@@ -25,12 +25,16 @@ const UNIT_SETTLE_POLL_SECS: u64 = 3;
 /// Absent: nothing runs a release yet (before the cutover), and the release step is skipped
 /// (§8 D13) — the first activation is the cutover's.
 pub fn release_in_force(releases: &Path) -> bool {
-    fs::symlink_metadata(releases.join("current")).map(|m| m.file_type().is_symlink()).unwrap_or(false)
+    fs::symlink_metadata(releases.join("current"))
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
 }
 
 /// What `current` names now (for the fault text: "current is untouched, still <x>").
 pub fn current_name(releases: &Path) -> String {
-    fs::read_link(releases.join("current")).map(|p| p.display().to_string()).unwrap_or_else(|_| "absent".into())
+    fs::read_link(releases.join("current"))
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "absent".into())
 }
 
 /// Everything the deploy needs, fixed before the CAS (every refusal is before it).
@@ -61,7 +65,12 @@ pub enum Outcome {
 
 impl Plan {
     fn common(&self) -> Vec<String> {
-        vec!["--releases".into(), self.releases.display().to_string(), "--run".into(), self.run.display().to_string()]
+        vec![
+            "--releases".into(),
+            self.releases.display().to_string(),
+            "--run".into(),
+            self.run.display().to_string(),
+        ]
     }
 }
 
@@ -90,7 +99,13 @@ fn release_bin(w: &World, bins: Option<&Path>) -> PathBuf {
 
 /// Run one `release` step; forward its stderr (release prefixes its own lines); Err is the
 /// fault text for a non-zero exit.
-fn step(w: &World, plan: &Plan, bin: &Path, what: &str, mut a: Vec<String>) -> Result<String, String> {
+fn step(
+    w: &World,
+    plan: &Plan,
+    bin: &Path,
+    what: &str,
+    mut a: Vec<String>,
+) -> Result<String, String> {
     a.extend(plan.common());
     let r = w.scripts.release(bin, &a, &plan.db);
     let err = r.err.trim_end_matches('\n');
@@ -98,8 +113,16 @@ fn step(w: &World, plan: &Plan, bin: &Path, what: &str, mut a: Vec<String>) -> R
         w.err(err);
     }
     if r.rc != 0 {
-        let lines: Vec<&str> = err.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
-        let why = if lines.is_empty() { "no output".to_string() } else { lines.join(" | ") };
+        let lines: Vec<&str> = err
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+        let why = if lines.is_empty() {
+            "no output".to_string()
+        } else {
+            lines.join(" | ")
+        };
         return Err(format!("release {what} exited {}: {why}", r.rc));
     }
     Ok(r.out)
@@ -116,11 +139,26 @@ pub fn build_and_verify(w: &World, plan: &Plan, head: &str) -> Result<String, St
         plan,
         &bin,
         "build",
-        args(&["build", head, "--repo", &plan.repo.display().to_string(), "--bin-dir", &bins.display().to_string()]),
+        args(&[
+            "build",
+            head,
+            "--repo",
+            &plan.repo.display().to_string(),
+            "--bin-dir",
+            &bins.display().to_string(),
+        ]),
     )?;
-    let sha = out.lines().rev().map(str::trim).find(|l| !l.is_empty()).unwrap_or("").to_string();
+    let sha = out
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("")
+        .to_string();
     if sha != head {
-        return Err(format!("release build answered {sha:?} for {head} — not the landed commit"));
+        return Err(format!(
+            "release build answered {sha:?} for {head} — not the landed commit"
+        ));
     }
     step(w, plan, &bin, "verify", args(&["verify", &sha]))?;
     Ok(sha)
@@ -147,7 +185,9 @@ pub fn activate(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
     for u in &units {
         settle_unit(w, u);
     }
-    activate_once(w, plan, sha).map_err(|second| format!("{first}; re-attempt after the units settled also failed: {second}"))
+    activate_once(w, plan, sha).map_err(|second| {
+        format!("{first}; re-attempt after the units settled also failed: {second}")
+    })
 }
 
 /// Units a failed activation names as having timed out on restart or not come up. Empty for
@@ -159,8 +199,16 @@ fn transient_units(err: &str) -> Vec<String> {
         if !(timed_out || line.contains(": did not come up")) {
             continue;
         }
-        let Some(cut) = line.find(": restart failed:").or_else(|| line.find(": did not come up")) else { continue };
-        let unit = line[..cut].rsplit(|c: char| c.is_whitespace()).next().unwrap_or("");
+        let Some(cut) = line
+            .find(": restart failed:")
+            .or_else(|| line.find(": did not come up"))
+        else {
+            continue;
+        };
+        let unit = line[..cut]
+            .rsplit(|c: char| c.is_whitespace())
+            .next()
+            .unwrap_or("");
         if unit.ends_with(".service") && !units.iter().any(|u| u == unit) {
             units.push(unit.to_string());
         }
@@ -172,7 +220,8 @@ fn settle_unit(w: &World, unit: &str) {
     let deadline = w.clock.now() + UNIT_SETTLE_WAIT_SECS;
     loop {
         let st = w.scripts.unit_active_state(unit);
-        if matches!(st.as_str(), "active" | "failed" | "inactive" | "") || w.clock.now() >= deadline {
+        if matches!(st.as_str(), "active" | "failed" | "inactive" | "") || w.clock.now() >= deadline
+        {
             return;
         }
         w.clock.sleep(UNIT_SETTLE_POLL_SECS);

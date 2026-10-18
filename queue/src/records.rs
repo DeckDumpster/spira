@@ -19,17 +19,27 @@ impl Kv {
     pub fn parse(text: &str) -> Kv {
         let lines = text
             .lines()
-            .filter_map(|l| l.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
+            .filter_map(|l| {
+                l.split_once('=')
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+            })
             .collect();
         Kv { lines }
     }
 
     pub fn get_first(&self, k: &str) -> Option<&str> {
-        self.lines.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.as_str())
+        self.lines
+            .iter()
+            .find(|(kk, _)| kk == k)
+            .map(|(_, v)| v.as_str())
     }
 
     pub fn get(&self, k: &str) -> Option<&str> {
-        self.lines.iter().rev().find(|(kk, _)| kk == k).map(|(_, v)| v.as_str())
+        self.lines
+            .iter()
+            .rev()
+            .find(|(kk, _)| kk == k)
+            .map(|(_, v)| v.as_str())
     }
 
     pub fn remove(&mut self, k: &str) {
@@ -73,9 +83,15 @@ pub fn read_kv(path: &Path) -> Result<Option<Kv>, String> {
 /// Write `contents` to `path` atomically: a sibling temp file renamed into place, so no
 /// reader (queue verdict, batcher-cut, queue-watch, cockpit) ever sees a half-written record.
 pub fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
-    let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("record");
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("record");
     let tmp = dir.join(format!(".{name}.{}", std::process::id()));
     fs::write(&tmp, contents).map_err(|e| format!("{}: {e}", tmp.display()))?;
     fs::rename(&tmp, path).map_err(|e| {
@@ -91,7 +107,10 @@ pub fn repo_file(queue_dir: &Path, repo: &str, name: &str) -> PathBuf {
 
 /// round-seq: a bare integer; anything unreadable or non-numeric is 0 (as queue.sh).
 pub fn read_seq(path: &Path) -> u64 {
-    fs::read_to_string(path).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0)
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0)
 }
 
 /// The open record rewritten for a claim: drop owner/pre_claim_owner/claim_reason, then
@@ -141,7 +160,10 @@ mod tests {
     fn claim_then_release_restores_the_owner() {
         let kv = Kv::parse("pr=1\nowner=batcher\n");
         let c = claim_rewrite(&kv, "batcher", "fix\nit");
-        assert_eq!(c.render(), "pr=1\nowner=concierge\npre_claim_owner=batcher\nclaim_reason=fix it\n");
+        assert_eq!(
+            c.render(),
+            "pr=1\nowner=concierge\npre_claim_owner=batcher\nclaim_reason=fix it\n"
+        );
         let (r, restored) = release_rewrite(&c);
         assert_eq!(restored, "batcher");
         assert_eq!(r.render(), "pr=1\nowner=batcher\n");

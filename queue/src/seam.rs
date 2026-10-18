@@ -199,7 +199,10 @@ pub fn split_answer(stdout: &str) -> (&str, &str) {
 pub fn parse_kv0(answer: &str) -> std::collections::BTreeMap<String, String> {
     answer
         .split('\0')
-        .filter_map(|r| r.split_once('=').map(|(k, v)| (k.to_string(), v.to_string())))
+        .filter_map(|r| {
+            r.split_once('=')
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+        })
         .collect()
 }
 
@@ -212,10 +215,20 @@ mod tests {
     #[test]
     fn every_script_is_one_braced_command_with_no_nul() {
         for op in [
-            Op::Context, Op::TomlPath, Op::BeadReopen, Op::CauseEvent, Op::ReleaseClaim,
-            Op::Comment, Op::Event, Op::Rebase,
-            Op::LandSubject, Op::FormatBatch, Op::BaseConflict, Op::PfGate,
-            Op::CreateBug, Op::AmendBug,
+            Op::Context,
+            Op::TomlPath,
+            Op::BeadReopen,
+            Op::CauseEvent,
+            Op::ReleaseClaim,
+            Op::Comment,
+            Op::Event,
+            Op::Rebase,
+            Op::LandSubject,
+            Op::FormatBatch,
+            Op::BaseConflict,
+            Op::PfGate,
+            Op::CreateBug,
+            Op::AmendBug,
         ] {
             let s = script(op);
             assert!(s.starts_with("{\n") && s.ends_with("}\n"), "{op:?}");
@@ -232,13 +245,32 @@ mod tests {
         // (BeadReopen is the stand-in; its own body hardcodes an empty third positional,
         // which is what exercises the empty-value case this test is for.)
         let dir = crate::testutil::tmpdir("seam");
-        std::fs::write(dir.join("lib.sh"), "bead_reopen() { printf '[%s]' \"$@\"; }\n").unwrap();
+        std::fs::write(
+            dir.join("lib.sh"),
+            "bead_reopen() { printf '[%s]' \"$@\"; }\n",
+        )
+        .unwrap();
         let home = dir.to_str().unwrap();
-        let mut child = Command::new("bash").stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
-        child.stdin.take().unwrap().write_all(&stdin_bytes(Op::BeadReopen, &[home, "sp-a", "RED", "line one\nline $(two) `x`"])).unwrap();
+        let mut child = Command::new("bash")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(&stdin_bytes(
+                Op::BeadReopen,
+                &[home, "sp-a", "RED", "line one\nline $(two) `x`"],
+            ))
+            .unwrap();
         let out = child.wait_with_output().unwrap();
         assert!(out.status.success());
-        assert_eq!(String::from_utf8_lossy(&out.stdout), "[sp-a][RED][][line one\nline $(two) `x`]");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "[sp-a][RED][][line one\nline $(two) `x`]"
+        );
     }
 
     #[test]
@@ -252,10 +284,21 @@ mod tests {
         .unwrap();
         let home = dir.to_str().unwrap();
         let run = |id: &str| {
-            let mut child = Command::new("bash").stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
-            child.stdin.take().unwrap().write_all(&stdin_bytes(Op::AmendBug, &[home, "actor", id, "note"])).unwrap();
+            let mut child = Command::new("bash")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(&stdin_bytes(Op::AmendBug, &[home, "actor", id, "note"]))
+                .unwrap();
             let out = child.wait_with_output().unwrap();
-            split_answer(&String::from_utf8_lossy(&out.stdout)).1.to_string()
+            split_answer(&String::from_utf8_lossy(&out.stdout))
+                .1
+                .to_string()
         };
         assert_eq!(run("sp-live"), "amended");
         assert_eq!(run("sp-done"), "");

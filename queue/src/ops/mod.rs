@@ -7,8 +7,8 @@ pub mod helpers;
 pub mod land;
 pub mod mend;
 pub mod publish;
-pub mod reconcile;
 pub mod rebase;
+pub mod reconcile;
 pub mod round;
 pub mod simple;
 pub mod stage;
@@ -44,7 +44,9 @@ pub fn resolve(w: &World, label: &str, repo: Option<&str>) -> Result<Ctx, i32> {
     match w.lib.context(repo) {
         Ok((s, r)) => Ok(Ctx { s, r }),
         Err(e) => {
-            w.err(format!("queue.sh {label}: cannot resolve the harness configuration: {e}"));
+            w.err(format!(
+                "queue.sh {label}: cannot resolve the harness configuration: {e}"
+            ));
             Err(FAIL)
         }
     }
@@ -64,7 +66,11 @@ pub fn repo_path(w: &World, label: &str, c: &Ctx) -> Result<PathBuf, i32> {
 /// spira-lc is the only record: an unreachable machine is a loud refusal before anything
 /// changes.
 pub fn require_lc(w: &World, label: &str) -> Result<(), i32> {
-    let why = if w.lc.available() { w.lc.probe().err() } else { Some("no spira-lc program".into()) };
+    let why = if w.lc.available() {
+        w.lc.probe().err()
+    } else {
+        Some("no spira-lc program".into())
+    };
     match why {
         None => Ok(()),
         Some(e) => {
@@ -99,7 +105,12 @@ fn timed_out(e: &(i32, String)) -> bool {
 
 /// `lc_cas` that survives a deadline: a write that answered "cannot tell" may have landed, so
 /// each retry re-reads the row first and `applied(state)` says whether the first try took.
-pub fn lc_cas_settled<F, A>(w: &World, batch_id: &str, f: F, applied: A) -> Result<(), (i32, String)>
+pub fn lc_cas_settled<F, A>(
+    w: &World,
+    batch_id: &str,
+    f: F,
+    applied: A,
+) -> Result<(), (i32, String)>
 where
     F: Fn(&str, &str) -> Result<(), (i32, String)>,
     A: Fn(&World) -> bool,
@@ -132,7 +143,9 @@ pub fn converge_orphans(w: &World) {
         return;
     }
     if let Err((rc, out)) = w.lc.requeue_orphans("queue.sh") {
-        w.err(format!("queue.sh: orphan sweep did not complete (rc={rc}): {out}"));
+        w.err(format!(
+            "queue.sh: orphan sweep did not complete (rc={rc}): {out}"
+        ));
     }
 }
 
@@ -141,17 +154,33 @@ fn batch_abandoned(w: &World, batch_id: &str) -> bool {
 }
 
 /// An abandon already recorded is the abandon done: a terminal row answers success.
-pub fn lc_abandon(w: &World, batch_id: &str, actor: &str, reason: &str) -> Result<(), (i32, String)> {
+pub fn lc_abandon(
+    w: &World,
+    batch_id: &str,
+    actor: &str,
+    reason: &str,
+) -> Result<(), (i32, String)> {
     if w.lc.available() && batch_abandoned(w, batch_id) {
         return Ok(());
     }
-    match lc_cas_settled(w, batch_id, |s, v| w.lc.abandon_batch(batch_id, s, v, actor, reason), |w| batch_abandoned(w, batch_id)) {
+    match lc_cas_settled(
+        w,
+        batch_id,
+        |s, v| w.lc.abandon_batch(batch_id, s, v, actor, reason),
+        |w| batch_abandoned(w, batch_id),
+    ) {
         Err(_) if batch_abandoned(w, batch_id) => Ok(()),
         r => r,
     }
 }
 
-pub fn lc_eject_member(w: &World, batch_id: &str, bead: &str, actor: &str, reason: &str) -> Result<(), (i32, String)> {
+pub fn lc_eject_member(
+    w: &World,
+    batch_id: &str,
+    bead: &str,
+    actor: &str,
+    reason: &str,
+) -> Result<(), (i32, String)> {
     lc_cas_settled(
         w,
         batch_id,
@@ -197,7 +226,11 @@ pub fn take_lock(w: &World, label: &str, c: &Ctx, busy_suffix: &str) -> Result<O
             }
             Acquire::Busy => {
                 let held = lock::holder(&c.s.queue_dir, &c.r.name);
-                let held = if held.is_empty() { "holder not recorded".to_string() } else { held };
+                let held = if held.is_empty() {
+                    "holder not recorded".to_string()
+                } else {
+                    held
+                };
                 w.err(format!(
                     "queue.sh {label}: another queue operation holds the lock for {}{busy_suffix} (waited {waited}s; {held})",
                     c.r.name
@@ -205,7 +238,10 @@ pub fn take_lock(w: &World, label: &str, c: &Ctx, busy_suffix: &str) -> Result<O
                 return Err(FAIL);
             }
             Acquire::Unopenable => {
-                w.err(format!("queue.sh {label}: cannot open lock file for {}", c.r.name));
+                w.err(format!(
+                    "queue.sh {label}: cannot open lock file for {}",
+                    c.r.name
+                ));
                 return Err(FAIL);
             }
         }
@@ -281,14 +317,22 @@ pub fn idents(w: &World, label: &str, pairs: &[(&str, &str)]) -> Result<(), i32>
 /// Append one line to `$SPIRA_RUN/landing.log`, best-effort (as `>> … || true`).
 pub fn landing_log(run: &Path, line: &str) {
     use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(run.join("landing.log")) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(run.join("landing.log"))
+    {
         let _ = writeln!(f, "{line}");
     }
 }
 
 /// A bead title for a PR body line, cut to 120 characters (queue.sh's python).
 pub fn title_line(rows: &[crate::model::BeadRow], id: &str) -> String {
-    let t = rows.iter().find(|r| r.id == id).and_then(|r| r.title.clone()).unwrap_or_default();
+    let t = rows
+        .iter()
+        .find(|r| r.id == id)
+        .and_then(|r| r.title.clone())
+        .unwrap_or_default();
     if t.is_empty() {
         "(title unavailable)".into()
     } else {

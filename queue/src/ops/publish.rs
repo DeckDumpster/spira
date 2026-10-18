@@ -2,7 +2,10 @@
 
 use std::collections::BTreeMap;
 
-use super::{czar_ok, Acquire, Ctx, idents, landing_log, lock, lock_held_by_caller, repo_path, resolve, take_lock, title_line, World, FAIL, OK};
+use super::{
+    czar_ok, idents, landing_log, lock, lock_held_by_caller, repo_path, resolve, take_lock,
+    title_line, Acquire, Ctx, World, FAIL, OK,
+};
 use crate::model::{LandMode, Member};
 use crate::ports::Divergence;
 use crate::records::{self, write_atomic, Kv};
@@ -17,15 +20,24 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
     if !czar_ok(w) {
         return FAIL;
     }
-    let Ok(c) = resolve(w, "publish", repo) else { return FAIL };
-    let Ok(path) = repo_path(w, "publish", &c) else { return FAIL };
+    let Ok(c) = resolve(w, "publish", repo) else {
+        return FAIL;
+    };
+    let Ok(path) = repo_path(w, "publish", &c) else {
+        return FAIL;
+    };
     let name = c.r.name.clone();
     if c.r.mode != LandMode::QueueLocal {
-        w.err(format!("queue.sh publish: repo is not in queue.local mode (mode={})", c.r.mode.as_str()));
+        w.err(format!(
+            "queue.sh publish: repo is not in queue.local mode (mode={})",
+            c.r.mode.as_str()
+        ));
         return FAIL;
     }
     let Some(base) = c.r.landref.clone() else {
-        w.err(format!("queue.sh publish: cannot resolve landing ref for {name}"));
+        w.err(format!(
+            "queue.sh publish: cannot resolve landing ref for {name}"
+        ));
         return FAIL;
     };
     if c.r.ref_remote(&base).is_some() {
@@ -33,14 +45,28 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
         return FAIL;
     }
     if c.r.unpublished {
-        w.out(format!("queue.sh publish: {name} is declared unpublished — skipped"));
+        w.out(format!(
+            "queue.sh publish: {name} is declared unpublished — skipped"
+        ));
         return OK;
     }
     let Some((remote, forge_branch)) = c.r.publish.clone() else {
-        w.err(format!("queue.sh publish: cannot resolve a forge target for {name}"));
+        w.err(format!(
+            "queue.sh publish: cannot resolve a forge target for {name}"
+        ));
         return FAIL;
     };
-    if idents(w, "publish", &[("remote", &remote), ("forge branch", &forge_branch), ("base", &base)]).is_err() {
+    if idents(
+        w,
+        "publish",
+        &[
+            ("remote", &remote),
+            ("forge branch", &forge_branch),
+            ("base", &base),
+        ],
+    )
+    .is_err()
+    {
         return FAIL;
     }
     let _g = if lock_held {
@@ -60,18 +86,32 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
         return FAIL;
     }
     if !w.git.fetch(&path, &remote, &forge_branch) {
-        w.err(format!("queue.sh publish: could not fetch {remote}/{forge_branch}"));
+        w.err(format!(
+            "queue.sh publish: could not fetch {remote}/{forge_branch}"
+        ));
         return FAIL;
     }
-    let Some(forge_sha) = w.git.rev_parse(&path, &format!("refs/remotes/{remote}/{forge_branch}")) else {
-        w.err(format!("queue.sh publish: cannot resolve {remote}/{forge_branch}"));
+    let Some(forge_sha) = w
+        .git
+        .rev_parse(&path, &format!("refs/remotes/{remote}/{forge_branch}"))
+    else {
+        w.err(format!(
+            "queue.sh publish: cannot resolve {remote}/{forge_branch}"
+        ));
         return FAIL;
     };
     let Some(head_sha) = w.git.rev_parse(&path, &base) else {
         w.err(format!("queue.sh publish: cannot resolve {base}"));
         return FAIL;
     };
-    match w.lib.divergence(&c.s.mailbox, &c.s.queue_dir, &name, &path, &forge_sha, &head_sha) {
+    match w.lib.divergence(
+        &c.s.mailbox,
+        &c.s.queue_dir,
+        &name,
+        &path,
+        &forge_sha,
+        &head_sha,
+    ) {
         Divergence::Ancestor => {}
         Divergence::Diverged(foreign) => {
             w.err(format!(
@@ -97,7 +137,13 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
         if kv.get("head") == Some(head_sha.as_str()) {
             let fid = kv.get("fix_forward").unwrap_or("<unknown>");
             w.out(format!("queue.sh publish: waiting on fix-forward {fid} for {name} — {base} has not moved past the red head"));
-            landing_log(&c.s.run, &format!("QUEUE PUBLISH_WAIT {} repo={name} fix_forward={fid} head={head_sha}", w.clock.now()));
+            landing_log(
+                &c.s.run,
+                &format!(
+                    "QUEUE PUBLISH_WAIT {} repo={name} fix_forward={fid} head={head_sha}",
+                    w.clock.now()
+                ),
+            );
             return OK;
         }
         let _ = std::fs::remove_file(&red_file);
@@ -106,7 +152,9 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
     let members = match range_members(w, &path, &forge_sha, &head_sha) {
         Ok(m) => m,
         Err(e) => {
-            w.err(format!("queue.sh publish: cannot read {forge_sha}..{head_sha}: {e} — refusing"));
+            w.err(format!(
+                "queue.sh publish: cannot read {forge_sha}..{head_sha}: {e} — refusing"
+            ));
             return FAIL;
         }
     };
@@ -117,27 +165,48 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
 
     let who = w.env.var("USER").unwrap_or_else(|| "unknown".into());
     let override_reason = w.env.var(local_pass::OVERRIDE_ENV);
-    match local_pass::check(&c.s.run, local_pass::Kind::FullSuite, &head_sha, override_reason.as_deref(), &who, &w.clock.now().to_string()) {
+    match local_pass::check(
+        &c.s.run,
+        local_pass::Kind::FullSuite,
+        &head_sha,
+        override_reason.as_deref(),
+        &who,
+        &w.clock.now().to_string(),
+    ) {
         Ok(local_pass::Verdict::Passed) => {}
         Ok(local_pass::Verdict::Overridden(why)) => {
             w.out(format!("queue.sh publish: full-suite local-pass check for {head_sha} OVERRIDDEN by {who}: {why}"));
-            landing_log(&c.s.run, &format!("QUEUE PUBLISH_OVERRIDE {} repo={name} head={head_sha} by={who}", w.clock.now()));
+            landing_log(
+                &c.s.run,
+                &format!(
+                    "QUEUE PUBLISH_OVERRIDE {} repo={name} head={head_sha} by={who}",
+                    w.clock.now()
+                ),
+            );
         }
         Err(why) => {
-            w.err(format!("queue.sh publish: refusing to open a publish PR for {head_sha}: {why}"));
+            w.err(format!(
+                "queue.sh publish: refusing to open a publish PR for {head_sha}: {why}"
+            ));
             return FAIL;
         }
     }
 
     let stamp = w.clock.stamp();
     let branch = format!("spira/publish/{stamp}");
-    if !w.lib.push(&path, &remote, &format!("{head_sha}:refs/heads/{branch}")) {
+    if !w
+        .lib
+        .push(&path, &remote, &format!("{head_sha}:refs/heads/{branch}"))
+    {
         w.err(format!("queue.sh publish: could not push {branch}"));
         return FAIL;
     }
     let ids: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
     let titles = w.bd.show(&ids).unwrap_or_default();
-    let mut body = format!("Publish queue: {} bead(s) landed on {base} since the last publish, for {name}.\n\n", ids.len());
+    let mut body = format!(
+        "Publish queue: {} bead(s) landed on {base} since the last publish, for {name}.\n\n",
+        ids.len()
+    );
     body.push_str(&format!(
         "These commits already fast-forwarded {base} locally; CI here is confirmation, not the gate. A red run files a fix-forward bead — it never rolls back production.\n\n"
     ));
@@ -145,15 +214,26 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
         body.push_str(&format!("- {id} — {}\n", title_line(&titles, id)));
     }
     let title = format!("publish: {} bead(s) for {name}", ids.len());
-    let pr = match w.forge.pr_create(&c.s.forge, &path, &branch, &forge_branch, &title, body.trim_end_matches('\n')) {
+    let pr = match w.forge.pr_create(
+        &c.s.forge,
+        &path,
+        &branch,
+        &forge_branch,
+        &title,
+        body.trim_end_matches('\n'),
+    ) {
         Ok(pr) => pr,
         Err(e) => {
-            w.err(format!("queue.sh publish: forge pr-create failed for {branch}: {e}"));
+            w.err(format!(
+                "queue.sh publish: forge pr-create failed for {branch}: {e}"
+            ));
             return FAIL;
         }
     };
     if pr.is_empty() {
-        w.err(format!("queue.sh publish: forge returned no PR number for {branch}"));
+        w.err(format!(
+            "queue.sh publish: forge returned no PR number for {branch}"
+        ));
         return FAIL;
     }
     let opened = w.clock.now();
@@ -174,17 +254,39 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
         w.err(format!("queue.sh publish: {e}"));
         return FAIL;
     }
-    landing_log(&c.s.run, &format!("QUEUE PUBLISH {opened} repo={name} pr={pr} members={}", ids.len()));
-    w.out(format!("queue.sh publish: PR {pr} opened — {} bead(s) since last publish ({branch})", ids.len()));
+    landing_log(
+        &c.s.run,
+        &format!(
+            "QUEUE PUBLISH {opened} repo={name} pr={pr} members={}",
+            ids.len()
+        ),
+    );
+    w.out(format!(
+        "queue.sh publish: PR {pr} opened — {} bead(s) since last publish ({branch})",
+        ids.len()
+    ));
     OK
 }
 
 /// The members of forge..head: from the land commits, the lifecycle rows for tips only.
-pub fn range_members(w: &World, path: &std::path::Path, forge: &str, head: &str) -> Result<Vec<Member>, String> {
+pub fn range_members(
+    w: &World,
+    path: &std::path::Path,
+    forge: &str,
+    head: &str,
+) -> Result<Vec<Member>, String> {
     let commits = w.git.log_range(path, &format!("{forge}..{head}"))?;
-    let states: BTreeMap<_, _> = w.lc.bead_rows(Some("LANDED")).unwrap_or_default().into_iter().map(|r| (r.bead_id.clone(), r)).collect();
+    let states: BTreeMap<_, _> =
+        w.lc.bead_rows(Some("LANDED"))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|r| (r.bead_id.clone(), r))
+            .collect();
     let in_range = |t: &str| {
-        crate::ident::check("tip", t).is_ok() && w.git.commit_exists(path, t) && w.git.is_ancestor(path, t, head) && !w.git.is_ancestor(path, t, forge)
+        crate::ident::check("tip", t).is_ok()
+            && w.git.commit_exists(path, t)
+            && w.git.is_ancestor(path, t, head)
+            && !w.git.is_ancestor(path, t, forge)
     };
     Ok(crate::publish_range::members(&commits, &states, &in_range))
 }
@@ -239,10 +341,24 @@ pub fn decide(pr: Option<Pr>) -> Settle {
         None => Settle::Open,
         Some(Pr::Gone) => Settle::Retire,
         Some(Pr::Unknown) => Settle::Wait,
-        Some(Pr::Open { ci: Ci::Red | Ci::Untested, behind: true, .. }) => Settle::Supersede,
-        Some(Pr::Open { ci: Ci::Untested, tries: 0, .. }) => Settle::Rerun,
-        Some(Pr::Open { ci: Ci::Untested, tries: 1, .. }) => Settle::Alarm,
-        Some(Pr::Open { ci: Ci::Untested, .. }) => Settle::Parked,
+        Some(Pr::Open {
+            ci: Ci::Red | Ci::Untested,
+            behind: true,
+            ..
+        }) => Settle::Supersede,
+        Some(Pr::Open {
+            ci: Ci::Untested,
+            tries: 0,
+            ..
+        }) => Settle::Rerun,
+        Some(Pr::Open {
+            ci: Ci::Untested,
+            tries: 1,
+            ..
+        }) => Settle::Alarm,
+        Some(Pr::Open {
+            ci: Ci::Untested, ..
+        }) => Settle::Parked,
         Some(Pr::Open { .. }) => Settle::Wait,
     }
 }
@@ -255,7 +371,9 @@ pub fn publish_settle(w: &World, repo: Option<&str>) -> i32 {
         None => match w.lib.repos() {
             Ok(n) => n,
             Err(e) => {
-                w.err(format!("queue.sh publish-settle: cannot list repositories: {e}"));
+                w.err(format!(
+                    "queue.sh publish-settle: cannot list repositories: {e}"
+                ));
                 return FAIL;
             }
         },
@@ -268,13 +386,19 @@ pub fn publish_settle(w: &World, repo: Option<&str>) -> i32 {
         };
         if c.r.mode != LandMode::QueueLocal {
             if repo.is_some() {
-                w.err(format!("queue.sh publish-settle: {name} is not in queue.local mode (mode={})", c.r.mode.as_str()));
+                w.err(format!(
+                    "queue.sh publish-settle: {name} is not in queue.local mode (mode={})",
+                    c.r.mode.as_str()
+                ));
                 rc = FAIL;
             }
             continue;
         }
         if c.r.unpublished {
-            w.out(format!("{} publish-settle {name}: declared unpublished — skipped", w.clock.now()));
+            w.out(format!(
+                "{} publish-settle {name}: declared unpublished — skipped",
+                w.clock.now()
+            ));
             continue;
         }
         if settle_repo(w, &c) != OK {
@@ -289,7 +413,9 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
         return FAIL;
     }
     let name = c.r.name.clone();
-    let Ok(path) = repo_path(w, "publish-settle", c) else { return FAIL };
+    let Ok(path) = repo_path(w, "publish-settle", c) else {
+        return FAIL;
+    };
     if idents(w, "publish-settle", &[("repo", &name)]).is_err() {
         return FAIL;
     }
@@ -300,7 +426,9 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
             return OK;
         }
         Acquire::Unopenable => {
-            w.err(format!("queue.sh publish-settle: cannot open lock file for {name}"));
+            w.err(format!(
+                "queue.sh publish-settle: cannot open lock file for {name}"
+            ));
             return FAIL;
         }
     };
@@ -318,24 +446,39 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
     }
     let pr = kv.as_ref().map(|kv| observe(w, c, &path, kv));
     let action = decide(pr);
-    if !matches!(action, Settle::Wait | Settle::Parked | Settle::Alarm) && round_pass_running(w, c) {
+    if !matches!(action, Settle::Wait | Settle::Parked | Settle::Alarm) && round_pass_running(w, c)
+    {
         w.out(format!("{} publish-settle {name}: a round pass holds the hypervisor; deferring {action:?} to the next tick", w.clock.now()));
         return OK;
     }
     let now = w.clock.now();
-    let pr_no = kv.as_ref().and_then(|k| k.get("pr")).unwrap_or("").to_string();
-    w.out(format!("{now} publish-settle {name}: pr={} -> {action:?}", if pr_no.is_empty() { "none" } else { &pr_no }));
+    let pr_no = kv
+        .as_ref()
+        .and_then(|k| k.get("pr"))
+        .unwrap_or("")
+        .to_string();
+    w.out(format!(
+        "{now} publish-settle {name}: pr={} -> {action:?}",
+        if pr_no.is_empty() { "none" } else { &pr_no }
+    ));
     match action {
         Settle::Wait | Settle::Parked => OK,
         Settle::Rerun | Settle::Alarm => rerun_or_alarm(w, c, &path, &pfile, kv.as_ref(), action),
         Settle::Open => publish_with(w, Some(&name), true),
         Settle::Retire | Settle::Supersede => {
             if action == Settle::Supersede {
-                w.lib.cancel_runs(&c.s.forge, &path, kv.as_ref().and_then(|k| k.get("branch")).unwrap_or(""));
+                w.lib.cancel_runs(
+                    &c.s.forge,
+                    &path,
+                    kv.as_ref().and_then(|k| k.get("branch")).unwrap_or(""),
+                );
                 w.forge.pr_close(&c.s.forge, &path, &pr_no);
             }
             let _ = std::fs::remove_file(&pfile);
-            landing_log(&c.s.run, &format!("QUEUE PUBLISH_SUPERSEDED {now} repo={name} pr={pr_no} action={action:?}"));
+            landing_log(
+                &c.s.run,
+                &format!("QUEUE PUBLISH_SUPERSEDED {now} repo={name} pr={pr_no} action={action:?}"),
+            );
             publish_with(w, Some(&name), true)
         }
     }
@@ -343,29 +486,50 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
 
 /// An open `spira/publish/*` PR the record does not know is recorded (the newest; any older
 /// one is closed), so the one-PR guard's refusal becomes settlement. Ok(true): adopted.
-fn adopt_forge_publish(w: &World, c: &Ctx, path: &std::path::Path, pfile: &std::path::Path) -> Result<bool, ()> {
+fn adopt_forge_publish(
+    w: &World,
+    c: &Ctx,
+    path: &std::path::Path,
+    pfile: &std::path::Path,
+) -> Result<bool, ()> {
     let name = &c.r.name;
     let Some(mut open) = w.forge.publish_prs(&c.s.forge, path) else {
         w.err(format!("queue.sh publish-settle: {name}: cannot list open publish PRs on the forge; continuing without adoption"));
         return Ok(false);
     };
     open.sort_by_key(|(n, _)| n.parse::<u64>().unwrap_or(0));
-    let Some((pr, branch)) = open.pop() else { return Ok(false) };
-    let Some((remote, forge_branch)) = c.r.publish.clone() else { return Ok(false) };
+    let Some((pr, branch)) = open.pop() else {
+        return Ok(false);
+    };
+    let Some((remote, forge_branch)) = c.r.publish.clone() else {
+        return Ok(false);
+    };
     let fail = |why: String| {
         w.err(format!("queue.sh publish-settle: {name}: open publish PR {pr} ({branch}) is not in the record and cannot be adopted: {why}"));
         w.lib.notify(&c.s.mailbox, name, &format!("publish PR {pr} cannot be adopted"), &format!("PR {pr} ({branch}) is open for {name} but publish-settle has no record of it and could not adopt it: {why}"));
         Err(())
     };
-    if idents(w, "publish-settle", &[("remote", &remote), ("forge branch", &forge_branch), ("branch", &branch)]).is_err() {
+    if idents(
+        w,
+        "publish-settle",
+        &[
+            ("remote", &remote),
+            ("forge branch", &forge_branch),
+            ("branch", &branch),
+        ],
+    )
+    .is_err()
+    {
         return Err(());
     }
     if !w.git.fetch(path, &remote, &branch) || !w.git.fetch(path, &remote, &forge_branch) {
         return fail(format!("could not fetch {remote}/{branch}"));
     }
     let (Some(head), Some(base)) = (
-        w.git.rev_parse(path, &format!("refs/remotes/{remote}/{branch}")),
-        w.git.rev_parse(path, &format!("refs/remotes/{remote}/{forge_branch}")),
+        w.git
+            .rev_parse(path, &format!("refs/remotes/{remote}/{branch}")),
+        w.git
+            .rev_parse(path, &format!("refs/remotes/{remote}/{forge_branch}")),
     ) else {
         return fail(format!("cannot resolve {remote}/{branch}"));
     };
@@ -390,30 +554,62 @@ fn adopt_forge_publish(w: &World, c: &Ctx, path: &std::path::Path, pfile: &std::
     for (n, _) in &open {
         w.forge.pr_close(&c.s.forge, path, n);
     }
-    landing_log(&c.s.run, &format!("QUEUE PUBLISH_ADOPTED {} repo={name} pr={pr} branch={branch} closed={}", w.clock.now(), open.len()));
-    w.out(format!("publish-settle {name}: adopted open publish PR {pr} ({branch}) from the forge"));
+    landing_log(
+        &c.s.run,
+        &format!(
+            "QUEUE PUBLISH_ADOPTED {} repo={name} pr={pr} branch={branch} closed={}",
+            w.clock.now(),
+            open.len()
+        ),
+    );
+    w.out(format!(
+        "publish-settle {name}: adopted open publish PR {pr} ({branch}) from the forge"
+    ));
     Ok(true)
 }
 
-fn rerun_or_alarm(w: &World, c: &Ctx, path: &std::path::Path, pfile: &std::path::Path, kv: Option<&Kv>, action: Settle) -> i32 {
+fn rerun_or_alarm(
+    w: &World,
+    c: &Ctx,
+    path: &std::path::Path,
+    pfile: &std::path::Path,
+    kv: Option<&Kv>,
+    action: Settle,
+) -> i32 {
     let name = &c.r.name;
-    let Some(mut rec) = kv.cloned() else { return OK };
+    let Some(mut rec) = kv.cloned() else {
+        return OK;
+    };
     let pr = rec.get("pr").unwrap_or("").to_string();
     let branch = rec.get("branch").unwrap_or("").to_string();
     if action == Settle::Rerun {
         let Some(run) = w.forge.run_id(&c.s.forge, path, &branch) else {
-            w.err(format!("queue.sh publish-settle: {name}: no run id for {branch}; cannot rerun PR {pr}"));
+            w.err(format!(
+                "queue.sh publish-settle: {name}: no run id for {branch}; cannot rerun PR {pr}"
+            ));
             return FAIL;
         };
         w.forge.workflow_rerun(&c.s.forge, path, &run);
         rec.remove("rerun");
         rec.push("rerun", &run);
-        landing_log(&c.s.run, &format!("QUEUE PUBLISH_RERUN {} repo={name} pr={pr} run={run}", w.clock.now()));
+        landing_log(
+            &c.s.run,
+            &format!(
+                "QUEUE PUBLISH_RERUN {} repo={name} pr={pr} run={run}",
+                w.clock.now()
+            ),
+        );
         w.out(format!("publish-settle {name}: PR {pr} run {run} was never tested (suites cancelled or timed out) — whole workflow rerun"));
     } else {
         rec.remove("alarmed");
         rec.push("alarmed", &w.clock.now().to_string());
-        landing_log(&c.s.run, &format!("QUEUE PUBLISH_UNTESTED {} repo={name} pr={pr}", w.clock.now()));
+        landing_log(
+            &c.s.run,
+            &format!(
+                "QUEUE PUBLISH_UNTESTED {} repo={name} pr={pr}",
+                w.clock.now()
+            ),
+        );
         w.lib.notify(
             &c.s.mailbox,
             name,
@@ -443,12 +639,22 @@ fn round_pass_running(w: &World, c: &Ctx) -> bool {
     crate::ops::round::open_records(c)
         .iter()
         .filter_map(|(_, kv)| kv.get("batch_id"))
-        .any(|batch| w.lc.batch_state(batch).map_or(true, |(s, _)| s == "CI_RUNNING"))
+        .any(|batch| {
+            w.lc.batch_state(batch)
+                .map_or(true, |(s, _)| s == "CI_RUNNING")
+        })
 }
 
 fn progress_live(run: &std::path::Path, now: u64) -> bool {
-    let Some(v) = std::fs::read_to_string(run.join("round-progress.json")).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) else { return false };
-    let live = v["phase"].as_str().is_some_and(|p| LIVE_PHASES.contains(&p));
+    let Some(v) = std::fs::read_to_string(run.join("round-progress.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+    else {
+        return false;
+    };
+    let live = v["phase"]
+        .as_str()
+        .is_some_and(|p| LIVE_PHASES.contains(&p));
     let at = v["updated_at"].as_u64().unwrap_or(0);
     live && now.saturating_sub(at) < PROGRESS_FRESH_SECS
 }
@@ -459,14 +665,37 @@ fn observe(w: &World, c: &Ctx, path: &std::path::Path, kv: &Kv) -> Pr {
     if pr.is_empty() || branch.is_empty() || head.is_empty() {
         return Pr::Unknown;
     }
-    match w.forge.pr_state(&c.s.forge, path, &pr).as_deref().map(str::trim) {
+    match w
+        .forge
+        .pr_state(&c.s.forge, path, &pr)
+        .as_deref()
+        .map(str::trim)
+    {
         Some("open") => {}
         Some("closed" | "merged") => return Pr::Gone,
         _ => return Pr::Unknown,
     }
-    let Some(base) = c.r.landref.as_deref() else { return Pr::Unknown };
-    let Some(local) = w.git.rev_parse(path, base) else { return Pr::Unknown };
-    let ci = ci_of(&w.forge.check_status(&c.s.forge, path, &pr, &branch).unwrap_or_default());
-    let tries = if kv.get("alarmed").is_some() { 2 } else if kv.get("rerun").is_some() { 1 } else { 0 };
-    Pr::Open { ci, behind: local != head, tries }
+    let Some(base) = c.r.landref.as_deref() else {
+        return Pr::Unknown;
+    };
+    let Some(local) = w.git.rev_parse(path, base) else {
+        return Pr::Unknown;
+    };
+    let ci = ci_of(
+        &w.forge
+            .check_status(&c.s.forge, path, &pr, &branch)
+            .unwrap_or_default(),
+    );
+    let tries = if kv.get("alarmed").is_some() {
+        2
+    } else if kv.get("rerun").is_some() {
+        1
+    } else {
+        0
+    };
+    Pr::Open {
+        ci,
+        behind: local != head,
+        tries,
+    }
 }

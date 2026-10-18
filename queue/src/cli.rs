@@ -19,38 +19,121 @@ impl Text {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Cmd {
-    Submit { branch: String, repo: Option<String> },
-    Protect { repo: Option<String> },
+    Submit {
+        branch: String,
+        repo: Option<String>,
+    },
+    Protect {
+        repo: Option<String>,
+    },
     Stats,
     /// `churn [--since <when>] [--until <when>] [<repo>]`: the mender's meter.
-    Churn { since: Option<String>, until: Option<String>, repo: Option<String> },
-    Flush { repo: Option<String> },
-    Step { repo: String },
+    Churn {
+        since: Option<String>,
+        until: Option<String>,
+        repo: Option<String>,
+    },
+    Flush {
+        repo: Option<String>,
+    },
+    Step {
+        repo: String,
+    },
     /// `verdict <repo>`: settle the repository's CI result (DESIGN-verdict.md).
-    Verdict { repo: String },
+    Verdict {
+        repo: String,
+    },
     /// `step --all`: every queue-mode repository (queue-step-all.md).
     StepAll,
-    Eject { id: String, repo: Option<String>, reason: Text, suites: String, red: bool, harness_fault: bool, dry_run: bool },
-    Abandon { repo: Option<String>, reason: Text, dry_run: bool },
-    OpenBatch { repo: Option<String>, members: Text, skip_pregate: bool, dry_run: bool, replace: bool, reason: Text },
-    Claim { repo: Option<String>, reason: Text, force: bool },
-    Release { repo: Option<String> },
+    Eject {
+        id: String,
+        repo: Option<String>,
+        reason: Text,
+        suites: String,
+        red: bool,
+        harness_fault: bool,
+        dry_run: bool,
+    },
+    Abandon {
+        repo: Option<String>,
+        reason: Text,
+        dry_run: bool,
+    },
+    OpenBatch {
+        repo: Option<String>,
+        members: Text,
+        skip_pregate: bool,
+        dry_run: bool,
+        replace: bool,
+        reason: Text,
+    },
+    Claim {
+        repo: Option<String>,
+        reason: Text,
+        force: bool,
+    },
+    Release {
+        repo: Option<String>,
+    },
     /// `resubmit <id> --tip <40-hex> --by concierge --reason <why>`: re-tip a REWORK bead held manual and admit it to a round.
-    Resubmit { id: String, repo: Option<String>, tip: String, by: String, reason: Text, evidence: Text, evidence_tip: String },
+    Resubmit {
+        id: String,
+        repo: Option<String>,
+        tip: String,
+        by: String,
+        reason: Text,
+        evidence: Text,
+        evidence_tip: String,
+    },
     /// `absolve <id> --by concierge --reason <why> --evidence <checks> --evidence-tip <tip>`: withdraw a red recorded against the bead's tip that was not the tree's fault.
-    Absolve { id: String, repo: Option<String>, by: String, reason: Text, evidence: Text, evidence_tip: String },
+    Absolve {
+        id: String,
+        repo: Option<String>,
+        by: String,
+        reason: Text,
+        evidence: Text,
+        evidence_tip: String,
+    },
     /// `rework <id> --by <actor> --reason <evidence>`: send a SUBMITTED/CERTIFIED bead outside any round to REWORK.
-    Rework { id: String, repo: Option<String>, by: String, reason: Text },
+    Rework {
+        id: String,
+        repo: Option<String>,
+        by: String,
+        reason: Text,
+    },
     /// `forced-suites <id> [--clear --by concierge --reason <why>]`: show, or drop, the suites an eject forces on the bead's recertification.
-    ForcedSuites { id: String, repo: Option<String>, clear: bool, by: String, reason: Text },
-    LandLocal { repo: Option<String>, head: String, members: Text, worktree: Option<PathBuf> },
-    Publish { repo: Option<String> },
-    PublishSettle { repo: Option<String> },
-    ToForge { repo: Option<String> },
-    ToLocal { repo: Option<String> },
-    RollbackLocal { repo: Option<String> },
+    ForcedSuites {
+        id: String,
+        repo: Option<String>,
+        clear: bool,
+        by: String,
+        reason: Text,
+    },
+    LandLocal {
+        repo: Option<String>,
+        head: String,
+        members: Text,
+        worktree: Option<PathBuf>,
+    },
+    Publish {
+        repo: Option<String>,
+    },
+    PublishSettle {
+        repo: Option<String>,
+    },
+    ToForge {
+        repo: Option<String>,
+    },
+    ToLocal {
+        repo: Option<String>,
+    },
+    RollbackLocal {
+        repo: Option<String>,
+    },
     /// `rebase-waiting [<repo>]`: rebase every waiting bead onto the landing ref.
-    RebaseWaiting { repo: Option<String> },
+    RebaseWaiting {
+        repo: Option<String>,
+    },
     Round(Round),
     Help,
 }
@@ -58,26 +141,99 @@ pub enum Cmd {
 /// `round <verb>`: the shared round lifecycle (ops/round.rs).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Round {
-    Open { repo: Option<String>, members: Text, name: Option<String>, worktree: Option<PathBuf> },
-    Certify { batch: String, repo: Option<String>, attest: Option<String> },
-    Eject { batch: String, id: String, repo: Option<String>, reason: Text, suites: String, red: bool, harness_fault: bool, rebuild: bool },
-    Land { batch: String, repo: Option<String> },
-    Abandon { batch: String, repo: Option<String>, reason: Text },
-    Preempt { batch: String, repo: Option<String>, eject: String, reason: Text, suites: String },
-    PassStart { batch: String, repo: Option<String>, resume: bool },
-    SuitesStarted { batch: String, repo: Option<String> },
-    Failed { batch: String, repo: Option<String>, suite: String },
+    Open {
+        repo: Option<String>,
+        members: Text,
+        name: Option<String>,
+        worktree: Option<PathBuf>,
+    },
+    Certify {
+        batch: String,
+        repo: Option<String>,
+        attest: Option<String>,
+    },
+    Eject {
+        batch: String,
+        id: String,
+        repo: Option<String>,
+        reason: Text,
+        suites: String,
+        red: bool,
+        harness_fault: bool,
+        rebuild: bool,
+    },
+    Land {
+        batch: String,
+        repo: Option<String>,
+    },
+    Abandon {
+        batch: String,
+        repo: Option<String>,
+        reason: Text,
+    },
+    Preempt {
+        batch: String,
+        repo: Option<String>,
+        eject: String,
+        reason: Text,
+        suites: String,
+    },
+    PassStart {
+        batch: String,
+        repo: Option<String>,
+        resume: bool,
+    },
+    SuitesStarted {
+        batch: String,
+        repo: Option<String>,
+    },
+    Failed {
+        batch: String,
+        repo: Option<String>,
+        suite: String,
+    },
     /// A mender's outcome for one failure (`mended|return|environment|flaky|unsure`), or `triage-ended`.
-    Mend { outcome: String, batch: String, suite: String, repo: Option<String>, tips: String, checked: String, ask: Option<String>, reason: Text },
-    PassVerdict { batch: String, repo: Option<String>, verdict: String, red_suites: String, suites_s: u64, build_s: u64, reason: Text },
-    Status { repo: Option<String> },
+    Mend {
+        outcome: String,
+        batch: String,
+        suite: String,
+        repo: Option<String>,
+        tips: String,
+        checked: String,
+        ask: Option<String>,
+        reason: Text,
+    },
+    PassVerdict {
+        batch: String,
+        repo: Option<String>,
+        verdict: String,
+        red_suites: String,
+        suites_s: u64,
+        build_s: u64,
+        reason: Text,
+    },
+    Status {
+        repo: Option<String>,
+    },
     /// Assemble the next round behind the open one and run the fences on it.
-    Stage { repo: Option<String>, members: Text, name: Option<String>, worktree: Option<PathBuf> },
+    Stage {
+        repo: Option<String>,
+        members: Text,
+        name: Option<String>,
+        worktree: Option<PathBuf>,
+    },
     /// The staged round's own VM pass, once the round it waits behind is green.
-    StageTest { repo: Option<String> },
+    StageTest {
+        repo: Option<String>,
+    },
     /// The round it waited behind landed: cut the staged round, reusing its pass when the tree matches.
-    Promote { repo: Option<String> },
-    Discard { repo: Option<String>, reason: Text },
+    Promote {
+        repo: Option<String>,
+    },
+    Discard {
+        repo: Option<String>,
+        reason: Text,
+    },
 }
 
 pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh churn [--since <dur|date>] [--until <dur|date>] [<repo>] | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--harness-fault] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] [--replace --reason <why>] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh resubmit <id> [<repo>] --tip <40-hex> --by concierge --reason <why> | queue.sh rework <id> [<repo>] --by <concierge|operator> --reason <evidence> | queue.sh absolve <id> [<repo>] --by <concierge|operator> --reason <why> --evidence <checks> --evidence-tip <tip> | queue.sh forced-suites <id> [<repo>] [--clear --by <concierge|operator> --reason <why>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh publish-settle [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh rollback-local [<repo>] | queue.sh rebase-waiting [<repo>] | queue.sh round open [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round certify <batch> [<repo>] [--attest <head>] | queue.sh round eject <batch> <id> [<repo>] --reason <text> [--suites <csv>] [--red] [--harness-fault] [--no-rebuild] | queue.sh round land <batch> [<repo>] | queue.sh round abandon <batch> [<repo>] --reason <text> | queue.sh round preempt <batch> [<repo>] --eject <id>[,<id>...] --reason <text> [--suites <csv>] | queue.sh round pass-start <batch> [<repo>] [--resume] | queue.sh round suites-started <batch> [<repo>] | queue.sh round failed <batch> [<repo>] --suite <name> | queue.sh round mended <batch> <failure> [<repo>] --tips <id:tip,...> --checked <crate:x|suite:y,...> [--ask <id>] [--reason <text>] | queue.sh round return|environment|flaky|unsure <batch> <failure> [<repo>] --reason <text> | queue.sh round triage-ended <batch> <failure> [<repo>] | queue.sh round pass-verdict <batch> [<repo>] --verdict <green|red|incomplete> [--red-suites <csv>] [--suites-s <n>] [--build-s <n>] [--reason <text>] | queue.sh round status [<repo>] | queue.sh round stage [<repo>] --members <id[:tip],...> [--name <n>] [--worktree <dir>] | queue.sh round stage-test [<repo>] | queue.sh round promote [<repo>] | queue.sh round discard [<repo>] --reason <text>";
@@ -126,7 +282,11 @@ impl<'a> Walk<'a> {
     }
 
     fn unknown(&self, name: &str) -> Usage {
-        let shown = if name.starts_with('-') { name.to_string() } else { format!("--{name}") };
+        let shown = if name.starts_with('-') {
+            name.to_string()
+        } else {
+            format!("--{name}")
+        };
         Usage(format!("queue.sh {}: unknown option: {shown}", self.cmd))
     }
 }
@@ -181,14 +341,22 @@ fn repo_only(cmd: &str, args: &[String]) -> Result<Option<String>, Usage> {
 }
 
 fn parse_round(args: &[String]) -> Result<Round, Usage> {
-    let Some(verb) = args.first() else { return Err(Usage(USAGE.into())) };
+    let Some(verb) = args.first() else {
+        return Err(Usage(USAGE.into()));
+    };
     let label = format!("round {verb}");
-    let mut w = Walk { cmd: &label, args: &args[1..], i: 0 };
+    let mut w = Walk {
+        cmd: &label,
+        args: &args[1..],
+        i: 0,
+    };
     let (mut members, mut reason) = (Text::None, Text::None);
     let (mut name, mut worktree, mut attest) = (None, None, None);
-    let (mut suites, mut red, mut harness_fault, mut rebuild, mut resume) = (String::new(), false, false, true, false);
+    let (mut suites, mut red, mut harness_fault, mut rebuild, mut resume) =
+        (String::new(), false, false, true, false);
     let mut eject = String::new();
-    let (mut verdict, mut red_suites, mut suites_s, mut build_s) = (String::new(), String::new(), None, None);
+    let (mut verdict, mut red_suites, mut suites_s, mut build_s) =
+        (String::new(), String::new(), None, None);
     let mut suite = None;
     let (mut tips, mut checked, mut ask) = (String::new(), String::new(), None);
     let mut pos: Vec<String> = Vec::new();
@@ -217,45 +385,100 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
             Tok::Pos(p) => pos.push(p.to_string()),
         }
     }
-    let need = |what: &str, v: Option<String>| v.ok_or_else(|| Usage(format!("queue.sh round {verb}: {what} required")));
+    let need = |what: &str, v: Option<String>| {
+        v.ok_or_else(|| Usage(format!("queue.sh round {verb}: {what} required")))
+    };
     let mut pos = pos.into_iter();
     match verb.as_str() {
         "open" => {
             if matches!(&members, Text::None) {
                 return Err(Usage("queue.sh round open: --members is required".into()));
             }
-            Ok(Round::Open { repo: pos.next(), members, name, worktree })
+            Ok(Round::Open {
+                repo: pos.next(),
+                members,
+                name,
+                worktree,
+            })
         }
-        "certify" => Ok(Round::Certify { batch: need("batch id", pos.next())?, repo: pos.next(), attest }),
-        "eject" => Ok(Round::Eject { batch: need("batch id", pos.next())?, id: need("bead id", pos.next())?, repo: pos.next(), reason, suites, red, harness_fault, rebuild }),
-        "land" => Ok(Round::Land { batch: need("batch id", pos.next())?, repo: pos.next() }),
-        "abandon" => Ok(Round::Abandon { batch: need("batch id", pos.next())?, repo: pos.next(), reason }),
-        "preempt" => {
-            if eject.split(',').all(str::is_empty) {
-                return Err(Usage("queue.sh round preempt: --eject <id>[,<id>...] is required".into()));
-            }
-            Ok(Round::Preempt { batch: need("batch id", pos.next())?, repo: pos.next(), eject, reason, suites })
-        }
-        "pass-start" => Ok(Round::PassStart { batch: need("batch id", pos.next())?, repo: pos.next(), resume }),
-        "suites-started" => Ok(Round::SuitesStarted { batch: need("batch id", pos.next())?, repo: pos.next() }),
-        "failed" => Ok(Round::Failed { batch: need("batch id", pos.next())?, repo: pos.next(), suite: need("--suite", suite)? }),
-        "mended" | "return" | "environment" | "flaky" | "unsure" | "triage-ended" => Ok(Round::Mend {
-            outcome: verb.clone(),
+        "certify" => Ok(Round::Certify {
             batch: need("batch id", pos.next())?,
-            suite: need("failure (the suite name)", pos.next())?,
             repo: pos.next(),
-            tips,
-            checked,
-            ask,
+            attest,
+        }),
+        "eject" => Ok(Round::Eject {
+            batch: need("batch id", pos.next())?,
+            id: need("bead id", pos.next())?,
+            repo: pos.next(),
+            reason,
+            suites,
+            red,
+            harness_fault,
+            rebuild,
+        }),
+        "land" => Ok(Round::Land {
+            batch: need("batch id", pos.next())?,
+            repo: pos.next(),
+        }),
+        "abandon" => Ok(Round::Abandon {
+            batch: need("batch id", pos.next())?,
+            repo: pos.next(),
             reason,
         }),
+        "preempt" => {
+            if eject.split(',').all(str::is_empty) {
+                return Err(Usage(
+                    "queue.sh round preempt: --eject <id>[,<id>...] is required".into(),
+                ));
+            }
+            Ok(Round::Preempt {
+                batch: need("batch id", pos.next())?,
+                repo: pos.next(),
+                eject,
+                reason,
+                suites,
+            })
+        }
+        "pass-start" => Ok(Round::PassStart {
+            batch: need("batch id", pos.next())?,
+            repo: pos.next(),
+            resume,
+        }),
+        "suites-started" => Ok(Round::SuitesStarted {
+            batch: need("batch id", pos.next())?,
+            repo: pos.next(),
+        }),
+        "failed" => Ok(Round::Failed {
+            batch: need("batch id", pos.next())?,
+            repo: pos.next(),
+            suite: need("--suite", suite)?,
+        }),
+        "mended" | "return" | "environment" | "flaky" | "unsure" | "triage-ended" => {
+            Ok(Round::Mend {
+                outcome: verb.clone(),
+                batch: need("batch id", pos.next())?,
+                suite: need("failure (the suite name)", pos.next())?,
+                repo: pos.next(),
+                tips,
+                checked,
+                ask,
+                reason,
+            })
+        }
         "pass-verdict" => {
             if !["green", "red", "incomplete"].contains(&verdict.as_str()) {
-                return Err(Usage("queue.sh round pass-verdict: --verdict green|red|incomplete is required".into()));
+                return Err(Usage(
+                    "queue.sh round pass-verdict: --verdict green|red|incomplete is required"
+                        .into(),
+                ));
             }
             let secs = |what: &str, v: Option<String>| match v {
                 None => Ok(0),
-                Some(s) => s.parse::<u64>().map_err(|_| Usage(format!("queue.sh round pass-verdict: {what} must be a whole number of seconds"))),
+                Some(s) => s.parse::<u64>().map_err(|_| {
+                    Usage(format!(
+                        "queue.sh round pass-verdict: {what} must be a whole number of seconds"
+                    ))
+                }),
             };
             Ok(Round::PassVerdict {
                 batch: need("batch id", pos.next())?,
@@ -272,30 +495,48 @@ fn parse_round(args: &[String]) -> Result<Round, Usage> {
             if matches!(&members, Text::None) {
                 return Err(Usage("queue.sh round stage: --members is required".into()));
             }
-            Ok(Round::Stage { repo: pos.next(), members, name, worktree })
+            Ok(Round::Stage {
+                repo: pos.next(),
+                members,
+                name,
+                worktree,
+            })
         }
         "stage-test" => Ok(Round::StageTest { repo: pos.next() }),
         "promote" => Ok(Round::Promote { repo: pos.next() }),
-        "discard" => Ok(Round::Discard { repo: pos.next(), reason }),
+        "discard" => Ok(Round::Discard {
+            repo: pos.next(),
+            reason,
+        }),
         _ => Err(Usage(USAGE.into())),
     }
 }
 
 pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
-    let Some(sub) = argv.first() else { return Err(Usage(USAGE.into())) };
+    let Some(sub) = argv.first() else {
+        return Err(Usage(USAGE.into()));
+    };
     let args = &argv[1..];
     let pos = |i: usize| args.get(i).filter(|s| !s.is_empty()).cloned();
     match sub.as_str() {
         "-h" | "--help" | "help" => Ok(Cmd::Help),
         "submit" => {
-            let branch = pos(0).ok_or_else(|| Usage("queue.sh submit: branch name required".into()))?;
-            Ok(Cmd::Submit { branch, repo: pos(1) })
+            let branch =
+                pos(0).ok_or_else(|| Usage("queue.sh submit: branch name required".into()))?;
+            Ok(Cmd::Submit {
+                branch,
+                repo: pos(1),
+            })
         }
         // protect/flush/step took their first positional and ignored the rest.
         "protect" => Ok(Cmd::Protect { repo: pos(0) }),
         "stats" => Ok(Cmd::Stats),
         "churn" => {
-            let mut w = Walk { cmd: "churn", args, i: 0 };
+            let mut w = Walk {
+                cmd: "churn",
+                args,
+                i: 0,
+            };
             let (mut since, mut until, mut repo) = (None, None, None);
             while let Some(t) = w.next() {
                 match t {
@@ -324,14 +565,21 @@ pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
         "verdict" => {
             let repo = pos(0).ok_or_else(|| Usage("queue.sh verdict: repo required".into()))?;
             if repo.starts_with('-') || args.len() > 1 {
-                return Err(Usage("queue.sh verdict: takes exactly one repository".into()));
+                return Err(Usage(
+                    "queue.sh verdict: takes exactly one repository".into(),
+                ));
             }
             Ok(Cmd::Verdict { repo })
         }
         "eject" => {
             let id = pos(0).ok_or_else(|| Usage("queue.sh eject: bead id required".into()))?;
-            let mut w = Walk { cmd: "eject", args: &args[1..], i: 0 };
-            let (mut repo, mut reason, mut suites, mut red, mut harness_fault, mut dry_run) = (None, Text::None, String::new(), false, false, false);
+            let mut w = Walk {
+                cmd: "eject",
+                args: &args[1..],
+                i: 0,
+            };
+            let (mut repo, mut reason, mut suites, mut red, mut harness_fault, mut dry_run) =
+                (None, Text::None, String::new(), false, false, false);
             while let Some(t) = w.next() {
                 match t {
                     Tok::Opt(k, v) if reason_opt(&mut w, k, v.clone(), &mut reason) => {}
@@ -343,10 +591,22 @@ pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
                     Tok::Pos(p) => repo = Some(p.to_string()),
                 }
             }
-            Ok(Cmd::Eject { id, repo, reason, suites, red, harness_fault, dry_run })
+            Ok(Cmd::Eject {
+                id,
+                repo,
+                reason,
+                suites,
+                red,
+                harness_fault,
+                dry_run,
+            })
         }
         "abandon" => {
-            let mut w = Walk { cmd: "abandon", args, i: 0 };
+            let mut w = Walk {
+                cmd: "abandon",
+                args,
+                i: 0,
+            };
             let (mut repo, mut reason, mut dry_run) = (None, Text::None, false);
             while let Some(t) = w.next() {
                 match t {
@@ -356,11 +616,20 @@ pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
                     Tok::Pos(p) => repo = Some(p.to_string()),
                 }
             }
-            Ok(Cmd::Abandon { repo, reason, dry_run })
+            Ok(Cmd::Abandon {
+                repo,
+                reason,
+                dry_run,
+            })
         }
         "open-batch" => {
-            let mut w = Walk { cmd: "open-batch", args, i: 0 };
-            let (mut repo, mut members, mut skip_pregate, mut dry_run, mut replace, mut reason) = (None, Text::None, false, false, false, Text::None);
+            let mut w = Walk {
+                cmd: "open-batch",
+                args,
+                i: 0,
+            };
+            let (mut repo, mut members, mut skip_pregate, mut dry_run, mut replace, mut reason) =
+                (None, Text::None, false, false, false, Text::None);
             while let Some(t) = w.next() {
                 match t {
                     Tok::Opt(k, v) if members_opt(&mut w, k, v.clone(), &mut members) => {}
@@ -372,10 +641,21 @@ pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
                     Tok::Pos(p) => repo = Some(p.to_string()),
                 }
             }
-            Ok(Cmd::OpenBatch { repo, members, skip_pregate, dry_run, replace, reason })
+            Ok(Cmd::OpenBatch {
+                repo,
+                members,
+                skip_pregate,
+                dry_run,
+                replace,
+                reason,
+            })
         }
         "claim" => {
-            let mut w = Walk { cmd: "claim", args, i: 0 };
+            let mut w = Walk {
+                cmd: "claim",
+                args,
+                i: 0,
+            };
             let (mut repo, mut reason, mut force) = (None, Text::None, false);
             while let Some(t) = w.next() {
                 match t {
@@ -385,13 +665,24 @@ pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
                     Tok::Pos(p) => repo = Some(p.to_string()),
                 }
             }
-            Ok(Cmd::Claim { repo, reason, force })
+            Ok(Cmd::Claim {
+                repo,
+                reason,
+                force,
+            })
         }
-        "release" => Ok(Cmd::Release { repo: repo_only("release", args)? }),
+        "release" => Ok(Cmd::Release {
+            repo: repo_only("release", args)?,
+        }),
         "resubmit" => {
             let id = pos(0).ok_or_else(|| Usage("queue.sh resubmit: bead id required".into()))?;
-            let mut w = Walk { cmd: "resubmit", args: &args[1..], i: 0 };
-            let (mut repo, mut tip, mut by, mut reason) = (None, String::new(), String::new(), Text::None);
+            let mut w = Walk {
+                cmd: "resubmit",
+                args: &args[1..],
+                i: 0,
+            };
+            let (mut repo, mut tip, mut by, mut reason) =
+                (None, String::new(), String::new(), Text::None);
             let (mut evidence, mut evidence_tip) = (Text::None, String::new());
             while let Some(t) = w.next() {
                 match t {
@@ -411,11 +702,23 @@ pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
             if by.is_empty() {
                 return Err(Usage("queue.sh resubmit: --by is required".into()));
             }
-            Ok(Cmd::Resubmit { id, repo, tip, by, reason, evidence, evidence_tip })
+            Ok(Cmd::Resubmit {
+                id,
+                repo,
+                tip,
+                by,
+                reason,
+                evidence,
+                evidence_tip,
+            })
         }
         "absolve" => {
             let id = pos(0).ok_or_else(|| Usage("queue.sh absolve: bead id required".into()))?;
-            let mut w = Walk { cmd: "absolve", args: &args[1..], i: 0 };
+            let mut w = Walk {
+                cmd: "absolve",
+                args: &args[1..],
+                i: 0,
+            };
             let (mut repo, mut by, mut reason) = (None, String::new(), Text::None);
             let (mut evidence, mut evidence_tip) = (Text::None, String::new());
             while let Some(t) = w.next() {
@@ -432,12 +735,25 @@ pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
             if by.is_empty() {
                 return Err(Usage("queue.sh absolve: --by is required".into()));
             }
-            Ok(Cmd::Absolve { id, repo, by, reason, evidence, evidence_tip })
+            Ok(Cmd::Absolve {
+                id,
+                repo,
+                by,
+                reason,
+                evidence,
+                evidence_tip,
+            })
         }
         "forced-suites" => {
-            let id = pos(0).ok_or_else(|| Usage("queue.sh forced-suites: bead id required".into()))?;
-            let mut w = Walk { cmd: "forced-suites", args: &args[1..], i: 0 };
-            let (mut repo, mut by, mut reason, mut clear) = (None, String::new(), Text::None, false);
+            let id =
+                pos(0).ok_or_else(|| Usage("queue.sh forced-suites: bead id required".into()))?;
+            let mut w = Walk {
+                cmd: "forced-suites",
+                args: &args[1..],
+                i: 0,
+            };
+            let (mut repo, mut by, mut reason, mut clear) =
+                (None, String::new(), Text::None, false);
             while let Some(t) = w.next() {
                 match t {
                     Tok::Opt(k, v) if reason_opt(&mut w, k, v.clone(), &mut reason) => {}
@@ -448,13 +764,25 @@ pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
                 }
             }
             if clear && by.is_empty() {
-                return Err(Usage("queue.sh forced-suites: --by is required with --clear".into()));
+                return Err(Usage(
+                    "queue.sh forced-suites: --by is required with --clear".into(),
+                ));
             }
-            Ok(Cmd::ForcedSuites { id, repo, clear, by, reason })
+            Ok(Cmd::ForcedSuites {
+                id,
+                repo,
+                clear,
+                by,
+                reason,
+            })
         }
         "rework" => {
             let id = pos(0).ok_or_else(|| Usage("queue.sh rework: bead id required".into()))?;
-            let mut w = Walk { cmd: "rework", args: &args[1..], i: 0 };
+            let mut w = Walk {
+                cmd: "rework",
+                args: &args[1..],
+                i: 0,
+            };
             let (mut repo, mut by, mut reason) = (None, String::new(), Text::None);
             while let Some(t) = w.next() {
                 match t {
@@ -467,11 +795,21 @@ pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
             if by.is_empty() {
                 return Err(Usage("queue.sh rework: --by is required".into()));
             }
-            Ok(Cmd::Rework { id, repo, by, reason })
+            Ok(Cmd::Rework {
+                id,
+                repo,
+                by,
+                reason,
+            })
         }
         "land-local" => {
-            let mut w = Walk { cmd: "land-local", args, i: 0 };
-            let (mut repo, mut head, mut members, mut worktree) = (None, String::new(), Text::None, None);
+            let mut w = Walk {
+                cmd: "land-local",
+                args,
+                i: 0,
+            };
+            let (mut repo, mut head, mut members, mut worktree) =
+                (None, String::new(), Text::None, None);
             while let Some(t) = w.next() {
                 match t {
                     Tok::Opt("head", v) => head = w.value(v),
@@ -487,12 +825,25 @@ pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
             if matches!(&members, Text::None) || matches!(&members, Text::Arg(s) if s.is_empty()) {
                 return Err(Usage("queue.sh land-local: --members is required".into()));
             }
-            Ok(Cmd::LandLocal { repo, head, members, worktree })
+            Ok(Cmd::LandLocal {
+                repo,
+                head,
+                members,
+                worktree,
+            })
         }
-        "publish" => Ok(Cmd::Publish { repo: repo_only("publish", args)? }),
-        "publish-settle" => Ok(Cmd::PublishSettle { repo: repo_only("publish-settle", args)? }),
-        "to-forge" => Ok(Cmd::ToForge { repo: repo_only("to-forge", args)? }),
-        "to-local" => Ok(Cmd::ToLocal { repo: repo_only("to-local", args)? }),
+        "publish" => Ok(Cmd::Publish {
+            repo: repo_only("publish", args)?,
+        }),
+        "publish-settle" => Ok(Cmd::PublishSettle {
+            repo: repo_only("publish-settle", args)?,
+        }),
+        "to-forge" => Ok(Cmd::ToForge {
+            repo: repo_only("to-forge", args)?,
+        }),
+        "to-local" => Ok(Cmd::ToLocal {
+            repo: repo_only("to-local", args)?,
+        }),
         // rollback-local took `${1:-home}` and nothing else.
         "rollback-local" => Ok(Cmd::RollbackLocal { repo: pos(0) }),
         "rebase-waiting" => Ok(Cmd::RebaseWaiting { repo: pos(0) }),
@@ -517,90 +868,334 @@ mod tests {
 
     #[test]
     fn submit_needs_a_branch() {
-        assert_eq!(p(&["submit"]), Err(Usage("queue.sh submit: branch name required".into())));
-        assert_eq!(p(&["submit", "spira/sp-a", "spira"]), Ok(Cmd::Submit { branch: "spira/sp-a".into(), repo: Some("spira".into()) }));
+        assert_eq!(
+            p(&["submit"]),
+            Err(Usage("queue.sh submit: branch name required".into()))
+        );
+        assert_eq!(
+            p(&["submit", "spira/sp-a", "spira"]),
+            Ok(Cmd::Submit {
+                branch: "spira/sp-a".into(),
+                repo: Some("spira".into())
+            })
+        );
     }
 
     #[test]
     fn eject_reason_in_both_spellings_and_red() {
         let c = p(&["eject", "sp-a", "--reason=r1", "--red", "spira"]).unwrap();
-        assert_eq!(c, Cmd::Eject { id: "sp-a".into(), repo: Some("spira".into()), reason: Text::Arg("r1".into()), suites: String::new(), red: true, harness_fault: false, dry_run: false });
+        assert_eq!(
+            c,
+            Cmd::Eject {
+                id: "sp-a".into(),
+                repo: Some("spira".into()),
+                reason: Text::Arg("r1".into()),
+                suites: String::new(),
+                red: true,
+                harness_fault: false,
+                dry_run: false
+            }
+        );
         let c = p(&["eject", "sp-a", "--reason-file", "-", "--suites", "t.sh"]).unwrap();
-        assert!(matches!(c, Cmd::Eject { reason: Text::Stdin, ref suites, .. } if suites == "t.sh"));
-        assert_eq!(p(&["eject", "sp-a", "--bogus"]), Err(Usage("queue.sh eject: unknown option: --bogus".into())));
-        assert_eq!(p(&["eject"]), Err(Usage("queue.sh eject: bead id required".into())));
+        assert!(
+            matches!(c, Cmd::Eject { reason: Text::Stdin, ref suites, .. } if suites == "t.sh")
+        );
+        assert_eq!(
+            p(&["eject", "sp-a", "--bogus"]),
+            Err(Usage("queue.sh eject: unknown option: --bogus".into()))
+        );
+        assert_eq!(
+            p(&["eject"]),
+            Err(Usage("queue.sh eject: bead id required".into()))
+        );
     }
 
     #[test]
     fn land_local_requires_head_and_members() {
-        assert_eq!(p(&["land-local", "spira", "--members", "a:1"]), Err(Usage("queue.sh land-local: --head is required".into())));
-        assert_eq!(p(&["land-local", "--head", "x"]), Err(Usage("queue.sh land-local: --members is required".into())));
-        let c = p(&["land-local", "spira", "--head", "abc", "--members-file", "/tmp/m", "--worktree", "/w"]).unwrap();
-        assert_eq!(c, Cmd::LandLocal { repo: Some("spira".into()), head: "abc".into(), members: Text::File("/tmp/m".into()), worktree: Some("/w".into()) });
+        assert_eq!(
+            p(&["land-local", "spira", "--members", "a:1"]),
+            Err(Usage("queue.sh land-local: --head is required".into()))
+        );
+        assert_eq!(
+            p(&["land-local", "--head", "x"]),
+            Err(Usage("queue.sh land-local: --members is required".into()))
+        );
+        let c = p(&[
+            "land-local",
+            "spira",
+            "--head",
+            "abc",
+            "--members-file",
+            "/tmp/m",
+            "--worktree",
+            "/w",
+        ])
+        .unwrap();
+        assert_eq!(
+            c,
+            Cmd::LandLocal {
+                repo: Some("spira".into()),
+                head: "abc".into(),
+                members: Text::File("/tmp/m".into()),
+                worktree: Some("/w".into())
+            }
+        );
     }
 
     #[test]
     fn round_verbs_parse_their_positionals_and_options() {
-        let c = p(&["round", "open", "spira", "--members", "a:1,b", "--name", "r1", "--worktree", "/w"]).unwrap();
-        assert_eq!(c, Cmd::Round(Round::Open { repo: Some("spira".into()), members: Text::Arg("a:1,b".into()), name: Some("r1".into()), worktree: Some("/w".into()) }));
-        let c = p(&["round", "eject", "b1", "sp-a", "--reason=r", "--no-rebuild", "--suites", "t.sh"]).unwrap();
-        assert!(matches!(c, Cmd::Round(Round::Eject { ref batch, ref id, rebuild: false, ref suites, .. }) if batch == "b1" && id == "sp-a" && suites == "t.sh"));
-        let c = p(&["round", "mended", "b1", "test-x.sh", "spira", "--tips", "sp-a:t2", "--checked", "crate:queue", "--ask=a1"]).unwrap();
-        assert!(matches!(c, Cmd::Round(Round::Mend { ref outcome, ref suite, ref tips, ref ask, .. }) if outcome == "mended" && suite == "test-x.sh" && tips == "sp-a:t2" && ask.as_deref() == Some("a1")));
-        assert!(p(&["round", "flaky", "b1"]).is_err(), "an outcome names its failure");
-        assert_eq!(p(&["round", "land", "b1"]), Ok(Cmd::Round(Round::Land { batch: "b1".into(), repo: None })));
-        assert_eq!(p(&["round", "status"]), Ok(Cmd::Round(Round::Status { repo: None })));
-        assert_eq!(p(&["round", "pass-start", "b1"]), Ok(Cmd::Round(Round::PassStart { batch: "b1".into(), repo: None, resume: false })));
-        assert_eq!(p(&["round", "failed", "b1", "--suite", "test-x.sh"]), Ok(Cmd::Round(Round::Failed { batch: "b1".into(), repo: None, suite: "test-x.sh".into() })));
-        assert!(p(&["round", "failed", "b1"]).is_err(), "a failure names its suite");
-        assert_eq!(p(&["round", "suites-started", "b1", "spira"]), Ok(Cmd::Round(Round::SuitesStarted { batch: "b1".into(), repo: Some("spira".into()) })));
-        let c = p(&["round", "pass-verdict", "b1", "--verdict", "red", "--red-suites", "t.sh", "--suites-s", "90", "--build-s=30"]).unwrap();
-        assert!(matches!(c, Cmd::Round(Round::PassVerdict { ref verdict, ref red_suites, suites_s: 90, build_s: 30, .. }) if verdict == "red" && red_suites == "t.sh"));
-        assert!(p(&["round", "pass-verdict", "b1"]).is_err(), "a verdict is required");
-        assert!(p(&["round", "pass-verdict", "b1", "--verdict", "green", "--suites-s", "x"]).is_err());
+        let c = p(&[
+            "round",
+            "open",
+            "spira",
+            "--members",
+            "a:1,b",
+            "--name",
+            "r1",
+            "--worktree",
+            "/w",
+        ])
+        .unwrap();
+        assert_eq!(
+            c,
+            Cmd::Round(Round::Open {
+                repo: Some("spira".into()),
+                members: Text::Arg("a:1,b".into()),
+                name: Some("r1".into()),
+                worktree: Some("/w".into())
+            })
+        );
+        let c = p(&[
+            "round",
+            "eject",
+            "b1",
+            "sp-a",
+            "--reason=r",
+            "--no-rebuild",
+            "--suites",
+            "t.sh",
+        ])
+        .unwrap();
+        assert!(
+            matches!(c, Cmd::Round(Round::Eject { ref batch, ref id, rebuild: false, ref suites, .. }) if batch == "b1" && id == "sp-a" && suites == "t.sh")
+        );
+        let c = p(&[
+            "round",
+            "mended",
+            "b1",
+            "test-x.sh",
+            "spira",
+            "--tips",
+            "sp-a:t2",
+            "--checked",
+            "crate:queue",
+            "--ask=a1",
+        ])
+        .unwrap();
+        assert!(
+            matches!(c, Cmd::Round(Round::Mend { ref outcome, ref suite, ref tips, ref ask, .. }) if outcome == "mended" && suite == "test-x.sh" && tips == "sp-a:t2" && ask.as_deref() == Some("a1"))
+        );
+        assert!(
+            p(&["round", "flaky", "b1"]).is_err(),
+            "an outcome names its failure"
+        );
+        assert_eq!(
+            p(&["round", "land", "b1"]),
+            Ok(Cmd::Round(Round::Land {
+                batch: "b1".into(),
+                repo: None
+            }))
+        );
+        assert_eq!(
+            p(&["round", "status"]),
+            Ok(Cmd::Round(Round::Status { repo: None }))
+        );
+        assert_eq!(
+            p(&["round", "pass-start", "b1"]),
+            Ok(Cmd::Round(Round::PassStart {
+                batch: "b1".into(),
+                repo: None,
+                resume: false
+            }))
+        );
+        assert_eq!(
+            p(&["round", "failed", "b1", "--suite", "test-x.sh"]),
+            Ok(Cmd::Round(Round::Failed {
+                batch: "b1".into(),
+                repo: None,
+                suite: "test-x.sh".into()
+            }))
+        );
+        assert!(
+            p(&["round", "failed", "b1"]).is_err(),
+            "a failure names its suite"
+        );
+        assert_eq!(
+            p(&["round", "suites-started", "b1", "spira"]),
+            Ok(Cmd::Round(Round::SuitesStarted {
+                batch: "b1".into(),
+                repo: Some("spira".into())
+            }))
+        );
+        let c = p(&[
+            "round",
+            "pass-verdict",
+            "b1",
+            "--verdict",
+            "red",
+            "--red-suites",
+            "t.sh",
+            "--suites-s",
+            "90",
+            "--build-s=30",
+        ])
+        .unwrap();
+        assert!(
+            matches!(c, Cmd::Round(Round::PassVerdict { ref verdict, ref red_suites, suites_s: 90, build_s: 30, .. }) if verdict == "red" && red_suites == "t.sh")
+        );
+        assert!(
+            p(&["round", "pass-verdict", "b1"]).is_err(),
+            "a verdict is required"
+        );
+        assert!(p(&[
+            "round",
+            "pass-verdict",
+            "b1",
+            "--verdict",
+            "green",
+            "--suites-s",
+            "x"
+        ])
+        .is_err());
     }
 
     #[test]
     fn preempt_names_its_ejects_and_its_evidence() {
-        let c = p(&["round", "preempt", "b1", "spira", "--eject", "sp-a,sp-b", "--reason", "red", "--suites=test-x.sh"]).unwrap();
-        assert!(matches!(c, Cmd::Round(Round::Preempt { ref batch, ref repo, ref eject, ref suites, .. })
-            if batch == "b1" && repo.as_deref() == Some("spira") && eject == "sp-a,sp-b" && suites == "test-x.sh"));
-        assert_eq!(p(&["round", "preempt", "b1"]), Err(Usage("queue.sh round preempt: --eject <id>[,<id>...] is required".into())));
+        let c = p(&[
+            "round",
+            "preempt",
+            "b1",
+            "spira",
+            "--eject",
+            "sp-a,sp-b",
+            "--reason",
+            "red",
+            "--suites=test-x.sh",
+        ])
+        .unwrap();
+        assert!(
+            matches!(c, Cmd::Round(Round::Preempt { ref batch, ref repo, ref eject, ref suites, .. })
+            if batch == "b1" && repo.as_deref() == Some("spira") && eject == "sp-a,sp-b" && suites == "test-x.sh")
+        );
+        assert_eq!(
+            p(&["round", "preempt", "b1"]),
+            Err(Usage(
+                "queue.sh round preempt: --eject <id>[,<id>...] is required".into()
+            ))
+        );
     }
 
     #[test]
     fn staged_round_verbs_parse() {
-        let c = p(&["round", "stage", "spira", "--members", "a:1", "--name", "r2"]).unwrap();
-        assert_eq!(c, Cmd::Round(Round::Stage { repo: Some("spira".into()), members: Text::Arg("a:1".into()), name: Some("r2".into()), worktree: None }));
-        assert_eq!(p(&["round", "stage"]), Err(Usage("queue.sh round stage: --members is required".into())));
-        assert_eq!(p(&["round", "stage-test"]), Ok(Cmd::Round(Round::StageTest { repo: None })));
-        assert_eq!(p(&["round", "promote", "spira"]), Ok(Cmd::Round(Round::Promote { repo: Some("spira".into()) })));
-        assert_eq!(p(&["round", "discard", "--reason", "x"]), Ok(Cmd::Round(Round::Discard { repo: None, reason: Text::Arg("x".into()) })));
+        let c = p(&[
+            "round",
+            "stage",
+            "spira",
+            "--members",
+            "a:1",
+            "--name",
+            "r2",
+        ])
+        .unwrap();
+        assert_eq!(
+            c,
+            Cmd::Round(Round::Stage {
+                repo: Some("spira".into()),
+                members: Text::Arg("a:1".into()),
+                name: Some("r2".into()),
+                worktree: None
+            })
+        );
+        assert_eq!(
+            p(&["round", "stage"]),
+            Err(Usage("queue.sh round stage: --members is required".into()))
+        );
+        assert_eq!(
+            p(&["round", "stage-test"]),
+            Ok(Cmd::Round(Round::StageTest { repo: None }))
+        );
+        assert_eq!(
+            p(&["round", "promote", "spira"]),
+            Ok(Cmd::Round(Round::Promote {
+                repo: Some("spira".into())
+            }))
+        );
+        assert_eq!(
+            p(&["round", "discard", "--reason", "x"]),
+            Ok(Cmd::Round(Round::Discard {
+                repo: None,
+                reason: Text::Arg("x".into())
+            }))
+        );
     }
 
     #[test]
     fn round_verbs_refuse_what_they_need() {
-        assert_eq!(p(&["round", "open"]), Err(Usage("queue.sh round open: --members is required".into())));
-        assert_eq!(p(&["round", "certify"]), Err(Usage("queue.sh round certify: batch id required".into())));
-        assert_eq!(p(&["round", "eject", "b1"]), Err(Usage("queue.sh round eject: bead id required".into())));
-        assert_eq!(p(&["round", "land", "b1", "--bogus"]), Err(Usage("queue.sh round land: unknown option: --bogus".into())));
+        assert_eq!(
+            p(&["round", "open"]),
+            Err(Usage("queue.sh round open: --members is required".into()))
+        );
+        assert_eq!(
+            p(&["round", "certify"]),
+            Err(Usage("queue.sh round certify: batch id required".into()))
+        );
+        assert_eq!(
+            p(&["round", "eject", "b1"]),
+            Err(Usage("queue.sh round eject: bead id required".into()))
+        );
+        assert_eq!(
+            p(&["round", "land", "b1", "--bogus"]),
+            Err(Usage("queue.sh round land: unknown option: --bogus".into()))
+        );
         assert_eq!(p(&["round", "nope"]), Err(Usage(USAGE.into())));
         assert_eq!(p(&["round"]), Err(Usage(USAGE.into())));
     }
 
     #[test]
     fn churn_takes_a_window_and_a_repo() {
-        assert_eq!(p(&["churn"]), Ok(Cmd::Churn { since: None, until: None, repo: None }));
+        assert_eq!(
+            p(&["churn"]),
+            Ok(Cmd::Churn {
+                since: None,
+                until: None,
+                repo: None
+            })
+        );
         assert_eq!(
             p(&["churn", "--since", "14d", "--until=2026-10-09", "spira"]),
-            Ok(Cmd::Churn { since: Some("14d".into()), until: Some("2026-10-09".into()), repo: Some("spira".into()) })
+            Ok(Cmd::Churn {
+                since: Some("14d".into()),
+                until: Some("2026-10-09".into()),
+                repo: Some("spira".into())
+            })
         );
-        assert_eq!(p(&["churn", "--bogus"]), Err(Usage("queue.sh churn: unknown option: --bogus".into())));
+        assert_eq!(
+            p(&["churn", "--bogus"]),
+            Err(Usage("queue.sh churn: unknown option: --bogus".into()))
+        );
     }
 
     #[test]
     fn repo_only_commands_refuse_options() {
-        assert_eq!(p(&["publish", "-x"]), Err(Usage("queue.sh publish: unknown option: -x".into())));
-        assert_eq!(p(&["to-forge", "spira"]), Ok(Cmd::ToForge { repo: Some("spira".into()) }));
+        assert_eq!(
+            p(&["publish", "-x"]),
+            Err(Usage("queue.sh publish: unknown option: -x".into()))
+        );
+        assert_eq!(
+            p(&["to-forge", "spira"]),
+            Ok(Cmd::ToForge {
+                repo: Some("spira".into())
+            })
+        );
     }
 }

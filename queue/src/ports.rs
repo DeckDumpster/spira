@@ -72,7 +72,18 @@ pub struct VerdictSettings {
 
 impl Default for VerdictSettings {
     fn default() -> Self {
-        VerdictSettings { ci_maxsec: 3600, ci_idle_sec: 600, infra_retries: 2, lock_wait: 90, lock_starve_max: 5, capacity_backoff_min: 300, capacity_backoff_max: 3600, incident_priority: "1".into(), red_tracker_label: String::new(), mender_label: "mender-failure".into() }
+        VerdictSettings {
+            ci_maxsec: 3600,
+            ci_idle_sec: 600,
+            infra_retries: 2,
+            lock_wait: 90,
+            lock_starve_max: 5,
+            capacity_backoff_min: 300,
+            capacity_backoff_max: 3600,
+            incident_priority: "1".into(),
+            red_tracker_label: String::new(),
+            mender_label: "mender-failure".into(),
+        }
     }
 }
 
@@ -100,7 +111,10 @@ impl RepoCtx {
     /// `ref_remote <ref> <repo>`: the prefix before the first `/` when it is a remote here.
     pub fn ref_remote(&self, r: &str) -> Option<String> {
         let (prefix, _) = r.split_once('/')?;
-        self.remotes.iter().any(|x| x == prefix).then(|| prefix.to_string())
+        self.remotes
+            .iter()
+            .any(|x| x == prefix)
+            .then(|| prefix.to_string())
     }
 }
 
@@ -148,13 +162,29 @@ pub trait Git {
     fn worktree_remove(&self, repo: &Path, path: &Path);
     /// `merge --no-edit --no-ff -F <msgfile> <tip>` as `git_name <git_email>`; false on
     /// conflict.
-    fn merge_no_ff(&self, wt: &Path, message: &str, tip: &str, git_name: &str, git_email: &str) -> bool;
+    fn merge_no_ff(
+        &self,
+        wt: &Path,
+        message: &str,
+        tip: &str,
+        git_name: &str,
+        git_email: &str,
+    ) -> bool;
     fn merge_abort(&self, wt: &Path);
     /// Replays `upstream..tip` onto `onto` in a throwaway worktree at `scratch`, leaving every
     /// branch alone: Ok(the rebased tip), or Err(the conflicting paths; empty when the rebase
     /// could not be attempted).
     #[allow(clippy::too_many_arguments)]
-    fn rebase_onto(&self, repo: &Path, scratch: &Path, tip: &str, upstream: &str, onto: &str, git_name: &str, git_email: &str) -> Result<String, Vec<String>>;
+    fn rebase_onto(
+        &self,
+        repo: &Path,
+        scratch: &Path,
+        tip: &str,
+        upstream: &str,
+        onto: &str,
+        git_name: &str,
+        git_email: &str,
+    ) -> Result<String, Vec<String>>;
     /// `status --porcelain` is empty.
     fn is_clean(&self, wt: &Path) -> bool;
 }
@@ -185,7 +215,13 @@ pub trait Lib {
     /// `sending reap-landed-branch <id> <branch> <root> <why>` for the repository the
     /// `repo:` label names. Ok(false): that repository or branch is not here, nothing to
     /// reap; Err: the Sending refused or failed (it remains the backstop).
-    fn reap_landed_branch(&self, id: &str, repo: &str, branch: &str, why: &str) -> Result<bool, String>;
+    fn reap_landed_branch(
+        &self,
+        id: &str,
+        repo: &str,
+        branch: &str,
+        why: &str,
+    ) -> Result<bool, String>;
     fn gh_issue_closeout(&self, id: &str, sha: &str, repo: &Path);
     fn comment(&self, id: &str, text: &str);
     /// `mailbox`: `Settings::mailbox` (`SPIRA_MAIL_SESSION_MAILBOX`'s declared value).
@@ -193,7 +229,15 @@ pub trait Lib {
     fn event(&self, kind: &str, title: &str, detail: &str);
     /// R11: is forge an ancestor of local (alarms once per foreign tip if not). `mailbox`:
     /// `Settings::mailbox`.
-    fn divergence(&self, mailbox: &str, queue_dir: &Path, repo: &str, path: &Path, forge: &str, local: &str) -> Divergence;
+    fn divergence(
+        &self,
+        mailbox: &str,
+        queue_dir: &Path,
+        repo: &str,
+        path: &Path,
+        forge: &str,
+        local: &str,
+    ) -> Divergence;
     /// R12: `spira_git_push <path> -q <remote> <refspec>`.
     fn push(&self, path: &Path, remote: &str, refspec: &str) -> bool;
     /// R13: Ok, or Err(REBASE_FAILURE).
@@ -201,7 +245,14 @@ pub trait Lib {
     fn land_subject(&self, id: &str) -> String;
     /// R15: `queue_sort_rows` over `<id> <tip> <epoch>` rows; returns `<id> <tip>` rows.
     /// `express`: the beads whose lifecycle row carries Express.
-    fn sort_rows(&self, express: &HashSet<String>, path: &Path, base: &str, prio_json: &str, rows: &str) -> Vec<(String, String)>;
+    fn sort_rows(
+        &self,
+        express: &HashSet<String>,
+        path: &Path,
+        base: &str,
+        prio_json: &str,
+        rows: &str,
+    ) -> Vec<(String, String)>;
     fn cancel_runs(&self, forge: &Path, path: &Path, branch: &str);
     fn format_batch(&self, wt: &Path, base: &str, name: &str);
     /// `_base_conflict`: true when the tip conflicts with the base.
@@ -210,7 +261,14 @@ pub trait Lib {
     fn pf_gate(&self, branch: &str, name: &str, stamp: &str, wall_secs: u64) -> (i32, String);
     /// R23: `BEADS_ACTOR=<actor> bdq create <title> --type bug --priority P --labels L
     /// --body-file <body> --silent` → the new id (None when bd created nothing).
-    fn create_bug(&self, actor: &str, title: &str, priority: &str, labels: &str, body: &str) -> Option<String>;
+    fn create_bug(
+        &self,
+        actor: &str,
+        title: &str,
+        priority: &str,
+        labels: &str,
+        body: &str,
+    ) -> Option<String>;
     /// Append `note` to bead `id` when it is still open; false when it is closed, unknown
     /// or the note did not land — the caller then files a new bead.
     fn amend_bug(&self, actor: &str, id: &str, note: &str) -> bool;
@@ -227,7 +285,15 @@ pub trait Scripts {
     fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str) -> (i32, String);
     /// `batcher judgement-ci <repo> --suites CSV --members CSV --evidence T --home --run --db`,
     /// stdout and stderr combined (the verdict reads `id=` off it).
-    fn judgement_ci(&self, bin: &Path, s: &Settings, repo: &str, suites: &str, members: &str, evidence: &str) -> RunOut;
+    fn judgement_ci(
+        &self,
+        bin: &Path,
+        s: &Settings,
+        repo: &str,
+        suites: &str,
+        members: &str,
+        evidence: &str,
+    ) -> RunOut;
     /// `testenv suites observe-flake <suite> <sha>`, best-effort.
     fn observe_flake(&self, suite: &str, sha: &str);
     /// `mail send operator --from "Spira Queue <queue@spira>" --subject S`, body on stdin.
@@ -250,7 +316,15 @@ pub trait Scripts {
     /// 124/137 hit the wall; anything else is the harness's fault.
     /// `handle` is where the run's pid is written while it runs: the one thing `round preempt`
     /// addresses. The pid is the `timeout` wrapper, so a TERM reaches round-vm through it.
-    fn round_vm(&self, tree: &Path, results: &Path, base: &str, round: (&str, &str), wall_secs: u64, handle: &Path) -> RunOut;
+    fn round_vm(
+        &self,
+        tree: &Path,
+        results: &Path,
+        base: &str,
+        round: (&str, &str),
+        wall_secs: u64,
+        handle: &Path,
+    ) -> RunOut;
     /// `testenv <head> <repo>` under `timeout`: a repository that declares its own suites
     /// (`.spira/testenv.toml`) judged on its own image. Exit 0 GREEN, 1 RED, anything else a
     /// fault. `handle` receives the pid exactly as `round_vm`'s does.
@@ -278,7 +352,15 @@ pub struct RunOut {
 
 pub trait Forge {
     /// `pr-create <repo> <head> <base> <title>`, body on stdin → the PR number, or the forge's own error.
-    fn pr_create(&self, forge: &Path, repo: &Path, head: &str, base: &str, title: &str, body: &str) -> Result<String, String>;
+    fn pr_create(
+        &self,
+        forge: &Path,
+        repo: &Path,
+        head: &str,
+        base: &str,
+        title: &str,
+        body: &str,
+    ) -> Result<String, String>;
     fn pr_close(&self, forge: &Path, repo: &Path, pr: &str);
     /// `pr-automerge <repo> <pr> merge` → armed?
     fn pr_automerge(&self, forge: &Path, repo: &Path, pr: &str) -> bool;
@@ -314,22 +396,80 @@ pub trait Lc {
     fn batch_pass(&self, batch_id: &str) -> Option<(u32, String)>;
     fn create_bead(&self, id: &str);
     /// `cut` → Ok(version) or Err((rc, output)).
-    fn cut(&self, batch_id: &str, repo: &str, head: &str, base: &str, members: &str, actor: &str) -> Result<String, (i32, String)>;
+    fn cut(
+        &self,
+        batch_id: &str,
+        repo: &str,
+        head: &str,
+        base: &str,
+        members: &str,
+        actor: &str,
+    ) -> Result<String, (i32, String)>;
     /// `stage` → the batch row written STAGED behind `parent`; no member moves. Ok(version).
     #[allow(clippy::too_many_arguments)]
-    fn stage(&self, batch_id: &str, repo: &str, head: &str, base: &str, members: &str, parent: &str, actor: &str) -> Result<String, (i32, String)>;
+    fn stage(
+        &self,
+        batch_id: &str,
+        repo: &str,
+        head: &str,
+        base: &str,
+        members: &str,
+        parent: &str,
+        actor: &str,
+    ) -> Result<String, (i32, String)>;
     /// `promote` → STAGED to OPEN at `head`/`base`, every member delivered, in one transaction.
-    fn promote(&self, batch_id: &str, head: &str, base: &str, actor: &str) -> Result<(), (i32, String)>;
-    fn abandon_batch(&self, batch_id: &str, state: &str, version: &str, actor: &str, reason: &str) -> Result<(), (i32, String)>;
-    fn eject_member(&self, batch_id: &str, bead: &str, state: &str, version: &str, actor: &str, reason: &str) -> Result<(), (i32, String)>;
+    fn promote(
+        &self,
+        batch_id: &str,
+        head: &str,
+        base: &str,
+        actor: &str,
+    ) -> Result<(), (i32, String)>;
+    fn abandon_batch(
+        &self,
+        batch_id: &str,
+        state: &str,
+        version: &str,
+        actor: &str,
+        reason: &str,
+    ) -> Result<(), (i32, String)>;
+    fn eject_member(
+        &self,
+        batch_id: &str,
+        bead: &str,
+        state: &str,
+        version: &str,
+        actor: &str,
+        reason: &str,
+    ) -> Result<(), (i32, String)>;
     /// `event batch <id> --expect S --version V --actor A --kind K` (one CAS'd event).
-    fn batch_event(&self, batch_id: &str, state: &str, version: &str, actor: &str, kind: &str) -> Result<(), (i32, String)>;
+    fn batch_event(
+        &self,
+        batch_id: &str,
+        state: &str,
+        version: &str,
+        actor: &str,
+        kind: &str,
+    ) -> Result<(), (i32, String)>;
     /// `show <bead>` → the bead row's (state, version); None when it has no row.
     fn bead_state(&self, bead: &str) -> Option<(String, String)>;
     /// `event bead <id> --expect S --version V --actor A --kind K` (one CAS'd event).
-    fn bead_event(&self, bead: &str, state: &str, version: &str, actor: &str, kind: &str) -> Result<(), (i32, String)>;
+    fn bead_event(
+        &self,
+        bead: &str,
+        state: &str,
+        version: &str,
+        actor: &str,
+        kind: &str,
+    ) -> Result<(), (i32, String)>;
     /// `land <id> --expect GREEN --version V --actor A --sha S`.
-    fn land_batch(&self, batch_id: &str, version: &str, actor: &str, sha: &str) -> Result<(), (i32, String)>;
+    fn land_batch(
+        &self,
+        batch_id: &str,
+        version: &str,
+        actor: &str,
+        sha: &str,
+    ) -> Result<(), (i32, String)>;
     /// A reachability probe (one read against the lifecycle database). Err names why.
     fn probe(&self) -> Result<(), String>;
     /// `list [--state S]`: every bead row (with `since`). Err = cannot tell.
@@ -344,10 +484,26 @@ pub trait Lc {
     /// `show <bead>` → the bead row; None when it has no row or the machine cannot say.
     fn bead_row(&self, bead: &str) -> Option<LcBeadRow>;
     /// `mending event`: one mender outcome or diagnosis for a failure, stamped by the machine.
-    fn mending_event(&self, batch_id: &str, pass: u32, suite: &str, kind: &str, actor: &str) -> Result<(), (i32, String)>;
+    fn mending_event(
+        &self,
+        batch_id: &str,
+        pass: u32,
+        suite: &str,
+        kind: &str,
+        actor: &str,
+    ) -> Result<(), (i32, String)>;
     /// `mending mend`: take the mended tips (`bead:from:to,...`) if the machine's checks hold.
     #[allow(clippy::too_many_arguments)]
-    fn mend(&self, batch_id: &str, pass: u32, suite: &str, members: &str, facts: &str, fences: &str, actor: &str) -> Result<(), (i32, String)>;
+    fn mend(
+        &self,
+        batch_id: &str,
+        pass: u32,
+        suite: &str,
+        members: &str,
+        facts: &str,
+        fences: &str,
+        actor: &str,
+    ) -> Result<(), (i32, String)>;
     /// `mending tips`: each bead's latest mended tip, absent when it was never mended.
     fn mend_tips(&self, beads: &[String]) -> Result<BTreeMap<String, String>, String>;
     /// `churn-facts --since <epoch>`: the rows the churn report measures, as the JSON text.
@@ -360,14 +516,36 @@ pub trait Lc {
         Ok(String::new())
     }
     /// `certify <bead> <tip> pass <detail> <actor>`: record a gate pass at `tip`.
-    fn certify(&self, bead: &str, tip: &str, detail: &str, actor: &str) -> Result<(), (i32, String)>;
+    fn certify(
+        &self,
+        bead: &str,
+        tip: &str,
+        detail: &str,
+        actor: &str,
+    ) -> Result<(), (i32, String)>;
     /// `retip <bead> <tip> <actor> <reason> <evidence> <evidence-tip>`: a REWORK bead held manual,
     /// or an unclaimed READY one, moves to SUBMITTED at `tip`, no gate verdict. Break-glass: the
     /// machine refuses a move without its provenance, or a REWORK row with no manual hold.
-    fn retip(&self, bead: &str, tip: &str, actor: &str, reason: &str, evidence: &str, evidence_tip: &str) -> Result<(), (i32, String)>;
+    fn retip(
+        &self,
+        bead: &str,
+        tip: &str,
+        actor: &str,
+        reason: &str,
+        evidence: &str,
+        evidence_tip: &str,
+    ) -> Result<(), (i32, String)>;
     /// `absolve <bead> <tip> <actor> <reason> <evidence> <evidence-tip>`: withdraw the red recorded
     /// against `tip`. The machine refuses a row whose recorded red is not `tip`, or no provenance.
-    fn absolve(&self, bead: &str, tip: &str, actor: &str, reason: &str, evidence: &str, evidence_tip: &str) -> Result<(), (i32, String)>;
+    fn absolve(
+        &self,
+        bead: &str,
+        tip: &str,
+        actor: &str,
+        reason: &str,
+        evidence: &str,
+        evidence_tip: &str,
+    ) -> Result<(), (i32, String)>;
 }
 
 /// The config documents, through the spira-config library only
@@ -378,7 +556,13 @@ pub trait ConfigStore {
     /// Write `[repo.<name>] mode` and `base` (validated, atomic).
     fn set_repo_row(&self, toml: &Path, name: &str, mode: &str, base: &str) -> Result<(), String>;
     /// The legacy map's land/base columns for `name` (spira_config::legacy_map), atomic.
-    fn set_legacy_map_row(&self, map: &Path, name: &str, land: &str, base: &str) -> Result<(), String>;
+    fn set_legacy_map_row(
+        &self,
+        map: &Path,
+        name: &str,
+        land: &str,
+        base: &str,
+    ) -> Result<(), String>;
 }
 
 pub trait Clock {

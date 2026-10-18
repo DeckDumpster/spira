@@ -23,7 +23,9 @@ use crate::real::{RealGit, RealLc};
 /// CERTIFIED, as `(id, tip, epoch)` — the selection primitive any cutter (the batcher, the
 /// reconciler's mergeability check, cockpit-collect's "next up" pane) draws from.
 pub fn certified_list(repo: &Path) -> Vec<(String, String, u64)> {
-    let lc = RealLc { bin: Some(PathBuf::from("spira-lc")) };
+    let lc = RealLc {
+        bin: Some(PathBuf::from("spira-lc")),
+    };
     certified_rows(&lc, &RealGit.branches(repo, "refs/heads/spira/"))
 }
 
@@ -33,13 +35,23 @@ pub fn certified_rows(lc: &dyn Lc, branches: &[(String, String)]) -> Vec<(String
 }
 
 /// The `state` rows whose bead has a `spira/<id>` branch among `branches`.
-pub fn state_rows(lc: &dyn Lc, branches: &[(String, String)], state: &str) -> Vec<(String, String, u64)> {
+pub fn state_rows(
+    lc: &dyn Lc,
+    branches: &[(String, String)],
+    state: &str,
+) -> Vec<(String, String, u64)> {
     let rows = lc.polled_rows(state).unwrap_or_default();
     let mut out = Vec::new();
     for (branch, _) in branches {
-        let Some(id) = branch.strip_prefix("spira/") else { continue };
+        let Some(id) = branch.strip_prefix("spira/") else {
+            continue;
+        };
         if let Some(r) = rows.iter().find(|r| r.bead_id == id) {
-            out.push((id.to_string(), r.tip.clone().unwrap_or_default(), r.since.unwrap_or(0)));
+            out.push((
+                id.to_string(),
+                r.tip.clone().unwrap_or_default(),
+                r.since.unwrap_or(0),
+            ));
         }
     }
     out
@@ -57,12 +69,20 @@ pub fn is_suite_transition(repo: &Path, tip: &str, base: &str) -> bool {
             return false;
         }
     };
-    let out = spira_config::bounded::bounded("git").arg("-C").arg(repo).args(["diff", "--name-only", base, tip]).stdin(Stdio::null()).stderr(Stdio::null()).output();
+    let out = spira_config::bounded::bounded("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["diff", "--name-only", base, tip])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output();
     match out {
         // grep -F: a fixed-string SUBSTRING match against any changed-path line, not an
         // exact-line match — preserved here rather than tightened, to keep the port's
         // output contract byte for byte.
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).lines().any(|l| l.contains(file.as_str())),
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .any(|l| l.contains(file.as_str())),
         _ => false,
     }
 }
@@ -98,11 +118,15 @@ pub struct RankedRow {
 /// `<express> <prio padded to 9> <trans> <epoch padded to 10> <id> <tip>` — the exact
 /// columns `queue_sort_rows` printed (callers outside this crate read `$5`/`$2` off it).
 pub fn render_row(r: &RankedRow) -> String {
-    format!("{} {:09} {} {:010} {} {}", r.express, r.prio, r.trans, r.epoch, r.id, r.tip)
+    format!(
+        "{} {:09} {} {:010} {} {}",
+        r.express, r.prio, r.trans, r.epoch, r.id, r.tip
+    )
 }
 
 fn value_as_i64(v: &serde_json::Value) -> Option<i64> {
-    v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+    v.as_i64()
+        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
 }
 
 /// `queue_sort_rows`'s ranking (lib.sh's own comment, carried forward verbatim in spirit):
@@ -116,14 +140,28 @@ fn value_as_i64(v: &serde_json::Value) -> Option<i64> {
 /// cut nothing for nine hours with 40 branches certified and waiting). So unparseable
 /// `prio_json` returns every row in its ORIGINAL order, never dropped, with a warning
 /// naming why ranking was skipped.
-pub fn sort_rows(rows: &[(String, String, i64, bool)], prio_json: &str, express: &HashSet<String>) -> (Vec<RankedRow>, Option<String>) {
+pub fn sort_rows(
+    rows: &[(String, String, i64, bool)],
+    prio_json: &str,
+    express: &HashSet<String>,
+) -> (Vec<RankedRow>, Option<String>) {
     let parsed: Result<serde_json::Value, _> = serde_json::from_str(prio_json);
     let Ok(parsed) = parsed else {
         let unranked = rows
             .iter()
-            .map(|(id, tip, epoch, is_trans)| RankedRow { express: 1, prio: 9, trans: if *is_trans { 0 } else { 1 }, epoch: *epoch, id: id.clone(), tip: tip.clone() })
+            .map(|(id, tip, epoch, is_trans)| RankedRow {
+                express: 1,
+                prio: 9,
+                trans: if *is_trans { 0 } else { 1 },
+                epoch: *epoch,
+                id: id.clone(),
+                tip: tip.clone(),
+            })
             .collect();
-        return (unranked, Some("queue_sort_rows: ranking failed (rc=1) -- returning rows unranked".to_string()));
+        return (
+            unranked,
+            Some("queue_sort_rows: ranking failed (rc=1) -- returning rows unranked".to_string()),
+        );
     };
     let items: Vec<&serde_json::Value> = match &parsed {
         serde_json::Value::Array(a) => a.iter().collect(),
@@ -134,7 +172,13 @@ pub fn sort_rows(rows: &[(String, String, i64, bool)], prio_json: &str, express:
         if !x.is_object() {
             continue;
         }
-        let Some(id) = x.get("id").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) else { continue };
+        let Some(id) = x
+            .get("id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        else {
+            continue;
+        };
         let prio = x.get("priority").and_then(value_as_i64).unwrap_or(9);
         prio_map.insert(id.to_string(), prio);
     }
@@ -148,13 +192,27 @@ pub fn sort_rows(rows: &[(String, String, i64, bool)], prio_json: &str, express:
         })
         .collect();
     keyed.sort();
-    let ranked = keyed.into_iter().map(|(express, prio, trans, epoch, id, tip)| RankedRow { express, prio, trans, epoch, id, tip }).collect();
+    let ranked = keyed
+        .into_iter()
+        .map(|(express, prio, trans, epoch, id, tip)| RankedRow {
+            express,
+            prio,
+            trans,
+            epoch,
+            id,
+            tip,
+        })
+        .collect();
     (ranked, None)
 }
 
 fn append_log(run_dir: &Path, name: &str, line: &str) {
     use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(run_dir.join(name)) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(run_dir.join(name))
+    {
         let _ = writeln!(f, "{line}");
     }
 }
@@ -195,13 +253,35 @@ pub fn cancel_branch_runs(forge: &Path, repo: &Path, branch: &str, tag: &str) ->
             continue;
         }
         let status = it.next().unwrap_or("");
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        let cancelled = spira_config::bounded::bounded(forge).arg("run-cancel").arg(repo).arg(run_id).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let cancelled = spira_config::bounded::bounded(forge)
+            .arg("run-cancel")
+            .arg(repo)
+            .arg(run_id)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
         if cancelled {
-            append_log(&run_dir, "landing.log", &format!("{tag} RUN_CANCEL {now} branch={branch} run={run_id} status={status}"));
+            append_log(
+                &run_dir,
+                "landing.log",
+                &format!("{tag} RUN_CANCEL {now} branch={branch} run={run_id} status={status}"),
+            );
         } else {
             all_ok = false;
-            append_log(&run_dir, "landing.log", &format!("{tag} RUN_CANCEL_FAILED {now} branch={branch} run={run_id} status={status}"));
+            append_log(
+                &run_dir,
+                "landing.log",
+                &format!(
+                    "{tag} RUN_CANCEL_FAILED {now} branch={branch} run={run_id} status={status}"
+                ),
+            );
             eprintln!("spira: WARN failed to cancel run {run_id} for {branch} — will retry");
         }
     }
@@ -219,7 +299,16 @@ pub fn notify(mailbox: &str, name: &str, subject: &str, body: &str) {
     let full_subject = format!("Merge queue: {name} {subject}");
     let full_body = format!("## Alert\n{body}\n");
     if let Ok(mut child) = spira_config::bounded::bounded("mail")
-        .args(["send", mailbox, "--from", "Spira Queue <queue@spira>", "--subject", &full_subject, "--kind", "alert"])
+        .args([
+            "send",
+            mailbox,
+            "--from",
+            "Spira Queue <queue@spira>",
+            "--subject",
+            &full_subject,
+            "--kind",
+            "alert",
+        ])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -238,9 +327,19 @@ pub fn notify(mailbox: &str, name: &str, subject: &str, body: &str) {
 /// something pushed outside the publish queue; the first sighting of each foreign tip mails
 /// `mailbox` (marker `queue/<name>/divergence-alarmed`, cleared once healthy). Never
 /// rebases. A check that cannot run is `CannotCheck`, never `Diverged`.
-pub fn check_divergence(mailbox: &str, queue_dir: &Path, name: &str, repo: &Path, forge_sha: &str, local_sha: &str) -> Divergence {
+pub fn check_divergence(
+    mailbox: &str,
+    queue_dir: &Path,
+    name: &str,
+    repo: &Path,
+    forge_sha: &str,
+    local_sha: &str,
+) -> Divergence {
     if queue_dir.as_os_str().is_empty() {
-        return Divergence::CannotCheck("the queue directory is not configured, so the divergence marker cannot be placed".into());
+        return Divergence::CannotCheck(
+            "the queue directory is not configured, so the divergence marker cannot be placed"
+                .into(),
+        );
     }
     let statefile = queue_dir.join(name).join("divergence-alarmed");
     let status = spira_config::bounded::bounded("git")
@@ -257,11 +356,21 @@ pub fn check_divergence(mailbox: &str, queue_dir: &Path, name: &str, repo: &Path
             return Divergence::Ancestor;
         }
         Ok(s) if s.code() == Some(1) => {}
-        Ok(s) => return Divergence::CannotCheck(format!("git merge-base --is-ancestor {forge_sha} {local_sha} failed ({s}) in {}", repo.display())),
-        Err(e) => return Divergence::CannotCheck(format!("could not run git in {}: {e}", repo.display())),
+        Ok(s) => {
+            return Divergence::CannotCheck(format!(
+                "git merge-base --is-ancestor {forge_sha} {local_sha} failed ({s}) in {}",
+                repo.display()
+            ))
+        }
+        Err(e) => {
+            return Divergence::CannotCheck(format!("could not run git in {}: {e}", repo.display()))
+        }
     }
     let foreign_range = format!("{local_sha}..{forge_sha}");
-    let already = std::fs::read_to_string(&statefile).ok().map(|s| s.trim().to_string()).unwrap_or_default();
+    let already = std::fs::read_to_string(&statefile)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
     if already != forge_sha {
         let foreign = spira_config::bounded::bounded("git")
             .arg("-C")
@@ -282,7 +391,12 @@ pub fn check_divergence(mailbox: &str, queue_dir: &Path, name: &str, repo: &Path
             "{name}'s forge target ({forge_sha}) is not an ancestor of local/main ({local_sha}) — something pushed to the forge outside the publish queue. Foreign commit(s):\n{}\n\nPublishing is refused until this is reconciled by hand. Never rebase silently.",
             if foreign.is_empty() { "<none found>" } else { &foreign }
         );
-        notify(mailbox, name, "divergence: forge is not an ancestor of local/main", &body);
+        notify(
+            mailbox,
+            name,
+            "divergence: forge is not an ancestor of local/main",
+            &body,
+        );
     }
     Divergence::Diverged(foreign_range)
 }
@@ -303,14 +417,23 @@ pub fn git_push_cmd(repo: &Path, args: &[String]) -> Command {
             false
         }
     };
-    push_command(repo, args, declared("SPIRA_GH_APP_ID") && declared("SPIRA_GH_APP_INSTALLATION_ID"))
+    push_command(
+        repo,
+        args,
+        declared("SPIRA_GH_APP_ID") && declared("SPIRA_GH_APP_INSTALLATION_ID"),
+    )
 }
 
 pub(crate) fn push_command(repo: &Path, args: &[String], app_configured: bool) -> Command {
     let mut c = Command::new("git");
     c.arg("-C").arg(repo);
     if app_configured {
-        c.args(["-c", "credential.helper=!git-credential-app.sh", "-c", "url.https://github.com/.insteadOf=git@github.com:"]);
+        c.args([
+            "-c",
+            "credential.helper=!git-credential-app.sh",
+            "-c",
+            "url.https://github.com/.insteadOf=git@github.com:",
+        ]);
     }
     c.arg("push").args(args);
     c
@@ -327,7 +450,13 @@ mod tests {
     #[test]
     fn parse_rows_drops_short_lines_and_ignores_extra_fields() {
         let rows = parse_rows("sp-a ta 6\nsp-b tb 5 extra junk\nonly-two fields\n\n");
-        assert_eq!(rows, vec![("sp-a".to_string(), "ta".to_string(), 6), ("sp-b".to_string(), "tb".to_string(), 5)]);
+        assert_eq!(
+            rows,
+            vec![
+                ("sp-a".to_string(), "ta".to_string(), 6),
+                ("sp-b".to_string(), "tb".to_string(), 5)
+            ]
+        );
     }
 
     #[test]
@@ -336,33 +465,59 @@ mod tests {
         let (ranked, warn) = sort_rows(&rows, "{not json", &HashSet::new());
         assert!(warn.unwrap().contains("ranking failed"));
         let ids: Vec<&str> = ranked.iter().map(|r| r.id.as_str()).collect();
-        assert_eq!(ids, vec!["sp-a", "sp-b"], "original order preserved, nothing dropped");
+        assert_eq!(
+            ids,
+            vec!["sp-a", "sp-b"],
+            "original order preserved, nothing dropped"
+        );
         assert_eq!(ranked[0].prio, 9);
         assert_eq!(ranked[0].express, 1);
-        assert_eq!(ranked[1].trans, 0, "is_trans=true renders as the 0 (first) slot even unranked");
+        assert_eq!(
+            ranked[1].trans, 0,
+            "is_trans=true renders as the 0 (first) slot even unranked"
+        );
     }
 
     #[test]
     fn priority_orders_rows_and_wins_over_a_transition_tiebreak() {
         let rows = [row("sp-p1", "t1", 2, true), row("sp-p0", "t2", 1, false)];
-        let (ranked, warn) = sort_rows(&rows, r#"[{"id":"sp-p0","priority":0},{"id":"sp-p1","priority":1}]"#, &HashSet::new());
+        let (ranked, warn) = sort_rows(
+            &rows,
+            r#"[{"id":"sp-p0","priority":0},{"id":"sp-p1","priority":1}]"#,
+            &HashSet::new(),
+        );
         assert!(warn.is_none());
         let ids: Vec<&str> = ranked.iter().map(|r| r.id.as_str()).collect();
-        assert_eq!(ids, vec!["sp-p0", "sp-p1"], "a P0 without a transition still sorts ahead of a P1 with one");
+        assert_eq!(
+            ids,
+            vec!["sp-p0", "sp-p1"],
+            "a P0 without a transition still sorts ahead of a P1 with one"
+        );
     }
 
     #[test]
     fn within_one_priority_a_transition_sorts_first_despite_a_later_epoch() {
         let rows = [row("sp-p", "tp", 1, false), row("sp-t", "tt", 2, true)];
-        let (ranked, _) = sort_rows(&rows, r#"[{"id":"sp-t","priority":2},{"id":"sp-p","priority":2}]"#, &HashSet::new());
+        let (ranked, _) = sort_rows(
+            &rows,
+            r#"[{"id":"sp-t","priority":2},{"id":"sp-p","priority":2}]"#,
+            &HashSet::new(),
+        );
         let ids: Vec<&str> = ranked.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(ids, vec!["sp-t", "sp-p"]);
     }
 
     #[test]
     fn express_ranks_ahead_of_everything_else() {
-        let rows = [row("sp-hi-prio", "t1", 1, false), row("sp-express", "t2", 9, false)];
-        let (ranked, _) = sort_rows(&rows, r#"[{"id":"sp-hi-prio","priority":0},{"id":"sp-express","priority":9}]"#, &HashSet::from(["sp-express".to_string()]));
+        let rows = [
+            row("sp-hi-prio", "t1", 1, false),
+            row("sp-express", "t2", 9, false),
+        ];
+        let (ranked, _) = sort_rows(
+            &rows,
+            r#"[{"id":"sp-hi-prio","priority":0},{"id":"sp-express","priority":9}]"#,
+            &HashSet::from(["sp-express".to_string()]),
+        );
         let ids: Vec<&str> = ranked.iter().map(|r| r.id.as_str()).collect();
         assert_eq!(ids, vec!["sp-express", "sp-hi-prio"]);
     }
@@ -370,14 +525,25 @@ mod tests {
     #[test]
     fn malformed_prio_entries_default_to_priority_nine_rather_than_crashing() {
         let rows = [row("sp-a", "ta", 1, false)];
-        let (ranked, warn) = sort_rows(&rows, r#"[{"id":"sp-a","priority":"not-a-number"}]"#, &HashSet::new());
+        let (ranked, warn) = sort_rows(
+            &rows,
+            r#"[{"id":"sp-a","priority":"not-a-number"}]"#,
+            &HashSet::new(),
+        );
         assert!(warn.is_none());
         assert_eq!(ranked[0].prio, 9);
     }
 
     #[test]
     fn render_row_pads_priority_and_epoch() {
-        let r = RankedRow { express: 0, prio: 2, trans: 1, epoch: 42, id: "sp-a".into(), tip: "deadbeef".into() };
+        let r = RankedRow {
+            express: 0,
+            prio: 2,
+            trans: 1,
+            epoch: 42,
+            id: "sp-a".into(),
+            tip: "deadbeef".into(),
+        };
         assert_eq!(render_row(&r), "0 000000002 1 0000000042 sp-a deadbeef");
     }
 }
@@ -394,22 +560,41 @@ pub fn land_close_reason(sha: &str) -> String {
 /// itself is idempotent and refused by spira-lc for a row not in delivery. Best-effort throughout — a failed close is left
 /// submitted for CHECK 5, a missed reap is left for the Sending.
 pub fn close_on_land(w: &World, submitted_label: &str, id: &str, sha: &str) {
-    let Ok(rows) = w.bd.show(&[id.to_string()]) else { return };
-    let Some(row) = rows.iter().find(|r| r.id == id) else { return };
+    let Ok(rows) = w.bd.show(&[id.to_string()]) else {
+        return;
+    };
+    let Some(row) = rows.iter().find(|r| r.id == id) else {
+        return;
+    };
     if !row.labels.iter().any(|l| l == submitted_label) {
         return;
     }
     let shown = if sha.is_empty() { "unknown" } else { sha };
     if !w.lib.bead_close(id, &land_close_reason(sha)) {
-        w.out(format!("land-close {id}: bd close failed — left submitted (LANDED is on the lifecycle record)"));
+        w.out(format!(
+            "land-close {id}: bd close failed — left submitted (LANDED is on the lifecycle record)"
+        ));
         return;
     }
-    w.out(format!("land-close {id}: closed at {shown} (submitted -> landed)"));
-    let label = |p: &str| row.labels.iter().find_map(|l| l.strip_prefix(p).map(str::to_string));
-    let (Some(repo), Some(branch)) = (label("repo:"), label("branch:")) else { return };
-    match w.lib.reap_landed_branch(id, &repo, &branch, &format!("landed at {shown}")) {
+    w.out(format!(
+        "land-close {id}: closed at {shown} (submitted -> landed)"
+    ));
+    let label = |p: &str| {
+        row.labels
+            .iter()
+            .find_map(|l| l.strip_prefix(p).map(str::to_string))
+    };
+    let (Some(repo), Some(branch)) = (label("repo:"), label("branch:")) else {
+        return;
+    };
+    match w
+        .lib
+        .reap_landed_branch(id, &repo, &branch, &format!("landed at {shown}"))
+    {
         Ok(true) => w.out(format!("land-close {id}: reaped branch {branch}")),
         Ok(false) => {}
-        Err(e) => w.out(format!("land-close {id}: branch {branch} not reaped: {e} — left for the Sending")),
+        Err(e) => w.out(format!(
+            "land-close {id}: branch {branch} not reaped: {e} — left for the Sending"
+        )),
     }
 }

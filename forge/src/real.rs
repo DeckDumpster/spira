@@ -12,7 +12,10 @@ pub struct RealGh;
 /// `GH_TIMEOUT` is not a registered `spira/conf.d` key — the per-invocation timeout
 /// override every `timeout` call here takes, read straight off the environment.
 fn gh_timeout() -> String {
-    std::env::var("GH_TIMEOUT").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "120".into())
+    std::env::var("GH_TIMEOUT")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "120".into())
 }
 
 /// `SPIRA_GH`, a registered config key (spira/conf.d) — the one source of config, through
@@ -30,7 +33,10 @@ fn run(repo: Option<&Path>, args: &[&str], input: Option<&[u8]>, merge_stderr: b
         Ok(g) => g,
         Err(e) => {
             eprintln!("forge: {e}");
-            return GhOut { code: -1, stdout: Vec::new() };
+            return GhOut {
+                code: -1,
+                stdout: Vec::new(),
+            };
         }
     };
     let mut c = Command::new("timeout");
@@ -38,12 +44,25 @@ fn run(repo: Option<&Path>, args: &[&str], input: Option<&[u8]>, merge_stderr: b
     if let Some(r) = repo {
         c.current_dir(r);
     }
-    c.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() });
+    c.stdin(if input.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    });
     c.stdout(Stdio::piped());
-    c.stderr(if merge_stderr { Stdio::piped() } else { Stdio::null() });
+    c.stderr(if merge_stderr {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    });
     let mut child = match c.spawn() {
         Ok(c) => c,
-        Err(_) => return GhOut { code: -1, stdout: Vec::new() },
+        Err(_) => {
+            return GhOut {
+                code: -1,
+                stdout: Vec::new(),
+            }
+        }
     };
     if let Some(bytes) = input {
         if let Some(mut si) = child.stdin.take() {
@@ -52,13 +71,21 @@ fn run(repo: Option<&Path>, args: &[&str], input: Option<&[u8]>, merge_stderr: b
     }
     let out = match child.wait_with_output() {
         Ok(o) => o,
-        Err(_) => return GhOut { code: -1, stdout: Vec::new() },
+        Err(_) => {
+            return GhOut {
+                code: -1,
+                stdout: Vec::new(),
+            }
+        }
     };
     let mut stdout = out.stdout;
     if merge_stderr {
         stdout.extend_from_slice(&out.stderr);
     }
-    GhOut { code: out.status.code().unwrap_or(-1), stdout }
+    GhOut {
+        code: out.status.code().unwrap_or(-1),
+        stdout,
+    }
 }
 
 impl Gh for RealGh {
@@ -77,7 +104,11 @@ impl Proc for RealProc {
         let mut c = spira_config::bounded::bounded(program);
         c.envs(spira_config::release_env::child_path_env_for_process());
         c.args(args);
-        c.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() });
+        c.stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
         c.stdout(Stdio::piped());
         c.stderr(Stdio::null());
         let mut child = match c.spawn() {
@@ -110,9 +141,16 @@ mod tests {
         let dir = testkit::TempDir::new("forge-real-env");
         let real_home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
         let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_GH", "")]);
-        let _env = testkit::env(&[("SPIRA_HOME", real_home.to_str()), ("SPIRA_TOML", toml.to_str())]);
+        let _env = testkit::env(&[
+            ("SPIRA_HOME", real_home.to_str()),
+            ("SPIRA_TOML", toml.to_str()),
+        ]);
 
-        assert_eq!(spira_gh(), Ok("gh".to_string()), "an empty declared SPIRA_GH means the system gh");
+        assert_eq!(
+            spira_gh(),
+            Ok("gh".to_string()),
+            "an empty declared SPIRA_GH means the system gh"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

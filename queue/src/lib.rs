@@ -1,6 +1,5 @@
 //! queue — the merge queue's operator and landing tool. See DESIGN.md.
 
-pub mod telemetry;
 pub mod churn;
 pub mod cli;
 pub mod conf;
@@ -14,11 +13,12 @@ pub mod real;
 pub mod records;
 pub mod seam;
 pub mod stats;
+pub mod telemetry;
 
 #[cfg(test)]
-pub mod testutil;
-#[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub mod testutil;
 
 use cli::Cmd;
 use ports::World;
@@ -34,25 +34,111 @@ pub fn dispatch(w: &World, cmd: &Cmd) -> i32 {
         Cmd::Submit { branch, repo } => simple::submit(w, branch, repo.as_deref()),
         Cmd::Protect { repo } => simple::protect(w, repo.as_deref()),
         Cmd::Stats => simple::stats(w),
-        Cmd::Churn { since, until, repo } => simple::churn(w, since.as_deref(), until.as_deref(), repo.as_deref()),
+        Cmd::Churn { since, until, repo } => {
+            simple::churn(w, since.as_deref(), until.as_deref(), repo.as_deref())
+        }
         Cmd::Flush { repo } => simple::flush(w, repo.as_deref()),
         Cmd::Step { repo } => simple::step(w, repo),
         Cmd::StepAll => simple::step_all(w),
         Cmd::Verdict { repo } => verdict::verdict(w, repo),
-        Cmd::Eject { suites, red: true, harness_fault: false, .. } if suites.trim().is_empty() => {
+        Cmd::Eject {
+            suites,
+            red: true,
+            harness_fault: false,
+            ..
+        } if suites.trim().is_empty() => {
             w.err("queue.sh eject: --red names no failing check — pass --suites <csv> naming the suite or step that failed, so the resubmit can be held to proving it");
             USAGE
         }
-        Cmd::Eject { id, repo, reason, suites, red, harness_fault, dry_run } => batch::eject(w, id, repo.as_deref(), reason, suites, *red, *harness_fault, *dry_run),
-        Cmd::Abandon { repo, reason, dry_run } => batch::abandon(w, repo.as_deref(), reason, *dry_run),
-        Cmd::OpenBatch { repo, members, skip_pregate, dry_run, replace, reason } => batch::open_batch(w, repo.as_deref(), members, *skip_pregate, *dry_run, replace.then_some(reason)),
-        Cmd::Claim { repo, reason, force } => simple::claim(w, repo.as_deref(), reason, *force),
+        Cmd::Eject {
+            id,
+            repo,
+            reason,
+            suites,
+            red,
+            harness_fault,
+            dry_run,
+        } => batch::eject(
+            w,
+            id,
+            repo.as_deref(),
+            reason,
+            suites,
+            *red,
+            *harness_fault,
+            *dry_run,
+        ),
+        Cmd::Abandon {
+            repo,
+            reason,
+            dry_run,
+        } => batch::abandon(w, repo.as_deref(), reason, *dry_run),
+        Cmd::OpenBatch {
+            repo,
+            members,
+            skip_pregate,
+            dry_run,
+            replace,
+            reason,
+        } => batch::open_batch(
+            w,
+            repo.as_deref(),
+            members,
+            *skip_pregate,
+            *dry_run,
+            replace.then_some(reason),
+        ),
+        Cmd::Claim {
+            repo,
+            reason,
+            force,
+        } => simple::claim(w, repo.as_deref(), reason, *force),
         Cmd::Release { repo } => simple::release(w, repo.as_deref()),
-        Cmd::Rework { id, repo, by, reason } => simple::rework(w, id, repo.as_deref(), by, reason),
-        Cmd::Resubmit { id, repo, tip, by, reason, evidence, evidence_tip } => simple::resubmit(w, id, repo.as_deref(), tip, by, reason, evidence, evidence_tip),
-        Cmd::Absolve { id, repo, by, reason, evidence, evidence_tip } => simple::absolve(w, id, repo.as_deref(), by, reason, evidence, evidence_tip),
-        Cmd::ForcedSuites { id, repo, clear, by, reason } => simple::forced_suites(w, id, repo.as_deref(), *clear, by, reason),
-        Cmd::LandLocal { repo, head, members, worktree } => land::land_local(w, repo.as_deref(), head, members, worktree.as_deref()),
+        Cmd::Rework {
+            id,
+            repo,
+            by,
+            reason,
+        } => simple::rework(w, id, repo.as_deref(), by, reason),
+        Cmd::Resubmit {
+            id,
+            repo,
+            tip,
+            by,
+            reason,
+            evidence,
+            evidence_tip,
+        } => simple::resubmit(
+            w,
+            id,
+            repo.as_deref(),
+            tip,
+            by,
+            reason,
+            evidence,
+            evidence_tip,
+        ),
+        Cmd::Absolve {
+            id,
+            repo,
+            by,
+            reason,
+            evidence,
+            evidence_tip,
+        } => simple::absolve(w, id, repo.as_deref(), by, reason, evidence, evidence_tip),
+        Cmd::ForcedSuites {
+            id,
+            repo,
+            clear,
+            by,
+            reason,
+        } => simple::forced_suites(w, id, repo.as_deref(), *clear, by, reason),
+        Cmd::LandLocal {
+            repo,
+            head,
+            members,
+            worktree,
+        } => land::land_local(w, repo.as_deref(), head, members, worktree.as_deref()),
         Cmd::Publish { repo } => publish::publish(w, repo.as_deref()),
         Cmd::PublishSettle { repo } => publish::publish_settle(w, repo.as_deref()),
         Cmd::ToForge { repo } => transition::to_forge(w, repo.as_deref()),
