@@ -297,10 +297,11 @@ pub fn switch(ctx: &Ctx, sha: &str, install_new: bool) -> Result<Switched, Strin
         }
     }
 
+    let old_root = prev.as_deref().map(|p| cfg.releases.join(p)).unwrap_or_else(|| rel.clone());
     let mut out = Switched { rewritten: changes.iter().map(|c| c.unit.clone()).collect(), retired, ..Default::default() };
     let mut draining = Vec::new();
     for c in &changes {
-        if !c.unit.ends_with(".service") || !units::exec_changed(&c.old, &c.new) {
+        if !c.unit.ends_with(".service") || !restart_needed(&c.unit, &c.old, &c.new, &old_root, &rel) {
             continue;
         }
         match ctx.sc.state(&c.unit) {
@@ -509,6 +510,21 @@ fn reconcile_epics(cfg: &Config, sha: &str) {
 /// The unit whose `RefuseManualStop=yes` denies a restart job; `systemctl kill` plus its
 /// `Restart=always` is the sanctioned way to cycle it.
 const KILL_RESTARTED: &str = "dolt-beads.service";
+
+/// Whether a rewritten service must be restarted. The store server is restarted only when its
+/// unit changed in something other than the release root every unit embeds: the server binary
+/// comes from the toolchain environment, and a restart is an outage for every caller.
+fn restart_needed(unit: &str, old: &str, new: &str, old_root: &Path, new_root: &Path) -> bool {
+    if unit != KILL_RESTARTED {
+        return units::exec_changed(old, new);
+    }
+    let moved = old.replace(&old_root.display().to_string(), &new_root.display().to_string());
+    let changed = units::without_documentation(&moved) != units::without_documentation(new);
+    if !changed {
+        eprintln!("release: {unit} differs only in the release root; left running");
+    }
+    changed
+}
 
 fn restart_unit(sc: &dyn Systemctl, unit: &str) -> Result<(), String> {
     if unit == KILL_RESTARTED {
