@@ -1385,3 +1385,31 @@ fn urgent_names_the_claimable_p0_and_rework_beads_with_their_kind() {
     got.sort();
     assert_eq!(got, vec!["p0\t0\t0\t0", "p0x\t0\t0\t1", "rw\t3\t1\t0"], "{}", o.out);
 }
+
+/// An lc whose `fact` appends and whose `facts` replays, and a bd that never keeps metadata:
+/// the streak must not depend on a metadata round trip.
+fn fact_log_store(dir: &str) -> FakeStore {
+    let lc = format!(
+        r#"f={dir}/facts
+if [ "$1" = fact ]; then printf '%s\t%s\t%s\n' "$2" "$4" "$8" >> "$f"; exit 0; fi
+printf '['; sep=''
+[ -f "$f" ] && while IFS='	' read -r i k c; do [ "$i" = "$3" ] || continue; printf '%s{{"issue_id":"%s","event_type":"%s","new_value":"%s","created_at":"2026-09-28T10:00:00Z"}}' "$sep" "$i" "$k" "$c"; sep=','; done < "$f"
+printf ']'"#
+    );
+    fake_bd_lc(r#"echo '[{"id":"sp-a"}]'"#, &lc)
+}
+
+#[test]
+fn consecutive_no_progress_exits_at_one_tip_count_up_and_a_new_tip_resets() {
+    let dir = testkit::TempDir::new("spira-claim-streak");
+    let st = fact_log_store(&dir.to_string_lossy());
+    let bump = |tip: &str| crate::counters::thrash_streak_bump(&st, "sp-a", tip, "cannot tell: deadline");
+    assert_eq!(bump("86ce62b68"), 1);
+    assert_eq!(bump("86ce62b68"), 2, "the second exit at the same tip is a streak of 2 whatever bd metadata kept");
+    assert_eq!(bump("86ce62b68"), 3);
+    assert_eq!(bump("aaaa1111"), 1, "a moved tip resets the streak");
+    assert_eq!(bump("aaaa1111"), 2);
+    assert_eq!(crate::counters::thrash_streak_bump(&st, "sp-b", "86ce62b68", "x"), 1, "another bead's exits are not this bead's");
+    assert_eq!(bump("?"), 1, "an unreadable tip never streaks");
+    assert_eq!(bump("?"), 1);
+}
