@@ -1509,9 +1509,9 @@ fn land(w: &World, batch: &str, repo: Option<&str>) -> i32 {
 }
 
 /// A round is cut from the landing ref and lands only on top of it. When an earlier round has
-/// landed since, this one is re-merged onto the new ref: with no file in common with what landed
-/// it lands on its own evidence, otherwise it goes back to certify on the merged tree. `None`
-/// means the round may land now (its kv holds the head to land).
+/// landed since, this one is re-merged onto the new ref and goes back to certify on the merged
+/// tree, whatever files it shares with what landed: disjoint files can still conflict in meaning.
+/// `None` means the round may land now (its kv holds the head to land).
 fn remerge_if_moved(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, kv: &mut Kv) -> Option<i32> {
     let base = c.r.landref.clone().unwrap_or_default();
     let base_now = w.git.rev_parse(path, &base)?;
@@ -1538,15 +1538,6 @@ fn remerge_if_moved(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, k
     set(kv, "head", &new_head);
     set(kv, "base", &base_now);
     kv.remove("red");
-    if shared.is_empty() {
-        if save(w, label, c, kv).is_err() {
-            return Some(FAIL);
-        }
-        landing_log(&c.s.run, &format!("QUEUE ROUND-REMERGE {} repo={} batch={batch} head={new_head} base={base_now} shared=none", w.clock.now(), c.r.name));
-        w.out(format!("queue.sh {label}: round {batch} re-merged onto {base} ({base_now}) with no file in common with what landed — landing on its own evidence"));
-        let rc = finish_green(w, label, c, path, batch, &new_head, &actor(w), "remerge");
-        return (rc != OK).then_some(rc);
-    }
     let moved = lc_cas(w, batch, |s, v| w.lc.batch_event(batch, s, v, LC_ACTOR, "\"BaseMoved\""));
     if let Err((rc, out)) = moved {
         w.err(format!("queue.sh {label}: spira-lc refused BaseMoved for {batch} (rc={rc}): {out} — the round worktree was rebuilt at {new_head}; certify it again"));
@@ -1557,9 +1548,8 @@ fn remerge_if_moved(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, k
     mark_running(c, batch);
     landing_log(&c.s.run, &format!("QUEUE ROUND-REMERGE {} repo={} batch={batch} head={new_head} base={base_now} shared={}", w.clock.now(), c.r.name, shared.iter().map(|f| f.as_str()).collect::<Vec<_>>().join(",")));
     w.err(format!(
-        "queue.sh {label}: round {batch} was cut before {base} moved to {base_now} and shares {} file(s) with what landed ({}) — re-merged to {new_head}; run `queue round certify {batch}`, it is not landed",
-        shared.len(),
-        shared.iter().take(5).map(|f| f.as_str()).collect::<Vec<_>>().join(" ")
+        "queue.sh {label}: round {batch} was cut before {base} moved to {base_now} (files in common with what landed: {}) — re-merged to {new_head}; run `queue round certify {batch}`, it is not landed",
+        if shared.is_empty() { "none".to_string() } else { shared.iter().take(5).map(|f| f.as_str()).collect::<Vec<_>>().join(" ") }
     ));
     Some(FAIL)
 }
