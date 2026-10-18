@@ -161,7 +161,8 @@ if ! command -v cargo >/dev/null 2>&1; then
     echo "round-vm: cargo not found on PATH ($PATH) — the template is missing a Rust toolchain" >&2
     exit 127
 fi
-rm -rf ~/round-bins ~/round-launcher.env
+rm -rf ~/round-bins ~/round-launcher.env ~/round-setup.log
+exec 2> >(tee ~/round-setup.log >&2)
 mirror="git://${host_addr}:${port}/mirror.git"
 if [ -d ~/round-work/.git ] \
     && git -C ~/round-work remote set-url origin "$mirror" \
@@ -540,6 +541,35 @@ pub const LAUNCHER_ENV: &str = "round-launcher.env";
 
 /// Where REMOTE_SCRIPT stages the round's executables, relative to the VM user's home.
 pub const REMOTE_BINS: &str = "round-bins/";
+
+/// The VM script's own stderr, kept so a round that never produced binaries can say why.
+pub const REMOTE_SETUP_LOG: &str = "round-setup.log";
+
+const SETUP_LOG_TAIL: usize = 60;
+
+/// The last lines of `log`, or `None` when it is empty.
+pub fn log_tail(log: &str, n: usize) -> Option<String> {
+    let lines: Vec<&str> = log.lines().collect();
+    if lines.is_empty() {
+        return None;
+    }
+    Some(lines[lines.len().saturating_sub(n)..].join("\n"))
+}
+
+/// Prints the VM's setup log tail: a failure carries its own explanation.
+fn show_setup_log(remote: &dyn Remote, cfg: &Config, addr: &str, scratch: &Path) {
+    let _ = fs::remove_dir_all(scratch);
+    if pull_retry(remote, cfg, addr, REMOTE_SETUP_LOG, scratch) {
+        let text = fs::read_to_string(scratch.join(REMOTE_SETUP_LOG)).unwrap_or_default();
+        match log_tail(&text, SETUP_LOG_TAIL) {
+            Some(t) => eprintln!("round-vm run: no round-bins came back; the VM's setup log, last {SETUP_LOG_TAIL} lines:\n{t}"),
+            None => eprintln!("round-vm run: no round-bins came back and the VM's setup log is empty"),
+        }
+    } else {
+        eprintln!("round-vm run: no round-bins came back and the VM's setup log could not be pulled");
+    }
+    let _ = fs::remove_dir_all(scratch);
+}
 
 /// The Proxmox template's cache home is `SPIRA_ROUND_VM_CACHE_HOME`; an EC2 image records its
 /// own, which the VM reads, so the template's path is never sent to it.
@@ -1682,6 +1712,9 @@ fn after_batch(
         (results_ok, tsd_pull.join().unwrap_or(false))
     });
     let leaf = results_leaf(&pulled);
+    if executables(&bins).is_empty() {
+        show_setup_log(remote, cfg, &vm.addr, &scratch("setup-log"));
+    }
     if build_failed_without_results(remote_rc, leaf.is_some()) {
         eprintln!("round-vm run: the workspace build failed on {}: no suite ran, so there is nothing to pull; releasing it", vm.handle);
         for d in [&pulled, &tsd, &bins] {
@@ -1788,6 +1821,13 @@ mod tests {
         assert_eq!(spilled_maxpar(Some(8), Some("c7i.4xlarge"), false), None);
         assert_eq!(spilled_maxpar(None, Some("c7i.4xlarge"), true), None);
         assert_eq!(spilled_maxpar(None, None, false), None);
+    }
+
+    #[test]
+    fn log_tail_keeps_the_last_lines_and_none_when_empty() {
+        assert_eq!(log_tail("a\nb\nc\n", 2).as_deref(), Some("b\nc"));
+        assert_eq!(log_tail("a\n", 60).as_deref(), Some("a"));
+        assert_eq!(log_tail("", 60), None);
     }
 
     #[test]
