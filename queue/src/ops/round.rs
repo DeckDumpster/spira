@@ -1126,6 +1126,28 @@ fn finish_green(w: &World, label: &str, c: &Ctx, path: &Path, batch: &str, head:
     OK
 }
 
+/// Suites an eject forces on the recertification must be ones testenv runs for the round's tree;
+/// a name nothing can satisfy would block the bead's resubmit for good.
+fn known_forced_suites(w: &World, label: &str, wt: &Path, suites: &str) -> Result<(), i32> {
+    let named: Vec<&str> = suites.split(',').filter(|s| !s.is_empty()).collect();
+    if named.is_empty() {
+        return Ok(());
+    }
+    let known = match gate::own::known_suites(wt) {
+        Ok(k) => k,
+        Err(e) => {
+            w.err(format!("queue.sh {label}: cannot read the suites testenv knows for the round tree: {e} — nothing changed"));
+            return Err(FAIL);
+        }
+    };
+    let unknown: Vec<&str> = named.iter().copied().filter(|n| !known.iter().any(|k| k == n)).collect();
+    if unknown.is_empty() {
+        return Ok(());
+    }
+    w.err(format!("queue.sh {label}: --suites names {} which testenv does not know — nothing changed; known suites: {}", unknown.join(","), known.join(" ")));
+    Err(FAIL)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, suites: &str, red: bool, harness_fault: bool, rebuild: bool) -> i32 {
     let label = "round eject";
@@ -1164,6 +1186,9 @@ fn eject(w: &World, batch: &str, id: &str, repo: Option<&str>, reason: &Text, su
         return FAIL;
     }
     let wt = worktree_of(&kv);
+    if let Err(rc) = known_forced_suites(w, label, &wt, suites) {
+        return rc;
+    }
     let old_head = kv.get("head").unwrap_or("").to_string();
     let base_sha = kv.get("base").unwrap_or("").to_string();
     let ejected_tip = members.iter().find(|m| m.id == id).map(|m| m.tip.clone()).unwrap_or_default();

@@ -94,6 +94,42 @@ fn land_with_the_batch_record_refused_prints_the_reason_and_exits_nonzero() {
     assert_eq!(t.landed_ref().as_deref(), Some("merged-tb"), "the release is live regardless");
 }
 
+fn seed_suite(t: &T, name: &str) {
+    let dir = PathBuf::from(&kv_of(t, "round")["worktree"]).join("spira");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join(name), "").unwrap();
+}
+
+#[test]
+fn an_eject_forcing_a_suite_testenv_does_not_know_is_refused_naming_the_known_ones_and_changes_nothing() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    seed_suite(&t, "test-b.sh");
+    let before = kv_of(&t, "round");
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "round-vm"]), 1);
+    let e = t.err();
+    assert!(e.contains("round-vm") && e.contains("does not know") && e.contains("test-b.sh"), "{e}");
+    assert_eq!(kv_of(&t, "round"), before);
+    assert!(!t.lib.has("bead_reopen") && !t.lc.has("eject-member"), "{:?}", t.lc.calls.borrow());
+    assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh"]), 0, "positive control: {}", t.err());
+}
+
+#[test]
+fn clearing_forced_suites_removes_the_proof_and_the_sidecar_and_is_gated_on_who_asks() {
+    let t = round_world();
+    let run = t.s().run.clone();
+    spira_config::proof::record_failing(&run, "sp-a", &["round-vm".to_string()]).unwrap();
+    fs::create_dir_all(run.join("ejected")).unwrap();
+    fs::write(run.join("ejected/sp-a"), "round-vm").unwrap();
+    assert_eq!(t.run(&["forced-suites", "sp-a"]), 0);
+    assert!(t.out().contains("round-vm"), "{}", t.out());
+    assert_eq!(t.run(&["forced-suites", "sp-a", "--clear", "--by=aeon", "--reason=x"]), 1);
+    assert_eq!(spira_config::proof::failing(&run, "sp-a"), vec!["round-vm".to_string()], "a refused clear changes nothing");
+    assert_eq!(t.run(&["forced-suites", "sp-a", "--clear", "--by=concierge", "--reason=round-vm is not a suite"]), 0, "{}", t.err());
+    assert!(spira_config::proof::failing(&run, "sp-a").is_empty() && !run.join("ejected/sp-a").exists());
+}
+
 fn certified_round() -> (T, String) {
     let mut t = round_world();
     t.lib.s.home_repo = "spira".into();
@@ -143,6 +179,7 @@ fn eject_then_land_rebuilds_the_head_without_the_member() {
     assert_eq!(t.run(&["round", "land", &batch]), 1, "a red round does not land");
     assert!(t.err().contains("is attributing, not green"), "{}", t.err());
 
+    seed_suite(&t, "test-b.sh");
     assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "red on test-b.sh", "--suites", "test-b.sh"]), 0, "{}", t.err());
     assert!(t.lib.has("bead_reopen sp-b eject-red test-b.sh"));
     assert!(t.lc.has("event bead sp-b IN_DELIVERY 4 {\"Returned\":{\"reason\":\"batch-ejected\"}}") || t.lc.has("event bead sp-b CERTIFIED 3 \"Deliver\""));
@@ -209,6 +246,7 @@ fn a_harness_fault_eject_naming_suites_is_not_charged() {
     let t = round_world();
     assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
     let batch = batch_of(&t);
+    seed_suite(&t, "test-b.sh");
     assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "round VM lacked the config delta", "--suites", "test-b.sh", "--harness-fault"]), 0, "{}", t.err());
     assert!(t.lib.has("bead_reopen sp-b eject test-b.sh") && !t.lib.has("bead_reopen sp-b eject-red"));
 }
@@ -663,6 +701,7 @@ fn a_round_through_a_red_pass_an_eject_and_a_green_pass_records_both_passes() {
         ],
         "pass 1 is started, enters its suites and ends red, naming the suite"
     );
+    seed_suite(&t, "test-b.sh");
     assert_eq!(t.run(&["round", "eject", &batch, "sp-b", "--reason", "red on test-b.sh", "--suites", "test-b.sh"]), 0, "{}", t.err());
     assert!(events_of(&t, &batch).last().unwrap().starts_with("{\"PassRebuilt\":{\"head\":"), "{:?}", events_of(&t, &batch));
 
@@ -756,6 +795,7 @@ fn preempt_world() -> (T, String) {
 #[test]
 fn preempting_a_running_pass_salvages_ejects_rebuilds_and_restarts() {
     let (t, batch) = preempt_world();
+    seed_suite(&t, "test-b.sh");
     let rc = t.run(&["round", "preempt", &batch, "--eject", "sp-b", "--reason", "red on test-b.sh at 2/3", "--suites", "test-b.sh"]);
     assert_eq!(rc, 0, "{}", t.err());
     assert!(t.scripts.calls.borrow().iter().any(|c| c == "terminate 777"), "TERM to the run's handle, never a kill: {:?}", t.scripts.calls.borrow());

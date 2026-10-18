@@ -51,6 +51,7 @@ pub fn dispatch(w: &World, cmd: &Cmd) -> i32 {
         Cmd::Rework { id, repo, by, reason } => simple::rework(w, id, repo.as_deref(), by, reason),
         Cmd::Resubmit { id, repo, tip, by, reason, evidence, evidence_tip } => simple::resubmit(w, id, repo.as_deref(), tip, by, reason, evidence, evidence_tip),
         Cmd::Absolve { id, repo, by, reason, evidence, evidence_tip } => simple::absolve(w, id, repo.as_deref(), by, reason, evidence, evidence_tip),
+        Cmd::ForcedSuites { id, repo, clear, by, reason } => simple::forced_suites(w, id, repo.as_deref(), *clear, by, reason),
         Cmd::LandLocal { repo, head, members, worktree } => land::land_local(w, repo.as_deref(), head, members, worktree.as_deref()),
         Cmd::Publish { repo } => publish::publish(w, repo.as_deref()),
         Cmd::PublishSettle { repo } => publish::publish_settle(w, repo.as_deref()),

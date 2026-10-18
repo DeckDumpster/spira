@@ -10,6 +10,21 @@ pub fn declares_own_testenv(tree: &Path) -> bool {
     tree.join(DECL).is_file() && !tree.join(HARNESS_IMAGE).exists()
 }
 
+/// The suite names testenv would accept for `tree`: a repository's declared tiers, else the
+/// files of the harness's own `spira/` directory. `Err` when the declaration cannot be read.
+pub fn known_suites(tree: &Path) -> Result<Vec<String>, String> {
+    if declares_own_testenv(tree) {
+        let text = std::fs::read_to_string(tree.join(DECL)).map_err(|e| format!("{DECL}: {e}"))?;
+        let doc: toml::Value = spira_config::parse_foreign(&text).map_err(|e| format!("{DECL}: {e}"))?;
+        return Ok(doc.get("tier").and_then(|t| t.as_table()).map(|t| t.keys().cloned().collect()).unwrap_or_default());
+    }
+    let mut names: Vec<String> = std::fs::read_dir(tree.join("spira"))
+        .map(|d| d.flatten().filter(|e| e.path().is_file()).filter_map(|e| e.file_name().into_string().ok()).filter(|n| n.starts_with("test-") && n.ends_with(".sh")).collect())
+        .unwrap_or_default();
+    names.sort();
+    Ok(names)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
