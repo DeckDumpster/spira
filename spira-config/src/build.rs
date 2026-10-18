@@ -309,6 +309,17 @@ pub const AEON_WARM_CAP_ENV: &str = "SPIRA_AEON_WARM_CAP_MIB";
 /// Slots offered: one per aeon name, so a free one always exists below the live-aeon ceiling.
 pub const AEON_WARM_SLOTS: u64 = 10;
 
+pub const TF_PLUGIN_CACHE_ENV: &str = "TF_PLUGIN_CACHE_DIR";
+
+/// The one Terraform provider cache of the box, under the run directory and outside every
+/// worktree. Created here because terraform refuses a cache directory that does not exist.
+/// The lock-file override stays unset, so `.terraform.lock.hcl` remains authoritative.
+pub fn tf_plugin_cache(run: &Path) -> std::io::Result<std::path::PathBuf> {
+    let dir = run.join("tf-plugin-cache");
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
 /// Create `base` and every slot directory in it, so a session never creates them.
 pub fn prepare_warm(base: &Path, slots: u64) -> std::io::Result<()> {
     for n in 1..=slots.max(1) {

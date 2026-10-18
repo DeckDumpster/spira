@@ -1657,6 +1657,18 @@ fn an_agents_cargo_compiles_through_spira_admit_with_sccache_inside() {
 }
 
 #[test]
+fn a_session_shares_one_terraform_provider_cache_under_run() {
+    let f = fx("tf-cache");
+    seed(&f, "sp-tf");
+    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0")], Mode::Claim, BTreeMap::new(), commits_and_closes());
+    let got = o.seen[0].env.get("TF_PLUGIN_CACHE_DIR").cloned().expect("TF_PLUGIN_CACHE_DIR set");
+    let want = f.run.join("tf-plugin-cache");
+    assert_eq!(got, want.display().to_string());
+    assert!(want.is_dir(), "terraform refuses a cache directory that does not exist");
+    assert!(o.seen[0].env.get("TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE").is_none(), "lock files stay authoritative");
+}
+
+#[test]
 fn a_session_builds_into_its_slots_warm_target_dir() {
     let f = fx("warm-target");
     seed(&f, "sp-warm");
