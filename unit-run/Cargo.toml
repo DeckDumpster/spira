@@ -2,7 +2,7 @@
 name = "unit-run"
 version = "1.0.0"
 edition = "2021"
-description = "unit-run — the one writer of run/tsd/'s unit-run family: one record per systemd user-unit execution, folded from the user journal (follow, resuming from its cursor; backfill, idempotent on invocation_id) or learned from the manager's D-Bus signals (watch)."
+description = "unit-run — the one writer of run/tsd/'s unit-run family: one record per systemd user-unit execution, learned from the user manager's D-Bus signals (watch)."
 
 [lib]
 name = "unit_run"

@@ -264,6 +264,7 @@ cat > "$BIN/systemctl" <<'SCEOF'
 printf 'SC %s\n' "$*" >> "${SC_LOG:-/dev/null}"
 case "$*" in
     *reset-failed*spira-skew-*) rm -f "${SKEW_UNIT_FAILED_FILE:-/nonexistent}" ;;
+    *" show "*) printf 'Result=exit-code\nExecMainStatus=2\n' ;;
     *list-units*--state=failed*) [ -n "${SC_FAILED_UNITS:-}" ] && printf '%s\n' "$SC_FAILED_UNITS" ;;
     *" start "*) case " $* " in *" ${SC_START_FAILS:-@none@} "*) exit 1 ;; esac ;;
     *list-units*) printf 'spira-sentinel-prod.service loaded active running\n' ;;
@@ -271,13 +272,6 @@ esac
 exit 0
 SCEOF
 chmod +x "$BIN/systemctl"
-
-cat > "$BIN/journalctl" <<'JCEOF'
-#!/usr/bin/env bash
-while [ $# -gt 0 ]; do [ "$1" = "-u" ] && { printf 'JOURNAL-LINE-FOR %s\n' "$2"; exit 0; }; shift; done
-exit 0
-JCEOF
-chmod +x "$BIN/journalctl"
 
 # ---------------------------------------------------------------------------
 # run_deploy [env-pairs...] -- [deploy args...]
@@ -599,7 +593,7 @@ want   "deploy-window: the installed failed unit is reset"    "SC --user reset-f
 want   "deploy-window: ... and re-run under the release"      "SC --user start spira-real-prod.service" "$(cat "$SC_LOG")"
 want   "deploy-window: the re-run is logged"                  "re-ran spira-real-prod.service" "$_out"
 want   "deploy-window: the failure is surfaced"               "spira-real-prod.service FAILED inside the deploy window" "$_out"
-want   "deploy-window: ... with its own journal lines"        "JOURNAL-LINE-FOR spira-real-prod.service" "$_out"
+want   "deploy-window: ... with the manager's own state"        "Result=exit-code" "$_out"
 nowant "deploy-window: a pass is not called proof of health"  "it failed inside the deploy window and passes under" "$_out"
 rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
 _out="$(run_deploy "SC_FAILED_UNITS=spira-real-prod.service loaded failed failed A real failure" \

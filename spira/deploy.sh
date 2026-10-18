@@ -657,8 +657,8 @@ log "deploy: resuming"
     | awk '$2 == "loaded" {print $1}' \
     | while IFS= read -r _knocked; do
         [ -n "$_knocked" ] || continue
-        log "deploy: WARNING: $_knocked FAILED inside the deploy window (dolt-beads is restarted while timers keep firing); its journal:"
-        journalctl --user -u "$_knocked" -n 15 --no-pager 2>&1 | sed 's/^/deploy:   | /' || true
+        log "deploy: WARNING: $_knocked FAILED inside the deploy window (dolt-beads is restarted while timers keep firing); its manager state:"
+        "$_SC" --user show -p ActiveState -p Result -p ExecMainStatus "$_knocked" 2>&1 | sed 's/^/deploy:   | /' || true
         "$_SC" --user reset-failed "$_knocked" 2>/dev/null || true
         if timeout "${SPIRA_DEPLOY_RERUN_TIMEOUT:-300}" "$_SC" --user start "$_knocked" 2>/dev/null; then
             log "deploy: re-ran $_knocked and it passes under $release_stem — the earlier failure above is NOT shown benign by this"
