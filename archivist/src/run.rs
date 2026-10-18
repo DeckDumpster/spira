@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::brain;
 use crate::candidates::{self, Candidate};
 use crate::config::Env;
 use crate::lock::{self, Acquire};
@@ -240,11 +241,27 @@ pub fn archive(seam: &dyn Seam, cfg: &Env, arc: &Path, sid: &str, tp: &Path, at:
         cwd: &arc.join("cwd"),
         mail_from: "Archivist <archivist@spira>",
     };
+    let wiki_dir = cfg.wiki.as_deref().filter(|w| !w.is_empty()).map(Path::new);
+    let before = wiki_dir.map(brain::snapshot);
     let rc = seam.run_agent(&spec);
+    let committed = match (wiki_dir, before) {
+        (Some(dir), Some(before)) => Some(before.and_then(|b| {
+            let touched = brain::touched(&b, &brain::snapshot(dir)?);
+            brain::commit_paths(dir, &touched, &format!("archivist: {} page(s) from session {sid}\n", touched.len()))
+        })),
+        _ => None,
+    };
+    if let Some(Err(e)) = &committed {
+        log(&format!("archivist: {sid} could not commit the wiki pages it wrote — {e}"));
+    }
 
     let items: u64 = state::read_state_key(arc, sid, "items_filed").and_then(|s| s.parse().ok()).unwrap_or(0);
 
-    if rc == 0 {
+    if rc == 0 && matches!(committed, Some(Err(_))) {
+        let _ = state::write_state(arc, sid, State::Failed, at, items);
+        log(&format!("archivist: {sid} FAILED — its wiki pages are written but not committed; see {}", logf.display()));
+        1
+    } else if rc == 0 {
         let _ = state::write_state(arc, sid, State::Safe, at, items);
         let _ = set_covered(arc, sid, at);
         let _ = std::fs::remove_file(&tc_file);
@@ -734,6 +751,44 @@ mod tests {
         assert_eq!(covered_raw(&dir, "sess-1"), Some("10".to_string()));
         assert_eq!(seam.agent_calls.borrow().len(), 1);
         assert!(seam.agent_calls.borrow()[0].contains("task for sess-1"));
+    }
+
+    fn brain_run(rc: i32, break_remote: bool) -> (i32, testkit::TempDir, PathBuf, testkit::TempDir) {
+        let dir = testkit::TempDir::new("archivist-run");
+        let chamber = testkit::TempDir::new("archivist-chamber");
+        std::fs::write(chamber.join("archivist.md"), "system\n<!-- task -->\ntask").unwrap();
+        let (root, brain) = brain::tests::fixture();
+        if break_remote {
+            brain::tests::sh(&brain, &["remote", "set-url", "origin", "/nonexistent/remote.git"]);
+        }
+        let mut c = cfg();
+        c.chamber = chamber.path().to_string_lossy().into_owned();
+        c.run = dir.path().to_string_lossy().into_owned();
+        c.wiki = Some(brain.to_string_lossy().into_owned());
+        let seam = FakeSeam::new();
+        *seam.agent_rc.borrow_mut() = rc;
+        *seam.agent_writes.borrow_mut() = vec![(brain.join("wiki/notes/a.md"), "a\n".into()), (brain.join("wiki/notes/b.md"), "b\n".into())];
+        let out = archive(&seam, &c, &dir, "sess-1", Path::new("/tmp/sess-1.jsonl"), 10, "5", "t", false);
+        (out, dir, brain, root)
+    }
+
+    #[test]
+    fn an_archive_run_that_writes_two_pages_commits_them_and_leaves_the_tree_clean() {
+        let (rc, dir, brain, _root) = brain_run(0, false);
+        assert_eq!(rc, 0);
+        assert_eq!(state::read_state_key(&dir, "sess-1", "state"), Some("safe".into()));
+        let status = std::process::Command::new("git").arg("-C").arg(&brain).args(["status", "--porcelain"]).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&status.stdout), "");
+        let log = std::process::Command::new("git").arg("-C").arg(&brain).args(["log", "-1", "--format=%s"]).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&log.stdout).trim(), "archivist: 2 page(s) from session sess-1");
+    }
+
+    #[test]
+    fn a_run_whose_pages_cannot_be_pushed_fails_loudly_and_does_not_advance_the_cursor() {
+        let (rc, dir, _brain, _root) = brain_run(0, true);
+        assert_ne!(rc, 0);
+        assert_eq!(state::read_state_key(&dir, "sess-1", "state"), Some("failed".into()));
+        assert_eq!(covered_raw(&dir, "sess-1"), None);
     }
 
     // A fork elsewhere in the test binary can briefly hold a copy of a just-dropped flock fd,

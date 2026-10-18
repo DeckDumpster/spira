@@ -6,6 +6,7 @@
 //! holds. [`run`] composes all of it into `sweep`, `list`, `now`, `mark`, `state`,
 //! `record` and `digest-send`.
 
+pub mod brain;
 pub mod candidates;
 pub mod config;
 pub mod digest;
