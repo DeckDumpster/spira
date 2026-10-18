@@ -1424,7 +1424,7 @@ impl AmiWait {
                 return false;
             }
         }
-        w.clock.sleep(Self::POLL_SECS);
+        w.clock.sleep(Self::POLL_SECS); // waits-on: the round AMI forge run; cap round_ami_wait_secs
         true
     }
 }
