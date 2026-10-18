@@ -123,6 +123,7 @@ pub fn run(args: &[String]) -> i32 {
             cold_tick(&sweeper);
             continuity_tick(&sweeper);
             crate::ops::epics_tick(&sweeper);
+            crate::ops::views_tick(&sweeper);
             alarm_tick();
             if let Err(e) = crate::mending::expire_overdue(&sweeper, "spira-lc.sweep") {
                 eprintln!("spira-lc serve: mending sweep: {e:?}");
