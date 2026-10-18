@@ -2203,11 +2203,37 @@ fn activating_a_release_that_changes_dolt_beads_restarts_it_by_kill_never_a_rest
     fs::write(w.units().join("dolt-beads.service"), rendered).unwrap();
     sc.states.borrow_mut().insert("dolt-beads.service".into(), UnitState { active: "active".into(), result: "success".into(), kind: "simple".into() });
     sc.restarts.borrow_mut().clear();
+    let installed = w.units().join("dolt-beads.service");
+    let text = fs::read_to_string(&installed).unwrap();
+    fs::write(&installed, text.replace("--dolt", "--dolt-old")).unwrap();
 
     let s = activate::activate(&c, B, None).unwrap();
     assert!(s.restarted.contains(&"dolt-beads.service".to_string()), "{s:?}");
     assert_eq!(*sc.kills.borrow(), vec!["dolt-beads.service".to_string()]);
     assert!(!sc.restarts.borrow().contains(&"dolt-beads.service".to_string()));
+}
+
+#[test]
+fn activating_a_release_whose_dolt_beads_unit_differs_only_in_the_release_root_leaves_it_running() {
+    let dolt = "[Service]\nType=simple\nEnvironment=SPIRA_RELEASE=@SPIRA_RELEASE@\nExecStart=@SPIRA_TOOL_BIN@ --dolt\n";
+    let w = World::with_git(FakeGit { extra: vec![("systemd/dolt-beads.service".into(), dolt.into(), false)], ..Default::default() });
+    w.build(A).unwrap();
+    w.build(B).unwrap();
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, A, None).unwrap();
+    w.install_units(A);
+    let rel = w.rel(A);
+    let text = fs::read_to_string(rel.join("systemd/dolt-beads.service")).unwrap();
+    let rendered = units::render("dolt-beads.service", &text, &rel, &w.cfg.host_values().unwrap(), None, "prod").unwrap();
+    fs::write(w.units().join("dolt-beads.service"), rendered).unwrap();
+    sc.states.borrow_mut().insert("dolt-beads.service".into(), UnitState { active: "active".into(), result: "success".into(), kind: "simple".into() });
+
+    let s = activate::activate(&c, B, None).unwrap();
+    assert!(s.rewritten.contains(&"dolt-beads.service".to_string()), "control: the unit file was rewritten for the new root: {s:?}");
+    assert!(w.unit("dolt-beads.service").contains(&w.rel(B).display().to_string()));
+    assert!(!s.restarted.contains(&"dolt-beads.service".to_string()), "{s:?}");
+    assert!(sc.kills.borrow().is_empty(), "{:?}", sc.kills.borrow());
 }
 
 #[test]
