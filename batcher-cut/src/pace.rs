@@ -9,6 +9,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub const INFRA_MARKERS: &[&str] = &["NO RESULT", "OVER-CAP", "cannot check out", "certify rc=75", "left no verdicts"];
+pub const STALE_AMI_MARKER: &str = "round AMI is stale";
 pub const BACKOFF_SECS: u64 = 600;
 pub const STOP_AFTER: u32 = 2;
 
@@ -24,6 +25,7 @@ pub enum Outcome {
     Quiet,
     Red,
     Infra,
+    StaleImage,
     OpenFailed,
 }
 
@@ -46,6 +48,9 @@ pub struct Effects {
 /// not land is red.
 pub fn classify(result: &Result<(), String>, verdict: Option<(&str, u64)>, pass_start: u64) -> Outcome {
     let text = result.as_ref().err().map(String::as_str).unwrap_or("");
+    if text.contains(STALE_AMI_MARKER) {
+        return Outcome::StaleImage;
+    }
     if INFRA_MARKERS.iter().any(|m| text.contains(m)) {
         return Outcome::Infra;
     }
@@ -81,6 +86,7 @@ pub fn advance(st: &State, outcome: &Outcome, repo: &str, now: u64, detail: &str
             fx.pause = true;
             fx.pages.push(format!("ROUND RED {repo} — attribute and eject, then rm the pause file ({detail})"));
         }
+        Outcome::StaleImage => {}
         Outcome::OpenFailed => {
             fx.pages.push(format!("OPEN FAILED {repo} — the cut could not open a round ({detail})"));
         }
@@ -322,6 +328,19 @@ mod tests {
         let ran = run(d, "b", 1010, None, None, Ok(()));
         assert!(ran);
         assert!(!Files::new(d, "b").pause_file().exists());
+    }
+
+    #[test]
+    fn a_stale_round_image_never_counts_toward_the_stop() {
+        let t = dir("stale-ami");
+        let d = t.path();
+        let stale = "certify rc=75: round AMI is stale: acquire failed: clone refused";
+        assert_eq!(classify(&Err(stale.into()), None, 0), Outcome::StaleImage);
+        for at in [1000, 2000, 3000] {
+            run(d, "a", at, None, None, Err(stale.into()));
+        }
+        assert!(!Files::new(d, "a").stop_file().exists());
+        assert_eq!(Files::new(d, "a").load().infra, 0);
     }
 
     #[test]

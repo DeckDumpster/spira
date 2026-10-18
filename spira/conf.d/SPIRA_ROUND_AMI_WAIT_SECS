@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=round
+DOC=SECONDS `queue round certify` WAITS FOR A ROUND AMI BUILD when the newest round image carries a stale recipe, before reporting the round as incomplete
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # SECONDS `queue round certify` WAITS FOR A ROUND AMI BUILD when the newest round image
+    # carries a stale recipe, before reporting the round as incomplete.
+    : "${SPIRA_ROUND_AMI_WAIT_SECS:=2400}"
+SPIRA_CONF_DEFAULT_EOF

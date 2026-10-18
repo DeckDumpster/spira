@@ -29,6 +29,8 @@ pub const OPERATIONS: &[&str] = &[
     "pr-close",
     "pr-comment",
     "dispatch",
+    "ami-runs",
+    "ami-dispatch",
     "fail-lines",
     "branch-protect",
     "branch-protection-status",

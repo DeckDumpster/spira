@@ -446,6 +446,8 @@ struct FScripts {
     judgement: RefCell<RunOut>,
     /// What `round-vm run` answers, and the `<suite>.result` files it leaves in --results-dir.
     round_vm: RefCell<RunOut>,
+    /// Answers `round_vm` gives before it falls back to `round_vm`.
+    round_vm_queue: RefCell<Vec<RunOut>>,
     repo_testenv: RefCell<RunOut>,
     round_vm_results: RefCell<Vec<(String, String)>>,
     /// The `runner.meta` it leaves beside them (empty = none).
@@ -596,7 +598,12 @@ impl Scripts for FScripts {
         if !self.round_vm_meta.borrow().is_empty() {
             fs::write(results.join("runner.meta"), &*self.round_vm_meta.borrow()).unwrap();
         }
-        self.round_vm.borrow().clone()
+        let mut queued = self.round_vm_queue.borrow_mut();
+        if queued.is_empty() {
+            self.round_vm.borrow().clone()
+        } else {
+            queued.remove(0)
+        }
     }
     fn repo_testenv(&self, head: &str, repo: &str, wall_secs: u64, handle: &Path) -> RunOut {
         self.calls
@@ -671,6 +678,8 @@ struct FForge {
     /// What `fail-lines` answers.
     fails: RefCell<String>,
     arm_fails: std::cell::Cell<bool>,
+    /// ami-runs answers in order; when none is left no run is in progress. `None` is an unreadable forge.
+    ami_runs: RefCell<Vec<Option<Vec<String>>>>,
     /// pr-create makes this PR number upstream, then reports this error.
     create_then_err: RefCell<Option<(String, String)>>,
 }
@@ -766,6 +775,19 @@ impl Forge for FForge {
         self.calls
             .borrow_mut()
             .push(format!("workflow-rerun {run}"));
+    }
+    fn ami_runs(&self, _: &Path, _: &Path) -> Option<Vec<String>> {
+        self.calls.borrow_mut().push("ami-runs".into());
+        let mut q = self.ami_runs.borrow_mut();
+        if q.is_empty() {
+            Some(vec![])
+        } else {
+            q.remove(0)
+        }
+    }
+    fn ami_dispatch(&self, _: &Path, _: &Path, ref_: &str) -> bool {
+        self.calls.borrow_mut().push(format!("ami-dispatch {ref_}"));
+        true
     }
 }
 
@@ -1336,6 +1358,7 @@ impl T {
             git_email: "spira@spira.invalid".into(),
             mailbox: "concierge".into(),
             round_wall_secs: 900,
+            round_ami_wait_secs: 2400,
             rounds_max: 1,
         };
         fs::create_dir_all(s.queue_dir.join("spira")).unwrap();

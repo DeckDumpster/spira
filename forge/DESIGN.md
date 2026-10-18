@@ -62,6 +62,8 @@ terms). Body payloads that were `stdin` in bash (`pr-create`) stay stdin.
 | `run-cancel` | `<run-id>` | cancels; silent |
 | `workflow-rerun` | `<run-id>` | re-queues a failed run; silent |
 | `dispatch` | `<ref> <suites-csv>` | triggers a Gate run restricted to `suites-csv`; silent |
+| `ami-runs` | — | the id of each Round AMI run not yet completed, one per line; `?` when unreadable |
+| `ami-dispatch` | `<ref>` | triggers the Round AMI workflow on `ref`; silent |
 | `fail-lines` | `<run-id> <suites-space-sep>` | `fail-line: <suite>: <text>` |
 | `pr-close` | `<pr-number>` | silent |
 | `pr-comment` | `<pr-number> <body>` | silent |

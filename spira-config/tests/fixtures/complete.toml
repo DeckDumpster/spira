@@ -323,6 +323,7 @@ review_label = "review-finding"
 round_due_remind = 1200
 round_idle_cut = 1200
 round_certify_wall_secs = 900
+round_ami_wait_secs = 2400
 round_marker_max_age = 10800
 round_min = 8
 round_max_open = 1

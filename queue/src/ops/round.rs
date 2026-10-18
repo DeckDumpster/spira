@@ -18,6 +18,7 @@ use super::{
 use crate::cli::{Round, Text};
 use crate::ident::bounded_text;
 use crate::lock::Guard;
+use crate::ports::{ref_branch, RunOut};
 use crate::model::{parse_members, render_members, EjectCause, LandMode, Member};
 use crate::records::{self, one_line, write_atomic, Kv};
 use landing_pass::gateq::GateQueue;
@@ -1364,6 +1365,70 @@ fn first_build_error(err: &str) -> Option<String> {
     })
 }
 
+/// The marker the loop's pacing reads: a stale round image is a wait, not a pool fault.
+pub const STALE_AMI_MARK: &str = "round AMI is stale";
+
+fn stale_ami_cause(out: &RunOut) -> Option<String> {
+    if out.rc == 0 || out.rc == 1 {
+        return None;
+    }
+    let lines: Vec<&str> = out.err.lines().map(str::trim).collect();
+    let from = lines.iter().rposition(|l| l.contains("acquire failed"))?;
+    let cause = lines[from..].join(" ");
+    cause.contains("round-ami-build").then(|| bounded_text(&cause))
+}
+
+/// A round whose image recipe is stale waits for the Round AMI build for the current recipe,
+/// triggering one when none is running; the wait is bounded by `round_ami_wait_secs`.
+#[derive(Default)]
+struct AmiWait {
+    began: Option<u64>,
+    triggered: bool,
+    idle_polls: u32,
+}
+
+impl AmiWait {
+    const POLL_SECS: u64 = 60;
+    const IDLE_POLLS: u32 = 3;
+
+    fn step(&mut self, w: &World, label: &str, c: &Ctx) -> bool {
+        let now = w.clock.now();
+        let began = *self.began.get_or_insert(now);
+        if now.saturating_sub(began) >= c.s.round_ami_wait_secs {
+            return false;
+        }
+        let Ok(home) = resolve(w, label, Some(&c.s.home_repo)) else {
+            return false;
+        };
+        let Some(home_path) = home.r.path.clone() else {
+            return false;
+        };
+        let Some(running) = w.forge.ami_runs(&c.s.forge, &home_path) else {
+            return false;
+        };
+        if let Some(run) = running.first() {
+            self.idle_polls = 0;
+            w.out(format!("queue.sh {label}: waiting for round AMI {run}"));
+        } else if !self.triggered {
+            let Some(land) = home.r.landref.as_deref() else {
+                return false;
+            };
+            if !w.forge.ami_dispatch(&c.s.forge, &home_path, ref_branch(land)) {
+                return false;
+            }
+            self.triggered = true;
+            w.out(format!("queue.sh {label}: no round AMI build was running; triggered one"));
+        } else {
+            self.idle_polls += 1;
+            if self.idle_polls >= Self::IDLE_POLLS {
+                return false;
+            }
+        }
+        w.clock.sleep(Self::POLL_SECS);
+        true
+    }
+}
+
 fn vm_fault_cause(err: &str) -> Option<String> {
     let line = err.lines().rev().find(|l| {
         let l = l.trim_start();
@@ -1520,14 +1585,24 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
         };
         let began = w.clock.now();
         let _ = fs::create_dir_all(rounds_dir(&c));
-        let out = w.scripts.round_vm(
-            &wt,
-            &results,
-            &base,
-            (batch, &c.r.name),
-            c.s.round_wall_secs,
-            &handle_of(&c, batch),
-        );
+        let run_vm = || {
+            w.scripts.round_vm(
+                &wt,
+                &results,
+                &base,
+                (batch, &c.r.name),
+                c.s.round_wall_secs,
+                &handle_of(&c, batch),
+            )
+        };
+        let mut out = run_vm();
+        let mut ami = AmiWait::default();
+        while stale_ami_cause(&out).is_some()
+            && !preempt_marker(&c, batch).exists()
+            && ami.step(w, label, &c)
+        {
+            out = run_vm();
+        }
         let _ = fs::remove_file(handle_of(&c, batch));
         if preempt_marker(&c, batch).exists() {
             w.out(format!("queue.sh {label}: round {batch} was preempted; its pass is recorded by `round preempt`"));
@@ -1553,9 +1628,10 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
                 w.clock.now().saturating_sub(began),
                 c.s.round_wall_secs
             )),
-            rc => Some(match vm_fault_cause(&out.err) {
-                Some(c) => format!("round-vm exited {rc}: {c}"),
-                None => format!("round-vm exited {rc}"),
+            rc => Some(match (stale_ami_cause(&out), vm_fault_cause(&out.err)) {
+                (Some(cause), _) => format!("{STALE_AMI_MARK}: {cause}"),
+                (None, Some(c)) => format!("round-vm exited {rc}: {c}"),
+                (None, None) => format!("round-vm exited {rc}"),
             }),
         };
         if let Some(why) = fault {

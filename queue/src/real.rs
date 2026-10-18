@@ -520,6 +520,7 @@ impl Lib for RealLib {
         let mailbox = spira_config::process::cfg("SPIRA_MAIL_SESSION_MAILBOX")?;
         let round_wall_secs =
             spira_config::process::cfg_parse::<u64>("SPIRA_ROUND_CERTIFY_WALL_SECS")?;
+        let round_ami_wait_secs = spira_config::process::cfg_parse::<u64>("SPIRA_ROUND_AMI_WAIT_SECS")?;
         let rounds_max = spira_config::process::cfg_parse::<usize>("SPIRA_QUEUE_ROUNDS_MAX")?;
         let s = Settings {
             home: PathBuf::from(g("home")),
@@ -558,6 +559,7 @@ impl Lib for RealLib {
             git_email,
             mailbox,
             round_wall_secs,
+            round_ami_wait_secs,
             rounds_max,
         };
         let path = reg.root(&name);
@@ -1296,6 +1298,16 @@ impl Forge for RealForge {
     }
     fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str) {
         let _ = ok(Command::new(forge).arg("workflow-rerun").arg(repo).arg(run));
+    }
+    fn ami_runs(&self, forge: &Path, repo: &Path) -> Option<Vec<String>> {
+        let text = stdout_of(Command::new(forge).arg("ami-runs").arg(repo))?;
+        if text.lines().any(|l| l.trim() == "?") {
+            return None;
+        }
+        Some(text.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
+    }
+    fn ami_dispatch(&self, forge: &Path, repo: &Path, ref_: &str) -> bool {
+        ok(Command::new(forge).arg("ami-dispatch").arg(repo).arg(ref_))
     }
 }
 

@@ -1653,6 +1653,35 @@ pub fn dispatch(gh: &dyn Gh, repo: &Path, workflow: &str, ref_: &str, suites: &s
     }
 }
 
+pub const ROUND_AMI_WORKFLOW: &str = "round-ami-build.yml";
+
+/// The Round AMI runs not yet completed, one id per line; `?` when the forge cannot be read,
+/// so a caller never mistakes an unreadable forge for "no build is running".
+pub fn ami_runs(gh: &dyn Gh, repo: &Path) -> Out {
+    let r = gh.call(
+        Some(repo),
+        &["run", "list", "--workflow", ROUND_AMI_WORKFLOW, "--limit", "20", "--json", "databaseId,status"],
+    );
+    let Some(runs) = (r.code == 0).then(|| parse(&r.stdout)).flatten().and_then(|v| v.as_array().cloned()) else {
+        return ok(vec!["?".into()]);
+    };
+    ok(runs
+        .iter()
+        .filter(|run| matches!(jstr(run, "status").as_deref(), Some("queued" | "in_progress" | "waiting" | "pending" | "requested")))
+        .filter_map(|run| run.get("databaseId").and_then(Value::as_u64))
+        .map(|id| id.to_string())
+        .collect())
+}
+
+pub fn ami_dispatch(gh: &dyn Gh, repo: &Path, ref_: &str) -> Out {
+    if ref_.is_empty() {
+        eprintln!("forge: ami-dispatch: ref required");
+        return fail(vec![]);
+    }
+    let r = gh.call(Some(repo), &["workflow", "run", ROUND_AMI_WORKFLOW, "--ref", ref_]);
+    Out { code: r.code, lines: passthrough(&r) }
+}
+
 fn passthrough(r: &GhOut) -> Vec<String> {
     let t = r.text();
     if t.is_empty() {
