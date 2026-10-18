@@ -17,6 +17,23 @@
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
+      terraformVersion = "1.16.6";
+      # nixpkgs' terraform is source-built under the BSL; this is HashiCorp's own release zip,
+      # pinned by version and checksum (hashes from terraform_<version>_SHA256SUMS).
+      terraform = pkgs.stdenv.mkDerivation {
+        pname = "terraform";
+        version = terraformVersion;
+        src = pkgs.fetchurl {
+          url = "https://releases.hashicorp.com/terraform/${terraformVersion}/terraform_${terraformVersion}_linux_amd64.zip";
+          hash = "sha256-OANLONAwljmaehJkoUVhqAKbK0lv0fFpRSZW5Tlo8bc=";
+        };
+        nativeBuildInputs = [ pkgs.unzip ];
+        sourceRoot = ".";
+        dontConfigure = true;
+        dontBuild = true;
+        dontFixup = true;
+        installPhase = "install -Dm755 terraform $out/bin/terraform";
+      };
     in {
       packages.${system} = {
         spira-env = pkgs.buildEnv {
@@ -37,7 +54,7 @@
             tailscale
             nodejs
             openssl
-          ];
+          ] ++ [ terraform ];
         };
         default = self.packages.${system}.spira-env;
       };

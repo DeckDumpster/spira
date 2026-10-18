@@ -220,6 +220,15 @@ version_min = ""
 version_probe = "go version"
 
 [[dep]]
+name = "terraform"
+tier = "dev"
+provider = "spira-env"
+purpose = "formatting and testing infrastructure roots (terraform fmt, terraform test) in the repos whose gate uses it. Provided by spira-env (flake.nix) as HashiCorp's own pinned release, so aeons, gates and rounds resolve one binary"
+version_min = "1.16.6"
+version_probe = "terraform version | head -n1"
+absent = "a repo whose format or gate command runs terraform fails, and the repo check reports terraform as not installed."
+
+[[dep]]
 name = "nix"
 tier = "dev"
 purpose = "builds the pinned spira-env (flake.nix) that build-bd.sh --from-flake and build-aerc.sh take bd and go from at release-build time"
