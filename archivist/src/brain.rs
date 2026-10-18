@@ -10,9 +10,13 @@ use std::process::{Command, Stdio};
 
 pub type Snapshot = BTreeMap<String, String>;
 
+const LOCAL_DEADLINE_SECS: &str = "5";
+const NETWORK_DEADLINE_SECS: &str = "60";
+
 fn git(dir: &Path, args: &[&str], stdin: Option<&str>) -> Result<String, String> {
-    let mut c = Command::new("git");
-    c.arg("-C").arg(dir).args(args).stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let network = matches!(args.first(), Some(&"pull") | Some(&"push"));
+    let mut c = Command::new("timeout");
+    c.arg(if network { NETWORK_DEADLINE_SECS } else { LOCAL_DEADLINE_SECS }).arg("git").arg("-C").arg(dir).args(args).stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = c.spawn().map_err(|e| format!("git {}: {e}", args.join(" ")))?;
     if let (Some(text), Some(mut si)) = (stdin, child.stdin.take()) {
         let _ = si.write_all(text.as_bytes());
