@@ -43,6 +43,7 @@ pub mod proof;
 pub mod registry;
 pub mod release_env;
 pub mod release_skew;
+pub mod repo_admin;
 pub mod repos;
 pub mod resolve;
 pub mod room;
