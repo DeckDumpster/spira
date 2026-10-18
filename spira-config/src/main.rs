@@ -583,6 +583,98 @@ fn cmd_repo_containment_check() -> ExitCode {
     }
 }
 
+fn cmd_repo_add(args: &[String]) -> ExitCode {
+    const USAGE: &str = "usage: spira-config repo add <name> --path P --queue local|forge [--remote URL] [--land-ref R] [--format CMD] [--gate CMD]";
+    let Some(name) = args.first().filter(|a| !a.starts_with("--")) else {
+        eprintln!("{USAGE}");
+        return ExitCode::FAILURE;
+    };
+    let (mut path, mut queue, mut remote, mut land_ref, mut format, mut gate) =
+        (None, None, None, None, String::new(), String::new());
+    let mut i = 1;
+    while i < args.len() {
+        let val = args.get(i + 1).cloned();
+        match (args[i].as_str(), val) {
+            ("--path", Some(v)) => path = Some(PathBuf::from(v)),
+            ("--queue", Some(v)) => queue = spira_config::repo_admin::Queue::parse(&v),
+            ("--remote", Some(v)) => remote = Some(v),
+            ("--land-ref", Some(v)) => land_ref = Some(v),
+            ("--format", Some(v)) => format = v,
+            ("--gate", Some(v)) => gate = v,
+            _ => {
+                eprintln!("{USAGE}");
+                return ExitCode::FAILURE;
+            }
+        }
+        i += 2;
+    }
+    let (Some(path), Some(queue)) = (path, queue) else {
+        eprintln!("{USAGE}");
+        return ExitCode::FAILURE;
+    };
+    let home = spira_config::resolve::locate_home_for_process().unwrap_or_default();
+    let env_map = spira_config::repos::registry_env(env::vars().collect(), &home);
+    let targets = spira_config::repo_admin::Targets {
+        map: env_map
+            .get("SPIRA_REPO_MAP")
+            .filter(|p| !p.is_empty())
+            .map(PathBuf::from),
+        toml: spira_config::locate::locate(None).found(),
+    };
+    let a = spira_config::repo_admin::AddArgs {
+        name: name.clone(),
+        path,
+        queue,
+        remote,
+        land_ref,
+        format,
+        gate,
+    };
+    match spira_config::repo_admin::add(&a, &targets) {
+        Ok(did) => {
+            for d in &did {
+                println!("repo add: {d}");
+            }
+            if did.is_empty() {
+                println!("repo add: {name} already registered, nothing changed");
+            }
+            cmd_repo_check(&repo_registry(), &[name.clone()])
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn cmd_repo_check(reg: &Registry, args: &[String]) -> ExitCode {
+    let names: Vec<String> = match args.first().map(String::as_str) {
+        Some("--all") => reg.all(),
+        Some(n) if !n.starts_with("--") => vec![n.to_string()],
+        _ => {
+            eprintln!("usage: spira-config repo check <name>|--all");
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut red = false;
+    for name in &names {
+        for p in spira_config::repo_admin::check(reg, name) {
+            println!(
+                "{} {name}: {}: {}",
+                if p.ok { "ok  " } else { "FAIL" },
+                p.name,
+                p.detail
+            );
+            red |= !p.ok;
+        }
+    }
+    if red {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
 /// `repo <field|names|all|home-repo|root|land|land-queued|gate|format|base|name-at|same|
 /// containment-check|landref|ref-remote|ref-branch|qualify-base-ref|landrefs|publish-forge>
 /// ...` — the CLI door onto [`spira_config::repos`] for the bash scripts that still call
@@ -622,6 +714,8 @@ fn cmd_repo(args: &[String]) -> ExitCode {
             }
             ExitCode::SUCCESS
         }
+        Some("add") => cmd_repo_add(&args[1..]),
+        Some("check") => cmd_repo_check(&reg, &args[1..]),
         Some("home-repo") => {
             println!("{}", reg.home_repo());
             ExitCode::SUCCESS
@@ -817,7 +911,7 @@ fn cmd_repo(args: &[String]) -> ExitCode {
             eprintln!(
                 "usage: spira-config repo <field|names|all|home-repo|root|land|land-queued|\n\
                  \x20            gate|format|base|name-at|same|containment-check|landref|\n\
-                 \x20            ref-remote|ref-branch|qualify-base-ref|landrefs|publish-forge> ..."
+                 \x20            ref-remote|ref-branch|qualify-base-ref|landrefs|publish-forge|add|check> ..."
             );
             ExitCode::FAILURE
         }

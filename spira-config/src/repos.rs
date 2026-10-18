@@ -317,6 +317,11 @@ impl Registry {
         self.map_present
     }
 
+    /// Whether a `[publish.<name>]` block exists for `name`.
+    pub fn publish_declared(&self, name: &str) -> bool {
+        self.publish.contains_key(name)
+    }
+
     /// `spira_home_repo`.
     pub fn home_repo(&self) -> &str {
         &self.home
