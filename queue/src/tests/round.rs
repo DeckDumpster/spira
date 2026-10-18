@@ -1466,17 +1466,20 @@ fn two_green_rounds(t: &T) {
 }
 
 #[test]
-fn a_later_round_with_no_file_in_common_lands_on_its_evidence_after_the_earlier_one() {
+fn a_later_round_with_no_file_in_common_is_still_certified_on_the_merged_tree_before_it_lands() {
     let t = concurrent_world();
     two_green_rounds(&t);
     t.git.stat("b0", "merged-ta", &[("x.rs", 1, 0)]);
     t.git.stat("b0", "merged-tb", &[("y.rs", 1, 0)]);
     assert_eq!(t.run(&["round", "land", "r-1"]), 0, "{}", t.err());
-    assert_eq!(t.landed_ref().as_deref(), Some("merged-ta"));
+    assert_eq!(t.run(&["round", "land", "r-2"]), 1);
+    assert!(t.err().contains("files in common with what landed: none") && t.err().contains("it is not landed"), "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("merged-ta"), "nothing of the later round landed on a pass it did not earn");
+    assert!(t.landing_log().contains("QUEUE ROUND-REMERGE"), "{}", t.landing_log());
+    assert_eq!(round_phase(&t), "REBUILDING");
+    assert_eq!(t.run(&["round", "certify", "r-2"]), 0, "{}", t.err());
     assert_eq!(t.run(&["round", "land", "r-2"]), 0, "{}", t.err());
-    assert_eq!(t.landed_ref().as_deref(), Some("merged-tb@merged-ta"), "the later round lands on the new ref");
-    assert!(t.landing_log().contains("QUEUE ROUND-REMERGE") && t.landing_log().contains("shared=none"), "{}", t.landing_log());
-    assert!(t.lc.has("land r-2 4 merged-tb@merged-ta") || t.lc.calls.borrow().iter().any(|c| c.contains("land r-2")), "{:?}", t.lc.calls.borrow());
+    assert_eq!(t.landed_ref().as_deref(), Some("merged-tb@merged-ta"));
 }
 
 #[test]
@@ -1487,7 +1490,7 @@ fn a_later_round_sharing_a_file_with_the_landed_one_goes_back_to_certify_on_the_
     t.git.stat("b0", "merged-tb", &[("shared.rs", 1, 0)]);
     assert_eq!(t.run(&["round", "land", "r-1"]), 0, "{}", t.err());
     assert_eq!(t.run(&["round", "land", "r-2"]), 1);
-    assert!(t.err().contains("shares 1 file(s) with what landed (shared.rs)") && t.err().contains("it is not landed"), "{}", t.err());
+    assert!(t.err().contains("files in common with what landed: shared.rs") && t.err().contains("it is not landed"), "{}", t.err());
     assert_eq!(t.landed_ref().as_deref(), Some("merged-ta"), "nothing of the later round landed");
     let rec = kv_of(&t, "round");
     assert_eq!((rec["batch_id"].as_str(), rec["base"].as_str(), rec["head"].as_str()), ("r-2", "merged-ta", "merged-tb@merged-ta"));
