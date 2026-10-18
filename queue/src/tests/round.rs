@@ -553,6 +553,18 @@ fn certify_never_reads_a_harness_fault_as_green_or_red() {
 }
 
 #[test]
+fn a_round_vm_exit_names_the_failure_the_vm_logged() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    let err = "  ok      tmux\n  FAIL    terraform — not found on PATH and not waived\n23 ok, 1 FAIL\nround-vm: IMAGE-BUILD-FAILED: img could not be built on this VM\n";
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 3, out: String::new(), err: err.into() };
+    *t.scripts.round_vm_results.borrow_mut() = vec![];
+    assert_eq!(t.run(&["round", "certify", &batch]), 4);
+    assert!(t.err().contains("round-vm exited 3: round-vm: IMAGE-BUILD-FAILED: img could not be built"), "{}", t.err());
+}
+
+#[test]
 fn a_pass_whose_tests_overran_the_cap_is_a_fault_even_with_every_verdict_in() {
     let t = round_world();
     assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
