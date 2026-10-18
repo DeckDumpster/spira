@@ -1321,6 +1321,11 @@ pub fn testenv_cut_at_cap(text: &str) -> bool {
     text.lines().map(str::trim).any(|l| l.starts_with("VERDICT FAULT") && (l.contains("reason=deadline-suites") || l.contains("reason=over-cap")))
 }
 
+/// True when `text` is testenv's FAULT verdict for a run that refused before any test ran.
+pub fn testenv_ran_nothing(text: &str) -> bool {
+    text.lines().map(str::trim).any(|l| l.starts_with("VERDICT FAULT") && l.split_whitespace().any(|w| w == "ran=0"))
+}
+
 /// A cap breach is the host's when the 1-minute load average exceeds the cores.
 pub fn over_cap_from_load(text: &str, load: Option<f64>, cores: usize) -> bool {
     testenv_cut_at_cap(text) && load.is_some_and(|l| l > cores as f64)
@@ -1500,6 +1505,10 @@ fn local_tier_keyed(env: &Env, repo: &Repo, rev: &str, mark: PathBuf) -> Result<
     let (load, cores) = host_load();
     if over_cap_from_load(&text, load, cores) {
         return Err(TierEnd::Unjudged(format!("testenv cut at its wall cap with load {} on {cores} cores", load.unwrap_or(0.0))));
+    }
+    if testenv_ran_nothing(&text) {
+        let reason = text.lines().map(str::trim).find(|l| l.starts_with("VERDICT FAULT")).unwrap_or("");
+        return Err(TierEnd::Unjudged(format!("testenv ran no test ({reason})")));
     }
     Err(TierEnd::Red(local_red_evidence(out.status.code(), &text)))
 }
@@ -4052,6 +4061,23 @@ mod local_tier_tests {
     }
 
     #[test]
+    fn a_run_that_ran_no_test_is_not_a_landing_ref_red_and_is_retried() {
+        let script = "#!/bin/sh\nif [ -f \"$0.ok\" ]; then exit 0; fi\necho 'scratch-short: MemAvailable below floor'\necho 'VERDICT FAULT rc=2 ran=0 reason=scratch-short'\nexit 2\n";
+        let (_d, env, repo) = fixture("lt-ran0", script);
+        assert!(matches!(landing_ref_fault(&env, &repo, "base1"), Err(_)));
+        assert!(!local_fault_path(&env, &repo, "base1").exists());
+        fs::write(format!("{}.ok", env.testenv_bin.display()), "").unwrap();
+        assert!(landing_ref_fault(&env, &repo, "base1").unwrap().is_none());
+    }
+
+    #[test]
+    fn a_run_that_ran_tests_and_failed_is_still_a_landing_ref_red() {
+        let (_d, env, repo) = fixture("lt-ran3", "#!/bin/sh\necho 'tier X RED'\necho 'VERDICT RED rc=1 ran=3'\nexit 1\n");
+        let (ev, first) = landing_ref_fault(&env, &repo, "base1").unwrap().unwrap();
+        assert!(ev.contains("tier X") && first);
+    }
+
+    #[test]
     fn a_missing_testenv_refuses() {
         let (_d, mut env, repo) = fixture("lt-missing", "#!/bin/sh\nexit 0\n");
         env.testenv_bin = env.run.join("no-such-testenv");
@@ -4076,6 +4102,9 @@ mod fences_verdict_tests {
         assert!(super::testenv_cut_at_cap("x\nVERDICT FAULT rc=2 ran=1 reason=over-cap"));
         assert!(super::testenv_cut_at_cap("x\n  VERDICT FAULT rc=2 ran=3 reason=deadline-suites\r\n"));
         assert!(!super::testenv_cut_at_cap("  VERDICT FAULT rc=2 ran=0 reason=container-run"));
+        assert!(super::testenv_ran_nothing("x\nVERDICT FAULT rc=2 ran=0 reason=scratch-short\n"));
+        assert!(!super::testenv_ran_nothing("VERDICT FAULT rc=2 ran=3 reason=over-cap"));
+        assert!(!super::testenv_ran_nothing("VERDICT RED rc=1 ran=4"));
     }
 
     #[test]
