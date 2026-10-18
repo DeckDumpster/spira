@@ -15,6 +15,18 @@ pub fn ref_hash(reference: &str) -> String {
     hex[..8].to_string()
 }
 
+/// external_ref is a fixed-width column: a longer key is a permanent create error, so a
+/// spooled entry written before its filer bounded the key would retry forever. An overlong
+/// key keeps a readable prefix plus the hash of the whole.
+pub fn bound_ref(reference: &str) -> String {
+    const MAX: usize = 160;
+    if reference.chars().count() <= MAX {
+        return reference.to_string();
+    }
+    let head: String = reference.chars().take(MAX - 9).collect();
+    format!("{head}:{}", ref_hash(reference))
+}
+
 /// incident.sh sanitises SPIRA_INCIDENT_CAUSE with
 /// `tr -c 'a-zA-Z0-9-' '-' | sed 's/-\{2,\}/-/g;s/^-//;s/-$//'`, defaulting to "unrecorded"
 /// when that collapses to nothing. A space in a label would otherwise split it into two
@@ -311,6 +323,17 @@ pub fn incident_labels(supplied: Option<&str>, scope: Option<&str>, incident_lab
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bound_ref_keeps_short_keys_and_hashes_long_ones() {
+        assert_eq!(bound_ref("incident:foo"), "incident:foo");
+        let a = format!("basefail-local:r:s:{}", "x".repeat(900));
+        let b = format!("{a}y");
+        assert!(bound_ref(&a).chars().count() <= 160);
+        assert_eq!(bound_ref(&a), bound_ref(&a));
+        assert_ne!(bound_ref(&a), bound_ref(&b));
+        assert!(bound_ref(&a).starts_with("basefail-local:r:s:"));
+    }
 
     #[test]
     fn ref_hash_is_deterministic_and_8_hex_chars() {
