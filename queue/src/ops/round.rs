@@ -375,6 +375,10 @@ pub(super) fn summon_mender(
         w.err(format!("queue.sh round failed: WARNING — no mender bead filed for {suite} of {batch}: spira-lc cannot say which pass it is on"));
         return;
     };
+    if c.r.name.is_empty() {
+        w.err(format!("queue.sh round failed: WARNING — no mender bead filed for {suite} of {batch}: the repo is unnamed, so the bead could not be claimed"));
+        return;
+    }
     let marker = rounds_dir(c).join(format!("{batch}.mender-{pass}-{suite}"));
     sweep_menders(w, c);
     if marker.exists() {
@@ -580,6 +584,13 @@ pub(super) fn raise_forge_reds(w: &World, c: &Ctx, kv: &Kv, suites_csv: &str) {
     let Some(batch) = kv.get("batch_id").filter(|b| !b.is_empty()) else {
         return;
     };
+    let members = kv.members();
+    let reworking = members
+        .iter()
+        .any(|m| matches!(w.lc.bead_state(&m.id), Some((s, _)) if s == "REWORK"));
+    if members.len() == 1 || reworking {
+        return;
+    }
     for suite in suites_csv.split(',').filter(|s| !s.is_empty()) {
         if idents(w, "verdict", &[("suite", suite)]).is_err() {
             continue;
