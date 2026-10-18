@@ -138,13 +138,22 @@ pub fn truncate_note(note: &str) -> String {
     note.chars().map(|c| if c == '\n' || c == '\r' { ' ' } else { c }).take(300).collect()
 }
 
-/// Stores `thrash_tip`/`thrash_streak`/`thrash_last` as bead metadata and returns the new
-/// streak; best-effort — the write's own failure is swallowed, matching bash (which never
-/// checked `bd update`'s exit code either).
+/// The streak AFTER this bump. Each bump appends a `no-progress` fact whose cause is the
+/// tip; the streak is the number of such facts at this tip, so it survives a metadata
+/// read that comes back empty. `thrash_tip`/`thrash_streak`/`thrash_last` are still
+/// written for the brief; when the fact log cannot be written or read the metadata
+/// arithmetic decides, as before.
 pub fn thrash_streak_bump(store: &Store, id: &str, tip: &str, note: &str) -> u32 {
     let prev_tip = bead_metadata(store, id, "thrash_tip");
     let prev_streak: u32 = bead_metadata(store, id, "thrash_streak").trim().parse().unwrap_or(0);
-    let streak = next_streak(&prev_tip, prev_streak, tip);
+    let mut streak = next_streak(&prev_tip, prev_streak, tip);
+    if !tip.is_empty() && tip != "?" {
+        let counted = write_event(store, "harness", id, NO_PROGRESS_KIND, tip)
+            .and_then(|()| count_events_at(store, id, NO_PROGRESS_KIND, tip));
+        if let Ok(n) = counted {
+            streak = n.max(1);
+        }
+    }
     let note = truncate_note(note);
     let tip_arg = format!("thrash_tip={tip}");
     let streak_arg = format!("thrash_streak={streak}");
@@ -152,6 +161,15 @@ pub fn thrash_streak_bump(store: &Store, id: &str, tip: &str, note: &str) -> u32
     let args = ["update", id, "--set-metadata", &tip_arg, "--set-metadata", &streak_arg, "--set-metadata", &last_arg];
     let _ = store::run_full(store.bd_cmd(&args), store.timeout, None);
     streak
+}
+
+const NO_PROGRESS_KIND: &str = "no-progress";
+
+fn count_events_at(store: &Store, id: &str, etype: &str, cause: &str) -> Result<u32, String> {
+    let args = ["facts".to_string(), "--ids".into(), id.to_string(), "--kinds".into(), etype.to_string()];
+    let out = store::run(store.lc_cmd(&args), store.timeout)?;
+    let rows = crate::events::parse_rows(&out)?;
+    Ok(rows.iter().filter(|r| r.new_value.as_deref() == Some(bounded_cause(cause).as_str())).count() as u32)
 }
 
 // =========================================================================================
