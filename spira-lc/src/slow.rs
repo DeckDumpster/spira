@@ -5,7 +5,7 @@
 //! `stats_json` is the per-verb and per-caller counter of what this process has served.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::Write;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -110,6 +110,77 @@ pub fn request_done(verb: &str, caller: &str, took: Duration) {
     append(took, &verb, &caller, "REQUEST");
 }
 
+/// The p95 a served method must stay under (law-hot-reads-answer-in-500ms).
+pub const P95_LIMIT_MS: u64 = 500;
+const LATENCY_WINDOW: Duration = Duration::from_secs(300);
+const LATENCY_MIN_SAMPLES: usize = 10;
+const LATENCY_REALARM: Duration = Duration::from_secs(900);
+
+#[derive(Default)]
+pub struct Latency {
+    samples: BTreeMap<String, VecDeque<(std::time::Instant, u64)>>,
+    alarmed: BTreeMap<String, std::time::Instant>,
+}
+
+static LATENCY: Mutex<Latency> = Mutex::new(Latency { samples: BTreeMap::new(), alarmed: BTreeMap::new() });
+
+/// The method a request is measured under: the verb, and for `work` the lane verb after the
+/// bead id, so a slow brokered tool does not hide behind `work show`.
+pub fn method_of(argv: &[String]) -> String {
+    match argv.first().map(String::as_str) {
+        Some("work") => format!("work:{}", argv.get(2).map(String::as_str).unwrap_or("-")),
+        Some(v) => v.to_string(),
+        None => "-".to_string(),
+    }
+}
+
+/// Brokered batch jobs run a harness tool or aggregate the whole fact history; they are bounded
+/// by their own deadline, not the store-call ceiling.
+fn is_batch_method(method: &str) -> bool {
+    method == "facts-query" || method.strip_prefix("work:").is_some_and(crate::work::is_tool)
+}
+
+pub fn sample(method: &str, took: Duration) {
+    if let Ok(mut l) = LATENCY.lock() {
+        l.record(method, std::time::Instant::now(), took.as_millis() as u64);
+    }
+}
+
+/// One alarm line per method whose p95 over the window is past the limit, each at most once per
+/// re-alarm interval.
+pub fn latency_breaches(now: std::time::Instant) -> Vec<String> {
+    LATENCY.lock().map(|mut l| l.breaches(now, crate::db::now_epoch())).unwrap_or_default()
+}
+
+impl Latency {
+    fn record(&mut self, method: &str, now: std::time::Instant, ms: u64) {
+        if !is_batch_method(method) {
+            self.samples.entry(clean(method)).or_default().push_back((now, ms));
+        }
+    }
+
+    fn breaches(&mut self, now: std::time::Instant, epoch: i64) -> Vec<String> {
+        let mut out = Vec::new();
+        for (method, window) in self.samples.iter_mut() {
+            while window.front().is_some_and(|(t, _)| now.saturating_duration_since(*t) > LATENCY_WINDOW) {
+                window.pop_front();
+            }
+            if window.len() < LATENCY_MIN_SAMPLES {
+                continue;
+            }
+            let mut ms: Vec<u64> = window.iter().map(|(_, m)| *m).collect();
+            ms.sort_unstable();
+            let p95 = ms[(ms.len() * 95).div_ceil(100) - 1];
+            if p95 <= P95_LIMIT_MS || self.alarmed.get(method).is_some_and(|t| now.saturating_duration_since(*t) < LATENCY_REALARM) {
+                continue;
+            }
+            self.alarmed.insert(method.clone(), now);
+            out.push(format!("{epoch}\tLC-LATENCY\t{method}\tp95={p95}ms\tn={}\tlimit={P95_LIMIT_MS}ms", ms.len()));
+        }
+        out
+    }
+}
+
 pub fn stats_json() -> String {
     let Ok(c) = COUNTERS.lock() else { return "{}".to_string() };
     let verbs: serde_json::Map<String, serde_json::Value> =
@@ -201,6 +272,57 @@ fn append(took: Duration, verb: &str, caller: &str, sql: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fed(method: &str, durations: &[u64]) -> (Latency, std::time::Instant) {
+        let t0 = std::time::Instant::now();
+        let mut l = Latency::default();
+        for ms in durations {
+            l.record(method, t0, *ms);
+        }
+        (l, t0)
+    }
+
+    #[test]
+    fn a_slow_method_alarms_once_and_a_fast_one_never() {
+        let (mut l, t0) = fed("event-continuity", &[2400; 12]);
+        for _ in 0..12 {
+            l.record("show", t0, 3);
+        }
+        let got = l.breaches(t0, 7);
+        assert_eq!(got, ["7\tLC-LATENCY\tevent-continuity\tp95=2400ms\tn=12\tlimit=500ms"]);
+        assert!(l.breaches(t0, 8).is_empty(), "re-alarm waits out the interval");
+        assert_eq!(l.breaches(t0 + LATENCY_REALARM + Duration::from_secs(1), 9).len(), 0, "the window has emptied by then");
+    }
+
+    #[test]
+    fn p95_not_the_mean_decides() {
+        let mut ms = vec![10u64; 94];
+        ms.extend([900; 6]);
+        let (mut l, t0) = fed("ops-view", &ms);
+        assert_eq!(l.breaches(t0, 1).len(), 1, "6 of 100 over the limit puts p95 over it");
+        let mut ms = vec![10u64; 96];
+        ms.extend([900; 4]);
+        let (mut l, t0) = fed("ops-view", &ms);
+        assert!(l.breaches(t0, 1).is_empty(), "4 of 100 over the limit leaves p95 under it");
+    }
+
+    #[test]
+    fn too_few_samples_and_batch_methods_do_not_alarm() {
+        let (mut l, t0) = fed("list", &[4000; 9]);
+        assert!(l.breaches(t0, 1).is_empty());
+        let (mut l, t0) = fed("work:groom", &[4000; 20]);
+        assert!(l.breaches(t0, 1).is_empty());
+        let (mut l, t0) = fed("work:note", &[4000; 20]);
+        assert_eq!(l.breaches(t0, 1).len(), 1, "a store-only lane verb is held to the ceiling");
+    }
+
+    #[test]
+    fn a_work_request_is_measured_by_its_lane_verb() {
+        let a = |v: &[&str]| method_of(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(a(&["work", "sp-x", "note", "hi"]), "work:note");
+        assert_eq!(a(&["work", "sp-x", "groom", "sweep"]), "work:groom");
+        assert_eq!(a(&["ops-view", "ops_live"]), "ops-view");
+    }
 
     #[test]
     fn spira_caller_is_read_from_the_environment_block() {

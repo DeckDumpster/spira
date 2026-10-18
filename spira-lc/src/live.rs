@@ -215,6 +215,13 @@ pub struct Live {
     ambiguous: Mutex<Vec<(std::time::Instant, Option<Vec<String>>)>>,
     verify_from: Mutex<Option<std::time::Instant>>,
     cold: Mutex<ColdLoad>,
+    continuity: Mutex<crate::continuity::Tracker>,
+}
+
+impl Live {
+    pub fn continuity(&self) -> &Mutex<crate::continuity::Tracker> {
+        &self.continuity
+    }
 }
 
 /// The bookkeeping of a cold load in flight: the keys written since it began (their rows are

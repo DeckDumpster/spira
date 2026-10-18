@@ -552,6 +552,10 @@ const TOOLS: &[(&str, &str)] = &[
 // batch-job: a broker-run harness tool (groomer sweep, queue step), bounded at 300 s.
 const TOOL_SECS: u64 = 300;
 
+pub fn is_tool(verb: &str) -> bool {
+    TOOLS.iter().any(|(v, _)| *v == verb)
+}
+
 const ANY: &[&str] = &["*"];
 
 /// THE allow table: operation → the personas that may run it (`*`: every persona). An

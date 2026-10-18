@@ -121,6 +121,9 @@ pub fn run(args: &[String]) -> i32 {
         scope.spawn(move || loop {
             std::thread::sleep(SWEEP_EVERY);
             cold_tick(&sweeper);
+            continuity_tick(&sweeper);
+            crate::ops::epics_tick(&sweeper);
+            alarm_tick();
             if let Err(e) = crate::mending::expire_overdue(&sweeper, "spira-lc.sweep") {
                 eprintln!("spira-lc serve: mending sweep: {e:?}");
             }
@@ -148,6 +151,26 @@ fn cold_tick(conn: &Conn) {
             Ok(n) => eprintln!("spira-lc serve: {n} older rows in memory"),
             Err(e) => eprintln!("spira-lc serve: older rows not loaded, reads that need them go to Dolt: {e}"),
         }
+    }
+}
+
+fn continuity_tick(conn: &Conn) {
+    if let Err(e) = crate::continuity::tick(conn) {
+        eprintln!("spira-lc serve: event continuity not refreshed: {e}");
+    }
+}
+
+fn alarm_tick() {
+    let lines = crate::slow::latency_breaches(Instant::now());
+    if lines.is_empty() {
+        return;
+    }
+    let Some(path) = spira_config::process::cfg("SPIRA_RUN").ok().filter(|r| !r.is_empty()).map(|r| std::path::Path::new(&r).join("lc-latency.log")) else {
+        return;
+    };
+    let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+    if let Err(e) = std::fs::OpenOptions::new().create(true).append(true).open(&path).and_then(|mut f| f.write_all(text.as_bytes())) {
+        eprintln!("spira-lc serve: {}: {e}", path.display());
     }
 }
 
@@ -248,6 +271,7 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
         Err(refusal) => refusal,
     };
     crate::slow::request_done(&verb, &caller, received.elapsed());
+    crate::slow::sample(&crate::slow::method_of(&argv), received.elapsed());
     let _ = write_response(&stream, code, &out);
     let began = *started_work.lock().unwrap_or_else(|e| e.into_inner());
     let waited = began.unwrap_or_else(Instant::now).saturating_duration_since(accepted);
