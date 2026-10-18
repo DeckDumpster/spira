@@ -39,7 +39,7 @@ EVERY=40
 tl_config SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
     SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
     SPIRA_ARCHIVIST_IDLE="$IDLE" SPIRA_ARCHIVIST_EVERY="$EVERY" \
-    SPIRA_CHAMBER="$T/chamber" SPIRA_ARCHIVIST_TIMEOUT=10
+    SPIRA_CHAMBER="$T/chamber" SPIRA_ARCHIVIST_TIMEOUT=10 SPIRA_WIKI=
 
 # Build a synthetic transcript with a given number of turns and approximate context.
 mktranscript() {   # mktranscript <path> <turns> <ctx>
