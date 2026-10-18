@@ -220,7 +220,7 @@ HD="$(mktemp -d)"
 ID=11111111-2222-3333-4444-555555555555
 printf '%s\n' '#!/bin/sh' 'case "$(cat "$0.mode")" in fail) exit 3;; empty) exit 0;; *) echo "'$ID' R1 design";; esac' >"$HD/hunk"
 chmod +x "$HD/hunk"
-_want() { env -i PATH="$PATH" HOME="$HD" HUNK="$HD/hunk" COCKPIT_STATE="$HD/state" COCKPIT_SESSION=nosuch-$$ bash "${1:-$CR}" status 2>&1 | sed -n 's/^want: *//p'; }
+_want() { env -i PATH="$PATH" HOME="$HD" HUNK="$HD/hunk" COCKPIT_FORGET_SECS="${COCKPIT_FORGET_SECS:-}" COCKPIT_STATE="$HD/state" COCKPIT_SESSION=nosuch-$$ bash "${1:-$CR}" status 2>&1 | sed -n 's/^want: *//p'; }
 mkdir "$HD/state"; printf '%s\n' "$ID" >"$HD/state/dismissed"
 
 echo live >"$HD/hunk.mode"
