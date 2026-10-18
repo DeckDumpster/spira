@@ -1212,6 +1212,10 @@ impl<'a> Run<'a> {
             }
             Err(e) => self.log(&format!("{}: {e} — this session's builds are UNCACHED", self.f())),
         }
+        match spira_config::build::tf_plugin_cache(self.run_dir()) {
+            Ok(d) => env.set(spira_config::build::TF_PLUGIN_CACHE_ENV, &d.display().to_string()),
+            Err(e) => self.log(&format!("{}: no terraform provider cache ({e}) — terraform init downloads per worktree", self.f())),
+        }
         // THE WARM TARGET: the session builds into its slot's directory, kept between sessions
         // and worktrees (cargo's fingerprints cover the different checkout), so a second session
         // on a bead recompiles only what changed. The slot's lock is held until this returns.

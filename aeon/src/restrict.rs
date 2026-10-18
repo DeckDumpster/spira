@@ -96,6 +96,7 @@ const CONDITIONAL: &[&str] = &[
     "BEADS_ACTOR",
     "SPIRA_MAIL",
     "CARGO_TARGET_DIR",
+    "TF_PLUGIN_CACHE_DIR",
     "RUSTC_WRAPPER",
     "SPIRA_ADMIT_INNER",
     "SPIRA_ADMIT_WHO",

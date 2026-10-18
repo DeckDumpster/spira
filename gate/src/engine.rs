@@ -737,6 +737,12 @@ impl<'w, W: World> Trial<'w, W> {
                 e("SPIRA_VERDICT_REPEAT_CONSIDERED", repeat),
                 e("SPIRA_GATE_BUDGET", ctx.var("SPIRA_GATE_BUDGET")),
                 e("SPIRA_RUN", &self.s.run),
+                e(
+                    spira_config::build::TF_PLUGIN_CACHE_ENV,
+                    &spira_config::build::tf_plugin_cache(Path::new(&self.s.run))
+                        .map(|d| d.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                ),
                 // The runner's budget split and warm path (testenv DESIGN.md §11): the
                 // operator's knobs reach the trial they tune; unset = the runner's defaults.
                 e("SPIRA_TESTENV_SETUP_SHARE", ctx.var("SPIRA_TESTENV_SETUP_SHARE")),
