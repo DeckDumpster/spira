@@ -90,6 +90,8 @@ pub struct RepoCtx {
     pub map_base: String,
     /// `spira_publish_forge <name>`: (remote, branch).
     pub publish: Option<(String, String)>,
+    /// The repository is declared to publish nowhere (`SPIRA_PUBLISH_REMOTE_<NAME>=none`).
+    pub unpublished: bool,
     /// `git remote` of the checkout.
     pub remotes: Vec<String>,
 }

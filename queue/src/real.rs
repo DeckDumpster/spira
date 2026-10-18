@@ -432,6 +432,7 @@ impl Lib for RealLib {
         let landref = spira_config::repos::landref(&reg, &name).filter(|s| !s.is_empty());
         let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
         let publish = spira_config::repos::publish_forge(&reg, &name, &env_map);
+        let unpublished = spira_config::repos::publishes_nowhere(&name, &env_map);
         let remotes = path.as_deref().map(git_remotes).unwrap_or_default();
         let path = path.map(PathBuf::from);
         let r = RepoCtx {
@@ -442,6 +443,7 @@ impl Lib for RealLib {
             path,
             landref,
             publish,
+            unpublished,
             remotes,
         };
         Ok((s, r))
