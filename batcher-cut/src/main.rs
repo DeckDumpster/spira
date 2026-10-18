@@ -1427,8 +1427,9 @@ fn plan(land: &str, pass: Pass) -> Vec<Step> {
     }
 }
 
-/// The operator's two holds: `SPIRA_BATCHER_ENABLE` holds queue.local rounds (the Concierge cuts
-/// those by hand); `SPIRA_BATCHER_FORGE_ENABLE` holds queue.forge batches. Neither implies the other.
+/// The operator's two holds: `SPIRA_BATCHER_ENABLE` holds the home repository's queue.local rounds
+/// (the Concierge cuts those by hand) and no other repo's; `SPIRA_BATCHER_FORGE_ENABLE` holds
+/// queue.forge batches. Neither implies the other.
 #[derive(Clone, Copy)]
 struct Switches {
     local: bool,
@@ -1436,20 +1437,24 @@ struct Switches {
 }
 
 impl Switches {
-    fn admits(self, land: &str) -> bool {
-        if land == "queue.local" { self.local } else { self.forge }
+    fn admits(self, land: &str, is_home: bool) -> bool {
+        match land {
+            "queue.local" => self.local || !is_home,
+            _ => self.forge,
+        }
     }
 }
 
 fn drive_pass(
     repos: &[(String, String)],
+    home: &str,
     pass: Pass,
     on: Switches,
     mut run: impl FnMut(&str, &Step) -> Result<(), String>,
 ) -> Vec<String> {
     let mut failed = Vec::new();
     for (name, land) in repos {
-        if !on.admits(land) {
+        if !on.admits(land, name == home) {
             continue;
         }
         for step in plan(land, pass) {
@@ -1521,17 +1526,17 @@ fn paced_cut(env_: &Env, name: &str, one: &Opts) -> Result<(), String> {
 
 /// One scheduler pass over the repo map. `Pass::Local` is the harness's VM rounds, run one repo
 /// at a time; `Pass::Forge` settles and opens queue.forge batches. They run as separate units so
-/// a long VM round never delays a forge batch. `SPIRA_BATCHER_ENABLE=0` holds only the local
-/// rounds; `SPIRA_BATCHER_FORGE_ENABLE=0` holds only the forge batches.
+/// a long VM round never delays a forge batch. `SPIRA_BATCHER_ENABLE=0` holds only the home
+/// repository's local rounds; `SPIRA_BATCHER_FORGE_ENABLE=0` holds only the forge batches.
 fn rounds(o: &Opts, pass: Pass) -> Result<(), String> {
     let on = Switches { local: cfg("SPIRA_BATCHER_ENABLE")?.trim() != "0", forge: cfg("SPIRA_BATCHER_FORGE_ENABLE")?.trim() != "0" };
     if !on.local {
-        println!("batcher rounds: SPIRA_BATCHER_ENABLE=0 — the operator cuts local rounds");
+        println!("batcher rounds: SPIRA_BATCHER_ENABLE=0 — the operator cuts the home repository's local rounds");
     }
     if !on.forge {
         println!("batcher rounds: SPIRA_BATCHER_FORGE_ENABLE=0 — the operator cuts forge batches");
     }
-    if (pass == Pass::Local && !on.local) || (pass == Pass::Forge && !on.forge) || (pass == Pass::All && !on.local && !on.forge) {
+    if pass == Pass::Forge && !on.forge {
         return Ok(());
     }
     let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
@@ -1545,7 +1550,7 @@ fn rounds(o: &Opts, pass: Pass) -> Result<(), String> {
             page_held(&env_, name);
         }
     }
-    let failed = drive_pass(&repos, pass, on, |name, step| match step {
+    let failed = drive_pass(&repos, reg.home_repo(), pass, on, |name, step| match step {
         Step::Verdict => {
             let armed = find_repo(&env_, name).and_then(|r| io::forge_arm_queue(&r));
             settle_batch(&env_, name).and(armed)
@@ -1755,7 +1760,7 @@ mod tests {
             .collect();
         let run = |pass, enabled: Switches| {
             let mut seen = Vec::new();
-            let failed = drive_pass(&repos, pass, enabled, |n, s| {
+            let failed = drive_pass(&repos, "spira", pass, enabled, |n, s| {
                 seen.push(format!("{n}:{}", if *s == Step::Verdict { "verdict" } else { "cut" }));
                 Ok(())
             });
@@ -1772,7 +1777,7 @@ mod tests {
         let repos = vec![("spira".to_string(), "queue.local".to_string()), ("deck".to_string(), "queue".to_string())];
         let seen = |on| {
             let mut seen = Vec::new();
-            drive_pass(&repos, Pass::All, on, |n, _| {
+            drive_pass(&repos, "spira", Pass::All, on, |n, _| {
                 seen.push(n.to_string());
                 Ok(())
             });
@@ -1784,10 +1789,26 @@ mod tests {
     }
 
     #[test]
+    fn the_local_hold_holds_only_the_home_repo_and_a_sibling_queue_local_repo_is_still_cut() {
+        let repos = vec![("spira".to_string(), "queue.local".to_string()), ("cubby".to_string(), "queue.local".to_string())];
+        let seen = |on, pass| {
+            let mut seen = Vec::new();
+            drive_pass(&repos, "spira", pass, on, |n, _| {
+                seen.push(n.to_string());
+                Ok(())
+            });
+            seen
+        };
+        assert_eq!(seen(Switches { local: false, forge: true }, Pass::Local), ["cubby"]);
+        assert_eq!(seen(Switches { local: false, forge: false }, Pass::All), ["cubby"]);
+        assert_eq!(seen(Switches { local: true, forge: true }, Pass::Local), ["spira", "cubby"]);
+    }
+
+    #[test]
     fn one_repos_failure_does_not_stop_the_others_and_a_failed_verdict_still_cuts() {
         let repos = vec![("deck".to_string(), "queue".to_string()), ("poke".to_string(), "queue".to_string())];
         let mut seen = Vec::new();
-        let failed = drive_pass(&repos, Pass::Forge, ALL, |n, s| {
+        let failed = drive_pass(&repos, "spira", Pass::Forge, ALL, |n, s| {
             seen.push(format!("{n}:{}", if *s == Step::Verdict { "verdict" } else { "cut" }));
             if n == "deck" { Err("boom".into()) } else { Ok(()) }
         });
