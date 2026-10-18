@@ -900,6 +900,14 @@ fn first_build_error(err: &str) -> Option<String> {
     })
 }
 
+fn vm_fault_cause(err: &str) -> Option<String> {
+    let line = err.lines().rev().find(|l| {
+        let l = l.trim_start();
+        l.starts_with("FAIL ") || l.starts_with("round-vm: IMAGE-BUILD-FAILED") || l.starts_with("round-vm: cannot")
+    })?;
+    Some(line.trim().to_string())
+}
+
 pub(super) fn tail(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
     lines[lines.len().saturating_sub(n)..].join("\n")
@@ -1019,7 +1027,10 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
                 w.clock.now().saturating_sub(began),
                 c.s.round_wall_secs
             )),
-            rc => Some(format!("round-vm exited {rc}")),
+            rc => Some(match vm_fault_cause(&out.err) {
+                Some(c) => format!("round-vm exited {rc}: {c}"),
+                None => format!("round-vm exited {rc}"),
+            }),
         };
         if let Some(why) = fault {
             warn_unrecorded(w, label, batch, "the incomplete pass", pass_verdict_event(w, batch, &Verdict::Incomplete(&bounded_text(&why)), false));
