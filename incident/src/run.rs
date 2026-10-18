@@ -118,6 +118,8 @@ pub fn file_one(
     log: &mut Vec<String>,
 ) -> FileOutcome {
     let now = clock.now();
+    let bounded = decide::bound_ref(reference);
+    let reference = bounded.as_str();
     let hit = match dedup_incident(bd, cfg.db, reference, cfg.dedup_lookback_days, now) {
         Err(()) => {
             log.push(format!("database unreachable — {reference} stays spooled"));
