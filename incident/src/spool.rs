@@ -14,6 +14,7 @@ pub struct SpoolEntry {
     pub unit: String,
     pub incident_path: String,
     pub cause: String,
+    pub repo: Option<String>,
     pub body: Vec<u8>,
 }
 
@@ -22,10 +23,14 @@ pub struct SpoolEntry {
 /// the bash mid-cutover still drains correctly under the new binary.
 pub fn format_entry(e: &SpoolEntry) -> Vec<u8> {
     let mut out = format!(
-        "REF: {}\nTITLE: {}\nUNIT: {}\nINCIDENT_PATH: {}\nCAUSE: {}\n--\n",
+        "REF: {}\nTITLE: {}\nUNIT: {}\nINCIDENT_PATH: {}\nCAUSE: {}\n",
         e.reference, e.title, e.unit, e.incident_path, e.cause
     )
     .into_bytes();
+    if let Some(repo) = &e.repo {
+        out.extend_from_slice(format!("REPO: {repo}\n").as_bytes());
+    }
+    out.extend_from_slice(b"--\n");
     out.extend_from_slice(&e.body);
     out
 }
@@ -60,7 +65,8 @@ pub fn parse_entry(raw: &[u8]) -> Option<SpoolEntry> {
     let unit = field(&text, "UNIT").unwrap_or("?").to_string();
     let incident_path = field(&text, "INCIDENT_PATH").unwrap_or("?").to_string();
     let cause = field(&text, "CAUSE").unwrap_or("").to_string();
-    Some(SpoolEntry { reference, title, unit, incident_path, cause, body: body_bytes(raw) })
+    let repo = field(&text, "REPO").filter(|r| !r.is_empty()).map(str::to_string);
+    Some(SpoolEntry { reference, title, unit, incident_path, cause, repo, body: body_bytes(raw) })
 }
 
 /// A filesystem-safe filename component: incident.sh's `tr -c 'A-Za-z0-9._-' '_' | cut -c1-80`.
@@ -89,11 +95,28 @@ mod tests {
             unit: "foo.service".into(),
             incident_path: "?".into(),
             cause: "systemd-fail".into(),
+            repo: Some("pokedumpster".into()),
             body: b"line one\nline two\n".to_vec(),
         };
         let raw = format_entry(&e);
         let parsed = parse_entry(&raw).unwrap();
         assert_eq!(parsed, e);
+    }
+
+    #[test]
+    fn repo_survives_the_spool_and_absence_stays_absent() {
+        let mut e = SpoolEntry {
+            reference: "r".into(),
+            title: "t".into(),
+            unit: "u".into(),
+            incident_path: "p".into(),
+            cause: "c".into(),
+            repo: Some("dumpstar".into()),
+            body: b"b\n".to_vec(),
+        };
+        assert_eq!(parse_entry(&format_entry(&e)).unwrap().repo.as_deref(), Some("dumpstar"));
+        e.repo = None;
+        assert_eq!(parse_entry(&format_entry(&e)).unwrap().repo, None);
     }
 
     #[test]

@@ -298,6 +298,9 @@ fn file_new(
             cfg.home_repo.to_string()
         };
         bd.set_state(cfg.db, &id, &format!("repo={effective}"));
+        if !bd.set_repo(&id, &effective) {
+            log.push(format!("warning: {id} filed but its lifecycle row was not pointed at {effective}"));
+        }
     }
 
     if cfg.express {
@@ -437,6 +440,7 @@ mod tests {
         duplicated: RefCell<Vec<(String, String)>>,
         labels: RefCell<HashMap<String, Vec<String>>>,
         notes: RefCell<HashMap<String, Vec<String>>>,
+        repos: RefCell<HashMap<String, String>>,
         next_id: RefCell<u32>,
     }
 
@@ -495,6 +499,10 @@ mod tests {
             true
         }
         fn set_state(&self, _db: &str, _id: &str, _kv: &str) -> bool {
+            true
+        }
+        fn set_repo(&self, id: &str, repo: &str) -> bool {
+            self.repos.borrow_mut().insert(id.to_string(), repo.to_string());
             true
         }
         fn reopen(&self, _db: &str, id: &str, _cause: &str) -> bool {
@@ -819,6 +827,20 @@ mod tests {
         let out2 = file_one(&bd, &mailer, &clock, &c, "incident:y", "y failed", b"payload", "spira,incident", &mut log);
         assert!(matches!(out2, FileOutcome::Filed(_)));
         assert_eq!(mailer.sent.borrow().len(), 1, "a bead already labelled sin is never paged twice");
+    }
+
+    #[test]
+    fn declared_repo_is_written_to_the_lifecycle_row() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string(), "dumpstar".to_string()];
+        let mut c = cfg(&known);
+        c.repo_declared = Some("dumpstar");
+        let mut log = vec![];
+        let out = file_one(&bd, &mailer, &clock, &c, "incident:r", "r failed", b"payload", "spira,incident", &mut log);
+        let FileOutcome::Filed(id) = out else { panic!() };
+        assert_eq!(bd.repos.borrow().get(&id).map(String::as_str), Some("dumpstar"));
     }
 
     #[test]

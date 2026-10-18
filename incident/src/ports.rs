@@ -38,6 +38,8 @@ pub trait Bd {
     fn label_list(&self, db: &str, id: &str) -> Vec<String>;
     fn note(&self, db: &str, id: &str, text: &str) -> bool;
     fn set_state(&self, db: &str, id: &str, kv: &str) -> bool;
+    /// `spira-lc set-repo <id> <repo>`: the lifecycle row's repo, which a claim reads.
+    fn set_repo(&self, id: &str, repo: &str) -> bool;
     /// `spira-lc reopen <id> <cause>`: the machine's return-to-rework.
     fn reopen(&self, db: &str, id: &str, cause: &str) -> bool;
     /// `bd -C db dep relate <a> <b>`: a bidirectional see-also link (sp-nmlna: a fresh
