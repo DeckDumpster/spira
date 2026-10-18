@@ -652,10 +652,12 @@ pub fn refresh(w: &dyn World, repo_arg: Option<&str>) -> i32 {
         };
     }
 
+    let mut is_product_repo = false;
     if let Some(name) = repo_name_for_path(w, &repo) {
         if w.repo_land(&name) == "queue.local" {
             return refresh_check_only(w, &repo, &name);
         }
+        is_product_repo = name != w.home_repo();
     }
 
     let releases = match w.env("SPIRA_RELEASES") {
@@ -670,7 +672,7 @@ pub fn refresh(w: &dyn World, repo_arg: Option<&str>) -> i32 {
         .map(|r| w.is_symlink(&PathBuf::from(r).join("current")))
         .unwrap_or(false);
 
-    if current_is_symlink {
+    if current_is_symlink && !is_product_repo {
         if !w.is_git_repo(&repo) {
             w.out(&format!("skew: refresh: {} is not a git checkout", repo.display()));
             return 1;
@@ -697,8 +699,9 @@ pub fn refresh(w: &dyn World, repo_arg: Option<&str>) -> i32 {
             return 1;
         };
         let releases_dir = PathBuf::from(releases.unwrap());
-        if w.release_build_verify_activate(&sha, &repo, &base, &releases_dir).is_err() {
-            w.out(&format!("skew: refresh: release build/verify/activate of {sha} failed"));
+        if let Err(e) = w.release_build_verify_activate(&sha, &repo, &base, &releases_dir) {
+            let reason = e.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("release gave no output");
+            w.out(&format!("skew: refresh: release build/verify/activate of {sha} failed: {reason}"));
             return 1;
         }
         w.out(&format!("skew: refreshed — new release installed ({behind} commit(s))"));
