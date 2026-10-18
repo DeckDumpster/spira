@@ -1682,7 +1682,13 @@ pub fn record_escape(
 
 #[cfg(test)]
 mod local_red_ref_tests {
-    use super::local_red_ref;
+    use super::{landing_red_is_harness_fault, local_red_ref};
+
+    #[test]
+    fn only_the_home_repositorys_landing_red_is_a_harness_fault() {
+        assert!(landing_red_is_harness_fault("spira", "spira"));
+        assert!(!landing_red_is_harness_fault("spira", "fixturerepo"));
+    }
 
     #[test]
     fn key_is_bounded_and_distinguishes_detail() {
@@ -1693,6 +1699,34 @@ mod local_red_ref_tests {
         assert!(a.starts_with("basefail-local:dumpstar:local-tier:landing-ref-red:"));
         assert_ne!(a, local_red_ref("dumpstar", &s, &format!("{long}y")));
         assert_eq!(a, local_red_ref("dumpstar", &s, &long));
+    }
+}
+
+#[cfg(test)]
+mod landing_red_filing_tests {
+    use super::*;
+
+    fn stub(dir: &Path, log: &Path) -> String {
+        let p = dir.join("bead-stub.sh");
+        testkit::write_exe(&p, &format!("#!/bin/sh\necho \"$@\" >> {}\necho '{{\"id\":\"sp-new1\"}}'\n", log.display()));
+        p.display().to_string()
+    }
+
+    #[test]
+    fn a_non_harness_landing_red_is_a_builder_bead_for_that_repo_and_not_an_incident() {
+        let tmp = testkit::TempDir::new("landing-red");
+        let d = tmp.path().to_path_buf();
+        let log = d.join("argv");
+        let bead_sh = stub(&d, &log);
+        let env = lifecycle_tests_env(&d);
+        let repo = Repo { name: "fixturerepo".into(), path: d.clone(), base: "main".into(), forge: PathBuf::from("forge"), land: Land::Local };
+        let id = file_builder_landing_red(&env, &bead_sh, &|_| true, &repo, "abc123", "evidence", "landing-ref-red error[E0]").unwrap();
+        assert_eq!(id, "sp-new1");
+        let argv = fs::read_to_string(&log).unwrap();
+        assert!(argv.contains("--for builder --repo fixturerepo"), "{argv}");
+        assert!(!argv.contains("incident") && !argv.contains("--for ops"), "{argv}");
+        let again = file_builder_landing_red(&env, &bead_sh, &|_| true, &repo, "def456", "evidence", "landing-ref-red error[E0]");
+        assert_eq!(fs::read_to_string(&log).unwrap().lines().count(), 1, "open bead blocks a second filing: {again:?}");
     }
 }
 
@@ -1752,6 +1786,61 @@ pub fn file_local_red_incident(
     if id.is_empty() {
         return Err(format!("incident.sh file: no id returned: {out}"));
     }
+    Ok(id)
+}
+
+/// Where a red on a repository's own landing ref is filed: the home repository's is a harness
+/// fault for Ops; any other repository's fix is code only that repository's builder can change.
+pub fn landing_red_is_harness_fault(home_repo: &str, repo: &str) -> bool {
+    home_repo == repo
+}
+
+fn landing_red_marker(env: &Env, repo: &str, key: &str) -> PathBuf {
+    let safe: String = key.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+    env.queue_dir.join(repo).join(format!("landing-red-{safe}"))
+}
+
+/// File a red landing ref: an Ops incident for the home repository, a builder bead for any
+/// other. The builder bead is deduplicated per repo+tier+reason by a marker holding its id,
+/// the way the incident is by its ref: while that bead is open, no second one is filed.
+pub fn file_landing_ref_red(env: &Env, repo: &Repo, base: &str, evidence: &str, reason: &str) -> Result<String, String> {
+    let suites = ["local-tier".to_string()];
+    if landing_red_is_harness_fault(registry(env).home_repo(), &repo.name) {
+        return file_local_red_incident(env, repo, &suites, base, evidence, reason);
+    }
+    file_builder_landing_red(env, "bead.sh", &|id| bead_open(env, id), repo, base, evidence, reason)
+}
+
+fn file_builder_landing_red(env: &Env, bead_sh: &str, open: &dyn Fn(&str) -> bool, repo: &Repo, base: &str, evidence: &str, reason: &str) -> Result<String, String> {
+    let suites = ["local-tier".to_string()];
+    let marker = landing_red_marker(env, &repo.name, &local_red_ref(&repo.name, &suites, reason));
+    if let Some(id) = fs::read_to_string(&marker).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+        if open(&id) {
+            return Ok(id);
+        }
+    }
+    let title = format!("Landing ref red ({reason}) on {} — nothing can land", suites.join(","));
+    let body = format!(
+        "The declared tiers are red on {base}, the landing ref itself, so no member can be blamed and nothing lands until it is green.\n\nDeliverable: fix the red on the landing ref in this repository and land the fix.\n\n{}",
+        batcher::core::base_fail_body(&repo.name, base, &suites, evidence)
+    );
+    let tmp_dir = env.run.join("tmp");
+    fs::create_dir_all(&tmp_dir).map_err(|e| format!("{}: {e}", tmp_dir.display()))?;
+    let tmp = tmp_dir.join(format!("landing-red-{}-{}.txt", repo.name, now()));
+    fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    let out = run(
+        Command::new(bead_sh)
+            .args(["file", &title, "--for", "builder", "--repo", &repo.name, "--priority", "1", "--harness-title", "--body-file"])
+            .arg(&tmp)
+            .arg("--json"),
+        "bead.sh file",
+    );
+    let _ = fs::remove_file(&tmp);
+    let id = bead_id(&out?)?;
+    if let Some(dir) = marker.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    let _ = fs::write(&marker, &id);
     Ok(id)
 }
 

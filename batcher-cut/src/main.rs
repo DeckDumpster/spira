@@ -717,7 +717,7 @@ fn forge_local_tier(
 }
 
 /// Runs one member's declared tiers and handles the outcome: a red member is returned to rework
-/// with the compiler's locations; a red landing ref is a fault of the check, filed once for Ops.
+/// with the compiler's locations; a red landing ref is a fault of the check, filed once: for Ops when it is the home repository, else as a builder bead for that repository.
 /// Returns whether a check actually ran.
 fn check_forge_member(env_: &Env, repo: &Repo, start_sha: &str, m: &Member) -> bool {
     match io::local_tier_member(env_, repo, start_sha, &m.tip) {
@@ -746,9 +746,9 @@ fn check_forge_member(env_: &Env, repo: &Repo, start_sha: &str, m: &Member) -> b
                 if first && !io::testenv_cut_at_cap(&fault) {
                     let first_error = fault.lines().find(|l| l.contains("error")).or_else(|| fault.lines().last()).unwrap_or("").trim().to_string();
                     let reason = format!("landing-ref-red {first_error}");
-                    match io::file_local_red_incident(env_, repo, &["local-tier".to_string()], start_sha, &fault, &reason) {
-                        Ok(id) => println!("batcher {}: filed {id} for Ops", repo.name),
-                        Err(e) => println!("batcher {}: could not file for Ops: {e}", repo.name),
+                    match io::file_landing_ref_red(env_, repo, start_sha, &fault, &reason) {
+                        Ok(id) => println!("batcher {}: filed {id} for the landing-ref red", repo.name),
+                        Err(e) => println!("batcher {}: could not file the landing-ref red: {e}", repo.name),
                     }
                 }
                 return true;
@@ -849,9 +849,9 @@ fn check_forge_pool(env_: &Env, repo: &Repo, base: &str, pool: &[Member]) {
                     if first && !io::testenv_cut_at_cap(&fault) {
                         let first_error = fault.lines().find(|l| l.contains("error")).or_else(|| fault.lines().last()).unwrap_or("").trim().to_string();
                         let reason = format!("landing-ref-red {first_error}");
-                        match io::file_local_red_incident(env_, repo, &["local-tier".to_string()], base, &fault, &reason) {
-                            Ok(id) => println!("batcher {}: filed {id} for Ops", repo.name),
-                            Err(e) => println!("batcher {}: could not file for Ops: {e}", repo.name),
+                        match io::file_landing_ref_red(env_, repo, base, &fault, &reason) {
+                            Ok(id) => println!("batcher {}: filed {id} for the landing-ref red", repo.name),
+                            Err(e) => println!("batcher {}: could not file the landing-ref red: {e}", repo.name),
                         }
                     }
                     return;
