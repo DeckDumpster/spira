@@ -186,6 +186,11 @@ gh-provenance|daemon|gh-intake provenance watch --interval 900|gh-intake provena
 # appends one JSON line per key whose first break it finds, and a clean log writes nothing.
 event-continuity|log|@SPIRA_RUN@/event-continuity.log
 
+# LC-LATENCY is the alarm for a spira-lc method whose p95 over five minutes is past the 500 ms
+# ceiling: lc-serve appends one line per breach (re-alarmed every 15 minutes) and nothing else
+# writes the log. Brokered tool verbs (groom, queue, ...) and facts-query are batch jobs and exempt.
+lc-latency|log|@SPIRA_RUN@/lc-latency.log
+
 # BEAD-SWEEP classifies every live bead (OK, BLOCKED, HELD, ASK, SUSPECT) on a half-hour cadence
 # and raises each SUSPECT class — poison, unanswered ask hold, stale manual hold, rowless bead,
 # stale blocked edge, unclaimed rework, expired lease, certified with no batch — as an inbox line

@@ -85,18 +85,37 @@ const EPICS_TTL_SECS: i64 = 60;
 
 static EPICS_CACHE: std::sync::Mutex<Option<(i64, Value)>> = std::sync::Mutex::new(None);
 
+/// Past this age even a serving process recomputes on the request, in case its sweeper is down.
+const EPICS_MAX_AGE_SECS: i64 = 600;
+
 fn epics_cached(conn: &Conn, now: i64) -> Result<Value, String> {
+    let ttl = if conn.live.is_some() { EPICS_MAX_AGE_SECS } else { EPICS_TTL_SECS };
     if let Some((at, v)) = EPICS_CACHE.lock().ok().and_then(|c| c.clone()) {
-        if now - at < EPICS_TTL_SECS {
+        if now - at < ttl {
             return Ok(v);
         }
     }
+    epics_refresh(conn, now)
+}
+
+fn epics_refresh(conn: &Conn, now: i64) -> Result<Value, String> {
     let rows = conn.query(EPICS_SQL).map_err(|e| format!("{e:?}"))?;
     let v = epics_rollup(&rows);
     if let Ok(mut c) = EPICS_CACHE.lock() {
         *c = Some((now, v.clone()));
     }
     Ok(v)
+}
+
+/// The serving process keeps the rollup warm from its sweeper, so no request pays for the aggregate.
+pub fn epics_tick(conn: &Conn) {
+    let now = crate::db::now_epoch();
+    let stale = EPICS_CACHE.lock().ok().and_then(|c| c.as_ref().map(|(at, _)| now - at >= EPICS_TTL_SECS)).unwrap_or(true);
+    if conn.live.is_some() && stale {
+        if let Err(e) = epics_refresh(conn, now) {
+            eprintln!("spira-lc serve: epics not refreshed: {e}");
+        }
+    }
 }
 
 fn n_of(v: &Value) -> i64 {

@@ -19,6 +19,7 @@ mod callers;
 mod churn;
 mod classify_cmd;
 mod content;
+mod continuity;
 mod content_rows;
 mod client;
 mod close_on_land;

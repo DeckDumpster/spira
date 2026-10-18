@@ -1701,26 +1701,14 @@ pub fn cmd_event_continuity(args: &[String], conn: &Conn) -> (i32, String) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {}: {e}", ack_path.display())),
     }
-    let sql = "SELECT machine, lc_key, seq, event, from_state, prev_to FROM (\
-               SELECT seq, machine, lc_key, event, from_state, \
-               LAG(to_state) OVER (PARTITION BY machine, lc_key ORDER BY seq) AS prev_to \
-               FROM event WHERE applied = 1) t \
-               WHERE prev_to IS NOT NULL AND from_state <> prev_to ORDER BY seq";
-    let rows = match conn.query(sql) {
-        Ok(r) => r,
-        Err(e) => return cannot_tell(e),
+    let found = match conn.live.as_ref() {
+        Some(l) => crate::continuity::current(conn, l.continuity()),
+        None => crate::continuity::scan(conn).map(|t| t.breaks()),
     };
-    let mut seen = std::collections::HashSet::new();
-    let mut breaks = Vec::new();
-    for r in rows {
-        let field = |c: &str| r.get(c).and_then(|v| v.as_str()).unwrap_or("").to_string();
-        if seen.insert((field("machine"), field("lc_key"))) {
-            breaks.push((field("machine"), field("lc_key"), field("seq"), serde_json::json!({
-                "machine": field("machine"), "key": field("lc_key"), "seq": field("seq"),
-                "event": field("event"), "from_state": field("from_state"), "previous_to_state": field("prev_to"),
-            })));
-        }
-    }
+    let breaks = match found {
+        Ok(b) => b,
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
+    };
     if args.iter().any(|a| a == "--acknowledge") {
         let (Some(reason), Some(through)) = (flag(args, "--reason"), flag(args, "--through").and_then(|t| t.parse::<i64>().ok())) else {
             return (REFUSED, "refused: --acknowledge needs --reason R and --through SEQ".to_string());
