@@ -1308,3 +1308,15 @@ fn pr_create_refuses_when_the_listing_cannot_be_read() {
     );
     assert!(!created(&gh));
 }
+
+#[test]
+fn ami_runs_lists_only_unfinished_runs_and_says_so_when_unreadable() {
+    let gh = FakeGh::default();
+    gh.on(
+        &["run", "list", "--workflow", "round-ami-build.yml", "--limit", "20", "--json", "databaseId,status"],
+        0,
+        r#"[{"databaseId":5,"status":"in_progress"},{"databaseId":4,"status":"completed"}]"#,
+    );
+    assert_eq!(ami_runs(&gh, repo()).lines, vec!["5".to_string()]);
+    assert_eq!(ami_runs(&FakeGh::default(), repo()).lines, vec!["?".to_string()]);
+}

@@ -49,6 +49,9 @@ pub struct Settings {
     /// `SPIRA_ROUND_CERTIFY_WALL_SECS` (declared value): the wall `round certify` allows the
     /// round VM's corpus.
     pub round_wall_secs: u64,
+    /// `SPIRA_ROUND_AMI_WAIT_SECS` (declared value): how long `round certify` waits for a Round
+    /// AMI build when the newest image is stale.
+    pub round_ami_wait_secs: u64,
     /// `SPIRA_QUEUE_ROUNDS_MAX` (declared value): how many rounds may be open at once per repo.
     pub rounds_max: usize,
 }
@@ -385,6 +388,10 @@ pub trait Forge {
     fn fail_lines(&self, forge: &Path, repo: &Path, run: &str, suites: &str) -> String;
     fn run_cancel(&self, forge: &Path, repo: &Path, run: &str);
     fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str);
+    /// `ami-runs <repo>`: the Round AMI runs not yet completed; None when the forge cannot be read.
+    fn ami_runs(&self, forge: &Path, repo: &Path) -> Option<Vec<String>>;
+    /// `ami-dispatch <repo> <ref>`: whether the forge accepted a new Round AMI run.
+    fn ami_dispatch(&self, forge: &Path, repo: &Path, ref_: &str) -> bool;
 }
 
 /// spira-lc (the lifecycle machine's CLI).

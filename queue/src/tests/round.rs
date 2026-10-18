@@ -3789,3 +3789,59 @@ fn a_testenv_fault_on_an_own_testenv_repo_is_not_judged() {
         t.err()
     );
 }
+
+const STALE_ACQUIRE: &str = "round-vm run: acquire failed: EC2 launch failed (placement ec2-always)\nclone refused: the newest round AMI ami-1 carries recipe-sha aa but this release's recipe is bb; run the round-ami-build workflow\n";
+
+fn stale_ami() -> RunOut {
+    RunOut {
+        rc: 2,
+        out: String::new(),
+        err: STALE_ACQUIRE.into(),
+    }
+}
+
+fn stale_world() -> (T, String) {
+    let t = round_world();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    (t, batch)
+}
+
+#[test]
+fn a_stale_round_image_waits_for_the_build_in_progress_then_proceeds() {
+    let (t, batch) = stale_world();
+    *t.scripts.round_vm_queue.borrow_mut() = vec![stale_ami(), stale_ami(), RunOut::default()];
+    *t.forge.ami_runs.borrow_mut() = vec![Some(vec!["381189175".into()]), Some(vec!["381189175".into()])];
+
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    assert!(t.out().contains("waiting for round AMI 381189175"), "{}", t.out());
+    let calls = t.forge.calls.borrow().join("\n");
+    assert!(!calls.contains("ami-dispatch"), "{calls}");
+    assert_eq!(calls.matches("ami-runs").count(), 2, "{calls}");
+}
+
+#[test]
+fn a_stale_round_image_with_no_build_running_triggers_exactly_one() {
+    let (t, batch) = stale_world();
+    *t.scripts.round_vm_queue.borrow_mut() = vec![stale_ami(), stale_ami(), RunOut::default()];
+    *t.forge.ami_runs.borrow_mut() = vec![Some(vec![]), Some(vec!["7".into()])];
+
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    let calls = t.forge.calls.borrow().join("\n");
+    assert_eq!(calls.matches("ami-dispatch").count(), 1, "{calls}");
+}
+
+#[test]
+fn a_round_image_that_stays_stale_reports_the_acquire_error_itself() {
+    let (t, batch) = stale_world();
+    *t.scripts.round_vm.borrow_mut() = stale_ami();
+
+    assert_eq!(t.run(&["round", "certify", &batch]), 4);
+    let err = t.err();
+    assert!(
+        err.contains("round AMI is stale") && err.contains("clone refused") && err.contains("round-ami-build workflow"),
+        "{err}"
+    );
+    assert!(!err.contains("left no verdicts"), "{err}");
+}

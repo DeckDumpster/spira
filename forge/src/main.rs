@@ -126,6 +126,8 @@ fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[String
         "pr-close" => pr_close(gh, repo, arg(args, 0)),
         "pr-comment" => pr_comment(gh, repo, arg(args, 0), arg(args, 1)),
         "dispatch" => dispatch_cmd(gh, repo, workflow, arg(args, 0), arg(args, 1)),
+        "ami-runs" => forge::cmds::ami_runs(gh, repo),
+        "ami-dispatch" => forge::cmds::ami_dispatch(gh, repo, arg(args, 0)),
         "fail-lines" => fail_lines(gh, proc, repo, arg(args, 0), arg(args, 1)),
         "branch-protect" => {
             // SPIRA_QUEUE_ACTIONS_APP_ID is a registered config key — the one source of
