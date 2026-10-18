@@ -2237,6 +2237,29 @@ fn activating_a_release_whose_dolt_beads_unit_differs_only_in_the_release_root_l
 }
 
 #[test]
+fn a_dolt_beads_unit_installed_against_the_current_link_is_left_running_across_activations() {
+    let dolt = "[Service]\nType=simple\nEnvironment=SPIRA_RELEASE=@SPIRA_RELEASE@\nExecStart=@SPIRA_TOOL_BIN@ --dolt\n";
+    let w = World::with_git(FakeGit { extra: vec![("systemd/dolt-beads.service".into(), dolt.into(), false)], ..Default::default() });
+    w.build(A).unwrap();
+    w.build(B).unwrap();
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, A, None).unwrap();
+    w.install_units(A);
+    let rel = w.rel(A);
+    let text = fs::read_to_string(rel.join("systemd/dolt-beads.service")).unwrap();
+    let rendered = units::render("dolt-beads.service", &text, &rel, &w.cfg.host_values().unwrap(), None, "prod").unwrap();
+    let via_current = rendered.replace(&rel.display().to_string(), &w.cfg.releases.join("current").display().to_string());
+    assert_ne!(via_current, rendered, "control: the installed text names the link");
+    fs::write(w.units().join("dolt-beads.service"), via_current).unwrap();
+    sc.states.borrow_mut().insert("dolt-beads.service".into(), UnitState { active: "active".into(), result: "success".into(), kind: "simple".into() });
+
+    let s = activate::activate(&c, B, None).unwrap();
+    assert!(!s.restarted.contains(&"dolt-beads.service".to_string()), "{s:?}");
+    assert!(sc.kills.borrow().is_empty(), "{:?}", sc.kills.borrow());
+}
+
+#[test]
 fn deciding_to_hand_activation_over_reads_the_releases_dir_from_the_layers_not_from_resolved_config() {
     let w = World::new();
     w.build(B).unwrap();
