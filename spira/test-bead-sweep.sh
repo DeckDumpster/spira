@@ -104,6 +104,18 @@ is "a sha-named release dir raises no SUSPECT on a home-repo bead" "0" "$bad"
 want "a foreign CERTIFIED bead still raises it" "SUSPECT sp-theirs CERTIFIED CERTIFIED outside repo:widgets" "$out"
 out="$(SWEEP_REPO="$SHA" SWEEP_HOME_REPO=SPIRA_HOME_REPO= run --show)"
 want "an undeclared home repo refuses" "SWEEP FAILED" "$out"
+board "$(row sp-q CERTIFIED "$MID" '[]')" "$(row sp-bm IN_DELIVERY "$MID" '[]')" -- \
+    "$(cont sp-q '["repo:other"]')" "$(cont sp-bm '["repo:other"]')"
+out="$(run --show)"
+want "a certified bead whose repo has an open batch is OK" "OK sp-q CERTIFIED queued behind the open batch" "$out"
+board "$(row sp-q CERTIFIED "$MID" '[]')" "$(row sp-bm IN_DELIVERY "$MID" '[]')" -- \
+    "$(cont sp-q '["repo:other"]')" "$(cont sp-bm '["repo:else"]')"
+out="$(run --show)"
+want "a batch open in another repo does not cover the bead" "SUSPECT sp-q CERTIFIED CERTIFIED outside" "$out"
+board "$(row sp-q CERTIFIED "$MID" '[]')" "$(row sp-bm IN_DELIVERY "$OLD" '[]')" -- \
+    "$(cont sp-q '["repo:other"]')" "$(cont sp-bm '["repo:other"]')"
+out="$(run --show)"
+want "an open batch older than the margin no longer covers the bead" "SUSPECT sp-q CERTIFIED CERTIFIED outside" "$out"
 board "$(row sp-pois READY "$NOW" '["poison"]')" "$(row sp-ask READY "$NOW" '["ask"]')" \
     "$(row sp-man READY "$OLD" '["manual"]')" "$(row sp-edge READY "$NOW" '[]' '["sp-done"]')" \
     "$(row sp-rw REWORK "$OLD" '[]')" "$(row sp-cert CERTIFIED "$OLD" '[]')" \

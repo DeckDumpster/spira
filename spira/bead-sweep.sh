@@ -24,6 +24,7 @@ HOLD_MIN="${BEAD_SWEEP_HOLD_MIN:-120}"
 REWORK_MIN="${BEAD_SWEEP_REWORK_MIN:-20}"
 CERT_MIN="${BEAD_SWEEP_CERT_MIN:-10}"
 WAIT_MIN="${BEAD_SWEEP_WAIT_MIN:-120}"
+BATCH_MIN="${BEAD_SWEEP_BATCH_MIN:-180}"
 declare -A _bs_seen
 
 _bs_classify() {
@@ -37,11 +38,11 @@ _bs_classify() {
     timeout 60 spira-lc list --state LANDED,DONE,DROPPED,SUPERSEDED > "$t/term.json" 2>/dev/null || return 1
     local pr_labels="" n
     for n in $(repo_names); do [ "$(repo_land "$n")" = pr ] && pr_labels="$pr_labels repo:$n"; done
-    python3 -I - "$t" "$SPIRA_ASK_LABEL" "$HOME_LABEL" "$HOLD_MIN" "$REWORK_MIN" "$CERT_MIN" "$WAIT_MIN" "$pr_labels" <<'PY'
+    python3 -I - "$t" "$SPIRA_ASK_LABEL" "$HOME_LABEL" "$HOLD_MIN" "$REWORK_MIN" "$CERT_MIN" "$WAIT_MIN" "$BATCH_MIN" "$pr_labels" <<'PY'
 import calendar, json, re, subprocess, sys, time
 T, ask, home = sys.argv[1:4]
-hold_min, rework_min, cert_min, wait_min = (int(x) for x in sys.argv[4:8])
-pr_labels = set(sys.argv[8].split())
+hold_min, rework_min, cert_min, wait_min, batch_min = (int(x) for x in sys.argv[4:9])
+pr_labels = set(sys.argv[9].split())
 rows = {r["bead_id"]: r for r in json.load(open(T + "/rows.json"))}
 content = {b["id"]: b for b in json.load(open(T + "/content.json"))}
 term = {r["bead_id"]: r["state"] for r in json.load(open(T + "/term.json"))}
@@ -85,6 +86,13 @@ def held_reason(i, reason):
             break
     return reason
 rowless = []
+open_batch = {}
+for i, r in rows.items():
+    if r["state"] == "IN_DELIVERY":
+        since = int(r.get("since") or r.get("updated_at") or now)
+        for l in content.get(i, {}).get("labels", []):
+            if l.startswith("repo:"):
+                open_batch[l] = min(open_batch.get(l, since), since)
 out ={k: [] for k in ("OK", "BLOCKED", "HELD", "ASK", "SUSPECT")}
 for i, b in content.items():
     if i not in rows and i not in term and b.get("issue_type") not in ("epic", "event") and ask not in b.get("labels", []):
@@ -124,6 +132,8 @@ for i, r in sorted(rows.items()):
         put("SUSPECT", f"STALE EDGE blocked_by {blk} all terminal")
     elif live:
         put("BLOCKED", "by " + ",".join(live))
+    elif st == "CERTIFIED" and home not in labels and any(l in open_batch and (now - open_batch[l]) / 60 <= batch_min for l in labels):
+        put("OK", "queued behind the open batch")
     elif st == "REWORK" and age > rework_min:
         put("SUSPECT", f"UNCLAIMED REWORK over {rework_min}m ({why})")
     elif st == "CERTIFIED" and home not in labels and age > cert_min:
