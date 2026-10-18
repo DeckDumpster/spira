@@ -373,10 +373,11 @@ fn flag(args: &[String], name: &str) -> Option<String> {
 
 /// Derived table `blockers(waiting, blocked_by)`: per bead, the comma-joined ids of its
 /// blocks-type prerequisites that are still live (the same rule `ops_live` applies).
-fn blockers_join() -> String {
+fn blockers_join(waiting_where: &str) -> String {
     format!(
         "(SELECT d.bead_id AS waiting, GROUP_CONCAT(d.depends_on ORDER BY d.depends_on SEPARATOR ',') AS blocked_by \
-         FROM bead_dep d JOIN bead p ON p.bead_id = d.depends_on WHERE d.dep_type = 'blocks' AND p.state IN ({}) GROUP BY d.bead_id) blockers",
+         FROM bead_dep d JOIN bead p ON p.bead_id = d.depends_on WHERE d.dep_type = 'blocks' AND p.state IN ({}) \
+         AND d.bead_id IN (SELECT w.bead_id FROM bead w{waiting_where}) GROUP BY d.bead_id) blockers",
         deps::LIVE_STATES
     )
 }
@@ -410,7 +411,7 @@ pub(crate) fn cmd_show(args: &[String], conn: &Conn) -> (i32, String) {
         return (1, "{}".to_string());
     }
     let mut bead_rows = bead_rows;
-    match conn.query(&format!("SELECT blockers.blocked_by FROM {} WHERE blockers.waiting = '{}'", blockers_join(), rows::escape(bead_id))) {
+    match conn.query(&format!("SELECT blockers.blocked_by FROM {} WHERE blockers.waiting = '{}'", blockers_join(&format!(" WHERE w.bead_id = '{}'", rows::escape(bead_id))), rows::escape(bead_id))) {
         Ok(r) => {
             if let Some(o) = bead_rows[0].as_object_mut() {
                 o.insert("blocked_by".into(), r.first().and_then(|x| x.get("blocked_by")).cloned().unwrap_or(Value::Null));
@@ -454,6 +455,7 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
         let beads = match (live, repo.is_some()) {
             (true, false) => mem.list(&f),
             (true, true) => mem.list_live_full(&f),
+            (false, _) if cached && ids.is_none() && live::only_live_states(&f) => mem.list_live_full(&f),
             (false, _) if cached => mem.list_all(&f),
             (false, _) => None,
         };
@@ -492,12 +494,13 @@ pub(crate) fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
         c.iter().map(|x| format!(" AND {x}")).collect()
     };
     let where_clause = filters("").replacen(" AND ", " WHERE ", 1);
+    let waiting_where = filters("w.").replacen(" AND ", " WHERE ", 1);
     // reason/updated_at: a bulk caller bucketing REWORK by cause or ageing a row needs both
     // without a second round trip per bead.
     let sql = format!(
         "SELECT bead_id, state, tip, holder, persona, lease_until, holds, reason, updated_at, version, stack, stack_depth, since, express, aeon_phase, disposition, disposition_note, ejected_red_tip, sifted_tip, title, priority, repo, blockers.blocked_by FROM bead \
          LEFT JOIN {} ON blockers.waiting = bead.bead_id{where_clause} ORDER BY bead_id",
-        blockers_join()
+        blockers_join(&waiting_where)
     );
     let mut beads = match conn.query(&sql) {
         Ok(r) => r,
@@ -929,6 +932,22 @@ mod tests {
         assert_eq!(cmd_list(&[], &conn).0, CANNOT_TELL, "a list without --live reads Dolt until the older rows are in memory");
         assert_eq!(cmd_show(&["sp-missing".to_string()], &conn).0, CANNOT_TELL, "a bead memory does not hold is asked of Dolt");
         assert_eq!(cmd_list(&["--cached".to_string()], &conn).0, CANNOT_TELL, "--cached still needs the older rows in memory");
+    }
+
+    #[test]
+    fn a_cached_state_list_of_live_states_never_waits_on_the_cold_rows() {
+        let row = serde_json::json!({"bead_id": "sp-a", "state": "READY", "holds": "[]", "version": "2", "updated_at": "1", "since": "1", "express": "0"});
+        let conn = unreachable_conn_with_live(vec![row]);
+        let (code, out) = cmd_list(&["--state".into(), "READY,WORKING".into(), "--cached".into()], &conn);
+        assert_eq!(code, 0, "{out}");
+        assert!(out.contains("\"sp-a\""), "{out}");
+        assert_eq!(cmd_list(&["--state".into(), "READY,LANDED".into(), "--cached".into()], &conn).0, CANNOT_TELL, "a terminal state needs the cold rows");
+    }
+
+    #[test]
+    fn the_blockers_subquery_is_restricted_to_the_rows_listed() {
+        let sql = blockers_join(" WHERE w.state IN ('READY')");
+        assert!(sql.contains("d.bead_id IN (SELECT w.bead_id FROM bead w WHERE w.state IN ('READY'))"), "{sql}");
     }
 
     #[test]

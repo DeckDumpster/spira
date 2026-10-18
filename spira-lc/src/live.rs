@@ -532,6 +532,11 @@ impl Live {
     }
 }
 
+/// True when the filter names states and every one is non-terminal, so the live window alone answers it.
+pub fn only_live_states(f: &ListFilter) -> bool {
+    f.states.as_ref().is_some_and(|s| !s.is_empty() && s.iter().all(|x| LIVE.contains(&x.as_str())))
+}
+
 pub fn filter_from_flags(state: Option<&str>, ids: Option<&str>, hold: Option<&str>, express: bool, repo: Option<&str>) -> ListFilter {
     let csv = |v: &str| v.split(',').filter(|x| !x.is_empty()).map(str::to_string).collect::<Vec<_>>();
     ListFilter { states: state.map(csv), ids: ids.map(csv), hold: hold.map(str::to_string), express, repo: repo.map(str::to_string) }
