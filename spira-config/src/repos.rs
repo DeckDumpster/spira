@@ -599,20 +599,11 @@ pub fn landrefs(reg: &Registry, repo: &str) -> Option<(String, Option<String>)> 
 /// mapped to `_` (bash: `tr 'a-z-' 'A-Z_'` — only lowercase letters and `-` are touched).
 pub fn publish_forge(reg: &Registry, name: &str, env: &BTreeMap<String, String>) -> Option<(String, String)> {
     let base = landref(reg, name)?;
-    let key: String = name
-        .chars()
-        .map(|c| match c {
-            'a'..='z' => c.to_ascii_uppercase(),
-            '-' => '_',
-            other => other,
-        })
-        .collect();
-    let remote = env
-        .get(&format!("SPIRA_PUBLISH_REMOTE_{key}"))
-        .filter(|v| !v.is_empty())
-        .cloned()
-        .or_else(|| env.get("SPIRA_PUBLISH_REMOTE").filter(|v| !v.is_empty()).cloned())
-        .unwrap_or_else(|| "origin".to_string());
+    let key = publish_key(name);
+    let remote = publish_remote(name, env);
+    if remote == NO_PUBLISH {
+        return None;
+    }
     let branch = env
         .get(&format!("SPIRA_PUBLISH_BRANCH_{key}"))
         .filter(|v| !v.is_empty())
@@ -622,6 +613,33 @@ pub fn publish_forge(reg: &Registry, name: &str, env: &BTreeMap<String, String>)
         return None;
     }
     Some((remote, branch))
+}
+
+/// The publish remote value that declares a repository publishes nowhere.
+pub const NO_PUBLISH: &str = "none";
+
+fn publish_key(name: &str) -> String {
+    name.chars()
+        .map(|c| match c {
+            'a'..='z' => c.to_ascii_uppercase(),
+            '-' => '_',
+            other => other,
+        })
+        .collect()
+}
+
+fn publish_remote(name: &str, env: &BTreeMap<String, String>) -> String {
+    env.get(&format!("SPIRA_PUBLISH_REMOTE_{}", publish_key(name)))
+        .filter(|v| !v.is_empty())
+        .cloned()
+        .or_else(|| env.get("SPIRA_PUBLISH_REMOTE").filter(|v| !v.is_empty()).cloned())
+        .unwrap_or_else(|| "origin".to_string())
+}
+
+/// True when the repository is explicitly declared unpublished
+/// (`SPIRA_PUBLISH_REMOTE_<NAME>=none`), as opposed to a target that merely fails to resolve.
+pub fn publishes_nowhere(name: &str, env: &BTreeMap<String, String>) -> bool {
+    publish_remote(name, env) == NO_PUBLISH
 }
 
 /// `_spira_gitstore <path>` — its shared git directory, canonicalized, or `None` when `path`
@@ -1253,6 +1271,21 @@ oldshape | /h/old | pr | fmt-tool | gate --flag
         // the blanket SPIRA_PUBLISH_REMOTE only applies when no per-name override exists.
         let blanket = env(&[("SPIRA_PUBLISH_REMOTE", "upstream")]);
         assert_eq!(publish_forge(&reg, "my-queue", &blanket), Some(("upstream".to_string(), "trunk".to_string())));
+    }
+
+    #[test]
+    fn publish_forge_is_none_for_a_repository_declared_unpublished() {
+        let dir = testkit::TempDir::new("spira-config-repos-publish-forge-none");
+        let repo = dir.join("repo");
+        init_repo(&repo, "trunk");
+        run_git(&repo, &["branch", "-q", "local/trunk"]);
+        let map = format!("my-queue | {} | push | local/trunk |  | \n", repo.display());
+        let reg = registry_for(&map, "my-queue");
+        let off = env(&[("SPIRA_PUBLISH_REMOTE_MY_QUEUE", "none")]);
+        assert_eq!(publish_forge(&reg, "my-queue", &off), None);
+        assert!(publishes_nowhere("my-queue", &off));
+        assert!(!publishes_nowhere("my-queue", &env(&[])));
+        assert!(!publishes_nowhere("other", &off), "the declaration is per repository");
     }
 
     #[test]

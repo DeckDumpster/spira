@@ -950,6 +950,7 @@ impl T {
             map_land: mode.config_word().into(),
             map_base: landref.into(),
             publish: Some(("origin".into(), "main".into())),
+            unpublished: false,
             remotes: vec!["origin".into()],
         };
         let git = FGit::default();
@@ -2853,6 +2854,22 @@ fn settle_supersedes_a_red_or_untested_publish_that_local_has_moved_past() {
         assert!(calls.iter().any(|c| c.starts_with("pr-create spira/publish/20260929T010203Z main")), "{calls:?}");
         assert!(fs::read_to_string(t.qfile("publish")).unwrap().starts_with("pr=78\nhead=m4\n"));
     }
+}
+
+#[test]
+fn settle_skips_a_repository_declared_unpublished_and_still_fails_a_fetch_that_cannot_run() {
+    let t = T::new(LandMode::QueueLocal);
+    t.lib.r.borrow_mut().unpublished = true;
+    t.git.fetch_ok.set(false);
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert!(t.out().contains("publish-settle spira: declared unpublished — skipped"), "{}", t.out());
+    assert_eq!(t.run(&["publish"]), 0, "{}", t.err());
+    assert!(t.forge.calls.borrow().is_empty());
+
+    let t = T::new(LandMode::QueueLocal);
+    t.git.fetch_ok.set(false);
+    assert_ne!(t.run(&["publish-settle"]), 0, "positive control: a published repository whose fetch fails is red");
+    assert!(t.err().contains("could not fetch origin/main"), "{}", t.err());
 }
 
 #[test]

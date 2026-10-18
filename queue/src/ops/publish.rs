@@ -32,6 +32,10 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
         w.err(format!("queue.sh publish: {name} resolves to a remote-tracking ref ({base}) — not a queue.local base"));
         return FAIL;
     }
+    if c.r.unpublished {
+        w.out(format!("queue.sh publish: {name} is declared unpublished — skipped"));
+        return OK;
+    }
     let Some((remote, forge_branch)) = c.r.publish.clone() else {
         w.err(format!("queue.sh publish: cannot resolve a forge target for {name}"));
         return FAIL;
@@ -267,6 +271,10 @@ pub fn publish_settle(w: &World, repo: Option<&str>) -> i32 {
                 w.err(format!("queue.sh publish-settle: {name} is not in queue.local mode (mode={})", c.r.mode.as_str()));
                 rc = FAIL;
             }
+            continue;
+        }
+        if c.r.unpublished {
+            w.out(format!("{} publish-settle {name}: declared unpublished — skipped", w.clock.now()));
             continue;
         }
         if settle_repo(w, &c) != OK {
