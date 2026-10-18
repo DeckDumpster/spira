@@ -789,6 +789,60 @@ fn a_red_forge_batch_summons_a_mender_per_red_suite_once() {
     assert_eq!(events(&t), 2);
 }
 
+fn red_forge_creates(t: &T) -> Vec<String> {
+    t.lib
+        .calls
+        .borrow()
+        .iter()
+        .filter(|c| c.starts_with("create_bug"))
+        .cloned()
+        .collect()
+}
+
+fn red_forge_run(t: &mut T) {
+    t.lib.s.batcher_bin = Some(PathBuf::from("batcher"));
+    *t.scripts.judgement.borrow_mut() = RunOut {
+        rc: 0,
+        out: "id=sp-j1\n".into(),
+        err: String::new(),
+    };
+    t.forge
+        .status
+        .borrow_mut()
+        .push(Some("red\nred-suite: gate-deploy-ci-sh\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+}
+
+#[test]
+fn a_one_member_red_forge_batch_files_no_mend() {
+    let mut t = T::new(LandMode::Queue);
+    t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=sp-a:ta\nopened=500\nbranch=spira/queue/x\nowner=batcher\nbatch_id=spira-1\nversion=3\n");
+    t.git.set("origin/main", "b0");
+    red_forge_run(&mut t);
+    assert!(red_forge_creates(&t).is_empty(), "{:?}", red_forge_creates(&t));
+}
+
+#[test]
+fn a_red_forge_batch_with_a_member_in_rework_files_no_mend() {
+    let mut t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    t.lc.bead_rows
+        .borrow_mut()
+        .insert("sp-a".into(), ("REWORK".into(), "3".into()));
+    red_forge_run(&mut t);
+    assert!(red_forge_creates(&t).is_empty(), "{:?}", red_forge_creates(&t));
+}
+
+#[test]
+fn a_multi_member_red_forge_batch_files_one_mend_carrying_the_repo_label() {
+    let mut t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    red_forge_run(&mut t);
+    let made = red_forge_creates(&t);
+    assert_eq!(made.len(), 1, "{made:?}");
+    assert!(made[0].contains(",repo:spira "), "{made:?}");
+}
+
 #[test]
 fn a_red_forge_batch_starts_its_pass_before_the_failed_event_because_its_row_is_open() {
     let mut t = T::new(LandMode::Queue);
