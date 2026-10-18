@@ -723,6 +723,42 @@ fn refresh_release_mode_builds_and_activates() {
 }
 
 #[test]
+fn refresh_release_failure_logs_releases_first_error_line() {
+    let f = Fake::default();
+    f.set_env("SPIRA_RELEASES", "/releases");
+    f.symlinks.borrow_mut().insert(PathBuf::from("/releases/current"), "rel-1".into());
+    f.set_env("SPIRA_REPO", "/repo");
+    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
+    f.landrefs.borrow_mut().insert("/repo".into(), "origin/main".into());
+    f.rev_list_counts.borrow_mut().insert("/repo|HEAD..origin/main".into(), 2);
+    f.rev_parse.borrow_mut().insert("/repo|HEAD".into(), "newsha".into());
+
+    assert_eq!(refresh(&f, Some("/repo")), 1);
+    assert!(f.stdout_joined().contains("of newsha failed: build failed"));
+}
+
+#[test]
+fn refresh_product_repo_never_calls_release() {
+    let f = Fake::default();
+    f.set_env("SPIRA_RELEASES", "/releases");
+    f.symlinks.borrow_mut().insert(PathBuf::from("/releases/current"), "rel-1".into());
+    *f.home_repo.borrow_mut() = "home".into();
+    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("/home-repo"));
+    f.repo_roots.borrow_mut().insert("prod".into(), PathBuf::from("/prod"));
+    f.git_repos.borrow_mut().push(PathBuf::from("/prod"));
+    f.landrefs.borrow_mut().insert("/prod".into(), "origin/main".into());
+    f.rev_list_counts.borrow_mut().insert("/prod|HEAD..origin/main".into(), 1);
+    f.current_branches.borrow_mut().insert("/prod".into(), "some-feature".into());
+    *f.release_bva_ok.borrow_mut() = false;
+
+    let rc = refresh(&f, Some("/prod"));
+    assert_eq!(rc, 1);
+    let out = f.stdout_joined();
+    assert!(out.contains("declined"), "{out}");
+    assert!(!out.contains("release build"), "{out}");
+}
+
+#[test]
 fn refresh_checkout_mode_declines_off_base_branch() {
     let f = Fake::default();
     f.set_env("SPIRA_REPO", "/repo");
