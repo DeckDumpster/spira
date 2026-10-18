@@ -11,6 +11,7 @@ Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr
 Type=simple
 CPUQuota=10%
 MemoryMax=128M
+ExecStartPre=-@SPIRA_PROD_ROOT@/bin/unit-run ensure-accounting
 ExecStart=@SPIRA_PROD_ROOT@/bin/unit-run watch
 Restart=always
 RestartSec=10

@@ -287,52 +287,6 @@ pub fn step(conn: &mut Conn, t: &mut Tracker, now_us: impl Fn() -> u64, timeout:
     Ok(out)
 }
 
-/// How two family files agree about the runs they share.
-#[derive(Debug, Default, PartialEq)]
-pub struct Comparison {
-    pub agree: usize,
-    pub disagree: Vec<String>,
-    pub only_a: Vec<String>,
-    pub only_b: Vec<String>,
-}
-
-fn rows(text: &str) -> BTreeMap<String, serde_json::Value> {
-    text.lines()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .filter_map(|v| Some((v.get("invocation_id")?.as_str()?.to_string(), v)))
-        .collect()
-}
-
-/// Join two family files on invocation id over the `.service` runs that ended in `[from, to]`
-/// (ISO-8601 stamps compare as text). Agreement is the same unit, result and exit status.
-pub fn compare(a: &str, b: &str, from: &str, to: &str) -> Comparison {
-    let in_window = |v: &serde_json::Value| {
-        let end = v.get("ended_at").and_then(|e| e.as_str()).unwrap_or("");
-        v.get("unit").and_then(|u| u.as_str()).is_some_and(|u| u.ends_with(".service")) && end >= from && end <= to
-    };
-    let (ra, rb) = (rows(a), rows(b));
-    let mut c = Comparison::default();
-    for (id, va) in ra.iter().filter(|(_, v)| in_window(v)) {
-        match rb.get(id) {
-            None => c.only_a.push(format!("{id} {}", va["unit"].as_str().unwrap_or(""))),
-            Some(vb) => {
-                let key = |v: &serde_json::Value| (v["unit"].clone(), v["result"].clone(), v["exit_status"].clone());
-                if key(va) == key(vb) {
-                    c.agree += 1;
-                } else {
-                    c.disagree.push(format!("{id} {} journal={:?} dbus={:?}", va["unit"].as_str().unwrap_or(""), key(va), key(vb)));
-                }
-            }
-        }
-    }
-    for (id, vb) in rb.iter().filter(|(_, v)| in_window(v)) {
-        if !ra.contains_key(id) {
-            c.only_b.push(format!("{id} {}", vb["unit"].as_str().unwrap_or("")));
-        }
-    }
-    c
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,16 +368,5 @@ mod tests {
         let text = "{\"ended_at\":\"2026-10-17T10:00:05Z\"}\nnot json\n{\"ended_at\":\"2026-10-17T10:00:01Z\"}\n{\"unit\":\"x\"}\n";
         assert_eq!(last_ended_us(text), tsd::parse_ts("2026-10-17T10:00:05Z").map(|s| s * 1_000_000));
         assert_eq!(last_ended_us(""), None);
-    }
-
-    #[test]
-    fn comparison_names_every_disagreement_and_every_unmatched_run() {
-        let row = |id: &str, res: &str| format!("{{\"invocation_id\":\"{id}\",\"unit\":\"a.service\",\"result\":\"{res}\",\"ended_at\":\"2026-10-17T10:00:00Z\"}}\n");
-        let a = format!("{}{}{}", row("1", "success"), row("2", "success"), row("3", "success"));
-        let b = format!("{}{}{}", row("1", "success"), row("2", "exit-code"), row("4", "success"));
-        let c = compare(&a, &b, "2026-10-17T00:00:00Z", "2026-10-18T00:00:00Z");
-        assert_eq!((c.agree, c.disagree.len(), c.only_a.len(), c.only_b.len()), (1, 1, 1, 1));
-        let out = compare(&a, &b, "2026-10-18T00:00:00Z", "2026-10-19T00:00:00Z");
-        assert_eq!(out, Comparison::default());
     }
 }

@@ -3,7 +3,7 @@ use install::values::{render_file, HostValues};
 use std::path::{Path, PathBuf};
 
 const IO_FENCED: [&str; 4] = ["spira-landing-pass.service", "spira-sop-lint.service", "lc-backup.service", "lc-backup-drill.service"];
-const QUOTA_FENCED: [&str; 14] = ["spira-mail-reconcile.service", "spira-concierge-guard.service", "spira-nix-gc.service", "spira-verify-asks.service", "spira-perf-watch.service", "spira-perf-happy-path.service", "spira-refusal-watch.service", "spira-sift.service", "spira-reclaim.service", "spira-unit-run.service", "spira-unit-run-dbus.service", "spira-metrics-vm.service", "spira-metrics-collector.service", "spira-metrics-grafana.service"];
+const QUOTA_FENCED: [&str; 13] = ["spira-mail-reconcile.service", "spira-concierge-guard.service", "spira-nix-gc.service", "spira-verify-asks.service", "spira-perf-watch.service", "spira-perf-happy-path.service", "spira-refusal-watch.service", "spira-sift.service", "spira-reclaim.service", "spira-unit-run-dbus.service", "spira-metrics-vm.service", "spira-metrics-collector.service", "spira-metrics-grafana.service"];
 const FENCE_EXEMPT_OTHER: [&str; 1] = ["dolt-tmp-prune.service"];
 const STORE_LATE: u32 = 60;
 

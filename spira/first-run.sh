@@ -7,7 +7,7 @@
 # Every systemd/ template (.service, or the .service of a changed .timer) that differs
 # between A and B and is Type=oneshot is started once, bounded (SPIRA_FIRSTRUN_TIMEOUT). A
 # non-zero exit files one P1 against the bead named in the subject of the last commit that
-# touched the template, carrying the exit and the journal tail. A template opts out with a
+# touched the template, carrying the exit and the manager state. A template opts out with a
 # line `# first-run: skip <reason>`; the reason is logged. A unit the instance does not
 # install is skipped. Never fails the deploy; exits 1 only if a filing itself failed.
 #
@@ -18,7 +18,6 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
 
 SC="${SPIRA_SYSTEMCTL:-systemctl}"
-JC="${SPIRA_JOURNALCTL:-journalctl}"
 BD="${SPIRA_BD:-bd}"
 BEAD="${SPIRA_FIRSTRUN_BEAD_SH:-$HERE/bead.sh}"
 TIMEOUT="${SPIRA_FIRSTRUN_TIMEOUT:-300}"
@@ -74,11 +73,11 @@ for stem in $stems; do
             | grep -qF "$marker $unit"; then
         printf 'first-run: %s already filed for %s\n' "$unit" "$release"; continue
     fi
-    tail="$("$JC" --user -u "$unit" -n 20 --no-pager 2>&1 | tail -c 3000)"
+    state="$("$SC" --user show -p ActiveState -p Result -p ExecMainStatus "$unit" 2>&1)"
     bodyf="$(mktemp)"
     {
         printf 'Unit %s, shipped by %s, failed its first run after release %s.\n\n' "$unit" "${bead:-an unnamed bead}" "$release"
-        printf 'exit: %s\n\nsystemctl: %s\n\njournal tail:\n%s\n' "$crc" "$out" "$tail"
+        printf 'exit: %s\n\nsystemctl: %s\n\nmanager state:\n%s\n' "$crc" "$out" "$state"
     } > "$bodyf"
     extra=()
     if [ -n "$bead" ]; then

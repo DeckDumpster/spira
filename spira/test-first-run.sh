@@ -24,10 +24,6 @@ case "$1" in
         case "$2" in spira-bad-zz.service) echo "Job failed: exit-code 2" >&2; exit 2 ;; esac ;;
 esac
 STUB
-cat > "$TMP/journalctl" <<'STUB'
-#!/usr/bin/env bash
-echo "spira-bad: SPIRA_TOML is not set"
-STUB
 cat > "$TMP/bd" <<'STUB'
 #!/usr/bin/env bash
 shift 2
@@ -42,8 +38,8 @@ cat > "$TMP/bead.sh" <<'STUB'
 echo "FILE $*" >> "$FIX/filed"
 for a in "$@"; do [ -f "$a" ] && cat "$a" >> "$FIX/filed"; done
 STUB
-chmod +x "$TMP"/systemctl "$TMP"/journalctl "$TMP"/bd "$TMP"/bead.sh
-export SPIRA_SYSTEMCTL="$TMP/systemctl" SPIRA_JOURNALCTL="$TMP/journalctl" SPIRA_BD="$TMP/bd" SPIRA_FIRSTRUN_BEAD_SH="$TMP/bead.sh"
+chmod +x "$TMP"/systemctl "$TMP"/bd "$TMP"/bead.sh
+export SPIRA_SYSTEMCTL="$TMP/systemctl" SPIRA_BD="$TMP/bd" SPIRA_FIRSTRUN_BEAD_SH="$TMP/bead.sh"
 tl_config SPIRA_BD="$SPIRA_BD"
 
 R="$TMP/repo"; git init -q "$R"
@@ -68,7 +64,7 @@ is   "exactly one filing"                 "1" "$(grep -c '^FILE' "$FIX/filed")"
 want "filing is P1"                       "--priority 1" "$filed"
 want "filing names the shipping bead"     "--parent sp-ship1" "$filed"
 want "filing takes the bead's repo"       "--repo zzrepo" "$filed"
-want "filing carries the error text"      "SPIRA_TOML is not set" "$filed"
+want "filing carries the error text"      "Job failed: exit-code 2" "$filed"
 want "filing carries the exit"            "exit: 2" "$filed"
 
 : > "$FIX/filed"

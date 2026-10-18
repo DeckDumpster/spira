@@ -257,7 +257,7 @@ fn units_fixture(rows: &[String]) -> UnitsFixture {
     std::fs::write(&show_file, SHOW).unwrap();
     let run = dir.join("run");
     std::fs::create_dir_all(run.join("tsd")).unwrap();
-    std::fs::write(run.join("tsd").join("unit-run.jsonl"), b"{}\n").unwrap();
+    std::fs::write(run.join("tsd").join("unit-run-dbus.jsonl"), b"{}\n").unwrap();
     let systemctl = dir.join("systemctl");
     script(
         &systemctl,
@@ -371,7 +371,7 @@ async fn units_page_renders_the_same_rows_and_is_cached() {
 #[tokio::test]
 async fn units_without_a_unit_run_file_still_lists_the_units_and_names_nothing_missing() {
     let fx = units_fixture(&[]);
-    std::fs::remove_file(std::path::Path::new(&fx.cfg.run).join("tsd").join("unit-run.jsonl")).unwrap();
+    std::fs::remove_file(std::path::Path::new(&fx.cfg.run).join("tsd").join("unit-run-dbus.jsonl")).unwrap();
     let addr = spawn(fx.cfg.clone()).await;
     let v = units_json(addr).await;
     assert_eq!(v["errors"].as_array().unwrap().len(), 0);
@@ -398,7 +398,7 @@ async fn units_reads_the_real_unit_run_file_through_duckdb() {
     let mut fx = units_fixture(&[]);
     let run = std::path::PathBuf::from(&fx.cfg.run);
     let line = |unit: &str, ago: i64, result: &str, ms: i64, inv: &str| {
-        format!(r#"{{"family":"unit-run","unit":"{unit}","ts":"{}","result":"{result}","duration_ms":{ms},"invocation_id":"{inv}"}}"#, tsd::iso_utc((now_s() - ago) as u64))
+        format!(r#"{{"family":"unit-run-dbus","unit":"{unit}","ts":"{}","result":"{result}","duration_ms":{ms},"invocation_id":"{inv}"}}"#, tsd::iso_utc((now_s() - ago) as u64))
     };
     let mut text = String::new();
     for i in 1..=10 {
@@ -409,7 +409,7 @@ async fn units_reads_the_real_unit_run_file_through_duckdb() {
     text.push('\n');
     text.push_str(&line("flaky.service", 9 * 86_400, "success", 5, "too-old"));
     text.push('\n');
-    std::fs::write(run.join("tsd").join("unit-run.jsonl"), text).unwrap();
+    std::fs::write(run.join("tsd").join("unit-run-dbus.jsonl"), text).unwrap();
     fx.cfg.duckdb = "duckdb".into();
     let addr = spawn(fx.cfg.clone()).await;
     let v = units_json(addr).await;

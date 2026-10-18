@@ -1,4 +1,4 @@
-//! `/units`: every systemd user unit, with its executions folded from `run/tsd/unit-run.jsonl`.
+//! `/units`: every systemd user unit, with its executions folded from `run/tsd/unit-run-dbus.jsonl`.
 //! The unit list comes from systemd itself, so a unit that never ran still has a row.
 
 use crate::stuck::{dur, esc, shell};
@@ -562,7 +562,7 @@ pub fn parse_timer_nexts(text: &str) -> Result<BTreeMap<String, i64>, String> {
 }
 
 async fn executions(src: &Sources, path: &str, now: i64) -> Result<Vec<Value>, String> {
-    let file = tsd::family_path(std::path::Path::new(&src.run), "unit-run");
+    let file = tsd::family_path(std::path::Path::new(&src.run), "unit-run-dbus");
     if !file.exists() {
         return Ok(Vec::new());
     }
