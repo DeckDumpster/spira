@@ -14,7 +14,8 @@ trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/fakebin" "$TMP/store/cur/bin" "$TMP/store/prev/bin"
 printf '#!/bin/sh\necho collected >> "%s/calls"\n' "$TMP" > "$TMP/fakebin/nix-collect-garbage"
 chmod +x "$TMP/fakebin/nix-collect-garbage"
-export PATH="$TMP/fakebin:$PATH"
+export PATH="/usr/local/bin:/usr/bin:/bin"
+export SPIRA_NIX_PROFILE_BIN="$TMP/fakebin"
 export SPIRA_NIX_ENV_LINK="$TMP/spira-env"
 
 calls() { [ -f "$TMP/calls" ] && wc -l < "$TMP/calls" || echo 0; }
@@ -33,6 +34,12 @@ nix_gc_main >/dev/null 2>&1; rc=$?
 rm "$TMP/spira-env.prev"; ln -s "$TMP/store/prev" "$TMP/spira-env.prev"
 nix_gc_main >/dev/null 2>&1; rc=$?
 [ "$rc" = 0 ] && [ "$(calls)" = 2 ] && ok "both roots resolve: collects" || bad "both roots resolve: collects" "rc=$rc calls=$(calls)"
+
+rm "$TMP/spira-env.prev"
+mv "$TMP/fakebin" "$TMP/hidden"
+out="$(nix_gc_main 2>&1)"; rc=$?
+[ "$rc" = 1 ] && [[ "$out" == *"$TMP/fakebin"* && "$out" == *"$TMP/spira-env/bin"* ]] && ok "neither present: fails naming both places" || bad "neither present: fails naming both places" "rc=$rc out=$out"
+mv "$TMP/hidden" "$TMP/fakebin"
 
 svc="$HERE/../systemd/spira-nix-gc.service"; tmr="$HERE/../systemd/spira-nix-gc.timer"
 grep -q '^CPUQuota=' "$svc" && ok "unit is CPU-fenced" || bad "unit is CPU-fenced" "no CPUQuota"
