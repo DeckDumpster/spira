@@ -333,7 +333,7 @@ impl<'a> Sweep<'a> {
                 // empty work; only a branch with commits whose diff is nonetheless on the
                 // base is the case this records: a ContentOnBase event.
                 let ahead = g.ahead(lr, br).unwrap_or(0);
-                if ahead > 0 && !g.has_own_commit(lr, br, id) {
+                if ahead > 0 && !g.has_own_commit(lr, br, id) && !g.only_stacked_base(lr, br) {
                     self.say(&format!("KEEP   {id}  {ahead} commit(s) not in {lr}, none naming the bead — an empty diff is not evidence of landing"));
                     return;
                 }
