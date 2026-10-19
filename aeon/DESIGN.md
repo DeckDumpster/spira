@@ -183,7 +183,7 @@ through lib.sh functions (§5), never hand-written SQL.
 `bd` (`$SPIRA_BD`), `git`, `spira-claim`, the model (`$SPIRA_AGENT`, default `claude`),
 `world.sh stop|start`, `gate-run.sh --status`,
 `worktree-hooks.sh install`, `holds.sh`, `wiki-commit.sh`, `sop ledger-init|digest|log`,
-`close-reason-flags.py`, `workflow-run-check.py`, the repository's own testdb library, and
+`close-reason-flags.py`, the repository's own testdb library, and
 `bash` for the lib.sh seam. Every Spira tool and script is invoked by its bare name on the
 PATH the launcher set (sp-gypjk: the release's `bin/` and `spira/` first); there is no
 `SPIRA_*_BIN` override, no `$SPIRA_ARTIFACTS` or `$SPIRA_REPO/bin` lookup, and no "binary
