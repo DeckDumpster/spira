@@ -8,7 +8,7 @@
 # Takes the git settings from the dolt-beads unit itself, so a unit that loses them fails here.
 #
 # tier: T1
-# covers: systemd/dolt-beads.service beads-store/*
+# covers: systemd/dolt-beads.service
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

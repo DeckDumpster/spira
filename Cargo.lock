@@ -171,16 +171,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "beads-store"
-version = "1.0.0"
-dependencies = [
- "serde_json",
- "spira-config",
- "spira-otel",
- "testkit",
-]
-
-[[package]]
 name = "bitflags"
 version = "2.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
