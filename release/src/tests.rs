@@ -1825,6 +1825,52 @@ fn a_release_that_adds_and_drops_a_key_activates_over_the_other_with_no_hand_edi
     assert!(loads(&w, A), "the old release loads the config again after rollback");
 }
 
+const UNREAD_KEYS: [&str; 16] = [
+    "round_marker_max_age", "liveness_model", "tier_budget_window", "attribute_maxpar", "batch_bins_ttl", "gate_select_cap",
+    "preflight_suite_max_secs", "queue_repro_ci_maxsec", "queue_repro_ci_pollsec", "queue_stuck_age", "reconciler_label",
+    "round_vm_provider", "suites_budget", "suite_times_log", "tier_allowlist", "tier_area_allowlist",
+];
+
+fn unread_keys_config() -> String {
+    let mut c = String::from("[spira]\nid_prefix = \"sp\"\n");
+    for k in UNREAD_KEYS {
+        c.push_str(&format!("{k} = 1\n"));
+    }
+    c
+}
+
+fn activate_over_unread_keys(delta: &str) -> (World, Result<(), String>) {
+    let w = World::with_git(delta_git(delta));
+    file(Path::new(&w.cfg.toml_spec().unwrap()), &unread_keys_config());
+    build_with_schema(&w, A, &UNREAD_KEYS, &[]);
+    build_with_schema(&w, B, &[], &UNREAD_KEYS);
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), A, None).unwrap();
+    let r = activate::activate(&ctx(&w, &sc), B, None).map(|_| ()).map_err(|e| format!("{e:?}"));
+    (w, r)
+}
+
+#[test]
+fn activating_over_a_config_that_sets_the_sixteen_unread_keys_strips_them() {
+    let real = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/config-delta.toml")).unwrap();
+    for k in UNREAD_KEYS {
+        assert!(real.contains(&format!("\"spira.{k}\"")), "config-delta.toml names {k} under removed");
+    }
+    let removed: Vec<String> = UNREAD_KEYS.iter().map(|k| format!("\"spira.{k}\"")).collect();
+
+    let (_, without) = activate_over_unread_keys("[added]\n\"spira.other\" = 1\n");
+    assert!(without.is_err(), "control: with no removal the new release refuses the config");
+
+    let (w, with) = activate_over_unread_keys(&format!("removed = [{}]\n", removed.join(", ")));
+    with.unwrap();
+    assert_eq!(w.current().as_deref(), Some(B));
+    let text = cfg_text(&w);
+    for k in UNREAD_KEYS {
+        assert!(!text.contains(k), "{k} still in config: {text}");
+    }
+    assert!(loads(&w, B));
+}
+
 #[test]
 fn verify_pre_activate_sees_the_config_with_the_delta_applied_and_leaves_the_files_alone() {
     let probe = "#!/bin/sh\nPATH=/usr/bin:/bin\ncat $(echo \"$SPIRA_TOML\" | tr : ' ') | grep -q new_key || { echo 'FAIL units: new_key is not declared' >&2; exit 1; }\nexit 0\n";

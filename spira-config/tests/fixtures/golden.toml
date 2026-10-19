@@ -31,7 +31,6 @@ queue_ci_maxsec = 21600
 queue_throttle_release_at = 12
 run = "/opt/fixture-home/.local/state/spira"
 scope_label = "myproject"
-suites_budget = 1800
 tz = "America/Los_Angeles"
 view = "/opt/spira/bin/view-follower"
 wiki = "/srv/checkouts/notes"
