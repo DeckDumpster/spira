@@ -440,6 +440,79 @@ pub fn rotate_from_env(env: &std::collections::BTreeMap<String, String>) -> Resu
     Ok(lines)
 }
 
+/// `release migrate-bead-clients`: move the bead-store clients off root onto [`BEADS_USER`]
+/// ([`ensure_beads_user`], run as root with the admin password in force, empty on a box never
+/// rotated), then prove the new user logs in and put `metadata.json` back if it does not. A
+/// no-op when the clients already use another user. The precondition `rotate-lc-credentials`
+/// names when it refuses to set root's password.
+pub fn migrate_bead_clients(
+    metadata: &Path,
+    beads_cred: &Path,
+    admin_file: &Path,
+    host: Option<String>,
+    port: u16,
+    tmp_parent: &Path,
+    mut run: impl FnMut(&[String], &[(String, String)]) -> (i32, String),
+) -> Result<Vec<String>, String> {
+    let (client, db) = bead_client(metadata)?;
+    if client != "root" {
+        return Ok(vec![format!("bead-store clients already connect as {client}; nothing to migrate")]);
+    }
+    let password = match std::fs::read_to_string(admin_file) {
+        Ok(t) => t.trim().to_string(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("cannot read the admin credential {}: {e}", admin_file.display())),
+    };
+    let admin = Admin { user: "root".into(), password, host: host.clone(), port };
+    let before = std::fs::read_to_string(metadata).map_err(|e| format!("cannot read {}: {e}", metadata.display()))?;
+    let mut lines = ensure_beads_user(beads_cred, metadata, &db, &admin, tmp_parent, &mut run)?;
+    let client_host = host.unwrap_or_else(|| "127.0.0.1".into());
+    let pw = read_beads_credential(beads_cred, &client_host, port)
+        .ok_or_else(|| format!("{BEADS_USER}'s password is not in {} after writing it", beads_cred.display()))?;
+    let dir = PrivateDir::new(tmp_parent, "mig")?;
+    let f = dir.write("client", &pw)?;
+    let env = vec![("SPIRA_LC_DB".to_string(), db), ("SPIRA_LC_PORT".to_string(), port.to_string()), ("SPIRA_LC_HOST".to_string(), client_host)];
+    let (rc, out) = run(&["verify-login".to_string(), BEADS_USER.to_string(), f.to_string_lossy().to_string()], &env);
+    if rc != 0 {
+        std::fs::write(metadata, &before).map_err(|e| format!("{BEADS_USER} cannot log in AND {} could not be put back: {e}", metadata.display()))?;
+        return Err(format!("{BEADS_USER} cannot log in ({}); {} put back on root", redact(out.trim_end(), &[&pw, &admin.password]), metadata.display()));
+    }
+    lines.push(format!("{BEADS_USER} logs in; bead-store clients now connect as {BEADS_USER}"));
+    Ok(lines)
+}
+
+/// [`migrate_bead_clients`] from the same environment as `rotate-lc-credentials`.
+pub fn migrate_bead_clients_from_env(env: &std::collections::BTreeMap<String, String>) -> Result<Vec<String>, String> {
+    let store_dir = env.get("SPIRA_DB").filter(|d| !d.is_empty()).ok_or("SPIRA_DB is not set — cannot find the bead-store client config")?;
+    let metadata = Path::new(store_dir).join(".beads/metadata.json");
+    let beads_cred = match env.get("BEADS_CREDENTIALS_FILE").filter(|p| !p.is_empty()) {
+        Some(p) => PathBuf::from(p),
+        None => PathBuf::from(env.get("HOME").filter(|h| !h.is_empty()).ok_or("HOME is not set")?).join(".config/beads/credentials"),
+    };
+    let admin_file = match env.get("SPIRA_LC_ADMIN_PASSWORD_FILE").filter(|p| !p.is_empty()) {
+        Some(p) => p.clone(),
+        None => spira_config::resolve::lc_admin_credential_default(env),
+    };
+    let host = env.get("SPIRA_LC_HOST").filter(|h| !h.is_empty()).cloned();
+    let port: u16 = match env.get("SPIRA_LC_PORT").filter(|p| !p.is_empty()) {
+        Some(p) => p.parse().map_err(|e| format!("SPIRA_LC_PORT: {e}"))?,
+        None => 3307,
+    };
+    let run = |args: &[String], e: &[(String, String)]| {
+        // batch-job: one operator-run migration against the local Dolt; bounded at 120 s by timeout(1).
+        let mut c = std::process::Command::new("timeout");
+        c.arg("120").arg("spira-lc").args(args).stdin(std::process::Stdio::null());
+        for (k, v) in e {
+            c.env(k, v);
+        }
+        match c.output() {
+            Ok(o) => (o.status.code().unwrap_or(1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
+            Err(e) => (127, format!("cannot run spira-lc: {e}")),
+        }
+    };
+    migrate_bead_clients(&metadata, &beads_cred, Path::new(&admin_file), host, port, &std::env::temp_dir(), run)
+}
+
 pub const BEADS_USER: &str = "beads";
 
 /// SQL giving `BEADS_USER` the password and every privilege on the beads database `db` and
@@ -630,6 +703,50 @@ mod tests {
         assert!(!sql.contains("*.*"), "{sql}");
         assert!(beads_user_sql("a`; DROP", "pw").is_err());
         assert!(beads_user_sql("db", "p'w").is_err());
+    }
+
+    #[test]
+    fn migrate_bead_clients_moves_root_clients_to_beads_and_proves_the_login() {
+        let d = testkit::TempDir::new("lc-migrate");
+        let cred = d.path().join("beads/credentials");
+        let meta = d.path().join("metadata.json");
+        let admin = d.path().join("admin");
+        std::fs::write(&meta, "{\"dolt_database\":\"spira\",\"dolt_mode\":\"server\"}").unwrap();
+        let mut calls = Vec::new();
+        let lines = migrate_bead_clients(&meta, &cred, &admin, None, 3307, d.path(), |args, _| {
+            calls.push(args[0].clone());
+            (0, String::new())
+        }).unwrap();
+        assert_eq!(calls, vec!["admin-apply-ddl", "verify-login"]);
+        let m: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&meta).unwrap()).unwrap();
+        assert_eq!(m["dolt_server_user"], "beads");
+        let pw = read_beads_credential(&cred, "127.0.0.1", 3307).unwrap();
+        assert!(!lines.join("\n").contains(&pw));
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&cred).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+
+    #[test]
+    fn migrate_bead_clients_puts_metadata_back_when_beads_cannot_log_in() {
+        let d = testkit::TempDir::new("lc-migrate-fail");
+        let cred = d.path().join("beads/credentials");
+        let meta = d.path().join("metadata.json");
+        let original = "{\"dolt_database\":\"spira\",\"dolt_mode\":\"server\"}";
+        std::fs::write(&meta, original).unwrap();
+        let err = migrate_bead_clients(&meta, &cred, &d.path().join("admin"), None, 3307, d.path(), |args, _| {
+            if args[0] == "verify-login" { (1, "Access denied".into()) } else { (0, String::new()) }
+        }).unwrap_err();
+        assert!(err.contains("cannot log in"), "{err}");
+        assert_eq!(std::fs::read_to_string(&meta).unwrap(), original);
+    }
+
+    #[test]
+    fn migrate_bead_clients_is_a_no_op_when_clients_are_not_root() {
+        let d = testkit::TempDir::new("lc-migrate-noop");
+        let meta = d.path().join("metadata.json");
+        std::fs::write(&meta, "{\"dolt_database\":\"spira\",\"dolt_server_user\":\"beads\"}").unwrap();
+        let lines = migrate_bead_clients(&meta, &d.path().join("c"), &d.path().join("a"), None, 3307, d.path(), |_, _| panic!("no call expected")).unwrap();
+        assert!(lines[0].contains("nothing to migrate"));
     }
 
     #[test]
