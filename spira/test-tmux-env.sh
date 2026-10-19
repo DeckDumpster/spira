@@ -97,4 +97,25 @@ fi
 # ---- idempotent -------------------------------------------------------------------------
 out="$(bash "$TOOL" scrub -L "$SOCK" 2>&1)"
 [ -z "$out" ] && ok "a second scrub is silent" || bad "a second scrub is silent" "said [$out]"
+
+# ---- SPIRA_TOML is pinned into a server that lacks it ------------------------------------
+TOML="$(mktemp)"; echo '# fixture' > "$TOML"
+trap 'cleanup; rm -f "$TOML"' EXIT
+"${TM[@]}" set-environment -gu SPIRA_TOML
+"${TM[@]}" show-environment -g SPIRA_TOML >/dev/null 2>&1 \
+    && bad "POSITIVE CONTROL — the server starts without SPIRA_TOML" "already set" \
+    || ok "POSITIVE CONTROL — the server starts without SPIRA_TOML"
+out="$(SPIRA_TOML="$TOML" bash "$TOOL" scrub -L "$SOCK" 2>&1)"
+case "$out" in *pinned*) ok "scrub reports pinning SPIRA_TOML" ;; *) bad "scrub reports pinning SPIRA_TOML" "said [$out]" ;; esac
+[ "$(pane_env SPIRA_TOML)" = "SPIRA_TOML=$TOML" ] \
+    && ok "show-environment -g names the config" \
+    || bad "show-environment -g names the config" "got [$(pane_env SPIRA_TOML)]"
+rm -f "/tmp/tmuxenv-$$.out"
+"${TM[@]}" new-window -d -n toml "printf '%s\\n' \"\${SPIRA_TOML:-unset}\" > /tmp/tmuxenv-$$.out" 2>/dev/null
+for _ in 1 2 3 4 5 6 7 8 9 10; do [ -s "/tmp/tmuxenv-$$.out" ] && break; sleep 0.3; done
+[ "$(cat "/tmp/tmuxenv-$$.out" 2>/dev/null)" = "$TOML" ] \
+    && ok "a new pane sees SPIRA_TOML" || bad "a new pane sees SPIRA_TOML" "got [$(cat "/tmp/tmuxenv-$$.out" 2>/dev/null)]"
+rm -f "/tmp/tmuxenv-$$.out"
+out="$(SPIRA_TOML="$TOML" bash "$TOOL" scrub -L "$SOCK" 2>&1)"
+[ -z "$out" ] && ok "a second pin is silent" || bad "a second pin is silent" "said [$out]"
 tl_summary

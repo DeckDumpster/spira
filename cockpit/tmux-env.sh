@@ -3,7 +3,8 @@
 # tmux-env.sh — keep one Claude session's identity out of the tmux server's environment.
 #
 #   tmux-env.sh names            the variable names, one per line
-#   tmux-env.sh scrub [-L sock]  remove them from a live server's global environment
+#   tmux-env.sh scrub [-L sock]  remove them from a live server's global environment, and
+#                                pin SPIRA_TOML there when the server lacks it
 #
 # WHY THIS EXISTS
 # ---------------
@@ -67,6 +68,13 @@ case "${1:-names}" in
         # the caller is about to fork a clean one.
         tmux "$@" has-session 2>/dev/null || exit 0
         n=0
+        # The counterpart of the scrub: a server created without SPIRA_TOML gives every pane
+        # none, and concierge.sh refuses to start in one.
+        if [ -n "${SPIRA_TOML:-}" ] && [ -f "$SPIRA_TOML" ] \
+            && ! tmux "$@" show-environment -g SPIRA_TOML >/dev/null 2>&1; then
+            tmux "$@" set-environment -g SPIRA_TOML "$SPIRA_TOML" 2>/dev/null \
+                && printf 'cockpit: pinned SPIRA_TOML in the tmux server environment\n'
+        fi
         for v in $VARS; do
             tmux "$@" show-environment -g "$v" >/dev/null 2>&1 || continue
             tmux "$@" set-environment -gu "$v" 2>/dev/null && n=$((n+1))
