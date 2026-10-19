@@ -78,6 +78,14 @@ impl Git<'_> {
         })
     }
 
+    /// Every commit in `base..br` is the claim-time stacked-base merge, which carries no change
+    /// of its own; false when there are none.
+    pub fn only_stacked_base(&self, base: &str, br: &str) -> bool {
+        let range = format!("{base}..{br}");
+        self.out(&["log", "--format=%s", range.as_str()])
+            .is_some_and(|s| !s.trim().is_empty() && s.lines().all(|l| l.starts_with("stacked base: merge ")))
+    }
+
     /// `git cherry base br` has a `+` line: a commit unique to <br> with no patch-equivalent
     /// on <base>.
     pub fn cherry_unapplied(&self, base: &str, br: &str) -> bool {

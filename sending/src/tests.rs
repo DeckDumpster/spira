@@ -400,6 +400,21 @@ fn a_branch_with_no_commit_naming_the_bead_is_not_content_on_base_evidence() {
 }
 
 #[test]
+fn a_branch_holding_only_a_stacked_base_merge_is_sent() {
+    let (fx, mut f) = fixture();
+    let r = fx.repo.clone();
+    git(&r, &["checkout", "-q", "-b", "spira/sp-stk", "main"]);
+    git(&r, &["commit", "-q", "--allow-empty", "-m", "stacked base: merge sp-other (abc) onto main"]);
+    git(&r, &["checkout", "-q", "main"]);
+    f.put("sp-stk", json!({"status": "closed", "labels": [], "dependencies": []}));
+    sweep(&f, opts(), &[repo(&fx)]);
+    let out = f.out();
+    assert!(!out.contains("KEEP   sp-stk"), "{out}");
+    assert!(!exists(&fx, "spira/sp-stk"), "{out}");
+    assert!(exists(&fx, "spira/sp-vac"), "a branch with other commits stays kept");
+}
+
+#[test]
 fn dry_run_says_would_and_changes_nothing() {
     let (fx, f) = fixture();
     let rc = sweep(&f, Opts { dry: true, ..opts() }, &[repo(&fx)]);
