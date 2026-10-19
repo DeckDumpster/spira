@@ -418,6 +418,20 @@ fn dry_run_says_would_and_changes_nothing() {
 }
 
 #[test]
+fn dry_run_and_real_pass_print_the_same_keep_lines() {
+    let keeps = |dry: bool| {
+        let (fx, f) = fixture();
+        sweep(&f, Opts { dry, ..opts() }, &[repo(&fx)]);
+        let mut v: Vec<String> = f.out().lines().filter(|l| l.starts_with("KEEP")).map(String::from).collect();
+        v.sort();
+        v
+    };
+    let (dry, real) = (keeps(true), keeps(false));
+    assert!(dry.iter().any(|l| l.contains("sp-vac") && l.contains("none naming the bead")), "{dry:?}");
+    assert_eq!(dry, real);
+}
+
+#[test]
 fn mid_send_hold_queue_and_failure() {
     let (fx, mut f) = fixture();
     f.held_mid.insert("sp-cl1".into());
