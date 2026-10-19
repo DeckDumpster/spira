@@ -3,6 +3,8 @@ Description=Check two minutes after boot that the bead store is running
 
 [Timer]
 OnBootSec=2min
+OnActiveSec=2min
+OnUnitActiveSec=15min
 AccuracySec=5s
 Unit=spira-dolt-boot-check.service
 
