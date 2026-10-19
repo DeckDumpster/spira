@@ -85,6 +85,30 @@ pub struct Conf {
     pub spira_conf: Option<String>,
 }
 
+impl Conf {
+    /// `concierge.sh` lives in the release; `SPIRA_REPO` is only a fallback. An unresolvable
+    /// path is an error, never a bare shell.
+    pub fn concierge_script(&self) -> Result<String, String> {
+        let mut tried = Vec::new();
+        for root in [&self.spira_release, &self.spira_repo] {
+            if root.is_empty() {
+                continue;
+            }
+            let p = format!("{root}/concierge.sh");
+            if std::path::Path::new(&p).is_file() {
+                return Ok(p);
+            }
+            tried.push(p);
+        }
+        Err(format!(
+            "cockpit: concierge.sh not found (SPIRA_RELEASE='{}', SPIRA_REPO='{}'; tried: {})",
+            self.spira_release,
+            self.spira_repo,
+            if tried.is_empty() { "nothing — both unset".to_string() } else { tried.join(", ") }
+        ))
+    }
+}
+
 fn env_nonempty(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|v| !v.is_empty())
 }
@@ -364,6 +388,45 @@ mod tests {
         let wins = "@1|brain:0|1\n@2|hunk:0|1\n";
         let out = cockpit_window_targets(panes, wins);
         assert_eq!(out, vec!["cockpit:2".to_string(), "hunk:0".to_string()]);
+    }
+
+    fn conf_with(release: &str, repo: &str) -> Conf {
+        Conf {
+            spira_release: release.into(),
+            cock: PathBuf::new(),
+            run: PathBuf::new(),
+            cwd: String::new(),
+            right_pct: 33,
+            bottom_pct: 28,
+            mail_cmd: None,
+            heal_cooldown_secs: 60,
+            idle_secs: 0,
+            mouse_on: true,
+            clipboard_on: false,
+            spira_repo: repo.into(),
+            spira_conf: None,
+        }
+    }
+
+    #[test]
+    fn concierge_script_resolves_in_the_release_with_repo_unset() {
+        let dir = testkit::TempDir::new("sp-9hn7po-rel");
+        testkit::write_exe(&dir.join("concierge.sh"), "#!/bin/sh\n");
+        let rel = dir.display().to_string();
+        let got = conf_with(&rel, "").concierge_script().unwrap();
+        assert_eq!(got, format!("{rel}/concierge.sh"));
+    }
+
+    #[test]
+    fn concierge_script_with_neither_set_names_both() {
+        let e = conf_with("", "").concierge_script().unwrap_err();
+        assert!(e.contains("SPIRA_RELEASE") && e.contains("SPIRA_REPO"), "{e}");
+    }
+
+    #[test]
+    fn concierge_script_missing_file_names_the_path_tried() {
+        let e = conf_with("/nonexistent-rel", "").concierge_script().unwrap_err();
+        assert!(e.contains("/nonexistent-rel/concierge.sh"), "{e}");
     }
 
     #[test]
@@ -686,29 +749,17 @@ impl Layout {
                 .into_iter()
                 .next()
                 .ok_or_else(|| "cockpit: could not restore the session pane".to_string())?;
-            let conc = format!("{}/concierge.sh", self.conf.spira_repo);
-            let is_exec = std::path::Path::new(&conc).is_file();
-            let cmd = if is_exec {
-                format!("{}{} here", self.conf.rel_prefix(), conc)
-            } else {
-                String::new()
-            };
-            let mut args = vec![
+            let conc = self.conf.concierge_script()?;
+            let cmd = format!("{}{} here", self.conf.rel_prefix(), conc);
+            let args = [
                 "split-window", "-P", "-F", "#{pane_id}", "-b", "-v", "-l", "60%", "-t", &anchor,
-                "-c", &self.conf.cwd,
+                "-c", &self.conf.cwd, &cmd,
             ];
-            if !cmd.is_empty() {
-                args.push(&cmd);
-            }
             let new_sess = self
                 .tmux
                 .run(&args)
                 .ok_or_else(|| "cockpit: could not restore the session pane".to_string())?;
-            if is_exec {
-                println!("cockpit: session pane was gone — opened concierge.sh here at {new_sess}");
-            } else {
-                println!("cockpit: session pane was gone — opened a shell at {new_sess} (concierge.sh not found)");
-            }
+            println!("cockpit: session pane was gone — opened {conc} here at {new_sess}");
             sess = Some(new_sess);
         }
         let sess = sess.unwrap();
