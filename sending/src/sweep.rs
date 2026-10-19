@@ -41,7 +41,6 @@ pub enum Disp {
     ReapSquashMerged,
     KeepSupersededUnsafe,
     KeepUnlanded,
-    KeepCherryUnapplied,
     OrphanNoBead,
     /// The lifecycle row is terminal and the base lacks the branch's work: nothing will
     /// ever land it, so it is parked under refs/archive, never left to stand or deleted.
@@ -59,7 +58,6 @@ impl Disp {
             Disp::ReapSquashMerged => "REAP squash-merged",
             Disp::KeepSupersededUnsafe => "KEEP superseded-unsafe",
             Disp::KeepUnlanded => "KEEP unlanded",
-            Disp::KeepCherryUnapplied => "KEEP cherry-unapplied",
             Disp::OrphanNoBead => "ORPHAN no-bead",
             Disp::ArchiveTerminal => "ARCHIVE terminal",
         }
@@ -125,10 +123,11 @@ pub fn disposition(c: &Ctx, id: &str, br: &str) -> Disp {
     // LANDED BY OTHER PR: the lifecycle record says the bead LANDED (`spira-lc state`, the one
     // record — never a commit-subject search) — but that landing may be about a PRIOR push of
     // this branch, so every commit unique to it must already be on the base (git cherry), or
-    // this would delete work under a LANDED that is true about the past.
+    // this would delete work under a LANDED that is true about the past. A branch whose proof
+    // fails is archived, not kept: the commits stay reachable at refs/archive.
     if b.is_some() && c.w.lc_landed(id) {
         if g.cherry_unapplied(lr, br) && !g.landed_by_subject(lr, br, id, 2000) {
-            return Disp::KeepCherryUnapplied;
+            return Disp::ArchiveTerminal;
         }
         return Disp::SendOtherPr;
     }
@@ -320,10 +319,6 @@ impl<'a> Sweep<'a> {
                 }
             }
             Disp::KeepUnlanded => self.say(&format!("KEEP   {id}  unlanded — {} commit(s) not in {lr}", q(g.ahead(lr, br)))),
-            Disp::KeepCherryUnapplied => self.say(&format!(
-                "KEEP   {id}  {} commit(s) not in {lr}; the lifecycle record says LANDED but git cherry finds unapplied commits — not safe to reap",
-                q(g.ahead(lr, br))
-            )),
             Disp::OrphanNoBead | Disp::ArchiveTerminal => {
                 if dry {
                     self.say(&format!("WOULD  {id}  archive orphan branch {br} ({} commit(s) not in {lr}) to refs/archive/{br}", q(g.ahead(lr, br))));

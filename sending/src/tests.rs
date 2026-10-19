@@ -300,7 +300,7 @@ fn every_branch_gets_the_shells_disposition() {
         ("sp-supunsafe", Disp::KeepSupersededUnsafe),
         ("sp-sq", Disp::ReapSquashMerged),
         ("sp-otherpr", Disp::SendOtherPr),
-        ("sp-cherry", Disp::KeepCherryUnapplied),
+        ("sp-cherry", Disp::ArchiveTerminal),
         ("sp-rewritten", Disp::SendOtherPr),
         ("sp-unlanded", Disp::KeepUnlanded),
         ("sp-noone", Disp::OrphanNoBead),
@@ -346,10 +346,10 @@ fn one_pass_sends_reaps_keeps_archives_and_holds() {
     assert!(out.contains("\nsp-supunsafe.txt\n"), "{out}");
     assert!(exists(&fx, "spira/sp-supunsafe"));
     assert!(f.called("destroy sp-supunsafe"), "the kept branch's worktree is freed");
-    assert!(out.contains("KEEP   sp-cherry  2 commit(s) not in main; the lifecycle record says LANDED but git cherry finds unapplied commits"), "{out}");
+    assert!(Git(&fx.repo).verify("refs/archive/spira/sp-cherry").is_some() && !exists(&fx, "spira/sp-cherry"), "{out}");
     assert!(out.contains("KEEP   sp-unlanded  unlanded — 1 commit(s) not in main"));
     assert!(out.contains("HELD   sp-held  in_progress"));
-    assert!(exists(&fx, "spira/sp-held") && exists(&fx, "spira/sp-cherry") && exists(&fx, "spira/sp-unlanded"));
+    assert!(exists(&fx, "spira/sp-held") && exists(&fx, "spira/sp-unlanded"));
     // The orphan's commits stay reachable at refs/archive, written before the reap and
     // reaped with the "archived" caller exception.
     assert_eq!(Git(&fx.repo).verify("refs/archive/spira/sp-noone").as_deref(), Some(fx.noone_tip.as_str()));
@@ -364,7 +364,7 @@ fn one_pass_sends_reaps_keeps_archives_and_holds() {
     assert!(out.contains("SENT sp-orphan  home spira/sp-orphan  orphaned worktree (branch was already gone)"), "{out}");
     assert!(!f.called("destroy .landing.repo"));
     assert!(f.called("prune"));
-    assert!(out.ends_with("LOG sending: 10 sent, 0 failed"), "{out}");
+    assert!(out.ends_with("LOG sending: 11 sent, 0 failed"), "{out}");
 }
 
 #[test]

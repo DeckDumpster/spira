@@ -312,7 +312,8 @@ bead sp-otherpr closed
 seed_lc sp-otherpr LANDED   # the lifecycle record has it LANDED (sp-2c1n0): that, not the subject, is landed-ness
 
 # sp-cherry: its lifecycle row is LANDED from an OLD landing, but a commit was added to the
-# branch AFTER that landing — git cherry finds it unapplied ('+'). KEEP cherry-unapplied.
+# branch AFTER that landing — git cherry finds it unapplied ('+'). ARCHIVE terminal.
+
 git -C "$REPO" checkout -q -b spira/sp-cherry main
 printf 'v1\n' > "$REPO/shared-cherry.txt"
 git -C "$REPO" add shared-cherry.txt && git -C "$REPO" commit -q -m "sp-cherry: add content"
@@ -325,6 +326,7 @@ git -C "$REPO" checkout -q spira/sp-cherry
 printf 'a new, never-landed change\n' > "$REPO/sp-cherry-extra.txt"
 git -C "$REPO" add sp-cherry-extra.txt && git -C "$REPO" commit -q -m "sp-cherry: one more commit, after landing"
 git -C "$REPO" checkout -q main
+SP_CHERRY_TIP="$(git -C "$REPO" rev-parse spira/sp-cherry)"
 bead sp-cherry closed
 seed_lc sp-cherry LANDED
 
@@ -469,13 +471,15 @@ fi
 want   "sp-sq is REAPED"                    "REAPED sp-sq"         "$out"
 is     "sp-sq branch is gone"               1 "$(branch_exists spira/sp-sq; echo $?)"
 
-# SEND / other-pr, KEEP / cherry-unapplied
+# SEND / other-pr, ARCHIVE / cherry-unapplied
 want   "sp-otherpr is SENT"                 "SENT sp-otherpr"      "$out"
 is     "sp-otherpr branch is gone"          1 "$(branch_exists spira/sp-otherpr; echo $?)"
 
-want   "sp-cherry is KEPT"                  "KEEP   sp-cherry"     "$out"
+want   "sp-cherry is ARCHIVED"              "ARCHIVED sp-cherry"   "$out"
 nowant "sp-cherry is not sent"              "SENT sp-cherry"       "$out"
-is     "sp-cherry branch still exists"      0 "$(branch_exists spira/sp-cherry; echo $?)"
+is     "sp-cherry branch is gone"           1 "$(branch_exists spira/sp-cherry; echo $?)"
+is     "sp-cherry's tip is reachable at refs/archive/spira/sp-cherry" "$SP_CHERRY_TIP" \
+    "$(git -C "$REPO" rev-parse -q --verify refs/archive/spira/sp-cherry 2>/dev/null)"
 
 # KEEP / unlanded, UNADOPTED
 want   "sp-unlanded is KEPT"                "KEEP   sp-unlanded"   "$out"
