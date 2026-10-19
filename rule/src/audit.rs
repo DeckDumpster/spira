@@ -28,6 +28,7 @@ fn is_verb(tok: &str) -> bool {
     let mut c = tok.chars();
     c.next().is_some_and(|f| f.is_ascii_lowercase())
         && tok.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !tok.ends_with("ed")
 }
 
 fn is_script(tok: &str) -> bool {
@@ -143,6 +144,12 @@ mod tests {
     fn a_verb_the_script_does_not_name_is_missing() {
         let r = extract_refs("run .claude/bead.sh drop <id> --reason text. Never bd delete.");
         assert_eq!(missing_refs(&r, &release), vec![".claude/bead.sh drop".to_string()]);
+    }
+
+    #[test]
+    fn a_past_tense_word_after_a_script_is_prose_not_a_verb() {
+        let r = extract_refs("Scar: bead.sh labelled every P0 express.");
+        assert!(missing_refs(&r, &release).is_empty());
     }
 
     #[test]
