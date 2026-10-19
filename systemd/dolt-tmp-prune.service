@@ -10,7 +10,6 @@
 # past the TTL — the same rule the 2026-09-27 incident used by hand.
 Description=Prune dolt-beads.service's temp spool
 Documentation=file://@SPIRA_HOME@/dolt-tmp-prune.sh
-After=default.target
 
 [Service]
 # THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu), as every shipped service carries it (sp-tofsd).

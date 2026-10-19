@@ -1,6 +1,5 @@
 [Unit]
 Description=Spira unit-run (D-Bus) — one record per user-unit execution, from the manager's own signals
-After=default.target
 StartLimitIntervalSec=300
 StartLimitBurst=5
 

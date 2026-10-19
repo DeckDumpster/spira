@@ -3,7 +3,6 @@ After=lc-serve.service
 Wants=lc-serve.service
 Description=Spira mail delivery daemon — wake registered readers on new mail
 Documentation=file://@SPIRA_HOME@/spira-mail-deliver.sh
-After=default.target
 # Restart bounds: five restarts over 300s before giving up.  inotifywait exits
 # immediately if the watch path is missing; the daemon recreates it before
 # exec so ordinary restarts do not count toward the limit.

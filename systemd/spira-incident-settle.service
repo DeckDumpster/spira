@@ -3,7 +3,6 @@ After=lc-serve.service
 Wants=lc-serve.service
 Description=Spira incident settle — close incidents whose fix landed and whose detector is quiet
 Documentation=file://@SPIRA_PROD_ROOT@/incident/DESIGN.md
-After=default.target
 
 [Service]
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@

@@ -1,7 +1,6 @@
 [Unit]
 Description=VictoriaMetrics — the metrics store
 Documentation=file://@SPIRA_HOME@/metrics-stack.sh
-After=default.target
 StartLimitIntervalSec=300
 StartLimitBurst=5
 

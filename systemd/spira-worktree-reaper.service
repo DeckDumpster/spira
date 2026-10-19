@@ -3,7 +3,6 @@ After=lc-serve.service
 Wants=lc-serve.service
 Description=Spira worktree reaper — remove worktrees of finished, merged or idle beads
 Documentation=file://@SPIRA_PROD_ROOT@/sending/DESIGN.md
-After=default.target
 
 [Service]
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@

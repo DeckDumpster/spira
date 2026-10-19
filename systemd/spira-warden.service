@@ -1,7 +1,6 @@
 [Unit]
 Description=Spira Warden trigger — file the scheduled warden sweep bead
 Documentation=file://@SPIRA_HOME@/chamber/warden.fayth
-After=default.target
 
 [Service]
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@

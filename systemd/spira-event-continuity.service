@@ -2,7 +2,6 @@
 After=lc-serve.service
 Wants=lc-serve.service
 Description=Spira event continuity — the first break per key in the lifecycle event log
-After=default.target
 
 [Service]
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@

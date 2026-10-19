@@ -3,7 +3,6 @@ After=lc-serve.service
 Wants=lc-serve.service
 Description=Spira czar fast pass — queue-stall detection with deterministic remedies
 Documentation=file://@SPIRA_HOME@/../czar-pass/src/main.rs
-After=default.target
 
 [Service]
 # THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built

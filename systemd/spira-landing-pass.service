@@ -3,7 +3,6 @@ After=lc-serve.service
 Wants=lc-serve.service
 Description=Spira landing pass — pr mode (the gated modes run as landing-pass land under spira-landing)
 Documentation=file://@SPIRA_HOME@/../landing-pass/src/pr_branch.rs
-After=default.target
 
 [Service]
 # THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built

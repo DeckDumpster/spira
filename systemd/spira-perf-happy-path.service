@@ -1,7 +1,6 @@
 [Unit]
 Description=Spira perf-watch — time the sim happy path against its design goal, outside any round
 Documentation=file://@SPIRA_HOME@/perf-probes
-After=default.target
 
 [Service]
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@

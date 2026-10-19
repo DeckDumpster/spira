@@ -23,7 +23,6 @@ Wants=lc-serve.service
 # success, so the timer sits silent and starts working the moment the file is present.
 Description=Spira Maechen trigger — evaluate landing/gap conditions and file a sweep bead
 Documentation=file://@SPIRA_HOME@/chamber/maechen.fayth
-After=default.target
 
 [Service]
 # THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built

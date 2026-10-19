@@ -13,7 +13,6 @@
 # know cannot be clobbered by a command nobody should still be running.
 Description=Dolt SQL server for beads (spira and the frozen Gas Town databases)
 Documentation=file://@SPIRA_HOME@/README.md
-After=default.target
 StartLimitIntervalSec=60
 StartLimitBurst=5
 # RefuseManualStop: `systemctl stop`/`restart` on this unit is denied (sp-39gqq — two

@@ -9,7 +9,6 @@ Wants=lc-serve.service
 # timer. This is what cockpit-ensure does for panes, done for daemons.
 Description=Restart any Spira watcher whose code is newer than the process running it
 Documentation=file://@SPIRA_HOME@/watch-refresh.sh
-After=default.target
 
 [Service]
 # THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built

@@ -22,7 +22,6 @@ Wants=lc-serve.service
 # is present. No step for anyone to remember.
 Description=Spira Groomer trigger — file a trigger bead for the scheduled hygiene pass
 Documentation=file://@SPIRA_HOME@/chamber/groomer.fayth
-After=default.target
 
 [Service]
 # THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built

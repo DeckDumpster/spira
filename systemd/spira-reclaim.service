@@ -1,6 +1,5 @@
 [Unit]
 Description=Spira reclaim — remove stale rebuildable build targets when the disk is short, cap the shared compilation cache; prune podman storage losslessly
-After=default.target
 
 [Service]
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@

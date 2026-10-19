@@ -2,7 +2,6 @@
 After=lc-serve.service
 Wants=lc-serve.service
 Description=Spira reconcile-content — close the content bead of every terminal lifecycle row
-After=default.target
 
 [Service]
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@

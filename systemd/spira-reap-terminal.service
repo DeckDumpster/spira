@@ -3,7 +3,6 @@ After=lc-serve.service
 Wants=lc-serve.service
 Description=Spira reap-terminal — remove terminal beads' worktrees and aged scratch from run/worktree
 Documentation=file://@SPIRA_PROD_ROOT@/sending/DESIGN.md
-After=default.target
 
 [Service]
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@

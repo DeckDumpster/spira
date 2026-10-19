@@ -6,7 +6,6 @@ Wants=lc-serve.service
 # landing-time reap missed.
 Description=Spira straggler sweep — reap branches of finished beads in every repository
 Documentation=file://@SPIRA_PROD_ROOT@/sending/DESIGN.md
-After=default.target
 
 [Service]
 # THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built

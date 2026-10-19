@@ -6,7 +6,6 @@ Wants=lc-serve.service
 # sits on, with no retention promise to anyone.
 Description=Spira transcript archive — keep the session logs, indexed by time and lineage
 Documentation=file://@SPIRA_HOME@/archive.sh
-After=default.target
 
 [Service]
 # THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built

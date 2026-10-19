@@ -4,7 +4,6 @@
 # (disk-backed, and it must not compete with the agents' own RAM).
 Description=sccache-dav — the box's shared compilation cache, reachable from every round-vm
 Documentation=file://@SPIRA_HOME@/sccache-dav/DESIGN.md
-After=default.target
 StartLimitIntervalSec=60
 StartLimitBurst=5
 

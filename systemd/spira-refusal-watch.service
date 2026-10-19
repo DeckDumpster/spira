@@ -2,7 +2,6 @@
 After=lc-serve.service
 Wants=lc-serve.service
 Description=Spira refusal watch — files one bead per class of refused lifecycle transition over its baseline
-After=default.target
 
 [Service]
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@

@@ -3,7 +3,6 @@ After=lc-serve.service
 Wants=lc-serve.service
 Description=Spira gate worker — gates the branches the landing pass queued, up to certify_par at once
 Documentation=file://@SPIRA_HOME@/../gate-worker/src/lib.rs
-After=default.target
 
 [Service]
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
