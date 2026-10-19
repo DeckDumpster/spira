@@ -10,14 +10,32 @@ use std::process::{Command, Stdio};
 
 pub type Snapshot = BTreeMap<String, String>;
 
-const LOCAL_DEADLINE_SECS: &str = "5";
+const LOCAL_DEADLINE_SECS: &str = "30";
 const NETWORK_DEADLINE_SECS: &str = "60";
+const TIMEOUT_EXIT: i32 = 124;
+
+struct Git {
+    program: String,
+    local_deadline: String,
+}
+
+impl Git {
+    fn real() -> Git {
+        Git { program: "git".to_string(), local_deadline: LOCAL_DEADLINE_SECS.to_string() }
+    }
+}
 
 fn git(dir: &Path, args: &[&str], stdin: Option<&str>) -> Result<String, String> {
+    run_git(&Git::real(), dir, args, stdin)
+}
+
+fn run_git(g: &Git, dir: &Path, args: &[&str], stdin: Option<&str>) -> Result<String, String> {
     let network = matches!(args.first(), Some(&"pull") | Some(&"push"));
+    let deadline = if network { NETWORK_DEADLINE_SECS } else { g.local_deadline.as_str() };
     let mut c = Command::new("timeout");
-    c.arg(if network { NETWORK_DEADLINE_SECS } else { LOCAL_DEADLINE_SECS })
-        .args(["git", "-C"])
+    c.arg(deadline)
+        .arg(&g.program)
+        .arg("-C")
         .arg(dir)
         .args(args)
         .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
@@ -31,8 +49,18 @@ fn git(dir: &Path, args: &[&str], stdin: Option<&str>) -> Result<String, String>
     if o.status.success() {
         Ok(String::from_utf8_lossy(&o.stdout).into_owned())
     } else {
-        Err(format!("git {} failed: {}", args.join(" "), String::from_utf8_lossy(&o.stderr).trim()))
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        let reason = match o.status.code() {
+            Some(TIMEOUT_EXIT) => format!("deadline {deadline}s exceeded"),
+            Some(code) => format!("exit {code}: {}", stderr.trim()),
+            None => format!("killed by a signal: {}", stderr.trim()),
+        };
+        Err(format!("git {} failed: {reason}", args.join(" ")))
     }
+}
+
+fn timed_out(err: &str) -> bool {
+    err.contains("deadline ") && err.contains("s exceeded")
 }
 
 pub fn is_ours_to_commit(path: &str) -> bool {
@@ -67,17 +95,30 @@ pub fn touched(before: &Snapshot, after: &Snapshot) -> Vec<String> {
 
 /// Stage exactly `paths`, commit, rebase onto the remote, push. Returns the count committed.
 pub fn commit_paths(dir: &Path, paths: &[String], subject: &str) -> Result<usize, String> {
+    commit_paths_with(&Git::real(), dir, paths, subject)
+}
+
+/// A failed stage or commit unstages `paths`, so a later plain `git commit` cannot sweep them in.
+fn commit_paths_with(g: &Git, dir: &Path, paths: &[String], subject: &str) -> Result<usize, String> {
     if paths.is_empty() {
         return Ok(0);
     }
     let mut add: Vec<&str> = vec!["add", "--"];
     add.extend(paths.iter().map(String::as_str));
-    git(dir, &add, None)?;
     let mut commit: Vec<&str> = vec!["commit", "-F", "-", "--only", "--"];
     commit.extend(paths.iter().map(String::as_str));
-    git(dir, &commit, Some(subject))?;
-    git(dir, &["pull", "--rebase"], None)?;
-    git(dir, &["push"], None)?;
+    let staged = run_git(g, dir, &add, None).and_then(|_| match run_git(g, dir, &commit, Some(subject)) {
+        Err(e) if timed_out(&e) => run_git(g, dir, &commit, Some(subject)),
+        r => r,
+    });
+    if let Err(e) = staged {
+        let mut reset: Vec<&str> = vec!["reset", "-q", "--"];
+        reset.extend(paths.iter().map(String::as_str));
+        let _ = run_git(g, dir, &reset, None);
+        return Err(e);
+    }
+    run_git(g, dir, &["pull", "--rebase"], None)?;
+    run_git(g, dir, &["push"], None)?;
     Ok(paths.len())
 }
 
@@ -165,6 +206,35 @@ pub(crate) mod tests {
         std::fs::write(brain.join("wiki/notes/a.md"), "a\n").unwrap();
         let err = commit_paths(&brain, &["wiki/notes/a.md".to_string()], "archivist: x\n").unwrap_err();
         assert!(err.contains("git pull --rebase failed") || err.contains("git push failed"), "{err}");
+    }
+
+    fn stub_git(root: &Path) -> (String, std::path::PathBuf) {
+        let count = root.join("commit-count");
+        let stub = root.join("git-stub");
+        testkit::write_exe(
+            &stub,
+            &format!("#!/bin/sh\ncase \" $* \" in *\" commit \"*) echo x >> {}; exit 124;; esac\nexec git \"$@\"\n", count.display()),
+        );
+        (stub.to_str().unwrap().to_string(), count)
+    }
+
+    #[test]
+    fn a_commit_that_times_out_is_retried_named_and_leaves_nothing_staged() {
+        let (root, brain) = fixture();
+        let (program, count) = stub_git(root.path());
+        let g = Git { program, local_deadline: "7".to_string() };
+        std::fs::write(brain.join("wiki/notes/a.md"), "a\n").unwrap();
+        let err = commit_paths_with(&g, &brain, &["wiki/notes/a.md".to_string()], "archivist: x\n").unwrap_err();
+        assert!(err.contains("deadline 7s exceeded"), "{err}");
+        assert_eq!(std::fs::read_to_string(count).unwrap().lines().count(), 2);
+        assert_eq!(porcelain(&brain), "?? wiki/notes/a.md\n");
+    }
+
+    #[test]
+    fn a_failure_other_than_the_deadline_names_its_exit_status() {
+        let (_root, brain) = fixture();
+        let err = git(&brain, &["rev-parse", "--verify", "nosuchref"], None).unwrap_err();
+        assert!(err.contains("exit 128"), "{err}");
     }
 
     #[test]
