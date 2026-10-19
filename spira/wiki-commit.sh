@@ -2,7 +2,7 @@
 # wiki-commit.sh <wiki-dir> <message>
 # Reads filenames (one per line) from stdin. Acquires an exclusive lock on the
 # wiki checkout, stages each file, commits, and pushes. Serialises concurrent
-# callers so no writer can commit paths staged by another.
+# callers; commits only the named paths (--only), leaving anything else staged untouched.
 # Exits 0 on success or nothing-to-commit, 1 on lock or commit error.
 set -uo pipefail
 wiki="${1:?wiki-commit.sh: wiki dir required}"
@@ -19,6 +19,7 @@ done
     || { printf 'wiki-commit.sh: cannot open lock for %s\n' "$wiki" >&2; exit 1; }
 flock "${_wc_lockfd}"
 
+paths=()
 while IFS= read -r f; do
     [ -n "$f" ] || continue
     # A directory path stages everything beneath it — every file a caller never named,
@@ -29,15 +30,24 @@ while IFS= read -r f; do
         continue
     fi
     git -C "$wiki" add -- "$f" 2>/dev/null || true
+    paths+=("$f")
 done <<< "$files"
 
-if git -C "$wiki" diff --cached --quiet 2>/dev/null; then
+if [ "${#paths[@]}" -eq 0 ] || git -C "$wiki" diff --cached --quiet -- "${paths[@]}" 2>/dev/null; then
     exec {_wc_lockfd}>&-
     exit 0
 fi
 
 rc=0
-git -C "$wiki" commit -m "$msg" 2>/dev/null || rc=$?
+git -C "$wiki" commit --only -m "$msg" -- "${paths[@]}" 2>/dev/null || rc=$?
+if [ "$rc" -eq 0 ]; then
+    committed="$(git -C "$wiki" show --name-only --format= HEAD 2>/dev/null | sort)"
+    named="$(git -C "$wiki" diff --name-only HEAD~1 HEAD -- "${paths[@]}" 2>/dev/null | sort)"
+    if [ "$committed" != "$named" ]; then
+        printf 'wiki-commit.sh: HEAD names paths beyond those given:\n%s\n' "$committed" >&2
+        rc=1
+    fi
+fi
 if [ "$rc" -eq 0 ]; then
     timeout 5 git -C "$wiki" push 2>/dev/null || true
 fi
