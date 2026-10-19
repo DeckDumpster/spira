@@ -5,11 +5,7 @@ Replaces `spira/spira-verdict.sh` (18 lines), the body of `spira-verdict.service
 queue-mode repository run `queue.sh step`". It belongs in the queue binary: it is `step`,
 repeated over the repositories whose land mode makes `step` meaningful.
 
-The implementation is `queue-step-all.patch` beside this file, against
-`concierge/rw-queue` at eebfaf7f6 (its lifecycle_enforce commit), with unit tests. It is not applied on this branch because
-the queue crate does not exist here; the Concierge applies it (`git apply
-testenv/queue-step-all.patch` on a checkout of concierge/rw-queue, then
-`cargo test -p queue`).
+The implementation is in `queue/src/cli.rs` (`StepAll`) with its unit tests.
 
 ## Intent
 
@@ -108,7 +104,7 @@ trait Scripts { fn verdict(&self, repo, lc_off: bool); fn batch_sweep(&self, rep
 // lock.rs: try_lock_file(queue_dir, repo, "step.lock") — same flock as try_lock.
 ```
 
-## Tests (in the patch; `cargo test -p queue`)
+## Tests (`cargo test -p queue`)
 
 | test | pins |
 |---|---|

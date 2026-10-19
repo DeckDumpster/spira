@@ -11,8 +11,8 @@
 # not depend on a stop job at all — `kill`, which Restart=always turns into a restart
 # without ever enqueuing one. RefuseManualStop's real-systemd semantics (restart refused,
 # kill unaffected, Restart=always revives the process) are systemd's own documented
-# contract (systemd.unit(5)) and already confirmed against this exact unit in a production
-# incident (wiki/notes/sp-8cylj-host-mismatch.md); this suite proves install.sh's own
+# contract (systemd.unit(5)) and already confirmed against this exact unit in production;
+# this suite proves install.sh's own
 # dispatch chooses the kill path for dolt-beads.service and never calls `restart` on it.
 #
 # PROPERTIES UNDER TEST

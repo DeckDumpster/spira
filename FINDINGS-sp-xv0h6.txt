@@ -1,8 +1,0 @@
-sp-xv0h6 investigation findings
-
-Root cause: test-suites.sh hardcodes SPIRA_SUITES_RUNNER_VARS="" at line 109,
-which overrides the runner's variable-stripping list. This breaks the
-guarantee that fixtures run the same way as under the systemd runner.
-
-SOP written: sop-test-suites-runner-env-sensitive
-Child incident: sp-88thl
