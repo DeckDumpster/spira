@@ -1,7 +1,0 @@
-## sp-kzok4 — Spira sweep closed
-
-Status: Healthy pipeline. Sweep is a periodic health check (ten-minute intervals).
-SOP applied: sop-spira-sweep  
-Evidence: landstate confirms recent LANDED commits.
-
-The previous session ran this SOP but failed to commit. This session records it.
