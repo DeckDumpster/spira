@@ -1,0 +1,16 @@
+[Unit]
+Description=Alarm when the bead store is not running after boot
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+CPUQuota=10%
+ExecStart=@SPIRA_HOME@/dolt-boot-check.sh
+TimeoutStartSec=30
+StandardOutput=append:@SPIRA_RUN@/dolt-boot-check.log
+StandardError=append:@SPIRA_RUN@/dolt-boot-check.log
+
+[X-Spira]
+Plane=observability

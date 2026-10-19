@@ -210,6 +210,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
         m.units.push(t("dolt-beads.service", true));
         m.units.push(t("dolt-tmp-prune.service", false));
         m.units.push(t("dolt-tmp-prune.timer", true));
+        m.units.push(t("spira-dolt-boot-check.service", false));
+        m.units.push(t("spira-dolt-boot-check.timer", true));
         if inputs.dolt_durable_set {
             m.units.push(t("dolt-persist.service", true));
             m.units.push(t("dolt-persist-compact.service", false));
@@ -223,6 +225,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
         m.optional.push("dolt-beads.service".into());
         m.optional.push("dolt-tmp-prune.service".into());
         m.optional.push("dolt-tmp-prune.timer".into());
+        m.optional.push("spira-dolt-boot-check.service".into());
+        m.optional.push("spira-dolt-boot-check.timer".into());
         m.optional.push("dolt-persist.service".into());
         m.optional.push("dolt-persist-compact.service".into());
         m.optional.push("dolt-persist-compact.timer".into());
