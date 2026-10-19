@@ -327,10 +327,6 @@ impl<'a> Sweep<'a> {
                 self.orphan(c, id, br);
             }
             Disp::SendContentLanded => {
-                if dry {
-                    self.say(&format!("WOULD  {id}  send branch {br}{}", wt_suffix()));
-                    return;
-                }
                 // EVIDENCE BEFORE DELETING, and only when there was work to land: the branch
                 // is about to vanish, and with it the only proof the bead was not closed on
                 // nothing. Zero ahead is a fast-forward (whose own commit names the bead) or
@@ -339,6 +335,10 @@ impl<'a> Sweep<'a> {
                 let ahead = g.ahead(lr, br).unwrap_or(0);
                 if ahead > 0 && !g.has_own_commit(lr, br, id) {
                     self.say(&format!("KEEP   {id}  {ahead} commit(s) not in {lr}, none naming the bead — an empty diff is not evidence of landing"));
+                    return;
+                }
+                if dry {
+                    self.say(&format!("WOULD  {id}  send branch {br}{}", wt_suffix()));
                     return;
                 }
                 if ahead > 0 && !self.w.lc_terminal(id) {
