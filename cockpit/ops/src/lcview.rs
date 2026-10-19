@@ -458,6 +458,9 @@ pub struct RoundView {
     pub name: String,
     pub state: String,
     pub age: String,
+    /// Not terminal: only a live round shows pass data or a progress bar.
+    #[serde(default)]
+    pub live: bool,
     /// Certification passes so far: one, plus one per eject.
     pub passes: usize,
     pub ejected: Vec<String>,
@@ -1179,6 +1182,7 @@ pub fn view(s: &Snapshot) -> View {
                 name: b.id.clone(),
                 state: if OPEN_BATCH.contains(&b.state.as_str()) { b.state.clone() } else { format!("{} {} ago", b.state, age(s.now - b.last_at)) },
                 age: age(s.now - opened),
+                live: OPEN_BATCH.contains(&b.state.as_str()),
                 passes: passes(&b.eject_at),
                 ejected: b.ejected.clone(),
                 members: b
@@ -1204,7 +1208,7 @@ pub fn view(s: &Snapshot) -> View {
         .collect();
     // round-vm's writer names the round by its head sha and the pass by a sha: one VM round
     // runs at a time, so a sha-named pass is the open round's current pass.
-    if let (Some(p), Some(r)) = (v.progress.as_mut(), v.round.as_ref()) {
+    if let (Some(p), Some(r)) = (v.progress.as_mut(), v.round.as_ref().filter(|r| r.live)) {
         if p.round.len() == 40 && p.round.chars().all(|c| c.is_ascii_hexdigit()) {
             p.round = r.name.clone();
             if p.pass == 0 {
