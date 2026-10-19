@@ -14,7 +14,6 @@ Wants=lc-serve.service
 # as every other spira timer.
 Description=Spira gate check — evaluate gh:run CI gates and resolve those that have passed
 Documentation=file://@SPIRA_HOME@/gate-check.sh
-After=default.target
 
 [Service]
 # THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built

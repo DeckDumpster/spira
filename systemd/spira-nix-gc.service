@@ -1,6 +1,5 @@
 [Unit]
 Description=Collect unreferenced Nix store paths, keeping the current and previous spira-env
-After=default.target
 
 [Service]
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@

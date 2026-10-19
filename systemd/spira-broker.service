@@ -3,7 +3,6 @@ After=lc-serve.service
 Wants=lc-serve.service
 Description=Spira broker — validate and execute queued forge-write intents
 Documentation=file://@SPIRA_HOME@/broker.sh
-After=default.target
 
 [Service]
 # THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built

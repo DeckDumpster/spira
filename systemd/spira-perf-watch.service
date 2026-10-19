@@ -3,7 +3,6 @@ After=lc-serve.service
 Wants=lc-serve.service
 Description=Spira perf-watch — time the hot read paths and alarm past the limit
 Documentation=file://@SPIRA_HOME@/perf-probes
-After=default.target
 
 [Service]
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@

@@ -1,6 +1,5 @@
 [Unit]
 Description=Spira target-reap — reclaim idle worktrees' build output when free space is under the floor
-After=default.target
 
 [Service]
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@

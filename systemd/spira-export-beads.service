@@ -3,7 +3,6 @@ After=lc-serve.service
 Wants=lc-serve.service
 Description=Spira bead mirror — regenerate the wiki's raw/spira-beads/spira.jsonl from the stores
 Documentation=file://@SPIRA_HOME@/export-beads.sh
-After=default.target
 
 [Service]
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@

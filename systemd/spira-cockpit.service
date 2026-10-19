@@ -11,7 +11,6 @@ Wants=lc-serve.service
 # `cockpit-collect` crate's own tiered supervisor (`cockpit-collect collect`).
 Description=Spira cockpit collector (snapshot for the ops pane)
 Documentation=file://@SPIRA_PROD_ROOT@/cockpit-collect/DESIGN.md
-After=default.target
 StartLimitIntervalSec=300
 StartLimitBurst=5
 

@@ -3,7 +3,6 @@ After=lc-serve.service
 Wants=lc-serve.service
 Description=Spira mail reconcile — apply delivered replies to the beads they answer
 Documentation=file://@SPIRA_PROD_ROOT@/mail/DESIGN.md
-After=default.target
 
 [Service]
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@

@@ -7,7 +7,6 @@ Wants=lc-serve.service
 # timeout; a check that errors leaves the ask open (never reads as satisfied).
 Description=Spira verify-asks — close asks whose VERIFY check already passes
 Documentation=file://@SPIRA_COCKPIT@/verify-asks.sh
-After=default.target
 
 [Service]
 # THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built

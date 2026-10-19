@@ -1,6 +1,5 @@
 [Unit]
 Description=Spira concierge guard — write an inbox row when the Concierge inbox waiter lapses, mail the operator when the lapse persists
-After=default.target
 
 [Service]
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@

@@ -1,6 +1,5 @@
 [Unit]
 Description=spira-submission — authenticated SMTPS on the tailnet, so a reply from a mail client reaches mail sendmail
-After=default.target
 StartLimitIntervalSec=300
 StartLimitBurst=5
 

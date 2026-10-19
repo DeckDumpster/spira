@@ -14,7 +14,6 @@ Wants=lc-serve.service
 # logs one line and exits 0, keeping the unit inert on installs with no
 # configured inbox.
 Description=Spira GitHub issue intake — triage gate
-After=default.target
 
 [Service]
 # THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built

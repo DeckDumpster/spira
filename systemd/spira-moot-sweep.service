@@ -7,7 +7,6 @@ Wants=lc-serve.service
 # cannot silently clear an open escalation (law-absence-needs-a-positive-control).
 Description=Spira moot sweep — resolve asks whose MOOT-WHEN predicate has cleared
 Documentation=file://@SPIRA_COCKPIT@/moot-sweep.sh
-After=default.target
 
 [Service]
 # THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built

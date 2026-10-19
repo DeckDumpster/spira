@@ -3,7 +3,6 @@ After=lc-serve.service
 Wants=lc-serve.service
 Description=Spira escape census — escapes by class over the trailing week
 Documentation=file://@SPIRA_HOME@/escape-classify.sh
-After=default.target
 
 [Service]
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@

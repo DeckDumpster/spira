@@ -6,7 +6,6 @@ Wants=lc-serve.service
 # aeon unit's own ExecStopPost (sp-0y2av); this timer is the fallback cadence between exits.
 Description=Spira fast summon — refill a freed aeon slot without a full sentinel pass
 Documentation=file://@SPIRA_PROD_ROOT@/sentinel/DESIGN.md
-After=default.target
 
 [Service]
 # THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built
