@@ -1,5 +1,5 @@
 # Keys this release adds to the one source (release/src/config_delta.rs, sp-pr6jn6), applied at activation.
-removed = ["spira.express_label", "spira.overlap_defer_label"]
+removed = ["spira.express_label", "spira.overlap_defer_label", "spira.round_marker_max_age", "spira.liveness_model", "spira.tier_budget_window", "spira.attribute_maxpar", "spira.batch_bins_ttl", "spira.gate_select_cap", "spira.preflight_suite_max_secs", "spira.queue_repro_ci_maxsec", "spira.queue_repro_ci_pollsec", "spira.queue_stuck_age", "spira.reconciler_label", "spira.round_vm_provider", "spira.suites_budget", "spira.suite_times_log", "spira.tier_allowlist", "spira.tier_area_allowlist"]
 [added]
 "spira.gate_deadline" = 300
 "spira.git_lock_stale_secs" = 600

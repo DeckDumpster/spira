@@ -1,7 +1,0 @@
-TYPE=u64
-GROUP=suites
-DOC=SPIRA_SUITES_BUDGET — The suite budget in seconds: the 15-minute suite cap.
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # Registered default (sp-kuwp6s, per Ryan 2026-10-07): The suite budget in seconds: the 15-minute suite cap.
-    : "${SPIRA_SUITES_BUDGET:=900}"
-SPIRA_CONF_DEFAULT_EOF

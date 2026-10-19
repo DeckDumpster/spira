@@ -600,7 +600,23 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "express_label", bead: "sp-38yq9j" },
     // Rework is never deferred behind another bead's branch: rounds merge and rebase, Sift screens.
     RetiredKey { key: "overlap_defer_label", bead: "sp-dzwj7w" },
-];
+    // Registered but read by no code under any spelling.
+    RetiredKey { key: "round_marker_max_age", bead: "sp-dm7mjb" },
+    RetiredKey { key: "liveness_model", bead: "sp-dm7mjb" },
+    RetiredKey { key: "tier_budget_window", bead: "sp-dm7mjb" },
+    RetiredKey { key: "attribute_maxpar", bead: "sp-dm7mjb" },
+    RetiredKey { key: "batch_bins_ttl", bead: "sp-dm7mjb" },
+    RetiredKey { key: "gate_select_cap", bead: "sp-dm7mjb" },
+    RetiredKey { key: "preflight_suite_max_secs", bead: "sp-dm7mjb" },
+    RetiredKey { key: "queue_repro_ci_maxsec", bead: "sp-dm7mjb" },
+    RetiredKey { key: "queue_repro_ci_pollsec", bead: "sp-dm7mjb" },
+    RetiredKey { key: "queue_stuck_age", bead: "sp-dm7mjb" },
+    RetiredKey { key: "reconciler_label", bead: "sp-dm7mjb" },
+    RetiredKey { key: "round_vm_provider", bead: "sp-dm7mjb" },
+    RetiredKey { key: "suites_budget", bead: "sp-dm7mjb" },
+    RetiredKey { key: "suite_times_log", bead: "sp-dm7mjb" },
+    RetiredKey { key: "tier_allowlist", bead: "sp-dm7mjb" },
+    RetiredKey { key: "tier_area_allowlist", bead: "sp-dm7mjb" },];
 
 /// A retired `batcher_bin` value that is not the batcher itself (e.g. "/bin/true", the old
 /// way to switch automatic cuts off) — read as `batcher_enable = "0"`.
