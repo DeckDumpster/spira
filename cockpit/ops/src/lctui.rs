@@ -246,6 +246,7 @@ pub fn tree(v: &View) -> Vec<Node> {
     }
     let single = match &v.round {
         None => Node::new("round", format!("{B}ROUND{R}  {D}none open{R}")),
+        Some(r) if !r.live => Node::new("round", format!("{B}ROUND{R}  {D}no round running · last: {} {}{R}", r.name, r.state)),
         Some(r) => {
             let member_nodes = |round: &crate::lcview::RoundView, key: &str| -> Vec<Node> {
                 round
@@ -266,7 +267,7 @@ pub fn tree(v: &View) -> Vec<Node> {
             if !r.ejected.is_empty() {
                 kids.push(Node::new("round/ejected", format!("{D}ejected this round: {}{R}", r.ejected.join(" "))));
             }
-            if let Some(p) = v.progress.as_ref().filter(|p| r.name.starts_with(&p.round)) {
+            if let Some(p) = v.progress.as_ref().filter(|p| !p.round.is_empty() && r.name.starts_with(&p.round)) {
                 kids.insert(0, pass_node(p, v.now));
             }
             Node::new(
@@ -1059,6 +1060,7 @@ mod tests {
                 name: "r-auto-96".into(),
                 state: "OPEN".into(),
                 age: "13m".into(),
+                live: true,
                 passes: 2,
                 ejected: vec!["sp-x".into()],
                 members: (0..4).map(|k| RoundMember { id: format!("sp-m{k}"), prio: "P1".into(), title: "member".into(), ejects: k }).collect(),
@@ -1317,6 +1319,26 @@ mod tests {
         assert!(parent < at("sp-m0") && at("sp-m3") < child && child < member, "{t:#?}");
         let indent = |i: usize| t[i].len() - t[i].trim_start().len();
         assert!(indent(member) > indent(child), "members sit under the child: {t:#?}");
+    }
+
+    #[test]
+    fn a_landed_round_is_not_current_and_takes_no_foreign_pass() {
+        let mut v = busy_view();
+        v.rounds.clear();
+        v.round = Some(RoundView { name: "identity-20261019T005431Z".into(), state: "LANDED 72m ago".into(), age: "72m".into(), passes: 1, ..Default::default() });
+        v.progress = Some(crate::lcview::PassProgress { round: "r-auto-328".into(), pass: 1, phase: "done".into(), verdict: "green".into(), done: 475, total: 475, suites_started: 9_000, cap: 900, updated_at: 9_995, ..Default::default() });
+        let t = text(&layout(&v, &Ui::default(), 100, 200));
+        let line = t.iter().find(|l| l.contains("ROUND") && !l.contains("ROUNDS")).unwrap_or_else(|| panic!("{t:#?}"));
+        assert!(line.contains("no round running") && line.contains("last: identity-20261019T005431Z LANDED 72m ago"), "{t:#?}");
+        assert!(!t.iter().any(|l| l.contains("475/475") || l.contains("pass 1")), "no foreign pass: {t:#?}");
+    }
+
+    #[test]
+    fn a_live_round_shows_its_own_pass() {
+        let mut v = busy_view();
+        v.progress = Some(crate::lcview::PassProgress { round: "r-auto-96".into(), pass: 2, phase: "done".into(), verdict: "green".into(), done: 452, total: 452, suites_started: 9_000, cap: 900, updated_at: 9_995, ..Default::default() });
+        let t = text(&layout(&v, &Ui::default(), 100, 200));
+        assert!(t.iter().any(|l| l.contains("452/452")), "{t:#?}");
     }
 
     #[test]
