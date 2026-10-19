@@ -56,7 +56,6 @@ members = [
     "groomer",
     "archivist",
     "intent-report",
-    "beads-store",
     "suite-select",
     "release",
     "forge",

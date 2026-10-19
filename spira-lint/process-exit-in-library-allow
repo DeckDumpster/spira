@@ -6,7 +6,6 @@
 aeon/src/conf.rs
 aeon/src/main.rs
 archivist/src/main.rs
-beads-store/src/main.rs
 census/src/main.rs
 cockpit-collect/src/probes/mod.rs
 cockpit/ops/src/health_main.rs

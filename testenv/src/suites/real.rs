@@ -308,7 +308,7 @@ exit $?
 "#;
 
 /// The wall on the filing and on the claim (spira-lint call-deadline's cap): both are a
-/// handful of beads-store / lifecycle round trips, never a batch job.
+/// handful of store / lifecycle round trips, never a batch job.
 pub const CHANGE_WALL_SECS: &str = "5";
 
 /// lc_claim_bead's exit codes, as the transition reports them.
