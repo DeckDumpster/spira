@@ -87,6 +87,7 @@ pub fn run(w: &dyn World) -> i32 {
                 let mut v = check_failed_units(w);
                 v.extend(check_orphan_units(w));
                 v.extend(check_prod_checkout(w));
+                v.extend(check_dovecot_dropin(w));
                 v
             },
         },
@@ -766,6 +767,23 @@ pub fn check_prod_checkout(w: &dyn World) -> Vec<Line> {
         out.push(ok(format!("every installed spira-* unit runs from {releases}")));
     }
     out
+}
+
+const DOVECOT_UNIT_DIRS: [&str; 3] = ["/lib/systemd/system", "/usr/lib/systemd/system", "/etc/systemd/system"];
+const DOVECOT_DROPIN: &str = "/etc/systemd/system/dovecot.service.d/spira-tailnet.conf";
+
+/// Release promotion runs unprivileged, so the drop-in is written only by the root installer phase.
+pub fn check_dovecot_dropin(w: &dyn World) -> Vec<Line> {
+    if !DOVECOT_UNIT_DIRS.iter().any(|d| w.file_exists(&Path::new(d).join("dovecot.service"))) {
+        return Vec::new();
+    }
+    if w.file_exists(Path::new(DOVECOT_DROPIN)) {
+        return vec![ok("dovecot has the tailnet ordering drop-in")];
+    }
+    vec![warn(
+        format!("dovecot.service lacks {DOVECOT_DROPIN}"),
+        "A tailnet-bound dovecot fails at boot until tailscaled assigns the address. Promotion cannot write it (needs root): run `sudo spira-install --system-user`.",
+    )]
 }
 
 // ============================================================================ snapshot freshness

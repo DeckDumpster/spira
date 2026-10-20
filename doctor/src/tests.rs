@@ -1395,3 +1395,19 @@ fn submission_unconfigured_warns_only_when_tailscale_is_up() {
     assert_eq!(submission("configured=0\ntailnet=1\n")[0].level, Level::Warn);
     assert_eq!(submission("configured=0\ntailnet=0\n")[0].level, Level::Ok);
 }
+
+#[test]
+fn dovecot_dropin_absent_where_dovecot_is_not_installed_says_nothing() {
+    assert!(check_dovecot_dropin(&Fake::default()).is_empty());
+}
+
+#[test]
+fn dovecot_dropin_missing_warns_and_present_is_ok() {
+    let f = Fake::default();
+    f.files.borrow_mut().push(Path::new("/usr/lib/systemd/system/dovecot.service").to_path_buf());
+    let out = check_dovecot_dropin(&f);
+    assert_eq!(levels(&out), vec![Level::Warn]);
+    assert!(out[0].detail.as_deref().unwrap().contains("--system-user"));
+    f.files.borrow_mut().push(Path::new("/etc/systemd/system/dovecot.service.d/spira-tailnet.conf").to_path_buf());
+    assert_eq!(levels(&check_dovecot_dropin(&f)), vec![Level::Ok]);
+}
