@@ -34,15 +34,7 @@ fn parse(bytes: &[u8]) -> Option<Value> {
 
 /// One open PR per repo from this installation's identity, whoever opens it. Unreadable
 /// listing refuses too: a control that cannot check must not wave the PR through.
-pub fn pr_create(
-    gh: &dyn Gh,
-    repo: &Path,
-    head: &str,
-    base: &str,
-    title: &str,
-    body: &[u8],
-    second_pr_why: &str,
-) -> Out {
+pub fn pr_preflight(gh: &dyn Gh, repo: &Path, head: &str, second_pr_why: &str) -> Out {
     let listed = gh.call(
         Some(repo),
         &[
@@ -57,7 +49,11 @@ pub fn pr_create(
         ],
     );
     let Some(Value::Array(open)) = listed.ok().then(|| parse(&listed.stdout)).flatten() else {
-        eprintln!("forge pr-create: cannot list this installation's open PRs on {} — refusing to open {head}", repo.display());
+        if listed.code == 127 {
+            eprintln!("forge pr-create: gh is not on PATH (or SPIRA_GH does not resolve) — cannot check this installation's open PRs on {}, refusing to open {head}", repo.display());
+        } else {
+            eprintln!("forge pr-create: cannot list this installation's open PRs on {} (gh exited {}) — refusing to open {head}", repo.display(), listed.code);
+        }
         return fail(vec![String::new()]);
     };
     let open: Vec<String> = open
@@ -85,6 +81,22 @@ pub fn pr_create(
             "forge pr-create: SECOND_PR_CONSIDERED opening {head} beside {}: {why}",
             open.join(", ")
         );
+    }
+    ok(vec![])
+}
+
+pub fn pr_create(
+    gh: &dyn Gh,
+    repo: &Path,
+    head: &str,
+    base: &str,
+    title: &str,
+    body: &[u8],
+    second_pr_why: &str,
+) -> Out {
+    let pre = pr_preflight(gh, repo, head, second_pr_why);
+    if pre.code != 0 {
+        return pre;
     }
     let r = gh.call_merged(
         Some(repo),

@@ -354,6 +354,8 @@ pub struct RunOut {
 }
 
 pub trait Forge {
+    /// `pr-preflight <repo> <head>`: every check `pr-create` would refuse on, before anything is pushed.
+    fn pr_preflight(&self, forge: &Path, repo: &Path, head: &str) -> Result<(), String>;
     /// `pr-create <repo> <head> <base> <title>`, body on stdin → the PR number, or the forge's own error.
     fn pr_create(
         &self,

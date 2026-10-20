@@ -1167,6 +1167,25 @@ const REBASE_WIDTH: usize = 4;
 pub struct RealForge;
 
 impl Forge for RealForge {
+    fn pr_preflight(&self, forge: &Path, repo: &Path, head: &str) -> Result<(), String> {
+        let o = Command::new(forge)
+            .arg("pr-preflight")
+            .arg(repo)
+            .arg(head)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("could not run the forge: {e}"))?;
+        if o.status.success() {
+            return Ok(());
+        }
+        let err = String::from_utf8_lossy(&o.stderr);
+        let err = err.trim();
+        Err(if err.is_empty() {
+            format!("rc={}: (no stderr)", o.status.code().unwrap_or(-1))
+        } else {
+            err.to_string()
+        })
+    }
     fn pr_create(
         &self,
         forge: &Path,
