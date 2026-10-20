@@ -168,7 +168,7 @@ fn fatal(msg: &str) -> i32 {
 
 fn classify_unclaimable_main() -> i32 {
     use std::io::Read;
-    let env = |k: &str, d: &str| std::env::var(k).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| d.to_string());
+    let env = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
     let labels = unclaimable::Labels {
         scope: env("SPIRA_SCOPE_LABEL", "spira"),
         ci: env("SPIRA_CI_LABEL", "awaiting-ci"),
