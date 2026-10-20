@@ -67,6 +67,9 @@ case "\$cmd" in
         ;;
     pr-number) grep "^\${1:-}	" "$FORGE_LOG" 2>/dev/null | tail -1 | cut -f2 ;;
     pr-list-open) cat "$TMP/live-prs" 2>/dev/null ;;
+    pr-preflight)
+        if [ -f "$TMP/forge-refuses" ]; then echo "forge pr-preflight: gh is not installed" >&2; exit 1; fi
+        ;;
     pr-comment|pr-list-queue) : ;;
     *) printf 'forge-fixture: unknown: %s\n' "\$cmd" >&2; exit 1 ;;
 esac
@@ -326,6 +329,21 @@ is   "10. sp-k is still CERTIFIED" "CERTIFIED" "$(lcfix_state sp-k)"
 qb10="$(remote_queue_branches)"
 [ -z "$qb10" ] && ok "10. no queue branch pushed" || bad "10. no queue branch pushed" "$qb10"
 [ -f "$(open_batch_file)" ] && bad "10. no open record written" "file exists" || ok "10. no open record written"
+clean_case
+
+echo
+echo "11. a forge that refuses the preflight leaves no remote branch:"
+seed
+certify sp-m fm.txt "m-content"
+: > "$TMP/forge-refuses"
+out11="$(openbatch fixture-repo)"; rc11=$?
+rm -f "$TMP/forge-refuses"
+want "11. names the forge refusal" "forge refuses" "$out11"
+[ "$rc11" -ne 0 ] && ok "11. non-zero exit" || bad "11. non-zero exit" "rc=$rc11"
+is   "11. no PR created"           "0" "$(wc -l < "$FORGE_LOG")"
+qb11="$(remote_queue_branches)"
+[ -z "$qb11" ] && ok "11. no queue branch pushed" || bad "11. no queue branch pushed" "$qb11"
+is   "11. sp-m is still CERTIFIED" "CERTIFIED" "$(lcfix_state sp-m)"
 clean_case
 
 echo
