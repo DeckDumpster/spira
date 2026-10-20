@@ -15,6 +15,7 @@ test = false
 
 [dependencies]
 spira-config = { path = "../spira-config" }
+install = { path = "../install" }
 spira-otel = { path = "../spira-otel" }
 serde_json = "1"
 
