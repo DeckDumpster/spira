@@ -1,8 +1,7 @@
 //! Unit tests over a `Fake` [`crate::ports::World`] — one scenario per decision point
 //! census.sh's own orchestration made (the clock-skew guard, the watermark fallback,
 //! suppression by open/closed remedy, orphan annotation, `--with-suppressed` gating).
-//! The six `census/*.py` scripts and the SQL itself are treated as already-correct,
-//! unchanged dependencies (DESIGN.md §2) — the `Fake` stands in for their output directly.
+//! The classification pipeline has its own tests below; the `Fake` stands in for its output.
 
 use crate::ports::World;
 use crate::*;
@@ -30,7 +29,7 @@ pub struct Fake {
     pub stderr: RefCell<Vec<String>>,
     /// Every remedy bd holds (`covers:*`), as bd's JSON — bd's own status included.
     pub remedies: RefCell<String>,
-    /// What covers.py / covers_closed.py were fed.
+    /// What `covers` / `covers_closed` were fed.
     pub covers_in: RefCell<String>,
     pub covers_closed_in: RefCell<String>,
     /// `spira-lc list`'s rows.
@@ -123,24 +122,24 @@ impl World for Fake {
     fn lc_landed(&self, id: &str) -> i32 {
         self.landed.borrow().get(id).copied().unwrap_or(2)
     }
-    fn cluster_py(&self, tabular: &str) -> Result<String, String> {
+    fn cluster(&self, tabular: &str) -> Result<String, String> {
         Ok(self.count_out.borrow().get(tabular).cloned().unwrap_or_default())
     }
-    fn cluster_merge_py(&self, _all_time: &str, _since_wm: &str) -> String {
+    fn cluster_merge(&self, _all_time: &str, _since_wm: &str) -> String {
         self.merge_out.borrow().clone()
     }
-    fn covers_py(&self, bdq_json: &str, _fold_map: &str) -> String {
+    fn covers(&self, bdq_json: &str, _fold_map: &str) -> String {
         *self.covers_in.borrow_mut() = bdq_json.to_string();
         self.covers_out.borrow().clone()
     }
-    fn covers_closed_py(&self, bdq_json: &str, _fold_map: &str) -> String {
+    fn covers_closed(&self, bdq_json: &str, _fold_map: &str) -> String {
         *self.covers_closed_in.borrow_mut() = bdq_json.to_string();
         self.covers_closed_out.borrow().clone()
     }
-    fn handwritten_py(&self, _tabular: &str) -> String {
+    fn handwritten(&self, _tabular: &str) -> String {
         self.handwritten_out.borrow().clone()
     }
-    fn deliberate_py(&self, _tabular: &str) -> String {
+    fn deliberate(&self, _tabular: &str) -> String {
         self.deliberate_out.borrow().clone()
     }
     fn bd_list_all_json(&self, _label_pattern: &str) -> String {
@@ -255,7 +254,7 @@ fn unreadable_watermark_warns_and_falls_back() {
 }
 
 #[test]
-fn valid_watermark_uses_cluster_merge_py() {
+fn valid_watermark_uses_cluster_merge() {
     let f = Fake::default();
     f.clean_clock();
     f.set("SPIRA_RUN", "/run");
@@ -456,4 +455,68 @@ fn an_unreachable_lifecycle_machine_suppresses_nothing() {
     run(&f, false);
     assert_eq!(f.covers_in.borrow().trim(), "[]");
     assert!(f.stderr.borrow().iter().any(|l| l.contains("lifecycle") && l.contains("not suppressing")), "{:?}", f.stderr.borrow());
+}
+
+// ============================================================================ pipeline
+
+mod pipeline_tests {
+    use crate::pipeline::*;
+
+    const HDR: &str = "+---+\n| event_type | new_value | issue_id | ts |\n+---+\n";
+
+    #[test]
+    fn cluster_collapses_a_burst_and_keeps_victims() {
+        let rows = format!("{HDR}| requeued | x | a | 100 |\n| requeued | x | b | 150 |\n| requeued | x | a | 1000 |\n| bogus | x | a | 1 |\n(3 rows)\n");
+        assert_eq!(cluster(&rows, 300), "2 2 3 sp-requeue-x\n");
+        assert_eq!(cluster(&rows, 10), "3 2 3 sp-requeue-x\n");
+        assert_eq!(cluster("", 300), "");
+    }
+
+    #[test]
+    fn cluster_ranks_and_names_classes() {
+        let rows = "| reclaimed | | a | 1 |\n| reopened | r | a | 1 |\n| reopen | r | b | 9999 |\n| lapsed | | a | 1 |\n";
+        assert_eq!(cluster(rows, 300), "2 2 2 sp-reopen-r\n1 1 1 sp-lapsed-unrecorded\n1 1 1 sp-reclaim\n");
+    }
+
+    #[test]
+    fn merge_ranks_by_since_counts_and_survives_malformed_input() {
+        assert_eq!(
+            cluster_merge("5 5 9 a\n1 1 1 b\n", "1 1 2 b\n"),
+            "1 b (1 victims, 2 detections, 1 all-time)\n0 a (0 victims, 0 detections, 5 all-time)\n"
+        );
+        assert_eq!(cluster_merge("junk\n", ""), "");
+    }
+
+    #[test]
+    fn covers_resolves_aliases_and_ignores_garbage() {
+        let j = r#"[{"labels":["spira","covers:old"]},{"labels":["covers:c"]},{"labels":null}]"#;
+        assert_eq!(covers(j, "old new\nbad line here\n"), "new\nc\n");
+        assert_eq!(covers("not json", ""), "");
+        assert_eq!(covers(r#"{"labels":["covers:one"]}"#, ""), "one\n");
+    }
+
+    #[test]
+    fn covers_closed_applies_the_window() {
+        let now = 1_800_000_000;
+        let j = r#"[{"id":"r1","closed_at":"2027-01-10T00:00:00Z","labels":["covers:x"]},
+                    {"id":"r2","closed_at":"2026-11-01T00:00:00Z","labels":["covers:x"]},
+                    {"id":"r3","closed_at":"2027-01-10T00:00:00.123+00:00","labels":["covers:y"]},
+                    {"id":"","labels":["covers:x"]},
+                    {"id":"r4","closed_at":"garbage","labels":["covers:z"]}]"#;
+        assert_eq!(covers_closed(j, "", 30, now), "r1 x\nr3 y\nr4 z\n");
+    }
+
+    #[test]
+    fn handwritten_and_deliberate_rank_and_skip_zero() {
+        let hw = "| requeued | c | bot | 2 | 3 |\n| requeued | d | bot | 5 | 5 |\n| requeued | e | bot | 0 | 1 |\n";
+        assert_eq!(
+            handwritten(hw),
+            "hand-written (not ranked): sp-requeue-d 5 beads (actor bot)\nhand-written (not ranked): sp-requeue-c 2 beads (actor bot)\n"
+        );
+        let del = "| reopen | k | 1 | 4 |\n| reopen | j | 3 | 3 |\n";
+        assert_eq!(
+            deliberate(del),
+            "deliberate, not ranked: sp-reopen-j 3 beads (3 events)\ndeliberate, not ranked: sp-reopen-k 1 beads (4 events)\n"
+        );
+    }
 }

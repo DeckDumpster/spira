@@ -1,9 +1,9 @@
 //! `census` — Maechen census: failure classes ranked by frequency, with open-remedy
 //! suppression. Replaces `spira/census.sh` (238 lines). See DESIGN.md for the contract;
-//! written from the script's intent (bd sp-yyk47). The SQL itself and the six
-//! `census/*.py` pipeline scripts are unchanged (DESIGN.md §2) — this crate is the bash
-//! orchestration around them, moved to Rust.
+//! written from the script's intent (bd sp-yyk47). The SQL itself is unchanged (DESIGN.md §2);
+//! the classification pipeline is [`pipeline`].
 
+pub mod pipeline;
 pub mod ports;
 pub mod real;
 pub mod sql;
@@ -55,7 +55,7 @@ pub fn run(w: &dyn World, with_suppressed: bool) -> i32 {
             w.err("census: events substrate is unreachable — cannot produce a census");
             return 1;
         };
-        w.cluster_merge_py(&all_time, &since_wm)
+        w.cluster_merge(&all_time, &since_wm)
     } else {
         all_time
             .lines()
@@ -81,14 +81,14 @@ pub fn run(w: &dyn World, with_suppressed: bool) -> i32 {
 
     let suppressed: HashSet<String> = {
         let json = open_json;
-        w.covers_py(&json, &fold_map).lines().filter(|l| !l.is_empty()).map(str::to_string).collect()
+        w.covers(&json, &fold_map).lines().filter(|l| !l.is_empty()).map(str::to_string).collect()
     };
 
     let mut suppressed_closed: HashSet<String> = HashSet::new();
     let mut orphaned_by_class: BTreeMap<String, Vec<String>> = BTreeMap::new();
     {
         let json = closed_json;
-        let closed_out = w.covers_closed_py(&json, &fold_map);
+        let closed_out = w.covers_closed(&json, &fold_map);
         let repo = w.repo_root();
         for line in closed_out.lines() {
             let mut it = line.splitn(2, ' ');
@@ -136,10 +136,10 @@ pub fn run(w: &dyn World, with_suppressed: bool) -> i32 {
     }
 
     if with_suppressed {
-        let hw = w.handwritten_py(&w.census_handwritten_run_sql());
+        let hw = w.handwritten(&w.census_handwritten_run_sql());
         print_lines(w, &hw);
         let del_sql = w.census_deliberate_run_sql(if watermark_ts > 0 { Some(watermark_ts) } else { None });
-        let del = w.deliberate_py(&del_sql);
+        let del = w.deliberate(&del_sql);
         print_lines(w, &del);
     }
 
@@ -147,7 +147,7 @@ pub fn run(w: &dyn World, with_suppressed: bool) -> i32 {
 }
 
 /// The remedies bd lists, split by their lifecycle rows into (open, closed) JSON arrays for
-/// covers.py / covers_closed.py. Open: the bead is still READY, WORKING or in REWORK — a
+/// `covers` / `covers_closed`. Open: the bead is still READY, WORKING or in REWORK — a
 /// builder will still produce the fix, so its class stays suppressed. Closed: the builder
 /// has handed it on (SUBMITTED onward, or terminal), so whether it landed decides.
 ///
@@ -203,10 +203,10 @@ fn split3(line: &str) -> (String, String, String) {
 }
 
 /// All-time / since-watermark causal-event counts: the raw event rows clustered by
-/// `cluster.py` (`SPIRA_CENSUS_CLUSTER_GAP_S`).
+/// `pipeline::cluster` (`SPIRA_CENSUS_CLUSTER_GAP_S`).
 fn census_counts(w: &dyn World, since: Option<i64>) -> Result<String, String> {
     let tabular = w.census_event_rows_run_sql(since)?;
-    w.cluster_py(&tabular)
+    w.cluster(&tabular)
 }
 
 /// Reads and validates the watermark file exactly as census.sh did: a missing file and an

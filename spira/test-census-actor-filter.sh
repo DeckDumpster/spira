@@ -12,7 +12,7 @@
 # path could ever stop emitting — sp-requeue-unjudged-branch-collision reached #2 in
 # a real Maechen census with 6 distinct beads. Fixed by an actor predicate
 # (actor = 'harness' OR actor LIKE 'aeon-%') on the ranked query; excluded rows are
-# listed separately by census_handwritten_run_sql / handwritten.py.
+# listed separately by census_handwritten_run_sql / handwritten.
 #
 # POSITIVE CONTROL (law-absence-needs-a-positive-control, law-a-regression-test-must-
 # be-seen-to-fail): the discriminating fact is the actor, not the cause string, so
@@ -29,7 +29,7 @@
 # refuses. Skips when server testdb is not available.
 #
 # tier: T2
-# covers: census/src/* spira/lib.sh spira/census/handwritten.py spira/census/classmap.py spira/census/cluster.py
+# covers: census/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

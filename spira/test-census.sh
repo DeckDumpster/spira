@@ -15,7 +15,7 @@
 # bd list against a real store.
 #
 # tier: T3
-# covers: census/src/* spira/census/deliberate.py spira/lib.sh UC-ops-detection-remediation-07 UC-ops-detection-remediation-12 UC-ops-detection-remediation-14
+# covers: census/src/* spira/lib.sh UC-ops-detection-remediation-07 UC-ops-detection-remediation-12 UC-ops-detection-remediation-14
 # hermetic-ok: uses a fixture database; no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -187,7 +187,7 @@ echo "3. since-filter reaches the real SQL (watermark narrows the query)"
 # ==============================================================================
 # A stale event (before the watermark) and a live one (after) — the since-watermark
 # query must see only the live one, proving SPIRA_RUN/maechen.watermark really reaches
-# census_event_rows_run_sql's since-clause and not just cluster_merge.py's ranking
+# census_event_rows_run_sql's since-clause and not just cluster_merge's ranking
 # (table-tested separately in test-census-pipeline.sh).
 testdb_reset
 bid_stale="$(plant_bead "stale-watermark-bead")"

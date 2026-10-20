@@ -1,8 +1,7 @@
 //! Everything census.sh's orchestration logic needs from the world, as a trait (DESIGN.md
 //! §4). The SQL itself (`_census_events_sql`, `_census_class_fold_map`, the retry-aware
 //! `census_events_run_sql`/`census_handwritten_run_sql`/`census_deliberate_run_sql`) and
-//! the six `census/*.py` pipeline scripts are UNCHANGED, still lib.sh and still Python
-//! respectively — this crate moves only the bash glue around them into Rust (DESIGN.md §2).
+//! the classification pipeline (`crate::pipeline`) sit behind it.
 
 use std::path::Path;
 
@@ -32,18 +31,18 @@ pub trait World {
     /// `landed <id>` -> its exit code (0 landed, 1 not landed, 2 unknown).
     fn lc_landed(&self, id: &str) -> i32;
 
-    // ---- the census/*.py pipeline, unchanged, run as subprocesses exactly as bash ran them ----
-    /// `cluster.py < raw event rows` -> Ok("<causal> <victims> <detections> <class>" lines)
-    /// or Err when the process itself could not run.
-    fn cluster_py(&self, tabular: &str) -> Result<String, String>;
-    /// `cluster_merge.py <all-time-file> <since-wm-file>`.
-    fn cluster_merge_py(&self, all_time: &str, since_wm: &str) -> String;
-    /// `covers.py <fold-map-file> < bdq-json>`.
-    fn covers_py(&self, bdq_json: &str, fold_map: &str) -> String;
-    /// `covers_closed.py <fold-map-file> < bdq-json>`.
-    fn covers_closed_py(&self, bdq_json: &str, fold_map: &str) -> String;
-    fn handwritten_py(&self, tabular: &str) -> String;
-    fn deliberate_py(&self, tabular: &str) -> String;
+    // ---- the classification pipeline (`crate::pipeline`) ----
+    /// Raw event rows -> Ok("<causal> <victims> <detections> <class>" lines)
+    /// or Err when it could not run.
+    fn cluster(&self, tabular: &str) -> Result<String, String>;
+    /// All-time and since-watermark `cluster` outputs, merged and ranked.
+    fn cluster_merge(&self, all_time: &str, since_wm: &str) -> String;
+    /// Open remedy beads' covered classes.
+    fn covers(&self, bdq_json: &str, fold_map: &str) -> String;
+    /// Closed remedy beads' `<id> <class>` lines within the remedy window.
+    fn covers_closed(&self, bdq_json: &str, fold_map: &str) -> String;
+    fn handwritten(&self, tabular: &str) -> String;
+    fn deliberate(&self, tabular: &str) -> String;
 
     // ---- bd, direct (a `list` read: bdq's guards apply only to create/reopen/update/close) ----
     /// Every bead carrying a label matching `label_pattern`, whatever bd says its status is
