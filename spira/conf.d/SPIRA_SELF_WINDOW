@@ -1,8 +1,8 @@
 TYPE=string
 GROUP=self
-DOC=SELF-MONITORING WINDOW: how many minutes back cockpit-metrics.py looks when deciding
+DOC=SELF-MONITORING WINDOW: how many minutes back cockpit-collect metrics looks when deciding
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # SELF-MONITORING WINDOW: how many minutes back cockpit-metrics.py looks when deciding
+    # SELF-MONITORING WINDOW: how many minutes back cockpit-collect metrics looks when deciding
     # what is "repeating now" and whether a stillborn or stall alert is in force. Narrow
     # enough to suppress a burst that ended hours ago; wide enough to cover the ~2-minute
     # sentinel cadence across a meaningful run of passes.

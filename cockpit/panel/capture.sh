@@ -42,19 +42,19 @@ tmux resize-window -t "$S" -x "$W" -y "$H"
 # Let it paint. The store loads the fixture synchronously, so this is paint time only.
 for _ in $(seq 40); do
     [ "$(tmux capture-pane -p -t "$S" | grep -c 'view')" -gt 0 ] && break
-    python3 -c 'import time; time.sleep(0.1)'
+    sleep 0.1  # waits-on: the pane painting "view"; cap 40 polls
 done
 # KEYS is a SEQUENCE, sent one key at a time with a pause between. "Tab o" has to reach the
 # reader of the second tab, and both keys arriving in one write can be read as one event.
 for k in $KEYS; do
     tmux send-keys -t "$S" "$k"
-    python3 -c 'import time; time.sleep(0.4)'
+    sleep 0.4  # waits-on: the key reaching the reader as its own event; cap 0.4s per key
 done
 if [ -n "$TEXT" ]; then
     tmux send-keys -t "$S" -l "$TEXT"
-    python3 -c 'import time; time.sleep(0.6)'
+    sleep 0.6  # waits-on: the typed text painting; cap 0.6s
 fi
 tmux capture-pane -p    -t "$S" > "$OUT.txt"
-tmux capture-pane -p -e -t "$S" | ./ansi-svg.py > "$OUT.svg"
+tmux capture-pane -p -e -t "$S" | "$(dirname "$BIN")/ansi-svg" > "$OUT.svg"
 tmux kill-session -t "$S" 2>/dev/null || true
 printf '%s\n' "$OUT.txt $(wc -l < "$OUT.txt") rows" "$OUT.svg"

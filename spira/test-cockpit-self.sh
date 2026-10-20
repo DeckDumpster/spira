@@ -6,7 +6,7 @@
 #
 # WHAT THIS SUITE EXISTS FOR
 # --------------------------
-# cockpit-metrics.py now emits short-window SELF metrics:
+# cockpit-collect metrics now emits short-window SELF metrics:
 #
 #   SP_SELF_REPEATING_N    count of ACT texts repeating in consecutive passes right now
 #   SP_SELF_REPEATING{i}   formatted: "act text × N passes (Dm)"
@@ -23,7 +23,7 @@
 #
 # ACCEPTANCE CRITERIA (from the bead):
 #   1. A fixture sentinel.log with a burst 6h ago and nothing since renders no SELF row
-#      (no REPEATING output from cockpit-metrics.py; SP_SELF_REPEATING_N=0)
+#      (no REPEATING output from cockpit-collect metrics; SP_SELF_REPEATING_N=0)
 #   2. A fixture with three consecutive "handled 1 stranded item(s)" in the last ten
 #      minutes renders SP_SELF_REPEATING_N=1 and one formatted REPEATING string
 #   3. A ledger with one stillborn aeon in-window renders SP_SELF_STILLBORN_W=1
@@ -38,27 +38,27 @@
 #
 # defect: sp-jo8i
 # tier: T1
-# covers: spira/cockpit-metrics.py cockpit/ops/src/health.rs UC-cockpit-observability-16
+# covers: cockpit-collect/src/metrics.rs cockpit/ops/src/health.rs UC-cockpit-observability-16
 
-# covers: spira/cockpit-metrics.py cockpit/ops/src/health.rs
+# covers: cockpit-collect/src/metrics.rs cockpit/ops/src/health.rs
 # scar: the SELF metrics (repeating aeons, stillborn starts, starved passes) were absent; current session anomalies were invisible on the health pane.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 HEALTH="health"
+COLLECT="$(command -v cockpit-collect)"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
-# Call cockpit-metrics.py in a clean environment, using strings as fixture files.
+# Call `cockpit-collect metrics` in a clean environment, using strings as fixture files.
 # The window for SELF metrics is set to 90 minutes via SPIRA_SELF_WINDOW so that "last
 # 10 minutes" is clearly inside and "6 hours ago" is clearly outside.
 run_metrics() {   # run_metrics <sentinel-fixture-string> <ledger-fixture-string>
     local sf="$TMP/sent.log" lf="$TMP/ledger.log"
     printf '%s' "$1" > "$sf"
     printf '%s' "$2" > "$lf"
-    env -i PATH="/usr/bin:/bin" HOME="$TMP" PYTHONPATH="$HERE" \
-        SPIRA_SELF_WINDOW=90 \
-        python3 "$HERE/cockpit-metrics.py" "$sf" "$lf" 24 2>/dev/null
+    env -i PATH="/usr/bin:/bin" HOME="$TMP" SPIRA_HOME="$SPIRA_HOME" SPIRA_TOML="$(tl_layer SPIRA_SELF_WINDOW=90)" \
+        "$COLLECT" metrics "$sf" "$lf" 24 2>/dev/null
 }
 
 # Timestamps used in fixtures. "now" is computed once so fixtures are consistent.

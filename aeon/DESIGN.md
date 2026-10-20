@@ -114,7 +114,7 @@ Append-only, one line per write, `O_APPEND`, no lock. Timestamp is UTC second pr
 
 - `born` is written right after the fence, before any check that takes time; `awake` once
   the claim resolved; `done` is the disposition. Born-without-awake is a stillbirth
-  (cockpit-metrics.py `LEDGER_RE = ^(\S+) (born|awake|done) (\S+)(?: (.*))?$`).
+  (cockpit-collect metrics `LEDGER_RE = ^(\S+) (born|awake|done) (\S+)(?: (.*))?$`).
 - A dry run writes nothing.
 - The file is trimmed to its last 5,000 lines when it exceeds 20,000 (before `born`).
 - The eight session fields are parsed from the **last attempt segment** of the trace
@@ -127,7 +127,7 @@ Append-only, one line per write, `O_APPEND`, no lock. Timestamp is UTC second pr
   `gate-unfinished`, `decision-blocked`, `timeout`, `requeue-<cause>`, `operator-wait`,
   `submitted`, `yield-headless`, `pre-session`, `closed`, `open`, `in_progress`, `?`,
   `sweep`.
-- Readers: `cockpit-metrics.py`, `cockpit.sh` (tail), `watchtower` (`$2=="awake" && $3==f`),
+- Readers: `cockpit-collect metrics`, `cockpit.sh` (tail), `watchtower` (`$2=="awake" && $3==f`),
   `model-switch-report.sh`, `aeon::run::Run::rapid_recur_check` (`" done \S+ <id> "`,
   native since sp-8kqww — wave 4.33; lib.sh's own copy is retired),
   `full-aeon-fixture.sh`, and many suites. `lib.sh capacity_pause_set` also appends a

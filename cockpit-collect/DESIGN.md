@@ -30,9 +30,10 @@ exactly as `gate-run`'s `Real` already bridges to `repo_root`/`spira_landref` (a
 `io::lib_call(home, func, args)` generalizes that one seam to every `lib.sh` function this
 bead's probes need, rather than growing one bespoke snippet per call site).
 
-Two genuinely separate external tools this bead does not own or change, called exactly as
-the bash called them: `cockpit-metrics.py` (`sending_keys`, wholesale) and
-`cockpit-sparklines.py` (the throughput row inside `core_detail_keys`).
+Two ports, sp-8nv4wr, formerly Python scripts run as external tools: `metrics.rs`
+(`sending_keys`, wholesale) and `sparklines.rs` (the throughput row inside
+`core_detail_keys`). Both run in-process and are also reachable as `cockpit-collect metrics`
+and `cockpit-collect sparklines`, which is how the suites drive them.
 
 ## Scope: the collector, not the pane
 
@@ -162,8 +163,6 @@ probe that has simply never been due).
   to about twenty.
 - **The nine self-quoting keys keep their double-quote accretion.** Fixing it is a
   `health.sh`-side change this bead does not make.
-- **`sending_keys` and the `core_detail` throughput row stay fully delegated** to
-  `cockpit-metrics.py`/`cockpit-sparklines.py` — separate components, unowned by this bead.
 - **The bash `loop` subcommand (the pre-`collect.sh` serial forever-loop) is dropped**, not
   ported: nothing calls `cockpit.sh loop` in production (only `collect.sh loop`, this
   crate's `collect`), and no test suite drives it either.

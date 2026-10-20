@@ -14,7 +14,7 @@
 #
 # defect: sp-mn8q
 # tier: T1
-# covers: cockpit-collect/src/probes/core_detail.rs spira/cockpit-sparklines.py cockpit/ops/src/health.rs UC-cockpit-observability-19
+# covers: cockpit-collect/src/probes/core_detail.rs cockpit-collect/src/sparklines.rs cockpit/ops/src/health.rs UC-cockpit-observability-19
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -24,18 +24,14 @@ echo "test-beads-sparklines.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
-# ---------------------------------------------------------------------------
-# cockpit-sparklines.py is its own file (not something inlined into the collector),
-# so this suite runs the real script cockpit-collect runs, unmodified.
-# ---------------------------------------------------------------------------
-SPARKLINES_PY="$HERE/cockpit-sparklines.py"
-if [ ! -f "$SPARKLINES_PY" ]; then
-    bad "extract" "cockpit-sparklines.py not found next to cockpit-collect"
+COLLECT="$(command -v cockpit-collect)"
+if [ -z "$COLLECT" ]; then
+    bad "cockpit-collect" "not on PATH"
     echo ""
     echo "RESULTS: $_TL_PASS passed, $_TL_FAIL failed"
     exit 1
 fi
-ok "extract: cockpit-sparklines.py present"
+ok "cockpit-collect present"
 
 # ---------------------------------------------------------------------------
 # Fixture timestamps: pin to a fixed NOW so bucket boundaries are predictable.
@@ -58,25 +54,13 @@ ts_at() {
 # Beads: 4 opened, 3 closed within window.
 #   opened at bucket 0 (+3600s), bucket 2 (+25200s), bucket 5 (+56700s) ×2
 #   closed at bucket 1 (+14400s), bucket 4 (+48600s), bucket 6 (+68400s)
-BEADS_JSON="$(python3 -c "
-import json, time, sys
-
-W = $W
-def ts(offset):
-    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(W + offset))
-
-beads = [
-    {'id': 'sp-ta', 'status': 'closed', 'issue_type': 'task', 'labels': ['spira', 'plan'],
-     'created_at': ts(3600), 'closed_at': ts(14400), 'updated_at': ts(14400)},
-    {'id': 'sp-tb', 'status': 'closed', 'issue_type': 'task', 'labels': ['spira', 'plan'],
-     'created_at': ts(25200), 'closed_at': ts(48600), 'updated_at': ts(48600)},
-    {'id': 'sp-tc', 'status': 'closed', 'issue_type': 'bug', 'labels': ['spira', 'plan'],
-     'created_at': ts(56700), 'closed_at': ts(68400), 'updated_at': ts(68400)},
-    {'id': 'sp-td', 'status': 'open', 'issue_type': 'task', 'labels': ['spira', 'plan'],
-     'created_at': ts(57000), 'closed_at': None, 'updated_at': ts(57000)},
-]
-print(json.dumps(beads))
-" 2>/dev/null)"
+bead() {   # bead <id> <status> <type> <created-offset> <closed-offset|->
+    local closed=null upd; upd="\"$(ts_at "${5/#-/$4}")\""
+    [ "$5" != - ] && closed="\"$(ts_at "$5")\""
+    printf '{"id":"%s","status":"%s","issue_type":"%s","labels":["spira","plan"],"created_at":"%s","closed_at":%s,"updated_at":%s}' \
+        "$1" "$2" "$3" "$(ts_at "$4")" "$closed" "$upd"
+}
+BEADS_JSON="[$(bead sp-ta closed task 3600 14400),$(bead sp-tb closed task 25200 48600),$(bead sp-tc closed bug 56700 68400),$(bead sp-td open task 57000 -)]"
 
 if [ -z "$BEADS_JSON" ]; then
     bad "fixture" "failed to generate beads JSON"
@@ -88,20 +72,13 @@ ok "fixture: generated bead JSON"
 
 # Landing log: 3 landings at bucket 0, bucket 3, bucket 7
 LANDING_LOG="$TMP/landing.log"
-python3 -c "
-import time, sys
-W = $W
-def ts(offset):
-    return time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(W + offset))
-# bucket 0 (+5000s), bucket 3 (+38000s), bucket 7 (+80000s)
-print('%s spira: landed spira/sp-ta' % ts(5000))
-print('%s spira: landed spira/sp-tb' % ts(38000))
-print('%s spira: landed spira/sp-tc' % ts(80000))
-# a line NOT matching 'spira: landed' — must be ignored
-print('%s some other event' % ts(10000))
-# a line outside the window — must be ignored
-print('%s spira: landed spira/sp-old' % time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(W - 3600)))
-" > "$LANDING_LOG" 2>/dev/null
+{
+    echo "$(ts_at 5000) spira: landed spira/sp-ta"
+    echo "$(ts_at 38000) spira: landed spira/sp-tb"
+    echo "$(ts_at 80000) spira: landed spira/sp-tc"
+    echo "$(ts_at 10000) some other event"
+    echo "$(ts_at -3600) spira: landed spira/sp-old"
+} > "$LANDING_LOG"
 ok "fixture: generated landing.log"
 
 # ---------------------------------------------------------------------------
@@ -109,7 +86,7 @@ ok "fixture: generated landing.log"
 # ---------------------------------------------------------------------------
 run_block() {
     local landing="${1:-$LANDING_LOG}"
-    printf '%s\n' "$BEADS_JSON" | python3 "$SPARKLINES_PY" "$landing" 2>/dev/null
+    printf '%s\n' "$BEADS_JSON" | "$COLLECT" sparklines "$landing" 2>/dev/null
 }
 
 OUT="$(run_block)"
@@ -157,10 +134,10 @@ has "missing landing.log → opened sparkline still renders" "$OUT_NOLAND" "SP_B
 
 # ---------------------------------------------------------------------------
 # cockpit-history.csv is never touched.
-# The script reads from stdin (bdjson) and landing.log only. No HIST reference.
+# The renderer reads from stdin (bdjson) and landing.log only. No HIST reference.
 # ---------------------------------------------------------------------------
-HIST_REF="$(grep -c 'cockpit-history\|HIST_COLS\|append_history' "$SPARKLINES_PY" 2>/dev/null || true)"
-is "script has no HIST_COLS/append_history reference" "0" "${HIST_REF:-0}"
+HIST_REF="$(grep -c 'cockpit-history\|HIST_COLS\|append_history' "$HERE/../cockpit-collect/src/sparklines.rs" 2>/dev/null || true)"
+is "renderer has no HIST_COLS/append_history reference" "0" "${HIST_REF:-0}"
 
 # ---------------------------------------------------------------------------
 # Bucket-distribution assertion: the fixture's opened timestamps land in known
@@ -170,7 +147,7 @@ is "script has no HIST_COLS/append_history reference" "0" "${HIST_REF:-0}"
 # must render the tallest glyph and an empty bucket (e.g. bucket 1) the
 # shortest — proving the bucket index math, not just that something rendered.
 # ---------------------------------------------------------------------------
-glyph_at() { python3 -c "import sys; print(sys.argv[1][int(sys.argv[2])])" "$1" "$2"; }
+glyph_at() { printf '%s\n' "$1" | LC_ALL=C.UTF-8 grep -o . | sed -n "$(( $2 + 1 ))p"; }
 tallest="$(glyph_at "$SPARK_O" 5)"
 shortest="$(glyph_at "$SPARK_O" 1)"
 is "opened bucket 5 (2 events, the max) renders the tallest glyph" "█" "$tallest"

@@ -2,7 +2,7 @@
 #
 # test-wire-token.sh — SENT is the wire token between the Sending (sending/, was sending.sh),
 # the sentinel, and
-# cockpit-metrics.py. Three programs parse each other's stdout; a rename that lands in the
+# cockpit-collect metrics. Three programs parse each other's stdout; a rename that lands in the
 # emitter but not both parsers yields ZERO rather than an error, so the failure mode is
 # silence rather than a crash. This suite is the positive control: it fails the moment any of
 # the three disagrees about the token name.
@@ -17,12 +17,12 @@
 # WHAT COUNTS AS THE EMITTER LINE
 # --------------------------------
 # sending.sh emits `say "SENT …"` lines; the token is the first word of that argument.
-# sentinel.sh greps `^SENT`; cockpit-metrics.py does `t.startswith("SENT")`.
+# sentinel.sh greps `^SENT`; cockpit-collect metrics does `t.starts_with("SENT")`.
 # Each grep below targets the functional form — the literal string as it would appear in the
 # source — so a rename that updates every grep but not the say, or vice versa, is caught here.
 #
 # THE CONTRACT ROW pipes one canned SENT line — shaped exactly as send_branch() emits it —
-# through both real parsers. cockpit-metrics.py's sending_metrics() is a pure function,
+# through both real parsers. cockpit-collect metrics's sending_metrics() is a pure function,
 # called directly, no source-grep. sentinel.sh has no equivalent extracted function (its
 # parsing is inline in a large conditional block); the grep/field-split idiom below is
 # copied from its exact source line rather than hand-typed, so a source-grep still confirms
@@ -31,7 +31,7 @@
 # defect: sp-dcfm
 # tier: T1
 # tier: T0
-# covers: sending/src/* sentinel/src/* spira/cockpit-metrics.py UC-ops-detection-remediation-36
+# covers: sending/src/* sentinel/src/* cockpit-collect/src/metrics.rs UC-ops-detection-remediation-36
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -39,7 +39,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 echo "test-wire-token.sh"
 
 SENDING="$HERE/../sending/src/sweep.rs"   # the Sending is Rust (was sending.sh, sp-arpjt)
-METRICS="$HERE/cockpit-metrics.py"
+METRICS="$HERE/../cockpit-collect/src/metrics.rs"
 
 # ---------------------------------------------------------------------------------------
 # EMITTER. The Sending emits `SENT …` lines — `self.landed(.., "SENT")` for every landed
@@ -59,19 +59,19 @@ else
 fi
 
 # ---------------------------------------------------------------------------------------
-# PARSER — cockpit-metrics.py startswith the emitter's token.
+# PARSER — cockpit-metrics starts_with the emitter's token.
 # ---------------------------------------------------------------------------------------
-if grep -q 'startswith("SENT")' "$METRICS"; then
-    ok "cockpit-metrics.py startswith(\"SENT\")"
+if grep -q 'starts_with("SENT")' "$METRICS"; then
+    ok "cockpit-collect metrics starts_with(\"SENT\")"
 else
-    bad "cockpit-metrics.py startswith(\"SENT\")" "startswith(\"SENT\") not found — metrics parser is out of sync"
+    bad "cockpit-collect metrics starts_with(\"SENT\")" "starts_with(\"SENT\") not found — metrics parser is out of sync"
 fi
 
 # NEGATIVE: old parse prefix must be gone.
-if grep -q 'startswith("REAPED")' "$METRICS"; then
-    bad "cockpit-metrics.py no longer startswith(\"REAPED\")" "startswith(\"REAPED\") still present"
+if grep -q 'starts_with("REAPED")' "$METRICS"; then
+    bad "cockpit-collect metrics no longer starts_with(\"REAPED\")" "starts_with(\"REAPED\") still present"
 else
-    ok "cockpit-metrics.py does not startswith(\"REAPED\")"
+    ok "cockpit-collect metrics does not starts_with(\"REAPED\")"
 fi
 
 # ---------------------------------------------------------------------------------------
@@ -79,22 +79,12 @@ fi
 # ---------------------------------------------------------------------------------------
 FIXTURE_LINE='SENT sp-test1  myrepo mybranch  orphaned worktree (branch was already gone)'
 
-# cockpit-metrics.py's sending_metrics(), called directly — no source-grep.
-py_out="$(python3 -c '
-import sys
-sys.path.insert(0, "'"$HERE"'")
-import importlib.util
-spec = importlib.util.spec_from_file_location("cockpit_metrics", "'"$METRICS"'")
-m = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(m)
-from datetime import datetime, timezone
-lines = ["2026-09-10T00:00:00Z spira: state: open=0 plan_ready=0 in_progress=0 aeons=0",
-         "'"$FIXTURE_LINE"'"]
-now = datetime(2026, 9, 10, 0, 5, 0, tzinfo=timezone.utc)
-since = datetime(2026, 9, 9, 0, 0, 0, tzinfo=timezone.utc)
-d = m.sending_metrics(lines, since, now)
-print(d["SP_SENT"])
-' 2>/dev/null)"
-is "cockpit-metrics.py's sending_metrics() counts the fixture SENT line" "1" "$py_out"
+COLLECT="$(command -v cockpit-collect)"
+NOW_TS="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+TMPD="$(mktemp -d)"; trap 'rm -rf "$TMPD"' EXIT
+printf '%s\n' "$NOW_TS spira: state: open=0 plan_ready=0 in_progress=0 aeons=0" "$FIXTURE_LINE" > "$TMPD/sentinel.log"
+: > "$TMPD/ledger.log"
+out="$("$COLLECT" metrics "$TMPD/sentinel.log" "$TMPD/ledger.log" 24 2>/dev/null | sed -n 's/^SP_SENT=//p')"
+is "cockpit-collect metrics counts the fixture SENT line" "1" "$out"
 
 tl_summary

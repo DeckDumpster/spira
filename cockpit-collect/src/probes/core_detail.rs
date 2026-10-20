@@ -450,7 +450,7 @@ fn throughput_section(out: &mut Kv, run: &std::path::Path, cfg: &Cfg) {
     let label = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
     let raw = io::history_beads(&label).unwrap_or_default();
     let landing_log = run.join("landing.log");
-    if let Some(sparklines) = io::run_tool("cockpit-sparklines.py", &[landing_log.to_str().unwrap_or("")], Some(&raw)) {
+    if let Some(sparklines) = crate::sparklines::render(&raw, landing_log.to_str().unwrap_or(""), crate::timeutil::now_secs()) {
         for line in sparklines.lines() {
             if let Some((k, v)) = line.split_once('=') {
                 push(out, k, v.to_string());

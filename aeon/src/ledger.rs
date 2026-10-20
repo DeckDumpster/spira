@@ -241,7 +241,7 @@ mod tests {
              1970-01-01T00:00:03Z done builder sp-a rc=0 status=closed wall_s=? api_s=? turns=? in_tok=? cache_read_tok=? out_tok=? think_tok=? cost_usd=?\n\
              1970-01-01T00:00:04Z done ops sweep rc=1 status=sweep wall_s=12 api_s=9 turns=3 in_tok=10 cache_read_tok=20 out_tok=30 think_tok=0 cost_usd=0.1235\n"
         );
-        // cockpit-metrics.py's LEDGER_RE reads every line.
+        // cockpit-collect metrics's LEDGER_RE reads every line.
         let re = regex::Regex::new(r"^(\S+) (born|awake|done) (\S+)(?: (.*))?$").unwrap();
         assert!(text.lines().all(|l| re.is_match(l)));
     }

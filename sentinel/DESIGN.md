@@ -95,12 +95,12 @@ The format is `<YYYY-MM-DDTHH:MM:SSZ> spira: <msg>` (lib.sh `log`), in UTC.
 
 | line | parsed by |
 |---|---|
-| `state: open=<n> plan_ready=<n> in_progress=<n> aeons=<n> fayths=[<f …>]` | strand (`: state: open=` marks a pass start, `probe::PASS_MARKER`), auron-classify.py:49, cockpit-metrics.py:64,75, chamber/czar.md |
+| `state: open=<n> plan_ready=<n> in_progress=<n> aeons=<n> fayths=[<f …>]` | strand (`: state: open=` marks a pass start, `probe::PASS_MARKER`), auron-classify.py:49, cockpit-collect metrics:64,75, chamber/czar.md |
 | `CHECK7 <fayth>: not evaluated (pass budget exhausted)` (the seam emits it) | strand probe.rs:363, strand.sh:369 |
-| `ACT <msg>` for every act/progress (`summoned a <f> aeon`, `invoked reflection`, `poisoned <id> after <n> attempts`, `reclaimed <n> stale lease(s)`, …) | cockpit-metrics.py:65,69, cockpit.sh:626 |
+| `ACT <msg>` for every act/progress (`summoned a <f> aeon`, `invoked reflection`, `poisoned <id> after <n> attempts`, `reclaimed <n> stale lease(s)`, …) | cockpit-collect metrics:65,69, cockpit.sh:626 |
 | `pass complete — <a> action(s), <p> progress` | auron-classify.py:110 |
 | `summon-only pass complete — <a> action(s)` | nothing outside tests |
-| untimestamped `RECLAIMED`, `SENT`, `HELD`, `KEEP`, `FAILED` lines passed through from strand and sending | cockpit.sh:637, cockpit-metrics.py:236 |
+| untimestamped `RECLAIMED`, `SENT`, `HELD`, `KEEP`, `FAILED` lines passed through from strand and sending | cockpit.sh:637, cockpit-collect metrics:236 |
 
 Every other message is kept word for word as well, because the bash suites and the operator
 grep them. The exact strings are the ones §4 quotes; `src/tests.rs` pins the parsed ones
