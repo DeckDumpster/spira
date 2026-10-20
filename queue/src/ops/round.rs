@@ -905,6 +905,7 @@ fn open(
     let Ok((c, path)) = local_ctx(w, label, repo) else {
         return FAIL;
     };
+    reconcile_unrecorded(w, &c, &path);
     let repo_name = c.r.name.clone();
     if let Some(n) = name {
         if idents(w, label, &[("name", n)]).is_err() {
@@ -2329,11 +2330,51 @@ fn record_landing(w: &World, batch: &str, head: &str) -> Result<(), (i32, String
     }
 }
 
+fn unrecorded_marker(c: &Ctx, batch: &str) -> PathBuf {
+    rounds_dir(c).join(format!("{batch}.unrecorded"))
+}
+
+/// A round that landed on the ref but whose landing record was refused left a marker holding its
+/// head; record it now if the row is still GREEN and the head is on the landing ref.
+pub(super) fn reconcile_unrecorded(w: &World, c: &Ctx, path: &Path) {
+    let Ok(rd) = fs::read_dir(rounds_dir(c)) else {
+        return;
+    };
+    let base = c.r.landref.clone().unwrap_or_default();
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let Some(batch) = name.strip_suffix(".unrecorded") else {
+            continue;
+        };
+        match w.lc.batch_state(batch) {
+            Some((s, _)) if super::reconcile::terminal(&s) => {
+                let _ = fs::remove_file(e.path());
+            }
+            Some((s, _)) if s == "GREEN" => {
+                let head = fs::read_to_string(e.path()).unwrap_or_default();
+                let head = head.trim();
+                if head.is_empty() || !w.git.is_ancestor(path, head, &base) {
+                    continue;
+                }
+                match record_landing(w, batch, head) {
+                    Ok(()) => {
+                        let _ = fs::remove_file(e.path());
+                        w.out(format!("queue.sh: round {batch} was landed at {head} with no landing record — recorded now"));
+                    }
+                    Err((rc, out)) => w.err(format!("queue.sh: WARNING — landing record for {batch} still refused (rc={rc}): {}", out.trim())),
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 fn land(w: &World, batch: &str, repo: Option<&str>) -> i32 {
     let label = "round land";
     let Ok((c, path)) = local_ctx(w, label, repo) else {
         return FAIL;
     };
+    reconcile_unrecorded(w, &c, &path);
     if idents(w, label, &[("batch id", batch)]).is_err() || require_lc(w, label).is_err() {
         return FAIL;
     }
@@ -2383,6 +2424,12 @@ fn land(w: &World, batch: &str, repo: Option<&str>) -> i32 {
                 out.trim()
             };
             w.err(format!("queue.sh {label}: ALARM: {head} is landed and live but spira-lc refused the batch landing record for {batch} (rc={rc}): {why}"));
+            let _ = fs::create_dir_all(rounds_dir(&c));
+            let _ = write_atomic(&unrecorded_marker(&c, batch), &head);
+            w.scripts.mail_operator(
+                &format!("Round {batch} landed but has no batch landing record"),
+                &format!("{head} is landed and live, but spira-lc refused the batch landing record for {batch} (rc={rc}): {why}\n\nThe batch stays GREEN on the lifecycle until recorded. The next round open or land records it once the head is on the landing ref; no action is needed unless that does not happen.\n"),
+            );
             false
         }
     };

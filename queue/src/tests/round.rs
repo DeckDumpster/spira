@@ -166,6 +166,18 @@ fn land_with_the_batch_record_refused_prints_the_reason_and_exits_nonzero() {
         Some("merged-tb"),
         "the release is live regardless"
     );
+    assert!(
+        t.scripts
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with("mail-operator") && c.contains(&batch)),
+        "the operator is mailed, not only the log"
+    );
+    assert!(
+        marker(&t, &batch, "unrecorded").exists(),
+        "a marker is left for the later pass to reconcile"
+    );
 }
 
 fn seed_suite(t: &T, name: &str) {
