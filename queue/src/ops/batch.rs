@@ -276,9 +276,12 @@ pub fn eject(
             "{id} ejected; the batch PR is closed and not rebuilt"
         ));
         match lc_abandon(w, &batch_id, "queue.sh", &r) {
-            Ok(()) => w.out(format!(
-                "queue.sh eject: {batch_id} abandoned on spira-lc (survivors back to CERTIFIED)"
-            )),
+            Ok(()) => {
+                w.out(format!(
+                    "queue.sh eject: {batch_id} abandoned on spira-lc (survivors back to CERTIFIED)"
+                ));
+                super::round::retire_menders(w, &c, &batch_id, &format!("{id} ejected"));
+            }
             Err((rc, out)) => {
                 failed = true;
                 w.err(format!("queue.sh eject: spira-lc abandon-batch refused for {batch_id} (rc={rc}): {out}"));
