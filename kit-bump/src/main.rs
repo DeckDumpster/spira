@@ -47,6 +47,15 @@ fn unconfigured(argv: &[String]) -> Option<&str> {
     (!std::path::Path::new(f).exists()).then_some(f)
 }
 
+fn refresh(argv: &[String]) -> Result<(), String> {
+    let Some(conf) = argv.windows(2).find(|w| w[0] == "--config").map(|w| std::path::Path::new(&w[1])) else {
+        return Ok(());
+    };
+    let run = conf.parent().ok_or_else(|| format!("{} has no directory", conf.display()))?;
+    let home = spira_config::resolve::locate_home_for_process()?;
+    install::kit_bump::install(run, &home, &|k| spira_config::process::cfg(k)).map(|_| ())
+}
+
 fn parse(argv: &[String]) -> Result<(Real, Vec<Site>), String> {
     let argv = &expand(argv)?;
     let (mut kit, mut kit_ref, mut krate, mut state, mut persona) = (None, None, None, None, "builder".to_string());
@@ -84,8 +93,12 @@ fn main() -> ExitCode {
         eprintln!("kit-bump: unknown command\n{USAGE}");
         return ExitCode::from(2);
     }
+    if let Err(e) = refresh(&argv[1..]) {
+        eprintln!("kit-bump: cannot render the config from SPIRA_KIT_*: {e}");
+        return ExitCode::from(2);
+    }
     if let Some(f) = unconfigured(&argv[1..]) {
-        println!("kit-bump: unconfigured — {f} does not exist (install renders it once SPIRA_KIT_* are set)");
+        println!("kit-bump: unconfigured — {f} does not exist (set SPIRA_KIT_REPO and the pass renders it)");
         return ExitCode::SUCCESS;
     }
     let (real, sites) = match parse(&argv[1..]) {

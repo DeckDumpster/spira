@@ -99,6 +99,15 @@ mod tests {
     }
 
     #[test]
+    fn install_renders_an_absent_or_stale_conf_from_the_current_keys() {
+        let d = testkit::TempDir::new("kit-bump-refresh");
+        std::fs::write(d.path().join(FILE), "stale\n").unwrap();
+        let reg = parse(MAP);
+        let p = write(d.path(), &spec("app:Cargo.toml"), &reg).unwrap();
+        assert!(std::fs::read_to_string(p).unwrap().starts_with("kit /k\n"));
+    }
+
+    #[test]
     fn a_site_or_kit_missing_from_the_map_is_refused() {
         assert!(render(&spec("ghost:Cargo.toml"), &parse(MAP)).is_err());
         assert!(render(&Spec { kit_repo: "ghost", krate: "c", sites: "app:Cargo.toml" }, &parse(MAP)).is_err());
