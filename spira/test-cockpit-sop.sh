@@ -41,7 +41,7 @@
 # defect: sp-wwav
 # tier: T2
 # covers: cockpit-collect/src/* sop/src/ledger.rs UC-cockpit-observability-14
-# covers: spira/cockpit-metrics.py
+# covers: cockpit-collect/src/metrics.rs
 # scar: SP_SOP_NEVER_FIRED and SP_SOP_RECURRED were absent from the snapshot; a broken probe rendered as all-clear for dead-weight runbooks and recurring incidents.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

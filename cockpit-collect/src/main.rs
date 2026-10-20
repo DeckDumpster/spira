@@ -5,9 +5,12 @@
 //! invocation repointed, never its assertions rewritten.
 
 mod io;
+mod metrics;
 mod probes;
 mod quoting;
+mod sparklines;
 mod supervisor;
+mod timeutil;
 
 /// Test-only: cargo runs a crate's tests in parallel threads, but several probe tests
 /// mutate process-global environment variables (`SPIRA_RUN` and friends) that `io::` reads
@@ -59,6 +62,11 @@ fn main() {
 }
 
 fn run(args: &[String]) -> i32 {
+    match args.first().map(String::as_str) {
+        Some("metrics") => return cmd_metrics(&args[1..]),
+        Some("sparklines") => return cmd_sparklines(&args[1..]),
+        _ => {}
+    }
     // spira/cockpit.sh sourced lib.sh (which cascades into conf.sh) unconditionally at its
     // own top level before dispatching to any subcommand; see io::bootstrap_config for why
     // this binary must do the same instead of reading unresolved env vars.
@@ -353,3 +361,31 @@ mod tests {
     }
 }
 
+
+fn cmd_metrics(args: &[String]) -> i32 {
+    let (Some(sent), Some(ledger)) = (args.first(), args.get(1)) else {
+        eprintln!("usage: cockpit-collect metrics <sentinel.log> <aeon-ledger.log> [hours]");
+        return 1;
+    };
+    let hours = match args.get(2).map(|h| h.parse::<f64>()) {
+        None => 24.0,
+        Some(Ok(h)) => h,
+        Some(Err(e)) => {
+            eprintln!("cockpit-collect metrics: bad hours: {e}");
+            return 1;
+        }
+    };
+    let keys = metrics::collect(sent, ledger, hours, metrics::self_window_minutes(), timeutil::now_secs());
+    print!("{}", metrics::render(&keys));
+    0
+}
+
+fn cmd_sparklines(args: &[String]) -> i32 {
+    use std::io::Read;
+    let mut stdin = String::new();
+    let _ = std::io::stdin().read_to_string(&mut stdin);
+    if let Some(out) = sparklines::render(&stdin, args.first().map_or("", String::as_str), timeutil::now_secs()) {
+        print!("{out}");
+    }
+    0
+}

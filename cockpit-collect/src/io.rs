@@ -569,7 +569,7 @@ pub fn unit_show_invocation_id(unit: &str) -> Option<String> {
 }
 
 /// Run an already-on-`PATH` tool by bare name (release/overrides.sh/tokens.sh/yield.sh/
-/// tsd-query.sh/cockpit-metrics.py/cockpit-sparklines.py/bdsim.py) — every one of these
+/// tsd-query.sh/bdsim.py) — every one of these
 /// remains exactly what it was: a separate component this bead does not own, invoked the
 /// same way `spira/cockpit.sh` invoked it (law-units-build-what-they-exec: never construct
 /// a path to it, resolve it off `PATH` like every other caller in the release).

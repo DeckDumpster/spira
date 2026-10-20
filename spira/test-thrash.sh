@@ -15,11 +15,11 @@
 # The trip decision itself (both the fuse AND the session's own age must clear the wall)
 # is hb_tick's table, tested in test-aeon-lease.sh. The teardown behaviour once tripped
 # (requeue, no attempt / attempt-charged streak) is test-thrash-teardown.sh (G2). This
-# suite is left with what those two do not cover: cockpit-metrics.py's own thrash counter
+# suite is left with what those two do not cover: cockpit-collect metrics's own thrash counter
 # and the SPIRA_THRASH_MINUTES conf.d default.
 #
 # tier: T1
-# covers: aeon/src/trace.rs cockpit-collect/src/* spira/cockpit-metrics.py UC-aeon-execution-09
+# covers: aeon/src/trace.rs cockpit-collect/src/* cockpit-collect/src/metrics.rs UC-aeon-execution-09
 # scar: unrecorded
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -27,40 +27,20 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
-# ---- Part 5: cockpit-metrics.py counts requeue-thrash ledger lines ------------------
+# ---- Part 5: cockpit-collect metrics counts requeue-thrash ledger lines ------------------
 echo
-echo "cockpit-metrics.py: status=requeue-thrash is counted as SP_AEON_THRASH"
+echo "cockpit-collect metrics: status=requeue-thrash is counted as SP_AEON_THRASH"
 
-METRICS="$HERE/cockpit-metrics.py"
-if [ ! -f "$METRICS" ]; then
-    bad "cockpit-metrics.py exists" "not found at $METRICS"
+COLLECT="$(command -v cockpit-collect)"
+if [ -z "$COLLECT" ]; then
+    bad "cockpit-collect on PATH" "not found"
 else
     LEDGER="$TMP/aeon-ledger.log"
     SENTINEL="$TMP/sentinel.log"
-    # Empty sentinel and ledger files for a clean probe.
     printf '' > "$SENTINEL"
     printf '' > "$LEDGER"
 
-    # ledger_metrics is a pure function; call it directly via python3 -c to avoid
-    # having to satisfy cockpit-metrics.py's two-file main() invocation contract.
-    call_ledger() {
-        python3 -c "
-import sys, re, os
-sys.path.insert(0, os.path.dirname('$METRICS'))
-from datetime import datetime, timezone, timedelta
-
-# Import the function from the module without running main().
-spec = open('$METRICS').read()
-ns = {}
-exec(compile(spec, '$METRICS', 'exec'), ns)
-ledger_metrics = ns['ledger_metrics']
-read = ns['read']
-since = datetime.now(timezone.utc) - timedelta(hours=24)
-d = ledger_metrics(read('$LEDGER'), since)
-for k, v in sorted(d.items()):
-    print('%s=%s' % (k, v))
-" 2>/dev/null
-    }
+    call_ledger() { "$COLLECT" metrics "$SENTINEL" "$LEDGER" 24 2>/dev/null; }
 
     # key_val <key> <output>: extract value for a key from the output.
     key_val() { grep "^$1=" <<< "$2" | cut -d= -f2; }
@@ -70,7 +50,7 @@ for k, v in sorted(d.items()):
     zero_thrash="$(key_val SP_AEON_THRASH "$out0")"
     is "empty ledger → SP_AEON_THRASH=0 (positive control)" "0" "$zero_thrash"
 
-    # Now add timestamped ledger lines (cockpit-metrics.py expects ISO timestamps).
+    # Now add timestamped ledger lines (cockpit-collect metrics expects ISO timestamps).
     NOW="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     printf '%s awake fayth sp-aaa worked\n' "$NOW" >> "$LEDGER"
     printf '%s done fayth sp-bbb rc=0 status=requeue-thrash\n' "$NOW" >> "$LEDGER"

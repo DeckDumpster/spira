@@ -39,42 +39,29 @@
 #
 # defect: sp-1smg
 # tier: T1
-# covers: spira/cockpit-metrics.py
+# covers: cockpit-collect/src/metrics.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
 echo "test-sending-metrics.sh"
 
-# env -i so no real spira.conf can reach the module (law-gates-run-in-a-clean-environment).
-run_fixture() {   # run_fixture <fixture-on-stdin> -> "SENT HELD KEPT FAILED"
-    env -i PATH="/usr/bin:/bin" PYTHONPATH="$HERE" HOME="$HOME" \
-        python3 -c '
-import sys, datetime, importlib.util
-spec = importlib.util.spec_from_file_location("cm", sys.argv[1])
-cm = importlib.util.module_from_spec(spec); spec.loader.exec_module(cm)
-lines = sys.stdin.read().splitlines()
-since = datetime.datetime(2000, 1, 1, tzinfo=datetime.timezone.utc)
-d = cm.sending_metrics(lines, since)
-print(d["SP_SENT"], d["SP_SENT_HELD"], d["SP_SENT_KEPT"], d["SP_SENT_FAILED"])
-' "$HERE/cockpit-metrics.py"
-}
+COLLECT="$(command -v cockpit-collect)"
+EMPTY="$(mktemp)"; trap 'rm -f "$EMPTY"' EXIT
 
-# run_fixture_age: same as run_fixture but prints FAILED_AGE_M too.
-# now is pinned to 2026-09-08T12:00:00Z so age assertions are deterministic.
-run_fixture_age() {  # run_fixture_age <fixture-on-stdin> -> "FAILED FAILED_AGE_M"
-    env -i PATH="/usr/bin:/bin" PYTHONPATH="$HERE" HOME="$HOME" \
-        python3 -c '
-import sys, datetime, importlib.util
-spec = importlib.util.spec_from_file_location("cm", sys.argv[1])
-cm = importlib.util.module_from_spec(spec); spec.loader.exec_module(cm)
-lines = sys.stdin.read().splitlines()
-since = datetime.datetime(2000, 1, 1, tzinfo=datetime.timezone.utc)
-now   = datetime.datetime(2026, 9, 8, 12, 0, 0, tzinfo=datetime.timezone.utc)
-d = cm.sending_metrics(lines, since, now)
-print(d["SP_SENT_FAILED"], d["SP_SENT_FAILED_AGE_M"])
-' "$HERE/cockpit-metrics.py"
+# env -i so no real spira.conf can reach the binary (law-gates-run-in-a-clean-environment).
+# A million-hour window puts every fixture inside it.
+metrics_of() {   # metrics_of <fixture-on-stdin> <key>...
+    local f; f="$(mktemp)"; cat > "$f"
+    local out; out="$(env -i PATH="/usr/bin:/bin" HOME="$HOME" SPIRA_SELF_WINDOW=60 "$COLLECT" metrics "$f" "$EMPTY" 1000000 2>/dev/null)"
+    rm -f "$f"
+    local k; for k in "$@"; do sed -n "s/^$k=//p" <<< "$out"; done | tr '\n' ' '
 }
+run_fixture() { metrics_of SP_SENT SP_SENT_HELD SP_SENT_KEPT SP_SENT_FAILED; }
+run_fixture_age() { metrics_of SP_SENT_FAILED SP_SENT_FAILED_AGE_M; }
+
+# Stamps are relative to the real clock: the binary reads its own.
+mins_ago() { date -u -d "@$(( $(date +%s) - $1 * 60 ))" '+%Y-%m-%dT%H:%M:%SZ'; }
 
 # ---------------------------------------------------------------------------------------
 # THE REAL SHAPE: one branch git will not delete, refused on pass after pass. This is
@@ -147,25 +134,24 @@ is "kept counts branches, not passes" "1" "$k"
 # SP_SENT_FAILED_AGE_M — age of the most recent FAILED line.
 # The alarm in health.sh dims once the age exceeds 60m, so the age must be correct for
 # both the "old window" case (all failures resolved hours ago) and the "recent" case.
-# now is 2026-09-08T12:00:00Z in run_fixture_age.
+# Fixtures are stamped relative to now.
 # ---------------------------------------------------------------------------------------
 
-# OLD WINDOW: every FAILED line is from the 16:31Z pass of the PREVIOUS DAY (2026-09-07),
-# which is 2026-09-07T16:31:00Z — that is 19h29m before 2026-09-08T12:00:00Z = 1169m.
+# OLD WINDOW: every FAILED line is from a pass 1169 minutes ago.
 fixture_old_failures() {
     for i in 1 2 3; do
-        printf '2026-09-07T16:3%d:00Z spira: state: pass\n' "$i"
+        printf '%s spira: state: pass\n' "$(mins_ago 1169)"
         printf 'FAILED sp-kq8l  branch and worktree\n'
-        printf '2026-09-07T16:3%d:01Z spira: sending reported a branch it could not delete\n' "$i"
+        printf '%s spira: sending reported a branch it could not delete\n' "$(mins_ago 1169)"
     done
 }
 read -r f age <<< "$(fixture_old_failures | run_fixture_age)"
 is "old window counts the branch" "1" "$f"
-is "old window age is minutes since last pass (1167)" "1167" "$age"
+is "old window age is minutes since last pass" "1169" "$age"
 
 # RECENT FAILURE: a FAILED line 10 minutes before now.
 fixture_recent_failure() {
-    printf '2026-09-08T11:50:00Z spira: state: pass\n'
+    printf '%s spira: state: pass\n' "$(mins_ago 10)"
     printf 'FAILED sp-xyz  branch and worktree\n'
 }
 read -r f age <<< "$(fixture_recent_failure | run_fixture_age)"
@@ -174,9 +160,9 @@ is "recent failure age is 10m" "10" "$age"
 
 # MULTIPLE PASSES: age tracks the MOST RECENT FAILED line, not the first.
 fixture_multi_pass_failures() {
-    printf '2026-09-08T10:00:00Z spira: state: pass\n'
+    printf '%s spira: state: pass\n' "$(mins_ago 120)"
     printf 'FAILED sp-abc  branch and worktree\n'
-    printf '2026-09-08T11:45:00Z spira: state: pass\n'
+    printf '%s spira: state: pass\n' "$(mins_ago 15)"
     printf 'FAILED sp-abc  branch and worktree\n'
 }
 read -r f age <<< "$(fixture_multi_pass_failures | run_fixture_age)"
@@ -185,7 +171,7 @@ is "multi-pass: age is from the LAST pass (15m ago)" "15" "$age"
 
 # NO FAILURES: age is ? when no FAILED lines appear.
 fixture_no_failures() {
-    printf '2026-09-08T11:00:00Z spira: state: pass\n'
+    printf '%s spira: state: pass\n' "$(mins_ago 60)"
     printf 'SENT sp-abc  branch\n'
 }
 read -r f age <<< "$(fixture_no_failures | run_fixture_age)"

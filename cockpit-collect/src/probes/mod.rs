@@ -1314,7 +1314,7 @@ fn read_mail_subject(path: &Path) -> String {
 }
 
 // ---------------------------------------------------------------------------------------
-// sending_keys — entirely delegated to cockpit-metrics.py, unchanged from the bash.
+// sending_keys — the SENDING / SELF / aeon-ledger keys, from crate::metrics.
 // ---------------------------------------------------------------------------------------
 
 const SENDING_KEYS: &[&str] = &[
@@ -1329,14 +1329,16 @@ pub fn sending_keys() -> Kv {
     let run = io::run_dir();
     let sentinel_log = run.join("sentinel.log");
     let ledger = run.join("aeon-ledger.log");
-    match io::run_tool("cockpit-metrics.py", &[sentinel_log.to_str().unwrap_or(""), ledger.to_str().unwrap_or("")], None) {
-        Some(out) => out
-            .lines()
-            .filter_map(|l| l.split_once('='))
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect(),
-        None => SENDING_KEYS.iter().map(|k| (k.to_string(), "?".to_string())).collect(),
-    }
+    let keys = crate::metrics::collect(
+        sentinel_log.to_str().unwrap_or(""),
+        ledger.to_str().unwrap_or(""),
+        24.0,
+        crate::metrics::self_window_minutes(),
+        crate::timeutil::now_secs(),
+    );
+    let mut out: Kv = keys.into_iter().collect();
+    out.retain(|(k, _)| SENDING_KEYS.contains(&k.as_str()));
+    out
 }
 
 /// SP_DUP_*: incident bead ids grouped by `external_ref`, over the incidents still live —
