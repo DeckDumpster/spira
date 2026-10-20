@@ -31,7 +31,7 @@ fn when(row: &Value, k: &str) -> Option<f64> {
 }
 
 fn closed_when(row: &Value) -> Option<f64> {
-    field(row, "closed_at").or_else(|| field(row, "updated_at")).and_then(parse_iso)
+    when(row, "closed_at")
 }
 
 /// `None` when stdin is not JSON: nothing is emitted, as before.
@@ -43,7 +43,7 @@ pub fn render(stdin: &str, landing_log: &str, now: i64) -> Option<String> {
     };
     let cut = now as f64;
     let cut = cut - 86400.0;
-    let is_closed = |r: &&Value| r.get("status").and_then(Value::as_str) == Some("closed");
+    let is_closed = |r: &&Value| field(r, "closed_at").is_some();
     let closed: Vec<&&Value> = rows.iter().filter(|r| is_closed(r) && closed_when(r).unwrap_or(cut) >= cut).collect();
     let opened = rows.iter().filter(|r| when(r, "created_at").unwrap_or(cut - 86400.0) >= cut).count();
     let mut kinds: BTreeMap<&str, usize> = BTreeMap::new();
@@ -113,7 +113,7 @@ mod tests {
             format!("2026-09-{:02}T{:02}:{:02}:{:02}Z", 10 + t.div_euclid(86400) - 1788998400 / 86400, s / 3600, s % 3600 / 60, s % 60)
         };
         let json = format!(
-            r#"[{{"status":"closed","issue_type":"bug","created_at":"{}","closed_at":"{}"}},{{"status":"open","created_at":"{}"}}]"#,
+            r#"[{{"issue_type":"bug","created_at":"{}","closed_at":"{}"}},{{"status":"open","created_at":"{}"}}]"#,
             at(3600),
             at(14400),
             at(57000)
