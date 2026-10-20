@@ -2413,6 +2413,20 @@ fn eject_of_the_last_member_abandons_the_emptied_batch_row() {
 }
 
 #[test]
+fn eject_of_the_last_member_retires_the_mender_beads_filed_for_the_batch() {
+    let t = T::new(LandMode::Queue);
+    t.open_record("pr=12\nmembers=sp-a:ta\nbatch_id=spira-1\nversion=3\n");
+    let rounds = t.s().run.join("rounds");
+    fs::create_dir_all(&rounds).unwrap();
+    fs::write(rounds.join("spira-1.mender-1-gate-lint"), "sp-m1\n").unwrap();
+    fs::write(rounds.join("other-9.mender-1-gate-lint"), "sp-m2\n").unwrap();
+    assert_eq!(t.run(&["eject", "sp-a"]), 0, "{}", t.err());
+    assert!(t.lib.has("bead_close sp-m1"), "{:?}", t.lib.calls.borrow());
+    assert!(!t.lib.has("bead_close sp-m2"), "{:?}", t.lib.calls.borrow());
+    assert!(rounds.join("spira-1.mender-1-gate-lint.retired").exists());
+}
+
+#[test]
 fn spira_lc_unreachable_refuses_loudly_and_changes_nothing() {
     for args in [
         &["eject", "sp-a"][..],
