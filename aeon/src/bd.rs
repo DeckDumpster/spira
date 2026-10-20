@@ -1,7 +1,7 @@
 //! The bead store, with lib.sh `bdq`'s rules for every call the aeon makes itself:
 //! refuse an empty SPIRA_DB (bd would auto-discover the operator's real store), a timeout
 //! (BD_TIMEOUT, 180 s), one retry on a pooled connection the server already dropped
-//! ("invalid connection"), and SPIRA_BDJSON_FIXTURE → bdsim.py.
+//! ("invalid connection"), and SPIRA_BDJSON_FIXTURE → bdsim.
 //!
 //! bdq's create-time checks (repo label, destructive vocabulary, schema delete) and the czar
 //! fence (reopen/update/close by a czar with a class) guard calls the aeon never makes
@@ -30,9 +30,9 @@ impl Bd for BdCli<'_> {
     fn bd(&self, args: &[String]) -> Out {
         let env = self.env.child();
         if let Some(fx) = self.fixture.as_ref().filter(|f| !f.is_empty()) {
-            let mut a = vec![self.home.join("bdsim.py").display().to_string(), fx.clone()];
+            let mut a = vec![fx.clone()];
             a.extend(args.iter().cloned());
-            return util::run(Spec { prog: "python3", args: a, env: Some(&env), cwd: None, stdin: None, timeout: None });
+            return util::run(Spec { prog: "bdsim", args: a, env: Some(&env), cwd: None, stdin: None, timeout: None });
         }
         if self.db.is_empty() {
             return Out::fail(1, "bdq: refusing - SPIRA_DB is empty/unset (would fall through to bd auto-discovery)");

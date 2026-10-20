@@ -608,7 +608,7 @@ impl RealBeads {
 
     fn show_raw(&self, ids: &[String]) -> Result<String, String> {
         if let Some(fx) = &self.fixture {
-            let mut c = command("bdsim.py");
+            let mut c = command("bdsim");
             c.arg(fx).arg("show").args(ids).arg("--json").stdin(Stdio::null());
             let (rc, so, _) = run_capture(c);
             return if rc == 0 { Ok(String::from_utf8_lossy(&so).into_owned()) } else { Err(format!("bdsim exited {rc}")) };
@@ -641,7 +641,7 @@ impl RealBeads {
     /// as `show_raw`, for a verb other than `show`.
     fn bdq_raw(&self, verb: &str, args: &[&str]) -> Result<String, String> {
         if let Some(fx) = &self.fixture {
-            let mut c = command("bdsim.py");
+            let mut c = command("bdsim");
             c.arg(fx).arg(verb).args(args).arg("--json").stdin(Stdio::null());
             let (rc, so, _) = run_capture(c);
             return if rc == 0 { Ok(String::from_utf8_lossy(&so).into_owned()) } else { Err(format!("bdsim exited {rc}")) };

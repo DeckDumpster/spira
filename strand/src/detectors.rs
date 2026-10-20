@@ -17,10 +17,8 @@
 //! "landed" is the lifecycle record's LANDED state (`spira-lc state <id>`). Content-on-base is
 //! the Sending's own proof (`sending::git::Git::content_on_base`, the same answer as
 //! `spira-lc content-landed`), called in-process; the plain merge-tree clean check runs `git`.
-//! `detect_invalid_closed`'s statute-phrase predicates live in one file shared with aeon's
-//! close-time fence (`close-reason-flags.py`, its own header: "both callers exec() this
-//! file so the two cannot disagree") — this pipes the same embedded script into `python3`
-//! rather than re-deriving the regexes in Rust, for the same reason.
+//! `detect_invalid_closed`'s statute-phrase predicates live in [`crate::closereason`], shared
+//! with aeon's close-time fence (`strand close-reason`) so the two cannot disagree.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -287,65 +285,6 @@ pub fn detect_livelocked(cfg: &Config) -> String {
 // detect_invalid_closed
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// lib.sh `detect_invalid_closed`'s own embedded python, verbatim (close-reason-flags.py's
-/// own header: "both callers exec() this file so the two cannot disagree" — this pipes the
-/// SAME script through `python3` rather than re-deriving the regexes in Rust).
-const INVALID_CLOSED_SCRIPT: &str = r#"
-import sys, json, re, os
-
-# Load detect_close_reason and check_unfiled_follow from the shared helper. The detector
-# uses detect_close_reason (raw scan, no masking) so all occurrences reach Maechen;
-# check_close_reason (quote-masked) belongs to the close-time fence in aeon.sh.
-_flags_path = os.path.join(os.environ.get("SPIRA_HOME", ""), "close-reason-flags.py")
-try:
-    _ns = {"re": re, "__name__": ""}
-    exec(open(_flags_path).read(), _ns)
-    check_close_reason = _ns.get("detect_close_reason") or _ns["check_close_reason"]
-    check_unfiled_follow = _ns["check_unfiled_follow"]
-except Exception:
-    check_close_reason = lambda r: None
-    check_unfiled_follow = lambda r, id_prefix="sp": None
-
-_id_prefix = os.environ.get("SPIRA_ID_PREFIX", "sp")
-
-# ALLOWLIST. Beads whose id appears in $SPIRA_RUN/invalid-closed.allow are reported
-# as ALLOWED-IC (not counted) rather than as INVALID-CLOSED or UNFILED-FOLLOW. Each
-# line in the allowlist is "<id> <reason>" — the reason is what Maechen recorded when
-# it judged the row a false positive (quotation) or resolved it (follow-up filed).
-allowlist = {}
-_run = os.environ.get("SPIRA_RUN", "")
-_allow_path = os.path.join(_run, "invalid-closed.allow") if _run else ""
-if _allow_path and os.path.isfile(_allow_path):
-    with open(_allow_path) as _af:
-        for _line in _af:
-            _parts = _line.strip().split(None, 1)
-            if _parts and re.match(r"^[a-z0-9]+(?:-[a-z0-9]+)+$", _parts[0]):
-                allowlist[_parts[0]] = _parts[1] if len(_parts) > 1 else ""
-
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit
-for i in (d if isinstance(d, list) else [d]):
-    bid = i["id"]
-    reason = i.get("close_reason") or ""
-    title = re.sub(r"[^ A-Za-z0-9._/:,()#+-]", " ", (i.get("title") or ""))[:60]
-    reason_short = re.sub(r"\s+", " ", reason.strip())[:120]
-
-    if bid in allowlist:
-        print("ALLOWED-IC %s — %s" % (bid, allowlist[bid]))
-        continue
-
-    hit = check_close_reason(reason)
-    if hit:
-        print("INVALID-CLOSED %s — close reason contains %r: %s. title: %s" % (
-            bid, hit, reason_short, title))
-        continue
-
-    follow_hit = check_unfiled_follow(reason, _id_prefix)
-    if follow_hit:
-        print("UNFILED-FOLLOW %s — follow-on phrase %r without a tracking reference: %s. title: %s" % (
-            bid, follow_hit, reason_short, title))
-"#;
-
 /// The rows of a `bd list --json` array that carry a non-empty `close_reason`, re-serialised
 /// for the embedded script; the input unchanged when it is not an array.
 fn with_close_reason(raw: &str) -> String {
@@ -376,19 +315,67 @@ pub fn detect_invalid_closed(cfg: &Config) -> String {
     classify_invalid_closed(&with_close_reason(&raw), cfg)
 }
 
-fn classify_invalid_closed(raw: &str, cfg: &Config) -> String {
-    let home = cfg.home.clone().unwrap_or_default().to_string_lossy().into_owned();
-    let run = cfg.run.clone().unwrap_or_default().to_string_lossy().into_owned();
-    let o = probe::run(
-        "python3",
-        &["-c", INVALID_CLOSED_SCRIPT],
-        Some(raw.as_bytes()),
-        &[("SPIRA_HOME", home.as_str()), ("SPIRA_ID_PREFIX", cfg.id_prefix.as_str()), ("SPIRA_RUN", run.as_str())],
-    );
-    if !o.ok {
-        return String::new();
+fn py_repr(s: &str) -> String {
+    let q = if s.contains('\'') && !s.contains('"') { '"' } else { '\'' };
+    let mut out = String::from(q);
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c == q => {
+                out.push('\\');
+                out.push(c);
+            }
+            c => out.push(c),
+        }
     }
-    o.stdout.trim_end_matches('\n').to_string()
+    out.push(q);
+    out
+}
+
+fn read_allowlist(cfg: &Config) -> std::collections::HashMap<String, String> {
+    let mut allow = std::collections::HashMap::new();
+    let Some(run) = cfg.run.as_ref().filter(|r| !r.as_os_str().is_empty()) else { return allow };
+    let Ok(text) = std::fs::read_to_string(run.join("invalid-closed.allow")) else { return allow };
+    let id_re = regex::Regex::new(r"^[a-z0-9]+(?:-[a-z0-9]+)+$").unwrap();
+    for line in text.lines() {
+        let line = line.trim();
+        let (id, reason) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
+        if id_re.is_match(id) {
+            allow.insert(id.to_string(), reason.trim().to_string());
+        }
+    }
+    allow
+}
+
+/// `INVALID-CLOSED` / `UNFILED-FOLLOW` / `ALLOWED-IC` lines over a `bd list --json` payload.
+/// The detector scans the raw reason (`detect_close_reason`) so every occurrence reaches
+/// Maechen; the quote-masked fence belongs to aeon.
+fn classify_invalid_closed(raw: &str, cfg: &Config) -> String {
+    use crate::closereason::{check_unfiled_follow, detect_close_reason};
+    let Ok(d) = serde_json::from_str::<serde_json::Value>(raw) else { return String::new() };
+    let rows: Vec<&serde_json::Value> = match &d {
+        serde_json::Value::Array(a) => a.iter().collect(),
+        other => vec![other],
+    };
+    let allow = read_allowlist(cfg);
+    let mut out: Vec<String> = Vec::new();
+    for i in rows {
+        let Some(bid) = i.get("id").and_then(|v| v.as_str()) else { return String::new() };
+        let reason = i.get("close_reason").and_then(|v| v.as_str()).unwrap_or("");
+        let title = sanitize_title(i.get("title").and_then(|v| v.as_str()).unwrap_or(""), 60);
+        let reason_short: String = reason.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(120).collect();
+        if let Some(why) = allow.get(bid) {
+            out.push(format!("ALLOWED-IC {bid} — {why}"));
+        } else if let Some(hit) = detect_close_reason(reason) {
+            out.push(format!("INVALID-CLOSED {bid} — close reason contains {}: {reason_short}. title: {title}", py_repr(&hit)));
+        } else if let Some(hit) = check_unfiled_follow(reason, &cfg.id_prefix) {
+            out.push(format!("UNFILED-FOLLOW {bid} — follow-on phrase {} without a tracking reference: {reason_short}. title: {title}", py_repr(&hit)));
+        }
+    }
+    out.join("\n")
 }
 
 #[cfg(test)]

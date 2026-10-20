@@ -204,6 +204,39 @@ fn cmd_all_partition_members(args: Vec<String>) -> i32 {
     0
 }
 
+/// `close-reason [--detect|--unfiled <prefix>] <reason>`: the statute-phrase predicates.
+/// Bare: the close-time fence (prints the admitted phrase, exit 0; exit 1 when none).
+/// `--detect` / `--unfiled` print the hit (or nothing) and exit 0.
+fn cmd_close_reason(args: Vec<String>) -> i32 {
+    use strand::closereason::{check_close_reason, check_unfiled_follow, detect_close_reason};
+    let strs: Vec<&str> = args.iter().map(String::as_str).collect();
+    match strs.as_slice() {
+        [reason] => match check_close_reason(reason) {
+            Some(hit) => {
+                println!("{hit}");
+                0
+            }
+            None => 1,
+        },
+        ["--detect", reason] => {
+            println!("{}", detect_close_reason(reason).unwrap_or_default());
+            0
+        }
+        ["--unfiled", prefix, reason] => {
+            println!("{}", check_unfiled_follow(reason, prefix).unwrap_or_default());
+            0
+        }
+        [] => match check_close_reason("") {
+            Some(hit) => {
+                println!("{hit}");
+                0
+            }
+            None => 1,
+        },
+        _ => die("close-reason [--detect | --unfiled <prefix>] <reason>"),
+    }
+}
+
 fn main() {
     let mut argv: Vec<String> = std::env::args().skip(1).collect();
     if let Some(verb) = argv.first().cloned() {
@@ -216,6 +249,7 @@ fn main() {
             "detect-livelocked" => Some(cmd_detect_livelocked(rest())),
             "detect-incident-needs-builder" => Some(cmd_detect_incident_needs_builder(rest())),
             "detect-invalid-closed" => Some(cmd_detect_invalid_closed(rest())),
+            "close-reason" => Some(cmd_close_reason(rest())),
             "all-partition-members" => Some(cmd_all_partition_members(rest())),
             _ => None,
         };

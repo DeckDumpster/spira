@@ -1,15 +1,9 @@
-//! Builds the observation JSON exactly as auron.sh's own heredoc did, hands it to
-//! `auron-classify.py` unchanged (out of this bead's scope, per sp-zpaq0's own inventory —
-//! it is a pure function with its own suite, test-auron-classify.sh, untouched here), and
-//! parses back the JSON-lines firing records.
-//!
-//! `auron.sh gathers -> auron-classify.py classifies -> auron.sh speaks` — this crate is
-//! everything on either side of the arrow; the arrow itself is unchanged.
+//! Builds the observation JSON exactly as auron.sh's own heredoc did, classifies it with
+//! `judge` (the pure function) and parses back the firing records.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::util::{self, Out, Spec};
 
 #[derive(Debug, Clone, Default)]
 pub struct Mirror {
@@ -115,19 +109,24 @@ pub struct Firing {
     pub evidence: String,
 }
 
-/// Runs `auron-classify.py` (bare name, launcher PATH) with the observation on stdin,
-/// parsing its JSON-lines stdout. `None` on a classifier failure (unreadable/unparseable
-/// output) — a caller must treat that as "nothing known to be firing", never as "confirmed
-/// clear", exactly as auron.sh's own `2>/dev/null` swallowed a classifier crash into an
-/// empty `firing_json`.
+/// Classifies the observation in-process. An unusable observation yields nothing — a
+/// caller must treat that as "nothing known to be firing", never as "confirmed clear".
 pub fn run(obs: &Observation) -> Vec<Firing> {
-    run_with(obs, "auron-classify.py")
+    crate::judge::classify(&obs.to_json()).unwrap_or_default()
 }
 
-pub fn run_with(obs: &Observation, prog: &str) -> Vec<Firing> {
-    let payload = obs.to_json().to_string();
-    let o: Out = util::run(Spec { prog, args: vec![], env: None, cwd: None, stdin: Some(payload.into_bytes()), timeout: None });
-    parse_firing_lines(&o.stdout)
+/// The `auron classify` entry: one observation object on stdin, one sorted-key JSON alert per
+/// line on stdout.
+pub fn classify_stdin(input: &str) -> Result<String, String> {
+    let o: Value = serde_json::from_str(input).map_err(|e| format!("unreadable observations: {e}"))?;
+    let firing = crate::judge::classify(&o)?;
+    let mut out = String::new();
+    for f in firing {
+        let v = json!({"key": f.key, "title": f.title, "evidence": f.evidence});
+        out.push_str(&serde_json::to_string(&v).unwrap_or_default());
+        out.push('\n');
+    }
+    Ok(out)
 }
 
 pub fn parse_firing_lines(text: &str) -> Vec<Firing> {
@@ -178,18 +177,11 @@ mod tests {
     }
 
     #[test]
-    fn run_with_feeds_the_observation_on_stdin_and_reads_json_lines_back() {
-        // A stand-in classifier: cat's stdin back as one firing record naming the byte count.
-        let dir = testkit::TempDir::new("auron-classify");
-        let stub = dir.join("stub-classify.py");
-        // testkit::write_exe, never fs::write + set_permissions (sp-os3of): a concurrent
-        // fork elsewhere in this test binary can inherit a duplicate of this process's
-        // own write-fd mid-window and leave the file ETXTBSY for this test's own exec.
-        testkit::write_exe(&stub, "#!/usr/bin/env python3\nimport sys, json\nd = sys.stdin.read()\nprint(json.dumps({\"key\": \"echo\", \"title\": \"t\", \"evidence\": str(len(d))}))\n");
-        let obs = Observation { now: 1, ..Default::default() };
-        let f = run_with(&obs, stub.to_str().unwrap());
-        assert_eq!(f.len(), 1);
-        assert_eq!(f[0].key, "echo");
-        let _ = std::fs::remove_dir_all(&dir);
+    fn classify_stdin_emits_sorted_key_json_lines() {
+        let out = classify_stdin("{\"now\": 1, \"sentinel_log_readable\": false}").unwrap();
+        let v: Value = serde_json::from_str(out.trim()).unwrap();
+        assert_eq!(v["key"], "sentinel-unobservable");
+        assert!(out.starts_with("{\"evidence\""));
+        assert!(classify_stdin("not json").is_err());
     }
 }

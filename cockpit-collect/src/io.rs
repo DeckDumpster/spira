@@ -192,14 +192,14 @@ fn env_or(key: &str, default: &str) -> String {
 }
 
 /// `content <args>`: bead content (title, labels, comments) through `spira-lc content`, the
-/// one door — never `bd` itself. `SPIRA_BDJSON_FIXTURE` set -> `bdsim.py <fixture> <args>`
+/// one door — never `bd` itself. `SPIRA_BDJSON_FIXTURE` set -> `bdsim <fixture> <args>`
 /// (the test seam the `test-cockpit-*.sh` suites drive). `timeout ${BD_TIMEOUT:-180}`, retried
 /// up to `SPIRA_BDQ_CONN_RETRIES` (default 2) times while stderr contains "invalid
 /// connection". `None` on any failure; the caller renders `?`, never 0.
 pub fn content(args: &[&str]) -> Option<String> {
     if let Ok(fixture) = std::env::var("SPIRA_BDJSON_FIXTURE") {
         if !fixture.is_empty() {
-            let out = Command::new("bdsim.py")
+            let out = Command::new("bdsim")
                 .arg(&fixture)
                 .args(args)
                 .stdin(Stdio::null())
@@ -569,7 +569,7 @@ pub fn unit_show_invocation_id(unit: &str) -> Option<String> {
 }
 
 /// Run an already-on-`PATH` tool by bare name (release/overrides.sh/tokens.sh/yield.sh/
-/// tsd-query.sh/bdsim.py) — every one of these
+/// tsd-query.sh/bdsim) — every one of these
 /// remains exactly what it was: a separate component this bead does not own, invoked the
 /// same way `spira/cockpit.sh` invoked it (law-units-build-what-they-exec: never construct
 /// a path to it, resolve it off `PATH` like every other caller in the release).

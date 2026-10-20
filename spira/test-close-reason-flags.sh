@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-close-reason-flags.sh — close-reason-flags.py's classifiers, table-tested directly
+# test-close-reason-flags.sh — `strand close-reason`'s classifiers, table-tested directly
 #   against canned reason strings. No database, no cockpit-collect probe livelock.
 #
 #   ./test-close-reason-flags.sh
@@ -11,13 +11,13 @@
 # phrase — "PERMANENT FIX NEEDED", a temporary fix, "mitigated-only", "TODO") and
 # check_unfiled_follow (a follow-on phrase — "builders should", "at scale", "the real
 # fix", "follow-up" — with no tracking reference) are the exact functions
-# detect_invalid_closed in lib.sh execs from this one file, so the detector and this
+# detect_invalid_closed calls from strand::closereason, so the detector and this
 # suite cannot disagree. Every permutation of both belongs here, once, rather than
 # paying a database reset per phrase (test-livelock.sh, before this suite existed, spent
 # most of its 19 resets purely to exercise these two functions).
 #
 # check_close_reason (quote-masked, mention-file-aware) is the close-time FENCE's own
-# function, used through aeon.sh and the close-reason-flags.py CLI; test-ops-closing.sh
+# function, used through aeon and the `strand close-reason` CLI; test-ops-closing.sh
 # already table-tests it end to end (its own area — not duplicated here).
 #
 # test-livelock.sh keeps ONE row of each family proving detect_invalid_closed's output
@@ -27,36 +27,17 @@
 # the classifier can fire before any negative control is believed.
 #
 # tier: T1
-# covers: spira/close-reason-flags.py
+# covers: strand/src/closereason.rs strand/src/main.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
-# Load both functions the same way detect_invalid_closed does — exec, so a suite bug here
-# cannot diverge from the shared contract's own loading path.
-FLAGS_NS="$(python3 -c '
-ns = {"__name__": ""}
-exec(open("'"$HERE"'/close-reason-flags.py").read(), ns)
-print("ok" if "detect_close_reason" in ns and "check_unfiled_follow" in ns else "missing")
-')"
-[ "$FLAGS_NS" = ok ] || bail "close-reason-flags.py did not define both functions on exec"
-
 invalid_closed() {   # invalid_closed <reason> -> the matched phrase, or empty
-    REASON="$1" python3 -c '
-import os
-ns = {"__name__": ""}
-exec(open("'"$HERE"'/close-reason-flags.py").read(), ns)
-hit = ns["detect_close_reason"](os.environ["REASON"])
-print(hit or "")'
+    strand close-reason --detect "$1"
 }
 
 unfiled_follow() {   # unfiled_follow <reason> [id-prefix] -> the matched phrase, or empty
-    REASON="$1" PREFIX="${2:-sp}" python3 -c '
-import os
-ns = {"__name__": ""}
-exec(open("'"$HERE"'/close-reason-flags.py").read(), ns)
-hit = ns["check_unfiled_follow"](os.environ["REASON"], os.environ["PREFIX"])
-print(hit or "")'
+    strand close-reason --unfiled "${2:-sp}" "$1"
 }
 
 echo "test-close-reason-flags.sh"

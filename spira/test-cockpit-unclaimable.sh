@@ -17,7 +17,7 @@
 #
 # defect: sp-f8vry
 # tier: T1
-# covers: cockpit-collect/src/* spira/unclaimable.py UC-dispatch-17 UC-cockpit-observability-17
+# covers: cockpit-collect/src/* sentinel/src/unclaimable.rs UC-dispatch-17 UC-cockpit-observability-17
 # hermetic-ok: mock bd binary, no systemd or database
 # scar: a bead carrying fayth:ops on spira,plan labels appeared in builder's partition query; the panel said "builder" for fifteen hours while the bead was unclaimable by any persona.
 set -uo pipefail
@@ -147,17 +147,16 @@ want   "mixed: sp-uc4b's own line shows unclaimable"          "unclaimable"  "$l
 nowant "mixed: sp-uc4b's own line does NOT show builder"      "builder"      "$line_b"
 
 # UC-dispatch-17: the cockpit's per-id attribution must agree with the UC-16 classifier
-# (spira/unclaimable.py) run over the same two beads, not merely with itself.
+# (sentinel/src/unclaimable.rs) run over the same two beads, not merely with itself.
 UC16_PARTS="builder|${SPIRA_SCOPE_LABEL},plan|
 ops|${SPIRA_SCOPE_LABEL},incident|
 "
-# round 3 fix: unclaimable.py is explicitly a "direct invocation without conf.sh" tool
-# (its own header comment) — it reads SPIRA_SCOPE_LABEL/SPIRA_CI_LABEL/SPIRA_ASK_LABEL
-# from os.environ directly, by design, never through spira-config/SPIRA_TOML. tl_config
+# sentinel --classify-unclaimable is a "direct invocation without conf.sh" tool — it reads
+# SPIRA_SCOPE_LABEL/SPIRA_CI_LABEL/SPIRA_ASK_LABEL from the process environment, by design. tl_config
 # here would be silently ignored by this one reader; keep the plain env prefix.
 uc16_out="$(PARTS="$UC16_PARTS" ALL_PARTS="$UC16_PARTS" \
     SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" SPIRA_CI_LABEL=awaiting-ci SPIRA_ASK_LABEL=needs-ryan \
-    unclaimable.py <<< "$CASE4_JSON")"
+    sentinel --classify-unclaimable <<< "$CASE4_JSON")"
 nowant "UC-16 classifier agrees sp-uc4a is claimable"    "sp-uc4a"               "$uc16_out"
 want   "UC-16 classifier agrees sp-uc4b is unclaimable"  "UNCLAIMABLE sp-uc4b"   "$uc16_out"
 

@@ -5,7 +5,7 @@
 //! and row B, safety note (c1)).
 //!
 //! Pure, argv-in/decision-out logic lives here so it is unit-testable with no database, no
-//! subprocess and no filesystem. The actual `bd`/`czar-fence.sh`/`bdsim.py` subprocess work,
+//! subprocess and no filesystem. The actual `bd`/`czar-fence.sh`/`bdsim` subprocess work,
 //! and the retry loop that drives it, live in `src/bin/bdq.rs` — the same split `lib.rs`/
 //! `main.rs` already draws for `bead file`/`bead lint`.
 

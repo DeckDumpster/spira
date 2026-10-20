@@ -31,7 +31,7 @@
 # SPIRA_BDJSON_FIXTURE, NOT A REAL STORE. queue_keys' only bd reads that this suite exercises
 # are two `show <ids>` calls (batch members, next/certified candidates); the query shape
 # itself is covered once in test-cockpit-bd-contract.sh, against real bd. queue_keys also
-# issues a `bd ready --label express` read for SP_EXPRESS_N — bdsim.py deliberately does not
+# issues a `bd ready --label express` read for SP_EXPRESS_N — bdsim deliberately does not
 # simulate `ready` (a hand-written model of its blocker-aware filtering would drift from the
 # real one), so under the fixture that read fails and SP_EXPRESS_N renders 0. Neither this
 # suite nor its predecessor asserts SP_EXPRESS_N, so nothing here depends on that read

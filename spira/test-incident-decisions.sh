@@ -5,14 +5,14 @@
 # undeclared one is flagged for triage, and recurrence notes stay bounded for an unchanged payload.
 #
 # tier: T1
-# covers: spira/incident.sh spira/incident-stub-bd.py incident/* UC-ops-detection-remediation-04 UC-ops-detection-remediation-05 UC-ops-detection-remediation-06
+# covers: spira/incident.sh incident/src/stub_bd.rs incident/* UC-ops-detection-remediation-04 UC-ops-detection-remediation-05 UC-ops-detection-remediation-06
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
 echo "test-incident-decisions.sh"
 
-STUB_BD="$HERE/incident-stub-bd.py"
+STUB_BD="$(command -v incident-stub-bd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/home" "$TMP/run"
 ln -s "$HERE/conf.d" "$TMP/home/conf.d"

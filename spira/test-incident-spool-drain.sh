@@ -15,13 +15,13 @@
 # behaviour is real, not an artifact of a stub that happens to always succeed.
 #
 # tier: T2
-# covers: spira/incident.sh spira/incident-stub-bd.py incident/* UC-ops-detection-remediation-10
+# covers: spira/incident.sh incident/src/stub_bd.rs incident/* UC-ops-detection-remediation-10
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 echo "test-incident-spool-drain.sh"
-STUB_BD="$HERE/incident-stub-bd.py"
+STUB_BD="$(command -v incident-stub-bd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 # sp-jgjvh: incident beads are work beads, so incident's dedup reads each one's state from
 # its lifecycle row, never bd status. A stand-in spira-lc tells the stub store's story in

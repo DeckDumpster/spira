@@ -23,7 +23,7 @@
 # DEMOTED TO T1 (UC-ops-detection-remediation-07). recurs_of -> _counter_events_query needs
 # only row 3 of `bd sql`'s output, which embedded testdb refuses entirely (it answers every
 # `bd sql` with "not yet supported") and server-mode testdb costs ~110s to prove it. Neither
-# is needed: incident-stub-bd.py is a genuinely stateful fake bd (a second filing must see
+# is needed: incident-stub-bd is a genuinely stateful fake bd (a second filing must see
 # the first filing's write, and a bump_recur event must be counted by the next recurs_of
 # call), so the whole sequence — create, recur, recur, escalate — runs against it exactly as
 # it would against real bd, without a fixture database at all.
@@ -34,14 +34,14 @@
 #
 # defect: sp-kufh
 # tier: T1
-# covers: spira/incident.sh spira/incident-stub-bd.py incident/* UC-ops-detection-remediation-07
+# covers: spira/incident.sh incident/src/stub_bd.rs incident/* UC-ops-detection-remediation-07
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
 echo "test-sin-exempt.sh"
 
-STUB_BD="$HERE/incident-stub-bd.py"
+STUB_BD="$(command -v incident-stub-bd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/home" "$TMP/run"
 # round 2 fix: SPIRA_HOME IS the home now (locate_home no longer searches) and every

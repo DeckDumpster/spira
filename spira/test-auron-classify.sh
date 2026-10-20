@@ -24,11 +24,11 @@
 #                            off the state line instead, and this fixture is what keeps it
 #                            from regressing to an inference about an absent line.
 #
-# This suite needs nothing but python3 — auron-classify.py is already pure, and nothing
+# This suite needs nothing but the auron binary — `auron classify` is a pure function, and nothing
 # here reaches a database or a file outside $TMP. The reconciler (raising, clearing and
 # reopening real beads against it) is test-auron.sh.
 # tier: T1
-# covers: spira/auron-classify.py spira/testdata/sentinel-healthy.log spira/testdata/sentinel-pre-check7.log UC-ops-detection-remediation-18
+# covers: auron/src/* spira/testdata/sentinel-healthy.log spira/testdata/sentinel-pre-check7.log UC-ops-detection-remediation-18
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -40,7 +40,7 @@ NOW=1800000000
 
 keys_of() {   # keys_of <observations-json> -> the firing keys, comma separated, or `-`
     local got
-    got="$(printf '%s' "$1" | auron-classify.py 2>/dev/null \
+    got="$(printf '%s' "$1" | auron classify 2>/dev/null \
            | python3 -c '
 import sys, json
 ks = []
@@ -54,7 +54,7 @@ print(",".join(sorted(ks)))')"
 }
 
 evidence_of() {  # evidence_of <observations-json> <key>
-    printf '%s' "$1" | KEY="$2" auron-classify.py 2>/dev/null \
+    printf '%s' "$1" | KEY="$2" auron classify 2>/dev/null \
         | KEY="$2" python3 -c '
 import sys, os, json
 for line in sys.stdin:

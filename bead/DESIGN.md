@@ -213,12 +213,12 @@ shim carries them across regardless.
 
 **What ported vs what stayed bash, this time:** everything — all three fences, the czar-fence
 dispatch (still a subprocess call to `czar-fence.sh`, unchanged), the
-`SPIRA_BDJSON_FIXTURE` → `bdsim.py` route (also still a subprocess, unchanged), the
+`SPIRA_BDJSON_FIXTURE` → `bdsim` route (also still a subprocess, unchanged), the
 empty-`SPIRA_DB` refusal, the `SOP_APPLIED_TRACE` wrapper and the invalid-connection retry
-loop. `czar-fence.sh` and `bdsim.py` remain separate scripts, invoked as subprocesses from
+loop. `czar-fence.sh` and `bdsim` remain separate scripts, invoked as subprocesses from
 the binary exactly as `bdq` invoked them from bash — porting either is out of this bead's
 scope (czar-fence.sh guards the czar's own queue mutations, a different family entirely;
-bdsim.py is the fixture engine for several `cockpit.sh` suites, group 5).
+bdsim is the fixture engine for several `cockpit.sh` suites, group 5).
 
 **Safety (c1), carried over fence for fence:** the repo-label refusal names every valid key in
 its error (not just "refused"); the destructive-vocabulary refusal still bypasses only on

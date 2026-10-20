@@ -356,7 +356,7 @@ sp-j1q6o commit).
     `claim_retry list --status open --no-assignee --exclude-type epic,event --limit 0 --label "$FAYTH_LABELS" --exclude-label "$CLAIM_EXCLUDE"`
     and the rank/tier calls gain `--blockers machine`. `ready_count` (lib.sh:1167)
     becomes the same list query piped to `select --fayth "$f" --blockers machine --count`.
-    `fayth_ready`/`bulk_ready_by_fayth` (lib.sh:1513/1575) and ready-bucket.py count through
+    `fayth_ready`/`bulk_ready_by_fayth` (lib.sh:1513/1575) and the retired ready-bucket script count through
     that `ready_count`.
 12. ~~spira/unpoison.sh:123~~ — **superseded by §8.6**: unpoison.sh is deleted outright and
     `spira-claim unpoison` takes the requeue count from the same fold CHECK 4 uses.

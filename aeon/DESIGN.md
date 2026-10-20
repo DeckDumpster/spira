@@ -162,7 +162,7 @@ After each `done` line: `_tsd_aeon_session` (native since sp-27d3d — wave 4.34
 
 ### 2.6 Bead-store rows (through `bd -C $SPIRA_DB`, bdq's rules: `SPIRA_DB` must be set,
 `timeout ${BD_TIMEOUT:-180}`, one retry on `invalid connection`, `SPIRA_BDJSON_FIXTURE` →
-`bdsim.py`, `--json` output passed through `json_only`)
+`bdsim`, `--json` output passed through `json_only`)
 
 | call | when |
 |---|---|
@@ -183,7 +183,7 @@ through lib.sh functions (§5), never hand-written SQL.
 `bd` (`$SPIRA_BD`), `git`, `spira-claim`, the model (`$SPIRA_AGENT`, default `claude`),
 `world.sh stop|start`, `gate-run.sh --status`,
 `worktree-hooks.sh install`, `holds.sh`, `wiki-commit.sh`, `sop ledger-init|digest|log`,
-`close-reason-flags.py`, the repository's own testdb library, and
+`strand close-reason`, the repository's own testdb library, and
 `bash` for the lib.sh seam. Every Spira tool and script is invoked by its bare name on the
 PATH the launcher set (sp-gypjk: the release's `bin/` and `spira/` first); there is no
 `SPIRA_*_BIN` override, no `$SPIRA_ARTIFACTS` or `$SPIRA_REPO/bin` lookup, and no "binary
@@ -721,7 +721,7 @@ wiki commit → status/superseded/delivers/type from one `bd show` → `verdict_
 `close_verdict` (keep delivers / keep superseded / reopen delivers-mismatch / reopen
 closed-without-commit unless a work type) → own-worktree dirty (reopen prod-dirty,
 `SPIRA_ALLOW_PROD_DIRTY`) → SOP closing rule (`sop_rule_verdict`; poison) → close-reason
-fence (`close-reason-flags.py`, `SPIRA_CLOSE_REASON_OVERRIDE`) → groom escalation check →
+fence (`strand close-reason`, `SPIRA_CLOSE_REASON_OVERRIDE`) → groom escalation check →
 workflow-run fence (§8: only when `DB` is set in the environment) → rebase currency
 (current / rebased / cited-on-base retire / reopen rebase-conflict).
 

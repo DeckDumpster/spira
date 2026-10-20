@@ -5,12 +5,9 @@
 //! incident-needs-builder/invalid-closed/all_partition_members) is a different bead
 //! (4.29, "T-b → strand"); nothing here touches it.
 //!
-//! `detect_unclaimable_ready` still classifies through `spira/unclaimable.py` — split out
-//! on purpose (DESIGN comment in that file) so a fixture-JSON table can drive it directly,
-//! and `cockpit-collect`'s own test (test-cockpit-unclaimable.sh, UC-dispatch-17)
-//! cross-validates against it independently of this binary. Reimplementing the classifier
-//! natively here would be a second copy of that logic to keep in sync; this module only
-//! gathers PARTS/ALL_PARTS/the ready set and hands them to the one classifier.
+//! `detect_unclaimable_ready` classifies in-process through [`crate::unclaimable`], which
+//! `sentinel --classify-unclaimable` also exposes to the fixture-table suites and to
+//! `cockpit-collect`'s cross-check (test-cockpit-unclaimable.sh, UC-dispatch-17).
 
 use std::collections::HashMap;
 
@@ -85,7 +82,7 @@ impl<'a> Sentinel<'a> {
     }
 
     /// The broad (unscoped) ready set as raw JSON text, passed through unchanged —
-    /// `unclaimable.py` reads fields (`external_ref`) this binary's own `Bead` does not
+    /// The classifier reads fields (`external_ref`) this binary's own `Bead` does not
     /// model, so this never round-trips through `parse_beads`. `snap_ready_raw` is the
     /// pass's own `ready_raw_args` snapshot when running inside a full pass; `None` for a
     /// standalone `sentinel --detect-unclaimable`, which makes a live `bd ready` call.
@@ -118,16 +115,11 @@ impl<'a> Sentinel<'a> {
             .lc_rows()
             .map(|rows| rows.into_iter().filter(|r| r.holds.iter().any(|h| h == "ask" || h == "poison")).map(|r| r.bead_id).collect())
             .unwrap_or_default();
-        let o = self.h.run(
-            Spec::args_owned("unclaimable.py".to_string(), Vec::new())
-                .env("PARTS", parts)
-                .env("ALL_PARTS", all_parts)
-                .env("HELD_IDS", held.join(","))
-                .stdin(ready_raw.into_bytes())
-                .out(Io::Capture)
-                .err(Io::Null),
-        );
-        o.stdout
+        let (Ok(ci), Ok(groom_ask)) = (spira_config::process::cfg("SPIRA_CI_LABEL"), spira_config::process::cfg("SPIRA_GROOM_ASK_LABEL")) else {
+            return String::new();
+        };
+        let labels = crate::unclaimable::Labels { scope: self.cfg.scope.clone(), ci, ask: self.cfg.ask.clone(), groom_ask };
+        crate::unclaimable::classify(&ready_raw, &parts, &all_parts, &held.join(","), &labels)
     }
 
     /// lib.sh `file_unclaimable_incidents`: one P1 incident per `UNCLAIMABLE <id> — <reason>`

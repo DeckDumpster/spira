@@ -8,8 +8,7 @@
 # THREE THINGS THIS PROVES, each with a positive control first:
 #   A. aeon_count counts by unit name, not pidfile — the pidfile gap (aeon.sh writes its
 #      pidfile only after it claims a bead) must not read a just-summoned aeon as free.
-#   C. ready-bucket.py's bucketing mirrors fayth_ready's predicate exactly (labels,
-#      excludes, fayth: preference) — checked directly, no database needed.
+#   C. (the bucketing predicate is spira-claim's, unit-tested in spira-claim/src/ready.rs.)
 #   D. sentinel --summon-only, against a real fixture: the ready set is spira-claim's, over
 #      the lifecycle machine's READY rows — ZERO bd ready calls (sp-v62vn: there is no off
 #      mode, so neither the sentinel nor spira-claim asks bd what is ready) — a summon
@@ -36,7 +35,7 @@
 #
 # defect: sp-0y2av
 # tier: T1
-# covers: spira/lib.sh sentinel/src/* spira/ready-bucket.py UC-dispatch-09
+# covers: spira/lib.sh sentinel/src/* UC-dispatch-09
 # hermetic-ok: no real systemd, no real database in sections A-C; a fixture database in D
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -193,47 +192,6 @@ unset SPIRA_SUMMON 2>/dev/null || true
 
 # ============================================================================
 echo
-echo "C — ready-bucket.py mirrors fayth_ready's own predicate:"
-# ============================================================================
-RB="$HERE/ready-bucket.py"
-[ -r "$RB" ] || bail "ready-bucket.py not readable at $RB"
-
-PARTS_FIXTURE="builder|plan|spira-poison
-ops|incident|spira-poison"
-
-run_bucket() {   # run_bucket <beads-json>
-    printf '%s' "$1" | PARTS="$PARTS_FIXTURE" ready-bucket.py
-}
-
-# POSITIVE CONTROL: a plain bead matching builder's labels counts for builder, not ops.
-out="$(run_bucket '[{"id":"sp-1","labels":["plan"]}]')"
-want "positive control: plain plan bead counts for builder" "builder 1" "$out"
-want "positive control: plain plan bead does not count for ops" "ops 0" "$out"
-
-# EXCLUDE LABEL: a bead carrying the fayth's own exclude label does not count for it.
-out="$(run_bucket '[{"id":"sp-2","labels":["plan","spira-poison"]}]')"
-is "exclude label: a poisoned plan bead counts for nobody" "builder 0
-ops 0" "$out"
-
-# FAYTH: PREFERENCE NARROWS. A bead naming fayth:ops is excluded from builder even though
-# it also carries builder's own labels.
-out="$(run_bucket '[{"id":"sp-3","labels":["plan","incident","fayth:ops"]}]')"
-want "fayth: preference: named persona still counts" "ops 1" "$out"
-want "fayth: preference: every other persona is excluded" "builder 0" "$out"
-
-# SHARED EXCLUDE (QUEUE_WAIT/SUBMITTED): excluded from every fayth regardless of labels.
-out="$(printf '%s' '[{"id":"sp-4","labels":["plan","queue-wait"]}]' \
-    | PARTS="$PARTS_FIXTURE" SPIRA_QUEUE_WAIT_LABEL=queue-wait ready-bucket.py)"
-is "shared exclude: a queue-wait bead counts for nobody" "builder 0
-ops 0" "$out"
-
-# COUNTS ACCUMULATE across multiple beads in one call — the whole point of ONE bd call.
-out="$(run_bucket '[{"id":"sp-5","labels":["plan"]},{"id":"sp-6","labels":["plan"]},{"id":"sp-7","labels":["incident"]}]')"
-is "counts accumulate: 2 builder beads, 1 ops bead in a single fetch" "builder 2
-ops 1" "$out"
-
-# ============================================================================
-echo
 echo "D — sentinel --summon-only against a real fixture: the machine's ready set, no bd ready call, no full pass:"
 # ============================================================================
 # shellcheck disable=SC1090
@@ -250,7 +208,6 @@ JSONL
 DSTUBS="$T/dstubs"
 mkdir -p "$DSTUBS"
 ln -s "$HERE/chamber" "$DSTUBS/chamber"
-ln -s "$HERE/ready-bucket.py" "$DSTUBS/ready-bucket.py"
 # THE SENTINEL IS A BINARY (sentinel.sh is gone): it sources lib.sh from SPIRA_HOME.
 for _s in lib.sh conf.sh suite-covers.sh; do ln -s "$HERE/$_s" "$DSTUBS/$_s"; done
 ln -s "$HERE/conf.d" "$DSTUBS/conf.d"

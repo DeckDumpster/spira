@@ -104,7 +104,7 @@ echo "an unreadable store renders ? rather than 0:"
 # indistinguishability is the exact defect the meter was built to close. The ? convention
 # preserves the suspicion a broken probe must not displace (law-failed-probe-is-not-zero).
 #
-# A nonexistent fixture path makes bdsim.py exit 1 with no stdout — the same shape bdjson
+# A nonexistent fixture path makes bdsim exit 1 with no stdout — the same shape bdjson
 # sees from a real bd that cannot reach its store.
 keys_bad="$(dup_refs "$TMP/does-not-exist.json")"
 is     "unreadable store: SP_DUP_REFS=?"            "?" "$(key "$keys_bad" SP_DUP_REFS)"

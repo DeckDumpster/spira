@@ -17,13 +17,13 @@
 # and this suite has no systemd user session to make that path interesting to reproduce.
 #
 # tier: T2
-# covers: spira/incident.sh spira/incident-stub-bd.py incident/*
+# covers: spira/incident.sh incident/src/stub_bd.rs incident/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 echo "test-incident-systemd.sh"
-STUB_BD="$HERE/incident-stub-bd.py"
+STUB_BD="$(command -v incident-stub-bd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/home" "$TMP/run"
 # locate_home no longer searches: SPIRA_HOME IS the home, and every binary reads

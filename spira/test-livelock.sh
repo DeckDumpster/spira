@@ -25,7 +25,7 @@
 #
 #   INVALID-CLOSED / UNFILED-FOLLOW   close_reason classification, covered exhaustively
 #                        (every phrase, every tracking-reference exemption) by
-#                        test-close-reason-flags.sh against close-reason-flags.py directly,
+#                        test-close-reason-flags.sh against `strand close-reason` directly,
 #                        no database. This suite keeps ONE row of each proving
 #                        detect_invalid_closed's output actually reaches cockpit-collect
 #                        livelock's report — the integration, not the classification.
@@ -37,7 +37,7 @@
 # with the database built once.
 #
 # tier: T2
-# covers: spira/lib.sh cockpit-collect/src/* spira/close-reason-flags.py spira/chamber/builder.fayth spira/chamber/ops.fayth UC-ops-detection-remediation-29
+# covers: spira/lib.sh cockpit-collect/src/* strand/src/closereason.rs spira/chamber/builder.fayth spira/chamber/ops.fayth UC-ops-detection-remediation-29
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

@@ -792,5 +792,5 @@ liveness, the clock, spira-lc and the halt ports (signals, podman, testenv teard
 | asks / noverdict text (D16, sp-31hjr) | `ask::tests` — generated-file matching, each `ask_*`/`machinery*` mail against lib.sh's own wording, `bead_context` against the python |
 
 Also run by hand (not a suite, not production): `landing-pass land` against a stand-in
-`SPIRA_HOME` (stub lib.sh/gate.sh/bdsim.py, a temp git repository) — certified, then skipped
+`SPIRA_HOME` (stub lib.sh/gate.sh/bdsim, a temp git repository) — certified, then skipped
 at the same tip, then SIGTERM mid-gate → `SP_LAND_RC=143`, the gate's own child gone.

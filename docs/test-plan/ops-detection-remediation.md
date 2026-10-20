@@ -7,10 +7,10 @@ branch became a shared catch-all across five beads and was never merged — see
 differs from its draft.
 
 Subjects: `incident.sh`, `census.sh` (and the `cluster.py`/`cluster_merge.py`/`covers.py` files it
-calls), `maechen-trigger.sh` + `chamber/maechen.md`, `auron.sh` + `auron-classify.py`,
+calls), `maechen-trigger.sh` + `chamber/maechen.md`, `auron.sh` + `auron classify`,
 `strand.sh` + `strand-classify.py`, `watchtower.sh`, `czar-pass` → `czar-pass/src/main.rs` (on
 the reconciler-engine, sp-pu7v6), `czar-fence.sh`, `groomer`, `groom-trigger.sh`,
-`hold.sh`/`unhold.sh`, `cockpit.sh livelock` + `close-reason-flags.py`, `archivist`.
+`hold.sh`/`unhold.sh`, `cockpit.sh livelock` + `strand close-reason`, `archivist`.
 
 ---
 
@@ -84,7 +84,7 @@ produced the 36 use cases. Columns marked **applied** reflect code that is actua
 | 01 | Merge `test-incident-dedup.sh` into `test-incident.sh`; demote the decision part to T1 against a stub bd. | **Applied** (`sp-fhzib.2`): `incident-dedup-decision.py` extracted and table-tested; `test-incident-dedup.sh` deleted. |
 | 02 | Deterministic barrier instead of relying on Dolt latency. | **Applied**: a `SLOW_BD` wrapper sleeps inside the flock. |
 | 03 | Add an outside-lookback row and the BSD `date -v` fallback. | **Applied**: both covered in `test-incident.sh` / the stub. |
-| 04 | Demote to T1 (counting stub bd, no Dolt). | **Applied**: `spira/incident-stub-bd.py`. |
+| 04 | Demote to T1 (counting stub bd, no Dolt). | **Applied**: `incident-stub-bd` (incident/src/stub_bd.rs). |
 | 05 | Demote to T1 (stub bd plus a maildir). | **Applied**. |
 | 06 | Demote the note-size decision to T1; keep one real row; delete `test-incident-recur-bounded.sh`. | **Applied**. |
 | 07 | Demote `test-sin-exempt.sh` to T1 against a stub-`bd sql` count; merge the real-events row into the census integration suite; move the watchtower DRAINING-exempt assertion to `test-watchtower.sh`. | **Applied** except the real-events row, which was deferred by `sp-fhzib.3` until `sp-fhzib.2` landed. **Landed by this bead** (`sp-n1twd`): `test-census.sh` gained the Sin real-events row — see §8. |

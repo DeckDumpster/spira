@@ -1,4 +1,4 @@
-//! auron — `auron [--home DIR] [--report]`. See DESIGN.md and each module's own doc
+//! auron — `auron [--home DIR] [--report]` | `auron classify` (observations on stdin). See DESIGN.md and each module's own doc
 //! comment for the design this ports from (spira/auron.sh, retired in the same change).
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -46,7 +46,28 @@ fn resolve_home(flag: Option<&str>, env: &BTreeMap<String, String>) -> Option<Pa
 
 static FIRING: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+fn classify_main() -> i32 {
+    let mut input = String::new();
+    if std::io::Read::read_to_string(&mut std::io::stdin(), &mut input).is_err() {
+        eprintln!("auron classify: unreadable observations");
+        return 2;
+    }
+    match classify::classify_stdin(&input) {
+        Ok(out) => {
+            print!("{out}");
+            0
+        }
+        Err(e) => {
+            eprintln!("auron classify: {e}");
+            2
+        }
+    }
+}
+
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("classify") {
+        std::process::exit(classify_main());
+    }
     let run = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "auron", "pass");
     let code = pass();
     run.end_with(spira_otel::metrics::outcome_of(code), &[spira_otel::metrics::Point::Count { name: "spira_auron_firing_alerts", value: FIRING.load(std::sync::atomic::Ordering::Relaxed) }]);

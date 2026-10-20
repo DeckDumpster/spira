@@ -17,16 +17,9 @@ pub struct Bd<'a> {
 impl<'a> Bd<'a> {
     pub fn spec(&self, args: &[String]) -> Spec {
         if let Some(fx) = &self.cfg.bd_fixture {
-            let mut a = vec![
-                self.cfg
-                    .home
-                    .join("bdsim.py")
-                    .to_string_lossy()
-                    .into_owned(),
-                fx.clone(),
-            ];
+            let mut a = vec![fx.clone()];
             a.extend(args.iter().cloned());
-            return Spec::args_owned("python3", a);
+            return Spec::args_owned("bdsim", a);
         }
         let mut a = vec!["-C".to_string(), self.cfg.db.clone()];
         a.extend(args.iter().cloned());

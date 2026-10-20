@@ -1,5 +1,5 @@
 //! `READY_ARGS` / `ready_raw_args` / `ready_shared_exclude` / `fayth_exclude` /
-//! `bulk_ready_by_fayth`'s bucketing (`ready-bucket.py`) — lib.sh family F (wave 4
+//! `bulk_ready_by_fayth`'s bucketing (the former ready-bucket script) — lib.sh family F (wave 4
 //! decomposition row F, sp-obhv6). Pure argv-building and predicate logic lives here, with
 //! no I/O, so it is unit-testable with no database and no chamber directory. The store
 //! reads (the machine's claimable set) are `main.rs::machine_claimable` over `Store`;
@@ -103,12 +103,12 @@ pub struct FaythPart {
     pub exc: Vec<String>,
 }
 
-/// `ready-bucket.py`'s own split: comma-separated, empty tokens dropped.
+/// The former ready-bucket script's own split: comma-separated, empty tokens dropped.
 pub fn split_csv(s: &str) -> Vec<String> {
     s.split(',').map(str::trim).filter(|t| !t.is_empty()).map(str::to_string).collect()
 }
 
-/// `ready-bucket.py`'s predicate, exactly: a bead counts for `(inc, exc)` iff none of its
+/// The former ready-bucket script's predicate, exactly: a bead counts for `(inc, exc)` iff none of its
 /// labels is in `shared`, its `fayth:` preferences (if it carries any) include `name`,
 /// `inc` is a subset of its labels, and `exc` is disjoint from them.
 ///

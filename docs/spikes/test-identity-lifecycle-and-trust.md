@@ -4,7 +4,7 @@ Spike sp-pmv67. Written 2026-09-18 against `origin/main` at `c26bd5b`. It also a
 sp-t600k, which asks the same question.
 
 Sources are preserved under [`sources/sp-pmv67/`](sources/sp-pmv67/) and cited by their path
-there. Every measurement script is in `sources/sp-pmv67/scripts/`. The same scripts, plus the
+there. The shell measurement scripts are in `sources/sp-pmv67/scripts/`; the four Python ones (`harvest-corpus`, `extract-dir`, `label-stability`, `assertion-edits`) were deleted when the harness dropped Python, and their outputs under `sources/sp-pmv67/data/` stay as documents. The same scripts, plus the
 proof of concept, are on branch `spike/sp-pmv67-poc` (`0c1c05b`). That branch is **local
 only**: aeons hold no push credentials, so it disappears when this worktree is reaped. Nothing
 in this document depends on it, because every script it holds is also in the sources.

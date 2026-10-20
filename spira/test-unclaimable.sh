@@ -17,7 +17,7 @@
 #
 # MERGED FROM (D6, sp-9ce60.2.3): test-unclaimable-bead.sh (12 cases over real bd, 47s) and
 # test-unclaimable-cycle.sh (hermetic but string-split lib.sh to reach the python body, 72s
-# measurement anomaly). The classifier now lives in its own file, spira/unclaimable.py, so
+# measurement anomaly). The classifier is sentinel/src/unclaimable.rs, so
 # T1 below drives it directly over canned JSON; only one T2 row exercises the real bd-ready
 # shape, and the incident-filing rows drive file_unclaimable_incidents against a mock
 # incident.sh (no bd needed at all — the input is a canned UNCLAIMABLE line).
@@ -28,7 +28,7 @@
 #
 # tier: T1
 # defect: sp-9zyu1 sp-f8vry
-# covers: spira/lib.sh spira/unclaimable.py sentinel/src/* UC-dispatch-16
+# covers: spira/lib.sh sentinel/src/unclaimable.rs sentinel/src/* UC-dispatch-16
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -36,7 +36,7 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 echo "test-unclaimable.sh"
 
 # ==============================================================================================
-# T1 — the classifier (spira/unclaimable.py) driven directly over fixture JSON, no bd at all.
+# T1 — the classifier (sentinel/src/unclaimable.rs) driven directly over fixture JSON, no bd at all.
 # ==============================================================================================
 
 # Non-default labels throughout (law-gates-run-in-a-clean-environment): a hardcoded "spira",
@@ -62,13 +62,13 @@ NARROW_PARTS="builder|${SCOPE},plan|${EXC}
 spike|${SCOPE},spike|${EXC}
 "
 
-# classify <beads-json> [parts] [all_parts] -> unclaimable.py's stdout
+# classify <beads-json> [parts] [all_parts] -> sentinel --classify-unclaimable's stdout
 classify() {
     local beads_json="$1" parts="${2:-$FULL_PARTS}" all_parts="${3:-$FULL_PARTS}"
     PARTS="$parts" ALL_PARTS="$all_parts" HELD_IDS="${HELD_IDS:-}" \
     SPIRA_SCOPE_LABEL="$SCOPE" SPIRA_CI_LABEL="$CI" SPIRA_ASK_LABEL="$ASK" \
     SPIRA_GROOM_ASK_LABEL="$GROOM_ASK" \
-        unclaimable.py <<< "$beads_json"
+        sentinel --classify-unclaimable <<< "$beads_json"
 }
 
 bead() { # bead <id> <extra-labels-csv-or-""> -> one bead JSON object, always scoped+repo'd

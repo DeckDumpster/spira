@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
 #
 # test-cockpit-bd-contract.sh — one real-bd row per distinct query shape the cockpit *_keys
-# functions issue, so the fixture-driven suites that replaced them can trust bdsim.py.
+# functions issue, so the fixture-driven suites that replaced them can trust bdsim.
 #
 #   ./test-cockpit-bd-contract.sh
 #
 # WHAT THIS SUITE IS FOR
 # -----------------------
 # docs/test-plan/cockpit-observability.md section 5 demotes dup-refs, repo-labels, sphere
-# and sop off a real testdb_up store and onto SPIRA_BDJSON_FIXTURE (spira/bdsim.py's pure
-# list/show/memories functions). That is safe only if bdsim.py's filtering — label AND
+# and sop off a real testdb_up store and onto SPIRA_BDJSON_FIXTURE (bead/src/bdsim.rs's pure
+# list/show/memories functions). That is safe only if bdsim's filtering — label AND
 # matching, the default exclude-closed, --all, and the query shapes bd reads for `ready` and
 # `memories` — actually agrees with the real `bd` binary. This suite is the explicit
 # exception to "never build a real store" (law-prefer-the-real-dependency): it keeps exactly
 # one row per query shape against real bd on a throwaway database, so a drift between
-# bdsim.py and bd surfaces here instead of as a silent wrong answer in every fixture suite.
+# bdsim and bd surfaces here instead of as a silent wrong answer in every fixture suite.
 #
 # NOT A REPEAT OF EACH SUITE'S OWN CASES. Each row asserts only that the shape resolves
 # correctly against a real store — the exhaustive positive/negative/lookback/closed-bead
 # cases already live in the fixture-driven suite for that probe.
 #
 # tier: T2
-# covers: cockpit-collect/src/* spira/bdsim.py cockpit/panel/src/store.rs
+# covers: cockpit-collect/src/* bead/src/bdsim.rs cockpit/panel/src/store.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

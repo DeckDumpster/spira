@@ -22,7 +22,7 @@
 #
 # SPIRA_BDJSON_FIXTURE, NOT A REAL STORE (docs/test-plan/cockpit-observability.md coverage
 # row 13). sphere_keys issues two `list` calls (label=spira-poison, and label=<scope>,plan)
-# against the same underlying bead set; bdsim.py's list filter reproduces bd's own AND-label
+# against the same underlying bead set; bdsim's list filter reproduces bd's own AND-label
 # and default-exclude-closed semantics so one fixture array answers both. The query shape
 # itself is covered once, against real bd, in test-cockpit-bd-contract.sh.
 #
