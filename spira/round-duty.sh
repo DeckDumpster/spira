@@ -31,13 +31,14 @@ _rd_say() {
 }
 
 # Sets _rd_total and _rd_by_repo ("name=N ..."), counting only repos that land through local
-# rounds: a forge repo's certified backlog belongs to the forge batcher.
+# rounds: a forge repo's certified backlog belongs to the forge batcher. A bead with any hold is
+# not counted: the batcher's round pool is unheld beads only, so no round could take it.
 _rd_certified() {
     local r n
     _rd_total=0 _rd_by_repo=""
     for r in $(repo_names 2>/dev/null); do
         [ "$(repo_land "$r" 2>/dev/null)" = queue.local ] || continue
-        n="$(spira-lc list --state CERTIFIED --repo "$r" 2>/dev/null | grep -c '"bead_id"')"
+        n="$(spira-lc list --state CERTIFIED --repo "$r" 2>/dev/null | jq '[.[] | select((.holds // []) | (if type == "string" then (try fromjson catch ["?"]) else . end) | length == 0)] | length' 2>/dev/null)"
         [ "${n:-0}" -gt 0 ] || continue
         _rd_total=$((_rd_total + n)); _rd_by_repo="${_rd_by_repo:+$_rd_by_repo }$r=$n"
     done
