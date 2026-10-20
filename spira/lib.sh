@@ -95,8 +95,8 @@ mkdir -p "$SPIRA_RUN"
 #
 # SPIRA_BDJSON_FIXTURE is the one sanctioned exception: a read-only, per-probe test that
 # needs a pure classification result, not bd's own filtering behaviour, points it at a
-# canned-JSON file and bdsim.py answers `list`/`show`/`memories` from that file instead of a
-# live store. Query shapes bdsim.py does not simulate stay on real bd, in
+# canned-JSON file and bdsim answers `list`/`show`/`memories` from that file instead of a
+# live store. Query shapes bdsim does not simulate stay on real bd, in
 # test-cockpit-bd-contract.sh.
 # bdq AND ITS THREE CREATE-TIME FENCES ARE NOW bead::bdq (sp-w3h16, wave 4.14,
 # wave4-decomposition.md row A, safety note (c1)): one library plus a `bdq` binary every
@@ -1501,10 +1501,10 @@ all_partition_members() {
 # Ported to Rust (sp-fbqsv, "wave 4.28"); see `sentinel::detect` for the full rationale
 # each of these carried (the fifteen-hour fayth:-preference strand, the unclaimable-
 # reporting-its-own-report cycle guard, the sp-lyglx/sp-vcxmz branch-collision incidents).
-# `detect_unclaimable_ready` still classifies through `spira/unclaimable.py`, unchanged and
-# untouched — split out on purpose so a fixture-JSON table (test-unclaimable.sh) and
-# cockpit-collect's own cross-check (test-cockpit-unclaimable.sh, UC-dispatch-17) can drive
-# it directly; this bead only ports the bash orchestration around it. The bash-only re-exec
+# `detect_unclaimable_ready` classifies in-process (sentinel/src/unclaimable.rs); the pure classifier
+# is also `sentinel --classify-unclaimable`, so a fixture-JSON table (test-unclaimable.sh) and
+# cockpit-collect's cross-check (test-cockpit-unclaimable.sh, UC-dispatch-17) can drive it
+# directly. The bash-only re-exec
 # that used to re-source lib.sh from the production checkout when called from a worktree
 # (sp-b0j0s) is retired, not ported: it was a workaround for a bash function having no
 # persistent, correctly-resolved context across calls, and this binary resolves its config

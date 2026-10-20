@@ -27,7 +27,7 @@
 # SPIRA_BDJSON_FIXTURE, NOT A REAL STORE (docs/test-plan/cockpit-observability.md coverage
 # row 14). sop_keys' only bd read is bare `bd memories`, which returns the shelf as one
 # JSON object; a canned fixture reproduces that shape exactly, and the "broken shelf" case
-# below is reproduced by pointing the fixture at a path that does not exist — bdsim.py exits
+# below is reproduced by pointing the fixture at a path that does not exist — bdsim exits
 # with empty stdout, the same shape bdjson sees from a bd that cannot reach its store.
 #
 # SPIRA_NOW PINS THE CLOCK for SP_SWEEP_AGE, so "fresh" and "stale" are exact equalities

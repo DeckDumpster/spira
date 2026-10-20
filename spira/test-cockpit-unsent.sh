@@ -352,7 +352,7 @@ echo "probe-fault — a failed bead lookup lands in SP_PROBE_FAIL, not SP_UNADOP
 # DEFECT: a failed bdjson call returned empty, which the probe read as "no bead exists"
 # and routed to SP_UNADOPTED. Closed beads appeared as unadopted strays. (sp-kc9v4)
 #
-# An unreadable fixture makes bdsim.py exit 1 with no stdout — the same shape bdjson sees
+# An unreadable fixture makes bdsim exit 1 with no stdout — the same shape bdjson sees
 # from a real bd that cannot reach its store, whether bd exits non-zero or exits 0 with
 # nothing printed (json_only strips anything that is not a JSON line either way).
 #

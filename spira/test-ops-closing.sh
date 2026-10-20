@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-ops-closing.sh — close-reason-flags.py, the phrase table the close-reason fence and
+# test-ops-closing.sh — `strand close-reason`, the phrase table the close-reason fence and
 # detect_invalid_closed share, and the ops.md instruction check.
 #
 # The fence wiring (a submission whose reason admits unfinished work goes back to REWORK, a
@@ -9,8 +9,8 @@
 #
 # defect: sp-9pyr
 # tier: T1
-# covers: aeon/src/* sop/src/*.rs spira/close-reason-flags.py spira/chamber/ops.fayth spira/chamber/ops.md spira/test-ops-closing.sh
-# covers: aeon/src/* spira/close-reason-flags.py spira/chamber/ops.fayth spira/test-ops-closing.sh UC-aeon-execution-16
+# covers: aeon/src/* sop/src/*.rs strand/src/closereason.rs spira/chamber/ops.fayth spira/chamber/ops.md spira/test-ops-closing.sh
+# covers: aeon/src/* strand/src/closereason.rs spira/chamber/ops.fayth spira/test-ops-closing.sh UC-aeon-execution-16
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -19,13 +19,13 @@ echo "test-ops-closing.sh"
 
 
 echo
-echo "T1: close-reason-flags.py, unit directly — no aeon run, no bd"
+echo "T1: strand close-reason, unit directly — no aeon run, no bd"
 # ===========================================================================================
-# THE FENCE AND detect_invalid_closed IN lib.sh SHARE THIS FILE so they cannot disagree
+# THE FENCE AND detect_invalid_closed SHARE strand::closereason so they cannot disagree
 # about which phrase triggers a refusal. Testing it directly, rather than only through a
 # full aeon run per case, is what "already standalone" is for.
 crf() {   # crf <reason> -> sets CRF_RC and CRF_OUT (the matched phrase, if any)
-    CRF_OUT="$(python3 "$HERE/close-reason-flags.py" "$1" 2>/dev/null)"; CRF_RC=$?
+    CRF_OUT="$(strand close-reason "$1" 2>/dev/null)"; CRF_RC=$?
 }
 
 crf "done"
@@ -44,7 +44,7 @@ wantrc "a parenthetical mention is masked too" 1 "$CRF_RC"
 crf 'the `TEMPORARY WORKAROUND` phrase, avoided'
 wantrc "a backtick-quoted mention is masked too" 1 "$CRF_RC"
 
-crf "see close-reason-flags.py for the TEMPORARY WORKAROUND check"
+crf "see close-reason-flags for the TEMPORARY WORKAROUND check"
 wantrc "a line naming this file is a mention, not an admission" 1 "$CRF_RC"
 
 crf "PERMANENT FIX NEEDED here"

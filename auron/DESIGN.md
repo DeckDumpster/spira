@@ -46,8 +46,8 @@ the condition RETURNS) and `silent-until:` (the panel's own affordance; Auron ne
 touches it).
 
 **Noise is the failure mode.** Three defences, in this order of how much they matter: (1)
-thresholds measured from the real pass log (`auron-classify.py`, unchanged by this port —
-see §4); (2) a condition must hold for `SPIRA_AURON_CONFIRM` consecutive passes before it
+thresholds measured from the real pass log (`judge.rs`, a port of the former
+classifier script — see §2.4); (2) a condition must hold for `SPIRA_AURON_CONFIRM` consecutive passes before it
 fires and clear for `SPIRA_AURON_CLEAR` before it is retracted; (3) one bead per cause
 forever, reopened and flap-counted.
 
@@ -69,7 +69,7 @@ cannot be resolved at all (a setup failure, not a condition to report).
 ### 2.3 Architecture — gather, classify, reconcile, speak
 
 ```
-auron.sh gathers -> auron-classify.py classifies -> auron.sh speaks
+gather -> judge::classify -> speak
 ```
 
 unchanged in shape. Each arrow-side is a module:
@@ -78,7 +78,8 @@ unchanged in shape. Each arrow-side is a module:
 |---|---|---|
 | `gather.rs` | GATHER | no — file reads, systemctl |
 | `restart.rs` | the restart-baseline arithmetic inside GATHER | **yes** |
-| `classify.rs` | the JSON built for the classifier, and parsing its answer | mostly (the JSON build is pure; the subprocess call is not) |
+| `classify.rs` | the JSON built for the classifier, and the `auron classify` stdin entry | **yes** |
+| `judge.rs` | the classifier: observations in, firing records out | **yes** |
 | `reconcile.rs` | the confirm/clear/refresh loop | **yes** — the whole debounce state machine, no IO |
 | `alerts.rs` | `body_of`, `alert_write`, `alert_clear`, the write probe | no — bd calls, but against a `BdOps` port so it is unit-tested with a fake |
 | `bdops.rs` | `bdq` calls threaded through the reconcile loop | no — the seam |
@@ -87,13 +88,12 @@ unchanged in shape. Each arrow-side is a module:
 | `state.rs` | the TSV state file | **yes** (parse/render) |
 | `seam.rs` | (new) | no — the lib.sh subprocess seam |
 
-### 2.4 What is NOT ported: `auron-classify.py`
+### 2.4 The classifier: `judge.rs`
 
-Out of this bead's scope (sp-zpaq0 names `spira/auron.sh spira/escape.sh
-spira/work-env.sh` only; `auron-classify.py`/`escape-classify.sh` are the next inventory
-row). It is unchanged, has a live caller (this binary, exactly as it had auron.sh), and
-keeps its own suite (`test-auron-classify.sh`). `classify::run` calls it by bare name on
-stdin/stdout, byte for byte what auron.sh's heredoc-and-pipe did.
+The whole judgement is a pure function of one observation object (`judge::classify`): no
+clock, file, command or network. `auron classify` reads one observation on stdin and writes
+one sorted-key JSON alert per line, which is how `test-auron-classify.sh` replays it
+against real sentinel log. `classify::run` calls it in-process.
 
 ### 2.5 The lib.sh seam (`seam.rs`)
 

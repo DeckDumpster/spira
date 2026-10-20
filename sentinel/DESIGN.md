@@ -95,10 +95,10 @@ The format is `<YYYY-MM-DDTHH:MM:SSZ> spira: <msg>` (lib.sh `log`), in UTC.
 
 | line | parsed by |
 |---|---|
-| `state: open=<n> plan_ready=<n> in_progress=<n> aeons=<n> fayths=[<f …>]` | strand (`: state: open=` marks a pass start, `probe::PASS_MARKER`), auron-classify.py:49, cockpit-collect metrics:64,75, chamber/czar.md |
+| `state: open=<n> plan_ready=<n> in_progress=<n> aeons=<n> fayths=[<f …>]` | strand (`: state: open=` marks a pass start, `probe::PASS_MARKER`), auron/src/judge.rs, cockpit-collect metrics:64,75, chamber/czar.md |
 | `CHECK7 <fayth>: not evaluated (pass budget exhausted)` (the seam emits it) | strand probe.rs:363, strand.sh:369 |
 | `ACT <msg>` for every act/progress (`summoned a <f> aeon`, `invoked reflection`, `poisoned <id> after <n> attempts`, `reclaimed <n> stale lease(s)`, …) | cockpit-collect metrics:65,69, cockpit.sh:626 |
-| `pass complete — <a> action(s), <p> progress` | auron-classify.py:110 |
+| `pass complete — <a> action(s), <p> progress` | auron/src/judge.rs |
 | `summon-only pass complete — <a> action(s)` | nothing outside tests |
 | untimestamped `RECLAIMED`, `SENT`, `HELD`, `KEEP`, `FAILED` lines passed through from strand and sending | cockpit.sh:637, cockpit-collect metrics:236 |
 
@@ -218,7 +218,7 @@ names live as plain `Cfg` fields so a unit test can point one at a fixture.
 | `SPIRA_BD` | `bd` | store |
 | `BD_TIMEOUT` | 180 | every bd call (lib.sh `bdq`) |
 | `SPIRA_BDQ_CONN_RETRIES` | 2 | retry on `invalid connection` |
-| `SPIRA_BDJSON_FIXTURE` | — | test seam: `python3 $SPIRA_HOME/bdsim.py <fixture> …` |
+| `SPIRA_BDJSON_FIXTURE` | — | test seam: `bdsim <fixture> …` |
 | `SPIRA_SCOPE_LABEL`, `SPIRA_ASK_LABEL`, `SPIRA_NO_LOOP_LABEL`, `SPIRA_INCIDENT_LABEL` | conf.sh; `incident` | predicates |
 | `SPIRA_QUEUE_WAIT_LABEL`, `SPIRA_SUBMITTED_LABEL` | conf.sh | the ready cache |
 | `SPIRA_WORK_CLOSE_TYPES` | `task bug feature` | CHECK 5 |
@@ -621,7 +621,7 @@ counter semantics lib.sh functions had when they ran in-process.
 | S4 | ~~check3b~~ | **retired (sp-fbqsv, wave 4.28):** `mark_queue_waiters`/`close_landed_queue_waiters` are native Rust now — `waiters.rs`, called in-process from `full()` with the pass's own broad ready snapshot already in memory (no `$SPIRA_READY_SNAPSHOT` temp-file round trip). `sentinel --mark-queue-waiters`/`--close-landed-queue-waiters` drive each alone for lib.sh's own shims. (`mark_open_children` is CHECK 3c, also in Rust.) | — | — |
 | S5 | event | `IFS= read -r -d '' k; IFS= read -r -d '' t; IFS= read -r -d '' ti; IFS= read -r -d '' de; spira_event "$k" "$t" "$ti" "$de" \|\| true` | 4 NUL-terminated fields | — |
 | S6 | ~~trace-tail~~ | retired (sp-27d3d, wave 4.34): `trace_tail` was lib.sh; `check4.rs` now calls `aeon::trace::trace_tail` in-process (`SPIRA_TRACE_MARK` read from S0's `@vars`), no seam | — | — |
-| S7 | ~~detect-unclaimable~~ | **retired (sp-fbqsv, wave 4.28):** `detect_unclaimable_ready` is native Rust now — `detect.rs`, called in-process from CHECK 7c. It still shells to `unclaimable.py` for the classification itself (kept as the one shared, independently-tested classifier — cockpit-collect's own suite cross-checks against it); this seam only carried the bash orchestration around that call. `sentinel --detect-unclaimable` drives it alone. | — | — |
+| S7 | ~~detect-unclaimable~~ | **retired (sp-fbqsv, wave 4.28):** `detect_unclaimable_ready` is native Rust now — `detect.rs`, called in-process from CHECK 7c. It still shells to `sentinel --classify-unclaimable` for the classification itself (kept as the one shared, independently-tested classifier — cockpit-collect's own suite cross-checks against it); this seam only carried the bash orchestration around that call. `sentinel --detect-unclaimable` drives it alone. | — | — |
 | S8 | ~~file-unclaimable~~ | **retired (sp-fbqsv, wave 4.28):** `file_unclaimable_incidents` is native Rust now — `detect.rs`. `sentinel --file-unclaimable` (stdin: S7's output) drives it alone. | — | — |
 | S9 | ~~detect-collisions~~ | **retired (sp-fbqsv, wave 4.28):** `detect_branch_collisions` is native Rust now — `detect.rs`, called in-process from CHECK 7d. `sentinel --detect-collisions` drives it alone. | — | — |
 | S10 | ~~park-collisions~~ | **retired (sp-fbqsv, wave 4.28):** `park_branch_collisions` is native Rust now — `detect.rs`. `sentinel --park-collisions` (stdin: S9's output) drives it alone. | — | — |
@@ -642,7 +642,7 @@ tested by asserting on the script name and stdin, and by feeding a tally file ba
 functions have their own tests:
 
 - the partition predicate;
-- the ready bucket (ported from ready-bucket.py);
+- the ready bucket (ported from the retired ready-bucket script);
 - CHECK 5's subject parser;
 - the cause renderer;
 - `check8_should_judge`;
@@ -702,7 +702,7 @@ Then `systemd/install.sh` (or `unit-ensure.sh`) re-renders, and `daemon-reload`.
 | # | file:line | current | replacement |
 |---|---|---|---|
 | 19 | `spira/sentinel.sh` | the component | delete |
-| 20 | `spira/ready-bucket.py` | — | **keep**: `bulk_ready_by_fayth` still feeds the watchtower crate's `--show`/sweep (idle-while-ready, via `seams::pipeline_probe`, sp-lnmbq). The sentinel buckets the cache in Rust (`summon::bucket`, a port of it). |
+| 20 | (retired ready-bucket script) | — | **keep**: `bulk_ready_by_fayth` still feeds the watchtower crate's `--show`/sweep (idle-while-ready, via `seams::pipeline_probe`, sp-lnmbq). The sentinel buckets the cache in Rust (`summon::bucket`, a port of it). |
 
 **Bash tests to repoint or retire.** Each is either repointed at the binary
 (`"$SPIRA_SENTINEL_BIN"` for `bash "$SH/sentinel.sh"`, with a fixture that also puts the

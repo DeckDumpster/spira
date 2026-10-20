@@ -7,6 +7,8 @@
 //! binary's own pure logic — see `src/bin/bdq.rs` and `bdq.rs`'s own module doc.
 
 pub mod bdq;
+#[path = "../tests/fixtures/bdsim.rs"]
+pub mod bdsim;
 pub mod claimdesc;
 pub mod event;
 pub mod identity;

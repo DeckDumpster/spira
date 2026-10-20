@@ -774,7 +774,7 @@ mod tests {
             (&["cockpit/moot-sweep.sh"], s("script")),
             (&["systemd/units.sh"], s("script")),
             (&["rule.sh"], s("script")),
-            (&["spira/ready-bucket.py"], s("script")),
+            (&["tools/helper.py"], s("script")),
             (
                 &["docs/a.md", "README.md", "INCIDENT-x.md", "notes.txt"],
                 Fences,

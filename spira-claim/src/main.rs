@@ -994,7 +994,7 @@ fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
     Outcome::ok(mine.len().to_string())
 }
 
-/// `bulk-ready-by-fayth`: `bulk_ready_by_fayth` (lib.sh:734) plus `ready-bucket.py`'s own
+/// `bulk-ready-by-fayth`: `bulk_ready_by_fayth` (lib.sh:734) plus the former ready-bucket script's own
 /// bucketing ([`ready::bucket`]) over the machine's claimable set ([`machine_claimable`]).
 fn cmd_bulk_ready_by_fayth(a: &Args, env: &mut Env) -> Outcome {
     if let Err(e) = a.check_known(&["--scope-label", "--noloop-label"]) {

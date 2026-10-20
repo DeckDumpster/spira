@@ -323,15 +323,11 @@ fn cmd_bdq(args: &[String]) -> i32 {
         }
     }
 
-    // SPIRA_BDJSON_FIXTURE routes every call to bdsim.py instead of the real bd — stdio
-    // fully inherited, exit code passed through unchanged.
+    // SPIRA_BDJSON_FIXTURE routes every call to the fixture engine instead of the real bd.
     if let Some(fixture) = env_nonempty("SPIRA_BDJSON_FIXTURE") {
-        return Command::new("bdsim.py")
-            .arg(&fixture)
-            .args(args)
-            .status()
-            .map(|s| s.code().unwrap_or(1))
-            .unwrap_or(127);
+        let mut argv = vec![fixture];
+        argv.extend(args.iter().cloned());
+        return bead::bdsim::run(&argv);
     }
 
     // Refuse rather than fall through to bd's own auto-discovery (sp-agdzk/sp-25b7s).

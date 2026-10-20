@@ -357,14 +357,13 @@ echo "idle-while-ready escalation (sp-o4trx): a fayth with ready work whose last
 echo "summons ALL ledgered idle is a claim-error masquerading as an empty queue:"
 # ======================================================================================
 # A FIXTURE CHAMBER, NOT THE REAL ONE. bulk_ready_by_fayth reads FAYTH_LABELS from
-# $SPIRA_HOME/chamber/<fayth>.fayth and calls $SPIRA_HOME/ready-bucket.py; a minimal
+# $SPIRA_HOME/chamber/<fayth>.fayth; a minimal
 # fixture pins FAYTH_LABELS to a literal (never the shipped default) and avoids this
 # suite depending on the real builder.fayth's own label composition.
 IWR_HOME="$TMP/iwr-home"; mkdir -p "$IWR_HOME/chamber"
 # SPIRA_CHAMBER EXPLICITLY: the complete fixture declares a fixed chamber path of its own
 # now, no longer derived from SPIRA_HOME when unset.
 tl_config SPIRA_FAYTHS=builder SPIRA_CHAMBER="$IWR_HOME/chamber"
-cp "$HERE/ready-bucket.py" "$IWR_HOME/"
 cat > "$IWR_HOME/chamber/builder.fayth" <<'FAYTH'
 FAYTH_NAME=builder
 FAYTH_LABELS=plan

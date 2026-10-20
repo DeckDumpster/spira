@@ -59,7 +59,7 @@ struct World {
     gate_status: Option<(i32, String)>,
     /// Extra `dependencies` entries per bead, as `bd show --json` lists them (an ask that blocks it).
     dep_rows: BTreeMap<String, Vec<serde_json::Value>>,
-    /// Beads' bd `close_reason`, and what `close-reason-flags.py` answers (the matched phrase).
+    /// Beads' bd `close_reason`, and what `strand close-reason` answers (the matched phrase).
     close_reason: BTreeMap<String, String>,
     close_reason_hit: Option<String>,
     /// `spira-lc show`'s `tip`/`version` for a SUBMITTED row, so a refused submission can go back to REWORK.
@@ -234,7 +234,7 @@ impl Exec for FakeExec {
                 _ => Out::ok("{}"),
             };
         }
-        if prog == "close-reason-flags.py" {
+        if prog == "strand" && args.first().map(String::as_str) == Some("close-reason") {
             if let Some(hit) = self.0.lock().unwrap().close_reason_hit.clone() {
                 return Out::ok(hit);
             }

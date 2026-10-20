@@ -3,6 +3,7 @@
 pub mod alerts;
 pub mod bdops;
 pub mod classify;
+pub mod judge;
 pub mod fallback;
 pub mod gather;
 pub mod heartbeat;

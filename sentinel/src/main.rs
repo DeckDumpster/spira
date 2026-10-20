@@ -12,6 +12,7 @@
 //!   sentinel --mark-queue-waiters / --close-landed-queue-waiters
 //!                            CHECK 3b's two halves alone (wave 4.28, sp-fbqsv): the
 //!                            lib.sh shims' way in for suites that call them directly
+//!   sentinel --classify-unclaimable   the pure classifier: PARTS/ALL_PARTS/HELD_IDS in env, beads JSON on stdin
 //!   sentinel --detect-unclaimable / --file-unclaimable
 //!                            CHECK 7c alone; --file-unclaimable reads detect's output
 //!                            on stdin (wave 4.28, sp-fbqsv)
@@ -35,6 +36,7 @@ mod seams;
 mod store;
 mod summon;
 mod temps;
+mod unclaimable;
 mod waiters;
 #[cfg(test)]
 mod tests;
@@ -164,7 +166,30 @@ fn fatal(msg: &str) -> i32 {
     1
 }
 
+fn classify_unclaimable_main() -> i32 {
+    use std::io::Read;
+    let env = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
+    let labels = unclaimable::Labels {
+        scope: env("SPIRA_SCOPE_LABEL", "spira"),
+        ci: env("SPIRA_CI_LABEL", "awaiting-ci"), // literal-ok: fallback when conf.sh is not sourced
+        ask: env("SPIRA_ASK_LABEL", "needs-operator"), // literal-ok: fallback when conf.sh is not sourced
+        groom_ask: env("SPIRA_GROOM_ASK_LABEL", "groom-asked"),
+    };
+    let mut beads = String::new();
+    if std::io::stdin().read_to_string(&mut beads).is_err() {
+        return 0;
+    }
+    print!(
+        "{}",
+        unclaimable::classify(&beads, &env("PARTS", ""), &env("ALL_PARTS", ""), &env("HELD_IDS", ""), &labels)
+    );
+    0
+}
+
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--classify-unclaimable") {
+        std::process::exit(classify_unclaimable_main());
+    }
     spira_otel::run::begin("sentinel", spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref());
     temps::install_handlers();
     let argv: Vec<String> = std::env::args().skip(1).collect();

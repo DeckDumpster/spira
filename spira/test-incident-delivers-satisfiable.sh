@@ -21,13 +21,13 @@
 # fixture database it never needed — case 5 below reproduces that env shape against the stub.
 #
 # tier: T1
-# covers: spira/incident.sh spira/incident-stub-bd.py testenv/src/* incident/* UC-ops-detection-remediation-08
+# covers: spira/incident.sh incident/src/stub_bd.rs testenv/src/* incident/* UC-ops-detection-remediation-08
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 echo "test-incident-delivers-satisfiable.sh"
-STUB_BD="$HERE/incident-stub-bd.py"
+STUB_BD="$(command -v incident-stub-bd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/home" "$TMP/run"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/home/mail"; chmod +x "$TMP/home/mail"

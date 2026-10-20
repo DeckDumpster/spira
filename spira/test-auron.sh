@@ -4,8 +4,8 @@
 #
 #   ./test-auron.sh
 #
-# The classifier half (auron-classify.py, the pure function that turns observations into
-# firing keys) is test-auron-classify.sh, which needs nothing but python and runs
+# The classifier half (`auron classify`, the pure function that turns observations into
+# firing keys) is test-auron-classify.sh, which needs nothing but the auron binary and runs
 # everywhere. This suite drives a real `bd` against a throwaway Dolt database, because a
 # stub for bd has twice made correct callers look broken (law-prefer-the-real-dependency).
 # With no server, this suite exits 77 — the automake skip convention, which gate-brain.sh
@@ -65,7 +65,7 @@ fi
 testdb_up auron || { echo "test-auron: could not build a fixture database"; exit 1; }
 
 SH="$TMP/spira"; RUN="$TMP/run"; mkdir -p "$SH" "$RUN"
-cp "$HERE/auron-classify.py" "$HERE/lib.sh" "$HERE/conf.sh" "$SH/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 # ITS OWN SPIRA_HOME AND ITS OWN repo-map. Without one, SPIRA_HOME falls back to the
 # INSTALLED harness directory and this suite would read the operator's real repositories.

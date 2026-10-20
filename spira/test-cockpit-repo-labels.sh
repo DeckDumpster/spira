@@ -113,7 +113,7 @@ echo
 echo "CLOSED beads are excluded from both counts:"
 # ======================================================================================
 # bdjson list --limit 0 (no --all) returns only non-closed beads; closed ones are invisible
-# to this check by the query's own filter — bdsim.py's default list filter reproduces it.
+# to this check by the query's own filter — bdsim's default list filter reproduces it.
 cat > "$TMP/closed.json" <<'JSON'
 [
   {"id":"sp-cl-bogus","title":"closed unmapped bead","status":"closed","issue_type":"task","labels":["repo:bogusrepo"],"updated_at":"2026-09-09T00:00:00Z"},

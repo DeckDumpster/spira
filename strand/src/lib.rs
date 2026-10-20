@@ -14,6 +14,7 @@
 
 pub mod check;
 pub mod classify;
+pub mod closereason;
 pub mod config;
 pub mod detectors;
 pub mod model;

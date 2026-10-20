@@ -793,3 +793,10 @@ tier = "release"
 purpose = "Spira's cert-report binary, from the release's bin/ — certification throughput per repo and instance type from the cert-pass records"
 version_min = ""
 version_probe = "readlink -f \"$(command -v cert-report)\""
+
+[[dep]]
+name = "bdsim"
+tier = "dev"
+purpose = "the bd stand-in the cockpit suites point SPIRA_BDJSON_FIXTURE at; built from the bead crate"
+version_min = ""
+version_probe = "echo built-from-bead"

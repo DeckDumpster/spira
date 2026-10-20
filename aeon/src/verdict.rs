@@ -184,7 +184,7 @@ impl Run<'_> {
         if submitted && committed {
             let cr = bd::show(self.d.bd, &id).and_then(|r| r.close_reason).unwrap_or_default();
             if !cr.is_empty() && !self.conf.set_nonempty("SPIRA_CLOSE_REASON_OVERRIDE") {
-                let o = self.d.exec.exec("close-reason-flags.py", &s(&[&cr]), None, None);
+                let o = self.d.exec.exec("strand", &s(&["close-reason", &cr]), None, None);
                 let hit = if o.success() { o.text() } else { String::new() };
                 if !hit.is_empty() {
                     self.refuse(submitted, UNFINISHED_REASON, &format!("Reopened by aeon.sh: close reason contains a statute phrase (\"{hit}\") that says the work is not done (law-no-close-reason-admits-unfinished). A remainder is a bead, not a sentence in the close reason. Two endings: (a) file the remainder with bead.sh, cite its id in the reason, then close; (b) groomer depends-on-fix {id} --fix <blocker-bead> if a fix is already in flight (law-a-bug-with-a-fix-in-flight-depends-on-it)."));

@@ -54,7 +54,7 @@
 # suite exists to catch, not a seventh exception to add.
 #
 # tier: T1
-# covers: watchtower/src/* sentinel/src/* spira/lib.sh spira/auron-classify.py
+# covers: watchtower/src/* sentinel/src/* spira/lib.sh auron/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"

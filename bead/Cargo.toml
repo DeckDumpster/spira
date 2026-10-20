@@ -18,10 +18,15 @@ name = "bdq"
 path = "src/bin/bdq.rs"
 test = false
 
+[[bin]]
+name = "bdsim"
+path = "src/bin/bdsim.rs"
+test = false
+
 [dependencies]
 spira-otel = { path = "../spira-otel" }
 regex = "1"
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 sha2 = "0.10"
 spira-config = { path = "../spira-config" }
 strand = { path = "../strand" }

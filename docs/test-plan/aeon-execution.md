@@ -100,7 +100,7 @@ Cost is the CI seconds of the whole file (main push). "e2e" means the proposed s
 | 14 | test-aeon-eviction-race.sh (7 runs) | T3 / 43 | DEMOTE-TO-T1 (`eviction_reopen <landstate> <tip> <recent>` table, 7 rows + cap row) + 1 e2e row |
 | 15 | test-aeon-gate-close-silent.sh (3 runs) | T3 / 16 | DEMOTE-TO-T1 (rc→note switch; rows in the disposition table) |
 | 16a | test-aeon-prod-dirty.sh (4 runs, 4 repos) | T3 / 33 | MERGE-INTO e2e (own-dirty reopen + shared-dirty stays); override row → T1 |
-| 16b,c | test-ops-closing.sh (15 runs) | T3 / 102 | DEMOTE-TO-T1: the close-reason fence becomes a direct unit of `close-reason-flags.py`; the SOP rule becomes a predicate over a fake ledger. SOURCE-GREP: the 3 static greps go to T0. **The SOP mechanism is OFF for every shipped persona (sp-q27cp).** It needs a keep-or-retire decision (see Gaps). |
+| 16b,c | test-ops-closing.sh (15 runs) | T3 / 102 | DEMOTE-TO-T1: the close-reason fence becomes a direct unit of `strand close-reason`; the SOP rule becomes a predicate over a fake ledger. SOURCE-GREP: the 3 static greps go to T0. **The SOP mechanism is OFF for every shipped persona (sp-q27cp).** It needs a keep-or-retire decision (see Gaps). |
 | 16d | test-groom-escalation-check.sh (5 runs) | T3 / 36 | DEMOTE-TO-T1 (claims × ask-bead JSON × session epoch) + the conf-key greps to T0 |
 | 17 | test-aeon-wiki-dirty.sh (4 runs, 6 repos); test-aeon-wiki-concurrent.sh | T3 / 28; T2 / 1 | DEMOTE-TO-T1 (snapshot set difference minus tasks.md) + 1 e2e row (author, message). KEEP wiki-concurrent (T2) but force an interleave: today it can pass without the lock. |
 | 18 | test-aeon-exit.sh (5 runs); test-aeon-ledger.sh (8 runs, ~46 asserts) | T3 / 16; T3 / 36 | DEMOTE-TO-T1: the exit-code mapping, and the spend parser on fixture traces (40 of 46 asserts). The segment-boundary case → e2e (second run on the same bead). |
@@ -153,7 +153,7 @@ Every seam below turns a full `aeon.sh` or `sentinel.sh` run on a real Dolt stor
 | World-stop fence | aeon.sh 448-504 | test-aeon-world-stop.sh (4 runs, a `sleep 300` fake aeon) | `world_stop_decide <labels> <live-aeon-list> <skip>` |
 | Read-after-claim poison | aeon.sh 430-446 | grep only | `bead_has_label <json> spira-poison` |
 | Wiki commit selection | aeon.sh wiki section (~1304, ~1819) | test-aeon-wiki-dirty.sh (4 runs, 6 repos) | `wiki_new_since <snapshot> <porcelain>` minus tasks.md |
-| Close guards (SOP, groom, close-reason, prod-dirty override) | aeon.sh post-session; `close-reason-flags.py` | test-ops-closing.sh (15 runs), test-groom-escalation-check.sh (5 runs) | `close-reason-flags.py` is already standalone, so unit it directly; `sop_rule_verdict <ledger> <bead> <epoch>`; `groom_claims_verified <log> <ask-json> <epoch>` |
+| Close guards (SOP, groom, close-reason, prod-dirty override) | aeon.sh post-session; `strand close-reason` | test-ops-closing.sh (15 runs), test-groom-escalation-check.sh (5 runs) | `strand close-reason` is already standalone, so unit it directly; `sop_rule_verdict <ledger> <bead> <epoch>`; `groom_claims_verified <log> <ask-json> <epoch>` |
 | Timeout ask loop | lib.sh `spira_ask_timeout_loop` | test-timeout.sh on server-mode Dolt (156 s) | already a function; stub mail, no bd |
 | slay argument parsing | slay.sh | real testdb per case | parse before `testdb`/bd is touched; unit with no store |
 

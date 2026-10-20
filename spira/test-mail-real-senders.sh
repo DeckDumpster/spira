@@ -16,7 +16,7 @@
 # path directly, skew's through a real `skew check --escalate` against a minimal
 # NOT-LATEST fixture.
 #
-# incident.sh's SIN escalation is driven through incident-stub-bd.py (a genuinely stateful
+# incident.sh's SIN escalation is driven through incident-stub-bd (a genuinely stateful
 # fake bd, not a canned response — test-sin-exempt.sh already established that it reproduces
 # the create-then-recur sequence faithfully) rather than a real bd store: what this suite
 # checks is that the message incident.sh builds clears mail's own lint, which needs the
@@ -30,7 +30,7 @@
 # daily digest is the only path to the operator — so nothing here should ever reach the mailbox.
 #
 # tier: T2
-# covers: spira/lib.sh watchd/* skew/src/* spira/incident.sh archivist/src/* spira/ctx-meter.sh spira/incident-stub-bd.py mail/src/* incident/* sentinel/src/* UC-operator-channel-05
+# covers: spira/lib.sh watchd/* skew/src/* spira/incident.sh archivist/src/* spira/ctx-meter.sh incident/src/stub_bd.rs mail/src/* incident/* sentinel/src/* UC-operator-channel-05
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -169,13 +169,13 @@ SIN_AT=2
 _keep_lc="${SPIRA_LC_BIN-}"; lc_mirror_bd "$TMP/sin-lc"; SIN_LC="$SPIRA_LC_BIN"; SPIRA_LC_BIN="$_keep_lc"
 
 # file_sin_incident <ref> <title> <payload> — a real incident.sh subprocess against
-# incident-stub-bd.py, with the real mail (SPIRA_HOME/SPIRA_MAIL from the suite-wide
+# incident-stub-bd, with the real mail (SPIRA_HOME/SPIRA_MAIL from the suite-wide
 # exports above) so the SIN message actually clears mail's lint.
 file_sin_incident() {
     local ref="$1" title="$2" payload="$3"
     # SPIRA_BD/SPIRA_DB are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
     # declare via tl_config, not the env prefix below, which no process reads any more.
-    tl_config SPIRA_BD="$HERE/incident-stub-bd.py" SPIRA_DB="fakedb"
+    tl_config SPIRA_BD="$(command -v incident-stub-bd)" SPIRA_DB="fakedb"
     printf '%s' "$payload" | \
         env STUB_BD_STATE="$SIN_STATE" STUB_BD_LOG="$SIN_LOG" \
         SPIRA_LC_BIN="$SIN_LC" \

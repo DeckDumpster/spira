@@ -39,7 +39,7 @@
 # operator runs it directly.
 #
 # tier: T3
-# covers: round-vm/src/*.rs
+# covers: round-vm/src/*.rs round-vm/src/bin/*.rs
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -145,7 +145,7 @@ podman exec "$VM_NAME" chmod +x /usr/local/bin/cargo # batch-job: container fixt
 
 REQLOG="$TMP/reqlog.jsonl"
 : > "$REQLOG"
-python3 "$HERE/round-vm-stub-pve.py" "$PVE_PORT" "$VM_NAME" "$TMP/pve_cert.pem" "$TMP/pve_key.pem" "$REQLOG" &
+round-vm-stub-pve "$PVE_PORT" "$VM_NAME" "$TMP/pve_cert.pem" "$TMP/pve_key.pem" "$REQLOG" &
 STUB_PID=$!
 for _ in $(seq 1 20); do
     python3 -c "import socket; socket.create_connection(('127.0.0.1', $PVE_PORT), timeout=1).close()" 2>/dev/null && break
