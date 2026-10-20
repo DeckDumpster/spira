@@ -782,7 +782,7 @@ pub fn check_dovecot_dropin(w: &dyn World) -> Vec<Line> {
     }
     vec![warn(
         format!("dovecot.service lacks {DOVECOT_DROPIN}"),
-        "A tailnet-bound dovecot fails at boot until tailscaled assigns the address. Promotion cannot write it (needs root): run `sudo spira-install --system-user`.",
+        "A tailnet-bound dovecot fails at boot until tailscaled assigns the address. Promotion cannot write it (needs root): run `sudo spira-install --system-user`, then `sudo systemctl restart dovecot` if it is already failed (a drop-in does not revive a failed unit).",
     )]
 }
 
