@@ -1859,6 +1859,21 @@ fn a_closed_unmerged_pr_abandons_the_batch_and_a_second_pass_is_a_no_op() {
 }
 
 #[test]
+fn a_closed_unmerged_pr_retires_the_mender_beads_filed_for_its_red() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    let rounds = t.s().run.join("rounds");
+    fs::create_dir_all(&rounds).unwrap();
+    fs::write(rounds.join("spira-1.mender-1-gate-lint"), "sp-m1\n").unwrap();
+    fs::write(rounds.join("other-9.mender-1-gate-lint"), "sp-m2\n").unwrap();
+    *t.forge.pr_state.borrow_mut() = Some("closed".into());
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(t.lib.has("bead_close sp-m1"), "{:?}", t.lib.calls.borrow());
+    assert!(!t.lib.has("bead_close sp-m2"), "{:?}", t.lib.calls.borrow());
+    assert!(rounds.join("spira-1.mender-1-gate-lint.retired").exists());
+}
+
+#[test]
 fn a_batch_with_no_members_is_abandoned_and_its_open_pr_closed() {
     let t = T::new(LandMode::Queue);
     t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=\nopened=500\nbranch=spira/queue/x\nbatch_id=spira-1\nversion=3\n");

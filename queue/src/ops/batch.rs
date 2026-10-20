@@ -488,9 +488,12 @@ fn abandon_locked(
     if !batch_id.is_empty() {
         let r = bounded_text(reason);
         match lc_abandon(w, &batch_id, "queue.sh", &r) {
-            Ok(()) => w.out(format!(
-                "queue.sh {label}: {batch_id} abandoned on spira-lc"
-            )),
+            Ok(()) => {
+                w.out(format!(
+                    "queue.sh {label}: {batch_id} abandoned on spira-lc"
+                ));
+                super::round::retire_menders(w, &c, &batch_id, &r);
+            }
             Err((rc, out)) => w.err(format!(
                 "queue.sh {label}: spira-lc abandon-batch refused for {batch_id} (rc={rc}): {out}"
             )),
