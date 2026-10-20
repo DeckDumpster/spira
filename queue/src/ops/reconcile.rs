@@ -260,6 +260,9 @@ fn abandon(
             }
         }
     }
+    if let Some(id) = kv.get("batch_id").filter(|b| !b.is_empty()) {
+        super::round::retire_menders(w, c, id, why);
+    }
     if !pr.is_empty()
         && w.forge
             .pr_state(&c.s.forge, path, pr)
