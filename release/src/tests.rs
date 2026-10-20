@@ -1288,6 +1288,37 @@ fn prune_keeps_a_release_a_worktree_git_hook_still_names() {
 }
 
 #[test]
+fn prune_keeps_a_release_a_live_process_names_until_it_exits() {
+    let w = World::new(); // keep = 2
+    let shas: Vec<String> = (0..4).map(|i| format!("{i}").repeat(40)).collect();
+    for s in &shas {
+        w.build(s).unwrap();
+    }
+    for (i, s) in shas.iter().enumerate() {
+        let rel = w.rel(s);
+        fsutil::make_writable(&rel);
+        let mut m = Manifest::load(&rel).unwrap();
+        m.built = Some(format!("2026-09-2{i}T00:00:00Z"));
+        fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+        fsutil::set_readonly(&rel).unwrap();
+    }
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, &shas[3], None).unwrap();
+    let hook = format!("{}/{}/spira/hooks/fence.sh", w.cfg.releases.display(), shas[0]);
+    let mut child = std::process::Command::new("sh").args(["-c", "sleep 30", "_"]).arg(&hook).spawn().unwrap();
+
+    let p = crate::prune::prune(&w.cfg).unwrap();
+    assert!(p.kept.contains(&shas[0]) && w.rel(&shas[0]).exists(), "{p:?}");
+    assert!(p.removed.contains(&shas[1]), "{p:?}");
+
+    child.kill().unwrap();
+    child.wait().unwrap();
+    let p = crate::prune::prune(&w.cfg).unwrap();
+    assert!(p.removed.contains(&shas[0]), "{p:?}");
+}
+
+#[test]
 fn prune_ignores_a_stale_worktrees_git_hook() {
     let w = World::new(); // keep = 2
     let shas: Vec<String> = (0..4).map(|i| format!("{i}").repeat(40)).collect();

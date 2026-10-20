@@ -46,19 +46,40 @@ fn hook_referenced(cfg: &Config) -> BTreeSet<String> {
         let Ok(hooks) = fs::read_dir(Path::new(gitdir.trim()).join("hooks")) else { continue };
         for h in hooks.flatten() {
             let Ok(text) = fs::read_to_string(h.path()) else { continue };
-            for part in text.split(prefix.as_str()).skip(1) {
-                let sha: String = part.chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
-                if crate::is_sha(&sha) {
-                    out.insert(sha);
-                }
-            }
+            shas_after(&text, &prefix, &mut out);
         }
     }
     out
 }
 
+fn shas_after(text: &str, prefix: &str, out: &mut BTreeSet<String>) {
+    for part in text.split(prefix).skip(1) {
+        let sha: String = part.chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
+        if crate::is_sha(&sha) {
+            out.insert(sha);
+        }
+    }
+}
+
+/// Releases named on any live process's command line: a long-lived session launched with
+/// `--settings` hooks inside a release runs them from that path, and a pruned path fails
+/// every hook as non-blocking, switching its guards off silently.
+fn process_referenced(cfg: &Config) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let prefix = format!("{}/", cfg.releases.display());
+    let Ok(rd) = fs::read_dir("/proc") else { return out };
+    for e in rd.flatten() {
+        if !e.file_name().to_string_lossy().bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        let Ok(raw) = fs::read(e.path().join("cmdline")) else { continue };
+        shas_after(&String::from_utf8_lossy(&raw).replace('\0', " "), &prefix, &mut out);
+    }
+    out
+}
+
 /// Keep the newest `cfg.keep` releases by MANIFEST `built` time, plus whatever `current`
-/// names, the rollback target, a standing hotfix and any release a worktree git hook names; remove the rest, and any stage or
+/// names, the rollback target, a standing hotfix and any release a worktree git hook or a live process's command line names; remove the rest, and any stage or
 /// throw-away target directory whose builder is gone.
 pub fn prune(cfg: &Config) -> Result<Pruned, String> {
     let mut protected = BTreeSet::new();
@@ -75,6 +96,7 @@ pub fn prune(cfg: &Config) -> Result<Pruned, String> {
         }
     }
     protected.extend(hook_referenced(cfg));
+    protected.extend(process_referenced(cfg));
     let rd = match fs::read_dir(&cfg.releases) {
         Ok(rd) => rd,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Pruned::default()),
