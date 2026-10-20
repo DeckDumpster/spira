@@ -34,11 +34,12 @@ _rd_say() {
 # rounds: a forge repo's certified backlog belongs to the forge batcher. A bead with any hold is
 # not counted: the batcher's round pool is unheld beads only, so no round could take it.
 _rd_certified() {
-    local r n
+    local r n rows
     _rd_total=0 _rd_by_repo=""
     for r in $(repo_names 2>/dev/null); do
         [ "$(repo_land "$r" 2>/dev/null)" = queue.local ] || continue
-        n="$(spira-lc list --state CERTIFIED --repo "$r" 2>/dev/null | jq '[.[] | select((.holds // []) | (if type == "string" then (try fromjson catch ["?"]) else . end) | length == 0)] | length' 2>/dev/null)"
+        rows="$(spira-lc list --state CERTIFIED --repo "$r" 2>/dev/null | tr -d '\n')"
+        n=$(( $(printf '%s' "$rows" | grep -o '"bead_id"' | wc -l) - $(printf '%s' "$rows" | grep -oE '"holds": *("\[ *\\"|\[ *")' | wc -l) ))
         [ "${n:-0}" -gt 0 ] || continue
         _rd_total=$((_rd_total + n)); _rd_by_repo="${_rd_by_repo:+$_rd_by_repo }$r=$n"
     done

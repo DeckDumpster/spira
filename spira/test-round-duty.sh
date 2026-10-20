@@ -9,7 +9,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
-echo "test-round-duty.sh"; echo "# jq=$(command -v jq) py=$(command -v python3)"
+echo "test-round-duty.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 git init -q "$TMP/repo"; git -C "$TMP/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m x
 tip="$(git -C "$TMP/repo" rev-parse HEAD)"
