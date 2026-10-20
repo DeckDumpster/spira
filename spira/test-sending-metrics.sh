@@ -53,7 +53,7 @@ EMPTY="$(mktemp)"; trap 'rm -f "$EMPTY"' EXIT
 # A million-hour window puts every fixture inside it.
 metrics_of() {   # metrics_of <fixture-on-stdin> <key>...
     local f; f="$(mktemp)"; cat > "$f"
-    local out; out="$(env -i PATH="/usr/bin:/bin" HOME="$HOME" SPIRA_TOML="$(tl_layer SPIRA_SELF_WINDOW=60)" "$COLLECT" metrics "$f" "$EMPTY" 1000000 2>/dev/null)"
+    local out; out="$(env -i PATH="/usr/bin:/bin" HOME="$HOME" SPIRA_HOME="$SPIRA_HOME" SPIRA_TOML="$(tl_layer SPIRA_SELF_WINDOW=60)" "$COLLECT" metrics "$f" "$EMPTY" 1000000 2>/dev/null)"
     rm -f "$f"
     local k; for k in "$@"; do sed -n "s/^$k=//p" <<< "$out"; done | tr '\n' ' '
 }
