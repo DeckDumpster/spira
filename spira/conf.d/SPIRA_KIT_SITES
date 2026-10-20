@@ -1,0 +1,6 @@
+TYPE=string
+GROUP=repo
+DOC=Consuming sites of the shared kit, space-separated repo-map-name:manifest-file pairs (e.g. app:Cargo.toml); each site's path and ref come from the repo map.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_KIT_SITES:=}"
+SPIRA_CONF_DEFAULT_EOF

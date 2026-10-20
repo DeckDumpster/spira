@@ -120,3 +120,6 @@ removed = ["spira.express_label", "spira.overlap_defer_label", "spira.round_mark
 "spira.metrics_grafana_addr" = ""
 "spira.brain_dirty_age" = 3600
 "spira.round_ami_wait_secs" = 2400
+"spira.kit_repo" = ""
+"spira.kit_crate" = ""
+"spira.kit_sites" = ""
