@@ -80,12 +80,42 @@ fn is_exec(p: &std::path::Path) -> bool {
 fn main() -> ExitCode {
     let w = Real::new(resolve_home());
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    if argv.first().map(String::as_str) == Some("pipeline") {
+        return ExitCode::from(cmd_pipeline(&w, &argv[1..]).clamp(0, 255) as u8);
+    }
     if argv.first().map(String::as_str) == Some("sql") {
         return ExitCode::from(cmd_sql(&w, &argv[1..]).clamp(0, 255) as u8);
     }
     let with_suppressed = argv.first().map(String::as_str) == Some("--with-suppressed");
     let rc = census::run(&w, with_suppressed);
     ExitCode::from(rc.clamp(0, 255) as u8)
+}
+
+/// `census pipeline <cluster|cluster-merge|covers|covers-closed|handwritten|deliberate> [file...]`
+/// — the classification stages on their own, reading stdin (and, for `cluster-merge`, two files;
+/// for `covers`/`covers-closed`, a fold-map file), for the suites that feed them canned input.
+fn cmd_pipeline(w: &dyn census::ports::World, args: &[String]) -> i32 {
+    use std::io::Read;
+    let mut stdin = String::new();
+    let file = |i: usize| args.get(i).and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
+    let mut read_stdin = || {
+        let _ = std::io::stdin().read_to_string(&mut stdin);
+        std::mem::take(&mut stdin)
+    };
+    let out = match args.first().map(String::as_str) {
+        Some("cluster") => w.cluster(&read_stdin()).unwrap_or_default(),
+        Some("cluster-merge") => w.cluster_merge(&file(1), &file(2)),
+        Some("covers") => w.covers(&read_stdin(), &file(1)),
+        Some("covers-closed") => w.covers_closed(&read_stdin(), &file(1)),
+        Some("handwritten") => w.handwritten(&read_stdin()),
+        Some("deliberate") => w.deliberate(&read_stdin()),
+        _ => {
+            eprintln!("usage: census pipeline <cluster|cluster-merge|covers|covers-closed|handwritten|deliberate> [file...]");
+            return 1;
+        }
+    };
+    print!("{out}");
+    0
 }
 
 /// `census sql <events|handwritten|deliberate|class-fold-map|deliberate-causes>

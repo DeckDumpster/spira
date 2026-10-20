@@ -6,16 +6,15 @@
 #
 # WHAT THIS TESTS
 # ---------------
-# The python files under census/ (extracted from census.sh's former heredocs) on
-# canned stdin/argv, with no database:
-#   cluster.py          — raw event rows -> ranked "<causal> <victims> <detections> <class>"
+# The census pipeline stages (`census pipeline <stage>`) on
+#   cluster          — raw event rows -> ranked "<causal> <victims> <detections> <class>"
 #                          lines, clustering same-class events less than the gap apart
 #                          into one causal event (sp-jcd0e, Concierge decision sp-h2hpl/
 #                          sp-yojbh)
-#   cluster_merge.py     — all-time + since-watermark cluster.py files -> ranked merged
+#   cluster_merge     — all-time + since-watermark cluster files -> ranked merged
 #                          lines
-#   covers.py           — open-remedy bead JSON -> covered classes (with fold-map)
-#   covers_closed.py   — closed-remedy bead JSON -> "<bead-id> <class>" within the window
+#   covers           — open-remedy bead JSON -> covered classes (with fold-map)
+#   covers_closed   — closed-remedy bead JSON -> "<bead-id> <class>" within the window
 #
 # and census.sh's own bash decision logic (watermark fallback/stderr, suppression
 # state, orphan-vs-in-flight annotation) end-to-end against a scripted `bd`, never a
@@ -23,13 +22,13 @@
 # which UC-ops-detection-remediation-12 covers with 3 real rows in test-census.sh.
 #
 # tier: T1
-# covers: spira/census/cluster.py spira/census/cluster_merge.py spira/census/covers.py spira/census/covers_closed.py census/src/* spira/chamber/maechen.md UC-ops-detection-remediation-11 UC-ops-detection-remediation-13 UC-ops-detection-remediation-14 UC-ops-detection-remediation-15
+# covers: census/src/* spira/chamber/maechen.md UC-ops-detection-remediation-11 UC-ops-detection-remediation-13 UC-ops-detection-remediation-14 UC-ops-detection-remediation-15
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 lack() { case "$3" in *"$2"*) bad "$1" "did not want [$2] in [$3]" ;; *) ok "$1" ;; esac; }
 
-CENSUS_DIR="$HERE/census"
+census_pipeline() { SPIRA_HOME="$HERE" census pipeline "$@"; }
 CENSUS="$(command -v census)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 
@@ -37,12 +36,12 @@ echo "test-census-pipeline.sh"
 
 # ==============================================================================
 echo
-echo "cluster.py — cause-suffix mapping per event_type, one event per class (UC-11)"
+echo "cluster — cause-suffix mapping per event_type, one event per class (UC-11)"
 # ==============================================================================
-# Input rows are now raw (event_type, new_value, issue_id, unix-ts) — cluster.py, not the
+# Input rows are now raw (event_type, new_value, issue_id, unix-ts) — cluster, not the
 # SQL, does the aggregating. One row per class here just proves the class-name mapping
 # survived the move; clustering itself is exercised further down.
-cluster_of() { python3 "$CENSUS_DIR/cluster.py" <<<"$1"; }
+cluster_of() { census_pipeline cluster <<<"$1"; }
 
 want "requeued+cause -> sp-requeue-<cause>" "1 1 1 sp-requeue-prod-dirty" \
     "$(cluster_of 'requeued | prod-dirty | bead1 | 1000')"
@@ -67,15 +66,15 @@ is "malformed row (wrong column count) is skipped, not fatal" "" \
 
 # ==============================================================================
 echo
-echo "cluster.py — no double-count across a requeue+reopen pair"
+echo "cluster — no double-count across a requeue+reopen pair"
 # ==============================================================================
 # The requeue/reopen fold (sp-requeue-merge-conflict -> sp-reopen-rebase-conflict) happens
-# in the SQL (lib.sh:_census_events_sql / _census_event_rows_sql), never in cluster.py:
-# cluster.py sees only whatever rows the query emits. This proves cluster.py keeps each
+# in the SQL (lib.sh:_census_events_sql / _census_event_rows_sql), never in cluster:
+# cluster sees only whatever rows the query emits. This proves cluster keeps each
 # row's class independent — if the SQL fold ever regressed and re-emitted the raw pair,
-# cluster.py would report two classes rather than silently merging or losing one.
+# cluster would report two classes rather than silently merging or losing one.
 pair_out="$(printf 'requeued | merge-conflict | bead1 | 1000\nreopen | rebase-conflict | bead2 | 1000\n' \
-    | python3 "$CENSUS_DIR/cluster.py")"
+    | census_pipeline cluster)"
 want "raw pair: requeue class present" "1 1 1 sp-requeue-merge-conflict" "$pair_out"
 want "raw pair: reopen class present, not merged into the requeue line" \
     "1 1 1 sp-reopen-rebase-conflict" "$pair_out"
@@ -83,11 +82,11 @@ is "raw pair: exactly two class lines (no cross-class bleed)" "2" "$(printf '%s\
 
 # ==============================================================================
 echo
-echo "cluster.py — clustering: same-class events inside the gap are one causal event (sp-jcd0e)"
+echo "cluster — clustering: same-class events inside the gap are one causal event (sp-jcd0e)"
 # ==============================================================================
 # Pinned to a NON-DEFAULT gap (100s, not the 300s default) so the assertion exercises the
 # configured value rather than a literal that would pass even if the env var were ignored.
-cluster_gap() { SPIRA_CENSUS_CLUSTER_GAP_S=100 python3 "$CENSUS_DIR/cluster.py" <<<"$1"; }
+cluster_gap() { SPIRA_CENSUS_CLUSTER_GAP_S=100 census_pipeline cluster <<<"$1"; }
 
 # Three events of one class: bead1@1000, bead2@1050 (50s later, inside the 100s gap — same
 # causal event), bead3@1200 (150s after bead2, at/beyond the gap — a new causal event).
@@ -105,14 +104,14 @@ under_out="$(cluster_gap "$(printf 'recurred | under | bead1 | 1000\nrecurred | 
 want "gap one second under the threshold merges into one causal event" \
     "1 2 2 sp-recur-under" "$under_out"
 
-# Input order does not matter: cluster.py sorts by timestamp before clustering.
+# Input order does not matter: cluster sorts by timestamp before clustering.
 unordered_out="$(cluster_gap "$(printf 'recurred | tight | bead3 | 1200\nrecurred | tight | bead1 | 1000\nrecurred | tight | bead2 | 1050\n')")"
 want "unordered input clusters identically to sorted input" \
     "2 3 3 sp-recur-tight" "$unordered_out"
 
 # ==============================================================================
 echo
-echo "cluster.py — the ask's own positive control: three timelines, ranked by causal event (sp-jcd0e/sp-yojbh)"
+echo "cluster — the ask's own positive control: three timelines, ranked by causal event (sp-jcd0e/sp-yojbh)"
 # ==============================================================================
 # The exact fixture from the Concierge decision (sp-h2hpl, ratified sp-yojbh): three
 # classes tied at 5 victims each, distinguishable only once the causal-event count is
@@ -151,7 +150,7 @@ _ghost_t4=$((_ghost_t3 + $(_min 3.6)))
 _ghost_rows="$(printf 'reclaimed |  | g0 | %d\nreclaimed |  | g1 | %d\nreclaimed |  | g2 | %d\nreclaimed |  | g3 | %d\nreclaimed |  | g4 | %d\n' \
     "$_ghost_t0" "$_ghost_t1" "$_ghost_t2" "$_ghost_t3" "$_ghost_t4")"
 
-three_timelines_out="$(printf '%s\n%s\n%s\n' "$_eject_rows" "$_sweep_rows" "$_ghost_rows" | python3 "$CENSUS_DIR/cluster.py")"
+three_timelines_out="$(printf '%s\n%s\n%s\n' "$_eject_rows" "$_sweep_rows" "$_ghost_rows" | census_pipeline cluster)"
 want "eject: 5 independent events -> ranks 1st with 5 causal events" \
     "5 5 5 sp-reopen-eject" "$three_timelines_out"
 want "sweepy: one burst + one late straggler -> 2 causal events, 5 victims" \
@@ -164,14 +163,14 @@ is "ranked strictly by causal event count: eject(5) > sweepy(2) > ghost(1), NOT 
 
 # ==============================================================================
 echo
-echo "cluster.py — ranking: causal events decide rank, victims are secondary (never the rank)"
+echo "cluster — ranking: causal events decide rank, victims are secondary (never the rank)"
 # ==============================================================================
 # classA: 3 well-separated events (3 causal events), 3 victims.
 # classB: one 3-event burst (1 causal event), 5 victims — MORE victims than classA.
 # If victims still decided the rank, classB (5) would outrank classA (3). The ratified
 # rule requires the opposite.
 rank_rows="$(printf 'recurred | few-victims-many-events | va | 1000\nrecurred | few-victims-many-events | vb | 2000\nrecurred | few-victims-many-events | vc | 3000\nrecurred | many-victims-one-sweep | wa | 1000\nrecurred | many-victims-one-sweep | wb | 1010\nrecurred | many-victims-one-sweep | wc | 1020\nrecurred | many-victims-one-sweep | wd | 1030\nrecurred | many-victims-one-sweep | we | 1040\n')"
-rank_out="$(printf '%s' "$rank_rows" | python3 "$CENSUS_DIR/cluster.py")"
+rank_out="$(printf '%s' "$rank_rows" | census_pipeline cluster)"
 first_cls="$(printf '%s\n' "$rank_out" | head -1 | awk '{print $4}')"
 is "3-causal-event class ranks first despite fewer victims than the 1-event burst" \
     "sp-recur-few-victims-many-events" "$first_cls"
@@ -180,20 +179,20 @@ want "the burst's larger victim count is visible but did not win the rank" \
 
 # ==============================================================================
 echo
-echo "cluster.py — header/separator lines and the empty store"
+echo "cluster — header/separator lines and the empty store"
 # ==============================================================================
 sql_shape="$(printf '+------+\n| event_type | new_value | issue_id | ts |\n+------+\n| recurred | shape-test | bead1 | 1000 |\n+------+\n')"
 want "realistic bd-sql framing: header/separator ignored, data row counted" \
-    "1 1 1 sp-recur-shape-test" "$(python3 "$CENSUS_DIR/cluster.py" <<<"$sql_shape")"
-is "empty store: no input produces no output" "" "$(printf '' | python3 "$CENSUS_DIR/cluster.py")"
+    "1 1 1 sp-recur-shape-test" "$(census_pipeline cluster <<<"$sql_shape")"
+is "empty store: no input produces no output" "" "$(printf '' | census_pipeline cluster)"
 
 # ==============================================================================
 echo
-echo "cluster_merge.py — since-watermark ranking, with all-time carried alongside (UC-13)"
+echo "cluster_merge — since-watermark ranking, with all-time carried alongside (UC-13)"
 # ==============================================================================
 printf '2 4 5 sp-recur-old-class\n1 1 1 sp-recur-new-class\n' > "$T/all_time.txt"
 printf '0 0 0 sp-recur-old-class\n1 1 1 sp-recur-new-class\n' > "$T/since_wm.txt"
-merge_out="$(python3 "$CENSUS_DIR/cluster_merge.py" "$T/all_time.txt" "$T/since_wm.txt")"
+merge_out="$(census_pipeline cluster-merge "$T/all_time.txt" "$T/since_wm.txt")"
 first_merge="$(printf '%s\n' "$merge_out" | head -1 | awk '{print $2}')"
 is "live-since class ranks first despite a smaller all-time count" "sp-recur-new-class" "$first_merge"
 want "stale class shows 0 since, all-time preserved" \
@@ -202,18 +201,18 @@ want "live class shows since count with all-time alongside" \
     "1 sp-recur-new-class (1 victims, 1 detections, 1 all-time)" "$merge_out"
 
 # A class present only since the watermark (no all-time row — cannot happen from one
-# query, but cluster_merge.py must not crash reading two independently-produced files).
+# query, but cluster_merge must not crash reading two independently-produced files).
 printf '' > "$T/all_time_empty.txt"
 printf '1 1 1 sp-recur-fresh\n' > "$T/since_only.txt"
 want "since-only class: all-time reads as 0, not a crash" \
     "1 sp-recur-fresh (1 victims, 1 detections, 0 all-time)" \
-    "$(python3 "$CENSUS_DIR/cluster_merge.py" "$T/all_time_empty.txt" "$T/since_only.txt")"
+    "$(census_pipeline cluster-merge "$T/all_time_empty.txt" "$T/since_only.txt")"
 
 # Malformed line ignored rather than raising.
 printf 'garbage line with no count\n1 1 1 sp-recur-ok\n' > "$T/malformed.txt"
 printf '' > "$T/empty2.txt"
 want "malformed all-time line is skipped, not fatal" "0 sp-recur-ok (0 victims, 0 detections, 1 all-time)" \
-    "$(python3 "$CENSUS_DIR/cluster_merge.py" "$T/malformed.txt" "$T/empty2.txt")"
+    "$(census_pipeline cluster-merge "$T/malformed.txt" "$T/empty2.txt")"
 
 # ==============================================================================
 echo
@@ -356,7 +355,7 @@ want "unreadable watermark: stderr says so" "unreadable" "$(cat "$T/badwm.stderr
 RUN_WM="$T/run-wm"; mkdir -p "$RUN_WM"
 printf '1000000000\n' > "$RUN_WM/maechen.watermark"
 wm_out="$(run_census_fake "$RUN_WM" 2>"$T/wm.stderr")"
-want "valid watermark: since-watermark format used (cluster_merge.py path)" \
+want "valid watermark: since-watermark format used (cluster_merge path)" \
     "sp-recur-fallback-test (1 victims, 1 detections, 1 all-time)" "$wm_out"
 lack "valid watermark: no fallback stderr note" "falling back" "$(cat "$T/wm.stderr")"
 
@@ -466,38 +465,38 @@ want "skew check unreachable: stderr says so" "cannot verify" "$(cat "$T/unverif
 
 # ==============================================================================
 echo
-echo "covers.py / covers_closed.py — open and closed remedy suppression (UC-14)"
+echo "covers / covers_closed — open and closed remedy suppression (UC-14)"
 # ==============================================================================
 covers_of() {   # covers_of <fold-map-file> <json>
-    printf '%s' "$2" | python3 "$CENSUS_DIR/covers.py" "$1"
+    printf '%s' "$2" | census_pipeline covers "$1"
 }
 printf '' > "$T/nofold.txt"
 printf 'sp-requeue-merge-conflict sp-reopen-rebase-conflict\n' > "$T/fold.txt"
 
-want "covers.py: open bead's covers: label extracted" "sp-recur-open-class" \
+want "covers: open bead's covers: label extracted" "sp-recur-open-class" \
     "$(covers_of "$T/nofold.txt" '[{"labels":["spira","maechen-remedy","covers:sp-recur-open-class"]}]')"
-want "covers.py: fold-map resolves a pre-fold alias to the canonical class" \
+want "covers: fold-map resolves a pre-fold alias to the canonical class" \
     "sp-reopen-rebase-conflict" \
     "$(covers_of "$T/fold.txt" '[{"labels":["covers:sp-requeue-merge-conflict"]}]')"
-lack "covers.py: non-covers labels produce no class" "spira" \
+lack "covers: non-covers labels produce no class" "spira" \
     "$(covers_of "$T/nofold.txt" '[{"labels":["spira","maechen-remedy"]}]')"
-want "covers.py: multiple beads each contribute their class" "sp-recur-a" \
+want "covers: multiple beads each contribute their class" "sp-recur-a" \
     "$(covers_of "$T/nofold.txt" '[{"labels":["covers:sp-recur-a"]},{"labels":["covers:sp-recur-b"]}]')"
-want "covers.py: multiple beads, second class also present" "sp-recur-b" \
+want "covers: multiple beads, second class also present" "sp-recur-b" \
     "$(covers_of "$T/nofold.txt" '[{"labels":["covers:sp-recur-a"]},{"labels":["covers:sp-recur-b"]}]')"
-is "covers.py: malformed JSON exits cleanly with no output" "" \
+is "covers: malformed JSON exits cleanly with no output" "" \
     "$(covers_of "$T/nofold.txt" 'not json')"
 
 closed_of() {   # closed_of <window-days> <json>
-    printf '%s' "$2" | SPIRA_REMEDY_WINDOW="$1" python3 "$CENSUS_DIR/covers_closed.py" "$T/nofold.txt"
+    printf '%s' "$2" | SPIRA_REMEDY_WINDOW="$1" census_pipeline covers-closed "$T/nofold.txt"
 }
 recent="$(date -u -d '5 days ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-5d '+%Y-%m-%dT%H:%M:%SZ')"
 stale="$(date -u -d '40 days ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -v-40d '+%Y-%m-%dT%H:%M:%SZ')"
-want "covers_closed.py: bead closed within window is included" "sp-r1 sp-recur-x" \
+want "covers_closed: bead closed within window is included" "sp-r1 sp-recur-x" \
     "$(closed_of 30 "[{\"id\":\"sp-r1\",\"closed_at\":\"$recent\",\"labels\":[\"covers:sp-recur-x\"]}]")"
-is "covers_closed.py: bead closed beyond the window is excluded" "" \
+is "covers_closed: bead closed beyond the window is excluded" "" \
     "$(closed_of 30 "[{\"id\":\"sp-r2\",\"closed_at\":\"$stale\",\"labels\":[\"covers:sp-recur-x\"]}]")"
-is "covers_closed.py: a bead missing an id is skipped even with a covers: label" "" \
+is "covers_closed: a bead missing an id is skipped even with a covers: label" "" \
     "$(closed_of 30 "[{\"closed_at\":\"$recent\",\"labels\":[\"covers:sp-recur-x\"]}]")"
 
 # ==============================================================================

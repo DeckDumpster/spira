@@ -2,7 +2,7 @@
 
 Replaces `spira/census.sh` (238 lines). One binary, `census`, the same `[--with-suppressed]`
 flag. Written from the script's intent and its caller (bd sp-yyk47: the Maechen chamber
-brief's Step 1). The SQL and the six `census/*.py` pipeline scripts are unchanged (§2) —
+brief's Step 1). The SQL stays in lib.sh; the classification pipeline is in-process (§2) —
 this crate is the bash orchestration around them, moved to Rust.
 
 ## 1. Intent
@@ -26,14 +26,10 @@ deliberate-cause event silently** (they are real state, shown separately, never 
   Re-deriving 400-character generated SQL strings in Rust would be exactly the duplication
   that comment exists to prevent, and it buys nothing: this bead's scope is `spira/census.sh`,
   not `spira/lib.sh`.
-- **The six `census/*.py` scripts** (`cluster.py`, `cluster_merge.py`, `covers.py`, `covers_closed.py`,
-  `handwritten.py`, `deliberate.py`) keep doing the actual class-name mapping, ranking and
-  JSON parsing, run as subprocesses exactly as bash ran them (same argv shapes: file-path
-  arguments for `cluster_merge.py`/`covers.py`/`covers_closed.py`, stdin for the rest). This mirrors
-  `forge`'s own precedent (keeping its artifact-zip Python rather than adding a zip crate,
-  `forge/DESIGN.md` §2): the class-mapping logic is fully specified, already has its own
-  suite (`test-census-pipeline.sh`, kept — §6), and re-deriving it in Rust risks a silent
-  behavioural drift for no reader that needs it to be Rust.
+- **The classification pipeline** (`pipeline.rs`: `cluster`, `cluster_merge`, `covers`,
+  `covers_closed`, `handwritten`, `deliberate`) does the class-name mapping, ranking and JSON
+  parsing in-process; `census pipeline <stage>` exposes each stage on stdin/files for the suites.
+  Output is byte-identical to the Python scripts it replaced.
 - **`bdq list`** (the open- and closed-remedy lookups) is called as plain `bd` directly, not
   through lib.sh's `bdq` wrapper: `bdq`'s own guards (repo-label validation, destructive-SQL
   refusal, the czar fence) apply only to `create`/`reopen`/`update`/`close`, never to `list`,
@@ -43,7 +39,7 @@ deliberate-cause event silently** (they are real state, shown separately, never 
 - **Open vs closed remedy is the lifecycle row's, not bd's** (sp-mve9i, design
   bead-lifecycle-state-machine §3.4). One `bd list --all --label-pattern covers:*` reads the
   remedies' content; `spira-lc list` splits them (`split_remedies`): READY/WORKING/REWORK is
-  an open remedy (covers.py, suppresses), SUBMITTED onward a closed one (covers_closed.py,
+  an open remedy (covers, suppresses), SUBMITTED onward a closed one (covers_closed,
   then the landing check). A remedy with no lifecycle row is neither and is named on stderr;
   a machine that cannot answer suppresses nothing.
 
@@ -99,11 +95,7 @@ trait World {
 }
 ```
 
-`real.rs` implements the Python calls with a process-lifetime scratch directory (removed on
-`Drop`) for the three scripts that need on-disk file arguments (`cluster_merge.py`'s two inputs,
-`covers.py`/`covers_closed.py`'s fold-map file) — the same tempdir role census.sh's own
-`_TMPDIR` played, just owned by the Rust process instead of a `trap ... EXIT`.
-`tests.rs`'s `Fake` stands in for the SQL/Python layer directly (it has its own,
+`tests.rs`'s `Fake` stands in for the SQL/pipeline layer directly (it has its own,
 independent coverage — §6) and exercises only the orchestration: the clock guard, the
 watermark fallback, the three suppression outcomes, and the `--with-suppressed` gate.
 
@@ -124,22 +116,21 @@ watermark fallback, the three suppression outcomes, and the `--with-suppressed` 
   predicates are gated on the verb (`create`/`reopen`/`update`/`close`) and provably never
   fire for `list`; this is not a behavior change, it is not calling code that would not have
   run anyway.
-- **No JSON crate.** `bdq`'s `--json` output is consumed entirely by `covers.py`/
-  `covers_closed.py` (unchanged Python, §2); Rust never parses it.
+- **JSON** is read with `serde_json`: `split_remedies` and the `covers` stages.
 
 ## 6. Parity and what moved
 
 No dedicated bash suite tests census.sh's own orchestration logic in isolation — the
-closest, `test-census-pipeline.sh`, is explicitly about the **Python** decision logic
-(`cluster.py`/`cluster_merge.py`/`covers.py`/`covers_closed.py`'s class mapping and ranking, table-
+closest, `test-census-pipeline.sh`, is explicitly about the decision logic
+(`cluster`/`cluster_merge`/`covers`/`covers_closed`'s class mapping and ranking, table-
 tested on canned rows) and is **kept**, repointed (`CENSUS="$HERE/census.sh"` →
-`CENSUS="$(command -v census)"`), because nothing here replaces Python it doesn't run.
+`CENSUS="$(command -v census)"`), because the pipeline stages are the decision logic.
 `test-census.sh` (the one real-`bd`-fixture suite, `UC-ops-detection-remediation-07/12/14`),
 `test-census-events.sh` and `test-census-actor-filter.sh` are likewise **kept**, repointed:
 real end-to-end coverage against a live Dolt fixture that a fake-backed unit test does not
 replace. This crate's 17 unit tests are the new coverage for the orchestration itself: the
 clock-skew guard (pass, beyond-tolerance, query failure, unparseable row), the watermark
-fallback (missing file, unreadable content, valid — routed to `cluster_merge.py`), all three
+fallback (missing file, unreadable content, valid — routed to `cluster_merge`), all three
 suppression outcomes (open remedy, closed-and-landed-branch, closed-with-no-branch =
 orphaned) plus the landed/unknown and landed-clean asymmetry (§3.2), and the
 `--with-suppressed` gate for both the suppression annotations and the trailing
@@ -163,7 +154,7 @@ the same principle: an unresolved state must not be read as "resolved, so suppre
 
 17 unit tests (`cargo test -p census`) cover every orchestration branch against a `Fake`.
 Not covered here, and not fixable from this side without a live Dolt server: the real SQL
-text `_census_events_sql` generates, the real `cluster.py`/`cluster_merge.py`/`covers.py` class-name
+text `_census_events_sql` generates, the real `cluster`/`cluster_merge`/`covers` class-name
 mapping, and `bd sql`'s actual `DATE_FORMAT(UTC_TIMESTAMP(), ...)` row shape. Those remain
 `test-census.sh`, `test-census-pipeline.sh`, `test-census-events.sh` and
 `test-census-actor-filter.sh`'s job, all kept and repointed (§6).
@@ -173,6 +164,6 @@ mapping, and `bd sql`'s actual `DATE_FORMAT(UTC_TIMESTAMP(), ...)` row shape. Th
 The rank is the count of distinct causal events, not victim beads: same-class events less
 than `SPIRA_CENSUS_CLUSTER_GAP_S` (default 300) apart are one event. `sql::event_rows_sql`
 emits one raw `(type, cause, issue, epoch)` row per event with the same predicates as
-`events_sql`; `cluster.py` clusters them and emits `<causal> <victims> <detections>
+`events_sql`; `cluster` clusters them and emits `<causal> <victims> <detections>
 <class>`. Victims and detections are reported, never the rank; the aggregated `events_sql`
 remains for `census sql run-events`.

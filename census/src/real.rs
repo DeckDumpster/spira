@@ -1,9 +1,8 @@
 //! The production [`crate::ports::World`]: the `conf.sh`+`lib.sh` seam for the SQL runners
 //! and the fold map (never re-derived — DESIGN.md §2), direct `bd`/`git`/`date` calls, and
-//! the unchanged `census/*.py` pipeline run as subprocesses with a scratch temp directory
-//! for the two scripts that take file-path arguments (`cluster_merge.py`, `covers.py`,
-//! `covers_closed.py`).
+//! the in-process classification pipeline.
 
+use crate::pipeline;
 use crate::ports::World;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -12,19 +11,12 @@ use std::process::{Command, Stdio};
 const MAX_RECORDED_IDS: usize = 4000;
 
 pub struct Real {
-    pub home: PathBuf,   // spira/ — where conf.sh, lib.sh and census/*.py live
-    pub scratch: PathBuf, // a process-lifetime scratch dir, removed on drop
+    pub home: PathBuf,   // spira/ — where conf.sh and lib.sh live
 }
 
 impl Real {
     pub fn new(home: PathBuf) -> Real {
-        let scratch = std::env::temp_dir().join(format!("census-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&scratch);
-        Real { home, scratch }
-    }
-
-    fn census_py(&self) -> PathBuf {
-        self.home.join("census")
+        Real { home }
     }
 
     /// Source conf.sh + lib.sh, then run `body` with `args` as `$1`, `$2`, ... Captures
@@ -58,12 +50,6 @@ impl Real {
     /// record; nothing sets it in production, where spira-lc is found on PATH.
     fn lc_bin(&self) -> String {
         std::env::var("SPIRA_LC_BIN").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "spira-lc".into())
-    }
-
-    fn write_scratch(&self, name: &str, content: &str) -> PathBuf {
-        let p = self.scratch.join(name);
-        let _ = std::fs::write(&p, content);
-        p
     }
 
     /// `<bd> -C <db> sql <query>` — stdout/stderr returned separately (never combined the
@@ -152,30 +138,6 @@ impl Real {
             return Err(format!("lifecycle facts: {} beads with a recorded cause is more than one query can carry", ids.len()));
         }
         Ok(ids)
-    }
-
-    fn run_py(&self, script: &str, args: &[&Path], stdin: Option<&str>) -> String {
-        let mut cmd = spira_config::bounded::bounded("python3");
-        cmd.arg(self.census_py().join(script));
-        for a in args {
-            cmd.arg(a);
-        }
-        cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
-        let mut child = match cmd.stdout(Stdio::piped()).stderr(Stdio::null()).spawn() {
-            Ok(c) => c,
-            Err(_) => return String::new(),
-        };
-        if let (Some(s), Some(mut si)) = (stdin, child.stdin.take()) {
-            use std::io::Write;
-            let _ = si.write_all(s.as_bytes());
-        }
-        child.wait_with_output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
-    }
-}
-
-impl Drop for Real {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.scratch);
     }
 }
 
@@ -279,27 +241,25 @@ impl World for Real {
         }
     }
 
-    fn cluster_py(&self, tabular: &str) -> Result<String, String> {
-        Ok(self.run_py("cluster.py", &[], Some(tabular)))
+    fn cluster(&self, tabular: &str) -> Result<String, String> {
+        let gap = self.env("SPIRA_CENSUS_CLUSTER_GAP_S").and_then(|v| v.trim().parse::<i64>().ok()).filter(|g| *g != 0).unwrap_or(300);
+        Ok(pipeline::cluster(tabular, gap))
     }
-    fn cluster_merge_py(&self, all_time: &str, since_wm: &str) -> String {
-        let a = self.write_scratch("all_time.txt", all_time);
-        let b = self.write_scratch("since_wm.txt", since_wm);
-        self.run_py("cluster_merge.py", &[&a, &b], None)
+    fn cluster_merge(&self, all_time: &str, since_wm: &str) -> String {
+        pipeline::cluster_merge(all_time, since_wm)
     }
-    fn covers_py(&self, bdq_json: &str, fold_map: &str) -> String {
-        let f = self.write_scratch("fold_map.txt", fold_map);
-        self.run_py("covers.py", &[&f], Some(bdq_json))
+    fn covers(&self, bdq_json: &str, fold_map: &str) -> String {
+        pipeline::covers(bdq_json, fold_map)
     }
-    fn covers_closed_py(&self, bdq_json: &str, fold_map: &str) -> String {
-        let f = self.write_scratch("fold_map.txt", fold_map);
-        self.run_py("covers_closed.py", &[&f], Some(bdq_json))
+    fn covers_closed(&self, bdq_json: &str, fold_map: &str) -> String {
+        let window = self.env("SPIRA_REMEDY_WINDOW").and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(30);
+        pipeline::covers_closed(bdq_json, fold_map, window, std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0))
     }
-    fn handwritten_py(&self, tabular: &str) -> String {
-        self.run_py("handwritten.py", &[], Some(tabular))
+    fn handwritten(&self, tabular: &str) -> String {
+        pipeline::handwritten(tabular)
     }
-    fn deliberate_py(&self, tabular: &str) -> String {
-        self.run_py("deliberate.py", &[], Some(tabular))
+    fn deliberate(&self, tabular: &str) -> String {
+        pipeline::deliberate(tabular)
     }
 
     fn bd_list_all_json(&self, label_pattern: &str) -> String {

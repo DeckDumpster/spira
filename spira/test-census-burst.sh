@@ -10,9 +10,10 @@
 # class is what proves the window is not simply collapsing everything.
 #
 # tier: T2
-# covers: census/src/* spira/census/* spira/lib.sh
+# covers: census/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
+census_pipeline() { SPIRA_HOME="$HERE" census pipeline "$@"; }
 . "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
@@ -63,7 +64,7 @@ for n in 1 2 3 4 5; do
     _insert_event_at "sp-b$n" recurred spaced "2026-09-29 12:$((n * 10)):00"
 done
 
-out="$(census_event_rows_run_sql 2>/dev/null | python3 "$HERE/census/cluster.py")"
+out="$(census_event_rows_run_sql 2>/dev/null | census_pipeline cluster)"
 want "charging unjudged cause: two sweeps = 2 causal events, 6 victims, 14 detections" \
     "2 6 14 sp-requeue-unjudged-unlanded" "$out"
 nowant "free killed/slain causes are not ranked at all" "sp-requeue-unjudged-slain" "$out"
@@ -73,7 +74,7 @@ want "independent events ten minutes apart still rank one each" "5 5 5 sp-recur-
 fold="$(_census_class_fold_map)"
 want "fold map aliases slain onto killed" "sp-requeue-unjudged-slain sp-requeue-unjudged-killed" "$fold"
 
-since="$(census_event_rows_run_sql 1790649952 2>/dev/null | python3 "$HERE/census/cluster.py")"
+since="$(census_event_rows_run_sql 1790649952 2>/dev/null | census_pipeline cluster)"
 want "windowed query collapses the same way" "2 6 14 sp-requeue-unjudged-unlanded" "$since"
 
 tl_summary
