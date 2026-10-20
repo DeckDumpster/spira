@@ -171,8 +171,8 @@ fn classify_unclaimable_main() -> i32 {
     let env = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
     let labels = unclaimable::Labels {
         scope: env("SPIRA_SCOPE_LABEL", "spira"),
-        ci: env("SPIRA_CI_LABEL", "awaiting-ci"),
-        ask: env("SPIRA_ASK_LABEL", "needs-operator"),
+        ci: env("SPIRA_CI_LABEL", "awaiting-ci"), // literal-ok: fallback when conf.sh is not sourced
+        ask: env("SPIRA_ASK_LABEL", "needs-operator"), // literal-ok: fallback when conf.sh is not sourced
         groom_ask: env("SPIRA_GROOM_ASK_LABEL", "groom-asked"),
     };
     let mut beads = String::new();

@@ -9,7 +9,7 @@
 # something (law-absence-needs-a-positive-control).
 #
 # tier: T0
-# covers: *.py
+# covers: spira/test-no-python.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"

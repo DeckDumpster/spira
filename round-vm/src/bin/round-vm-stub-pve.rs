@@ -6,7 +6,7 @@
 //!
 //! Usage: round-vm-stub-pve <port> <container-name> <cert-pem> <key-pem> <reqlog-path>
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -18,8 +18,8 @@ use serde_json::{json, Value};
 struct Stub {
     container: String,
     reqlog: String,
-    vms: HashMap<String, Value>,
-    exec_results: HashMap<i64, i64>,
+    vms: BTreeMap<String, Value>,
+    exec_results: BTreeMap<i64, i64>,
     pid: i64,
     nextid: i64,
 }
@@ -64,6 +64,7 @@ fn get<'a>(p: &'a Params, k: &str) -> Option<&'a str> {
 }
 
 fn podman_exec(container: &str, argv: &[&str]) -> i64 {
+    // batch-job: test stub drives a local container; the caller bounds the run
     Command::new("podman")
         .arg("exec")
         .arg(container)
@@ -76,6 +77,7 @@ fn podman_exec(container: &str, argv: &[&str]) -> i64 {
 }
 
 fn podman_write_file(container: &str, path: &str, content: &str) -> i64 {
+    // batch-job: test stub drives a local container; the caller bounds the run
     let child = Command::new("podman")
         .args(["exec", "-i", container, "sh", "-c", "cat > \"$1\"", "_", path])
         .stdin(Stdio::piped())
@@ -227,7 +229,7 @@ fn main() {
         .with_single_cert(certs, key)
         .expect("cert/key");
     let cfg = Arc::new(cfg);
-    let stub = Arc::new(Mutex::new(Stub { container: a[1].clone(), reqlog: a[4].clone(), vms: HashMap::new(), exec_results: HashMap::new(), pid: 1000, nextid: 776 }));
+    let stub = Arc::new(Mutex::new(Stub { container: a[1].clone(), reqlog: a[4].clone(), vms: BTreeMap::new(), exec_results: BTreeMap::new(), pid: 1000, nextid: 776 }));
     let listener = TcpListener::bind(("127.0.0.1", a[0].parse().expect("port"))).expect("bind");
     for tcp in listener.incoming().flatten() {
         let (cfg, stub) = (cfg.clone(), stub.clone());
