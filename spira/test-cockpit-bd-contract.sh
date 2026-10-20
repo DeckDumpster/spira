@@ -8,7 +8,7 @@
 # WHAT THIS SUITE IS FOR
 # -----------------------
 # docs/test-plan/cockpit-observability.md section 5 demotes dup-refs, repo-labels, sphere
-# and sop off a real testdb_up store and onto SPIRA_BDJSON_FIXTURE (bead/src/bdsim.rs's pure
+# and sop off a real testdb_up store and onto SPIRA_BDJSON_FIXTURE (bead/tests/fixtures/bdsim.rs's pure
 # list/show/memories functions). That is safe only if bdsim's filtering — label AND
 # matching, the default exclude-closed, --all, and the query shapes bd reads for `ready` and
 # `memories` — actually agrees with the real `bd` binary. This suite is the explicit
@@ -21,7 +21,7 @@
 # cases already live in the fixture-driven suite for that probe.
 #
 # tier: T2
-# covers: cockpit-collect/src/* bead/src/bdsim.rs cockpit/panel/src/store.rs
+# covers: cockpit-collect/src/* bead/tests/fixtures/bdsim.rs cockpit/panel/src/store.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

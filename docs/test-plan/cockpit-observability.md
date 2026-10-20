@@ -98,7 +98,7 @@
 > **2026-10-10 (sp-fdeq6z): `watchtower::load_fence::a_real_process_is_lowered_and_a_fenced_one_is_left_alone` deleted** (law-a-test-that-flips-is-deleted): it renices and ioprio-classes a spawned `sleep`, so its verdict depended on the niceness the gate runs under; red in the per-bead gate, green on a plain rerun of the same tree. Coverage left: `scan`/`ownerless` against a fake `/proc` and `ancestry`. Coverage lost: `fence()` renicing and idle-ioprio on a real process. A root-cause bead may re-add it with the child spawned at a known niceness (setpriority before fence).
 
 
-> **2026-09-25 (sp-s088v.7): the bdjson-fixture seam landed.** `bead/src/bdsim.rs` answers
+> **2026-09-25 (sp-s088v.7): the bdjson-fixture seam landed.** `bead/tests/fixtures/bdsim.rs` answers
 > `list`/`show`/`memories` from a `SPIRA_BDJSON_FIXTURE` JSON file; `lib.sh`'s `bdq()` routes
 > there when the variable is set, which is the one chokepoint every `*_keys` function's bd
 > read already funnels through. Converted off `testdb_up` onto that seam: dup-refs,
