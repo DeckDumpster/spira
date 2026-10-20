@@ -122,7 +122,7 @@ pub fn classify_stdin(input: &str) -> Result<String, String> {
     let firing = crate::judge::classify(&o)?;
     let mut out = String::new();
     for f in firing {
-        let v = json!({"key": f.key, "title": f.title, "evidence": f.evidence});
+        let v: std::collections::BTreeMap<&str, &str> = [("key", f.key.as_str()), ("title", f.title.as_str()), ("evidence", f.evidence.as_str())].into_iter().collect();
         out.push_str(&serde_json::to_string(&v).unwrap_or_default());
         out.push('\n');
     }
