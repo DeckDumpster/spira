@@ -3,6 +3,7 @@ Description=Check each consuming site's kit pin against the kit's landing tip ev
 
 [Timer]
 OnBootSec=5min
+OnActiveSec=5min
 OnUnitActiveSec=10min
 AccuracySec=1min
 Persistent=true
