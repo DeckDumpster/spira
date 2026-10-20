@@ -682,9 +682,18 @@ struct FForge {
     ami_runs: RefCell<Vec<Option<Vec<String>>>>,
     /// pr-create makes this PR number upstream, then reports this error.
     create_then_err: RefCell<Option<(String, String)>>,
+    /// pr-preflight refuses with this message.
+    preflight_err: RefCell<Option<String>>,
 }
 
 impl Forge for FForge {
+    fn pr_preflight(&self, _: &Path, _: &Path, head: &str) -> Result<(), String> {
+        self.calls.borrow_mut().push(format!("pr-preflight {head}"));
+        match self.preflight_err.borrow().clone() {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
     fn pr_create(
         &self,
         _: &Path,
@@ -2696,6 +2705,29 @@ fn open_batch_pr_create_failure_with_no_pr_carries_the_forge_error_and_rolls_bac
     *t.forge.pr.borrow_mut() = None;
     assert_ne!(t.run(&["open-batch", "--skip-pregate"]), 0);
     assert!(t.err().contains("rc=1: stub"), "{}", t.err());
+    assert!(!t.qfile("open").exists());
+}
+
+#[test]
+fn open_batch_preflight_refusal_pushes_nothing_and_leaves_no_branch() {
+    let t = T::new(LandMode::Queue);
+    t.git.set("origin/main", "b0");
+    *t.git.branches.borrow_mut() = vec![("spira/sp-a".into(), "ta".into())];
+    t.lc_row("sp-a", "CERTIFIED", "ta", 1);
+    t.bd.rows.borrow_mut().push(BeadRow {
+        id: "sp-a".into(),
+        status: Some("closed".into()),
+        ..Default::default()
+    });
+    *t.forge.preflight_err.borrow_mut() = Some("gh is not on PATH".into());
+    assert_ne!(t.run(&["open-batch", "--skip-pregate"]), 0);
+    assert!(t.err().contains("gh is not on PATH"), "{}", t.err());
+    assert!(
+        !t.lib.calls.borrow().iter().any(|c| c.starts_with("push ")),
+        "{:?}",
+        t.lib.calls.borrow()
+    );
+    assert!(!t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-create")));
     assert!(!t.qfile("open").exists());
 }
 
@@ -4804,7 +4836,7 @@ fn open_batch_assembles_admits_opens_and_cuts_on_spira_lc() {
         "{rec}"
     );
     assert!(t.lc.has("create-bead sp-a") && t.lc.has("cut spira-20260929T010203Z sp-a:ta"));
-    assert!(t.forge.calls.borrow()[0].contains("- sp-a — A"));
+    assert!(t.forge.calls.borrow()[1].contains("- sp-a — A"));
     assert!(t
         .landing_log()
         .contains("members=1 gate_seconds=0 verdict=green source=open-batch"));

@@ -1310,6 +1310,22 @@ fn pr_create_refuses_when_the_listing_cannot_be_read() {
 }
 
 #[test]
+fn pr_create_names_a_missing_gh_as_the_cause() {
+    let gh = FakeGh::default();
+    gh.on(LIST_MINE, 127, "");
+    let out = pr_preflight(&gh, repo(), "spira/queue/b", "");
+    assert_eq!(out.code, 1);
+    assert!(!created(&gh));
+}
+
+#[test]
+fn pr_preflight_makes_no_create_call() {
+    let gh = creatable("[]");
+    assert_eq!(pr_preflight(&gh, repo(), "spira/queue/b", "").code, 0);
+    assert!(!created(&gh));
+}
+
+#[test]
 fn ami_runs_lists_only_unfinished_runs_and_says_so_when_unreadable() {
     let gh = FakeGh::default();
     gh.on(

@@ -854,6 +854,13 @@ pub fn open_batch(
         return OK;
     }
 
+    if let Err(e) = w.forge.pr_preflight(&c.s.forge, &path, &batch_br) {
+        w.err(format!(
+            "queue.sh open-batch: forge refuses {batch_br}: {e} — nothing pushed"
+        ));
+        w.git.worktree_remove(&path, &wt);
+        return FAIL;
+    }
     w.git.branch_set(&path, &batch_br, &head, true);
     w.git.worktree_remove(&path, &wt);
 

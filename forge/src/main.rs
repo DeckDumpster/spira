@@ -73,6 +73,12 @@ fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[String
             &stdin_bytes(),
             &std::env::var("QUEUE_SECOND_PR_CONSIDERED").unwrap_or_default(),
         ),
+        "pr-preflight" => pr_preflight(
+            gh,
+            repo,
+            arg(args, 0),
+            &std::env::var("QUEUE_SECOND_PR_CONSIDERED").unwrap_or_default(),
+        ),
         "pr-number" => pr_number(gh, repo, arg(args, 0)),
         "pr-list-queue" => pr_list_queue(gh, repo),
         "pr-list-open" => pr_list_open(gh, repo),

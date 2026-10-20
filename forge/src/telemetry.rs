@@ -5,6 +5,7 @@ use spira_otel::metrics::{self, MetricsSink};
 pub const COMPONENT: &str = "forge";
 pub const OPERATIONS: &[&str] = &[
     "pr-create",
+    "pr-preflight",
     "pr-number",
     "pr-list-queue",
     "pr-list-open",
