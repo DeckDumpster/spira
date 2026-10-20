@@ -1109,6 +1109,97 @@ fn orphan_reading(out: &str) -> RawStatus {
     RawStatus::Gap { desired: "no bead IN_DELIVERY without an open batch naming it".into(), observed: ids.join(" "), since_hint: None }
 }
 
+const LANDED_BATCH_PREFIX: &str = "batch-landed:";
+
+struct GreenBatch {
+    id: String,
+    repo: String,
+    version: String,
+    head: String,
+}
+
+fn green_batches(out: &str) -> Option<Vec<GreenBatch>> {
+    let v: serde_json::Value = serde_json::from_str(out.trim()).ok()?;
+    let text = |b: &serde_json::Value, k: &str| match b.get(k) {
+        Some(serde_json::Value::String(s)) => Some(s.clone()),
+        Some(n @ serde_json::Value::Number(_)) => Some(n.to_string()),
+        _ => None,
+    };
+    Some(
+        v.as_array()?
+            .iter()
+            .filter(|b| b.get("state").and_then(|s| s.as_str()) == Some("GREEN"))
+            .filter_map(|b| {
+                Some(GreenBatch { id: text(b, "batch_id")?, repo: text(b, "repo")?, version: text(b, "version")?, head: text(b, "head")? })
+            })
+            .filter(|g| !g.head.is_empty())
+            .collect(),
+    )
+}
+
+fn head_on_ref(cfg: &Config, repo: &Path, head: &str, landref: &str) -> Option<bool> {
+    let status = spira_config::bounded::bounded(&cfg.seams.git)
+        .args(["-C", &repo.to_string_lossy(), "merge-base", "--is-ancestor", head, landref])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .ok()?;
+    match status.code() {
+        Some(0) => Some(true),
+        Some(1) => Some(false),
+        _ => None,
+    }
+}
+
+fn observe_landed_batches(cfg: &Config) -> Vec<Check> {
+    let out = run_cmd(&cfg.seams.spira_lc, &["list", "--batches", "--window", "1"]);
+    let Some(greens) = green_batches(&out) else {
+        return vec![Check {
+            key: "batch-landed".into(),
+            raw: RawStatus::Unobservable { reason: "spira-lc list --batches gave no readable answer".into() },
+            remedy: Remedy::Escalate,
+        }];
+    };
+    let mut checks = Vec::new();
+    for g in greens {
+        let Some(repo_path) = repo_root(&g.repo, &cfg.repo_map) else { continue };
+        let landref = run_cmd(&cfg.seams.spira_config, &["repo", "landref", &g.repo]);
+        let landref = landref.trim();
+        if landref.is_empty() {
+            continue;
+        }
+        let raw = match head_on_ref(cfg, &repo_path, &g.head, landref) {
+            None => RawStatus::Unobservable { reason: format!("cannot compare {} with {} in {}", g.head, landref, g.repo) },
+            Some(false) => RawStatus::Satisfied,
+            Some(true) => RawStatus::Gap {
+                desired: format!("batch {} LANDED", g.id),
+                observed: format!("GREEN with head {} already on {}", g.head, landref),
+                since_hint: None,
+            },
+        };
+        checks.push(Check {
+            key: format!("{LANDED_BATCH_PREFIX}{}:{}", g.repo, g.id),
+            raw,
+            remedy: Remedy::Command {
+                program: cfg.seams.spira_lc.clone(),
+                args: vec![
+                    "land".into(),
+                    g.id.clone(),
+                    "--expect".into(),
+                    "GREEN".into(),
+                    "--version".into(),
+                    g.version.clone(),
+                    "--actor".into(),
+                    "reconciler".into(),
+                    "--sha".into(),
+                    g.head.clone(),
+                ],
+            },
+        });
+    }
+    checks
+}
+
 fn observe_lc_orphans(cfg: &Config) -> Check {
     let actor = "reconciler";
     let raw = orphan_reading(&run_cmd(&cfg.seams.spira_lc, &["requeue-orphans", "--actor", actor]));
@@ -1655,6 +1746,7 @@ fn run_pass() -> Result<(), String> {
         ("queue-lock-age", Box::new(|| observe_queue_lock_age(&cfg))),
         ("queue-stranded-runs", Box::new(|| observe_queue_stranded_runs(&cfg))),
         ("lc-orphans", Box::new(|| vec![observe_lc_orphans(&cfg)])),
+        ("batch-landed", Box::new(|| observe_landed_batches(&cfg))),
         ("junk-row", Box::new(|| observe_junk_rows(&cfg))),
         ("epic-edges", Box::new(|| observe_epic_edges(&cfg))),
         ("main-health", Box::new(|| observe_main_health(&cfg))),
@@ -1687,6 +1779,7 @@ fn run_pass() -> Result<(), String> {
     });
     for (name, prefix) in [
         ("queue-stranded-runs", STRANDED_RUN_PREFIX),
+        ("batch-landed", LANDED_BATCH_PREFIX),
         ("junk-row", JUNK_ROW_PREFIX),
         ("epic-edges", EPIC_EDGE_PREFIX),
     ] {
@@ -1696,7 +1789,7 @@ fn run_pass() -> Result<(), String> {
     let mut checks = Vec::new();
     for name in [
         "units", "fleet", "cockpit", "release", "disk", "queue-mergeable", "queue-lock-age",
-        "queue-stranded-runs", "lc-orphans", "junk-row", "epic-edges", "main-health",
+        "queue-stranded-runs", "lc-orphans", "batch-landed", "junk-row", "epic-edges", "main-health",
     ] {
         checks.extend(by_name.remove(name).unwrap_or_default());
     }
@@ -2011,6 +2104,48 @@ mod tests {
         assert!(matches!(probe[0].raw, RawStatus::Gap { .. }));
         let steps = probe[0].remedy.steps();
         assert_eq!(steps[0].1, vec!["workflow-rerun", "/srv/r-checkout", "55"]);
+    }
+
+    #[test]
+    fn a_green_batch_whose_head_is_on_the_landing_ref_is_landed_and_one_off_it_is_left() {
+        let dir = scratch_dir("landed-batch");
+        let repo = dir.join("checkout");
+        let git = |args: &[&str]| {
+            let st = std::process::Command::new("git").arg("-C").arg(&repo).args(args).stdout(Stdio::null()).status().unwrap();
+            assert!(st.success(), "git {args:?}");
+        };
+        fs::create_dir_all(&repo).unwrap();
+        git(&["init", "-q", "-b", "trunk"]);
+        git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "on"]);
+        let on = String::from_utf8(std::process::Command::new("git").arg("-C").arg(&repo).args(["rev-parse", "HEAD"]).output().unwrap().stdout).unwrap().trim().to_string();
+        git(&["checkout", "-q", "-b", "side"]);
+        git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "off"]);
+        let off = String::from_utf8(std::process::Command::new("git").arg("-C").arg(&repo).args(["rev-parse", "HEAD"]).output().unwrap().stdout).unwrap().trim().to_string();
+        git(&["checkout", "-q", "trunk"]);
+
+        let lc = dir.join("lc");
+        testkit::write_exe(
+            &lc,
+            &format!(
+                "#!/bin/sh\ncat <<'EOF'\n[{{\"batch_id\":\"b-on\",\"repo\":\"r\",\"state\":\"GREEN\",\"version\":4,\"head\":\"{on}\"}},\n {{\"batch_id\":\"b-off\",\"repo\":\"r\",\"state\":\"GREEN\",\"version\":2,\"head\":\"{off}\"}},\n {{\"batch_id\":\"b-done\",\"repo\":\"r\",\"state\":\"LANDED\",\"version\":9,\"head\":\"{on}\"}}]\nEOF\n"
+            ),
+        );
+        let sc = dir.join("sc");
+        testkit::write_exe(&sc, "#!/bin/sh\necho trunk\n");
+        let map = dir.join("map");
+        fs::write(&map, format!("r|{}\n", repo.display())).unwrap();
+        let cfg = Config {
+            seams: Seams { spira_lc: lc.to_string_lossy().to_string(), spira_config: sc.to_string_lossy().to_string(), ..Seams::production() },
+            repo_map: Some(map),
+            ..test_config()
+        };
+        let checks = observe_landed_batches(&cfg);
+        assert_eq!(checks.len(), 2, "only GREEN rows are observed");
+        let on_check = checks.iter().find(|c| c.key == "batch-landed:r:b-on").unwrap();
+        assert!(matches!(on_check.raw, RawStatus::Gap { .. }));
+        assert_eq!(on_check.remedy.steps()[0].1, vec!["land", "b-on", "--expect", "GREEN", "--version", "4", "--actor", "reconciler", "--sha", on.as_str()]);
+        let off_check = checks.iter().find(|c| c.key == "batch-landed:r:b-off").unwrap();
+        assert!(matches!(off_check.raw, RawStatus::Satisfied));
     }
 
     #[test]
