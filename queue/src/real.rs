@@ -1168,7 +1168,7 @@ pub struct RealForge;
 
 impl Forge for RealForge {
     fn pr_preflight(&self, forge: &Path, repo: &Path, head: &str) -> Result<(), String> {
-        let o = Command::new(forge)
+        let o = spira_config::bounded::bounded(forge)
             .arg("pr-preflight")
             .arg(repo)
             .arg(head)
