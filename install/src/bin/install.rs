@@ -1726,11 +1726,30 @@ fn system_user_phase(host: &install::values::HostValues) -> Result<(), String> {
         let _ = std::fs::remove_file(format!("{dest}.tmp"));
         info(&format!("install {dest}"));
     }
+    install_dovecot_dropin(Path::new(home), Path::new("/etc/systemd/system"), &["/lib/systemd/system", "/usr/lib/systemd/system", "/etc/systemd/system"])?;
     run_ok("systemctl", &["daemon-reload"])?;
     info("reload systemd");
     run_ok("systemctl", &["enable", "--now", "spira-lc.socket"])?;
     info("enable spira-lc.socket (spira-lc.service itself is socket-activated, not enabled directly)");
     Ok(())
+}
+
+/// Binding a tailnet address fails until tailscaled has assigned it, so a mail server that
+/// listens on one needs ordering after it and a retry. Written only where dovecot is installed.
+fn install_dovecot_dropin(home: &Path, unit_dir: &Path, unit_search: &[&str]) -> Result<bool, String> {
+    if !unit_search.iter().any(|d| Path::new(d).join("dovecot.service").is_file()) {
+        return Ok(false);
+    }
+    let text = std::fs::read_to_string(home.join("systemd/dovecot-tailnet.conf")).map_err(|e| e.to_string())?;
+    let dir = unit_dir.join("dovecot.service.d");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let dest = dir.join("spira-tailnet.conf");
+    if std::fs::read_to_string(&dest).ok().as_deref() == Some(text.as_str()) {
+        return Ok(false);
+    }
+    std::fs::write(&dest, text).map_err(|e| e.to_string())?;
+    info(&format!("install {}", dest.display()));
+    Ok(true)
 }
 
 fn run_ok(prog: &str, args: &[&str]) -> Result<(), String> {
@@ -2122,6 +2141,30 @@ mod dependency_fetch_tests {
         let r = install_aerc(true, &bin, Some(release.path()));
         assert!(r.is_ok(), "{r:?}");
         assert!(!bin.join("aerc").exists(), "a dry run must not copy anything");
+    }
+}
+
+#[cfg(test)]
+mod dovecot_dropin_tests {
+    use super::*;
+
+    #[test]
+    fn the_dropin_orders_after_tailscaled_and_retries_and_is_written_only_where_dovecot_exists() {
+        let td = testkit::TempDir::new("dovecot-dropin");
+        let root = td.path().to_path_buf();
+        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let units = root.join("etc");
+        let lib = root.join("lib");
+        std::fs::create_dir_all(&lib).unwrap();
+        let search = [lib.to_str().unwrap()];
+        assert_eq!(install_dovecot_dropin(&home, &units, &search), Ok(false));
+        assert!(!units.join("dovecot.service.d").exists(), "no dovecot, no drop-in");
+        std::fs::write(lib.join("dovecot.service"), "[Service]\n").unwrap();
+        assert_eq!(install_dovecot_dropin(&home, &units, &search), Ok(true));
+        let out = std::fs::read_to_string(units.join("dovecot.service.d/spira-tailnet.conf")).unwrap();
+        assert!(out.contains("After=tailscaled.service network-online.target"), "{out}");
+        assert!(out.contains("Restart=on-failure") && out.contains("StartLimitIntervalSec=0"), "{out}");
+        assert_eq!(install_dovecot_dropin(&home, &units, &search), Ok(false), "a rerun changes nothing");
     }
 }
 
