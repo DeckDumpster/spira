@@ -183,3 +183,20 @@ fn every_store_credentialed_unit_waits_for_and_outlasts_the_store() {
     assert!(unord.is_empty(), "not After=/Wants= lc-serve: {unord:?}");
     assert!(short.is_empty(), "retry shorter than a {STORE_LATE}s-late store: {short:?}");
 }
+
+fn assignments_before_first_section(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .take_while(|l| !l.starts_with('['))
+        .filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with(';'))
+        .map(String::from)
+        .collect()
+}
+
+#[test]
+fn no_unit_assigns_anything_above_its_first_section_header() {
+    let planted = "After=x.service\n[Unit]\nDescription=d\n";
+    assert_eq!(assignments_before_first_section(planted), ["After=x.service"]);
+    let bad: Vec<String> = templates().into_iter().flat_map(|n| assignments_before_first_section(&raw(&n)).into_iter().map(move |l| format!("{n}: {l}"))).collect();
+    assert!(bad.is_empty(), "assignment outside a section: {bad:?}");
+}

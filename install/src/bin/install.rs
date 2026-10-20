@@ -1110,6 +1110,14 @@ fn run_main() -> ExitCode {
                 Err(e) => eprintln!("install: cannot create the aeon warm slots under {base}: {e}"),
             }
         }
+        match install::kit_bump::install(Path::new(&host.run), Path::new(&host.home), &|k| spira_config::process::cfg(k)) {
+            Ok(Some(p)) => println!("installed {}", p.display()),
+            Ok(None) => skip("SPIRA_KIT_REPO is empty — not writing kit-bump.conf"),
+            Err(e) => {
+                eprintln!("install: kit-bump.conf: {e}");
+                return ExitCode::from(2);
+            }
+        }
         let templates_dir = bootstrap::templates_dir();
         let suspended = bootstrap::suspended_set();
         let no = |s: &str| suspended.contains(s);
