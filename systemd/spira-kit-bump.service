@@ -1,0 +1,25 @@
+After=lc-serve.service
+Wants=lc-serve.service
+[Unit]
+Description=Spira kit bump — files or amends one bump bead per consuming site whose kit pin is behind the kit's landing tip
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+Nice=19
+CPUQuota=25%
+ExecStart=@SPIRA_PROD_ROOT@/bin/kit-bump pass --config @SPIRA_RUN@/kit-bump.conf --state @SPIRA_RUN@/kit-bump.state
+# Exit 1 means a site failed and is retried next pass; exit 3 (the kit tip could not be read) is a failure.
+SuccessExitStatus=1
+TimeoutStartSec=300
+StandardOutput=append:@SPIRA_RUN@/kit-bump.log
+StandardError=append:@SPIRA_RUN@/kit-bump.log
+
+[Install]
+WantedBy=default.target
+
+[X-Spira]
+Plane=observability

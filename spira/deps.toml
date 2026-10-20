@@ -767,6 +767,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v refusal-watch)\""
 
 [[dep]]
+name = "kit-bump"
+tier = "release"
+purpose = "Spira's kit-bump binary, from the release's bin/ — files or amends one bump bead per consuming site whose pinned kit commit is behind the kit's landing tip"
+version_min = ""
+version_probe = "readlink -f \"$(command -v kit-bump)\""
+
+[[dep]]
 name = "store-persist"
 tier = "release"
 purpose = "Spira's store-persist binary, from the release's bin/ — restores a RAM-backed Dolt store from its durable copy and keeps that copy synced"

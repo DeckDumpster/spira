@@ -1,0 +1,15 @@
+[Unit]
+Description=Check each consuming site's kit pin against the kit's landing tip every ten minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=10min
+AccuracySec=1min
+Persistent=true
+Unit=spira-kit-bump.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=observability

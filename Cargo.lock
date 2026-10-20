@@ -776,6 +776,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "kit-bump"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "spira-config",
+ "spira-otel",
+ "testkit",
+]
+
+[[package]]
 name = "landing-pass"
 version = "2.0.0"
 dependencies = [
