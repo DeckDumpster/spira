@@ -15,6 +15,7 @@ serde_json = "1"
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+mail = { path = "../mail" }
 
 [profile.release]
 opt-level = "z"

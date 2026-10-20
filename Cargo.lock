@@ -1272,6 +1272,7 @@ dependencies = [
 name = "reconciler"
 version = "1.0.0"
 dependencies = [
+ "mail",
  "reconciler-engine",
  "serde_json",
  "spira-config",

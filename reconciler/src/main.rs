@@ -480,6 +480,19 @@ fn owner_landed(cfg: &Config, owner: &str) -> bool {
     matches!(spira_config::lc_state::row_with(&cfg.seams.spira_lc, owner), Ok(Some(r)) if r.state == "LANDED")
 }
 
+fn reminder_body(subject: &str, why: &str, reason: &str, owner: &str) -> String {
+    let owned = if owner.is_empty() {
+        String::new()
+    } else {
+        format!(" Its owner is bead {owner}, the work expected to make the suspension unnecessary.")
+    };
+    format!(
+        "## Note\n\nThe suspension of {subject} is due for review because {why}. It was recorded with this reason: {reason}.{owned}\n\n\
+         The reconciler has not lifted the suspension and will not. Lift it with `ctrl resume {subject}`, or \
+         extend it by suspending again with a new owner or --until.\n"
+    )
+}
+
 /// Mails the Concierge once per (subject, owner, until) declaration when it falls due. The
 /// sent set is persisted; a failed send is not recorded, so it is retried next pass.
 fn remind_due_suspensions(cfg: &Config, ctrl: &spira_ctrl::CtrlData) {
@@ -494,6 +507,12 @@ fn remind_due_suspensions(cfg: &Config, ctrl: &spira_ctrl::CtrlData) {
         .collect();
     let before = sent.clone();
     sent.retain(|k| live.contains(k));
+    let failed_path = cfg.reminders_path.with_extension("failed.json");
+    let mut failed: std::collections::BTreeMap<String, String> = fs::read_to_string(&failed_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let failed_before = failed.clone();
     for subject in ctrl.keys() {
         let Some((owner, until)) = spira_ctrl::declared(ctrl, subject) else { continue };
         let marker = format!("{}|{}|{}", subject, owner, until.unwrap_or(""));
@@ -508,17 +527,24 @@ fn remind_due_suspensions(cfg: &Config, ctrl: &spira_ctrl::CtrlData) {
         };
         let reason = spira_ctrl::reason(ctrl, subject).unwrap_or("");
         let subj = format!("reconciler: suspension of {} is due for review", subject);
-        let body = format!(
-            "The suspension of {subject} is due: {why}.\n\nreason  {reason}\nowner   {owner}\n\n\
-             The reconciler has not lifted it and will not. Lift it with `ctrl resume {subject}`, or \
-             extend it by suspending again with a new owner or --until.\n"
-        );
+        let body = reminder_body(subject, &why, reason, owner);
         match mail::note_concierge(&cfg.seams.mail, &subj, &body) {
             Ok(()) => {
                 log_print(cfg, &format!("reconciler: reminded — {}: {}", subject, why));
                 sent.insert(marker);
             }
-            Err(e) => log_print(cfg, &format!("reconciler: reminder for {} not sent: {}", subject, e)),
+            Err(e) => {
+                if failed.get(&marker) != Some(&e) {
+                    log_print(cfg, &format!("reconciler: reminder for {} not sent: {}", subject, e));
+                }
+                failed.insert(marker, e);
+            }
+        }
+    }
+    failed.retain(|k, _| live.contains(k) && !sent.contains(k));
+    if failed != failed_before {
+        if let Ok(json) = serde_json::to_string_pretty(&failed) {
+            let _ = fs::write(&failed_path, json);
         }
     }
     if sent != before {
@@ -2263,6 +2289,42 @@ mod tests {
         remind_due_suspensions(&broken, &load_ctrl(&broken));
         remind_due_suspensions(&cfg, &load_ctrl(&cfg));
         assert!(dir.join("mail-body").exists());
+    }
+
+    #[test]
+    fn a_composed_reminder_passes_the_lint_mail_send_applies() {
+        let kinds = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/mail/kinds");
+        let lint = |body: &str| {
+            ::mail::lint::lint_check(
+                &::mail::lint::LintInput {
+                    from: reconciler_engine::mail::FROM,
+                    subject: "reconciler: suspension of spira-cert-sweep-sample is due for review",
+                    kind: "note",
+                    default: "",
+                    urgent: false,
+                    body,
+                    digest: false,
+                },
+                &kinds,
+                "sp",
+            )
+        };
+        let old = "The suspension is due.\n\nreason  faults\nowner   sp-f2nkn6\n";
+        assert!(lint(old).is_err(), "the lint no longer rejects the old body shape");
+        let body = reminder_body("spira-cert-sweep-sample", "its owner bead sp-f2nkn6 has landed", "faults when a release changes the image tag", "sp-f2nkn6");
+        assert_eq!(lint(&body), Ok(()), "{body}");
+    }
+
+    #[test]
+    fn a_repeated_send_failure_is_logged_once() {
+        let (dir, cfg) = suspension_fixture("reminder-failure-once", "sp-xn3nou", None);
+        let log = dir.join("recon.log");
+        let broken = Config { seams: Seams { mail: "/bin/false".into(), ..cfg.seams.clone() }, log: log.clone(), ..cfg.clone() };
+        for _ in 0..3 {
+            remind_due_suspensions(&broken, &load_ctrl(&broken));
+        }
+        let text = fs::read_to_string(&log).unwrap_or_default();
+        assert_eq!(text.matches("not sent").count(), 1, "{text}");
     }
 
     #[test]
