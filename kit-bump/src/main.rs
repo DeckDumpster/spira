@@ -42,6 +42,11 @@ pub fn expand(argv: &[String]) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
+fn unconfigured(argv: &[String]) -> Option<&str> {
+    let f = argv.windows(2).find(|w| w[0] == "--config").map(|w| w[1].as_str())?;
+    (!std::path::Path::new(f).exists()).then_some(f)
+}
+
 fn parse(argv: &[String]) -> Result<(Real, Vec<Site>), String> {
     let argv = &expand(argv)?;
     let (mut kit, mut kit_ref, mut krate, mut state, mut persona) = (None, None, None, None, "builder".to_string());
@@ -78,6 +83,10 @@ fn main() -> ExitCode {
     if argv.first().map(String::as_str) != Some("pass") {
         eprintln!("kit-bump: unknown command\n{USAGE}");
         return ExitCode::from(2);
+    }
+    if let Some(f) = unconfigured(&argv[1..]) {
+        println!("kit-bump: unconfigured — {f} does not exist (install renders it once SPIRA_KIT_* are set)");
+        return ExitCode::SUCCESS;
     }
     let (real, sites) = match parse(&argv[1..]) {
         Ok(v) => v,
@@ -117,4 +126,24 @@ fn main() -> ExitCode {
     let code = i32::from(!o.failed.is_empty());
     spira_otel::oneshot::end(code);
     ExitCode::from(code as u8)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn v(a: &[&str]) -> Vec<String> {
+        a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_missing_config_file_is_unconfigured_not_an_error() {
+        let d = testkit::TempDir::new("kit-bump-unconfigured");
+        let missing = d.path().join("kit-bump.conf");
+        let m = missing.to_str().unwrap();
+        assert_eq!(unconfigured(&v(&["--config", m])), Some(m));
+        std::fs::write(&missing, "kit /k\n").unwrap();
+        assert_eq!(unconfigured(&v(&["--config", m])), None);
+        assert_eq!(unconfigured(&v(&["--kit", "/k"])), None);
+    }
 }
