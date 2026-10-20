@@ -57,8 +57,7 @@ run_metrics() {   # run_metrics <sentinel-fixture-string> <ledger-fixture-string
     local sf="$TMP/sent.log" lf="$TMP/ledger.log"
     printf '%s' "$1" > "$sf"
     printf '%s' "$2" > "$lf"
-    env -i PATH="/usr/bin:/bin" HOME="$TMP" \
-        SPIRA_SELF_WINDOW=90 \
+    env -i PATH="/usr/bin:/bin" HOME="$TMP" SPIRA_TOML="$(tl_layer SPIRA_SELF_WINDOW=90)" \
         "$COLLECT" metrics "$sf" "$lf" 24 2>/dev/null
 }
 

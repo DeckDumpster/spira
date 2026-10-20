@@ -305,12 +305,10 @@ fn unknown(keys: &[&str]) -> Keys {
     keys.iter().map(|k| (k.to_string(), "?".to_string())).collect()
 }
 
-/// SPIRA_SELF_WINDOW is minutes. The process environment wins so a caller can narrow it for
-/// one run; otherwise the registered config value.
+/// SPIRA_SELF_WINDOW is minutes, from the registered config.
 pub fn self_window_minutes() -> Option<f64> {
-    std::env::var("SPIRA_SELF_WINDOW")
+    spira_config::process::cfg("SPIRA_SELF_WINDOW")
         .ok()
-        .or_else(|| spira_config::process::cfg("SPIRA_SELF_WINDOW").ok())
         .and_then(|v| v.trim().parse().ok())
 }
 
