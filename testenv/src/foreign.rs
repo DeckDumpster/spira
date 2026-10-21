@@ -98,6 +98,9 @@ pub struct Tier {
     /// `dir/` is a prefix, `*.ext` a suffix, anything else an exact path.
     #[serde(default)]
     pub paths: Vec<String>,
+    /// The tier runs podman itself (CI's isolation, deploy and container tiers); pair it with an `image` that carries podman.
+    #[serde(default)]
+    pub nested_podman: bool,
 }
 
 fn path_covers(pattern: &str, path: &str) -> bool {
@@ -452,6 +455,7 @@ impl TierRun<'_> {
             deadline: self.deadline,
             output: self.results.join(format!("{name}.log")),
             cpus: Some(share.to_string()),
+            nested_podman: tier.nested_podman,
         };
         let rc = self.rt.run_once(&req).rc;
         self.rt.purge(&cname);
@@ -636,6 +640,13 @@ mod tests {
         let got = lines.lock().unwrap().join("\n");
         assert!(got.contains("c1: warm cache publish failed (not a verdict"), "{got}");
         assert!(got.contains("merge waited"), "{got}");
+    }
+
+    #[test]
+    fn nested_podman_is_a_per_tier_flag_off_by_default() {
+        let d = Decl::parse("image = \"r\"\n[tier.a]\nargv=[\"x\"]\n[tier.b]\nargv=[\"x\"]\nnested_podman = true\n").unwrap();
+        assert!(!d.tier["a"].nested_podman);
+        assert!(d.tier["b"].nested_podman);
     }
 
     #[test]

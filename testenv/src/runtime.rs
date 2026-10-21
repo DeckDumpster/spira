@@ -132,6 +132,8 @@ pub struct RunRequest {
     pub output: PathBuf,
     /// `podman run --cpus`: the container's share of the host's cores.
     pub cpus: Option<String>,
+    /// Run with what a rootless podman inside the container needs: /dev/fuse and no SELinux relabel.
+    pub nested_podman: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -159,6 +161,9 @@ pub fn podman_run_args(req: &RunRequest) -> Vec<String> {
     if let Some(c) = &req.cpus {
         a.push("--cpus".into());
         a.push(c.clone());
+    }
+    if req.nested_podman {
+        a.extend(["--device", "/dev/fuse", "--security-opt", "label=disable"].map(String::from));
     }
     a.push("-w".into());
     a.push(req.workdir.clone());
@@ -503,11 +508,23 @@ mod tests {
             deadline: None,
             output: "/o".into(),
             cpus: Some("1.5".into()),
+            nested_podman: false,
         };
         assert!(podman_run_args(&req).contains(&"/l:/c:O,upperdir=/u,workdir=/k".to_string()));
         let a = podman_run_args(&req);
         let i = a.iter().position(|x| x == "--cpus").expect("--cpus passed");
         assert_eq!(a[i + 1], "1.5");
+    }
+
+    #[test]
+    fn a_nested_podman_tier_gets_fuse_and_no_relabel() {
+        let mut req = RunRequest::default();
+        assert!(!podman_run_args(&req).contains(&"/dev/fuse".to_string()));
+        req.nested_podman = true;
+        let a = podman_run_args(&req);
+        let i = a.iter().position(|x| x == "--device").expect("--device passed");
+        assert_eq!(a[i + 1], "/dev/fuse");
+        assert!(a.contains(&"label=disable".to_string()));
     }
 
     use super::*;
