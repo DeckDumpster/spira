@@ -23,6 +23,9 @@ A="$(cat "$ROOT/round-vm/ami-setup.sh")"
 want "image carries sqlite3" " sqlite3 " "$A"
 want "image links node and npm" "node npm npx" "$A"
 want "image installs nextest at the foreign pin" "cargo-nextest --version \"\$nextest\"" "$A"
+want "setup leaves the dir template.sh deleted before cargo install" "template.sh\"
+# template.sh removes its work dir, which may be ours: cargo install needs a cwd that exists.
+cd /" "$A"
 want "image checks each foreign repo" "runner-deps.sh\" --check" "$A"
 
 if ! command -v jq >/dev/null 2>&1; then
