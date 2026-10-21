@@ -38,6 +38,23 @@
         "refresh": 2
       },
       {
+        "name": "place",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_VM}"
+        },
+        "label": "place",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "query": {
+          "query": "label_values(spira_cert_pass_verdicts, place)",
+          "refId": "v"
+        },
+        "refresh": 2
+      },
+      {
         "name": "instance_type",
         "type": "query",
         "datasource": {
@@ -86,7 +103,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "quantile_over_time(0.9, spira_cert_pass_capacity_wait_seconds{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__interval])",
+          "expr": "quantile_over_time(0.9, spira_cert_pass_capacity_wait_seconds{repo=~\"$repo\",place=~\"$place\",instance_type=~\"$instance_type\"}[$__interval])",
           "legendFormat": "p90 {{instance_type}}",
           "refId": "A"
         }
@@ -118,7 +135,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "quantile_over_time(0.9, spira_cert_pass_boot_seconds{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__interval])",
+          "expr": "quantile_over_time(0.9, spira_cert_pass_boot_seconds{repo=~\"$repo\",place=~\"$place\",instance_type=~\"$instance_type\"}[$__interval])",
           "legendFormat": "p90 {{instance_type}}",
           "refId": "A"
         }
@@ -150,7 +167,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "quantile_over_time(0.9, spira_cert_pass_build_seconds{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__interval])",
+          "expr": "quantile_over_time(0.9, spira_cert_pass_build_seconds{repo=~\"$repo\",place=~\"$place\",instance_type=~\"$instance_type\"}[$__interval])",
           "legendFormat": "p90 {{instance_type}}",
           "refId": "A"
         }
@@ -182,7 +199,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "quantile_over_time(0.9, spira_cert_pass_suites_seconds{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__interval])",
+          "expr": "quantile_over_time(0.9, spira_cert_pass_suites_seconds{repo=~\"$repo\",place=~\"$place\",instance_type=~\"$instance_type\"}[$__interval])",
           "legendFormat": "p90 {{instance_type}}",
           "refId": "A"
         }
@@ -214,7 +231,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "quantile_over_time(0.5, spira_cert_pass_total_seconds{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__interval])",
+          "expr": "quantile_over_time(0.5, spira_cert_pass_total_seconds{repo=~\"$repo\",place=~\"$place\",instance_type=~\"$instance_type\"}[$__interval])",
           "legendFormat": "{{repo}}",
           "refId": "A"
         }
@@ -246,7 +263,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "quantile_over_time(0.9, spira_cert_pass_total_seconds{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__interval])",
+          "expr": "quantile_over_time(0.9, spira_cert_pass_total_seconds{repo=~\"$repo\",place=~\"$place\",instance_type=~\"$instance_type\"}[$__interval])",
           "legendFormat": "{{instance_type}}",
           "refId": "A"
         }
@@ -278,7 +295,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "sum by (verdict) (sum_over_time(spira_cert_pass_verdicts{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__interval]))",
+          "expr": "sum by (verdict) (sum_over_time(spira_cert_pass_verdicts{repo=~\"$repo\",place=~\"$place\",instance_type=~\"$instance_type\"}[$__interval]))",
           "legendFormat": "{{verdict}}",
           "refId": "A"
         }
@@ -310,7 +327,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "sum by (cause) (sum_over_time(spira_cert_pass_causes{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__interval]))",
+          "expr": "sum by (cause) (sum_over_time(spira_cert_pass_causes{repo=~\"$repo\",place=~\"$place\",instance_type=~\"$instance_type\"}[$__interval]))",
           "legendFormat": "{{cause}}",
           "refId": "A"
         }
@@ -342,7 +359,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "sum(sum_over_time(spira_cert_pass_causes{repo=~\"$repo\",instance_type=~\"$instance_type\",cause=\"infra\"}[$__range])) / sum(sum_over_time(spira_cert_pass_causes{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__range]))",
+          "expr": "sum(sum_over_time(spira_cert_pass_causes{repo=~\"$repo\",place=~\"$place\",instance_type=~\"$instance_type\",cause=\"infra\"}[$__range])) / sum(sum_over_time(spira_cert_pass_causes{repo=~\"$repo\",place=~\"$place\",instance_type=~\"$instance_type\"}[$__range]))",
           "legendFormat": "infra share",
           "refId": "A"
         }
@@ -374,8 +391,104 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "sum by (repo) (sum_over_time(spira_cert_pass_verdicts{repo=~\"$repo\",instance_type=~\"$instance_type\",verdict=\"red\"}[$__range])) / sum by (repo) (sum_over_time(spira_cert_pass_verdicts{repo=~\"$repo\",instance_type=~\"$instance_type\"}[$__range]))",
+          "expr": "sum by (repo) (sum_over_time(spira_cert_pass_verdicts{repo=~\"$repo\",place=~\"$place\",instance_type=~\"$instance_type\",verdict=\"red\"}[$__range])) / sum by (repo) (sum_over_time(spira_cert_pass_verdicts{repo=~\"$repo\",place=~\"$place\",instance_type=~\"$instance_type\"}[$__range]))",
           "legendFormat": "{{repo}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "passes by place \u00d7 verdict",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "sum by (place, verdict) (sum_over_time(spira_cert_pass_verdicts{repo=~\"$repo\",place=~\"$place\",instance_type=~\"$instance_type\"}[$__interval]))",
+          "legendFormat": "{{place}} {{verdict}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "pass wall time p90 by place",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "quantile_over_time(0.9, spira_cert_pass_total_seconds{repo=~\"$repo\",place=~\"$place\",instance_type=~\"$instance_type\"}[$__interval])",
+          "legendFormat": "{{place}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "spill share (ec2 \u00f7 all)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "sum(sum_over_time(spira_cert_pass_verdicts{repo=~\"$repo\",place=~\"$place\",instance_type=~\"$instance_type\",place=\"ec2\"}[$__interval])) / sum(sum_over_time(spira_cert_pass_verdicts{repo=~\"$repo\",place=~\"$place\",instance_type=~\"$instance_type\"}[$__interval]))",
+          "legendFormat": "spill share",
           "refId": "A"
         }
       ]

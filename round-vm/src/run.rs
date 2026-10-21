@@ -1175,7 +1175,8 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
         tsd::pass::Place::Ec2 => facts.instance_type.as_deref().and_then(crate::ec2::vcpus_of),
         _ => Some(env.cfg.vcpus),
     };
-    crate::telemetry::push_placement(if place == tsd::pass::Place::Ec2 { "ec2" } else { "local" }, facts.instance_type.as_deref().unwrap_or("unknown"), facts.wait_s, boot_s);
+    let instance_type = facts.instance_type.clone().unwrap_or_else(|| format!("{}vcpu", env.cfg.vcpus));
+    crate::telemetry::push_placement(place.as_str(), &instance_type, facts.wait_s, boot_s);
     let (pass, members) = match env.record.pass_context(batch) {
         Some((n, m)) => (n.to_string(), m),
         None => (format!("t{started}"), Vec::new()),
@@ -1185,7 +1186,7 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
         batch: batch.to_string(),
         pass,
         members,
-        instance_type: facts.instance_type.unwrap_or_default(),
+        instance_type,
         vcpus,
         place,
         capacity_wait_s: facts.wait_s,
@@ -1196,7 +1197,10 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
         detail: lost.unwrap_or_default(),
     };
     match env.record.pass_record(&env.cfg.run_dir, &record) {
-        Ok(()) => code,
+        Ok(()) => {
+            crate::telemetry::push_pass(&record);
+            code
+        }
         Err(e) => {
             let why = format!("the pass's record could not be written ({e}); its verdict is lost");
             eprintln!("round-vm run: {why}");
