@@ -3,7 +3,7 @@
 # test-round-ami-ssm-commands.sh — the Round AMI SSM command document survives /bin/sh.
 #
 # tier: T1
-# covers: round-vm/wait-image.sh round-vm/ssm-commands.jq .github/workflows/round-ami-build.yml
+# covers: round-vm/ami-setup.sh round-vm/wait-image.sh round-vm/ssm-commands.jq .github/workflows/round-ami-build.yml
 # host-reason: jq and sh only; no container or database dependency
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -19,6 +19,11 @@ F="$ROOT/round-vm/ssm-commands.jq"
 want "filter wraps the setup in bash -c" '"bash -c " + @sh' "$(cat "$F")"
 want "filter sets pipefail inside the bash string" "set -euo pipefail; mkdir" "$(cat "$F")"
 want "toolchain passed to setup" "ami-setup.sh /root/tree" "$(cat "$F")"
+A="$(cat "$ROOT/round-vm/ami-setup.sh")"
+want "image carries sqlite3" " sqlite3 " "$A"
+want "image links node and npm" "node npm npx" "$A"
+want "image installs nextest at the foreign pin" "cargo-nextest --version \"\$nextest\"" "$A"
+want "image checks each foreign repo" "runner-deps.sh\" --check" "$A"
 
 if ! command -v jq >/dev/null 2>&1; then
     ok "jq absent; rendered-document checks skipped"
