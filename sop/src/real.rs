@@ -239,6 +239,42 @@ fn wiki_worktree_root(spira_wiki: &str) -> Option<String> {
     }
 }
 
+/// Commits exactly the regenerated shelf page, then pulls --rebase and pushes when the
+/// repo has an upstream. `Ok(None)` when the page is not in a git repo or did not change.
+pub fn commit_page(out_path: &str, slug: &str) -> Result<Option<String>, String> {
+    let path = std::path::Path::new(out_path);
+    let dir = path.parent().and_then(|d| d.to_str()).filter(|d| !d.is_empty()).unwrap_or(".");
+    let Some(top) = git_out(&["rev-parse", "--show-toplevel"], Some(dir)) else {
+        return Ok(None);
+    };
+    let run = |args: &[&str]| -> Result<String, String> {
+        let out = spira_config::bounded::bounded("git")
+            .arg("-C")
+            .arg(&top)
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("git {}: {e}", args[0]))?;
+        if out.status.success() {
+            Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+        } else {
+            Err(format!("git {} failed: {}", args[0], String::from_utf8_lossy(&out.stderr).trim()))
+        }
+    };
+    let abs = std::fs::canonicalize(path).map_err(|e| format!("{out_path}: {e}"))?;
+    let abs = abs.to_string_lossy().into_owned();
+    if run(&["status", "--porcelain", "--", &abs])?.trim().is_empty() {
+        return Ok(None);
+    }
+    run(&["add", "--", &abs])?;
+    run(&["commit", "--only", "-m", &format!("refactor: regenerate SOP shelf — {slug}"), "--", &abs])?;
+    if run(&["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]).is_ok() {
+        run(&["pull", "--rebase", "--autostash"]).map_err(|e| format!("{e} (page committed locally, not pushed)"))?;
+        run(&["push"]).map_err(|e| format!("{e} (page committed locally, not pushed)"))?;
+    }
+    Ok(Some(format!("sop: committed {out_path}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

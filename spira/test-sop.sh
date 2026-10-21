@@ -160,6 +160,30 @@ else
 fi
 
 echo
+echo "7b. write commits exactly the regenerated page and sends it to the upstream"
+git init -q --bare "$T/wiki-remote.git"
+git -C "$WIKI" remote add origin "$T/wiki-remote.git"
+git -C "$WIKI" config push.autoSetupRemote true
+git -C "$WIKI" branch -q -u origin/HEAD 2>/dev/null
+git -C "$WIKI" push -q -u origin HEAD >/dev/null 2>&1
+echo stray >"$WIKI/stray.txt"
+before="$(git -C "$WIKI" rev-list --count HEAD)"
+printf '%s' "$GOOD" | run_sop write commit-target - >/dev/null
+rc=$?
+is "write exits 0" "0" "$rc"
+is "write adds one commit" "$((before + 1))" "$(git -C "$WIKI" rev-list --count HEAD)"
+is "the commit touches only the shelf page" "wiki/notes/standard-operating-procedures.md" "$(git -C "$WIKI" show --name-only --format= HEAD)"
+is "the shelf page is clean" "" "$(git -C "$WIKI" status --porcelain -- wiki/notes/standard-operating-procedures.md)"
+is "the commit reached the remote" "$(git -C "$WIKI" rev-parse HEAD)" "$(git -C "$T/wiki-remote.git" rev-parse HEAD)"
+want "the unrelated file is left alone" "?? stray.txt" "$(git -C "$WIKI" status --porcelain)"
+rm -f "$WIKI/stray.txt"
+printf '#!/bin/sh\nexit 1\n' >"$T/wiki-remote.git/hooks/pre-receive"; chmod +x "$T/wiki-remote.git/hooks/pre-receive"
+out="$(printf '%s' "$GOOD" | run_sop write push-fails - )"; rc=$?
+is "a refused upload exits non-zero" "1" "$rc"
+want "the failure names the git step" "failed" "$out"
+rm -f "$T/wiki-remote.git/hooks/pre-receive"
+
+echo
 echo "8. the chamber briefs and aeon's rendered hint name a bare sop, not a deleted sop.sh"
 if grep -rqE '(^|[^.])\bsop\.sh\b' "$HERE/chamber/ops.md" "$HERE/chamber/ops.fayth" "$HERE/chamber/concierge.md" 2>/dev/null; then
     bad "no chamber brief names sop.sh" "$(grep -rnE '(^|[^.])\bsop\.sh\b' "$HERE/chamber/ops.md" "$HERE/chamber/ops.fayth" "$HERE/chamber/concierge.md" 2>/dev/null)"
