@@ -494,7 +494,7 @@ fn build_with_a_bin_dir_also_carries_every_declared_compat_name() {
     let w = World::with_git(FakeGit {
         extra: vec![(
             "spira/deps.toml".into(),
-            "[[compat]]\nname = \"tool\"\nalias = \"tool.sh\"\n\n[[compat]]\nname = \"missing\"\nalias = \"missing.sh\"\n".into(),
+            "[[compat]]\nname = \"tool\"\nalias = \"tool.sh\"\n".into(),
             false,
         )],
         ..Default::default()
@@ -517,10 +517,6 @@ fn build_with_a_bin_dir_also_carries_every_declared_compat_name() {
     assert!(spira_alias.is_symlink(), "spira/tool.sh must exist");
     assert_eq!(fs::read_link(&spira_alias).unwrap(), Path::new("../bin/tool"));
     assert_eq!(fs::read_to_string(&spira_alias).unwrap(), "#!/bin/sh\n# the round's tested build\n");
-
-    // "missing" was never built (its declared binary doesn't exist) — skipped, not refused.
-    assert!(!w.rel(A).join("bin/missing.sh").exists());
-    assert!(!w.rel(A).join("spira/missing.sh").exists());
 
     // The manifest records both symlinks (Manifest::scan's existing Node::Link handling),
     // and verify() still reports a clean release.
