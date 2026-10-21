@@ -1408,6 +1408,7 @@ fn dovecot_dropin_missing_warns_and_present_is_ok() {
     let out = check_dovecot_dropin(&f);
     assert_eq!(levels(&out), vec![Level::Warn]);
     assert!(out[0].detail.as_deref().unwrap().contains("--system-user"));
+    assert!(out[0].detail.as_deref().unwrap().contains("systemctl restart dovecot"));
     f.files.borrow_mut().push(Path::new("/etc/systemd/system/dovecot.service.d/spira-tailnet.conf").to_path_buf());
     assert_eq!(levels(&check_dovecot_dropin(&f)), vec![Level::Ok]);
 }
