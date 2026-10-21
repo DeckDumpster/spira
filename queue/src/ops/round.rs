@@ -201,6 +201,8 @@ fn start_pass(w: &World, batch: &str, head: &str, strict: bool) -> Result<(), (i
     })
 }
 
+const STALE_TRIES: u32 = 5;
+
 fn suites_started(w: &World, batch: &str, strict: bool) -> Result<(), (i32, String)> {
     let send = || {
         pass_event(w, batch, |_, n, phase| {
@@ -208,10 +210,17 @@ fn suites_started(w: &World, batch: &str, strict: bool) -> Result<(), (i32, Stri
                 .then(|| serde_json::json!({"SuitesStarted": {"n": n}}).to_string())
         })
     };
-    match send() {
-        Err((_, e)) if e.contains("StaleVersion") => send(),
-        r => r,
+    let mut sent = send();
+    for attempt in 1..STALE_TRIES {
+        match &sent {
+            Err((_, e)) if e.contains("StaleVersion") => {
+                w.clock.sleep(u64::from(attempt));
+                sent = send();
+            }
+            _ => break,
+        }
     }
+    sent
 }
 
 fn pass_verdict_event(

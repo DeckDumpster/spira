@@ -845,6 +845,8 @@ struct FLc {
     event_ignored: Cell<bool>,
     /// The next bead event finds the row already moved: its version bumped, the call refused.
     event_races: RefCell<Option<(String, String)>>,
+    /// The next N batch events are refused StaleVersion before they apply.
+    stale_batch_events: Cell<u32>,
     /// `show <bead>` cannot answer (the bulk `list` still does).
     row_fails: Cell<bool>,
     /// When set, the batch answers (state, version, pass, phase) and follows the pass events it is sent.
@@ -879,6 +881,7 @@ impl Default for FLc {
             batch_event_times_out: Cell::new(None),
             event_ignored: Cell::new(false),
             event_races: RefCell::default(),
+            stale_batch_events: Cell::new(0),
             row_fails: Cell::new(false),
             batch_view: RefCell::default(),
             mend_tips: RefCell::default(),
@@ -1045,6 +1048,10 @@ impl Lc for FLc {
         self.calls
             .borrow_mut()
             .push(format!("event batch {id} {s} {v} {kind}"));
+        if self.stale_batch_events.get() > 0 {
+            self.stale_batch_events.set(self.stale_batch_events.get() - 1);
+            return Err((1, "refused: StaleVersion { given: 4, current: 5 }".into()));
+        }
         if self
             .batch_event_refused
             .get()
