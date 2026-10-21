@@ -81,6 +81,7 @@ claim_retry_delay_s = "1"
 client_settings = "/fixture/userhome/.claude/settings.json"
 cockpit = "/fixture/userhome/spira/spira-releases/current/cockpit"
 cockpit_trace_lines = "2"
+cold_par = 1
 compile_par = 3
 compile_stall_mins = 30
 concierge_inbox = "/fixture/userhome/spira/run/watchd/concierge-inbox.log"

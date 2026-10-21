@@ -10,6 +10,7 @@ removed = ["spira.broker_enable", "spira.express_label", "spira.overlap_defer_la
 "spira.queue_rounds_max" = 2
 "spira.publish_red_priority" = 1
 "spira.publish_red_escalate_after" = 3
+"spira.cold_par" = 1
 "spira.preflight_wall_secs" = "240"
 "spira.flow_window_hours" = "0.5"
 "spira.flow_baseline_hours" = "24"
