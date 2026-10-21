@@ -972,7 +972,12 @@ fn finish_local_round(
     if attested {
         println!("batcher {}: the staged pass certified the round's tree (attested at {})", repo.name, stable.head);
     } else {
-        match io::round_certify(env_, repo, batch, &stable.head) {
+        let attest = if gate::own::declares_own_testenv(wt) {
+            None
+        } else {
+            Some((stable.head.as_str(), io::all_suites(repo, &stable.green_branch).len()))
+        };
+        match io::round_certify(env_, repo, batch, attest) {
             Ok(()) => println!("batcher {}: certified the round's tree (round GREEN at {})", repo.name, stable.head),
             Err(e) => return refuse(format!("batcher {}: refused to land locally at {head} — cannot certify the round: {e}", repo.name)),
         }

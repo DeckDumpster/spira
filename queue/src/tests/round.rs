@@ -1364,6 +1364,44 @@ fn the_blocking_only_reader_passed_what_unjudgeable_now_refuses() {
 }
 
 #[test]
+fn an_attestation_of_a_corpus_that_ran_nothing_is_refused() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    for extra in [&[][..], &["--ran", "0"][..], &["--ran", "x"][..]] {
+        let mut args = vec!["round", "certify", &batch, "--attest", "merged-ta"];
+        args.extend_from_slice(extra);
+        assert_eq!(t.run(&args), 1, "{}", t.err());
+        assert!(t.err().contains("a vacuous pass is not a certificate"), "{}", t.err());
+    }
+    assert!(!certified_tree_exists(&t));
+}
+
+#[test]
+fn a_green_round_names_how_many_suites_it_ran() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    assert_eq!(
+        t.run(&["round", "certify", &batch, "--attest", "merged-ta", "--ran", "7"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(t.out().contains("ran=7 wall="), "{}", t.out());
+}
+
+#[test]
 fn attest_names_the_worktrees_own_head_and_nothing_else() {
     let t = round_world();
     assert_eq!(
@@ -1375,7 +1413,7 @@ fn attest_names_the_worktrees_own_head_and_nothing_else() {
     let batch = batch_of(&t);
     t.git.set("refs/heads/elsewhere", "merged-ta");
     assert_eq!(
-        t.run(&["round", "certify", &batch, "--attest", "elsewhere"]),
+        t.run(&["round", "certify", &batch, "--attest", "elsewhere", "--ran", "3"]),
         1
     );
     assert!(
@@ -1393,7 +1431,7 @@ fn attest_names_the_worktrees_own_head_and_nothing_else() {
     );
 
     assert_eq!(
-        t.run(&["round", "certify", &batch, "--attest", "merged-tb"]),
+        t.run(&["round", "certify", &batch, "--attest", "merged-tb", "--ran", "3"]),
         0,
         "{}",
         t.err()
@@ -2682,7 +2720,7 @@ fn a_green_write_that_times_out_after_applying_still_certifies_and_certify_is_id
     );
 
     assert_eq!(
-        t.run(&["round", "certify", &batch, "--attest", "merged-ta"]),
+        t.run(&["round", "certify", &batch, "--attest", "merged-ta", "--ran", "3"]),
         0,
         "{}",
         t.err()
@@ -2711,7 +2749,7 @@ fn a_retry_after_a_timed_out_green_completes_the_missing_certificate() {
     *t.lc.batch_view.borrow_mut() = Some(("GREEN".into(), 1, 1, String::new()));
     let ran = t.scripts.calls.borrow().len();
     assert_eq!(
-        t.run(&["round", "certify", &batch, "--attest", "merged-ta"]),
+        t.run(&["round", "certify", &batch, "--attest", "merged-ta", "--ran", "3"]),
         0,
         "{}",
         t.err()
@@ -2764,7 +2802,7 @@ fn a_green_batch_at_another_head_is_still_refused_as_changed() {
     *t.lc.batch_view.borrow_mut() = Some(("GREEN".into(), 1, 1, String::new()));
     t.git.set("refs/heads/elsewhere", "merged-ta");
     assert_eq!(
-        t.run(&["round", "certify", &batch, "--attest", "elsewhere"]),
+        t.run(&["round", "certify", &batch, "--attest", "elsewhere", "--ran", "3"]),
         1
     );
     assert!(!certified_tree_exists(&t));
