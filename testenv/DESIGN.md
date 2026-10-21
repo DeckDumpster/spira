@@ -69,7 +69,7 @@ options. An unknown option prints `batch: unknown option: X` and the usage line,
 directory runs the tiers it declares in `.spira/testenv.toml` — `image`, optional `workdir`
 (default `/work`) and `timeout`, `default` (tiers run with no `--suites`; absent = all), and
 `[tier.<name>]` with `argv`, `env`, `timeout` and an optional `image` that overrides the repository's
-for that tier only (a Node check beside Rust tiers; an empty one is refused). `nested_podman = true` runs the tier with `/dev/fuse` and SELinux relabelling off so a rootless podman inside it works; pair it with an `image` that carries podman (CI's isolation, deploy and container tiers). Each tier is one
+for that tier only (a Node check beside Rust tiers; an empty one is refused). Each tier is one
 `podman run --rm` of its image with the tree mounted at `workdir`, bounded by `--deadline`; `--suites` names tiers
 (`reason=unknown-suite` otherwise), output lands in `<results>/<tier>.log`, and the last line is
 the usual `VERDICT`. podman's own failure (rc 125) is `FAULT reason=container-run`, never RED. A
