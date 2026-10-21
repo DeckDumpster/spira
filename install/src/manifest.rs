@@ -234,13 +234,6 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
         m.notes.push("Start your Dolt server yourself, or set it in spira.conf.".into());
     }
 
-    if inputs.testdb_data_set {
-        // Installed, not enabled: testdb.sh starts it on demand.
-        m.units.push(t("dolt-beads-test.service", false));
-    } else {
-        m.optional.push("dolt-beads-test.service".into());
-    }
-
     m.units.push(t("spira-loom.service", true));
     m.units.push(t("spira-unit-run-dbus.service", true));
     m.units.push(t("spira-submission.service", true));
@@ -559,15 +552,6 @@ mod tests {
         assert!(m.units.iter().any(|u| u.name == "dolt-persist-compact.timer" && u.enable));
         assert!(m.units.iter().any(|u| u.name == "dolt-persist-compact.service" && !u.enable), "the timer runs it, never boot");
         assert!(union_template_names().contains(&"dolt-persist.service".to_string()), "uninstall knows the unit");
-    }
-
-    #[test]
-    fn dolt_beads_test_is_installed_but_never_enabled() {
-        let mut i = inputs();
-        i.testdb_data_set = true;
-        let m = build(&i).unwrap();
-        let u = m.units.iter().find(|u| u.name == "dolt-beads-test.service").unwrap();
-        assert!(!u.enable);
     }
 
     #[test]

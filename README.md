@@ -461,7 +461,7 @@ Crates that are libraries only: `lifecycle` (pure state machines), `spira-otel`,
 
 | Component | Binaries / units | Purpose, reads and writes |
 |---|---|---|
-| **Dolt store** | `dolt-beads.service` (`dolt sql-server`, `Restart=always`, refuses manual stop), `dolt-persist.service`, `dolt-persist-compact.timer`, `dolt-tmp-prune.timer`, `spira-dolt-boot-check.timer`, `dolt-beads-test.service` (on-demand fixture server, never real data) | The bead store, installed when `SPIRA_DOLT_DATA` is set (persistence units also need `SPIRA_DOLT_DURABLE`). The boot check alarms the operator if the store is not active shortly after boot. |
+| **Dolt store** | `dolt-beads.service` (`dolt sql-server`, `Restart=always`, refuses manual stop), `dolt-persist.service`, `dolt-persist-compact.timer`, `dolt-tmp-prune.timer`, `spira-dolt-boot-check.timer` | The bead store, installed when `SPIRA_DOLT_DATA` is set (persistence units also need `SPIRA_DOLT_DURABLE`). The boot check alarms the operator if the store is not active shortly after boot. |
 | **store-persist** | `store-persist restore\|pass [--offline]\|run\|seed --from DIR\|compact\|age` | Keeps a RAM-resident Dolt data dir durable: one `dolt backup` per database, restored before the server starts, synced continuously, compacted daily. `age` exits 1 past the lag bound. |
 | **beads-store** | `beads-store commit --db P --message M`, `push --db P --remote R` | Commits a beads store's dirty tracked tables through the real `dolt` engine (never `bd`) and verifies the commit cleared the working set. Operator tool; no unit calls it. |
 | **lifecycle** | library; `lifecycle/schema.sql`, `migrations/`, `grants.sql` | The bead, delivery, batch, ask and mending machines and the event-log fold. Defines database `spira_lifecycle`; grants make `spira_lc` its only writer. |
@@ -589,7 +589,7 @@ here unless they have no other home.
 | `spira-statute-audit` | `rule audit --file --for builder --max 5` | weekly | statutes naming tools that do not exist |
 | `spira-incident-settle` | `incident settle` | every 5 min | close incidents whose fix landed and detector is quiet |
 
-Long-running services with no timer: `dolt-beads`, `dolt-beads-test`, `dolt-persist`,
+Long-running services with no timer: `dolt-beads`, `dolt-persist`,
 `lc-serve` / `spira-lc` (+ sockets), `sccache-dav`, `spira-loom`, `spira-cockpit`,
 `spira-mail-deliver`, `spira-submission`, `spira-metrics-*`, `spira-unit-run-dbus`,
 `spira-watch@<name>`.

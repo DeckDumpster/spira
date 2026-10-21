@@ -6,7 +6,7 @@
 #   ./test-lifecycle-container.sh
 #
 # WHAT THIS PROVES, against a throwaway `dolt sql-server` this suite starts and tears
-# down itself (never dolt-beads.service, never dolt-beads-test.service — its own disposable
+# down itself (never dolt-beads.service — its own disposable
 # instance, on SPIRA_LC_TESTDB_PORT, in a fresh SPIRA_LC_TESTDB_DATA-rooted tmp dir):
 #   - a non-spira_lc user's write is refused, with `--use-db` selected and without (the
 #     qualified-name form) — POSITIVE CONTROL: the same user's SELECT is checked to still

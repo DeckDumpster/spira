@@ -171,8 +171,8 @@ pub fn fixture_brief(fixture: Option<&FixtureInfo>, testdb_lib: &str, port: &str
         Some(f) => {
             let (engine, cleanup) = if f.mode == "server" {
                 (
-                    format!("the dolt-beads-test server (port {})", if port.is_empty() { "3308" } else { port }),
-                    "testdb_drop (which stops dolt-beads-test.service if this session started it)".to_string(),
+                    format!("a private Dolt sql-server (port {})", if port.is_empty() { "3308" } else { port }),
+                    "testdb_drop (which stops that server if this session started it)".to_string(),
                 )
             } else {
                 ("the embedded Dolt engine — no shared server, no external port".to_string(), "`rm -rf` on the fixture directory".to_string())
@@ -796,7 +796,7 @@ mod tests {
         assert!(e.contains("spending the 1234ms"));
         assert!(e.contains("embedded Dolt engine"));
         let s = fixture_brief(Some(&FixtureInfo { mode: "server".into(), ..f }), "spira/testdb.sh", "", 1);
-        assert!(s.contains("dolt-beads-test server (port 3308)"));
+        assert!(s.contains("private Dolt sql-server (port 3308)"));
     }
 
     // test-aeon-resume.sh's render rows.
