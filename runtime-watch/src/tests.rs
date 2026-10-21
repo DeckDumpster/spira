@@ -11,6 +11,7 @@ struct Fake {
     node: Option<EolSupport>,
     py: Option<EolSupport>,
     open: RefCell<BTreeMap<String, String>>,
+    foreign: Vec<(String, String, String)>,
     filed: RefCell<Vec<(String, String)>>,
 }
 
@@ -43,7 +44,8 @@ impl World for Fake {
         self.py.clone().ok_or_else(|| "endoflife.date unreachable".into())
     }
     fn open_bump(&self, repo: &Repo, rt: Runtime) -> Result<Option<String>, String> {
-        Ok(self.open.borrow().get(&format!("{} {}", repo.name, rt.name())).cloned())
+        let own = self.open.borrow().get(&format!("{} {}", repo.name, rt.name())).cloned();
+        Ok(own.or_else(|| self.foreign.iter().find(|(r, _, t)| *r == repo.name && names_bump(t, rt)).map(|(_, id, _)| id.clone())))
     }
     fn file_bump(&self, repo: &Repo, rt: Runtime, title: &str, body: &str) -> Result<String, String> {
         self.open.borrow_mut().insert(format!("{} {}", repo.name, rt.name()), "sp-x".into());
@@ -160,4 +162,21 @@ fn civil_date_is_the_calendar_date() {
     assert_eq!(civil_date(0), "1970-01-01");
     assert_eq!(civil_date(1_792_595_783), "2026-10-21");
     assert_eq!(civil_date(951_782_400), "2000-02-29");
+}
+
+#[test]
+fn a_bump_bead_filed_outside_the_ledger_is_amended_not_duplicated() {
+    let foreign = vec![("old".to_string(), "sp-hand".to_string(), "Bump Rust toolchain 1.82.0 -> 1.99.1".to_string())];
+    let w = Fake { rust: Some("1.94.0".into()), foreign, ..Default::default() }.file("old", "rust-toolchain.toml", &tc("1.92.0"));
+    let o = pass(&w, 10);
+    assert!(o.filed.is_empty() && w.filed.borrow().is_empty(), "{o:?}");
+    assert_eq!(o.open, vec!["old rust"]);
+}
+
+#[test]
+fn names_bump_needs_the_runtime_and_a_bump_word() {
+    assert!(names_bump("bump rust 1.82.0 to 1.99.1", Runtime::Rust));
+    assert!(names_bump("Upgrade the Rust toolchain", Runtime::Rust));
+    assert!(!names_bump("bump node 18 to 22", Runtime::Rust));
+    assert!(!names_bump("rust build is slow", Runtime::Rust));
 }

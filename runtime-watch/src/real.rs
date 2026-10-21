@@ -1,4 +1,4 @@
-use crate::{civil_date, parse_node, parse_python, parse_rust_stable, EolSupport, Repo, Runtime, RustSupport, World, LABEL};
+use crate::{civil_date, names_bump, parse_node, parse_python, parse_rust_stable, EolSupport, Repo, Runtime, RustSupport, World, LABEL};
 use spira_config::bounded::{bounded, bounded_for};
 use spira_config::repos::{Column, Registry};
 use std::cell::RefCell;
@@ -62,6 +62,22 @@ impl Real {
         std::fs::write(&self.state, text).map_err(|e| format!("cannot record {id} in {}: {e}", self.state.display()))
     }
 
+    fn ledger_bump(&self, repo: &Repo, rt: Runtime) -> Result<Option<String>, String> {
+        let Some(id) = self.bumps.borrow().get(&key(repo, rt)).cloned() else { return Ok(None) };
+        let mut c = bounded(spira_config::lifecycle_row::lc_bin());
+        c.args(["show", &id]);
+        let out = c.output().map_err(|e| e.to_string())?;
+        match out.status.code() {
+            Some(1) => Ok(None),
+            Some(0) => {
+                let doc: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| format!("{id}: not JSON: {e}"))?;
+                let state = doc["bead"]["state"].as_str().ok_or_else(|| format!("{id}: no state"))?;
+                Ok((!TERMINAL.contains(&state)).then_some(id))
+            }
+            _ => Err(format!("cannot tell whether {id} is open: {}", String::from_utf8_lossy(&out.stdout).trim())),
+        }
+    }
+
     fn bead(&self, args: &[&str]) -> Result<String, String> {
         // batch-job: bead.sh opens the store and runs as long as the filing takes
         let mut c = bounded_for("bead.sh", "120");
@@ -113,19 +129,21 @@ impl World for Real {
     }
 
     fn open_bump(&self, repo: &Repo, rt: Runtime) -> Result<Option<String>, String> {
-        let Some(id) = self.bumps.borrow().get(&key(repo, rt)).cloned() else { return Ok(None) };
-        let mut c = bounded(spira_config::lifecycle_row::lc_bin());
-        c.args(["show", &id]);
-        let out = c.output().map_err(|e| e.to_string())?;
-        match out.status.code() {
-            Some(1) => Ok(None),
-            Some(0) => {
-                let doc: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| format!("{id}: not JSON: {e}"))?;
-                let state = doc["bead"]["state"].as_str().ok_or_else(|| format!("{id}: no state"))?;
-                Ok((!TERMINAL.contains(&state)).then_some(id))
-            }
-            _ => Err(format!("cannot tell whether {id} is open: {}", String::from_utf8_lossy(&out.stdout).trim())),
+        if let Some(id) = self.ledger_bump(repo, rt)? {
+            return Ok(Some(id));
         }
+        let mut c = bounded(spira_config::lifecycle_row::lc_bin());
+        c.args(["list", "--live", "--repo", &repo.name]);
+        let out = c.output().map_err(|e| e.to_string())?;
+        if out.status.code() != Some(0) {
+            return Err(format!("cannot list {}'s open beads: {}", repo.name, String::from_utf8_lossy(&out.stdout).trim()));
+        }
+        let beads: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).map_err(|e| format!("{}: bead list not JSON: {e}", repo.name))?;
+        Ok(beads
+            .iter()
+            .filter(|b| b["state"].as_str().is_some_and(|s| !TERMINAL.contains(&s)))
+            .find(|b| b["title"].as_str().is_some_and(|t| names_bump(t, rt)))
+            .and_then(|b| b["bead_id"].as_str().map(str::to_string)))
     }
 
     fn file_bump(&self, repo: &Repo, rt: Runtime, title: &str, body: &str) -> Result<String, String> {
