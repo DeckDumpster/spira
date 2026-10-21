@@ -31,6 +31,11 @@ id = "UC-config-store-preflight-05"
 tier = "T1"
 statement = "mutable state resolves under the runtime directory, never inside the harness tree"
 
+[use_case.uncovered]
+reason = "test-cockpit-runtime-path.sh only asserted the deleted SPIRA_PREFIX_MAP default; no suite asserts mutable state resolves outside the harness tree"
+date = "2026-10-21"
+bead = "sp-qu3k0s"
+
 [[use_case]]
 id = "UC-config-store-preflight-06"
 tier = "T1"

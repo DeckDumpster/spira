@@ -259,7 +259,12 @@ bead = "sp-b99nj"
 [[use_case]]
 id = "UC-test-infrastructure-34"
 tier = "T1"
-statement = "**One report grammar.** Every suite emits `ok`/`FAIL` lines in one format and an `ASSERTIONS n` trailer through `suite-assert.sh`, including on an early exit."
+statement = "**One report grammar.** Every suite emits `ok`/`FAIL` lines in one format and an `ASSERTIONS n` trailer through `testlib.sh`, including on an early exit."
+
+[use_case.uncovered]
+reason = "test-suite-assert.sh was deleted with suite-assert.sh; the trailer is now emitted by testlib.sh and no suite asserts the grammar"
+date = "2026-10-21"
+bead = "sp-qu3k0s"
 
 [[use_case]]
 id = "UC-test-infrastructure-35"
