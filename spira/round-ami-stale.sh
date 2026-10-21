@@ -28,7 +28,7 @@ _ras_say() {
 cmd_pass() {
     case "${SPIRA_ROUND_VM_SPILL:-}" in ec2|ec2-always|ec2-only) ;; *) return 0 ;; esac
     local out rc line
-    out="$(timeout 60 round-vm ami-check 2>&1)"; rc=$?
+    out="$(timeout 60 round-vm ami-check 2>&1)"; rc=$? # batch-job: AWS image listing, polled off the hot path
     case "$rc" in
         0) rm -f "$SAID"; return 0 ;;
         1) line="$(printf '%s' "$out" | tail -n 1)" ;;
