@@ -76,10 +76,9 @@ is "dashboard is valid JSON" 0 "$(python3 -c 'import json,sys; json.load(open(sy
 exprs="$(python3 -c 'import json,sys
 for p in json.load(open(sys.argv[1]))["panels"]:
     for t in p["targets"]: print(t["expr"])' "$dash")"
-want "dashboard graphs call rate" "traces_span_metrics_calls_total" "$exprs"
-want "dashboard graphs p95 latency" "histogram_quantile(0.95" "$exprs"
-want "dashboard graphs errors" "STATUS_CODE_ERROR" "$exprs"
-want "dashboard groups by verb label" "rpc_method" "$exprs"
+want "dashboard graphs call rate" "spira_bead_store_calls" "$exprs"
+want "dashboard graphs latency quantiles" "quantile_over_time(0.9" "$exprs"
+want "dashboard groups by verb label" "by (verb)" "$exprs"
 want "datasource uid matches the dashboard" "uid: spira-vm" "$(cat "$HERE/metrics/grafana/provisioning/datasources/victoriametrics.yaml")"
 
 tl_summary
