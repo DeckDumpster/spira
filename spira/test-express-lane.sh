@@ -11,6 +11,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testdb.sh"
 testdb_require test-express-lane
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+printf '## Build\n\nA fixture change in spira/x.\n' > "$TMP/build.md"
 testdb_up express-lane || {
     printf 'SKIP test-express-lane: testdb not available\n' >&2
     exit 77
@@ -86,7 +87,7 @@ testdb_seed <<'SEED'
 SEED
 out="$(SPIRA_HOME="$SH" \
     bash "$SH/bead.sh" file "express test bead" \
-    --for builder --repo fixture-repo --priority 1 2>&1)" || true
+    --for builder --repo fixture-repo --body-file "$TMP/build.md" --priority 1 2>&1)" || true
 BID="$(printf '%s' "$out" | grep -oE 'sp-[a-z0-9]+' | head -1)"
 if [ -n "$BID" ]; then
     LABELS="$(labels_of "$BID")"
@@ -100,7 +101,7 @@ testdb_seed <<'SEED'
 SEED
 out="$(SPIRA_HOME="$SH" \
     bash "$SH/bead.sh" file "express test bead" \
-    --for builder --repo fixture-repo --priority 1 --express 2>&1)" || true
+    --for builder --repo fixture-repo --body-file "$TMP/build.md" --priority 1 --express 2>&1)" || true
 BID="$(printf '%s' "$out" | grep -oE 'sp-[a-z0-9]+' | head -1)"
 if [ -n "$BID" ]; then
     LABELS="$(labels_of "$BID")"
@@ -120,7 +121,7 @@ testdb_seed <<'SEED'
 SEED
 out="$(SPIRA_HOME="$SH" \
     bash "$SH/bead.sh" file "P0 blocker" \
-    --for builder --repo fixture-repo --priority 0 2>&1)" || true
+    --for builder --repo fixture-repo --body-file "$TMP/build.md" --priority 0 2>&1)" || true
 BID="$(printf '%s' "$out" | grep -oE 'sp-[a-z0-9]+' | head -1)"
 if [ -n "$BID" ]; then
     LABELS="$(labels_of "$BID")"
@@ -136,7 +137,7 @@ testdb_seed <<'SEED'
 SEED
 out="$(SPIRA_HOME="$SH" \
     bash "$SH/bead.sh" file "P0 blocker, express" \
-    --for builder --repo fixture-repo --priority 0 --express 2>&1)" || true
+    --for builder --repo fixture-repo --body-file "$TMP/build.md" --priority 0 --express 2>&1)" || true
 BID="$(printf '%s' "$out" | grep -oE 'sp-[a-z0-9]+' | head -1)"
 if [ -n "$BID" ]; then
     LABELS="$(labels_of "$BID")"
@@ -153,7 +154,7 @@ testdb_seed <<'SEED'
 SEED
 out="$(SPIRA_HOME="$SH" \
     bash "$SH/bead.sh" file "P1 no express" \
-    --for builder --repo fixture-repo --priority 1 2>&1)" || true
+    --for builder --repo fixture-repo --body-file "$TMP/build.md" --priority 1 2>&1)" || true
 BID="$(printf '%s' "$out" | grep -oE 'sp-[a-z0-9]+' | head -1)"
 if [ -n "$BID" ]; then
     LABELS="$(labels_of "$BID")"
@@ -170,7 +171,7 @@ testdb_seed <<'SEED'
 SEED
 out="$(SPIRA_HOME="$SH" \
     bash "$SH/bead.sh" file "amend target" \
-    --for builder --repo fixture-repo --priority 2 2>&1)" || true
+    --for builder --repo fixture-repo --body-file "$TMP/build.md" --priority 2 2>&1)" || true
 BID="$(printf '%s' "$out" | grep -oE 'sp-[a-z0-9]+' | head -1)"
 if [ -n "$BID" ]; then
     # POSITIVE CONTROL: no express label before amend.

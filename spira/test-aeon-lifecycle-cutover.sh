@@ -46,6 +46,7 @@ testdb_require "test-aeon-lifecycle-cutover.sh"
 
 REPO="$(cd "$HERE/.." && pwd)"
 TMP="$(mktemp -d)"
+printf '## Build\n\nA fixture change in spira/x.\n' > "$TMP/build.md"
 PORT=$((SPIRA_LC_TESTDB_PORT + 900 + (RANDOM % 500)))
 SERVER_PID=""
 SERVE_PID=""
@@ -328,7 +329,7 @@ printf '%s' "\$?" > "$TMP/work-submit-rc"
 SHIM
 chmod +x "$BIN/claude"
 
-BID="$(bead.sh file "aeon lifecycle cutover container fixture" --for builder --repo fixture 2>/dev/null | tail -1)"
+BID="$(bead.sh file "aeon lifecycle cutover container fixture" --for builder --repo fixture --body-file "$TMP/build.md" 2>/dev/null | tail -1)"
 [ -n "$BID" ] || bail "bead.sh file did not return an id"
 seed_bead "$BID" READY
 
@@ -369,9 +370,9 @@ for r in d:
 '
 }
 
-PREREQ="$(bash "$HERE/bead.sh" file "stack fixture: prerequisite" --for builder --repo fixture 2>/dev/null | tail -1)"
+PREREQ="$(bash "$HERE/bead.sh" file "stack fixture: prerequisite" --for builder --repo fixture --body-file "$TMP/build.md" 2>/dev/null | tail -1)"
 [ -n "$PREREQ" ] || bail "bead.sh file did not return an id for the prerequisite"
-DEP="$(bash "$HERE/bead.sh" file "stack fixture: dependent" --for builder --repo fixture 2>/dev/null | tail -1)"
+DEP="$(bash "$HERE/bead.sh" file "stack fixture: dependent" --for builder --repo fixture --body-file "$TMP/build.md" 2>/dev/null | tail -1)"
 [ -n "$DEP" ] || bail "bead.sh file did not return an id for the dependent"
 
 bash "$HERE/bead.sh" dep add "$DEP" "$PREREQ" >/dev/null 2>&1
