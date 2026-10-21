@@ -3373,80 +3373,83 @@ fn a_round_is_addressed_by_its_batch_id_and_the_oldest_record_follows_the_landed
     assert!(!t.qfile("round.r-3").exists());
 }
 
-fn two_green_rounds(t: &T) {
+fn tree_of(t: &T, head: &str) {
+    t.git.ancestor(head, head);
+    t.git.trees.borrow_mut().insert(head.into(), T_ROUND.into());
+}
+
+fn open_and_certify(t: &T, member: &str, name: &str) {
     assert_eq!(
-        t.run(&["round", "open", "--members", "sp-a", "--name", "r-1"]),
+        t.run(&["round", "open", "--members", member, "--name", name]),
         0,
         "{}",
         t.err()
     );
+}
+
+fn two_green_stacked_rounds(t: &T) {
+    open_and_certify(t, "sp-a", "r-1");
     assert_eq!(t.run(&["round", "certify", "r-1"]), 0, "{}", t.err());
     t.git.heads_name_their_base.set(true);
-    assert_eq!(
-        t.run(&["round", "open", "--members", "sp-b", "--name", "r-2"]),
-        0,
-        "{}",
-        t.err()
-    );
+    open_and_certify(t, "sp-b", "r-2");
+    tree_of(t, "merged-tb@merged-ta");
     assert_eq!(t.run(&["round", "certify", "r-2"]), 0, "{}", t.err());
-    t.git
-        .trees
-        .borrow_mut()
-        .insert("merged-tb@merged-ta".into(), T_ROUND.into());
     t.git.ancestor("ta", "merged-ta");
     t.git.ancestor("tb", "merged-tb@merged-ta");
 }
 
 #[test]
-fn a_later_round_with_no_file_in_common_is_still_certified_on_the_merged_tree_before_it_lands() {
+fn a_later_round_is_cut_on_the_earlier_rounds_head_and_lands_after_it_with_one_certify() {
     let t = concurrent_world();
-    two_green_rounds(&t);
-    t.git.stat("b0", "merged-ta", &[("x.rs", 1, 0)]);
-    t.git.stat("b0", "merged-tb", &[("y.rs", 1, 0)]);
-    assert_eq!(t.run(&["round", "land", "r-1"]), 0, "{}", t.err());
+    two_green_stacked_rounds(&t);
+    let second = kv_of(&t, "round.r-2");
+    assert_eq!(
+        (second["base"].as_str(), second["parent"].as_str()),
+        ("merged-ta", "r-1"),
+        "the second round is stacked on the first round's head"
+    );
+    let runs = vm_runs(&t);
     assert_eq!(t.run(&["round", "land", "r-2"]), 1);
     assert!(
-        t.err().contains("files in common with what landed: none")
-            && t.err().contains("it is not landed"),
+        t.err()
+            .contains("stacked on round r-1, which has not landed"),
         "{}",
         t.err()
     );
     assert_eq!(
         t.landed_ref().as_deref(),
-        Some("merged-ta"),
-        "nothing of the later round landed on a pass it did not earn"
+        Some("b0"),
+        "the stacked round lands only behind its parent"
     );
-    assert!(
-        t.landing_log().contains("QUEUE ROUND-REMERGE"),
-        "{}",
-        t.landing_log()
-    );
-    assert_eq!(round_phase(&t), "REBUILDING");
-    assert_eq!(t.run(&["round", "certify", "r-2"]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "land", "r-1"]), 0, "{}", t.err());
     assert_eq!(t.run(&["round", "land", "r-2"]), 0, "{}", t.err());
     assert_eq!(t.landed_ref().as_deref(), Some("merged-tb@merged-ta"));
+    assert_eq!(
+        vm_runs(&t),
+        runs,
+        "landing the second round re-certified nothing"
+    );
+    assert!(!t.landing_log().contains("QUEUE ROUND-REMERGE"));
 }
 
 #[test]
-fn a_later_round_sharing_a_file_with_the_landed_one_goes_back_to_certify_on_the_merged_tree() {
+fn a_stacked_round_whose_parent_was_abandoned_is_rebuilt_without_it_and_certified_again() {
     let t = concurrent_world();
-    two_green_rounds(&t);
-    t.git
-        .stat("b0", "merged-ta", &[("x.rs", 1, 0), ("shared.rs", 1, 0)]);
-    t.git.stat("b0", "merged-tb", &[("shared.rs", 1, 0)]);
-    assert_eq!(t.run(&["round", "land", "r-1"]), 0, "{}", t.err());
-    assert_eq!(t.run(&["round", "land", "r-2"]), 1);
-    assert!(
-        t.err()
-            .contains("files in common with what landed: shared.rs")
-            && t.err().contains("it is not landed"),
+    two_green_stacked_rounds(&t);
+    assert_eq!(
+        t.run(&["round", "abandon", "r-1", "--reason", "red"]),
+        0,
         "{}",
         t.err()
     );
+    tree_of(&t, "merged-tb");
+    let runs = vm_runs(&t);
+    assert_eq!(t.run(&["round", "land", "r-2"]), 1);
+    assert!(t.err().contains("it is not landed"), "{}", t.err());
     assert_eq!(
         t.landed_ref().as_deref(),
-        Some("merged-ta"),
-        "nothing of the later round landed"
+        Some("b0"),
+        "nothing landed on the parent's tree"
     );
     let rec = kv_of(&t, "round");
     assert_eq!(
@@ -3455,13 +3458,73 @@ fn a_later_round_sharing_a_file_with_the_landed_one_goes_back_to_certify_on_the_
             rec["base"].as_str(),
             rec["head"].as_str()
         ),
-        ("r-2", "merged-ta", "merged-tb@merged-ta")
+        ("r-2", "b0", "merged-tb")
     );
+    assert!(!rec.contains_key("parent"));
     assert_eq!(round_phase(&t), "REBUILDING");
+    t.git.ancestor("tb", "merged-tb");
     assert_eq!(t.run(&["round", "certify", "r-2"]), 0, "{}", t.err());
-    assert_eq!(round_phase(&t), "GREEN");
+    assert_eq!(vm_runs(&t), runs + 1);
     assert_eq!(t.run(&["round", "land", "r-2"]), 0, "{}", t.err());
-    assert_eq!(t.landed_ref().as_deref(), Some("merged-tb@merged-ta"));
+    assert_eq!(t.landed_ref().as_deref(), Some("merged-tb"));
+}
+
+#[test]
+fn a_stacked_round_is_recut_on_the_head_its_parent_was_rebuilt_to() {
+    let t = concurrent_world();
+    two_green_stacked_rounds(&t);
+    let mut parent = kv_of(&t, "round");
+    parent.insert("head".into(), "rebuilt-ta".into());
+    let mut kv = crate::records::Kv::default();
+    for (k, v) in &parent {
+        kv.push(k, v);
+    }
+    crate::records::write_atomic(&t.qfile("round"), &kv.render()).unwrap();
+    tree_of(&t, "merged-tb@rebuilt-ta");
+    assert_eq!(t.run(&["round", "land", "r-2"]), 1);
+    let rec = kv_of(&t, "round.r-2");
+    assert_eq!(
+        (
+            rec["base"].as_str(),
+            rec["head"].as_str(),
+            rec["parent"].as_str()
+        ),
+        ("rebuilt-ta", "merged-tb@rebuilt-ta", "r-1")
+    );
+    assert_eq!(t.landed_ref().as_deref(), Some("b0"));
+}
+
+#[test]
+fn a_member_that_conflicts_in_meaning_with_an_earlier_round_is_certified_on_that_rounds_tree() {
+    let t = concurrent_world();
+    open_and_certify(&t, "sp-a", "r-1");
+    assert_eq!(t.run(&["round", "certify", "r-1"]), 0, "{}", t.err());
+    t.git.heads_name_their_base.set(true);
+    open_and_certify(&t, "sp-b", "r-2");
+    assert_eq!(
+        t.git.cut_on.borrow().as_str(),
+        "merged-ta",
+        "the second member is merged into the first round's tree, where a duplicate definition fails the build"
+    );
+    t.git.ancestor("merged-tb@merged-ta", "merged-tb@merged-ta");
+    t.git.trees.borrow_mut().insert(
+        "merged-tb@merged-ta".into(),
+        "4444444444444444444444444444444444444444".into(),
+    );
+    *t.scripts.round_vm_results.borrow_mut() = vec![
+        ("test-a.sh".into(), "ok".into()),
+        ("test-b.sh".into(), "red 1 2 fp p e 1".into()),
+    ];
+    t.git.ancestor("ta", "merged-ta");
+    assert_eq!(t.run(&["round", "land", "r-1"]), 0, "{}", t.err());
+    *t.lc.batch_view.borrow_mut() = None;
+    assert_eq!(t.run(&["round", "certify", "r-2"]), 1, "{}", t.out());
+    assert_eq!(t.run(&["round", "land", "r-2"]), 1);
+    assert_eq!(
+        t.landed_ref().as_deref(),
+        Some("merged-ta"),
+        "the conflicting round never lands"
+    );
 }
 
 #[test]
@@ -3815,7 +3878,12 @@ fn stale_ami() -> RunOut {
 fn stale_world() -> (T, String) {
     let t = round_world();
     *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     (t, batch)
 }
@@ -3824,10 +3892,17 @@ fn stale_world() -> (T, String) {
 fn a_stale_round_image_waits_for_the_build_in_progress_then_proceeds() {
     let (t, batch) = stale_world();
     *t.scripts.round_vm_queue.borrow_mut() = vec![stale_ami(), stale_ami(), RunOut::default()];
-    *t.forge.ami_runs.borrow_mut() = vec![Some(vec!["381189175".into()]), Some(vec!["381189175".into()])];
+    *t.forge.ami_runs.borrow_mut() = vec![
+        Some(vec!["381189175".into()]),
+        Some(vec!["381189175".into()]),
+    ];
 
     assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
-    assert!(t.out().contains("waiting for round AMI 381189175"), "{}", t.out());
+    assert!(
+        t.out().contains("waiting for round AMI 381189175"),
+        "{}",
+        t.out()
+    );
     let calls = t.forge.calls.borrow().join("\n");
     assert!(!calls.contains("ami-dispatch"), "{calls}");
     assert_eq!(calls.matches("ami-runs").count(), 2, "{calls}");
@@ -3852,7 +3927,9 @@ fn a_round_image_that_stays_stale_reports_the_acquire_error_itself() {
     assert_eq!(t.run(&["round", "certify", &batch]), 4);
     let err = t.err();
     assert!(
-        err.contains("round AMI is stale") && err.contains("clone refused") && err.contains("round-ami-build workflow"),
+        err.contains("round AMI is stale")
+            && err.contains("clone refused")
+            && err.contains("round-ami-build workflow"),
         "{err}"
     );
     assert!(!err.contains("left no verdicts"), "{err}");
