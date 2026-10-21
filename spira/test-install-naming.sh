@@ -19,7 +19,7 @@ mkdir -p "$TMP/run"
 WATCHERS="$TMP/watchers"; printf '# empty\n' > "$WATCHERS"
 
 tl_config SPIRA_WATCHERS="$WATCHERS" SPIRA_RUN="$TMP/run" \
-    SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_PROD="" SPIRA_REPO_MAP=/nonexistent
+    SPIRA_DOLT_DATA="" SPIRA_PROD="" SPIRA_REPO_MAP=/nonexistent
 rendered="$(env -i \
     PATH="$PATH" \
     HOME="$TMP/home" \
@@ -57,7 +57,7 @@ want "naming: concierge.service present (shared, plain name)" \
 # nonempty_env("SPIRA_INSTANCE"))) — read with a raw std::env::var, before config can even
 # be located, never through spira-config. It still needs the plain env assignment below,
 # on top of (not instead of) the tl_config declaration every other registered key here uses.
-tl_config SPIRA_INSTANCE=test SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RUN="$TMP/run" \
+tl_config SPIRA_INSTANCE=test SPIRA_DOLT_DATA="" SPIRA_RUN="$TMP/run" \
     SPIRA_WATCHERS="$WATCHERS"
 enable_arr="$(env -i PATH="$PATH" HOME="$HOME" SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" SPIRA_REPO="$(cd "$HERE/.." && pwd -P)" \
     SPIRA_CONF=/nonexistent SPIRA_INSTANCE=test \

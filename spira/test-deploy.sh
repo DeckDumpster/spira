@@ -167,8 +167,8 @@ cat > "$BIN/install.sh" <<'IEOF'
 #!/usr/bin/env bash
 printf 'install SPIRA_PROD=%s SPIRA_HOME=%s\n' "${SPIRA_PROD:-UNSET}" "${SPIRA_HOME:-UNSET}" >> "${CALL_LOG:-/dev/null}"
 printf 'install-bins SPIRA_REPO=%s\n' "${SPIRA_REPO:-UNSET}" >> "${CALL_LOG:-/dev/null}"
-printf 'install-paths SPIRA_RUN=%s SPIRA_CTRL=%s SPIRA_TESTDB_DATA=%s SPIRA_WORKSPACES=%s SPIRA_MAIL=%s SPIRA_DOLT_DATA=%s\n' \
-    "${SPIRA_RUN:-UNSET}" "${SPIRA_CTRL:-UNSET}" "${SPIRA_TESTDB_DATA:-UNSET}" \
+printf 'install-paths SPIRA_RUN=%s SPIRA_CTRL=%s SPIRA_WORKSPACES=%s SPIRA_MAIL=%s SPIRA_DOLT_DATA=%s\n' \
+    "${SPIRA_RUN:-UNSET}" "${SPIRA_CTRL:-UNSET}" \
     "${SPIRA_WORKSPACES:-UNSET}" "${SPIRA_MAIL:-UNSET}" "${SPIRA_DOLT_DATA:-UNSET}" >> "${CALL_LOG:-/dev/null}"
 printf 'install-resolved SPIRA_HOME=%s\n' \
     "$(readlink -f "${SPIRA_HOME:-}" 2>/dev/null || printf '%s' "${SPIRA_HOME:-}")" \
@@ -292,7 +292,7 @@ run_deploy() {
         case "$_a" in
             SPIRA_BD=*|SPIRA_CTRL=*|SPIRA_DB=*|SPIRA_DOLT_DATA=*|SPIRA_FORGE_REPO=*| \
             SPIRA_GH_REPO=*|SPIRA_INSTANCE=*|SPIRA_MAIL=*|SPIRA_PATH=*|SPIRA_PROD=*| \
-            SPIRA_RELEASES=*|SPIRA_RUN=*|SPIRA_TESTDB_DATA=*|SPIRA_WORKSPACES=*)
+            SPIRA_RELEASES=*|SPIRA_RUN=*|SPIRA_WORKSPACES=*)
                 tl_config "$_a" ;;
             *) extra_env+=("$_a") ;;
         esac

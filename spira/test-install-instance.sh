@@ -88,7 +88,7 @@ inst() {
     # run (sp-xp0u2) and that mkdir fails "Permission denied" under the fixture's unwritable
     # tree, so the whole install refuses before it ever gets to systemctl.
     tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_MAIL="$TMP/mail" \
-        SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_PROD="$PROD" \
+        SPIRA_DOLT_DATA="" SPIRA_PROD="$PROD" \
         SPIRA_REPO_MAP=/nonexistent SPIRA_WATCHERS="${SPIRA_WATCHERS:-}"
     SCTL_LOG="$SCTL_LOG" \
     PATH="$TMP/bin:$PATH" \
@@ -108,7 +108,7 @@ printf '# empty\n' > "$WATCHERS"
 
 # Seed DEST via --render so unit files exist before the full install compares.
 tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA="" \
-    SPIRA_TESTDB_DATA="" SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
+    SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
     SPIRA_WATCHERS="$WATCHERS"
 rendered="$(SCTL_LOG="$SCTL_LOG" PATH="$TMP/bin:$PATH" SPIRA_CONF=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
@@ -169,7 +169,7 @@ echo "WATCHER INSTALL — manifest row installs spira-watch-testview-test.servic
 printf 'testview|daemon|/bin/true\n' > "$WATCHERS"
 
 tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA="" \
-    SPIRA_TESTDB_DATA="" SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
+    SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
     SPIRA_WATCHERS="$WATCHERS"
 wrendered="$(SCTL_LOG="$SCTL_LOG" PATH="$TMP/bin:$PATH" SPIRA_CONF=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \

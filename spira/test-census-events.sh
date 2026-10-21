@@ -27,7 +27,7 @@
 #
 # A REAL bd ON A THROWAWAY DATABASE (law-prefer-the-real-dependency).
 # Requires server mode: census_events_run_sql uses bd sql, and bd-embedded refuses
-# bd sql in embedded mode. Skips when SPIRA_TESTDB_DATA is not set.
+# bd sql in embedded mode. Skips when no server-mode fixture comes up.
 #
 # tier: T2
 # covers: census/src/* spira/lib.sh

@@ -26,7 +26,7 @@ routed every such suite in a batch container to **one** shared test-dolt unit:
   throttled time in 190 s of wall, `cpu.max 50000 100000`, while the 32-core host's load
   average stood at ~11. Nineteen suites queued on half a core while thirty cores idled.
 * `bd init --server` for each fixture ran under an `flock` on
-  `$SPIRA_TESTDB_DATA/.server-init.lock`, because schema DDL on one server takes a global
+  a shared init lock, because schema DDL on one server takes a global
   lock; every init waited for every earlier one.
 * a fixture's reset issued `CALL DOLT_RESET` plus three `DELETE`s against the same starved
   server — the "stopped right after `OK, 0 rows affected`" signature.
@@ -49,7 +49,7 @@ diagnostics on stderr; exit 0 success, 1 failure, 2 usage.
 | `reap --fixture F --owner PID` | internal: the watchdog `up` detaches |
 
 `R` defaults to `$TESTDB_ROOT`, else `/var/tmp/spira-testdb`. It must have **no `.dolt`
-ancestor** (bd refuses to init under one), which is why it is not `$SPIRA_TESTDB_DATA`.
+ancestor** (bd refuses to init under one), which is why it is not under the workspaces root.
 
 **Inside testenv `R` is `/tmp/spira-testdb`, a tmpfs (sp-t26yx, §2.5).** testenv sets
 `TESTDB_ROOT` and `TESTDB_REQUIRE_TMPFS=1` for the template build and in every server-mode

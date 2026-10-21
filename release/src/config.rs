@@ -46,8 +46,6 @@ pub struct Registered {
     pub path: String,
     pub db: String,
     pub dolt_data: String,
-    pub testdb_data: String,
-    pub testdb_port: String,
     pub snap_stale_s: String,
     pub watchtower_start_timeout_s: String,
     pub sccache_dav_addr: String,
@@ -69,8 +67,6 @@ pub struct Config {
     path_raw: String,
     db: String,
     dolt_data: String,
-    testdb_data: String,
-    testdb_port: String,
     snap_stale_s: String,
     watchtower_start_timeout_s: String,
     sccache_dav_addr: String,
@@ -126,8 +122,6 @@ impl Config {
             path: cfg("SPIRA_PATH")?,
             db: cfg("SPIRA_DB")?,
             dolt_data: cfg("SPIRA_DOLT_DATA")?,
-            testdb_data: cfg("SPIRA_TESTDB_DATA")?,
-            testdb_port: cfg("SPIRA_TESTDB_PORT")?,
             snap_stale_s: cfg("SPIRA_SNAP_STALE_S")?,
             watchtower_start_timeout_s: cfg("SPIRA_WATCHTOWER_START_TIMEOUT_S")?,
             sccache_dav_addr: cfg("SPIRA_SCCACHE_DAV_ADDR")?,
@@ -173,8 +167,6 @@ impl Config {
             path_raw: reg.path.clone(),
             db: reg.db.clone(),
             dolt_data: reg.dolt_data.clone(),
-            testdb_data: reg.testdb_data.clone(),
-            testdb_port: reg.testdb_port.clone(),
             snap_stale_s: reg.snap_stale_s.clone(),
             watchtower_start_timeout_s: reg.watchtower_start_timeout_s.clone(),
             sccache_dav_addr: reg.sccache_dav_addr.clone(),
@@ -239,8 +231,6 @@ impl Config {
         m.insert("SPIRA_DB".into(), self.db.clone());
         m.insert("SPIRA_INSTANCE".into(), self.instance());
         m.insert("SPIRA_DOLT_DATA".into(), self.dolt_data.clone());
-        m.insert("SPIRA_TESTDB_DATA".into(), self.testdb_data.clone());
-        m.insert("SPIRA_TESTDB_PORT".into(), self.testdb_port.clone());
         m.insert("SPIRA_SNAP_STALE_S".into(), self.snap_stale_s.clone());
         m.insert("SPIRA_WATCHTOWER_START_TIMEOUT_S".into(), self.watchtower_start_timeout_s.clone());
         // DOLT is not a registered config key (spira/conf.d) — ambient env, else a PATH lookup.

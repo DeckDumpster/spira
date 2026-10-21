@@ -68,12 +68,12 @@ mkdir -p "$DEST" "$TMP/home" "$TMP/run"
 # lives in unless it is handed through explicitly.
 DOLT_DIR="$(dirname "$(command -v dolt 2>/dev/null || echo /nonexistent/dolt)")"
 
-# SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA are declared empty on purpose, not "use the default":
+# SPIRA_DOLT_DATA are declared empty on purpose, not "use the default":
 # empty means "dolt server is managed independently" (doctor/src/lib.rs) — the complete
 # fixture's own concrete paths point nowhere on disk here and would FAIL doctor's existence
 # check, which is exactly the false positive this suite must not produce.
 tl_config SPIRA_RUN="$TMP/run" SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
-    SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
+    SPIRA_DOLT_DATA=""
 
 inst() {
     tl_config SPIRA_PATH="$DOLT_DIR"

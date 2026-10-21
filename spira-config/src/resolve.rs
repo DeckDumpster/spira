@@ -420,8 +420,6 @@ pub const EXPORT_KEYS: &[&str] = &[
     "SPIRA_LC_SNAPSHOT",
     "SPIRA_LC_SNAPSHOT_SECS",
     "SPIRA_LC_SOCKET",
-    "SPIRA_LC_TESTDB_DATA",
-    "SPIRA_LC_TESTDB_PORT",
     "SPIRA_LC_TIMEOUT",
     "SPIRA_LC_UNIX_GROUP",
     "SPIRA_LC_UNIX_USER",
@@ -455,8 +453,6 @@ pub const EXPORT_KEYS: &[&str] = &[
     "SPIRA_SPIKE_PATHS",
     "SPIRA_SUBMITTED_LABEL",
     "SPIRA_TESTDB_BD",
-    "SPIRA_TESTDB_DATA",
-    "SPIRA_TESTDB_PORT",
     "SPIRA_TESTENV_CPUS",
     "SPIRA_TESTENV_MAX_CONCURRENT",
     "SPIRA_TESTENV_PIDS_LIMIT",
@@ -858,16 +854,6 @@ fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, regist
     set!("SPIRA_WAKE", wake);
 
     // 10-14. The spira-lc family (fixed literals; no cross-reference but SPIRA_WORKSPACES).
-    let lc_testdb_data = resolve_colon("SPIRA_LC_TESTDB_DATA", env, &toml_map, || {
-        Ok(crate::eval::spira_join(&workspaces, "lc-test"))
-    })
-    .map_err(ResolveError::Registry)?;
-    set!("SPIRA_LC_TESTDB_DATA", lc_testdb_data);
-    set!(
-        "SPIRA_LC_TESTDB_PORT",
-        resolve_colon("SPIRA_LC_TESTDB_PORT", env, &toml_map, ok_str!("3309"))
-            .map_err(ResolveError::Registry)?
-    );
     set!(
         "SPIRA_LC_UNIX_USER",
         resolve_colon("SPIRA_LC_UNIX_USER", env, &toml_map, ok_str!("spira-lc"))

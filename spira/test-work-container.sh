@@ -38,10 +38,10 @@ printf '## Build\n\nA fixture change in spira/x.\n' > "$TMP/build.md"
 # Other suites draw from overlapping ranges concurrently; take the first port nothing answers on.
 PORT=""
 for _ in $(seq 1 50); do
-    cand=$((SPIRA_LC_TESTDB_PORT + 700 + (RANDOM % 500)))
+    cand=$((3309 + 700 + (RANDOM % 500)))
     if ! (exec 3<>"/dev/tcp/127.0.0.1/$cand") 2>/dev/null; then PORT="$cand"; break; fi
 done
-[ -n "$PORT" ] || bail "no free port found near $SPIRA_LC_TESTDB_PORT"
+[ -n "$PORT" ] || bail "no free port found near 3309"
 SERVER_PID=""
 SERVE_PID=""
 

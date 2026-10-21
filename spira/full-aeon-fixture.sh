@@ -28,8 +28,7 @@ fa_setup() {   # fa_setup <tag> — build the fixture once
     local tag="${1:?fa_setup: tag required}"
     testdb_require "$tag"
     FA_TMP="$(mktemp -d)"
-    # A caller that requested server mode and got none (no SPIRA_TESTDB_DATA in this
-    # environment) decides for itself whether that is a skip or a failure — return, not exit.
+    # A caller that requested server mode and got none (no server-mode fixture available) decides for itself whether that is a skip or a failure — return, not exit.
     testdb_up "$tag" || { rm -rf "$FA_TMP"; return 1; }
     export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 

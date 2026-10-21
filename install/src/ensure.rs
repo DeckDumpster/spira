@@ -90,11 +90,11 @@ mod tests {
     use crate::values::HostValues;
 
     fn host() -> HostValues {
-        HostValues { toml: "/h/cfg.toml".into(), home: "/h".into(), repo: "/h".into(), run: "/run".into(), db: "/db".into(), cockpit: "/h/cockpit".into(), dolt_data: "".into(), testdb_data: "".into(), dolt: "/usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), testdb_port: "3308".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), env_bin: "/h/.local/lib/spira-env/bin".into(), sccache_dav_addr: "".into(), repo_map: "".into(), lc_password_file: "/h/lc.credential".into() }
+        HostValues { toml: "/h/cfg.toml".into(), home: "/h".into(), repo: "/h".into(), run: "/run".into(), db: "/db".into(), cockpit: "/h/cockpit".into(), dolt_data: "".into(), dolt: "/usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), snap_stale_s: "600".into(), watchtower_start_timeout_s: "360".into(), path_tail: "".into(), env_bin: "/h/.local/lib/spira-env/bin".into(), sccache_dav_addr: "".into(), repo_map: "".into(), lc_password_file: "/h/lc.credential".into() }
     }
 
     fn tiny_manifest() -> crate::manifest::Manifest {
-        let mut m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, testdb_data_set: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
+        let mut m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
         m.units.retain(|u| u.name == "spira-sentinel.service" || u.name == "spira-sentinel.timer");
         m
     }

@@ -157,7 +157,7 @@ service template sets `Environment=SPIRA_RELEASE=` and `Environment=PATH=` from 
 sp-31gtu), `SPIRA_PROD_COCK` is
 `<rel>/cockpit`, and each `SPIRA_<X>_BIN` is `<rel>/bin/<its binary>`. Host keys
 (`SPIRA_RUN`, `SPIRA_DB`, `SPIRA_INSTANCE`, `SPIRA_COCKPIT`, `SPIRA_DOLT_DATA`,
-`SPIRA_TESTDB_DATA`, `SPIRA_TESTDB_PORT`, `SPIRA_SNAP_STALE_S`, `DOLT`) come from the
+`SPIRA_SNAP_STALE_S`, `DOLT`) come from the
 environment, else `spira.toml`, and `DOLT` from `PATH`. **A key a template uses with no
 value is a refusal** naming the key and the template; render.py silently wrote an empty
 string. **`SPIRA_PATH_TAIL`** is the one exception to that refusal (sp-c7b85): the box's own

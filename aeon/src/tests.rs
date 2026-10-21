@@ -424,7 +424,6 @@ fn go_as(fayth_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], mode: M
         ("SPIRA_WIKI", String::new()),
         ("SPIRA_MAIL", String::new()),
         ("SPIRA_REPO_MAP", String::new()),
-        ("SPIRA_TESTDB_PORT", String::new()),
         ("SPIRA_SPIKE_DIR", String::new()),
         ("SPIRA_SPIKE_PATHS", String::new()),
         ("SPIRA_MAECHEN_MAX_BEADS", String::new()),

@@ -866,15 +866,6 @@ fn run_main() -> ExitCode {
         dolt_port = read_yaml_port(&yaml_dest).unwrap_or(3307);
 
     }
-    if let Some(td) = nonempty_env("SPIRA_TESTDB_DATA") {
-        if !Path::new(&td).is_dir() && !opts.dry {
-            let _ = std::fs::create_dir_all(&td);
-        }
-        let port = nonempty_env("SPIRA_TESTDB_PORT").unwrap_or_default();
-        let yaml_tpl = format!("{}/dolt-server-test.yaml", bootstrap::templates_dir().display());
-        changes += place_dolt_yaml(&yaml_tpl, &format!("{td}/dolt-server.yaml"), &[("@SPIRA_TESTDB_DATA@", &td), ("@SPIRA_TESTDB_PORT@", &port)], opts.dry);
-    }
-
     if Path::new(&db).join(".beads").is_dir() {
         if let Ok(meta) = std::fs::read_to_string(Path::new(&db).join(".beads/metadata.json")) {
             if meta.contains("\"dolt_mode\"") && meta.contains("\"embedded\"") {
@@ -2181,16 +2172,15 @@ mod dolt_yaml_tests {
     use super::*;
 
     #[test]
-    fn test_template_renders_with_the_test_port_and_data_dir() {
+    fn dolt_template_renders_with_the_data_dir() {
         let td = testkit::TempDir::new("dolt-yaml");
         let root = td.path().to_path_buf();
-        let tpl = format!("{}/../systemd/dolt-server-test.yaml", env!("CARGO_MANIFEST_DIR"));
+        let tpl = format!("{}/../systemd/dolt-server.yaml", env!("CARGO_MANIFEST_DIR"));
         let dest = root.join("dolt-server.yaml");
         let dest = dest.to_str().unwrap();
         let data = root.to_str().unwrap();
-        assert_eq!(place_dolt_yaml(&tpl, dest, &[("@SPIRA_TESTDB_DATA@", data), ("@SPIRA_TESTDB_PORT@", "3911")], false), 1);
+        assert_eq!(place_dolt_yaml(&tpl, dest, &[("@SPIRA_DOLT_DATA@", data)], false), 1);
         let out = std::fs::read_to_string(dest).unwrap();
-        assert!(out.contains("port: 3911"), "{out}");
         assert!(out.contains(&format!("data_dir: \"{data}\"")), "{out}");
         assert!(!out.contains("@SPIRA_"), "{out}");
         assert_eq!(place_dolt_yaml(&tpl, dest, &[], false), 0);

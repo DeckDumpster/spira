@@ -54,7 +54,7 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 
 # ── a throwaway spira-lc/Dolt server, the same shape test-lc-hold.sh uses ─────────────
 SRC_ROOT="$(cd "$HERE/.." && pwd)"
-LC_PORT=$((SPIRA_LC_TESTDB_PORT + 1600 + (RANDOM % 300)))
+LC_PORT=$((3309 + 1600 + (RANDOM % 300)))
 LC_TMP="$TMP/lc"; mkdir -p "$LC_TMP/data"
 cat > "$LC_TMP/server.yaml" <<YAML
 log_level: warning

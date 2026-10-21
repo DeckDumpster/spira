@@ -41,7 +41,7 @@ TMP="$(mktemp -d)"
 # (root, no password) credential file, declared, and no socket.
 : > "$TMP/credential"
 tl_config SPIRA_LC_PASSWORD_FILE="$TMP/credential" SPIRA_LC_SOCKET=""
-PORT=$((SPIRA_LC_TESTDB_PORT + 1000 + (RANDOM % 300)))
+PORT=$((3309 + 1000 + (RANDOM % 300)))
 SERVER_PID=""
 cleanup() { [ -n "$SERVER_PID" ] && kill "$SERVER_PID" >/dev/null 2>&1; rm -rf "$TMP"; }
 trap cleanup EXIT INT TERM

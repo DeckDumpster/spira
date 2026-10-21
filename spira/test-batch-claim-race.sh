@@ -30,7 +30,7 @@ unset SPIRA_LC_SOCKET
 
 REPO="$(cd "$HERE/.." && pwd)"
 TMP="$(mktemp -d)"
-PORT=$((SPIRA_LC_TESTDB_PORT + (RANDOM % 500)))
+PORT=$((3309 + (RANDOM % 500)))
 SERVER_PID=""
 
 cleanup() {

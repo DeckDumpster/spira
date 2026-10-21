@@ -51,7 +51,7 @@ testdb_up test-lifecycle-classify
 
 REPO="$(cd "$HERE/.." && pwd)"
 TMP="$(mktemp -d)"
-PORT=$((SPIRA_LC_TESTDB_PORT + (RANDOM % 500) + 500))
+PORT=$((3309 + (RANDOM % 500) + 500))
 SERVER_PID=""
 cleanup() {
     [ -n "$SERVER_PID" ] && kill "$SERVER_PID" >/dev/null 2>&1

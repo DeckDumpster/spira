@@ -47,7 +47,7 @@ testdb_up test-cutover-deploy
 
 REPO="$(cd "$HERE/.." && pwd)"
 TMP="$(mktemp -d)"
-PORT=$((SPIRA_LC_TESTDB_PORT + 2000 + (RANDOM % 500)))
+PORT=$((3309 + 2000 + (RANDOM % 500)))
 SERVER_PID=""
 
 cleanup() {
@@ -216,7 +216,7 @@ ln -s "$HERE/conf.d" "$FIX/spira/conf.d" 2>/dev/null || true
 INSTALL_BIN="$(dirname "$(command -v render-unit)")"
 rendered="$("$INSTALL_BIN/render-unit" "$REPO/systemd/spira-sentinel.service" --home "$FIX" --repo "$REPO" --run "$FIX/run" \
     --db "$SPIRA_DB" --cockpit "$FIX/cockpit" --dolt /bin/true --prod "$FIX/spira" --instance prod \
-    --testdb-port 3308 --snap-stale-s 60 --lc-password-file "$CRED")"
+    --snap-stale-s 60 --lc-password-file "$CRED")"
 unit_env="$(printf '%s\n' "$rendered" | sed -n 's/^Environment=\(SPIRA_LC_PASSWORD_FILE=.*\)$/\1/p')"
 is "the rendered unit carries the configured credential path" "SPIRA_LC_PASSWORD_FILE=$CRED" "$unit_env"
 # SPIRA_RELEASE=... AND SPIRA_TOML=... TOO: a real deployed unit's Environment= block

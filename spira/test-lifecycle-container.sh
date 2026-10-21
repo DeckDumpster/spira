@@ -7,7 +7,7 @@
 #
 # WHAT THIS PROVES, against a throwaway `dolt sql-server` this suite starts and tears
 # down itself (never dolt-beads.service — its own disposable
-# instance, on SPIRA_LC_TESTDB_PORT, in a fresh SPIRA_LC_TESTDB_DATA-rooted tmp dir):
+# instance, on 3309, in a fresh tmp dir):
 #   - a non-spira_lc user's write is refused, with `--use-db` selected and without (the
 #     qualified-name form) — POSITIVE CONTROL: the same user's SELECT is checked to still
 #     work, so a refusal here is the grant working, not a broken connection;
@@ -51,7 +51,7 @@ unset SPIRA_LC_SOCKET
 
 REPO="$(cd "$HERE/.." && pwd)"
 TMP="$(mktemp -d)"
-PORT=$((SPIRA_LC_TESTDB_PORT + (RANDOM % 500)))
+PORT=$((3309 + (RANDOM % 500)))
 SERVER_PID=""
 
 cleanup() {

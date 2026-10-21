@@ -54,8 +54,8 @@ run_renderer() {
     render-unit "$template" \
         --home /fake_home --repo /fake_repo --run /fake_run --db /fake_db \
         --cockpit /fake_cockpit --dolt-data /fake_dolt_data \
-        --testdb-data /fake_testdb_data --dolt "$dolt_val" \
-        --prod /fake_prod --instance prod --testdb-port 3307 \
+        --dolt "$dolt_val" \
+        --prod /fake_prod --instance prod \
         2>&1
 }
 

@@ -166,13 +166,13 @@ pub struct FixtureInfo {
     pub server_init_hash: String,
 }
 
-pub fn fixture_brief(fixture: Option<&FixtureInfo>, testdb_lib: &str, port: &str, fixture_ms: u64) -> String {
+pub fn fixture_brief(fixture: Option<&FixtureInfo>, testdb_lib: &str, fixture_ms: u64) -> String {
     match fixture {
         Some(f) => {
             let (engine, cleanup) = if f.mode == "server" {
                 (
-                    format!("a private Dolt sql-server (port {})", if port.is_empty() { "3308" } else { port }),
-                    "testdb_drop (which stops that server if this session started it)".to_string(),
+                    "a private Dolt sql-server started for this fixture alone".to_string(),
+                    "testdb_drop (which stops that server)".to_string(),
                 )
             } else {
                 ("the embedded Dolt engine — no shared server, no external port".to_string(), "`rm -rf` on the fixture directory".to_string())
@@ -788,15 +788,18 @@ mod tests {
 
     #[test]
     fn fixture_brief_is_truthful_about_what_exists() {
-        let none = fixture_brief(None, "spira/testdb.sh", "3308", 0);
+        let none = fixture_brief(None, "spira/testdb.sh", 0);
         assert!(none.starts_with("This repository has no shared test fixture"));
         let f = FixtureInfo { name: "aeonspa".into(), dir: "/d".into(), baseline: "b".into(), bin: String::new(), started_service: "0".into(), mode: "embedded".into(), server_init_hash: String::new() };
-        let e = fixture_brief(Some(&f), "spira/testdb.sh", "3308", 1234);
+        let e = fixture_brief(Some(&f), "spira/testdb.sh", 1234);
         assert!(e.contains("`TESTDB_NAME=aeonspa`"));
         assert!(e.contains("spending the 1234ms"));
         assert!(e.contains("embedded Dolt engine"));
-        let s = fixture_brief(Some(&FixtureInfo { mode: "server".into(), ..f }), "spira/testdb.sh", "", 1);
-        assert!(s.contains("private Dolt sql-server (port 3308)"));
+        let s = fixture_brief(Some(&FixtureInfo { mode: "server".into(), ..f }), "spira/testdb.sh", 1);
+        assert!(s.contains("private Dolt sql-server"));
+        for text in [&none, &e, &s] {
+            assert!(!text.contains("dolt-beads-test"), "no shared test server in the brief");
+        }
     }
 
     // test-aeon-resume.sh's render rows.

@@ -165,10 +165,10 @@ FAKE_RUN="$TMP/run"
 mkdir -p "$FAKE_HOME" "$FAKE_UNITDIR" "$FAKE_RUN"
 
 # Pre-render units so the diff check passes.
-# SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA declared empty on purpose (not "use the default"; see
+# SPIRA_DOLT_DATA declared empty on purpose (not "use the default"; see
 # test-deploy-preflight-new-unit.sh).
 tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$SPIRA_DIR/watchers" \
-    SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RUN="$FAKE_RUN" \
+    SPIRA_DOLT_DATA="" SPIRA_RUN="$FAKE_RUN" \
     SPIRA_PROD="$SPIRA_DIR" SPIRA_COCKPIT="$COCKPIT_DIR" SPIRA_BD="$MOCK_BIN/bd"
 _rendered="$(env -i \
     SPIRA_TOML="$SPIRA_TOML" \

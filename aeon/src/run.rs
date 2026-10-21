@@ -992,7 +992,7 @@ impl<'a> Run<'a> {
         let landing = brief::landing_brief(&self.s.repo_land, &self.s.branch, &self.s.base_branch, &self.s.repo_name, &self.s.base);
         let park = brief::park_brief(&self.s.repo_land, &self.s.branch, &self.s.repo_name, &self.s.base_branch);
         let finish = brief::finish_brief(&bead);
-        let fixture = brief::fixture_brief(self.s.fixture.as_ref(), &self.conf.s("SPIRA_TESTDB_LIB"), &self.conf.s("SPIRA_TESTDB_PORT"), fixture_ms);
+        let fixture = brief::fixture_brief(self.s.fixture.as_ref(), &self.conf.s("SPIRA_TESTDB_LIB"), fixture_ms);
         let deadline_at = self.fayth.timeout_seconds.map(|t| self.t0 + t as i64);
         let deadline = brief::deadline_brief(deadline_at, self.now(), deadline_at.and_then(util::local_hms_zone));
 

@@ -788,7 +788,7 @@ fn every_shipped_service_carries_path(tail: &str, want_tail: &str) {
     let r = rel.display().to_string();
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
     let mut host = BTreeMap::new();
-    for k in ["SPIRA_RUN", "SPIRA_DB", "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "SPIRA_TESTDB_PORT", "SPIRA_SNAP_STALE_S", "SPIRA_WATCHTOWER_START_TIMEOUT_S", "DOLT", "SPIRA_ENV_PATH", "SPIRA_INSTANCE", "SPIRA_SCCACHE_DAV_ADDR", "SPIRA_REPO_MAP", "SPIRA_LC_PASSWORD_FILE", "SPIRA_TOML"] {
+    for k in ["SPIRA_RUN", "SPIRA_DB", "SPIRA_DOLT_DATA", "SPIRA_SNAP_STALE_S", "SPIRA_WATCHTOWER_START_TIMEOUT_S", "DOLT", "SPIRA_ENV_PATH", "SPIRA_INSTANCE", "SPIRA_SCCACHE_DAV_ADDR", "SPIRA_REPO_MAP", "SPIRA_LC_PASSWORD_FILE", "SPIRA_TOML"] {
         host.insert(k.to_string(), format!("/host/{k}"));
     }
     host.insert("SPIRA_PATH_TAIL".to_string(), tail.to_string());
@@ -847,8 +847,6 @@ fn every_shipped_service_renders_against_real_host_values() {
         run: "/host/SPIRA_RUN".into(),
         db: "/host/SPIRA_DB".into(),
         dolt_data: "/host/SPIRA_DOLT_DATA".into(),
-        testdb_data: "/host/SPIRA_TESTDB_DATA".into(),
-        testdb_port: "3308".into(),
         snap_stale_s: "60".into(),
         watchtower_start_timeout_s: "360".into(),
         instance: "/host/SPIRA_INSTANCE".into(),

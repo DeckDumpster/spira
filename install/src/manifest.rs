@@ -25,8 +25,6 @@ pub struct Inputs {
     pub dolt_data_set: bool,
     /// `SPIRA_DOLT_DURABLE` is non-empty: the store is RAM-backed and store-persist keeps its copy.
     pub dolt_durable_set: bool,
-    /// `SPIRA_TESTDB_DATA` is non-empty.
-    pub testdb_data_set: bool,
     /// `inotifywait` is on `PATH`.
     pub inotify_present: bool,
     /// `SPIRA_SCCACHE_DAV_ADDR` is non-empty (sp-xtdqi): this box names its own LAN address
@@ -51,7 +49,7 @@ pub struct Inputs {
 
 impl Default for Inputs {
     fn default() -> Self {
-        Inputs { instance: String::new(), dolt_data_set: false, dolt_durable_set: false, testdb_data_set: false, inotify_present: false, sccache_dav_addr_set: false, repo_is_git_checkout: false, lc_system_mode: false, watch_names: Ok(Vec::new()) }
+        Inputs { instance: String::new(), dolt_data_set: false, dolt_durable_set: false, inotify_present: false, sccache_dav_addr_set: false, repo_is_git_checkout: false, lc_system_mode: false, watch_names: Ok(Vec::new()) }
     }
 }
 
@@ -332,8 +330,8 @@ impl Manifest {
     }
 }
 
-/// Every template name any combination of this box's SIX conditional inputs (dolt data,
-/// testdb data, `inotifywait`, `SPIRA_SCCACHE_DAV_ADDR`, `--system-user`, `repo_is_git_
+/// Every template name any combination of this box's FIVE conditional inputs (dolt data,
+/// `inotifywait`, `SPIRA_SCCACHE_DAV_ADDR`, `--system-user`, `repo_is_git_
 /// checkout`) could ever push into `Manifest::units` — the same completeness union
 /// `--list-optional`/`--list-union` already compute for a human,
 /// factored out here so a REMOVAL caller gets it too (sp-da4y0).
@@ -349,15 +347,13 @@ impl Manifest {
 pub fn union_template_names() -> Vec<String> {
     let mut set = std::collections::BTreeSet::new();
     for dolt in [false, true] {
-        for testdb in [false, true] {
-            for inotify in [false, true] {
-                for sccache in [false, true] {
-                    for lc_system in [false, true] {
-                        for repo_git in [false, true] {
-                            let inputs = Inputs { dolt_data_set: dolt, dolt_durable_set: dolt, testdb_data_set: testdb, inotify_present: inotify, sccache_dav_addr_set: sccache, lc_system_mode: lc_system, repo_is_git_checkout: repo_git, ..Default::default() };
-                            if let Ok(m) = build(&inputs) {
-                                set.extend(m.units.into_iter().map(|u| u.name).filter(|n| n != "spira-watch@.service"));
-                            }
+        for inotify in [false, true] {
+            for sccache in [false, true] {
+                for lc_system in [false, true] {
+                    for repo_git in [false, true] {
+                        let inputs = Inputs { dolt_data_set: dolt, dolt_durable_set: dolt, inotify_present: inotify, sccache_dav_addr_set: sccache, lc_system_mode: lc_system, repo_is_git_checkout: repo_git, ..Default::default() };
+                        if let Ok(m) = build(&inputs) {
+                            set.extend(m.units.into_iter().map(|u| u.name).filter(|n| n != "spira-watch@.service"));
                         }
                     }
                 }
@@ -407,8 +403,6 @@ mod tests {
             instance: "prod".into(),
             dolt_data_set: true,
             dolt_durable_set: false,
-            testdb_data_set: false,
-           
             inotify_present: true,
             sccache_dav_addr_set: false,
             repo_is_git_checkout: true,

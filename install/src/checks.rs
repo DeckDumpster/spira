@@ -27,7 +27,7 @@ pub fn check_collisions(instance: &str, host: &HostValues) -> Result<(), Vec<Str
             }
         }
     }
-    let this: std::collections::BTreeMap<&str, &str> = [("SPIRA_RUN", host.run.as_str()), ("SPIRA_DB", host.db.as_str()), ("SPIRA_PROD", host.prod.as_str()), ("SPIRA_DOLT_DATA", host.dolt_data.as_str()), ("SPIRA_TESTDB_PORT", host.testdb_port.as_str())]
+    let this: std::collections::BTreeMap<&str, &str> = [("SPIRA_RUN", host.run.as_str()), ("SPIRA_DB", host.db.as_str()), ("SPIRA_PROD", host.prod.as_str()), ("SPIRA_DOLT_DATA", host.dolt_data.as_str())]
         .into_iter()
         .filter(|(_, v)| !v.is_empty())
         .collect();

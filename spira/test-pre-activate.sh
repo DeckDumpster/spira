@@ -387,7 +387,7 @@ REPO="$(cd "$HERE/.." && pwd -P)"
 if [ -z "$DOLT_BIN" ] || [ -z "$LC_BIN" ]; then
     bad "lifecycle (real store): needs dolt and the tree's spira-lc on PATH" "dolt=[$DOLT_BIN] spira-lc=[$LC_BIN]"
 else
-    PORT=$(( ${SPIRA_LC_TESTDB_PORT:-3308} + 1300 + RANDOM % 300 ))
+    PORT=$(( 3309 + 1300 + RANDOM % 300 ))
     mkdir -p "$TMP/dolt/data"
     cat > "$TMP/dolt/server.yaml" <<YAML
 log_level: warning

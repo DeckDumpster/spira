@@ -69,8 +69,8 @@ DOLT_BIN="$(command -v dolt 2>/dev/null || echo /usr/bin/dolt)"
 rendered="$(render-unit "$TEMPLATE" \
     --home /fake_home --repo /fake_repo --run /fake_run --db /fake_db \
     --cockpit /fake_cockpit --dolt-data /fake_dolt_data \
-    --testdb-data /fake_testdb_data --dolt "$DOLT_BIN" \
-    --prod /fake_prod --instance prod --testdb-port 3307 2>&1)"
+    --dolt "$DOLT_BIN" \
+    --prod /fake_prod --instance prod 2>&1)"
 want "render: rendered unit declares RefuseManualStop=yes" "RefuseManualStop=yes" "$rendered"
 
 # ==========================================================================
@@ -149,7 +149,7 @@ for b in loginctl spira-supervise; do printf '#!/usr/bin/env bash\nexit 0\n' > "
 # which has intermittently refused mkdir with EACCES under concurrent runs (same fix as
 # test-install-unit-prune.sh); declaring no readers means install never calls `mail ensure`.
 tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
-    SPIRA_DOLT_DATA="$DOLT_DATA" SPIRA_TESTDB_DATA= SPIRA_DB="$DB" SPIRA_BD="$MOCK_BIN/bd" \
+    SPIRA_DOLT_DATA="$DOLT_DATA" SPIRA_DB="$DB" SPIRA_BD="$MOCK_BIN/bd" \
     SPIRA_RUN="$RUN_DIR" SPIRA_PROD="$PROD" SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=prod \
     SPIRA_MAIL_READERS=
 # SPIRA_DOLT_DATA also as plain env: `units-install` (unlike `spira-install`, which bridges

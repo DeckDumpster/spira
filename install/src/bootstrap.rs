@@ -45,7 +45,7 @@ pub fn which(prog: &str) -> Option<String> {
 /// wins). Derives nothing beyond what conf.sh itself derives with a plain, no-side-effect
 /// default for a render-relevant key: `SPIRA_HOME = SPIRA_REPO/spira` (conf.sh: no-colon
 /// derivation), `SPIRA_COCKPIT = dirname(SPIRA_HOME)/cockpit` (conf.sh line ~937),
-/// `SPIRA_SNAP_STALE_S = 60` (line ~951), `SPIRA_TESTDB_PORT = 3308` (line ~1015) — the three
+/// `SPIRA_SNAP_STALE_S = 60` (line ~951) — the two
 /// `: "${VAR:=default}"` conf.sh lines that matter to rendering. A caller that already
 /// sourced conf.sh (a human, `deploy.sh`) exports the real value first, so this default is
 /// reached only when nothing did — never a silent override of an explicit setting.
@@ -148,11 +148,9 @@ pub fn host_from(instance: &str, env_map: &std::collections::BTreeMap<String, St
         repo_map: cfg("SPIRA_REPO_MAP")?,
         cockpit,
         dolt_data: cfg("SPIRA_DOLT_DATA")?,
-        testdb_data: cfg("SPIRA_TESTDB_DATA")?,
         dolt,
         prod: cfg("SPIRA_PROD")?,
         instance: instance.to_string(),
-        testdb_port: cfg("SPIRA_TESTDB_PORT")?,
         snap_stale_s: cfg("SPIRA_SNAP_STALE_S")?,
         watchtower_start_timeout_s: cfg("SPIRA_WATCHTOWER_START_TIMEOUT_S")?,
         path_tail,
@@ -328,7 +326,6 @@ pub fn manifest_from_env(instance: &str) -> Result<Manifest, String> {
         instance: instance.to_string(),
         dolt_data_set: declared("SPIRA_DOLT_DATA").is_some(),
         dolt_durable_set: declared("SPIRA_DOLT_DURABLE").is_some(),
-        testdb_data_set: declared("SPIRA_TESTDB_DATA").is_some(),
         inotify_present,
         sccache_dav_addr_set: !sccache_dav_addr()?.is_empty(),
         repo_is_git_checkout,

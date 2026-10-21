@@ -24,11 +24,9 @@ pub struct HostValues {
     pub db: String,
     pub cockpit: String,
     pub dolt_data: String,
-    pub testdb_data: String,
     pub dolt: String,
     pub prod: String,
     pub instance: String,
-    pub testdb_port: String,
     pub snap_stale_s: String,
     pub watchtower_start_timeout_s: String,
     pub path_tail: String,
@@ -63,11 +61,9 @@ impl HostValues {
         m.insert("SPIRA_COCKPIT".into(), self.cockpit.clone());
         m.insert("SPIRA_DOLT_DATA".into(), self.dolt_data.clone());
         m.insert("SPIRA_SCCACHE_DAV_ADDR".into(), self.sccache_dav_addr.clone());
-        m.insert("SPIRA_TESTDB_DATA".into(), self.testdb_data.clone());
         m.insert("DOLT".into(), self.dolt.clone());
         m.insert("SPIRA_PROD".into(), prod.clone());
         m.insert("SPIRA_INSTANCE".into(), self.instance.clone());
-        m.insert("SPIRA_TESTDB_PORT".into(), self.testdb_port.clone());
         m.insert("SPIRA_SNAP_STALE_S".into(), self.snap_stale_s.clone());
         m.insert("SPIRA_WATCHTOWER_START_TIMEOUT_S".into(), self.watchtower_start_timeout_s.clone());
         m.insert("SPIRA_PATH_TAIL".into(), if self.path_tail.is_empty() { String::new() } else { format!(":{}", self.path_tail) });
@@ -146,11 +142,9 @@ mod tests {
             db: "/db".into(),
             cockpit: "/h/cockpit".into(),
             dolt_data: "".into(),
-            testdb_data: "".into(),
             dolt: "/usr/bin/dolt".into(),
             prod: "".into(),
             instance: "prod".into(),
-            testdb_port: "3308".into(),
             snap_stale_s: "600".into(),
             watchtower_start_timeout_s: "360".into(),
             path_tail: "".into(), env_bin: "/h/.local/lib/spira-env/bin".into(),
