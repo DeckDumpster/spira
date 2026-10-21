@@ -86,7 +86,7 @@ _rsk_probe() {
 _rsk_template() {
     local out rc
     command -v round-vm >/dev/null 2>&1 || return 0
-    out="$(timeout 30 round-vm template-check 2>&1)"; rc=$?
+    out="$(timeout 5 round-vm template-check 2>&1)"; rc=$?
     case "$rc" in
         0|3) _rsk_clear_template ;;
         *) out="$(printf '%s' "$out" | tail -n 2 | tr '\n' ' ')"
