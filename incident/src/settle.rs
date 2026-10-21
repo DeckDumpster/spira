@@ -5,6 +5,8 @@
 
 use crate::decide::ref_hash;
 
+const DROPPED: &str = "DROPPED";
+
 pub const FIRED_LABEL_PREFIX: &str = "settle-fired:";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,9 +74,14 @@ pub fn settle_one(s: &dyn Settler, c: &Candidate) -> Outcome {
     }
     fixes.sort();
     let mut landings = Vec::new();
+    let mut dropped: Vec<String> = Vec::new();
     for fix in &fixes {
         match s.fix_state(fix) {
             Ok(FixState::Landed) => {}
+            Ok(FixState::Unlanded(st)) if st == DROPPED => {
+                dropped.push(fix.clone());
+                continue;
+            }
             Ok(FixState::Unlanded(st)) => return wait(format!("{fix} is {st}")),
             Err(e) => return skip(format!("cannot read {fix}: {e}")),
         }
@@ -88,8 +95,11 @@ pub fn settle_one(s: &dyn Settler, c: &Candidate) -> Outcome {
     match s.detect(c) {
         Ok(Detector::NoProbe) => skip("no detector to re-run".into()),
         Ok(Detector::Quiet) => {
-            let landed = landings.iter().map(|(f, sha)| format!("{f} at {sha}")).collect::<Vec<_>>().join(", ");
-            let evidence = format!("fix landed: {landed}; detector quiet at {}", s.now_iso());
+            let mut landed = landings.iter().map(|(f, sha)| format!("fix landed: {f} at {sha}")).collect::<Vec<_>>();
+            if !dropped.is_empty() {
+                landed.push(format!("fix dropped: {}", dropped.join(", ")));
+            }
+            let evidence = format!("{}; detector quiet at {}", landed.join("; "), s.now_iso());
             match s.close(&c.id, &evidence) {
                 Ok(()) => Outcome::Closed { id: c.id.clone(), evidence },
                 Err(e) => skip(format!("close refused: {e}")),
@@ -107,6 +117,28 @@ pub fn settle_one(s: &dyn Settler, c: &Candidate) -> Outcome {
         }
         Err(e) => skip(format!("detector could not run: {e}")),
     }
+}
+
+/// The Waiting outcomes whose reason differs from `prev` (one `id\twhy` per line, as returned
+/// before), and the state to remember for the next pass.
+pub fn changed_waiting<'a>(prev: &str, outcomes: &'a [Outcome]) -> (Vec<&'a Outcome>, String) {
+    let prev: std::collections::HashSet<&str> = prev.lines().collect();
+    let mut state = Vec::new();
+    let mut fresh = Vec::new();
+    for o in outcomes {
+        match o {
+            Outcome::Waiting { id, why } => {
+                let line = format!("{id}\t{}", why.replace('\n', " "));
+                if !prev.contains(line.as_str()) {
+                    fresh.push(o);
+                }
+                state.push(line);
+            }
+            _ => fresh.push(o),
+        }
+    }
+    state.sort();
+    (fresh, state.join("\n"))
 }
 
 pub fn settle(s: &dyn Settler) -> Result<Vec<Outcome>, String> {
@@ -204,6 +236,28 @@ mod tests {
         let f = Fake::new(FixState::Unlanded("CERTIFIED".into()), Detector::Quiet);
         assert!(matches!(settle_one(&f, &cand(&[])), Outcome::Waiting { .. }));
         assert!(f.closed.borrow().is_empty() && f.persisted.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_dropped_fix_does_not_block_the_incident() {
+        let f = Fake::new(FixState::Unlanded("DROPPED".into()), Detector::Quiet);
+        let out = settle_one(&f, &cand(&[]));
+        assert!(matches!(out, Outcome::Closed { .. }), "{out:?}");
+        assert!(f.closed.borrow()[0].1.contains("fix dropped: sp-fix"));
+        let g = Fake::new(FixState::Unlanded("DROPPED".into()), Detector::Firing("failed".into()));
+        assert_eq!(settle_one(&g, &cand(&[])), Outcome::Persists { id: "sp-inc".into() });
+    }
+
+    #[test]
+    fn a_waiting_line_is_logged_only_when_it_changes() {
+        let w = |why: &str| vec![Outcome::Waiting { id: "a".into(), why: why.into() }, Outcome::Persists { id: "b".into() }];
+        let (x, y) = (w("x"), w("y"));
+        let (first, state) = changed_waiting("", &x);
+        assert_eq!(first.len(), 2);
+        let (again, state2) = changed_waiting(&state, &x);
+        assert_eq!(again.len(), 1, "only the non-waiting outcome repeats");
+        assert_eq!(state, state2);
+        assert_eq!(changed_waiting(&state, &y).0.len(), 2);
     }
 
     #[test]

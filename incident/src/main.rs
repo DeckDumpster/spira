@@ -564,9 +564,13 @@ fn cmd_settle(env: &Env, bd: &RealBd) -> ExitCode {
     };
     match incident::settle::settle(&settler) {
         Ok(outcomes) => {
-            for o in &outcomes {
+            let waiting_path = env.log_path.with_extension("settle-waiting");
+            let prev = std::fs::read_to_string(&waiting_path).unwrap_or_default();
+            let (fresh, state) = incident::settle::changed_waiting(&prev, &outcomes);
+            for o in fresh {
                 ilog(env, &format!("settle: {o:?}"));
             }
+            let _ = std::fs::write(&waiting_path, state);
             let closed = outcomes.iter().filter(|o| matches!(o, incident::settle::Outcome::Closed { .. })).count();
             println!("settled {closed} of {}", outcomes.len());
             ExitCode::SUCCESS
