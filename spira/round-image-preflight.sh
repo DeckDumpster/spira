@@ -50,7 +50,9 @@ foreign_checkouts() {   # registered repos other than this one that declare runn
 
 paths="$(recipe_paths "$TREE")" || exit 1
 [ -n "$paths" ] || { echo "round-image-preflight: recipe.rs lists no inputs" >&2; exit 1; }
+npaths="$(printf '%s\n' "$paths" | wc -l)"
 
+hit=""
 if [ "$FORCE" = 0 ]; then
     [ -n "$BASE" ] || { echo "round-image-preflight: no base given (--base or SPIRA_GATE_BASE)" >&2; exit 2; }
     touched="$(git -C "$TREE" diff --name-only "$BASE...$HEAD_REF")" \
@@ -58,6 +60,7 @@ if [ "$FORCE" = 0 ]; then
     hit="$(printf '%s\n' "$touched" | grep -Fxf <(printf '%s\n' "$paths") || true)"
     if [ -z "$hit" ]; then
         echo "round-image-preflight: skipped; no recipe input in the diff"
+        echo "fence: round-image-preflight checked $npaths recipe paths against the diff (0 touched, setup not run)"
         exit 0
     fi
     echo "round-image-preflight: recipe inputs touched: $(echo $hit)"
@@ -94,3 +97,4 @@ if [ "$rc" -ne 0 ]; then
     exit 1
 fi
 echo "round-image-preflight: setup exited 0 and each foreign runner-deps passed; wall ${wall}s"
+echo "fence: round-image-preflight checked $npaths recipe paths against the diff ($(printf "%s" "$hit" | grep -c .) touched, setup ran)"

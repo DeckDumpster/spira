@@ -42,6 +42,7 @@ run() { env -i PATH="$T/bin:/usr/bin:/bin" HOME="$T" PODMAN_LOG="$T/log" PODMAN_
 out="$(run bash "$P" --tree "$T/repo" --base main --head br 2>&1)"; rc=$?
 is "an ordinary diff exits 0" 0 "$rc"
 want "an ordinary diff is skipped" "skipped" "$out"
+want "an ordinary diff reports a real fence count" "fence: round-image-preflight checked 6 recipe paths" "$out"
 is "an ordinary diff runs no container" 0 "$(wc -c < "$T/log")"
 
 (cd "$T/repo" && git checkout -q br && echo '# x' >> rust-toolchain.toml && git -c user.email=t@t -c user.name=t commit -qam toolchain)
@@ -52,6 +53,7 @@ want "a container ran" "run --rm" "$(cat "$T/log")"
 want "the base-OS image is the pinned 26.04" "ubuntu:26.04" "$(cat "$T/log")"
 want "the toolchain is read from the pin" "1.82.0" "$(cat "$T/log")"
 want "wall time is recorded" "wall " "$out"
+want "a ran preflight reports its fence line" "fence: round-image-preflight checked 6 recipe paths" "$out"
 
 out="$(PODMAN_FAIL=1 run bash "$P" --tree "$T/repo" --base main --head br 2>&1)"; rc=$?
 is "a failing setup is red" 1 "$rc"
