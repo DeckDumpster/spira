@@ -273,6 +273,22 @@ impl<'a> Run<'a> {
 
     /// A bead rejected twice claims on the persona's stronger model with its history in the
     /// brief; at the third rejection it is released and held for the Concierge instead of run.
+    /// A persona that requires a build spec stops at once on a bead without one: the bead is
+    /// held with an ask for the Concierge, and no session starts to invent a mechanism.
+    fn build_spec_gate(&mut self, c: &claim::Claimed) -> Option<i32> {
+        if !self.fayth.requires_build_spec || bead::has_build_spec(c.row.description.as_deref().unwrap_or("")) {
+            return None;
+        }
+        let id = &c.id;
+        let reason = format!("no build spec: {id} has no `{}` section naming what to build. Choosing a mechanism is design work: file the outcome --for spike for a proposed spec, or add the section.", bead::BUILD_HEADING);
+        self.release();
+        let _ = self.d.exec.exec("spira-lc", &s(&["hold", id, "ask", &reason, self.f()]), None, None);
+        self.note(&reason);
+        self.log(&format!("{}: {id} {reason}", self.f()));
+        self.ledger_done(0, "no-build-spec");
+        Some(0)
+    }
+
     fn escalation_gate(&mut self, id: &str) -> Option<i32> {
         use spira_config::escalation::{self, Tier};
         let o = self.d.exec.exec("spira-claim", &s(&["rejections", id]), None, None);
@@ -592,6 +608,10 @@ impl<'a> Run<'a> {
             self.log(&format!("{who}: {} carries a {} hold — released immediately after claim (race with the hold)", c.id, held.join(",")));
             self.ledger_done(0, "hold-raced");
             return Err(0);
+        }
+
+        if let Some(rc) = self.build_spec_gate(&c) {
+            return Err(rc);
         }
 
         if let Some(rc) = self.escalation_gate(&c.id) {

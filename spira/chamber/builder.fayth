@@ -97,6 +97,11 @@ FAYTH_ELASTIC=1
 FAYTH_LEASE_MINUTES=90
 FAYTH_HEARTBEAT_SECONDS=30
 
+# A builder is handed a bead that names what to build. bead.sh file --for builder refuses a body
+# with no `## Build` section, bead.sh lint reports one already filed, and aeon holds a claimed
+# bead without one with an ask — design work goes to spike.
+FAYTH_REQUIRES_BUILD_SPEC=1
+
 FAYTH_TOOLS="Bash,Read,Edit,Write,Glob,Grep,TodoWrite"
 FAYTH_PROJECT_INSTRUCTIONS=repo
 

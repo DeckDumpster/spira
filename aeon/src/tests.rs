@@ -2223,3 +2223,27 @@ fn a_submission_with_a_clean_close_reason_stands_submitted() {
     assert!(exec_verbs(&w, "event").is_empty(), "{:?}", exec_verbs(&w, "event"));
     assert!(!o.log.contains("SPIRA_CLOSE_REASON_OVERRIDE"), "{}", o.log);
 }
+
+#[test]
+fn a_claim_without_a_build_spec_holds_with_an_ask_and_starts_no_session() {
+    let f = fx("nospec");
+    seed(&f, "sp-ns");
+    let o = go(&f, "spira,plan", &[("FAYTH_REQUIRES_BUILD_SPEC", "1")], Mode::Claim, BTreeMap::new(), no_session());
+    let w = o.w.lock().unwrap();
+    let hold = w.exec_calls.iter().find(|c| c.0 == "spira-lc" && c.1.first().map(String::as_str) == Some("hold")).unwrap_or_else(|| panic!("{}", o.log));
+    assert_eq!(&hold.1[..3], ["hold", "sp-ns", "ask"]);
+    assert!(hold.1[3].starts_with("no build spec"), "{:?}", hold.1);
+    assert!(ledger_lines(&o).iter().any(|l| l.contains("status=no-build-spec")), "{:?}", ledger_lines(&o));
+    let log = std::process::Command::new("git").arg("-C").arg(&f.repo).args(["log", "--format=%s", "--all"]).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&log.stdout).lines().count(), 1, "no commits");
+}
+
+#[test]
+fn a_claim_with_a_build_spec_proceeds() {
+    let f = fx("withspec");
+    seed(&f, "sp-ws");
+    f.w.lock().unwrap().descriptions.insert("sp-ws".into(), "Why.\n\n## Build\n\nA guard in aeon/src/run.rs.\n".into());
+    let o = go(&f, "spira,plan", &[("FAYTH_REQUIRES_BUILD_SPEC", "1")], Mode::Claim, BTreeMap::new(), commits_and_closes());
+    let w = o.w.lock().unwrap();
+    assert!(!w.exec_calls.iter().any(|c| c.0 == "spira-lc" && c.1.first().map(String::as_str) == Some("hold") && c.1.get(3).is_some_and(|r| r.starts_with("no build spec"))), "{}", o.log);
+}

@@ -316,6 +316,12 @@ fn fayth_label(home: &str, fayth: &str) -> String {
     spira_config::chamber::fayth_get(Path::new(&chamber_home(home)), fayth, "FAYTH_LABELS", "")
 }
 
+const REQUIRES_BUILD_SPEC_KEY: &str = "FAYTH_REQUIRES_BUILD_SPEC";
+
+fn requires_build_spec(home: &str, fayth: &str) -> bool {
+    spira_config::chamber::fayth_get(Path::new(&chamber_home(home)), fayth, REQUIRES_BUILD_SPEC_KEY, "") == "1"
+}
+
 /// `FAYTH_LABELS`/`FAYTH_EXCLUDE_LABELS`, fully resolved and FAIL-CLOSED — delegates to
 /// `spira_config::chamber::fayth_predicate`, the one shared evaluator every
 /// ready-counting/claiming/FILING caller now goes through (sp-xsnid). For the one call
@@ -602,6 +608,20 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         i += 1;
     }
 
+    if body_file.as_deref() == Some("-") {
+        let mut text = String::new();
+        if let Err(e) = std::io::Read::read_to_string(&mut std::io::stdin(), &mut text) {
+            eprintln!("bead: reading the body from stdin: {e}");
+            return 2;
+        }
+        let path = env::temp_dir().join(format!("bead-stdin-{}.md", std::process::id()));
+        if let Err(e) = std::fs::write(&path, text) {
+            eprintln!("bead: writing {}: {e}", path.display());
+            return 2;
+        }
+        body_file = Some(path.to_string_lossy().into_owned());
+    }
+
     if let Some(t) = &target {
         if let Err(e) = spira_config::target::valid_target(t) {
             eprintln!("bead: {e}");
@@ -745,6 +765,17 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         if fayth_labels.is_empty() {
             eprintln!("bead: persona {for_fayth} has no partition labels");
             return 2;
+        }
+
+        if requires_build_spec(home, &for_fayth) {
+            let body = body_file.as_deref().map(|f| std::fs::read_to_string(f).unwrap_or_default()).unwrap_or_default();
+            if !bead::has_build_spec(&body) {
+                eprintln!(
+                    "bead: refusing: a bead for {for_fayth} must name what to build under a `{}` heading (the artifact, component or change, and where). An outcome with no named deliverable is design work: file it --for spike, which returns a proposed build spec for approval.",
+                    bead::BUILD_HEADING
+                );
+                return 2;
+            }
         }
 
         let lane_override = env::var("SPIRA_BEAD_LANE_OVERRIDE")
@@ -1194,6 +1225,12 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
     let partitions = chamber_partitions(&personas, &scope_for_partitions);
     let partitions_joined = partitions.join(" ");
 
+    let spec_partitions: Vec<Vec<String>> = fayth_names(home)
+        .into_iter()
+        .filter(|f| requires_build_spec(home, f))
+        .map(|f| fayth_label(home, &f).split(',').map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
+        .collect();
+
     let no_loop_label = cfg_label("SPIRA_NO_LOOP_LABEL");
     let ask_label = cfg_label("SPIRA_ASK_LABEL");
     let incident_label = cfg_label("SPIRA_INCIDENT_LABEL");
@@ -1301,6 +1338,11 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
         } else {
             false
         };
+        if awaits && spec_partitions.iter().any(|p| bead::is_builder_bead(&row.labels, p)) && !bead::has_build_spec(&row.description) {
+            eprintln!("bead: {id}: no build spec: a builder bead needs a `{}` section naming what to build (or route it --for spike)", bead::BUILD_HEADING);
+            bad += 1;
+            rc = 1;
+        }
         if row.labels.iter().any(|l| l == &incident_label) && !lc_done(&mut lc, id) {
             let (_, rel_out) =
                 bdq_capture(home, &s(&["dep", "list", id, "--type", "relates-to", "--json"]));

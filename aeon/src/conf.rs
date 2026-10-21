@@ -29,6 +29,7 @@ pub struct Fayth {
     pub system_prompt: SystemPrompt,
     pub groom_escalation_check: bool,
     pub graph_only: bool,
+    pub requires_build_spec: bool,
 }
 
 fn get<'a>(m: &'a BTreeMap<String, String>, k: &str) -> Option<&'a str> {
@@ -57,6 +58,7 @@ impl Fayth {
             system_prompt: if get(v, "FAYTH_SYSTEM_PROMPT") == Some("replace") { SystemPrompt::Replace } else { SystemPrompt::Append },
             groom_escalation_check: get(v, "FAYTH_GROOM_ESCALATION_CHECK") == Some("1"),
             graph_only: get(v, "FAYTH_GRAPH_ONLY") == Some("1"),
+            requires_build_spec: get(v, "FAYTH_REQUIRES_BUILD_SPEC") == Some("1"),
         }
     }
 

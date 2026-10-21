@@ -98,7 +98,10 @@ pub fn followup_brief(bead_id: &str) -> String {
         "**File it as a bead** — `work file-followup \"<title>\" --repo <name>` for work that follows
   from this one, `work split \"<title>\" --repo <name>` for a piece of this bead's own scope.
   Both are parented to `{bead_id}` for you and never carry its `branch:` label. `--repo` is
-  required and is the repo the child's work lives in; it is never copied from this bead."
+  required and is the repo the child's work lives in; it is never copied from this bead.
+  A child for a builder needs a body (`--body-file -`, text on stdin) with a `## Build` section
+  naming the artifact, component or change to make, and where. A problem with no named
+  deliverable is not builder work: say so in your submission instead of filing it."
     )
 }
 

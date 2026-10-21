@@ -406,7 +406,7 @@ except Exception:
     # shell metacharacters is not interpreted (law-commit-messages-via-stdin
     # applies to --body-file as well).
     local tmpbody; tmpbody="$(mktemp)"
-    printf 'Review finding in release unit %s\n\n%s\n' "$tag" "$body" > "$tmpbody"
+    printf 'Review finding in release unit %s\n\n%s\n\n## Build\n\nFix the review finding above in this repository.\n' "$tag" "$body" > "$tmpbody"
 
     local id
     id="$("$HERE/bead.sh" file "review finding: ${title}" \

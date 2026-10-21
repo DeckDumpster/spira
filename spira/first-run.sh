@@ -78,6 +78,7 @@ for stem in $stems; do
     {
         printf 'Unit %s, shipped by %s, failed its first run after release %s.\n\n' "$unit" "${bead:-an unnamed bead}" "$release"
         printf 'exit: %s\n\nsystemctl: %s\n\nmanager state:\n%s\n' "$crc" "$out" "$state"
+        printf '\n## Build\n\nFix the unit so its first run succeeds, and land the fix.\n'
     } > "$bodyf"
     extra=()
     if [ -n "$bead" ]; then

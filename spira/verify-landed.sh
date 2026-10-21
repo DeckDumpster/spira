@@ -84,6 +84,7 @@ print(d.get("description") or "")' 2>/dev/null)" || continue
             printf 'command: %s\n' "$cmd"
             [ -z "$want" ] || printf 'expected output to contain: %s\n' "$want"
             printf 'exit: %s\n\noutput:\n%s\n' "$crc" "$short"
+            printf '\n## Build\n\nFix the failing production check above and land the fix.\n'
         } > "$bodyf"
         "$BEAD" file "fix of $id did not hold in production: verify failed" \
             --for builder --repo "$repo" --priority 1 \

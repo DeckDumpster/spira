@@ -241,7 +241,11 @@ pub fn build_request_with_body(bound: &str, verb: &str, verb_args: &[String], ti
             // layer files as the same persona the aeon itself is running as, the same
             // identity --actor already carries.
             req.extend(verb_args.iter().cloned());
-            req.extend(["--for".to_string(), actor.to_string(), "--actor".to_string(), actor.to_string()]);
+            req.extend(["--for".to_string(), actor.to_string()]);
+            if let Some(b) = body {
+                req.extend(["--stdin".to_string(), b.to_string()]);
+            }
+            req.extend(["--actor".to_string(), actor.to_string()]);
         }
         "done" | "blocked" | "superseded-by" => {
             req.extend(verb_args.iter().cloned());

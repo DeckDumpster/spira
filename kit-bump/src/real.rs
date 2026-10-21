@@ -53,7 +53,7 @@ impl Real {
 
     fn body_file(body: &str) -> Result<PathBuf, String> {
         let p = std::env::temp_dir().join(format!("kit-bump-{}.md", std::process::id()));
-        std::fs::write(&p, body).map_err(|e| e.to_string())?;
+        std::fs::write(&p, format!("{body}\n\n## Build\n\nBump the kit dependency at this site as described above and land the change.\n")).map_err(|e| e.to_string())?;
         Ok(p)
     }
 

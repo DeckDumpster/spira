@@ -153,7 +153,7 @@ impl World for Real {
         c.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
         if let Ok(mut child) = c.spawn() {
             if let Some(mut w) = child.stdin.take() {
-                let _ = w.write_all(body.as_bytes());
+                let _ = w.write_all(format!("{body}\n\n## Build\n\nFix the gate failure described above in this repository and land the fix.\n").as_bytes());
             }
             let _ = child.wait();
         }

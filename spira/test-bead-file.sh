@@ -326,4 +326,33 @@ is   "repo-prefixed title: exits 0" "0" "$rc"
 out="$(run_bead "testrepo x: y" --for builder --repo testrepo --harness-title 2>&1)"; rc=$?
 is   "harness-title flag still accepted: exits 0" "0" "$rc"
 
+# a persona that requires a build spec refuses an outcome-only body and names its exit
+cat > "$T/chamber/specbuilder.fayth" <<'FAYTH'
+FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan}"
+FAYTH_REQUIRES_BUILD_SPEC=1
+FAYTH
+printf 'A routine deploy causes no failed requests, whatever the mechanism.\n' > "$T/outcome.md"
+printf 'Why.\n\n## Build\n\nA guard in spira/x.\n' > "$T/spec.md"
+
+out="$(run_bead "spec bead" --for specbuilder --repo testrepo --body-file "$T/spec.md")"; rc=$?
+is     "build spec: a body with a Build section is accepted (positive control)" "0" "$rc"
+want   "build spec: the accepted body creates" "create" "$(cat "$BD_LOG")"
+
+out="$(run_bead "outcome bead" --for specbuilder --repo testrepo --body-file "$T/outcome.md")"; rc=$?
+is     "build spec: an outcome-only body is refused" "2" "$rc"
+want   "build spec: the refusal names the Build heading" "## Build" "$out"
+want   "build spec: the refusal names the spike route" "--for spike" "$out"
+nowant "build spec: nothing is created" "create" "$(cat "$BD_LOG")"
+
+out="$(run_bead "no body bead" --for specbuilder --repo testrepo)"; rc=$?
+is     "build spec: no body is refused" "2" "$rc"
+
+out="$(run_bead "stdin spec bead" --for specbuilder --repo testrepo --body-file - < "$T/spec.md")"; rc=$?
+is     "build spec: a Build section on stdin is accepted" "0" "$rc"
+out="$(run_bead "stdin outcome bead" --for specbuilder --repo testrepo --body-file - < "$T/outcome.md")"; rc=$?
+is     "build spec: an outcome-only body on stdin is refused" "2" "$rc"
+
+out="$(run_bead "builder without the flag" --for builder --repo testrepo --body-file "$T/outcome.md")"; rc=$?
+is     "build spec: a persona that does not require one is unaffected" "0" "$rc"
+
 tl_summary
