@@ -1,8 +1,0 @@
-TYPE=string
-GROUP=reviewer
-DOC=HOW MUCH OF A DIFF THE REVIEWER READS. Diffs larger than this are truncated with a
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # HOW MUCH OF A DIFF THE REVIEWER READS. Diffs larger than this are truncated with a
-    # note in the prompt; the reviewer still runs and may find what it can within the window.
-    : "${SPIRA_REVIEWER_DIFF_LIMIT:=80000}"
-SPIRA_CONF_DEFAULT_EOF

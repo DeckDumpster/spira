@@ -10,7 +10,6 @@ Inputs: 62 primary files plus 1 secondary (`test-pr-notify.sh`, unit-render sect
 - `test-capacity-probe.sh` belongs to dispatch.
 - `test-session-hook.sh` belongs to the operator channel or hooks.
 - `test-canary.sh` belongs to test infrastructure or acceptance.
-- `test-review.sh` belongs to release review.
 - `test-boundary.sh` belongs to publishing lint.
 
 Together they cost 58 s. They are kept in the arithmetic in section 7, so the total reconciles with signals.tsv.
@@ -54,7 +53,6 @@ Where they run: **cert** = certification (every commit, local and gate), **batch
 | UC-instance-lifecycle-04 | `build-tarball.sh verify` accepts a MANIFEST whose commit exists in the source repo and refuses one that does not. | FC | T2 / cert |
 | UC-instance-lifecycle-05 | `build-bd.sh --from-flake` takes bd from the flake environment and refuses an environment with no bd. | FC, COR | T2 / cert |
 | UC-instance-lifecycle-06 | `release.sh cut` creates an annotated tag listing the bead ids landed since the previous tag, on the repo-map base ref (not hardcoded `main`). A no-op cut creates no tag, and `show` reads the tag back. | COR, CFG | T2 / cert |
-| UC-instance-lifecycle-07 | `review.sh` records a ship/block verdict per release unit, files a finding bead on block, and never duplicates it. *(misfiled; price only)* | COR, IDEM | T2 / batch |
 
 ### Activate, deploy, rollback
 | ID | Requirement | Dims | Tier / where |
@@ -129,7 +127,6 @@ The cost column is ci_secs from the main-push run; NA means not run there.
 | 03 | test-tarball-bins.sh::1–5; test-build-tarball.sh::bins present | T2, 1 + dup | test-tarball-bins: MERGE-INTO test-build-tarball.sh (the `--supervise-bin` refusal) and MERGE-INTO the unit-lint T0 (the ExecStart token scan, deriving OPTIONAL from `units.sh` instead of a hand-copied list). Delete release.yml grep (belongs in test-release-workflow). |
 | 05 | test-build-bd-release.sh::all | T2, 6 | KEEP |
 | 06 | test-release.sh::1–7 | T2, 6 | KEEP. Drop case 8 (a trivially-true self-check). |
-| 07 | test-review.sh | T2 (real bd), 8 | KEEP (misfiled; owner: release review) |
 | 08 | test-activate.sh::basic, dry-run; test-rollback.sh::activate-A/B; test-loop-readonly.sh::activate/ro; test-artifact-install.sh::activate | T2, 2 (+4 +12 +152 dup legs) | KEEP test-activate.sh. Delete the activate legs elsewhere. |
 | 09 | test-activate.sh::prune | T2, 2 | KEEP + fix. The test sets `current` to the oldest release, but activation repoints it before the prune runs, so "never prunes current" is not exercised (Gap G4). |
 | 10 | test-activate.sh::aeon-guard, force, restart | T2, 2 | KEEP. Add the reload-before-restart ordering assertion. |

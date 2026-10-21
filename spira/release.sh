@@ -8,7 +8,7 @@
 # A release unit is an annotated git tag that names every bead id whose
 # commit reached the base branch since the previous release tag for the
 # same repository. The tag is simultaneously the review unit, the deploy
-# unit and the revert unit: to roll back, promote.sh to the previous tag.
+# unit and the revert unit: to roll back, deploy the previous tag.
 #
 # NAMING. Tags follow the form spira-release-<reponame>-<YYYYMMDDTHHMMSSZ>.
 # The repo name comes from the repo-map. If two cuts land in the same UTC

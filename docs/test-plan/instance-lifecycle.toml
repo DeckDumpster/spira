@@ -36,6 +36,11 @@ id = "UC-instance-lifecycle-07"
 tier = "T2"
 statement = "`review.sh` records a ship/block verdict per release unit, files a finding bead on block, and never duplicates it"
 
+[use_case.uncovered]
+reason = "review.sh and test-review.sh retired with the promote/review flow; no replacement exists"
+date = "2026-10-21"
+bead = "sp-fm92p0"
+
 [[use_case]]
 id = "UC-instance-lifecycle-08"
 tier = "T2"

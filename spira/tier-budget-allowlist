@@ -280,7 +280,6 @@ test-released-defects.sh	T1	7.5
 test-render-memories.sh	T1	9.0
 test-reopen-queue-eject.sh	T1	3.0
 test-requeue.sh	T1	30.5
-test-review.sh	T1	10.5
 test-rollback.sh	T1	2.0
 test-roster-warn.sh	T1	2.0
 test-runner-deps.sh	T1	1.5

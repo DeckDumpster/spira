@@ -175,9 +175,6 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-target-reap.service", false));
     m.units.push(t("spira-target-reap.timer", true));
 
-    // promote.sh / spira-promote.*: retired by deploy.sh's split-checkout replacement.
-    m.optional.push("spira-promote.service".into());
-    m.optional.push("spira-promote.timer".into());
     // spira-lc.service: a SYSTEM unit installed by the root installer's --system-user phase,
     // never by the per-instance flow this manifest drives.
     m.optional.push("spira-lc.service".into());
