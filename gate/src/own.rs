@@ -10,6 +10,14 @@ pub fn declares_own_testenv(tree: &Path) -> bool {
     tree.join(DECL).is_file() && !tree.join(HARNESS_IMAGE).exists()
 }
 
+/// The command a registered repository declares as its own full CI entry point (`ci_entry` in
+/// the declaration): what a round VM runs so the round covers what CI covers.
+pub fn ci_entry(tree: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(tree.join(DECL)).ok()?;
+    let doc: toml::Value = spira_config::parse_foreign(&text).ok()?;
+    doc.get("ci_entry")?.as_str().map(str::trim).filter(|s| !s.is_empty()).map(String::from)
+}
+
 /// The suite names testenv would accept for `tree`: a repository's declared tiers, else the
 /// files of the harness's own `spira/` directory. `Err` when the declaration cannot be read.
 pub fn known_suites(tree: &Path) -> Result<Vec<String>, String> {
@@ -47,6 +55,16 @@ mod tests {
     #[test]
     fn the_harness_image_makes_it_the_harness() {
         assert!(!declares_own_testenv(&*tree(&[DECL, HARNESS_IMAGE, "x"])));
+    }
+
+    #[test]
+    fn ci_entry_is_the_declared_top_level_command_and_absent_when_undeclared() {
+        let d = tree(&[DECL]);
+        assert_eq!(ci_entry(&d), None);
+        fs::write(d.join(DECL), "ci_entry = \" deploy/ci.sh all \"\n[tier.a]\n").unwrap();
+        assert_eq!(ci_entry(&d).as_deref(), Some("deploy/ci.sh all"));
+        fs::write(d.join(DECL), "ci_entry = \"\"\n").unwrap();
+        assert_eq!(ci_entry(&d), None);
     }
 
     #[test]

@@ -21,6 +21,9 @@ const RC_PODMAN: i32 = 125;
 #[serde(deny_unknown_fields)]
 pub struct Decl {
     pub image: String,
+    /// The repository's full CI entry point, run by a round VM (`round-vm run --ci-entry`).
+    #[serde(default)]
+    pub ci_entry: Option<String>,
     /// The repository's one language runtime, enforced by spira-lint's `one-runtime` rule.
     #[serde(default)]
     pub runtime: Option<String>,

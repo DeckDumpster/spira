@@ -328,10 +328,10 @@ pub trait Scripts {
         wall_secs: u64,
         handle: &Path,
     ) -> RunOut;
-    /// `testenv <head> <repo>` under `timeout`: a repository that declares its own suites
-    /// (`.spira/testenv.toml`) judged on its own image. Exit 0 GREEN, 1 RED, anything else a
-    /// fault. `handle` receives the pid exactly as `round_vm`'s does.
-    fn repo_testenv(&self, head: &str, repo: &str, wall_secs: u64, handle: &Path) -> RunOut;
+    /// `round-vm run <tree> --ci-entry <entry> --results-dir <results> --round-batch <batch> --round-repo <repo>` under `timeout`: a repository
+    /// that is not the harness judged by its own full CI entry point on a round VM. Exit 0 GREEN, 1 RED
+    /// (`ci.result` in `results`), anything else a fault. `handle` receives the pid exactly as `round_vm`'s does.
+    fn repo_round_vm(&self, tree: &Path, results: &Path, entry: &str, round: (&str, &str), wall_secs: u64, handle: &Path) -> RunOut;
     /// SIGTERM to a run's pid: round-vm salvages the finished suites' results and releases the VM.
     fn pass_terminate(&self, pid: u32);
     fn pass_alive(&self, pid: u32) -> bool;

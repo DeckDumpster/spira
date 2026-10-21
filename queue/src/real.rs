@@ -950,92 +950,18 @@ impl Scripts for RealScripts {
         wall_secs: u64,
         handle: &Path,
     ) -> RunOut {
-        // batch-job: round-vm enforces the cap itself, on the suites and bare lane alone; this is its hang guard
-        let spawned = Command::new("timeout")
-            .args([
-                "-k",
-                "5",
-                &wall_secs
-                    .saturating_mul(ROUND_HANG_GUARD_FACTOR)
-                    .to_string(),
-                "round-vm",
-                "run",
-            ])
-            .arg(tree)
-            .arg("--results-dir")
-            .arg(results)
-            .arg("--base")
-            .arg(base)
-            .args(["--round-batch", round.0, "--round-repo", round.1])
-            .args(on_red_hook(round.0, round.1))
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn();
-        let child = match spawned {
-            Ok(c) => c,
-            Err(e) => {
-                return RunOut {
-                    rc: 127,
-                    out: String::new(),
-                    err: format!("cannot run round-vm: {e}"),
-                }
-            }
-        };
-        let _ = fs::write(handle, child.id().to_string());
-        match child.wait_with_output() {
-            Ok(o) => RunOut {
-                rc: o.status.code().unwrap_or(127),
-                out: String::from_utf8_lossy(&o.stdout).to_string(),
-                err: String::from_utf8_lossy(&o.stderr).to_string(),
-            },
-            Err(e) => RunOut {
-                rc: 127,
-                out: String::new(),
-                err: format!("cannot run round-vm: {e}"),
-            },
-        }
+        run_round_vm(tree, results, ["--base", base], round, wall_secs, handle)
     }
-    fn repo_testenv(&self, head: &str, repo: &str, wall_secs: u64, handle: &Path) -> RunOut {
-        // batch-job: bounded by the same hang guard as round-vm
-        let spawned = Command::new("timeout")
-            .args([
-                "-k",
-                "5",
-                &wall_secs
-                    .saturating_mul(ROUND_HANG_GUARD_FACTOR)
-                    .to_string(),
-                "testenv",
-                head,
-                repo,
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn();
-        let child = match spawned {
-            Ok(c) => c,
-            Err(e) => {
-                return RunOut {
-                    rc: 127,
-                    out: String::new(),
-                    err: format!("cannot run testenv: {e}"),
-                }
-            }
-        };
-        let _ = fs::write(handle, child.id().to_string());
-        match child.wait_with_output() {
-            Ok(o) => RunOut {
-                rc: o.status.code().unwrap_or(127),
-                out: String::from_utf8_lossy(&o.stdout).to_string(),
-                err: String::from_utf8_lossy(&o.stderr).to_string(),
-            },
-            Err(e) => RunOut {
-                rc: 127,
-                out: String::new(),
-                err: format!("cannot run testenv: {e}"),
-            },
-        }
+    fn repo_round_vm(
+        &self,
+        tree: &Path,
+        results: &Path,
+        entry: &str,
+        round: (&str, &str),
+        wall_secs: u64,
+        handle: &Path,
+    ) -> RunOut {
+        run_round_vm(tree, results, ["--ci-entry", entry], round, wall_secs, handle)
     }
     fn pass_terminate(&self, pid: u32) {
         // SAFETY: a plain SIGTERM to the pid the run wrote to its handle.
@@ -1133,6 +1059,60 @@ impl Scripts for RealScripts {
             .process_group(0)
             .spawn()
             .is_ok()
+    }
+}
+
+fn run_round_vm(
+    tree: &Path,
+    results: &Path,
+    judged_by: [&str; 2],
+    round: (&str, &str),
+    wall_secs: u64,
+    handle: &Path,
+) -> RunOut {
+    // batch-job: round-vm enforces the cap itself, on the suites and bare lane alone; this is its hang guard
+    let spawned = Command::new("timeout")
+        .args([
+            "-k",
+            "5",
+            &wall_secs
+                .saturating_mul(ROUND_HANG_GUARD_FACTOR)
+                .to_string(),
+            "round-vm",
+            "run",
+        ])
+        .arg(tree)
+        .arg("--results-dir")
+        .arg(results)
+        .args(judged_by)
+        .args(["--round-batch", round.0, "--round-repo", round.1])
+        .args(on_red_hook(round.0, round.1))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
+    let child = match spawned {
+        Ok(c) => c,
+        Err(e) => {
+            return RunOut {
+                rc: 127,
+                out: String::new(),
+                err: format!("cannot run round-vm: {e}"),
+            }
+        }
+    };
+    let _ = fs::write(handle, child.id().to_string());
+    match child.wait_with_output() {
+        Ok(o) => RunOut {
+            rc: o.status.code().unwrap_or(127),
+            out: String::from_utf8_lossy(&o.stdout).to_string(),
+            err: String::from_utf8_lossy(&o.stderr).to_string(),
+        },
+        Err(e) => RunOut {
+            rc: 127,
+            out: String::new(),
+            err: format!("cannot run round-vm: {e}"),
+        },
     }
 }
 

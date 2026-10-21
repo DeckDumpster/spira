@@ -66,7 +66,7 @@ options. An unknown option prints `batch: unknown option: X` and the usage line,
 
 `<repo>` resolves through the repo-map (the registry every other tool reads) as well as
 `[repo.*]`; an unknown name is still `FAULT rc=2 reason=repo`. A tree that has no `spira/`
-directory runs the tiers it declares in `.spira/testenv.toml` — `image`, optional `workdir`
+directory runs the tiers it declares in `.spira/testenv.toml` — `ci_entry` (the full CI command a round VM runs for this repository; `testenv` itself does not read it), `image`, optional `workdir`
 (default `/work`) and `timeout`, `default` (tiers run with no `--suites`; absent = all), and
 `[tier.<name>]` with `argv`, `env`, `timeout` and an optional `image` that overrides the repository's
 for that tier only (a Node check beside Rust tiers; an empty one is refused). Each tier is one

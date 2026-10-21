@@ -605,12 +605,27 @@ impl Scripts for FScripts {
             queued.remove(0)
         }
     }
-    fn repo_testenv(&self, head: &str, repo: &str, wall_secs: u64, handle: &Path) -> RunOut {
-        self.calls
-            .borrow_mut()
-            .push(format!("repo-testenv {head} {repo} wall={wall_secs}"));
+    fn repo_round_vm(
+        &self,
+        tree: &Path,
+        results: &Path,
+        entry: &str,
+        round: (&str, &str),
+        wall_secs: u64,
+        handle: &Path,
+    ) -> RunOut {
+        self.calls.borrow_mut().push(format!(
+            "repo-round-vm {} entry={entry} round={}/{} wall={wall_secs}",
+            tree.display(),
+            round.0,
+            round.1
+        ));
         fs::write(handle, "777").unwrap();
-        self.repo_testenv.borrow().clone()
+        fs::create_dir_all(results).unwrap();
+        let out = self.repo_testenv.borrow().clone();
+        let status = if out.rc == 0 { "ok" } else { "red" };
+        fs::write(results.join("ci.result"), format!("{status} 1 1\n")).unwrap();
+        out
     }
     fn unit_active_state(&self, unit: &str) -> String {
         self.unit_asked.borrow_mut().push(unit.to_string());
