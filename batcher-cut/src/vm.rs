@@ -291,7 +291,7 @@ impl<'a> VmRunner<'a> {
                     .arg("--maxpar")
                     .arg(self.env.maxpar.to_string())
                     .arg("--toolchain")
-                    .arg(&self.env.rust_toolchain)
+                    .arg(tree_toolchain(&wt, &self.env.rust_toolchain))
                     .arg("--results-dir")
                     .arg(&results)
                     .env("SPIRA_HOME", &self.env.home)
@@ -321,6 +321,18 @@ impl Drop for VmRunner<'_> {
     fn drop(&mut self) {
         self.close();
     }
+}
+
+/// The channel the round tree pins, else the release's value: the round must build with the
+/// toolchain the tree under test names, not the one the host happens to have.
+fn tree_toolchain(tree: &Path, fallback: &str) -> String {
+    let pinned = fs::read_to_string(tree.join("rust-toolchain.toml")).ok().and_then(|t| {
+        t.lines().find_map(|l| {
+            let (k, v) = l.split_once('=')?;
+            (k.trim() == "channel").then(|| v.trim().trim_matches('"').to_string())
+        })
+    });
+    pinned.filter(|c| c.starts_with(|ch: char| ch.is_ascii_digit())).unwrap_or_else(|| fallback.to_string())
 }
 
 fn epoch() -> u64 {
@@ -359,7 +371,7 @@ impl RoundRunner for VmRunner<'_> {
                 cmd.arg(&self.env.round_vm).arg("run").arg(&self.wt);
                 cmd.arg("--suites").arg(suites.join(","));
                 cmd.arg("--maxpar").arg(self.env.maxpar.to_string());
-                cmd.arg("--toolchain").arg(&self.env.rust_toolchain);
+                cmd.arg("--toolchain").arg(tree_toolchain(&self.wt, &self.env.rust_toolchain));
                 cmd.arg("--results-dir").arg(&self.results);
                 cmd.arg("--attr-spool").arg(&self.spool);
                 cmd.arg("--base").arg(&self.repo.base);
@@ -487,6 +499,17 @@ impl RoundRunner for VmRunner<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_round_tree_pin_outranks_the_release_value() {
+        let tmp = testkit::TempDir::new("tc-pin");
+        let d = tmp.path().to_path_buf();
+        assert_eq!(tree_toolchain(&d, "1.82.0"), "1.82.0");
+        fs::write(d.join("rust-toolchain.toml"), "[toolchain]\nchannel = \"1.99.1\"\n").unwrap();
+        assert_eq!(tree_toolchain(&d, "1.82.0"), "1.99.1");
+        fs::write(d.join("rust-toolchain.toml"), "[toolchain]\nchannel = \"stable\"\n").unwrap();
+        assert_eq!(tree_toolchain(&d, "1.82.0"), "1.82.0");
+    }
 
     #[test]
     fn a_rerun_reuses_the_round_binaries_only_when_the_removed_members_changed_no_source() {

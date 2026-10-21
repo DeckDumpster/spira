@@ -876,6 +876,20 @@ want "K2: SPIRA_BATCH_MAXPAR overrides the default" "SPIRA_BATCH_MAXPAR=7" "$(ca
 want "K2: SPIRA_RELEASE_RUST_TOOLCHAIN overrides the default toolchain pin" \
     "RUSTUP_TOOLCHAIN=1.77.3" "$(cat "$ARGV_LOG2")"
 
+# K2b — a tree pinning a different channel than the release passes THAT channel to round-vm.
+rm -f "$(open_batch_file)"
+plant sp-cgdd4 express
+git -C "$REPO" worktree add -q -b spira/sp-cgdd4 "$RUN/worktree/sp-cgdd4" main
+printf '[toolchain]\nchannel = "1.99.1"\n' > "$RUN/worktree/sp-cgdd4/rust-toolchain.toml"
+git -C "$RUN/worktree/sp-cgdd4" add -A
+git -C "$RUN/worktree/sp-cgdd4" commit -q -m "sp-cgdd4: work"
+tip_g4="$(git -C "$REPO" rev-parse spira/sp-cgdd4)"
+git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cgdd4"
+certify sp-cgdd4 "$tip_g4"
+ARGV_LOG4="$TMP/argv-log-tree"; : > "$ARGV_LOG4"
+SPIRA_RELEASE_RUST_TOOLCHAIN=1.77.3 STUB_ARGV_LOG="$ARGV_LOG4" cut_repo >/dev/null
+want "K2b: the round tree's rust-toolchain.toml channel goes to round-vm" "RUSTUP_TOOLCHAIN=1.99.1" "$(cat "$ARGV_LOG4")"
+
 # K3 — a --with-bins build failure (exit 4) is a round-level red: filed as an Ops incident
 # naming the round's own members (the same file_local_red_incident path case H's base-fail
 # uses), not a harness fault that aborts the round with nobody blamed (the defect this bead
