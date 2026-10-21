@@ -3864,6 +3864,27 @@ fn a_repo_that_declares_its_own_testenv_certifies_and_lands_from_its_verdict() {
 }
 
 #[test]
+fn a_worktree_moved_by_stabilization_certifies_only_when_the_batcher_names_its_head() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    declare_own_testenv(&t);
+    t.git.set("HEAD", "stabilized");
+    t.git.trees.borrow_mut().insert("stabilized".into(), T_ROUND.into());
+    t.git.ancestor("b0", "stabilized");
+
+    assert_eq!(t.run(&["round", "certify", &batch]), 1);
+    assert!(t.err().contains("is not at the round's head"), "{}", t.err());
+    assert_eq!(t.run(&["round", "certify", &batch, "--rehead", "merged-tb"]), 1);
+    assert!(t.err().contains("--rehead merged-tb is not the round worktree's head"), "{}", t.err());
+    assert!(!certified_tree_exists(&t));
+
+    assert_eq!(t.run(&["round", "certify", &batch, "--rehead", "stabilized"]), 0, "{}", t.err());
+    assert_eq!(kv_of(&t, "round")["head"], "stabilized");
+    assert_eq!(round_phase(&t), "GREEN");
+}
+
+#[test]
 fn a_repo_that_declares_its_own_testenv_goes_red_and_does_not_land_on_a_failing_suite() {
     let t = round_world();
     *t.scripts.repo_testenv.borrow_mut() = RunOut {

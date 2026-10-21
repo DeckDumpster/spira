@@ -61,7 +61,8 @@ pub fn run(w: &World, r: &Round) -> i32 {
             repo,
             attest,
             ran,
-        } => certify(w, batch, repo.as_deref(), attest.as_deref(), ran.as_deref().and_then(|r| r.parse().ok())),
+            rehead,
+        } => certify(w, batch, repo.as_deref(), attest.as_deref(), ran.as_deref().and_then(|r| r.parse().ok()), rehead.as_deref()),
         Round::Eject {
             batch,
             id,
@@ -1487,6 +1488,7 @@ pub(super) fn certify(
     repo: Option<&str>,
     attest: Option<&str>,
     attested_ran: Option<usize>,
+    rehead: Option<&str>,
 ) -> i32 {
     let label = "round certify";
     let Ok((c, path)) = local_ctx(w, label, repo) else {
@@ -1515,6 +1517,15 @@ pub(super) fn certify(
             let at_wt = w.git.rev_parse(&wt, "HEAD");
             if at.is_none() || at != at_wt {
                 w.err(format!("queue.sh {label}: --attest {a} is not the round worktree's head ({}) — refused", at_wt.unwrap_or_else(|| "<none>".into())));
+                return FAIL;
+            }
+            head = at.unwrap_or_default();
+            set(&mut kv, "head", &head);
+        } else if let Some(r) = rehead {
+            let at = w.git.rev_parse(&path, r);
+            let at_wt = w.git.rev_parse(&wt, "HEAD");
+            if at.is_none() || at != at_wt {
+                w.err(format!("queue.sh {label}: --rehead {r} is not the round worktree's head ({}) — refused", at_wt.unwrap_or_else(|| "<none>".into())));
                 return FAIL;
             }
             head = at.unwrap_or_default();

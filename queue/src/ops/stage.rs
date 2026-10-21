@@ -668,7 +668,7 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
     match attested_from {
         Some((tree, tested_head, staged_ran)) => {
             w.out(format!("queue.sh {label}: {batch}'s tree {tree} is the tree its staged pass at {tested_head} judged — attesting that pass"));
-            let rc = certify(w, &batch, Some(&repo_name), Some(&head), Some(staged_ran));
+            let rc = certify(w, &batch, Some(&repo_name), Some(&head), Some(staged_ran), None);
             landing_log(&c.s.run, &format!("QUEUE ROUND-ATTEST {} repo={repo_name} batch={batch} head={head} tree={tree} tested={tested_head} rc={rc}", w.clock.now()));
             if rc == OK {
                 w.out("attested=1");

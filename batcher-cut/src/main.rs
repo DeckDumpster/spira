@@ -978,7 +978,7 @@ fn finish_local_round(
         } else {
             Some((stable.head.as_str(), io::all_suites(repo, &stable.green_branch).len()))
         };
-        match io::round_certify(env_, repo, batch, attest) {
+        match io::round_certify(env_, repo, batch, attest, Some(&head)) {
             Ok(()) => println!("batcher {}: certified the round's tree (round GREEN at {})", repo.name, stable.head),
             Err(e) => return refuse(format!("batcher {}: refused to land locally at {head} — cannot certify the round: {e}", repo.name)),
         }
