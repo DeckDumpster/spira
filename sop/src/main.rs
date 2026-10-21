@@ -192,11 +192,8 @@ fn dispatch(args: &[String]) -> ExitCode {
                     Err(c) => return c,
                 };
                 let sr = logic::synth(&bd, &clock, out.as_deref());
-                let scode = print_report(&sr);
-                if sr.code != 0 {
-                    return scode;
-                }
-                if let Some(o) = out.as_deref() {
+                print_report(&sr);
+                if let (0, Some(o)) = (sr.code, out.as_deref()) {
                     match sop::real::commit_page(o, &sop::shelf::slugify(key)) {
                         Ok(Some(m)) => println!("{m}"),
                         Ok(None) => {}
@@ -356,11 +353,8 @@ fn dispatch(args: &[String]) -> ExitCode {
                     Err(c) => return c,
                 };
                 let sr = logic::synth(&bd, &clock, out.as_deref());
-                let scode = print_report(&sr);
-                if sr.code != 0 {
-                    return scode;
-                }
-                if let Some(o) = out.as_deref() {
+                print_report(&sr);
+                if let (0, Some(o)) = (sr.code, out.as_deref()) {
                     match sop::real::commit_page(o, &sop::shelf::slugify(key)) {
                         Ok(Some(m)) => println!("{m}"),
                         Ok(None) => {}
