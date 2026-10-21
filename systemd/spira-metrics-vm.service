@@ -11,6 +11,7 @@ Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr
 Type=simple
 ExecStart=@SPIRA_PROD@/metrics-stack.sh vm
 CPUQuota=100%
+SuccessExitStatus=2
 Restart=always
 RestartSec=30
 StandardOutput=append:@SPIRA_RUN@/spira-metrics-vm.log

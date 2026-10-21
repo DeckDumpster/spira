@@ -127,6 +127,13 @@ fn cert_sweep_passes_the_git_checkout_not_the_release_dir() {
     }
 }
 
+#[test]
+fn a_clean_stop_of_the_metrics_store_is_not_a_failure() {
+    let ok = |t: &str| t.lines().any(|l| l.trim() == "SuccessExitStatus=2");
+    assert!(!ok("[Service]\nRestart=always\n"), "positive control");
+    assert!(ok(&raw("spira-metrics-vm.service")));
+}
+
 fn lone_pct(text: &str) -> usize {
     text.lines().filter(|l| l.starts_with("Exec")).filter(|l| l.replace("%%", "").contains('%') && l.replace("%%", "").split('%').skip(1).any(|r| r.starts_with(|c: char| c.is_ascii_alphabetic()))).count()
 }
