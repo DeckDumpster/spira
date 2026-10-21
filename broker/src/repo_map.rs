@@ -1,5 +1,5 @@
-// repo_map.rs — parse a repo-map line into a local checkout path. execute.rs and read.rs
-// each carried their own copy of this; one copy is also the one that gets a unit test.
+// repo_map.rs — parse a repo-map line into a local checkout path.
+// One copy, so it gets a unit test.
 
 use std::path::PathBuf;
 

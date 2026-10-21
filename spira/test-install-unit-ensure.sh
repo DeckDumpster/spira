@@ -16,8 +16,8 @@
 # 5. MISSING-TARGET (gap G10). A newly-installed unit whose ExecStart is not
 #    executable is refused, not enabled, via unit-ensure.sh's own
 #    _ue_execstart_ok — not a copy of it.
-# 6. PRODUCER GUARD (sp-5dcpj). spira-broker.timer is disabled whenever
-#    spira_broker_producer_present is false, regardless of the rendered file.
+# 6. RETIRED BROKER UNITS. An installed spira-broker unit the release no longer ships is
+#    removed by --retire.
 #
 # The BINARY GUARD cases (an enabled unit whose binary is missing) are deleted with the
 # guard itself (sp-gypjk): a release always carries every binary.
@@ -96,18 +96,13 @@ rm -f "$TMP/badprod/bin/spira-supervise"
 ensure() {
     tl_config SPIRA_PATH="$BIN" SPIRA_WATCHERS="$TMP/watchers-empty" SPIRA_DB="$TMP/db" \
         SPIRA_RUN="$TMP/run" SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
-        SPIRA_PROD="${_ENSURE_PROD:-$PROD}" SPIRA_BROKER_ENABLE="${_ENSURE_BROKER_ENABLE:-0}" \
+        SPIRA_PROD="${_ENSURE_PROD:-$PROD}" \
         SPIRA_BD=""
-    # SPIRA_BROKER_ENABLE ALSO AS PLAIN ENV: install/src/ensure.rs's producer guard still
-    # reads it with a bare std::env::var, never through spira_config::process::cfg (unlike
-    # the manifest's own ENABLE-set resolution a few lines over) — tl_config's declaration
-    # never reaches that one check.
     env -i PATH="$PIN/bin:$BIN:$PATH" HOME="$TMP/home" \
         SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$PIN/spira" \
         SPIRA_CONF=/nonexistent \
         SPIRA_INSTALL_FORCE=1 \
         SPIRA_SYSTEMCTL="$TMP/sc" \
-        SPIRA_BROKER_ENABLE="${_ENSURE_BROKER_ENABLE:-0}" \
         unit-ensure "$@" 2>&1
 }
 
@@ -256,38 +251,16 @@ want "MISSING-TARGET: present ExecStart target is enabled" \
 
 # ==========================================================================
 echo
-echo "PRODUCER GUARD — spira-broker.timer needs the producer opt-in, disabled without it (sp-5dcpj):"
+echo "RETIRED BROKER TIMER — an installed spira-broker unit this release does not ship is removed:"
 # ==========================================================================
-# POSITIVE CONTROL: producer present (SPIRA_BROKER_ENABLE=1) — the timer is installed and
-# enabled.
-_ENSURE_BROKER_ENABLE=1
 : > "$SC_LOG"
-broker_on_out="$(ensure)"
-unset _ENSURE_BROKER_ENABLE
-want "PRODUCER GUARD: broker timer enabled when producer present" \
-     "enabled+started  spira-broker-prod.timer" "$broker_on_out"
-
-# NO PRODUCER, NO CONTENT CHANGE: _ENSURE_BROKER_ENABLE unset now (defaults to 0,
-# same as spira_broker_producer_present's default) and nothing about the rendered
-# unit files depends on it, so this run has zero changes — the guard must still fire.
-: > "$SC_LOG"
-noprod_out="$(ensure)"
-want "PRODUCER GUARD: run itself reports no changes" "no changes" "$noprod_out"
-want "PRODUCER GUARD: disables the timer with no producer" \
-     "DISABLED spira-broker-prod.timer (no producer" "$noprod_out"
-if grep -q "disable spira-broker-prod.timer" "$SC_LOG"; then
-    ok "PRODUCER GUARD: systemctl disable was actually called"
-else
-    bad "PRODUCER GUARD: systemctl disable was actually called" "$(cat "$SC_LOG")"
-fi
-
-# PAIR: producer present again — the guard must stay quiet.
-_ENSURE_BROKER_ENABLE=1
-: > "$SC_LOG"
-prod_again_out="$(ensure)"
-unset _ENSURE_BROKER_ENABLE
-nowant "PRODUCER GUARD: does not disable when producer present" \
-     "DISABLED spira-broker" "$prod_again_out"
+for stale in spira-broker-prod.service spira-broker-prod.timer; do
+    printf '[Unit]\nDescription=stale\n' > "$DEST/$stale"
+done
+retire_out="$(ensure --retire)"
+want "RETIRED BROKER: the stale timer is retired" "retired    spira-broker-prod.timer" "$retire_out"
+want "RETIRED BROKER: the stale service is retired" "retired    spira-broker-prod.service" "$retire_out"
+[ ! -e "$DEST/spira-broker-prod.timer" ] && ok "RETIRED BROKER: the timer file is gone" || bad "RETIRED BROKER: the timer file is gone" "still present"
 
 # ==========================================================================
 tl_summary

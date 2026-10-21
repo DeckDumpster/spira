@@ -1,20 +1,10 @@
 #!/usr/bin/env bash
 #
-# test-broker.sh — broker: one end-to-end smoke, binary through execute through gh.
+# test-broker.sh — broker: one end-to-end smoke of the read dispatch, binary through gh.
 #
-# WHAT MOVED OUT. The policy table (fayth × verb refusal), intent JSON field shape, and gh
-# argv per verb are cargo #[cfg(test)] unit tests in broker/src/{policy,submit,execute,
-# read}.rs — see UC-landing-merge-queue-55 — run below via `cargo test -p broker`. The
-# end-to-end smoke that follows proves what no in-process unit test can: that main.rs's
-# dispatch, real file I/O under SPIRA_RUN, and env var propagation to a real gh stub actually
-# wire together. The conf.sh/build.sh/broker.sh declaration greps moved to
-# broker-allowlist-lint.sh, which runs without cargo.
-#
-# THE "FAILS OPEN" CASE IS GONE. It called the gh stub directly, bypassing the broker
-# entirely, to "prove what the broker prevents" — but a check that always passes regardless
-# of the broker's own correctness proves nothing about this suite's subject, only that gh
-# stubs can be invoked. What actually matters (a refused intent never reaches gh) is already
-# asserted below, on the real path, with a real refusal.
+# The read verbs' gh argv are cargo #[cfg(test)] unit tests in broker/src/read.rs; this proves
+# what no in-process test can: that main.rs's dispatch, env propagation and the repo-map
+# lookup reach a real gh stub. The retired intent verbs must stay gone from the binary.
 #
 # tier: T1
 # covers: broker/* spira/broker.sh UC-landing-merge-queue-55
@@ -85,55 +75,16 @@ base_env() {
         "$@"
 }
 
-audit="$SPIRA_RUN/broker/audit.jsonl"
-
 # =========================================================================
 echo
-echo "SMOKE — submit through execute, refused: a builder fayth cannot reach gh for a"
-echo "czar-only verb. The policy DECISION is Rust-tested; this proves it is actually wired"
-echo "into the running binary end to end."
+echo "RETIRED — submit and execute are no longer verbs of the binary."
 # =========================================================================
-intent_id="$(base_env \
-    FAYTH_NAME=builder \
-    SPIRA_AEON=test-aeon \
-    broker submit run-rerun test-repo/99 \
-        --reason "test reason" --bead sp-test --class deadlock 2>&1)"
-is "submit exits 0" "0" "$?"
-[ -f "$SPIRA_RUN/broker/inbox/${intent_id}.json" ] \
-    && ok "submit writes the intent to inbox/" \
-    || bad "submit writes the intent to inbox/" "no such file"
-
-> "$GH_LOG"
-tl_config SPIRA_CZAR_STAGE_DEADLOCK=act
-base_env broker execute >/dev/null 2>&1
-
-refused_line="$(grep "$intent_id" "$audit" 2>/dev/null || echo "")"
-want "builder+czar-only verb is REFUSED end to end" '"REFUSED"' "$refused_line"
-lack "gh is never called for the refused intent"    "99"        "$(cat "$GH_LOG" 2>/dev/null || echo "")"
-[ -f "$SPIRA_RUN/broker/refused/${intent_id}.json" ] \
-    && ok "the refused intent is moved to refused/" \
-    || bad "the refused intent is moved to refused/" "not found"
-
-# =========================================================================
-echo
-echo "SMOKE — submit through execute, done: czar + act reaches gh with the real argv."
-# =========================================================================
-> "$GH_LOG"
-act_id="$(base_env \
-    FAYTH_NAME=czar \
-    SPIRA_AEON=czar-1 \
-    broker submit run-rerun test-repo/777 \
-        --reason "act rerun" --bead sp-act --class deadlock 2>&1)"
-tl_config SPIRA_CZAR_STAGE_DEADLOCK=act
-base_env broker execute >/dev/null 2>&1
-
-act_line="$(grep "$act_id" "$audit" 2>/dev/null || echo "")"
-want "czar+act run-rerun → DONE end to end" '"DONE"' "$act_line"
-gh_calls="$(cat "$GH_LOG" 2>/dev/null || echo "")"
-want "gh received the run rerun argv" "run rerun 777" "$gh_calls"
-[ -f "$SPIRA_RUN/broker/done/${act_id}.json" ] \
-    && ok "the done intent is moved to done/" \
-    || bad "the done intent is moved to done/" "not found"
+for retired in submit execute; do
+    retired_out="$(base_env broker "$retired" 2>&1)"; retired_rc=$?
+    is "broker $retired is refused as usage" "2" "$retired_rc"
+    want "broker $retired usage names read and token only" "broker read" "$retired_out"
+    lack "broker $retired usage does not offer $retired" "broker $retired" "$retired_out"
+done
 
 # =========================================================================
 echo
@@ -153,48 +104,6 @@ read_out="$(base_env broker read run-view test-repo/12345 2>&1)"
 is "broker read run-view exits 0" "0" "$?"
 want "broker read run-view output contains status" '"status"' "$read_out"
 want "gh called with run view 12345" "run view 12345" "$(cat "$GH_LOG" 2>/dev/null || echo "")"
-
-# =========================================================================
-echo
-echo "SMOKE — pr-close on a batch PR cancels its in-progress runs first, and a run that will"
-echo "not cancel leaves the PR open."
-# =========================================================================
-RUNS_STATE="$T/runs-state"
-cat > "$GH_STUB" << 'ENDGH3'
-#!/usr/bin/env bash
-printf 'stub-gh: %s\n' "$*" >> "$SPIRA_BROKER_GH_LOG"
-case "$1 $2" in
-    "pr view") echo "spira/queue/20261015T081340Z" ;;
-    "run list") printf '[{"databaseId":38704330755,"status":"%s"}]\n' "$(cat "$RUNS_STATE")" ;;
-    "run cancel") [ -f "$CANCEL_FAIL" ] && { echo "boom" >&2; exit 1; }; echo completed > "$RUNS_STATE" ;;
-esac
-exit 0
-ENDGH3
-chmod +x "$GH_STUB"
-close_env() { base_env RUNS_STATE="$RUNS_STATE" CANCEL_FAIL="$T/cancel-fail" "$@"; }
-
-echo in_progress > "$RUNS_STATE"; > "$GH_LOG"
-close_id="$(close_env FAYTH_NAME=czar SPIRA_AEON=czar-1 broker submit pr-close test-repo/58 \
-    --reason "superseded" --bead sp-close --class deadlock 2>&1)"
-close_env broker execute >/dev/null 2>&1
-close_line="$(grep "$close_id" "$audit" 2>/dev/null || echo "")"
-want "pr-close with an active run → DONE" '"DONE"' "$close_line"
-want "the audit names the cancelled run" "38704330755" "$close_line"
-gh_calls="$(cat "$GH_LOG")"
-want "gh was asked to cancel the run" "run cancel 38704330755" "$gh_calls"
-cancel_at="$(grep -n 'run cancel' "$GH_LOG" | head -1 | cut -d: -f1)"
-close_at="$(grep -n 'pr close' "$GH_LOG" | head -1 | cut -d: -f1)"
-[ -n "$cancel_at" ] && [ -n "$close_at" ] && [ "$cancel_at" -lt "$close_at" ] \
-    && ok "the run is cancelled before the PR closes" \
-    || bad "the run is cancelled before the PR closes" "cancel line [$cancel_at] close line [$close_at]"
-
-echo in_progress > "$RUNS_STATE"; > "$GH_LOG"; : > "$T/cancel-fail"
-stuck_id="$(close_env FAYTH_NAME=czar SPIRA_AEON=czar-1 broker submit pr-close test-repo/59 \
-    --reason "superseded" --bead sp-close --class deadlock 2>&1)"
-close_env broker execute >/dev/null 2>&1
-stuck_line="$(grep "$stuck_id" "$audit" 2>/dev/null || echo "")"
-want "an uncancellable run refuses the close" '"REFUSED"' "$stuck_line"
-lack "gh never closes the PR over a live run" "pr close" "$(cat "$GH_LOG")"
 
 # =========================================================================
 echo

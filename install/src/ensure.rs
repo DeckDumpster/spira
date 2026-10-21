@@ -3,7 +3,6 @@
 //! restarts a running service. `landing-pass` runs this after every pass.
 
 use crate::install_units::{execstart_target_ok, is_masked, render_all, retire_dropped_units, write_unit, Ctx};
-use crate::manifest::inst_name;
 use std::fs;
 
 #[derive(Debug, Default)]
@@ -14,14 +13,10 @@ pub struct Report {
     pub retired: Vec<String>,
     pub missing_target: Vec<String>,
     pub enabled_started: Vec<String>,
-    pub broker_enabled: Vec<String>,
-    pub broker_disabled: Vec<String>,
     pub errors: Vec<String>,
 }
 
-/// `broker_enable` is the declared `SPIRA_BROKER_ENABLE` — resolved by the caller from the one
-/// source of config, so this library function never reads config (or the environment) itself.
-pub fn run(ctx: &Ctx, broker_enable: bool, retire: bool) -> Report {
+pub fn run(ctx: &Ctx, retire: bool) -> Report {
     let mut r = Report::default();
     let rendered = match render_all(ctx) {
         Ok(v) => v,
@@ -84,27 +79,6 @@ pub fn run(ctx: &Ctx, broker_enable: bool, retire: bool) -> Report {
         }
     }
 
-    // THE PRODUCER GUARD, every invocation: spira-broker.timer's enabled state tracks
-    // `spira_broker_producer_present` regardless of whether its own rendered content
-    // changed — the loop above only reaches newly installed units.
-    let producer_present = broker_enable;
-    let bare = "spira-broker.timer";
-    let named = inst_name(bare, &ctx.host.instance);
-    for name in [named.as_str(), bare] {
-        if producer_present {
-            let dest = ctx.unit_dir.join(name);
-            let Ok(text) = fs::read_to_string(&dest) else { continue };
-            if execstart_target_ok(&text).is_err() {
-                continue;
-            }
-            if ctx.systemctl.enable(name).is_ok() && ctx.systemctl.enable_now(name).is_ok() {
-                r.broker_enabled.push(name.to_string());
-            }
-        } else if ctx.systemctl.is_enabled(name).as_deref() == Some("enabled") && ctx.systemctl.disable(name).is_ok() {
-            r.broker_disabled.push(name.to_string());
-        }
-    }
-
     r
 }
 
@@ -120,7 +94,7 @@ mod tests {
     }
 
     fn tiny_manifest() -> crate::manifest::Manifest {
-        let mut m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, testdb_data_set: false, broker_enable: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
+        let mut m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, testdb_data_set: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
         m.units.retain(|u| u.name == "spira-sentinel.service" || u.name == "spira-sentinel.timer");
         m
     }
@@ -145,21 +119,21 @@ mod tests {
         let no_suspend = |_: &str| false;
         let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
 
-        let r = run(&ctx, false, false);
+        let r = run(&ctx, false);
         assert!(r.errors.is_empty(), "{:?}", r.errors);
         assert_eq!(r.installed.len(), 2);
         assert!(r.enabled_started.contains(&"spira-sentinel-prod.timer".to_string()));
         assert_eq!(sc.restarts.borrow().len(), 0);
 
         // A second run with the template unchanged: no-op.
-        let r2 = run(&ctx, false, false);
+        let r2 = run(&ctx, false);
         assert_eq!(r2.installed.len(), 0);
         assert_eq!(r2.updated.len(), 0);
         assert_eq!(r2.unchanged, 2);
 
         // A changed template installs but does NOT restart or re-enable (operator's call).
         std::fs::write(tmpl_dir.join("spira-sentinel.service"), "[Service]\nExecStart=/bin/false\n").unwrap();
-        let r3 = run(&ctx, false, false);
+        let r3 = run(&ctx, false);
         assert_eq!(r3.updated, vec!["spira-sentinel-prod.service".to_string()]);
         assert_eq!(sc.restarts.borrow().len(), 0);
     }
@@ -178,7 +152,7 @@ mod tests {
         let sc = FakeSystemctl::default();
         let no_suspend = |_: &str| false;
         let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
-        let r = run(&ctx, false, retire);
+        let r = run(&ctx, retire);
         assert!(r.errors.is_empty(), "{:?}", r.errors);
         (base, unit_dir, sc, r)
     }

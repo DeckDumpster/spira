@@ -580,6 +580,8 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "lc_bin", bead: "sp-gypjk" },
     RetiredKey { key: "panel", bead: "sp-gypjk" },
     RetiredKey { key: "broker_bin", bead: "sp-gypjk" },
+    // The broker intent queue is gone; only `broker token` and `broker read` remain.
+    RetiredKey { key: "broker_enable", bead: "sp-1tvphb" },
     RetiredKey { key: "czar_pass_bin", bead: "sp-gypjk" },
     RetiredKey { key: "queue_watch_bin", bead: "sp-gypjk" },
     RetiredKey { key: "supervise_bin", bead: "sp-gypjk" },

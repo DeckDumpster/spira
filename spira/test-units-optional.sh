@@ -10,7 +10,7 @@
 # inotifywait (an external program) still gates a unit.
 #
 # tier: T1
-# covers: install/src/manifest.rs install/src/bin/units_install.rs systemd/spira-mail-deliver.service systemd/spira-loom.service systemd/spira-broker.service UC-instance-lifecycle-25
+# covers: install/src/manifest.rs install/src/bin/units_install.rs systemd/spira-mail-deliver.service systemd/spira-loom.service UC-instance-lifecycle-25
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -95,18 +95,18 @@ nowant "A: OPTIONAL does not include spira-loom" "spira-loom" \
        "$(printf '%s\n' "$a_out" | grep '^OPTIONAL:')"
 
 # ==========================================================================
-echo "C: broker is installed unconditionally; its timer waits for a producer"
+echo "C: the broker intent queue is retired — no broker unit ships, none is enabled"
 # ==========================================================================
-want   "C: UNITS includes spira-broker.service" "spira-broker.service" \
+nowant "C: UNITS names no spira-broker unit" "spira-broker" \
        "$(printf '%s\n' "$a_out" | grep '^UNITS:')"
-want   "C: UNITS includes spira-broker.timer" "spira-broker.timer" \
-       "$(printf '%s\n' "$a_out" | grep '^UNITS:')"
-# SPIRA_BROKER_ENABLE is unset here (env -i), so the timer stays off with no producer —
-# test-broker-units.sh covers the opt-in case.
-nowant "C: ENABLE does not include spira-broker-prod.timer without SPIRA_BROKER_ENABLE" \
-       "spira-broker-prod.timer" "$(printf '%s\n' "$a_out" | grep '^ENABLE:')"
-nowant "C: OPTIONAL does not include spira-broker" "spira-broker" \
+nowant "C: ENABLE names no spira-broker unit" "spira-broker" \
+       "$(printf '%s\n' "$a_out" | grep '^ENABLE:')"
+nowant "C: OPTIONAL names no spira-broker unit" "spira-broker" \
        "$(printf '%s\n' "$a_out" | grep '^OPTIONAL:')"
+SHIPPED_BROKER_UNITS="$(ls "$HERE/../systemd" 2>/dev/null | grep '^spira-broker' || true)"
+is "C: the release ships no spira-broker template" "" "$SHIPPED_BROKER_UNITS"
+BROKER_ENABLE_KEY="$(ls "$HERE/conf.d" 2>/dev/null | grep -x 'SPIRA_BROKER_ENABLE' || true)"
+is "C: the config registry has no SPIRA_BROKER_ENABLE key" "" "$BROKER_ENABLE_KEY"
 
 # ==========================================================================
 echo "E/F: inotifywait present/absent (spira-mail-deliver.service)"

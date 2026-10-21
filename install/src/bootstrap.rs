@@ -329,8 +329,6 @@ pub fn manifest_from_env(instance: &str) -> Result<Manifest, String> {
         dolt_data_set: declared("SPIRA_DOLT_DATA").is_some(),
         dolt_durable_set: declared("SPIRA_DOLT_DURABLE").is_some(),
         testdb_data_set: declared("SPIRA_TESTDB_DATA").is_some(),
-        // SPIRA_BROKER_ENABLE is a registered key — the one door, never a bare env read.
-        broker_enable: spira_config::process::cfg("SPIRA_BROKER_ENABLE")? == "1",
         inotify_present,
         sccache_dav_addr_set: !sccache_dav_addr()?.is_empty(),
         repo_is_git_checkout,

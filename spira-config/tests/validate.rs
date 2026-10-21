@@ -235,6 +235,13 @@ mod retired_keys {
     }
 
     #[test]
+    fn a_toml_still_setting_broker_enable_loads_with_a_warning() {
+        let (_, w) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nbroker_enable = \"0\"\n")
+            .expect("a retired key must validate, not error");
+        assert!(w.iter().any(|m| m.contains("broker_enable") && m.contains("sp-1tvphb")), "{w:?}");
+    }
+
+    #[test]
     fn retired_key_warns_naming_the_key_and_bead() {
         let (doc, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nqueue_local_gate = 1\n")
             .expect("a retired key must validate, not error");

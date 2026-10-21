@@ -49,12 +49,7 @@ fn load_creds() -> Result<Option<AppCreds>, String> {
     }
 }
 
-// DESIGN QUESTION (flagged, not resolved here): SPIRA_RUN is registered, so this reads
-// it via cfg(), but keeps the original best-effort shape — `.ok()` turns a resolution
-// failure into "no cache", not a refusal, so `broker token` still mints without caching
-// when SPIRA_RUN can't be resolved. That is in tension with "a missing value is a
-// refusal"; left as-is because caching is optional to this subcommand and the rest of
-// the crate (execute.rs, submit.rs) already refuses hard on SPIRA_RUN where it is not.
+// Caching is optional: an unresolved SPIRA_RUN means no cache, not a refusal.
 fn cache_path() -> Option<PathBuf> {
     let run = spira_config::process::cfg("SPIRA_RUN").ok().filter(|s| !s.is_empty())?;
     Some(PathBuf::from(run).join("broker").join("gh-token.json"))

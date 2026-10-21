@@ -27,8 +27,6 @@ pub struct Inputs {
     pub dolt_durable_set: bool,
     /// `SPIRA_TESTDB_DATA` is non-empty.
     pub testdb_data_set: bool,
-    /// `SPIRA_BROKER_ENABLE=1`.
-    pub broker_enable: bool,
     /// `inotifywait` is on `PATH`.
     pub inotify_present: bool,
     /// `SPIRA_SCCACHE_DAV_ADDR` is non-empty (sp-xtdqi): this box names its own LAN address
@@ -53,7 +51,7 @@ pub struct Inputs {
 
 impl Default for Inputs {
     fn default() -> Self {
-        Inputs { instance: String::new(), dolt_data_set: false, dolt_durable_set: false, testdb_data_set: false, broker_enable: false, inotify_present: false, sccache_dav_addr_set: false, repo_is_git_checkout: false, lc_system_mode: false, watch_names: Ok(Vec::new()) }
+        Inputs { instance: String::new(), dolt_data_set: false, dolt_durable_set: false, testdb_data_set: false, inotify_present: false, sccache_dav_addr_set: false, repo_is_git_checkout: false, lc_system_mode: false, watch_names: Ok(Vec::new()) }
     }
 }
 
@@ -288,9 +286,6 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
         m.notes.push("Map a real harness checkout (SPIRA_REPO_MAP) and re-run install to enable continuous certification.".into());
     }
 
-    m.units.push(t("spira-broker.service", false));
-    m.units.push(t("spira-broker.timer", inputs.broker_enable));
-
     m.units.push(t("spira-landing-pass.service", false));
     m.units.push(t("spira-landing-pass.timer", true));
     m.units.push(t("spira-rounds.service", false));
@@ -350,8 +345,7 @@ impl Manifest {
 /// Every template name any combination of this box's SIX conditional inputs (dolt data,
 /// testdb data, `inotifywait`, `SPIRA_SCCACHE_DAV_ADDR`, `--system-user`, `repo_is_git_
 /// checkout`) could ever push into `Manifest::units` — the same completeness union
-/// `--list-optional`/`--list-union` already compute for a human (`SPIRA_BROKER_ENABLE` is
-/// left out: it never changes which units exist, only `spira-broker.timer`'s `enable`),
+/// `--list-optional`/`--list-union` already compute for a human,
 /// factored out here so a REMOVAL caller gets it too (sp-da4y0).
 ///
 /// `manifest_from_env` probes every one of these fresh on each call — `repo_is_git_
@@ -424,7 +418,7 @@ mod tests {
             dolt_data_set: true,
             dolt_durable_set: false,
             testdb_data_set: false,
-            broker_enable: false,
+           
             inotify_present: true,
             sccache_dav_addr_set: false,
             repo_is_git_checkout: true,
@@ -584,17 +578,6 @@ mod tests {
         assert!(!m.units.iter().any(|u| u.name == "spira-mail-deliver.service"));
         assert!(m.optional.contains(&"spira-mail-deliver.service".to_string()));
         assert!(m.unbuilt.contains(&"spira-mail-deliver.service".to_string()));
-    }
-
-    #[test]
-    fn the_broker_timer_is_present_but_enabled_only_with_the_operators_opt_in() {
-        let m = build(&inputs()).unwrap();
-        let timer = m.units.iter().find(|u| u.name == "spira-broker.timer").unwrap();
-        assert!(!timer.enable);
-        let mut i = inputs();
-        i.broker_enable = true;
-        let m2 = build(&i).unwrap();
-        assert!(m2.units.iter().find(|u| u.name == "spira-broker.timer").unwrap().enable);
     }
 
     #[test]

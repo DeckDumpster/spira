@@ -57,7 +57,6 @@ bd_tag = "v1.2.1"
 brain_dirty_age = 3600
 brief_keep_recurrences = "5"
 brief_notes_max_chars = "8000"
-broker_enable = "0"
 broker_gh_config_dir = ""
 broker_gh_token = ""
 capacity_probe_interval = "3600"
