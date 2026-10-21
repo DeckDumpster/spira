@@ -243,6 +243,9 @@ fn wiki_worktree_root(spira_wiki: &str) -> Option<String> {
 /// repo has an upstream. `Ok(None)` when the page is not in a git repo or did not change.
 pub fn commit_page(out_path: &str, slug: &str) -> Result<Option<String>, String> {
     let path = std::path::Path::new(out_path);
+    if !path.is_file() {
+        return Ok(None);
+    }
     let dir = path.parent().and_then(|d| d.to_str()).filter(|d| !d.is_empty()).unwrap_or(".");
     let Some(top) = git_out(&["rev-parse", "--show-toplevel"], Some(dir)) else {
         return Ok(None);
@@ -271,8 +274,9 @@ pub fn commit_page(out_path: &str, slug: &str) -> Result<Option<String>, String>
     if run(&["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]).is_ok() {
         run(&["pull", "--rebase", "--autostash"]).map_err(|e| format!("{e} (page committed locally, not pushed)"))?;
         run(&["push"]).map_err(|e| format!("{e} (page committed locally, not pushed)"))?;
+        return Ok(Some(format!("sop: committed and pushed {out_path}")));
     }
-    Ok(Some(format!("sop: committed {out_path}")))
+    Ok(Some(format!("sop: committed {out_path}; no upstream configured")))
 }
 
 #[cfg(test)]
