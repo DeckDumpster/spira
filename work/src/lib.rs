@@ -342,6 +342,12 @@ mod tests {
         assert_eq!(req, vec!["work", "sp-3m1p9", "file-followup", "a title", "--for", "builder", "--actor", "builder"]);
     }
 
+    #[test]
+    fn file_followup_carries_a_stdin_body() {
+        let req = build_request_with_body("sp-3m1p9", "file-followup", &["t".into(), "--body-file".into(), "-".into()], None, "builder", Some("## Build\nx")).unwrap();
+        assert_eq!(req, vec!["work", "sp-3m1p9", "file-followup", "t", "--body-file", "-", "--for", "builder", "--stdin", "## Build\nx", "--actor", "builder"]);
+    }
+
     fn v(xs: &[&str]) -> Vec<String> {
         xs.iter().map(|x| x.to_string()).collect()
     }
