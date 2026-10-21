@@ -655,18 +655,13 @@ iszero "beads credential: a second run with no file exits 0" "$?"
 echo
 echo "TIMER RACE (T2, sp-6k3pr) — a timer firing mid-uninstall does not resurrect its service:"
 # ==========================================================================
-# spira-broker.service/.timer are only in the manifest when SPIRA_BROKER_BIN is
-# executable (units.sh); set it to a stub so owned.sh includes them exactly as
-# a real broker install would.
-# inst_name() (systemd/units.sh) suffixes spira-broker.{service,timer} with the
-# instance name below (SPIRA_INSTANCE=test) — the mock must match what uninstall.sh
-# actually calls, not an arbitrary name.
-RACE_UNIT_SVC="spira-broker-test.service"
-RACE_UNIT_TMR="spira-broker-test.timer"
+# inst_name() (systemd/units.sh) suffixes a unit with the instance name below
+# (SPIRA_INSTANCE=test) — the mock must match what uninstall.sh actually calls.
+RACE_UNIT_SVC="spira-landing-pass-test.service"
+RACE_UNIT_TMR="spira-landing-pass-test.timer"
 RACE_STATE="$TMP/race-state"
 RACE_BIN="$TMP/race-bin"
 mkdir -p "$RACE_STATE" "$RACE_BIN"
-printf '#!/bin/sh\n' > "$RACE_BIN/broker"; chmod +x "$RACE_BIN/broker"
 
 # Mock systemctl that tracks the service's running state on disk. Stopping the
 # SERVICE while its TIMER has not yet been stopped simulates the timer firing
@@ -700,7 +695,7 @@ chmod +x "$RACE_BIN/systemctl"
            "expected the mock to show the service resurrected"
 
 # THE REAL RUN: uninstall.sh must stop every .timer before any .service, so
-# by the time it reaches the broker service the firing can no longer happen.
+# by the time it reaches the service the firing can no longer happen.
 : > "$RACE_STATE/active"; rm -f "$RACE_STATE/timer_stopped"
 # SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_INSTANCE/SPIRA_DOLT_DATA/
 # SPIRA_TESTDB_DATA are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
@@ -733,24 +728,24 @@ echo
 echo "BINARY-BACKED UNITS ARE ALWAYS OWNED — a release carries every binary, so uninstall removes them:"
 # ==========================================================================
 # THE ACCEPTANCE FAILURE. Uninstall once ran from a source checkout with no bin/, and units.sh
-# left a unit out of UNITS when its binary was not built HERE, so spira-broker/-loom units a
+# left a unit out of UNITS when its binary was not built HERE, so spira-landing-pass/-loom units a
 # tarball install put there were left behind as strays. Since sp-gypjk there is no "not built"
 # state: units.sh lists these units unconditionally, so owned.sh's manifest always has them.
-for _ub in spira-broker-test.service spira-broker-test.timer spira-loom-test.service \
+for _ub in spira-landing-pass-test.service spira-landing-pass-test.timer spira-loom-test.service \
            spira-reconciler-flow-test.service spira-reconciler-flow-test.timer; do
     printf '[Unit]\nDescription=left by a tarball install\n' > "$DEST/$_ub"
 done
 unbuilt_out="$(un)"
 unbuilt_rc=$?
 iszero "unbuilt: uninstall exits 0" "$unbuilt_rc"
-for _ub in spira-broker-test.service spira-broker-test.timer spira-loom-test.service \
+for _ub in spira-landing-pass-test.service spira-landing-pass-test.timer spira-loom-test.service \
            spira-reconciler-flow-test.service spira-reconciler-flow-test.timer; do
     [ -e "$DEST/$_ub" ] \
         && bad "unbuilt: $_ub is removed" "still in $DEST" \
         || ok  "unbuilt: $_ub is removed"
 done
-nowant "unbuilt: none of them is left as a stray" "STRAY  spira-broker-test" "$unbuilt_out"
-want   "unbuilt: the broker service was stopped" "stop spira-broker-test.service" "$(cat "$MOCK_LOG")"
+nowant "unbuilt: none of them is left as a stray" "STRAY  spira-landing-pass-test" "$unbuilt_out"
+want   "unbuilt: the landing-pass service was stopped" "stop spira-landing-pass-test.service" "$(cat "$MOCK_LOG")"
 unset _ub
 
 # ==========================================================================
