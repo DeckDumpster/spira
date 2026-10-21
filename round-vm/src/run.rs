@@ -2025,7 +2025,7 @@ mod tests {
 
     #[test]
     fn the_round_runs_with_spira_env_from_its_own_tree_first_in_path() {
-        let build = REMOTE_SCRIPT.find("build \"path:$HOME/round-work#spira-env\"").expect("spira-env is built from the round's own tree");
+        let build = REMOTE_SCRIPT.find("flake_ref=\"path:$HOME/round-work#spira-env\"").expect("spira-env is built from the round's own tree");
         let path = REMOTE_SCRIPT.find("export PATH=\"$HOME/spira-env/bin:").expect("spira-env/bin first");
         let first_build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
         assert!(build < path && path < first_build);
