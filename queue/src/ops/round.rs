@@ -899,6 +899,12 @@ pub(super) fn forget_batch_red(c: &Ctx, id: &str, tip: &str) -> std::io::Result<
     records::write_atomic(&path, &kept).map_err(std::io::Error::other)
 }
 
+fn changes_recipe(w: &World, repo: &Path, base: &str, tip: &str) -> bool {
+    let from = w.git.merge_base(repo, base, tip).unwrap_or_else(|| base.to_string());
+    let changed: Vec<String> = w.git.numstat(repo, &from, tip).unwrap_or_default().into_iter().map(|(p, ..)| p).collect();
+    spira_config::recipe::touches(&changed)
+}
+
 fn open(
     w: &World,
     repo: Option<&str>,
@@ -1048,6 +1054,21 @@ fn open(
                 None => skips.push(format!("{}: no submitted tip — not admitted", m.id)),
             },
         }
+    }
+
+    let open_recipe = open_now
+        .iter()
+        .find(|(_, kv)| kv.members().iter().any(|h| changes_recipe(w, &path, &landed_sha, &h.tip)))
+        .map(|(_, kv)| kv.get("batch_id").unwrap_or("?").to_string());
+    let (mut recipe, ordinary): (Vec<Member>, Vec<Member>) =
+        admitted.into_iter().partition(|m| changes_recipe(w, &path, &landed_sha, &m.tip));
+    let alone = open_recipe.is_none() && ordinary.is_empty();
+    let admitted = if alone { recipe.drain(..1.min(recipe.len())).collect() } else { ordinary };
+    for m in &recipe {
+        skips.push(match &open_recipe {
+            Some(open) => format!("{0}: solo: {0} changes the round recipe — waits for open recipe round {open}, not admitted", m.id),
+            None => format!("{0}: solo: {0} changes the round recipe — rounds alone, not admitted with other members", m.id),
+        });
     }
 
     let batch = name

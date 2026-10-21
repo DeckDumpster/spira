@@ -49,6 +49,15 @@ pub fn sha_of_tree(root: &std::path::Path) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn the_hashed_files_are_the_admission_path_list() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        assert_eq!(super::INPUTS.len(), spira_config::recipe::PATHS.len());
+        for ((_, text), path) in super::INPUTS.iter().zip(spira_config::recipe::PATHS) {
+            assert_eq!(*text, std::fs::read_to_string(root.join(path)).unwrap(), "{path}");
+        }
+    }
+
+    #[test]
     fn the_hash_is_a_stable_sha256_hex_digest() {
         let s = super::sha();
         assert_eq!(s.len(), 64);
