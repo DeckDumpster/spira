@@ -1019,7 +1019,6 @@ fn open(
 
     let mut skips: Vec<String> = Vec::new();
     let mut admitted: Vec<Member> = Vec::new();
-    let mut blocked_by: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for m in wanted {
         match w.lc.bead_row(&m.id) {
             None => skips.push(format!("{}: no lifecycle row (spira-lc could not say) — not admitted", m.id)),
@@ -1037,10 +1036,13 @@ fn open(
                 }
                 Some(tip) if tip.starts_with(&m.tip) => match gate_red_at(&c, &m.id, &tip) {
                     Some(why) => skips.push(format!("{}: its gate is FAIL at {tip} ({why}) — not admitted", m.id)),
-                    None => {
-                        blocked_by.insert(m.id.clone(), r.blocked_by);
-                        admitted.push(Member { id: m.id, tip })
-                    }
+                    None => match r.blocked_by.first() {
+                        Some(dep) => {
+                            let state = w.lc.bead_row(dep).map(|d| d.state).unwrap_or_else(|| "unknown".into());
+                            skips.push(format!("{}: depends on {dep} ({state}) — not admitted until it lands", m.id))
+                        }
+                        None => admitted.push(Member { id: m.id, tip }),
+                    },
                 },
                 Some(tip) => skips.push(format!("{}: {} is not its row's tip {tip} — not admitted", m.id, m.tip)),
                 None => skips.push(format!("{}: no submitted tip — not admitted", m.id)),
@@ -1083,13 +1085,6 @@ fn open(
                 "{}: {} fails its compile-and-lint check — not admitted",
                 m.id, m.tip
             ));
-            continue;
-        }
-        if let Some(b) = blocked_by
-            .get(&m.id)
-            .and_then(|bs| bs.iter().find(|b| !merged.iter().any(|x| &x.id == *b)))
-        {
-            skips.push(format!("{}: blocked by {b}, which has not landed and is not merged ahead of it in this round — not admitted", m.id));
             continue;
         }
         if merge_member(w, &c, &wt, &m.id, &m.tip) {

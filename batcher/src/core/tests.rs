@@ -250,11 +250,10 @@ fn a_member_whose_blocker_has_not_landed_is_not_cut_and_the_refusal_names_it() {
 }
 
 #[test]
-fn a_member_whose_blocker_is_in_the_same_round_is_cut_and_merges_after_it() {
+fn a_member_whose_blocker_is_only_in_the_same_round_is_not_cut() {
     let (kept, refused) = refuse_blocked(vec![blocked("sp-b", &["sp-a"]), m("sp-a", 3, false, 0)]);
-    assert!(refused.is_empty(), "{refused:?}");
-    let order: Vec<_> = topo_order(&kept).into_iter().map(|m| m.id).collect();
-    assert_eq!(order, vec!["sp-a", "sp-b"]);
+    assert_eq!(kept.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-a"]);
+    assert!(refused[0].contains("sp-b: depends on sp-a"), "{refused:?}");
 }
 
 #[test]

@@ -168,23 +168,15 @@ pub fn should_cut(t: &TriggerInputs) -> Option<TriggerReason> {
     Some(TriggerReason::PoolFull(t.pool.len() as u32))
 }
 
-/// Drops every member with a `blocked_by` prerequisite that is not itself a surviving member
-/// (so it merges ahead of it, `topo_order`), to a fixed point. The refusals name the blocker.
+/// Drops every member with an unlanded `blocked_by` prerequisite. A blocker in the same round
+/// does not count: its fix acts only once released.
 pub fn refuse_blocked(pool: Vec<Member>) -> (Vec<Member>, Vec<String>) {
-    let mut kept = pool;
-    let mut refusals = Vec::new();
-    loop {
-        let ids: std::collections::BTreeSet<Id> = kept.iter().map(|m| m.id.clone()).collect();
-        let (ok, blocked): (Vec<Member>, Vec<Member>) = kept.into_iter().partition(|m| m.blocked_by.iter().all(|b| ids.contains(b)));
-        if blocked.is_empty() {
-            return (ok, refusals);
-        }
-        for m in &blocked {
-            let b = m.blocked_by.iter().find(|b| !ids.contains(*b)).expect("a blocked member has an absent blocker");
-            refusals.push(format!("{}: blocked by {b}, which has not landed and is not in this round — not cut", m.id));
-        }
-        kept = ok;
-    }
+    let (ok, blocked): (Vec<Member>, Vec<Member>) = pool.into_iter().partition(|m| m.blocked_by.is_empty());
+    let refusals = blocked
+        .iter()
+        .map(|m| format!("{}: depends on {} (unlanded) — not cut", m.id, m.blocked_by[0]))
+        .collect();
+    (ok, refusals)
 }
 
 /// What kind of round `select_round` cut from the pool.
