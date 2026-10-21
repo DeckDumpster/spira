@@ -610,7 +610,7 @@ nonzero "purge-database: wrong count exits non-zero"           "$wrong_rc"
 want    "purge-database: wrong count reports the mismatch"     "count mismatch" "$wrong_out"
 isdir   "purge-database: wrong count leaves .beads intact"     "$PURGEDB_DIR/.beads"
 
-# Right count: database, Dolt data and test Dolt data are all removed; exit 0.
+# Right count: database and Dolt data are both removed; exit 0.
 _seed_purgedb
 right_out="$(un_purgedb "3" --purge-database)"
 right_rc=$?
