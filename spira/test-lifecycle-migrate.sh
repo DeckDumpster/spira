@@ -37,7 +37,7 @@ unset SPIRA_LC_SOCKET
 
 REPO="$(cd "$HERE/.." && pwd)"
 TMP="$(mktemp -d)"
-PORT=$((SPIRA_LC_TESTDB_PORT + 1000 + (RANDOM % 300)))
+PORT=$((3309 + 1000 + (RANDOM % 300)))
 SERVER_PID=""
 cleanup() { [ -n "$SERVER_PID" ] && kill "$SERVER_PID" >/dev/null 2>&1; rm -rf "$TMP"; }
 trap cleanup EXIT INT TERM

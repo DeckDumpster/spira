@@ -134,7 +134,7 @@ chmod +x "$STUBBIN/mail"
 run_check() {
     local run_dir; run_dir="$(mktemp -d "$TMP/run-XXXXX")"
     tl_config SPIRA_HOME_REPO="lfixq" SPIRA_REPO_MAP="$RMAP" SPIRA_RUN="$run_dir" \
-        SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES"
+        SPIRA_DOLT_DATA="" SPIRA_RELEASES="$RELEASES"
     env -i SPIRA_TOML="$SPIRA_TOML" PATH="$STUBBIN:$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
@@ -253,7 +253,7 @@ refresh_run="$(mktemp -d "$TMP/run-XXXXX")"
 # $FAKE_RELEASE_DIR verbatim — exactly the ambiguity the real unit does NOT create, since it
 # sets only SPIRA_RELEASE and PATH.
 tl_config SPIRA_HOME_REPO="lfixq" SPIRA_REPO_MAP="$RMAP" SPIRA_RUN="$refresh_run" \
-    SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES"
+    SPIRA_DOLT_DATA="" SPIRA_RELEASES="$RELEASES"
 refresh_out="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$STUBBIN:$PATH" \
     HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
@@ -269,7 +269,7 @@ nowant "refresh no-arg: not a git checkout error"       "is not a git checkout" 
 activate "$C1"
 refresh_run2="$(mktemp -d "$TMP/run-XXXXX")"
 tl_config SPIRA_HOME_REPO="lfixq" SPIRA_REPO_MAP="$RMAP" SPIRA_RUN="$refresh_run2" \
-    SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES"
+    SPIRA_DOLT_DATA="" SPIRA_RELEASES="$RELEASES"
 refresh_out2="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$STUBBIN:$PATH" \
     HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
@@ -289,7 +289,7 @@ printf 'RUNNING UNLANDED %s: stop the world fix (since 2026-09-30T00:00:00Z)\n' 
 
 refresh_run3="$(mktemp -d "$TMP/run-XXXXX")"
 tl_config SPIRA_HOME_REPO="lfixq" SPIRA_REPO_MAP="$RMAP" SPIRA_RUN="$refresh_run3" \
-    SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES"
+    SPIRA_DOLT_DATA="" SPIRA_RELEASES="$RELEASES"
 refresh_out3="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$STUBBIN:$PATH" \
     HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \

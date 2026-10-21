@@ -47,7 +47,7 @@ testdb_require "test-aeon-lifecycle-cutover.sh"
 REPO="$(cd "$HERE/.." && pwd)"
 TMP="$(mktemp -d)"
 printf '## Build\n\nA fixture change in spira/x.\n' > "$TMP/build.md"
-PORT=$((SPIRA_LC_TESTDB_PORT + 900 + (RANDOM % 500)))
+PORT=$((3309 + 900 + (RANDOM % 500)))
 SERVER_PID=""
 SERVE_PID=""
 

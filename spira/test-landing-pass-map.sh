@@ -56,7 +56,7 @@ LPRUN="$TMP/lprun"; mkdir -p "$LPRUN"
 # landing-pass/src/seam.rs, repo_map_ok is `[ -r "${SPIRA_REPO_MAP:-}" ]`, which an empty
 # string fails identically to a genuinely absent key. Later calls override it via tl_config.
 tl_config SPIRA_BATCHER_ENABLE=1 SPIRA_RUN="$LPRUN" SPIRA_DB="$TMP/db" SPIRA_ID_PREFIX=sp \
-    SPIRA_WATCHERS="$LPHOME/watchers" SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= SPIRA_REPO_MAP=
+    SPIRA_WATCHERS="$LPHOME/watchers" SPIRA_DOLT_DATA= SPIRA_REPO_MAP=
 lp() {  # lp [KEY=val ...] — runs the real binary in an otherwise-empty environment
     # Extra SPIRA_* overrides (SPIRA_REPO_MAP below) are registered keys — declared via
     # tl_config rather than forwarded through env -i, which strips them.

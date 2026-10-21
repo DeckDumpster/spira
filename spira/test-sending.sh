@@ -54,7 +54,7 @@ export SPIRA_CONF="$TMP/no-such-conf"
 # `sending()` helper below spawns inherits it too.
 # --------------------------------------------------------------------------------------
 LCREPO="$(cd "$HERE/.." && pwd)"
-# A literal base port, not SPIRA_LC_TESTDB_PORT's conf.sh default: conf.sh is not sourced
+# A literal base port, not 3309's conf.sh default: conf.sh is not sourced
 # yet at this point in the suite (its own SPIRA_CONF points at a no-such-conf on purpose,
 # further down), so nothing has given that variable a value here.
 LC_PORT=$((23309 + (RANDOM % 400)))

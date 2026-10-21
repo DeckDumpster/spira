@@ -52,7 +52,7 @@ printf 'fixture | %s | push | origin/main | | |\n' "$REPO" > "$RMAP"
 run_skew_cmd() {
     local run_dir="$1"; shift
     tl_config SPIRA_RUN="$run_dir" SPIRA_OVERRIDES="$OVDIR" SPIRA_REPO_MAP="$RMAP" \
-        SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
+        SPIRA_DOLT_DATA=""
     env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
@@ -83,7 +83,7 @@ want "refresh: reports the override applied" "test-cap: applied" "$out1"
 is   "refresh: override brief present after reset" \
      "operator brief" "$(cat "$REPO/brief.txt")"
 
-tl_config SPIRA_RUN="$RUN1" SPIRA_OVERRIDES="$OVDIR" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
+tl_config SPIRA_RUN="$RUN1" SPIRA_OVERRIDES="$OVDIR" SPIRA_DOLT_DATA=""
 list1="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
     overrides.sh list)"
 want "list: override is active" "test-cap $BEAD active" "$list1"
@@ -119,7 +119,7 @@ is   "refresh: brief now carries the permanent fix, not the override's hand" \
     && ok  "spec moved to retired/" \
     || bad "spec moved to retired/" "not found at $OVDIR/retired/test-cap.override"
 
-tl_config SPIRA_RUN="$RUN2" SPIRA_OVERRIDES="$OVDIR" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
+tl_config SPIRA_RUN="$RUN2" SPIRA_OVERRIDES="$OVDIR" SPIRA_DOLT_DATA=""
 list2="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
     overrides.sh list)"
 want "list: override reports retired, not active" "test-cap $BEAD retired" "$list2"
@@ -150,7 +150,7 @@ apply()  { return 1; }
 EOF
 
 RUN4="$(mktemp -d "$TMP/run-XXXXX")"
-tl_config SPIRA_RUN="$RUN4" SPIRA_OVERRIDES="$FAILDIR" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
+tl_config SPIRA_RUN="$RUN4" SPIRA_OVERRIDES="$FAILDIR" SPIRA_DOLT_DATA=""
 apply_out="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
     overrides.sh apply "$REPO" 2>&1)"; apply_rc=$?
 is   "apply: a failing override exits non-zero"  "1"              "$apply_rc"

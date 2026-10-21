@@ -38,7 +38,7 @@ export SPIRA_POISON_ASKED="$TMP/poison-asked"; mkdir -p "$SPIRA_POISON_ASKED"
 unset SPIRA_LC_SOCKET
 
 REPO="$(cd "$HERE/.." && pwd)"
-LCPORT=$((SPIRA_LC_TESTDB_PORT + 900 + (RANDOM % 300)))
+LCPORT=$((3309 + 900 + (RANDOM % 300)))
 LC_SERVER_PID=""
 trap 'testdb_drop; [ -n "$LC_SERVER_PID" ] && kill "$LC_SERVER_PID" >/dev/null 2>&1; rm -rf "$TMP"' EXIT INT TERM
 

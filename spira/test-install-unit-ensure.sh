@@ -95,7 +95,7 @@ rm -f "$TMP/badprod/bin/spira-supervise"
 # the caller's PATH (conf.sh keeps it first and only appends SPIRA_PATH).
 ensure() {
     tl_config SPIRA_PATH="$BIN" SPIRA_WATCHERS="$TMP/watchers-empty" SPIRA_DB="$TMP/db" \
-        SPIRA_RUN="$TMP/run" SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
+        SPIRA_RUN="$TMP/run" SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" \
         SPIRA_PROD="${_ENSURE_PROD:-$PROD}" \
         SPIRA_BD=""
     env -i PATH="$PIN/bin:$BIN:$PATH" HOME="$TMP/home" \
@@ -111,7 +111,7 @@ echo
 echo "positive control — render produces valid output before testing:"
 # ==========================================================================
 tl_config SPIRA_PATH="$BIN" SPIRA_WATCHERS="$TMP/watchers-empty" SPIRA_DB="$TMP/db" \
-    SPIRA_RUN="$TMP/run" SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
+    SPIRA_RUN="$TMP/run" SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" \
     SPIRA_PROD="$PROD" SPIRA_BD=""
 rendered="$(env -i PATH="$PIN/bin:$BIN:$PATH" HOME="$TMP/home" \
     SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$PIN/spira" \

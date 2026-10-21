@@ -165,7 +165,7 @@ chmod +x "$MOCK_BIN/tmux"
 # ---------------------------------------------------------------------------
 un() {
     > "$MOCK_LOG"; > "$LINGER_LOG"; > "$LAYOUT_LOG"
-    # SPIRA_PATH/SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/
+    # SPIRA_PATH/SPIRA_DOLT_DATA/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/
     # SPIRA_INSTANCE/SPIRA_CLIENT_SETTINGS are registered keys (per Ryan 2026-10-05, ONE
     # SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i, which
     # clears it. SPIRA_CLIENT_SETTINGS's own conf.d default derives from $HOME, but that
@@ -173,7 +173,7 @@ un() {
     # cfg(), no env fallback) — undeclared, `release session-hook uninstall` (run with
     # `|| true` in uninstall.sh) silently fails to resolve it and the seeded hooks fixture
     # at $SETTINGS is never touched.
-    tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
+    tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_DOLT_DATA="" \
         SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" SPIRA_COCKPIT="$REAL_COCKPIT" \
         SPIRA_INSTANCE=test SPIRA_CLIENT_SETTINGS="$TMP/home/.claude/settings.json"
     env -i \
@@ -203,11 +203,10 @@ un() {
 # ---------------------------------------------------------------------------
 _seed_units() {
     local rendered rc
-    # SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_INSTANCE/SPIRA_DOLT_DATA/
-    # SPIRA_TESTDB_DATA are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
+    # SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_INSTANCE/SPIRA_DOLT_DATA are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
     # declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
     tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" \
-        SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
+        SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DOLT_DATA=""
     rendered="$(env -i \
         "PATH=$FIXTURE/spira:$PATH" \
         "HOME=$TMP/home" \
@@ -339,14 +338,14 @@ echo "INSTANCE AWARENESS — refuses multiple instances; accepts explicit:"
 > "$DEST/spira-sentinel-prod.service"
 > "$DEST/spira-sentinel-test.service"
 
-# SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA are
+# SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_DOLT_DATA are
 # registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and
 # thread SPIRA_TOML through env -i, which clears it. SPIRA_INSTANCE is reset to the
 # complete fixture's own base value ("prod") rather than left at "test" from the un()
 # calls above — this case is testing the no-explicit-CLI-argument ambiguity refusal, which
 # the unconvertible absence of SPIRA_INSTANCE used to give it for free.
 tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" \
-    SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_INSTANCE=prod
+    SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_DOLT_DATA="" SPIRA_INSTANCE=prod
 multi_out="$(env -i \
     "PATH=$FIXTURE/spira:$PATH" \
     "HOME=$TMP/home" \
@@ -365,11 +364,10 @@ want    "instance: names the instances found" "prod" "$multi_out"
 want    "instance: names the instances found" "test" "$multi_out"
 
 # Explicit argument should be accepted even with multiple sentinels.
-# SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_INSTANCE/SPIRA_DOLT_DATA/
-# SPIRA_TESTDB_DATA are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
+# SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_INSTANCE/SPIRA_DOLT_DATA are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
 # declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
 tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" \
-    SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
+    SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DOLT_DATA=""
 explicit_out="$(env -i \
     "PATH=$FIXTURE/spira:$PATH" \
     "HOME=$TMP/home" \
@@ -477,11 +475,10 @@ mkdir -p "$CONF_DIR"
 printf 'SPIRA_ID_PREFIX=sp\nSPIRA_INSTANCE=test\n' > "$CONF_DIR/spira.conf"
 mkdir -p "$SPIRA_RUN_DIR/archive"
 
-# SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_INSTANCE/SPIRA_DOLT_DATA/
-# SPIRA_TESTDB_DATA are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
+# SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_INSTANCE/SPIRA_DOLT_DATA are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
 # declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
 tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" \
-    SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
+    SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DOLT_DATA=""
 purge_out="$(env -i \
     "PATH=$FIXTURE/spira:$PATH" \
     "HOME=$TMP/home" \
@@ -513,11 +510,10 @@ echo "--dry-run — nothing changed:"
 _seed_units || { printf 'fixture: re-seed for dry-run failed\n'; exit 1; }
 _unit_before="$(ls -1 "$DEST" 2>/dev/null | wc -l | tr -d ' ')"
 
-# SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_INSTANCE/SPIRA_DOLT_DATA/
-# SPIRA_TESTDB_DATA are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
+# SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_INSTANCE/SPIRA_DOLT_DATA are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
 # declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
 tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" \
-    SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
+    SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DOLT_DATA=""
 dryrun_out="$(env -i \
     "PATH=$FIXTURE/spira:$PATH" \
     "HOME=$TMP/home" \
@@ -573,11 +569,10 @@ FAKE_BD_LIST_JSON='[{"id":"a"},{"id":"b"},{"id":"c"}]'   # 3 beads
 
 PURGEDB_DIR="$TMP/beads-db"
 PURGEDB_DOLT="$TMP/dolt-data"
-PURGEDB_TESTDB="$TMP/testdb-data"
 
 _seed_purgedb() {
-    rm -rf "$PURGEDB_DIR" "$PURGEDB_DOLT" "$PURGEDB_TESTDB"
-    mkdir -p "$PURGEDB_DIR/.beads" "$PURGEDB_DOLT" "$PURGEDB_TESTDB"
+    rm -rf "$PURGEDB_DIR" "$PURGEDB_DOLT"
+    mkdir -p "$PURGEDB_DIR/.beads" "$PURGEDB_DOLT"
 }
 
 # un_purgedb <typed-count> [uninstall.sh flags...] — same controlled environment as
@@ -585,11 +580,11 @@ _seed_purgedb() {
 un_purgedb() {
     local confirm="$1"; shift
     # SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_INSTANCE/SPIRA_DB/SPIRA_BD/
-    # SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA are registered keys (per Ryan 2026-10-05, ONE
+    # SPIRA_DOLT_DATA are registered keys (per Ryan 2026-10-05, ONE
     # SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through env -i.
     tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" \
         SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DB="$PURGEDB_DIR" \
-        SPIRA_BD="$MOCK_BIN/bd" SPIRA_DOLT_DATA="$PURGEDB_DOLT" SPIRA_TESTDB_DATA="$PURGEDB_TESTDB"
+        SPIRA_BD="$MOCK_BIN/bd" SPIRA_DOLT_DATA="$PURGEDB_DOLT"
     env -i \
         "PATH=$FIXTURE/spira:$PATH" \
         "HOME=$TMP/home" \
@@ -607,7 +602,7 @@ un_purgedb() {
         bash "$FIXTURE/spira/uninstall.sh" test --yes "$@" <<< "$confirm" 2>&1
 }
 
-# Wrong count: database, Dolt data and test Dolt data all left intact; non-zero exit.
+# Wrong count: database and Dolt data both left intact; non-zero exit.
 _seed_purgedb
 wrong_out="$(un_purgedb "99" --purge-database)"
 wrong_rc=$?
@@ -615,14 +610,13 @@ nonzero "purge-database: wrong count exits non-zero"           "$wrong_rc"
 want    "purge-database: wrong count reports the mismatch"     "count mismatch" "$wrong_out"
 isdir   "purge-database: wrong count leaves .beads intact"     "$PURGEDB_DIR/.beads"
 
-# Right count: database, Dolt data and test Dolt data are all removed; exit 0.
+# Right count: database and Dolt data are both removed; exit 0.
 _seed_purgedb
 right_out="$(un_purgedb "3" --purge-database)"
 right_rc=$?
 iszero "purge-database: right count exits 0"                "$right_rc"
 nofile "purge-database: right count removes the database"   "$PURGEDB_DIR"
 nofile "purge-database: right count removes Dolt data"       "$PURGEDB_DOLT"
-nofile "purge-database: right count removes test Dolt data"  "$PURGEDB_TESTDB"
 
 # Plain --purge (no --purge-database): never prompts for a count, never touches the DB.
 _seed_purgedb
@@ -632,7 +626,7 @@ iszero "purge-database: plain --purge exits 0"                     "$plain_rc"
 nowant "purge-database: plain --purge does not prompt for a count" "Type the count" "$plain_out"
 isdir  "purge-database: plain --purge leaves .beads intact"        "$PURGEDB_DIR/.beads"
 
-rm -rf "$PURGEDB_DIR" "$PURGEDB_DOLT" "$PURGEDB_TESTDB"
+rm -rf "$PURGEDB_DIR" "$PURGEDB_DOLT"
 
 # ==========================================================================
 echo
@@ -697,11 +691,10 @@ chmod +x "$RACE_BIN/systemctl"
 # THE REAL RUN: uninstall.sh must stop every .timer before any .service, so
 # by the time it reaches the service the firing can no longer happen.
 : > "$RACE_STATE/active"; rm -f "$RACE_STATE/timer_stopped"
-# SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_INSTANCE/SPIRA_DOLT_DATA/
-# SPIRA_TESTDB_DATA are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
+# SPIRA_PATH/SPIRA_RUN/SPIRA_PROD/SPIRA_COCKPIT/SPIRA_INSTANCE/SPIRA_DOLT_DATA are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
 # declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
 tl_config SPIRA_PATH="$RACE_BIN" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_PROD="$FIXTURE/spira" \
-    SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
+    SPIRA_COCKPIT="$REAL_COCKPIT" SPIRA_INSTANCE=test SPIRA_DOLT_DATA=""
 race_out="$(env -i \
     "PATH=$FIXTURE/spira:$PATH" \
     "HOME=$TMP/home" \

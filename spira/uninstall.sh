@@ -20,7 +20,6 @@
 # Kept unless --purge-database (requires bead count typed back):
 #   $SPIRA_DB              (beads database and its Dolt data)
 #   $SPIRA_DOLT_DATA       (Dolt server data directory)
-#   $SPIRA_TESTDB_DATA     (test Dolt server data directory)
 #
 # INSTANCE AWARENESS
 # ------------------
@@ -191,7 +190,6 @@ fi
 if [ "$_un_purge_db" = 1 ]; then
     printf '  --purge-database: beads database: %s\n' "$SPIRA_DB"
     [ -n "${SPIRA_DOLT_DATA:-}" ]   && printf '  --purge-database: Dolt data:       %s\n' "$SPIRA_DOLT_DATA"
-    [ -n "${SPIRA_TESTDB_DATA:-}" ] && printf '  --purge-database: test Dolt data:  %s\n' "$SPIRA_TESTDB_DATA"
 else
     printf '  (kept — re-run with --purge-database to also remove the beads database)\n'
 fi
@@ -450,8 +448,6 @@ if [ "$_un_purge_db" = 1 ]; then
         [ -d "$SPIRA_DB" ]            && { _un_act "removing database: $SPIRA_DB" rm -rf "$SPIRA_DB"; }
         [ -n "${SPIRA_DOLT_DATA:-}" ] && [ -d "$SPIRA_DOLT_DATA" ] && \
             { _un_act "removing Dolt data: $SPIRA_DOLT_DATA" rm -rf "$SPIRA_DOLT_DATA"; }
-        [ -n "${SPIRA_TESTDB_DATA:-}" ] && [ -d "$SPIRA_TESTDB_DATA" ] && \
-            { _un_act "removing test Dolt data: $SPIRA_TESTDB_DATA" rm -rf "$SPIRA_TESTDB_DATA"; }
     else
         printf 'uninstall: count mismatch — database NOT removed.\n' >&2
         _un_exit=1

@@ -139,7 +139,7 @@ statement = "the unit installer refuses a checkout on the wrong branch or behind
 [[use_case]]
 id = "UC-instance-lifecycle-20"
 tier = "T1"
-statement = "the unit installer refuses when another instance's config shares any of `SPIRA_RUN`/`SPIRA_DB`/`SPIRA_PROD`/`SPIRA_DOLT_DATA`/`SPIRA_TESTDB_PORT`, naming the key, the other instance and its file, writing no unit"
+statement = "the unit installer refuses when another instance's config shares any of `SPIRA_RUN`/`SPIRA_DB`/`SPIRA_PROD`/`SPIRA_DOLT_DATA`, naming the key, the other instance and its file, writing no unit"
 
 [use_case.uncovered]
 reason = "test-install-collisions.sh (its only suite) retired: systemd/install.sh is retired (sp-31dm0) and the check it sourced under SPIRA_INSTALL_LIB=1 is install::guards::check_path_collisions now, proved by cargo test -p install: guards::tests::a_shared_run_dir_across_instances_collides, guards::tests::the_same_instance_never_collides_with_itself, guards::tests::conf_key_parsing_strips_quotes_and_expands_home — not by a spira/test-*.sh suite this matrix can see"

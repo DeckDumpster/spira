@@ -135,9 +135,7 @@ echo "apply makes a bare store correct, and a second apply changes nothing"
 # bd sql, which embedded mode refuses; the section above already pins that refusal.
 _srv_err=""
 _srv_log="$T/server-fixture.log"
-if [ -z "${SPIRA_TESTDB_DATA:-}" ]; then
-    _srv_err="SPIRA_TESTDB_DATA is unset — there is no server-mode fixture on this box"
-elif ! SPIRA_TESTDB_MODE=server testdb_up schema-apply-server >/dev/null 2>"$_srv_log"; then
+if ! SPIRA_TESTDB_MODE=server testdb_up schema-apply-server >/dev/null 2>"$_srv_log"; then
     _srv_err="$(cat "$_srv_log" 2>/dev/null)"
     _srv_err="${_srv_err:-testdb_up failed with no output}"
 fi

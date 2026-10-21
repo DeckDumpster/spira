@@ -633,6 +633,11 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "delivers_check_timeout", bead: "sp-qu3k0s" },
     RetiredKey { key: "cert_prices", bead: "sp-qu3k0s" },
     RetiredKey { key: "dolt_maintenance_units", bead: "sp-qu3k0s" },
+    // Every fixture runs a private server of its own; no shared test server has a data directory or a port.
+    RetiredKey { key: "testdb_data", bead: "sp-iulew8" },
+    RetiredKey { key: "testdb_port", bead: "sp-iulew8" },
+    RetiredKey { key: "lc_testdb_data", bead: "sp-iulew8" },
+    RetiredKey { key: "lc_testdb_port", bead: "sp-iulew8" },
 ];
 
 /// A retired `batcher_bin` value that is not the batcher itself (e.g. "/bin/true", the old

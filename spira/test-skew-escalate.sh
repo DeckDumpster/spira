@@ -93,7 +93,7 @@ ln -s "spira-${TS1}" "$RELEASES/current"
 run_skew() {
     local run_dir
     run_dir="$(mktemp -d "$TMP/run-XXXXX")"
-    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES" \
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_RELEASES="$RELEASES" \
         SPIRA_HOME_REPO="fixture" SPIRA_REPO_MAP="$SKEWMAP"
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
@@ -108,7 +108,7 @@ run_skew() {
 run_skew_ro() {
     local run_dir
     run_dir="$(mktemp -d "$TMP/run-XXXXX")"
-    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES" \
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_RELEASES="$RELEASES" \
         SPIRA_HOME_REPO="fixture" SPIRA_REPO_MAP="$SKEWMAP"
     env -i PATH="$PATH" \
         HOME="$TMP/home" \
@@ -122,7 +122,7 @@ run_skew_ro() {
 
 run_skew_shared() {
     local run_dir="$1"; shift
-    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES" \
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_RELEASES="$RELEASES" \
         SPIRA_HOME_REPO="fixture" SPIRA_REPO_MAP="$SKEWMAP"
     env -i PATH="$PATH" \
         HOME="$TMP/home" \

@@ -101,7 +101,7 @@ export PATH="$(dirname "$DOLT_BIN"):$PATH"
 unset SPIRA_LC_SOCKET
 
 LCREPO="$(cd "$HERE/.." && pwd)"
-LCPORT=$((SPIRA_LC_TESTDB_PORT + 1200 + (RANDOM % 300)))
+LCPORT=$((3309 + 1200 + (RANDOM % 300)))
 LC_SERVER_PID=""
 trap 'testdb_drop; [ -n "$LC_SERVER_PID" ] && kill "$LC_SERVER_PID" >/dev/null 2>&1; rm -rf "$TMP"' EXIT INT TERM
 

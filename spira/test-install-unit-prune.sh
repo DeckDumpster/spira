@@ -73,7 +73,7 @@ printf '# empty\n' > "$WATCHERS"
 # ensure_reader_mailboxes() at a shared "/fixture/userhome/.../mail" tree this suite's sandboxed
 # SPIRA_RUN never touches, which has intermittently refused mkdir with EACCES under
 # concurrent runs; declaring no readers here means install never calls `mail ensure` at all.
-tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
+tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA= \
     SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent SPIRA_WATCHERS="$WATCHERS" \
     SPIRA_MAIL_READERS=
 

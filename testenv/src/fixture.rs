@@ -116,7 +116,6 @@ set_key chamber "$CONFIGURE_PROD/chamber"
 set_key ctrl "$CONFIGURE_RUN/control"
 set_key bd "$(command -v bd)"
 set_key run "$CONFIGURE_RUN"
-set_key testdb_data "$CONFIGURE_TESTDB_DATA"
 set_key max_aeons "$CONFIGURE_MAX_AEONS"
 set_key max_live_aeons "$CONFIGURE_MAX_LIVE_AEONS"
 set_key loom_addr "$CONFIGURE_LOOM_ADDR"
@@ -357,10 +356,6 @@ impl<'a> Session<'a> {
         format!("/tmp/spira-batch-{}", self.instance)
     }
 
-    pub fn testdb_data(&self) -> String {
-        format!("{}/testdb", self.batch_run())
-    }
-
     /// The launcher contract every exec that runs harness code carries (DESIGN.md §5): the
     /// staged release, and a PATH set outright from it — the same rule production's launchers
     /// follow, against a different release.
@@ -500,7 +495,6 @@ impl<'a> Session<'a> {
             kv("CONFIGURE_INSTANCE", &self.instance),
             kv("CONFIGURE_PROD", self.in_release("spira")),
             kv("CONFIGURE_RUN", self.batch_run()),
-            kv("CONFIGURE_TESTDB_DATA", self.testdb_data()),
             kv("CONFIGURE_MAX_AEONS", "1"),
             kv("CONFIGURE_MAX_LIVE_AEONS", "1"),
             kv("CONFIGURE_LOOM_ADDR", "127.0.0.1:7300"),
@@ -556,7 +550,6 @@ impl<'a> Session<'a> {
             kv("SPIRA_PROD", self.in_release("spira")),
             kv("SPIRA_INSTALL_FORCE", "1"),
             kv("SPIRA_RUN", self.batch_run()),
-            kv("SPIRA_TESTDB_DATA", self.testdb_data()),
             // sp-e5v53-4: a watcher daemon (pr-notify, inbox-keeper, publish-backlog — every
             // spira-watch-* unit) reaches outside this container — GitHub, mail, the forge —
             // which a fixture, by design, cannot; units-install reads this to warn about one
@@ -798,7 +791,6 @@ impl<'a> Session<'a> {
     pub fn baseline_request(&self) -> ExecRequest {
         let mut env = vec![
             kv("XDG_RUNTIME_DIR", USER_RUNTIME),
-            kv("SPIRA_TESTDB_DATA", self.testdb_data()),
         ];
         env.extend(self.release_env());
         self.setup_as_user(&["bash", "-c", BASELINE_SCRIPT], env)
@@ -874,7 +866,6 @@ impl<'a> Session<'a> {
             }
             Mode::Serial => env.push(kv("SPIRA_RUN", self.batch_run())),
         }
-        env.push(kv("SPIRA_TESTDB_DATA", self.testdb_data()));
         env.push(kv(
             "SPIRA_BD_TIMING_LOG",
             format!("{}/{suite}.log", self.bd_timing_dir()),
@@ -1382,10 +1373,6 @@ mod tests {
         assert_eq!(
             execs[5].env_value("SPIRA_RUN"),
             Some("/tmp/spira-batch-abc123")
-        );
-        assert_eq!(
-            execs[5].env_value("SPIRA_TESTDB_DATA"),
-            Some("/tmp/spira-batch-abc123/testdb")
         );
     }
 

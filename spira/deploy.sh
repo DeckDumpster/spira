@@ -447,7 +447,7 @@ fi
 #
 # THE RELEASE, NOT THE INVOKING CHECKOUT. This script's conf.sh derives and exports both
 # binary paths (SPIRA_BROKER_BIN, SPIRA_LOOM_BIN, ...) and runtime paths (SPIRA_RUN,
-# SPIRA_CTRL, SPIRA_TESTDB_DATA, ...) from the SPIRA_REPO it was run from, and a release's
+# SPIRA_CTRL, ...) from the SPIRA_REPO it was run from, and a release's
 # conf.sh keeps any such value it inherits rather than deriving its own — so run from a source
 # checkout, the release's rendered units pointed at the checkout's own runtime tree (acceptance
 # phase C, 2026-09-26) after having already pruned units for binaries the checkout never built

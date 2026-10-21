@@ -96,7 +96,7 @@ inst() {
     # /fixture/userhome/... runtime paths, which install renders into unit files and may touch
     # directly (sfail round 3, pattern 7).
     tl_config SPIRA_PATH="$MOCK_BIN" SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
-        SPIRA_DOLT_DATA="$DOLT_DATA" SPIRA_TESTDB_DATA="" SPIRA_DB="$DB" SPIRA_BD="$MOCK_BIN/bd" \
+        SPIRA_DOLT_DATA="$DOLT_DATA" SPIRA_DB="$DB" SPIRA_BD="$MOCK_BIN/bd" \
         SPIRA_RUN="$RUN_DIR" SPIRA_PROD="$PROD" SPIRA_COCKPIT="$REAL_COCKPIT" \
         SPIRA_CTRL="$RUN_DIR/ctrl" SPIRA_WORKSPACES="$RUN_DIR/workspaces" \
         SPIRA_MAIL="$RUN_DIR/mail" \

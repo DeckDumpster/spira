@@ -37,7 +37,7 @@ pub struct OtherConf {
     pub values: BTreeMap<String, String>,
 }
 
-pub const COLLISION_KEYS: &[&str] = &["SPIRA_RUN", "SPIRA_DB", "SPIRA_PROD", "SPIRA_DOLT_DATA", "SPIRA_TESTDB_PORT"];
+pub const COLLISION_KEYS: &[&str] = &["SPIRA_RUN", "SPIRA_DB", "SPIRA_PROD", "SPIRA_DOLT_DATA"];
 
 /// Parse one `*.conf` file's text into an [`OtherConf`] (units.sh's `_check_path_collisions`
 /// inline parser, in Rust): `KEY=VALUE` lines only, `#`-comments and blank lines skipped,

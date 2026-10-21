@@ -123,7 +123,7 @@ PROD="$(install_fixture_prod "$TMP/prod" "$HERE")"
 
 inst() {
     > "$SCTL_LOG"
-    # SPIRA_PATH/SPIRA_RUN/SPIRA_WATCHERS/SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA/SPIRA_PROD/
+    # SPIRA_PATH/SPIRA_RUN/SPIRA_WATCHERS/SPIRA_DOLT_DATA/SPIRA_PROD/
     # SPIRA_REPO_MAP are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
     # declare via tl_config, not the env prefix below, which no process reads any more.
     # round 4 fix (pattern 7): SPIRA_INSTANCE/SPIRA_WORKSPACES are registered keys too;
@@ -137,13 +137,13 @@ inst() {
     # EPERM'd before the migration logic this suite is actually about ever ran. Give it a
     # writable root under this suite's own $TMP.
     tl_config SPIRA_PATH="$TMP/bin" SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_WATCHERS="$WATCHERS" \
-        SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
+        SPIRA_DOLT_DATA="" SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
         SPIRA_INSTANCE="$_INST" SPIRA_WORKSPACES="$TMP" SPIRA_MAIL="$TMP/mail"
     # round 6 fix: tl_config alone is not enough for SPIRA_RUN specifically —
     # install/src/bootstrap.rs's `world_halted()` reads it with a bare `nonempty_env()`,
     # never through the registry (confirmed by reading bootstrap.rs directly: every other
     # `nonempty_env("SPIRA_*")` call there — SPIRA_WATCHERS, SPIRA_DOLT_DATA,
-    # SPIRA_TESTDB_DATA, SPIRA_INSTANCE, SPIRA_HOME, SPIRA_REPO — is the same, but only
+    # SPIRA_INSTANCE, SPIRA_HOME, SPIRA_REPO — is the same, but only
     # SPIRA_RUN's absence changes this suite's outcome, since it alone gates the end-state
     # active-check this suite relies on skipping). Its own doc comment says why: it expects
     # a CALLER that already sourced conf.sh and exported the resolved values, exactly as

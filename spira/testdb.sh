@@ -39,7 +39,6 @@
 #
 # REQUIRES bd-embedded FOR EMBEDDED MODE. The standard binary is built CGO_ENABLED=0 and
 # refuses embedded mode. Install: npm install -g @beads/bd (or the project's install.sh).
-# The old binary is at ~/.local/bin/bd.cgo0-backup for rollback.
 
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/conf.sh"
 

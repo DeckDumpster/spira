@@ -58,7 +58,7 @@ echo "test-auron.sh"
 if ! testdb_available; then
     printf 'SKIP test-auron: no bd engine available — the reconcile cases need a real bd.\n' \
         >&2
-    printf '  embedded: install bd-embedded  server: set SPIRA_TESTDB_DATA in spira.conf\n' \
+    printf '  embedded: install bd-embedded  server: testenv testdb\n' \
         >&2
     skip "no bd engine available"
 fi

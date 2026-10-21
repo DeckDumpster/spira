@@ -12,7 +12,7 @@
 #   runtime-tree  SPIRA_RUN directory
 #   database      SPIRA_DB path
 #   session-hook  SessionStart and PostCompact entries in SPIRA_CLIENT_SETTINGS
-#   dolt-yaml     dolt-server.yaml configs in SPIRA_DOLT_DATA / SPIRA_TESTDB_DATA
+#   dolt-yaml     dolt-server.yaml config in SPIRA_DOLT_DATA
 #   cockpit-pane  tmux panes tagged @cockpit=panel and @cockpit=health
 #   alert-dropin  50-spira-intake.conf drop-ins for alert units
 #
@@ -141,8 +141,6 @@ _owned_binaries() {
 _owned_dolt_yaml() {
     [ -n "${SPIRA_DOLT_DATA:-}" ] && \
         _row dolt-yaml dolt-server      "$SPIRA_DOLT_DATA/dolt-server.yaml"   install optional
-    [ -n "${SPIRA_TESTDB_DATA:-}" ] && \
-        _row dolt-yaml dolt-server-test "$SPIRA_TESTDB_DATA/dolt-server.yaml" install optional
 }
 
 _owned_cockpit_panes() {
@@ -292,11 +290,6 @@ _check_dolt_yaml() {
         status="$(_file_status "$SPIRA_DOLT_DATA/dolt-server.yaml")"
         printf '%s|%s|%s|%s\n' \
             dolt-yaml dolt-server "$SPIRA_DOLT_DATA/dolt-server.yaml" "$status"
-    fi
-    if [ -n "${SPIRA_TESTDB_DATA:-}" ]; then
-        status="$(_file_status "$SPIRA_TESTDB_DATA/dolt-server.yaml")"
-        printf '%s|%s|%s|%s\n' \
-            dolt-yaml dolt-server-test "$SPIRA_TESTDB_DATA/dolt-server.yaml" "$status"
     fi
 }
 

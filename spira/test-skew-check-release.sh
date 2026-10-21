@@ -113,13 +113,13 @@ run_skew() {
     # home_repo="spira" + a nonexistent repository map — skew looks "spira" up there to find a
     # git checkout, and finds nothing (sfail round 3, pattern 7).
     printf 'spira | %s | push | origin/main | |\n' "$REPO" > "$TMP/repomap-main"
-    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" \
         SPIRA_RELEASES="$RELEASES" SPIRA_HOME_REPO=spira \
         SPIRA_REPO_MAP="$TMP/repomap-main"
     local extra=() _a
     for _a in "$@"; do
         case "$_a" in
-            SPIRA_GH=*|SPIRA_GH_INTAKE_REPO=*|SPIRA_RELEASE_REPO=*|SPIRA_RELEASES=*|SPIRA_DOLT_DATA=*|SPIRA_TESTDB_DATA=*|SPIRA_RUN=*)
+            SPIRA_GH=*|SPIRA_GH_INTAKE_REPO=*|SPIRA_RELEASE_REPO=*|SPIRA_RELEASES=*|SPIRA_DOLT_DATA=*|SPIRA_RUN=*)
                 tl_config "$_a" ;;
             *) extra+=("$_a") ;;
         esac
@@ -225,11 +225,11 @@ run_skew_noart() {
     # Copy the template to the per-run releases directory (including hidden directories like .tags)
     (cd "$RELEASES_TEMPLATE" && cp -r . "$releases_dir/")
 
-    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$releases_dir"
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_RELEASES="$releases_dir"
     local extra=() _a
     for _a in "$@"; do
         case "$_a" in
-            SPIRA_GH=*|SPIRA_GH_INTAKE_REPO=*|SPIRA_RELEASE_REPO=*|SPIRA_RELEASES=*|SPIRA_DOLT_DATA=*|SPIRA_TESTDB_DATA=*|SPIRA_RUN=*)
+            SPIRA_GH=*|SPIRA_GH_INTAKE_REPO=*|SPIRA_RELEASE_REPO=*|SPIRA_RELEASES=*|SPIRA_DOLT_DATA=*|SPIRA_RUN=*)
                 tl_config "$_a" ;;
             *) extra+=("$_a") ;;
         esac
@@ -304,13 +304,13 @@ run_skew_artifact() {
     # sp-fghps made the same change to run_skew and missed this one.
 printf 'spira | %s | push | origin/main | |\n' "$ARTIFACT_REPO" > "$TMP/repomap-artifact"
     tl_config SPIRA_GH="$MOCK_BIN/gh" SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" \
-        SPIRA_TESTDB_DATA="" SPIRA_RELEASES="$RELEASES" SPIRA_GH_INTAKE_REPO="" \
+        SPIRA_RELEASES="$RELEASES" SPIRA_GH_INTAKE_REPO="" \
         SPIRA_RELEASE_REPO="" SPIRA_HOME_REPO=spira \
         SPIRA_REPO_MAP="$TMP/repomap-artifact"
     local extra=() _a
     for _a in "$@"; do
         case "$_a" in
-            SPIRA_GH=*|SPIRA_GH_INTAKE_REPO=*|SPIRA_RELEASE_REPO=*|SPIRA_RELEASES=*|SPIRA_DOLT_DATA=*|SPIRA_TESTDB_DATA=*|SPIRA_RUN=*)
+            SPIRA_GH=*|SPIRA_GH_INTAKE_REPO=*|SPIRA_RELEASE_REPO=*|SPIRA_RELEASES=*|SPIRA_DOLT_DATA=*|SPIRA_RUN=*)
                 tl_config "$_a" ;;
             *) extra+=("$_a") ;;
         esac
@@ -480,13 +480,13 @@ mkdir -p "$RELEASES_CK"   # no current symlink — checkout mode
 run_skew_checkout() {
     local run_dir; run_dir="$(mktemp -d "$TMP/run-XXXXX")"
     printf 'spira | %s | push | origin/main | |\n' "$CLONE_CK" > "$TMP/repomap-ck"
-    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
+    tl_config SPIRA_RUN="$run_dir" SPIRA_DOLT_DATA="" \
         SPIRA_RELEASES="$RELEASES_CK" SPIRA_HOME_REPO=spira \
         SPIRA_REPO_MAP="$TMP/repomap-ck"
     local extra=() _a
     for _a in "$@"; do
         case "$_a" in
-            SPIRA_GH=*|SPIRA_GH_INTAKE_REPO=*|SPIRA_RELEASE_REPO=*|SPIRA_RELEASES=*|SPIRA_DOLT_DATA=*|SPIRA_TESTDB_DATA=*|SPIRA_RUN=*)
+            SPIRA_GH=*|SPIRA_GH_INTAKE_REPO=*|SPIRA_RELEASE_REPO=*|SPIRA_RELEASES=*|SPIRA_DOLT_DATA=*|SPIRA_RUN=*)
                 tl_config "$_a" ;;
             *) extra+=("$_a") ;;
         esac

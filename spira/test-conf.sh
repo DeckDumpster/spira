@@ -99,7 +99,7 @@ is "the declared SPIRA_PROD is exported" "$custom_prod" "$got"
 # ==========================================================================
 # DELETED (per Ryan 2026-10-05, one source of config): the sections that asserted conf.sh
 # DERIVES a value — a default SPIRA_WORKSPACES, instance-qualified SPIRA_DB/SPIRA_RUN, the
-# XDG fallback for SPIRA_RUN, SPIRA_TESTDB_DATA from the workspaces root, SPIRA_HOME_REPO
+# XDG fallback for SPIRA_RUN from the workspaces root, SPIRA_HOME_REPO
 # from a worktree/MANIFEST/directory name, SPIRA_RELEASE_REPO/SPIRA_GH_INTAKE_REPO from a
 # MANIFEST. Every one of those keys is now declared; nothing derives it.
 # ==========================================================================

@@ -5,8 +5,8 @@
 //! render.py itself served.
 //!
 //! usage: render-unit <template> --home H --repo R --run RUN --db DB --cockpit C
-//!            --dolt-data D --testdb-data T --dolt DOLT --prod P --instance I
-//!            --testdb-port PORT --snap-stale-s S [--watcher-name W] [--path-tail TAIL] [--lc-password-file F] [--toml SPEC]
+//!            --dolt-data D --dolt DOLT --prod P --instance I
+//!            --snap-stale-s S [--watcher-name W] [--path-tail TAIL] [--lc-password-file F] [--toml SPEC]
 
 use install::values::{render_file, HostValues};
 use std::path::PathBuf;
@@ -36,11 +36,9 @@ fn run_main() -> ExitCode {
             "--db" => host.db = val,
             "--cockpit" => host.cockpit = val,
             "--dolt-data" => host.dolt_data = val,
-            "--testdb-data" => host.testdb_data = val,
             "--dolt" => host.dolt = val,
             "--prod" => host.prod = val,
             "--instance" => host.instance = val,
-            "--testdb-port" => host.testdb_port = val,
             "--snap-stale-s" => host.snap_stale_s = val,
             "--watchtower-start-timeout-s" => host.watchtower_start_timeout_s = val,
             "--watcher-name" => watcher = if val.is_empty() { None } else { Some(val) },

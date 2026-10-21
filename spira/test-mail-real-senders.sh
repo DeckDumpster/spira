@@ -140,11 +140,11 @@ ln -s "spira-20260101T000000Z" "$SKEW_RELEASES/current"   # activates the OLDER 
 SKEW_RUN="$TMP/skew-run"; mkdir -p "$SKEW_RUN"
 
 before="$(unread)"
-# SPIRA_RUN/SPIRA_RELEASES/SPIRA_MAIL/SPIRA_DOLT_DATA/SPIRA_TESTDB_DATA are registered
+# SPIRA_RUN/SPIRA_RELEASES/SPIRA_MAIL/SPIRA_DOLT_DATA are registered
 # keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and thread
 # SPIRA_TOML through env -i, which clears it.
 tl_config SPIRA_RUN="$SKEW_RUN" SPIRA_RELEASES="$SKEW_RELEASES" SPIRA_MAIL="$SPIRA_MAIL" \
-    SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
+    SPIRA_DOLT_DATA=""
 env -i PATH="$PATH" HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$HERE" SPIRA_REPO="$SKEW_REPO" \

@@ -65,7 +65,7 @@ inst() {
     # A run dir, as every real install has: without one units-install now refuses rather than
     # render StandardOutput=append:/<name>.log (sp-xp0u2).
     tl_config SPIRA_RUN="$TMP/home/run" SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
-        SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
+        SPIRA_DOLT_DATA=""
     # SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): the self-location-by-
     # binary-path trick this comment block used to rely on is gone, so it must be named
     # explicitly — the same fixture that trick used to resolve to (sfail round 3, pattern 1).
@@ -134,7 +134,7 @@ tinstall_write_dest "$DEST" "$rendered"
 
 skew_units() {
     tl_config SPIRA_RUN="$TMP/home/run" SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
-        SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
+        SPIRA_DOLT_DATA=""
     env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$FIXTURE/spira" SPIRA_REPO="$FIXTURE" \
@@ -168,7 +168,7 @@ echo "skew units — missing installer:"
 mkdir -p "$TMP/empty-spira"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$TMP/empty-spira/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$TMP/empty-spira/"
-tl_config SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA=""
+tl_config SPIRA_DOLT_DATA=""
 out="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$TMP/empty-spira" SPIRA_REPO="$TMP" \

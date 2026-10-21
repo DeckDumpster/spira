@@ -490,8 +490,7 @@ uid 1001, `XDG_RUNTIME_DIR=/run/user/1001`, `CARGO_HOME=/var/spira/cargo`,
   queue-watch watcher execs `/workspace/bin/queue-watch`, which the container never has; a
   CPUQuota on its unit hid the crash loop from install's is-active check until quotas were
   retired, sp-b4oct); `systemd/install.sh <instance>`
-  with `SPIRA_PROD=/workspace/spira SPIRA_INSTALL_FORCE=1 SPIRA_RUN=/tmp/spira-batch-<i>
-  SPIRA_TESTDB_DATA=/tmp/spira-batch-<i>/testdb`. Any failure → rc 3.
+  with `SPIRA_PROD=/workspace/spira SPIRA_INSTALL_FORCE=1 SPIRA_RUN=/tmp/spira-batch-<i>`. Any failure → rc 3.
 * **Requirements**: each distinct `# requires:` token (bar `testenv`) is checked once with
   `command -v` inside the container.
 * **Test databases (sp-34ru2, DESIGN-testdb.md §2.4)**: the server-mode template is built
