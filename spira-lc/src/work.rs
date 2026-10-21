@@ -350,6 +350,9 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
         if let Err(refusal) = record_target_verdict(bead_id, "done", args) {
             return refusal;
         }
+        if let Some(refusal) = red_tracker_done_refusal(bead_id) {
+            return refusal;
+        }
         if flag(args, "--after-ask").is_none() && released_on_ask_history(conn, bead_id) {
             return (
                 REFUSED,
@@ -399,6 +402,24 @@ fn working_exit_check(verb: &str, exit: &str, fayth: &str, exits: &[String]) -> 
         REFUSED,
         format!("refused: work {verb}: fayth {fayth} may not leave WORKING for {exit}; its exits are {}", exits.join(" ")),
     ))
+}
+
+fn red_tracker_done_refusal(bead_id: &str) -> Option<(i32, String)> {
+    let label = match spira_config::process::cfg("SPIRA_RED_TRACKER_LABEL") {
+        Ok(l) => l,
+        Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
+    };
+    match crate::bd::labels(bead_id) {
+        Ok(labels) if !label.is_empty() && labels.iter().any(|l| *l == label) => Some((
+            REFUSED,
+            format!(
+                "refused: work done: {bead_id} is a {label} bead and DONE would read as a handled red with no fix landed. \
+                 Submit a fix that lands, or park it with `work blocked` and a reason"
+            ),
+        )),
+        Ok(_) => None,
+        Err(e) => Some((CANNOT_TELL, format!("cannot tell: {e}"))),
+    }
 }
 
 fn released_on_ask_history(conn: &Conn, bead_id: &str) -> bool {
