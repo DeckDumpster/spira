@@ -274,7 +274,7 @@ out="$(work_as "$RT" done --delivers "no code change" 2>&1)"; rc=$?
 is "red-tracker done: refused (exit 3)" "3" "$rc"
 row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='$RT'" -r json 2>&1)"
 want "red-tracker done: still WORKING" "\"state\":\"WORKING\"" "$row"
-want "red-tracker done: the refusal names the exits" "work blocked" "$out"
+want "red-tracker done: the refusal names the exits" "its exits are SUBMITTED ask park hold" "$out"
 
 # ── blocked: a hold, plus an ask filed for the operator ──────────────────────────────
 BLID="$(bead.sh file "aeon semantic layer: blocked fixture" --for builder --repo testrepo --body-file "$TMP/build.md")"
