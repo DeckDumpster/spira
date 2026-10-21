@@ -170,6 +170,8 @@ fn truthy(v: Option<&Value>) -> bool {
     }
 }
 
+const MISSING_CONFIG: &str = "unable to find configuration file";
+
 pub struct Pve<T: Transport> {
     pub t: T,
     pub env: PveEnv,
@@ -205,6 +207,29 @@ impl<T: Transport> Pve<T> {
                 }
             })
             .collect())
+    }
+
+    fn refuse_missing_template(&self, e: String) -> String {
+        if e.contains(MISSING_CONFIG) {
+            format!(
+                "local round template {} is missing on node {}: refusing the lease; rebuild it with `round-vm template <tree-dir>` or point PVE_TEMPLATE_VMID at a live template ({e})",
+                self.env.template_vmid, self.env.node
+            )
+        } else {
+            e
+        }
+    }
+
+    /// Ok when the configured template exists and is a template; otherwise the refusal a lease
+    /// against it would give.
+    pub fn check_template(&self) -> Result<(), String> {
+        let path = format!("{}/config", self.qemu(&self.env.template_vmid));
+        let d = self.t.call(Method::Get, &path, &[]).map_err(|e| self.refuse_missing_template(e))?;
+        if truthy(d.get("template")) {
+            Ok(())
+        } else {
+            Err(format!("local round template {} on node {} is not a template", self.env.template_vmid, self.env.node))
+        }
     }
 
     /// POSTs/DELETEs something that returns a task, and waits for the task to finish OK.
@@ -251,7 +276,8 @@ impl<T: Transport> Provider for Pve<T> {
         if let Some(pool) = &self.env.pool {
             params.push(("pool", pool.clone()));
         }
-        self.task(Method::Post, &format!("{}/clone", self.qemu(&self.env.template_vmid)), &params)?;
+        self.task(Method::Post, &format!("{}/clone", self.qemu(&self.env.template_vmid)), &params)
+            .map_err(|e| self.refuse_missing_template(e))?;
         let mac = slot_mac(vmid)?;
         let cfg_path = format!("{}/config", self.qemu(vmid));
         let cfg = self.t.call(Method::Get, &cfg_path, &[])?;
@@ -363,6 +389,7 @@ mod tests {
         exec_polls: Mutex<u32>,
         nextids: Mutex<u32>,
         clone_refusals: Mutex<u32>,
+        missing_template: Mutex<bool>,
     }
 
     impl Transport for FakeApi {
@@ -376,6 +403,9 @@ mod tests {
                     let id = params.iter().find(|(k, _)| *k == "newid").map(|(_, v)| v.as_str()).unwrap_or("");
                     return Err(format!("HTTP 500 (POST {path}): unable to create VM {id}: config file already exists"));
                 }
+            }
+            if *self.missing_template.lock().unwrap() && path.starts_with("/nodes/pve/qemu/9000/") {
+                return Err(format!("HTTP 500 ({method:?} {path}): unable to find configuration file for VM 9000 on node 'pve'"));
             }
             Ok(match (method, path) {
                 (Method::Get, "/cluster/nextid") => {
@@ -585,5 +615,26 @@ mod tests {
         let e = provision(&p, &spec, &mut |id| seen.push(id.to_string())).unwrap_err();
         assert!(!e.reason.contains("clone refused"), "{}", e.reason);
         assert_eq!(seen, ["123", "124"]);
+    }
+
+    #[test]
+    fn a_clone_from_a_missing_template_is_refused_naming_the_template() {
+        let p = pve();
+        *p.t.missing_template.lock().unwrap() = true;
+        let e = p.clone_to("123", "round-123").unwrap_err();
+        assert!(e.contains("local round template 9000 is missing"), "{e}");
+        assert!(e.contains("refusing the lease"), "{e}");
+    }
+
+    #[test]
+    fn check_template_passes_a_live_template_and_refuses_a_missing_or_plain_vm() {
+        let mut p = pve();
+        p.env.template_vmid = "123".into();
+        p.check_template().unwrap();
+        p.env.template_vmid = "124".into();
+        assert!(p.check_template().unwrap_err().contains("is not a template"));
+        p.env.template_vmid = "9000".into();
+        *p.t.missing_template.lock().unwrap() = true;
+        assert!(p.check_template().unwrap_err().contains("local round template 9000 is missing"));
     }
 }

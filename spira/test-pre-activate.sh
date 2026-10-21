@@ -116,6 +116,20 @@ run() {
     rc=$?
 }
 
+# ── ami: a release whose recipe has no AMI is warned about, never refused ───────────────
+REL="$TMP/rel-ami"; DEP_VMIN=1.0.0 DEP_PROBE_OUT=2.3.4 DEP_PROBE_RC=0 mkrel "$REL"
+printf '#!/usr/bin/env bash\necho "no AMI carries recipe-sha abc" >&2\nexit 1\n' > "$REL/bin/round-vm"; chmod +x "$REL/bin/round-vm"
+run "$REL"
+is   "ami: no image for the recipe: still activates (exit 0)" 0 "$rc"
+want "ami: no image for the recipe: warns naming the cause" "warn ami: no round AMI matches" "$out"
+want "ami: the warning carries round-vm's own message" "no AMI carries recipe-sha abc" "$out"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$REL/bin/round-vm"
+run "$REL"
+nowant "ami: an image exists: no warning" "warn ami" "$out"
+printf '#!/usr/bin/env bash\nexit 3\n' > "$REL/bin/round-vm"
+run "$REL"
+nowant "ami: EC2 not in use: no warning" "warn ami" "$out"
+
 # ── deps: positive and negative, both directions of A3 ───────────────────────────────
 REL="$TMP/rel-deps-ok"; DEP_VMIN=1.0.0 DEP_PROBE_OUT=2.3.4 DEP_PROBE_RC=0 mkrel "$REL"
 run "$REL"

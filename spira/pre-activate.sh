@@ -15,6 +15,7 @@
 #              PATH (deps' version_min already pins which bd that is)
 #   units      every systemd unit renders with no unresolved placeholder
 #   self-test  the release's own spira/self-test.sh
+#   ami        a round AMI exists for the release's recipe-sha; only warns
 #   lifecycle  every pending lifecycle/migrations/*.sql is applied (spira-lc
 #              admin-migrate), so a release never goes live reading a column the store
 #              lacks (sp-vf9iu). Whether each is applied is read as the lifecycle service
@@ -267,11 +268,25 @@ check_lifecycle() {
     fi
 }
 
+# --- ami: an AMI exists for this release's recipe-sha. A warning, never a refusal: the image
+# is built from main after the recipe lands, so refusing here could never be satisfied.
+check_ami() {
+    local rv="$REL/bin/round-vm" out rc
+    [ -x "$rv" ] || { ok "ami (release carries no round-vm)"; return; }
+    out="$(timeout "${SPIRA_AMI_CHECK_TIMEOUT:-60}" "$rv" ami-check 2>&1)"
+    rc=$?
+    case "$rc" in
+        0|3) ok "ami" ;;
+        *) printf 'pre-activate: warn ami: no round AMI matches this release'"'"'s recipe (rc %s); EC2 rounds are refused until the round-ami-build workflow publishes one: %s\n' "$rc" "$(printf '%s' "$out" | tail -2 | tr '\n' ' ')" >&2 ;;
+    esac
+}
+
 check_deps
 check_config
 check_store
 check_units
 check_self_test
+check_ami
 check_lifecycle
 
 exit "$FAIL"
