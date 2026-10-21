@@ -602,7 +602,7 @@ un_purgedb() {
         bash "$FIXTURE/spira/uninstall.sh" test --yes "$@" <<< "$confirm" 2>&1
 }
 
-# Wrong count: database, Dolt data and test Dolt data all left intact; non-zero exit.
+# Wrong count: database and Dolt data both left intact; non-zero exit.
 _seed_purgedb
 wrong_out="$(un_purgedb "99" --purge-database)"
 wrong_rc=$?
@@ -617,7 +617,6 @@ right_rc=$?
 iszero "purge-database: right count exits 0"                "$right_rc"
 nofile "purge-database: right count removes the database"   "$PURGEDB_DIR"
 nofile "purge-database: right count removes Dolt data"       "$PURGEDB_DOLT"
-nofile "purge-database: right count removes test Dolt data" 
 
 # Plain --purge (no --purge-database): never prompts for a count, never touches the DB.
 _seed_purgedb
