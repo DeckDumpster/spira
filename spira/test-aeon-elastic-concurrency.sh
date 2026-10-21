@@ -101,6 +101,7 @@ echo "1 — elastic, pool declared (SPIRA_MAX_AEONS=6): 5 live is allowed, 6 liv
 # ======================================================================================
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<'F'
 FAYTH_NAME=builder
+FAYTH_WORKING_EXITS="SUBMITTED ask park hold"
 FAYTH_LABELS="test,plan"
 FAYTH_MAX_CONCURRENT=3
 FAYTH_ELASTIC=1

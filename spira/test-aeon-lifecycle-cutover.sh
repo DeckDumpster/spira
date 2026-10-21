@@ -295,6 +295,7 @@ printf 'fixture | %s | push | origin/main | |\n' "$FREPO" > "$SPIRA_REPO_MAP"
 tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_CHAMBER="$SPIRA_HOME/chamber"
 cat > "$SPIRA_HOME/chamber/builder.fayth" <<'FAYTH'
 FAYTH_NAME=builder
+FAYTH_WORKING_EXITS="SUBMITTED ask park hold"
 FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}"
 FAYTH_EXCLUDE_LABELS="spira-poison,needs-operator"
 FAYTH_MAX_CONCURRENT=1

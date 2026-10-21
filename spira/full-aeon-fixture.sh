@@ -71,6 +71,7 @@ fa_setup() {   # fa_setup <tag> — build the fixture once
     printf 'fixture | %s | push | origin/main | |\n' "$FA_REPO" > "$SPIRA_REPO_MAP"
     cat > "$FA_HOME/chamber/builder.fayth" <<FAYTH
 FAYTH_NAME=builder
+FAYTH_WORKING_EXITS="SUBMITTED ask park hold"
 FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
 FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL"
 FAYTH_MAX_CONCURRENT=1
