@@ -161,21 +161,21 @@ fi
 
 echo
 echo "7b. write commits exactly the regenerated page and sends it to the upstream"
-git init -q --bare "$T/wiki-remote.git"
-git -C "$WIKI" remote add origin "$T/wiki-remote.git"
-git -C "$WIKI" config push.autoSetupRemote true
-git -C "$WIKI" branch -q -u origin/HEAD 2>/dev/null
-git -C "$WIKI" push -q -u origin HEAD >/dev/null 2>&1
+timeout 5 git init -q --bare "$T/wiki-remote.git"
+timeout 5 git -C "$WIKI" remote add origin "$T/wiki-remote.git"
+timeout 5 git -C "$WIKI" config push.autoSetupRemote true
+timeout 5 git -C "$WIKI" branch -q -u origin/HEAD 2>/dev/null
+timeout 5 git -C "$WIKI" push -q -u origin HEAD >/dev/null 2>&1
 echo stray >"$WIKI/stray.txt"
-before="$(git -C "$WIKI" rev-list --count HEAD)"
+before="$(timeout 5 git -C "$WIKI" rev-list --count HEAD)"
 printf '%s' "$GOOD" | run_sop write commit-target - >/dev/null
 rc=$?
 is "write exits 0" "0" "$rc"
-is "write adds one commit" "$((before + 1))" "$(git -C "$WIKI" rev-list --count HEAD)"
-is "the commit touches only the shelf page" "wiki/notes/standard-operating-procedures.md" "$(git -C "$WIKI" show --name-only --format= HEAD)"
-is "the shelf page is clean" "" "$(git -C "$WIKI" status --porcelain -- wiki/notes/standard-operating-procedures.md)"
-is "the commit reached the remote" "$(git -C "$WIKI" rev-parse HEAD)" "$(git -C "$T/wiki-remote.git" rev-parse HEAD)"
-want "the unrelated file is left alone" "?? stray.txt" "$(git -C "$WIKI" status --porcelain)"
+is "write adds one commit" "$((before + 1))" "$(timeout 5 git -C "$WIKI" rev-list --count HEAD)"
+is "the commit touches only the shelf page" "wiki/notes/standard-operating-procedures.md" "$(timeout 5 git -C "$WIKI" show --name-only --format= HEAD)"
+is "the shelf page is clean" "" "$(timeout 5 git -C "$WIKI" status --porcelain -- wiki/notes/standard-operating-procedures.md)"
+is "the commit reached the remote" "$(timeout 5 git -C "$WIKI" rev-parse HEAD)" "$(timeout 5 git -C "$T/wiki-remote.git" rev-parse HEAD)"
+want "the unrelated file is left alone" "?? stray.txt" "$(timeout 5 git -C "$WIKI" status --porcelain)"
 rm -f "$WIKI/stray.txt"
 printf '#!/bin/sh\nexit 1\n' >"$T/wiki-remote.git/hooks/pre-receive"; chmod +x "$T/wiki-remote.git/hooks/pre-receive"
 out="$(printf '%s' "$GOOD" | run_sop write push-fails - )"; rc=$?
