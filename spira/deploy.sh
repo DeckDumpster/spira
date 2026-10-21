@@ -32,7 +32,6 @@
 #   3. Refuse if the named release is already current.
 #   4. Fetch the release tarball from the forge.
 #   5. Check DB migration compatibility before drain.
-#   6. Stop the promote timer (retired by this command).
 #   7. Pre-deploy health check: run doctor; refuse if any FAIL (pre-existing issue, not release).
 #   8. world.sh drain — wait for live aeons to finish; refuse if they do not.
 #      With --force: drain --timeout 0, then slay each live aeon (--keep-work --reopen).
@@ -376,12 +375,6 @@ if [ -d "${SPIRA_DB:-}/.beads" ]; then
     unset _mig_out _mig_rc _dolt_addr
 fi
 
-# Retire the promote timer before draining; it is superseded by this command.
-_promo_tmr="spira-promote-${SPIRA_INSTANCE}.timer"
-_promo_svc="spira-promote-${SPIRA_INSTANCE}.service"
-"$_SC" --user stop "$_promo_tmr" 2>/dev/null || true
-"$_SC" --user disable "$_promo_tmr" 2>/dev/null || true
-"$_SC" --user stop "$_promo_svc" 2>/dev/null || true
 
 # Ensure the tag sidecar directory exists and is writable before disrupting the instance.
 # The release dir is read-only after release install-tarball; the sidecar goes beside it, not inside.

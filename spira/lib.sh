@@ -75,7 +75,7 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # branch-sweep.sh, cadence.sh, citations.sh, deploy.sh, escape-classify.sh,
 # gate-locks.sh, groom-trigger.sh, held.sh, hold.sh, holds.sh,
 # pr-notify.sh, publish-backlog.sh, released-defects.sh,
-# release.sh, review.sh, tokens.sh, unhold.sh — plus roughly fifty of this directory's own
+# release.sh, tokens.sh, unhold.sh — plus roughly fifty of this directory's own
 # `test-*.sh` suites that exercise a shim (or one of the allow-listed functions) directly
 # as bash, rather than through the crate's own unit tests. Wave 4 does not own any of
 # those; this file goes away only once each is rewritten in its own turn ("rewrite when
@@ -2228,7 +2228,7 @@ recut_onto() {
 }
 
 
-# spira_live_aeons RETIRED (wave 4.23, sp-0ffox): its callers, promote.sh and
+# spira_live_aeons RETIRED (wave 4.23, sp-0ffox): its callers, the promote flow and
 # systemd/install.sh, are both gone — the install crate's own `checks::live_aeons`
 # (install/src/checks.rs, reimplemented directly against its own Systemctl port) is the
 # live-aeon guard now, independent of lib.sh. A whole-tree grep found no remaining caller.

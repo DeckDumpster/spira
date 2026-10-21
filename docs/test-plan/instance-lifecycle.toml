@@ -32,11 +32,6 @@ tier = "T2"
 statement = "`release.sh cut` creates an annotated tag listing bead ids landed since the previous tag on the repo-map base ref, not hardcoded `main`; a no-op cut creates no tag and `show` reads it back"
 
 [[use_case]]
-id = "UC-instance-lifecycle-07"
-tier = "T2"
-statement = "`review.sh` records a ship/block verdict per release unit, files a finding bead on block, and never duplicates it"
-
-[[use_case]]
 id = "UC-instance-lifecycle-08"
 tier = "T2"
 statement = "`activate.sh` unpacks to a versioned read-only release dir, atomically repoints `current` and keeps the previous release; `--dry-run` changes nothing"
