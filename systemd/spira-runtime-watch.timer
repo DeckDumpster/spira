@@ -1,0 +1,16 @@
+[Unit]
+Description=Check each registered repo's language runtime pins against upstream support every six hours
+
+[Timer]
+OnBootSec=15min
+OnActiveSec=15min
+OnUnitActiveSec=6h
+AccuracySec=5min
+Persistent=true
+Unit=spira-runtime-watch.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=observability

@@ -770,6 +770,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v kit-bump)\""
 
 [[dep]]
+name = "runtime-watch"
+tier = "release"
+purpose = "Spira's runtime-watch binary, from the release's bin/ — files one bump bead per repo and language runtime whose pinned release upstream no longer supports"
+version_min = ""
+version_probe = "readlink -f \"$(command -v runtime-watch)\""
+
+[[dep]]
 name = "store-persist"
 tier = "release"
 purpose = "Spira's store-persist binary, from the release's bin/ — restores a RAM-backed Dolt store from its durable copy and keeps that copy synced"

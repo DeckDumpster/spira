@@ -1433,6 +1433,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "runtime-watch"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "spira-config",
+ "spira-otel",
+ "testkit",
+]
+
+[[package]]
 name = "rustix"
 version = "0.38.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
