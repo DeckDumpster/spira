@@ -1,11 +1,20 @@
 //! The statute check every decision-recording tool runs on its own text before the write.
 //!
-//! File format, one row per line: `slug | refuse|show | regex`; `#` comments and blank lines
-//! skipped. A `refuse` row names a statute the text contradicts; a `show` row names one the
-//! text touches. Both are recorded on the bead; only `refuse` stops the write. The registry
-//! is a file, so the check never waits on the store and an unreadable registry refuses.
+//! File format, one row per line: `slug | refuse|show|plan | regex`; `#` comments and blank
+//! lines skipped. A `refuse` row names a statute the text contradicts; a `show` row names one
+//! the text touches. Both are recorded on the bead; only `refuse` stops the write. A `plan`
+//! row names a statute a builder's plan must read when it matches a governed decision; the
+//! decision-recording check ignores it and [`plan_check`] reads only it. The registry is a
+//! file, so the check never waits on the store and an unreadable registry refuses.
 
 use regex::RegexBuilder;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Mode {
+    Refuse,
+    Show,
+    Plan,
+}
 
 pub const OVERRIDE_ENV: &str = "BEAD_STATUTE_CONSIDERED";
 
@@ -16,7 +25,7 @@ pub struct Hit {
     pub matched: String,
 }
 
-pub fn parse(text: &str) -> Result<Vec<(String, bool, regex::Regex)>, String> {
+pub fn parse(text: &str) -> Result<Vec<(String, Mode, regex::Regex)>, String> {
     let mut rows = Vec::new();
     for (n, line) in text.lines().enumerate() {
         let t = line.trim();
@@ -27,16 +36,17 @@ pub fn parse(text: &str) -> Result<Vec<(String, bool, regex::Regex)>, String> {
         let (Some(slug), Some(mode), Some(pat)) = (f.next(), f.next(), f.next()) else {
             return Err(format!("line {}: want `slug | refuse|show | regex`", n + 1));
         };
-        let refuses = match mode {
-            "refuse" => true,
-            "show" => false,
-            other => return Err(format!("line {}: mode {other:?} is not refuse or show", n + 1)),
+        let mode = match mode {
+            "refuse" => Mode::Refuse,
+            "show" => Mode::Show,
+            "plan" => Mode::Plan,
+            other => return Err(format!("line {}: mode {other:?} is not refuse, show or plan", n + 1)),
         };
         let re = RegexBuilder::new(pat)
             .case_insensitive(true)
             .build()
             .map_err(|e| format!("line {}: {e}", n + 1))?;
-        rows.push((slug.to_string(), refuses, re));
+        rows.push((slug.to_string(), mode, re));
     }
     Ok(rows)
 }
@@ -44,7 +54,11 @@ pub fn parse(text: &str) -> Result<Vec<(String, bool, regex::Regex)>, String> {
 /// Every row `text` matches, refusing rows first; one hit per slug.
 pub fn check(registry: &str, text: &str) -> Result<Vec<Hit>, String> {
     let mut hits: Vec<Hit> = Vec::new();
-    for (slug, refuses, re) in parse(registry)? {
+    for (slug, mode, re) in parse(registry)? {
+        if mode == Mode::Plan {
+            continue;
+        }
+        let refuses = mode == Mode::Refuse;
         let Some(m) = re.find(text) else { continue };
         match hits.iter_mut().find(|h| h.slug == slug) {
             Some(h) => h.refuses |= refuses,
@@ -52,6 +66,21 @@ pub fn check(registry: &str, text: &str) -> Result<Vec<Hit>, String> {
         }
     }
     hits.sort_by_key(|h| !h.refuses);
+    Ok(hits)
+}
+
+/// The statutes a builder's plan must read: every `plan` row `plan` matches, one hit per slug.
+/// Empty means the plan makes no governed decision and no check is owed.
+pub fn plan_check(registry: &str, plan: &str) -> Result<Vec<Hit>, String> {
+    let mut hits: Vec<Hit> = Vec::new();
+    for (slug, mode, re) in parse(registry)? {
+        if mode != Mode::Plan || hits.iter().any(|h| h.slug == slug) {
+            continue;
+        }
+        if let Some(m) = re.find(plan) {
+            hits.push(Hit { slug, refuses: false, matched: m.as_str().to_string() });
+        }
+    }
     Ok(hits)
 }
 
@@ -120,6 +149,16 @@ mod tests {
     fn a_contradicting_text_is_a_refusing_hit_listed_first() {
         let h = check(REG, "Pick VMIDs from a configured range via the allocator").unwrap();
         assert_eq!(h.iter().map(|h| (h.slug.as_str(), h.refuses)).collect::<Vec<_>>(), vec![("law-alloc", true), ("law-touch", false)]);
+    }
+
+    #[test]
+    fn plan_rows_are_read_only_by_the_plan_check() {
+        let reg = format!("{REG}law-lang | plan | new \\w+ program\n");
+        assert!(check(&reg, "add a new python program").unwrap().is_empty());
+        let h = plan_check(&reg, "Add a new python program").unwrap();
+        assert_eq!(h.iter().map(|h| h.slug.as_str()).collect::<Vec<_>>(), vec!["law-lang"]);
+        assert!(plan_check(&reg, "edit inside an existing function").unwrap().is_empty());
+        assert!(plan_check("law-x | plan | (", "x").is_err());
     }
 
     #[test]

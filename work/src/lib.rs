@@ -83,7 +83,7 @@ pub const VERBS: &[&str] = &[
 ];
 
 /// Verbs answered in this process, never sent to the socket.
-pub const LOCAL_VERBS: &[&str] = &["crates"];
+pub const LOCAL_VERBS: &[&str] = &["crates", "statute-check"];
 
 /// The `-p` selection for a branch's diff: every workspace member it touches plus its direct
 /// dependents — the gate's own selection (`gate::compose`), never `--workspace`. A
@@ -107,6 +107,25 @@ pub fn crates_selection(diff_raw: &[u8], metadata_json: &str) -> Result<Vec<Stri
         return Ok(members.iter().map(|m| m.name.clone()).collect());
     }
     Ok(with_dependents(&touched, &members))
+}
+
+/// What `work statute-check` owes for a plan: `None` when it matches no governed decision (no
+/// check, no note); otherwise the full text of every statute returned, and the note recorded on
+/// the bead naming the plan and the statutes. A returned statute whose text is missing from
+/// the mirror is an error, never a silent omission.
+pub fn statute_check_report(registry: &str, plan: &str, text_of: impl Fn(&str) -> Option<String>) -> Result<Option<(String, String)>, String> {
+    let hits = bead::statute::plan_check(registry, plan)?;
+    if hits.is_empty() {
+        return Ok(None);
+    }
+    let mut out = String::new();
+    for h in &hits {
+        let text = text_of(&h.slug).ok_or_else(|| format!("{} was returned but its text is not in the statute mirror", h.slug))?;
+        out.push_str(&format!("{} (matched {:?})\n{}\n\n", h.slug, h.matched, text.trim()));
+    }
+    let slugs = hits.iter().map(|h| h.slug.as_str()).collect::<Vec<_>>().join(", ");
+    let note = format!("Statute check before a governed decision.\nPlan: {}\nReturned: {slugs}", plan.trim());
+    Ok(Some((out, note)))
 }
 
 /// `crates` as the words to append to a cargo command: `-p a -p b`, empty when nothing buildable changed.
@@ -235,6 +254,19 @@ pub fn build_request_with_body(bound: &str, verb: &str, verb_args: &[String], ti
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_governed_plan_returns_its_statutes_in_full_and_an_ungoverned_one_nothing() {
+        let reg = include_str!("../../spira/statute-guards");
+        let text = |s: &str| Some(format!("full text of {s}"));
+        let plan = "Add a new Python hold proxy program to the Rust repo's deploy path.";
+        let (out, note) = statute_check_report(reg, plan, text).unwrap().unwrap();
+        assert!(out.contains("full text of law-new-subsystems-are-rust") && out.contains("full text of law-one-language-runtime-per-repo"));
+        assert!(note.contains(plan) && note.contains("law-new-subsystems-are-rust") && note.contains("law-one-language-runtime-per-repo"));
+        assert!(!out.contains("law-tests-run-only-through-testenv"));
+        assert_eq!(statute_check_report(reg, "Fix the off-by-one in parse() inside the existing function.", text).unwrap(), None);
+        assert!(statute_check_report(reg, plan, |_| None).is_err());
+    }
+
     use super::*;
 
     #[test]
