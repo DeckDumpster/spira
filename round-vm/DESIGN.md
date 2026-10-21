@@ -30,7 +30,7 @@ means the same thing.
 | `round-vm teardown` | — | 0; stops the mirror daemon for the state dir (nothing running is success) |
 | `round-vm acquire` | `<handle> <addr> <warm\|cold>` | 0 success; 1 gave up (only when `SPIRA_ROUND_VM_MAX_RETRIES` > 0) |
 | `round-vm release <handle>` | nothing | 0 destroyed and verified gone; 1 failed; 2 usage |
-| `round-vm run <tree-dir> [--suites CSV; absent = whole corpus, longest recorded median first, unrecorded first with an alarm] [--maxpar N] [--toolchain V] [--results-dir D] [--base REF]` | the remote batch's own output | see 2.2 |
+| `round-vm run <tree-dir> [--suites CSV; absent = whole corpus, longest recorded median first, unrecorded first with an alarm] [--maxpar N] [--toolchain V] [--results-dir D] [--base REF] [--ci-entry CMD]` | the remote batch's own output | see 2.2 |
 | `round-vm status` | exactly three lines: `ready: <handle> <addr>\|none`, `provisioning: pid <pid>\|none`, `outage: <reason>\|none` | 0 |
 | `round-vm status --json` | the pool as recorded: `ready`, `provisioning`, `refreshing`, `outage`, `template`, `leases`, `doomed`, `vms` (state, since, age, reason) and the last 50 `events` | 0 |
 | `round-vm warm` | `spare: provisioning\|not needed` — first runs `drain`; then starts the background provision when nothing is ready, in flight or refreshing, and never under `ec2-always`/`ec2-only` | 0 |
@@ -42,6 +42,8 @@ Every option also accepts the `--opt=value` spelling. An unknown verb or no verb
 
 `warm` means a ready VM was handed out without waiting. `cold` means `acquire` had to
 wait for a VM, whether it provisioned one itself or waited on the provision in flight.
+
+`--ci-entry CMD` is the round of a registered repository that is not the harness: the VM clones the tree and runs `CMD` (the repository's own CI entry point, declared as `ci_entry` in its `.spira/testenv.toml`) instead of the corpus, so the round covers what CI covers. Its exit status is the one verdict, recorded as `ci.result` (`ok`/`red`) beside `ci.log`; no suite ordering, image build, lint or binaries apply.
 
 ### 2.2 `run`
 

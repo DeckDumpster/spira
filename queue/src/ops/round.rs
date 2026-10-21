@@ -1570,10 +1570,27 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
         let results = rounds_dir(&c).join(format!("{batch}.results"));
         let _ = fs::remove_dir_all(&results);
         let _ = fs::create_dir_all(&results);
+        let Some(entry) = gate::own::ci_entry(&wt) else {
+            let why = format!("{} declares no ci_entry — a round runs the repository's own CI entry point on a round VM", gate::own::DECL);
+            warn_unrecorded(
+                w,
+                label,
+                batch,
+                "the incomplete pass",
+                pass_verdict_event(w, batch, &Verdict::Incomplete(&bounded_text(&why)), false),
+            );
+            w.err(format!("queue.sh {label}: {why}; the round is not judged"));
+            return FAULT;
+        };
         let began = w.clock.now();
-        let out =
-            w.scripts
-                .repo_testenv(&head, &c.r.name, c.s.round_wall_secs, &handle_of(&c, batch));
+        let out = w.scripts.repo_round_vm(
+            &wt,
+            &results,
+            &entry,
+            (batch, &c.r.name),
+            c.s.round_wall_secs,
+            &handle_of(&c, batch),
+        );
         let _ = fs::remove_file(handle_of(&c, batch));
         if preempt_marker(&c, batch).exists() {
             w.out(format!("queue.sh {label}: round {batch} was preempted; its pass is recorded by `round preempt`"));
@@ -1597,7 +1614,7 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
                     c.s.round_wall_secs
                 )
             } else {
-                format!("testenv exited {}", out.rc)
+                format!("the repository's CI entry exited {}", out.rc)
             };
             warn_unrecorded(
                 w,

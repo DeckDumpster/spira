@@ -3778,7 +3778,11 @@ fn absolve_refuses_without_evidence_and_with_it_readmits_a_red_tip() {
 fn declare_own_testenv(t: &T) {
     let wt = PathBuf::from(&kv_of(t, "round")["worktree"]);
     fs::create_dir_all(wt.join(".spira")).unwrap();
-    fs::write(wt.join(".spira").join("testenv.toml"), "").unwrap();
+    fs::write(
+        wt.join(".spira").join("testenv.toml"),
+        "ci_entry = \"deploy/ci.sh all\"\n",
+    )
+    .unwrap();
 }
 
 #[test]
@@ -3803,7 +3807,11 @@ fn a_repo_that_declares_its_own_testenv_certifies_and_lands_from_its_verdict() {
     assert!(
         calls
             .iter()
-            .any(|c| c.starts_with("repo-testenv merged-tb spira wall=900")),
+            .any(|c| {
+                c.starts_with("repo-round-vm ")
+                    && c.contains("entry=deploy/ci.sh all round=")
+                    && c.ends_with("/spira wall=900")
+            }),
         "{calls:?}"
     );
     assert!(
@@ -3859,10 +3867,29 @@ fn a_testenv_fault_on_an_own_testenv_repo_is_not_judged() {
     declare_own_testenv(&t);
     assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
     assert!(
-        t.err().contains("testenv exited 2") && t.err().contains("not judged"),
+        t.err().contains("CI entry exited 2") && t.err().contains("not judged"),
         "{}",
         t.err()
     );
+}
+
+#[test]
+fn an_own_testenv_repo_with_no_ci_entry_is_not_judged_and_runs_nothing() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    let wt = PathBuf::from(&kv_of(&t, "round")["worktree"]);
+    fs::create_dir_all(wt.join(".spira")).unwrap();
+    fs::write(wt.join(".spira").join("testenv.toml"), "").unwrap();
+    assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
+    assert!(t.err().contains("declares no ci_entry"), "{}", t.err());
+    let calls = t.scripts.calls.borrow().clone();
+    assert!(!calls.iter().any(|c| c.contains("round-vm")), "{calls:?}");
 }
 
 const STALE_ACQUIRE: &str = "round-vm run: acquire failed: EC2 launch failed (placement ec2-always)\nclone refused: the newest round AMI ami-1 carries recipe-sha aa but this release's recipe is bb; run the round-ami-build workflow\n";

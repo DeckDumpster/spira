@@ -21,7 +21,7 @@ use crate::schema::{AcquireMode, Manifest, ProcId, Vm};
 use crate::spool::{linger, stream_into, Server, Spool};
 
 pub const RUN_USAGE: &str =
-    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--base <ref>] [--round-batch <id> [--round-repo <repo>]] [--on-red <command>]";
+    "round-vm run: usage: round-vm run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--base <ref>] [--round-batch <id> [--round-repo <repo>]] [--on-red <command>] [--ci-entry <command>]";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RunArgs {
@@ -40,6 +40,9 @@ pub struct RunArgs {
     pub round_repo: Option<String>,
     /// Words of a command run with each suite's name appended, the moment that suite goes red.
     pub on_red: Option<Vec<String>>,
+    /// A foreign repository's own full CI entry point: the VM clones the tree and runs this
+    /// command instead of the harness corpus, and its exit status is the round's one verdict.
+    pub ci_entry: Option<String>,
 }
 
 /// Parses `run`'s arguments; `--opt value` and `--opt=value` both work.
@@ -66,6 +69,7 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
             "--round-batch" => r.round_batch = Some(val()?).filter(|v| !v.is_empty()),
             "--round-repo" => r.round_repo = Some(val()?).filter(|v| !v.is_empty()),
             "--on-red" => r.on_red = Some(val()?.split_whitespace().map(String::from).collect()).filter(|v: &Vec<String>| !v.is_empty()),
+            "--ci-entry" => r.ci_entry = Some(val()?).filter(|v| !v.trim().is_empty()),
             other => return Err(format!("round-vm run: unknown option: {other}")),
         }
     }
@@ -125,6 +129,8 @@ pub struct BatchJob {
     /// The head's image tag differs from what the template (or the landing ref) holds: the VM
     /// builds `localhost/spira-testenv:<tag>` as a declared setup step instead of refusing it.
     pub build_image: bool,
+    /// Set: the VM runs [`FOREIGN_SCRIPT`] with this command rather than the harness round.
+    pub ci_entry: Option<String>,
 }
 
 /// The VM side, reached only by address.
@@ -143,6 +149,27 @@ pub trait Remote: Sync {
 pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
+
+/// The VM side of a round for a registered repository that is not the harness: clone the round's
+/// tree and run the repository's own CI entry point (`${13}`). Its exit status is the one verdict,
+/// written as `ci.result`, so the round covers what CI covers by construction.
+pub const FOREIGN_SCRIPT: &str = r#"set -euo pipefail
+host_addr="$1" port="$2" entry="${13}"
+export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
+rm -rf ~/round-bins ~/round-work
+git clone --quiet "git://${host_addr}:${port}/mirror.git" ~/round-work
+cd ~/round-work
+res="$HOME/round-work/.runtime/spira/batch-results"
+mkdir -p "$res"
+printf 'tree=%s\n' "$(git rev-parse 'HEAD^{tree}')" > "$res/batch.meta"
+t0=$(date +%s)
+rc=0
+bash -c "$entry" > "$res/ci.log" 2>&1 || rc=$?
+tail -n 40 "$res/ci.log" >&2
+if [ "$rc" -eq 0 ]; then status=ok; else status=red; fi
+printf '%s %s %s - - - %s\n' "$status" 1 "$(( $(date +%s) - t0 ))" "$rc" > "$res/ci.result"
+[ "$rc" -eq 0 ]
+"#;
 
 /// The VM side of a round. The VM is a LAUNCHER (design runtime-is-a-release, sp-dvfea): it
 /// builds the round's tree, stages that build as a release (`release build --bin-dir`, the
@@ -578,7 +605,7 @@ pub(crate) fn job_cache_home(ec2: bool, configured: Option<&str>) -> Option<Stri
 }
 
 pub fn remote_command(job: &BatchJob) -> String {
-    let args = [
+    let mut args = vec![
         job.host_addr.clone(),
         job.mirror_port.to_string(),
         job.suites.clone().unwrap_or_default(),
@@ -592,6 +619,7 @@ pub fn remote_command(job: &BatchJob) -> String {
         if job.lint { "1" } else { "" }.to_string(),
         if job.build_image { "1" } else { "" }.to_string(),
     ];
+    args.extend(job.ci_entry.clone());
     let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
     format!("bash -s -- {}", quoted.join(" "))
 }
@@ -638,7 +666,7 @@ impl Remote for SshRemote {
             .spawn()
             .map_err(|e| format!("ssh: {e}"))?;
         if let Some(mut si) = child.stdin.take() {
-            si.write_all(REMOTE_SCRIPT.as_bytes()).map_err(|e| format!("ssh stdin: {e}"))?;
+            si.write_all(if job.ci_entry.is_some() { FOREIGN_SCRIPT } else { REMOTE_SCRIPT }.as_bytes()).map_err(|e| format!("ssh stdin: {e}"))?;
         }
         let st = child.wait().map_err(|e| format!("ssh: {e}"))?;
         Ok(st.code().unwrap_or(255))
@@ -1209,9 +1237,9 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
             return 2;
         }
     };
-    let build_image = image_build_declared(env, args, &commit_sha);
+    let build_image = args.ci_entry.is_none() && image_build_declared(env, args, &commit_sha);
     let ordered;
-    let args = if args.suites.is_none() {
+    let args = if args.suites.is_none() && args.ci_entry.is_none() {
         match lpt_suites(env.host, &args.tree_dir) {
             Ok(list) => {
                 ordered = RunArgs { suites: Some(list), ..args.clone() };
@@ -1444,8 +1472,9 @@ fn on_vm_run(
         setup_alarm_secs: cfg.setup_alarm_secs,
         cap_secs: cfg.cap_secs,
         post_guard_secs: cfg.post_guard_secs,
-        lint: args.base.is_some(),
+        lint: args.base.is_some() && args.ci_entry.is_none(),
         build_image,
+        ci_entry: args.ci_entry.clone(),
     };
     let t0 = Instant::now();
     let stream_scratch = cfg.state_dir.join(format!(".pulled-stream.{}", std::process::id()));
@@ -2167,6 +2196,39 @@ mod tests {
         assert!(parse_run_args(&["/t".into()]).unwrap().base.is_none());
     }
 
+    fn foreign_run(entry: &str) -> (std::process::Output, String) {
+        let home = TempDir::new();
+        let src = home.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        for a in [&["init", "-q"][..], &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"]] {
+            assert!(std::process::Command::new("git").arg("-C").arg(&src).args(a).status().unwrap().success());
+        }
+        let script = FOREIGN_SCRIPT.replace("\"git://${host_addr}:${port}/mirror.git\"", &format!("'{}'", src.display()));
+        assert_ne!(script, FOREIGN_SCRIPT);
+        let out = std::process::Command::new("bash")
+            .args(["-c", &script, "x", "h", "1", "", "", "", "", "", "", "", "", "", "", entry])
+            .env_clear()
+            .env("HOME", home.path())
+            .env("PATH", std::env::var("PATH").unwrap())
+            .output()
+            .unwrap();
+        let res = home.path().join("round-work/.runtime/spira/batch-results");
+        let verdict = fs::read_to_string(res.join("ci.result")).unwrap_or_default();
+        assert!(fs::read_to_string(res.join("batch.meta")).unwrap().starts_with("tree="));
+        (out, verdict)
+    }
+
+    #[test]
+    fn the_foreign_script_runs_the_repos_entry_and_its_exit_is_the_verdict() {
+        let (out, verdict) = foreign_run("echo tier-one; exit 0");
+        assert!(out.status.success());
+        assert!(verdict.starts_with("ok "), "{verdict}");
+        let (out, verdict) = foreign_run("echo isolation tier failed; exit 7");
+        assert_eq!(out.status.code(), Some(1));
+        assert!(verdict.starts_with("red ") && verdict.trim_end().ends_with(" 7"), "{verdict}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("isolation tier failed"));
+    }
+
     #[test]
     fn remote_command_keeps_empty_arguments_in_place() {
         let cmd = remote_command(&BatchJob {
@@ -2182,8 +2244,9 @@ mod tests {
             post_guard_secs: 600,
             lint: false,
             build_image: false,
+            ci_entry: Some("deploy/ci.sh all".into()),
         });
-        assert_eq!(cmd, "bash -s -- '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' ''");
+        assert_eq!(cmd, "bash -s -- '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'deploy/ci.sh all'");
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -2211,7 +2274,7 @@ mod tests {
         }
         let d = TempDir::new();
         let cache_home = d.path().join("cargo-home");
-        let out = Command::new("bash")
+        let out = std::process::Command::new("bash")
             .arg("-c")
             .arg(REMOTE_SCRIPT)
             .arg("round-vm-test")
