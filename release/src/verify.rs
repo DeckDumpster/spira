@@ -107,7 +107,7 @@ pub fn verify(cfg: &Config, sha: &str, o: &VerifyOpts) -> Result<Vec<String>, St
 /// with, never the one in force. `None` when the release declares no delta.
 fn staged_config(cfg: &Config, rel: &Path) -> Result<Option<(PathBuf, String)>, String> {
     let Some(delta) = crate::config_delta::load(rel)? else { return Ok(None) };
-    let txn = crate::config_delta::prepare(cfg, rel, &delta)?;
+    let txn = crate::config_delta::prepare(cfg, rel, &delta, true)?;
     let dir = crate::config_delta::scratch_dir()?;
     match txn.stage(&dir) {
         Ok(spec) => Ok(Some((dir, spec))),

@@ -320,6 +320,31 @@ pub fn incident_labels(supplied: Option<&str>, scope: Option<&str>, incident_lab
     }
 }
 
+/// The `removed` keys a release's `config-delta.toml` lists, as `spira.<key>` paths.
+pub fn delta_removed_keys(delta_text: &str) -> Vec<String> {
+    let Some(start) = delta_text.find("removed") else { return Vec::new() };
+    let rest = &delta_text[start..];
+    let list = &rest[..rest.find(']').unwrap_or(rest.len())];
+    let key = regex::Regex::new(r#""(spira\.[a-z0-9_]+)""#).expect("static pattern");
+    key.captures_iter(list).map(|c| c[1].to_string()).collect()
+}
+
+/// The retired key a "`<KEY>` is not declared" failure names, when the running release's delta
+/// lists it as removed: a process still on the previous release resolving a key activation
+/// dropped, not a defect to build against.
+pub fn activation_skew(title: &str, payload: &str, removed: &[String]) -> Option<String> {
+    let name = regex::Regex::new(r"\b(?:SPIRA_)?([A-Z][A-Z0-9_]*) is not declared").expect("static pattern");
+    for text in [title, payload] {
+        for c in name.captures_iter(text) {
+            let path = format!("spira.{}", c[1].to_ascii_lowercase());
+            if removed.contains(&path) {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -599,5 +624,15 @@ mod tests {
         assert!(contains_schema_delete("DELETE   FROM schema_migrations", ""));
         assert!(contains_schema_delete("", "please delete from schema_migrations now"));
         assert!(!contains_schema_delete("delete from somewhere_else", ""));
+    }
+
+    #[test]
+    fn a_not_declared_failure_for_a_removed_key_is_skew_and_any_other_is_not() {
+        let removed = delta_removed_keys("removed = [\"spira.cert_prices\",\n \"spira.mirror\"]\n[added]\n\"spira.other\" = 1\n");
+        assert_eq!(removed, vec!["spira.cert_prices".to_string(), "spira.mirror".to_string()]);
+        let msg = "SPIRA_CERT_PRICES is not declared: no spira.cert_prices declared — every key is required; refusing";
+        assert_eq!(activation_skew("gate red", msg, &removed).as_deref(), Some("spira.cert_prices"));
+        assert!(activation_skew("gate red", "SPIRA_OTHER is not declared: no spira.other declared", &removed).is_none());
+        assert!(activation_skew("gate red", msg, &[]).is_none());
     }
 }
