@@ -23,10 +23,7 @@ for d in $foreign; do
 done
 export PATH="$cache_home/bin:$PATH"
 export CARGO_HOME="$cache_home" RUSTUP_HOME="$cache_home/rustup"
-rustup toolchain install 1.91.0 --profile minimal --no-self-update
-# template.sh links $CARGO_HOME/bin/rustc to the harness toolchain, so name nextest's compiler outright.
-tc="$RUSTUP_HOME/toolchains/1.91.0-x86_64-unknown-linux-gnu/bin"
-RUSTC="$tc/rustc" RUSTC_WRAPPER= "$tc/cargo" install --locked cargo-nextest --version "$nextest"
+cargo install --locked cargo-nextest --version "$nextest"
 ln -sfn "$cache_home/bin/cargo-nextest" /usr/local/bin/cargo-nextest
 for d in $foreign; do bash "$d/deploy/runner-deps.sh" --check; done
 cat > /etc/systemd/system/tailscaled.service <<UNIT
