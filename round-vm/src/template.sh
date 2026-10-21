@@ -6,13 +6,17 @@ work="$1" host_addr="$2" toolchain="$3" cache_home="$4"
 cd "$work"
 export CARGO_HOME="${cache_home:-$HOME/.cargo}"
 mkdir -p "$CARGO_HOME/bin"
-if [ -n "$toolchain" ] && [ ! -x "$CARGO_HOME/bin/rustc" ]; then
-    echo "round-vm template: installing rust $toolchain with rustup into $CARGO_HOME (must match the host's rustc byte-for-byte, sp-xjnzl)" >&2
+# toolchain-begin
+have=""
+[ -x "$CARGO_HOME/bin/rustc" ] && have="$("$CARGO_HOME/bin/rustc" --version 2>/dev/null | cut -d' ' -f2)"
+if [ -n "$toolchain" ] && [ "$have" != "$toolchain" ]; then
+    echo "round toolchain $toolchain (installed at round time; the image has ${have:-none}); must match the host's rustc byte-for-byte, sp-xjnzl" >&2
     command -v rustup >/dev/null 2>&1 || apt-get install -y -qq rustup >&2
     export RUSTUP_HOME="$CARGO_HOME/rustup"
     rustup toolchain install "$toolchain" --profile minimal --no-self-update >&2
     for b in "$RUSTUP_HOME"/toolchains/"$toolchain"-*/bin/*; do ln -sfn "$b" "$CARGO_HOME/bin/${b##*/}"; done
 fi
+# toolchain-end
 export PATH="$CARGO_HOME/bin:$PATH"
 export SPIRA_HOME="$work/spira"
 mkdir -p "$work/.runtime/spira"
