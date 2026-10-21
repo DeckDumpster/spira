@@ -874,6 +874,7 @@ dependencies = [
  "cockpit-ops",
  "serde_json",
  "spira-config",
+ "spira-desired-state",
  "spira-otel",
  "testkit",
  "tokio",

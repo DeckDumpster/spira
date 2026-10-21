@@ -115,6 +115,8 @@ fn ops_cfg(run: &str) -> Config {
         systemctl: "systemctl".to_string(),
         duckdb: "duckdb".to_string(),
         broker: fake_broker().0.to_string_lossy().into_owned(),
+        desired_dir: String::new(),
+        units_install: "/nonexistent/units-install".into(),
     }
 }
 
@@ -272,6 +274,9 @@ fn units_fixture(rows: &[String]) -> UnitsFixture {
     let mut cfg = ops_cfg(&run.to_string_lossy());
     cfg.systemctl = systemctl.to_string_lossy().into_owned();
     cfg.duckdb = duckdb.to_string_lossy().into_owned();
+    let install = dir.join("units-install");
+    script(&install, "#!/bin/sh\nprintf 'ok.service\\nok.timer\\ndead.service\\ndead.timer\\nnever.service\\nflaky.service\\ndur.service\\n'\n");
+    cfg.units_install = install.to_string_lossy().into_owned();
     UnitsFixture { dir, cfg }
 }
 
@@ -447,12 +452,12 @@ async fn units_folds_per_instance_names_into_one_family_row() {
     assert!(b["last_failure"]["unit"].as_str().unwrap().starts_with("spira-aeon-builder-17920"), "{b}");
     assert_eq!(unit(&v, "spira-aeon-ops")["runs_7d"], 1);
     assert_eq!(unit(&v, "libpod")["kind"], "session");
-    assert_eq!(unit(&v, "gpg-agent")["kind"], "system");
-    assert_eq!(unit(&v, "blockdev")["instances"], 2);
+    assert!(!names.contains(&"gpg-agent") && !names.contains(&"blockdev"), "families outside the declared set are not rows: {names:?}");
+    assert_eq!(v["foreign_families"], 2);
 
     let (_, html) = get(addr, "/units").await;
     assert!(html.contains("unit families"), "{html}");
-    assert!(html.contains("<details>"), "system families are folded away");
+    assert!(html.contains("2 non-Spira unit families"), "{html}");
 }
 
 #[tokio::test]

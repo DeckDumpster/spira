@@ -51,6 +51,10 @@ pub struct Config {
     pub duckdb: String,
     /// The `broker` the forge batch pages read CI detail through. Overridable in tests.
     pub broker: String,
+    /// The materialised desired-state directory, from `SPIRA_DESIRED_DIR`: the declared unit set the units page scopes to.
+    pub desired_dir: String,
+    /// The `units-install` that lists the enable manifest when no Composite declares units.
+    pub units_install: String,
 }
 
 impl Config {
@@ -78,6 +82,8 @@ impl Config {
                 .unwrap_or_else(|| "systemctl".to_string()),
             duckdb: std::env::var("SPIRA_DUCKDB").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "duckdb".to_string()),
             broker: std::env::var("SPIRA_BROKER").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "broker".to_string()),
+            desired_dir: cfg("SPIRA_DESIRED_DIR").map_err(|e| format!("loom: {e}"))?,
+            units_install: std::env::var("SPIRA_UNITS_INSTALL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "units-install".to_string()),
         })
     }
 }
@@ -122,6 +128,8 @@ impl Loom {
             duckdb: self.cfg.duckdb.clone(),
             extra_path: self.cfg.extra_path.join(":"),
             budget: self.cfg.budget,
+            desired_dir: self.cfg.desired_dir.clone(),
+            units_install: self.cfg.units_install.clone(),
         };
         let snap = Arc::new(units::take(&src, now_s()).await);
         *held = Some(snap.clone());

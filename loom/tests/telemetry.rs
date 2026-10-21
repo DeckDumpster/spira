@@ -38,6 +38,8 @@ async fn a_request_pushes_one_run_labelled_by_page_and_status_class() {
         systemctl: "/nonexistent/systemctl".into(),
         duckdb: "/nonexistent/duckdb".into(),
         broker: "/nonexistent/broker".into(),
+        desired_dir: String::new(),
+        units_install: "/nonexistent/units-install".into(),
     };
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
