@@ -22,6 +22,7 @@ for d in $foreign; do
     [ -z "$v" ] || nextest="$v"
 done
 export PATH="$cache_home/bin:$PATH"
+mkdir -p "$cache_home/bin"
 curl -sSfL "https://get.nexte.st/$nextest/linux" | tar -xz -C "$cache_home/bin"
 ln -sfn "$cache_home/bin/cargo-nextest" /usr/local/bin/cargo-nextest
 for d in $foreign; do bash "$d/deploy/runner-deps.sh" --check; done
