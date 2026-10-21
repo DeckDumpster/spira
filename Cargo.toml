@@ -78,6 +78,7 @@ members = [
     "sift",
     "refusal-watch",
     "kit-bump",
+    "runtime-watch",
     "spira-submission",
     "store-persist",
     "unit-run",

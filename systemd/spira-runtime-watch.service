@@ -1,0 +1,25 @@
+[Unit]
+Description=Spira runtime watch — files one bump bead per repo and language runtime whose pinned release upstream no longer supports
+After=lc-serve.service
+Wants=lc-serve.service
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+Nice=19
+CPUQuota=25%
+ExecStart=@SPIRA_PROD_ROOT@/bin/runtime-watch pass --state @SPIRA_RUN@/runtime-watch.state --max-files 10
+# Exit 1 means a filing failed and is retried next pass; exit 3 (a source could not be read) is a failure.
+SuccessExitStatus=1
+TimeoutStartSec=600
+StandardOutput=append:@SPIRA_RUN@/runtime-watch.log
+StandardError=append:@SPIRA_RUN@/runtime-watch.log
+
+[Install]
+WantedBy=default.target
+
+[X-Spira]
+Plane=observability

@@ -216,3 +216,4 @@ testenv-cap|daemon|testenv-cap watch --interval 15|testenv-cap health
 # The archivist commits what it writes; this is the backstop for a failed commit or a writer that
 # never committed. One line per stale path, once.
 brain-dirty|daemon|@SPIRA_HOME@/brain-dirty.sh watch --interval 600|@SPIRA_HOME@/brain-dirty.sh health
+runtime-watch|log|@SPIRA_RUN@/runtime-watch.log
