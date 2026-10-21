@@ -66,6 +66,15 @@ pub fn select_image(images: &[Image], expected: &str) -> Result<String, String> 
     Ok(newest.id.clone())
 }
 
+/// None when the newest image carries `expected`; otherwise the stale-image line.
+pub fn ami_staleness(images: &[Image], expected: &str) -> Option<String> {
+    match images.iter().max_by(|a, b| a.created.cmp(&b.created)) {
+        None => Some(format!("round AMI stale for recipe {expected}: no image tagged {}={} exists", AMI_OWNER_TAG.0, AMI_OWNER_TAG.1)),
+        Some(i) if i.recipe_sha != expected => Some(format!("round AMI stale for recipe {expected}: newest image {} is tagged {AMI_RECIPE_TAG} {}", i.id, i.recipe_sha)),
+        Some(_) => None,
+    }
+}
+
 pub trait Ec2Api {
     /// Launches one instance of `ami` and `instance_type` tagged `TAG_KEY=handle`, `Name=name`; its instance id.
     fn run(&self, ami: &str, instance_type: &str, handle: &str, name: &str, user_data: &str) -> Result<String, String>;
@@ -236,6 +245,10 @@ impl<A: Ec2Api> Ec2<A> {
         let id = select_image(&self.api.images()?, &self.recipe_sha)?;
         *g = Some(id.clone());
         Ok(id)
+    }
+
+    pub fn ami_check(&self) -> Result<Option<String>, String> {
+        Ok(ami_staleness(&self.api.images()?, &self.recipe_sha))
     }
 
     /// The production launch, asked of AWS with `--dry-run`: no instance, no cost.
@@ -1038,6 +1051,16 @@ mod tests {
         let e = select_image(&imgs, "sha-now").unwrap_err();
         assert!(e.contains("ami-new") && e.contains("sha-stale") && e.contains("sha-now"), "{e}");
         assert!(select_image(&[], "sha-now").unwrap_err().contains("no AMI"));
+    }
+
+    #[test]
+    fn a_stale_newest_image_is_reported_and_a_matching_one_clears() {
+        let old = Image { id: "ami-old".into(), recipe_sha: "aaa".into(), created: "2026-10-18".into() };
+        let new = Image { id: "ami-new".into(), recipe_sha: "bbb".into(), created: "2026-10-21".into() };
+        let stale = ami_staleness(&[old.clone()], "bbb").unwrap();
+        assert!(stale.contains("round AMI stale for recipe bbb") && stale.contains("aaa"), "{stale}");
+        assert_eq!(ami_staleness(&[old, new], "bbb"), None);
+        assert!(ami_staleness(&[], "bbb").unwrap().contains("no image"));
     }
 
     #[test]

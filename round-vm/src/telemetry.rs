@@ -1,5 +1,5 @@
 pub const COMPONENT: &str = "round-vm";
-pub const OPERATIONS: &[&str] = &["acquire", "release", "run", "status", "reap", "warm", "drain", "_provision-bg", "template", "refresh", "teardown", "recipe-sha", "ec2-probe"];
+pub const OPERATIONS: &[&str] = &["acquire", "release", "run", "status", "reap", "warm", "drain", "_provision-bg", "template", "refresh", "teardown", "recipe-sha", "ami-check", "ec2-probe"];
 
 pub fn endpoint() -> Option<String> {
     spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok()
