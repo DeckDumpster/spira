@@ -921,28 +921,6 @@ jobs:
           cargo build --release --locked -p spira-config
           printf '%s\n' "$GITHUB_WORKSPACE/target/release" >> "$GITHUB_PATH"
 
-      # A merge made with a token whose pushes start no workflow never fires Round AMI's push
-      # trigger, so dispatch it when the range touches a path that trigger lists.
-      - name: Dispatch Round AMI on a recipe change
-        env:
-          GH_TOKEN: ${{ steps.app-tok.outputs.token }}
-        run: |
-          set -uo pipefail
-          before="${{ github.event.before }}"
-          if [ -z "$before" ] || [ "$before" = 0000000000000000000000000000000000000000 ]; then
-            printf 'ami: no previous head — not dispatching\n'; exit 0
-          fi
-          if ! changed="$(gh api "repos/$GITHUB_REPOSITORY/compare/$before...${{ github.sha }}" --jq '.files[].filename')"; then
-            printf 'ami: could not read the range — dispatching\n'
-            gh workflow run round-ami-build.yml --ref main; exit 0
-          fi
-          if bash spira/round-ami-paths.sh <<<"$changed"; then
-            gh workflow run round-ami-build.yml --ref main
-            printf 'ami: recipe path changed — dispatched Round AMI\n'
-          else
-            printf 'ami: no recipe path changed\n'
-          fi
-
       - name: Cut release tag
         id: cut
         env:

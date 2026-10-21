@@ -33,10 +33,3 @@ want "a mismatch after the match cleared is said again" "stale for recipe r2" "$
 rm "$TMP/stale"; ras ec2-only pass >/dev/null; touch "$TMP/blind"
 want "an unreadable image list is not reported as fresh" "could not read the images" "$(ras ec2-only pass)"
 
-WF="$HERE/../.github/workflows/round-ami-build.yml"
-printf 'README.md\nround-vm/ami-setup.sh\n' | bash "$HERE/round-ami-paths.sh"; is "a range touching ami-setup.sh dispatches" "0" "$?"
-printf 'README.md\nqueue/src/lib.rs\n' | bash "$HERE/round-ami-paths.sh"; is "a range touching no recipe path does not" "1" "$?"
-printf 'round-vm/ami-setup.sh\n' | bash "$HERE/round-ami-paths.sh" /dev/null 2>/dev/null; is "a workflow with no paths is refused, not read as no match" "2" "$?"
-printf 'x\n' > "$TMP/wf.yml"; printf 'on:\n  push:\n    paths:\n      - fixture/only.sh\n  schedule:\n    - cron: "1 1 * * 1"\n' > "$TMP/wf.yml"
-printf 'fixture/only.sh\n' | bash "$HERE/round-ami-paths.sh" "$TMP/wf.yml"; is "the list comes from the workflow file" "0" "$?"
-printf 'round-vm/ami-setup.sh\n' | bash "$HERE/round-ami-paths.sh" "$TMP/wf.yml"; is "a path the workflow no longer lists does not match" "1" "$?"
