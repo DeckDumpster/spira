@@ -18,6 +18,7 @@ use toml::Value;
 
 pub const DELTA_PATH: &str = "spira/config-delta.toml";
 const UNDO_DIR: &str = "config-undo";
+const RETIRED_FILE: &str = "config-retired";
 const REGISTRY_DIRS: [&str; 2] = ["spira/conf.d", "spira/conf.toml.d"];
 
 type Table = Map<String, Value>;
@@ -108,6 +109,21 @@ pub fn save_undo(state: &Path, sha: &str, undo: &Delta) -> Result<(), String> {
     fsutil::write_atomic(&p, &undo.render())
 }
 
+/// Keys an earlier activation left in the config because a process running the code before it
+/// may still resolve them; the next activation removes them.
+pub fn load_retired(state: &Path) -> Vec<String> {
+    fs::read_to_string(state.join(RETIRED_FILE)).map(|t| t.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect()).unwrap_or_default()
+}
+
+pub fn save_retired(state: &Path, keys: &[String]) -> Result<(), String> {
+    let p = state.join(RETIRED_FILE);
+    if keys.is_empty() {
+        let _ = fs::remove_file(&p);
+        return Ok(());
+    }
+    fsutil::write_atomic(&p, &format!("{}\n", keys.join("\n")))
+}
+
 pub fn clear_undo(state: &Path, sha: &str) {
     let _ = fs::remove_file(undo_path(state, sha));
 }
@@ -157,12 +173,16 @@ pub struct Txn {
     post: Vec<Table>,
     /// What puts the config back for a rollback: the keys this added, the values this dropped.
     pub undo: Delta,
+    /// The dropped keys this activation leaves in the config until the next one.
+    pub deferred: Vec<String>,
 }
 
 /// `delta` applied to `original`: the added keys (one an operator already set stays; one held as
 /// the empty string was written undefaulted by an install and takes the release's value), then
-/// the dropped keys removed, and what undoes both.
-fn apply(original: &[Table], delta: &Delta) -> Result<(Vec<Table>, Vec<Table>, Delta), String> {
+/// the keys `retired` (left by the previous activation) removed, and what undoes both. The
+/// delta's own dropped keys are removed only when `defer` is off: a process still running the
+/// previous release's code resolves them until it exits.
+fn apply(original: &[Table], delta: &Delta, retired: &[String], defer: bool) -> Result<(Vec<Table>, Vec<Table>, Delta), String> {
     let mut pre = original.to_vec();
     let mut undo = Delta::default();
     for (k, v) in &delta.added {
@@ -180,7 +200,8 @@ fn apply(original: &[Table], delta: &Delta) -> Result<(Vec<Table>, Vec<Table>, D
         undo.removed.push(k.clone());
     }
     let mut post = pre.clone();
-    for k in &delta.removed {
+    let dropping = retired.iter().chain(delta.removed.iter().filter(|_| !defer));
+    for k in dropping {
         let mut dropped = None;
         for t in post.iter_mut() {
             if let Some(v) = remove(t, k) {
@@ -256,7 +277,7 @@ pub fn staged_for_commit(git: &dyn crate::git::Git, spec: &str, repo: &Path, com
 fn stage_tree_delta(original: &[Table], tree: &Path) -> Result<Option<(PathBuf, String)>, String> {
     let active = original.iter().rev().find_map(|t| get(t, "spira.releases").and_then(Value::as_str)).filter(|s| !s.is_empty()).map(|r| Path::new(r).join(crate::activate::CURRENT));
     let Some(delta) = complete(original, tree, active.as_deref(), load(tree)?)? else { return Ok(None) };
-    let (_, post, _) = apply(original, &delta)?;
+    let (_, post, _) = apply(original, &delta, &[], true)?;
     let dir = scratch_dir()?;
     let mut staged = Vec::new();
     for (i, t) in post.iter().enumerate() {
@@ -364,11 +385,15 @@ fn literal_default(k: &spira_config::registry::RegistryKey) -> Result<Value, Str
     }
 }
 
-pub fn prepare(cfg: &Config, rel: &Path, delta: &Delta) -> Result<Txn, String> {
+/// `defer` leaves the delta's dropped keys in the config for one more activation; a rollback
+/// passes `false`, since the release it returns to rejects keys it does not know.
+pub fn prepare(cfg: &Config, rel: &Path, delta: &Delta, defer: bool) -> Result<Txn, String> {
     let spec = cfg.toml_spec().ok_or("this release declares config changes but SPIRA_TOML names no file to apply them to")?;
     let (files, modes, original_text, original) = read_layers(&spec)?;
-    let (pre, post, undo) = apply(&original, delta)?;
-    let txn = Txn { files, modes, original_text, original, pre, post, undo };
+    let retired = if defer { load_retired(&cfg.state_dir()?) } else { Vec::new() };
+    let (pre, post, undo) = apply(&original, delta, &retired, defer)?;
+    let deferred = if defer { delta.removed.iter().filter(|k| original.iter().any(|t| get(t, k).is_some())).cloned().collect() } else { Vec::new() };
+    let txn = Txn { files, modes, original_text, original, pre, post, undo, deferred };
     txn.validate(cfg, rel)?;
     Ok(txn)
 }

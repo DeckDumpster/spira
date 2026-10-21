@@ -591,10 +591,12 @@ pub fn activate(ctx: &Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<Swi
     let after = hotfix_rule(ctx, standing, sha, hotfix_reason)?;
     let mut history = read_history(&state)?;
     let delta = config_delta::complete_for(ctx.cfg, &rel, config_delta::load(&rel)?)?;
-    let txn = delta.as_ref().map(|d| config_delta::prepare(ctx.cfg, &rel, d)).transpose()?;
+    let delta = delta.or_else(|| (!config_delta::load_retired(&state).is_empty()).then(config_delta::Delta::default));
+    let txn = delta.as_ref().map(|d| config_delta::prepare(ctx.cfg, &rel, d, true)).transpose()?;
     let (out, late) = switch_with_config(ctx, sha, txn.as_ref(), true)?;
     if let Some(t) = &txn {
         config_delta::save_undo(&state, sha, &t.undo)?;
+        config_delta::save_retired(&state, &t.deferred)?;
     }
     let entry = HistEntry { sha: sha.to_string(), hotfix: hotfix_reason.map(one_line) };
     if history.last() != Some(&entry) {
@@ -642,12 +644,13 @@ pub fn rollback(ctx: &Ctx) -> Result<String, String> {
     let txn = match &undo {
         Some(d) => {
             let rel = verify::release_dir(ctx.cfg, &prev.sha)?;
-            Some(config_delta::prepare(ctx.cfg, &rel, d)?)
+            Some(config_delta::prepare(ctx.cfg, &rel, d, false)?)
         }
         None => None,
     };
     let (_, late) = switch_with_config(ctx, &prev.sha, txn.as_ref(), false)?;
     config_delta::clear_undo(&state, &top.sha);
+    config_delta::save_retired(&state, &[])?;
     history.pop();
     write_history(&state, &history)?;
     let rec = prev.hotfix.as_ref().map(|r| Hotfix { sha: prev.sha.clone(), reason: r.clone(), at: fsutil::now_rfc3339() });

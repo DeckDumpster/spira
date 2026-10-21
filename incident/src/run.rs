@@ -26,6 +26,7 @@ pub struct FileConfig<'a> {
     pub ask_label: &'a str,
     pub express: bool,
     pub provenance: &'a str,
+    pub retired_keys: &'a [String],
 }
 
 pub enum FileOutcome {
@@ -37,6 +38,8 @@ pub enum FileOutcome {
     /// retrying an unreachable-looking failure is safer than silently dropping the event,
     /// and the guard message is on the log for a human to fix the caller.
     Refused,
+    /// The event was activation skew on a key the running release retired: logged, nothing filed.
+    Skew,
 }
 
 fn since_date(now: i64, lookback_days: i64) -> String {
@@ -118,6 +121,10 @@ pub fn file_one(
     log: &mut Vec<String>,
 ) -> FileOutcome {
     let now = clock.now();
+    if let Some(key) = decide::activation_skew(title, &String::from_utf8_lossy(payload), cfg.retired_keys) {
+        log.push(format!("{reference}: activation skew — {key} is retired by the running release's config-delta and an older process still resolved it; no bead filed"));
+        return FileOutcome::Skew;
+    }
     let bounded = decide::bound_ref(reference);
     let reference = bounded.as_str();
     let hit = match dedup_incident(bd, cfg.db, reference, cfg.dedup_lookback_days, now) {
@@ -596,6 +603,7 @@ mod tests {
             ask_label: "needs-ryan", // literal-ok: test fixture value, not a config default read at runtime.
             express: false,
             provenance: "foo.service on host: ?",
+            retired_keys: &[],
         }
     }
 
@@ -612,6 +620,27 @@ mod tests {
             _ => panic!("expected Filed"),
         }
         assert_eq!(bd.created.borrow().len(), 1);
+    }
+
+    #[test]
+    fn a_not_declared_red_for_a_retired_key_files_no_bead() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string()];
+        let retired = vec!["spira.cert_prices".to_string()];
+        let mut c = cfg(&known);
+        let payload = b"SPIRA_CERT_PRICES is not declared: no spira.cert_prices declared - refusing";
+        let mut log = vec![];
+        let out = file_one(&bd, &mailer, &clock, &c, "incident:x", "gate red", payload, "spira,incident", &mut log);
+        assert!(matches!(out, FileOutcome::Filed(_)), "control: with the key not retired the red is filed");
+        c.retired_keys = &retired;
+        let before = bd.created.borrow().len();
+        let mut log = vec![];
+        let out = file_one(&bd, &mailer, &clock, &c, "incident:y", "gate red", payload, "spira,incident", &mut log);
+        assert!(matches!(out, FileOutcome::Skew));
+        assert_eq!(bd.created.borrow().len(), before);
+        assert!(log.iter().any(|l| l.contains("activation skew")), "{log:?}");
     }
 
     #[test]

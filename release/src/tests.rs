@@ -1827,7 +1827,8 @@ fn a_release_that_adds_and_drops_a_key_activates_over_the_other_with_no_hand_edi
     let w = World::with_git(delta_git(DELTA_BOTH));
     file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\nold_key = 1\n");
     build_with_schema(&w, A, &["old_key"], &["new_key"]);
-    build_with_schema(&w, B, &["new_key"], &["old_key"]);
+    build_with_schema(&w, B, &["new_key"], &[]);
+    build_with_schema(&w, C, &["new_key"], &["old_key"]);
     let mut sc = FakeSystemctl::new(w.units());
     let (a, b) = (w.rel(A).join("bin/spira-config"), w.rel(B).join("bin/spira-config"));
     let spec = w.cfg.toml_spec().unwrap();
@@ -1843,13 +1844,34 @@ fn a_release_that_adds_and_drops_a_key_activates_over_the_other_with_no_hand_edi
 
     activate::activate(&c, B, None).unwrap();
     assert_eq!(w.current().as_deref(), Some(B));
-    assert!(cfg_text(&w).contains("new_key = 300") && !cfg_text(&w).contains("old_key"), "{}", cfg_text(&w));
+    assert!(cfg_text(&w).contains("new_key = 300") && cfg_text(&w).contains("old_key = 1"), "the dropped key stays one release: {}", cfg_text(&w));
     assert!(loads(&w, B), "the new release loads the config after the flip");
-    assert_eq!(*sc.probes.borrow(), vec!["a=false b=false".to_string()], "at the flip the added key is present and the dropped one not yet removed");
+    assert_eq!(*sc.probes.borrow(), vec!["a=false b=true".to_string()], "at the flip the added key is present and the dropped one still is");
+    assert_eq!(config_delta::load_retired(&w.cfg.state_dir().unwrap()), vec!["spira.old_key".to_string()]);
 
+    activate::activate(&c, C, None).unwrap();
+    assert!(cfg_text(&w).contains("new_key = 300") && !cfg_text(&w).contains("old_key"), "the second activation removes it: {}", cfg_text(&w));
+    assert!(loads(&w, C));
+    assert!(config_delta::load_retired(&w.cfg.state_dir().unwrap()).is_empty());
+
+    assert_eq!(activate::rollback(&c).unwrap(), B);
+    assert!(loads(&w, B), "{}", cfg_text(&w));
+}
+
+#[test]
+fn a_rollback_forgets_the_deferred_keys_and_restores_the_old_release_config() {
+    let w = World::with_git(delta_git(DELTA_BOTH));
+    file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\nold_key = 1\n");
+    build_with_schema(&w, A, &["old_key"], &["new_key"]);
+    build_with_schema(&w, B, &["new_key"], &[]);
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, A, None).unwrap();
+    activate::activate(&c, B, None).unwrap();
     assert_eq!(activate::rollback(&c).unwrap(), A);
     assert!(cfg_text(&w).contains("old_key = 1") && !cfg_text(&w).contains("new_key"), "{}", cfg_text(&w));
-    assert!(loads(&w, A), "the old release loads the config again after rollback");
+    assert!(loads(&w, A));
+    assert!(config_delta::load_retired(&w.cfg.state_dir().unwrap()).is_empty());
 }
 
 const UNREAD_KEYS: [&str; 16] = [
@@ -1870,7 +1892,7 @@ fn activate_over_unread_keys(delta: &str) -> (World, Result<(), String>) {
     let w = World::with_git(delta_git(delta));
     file(Path::new(&w.cfg.toml_spec().unwrap()), &unread_keys_config());
     build_with_schema(&w, A, &UNREAD_KEYS, &[]);
-    build_with_schema(&w, B, &[], &UNREAD_KEYS);
+    build_with_schema(&w, B, &[], &[]);
     let sc = FakeSystemctl::new(w.units());
     activate::activate(&ctx(&w, &sc), A, None).unwrap();
     let r = activate::activate(&ctx(&w, &sc), B, None).map(|_| ()).map_err(|e| format!("{e:?}"));
@@ -1878,24 +1900,30 @@ fn activate_over_unread_keys(delta: &str) -> (World, Result<(), String>) {
 }
 
 #[test]
-fn activating_over_a_config_that_sets_the_sixteen_unread_keys_strips_them() {
+fn activating_over_a_config_that_sets_the_sixteen_unread_keys_strips_them_one_release_late() {
     let real = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/config-delta.toml")).unwrap();
     for k in UNREAD_KEYS {
         assert!(real.contains(&format!("\"spira.{k}\"")), "config-delta.toml names {k} under removed");
     }
     let removed: Vec<String> = UNREAD_KEYS.iter().map(|k| format!("\"spira.{k}\"")).collect();
 
-    let (_, without) = activate_over_unread_keys("[added]\n\"spira.other\" = 1\n");
-    assert!(without.is_err(), "control: with no removal the new release refuses the config");
-
     let (w, with) = activate_over_unread_keys(&format!("removed = [{}]\n", removed.join(", ")));
     with.unwrap();
     assert_eq!(w.current().as_deref(), Some(B));
     let text = cfg_text(&w);
     for k in UNREAD_KEYS {
+        assert!(text.contains(k), "{k} is dropped one release late: {text}");
+    }
+    assert_eq!(config_delta::load_retired(&w.cfg.state_dir().unwrap()).len(), UNREAD_KEYS.len());
+    assert!(loads(&w, B));
+    let sc = FakeSystemctl::new(w.units());
+    build_with_schema(&w, C, &[], &UNREAD_KEYS);
+    activate::activate(&ctx(&w, &sc), C, None).unwrap();
+    let text = cfg_text(&w);
+    for k in UNREAD_KEYS {
         assert!(!text.contains(k), "{k} still in config: {text}");
     }
-    assert!(loads(&w, B));
+    assert!(loads(&w, C));
 }
 
 #[test]
@@ -2219,10 +2247,10 @@ fn config_for_resolution_has_the_delta_applied_without_touching_the_files_in_for
     let before = "[spira]\nid_prefix = \"sp\"\nold_key = 1\n";
     let spec = w.cfg.toml_spec().unwrap();
     file(Path::new(&spec), before);
-    build_with_schema(&w, B, &["new_key"], &["old_key"]);
+    build_with_schema(&w, B, &["new_key"], &[]);
     let (dir, staged) = config_delta::staged_for_resolution(&spec, Some(&w.cfg.releases), B).unwrap().expect("the release has a delta");
     let text = fs::read_to_string(&staged).unwrap();
-    assert!(text.contains("new_key = 300") && !text.contains("old_key"), "{text}");
+    assert!(text.contains("new_key = 300") && text.contains("old_key"), "{text}");
     assert_eq!(cfg_text(&w), before);
     let _ = fs::remove_dir_all(dir);
     assert!(config_delta::staged_for_resolution(&spec, Some(&w.cfg.releases), A).unwrap().is_none(), "no release, no delta, nothing to stage");
