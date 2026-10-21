@@ -191,7 +191,18 @@ fn dispatch(args: &[String]) -> ExitCode {
                     Ok(c) => c,
                     Err(c) => return c,
                 };
-                let _ = print_report(&logic::synth(&bd, &clock, out.as_deref()));
+                let sr = logic::synth(&bd, &clock, out.as_deref());
+                print_report(&sr);
+                if let (0, Some(o)) = (sr.code, out.as_deref()) {
+                    match sop::real::commit_page(o, &sop::shelf::slugify(key)) {
+                        Ok(Some(m)) => println!("{m}"),
+                        Ok(None) => {}
+                        Err(e) => {
+                            eprintln!("sop: {e}");
+                            return ExitCode::from(1);
+                        }
+                    }
+                }
             }
             code
         }
@@ -341,7 +352,18 @@ fn dispatch(args: &[String]) -> ExitCode {
                     Ok(c) => c,
                     Err(c) => return c,
                 };
-                let _ = print_report(&logic::synth(&bd, &clock, out.as_deref()));
+                let sr = logic::synth(&bd, &clock, out.as_deref());
+                print_report(&sr);
+                if let (0, Some(o)) = (sr.code, out.as_deref()) {
+                    match sop::real::commit_page(o, &sop::shelf::slugify(key)) {
+                        Ok(Some(m)) => println!("{m}"),
+                        Ok(None) => {}
+                        Err(e) => {
+                            eprintln!("sop: {e}");
+                            return ExitCode::from(1);
+                        }
+                    }
+                }
             }
             code
         }
