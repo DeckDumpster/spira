@@ -25,12 +25,6 @@
 #   The watcher flips ON TRANSITIONS ONLY (idle<->active), never continuously, so peeking
 #   at brain mid-review is not yanked back until the review genuinely starts or ends.
 #
-#   The same loop keeps the cockpit's PANE LAYOUT alive, via `layout.sh ensure`. The
-#   session pane holds a shell the operator can exit, and when they did, nothing noticed:
-#   the two dashboards inherited the window and the top half was simply gone until someone
-#   ran `layout.sh up` by hand. `ensure` repairs only a cockpit that is already up, and is
-#   silent otherwise, so a deliberate `layout.sh down` is never fought back.
-#
 # Subcommands:
 #   attach   (default) build the cockpit, sync its view to current state, ensure the
 #            watcher is running, then attach.
@@ -64,25 +58,7 @@ ABSENT="$STATE_DIR/dismissed.absent"
 FORGET_SECS="${COCKPIT_FORGET_SECS:-86400}"
 DISMISS="$STATE_DIR/dismissed"                  # hunk session-ids dismissed from the view
 DONE_KEY="${COCKPIT_DONE_KEY:-E}"               # <prefix> KEY signals "review phase ended"
-HEAL_EVERY="${COCKPIT_HEAL_EVERY:-5}"           # poll iterations between layout checks
 DETACH_MAX="${COCKPIT_DETACH_SECS:-1800}"       # unmanaged watcher exits after this long with no client
-
-# Locate layout.sh from the harness configuration rather than the wiki checkout, so a
-# host with no wiki can still run layout.sh ensure from the watcher loop. Priority:
-# the COCKPIT_LAYOUT env override, then SPIRA_HOME if already in the environment (a suite
-# or a configured caller), then the harness path from ~/.config/spira/harness.
-_layout_from_harness() {
-    local h l
-    for h in "${SPIRA_HOME:-}" \
-              "$(head -1 "${XDG_CONFIG_HOME:-$HOME/.config}/spira/harness" 2>/dev/null)"; do
-        [ -n "$h" ] || continue
-        l="$(cd "$h/.." 2>/dev/null && pwd)/cockpit/layout.sh"
-        [ -f "$l" ] && { printf '%s' "$l"; return 0; }
-    done
-    return 1
-}
-LAYOUT="${COCKPIT_LAYOUT:-$(_layout_from_harness 2>/dev/null)}"
-unset -f _layout_from_harness
 
 # ---- ~/.local/bin on PATH ---------------------------------------------------
 # `hunk` is a `#!/usr/bin/env node` script, and `node` is only on PATH via the LOGIN
@@ -236,19 +212,6 @@ select_want() {  # optional explicit target overrides state
 }
 
 # ---- watcher ----------------------------------------------------------------
-# Repair a cockpit whose session pane died. All the judgement lives in `layout.sh ensure`
-# — which windows hold a cockpit, whether one is broken, the cooldown on a repair that
-# keeps failing. It is silent when nothing is wrong, so anything reaching this log is real.
-heal_layout() {
-  # RETIRED, DELIBERATELY. `cockpit-ensure.timer` runs the harness's `layout.sh ensure` every
-  # minute and is the only repair loop. This call ran brain's OLD layout.sh, whose `ensure`
-  # resurrects the retired Gas Town collector; a second writer to one snapshot is never a
-  # repair. Set COCKPIT_LEGACY_HEAL=1 to run it.
-  [ "${COCKPIT_LEGACY_HEAL:-0}" = 1 ] || return 0
-  [ -x "$LAYOUT" ] || return 0
-  "$LAYOUT" ensure 2>&1 | sed "s/^/cockpit-heal: /"
-}
-
 _client_attached() { [ -n "$(tmux list-clients -t "=$COCKPIT" 2>/dev/null)" ]; }
 
 # A systemd-managed process has its lifetime governed by the unit; any other watcher lives
@@ -257,7 +220,7 @@ _unit_managed() { [ -n "${INVOCATION_ID:-}" ]; }
 _pid_unit_managed() { tr '\0' '\n' <"/proc/$1/environ" 2>/dev/null | grep -q '^INVOCATION_ID='; }
 
 watch_loop() {
-  local last="" cur n=0 idle_since=""
+  local last="" cur idle_since=""
   while has "$COCKPIT"; do
     if _unit_managed || _client_attached; then idle_since=""
     else
@@ -274,10 +237,6 @@ watch_loop() {
       [ -n "$last" ] && { echo "cockpit watcher: flip $last -> $cur; live sessions: $(live_ids | tr '\n' ' ')" >&2; select_want "$cur"; }
       last="$cur"
     fi
-    # The view poll is 3s because a flip should feel immediate. A dead pane does not need
-    # that resolution and the check is not free, so it runs every HEAL_EVERY passes.
-    n=$(( n + 1 ))
-    if [ "$n" -ge "$HEAL_EVERY" ]; then n=0; heal_layout; fi
     sleep "$POLL"
   done
 }

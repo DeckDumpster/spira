@@ -33,7 +33,7 @@
 # CLAUDE_EFFORT AND THE THEME ARE DELIBERATELY LEFT. They are operator preferences that mean
 # the same thing in any pane. Only session IDENTITY is poison.
 #
-# covers: cockpit/rebuild.sh cockpit/layout.sh concierge.sh
+# covers: concierge.sh
 set -uo pipefail
 
 # `scrub` with no -L targets the default socket — but a bare `tmux` prefers $TMUX, the

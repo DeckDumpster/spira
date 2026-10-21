@@ -1,4 +1,4 @@
-# batcher.fayth — the Judge: summoned when the batcher-cut binary (or, once sp-lomk3 lands,
+# batcher.fayth — the Judge: summoned when the batcher-cut binary (or
 # queue verdict) cannot resolve a round's red mechanically — a local double-red that survived
 # its re-run, or a CI-only red on a batcher-owned batch PR.
 #

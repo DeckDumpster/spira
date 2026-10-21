@@ -1,0 +1,55 @@
+# spira.toml.example — copy to ~/.config/spira/spira.toml and edit; point $SPIRA_TOML at it.
+# $SPIRA_TOML is the one configuration source: conf.sh refuses when it is unset or missing.
+# `spira-config validate` rejects a misspelled key. The environment wins over this file.
+# SPIRA_HOME and SPIRA_REPO are not settable here: where the harness is, is where conf.sh sits.
+
+[spira]
+home_repo = "home"
+db = "~/.local/share/spira/db"
+# Required: the prefix of this installation's own bead ids, without the hyphen.
+id_prefix = "sp"
+operator = "the operator"
+# literal-ok: the shipped example demonstrates the schema's own default label names
+ask_label = "needs-operator"
+# literal-ok: the shipped example demonstrates the schema's own default label names
+ci_label = "awaiting-ci"
+scope_label = "myproject"
+max_aeons = 4
+fayths = ["builder", "ops"]
+certify_suites = "off"
+czar_stage_deadlock = "shadow"
+
+[repo.home]
+path = "/srv/checkouts/home"
+mode = "push"
+base = "origin/main"
+lanes = ["plan", "incident", "groom", "spike"]
+
+[repo.service]
+path = "/srv/checkouts/service"
+mode = "pr"
+base = "origin/master"
+format = "cargo fmt --all"
+lanes = ["plan"]
+
+[persona.builder]
+model = "claude-sonnet-5"
+escalation_model = "claude-opus-5-5"
+tools = ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "TodoWrite"]
+labels = ["myproject", "plan"]
+system_prompt = "append"
+
+[persona.builder.lease]
+minutes = 90
+heartbeat_seconds = 30
+
+[persona.ops]
+model = "claude-haiku-4-5-20251001"
+tools = ["Bash", "Read", "Glob", "Grep", "TodoWrite"]
+labels = ["myproject", "incident"]
+lane = "ops"
+system_prompt = "replace"
+
+[persona.ops.lease]
+minutes = 10
+heartbeat_seconds = 30

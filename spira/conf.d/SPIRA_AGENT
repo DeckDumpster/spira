@@ -1,6 +1,6 @@
 TYPE=string
 GROUP=agent
-DOC=Defaults to claude, but a deprecated SPIRA_CLAUDE is migrated in first if SPIRA_AGENT is unset; see spira_conf_defaults() in spira/conf.sh.
+DOC=Defaults to claude.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # PROCEDURAL — this key's default has ordering constraints (a guard, a local-
     # variable dependency, or a reader elsewhere in the function that runs before any

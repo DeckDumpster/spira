@@ -923,7 +923,7 @@ Generic mechanism. A colleague clones this and it carries none of the operator's
 | `concierge.sh` | one named Remote Control session, so a phone can reach the harness |
 | `rule.sh` | enacting a statute writes the beads KV store, which is the harness's substrate |
 | `spira/archive.sh` | keeps every session transcript and indexes it by time range and by the lineage id that survives a clear. The mechanism ships; the transcripts and the store they land in are the operator's own and stay out of every repository |
-| `spira.conf.example` | the annotated template an operator copies to spira.conf. Every key but SPIRA_ID_PREFIX optional, every other default derived from where the harness is installed |
+| `spira.toml.example` | the annotated template an operator copies to spira.toml, the one configuration source ($SPIRA_TOML) |
 | `README.md` | the harness's own entry point, carrying this table |
 | `AGENTS.md`, `CLAUDE.md` | how an agent works ON the harness. Distinct from the wiki repository's own agent instructions, which are how an overseer works WITH it |
 

@@ -14,7 +14,7 @@
 # CALLED FROM A TIMER, NOT THE SENTINEL. The sentinel's bespoke awaiting-ci sweep has been
 # removed; this script is its replacement, on spira-gate-check.timer at a two-minute cadence.
 #
-# covers: spira/gate-check.sh spira/sentinel.sh spira/aeon.sh
+# covers: spira/gate-check.sh
 . "$(dirname "$0")/conf.sh" || exit 75
 if ! command -v gate-check >/dev/null 2>&1; then
     printf 'gate-check: gate-check is not on PATH (the launcher sets PATH to a release) — refusing to run.\n' >&2

@@ -24,7 +24,7 @@
 #                       (default: $SPIRA_RUN/batch-timing.tsv)
 #   SPIRA_RUN           used for the ledger path default
 #
-# covers: spira/gate-timing.sh spira/testenv-batch.sh
+# covers: spira/gate-timing.sh
 set -uo pipefail
 
 RESULTS="${1:?gate-timing: usage: gate-timing.sh <results-dir> <verdict>}"

@@ -21,15 +21,14 @@ pub fn read(stage: &Path) -> Vec<(String, String)> {
 }
 
 /// Symlinks `bin/<alias> -> <name>` and `spira/<alias> -> ../bin/<name>` for every compat
-/// entry whose target binary exists in `bin_dir` — silently skipped otherwise (e.g.
-/// mail.sh's entry, ahead of sp-ooh1k landing the `mail` binary). Returns the aliases
-/// actually created, for the caller to fold into its own manifest/log.
+/// entry; a missing target binary is an error. Returns the aliases created, for the caller to
+/// fold into its own manifest/log.
 pub fn link(stage: &Path, bin_dir: &Path) -> Result<Vec<String>, String> {
     let spira_dir = stage.join("spira");
     let mut made = Vec::new();
     for (name, alias) in read(stage) {
         if !bin_dir.join(&name).is_file() {
-            continue;
+            return Err(format!("compat alias {alias}: bin/{name} is not built"));
         }
         let bin_alias = bin_dir.join(&alias);
         if !bin_alias.exists() {
@@ -80,22 +79,30 @@ mod tests {
     }
 
     #[test]
-    fn link_creates_both_symlinks_only_when_the_binary_exists() {
+    fn link_creates_both_symlinks() {
         let d = stage_with_deps_toml(
             "[[compat]]\nname = \"world\"\nalias = \"world.sh\"\n\n[[compat]]\nname = \"mail\"\nalias = \"mail.sh\"\n",
         );
         let bin = d.join("bin");
         fs::create_dir_all(&bin).unwrap();
         testkit::write_exe(bin.join("world"), "#!/bin/sh\n");
-        // "mail" is NOT built yet (ahead of sp-ooh1k) — its entry must be skipped, not fail.
+        testkit::write_exe(bin.join("mail"), "#!/bin/sh\n");
         let made = link(&d, &bin).unwrap();
-        assert_eq!(made, vec!["world.sh".to_string()]);
+        assert_eq!(made, vec!["world.sh".to_string(), "mail.sh".to_string()]);
         assert!(bin.join("world.sh").is_symlink());
         assert_eq!(fs::read_link(bin.join("world.sh")).unwrap().to_str().unwrap(), "world");
         assert!(d.join("spira").join("world.sh").is_symlink());
         assert_eq!(fs::read_link(d.join("spira").join("world.sh")).unwrap().to_str().unwrap(), "../bin/world");
-        assert!(!bin.join("mail.sh").exists());
-        assert!(!d.join("spira").join("mail.sh").exists());
+        assert!(bin.join("mail.sh").is_symlink());
+        assert!(d.join("spira").join("mail.sh").is_symlink());
+    }
+
+    #[test]
+    fn link_refuses_a_compat_entry_whose_binary_is_missing() {
+        let d = stage_with_deps_toml("[[compat]]\nname = \"mail\"\nalias = \"mail.sh\"\n");
+        let bin = d.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        assert!(link(&d, &bin).unwrap_err().contains("mail.sh"));
     }
 
     #[test]

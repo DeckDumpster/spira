@@ -9,7 +9,7 @@
 #   HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 #   . "$HERE/testenv-guard.sh"
 #
-# covers: spira/testenv-batch.sh suite-select/
+# covers: suite-select/
 if suite-select header testenv-unmet "${BASH_SOURCE[1]:-$0}"; then
     printf 'Bail out! %s requires: testenv — run via testenv, not directly (SPIRA_IN_TESTENV != 1)\n' \
         "$(basename "${BASH_SOURCE[1]:-$0}")"
