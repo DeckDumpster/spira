@@ -60,7 +60,8 @@ pub fn run(w: &World, r: &Round) -> i32 {
             batch,
             repo,
             attest,
-        } => certify(w, batch, repo.as_deref(), attest.as_deref()),
+            ran,
+        } => certify(w, batch, repo.as_deref(), attest.as_deref(), ran.as_deref().and_then(|r| r.parse().ok())),
         Round::Eject {
             batch,
             id,
@@ -1480,7 +1481,13 @@ pub(super) fn tail(text: &str, n: usize) -> String {
     lines[lines.len().saturating_sub(n)..].join("\n")
 }
 
-pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option<&str>) -> i32 {
+pub(super) fn certify(
+    w: &World,
+    batch: &str,
+    repo: Option<&str>,
+    attest: Option<&str>,
+    attested_ran: Option<usize>,
+) -> i32 {
     let label = "round certify";
     let Ok((c, path)) = local_ctx(w, label, repo) else {
         return FAIL;
@@ -1489,6 +1496,10 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
         return FAIL;
     }
     let who = actor(w);
+    if attest.is_some() && attested_ran.unwrap_or(0) == 0 {
+        w.err(format!("queue.sh {label}: --attest needs --ran <n> with n > 0 — nothing ran; a vacuous pass is not a certificate"));
+        return FAIL;
+    }
 
     let (head, wt, run_id) = {
         let Ok(_g) = lock(w, label, &c) else {
@@ -1519,6 +1530,7 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
             if save(w, label, &c, &kv).is_err() {
                 return FAIL;
             }
+            let ran = kv.get("ran").and_then(|r| r.parse().ok()).unwrap_or(0);
             return finish_green(
                 w,
                 label,
@@ -1528,6 +1540,7 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
                 &head,
                 &who,
                 "re-certify of a GREEN round",
+                (ran, 0),
             );
         }
         let run_id = format!("{batch}-{}", w.clock.now());
@@ -1562,6 +1575,7 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
     };
 
     let mut reds: Vec<String> = Vec::new();
+    let mut ran = attested_ran.unwrap_or(0);
     let mut timings = Timings {
         suites_s: 0,
         build_s: 0,
@@ -1597,6 +1611,7 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
             return PREEMPTED;
         }
         let wall = w.clock.now().saturating_sub(began);
+        ran = 1;
         timings = Timings {
             suites_s: wall,
             build_s: 0,
@@ -1664,6 +1679,7 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
         timings = pass_timings(&results, w.clock.now().saturating_sub(began));
         let mut found = Vec::new();
         suite_statuses(&results, &mut found, 0);
+        ran = found.len();
         let fault = match out.rc {
             0 | 1 if found.is_empty() => Some("round-vm ran and left no verdicts — a fault of the round machinery, not of the candidates".to_string()),
             0 | 1 => unjudgeable(&wt, &found),
@@ -1774,10 +1790,12 @@ pub(super) fn certify(w: &World, batch: &str, repo: Option<&str>, attest: Option
         w.err(format!("queue.sh {label}: spira-lc refused the GREEN for {batch} (rc={rc}): {out} — the round certificate for {head} is kept; certify again to finish without re-running"));
         return FAIL;
     }
+    set(&mut kv, "ran", &ran.to_string());
     if save(w, label, &c, &kv).is_err() {
         return FAIL;
     }
-    finish_green(w, label, &c, &path, batch, &head, &who, &run_id)
+    let wall = timings.suites_s + timings.build_s;
+    finish_green(w, label, &c, &path, batch, &head, &who, &run_id, (ran, wall))
 }
 
 /// The (repo, tree) certificate a green full-corpus pass earns. Rewriting it is harmless.
@@ -1830,6 +1848,7 @@ fn finish_green(
     head: &str,
     who: &str,
     run_id: &str,
+    (ran, wall): (usize, u64),
 ) -> i32 {
     let tree = match write_round_certificate(w, label, c, path, batch, head, who) {
         Ok(t) => t,
@@ -1852,13 +1871,13 @@ fn finish_green(
     landing_log(
         &c.s.run,
         &format!(
-            "QUEUE ROUND-GREEN {} repo={} batch={batch} head={head} tree={tree} run={run_id}",
+            "QUEUE ROUND-GREEN {} repo={} batch={batch} head={head} tree={tree} run={run_id} ran={ran} wall={wall}s",
             w.clock.now(),
             c.r.name
         ),
     );
     w.out(format!(
-        "queue.sh {label}: round {batch} is GREEN at {head} (tree {tree})"
+        "queue.sh {label}: round {batch} is GREEN at {head} (tree {tree}) ran={ran} wall={wall}s"
     ));
     OK
 }

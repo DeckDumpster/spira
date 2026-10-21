@@ -2222,10 +2222,16 @@ fn round_eject_with(env: &Env, repo: &Repo, batch: &str, id: &str, reason: &str,
     }
 }
 
-/// `queue round certify --attest <head>`: the batcher's own corpus ran green on `head`, the
-/// round worktree's head, so the verb records the round's GREEN for that tree and no other.
-pub fn round_certify(env: &Env, repo: &Repo, batch: &str, head: &str) -> Result<(), String> {
-    let run = round_verb(env, &["certify", batch, &repo.name, "--attest", head], "")?;
+/// `queue round certify`: with `Some((head, ran))` the batcher's own corpus ran `ran` suites green
+/// on `head`, the round worktree's head, and the verb records that tree's GREEN; with `None` the
+/// verb runs the repo's own CI entry on a round VM and judges the round itself.
+pub fn round_certify(env: &Env, repo: &Repo, batch: &str, attest: Option<(&str, usize)>) -> Result<(), String> {
+    let ran = attest.map(|(_, n)| n.to_string());
+    let mut args = vec!["certify", batch, repo.name.as_str()];
+    if let (Some((head, _)), Some(ran)) = (attest, ran.as_deref()) {
+        args.extend(["--attest", head, "--ran", ran]);
+    }
+    let run = round_verb(env, &args, "")?;
     if run.code == Some(0) {
         Ok(())
     } else {
