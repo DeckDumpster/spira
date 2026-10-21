@@ -264,6 +264,18 @@ is "POSITIVE CONTROL: groomer done on a marked trigger: exits 0" "0" "$rc"
 row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='$GTRIG'" -r json 2>&1)"
 want "POSITIVE CONTROL: groomer done on a marked trigger: DONE" "\"state\":\"DONE\"" "$row"
 
+# ── red-tracker done: refused; a handled red leaves WORKING only by submit or ask ───
+RTL="$(. "$SPIRA_HOME/conf.sh" >/dev/null 2>&1; printf '%s' "${SPIRA_RED_TRACKER_LABEL:-spira-red-tracker}")"
+RT="$(bead.sh file "publish PR 1 red for testrepo" --for builder --repo testrepo --body-file "$TMP/build.md")"
+"${SPIRA_BD:-bd}" -C "$SPIRA_DB" label add "$RT" "$RTL" >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
+seed_bead "$RT"
+root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='aeon-test', version=1 WHERE bead_id='$RT'" >/dev/null 2>&1
+out="$(work_as "$RT" done --delivers "no code change" 2>&1)"; rc=$?
+is "red-tracker done: refused (exit 3)" "3" "$rc"
+row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='$RT'" -r json 2>&1)"
+want "red-tracker done: still WORKING" "\"state\":\"WORKING\"" "$row"
+want "red-tracker done: the refusal names the exits" "work blocked" "$out"
+
 # ── blocked: a hold, plus an ask filed for the operator ──────────────────────────────
 BLID="$(bead.sh file "aeon semantic layer: blocked fixture" --for builder --repo testrepo --body-file "$TMP/build.md")"
 seed_bead "$BLID"
