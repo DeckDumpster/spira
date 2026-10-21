@@ -233,6 +233,10 @@ seed_bead "$DID"
 root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='aeon-test', version=1 WHERE bead_id='$DID'" >/dev/null 2>&1
 
 out="$(work_as "$DID" done --delivers "a document at wiki/x" 2>&1)"; rc=$?
+is "builder done: refused (exit 3), its fayth declares no DONE exit" "3" "$rc"
+want "builder done: the refusal names the fayth and its exits" "SUBMITTED ask park hold" "$out"
+root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET persona='spike' WHERE bead_id='$DID'" >/dev/null 2>&1
+out="$(work_as "$DID" done --delivers "a document at wiki/x" 2>&1)"; rc=$?
 is "done: exits 0 (applied)" "0" "$rc"
 row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state, reason FROM bead WHERE bead_id='$DID'" -r json 2>&1)"
 want "done: state is DONE" "\"state\":\"DONE\"" "$row"

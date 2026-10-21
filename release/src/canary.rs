@@ -389,7 +389,7 @@ const CANARY_FAYTH: &str = "canary";
 const CANARY_HOLDER: &str = "canary-worker";
 const CANARY_LEASE_SECS: u64 = 3600;
 /// lib.sh's `lc_claim_bead`, the aeon's own claim (sp-860zj): the Claim event is the claim.
-const LC_CLAIM: &str = r#". "$SPIRA_HOME/lib.sh" || exit 2; lc_claim_bead "$1" "$2" "$3""#;
+const LC_CLAIM: &str = r#". "$SPIRA_HOME/lib.sh" || exit 2; lc_claim_bead "$1" "$2" "$3" "" 0 0 "$4""#;
 
 /// The worker's ready set and claim, through the one ready set an aeon claims from (sp-7g5q6):
 /// `spira-claim fayth-ready canary --json` — the machine's READY/REWORK rows — never a
@@ -414,7 +414,7 @@ pub(crate) fn claim_canary_bead(
     let rows: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("spira-claim fayth-ready {CANARY_FAYTH}: not JSON: {e}"))?;
     let ids: Vec<String> = rows.as_array().into_iter().flatten().filter_map(|r| r.get("id").and_then(|i| i.as_str()).map(str::to_string)).collect();
     for id in ids {
-        let rc = run("bash", &own(&["-c", LC_CLAIM, "lc-claim", &id, holder, &lease_until.to_string()])).0;
+        let rc = run("bash", &own(&["-c", LC_CLAIM, "lc-claim", &id, holder, &lease_until.to_string(), CANARY_FAYTH])).0;
         if rc == 0 {
             return Ok(Some(id));
         }
@@ -455,8 +455,8 @@ mod claim_tests {
         drop(t);
         assert_eq!(got.as_deref(), Some("sp-canary"));
         assert_eq!(calls[0], "spira-claim fayth-ready canary --json");
-        assert!(calls[1].starts_with("bash -c ") && calls[1].ends_with("lc-claim sp-won-elsewhere canary-worker 99"), "{calls:?}");
-        assert!(calls[2].ends_with("lc-claim sp-canary canary-worker 99"), "{calls:?}");
+        assert!(calls[1].starts_with("bash -c ") && calls[1].ends_with("lc-claim sp-won-elsewhere canary-worker 99 canary"), "{calls:?}");
+        assert!(calls[2].ends_with("lc-claim sp-canary canary-worker 99 canary"), "{calls:?}");
         assert!(!calls.iter().any(|c| c.starts_with("bd ") || c.contains(" ready ") || c.contains("--claim")), "{calls:?}");
     }
 

@@ -366,6 +366,7 @@ IWR_HOME="$TMP/iwr-home"; mkdir -p "$IWR_HOME/chamber"
 tl_config SPIRA_FAYTHS=builder SPIRA_CHAMBER="$IWR_HOME/chamber"
 cat > "$IWR_HOME/chamber/builder.fayth" <<'FAYTH'
 FAYTH_NAME=builder
+FAYTH_WORKING_EXITS="SUBMITTED ask park hold"
 FAYTH_LABELS=plan
 FAYTH_EXCLUDE_LABELS=""
 FAYTH

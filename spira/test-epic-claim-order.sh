@@ -295,6 +295,7 @@ AEON_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$AEON_REPO_MAP"
 cat > "$AEON_HOME/chamber/builder.fayth" <<FAYTH
 FAYTH_NAME=builder
+FAYTH_WORKING_EXITS="SUBMITTED ask park hold"
 FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}plan"
 FAYTH_EXCLUDE_LABELS="spira-poison"
 FAYTH_MAX_CONCURRENT=1

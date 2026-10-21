@@ -108,3 +108,6 @@ FAYTH_PROJECT_INSTRUCTIONS=repo
 # APPEND: the builder writes code, so Claude Code's default coding guidance belongs
 # underneath the persona layer rather than being replaced by it.
 FAYTH_SYSTEM_PROMPT=append
+
+# The states a bead claimed by this fayth may leave WORKING for; spira-lc refuses any other.
+FAYTH_WORKING_EXITS="SUBMITTED ask park hold"

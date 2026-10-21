@@ -28,3 +28,6 @@ FAYTH_TOOLS="Bash(systemctl status*),Bash(systemctl show*),Bash(systemctl list-*
 FAYTH_PROJECT_INSTRUCTIONS=none
 
 FAYTH_SYSTEM_PROMPT=replace
+
+# The states a bead claimed by this fayth may leave WORKING for; spira-lc refuses any other.
+FAYTH_WORKING_EXITS="DONE ask park hold"

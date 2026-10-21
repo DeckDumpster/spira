@@ -75,3 +75,6 @@ FAYTH_PROJECT_INSTRUCTIONS=none
 # REPLACE: Maechen reads and files — never writes code. The default coding guidance
 # competes with the standing constraints.
 FAYTH_SYSTEM_PROMPT=replace
+
+# The states a bead claimed by this fayth may leave WORKING for; spira-lc refuses any other.
+FAYTH_WORKING_EXITS="DONE ask park hold"

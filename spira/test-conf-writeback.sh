@@ -77,6 +77,7 @@ echo "guarded:"
 CHAMBER="$TMP/chamber"; mkdir -p "$CHAMBER"
 cat > "$CHAMBER/builder.fayth" <<'EOF'
 FAYTH_NAME=builder
+FAYTH_WORKING_EXITS="SUBMITTED ask park hold"
 EOF
 touch -d '+1 minute' "$CHAMBER/builder.fayth"
 

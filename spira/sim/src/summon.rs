@@ -48,7 +48,7 @@ fn agent_bin() -> Result<std::path::PathBuf, String> {
 }
 
 fn claim_event() -> String {
-    serde_json::json!({"Claim": {"holder": HOLDER, "lease_until": LEASE_UNTIL}}).to_string()
+    serde_json::json!({"Claim": {"holder": HOLDER, "lease_until": LEASE_UNTIL, "persona": "builder"}}).to_string()
 }
 
 fn git(work: &Path, args: &[&str]) -> Result<String, String> {

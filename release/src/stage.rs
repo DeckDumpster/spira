@@ -89,7 +89,7 @@ fn lc_content_shim(db: &Path) -> String {
 /// one worker; `FAYTH_LABELS` must include `SPIRA_SCOPE_LABEL` (when non-empty) to pass
 /// `fayth_fenced`.
 pub fn fayth_content() -> &'static str {
-    "FAYTH_NAME=canary\nFAYTH_LABELS=\"${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}\"\nFAYTH_MAX_CONCURRENT=1\n"
+    "FAYTH_NAME=canary\nFAYTH_LABELS=\"${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}\"\nFAYTH_MAX_CONCURRENT=1\nFAYTH_WORKING_EXITS=\"SUBMITTED ask park hold\"\n"
 }
 
 /// The stage's own repo map file's one line (the file `SPIRA_REPO_MAP` names; not literally

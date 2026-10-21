@@ -146,3 +146,6 @@ FAYTH_MODEL=claude-opus-5-5
 # A run that fails at the changed step is still valid evidence; the fence does not require
 # the run to be green, only that the step was reached.
 FAYTH_MAX_CONCURRENT=1
+
+# The states a bead claimed by this fayth may leave WORKING for; spira-lc refuses any other.
+FAYTH_WORKING_EXITS="SUBMITTED DONE ask park hold"

@@ -47,3 +47,6 @@ FAYTH_PROJECT_INSTRUCTIONS=repo
 # APPEND: this persona writes code and git history across more than its own bead branch, so
 # Claude Code's default coding guidance stays underneath it rather than being replaced.
 FAYTH_SYSTEM_PROMPT=append
+
+# The states a bead claimed by this fayth may leave WORKING for; spira-lc refuses any other.
+FAYTH_WORKING_EXITS="SUBMITTED DONE ask park hold"
