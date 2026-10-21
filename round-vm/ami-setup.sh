@@ -12,6 +12,8 @@ apt-get install -y -qq podman git curl build-essential pkg-config libssl-dev ope
 systemctl enable --now ssh
 mkdir -p /root/.ssh && chmod 700 /root/.ssh
 bash -s -- "$tree" "" "$toolchain" "$cache_home" < "$tree/round-vm/src/template.sh"
+# template.sh removes its work dir, which may be ours: cargo install needs a cwd that exists.
+cd /
 env_bin="$(readlink -f "${HOME:-/root}/spira-env")/bin"
 for t in tailscale node npm npx; do ln -sfn "$env_bin/$t" "/usr/local/bin/$t"; done
 nextest=0.9.148
