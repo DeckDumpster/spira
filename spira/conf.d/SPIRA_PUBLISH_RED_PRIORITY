@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=queue
+DOC=PRIORITY A RED PUBLISH'S FIX-FORWARD TRACKER BEAD IS FILED AT. A red publish blocks every deploy of its repo.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # PRIORITY A RED PUBLISH'S FIX-FORWARD TRACKER BEAD IS FILED AT. A red publish blocks every
+    # deploy of its repo, so it is not filed at the incident default.
+    : "${SPIRA_PUBLISH_RED_PRIORITY:=1}"
+SPIRA_CONF_DEFAULT_EOF

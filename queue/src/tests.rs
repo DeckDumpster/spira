@@ -1384,6 +1384,8 @@ impl T {
             round_wall_secs: 900,
             round_ami_wait_secs: 2400,
             rounds_max: 1,
+            publish_red_priority: "1".into(),
+            publish_red_escalate_after: 3,
         };
         fs::create_dir_all(s.queue_dir.join("spira")).unwrap();
         let landref = match mode {
