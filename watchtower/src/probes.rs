@@ -338,6 +338,28 @@ pub fn pressure(cfg: &Cfg) -> Reading {
     }
 }
 
+/// Two or more cold builds running while the host's io `full avg60` is at the threshold: the
+/// admission that serialises cold builds has been bypassed or raised past what the box bears.
+pub fn cold_overlap(cfg: &Cfg, run: &Path) -> Reading {
+    use spira_config::admission as adm;
+    let io = std::fs::read_to_string(Path::new(&cfg.psi_dir).join("io")).ok().and_then(|t| psi_full_avg60(&t));
+    let held = adm::read_occupancy(run, adm::Pool::Cold, adm::size_configured(adm::Pool::Cold), &adm::RealProcs).map(|o| o.used());
+    cold_overlap_reading(io, held, cfg)
+}
+
+pub fn cold_overlap_reading(io: Option<f64>, held: Option<u64>, cfg: &Cfg) -> Reading {
+    let (Some(io), Some(held)) = (io, held) else { return Reading::Unknown };
+    if held < 2 || io < cfg.psi_full_avg60 {
+        return Reading::Standing(Vec::new());
+    }
+    Reading::Standing(vec![cond(
+        "cold-overlap",
+        format!("COLD BUILDS: {held} running at once with io full avg60 {io}"),
+        format!("{held} cold builds hold the cold-build pool while io pressure (PSI full avg60) is {io}, at or above {}.\n\nSee the pool: `spira-admit status`; the cold-build slot is meant to admit one.\n", cfg.psi_full_avg60),
+        cfg.psi_sustain_secs,
+    )])
+}
+
 // ---- (d) the release store ----------------------------------------------------------
 
 pub fn store_count(releases: &Path) -> Option<usize> {
@@ -858,6 +880,17 @@ mod tests {
         let s = standing(pressure(&c));
         assert_eq!(s.iter().map(|c| c.key.as_str()).collect::<Vec<_>>(), vec!["psi-memory"]);
         assert_eq!(s[0].sustain_secs, 300);
+    }
+
+    #[test]
+    fn cold_overlap_stands_only_with_two_cold_builds_and_io_pressure() {
+        let d = testkit::TempDir::new("wt-cold");
+        let c = cfg(&d);
+        let keys = |io, held| standing(cold_overlap_reading(io, held, &c)).into_iter().map(|c| c.key).collect::<Vec<_>>();
+        assert_eq!(keys(Some(91.0), Some(2)), vec!["cold-overlap"]);
+        assert!(keys(Some(91.0), Some(1)).is_empty());
+        assert!(keys(Some(1.0), Some(3)).is_empty());
+        assert!(matches!(cold_overlap_reading(None, Some(2), &c), Reading::Unknown));
     }
 
     #[test]

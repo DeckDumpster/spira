@@ -94,6 +94,8 @@ pub struct BeadRow {
     pub created_by: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]

@@ -423,6 +423,7 @@ fn main() {
             conditions::reconcile(n, &ctx, "failing-units", probes::failing_units(&cfg, &run));
             conditions::reconcile(n, &ctx, "oom-restarts", probes::oom_restarts(&cfg, n, &run));
             conditions::reconcile(n, &ctx, "pressure", probes::pressure(&cfg));
+            conditions::reconcile(n, &ctx, "cold-overlap", probes::cold_overlap(&cfg, &run));
             conditions::reconcile(n, &ctx, "release-store", probes::release_store(&cfg));
             let rowless_cfg = probes::RowlessCfg {
                 bd: "bd".to_string(),

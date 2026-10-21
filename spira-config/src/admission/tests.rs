@@ -74,6 +74,7 @@ fn pools_have_their_own_directories_and_keys() {
     assert_eq!(Pool::Gate.dir(r), Path::new("/run/spira/gate-admission"), "the gate's pool stays where landing-pass probes it");
     assert_eq!(Pool::Compile.dir(r), Path::new("/run/spira/compile-admission"));
     assert_eq!(Pool::Test.dir(r), Path::new("/run/spira/test-admission"));
+    assert_eq!(Pool::Cold.dir(r), Path::new("/run/spira/cold-admission"));
     assert_eq!(Pool::Gate.size_env(), "SPIRA_CERTIFY_PAR");
     assert_eq!(Pool::parse("test"), Some(Pool::Test));
     assert_eq!(Pool::parse("tests"), None);
@@ -741,4 +742,77 @@ fn concurrent_compilers_share_one_round_probe_per_ttl_window() {
     let none = || None;
     assert_eq!(shared_round_probe(&dir, 5000 + 2 * ROUND_POLL_SECS, &none), None);
     assert_eq!(shared_round_probe(&dir, 5000 + 2 * ROUND_POLL_SECS, &probe), None);
+}
+
+#[test]
+fn a_second_cold_build_waits_on_the_cold_slot_until_the_first_releases() {
+    let d = run_dir();
+    let p = FakeProcs::with(&[(10, 1, 1), (20, 2, 1)]);
+    let size = || derive(Pool::Cold, Host { cores: 32, mem_avail_mib: 36_000 });
+    assert_eq!(size(), 1);
+    let first = acquire(&Request { run: &d, pool: Pool::Cold, holder_pid: 10, who: "sp-a", inherit: None, weight: 1 }, &Seams { size_of: &size, procs: &p, sleep: &|_| panic!("the first cold build must not wait") }, &mut |_| {});
+    assert!(first.held());
+    let first = RefCell::new(Some(first));
+    let mut said = Vec::new();
+    let sleeps = RefCell::new(0);
+    let sleep = |_: Duration| {
+        *sleeps.borrow_mut() += 1;
+        first.borrow_mut().take();
+    };
+    let second = acquire(&Request { run: &d, pool: Pool::Cold, holder_pid: 20, who: "sp-b", inherit: None, weight: 1 }, &Seams { size_of: &size, procs: &p, sleep: &sleep }, &mut |l: &str| said.push(l.to_string()));
+    assert!(second.held());
+    assert_eq!(*sleeps.borrow(), 1, "held for exactly as long as the first held");
+    assert!(said[0].starts_with("waiting for a cold slot: 1 of 1 held by sp-a"), "{said:?}");
+}
+
+#[test]
+fn a_cold_wait_gives_up_when_stopped_and_leaves_no_waiter() {
+    let d = run_dir();
+    let p = FakeProcs::with(&[(10, 1, 1), (20, 2, 1)]);
+    try_take(&d, Pool::Cold, 1, &h(10, 1, "sp-a"), 0, now_epoch(), &p).unwrap();
+    let polls = RefCell::new(0);
+    let stopped = || {
+        *polls.borrow_mut() += 1;
+        *polls.borrow() > 1
+    };
+    let q = Request { run: &d, pool: Pool::Cold, holder_pid: 20, who: "sp-b", inherit: None, weight: 1 };
+    let g = acquire_unless(&q, &Seams { size_of: &|| 1, procs: &p, sleep: &|_| {} }, &mut |_| {}, &stopped);
+    assert!(g.is_none());
+    assert!(!d.join("cold-admission/wait.20").exists());
+}
+
+#[test]
+fn only_a_toolchain_change_or_an_empty_target_is_cold() {
+    let files = |f: &[&str]| f.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    assert!(cold_reason("Upgrade the Rust toolchain to 1.91", &[]).is_some());
+    assert!(cold_reason("Fix a typo", &files(&["rust-toolchain.toml"])).is_some());
+    assert!(cold_reason("Bump", &files(&["Cargo.lock"])).is_some());
+    assert!(cold_reason("Bump", &files(&["flake.lock"])).is_some());
+    assert_eq!(cold_reason("Fix a typo", &files(&["aeon/Cargo.lock", "aeon/src/run.rs"])), None, "only the top-level lock");
+    let t = run_dir();
+    assert!(target_is_cold(t.path()));
+    fs::write(t.join(".rustc_info.json"), "{}").unwrap();
+    assert!(!target_is_cold(t.path()));
+}
+
+#[test]
+fn a_hold_releases_when_dropped_or_when_its_cap_passes() {
+    let d = run_dir();
+    let me = std::process::id();
+    let q = Request { run: &d, pool: Pool::Cold, holder_pid: me, who: "sp-a", inherit: None, weight: 1 };
+    let seams = Seams { size_of: &|| 1, procs: &RealProcs, sleep: &|_| {} };
+    let g = acquire(&q, &seams, &mut |_| {});
+    let hold = Hold::new(g, Duration::from_secs(3600));
+    assert!(d.join("cold-admission/slot.1").exists());
+    drop(hold);
+    assert!(!d.join("cold-admission/slot.1").exists());
+    let g = acquire(&q, &seams, &mut |_| {});
+    let _hold = Hold::new(g, Duration::from_millis(0));
+    for _ in 0..50 {
+        if !d.join("cold-admission/slot.1").exists() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    panic!("a hold past its cap must release");
 }
