@@ -252,6 +252,24 @@ impl Driver<'_> {
     /// deps.toml the image build actually consumes — never by path, so every checkout of
     /// one commit computes one tag. None when the closure cannot be read or deps.toml
     /// cannot be summarized (D18a).
+    /// The channel the workspace's `rust-toolchain.toml` pins, the image's only Rust version.
+    fn rust_channel(&self, dir: &Path) -> Option<String> {
+        let file = dir.parent()?.join("rust-toolchain.toml");
+        let text = String::from_utf8_lossy(&self.host.read(&file)?).into_owned();
+        let channel = text.lines().find_map(|l| {
+            let (k, v) = l.split_once('=')?;
+            (k.trim() == "channel").then(|| v.trim().trim_matches('"').to_string())
+        });
+        let channel = channel.filter(|c| c.starts_with(|ch: char| ch.is_ascii_digit()));
+        if channel.is_none() {
+            self.err(&format!(
+                "testenv: {} names no numeric channel — refusing to build an image with no pinned Rust",
+                file.display()
+            ));
+        }
+        channel
+    }
+
     pub fn image_tag(&self) -> Option<String> {
         let dir = self.need_harness("tag")?;
         let cf = dir.join("testenv/Containerfile");
@@ -283,6 +301,7 @@ impl Driver<'_> {
             closure.extend(self.host.read(pin).unwrap_or_default());
         }
         closure.extend(sha256sum_line(deps_text.as_bytes()));
+        closure.extend(sha256sum_line(self.rust_channel(&dir)?.as_bytes()));
         Some(crate::verdict::sha256_hex(&closure)[..12].to_string())
     }
 
@@ -477,10 +496,16 @@ impl Driver<'_> {
             self.err("testenv: refusing the image build — no config to stage for doctor-check (see above)");
             return false;
         }
+        let Some(channel) = self.rust_channel(&dir) else {
+            self.host.remove_tree(&context);
+            return false;
+        };
         let log = self.host.temp_log();
         let start = self.host.now();
         let args = vec![
             s("build"),
+            s("--build-arg"),
+            format!("RUST_VERSION={channel}"),
             s("-t"),
             s(img),
             s("-f"),

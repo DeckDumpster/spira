@@ -211,7 +211,6 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
         // own hardware-derived or unpinned defaults — see io::run_suites.
         maxpar: cfg_parse::<u32>("SPIRA_BATCH_MAXPAR")?,
         wall_secs: cfg_parse::<u64>("SPIRA_BATCHER_WALL_SECS")?,
-        rust_toolchain: cfg("SPIRA_RELEASE_RUST_TOOLCHAIN")?,
         git_name: cfg("SPIRA_GIT_NAME")?,
         git_email: cfg("SPIRA_GIT_EMAIL")?,
         lc_bin: Some(PathBuf::from("spira-lc")),

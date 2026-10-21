@@ -89,10 +89,6 @@ pub struct Env {
     /// hold the round lock for the duration, so an unbounded run holds it unbounded too;
     /// enforced with `timeout` so a hang cannot outlive this call.
     pub wall_secs: u64,
-    /// Pinned toolchain for --with-bins' build, same key release.yml's own pin reads
-    /// (SPIRA_RELEASE_RUST_TOOLCHAIN) — one fact about which Rust this workspace builds
-    /// under, not a second default that can drift from the first.
-    pub rust_toolchain: String,
     pub git_name: String,
     pub git_email: String,
     pub lc_bin: Option<PathBuf>,
@@ -3995,7 +3991,6 @@ pub(crate) fn lifecycle_tests_env(dir: &Path) -> Env {
         poll: std::time::Duration::from_secs(1),
         maxpar: 1,
         wall_secs: 1,
-        rust_toolchain: "1.82.0".into(),
         git_name: "t".into(),
         git_email: "t@t".into(),
         lc_rows: Default::default(),

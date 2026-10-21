@@ -141,7 +141,7 @@ absent = "every build tool refuses rather than compile every dependency cold: th
 [[dep]]
 name = "rustup"
 tier = "dev"
-purpose = "acceptance-local.sh: pins the tarball build to release.yml's own Rust toolchain (SPIRA_RELEASE_RUST_TOOLCHAIN)"
+purpose = "acceptance-local.sh: pins the tarball build to release.yml's own Rust toolchain (the channel in rust-toolchain.toml)"
 version_min = ""
 version_probe = "rustup --version"
 absent = "acceptance-local.sh builds with whatever cargo resolves to on PATH instead of the pinned release toolchain, and says so"

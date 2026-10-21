@@ -262,6 +262,7 @@ fn harness(f: &Fake, root: &str) {
     // doctor-check; tests of that staging itself (a_cold_build_*) set it up by hand instead.
     f.with_spira_config_buildable(root);
     f.file(&format!("{root}/spira-config/tests/fixtures/complete.toml"), "[spira]\n");
+    f.file(&format!("{root}/rust-toolchain.toml"), "[toolchain]\nchannel = \"7.6.5\"\n");
 }
 
 fn args(v: &[&str]) -> Vec<String> {
@@ -286,10 +287,11 @@ fn the_tag_is_the_scripts_hash_of_the_closure_by_content() {
     // cold-built a new image).
     let line = |b: &str| format!("{}  -\n", crate::verdict::sha256_hex(b.as_bytes()));
     let closure = format!(
-        "{}{}{}",
+        "{}{}{}{}",
         line("FROM ubuntu:24.04\n"),
         "migrations=12\n",
-        line("bd runtime\n")
+        line("bd runtime\n"),
+        line("7.6.5")
     );
     let want = crate::verdict::sha256_hex(closure.as_bytes())[..12].to_string();
     assert_eq!(tag_of(&f, &c), Some(want));
@@ -314,7 +316,10 @@ fn every_closure_input_moves_the_tag_and_nothing_else_does() {
     let pin = tag_of(&f, &c).unwrap();
     assert_ne!(pin, deps, "the bd pin");
     f.file("/h/spira/testenv/Containerfile", "FROM ubuntu:26.04\n");
-    assert_ne!(tag_of(&f, &c).unwrap(), pin, "the Containerfile");
+    let cf = tag_of(&f, &c).unwrap();
+    assert_ne!(cf, pin, "the Containerfile");
+    f.file("/h/rust-toolchain.toml", "[toolchain]\nchannel = \"7.6.6\"\n");
+    assert_ne!(tag_of(&f, &c).unwrap(), cf, "the rust-toolchain.toml channel");
 }
 
 // ---- tag: deps.toml only counts what doctor-check.sh's build-time check reads
@@ -481,6 +486,8 @@ fn no_registry_means_nothing_is_pulled() {
     assert_eq!(
         b[0][1..],
         args(&[
+            "--build-arg",
+            "RUST_VERSION=7.6.5",
             "-t",
             &f.out.borrow()[0],
             "-f",

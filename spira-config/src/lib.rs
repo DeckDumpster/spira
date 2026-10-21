@@ -638,6 +638,8 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "testdb_port", bead: "sp-iulew8" },
     RetiredKey { key: "lc_testdb_data", bead: "sp-iulew8" },
     RetiredKey { key: "lc_testdb_port", bead: "sp-iulew8" },
+    // rust-toolchain.toml is the one pin; every consumer reads it.
+    RetiredKey { key: "release_rust_toolchain", bead: "sp-nx83lb" },
 ];
 
 /// A retired `batcher_bin` value that is not the batcher itself (e.g. "/bin/true", the old

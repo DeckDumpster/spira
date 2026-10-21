@@ -30,10 +30,9 @@
 # Global: redeclared per-stage (ARG scope ends at the next FROM). Stage 3 pins
 # RUSTUP_TOOLCHAIN to this so a workspace rust-toolchain.toml naming another
 # channel can't send rustup to install into the read-only /usr/local/rustup.
-# Must equal rust-toolchain.toml's channel (the compiler the gate builds with), checked by
-# test-rust-toolchain-pin.sh: a different local cargo can rewrite Cargo.lock to crates CI
-# cannot build (PR 361).
-ARG RUST_VERSION=1.82.0
+# Supplied by testenv (--build-arg) from rust-toolchain.toml's channel; no default, so a
+# build that forgets it fails at FROM rather than installing some other compiler.
+ARG RUST_VERSION
 ARG GO_VERSION=1.26.5
 ARG DOLT_VERSION=2.2.3
 ARG AWS_CLI_VERSION=2.37.1
