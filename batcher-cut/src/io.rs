@@ -2240,16 +2240,26 @@ pub fn round_certify(env: &Env, repo: &Repo, batch: &str, attest: Option<(&str, 
 }
 
 /// The member ids the round record holds now, as `queue round status` reports them.
-pub fn round_members(env: &Env, repo: &Repo) -> Result<Vec<String>, String> {
+pub fn round_members(env: &Env, repo: &Repo, batch: &str) -> Result<Vec<String>, String> {
     let run = round_verb(env, &["status", &repo.name], "")?;
     if run.code != Some(0) {
         return Err(verb_failed("queue round status", &run));
     }
-    Ok(verb_value(&run.out, "members")
-        .unwrap_or_default()
-        .split_whitespace()
-        .map(|m| m.split(':').next().unwrap_or("").to_string())
-        .collect())
+    members_of_batch(&run.out, batch).ok_or_else(|| format!("queue round status names no open round {batch}"))
+}
+
+/// The member ids `queue round status` reports for `batch`, whichever of the open rounds it is:
+/// the first is unprefixed, the rest are `round<n>_`.
+fn members_of_batch(out: &str, batch: &str) -> Option<Vec<String>> {
+    let prefixes = std::iter::once(String::new()).chain((2..).map(|n| format!("round{n}_")));
+    for prefix in prefixes {
+        let id = verb_value(out, &format!("{prefix}batch_id"))?;
+        if id == batch {
+            let members = verb_value(out, &format!("{prefix}members")).unwrap_or_default();
+            return Some(members.split_whitespace().map(|m| m.split(':').next().unwrap_or("").to_string()).collect());
+        }
+    }
+    None
 }
 
 /// The id of the repo's open round, if `queue round status` reports one.
@@ -4157,5 +4167,19 @@ mod shots_tests {
         let bad = stub(tmp.path(), "echo 'no image for / at 390px' >&2; exit 1");
         let failed = batch_shots_section(&bad, &run, None, "site", &base, &head);
         assert!(failed.contains("capture failed: ") && failed.contains("no image for / at 390px"), "{failed}");
+    }
+}
+
+#[cfg(test)]
+mod round_status_tests {
+    use super::members_of_batch;
+
+    const STATUS: &str = "rounds=2\nopen_batches=old new\nround=open\nbatch_id=old\nmembers=a:1 b:2\nround2=open\nround2_batch_id=new\nround2_members=c:3\n";
+
+    #[test]
+    fn the_members_are_those_of_the_named_round_not_the_first_open_one() {
+        assert_eq!(members_of_batch(STATUS, "new"), Some(vec!["c".to_string()]));
+        assert_eq!(members_of_batch(STATUS, "old"), Some(vec!["a".to_string(), "b".to_string()]));
+        assert_eq!(members_of_batch(STATUS, "gone"), None);
     }
 }
