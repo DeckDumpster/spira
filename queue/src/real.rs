@@ -968,7 +968,8 @@ impl Scripts for RealScripts {
         stdout_of(&mut cmd).map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
     }
     fn ami_for(&self, sha: &str) -> AmiLookup {
-        match Command::new("round-vm").args(["ami-for", sha]).stdin(Stdio::null()).output() {
+        // batch-job: one AWS describe-images read, hang-guarded at 60 s
+        match Command::new("timeout").args(["60", "round-vm", "ami-for", sha]).stdin(Stdio::null()).output() {
             Ok(o) if o.status.code() == Some(0) => AmiLookup::Found(String::from_utf8_lossy(&o.stdout).trim().to_string()),
             Ok(o) if o.status.code() == Some(1) => AmiLookup::Missing,
             Ok(o) => AmiLookup::Unreadable(String::from_utf8_lossy(&o.stderr).trim().to_string()),
