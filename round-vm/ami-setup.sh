@@ -22,7 +22,7 @@ for d in $foreign; do
     [ -z "$v" ] || nextest="$v"
 done
 export PATH="$cache_home/bin:$PATH"
-cargo install --locked cargo-nextest --version "$nextest"
+curl -sSfL "https://get.nexte.st/$nextest/linux" | tar -xz -C "$cache_home/bin"
 ln -sfn "$cache_home/bin/cargo-nextest" /usr/local/bin/cargo-nextest
 for d in $foreign; do bash "$d/deploy/runner-deps.sh" --check; done
 cat > /etc/systemd/system/tailscaled.service <<UNIT
