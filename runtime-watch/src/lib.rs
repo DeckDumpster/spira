@@ -66,10 +66,17 @@ pub trait World {
     fn rust(&self) -> Result<RustSupport, String>;
     fn node(&self) -> Result<EolSupport, String>;
     fn python(&self) -> Result<EolSupport, String>;
+    /// A live bead for this repo and runtime, whoever filed it.
     fn open_bump(&self, repo: &Repo, rt: Runtime) -> Result<Option<String>, String>;
     fn file_bump(&self, repo: &Repo, rt: Runtime, title: &str, body: &str) -> Result<String, String>;
     /// `YYYY-MM-DD`.
     fn today(&self) -> String;
+}
+
+/// Whether a bead title is a bump of `rt`, however it was filed.
+pub fn names_bump(title: &str, rt: Runtime) -> bool {
+    let t = title.to_lowercase();
+    t.contains(rt.name()) && ["bump", "upgrade", "update"].iter().any(|w| t.contains(w))
 }
 
 fn digits(s: &str) -> String {
