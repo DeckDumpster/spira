@@ -72,3 +72,6 @@ FAYTH_HEARTBEAT_SECONDS=120
 # will carry. Withholding Edit and Write is the mechanism that enforces "QA proposes; it
 # does not land tests itself" — the judgement that produced the 17-minute gate.
 FAYTH_TOOLS="Bash,Read,Glob,Grep,TodoWrite"
+
+# The states a bead claimed by this fayth may leave WORKING for; spira-lc refuses any other.
+FAYTH_WORKING_EXITS="SUBMITTED ask park hold"

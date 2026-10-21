@@ -1042,6 +1042,7 @@ impl<'a> Run<'a> {
             ("DB", db.clone()),
             ("SPIKE_DIR", self.conf.s("SPIRA_SPIKE_DIR")),
             ("SPIKE_PATHS", self.conf.s("SPIRA_SPIKE_PATHS")),
+            ("WIKI_DIR", self.conf.s("SPIRA_WIKI")),
             // Tools by bare name (sp-gypjk): the aeon's environment carries the
             // launcher's PATH, whose first entries are the release's bin/ and spira/.
             ("SUITES", format!("{} suites", brief::TESTENV)),

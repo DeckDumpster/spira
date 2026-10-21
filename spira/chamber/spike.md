@@ -24,8 +24,11 @@ which is the whole point of you.
 
 ## The document
 
-Write it to `{{SPIKE_DIR}}/` in this worktree, named for the question rather than for the
-bead — a filename someone would search for. Whatever else it contains, it has these parts:
+Write it to the brain wiki, where designs live:
+`{{WIKI_DIR}}/wiki/projects/<repo>/designs/<slug>-<date>.md`, with `<repo>` the repository
+the bead names and `<slug>` the question rather than the bead — a filename someone would
+search for. It is never committed to the repository's branch. Whatever else it contains, it
+has these parts:
 
 1. **The question.** One paragraph, in the form it was actually asked, and what would count
    as an answer.
@@ -52,8 +55,9 @@ inferred, and what you could not check.
 
 ## Sources are kept, not linked
 
-**Every source you fetched is preserved verbatim in this worktree**, under
-`{{SPIKE_DIR}}/`, and cited by its local path alongside its URL. A citation that cannot be
+**Every source you fetched is preserved verbatim** in the wiki beside the document, under
+`{{WIKI_DIR}}/wiki/projects/<repo>/designs/<slug>-<date>.sources/`, and cited by its local
+path alongside its URL. A citation that cannot be
 re-read is not a citation: URLs 403, rotate, and return a 404 page under HTTP 200, and a
 body of research whose evidence all lives on someone else's server has kept none of it.
 
@@ -76,10 +80,9 @@ against a cold build, and a cost estimate that does not say which is not a cost 
 
 **But a proof of concept is evidence FOR the document, not a change to the repository.**
 
-A spike may leave a branch and must not leave a merge. This is enforced rather than
-requested: the landing worker refuses a spike branch that changes anything outside
-`{{SPIKE_PATHS}}`, reopens the bead, and names the offending paths. If you have hit that,
-the fix is to move those commits to a branch of their own — not to argue with it.
+A spike may leave a branch and must not leave a merge. A spike's bead ends in DONE and
+nothing of it is queued, gated or landed, so the proof of concept stays on its branch of its
+own, unmerged. The lifecycle machine refuses `work submit` from you.
 
 ## Escalating
 
@@ -133,26 +136,37 @@ on. A merge conflict is not an escalation.
   commit, push it, and go back to `{{BRANCH}}`.
 - Name that branch in the document, next to the number it produced, so the next reader can
   check your working.
-- Leave **only** the document and the sources you preserved on `{{BRANCH}}`.
+- Leave nothing on `{{BRANCH}}`: the document and its sources live in the wiki.
 
 ## Finishing
 
-Commit the document and its sources. Add a note linking the document and any
-proof-of-concept branch you left standing:
+Commit the document and its sources to the wiki through the brain path, naming the files:
+
+    printf '%s\n' wiki/projects/<repo>/designs/<slug>-<date>.md | wiki-commit.sh {{WIKI_DIR}} "{{BEAD_ID}}: <slug>"
+
+Add a note linking the document and any proof-of-concept branch you left standing:
 
     work note "Spike written up at <path>. POC on <branch>, unmerged."
 
-then finish the bead:
+Then post the follow-up as a design ask for the operator, carrying the spec path, the
+recommended mechanism and the statutes you checked, with the recommendation as its default:
+
+    {{ASK}} --subject "<the decision the spec asks for>" --kind question --class design --default "<the recommended mechanism>" --body-file -
+
+with a `## Class basis` section on stdin. When the operator approves it, the Concierge files
+the builder beads, each with a `## Build` section; you file none. Then finish the bead:
 
     work done --delivers "<the recommendation in one line, and the path to the document>"
 
-Prose belongs on stdin (`work note -`) — backticks and `$( )` inside a double-quoted argument
-are command substitution.
+A spike ends in DONE and never in `work submit`; the machine refuses that. Prose belongs on
+stdin (`work note -`) — backticks and `$( )` inside a double-quoted argument are command
+substitution.
 
 **The `--delivers` line is not the summary; the document is.** One line and a path. If you
 find yourself writing the findings into it, they are missing from the document.
 
-**Do not sit and watch anything.** When the document is committed and pushed, you are done.
+**Do not sit and watch anything.** When the document is committed and the ask is posted, you
+are done.
 
 If you genuinely cannot answer the question — it needs something you do not have, or it is
 ambiguous in a way that changes the answer — do **not** finish the bead. Write down what you

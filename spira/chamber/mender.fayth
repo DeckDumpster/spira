@@ -32,3 +32,6 @@ FAYTH_PROJECT_INSTRUCTIONS=repo
 
 # APPEND: the mender writes code on a member's branch.
 FAYTH_SYSTEM_PROMPT=append
+
+# The states a bead claimed by this fayth may leave WORKING for; spira-lc refuses any other.
+FAYTH_WORKING_EXITS="DONE ask park hold"

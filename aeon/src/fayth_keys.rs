@@ -76,6 +76,9 @@ pub fn unconsumed(fayth_text: &str, corpus_root: &Path, chamber: &Path) -> Optio
 pub fn check(fayth_file: &Path, home: &Path) -> Result<(), String> {
     let text = fs::read_to_string(fayth_file).map_err(|e| format!("{}: {e}", fayth_file.display()))?;
     let root = home.parent().unwrap_or(home);
+    if root.join("Cargo.toml").is_file() && !declared_keys(&text).contains(spira_config::chamber::WORKING_EXITS_KEY) {
+        return Err(format!("{}: {} is not declared", fayth_file.display(), spira_config::chamber::WORKING_EXITS_KEY));
+    }
     let Some(dead) = unconsumed(&text, root, &home.join("chamber")) else { return Ok(()) };
     if dead.is_empty() {
         return Ok(());
@@ -111,7 +114,7 @@ mod tests {
     #[test]
     fn check_names_the_dead_key_and_passes_a_non_workspace_corpus() {
         let d = tree("check");
-        fs::write(d.join("spira/chamber/x.fayth"), "FAYTH_DEAD=1\n").unwrap();
+        fs::write(d.join("spira/chamber/x.fayth"), "FAYTH_DEAD=1\nFAYTH_WORKING_EXITS=\"DONE\"\n").unwrap();
         let home = d.join("spira");
         fs::remove_file(d.join("Cargo.toml")).unwrap();
         assert!(unconsumed("FAYTH_DEAD=1\n", &d, &home.join("chamber")).is_none());
@@ -119,6 +122,15 @@ mod tests {
         fs::write(d.join("Cargo.toml"), "").unwrap();
         let e = check(&home.join("chamber/x.fayth"), &home).unwrap_err();
         assert!(e.contains("FAYTH_DEAD"), "{e}");
+    }
+
+    #[test]
+    fn a_fayth_without_working_exits_fails_to_load_naming_the_key() {
+        let d = tree("exits");
+        let home = d.join("spira");
+        fs::write(home.join("chamber/x.fayth"), "FAYTH_NAME=x\n").unwrap();
+        let e = check(&home.join("chamber/x.fayth"), &home).unwrap_err();
+        assert!(e.contains("FAYTH_WORKING_EXITS is not declared"), "{e}");
     }
 
     #[test]

@@ -301,6 +301,29 @@ fn assigned_value(text: &str, var: &str) -> Option<String> {
     found.map(|v| v.strip_prefix('"').and_then(|v| v.strip_suffix('"')).map(str::to_string).unwrap_or(v))
 }
 
+pub const WORKING_EXITS_KEY: &str = "FAYTH_WORKING_EXITS";
+
+/// What a fayth may declare as a way out of WORKING; `ask`, `park` and `hold` are the
+/// non-terminal exits, `SUBMITTED` and `DONE` the deliveries.
+pub const WORKING_EXIT_VOCABULARY: [&str; 5] = ["SUBMITTED", "DONE", "ask", "park", "hold"];
+
+/// The states a bead claimed by `fayth` may leave WORKING for, read from the fayth file in
+/// `chamber` itself. There is no default: a file that is absent, or does not declare the key,
+/// or declares a word outside [`WORKING_EXIT_VOCABULARY`], is an error naming what is wrong.
+pub fn working_exits_in(chamber: &Path, fayth: &str) -> Result<Vec<String>, String> {
+    let path = chamber.join(format!("{fayth}.fayth"));
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let raw = assigned_value(&text, WORKING_EXITS_KEY).unwrap_or_default();
+    let exits: Vec<String> = raw.split(|c: char| c.is_whitespace() || c == ',').filter(|w| !w.is_empty()).map(str::to_string).collect();
+    if exits.is_empty() {
+        return Err(format!("{}: {WORKING_EXITS_KEY} is not declared", path.display()));
+    }
+    if let Some(bad) = exits.iter().find(|w| !WORKING_EXIT_VOCABULARY.contains(&w.as_str())) {
+        return Err(format!("{}: {WORKING_EXITS_KEY} names {bad:?}; want any of {}", path.display(), WORKING_EXIT_VOCABULARY.join(" ")));
+    }
+    Ok(exits)
+}
+
 /// `FAYTH_LABELS`/`FAYTH_EXCLUDE_LABELS`, fully resolved and fail-closed — THE shared
 /// evaluator every ready-counting/claiming caller (`spira-claim`, sentinel's own
 /// `express_ready_in_task_pool`, `bead --for`) goes through, replacing each one's own copy
@@ -510,6 +533,19 @@ mod tests {
         let env: BTreeMap<String, String> =
             [("SPIRA_CHAMBER".to_string(), elsewhere.to_string_lossy().into_owned())].into();
         assert_eq!(chamber_dir_with(&ws, &env), elsewhere);
+    }
+
+    #[test]
+    fn working_exits_are_declared_never_defaulted() {
+        let ws = testkit::TempDir::new("spira-config-chamber-exits");
+        write_fayth(&ws, "builder", "FAYTH_WORKING_EXITS=\"SUBMITTED ask park hold\"\n");
+        write_fayth(&ws, "bare", "FAYTH_NAME=bare\n");
+        write_fayth(&ws, "odd", "FAYTH_WORKING_EXITS=\"SUBMITTED landed\"\n");
+        let dir = chamber_dir(&ws);
+        assert_eq!(working_exits_in(&dir, "builder").unwrap(), ["SUBMITTED", "ask", "park", "hold"]);
+        assert!(working_exits_in(&dir, "bare").unwrap_err().contains("FAYTH_WORKING_EXITS is not declared"));
+        assert!(working_exits_in(&dir, "odd").unwrap_err().contains("\"landed\""));
+        assert!(working_exits_in(&dir, "ghost").is_err());
     }
 
     #[test]
