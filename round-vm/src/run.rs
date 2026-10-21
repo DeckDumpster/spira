@@ -156,7 +156,9 @@ pub fn shell_quote(s: &str) -> String {
 pub const FOREIGN_SCRIPT: &str = r#"set -euo pipefail
 host_addr="$1" port="$2" entry="${13}"
 export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
-rm -rf ~/round-bins ~/round-work
+rm -rf ~/round-bins ~/round-work ~/round-setup.log
+exec 2> >(tee ~/round-setup.log >&2)
+exec 1>&2
 git clone --quiet "git://${host_addr}:${port}/mirror.git" ~/round-work
 cd ~/round-work
 res="$HOME/round-work/.runtime/spira/batch-results"
@@ -164,8 +166,7 @@ mkdir -p "$res"
 printf 'tree=%s\n' "$(git rev-parse 'HEAD^{tree}')" > "$res/batch.meta"
 t0=$(date +%s)
 rc=0
-bash -c "$entry" > "$res/ci.log" 2>&1 || rc=$?
-tail -n 40 "$res/ci.log" >&2
+bash -c "$entry" 2>&1 | tee "$res/ci.log" || rc=${PIPESTATUS[0]}
 if [ "$rc" -eq 0 ]; then status=ok; else status=red; fi
 printf '%s %s %s - - - %s\n' "$status" 1 "$(( $(date +%s) - t0 ))" "$rc" > "$res/ci.result"
 [ "$rc" -eq 0 ]

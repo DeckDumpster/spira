@@ -202,10 +202,16 @@ fn start_pass(w: &World, batch: &str, head: &str, strict: bool) -> Result<(), (i
 }
 
 fn suites_started(w: &World, batch: &str, strict: bool) -> Result<(), (i32, String)> {
-    pass_event(w, batch, |_, n, phase| {
-        (strict || phase == "build")
-            .then(|| serde_json::json!({"SuitesStarted": {"n": n}}).to_string())
-    })
+    let send = || {
+        pass_event(w, batch, |_, n, phase| {
+            (strict || phase == "build")
+                .then(|| serde_json::json!({"SuitesStarted": {"n": n}}).to_string())
+        })
+    };
+    match send() {
+        Err((_, e)) if e.contains("StaleVersion") => send(),
+        r => r,
+    }
 }
 
 fn pass_verdict_event(
@@ -1651,7 +1657,7 @@ pub(super) fn certify(
             );
             w.err(format!(
                 "queue.sh {label}: {why}; the round is not judged\n{}",
-                tail(&format!("{}{}", out.out, out.err), 20)
+                tail(&format!("{}{}", out.out, out.err), 40)
             ));
             return FAULT;
         }

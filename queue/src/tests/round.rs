@@ -3914,7 +3914,7 @@ fn a_testenv_fault_on_an_own_testenv_repo_is_not_judged() {
     *t.scripts.repo_testenv.borrow_mut() = RunOut {
         rc: 2,
         out: "VERDICT FAULT rc=2".into(),
-        err: String::new(),
+        err: "tier lint: podman: command not found".into(),
     };
     assert_eq!(
         t.run(&["round", "open", "--members", "sp-a:ta"]),
@@ -3926,7 +3926,9 @@ fn a_testenv_fault_on_an_own_testenv_repo_is_not_judged() {
     declare_own_testenv(&t);
     assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
     assert!(
-        t.err().contains("CI entry exited 2") && t.err().contains("not judged"),
+        t.err().contains("CI entry exited 2")
+            && t.err().contains("not judged")
+            && t.err().contains("tier lint: podman: command not found"),
         "{}",
         t.err()
     );
