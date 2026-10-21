@@ -1,6 +1,0 @@
-TYPE=string
-GROUP=lc
-DOC=User units whose active or activating state means the Dolt server is under declared maintenance and dolt-guard.sh must not signal it.
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    : "${SPIRA_DOLT_MAINTENANCE_UNITS:=lc-backup.service lc-backup-drill.service dolt-persist-compact.service}"
-SPIRA_CONF_DEFAULT_EOF

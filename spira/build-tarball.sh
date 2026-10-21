@@ -15,12 +15,10 @@
 #   --release-repo <owner/repo>: the forge repository that publishes this release, stamped
 #     into MANIFEST's `release-repo` line; conf.sh reads it back as SPIRA_RELEASE_REPO when
 #     nothing sets that, so an installed release always has a release source for skew.
-#   Legacy: --loom-bin, --panel-bin, --broker-bin, --supervise-bin, --landing-pass-bin,
-#   --reconciler-flow-bin still accepted.
 #
 # TARBALL CONTENTS
 #   Every file tracked by git at the given commit, plus:
-#     bin/<name>  — one entry per workspace [[bin]] target (or per explicit --*-bin)
+#     bin/<name>  — one entry per workspace [[bin]] target
 #     MANIFEST    — commit sha, timestamp, repo identity, and sha256 per binary
 #
 #   MANIFEST's `repo` line is the identity conf.sh reads back (SPIRA_HOME_REPO) once
@@ -52,12 +50,8 @@
 #   2   usage
 #
 # EXAMPLES
-#   # Build from HEAD of current repo with prebuilt binaries:
-#   build-tarball.sh build \
-#       --loom-bin loom/target/release/loom \
-#       --panel-bin cockpit/panel/target/release/panel \
-#       --broker-bin broker/target/release/broker \
-#       --supervise-bin supervise/target/release/spira-supervise
+#   # Build from HEAD of current repo with the workspace's built binaries:
+#   build-tarball.sh build --workspace .
 #
 #   # Verify a release directory:
 #   build-tarball.sh verify /opt/spira-releases/current --repo /path/to/harness
@@ -68,19 +62,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # build — produce the tarball
 # ---------------------------------------------------------------------------
 do_build() {
-    local outdir="." loom_bin="" panel_bin="" broker_bin="" supervise_bin="" landing_pass_bin="" reconciler_flow_bin="" commit="" repo="" name_override="" repo_name="" release_repo=""
+    local outdir="." commit="" repo="" name_override="" repo_name="" release_repo=""
     local workspace="" bin_dir=""  # workspace root for auto-discovery via cargo metadata; bin_dir overrides where the discovered names are looked up
 
     while [ $# -gt 0 ]; do
         case "$1" in
             --output)            outdir="$2";            shift 2 ;;
             --bin-dir)           bin_dir="$2";            shift 2 ;;
-            --loom-bin)          loom_bin="$2";          shift 2 ;;
-            --panel-bin)         panel_bin="$2";         shift 2 ;;
-            --broker-bin)        broker_bin="$2";        shift 2 ;;
-            --supervise-bin)     supervise_bin="$2";     shift 2 ;;
-            --landing-pass-bin)  landing_pass_bin="$2";  shift 2 ;;
-            --reconciler-flow-bin) reconciler_flow_bin="$2"; shift 2 ;;
             --workspace)         workspace="$2";         shift 2 ;;
             --name)              name_override="$2";     shift 2 ;;
             --repo-name)         repo_name="$2";         shift 2 ;;
@@ -133,7 +121,7 @@ do_build() {
 
     # Binary resolution: --bin-dir enumerates a directory directly (every executable file
     # ships, named for itself); --workspace auto-discovers names via cargo metadata, then
-    # looks them up under target/release; explicit --*-bin flags are the legacy path.
+    # looks them up under target/release.
     #
     # --BIN-DIR NEVER CALLS CARGO, EVEN COMBINED WITH --WORKSPACE. Its caller (queue.sh
     # land-local) already knows exactly what a --with-bins corpus built — that corpus IS
@@ -185,39 +173,8 @@ for pkg in meta['packages']:
             exit 1
         fi
     else
-        # Legacy explicit flags — all four are required.
-        if [ -z "$loom_bin" ] || [ ! -f "$loom_bin" ]; then
-            printf 'build-tarball.sh: loom binary not found: %s\n' \
-                "${loom_bin:-(not specified; pass --loom-bin <path>)}" >&2
-            exit 1
-        fi
-        if [ -z "$panel_bin" ] || [ ! -f "$panel_bin" ]; then
-            printf 'build-tarball.sh: panel binary not found: %s\n' \
-                "${panel_bin:-(not specified; pass --panel-bin <path>)}" >&2
-            exit 1
-        fi
-        if [ -z "$broker_bin" ] || [ ! -f "$broker_bin" ]; then
-            printf 'build-tarball.sh: broker binary not found: %s\n' \
-                "${broker_bin:-(not specified; pass --broker-bin <path>)}" >&2
-            exit 1
-        fi
-        if [ -z "$supervise_bin" ] || [ ! -f "$supervise_bin" ]; then
-            printf 'build-tarball.sh: spira-supervise binary not found: %s\n' \
-                "${supervise_bin:-(not specified; pass --supervise-bin <path>)}" >&2
-            exit 1
-        fi
-        if [ -z "$landing_pass_bin" ] || [ ! -f "$landing_pass_bin" ]; then
-            printf 'build-tarball.sh: landing-pass binary not found: %s\n' \
-                "${landing_pass_bin:-(not specified; pass --landing-pass-bin <path>)}" >&2
-            exit 1
-        fi
-        if [ -z "$reconciler_flow_bin" ] || [ ! -f "$reconciler_flow_bin" ]; then
-            printf 'build-tarball.sh: reconciler-flow binary not found: %s\n' \
-                "${reconciler_flow_bin:-(not specified; pass --reconciler-flow-bin <path>)}" >&2
-            exit 1
-        fi
-        _bin_names=(loom panel broker spira-supervise landing-pass reconciler-flow)
-        _bin_paths=("$loom_bin" "$panel_bin" "$broker_bin" "$supervise_bin" "$landing_pass_bin" "$reconciler_flow_bin")
+        printf 'build-tarball.sh: pass --bin-dir or --workspace\n' >&2
+        exit 2
     fi
 
     # Generate name and timestamp. --name overrides auto-generation and pins the

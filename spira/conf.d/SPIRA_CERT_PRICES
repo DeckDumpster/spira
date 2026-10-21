@@ -1,7 +1,0 @@
-TYPE=string
-GROUP=round
-DOC=SPIRA_CERT_PRICES — comma-separated type=usd_per_hour on-demand prices cert-report costs EC2 passes with.
-SCHEMA=Hourly USD price per EC2 instance type; a type absent here is reported with no cost, not a guessed one. Empty is valid.
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    : "${SPIRA_CERT_PRICES:=c7i.large=0.08925,c7i.xlarge=0.1785,c7i.2xlarge=0.357,c7i.4xlarge=0.714,c7i.8xlarge=1.428}"
-SPIRA_CONF_DEFAULT_EOF

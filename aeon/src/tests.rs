@@ -437,7 +437,6 @@ fn go_as(fayth_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], mode: M
         ("SPIRA_THRASH_MINUTES", "20".to_string()),
         ("SPIRA_THRASH_STREAK_CAP", "2".to_string()),
         ("SPIRA_VERDICT_WINDOW", "400".to_string()),
-        ("SPIRA_DELIVERS_CHECK_TIMEOUT", "60".to_string()),
         ("SPIRA_RAPID_RECUR_THRESHOLD", "3".to_string()),
         ("SPIRA_BRIEF_KEEP_RECURRENCES", "5".to_string()),
         ("SPIRA_BRIEF_NOTES_MAX_CHARS", "8000".to_string()),

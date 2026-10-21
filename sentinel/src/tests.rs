@@ -185,7 +185,6 @@ impl World {
             ("SPIRA_WORK_CLOSE_TYPES", "task bug feature"),
             ("SPIRA_RECLAIM_GRACE_SECS", "10800"),
             ("SPIRA_CHECK5_MAX_FILE", "5"),
-            ("SPIRA_CHECK5_MAX_RESOLVE", "50"),
             // literal-ok: the pre-migration Rust default this fixture stands in for, so
             // existing argv assertions (dispatch tests' RuntimeMaxSec=3600) don't drift.
             // spira/conf.d/SPIRA_LAND_MAXSEC's own declared default is 5400.
