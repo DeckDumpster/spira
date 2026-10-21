@@ -35,6 +35,9 @@ fn main() {
     };
     let verb_args = args[1..].to_vec();
     spira_otel::run::operation(if work::VERBS.contains(&verb.as_str()) || work::LOCAL_VERBS.contains(&verb.as_str()) { &verb } else { "unknown" });
+    if verb == "statute-check" {
+        { let code = statute_check(&verb_args); spira_otel::run::finish(code); std::process::exit(code) };
+    }
     if work::LOCAL_VERBS.contains(&verb.as_str()) {
         { let code = crates(&verb_args); spira_otel::run::finish(code); std::process::exit(code) };
     }
@@ -157,6 +160,88 @@ fn send(argv: &[String], wait: Duration) -> Result<(i32, String), String> {
     }
     let out = String::from_utf8(body).map_err(|e| format!("reply was not UTF-8: {e}"))?;
     Ok((code, out))
+}
+
+/// `work statute-check -` (plan on stdin) or `work statute-check "<plan>"`: runs the statute
+/// check on a builder's plan. A plan with no governed decision records nothing; otherwise the
+/// full text of every statute returned is printed and the plan and slugs are recorded on the
+/// bound bead as a note.
+fn statute_check(args: &[String]) -> i32 {
+    let plan = match args {
+        [a] if a == "-" => {
+            let mut s = String::new();
+            if let Err(e) = std::io::stdin().read_to_string(&mut s) {
+                eprintln!("work statute-check: reading stdin: {e}");
+                return REFUSED;
+            }
+            s
+        }
+        [a] => a.clone(),
+        _ => {
+            eprintln!("usage: work statute-check \"<one-paragraph plan>\" | work statute-check - < plan");
+            return REFUSED;
+        }
+    };
+    let bound = match std::env::var("SPIRA_WORK_BEAD_ID") {
+        Ok(b) if !b.is_empty() => b,
+        _ => {
+            eprintln!("cannot tell: SPIRA_WORK_BEAD_ID is not set — this environment is not bound to a bead");
+            return CANNOT_TELL;
+        }
+    };
+    let cfg = |k: &str| spira_config::process::cfg(k);
+    let (guards, dir) = match (cfg("SPIRA_STATUTE_GUARDS"), cfg("SPIRA_STATUTE_DIR")) {
+        (Ok(g), Ok(d)) if !g.is_empty() && !d.is_empty() => (g, d),
+        (Err(e), _) | (_, Err(e)) => {
+            eprintln!("work statute-check: refusing: {e}");
+            return REFUSED;
+        }
+        _ => {
+            eprintln!("work statute-check: refusing: SPIRA_STATUTE_GUARDS and SPIRA_STATUTE_DIR must both be set; an unconfigured check is not a pass");
+            return REFUSED;
+        }
+    };
+    let registry = match std::fs::read_to_string(&guards) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("work statute-check: refusing: cannot read the statute registry {guards}: {e}");
+            return REFUSED;
+        }
+    };
+    let text_of = |slug: &str| std::fs::read_to_string(std::path::Path::new(&dir).join(format!("{slug}.txt"))).ok();
+    let (out, note) = match work::statute_check_report(&registry, &plan, text_of) {
+        Ok(None) => {
+            println!("work statute-check: the plan makes no governed decision; no check owed");
+            return 0;
+        }
+        Ok(Some(r)) => r,
+        Err(e) => {
+            eprintln!("work statute-check: refusing: {e}");
+            return REFUSED;
+        }
+    };
+    let actor = std::env::var("SPIRA_FAYTH").or_else(|_| std::env::var("SPIRA_WORK_ACTOR")).unwrap_or_else(|_| "aeon".to_string());
+    let req = match work::build_request_with_body(&bound, "note", &["-".to_string()], None, &actor, Some(&note)) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{e}");
+            return REFUSED;
+        }
+    };
+    match send(&req, REPLY_WAIT) {
+        Ok((0, _)) => {}
+        Ok((code, o)) => {
+            eprintln!("work statute-check: the note was not recorded on the bead (exit {code}): {}", o.trim());
+            return code;
+        }
+        Err(e) => {
+            eprintln!("cannot tell: {e}");
+            return CANNOT_TELL;
+        }
+    }
+    print!("{out}");
+    println!("Read every statute above in full before writing code. If one forbids the plan, change the plan or `work ask` with a default. The check is recorded on the bead.");
+    0
 }
 
 /// `work crates [<base>]`: the `-p` words for the worktree's diff against `<base>` (default

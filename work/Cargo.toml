@@ -9,6 +9,7 @@ serde_json = "1"
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
 gate = { path = "../gate" }
+bead = { path = "../bead" }
 
 [[bin]]
 name = "work"

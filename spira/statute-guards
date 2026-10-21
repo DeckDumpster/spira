@@ -3,3 +3,12 @@
 law-tests-run-only-through-testenv | refuse | \b(run|running)\b[^.\n]{0,40}\b(suite|tests?)\b[^.\n]{0,30}\b(directly )?on the host\b
 law-never-disarm-a-check-to-proceed | show | \b(disable|disarm|bypass|skip)\b[^.\n]{0,30}\b(guard|check|gate|fence)\b
 law-never-derive-an-id-from-output | show | \b(parse|grep|scrape)\b[^.\n]{0,30}\bid\b[^.\n]{0,20}\boutput\b
+# plan rows: the statutes a builder's plan must read before a governed decision (`work statute-check`)
+law-new-subsystems-are-rust | plan | \b(new|add|adds|adding|introduc\w+|writ\w+|creat\w+)\b[^.\n]{0,40}\b(program|service|daemon|unit|proxy|binary|server|script|tool|component|subsystem)\b
+law-new-subsystems-are-rust | plan | \b(python|node\.?js|javascript|typescript|ruby|perl|bash|shell)\b|\.(py|js|ts|rb|pl|sh)\b
+law-one-language-runtime-per-repo | plan | \b(new|add|adds|adding|introduc\w+|writ\w+)\b[^.\n]{0,40}\b(language|runtime|file type|program|service|script|proxy)\b
+law-one-language-runtime-per-repo | plan | \b(python|node\.?js|javascript|typescript|ruby|perl|jvm|java)\b|\.(py|js|ts|rb|pl|java)\b
+law-install-installs-every-dependency | plan | \b(new|add|adds|adding|introduc\w+)\b[^.\n]{0,30}\b(dependency|dependencies|crate|package|image|host tool|library)\b
+law-third-party-tools-are-official-releases | plan | \b(new|add|adds|adding|introduc\w+)\b[^.\n]{0,30}\b(dependency|dependencies|crate|package|image|host tool|library)\b
+law-new-subsystems-are-rust | plan | \b(new|add|adds|adding|introduc\w+)\b[^.\n]{0,30}\b(protocol|wire format|on-disk format|socket)\b
+law-schema-over-code | plan | \b(new|add|adds|adding|introduc\w+)\b[^.\n]{0,30}\b(protocol|wire format|on-disk format|socket)\b
