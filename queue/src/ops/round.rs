@@ -18,8 +18,8 @@ use super::{
 use crate::cli::{Round, Text};
 use crate::ident::bounded_text;
 use crate::lock::Guard;
-use crate::ports::{ref_branch, RunOut};
 use crate::model::{parse_members, render_members, EjectCause, LandMode, Member};
+use crate::ports::{ref_branch, RunOut};
 use crate::records::{self, one_line, write_atomic, Kv};
 use landing_pass::gateq::GateQueue;
 use landing_pass::model::GateOutcome;
@@ -966,10 +966,24 @@ fn open(
         ));
         return FAIL;
     };
-    let Some(base_sha) = w.git.rev_parse(&path, &base) else {
+    let Some(landed_sha) = w.git.rev_parse(&path, &base) else {
         w.err(format!("queue.sh {label}: cannot resolve {base}"));
         return FAIL;
     };
+    let parent = open_now
+        .iter()
+        .filter_map(|(_, kv)| {
+            Some((
+                kv.get("batch_id")?.to_string(),
+                kv.get("head")?.to_string(),
+                kv.get("opened")?.parse::<u64>().unwrap_or(0),
+            ))
+        })
+        .max_by_key(|(_, _, at)| *at)
+        .filter(|(_, head, _)| !head.is_empty());
+    let base_sha = parent
+        .as_ref()
+        .map_or_else(|| landed_sha.clone(), |(_, head, _)| head.clone());
     if let Ok(Some(orphan)) = records::read_kv(&c.queue_file(stage::STAGED)) {
         let parent = orphan.get("parent").unwrap_or("?").to_string();
         if open_now
@@ -1065,7 +1079,7 @@ fn open(
             merged.push(m);
         } else {
             w.git.merge_abort(&wt);
-            if w.lib.base_conflict(&path, &base_sha, &m.tip) {
+            if w.lib.base_conflict(&path, &landed_sha, &m.tip) {
                 skips.push(match return_to_rework(w, &m) {
                     Ok(()) => format!("{}: conflicts with base — returned to rework", m.id),
                     Err(e) => {
@@ -1192,6 +1206,9 @@ fn open(
     kv.push("repo", &repo_name);
     kv.push("head", &head);
     kv.push("base", &base_sha);
+    if let Some((p, _, _)) = &parent {
+        kv.push("parent", p);
+    }
     kv.push("members", &render_members(&merged));
     kv.push("worktree", &wt.display().to_string());
     kv.push("actor", &actor(w));
@@ -1387,7 +1404,9 @@ fn stale_ami_cause(out: &RunOut) -> Option<String> {
     let lines: Vec<&str> = out.err.lines().map(str::trim).collect();
     let from = lines.iter().rposition(|l| l.contains("acquire failed"))?;
     let cause = lines[from..].join(" ");
-    cause.contains("round-ami-build").then(|| bounded_text(&cause))
+    cause
+        .contains("round-ami-build")
+        .then(|| bounded_text(&cause))
 }
 
 /// A round whose image recipe is stale waits for the Round AMI build for the current recipe,
@@ -1425,11 +1444,16 @@ impl AmiWait {
             let Some(land) = home.r.landref.as_deref() else {
                 return false;
             };
-            if !w.forge.ami_dispatch(&c.s.forge, &home_path, ref_branch(land)) {
+            if !w
+                .forge
+                .ami_dispatch(&c.s.forge, &home_path, ref_branch(land))
+            {
                 return false;
             }
             self.triggered = true;
-            w.out(format!("queue.sh {label}: no round AMI build was running; triggered one"));
+            w.out(format!(
+                "queue.sh {label}: no round AMI build was running; triggered one"
+            ));
         } else {
             self.idle_polls += 1;
             if self.idle_polls >= Self::IDLE_POLLS {
@@ -2461,6 +2485,73 @@ fn land(w: &World, batch: &str, repo: Option<&str>) -> i32 {
     rc
 }
 
+/// A round stacked on an open round lands only after that round has: it holds while the parent is
+/// open, is re-cut on the parent's head when that changed, and is rebuilt on the landing ref
+/// (to certify again) when the parent ended without landing. `None` means no stacking obstacle.
+fn settle_parent(
+    w: &World,
+    label: &str,
+    c: &Ctx,
+    path: &Path,
+    batch: &str,
+    kv: &mut Kv,
+    base_now: &str,
+) -> Option<i32> {
+    let parent = kv.get("parent").filter(|p| !p.is_empty())?.to_string();
+    let stacked_on = kv.get("base").unwrap_or("").to_string();
+    let onto = match record_of(c, &parent) {
+        Some((_, pkv)) => {
+            let phead = pkv.get("head").unwrap_or("").to_string();
+            if phead == stacked_on {
+                w.err(format!("queue.sh {label}: round {batch} is stacked on round {parent}, which has not landed — land {parent} first; nothing changed"));
+                return Some(FAIL);
+            }
+            phead
+        }
+        None if w.git.is_ancestor(path, &stacked_on, base_now) => {
+            kv.remove("parent");
+            return None;
+        }
+        None => {
+            kv.remove("parent");
+            base_now.to_string()
+        }
+    };
+    let members = kv.members();
+    let wt = worktree_of(kv);
+    let fallback = kv.get("head").unwrap_or("").to_string();
+    let new_head = match assemble(w, c, path, &wt, &onto, &members, &fallback) {
+        Ok(h) => h,
+        Err(why) => {
+            w.err(format!("queue.sh {label}: round {batch} no longer merges onto {onto}: {why} — nothing changed; eject the member and certify again"));
+            return Some(FAIL);
+        }
+    };
+    set(kv, "head", &new_head);
+    set(kv, "base", &onto);
+    kv.remove("red");
+    let moved = lc_cas(w, batch, |s, v| {
+        w.lc.batch_event(batch, s, v, LC_ACTOR, "\"BaseMoved\"")
+    });
+    if let Err((rc, out)) = moved {
+        w.err(format!("queue.sh {label}: spira-lc refused BaseMoved for {batch} (rc={rc}): {out} — the round worktree was rebuilt at {new_head}; certify it again"));
+    }
+    if save(w, label, c, kv).is_err() {
+        return Some(FAIL);
+    }
+    mark_running(c, batch);
+    landing_log(
+        &c.s.run,
+        &format!(
+            "QUEUE ROUND-RESTACK {} repo={} batch={batch} head={new_head} base={onto}",
+            w.clock.now(),
+            c.r.name
+        ),
+    );
+    w.err(format!("queue.sh {label}: round {batch} was stacked on round {parent}, which changed or ended without landing — rebuilt at {new_head} on {onto}; run `queue round certify {batch}`, it is not landed"));
+    Some(FAIL)
+}
+
 /// A round is cut from the landing ref and lands only on top of it. When an earlier round has
 /// landed since, this one is re-merged onto the new ref and goes back to certify on the merged
 /// tree, whatever files it shares with what landed: disjoint files can still conflict in meaning.
@@ -2475,6 +2566,9 @@ fn remerge_if_moved(
 ) -> Option<i32> {
     let base = c.r.landref.clone().unwrap_or_default();
     let base_now = w.git.rev_parse(path, &base)?;
+    if let Some(rc) = settle_parent(w, label, c, path, batch, kv, &base_now) {
+        return Some(rc);
+    }
     let head = kv.get("head").unwrap_or("").to_string();
     if w.git.is_ancestor(path, &base_now, &head) {
         return None;
