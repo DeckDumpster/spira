@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=compile
+DOC=SPIRA_COLD_PAR — One cold build at a time, host-wide: a toolchain change recompiles every artifact.
+SCHEMA=Cold-build admission slots (gate/DESIGN-admission.md); a session whose first build is cold takes one before it starts. A pool size, never a per-job limit.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Registered default: one cold full-workspace build at a time, host-wide.
+    : "${SPIRA_COLD_PAR:=1}"
+SPIRA_CONF_DEFAULT_EOF

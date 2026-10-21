@@ -1264,6 +1264,7 @@ impl<'a> Run<'a> {
                 None
             }
         };
+        let _cold = self.cold_slot(work, warm_slot.as_ref().map(|w| w.dir.as_path()))?;
         // THE SUMMON JITTER (sp-f4ig1 §3.4): aeons a pass summoned together start apart.
         let max = self.conf.i(spira_config::admission::JITTER_ENV).max(0) as u64;
         let seed = ((std::process::id() as u64) << 32)
@@ -1305,6 +1306,43 @@ impl<'a> Run<'a> {
         self.s.session_rc = rc;
         self.log(&format!("{}: {bead} session exited rc={rc}", self.f()));
         Ok(())
+    }
+
+    /// The host-wide cold-build slot (`Pool::Cold`): a session whose first build is cold waits
+    /// here, saying so, until the one running cold build's hold ends. A warm session passes.
+    fn cold_slot(&mut self, work: &Path, warm: Option<&Path>) -> Result<Option<spira_config::admission::Hold>, Abort> {
+        use spira_config::admission as adm;
+        let title = self.s.claimed.as_ref().and_then(|c| c.title.clone()).unwrap_or_default();
+        let base = self.s.base_fq.clone();
+        let touched: Vec<String> = if base.is_empty() {
+            Vec::new()
+        } else {
+            let o = self.d.git.git(work, &["diff", "--name-only", &format!("{base}...HEAD")]);
+            if o.success() { o.stdout.lines().map(str::to_string).collect() } else { Vec::new() }
+        };
+        let target = warm.map(Path::to_path_buf).unwrap_or_else(|| work.join("target"));
+        let Some(why) = adm::cold_reason(&title, &touched).or_else(|| adm::target_is_cold(&target).then(|| format!("no warm target at {}", target.display()))) else {
+            return Ok(None);
+        };
+        let bead = self.s.bead.clone();
+        let q = adm::Request { run: &self.conf.run, pool: adm::Pool::Cold, holder_pid: std::process::id(), who: &bead, inherit: None, weight: 1 };
+        let size_of = || adm::size_from_env(adm::Pool::Cold);
+        let sleep = |d: Duration| (self.d.sleep)(d);
+        let seams = adm::Seams { size_of: &size_of, procs: &adm::RealProcs, sleep: &sleep };
+        let f = self.f().to_string();
+        let mut waiting = false;
+        let mut say = |l: &str| {
+            waiting = true;
+            self.log(&format!("{f}: waiting on cold-build slot ({why}): {l}"));
+        };
+        let stop = &self.stop;
+        let guard = adm::acquire_unless(&q, &seams, &mut say, &|| stop.signalled().is_some());
+        let Some(guard) = guard else {
+            self.check_stop()?;
+            return Ok(None);
+        };
+        self.log(&format!("{f}: cold build ({why}) — holds the cold-build slot{}", if waiting { " after waiting" } else { "" }));
+        Ok(Some(adm::Hold::new(guard, Duration::from_secs(adm::COLD_HOLD_SECS))))
     }
 
     /// The session-id arguments for this launch. A checkpoint left by a world stop is

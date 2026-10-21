@@ -894,7 +894,7 @@ fn pools_row(snap: &Snapshot) -> String {
         let wait = if waiting == "0" { String::new() } else { format!(" {col}{waiting} waiting {oldest}s{RST}") };
         format!("{pool} {B}{held}/{size}{RST}{wait}")
     };
-    format!(" {DIM}POOLS{RST}  {}", ["compile", "test", "gate"].map(seg).join(" \u{b7} "))
+    format!(" {DIM}POOLS{RST}  {}", ["compile", "test", "gate", "cold"].map(seg).join(" \u{b7} "))
 }
 
 pub fn standing_lines(snap: &Snapshot, cols: i64) -> Vec<String> {

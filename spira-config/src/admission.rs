@@ -44,6 +44,14 @@ pub const ROUND_HOLD_ENV: &str = "SPIRA_ADMIT_ROUND_HOLD_SECS";
 pub const ROUND_HOLD_DEFAULT: u64 = 900;
 /// Seconds between looks at the round's phase while a compile yields.
 pub const ROUND_POLL_SECS: u64 = 5;
+/// Cold builds admitted at once, host-wide: a toolchain change invalidates every compiled
+/// artifact, so each cold session is a full-workspace build and two together starve the box.
+pub const COLD_PAR: u64 = 1;
+/// Longest one session keeps the cold slot: the build phase is over by then, whatever the
+/// session still does.
+pub const COLD_HOLD_SECS: u64 = 1200;
+/// Files whose change makes a session's first build a cold one.
+pub const COLD_FILES: [&str; 4] = ["rust-toolchain.toml", "rust-toolchain", "flake.lock", "Cargo.lock"];
 /// How often a waiter repeats its waiting line.
 pub const SAY_EVERY: u64 = 30;
 
@@ -52,16 +60,18 @@ pub enum Pool {
     Compile,
     Test,
     Gate,
+    Cold,
 }
 
 impl Pool {
-    pub const ALL: [Pool; 3] = [Pool::Compile, Pool::Test, Pool::Gate];
+    pub const ALL: [Pool; 4] = [Pool::Compile, Pool::Test, Pool::Gate, Pool::Cold];
 
     pub fn name(self) -> &'static str {
         match self {
             Pool::Compile => "compile",
             Pool::Test => "test",
             Pool::Gate => "gate",
+            Pool::Cold => "cold",
         }
     }
 
@@ -80,6 +90,7 @@ impl Pool {
             Pool::Compile => "SPIRA_COMPILE_PAR",
             Pool::Test => "SPIRA_TEST_PAR",
             Pool::Gate => "SPIRA_CERTIFY_PAR",
+            Pool::Cold => "SPIRA_COLD_PAR",
         }
     }
 }
@@ -110,6 +121,9 @@ impl Host {
 /// The derived size of a pool (DESIGN-admission.md §5): from the measured cost of one job of
 /// that phase. Never below 1.
 pub fn derive(pool: Pool, h: Host) -> u64 {
+    if pool == Pool::Cold {
+        return COLD_PAR;
+    }
     let (per_core, per_mib) = match pool {
         // One aeon-profile workspace build: ~9 cores average (14 peak), 2.7 GiB anon; a
         // release (LTO) build heavier. 10 cores and 4 GiB a slot.
@@ -119,6 +133,7 @@ pub fn derive(pool: Pool, h: Host) -> u64 {
         Pool::Test => (8, 8192),
         // The gate's own formula (gate/DESIGN.md), unchanged.
         Pool::Gate => (4, 400),
+        Pool::Cold => unreachable!("answered above"),
     };
     (h.cores / per_core).min(h.mem_avail_mib / per_mib).max(1)
 }
@@ -144,6 +159,7 @@ pub fn doc_size(pool: Pool, doc: &crate::SpiraToml) -> Option<u64> {
         Pool::Compile => s.compile_par,
         Pool::Test => s.test_par,
         Pool::Gate => s.certify_par,
+        Pool::Cold => None,
     }
     .map(u64::from)
     .filter(|n| *n > 0)
@@ -818,18 +834,27 @@ pub fn acquire_real(q: &Request, say: &mut dyn FnMut(&str)) -> Guard {
 /// unadmitted (a scheduling tool never stops the world). `inherit` is the caller's
 /// [`INHERIT_ENV`] value.
 pub fn acquire(q: &Request, s: &Seams, say: &mut dyn FnMut(&str)) -> Guard {
+    acquire_unless(q, s, say, &|| false).expect("never stopped")
+}
+
+/// [`acquire`] that gives up, leaving no waiter file, once `stopped` says so.
+pub fn acquire_unless(q: &Request, s: &Seams, say: &mut dyn FnMut(&str), stopped: &dyn Fn() -> bool) -> Option<Guard> {
     let (run, pool, holder_pid, who, inherit) = (q.run, q.pool, q.holder_pid, q.who, q.inherit);
     let (size_of, procs, sleep) = (s.size_of, s.procs, s.sleep);
     if let Some(t) = inherit.map(str::trim).filter(|t| !t.is_empty()) {
-        return Guard::inherited(pool, t);
+        return Some(Guard::inherited(pool, t));
     }
     let Some(me) = holder_for(holder_pid, who, q.weight, procs) else {
         say(&format!("admission: cannot read process {holder_pid} — running without a {} slot", pool.name()));
-        return Guard::inherited(pool, "none");
+        return Some(Guard::inherited(pool, "none"));
     };
     let t0 = now_epoch();
     let mut said_at: Option<u64> = None;
     loop {
+        if stopped() {
+            unwait(run, pool, me.pid);
+            return None;
+        }
         let size = size_of();
         let now = now_epoch();
         let waited = now.saturating_sub(t0);
@@ -844,7 +869,7 @@ pub fn acquire(q: &Request, s: &Seams, say: &mut dyn FnMut(&str)) -> Guard {
                         if said_at.is_some() {
                             say(&format!("admitted to {} slot {slot} after {waited}s", pool.name()));
                         }
-                        return Guard {
+                        return Some(Guard {
                             run: run.to_path_buf(),
                             pool,
                             size,
@@ -852,11 +877,11 @@ pub fn acquire(q: &Request, s: &Seams, say: &mut dyn FnMut(&str)) -> Guard {
                             me: Some(me),
                             waited,
                             token: format!("{}:{slot}", pool.name()),
-                        };
+                        });
                     }
                     Take::Inherited { slot, .. } => {
                         unwait(run, pool, me.pid);
-                        return Guard::inherited(pool, &format!("{}:{slot}", pool.name()));
+                        return Some(Guard::inherited(pool, &format!("{}:{slot}", pool.name())));
                     }
                     Take::Busy { holders } => {
                         if due(said_at, now) {
@@ -868,10 +893,59 @@ pub fn acquire(q: &Request, s: &Seams, say: &mut dyn FnMut(&str)) -> Guard {
             }
             Err(e) => {
                 say(&format!("admission: {} pool at {} unusable ({e}) — running without a slot", pool.name(), pool.dir(run).display()));
-                return Guard::inherited(pool, "none");
+                return Some(Guard::inherited(pool, "none"));
             }
         }
         sleep(Duration::from_millis(1000));
+    }
+}
+
+/// The reason a session's first build is a cold one, or `None`: its title names a toolchain
+/// change, or its diff touches a file whose change invalidates every compiled artifact.
+pub fn cold_reason(title: &str, touched: &[String]) -> Option<String> {
+    let t = title.to_lowercase();
+    if t.contains("toolchain") {
+        return Some("title names a toolchain change".into());
+    }
+    touched
+        .iter()
+        .find(|f| COLD_FILES.contains(&f.as_str()))
+        .map(|f| format!("diff touches {f}"))
+}
+
+/// A target directory with no `.rustc_info.json` has never held a build.
+pub fn target_is_cold(target: &Path) -> bool {
+    !target.join(".rustc_info.json").exists()
+}
+
+/// A [`Guard`] kept in a thread until `cap` passes or this is dropped, whichever is first.
+pub struct Hold {
+    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Hold {
+    pub fn new(guard: Guard, cap: Duration) -> Hold {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let done = std::sync::Arc::new(AtomicBool::new(false));
+        let flag = done.clone();
+        let thread = std::thread::spawn(move || {
+            let t0 = std::time::Instant::now();
+            while !flag.load(Ordering::Relaxed) && t0.elapsed() < cap {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            drop(guard);
+        });
+        Hold { done, thread: Some(thread) }
+    }
+}
+
+impl Drop for Hold {
+    fn drop(&mut self) {
+        self.done.store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
     }
 }
 

@@ -148,6 +148,17 @@ summons a batch of aeons at the same moment therefore does not start them in loc
 sleep checks the stop flag every second, so a stopped aeon exits at once. The jitter is
 logged: `aeon: summon jitter 13s`.
 
+### 3.4a The cold-build slot
+
+A fourth pool, `cold` (`$SPIRA_RUN/cold-admission`, size 1, `SPIRA_COLD_PAR` overrides), admits one
+cold build host-wide. Before its model session starts, the aeon asks `admission::cold_reason`:
+the title names a toolchain change, the branch diff touches `rust-toolchain(.toml)`, `flake.lock`
+or the top-level `Cargo.lock`, or its build target has no `.rustc_info.json`. A cold session
+takes a cold lease and logs `waiting on cold-build slot (<why>): …` until the holder releases;
+a warm session never touches the pool. The lease is held for the session or `COLD_HOLD_SECS`
+(1200), whichever is shorter. The watchtower raises `cold-overlap` when two or more leases are
+held while host io `full avg60` is at the pressure threshold.
+
 ### 3.5 `spira-admit`
 
 ```
