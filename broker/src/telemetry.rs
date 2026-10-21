@@ -3,7 +3,7 @@
 use spira_otel::metrics::{self, MetricsSink};
 
 pub const COMPONENT: &str = "broker";
-pub const OPERATIONS: &[&str] = &["submit", "execute", "read", "token"];
+pub const OPERATIONS: &[&str] = &["read", "token"];
 
 pub fn sink() -> MetricsSink {
     metrics::sink_for(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), COMPONENT)
@@ -25,10 +25,10 @@ mod tests {
 
     #[test]
     fn a_run_pushes_its_count_and_seconds_labelled_by_component_operation_and_outcome() {
-        let (code, got) = fixture::capture(|s| run(s, Some("submit"), || 1));
+        let (code, got) = fixture::capture(|s| run(s, Some("read"), || 1));
         assert_eq!(code, 1);
         let runs = got.iter().find(|c| c.name == metrics::RUNS).expect("run count pushed");
-        assert_eq!((runs.label("component"), runs.label("operation"), runs.label("outcome")), (Some("broker"), Some("submit"), Some("error")));
+        assert_eq!((runs.label("component"), runs.label("operation"), runs.label("outcome")), (Some("broker"), Some("read"), Some("error")));
         assert!(got.iter().any(|c| c.name == metrics::RUN_DURATION), "run seconds pushed");
     }
 

@@ -59,7 +59,7 @@ fn run_main() -> ExitCode {
     let no_suspend = |_: &str| false; // unit-ensure.sh never read ctrl.sh's suspended set either.
     let ctx = Ctx { unit_dir: &dir, templates_dir: &templates_dir, host: &host, manifest: &manifest, systemctl: &systemctl, suspended: &no_suspend, world_halted, skip_migrate_watchers: false };
 
-    let r = ensure::run(&ctx, bootstrap::declared("SPIRA_BROKER_ENABLE").is_some_and(|v| v == "1"), retire);
+    let r = ensure::run(&ctx, retire);
     for e in &r.errors {
         eprintln!("unit-ensure: {e}");
     }
@@ -82,12 +82,6 @@ fn run_main() -> ExitCode {
     }
     for u in &r.enabled_started {
         println!("unit-ensure: enabled+started  {u}");
-    }
-    for u in &r.broker_enabled {
-        println!("unit-ensure: enabled+started  {u}");
-    }
-    for u in &r.broker_disabled {
-        println!("unit-ensure: DISABLED {u} (no producer; SPIRA_BROKER_ENABLE=1 to opt in)");
     }
 
     if r.errors.is_empty() {

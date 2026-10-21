@@ -2,7 +2,7 @@
 name = "broker"
 version = "1.0.0"
 edition = "2021"
-description = "Broker — aeons submit forge-write intents; a credentialed executor validates and executes them."
+description = "Broker — mints the GitHub App token and answers read-only forge queries."
 
 [dependencies]
 spira-config = { path = "../spira-config" }
