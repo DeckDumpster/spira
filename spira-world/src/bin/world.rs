@@ -808,7 +808,6 @@ fn cmd_status() -> i32 {
         }
     }
     println!("  {:<26} {}", "dolt-beads.service", sysctl::run(&["is-active", "dolt-beads.service"]));
-    println!("  {:<26} {}", "dolt-beads-test.service", sysctl::run(&["is-active", "dolt-beads-test.service"]));
 
     let landing = sysctl::run(&["is-active", "spira-landing.service"]);
     println!("  {:<26} {}", "spira-landing.service", if landing.is_empty() { "inactive".to_string() } else { landing });

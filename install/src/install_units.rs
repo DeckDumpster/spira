@@ -396,12 +396,31 @@ pub(crate) fn retire_dropped_units(ctx: &Ctx, rendered: &[(String, String, Strin
         }
     }
     retire_unledgered_units(ctx, &now, &mut keep, r);
+    retire_named_units(ctx, &now, r);
     if !r.retired.is_empty() {
         let _ = ctx.systemctl.daemon_reload();
     }
     let body: String = keep.iter().map(|u| format!("{u}\n")).collect();
     if fs::read_to_string(&ledger).ok().as_deref() != Some(body.as_str()) {
         let _ = fs::write(&ledger, body);
+    }
+}
+
+/// Units outside the `spira-*` namespace that an earlier release shipped and none does now; the
+/// ledger may never have listed them, and no name pattern marks them as Spira's.
+const RETIRED_UNITS: [&str; 1] = ["dolt-beads-test.service"];
+
+fn retire_named_units(ctx: &Ctx, now: &std::collections::BTreeSet<String>, r: &mut Report) {
+    for u in RETIRED_UNITS {
+        let path = ctx.unit_dir.join(u);
+        if now.contains(u) || r.retired.iter().any(|x| x == u) || is_masked(&path) || !path.exists() {
+            continue;
+        }
+        let _ = ctx.systemctl.disable_now(u);
+        let _ = fs::remove_dir_all(ctx.unit_dir.join(format!("{u}.d")));
+        if fs::remove_file(&path).is_ok() {
+            r.retired.push(u.to_string());
+        }
     }
 }
 
@@ -687,6 +706,29 @@ mod tests {
         }
         assert_eq!(r.drift, vec!["spira-other-test.timer".to_string()]);
         assert!(unit_dir.join("spira-other-test.timer").exists() && unit_dir.join("mine.service").exists());
+    }
+
+    #[test]
+    fn the_shared_test_dolt_unit_is_stopped_and_removed_though_no_ledger_names_it() {
+        let td = tempdir();
+        let unit_dir = td.join("units");
+        let tmpl_dir = td.join("templates");
+        fs::create_dir_all(&unit_dir).unwrap();
+        fs::create_dir_all(&tmpl_dir).unwrap();
+        write_templates(&tmpl_dir);
+        fs::write(unit_dir.join("dolt-beads-test.service"), "x").unwrap();
+
+        let manifest = tiny_manifest();
+        let h = host();
+        let sc = FakeSystemctl::default();
+        let no_suspend = |_: &str| false;
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        let r = run(&ctx);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        assert!(!unit_dir.join("dolt-beads-test.service").exists());
+        assert!(r.retired.contains(&"dolt-beads-test.service".to_string()), "{:?}", r.retired);
+        assert!(sc.disabled_now.borrow().contains(&"dolt-beads-test.service".to_string()));
+        assert!(run(&ctx).retired.is_empty(), "a second run has nothing left to retire");
     }
 
     #[test]

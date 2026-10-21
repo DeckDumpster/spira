@@ -1,7 +1,7 @@
 //! `testdb-mode-lint` — server-mode testdb requires a stated reason.
 //! Ported from `spira/testdb-mode-lint.sh` (sp-pppt0). Contract: DESIGN.md.
 //!
-//! Embedded Dolt resets in ~5s; server mode pays a real dolt-beads-test round trip, median
+//! Embedded Dolt resets in ~5s; server mode pays a real server round trip, median
 //! 110s. A suite that pins `SPIRA_TESTDB_MODE=server` without saying why is
 //! indistinguishable, at a glance, from one that needs the real engine. This fence requires
 //! a header, `# testdb-mode: server — <reason>`, anywhere in the file, with non-empty text

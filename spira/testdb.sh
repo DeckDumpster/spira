@@ -54,7 +54,7 @@ TESTDB_BASELINE="${TESTDB_BASELINE:-}"
 TESTDB_BIN="${TESTDB_BIN:-}"
 TESTDB_PRIVATE_DIR="${TESTDB_PRIVATE_DIR:-}"
 # TESTDB_MODE: "embedded" when using the embedded engine, "server" when using
-# dolt-beads-test.service. Empty before testdb_up is first called.
+# a private per-fixture server. Empty before testdb_up is first called.
 TESTDB_MODE="${TESTDB_MODE:-}"
 # TESTDB_FIXTURE: server mode only — the fixture directory `testenv testdb` owns (its
 # private server, data and workspace). Reset and drop hand it back to testenv.

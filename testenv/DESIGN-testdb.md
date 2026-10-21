@@ -18,7 +18,7 @@ database (the operator's rule: every stage is CPU/memory/IO bound, never Dolt-bo
 In every full run on 2026-09-29 (cert-batch-rust-074901, round-w1-111703, round-w2-125237)
 5–9 of the 19 server-mode suites hit their 600 s timeout in one window, and the ones that
 passed took 450–580 s against 72–406 s in isolation. The server-mode path of `testdb.sh`
-routed every such suite in a batch container to **one** `dolt-beads-test.service`:
+routed every such suite in a batch container to **one** shared test-dolt unit:
 
 * that unit runs under `CPUQuota=50%` and `Nice=10`. Sampled inside a batch container
   running the 19 server suites plus 31 others at maxpar 16 (2026-09-29, 17:22Z): the
@@ -129,8 +129,7 @@ Server mode in `testdb_up` becomes one call —
 Gone: `testdb_server_ensure`, the init lock, the init hash, `DOLT_PURGE_DROPPED_DATABASES`,
 `DROP DATABASE`, and the shared-server borrower branch (a borrower now builds a private
 fixture in ~0.2 s instead of resetting one database that other borrowers were using).
-`dolt-beads-test.service` is no longer started by `testdb.sh`; its unit is left installed
-for the operator's own use and is not changed here.
+The shared unit is no longer started by `testdb.sh`, and install now retires it.
 
 ### 2.4 Every suite gets a server fixture (sp-34ru2)
 

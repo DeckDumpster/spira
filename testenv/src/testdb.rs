@@ -1,6 +1,6 @@
 //! `testenv testdb` — server-mode test databases, one private Dolt sql-server per fixture,
 //! started from a pre-initialised template (DESIGN-testdb.md). Replaces the shared
-//! `dolt-beads-test.service` + init lock that serialised every server-mode suite (sp-v2lqd).
+//! test-dolt unit + init lock that serialised every server-mode suite (sp-v2lqd).
 //! Also the embedded-mode fixture lifecycle (init, baseline snapshot, borrow, reset, drop),
 //! moved out of `testdb.sh`'s bash so the script becomes a call-site shim (DESIGN-testdb.md
 //! §6, sp-k2oyn).
