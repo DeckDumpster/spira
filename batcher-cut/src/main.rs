@@ -939,6 +939,7 @@ fn finish_local_round(
     let refuse = |msg: String| {
         println!("{msg}");
         io::round_abandon(env_, repo, batch, &msg);
+        stop_on_repeat(env_, &repo.name, batch, &msg);
         io::write_local_verdict(env_, &repo.name, "red", &msg);
         io::tsd_append_round(
             env_,
@@ -956,7 +957,7 @@ fn finish_local_round(
         return refuse(format!("batcher {}: refused to land locally at {head} — {refusal}", repo.name));
     }
 
-    let on_record = io::round_members(env_, repo)?;
+    let on_record = io::round_members(env_, repo, batch)?;
     let kept: Vec<&str> = stable.members.iter().map(|m| m.id.as_str()).collect();
     if on_record.iter().map(String::as_str).collect::<Vec<_>>() != kept {
         return refuse(format!(
@@ -1049,6 +1050,7 @@ fn finish_local_round(
         Err(e) => println!("batcher {}: landed but the cut pause was not cleared: {e}", repo.name),
     }
     io::write_local_verdict(env_, &repo.name, "green", "");
+    pace::Files::new(&env_.run, &repo.name).clear_refusals();
     println!("batcher {}: landed locally at {head} — {} member(s)", repo.name, stable.members.len());
 
     let mut fields = vec![
@@ -1071,6 +1073,22 @@ fn finish_local_round(
     Ok(io::round_promote(env_, repo))
 }
 
+fn stop_on_repeat(env_: &Env, repo: &str, batch: &str, msg: &str) {
+    let files = pace::Files::new(&env_.run, repo);
+    match files.record_refusal(repo, &pace::refusal_key(msg, batch), now()) {
+        Ok(Some(page)) => {
+            println!("batcher {repo}: {page}");
+            if let Ok(inbox) = cfg("SPIRA_CONCIERGE_INBOX") {
+                use std::io::Write;
+                let line = format!("{} [watch:rounds] {page}\n", utc_stamp(now()));
+                let _ = std::fs::OpenOptions::new().create(true).append(true).open(&inbox).and_then(|mut f| f.write_all(line.as_bytes()));
+            }
+        }
+        Ok(None) => {}
+        Err(e) => println!("batcher {repo}: could not record the refusal: {e}"),
+    }
+}
+
 fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason) -> Result<(), String> {
     let end = cut_new_round_inner(env_, repo, pool, reason);
     io::reap_branches(repo, &format!("spira/batcher-attr/{}-*", repo.name));
@@ -1079,6 +1097,10 @@ fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReaso
 
 fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason) -> Result<(), String> {
     let round_start = now();
+    if pace::Files::new(&env_.run, &repo.name).stopped() {
+        println!("batcher {}: stopped after repeated refusals — no cut; rm rounds-pace/{}/stopped to lift", repo.name, repo.name);
+        return Ok(());
+    }
     io::fetch_base(repo)?;
     let base_sha = io::resolve_base_sha(repo)?;
     let base_moved_at = io::base_moved_at(env_, &repo.name, &base_sha);

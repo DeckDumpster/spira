@@ -12,6 +12,8 @@ pub const INFRA_MARKERS: &[&str] = &["NO RESULT", "OVER-CAP", "cannot check out"
 pub const STALE_AMI_MARKER: &str = "round AMI is stale";
 pub const BACKOFF_SECS: u64 = 600;
 pub const STOP_AFTER: u32 = 2;
+pub const REFUSAL_WINDOW_SECS: u64 = 1800;
+pub const REFUSAL_STOP_AFTER: u32 = 2;
 
 #[derive(Default, Clone, PartialEq, Debug)]
 pub struct State {
@@ -153,6 +155,57 @@ impl Files {
     }
 }
 
+#[derive(Default, Clone, PartialEq, Debug)]
+pub struct Refusals {
+    pub key: String,
+    pub at: u64,
+    pub count: u32,
+}
+
+/// A refusal's text with the per-round tokens (batch id, object ids) removed, so the same
+/// refusal on a fresh round compares equal.
+pub fn refusal_key(msg: &str, batch: &str) -> String {
+    msg.split_whitespace()
+        .filter(|t| !(t.len() >= 40 && t.chars().all(|c| c.is_ascii_hexdigit())) && !t.contains(batch))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub fn note_refusal(prev: &Refusals, key: &str, now: u64) -> Refusals {
+    let repeat = prev.key == key && now.saturating_sub(prev.at) <= REFUSAL_WINDOW_SECS;
+    Refusals { key: key.to_string(), at: now, count: if repeat { prev.count + 1 } else { 1 } }
+}
+
+impl Files {
+    fn refusals_path(&self) -> PathBuf {
+        self.dir.join("refusals")
+    }
+    pub fn load_refusals(&self) -> Refusals {
+        let text = fs::read_to_string(self.refusals_path()).unwrap_or_default();
+        let mut lines = text.lines();
+        let (at, count) = (lines.next().unwrap_or(""), lines.next().unwrap_or(""));
+        Refusals { at: at.parse().unwrap_or(0), count: count.parse().unwrap_or(0), key: lines.collect::<Vec<_>>().join(" ") }
+    }
+    pub fn clear_refusals(&self) {
+        let _ = fs::remove_file(self.refusals_path());
+    }
+    /// Records a refusal; at the second like it inside the window the repo is stopped and the
+    /// text to page is returned.
+    pub fn record_refusal(&self, repo: &str, key: &str, now: u64) -> Result<Option<String>, String> {
+        let next = note_refusal(&self.load_refusals(), key, now);
+        fs::create_dir_all(&self.dir).map_err(|e| format!("{}: {e}", self.dir.display()))?;
+        fs::write(self.refusals_path(), format!("{}\n{}\n{}\n", next.at, next.count, next.key)).map_err(|e| format!("rounds-pace refusals: {e}"))?;
+        if next.count < REFUSAL_STOP_AFTER {
+            return Ok(None);
+        }
+        self.touch(self.stop_file())?;
+        Ok(Some(format!("ROUNDS STOPPED {repo}: {} consecutive rounds refused for the same reason — rm the stopped file once fixed ({key})", next.count)))
+    }
+    pub fn stopped(&self) -> bool {
+        self.stop_file().exists()
+    }
+}
+
 pub struct Seams<'a> {
     pub repo: &'a str,
     pub now: u64,
@@ -230,6 +283,22 @@ mod tests {
     }
     fn inbox(d: &Path) -> String {
         fs::read_to_string(d.join("inbox.log")).unwrap_or_default()
+    }
+
+    #[test]
+    fn a_refusal_repeated_inside_the_window_stops_the_repo_once_and_a_new_reason_does_not() {
+        let t = dir("refusal");
+        let f = Files::new(t.path(), "a");
+        let key = refusal_key("refused at 0123456789abcdef0123456789abcdef01234567 — round r-9 holds [x] but built from [y]", "r-9");
+        assert!(!key.contains("0123456789abcdef"));
+        assert_eq!(f.record_refusal("a", &key, 1000).unwrap(), None);
+        assert!(!f.stopped(), "one abandon only records");
+        assert_eq!(f.record_refusal("a", "other", 1010).unwrap(), None);
+        let page = f.record_refusal("a", "other", 1040).unwrap().expect("the second like refusal alarms");
+        assert!(page.contains("ROUNDS STOPPED a") && f.stopped());
+        let g = Files::new(t.path(), "b");
+        g.record_refusal("b", "k", 1000).unwrap();
+        assert_eq!(g.record_refusal("b", "k", 1000 + REFUSAL_WINDOW_SECS + 1).unwrap(), None, "outside the window it is a first");
     }
 
     #[test]
