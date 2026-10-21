@@ -459,8 +459,9 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, St
     // A child of a bead that carries spira-open-children cannot land after it, so a
     // follow-up that needs this bead landed first is filed unparented and blocked on it.
     let after_landing = args.iter().any(|a| a == "--after-landing");
+    let body = split_reserved(args).stdin;
     let parent = if after_landing { None } else { Some(bead_id) };
-    match crate::bd::file_child(title, &persona, &repo, parent) {
+    match crate::bd::file_child(title, &persona, &repo, parent, body.as_deref()) {
         Ok(new_id) => match crate::cutover::cmd_create_bead(&[new_id.clone()], conn) {
             (0, _) if after_landing => match crate::bd::add_blocker(&new_id, bead_id) {
                 Ok(()) => (0, new_id),

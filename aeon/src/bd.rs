@@ -92,6 +92,8 @@ pub struct BeadRow {
     pub close_reason: Option<String>,
     #[serde(default)]
     pub created_by: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]

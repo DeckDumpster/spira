@@ -34,6 +34,7 @@ testdb_require "test-work-container.sh"
 
 REPO="$(cd "$HERE/.." && pwd)"
 TMP="$(mktemp -d)"
+printf '## Build\n\nA fixture change in spira/x.\n' > "$TMP/build.md"
 # Other suites draw from overlapping ranges concurrently; take the first port nothing answers on.
 PORT=""
 for _ in $(seq 1 50); do
@@ -150,7 +151,7 @@ export SPIRA_LC_SOCKET="$SOCK"
 tl_config SPIRA_LC_SOCKET="$SOCK"
 
 # ── one real bd bead, filed through bead.sh's own contract, and its lifecycle twin ───
-BID="$(bead.sh file "aeon semantic layer container-tier fixture" --for builder --repo testrepo 2>"$TMP/file.err")"
+BID="$(bead.sh file "aeon semantic layer container-tier fixture" --for builder --repo testrepo --body-file "$TMP/build.md" 2>"$TMP/file.err")"
 [ -n "$BID" ] || bail "bead.sh file did not return an id: $(cat "$TMP/file.err")"
 seed_bead "$BID"
 
@@ -200,7 +201,7 @@ PREREQ="prereq-fixture"
 seed_bead "$PREREQ"
 root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='CERTIFIED', tip='newtip', version=1 WHERE bead_id='$PREREQ'" >/dev/null 2>&1
 
-STK="$(bead.sh file "aeon semantic layer: stacked-base fixture" --for builder --repo testrepo)"
+STK="$(bead.sh file "aeon semantic layer: stacked-base fixture" --for builder --repo testrepo --body-file "$TMP/build.md")"
 seed_bead "$STK"
 root_sql --use-db spira_lifecycle sql -q \
     "UPDATE bead SET state='WORKING', holder='aeon-stacked', version=1, stack=JSON_OBJECT('$PREREQ','oldtip') WHERE bead_id='$STK'" >/dev/null 2>&1
@@ -227,7 +228,7 @@ out="$(cd "$AEON_WT" && work_as "$STK" submit 2>&1)"; rc=$?
 is "submit once the stack matches the prerequisite's current tip: applied (exit 0)" "0" "$rc"
 
 # ── done needs WORKING, not SUBMITTED — reset via a fresh bead for the rest ──────────
-DID="$(bead.sh file "aeon semantic layer: done/blocked/split fixture" --for builder --repo testrepo)"
+DID="$(bead.sh file "aeon semantic layer: done/blocked/split fixture" --for builder --repo testrepo --body-file "$TMP/build.md")"
 seed_bead "$DID"
 root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='aeon-test', version=1 WHERE bead_id='$DID'" >/dev/null 2>&1
 
@@ -239,7 +240,7 @@ want "done: reason carries the delivers evidence" "a document at wiki/x" "$row"
 
 # ── groomer done: Done only on a bead carrying the groom-trigger marker ──────────────
 groom_as() { SPIRA_WORK_BEAD_ID="$1" SPIRA_FAYTH="groomer" SPIRA_LC_SOCKET="$SOCK" "$WORK_BIN" "${@:2}"; }
-GWORK="$(bead.sh file "groomer claimed a work bead" --for builder --repo testrepo)"
+GWORK="$(bead.sh file "groomer claimed a work bead" --for builder --repo testrepo --body-file "$TMP/build.md")"
 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" label add "$GWORK" "${SPIRA_GROOMER_LABEL:-groom}" >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
 seed_bead "$GWORK"
 root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='aeon-groomer', version=1 WHERE bead_id='$GWORK'" >/dev/null 2>&1
@@ -250,7 +251,7 @@ want "groomer done on an unmarked work bead: READY again" "\"state\":\"READY\"" 
 nowant "groomer done on an unmarked work bead: never DONE" "\"state\":\"DONE\"" "$row"
 want "groomer done on an unmarked work bead: the refusal says why" "not a groom trigger" "$out"
 
-GTRIG="$(bead.sh file "groomer trigger fixture" --for builder --repo testrepo)"
+GTRIG="$(bead.sh file "groomer trigger fixture" --for builder --repo testrepo --body-file "$TMP/build.md")"
 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" label add "$GTRIG" groom-trigger >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
 seed_bead "$GTRIG"
 root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='aeon-groomer', version=1 WHERE bead_id='$GTRIG'" >/dev/null 2>&1
@@ -260,7 +261,7 @@ row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE be
 want "POSITIVE CONTROL: groomer done on a marked trigger: DONE" "\"state\":\"DONE\"" "$row"
 
 # ── blocked: a hold, plus an ask filed for the operator ──────────────────────────────
-BLID="$(bead.sh file "aeon semantic layer: blocked fixture" --for builder --repo testrepo)"
+BLID="$(bead.sh file "aeon semantic layer: blocked fixture" --for builder --repo testrepo --body-file "$TMP/build.md")"
 seed_bead "$BLID"
 before_unread="$(ls "$SPIRA_MAIL/operator/new" "$SPIRA_MAIL/concierge/new" 2>/dev/null | grep -c .)"
 out="$(work_as "$BLID" blocked "which persona owns this?" --default "builder" 2>&1)"; rc=$?
@@ -273,7 +274,7 @@ after_unread="$(ls "$SPIRA_MAIL/operator/new" "$SPIRA_MAIL/concierge/new" 2>/dev
     || bad "blocked: an ask landed in the operator's mailbox" "count did not increase ($before_unread -> $after_unread)"
 
 # ── file-followup: filed through bead.sh's contract, parent set by the layer ─────────
-out="$(work_as "$BID" file-followup "a followup filed by the container-tier suite" --repo testrepo 2>&1)"; rc=$?
+out="$(work_as "$BID" file-followup "a followup filed by the container-tier suite" --repo testrepo --body-file "$TMP/build.md" 2>&1)"; rc=$?
 is "file-followup: exits 0" "0" "$rc"
 new_id="$(printf '%s' "$out" | tail -n1 | tr -d '[:space:]')"
 [ -n "$new_id" ] || bail "file-followup produced no new bead id"
@@ -287,7 +288,7 @@ is "split without --repo: refused (nonzero)" "1" "$ok_ref"
 want "split without --repo: says --repo is required" "--repo" "$out"
 
 # ── file-followup --after-landing: unparented, blocked on the bound bead ─────────────
-out="$(work_as "$BID" file-followup "a followup that needs the parent landed" --repo testrepo --after-landing 2>&1)"; rc=$?
+out="$(work_as "$BID" file-followup "a followup that needs the parent landed" --repo testrepo --body-file "$TMP/build.md" --after-landing 2>&1)"; rc=$?
 is "after-landing: exits 0" "0" "$rc"
 al_id="$(printf '%s' "$out" | tail -n1 | tr -d '[:space:]')"
 [ -n "$al_id" ] || bail "after-landing produced no new bead id"
@@ -297,11 +298,11 @@ want   "after-landing: blocked on the bound bead" "\"id\": \"$BID\"" "$al_json"
 want   "after-landing: the edge is a blocking one" "\"dependency_type\": \"blocks\"" "$al_json"
 
 # ── split: same mechanism, its own bead ───────────────────────────────────────────────
-out="$(work_as "$BID" split "a split piece filed by the container-tier suite" --repo testrepo 2>&1)"; rc=$?
+out="$(work_as "$BID" split "a split piece filed by the container-tier suite" --repo testrepo --body-file "$TMP/build.md" 2>&1)"; rc=$?
 is "split: exits 0" "0" "$rc"
 
 # ── superseded-by: a hold plus a confirmation ask, never bd supersede directly ───────
-SBID="$(bead.sh file "aeon semantic layer: superseded-by fixture" --for builder --repo testrepo)"
+SBID="$(bead.sh file "aeon semantic layer: superseded-by fixture" --for builder --repo testrepo --body-file "$TMP/build.md")"
 seed_bead "$SBID"
 out="$(work_as "$SBID" superseded-by "$BID" 2>&1)"; rc=$?
 is "superseded-by: exits 0" "0" "$rc"

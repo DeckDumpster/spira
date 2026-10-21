@@ -1830,7 +1830,7 @@ fn file_builder_landing_red(env: &Env, bead_sh: &str, open: &dyn Fn(&str) -> boo
     }
     let title = format!("Landing ref red ({reason}) on {} — nothing can land", suites.join(","));
     let body = format!(
-        "The declared tiers are red on {base}, the landing ref itself, so no member can be blamed and nothing lands until it is green.\n\nDeliverable: fix the red on the landing ref in this repository and land the fix.\n\n{}",
+        "The declared tiers are red on {base}, the landing ref itself, so no member can be blamed and nothing lands until it is green.\n\n## Build\n\nFix the red on the landing ref in this repository and land the fix.\n\n{}",
         batcher::core::base_fail_body(&repo.name, base, &suites, evidence)
     );
     let tmp_dir = env.run.join("tmp");

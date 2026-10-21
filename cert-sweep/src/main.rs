@@ -180,7 +180,7 @@ fn file_bead(title: &str, body: &str, priority: u64, run: &Path) -> Result<Strin
     let dir = run.join("tmp");
     fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let tmp = dir.join(format!("cert-sweep-{}-{}.txt", std::process::id(), now()));
-    fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    fs::write(&tmp, format!("{body}\n\n## Build\n\nFix the red the certification sweep reported above, in this repository, and land the fix.\n")).map_err(|e| format!("{}: {e}", tmp.display()))?;
     let out = spira_config::bounded::bounded("bead.sh")
         .envs(spira_config::release_env::child_path_env_for_process())
         .args(["file", title, "--for", "builder", "--repo", "spira", "--priority", &priority.to_string(), "--json", "--body-file"])

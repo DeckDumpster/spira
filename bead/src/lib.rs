@@ -213,6 +213,35 @@ pub fn lint_judge(
     (out.len() as u32, out)
 }
 
+/// The heading a bead filed for a persona that requires a build spec must carry.
+pub const BUILD_HEADING: &str = "## Build";
+
+/// Whether `text` carries a build spec: a `## Build` heading with at least one non-blank line
+/// under it before the next heading. An outcome with no named deliverable is design work.
+pub fn has_build_spec(text: &str) -> bool {
+    let mut lines = text.lines();
+    while let Some(l) = lines.next() {
+        if l.trim_end().eq_ignore_ascii_case(BUILD_HEADING) {
+            for body in lines.by_ref() {
+                let b = body.trim();
+                if b.starts_with('#') {
+                    break;
+                }
+                if !b.is_empty() {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+    false
+}
+
+/// Whether a bead carrying `labels` is builder work: every `builder_labels` token is present.
+pub fn is_builder_bead(labels: &[String], builder_labels: &[String]) -> bool {
+    !builder_labels.is_empty() && builder_labels.iter().all(|b| labels.iter().any(|l| l == b))
+}
+
 /// The partition vocabulary `_bead_lint` itself computes from the chamber: every fayth's
 /// `FAYTH_LABELS`, comma-split, trimmed, de-duplicated, excluding the empty string and
 /// (when non-empty) `scope_label`. `personas` is `(name, raw FAYTH_LABELS)` pairs, already
@@ -258,6 +287,7 @@ pub struct ShowRow {
     pub labels: Vec<String>,
     pub status: String,
     pub issue_type: String,
+    pub description: String,
 }
 
 /// Parses one `bd show --json` payload — an object, or a one-element array of one (both
@@ -287,10 +317,16 @@ pub fn parse_show_row(json: &str) -> Option<ShowRow> {
         .and_then(|s| s.as_str())
         .unwrap_or("")
         .to_string();
+    let description = obj
+        .get("description")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
     Some(ShowRow {
         labels,
         status,
         issue_type,
+        description,
     })
 }
 
@@ -731,6 +767,16 @@ mod tests {
     }
 
     #[test]
+    fn a_build_spec_is_a_build_heading_with_content_under_it() {
+        assert!(has_build_spec("Why.\n\n## Build\n\nA proxy in spira/foo.\n"));
+        assert!(has_build_spec("## Build\nx\n## Acceptance\ny"));
+        assert!(!has_build_spec("Outcome: no failed requests, whatever the mechanism."));
+        assert!(!has_build_spec("## Build\n\n## Acceptance\ny"));
+        assert!(!has_build_spec("## Build\n   \n"));
+        assert!(!has_build_spec("Rebuild the ## Build step"));
+    }
+
+    #[test]
     fn parse_show_row_none_on_garbage() {
         assert!(parse_show_row("not json").is_none());
     }
@@ -834,7 +880,7 @@ mod tests {
 
     #[test]
     fn a_stack_base_must_be_live_same_repo_work() {
-        let row = |ty: &str, st: &str, l: &str| ShowRow { labels: vec![l.into()], status: st.into(), issue_type: ty.into() };
+        let row = |ty: &str, st: &str, l: &str| ShowRow { labels: vec![l.into()], status: st.into(), issue_type: ty.into(), description: String::new() };
         assert_eq!(stack_after_refusal("sp-a", Some(&row("task", "open", "repo:r")), false, "r"), None);
         assert!(stack_after_refusal("sp-a", None, false, "r").is_some());
         assert!(stack_after_refusal("sp-a", Some(&row("epic", "open", "repo:r")), false, "r").is_some());

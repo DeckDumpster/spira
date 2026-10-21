@@ -241,7 +241,11 @@ pub fn build_request_with_body(bound: &str, verb: &str, verb_args: &[String], ti
             // layer files as the same persona the aeon itself is running as, the same
             // identity --actor already carries.
             req.extend(verb_args.iter().cloned());
-            req.extend(["--for".to_string(), actor.to_string(), "--actor".to_string(), actor.to_string()]);
+            req.extend(["--for".to_string(), actor.to_string()]);
+            if let Some(b) = body {
+                req.extend(["--stdin".to_string(), b.to_string()]);
+            }
+            req.extend(["--actor".to_string(), actor.to_string()]);
         }
         "done" | "blocked" | "superseded-by" => {
             req.extend(verb_args.iter().cloned());
@@ -336,6 +340,12 @@ mod tests {
     fn build_request_file_followup_infers_persona_from_actor() {
         let req = build_request("sp-3m1p9", "file-followup", &["a title".into()], None, "builder").unwrap();
         assert_eq!(req, vec!["work", "sp-3m1p9", "file-followup", "a title", "--for", "builder", "--actor", "builder"]);
+    }
+
+    #[test]
+    fn file_followup_carries_a_stdin_body() {
+        let req = build_request_with_body("sp-3m1p9", "file-followup", &["t".into(), "--body-file".into(), "-".into()], None, "builder", Some("## Build\nx")).unwrap();
+        assert_eq!(req, vec!["work", "sp-3m1p9", "file-followup", "t", "--body-file", "-", "--for", "builder", "--stdin", "## Build\nx", "--actor", "builder"]);
     }
 
     fn v(xs: &[&str]) -> Vec<String> {

@@ -59,32 +59,36 @@ run_lint() {              # run_lint <args...> -> sets LINT_OUT and LINT_RC from
 }
 
 testdb_seed <<'JSONL'
-{"id":"sp-lint-mix-claim","title":"claimable","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-09-25T00:00:00Z"}
+{"id":"sp-lint-mix-claim","title":"claimable","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-09-25T00:00:00Z","description":"Why.\n\n## Build\n\nThe change, in spira/x.\n"}
 {"id":"sp-lint-mix-noloop","title":"no-loop","status":"open","issue_type":"task","labels":["repo:spira","no-loop"],"updated_at":"2026-09-25T00:00:00Z"}
 {"id":"sp-lint-mix-nopart","title":"broken: no partition","status":"open","issue_type":"task","labels":["repo:spira"],"updated_at":"2026-09-25T00:00:00Z"}
-{"id":"sp-lint-mix-norepo","title":"broken: no repo","status":"open","issue_type":"task","labels":["plan"],"updated_at":"2026-09-25T00:00:00Z"}
+{"id":"sp-lint-mix-norepo","title":"broken: no repo","status":"open","issue_type":"task","labels":["plan"],"updated_at":"2026-09-25T00:00:00Z","description":"Why.\n\n## Build\n\nThe change, in spira/x.\n"}
 {"id":"sp-lint-mix-ev.1","title":"State change: branch → spira/sp-lint-mix-ev","status":"closed","issue_type":"event","labels":[],"updated_at":"2026-09-25T00:00:00Z"}
-{"id":"sp-lint-mix-brgood","title":"branch label names itself","status":"open","issue_type":"task","labels":["repo:spira","plan","branch:spira/sp-lint-mix-brgood"],"updated_at":"2026-09-25T00:00:00Z"}
-{"id":"sp-lint-mix-brbad","title":"branch label names another bead","status":"open","issue_type":"task","labels":["repo:spira","plan","branch:spira/sp-lint-mix-brgood"],"updated_at":"2026-09-25T00:00:00Z"}
+{"id":"sp-lint-mix-brgood","title":"branch label names itself","status":"open","issue_type":"task","labels":["repo:spira","plan","branch:spira/sp-lint-mix-brgood"],"updated_at":"2026-09-25T00:00:00Z","description":"Why.\n\n## Build\n\nThe change, in spira/x.\n"}
+{"id":"sp-lint-mix-brbad","title":"branch label names another bead","status":"open","issue_type":"task","labels":["repo:spira","plan","branch:spira/sp-lint-mix-brgood"],"updated_at":"2026-09-25T00:00:00Z","description":"Why.\n\n## Build\n\nThe change, in spira/x.\n"}
 {"id":"sp-lint-ask-a","title":"ask a","status":"open","issue_type":"decision","labels":["needs-op-test","overseer"],"updated_at":"2026-09-25T00:00:00Z"}
 {"id":"sp-lint-ask-b","title":"ask b","status":"open","issue_type":"decision","labels":["needs-op-test","overseer"],"updated_at":"2026-09-25T00:00:00Z","dependencies":[{"issue_id":"sp-lint-ask-b","depends_on_id":"sp-lint-ask-a","type":"blocks"}]}
 {"id":"sp-lint-ask-rel-a","title":"ask rel a","status":"open","issue_type":"decision","labels":["needs-op-test","overseer"],"updated_at":"2026-09-25T00:00:00Z"}
 {"id":"sp-lint-ask-rel-b","title":"ask rel b","status":"open","issue_type":"decision","labels":["needs-op-test","overseer"],"updated_at":"2026-09-25T00:00:00Z","dependencies":[{"issue_id":"sp-lint-ask-rel-b","depends_on_id":"sp-lint-ask-rel-a","type":"relates-to"}]}
-{"id":"sp-lint-ask-work","title":"work bead deliberately blocking an ask","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-09-25T00:00:00Z"}
+{"id":"sp-lint-ask-work","title":"work bead deliberately blocking an ask","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-09-25T00:00:00Z","description":"Why.\n\n## Build\n\nThe change, in spira/x.\n"}
 {"id":"sp-lint-ask-target","title":"ask blocked by a work bead","status":"open","issue_type":"decision","labels":["needs-op-test","overseer"],"updated_at":"2026-09-25T00:00:00Z","dependencies":[{"issue_id":"sp-lint-ask-target","depends_on_id":"sp-lint-ask-work","type":"blocks"}]}
 {"id":"sp-lint-inc-alarm","title":"recurring alarm","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira","no-loop"],"updated_at":"2026-09-25T00:00:00Z"}
-{"id":"sp-lint-inc-work","title":"work bead wrongly blocked on the alarm","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-09-25T00:00:00Z","dependencies":[{"issue_id":"sp-lint-inc-work","depends_on_id":"sp-lint-inc-alarm","type":"blocks"}]}
-{"id":"sp-lint-inc-rel","title":"work bead related to the alarm, not blocked","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-09-25T00:00:00Z","dependencies":[{"issue_id":"sp-lint-inc-rel","depends_on_id":"sp-lint-inc-alarm","type":"relates-to"}]}
-{"id":"sp-lint-work-a","title":"ordinary work a","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-09-25T00:00:00Z"}
-{"id":"sp-lint-work-b","title":"ordinary work b, blocked on work a","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-09-25T00:00:00Z","dependencies":[{"issue_id":"sp-lint-work-b","depends_on_id":"sp-lint-work-a","type":"blocks"}]}
+{"id":"sp-lint-inc-work","title":"work bead wrongly blocked on the alarm","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-09-25T00:00:00Z","dependencies":[{"issue_id":"sp-lint-inc-work","depends_on_id":"sp-lint-inc-alarm","type":"blocks"}],"description":"Why.\n\n## Build\n\nThe change, in spira/x.\n"}
+{"id":"sp-lint-inc-rel","title":"work bead related to the alarm, not blocked","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-09-25T00:00:00Z","dependencies":[{"issue_id":"sp-lint-inc-rel","depends_on_id":"sp-lint-inc-alarm","type":"relates-to"}],"description":"Why.\n\n## Build\n\nThe change, in spira/x.\n"}
+{"id":"sp-lint-work-a","title":"ordinary work a","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-09-25T00:00:00Z","description":"Why.\n\n## Build\n\nThe change, in spira/x.\n"}
+{"id":"sp-lint-work-b","title":"ordinary work b, blocked on work a","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-09-25T00:00:00Z","dependencies":[{"issue_id":"sp-lint-work-b","depends_on_id":"sp-lint-work-a","type":"blocks"}],"description":"Why.\n\n## Build\n\nThe change, in spira/x.\n"}
 {"id":"sp-lint-rem-bad","title":"incident, remedy only related","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira","no-loop"],"updated_at":"2026-10-01T00:00:00Z","dependencies":[{"issue_id":"sp-lint-rem-bad","depends_on_id":"sp-lint-rem-fix1","type":"relates-to"}]}
-{"id":"sp-lint-rem-fix1","title":"remedy one","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z"}
+{"id":"sp-lint-rem-fix1","title":"remedy one","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z","description":"Why.\n\n## Build\n\nThe change, in spira/x.\n"}
 {"id":"sp-lint-rem-good","title":"incident, remedy blocks","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira","no-loop"],"updated_at":"2026-10-01T00:00:00Z","dependencies":[{"issue_id":"sp-lint-rem-good","depends_on_id":"sp-lint-rem-fix2","type":"blocks"}]}
-{"id":"sp-lint-rem-fix2","title":"remedy two","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z"}
+{"id":"sp-lint-rem-fix2","title":"remedy two","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z","description":"Why.\n\n## Build\n\nThe change, in spira/x.\n"}
 {"id":"sp-lint-rem-done","title":"incident, remedy landed","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira","no-loop"],"updated_at":"2026-10-01T00:00:00Z","dependencies":[{"issue_id":"sp-lint-rem-done","depends_on_id":"sp-lint-rem-fix3","type":"relates-to"}]}
 {"id":"sp-lint-rem-fix3","title":"remedy three, closed","status":"closed","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z"}
 {"id":"sp-lint-fil-inc","title":"incident to remedy","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira","no-loop"],"updated_at":"2026-10-01T00:00:00Z"}
-{"id":"sp-lint-fil-work","title":"ordinary parent","status":"open","issue_type":"task","labels":["spira","repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z"}
+{"id":"sp-lint-fil-work","title":"ordinary parent","status":"open","issue_type":"task","labels":["spira","repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z","description":"Why.\n\n## Build\n\nThe change, in spira/x.\n"}
+{"id":"sp-lint-spec-none","title":"builder bead, outcome only","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z","description":"A routine deploy causes no failed requests, whatever the mechanism."}
+{"id":"sp-lint-spec-empty","title":"builder bead, empty Build section","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z","description":"Why.\n\n## Build\n\n## Acceptance\nx\n"}
+{"id":"sp-lint-spec-done","title":"builder bead already closed without a spec","status":"closed","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z"}
+{"id":"sp-lint-spec-noloop","title":"no-loop bead is not builder work","status":"open","issue_type":"task","labels":["repo:spira","no-loop"],"updated_at":"2026-10-01T00:00:00Z","description":"x"}
 JSONL
 
 run_lint --all
@@ -98,6 +102,17 @@ nowant "--all does not report the event bead"              "sp-lint-mix-ev" "$LI
 nowant "--all does not report the self-named branch label" "sp-lint-mix-brgood: branch:" "$LINT_OUT"
 want   "--all reports the branch label naming another bead" \
        "sp-lint-mix-brbad: branch: label names sp-lint-mix-brgood, not itself" "$LINT_OUT"
+
+want   "--all reports an outcome-only builder bead" "sp-lint-spec-none: no build spec" "$ALL_OUT"
+want   "--all reports a builder bead whose Build section is empty" "sp-lint-spec-empty: no build spec" "$ALL_OUT"
+nowant "--all does not report a builder bead that has a Build section" "sp-lint-mix-claim: no build spec" "$ALL_OUT"
+nowant "--all does not report a closed spec-less bead" "sp-lint-spec-done: no build spec" "$ALL_OUT"
+nowant "--all does not report a bead outside the builder partition" "sp-lint-spec-noloop: no build spec" "$ALL_OUT"
+
+run_lint sp-lint-spec-none
+wantrc "a spec-less builder bead exits 1 alone" "1" "$LINT_RC"
+run_lint sp-lint-mix-claim
+wantrc "a builder bead with a Build section passes alone (positive control)" "0" "$LINT_RC"
 
 run_lint sp-lint-mix-nonexistent
 wantrc "nonexistent id exits 1"    "1" "$LINT_RC"
@@ -177,8 +192,9 @@ file_under() {            # file_under <parent> -> FILE_OUT (new id), FILE_RC
     tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
         SPIRA_CHAMBER="$HERE/chamber" SPIRA_INCIDENT_LABEL="incident-test" \
         SPIRA_REPO_MAP="$TMP/repos.tbl"
+    printf 'Remedy.\n\n## Build\n\nThe fix, in spira/x.\n' > "$TMP/remedy.md"
     FILE_OUT="$(SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" SPIRA_BEAD_LANE_OVERRIDE=1 \
-        bead.sh file "remedy for $1" --for builder --repo harness --parent "$1" 2>"$TMP/file.err")"
+        bead.sh file "remedy for $1" --for builder --repo harness --parent "$1" --body-file "$TMP/remedy.md" 2>"$TMP/file.err")"
     FILE_RC=$?
 }
 blocks_of() {             # blocks_of <id> -> space-separated ids it blocks-depends on
