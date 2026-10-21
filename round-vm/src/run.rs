@@ -205,9 +205,15 @@ else
 fi
 cd ~/round-work
 nix_bin=/nix/var/nix/profiles/default/bin
-if ! PATH="$nix_bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" nix --extra-experimental-features 'nix-command flakes' build "path:$HOME/round-work#spira-env" -o "$HOME/spira-env" >&2; then
-    echo "round-vm: cannot build spira-env from the round's flake.lock" >&2
-    exit 3
+flake_ref="path:$HOME/round-work#spira-env"
+build_env() { PATH="$nix_bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" nix --extra-experimental-features 'nix-command flakes' build "$flake_ref" -o "$HOME/spira-env" >&2; }
+if ! build_env; then
+    echo "round-vm: spira-env build failed for flake ref $flake_ref (git checkout: $(git -C ~/round-work rev-parse --short HEAD 2>&1); flake.nix on disk: $([ -f ~/round-work/flake.nix ] && echo present || echo MISSING)) — dropping nix's fetcher cache and retrying once" >&2
+    rm -f ~/.cache/nix/fetcher-cache-v*.sqlite*
+    if ! build_env; then
+        echo "round-vm: cannot build spira-env from the round's flake.lock (flake ref $flake_ref)" >&2
+        exit 3
+    fi
 fi
 env_path="$(readlink -f "$HOME/spira-env")"
 export PATH="$HOME/spira-env/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -1923,6 +1929,57 @@ mod tests {
     fn the_round_builds_once_in_a_clean_tree_with_testenvs_own_flags() {
         assert!(!REMOTE_SCRIPT.contains("ln -sfn"), "a target symlink dirties the tree and dangles in the container");
         assert!(REMOTE_SCRIPT.contains(&format!("cargo build -q --profile release --workspace {}", spira_config::build::one_shot_words("release"))));
+    }
+
+    fn env_build_step() -> String {
+        let a = REMOTE_SCRIPT.find("nix_bin=").unwrap();
+        let b = REMOTE_SCRIPT.find("env_path=").unwrap();
+        format!("set -uo pipefail\n{}", &REMOTE_SCRIPT[a..b])
+    }
+
+    fn run_env_build(fail_first: usize, always_fail: bool) -> (i32, String) {
+        let tmp = testkit::TempDir::new("rvm-envbuild");
+        let d = tmp.path().to_path_buf();
+        let nixdir = d.join("nixbin");
+        std::fs::create_dir_all(&nixdir).unwrap();
+        std::fs::create_dir_all(d.join("round-work")).unwrap();
+        std::fs::create_dir_all(d.join(".cache/nix")).unwrap();
+        std::fs::write(d.join(".cache/nix/fetcher-cache-v4.sqlite"), "x").unwrap();
+        std::fs::write(d.join("round-work/flake.nix"), "{}").unwrap();
+        testkit::write_exe(
+            nixdir.join("nix"),
+            "#!/bin/sh\nif [ -e \"$HOME/.cache/nix/fetcher-cache-v4.sqlite\" ] && [ \"$FAIL\" != 0 ]; then echo \"error: path '/nix/store/x-source/flake.nix' does not exist\" >&2; exit 1; fi\nif [ \"$ALWAYS\" = 1 ]; then exit 1; fi\nexit 0\n",
+        );
+        let script = env_build_step().replace("nix_bin=/nix/var/nix/profiles/default/bin", &format!("nix_bin={}", nixdir.display()));
+        let out = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(&script)
+            .env_clear()
+            .env("HOME", &d)
+            .env("PATH", "/usr/bin:/bin")
+            .env("FAIL", fail_first.to_string())
+            .env("ALWAYS", if always_fail { "1" } else { "0" })
+            .output()
+            .unwrap();
+        (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).into_owned())
+    }
+
+    #[test]
+    fn a_stale_fetcher_cache_is_dropped_and_the_env_build_retried_naming_its_flake_ref() {
+        let (code, err) = run_env_build(1, false);
+        assert_eq!(code, 0, "{err}");
+        assert!(err.contains("flake ref path:") && err.contains("round-work#spira-env"), "{err}");
+        assert!(err.contains("flake.nix on disk: present"), "{err}");
+    }
+
+    #[test]
+    fn a_clean_env_build_does_not_retry_and_a_persistent_failure_names_the_flake_ref() {
+        let (code, err) = run_env_build(0, false);
+        assert_eq!(code, 0);
+        assert!(!err.contains("retrying"), "{err}");
+        let (code, err) = run_env_build(0, true);
+        assert_eq!(code, 3, "{err}");
+        assert!(err.contains("cannot build spira-env from the round's flake.lock (flake ref path:"), "{err}");
     }
 
     #[test]
