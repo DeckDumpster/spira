@@ -906,18 +906,13 @@ fn block(t: &T, id: &str, by: &[&str]) {
 }
 
 #[test]
-fn open_refuses_a_member_whose_blocker_has_not_landed_and_names_it() {
+fn open_skips_a_member_whose_blocker_has_not_landed_and_names_it() {
     let t = round_world();
     block(&t, "sp-b", &["sp-eeg"]);
-    assert_eq!(
-        t.run(&["round", "open", "--members", "sp-a,sp-b"]),
-        0,
-        "{}",
-        t.err()
-    );
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
     let o = t.out();
     assert!(
-        o.contains("sp-b: blocked by sp-eeg")
+        o.contains("skip — sp-b: depends on sp-eeg (")
             && o.contains("members=sp-a:ta")
             && !o.contains("sp-b:tb"),
         "{o}"
@@ -925,32 +920,14 @@ fn open_refuses_a_member_whose_blocker_has_not_landed_and_names_it() {
 }
 
 #[test]
-fn open_admits_a_member_whose_blocker_is_merged_ahead_of_it_in_the_round() {
+fn open_skips_a_member_whose_blocker_is_only_a_co_member_of_the_round() {
     let t = round_world();
     block(&t, "sp-b", &["sp-a"]);
-    assert_eq!(
-        t.run(&["round", "open", "--members", "sp-a,sp-b"]),
-        0,
-        "{}",
-        t.err()
-    );
-    assert!(t.out().contains("members=sp-a:ta sp-b:tb"), "{}", t.out());
-}
-
-#[test]
-fn open_refuses_a_member_listed_ahead_of_its_blocker() {
-    let t = round_world();
-    block(&t, "sp-a", &["sp-b"]);
-    assert_eq!(
-        t.run(&["round", "open", "--members", "sp-a,sp-b"]),
-        0,
-        "{}",
-        t.err()
-    );
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    let o = t.out();
     assert!(
-        t.out().contains("sp-a: blocked by sp-b") && t.out().contains("members=sp-b:tb"),
-        "{}",
-        t.out()
+        o.contains("skip — sp-b: depends on sp-a (") && !o.contains("sp-b:tb"),
+        "{o}"
     );
 }
 
