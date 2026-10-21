@@ -13,6 +13,8 @@ const WEEK: i64 = 7 * DAY;
 const STRIP_MAX: usize = 120;
 const STALE_INTERVALS: i64 = 3;
 const MIN_RUNS_FOR_INTERVAL: usize = 3;
+const TRANSIENT_WINDOW: i64 = 2 * DAY;
+const RESTART_FLAP: u32 = 5;
 
 pub struct Sources {
     pub run: String,
@@ -39,6 +41,11 @@ pub struct Live {
     pub next_at: Option<i64>,
     pub last_trigger: String,
     pub target: String,
+    pub description: String,
+    pub fragment: String,
+    pub restarts: u32,
+    pub exec_paths: Vec<String>,
+    pub fixed_at: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -53,7 +60,9 @@ pub enum Verdict {
     Failing,
     Late,
     NeverRan,
+    Fixed,
     Healthy,
+    Disabled,
     OneOff,
 }
 
@@ -63,7 +72,9 @@ impl Verdict {
             Verdict::Failing => "failing",
             Verdict::Late => "late",
             Verdict::NeverRan => "never ran",
+            Verdict::Fixed => "fixed, awaiting run",
             Verdict::Healthy => "healthy",
+            Verdict::Disabled => "disabled (config)",
             Verdict::OneOff => "one-off",
         }
     }
@@ -73,7 +84,9 @@ impl Verdict {
             Verdict::Failing => "failing",
             Verdict::Late => "late",
             Verdict::NeverRan => "never",
+            Verdict::Fixed => "fixed",
             Verdict::Healthy => "healthy",
+            Verdict::Disabled => "disabled",
             Verdict::OneOff => "oneoff",
         }
     }
@@ -107,6 +120,7 @@ pub struct Row {
     pub verdict: Verdict,
     pub failing_since: Option<i64>,
     pub failure: Option<Failure>,
+    pub restarts: u32,
 }
 
 pub struct Snapshot {
@@ -174,6 +188,10 @@ pub fn parse_show(text: &str) -> BTreeMap<String, Live> {
                 "UnitFileState" => l.unit_file = v.to_string(),
                 "LastTriggerUSec" => l.last_trigger = v.to_string(),
                 "Unit" => l.target = v.to_string(),
+                "Description" => l.description = v.to_string(),
+                "FragmentPath" => l.fragment = v.to_string(),
+                "NRestarts" => l.restarts = v.parse().unwrap_or(0),
+                "ExecStart" => l.exec_paths = exec_paths(v),
                 _ => {}
             }
         }
@@ -182,6 +200,25 @@ pub fn parse_show(text: &str) -> BTreeMap<String, Live> {
         }
     }
     out
+}
+
+/// Absolute paths in the `argv[]=` of an `ExecStart={ path=… ; argv[]=… ; … }` value.
+pub fn exec_paths(v: &str) -> Vec<String> {
+    let Some((_, argv)) = v.split_once("argv[]=") else { return Vec::new() };
+    argv.split(" ;").next().unwrap_or("").split_whitespace().filter(|t| t.starts_with('/')).map(str::to_string).collect()
+}
+
+fn names_spira(s: &str) -> bool {
+    let s = s.to_lowercase();
+    s.contains("spira") || s.contains("concierge")
+}
+
+fn os_owned(name: &str, l: &Live) -> bool {
+    !names_spira(name) && !names_spira(&l.description) && ["/usr/", "/lib/"].iter().any(|p| l.fragment.starts_with(p))
+}
+
+fn off(file: &str) -> bool {
+    matches!(file, "masked" | "masked-runtime" | "disabled")
 }
 
 pub struct Rule {
@@ -259,6 +296,7 @@ pub fn build(now: i64, rules: &[Rule], names: &[String], live: &BTreeMap<String,
     let mut groups: BTreeMap<String, (&'static str, Vec<String>)> = BTreeMap::new();
     for unit in units {
         let (label, kind) = if standalone.contains(&unit) { (unit.clone(), "plain") } else { family_of(rules, &unit) };
+        let kind = if kind == "plain" && live.get(&unit).is_some_and(|l| os_owned(&unit, l)) { "system" } else { kind };
         groups.entry(label).or_insert((kind, Vec::new())).1.push(unit);
     }
     let mut rows: Vec<Row> = groups
@@ -291,10 +329,20 @@ pub fn build(now: i64, rules: &[Rule], names: &[String], live: &BTreeMap<String,
             };
             let failed_now = own.is_some_and(|l| l.active == "failed");
             let latest_bad = ex7.last().is_some_and(|e| !is_ok(e));
+            let running_now = own.is_some_and(|l| l.active == "active");
+            let disabled = !grouped && !timer_active && !running_now && (off(own.map_or("", |l| l.unit_file.as_str())) || off(timer.as_ref().map_or("", |t| t.unit_file.as_str())));
+            let long_running = !grouped && !is_timer && timer.is_none() && own.is_some_and(|l| l.active == "active" && l.sub == "running");
+            let restarts = own.map_or(0, |l| l.restarts);
+            let failed_at = ex7.last().filter(|e| !is_ok(e)).map(|e| e.t);
+            let fixed = !grouped && matches!((own.and_then(|l| l.fixed_at), failed_at), (Some(f), Some(t)) if f > t);
             let verdict = if kind == "session" {
                 Verdict::OneOff
+            } else if disabled {
+                Verdict::Disabled
+            } else if long_running {
+                if restarts >= RESTART_FLAP { Verdict::Failing } else { Verdict::Healthy }
             } else if failed_now || latest_bad {
-                Verdict::Failing
+                if fixed { Verdict::Fixed } else { Verdict::Failing }
             } else if stale {
                 Verdict::Late
             } else if ex7.is_empty() {
@@ -331,10 +379,12 @@ pub fn build(now: i64, rules: &[Rule], names: &[String], live: &BTreeMap<String,
                 verdict,
                 failing_since,
                 failure,
+                restarts,
                 unit,
             }
         })
         .collect();
+    rows.retain(|r| r.listed || r.kind == "session" || r.last_run.is_some_and(|t| t >= now - TRANSIENT_WINDOW));
     rows.sort_by(|a, b| (a.kind == "system", a.verdict.rank(), &a.unit).cmp(&(b.kind == "system", b.verdict.rank(), &b.unit)));
     rows
 }
@@ -424,7 +474,7 @@ pub fn timing(now: i64, r: &Row) -> String {
 const CSS: &str = "<style>.units-page{padding:.4rem .8rem}.unit{padding:.55rem 0;border-bottom:1px solid #1d232b}.unit .top{display:flex;gap:.6rem;align-items:baseline;flex-wrap:wrap}\
 .unit .u{font-weight:600;overflow-wrap:anywhere}.unit .tm,.unit .why{margin-top:.15rem}.unit .why{color:#ff6b6d}\
 .vd{display:inline-block;min-width:5.2rem;text-align:center;padding:0 .5rem;border-radius:3px;font-size:.85em;font-weight:600;color:#0b0e12}\
-.v-failing .vd{background:#ff6b6d}.v-late .vd{background:#e0a030}.v-never .vd{background:#8a96a5}.v-healthy .vd{background:#3aa57a}.v-oneoff .vd{background:#4a5563;color:#d6dde6}\
+.v-failing .vd{background:#ff6b6d}.v-late .vd{background:#e0a030}.v-never .vd{background:#8a96a5}.v-healthy .vd{background:#3aa57a}.v-oneoff .vd,.v-disabled .vd,.v-fixed .vd{background:#4a5563;color:#d6dde6}\
 .tick{display:inline-block;width:4px;height:14px;margin-right:1px;background:#3aa57a}.tick.bad{background:#ff4d4f}\
 .strip{white-space:nowrap;overflow:hidden;max-width:100%;margin-top:.25rem}\
 .unit details{margin-top:.25rem}.unit summary{color:#7d8896;cursor:pointer}.unit dl{display:grid;grid-template-columns:max-content 1fr;gap:.1rem .8rem;margin:.3rem 0}\
@@ -436,6 +486,7 @@ pub fn render_page(s: &Snapshot) -> String {
     let system = s.rows.len() - shown.len();
     let count = |v: Verdict| shown.iter().filter(|r| r.verdict == v).count();
     let (failing, late, never, healthy, oneoff) = (count(Verdict::Failing), count(Verdict::Late), count(Verdict::NeverRan), count(Verdict::Healthy), count(Verdict::OneOff));
+    let (fixed, disabled) = (count(Verdict::Fixed), count(Verdict::Disabled));
     let tone = |n: usize| if n > 0 { "red" } else { "dim" };
     let mut b = format!(
         "{CSS}<header><h1>Units <span class=dim>— <span class=\"{}\">{failing} failing</span> · <span class=\"{}\">{late} late</span> · <span class=dim>{never} never ran</span> · <span class=dim>{healthy} healthy</span> · <a href=/stuck>stuck</a></span></h1></header><div class=units-page>",
@@ -445,7 +496,7 @@ pub fn render_page(s: &Snapshot) -> String {
     for e in &s.errors {
         b.push_str(&format!("<p class=red>{}</p>", esc(e)));
     }
-    b.push_str("<p class=\"dim legend\"><b>failing</b>: its last run failed or systemd marks it failed · <b>late</b>: its timer should have run it by now · <b>never ran</b>: no run in 7 d · <b>healthy</b>: running to schedule. Open <i>details</i> for systemd's own state and the 24 h / 7 d success rates.</p>");
+    b.push_str("<p class=\"dim legend\"><b>failing</b>: its last run failed or systemd marks it failed · <b>late</b>: its timer should have run it by now · <b>never ran</b>: no run in 7 d · <b>healthy</b>: running to schedule, or a service that is up and not restarting. A failure older than a fix to the unit's script reads <b>fixed, awaiting run</b>; a unit disabled or masked is not judged. Open <i>details</i> for systemd's own state and the 24 h / 7 d success rates.</p>");
     let group = |v: Verdict| shown.iter().filter(move |r| r.verdict == v);
     for r in shown.iter().filter(|r| matches!(r.verdict, Verdict::Failing | Verdict::Late | Verdict::NeverRan)) {
         b.push_str(&row_html(s.now, r));
@@ -457,6 +508,13 @@ pub fn render_page(s: &Snapshot) -> String {
         b.push_str(&format!("<details><summary class=dim>{healthy} healthy</summary>"));
         group(Verdict::Healthy).for_each(|r| b.push_str(&row_html(s.now, r)));
         b.push_str("</details>");
+    }
+    for (n, v, label) in [(fixed, Verdict::Fixed, "fixed, awaiting their next run"), (disabled, Verdict::Disabled, "disabled by config or masked")] {
+        if n > 0 {
+            b.push_str(&format!("<details><summary class=dim>{n} {label}</summary>"));
+            group(v).for_each(|r| b.push_str(&row_html(s.now, r)));
+            b.push_str("</details>");
+        }
     }
     if oneoff > 0 {
         b.push_str(&format!("<details><summary class=dim>{oneoff} one-off unit families (per-run sessions; not judged)</summary>"));
@@ -481,6 +539,7 @@ fn row_html(now: i64, r: &Row) -> String {
         (Verdict::Failing, f) => {
             let since = r.failing_since.map_or("failing now".to_string(), |t| format!("failing since {} ago", plain(now - t)));
             let err = f.as_ref().map_or(String::new(), |f| format!(" · last error: {}", esc(&f.result)));
+            let err = if r.restarts >= RESTART_FLAP { format!("{err} · restarted {} times since it started", r.restarts) } else { err };
             format!("<div class=why>{since}{err}</div>")
         }
         _ => String::new(),
@@ -536,10 +595,14 @@ async fn unit_list(src: &Sources, path: &str) -> Result<(Vec<String>, BTreeMap<S
     if names.is_empty() {
         return Ok((names, BTreeMap::new()));
     }
-    let mut args = strs(&["--user", "show", "--no-pager", "-p", "Id,ActiveState,SubState,UnitFileState,LastTriggerUSec,Unit"]);
+    let mut args = strs(&["--user", "show", "--no-pager", "-p", "Id,ActiveState,SubState,UnitFileState,LastTriggerUSec,Unit,Description,FragmentPath,NRestarts,ExecStart"]);
     args.extend(names.iter().cloned());
     let shown = run_cmd(&src.systemctl, &args, path, src.budget).await?;
-    Ok((names, parse_show(&shown)))
+    let mut live = parse_show(&shown);
+    for l in live.values_mut() {
+        l.fixed_at = l.exec_paths.iter().chain(std::iter::once(&l.fragment)).filter_map(|p| std::fs::metadata(p).ok()?.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64).max();
+    }
+    Ok((names, live))
 }
 
 async fn timer_nexts(src: &Sources, path: &str) -> Result<BTreeMap<String, i64>, String> {
@@ -677,9 +740,65 @@ mod tests {
         assert_eq!(v("concierge-run"), Verdict::OneOff, "a past transient failure is not a failure");
         let order: Vec<&str> = rs.iter().map(|r| r.verdict.word()).collect();
         let mut sorted = order.clone();
-        sorted.sort_by_key(|w| ["failing", "late", "never ran", "healthy", "one-off"].iter().position(|x| x == w));
+        sorted.sort_by_key(|w| ["failing", "late", "never ran", "fixed, awaiting run", "healthy", "disabled (config)", "one-off"].iter().position(|x| x == w));
         assert_eq!(order, sorted, "failing, late, never ran, healthy, one-off");
         assert_eq!(rs[0].unit, "broken.service");
+    }
+
+    fn lv(active: &str, sub: &str, f: impl FnOnce(&mut Live)) -> Live {
+        let mut l = live(active, sub);
+        f(&mut l);
+        l
+    }
+
+    #[test]
+    fn each_noise_category_maps_to_its_verdict() {
+        let mut runs = vec![ex("old-script.service", 2 * DAY, "exit-code")];
+        runs.push(ex("gone-transient.service", 3 * DAY, "exit-code"));
+        runs.push(ex("recent-transient.service", DAY / 2, "exit-code"));
+        runs.push(ex("loop.service", 2 * DAY, "exit-code"));
+        runs.push(ex("flappy.service", 2 * DAY, "success"));
+        let rs = rows(
+            &["spira-a.service", "snapd.service", "vendor.service", "old-script.service", "loop.service", "flappy.service", "off.service", "masked.service", "spira-vendor.service"],
+            &[
+                ("vendor.service", lv("inactive", "dead", |l| l.fragment = "/usr/lib/systemd/user/vendor.service".into())),
+                ("spira-vendor.service", lv("inactive", "dead", |l| l.fragment = "/usr/lib/systemd/user/x.service".into())),
+                ("old-script.service", lv("failed", "failed", |l| l.fixed_at = Some(NOW - DAY))),
+                ("loop.service", lv("active", "running", |_| {})),
+                ("flappy.service", lv("active", "running", |l| l.restarts = RESTART_FLAP)),
+                ("off.service", lv("inactive", "dead", |l| l.unit_file = "disabled".into())),
+                ("masked.service", lv("inactive", "dead", |l| l.unit_file = "masked".into())),
+            ],
+            runs,
+        );
+        let v = |n: &str| by(&rs, n).verdict;
+        assert_eq!(by(&rs, "vendor.service").kind, "system", "an OS-owned unit is not Spira's");
+        assert_eq!(by(&rs, "spira-vendor.service").kind, "plain", "a unit that names itself Spira's stays");
+        assert_eq!(by(&rs, "snapd").kind, "system");
+        assert_eq!(v("old-script.service"), Verdict::Fixed);
+        assert_eq!(v("loop.service"), Verdict::Healthy, "an active service is judged by state, not its old exit");
+        assert_eq!(v("flappy.service"), Verdict::Failing, "an active service that keeps restarting is failing");
+        assert_eq!(v("off.service"), Verdict::Disabled);
+        assert_eq!(v("masked.service"), Verdict::Disabled);
+        assert_eq!(v("spira-a.service"), Verdict::NeverRan);
+        assert!(rs.iter().all(|r| r.unit != "gone-transient.service"), "a transient that no longer exists ages out");
+        assert!(rs.iter().any(|r| r.unit == "recent-transient.service"), "inside the window it still shows");
+        let page = render_page(&Snapshot { taken: Instant::now(), now: NOW, rows: rs, errors: vec![] });
+        assert!(page.contains("1 fixed, awaiting their next run") && page.contains("2 disabled by config or masked"), "{page}");
+    }
+
+    #[test]
+    fn a_failure_newer_than_the_fix_still_fails() {
+        let rs = rows(&["x.service"], &[("x.service", lv("failed", "failed", |l| l.fixed_at = Some(NOW - 3 * DAY)))], vec![ex("x.service", DAY, "exit-code")]);
+        assert_eq!(by(&rs, "x.service").verdict, Verdict::Failing);
+    }
+
+    #[test]
+    fn show_parses_description_restarts_and_script_paths() {
+        let m = parse_show("Id=a.service\nDescription=Spira thing\nNRestarts=4\nFragmentPath=/h/a.service\nExecStart={ path=/bin/bash ; argv[]=/bin/bash /h/run.sh -x ; ignore_errors=no }\n");
+        let l = &m["a.service"];
+        assert_eq!((l.description.as_str(), l.restarts, l.fragment.as_str()), ("Spira thing", 4, "/h/a.service"));
+        assert_eq!(l.exec_paths, vec!["/bin/bash", "/h/run.sh"]);
     }
 
     #[test]
