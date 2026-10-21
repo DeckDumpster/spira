@@ -56,14 +56,12 @@ wait for a VM, whether it provisioned one itself or waited on the provision in f
    production sweep run that way faulted the moment it defaulted to the VM's own ambient
    `/root/.cargo`, which does not match where the template actually installed `sccache`;
    `law-a-binary-resolves-the-config-it-reads`).
-2. Update the read-only bare mirror `<state>/mirror.git` so `refs/rounds/<run>` is
-   `<tree-dir>`'s HEAD; the mirror's own `HEAD` is never moved or read, and the ref is deleted
-   when the run ends. Make sure an anonymous read-only `git daemon`
+2. Update the read-only bare mirror `<state>/mirror.git` so its `round` branch (and a
+   symbolic `HEAD`) is `<tree-dir>`'s HEAD. Make sure an anonymous read-only `git daemon`
    serves `<state>` on `SPIRA_ROUND_VM_MIRROR_PORT`.
 3. `acquire`. The VM is **leased to this process** from this point on.
 4. Wait until ssh reaches the VM. On the VM: clone `git://<host-addr>:<port>/mirror.git`,
-   fetch the run's ref and check out exactly the round's commit (a different commit fails
-   naming both shas), then act as a **launcher** (runtime-is-a-release, sp-dvfea; the GitHub CI twin is
+   then act as a **launcher** (runtime-is-a-release, sp-dvfea; the GitHub CI twin is
    sp-6cbna): `cargo build --profile release --workspace` (a failure exits 4, testenv's
    build-failure code), stage that build as a release with the round's own `release build
    <sha> --bin-dir target/release --releases ~/round-releases`, and set `SPIRA_RELEASE`,
