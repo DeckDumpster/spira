@@ -22,7 +22,9 @@ for d in $foreign; do
     [ -z "$v" ] || nextest="$v"
 done
 export PATH="$cache_home/bin:$PATH"
-cargo install --locked cargo-nextest --version "$nextest"
+export CARGO_HOME="$cache_home" RUSTUP_HOME="$cache_home/rustup"
+rustup toolchain install stable --profile minimal --no-self-update
+rustup run stable cargo install --locked cargo-nextest --version "$nextest"
 ln -sfn "$cache_home/bin/cargo-nextest" /usr/local/bin/cargo-nextest
 for d in $foreign; do bash "$d/deploy/runner-deps.sh" --check; done
 cat > /etc/systemd/system/tailscaled.service <<UNIT
