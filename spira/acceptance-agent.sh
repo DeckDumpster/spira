@@ -12,7 +12,6 @@
 # PATH" and resolved nothing) and `bd close` via SPIRA_DB; it died on "SPIRA_DB: unbound
 # variable", so the probe bead cycled READY -> WORKING -> READY and never SUBMITTED
 # (local acceptance phases A and D, 2026-10-05).
-# covers: spira/aeon.sh
 set -uo pipefail
 
 cat >/dev/null  # drain the aeon prompt from stdin

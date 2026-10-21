@@ -49,7 +49,7 @@
 #   0  deployed
 #   1  refused (already current, drain timeout without --force, migration mismatch, health-check rollback)
 #   2  fatal (usage error, draft release, fetch failed, activation error)
-# covers: spira/deploy.sh release/src/install.rs spira/world.sh layout
+# covers: spira/deploy.sh release/src/install.rs
 set -uo pipefail
 
 # Captured before conf.sh derives anything from THIS checkout, for _render_release_units to

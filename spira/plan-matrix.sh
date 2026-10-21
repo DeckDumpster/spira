@@ -14,7 +14,7 @@
 # one source for (the suite headers via git, the tsd timings via tsd-query.sh).
 #
 # tier: T0
-# covers: spira/plan-matrix.sh docs/test-plan/coverage.json docs/test-plan/COVERAGE.md
+# covers: spira/plan-matrix.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null)"

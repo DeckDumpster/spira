@@ -42,7 +42,7 @@
 # A pass over repos with no gh access is silent, not an error: the check itself is running
 # on behalf of the operator, who knows whether gh is configured.
 
-# covers: spira/pr-notify.sh spira/watchers spira/world.sh systemd/units.sh
+# covers: spira/pr-notify.sh spira/watchers
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/lib.sh"
