@@ -241,6 +241,13 @@ fn cut(o: &Opts) -> Result<(), String> {
         ));
     }
 
+    if repo.land == Land::Local && (io::read_open_batch(&env_, &repo.name)?.is_some() || io::read_prepared(&env_, &repo.name).is_some()) {
+        if let Err(e) = settle_batch(&env_, &repo.name) {
+            eprintln!("batcher {}: forge batch left by a mode switch is unsettled: {e}", repo.name);
+        }
+        io::clear_prepared(&env_, &repo.name);
+    }
+
     let wait_secs = cfg_parse::<u64>("SPIRA_QUEUE_LOCK_WAIT")?;
     let Some(_lock) = io::wait_lock(&env_, &repo.name, wait_secs)? else {
         return Err(format!("{}: another operation holds the lock (waited {wait_secs}s)", repo.name));
@@ -255,7 +262,7 @@ fn cut(o: &Opts) -> Result<(), String> {
     if let batcher::core::RoundKind::Feature(root) = &kind {
         println!("batcher {}: feature round {root} ({} members)", repo.name, pool.len());
     }
-    let open = io::read_open_batch(&env_, &repo.name)?;
+    let open = if repo.land == Land::Local { None } else { io::read_open_batch(&env_, &repo.name)? };
 
     if open.is_none() && repo.land == Land::Forge && open_prepared(&env_, &repo, &pool)? {
         return Ok(());

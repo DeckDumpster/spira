@@ -25,6 +25,7 @@ pub const OPERATIONS: &[&str] = &[
     "publish-settle",
     "to-forge",
     "to-local",
+    "mode-switch",
     "rollback-local",
     "rebase-waiting",
     "round",

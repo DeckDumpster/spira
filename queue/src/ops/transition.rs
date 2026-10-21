@@ -390,3 +390,48 @@ pub fn to_local(w: &World, repo: Option<&str>) -> i32 {
     w.out(format!("queue.sh to-local: {name} is now queue.local (base={new_base}, synced to {remote}/{fbranch})"));
     OK
 }
+
+/// Settle whatever forge batch the repository has, then flip its mode through the transition
+/// that owns the target. `to-local` / `to-forge` refuse while anything is in delivery, so a
+/// batch the settle could not finish (CI still running) stops the switch.
+pub fn mode_switch(w: &World, repo: &str, mode: &str) -> i32 {
+    let Ok(c) = resolve(w, "mode-switch", Some(repo)) else {
+        return FAIL;
+    };
+    let Ok(path) = repo_path(w, "mode-switch", &c) else {
+        return FAIL;
+    };
+    let target = match mode {
+        "queue.local" => LandMode::QueueLocal,
+        "queue.forge" | "queue" => LandMode::Queue,
+        _ => {
+            w.err(format!("queue.sh mode-switch: mode must be queue.forge or queue.local, not {mode}"));
+            return FAIL;
+        }
+    };
+    if c.r.mode == target {
+        w.err(format!("queue.sh mode-switch: {} is already {mode} — nothing to switch", c.r.name));
+        return FAIL;
+    }
+    if super::require_lc(w, "mode-switch").is_err() {
+        return FAIL;
+    }
+    let settled = if c.r.mode == LandMode::Queue {
+        super::verdict::pass(w, &c)
+    } else {
+        super::verdict::settle_forge_leftovers(w, &c, &path)
+    };
+    if settled != OK {
+        w.err(format!("queue.sh mode-switch: settling {}'s forge batch failed (rc={settled}) — refused, nothing changed", c.r.name));
+        return FAIL;
+    }
+    let rc = if target == LandMode::QueueLocal {
+        to_local(w, Some(repo))
+    } else {
+        to_forge(w, Some(repo))
+    };
+    if rc == OK {
+        super::verdict::settle_forge_leftovers(w, &c, &path);
+    }
+    rc
+}

@@ -824,6 +824,11 @@ For queue repositories `batcher rounds-local` (every 30 s) cuts, tests and lands
 member (path-based auto-eject, else a summoned `mender` or `batcher` judgement). Read and drive
 rounds with:
 
+Switch a repository's mode with `queue mode-switch <repo> <queue.forge|queue.local>`: it settles
+the forge batch first and refuses while one is unsettled. A forge batch left behind by any other
+route is settled by `queue verdict` whatever the mode, and `rounds-local` ignores forge
+`open`/`prepared` records for a queue.local repo.
+
 ```sh
 queue round status [<repo>]
 queue step <repo>
