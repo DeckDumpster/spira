@@ -19,6 +19,15 @@ pub fn push_placement(place: &str, instance_type: &str, wait_s: u64, boot_s: u64
     push_placement_to(endpoint().as_deref(), place, instance_type, wait_s, boot_s);
 }
 
+/// The pass's verdict, cause and phase durations: the series the rounds dashboard reads.
+pub fn push_pass(rec: &tsd::pass::PassRecord) {
+    push_pass_to(endpoint().as_deref(), rec);
+}
+
+fn push_pass_to(endpoint: Option<&str>, rec: &tsd::pass::PassRecord) {
+    rec.push_metrics(&spira_otel::metrics::MetricsSink::new(endpoint, "spira-round-vm", spira_otel::metrics::run::DEADLINE));
+}
+
 fn push_placement_to(endpoint: Option<&str>, place: &str, instance_type: &str, wait_s: u64, boot_s: u64) {
     use spira_otel::metrics::Point;
     spira_otel::metrics::MetricsSink::new(endpoint, "spira-round-vm", spira_otel::metrics::run::DEADLINE).push(
@@ -54,6 +63,34 @@ mod tests {
         let body = h.join().unwrap();
         for want in ["spira_round_vm_placements", "spira_round_vm_capacity_wait_seconds", "spira_round_vm_boot_seconds", "c7a.4xlarge", "ec2"] {
             assert!(body.contains(want), "{want} missing from the push");
+        }
+    }
+
+    #[test]
+    fn a_judged_pass_pushes_its_verdict_cause_place_and_phases() {
+        use tsd::pass::{Cause, PassRecord, Place};
+        for (cause, verdict) in [(Cause::Green, "green"), (Cause::RedAttributed, "red")] {
+            let (addr, h) = spira_otel::metrics::run::fixture_sink();
+            let rec = PassRecord {
+                repo: "r".into(),
+                batch: "b".into(),
+                pass: "1".into(),
+                members: vec![],
+                instance_type: "16vcpu".into(),
+                vcpus: Some(16),
+                place: Place::Proxmox,
+                capacity_wait_s: 1,
+                boot_s: 2,
+                build_s: 3,
+                suites_s: 4,
+                cause,
+                detail: String::new(),
+            };
+            push_pass_to(Some(&addr), &rec);
+            let body = h.join().unwrap();
+            for want in ["spira_cert_pass_verdicts", "spira_cert_pass_causes", "spira_cert_pass_total_seconds", "spira_cert_pass_boot_seconds", "place", "proxmox", "16vcpu", verdict] {
+                assert!(body.contains(want), "{want} missing from the push");
+            }
         }
     }
 

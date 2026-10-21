@@ -161,7 +161,7 @@ impl PassRecord {
     pub fn push_metrics(&self, sink: &spira_otel::metrics::MetricsSink) {
         use spira_otel::metrics::Point;
         let place = self.place.as_str();
-        let labels = [("repo", self.repo.as_str()), ("instance_type", self.instance_type.as_str()), ("where", place), ("verdict", self.cause.verdict()), ("cause", self.cause.as_str())];
+        let labels = [("repo", self.repo.as_str()), ("instance_type", self.instance_type.as_str()), ("place", place), ("verdict", self.cause.verdict()), ("cause", self.cause.as_str())];
         let secs = |name, v: u64| Point::Seconds { name, value: v as f64 };
         sink.push(
             &[
