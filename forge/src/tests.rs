@@ -1336,3 +1336,27 @@ fn ami_runs_lists_only_unfinished_runs_and_says_so_when_unreadable() {
     assert_eq!(ami_runs(&gh, repo()).lines, vec!["5".to_string()]);
     assert_eq!(ami_runs(&FakeGh::default(), repo()).lines, vec!["?".to_string()]);
 }
+
+#[test]
+fn ami_result_names_the_failing_step_of_a_failed_candidate_build() {
+    let list = ["run", "list", "--workflow", "round-ami-build.yml", "--branch", "cand", "--limit", "1", "--json", "databaseId,status,conclusion"];
+    let gh = FakeGh::default();
+    gh.on(&list, 0, r#"[{"databaseId":9,"status":"completed","conclusion":"failure"}]"#);
+    gh.on(
+        &["run", "view", "9", "--json", "jobs"],
+        0,
+        r#"{"jobs":[{"id":1,"name":"build","conclusion":"failure","steps":[{"name":"Stage the tree","conclusion":"success"},{"name":"Build, image and tag","conclusion":"failure"}]}]}"#,
+    );
+    assert_eq!(ami_result(&gh, repo(), "cand").lines, vec!["failure 9".to_string(), "failed-step: build / Build, image and tag".to_string()]);
+
+    for (body, want) in [
+        (r#"[{"databaseId":9,"status":"completed","conclusion":"success"}]"#, "success 9"),
+        (r#"[{"databaseId":9,"status":"in_progress","conclusion":""}]"#, "running 9"),
+        ("[]", "none"),
+    ] {
+        let gh = FakeGh::default();
+        gh.on(&list, 0, body);
+        assert_eq!(ami_result(&gh, repo(), "cand").lines, vec![want.to_string()]);
+    }
+    assert_eq!(ami_result(&FakeGh::default(), repo(), "cand").lines, vec!["?".to_string()]);
+}

@@ -4,5 +4,5 @@ DOC=SECONDS `queue round certify` WAITS FOR A ROUND AMI BUILD when the newest ro
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # SECONDS `queue round certify` WAITS FOR A ROUND AMI BUILD when the newest round image
     # carries a stale recipe, before reporting the round as incomplete.
-    : "${SPIRA_ROUND_AMI_WAIT_SECS:=2400}"
+    : "${SPIRA_ROUND_AMI_WAIT_SECS:=5400}"
 SPIRA_CONF_DEFAULT_EOF

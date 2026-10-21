@@ -2,7 +2,10 @@
 #
 # The tag `recipe-sha` is `round-vm recipe-sha`, the same function the provider compares
 # against, so a recipe change makes the older image refused rather than silently used.
-# Triggers: a recipe change on main, weekly (base-OS and package drift), dispatch.
+# Triggers: a recipe change on main, weekly (base-OS and package drift), dispatch. A round whose
+# head changes the recipe dispatches this on a `spira-round-candidate/*` branch so it certifies on
+# its own image before it lands; main's push build then finds that image tagged and builds nothing.
+# An image built for a candidate that never lands ages out with the rest of the round images.
 # Configuration is repository variables: ROUND_AMI_ROLE_ARN (the OIDC build role),
 # ROUND_AMI_REGION, ROUND_AMI_SUBNET, ROUND_AMI_SECURITY_GROUP, ROUND_AMI_INSTANCE_PROFILE
 # (SSM-managed), ROUND_AMI_STAGING_BUCKET, ROUND_AMI_BASE_PARAM (SSM parameter naming the
@@ -36,7 +39,7 @@ permissions:
 
 jobs:
   build:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/spira-round-candidate/')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -57,15 +60,17 @@ jobs:
           [ -n "$sha" ] || { echo "empty recipe hash" >&2; exit 1; }
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
-      - name: Skip when this recipe already has an image newer than a week
+      - name: Skip when this recipe already has an image
         id: have
         run: |
           set -euo pipefail
           cutoff="$(date -u -d '7 days ago' +%Y-%m-%dT%H:%M:%S)"
-          n="$(aws ec2 describe-images --owners self \
-            --filters "Name=tag:spill:owner,Values=round" "Name=tag:recipe-sha,Values=${{ steps.recipe.outputs.sha }}" \
-            --query "length(Images[?CreationDate>='$cutoff'])" --output text)"
-          if [ "$n" != 0 ] && [ "${{ github.event_name }}" = schedule ]; then echo "fresh=1" >> "$GITHUB_OUTPUT"; fi
+          filters=(--owners self --filters "Name=tag:spill:owner,Values=round" "Name=tag:recipe-sha,Values=${{ steps.recipe.outputs.sha }}")
+          fresh="$(aws ec2 describe-images "${filters[@]}" --query "length(Images[?CreationDate>='$cutoff'])" --output text)"
+          any="$(aws ec2 describe-images "${filters[@]}" --query "length(Images)" --output text)"
+          if [ "$fresh" != 0 ] && [ "${{ github.event_name }}" = schedule ]; then echo "fresh=1" >> "$GITHUB_OUTPUT"; fi
+          if [ "$any" != 0 ] && [ "${{ github.event_name }}" = push ]; then echo "fresh=1" >> "$GITHUB_OUTPUT"; fi
+          if [ "$any" != 0 ] && [ "$GITHUB_REF" != refs/heads/main ]; then echo "fresh=1" >> "$GITHUB_OUTPUT"; fi
 
       - name: Stage the tree
         if: steps.have.outputs.fresh != '1'

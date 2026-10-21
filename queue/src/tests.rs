@@ -448,6 +448,11 @@ struct FScripts {
     round_vm: RefCell<RunOut>,
     /// Answers `round_vm` gives before it falls back to `round_vm`.
     round_vm_queue: RefCell<Vec<RunOut>>,
+    /// `round-vm recipe-sha` of the release and of the round tree; None is unreadable.
+    recipe_release: RefCell<Option<String>>,
+    recipe_tree: RefCell<Option<String>>,
+    /// `round-vm ami-for` answers in order; the last one repeats.
+    ami_for: RefCell<Vec<AmiLookup>>,
     repo_testenv: RefCell<RunOut>,
     round_vm_results: RefCell<Vec<(String, String)>>,
     /// The `runner.meta` it leaves beside them (empty = none).
@@ -568,6 +573,21 @@ impl Scripts for FScripts {
             .push(format!("rebase-waiting-start {repo}"));
         true
     }
+    fn recipe_sha(&self, tree: Option<&Path>) -> Option<String> {
+        match tree {
+            Some(_) => self.recipe_tree.borrow().clone(),
+            None => self.recipe_release.borrow().clone(),
+        }
+    }
+    fn ami_for(&self, sha: &str) -> AmiLookup {
+        self.calls.borrow_mut().push(format!("ami-for {sha}"));
+        let mut q = self.ami_for.borrow_mut();
+        match q.len() {
+            0 => AmiLookup::Missing,
+            1 => q[0].clone(),
+            _ => q.remove(0),
+        }
+    }
     fn round_vm(
         &self,
         tree: &Path,
@@ -576,12 +596,14 @@ impl Scripts for FScripts {
         round: (&str, &str),
         wall_secs: u64,
         handle: &Path,
+        ami: Option<&str>,
     ) -> RunOut {
         self.calls.borrow_mut().push(format!(
-            "round-vm {} base={base} round={}/{} wall={wall_secs}",
+            "round-vm {} base={base} round={}/{} wall={wall_secs}{}",
             tree.display(),
             round.0,
-            round.1
+            round.1,
+            ami.map(|a| format!(" ami={a}")).unwrap_or_default()
         ));
         fs::write(handle, "777").unwrap();
         if self.preempted_during_vm.get() {
@@ -695,6 +717,8 @@ struct FForge {
     arm_fails: std::cell::Cell<bool>,
     /// ami-runs answers in order; when none is left no run is in progress. `None` is an unreadable forge.
     ami_runs: RefCell<Vec<Option<Vec<String>>>>,
+    /// ami-result answers in order; the last one repeats. Empty is a run not started.
+    ami_results: RefCell<Vec<Option<AmiBuild>>>,
     /// pr-create makes this PR number upstream, then reports this error.
     create_then_err: RefCell<Option<(String, String)>>,
     /// pr-preflight refuses with this message.
@@ -812,6 +836,15 @@ impl Forge for FForge {
     fn ami_dispatch(&self, _: &Path, _: &Path, ref_: &str) -> bool {
         self.calls.borrow_mut().push(format!("ami-dispatch {ref_}"));
         true
+    }
+    fn ami_result(&self, _: &Path, _: &Path, branch: &str) -> Option<AmiBuild> {
+        self.calls.borrow_mut().push(format!("ami-result {branch}"));
+        let mut q = self.ami_results.borrow_mut();
+        match q.len() {
+            0 => Some(AmiBuild::NotStarted),
+            1 => q[0].clone(),
+            _ => q.remove(0),
+        }
     }
 }
 
@@ -1389,7 +1422,8 @@ impl T {
             git_email: "spira@spira.invalid".into(),
             mailbox: "concierge".into(),
             round_wall_secs: 900,
-            round_ami_wait_secs: 2400,
+            round_ami_wait_secs: 5400,
+            round_spill: String::new(),
             rounds_max: 1,
             publish_red_priority: "1".into(),
             publish_red_escalate_after: 3,

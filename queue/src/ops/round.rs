@@ -19,7 +19,7 @@ use crate::cli::{Round, Text};
 use crate::ident::bounded_text;
 use crate::lock::Guard;
 use crate::model::{parse_members, render_members, EjectCause, LandMode, Member};
-use crate::ports::{ref_branch, RunOut};
+use crate::ports::{ref_branch, AmiBuild, AmiLookup, RunOut};
 use crate::records::{self, one_line, write_atomic, Kv};
 use landing_pass::gateq::GateQueue;
 use landing_pass::model::GateOutcome;
@@ -1477,6 +1477,96 @@ impl AmiWait {
     }
 }
 
+/// What the round's own recipe asks of the round image.
+enum Image {
+    /// The recipe is the release's: the image the pool already selects.
+    Release,
+    /// The recipe differs and an image is built from it.
+    Candidate(String),
+    /// The candidate's image build failed: a red of the build, never a pool fault.
+    Failed(String),
+    /// The wait for the build could not finish; the round is not judged.
+    Unjudged(String),
+}
+
+const IMAGE_UNJUDGED: i32 = 3;
+
+fn candidate_branch(batch: &str, sha: &str) -> String {
+    format!("spira-round-candidate/{batch}-{}", &sha[..sha.len().min(12)])
+}
+
+/// A round whose head changes the recipe certifies on an image built from that head: the head
+/// is pushed under a per-candidate branch, the Round AMI workflow is dispatched on it, and the
+/// pass waits up to `round_ami_wait_secs` for the image. A recipe already imaged is not rebuilt.
+fn candidate_image(w: &World, label: &str, c: &Ctx, path: &Path, wt: &Path, head: &str, batch: &str) -> Image {
+    if !matches!(c.s.round_spill.as_str(), "ec2" | "ec2-always" | "ec2-only") {
+        return Image::Release;
+    }
+    let (Some(tree), Some(release)) = (w.scripts.recipe_sha(Some(wt)), w.scripts.recipe_sha(None)) else {
+        return Image::Release;
+    };
+    if tree == release {
+        return Image::Release;
+    }
+    match w.scripts.ami_for(&tree) {
+        AmiLookup::Found(id) => return Image::Candidate(id),
+        AmiLookup::Unreadable(e) => return Image::Unjudged(format!("cannot read the round images: {e}")),
+        AmiLookup::Missing => {}
+    }
+    let Ok(home) = resolve(w, label, Some(&c.s.home_repo)) else {
+        return Image::Unjudged("cannot resolve the repository the Round AMI workflow runs in".into());
+    };
+    let (Some(home_path), Some((remote, _))) = (home.r.path.clone(), c.r.publish.clone()) else {
+        return Image::Unjudged("the repository has no publish remote to push the candidate image build to".into());
+    };
+    let branch = candidate_branch(batch, &tree);
+    let began = w.clock.now();
+    let mut dispatched = false;
+    let mut idle = 0u32;
+    let verdict = loop {
+        match w.forge.ami_result(&c.s.forge, &home_path, &branch) {
+            None => break Image::Unjudged("the forge cannot be read for the candidate round image build".into()),
+            Some(AmiBuild::Failure(run, steps)) => {
+                let at = steps.first().cloned().unwrap_or_else(|| "<unknown step>".into());
+                break Image::Failed(format!("round image build {run} failed at {at}"));
+            }
+            Some(AmiBuild::Success(run)) => match w.scripts.ami_for(&tree) {
+                AmiLookup::Found(id) => break Image::Candidate(id),
+                AmiLookup::Missing => break Image::Unjudged(format!("round image build {run} succeeded but no image carries recipe {tree}")),
+                AmiLookup::Unreadable(e) => break Image::Unjudged(format!("cannot read the round images: {e}")),
+            },
+            Some(AmiBuild::Running(run)) => {
+                idle = 0;
+                w.out(format!("queue.sh {label}: waiting for the candidate round image build {run}"));
+            }
+            Some(AmiBuild::NotStarted) if !dispatched => {
+                if !w.lib.push(&path.to_path_buf(), &remote, &format!("{head}:refs/heads/{branch}")) {
+                    break Image::Unjudged(format!("could not push {branch}"));
+                }
+                if !w.forge.ami_dispatch(&c.s.forge, &home_path, &branch) {
+                    break Image::Unjudged(format!("the forge refused the Round AMI build on {branch}"));
+                }
+                dispatched = true;
+                w.out(format!("queue.sh {label}: recipe {tree} has no image; dispatched the Round AMI build on {branch}"));
+            }
+            Some(AmiBuild::NotStarted) => {
+                idle += 1;
+                if idle >= AmiWait::IDLE_POLLS {
+                    break Image::Unjudged(format!("the Round AMI build dispatched on {branch} never started"));
+                }
+            }
+        }
+        if w.clock.now().saturating_sub(began) >= c.s.round_ami_wait_secs {
+            break Image::Unjudged(format!("the candidate round image build did not finish within {}s", c.s.round_ami_wait_secs));
+        }
+        w.clock.sleep(AmiWait::POLL_SECS); // waits-on: the Round AMI run on the candidate branch; cap round_ami_wait_secs
+    };
+    if !matches!(verdict, Image::Unjudged(_)) {
+        let _ = w.lib.push(&path.to_path_buf(), &remote, &format!(":refs/heads/{branch}"));
+    }
+    verdict
+}
+
 fn vm_fault_cause(err: &str) -> Option<String> {
     let line = err.lines().rev().find(|l| {
         let l = l.trim_start();
@@ -1674,6 +1764,11 @@ pub(super) fn certify(
         };
         let began = w.clock.now();
         let _ = fs::create_dir_all(rounds_dir(&c));
+        let image = candidate_image(w, label, &c, &path, &wt, &head, batch);
+        let image_id = match &image {
+            Image::Candidate(id) => Some(id.clone()),
+            _ => None,
+        };
         let run_vm = || {
             w.scripts.round_vm(
                 &wt,
@@ -1682,11 +1777,25 @@ pub(super) fn certify(
                 (batch, &c.r.name),
                 c.s.round_wall_secs,
                 &handle_of(&c, batch),
+                image_id.as_deref(),
             )
         };
-        let mut out = run_vm();
+        let mut out = match &image {
+            Image::Failed(why) => RunOut {
+                rc: 4,
+                out: String::new(),
+                err: format!("build-error: {why}"),
+            },
+            Image::Unjudged(why) => RunOut {
+                rc: IMAGE_UNJUDGED,
+                out: String::new(),
+                err: format!("round image: {why}"),
+            },
+            _ => run_vm(),
+        };
         let mut ami = AmiWait::default();
-        while stale_ami_cause(&out).is_some()
+        while image_id.is_none()
+            && stale_ami_cause(&out).is_some()
             && !preempt_marker(&c, batch).exists()
             && ami.step(w, label, &c)
         {
@@ -1707,11 +1816,14 @@ pub(super) fn certify(
             124 | 137 if !out.err.contains("OVER-CAP") && wall_complete(&wt, &found, &out.err) => None,
             4 => {
                 reds.push(BUILD_RED.into());
-                if let Some(e) = first_build_error(&out.err) {
+                if let Image::Failed(why) = &image {
+                    w.out(format!("build-error={why}"));
+                } else if let Some(e) = first_build_error(&out.err) {
                     w.out(format!("build-error={e}"));
                 }
                 None
             }
+            IMAGE_UNJUDGED if matches!(image, Image::Unjudged(_)) => Some(out.err.clone()),
             124 | 137 if out.err.contains("OVER-CAP") => Some(over_cap_why(&out.err, c.s.round_wall_secs)),
             124 | 137 => Some(format!(
                 "round-vm hung past its guard (guard=hang-guard elapsed={}s cap {}s)",

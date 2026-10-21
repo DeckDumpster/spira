@@ -49,30 +49,30 @@ pub struct Image {
     pub created: String,
 }
 
-/// The newest image, which must carry `expected` as its recipe-sha. Creation dates are ISO-8601
-/// in one zone, so they order as strings. A stale newest image is refused, never skipped for an
-/// older one: an older image is staler still.
+/// The newest image carrying `expected` as its recipe-sha. Creation dates are ISO-8601 in one
+/// zone, so they order as strings. A newer image of another recipe is not a reason to refuse:
+/// a candidate round's image is built before it lands and is newer than main's until it does.
 pub fn select_image(images: &[Image], expected: &str) -> Result<String, String> {
-    let newest = images
+    images
         .iter()
+        .filter(|i| i.recipe_sha == expected)
         .max_by(|a, b| a.created.cmp(&b.created))
-        .ok_or_else(|| format!("no AMI tagged {}={} {AMI_RECIPE_TAG} exists; run the round-ami-build workflow", AMI_OWNER_TAG.0, AMI_OWNER_TAG.1))?;
-    if newest.recipe_sha != expected {
-        return Err(format!(
-            "the newest round AMI {} carries {AMI_RECIPE_TAG} {:?} but this release's recipe is {expected:?}; run the round-ami-build workflow",
-            newest.id, newest.recipe_sha
-        ));
-    }
-    Ok(newest.id.clone())
+        .map(|i| i.id.clone())
+        .ok_or_else(|| match images.iter().max_by(|a, b| a.created.cmp(&b.created)) {
+            None => format!("no AMI tagged {}={} {AMI_RECIPE_TAG} exists; run the round-ami-build workflow", AMI_OWNER_TAG.0, AMI_OWNER_TAG.1),
+            Some(newest) => format!(
+                "no round AMI carries {AMI_RECIPE_TAG} {expected:?} (the newest, {}, carries {:?}); run the round-ami-build workflow",
+                newest.id, newest.recipe_sha
+            ),
+        })
 }
 
-/// None when the newest image carries `expected`; otherwise the stale-image line.
+/// None when an image carries `expected`; otherwise the stale-image line.
 pub fn ami_staleness(images: &[Image], expected: &str) -> Option<String> {
-    match images.iter().max_by(|a, b| a.created.cmp(&b.created)) {
-        None => Some(format!("round AMI stale for recipe {expected}: no image tagged {}={} exists", AMI_OWNER_TAG.0, AMI_OWNER_TAG.1)),
-        Some(i) if i.recipe_sha != expected => Some(format!("round AMI stale for recipe {expected}: newest image {} is tagged {AMI_RECIPE_TAG} {}", i.id, i.recipe_sha)),
-        Some(_) => None,
-    }
+    select_image(images, expected).err().map(|_| match images.iter().max_by(|a, b| a.created.cmp(&b.created)) {
+        None => format!("round AMI stale for recipe {expected}: no image tagged {}={} exists", AMI_OWNER_TAG.0, AMI_OWNER_TAG.1),
+        Some(i) => format!("round AMI stale for recipe {expected}: newest image {} is tagged {AMI_RECIPE_TAG} {}", i.id, i.recipe_sha),
+    })
 }
 
 pub trait Ec2Api {
@@ -245,6 +245,11 @@ impl<A: Ec2Api> Ec2<A> {
         let id = select_image(&self.api.images()?, &self.recipe_sha)?;
         *g = Some(id.clone());
         Ok(id)
+    }
+
+    /// The newest image built from `recipe_sha`, whatever the release's own recipe is.
+    pub fn image_for(&self, recipe_sha: &str) -> Result<Option<String>, String> {
+        Ok(select_image(&self.api.images()?, recipe_sha).ok())
     }
 
     pub fn ami_check(&self) -> Result<Option<String>, String> {
@@ -1046,10 +1051,12 @@ mod tests {
     }
 
     #[test]
-    fn a_stale_newest_image_is_refused_naming_both_hashes_not_replaced_by_an_older_match() {
-        let imgs = [image("ami-old", "sha-now", "2026-10-01T00:00:00.000Z"), image("ami-new", "sha-stale", "2026-10-09T00:00:00.000Z")];
-        let e = select_image(&imgs, "sha-now").unwrap_err();
-        assert!(e.contains("ami-new") && e.contains("sha-stale") && e.contains("sha-now"), "{e}");
+    fn a_newer_image_of_another_recipe_does_not_hide_the_matching_one() {
+        let imgs = [image("ami-old", "sha-now", "2026-10-01T00:00:00.000Z"), image("ami-cand", "sha-cand", "2026-10-09T00:00:00.000Z")];
+        assert_eq!(select_image(&imgs, "sha-now").unwrap(), "ami-old");
+        assert_eq!(select_image(&imgs, "sha-cand").unwrap(), "ami-cand");
+        let e = select_image(&imgs, "sha-none").unwrap_err();
+        assert!(e.contains("ami-cand") && e.contains("sha-cand") && e.contains("sha-none"), "{e}");
         assert!(select_image(&[], "sha-now").unwrap_err().contains("no AMI"));
     }
 

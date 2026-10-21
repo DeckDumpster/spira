@@ -1694,6 +1694,39 @@ pub fn ami_dispatch(gh: &dyn Gh, repo: &Path, ref_: &str) -> Out {
     Out { code: r.code, lines: passthrough(&r) }
 }
 
+/// The newest Round AMI run on `branch`: `none` before any run exists, `running <id>`,
+/// `success <id>`, or `failure <id>` followed by `failed-step: <job> / <step>` lines; `?` when
+/// the forge cannot be read, so an unreadable forge is never taken for "no build".
+pub fn ami_result(gh: &dyn Gh, repo: &Path, branch: &str) -> Out {
+    if branch.is_empty() {
+        eprintln!("forge: ami-result: branch required");
+        return fail(vec![]);
+    }
+    let r = gh.call(
+        Some(repo),
+        &["run", "list", "--workflow", ROUND_AMI_WORKFLOW, "--branch", branch, "--limit", "1", "--json", "databaseId,status,conclusion"],
+    );
+    let Some(runs) = (r.code == 0).then(|| parse(&r.stdout)).flatten().and_then(|v| v.as_array().cloned()) else {
+        return ok(vec!["?".into()]);
+    };
+    let Some(run) = runs.first() else {
+        return ok(vec!["none".into()]);
+    };
+    let id = run.get("databaseId").and_then(Value::as_u64).map(|n| n.to_string()).unwrap_or_default();
+    if jstr(run, "status").as_deref() != Some("completed") {
+        return ok(vec![format!("running {id}")]);
+    }
+    if jstr(run, "conclusion").as_deref() == Some("success") {
+        return ok(vec![format!("success {id}")]);
+    }
+    let mut lines = vec![format!("failure {id}")];
+    let view = gh.call(Some(repo), &["run", "view", &id, "--json", "jobs"]);
+    if let Some(v) = (view.code == 0).then(|| parse(&view.stdout)).flatten() {
+        lines.extend(failed_steps(&v).into_iter().map(|(_, job, step)| format!("failed-step: {job} / {step}")));
+    }
+    ok(lines)
+}
+
 fn passthrough(r: &GhOut) -> Vec<String> {
     let t = r.text();
     if t.is_empty() {

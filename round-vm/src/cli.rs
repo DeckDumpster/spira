@@ -19,7 +19,7 @@ use crate::pve::{HttpTransport, Pve};
 use crate::run::{parse_run_args, run, salvage_results, GitHost, RunEnv, SshRemote};
 use crate::schema::ProcId;
 
-pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--on-red <command>]|status [--json]|warm|teardown|template|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]|recipe-sha|ami-check|reap|ec2-probe [--dry-run]";
+pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--on-red <command>]|status [--json]|warm|teardown|template|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]|recipe-sha [--tree <dir>]|ami-for <recipe-sha>|ami-check|reap|ec2-probe [--dry-run]";
 
 fn secs_env(key: &str, default: u64) -> Duration {
     Duration::from_secs(std::env::var(key).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(default))
@@ -184,6 +184,37 @@ fn ec2_probe(args: &[String]) -> i32 {
     }
 }
 
+/// `round-vm ami-for <sha>`: prints the newest round image built from that recipe and exits 0;
+/// 1 when there is none yet, 2 when the images cannot be read.
+fn ami_for(sha: &str) -> i32 {
+    let cfg = match Config::load() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{e}");
+            return 2;
+        }
+    };
+    let ec2cfg = Ec2Config::from_lookup(&crate::config::declared);
+    let p = match Ec2::new(AwsCli::new(&ec2cfg, cfg.state_dir.join("ec2")), &ec2cfg) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("round-vm ami-for: {e}");
+            return 2;
+        }
+    };
+    match p.image_for(sha) {
+        Ok(Some(id)) => {
+            println!("{id}");
+            0
+        }
+        Ok(None) => 1,
+        Err(e) => {
+            eprintln!("round-vm ami-for: {e}");
+            2
+        }
+    }
+}
+
 /// `round-vm ami-check`: exit 0 when the newest round AMI carries this release's recipe hash,
 /// 1 printing the stale line when it does not, 2 when the images cannot be read.
 fn ami_check() -> i32 {
@@ -237,11 +268,34 @@ pub fn main_with(args: Vec<String>) -> i32 {
         println!("{}", crate::recipe::sha());
         return 0;
     }
+    if let [verb, flag, dir] = args.as_slice() {
+        if verb == "recipe-sha" && flag == "--tree" {
+            return match crate::recipe::sha_of_tree(std::path::Path::new(dir)) {
+                Ok(sha) => {
+                    println!("{sha}");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("round-vm recipe-sha: {e}");
+                    2
+                }
+            };
+        }
+    }
     let Some((verb, rest)) = args.split_first() else {
         eprintln!("{USAGE}");
         return 1;
     };
     let rest = rest.to_vec();
+    if verb == "ami-for" {
+        return match rest.as_slice() {
+            [sha] => ami_for(sha),
+            _ => {
+                eprintln!("round-vm ami-for: usage: round-vm ami-for <recipe-sha>");
+                1
+            }
+        };
+    }
     if verb == "ami-check" {
         return ami_check();
     }
