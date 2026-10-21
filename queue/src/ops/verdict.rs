@@ -267,6 +267,7 @@ fn settle_locked(w: &World, c: &Ctx, path: &Path) -> (i32, String) {
             }
             w.forge.pr_close(&c.s.forge, path, &pr);
             let _ = std::fs::remove_file(&pfile);
+            let _ = std::fs::remove_file(c.queue_file("publish-red-streak"));
             landing_log(
                 &c.s.run,
                 &format!(
@@ -432,7 +433,7 @@ pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
         w.lib.create_bug(
             &actor,
             &title,
-            &c.s.verdict.incident_priority,
+            &c.s.publish_red_priority,
             &labels,
             &body,
         )
@@ -477,12 +478,79 @@ pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
             "filed"
         }
     ));
+    escalate_red_streak(w, c, path, &pr, &forge_sha, fid.as_deref(), ids.len());
     // A red publish with no fix-forward bead is a fault the operator must see.
     if fid.is_none() {
         FAIL
     } else {
         OK
     }
+}
+
+/// Counts this red in the repo's run of consecutive red publish PRs and mails the operator
+/// once, when the run reaches `publish_red_escalate_after`; a green publish ends the run.
+fn escalate_red_streak(
+    w: &World,
+    c: &Ctx,
+    path: &Path,
+    pr: &str,
+    forge_sha: &str,
+    tracker: Option<&str>,
+    pr_members: usize,
+) {
+    let name = c.r.name.as_str();
+    let file = c.queue_file("publish-red-streak");
+    let prior = records::read_kv(&file).ok().flatten();
+    let list = |k: &str| -> Vec<String> {
+        prior
+            .as_ref()
+            .and_then(|kv| kv.get(k))
+            .unwrap_or("")
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect()
+    };
+    let mut prs = list("prs");
+    let mut trackers = list("trackers");
+    let mut escalated = prior.as_ref().and_then(|kv| kv.get("escalated")) == Some("1");
+    if !prs.iter().any(|p| p == pr) {
+        prs.push(pr.to_string());
+    }
+    if let Some(t) = tracker.filter(|t| !trackers.iter().any(|x| x == t)) {
+        trackers.push(t.to_string());
+    }
+    let threshold = c.s.publish_red_escalate_after;
+    if threshold > 0 && prs.len() >= threshold && !escalated {
+        let waiting = c
+            .r
+            .landref
+            .as_deref()
+            .and_then(|l| super::publish::range_members(w, path, forge_sha, l).ok())
+            .map_or(pr_members, |m| m.len());
+        w.scripts.mail_operator(
+            &format!("{name}: {} consecutive publishes red", prs.len()),
+            &format!(
+                "Publish PRs {} for {name} all went red; no publish has landed since the first.\n\n\
+                 Open tracker beads: {}.\n\
+                 Landed beads waiting to publish: {waiting}.\n\n\
+                 Every deploy of {name} is blocked until a publish goes green.\n\
+                 Default: leave the trackers to the loop; a fix landing on local/main is carried by the next publish.\n",
+                prs.join(", "),
+                if trackers.is_empty() { "none".into() } else { trackers.join(", ") },
+            ),
+        );
+        escalated = true;
+    }
+    let _ = write_atomic(
+        &file,
+        &format!(
+            "prs={}\ntrackers={}\nescalated={}\n",
+            prs.join(","),
+            trackers.join(","),
+            u8::from(escalated)
+        ),
+    );
 }
 
 // ------------------------------------------------------------------------ queue.forge

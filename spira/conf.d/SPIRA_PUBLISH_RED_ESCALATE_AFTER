@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=queue
+DOC=CONSECUTIVE RED PUBLISH PRs OF ONE REPO after which the operator is mailed once.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # CONSECUTIVE RED PUBLISH PRs OF ONE REPO after which the operator is mailed once. A green
+    # publish resets the count.
+    : "${SPIRA_PUBLISH_RED_ESCALATE_AFTER:=3}"
+SPIRA_CONF_DEFAULT_EOF

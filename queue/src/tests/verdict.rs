@@ -2046,3 +2046,74 @@ fn a_red_batch_writes_the_failing_lines_into_every_members_bead_once_per_run() {
         "one note per run, not per pass: {notes:?}"
     );
 }
+
+fn red_publish(t: &T, pr: u32) {
+    fs::write(
+        t.qfile("publish"),
+        format!("pr={pr}\nhead=m3\nbase=f0\nmembers=sp-a:t1 sp-b:t2\nopened=900\nbranch=spira/publish/X\nremote=origin\nforge_branch=main\n"),
+    )
+    .unwrap();
+    t.forge
+        .status
+        .borrow_mut()
+        .push(Some("red\nred-suite: test-a.sh\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+}
+
+fn operator_mails(t: &T) -> Vec<String> {
+    t.scripts
+        .calls
+        .borrow()
+        .iter()
+        .filter(|c| c.starts_with("mail-operator"))
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn a_red_publish_tracker_is_filed_at_the_publish_red_priority_not_the_incident_one() {
+    let mut t = T::new(LandMode::QueueLocal);
+    t.lib.s.verdict.incident_priority = "3".into();
+    t.lib.s.publish_red_priority = "1".into();
+    red_publish(&t, 77);
+    assert!(t.lib.has("create_bug queue.sh 1 "), "{:?}", t.lib.calls.borrow());
+}
+
+#[test]
+fn three_consecutive_red_publishes_escalate_once_and_a_fourth_does_not() {
+    let mut t = T::new(LandMode::QueueLocal);
+    t.lib.s.publish_red_escalate_after = 3;
+    for pr in [77, 78] {
+        red_publish(&t, pr);
+        fs::remove_file(t.qfile("publish-red")).unwrap();
+    }
+    assert!(operator_mails(&t).is_empty());
+    red_publish(&t, 79);
+    fs::remove_file(t.qfile("publish-red")).unwrap();
+    let mails = operator_mails(&t);
+    assert_eq!(mails.len(), 1, "{mails:?}");
+    assert!(mails[0].contains("spira: 3 consecutive publishes red"), "{}", mails[0]);
+    assert!(mails[0].contains("Publish PRs 77, 78, 79 for spira"), "{}", mails[0]);
+    assert!(mails[0].contains("Open tracker beads: sp-fix1"), "{}", mails[0]);
+    assert!(mails[0].contains("Landed beads waiting to publish: "), "{}", mails[0]);
+    red_publish(&t, 80);
+    assert_eq!(operator_mails(&t).len(), 1);
+}
+
+#[test]
+fn a_green_publish_resets_the_red_run() {
+    let mut t = T::new(LandMode::QueueLocal);
+    t.lib.s.publish_red_escalate_after = 2;
+    red_publish(&t, 77);
+    fs::remove_file(t.qfile("publish-red")).unwrap();
+    fs::write(
+        t.qfile("publish"),
+        "pr=78\nhead=m3\nbase=f0\nmembers=sp-a:t1\nopened=900\nbranch=b\nremote=origin\nforge_branch=main\n",
+    )
+    .unwrap();
+    t.forge.status.borrow_mut().push(Some("green\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(!t.qfile("publish-red-streak").exists());
+    red_publish(&t, 79);
+    assert!(operator_mails(&t).is_empty());
+}

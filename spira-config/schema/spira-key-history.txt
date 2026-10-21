@@ -479,3 +479,5 @@ round_ami_wait_secs
 kit_crate
 kit_repo
 kit_sites
+publish_red_priority
+publish_red_escalate_after
