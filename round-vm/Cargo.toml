@@ -2,6 +2,7 @@
 name = "round-vm"
 version = "0.1.0"
 edition = "2021"
+default-run = "round-vm"
 rust-version = "1.82"
 description = "round-vm — a pool of one ephemeral round VM from the hypervisor: acquire / release / run / status (sp-o3o6z; replaces spira/round-vm.sh and round-vm-provider-pve.sh)."
 
