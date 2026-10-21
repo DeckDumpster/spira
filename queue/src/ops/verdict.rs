@@ -40,13 +40,50 @@ pub fn pass(w: &World, c: &Ctx) -> i32 {
         return FAIL;
     };
     match c.r.mode {
-        LandMode::QueueLocal => local_pass(w, c, &path),
+        LandMode::QueueLocal => {
+            let rc = settle_forge_leftovers(w, c, &path);
+            let local = local_pass(w, c, &path);
+            if local == OK {
+                rc
+            } else {
+                local
+            }
+        }
         LandMode::Queue => forge_pass(w, c, &path),
         _ => OK,
     }
 }
 
 // ------------------------------------------------------------------------ queue.local
+
+/// A forge batch left behind by a mode switch settles whatever the mode: only the reconcile
+/// (merged lands, closed abandons) runs, never the CI read or a push, and once the open record
+/// is gone the prepared round and forge-state record go with it.
+pub fn settle_forge_leftovers(w: &World, c: &Ctx, path: &Path) -> i32 {
+    let open = c.queue_file("open");
+    let leftovers = ["open", "prepared", "forge-state"];
+    if !leftovers.iter().any(|f| c.queue_file(f).is_file()) {
+        return OK;
+    }
+    let Ok(_g) = lock_waiting(w, c) else {
+        w.out(format!("verdict {}: another queue operation holds the lock", c.r.name));
+        return OK;
+    };
+    let mut rc = OK;
+    if open.is_file() {
+        if let Ok(Some(kv)) = records::read_kv(&open) {
+            if let Some(r) = super::reconcile::step(w, c, path, &open, &kv) {
+                rc = r;
+            }
+        }
+    }
+    if !open.is_file() {
+        for f in ["prepared", "forge-state"] {
+            let _ = std::fs::remove_file(c.queue_file(f));
+        }
+    }
+    rc
+}
 
 fn local_pass(w: &World, c: &Ctx, path: &Path) -> i32 {
     let name = c.r.name.as_str();
