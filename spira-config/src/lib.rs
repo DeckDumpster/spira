@@ -618,7 +618,13 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "suites_budget", bead: "sp-dm7mjb" },
     RetiredKey { key: "suite_times_log", bead: "sp-dm7mjb" },
     RetiredKey { key: "tier_allowlist", bead: "sp-dm7mjb" },
-    RetiredKey { key: "tier_area_allowlist", bead: "sp-dm7mjb" },];
+    RetiredKey { key: "tier_area_allowlist", bead: "sp-dm7mjb" },
+    // The promote/review flow is gone; review.sh was its only consumer.
+    RetiredKey { key: "reviewer_model", bead: "sp-fm92p0" },
+    RetiredKey { key: "reviewer_timeout", bead: "sp-fm92p0" },
+    RetiredKey { key: "reviewer_verdicts", bead: "sp-fm92p0" },
+    RetiredKey { key: "reviewer_diff_limit", bead: "sp-fm92p0" },
+];
 
 /// A retired `batcher_bin` value that is not the batcher itself (e.g. "/bin/true", the old
 /// way to switch automatic cuts off) — read as `batcher_enable = "0"`.
