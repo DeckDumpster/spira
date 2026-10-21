@@ -624,6 +624,15 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "reviewer_timeout", bead: "sp-fm92p0" },
     RetiredKey { key: "reviewer_verdicts", bead: "sp-fm92p0" },
     RetiredKey { key: "reviewer_diff_limit", bead: "sp-fm92p0" },
+    RetiredKey { key: "queue_batcher", bead: "sp-qu3k0s" },
+    RetiredKey { key: "mirror", bead: "sp-qu3k0s" },
+    RetiredKey { key: "qa_depth", bead: "sp-qu3k0s" },
+    RetiredKey { key: "self_test", bead: "sp-qu3k0s" },
+    RetiredKey { key: "prefix_map", bead: "sp-qu3k0s" },
+    RetiredKey { key: "check5_max_resolve", bead: "sp-qu3k0s" },
+    RetiredKey { key: "delivers_check_timeout", bead: "sp-qu3k0s" },
+    RetiredKey { key: "cert_prices", bead: "sp-qu3k0s" },
+    RetiredKey { key: "dolt_maintenance_units", bead: "sp-qu3k0s" },
 ];
 
 /// A retired `batcher_bin` value that is not the batcher itself (e.g. "/bin/true", the old

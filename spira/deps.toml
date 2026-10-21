@@ -721,10 +721,6 @@ name = "world"
 alias = "world.sh"
 
 [[compat]]
-name = "ctrl"
-alias = "ctrl.sh"
-
-[[compat]]
 name = "aeons"
 alias = "aeons.sh"
 

@@ -136,7 +136,6 @@ test-cockpit-ready.sh	T1	7.0
 test-cockpit-rebuild.sh	T1	24.0
 test-cockpit-remote.sh	T1	2.0
 test-cockpit-repo-labels.sh	T1	3.5
-test-cockpit-runtime-path.sh	T1	2.0
 test-cockpit-self.sh	T1	4.0
 test-cockpit-snap-absent.sh	T1	3.5
 test-cockpit-sop.sh	T1	5.0
@@ -167,7 +166,6 @@ test-deploy-preflight-new-unit.sh	T1	12.0
 test-deploy.sh	T1	17.5
 test-destroy-branch.sh	T2	18.5
 test-destructive-bead.sh	T1	8.0
-test-drain-banner.sh	T1	2.5
 test-express-lane.sh	T1	25.5
 test-fayth-project-instructions.sh	T1	4.5
 test-fayth-ready-error.sh	T1	15.0

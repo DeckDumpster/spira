@@ -120,7 +120,7 @@ where `local`, cause `infra` for a fault or an unverifiable green.
 
 `cert-report [--day D] [--line] [--record]` reads those rows alone and reports, per repo and instance type,
 beads landed per hour, first-pass-to-landed p50/p95, passes per landed bead, capacity-wait share, lost
-passes by cause and EC2 cost per landed bead (priced by `SPIRA_CERT_PRICES`), each with its sample size.
+passes by cause and EC2 cost per landed bead (priced by `--prices`), each with its sample size.
 
 ### 2.2a `run --attr-spool <dir>` — streaming and attribution reruns (sp-hvtgs)
 

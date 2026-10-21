@@ -82,7 +82,6 @@ spira/test-closed-strand.sh
 spira/test-cockpit-bd-contract.sh
 spira/test-cockpit-queue-section.sh
 spira/test-cockpit-repo-labels.sh
-spira/test-cockpit-runtime-path.sh
 spira/test-cockpit-unlanded.sh
 spira/test-cockpit-unsent.sh
 spira/test-concierge-inbox.sh

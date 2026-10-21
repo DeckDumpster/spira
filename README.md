@@ -893,7 +893,7 @@ Generic mechanism. A colleague clones this and it carries none of the operator's
 
 | path | what it is |
 |---|---|
-| `spira/` | the harness proper — aeon runner, sentinel and its checks, gate, sending, strand, drain, the chamber and its fayth format, lib.sh, and the test suites that hold them |
+| `spira/` | the harness proper — aeon runner, sentinel and its checks, gate, sending, strand, the chamber and its fayth format, lib.sh, and the test suites that hold them |
 | `spira/boundary` | this manifest — it describes the harness, so it travels with it |
 | `spira/boundary.sh` | renders this manifest into every document that publishes it; the wiki-side target is configured and skipped when unset, per rule 2 |
 | `spira/conf.sh` | the one configuration surface: the loader, the key allowlist, the derived defaults, and `spira_require`, which names a missing program instead of dying as a shell error |
@@ -909,6 +909,9 @@ Generic mechanism. A colleague clones this and it carries none of the operator's
 | `spira/incident.sh` | turns a production event into a bead Ops can claim — systemd OnFailure, arbitrary payload, or a spool drain; deduplicates by external_ref |
 | `spira/statutes/` | the SEED statute book, one file per statute. Statutes live in the beads KV store, which is per-installation, so a clone gets the mechanism and none of the law unless it ships as text |
 | `spira/seed.sh` | writes those statutes into a fresh database, and never over one already in force |
+| `spira/bare-main.sh` | operator tool: `check` or `apply [repo]` makes a repository's main worktree bare while its linked worktrees stay working |
+| `spira/otel-query.sh` | operator tool: `report` or `sql [hours]` — DuckDB views over the OTLP span files spira-otel writes (verb stats, large responses) |
+| `spira/round-spill-profile.sh` | operator tool: `ensure` or `status` prepares the AWS profile and tailscale key location the EC2 spill provider reads, never a credential |
 | `cockpit/` | the decisions panel (Rust) and the ops pane — how a human sees what the harness is doing and answers what it asks. Generic; it reads whatever database it is pointed at |
 | `loom/` | Loom — a Rust read endpoint over the live beads graph with a per-request budget; refuses to start without a database so it cannot silently serve another harness's graph |
 | `systemd/` | unit TEMPLATES. The units in force on a machine are generated from these, never edited in place |

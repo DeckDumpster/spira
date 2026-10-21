@@ -136,6 +136,11 @@ id = "UC-cockpit-observability-24"
 tier = "T1"
 statement = "DRAINING (minutes and resume hint) and STOPPED are independent banners; a stale snapshot is STALE (naming probe and kill count) when its core probe timed out, FAULT (age) otherwise; the threshold `SPIRA_SNAP_STALE_S` is shared with `watchtower` and `doctor.sh`"
 
+[use_case.uncovered]
+reason = "test-drain-banner.sh was deleted with drain.sh; the DRAINING/STOPPED/STALE banner and the SPIRA_SNAP_STALE_S three-reader contract have no suite"
+date = "2026-10-21"
+bead = "sp-qu3k0s"
+
 [[use_case]]
 id = "UC-cockpit-observability-25"
 tier = "T1"

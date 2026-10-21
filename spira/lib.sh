@@ -351,7 +351,7 @@ fayth_get() {            # fayth_get <fayth> <VAR> [default] -> one field of a f
 # set (no scope filter) so that beads missing the scope label are seen and reported as
 # UNCLAIMABLE. They are excluded from claims, counts and strand reports via READY_ARGS, but
 # the detector's job is to name the condition — exclusion is not a reason to stay silent.
-# READY_ARGS and ready_raw_args stay bash: drain.sh and aeon's seam read the array directly,
+# READY_ARGS and ready_raw_args stay bash: aeon's seam reads the array directly,
 # and computing them through a subprocess at source time corrupted the aeon's seam snapshot.
 # On the Rust side the one constant is `spira_claim::READY_ARGS_BASE`. Neither decides what
 # is ready (the lifecycle machine is the only mode, sp-v62vn): spira-claim's counts and an aeon's ready set come from

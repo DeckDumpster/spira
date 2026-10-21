@@ -186,7 +186,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | census | no | - | 64 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | certified-withdraw | replaceable | resubmit-moved-tip | 18 | reopen strips the submitted label; resubmit is the re-entry |
 | certify | replaceable | certify-twice, resubmit-moved-tip | 89 | gated once per tip, re-certified when the tip moves |
-| chamber-core-check | no | - | ? | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
 | chamber-repo-labels | no | - | 4 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
 | citations | no | - | 16 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | claim-retry | partly | new:claim-order | 6 | transient bd failure retried; the failure itself is injection, stays bash |
@@ -482,7 +481,6 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | strand-truncated | no | - | 5 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | stranded-runner | no | - | ? | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | submitted-lands | replaceable | happy-path | ? | submit → certify → land → close is the scenario's whole walk |
-| suite-assert | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | suite-select-cli | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | suite-state-fence | no | - | 6 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | suite-state-rules | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |

@@ -25,7 +25,7 @@
 #
 # defect: sp-ns46j sp-o4trx
 # tier: T3
-# covers: spira/lib.sh aeon/src/* spira/epic-rank.sh spira-claim/*
+# covers: spira/lib.sh aeon/src/* spira-claim/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -243,27 +243,6 @@ is "epic_parent_lookup succeeds (rc=0) against the oversized ready set" "0" "$t7
 t7_rank_rc=0
 epic_rank_rows "$t7_ready_json" "$epic_lookup" "" >/dev/null || t7_rank_rc=$?
 is "epic_rank_rows succeeds (rc=0) against the oversized ready set" "0" "$t7_rank_rc"
-
-# ==========================================================================================
-echo
-echo "T6a: epic-rank.sh (the round cutter) groups beads by epic, groups in rank order,"
-echo "     members within a group by their own priority"
-# ==========================================================================================
-seed <<JSONL
-$(epic sp-e1 1)
-$(closed_child sp-e1-done sp-e1)
-$(bead sp-e1-y sp-e1 1)
-$(bead sp-e1-x sp-e1 3)
-$(epic sp-e2 1)
-$(bead sp-e2-z sp-e2 2)
-JSONL
-cut_out="$(epic-rank.sh --label plan)"
-is "grouped, group order by epic rank, members by their own priority within a group" \
-"== sp-e1 (P1, started) ==
-  sp-e1-y
-  sp-e1-x
-== sp-e2 (P1, unstarted) ==
-  sp-e2-z" "$cut_out"
 
 # ==========================================================================================
 echo
