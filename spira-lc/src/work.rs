@@ -373,8 +373,8 @@ fn working_exit_refusal(verb: &str, exit: &str, row: &bead::BeadRow, actor: &str
     if row.state != bead::BeadState::Working {
         return None;
     }
-    match spira_config::process::cfg("SPIRA_CHAMBER") {
-        Ok(c) => working_exit_refusal_in(std::path::Path::new(&c), verb, exit, row, actor),
+    match spira_config::resolve::locate_home_for_process() {
+        Ok(home) => working_exit_refusal_in(&spira_config::chamber::chamber_dir(std::path::Path::new(&home)), verb, exit, row, actor),
         Err(e) => Some((CANNOT_TELL, format!("cannot tell: {e}"))),
     }
 }
