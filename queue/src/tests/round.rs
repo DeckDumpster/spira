@@ -1685,6 +1685,21 @@ fn a_pass_the_vm_could_not_finish_is_incomplete_not_red_or_green() {
 }
 
 #[test]
+fn suites_started_re_reads_and_survives_repeated_stale_versions() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
+    t.lc.stale_batch_events.set(3);
+    assert_eq!(t.run(&["round", "suites-started", &batch]), 0, "{}", t.err());
+    let shows = t.lc.calls.borrow().iter().filter(|c| c.starts_with("event batch") && c.contains("SuitesStarted")).count();
+    assert_eq!(shows, 4, "{:?}", t.lc.calls.borrow());
+    t.lc.stale_batch_events.set(100);
+    assert_ne!(t.run(&["round", "suites-started", &batch]), 0);
+}
+
+#[test]
 fn the_pass_verbs_record_a_hand_driven_pass_like_the_batchers() {
     let t = round_world();
     *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
