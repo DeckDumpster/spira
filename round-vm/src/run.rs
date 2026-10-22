@@ -255,6 +255,16 @@ if [ -z "$cache_home" ]; then
     fi
 fi
 export CARGO_HOME="$cache_home"
+# The image links $CARGO_HOME/bin straight to ITS toolchain (template.sh runs only at image
+# build), so RUSTUP_TOOLCHAIN alone changes nothing: a round whose tree pins another release
+# installs it here and relinks, or a toolchain upgrade can never certify.
+have="$("$CARGO_HOME/bin/rustc" --version 2>/dev/null | cut -d' ' -f2)"
+if [ -n "$toolchain" ] && [ "$have" != "$toolchain" ]; then
+    echo "round-vm: round toolchain $toolchain (installed at round time; the image has ${have:-none})" >&2
+    export RUSTUP_HOME="$CARGO_HOME/rustup"
+    rustup toolchain install "$toolchain" --profile minimal --no-self-update >&2
+    for b in "$RUSTUP_HOME"/toolchains/"$toolchain"-*/bin/*; do ln -sf "$b" "$CARGO_HOME/bin/${b##*/}"; done
+fi
 export RUSTC_WRAPPER="$CARGO_HOME/bin/sccache"
 if [ ! -x "$RUSTC_WRAPPER" ]; then
     echo "round-vm: sccache is missing on this VM: $RUSTC_WRAPPER" >&2
@@ -2118,6 +2128,15 @@ mod tests {
         let a = REMOTE_SCRIPT.find("unit_stream() {").unwrap();
         let b = a + REMOTE_SCRIPT[a..].find("\n}\n").unwrap() + 3;
         REMOTE_SCRIPT[a..b].to_string()
+    }
+
+    #[test]
+    fn a_round_installs_its_trees_toolchain_when_the_image_differs() {
+        let home = REMOTE_SCRIPT.find("export CARGO_HOME=\"$cache_home\"").unwrap();
+        let install = REMOTE_SCRIPT.find("rustup toolchain install \"$toolchain\"").expect("installs the round's toolchain");
+        let relink = REMOTE_SCRIPT.find("ln -sf \"$b\" \"$CARGO_HOME/bin/${b##*/}\"").expect("relinks cargo/rustc");
+        assert!(home < install && install < relink);
+        assert!(REMOTE_SCRIPT.contains("installed at round time; the image has"));
     }
 
     #[test]
