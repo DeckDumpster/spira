@@ -167,6 +167,10 @@ pub struct Refusals {
 
 /// A refusal's text with the per-round tokens (batch id, object ids) removed, so the same
 /// refusal on a fresh round compares equal.
+pub fn is_stale_image(msg: &str) -> bool {
+    msg.contains(STALE_AMI_MARKER)
+}
+
 pub fn refusal_key(msg: &str, batch: &str) -> String {
     msg.split_whitespace()
         .filter(|t| !(t.len() >= 40 && t.chars().all(|c| c.is_ascii_hexdigit())) && !t.contains(batch))
@@ -418,6 +422,12 @@ mod tests {
         }
         assert!(!Files::new(d, "a").stopped());
         assert_eq!(Files::new(d, "a").load().infra, 0);
+    }
+
+    #[test]
+    fn a_stale_image_refusal_is_recognised_and_a_plain_one_is_not() {
+        assert!(is_stale_image("cannot certify the round: round AMI is stale: acquire failed"));
+        assert!(!is_stale_image("cannot certify the round: acquire failed: pool exhausted"));
     }
 
     #[test]

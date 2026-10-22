@@ -1094,6 +1094,9 @@ fn finish_local_round(
 }
 
 fn stop_on_repeat(env_: &Env, repo: &str, batch: &str, msg: &str) {
+    if pace::is_stale_image(msg) {
+        return;
+    }
     let files = pace::Files::new(&env_.run, repo);
     match files.record_refusal(repo, &pace::refusal_key(msg, batch), now()) {
         Ok(Some(page)) => {
