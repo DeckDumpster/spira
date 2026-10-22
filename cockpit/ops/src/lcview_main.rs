@@ -370,6 +370,7 @@ fn gather() -> Snapshot {
                 s.tails.insert(r.id.clone(), t);
             }
         }
+        s.inflight = std::fs::read_to_string(std::path::Path::new(run.trim()).join("cockpit.env")).map(|t| cockpit_ops::lcview::Inflight::from_cockpit_env(&t)).unwrap_or_default();
     }
     let sm = sm.join().unwrap_or_default();
     s.graph = sm.graph;

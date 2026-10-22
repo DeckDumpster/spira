@@ -14,7 +14,7 @@ fn bar(done: u64, total: u64) -> String {
     format!("{}{}", "\u{2588}".repeat(filled), "\u{2591}".repeat(BAR_CELLS - filled))
 }
 
-fn row_line(raw: &str, cols: i64, now: i64) -> String {
+pub fn row_text(raw: &str, now: i64) -> String {
     let f: Vec<&str> = raw.split('|').collect();
     let at = |i: usize| f.get(i).copied().unwrap_or("");
     let elapsed = at(3).parse::<i64>().map_or("?".to_string(), |t| mail_dur(&(now - t).max(0).to_string()));
@@ -23,7 +23,11 @@ fn row_line(raw: &str, cols: i64, now: i64) -> String {
         (Ok(d), Err(_)) => format!("  {DIM}{d}/?{RST}"),
         _ => String::new(),
     };
-    fit(&format!("  {B}{:<6}{RST} {}  {DIM}{} {elapsed}{RST}{progress}", at(0), at(1), at(2)), cols)
+    format!("{B}{:<6}{RST} {}  {DIM}{} {elapsed}{RST}{progress}", at(0), at(1), at(2))
+}
+
+fn row_line(raw: &str, cols: i64, now: i64) -> String {
+    fit(&format!("  {}", row_text(raw, now)), cols)
 }
 
 pub fn inflight_section(snap: &Snapshot, cols: i64, now: i64) -> Vec<String> {
