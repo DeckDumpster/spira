@@ -1724,6 +1724,13 @@ repo_field() {           # repo_field <name> <path|land|base|format|gate|lanes> 
     _spira_config_repo field "$1" "$2"
 }
 
+# scoped_stop_active <repo> <lane> — 0 when `world.sh pause --repo` stopped that lane on
+# purpose. Reads the record spira_config::scoped_stop writes (pretty JSON, one lane a line).
+scoped_stop_active() {
+    local f="$SPIRA_RUN/scoped-stops/repo-$1.json"
+    [ -r "$f" ] && grep -Eq "^[[:space:]]+\"$2\",?\$" "$f"
+}
+
 repo_names() {           # every repo name in the map, one per line
     _spira_config_repo names
 }

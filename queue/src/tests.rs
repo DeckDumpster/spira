@@ -4085,6 +4085,24 @@ fn publish_with_nothing_new_is_success() {
 }
 
 #[test]
+fn a_stopped_publish_lane_opens_no_pr_and_another_lane_does_not_stop_it() {
+    let t = T::new(LandMode::QueueLocal);
+    publishable(&t);
+    let run = t.s().run.clone();
+    let lanes = |l: &str| spira_config::scoped_stop::parse_lanes(l).unwrap();
+    spira_config::scoped_stop::pause_repo(&run, "spira", &lanes("claims,rounds"), "concierge", "hand fix", "fix lands", 1).unwrap();
+    assert_eq!(t.run(&["publish"]), 0);
+    assert!(!t.out().contains("stopped on purpose"), "a claims/rounds stop leaves publish running");
+    let t = T::new(LandMode::QueueLocal);
+    publishable(&t);
+    let run = t.s().run.clone();
+    spira_config::scoped_stop::pause_repo(&run, "spira", &lanes("publish"), "concierge", "hand fix", "fix lands", 1).unwrap();
+    assert_eq!(t.run(&["publish"]), 0);
+    assert!(t.out().contains("publish lane stopped on purpose by concierge"));
+    assert!(!t.qfile("publish").exists(), "no publish PR record");
+}
+
+#[test]
 fn publish_refuses_a_divergence_an_open_publish_and_a_range_without_land_commits() {
     let t = T::new(LandMode::QueueLocal);
     publishable(&t);

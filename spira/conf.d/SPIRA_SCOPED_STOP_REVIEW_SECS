@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=queue
+DOC=Seconds a scoped stop or bead reservation may stand before its owner is told its release condition is overdue.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Age after which a `world.sh pause --repo/--reserve` stop is surfaced to its owner as
+    # overdue. The stop stays in force; only the surfacing changes.
+    : "${SPIRA_SCOPED_STOP_REVIEW_SECS:=86400}"
+SPIRA_CONF_DEFAULT_EOF

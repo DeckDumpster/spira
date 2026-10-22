@@ -50,6 +50,13 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
         ));
         return OK;
     }
+    if let Some(stop) = spira_config::scoped_stop::stop_for(&c.s.run, &name, "publish") {
+        w.out(format!(
+            "queue.sh publish: {name} publish lane stopped on purpose by {} ({}) — no publish PR opened; lift with: world.sh unpause --repo {name} --lanes publish",
+            stop.owner, stop.reason
+        ));
+        return OK;
+    }
     let Some((remote, forge_branch)) = c.r.publish.clone() else {
         w.err(format!(
             "queue.sh publish: cannot resolve a forge target for {name}"

@@ -5,7 +5,14 @@
 //!   world.sh start [--work] [--observability] [--maintenance] [--all]
 //!   world.sh drain [--timeout SECS | --for SECS | --deadline SECS]
 //!   world.sh resume
+//!   world.sh pause --repo R [--lanes claims,rounds,publish] --reason WHY --until CONDITION [--owner O]
+//!   world.sh pause --reserve BEAD[,BEAD...] --reason WHY [--until CONDITION] [--owner O]
+//!   world.sh unpause --repo R [--lanes ...] | --reserve BEAD[,BEAD...]
 //!   world.sh status
+//!
+//! SCOPED PAUSES are recorded state (`spira_config::scoped_stop`), never halts: one repo's
+//! claims, rounds or publish lane, or named beads no aeon may claim. Running work is never
+//! touched, and every reader treats a stop as deliberate.
 //!
 //! PLANES. Every unit declares `Plane=work|observability|maintenance` in its own
 //! `[X-Spira]` section; world reads that, never a list of its own. A plane flag selects
@@ -281,7 +288,7 @@ fn notify_aeons(notifier: &mut spira_world::notice::Notifier, what: &str, elapse
     });
 }
 
-const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS] | drain [--reboot] [--timeout SECS | --deadline SECS] | resume | start [--work|--observability|--maintenance|--all] | status}";
+const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS] | drain [--reboot] [--timeout SECS | --deadline SECS] | resume | start [--work|--observability|--maintenance|--all] | pause --repo R [--lanes claims,rounds,publish] --reason WHY --until COND [--owner O] | pause --reserve BEADS --reason WHY [--owner O] | unpause --repo R [--lanes L] | unpause --reserve BEADS | status}";
 
 fn cmd_stop(args: &[String]) -> i32 {
     let mut why = String::new();
@@ -735,7 +742,125 @@ fn cmd_resume() -> i32 {
     0
 }
 
+fn now_epoch() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+fn flag<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
+    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).map(String::as_str)
+}
+
+fn ids_of(csv: &str) -> Vec<String> {
+    csv.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect()
+}
+
+fn cmd_pause(args: &[String]) -> i32 {
+    let run = run_or_die();
+    let owner = flag(args, "--owner").unwrap_or("concierge");
+    let reason = flag(args, "--reason").unwrap_or("");
+    let until = flag(args, "--until").unwrap_or("");
+    let now = now_epoch();
+    match (flag(args, "--repo"), flag(args, "--reserve")) {
+        (Some(repo), None) => {
+            let lanes = match spira_config::scoped_stop::parse_lanes(flag(args, "--lanes").unwrap_or("claims,rounds,publish")) {
+                Ok(l) => l,
+                Err(e) => {
+                    eprintln!("spira: world pause: {e}");
+                    return 64;
+                }
+            };
+            match spira_config::scoped_stop::pause_repo(&run, repo, &lanes, owner, reason, until, now) {
+                Ok(s) => {
+                    println!("spira: paused {} lane(s) of {repo}: now stopped [{}]; lift with: world.sh unpause --repo {repo}", lanes.join(","), s.lanes.join(","));
+                    0
+                }
+                Err(e) => {
+                    eprintln!("spira: world pause: {e}");
+                    64
+                }
+            }
+        }
+        (None, Some(csv)) => {
+            let ids = ids_of(csv);
+            if ids.is_empty() {
+                eprintln!("spira: world pause: --reserve names no bead");
+                return 64;
+            }
+            for id in &ids {
+                if let Err(e) = spira_config::scoped_stop::reserve(&run, id, owner, reason, until, now) {
+                    eprintln!("spira: world pause: {e}");
+                    return 64;
+                }
+                println!("spira: reserved {id}: no aeon will claim it; lift with: world.sh unpause --reserve {id}");
+            }
+            0
+        }
+        _ => {
+            eprintln!("{USAGE}");
+            64
+        }
+    }
+}
+
+fn cmd_unpause(args: &[String]) -> i32 {
+    let run = run_or_die();
+    match (flag(args, "--repo"), flag(args, "--reserve")) {
+        (Some(repo), None) => {
+            let lanes = match flag(args, "--lanes") {
+                Some(l) => match spira_config::scoped_stop::parse_lanes(l) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        eprintln!("spira: world unpause: {e}");
+                        return 64;
+                    }
+                },
+                None => Vec::new(),
+            };
+            match spira_config::scoped_stop::unpause_repo(&run, repo, &lanes) {
+                Ok(None) => println!("spira: {repo} has no scoped stop — nothing to lift"),
+                Ok(Some(left)) if left.is_empty() => println!("spira: {repo}: scoped stop lifted"),
+                Ok(Some(left)) => println!("spira: {repo}: still stopped [{}]", left.join(",")),
+                Err(e) => {
+                    eprintln!("spira: world unpause: {e}");
+                    return 1;
+                }
+            }
+            0
+        }
+        (None, Some(csv)) => {
+            for id in ids_of(csv) {
+                match spira_config::scoped_stop::unreserve(&run, &id) {
+                    Ok(true) => println!("spira: {id}: reservation lifted"),
+                    Ok(false) => println!("spira: {id} was not reserved"),
+                    Err(e) => {
+                        eprintln!("spira: world unpause: {e}");
+                        return 1;
+                    }
+                }
+            }
+            0
+        }
+        _ => {
+            eprintln!("{USAGE}");
+            64
+        }
+    }
+}
+
+fn print_scoped_stops() {
+    let run = run_or_die();
+    let review = spira_config::process::cfg_parse::<u64>("SPIRA_SCOPED_STOP_REVIEW_SECS").unwrap_or_else(|e| die(&e));
+    let now = now_epoch();
+    for s in spira_config::scoped_stop::repo_stops(&run) {
+        println!("spira: {}", spira_config::scoped_stop::describe_stop(&s, now, review));
+    }
+    for r in spira_config::scoped_stop::reservations(&run) {
+        println!("spira: {}", spira_config::scoped_stop::describe_reservation(&r, now, review));
+    }
+}
+
 fn cmd_status() -> i32 {
+    print_scoped_stops();
     if drain_stamp_or_die().is_file() {
         let text = std::fs::read_to_string(drain_stamp_or_die()).unwrap_or_default();
         let mut lines = text.lines();
@@ -851,6 +976,8 @@ fn main() {
         "start" => cmd_start(rest),
         "drain" => cmd_drain(rest),
         "resume" => cmd_resume(),
+        "pause" => cmd_pause(rest),
+        "unpause" => cmd_unpause(rest),
         "status" => cmd_status(),
         // `TIMER_PRIORITY`, one base name per line — the seam watchtower.sh's
         // disabled-timer-check reads instead of `WORLD_LIB=1 . world.sh`, which stopped

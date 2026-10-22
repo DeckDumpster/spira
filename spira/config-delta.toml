@@ -73,6 +73,7 @@ removed = ["spira.broker_enable", "spira.express_label", "spira.overlap_defer_la
 "spira.round_vm_ec2_boot_tries" = 150
 "spira.round_vm_ec2_key_warn_days" = 14
 "spira.rounds_pacing" = "0"
+"spira.scoped_stop_review_secs" = 86400
 "spira.batcher_forge_enable" = "1"
 "spira.pass_rate_max_pct" = 150
 "spira.pass_rate_window" = 86400

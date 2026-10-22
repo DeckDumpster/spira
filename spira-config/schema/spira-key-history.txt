@@ -482,3 +482,4 @@ kit_sites
 publish_red_priority
 publish_red_escalate_after
 cold_par
+scoped_stop_review_secs
