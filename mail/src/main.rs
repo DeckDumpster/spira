@@ -258,7 +258,14 @@ fn run_done(args: &[String]) -> ExitCode {
 
 fn run_sendmail(args: &[String]) -> ExitCode {
     if args.iter().any(|a| a == "--check") {
-        return ExitCode::SUCCESS;
+        let env = match Env::load() {
+            Ok(e) => e,
+            Err(e) => return fail(format!("sendmail --check: config: {e}")),
+        };
+        return match sendmail::check(&env.mail_root) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => fail(format!("sendmail --check: {e}")),
+        };
     }
     let mut raw = String::new();
     if io::stdin().read_to_string(&mut raw).is_err() {
