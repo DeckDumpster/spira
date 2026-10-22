@@ -1573,7 +1573,7 @@ fn publish_green_fast_forwards_the_forge_and_retires_the_record() {
     assert!(t
         .landing_log()
         .contains("QUEUE PUBLISH_GREEN 1000 repo=spira pr=77 head=m3"));
-    assert!(t.lib.has("notify spira publish PR 77 merged"));
+    assert!(!t.lib.has("notify spira publish PR 77 merged"));
     assert!(t
         .out()
         .contains("verdict spira: publish PR 77 green — origin/main fast-forwarded to m3"));
@@ -1604,7 +1604,7 @@ fn green_on_an_unmoved_base_fast_forwards_lands_every_member_and_cleans_up() {
         assert!(t.lib.has(&format!("gh_closeout {id} h1")));
         assert!(t.lib.has(&format!("bead_close {id} h1")));
     }
-    assert!(t.lib.has("notify spira PR 12 merged (fast-forward)"));
+    assert!(!t.lib.has("notify spira PR 12 merged (fast-forward)"));
     assert!(has_call(&t.scripts.calls, "observe-flake test-f.sh h1"));
     assert!(!t.qfile("open").exists());
     assert!(t.lib.has("push origin :refs/heads/spira/queue/x"));

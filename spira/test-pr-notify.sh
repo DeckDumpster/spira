@@ -23,9 +23,7 @@
 #   6. BRANCHES WITH NO PR (T2: real git, stubbed gh) — pr-mode only; unchanged from before.
 #   7. THE MANIFEST ROW is a daemon now, not a log fed by an external timer — this is what
 #      lets `watchd status` show it active instead of external.
-#   8. EVERY TRANSITION IS ALSO MAILED to the concierge mailbox directly (`--kind event`),
-#      not only logged — delivery this way does not depend on a session holding an
-#      in-session Monitor or on the watch-notify escalation timer.
+#   8. NO TRANSITION IS MAILED to the concierge mailbox: the watchd log is its one source.
 #
 # THE CLASSIFIER (_PR_STATUS_PY) IS A PURE FUNCTION OF STDIN JSON, exercised directly; the
 # transition engine is exercised through the real script with a stubbed `gh` so a PR's
@@ -221,17 +219,9 @@ for r in queue-repo pr-repo push-repo hold-repo; do
         "$out3" "FAIL RED #1 Round batch [$r]: suites"
 done
 
-# --- TICK 3 MAIL: THE SCOPE ADDITION — every transition is also mailed straight to the
-#     concierge mailbox, so delivery does not depend on a session holding an in-session
-#     Monitor or on the separate (and separately broken) watch-notify escalation timer.
-#     This is what makes queue-repo's red batch PR reach an unread message with no
-#     Concierge session attached to anything.
-mail_matches="$(grep -l "FAIL RED #1 Round batch \[queue-repo\]: suites" \
-    "$RUN"/mail/concierge/new/* 2>/dev/null | wc -l | tr -d ' ')"
-is "tick3: queue-repo's RED is mailed to the concierge mailbox" "1" "${mail_matches:-0}"
-mail_unread="$(ls "$RUN/mail/concierge/new" 2>/dev/null | wc -l | tr -d ' ')"
-is "tick3: one mail per repo's RED transition (4 repos)" "4" "$mail_unread"
-rm -f "$RUN"/mail/concierge/new/*
+# --- TICK 3 MAIL: the watchd log is the concierge's one source; no transition mails it.
+is "tick3: no transition is mailed to the concierge mailbox" "0" \
+    "$(ls "$RUN/mail/concierge/new" 2>/dev/null | wc -l | tr -d ' ')"
 
 # --- TICK 4: unchanged again — the RED is not re-announced --------------------------
 run --show
@@ -507,11 +497,11 @@ hasnt "actionable filter: GREEN is not actionable (it lands itself)"     "$out9"
 # otherwise go on filtering every later pr-notify.sh call too.
 tl_config SPIRA_ACTIONABLE=
 
-echo "10. the mailed log is marked delivered, so watchd notify has no unread stream to escalate"
+echo "10. the log stays unread, so watchd notify escalates it: the one concierge source"
 mkdir -p "$RUN/watchd"
 printf 'a\nb\n' > "$RUN/watchd/pr-notify.log"
 rm -f "$RUN/watchd/pr-notify.cursor"
 run watch --interval 0 --ticks 1
-is "cursor advanced over the lines mailed on earlier ticks" "2" "$(tr -d '[:space:]' < "$RUN/watchd/pr-notify.cursor" 2>/dev/null)"
+is "cursor is not advanced past unread lines" "" "$(cat "$RUN/watchd/pr-notify.cursor" 2>/dev/null)"
 
 tl_summary

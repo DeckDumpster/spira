@@ -55,36 +55,23 @@ _pr_state_file() { printf '%s/%s.tsv' "$STATE_DIR" "$1"; }
 
 _emit() { printf '%s\n' "$1"; }
 
-# _report <line> — a PR transition: printed (the watchd log, for history) AND mailed
-# straight to the concierge mailbox as `--kind event`, never `note`: a machine event gets
-# spira-mail-deliver's near-zero SPIRA_MAIL_SETTLE_EVENT, not the multi-minute
-# SPIRA_MAIL_SETTLE window that batches the operator's OWN replies landing in the same
-# mailbox. The log line alone depends on a session holding an in-session Monitor or the
-# watch-notify escalation timer, either of which can be down or unattended; mailing here
-# means delivery survives both, because it never depends on anything but this tick running.
+# _report <line> — a PR transition, printed to the watchd log. The log is the one source for
+# the concierge: watchd notify escalates it, so mailing it too would wake the concierge twice.
 _report() {
-    local line="$1"
-    _emit "$line"
-    mail send concierge \
-        --from "PR Notify <pr-notify@spira>" \
-        --subject "pr-notify: $line" \
-        --kind event <<MAILEOF >/dev/null || { _MAIL_FAILED=1; printf 'pr-notify: mail send failed for: %s\n' "$line" >&2; }
-## Event
-$line
-MAILEOF
+    _emit "$1"
 }
 
 # _operator <subject> <body> — a merge or deploy outcome, mailed to the operator as a note:
 # the channel that reaches his phone. --digest because the operator mailbox otherwise admits
 # only class-bearing asks and reroutes a note to the concierge; the repeat guard is
-# overridden because consecutive merges normalise to one subject. Failure is remembered like _report's, never dropped.
+# overridden because consecutive merges normalise to one subject.
 _operator() {
     local subject="$1" body="$2"
     SPIRA_MAIL_REPEAT_CONSIDERED="pr-notify deduplicates by merge sha; subjects differ only in PR number and sha" \
     mail send operator \
         --from "PR Notify <pr-notify@spira>" \
         --subject "$subject" \
-        --kind note --digest <<MAILEOF >/dev/null || { _MAIL_FAILED=1; printf 'pr-notify: operator mail failed for: %s\n' "$subject" >&2; }
+        --kind note --digest <<MAILEOF >/dev/null || printf 'pr-notify: operator mail failed for: %s\n' "$subject" >&2
 ## Note
 $body
 MAILEOF
@@ -392,17 +379,6 @@ cmd_actionable() {
     done < "$file" | awk '!seen[$0]++'
 }
 
-# _mark_delivered — the log is history once every line in it was mailed, so nothing reads it
-# and watchd notify must not escalate it as unread. Runs at the start of a tick, a whole
-# interval after the previous tick's output was appended; a tick with a failed mail leaves
-# the cursor alone so those lines still escalate.
-_MAIL_FAILED=0
-_mark_delivered() {
-    [ "$_MAIL_FAILED" = 0 ] || return 0
-    [ -f "$LOG_FILE" ] || return 0
-    wc -l < "$LOG_FILE" > "${LOG_FILE%.log}.cursor"
-}
-
 # cmd_watch [--interval S] [--ticks N] — the watchd daemon body. Runs forever (or --ticks
 # times, for a test), scanning every repo and writing a health record each pass.
 cmd_watch() {
@@ -415,7 +391,6 @@ cmd_watch() {
         esac
     done
     while :; do
-        _mark_delivered
         _pr_notify_tick
         _pr_notify_write_health "$interval"
         tick=$((tick + 1))

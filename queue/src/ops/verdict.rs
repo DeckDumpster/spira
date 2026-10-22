@@ -312,12 +312,6 @@ fn settle_locked(w: &World, c: &Ctx, path: &Path) -> (i32, String) {
                     w.clock.now()
                 ),
             );
-            w.lib.notify(
-                &c.s.mailbox,
-                name,
-                &format!("publish PR {pr} merged"),
-                &format!("{remote}/{forge_branch} fast-forwarded to {head} (PR {pr})."),
-            );
             w.out(format!("verdict {name}: publish PR {pr} green — {remote}/{forge_branch} fast-forwarded to {head}"));
             OK
         }
@@ -1253,16 +1247,6 @@ fn fast_forward(
         // reconciler lands it once the PR reads merged.
         return FAIL;
     }
-    w.lib.notify(
-        &c.s.mailbox,
-        name,
-        &format!("PR {pr} merged (fast-forward)"),
-        &format!(
-            "PR {pr} merged onto {base_branch} by fast-forward (head {}). Members: {}",
-            b.head,
-            b.members_str()
-        ),
-    );
     for m in &b.members {
         land_member(w, c, b.path, m, &b.head);
     }
