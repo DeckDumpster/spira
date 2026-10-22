@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=lifecycle
+DOC=Days of rows each run/tsd family file keeps; older rows are removed by the daily tsd-prune. A family is never kept for less than its readers' longest trailing window, whatever this says.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_TSD_KEEP_DAYS:=30}"
+SPIRA_CONF_DEFAULT_EOF

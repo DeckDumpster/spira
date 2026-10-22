@@ -128,3 +128,5 @@ removed = ["spira.broker_enable", "spira.express_label", "spira.overlap_defer_la
 "spira.reflect_recur_days" = 14
 "spira.reflect_recur_hits" = 2
 "spira.reflect_recur_weekly_cap" = 3
+"spira.tsd_keep_days" = 30
+"spira.tsd_keep_days_by_family" = ""

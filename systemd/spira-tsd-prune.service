@@ -1,0 +1,21 @@
+[Unit]
+Description=Spira tsd prune — drop run/tsd/ rows older than each family's retention bound
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+ExecStart=@SPIRA_PROD_ROOT@/bin/tsd-prune
+TimeoutStartSec=1800
+CPUQuota=20%
+Nice=10
+IOSchedulingClass=idle
+StandardOutput=append:@SPIRA_RUN@/tsd-prune.log
+StandardError=append:@SPIRA_RUN@/tsd-prune.log
+
+[Install]
+WantedBy=default.target
+
+[X-Spira]
+Plane=maintenance

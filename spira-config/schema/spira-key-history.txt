@@ -487,3 +487,5 @@ reflect_ledger
 reflect_recur_days
 reflect_recur_hits
 reflect_recur_weekly_cap
+tsd_keep_days
+tsd_keep_days_by_family
