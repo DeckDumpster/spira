@@ -1288,14 +1288,15 @@ fn amend_enforce(home: &str, aid: &str) -> i32 {
     }
     let reason = format!("amendment {aid} {why}; slain and requeued with the amendment merged into the body");
     rc |= bdq_status(home, &s(&["note", &id, &format!("Enforced {aid}: {reason}")]));
-    let slay = Command::new("slay.sh")
+    // batch-job: slay waits out the holder's shutdown and salvages its work
+    let slay = Command::new("slay")
         .args(["--bead", &id, "--why", &reason, "--reopen"])
         .envs(spira_config::release_env::child_path_env_for_process())
         .status()
         .map(|s| s.code().unwrap_or(1))
         .unwrap_or(127);
     if slay != 0 {
-        eprintln!("bead: amend: slay.sh --bead {id} failed ({slay}); the amendment is merged and marked enforced");
+        eprintln!("bead: amend: slay --bead {id} failed ({slay}); the amendment is merged and marked enforced");
     }
     rc | slay
 }

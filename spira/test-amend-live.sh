@@ -23,7 +23,7 @@ JSONL
 
 MAIL="$TMP/mail"
 mkdir -p "$MAIL/aeon-sp-aml-a/new" "$MAIL/aeon-sp-aml-b/new" "$TMP/bin" "$TMP/run"
-cat > "$TMP/bin/slay.sh" <<'S'
+cat > "$TMP/bin/slay" <<'S'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$SLAY_LOG"
 S
@@ -31,7 +31,7 @@ cat > "$TMP/bin/mail" <<'S'
 #!/usr/bin/env bash
 cat >/dev/null
 S
-chmod +x "$TMP/bin/slay.sh" "$TMP/bin/mail"
+chmod +x "$TMP/bin/slay" "$TMP/bin/mail"
 
 record() { # id bead state deadline text
     mkdir -p "$MAIL/aeon-$2/amend"
