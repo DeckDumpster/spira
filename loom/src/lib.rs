@@ -47,8 +47,8 @@ pub struct Config {
     pub instance: String,
     /// The `systemctl` binary to use for sentinel-active checks. Overridable in tests.
     pub systemctl: String,
-    /// The `duckdb` the units page runs. Overridable in tests.
-    pub duckdb: String,
+    /// The metrics store the units page reads executions from, from `SPIRA_METRICS_ENDPOINT`.
+    pub metrics_endpoint: Option<String>,
     /// The `broker` the forge batch pages read CI detail through. Overridable in tests.
     pub broker: String,
     /// The materialised desired-state directory, from `SPIRA_DESIRED_DIR`: the declared unit set the units page scopes to.
@@ -80,7 +80,7 @@ impl Config {
                 .ok()
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "systemctl".to_string()),
-            duckdb: std::env::var("SPIRA_DUCKDB").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "duckdb".to_string()),
+            metrics_endpoint: cfg("SPIRA_METRICS_ENDPOINT").ok().filter(|e| !e.trim().is_empty()),
             broker: std::env::var("SPIRA_BROKER").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "broker".to_string()),
             desired_dir: cfg("SPIRA_DESIRED_DIR").map_err(|e| format!("loom: {e}"))?,
             units_install: std::env::var("SPIRA_UNITS_INSTALL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "units-install".to_string()),
@@ -125,7 +125,7 @@ impl Loom {
         let src = units::Sources {
             run: self.cfg.run.clone(),
             systemctl: self.cfg.systemctl.clone(),
-            duckdb: self.cfg.duckdb.clone(),
+            metrics_endpoint: self.cfg.metrics_endpoint.clone(),
             extra_path: self.cfg.extra_path.join(":"),
             budget: self.cfg.budget,
             desired_dir: self.cfg.desired_dir.clone(),

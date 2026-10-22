@@ -36,7 +36,7 @@ async fn a_request_pushes_one_run_labelled_by_page_and_status_class() {
         run: tmp.path().display().to_string(),
         instance: "t".into(),
         systemctl: "/nonexistent/systemctl".into(),
-        duckdb: "/nonexistent/duckdb".into(),
+        metrics_endpoint: None,
         broker: "/nonexistent/broker".into(),
         desired_dir: String::new(),
         units_install: "/nonexistent/units-install".into(),
