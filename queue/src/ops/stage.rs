@@ -326,6 +326,7 @@ pub fn stage_test(w: &World, repo: Option<&str>) -> i32 {
         (&batch, &c.r.name),
         c.s.round_wall_secs,
         &handle_of(&c, &batch),
+        None,
     );
     let _ = fs::remove_file(handle_of(&c, &batch));
     let mut found = Vec::new();

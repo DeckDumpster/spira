@@ -52,6 +52,9 @@ pub struct Settings {
     /// `SPIRA_ROUND_AMI_WAIT_SECS` (declared value): how long `round certify` waits for a Round
     /// AMI build when the newest image is stale.
     pub round_ami_wait_secs: u64,
+    /// `SPIRA_ROUND_VM_SPILL` (declared value): empty when rounds only run on the local
+    /// hypervisor, so no round image is ever involved.
+    pub round_spill: String,
     /// `SPIRA_QUEUE_ROUNDS_MAX` (declared value): how many rounds may be open at once per repo.
     pub rounds_max: usize,
     /// `SPIRA_PUBLISH_RED_PRIORITY` (declared value): the priority of a red publish's tracker.
@@ -324,6 +327,7 @@ pub trait Scripts {
     /// 124/137 hit the wall; anything else is the harness's fault.
     /// `handle` is where the run's pid is written while it runs: the one thing `round preempt`
     /// addresses. The pid is the `timeout` wrapper, so a TERM reaches round-vm through it.
+    /// `ami` is the image id the pass launches instead of the newest matching the release (`SPIRA_ROUND_VM_EC2_AMI`).
     fn round_vm(
         &self,
         tree: &Path,
@@ -332,7 +336,12 @@ pub trait Scripts {
         round: (&str, &str),
         wall_secs: u64,
         handle: &Path,
+        ami: Option<&str>,
     ) -> RunOut;
+    /// `round-vm recipe-sha [--tree <dir>]`: the recipe hash of the release, or of the tree; None when unreadable.
+    fn recipe_sha(&self, tree: Option<&Path>) -> Option<String>;
+    /// `round-vm ami-for <recipe-sha>`: the newest round image built from that recipe.
+    fn ami_for(&self, sha: &str) -> AmiLookup;
     /// `round-vm run <tree> --ci-entry <entry> --results-dir <results> --round-batch <batch> --round-repo <repo>` under `timeout`: a repository
     /// that is not the harness judged by its own full CI entry point on a round VM. Exit 0 GREEN, 1 RED
     /// (`ci.result` in `results`), anything else a fault. `handle` receives the pid exactly as `round_vm`'s does.
@@ -399,6 +408,44 @@ pub trait Forge {
     fn ami_runs(&self, forge: &Path, repo: &Path) -> Option<Vec<String>>;
     /// `ami-dispatch <repo> <ref>`: whether the forge accepted a new Round AMI run.
     fn ami_dispatch(&self, forge: &Path, repo: &Path, ref_: &str) -> bool;
+    /// `ami-result <repo> <branch>`: the newest Round AMI run on that branch; None when the forge cannot be read.
+    fn ami_result(&self, forge: &Path, repo: &Path, branch: &str) -> Option<AmiBuild>;
+}
+
+/// A Round AMI run on a candidate branch, as the forge reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AmiBuild {
+    NotStarted,
+    Running(String),
+    Success(String),
+    /// The run id and the `<job> / <step>` that failed.
+    Failure(String, Vec<String>),
+}
+
+impl AmiBuild {
+    pub fn parse(text: &str) -> Option<AmiBuild> {
+        let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
+        let head = lines.next()?;
+        let (word, id) = head.split_once(' ').unwrap_or((head, ""));
+        match word {
+            "none" => Some(AmiBuild::NotStarted),
+            "running" => Some(AmiBuild::Running(id.into())),
+            "success" => Some(AmiBuild::Success(id.into())),
+            "failure" => Some(AmiBuild::Failure(
+                id.into(),
+                lines.filter_map(|l| l.strip_prefix("failed-step: ")).map(String::from).collect(),
+            )),
+            _ => None,
+        }
+    }
+}
+
+/// What `round-vm ami-for` says about the image built from a recipe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AmiLookup {
+    Found(String),
+    Missing,
+    Unreadable(String),
 }
 
 /// spira-lc (the lifecycle machine's CLI).

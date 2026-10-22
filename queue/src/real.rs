@@ -563,6 +563,7 @@ impl Lib for RealLib {
             mailbox,
             round_wall_secs,
             round_ami_wait_secs,
+            round_spill: spira_config::process::cfg("SPIRA_ROUND_VM_SPILL").unwrap_or_default(),
             rounds_max,
             publish_red_priority,
             publish_red_escalate_after,
@@ -954,8 +955,26 @@ impl Scripts for RealScripts {
         round: (&str, &str),
         wall_secs: u64,
         handle: &Path,
+        ami: Option<&str>,
     ) -> RunOut {
-        run_round_vm(tree, results, ["--base", base], round, wall_secs, handle)
+        run_round_vm(tree, results, ["--base", base], round, wall_secs, handle, ami)
+    }
+    fn recipe_sha(&self, tree: Option<&Path>) -> Option<String> {
+        let mut cmd = Command::new("round-vm");
+        cmd.arg("recipe-sha");
+        if let Some(t) = tree {
+            cmd.arg("--tree").arg(t);
+        }
+        stdout_of(&mut cmd).map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
+    }
+    fn ami_for(&self, sha: &str) -> AmiLookup {
+        // batch-job: one AWS describe-images read, hang-guarded at 60 s
+        match Command::new("timeout").args(["60", "round-vm", "ami-for", sha]).stdin(Stdio::null()).output() {
+            Ok(o) if o.status.code() == Some(0) => AmiLookup::Found(String::from_utf8_lossy(&o.stdout).trim().to_string()),
+            Ok(o) if o.status.code() == Some(1) => AmiLookup::Missing,
+            Ok(o) => AmiLookup::Unreadable(String::from_utf8_lossy(&o.stderr).trim().to_string()),
+            Err(e) => AmiLookup::Unreadable(format!("cannot run round-vm: {e}")),
+        }
     }
     fn repo_round_vm(
         &self,
@@ -966,7 +985,7 @@ impl Scripts for RealScripts {
         wall_secs: u64,
         handle: &Path,
     ) -> RunOut {
-        run_round_vm(tree, results, ["--ci-entry", entry], round, wall_secs, handle)
+        run_round_vm(tree, results, ["--ci-entry", entry], round, wall_secs, handle, None)
     }
     fn pass_terminate(&self, pid: u32) {
         // SAFETY: a plain SIGTERM to the pid the run wrote to its handle.
@@ -1074,9 +1093,14 @@ fn run_round_vm(
     round: (&str, &str),
     wall_secs: u64,
     handle: &Path,
+    ami: Option<&str>,
 ) -> RunOut {
     // batch-job: round-vm enforces the cap itself, on the suites and bare lane alone; this is its hang guard
-    let spawned = Command::new("timeout")
+    let mut cmd = Command::new("timeout");
+    if let Some(ami) = ami {
+        cmd.env("SPIRA_ROUND_VM_EC2_AMI", ami);
+    }
+    let spawned = cmd
         .args([
             "-k",
             "5",
@@ -1312,6 +1336,9 @@ impl Forge for RealForge {
     }
     fn ami_dispatch(&self, forge: &Path, repo: &Path, ref_: &str) -> bool {
         ok(Command::new(forge).arg("ami-dispatch").arg(repo).arg(ref_))
+    }
+    fn ami_result(&self, forge: &Path, repo: &Path, branch: &str) -> Option<AmiBuild> {
+        AmiBuild::parse(&stdout_of(Command::new(forge).arg("ami-result").arg(repo).arg(branch))?)
     }
 }
 
