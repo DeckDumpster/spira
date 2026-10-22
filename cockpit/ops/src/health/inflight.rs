@@ -40,6 +40,80 @@ pub fn inflight_section(snap: &Snapshot, cols: i64, now: i64) -> Vec<String> {
     out
 }
 
+/// One row of the work-in-flight view, parsed from the collector's `SP_INFLIGHT_ROW<n>` keys.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct FlightRow {
+    pub kind: String,
+    pub subject: String,
+    pub detail: String,
+    pub started: Option<i64>,
+    pub done: Option<u64>,
+    pub total: Option<u64>,
+}
+
+/// The same facts as the pane section, for a page and its JSON. `readable` is false when the
+/// snapshot has no segment or is older than `stale_s`: the view then says `?`, never idle.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct Flight {
+    pub readable: bool,
+    pub segment: String,
+    pub world: String,
+    pub rows: Vec<FlightRow>,
+}
+
+impl Flight {
+    pub fn from_snapshot(snap: &Snapshot, now: i64, stale_s: i64) -> Flight {
+        let fresh = snap.get("SP_AT").and_then(|v| v.parse::<i64>().ok()).is_some_and(|at| now - at <= stale_s);
+        let seg = snap.get("SP_INFLIGHT_SEG").filter(|s| !s.is_empty());
+        let (readable, segment) = match seg {
+            Some(s) if fresh => (true, s.to_string()),
+            Some(s) => (false, format!("{s} (stale)")),
+            None => (false, "\u{2699} ?inflight".to_string()),
+        };
+        let rows = if readable {
+            (0..)
+                .map_while(|i| snap.get(&format!("SP_INFLIGHT_ROW{i}")).filter(|s| !s.is_empty()))
+                .map(|raw| {
+                    let f: Vec<&str> = raw.split('|').collect();
+                    let at = |i: usize| f.get(i).copied().unwrap_or("");
+                    FlightRow {
+                        kind: at(0).to_string(),
+                        subject: at(1).to_string(),
+                        detail: at(2).to_string(),
+                        started: at(3).parse().ok(),
+                        done: at(4).parse().ok(),
+                        total: at(5).parse().ok(),
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Flight { readable, segment, world: snap.get("SP_INFLIGHT_WORLD").unwrap_or("?").to_string(), rows }
+    }
+
+    pub fn unread(&self) -> bool {
+        !self.readable || self.segment.contains('?') || self.world == "?"
+    }
+
+    pub fn html(&self, now: i64) -> String {
+        let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+        let class = if self.unread() { "line bad" } else { "line" };
+        let mut h = format!("<section id=inflight><div class='{class}'>{} <span class=world>[{}]</span></div>", esc(&self.segment), esc(&self.world));
+        for r in &self.rows {
+            let age = r.started.map_or("?".to_string(), |t| mail_dur(&(now - t).max(0).to_string()));
+            let progress = match (r.done, r.total) {
+                (Some(d), Some(t)) => format!(" <progress max={t} value={d}></progress> {d}/{t}"),
+                (Some(d), None) => format!(" {d}/?"),
+                _ => String::new(),
+            };
+            h.push_str(&format!("<div class=line>{} {} {} {age}{progress}</div>", esc(&r.kind), esc(&r.subject), esc(&r.detail)));
+        }
+        h.push_str("</section>");
+        h
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,6 +150,23 @@ mod tests {
         assert_eq!(render("SP_INFLIGHT_SEG='\u{2699} idle'\n"), vec!["\u{2699} idle"]);
         let missing = render("SP_OPEN='1'\n");
         assert!(missing[0].contains('?') && !missing[0].contains("idle"));
+    }
+
+    #[test]
+    fn the_page_view_lists_each_kind_and_never_shows_unreadable_as_idle() {
+        let snap = Snapshot::parse(
+            "SP_AT='690'\nSP_INFLIGHT_WORLD='draining'\nSP_INFLIGHT_SEG='\u{2699} 1 round (5/10) \u{b7} draining'\nSP_INFLIGHT_ROW0='round|spira/b1|certifying|100|5|10'\n",
+        );
+        let f = Flight::from_snapshot(&snap, 700, 60);
+        assert!(f.readable && f.rows.len() == 1 && f.rows[0].total == Some(10));
+        let h = f.html(700);
+        assert!(h.contains("spira/b1") && h.contains("5/10") && h.contains("draining") && !h.contains("line bad"));
+        let stale = Flight::from_snapshot(&snap, 7000, 60);
+        assert!(!stale.readable && stale.rows.is_empty() && stale.html(7000).contains("line bad"));
+        let none = Flight::from_snapshot(&Snapshot::parse("SP_AT='690'\n"), 700, 60);
+        assert!(none.segment.contains("?inflight") && !none.segment.contains("idle"));
+        let dark = Snapshot::parse("SP_AT='690'\nSP_INFLIGHT_WORLD='running'\nSP_INFLIGHT_SEG='\u{2699} ?rounds'\n");
+        assert!(Flight::from_snapshot(&dark, 700, 60).unread());
     }
 
     #[test]
