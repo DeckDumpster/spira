@@ -68,6 +68,10 @@ pub fn mint_msgid() -> String {
 /// still finds it) but wakes nobody. Unmuted is unchanged: `new/`.
 pub fn mail_deliver(dir: &Path, msgid: &str, mute: bool) -> std::io::Result<PathBuf> {
     let from = dir.join("tmp").join(msgid);
+    if fs::read(&from)?.iter().all(u8::is_ascii_whitespace) {
+        let _ = fs::remove_file(&from);
+        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "refusing to deliver an empty message"));
+    }
     let to = if mute { dir.join("cur").join(format!("{msgid}:2,S")) } else { dir.join("new").join(msgid) };
     fs::rename(&from, &to)?;
     Ok(to)
@@ -173,6 +177,22 @@ mod tests {
         let dest2 = mail_deliver(&dir, "two", true).unwrap();
         assert_eq!(dest2.file_name().unwrap().to_str().unwrap(), "two:2,S");
         assert!(dest2.starts_with(dir.join("cur")));
+    }
+
+    #[test]
+    fn deliver_refuses_an_empty_message_and_leaves_nothing_in_the_mailbox() {
+        let d = testkit::TempDir::new("mail-deliver-empty");
+        let dir = d.path().join("box");
+        mail_ensure(&dir).unwrap();
+        for (id, body) in [("e0", ""), ("e1", "\n \n")] {
+            fs::write(dir.join("tmp").join(id), body).unwrap();
+            for mute in [false, true] {
+                assert!(mail_deliver(&dir, id, mute).is_err(), "{id} mute={mute}");
+            }
+            assert!(!dir.join("tmp").join(id).exists());
+        }
+        assert!(sorted_entries(&dir.join("new")).is_empty());
+        assert!(sorted_entries(&dir.join("cur")).is_empty());
     }
 
     #[test]

@@ -256,7 +256,10 @@ fn run_done(args: &[String]) -> ExitCode {
     }
 }
 
-fn run_sendmail(_args: &[String]) -> ExitCode {
+fn run_sendmail(args: &[String]) -> ExitCode {
+    if args.iter().any(|a| a == "--check") {
+        return ExitCode::SUCCESS;
+    }
     let mut raw = String::new();
     if io::stdin().read_to_string(&mut raw).is_err() {
         return fail("sendmail: could not read stdin");
