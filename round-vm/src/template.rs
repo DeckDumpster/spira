@@ -374,8 +374,8 @@ mod tests {
             Some("1.98.1")
         );
         assert_eq!(
-            parse_template_args(&s(&["/t", "--toolchain=1.98.1"])).unwrap().toolchain.as_deref(),
-            Some("1.98.1")
+            parse_template_args(&s(&["/t", "--toolchain=fixture-chan"])).unwrap().toolchain.as_deref(),
+            Some("fixture-chan")
         );
         assert!(parse_template_args(&s(&[])).is_err());
         assert!(parse_template_args(&s(&["/t", "--bogus"])).unwrap_err().contains("--bogus"));

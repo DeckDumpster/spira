@@ -620,7 +620,7 @@ fn build_template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool
         commit,
         None, // the hypervisor assigns the id (/cluster/nextid)
         cfg.host_addr.as_deref().unwrap_or(""),
-        a.toolchain.as_deref().unwrap_or(""),
+        a.toolchain.clone().or_else(|| crate::recipe::tree_channel(&a.tree_dir)).as_deref().unwrap_or(""),
         cfg.cache_home.as_deref().unwrap_or(""),
     ) {
         Ok(b) if refresh => {

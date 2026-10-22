@@ -294,7 +294,6 @@ releases = "/fixture/userhome/spira/spira-releases"
 releases_keep = "10"
 release_currency_units = "spira-*-prod.service"
 release_repo = "DeckDumpster/spira"
-release_rust_toolchain = "1.82.0"
 release_stale_secs = 3600
 release_store_slack = 20
 remedy_window = "30"

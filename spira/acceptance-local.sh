@@ -29,7 +29,7 @@
 #           SIGTERM to it stops the whole session, not the leftover run (sp-kb0k5).
 #
 # 1. Build the release tarball from <tree> via build-tarball.sh, under the
-#    Rust toolchain release.yml pins (SPIRA_RELEASE_RUST_TOOLCHAIN) — the
+#    Rust toolchain <tree>/rust-toolchain.toml pins — the
 #    same binaries the release job would produce.
 # 2. Bring up a testenv container: a real systemd user session, the same
 #    image CI's suites run against.
@@ -85,7 +85,6 @@ if [ "${1:-}" = start ]; then
         --setenv=SPIRA_TOML="${SPIRA_TOML:-}" --setenv=SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
         --setenv=SPIRA_CONF="${SPIRA_CONF:-}" --setenv=SPIRA_DB="${SPIRA_DB:-}" \
         --setenv=SPIRA_REPO="${SPIRA_REPO:-}" --setenv=SPIRA_HOME_REPO="$(spira_home_repo 2>/dev/null)" \
-        --setenv=SPIRA_RELEASE_RUST_TOOLCHAIN="${SPIRA_RELEASE_RUST_TOOLCHAIN:-}" \
         --setenv=SPIRA_ACCEPTANCE_LOCAL_NAME="${SPIRA_ACCEPTANCE_LOCAL_NAME:-}" \
         --setenv=SPIRA_ACCEPTANCE_LOCAL_FORENSICS="${SPIRA_ACCEPTANCE_LOCAL_FORENSICS:-}" \
         --setenv=GH_TOKEN="${GH_TOKEN:-}" \
@@ -155,24 +154,29 @@ trap _al_cleanup EXIT INT TERM
 # what the container buys here; the container below is for the install/run
 # environment, which needs the real systemd user session install.sh drives.
 # ---------------------------------------------------------------------------
-log "acceptance-local: building $TREE under Rust $SPIRA_RELEASE_RUST_TOOLCHAIN"
+_al_rust="$(sed -n 's/^channel *= *"\([0-9][^"]*\)".*/\1/p' "$TREE/rust-toolchain.toml" 2>/dev/null | head -1)"
+if [ -z "$_al_rust" ]; then
+    printf 'acceptance-local: %s/rust-toolchain.toml names no numeric channel\n' "$TREE" >&2
+    exit 2
+fi
+log "acceptance-local: building $TREE under Rust $_al_rust"
 if command -v rustup >/dev/null 2>&1; then
-    rustup toolchain install "$SPIRA_RELEASE_RUST_TOOLCHAIN" --profile minimal >&2
-    _al_got="$(RUSTUP_TOOLCHAIN="$SPIRA_RELEASE_RUST_TOOLCHAIN" rustc --version 2>/dev/null \
+    rustup toolchain install "$_al_rust" --profile minimal >&2
+    _al_got="$(RUSTUP_TOOLCHAIN="$_al_rust" rustc --version 2>/dev/null \
         | awk '{print $2}')"
-    if [ "$_al_got" != "$SPIRA_RELEASE_RUST_TOOLCHAIN" ]; then
+    if [ "$_al_got" != "$_al_rust" ]; then
         printf 'acceptance-local: could not select Rust %s (rustup reports %s)\n' \
-            "$SPIRA_RELEASE_RUST_TOOLCHAIN" "${_al_got:-none}" >&2
+            "$_al_rust" "${_al_got:-none}" >&2
         exit 2
     fi
-    RUSTUP_TOOLCHAIN="$SPIRA_RELEASE_RUST_TOOLCHAIN" make -C "$TREE" build >&2 || {
+    RUSTUP_TOOLCHAIN="$_al_rust" make -C "$TREE" build >&2 || {
         printf 'acceptance-local: workspace build failed\n' >&2
         exit 2
     }
 else
     printf 'acceptance-local: rustup not on PATH — building with whatever cargo resolves to\n' >&2
     printf 'acceptance-local:   (%s), not the pinned %s release toolchain\n' \
-        "$(rustc --version 2>/dev/null || printf 'no rustc')" "$SPIRA_RELEASE_RUST_TOOLCHAIN" >&2
+        "$(rustc --version 2>/dev/null || printf 'no rustc')" "$_al_rust" >&2
     make -C "$TREE" build >&2 || {
         printf 'acceptance-local: workspace build failed\n' >&2
         exit 2

@@ -3,6 +3,18 @@
 //! only run on the image its own recipe produces.
 
 use sha2::{Digest, Sha256};
+use std::path::Path;
+
+/// The channel `rust-toolchain.toml` pins in `tree`, the one place the harness names a Rust.
+pub fn tree_channel(tree: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(tree.join("rust-toolchain.toml")).ok()?;
+    text.lines()
+        .find_map(|l| {
+            let (k, v) = l.split_once('=')?;
+            (k.trim() == "channel").then(|| v.trim().trim_matches('"').to_string())
+        })
+        .filter(|c| c.starts_with(|ch: char| ch.is_ascii_digit()))
+}
 
 const INPUTS: [(&str, &str); 6] = [
     ("template.sh", include_str!("template.sh")),
@@ -66,5 +78,16 @@ mod tests {
     fn a_tree_missing_a_recipe_input_is_refused_naming_it() {
         let e = super::sha_of_tree(std::path::Path::new("/nonexistent-recipe-tree")).unwrap_err();
         assert!(e.contains("template.sh"), "{e}");
+    }
+
+    #[test]
+    fn the_tree_channel_follows_the_file_and_ignores_a_floating_one() {
+        let tmp = testkit::TempDir::new("tc-pin");
+        let d = tmp.path();
+        assert_eq!(super::tree_channel(d), None);
+        std::fs::write(d.join("rust-toolchain.toml"), "[toolchain]\nchannel = \"9.8.7\"\n").unwrap();
+        assert_eq!(super::tree_channel(d).as_deref(), Some("9.8.7"));
+        std::fs::write(d.join("rust-toolchain.toml"), "[toolchain]\nchannel = \"stable\"\n").unwrap();
+        assert_eq!(super::tree_channel(d), None);
     }
 }

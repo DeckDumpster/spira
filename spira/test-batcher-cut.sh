@@ -327,7 +327,6 @@ cut_repo() {
         SPIRA_BATCH_MAXPAR="${SPIRA_BATCH_MAXPAR:-16}" \
         SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
     [ -n "${SPIRA_BATCHER_WALL_SECS:-}" ] && tl_config SPIRA_BATCHER_WALL_SECS="$SPIRA_BATCHER_WALL_SECS"
-    [ -n "${SPIRA_RELEASE_RUST_TOOLCHAIN:-}" ] && tl_config SPIRA_RELEASE_RUST_TOOLCHAIN="$SPIRA_RELEASE_RUST_TOOLCHAIN"
     # SPIRA_RUN ALSO AS PLAIN ENV: spira-lc-stub.sh (below) is a fixture script exec'd by
     # batcher as a child process, and it reads "${SPIRA_RUN:-/nonexistent}" as a raw shell
     # variable, never through spira-config — tl_config's declaration never reaches it.
@@ -837,8 +836,8 @@ is   "J: forge pr-create not called for the empty round" "$prcreate_before_j" "$
 echo
 echo "K. batcher parity: round-vm.sh run, maxpar, toolchain, wall bound, exit 4:"
 
-# K1 — default argv: SPIRA_BATCH_MAXPAR and SPIRA_RELEASE_RUST_TOOLCHAIN both unset, so the
-# batcher's own defaults (16, 1.82.0) must appear on round-vm.sh's own --maxpar/--toolchain
+# K1 — default argv: SPIRA_BATCH_MAXPAR unset, so the
+# batcher's own default (16) must appear on round-vm.sh's own --maxpar
 # regardless of whether the ambient environment happens to carry the Concierge's own values.
 rm -f "$(open_batch_file)"
 plant sp-cgaa1 express
@@ -853,8 +852,8 @@ certify sp-cgaa1 "$tip_g1"
 ARGV_LOG="$TMP/argv-log-default"; : > "$ARGV_LOG"
 STUB_ARGV_LOG="$ARGV_LOG" cut_repo >/dev/null
 want "K1: corpus runs through round-vm.sh run" "argv: run --suites" "$(cat "$ARGV_LOG")"
-want "K1: default toolchain pin is 1.82.0 (release.yml's own pin, no independent default)" \
-    "RUSTUP_TOOLCHAIN=1.82.0" "$(cat "$ARGV_LOG")"
+is "K1: no toolchain is passed — round-vm reads the tree's rust-toolchain.toml itself" \
+    "0" "$(grep -c 'RUSTUP_TOOLCHAIN=.' "$ARGV_LOG")"
 want "K1: default maxpar is 16 (the Concierge's own proven parallelism)" \
     "SPIRA_BATCH_MAXPAR=16" "$(cat "$ARGV_LOG")"
 
@@ -871,24 +870,8 @@ git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cgbb2"
 certify sp-cgbb2 "$tip_g2"
 
 ARGV_LOG2="$TMP/argv-log-override"; : > "$ARGV_LOG2"
-SPIRA_BATCH_MAXPAR=7 SPIRA_RELEASE_RUST_TOOLCHAIN=1.77.3 STUB_ARGV_LOG="$ARGV_LOG2" cut_repo >/dev/null
+SPIRA_BATCH_MAXPAR=7 STUB_ARGV_LOG="$ARGV_LOG2" cut_repo >/dev/null
 want "K2: SPIRA_BATCH_MAXPAR overrides the default" "SPIRA_BATCH_MAXPAR=7" "$(cat "$ARGV_LOG2")"
-want "K2: SPIRA_RELEASE_RUST_TOOLCHAIN overrides the default toolchain pin" \
-    "RUSTUP_TOOLCHAIN=1.77.3" "$(cat "$ARGV_LOG2")"
-
-# K2b — a tree pinning a different channel than the release passes THAT channel to round-vm.
-rm -f "$(open_batch_file)"
-plant sp-cgdd4 express
-git -C "$REPO" worktree add -q -b spira/sp-cgdd4 "$RUN/worktree/sp-cgdd4" main
-printf '[toolchain]\nchannel = "1.99.1"\n' > "$RUN/worktree/sp-cgdd4/rust-toolchain.toml"
-git -C "$RUN/worktree/sp-cgdd4" add -A
-git -C "$RUN/worktree/sp-cgdd4" commit -q -m "sp-cgdd4: work"
-tip_g4="$(git -C "$REPO" rev-parse spira/sp-cgdd4)"
-git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cgdd4"
-certify sp-cgdd4 "$tip_g4"
-ARGV_LOG4="$TMP/argv-log-tree"; : > "$ARGV_LOG4"
-SPIRA_RELEASE_RUST_TOOLCHAIN=1.77.3 STUB_ARGV_LOG="$ARGV_LOG4" cut_repo >/dev/null
-want "K2b: the round tree's rust-toolchain.toml channel goes to round-vm" "RUSTUP_TOOLCHAIN=1.99.1" "$(cat "$ARGV_LOG4")"
 
 # K3 — a --with-bins build failure (exit 4) is a round-level red: filed as an Ops incident
 # naming the round's own members (the same file_local_red_incident path case H's base-fail

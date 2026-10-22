@@ -195,7 +195,6 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
         poll: std::time::Duration::from_secs(1),
         maxpar: 2,
         wall_secs: 600,
-        rust_toolchain: "1.82.0".into(),
         git_name: "t".into(),
         git_email: "t@t".into(),
         lc_bin: None,
