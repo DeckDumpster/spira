@@ -93,6 +93,82 @@ pub fn touched(before: &Snapshot, after: &Snapshot) -> Vec<String> {
     after.iter().filter(|(p, h)| before.get(*p) != Some(*h)).map(|(p, _)| p.clone()).collect()
 }
 
+const VALIDATOR: &str = ".claude/skills/wiki-lint/frontmatter.py";
+const ALIAS_MAX: usize = 60;
+
+fn passes_schema(dir: &Path, path: &str) -> bool {
+    Command::new("timeout")
+        .arg(NETWORK_DEADLINE_SECS)
+        .args(["python3", VALIDATOR, path])
+        .current_dir(dir)
+        .env("BRAIN", dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn alias_len(item: &str) -> usize {
+    item.trim().trim_matches(|c| c == '"' || c == '\'').chars().count()
+}
+
+/// Drops block-list `aliases:` items longer than the schema allows; the key goes too if none remain.
+fn drop_long_aliases(text: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    let mut in_front = false;
+    let mut in_aliases = false;
+    let mut pending_key: Option<usize> = None;
+    for (n, line) in text.split_inclusive('\n').enumerate() {
+        let bare = line.trim_end_matches('\n');
+        if n == 0 && bare == "---" {
+            in_front = true;
+        } else if in_front && bare == "---" {
+            in_front = false;
+            in_aliases = false;
+        } else if in_front && bare == "aliases:" {
+            in_aliases = true;
+            pending_key = Some(out.len());
+        } else if in_front && in_aliases {
+            if let Some(item) = bare.trim_start().strip_prefix("- ").filter(|_| bare.starts_with([' ', '\t'])) {
+                if alias_len(item) > ALIAS_MAX {
+                    continue;
+                }
+                pending_key = None;
+            } else {
+                in_aliases = false;
+            }
+        }
+        out.push(line);
+    }
+    if let Some(k) = pending_key {
+        out.remove(k);
+    }
+    out.concat()
+}
+
+/// Splits `paths` into those the brain's pre-receive hook will accept (fixing an over-long alias
+/// mechanically where that is all that is wrong) and those it will reject. A brain without the
+/// validator is not vetted here; the hook is then the only judge.
+fn vet(dir: &Path, paths: &[String]) -> (Vec<String>, Vec<String>) {
+    let (mut ok, mut refused) = (Vec::new(), Vec::new());
+    for p in paths {
+        let checked = p.starts_with("wiki/") && p.ends_with(".md") && dir.join(p).is_file() && dir.join(VALIDATOR).is_file();
+        if !checked || passes_schema(dir, p) {
+            ok.push(p.clone());
+            continue;
+        }
+        let fixed = std::fs::read_to_string(dir.join(p)).map(|t| drop_long_aliases(&t));
+        let repaired = match fixed {
+            Ok(t) => std::fs::write(dir.join(p), t).is_ok() && passes_schema(dir, p),
+            Err(_) => false,
+        };
+        if repaired { ok.push(p.clone()) } else { refused.push(p.clone()) }
+    }
+    (ok, refused)
+}
+
 /// Stage exactly `paths`, commit, rebase onto the remote, push. Returns the count committed.
 pub fn commit_paths(dir: &Path, paths: &[String], subject: &str) -> Result<usize, String> {
     commit_paths_with(&Git::real(), dir, paths, subject)
@@ -100,8 +176,10 @@ pub fn commit_paths(dir: &Path, paths: &[String], subject: &str) -> Result<usize
 
 /// A failed stage or commit unstages `paths`, so a later plain `git commit` cannot sweep them in.
 fn commit_paths_with(g: &Git, dir: &Path, paths: &[String], subject: &str) -> Result<usize, String> {
+    let (vetted, refused) = vet(dir, paths);
+    let paths = &vetted[..];
     if paths.is_empty() {
-        return Ok(0);
+        return if refused.is_empty() { Ok(0) } else { Err(refusal(&refused)) };
     }
     let mut add: Vec<&str> = vec!["add", "--"];
     add.extend(paths.iter().map(String::as_str));
@@ -119,7 +197,11 @@ fn commit_paths_with(g: &Git, dir: &Path, paths: &[String], subject: &str) -> Re
     }
     run_git(g, dir, &["pull", "--rebase"], None)?;
     run_git(g, dir, &["push"], None)?;
-    Ok(paths.len())
+    if refused.is_empty() { Ok(paths.len()) } else { Err(refusal(&refused)) }
+}
+
+fn refusal(refused: &[String]) -> String {
+    format!("not committed, they violate the frontmatter schema: {}", refused.join(", "))
 }
 
 #[cfg(test)]
@@ -235,6 +317,43 @@ pub(crate) mod tests {
         let (_root, brain) = fixture();
         let err = git(&brain, &["rev-parse", "--verify", "nosuchref"], None).unwrap_err();
         assert!(err.contains("exit 128"), "{err}");
+    }
+
+    const STUB_VALIDATOR: &str = "import sys,re\nt=open(sys.argv[1]).read()\nbad=[l for l in t.split('\\n') if re.match(r'^\\s+- ',l) and len(l.strip()[2:].strip('\"\\''))>60]\nsys.exit(1 if bad else 0)\n";
+
+    fn with_validator(brain: &Path) {
+        std::fs::create_dir_all(brain.join(".claude/skills/wiki-lint")).unwrap();
+        std::fs::write(brain.join(VALIDATOR), STUB_VALIDATOR).unwrap();
+        sh(brain, &["add", "-A"]);
+        sh(brain, &["commit", "-q", "-m", "validator"]);
+    }
+
+    fn page(alias: &str) -> String {
+        format!("---\ntype: note\naliases:\n  - short one\n  - {alias}\n---\n\n# x\n")
+    }
+
+    #[test]
+    fn a_68_char_alias_is_dropped_before_the_commit() {
+        let (_root, brain) = fixture();
+        with_validator(&brain);
+        let long = "a".repeat(68);
+        std::fs::write(brain.join("wiki/notes/a.md"), page(&long)).unwrap();
+        assert_eq!(commit_paths(&brain, &["wiki/notes/a.md".to_string()], "archivist: x\n").unwrap(), 1);
+        let committed = git(&brain, &["show", "HEAD:wiki/notes/a.md"], None).unwrap();
+        assert!(!committed.contains(&long) && committed.contains("short one"), "{committed}");
+    }
+
+    #[test]
+    fn a_page_the_validator_rejects_for_another_reason_is_refused_not_committed() {
+        let (_root, brain) = fixture();
+        with_validator(&brain);
+        std::fs::write(brain.join(VALIDATOR), "import sys\nsys.exit(1)\n").unwrap();
+        sh(&brain, &["commit", "-qam", "strict"]);
+        let head = git(&brain, &["rev-parse", "HEAD"], None).unwrap();
+        std::fs::write(brain.join("wiki/notes/a.md"), "no frontmatter\n").unwrap();
+        let err = commit_paths(&brain, &["wiki/notes/a.md".to_string()], "archivist: x\n").unwrap_err();
+        assert!(err.contains("wiki/notes/a.md"), "{err}");
+        assert_eq!(head, git(&brain, &["rev-parse", "HEAD"], None).unwrap());
     }
 
     #[test]
