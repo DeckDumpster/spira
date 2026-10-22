@@ -407,6 +407,10 @@ pub(super) fn summon_mender(
         .map(str::to_string)
         .or_else(|| suite_output(&results, suite, 0).map(|o| tail(&o, 80)))
         .unwrap_or_else(|| "(the suite left no output in the round's results)".into());
+    if let Some(cause) = repo_config_refusal(&output) {
+        w.out(format!("queue.sh round failed: no mender bead for {suite} in pass {pass} of {batch}: {} was refused for a repo-config reason ({cause}) that no mend can fix", c.r.name));
+        return;
+    }
     let body = format!(
         "A suite went red in pass {pass} of round {batch} ({repo}): {suite}.\n\nBatch: {batch}\nPass: {pass}\nSuite: {suite}\nDeadline: the machine stamps it when you claim this failure; list it with `spira-lc mending list --batch {batch} --live`. Record your outcome with `queue round mended|return|environment|flaky|unsure {batch} {suite}` before it passes.\n\nSuite output (tail):\n{output}\n",
         repo = c.r.name,
@@ -432,6 +436,12 @@ pub(super) fn summon_mender(
         }
         None => w.err(format!("queue.sh round failed: WARNING — the mender bead for {suite} of {batch} could not be filed; report the failure again to retry")),
     }
+}
+
+const REPO_CONFIG_REFUSALS: [&str; 3] = ["declares no ci_entry", "no round AMI carries", "IMAGE-ABSENT"];
+
+fn repo_config_refusal(output: &str) -> Option<&'static str> {
+    REPO_CONFIG_REFUSALS.into_iter().find(|m| output.contains(m))
 }
 
 /// Close every mender bead filed for a batch that is closing: the failure it was filed for ends

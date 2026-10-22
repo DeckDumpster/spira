@@ -2545,6 +2545,44 @@ fn each_red_suite_files_one_mender_lane_bead_carrying_its_output_pass_and_batch(
 }
 
 #[test]
+fn a_red_that_is_a_repo_config_refusal_files_no_mender_bead_in_any_round() {
+    let mut t = round_world();
+    t.lib.s.verdict.mender_label = "mend-fixture".into();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
+    let results = t.lib.s.run.join("rounds").join(format!("{batch}.results"));
+    std::fs::create_dir_all(&results).unwrap();
+    std::fs::write(
+        results.join("ci.out"),
+        ".spira/testenv.toml declares no ci_entry\n",
+    )
+    .unwrap();
+    for _ in 0..2 {
+        assert_eq!(
+            t.run(&["round", "failed", &batch, "--suite", "ci"]),
+            0,
+            "{}",
+            t.err()
+        );
+    }
+    let bugs = t
+        .lib
+        .calls
+        .borrow()
+        .iter()
+        .filter(|c| c.starts_with("create_bug"))
+        .count();
+    assert_eq!(bugs, 0, "a refusal no mend can fix files nothing");
+}
+
+#[test]
 fn a_suite_going_red_mid_pass_is_a_failed_event_in_the_order_it_failed_and_the_pass_is_not_judged()
 {
     let t = round_world();
