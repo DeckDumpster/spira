@@ -179,12 +179,6 @@ fn land(
             w.clock.now()
         ),
     );
-    w.lib.notify(
-        &c.s.mailbox,
-        name,
-        &format!("PR {pr} merged (reconciled)"),
-        &format!("PR {pr} was merged on the forge; the batch was landed on spira-lc at {sha}."),
-    );
     w.out(format!(
         "verdict {name}: reconcile: PR {pr} merged — batch landed at {sha}"
     ));

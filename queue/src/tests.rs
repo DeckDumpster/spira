@@ -5181,7 +5181,7 @@ fn settle_adopts_a_green_forge_publish_the_record_does_not_know_then_opens_the_n
     assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
     let calls = t.forge.calls.borrow().clone();
     assert!(calls.contains(&"pr-close 587".to_string()), "{calls:?}");
-    assert!(t.lib.has("notify spira publish PR 587 merged"));
+    assert!(!t.lib.has("notify spira publish PR 587 merged"));
     assert!(
         calls
             .iter()
