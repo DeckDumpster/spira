@@ -384,8 +384,8 @@ is "time: gate seconds"  "50"   "$(printf '%s' "$out" | jget12 'r[0]["gate_s"]')
 is "time: round seconds" "4"    "$(printf '%s' "$out" | jget12 'r[0]["round_s"]')"
 is "time: empty-slot seconds" "1380" "$(printf '%s' "$out" | jget12 'r[0]["idle_slot_s"]')"
 
-out="$(qout12 sentinel)"; echo "# sentinel out: $out" >&2
-is "sentinel: p50 pass seconds" "10" "$(printf '%s' "$out" | jget12 'int(r[0]["p50"])')"
+out="$(qout12 sentinel)"
+is "sentinel: p50 pass seconds [$(printf %s "$out" | tr -d "\n")]" "10" "$(printf '%s' "$out" | jget12 'int(r[0]["p50"])')"
 is "sentinel: p90 pass seconds" "26" "$(printf '%s' "$out" | jget12 'int(r[0]["p90"])')"
 is "sentinel: top phase leads" "CHECK2:44" "$(printf '%s' "$out" | jget12 'r[0]["top_phases"][0]')"
 
