@@ -77,6 +77,12 @@ const SLOW_VIEWS: [&str; 4] = ["ops_edges", "ops_dwell", "ops_dwell_p95", "ops_r
 
 const VIEW_TTL_SECS: i64 = 30;
 
+/// Views the serving process answers from memory; it keeps the last answer so a reload of
+/// memory never sends the request to Dolt.
+const MEMORY_VIEWS: [&str; 2] = ["ops_live", "ops_recent"];
+
+const MEMORY_VIEW_MAX_AGE_SECS: i64 = 60;
+
 type ViewCache = std::collections::BTreeMap<&'static str, (i64, Vec<Value>)>;
 
 static VIEW_CACHE: std::sync::Mutex<ViewCache> = std::sync::Mutex::new(std::collections::BTreeMap::new());
@@ -89,7 +95,24 @@ fn view_fetch(conn: &Conn, view: &'static str, now: i64) -> Result<Vec<Value>, S
     Ok(rows)
 }
 
+fn remember_memory_views(conn: &Conn, now: i64) {
+    for name in MEMORY_VIEWS {
+        if let (Some(rows), Ok(mut c)) = (conn.live().and_then(|l| l.ops_view(name, now)), VIEW_CACHE.lock()) {
+            c.insert(name, (now, rows));
+        }
+    }
+}
+
 fn view_cached(conn: &Conn, view: &str, now: i64) -> Result<Vec<Value>, String> {
+    if conn.live.is_some() {
+        if let Some(name) = MEMORY_VIEWS.iter().find(|v| **v == view) {
+            if let Some((at, rows)) = VIEW_CACHE.lock().ok().and_then(|c| c.get(name).cloned()) {
+                if now - at < MEMORY_VIEW_MAX_AGE_SECS {
+                    return Ok(rows);
+                }
+            }
+        }
+    }
     let Some(name) = SLOW_VIEWS.iter().find(|v| **v == view) else {
         return conn.query(&format!("SELECT * FROM {view}")).map_err(|e| format!("{e:?}"));
     };
@@ -109,6 +132,7 @@ pub fn views_tick(conn: &Conn) {
         return;
     }
     let now = crate::db::now_epoch();
+    remember_memory_views(conn, now);
     for name in SLOW_VIEWS {
         let stale = VIEW_CACHE.lock().ok().and_then(|c| c.get(name).map(|(at, _)| now - at >= VIEW_TTL_SECS)).unwrap_or(true);
         if stale {
@@ -549,5 +573,44 @@ mod tests {
         let one_line = migration.split_whitespace().collect::<Vec<_>>().join(" ");
         assert!(one_line.contains(&format!("state IN ({LIVE_STATES})")), "ops_live and the backfill name the same states");
         assert!(sql.contains("state = 'LANDED' AND since >= UNIX_TIMESTAMP() - 86400") && migration.contains("state = 'LANDED' AND since >= UNIX_TIMESTAMP() - 86400"));
+    }
+
+    fn production_sized_bead(i: usize) -> Value {
+        let live = i % 50 == 0;
+        let mut o = serde_json::Map::new();
+        for (k, v) in [
+            ("bead_id", format!("sp-{i:06}")),
+            ("state", if live { "READY" } else { "LANDED" }.to_string()),
+            ("holds", "[]".to_string()),
+            ("since", crate::db::now_epoch().to_string()),
+            ("updated_at", crate::db::now_epoch().to_string()),
+            ("priority", "2".to_string()),
+            ("title", format!("a bead title of ordinary length number {i}")),
+        ] {
+            o.insert(k.into(), Value::String(v));
+        }
+        Value::Object(o)
+    }
+
+    #[test]
+    fn ops_live_at_production_size_answers_under_the_ceiling_while_memory_is_unloaded() {
+        let mut conn = Conn::unreachable();
+        conn.enable_live();
+        let live = conn.live.as_ref().unwrap();
+        live.replace(vec![(0..7500).map(production_sized_bead).collect(), vec![], vec![]]).unwrap();
+        views_tick(&conn);
+        live.invalidate();
+        assert!(conn.live().is_none(), "memory is unloaded, so only the kept answer can serve");
+        let mut took: Vec<u128> = (0..100)
+            .map(|_| {
+                let t = std::time::Instant::now();
+                let (code, out) = cmd_ops_view(&["ops_live".to_string()], &conn);
+                assert_eq!(code, 0, "{out}");
+                assert_eq!(serde_json::from_str::<Vec<Value>>(&out).unwrap().len(), 150);
+                t.elapsed().as_millis()
+            })
+            .collect();
+        took.sort_unstable();
+        assert!(took[94] < 100, "p95 {} ms leaves no headroom under the 500 ms ceiling", took[94]);
     }
 }
