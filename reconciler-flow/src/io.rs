@@ -43,10 +43,6 @@ fn f64_field(row: &Value, key: &str) -> f64 {
     row.get(key).and_then(Value::as_f64).unwrap_or(0.0)
 }
 
-fn u64_field(row: &Value, key: &str) -> u64 {
-    row.get(key).and_then(Value::as_u64).unwrap_or(0)
-}
-
 /// The count of beads in the backlog right now: every work bead whose lifecycle row is not
 /// terminal (sp-mve9i: a bead's state is spira-lc's, never bd's `status`). Scoped by
 /// `scope_label` when the harness serves more than one repository, same convention
@@ -95,141 +91,121 @@ const BEAD_DWELL_STATES: [&str; 5] = ["READY", "WORKING", "SUBMITTED", "IN_DELIV
 /// terminal, so nothing dwells in them.
 const BATCH_DWELL_STATES: [&str; 5] = ["OPEN", "CI_RUNNING", "GREEN", "ATTRIBUTING", "REBUILDING"];
 
-fn quoted_in_list(states: &[&str]) -> String {
-    states.iter().map(|s| format!("'{s}'")).collect::<Vec<_>>().join(", ")
+/// Every `bead-stage` row the store holds, once per pass, shared by the stage queries below. The
+/// whole retention is read: [`rework_metrics`] reports how much history exists. A store that
+/// cannot be reached, or holds no row, is the `Err` every one of them then returns by name.
+pub fn stage_rows(endpoint: Option<&str>) -> Result<Vec<Value>, String> {
+    let reader = tsd::store::Reader::new(endpoint).map_err(|e| e.to_string())?;
+    reader.rows("bead-stage", 0).map_err(|e| e.to_string())
+}
+
+fn ts_secs(row: &Value) -> Option<f64> {
+    tsd::query::ts_of(row).map(|t| t as f64)
+}
+
+fn applied(row: &Value) -> bool {
+    tsd::query::flag(row, "applied")
+}
+
+fn machine<'a>(row: &'a Value) -> &'a str {
+    tsd::query::text(row, "machine").unwrap_or("")
+}
+
+fn to_state<'a>(row: &'a Value) -> &'a str {
+    tsd::query::text(row, "to_state").unwrap_or("")
+}
+
+fn seq(row: &Value) -> f64 {
+    tsd::query::num(row, "seq").unwrap_or(f64::INFINITY)
+}
+
+fn cutoff(now: u64, hours: f64) -> f64 {
+    now as f64 - hours * 3600.0
 }
 
 /// How many beads are in a state that still needs to land — submitted, certified or already
-/// handed to delivery, but not there yet — read from each bead's latest `bead-stage` row. A
-/// family that does not exist yet is a fresh install with nothing in flight, not a failure.
-pub fn waiting_to_land(duckdb_bin: &str, root: &Path) -> Result<u64, String> {
-    let path = family_path(root, "bead-stage");
-    if !path.exists() {
-        return Ok(0);
+/// handed to delivery, but not there yet — read from each bead's latest applied `bead-stage` row.
+pub fn waiting_to_land(rows: &[Value]) -> u64 {
+    let mut latest: std::collections::HashMap<&str, (f64, &str)> = std::collections::HashMap::new();
+    for r in rows.iter().filter(|r| machine(r) == "bead" && applied(r)) {
+        let Some(key) = tsd::query::text(r, "key") else { continue };
+        let q = seq(r);
+        if latest.get(key).is_none_or(|(s, _)| q > *s) {
+            latest.insert(key, (q, to_state(r)));
+        }
     }
-    let path_str = path.to_string_lossy();
-    let sql = format!(
-        "WITH latest AS (
-            SELECT to_state,
-                   row_number() OVER (PARTITION BY key ORDER BY seq DESC) AS rn
-            FROM read_ndjson_auto('{path_str}')
-            WHERE machine = 'bead' AND applied
-         )
-         SELECT count(*) AS n FROM latest WHERE rn = 1 AND to_state IN ('SUBMITTED', 'CERTIFIED', 'IN_DELIVERY');"
-    );
-    let rows = duckdb_json(duckdb_bin, &sql)?;
-    Ok(rows.first().map(|r| u64_field(r, "n")).unwrap_or(0))
+    latest.values().filter(|(_, st)| ["SUBMITTED", "CERTIFIED", "IN_DELIVERY"].contains(st)).count() as u64
 }
 
-/// Current-window and trailing-baseline land rate (events/hour), both read from the
-/// `bead-stage` family in one query — a bead reaching LANDED, the lifecycle machine's own
-/// terminal state (design §2a: states are the machine's). `Err` when the family has no rows
-/// yet at all — a fresh install with nothing ever landed cannot say whether landing has
-/// stalled.
-pub fn velocity_metrics(
-    duckdb_bin: &str,
-    root: &Path,
-    window_hours: f64,
-    baseline_hours: f64,
-) -> Result<(f64, f64), String> {
-    let path = family_path(root, "bead-stage");
-    if !path.exists() {
-        return Err(format!("{}: no rows yet", path.display()));
+/// Current-window and trailing-baseline land rate (events/hour) — a bead reaching LANDED, the
+/// lifecycle machine's own terminal state (design §2a: states are the machine's).
+pub fn velocity_metrics(rows: &[Value], now: u64, window_hours: f64, baseline_hours: f64) -> (f64, f64) {
+    let landed = |hours: f64| rows.iter().filter(|r| machine(r) == "bead" && applied(r) && to_state(r) == "LANDED" && ts_secs(r).is_some_and(|t| t >= cutoff(now, hours))).count() as f64;
+    (landed(window_hours) / window_hours.max(1e-9), landed(baseline_hours) / baseline_hours.max(1e-9))
+}
+
+/// Each applied row's previous state and the seconds since it, per `part` of the rows ordered by seq.
+fn transitions<'a>(rows: &'a [Value], part: impl Fn(&Value) -> String, keep: impl Fn(&Value) -> bool) -> Vec<(&'a Value, Option<(&'a str, f64)>)> {
+    let mut by: std::collections::BTreeMap<String, Vec<&Value>> = Default::default();
+    for r in rows.iter().filter(|r| applied(r) && keep(r)) {
+        by.entry(part(r)).or_default().push(r);
     }
-    let path_str = path.to_string_lossy();
-    let sql = format!(
-        "SELECT
-            count(*) FILTER (WHERE machine = 'bead' AND applied AND to_state = 'LANDED' AND CAST(ts AS TIMESTAMP) >= now() - INTERVAL '{window_hours} hours') AS cur_n,
-            count(*) FILTER (WHERE machine = 'bead' AND applied AND to_state = 'LANDED' AND CAST(ts AS TIMESTAMP) >= now() - INTERVAL '{baseline_hours} hours') AS base_n
-         FROM read_ndjson_auto('{path_str}');"
-    );
-    let rows = duckdb_json(duckdb_bin, &sql)?;
-    let row = rows.first().ok_or_else(|| "velocity query returned no row".to_string())?;
-    let cur_n = f64_field(row, "cur_n");
-    let base_n = f64_field(row, "base_n");
-    Ok((cur_n / window_hours.max(1e-9), base_n / baseline_hours.max(1e-9)))
+    let mut out = Vec::new();
+    for (_, mut v) in by {
+        v.sort_by(|a, b| seq(a).partial_cmp(&seq(b)).unwrap_or(std::cmp::Ordering::Equal));
+        let mut prev: Option<&Value> = None;
+        for r in v {
+            let before = prev.and_then(|p| Some((tsd::query::text(p, "to_state")?, ts_secs(p)?)));
+            out.push((r, before));
+            prev = Some(r);
+        }
+    }
+    out
 }
 
 /// p95 dwell (seconds) across every in-flight bead state (READY, WORKING, SUBMITTED,
 /// IN_DELIVERY, REWORK) and every in-flight batch state (OPEN, CI_RUNNING, GREEN,
 /// ATTRIBUTING, REBUILDING), pooled into one series — for the current window and the
 /// trailing baseline, plus how many transitions each is drawn from. `bead` and `batch` rows
-/// share one `bead-stage` file, so dwell is windowed `PARTITION BY (machine, key)` to keep a
-/// bead's own timeline from a batch's.
-pub fn dwell_metrics(
-    duckdb_bin: &str,
-    root: &Path,
-    window_hours: f64,
-    baseline_hours: f64,
-) -> Result<(f64, u64, f64, u64), String> {
-    let path = family_path(root, "bead-stage");
-    if !path.exists() {
-        return Err(format!("{}: no rows yet", path.display()));
-    }
-    let path_str = path.to_string_lossy();
-    let dwell_states = quoted_in_list(&[BEAD_DWELL_STATES.as_slice(), BATCH_DWELL_STATES.as_slice()].concat());
-    let sql = format!(
-        "WITH ordered AS (
-            SELECT machine, key, to_state, CAST(ts AS TIMESTAMP) AS ts,
-                   LAG(to_state) OVER (PARTITION BY machine, key ORDER BY seq) AS prev_state,
-                   LAG(CAST(ts AS TIMESTAMP)) OVER (PARTITION BY machine, key ORDER BY seq) AS prev_ts
-            FROM read_ndjson_auto('{path_str}')
-            WHERE applied
-         ), dwells AS (
-            SELECT ts, epoch(ts) - epoch(prev_ts) AS dwell_s
-            FROM ordered
-            WHERE prev_state IN ({dwell_states})
-         )
-         SELECT
-            quantile_cont(dwell_s, 0.95) FILTER (WHERE ts >= now() - INTERVAL '{window_hours} hours') AS cur_p95,
-            count(*) FILTER (WHERE ts >= now() - INTERVAL '{window_hours} hours') AS cur_n,
-            quantile_cont(dwell_s, 0.95) FILTER (WHERE ts >= now() - INTERVAL '{baseline_hours} hours') AS base_p95,
-            count(*) FILTER (WHERE ts >= now() - INTERVAL '{baseline_hours} hours') AS base_n
-         FROM dwells;"
-    );
-    let rows = duckdb_json(duckdb_bin, &sql)?;
-    let row = rows.first().ok_or_else(|| "dwell query returned no row".to_string())?;
-    Ok((f64_field(row, "cur_p95"), u64_field(row, "cur_n"), f64_field(row, "base_p95"), u64_field(row, "base_n")))
+/// share one `bead-stage` family, so dwell is taken per (machine, key) to keep a bead's own
+/// timeline from a batch's.
+pub fn dwell_metrics(rows: &[Value], now: u64, window_hours: f64, baseline_hours: f64) -> (f64, u64, f64, u64) {
+    let states: Vec<&str> = [BEAD_DWELL_STATES.as_slice(), BATCH_DWELL_STATES.as_slice()].concat();
+    let dwells: Vec<(f64, f64)> = transitions(rows, |r| format!("{}\u{0}{}", machine(r), tsd::query::text(r, "key").unwrap_or("")), |_| true)
+        .into_iter()
+        .filter_map(|(r, before)| {
+            let (prev_state, prev_ts) = before?;
+            let t = ts_secs(r)?;
+            states.contains(&prev_state).then_some((t, t - prev_ts))
+        })
+        .collect();
+    let p95 = |hours: f64| {
+        let v: Vec<f64> = dwells.iter().filter(|(t, _)| *t >= cutoff(now, hours)).map(|(_, d)| *d).collect();
+        (tsd::query::quantile(&v, 0.95).unwrap_or(0.0), v.len() as u64)
+    };
+    let (cur, cur_n) = p95(window_hours);
+    let (base, base_n) = p95(baseline_hours);
+    (cur, cur_n, base, base_n)
 }
 
 /// Flips (a round reaching ATTRIBUTING — the batch machine's own Red transition, legal only
 /// from CI_RUNNING) and total batch transitions, for the current window and the trailing
 /// baseline, both read from the `bead-stage` family's `machine = 'batch'` rows.
-pub fn round_health_metrics(
-    duckdb_bin: &str,
-    root: &Path,
-    window_hours: f64,
-    baseline_hours: f64,
-) -> Result<(u64, u64, u64, u64), String> {
-    let path = family_path(root, "bead-stage");
-    if !path.exists() {
-        return Err(format!("{}: no rows yet", path.display()));
-    }
-    let path_str = path.to_string_lossy();
-    let sql = format!(
-        "WITH ordered AS (
-            SELECT key, to_state, CAST(ts AS TIMESTAMP) AS ts,
-                   LAG(to_state) OVER (PARTITION BY key ORDER BY seq) AS prev_state
-            FROM read_ndjson_auto('{path_str}')
-            WHERE machine = 'batch' AND applied
-         )
-         SELECT
-            count(*) FILTER (WHERE prev_state IS NOT NULL AND to_state = 'ATTRIBUTING' AND prev_state = 'CI_RUNNING'
-                              AND ts >= now() - INTERVAL '{window_hours} hours') AS cur_flips,
-            count(*) FILTER (WHERE prev_state IS NOT NULL AND ts >= now() - INTERVAL '{window_hours} hours') AS cur_transitions,
-            count(*) FILTER (WHERE prev_state IS NOT NULL AND to_state = 'ATTRIBUTING' AND prev_state = 'CI_RUNNING'
-                              AND ts >= now() - INTERVAL '{baseline_hours} hours') AS base_flips,
-            count(*) FILTER (WHERE prev_state IS NOT NULL AND ts >= now() - INTERVAL '{baseline_hours} hours') AS base_transitions
-         FROM ordered;"
-    );
-    let rows = duckdb_json(duckdb_bin, &sql)?;
-    let row = rows.first().ok_or_else(|| "round-health query returned no row".to_string())?;
-    Ok((
-        u64_field(row, "cur_flips"),
-        u64_field(row, "cur_transitions"),
-        u64_field(row, "base_flips"),
-        u64_field(row, "base_transitions"),
-    ))
+pub fn round_health_metrics(rows: &[Value], now: u64, window_hours: f64, baseline_hours: f64) -> (u64, u64, u64, u64) {
+    let moves: Vec<(f64, bool)> = transitions(rows, |r| tsd::query::text(r, "key").unwrap_or("").to_string(), |r| machine(r) == "batch")
+        .into_iter()
+        .filter_map(|(r, before)| {
+            let (prev_state, _) = before?;
+            Some((ts_secs(r)?, to_state(r) == "ATTRIBUTING" && prev_state == "CI_RUNNING"))
+        })
+        .collect();
+    let count = |hours: f64| {
+        let in_window: Vec<&(f64, bool)> = moves.iter().filter(|(t, _)| *t >= cutoff(now, hours)).collect();
+        (in_window.iter().filter(|(_, flip)| *flip).count() as u64, in_window.len() as u64)
+    };
+    let (cur_flips, cur_transitions) = count(window_hours);
+    let (base_flips, base_transitions) = count(baseline_hours);
+    (cur_flips, cur_transitions, base_flips, base_transitions)
 }
 
 /// Trailing-baseline average backlog size, from the `backlog` family this crate's own pass
@@ -305,46 +281,30 @@ pub fn slots_samples(duckdb_bin: &str, root: &Path) -> Result<(crate::core::Slot
 /// The most recently observed sentinel pass's total wall time: every `sentinel-phase` row for
 /// the pass with the latest timestamp, summed — sentinel.sh's own `_phase` gives every second
 /// of a pass to exactly one CHECK row, so the sum over one `pass` id is that pass's wall time.
-pub fn sentinel_pass_wall_seconds(duckdb_bin: &str, root: &Path) -> Result<u64, String> {
-    let path = family_path(root, "sentinel-phase");
-    if !path.exists() {
-        return Err(format!("{}: no rows yet", path.display()));
-    }
-    let path_str = path.to_string_lossy();
-    let sql = format!(
-        "SELECT CAST(sum(secs) AS DOUBLE) AS wall_s
-         FROM read_ndjson_auto('{path_str}')
-         WHERE pass = (
-            SELECT pass FROM read_ndjson_auto('{path_str}')
-            ORDER BY CAST(ts AS TIMESTAMP) DESC LIMIT 1
-         );"
-    );
-    let rows = duckdb_json(duckdb_bin, &sql)?;
-    let row = rows.first().ok_or_else(|| "sentinel-phase query returned no row".to_string())?;
-    Ok(f64_field(row, "wall_s") as u64)
+/// Only rows within `window_secs` are read: a sentinel that has not run in that long is `Err`,
+/// not a stale pass read as healthy.
+pub fn sentinel_pass_wall_seconds(endpoint: Option<&str>, now: u64, window_secs: u64) -> Result<u64, String> {
+    let reader = tsd::store::Reader::new(endpoint).map_err(|e| e.to_string())?;
+    let rows = reader.rows("sentinel-phase", now.saturating_sub(window_secs)).map_err(|e| e.to_string())?;
+    sentinel_wall(&rows).ok_or_else(|| "sentinel-phase: no row carries a pass id".to_string())
+}
+
+pub fn sentinel_wall(rows: &[Value]) -> Option<u64> {
+    let latest = rows.iter().filter_map(|r| Some((tsd::query::ts_of(r)?, tsd::query::text(r, "pass")?))).max_by_key(|(t, _)| *t)?.1;
+    let total: f64 = rows.iter().filter(|r| tsd::query::text(r, "pass") == Some(latest)).filter_map(|r| tsd::query::num(r, "secs")).sum();
+    Some(total as u64)
 }
 
 /// Reopens (transitions to REWORK) and beads landed over `window_hours`, plus how many hours
 /// of `bead-stage` history exist at all — the caller holds the rework invariant report-only
 /// until that history passes 24h (design: "report-only for 24h, then alerting"), since a
 /// ratio computed from a few hours of a brand-new series has no baseline behind it yet.
-pub fn rework_metrics(duckdb_bin: &str, root: &Path, window_hours: f64) -> Result<(u64, u64, f64), String> {
-    let path = family_path(root, "bead-stage");
-    if !path.exists() {
-        return Err(format!("{}: no rows yet", path.display()));
-    }
-    let path_str = path.to_string_lossy();
-    let sql = format!(
-        "SELECT
-            count(*) FILTER (WHERE applied AND to_state = 'REWORK' AND CAST(ts AS TIMESTAMP) >= now() - INTERVAL '{window_hours} hours') AS reopens,
-            count(*) FILTER (WHERE applied AND to_state = 'LANDED' AND CAST(ts AS TIMESTAMP) >= now() - INTERVAL '{window_hours} hours') AS landed,
-            epoch(now()) - epoch(min(CAST(ts AS TIMESTAMP))) AS history_secs
-         FROM read_ndjson_auto('{path_str}');"
-    );
-    let rows = duckdb_json(duckdb_bin, &sql)?;
-    let row = rows.first().ok_or_else(|| "rework query returned no row".to_string())?;
-    let history_hours = f64_field(row, "history_secs") / 3600.0;
-    Ok((u64_field(row, "reopens"), u64_field(row, "landed"), history_hours))
+pub fn rework_metrics(rows: &[Value], now: u64, window_hours: f64) -> (u64, u64, f64) {
+    let in_window = |r: &&Value| applied(r) && ts_secs(r).is_some_and(|t| t >= cutoff(now, window_hours));
+    let reopens = rows.iter().filter(in_window).filter(|r| to_state(r) == "REWORK").count() as u64;
+    let landed = rows.iter().filter(in_window).filter(|r| to_state(r) == "LANDED").count() as u64;
+    let oldest = rows.iter().filter_map(ts_secs).fold(f64::INFINITY, f64::min);
+    (reopens, landed, (now as f64 - oldest).max(0.0) / 3600.0)
 }
 
 /// Per lifecycle state, the p90 dwell (seconds) for the current window and the trailing
@@ -353,49 +313,29 @@ pub fn rework_metrics(duckdb_bin: &str, root: &Path, window_hours: f64) -> Resul
 /// window is simply absent from the result — the caller (main.rs) evaluates every state in
 /// [`crate::core::DWELL_REGRESSION_STATES`] regardless, defaulting an absent one to "no
 /// history", the same as a fresh install.
-pub fn dwell_regression_metrics(
-    duckdb_bin: &str,
-    root: &Path,
-    window_hours: f64,
-    baseline_hours: f64,
-) -> Result<Vec<(String, f64, u64, f64, u64)>, String> {
-    let path = family_path(root, "bead-stage");
-    if !path.exists() {
-        return Err(format!("{}: no rows yet", path.display()));
-    }
-    let path_str = path.to_string_lossy();
+pub fn dwell_regression_metrics(rows: &[Value], now: u64, window_hours: f64, baseline_hours: f64) -> Vec<(String, f64, u64, f64, u64)> {
     // Bucketed by when a dwell COMPLETED (the row leaving the state), not when it started —
     // the same convention `dwell_metrics` uses for CERTIFIED->LANDED: a dwell is only knowable
     // once it is over, so "the current window" means "finished recently", and a dwell that
     // started long ago but only just ended still counts as current.
-    let sql = format!(
-        "WITH ordered AS (
-            SELECT \"key\", to_state AS state, CAST(ts AS TIMESTAMP) AS ts,
-                   LAG(to_state) OVER (PARTITION BY \"key\" ORDER BY seq) AS prev_state,
-                   LAG(CAST(ts AS TIMESTAMP)) OVER (PARTITION BY \"key\" ORDER BY seq) AS prev_ts
-            FROM read_ndjson_auto('{path_str}')
-            WHERE applied
-         ), dwells AS (
-            SELECT prev_state AS state, ts, epoch(ts) - epoch(prev_ts) AS dwell_s
-            FROM ordered
-            WHERE prev_state IS NOT NULL
-         )
-         SELECT state,
-            quantile_cont(dwell_s, 0.9) FILTER (WHERE ts >= now() - INTERVAL '{window_hours} hours') AS cur_p90,
-            count(*) FILTER (WHERE ts >= now() - INTERVAL '{window_hours} hours') AS cur_n,
-            quantile_cont(dwell_s, 0.9) FILTER (WHERE ts >= now() - INTERVAL '{baseline_hours} hours') AS base_p90,
-            count(*) FILTER (WHERE ts >= now() - INTERVAL '{baseline_hours} hours') AS base_n
-         FROM dwells
-         GROUP BY state;"
-    );
-    let rows = duckdb_json(duckdb_bin, &sql)?;
-    Ok(rows
-        .iter()
-        .filter_map(|r| {
-            let state = r.get("state")?.as_str()?.to_string();
-            Some((state, f64_field(r, "cur_p90"), u64_field(r, "cur_n"), f64_field(r, "base_p90"), u64_field(r, "base_n")))
+    let mut by_state: std::collections::BTreeMap<&str, Vec<(f64, f64)>> = Default::default();
+    for (r, before) in transitions(rows, |r| tsd::query::text(r, "key").unwrap_or("").to_string(), |_| true) {
+        let Some((prev_state, prev_ts)) = before else { continue };
+        let Some(t) = ts_secs(r) else { continue };
+        by_state.entry(prev_state).or_default().push((t, t - prev_ts));
+    }
+    let p90 = |dwells: &[(f64, f64)], hours: f64| {
+        let v: Vec<f64> = dwells.iter().filter(|(t, _)| *t >= cutoff(now, hours)).map(|(_, d)| *d).collect();
+        (tsd::query::quantile(&v, 0.9).unwrap_or(0.0), v.len() as u64)
+    };
+    by_state
+        .into_iter()
+        .map(|(state, dwells)| {
+            let (cur, cur_n) = p90(&dwells, window_hours);
+            let (base, base_n) = p90(&dwells, baseline_hours);
+            (state.to_string(), cur, cur_n, base, base_n)
         })
-        .collect())
+        .collect()
 }
 
 /// The optional per-stage overrides from the desired-state document (sp-xqhog): a velocity
