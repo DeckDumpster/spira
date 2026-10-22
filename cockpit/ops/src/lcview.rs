@@ -14,6 +14,24 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 
+/// Every running unit of work as the collector's `inflight` probe composed it: the headline
+/// segment and one `kind|subject|detail|started|done|total` row per unit. An empty `seg` is a
+/// snapshot that never carried it, which reads as unknown, never as idle.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Inflight {
+    pub seg: String,
+    pub rows: Vec<String>,
+}
+
+impl Inflight {
+    pub fn from_cockpit_env(content: &str) -> Inflight {
+        let snap = crate::health::model::Snapshot::parse(content);
+        let seg = snap.get("SP_INFLIGHT_SEG").unwrap_or("").to_string();
+        let rows = (0..).map_while(|i| snap.get(&format!("SP_INFLIGHT_ROW{i}")).filter(|s| !s.is_empty())).map(String::from).collect();
+        Inflight { seg, rows }
+    }
+}
+
 /// One lifecycle row, as `spira-lc list` prints it.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Row {
@@ -286,6 +304,8 @@ pub struct Snapshot {
     pub menders: Vec<MenderRow>,
     #[serde(default)]
     pub epics: Vec<EpicRow>,
+    #[serde(default)]
+    pub inflight: Inflight,
 }
 
 /// A source that failed this pass keeps its last good read instead of drawing an empty
@@ -705,6 +725,7 @@ pub struct View {
     pub menders: Vec<SmMender>,
     /// Open epics, as the server rolled them up, ordered by repo then name.
     pub epics: Vec<EpicRow>,
+    pub inflight: Inflight,
 }
 
 const CHAIN: [&str; 7] = ["OPEN", "READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "LANDED"];
@@ -1125,6 +1146,7 @@ pub fn view(s: &Snapshot) -> View {
         landed_total: count("LANDED"),
         base: s.base.clone(),
         epics: s.epics.clone(),
+        inflight: s.inflight.clone(),
         ..Default::default()
     };
     v.flow = vec![

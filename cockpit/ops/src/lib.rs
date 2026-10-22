@@ -19,4 +19,5 @@ pub mod procfs;
 pub mod rebuild;
 pub mod reply;
 pub mod resolve;
+pub mod sections;
 pub mod tmux;

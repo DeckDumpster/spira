@@ -44,6 +44,7 @@ const R_STATE_BEADS: u16 = 23;
 const R_STATE_FOLD: u16 = 24;
 const R_TERMINAL: u16 = 25;
 const R_EPIC_FOLD: u16 = 26;
+const R_INFLIGHT_FOLD: u16 = 41;
 const R_NOW_FOLD: u16 = 40;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -326,6 +327,8 @@ pub fn tree(v: &View) -> Vec<Node> {
     }
     out.push(Node::new("now", format!("{B}NOW{R}    {B}{}{R} live {D}of {} — aeon · bead · phase{R}", v.now_items.len(), v.ceiling)).kids(aeons));
 
+    out.push(inflight_node(v));
+
     let mut states = Vec::new();
     for st in &v.machine {
         let sk = format!("state/{}", st.name);
@@ -438,6 +441,16 @@ pub fn tree(v: &View) -> Vec<Node> {
         .collect();
     out.push(Node::new("recent", format!("{B}RECENT{R} {D}last transitions{R}")).kids(ranked(recent, &[(3, R_RECENT_SOME), (0, R_RECENT_ALL)])));
     out
+}
+
+fn inflight_node(v: &View) -> Node {
+    let seg = &v.inflight.seg;
+    if seg.is_empty() {
+        return Node::new("inflight", format!("{B}IN FLIGHT{R}  {RED}\u{2699} ? work in flight unread{R}"));
+    }
+    let colour = if seg.contains('?') { RED } else { "" };
+    let rows = v.inflight.rows.iter().enumerate().map(|(i, r)| Node::new(format!("inflight/{i}"), crate::health::inflight::row_text(r, v.now))).collect();
+    Node::new("inflight", format!("{B}IN FLIGHT{R}  {colour}{seg}{R}")).kids(rows).fold(R_INFLIGHT_FOLD)
 }
 
 /// One line for a running pass: the round, the phase, and in suites a bar of suites done of
