@@ -78,7 +78,7 @@ fn main() {
 
     // A harness tool (a groomer sweep, a queue step) reads the whole graph, and a filing verb
     // runs bead.sh; the broker bounds both at 300 s, so this client waits that long and no longer.
-    let runs_tool = work::LANE_VERBS.contains(&verb.as_str()) || matches!(verb.as_str(), "file-followup" | "split" | "submit");
+    let runs_tool = work::LANE_VERBS.contains(&verb.as_str()) || matches!(verb.as_str(), "file-followup" | "split" | "submit" | "ack");
     let wait = if runs_tool { TOOL_TIMEOUT } else { REPLY_WAIT };
     match send(&req, wait) {
         Ok((code, out)) => {

@@ -1567,6 +1567,7 @@ pub fn aeon_settings(home: &Path) -> String {
     let mut pre = Vec::new();
     for p in [
         home.join("hooks").join("aeon-fence.sh"),
+        home.join("hooks").join("aeon-amend-block.sh"),
         home.join("bd-close-unacked-guard.sh"),
         home.join("script-running-guard.sh"),
     ] {

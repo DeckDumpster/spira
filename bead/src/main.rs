@@ -7,6 +7,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use spira_config::amendment;
 use bead::claimdesc::notify_live_aeon;
 use bead::{
     branch_candidate, branch_label, chamber_partitions, epic_blocks_refusal, incident_blocks_refusal, is_blocks_type,
@@ -53,7 +54,7 @@ fn main() {
         },
         _ => {
             eprintln!(
-                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F --replace | --append-body F] [--express]\n       bead.sh label add|remove <id> <label>\n       bead.sh drop <id> --reason <text>\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
+                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F --replace | --append-body F] [--express]\n       bead.sh amend <id> --live --note \"<text>\" | --append-body F [--ack-within <dur>]\n       bead.sh amend <id> --ack <amend-id> --accept | --decline \"<why>\"\n       bead.sh amend --enforce <amend-id>\n       bead.sh label add|remove <id> <label>\n       bead.sh drop <id> --reason <text>\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
             );
             2
         }
@@ -891,7 +892,21 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         eprintln!("bead: amend: id required");
         return 2;
     }
+    if args[0] == "--enforce" {
+        return match args.get(1) {
+            Some(aid) if args.len() == 2 => amend_enforce(home, aid),
+            _ => {
+                eprintln!("bead: amend: usage: bead.sh amend --enforce <amend-id>");
+                2
+            }
+        };
+    }
     let id = args[0].clone();
+    let mut live = false;
+    let mut ack_within: Option<String> = None;
+    let mut ack: Option<String> = None;
+    let mut accept = false;
+    let mut decline: Option<String> = None;
     let mut note: Option<String> = None;
     let mut body_file: Option<String> = None;
     let mut append_file: Option<String> = None;
@@ -915,6 +930,20 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
                 append_file = args.get(i).cloned();
             }
             "--replace" => replace = true,
+            "--live" => live = true,
+            "--ack-within" => {
+                i += 1;
+                ack_within = args.get(i).cloned();
+            }
+            "--ack" => {
+                i += 1;
+                ack = args.get(i).cloned();
+            }
+            "--accept" => accept = true,
+            "--decline" => {
+                i += 1;
+                decline = args.get(i).cloned();
+            }
             "--express" => express = true,
             "--priority" | "-p" => {
                 i += 1;
@@ -930,6 +959,29 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
             }
         }
         i += 1;
+    }
+    if let Some(aid) = &ack {
+        let answer = match (accept, &decline) {
+            (true, None) => amendment::State::Accepted,
+            (false, Some(why)) if !why.trim().is_empty() => amendment::State::Declined(why.clone()),
+            _ => {
+                eprintln!("bead: amend: --ack <amend-id> takes exactly one of --accept or --decline \"<why>\"");
+                return 2;
+            }
+        };
+        return amend_ack(home, &id, aid, answer);
+    }
+    if accept || decline.is_some() {
+        eprintln!("bead: amend: --accept and --decline qualify --ack <amend-id>");
+        return 2;
+    }
+    if ack_within.is_some() && !live {
+        eprintln!("bead: amend: --ack-within qualifies --live");
+        return 2;
+    }
+    if live && (body_file.is_some() || replace || express || priority.is_some() || (note.is_none() && append_file.is_none())) {
+        eprintln!("bead: amend: --live takes --note and/or --append-body only: the text is merged into the description when it is accepted");
+        return 2;
     }
     if note.is_none() && body_file.is_none() && append_file.is_none() && !express && priority.is_none() {
         eprintln!("bead: amend: --note, --body-file, --append-body, --express, or --priority required");
@@ -977,6 +1029,15 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
             Err(rc) => return rc,
             Ok(line) => statute_note = line,
         }
+    }
+
+    if live {
+        let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
+        let mail = spira_config::process::cfg("SPIRA_MAIL").unwrap_or_default();
+        if bead::claimdesc::live_aeon(&id, &run, &mail) {
+            return amend_live(home, &id, &mail, note.as_deref(), append_file.as_deref(), ack_within.as_deref());
+        }
+        eprintln!("bead: amend: no live aeon on {id}; recording the amendment without an acknowledgement");
     }
 
     let mut changed = String::new();
@@ -1087,6 +1148,157 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
     let mail = spira_config::process::cfg("SPIRA_MAIL").unwrap_or_default();
     notify_live_aeon(&id, &changed, &run, &mail);
     rc
+}
+
+fn now_epoch() -> i64 {
+    env::var("SPIRA_NOW").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+    })
+}
+
+fn amender() -> String {
+    ["BEADS_ACTOR", "USER"].iter().find_map(|k| env::var(k).ok().filter(|a| !a.is_empty())).unwrap_or_else(|| "concierge".into())
+}
+
+fn amend_mail_cfg() -> Option<String> {
+    spira_config::process::cfg("SPIRA_MAIL").ok().filter(|m| !m.is_empty())
+}
+
+fn merge_into_body(home: &str, id: &str, addition: &str) -> i32 {
+    let (_, out) = bdq_capture(home, &s(&["show", id, "--json"]));
+    let Some(old) = bead::parse_description(&out) else {
+        eprintln!("bead: amend: cannot read the current description of {id}; refusing");
+        return 1;
+    };
+    let date = Command::new("timeout").args(["5", "date", "-u", "+%F"]).output().ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    let tmp = env::temp_dir().join(format!("bead-amend-{}-{}", std::process::id(), id));
+    if let Err(e) = std::fs::write(&tmp, bead::appended_body(&old, addition, &date)) {
+        eprintln!("bead: amend: cannot stage the merged body: {e}");
+        return 1;
+    }
+    let rc = bdq_status(
+        home,
+        &s(&["update", id, "--body-file", &tmp.to_string_lossy(), bead::claimdesc::FORCE_FLAG, "bead.sh amend"]),
+    );
+    let _ = std::fs::remove_file(tmp);
+    rc
+}
+
+fn amend_live(home: &str, id: &str, mail: &str, note: Option<&str>, append_file: Option<&str>, ack_within: Option<&str>) -> i32 {
+    let secs = match ack_within {
+        None => amendment::DEFAULT_ACK_SECS,
+        Some(d) => match amendment::parse_duration(d) {
+            Some(n) => n,
+            None => {
+                eprintln!("bead: amend: --ack-within takes a duration such as 90s, 10m or 2h");
+                return 2;
+            }
+        },
+    };
+    let mut text = note.unwrap_or_default().to_string();
+    if let Some(f) = append_file {
+        match std::fs::read_to_string(f) {
+            Ok(t) => {
+                if !text.is_empty() {
+                    text.push_str("\n\n");
+                }
+                text.push_str(&t);
+            }
+            Err(e) => {
+                eprintln!("bead: amend: cannot read {f}: {e}");
+                return 1;
+            }
+        }
+    }
+    let rec = match amendment::create(mail, id, &amender(), &text, now_epoch(), secs) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("bead: amend: cannot record the amendment: {e}");
+            return 1;
+        }
+    };
+    let rc = bdq_status(home, &s(&["note", id, &format!("Live amendment {} by {} awaiting acknowledgement (within {secs}s):\n\n{}", rec.id, rec.amender, rec.text.trim())]));
+    bead::claimdesc::mail_to(
+        &format!("aeon-{id}"),
+        "amend <amend@spira>",
+        "Amendment to answer",
+        &amendment::block_text(&rec),
+    );
+    println!("{}", rec.id);
+    eprintln!("bead: amend: {} recorded on {id}; the aeon is blocked until it runs `work ack {} --accept|--decline`; after {secs}s or a decline: bead.sh amend --enforce {}", rec.id, rec.id, rec.id);
+    rc
+}
+
+fn amend_ack(home: &str, id: &str, aid: &str, answer: amendment::State) -> i32 {
+    let Some(mail) = amend_mail_cfg() else {
+        eprintln!("bead: amend: SPIRA_MAIL is not configured");
+        return 1;
+    };
+    let rec = match amendment::answer(&mail, id, aid, answer.clone()) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("bead: amend: {e}");
+            return 1;
+        }
+    };
+    let mut rc = 0;
+    let (verdict, tell) = match &answer {
+        amendment::State::Accepted => {
+            rc |= merge_into_body(home, id, &rec.text);
+            ("accepted".to_string(), format!("Amendment {aid} on {id} was accepted by the aeon and is merged into the description."))
+        }
+        amendment::State::Declined(why) => (
+            format!("declined: {why}"),
+            format!("Amendment {aid} on {id} was DECLINED by the aeon: {why}\n\nTo slay the session and requeue with the amendment merged: bead.sh amend --enforce {aid}"),
+        ),
+        _ => unreachable!(),
+    };
+    rc |= bdq_status(home, &s(&["note", id, &format!("Amendment {aid} {verdict}")]));
+    bead::claimdesc::mail_to(&rec.amender, "amend <amend@spira>", &format!("Amendment {aid} answered"), &tell);
+    rc
+}
+
+fn amend_enforce(home: &str, aid: &str) -> i32 {
+    let Some(mail) = amend_mail_cfg() else {
+        eprintln!("bead: amend: SPIRA_MAIL is not configured");
+        return 1;
+    };
+    let Some(rec) = amendment::find(&mail, aid) else {
+        eprintln!("bead: amend: no amendment {aid}");
+        return 1;
+    };
+    let why = match amendment::enforceable(&rec, now_epoch()) {
+        Ok(w) => w,
+        Err(e) => {
+            eprintln!("bead: amend: {e}");
+            return 1;
+        }
+    };
+    let id = rec.bead.clone();
+    let mut rc = merge_into_body(home, &id, &rec.text);
+    if rc != 0 {
+        eprintln!("bead: amend: could not merge {aid} into {id}; not slaying");
+        return rc;
+    }
+    if let Err(e) = amendment::mark_enforced(&mail, &rec) {
+        eprintln!("bead: amend: {e}");
+        return 1;
+    }
+    let reason = format!("amendment {aid} {why}; slain and requeued with the amendment merged into the body");
+    rc |= bdq_status(home, &s(&["note", &id, &format!("Enforced {aid}: {reason}")]));
+    // batch-job: slay waits out the holder's shutdown and salvages its work
+    let slay = Command::new("slay")
+        .args(["--bead", &id, "--why", &reason, "--reopen"])
+        .envs(spira_config::release_env::child_path_env_for_process())
+        .status()
+        .map(|s| s.code().unwrap_or(1))
+        .unwrap_or(127);
+    if slay != 0 {
+        eprintln!("bead: amend: slay --bead {id} failed ({slay}); the amendment is merged and marked enforced");
+    }
+    rc | slay
 }
 
 // =========================================================================================

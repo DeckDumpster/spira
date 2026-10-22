@@ -178,8 +178,13 @@ pub fn aeon_alive(pidfile: &str) -> bool {
 }
 
 fn mail_send(aeon_id: &str, body: &str) {
+    mail_to(aeon_id, "amend <amend@spira>", "Update while you work", body);
+}
+
+/// Best-effort mail; a mailbox that will not take it loses the message, never the caller.
+pub fn mail_to(mailbox: &str, from: &str, subject: &str, body: &str) {
     let Ok(mut child) = spira_config::bounded::bounded("mail")
-        .args(["send", aeon_id, "--from", "amend <amend@spira>", "--subject", "Update while you work"])
+        .args(["send", mailbox, "--from", from, "--subject", subject])
         .env("SPIRA_MAIL_LINT_CONSIDERED", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -192,6 +197,20 @@ fn mail_send(aeon_id: &str, body: &str) {
         let _ = stdin.write_all(body.as_bytes());
     }
     let _ = child.wait();
+}
+
+/// Whether an aeon is alive on `id` with an open mailbox: the only holder a live amendment can bind.
+pub fn live_aeon(id: &str, run: &str, mail: &str) -> bool {
+    if id.is_empty() || run.is_empty() || !Path::new(&format!("{mail}/aeon-{id}/new")).is_dir() {
+        return false;
+    }
+    let suffix = format!("-{id}.pid");
+    let Ok(entries) = std::fs::read_dir(run) else { return false };
+    entries
+        .filter_map(|e| e.ok())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| n.starts_with("aeon-") && n.ends_with(&suffix))
+        .any(|n| aeon_alive(&format!("{run}/{n}")))
 }
 
 #[cfg(test)]
