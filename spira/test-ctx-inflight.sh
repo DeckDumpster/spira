@@ -30,8 +30,8 @@ line() {
 }
 snap() { printf "SP_INFLIGHT_SEG='%s'\n" "$1" > "$SNAP"; touch -d "@$((EPOCH - ${2:-1}))" "$SNAP"; }
 
-snap "⚙ 1 aeon · 1 round (412/475) · 1 check"
-has "work running shows every kind with progress" "$(line)" "⚙ 1 aeon · 1 round (412/475) · 1 check"
+snap "⚙ 1 aeon · 1 round (412/475) · 1 gate"
+has "work running shows every kind with progress" "$(line)" "⚙ 1 aeon · 1 round (412/475) · 1 gate"
 
 snap "⚙ idle"
 has "idle shows idle" "$(line)" "⚙ idle"
