@@ -25,9 +25,7 @@ pub const READER_WINDOW_DAYS: &[(&str, u32)] = &[
     ("admission", 30),
     ("slots", 30),
     ("escape", 7),
-    ("bead-stage", 1),
     ("backlog", 1),
-    ("reconciler-status", 1),
 ];
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
