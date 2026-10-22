@@ -12,6 +12,9 @@
 # Each pass reads the outcome of the latest real EC2 launch from round-vm's pool record (SPIRA_ROUND_VM_STATE_DIR/pool.json, whole event log, no reap pass; `round-vm status --json` when the dir is unset); only when none is
 # within SPIRA_ROUND_VM_EC2_LAUNCH_WINDOW does it run `round-vm ec2-probe --dry-run`, whose timeout is "could not decide". Silent while SPIRA_ROUND_VM_SPILL is not ec2, ec2-always or ec2-only. Each distinct condition is said once.
 #
+# While the local pool is in use (spill is not ec2-always or ec2-only) a pass also runs
+# `round-vm template-check` and says once when the local template is missing.
+#
 # covers: spira/round-spill-key.sh spira/watchers spira/conf.d/SPIRA_ROUND_VM_EC2_*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -80,7 +83,25 @@ _rsk_probe() {
     _rsk_once "probe-$(printf '%s' "$out" | cksum | cut -d' ' -f1)" "ROUND SPILL LAUNCH: round-vm ec2-probe --dry-run failed; EC2 rounds cannot launch: $out"
 }
 
+_rsk_template() {
+    local out rc
+    command -v round-vm >/dev/null 2>&1 || return 0
+    out="$(timeout 5 round-vm template-check 2>&1)"; rc=$?
+    case "$rc" in
+        0|3) _rsk_clear_template ;;
+        *) out="$(printf '%s' "$out" | tail -n 2 | tr '\n' ' ')"
+           _rsk_once "template-$(printf '%s' "$out" | cksum | cut -d' ' -f1)" "ROUND TEMPLATE: the local round pool cannot lease: $out" ;;
+    esac
+}
+
+_rsk_clear_template() {
+    local mark="$SPIRA_RUN/watchd/round-spill-key.said"
+    [ -f "$mark" ] && { grep -v '^template-' "$mark" > "$mark.tmp"; mv "$mark.tmp" "$mark"; }
+    return 0
+}
+
 cmd_pass() {
+    case "${SPIRA_ROUND_VM_SPILL:-}" in ec2-always|ec2-only) ;; *) _rsk_template ;; esac
     case "${SPIRA_ROUND_VM_SPILL:-}" in ec2|ec2-always|ec2-only) ;; *) return 0 ;; esac
     _rsk_probe
     local file="$SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE" exp now days left

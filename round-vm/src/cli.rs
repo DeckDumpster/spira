@@ -19,7 +19,7 @@ use crate::pve::{HttpTransport, Pve};
 use crate::run::{parse_run_args, run, salvage_results, GitHost, RunEnv, SshRemote};
 use crate::schema::ProcId;
 
-pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--on-red <command>]|status [--json]|warm|teardown|template|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]|recipe-sha [--tree <dir>]|ami-for <recipe-sha>|ami-check|reap|ec2-probe [--dry-run]";
+pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--on-red <command>]|status [--json]|warm|teardown|template|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]|recipe-sha [--tree <dir>]|ami-for <recipe-sha>|template-check|ami-check|reap|ec2-probe [--dry-run]";
 
 fn secs_env(key: &str, default: u64) -> Duration {
     Duration::from_secs(std::env::var(key).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(default))
@@ -137,6 +137,40 @@ fn pool_for(cfg: &Config) -> Pool {
         max_retries: cfg.max_retries,
         wait_poll: cfg.wait_poll,
         acquire_deadline: cfg.acquire_deadline,
+    }
+}
+
+/// `round-vm template-check`: 0 when the configured local template exists, 1 naming it when it
+/// does not, 3 when this box has no local pool configured.
+fn template_check() -> i32 {
+    let cfg = match Config::load() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    let env = match PveEnv::load(&cfg.pve_env_path, &|k| std::env::var(k).ok()) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("round-vm template-check: no local pool configured: {e}");
+            return 3;
+        }
+    };
+    let transport = match HttpTransport::new(&env) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("round-vm template-check: {e}");
+            return 1;
+        }
+    };
+    let pve = Pve { t: transport, env, task_timeout: secs_env("PVE_TASK_TIMEOUT", 300), exec_timeout: secs_env("PVE_EXEC_TIMEOUT", 30), poll: Duration::from_secs(1) };
+    match pve.check_template() {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("{e}");
+            1
+        }
     }
 }
 
@@ -281,6 +315,9 @@ pub fn main_with(args: Vec<String>) -> i32 {
                 }
             };
         }
+    }
+    if args.as_slice() == ["template-check"] {
+        return template_check();
     }
     let Some((verb, rest)) = args.split_first() else {
         eprintln!("{USAGE}");

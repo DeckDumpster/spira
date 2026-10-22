@@ -13,6 +13,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 echo "test-round-spill-key.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/run/watchd"
+mkdir -p "$TMP/ok"; printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/ok/round-vm"; chmod +x "$TMP/ok/round-vm"
 INBOX="$TMP/inbox.log"; KEY="$TMP/k.tskey"
 : > "$KEY"
 
@@ -20,7 +21,7 @@ rsk() {
     local spill="$1"; shift
     tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_ROUND_VM_SPILL="$spill" \
         SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE="$KEY" SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS=9 SPIRA_ROUND_VM_EC2_PROBE_DEADLINE=7
-    env -i PATH="$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" bash "$HERE/round-spill-key.sh" "$@" 2>&1
+    env -i PATH="$TMP/ok:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" bash "$HERE/round-spill-key.sh" "$@" 2>&1
 }
 fresh() { rm -f "$TMP/run/watchd/round-spill-key.said" "$INBOX"; }
 
@@ -37,7 +38,7 @@ fresh
 want "ec2-only is watched like ec2" "expires in 4 days" "$(rsk ec2-only pass)"
 
 mkdir -p "$TMP/stub"
-printf '#!/usr/bin/env bash\necho "$*" >> "%s/probe.log"\nif [ -e "%s/probe-red" ]; then echo "FAILED at dry-run launch: aws ec2: UnauthorizedOperation" >&2; exit 1; fi\n' "$TMP" "$TMP" > "$TMP/stub/round-vm"
+printf '#!/usr/bin/env bash\n[ "$1" = template-check ] && exit "${TC_RC:-0}"\necho "$*" >> "%s/probe.log"\nif [ -e "%s/probe-red" ]; then echo "FAILED at dry-run launch: aws ec2: UnauthorizedOperation" >&2; exit 1; fi\n' "$TMP" "$TMP" > "$TMP/stub/round-vm"
 chmod +x "$TMP/stub/round-vm"
 rskp() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_ROUND_VM_SPILL=ec2-only \
@@ -57,10 +58,10 @@ rm -f "$TMP/probe-red"; rskp pass >/dev/null; touch "$TMP/probe-red"
 want "a recurrence after recovery alarms again" "UnauthorizedOperation" "$(rskp pass)"
 rm -f "$TMP/probe-red"
 fresh
-printf '#!/usr/bin/env bash\n[ "$1" = status ] && exit 1\nsleep 6\nexit 0\n' > "$TMP/stub/round-vm"
+printf '#!/usr/bin/env bash\n[ "$1" = template-check ] && exit "${TC_RC:-0}"\n[ "$1" = status ] && exit 1\nsleep 6\nexit 0\n' > "$TMP/stub/round-vm"
 is "a probe slower than the old 5s cap but inside the 7s deadline is quiet" "" "$(rskp pass)"
 nowant "a slow successful probe leaves no alarm" "ROUND SPILL LAUNCH" "$(cat "$INBOX" 2>/dev/null)"
-printf '#!/usr/bin/env bash\n[ "$1" = status ] && exit 1\nsleep 5\nexit 0\n' > "$TMP/stub/round-vm"
+printf '#!/usr/bin/env bash\n[ "$1" = template-check ] && exit "${TC_RC:-0}"\n[ "$1" = status ] && exit 1\nsleep 5\nexit 0\n' > "$TMP/stub/round-vm"
 DL=1 out="$(rskp pass)"
 want "a probe past the deadline says it could not decide" "probe could not decide" "$out"
 nowant "a timeout is not reported as a refused launch" "cannot launch" "$(cat "$INBOX")"
@@ -68,7 +69,7 @@ nowant "a timeout is not reported as a launch failure" "not confirmed" "$(cat "$
 
 now2="$(date +%s)"
 status_stub() {
-    printf '#!/usr/bin/env bash\nif [ "$1" = status ]; then cat "%s/status.json"; exit 0; fi\nsleep 5\nexit 0\n' "$TMP" > "$TMP/stub/round-vm"
+    printf '#!/usr/bin/env bash\n[ "$1" = template-check ] && exit "${TC_RC:-0}"\nif [ "$1" = status ]; then cat "%s/status.json"; exit 0; fi\nsleep 5\nexit 0\n' "$TMP" > "$TMP/stub/round-vm"
 }
 status_stub
 cat > "$TMP/status.json" <<JSON
@@ -94,7 +95,7 @@ JSON
 fresh
 is "a later successful launch supersedes an earlier refusal" "" "$(rskp pass)"
 mkdir -p "$TMP/state"
-printf '#!/usr/bin/env bash\nsleep 30\n' > "$TMP/stub/round-vm"
+printf '#!/usr/bin/env bash\n[ "$1" = template-check ] && exit "${TC_RC:-0}"\nsleep 30\n' > "$TMP/stub/round-vm"
 rskd() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_ROUND_VM_SPILL=ec2-only SPIRA_ROUND_VM_STATE_DIR="$TMP/state" \
         SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE="$KEY" SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS=9 SPIRA_ROUND_VM_EC2_PROBE_DEADLINE=1
@@ -114,7 +115,7 @@ out="$(rskd pass)"
 want "no launch in pool.json and a timing-out probe alarms" "probe could not decide" "$out"
 want "the alarm names the window" "last 3600s" "$out"
 rm -f "$TMP/probe.log"
-printf '#!/usr/bin/env bash\necho "FAILED at dry-run launch: aws ec2: UnauthorizedOperation" >&2; exit 1\n' > "$TMP/stub/round-vm"
+printf '#!/usr/bin/env bash\n[ "$1" = template-check ] && exit "${TC_RC:-0}"\necho "FAILED at dry-run launch: aws ec2: UnauthorizedOperation" >&2; exit 1\n' > "$TMP/stub/round-vm"
 fresh
 want "a refused launch still quotes the AWS error" "cannot launch: FAILED at dry-run launch: aws ec2: UnauthorizedOperation" "$(rskp pass)"
 echo "$((now + 5 * 86400))" > "$KEY.expires"
@@ -160,3 +161,19 @@ want "status names the missing access key" "no access key" "$out"
 want "status names the missing tailscale key" "absent or empty" "$out"
 touch "$TMP/has-access"; echo tskey > "$KEY"
 rsp status >/dev/null; is "status passes once both are supplied" "0" "$?"
+
+printf '#!/usr/bin/env bash\n[ "$1" = template-check ] && { echo "local round template 9000 is missing on node pve: refusing the lease" >&2; exit 1; }\nexit 0\n' > "$TMP/stub/round-vm"
+fresh
+out="$(TC_RC=1 rskp pass)"
+nowant "ec2-only never checks the local template" "ROUND TEMPLATE" "$out"
+tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_ROUND_VM_SPILL=ec2 \
+    SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE="$KEY" SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS=9
+tpl() { env -i PATH="$TMP/stub:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" bash "$HERE/round-spill-key.sh" pass 2>&1; }
+fresh
+want "a missing local template raises the watch row" "ROUND TEMPLATE: the local round pool cannot lease: local round template 9000 is missing" "$(tpl)"
+want "the row reaches the inbox" "ROUND TEMPLATE" "$(cat "$INBOX")"
+is "the same missing template is said once" "" "$(tpl)"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/stub/round-vm"
+tpl >/dev/null
+printf '#!/usr/bin/env bash\n[ "$1" = template-check ] && { echo "local round template 9000 is missing on node pve: refusing the lease" >&2; exit 1; }\nexit 0\n' > "$TMP/stub/round-vm"
+want "a recurrence after recovery is said again" "ROUND TEMPLATE" "$(tpl)"
