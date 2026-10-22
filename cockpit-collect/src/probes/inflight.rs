@@ -25,7 +25,7 @@ pub enum World {
     Halted,
 }
 
-pub fn inflight_keys(cfg: &Cfg) -> Kv {
+pub fn inflight_keys(_cfg: &Cfg) -> Kv {
     let run = io::run_dir();
     let sources = [aeon_rows(&run), round_rows(), gate_rows(&run)];
     compose(&sources, world(&run))
