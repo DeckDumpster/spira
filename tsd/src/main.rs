@@ -112,7 +112,7 @@ fn run_rows_from(family: &str, src: &str) -> Result<(), String> {
     let endpoint = tsd::store::endpoint();
     let (mut pushed, mut skipped) = (0usize, 0usize);
     let mut batch: Vec<String> = Vec::new();
-    let mut flush = |batch: &mut Vec<String>, pushed: &mut usize| -> Result<(), String> {
+    let flush = |batch: &mut Vec<String>, pushed: &mut usize| -> Result<(), String> {
         tsd::store::push_rows(endpoint.as_deref(), family, batch)?;
         *pushed += batch.len();
         batch.clear();

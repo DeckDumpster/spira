@@ -97,7 +97,7 @@ pub fn push_rows<L: AsRef<str>>(endpoint: Option<&str>, family: &str, lines: &[L
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO);
     let mut series: Vec<Series> = Vec::new();
     let sink = MetricsSink::new(endpoint, SERVICE, Duration::from_secs(2));
-    let mut send = |series: &mut Vec<Series>| -> Result<(), String> {
+    let send = |series: &mut Vec<Series>| -> Result<(), String> {
         let r = sink.try_push_series(series).map_err(|e| format!("{family}: row not stored: {e}"));
         series.clear();
         r
