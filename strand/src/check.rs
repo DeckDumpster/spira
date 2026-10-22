@@ -284,7 +284,7 @@ pub fn decide(r: &AgedRow, dry: bool, strand_grace: i64) -> Step {
             detail: format!("{} (the mechanical fix ran and did not clear it)", r.row.detail),
         };
     }
-    if r.age < strand_grace {
+    if r.age < strand_grace && r.part != crate::unrostered::PART {
         return Step::Skip;
     }
     Step::Escalate { detail: r.row.detail.clone() }
@@ -543,8 +543,29 @@ fn tail_lines(path: Option<&Path>, n: usize) -> String {
     }
 }
 
+fn inbox_line(title: &str, detail: &str, action: &str) -> String {
+    format!("[strand] {title}: {detail} — {action}")
+}
+
+fn escalate_to_inbox(title: &str, detail: &str, action: &str) {
+    use std::io::Write;
+    let Ok(path) = spira_config::process::cfg("SPIRA_CONCIERGE_INBOX") else {
+        warn("check: SPIRA_CONCIERGE_INBOX unreadable — the unrostered row reached no one");
+        return;
+    };
+    let line = format!("{} {}\n", timefmt::utc_stamp(timefmt::now()), inbox_line(title, detail, action).replace('\n', " "));
+    let wrote = std::fs::OpenOptions::new().create(true).append(true).open(&path).and_then(|mut f| f.write_all(line.as_bytes()));
+    if let Err(e) = wrote {
+        warn(&format!("check: cannot append to {path}: {e}"));
+    }
+}
+
 fn escalate(cfg: &Config, part: &str, kind: &str, id: &str, detail: &str, action: &str) {
     let title = title_for(part, kind, id);
+    if part == crate::unrostered::PART {
+        escalate_to_inbox(&title, detail, action);
+        return;
+    }
     let bead = if id.is_empty() || id == "-" { None } else { probe::show(cfg, id) };
     let ctx = format!(
         "{}\n\nWHY THIS IS ESCALATED\n{}\n\nSENTINEL STATE\n{}",
@@ -588,6 +609,22 @@ mod tests {
 
     use super::*;
     use crate::model::Row;
+
+    #[test]
+    fn an_unrostered_row_escalates_inside_the_grace_and_a_stuck_row_does_not() {
+        let mut r = aged("unrostered", Disposition::Escalate, 0, 0, 0);
+        assert_eq!(decide(&r, false, 900), Step::Skip, "a row of another partition waits out the grace");
+        r.part = crate::unrostered::PART.into();
+        assert_eq!(decide(&r, false, 900), Step::Escalate { detail: "d".into() });
+        r.escalated = 5;
+        assert_eq!(decide(&r, false, 900), Step::Skip, "once");
+    }
+
+    #[test]
+    fn the_inbox_line_names_the_row_and_its_action() {
+        let l = inbox_line("Spira: sp-x is stranded (unrostered)", "no persona", "roster it");
+        assert!(l.contains("sp-x") && l.contains("no persona") && l.contains("roster it"), "{l}");
+    }
 
     fn aged(kind: &str, disp: Disposition, age: i64, acted: i64, esc: i64) -> AgedRow {
         AgedRow {

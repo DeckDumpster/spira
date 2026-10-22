@@ -343,7 +343,7 @@ fn raise_unreported_reds(w: &World, c: &Ctx, batch: &str, kv: &Kv, reds: &[Strin
     let rd = rounds_dir(c);
     let unreported: Vec<&String> = reds
         .iter()
-        .filter(|s| *s != BUILD_RED && !rd.join(format!("{batch}.mender-{pass}-{s}")).exists())
+        .filter(|s| *s != BUILD_RED && !mender_marker(&rd, batch, pass, s).exists())
         .collect();
     if unreported.is_empty() {
         return;
@@ -397,7 +397,7 @@ pub(super) fn summon_mender(
         w.err(format!("queue.sh round failed: WARNING — no mender bead filed for {suite} of {batch}: the repo is unnamed, so the bead could not be claimed"));
         return;
     }
-    let marker = rounds_dir(c).join(format!("{batch}.mender-{pass}-{suite}"));
+    let marker = mender_marker(&rounds_dir(c), batch, pass, suite);
     sweep_menders(w, c);
     if marker.exists() {
         return;
@@ -447,6 +447,10 @@ fn repo_config_refusal(output: &str) -> Option<&'static str> {
 /// Close every mender bead filed for a batch that is closing: the failure it was filed for ends
 /// with the batch. Idempotent; a close that fails says why and is retried by the next call, and
 /// every call also retires the menders of any other batch the lifecycle already holds terminal.
+fn mender_marker(dir: &Path, batch: &str, pass: impl std::fmt::Display, suite: &str) -> PathBuf {
+    dir.join(format!("{}.mender-{pass}-{suite}", batch.replace('/', "%2F")))
+}
+
 pub(super) fn retire_menders(w: &World, c: &Ctx, batch: &str, why: &str) {
     retire_marked(w, c, |b| b == batch, why);
     sweep_menders(w, c);
@@ -470,6 +474,8 @@ fn retire_marked(w: &World, c: &Ctx, ended: impl Fn(&str) -> bool, why: &str) {
         let Some((batch, _)) = name.split_once(".mender-") else {
             continue;
         };
+        let batch = batch.replace("%2F", "/");
+        let batch = batch.as_str();
         let done = e.path().with_file_name(format!("{name}.retired"));
         if name.ends_with(".retired") || done.exists() || !ended(batch) {
             continue;
@@ -623,10 +629,7 @@ pub(super) fn raise_forge_reds(w: &World, c: &Ctx, kv: &Kv, suites_csv: &str) {
         if idents(w, "verdict", &[("suite", suite)]).is_err() {
             continue;
         }
-        let marker = rounds_dir(c).join(format!(
-            "{batch}.mender-{}-{suite}",
-            w.lc.batch_pass(batch).map_or(0, |p| p.0)
-        ));
+        let marker = mender_marker(&rounds_dir(c), batch, w.lc.batch_pass(batch).map_or(0, |p| p.0), suite);
         if marker.exists() {
             continue;
         }
