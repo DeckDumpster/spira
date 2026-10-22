@@ -3,7 +3,7 @@
 use spira_otel::metrics::{self, MetricsSink};
 
 pub const COMPONENT: &str = "batcher";
-pub const OPERATIONS: &[&str] = &["cut", "rounds", "rounds-local", "rounds-forge", "checks-forge", "judgement-ci", "sift", "sifts", "path-attribute"];
+pub const OPERATIONS: &[&str] = &["cut", "rounds", "rounds-local", "rounds-forge", "judgement-ci", "sift", "sifts", "path-attribute"];
 
 pub fn sink() -> MetricsSink {
     metrics::sink_for(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), COMPONENT)
