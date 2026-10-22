@@ -1648,13 +1648,23 @@ pub fn forge_pr_create(repo: &Repo, head: &str, base: &str, title: &str, body: &
     forge_pr_create_on(repo, head, base, title, body, None)
 }
 
+const PR_CREATE_DEADLINE_SECS: &str = "300";
+
 fn forge_cmd(repo: &Repo, path: Option<&std::ffi::OsStr>) -> std::process::Command {
+    forge_cmd_for(repo, path, None)
+}
+
+fn forge_cmd_for(repo: &Repo, path: Option<&std::ffi::OsStr>, secs: Option<&str>) -> std::process::Command {
+    let bound = |p: &dyn AsRef<std::ffi::OsStr>| match secs {
+        Some(s) => spira_config::bounded::bounded_for(p, s),
+        None => spira_config::bounded::bounded(p),
+    };
     // A bare name (the default, `forge`, since sp-yv4b3) is the launcher-PATH program, run
     // directly; a configured SPIRA_FORGE path is run with bash, as batch.sh did.
     let mut cmd = if repo.forge.components().count() == 1 {
-        spira_config::bounded::bounded(&repo.forge)
+        bound(&repo.forge)
     } else {
-        let mut c = spira_config::bounded::bounded("bash");
+        let mut c = bound(&"bash");
         c.arg(&repo.forge);
         c
     };
@@ -1697,7 +1707,30 @@ pub fn forge_arm_queue(repo: &Repo) -> Result<(), String> {
 
 /// `path`, when given, is the child's PATH — the seam tests use instead of mutating the process PATH.
 fn forge_pr_create_on(repo: &Repo, head: &str, base: &str, title: &str, body: &str, path: Option<&std::ffi::OsStr>) -> Result<String, String> {
-    let mut cmd = forge_cmd(repo, path);
+    match forge_pr_create_once(repo, head, base, title, body, path) {
+        Ok(n) => Ok(n),
+        Err(e) => match forge_pr_number_on(repo, head, path) {
+            Some(n) => {
+                eprintln!("batcher {}: {e}; adopting the existing PR {n} for {head}", repo.name);
+                Ok(n)
+            }
+            None => Err(e),
+        },
+    }
+}
+
+/// The open PR GitHub already holds for `head`, if any — a pr-create that failed after the
+/// forge created the PR must be adopted, never retried into a second one.
+fn forge_pr_number_on(repo: &Repo, head: &str, path: Option<&std::ffi::OsStr>) -> Option<String> {
+    let mut cmd = forge_cmd_for(repo, path, Some(PR_CREATE_DEADLINE_SECS));
+    cmd.arg("pr-number").arg(&repo.path).arg(head);
+    let o = cmd.stdin(std::process::Stdio::null()).output().ok()?;
+    let n = String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").trim().to_string();
+    (o.status.success() && !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())).then_some(n)
+}
+
+fn forge_pr_create_once(repo: &Repo, head: &str, base: &str, title: &str, body: &str, path: Option<&std::ffi::OsStr>) -> Result<String, String> {
+    let mut cmd = forge_cmd_for(repo, path, Some(PR_CREATE_DEADLINE_SECS));
     cmd.arg("pr-create").arg(&repo.path).arg(head).arg(base).arg(title);
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
@@ -2513,6 +2546,27 @@ case \"$1\" in pr-create) cat >/dev/null; echo 42 ;; pr-automerge) [ \"$4\" = me
         forge_pr_arm_on(&repo, &pr, Some(&path)).expect("a batch PR is armed with the merge method");
         let bare = Repo { forge: PathBuf::from("forge-missing"), ..repo };
         assert!(forge_pr_arm_on(&bare, &pr, Some(&path)).is_err(), "an arm failure is an error, not a warning");
+    }
+
+    #[test]
+    fn a_pr_create_that_times_out_after_the_pr_exists_is_adopted() {
+        let dir = testkit::TempDir::new("batcher-cut-adopt-forge-test");
+        testkit::write_exe(
+            dir.join("forge"),
+            "#!/bin/sh
+case \"$1\" in pr-create) cat >/dev/null; exit 124 ;; pr-number) echo 77 ;; *) exit 1 ;; esac
+",
+        );
+        let real_path = std::env::var_os("PATH").unwrap_or_default();
+        let mut path = dir.path().as_os_str().to_os_string();
+        path.push(":");
+        path.push(&real_path);
+        let repo = Repo { name: "r".into(), path: PathBuf::from("/tmp/r"), base: "local/main".into(), forge: PathBuf::from("forge"), land: Land::Forge };
+        assert_eq!(forge_pr_create_on(&repo, "head", "base", "t", "b", Some(&path)).unwrap(), "77");
+        testkit::write_exe(dir.join("forge"), "#!/bin/sh
+case \"$1\" in pr-create) cat >/dev/null; exit 124 ;; *) exit 0 ;; esac
+");
+        assert!(forge_pr_create_on(&repo, "head", "base", "t", "b", Some(&path)).is_err(), "no PR exists: the failure stands");
     }
 
     fn g(dir: &Path, args: &[&str]) -> String {
