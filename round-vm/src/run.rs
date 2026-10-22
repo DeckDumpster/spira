@@ -288,6 +288,14 @@ if [ -n "$toolchain" ] && [ "$have" != "$toolchain" ]; then
     for b in "$RUSTUP_HOME"/toolchains/"$toolchain"-*/bin/*; do ln -sf "$b" "$CARGO_HOME/bin/${b##*/}"; done
 fi
 export PATH="$CARGO_HOME/bin:$HOME/spira-env/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
+rustc_id="$(rustc -vV | sed -n 's/^\(release\|commit-hash\): //p' | tr '\n' ' ')"
+echo "round-vm: round rustc $rustc_id" >&2
+if [ -d ~/round-work/target ] && [ "$(cat ~/round-work/target/.rustc-id 2>/dev/null)" != "$rustc_id" ]; then
+    echo "round-vm: warm target was built by another rustc; clearing it" >&2
+    find ~/round-work/target -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+fi
+mkdir -p ~/round-work/target
+printf '%s' "$rustc_id" > ~/round-work/target/.rustc-id
 export RUSTC_WRAPPER="$CARGO_HOME/bin/sccache"
 if [ ! -x "$RUSTC_WRAPPER" ]; then
     echo "round-vm: sccache is missing on this VM: $RUSTC_WRAPPER" >&2
@@ -2173,6 +2181,16 @@ mod tests {
         let a = REMOTE_SCRIPT.find("unit_stream() {").unwrap();
         let b = a + REMOTE_SCRIPT[a..].find("\n}\n").unwrap() + 3;
         REMOTE_SCRIPT[a..b].to_string()
+    }
+
+    #[test]
+    fn the_warm_target_is_cleared_when_the_rustc_that_built_it_differs() {
+        let install = REMOTE_SCRIPT.find("rustup toolchain install \"$toolchain\"").unwrap();
+        let stamp = REMOTE_SCRIPT.find("rustc -vV").expect("identifies the active rustc");
+        let clear = REMOTE_SCRIPT.find("warm target was built by another rustc").expect("clears a foreign target");
+        let build = REMOTE_SCRIPT.find("cargo build").unwrap_or(usize::MAX);
+        assert!(install < stamp && stamp < clear && clear < build);
+        assert!(REMOTE_SCRIPT.contains("target/.rustc-id"));
     }
 
     #[test]
