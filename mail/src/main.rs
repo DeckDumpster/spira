@@ -265,6 +265,9 @@ fn run_sendmail(_args: &[String]) -> ExitCode {
         Ok(e) => e,
         Err(e) => return fail(e),
     };
+    if raw.trim().is_empty() {
+        return fail("sendmail: empty message — nothing to deliver");
+    }
     let spool = sendmail::spool_message(&env.run_dir, &raw);
     match sendmail::sendmail(&env.home, &env.mail_root, env.mute, &raw) {
         Ok(_) => {

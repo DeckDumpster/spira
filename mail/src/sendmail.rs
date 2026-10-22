@@ -106,6 +106,9 @@ pub struct SendmailOutcome {
 /// reply and delivers it. Nothing here touches the bead store; `reconcile::pass` applies what
 /// a delivered reply means to the beads it answers.
 pub fn sendmail(home: &Path, mail_root: &Path, mute: bool, raw: &str) -> Result<SendmailOutcome, String> {
+    if raw.trim().is_empty() {
+        return Err("empty message — nothing to deliver".to_string());
+    }
     let in_reply_to = strip_angle_brackets(&message::header_ci_before_blank(raw, "in-reply-to"));
     let mut dest_mailbox = "concierge".to_string();
     let mut orig_file: Option<PathBuf> = None;
@@ -166,6 +169,23 @@ mod tests {
         }
         s.push_str("\nNoted.\n");
         s
+    }
+
+    #[test]
+    #[test]
+    fn empty_message_is_refused_and_leaves_every_mailbox_untouched() {
+        let d = testkit::TempDir::new("mail-sendmail");
+        let root = d.path().join("mail");
+        send_plain(&root, "concierge", "A <a@spira>", "seed");
+        let snap = |sub: &str| fs::read_dir(root.join("concierge").join(sub)).unwrap().count();
+        let before = (snap("tmp"), snap("new"), snap("cur"));
+        for raw in ["", "
+
+  
+"] {
+            assert!(sendmail(d.path(), &root, false, raw).is_err());
+        }
+        assert_eq!((snap("tmp"), snap("new"), snap("cur")), before);
     }
 
     #[test]
