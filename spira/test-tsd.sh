@@ -284,7 +284,8 @@ start_store store12; STORE12_PID=$STORE_PID; STORE12="$STORE_ADDR"
 trap 'kill $STORE12_PID 2>/dev/null; rm -rf "$T"' EXIT INT TERM
 
 RUN12="$T/run12"; mkdir -p "$RUN12/tsd" "$T/rows12"
-export SPIRA_METRICS_ENDPOINT="$STORE12"
+start_store storef; STOREF_PID=$STORE_PID
+export SPIRA_METRICS_ENDPOINT="$STORE_ADDR"
 
 # a moved family has no file: the row goes to the store, and nothing is appended to run/tsd/.
 RUNF="$T/runf"; mkdir -p "$RUNF"
@@ -303,6 +304,9 @@ out="$(printf '{broken\n\n{"no":"ts"}\n{"ts":"2026-09-25T00:00:00Z","host":"vm",
 want "--rows-from stores the readable row and counts the unreadable ones" "stored 1 row(s), skipped 2 unreadable" "$out"
 "$TSD_BIN" --family suite-timing --rows-from - </dev/null >/dev/null 2>&1 \
     && bad "--rows-from accepted a file family" || ok "--rows-from refuses a family that is a file"
+
+kill "$STOREF_PID" 2>/dev/null
+export SPIRA_METRICS_ENDPOINT="$STORE12"
 
 qout12() { tl_config SPIRA_RUN="$RUN12" SPIRA_METRICS_ENDPOINT="${SPIRA_METRICS_ENDPOINT:-}"
            SPIRA_HOME="$T" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent \
@@ -385,7 +389,7 @@ is "time: round seconds" "4"    "$(printf '%s' "$out" | jget12 'r[0]["round_s"]'
 is "time: empty-slot seconds" "1380" "$(printf '%s' "$out" | jget12 'r[0]["idle_slot_s"]')"
 
 out="$(qout12 sentinel)"
-is "sentinel: p50 pass seconds [$(printf %s "$out" | tr -d "\n")]" "10" "$(printf '%s' "$out" | jget12 'int(r[0]["p50"])')"
+is "sentinel: p50 pass seconds" "10" "$(printf '%s' "$out" | jget12 'int(r[0]["p50"])')"
 is "sentinel: p90 pass seconds" "26" "$(printf '%s' "$out" | jget12 'int(r[0]["p90"])')"
 is "sentinel: top phase leads" "CHECK2:44" "$(printf '%s' "$out" | jget12 'r[0]["top_phases"][0]')"
 
