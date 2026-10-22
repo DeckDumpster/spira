@@ -187,7 +187,7 @@ plus one CI runner (`SPIRA_CI_RUNNER_MEM_MIB`) must fit in `SPIRA_HYPERVISOR_MEM
 at a time. `batcher rounds-forge` (spira-rounds-forge) runs `queue verdict <repo>` then `cut` for
 each queue.forge repo, which settles the open batch and opens the next. They are separate units
 so a VM round never delays a forge batch; a repo only ever gets its own mode's steps.
-A forge pass never runs a local-tier check: it batches only members whose (tip, base) pass is recorded. `batcher checks-forge` (spira-checks-forge) runs one pending member's check per repo per invocation and records the pass; a pending member joins the next batch.
+A forge pass runs no local check: every certified member is batched and CI on the batch PR is the gate, its red handled by eject or bisect.
 `SPIRA_BATCHER_ENABLE=0` holds the home repository's local rounds only (every other queue.local repo is still cut); `SPIRA_BATCHER_FORGE_ENABLE=0` holds forge batches only. `batcher rounds` runs both, in order.
 
 ## 6. Pacing (`SPIRA_ROUNDS_PACING`, default off)
