@@ -207,7 +207,7 @@ exec 2> >(tee ~/round-setup.log >&2)
 mirror="git://${host_addr}:${port}/mirror.git"
 checkout_round() {
     git -C ~/round-work fetch --quiet origin "$round_ref" \
-        && git -C ~/round-work checkout --quiet --force --detach FETCH_HEAD
+        && git -C ~/round-work checkout --quiet --force -B round FETCH_HEAD
 }
 if [ -d ~/round-work/.git ] \
     && git -C ~/round-work remote set-url origin "$mirror" \
@@ -2168,7 +2168,7 @@ mod tests {
     fn the_round_tree_is_fetched_into_a_kept_tree_and_only_cloned_when_that_fails() {
         let fetch = REMOTE_SCRIPT.find("fetch --quiet --prune origin").expect("fetches into the kept tree");
         let reset = REMOTE_SCRIPT.find("&& checkout_round").unwrap();
-        assert!(REMOTE_SCRIPT.contains("checkout --quiet --force --detach FETCH_HEAD"));
+        assert!(REMOTE_SCRIPT.contains("checkout --quiet --force -B round FETCH_HEAD"), "testenv runs the branch `round`; a detached HEAD leaves it on the image's old commit");
         assert!(!REMOTE_SCRIPT.contains("origin/HEAD"), "the mirror's HEAD is shared and never read");
         let clean = REMOTE_SCRIPT.find("clean --quiet -fdx -e /target").expect("the clean spares the warm target");
         let clone = REMOTE_SCRIPT.find("git clone").unwrap();
@@ -2549,6 +2549,30 @@ mod tests {
     }
 
     const RR: &str = "refs/rounds/t";
+
+    #[test]
+    fn a_kept_tree_with_an_old_round_branch_is_moved_to_the_round_commit() {
+        let d = TempDir::new();
+        let (src, kept) = (d.path().join("src"), d.path().join("kept"));
+        fs::create_dir_all(&src).unwrap();
+        let commit = |m: &str| {
+            for a in [&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", m][..]] {
+                assert!(std::process::Command::new("git").arg("-C").arg(&src).args(a).status().unwrap().success());
+            }
+        };
+        assert!(std::process::Command::new("git").arg("-C").arg(&src).args(["init", "-q", "-b", "round"]).status().unwrap().success());
+        commit("old");
+        assert!(std::process::Command::new("git").args(["clone", "-q"]).arg(&src).arg(&kept).status().unwrap().success());
+        commit("new");
+        git_out(&src, &["update-ref", "refs/rounds/t", "HEAD"]);
+        let want = git_out(&src, &["rev-parse", "HEAD"]);
+        let line = REMOTE_SCRIPT.lines().find(|l| l.contains("checkout --quiet --force -B round FETCH_HEAD")).expect("the kept-tree checkout");
+        let script = format!("set -e\ngit -C \"$K\" fetch --quiet \"$S\" refs/rounds/t\ngit -C \"$K\" {}", line.trim().trim_start_matches("&& git -C ~/round-work").trim_end_matches('}').trim());
+        let out = std::process::Command::new("bash").args(["-c", &script]).env("K", &kept).env("S", &src).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(git_out(&kept, &["rev-parse", "round"]), want, "testenv's branch is the round's commit");
+        assert_eq!(git_out(&kept, &["rev-parse", "HEAD"]), want);
+    }
 
     #[test]
     fn two_repos_prepared_back_to_back_each_keep_their_own_ref_and_it_is_pruned() {
