@@ -483,3 +483,7 @@ publish_red_priority
 publish_red_escalate_after
 cold_par
 scoped_stop_review_secs
+reflect_ledger
+reflect_recur_days
+reflect_recur_hits
+reflect_recur_weekly_cap
