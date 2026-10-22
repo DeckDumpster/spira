@@ -241,7 +241,7 @@ _tl_json_escape() {
 }
 
 # _tl_case_ms -> milliseconds since the previous case (or source time), printed as the
-# `#ms=<n>` line testenv reads into the case-timing family.
+# `#ms=<n>` line.
 _tl_case_ms() {
     local now="${EPOCHREALTIME/./}"
     printf '#ms=%s\n' "$(( (now - _TL_LAST_US) / 1000 ))"
