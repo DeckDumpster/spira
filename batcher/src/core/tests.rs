@@ -70,7 +70,7 @@ fn no_shared_epic_is_a_catch_all_of_the_whole_pool() {
     let pool = vec![m("sp-a", 2, false, 0), m("sp-b.1", 2, false, 1), m("sp-c.1", 2, false, 2)];
     let (round, kind) = select_round(pool);
     assert_eq!(kind, RoundKind::CatchAll);
-    assert_eq!(ids(&round), ["sp-a", "sp-b.1", "sp-c.1"]);
+    assert_eq!(round_ids(&round), ["sp-a", "sp-b.1", "sp-c.1"]);
 }
 
 #[test]
@@ -78,7 +78,7 @@ fn two_members_of_one_epic_cut_that_feature_alone() {
     let pool = vec![m("sp-a", 2, false, 0), m("sp-f.1", 2, false, 1), m("sp-f.2", 2, false, 2), m("sp-z", 2, false, 3)];
     let (round, kind) = select_round(pool);
     assert_eq!(kind, RoundKind::Feature("sp-f".into()));
-    assert_eq!(ids(&round), ["sp-f.1", "sp-f.2"]);
+    assert_eq!(round_ids(&round), ["sp-f.1", "sp-f.2"]);
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn the_epic_parent_itself_belongs_to_its_feature() {
     let pool = vec![m("sp-f", 2, false, 0), m("sp-f.1", 2, false, 1), m("sp-o", 2, false, 2)];
     let (round, kind) = select_round(pool);
     assert_eq!(kind, RoundKind::Feature("sp-f".into()));
-    assert_eq!(ids(&round), ["sp-f", "sp-f.1"]);
+    assert_eq!(round_ids(&round), ["sp-f", "sp-f.1"]);
 }
 
 #[test]
@@ -108,14 +108,14 @@ fn what_the_feature_stacks_on_and_what_stacks_on_it_ride_along() {
     let pool = vec![m("sp-f.1", 2, false, 1), f2, m("sp-p", 2, false, 0), dep, second, m("sp-z", 2, false, 6)];
     let (round, kind) = select_round(pool);
     assert_eq!(kind, RoundKind::Feature("sp-f".into()));
-    assert_eq!(ids(&round), ["sp-f.1", "sp-f.2", "sp-p", "sp-d", "sp-e"]);
+    assert_eq!(round_ids(&round), ["sp-f.1", "sp-f.2", "sp-p", "sp-d", "sp-e"]);
 }
 
 #[test]
 fn an_express_member_rides_in_a_feature_round() {
     let pool = vec![m("sp-f.1", 2, false, 0), m("sp-f.2", 2, false, 1), m("sp-x", 1, true, 2), m("sp-z", 2, false, 3)];
     let (round, _) = select_round(pool);
-    assert_eq!(ids(&round), ["sp-f.1", "sp-f.2", "sp-x"]);
+    assert_eq!(round_ids(&round), ["sp-f.1", "sp-f.2", "sp-x"]);
 }
 
 #[test]
@@ -857,4 +857,41 @@ fn a_sibling_loser_names_the_p0_it_lost_to_not_the_base() {
     assert_eq!(combined.merged.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-p0"]);
     let text = evicted_event(&combined.set_aside[0]).text;
     assert!(text.contains("sibling sp-p0") && text.contains("a.rs") && !text.contains("with base"), "{text}");
+}
+
+fn touching(ids: &[&str]) -> std::collections::BTreeSet<Id> {
+    ids.iter().map(|i| i.to_string()).collect()
+}
+
+fn round_ids(pool: &[Member]) -> Vec<&str> {
+    pool.iter().map(|m| m.id.as_str()).collect()
+}
+
+#[test]
+fn recipe_member_rounds_alone_after_the_ordinary_three() {
+    let mut pool = vec![m("sp-a", 2, false, 1), m("sp-r", 1, false, 0), m("sp-b", 2, false, 2), m("sp-c", 2, false, 3)];
+    let rec = touching(&["sp-r"]);
+    let (first, lines) = recipe_solo(pool.clone(), &rec);
+    assert_eq!(round_ids(&first), ["sp-a", "sp-b", "sp-c"]);
+    assert_eq!(lines, ["solo: sp-r changes the round recipe"]);
+    pool.retain(|m| m.id == "sp-r");
+    let (second, lines) = recipe_solo(pool, &rec);
+    assert_eq!(round_ids(&second), ["sp-r"]);
+    assert_eq!(lines.len(), 1);
+}
+
+#[test]
+fn a_second_recipe_member_waits_for_the_first_round() {
+    let pool = vec![m("sp-r2", 2, false, 5), m("sp-r1", 2, false, 1)];
+    let (round, lines) = recipe_solo(pool, &touching(&["sp-r1", "sp-r2"]));
+    assert_eq!(round_ids(&round), ["sp-r1"]);
+    assert_eq!(lines.len(), 2);
+}
+
+#[test]
+fn a_pool_without_recipe_members_is_untouched() {
+    let pool = vec![m("sp-a", 1, false, 0), m("sp-b", 1, false, 1)];
+    let (round, lines) = recipe_solo(pool.clone(), &touching(&["sp-zzz"]));
+    assert_eq!(round, pool);
+    assert!(lines.is_empty());
 }

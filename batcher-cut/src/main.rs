@@ -258,6 +258,11 @@ fn cut(o: &Opts) -> Result<(), String> {
     for r in &refused {
         println!("batcher {}: {r}", repo.name);
     }
+    let recipe = io::recipe_members(&repo, &pool);
+    let (pool, solo) = batcher::core::recipe_solo(pool, &recipe);
+    for line in &solo {
+        println!("batcher {}: {line}", repo.name);
+    }
     if let batcher::core::RoundKind::Feature(root) = &kind {
         println!("batcher {}: feature round {root} ({} members)", repo.name, pool.len());
     }

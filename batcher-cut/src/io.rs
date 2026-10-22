@@ -1075,6 +1075,11 @@ pub fn changed_paths(repo: &Repo, base_sha: &str, tip: &str) -> Vec<String> {
         .collect()
 }
 
+/// The pool members whose diff against `repo.base` touches a round-recipe input.
+pub fn recipe_members(repo: &Repo, pool: &[Member]) -> std::collections::BTreeSet<String> {
+    pool.iter().filter(|m| spira_config::recipe::touches(&changed_paths(repo, &repo.base, &m.tip))).map(|m| m.id.clone()).collect()
+}
+
 fn patch_id(repo: &Repo, base_sha: &str, tip: &str) -> Option<String> {
     let diff = spira_config::bounded::bounded("git").arg("-C").arg(&repo.path).args(["diff", &format!("{base_sha}...{tip}")]).output().ok()?;
     if !diff.status.success() {

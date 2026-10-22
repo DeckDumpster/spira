@@ -179,6 +179,24 @@ pub fn refuse_blocked(pool: Vec<Member>) -> (Vec<Member>, Vec<String>) {
     (ok, refusals)
 }
 
+/// A member whose diff touches a round-recipe input rounds alone: ordinary members go first and
+/// the recipe members wait; with none left, the best-ranked recipe member is the whole round.
+/// Returns the round's pool and one `solo:` line per recipe member in the pool.
+pub fn recipe_solo(pool: Vec<Member>, touching: &std::collections::BTreeSet<Id>) -> (Vec<Member>, Vec<String>) {
+    let (mut recipe, ordinary): (Vec<Member>, Vec<Member>) = pool.into_iter().partition(|m| touching.contains(&m.id));
+    if recipe.is_empty() {
+        return (ordinary, Vec::new());
+    }
+    recipe.sort_by_key(order_key);
+    let lines = recipe.iter().map(|m| format!("solo: {} changes the round recipe", m.id)).collect();
+    if ordinary.is_empty() {
+        recipe.truncate(1);
+        (recipe, lines)
+    } else {
+        (ordinary, lines)
+    }
+}
+
 /// What kind of round `select_round` cut from the pool.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RoundKind {

@@ -4096,3 +4096,25 @@ fn a_candidate_image_build_that_outlasts_its_wait_leaves_the_round_unjudged() {
     assert_eq!(t.run(&["round", "certify", &batch]), crate::ops::round::FAULT, "{}", t.err());
     assert!(t.err().contains("did not finish within 5400s"), "{}", t.err());
 }
+
+#[test]
+fn open_rounds_a_recipe_changing_member_apart_from_the_ordinary_ones() {
+    let t = round_world();
+    t.git.stat("b0", "tb", &[("round-vm/ami-setup.sh", 1, 1)]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b,sp-c"]), 0, "{}", t.err());
+    let o = t.out();
+    assert!(
+        o.contains("skip — sp-b: solo: sp-b changes the round recipe") && o.contains("members=sp-a:ta sp-c:tc") && !o.contains("sp-b:tb"),
+        "{o}"
+    );
+}
+
+#[test]
+fn open_admits_a_lone_recipe_changing_member_by_itself() {
+    let t = round_world();
+    t.git.stat("b0", "ta", &[("flake.nix", 1, 1)]);
+    t.git.stat("b0", "tb", &[("flake.lock", 1, 1)]);
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    let o = t.out();
+    assert!(o.contains("members=sp-a:ta") && !o.contains("sp-b:tb") && o.contains("sp-b: solo: sp-b changes the round recipe"), "{o}");
+}
