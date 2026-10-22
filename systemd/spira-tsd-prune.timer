@@ -1,0 +1,14 @@
+[Unit]
+Description=Daily run/tsd/ retention prune
+
+[Timer]
+OnCalendar=*-*-* 04:20:00
+Persistent=true
+AccuracySec=5min
+Unit=spira-tsd-prune.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=maintenance

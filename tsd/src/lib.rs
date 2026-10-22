@@ -141,6 +141,7 @@ const LOCK_EX: i32 = 2;
 const LOCK_UN: i32 = 8;
 
 pub mod pass;
+pub mod prune;
 pub mod report;
 
 pub fn default_host() -> String {
@@ -219,6 +220,29 @@ pub fn read_tail(path: &Path, max: u64) -> String {
     text.split_once('\n').map_or(String::new(), |(_, rest)| rest.to_string())
 }
 
+/// The family file open and exclusively locked, as the file now at `path`: a prune renames a new
+/// file over it, so a lock won on the replaced inode is released and the open retried.
+fn open_locked(path: &Path) -> Result<(std::fs::File, i32), String> {
+    use std::os::unix::fs::MetadataExt;
+    loop {
+        let f = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .append(true)
+            .open(path)
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+        let fd = f.as_raw_fd();
+        if unsafe { flock(fd, LOCK_EX) } != 0 {
+            return Err(format!("{}: flock failed", path.display()));
+        }
+        let held = f.metadata().map_err(|e| format!("{}: {e}", path.display()))?.ino();
+        if std::fs::metadata(path).is_ok_and(|m| m.ino() == held) {
+            return Ok((f, fd));
+        }
+        let _ = unsafe { flock(fd, LOCK_UN) };
+    }
+}
+
 /// `append_line`, first moving a file of at least `max_bytes` to `rotated_path`. For a family with
 /// one writer: a second writer that opened the path before the move would append to the moved file.
 pub fn append_line_rotating(path: &Path, line: &str, max_bytes: u64) -> Result<(), String> {
@@ -226,16 +250,7 @@ pub fn append_line_rotating(path: &Path, line: &str, max_bytes: u64) -> Result<(
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
-    let mut f = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .append(true)
-        .open(path)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
-    let fd = f.as_raw_fd();
-    if unsafe { flock(fd, LOCK_EX) } != 0 {
-        return Err(format!("{}: flock failed", path.display()));
-    }
+    let (mut f, fd) = open_locked(path)?;
     let result = (|| {
         if f.metadata()?.len() >= max_bytes {
             std::fs::rename(path, rotated_path(path))?;

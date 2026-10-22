@@ -1,0 +1,6 @@
+TYPE=string
+GROUP=lifecycle
+DOC=Per-family override of tsd_keep_days, as space-separated family=days pairs (case-timing=7 suite-timing=60). Empty keeps every family on tsd_keep_days. An unparsable value stops the prune.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_TSD_KEEP_DAYS_BY_FAMILY:=}"
+SPIRA_CONF_DEFAULT_EOF
