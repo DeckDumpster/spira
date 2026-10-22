@@ -1,9 +1,9 @@
 // store — the metrics-store half of a run/tsd/ family: rows of the families listed in [`MOVED`]
 // are pushed to the metrics store as OTLP gauges and read back from it, and never written to a
 // file. A row's numeric fields become `spira_tsd_value{tsd_family,tsd_field,...}` samples; its
-// string and bool fields are the labels every one of those samples carries, and a
-// `spira_tsd_row` marker sample carries the same labels so a row with no numeric field still
-// exists. The row's `ts` is the sample time, so a window is the store's own time range.
+// string and bool fields are the labels every one of those samples carries. A row with no
+// numeric field is one `spira_tsd_row` sample with the same labels, so it still exists. The
+// row's `ts` is the sample time, so a window is the store's own time range.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -68,13 +68,17 @@ pub fn series_of(family: &str, row: &Map<String, Value>, at: SystemTime) -> Vec<
         }
         labels.push((label_name(k), text.chars().take(LABEL_MAX).collect()));
     }
-    let mut out = vec![Series { name: ROW.into(), value: 1.0, labels: labels.clone(), at }];
-    for (field, value) in numbers {
-        let mut l = labels.clone();
-        l.push(("tsd_field".into(), field));
-        out.push(Series { name: VALUE.into(), value, labels: l, at });
+    if numbers.is_empty() {
+        return vec![Series { name: ROW.into(), value: 1.0, labels, at }];
     }
-    out
+    numbers
+        .into_iter()
+        .map(|(field, value)| {
+            let mut l = labels.clone();
+            l.push(("tsd_field".into(), field));
+            Series { name: VALUE.into(), value, labels: l, at }
+        })
+        .collect()
 }
 
 /// The millisecond part of a row's sample time: a hash of the whole row, so two different rows
@@ -200,7 +204,9 @@ impl Reader {
 
 /// Rows from exported series: samples sharing a label set and a timestamp are one row.
 pub fn rebuild(family: &str, series: &[Exported]) -> Vec<Value> {
-    let mut rows: BTreeMap<(i64, Vec<(String, String)>), Map<String, Value>> = BTreeMap::new();
+    let mut sets: Vec<Vec<(String, String)>> = Vec::new();
+    let mut ids: std::collections::HashMap<Vec<(String, String)>, usize> = Default::default();
+    let mut rows: BTreeMap<(i64, usize), Map<String, Value>> = BTreeMap::new();
     for s in series {
         let name = s.labels.get("__name__").map(String::as_str).unwrap_or("");
         if name != VALUE && name != ROW {
@@ -212,30 +218,35 @@ pub fn rebuild(family: &str, series: &[Exported]) -> Vec<Value> {
             .filter(|(k, _)| !OWN_LABELS.contains(&k.as_str()) && !STORE_LABELS.contains(&k.as_str()))
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
+        let id = *ids.entry(row_labels.clone()).or_insert_with(|| {
+            sets.push(row_labels);
+            sets.len() - 1
+        });
+        let field = (name == VALUE).then(|| s.labels.get("tsd_field")).flatten();
         for (ms, v) in &s.samples {
-            let row = rows.entry((*ms, row_labels.clone())).or_insert_with(|| {
+            let row = rows.entry((*ms, id)).or_insert_with(|| {
                 let mut m = Map::new();
                 m.insert("ts".into(), Value::String(crate::iso_utc((*ms).max(0) as u64 / 1000)));
                 m.insert("family".into(), Value::String(family.into()));
-                for (k, text) in &row_labels {
+                for (k, text) in &sets[id] {
                     m.insert(k.clone(), typed(text));
                 }
                 m
             });
-            if name == VALUE {
-                if let Some(field) = s.labels.get("tsd_field") {
-                    row.insert(field.clone(), number(*v));
-                }
+            if let Some(field) = field {
+                row.insert(field.clone(), number(*v));
             }
         }
     }
-    let mut out: Vec<Value> = rows.into_values().map(Value::Object).collect();
-    out.sort_by(|a, b| {
-        let key = |r: &Value| (r["ts"].as_str().unwrap_or("").to_string(), r["seq"].as_f64().unwrap_or(0.0));
-        let (x, y) = (key(a), key(b));
-        x.0.cmp(&y.0).then(x.1.partial_cmp(&y.1).unwrap_or(std::cmp::Ordering::Equal))
-    });
-    out
+    let mut keyed: Vec<((i64, f64), Value)> = rows
+        .into_iter()
+        .map(|((ms, _), row)| {
+            let seq = row.get("seq").and_then(Value::as_f64).unwrap_or(0.0);
+            ((ms.div_euclid(1000), seq), Value::Object(row))
+        })
+        .collect();
+    keyed.sort_by(|a, b| a.0 .0.cmp(&b.0 .0).then(a.0 .1.partial_cmp(&b.0 .1).unwrap_or(std::cmp::Ordering::Equal)));
+    keyed.into_iter().map(|(_, v)| v).collect()
 }
 
 fn typed(text: &str) -> Value {

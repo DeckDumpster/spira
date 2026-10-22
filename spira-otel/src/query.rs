@@ -8,8 +8,6 @@ use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
-use serde_json::Value;
-
 pub const DEADLINE: Duration = Duration::from_secs(5);
 const MAX_BODY: usize = 256 << 20;
 
@@ -125,20 +123,23 @@ fn encode(s: &str) -> String {
     s.bytes().map(|b| if b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.' { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
 }
 
+#[derive(serde::Deserialize)]
+struct Line {
+    metric: BTreeMap<String, String>,
+    values: Vec<Option<f64>>,
+    timestamps: Vec<i64>,
+}
+
 fn parse_export(body: &[u8]) -> Result<Vec<Exported>, QueryError> {
     let text = std::str::from_utf8(body).map_err(|e| QueryError::Malformed(format!("export is not utf-8: {e}")))?;
     let mut out = Vec::new();
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
-        let v: Value = serde_json::from_str(line).map_err(|e| QueryError::Malformed(format!("export line: {e}")))?;
-        let metric = v.get("metric").and_then(Value::as_object).ok_or_else(|| QueryError::Malformed("export line has no metric".into()))?;
-        let labels = metric.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_string())).collect();
-        let values = v.get("values").and_then(Value::as_array).ok_or_else(|| QueryError::Malformed("export line has no values".into()))?;
-        let stamps = v.get("timestamps").and_then(Value::as_array).ok_or_else(|| QueryError::Malformed("export line has no timestamps".into()))?;
-        if values.len() != stamps.len() {
+        let l: Line = serde_json::from_str(line).map_err(|e| QueryError::Malformed(format!("export line: {e}")))?;
+        if l.values.len() != l.timestamps.len() {
             return Err(QueryError::Malformed("export values and timestamps differ in length".into()));
         }
-        let samples = stamps.iter().zip(values).filter_map(|(t, v)| Some((t.as_i64()?, v.as_f64()?))).collect();
-        out.push(Exported { labels, samples });
+        let samples = l.timestamps.into_iter().zip(l.values).filter_map(|(t, v)| Some((t, v?))).collect();
+        out.push(Exported { labels: l.metric, samples });
     }
     Ok(out)
 }
