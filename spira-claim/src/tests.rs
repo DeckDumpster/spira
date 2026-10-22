@@ -1413,3 +1413,31 @@ fn consecutive_no_progress_exits_at_one_tip_count_up_and_a_new_tip_resets() {
     assert_eq!(bump("?"), 1, "an unreadable tip never streaks");
     assert_eq!(bump("?"), 1);
 }
+
+#[test]
+fn a_reserved_bead_and_a_claims_stopped_repo_are_skipped_by_select() {
+    let (ready, lc, recs) = machine_fixture();
+    let dir = testkit::TempDir::new("spira-claim-scoped-stop");
+    let run_s = dir.path().to_string_lossy().into_owned();
+    let select = |count: bool| {
+        let mut a = vec!["select", "--fayth", "t", "--blockers", "machine", "--lifecycle", lc.as_str(), "--blocker-records", recs.as_str()];
+        let lk = tmp("{}");
+        if count {
+            a.push("--count");
+        } else {
+            a.extend(["--epics", lk.as_str()]);
+        }
+        let o = run_cfg(&a, &ready, &[("SPIRA_RUN", run_s.as_str())], &[]);
+        assert_eq!(o.code, 0, "{}", o.err);
+        o.out.lines().map(|l| l.split('\t').nth(5).unwrap_or(l).to_string()).collect::<Vec<_>>()
+    };
+    assert_eq!(select(false), ["B", "L"], "no stop: the fixture's claimable set");
+    spira_config::scoped_stop::reserve(dir.path(), "B", "concierge", "hand fix", "", 1).unwrap();
+    assert_eq!(select(false), ["L"], "a reserved bead is skipped");
+    spira_config::scoped_stop::unreserve(dir.path(), "B").unwrap();
+    let lanes = spira_config::scoped_stop::parse_lanes("claims").unwrap();
+    spira_config::scoped_stop::pause_repo(dir.path(), "spira", &lanes, "concierge", "hand fix", "fix lands", 1).unwrap();
+    assert!(select(false).is_empty(), "every spira bead is skipped while its claims lane is stopped");
+    spira_config::scoped_stop::unpause_repo(dir.path(), "spira", &[]).unwrap();
+    assert_eq!(select(false), ["B", "L"], "resume restores both");
+}

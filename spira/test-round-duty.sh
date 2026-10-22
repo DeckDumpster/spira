@@ -47,6 +47,16 @@ rm -f "$M" "$TMP/spiraon"
 nowant "certified forge beads alone raise nothing" "ROUND DUE" "$(run watch --interval 1 --ticks 1)"
 : > "$TMP/spiraon"
 
+mkdir -p "$TMP/run/scoped-stops"
+printf '{\n  "repo": "spira",\n  "lanes": [\n    "rounds"\n  ],\n  "owner": "concierge",\n  "reason": "hand fix",\n  "until": "fix lands",\n  "since": 1\n}' > "$TMP/run/scoped-stops/repo-spira.json"
+out="$(run watch --interval 1 --ticks 1)"
+nowant "a rounds-stopped repo is never ROUND DUE" "ROUND DUE" "$out"
+want "the stop is reported as deliberate" "ROUNDS STOPPED ON PURPOSE: spira" "$out"
+nowant "a deliberate stop is not a fault" "UNKNOWN" "$out"
+printf '{\n  "repo": "spira",\n  "lanes": [\n    "claims"\n  ],\n  "owner": "c",\n  "reason": "r",\n  "until": "u",\n  "since": 1\n}' > "$TMP/run/scoped-stops/repo-spira.json"
+want "a claims-only stop leaves rounds due" "ROUND DUE: 1 certified" "$(run watch --interval 1 --ticks 1)"
+rm -rf "$TMP/run/scoped-stops"
+
 mrun() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_ROUND_MIN=1 SPIRA_REPO_MAP="$TMP/rows" SPIRA_ROUND_MAX_OPEN=1 "$@"
     env -i PATH="$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" SPIRA_REPO="$TMP/repo" \

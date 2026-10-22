@@ -184,4 +184,26 @@ run watch --interval 5 --ticks 1 >/dev/null
 want "a repair that fails stays a SUSPECT" "SUSPECT sp-stuck ROWLESS" "$(cat "$TMP/inbox")"
 rm -f "$STUB_DIR/refuse-create"
 
+# Scoped stops are deliberate state: a stopped lane or a reservation is HELD, never SUSPECT,
+# and an overdue stop is surfaced to its owner.
+rw() { cont "$1" '["repo:widgets"]'; }
+board "$(row sp-srw REWORK "$OLD" '[]')" "$(row sp-rsv REWORK "$OLD" '[]')" "$(row sp-scert CERTIFIED "$OLD" '[]')" -- "$(rw sp-srw)" "$(rw sp-rsv)" "$(rw sp-scert)"
+out="$(run --show)"
+want "positive control: with no stop an old REWORK is SUSPECT" "SUSPECT sp-srw REWORK UNCLAIMED REWORK" "$out"
+mkdir -p "$TMP/run/scoped-stops"
+printf '{"repo":"widgets","lanes":["claims"],"owner":"concierge","reason":"hand fix","until":"fix lands","since":%s}' "$NOW" > "$TMP/run/scoped-stops/repo-widgets.json"
+printf '{"bead":"sp-rsv","owner":"concierge","reason":"hand fix","until":"","since":%s}' "$NOW" > "$TMP/run/scoped-stops/reserve-sp-rsv.json"
+out="$(run --show)"
+want "a bead of a claims-stopped repo is HELD" "HELD sp-srw REWORK claims lane stopped on purpose" "$out"
+want "a reserved bead is HELD" "HELD sp-rsv REWORK reserved by concierge" "$out"
+want "a bead waiting for a round is still SUSPECT while only claims is stopped" "SUSPECT sp-scert" "$out"
+printf '{"repo":"widgets","lanes":["claims","rounds"],"owner":"concierge","reason":"hand fix","until":"fix lands","since":%s}' "$NOW" > "$TMP/run/scoped-stops/repo-widgets.json"
+out="$(run --show)"
+want "a bead of a rounds-stopped repo is HELD" "HELD sp-scert CERTIFIED rounds lane stopped on purpose" "$out"
+nowant "a young stop is not overdue" "OVERDUE" "$out"
+printf '{"repo":"widgets","lanes":["rounds"],"owner":"concierge","reason":"hand fix","until":"fix lands","since":%s}' "$((NOW - 100 * 86400))" > "$TMP/run/scoped-stops/repo-widgets.json"
+out="$(run --show)"
+want "an overdue stop is surfaced to its owner" "SCOPED stop widgets rounds OVERDUE: owner concierge, release condition: fix lands" "$out"
+rm -rf "$TMP/run/scoped-stops"
+
 tl_summary

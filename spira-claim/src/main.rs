@@ -501,6 +501,7 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
             Err(e) => return Outcome::cannot_tell(format!("{fayth}: blocker records: {e}")),
         };
         rows.retain(|r| matches!(rank::claimable(r, &lc, &bd, rank::stack_cap(r, &env.config.incident_label, stack_max)), Verdict::Claimable { .. }));
+        retain_unstopped(&mut rows, std::path::Path::new(&env.config.run));
         machine_lc = Some(lc);
     }
 
@@ -913,10 +914,22 @@ fn claimable_base(a: &Args, env: &Env, st: &Store) -> Result<Vec<rank::ReadyRow>
     }
     rank::mark_stack_conflicts(&mut lc, std::path::Path::new(&env.config.run));
     let stack_max = env.config.stack_max_depth.min(rank::STACK_CEILING);
-    Ok(rows
+    let mut rows: Vec<rank::ReadyRow> = rows
         .into_iter()
         .filter(|r| matches!(rank::claimable(r, &lc, &bd, rank::stack_cap(r, &env.config.incident_label, stack_max)), Verdict::Claimable { .. }))
-        .collect())
+        .collect();
+    retain_unstopped(&mut rows, std::path::Path::new(&env.config.run));
+    Ok(rows)
+}
+
+/// Drops the beads a scoped stop keeps unclaimed: a reserved bead, and any bead of a repo
+/// whose claims lane is stopped.
+fn retain_unstopped(rows: &mut Vec<rank::ReadyRow>, run: &std::path::Path) {
+    let reserved = spira_config::scoped_stop::reserved_ids(run);
+    rows.retain(|r| {
+        !reserved.contains(&r.id)
+            && !r.label_value("repo:").is_some_and(|repo| spira_config::scoped_stop::stop_for(run, repo, "claims").is_some())
+    });
 }
 
 /// `fayth-ready <fayth>`: `fayth_ready` (lib.sh:693). Exit code names which of FOUR things

@@ -27,6 +27,7 @@ base_ci_unreadable_grace_secs = "120"
 batcher_enable = "0"
 batcher_forge_enable = "1"
 rounds_pacing = "0"
+scoped_stop_review_secs = 86400
 batcher_wall_secs = "3600"
 batch_artifact_days = ""
 batch_judgement_label = "batch-judgement"

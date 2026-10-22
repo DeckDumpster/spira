@@ -20,7 +20,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 ROUNDS="$SPIRA_RUN/rounds"
 HEALTH_FILE="$SPIRA_RUN/watchd/round-duty.health"
-_rd_last_due=0 _rd_last_unknown=0 _rd_last_c="" _rd_last_change=0
+_rd_last_due=0 _rd_last_unknown=0 _rd_last_c="" _rd_last_change=0 _rd_last_stopped=""
 declare -A _rd_lines
 
 _rd_say() {
@@ -35,9 +35,10 @@ _rd_say() {
 # not counted: the batcher's round pool is unheld beads only, so no round could take it.
 _rd_certified() {
     local r n rows
-    _rd_total=0 _rd_by_repo=""
+    _rd_total=0 _rd_by_repo="" _rd_stopped=""
     for r in $(repo_names 2>/dev/null); do
         [ "$(repo_land "$r" 2>/dev/null)" = queue.local ] || continue
+        if scoped_stop_active "$r" rounds; then _rd_stopped="${_rd_stopped:+$_rd_stopped,}$r"; continue; fi
         rows="$(spira-lc list --state CERTIFIED --repo "$r" 2>/dev/null | tr -d '\n')"
         n=$(( $(printf '%s' "$rows" | grep -o '"bead_id"' | wc -l) - $(printf '%s' "$rows" | grep -oE '"holds": *("\[ *\\"|\[ *")' | wc -l) ))
         [ "${n:-0}" -gt 0 ] || continue
@@ -83,6 +84,10 @@ _rd_tick() {
         fi
     done
     _rd_certified; c="$_rd_total"; now="$(date +%s)"
+    if [ "$_rd_stopped" != "$_rd_last_stopped" ]; then
+        _rd_say "ROUNDS STOPPED ON PURPOSE: ${_rd_stopped:-none} (world.sh status names owner and release condition) — not counted as due"
+        _rd_last_stopped="$_rd_stopped"
+    fi
     [ "$c" != "$_rd_last_c" ] && { _rd_last_c="$c"; _rd_last_change=$now; }
     idle=$(( now - _rd_last_change ))
     _rd_round_state

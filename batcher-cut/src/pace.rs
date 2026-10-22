@@ -8,6 +8,10 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use spira_config::scoped_stop;
+
+pub const PACE_OWNER: &str = "batcher";
+
 pub const INFRA_MARKERS: &[&str] = &["NO RESULT", "OVER-CAP", "cannot check out", "certify rc=75", "left no verdicts"];
 pub const STALE_AMI_MARKER: &str = "round AMI is stale";
 pub const BACKOFF_SECS: u64 = 600;
@@ -119,18 +123,17 @@ pub fn open_page(st: &State, repo: &str, open_id: &str) -> (State, Option<String
 }
 
 pub struct Files {
+    run: PathBuf,
+    repo: String,
     dir: PathBuf,
 }
 
 impl Files {
     pub fn new(run: &Path, repo: &str) -> Files {
-        Files { dir: run.join("rounds-pace").join(repo) }
+        Files { run: run.to_path_buf(), repo: repo.to_string(), dir: run.join("rounds-pace").join(repo) }
     }
     pub fn pause_file(&self) -> PathBuf {
         self.dir.join("pause")
-    }
-    pub fn stop_file(&self) -> PathBuf {
-        self.dir.join("stopped")
     }
     pub fn load(&self) -> State {
         let kv: BTreeMap<String, String> = fs::read_to_string(self.dir.join("state"))
@@ -198,11 +201,16 @@ impl Files {
         if next.count < REFUSAL_STOP_AFTER {
             return Ok(None);
         }
-        self.touch(self.stop_file())?;
-        Ok(Some(format!("ROUNDS STOPPED {repo}: {} consecutive rounds refused for the same reason — rm the stopped file once fixed ({key})", next.count)))
+        let why = format!("{} consecutive rounds refused for the same reason ({key})", next.count);
+        self.stop_rounds(&why, now)?;
+        Ok(Some(format!("ROUNDS STOPPED {repo}: {why} — look before lifting: world.sh unpause --repo {repo} --lanes rounds")))
+    }
+    pub fn stop_rounds(&self, why: &str, now: u64) -> Result<(), String> {
+        let until = format!("the fault is fixed; then world.sh unpause --repo {} --lanes rounds", self.repo);
+        scoped_stop::pause_repo(&self.run, &self.repo, &["rounds".to_string()], PACE_OWNER, why, &until, now).map(|_| ())
     }
     pub fn stopped(&self) -> bool {
-        self.stop_file().exists()
+        scoped_stop::stop_for(&self.run, &self.repo, "rounds").is_some()
     }
 }
 
@@ -227,7 +235,7 @@ pub fn paced(
     cut: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
     let mut st = files.load();
-    if let Some(h) = hold(files.pause_file().exists(), files.stop_file().exists(), &st, sm.now) {
+    if let Some(h) = hold(files.pause_file().exists(), files.stopped(), &st, sm.now) {
         println!("batcher rounds: {}: held ({h:?}) — no cut", sm.repo);
         return Ok(());
     }
@@ -250,7 +258,7 @@ pub fn paced(
         files.touch(files.pause_file())?;
     }
     if fx.stop {
-        files.touch(files.stop_file())?;
+        files.stop_rounds(&format!("{} consecutive rounds produced no verdicts ({detail})", st.infra), sm.now)?;
     }
     for p in &fx.pages {
         page(sm, p)?;
@@ -335,7 +343,7 @@ mod tests {
             run(d, "a", 1050 + i as u64 * 100, None, None, Ok(()));
         }
         assert!(!Files::new(d, "a").pause_file().exists());
-        assert!(!Files::new(d, "a").stop_file().exists());
+        assert!(!Files::new(d, "a").stopped());
         assert_eq!(inbox(d), "");
     }
 
@@ -350,10 +358,10 @@ mod tests {
         assert!(!ran, "inside the backoff there is no retry");
         let ran = run(d, "a", 1000 + BACKOFF_SECS, None, None, infra());
         assert!(ran);
-        assert!(Files::new(d, "a").stop_file().exists());
+        assert!(Files::new(d, "a").stopped());
         assert!(inbox(d).contains("ROUNDS STOPPED a: 2 consecutive"));
         let ran = run(d, "a", 9_000_000, None, None, Ok(()));
-        assert!(!ran, "stopped stays stopped until the operator removes the file");
+        assert!(!ran, "stopped stays stopped until the operator lifts the scoped stop");
     }
 
     #[test]
@@ -364,7 +372,7 @@ mod tests {
         run(d, "a", 2000, None, None, Ok(()));
         assert_eq!(Files::new(d, "a").load().infra, 0);
         run(d, "a", 3000, None, None, Err("OVER-CAP".into()));
-        assert!(!Files::new(d, "a").stop_file().exists());
+        assert!(!Files::new(d, "a").stopped());
     }
 
     #[test]
@@ -408,7 +416,7 @@ mod tests {
         for at in [1000, 2000, 3000] {
             run(d, "a", at, None, None, Err(stale.into()));
         }
-        assert!(!Files::new(d, "a").stop_file().exists());
+        assert!(!Files::new(d, "a").stopped());
         assert_eq!(Files::new(d, "a").load().infra, 0);
     }
 

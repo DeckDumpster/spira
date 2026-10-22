@@ -38,11 +38,26 @@ _bs_classify() {
     timeout 60 spira-lc list --state LANDED,DONE,DROPPED,SUPERSEDED > "$t/term.json" 2>/dev/null || return 1
     local pr_labels="" n
     for n in $(repo_names); do [ "$(repo_land "$n")" = pr ] && pr_labels="$pr_labels repo:$n"; done
-    python3 -I - "$t" "$SPIRA_ASK_LABEL" "$HOME_LABEL" "$HOLD_MIN" "$REWORK_MIN" "$CERT_MIN" "$WAIT_MIN" "$BATCH_MIN" "$pr_labels" <<'PY'
-import calendar, json, re, subprocess, sys, time
+    python3 -I - "$t" "$SPIRA_ASK_LABEL" "$HOME_LABEL" "$HOLD_MIN" "$REWORK_MIN" "$CERT_MIN" "$WAIT_MIN" "$BATCH_MIN" "$pr_labels" "$SPIRA_RUN/scoped-stops" "$SPIRA_SCOPED_STOP_REVIEW_SECS" <<'PY'
+import calendar, json, os, re, subprocess, sys, time
 T, ask, home = sys.argv[1:4]
 hold_min, rework_min, cert_min, wait_min, batch_min = (int(x) for x in sys.argv[4:9])
 pr_labels = set(sys.argv[9].split())
+stops_dir, stop_review = sys.argv[10], int(sys.argv[11])
+def scoped(prefix):
+    out = []
+    try:
+        for f in sorted(os.listdir(stops_dir)):
+            if f.startswith(prefix) and f.endswith(".json"):
+                try:
+                    out.append(json.load(open(os.path.join(stops_dir, f))))
+                except ValueError:
+                    pass
+    except OSError:
+        pass
+    return out
+repo_stops = {s["repo"]: s for s in scoped("repo-")}
+reserved = {r["bead"]: r for r in scoped("reserve-")}
 rows = {r["bead_id"]: r for r in json.load(open(T + "/rows.json"))}
 content = {b["id"]: b for b in json.load(open(T + "/content.json"))}
 term = {r["bead_id"]: r["state"] for r in json.load(open(T + "/term.json"))}
@@ -132,6 +147,12 @@ for i, r in sorted(rows.items()):
         put("SUSPECT", f"STALE EDGE blocked_by {blk} all terminal")
     elif live:
         put("BLOCKED", "by " + ",".join(live))
+    elif i in reserved:
+        put("HELD", f"reserved by {reserved[i]['owner']}: {reserved[i]['reason'][:60]}")
+    elif st in ("READY", "REWORK") and any("claims" in repo_stops.get(l[5:], {}).get("lanes", []) for l in labels if l.startswith("repo:")):
+        put("HELD", "claims lane stopped on purpose (world.sh status)")
+    elif st in ("SUBMITTED", "CERTIFIED") and any("rounds" in repo_stops.get(l[5:], {}).get("lanes", []) for l in labels if l.startswith("repo:")):
+        put("HELD", "rounds lane stopped on purpose (world.sh status)")
     elif st == "CERTIFIED" and home not in labels and any(l in open_batch and (now - open_batch[l]) / 60 <= batch_min for l in labels):
         put("OK", "queued behind the open batch")
     elif st == "REWORK" and age > rework_min:
@@ -144,6 +165,10 @@ for i, r in sorted(rows.items()):
         put("SUSPECT", f"LEASE EXPIRED holder {str(r.get('holder'))[:28]}")
     else:
         put("OK", "")
+for r in list(repo_stops.values()) + list(reserved.values()):
+    if now - int(r["since"]) >= stop_review:
+        what = f"stop {r['repo']} {','.join(r['lanes'])}" if "repo" in r else f"reservation {r['bead']}"
+        out["SUSPECT"].append(f"- SCOPED {what} OVERDUE: owner {r['owner']}, release condition: {r.get('until') or 'the bead lands'}")
 open(T + "/rowless.tsv", "w").write("".join(r + "\n" for r in rowless))
 print(f"BEAD SWEEP {len(rows)} live rows; " + ", ".join(f"{k} {len(v)}" for k, v in out.items()))
 for k in ("SUSPECT", "BLOCKED", "HELD", "ASK", "OK"):

@@ -223,6 +223,11 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
     })
 }
 
+fn rounds_stop_note(run: &Path, repo: &str) -> Option<String> {
+    spira_config::scoped_stop::stop_for(run, repo, "rounds")
+        .map(|s| format!("batcher {repo}: rounds lane stopped on purpose by {} ({}) — no cut; lift with: world.sh unpause --repo {repo} --lanes rounds", s.owner, s.reason))
+}
+
 fn cut(o: &Opts) -> Result<(), String> {
     let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
     let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
@@ -232,6 +237,10 @@ fn cut(o: &Opts) -> Result<(), String> {
     let env_ = env_for(o, home, run)?;
     io::lc_forget(&env_);
     let repo = find_repo(&env_, &o.repo)?;
+    if let Some(note) = rounds_stop_note(&env_.run, &repo.name) {
+        println!("{note}");
+        return Ok(());
+    }
 
     // The machine must answer before anything changes.
     if let Err(e) = io::lc_probe(&env_) {
@@ -1104,10 +1113,6 @@ fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReaso
 
 fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason) -> Result<(), String> {
     let round_start = now();
-    if pace::Files::new(&env_.run, &repo.name).stopped() {
-        println!("batcher {}: stopped after repeated refusals — no cut; rm rounds-pace/{}/stopped to lift", repo.name, repo.name);
-        return Ok(());
-    }
     io::fetch_base(repo)?;
     let base_sha = io::resolve_base_sha(repo)?;
     let base_moved_at = io::base_moved_at(env_, &repo.name, &base_sha);
@@ -1785,6 +1790,18 @@ mod tests {
     use super::*;
 
     const ALL: Switches = Switches { local: true, forge: true };
+
+    #[test]
+    fn a_rounds_stop_on_one_repo_leaves_another_cutting() {
+        let d = testkit::TempDir::new("batcher-rounds-stop");
+        assert!(rounds_stop_note(d.path(), "spira").is_none(), "no stop, no note: the matcher can be silent");
+        let lanes = |l: &str| spira_config::scoped_stop::parse_lanes(l).unwrap();
+        spira_config::scoped_stop::pause_repo(d.path(), "spira", &lanes("rounds"), "concierge", "hand fix", "fix lands", 1).unwrap();
+        assert!(rounds_stop_note(d.path(), "spira").unwrap().contains("stopped on purpose by concierge"));
+        assert!(rounds_stop_note(d.path(), "cubby").is_none());
+        spira_config::scoped_stop::unpause_repo(d.path(), "spira", &lanes("claims")).unwrap();
+        assert!(rounds_stop_note(d.path(), "spira").is_some(), "lifting another lane keeps rounds stopped");
+    }
 
     #[test]
     fn a_pass_drives_each_repo_by_its_own_land_mode_and_never_mixes() {
