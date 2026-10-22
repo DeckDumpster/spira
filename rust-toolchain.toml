@@ -4,4 +4,4 @@
 # build` on a newer host toolchain cannot silently re-resolve Cargo.lock to a
 # crate the gate's toolchain cannot parse.
 [toolchain]
-channel = "1.82.0"
+channel = "1.99.1"

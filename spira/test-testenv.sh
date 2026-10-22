@@ -180,7 +180,7 @@ echo "rust-toolchain.toml — a pinned channel the image never installed must no
 # dies with EACCES. Prove that before trusting a green from the image's own env.
 # batch-job: container fixture call; image pulls and starts exceed 5 s
 podman exec --user spirauser "$CNAME" bash -c \
-    'mkdir -p /tmp/rttest && printf "[toolchain]\nchannel = \"1.82.0\"\n" > /tmp/rttest/rust-toolchain.toml'
+    'mkdir -p /tmp/rttest && printf "[toolchain]\nchannel = \"1.99.1\"\n" > /tmp/rttest/rust-toolchain.toml'
 
 # batch-job: container fixture call; image pulls and starts exceed 5 s
 pin_unpatched_out="$(podman exec --user spirauser \
@@ -198,7 +198,7 @@ pin_patched_out="$(podman exec --user spirauser \
 pin_patched_rc=$?
 iszero "container's own RUSTUP_TOOLCHAIN overrides the workspace pin" "$pin_patched_rc"
 case "$pin_patched_out" in
-    *1.82.0*) bad "cargo used the installed toolchain, not the pin" "got: $pin_patched_out" ;;
+    *1.99.1*) bad "cargo used the installed toolchain, not the pin" "got: $pin_patched_out" ;;
     *)        ok "cargo used the installed toolchain, not the pin" ;;
 esac
 printf '  note  cargo --version under the pin: %s\n' "$pin_patched_out"
