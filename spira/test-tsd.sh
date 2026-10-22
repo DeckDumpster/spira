@@ -298,6 +298,12 @@ SPIRA_METRICS_ENDPOINT="" "$TSD_BIN" --family sentinel-phase --root "$RUNF" --fi
     && bad "an unconfigured store accepted a moved family's row (it has no file to fall back to)" \
     || ok "an unconfigured store refuses a moved family's row"
 
+# --rows-from replays a whole old family file: an unreadable line is skipped and counted.
+out="$(printf '{broken\n\n{"no":"ts"}\n{"ts":"2026-09-25T00:00:00Z","host":"vm","iowait_pct":2.5}\n' | "$TSD_BIN" --family vm-signals --rows-from - 2>&1)"
+want "--rows-from stores the readable row and counts the unreadable ones" "stored 1 row(s), skipped 2 unreadable" "$out"
+"$TSD_BIN" --family suite-timing --rows-from - </dev/null >/dev/null 2>&1 \
+    && bad "--rows-from accepted a file family" || ok "--rows-from refuses a family that is a file"
+
 qout12() { tl_config SPIRA_RUN="$RUN12"
            SPIRA_HOME="$T" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent \
              tsd-query.sh "$@" 2>&1; }

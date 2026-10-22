@@ -103,6 +103,41 @@ fn escape_row(root: &Path, member: &str, suite: &str, class: &str, batch_id: &st
     append_line(&tsd::family_path(root, "escape"), &line)
 }
 
+/// `--rows-from <file|->`: stores finished rows, a thousand to a request. A line that is not a JSON
+/// object with a readable `ts` is skipped and counted, so an old family file can be replayed whole;
+/// a row the store refuses ends the run with its error.
+fn run_rows_from(family: &str, src: &str) -> Result<(), String> {
+    use std::io::BufRead;
+    let input: Box<dyn BufRead> = if src == "-" { Box::new(std::io::stdin().lock()) } else { Box::new(std::io::BufReader::new(fs::File::open(src).map_err(|e| format!("{src}: {e}"))?)) };
+    let endpoint = tsd::store::endpoint();
+    let (mut pushed, mut skipped) = (0usize, 0usize);
+    let mut batch: Vec<String> = Vec::new();
+    let mut flush = |batch: &mut Vec<String>, pushed: &mut usize| -> Result<(), String> {
+        tsd::store::push_rows(endpoint.as_deref(), family, batch)?;
+        *pushed += batch.len();
+        batch.clear();
+        Ok(())
+    };
+    for line in input.lines() {
+        let line = line.map_err(|e| format!("{src}: {e}"))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let usable = serde_json::from_str::<serde_json::Value>(&line).ok().is_some_and(|v| v.get("ts").and_then(|t| t.as_str()).and_then(tsd::parse_ts).is_some());
+        if !usable {
+            skipped += 1;
+            continue;
+        }
+        batch.push(line);
+        if batch.len() >= 1000 {
+            flush(&mut batch, &mut pushed)?;
+        }
+    }
+    flush(&mut batch, &mut pushed)?;
+    eprintln!("tsd-write: {family}: stored {pushed} row(s), skipped {skipped} unreadable");
+    Ok(())
+}
+
 fn run(args: &[String]) -> Result<(), String> {
     let mut family: Option<String> = None;
     let mut root: Option<PathBuf> = None;
@@ -140,9 +175,7 @@ fn run(args: &[String]) -> Result<(), String> {
         if !tsd::store::moved(&family) {
             return Err(format!("--rows-from stores rows in the metrics store; {family:?} is a file family"));
         }
-        let text = if src == "-" { std::io::read_to_string(std::io::stdin()).map_err(|e| e.to_string())? } else { fs::read_to_string(&src).map_err(|e| format!("{src}: {e}"))? };
-        let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
-        return tsd::store::push_rows(tsd::store::endpoint().as_deref(), &family, &lines);
+        return run_rows_from(&family, &src);
     }
     let host = host.unwrap_or_else(default_host);
     let ts = ts.unwrap_or_else(now_iso);
