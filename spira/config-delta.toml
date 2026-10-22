@@ -125,3 +125,7 @@ removed = ["spira.broker_enable", "spira.express_label", "spira.overlap_defer_la
 "spira.kit_repo" = ""
 "spira.kit_crate" = ""
 "spira.kit_sites" = ""
+"spira.reflect_ledger" = ""
+"spira.reflect_recur_days" = 14
+"spira.reflect_recur_hits" = 2
+"spira.reflect_recur_weekly_cap" = 3

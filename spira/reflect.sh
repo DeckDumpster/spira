@@ -53,7 +53,8 @@ output, because a stall diagnosed by inference twice is a check that was never w
 
 If the fix needs a decision only $SPIRA_OPERATOR can make, end with a line beginning 'ESCALATE:'
 followed by the decision stated as a question with a default. Otherwise end with a line
-beginning 'CHECK:' followed by the proposed deterministic check. Do not take any action
+beginning 'CHECK:' followed by the sentinel file or function it belongs in, a '|', then the condition it
+would detect. Do not take any action
 and do not modify any bead."
 
 printf '\n===== %s =====\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -63,6 +64,8 @@ DENY='{"permissions":{"deny":["Write","Edit","NotebookEdit","Bash(bd:*)","Bash(w
 out="$(printf '%s' "$PROMPT" | timeout 600 "${SPIRA_AGENT:-claude}" -p --model "${SPIRA_REFLECT_MODEL:-claude-opus-5}" \
         --settings "$DENY" --dangerously-skip-permissions 2>&1)"
 printf '%s\n' "$out"
+
+grep -m1 '^CHECK:' <<< "$out" | while IFS= read -r _c; do "$(dirname "$0")/reflect-recur.sh" "$_c"; done
 
 # An escalation must reach the cockpit, not just this log. An answer with no delivery path
 # is the same as no answer.
