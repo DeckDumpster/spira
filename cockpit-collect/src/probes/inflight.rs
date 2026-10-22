@@ -8,7 +8,7 @@ use crate::quoting::sanitize;
 use std::path::Path;
 
 const MAX_ROWS: usize = 12;
-const KINDS: [(&str, &str); 4] = [("aeon", "aeons"), ("round", "rounds"), ("check", "checks"), ("gate", "gates")];
+const KINDS: [(&str, &str); 3] = [("aeon", "aeons"), ("round", "rounds"), ("gate", "gates")];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Row {
@@ -25,9 +25,9 @@ pub enum World {
     Halted,
 }
 
-pub fn inflight_keys(cfg: &Cfg) -> Kv {
+pub fn inflight_keys(_cfg: &Cfg) -> Kv {
     let run = io::run_dir();
-    let sources = [aeon_rows(&run), round_rows(), check_rows(cfg), gate_rows(&run)];
+    let sources = [aeon_rows(&run), round_rows(), gate_rows(&run)];
     compose(&sources, world(&run))
 }
 
@@ -74,21 +74,6 @@ fn round_rows() -> Option<Vec<Row>> {
             })
             .collect(),
     )
-}
-
-fn check_rows(cfg: &Cfg) -> Option<Vec<Row>> {
-    let systemctl = std::env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemctl".to_string());
-    let unit = spira_config::unit::resolve_unit("checks-forge", "service", &cfg.instance, &systemctl);
-    if unit == "?" {
-        return None;
-    }
-    let out = spira_config::bounded::bounded(&systemctl).args(["--user", "is-active", &unit]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output().ok()?;
-    let state = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if state.is_empty() {
-        return None;
-    }
-    let running = matches!(state.as_str(), "active" | "activating" | "reloading");
-    Some(if running { vec![Row { subject: unit, detail: "pre-check".to_string(), started: None, progress: None }] } else { Vec::new() })
 }
 
 fn gate_rows(run: &Path) -> Option<Vec<Row>> {
@@ -140,7 +125,7 @@ pub fn segment(sources: &[Option<Vec<Row>>], world: Option<World>) -> String {
     format!("\u{2699} {}", parts.join(" \u{b7} "))
 }
 
-pub fn compose(sources: &[Option<Vec<Row>>; 4], world: Option<World>) -> Kv {
+pub fn compose(sources: &[Option<Vec<Row>>; 3], world: Option<World>) -> Kv {
     let mut out = Kv::new();
     let mut total = 0;
     for (i, (one, _)) in KINDS.iter().enumerate() {
@@ -184,47 +169,46 @@ mod tests {
     }
 
     #[test]
-    fn one_aeon_one_round_one_check_all_show_with_progress() {
+    fn one_aeon_one_round_one_gate_all_show_with_progress() {
         let src = [
             Some(vec![row("sp-1", "guardian", None)]),
             Some(vec![row("spira/b1", "certifying", Some((412, Some(475))))]),
-            Some(vec![row("spira-checks-forge-prod.service", "pre-check", None)]),
-            Some(vec![]),
+            Some(vec![row("spira-x", "pre-merge", None)]),
         ];
         let kv = compose(&src, Some(World::Running));
-        assert_eq!(get(&kv, "SP_INFLIGHT_SEG"), "\u{2699} 1 aeon \u{b7} 1 round (412/475) \u{b7} 1 check");
+        assert_eq!(get(&kv, "SP_INFLIGHT_SEG"), "\u{2699} 1 aeon \u{b7} 1 round (412/475) \u{b7} 1 gate");
         assert_eq!(get(&kv, "SP_INFLIGHT_ROUND_N"), "1");
         assert_eq!(get(&kv, "SP_INFLIGHT_ROW1"), "round|spira/b1|certifying|100|412|475");
     }
 
     #[test]
     fn everything_stopped_is_idle() {
-        let src = [Some(vec![]), Some(vec![]), Some(vec![]), Some(vec![])];
+        let src = [Some(vec![]), Some(vec![]), Some(vec![])];
         assert_eq!(get(&compose(&src, Some(World::Running)), "SP_INFLIGHT_SEG"), "\u{2699} idle");
     }
 
     #[test]
     fn an_unreadable_source_is_a_question_mark_never_idle() {
-        let src = [Some(vec![]), None, Some(vec![]), Some(vec![])];
+        let src = [Some(vec![]), None, Some(vec![])];
         let kv = compose(&src, Some(World::Running));
         assert_eq!(get(&kv, "SP_INFLIGHT_SEG"), "\u{2699} ?rounds");
         assert_eq!(get(&kv, "SP_INFLIGHT_ROUND_N"), "?");
-        let all_dark = [None, None, None, None];
+        let all_dark = [None, None, None];
         assert!(!get(&compose(&all_dark, Some(World::Running)), "SP_INFLIGHT_SEG").contains("idle"));
         assert!(get(&compose(&src, None), "SP_INFLIGHT_SEG").contains("?world"));
     }
 
     #[test]
     fn drain_reads_draining_with_work_and_drained_without() {
-        let busy = [Some(vec![row("sp-1", "g", None)]), Some(vec![]), Some(vec![]), Some(vec![])];
+        let busy = [Some(vec![row("sp-1", "g", None)]), Some(vec![]), Some(vec![])];
         assert_eq!(get(&compose(&busy, Some(World::Draining)), "SP_INFLIGHT_SEG"), "\u{2699} 1 aeon \u{b7} draining");
-        let idle = [Some(vec![]), Some(vec![]), Some(vec![]), Some(vec![])];
+        let idle = [Some(vec![]), Some(vec![]), Some(vec![])];
         assert_eq!(get(&compose(&idle, Some(World::Draining)), "SP_INFLIGHT_SEG"), "\u{2699} drained");
     }
 
     #[test]
     fn an_unknown_total_is_shown_as_unknown() {
-        let src = [Some(vec![]), Some(vec![row("a", "certifying", Some((3, None)))]), Some(vec![]), Some(vec![])];
+        let src = [Some(vec![]), Some(vec![row("a", "certifying", Some((3, None)))]), Some(vec![])];
         assert!(get(&compose(&src, Some(World::Running)), "SP_INFLIGHT_SEG").contains("(3/?)"));
     }
 }
