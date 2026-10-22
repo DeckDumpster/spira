@@ -289,3 +289,17 @@ mod tests {
         assert!(out.delivered_path.to_string_lossy().ends_with(":2,S"));
     }
 }
+
+#[cfg(test)]
+mod empty_stdin_tests {
+    use super::*;
+
+    #[test]
+    fn sendmail_of_an_empty_message_delivers_nothing() {
+        let d = testkit::TempDir::new("sendmail-empty");
+        let root = d.path().join("mail");
+        assert!(sendmail(d.path(), &root, false, "").is_err());
+        let n = |sub: &str| maildir::sorted_entries(&root.join("concierge").join(sub)).len();
+        assert_eq!(n("new") + n("cur"), 0);
+    }
+}
