@@ -92,6 +92,46 @@ impl MetricsSink {
     }
 }
 
+/// One gauge sample with its own labels and its own timestamp: a producer replaying a record
+/// that happened before the push (a row stamped by the producer's clock) keeps its time.
+#[derive(Debug, Clone)]
+pub struct Series {
+    pub name: String,
+    pub value: f64,
+    pub labels: Vec<(String, String)>,
+    pub at: SystemTime,
+}
+
+impl MetricsSink {
+    /// A failure is returned, for a caller whose record has no other copy.
+    pub fn try_push_series(&self, series: &[Series]) -> std::io::Result<()> {
+        let Some(addr) = &self.endpoint else { return Err(std::io::Error::other("metrics endpoint is not configured")) };
+        post(addr, &self.encode_series(series).encode_to_vec(), self.deadline)
+    }
+
+    pub fn encode_series(&self, series: &[Series]) -> ExportMetricsServiceRequest {
+        let metrics = series
+            .iter()
+            .map(|s| {
+                let t = s.at.duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO).as_nanos() as u64;
+                let attributes = s.labels.iter().map(|(k, v)| kv(k, v)).collect();
+                Metric {
+                    name: s.name.clone(),
+                    data: Some(Data::Gauge(Gauge { data_points: vec![NumberDataPoint { attributes, time_unix_nano: t, value: Some(Num::AsDouble(s.value)), ..Default::default() }] })),
+                    ..Default::default()
+                }
+            })
+            .collect();
+        ExportMetricsServiceRequest {
+            resource_metrics: vec![ResourceMetrics {
+                resource: Some(Resource { attributes: vec![kv("service.name", &self.service)], ..Default::default() }),
+                scope_metrics: vec![ScopeMetrics { scope: Some(InstrumentationScope { name: "spira-otel".into(), ..Default::default() }), metrics, ..Default::default() }],
+                ..Default::default()
+            }],
+        }
+    }
+}
+
 pub const INVOCATIONS: &str = "spira_component_invocations";
 pub const RUN_SECONDS: &str = "spira_component_run_seconds";
 

@@ -142,6 +142,7 @@ const LOCK_UN: i32 = 8;
 
 pub mod pass;
 pub mod prune;
+pub mod store;
 pub mod report;
 
 pub fn default_host() -> String {
