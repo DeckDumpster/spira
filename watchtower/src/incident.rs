@@ -105,13 +105,30 @@ impl Finding {
 /// Hands a detector's condition to the Concierge inbox as one deduplicated note
 /// (`incident.sh alarm`), never a bead. 
 pub fn alarm(incident_sh: &str, f: &Finding) -> bool {
-    run_verb(incident_sh, "alarm", f)
+    run_verb(incident_sh, "alarm", f).is_some()
 }
 
-fn run_verb(incident_sh: &str, verb: &str, f: &Finding) -> bool {
+#[derive(Debug, PartialEq)]
+pub enum AlarmOutcome {
+    Noted,
+    Deduped,
+    Failed,
+}
+
+/// `alarm`, reporting whether a new inbox note was written or the condition was already
+/// noted within the reminder interval.
+pub fn alarm_outcome(incident_sh: &str, f: &Finding) -> AlarmOutcome {
+    match run_verb(incident_sh, "alarm", f) {
+        None => AlarmOutcome::Failed,
+        Some(out) if out.trim() == "deduped" => AlarmOutcome::Deduped,
+        Some(_) => AlarmOutcome::Noted,
+    }
+}
+
+fn run_verb(incident_sh: &str, verb: &str, f: &Finding) -> Option<String> {
     if let Some(cause) = f.cause.as_deref().filter(|c| crate::ctrl_gate::condition_suspended(c)) {
         crate::log::log(&format!("watchtower: {cause} is suspended in the control plane — not filing {}", f.title));
-        return false;
+        return None;
     }
     let mut cmd = spira_config::bounded::bounded("bash");
     cmd.envs(spira_config::release_env::child_path_env_for_process());
@@ -135,22 +152,38 @@ fn run_verb(incident_sh: &str, verb: &str, f: &Finding) -> bool {
     }
     let child = cmd
         .stdin(Stdio::piped())
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn();
     let mut child = match child {
         Ok(c) => c,
-        Err(_) => return false,
+        Err(_) => return None,
     };
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(f.body.as_bytes());
     }
-    child.wait().map(|s| s.success()).unwrap_or(false)
+    let out = child.wait_with_output().ok()?;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn alarm_with_stdout(tag: &str, stdout: &str, code: i32) -> AlarmOutcome {
+        let d = testkit::TempDir::new(tag);
+        let sh = d.join("inc.sh");
+        std::fs::write(&sh, format!("#!/usr/bin/env bash\ncat >/dev/null\necho {stdout}\nexit {code}\n")).unwrap();
+        let f = Finding::new("db", "repo", "t", "b");
+        alarm_outcome(sh.to_str().unwrap(), &f)
+    }
+
+    #[test]
+    fn alarm_outcome_distinguishes_noted_deduped_and_failed() {
+        assert_eq!(alarm_with_stdout("wt-ao-noted", "noted", 0), AlarmOutcome::Noted);
+        assert_eq!(alarm_with_stdout("wt-ao-dedup", "deduped", 0), AlarmOutcome::Deduped);
+        assert_eq!(alarm_with_stdout("wt-ao-fail", "deduped", 1), AlarmOutcome::Failed);
+    }
 
     /// The scar, reproduced: lib.sh ships non-executable in a release (`-r--r--r--`), and
     /// this must still be found — `which` is used to LOCATE the file, never to run it
