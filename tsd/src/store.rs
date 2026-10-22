@@ -77,16 +77,22 @@ pub fn series_of(family: &str, row: &Map<String, Value>, at: SystemTime) -> Vec<
     out
 }
 
-/// Pushes one built row (`tsd::build_row`'s line) to the store. The sub-second part of the
-/// sample time is the clock's own, so two rows the producer stamped in the same second do not
-/// overwrite one another.
+/// The millisecond part of a row's sample time: a hash of the whole row, so two different rows
+/// the producer stamped in the same second do not overwrite one another, and the same row
+/// pushed twice (a retry, a re-merge) lands on the same sample.
+fn millis_of(line: &str) -> u32 {
+    let h = line.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100000001b3));
+    (h % 1000) as u32
+}
+
+/// Pushes one built row (`tsd::build_row`'s line) to the store.
 pub fn push_row(endpoint: Option<&str>, family: &str, line: &str) -> Result<(), String> {
     let Value::Object(row) = serde_json::from_str::<Value>(line).map_err(|e| format!("row is not valid JSON: {e}"))? else {
         return Err("row is not a JSON object".into());
     };
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO);
     let secs = row.get("ts").and_then(Value::as_str).and_then(crate::parse_ts).unwrap_or(now.as_secs());
-    let at = UNIX_EPOCH + Duration::new(secs, now.subsec_millis() * 1_000_000);
+    let at = UNIX_EPOCH + Duration::new(secs, millis_of(line) * 1_000_000);
     let sink = MetricsSink::new(endpoint, SERVICE, Duration::from_secs(2));
     sink.try_push_series(&series_of(family, &row, at)).map_err(|e| format!("{family}: row not stored: {e}"))
 }
@@ -288,6 +294,19 @@ mod tests {
         assert_eq!(r.rows("bead-stage", 0).unwrap_err().name(), "metrics-store-unreachable");
         assert_eq!(r.rows_or_empty("bead-stage", 0).unwrap_err().name(), "metrics-store-unreachable");
         assert_eq!(Reader::new(None).err().map(|e| e.name()), Some("metrics-store-not-configured"));
+    }
+
+    #[test]
+    fn the_same_row_pushed_twice_is_one_row_and_different_rows_in_one_second_are_two() {
+        let store = spira_otel::fixture::FakeStore::start();
+        let line = |secs: u64| crate::build_row("2026-10-22T10:00:00Z", "h", "sentinel-phase", &[crate::parse_field_str("check=C1").unwrap(), crate::parse_field(&format!("secs={secs}")).unwrap()]).unwrap();
+        for l in [line(3), line(3), line(4)] {
+            push_row(Some(store.addr()), "sentinel-phase", &l).unwrap();
+        }
+        let rows = Reader::new(Some(store.addr())).unwrap().rows("sentinel-phase", 0).unwrap();
+        let mut secs: Vec<i64> = rows.iter().filter_map(|r| r["secs"].as_i64()).collect();
+        secs.sort();
+        assert_eq!(secs, [3, 4]);
     }
 
     #[test]
