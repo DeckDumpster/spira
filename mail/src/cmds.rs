@@ -154,7 +154,11 @@ pub type DeliverFn<'a> = &'a dyn Fn(&Path, &str, &str, bool) -> Result<PathBuf, 
 
 fn deliver_to_maildir(dir: &Path, msgid: &str, msg: &str, mute: bool) -> Result<PathBuf, String> {
     maildir::mail_ensure(dir).map_err(|e| format!("cannot create mailbox {}: {e}", dir.display()))?;
-    fs::write(dir.join("tmp").join(msgid), msg).map_err(|e| format!("cannot write message: {e}"))?;
+    let tmp = dir.join("tmp").join(msgid);
+    if let Err(e) = fs::write(&tmp, msg) {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("cannot write message: {e}"));
+    }
     maildir::mail_deliver(dir, msgid, mute).map_err(|e| format!("cannot deliver message: {e}"))
 }
 
@@ -782,6 +786,38 @@ mod probe_tests {
         assert_eq!(mailbox_entries(t.path()), 0);
         assert!(!t.path().join("mail/operator").exists(), "a dry run must not even create the mailbox");
         assert!(out.x_bead.is_none());
+    }
+
+    #[test]
+    fn a_lint_refused_send_leaves_every_mailbox_unchanged() {
+        let t = testkit::TempDir::new("mail-lint-refused");
+        std::fs::create_dir_all(t.path().join("kinds")).unwrap();
+        std::fs::write(t.path().join("kinds/note.md"), "---\n---\n\n## Note\n").unwrap();
+        for mb in ["concierge", "other"] {
+            maildir::mail_ensure(&t.path().join("mail").join(mb)).unwrap();
+        }
+        let snapshot = || -> Vec<(String, Vec<String>)> {
+            let mut v = Vec::new();
+            for mb in ["concierge", "other", "operator"] {
+                for sub in ["tmp", "new", "cur"] {
+                    let d = t.path().join("mail").join(mb).join(sub);
+                    let mut names: Vec<String> = std::fs::read_dir(&d).map(|r| r.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
+                    names.sort();
+                    v.push((format!("{mb}/{sub}"), names));
+                }
+            }
+            v
+        };
+        let before = snapshot();
+        let mut e = env(t.path());
+        e.lint_considered = None;
+        for mailbox in ["concierge", "other", "operator", "fresh"] {
+            let a = SendArgs { mailbox, from: Some("A <a@spira>"), subject: "hello", kind: "note", default: "", class: "", bead: "", urgent: false, digest: false, dry_run: false, requested_by: "" };
+            let Err(msg) = send(&FakeBd::new(vec![]), &e, &a, "## Note\n".into()) else { panic!("{mailbox}: delivered") };
+            assert!(msg.contains("is empty"), "{mailbox}: {msg}");
+        }
+        assert_eq!(snapshot(), before);
+        assert!(!t.path().join("mail/fresh").exists());
     }
 
     fn root_mailbox_entries(root: &Path, mb: &str) -> usize {
