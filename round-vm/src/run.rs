@@ -160,9 +160,9 @@ pub fn shell_quote(s: &str) -> String {
 /// tree and run the repository's own CI entry point (`${15}`). Its exit status is the one verdict,
 /// written as `ci.result`, so the round covers what CI covers by construction.
 pub const FOREIGN_SCRIPT: &str = r#"set -euo pipefail
-host_addr="$1" port="$2" round_ref="${13}" round_sha="${14}" entry="${15}"
+host_addr="$1" port="$2" toolchain="$5" round_ref="${13}" round_sha="${14}" entry="${15}"
 export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
-rm -rf ~/round-bins ~/round-work ~/round-setup.log
+rm -rf ~/round-bins ~/round-work ~/round-setup.log ~/round-shims
 exec 2> >(tee ~/round-setup.log >&2)
 exec 1>&2
 git clone --quiet --no-checkout "git://${host_addr}:${port}/mirror.git" ~/round-work
@@ -174,6 +174,19 @@ if [ "$got" != "$round_sha" ]; then
     exit 2
 fi
 cd ~/round-work
+unset RUSTC RUSTDOC CARGO_BUILD_RUSTC CARGO_BUILD_RUSTDOC RUSTUP_TOOLCHAIN
+rustup_bin="$(command -v rustup || true)"
+if [ -n "$rustup_bin" ]; then
+    if [ -n "$toolchain" ]; then
+        echo "round-vm: round toolchain $toolchain (the tree's pin)" >&2
+        rustup toolchain install "$toolchain" --profile minimal -c clippy -c rustfmt --no-self-update >&2
+        export RUSTUP_TOOLCHAIN="$toolchain"
+    fi
+    mkdir -p ~/round-shims
+    for t in cargo rustc rustdoc rustfmt cargo-fmt clippy-driver cargo-clippy; do ln -sf "$rustup_bin" ~/round-shims/$t; done
+    export PATH="$HOME/round-shims:$PATH"
+fi
+rustc -vV >&2 || echo "round-vm: no rustc on PATH" >&2
 res="$HOME/round-work/.runtime/spira/batch-results"
 mkdir -p "$res"
 printf 'tree=%s\n' "$(git rev-parse 'HEAD^{tree}')" > "$res/batch.meta"
@@ -2353,7 +2366,12 @@ mod tests {
     }
 
     fn foreign_run_expecting(entry: &str, expect: Option<&str>) -> (std::process::Output, String) {
+        foreign_run_with(entry, expect, "", |_| {}, &[])
+    }
+
+    fn foreign_run_with(entry: &str, expect: Option<&str>, toolchain: &str, setup: impl Fn(&Path), env: &[(&str, &str)]) -> (std::process::Output, String) {
         let home = TempDir::new();
+        setup(home.path());
         let src = home.path().join("src");
         fs::create_dir_all(&src).unwrap();
         for a in [&["init", "-q"][..], &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"]] {
@@ -2364,8 +2382,9 @@ mod tests {
         let script = FOREIGN_SCRIPT.replace("\"git://${host_addr}:${port}/mirror.git\"", &format!("'{}'", src.display()));
         assert_ne!(script, FOREIGN_SCRIPT);
         let out = std::process::Command::new("bash")
-            .args(["-c", &script, "x", "h", "1", "", "", "", "", "", "", "", "", "", "", "refs/rounds/t", &sha, entry])
+            .args(["-c", &script, "x", "h", "1", "", "", toolchain, "", "", "", "", "", "", "", "refs/rounds/t", &sha, entry])
             .env_clear()
+            .envs(env.iter().copied())
             .env("HOME", home.path())
             .env("PATH", std::env::var("PATH").unwrap())
             .output()
@@ -2396,6 +2415,28 @@ mod tests {
         assert_eq!(out.status.code(), Some(1));
         assert!(verdict.starts_with("red ") && verdict.trim_end().ends_with(" 7"), "{verdict}");
         assert!(String::from_utf8_lossy(&out.stderr).contains("isolation tier failed"));
+    }
+
+    #[test]
+    fn the_foreign_script_resolves_rust_tools_through_rustup_from_the_trees_pin() {
+        use std::os::unix::fs::symlink;
+        let setup = |home: &Path| {
+            let bin = home.join(".cargo/bin");
+            fs::create_dir_all(&bin).unwrap();
+            let rustup = "#!/bin/sh\ncase \"${0##*/}\" in\n  rustup) echo \"$@\" > \"$HOME/rustup.args\" ;;\n  rustc) echo \"rustc via proxy pin=${RUSTUP_TOOLCHAIN:-none}\" ;;\nesac\n";
+            testkit::write_exe(&bin.join("rustup"), rustup);
+            let image = home.join("image-rustc");
+            testkit::write_exe(&image, "#!/bin/sh\necho rustc 1.99.1 direct\n");
+            symlink(&image, bin.join("rustc")).unwrap();
+        };
+        let (out, _) = foreign_run_with("rustc -vV; echo \"[$RUSTUP_TOOLCHAIN]\"", None, "1.94", setup, &[("RUSTC", "/bin/false")]);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{err}");
+        assert!(err.contains("rustc via proxy pin=1.94"), "{err}");
+        assert!(!err.contains("1.99.1"), "{err}");
+        assert!(err.contains("[1.94]"), "{err}");
+        let (out, _) = foreign_run_with("rustc -vV", None, "", setup, &[]);
+        assert!(!String::from_utf8_lossy(&out.stderr).contains("1.99.1"));
     }
 
     #[test]
