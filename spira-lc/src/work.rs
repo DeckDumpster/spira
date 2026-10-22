@@ -35,11 +35,12 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         "file-followup" => cmd_file(bead_id, rest, "file-followup", conn),
         "split" => cmd_file(bead_id, rest, "split", conn),
         "superseded-by" => cmd_superseded_by(bead_id, rest, conn),
+        "ack" => cmd_ack(bead_id, rest),
         "fence" => cmd_fence(rest),
         other if LANE_VERBS.contains(&other) => cmd_lane(bead_id, other, rest, conn),
         other => (
             CANNOT_TELL,
-            format!("work: unknown verb {other:?} (want show, note, submit, done, blocked, file-followup, split, superseded-by, {})", LANE_VERBS.join(", ")),
+            format!("work: unknown verb {other:?} (want show, note, submit, done, blocked, file-followup, split, superseded-by, ack, {})", LANE_VERBS.join(", ")),
         ),
     }
 }
@@ -106,6 +107,37 @@ fn cmd_note(bead_id: &str, args: &[String]) -> (i32, String) {
     }
 }
 
+fn unanswered_amendment_refusal(bead_id: &str) -> Option<(i32, String)> {
+    let mail = spira_config::process::cfg("SPIRA_MAIL").ok().filter(|m| !m.is_empty())?;
+    spira_config::amendment::submit_refusal(&mail, bead_id).map(|m| (REFUSED, m))
+}
+
+/// `work ack <amend-id> --accept | --decline "<why>"`: the answer is recorded and carried out by `bead.sh amend --ack`.
+fn cmd_ack(bead_id: &str, args: &[String]) -> (i32, String) {
+    let actor = match require_actor(args) {
+        Ok(a) => a,
+        Err(e) => return e,
+    };
+    let call = split_reserved(args);
+    let a = &call.args;
+    let Some(aid) = a.first().filter(|x| spira_config::amendment::is_amend_id(x)) else {
+        return (CANNOT_TELL, "work ack: usage: work ack <amend-id> --accept | --decline \"<why>\"".into());
+    };
+    let verdict: Vec<String> = match (a.get(1).map(String::as_str), a.get(2), a.len()) {
+        (Some("--accept"), None, 2) => vec![s("--accept")],
+        (Some("--decline"), Some(why), 3) if !why.trim().is_empty() => vec![s("--decline"), why.clone()],
+        _ => return (CANNOT_TELL, "work ack: give exactly one of --accept or --decline \"<why>\"".into()),
+    };
+    let mut argv = vec![s("amend"), bead_id.to_string(), s("--ack"), aid.clone()];
+    argv.extend(verdict);
+    let (code, out) = crate::bd::tool("bead.sh", &argv, None, &actor, 60);
+    if code == 0 {
+        (0, format!("{aid} answered{}", if out.trim().is_empty() { String::new() } else { format!("\n{out}") }))
+    } else {
+        (code, out)
+    }
+}
+
 fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     let actor = match require_actor(args) {
         Ok(a) => a,
@@ -120,6 +152,9 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
     };
     if let Some(refusal) = working_exit_refusal("submit", "SUBMITTED", &row, &actor) {
+        return refusal;
+    }
+    if let Some(refusal) = unanswered_amendment_refusal(bead_id) {
         return refusal;
     }
     if !row.stack.is_empty() {
@@ -318,6 +353,9 @@ fn ejected_reasons(conn: &Conn, bead_id: &str, tip: &str) -> Option<String> {
 }
 
 fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
+    if let Some(refusal) = unanswered_amendment_refusal(bead_id) {
+        return refusal;
+    }
     let actor = match require_actor(args) {
         Ok(a) => a,
         Err(e) => return e,
@@ -598,7 +636,7 @@ pub const LANE_VERBS: &[&str] = &[
     "sop", "census", "queue", "landing-pass", "strand", "fence", "sending", "mender",
 ];
 
-const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by"];
+const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ack"];
 
 /// The tool verbs: `work <verb> <sub> ...` runs `<program> <sub> ...` — a harness tool that
 /// itself reaches bd, with `<sub>` one of the operations [`ALLOW`] names for it. `census`
@@ -627,7 +665,7 @@ pub fn is_tool(verb: &str) -> bool {
 /// The verbs that run a brokered tool (lint, testenv, bead.sh, a harness sweep) and so wait on
 /// the client's tool bound, not the store-call deadline; `work`'s client waits the same set.
 pub fn brokers_tool(verb: &str) -> bool {
-    is_tool(verb) || LANE_VERBS.contains(&verb) || matches!(verb, "file-followup" | "split" | "submit")
+    is_tool(verb) || LANE_VERBS.contains(&verb) || matches!(verb, "file-followup" | "split" | "submit" | "ack")
 }
 
 const ANY: &[&str] = &["*"];
@@ -645,6 +683,7 @@ pub const ALLOW: &[(&str, &[&str])] = &[
     ("file-followup", ANY),
     ("split", ANY),
     ("superseded-by", ANY),
+    ("ack", ANY),
     // Reads and the operator mailbox.
     ("ask", ANY),
     ("read", ANY),
