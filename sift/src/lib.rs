@@ -54,11 +54,6 @@ pub trait Store {
     fn send_backs(&self, id: &str) -> u32;
     fn record_screened(&self, id: &str, tip: &str) -> Result<(), String>;
     fn record_send_back(&self, id: &str, tip: &str, reason: &str) -> Result<u32, String>;
-    /// When a mend was filed for `(id, tip)`, if one was.
-    fn mending_since(&self, id: &str, tip: &str) -> Option<u64>;
-    fn record_mending(&self, id: &str, tip: &str, bead: &str) -> Result<(), String>;
-    /// The mend bead last filed for `id` at any tip.
-    fn last_mend(&self, id: &str) -> Option<String>;
     /// True the first time `(id, tip)` is reported as capped; records the `capped` event.
     fn first_cap_report(&self, id: &str, tip: &str) -> bool;
 }
@@ -67,15 +62,6 @@ pub trait Acts {
     fn note(&mut self, id: &str, text: &str) -> Result<(), String>;
     fn gate_red(&mut self, id: &str, tip: &str, reason: &str) -> Result<(), String>;
     fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String>;
-    /// The mender's bead for a branch that does not merge onto the landing ref; returns its id.
-    /// `prior` is the mend last filed for `id`: while it is open it is amended to the new tip and
-    /// returned, so a bead has at most one open mend.
-    fn mend(&mut self, id: &str, tip: &str, files: &[String], prior: Option<&str>) -> Result<String, String>;
-    /// Retires `mend`, filed for `id` while its branch did not merge: `tip` now does. A no-op
-    /// when the mend is already closed.
-    fn retire_mend(&mut self, _id: &str, _mend: &str, _tip: &str) -> Result<(), String> {
-        Ok(())
-    }
     /// Records that `tip` passed, on the lifecycle store.
     fn pass(&mut self, id: &str, tip: &str) -> Result<(), String>;
     fn tell(&mut self, msg: &str);
@@ -125,8 +111,6 @@ pub struct Outcome {
     pub superseded: Vec<String>,
     pub capped: Vec<String>,
     pub held: Vec<String>,
-    /// Conflicts with a mend filed and still inside its deadline: held out of the cut, not sent back.
-    pub mending: Vec<String>,
     pub errors: Vec<String>,
 }
 
@@ -144,14 +128,9 @@ fn verdict(probe: &dyn Probe, store: &dyn Store, c: &Candidate, base: &str) -> R
     Ok(v)
 }
 
-/// A candidate the screen cannot judge passes, with the error in `errors`.
+/// A candidate the screen cannot judge passes, with the error in `errors`. A branch that does not
+/// merge onto the landing ref goes straight to REWORK: its builder rebases it.
 pub fn screen(probe: &dyn Probe, store: &dyn Store, acts: &mut dyn Acts, pool: &[Candidate], open_round: &[Candidate]) -> Outcome {
-    screen_with(probe, store, acts, pool, open_round, 0)
-}
-
-/// `mend_deadline_s` > 0 sends a conflict to the mender first and holds it that many seconds;
-/// 0 sends it straight to REWORK.
-pub fn screen_with(probe: &dyn Probe, store: &dyn Store, acts: &mut dyn Acts, pool: &[Candidate], open_round: &[Candidate], mend_deadline_s: u64) -> Outcome {
     let mut out = Outcome::default();
     let base = match probe.base() {
         Ok(b) => b,
@@ -238,11 +217,6 @@ pub fn screen_with(probe: &dyn Probe, store: &dyn Store, acts: &mut dyn Acts, po
             Err(e) => findings.push(Finding { reason: "policy-violation", text: format!("identity check refused: {e}") }),
         }
         if findings.is_empty() {
-            if let Some(mend) = store.last_mend(&c.id) {
-                if let Err(e) = acts.retire_mend(&c.id, &mend, &c.tip) {
-                    out.errors.push(format!("sift: {} mend {mend} not retired ({e})", c.id));
-                }
-            }
             if let Err(e) = store.record_screened(&c.id, &c.tip) {
                 out.errors.push(format!("sift: {} screened not recorded ({e})", c.id));
             }
@@ -254,28 +228,6 @@ pub fn screen_with(probe: &dyn Probe, store: &dyn Store, acts: &mut dyn Acts, po
             continue;
         }
         let conflict = v.conflict.is_some();
-        if let (Some(files), true) = (&v.conflict, mend_deadline_s > 0) {
-            match store.mending_since(&c.id, &c.tip) {
-                Some(at) if spira_config::vtime::now_epoch().saturating_sub(at) < mend_deadline_s => {
-                    out.mending.push(c.id.clone());
-                    out.held.push(c.id.clone());
-                    continue;
-                }
-                Some(_) => acts.tell(&format!("SIFT mend of {} missed its deadline; sending it to REWORK", c.id)),
-                None => match acts.mend(&c.id, &c.tip, files, store.last_mend(&c.id).as_deref()) {
-                    Ok(mend) => {
-                        if let Err(e) = store.record_mending(&c.id, &c.tip, &mend) {
-                            out.errors.push(format!("sift: {} mend {mend} not recorded ({e})", c.id));
-                        }
-                        acts.tell(&format!("SIFT filed mend {mend} for {}: does not merge onto the landing ref", c.id));
-                        out.mending.push(c.id.clone());
-                        out.held.push(c.id.clone());
-                        continue;
-                    }
-                    Err(e) => out.errors.push(format!("sift: {} mend not filed ({e}); sent back instead", c.id)),
-                },
-            }
-        }
         let prior = store.send_backs(&c.id);
         if !conflict && prior >= SEND_BACK_CAP {
             if store.first_cap_report(&c.id, &c.tip) {

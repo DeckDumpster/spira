@@ -1033,12 +1033,6 @@ pub fn lc_supersede(env: &Env, id: &str, keeper: &str) -> Result<(), String> {
     spira_config::lifecycle_row::close_with(&bin.to_string_lossy(), id, &reason, "sift", Some(keeper))
 }
 
-/// Close a mend bead whose conflict is gone, through the lifecycle's own close.
-pub fn retire_mend(env: &Env, mend: &str, reason: &str) -> Result<(), String> {
-    let bin = env.lc_bin.as_ref().ok_or_else(|| "no spira-lc program".to_string())?;
-    spira_config::lifecycle_row::close_with(&bin.to_string_lossy(), mend, reason, "sift", None)
-}
-
 /// The evidence a send-back stands on, written on the bead before the GateRed.
 pub fn bead_note(env: &Env, id: &str, text: &str) -> Result<(), String> {
     // batch-job: bead.sh amend is a bead-store write that takes as long as the store does
@@ -2290,27 +2284,6 @@ pub fn bead_open(env: &Env, id: &str) -> bool {
         .ok()
         .and_then(|v| v.as_array().and_then(|a| a.first().cloned()))
         .is_some_and(|b| !spira_config::nonwork::row_closed(spira_config::nonwork::Kind::Hold, &b))
-}
-
-/// File the mender's bead for a branch that does not merge onto the landing ref; returns its id.
-pub fn file_conflict_mend(env: &Env, repo: &Repo, id: &str, tip: &str, files: &[String]) -> Result<String, String> {
-    let title = format!("mend {id}: does not merge onto {}", repo.base);
-    let body = format!(
-        "Bead {id} (branch spira/{id}, tip {tip}) does not merge onto {base} in {repo}.\n\nConflicting files: {files}\n\nRebase the branch onto {base}, resolve each conflict so the bead's intent is kept, run the repo's local checks for what you touched, and resubmit the new tip. If the conflict is not mechanical (the two sides disagree about behaviour), say so in your diagnosis and leave the branch alone: Sift returns the bead to REWORK when this mend's hold runs out.\n",
-        base = repo.base,
-        repo = repo.name,
-        files = files.join(", "),
-    );
-    let tmp_dir = env.run.join("tmp");
-    fs::create_dir_all(&tmp_dir).map_err(|e| format!("{}: {e}", tmp_dir.display()))?;
-    let tmp = tmp_dir.join(format!("conflict-mend-{id}-{}.txt", now()));
-    fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    let out = run(
-        Command::new("bead.sh").args(["file", &title, "--for", "mender", "--repo", &repo.name, "--harness-title", "--body-file"]).arg(&tmp).arg("--json"),
-        "bead.sh file",
-    );
-    let _ = fs::remove_file(&tmp);
-    bead_id(&out?)
 }
 
 /// File the follow-up bead for a deleted flip and return its id.
