@@ -225,6 +225,14 @@ fn lifecycle_snapshot(loom: &Loom) -> Result<(cockpit_ops::lcview::Snapshot, i64
     Ok((snap.clone(), now - snap.now))
 }
 
+/// Work in flight, read from the collector's `cockpit.env` through the same `Flight` the pane
+/// uses. A missing or unparsable file is the unreadable view (`?`), never an idle one.
+fn inflight(loom: &Loom) -> cockpit_ops::health::inflight::Flight {
+    use cockpit_ops::health::{inflight::Flight, model::Snapshot};
+    let text = std::fs::read_to_string(std::path::Path::new(&loom.config().run).join("cockpit.env")).unwrap_or_default();
+    Flight::from_snapshot(&Snapshot::parse(&text), now_s(), LIFECYCLE_STALE_S)
+}
+
 /// Older than this, the page says the collector has stopped rather than showing old numbers as live.
 pub(crate) const LIFECYCLE_STALE_S: i64 = 60;
 
@@ -249,9 +257,12 @@ async fn lifecycle_page_route(
             let v = cockpit_ops::lcview::view(&snap);
             let stale = (age > LIFECYCLE_STALE_S).then_some(age);
             if fragment {
-                (StatusCode::OK, "application/json", cockpit_ops::lctui::render_fragment(&v, stale))
+                let mut frag: Value = serde_json::from_str(&cockpit_ops::lctui::render_fragment(&v, stale)).unwrap_or_default();
+                let banner = format!("{}{}", inflight(&loom).html(now_s()), frag["banner"].as_str().unwrap_or_default());
+                frag["banner"] = Value::String(banner);
+                (StatusCode::OK, "application/json", frag.to_string())
             } else {
-                let html = cockpit_ops::lcview::render_html(&v, stale, 5);
+                let html = cockpit_ops::lcview::render_html(&v, stale, 5).replacen("<header id=banner>", &format!("<header id=banner>{}", inflight(&loom).html(now_s())), 1);
                 (StatusCode::OK, "text/html; charset=utf-8", shell::wrap_foreign(&html, "lifecycle", &now::bar(Some(&snap), now_s())))
             }
         }
@@ -313,7 +324,7 @@ async fn lifecycle_api_route(State(loom): State<Arc<Loom>>) -> Response {
     let (status, body) = match lifecycle_snapshot(&loom) {
         Ok((snap, age)) => {
             let v = cockpit_ops::lcview::view(&snap);
-            (StatusCode::OK, serde_json::json!({ "age_s": age, "stale": age > LIFECYCLE_STALE_S, "view": v }).to_string())
+            (StatusCode::OK, serde_json::json!({ "age_s": age, "stale": age > LIFECYCLE_STALE_S, "view": v, "inflight": inflight(&loom) }).to_string())
         }
         Err(e) => (StatusCode::SERVICE_UNAVAILABLE, serde_json::json!({ "error": e }).to_string()),
     };

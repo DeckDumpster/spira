@@ -493,6 +493,28 @@ async fn lifecycle_round_rows_are_links_and_a_vm_round_serves_its_log() {
 }
 
 
+#[tokio::test]
+async fn lifecycle_shows_work_in_flight_from_the_collector_snapshot_and_never_idle_when_unread() {
+    let run = ops_run_dir();
+    write_snapshot(&run, &cockpit_ops::lcview::Snapshot { now: now_s(), ..Default::default() });
+    let addr = spawn(ops_cfg(run.to_str().unwrap())).await;
+    let (_, dark) = get(addr, "/lifecycle").await;
+    assert!(dark.contains("?inflight") && !dark.contains("idle"), "{dark}");
+    let at = now_s();
+    std::fs::write(
+        run.join("cockpit.env"),
+        format!("SP_AT='{at}'\nSP_INFLIGHT_WORLD='draining'\nSP_INFLIGHT_SEG='\u{2699} 1 aeon \u{b7} 1 round (412/475) \u{b7} draining'\nSP_INFLIGHT_ROW0='aeon|sp-1|guardian|{at}||'\nSP_INFLIGHT_ROW1='round|spira/b1|certifying|{at}|412|475'\n"),
+    )
+    .unwrap();
+    let (_, page) = get(addr, "/lifecycle").await;
+    assert!(page.contains("sp-1") && page.contains("spira/b1") && page.contains("412/475") && page.contains("draining"), "{page}");
+    let (_, api) = get(addr, "/api/lifecycle").await;
+    let v: Value = serde_json::from_str(&api).expect("json");
+    assert_eq!(v["inflight"]["rows"][1]["total"], 475, "{api}");
+    let (_, frag) = get(addr, "/lifecycle?fragment").await;
+    assert!(frag.contains("412/475"), "{frag}");
+}
+
 // ── Now and the shell ────────────────────────────────────────────────────────
 
 const FIVE: [&str; 7] = ["/", "/aeons", "/rounds", "/stuck", "/units", "/states", "/lifecycle"];
