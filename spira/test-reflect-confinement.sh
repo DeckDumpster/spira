@@ -6,6 +6,7 @@
 # session must therefore carry --settings naming a deny list that refuses file edits and the
 # state-changing harness verbs, and must not carry the --allowedTools that implied otherwise.
 #
+# tier: T1
 # covers: spira/reflect.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

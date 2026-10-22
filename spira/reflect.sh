@@ -57,9 +57,9 @@ beginning 'CHECK:' followed by the proposed deterministic check. Do not take any
 and do not modify any bead."
 
 printf '\n===== %s =====\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-# batch-job: the reflection model call runs for minutes
 # Deny rules bind under bypass-permissions; an allow list does not subtract from it.
 DENY='{"permissions":{"deny":["Write","Edit","NotebookEdit","Bash(bd:*)","Bash(work:*)","Bash(lc:*)","Bash(mail:*)","Bash(spira-lc:*)","Bash(git commit:*)","Bash(git push:*)"]}}'
+# batch-job: the reflection model call runs for minutes
 out="$(printf '%s' "$PROMPT" | timeout 600 "${SPIRA_AGENT:-claude}" -p --model "${SPIRA_REFLECT_MODEL:-claude-opus-5}" \
         --settings "$DENY" --dangerously-skip-permissions 2>&1)"
 printf '%s\n' "$out"
