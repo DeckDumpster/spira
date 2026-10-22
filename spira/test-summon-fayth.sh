@@ -263,7 +263,8 @@ is "G8: escape.sh exits non-zero when draining" "1" "$rc"
 { echo "now"; echo "gated"; printf 'expires %s\n' "$(( $(date +%s) - 60 ))"; } > "$DRAIN_STAMP_G8"
 rm -f "$SUMMONED"
 aeon --escape stretchy 2>/dev/null || true
-is "G8: expired drain — escape.sh summons" "SUMMONED:stretchy" "$(cat "$SUMMONED" 2>/dev/null)"
+is "G8: a legacy past-expiry drain stamp still holds — escape.sh does not summon" "absent" "$( [ -f "$SUMMONED" ] && cat "$SUMMONED" || echo absent )"
+[ -f "$DRAIN_STAMP_G8" ] && ok "G8: the stamp is untouched" || bad "G8: the stamp is untouched" "a clock removed it"
 rm -f "$DRAIN_STAMP_G8"
 
 # ======================================================================================

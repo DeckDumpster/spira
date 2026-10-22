@@ -188,7 +188,7 @@ fn parse_stamp_first_line(path: &Path) -> i64 {
     }
 }
 
-pub fn world_state(run_dir: &Path, now: i64, drain_ttl: i64) -> WorldState {
+pub fn world_state(run_dir: &Path) -> WorldState {
     let mut w = WorldState::default();
     let halted_path = run_dir.join("world.halted");
     if halted_path.is_file() {
@@ -196,22 +196,9 @@ pub fn world_state(run_dir: &Path, now: i64, drain_ttl: i64) -> WorldState {
         w.halt_at = parse_stamp_first_line(&halted_path);
     }
     let draining_path = run_dir.join("world.draining");
-    if let Ok(text) = std::fs::read_to_string(&draining_path) {
-        if text.lines().any(|l| l == "holds until resume") {
-            w.draining = true;
-            w.drain_at = parse_stamp_first_line(&draining_path);
-            return w;
-        }
-        let expires = text.lines().find_map(|l| l.strip_prefix("expires ")).and_then(|s| s.trim().parse::<i64>().ok()).unwrap_or(0);
-        let expires = if expires == 0 {
-            std::fs::metadata(&draining_path).ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs() as i64 + drain_ttl).unwrap_or(0)
-        } else {
-            expires
-        };
-        if now < expires {
-            w.draining = true;
-            w.drain_at = parse_stamp_first_line(&draining_path);
-        }
+    if draining_path.is_file() {
+        w.draining = true;
+        w.drain_at = parse_stamp_first_line(&draining_path);
     }
     w
 }
@@ -272,7 +259,7 @@ mod tests {
     #[test]
     fn no_halt_or_drain_files_is_a_clean_world() {
         let dir = testkit::TempDir::new("auron-gather");
-        let w = world_state(&dir, 1000, 1800);
+        let w = world_state(&dir);
         assert!(!w.halted && !w.draining);
     }
 
@@ -280,7 +267,7 @@ mod tests {
     fn a_halted_stamp_is_reported_halted() {
         let dir = testkit::TempDir::new("auron-gather");
         std::fs::write(dir.join("world.halted"), "Mon Sep 29 00:00:00 UTC 2026\n").unwrap();
-        let w = world_state(&dir, 1000, 1800);
+        let w = world_state(&dir);
         assert!(w.halted);
     }
 
@@ -288,23 +275,14 @@ mod tests {
     fn a_holds_until_resume_stamp_is_draining_at_any_age() {
         let dir = testkit::TempDir::new("auron-gather-holds");
         std::fs::write(dir.join("world.draining"), "now\ngated\nholds until resume\n").unwrap();
-        assert!(world_state(&dir, i64::MAX / 2, 1).draining);
+        assert!(world_state(&dir).draining);
     }
 
     #[test]
-    fn a_draining_stamp_with_expires_line_in_the_future_is_draining() {
+    fn a_legacy_stamp_with_a_past_expires_line_still_holds() {
         let dir = testkit::TempDir::new("auron-gather");
-        std::fs::write(dir.join("world.draining"), format!("now\ngated\nexpires {}\n", 2000)).unwrap();
-        let w = world_state(&dir, 1000, 1800);
-        assert!(w.draining);
-    }
-
-    #[test]
-    fn an_expired_drain_stamp_is_not_draining() {
-        let dir = testkit::TempDir::new("auron-gather");
-        std::fs::write(dir.join("world.draining"), "now\ngated\nexpires 500\n".to_string()).unwrap();
-        let w = world_state(&dir, 1000, 1800);
-        assert!(!w.draining);
+        std::fs::write(dir.join("world.draining"), "now\ngated\nexpires 500\n").unwrap();
+        assert!(world_state(&dir).draining);
     }
 
     // ---- systemd, faked ------------------------------------------------------------------

@@ -331,9 +331,6 @@ pub struct Cfg {
     /// The capacity pause file (family K, wave 4.26 — owned by `aeon`; this is a pure
     /// read, never a probe: `aeon::capacity::pause_state`).
     pub capacity_pause: PathBuf,
-    /// `SPIRA_DRAIN_TTL` (default 1800s): how long a drain stamp with no `expires` line of
-    /// its own is honoured before `world_gate` lifts it unasked (family G, wave 4.27).
-    pub drain_ttl: i64,
     /// `SPIRA_MAX_AEONS`: the task pool's ceiling. `None` (unset/empty) means no pool at
     /// all — every persona's own concurrency cap applies unchanged.
     pub max_aeons: Option<i64>,
@@ -467,7 +464,6 @@ impl Cfg {
             roster_stamp: dir("SPIRA_ROSTER_WARN_STAMP", "roster-warn.stamp"),
             // literal-ok: conf.sh's default before sp-i2m7y retired the key
             capacity_pause: dir("SPIRA_CAPACITY_PAUSE", "capacity-pause"),
-            drain_ttl: num("SPIRA_DRAIN_TTL", 1800),
             max_aeons: d.max_aeons,
             max_live_aeons: d.max_live_aeons,
             lanes_max_live: d.lanes_max_live,
