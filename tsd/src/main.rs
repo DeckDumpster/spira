@@ -8,6 +8,8 @@
 //
 // usage: tsd-write --family <name> [--root <dir>] [--host <id>] [--ts <iso8601>]
 //                   [--field key=value ...] [--field-str key=value ...]
+//        tsd-write --family <name> --rows-from <file|-> [--root <dir>]
+//                   one finished row per line (envelope included), for a family in the store
 //
 //   --root defaults to $SPIRA_RUN.
 //   --host defaults to this machine's hostname (law-producers-stamp-their-own-clock: the
@@ -24,7 +26,7 @@ use tsd::{append_line, default_host, now_iso};
 
 fn usage() -> &'static str {
     "usage: tsd-write --family <name> [--root <dir>] [--host <id>] [--ts <iso8601>] \
-     [--field key=value ...] [--field-str key=value ...]\n   or: tsd-write escape <member> <suite> <class> [batch_id]"
+     [--field key=value ...] [--field-str key=value ...]\n   or: tsd-write --family <name> --rows-from <file|->\n   or: tsd-write escape <member> <suite> <class> [batch_id]"
 }
 
 /// `_tsd_escape`'s own four classes (wave4-decomposition.md row AC, wave 4.35, sp-kelr2;
@@ -107,6 +109,7 @@ fn run(args: &[String]) -> Result<(), String> {
     let mut host: Option<String> = None;
     let mut ts: Option<String> = None;
     let mut fields: Vec<(String, serde_json::Value)> = Vec::new();
+    let mut rows_from: Option<String> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -121,6 +124,7 @@ fn run(args: &[String]) -> Result<(), String> {
             "--ts" => ts = Some(next(&mut i)?.clone()),
             "--field" => fields.push(tsd::parse_field(next(&mut i)?)?),
             "--field-str" => fields.push(tsd::parse_field_str(next(&mut i)?)?),
+            "--rows-from" => rows_from = Some(next(&mut i)?.clone()),
             other => return Err(format!("unknown argument: {other}\n{}", usage())),
         }
         i += 1;
@@ -131,6 +135,14 @@ fn run(args: &[String]) -> Result<(), String> {
         return Err(format!(
             "family {family:?} must start with a letter and contain only lowercase letters, digits and hyphens"
         ));
+    }
+    if let Some(src) = rows_from {
+        if !tsd::store::moved(&family) {
+            return Err(format!("--rows-from stores rows in the metrics store; {family:?} is a file family"));
+        }
+        let text = if src == "-" { std::io::read_to_string(std::io::stdin()).map_err(|e| e.to_string())? } else { fs::read_to_string(&src).map_err(|e| format!("{src}: {e}"))? };
+        let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+        return tsd::store::push_rows(tsd::store::endpoint().as_deref(), &family, &lines);
     }
     let host = host.unwrap_or_else(default_host);
     let ts = ts.unwrap_or_else(now_iso);

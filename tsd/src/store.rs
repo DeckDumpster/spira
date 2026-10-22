@@ -87,15 +87,38 @@ fn millis_of(line: &str) -> u32 {
 
 /// Pushes one built row (`tsd::build_row`'s line) to the store.
 pub fn push_row(endpoint: Option<&str>, family: &str, line: &str) -> Result<(), String> {
-    let Value::Object(row) = serde_json::from_str::<Value>(line).map_err(|e| format!("row is not valid JSON: {e}"))? else {
-        return Err("row is not a JSON object".into());
-    };
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO);
-    let secs = row.get("ts").and_then(Value::as_str).and_then(crate::parse_ts).unwrap_or(now.as_secs());
-    let at = UNIX_EPOCH + Duration::new(secs, millis_of(line) * 1_000_000);
-    let sink = MetricsSink::new(endpoint, SERVICE, Duration::from_secs(2));
-    sink.try_push_series(&series_of(family, &row, at)).map_err(|e| format!("{family}: row not stored: {e}"))
+    push_rows(endpoint, family, &[line])
 }
+
+/// [`push_row`] for many rows, a request per [`BATCH_SERIES`] samples. All or nothing is not
+/// promised: the first refused request is the error, and the rows before it are stored.
+pub fn push_rows<L: AsRef<str>>(endpoint: Option<&str>, family: &str, lines: &[L]) -> Result<(), String> {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO);
+    let mut series: Vec<Series> = Vec::new();
+    let sink = MetricsSink::new(endpoint, SERVICE, Duration::from_secs(2));
+    let mut send = |series: &mut Vec<Series>| -> Result<(), String> {
+        let r = sink.try_push_series(series).map_err(|e| format!("{family}: row not stored: {e}"));
+        series.clear();
+        r
+    };
+    for line in lines {
+        let line = line.as_ref();
+        let Value::Object(row) = serde_json::from_str::<Value>(line).map_err(|e| format!("row is not valid JSON: {e}"))? else {
+            return Err("row is not a JSON object".into());
+        };
+        let secs = row.get("ts").and_then(Value::as_str).and_then(crate::parse_ts).unwrap_or(now.as_secs());
+        series.extend(series_of(family, &row, UNIX_EPOCH + Duration::new(secs, millis_of(line) * 1_000_000)));
+        if series.len() >= BATCH_SERIES {
+            send(&mut series)?;
+        }
+    }
+    if series.is_empty() {
+        return Ok(());
+    }
+    send(&mut series)
+}
+
+pub const BATCH_SERIES: usize = 2000;
 
 /// The store's address: `SPIRA_METRICS_ENDPOINT` when the caller exported it, else the
 /// declared `spira.metrics_endpoint`. `tsd` cannot link `spira-config` (which links `tsd`), so the
@@ -206,7 +229,13 @@ pub fn rebuild(family: &str, series: &[Exported]) -> Vec<Value> {
             }
         }
     }
-    rows.into_values().map(Value::Object).collect()
+    let mut out: Vec<Value> = rows.into_values().map(Value::Object).collect();
+    out.sort_by(|a, b| {
+        let key = |r: &Value| (r["ts"].as_str().unwrap_or("").to_string(), r["seq"].as_f64().unwrap_or(0.0));
+        let (x, y) = (key(a), key(b));
+        x.0.cmp(&y.0).then(x.1.partial_cmp(&y.1).unwrap_or(std::cmp::Ordering::Equal))
+    });
+    out
 }
 
 fn typed(text: &str) -> Value {

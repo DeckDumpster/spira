@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # test-tsd.sh — the run/tsd/ time-series layer (sp-sbc6o): the tsd-write row format and IO
-# seam, its wiring into land_mark (landing-event) and testenv-batch.sh's suite-times ledger
-# (suite-timing), and tsd-query.sh's DuckDB queries.
+# seam, its wiring into testenv's suite-times ledger (suite-timing), and tsd-query.sh's
+# queries: DuckDB over the file families, tsd-read over the families held in the metrics store.
 #
 # WHAT THIS SUITE CHECKS.
 #   1. tsd-write builds and appends a well-formed row: envelope (ts, host, family) merged
@@ -15,6 +15,9 @@
 #   5. Neither --root nor SPIRA_RUN set is refused with a clear message.
 #   9. testenv-batch.sh's suite-times hook (_append_suite_times) appends a suite-timing row —
 #      the sole producer since the git-notes ledger and suite-times.sh were retired.
+#  12. the moved families (bead-stage, sentinel-phase, aeon-session) live in the metrics store,
+#      not in files: tsd-write pushes them, tsd-query.sh answers from the store with known
+#      values, and refuses by name when the store is stopped, empty or unconfigured.
 #  10. tsd-query.sh: baseline (avg), rate (count/hours), dwell (quantile), and by-group
 #      (per-group avg, longest-first — sp-ezkp3's LPT lookup) against a synthetic fixture,
 #      plus refusals for a bad family, a missing family, and a bad field name.
@@ -24,7 +27,7 @@
 # rather than trusted on silence.
 #
 # tier: T2
-# covers: tsd/src/lib.rs tsd/src/main.rs spira/tsd-query.sh spira/deps.toml spira/conf.sh
+# covers: tsd/src/* tsd/tests/* spira-otel/src/* spira/tsd-query.sh spira/deps.toml spira/conf.sh
 #         spira/lib.sh testenv/src/* spira/testenv/Containerfile
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -78,16 +81,16 @@ is "first row untouched by the second write" \
 printf '\n%s\n' "3. a field colliding with the envelope is refused, before any line lands"
 # ============================================================================================
 RUN2="$T/run2"; mkdir -p "$RUN2"
-"$TSD_BIN" --family landing-event --root "$RUN2" --field host=spoofed >/dev/null 2>&1
+"$TSD_BIN" --family probe-event --root "$RUN2" --field host=spoofed >/dev/null 2>&1
 rc=$?
 [ "$rc" -ne 0 ] && ok "host-colliding field refused (rc=$rc)" || bad "host collision accepted"
-[ -f "$RUN2/tsd/landing-event.jsonl" ] \
+[ -f "$RUN2/tsd/probe-event.jsonl" ] \
     && bad "a line was appended despite the refused field" \
     || ok "no file created on refusal"
 
 # Positive control: the same call minus the collision succeeds.
-"$TSD_BIN" --family landing-event --root "$RUN2" --field-str state=LANDED >/dev/null 2>&1
-[ -f "$RUN2/tsd/landing-event.jsonl" ] \
+"$TSD_BIN" --family probe-event --root "$RUN2" --field-str state=LANDED >/dev/null 2>&1
+[ -f "$RUN2/tsd/probe-event.jsonl" ] \
     && ok "the same call without the collision succeeds" \
     || bad "non-colliding call was also refused"
 
@@ -119,12 +122,12 @@ printf '\n%s\n' "6. concurrent writers to the same family never interleave a lin
 RUN4="$T/run4"; mkdir -p "$RUN4"
 _pids=""
 for i in $(seq 1 20); do
-    "$TSD_BIN" --family landing-event --root "$RUN4" --host "h$i" \
+    "$TSD_BIN" --family probe-event --root "$RUN4" --host "h$i" \
         --field-str "bead=sp-concurrent-$i" --field-str state=LANDED &
     _pids="$_pids $!"
 done
 wait $_pids
-FAM4="$RUN4/tsd/landing-event.jsonl"
+FAM4="$RUN4/tsd/probe-event.jsonl"
 is "20 concurrent writers -> 20 lines" "20" "$(jpy "$FAM4" 'len(rows)')"
 is "every line parses as one JSON object (no interleaving)" \
    "20" "$(jpy "$FAM4" 'sum(1 for r in rows if isinstance(r, dict))')"
@@ -266,25 +269,49 @@ else
 fi
 
 # ============================================================================================
-printf '\n%s\n' "12. tsd-query.sh: where, rework, time, slots, sentinel, bead — known values, speed, refusal"
+printf '\n%s\n' "12. moved families: tsd-write stores them, tsd-query.sh answers from the store, and refuses by name"
 # ============================================================================================
-if [ -z "$DUCKDB_BIN" ]; then
-    echo "SKIP section 12: duckdb not found — tsd-query.sh needs it on PATH"
-else
-    RUN12="$T/run12"; mkdir -p "$RUN12/tsd"
-    qout12() { tl_config SPIRA_RUN="$RUN12"
-               SPIRA_HOME="$T" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent \
-                 tsd-query.sh "$@" 2>&1; }
-    jget12() { python3 -c 'import json,sys; r=json.load(sys.stdin); print(eval(sys.argv[1]))' "$1"; }
+command -v tsd-fake-store >/dev/null 2>&1 || bail "tsd-fake-store is not on PATH"
+start_store() {  # start_store <name> — a fake store on a free port; sets STORE_ADDR, remembers the pid
+    tsd-fake-store >"$T/$1.addr" 2>/dev/null &
+    STORE_PID=$!
+    local n=0
+    while [ ! -s "$T/$1.addr" ] && [ "$n" -lt 100 ]; do sleep 0.05; n=$((n + 1)); done
+    STORE_ADDR="$(head -1 "$T/$1.addr")"
+    [ -n "$STORE_ADDR" ] || bail "tsd-fake-store did not start"
+}
+start_store store12; STORE12_PID=$STORE_PID; STORE12="$STORE_ADDR"
+trap 'kill $STORE12_PID 2>/dev/null; rm -rf "$T"' EXIT INT TERM
 
-    python3 -I - "$RUN12/tsd" <<'PY'
+RUN12="$T/run12"; mkdir -p "$RUN12/tsd" "$T/rows12"
+export SPIRA_METRICS_ENDPOINT="$STORE12"
+
+# a moved family has no file: the row goes to the store, and nothing is appended to run/tsd/.
+RUNF="$T/runf"; mkdir -p "$RUNF"
+"$TSD_BIN" --family sentinel-phase --root "$RUNF" --host h1 --ts 2026-09-25T00:00:00Z \
+    --field-str pass=p0 --field-str check=CHECK1 --field secs=7 \
+    && ok "a moved family's row is accepted by tsd-write" || bad "a moved family's row was refused"
+[ -e "$RUNF/tsd/sentinel-phase.jsonl" ] && bad "a moved family wrote a file" || ok "a moved family writes no file"
+out="$(SPIRA_RUN="$RUNF" tsd-read rows sentinel-phase 999999)"
+want "and the row reads back from the store with its fields" '"secs":7' "$out"
+SPIRA_METRICS_ENDPOINT="" "$TSD_BIN" --family sentinel-phase --root "$RUNF" --field secs=1 >/dev/null 2>&1 \
+    && bad "an unconfigured store accepted a moved family's row (it has no file to fall back to)" \
+    || ok "an unconfigured store refuses a moved family's row"
+
+qout12() { tl_config SPIRA_RUN="$RUN12"
+           SPIRA_HOME="$T" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent \
+             tsd-query.sh "$@" 2>&1; }
+jget12() { python3 -c 'import json,sys; r=json.load(sys.stdin); print(eval(sys.argv[1]))' "$1"; }
+
+python3 -I - "$RUN12/tsd" "$T/rows12" <<'PY'
 import json, sys, time, datetime
-d = sys.argv[1]
+d, rows_dir = sys.argv[1], sys.argv[2]
 now = time.time()
 def iso(age): return datetime.datetime.fromtimestamp(now - age, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-def w(fam, rows, extra=()):
-    with open(f"{d}/{fam}.jsonl", "w") as f:
-        for r in rows: f.write(json.dumps({"family": fam, **r}) + "\n")
+def w(fam, rows, extra=(), moved=True):
+    path = f"{rows_dir}/{fam}.jsonl" if moved else f"{d}/{fam}.jsonl"
+    with open(path, "w") as f:
+        for r in rows: f.write(json.dumps({"host": "h", "family": fam, **r}) + "\n")
         for line in extra: f.write(line + "\n")
 stage = []
 def st(key, seq, to, age, reason=None, frm="X"):
@@ -304,73 +331,95 @@ stage.append({"ts": iso(100), "seq": 1, "machine": "batch", "key": "r1", "from_s
 w("bead-stage", stage)
 slots = [{"ts": iso(3600 - 60 * i), "live": 4, "ceiling": 6, "ready": 2} for i in range(10)]
 slots += [{"ts": iso(3600 - 60 * i), "live": 5, "ceiling": 6, "ready": 0} for i in range(10, 14)]
-w("slots", slots, extra=["not json at all", '{"ts":"x","live":"?","ceiling":"?","ready":"?","family":"slots"}'])
+w("slots", slots, extra=["not json at all", '{"ts":"x","live":"?","ceiling":"?","ready":"?","family":"slots"}'], moved=False)
 ph = []
 for n, (a, b) in enumerate([(2, 8), (3, 27), (1, 9)]):
     ph += [{"ts": iso(500 - n), "pass": f"p{n}", "check": "CHECK1", "secs": a},
            {"ts": iso(500 - n), "pass": f"p{n}", "check": "CHECK2", "secs": b}]
-w("sentinel-phase", ph, extra=["{broken"])
+w("sentinel-phase", ph)
 w("aeon-session", [{"ts": iso(100), "bead": "sp-a", "fayth": "builder", "status": "submitted", "wall_s": 100},
                    {"ts": iso(90), "bead": "sp-b", "fayth": "builder", "status": "submitted", "wall_s": 50}])
 w("gate-run", [{"ts": iso(100), "bead": "sp-a", "status": "GREEN", "reason": "x", "ran_secs": 30},
-               {"ts": iso(90), "bead": "sp-b", "status": "RED", "reason": "y", "ran_secs": 20}])
-w("batch-round", [{"ts": iso(100), "duration_ms": "4000"}])
+               {"ts": iso(90), "bead": "sp-b", "status": "RED", "reason": "y", "ran_secs": 20}], moved=False)
+w("batch-round", [{"ts": iso(100), "duration_ms": "4000"}], moved=False)
 PY
+for fam in bead-stage sentinel-phase aeon-session; do
+    "$TSD_BIN" --family "$fam" --root "$RUN12" --rows-from "$T/rows12/$fam.jsonl" || bad "could not store the $fam fixture"
+done
+for fam in bead-stage sentinel-phase aeon-session; do
+    [ -e "$RUN12/tsd/$fam.jsonl" ] && bad "$fam: a file was written beside the store" || ok "$fam: no file written beside the store"
+done
 
-    out="$(qout12 where)"
-    is "where: three stages occupied"          "3" "$(printf '%s' "$out" | jget12 'len(r)')"
-    is "where: states in pipeline order"       "WORKING SUBMITTED REWORK" "$(printf '%s' "$out" | jget12 '" ".join(x["state"] for x in r)')"
-    is "where: one bead WORKING (B; C and E left it)" "1" "$(printf '%s' "$out" | jget12 'r[0]["wip"]')"
-    is "where: SUBMITTED dwell is A's age, about an hour" "1" \
-        "$(printf '%s' "$out" | jget12 '1 if 3600 <= r[1]["dwell_p50_s"] <= 3700 else 0')"
-    lack "where: batch-machine rows never count as bead stages" '"wip":2' "$out"
+out="$(qout12 where)"
+is "where: three stages occupied"          "3" "$(printf '%s' "$out" | jget12 'len(r)')"
+is "where: states in pipeline order"       "WORKING SUBMITTED REWORK" "$(printf '%s' "$out" | jget12 '" ".join(x["state"] for x in r)')"
+is "where: one bead WORKING (B; C and E left it)" "1" "$(printf '%s' "$out" | jget12 'r[0]["wip"]')"
+is "where: SUBMITTED dwell is A's age, about an hour" "1" \
+    "$(printf '%s' "$out" | jget12 '1 if 3600 <= r[1]["dwell_p50_s"] <= 3700 else 0')"
+lack "where: batch-machine rows never count as bead stages" '"wip":2' "$out"
 
-    out="$(qout12 rework)"
-    is "rework: total reopens"                 "3" "$(printf '%s' "$out" | jget12 'r[0]["reopens"]')"
-    is "rework: landed beads"                  "2" "$(printf '%s' "$out" | jget12 'r[0]["landed"]')"
-    is "rework: reasons, most frequent first"  "gate-red:2 ejected:1" \
-        "$(printf '%s' "$out" | jget12 '" ".join("%s:%s" % (x["reason"], x["reopens"]) for x in r[1:])')"
+out="$(qout12 rework)"
+is "rework: total reopens"                 "3" "$(printf '%s' "$out" | jget12 'r[0]["reopens"]')"
+is "rework: landed beads"                  "2" "$(printf '%s' "$out" | jget12 'r[0]["landed"]')"
+is "rework: reasons, most frequent first"  "gate-red:2 ejected:1" \
+    "$(printf '%s' "$out" | jget12 '" ".join("%s:%s" % (x["reason"], x["reopens"]) for x in r[1:])')"
 
+if [ -n "$DUCKDB_BIN" ]; then
     out="$(qout12 slots)"
     is "slots: empty slot-minutes while work was ready" "20" "$(printf '%s' "$out" | jget12 'r[0]["empty_with_work_min"]')"
     is "slots: empty slot-minutes with nothing ready"   "3"  "$(printf '%s' "$out" | jget12 'r[0]["empty_idle_min"]')"
+else
+    echo "SKIP slots: duckdb not found — the file families need it on PATH"
+fi
 
-    out="$(qout12 time)"
-    is "time: aeon seconds"  "150"  "$(printf '%s' "$out" | jget12 'r[0]["aeon_s"]')"
-    is "time: gate seconds"  "50"   "$(printf '%s' "$out" | jget12 'r[0]["gate_s"]')"
-    is "time: round seconds" "4"    "$(printf '%s' "$out" | jget12 'r[0]["round_s"]')"
-    is "time: empty-slot seconds" "1380" "$(printf '%s' "$out" | jget12 'r[0]["idle_slot_s"]')"
+out="$(qout12 time)"
+is "time: aeon seconds"  "150"  "$(printf '%s' "$out" | jget12 'r[0]["aeon_s"]')"
+is "time: gate seconds"  "50"   "$(printf '%s' "$out" | jget12 'r[0]["gate_s"]')"
+is "time: round seconds" "4"    "$(printf '%s' "$out" | jget12 'r[0]["round_s"]')"
+is "time: empty-slot seconds" "1380" "$(printf '%s' "$out" | jget12 'r[0]["idle_slot_s"]')"
 
-    out="$(qout12 sentinel)"
-    is "sentinel: p50 pass seconds" "10" "$(printf '%s' "$out" | jget12 'int(r[0]["p50"])')"
-    is "sentinel: p90 pass seconds" "26" "$(printf '%s' "$out" | jget12 'int(r[0]["p90"])')"
-    is "sentinel: top phase leads" "CHECK2:44" "$(printf '%s' "$out" | jget12 'r[0]["top_phases"][0]')"
+out="$(qout12 sentinel)"
+is "sentinel: p50 pass seconds" "10" "$(printf '%s' "$out" | jget12 'int(r[0]["p50"])')"
+is "sentinel: p90 pass seconds" "26" "$(printf '%s' "$out" | jget12 'int(r[0]["p90"])')"
+is "sentinel: top phase leads" "CHECK2:44" "$(printf '%s' "$out" | jget12 'r[0]["top_phases"][0]')"
 
-    out="$(qout12 bead sp-c)"
-    is "bead: six stage rows, oldest first" "WORKING" "$(printf '%s' "$out" | jget12 'r[0]["what"].split(" -> ")[1]')"
-    is "bead: the rework reason is on the timeline" "1" "$(printf '%s' "$out" | jget12 'sum(1 for x in r if "(gate-red)" in x["what"])')"
-    out="$(qout12 bead sp-a)"
-    is "bead: aeon session joins the timeline" "1" "$(printf '%s' "$out" | jget12 'sum(1 for x in r if x["kind"]=="aeon")')"
-    out="$(qout12 bead 'x; drop')"; rc=$?
-    [ "$rc" -ne 0 ] && ok "bead: bad id refused" || bad "bead: bad id accepted"
+out="$(qout12 bead sp-c)"
+is "bead: six stage rows, oldest first" "WORKING" "$(printf '%s' "$out" | jget12 'r[0]["what"].split(" -> ")[1]')"
+is "bead: the rework reason is on the timeline" "1" "$(printf '%s' "$out" | jget12 'sum(1 for x in r if "(gate-red)" in x["what"])')"
+out="$(qout12 bead sp-a)"
+is "bead: aeon session joins the timeline" "1" "$(printf '%s' "$out" | jget12 'sum(1 for x in r if x["kind"]=="aeon")')"
+out="$(qout12 bead 'x; drop')"; rc=$?
+[ "$rc" -ne 0 ] && ok "bead: bad id refused" || bad "bead: bad id accepted"
 
-    mv "$RUN12/tsd/bead-stage.jsonl" "$RUN12/tsd/bead-stage.away"
-    for q in where rework "bead sp-a"; do
-        qout12 $q >/dev/null; rc=$?
-        [ "$rc" -ne 0 ] && ok "$q: missing family exits non-zero, never an empty answer" || bad "$q: missing family exited 0"
+out="$(qout12 baseline sentinel-phase secs 24)"
+want "baseline over a moved family answers from the store" '"n":6' "$out"
+
+# ── refusal: an empty, a stopped and an unconfigured store each exit non-zero and say which ──
+start_store empty12; EMPTY_PID=$STORE_PID; EMPTY12="$STORE_ADDR"
+kill "$STORE12_PID" 2>/dev/null; wait "$STORE12_PID" 2>/dev/null
+for q in where rework "bead sp-a" sentinel time "baseline sentinel-phase secs 24" "count-by bead-stage to_state"; do
+    for case in "$EMPTY12:metrics-store-no-series" "$STORE12:metrics-store-unreachable" ":metrics-store-not-configured"; do
+        endpoint="${case%%:metrics-store*}"; name="metrics-store${case#*:metrics-store}"
+        out="$(SPIRA_METRICS_ENDPOINT="$endpoint" qout12 $q)"; rc=$?
+        if [ "$rc" -ne 0 ] && [[ "$out" == *"$name"* ]]; then ok "$q: refused with $name"
+        else bad "$q against $name: rc=$rc out=[$out]"; fi
     done
-    mv "$RUN12/tsd/bead-stage.away" "$RUN12/tsd/bead-stage.jsonl"
+done
+kill "$EMPTY_PID" 2>/dev/null
 
-    RUN13="$T/run13"; mkdir -p "$RUN13/tsd"
-    python3 -I - "$RUN13/tsd" <<'PY'
+# ── thirty days of rows: every moved-family query still answers ──
+start_store store13; STORE13_PID=$STORE_PID; STORE13="$STORE_ADDR"
+trap 'kill $STORE13_PID 2>/dev/null; rm -rf "$T"' EXIT INT TERM
+RUN13="$T/run13"; mkdir -p "$RUN13/tsd" "$T/rows13"
+python3 -I - "$RUN13/tsd" "$T/rows13" <<'PY'
 import json, sys, time, datetime, random
-d = sys.argv[1]; now = time.time(); random.seed(1)
+d, rows_dir = sys.argv[1], sys.argv[2]; now = time.time(); random.seed(1)
 def iso(age): return datetime.datetime.fromtimestamp(now - age, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-D = 30 * 86400
-def w(fam, rows):
-    with open(f"{d}/{fam}.jsonl", "w") as f:
-        for r in rows: f.write(json.dumps({"family": fam, **r}) + "\n")
-w("slots", [{"ts": iso(D - 60 * i), "live": 3, "ceiling": 6, "ready": 1} for i in range(D // 60)])
+D = 29 * 86400
+def w(fam, rows, moved=True):
+    with open(f"{rows_dir if moved else d}/{fam}.jsonl", "w") as f:
+        for r in rows: f.write(json.dumps({"host": "h", "family": fam, **r}) + "\n")
+w("slots", [{"ts": iso(D - 60 * i), "live": 3, "ceiling": 6, "ready": 1} for i in range(D // 60)], moved=False)
 w("sentinel-phase", [{"ts": iso(D - 100 * (i // 4)), "pass": f"p{i // 4}", "check": f"C{i % 4}", "secs": random.randint(0, 9)} for i in range(4 * D // 100)])
 st = []
 for b in range(4000):
@@ -379,14 +428,20 @@ for b in range(4000):
         st.append({"ts": iso(max(t0 - dt, 1)), "seq": q + 1, "machine": "bead", "key": f"sp-{b}", "from_state": "X", "to_state": to, "applied": True})
 w("bead-stage", st)
 w("aeon-session", [{"ts": iso(random.randint(1, D)), "bead": f"sp-{i % 4000}", "fayth": "builder", "status": "ok", "wall_s": 100} for i in range(6000)])
-w("gate-run", [{"ts": iso(random.randint(1, D)), "bead": f"sp-{i % 4000}", "status": "GREEN", "ran_secs": 90} for i in range(6000)])
+w("gate-run", [{"ts": iso(random.randint(1, D)), "bead": f"sp-{i % 4000}", "status": "GREEN", "ran_secs": 90} for i in range(6000)], moved=False)
 PY
-    for q in where rework slots time sentinel "bead sp-7"; do
-        tl_config SPIRA_RUN="$RUN13"
-        out=$(SPIRA_HOME="$T" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent \
-            tsd-query.sh $q 2>/dev/null); rc=$?
-        [ "$rc" -eq 0 ] && [ -n "$out" ] && ok "$q over 30 days of rows answers" || bad "$q over 30 days: rc=$rc"
-    done
-fi
+for fam in bead-stage sentinel-phase aeon-session; do
+    SPIRA_METRICS_ENDPOINT="$STORE13" "$TSD_BIN" --family "$fam" --root "$RUN13" --rows-from "$T/rows13/$fam.jsonl" || bad "could not store the 30-day $fam fixture"
+done
+for q in where rework slots time sentinel "bead sp-7"; do
+    if [ "$q" = slots ] && [ -z "$DUCKDB_BIN" ]; then continue; fi
+    tl_config SPIRA_RUN="$RUN13"
+    t0=$(date +%s.%N)
+    out=$(SPIRA_METRICS_ENDPOINT="$STORE13" SPIRA_HOME="$T" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent \
+        tsd-query.sh $q 2>/dev/null); rc=$?
+    secs=$(python3 -c "print(round($(date +%s.%N) - $t0, 2))")
+    [ "$rc" -eq 0 ] && [ -n "$out" ] && ok "$q over 30 days of rows answers (${secs}s)" || bad "$q over 30 days: rc=$rc"
+done
+kill "$STORE13_PID" 2>/dev/null
 
 tl_summary

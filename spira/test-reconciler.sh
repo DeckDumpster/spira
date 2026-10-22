@@ -69,7 +69,7 @@
 # on a healthy fixture before 4-9 and 11-17 add the trigger and assert it does.
 #
 # tier: T2
-# covers: reconciler/src/main.rs reconciler-engine/src/**.rs desired-state/src/store.rs
+# covers: reconciler/src/main.rs reconciler-engine/src/**.rs desired-state/src/store.rs tsd/src/* spira-otel/src/*
 #         desired-state/src/resource.rs spira/conf.sh cockpit/ops/src/layout.rs
 #         systemd/spira-reconciler.service systemd/spira-reconciler.timer
 set -uo pipefail
@@ -82,6 +82,23 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 # (this crate's own #[test]s run once per round as the workspace unit-test step, not here.)
 
 command -v reconciler >/dev/null 2>&1 || bail "reconciler is not on PATH"
+command -v tsd-fake-store >/dev/null 2>&1 && command -v tsd-read >/dev/null 2>&1 \
+    || bail "tsd-fake-store and tsd-read must be on PATH: the status series lives in the metrics store"
+
+# The status series is held by the metrics store, not a file: each phase gets a fresh fake store.
+STORE_PID=""
+fresh_store() {
+    [ -z "$STORE_PID" ] || kill "$STORE_PID" 2>/dev/null
+    : > "$T/store.addr"
+    tsd-fake-store >"$T/store.addr" 2>/dev/null &
+    STORE_PID=$!
+    local n=0
+    while [ ! -s "$T/store.addr" ] && [ "$n" -lt 100 ]; do sleep 0.05; n=$((n + 1)); done
+    STORE_ADDR="$(head -1 "$T/store.addr")"
+    [ -n "$STORE_ADDR" ] || bail "tsd-fake-store did not start"
+    tl_config SPIRA_METRICS_ENDPOINT="$STORE_ADDR"
+}
+trap 'kill $STORE_PID 2>/dev/null; rm -rf "$T"' EXIT INT TERM
 
 export SPIRA_HOME="$HERE"
 export SPIRA_RUN="$T/run"
@@ -99,6 +116,7 @@ export SPIRA_DESIRED_DIR="$DESIRED_DIR"
 # explicitly (one source of config, per Ryan 2026-10-05).
 tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_DESIRED_DIR="$SPIRA_DESIRED_DIR" \
     SPIRA_QUEUE_DIR="$SPIRA_RUN/queue"
+fresh_store
 
 # desired_state_write <resource-toml-fragment>... — hand-writes a single-version composite
 # document directly in the store's own on-disk shape (meta + [[resource]]), rather than
@@ -305,15 +323,24 @@ tl_config SPIRA_BD="$STUB_BD"
 
 reset_state() {
     rm -f "$SPIRA_RUN/reconciler-state.json" "$SPIRA_RUN/reconciler-alerted.json" \
-          "$SPIRA_RUN/tsd/reconciler-status.jsonl" "$SPIRA_RUN/reconciler.log" "$SPIRA_RUN/cockpit.down"
+          "$SPIRA_RUN/reconciler.log" "$SPIRA_RUN/cockpit.down"
+    fresh_store
     : > "$SYSTEMCTL_CALLS"; : > "$COCKPIT_CALLS"; : > "$QUEUE_CALLS"; : > "$MAIL_LOG"
     : > "$DISK_USAGE_CALLS"; : > "$DISK_REMEDY_CALLS"
     desired_state_clear
 }
 
-# under run/tsd/ (design reconciler-time-series-2026-09-27 §2, sp-69m85): moved from
-# $SPIRA_RUN directly.
-status_jsonl() { cat "$SPIRA_RUN/tsd/reconciler-status.jsonl" 2>/dev/null || true; }
+# The `reconciler-status` rows of this phase, one JSON object per line in the order the
+# assertions below read them (key, status, desired, observed, ...).
+status_jsonl() {
+    SPIRA_METRICS_ENDPOINT="$STORE_ADDR" tsd-read rows reconciler-status 999999 2>/dev/null | python3 -c '
+import json, sys
+order = ["key", "status", "desired", "observed", "reason", "since", "is_gap", "just_closed", "remedy_failed"]
+for line in sys.stdin:
+    r = json.loads(line)
+    print(json.dumps({k: r.get(k) for k in order}, separators=(",", ":")))
+' || true
+}
 
 printf 'test-reconciler.sh\n'
 

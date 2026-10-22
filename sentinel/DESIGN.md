@@ -203,7 +203,7 @@ Dead ones are deleted, as `aeon_count` does.
 | CHECK 4 | `spira-claim counts` (ids on stdin), `decide --poison-at P --requeue-at R --reclaim-at C -- n rq rc labels stamp [poisoned]`; `mail send operator --from … --subject … --kind question --default …` (body on stdin) | `id\tatt\treq\trcl`; tokens; rc |
 | CHECK 6 | `watchtower --throttle-check`, `--czar-outcome-check`, `--pr-stall-check` (bare name on the release PATH, each 2>/dev/null; sp-lnmbq) | ignored |
 | CHECK 8 | `$SPIRA_HOME/reflect.sh "<open children, newline-separated>"` >> `reflect.log` | — |
-| tsd | `tsd-write --family sentinel-phase --root $SPIRA_RUN --field-str pass=<id> --field-str check=<name> --field secs=<n>` | best-effort |
+| tsd | `tsd-write --family sentinel-phase --field-str pass=<id> --field-str check=<name> --field secs=<n>` (stored in the metrics store, read back by `tsd-read sentinel`) | best-effort |
 
 Every Spira tool is invoked by its bare name on the PATH the launcher set (sp-gypjk; design
 runtime-is-a-release). There is no resolver, no `SPIRA_*_BIN` override and no "not
