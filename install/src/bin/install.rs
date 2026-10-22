@@ -285,7 +285,6 @@ fn render_sendmail_wrapper(releases: &str, toml: &str) -> String {
          # spira-sendmail — aerc's outgoing command; written by spira-install, rewritten on every install.\n\
          R=$(readlink -f '{releases}/current') || exit 1\n\
          [ -x \"$R/bin/mail\" ] || {{ echo \"spira-sendmail: $R/bin/mail is not executable\" >&2; exit 1; }}\n\
-         [ \"${{1:-}}\" = --check ] && exit 0\n\
          exec env SPIRA_RELEASE=\"$R\" SPIRA_TOML='{toml}' PATH=\"$R/bin:$R/spira:/usr/local/bin:/usr/bin:/bin\" \"$R/bin/mail\" sendmail \"$@\"\n"
     )
 }
@@ -1995,9 +1994,10 @@ mod dependency_fetch_tests {
     }
 
     #[test]
-    fn sendmail_wrapper_names_release_and_toml_and_supports_check() {
+    fn sendmail_wrapper_names_release_and_toml_and_passes_check_through() {
         let w = render_sendmail_wrapper("/r", "/t.toml");
-        assert!(w.contains("readlink -f '/r/current'") && w.contains("SPIRA_TOML='/t.toml'") && w.contains("--check"));
+        assert!(w.contains("readlink -f '/r/current'") && w.contains("SPIRA_TOML='/t.toml'") && w.contains("sendmail \"$@\""));
+        assert!(!w.contains("--check"), "the wrapper must hand --check to mail, not answer it");
     }
 
     #[test]

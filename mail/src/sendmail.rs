@@ -135,6 +135,29 @@ pub fn sendmail(home: &Path, mail_root: &Path, mute: bool, raw: &str) -> Result<
     Ok(SendmailOutcome { dest_mailbox, delivered_path })
 }
 
+const CHECK_SAMPLE: &str = "From: Operator <operator@spira>\nSubject: Re: probe\nIn-Reply-To: <probe@spira>\n\nNoted.\n\nIgnored.\n";
+
+/// The health probe: every step of the send path except delivery. Names the failing step.
+pub fn check(mail_root: &Path) -> Result<(), String> {
+    let from = message::header_ci_before_blank(CHECK_SAMPLE, "from");
+    let reply = strip_angle_brackets(&message::header_ci_before_blank(CHECK_SAMPLE, "in-reply-to"));
+    if !from.contains("operator@spira") || reply != "probe@spira" || first_paragraph(CHECK_SAMPLE) != "Noted." {
+        return Err("parse: the sample message was not parsed".to_string());
+    }
+    if !mail_root.is_dir() {
+        return Err(format!("mailbox: {} is not a directory", mail_root.display()));
+    }
+    let dir = mail_root.join("concierge");
+    for sub in ["tmp", "new", "cur"] {
+        if !dir.join(sub).is_dir() {
+            return Err(format!("mailbox: {} is missing", dir.join(sub).display()));
+        }
+    }
+    let probe = dir.join("tmp").join(format!(".check-{}", maildir::mint_msgid()));
+    fs::write(&probe, "").map_err(|e| format!("mailbox: cannot write {}: {e}", probe.display()))?;
+    fs::remove_file(&probe).map_err(|e| format!("mailbox: cannot remove {}: {e}", probe.display()))
+}
+
 /// Replying to a message is having seen it: the original moves out of `new/` into `cur/`
 /// carrying `S` and `R` in one rename. Flagging it in place left it in `new/` unread, and a
 /// client's own seen-rename of the old name then failed against it.
