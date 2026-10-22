@@ -224,11 +224,10 @@ fn read_back(conn: &mut Conn, t: &mut Tracker, path: &str) {
     }
 }
 
-/// The latest `ended_at` in a family file's text, in microseconds: where a restarted listener
+/// The latest `ended_at` among stored rows, in microseconds: where a restarted listener
 /// resumes from.
-pub fn last_ended_us(text: &str) -> Option<u64> {
-    text.lines()
-        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+pub fn last_ended_us(rows: &[serde_json::Value]) -> Option<u64> {
+    rows.iter()
         .filter_map(|v| tsd::parse_ts(v.get("ended_at")?.as_str()?))
         .max()
         .map(|s| s.saturating_mul(1_000_000))
@@ -365,8 +364,8 @@ mod tests {
 
     #[test]
     fn the_resume_point_is_the_latest_recorded_end() {
-        let text = "{\"ended_at\":\"2026-10-17T10:00:05Z\"}\nnot json\n{\"ended_at\":\"2026-10-17T10:00:01Z\"}\n{\"unit\":\"x\"}\n";
-        assert_eq!(last_ended_us(text), tsd::parse_ts("2026-10-17T10:00:05Z").map(|s| s * 1_000_000));
-        assert_eq!(last_ended_us(""), None);
+        let rows = [serde_json::json!({"ended_at": "2026-10-17T10:00:05Z"}), serde_json::json!({"ended_at": "2026-10-17T10:00:01Z"}), serde_json::json!({"unit": "x"})];
+        assert_eq!(last_ended_us(&rows), tsd::parse_ts("2026-10-17T10:00:05Z").map(|s| s * 1_000_000));
+        assert_eq!(last_ended_us(&[]), None);
     }
 }

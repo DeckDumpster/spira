@@ -108,13 +108,19 @@ pub fn endpoint() -> Option<String> {
 pub struct Pusher {
     endpoint: Option<String>,
     down_until: std::sync::atomic::AtomicU64,
+    suspend_secs: u64,
 }
 
 pub const SUSPEND_SECS: u64 = 30;
 
 impl Pusher {
     pub fn new(endpoint: Option<String>) -> Pusher {
-        Pusher { endpoint, down_until: std::sync::atomic::AtomicU64::new(0) }
+        Pusher { endpoint, down_until: std::sync::atomic::AtomicU64::new(0), suspend_secs: SUSPEND_SECS }
+    }
+
+    pub fn suspending_for(mut self, secs: u64) -> Pusher {
+        self.suspend_secs = secs;
+        self
     }
 
     pub fn endpoint(&self) -> Option<&str> {
@@ -125,10 +131,10 @@ impl Pusher {
         use std::sync::atomic::Ordering::Relaxed;
         let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
         if now < self.down_until.load(Relaxed) {
-            return Err(format!("{family}: row not stored: the store failed a push in the last {SUSPEND_SECS}s"));
+            return Err(format!("{family}: row not stored: the store failed a push in the last {}s", self.suspend_secs));
         }
         let line = crate::build_row(ts, &crate::default_host(), family, fields)?;
-        push_row(self.endpoint.as_deref(), family, &line).inspect_err(|_| self.down_until.store(now + SUSPEND_SECS, Relaxed))
+        push_row(self.endpoint.as_deref(), family, &line).inspect_err(|_| self.down_until.store(now + self.suspend_secs, Relaxed))
     }
 }
 

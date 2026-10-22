@@ -110,12 +110,9 @@ pub fn record_fields(r: &Record, triggered_by: Option<&str>, instance: &str) -> 
     f
 }
 
-/// The invocation ids already in a family file's text: the dedupe key of every writer.
-pub fn written_ids(text: &str) -> BTreeSet<String> {
-    text.lines()
-        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
-        .filter_map(|v| v.get("invocation_id")?.as_str().map(String::from))
-        .collect()
+/// The invocation ids already stored: the dedupe key of every writer.
+pub fn written_ids(rows: &[Value]) -> BTreeSet<String> {
+    rows.iter().filter_map(|v| v.get("invocation_id")?.as_str().map(String::from)).collect()
 }
 
 pub const ACCOUNTING_DROPIN: &str = "[Manager]\nDefaultIOAccounting=yes\n";
@@ -146,4 +143,42 @@ pub fn ensure_io_accounting(config_home: &std::path::Path) -> Result<bool, Strin
     }
     std::fs::write(&path, ACCOUNTING_DROPIN).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(true)
+}
+
+/// Rows the store has not taken yet, oldest first; a flush stops at the first refusal so the
+/// order is kept, and a full backlog drops its oldest row rather than grow without bound.
+pub struct Backlog {
+    held: std::collections::VecDeque<(String, Vec<(String, Value)>)>,
+    max: usize,
+}
+
+impl Backlog {
+    pub fn new(max: usize) -> Backlog {
+        Backlog { held: Default::default(), max }
+    }
+
+    pub fn len(&self) -> usize {
+        self.held.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.held.is_empty()
+    }
+
+    /// Queues one row and offers everything held to the store. `Err` is the first refusal, with
+    /// the rows still held; `Ok(dropped)` says whether the queue had to drop its oldest row.
+    pub fn offer(&mut self, store: &tsd::store::Pusher, family: &str, ts: String, fields: Vec<(String, Value)>) -> (bool, Result<(), String>) {
+        let dropped = self.held.len() >= self.max;
+        if dropped {
+            self.held.pop_front();
+        }
+        self.held.push_back((ts, fields));
+        while let Some((ts, fields)) = self.held.front() {
+            if let Err(e) = store.push(family, ts, fields) {
+                return (dropped, Err(e));
+            }
+            self.held.pop_front();
+        }
+        (dropped, Ok(()))
+    }
 }
