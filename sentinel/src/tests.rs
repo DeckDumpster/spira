@@ -798,7 +798,7 @@ fn summon_only_fails_closed_on_an_unreadable_capacity_pause_file() {
 // lib.sh's own shim targets, in-process now.
 
 #[test]
-fn world_gate_cmd_halts_pins_and_lifts_an_expired_drain_loudly() {
+fn world_gate_cmd_halts_and_a_drain_holds_however_old() {
     let mode = |f: &str| Mode::WorldGate { fayth: f.into(), prefix: "CHECK7".into() };
 
     // No stamp at all: permitted, silently.
@@ -813,27 +813,15 @@ fn world_gate_cmd_halts_pins_and_lifts_an_expired_drain_loudly() {
     assert_eq!(run_mode(&w, &r, &sink, &clock, mode("builder"), &[], None), 1);
     assert!(sink.has("CHECK7 builder: halted — not summoning (world.sh start to lift)"));
 
-    // DRAINING, not yet expired: refused, quietly (no DRAIN EXPIRED line).
-    let (w, r, sink, clock) = setup("wg-draining");
-    std::fs::write(w.run.join("world.draining"), format!("expires {}\n", NOW + 10_000)).unwrap();
-    assert_eq!(run_mode(&w, &r, &sink, &clock, mode("builder"), &[], None), 1);
-    assert!(sink.has("CHECK7 builder: draining — not summoning (world.sh resume to lift)"));
-    assert!(!sink.has("EXPIRED"));
-    assert!(w.run.join("world.draining").is_file(), "a live drain is never touched");
-
-    // DRAINING with a "holds until resume" stamp: no clock lifts it, however old.
-    let (w, r, sink, clock) = setup("wg-holds");
-    std::fs::write(w.run.join("world.draining"), "then\ngated\nholds until resume\n").unwrap();
-    assert_eq!(run_mode(&w, &r, &sink, &clock, mode("builder"), &[], None), 1);
-    assert!(!sink.has("EXPIRED"));
-    assert!(w.run.join("world.draining").is_file());
-
-    // DRAINING, past its own `expires` line: lifted, LOUDLY, and removed.
-    let (w, r, sink, clock) = setup("wg-expired");
-    std::fs::write(w.run.join("world.draining"), format!("expires {}\n", NOW - 10)).unwrap();
-    assert_eq!(run_mode(&w, &r, &sink, &clock, mode("builder"), &[], None), 0);
-    assert!(sink.has("CHECK7 builder: DRAIN EXPIRED — lifting a drain nobody resumed"), "{}", sink.text());
-    assert!(!w.run.join("world.draining").is_file(), "the expired stamp is removed");
+    // DRAINING, however the stamp reads or however old: refused, stamp untouched.
+    for (tag, text) in [("wg-holds", "then\ngated\nholds until resume\n"), ("wg-legacy-expires", format!("expires {}\n", NOW - 10).leak() as &str), ("wg-bare", "")] {
+        let (w, r, sink, clock) = setup(tag);
+        std::fs::write(w.run.join("world.draining"), text).unwrap();
+        assert_eq!(run_mode(&w, &r, &sink, &clock, mode("builder"), &[], None), 1, "{tag}");
+        assert!(sink.has("CHECK7 builder: draining — not summoning (world.sh resume to lift)"), "{tag}");
+        assert!(!sink.has("EXPIRED"), "{tag}");
+        assert!(w.run.join("world.draining").is_file(), "{tag}: nothing but resume removes a drain");
+    }
 }
 
 #[test]
@@ -1062,7 +1050,7 @@ fn a_summon_carries_a_timeout_and_never_a_cpu_quota_or_nice() {
 }
 
 #[test]
-fn a_halt_refuses_a_summon_loudly_and_a_stamp_without_an_expiry_ages_by_mtime_plus_ttl() {
+fn a_halt_refuses_a_summon_loudly_and_an_old_drain_stamp_still_holds() {
     let l = ladder("halt-ok", ELASTIC, SOLO, &[], &[("builder", 1)]);
     assert!(l.summon("builder", None, &[]), "positive control: {}", l.sink.text());
     let l = ladder("halt", ELASTIC, SOLO, &[], &[("builder", 1)]);
@@ -1070,19 +1058,13 @@ fn a_halt_refuses_a_summon_loudly_and_a_stamp_without_an_expiry_ages_by_mtime_pl
     assert!(!l.summon("builder", None, &[]));
     assert!(l.sink.has("halted — not summoning"), "{}", l.sink.text());
 
-    let stamp_aged = |tag: &str, age: i64| {
-        let l = ladder(tag, ELASTIC, SOLO, &[], &[("builder", 1)]);
-        let stamp = l.w.run.join("world.draining");
-        std::fs::write(&stamp, "now\ngated\n").unwrap();
-        let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs((NOW - age) as u64);
-        std::fs::File::options().write(true).open(&stamp).unwrap().set_modified(at).unwrap();
-        let summoned = l.summon("builder", None, &[("SPIRA_DRAIN_TTL", "600")]);
-        (summoned, l.sink.text(), stamp.is_file())
-    };
-    let (summoned, log, kept) = stamp_aged("drain-fresh", 599);
-    assert!(!summoned && kept && log.contains("draining — not summoning"), "{log}");
-    let (summoned, log, kept) = stamp_aged("drain-stale", 601);
-    assert!(summoned && !kept && log.contains("DRAIN EXPIRED") && log.contains("did not resume"), "{log}");
+    let l = ladder("drain-old", ELASTIC, SOLO, &[], &[("builder", 1)]);
+    let stamp = l.w.run.join("world.draining");
+    std::fs::write(&stamp, "now\ngated\n").unwrap();
+    let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs((NOW - 100_000) as u64);
+    std::fs::File::options().write(true).open(&stamp).unwrap().set_modified(at).unwrap();
+    assert!(!l.summon("builder", None, &[]), "{}", l.sink.text());
+    assert!(stamp.is_file() && l.sink.has("draining — not summoning") && !l.sink.has("EXPIRED"), "{}", l.sink.text());
 }
 
 /// sp-hh599, law-a-control-that-cannot-check-must-refuse: `fayth_ready`'s own rc contract

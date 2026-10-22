@@ -4,8 +4,4 @@
 #
 # SHRINK-ONLY. A count goes down as the wait is converted to a named, capped wait (or the line
 # carries `# waits-on: <object>; cap <bound>`); nothing is raised for a NEW wait.
-2 auron/src/gather.rs sp-qse6cn
-2 auron/src/main.rs sp-qse6cn
-2 sentinel/src/cfg.rs sp-qse6cn
-2 sentinel/src/summon.rs sp-qse6cn
 2 concierge.sh sp-4gcxuz.2

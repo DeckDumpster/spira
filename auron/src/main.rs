@@ -172,7 +172,6 @@ fn pass() -> i32 {
     let refresh = env_n(&original, "SPIRA_AURON_REFRESH", 3600);
     let restarts_threshold: i64 = cfg_num_or_die!("SPIRA_AURON_RESTARTS");
     let restart_window: i64 = cfg_num_or_die!("SPIRA_AURON_RESTART_WINDOW");
-    let drain_ttl = env_n(&original, "SPIRA_DRAIN_TTL", 1800);
     let thresholds = Thresholds {
         pass_stale: env_n(&original, "SPIRA_AURON_PASS_STALE", 600),
         starve_passes: env_n(&original, "SPIRA_AURON_STARVE_PASSES", 5),
@@ -194,7 +193,7 @@ fn pass() -> i32 {
     let sc = RealSystemctl { bin: systemctl_bin.clone(), timeout: Duration::from_secs(5) };
     let sentinel_timer = gather::sentinel_timer_status(&sc, &instance);
     let mirror = gather::check_mirror(&exporter, &mirror_path);
-    let world = gather::world_state(&run_dir, now, drain_ttl);
+    let world = gather::world_state(&run_dir);
     let strands: serde_json::Value = std::fs::read_to_string(&strands_path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(serde_json::json!({}));
 
     let mut restart_alerts: Vec<ObsRestartAlert> = Vec::new();

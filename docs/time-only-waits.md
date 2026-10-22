@@ -11,7 +11,6 @@ that converts it.
 
 | Where | Really waits for | Observable? | Converting bead |
 |---|---|---|---|
-| `auron/src/gather.rs`, `auron/src/main.rs`, `sentinel/src/cfg.rs`, `sentinel/src/summon.rs` — the drain stamp's `expires` / `SPIRA_DRAIN_TTL` | the live aeons to finish | yes: pidfiles / lifecycle rows | sp-qse6cn |
 | `concierge.sh` 499, 524 — `sleep 3` after new-session | the tmux session and pane to exist | yes: `has-session`, `list-panes` | sp-4gcxuz.2 |
 | `concierge.sh` 613, 614 — wake settle sleep, uncapped input-busy poll | the pane's input line to be idle | yes: `capture-pane` | sp-4gcxuz.2 |
 | `release/src/acceptance/phases.rs` — `sleep(30)`, `sleep(120)` | spira-* units to be active or failed | yes: `systemctl list-units` | sp-4gcxuz.3 |

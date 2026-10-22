@@ -3,7 +3,9 @@
 //!   world.sh stop [--why "..."] [--work] [--observability] [--maintenance] [--all]
 //!                 [--hard] [--round-drain] [--round-drain-timeout SECS]
 //!   world.sh start [--work] [--observability] [--maintenance] [--all]
-//!   world.sh drain [--timeout SECS | --for SECS | --deadline SECS]
+//!   world.sh drain [--until WHAT] [--owner O] [--owner-pid PID | --owner-unit UNIT]
+//!                  [--timeout SECS | --for SECS | --deadline SECS]
+//!   world.sh drain-check
 //!   world.sh resume
 //!   world.sh pause --repo R [--lanes claims,rounds,publish] --reason WHY --until CONDITION [--owner O]
 //!   world.sh pause --reserve BEAD[,BEAD...] --reason WHY [--until CONDITION] [--owner O]
@@ -288,7 +290,7 @@ fn notify_aeons(notifier: &mut spira_world::notice::Notifier, what: &str, elapse
     });
 }
 
-const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS] | drain [--reboot] [--timeout SECS | --deadline SECS] | resume | start [--work|--observability|--maintenance|--all] | pause --repo R [--lanes claims,rounds,publish] --reason WHY --until COND [--owner O] | pause --reserve BEADS --reason WHY [--owner O] | unpause --repo R [--lanes L] | unpause --reserve BEADS | status}";
+const USAGE: &str = "usage: world.sh {stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS] | drain [--until WHAT] [--owner O] [--owner-pid PID | --owner-unit UNIT] [--reboot] [--timeout SECS | --deadline SECS] | drain-check | resume | start [--work|--observability|--maintenance|--all] | pause --repo R [--lanes claims,rounds,publish] --reason WHY --until COND [--owner O] | pause --reserve BEADS --reason WHY [--owner O] | unpause --repo R [--lanes L] | unpause --reserve BEADS | status}";
 
 fn cmd_stop(args: &[String]) -> i32 {
     let mut why = String::new();
@@ -621,6 +623,11 @@ fn cmd_drain(args: &[String]) -> i32 {
     let mut dfor: u64 = dtimeout;
     let mut dslay = false;
     let mut reboot = false;
+    let mut for_given = false;
+    let mut until = String::new();
+    let mut owner = "concierge".to_string();
+    let mut owner_pid: Option<u32> = None;
+    let mut owner_unit: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -628,12 +635,29 @@ fn cmd_drain(args: &[String]) -> i32 {
                 reboot = true;
                 i += 1;
             }
+            "--until" => {
+                until = args.get(i + 1).cloned().unwrap_or_default();
+                i += 2;
+            }
+            "--owner" => {
+                owner = args.get(i + 1).cloned().unwrap_or(owner);
+                i += 2;
+            }
+            "--owner-pid" => {
+                owner_pid = args.get(i + 1).and_then(|v| v.parse().ok());
+                i += 2;
+            }
+            "--owner-unit" => {
+                owner_unit = args.get(i + 1).cloned().filter(|v| !v.is_empty());
+                i += 2;
+            }
             "--timeout" => {
                 dtimeout = args.get(i + 1).and_then(|v| v.parse().ok()).unwrap_or(1800);
                 i += 2;
             }
             "--for" => {
                 dfor = args.get(i + 1).and_then(|v| v.parse().ok()).unwrap_or(1800);
+                for_given = true;
                 i += 2;
             }
             "--deadline" => {
@@ -648,12 +672,23 @@ fn cmd_drain(args: &[String]) -> i32 {
     let run = run_or_die();
     let _ = std::fs::create_dir_all(&run);
     let exe = env::args().next().unwrap_or_else(|| "world.sh".to_string());
+    let exe_name = exe.clone();
+    let drain = spira_world::drain::Drain {
+        owner,
+        until: if until.is_empty() { format!("{exe_name} resume") } else { until },
+        owner_pid,
+        owner_unit,
+        cap_secs: Some(if dslay || !for_given { dtimeout } else { dfor }),
+        since_epoch: Some(now_epoch()),
+    };
+    let _ = std::fs::remove_file(spira_world::drain::paged_marker(&drain_stamp_or_die()));
     let _ = std::fs::write(
         drain_stamp_or_die(),
         format!(
-            "{}\nsummons gated in summon_fayth; loop and landing still running. Lift with: {exe} resume\n{}\n",
+            "{}\nsummons gated in summon_fayth; loop and landing still running. Lift with: {exe} resume\n{}\n{}",
             Command::new("date").arg("+%Y-%m-%d %H:%M:%S %Z").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default(),
-            spira_world::DRAIN_HOLDS_UNTIL_RESUME
+            spira_world::DRAIN_HOLDS_UNTIL_RESUME,
+            drain.render()
         ),
     );
     if reboot {
@@ -717,6 +752,7 @@ fn cmd_drain(args: &[String]) -> i32 {
             }
             eprintln!("spira: NOT DRAINED — {n} aeon(s) still live after {dtimeout}s: {}", pending.join(" "));
             eprintln!("spira: summons REMAIN GATED. Lift with: {exe} resume");
+            drain_check_and_page();
             return 1;
         }
         if waited % 60 == 0 && waited > 0 {
@@ -731,8 +767,58 @@ fn cmd_drain(args: &[String]) -> i32 {
     0
 }
 
+fn owner_alive(d: &spira_world::drain::Drain) -> Option<bool> {
+    if let Some(pid) = d.owner_pid {
+        return Some(std::path::Path::new(&format!("/proc/{pid}")).exists());
+    }
+    d.owner_unit.as_deref().map(|u| sysctl::run(&["is-active", u]) == "active")
+}
+
+fn page_concierge(subject: &str, body: &str) -> bool {
+    use std::io::Write;
+    let Ok(mut child) = spira_config::bounded::bounded("mail")
+        .args(["send", "concierge", "--from", "world <world@spira>", "--subject", subject, "--kind", "alert"])
+        .env("SPIRA_MAIL_LINT_CONSIDERED", "1")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(body.as_bytes());
+    }
+    child.wait().map(|s| s.success()).unwrap_or(false)
+}
+
+fn drain_check_and_page() -> spira_world::drain::Outcome {
+    let stragglers = live_beads();
+    spira_world::drain::check(&drain_stamp_or_die(), now_epoch(), owner_alive, &stragglers, page_concierge)
+}
+
+fn cmd_drain_check() -> i32 {
+    use spira_world::drain::Outcome;
+    match drain_check_and_page() {
+        Outcome::PageFailed => {
+            eprintln!("spira: drain-check could not page the concierge — will retry");
+            1
+        }
+        Outcome::PagedCap => {
+            println!("spira: drain past its cap — paged; the drain stays in force");
+            0
+        }
+        Outcome::PagedOrphan => {
+            println!("spira: drain owner is gone — reported as orphaned; the drain stays in force");
+            0
+        }
+        Outcome::Quiet | Outcome::NotDraining => 0,
+    }
+}
+
 fn cmd_resume() -> i32 {
     let _ = std::fs::remove_file(spira_world::reboot_marker().unwrap_or_else(|e| die(&e)));
+    let _ = std::fs::remove_file(spira_world::drain::paged_marker(&drain_stamp_or_die()));
     if drain_stamp_or_die().is_file() {
         let _ = std::fs::remove_file(drain_stamp_or_die());
         println!("spira: summons resumed");
@@ -868,6 +954,13 @@ fn cmd_status() -> i32 {
         if let Some(l2) = lines.next() {
             println!("{l2}");
         }
+        let d = spira_world::drain::Drain::parse(&text);
+        let alive = match owner_alive(&d) {
+            Some(true) => " (alive)",
+            Some(false) => " (DEAD — orphaned drain; still in force)",
+            None => "",
+        };
+        println!("  {}{alive}", d.describe(now_epoch()));
     }
     if spira_world::reboot_marker().unwrap_or_else(|e| die(&e)).is_file() {
         println!("spira: REBOOT-DRAIN — drained for a planned reboot; lift with: cockpit.sh resume");
@@ -976,6 +1069,7 @@ fn main() {
         "start" => cmd_start(rest),
         "drain" => cmd_drain(rest),
         "resume" => cmd_resume(),
+        "drain-check" => cmd_drain_check(),
         "pause" => cmd_pause(rest),
         "unpause" => cmd_unpause(rest),
         "status" => cmd_status(),

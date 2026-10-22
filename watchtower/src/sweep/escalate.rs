@@ -21,6 +21,7 @@ fn num(env_val: &str) -> Option<i64> {
 pub fn run(d: &SweepData, cfg: &Cfg) {
     failed_units_escalation(d, cfg);
     drain_escalation(d, cfg);
+    drain_check(d);
     sending_oldest_unsent(d, cfg);
     unadopted_refs(d, cfg);
     hotfix(d, cfg);
@@ -92,6 +93,18 @@ fn failed_units_escalation(d: &SweepData, cfg: &Cfg) {
         new_rows.push(row);
     }
     failed_units::write_state_file(&state_path, &new_rows);
+}
+
+/// The drain's own cap and owner-liveness checks live in `world drain-check`, which pages
+/// the Concierge once per condition and never lifts the drain.
+fn drain_check(d: &SweepData) {
+    if !matches!(d.drain, super::collect::Drain::Draining { .. }) {
+        return;
+    }
+    match spira_config::bounded::bounded("world").arg("drain-check").output() {
+        Ok(o) if o.status.success() => {}
+        _ => log("watchtower: `world drain-check` failed — the drain's cap and owner were not checked"),
+    }
 }
 
 fn drain_escalation(d: &SweepData, cfg: &Cfg) {

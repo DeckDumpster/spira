@@ -181,50 +181,18 @@ fn which(name: &str, path: &str) -> Option<String> {
 
 impl<'a> Sentinel<'a> {
     /// world_gate <fayth> <log-prefix> -> true if summons are permitted, false if halted or
-    /// draining (lib.sh:1102). HALTED is indefinite, checked first; DRAINING expires — a
-    /// stamp with no `expires` line of its own expires at its own mtime + `drain_ttl`, so a
-    /// drain nobody resumed cannot wedge the loop forever. Lifting an expired drain is
-    /// LOUD, never silent: a quiet lift would hide the forgotten resume, which is the
-    /// defect worth seeing.
+    /// draining (lib.sh:1102). Both stamps hold until `world.sh start` / `resume`: no clock
+    /// lifts either, whatever the stamp's age or contents.
     pub fn world_gate(&self, f: &str, prefix: &str) -> bool {
         if self.cfg.run.join("world.halted").is_file() {
             self.log(&format!("{prefix} {f}: halted — not summoning (world.sh start to lift)"));
             return false;
         }
-        let dstamp = self.cfg.run.join("world.draining");
-        let Ok(meta) = std::fs::metadata(&dstamp) else {
-            return true;
-        };
-        let text = std::fs::read_to_string(&dstamp).unwrap_or_default();
-        if text.lines().any(|l| l == "holds until resume") {
+        if self.cfg.run.join("world.draining").is_file() {
             self.log(&format!("{prefix} {f}: draining — not summoning (world.sh resume to lift)"));
             return false;
         }
-        let declared = text
-            .lines()
-            .find_map(|l| l.strip_prefix("expires "))
-            .and_then(|v| v.trim().parse::<i64>().ok());
-        let exp = declared.unwrap_or_else(|| {
-            let mtime = meta
-                .modified()
-                .ok()
-                .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
-            mtime + self.cfg.drain_ttl
-        });
-        if self.h.now() >= exp {
-            let _ = std::fs::remove_file(&dstamp);
-            self.log(&format!(
-                "{prefix} {f}: DRAIN EXPIRED — lifting a drain nobody resumed (deadline {}, TTL {}s). Whoever drained did not resume; summons are live again.",
-                crate::host::utc(exp),
-                self.cfg.drain_ttl
-            ));
-            true
-        } else {
-            self.log(&format!("{prefix} {f}: draining — not summoning (world.sh resume to lift)"));
-            false
-        }
+        true
     }
 
     /// `sentinel --world-gate <fayth> <prefix>`: lib.sh's `world_gate` shim target, for
