@@ -29,6 +29,7 @@ fn http(addr: &str, req: &str) -> String {
 }
 
 fn start() -> Option<(Vm, String)> {
+    std::env::var_os("SPIRA_VM_CONTAINER_TEST")?;
     let image = std::env::var("SPIRA_VM_IMAGE").unwrap_or_else(|_| IMAGE.into());
     let name = format!("tsd-vm-{}", std::process::id());
     let out = Command::new("podman").args(["run", "-d", "--rm", "--name", &name, "-p", "127.0.0.1::8428", &image, "-retentionPeriod=1d", "-search.latencyOffset=0s"]).output().ok()?;
@@ -56,7 +57,7 @@ fn row(ts: &str, fields: &[(&str, Value)]) -> String {
 #[test]
 fn rows_pushed_to_a_real_store_read_back_as_the_same_rows() {
     let Some((_vm, addr)) = start() else {
-        eprintln!("skipped: no container runtime for {IMAGE}");
+        eprintln!("skipped: set SPIRA_VM_CONTAINER_TEST to run against a container ({IMAGE})");
         return;
     };
     scenario(&addr);
