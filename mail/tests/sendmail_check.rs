@@ -68,18 +68,19 @@ fn a_mailbox_without_its_subdirectories_fails_naming_mailbox() {
     assert!(err.contains("mailbox"), "{err}");
 }
 
-fn chmod(mode: &str, p: &Path) {
-    assert!(std::process::Command::new("chmod").arg(mode).arg(p).status().unwrap().success());
+fn chmod(mode: u32, p: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(p, fs::Permissions::from_mode(mode)).unwrap();
 }
 
 #[test]
 fn an_unwritable_tmp_fails_naming_mailbox() {
     let fx = healthy();
     let tmp = fx.mail.join("concierge").join("tmp");
-    chmod("555", &tmp);
+    chmod(0o555, &tmp);
     let writable_anyway = fs::write(tmp.join(".probe"), "").is_ok();
     let (ok, err) = check(&fx, None);
-    chmod("755", &tmp);
+    chmod(0o755, &tmp);
     if writable_anyway {
         return;
     }
