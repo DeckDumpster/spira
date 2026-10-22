@@ -1462,12 +1462,15 @@ impl AmiWait {
             return false;
         }
         let Ok(home) = resolve(w, label, Some(&c.s.home_repo)) else {
+            w.out(format!("queue.sh {label}: not waiting for a round AMI: cannot resolve {}", c.s.home_repo));
             return false;
         };
         let Some(home_path) = home.r.path.clone() else {
+            w.out(format!("queue.sh {label}: not waiting for a round AMI: {} has no path", c.s.home_repo));
             return false;
         };
         let Some(running) = w.forge.ami_runs(&c.s.forge, &home_path) else {
+            w.out(format!("queue.sh {label}: not waiting for a round AMI: the forge cannot be read for its runs"));
             return false;
         };
         if let Some(run) = running.first() {
@@ -1481,6 +1484,7 @@ impl AmiWait {
                 .forge
                 .ami_dispatch(&c.s.forge, &home_path, ref_branch(land))
             {
+                w.out(format!("queue.sh {label}: the forge refused the Round AMI build on {land}"));
                 return false;
             }
             self.triggered = true;

@@ -2239,7 +2239,12 @@ pub fn round_certify(env: &Env, repo: &Repo, batch: &str, attest: Option<(&str, 
     if run.code == Some(0) {
         Ok(())
     } else {
-        Err(verb_failed("queue round certify", &run))
+        let failed = verb_failed("queue round certify", &run);
+        Err(if run.err.contains(crate::pace::STALE_AMI_MARKER) {
+            format!("{}: {failed}", crate::pace::STALE_AMI_MARKER)
+        } else {
+            failed
+        })
     }
 }
 
