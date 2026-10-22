@@ -312,4 +312,24 @@ wt_drift_check "$REPO" "$UNITDIR" >/dev/null
 is "halted world: no incident filed" "" "$(inc_calls)"
 rm -f "$TMP/run/world.halted" "$REPO/spira/test-stray.sh"
 
+# A CHECKOUT HALF THAT CANNOT RUN MUST RAISE AN INCIDENT, NOT LOG FOREVER.
+wt_drift_blind() {
+    tl_config SPIRA_RUN="$TMP/run"
+    env -i PATH="$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
+        SPIRA_INCIDENT_SH="$MOCK_INC" watchtower --drift-check 2>&1
+}
+rm -rf "$TMP/run/conditions"; rm -f "$TMP/inc-calls"
+wt_drift_blind >/dev/null; wt_drift_blind >/dev/null
+is "SPIRA_REPO and SPIRA_RELEASE unset: two runs file nothing yet" "" "$(inc_calls)"
+wt_drift_blind >/dev/null
+want "SPIRA_REPO and SPIRA_RELEASE unset: third run files an incident" "incident:drift-unreadable-checkout" "$(inc_calls)"
+
+mkdir -p "$TMP/release"
+rm -rf "$TMP/run/conditions"; rm -f "$TMP/inc-calls"
+for _ in 1 2 3 4; do
+    env -i PATH="$PATH" HOME="$TMP/home" SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" \
+        SPIRA_RELEASE="$TMP/release" SPIRA_INCIDENT_SH="$MOCK_INC" watchtower --drift-check >/dev/null 2>&1
+done
+is "release directory: checkout half retired, no incident" "" "$(inc_calls)"
+
 tl_summary

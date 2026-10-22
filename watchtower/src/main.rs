@@ -479,10 +479,11 @@ fn main() {
             }
             drift::run(
                 &spira_home(),
-                &getenv("SPIRA_REPO").unwrap_or_default(),
+                &drift::checkout_target(getenv("SPIRA_REPO"), getenv("SPIRA_RELEASE")).unwrap_or_default(),
                 &reg("SPIRA_DB"),
                 &reg("SPIRA_HOME_REPO"),
                 &resolved_incident_sh(),
+                &run,
             );
         }
         Some(other) => {
