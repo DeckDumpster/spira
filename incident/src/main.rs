@@ -433,12 +433,14 @@ fn cmd_alarm(env: &Env, title: &str) -> ExitCode {
         return ExitCode::FAILURE;
     };
     let state_path = env.spira_run_path("incident-alarms.tsv");
+    let was_due = std::cell::Cell::new(false);
     let noted = with_incident_lock(&env.lock_path, env.lock_wait_s, || {
         let state = std::fs::read_to_string(&state_path).unwrap_or_default();
         let (due, next) = incident::alarm::decide(&state, &reference, now_epoch());
         if !due {
             return true;
         }
+        was_due.set(true);
         if let Some(parent) = std::path::Path::new(&inbox).parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -450,6 +452,7 @@ fn cmd_alarm(env: &Env, title: &str) -> ExitCode {
         wrote.is_ok() && std::fs::write(&state_path, next).is_ok()
     });
     if noted == Some(true) {
+        println!("{}", if was_due.get() { "noted" } else { "deduped" });
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE

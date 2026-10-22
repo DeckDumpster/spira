@@ -226,8 +226,12 @@ fn batched_stranded(d: &SweepData, cfg: &Cfg) {
         .priority(1)
         .reference("incident:sending-batched-stranded")
         .cause("batched-stranded");
-    incident::alarm(inc, &f);
-    log(&format!("watchtower: batched-stranded escalation filed ({n} stranded)"));
+    let outcome = match incident::alarm_outcome(inc, &f) {
+        incident::AlarmOutcome::Noted => "noted in the Concierge inbox",
+        incident::AlarmOutcome::Deduped => "deduped (already noted within the reminder interval)",
+        incident::AlarmOutcome::Failed => "NOT filed (incident alarm failed)",
+    };
+    log(&format!("watchtower: batched-stranded escalation {outcome} ({n} stranded: {names})"));
 }
 
 fn batched_too_long(d: &SweepData, cfg: &Cfg) {
