@@ -81,8 +81,11 @@ pub trait Host: Sync {
     fn is_checkout(&self, tree: &Path) -> bool;
     /// (commit sha, tree sha) of `tree`'s HEAD.
     fn head(&self, tree: &Path) -> Result<(String, String), String>;
-    /// Points the mirror at `tree`'s HEAD and makes sure the daemon serving it is up.
-    fn prepare_mirror(&self, tree: &Path) -> Result<(), String>;
+    /// Publishes `tree`'s HEAD in the mirror as `round_ref` (one ref per run, never a shared
+    /// HEAD) and makes sure the daemon serving it is up.
+    fn prepare_mirror(&self, tree: &Path, round_ref: &str) -> Result<(), String>;
+    /// Deletes `round_ref` from the mirror once its run is over.
+    fn drop_round_ref(&self, round_ref: &str);
     /// The testenv image tag `commit` of `tree` needs, computed without a checkout.
     fn image_tag(&self, tree: &Path, commit: &str) -> Result<String, String>;
     /// Fetches `branch` of `tree`'s repository into the mirror as `refs/heads/<as_ref>`.
@@ -129,6 +132,9 @@ pub struct BatchJob {
     /// The head's image tag differs from what the template (or the landing ref) holds: the VM
     /// builds `localhost/spira-testenv:<tag>` as a declared setup step instead of refusing it.
     pub build_image: bool,
+    /// The mirror ref holding this run's tree, and the commit it must resolve to.
+    pub round_ref: String,
+    pub round_sha: String,
     /// Set: the VM runs [`FOREIGN_SCRIPT`] with this command rather than the harness round.
     pub ci_entry: Option<String>,
 }
@@ -151,15 +157,22 @@ pub fn shell_quote(s: &str) -> String {
 }
 
 /// The VM side of a round for a registered repository that is not the harness: clone the round's
-/// tree and run the repository's own CI entry point (`${13}`). Its exit status is the one verdict,
+/// tree and run the repository's own CI entry point (`${15}`). Its exit status is the one verdict,
 /// written as `ci.result`, so the round covers what CI covers by construction.
 pub const FOREIGN_SCRIPT: &str = r#"set -euo pipefail
-host_addr="$1" port="$2" entry="${13}"
+host_addr="$1" port="$2" round_ref="${13}" round_sha="${14}" entry="${15}"
 export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 rm -rf ~/round-bins ~/round-work ~/round-setup.log
 exec 2> >(tee ~/round-setup.log >&2)
 exec 1>&2
-git clone --quiet "git://${host_addr}:${port}/mirror.git" ~/round-work
+git clone --quiet --no-checkout "git://${host_addr}:${port}/mirror.git" ~/round-work
+git -C ~/round-work fetch --quiet origin "$round_ref"
+git -C ~/round-work checkout --quiet --force --detach FETCH_HEAD
+got="$(git -C ~/round-work rev-parse HEAD)"
+if [ "$got" != "$round_sha" ]; then
+    echo "round-vm: checked out $got from $round_ref, expected the round's commit $round_sha" >&2
+    exit 2
+fi
 cd ~/round-work
 res="$HOME/round-work/.runtime/spira/batch-results"
 mkdir -p "$res"
@@ -182,7 +195,7 @@ printf '%s %s %s - - - %s\n' "$status" 1 "$(( $(date +%s) - t0 ))" "$rc" > "$res
 /// build is incremental on the one just made) and stages `target/release`'s executables
 /// into `~/round-bins/` so the host pulls the binaries and not cargo's target directory.
 pub const REMOTE_SCRIPT: &str = r#"set -euo pipefail
-host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" cap="$9" post_guard="${10}" lint="${11}" build_image="${12}"
+host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" cap="$9" post_guard="${10}" lint="${11}" build_image="${12}" round_ref="${13}" round_sha="${14}"
 t_start=$(date +%s)
 export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 if ! command -v cargo >/dev/null 2>&1; then
@@ -192,16 +205,25 @@ fi
 rm -rf ~/round-bins ~/round-launcher.env ~/round-setup.log
 exec 2> >(tee ~/round-setup.log >&2)
 mirror="git://${host_addr}:${port}/mirror.git"
+checkout_round() {
+    git -C ~/round-work fetch --quiet origin "$round_ref" \
+        && git -C ~/round-work checkout --quiet --force -B round FETCH_HEAD
+}
 if [ -d ~/round-work/.git ] \
     && git -C ~/round-work remote set-url origin "$mirror" \
     && git -C ~/round-work fetch --quiet --prune origin \
-    && git -C ~/round-work remote set-head origin --auto >/dev/null \
-    && git -C ~/round-work reset --quiet --hard origin/HEAD \
+    && checkout_round \
     && git -C ~/round-work clean --quiet -fdx -e /target; then
     :
 else
     rm -rf ~/round-work
-    git clone --quiet "$mirror" ~/round-work
+    git clone --quiet --no-checkout "$mirror" ~/round-work
+    checkout_round
+fi
+got="$(git -C ~/round-work rev-parse HEAD)"
+if [ "$got" != "$round_sha" ]; then
+    echo "round-vm: checked out $got from $round_ref, expected the round's commit $round_sha" >&2
+    exit 2
 fi
 cd ~/round-work
 nix_bin=/nix/var/nix/profiles/default/bin
@@ -626,6 +648,8 @@ pub fn remote_command(job: &BatchJob) -> String {
         if job.lint { "1" } else { "" }.to_string(),
         if job.build_image { "1" } else { "" }.to_string(),
     ];
+    args.push(job.round_ref.clone());
+    args.push(job.round_sha.clone());
     args.extend(job.ci_entry.clone());
     let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
     format!("bash -s -- {}", quoted.join(" "))
@@ -840,7 +864,7 @@ impl Host for GitHost {
         crate::lpt::parse_medians(&String::from_utf8_lossy(&o.stdout))
     }
 
-    fn prepare_mirror(&self, tree: &Path) -> Result<(), String> {
+    fn prepare_mirror(&self, tree: &Path, round_ref: &str) -> Result<(), String> {
         if self.listen.is_empty() {
             return Err("no listen address for the mirror daemon (SPIRA_ROUND_VM_HOST_ADDR)".into());
         }
@@ -861,8 +885,7 @@ impl Host for GitHost {
         if !mirror.is_dir() {
             git(&["init", "--quiet", "--bare", &m])?;
         }
-        git(&["--git-dir", &m, "fetch", "--quiet", &tree.to_string_lossy(), "+HEAD:refs/heads/round"])?;
-        git(&["--git-dir", &m, "symbolic-ref", "HEAD", "refs/heads/round"])?;
+        git(&["--git-dir", &m, "fetch", "--quiet", &tree.to_string_lossy(), &format!("+HEAD:{round_ref}")])?;
 
         let pidfile = self.state_dir.join("git-daemon.pid");
         let running = |p: &Path| fs::read_to_string(p).ok().and_then(|s| s.trim().parse().ok()).map(pid_alive).unwrap_or(false);
@@ -899,6 +922,11 @@ impl Host for GitHost {
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
         Err(format!("git daemon did not start on port {} (exit {:?})", self.mirror_port, st.code()))
+    }
+
+    fn drop_round_ref(&self, round_ref: &str) {
+        let m = self.state_dir.join("mirror.git").to_string_lossy().to_string();
+        let _ = git(&["--git-dir", &m, "update-ref", "-d", round_ref]);
     }
 
     fn mirror_ref(&self, tree: &Path, branch: &str, as_ref: &str) -> Result<(), String> {
@@ -1217,6 +1245,17 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
     }
 }
 
+struct RoundRef<'a> {
+    host: &'a dyn Host,
+    name: &'a str,
+}
+
+impl Drop for RoundRef<'_> {
+    fn drop(&mut self) {
+        self.host.drop_round_ref(self.name);
+    }
+}
+
 fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
     let cfg = env.cfg;
     if !env.host.is_checkout(&args.tree_dir) {
@@ -1264,7 +1303,9 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
     } else {
         args
     };
-    if let Err(e) = env.host.prepare_mirror(&args.tree_dir) {
+    let round_ref = format!("refs/rounds/{}-{commit_sha}", std::process::id());
+    let _round_ref = RoundRef { host: env.host, name: &round_ref };
+    if let Err(e) = env.host.prepare_mirror(&args.tree_dir, &round_ref) {
         eprintln!("round-vm run: cannot prepare the mirror from {}: {e}", args.tree_dir.display());
         return 2;
     }
@@ -1358,7 +1399,7 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
         host_addr
     };
     let keep = AtomicBool::new(false);
-    let code = on_vm(env, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, progress, results_dir, &keep);
+    let code = on_vm(env, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, &round_ref, progress, results_dir, &keep);
     if keep.load(Ordering::SeqCst) {
         let pulled = fs::read_dir(&args.results_dir.clone().unwrap_or_else(|| cfg.run_dir.join("batch-results"))).map(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "result")).count()).unwrap_or(0);
         eprintln!("round-vm run: INCOMPLETE: {pulled} results pulled; results not fully pulled; keeping VM {} at {} for a re-pull (release it with `round-vm release {}`)", vm.handle, vm.addr, vm.handle);
@@ -1434,9 +1475,9 @@ fn pool_detail(state_file: &Path) -> Option<String> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &str, commit_sha: &str, tree_sha: &str, build_image: bool, progress: crate::progress::Progress, results_dir: PathBuf, keep: &AtomicBool) -> i32 {
+fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &str, commit_sha: &str, tree_sha: &str, build_image: bool, round_ref: &str, progress: crate::progress::Progress, results_dir: PathBuf, keep: &AtomicBool) -> i32 {
     let watch = crate::load::Watch::start(&vm.handle);
-    let rc = on_vm_run(env, args, vm, mode, host_addr, commit_sha, tree_sha, build_image, progress, results_dir, keep);
+    let rc = on_vm_run(env, args, vm, mode, host_addr, commit_sha, tree_sha, build_image, round_ref, progress, results_dir, keep);
     watch.finish();
     rc
 }
@@ -1451,6 +1492,7 @@ fn on_vm_run(
     commit_sha: &str,
     tree_sha: &str,
     build_image: bool,
+    round_ref: &str,
     mut progress: crate::progress::Progress,
     results_dir: PathBuf,
     keep: &AtomicBool,
@@ -1485,6 +1527,8 @@ fn on_vm_run(
         post_guard_secs: cfg.post_guard_secs,
         lint: args.base.is_some() && args.ci_entry.is_none(),
         build_image,
+        round_ref: round_ref.to_string(),
+        round_sha: commit_sha.to_string(),
         ci_entry: args.ci_entry.clone(),
     };
     let t0 = Instant::now();
@@ -2123,7 +2167,9 @@ mod tests {
     #[test]
     fn the_round_tree_is_fetched_into_a_kept_tree_and_only_cloned_when_that_fails() {
         let fetch = REMOTE_SCRIPT.find("fetch --quiet --prune origin").expect("fetches into the kept tree");
-        let reset = REMOTE_SCRIPT.find("reset --quiet --hard origin/HEAD").unwrap();
+        let reset = REMOTE_SCRIPT.find("&& checkout_round").unwrap();
+        assert!(REMOTE_SCRIPT.contains("checkout --quiet --force -B round FETCH_HEAD"), "testenv runs the branch `round`; a detached HEAD leaves it on the image's old commit");
+        assert!(!REMOTE_SCRIPT.contains("origin/HEAD"), "the mirror's HEAD is shared and never read");
         let clean = REMOTE_SCRIPT.find("clean --quiet -fdx -e /target").expect("the clean spares the warm target");
         let clone = REMOTE_SCRIPT.find("git clone").unwrap();
         assert!(fetch < reset && reset < clean && clean < clone);
@@ -2258,17 +2304,29 @@ mod tests {
         assert!(parse_run_args(&["/t".into()]).unwrap().base.is_none());
     }
 
+    fn git_out(dir: &Path, a: &[&str]) -> String {
+        let o = std::process::Command::new("git").arg("-C").arg(dir).args(a).output().unwrap();
+        assert!(o.status.success(), "{a:?}");
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    }
+
     fn foreign_run(entry: &str) -> (std::process::Output, String) {
+        foreign_run_expecting(entry, None)
+    }
+
+    fn foreign_run_expecting(entry: &str, expect: Option<&str>) -> (std::process::Output, String) {
         let home = TempDir::new();
         let src = home.path().join("src");
         fs::create_dir_all(&src).unwrap();
         for a in [&["init", "-q"][..], &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"]] {
             assert!(std::process::Command::new("git").arg("-C").arg(&src).args(a).status().unwrap().success());
         }
+        git_out(&src, &["update-ref", "refs/rounds/t", "HEAD"]);
+        let sha = expect.map(str::to_string).unwrap_or_else(|| git_out(&src, &["rev-parse", "HEAD"]));
         let script = FOREIGN_SCRIPT.replace("\"git://${host_addr}:${port}/mirror.git\"", &format!("'{}'", src.display()));
         assert_ne!(script, FOREIGN_SCRIPT);
         let out = std::process::Command::new("bash")
-            .args(["-c", &script, "x", "h", "1", "", "", "", "", "", "", "", "", "", "", entry])
+            .args(["-c", &script, "x", "h", "1", "", "", "", "", "", "", "", "", "", "", "refs/rounds/t", &sha, entry])
             .env_clear()
             .env("HOME", home.path())
             .env("PATH", std::env::var("PATH").unwrap())
@@ -2276,8 +2334,19 @@ mod tests {
             .unwrap();
         let res = home.path().join("round-work/.runtime/spira/batch-results");
         let verdict = fs::read_to_string(res.join("ci.result")).unwrap_or_default();
-        assert!(fs::read_to_string(res.join("batch.meta")).unwrap().starts_with("tree="));
         (out, verdict)
+    }
+
+    #[test]
+    fn the_foreign_script_checks_out_the_round_commit_and_refuses_another_naming_both() {
+        let (out, _) = foreign_run("exit 0");
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        let other = "0123456789012345678901234567890123456789";
+        let (out, verdict) = foreign_run_expecting("exit 0", Some(other));
+        assert_eq!(out.status.code(), Some(2));
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains(other) && err.contains("expected the round's commit"), "{err}");
+        assert!(verdict.is_empty());
     }
 
     #[test]
@@ -2306,9 +2375,11 @@ mod tests {
             post_guard_secs: 600,
             lint: false,
             build_image: false,
+            round_ref: "refs/rounds/7-abc".into(),
+            round_sha: "abc".into(),
             ci_entry: Some("deploy/ci.sh all".into()),
         });
-        assert_eq!(cmd, "bash -s -- '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'deploy/ci.sh all'");
+        assert_eq!(cmd, "bash -s -- '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all'");
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -2342,7 +2413,7 @@ mod tests {
             .arg("round-vm-test")
             .args(["host", "9430", "", "16", ""])
             .arg(&cache_home)
-            .args(["", "60", "900", "600", "", ""])
+            .args(["", "60", "900", "600", "", "", "refs/rounds/t", "abc"])
             .env("PATH", "/usr/bin:/bin")
             .env("HOME", "/nonexistent-home")
             .output()
@@ -2477,6 +2548,57 @@ mod tests {
         }
     }
 
+    const RR: &str = "refs/rounds/t";
+
+    #[test]
+    fn a_kept_tree_with_an_old_round_branch_is_moved_to_the_round_commit() {
+        let d = TempDir::new();
+        let (src, kept) = (d.path().join("src"), d.path().join("kept"));
+        fs::create_dir_all(&src).unwrap();
+        let commit = |m: &str| {
+            for a in [&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", m][..]] {
+                assert!(std::process::Command::new("git").arg("-C").arg(&src).args(a).status().unwrap().success());
+            }
+        };
+        assert!(std::process::Command::new("git").arg("-C").arg(&src).args(["init", "-q", "-b", "round"]).status().unwrap().success());
+        commit("old");
+        assert!(std::process::Command::new("git").args(["clone", "-q"]).arg(&src).arg(&kept).status().unwrap().success());
+        commit("new");
+        git_out(&src, &["update-ref", "refs/rounds/t", "HEAD"]);
+        let want = git_out(&src, &["rev-parse", "HEAD"]);
+        let line = REMOTE_SCRIPT.lines().find(|l| l.contains("checkout --quiet --force -B round FETCH_HEAD")).expect("the kept-tree checkout");
+        let script = format!("set -e\ngit -C \"$K\" fetch --quiet \"$S\" refs/rounds/t\ngit -C \"$K\" {}", line.trim().trim_start_matches("&& git -C ~/round-work").trim_end_matches('}').trim());
+        let out = std::process::Command::new("bash").args(["-c", &script]).env("K", &kept).env("S", &src).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(git_out(&kept, &["rev-parse", "round"]), want, "testenv's branch is the round's commit");
+        assert_eq!(git_out(&kept, &["rev-parse", "HEAD"]), want);
+    }
+
+    #[test]
+    fn two_repos_prepared_back_to_back_each_keep_their_own_ref_and_it_is_pruned() {
+        let d = TempDir::new();
+        let mk = |name: &str| {
+            let t = d.path().join(name);
+            fs::create_dir_all(&t).unwrap();
+            for a in [vec!["init", "--quiet"], vec!["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "--allow-empty", "-m", name]] {
+                assert!(std::process::Command::new("git").arg("-C").arg(&t).args(&a).status().unwrap().success());
+            }
+            t
+        };
+        let (a, b) = (mk("a"), mk("b"));
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let state = d.path().join("state");
+        let host = GitHost { state_dir: state.clone(), mirror_port: port, listen: "127.0.0.1".into(), also_listen: vec![] };
+        host.prepare_mirror(&a, "refs/rounds/1-a").unwrap();
+        host.prepare_mirror(&b, "refs/rounds/2-b").unwrap();
+        let m = state.join("mirror.git");
+        assert_eq!(git_out(&m, &["rev-parse", "refs/rounds/1-a"]), git_out(&a, &["rev-parse", "HEAD"]));
+        assert_eq!(git_out(&m, &["rev-parse", "refs/rounds/2-b"]), git_out(&b, &["rev-parse", "HEAD"]));
+        host.drop_round_ref("refs/rounds/1-a");
+        assert_eq!(git_out(&m, &["for-each-ref", "--format=%(refname)", "refs/rounds"]), "refs/rounds/2-b");
+        stop_mirror(&state).unwrap();
+    }
+
     #[test]
     fn a_real_mirror_daemon_listens_where_told_and_teardown_closes_it() {
         let d = TempDir::new();
@@ -2488,20 +2610,20 @@ mod tests {
         let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let state = d.path().join("state");
         let no_addr = GitHost { state_dir: state.clone(), mirror_port: port, listen: String::new(), also_listen: vec![] };
-        assert!(no_addr.prepare_mirror(&tree).is_err(), "no address means no daemon, never every interface");
+        assert!(no_addr.prepare_mirror(&tree, RR).is_err(), "no address means no daemon, never every interface");
         let host = GitHost { state_dir: state.clone(), mirror_port: port, listen: "127.0.0.1".into(), also_listen: vec![] };
-        host.prepare_mirror(&tree).unwrap();
+        host.prepare_mirror(&tree, RR).unwrap();
         assert!(accepts("127.0.0.1", port), "daemon not listening");
         let old_pid = fs::read_to_string(state.join("git-daemon.pid")).unwrap();
-        host.prepare_mirror(&tree).unwrap();
+        host.prepare_mirror(&tree, RR).unwrap();
         assert_eq!(old_pid, fs::read_to_string(state.join("git-daemon.pid")).unwrap(), "a daemon on the right address is kept");
         fs::write(state.join("git-daemon.addr"), "192.0.2.1").unwrap();
-        host.prepare_mirror(&tree).unwrap();
+        host.prepare_mirror(&tree, RR).unwrap();
         assert_ne!(old_pid, fs::read_to_string(state.join("git-daemon.pid")).unwrap(), "a daemon recorded on another address is restarted");
         assert_eq!(fs::read_to_string(state.join("git-daemon.addr")).unwrap(), "127.0.0.1");
         assert!(accepts("127.0.0.1", port));
         let foreign = GitHost { state_dir: state.clone(), mirror_port: port, listen: "192.0.2.1".into(), also_listen: vec![] };
-        let e = foreign.prepare_mirror(&tree).unwrap_err();
+        let e = foreign.prepare_mirror(&tree, RR).unwrap_err();
         assert!(e.contains("not an address of this host") && e.contains("set it to auto"), "{e}");
         stop_mirror(&state).unwrap();
         assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err(), "listener survived teardown");
@@ -2522,10 +2644,10 @@ mod tests {
         let two = GitHost { state_dir: state.clone(), mirror_port: port, listen: "192.0.2.1".into(), also_listen: vec!["127.0.0.1".into()] };
         assert_eq!(two.listen_set(), vec!["192.0.2.1", "127.0.0.1"]);
         let bad = GitHost { state_dir: state.clone(), mirror_port: port, listen: "127.0.0.1".into(), also_listen: vec!["192.0.2.1".into()] };
-        let e = bad.prepare_mirror(&tree).unwrap_err();
+        let e = bad.prepare_mirror(&tree, RR).unwrap_err();
         assert!(e.starts_with("192.0.2.1 is not an address of this host"), "{e}");
         let loopback2 = GitHost { state_dir: state.clone(), mirror_port: port, listen: "127.0.0.1".into(), also_listen: vec!["127.0.0.2".into()] };
-        let r = loopback2.prepare_mirror(&tree);
+        let r = loopback2.prepare_mirror(&tree, RR);
         if r.is_ok() {
             assert!(accepts("127.0.0.2", port), "second address not listening");
             assert!(accepts("127.0.0.1", port));
@@ -2542,9 +2664,10 @@ mod tests {
         fn head(&self, _: &Path) -> Result<(String, String), String> {
             Ok(("commitsha".into(), "treesha".into()))
         }
-        fn prepare_mirror(&self, _: &Path) -> Result<(), String> {
+        fn prepare_mirror(&self, _: &Path, _: &str) -> Result<(), String> {
             Ok(())
         }
+        fn drop_round_ref(&self, _: &str) {}
         fn image_tag(&self, tree: &Path, rev: &str) -> Result<String, String> {
             if rev == "main" { Ok("tagA".into()) } else if tree.ends_with("tag-unreadable") { Err("no closure".into()) } else if tree.ends_with("newer-image") { Ok("tagB".into()) } else { Ok("tagA".into()) }
         }
@@ -2899,10 +3022,10 @@ mod tests {
         record_template(&mut fx, "130", "localhost/spira-testenv:tagA", "130");
         let remote = FakeRemote::green();
         assert_eq!(go(&fx, &remote, &newer_tree(&fx)), 0);
-        assert!(remote.jobs.lock().unwrap()[0].ends_with("'180' '1234' '77' '' '1'"), "declared: {:?}", remote.jobs.lock().unwrap());
+        assert!(remote.jobs.lock().unwrap()[0].contains("'180' '1234' '77' '' '1' 'refs/rounds/"), "declared: {:?}", remote.jobs.lock().unwrap());
         let remote = FakeRemote::green();
         assert_eq!(go(&fx, &remote, &tree(&fx)), 0);
-        assert!(remote.jobs.lock().unwrap()[0].ends_with("'180' '1234' '77' '' ''"), "no image change, no build: {:?}", remote.jobs.lock().unwrap());
+        assert!(remote.jobs.lock().unwrap()[0].contains("'180' '1234' '77' '' '' 'refs/rounds/"), "no image change, no build: {:?}", remote.jobs.lock().unwrap());
     }
 
     #[test]
@@ -2912,12 +3035,12 @@ mod tests {
         let mut a = tree(&fx);
         a.base = Some("main".into());
         assert_eq!(go(&fx, &remote, &a), 0);
-        assert!(remote.jobs.lock().unwrap()[0].ends_with("'1' ''"), "same tag as base: {:?}", remote.jobs.lock().unwrap());
+        assert!(remote.jobs.lock().unwrap()[0].contains("'1' '' 'refs/rounds/"), "same tag as base: {:?}", remote.jobs.lock().unwrap());
         let remote = FakeRemote::green();
         let mut a = newer_tree(&fx);
         a.base = Some("main".into());
         assert_eq!(go(&fx, &remote, &a), 0);
-        assert!(remote.jobs.lock().unwrap()[0].ends_with("'1' '1'"), "newer tag than base: {:?}", remote.jobs.lock().unwrap());
+        assert!(remote.jobs.lock().unwrap()[0].contains("'1' '1' 'refs/rounds/"), "newer tag than base: {:?}", remote.jobs.lock().unwrap());
     }
 
     #[test]
@@ -3030,7 +3153,7 @@ mod tests {
         // path-ok: a test asserting where round-vm installs a fixture binary in a temp worktree
         assert!(tree(&fx).tree_dir.join("target/release/batcher").is_file(), "installed into the round worktree");
         assert!(fs::read_to_string(fx.cfg.run_dir.join("tsd/suite.jsonl")).unwrap().contains("\"ran_on\":\"100\""));
-        assert!(remote.jobs.lock().unwrap()[0].ends_with("'test-slow.sh,test-fast.sh' '24' '' '/opt/spira/cargo' '' '180' '1234' '77' '' ''"), "{:?}", remote.jobs.lock().unwrap());
+        assert!(remote.jobs.lock().unwrap()[0].contains("'test-slow.sh,test-fast.sh' '24' '' '/opt/spira/cargo' '' '180' '1234' '77' '' '' 'refs/rounds/"), "{:?}", remote.jobs.lock().unwrap());
     }
 
     #[test]
