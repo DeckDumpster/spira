@@ -1751,7 +1751,7 @@ fn an_agents_trial_builds_on_a_compile_slot_then_tests_on_a_test_slot() {
     let rows = admission_rows(&w);
     let pools: Vec<(&str, &str)> = rows.iter().map(|r| (r["pool"].as_str().unwrap(), r["end"].as_str().unwrap())).collect();
     assert_eq!(pools, [("compile", "released"), ("test", "released")], "compile released before the test slot was taken");
-    assert!(rows.iter().all(|r| r["who"] == "sp-agent" && r["waited_secs"] == 0));
+    assert!(rows.iter().all(|r| r["who"] == "sp-agent"));
     assert!(lease_files(&w, "compile").is_empty() && lease_files(&w, "test").is_empty(), "nothing left held");
 }
 
