@@ -27,20 +27,6 @@ impl Acts for Live<'_> {
     fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String> {
         io::lc_supersede(self.env, id, keeper)
     }
-    fn mend(&mut self, id: &str, tip: &str, files: &[String], prior: Option<&str>) -> Result<String, String> {
-        if let Some(open) = prior.filter(|p| io::bead_open(self.env, p)) {
-            let note = format!("Bead {id} has a new tip {tip}, still not merging onto {}. Conflicting files: {}. This mend now stands for that tip.", self.repo.base, files.join(", "));
-            io::bead_note(self.env, open, &note)?;
-            return Ok(open.to_string());
-        }
-        io::file_conflict_mend(self.env, self.repo, id, tip, files)
-    }
-    fn retire_mend(&mut self, id: &str, mend: &str, tip: &str) -> Result<(), String> {
-        if !io::bead_open(self.env, mend) {
-            return Ok(());
-        }
-        io::retire_mend(self.env, mend, &format!("Bead {id} has a new tip {tip} that merges onto {}; the conflict this mend was filed for is gone.", self.repo.base))
-    }
     fn pass(&mut self, id: &str, tip: &str) -> Result<(), String> {
         if self.sifted.get(id).map(String::as_str) == Some(tip) {
             return Ok(());
@@ -90,8 +76,7 @@ pub fn sift_repo(env: &Env, repo: &Repo, open: Option<&OpenBatch>) -> Result<sif
     let candidates: Vec<Candidate> = pool.iter().map(|m| Candidate { id: m.id.clone(), tip: m.tip.clone() }).collect();
     let open_round: Vec<Candidate> = open.map(|o| o.members.iter().map(|(id, tip)| Candidate { id: id.clone(), tip: tip.clone() }).collect()).unwrap_or_default();
     let mut live = Live { env, repo, sifted: io::sifted_tips(env)? };
-    let hold = cfg("SPIRA_SIFT_MEND_HOLD_SECS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
-    let out = sift::screen_with(&probe, &FileStore::new(work), &mut live, &candidates, &open_round, hold);
+    let out = sift::screen(&probe, &FileStore::new(work), &mut live, &candidates, &open_round);
     for e in &out.errors {
         eprintln!("batcher {}: {e}", repo.name);
     }

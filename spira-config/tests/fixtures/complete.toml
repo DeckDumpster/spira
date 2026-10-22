@@ -219,7 +219,6 @@ mail_unread_age = "1800"
 mail_wake_backoff = "15 60 300 900"
 max_aeons = 6
 mender_deadline_secs = 450
-sift_mend_hold_secs = 1500
 testenv_suite_cap = 777
 testenv_gate_cap = 222
 testenv_load_max_pct = 55

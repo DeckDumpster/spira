@@ -1,9 +1,0 @@
-TYPE=u64
-GROUP=mender
-DOC=THE SIFT MEND HOLD — seconds a branch that does not merge onto the landing ref is held for its mender before Sift sends it to REWORK. 0 sends conflicts straight to REWORK.
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # THE SIFT MEND HOLD — seconds a branch that does not merge onto the landing ref is held
-    # for its mender before Sift sends it to REWORK. Covers the wait for a free mender plus
-    # SPIRA_MENDER_DEADLINE_SECS; 0 sends conflicts straight to REWORK.
-    : "${SPIRA_SIFT_MEND_HOLD_SECS:=1200}"
-SPIRA_CONF_DEFAULT_EOF

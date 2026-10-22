@@ -52,8 +52,6 @@ struct Mem {
     verdicts: RefCell<BTreeMap<(String, String), Verdict>>,
     counts: RefCell<BTreeMap<String, u32>>,
     reported: RefCell<Vec<(String, String)>>,
-    mending: RefCell<BTreeMap<(String, String), u64>>,
-    mends: RefCell<BTreeMap<String, String>>,
 }
 
 impl Store for Mem {
@@ -76,17 +74,6 @@ impl Store for Mem {
         *n += 1;
         Ok(*n)
     }
-    fn mending_since(&self, id: &str, tip: &str) -> Option<u64> {
-        self.mending.borrow().get(&(id.to_string(), tip.to_string())).copied()
-    }
-    fn last_mend(&self, id: &str) -> Option<String> {
-        self.mends.borrow().get(id).cloned()
-    }
-    fn record_mending(&self, id: &str, tip: &str, bead: &str) -> Result<(), String> {
-        self.mends.borrow_mut().insert(id.to_string(), bead.to_string());
-        self.mending.borrow_mut().insert((id.to_string(), tip.to_string()), spira_config::vtime::now_epoch());
-        Ok(())
-    }
     fn first_cap_report(&self, id: &str, tip: &str) -> bool {
         let k = (id.to_string(), tip.to_string());
         let seen = self.reported.borrow().contains(&k);
@@ -99,7 +86,6 @@ impl Store for Mem {
 struct Rec {
     log: Vec<String>,
     fail_note: bool,
-    mend_open: bool,
 }
 
 impl Acts for Rec {
@@ -116,18 +102,6 @@ impl Acts for Rec {
     }
     fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String> {
         self.log.push(format!("supersede {id} by {keeper}"));
-        Ok(())
-    }
-    fn mend(&mut self, id: &str, tip: &str, files: &[String], prior: Option<&str>) -> Result<String, String> {
-        self.log.push(format!("mend {id} {tip} {}", files.join(",")));
-        if let Some(p) = prior.filter(|_| self.mend_open) {
-            self.log.push(format!("amend {p} {tip}"));
-            return Ok(p.to_string());
-        }
-        Ok(format!("mend-{id}-{tip}"))
-    }
-    fn retire_mend(&mut self, id: &str, mend: &str, tip: &str) -> Result<(), String> {
-        self.log.push(format!("retire {mend} for {id} at {tip}"));
         Ok(())
     }
     fn pass(&mut self, id: &str, tip: &str) -> Result<(), String> {
@@ -390,9 +364,6 @@ fn a_pass_the_store_refuses_is_not_a_sifted_candidate() {
         fn supersede(&mut self, id: &str, keeper: &str) -> Result<(), String> {
             self.0.supersede(id, keeper)
         }
-        fn mend(&mut self, id: &str, tip: &str, files: &[String], prior: Option<&str>) -> Result<String, String> {
-            self.0.mend(id, tip, files, prior)
-        }
         fn pass(&mut self, _: &str, _: &str) -> Result<(), String> {
             Err("tip moved".into())
         }
@@ -554,68 +525,12 @@ fn an_identity_check_whose_git_diff_timed_out_holds_the_bead_and_never_sends_it_
 }
 
 #[test]
-fn a_conflict_files_a_mend_and_is_held_not_sent_back_until_the_deadline_passes() {
+fn a_conflict_goes_straight_to_rework_and_files_no_bead() {
     let mut f = fake();
     f.conflicts.insert("t-a".into(), vec!["x.rs".into()]);
-    let store = Mem::default();
     let mut r = Rec::default();
-    let o = screen_with(&f, &store, &mut r, &[c("a"), c("b")], &[], 600);
-    assert_eq!((o.pass.as_slice(), o.mending.as_slice(), o.sent_back.len()), (&["b".to_string()][..], &["a".to_string()][..], 0));
-    assert!(r.log.contains(&"mend a t-a x.rs".to_string()) && reds(&r).is_empty(), "{:?}", r.log);
-
-    let o = screen_with(&f, &store, &mut r, &[c("a")], &[], 600);
-    assert_eq!((o.mending.as_slice(), o.held.as_slice()), (&["a".to_string()][..], &["a".to_string()][..]));
-    assert_eq!(r.log.iter().filter(|l| l.starts_with("mend ")).count(), 1, "one mend per tip");
-
-    store.mending.borrow_mut().insert(("a".into(), "t-a".into()), 1);
-    let o = screen_with(&f, &store, &mut r, &[c("a")], &[], 600);
-    assert_eq!(o.sent_back, ["a"]);
+    let o = screen(&f, &Mem::default(), &mut r, &[c("a"), c("b")], &[]);
+    assert_eq!((o.pass.as_slice(), o.sent_back.as_slice()), (&["b".to_string()][..], &["a".to_string()][..]));
     assert_eq!(reds(&r), ["red a t-a no-rebase"]);
-}
-
-#[test]
-fn a_new_tip_amends_the_open_mend_and_a_closed_one_is_replaced() {
-    let mut f = fake();
-    f.conflicts.insert("t-a".into(), vec!["x.rs".into()]);
-    f.conflicts.insert("t-a2".into(), vec!["x.rs".into()]);
-    f.conflicts.insert("t-a3".into(), vec!["x.rs".into()]);
-    let store = Mem::default();
-    let mut r = Rec { mend_open: true, ..Rec::default() };
-    screen_with(&f, &store, &mut r, &[c("a")], &[], 600);
-    let mut a2 = c("a");
-    a2.tip = "t-a2".into();
-    screen_with(&f, &store, &mut r, &[a2], &[], 600);
-    assert!(r.log.contains(&"amend mend-a-t-a t-a2".to_string()), "{:?}", r.log);
-    assert_eq!(store.last_mend("a").as_deref(), Some("mend-a-t-a"));
-
-    r.mend_open = false;
-    let mut a3 = c("a");
-    a3.tip = "t-a3".into();
-    screen_with(&f, &store, &mut r, &[a3], &[], 600);
-    assert_eq!(store.last_mend("a").as_deref(), Some("mend-a-t-a3"));
-}
-
-#[test]
-fn a_new_tip_that_merges_retires_the_mend_filed_for_the_old_one() {
-    let mut f = fake();
-    f.conflicts.insert("t-a".into(), vec!["x.rs".into()]);
-    let store = Mem::default();
-    let mut r = Rec::default();
-    screen_with(&f, &store, &mut r, &[c("a")], &[], 600);
-    assert!(!r.log.iter().any(|l| l.starts_with("retire ")), "{:?}", r.log);
-    let mut a2 = c("a");
-    a2.tip = "t-a2".into();
-    let o = screen_with(&f, &store, &mut r, &[a2], &[], 600);
-    assert_eq!(o.pass, ["a"]);
-    assert!(r.log.contains(&"retire mend-a-t-a for a at t-a2".to_string()), "{:?}", r.log);
-}
-
-#[test]
-fn a_conflict_goes_straight_to_rework_when_mending_is_off() {
-    let mut f = fake();
-    f.conflicts.insert("t-a".into(), vec!["x.rs".into()]);
-    let mut r = Rec::default();
-    let o = screen_with(&f, &Mem::default(), &mut r, &[c("a")], &[], 0);
-    assert_eq!(o.sent_back, ["a"]);
-    assert!(!r.log.iter().any(|l| l.starts_with("mend ")));
+    assert!(r.log.iter().all(|l| l.starts_with("note ") || l.starts_with("red ") || l.starts_with("pass ") || l.starts_with("tell ")), "{:?}", r.log);
 }
