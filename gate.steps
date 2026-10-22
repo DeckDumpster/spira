@@ -44,6 +44,8 @@ step "$SPIRA_LINT_BIN"
 bin SPIRA_GUARD_BIN lifecycle-guard
 step "$SPIRA_GUARD_BIN" --gate .
 step bash spira/build-fence.sh
+# A branch touching a round-image recipe input runs the image setup in a base-OS container; any other branch skips it.
+step bash spira/round-image-preflight.sh
 # Every provisioned CI workflow spills to EC2 only; prints `fence: ci-spill-guard checked <n> provision steps`.
 step bash spira/ci-spill-guard.sh --gate .
 # README is rendered from spira/boundary; the suite selector runs test-boundary.sh only when a
