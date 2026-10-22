@@ -304,7 +304,7 @@ want "--rows-from stores the readable row and counts the unreadable ones" "store
 "$TSD_BIN" --family suite-timing --rows-from - </dev/null >/dev/null 2>&1 \
     && bad "--rows-from accepted a file family" || ok "--rows-from refuses a family that is a file"
 
-qout12() { tl_config SPIRA_RUN="$RUN12"
+qout12() { tl_config SPIRA_RUN="$RUN12" SPIRA_METRICS_ENDPOINT="${SPIRA_METRICS_ENDPOINT:-}"
            SPIRA_HOME="$T" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent \
              tsd-query.sh "$@" 2>&1; }
 jget12() { python3 -c 'import json,sys; r=json.load(sys.stdin); print(eval(sys.argv[1]))' "$1"; }
@@ -441,7 +441,7 @@ for fam in bead-stage sentinel-phase aeon-session; do
 done
 for q in where rework slots time sentinel "bead sp-7"; do
     if [ "$q" = slots ] && [ -z "$DUCKDB_BIN" ]; then continue; fi
-    tl_config SPIRA_RUN="$RUN13"
+    tl_config SPIRA_RUN="$RUN13" SPIRA_METRICS_ENDPOINT="$STORE13"
     t0=$(date +%s.%N)
     out=$(SPIRA_METRICS_ENDPOINT="$STORE13" SPIRA_HOME="$T" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent \
         tsd-query.sh $q 2>/dev/null); rc=$?

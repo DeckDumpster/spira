@@ -154,6 +154,7 @@ esac
 GHSTUB
 chmod +x "$T/sbin/gh"
 export SPIRA_METRICS_ENDPOINT="$STORE"
+tl_config SPIRA_METRICS_ENDPOINT="$STORE"
 out5="$(ingest test-org/test-repo 300 2>&1)"; rc5=$?
 wantrc "a moved family ingests" 0 "$rc5"
 want   "and is counted" "ingested 1 family" "$out5"
