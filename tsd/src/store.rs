@@ -1,9 +1,6 @@
-// store — the metrics-store half of a run/tsd/ family: rows of the families listed in [`MOVED`]
-// are pushed to the metrics store as OTLP gauges and read back from it, and never written to a
-// file. A row's numeric fields become `spira_tsd_value{tsd_family,tsd_field,...}` samples; its
-// string and bool fields are the labels every one of those samples carries. A row with no
-// numeric field is one `spira_tsd_row` sample with the same labels, so it still exists. The
-// row's `ts` is the sample time, so a window is the store's own time range.
+// store — families held in the metrics store instead of a file. A row's numeric fields are
+// `spira_tsd_value{tsd_family,tsd_field,..}` gauges, its string and bool fields their labels, its
+// `ts` the sample time; a row with no number is one `spira_tsd_row` sample.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
