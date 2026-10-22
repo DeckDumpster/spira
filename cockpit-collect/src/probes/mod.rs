@@ -7,6 +7,7 @@
 
 mod admission;
 mod core_detail;
+mod inflight;
 mod lc;
 mod queue;
 mod ratelim;
@@ -153,6 +154,7 @@ pub fn full_pass(cfg: &Cfg) -> Kv {
     out.extend(unsent::unsent_keys(cfg));
     out.extend(queue::queue_keys(cfg));
     out.extend(round::round_keys(cfg.round_cap_secs, &cfg.queue_dir));
+    out.extend(inflight::inflight_keys(cfg));
     out.extend(reachable::reachable_keys(cfg));
     out.extend(sphere_keys(cfg));
     out.extend(repo_label_keys(cfg));
@@ -192,6 +194,7 @@ pub fn run(subcommand: &str, cfg: &Cfg) -> Option<Kv> {
         "unsent" => Some(unsent::unsent_keys(cfg)),
         "queue" => Some(queue::queue_keys(cfg)),
         "round" => Some(round::round_keys(cfg.round_cap_secs, &cfg.queue_dir)),
+        "inflight" => Some(inflight::inflight_keys(cfg)),
         "reachable" => Some(reachable::reachable_keys(cfg)),
         "sphere" => Some(sphere_keys(cfg)),
         "repo_labels" => Some(repo_label_keys(cfg)),
@@ -447,7 +450,7 @@ fn overrides_summary() -> (usize, usize, String) {
     (n, failed, list.join(","))
 }
 
-fn gate_run_scan(run: &Path) -> (Vec<(String, String, String, String)>, usize, usize) {
+pub(super) fn gate_run_scan(run: &Path) -> (Vec<(String, String, String, String)>, usize, usize) {
     let dir = run.join("gate-run");
     let mut rows = Vec::new();
     let mut n = 0;
@@ -500,7 +503,7 @@ fn gate_run_scan(run: &Path) -> (Vec<(String, String, String, String)>, usize, u
 /// (`Cfg::load`); `SPIRA_SYSTEMCTL` is not a registered config key, so it is still read
 /// straight from the environment, the same per-copy-fact reading `capacity_pause_file`
 /// (above) does for its own non-registered key.
-fn unit_active_key(fayth: &str, kind: &str, instance: &str) -> String {
+pub(super) fn unit_active_key(fayth: &str, kind: &str, instance: &str) -> String {
     let systemctl = std::env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemctl".to_string());
     let unit = spira_config::unit::resolve_unit(fayth, kind, instance, &systemctl);
     match io::unit_active(&unit) {
