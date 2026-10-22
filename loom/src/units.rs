@@ -704,14 +704,15 @@ pub fn parse_timer_nexts(text: &str) -> Result<BTreeMap<String, i64>, String> {
 
 async fn executions(src: &Sources, path: &str, now: i64) -> Result<Vec<Value>, String> {
     let file = tsd::family_path(std::path::Path::new(&src.run), "unit-run-dbus");
-    if !file.exists() {
+    let files: Vec<String> = [tsd::rotated_path(&file), file].iter().filter(|f| f.exists()).map(|f| format!("'{}'", f.to_string_lossy().replace('\'', "''"))).collect();
+    if files.is_empty() {
         return Ok(Vec::new());
     }
     let sql = format!(
         "SELECT unit, t, result, duration_ms, invocation_id FROM \
-         (SELECT unit, CAST(epoch(CAST(ts AS TIMESTAMPTZ)) AS BIGINT) AS t, result, duration_ms, invocation_id FROM read_ndjson('{}', columns={{unit:'VARCHAR',ts:'VARCHAR',result:'VARCHAR',duration_ms:'BIGINT',invocation_id:'VARCHAR'}})) \
+         (SELECT unit, CAST(epoch(CAST(ts AS TIMESTAMPTZ)) AS BIGINT) AS t, result, duration_ms, invocation_id FROM read_ndjson([{}], columns={{unit:'VARCHAR',ts:'VARCHAR',result:'VARCHAR',duration_ms:'BIGINT',invocation_id:'VARCHAR'}})) \
          WHERE t >= {} ORDER BY t;",
-        file.to_string_lossy().replace('\'', "''"),
+        files.join(","),
         now - WEEK
     );
     let text = run_cmd(&src.duckdb, &["-json".to_string(), "-c".to_string(), sql], path, src.budget).await?;

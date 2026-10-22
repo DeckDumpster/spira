@@ -40,10 +40,18 @@ fn push_metrics(sink: &spira_otel::metrics::MetricsSink, r: &unit_run::Record) {
     sink.push(&points, &[("unit", &unit), ("result", &r.result)]);
 }
 
+const TAIL_BYTES: u64 = 4 << 20;
+const ROTATE_BYTES: u64 = 16 << 20;
+
+fn resume_text(path: &std::path::Path) -> String {
+    tsd::read_tail(&tsd::rotated_path(path), TAIL_BYTES) + &tsd::read_tail(path, TAIL_BYTES)
+}
+
 fn watch_cmd(family: &str) -> Result<(), String> {
     let run = run_dir()?;
     let path = tsd::family_path(&run, family);
-    let mut seen = written_ids(&std::fs::read_to_string(&path).unwrap_or_default());
+    let resume = resume_text(&path);
+    let mut seen = written_ids(&resume);
     let instance = spira_config::process::cfg("SPIRA_INSTANCE")?;
     let host = tsd::default_host();
     let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
@@ -53,7 +61,7 @@ fn watch_cmd(family: &str) -> Result<(), String> {
     watch::arm(&mut conn)?;
     let now_us = || spira_config::vtime::now_epoch().saturating_mul(1_000_000);
     let started_us = now_us();
-    let mut tracker = watch::Tracker::new(watch::last_ended_us(&std::fs::read_to_string(&path).unwrap_or_default()).unwrap_or(started_us));
+    let mut tracker = watch::Tracker::new(watch::last_ended_us(&resume).unwrap_or(started_us));
     let mut record = |r: unit_run::Record| -> Result<(), String> {
         if !seen.insert(r.invocation_id.clone()) {
             return Ok(());
@@ -61,7 +69,7 @@ fn watch_cmd(family: &str) -> Result<(), String> {
         let trig = triggers.of(&r.unit);
         let fields = unit_run::record_fields(&r, trig.as_deref(), &instance);
         let row = tsd::build_row(&tsd::iso_utc(Wall.now_epoch()), &host, family, &fields)?;
-        tsd::append_line(&path, &row)?;
+        tsd::append_line_rotating(&path, &row, ROTATE_BYTES)?;
         push_metrics(&metrics, &r);
         Ok(())
     };
