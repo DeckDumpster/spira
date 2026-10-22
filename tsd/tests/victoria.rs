@@ -1,4 +1,4 @@
-//! A family row pushed to a real VictoriaMetrics container reads back as the same row.
+//! A family row pushed to a real VictoriaMetrics container reads back as the same row, and the stand-in store (spira_otel::fixture::FakeStore) gives the identical answers.
 //! Skips when no container runtime can start the image (set `SPIRA_VM_IMAGE` to override it).
 
 use std::io::{Read, Write};
@@ -59,6 +59,17 @@ fn rows_pushed_to_a_real_store_read_back_as_the_same_rows() {
         eprintln!("skipped: no container runtime for {IMAGE}");
         return;
     };
+    scenario(&addr);
+}
+
+#[test]
+fn the_stand_in_store_gives_the_same_answers_as_the_real_one() {
+    let fake = spira_otel::fixture::FakeStore::start();
+    scenario(fake.addr());
+}
+
+fn scenario(addr: &str) {
+    let addr = addr.to_string();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
     let t = |back: u64| tsd::iso_utc(now - back);
     let sent = vec![

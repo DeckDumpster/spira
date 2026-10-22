@@ -16,6 +16,14 @@ path = "src/main.rs"
 name = "cert-report"
 path = "src/report_main.rs"
 
+[[bin]]
+name = "tsd-read"
+path = "src/read_main.rs"
+
+[[bin]]
+name = "tsd-fake-store"
+path = "src/fake_store_main.rs"
+
 [dependencies]
 serde_json = "1"
 spira-otel = { path = "../spira-otel" }

@@ -91,6 +91,17 @@ pub fn push_row(endpoint: Option<&str>, family: &str, line: &str) -> Result<(), 
     sink.try_push_series(&series_of(family, &row, at)).map_err(|e| format!("{family}: row not stored: {e}"))
 }
 
+/// The store's address: `SPIRA_METRICS_ENDPOINT` when the caller exported it, else the
+/// declared `spira.metrics_endpoint`. `tsd` cannot link `spira-config` (which links `tsd`), so the
+/// declaration is read through its CLI. Empty or unreadable is `None`, and `None` is a refusal.
+pub fn endpoint() -> Option<String> {
+    let from_env = std::env::var("SPIRA_METRICS_ENDPOINT").ok().filter(|v| !v.trim().is_empty());
+    from_env.or_else(|| {
+        let out = std::process::Command::new("timeout").args(["3", "spira-config", "get", "spira.metrics_endpoint"]).stdin(std::process::Stdio::null()).output().ok()?;
+        Some(String::from_utf8_lossy(&out.stdout).trim().to_string()).filter(|v| out.status.success() && !v.is_empty())
+    })
+}
+
 pub struct Reader {
     store: Store,
 }

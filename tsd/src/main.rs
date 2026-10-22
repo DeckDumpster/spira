@@ -3,6 +3,9 @@
 // interleave partial lines. The row format itself lives in lib.rs and is tested there without
 // touching a filesystem.
 //
+// A family in tsd::store::MOVED has no file: its row is pushed to SPIRA_METRICS_ENDPOINT, and a
+// push that fails is an error here, because the row has no other copy.
+//
 // usage: tsd-write --family <name> [--root <dir>] [--host <id>] [--ts <iso8601>]
 //                   [--field key=value ...] [--field-str key=value ...]
 //
@@ -129,6 +132,13 @@ fn run(args: &[String]) -> Result<(), String> {
             "family {family:?} must start with a letter and contain only lowercase letters, digits and hyphens"
         ));
     }
+    let host = host.unwrap_or_else(default_host);
+    let ts = ts.unwrap_or_else(now_iso);
+
+    let line = tsd::build_row(&ts, &host, &family, &fields)?;
+    if tsd::store::moved(&family) {
+        return tsd::store::push_row(tsd::store::endpoint().as_deref(), &family, &line);
+    }
     // `tsd` stays a leaf library/binary (`spira-config` depends on it, so it cannot depend
     // back on `spira-config` without a cycle) — SPIRA_RUN is a registered config key, but
     // this binary cannot reach the one door for it, so a raw env read is this crate's own,
@@ -137,12 +147,7 @@ fn run(args: &[String]) -> Result<(), String> {
         Some(r) => r,
         None => return Err("no --root and SPIRA_RUN is unset".to_string()),
     };
-    let host = host.unwrap_or_else(default_host);
-    let ts = ts.unwrap_or_else(now_iso);
-
-    let line = tsd::build_row(&ts, &host, &family, &fields)?;
-    let path = tsd::family_path(&root, &family);
-    append_line(&path, &line)
+    append_line(&tsd::family_path(&root, &family), &line)
 }
 
 #[cfg(test)]
