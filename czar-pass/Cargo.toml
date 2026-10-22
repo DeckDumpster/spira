@@ -9,6 +9,7 @@ spira-config = { path = "../spira-config" }
 serde_json = "1"
 spira-otel = { path = "../spira-otel" }
 reconciler-engine = { path = "../reconciler-engine" }
+tsd = { path = "../tsd" }
 
 [profile.release]
 opt-level = "z"

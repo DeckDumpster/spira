@@ -62,7 +62,7 @@ struct Config {
     lock_path: PathBuf,
     state_path: PathBuf,
     alerted_path: PathBuf,
-    status_log: PathBuf,
+    store: tsd::store::Pusher,
     tsd_bin: String,
     export_bin: String,
     duckdb_bin: String,
@@ -105,7 +105,7 @@ impl Config {
             lock_path: spira_run.join("reconciler-flow.lock"),
             state_path: paths::flow_state(&spira_run),
             alerted_path: paths::flow_alerted(&spira_run),
-            status_log: paths::status_log(&spira_run),
+            store: tsd::store::Pusher::new(cfg("SPIRA_METRICS_ENDPOINT").ok().filter(|e| !e.trim().is_empty())),
             tsd_bin: seams.tsd,
             duckdb_bin: seams.duckdb,
             export_bin: seams.export,
@@ -152,7 +152,7 @@ fn evaluate(cfg: &Config, state: &mut StateMap, key: &str, raw: RawStatus) -> Ve
         _ => cfg.grace_secs,
     };
     let (verdict, next) = step(cfg.now_secs, raw, grace, prev);
-    append_status(&cfg.status_log, &cfg.now_iso, key, &verdict);
+    append_status(&cfg.store, &cfg.now_iso, key, &verdict);
     if next != HysteresisState::default() {
         state.insert(key.to_string(), next);
     }

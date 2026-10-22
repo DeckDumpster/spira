@@ -98,7 +98,7 @@ struct Config {
     base_unreadable_grace: u64,
     lock_path: PathBuf,
     reconciler_state: PathBuf,
-    reconciler_status_log: PathBuf,
+    store: std::sync::Arc<tsd::store::Pusher>,
     reconciler_stamp: PathBuf,
     reconciler_grace_secs: u64,
     reconciler_timer: String,
@@ -182,7 +182,7 @@ impl Config {
             base_unreadable_grace: must_cfg_parse("SPIRA_BASE_CI_UNREADABLE_GRACE_SECS"),
             lock_path: spira_run.join("czar-pass.lock"),
             reconciler_state: paths::state(&spira_run),
-            reconciler_status_log: paths::status_log(&spira_run),
+            store: std::sync::Arc::new(tsd::store::Pusher::new(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().filter(|e| !e.trim().is_empty()))),
             reconciler_stamp: paths::pass_stamp(&spira_run),
             reconciler_grace_secs: must_cfg_parse("SPIRA_RECONCILER_GRACE_SECS"),
             reconciler_timer: format!("spira-reconciler-{}.timer", must_cfg("SPIRA_INSTANCE")),
@@ -274,7 +274,7 @@ fn telem(cfg: &Config, class: &str, verdict: &Verdict, remedy: &str, tier: &str)
 fn evaluate(cfg: &Config, state: &mut StateMap, key: &str, raw: RawStatus, grace_secs: u64) -> Verdict {
     let prev = state.remove(key).unwrap_or_default();
     let (verdict, next) = step(cfg.now_secs, raw, grace_secs, prev);
-    append_status(&cfg.reconciler_status_log, &cfg.now_iso, key, &verdict);
+    append_status(&cfg.store, &cfg.now_iso, key, &verdict);
     if next != HysteresisState::default() {
         state.insert(key.to_string(), next);
     }
@@ -1674,7 +1674,7 @@ mod tests {
             base_unreadable_grace: 120,
             lock_path: dir.join("czar-pass.lock"),
             reconciler_state: dir.join("reconciler-state.json"),
-            reconciler_status_log: dir.join("reconciler-status.jsonl"),
+            store: std::sync::Arc::new(tsd::store::Pusher::new(None)),
             reconciler_stamp: dir.join("reconciler-pass.stamp"),
             reconciler_grace_secs: 300,
             reconciler_timer: "spira-reconciler-prod.timer".to_string(),

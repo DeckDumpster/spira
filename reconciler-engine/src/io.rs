@@ -4,11 +4,12 @@
 //! hysteresis logic that decides what to persist lives in [`crate::core`], not here.
 
 use std::collections::BTreeMap;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::Path;
 
 use serde::Serialize;
+use serde_json::Value;
+use tsd::store::Pusher;
 
 use crate::core::{HysteresisState, RawStatus, Verdict};
 
@@ -52,7 +53,6 @@ pub fn save_alerted(path: &Path, state: &AlertedSinceMap) -> std::io::Result<()>
 
 #[derive(Serialize)]
 struct StatusRecord<'a> {
-    ts: &'a str,
     key: &'a str,
     status: &'static str,
     desired: Option<&'a str>,
@@ -64,13 +64,10 @@ struct StatusRecord<'a> {
     remedy_failed: bool,
 }
 
-/// Appends one line per invariant per pass to the time series — every resource's status is
-/// recorded every pass, not only when it changes, so a gap in the series itself is visible.
-///
-/// Creates its parent directory: the default path is now under run/tsd/ (design
-/// reconciler-time-series-2026-09-27 §2), a directory no other reconciler write already
-/// guarantees exists.
-pub fn append_status(path: &Path, now_iso: &str, key: &str, verdict: &Verdict) {
+/// Pushes one row per invariant per pass to the `reconciler-status` family — every resource's
+/// status is recorded every pass, not only when it changes, so a gap in the series itself is
+/// visible. A push that fails is dropped: the pass does not wait on its own record.
+pub fn append_status(store: &Pusher, now_iso: &str, key: &str, verdict: &Verdict) {
     let (status, desired, observed, reason) = match &verdict.status {
         RawStatus::Satisfied => ("satisfied", None, None, None),
         RawStatus::Gap { desired, observed, .. } => ("gap", Some(desired.as_str()), Some(observed.as_str()), None),
@@ -78,7 +75,6 @@ pub fn append_status(path: &Path, now_iso: &str, key: &str, verdict: &Verdict) {
         RawStatus::Deliberate { reason } => ("deliberate", None, None, Some(reason.as_str())),
     };
     let record = StatusRecord {
-        ts: now_iso,
         key,
         status,
         desired,
@@ -89,16 +85,16 @@ pub fn append_status(path: &Path, now_iso: &str, key: &str, verdict: &Verdict) {
         just_closed: verdict.just_closed,
         remedy_failed: verdict.remedy_failed,
     };
-    let line = match serde_json::to_string(&record) {
-        Ok(l) => l,
-        Err(_) => return,
-    };
-    if let Some(dir) = path.parent() {
-        let _ = fs::create_dir_all(dir);
-    }
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(f, "{}", line);
-    }
+    push(store, STATUS_FAMILY, now_iso, &record);
+}
+
+pub const STATUS_FAMILY: &str = "reconciler-status";
+
+/// One `family` row from a serializable record, through `store`; the record's own fields are the row's.
+pub fn push<T: Serialize>(store: &Pusher, family: &str, now_iso: &str, record: &T) {
+    let Ok(Value::Object(fields)) = serde_json::to_value(record) else { return };
+    let fields: Vec<(String, Value)> = fields.into_iter().collect();
+    let _ = store.push(family, now_iso, &fields);
 }
 
 #[cfg(test)]
@@ -122,11 +118,12 @@ mod tests {
         let reloaded = load_state(&state_path);
         assert_eq!(reloaded.get("k"), state.get("k"));
 
-        let status_path = dir.join("status.jsonl");
-        append_status(&status_path, "2026-09-25T00:00:00Z", "k", &verdict);
-        let contents = fs::read_to_string(&status_path).unwrap();
-        assert!(contents.contains("\"status\":\"gap\""));
-        assert_eq!(contents.lines().count(), 1);
+        let store = spira_otel::fixture::FakeStore::start();
+        append_status(&Pusher::new(Some(store.addr().to_string())), "2026-09-25T00:00:00Z", "k", &verdict);
+        let rows = tsd::store::Reader::new(Some(store.addr())).unwrap().rows(STATUS_FAMILY, 0).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0]["status"].as_str(), rows[0]["key"].as_str(), rows[0]["since"].as_u64()), (Some("gap"), Some("k"), verdict.since));
+        assert_eq!(rows[0]["ts"], "2026-09-25T00:00:00Z");
 
         fs::remove_dir_all(&dir).ok();
     }

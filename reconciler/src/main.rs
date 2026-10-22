@@ -179,8 +179,7 @@ struct Config {
     log: PathBuf,
     state_path: PathBuf,
     alerted_path: PathBuf,
-    status_log: PathBuf,
-    remedy_log: PathBuf,
+    store: std::sync::Arc<tsd::store::Pusher>,
     effect_state: PathBuf,
     mail_root: PathBuf,
     release: String,
@@ -234,8 +233,7 @@ impl Config {
             log: spira_run.join("reconciler.log"),
             state_path: paths::state(&spira_run),
             alerted_path: paths::alerted(&spira_run),
-            status_log: paths::status_log(&spira_run),
-            remedy_log: paths::remedy_log(&spira_run),
+            store: std::sync::Arc::new(tsd::store::Pusher::new(cfg("SPIRA_METRICS_ENDPOINT").ok().filter(|e| !e.trim().is_empty()))),
             effect_state: paths::effect_state(&spira_run),
             mail_root: PathBuf::from(cfg("SPIRA_MAIL")?),
             release: release_name(Path::new(&spira_home)),
@@ -1539,7 +1537,7 @@ fn gap_metric(raw: &RawStatus) -> f64 {
 
 fn write_event(cfg: &Config, event: &str, key: &str, action: &str, before: f64, after: Option<f64>) {
     append_event(
-        &cfg.remedy_log,
+        &cfg.store,
         &RemedyEvent {
             ts: &cfg.now_iso,
             event,
@@ -1580,7 +1578,7 @@ fn evaluate(cfg: &Config, state: &mut StateMap, pending: &mut PendingMap, alerte
     let prev_remedy = last_remedy(&prev).map(str::to_string);
     let metric_now = gap_metric(&check.raw);
     let (verdict, mut next) = step(cfg.now_secs, check.raw, cfg.grace_secs, prev);
-    append_status(&cfg.status_log, &cfg.now_iso, &check.key, &verdict);
+    append_status(&cfg.store, &cfg.now_iso, &check.key, &verdict);
     judge_pending(cfg, pending, &check.key, metric_now);
 
     if verdict.is_gap {
@@ -1848,6 +1846,16 @@ fn stamp_pass(cfg: &Config) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fixture_store() -> std::sync::Arc<tsd::store::Pusher> {
+        let s = Box::leak(Box::new(spira_otel::fixture::FakeStore::start()));
+        std::sync::Arc::new(tsd::store::Pusher::new(Some(s.addr().to_string())))
+    }
+
+    fn stored(cfg: &Config, family: &str) -> String {
+        let rows = tsd::store::Reader::new(cfg.store.endpoint()).unwrap().rows_or_empty(family, 0).unwrap();
+        rows.iter().map(|r| format!("{r}\n")).collect()
+    }
     use std::time::SystemTime;
 
     fn scratch_dir(name: &str) -> testkit::TempDir {
@@ -2019,7 +2027,7 @@ mod tests {
     fn effect_cfg(dir: &Path, mail: &Path) -> Config {
         Config {
             grace_secs: 0,
-            remedy_log: dir.join("remedy.jsonl"),
+            store: fixture_store(),
             seams: stub_mail_seams(mail),
             release: "r-fixture".into(),
             effect_passes: 2,
@@ -2043,16 +2051,16 @@ mod tests {
 
         let cfg1 = Config { now_secs: 100, ..effect_cfg(&dir, &mail) };
         evaluate(&cfg1, &mut state, &mut pending, &mut alerted, Check { key: "disk:/v".into(), raw: gap_raw(), remedy: touch_remedy(&dir.join("ran")) });
-        let log = fs::read_to_string(dir.join("remedy.jsonl")).unwrap();
+        let log = stored(&cfg1, "reconciler-remedy");
         assert_eq!(log.lines().count(), 1, "one remedy writes exactly one event");
-        for field in ["\"event\":\"remedy\"", "\"kind\":\"disk\"", "\"key\":\"disk:/v\"", "\"action\":\"touch ", "\"before\":1.0", "\"release\":\"r-fixture\"", "\"ts\":"] {
+        for field in ["\"event\":\"remedy\"", "\"kind\":\"disk\"", "\"key\":\"disk:/v\"", "\"action\":\"touch ", "\"before\":1", "\"release\":\"r-fixture\"", "\"ts\":"] {
             assert!(log.contains(field), "event lacks {field}: {log}");
         }
 
         let cfg2 = Config { now_secs: 200, ..cfg1.clone() };
         evaluate(&cfg2, &mut state, &mut pending, &mut alerted, Check { key: "disk:/v".into(), raw: RawStatus::Satisfied, remedy: touch_remedy(&dir.join("ran")) });
-        let log = fs::read_to_string(dir.join("remedy.jsonl")).unwrap();
-        assert!(log.contains("\"event\":\"effect\"") && log.contains("\"after\":0.0"), "{log}");
+        let log = stored(&cfg2, "reconciler-remedy");
+        assert!(log.contains("\"event\":\"effect\"") && log.contains("\"after\":0"), "{log}");
         assert!(!log.contains("no-effect"));
         assert!(!dir.join("mailed").exists(), "an effective remedy mails nothing");
         assert!(pending.is_empty());
@@ -2075,8 +2083,8 @@ mod tests {
         let cfg3 = Config { now_secs: 300, ..cfg1.clone() };
         evaluate(&cfg3, &mut state, &mut pending, &mut alerted, Check { key: "disk:/v".into(), raw: gap_raw(), remedy: noop() });
 
-        let log = fs::read_to_string(dir.join("remedy.jsonl")).unwrap();
-        assert!(log.contains("\"event\":\"no-effect\"") && log.contains("\"before\":1.0") && log.contains("\"after\":1.0"), "{log}");
+        let log = stored(&cfg3, "reconciler-remedy");
+        assert!(log.contains("\"event\":\"no-effect\"") && log.contains("\"before\":1") && log.contains("\"after\":1"), "{log}");
         let mailed = fs::read_to_string(dir.join("mailed")).unwrap();
         assert!(mailed.contains("before: 1") && mailed.contains("after: 1") && mailed.contains("disk:/v"), "{mailed}");
     }
@@ -2092,7 +2100,7 @@ mod tests {
         let mut alerted = AlertedSinceMap::new();
         evaluate(&cfg, &mut state, &mut pending, &mut alerted, Check { key: "disk:/v".into(), raw: gap_raw(), remedy: touch_remedy(&ran) });
         assert!(!ran.exists(), "the kill switch holds the remedy back");
-        assert!(fs::read_to_string(dir.join("remedy.jsonl")).unwrap().contains("\"event\":\"shadow\""));
+        assert!(stored(&cfg, "reconciler-remedy").contains("\"event\":\"shadow\""));
         assert!(pending.is_empty(), "a remedy that did not act has no effect to measure");
 
         let other = Config { shadow_kinds: vec!["units-timer".into()], ..cfg.clone() };
@@ -2308,7 +2316,7 @@ mod tests {
             seams: Seams { systemctl, units_install, spira_lc, mail, ..Seams::production() },
             ctrl_path,
             reminders_path: dir.join("reminders.json"),
-            status_log: dir.join("status.jsonl"),
+            store: fixture_store(),
             now_iso: "2026-10-08T00:00:00Z".into(),
             grace_secs: 0,
             ..test_config()
@@ -2327,7 +2335,7 @@ mod tests {
         }
         let calls = fs::read_to_string(dir.join("systemctl-calls")).unwrap_or_default();
         assert!(!calls.contains("enable") && !calls.contains("restart"), "a remedy ran against a suspended unit: {calls}");
-        let status = fs::read_to_string(&cfg.status_log).unwrap();
+        let status = stored(&cfg, "reconciler-status");
         assert!(status.contains("\"status\":\"deliberate\""), "{status}");
         assert!(status.contains("fails every run"), "{status}");
     }
@@ -2361,7 +2369,7 @@ mod tests {
         let units_install = dir.join("units-install");
         testkit::write_exe(&units_install, "#!/bin/sh\necho spira-reconciler-prod.timer\n");
         let cfg = Config {
-            remedy_log: dir.join("remedy.jsonl"),
+            store: fixture_store(),
             effect_passes: 2,
             release: "r-fixture".into(),
             seams: Seams {
@@ -2381,16 +2389,16 @@ mod tests {
         }
         let calls = fs::read_to_string(dir.join("systemctl-calls")).unwrap();
         assert!(calls.contains("enable --now spira-reconciler-prod.timer"), "{calls}");
-        let log = fs::read_to_string(&cfg.remedy_log).unwrap();
-        assert!(log.contains("\"event\":\"remedy\"") && log.contains("\"before\":1.0"), "{log}");
+        let log = stored(&cfg, "reconciler-remedy");
+        assert!(log.contains("\"event\":\"remedy\"") && log.contains("\"before\":1"), "{log}");
 
         let cfg2 = Config { now_secs: cfg.now_secs + 60, ..cfg.clone() };
         for c in observe_units(&cfg2) {
             assert_eq!(c.raw, RawStatus::Satisfied);
             evaluate(&cfg2, &mut state, &mut pending, &mut alerted, c);
         }
-        let log = fs::read_to_string(&cfg.remedy_log).unwrap();
-        assert!(log.contains("\"event\":\"effect\"") && log.contains("\"after\":0.0"), "{log}");
+        let log = stored(&cfg, "reconciler-remedy");
+        assert!(log.contains("\"event\":\"effect\"") && log.contains("\"after\":0"), "{log}");
         assert!(pending.is_empty());
     }
 
@@ -2544,8 +2552,7 @@ mod tests {
             log: PathBuf::from("/dev/null"),
             state_path: PathBuf::from("/dev/null"),
             alerted_path: PathBuf::from("/dev/null"),
-            status_log: PathBuf::from("/dev/null"),
-            remedy_log: PathBuf::from("/dev/null"),
+            store: std::sync::Arc::new(tsd::store::Pusher::new(None)),
             effect_state: PathBuf::from("/dev/null"),
             mail_root: PathBuf::new(),
             release: "r-test".into(),

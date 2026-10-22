@@ -102,6 +102,36 @@ pub fn endpoint() -> Option<String> {
     })
 }
 
+/// Pushes rows for a long-running or many-rows-per-pass caller. After a failed push it refuses
+/// the next ones for [`SUSPEND_SECS`] with the same error, so a store that stopped answering
+/// costs one deadline, not one per row.
+pub struct Pusher {
+    endpoint: Option<String>,
+    down_until: std::sync::atomic::AtomicU64,
+}
+
+pub const SUSPEND_SECS: u64 = 30;
+
+impl Pusher {
+    pub fn new(endpoint: Option<String>) -> Pusher {
+        Pusher { endpoint, down_until: std::sync::atomic::AtomicU64::new(0) }
+    }
+
+    pub fn endpoint(&self) -> Option<&str> {
+        self.endpoint.as_deref()
+    }
+
+    pub fn push(&self, family: &str, ts: &str, fields: &[(String, Value)]) -> Result<(), String> {
+        use std::sync::atomic::Ordering::Relaxed;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        if now < self.down_until.load(Relaxed) {
+            return Err(format!("{family}: row not stored: the store failed a push in the last {SUSPEND_SECS}s"));
+        }
+        let line = crate::build_row(ts, &crate::default_host(), family, fields)?;
+        push_row(self.endpoint.as_deref(), family, &line).inspect_err(|_| self.down_until.store(now + SUSPEND_SECS, Relaxed))
+    }
+}
+
 pub struct Reader {
     store: Store,
 }
