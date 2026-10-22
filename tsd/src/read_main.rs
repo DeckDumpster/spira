@@ -9,6 +9,7 @@
 //        tsd-read dwell <family> <field> <p> [<hours>]
 //        tsd-read by-group <family> <group> <field> [<hours>]
 //        tsd-read count-by <family> <group> [<hours>]
+//        tsd-read moved <family>                  exit 0 when the family lives in the metrics store
 //        tsd-read rows <family> [<hours>]        the family's rows, one JSON object per line
 //
 // SPIRA_RUN is a raw env read and the store address comes from tsd::store::endpoint (tsd cannot
@@ -48,6 +49,12 @@ fn family<'a>(v: Option<&'a String>) -> Result<&'a str, Failure> {
 }
 
 fn run(args: &[String]) -> Result<String, Failure> {
+    if args.first().map(String::as_str) == Some("moved") {
+        return match args.get(1) {
+            Some(f) if tsd::store::moved(f) => Ok(String::new()),
+            _ => Err(Failure { code: 1, message: String::new() }),
+        };
+    }
     let root = PathBuf::from(std::env::var("SPIRA_RUN").map_err(|_| Failure { code: 2, message: "tsd-read: SPIRA_RUN is not set".into() })?);
     let endpoint = tsd::store::endpoint();
     let now = match std::env::var("SPIRA_TSD_NOW") {
@@ -91,11 +98,13 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match run(&args) {
         Ok(out) => {
-            if out.ends_with('\n') { print!("{out}") } else { println!("{out}") }
+            if out.is_empty() || out.ends_with('\n') { print!("{out}") } else { println!("{out}") }
             ExitCode::SUCCESS
         }
         Err(f) => {
-            eprintln!("{}", f.message);
+            if !f.message.is_empty() {
+                eprintln!("{}", f.message);
+            }
             ExitCode::from(f.code.clamp(1, 255) as u8)
         }
     }

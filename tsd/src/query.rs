@@ -209,7 +209,11 @@ pub fn time(src: &Source, now: u64, hours: u64) -> Result<Value, Failure> {
         .filter(|w| w[0].0 >= from)
         .map(|w| {
             let dt = (w[1].0 - w[0].0).min(300) as f64;
-            (num(w[0].1, "ceiling").unwrap_or(0.0).round() - num(w[0].1, "live").unwrap_or(0.0).round()).max(0.0) * dt
+            let empty = match (num(w[0].1, "ceiling"), num(w[0].1, "live")) {
+                (Some(c), Some(l)) => (c.round() - l.round()).max(0.0),
+                _ => 0.0,
+            };
+            empty * dt
         })
         .sum();
     Ok(json!([{"aeon_s": int(sum(&aeon, "wall_s")), "gate_s": int(sum(&gate, "ran_secs")), "round_s": int(sum(&rounds, "duration_ms") / 1000.0), "idle_slot_s": int(idle)}]))
