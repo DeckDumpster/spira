@@ -29,7 +29,7 @@ fn forge_state(queue_dir: &Path, repo: &str, batch: &str) -> Option<Vec<(String,
     (get("batch_id") == Some(batch)).then_some(kv)
 }
 
-fn list_batches() -> Option<String> {
+pub(super) fn list_batches() -> Option<String> {
     super::lc::shared_live("batches", list_batches_live)
 }
 
@@ -126,7 +126,7 @@ pub fn pool_waiting(rows: &[spira_config::lc_state::Row]) -> usize {
     rows.iter().filter(|r| matches!(r.state.as_str(), "SUBMITTED" | "CERTIFIED") && r.holds.is_empty()).count()
 }
 
-fn terminal(state: &str) -> bool {
+pub(super) fn terminal(state: &str) -> bool {
     matches!(state, "LANDED" | "SETTLED" | "ABANDONED")
 }
 

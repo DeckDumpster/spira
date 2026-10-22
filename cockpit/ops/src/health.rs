@@ -12,6 +12,7 @@
 
 pub mod colors;
 pub mod fmt;
+pub mod inflight;
 pub mod frame;
 pub mod model;
 pub mod round;

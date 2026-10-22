@@ -517,6 +517,25 @@ def limits_env_lines():
     out.append("SP_LIMIT_AGE=%d" % max(0, now - newest[0]))
     return out
 
+INFLIGHT_STALE = 60   # seconds; the collector rewrites the snapshot every 5
+
+def inflight_segment():
+    """Work in flight, from the collector's snapshot. Unreadable or stale is `?`, never idle."""
+    bad = " \x1b[31m\u2699 ?inflight\x1b[0m"
+    snap = os.path.join(run, "cockpit.env")
+    try:
+        if now - os.stat(snap).st_mtime > INFLIGHT_STALE: return bad
+        with open(snap) as fh:
+            for ln in fh:
+                if ln.startswith("SP_INFLIGHT_SEG="):
+                    v = ln.rstrip("\n").split("=", 1)[1]
+                    if len(v) >= 2 and v[0] == v[-1] == "'": v = v[1:-1]
+                    if not v: return bad
+                    return " " + ("\x1b[31m" if "?" in v else "\x1b[2m") + v + "\x1b[0m"
+    except OSError:
+        return bad
+    return bad
+
 def limits_segment():
     """The rendered segment, or "" when the client sent no window."""
     if lim_hook is None: return ""
@@ -619,7 +638,7 @@ if mode == "env":
 # context is the best possible news and a stale number is worse, because both displace exactly
 # the suspicion that would have prompted a look.
 if ctx is None:
-    print(("\x1b[2m· ctx fresh\x1b[0m" if named and not broken else "ctx ?") + limits_segment())
+    print(("\x1b[2m· ctx fresh\x1b[0m" if named and not broken else "ctx ?") + limits_segment() + inflight_segment())
     raise SystemExit
 
 def hue(v):
@@ -664,5 +683,5 @@ elif arc_name == "?":
 else:
     arc = f" \x1b[2m{arc_name}\x1b[0m"
 
-print(f"{hue(ctx)}{BLK[lvl]} ctx {k}{R} \x1b[2m{turned}{growth}{R}{arc}{limits_segment()}")
+print(f"{hue(ctx)}{BLK[lvl]} ctx {k}{R} \x1b[2m{turned}{growth}{R}{arc}{limits_segment()}{inflight_segment()}")
 PY
