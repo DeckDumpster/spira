@@ -396,22 +396,26 @@ fn queue_repo_names(queue_dir: &Path) -> Vec<String> {
 // could not tell you". systemctl's own contract is the discriminator: both verbs print one
 // of a small set of known state words on stdout even on a non-zero exit; anything else
 // (empty output, an error message, a missing binary) is genuinely unreadable.
-fn systemctl_state(cfg: &Config, verb: &str, unit: &str) -> Option<String> {
+fn systemctl_state(cfg: &Config, verb: &str, unit: &str) -> Result<String, String> {
     let out = spira_config::bounded::bounded(&cfg.seams.systemctl)
         .args(["--user", verb, unit])
-        .stderr(Stdio::null())
         .output()
-        .ok()?;
-    let word = String::from_utf8(out.stdout).ok()?.trim().to_string();
+        .map_err(|e| format!("{} {} {}: {}", cfg.seams.systemctl, verb, unit, e))?;
+    let word = String::from_utf8_lossy(&out.stdout).trim().to_string();
     const KNOWN: &[&str] = &[
         "enabled", "disabled", "static", "masked", "linked", "alias", "generated", "indirect", "enabled-runtime",
         "active", "inactive", "failed", "activating", "deactivating", "reloading",
     ];
     if KNOWN.contains(&word.as_str()) {
-        Some(word)
-    } else {
-        None
+        return Ok(word);
     }
+    let how = match out.status.code() {
+        Some(124) => format!("timed out after {}s", spira_config::bounded::CALL_TIMEOUT_SECS),
+        Some(c) => format!("exit status {}", c),
+        None => "killed by a signal".to_string(),
+    };
+    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    Err(format!("systemctl {} {}: {}; stdout {:?}; stderr {:?}", verb, unit, how, word, stderr))
 }
 
 /// A unit's desired (enabled, active) — from the Composite's UnitsSpec when it names the
@@ -587,13 +591,12 @@ fn observe_units(cfg: &Config) -> Vec<Check> {
         let enabled = systemctl_state(cfg, "is-enabled", unit);
         let active = systemctl_state(cfg, "is-active", unit);
         let (enabled, active) = match (enabled, active) {
-            (Some(e), Some(a)) => (e, a),
-            _ => {
+            (Ok(e), Ok(a)) => (e, a),
+            (e, a) => {
+                let reasons: Vec<String> = [e.err(), a.err()].into_iter().flatten().collect();
                 checks.push(Check {
                     key: format!("units:{}", unit),
-                    raw: RawStatus::Unobservable {
-                        reason: format!("systemctl could not read {}", unit),
-                    },
+                    raw: RawStatus::Unobservable { reason: reasons.join(" | ") },
                     remedy: Remedy::Escalate,
                 });
                 continue;
@@ -1577,7 +1580,12 @@ fn evaluate(cfg: &Config, state: &mut StateMap, pending: &mut PendingMap, alerte
     let prev = state.remove(&check.key).unwrap_or_default();
     let prev_remedy = last_remedy(&prev).map(str::to_string);
     let metric_now = gap_metric(&check.raw);
-    let (verdict, mut next) = step(cfg.now_secs, check.raw, cfg.grace_secs, prev);
+    let first_unobservable_unit_read =
+        kind_of(&check.key) == "units" && matches!(check.raw, RawStatus::Unobservable { .. }) && prev == HysteresisState::default();
+    let (mut verdict, mut next) = step(cfg.now_secs, check.raw, cfg.grace_secs, prev);
+    if first_unobservable_unit_read {
+        verdict.is_gap = false;
+    }
     append_status(&cfg.store, &cfg.now_iso, &check.key, &verdict);
     judge_pending(cfg, pending, &check.key, metric_now);
 
@@ -2338,6 +2346,58 @@ mod tests {
         let status = stored(&cfg, "reconciler-status");
         assert!(status.contains("\"status\":\"deliberate\""), "{status}");
         assert!(status.contains("fails every run"), "{status}");
+    }
+
+    fn flaky_systemctl_fixture(tag: &str, body: &str) -> (testkit::TempDir, Config) {
+        let (dir, cfg) = suspension_fixture(tag, "sp-never", None);
+        fs::remove_file(&cfg.ctrl_path).unwrap();
+        let systemctl = dir.join("systemctl");
+        testkit::write_exe(&systemctl, body);
+        let seams = Seams { systemctl: systemctl.to_string_lossy().to_string(), ..cfg.seams.clone() };
+        (dir, Config { seams, ..cfg })
+    }
+
+    fn run_pass(cfg: &Config, state: &mut StateMap, now_secs: u64) {
+        let cfg = Config { now_secs, ..cfg.clone() };
+        for c in observe_units(&cfg) {
+            evaluate(&cfg, state, &mut Default::default(), &mut Default::default(), c);
+        }
+    }
+
+    #[test]
+    fn one_failed_systemctl_read_is_not_escalated_when_the_next_pass_reads_active() {
+        let (dir, cfg) = flaky_systemctl_fixture(
+            "flaky-once",
+            "#!/bin/sh\nm=\"$(dirname \"$0\")/failed-once\"\nif [ ! -f \"$m\" ]; then touch \"$m\"; exit 1; fi\ncase \"$2\" in is-enabled) echo enabled;; is-active) echo active;; esac\n",
+        );
+        let mut state = StateMap::new();
+        run_pass(&cfg, &mut state, 100);
+        run_pass(&cfg, &mut state, 160);
+        assert!(!dir.join("mail-body").exists(), "a single failed read must not be mailed: {:?}", fs::read_to_string(dir.join("mail-body")));
+    }
+
+    #[test]
+    fn a_systemctl_read_that_keeps_failing_escalates_and_names_what_systemctl_said() {
+        let (dir, cfg) = flaky_systemctl_fixture(
+            "flaky-always",
+            "#!/bin/sh\necho 'Failed to connect to bus: No medium found' >&2\nexit 1\n",
+        );
+        let mut state = StateMap::new();
+        run_pass(&cfg, &mut state, 100);
+        assert!(!dir.join("mail-body").exists(), "the first failed read is held back");
+        run_pass(&cfg, &mut state, 160);
+        let mail = fs::read_to_string(dir.join("mail-body")).expect("a persistent failure must escalate");
+        assert!(mail.contains("exit status 1") && mail.contains("Failed to connect to bus"), "{mail}");
+    }
+
+    #[test]
+    fn a_timed_out_systemctl_read_is_named_as_a_timeout() {
+        let (_dir, cfg) = flaky_systemctl_fixture("flaky-timeout", "#!/bin/sh\nexit 124\n");
+        let checks = observe_units(&cfg);
+        match &checks[0].raw {
+            RawStatus::Unobservable { reason } => assert!(reason.contains("timed out"), "{reason}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
