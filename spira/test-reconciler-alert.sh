@@ -67,6 +67,7 @@ tl_config SPIRA_ASK_LABEL="needs-operator"
 tl_config SPIRA_MAIL="$SPIRA_RUN/mail" SPIRA_MAIL_KINDS="$HERE/mail/kinds" \
     SPIRA_MAIL_INDEX="$SPIRA_RUN/mail/index" SPIRA_MAIL_MUTE=0
 mkdir -p "$SPIRA_RUN"
+tl_stub_ask_store "$T/askstub"
 
 # Stub tmux: "has-session -t =concierge" answers from a file the scenario toggles, so the
 # fixture never starts a real tmux session. reconciler-alert runs tmux by bare name, so the
