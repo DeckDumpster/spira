@@ -9,24 +9,31 @@ use std::process::ExitCode;
 const USAGE: &str = "usage: filings-collect pass --state FILE";
 
 fn main() -> ExitCode {
+    spira_otel::run::begin("filings-collect", spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref());
+    let code = run();
+    spira_otel::run::finish(i32::from(code));
+    ExitCode::from(code)
+}
+
+fn run() -> u8 {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let state_path = match argv.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
         ["pass", "--state", f] => std::path::PathBuf::from(f),
         _ => {
             eprintln!("filings-collect: {USAGE}");
-            return ExitCode::from(2);
+            return 2;
         }
     };
     let hosts = match spira_config::process::cfg("SPIRA_FILINGS_HOSTS").and_then(|s| parse_hosts(&s)) {
         Ok(h) => h,
         Err(e) => {
             eprintln!("filings-collect: {e}");
-            return ExitCode::from(2);
+            return 2;
         }
     };
     if hosts.is_empty() {
         println!("filings-collect: unconfigured — SPIRA_FILINGS_HOSTS names no host");
-        return ExitCode::SUCCESS;
+        return 0;
     }
     let mut state = State::parse(&std::fs::read_to_string(&state_path).unwrap_or_default());
     let mut save = |s: &State| {
@@ -43,5 +50,5 @@ fn main() -> ExitCode {
     for f in &o.failed {
         eprintln!("filings-collect: ALARM {f}");
     }
-    ExitCode::from(u8::from(!o.failed.is_empty()))
+    u8::from(!o.failed.is_empty())
 }
