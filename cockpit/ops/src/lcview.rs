@@ -61,6 +61,15 @@ pub struct Row {
     pub ejected_red_tip: Option<String>,
 }
 
+/// One open ask, as `spira-lc list-asks` prints it; `title` is the bead table's mirror of it.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AskRow {
+    pub id: String,
+    pub opened_at: i64,
+    pub title: String,
+    pub class: String,
+}
+
 /// What `work list` knows that the lifecycle does not.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Meta {
@@ -265,6 +274,11 @@ pub struct Snapshot {
     /// DECIDE, never counted as work.
     #[serde(default)]
     pub ask_label: String,
+    /// The open asks in the ask table; `asks_error` names why they could not be read.
+    #[serde(default)]
+    pub asks: Vec<AskRow>,
+    #[serde(default)]
+    pub asks_error: Option<String>,
     /// Why a round last ejected each bead, newest eject per bead (the batch's own reason).
     #[serde(default)]
     pub eject_why: BTreeMap<String, String>,
@@ -399,6 +413,8 @@ pub struct Item {
     pub repo: String,
     #[serde(default)]
     pub holds: Vec<String>,
+    #[serde(default)]
+    pub class: String,
     /// The aeon's last output lines, how old, and ok|warn|bad|none.
     pub out: Vec<String>,
     pub out_age: String,
@@ -722,6 +738,9 @@ pub struct View {
     pub now: i64,
     /// Questions waiting on the operator (needs-ryan), oldest first. Never counted as work.
     pub decide: Vec<Item>,
+    /// Why the asks could not be read; the section then says `?`, never 0.
+    #[serde(default)]
+    pub decide_error: Option<String>,
     pub menders: Vec<SmMender>,
     /// Open epics, as the server rolled them up, ordered by repo then name.
     pub epics: Vec<EpicRow>,
@@ -1333,9 +1352,19 @@ pub fn view(s: &Snapshot) -> View {
 
     let blocked_row = |r: &Row| r.blocker.as_deref().is_some_and(|b| !b.is_empty());
     let is_ask = |id: &str| !s.ask_label.is_empty() && s.meta.get(id).is_some_and(|m| m.labels.iter().any(|l| *l == s.ask_label));
-    let mut asks: Vec<&Row> = s.rows.iter().filter(|r| is_ask(&r.id) && !matches!(r.state.as_str(), "LANDED" | "DROPPED" | "SUPERSEDED" | "DONE")).collect();
-    asks.sort_by_key(|r| r.since);
-    v.decide = asks.iter().map(|r| item(r, r.since, String::new())).collect();
+    let mut asks: Vec<&AskRow> = s.asks.iter().collect();
+    asks.sort_by(|a, b| a.opened_at.cmp(&b.opened_at).then_with(|| a.id.cmp(&b.id)));
+    v.decide = asks
+        .iter()
+        .map(|a| Item {
+            id: a.id.clone(),
+            age: age(s.now - a.opened_at),
+            class: a.class.clone(),
+            title: Some(a.title.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| title(&a.id)),
+            ..Default::default()
+        })
+        .collect();
+    v.decide_error = s.asks_error.clone();
     let mut nx: Vec<&Row> = ready
         .iter()
         .copied()
@@ -1358,7 +1387,7 @@ pub fn view(s: &Snapshot) -> View {
 
     let claim_of = |r: &Row| -> String {
         if is_ask(&r.id) {
-            return "ask: see DECIDE".into();
+            return "ask: see WAITING ON YOU".into();
         }
         if let Some(b) = r.blocker.as_deref().filter(|b| !b.is_empty()) {
             return format!("blocked: {b}");
@@ -1423,6 +1452,18 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
     ));
     for e in &v.errors {
         out.push(format!("{RED}  source failed: {}{R}", cut(e, w - 18)));
+    }
+    out.push(match (&v.decide_error, v.decide.len()) {
+        (Some(e), _) => format!("{YEL}{B}WAITING ON YOU{R} {B}?{R} {RED}{}{R}", cut(e, w.saturating_sub(20))),
+        (None, 0) => format!("{YEL}{B}WAITING ON YOU{R} {B}0{R}"),
+        (None, n) => format!("{YEL}{B}WAITING ON YOU{R} {B}{n}{R}"),
+    });
+    for i in v.decide.iter().take(5) {
+        let class = if i.class.is_empty() { String::new() } else { format!("{} ", i.class) };
+        out.push(format!("  {YEL}{:<12}{R} {D}{:>4}{R} {class}{}", i.id, i.age, cut(&i.title, w.saturating_sub(24 + class.len()))));
+    }
+    if v.decide.len() > 5 {
+        out.push(format!("  {D}+{} more{R}", v.decide.len() - 5));
     }
     out.push(format!("{B}STATE MACHINE{R}   {D}(counts now · edge rates per hour){R}"));
     let dw = w.saturating_sub(24);
@@ -1759,12 +1800,18 @@ mod tests {
         let mut s = snap(vec![row("sp-ask1", "READY", 90_000), row("sp-work1", "READY", 91_000), row("sp-done-ask", "DROPPED", 80_000)]);
         s.ask_label = "fixture-ask-label".into();
         s.claimable = Some(vec!["sp-ask1".into(), "sp-work1".into()]); // even listed, an ask is never NEXT
+        s.asks = vec![
+            AskRow { id: "sp-newer".into(), opened_at: 90_000, title: "newer ask".into(), class: "policy".into() },
+            AskRow { id: "sp-older".into(), opened_at: 80_000, title: String::new(), class: String::new() },
+        ];
+        s.meta.insert("sp-older".into(), Meta { title: "older ask".into(), ..Default::default() });
         for id in ["sp-ask1", "sp-done-ask"] {
             s.meta.insert(id.into(), Meta { title: "Statute: something".into(), priority: Some(2), labels: vec![s.ask_label.clone()], ..Default::default() });
         }
         s.meta.insert("sp-work1".into(), Meta { title: "real work".into(), priority: Some(1), ..Default::default() });
         let v = view(&s);
-        assert_eq!(v.decide.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["sp-ask1"], "open asks only");
+        assert_eq!(v.decide.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["sp-older", "sp-newer"], "the ask table, oldest first");
+        assert_eq!((v.decide[0].title.as_str(), v.decide[1].class.as_str()), ("older ask", "policy"));
         assert_eq!(v.next_count, 1, "only the work bead is claimable");
         assert_eq!(v.next[0].id, "sp-work1");
     }

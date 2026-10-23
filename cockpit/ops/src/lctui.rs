@@ -200,18 +200,40 @@ fn banner(v: &View) -> Vec<String> {
     out
 }
 
-/// The whole pane as a tree, in Ryan's order: DECIDE, ROUND, NOW, STATE MACHINE (with each state's
+const WAITING_SHOWN: usize = 5;
+
+/// WAITING ON YOU: every open ask addressed to the operator, oldest first, above everything else
+/// and never absent: an unreadable store is `?` with its error, not 0.
+fn waiting_node(v: &View) -> Node {
+    let head = |n: &str, tail: &str| format!("{YEL}{B}WAITING ON YOU{R} {B}{n}{R}{tail}");
+    if let Some(e) = &v.decide_error {
+        return Node::new("decide", head("?", &format!(" {RED}{}{R}", cut(e, 90))));
+    }
+    if v.decide.is_empty() {
+        return Node::new("decide", head("0", ""));
+    }
+    let mut kids: Vec<Node> = v
+        .decide
+        .iter()
+        .take(WAITING_SHOWN)
+        .map(|i| {
+            let class = if i.class.is_empty() { String::new() } else { format!("{D}{}{R} ", i.class) };
+            Node::new(format!("decide/{}", i.id), format!("{YEL}{:<12}{R} {D}{:>4}{R} {class}{}", i.id, i.age, i.title))
+        })
+        .collect();
+    if v.decide.len() > WAITING_SHOWN {
+        kids.push(Node::new("decide/more", format!("{D}+{} more{R}", v.decide.len() - WAITING_SHOWN)));
+    }
+    Node::new("decide", head(&v.decide.len().to_string(), "")).kids(kids)
+}
+
+/// The whole pane as a tree, in Ryan's order: WAITING ON YOU, ROUND, NOW, STATE MACHINE (with each state's
 /// beads under it; READY's header and rows carry the claimability NEXT used to show), and DRIFT only as an alarm,
 /// BLOCKED, DRIFT, REFUSED, HOLDS, RECENT.
 pub fn tree(v: &View) -> Vec<Node> {
     let mut out = Vec::new();
 
-    // DECIDE: what is waiting on the operator, above everything else; it is never work.
-    let asks: Vec<Node> = v.decide.iter().map(|i| Node::new(format!("decide/{}", i.id), format!("{YEL}{:<12}{R} {D}{:>4}{R} {}", i.id, i.age, i.title))).collect();
-    // Only when something waits on him (per Ryan 2026-10-09).
-    if !asks.is_empty() {
-        out.push(Node::new("decide", format!("{YEL}{B}DECIDE{R} {B}{}{R} {D}waiting on you{R}", asks.len())).kids(asks));
-    }
+    out.push(waiting_node(v));
 
     // DRIFT is an alarm, not a section (per Ryan 2026-10-09): beads whose own commit is on the
     // base while the lifecycle still says READY/REWORK. The content-on-base reconciler closes
@@ -1284,12 +1306,45 @@ mod tests {
     }
 
     #[test]
-    fn empty_decide_and_blocked_do_not_appear_and_the_names_are_spira_and_states() {
+    fn empty_blocked_does_not_appear_and_the_names_are_spira_and_states() {
         let v = busy_view();
         let t = text(&layout(&v, &Ui::default(), 100, 200));
         assert!(t[0].starts_with("SPIRA"), "{}", t[0]);
         assert!(has(&t, "STATES") && !has(&t, "STATE MACHINE"));
-        assert!(!has(&t, "DECIDE") && !has(&t, "BLOCKED"), "empty sections are not drawn: {t:#?}");
+        assert!(!has(&t, "BLOCKED"), "empty sections are not drawn: {t:#?}");
+        assert!(t.iter().any(|l| l.contains("WAITING ON YOU 0")), "no asks reads 0 on one line: {t:#?}");
+    }
+
+    fn ask(id: &str, age: &str, title: &str) -> Item {
+        Item { id: id.into(), age: age.into(), title: title.into(), ..Default::default() }
+    }
+
+    #[test]
+    fn waiting_on_you_lists_the_oldest_five_with_the_overflow_above_rounds_and_never_wraps() {
+        let mut v = busy_view();
+        v.rounds = vec![crate::lcview::RepoRound { repo: "r".into(), batch: "r-1".into(), kind: "VM round".into(), phase: "x".into(), ..Default::default() }];
+        v.decide = (0..7).map(|k| ask(&format!("sp-ask{k}"), &format!("{}h", 7 - k), &format!("a long question title number {k} that goes on and on and on past any narrow pane"))).collect();
+        v.decide[0].class = "design".into();
+        for (w, h) in [(160, 77), (70, 50)] {
+            let f = layout(&v, &Ui::default(), w, h);
+            let t = text(&f);
+            let at = |needle: &str| t.iter().position(|l| l.contains(needle)).unwrap_or_else(|| panic!("{needle}: {t:#?}"));
+            assert!(t[at("WAITING ON YOU")].contains("WAITING ON YOU 7"), "{t:#?}");
+            assert!(at("WAITING ON YOU") < at("ROUNDS"));
+            assert!(at("sp-ask0") < at("sp-ask1") && at("sp-ask3") < at("sp-ask4"), "oldest first: {t:#?}");
+            assert!(!t.iter().any(|l| l.contains("sp-ask5")), "only five shown: {t:#?}");
+            assert!(t.iter().any(|l| l.contains("+2 more")), "{t:#?}");
+            assert!(t[at("sp-ask0")].contains("design"), "{t:#?}");
+            assert!(f.lines.len() <= h && f.lines.iter().all(|l| visible_len(l) <= w), "frame fits {w}x{h}");
+        }
+    }
+
+    #[test]
+    fn waiting_on_you_says_question_mark_with_the_error_when_the_asks_cannot_be_read() {
+        let mut v = busy_view();
+        v.decide_error = Some("spira-lc list-asks: exit 3 store down".into());
+        let t = text(&layout(&v, &Ui::default(), 120, 60));
+        assert!(t.iter().any(|l| l.contains("WAITING ON YOU ?") && l.contains("store down")) && !has(&t, "WAITING ON YOU 0"), "{t:#?}");
     }
 
     #[test]

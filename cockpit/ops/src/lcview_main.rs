@@ -3,7 +3,7 @@
 //! commits (drift, cached by sha), `world status`, and the aeon ceiling from config. Never runs `bd`.
 
 use cockpit_ops::lctui::{layout, parent_key, Frame, Mode, Ui};
-use cockpit_ops::lcview::{carry_forward, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveAeon, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
+use cockpit_ops::lcview::{carry_forward, AskRow, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveAeon, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::process::Command;
@@ -340,11 +340,15 @@ fn gather() -> Snapshot {
             for a in asks {
                 let id = text(&a["ask_id"]);
                 if !label.is_empty() {
-                    s.meta.entry(id).or_default().labels.push(label.clone());
+                    s.meta.entry(id.clone()).or_default().labels.push(label.clone());
                 }
+                s.asks.push(AskRow { id, opened_at: num(&a["opened_at"]).unwrap_or(0), title: text(&a["title"]), class: text(&a["class"]) });
             }
         }
-        Err(e) => s.errors.push(e),
+        Err(e) => {
+            s.asks_error = Some(e.clone());
+            s.errors.push(e);
+        }
     }
     match git.join().unwrap_or_else(|_| Err("git: panicked".into())) {
         Ok((base, m)) => {
