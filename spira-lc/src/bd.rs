@@ -333,9 +333,16 @@ fn spawn(cmd: Command, stdin: Option<&str>, what: &str) -> (i32, String) {
     spawn_with(cmd, stdin, what, false)
 }
 
+/// A socket-activated broker holds these for its own listener; `podman run` reads `LISTEN_FDS`
+/// and preserves fds the child never had, which breaks its libpod database mid-run.
+const ACTIVATION_ENV: [&str; 4] = ["LISTEN_FDS", "LISTEN_PID", "LISTEN_FDNAMES", "LISTEN_PIDFDID"];
+
 fn spawn_with(mut cmd: Command, stdin: Option<&str>, what: &str, keep_stderr: bool) -> (i32, String) {
     use std::io::Write;
     use std::process::Stdio;
+    for k in ACTIVATION_ENV {
+        cmd.env_remove(k);
+    }
     cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -379,6 +386,18 @@ mod settled_tests {
     #[test]
     fn a_successful_close_is_never_reread() {
         assert!(settled(Ok(()), "sp-a", || panic!("must not read")).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod activation_env_tests {
+    use super::*;
+
+    #[test]
+    fn a_brokered_tool_does_not_inherit_socket_activation_variables() {
+        let env = [("LISTEN_FDS", "1"), ("LISTEN_PID", "1"), ("LISTEN_FDNAMES", "x")];
+        let (code, out) = tool_env("sh", &["-c".to_string(), "echo \"[${LISTEN_FDS-}${LISTEN_PID-}${LISTEN_FDNAMES-}]\"".to_string()], None, "t", 10, &env);
+        assert_eq!((code, out.trim()), (0, "[]"));
     }
 }
 
