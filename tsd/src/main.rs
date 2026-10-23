@@ -3,8 +3,13 @@
 // interleave partial lines. The row format itself lives in lib.rs and is tested there without
 // touching a filesystem.
 //
+// A family in tsd::store::MOVED has no file: its row is pushed to SPIRA_METRICS_ENDPOINT, and a
+// push that fails is an error here, because the row has no other copy.
+//
 // usage: tsd-write --family <name> [--root <dir>] [--host <id>] [--ts <iso8601>]
 //                   [--field key=value ...] [--field-str key=value ...]
+//        tsd-write --family <name> --rows-from <file|-> [--root <dir>]
+//                   one finished row per line (envelope included), for a family in the store
 //
 //   --root defaults to $SPIRA_RUN.
 //   --host defaults to this machine's hostname (law-producers-stamp-their-own-clock: the
@@ -21,7 +26,7 @@ use tsd::{append_line, default_host, now_iso};
 
 fn usage() -> &'static str {
     "usage: tsd-write --family <name> [--root <dir>] [--host <id>] [--ts <iso8601>] \
-     [--field key=value ...] [--field-str key=value ...]\n   or: tsd-write escape <member> <suite> <class> [batch_id]"
+     [--field key=value ...] [--field-str key=value ...]\n   or: tsd-write --family <name> --rows-from <file|->\n   or: tsd-write escape <member> <suite> <class> [batch_id]"
 }
 
 /// `_tsd_escape`'s own four classes (wave4-decomposition.md row AC, wave 4.35, sp-kelr2;
@@ -98,12 +103,48 @@ fn escape_row(root: &Path, member: &str, suite: &str, class: &str, batch_id: &st
     append_line(&tsd::family_path(root, "escape"), &line)
 }
 
+/// `--rows-from <file|->`: stores finished rows, a thousand to a request. A line that is not a JSON
+/// object with a readable `ts` is skipped and counted, so an old family file can be replayed whole;
+/// a row the store refuses ends the run with its error.
+fn run_rows_from(family: &str, src: &str) -> Result<(), String> {
+    use std::io::BufRead;
+    let input: Box<dyn BufRead> = if src == "-" { Box::new(std::io::stdin().lock()) } else { Box::new(std::io::BufReader::new(fs::File::open(src).map_err(|e| format!("{src}: {e}"))?)) };
+    let endpoint = tsd::store::endpoint();
+    let (mut pushed, mut skipped) = (0usize, 0usize);
+    let mut batch: Vec<String> = Vec::new();
+    let flush = |batch: &mut Vec<String>, pushed: &mut usize| -> Result<(), String> {
+        tsd::store::push_rows(endpoint.as_deref(), family, batch)?;
+        *pushed += batch.len();
+        batch.clear();
+        Ok(())
+    };
+    for line in input.lines() {
+        let line = line.map_err(|e| format!("{src}: {e}"))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let usable = serde_json::from_str::<serde_json::Value>(&line).ok().is_some_and(|v| v.get("ts").and_then(|t| t.as_str()).and_then(tsd::parse_ts).is_some());
+        if !usable {
+            skipped += 1;
+            continue;
+        }
+        batch.push(line);
+        if batch.len() >= 1000 {
+            flush(&mut batch, &mut pushed)?;
+        }
+    }
+    flush(&mut batch, &mut pushed)?;
+    eprintln!("tsd-write: {family}: stored {pushed} row(s), skipped {skipped} unreadable");
+    Ok(())
+}
+
 fn run(args: &[String]) -> Result<(), String> {
     let mut family: Option<String> = None;
     let mut root: Option<PathBuf> = None;
     let mut host: Option<String> = None;
     let mut ts: Option<String> = None;
     let mut fields: Vec<(String, serde_json::Value)> = Vec::new();
+    let mut rows_from: Option<String> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -118,6 +159,7 @@ fn run(args: &[String]) -> Result<(), String> {
             "--ts" => ts = Some(next(&mut i)?.clone()),
             "--field" => fields.push(tsd::parse_field(next(&mut i)?)?),
             "--field-str" => fields.push(tsd::parse_field_str(next(&mut i)?)?),
+            "--rows-from" => rows_from = Some(next(&mut i)?.clone()),
             other => return Err(format!("unknown argument: {other}\n{}", usage())),
         }
         i += 1;
@@ -129,6 +171,19 @@ fn run(args: &[String]) -> Result<(), String> {
             "family {family:?} must start with a letter and contain only lowercase letters, digits and hyphens"
         ));
     }
+    if let Some(src) = rows_from {
+        if !tsd::store::moved(&family) {
+            return Err(format!("--rows-from stores rows in the metrics store; {family:?} is a file family"));
+        }
+        return run_rows_from(&family, &src);
+    }
+    let host = host.unwrap_or_else(default_host);
+    let ts = ts.unwrap_or_else(now_iso);
+
+    let line = tsd::build_row(&ts, &host, &family, &fields)?;
+    if tsd::store::moved(&family) {
+        return tsd::store::push_row(tsd::store::endpoint().as_deref(), &family, &line);
+    }
     // `tsd` stays a leaf library/binary (`spira-config` depends on it, so it cannot depend
     // back on `spira-config` without a cycle) — SPIRA_RUN is a registered config key, but
     // this binary cannot reach the one door for it, so a raw env read is this crate's own,
@@ -137,12 +192,7 @@ fn run(args: &[String]) -> Result<(), String> {
         Some(r) => r,
         None => return Err("no --root and SPIRA_RUN is unset".to_string()),
     };
-    let host = host.unwrap_or_else(default_host);
-    let ts = ts.unwrap_or_else(now_iso);
-
-    let line = tsd::build_row(&ts, &host, &family, &fields)?;
-    let path = tsd::family_path(&root, &family);
-    append_line(&path, &line)
+    append_line(&tsd::family_path(&root, &family), &line)
 }
 
 #[cfg(test)]

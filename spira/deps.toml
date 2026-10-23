@@ -91,7 +91,7 @@ version_probe = "dolt version"
 [[dep]]
 name = "duckdb"
 tier = "runtime"
-purpose = "the query layer over run/tsd/'s append-only JSONL files — trailing baselines, rates and dwell percentiles for the reconciler's flow invariants (tsd-query.sh)"
+purpose = "the query layer over the run/tsd/ families that stay files (suite-timing, gate-run, slots, batch-round) — baselines, rates and percentiles (tsd-query.sh); the families in the metrics store are read by tsd-read"
 version_min = ""
 version_probe = "duckdb --version"
 
@@ -628,6 +628,20 @@ tier = "release"
 purpose = "Spira's tsd-write binary, from the release's bin/"
 version_min = ""
 version_probe = "readlink -f \"$(command -v tsd-write)\""
+
+[[dep]]
+name = "tsd-read"
+tier = "release"
+purpose = "Spira's tsd-read binary, from the release's bin/ — the observational queries over the run/tsd/ families the metrics store holds; tsd-query.sh delegates to it and it refuses by name when the store cannot answer"
+version_min = ""
+version_probe = "readlink -f \"$(command -v tsd-read)\""
+
+[[dep]]
+name = "tsd-fake-store"
+tier = "dev"
+purpose = "the metrics-store stand-in the tsd, reconciler and lifecycle-export suites point SPIRA_METRICS_ENDPOINT at; built from the tsd crate"
+version_min = ""
+version_probe = "echo built-from-tsd"
 
 [[dep]]
 name = "unit-ensure"

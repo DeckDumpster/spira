@@ -1,4 +1,4 @@
-//! `/units`: every systemd user unit, with its executions folded from `run/tsd/unit-run-dbus.jsonl`.
+//! `/units`: every systemd user unit, with its executions folded from the `unit-run-dbus` rows in the metrics store.
 //! The unit list comes from systemd itself, so a unit that never ran still has a row.
 
 use crate::stuck::{dur, esc, shell};
@@ -19,7 +19,7 @@ const RESTART_FLAP: u32 = 5;
 pub struct Sources {
     pub run: String,
     pub systemctl: String,
-    pub duckdb: String,
+    pub metrics_endpoint: Option<String>,
     pub extra_path: String,
     pub budget: Duration,
     pub desired_dir: String,
@@ -702,25 +702,20 @@ pub fn parse_timer_nexts(text: &str) -> Result<BTreeMap<String, i64>, String> {
         .collect())
 }
 
-async fn executions(src: &Sources, path: &str, now: i64) -> Result<Vec<Value>, String> {
-    let file = tsd::family_path(std::path::Path::new(&src.run), "unit-run-dbus");
-    let files: Vec<String> = [tsd::rotated_path(&file), file].iter().filter(|f| f.exists()).map(|f| format!("'{}'", f.to_string_lossy().replace('\'', "''"))).collect();
-    if files.is_empty() {
-        return Ok(Vec::new());
-    }
-    let sql = format!(
-        "SELECT unit, t, result, duration_ms, invocation_id FROM \
-         (SELECT unit, CAST(epoch(CAST(ts AS TIMESTAMPTZ)) AS BIGINT) AS t, result, duration_ms, invocation_id FROM read_ndjson([{}], columns={{unit:'VARCHAR',ts:'VARCHAR',result:'VARCHAR',duration_ms:'BIGINT',invocation_id:'VARCHAR'}})) \
-         WHERE t >= {} ORDER BY t;",
-        files.join(","),
-        now - WEEK
-    );
-    let text = run_cmd(&src.duckdb, &["-json".to_string(), "-c".to_string(), sql], path, src.budget).await?;
-    let text = text.trim();
-    if text.is_empty() {
-        return Ok(Vec::new());
-    }
-    serde_json::from_str(text).map_err(|e| format!("{}: unparsable json: {e}", src.duckdb))
+async fn executions(src: &Sources, now: i64) -> Result<Vec<Value>, String> {
+    let endpoint = src.metrics_endpoint.clone();
+    let since = (now - WEEK).max(0) as u64;
+    tokio::task::spawn_blocking(move || {
+        let rows = tsd::store::Reader::new(endpoint.as_deref()).and_then(|r| r.rows("unit-run-dbus", since)).map_err(|e| e.to_string())?;
+        let mut out: Vec<Value> = rows
+            .iter()
+            .filter_map(|r| Some(json!({"unit": r["unit"].as_str()?, "t": tsd::query::ts_of(r)?, "result": r["result"], "duration_ms": r["duration_ms"], "invocation_id": r["invocation_id"]})))
+            .collect();
+        out.sort_by_key(|r| r["t"].as_i64());
+        Ok(out)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// The unit set the reconciler declares: the Composite's Units resource, else the installer's enable manifest.
@@ -753,7 +748,7 @@ pub async fn take(src: &Sources, now: i64) -> Snapshot {
         let inherited = std::env::var("PATH").unwrap_or_default();
         if src.extra_path.is_empty() { inherited } else { format!("{}:{inherited}", src.extra_path) }
     };
-    let (list, rows, nexts, declared) = tokio::join!(unit_list(src, &path), executions(src, &path, now), timer_nexts(src, &path), declared_units(src, &path));
+    let (list, rows, nexts, declared) = tokio::join!(unit_list(src, &path), executions(src, now), timer_nexts(src, &path), declared_units(src, &path));
     let mut errors = Vec::new();
     let declared = declared.map_err(|e| errors.push(format!("declared units: {e}"))).ok();
     let (names, mut live) = list.unwrap_or_else(|e| {

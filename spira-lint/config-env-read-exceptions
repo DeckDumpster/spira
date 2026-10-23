@@ -10,3 +10,5 @@ install/src/bin/install.rs the installer is the bootstrap: its environment is th
 install/src/bin/units_install.rs bootstrap: runs during install, before the config it would read is rendered
 install/src/bootstrap.rs bootstrap: runs during install, before the config it would read is rendered
 install/src/orchestrate.rs bootstrap: the install-time render computes the path tail that goes into config
+tsd/src/read_main.rs tsd sits below spira-config in the dependency graph (cfg() would cycle); the caller exports the resolved run root
+tsd/src/store.rs tsd sits below spira-config in the dependency graph (cfg() would cycle); a caller's exported endpoint wins, else the declaration is read through the spira-config CLI

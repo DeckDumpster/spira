@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-tsd-lifecycle-export.sh — tsd-lifecycle-export (sp-qz2yj), the one writer of
-# run/tsd/'s bead-stage family (design reconciler-time-series-2026-09-27 §2/§2a).
+# the bead-stage family, held in the metrics store (design reconciler-time-series-2026-09-27 §2/§2a).
 #
 # WHAT THIS SUITE CHECKS, against real dependencies (a real bd fixture store's own `events`
 # table, and a real throwaway `dolt sql-server` for spira_lifecycle — never a hand-modelled
@@ -21,7 +21,7 @@
 #
 # defect: sp-qz2yj
 # tier: T2
-# covers: tsd-lifecycle-export/* spira/conf.sh spira/testdb.sh
+# covers: tsd-lifecycle-export/* tsd/src/* spira-otel/src/* spira/conf.sh spira/testdb.sh
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -36,8 +36,23 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 
 # ── 0. the two binaries this suite drives: the tree's own build, by name on PATH (sp-gypjk) ──
 command -v tsd-lifecycle-export >/dev/null 2>&1 && command -v tsd-write >/dev/null 2>&1 \
-    || bail "tsd-lifecycle-export and tsd-write must both be on PATH"
+    && command -v tsd-read >/dev/null 2>&1 && command -v tsd-fake-store >/dev/null 2>&1 \
+    || bail "tsd-lifecycle-export, tsd-write, tsd-read and tsd-fake-store must all be on PATH"
 EXPORT_BIN=tsd-lifecycle-export
+
+# One fake metrics store per scenario: the exporter's rows go to the store, never to a file.
+STORE_PIDS=""
+start_store() {  # start_store <name> — sets STORE_ADDR
+    tsd-fake-store >"$T/$1.addr" 2>/dev/null &
+    STORE_PIDS="$STORE_PIDS $!"
+    local n=0
+    while [ ! -s "$T/$1.addr" ] && [ "$n" -lt 100 ]; do sleep 0.05; n=$((n + 1)); done
+    STORE_ADDR="$(head -1 "$T/$1.addr")"
+    [ -n "$STORE_ADDR" ] || bail "tsd-fake-store did not start"
+}
+stage_rows() {  # stage_rows <run-dir> <store> <out-file> — the family's rows from the store, oldest first
+    SPIRA_RUN="$1" SPIRA_METRICS_ENDPOINT="$2" tsd-read rows bead-stage 999999 >"$3" 2>"$3.err"
+}
 
 jpy() {  # jpy <file> <python-expr-on-"rows"> — rows is a list of parsed JSON lines
     python3 -c '
@@ -80,18 +95,21 @@ seedt sp-tle-a closed  ''    '2026-09-16T00:00:02Z'
 seedt sp-tle-b claimed ''    '2026-09-16T00:00:03Z'
 
 RUN1="$T/run1"; mkdir -p "$RUN1"
-run_export() {   # run_export <mode> <run-dir> [--since <ts>]
-    local mode="$1" run="$2"; shift 2
+start_store store1; STORE1="$STORE_ADDR"
+trap 'kill $STORE_PIDS 2>/dev/null; testdb_drop; rm -rf "$T"' EXIT INT TERM
+run_export() {   # run_export <mode> <run-dir> <store> [--since <ts>]
+    local mode="$1" run="$2" store="$3"; shift 3
     tl_config SPIRA_RUN="$run" SPIRA_BD="$SPIRA_BD"
-    SPIRA_DB="$SPIRA_DB" \
+    SPIRA_DB="$SPIRA_DB" SPIRA_METRICS_ENDPOINT="$store" \
         "$EXPORT_BIN" "$mode" "$@"
 }
-run_export legacy "$RUN1" --since '2026-09-16T00:00:00Z' >"$T/export1.out" 2>&1
+run_export legacy "$RUN1" "$STORE1" --since '2026-09-16T00:00:00Z' >"$T/export1.out" 2>&1
 wantrc "legacy export exits 0" 0 $?
 cat "$T/export1.out" >&2
 
-FAM1="$RUN1/tsd/bead-stage.jsonl"
-[ -f "$FAM1" ] && ok "bead-stage.jsonl written" || bad "MUST-FAIL CHECK: no bead-stage.jsonl produced"
+FAM1="$T/fam1.jsonl"
+stage_rows "$RUN1" "$STORE1" "$FAM1" && ok "bead-stage rows stored" || bad "MUST-FAIL CHECK: no bead-stage rows in the store: $(cat "$FAM1.err")"
+[ -e "$RUN1/tsd/bead-stage.jsonl" ] && bad "the exporter wrote a bead-stage file beside the store" || ok "no bead-stage file is written"
 is "exactly one row per bd event (3 seeded)" "3" "$(jpy "$FAM1" 'len(rows)')"
 is "row 1: source is legacy"      "legacy"  "$(jpy "$FAM1" 'rows[0]["source"]')"
 is "row 1: machine is bead"       "bead"    "$(jpy "$FAM1" 'rows[0]["machine"]')"
@@ -105,13 +123,15 @@ seqs="$(jpy "$FAM1" '[r["seq"] for r in rows]')"
 is "seq is assigned in order" "[1, 2, 3]" "$seqs"
 
 # ── re-run: nothing new ──────────────────────────────────────────────────────────────────
-run_export legacy "$RUN1" --since '2026-09-16T00:00:00Z' >"$T/export1b.out" 2>&1
+run_export legacy "$RUN1" "$STORE1" --since '2026-09-16T00:00:00Z' >"$T/export1b.out" 2>&1
 wantrc "second legacy export exits 0" 0 $?
+stage_rows "$RUN1" "$STORE1" "$FAM1"
 is "re-running exports nothing new (still 3 rows)" "3" "$(jpy "$FAM1" 'len(rows)')"
 
 # ── a new event after the checkpoint IS picked up ────────────────────────────────────────
 seedt sp-tle-b closed '' '2026-09-16T00:00:04Z'
-run_export legacy "$RUN1" --since '2026-09-16T00:00:00Z' >"$T/export1c.out" 2>&1
+run_export legacy "$RUN1" "$STORE1" --since '2026-09-16T00:00:00Z' >"$T/export1c.out" 2>&1
+stage_rows "$RUN1" "$STORE1" "$FAM1"
 is "a genuinely new event is exported on the next run" "4" "$(jpy "$FAM1" 'len(rows)')"
 is "the new row's seq continues from the checkpoint" "4" "$(jpy "$FAM1" 'rows[3]["seq"]')"
 
@@ -119,10 +139,12 @@ is "the new row's seq continues from the checkpoint" "4" "$(jpy "$FAM1" 'rows[3]
 printf '\n%s\n' "3. backfill: row count matches bd's own event count since the backfill date"
 # ============================================================================================
 RUN2="$T/run2"; mkdir -p "$RUN2"
-run_export backfill "$RUN2" --since '2026-09-16T00:00:00Z' >"$T/export2.out" 2>&1
+start_store store2; STORE2="$STORE_ADDR"
+run_export backfill "$RUN2" "$STORE2" --since '2026-09-16T00:00:00Z' >"$T/export2.out" 2>&1
 wantrc "backfill export exits 0" 0 $?
 cat "$T/export2.out" >&2
-FAM2="$RUN2/tsd/bead-stage.jsonl"
+FAM2="$T/fam2.jsonl"
+stage_rows "$RUN2" "$STORE2" "$FAM2"
 n_events="$(bdq sql --json "SELECT COUNT(*) AS n FROM events WHERE created_at >= '2026-09-16T00:00:00Z'" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["n"])')"
 n_rows="$(jpy "$FAM2" 'len(rows)')"
 is "backfill row count matches bd events since the backfill date" "$n_events" "$n_rows"
@@ -147,7 +169,7 @@ behavior:
 YAML
 "$DOLT_BIN" sql-server --config "$LTMP/server.yaml" > "$LTMP/server.log" 2>&1 & # batch-job: fixture dolt call against the suite's private store
 LC_SERVER_PID=$!
-trap 'kill "$LC_SERVER_PID" >/dev/null 2>&1; testdb_drop; rm -rf "$T"' EXIT INT TERM
+trap 'kill "$LC_SERVER_PID" $STORE_PIDS >/dev/null 2>&1; testdb_drop; rm -rf "$T"' EXIT INT TERM
 
 up=0
 for _ in $(seq 1 50); do
@@ -168,19 +190,20 @@ root_lc_sql --use-db spira_lifecycle sql -q \
     >/dev/null 2>&1
 
 RUN3="$T/run3"; mkdir -p "$RUN3"
+start_store store3; STORE3="$STORE_ADDR"
 # SPIRA_LC_PASSWORD_FILE is registered and resolves ambiently via cfg() to the complete
 # fixture's own nonexistent path, which would be preferred over the explicit
 # SPIRA_LC_PASSWORD="" below (sfail round 3, pattern 7 — same cause as test-canary.sh).
 tl_config SPIRA_RUN="$RUN3" SPIRA_LC_PASSWORD_FILE=""
 SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LPORT" SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$LTMP" \
-    SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" \
+    SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" SPIRA_METRICS_ENDPOINT="$STORE3" \
     "$EXPORT_BIN" lifecycle >"$T/export3.out" 2>&1
 wantrc "lifecycle export exits 0" 0 $?
 cat "$T/export3.out" >&2
 
-FAM3="$RUN3/tsd/bead-stage.jsonl"
-[ -f "$FAM3" ] && ok "bead-stage.jsonl written from the lifecycle source" \
-                || bad "MUST-FAIL CHECK: no bead-stage.jsonl from the lifecycle source"
+FAM3="$T/fam3.jsonl"
+stage_rows "$RUN3" "$STORE3" "$FAM3" && ok "bead-stage rows stored from the lifecycle source" \
+                || bad "MUST-FAIL CHECK: no bead-stage rows from the lifecycle source: $(cat "$FAM3.err")"
 is "both event rows are exported" "2" "$(jpy "$FAM3" 'len(rows)')"
 is "row 1: source is lifecycle"     "lifecycle" "$(jpy "$FAM3" 'rows[0]["source"]')"
 is "row 1: applied is true"         "True"      "$(jpy "$FAM3" 'rows[0]["applied"]')"
@@ -192,12 +215,13 @@ is "row 2: reason pulled from evidence" "flaky" "$(jpy "$FAM3" 'rows[1]["reason"
 # re-run: nothing new
 tl_config SPIRA_RUN="$RUN3"
 SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LPORT" SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$LTMP" \
-    SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" \
+    SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" SPIRA_METRICS_ENDPOINT="$STORE3" \
     "$EXPORT_BIN" lifecycle >"$T/export3b.out" 2>&1
+stage_rows "$RUN3" "$STORE3" "$FAM3"
 is "re-running the lifecycle source exports nothing new" "2" "$(jpy "$FAM3" 'len(rows)')"
 
 kill "$LC_SERVER_PID" >/dev/null 2>&1
-trap 'testdb_drop; rm -rf "$T"' EXIT INT TERM
+trap 'kill $STORE_PIDS 2>/dev/null; testdb_drop; rm -rf "$T"' EXIT INT TERM
 
 # ============================================================================================
 printf '\n%s\n' "5. no harness transition site writes to run/tsd/'s bead-stage family directly"

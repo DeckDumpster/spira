@@ -11,12 +11,15 @@
 #   3. MERGE: ingesting a second, different run appends alongside rows already there —
 #      existing local/prior-CI rows are not overwritten.
 #   4. NO ARTIFACT: a run with no batch-results artifact is a clean no-op, not a failure.
+#   5. MOVED FAMILY: a family the metrics store holds (vm-signals) is stored there, not in a
+#      file, and re-ingesting the same rows adds none; a stopped store fails the ingest
+#      without writing the marker, so the next tick retries.
 #
 # A STUB gh. What is tested is tsd-ingest.sh's artifact handling and merge/idempotency, not
 # a real GitHub response.
 #
 # tier: T1
-# covers: spira/tsd-ingest.sh
+# covers: spira/tsd-ingest.sh tsd/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -124,5 +127,48 @@ out4="$(ingest test-org/test-repo 200 2>&1)"; rc4=$?
 wantrc "no-artifact run exits 0" 0 "$rc4"
 want   "no-artifact run says so" "no batch-results artifact" "$out4"
 is     "row count unchanged" "2" "$(grep -c . "$FAM" 2>/dev/null || echo 0)"
+
+# --------------------------------------------------------------------------------------
+# PART 5: MOVED FAMILY — rows go to the metrics store, never to a file.
+# --------------------------------------------------------------------------------------
+echo
+echo "run whose artifact carries a family the metrics store holds:"
+command -v tsd-fake-store >/dev/null 2>&1 && command -v tsd-read >/dev/null 2>&1 && command -v tsd-write >/dev/null 2>&1 \
+    || bail "tsd-fake-store, tsd-read and tsd-write must be on PATH"
+tsd-fake-store >"$T/store.addr" 2>/dev/null &
+STORE_PID=$!
+trap 'kill $STORE_PID 2>/dev/null; rm -rf "$T"' EXIT INT TERM
+_n=0; while [ ! -s "$T/store.addr" ] && [ "$_n" -lt 100 ]; do sleep 0.05; _n=$((_n + 1)); done
+STORE="$(head -1 "$T/store.addr")"
+ZIP3="$T/artifact3.zip"
+mkzip "$ZIP3" "tsd/vm-signals.jsonl" \
+    '{"ts":"2026-10-22T01:00:00Z","host":"vm-1","family":"vm-signals","iowait_pct":3.5}
+'
+cat > "$T/sbin/gh" <<GHSTUB
+#!/usr/bin/env bash
+case "\$*" in
+    *"actions/runs/300/artifacts"*)  printf '903\n' ;;
+    *"actions/artifacts/903/zip"*)   cat "$ZIP3" ;;
+    *) exit 0 ;;
+esac
+GHSTUB
+chmod +x "$T/sbin/gh"
+export SPIRA_METRICS_ENDPOINT="$STORE"
+tl_config SPIRA_METRICS_ENDPOINT="$STORE"
+out5="$(ingest test-org/test-repo 300 2>&1)"; rc5=$?
+wantrc "a moved family ingests" 0 "$rc5"
+want   "and is counted" "ingested 1 family" "$out5"
+[ -e "$T/run/tsd/vm-signals.jsonl" ] && bad "a moved family was written to a file" || ok "no vm-signals file is written"
+rows5="$(SPIRA_RUN="$T/run" tsd-read rows vm-signals 999999 2>&1)"
+want "the row is in the store with its own host" '"host":"vm-1"' "$rows5"
+rm -f "$T/run/tsd/.ingested-runs/300"
+ingest test-org/test-repo 300 >/dev/null 2>&1
+is "re-ingesting the same rows adds none" "1" "$(SPIRA_RUN="$T/run" tsd-read rows vm-signals 999999 | grep -c .)"
+
+kill $STORE_PID 2>/dev/null; wait $STORE_PID 2>/dev/null
+rm -f "$T/run/tsd/.ingested-runs/300"
+out5b="$(ingest test-org/test-repo 300 2>&1)"; rc5b=$?
+[ "$rc5b" -ne 0 ] && ok "a stopped store fails the ingest" || bad "a stopped store did not fail the ingest"
+[ -e "$T/run/tsd/.ingested-runs/300" ] && bad "the marker was written though the rows were not stored" || ok "no marker, so the next tick retries"
 
 tl_summary

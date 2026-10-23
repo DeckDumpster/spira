@@ -334,6 +334,17 @@ pub fn corpus_runs(host: &str, round_vm: &str, w: Window) -> Vec<CorpusRun> {
     out
 }
 
+/// How far before the window a CERTIFIED event is looked for: a landing in the window is measured from it.
+pub const LANDING_LOOKBACK_SECS: u64 = 7 * 86_400;
+
+/// The `landing-event` rows since `since`, one JSON object per line. Any refusal is returned as
+/// its named error; an empty answer is a refusal too, never zero landings.
+pub fn landing_events(endpoint: Option<&str>, since: u64) -> Result<String, String> {
+    let reader = tsd::store::Reader::new(endpoint).map_err(|e| e.to_string())?;
+    let rows = reader.rows("landing-event", since).map_err(|e| e.to_string())?;
+    Ok(rows.iter().map(|r| format!("{r}\n")).collect())
+}
+
 /// Seconds from each bead's latest CERTIFIED to its first LANDED in `w`.
 pub fn certified_to_landed(textual: &str, w: Window) -> Vec<f64> {
     let mut events: Vec<(u64, String, String)> = rows(textual)
@@ -371,6 +382,8 @@ pub struct Inputs<'a> {
     pub round_attribution: &'a str,
     pub suite_timing: &'a str,
     pub landing_event: &'a str,
+    /// Why `landing_event` could not be read from the metrics store; the section then says so instead of counting zero landings.
+    pub landing_event_error: Option<&'a str>,
     pub round_vm_timing: &'a str,
 }
 
@@ -640,6 +653,10 @@ pub fn render(inp: &Inputs, w: Window) -> String {
     let _ = writeln!(o);
 
     // 5. Certified -> landed.
+    if let Some(why) = inp.landing_event_error {
+        let _ = writeln!(o, "5. Certified -> landed: UNAVAILABLE — {why}");
+        return o;
+    }
     let lat = certified_to_landed(inp.landing_event, w);
     let _ = writeln!(
         o,

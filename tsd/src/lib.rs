@@ -142,6 +142,8 @@ const LOCK_UN: i32 = 8;
 
 pub mod pass;
 pub mod prune;
+pub mod query;
+pub mod store;
 pub mod report;
 
 pub fn default_host() -> String {
@@ -189,37 +191,6 @@ fn tail_is_torn(f: &mut std::fs::File) -> std::io::Result<bool> {
     Ok(b[0] != b'\n')
 }
 
-pub fn append_line(path: &Path, line: &str) -> Result<(), String> {
-    append_line_rotating(path, line, u64::MAX)
-}
-
-/// The file a rotated family file moves to: one generation, replaced at the next rotation.
-pub fn rotated_path(path: &Path) -> PathBuf {
-    let mut s = path.as_os_str().to_os_string();
-    s.push(".1");
-    PathBuf::from(s)
-}
-
-/// The last `max` bytes of a file as text, starting at a line boundary; empty when absent.
-pub fn read_tail(path: &Path, max: u64) -> String {
-    use std::io::{Read, Seek, SeekFrom};
-    let Ok(mut f) = std::fs::File::open(path) else { return String::new() };
-    let Ok(len) = f.metadata().map(|m| m.len()) else { return String::new() };
-    let start = len.saturating_sub(max);
-    if f.seek(SeekFrom::Start(start)).is_err() {
-        return String::new();
-    }
-    let mut buf = Vec::new();
-    if f.take(max).read_to_end(&mut buf).is_err() {
-        return String::new();
-    }
-    let text = String::from_utf8_lossy(&buf).into_owned();
-    if start == 0 {
-        return text;
-    }
-    text.split_once('\n').map_or(String::new(), |(_, rest)| rest.to_string())
-}
-
 /// The family file open and exclusively locked, as the file now at `path`: a prune renames a new
 /// file over it, so a lock won on the replaced inode is released and the open retried.
 fn open_locked(path: &Path) -> Result<(std::fs::File, i32), String> {
@@ -243,19 +214,14 @@ fn open_locked(path: &Path) -> Result<(std::fs::File, i32), String> {
     }
 }
 
-/// `append_line`, first moving a file of at least `max_bytes` to `rotated_path`. For a family with
-/// one writer: a second writer that opened the path before the move would append to the moved file.
-pub fn append_line_rotating(path: &Path, line: &str, max_bytes: u64) -> Result<(), String> {
+/// Appends one whole line under an exclusive lock, first closing a torn tail left by a writer that died mid-line.
+pub fn append_line(path: &Path, line: &str) -> Result<(), String> {
     check_line(line).map_err(|e| format!("{}: refused: {e}", path.display()))?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
     let (mut f, fd) = open_locked(path)?;
     let result = (|| {
-        if f.metadata()?.len() >= max_bytes {
-            std::fs::rename(path, rotated_path(path))?;
-            f = OpenOptions::new().create(true).read(true).append(true).open(path)?;
-        }
         let mut buf = Vec::with_capacity(line.len() + 2);
         if tail_is_torn(&mut f)? {
             buf.push(b'\n');
@@ -272,34 +238,6 @@ pub fn append_line_rotating(path: &Path, line: &str, max_bytes: u64) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn read_tail_is_bounded_and_starts_on_a_line() {
-        let t = testkit::TempDir::new("tsd-tail");
-        let d = t.path().to_path_buf();
-        let p = d.join("f.jsonl");
-        let lines: String = (0..1000).map(|i| format!("{{\"n\":{i}}}\n")).collect();
-        std::fs::write(&p, &lines).unwrap();
-        let t = read_tail(&p, 100);
-        assert!(t.len() <= 100 && t.ends_with("{\"n\":999}\n") && t.starts_with("{\"n\":"));
-        assert_eq!(read_tail(&p, 1 << 20), lines);
-        assert_eq!(read_tail(&d.join("none"), 10), "");
-    }
-
-    #[test]
-    fn a_full_file_rotates_to_one_generation_and_writing_continues() {
-        let t = testkit::TempDir::new("tsd-rot");
-        let d = t.path().to_path_buf();
-        let p = d.join("f.jsonl");
-        for i in 0..50 {
-            append_line_rotating(&p, &format!("{{\"n\":{i}}}"), 100).unwrap();
-        }
-        let cur = std::fs::read_to_string(&p).unwrap();
-        let old = std::fs::read_to_string(rotated_path(&p)).unwrap();
-        assert!(cur.len() < 200 && old.len() >= 100 && old.len() < 200, "{} {}", cur.len(), old.len());
-        assert!(cur.ends_with("{\"n\":49}\n"));
-        assert!(!d.join("f.jsonl.2").exists());
-    }
 
     #[test]
     fn valid_family_accepts_lowercase_hyphenated_names() {

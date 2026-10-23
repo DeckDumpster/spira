@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # tsd-ingest.sh — coordinator-side ingest: pull a CI gate run's tsd/*.jsonl rows (uploaded
-# in its batch-results artifact) into the local run/tsd/ tree, so one family file
-# answers queries over local and CI producers together. Every row already carries its own
+# in its batch-results artifact) into the local run/tsd/ tree (or, for a family the metrics
+# store holds, into the store), so one family answers queries over local and CI producers together. Every row already carries its own
 # producer's host id and clock stamp (law-producers-stamp-their-own-clock); ingest appends
 # each line unchanged, it does not relabel it.
 #
@@ -53,6 +53,15 @@ fi
 _n_families=0
 while IFS= read -r -d '' src; do
     family="$(basename "$src" .jsonl)"
+    if tsd-read moved "$family"; then
+        # A family the metrics store holds has no file; the same row stored twice is one sample.
+        if ! tsd-write --family "$family" --rows-from "$src"; then
+            printf 'tsd-ingest: run %s: %s rows were not stored\n' "$RUN_ID" "$family" >&2
+            exit 1
+        fi
+        _n_families=$((_n_families + 1))
+        continue
+    fi
     dest="$SPIRA_RUN/tsd/$family.jsonl"
     mkdir -p "$(dirname "$dest")"
     # Append-only merge under an exclusive lock, same discipline tsd-write's IO seam uses —

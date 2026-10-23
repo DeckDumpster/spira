@@ -1,7 +1,7 @@
 //! unit-run watch [--family F] | ensure-accounting [--dir DIR]
 //!
-//! watch: learn unit runs from the user manager's D-Bus signals, writing one record per run to
-//! run/tsd/<family>.jsonl and pushing it to the metrics store.
+//! watch: learn unit runs from the user manager's D-Bus signals, pushing one record per run to
+//! the metrics store (family `unit-run-dbus`), and pushing its counts and duration there too.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -26,10 +26,6 @@ impl Proc for Spawn {
     }
 }
 
-fn run_dir() -> Result<PathBuf, String> {
-    Ok(PathBuf::from(spira_config::process::cfg("SPIRA_RUN")?))
-}
-
 fn push_metrics(sink: &spira_otel::metrics::MetricsSink, r: &unit_run::Record) {
     use spira_otel::metrics::Point;
     let unit = watch::metric_unit(&r.unit);
@@ -40,22 +36,35 @@ fn push_metrics(sink: &spira_otel::metrics::MetricsSink, r: &unit_run::Record) {
     sink.push(&points, &[("unit", &unit), ("result", &r.result)]);
 }
 
-const TAIL_BYTES: u64 = 4 << 20;
-const ROTATE_BYTES: u64 = 16 << 20;
+/// How far back a restarted listener looks for the invocations it already stored and the run it
+/// last saw end. Longer than any catch-up overlap, short enough to export in one read.
+const RESUME_SECS: u64 = 2 * 3600;
+const RETRY: Duration = Duration::from_secs(10);
+const BACKLOG_MAX: usize = 20_000;
 
-fn resume_text(path: &std::path::Path) -> String {
-    tsd::read_tail(&tsd::rotated_path(path), TAIL_BYTES) + &tsd::read_tail(path, TAIL_BYTES)
+/// The family's recent rows from the store. The listener does not start without them: a resume
+/// read that failed would store every overlapping run twice.
+fn resume_rows(endpoint: Option<&str>, family: &str, now: u64) -> Vec<serde_json::Value> {
+    loop {
+        let read = tsd::store::Reader::new(endpoint).and_then(|r| r.rows_or_empty(family, now.saturating_sub(RESUME_SECS)));
+        match read {
+            Ok(rows) => return rows,
+            Err(e) => {
+                eprintln!("unit-run watch: resume read refused: {e}; retrying in {}s", RETRY.as_secs());
+                std::thread::sleep(RETRY);
+            }
+        }
+    }
 }
 
 fn watch_cmd(family: &str) -> Result<(), String> {
-    let run = run_dir()?;
-    let path = tsd::family_path(&run, family);
-    let resume = resume_text(&path);
-    let mut seen = written_ids(&resume);
     let instance = spira_config::process::cfg("SPIRA_INSTANCE")?;
-    let host = tsd::default_host();
-    let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
+    let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().filter(|e| !e.trim().is_empty());
+    let resume = resume_rows(endpoint.as_deref(), family, Wall.now_epoch());
+    let mut seen = written_ids(&resume);
     let metrics = spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), "spira-unit-run", Duration::from_secs(2));
+    let store = tsd::store::Pusher::new(endpoint.clone());
+    let mut backlog = unit_run::Backlog::new(BACKLOG_MAX);
     let mut triggers = Triggers::new(&Spawn);
     let mut conn = unit_run::dbus::Conn::connect(&unit_run::dbus::bus_path()?)?;
     watch::arm(&mut conn)?;
@@ -68,15 +77,20 @@ fn watch_cmd(family: &str) -> Result<(), String> {
         }
         let trig = triggers.of(&r.unit);
         let fields = unit_run::record_fields(&r, trig.as_deref(), &instance);
-        let row = tsd::build_row(&tsd::iso_utc(Wall.now_epoch()), &host, family, &fields)?;
-        tsd::append_line_rotating(&path, &row, ROTATE_BYTES)?;
+        let (dropped, stored) = backlog.offer(&store, family, tsd::iso_utc(Wall.now_epoch()), fields);
+        if dropped {
+            eprintln!("unit-run watch: backlog full ({BACKLOG_MAX}) while the store refuses rows; dropped the oldest");
+        }
+        if let Err(e) = stored {
+            eprintln!("unit-run watch: {} row(s) held: {e}", backlog.len());
+        }
         push_metrics(&metrics, &r);
         Ok(())
     };
     for r in watch::catch_up(&mut conn, &mut tracker, now_us)? {
         record(r)?;
     }
-    eprintln!("unit-run watch: armed on the user manager; writing {}", tsd::family_path(&run, family).display());
+    eprintln!("unit-run watch: armed on the user manager; storing {family} rows in the metrics store");
     loop {
         for r in watch::step(&mut conn, &mut tracker, now_us, Duration::from_secs(60))? {
             record(r)?;

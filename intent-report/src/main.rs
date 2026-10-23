@@ -2,7 +2,7 @@
 //
 // usage: intent-report [--run <dir>] [--since <dur|ISO>] [--until <dur|ISO>] [--no-backfill] [--round-vm-timing <file>]
 
-use intent_report::{parse_when, render, Inputs, Window};
+use intent_report::{landing_events, parse_when, render, Inputs, Window, LANDING_LOOKBACK_SECS};
 use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -72,12 +72,11 @@ fn run(args: Vec<String>) -> Result<String, String> {
         Some(f) => fs::read_to_string(f).map_err(|e| format!("{}: {e}", f.display()))?,
         None => String::new(),
     };
-    let (gate_run, ra, st, le) = (
-        read("tsd/gate-run.jsonl"),
-        read("tsd/round-attribution.jsonl"),
-        read("tsd/suite-timing.jsonl"),
-        read("tsd/landing-event.jsonl"),
-    );
+    let (gate_run, ra, st) = (read("tsd/gate-run.jsonl"), read("tsd/round-attribution.jsonl"), read("tsd/suite-timing.jsonl"));
+    let (le, le_error) = match landing_events(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), from.saturating_sub(LANDING_LOOKBACK_SECS)) {
+        Ok(text) => (text, None),
+        Err(e) => (String::new(), Some(e)),
+    };
     Ok(render(
         &Inputs {
             gate_run: &gate_run,
@@ -85,6 +84,7 @@ fn run(args: Vec<String>) -> Result<String, String> {
             round_attribution: &ra,
             suite_timing: &st,
             landing_event: &le,
+            landing_event_error: le_error.as_deref(),
             round_vm_timing: &vm,
         },
         Window { from, to },

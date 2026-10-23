@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 #
-# tsd-query.sh — DuckDB CLI over run/tsd/'s append-only JSONL families: the queries the
-# reconciler's flow invariants need (trailing baselines, rates, dwell percentiles). DuckDB
-# reads the files in place with no daemon and nothing loaded ahead of time; the files
-# themselves, not this script, are the durable contract.
+# tsd-query.sh — the queries the reconciler's flow invariants need (trailing baselines, rates,
+# dwell percentiles) over run/tsd/'s families. A family the metrics store holds (`tsd-read
+# moved <family>`) is answered by tsd-read, which refuses by name when the store is unreachable
+# or holds nothing for the window; the files of the others are read in place by DuckDB, with no
+# daemon and nothing loaded ahead of time.
 #
 # usage:
 #   tsd-query.sh baseline <family> <field> <hours>        avg(field) over the trailing window
@@ -53,12 +54,10 @@
 # suite name is not an identifier (it carries dots and slashes-as-hyphens from a path), so it
 # gets its own charset and is quoted as a SQL string literal, single quotes doubled.
 #
-# covers: tsd/src/lib.rs tsd/src/main.rs spira/deps.toml spira/conf.sh
+# covers: tsd/src/lib.rs tsd/src/main.rs tsd/src/query.rs tsd/src/read_main.rs spira/deps.toml spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/conf.sh"
-
-spira_require duckdb || exit 1
 
 FAMILY_RE='^[a-z][a-z0-9-]*$'
 FIELD_RE='^[a-z_][a-z0-9_]*$'
@@ -68,7 +67,6 @@ SUITE_RE='^[A-Za-z0-9._-]+$'
 BEAD_RE='^[a-z][a-z0-9]*-[a-z0-9.]+$'
 DEFAULT_HOURS=720
 BRANCH_RE='^[A-Za-z0-9._/-]+$'
-STAGE_FAMILY=bead-stage
 
 usage() {
     cat >&2 <<'USAGE'
@@ -154,6 +152,15 @@ _check_hours() {
 }
 
 cmd="${1:-}"; shift || true
+case "$cmd" in
+    baseline|rate|dwell|by-group|count-by)
+        if tsd-read moved "${1:-}"; then exec tsd-read "$cmd" "$@"; fi ;;
+esac
+case "$cmd" in
+    where|rework|time|sentinel|bead) ;;
+    *) spira_require duckdb || exit 1 ;;
+esac
+
 case "$cmd" in
     baseline)
         family="${1:?family required}"; field="${2:?field required}"; hours="${3:?hours required}"
@@ -303,48 +310,6 @@ case "$cmd" in
             LIMIT $n;
         "
         ;;
-    where)
-        hours="${1:-$DEFAULT_HOURS}"; _check_hours "$hours"
-        path="$(_check_family "$STAGE_FAMILY")" || exit $?
-        duckdb -json -c "
-            WITH latest AS (
-                SELECT to_state, epoch(now()) - epoch(CAST(ts AS TIMESTAMPTZ)) AS dwell_s,
-                       row_number() OVER (PARTITION BY key ORDER BY seq DESC) AS rn
-                FROM $(_rows $path ts seq machine key from_state to_state applied reason)
-                WHERE machine = 'bead' AND applied
-                  AND CAST(ts AS TIMESTAMPTZ) >= now() - INTERVAL '$hours hours'
-            )
-            SELECT to_state AS state, count(*) AS wip,
-                   CAST(quantile_cont(dwell_s, 0.5) AS BIGINT) AS dwell_p50_s,
-                   CAST(max(dwell_s) AS BIGINT) AS dwell_max_s
-            FROM latest
-            WHERE rn = 1 AND to_state IN ('READY','WORKING','SUBMITTED','CERTIFIED','IN_DELIVERY','REWORK')
-            GROUP BY to_state
-            ORDER BY CASE to_state WHEN 'READY' THEN 1 WHEN 'WORKING' THEN 2 WHEN 'SUBMITTED' THEN 3
-                                   WHEN 'CERTIFIED' THEN 4 WHEN 'IN_DELIVERY' THEN 5 ELSE 6 END;
-        "
-        ;;
-    rework)
-        hours="${1:-$DEFAULT_HOURS}"; _check_hours "$hours"
-        path="$(_check_family "$STAGE_FAMILY")" || exit $?
-        duckdb -json -c "
-            WITH win AS (
-                SELECT key, to_state, COALESCE(reason, 'unknown') AS reason
-                FROM $(_rows $path ts seq machine key from_state to_state applied reason)
-                WHERE machine = 'bead' AND applied
-                  AND CAST(ts AS TIMESTAMPTZ) >= now() - INTERVAL '$hours hours'
-            ), landed AS (
-                SELECT count(DISTINCT key) AS n FROM win WHERE to_state = 'LANDED'
-            ), reopens AS (
-                SELECT reason, count(*) AS n FROM win WHERE to_state = 'REWORK' GROUP BY reason
-            )
-            SELECT '*' AS reason, COALESCE((SELECT sum(n) FROM reopens), 0)::BIGINT AS reopens,
-                   (SELECT n FROM landed) AS landed, 0 AS ord
-            UNION ALL
-            SELECT reason, n, (SELECT n FROM landed), 1 FROM reopens
-            ORDER BY ord, reopens DESC, reason;
-        "
-        ;;
     slots)
         hours="${1:-$DEFAULT_HOURS}"; _check_hours "$hours"
         path="$(_check_family slots)" || exit $?
@@ -361,70 +326,14 @@ case "$cmd" in
             FROM s WHERE t >= now() - INTERVAL '$hours hours' AND dt IS NOT NULL;
         "
         ;;
-    time)
-        hours="${1:-$DEFAULT_HOURS}"; _check_hours "$hours"
-        apath="$(_check_family aeon-session)" || exit $?
-        gpath="$(_check_family gate-run)" || exit $?
-        spath="$(_check_family slots)" || exit $?
-        rpath="$(_family_path batch-round)"
-        rsrc="SELECT 0.0 AS secs WHERE false"
-        [ -f "$rpath" ] && rsrc="SELECT CAST(duration_ms AS DOUBLE) / 1000 AS secs FROM $(_rows $rpath ts duration_ms) WHERE CAST(ts AS TIMESTAMPTZ) >= now() - INTERVAL '$hours hours'"
-        duckdb -json -c "
-            WITH sl AS (
-                SELECT CAST(ts AS TIMESTAMPTZ) AS t, ceiling, live,
-                       CASE WHEN lead(ts) OVER (ORDER BY ts) IS NULL THEN NULL
-                            ELSE least(epoch(lead(ts) OVER (ORDER BY ts)) - epoch(ts), 300) END AS dt
-                FROM $(_rows $spath ts live ceiling ready) WHERE ts IS NOT NULL
-            )
-            SELECT
-                (SELECT CAST(COALESCE(sum(wall_s), 0) AS BIGINT) FROM $(_rows $apath ts bead fayth status wall_s)
-                    WHERE CAST(ts AS TIMESTAMPTZ) >= now() - INTERVAL '$hours hours') AS aeon_s,
-                (SELECT CAST(COALESCE(sum(ran_secs), 0) AS BIGINT) FROM $(_rows $gpath ts bead status reason ran_secs)
-                    WHERE CAST(ts AS TIMESTAMPTZ) >= now() - INTERVAL '$hours hours') AS gate_s,
-                (SELECT CAST(COALESCE(sum(secs), 0) AS BIGINT) FROM ($rsrc)) AS round_s,
-                (SELECT CAST(COALESCE(sum(greatest(ceiling - live, 0) * dt), 0) AS BIGINT) FROM sl
-                    WHERE t >= now() - INTERVAL '$hours hours' AND dt IS NOT NULL) AS idle_slot_s;
-        "
-        ;;
-    sentinel)
-        hours="${1:-$DEFAULT_HOURS}"; _check_hours "$hours"
-        path="$(_check_family sentinel-phase)" || exit $?
-        duckdb -json -c "
-            WITH w AS (
-                SELECT pass, \"check\" AS phase, secs
-                FROM $(_rows $path ts pass check secs)
-                WHERE CAST(ts AS TIMESTAMPTZ) >= now() - INTERVAL '$hours hours'
-            ), per_pass AS (
-                SELECT pass, sum(secs) AS total FROM w GROUP BY pass
-            ), top AS (
-                SELECT phase, sum(secs) AS secs FROM w GROUP BY phase ORDER BY secs DESC, phase LIMIT 3
-            )
-            SELECT quantile_cont(total, 0.5) AS p50, quantile_cont(total, 0.9) AS p90, count(*) AS passes,
-                   (SELECT list(phase || ':' || CAST(secs AS BIGINT)) FROM top) AS top_phases
-            FROM per_pass;
-        "
+    where|rework|time|sentinel)
+        [[ "${1:-$DEFAULT_HOURS}" =~ $NUM_RE ]] || { printf 'tsd-query: bad hours %q — must be a non-negative integer\n' "$1" >&2; exit 2; }
+        exec tsd-read "$cmd" "$@"
         ;;
     bead)
         id="${1:?bead id required}"
         [[ "$id" =~ $BEAD_RE ]] || { printf 'tsd-query: bad bead %q\n' "$id" >&2; exit 2; }
-        path="$(_check_family "$STAGE_FAMILY")" || exit $?
-        extra=""
-        [ -f "$(_family_path aeon-session)" ] && extra="$extra
-            UNION ALL SELECT ts, 'aeon', fayth || ' ' || status, CAST(wall_s AS BIGINT)
-            FROM $(_rows $(_family_path aeon-session) ts bead fayth status wall_s) WHERE bead = $(_sqlstr "$id")"
-        [ -f "$(_family_path gate-run)" ] && extra="$extra
-            UNION ALL SELECT ts, 'gate', status || ' ' || COALESCE(reason, ''), CAST(ran_secs AS BIGINT)
-            FROM $(_rows $(_family_path gate-run) ts bead status reason ran_secs) WHERE bead = $(_sqlstr "$id")"
-        duckdb -json -c "
-            SELECT * FROM (
-                SELECT ts, 'stage' AS kind,
-                       from_state || ' -> ' || to_state || COALESCE(' (' || reason || ')', '') AS what,
-                       CAST(epoch(CAST(ts AS TIMESTAMPTZ)) - epoch(CAST(lag(ts) OVER (ORDER BY seq) AS TIMESTAMPTZ)) AS BIGINT) AS secs
-                FROM $(_rows $path ts seq machine key from_state to_state applied reason)
-                WHERE machine = 'bead' AND applied AND key = $(_sqlstr "$id")
-                $extra
-            ) ORDER BY ts, kind;
-        "
+        exec tsd-read bead "$id"
         ;;
     *)
         usage; exit 2 ;;

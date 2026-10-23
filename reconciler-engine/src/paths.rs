@@ -7,16 +7,8 @@ pub fn state(run: &Path) -> PathBuf {
     run.join("reconciler-state.json")
 }
 
-pub fn status_log(run: &Path) -> PathBuf {
-    run.join("tsd").join("reconciler-status.jsonl")
-}
-
 pub fn pass_stamp(run: &Path) -> PathBuf {
     run.join("reconciler-pass.stamp")
-}
-
-pub fn remedy_log(run: &Path) -> PathBuf {
-    run.join("tsd").join("reconciler-remedy.jsonl")
 }
 
 pub fn effect_state(run: &Path) -> PathBuf {
@@ -51,12 +43,3 @@ pub fn flow_alerted(run: &Path) -> PathBuf {
     run.join("reconciler-flow-alerted.json")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_status_log_lives_under_tsd() {
-        assert_eq!(status_log(Path::new("/r")), Path::new("/r/tsd/reconciler-status.jsonl"));
-    }
-}

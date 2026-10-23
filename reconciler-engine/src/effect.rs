@@ -6,8 +6,7 @@
 //! [`append_event`], [`load_pending`] and [`save_pending`], the IO seam at the bottom.
 
 use std::collections::BTreeMap;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -83,14 +82,14 @@ pub struct RemedyEvent<'a> {
     pub release: &'a str,
 }
 
-pub fn append_event(path: &Path, event: &RemedyEvent) {
-    let Ok(line) = serde_json::to_string(event) else { return };
-    if let Some(dir) = path.parent() {
-        let _ = fs::create_dir_all(dir);
-    }
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(f, "{}", line);
-    }
+pub const REMEDY_FAMILY: &str = "reconciler-remedy";
+
+/// Pushes one row to the `reconciler-remedy` family; a failed push is dropped.
+pub fn append_event(store: &tsd::store::Pusher, event: &RemedyEvent) {
+    let Ok(serde_json::Value::Object(mut fields)) = serde_json::to_value(event) else { return };
+    let ts = fields.remove("ts").and_then(|t| t.as_str().map(str::to_string)).unwrap_or_default();
+    let fields: Vec<(String, serde_json::Value)> = fields.into_iter().collect();
+    let _ = store.push(REMEDY_FAMILY, &ts, &fields);
 }
 
 pub type PendingMap = BTreeMap<String, PendingEffect>;
@@ -159,7 +158,7 @@ mod tests {
     #[test]
     fn events_and_pending_round_trip_through_files() {
         let dir = testkit::TempDir::new("reconciler-engine-effect-test");
-        let path = dir.join("tsd").join("events.jsonl");
+        let store = spira_otel::fixture::FakeStore::start();
         let ev = RemedyEvent {
             ts: "2026-10-07T00:00:00Z",
             event: "remedy",
@@ -171,9 +170,11 @@ mod tests {
             after: None,
             release: "r1",
         };
-        append_event(&path, &ev);
-        let line = fs::read_to_string(&path).unwrap();
-        assert!(line.contains("\"kind\":\"disk\"") && line.contains("\"release\":\"r1\"") && line.contains("\"before\":1.0"));
+        append_event(&tsd::store::Pusher::new(Some(store.addr().to_string())), &ev);
+        let rows = tsd::store::Reader::new(Some(store.addr())).unwrap().rows(REMEDY_FAMILY, 0).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0]["kind"].as_str(), rows[0]["release"].as_str(), rows[0]["before"].as_f64()), (Some("disk"), Some("r1"), Some(1.0)));
+        assert!(rows[0].get("after").is_none());
 
         let pp = dir.join("pending.json");
         assert!(load_pending(&pp).is_empty());

@@ -1065,14 +1065,30 @@ pub fn install_bins(pulled: &Path, expected: &str, reported: Option<&str>, targe
     Ok(())
 }
 
-/// Appends the VM's tsd rows to the host's `<run>/tsd/<family>.jsonl`, each tagged with
-/// `ran_on`, `vcpus` and `maxpar`, skipping a row already present, under `<file>.lock`.
-pub fn merge_tsd(src: &Path, run_dir: &Path, vm: &str, vcpus: u32, maxpar: u32) -> Result<usize, String> {
+/// Takes the VM's tsd rows to the host, each tagged with `ran_on`, `vcpus` and `maxpar`: a row of
+/// a family held in the metrics store is pushed to `store`, any other is appended to
+/// `<run>/tsd/<family>.jsonl` unless already present, under `<file>.lock`.
+pub fn merge_tsd(src: &Path, run_dir: &Path, vm: &str, vcpus: u32, maxpar: u32, store: Option<&str>) -> Result<usize, String> {
     let Ok(rd) = fs::read_dir(src) else { return Ok(0) };
     let mut added = 0;
     let mut files: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().map(|x| x == "jsonl").unwrap_or(false)).collect();
     files.sort();
+    let mut refused: Option<String> = None;
     for f in files {
+        let family = f.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        if tsd::store::moved(&family) {
+            for line in fs::read_to_string(&f).unwrap_or_default().lines() {
+                let Ok(Value::Object(mut row)) = serde_json::from_str::<Value>(line) else { continue };
+                row.insert("ran_on".into(), Value::from(vm));
+                row.insert("vcpus".into(), Value::from(vcpus));
+                row.insert("maxpar".into(), Value::from(maxpar));
+                match tsd::store::push_row(store, &family, &Value::Object(row).to_string()) {
+                    Ok(()) => added += 1,
+                    Err(e) => refused = Some(e),
+                }
+            }
+            continue;
+        }
         let dest = run_dir.join("tsd").join(f.file_name().unwrap());
         let mut lock_path = dest.clone().into_os_string();
         lock_path.push(".lock");
@@ -1091,7 +1107,10 @@ pub fn merge_tsd(src: &Path, run_dir: &Path, vm: &str, vcpus: u32, maxpar: u32) 
             }
         }
     }
-    Ok(added)
+    match refused {
+        Some(e) => Err(e),
+        None => Ok(added),
+    }
 }
 
 pub struct RunEnv<'a> {
@@ -1863,7 +1882,7 @@ fn after_batch(
     let build = build_wall(&results_dir);
 
     if tsd_ok {
-        if let Err(e) = merge_tsd(&tsd, &cfg.run_dir, &vm.handle, cfg.vcpus, maxpar) {
+        if let Err(e) = merge_tsd(&tsd, &cfg.run_dir, &vm.handle, cfg.vcpus, maxpar, crate::telemetry::endpoint().as_deref()) {
             eprintln!("round-vm run: tsd merge: {e}");
         }
     }
@@ -2580,14 +2599,32 @@ mod tests {
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("suite.jsonl"), "{\"suite\":\"a\",\"secs\":3}\nnot json\n{\"suite\":\"b\"}\n").unwrap();
         let run = d.path().join("run");
-        assert_eq!(merge_tsd(&src, &run, "123", 16, 24).unwrap(), 2);
-        assert_eq!(merge_tsd(&src, &run, "123", 16, 24).unwrap(), 0, "a re-merge adds nothing");
+        assert_eq!(merge_tsd(&src, &run, "123", 16, 24, None).unwrap(), 2);
+        assert_eq!(merge_tsd(&src, &run, "123", 16, 24, None).unwrap(), 0, "a re-merge adds nothing");
         let rows: Vec<Value> = fs::read_to_string(run.join("tsd/suite.jsonl")).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0]["ran_on"], "123");
         assert_eq!(rows[0]["vcpus"], 16);
         assert_eq!(rows[0]["maxpar"], 24);
         assert_eq!(rows[0]["secs"], 3);
+    }
+
+    #[test]
+    fn vm_signals_go_to_the_store_and_a_re_merge_adds_no_second_row() {
+        let d = TempDir::new();
+        let src = d.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("vm-signals.jsonl"), "{\"ts\":\"2026-10-22T10:00:00Z\",\"host\":\"vm\",\"family\":\"vm-signals\",\"iowait_pct\":4.5,\"steal_pct\":0.0}\n").unwrap();
+        let run = d.path().join("run");
+        let store = spira_otel::fixture::FakeStore::start();
+        merge_tsd(&src, &run, "123", 16, 24, Some(store.addr())).unwrap();
+        merge_tsd(&src, &run, "123", 16, 24, Some(store.addr())).unwrap();
+        assert!(!run.join("tsd/vm-signals.jsonl").exists(), "a moved family has no file");
+        let rows = tsd::store::Reader::new(Some(store.addr())).unwrap().rows("vm-signals", 0).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!((rows[0]["iowait_pct"].as_f64(), rows[0]["ran_on"].as_str(), rows[0]["vcpus"].as_i64()), (Some(4.5), Some("123"), Some(16)));
+        let err = merge_tsd(&src, &run, "123", 16, 24, None).unwrap_err();
+        assert!(err.contains("not stored"), "an unreachable store is an error, not a silent drop: {err}");
     }
 
     // ── run end to end against fakes ────────────────────────────────────────────────

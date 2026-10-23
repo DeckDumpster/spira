@@ -41,7 +41,7 @@ intent-report [--run <dir>] [--since <dur|ISO>] [--until <dur|ISO>] [--no-backfi
 | (history, same measures) | `gate.log` | `gate` (and the bash gate before it) | the meter line, see below |
 | attribution time per member defect | `tsd/round-attribution.jsonl` | `batcher` (`RedRecord::tsd_fields`, sp-hvtgs) | `ts`, `outcome`, `owner`, `attribution_secs` |
 | bd / Dolt wait per suite | `tsd/suite-timing.jsonl` | `testenv` (+ `bd-meter`) | `ts`, `suite`, `wall_secs`, `bd_calls`, `bd_ms` |
-| certified → landed | `tsd/landing-event.jsonl` | landing pass | `ts`, `bead`, `state` (`CERTIFIED`, `LANDED`) |
+| certified → landed | `landing-event` rows in the metrics store (`tsd::store`) | none live; the section reads UNAVAILABLE until a producer exists | `ts`, `bead`, `state` (`CERTIFIED`, `LANDED`) |
 | test-runner setup vs suites (sp-govet) | `tsd/suite-timing.jsonl`, `__batch__` rows | `testenv` (DESIGN.md §11) | `ts`, `rc`, `wall_secs`, `setup_secs`, `warm` |
 
 Unparseable lines and rows without a parseable `ts` are skipped, never fatal. Numeric fields

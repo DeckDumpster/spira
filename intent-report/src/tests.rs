@@ -159,6 +159,7 @@ fn the_report_prints_every_intent_measure_against_its_target() {
             round_attribution: &ra,
             suite_timing: &st,
             landing_event: &le,
+            landing_event_error: None,
             round_vm_timing: "",
         },
         all(),
@@ -212,6 +213,7 @@ fn an_empty_window_says_no_data_never_zero_or_met() {
             round_attribution: "",
             suite_timing: "",
             landing_event: "",
+            landing_event_error: None,
             round_vm_timing: "",
         },
         all(),
@@ -244,6 +246,7 @@ fn unmetered_suite_rows_are_not_reported_as_zero_wait() {
             round_attribution: "",
             suite_timing: &st,
             landing_event: "",
+            landing_event_error: None,
             round_vm_timing: "",
         },
         all(),
@@ -283,6 +286,7 @@ fn runner_trials_split_setup_from_suites_and_skip_rows_without_phases() {
             round_attribution: "",
             suite_timing: &st,
             landing_event: "",
+            landing_event_error: None,
             round_vm_timing: "",
         },
         all(),
@@ -316,6 +320,7 @@ fn the_report_shows_the_queue_wait_inside_ran_from_rows_and_the_log() {
             round_attribution: "",
             suite_timing: "",
             landing_event: "",
+            landing_event_error: None,
             round_vm_timing: "",
         },
         all(),
@@ -361,6 +366,7 @@ fn corpus_wall_pairs_each_run_with_load_and_counts_round_vm_rows_apart() {
         round_attribution: "",
         suite_timing: Box::leak(host.clone().into_boxed_str()),
         landing_event: "",
+        landing_event_error: None,
         round_vm_timing: vm,
     };
     let r = render(&inp(Box::leak(vm.clone().into_boxed_str())), all());
@@ -368,4 +374,60 @@ fn corpus_wall_pairs_each_run_with_load_and_counts_round_vm_rows_apart() {
     assert!(r.contains("quiet (< 16) 2 runs median"), "{r}");
     assert!(r.contains("loaded 1 runs median 1400 s"), "{r}");
     assert!(render(&inp(""), all()).contains("under-count"));
+}
+
+#[test]
+fn an_unreadable_landing_event_source_is_named_and_never_counted_as_zero_landings() {
+    let out = render(
+        &Inputs {
+            gate_run: "",
+            gate_log: None,
+            round_attribution: "",
+            suite_timing: "",
+            landing_event: "",
+            landing_event_error: Some("metrics-store-unreachable: 127.0.0.1:1 connect: refused; refusing to report"),
+            round_vm_timing: "",
+        },
+        all(),
+    );
+    assert!(out.contains("5. Certified -> landed: UNAVAILABLE — metrics-store-unreachable"), "{out}");
+    assert!(!out.contains("0 landings"), "{out}");
+}
+
+#[test]
+fn landing_events_read_from_the_store_give_the_latencies_the_file_text_gave() {
+    let at = ts;
+    let file = format!(
+        "{{\"ts\":\"{}\",\"host\":\"h\",\"family\":\"landing-event\",\"bead\":\"sp-1\",\"state\":\"CERTIFIED\"}}\n\
+         {{\"ts\":\"{}\",\"host\":\"h\",\"family\":\"landing-event\",\"bead\":\"sp-1\",\"state\":\"LANDED\"}}\n\
+         {{\"ts\":\"{}\",\"host\":\"h\",\"family\":\"landing-event\",\"bead\":\"sp-2\",\"state\":\"CERTIFIED\"}}\n\
+         {{\"ts\":\"{}\",\"host\":\"h\",\"family\":\"landing-event\",\"bead\":\"sp-2\",\"state\":\"LANDED\",\"reason\":\"x\"}}\n",
+        at(10),
+        at(70),
+        at(20),
+        at(500)
+    );
+    let store = spira_otel::fixture::FakeStore::start();
+    for line in file.lines() {
+        tsd::store::push_row(Some(store.addr()), "landing-event", line).unwrap();
+    }
+    let from_store = landing_events(Some(store.addr()), 0).unwrap();
+    let want = certified_to_landed(&file, all());
+    assert_eq!(want.len(), 2);
+    let mut got = certified_to_landed(&from_store, all());
+    got.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let mut want = want;
+    want.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert_eq!(got, want);
+}
+
+#[test]
+fn an_empty_or_stopped_store_is_a_refusal_not_zero_landings() {
+    let empty = spira_otel::fixture::FakeStore::start();
+    assert!(landing_events(Some(empty.addr()), 0).unwrap_err().starts_with("metrics-store-no-series"));
+    assert!(landing_events(None, 0).unwrap_err().starts_with("metrics-store-not-configured"));
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap().to_string();
+    drop(l);
+    assert!(landing_events(Some(&addr), 0).unwrap_err().starts_with("metrics-store-unreachable"));
 }

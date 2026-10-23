@@ -113,7 +113,7 @@ fn ops_cfg(run: &str) -> Config {
         run: run.to_string(),
         instance: "test".to_string(),
         systemctl: "systemctl".to_string(),
-        duckdb: "duckdb".to_string(),
+        metrics_endpoint: None,
         broker: fake_broker().0.to_string_lossy().into_owned(),
         desired_dir: String::new(),
         units_install: "/nonexistent/units-install".into(),
@@ -235,7 +235,15 @@ fn now_s() -> i64 {
 }
 
 fn exec_row(unit: &str, ago_s: i64, result: &str, duration_ms: i64, inv: &str) -> String {
-    format!(r#"{{"unit":"{unit}","t":{},"result":"{result}","duration_ms":{duration_ms},"invocation_id":"{inv}"}}"#, now_s() - ago_s)
+    format!(r#"{{"family":"unit-run-dbus","unit":"{unit}","ts":"{}","result":"{result}","duration_ms":{duration_ms},"invocation_id":"{inv}"}}"#, tsd::iso_utc((now_s() - ago_s) as u64))
+}
+
+fn store_with(rows: &[String]) -> spira_otel::fixture::FakeStore {
+    let store = spira_otel::fixture::FakeStore::start();
+    for r in rows {
+        tsd::store::push_row(Some(store.addr()), "unit-run-dbus", r).unwrap();
+    }
+    store
 }
 
 const SHOW: &str = "Id=ok.service\nActiveState=inactive\nSubState=dead\nUnitFileState=static\n\n\
@@ -249,17 +257,16 @@ Id=dur.service\nActiveState=inactive\nSubState=dead\nUnitFileState=static\n";
 struct UnitsFixture {
     dir: testkit::TempDir,
     cfg: Config,
+    store: spira_otel::fixture::FakeStore,
 }
 
 fn units_fixture(rows: &[String]) -> UnitsFixture {
     let dir = scratch("units");
-    let rows_file = dir.join("rows.json");
-    std::fs::write(&rows_file, format!("[{}]", rows.join(","))).unwrap();
+    let store = store_with(rows);
     let show_file = dir.join("show.txt");
     std::fs::write(&show_file, SHOW).unwrap();
     let run = dir.join("run");
-    std::fs::create_dir_all(run.join("tsd")).unwrap();
-    std::fs::write(run.join("tsd").join("unit-run-dbus.jsonl"), b"{}\n").unwrap();
+    std::fs::create_dir_all(&run).unwrap();
     let systemctl = dir.join("systemctl");
     script(
         &systemctl,
@@ -269,15 +276,13 @@ fn units_fixture(rows: &[String]) -> UnitsFixture {
             (now_s() + 60) * 1_000_000
         ),
     );
-    let duckdb = dir.join("duckdb");
-    script(&duckdb, &format!("#!/bin/sh\ncat {}\n", rows_file.display()));
     let mut cfg = ops_cfg(&run.to_string_lossy());
     cfg.systemctl = systemctl.to_string_lossy().into_owned();
-    cfg.duckdb = duckdb.to_string_lossy().into_owned();
+    cfg.metrics_endpoint = Some(store.addr().to_string());
     let install = dir.join("units-install");
     script(&install, "#!/bin/sh\nprintf 'ok.service\\nok.timer\\ndead.service\\ndead.timer\\nnever.service\\nflaky.service\\ndur.service\\n'\n");
     cfg.units_install = install.to_string_lossy().into_owned();
-    UnitsFixture { dir, cfg }
+    UnitsFixture { dir, cfg, store }
 }
 
 fn fixture_rows() -> Vec<String> {
@@ -367,56 +372,50 @@ async fn units_page_renders_the_same_rows_and_is_cached() {
     assert!(html.contains("class=\"unit v-failing\"") && html.contains("class=\"unit v-late\"") && html.contains("class=u title=\"ok.service\""), "one card per family: {html}");
     assert!(html.contains("<div class=strip>") && html.contains("<summary>details</summary>"), "{html}");
 
-    let swapped = fx.dir.join("duckdb");
-    script(&swapped, "#!/bin/sh\necho '[]'\n");
+    let UnitsFixture { store, .. } = fx;
+    drop(store);
     let v = units_json(addr).await;
     assert_eq!(unit(&v, "dur.service")["runs_7d"], 10, "inside the cache window the held snapshot answers");
 }
 
 #[tokio::test]
-async fn units_without_a_unit_run_file_still_lists_the_units_and_names_nothing_missing() {
+async fn units_with_nothing_in_the_store_names_the_refusal_and_claims_no_run() {
     let fx = units_fixture(&[]);
-    std::fs::remove_file(std::path::Path::new(&fx.cfg.run).join("tsd").join("unit-run-dbus.jsonl")).unwrap();
     let addr = spawn(fx.cfg.clone()).await;
     let v = units_json(addr).await;
-    assert_eq!(v["errors"].as_array().unwrap().len(), 0);
+    let errors = v["errors"].as_array().unwrap();
+    assert!(errors.iter().any(|e| e.as_str().unwrap().contains("metrics-store-no-series")), "{v}");
     assert_eq!(unit(&v, "never.service")["runs_7d"], 0);
-    assert_eq!(unit(&v, "dead.service")["verdict"], "never ran", "an active timer that has not run at all is flagged");
+    assert_eq!(unit(&v, "dead.service")["verdict"], "never ran", "an active timer is flagged, never read as healthy");
 }
 
 #[tokio::test]
-async fn units_reports_a_failing_source_instead_of_hiding_the_rows() {
+async fn units_reports_an_unreachable_or_unconfigured_store_instead_of_hiding_the_rows() {
     let mut fx = units_fixture(&fixture_rows());
-    fx.cfg.duckdb = "/nonexistent/duckdb".into();
+    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    fx.cfg.metrics_endpoint = Some(l.local_addr().unwrap().to_string());
+    drop(l);
     let addr = spawn(fx.cfg.clone()).await;
     let v = units_json(addr).await;
-    assert!(v["errors"][0].as_str().unwrap().contains("unit-run"), "{v}");
+    assert!(v["errors"][0].as_str().unwrap().contains("metrics-store-unreachable"), "{v}");
     assert!(unit(&v, "never.service")["runs_7d"] == 0);
+
+    fx.cfg.metrics_endpoint = None;
+    let addr = spawn(fx.cfg.clone()).await;
+    let v = units_json(addr).await;
+    assert!(v["errors"][0].as_str().unwrap().contains("metrics-store-not-configured"), "{v}");
 }
 
 #[tokio::test]
-async fn units_reads_the_real_unit_run_file_through_duckdb() {
-    if std::process::Command::new("duckdb").arg("--version").output().is_err() {
-        eprintln!("duckdb is not on PATH: the real-query check runs in the test container");
-        return;
-    }
-    let mut fx = units_fixture(&[]);
-    let run = std::path::PathBuf::from(&fx.cfg.run);
-    let line = |unit: &str, ago: i64, result: &str, ms: i64, inv: &str| {
-        format!(r#"{{"family":"unit-run-dbus","unit":"{unit}","ts":"{}","result":"{result}","duration_ms":{ms},"invocation_id":"{inv}"}}"#, tsd::iso_utc((now_s() - ago) as u64))
-    };
-    let mut text = String::new();
-    for i in 1..=10 {
-        text.push_str(&line("dur.service", i * 60, "success", i * 100, &format!("d{i}")));
-        text.push('\n');
-    }
-    text.push_str(&line("flaky.service", 120, "exit-code", 5, "inv-bad"));
-    text.push('\n');
-    text.push_str(&line("flaky.service", 9 * 86_400, "success", 5, "too-old"));
-    text.push('\n');
-    std::fs::write(run.join("tsd").join("unit-run-dbus.jsonl"), text).unwrap();
-    fx.cfg.duckdb = "duckdb".into();
-    let addr = spawn(fx.cfg.clone()).await;
+async fn units_reads_the_executions_in_the_store_and_only_the_last_week() {
+    let fx = units_fixture(&[]);
+    let mut rows: Vec<String> = (1..=10).map(|i| exec_row("dur.service", i * 60, "success", i * 100, &format!("d{i}"))).collect();
+    rows.push(exec_row("flaky.service", 120, "exit-code", 5, "inv-bad"));
+    rows.push(exec_row("flaky.service", 9 * 86_400, "success", 5, "too-old"));
+    let store = store_with(&rows);
+    let mut cfg = fx.cfg.clone();
+    cfg.metrics_endpoint = Some(store.addr().to_string());
+    let addr = spawn(cfg).await;
     let v = units_json(addr).await;
     assert_eq!(v["errors"].as_array().unwrap().len(), 0, "{v}");
     let dur = unit(&v, "dur.service");

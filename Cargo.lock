@@ -334,6 +334,7 @@ dependencies = [
  "spira-config",
  "spira-otel",
  "testkit",
+ "tsd",
 ]
 
 [[package]]
@@ -1294,6 +1295,7 @@ dependencies = [
  "spira-desired-state",
  "spira-otel",
  "testkit",
+ "tsd",
 ]
 
 [[package]]
@@ -1315,7 +1317,9 @@ dependencies = [
  "serde",
  "serde_json",
  "spira-config",
+ "spira-otel",
  "testkit",
+ "tsd",
 ]
 
 [[package]]

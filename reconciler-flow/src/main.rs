@@ -32,7 +32,7 @@ use reconciler_flow::core::{
 use reconciler_flow::io::{
     append_backlog_sample, backlog_baseline, backlog_count, dwell_metrics,
     dwell_regression_metrics, flow_floors, rework_metrics, round_health_metrics,
-    sentinel_pass_wall_seconds, slots_samples, velocity_metrics, waiting_to_land,
+    sentinel_pass_wall_seconds, slots_samples, stage_rows, velocity_metrics, waiting_to_land,
 };
 
 extern "C" {
@@ -62,7 +62,8 @@ struct Config {
     lock_path: PathBuf,
     state_path: PathBuf,
     alerted_path: PathBuf,
-    status_log: PathBuf,
+    store: tsd::store::Pusher,
+    metrics_endpoint: Option<String>,
     tsd_bin: String,
     export_bin: String,
     duckdb_bin: String,
@@ -105,7 +106,8 @@ impl Config {
             lock_path: spira_run.join("reconciler-flow.lock"),
             state_path: paths::flow_state(&spira_run),
             alerted_path: paths::flow_alerted(&spira_run),
-            status_log: paths::status_log(&spira_run),
+            store: tsd::store::Pusher::new(cfg("SPIRA_METRICS_ENDPOINT").ok().filter(|e| !e.trim().is_empty())),
+            metrics_endpoint: cfg("SPIRA_METRICS_ENDPOINT").ok(),
             tsd_bin: seams.tsd,
             duckdb_bin: seams.duckdb,
             export_bin: seams.export,
@@ -152,7 +154,7 @@ fn evaluate(cfg: &Config, state: &mut StateMap, key: &str, raw: RawStatus) -> Ve
         _ => cfg.grace_secs,
     };
     let (verdict, next) = step(cfg.now_secs, raw, grace, prev);
-    append_status(&cfg.status_log, &cfg.now_iso, key, &verdict);
+    append_status(&cfg.store, &cfg.now_iso, key, &verdict);
     if next != HysteresisState::default() {
         state.insert(key.to_string(), next);
     }
@@ -273,8 +275,9 @@ fn run_pass() -> Result<(), String> {
     }
 
     // ── stage velocity ("queue") ─────────────────────────────────────────────────────────
-    let waiting = waiting_to_land(&cfg.duckdb_bin, &cfg.spira_run);
-    let velocity = velocity_metrics(&cfg.duckdb_bin, &cfg.spira_run, cfg.window_hours, cfg.baseline_hours);
+    let stage = stage_rows(cfg.metrics_endpoint.as_deref());
+    let waiting = stage.as_ref().map(|rows| waiting_to_land(rows)).map_err(Clone::clone);
+    let velocity = stage.as_ref().map(|rows| velocity_metrics(rows, cfg.now_secs, cfg.window_hours, cfg.baseline_hours)).map_err(Clone::clone);
     let velocity_raw_status = match (&waiting, &velocity) {
         (Ok(w), Ok((cur, base))) => velocity_raw(
             &VelocityObserved { current_per_hour: *cur, baseline_per_hour: *base, waiting: *w },
@@ -288,7 +291,7 @@ fn run_pass() -> Result<(), String> {
     log_print(&cfg, &format!("reconciler-flow: flow:velocity:queue → {}", status_word(&v)));
 
     // ── stage dwell ("review") ───────────────────────────────────────────────────────────
-    let dwell = dwell_metrics(&cfg.duckdb_bin, &cfg.spira_run, cfg.window_hours, cfg.baseline_hours);
+    let dwell = stage.as_ref().map(|rows| dwell_metrics(rows, cfg.now_secs, cfg.window_hours, cfg.baseline_hours)).map_err(Clone::clone);
     let dwell_raw_status = match dwell {
         Ok((cur_p95, cur_n, base_p95, base_n)) => dwell_raw(
             &DwellObserved { p95_seconds: cur_p95, n: cur_n },
@@ -302,7 +305,7 @@ fn run_pass() -> Result<(), String> {
     log_print(&cfg, &format!("reconciler-flow: flow:dwell:review → {}", status_word(&v)));
 
     // ── round health (flip rate) ─────────────────────────────────────────────────────────
-    let round_health = round_health_metrics(&cfg.duckdb_bin, &cfg.spira_run, cfg.window_hours, cfg.baseline_hours);
+    let round_health = stage.as_ref().map(|rows| round_health_metrics(rows, cfg.now_secs, cfg.window_hours, cfg.baseline_hours)).map_err(Clone::clone);
     let round_health_raw_status = match round_health {
         Ok((cur_flips, cur_transitions, base_flips, base_transitions)) => {
             let baseline_flip_rate = if base_transitions > 0 { base_flips as f64 / base_transitions as f64 } else { 0.0 };
@@ -324,7 +327,7 @@ fn run_pass() -> Result<(), String> {
     log_print(&cfg, &format!("reconciler-flow: flow:idle-capacity → {}", status_word(&v)));
 
     // ── sentinel overrun ─────────────────────────────────────────────────────────────────
-    let sentinel_raw_status = match sentinel_pass_wall_seconds(&cfg.duckdb_bin, &cfg.spira_run) {
+    let sentinel_raw_status = match sentinel_pass_wall_seconds(cfg.metrics_endpoint.as_deref(), cfg.now_secs, (cfg.sentinel_timer_secs * 3).max(3600)) {
         Ok(secs) => sentinel_overrun_raw(secs, cfg.sentinel_timer_secs),
         Err(e) => unobservable(e),
     };
@@ -337,7 +340,7 @@ fn run_pass() -> Result<(), String> {
     // 1.0 reopens per landed bead over 6h ... report-only for 24h, then tuned") — reusing
     // baseline_hours as that warm-up window, since it is already this pass's own "how much
     // history counts as enough" answer.
-    match rework_metrics(&cfg.duckdb_bin, &cfg.spira_run, cfg.rework_window_hours) {
+    match stage.as_ref().map(|rows| rework_metrics(rows, cfg.now_secs, cfg.rework_window_hours)).map_err(Clone::clone) {
         Ok((reopens, landed, history_hours)) => {
             let raw = fresh(&export, rework_raw(&ReworkObserved { reopens, landed }));
             let v = evaluate(&cfg, &mut state, "flow:rework", raw);
@@ -359,7 +362,7 @@ fn run_pass() -> Result<(), String> {
     }
 
     // ── stage dwell regression ───────────────────────────────────────────────────────────
-    match dwell_regression_metrics(&cfg.duckdb_bin, &cfg.spira_run, cfg.window_hours, cfg.baseline_hours) {
+    match stage.as_ref().map(|rows| dwell_regression_metrics(rows, cfg.now_secs, cfg.window_hours, cfg.baseline_hours)).map_err(Clone::clone) {
         Ok(rows) => {
             for state_name in DWELL_REGRESSION_STATES {
                 let key = format!("flow:dwell-regression:{}", state_name.to_ascii_lowercase());
