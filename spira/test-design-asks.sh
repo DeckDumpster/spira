@@ -15,10 +15,10 @@ BRAIN="$TMP/brain"; D="$BRAIN/wiki/projects/zed/designs"; mkdir -p "$D" "$TMP/ru
 INBOX="$TMP/inbox.log"
 design() { printf -- '---\nstatus: %s\nbead: %s\n---\n# x\n' "$2" "$3" > "$D/$1.md"; }
 design unasked draft sp-writer1
-design asked in-review sp-writer2
+design covered in-review sp-writer2
 design done approved sp-writer3
 ASKS="$TMP/asks.json"
-printf '[{"id":"sp-a","title":"approve","description":"Please approve wiki/projects/zed/designs/asked.md","notes":""}]' > "$ASKS"
+printf '[{"id":"sp-a","title":"approve","description":"Please approve wiki/projects/zed/designs/covered.md","notes":""}]' > "$ASKS"
 cat > "$TMP/bin/bd" <<'BD'
 #!/usr/bin/env bash
 [ -f "$FAKE_BD_FAIL" ] && exit 1
@@ -33,7 +33,7 @@ out="$(w bash "$G" pass)"
 want "a draft design with no ask is told" "wiki/projects/zed/designs/unasked.md is draft" "$out"
 want "the line names its writer" "sp-writer1" "$out"
 want "the line says how long" "no open ask for 0h" "$out"
-nowant "a design with an open ask is quiet" "asked.md" "$out"
+nowant "a design with an open ask is quiet" "covered.md" "$out"
 nowant "an approved design is quiet" "done.md" "$out"
 want "the inbox gets it" "[watch:design-asks] DESIGN WITHOUT ASK" "$(cat "$INBOX" 2>/dev/null)"
 is "within the repeat interval it is not repeated" "" "$(w bash "$G" pass)"
@@ -41,10 +41,10 @@ is "within the repeat interval it is not repeated" "" "$(w bash "$G" pass)"
 awk '{ $2 -= 10800; $3 -= 10800; print }' "$TMP/run/watchd/design-asks.state" > "$TMP/s" && mv "$TMP/s" "$TMP/run/watchd/design-asks.state"
 want "past the repeat interval it is told again, with its age" "no open ask for 3h" "$(w bash "$G" pass)"
 
-printf '[{"id":"sp-b","title":"t","description":"wiki/projects/zed/designs/unasked.md","notes":""}]' > "$ASKS"
+printf '[{"id":"sp-b","title":"t","description":"wiki/projects/zed/designs/unasked.md wiki/projects/zed/designs/covered.md","notes":""}]' > "$ASKS"
 is "an ask naming the path silences it" "" "$(w bash "$G" pass)"
-design asked2 draft sp-writer4
-want "a new unasked page is told" "asked2.md" "$(w bash "$G" pass)"
+design fresh draft sp-writer4
+want "a new unasked page is told" "fresh.md" "$(w bash "$G" pass)"
 
 w bash "$G" health >/dev/null; wantrc "health fails before any poll" 1 "$?"
 w bash "$G" watch --interval 5 --ticks 1 >/dev/null
