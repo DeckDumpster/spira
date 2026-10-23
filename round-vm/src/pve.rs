@@ -178,6 +178,9 @@ pub struct Pve<T: Transport> {
     pub task_timeout: Duration,
     pub exec_timeout: Duration,
     pub poll: Duration,
+    /// Memory (MiB) and vCPUs each clone is set to; 0 leaves the template's value.
+    pub mem_mib: u64,
+    pub vcpus: u32,
 }
 
 impl<T: Transport> Pve<T> {
@@ -286,6 +289,12 @@ impl<T: Transport> Provider for Pve<T> {
             ("cpuunits", ROUND_CPUUNITS.to_string()),
             ("tags", crate::provider::OWNER_TAG.to_string()),
         ];
+        if self.mem_mib > 0 {
+            reserve.push(("memory", self.mem_mib.to_string()));
+        }
+        if self.vcpus > 0 {
+            reserve.push(("cores", self.vcpus.to_string()));
+        }
         if let Some(net0) = cfg.get("net0").and_then(Value::as_str) {
             let pinned = with_mac(net0, &mac).ok_or_else(|| format!("net0 {net0:?} has no model=MAC field"))?;
             reserve.insert(0, ("net0", pinned));
@@ -452,6 +461,8 @@ mod tests {
             task_timeout: Duration::from_secs(5),
             exec_timeout: Duration::from_secs(5),
             poll: Duration::ZERO,
+            mem_mib: 0,
+            vcpus: 0,
         }
     }
 
@@ -525,6 +536,17 @@ mod tests {
     }
 
     #[test]
+    fn clone_applies_the_configured_memory_and_vcpus() {
+        let mut p = pve();
+        p.mem_mib = 24576;
+        p.vcpus = 16;
+        p.clone_to("124", "round-124").unwrap();
+        let params = last(&p, "/qemu/124/config").2;
+        assert!(params.contains(&("memory".into(), "24576".into())));
+        assert!(params.contains(&("cores".into(), "16".into())));
+    }
+
+    #[test]
     fn with_mac_refuses_a_net0_without_a_model_field() {
         assert_eq!(with_mac("e1000=AA:BB,bridge=b", "02:00:00:00:00:01").as_deref(), Some("e1000=02:00:00:00:00:01,bridge=b"));
         assert_eq!(with_mac("bridge", "02:00:00:00:00:01"), None);
@@ -559,7 +581,7 @@ mod tests {
                 Ok(if path.contains("/tasks/") { json!({"status": "stopped", "exitstatus": "clone failed"}) } else { json!("UPID:x") })
             }
         }
-        let p = Pve { t: Failing, env: pve().env, task_timeout: Duration::from_secs(1), exec_timeout: Duration::from_secs(1), poll: Duration::ZERO };
+        let p = Pve { t: Failing, env: pve().env, task_timeout: Duration::from_secs(1), exec_timeout: Duration::from_secs(1), poll: Duration::ZERO, mem_mib: 0, vcpus: 0 };
         let e = p.start("1").unwrap_err();
         assert!(e.contains("clone failed"), "{e}");
     }

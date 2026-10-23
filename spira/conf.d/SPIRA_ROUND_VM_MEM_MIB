@@ -1,7 +1,7 @@
 TYPE=u32
 GROUP=batcher
-DOC=MiB of memory one round VM holds (the template's size); 0 means unknown, and no round is staged behind another.
+DOC=MiB of memory each round VM clone is set to; 0 keeps the template's size, and no round is staged behind another.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # MiB of memory one round VM holds (the template's size); 0 means unknown, and no round is staged behind another.
+    # MiB of memory each round VM clone is set to; 0 keeps the template's size, and no round is staged behind another.
     : "${SPIRA_ROUND_VM_MEM_MIB:=0}"
 SPIRA_CONF_DEFAULT_EOF
