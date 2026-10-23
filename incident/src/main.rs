@@ -426,7 +426,7 @@ fn cmd_file(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, titl
     }
 }
 
-fn cmd_alarm(env: &Env, title: &str) -> ExitCode {
+fn cmd_alarm(env: &Env, bd: Option<&dyn Bd>, mailer: &dyn Mailer, clock: &dyn Clock, title: &str) -> ExitCode {
     let reference = env.repo_override_ref().unwrap_or_else(|| format!("incident:{title}"));
     let Some(inbox) = self::env("SPIRA_CONCIERGE_INBOX") else {
         eprintln!("incident: SPIRA_CONCIERGE_INBOX is not declared — refusing");
@@ -452,10 +452,29 @@ fn cmd_alarm(env: &Env, title: &str) -> ExitCode {
         wrote.is_ok() && std::fs::write(&state_path, next).is_ok()
     });
     if noted == Some(true) {
+        if let (true, Some(bd), Some(_)) = (was_due.get(), bd, env.db.as_deref()) {
+            own_alarm(env, bd, mailer, clock, title, &reference);
+        }
         println!("{}", if was_due.get() { "noted" } else { "deduped" });
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
+    }
+}
+
+fn own_alarm(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, title: &str, reference: &str) {
+    let mut body = Vec::new();
+    let _ = std::io::stdin().read_to_end(&mut body);
+    let provenance = run::provenance(&env.unit, &hostname(), &env.path);
+    let cause = decide::sanitize_cause(&env.cause);
+    let mut cfg = env.file_config(&provenance);
+    cfg.cause = &cause;
+    let mut log = Vec::new();
+    let _ = with_incident_lock(&env.lock_path, env.lock_wait_s, || {
+        run::alarm_owner(bd, mailer, clock, &cfg, reference, title, &body, &env.labels, &mut log)
+    });
+    for l in &log {
+        ilog(env, l);
     }
 }
 
@@ -612,7 +631,8 @@ fn main() -> ExitCode {
             eprintln!("usage: incident alarm <title> [-|<file>]");
             return ExitCode::from(2);
         };
-        return cmd_alarm(&env_cfg, title);
+        let bd = RealBd::from_env().ok();
+        return cmd_alarm(&env_cfg, bd.as_ref().map(|b| b as &dyn Bd), &RealMailer, &RealClock, title);
     }
 
     let bd = match RealBd::from_env() {

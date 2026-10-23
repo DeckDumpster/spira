@@ -271,8 +271,9 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
         }
         Err(refusal) => refusal,
     };
-    crate::slow::request_done(&verb, &caller, received.elapsed());
-    crate::slow::sample(&crate::slow::method_of(&argv), received.elapsed());
+    let method = crate::slow::method_of(&argv);
+    crate::slow::request_done(&verb, &method, &caller, received.elapsed());
+    crate::slow::sample(&method, received.elapsed());
     let _ = write_response(&stream, code, &out);
     let began = *started_work.lock().unwrap_or_else(|e| e.into_inner());
     let waited = began.unwrap_or_else(Instant::now).saturating_duration_since(accepted);
