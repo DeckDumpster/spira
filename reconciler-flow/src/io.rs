@@ -140,8 +140,8 @@ pub fn waiting_to_land(rows: &[Value]) -> u64 {
 /// Current-window and trailing-baseline land rate (events/hour) — a bead reaching LANDED, the
 /// lifecycle machine's own terminal state (design §2a: states are the machine's).
 pub fn velocity_metrics(rows: &[Value], now: u64, window_hours: f64, baseline_hours: f64) -> (f64, f64) {
-    let landed = |hours: f64| rows.iter().filter(|r| machine(r) == "bead" && applied(r) && to_state(r) == "LANDED" && ts_secs(r).is_some_and(|t| t >= cutoff(now, hours))).count() as f64;
-    (landed(window_hours) / window_hours.max(1e-9), landed(baseline_hours) / baseline_hours.max(1e-9))
+    let merged_in = |hours: f64| rows.iter().filter(|r| machine(r) == "bead" && applied(r) && to_state(r) == "LANDED" && ts_secs(r).is_some_and(|t| t >= cutoff(now, hours))).count() as f64;
+    (merged_in(window_hours) / window_hours.max(1e-9), merged_in(baseline_hours) / baseline_hours.max(1e-9))
 }
 
 /// Each applied row's previous state and the seconds since it, per `part` of the rows ordered by seq.
