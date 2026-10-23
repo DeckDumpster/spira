@@ -291,10 +291,10 @@ impl Repo for RealRepo {
 
     fn forge_slug(&self, name: &str) -> Option<String> {
         let root = self.root_with_git(name)?;
-        let remotes = Command::new("git").args(["-C", &root, "remote"]).stdin(Stdio::null()).output().ok()?;
+        let remotes = Command::new("timeout").args(["5", "git", "-C", &root, "remote"]).stdin(Stdio::null()).output().ok()?;
         let remotes = String::from_utf8_lossy(&remotes.stdout).to_string();
         let remote = if remotes.lines().any(|r| r == "origin") { "origin" } else { remotes.lines().next()? };
-        let url = Command::new("git").args(["-C", &root, "remote", "get-url", remote]).stdin(Stdio::null()).output().ok()?;
+        let url = Command::new("timeout").args(["5", "git", "-C", &root, "remote", "get-url", remote]).stdin(Stdio::null()).output().ok()?;
         crate::model::github_slug(&String::from_utf8_lossy(&url.stdout))
     }
 
