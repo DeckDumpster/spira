@@ -350,6 +350,13 @@ fn gather() -> Snapshot {
             s.errors.push(e);
         }
     }
+    if s.asks.iter().any(|a| a.title.is_empty()) {
+        let ids = s.asks.iter().filter(|a| a.title.is_empty()).map(|a| a.id.as_str()).collect::<Vec<_>>().join(",");
+        match lc_json(&["content-rows", "--ids", &ids]) {
+            Ok(rows) => cockpit_ops::lcview::fill_ask_titles(&mut s.asks, &rows),
+            Err(e) => s.errors.push(e),
+        }
+    }
     match git.join().unwrap_or_else(|_| Err("git: panicked".into())) {
         Ok((base, m)) => {
             s.base = base;
