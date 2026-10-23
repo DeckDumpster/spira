@@ -158,6 +158,8 @@ pub fn reported_image(stdout: &str) -> Option<String> {
 /// The template VM's side, reached only by address.
 pub trait Guest {
     fn reachable(&self, addr: &str) -> bool;
+    /// Whether `cargo` resolves on the VM's own PATH, for a build that names no toolchain.
+    fn has_cargo(&self, addr: &str, cache_home: &str) -> bool;
     /// Unpacks `commit` of the repository at `tree` into `dir` on the VM.
     fn upload(&self, addr: &str, tree: &Path, commit: &str, dir: &str) -> Result<(), String>;
     /// Runs TEMPLATE_SCRIPT in `dir` on the VM at `addr`, pointing its cache at
@@ -170,6 +172,21 @@ pub trait Guest {
 impl Guest for SshRemote {
     fn reachable(&self, addr: &str) -> bool {
         crate::run::Remote::reachable(self, addr)
+    }
+
+    fn has_cargo(&self, addr: &str, cache_home: &str) -> bool {
+        command("ssh")
+            .args(self.ssh_opts())
+            .arg(format!("{}@{addr}", self.user))
+            .arg(format!(
+                "[ -n {h} ] && PATH={h}/bin:$PATH; command -v cargo >/dev/null 2>&1",
+                h = shell_quote(cache_home)
+            ))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .status()
+            .map(|st| st.success())
+            .unwrap_or(false)
     }
 
     fn upload(&self, addr: &str, tree: &Path, commit: &str, dir: &str) -> Result<(), String> {
@@ -285,6 +302,13 @@ fn prepare_vm(
     if !reachable {
         return Err(format!("VM {vmid} at {addr} never became reachable over ssh"));
     }
+    if toolchain.is_empty() && !g.has_cargo(&addr, cache_home) {
+        return Err(format!(
+            "the base has no cargo and neither --toolchain nor the tree's rust-toolchain.toml names a toolchain to install; \
+             pass --toolchain <ver> or pin a channel in {}/rust-toolchain.toml",
+            tree.display()
+        ));
+    }
     eprintln!("round-vm template: {vmid} at {addr}: unpacking {commit}");
     g.upload(&addr, tree, commit, TEMPLATE_WORK)?;
     eprintln!("round-vm template: building the test image on {vmid} (a cold build: its heartbeat follows)");
@@ -336,18 +360,22 @@ mod tests {
         rc: i32,
         out: String,
         reachable: bool,
+        cargo: bool,
         calls: Mutex<Vec<String>>,
     }
 
     impl FakeGuest {
         fn ok() -> FakeGuest {
-            FakeGuest { rc: 0, out: "noise\nimage=localhost/spira-testenv:abc123\n".into(), reachable: true, calls: Mutex::new(vec![]) }
+            FakeGuest { rc: 0, out: "noise\nimage=localhost/spira-testenv:abc123\n".into(), reachable: true, cargo: true, calls: Mutex::new(vec![]) }
         }
     }
 
     impl Guest for FakeGuest {
         fn reachable(&self, _: &str) -> bool {
             self.reachable
+        }
+        fn has_cargo(&self, _: &str, _: &str) -> bool {
+            self.cargo
         }
         fn upload(&self, addr: &str, _: &Path, commit: &str, dir: &str) -> Result<(), String> {
             self.calls.lock().unwrap().push(format!("upload {addr} {commit} {dir}"));
@@ -412,6 +440,19 @@ mod tests {
                 format!("prepare 10.0.0.9120 {TEMPLATE_WORK} 192.168.1.56 1.98.1 /opt/spira/cargo")
             ]
         );
+    }
+
+    #[test]
+    fn no_toolchain_and_no_cargo_on_the_base_refuses_before_the_tree_is_unpacked() {
+        let p = FakeProvider::new();
+        let g = FakeGuest { cargo: false, ..FakeGuest::ok() };
+        let e = build(&p, &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "", "").unwrap_err();
+        assert!(e.contains("no cargo") && e.contains("toolchain"), "{e}");
+        assert!(g.calls.lock().unwrap().is_empty(), "nothing was unpacked or built: {:?}", g.calls.lock().unwrap());
+        assert!(p.all_vms().is_empty());
+        let g = FakeGuest { cargo: false, ..FakeGuest::ok() };
+        build(&FakeProvider::new(), &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "1.99.1", "").unwrap();
+        assert_eq!(g.calls.lock().unwrap().len(), 2, "a pinned toolchain installs, so a base without cargo proceeds");
     }
 
     #[test]
