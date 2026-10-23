@@ -38,6 +38,8 @@ pub fn real_attempt() -> Result<Attempt, String> {
         task_timeout: secs_env("PVE_TASK_TIMEOUT", 300),
         exec_timeout: secs_env("PVE_EXEC_TIMEOUT", 30),
         poll: Duration::from_secs(1),
+        mem_mib: cfg.mem_mib,
+        vcpus: cfg.vcpus,
     };
     let (ec2, spill) = spill_wiring(&cfg)?;
     Ok(Attempt {
@@ -164,7 +166,7 @@ fn template_check() -> i32 {
             return 1;
         }
     };
-    let pve = Pve { t: transport, env, task_timeout: secs_env("PVE_TASK_TIMEOUT", 300), exec_timeout: secs_env("PVE_EXEC_TIMEOUT", 30), poll: Duration::from_secs(1) };
+    let pve = Pve { t: transport, env, task_timeout: secs_env("PVE_TASK_TIMEOUT", 300), exec_timeout: secs_env("PVE_EXEC_TIMEOUT", 30), poll: Duration::from_secs(1), mem_mib: 0, vcpus: 0 };
     match pve.check_template() {
         Ok(()) => 0,
         Err(e) => {
@@ -746,6 +748,7 @@ mod tests {
             cache_home: None,
             testenv_registry: None,
             vcpus: 1,
+            mem_mib: 0,
             maxpar: 1,
             max_retries: 0,
             retry_interval_secs: 1,

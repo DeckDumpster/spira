@@ -2938,6 +2938,7 @@ mod tests {
             cache_home: Some("/opt/spira/cargo".to_string()),
             testenv_registry: None,
             vcpus: 16,
+            mem_mib: 0,
             maxpar: 16,
             max_retries: 0,
             retry_interval_secs: 60,
