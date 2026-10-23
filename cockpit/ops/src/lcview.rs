@@ -70,6 +70,15 @@ pub struct AskRow {
     pub class: String,
 }
 
+/// Fills each untitled ask from the content store's decision bead rows (`content-rows` JSON).
+pub fn fill_ask_titles(asks: &mut [AskRow], content: &[serde_json::Value]) {
+    for a in asks.iter_mut().filter(|a| a.title.is_empty()) {
+        if let Some(t) = content.iter().find(|c| c["id"] == a.id.as_str()).and_then(|c| c["title"].as_str()) {
+            a.title = t.to_string();
+        }
+    }
+}
+
 /// What `work list` knows that the lifecycle does not.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Meta {
@@ -1814,6 +1823,16 @@ mod tests {
         assert_eq!((v.decide[0].title.as_str(), v.decide[1].class.as_str()), ("older ask", "policy"));
         assert_eq!(v.next_count, 1, "only the work bead is claimable");
         assert_eq!(v.next[0].id, "sp-work1");
+    }
+
+    #[test]
+    fn an_ask_with_no_bead_row_takes_its_title_from_the_content_store() {
+        let mut s = snap(vec![]);
+        s.asks = vec![AskRow { id: "sp-dec".into(), opened_at: 1, title: String::new(), class: String::new() }];
+        let content: Vec<serde_json::Value> = serde_json::from_str(r#"[{"id":"sp-dec","title":"Fill credentials?"}]"#).unwrap();
+        fill_ask_titles(&mut s.asks, &content);
+        let v = view(&s);
+        assert_eq!(v.decide[0].title, "Fill credentials?");
     }
 
     fn plain(lines: &[String]) -> String {
