@@ -106,6 +106,12 @@ pub struct SendmailOutcome {
 /// reply and delivers it. Nothing here touches the bead store; `reconcile::pass` applies what
 /// a delivered reply means to the beads it answers.
 pub fn sendmail(home: &Path, mail_root: &Path, mute: bool, raw: &str) -> Result<SendmailOutcome, String> {
+    sendmail_to(home, mail_root, mute, raw, None)
+}
+
+/// `sendmail` with the destination named by the caller instead of routed from the original's
+/// sender: the same message delivered a second time, to a reader the routing would not reach.
+pub fn sendmail_to(home: &Path, mail_root: &Path, mute: bool, raw: &str, to: Option<&str>) -> Result<SendmailOutcome, String> {
     if raw.trim().is_empty() {
         return Err("empty message — nothing to deliver".to_string());
     }
@@ -118,10 +124,15 @@ pub fn sendmail(home: &Path, mail_root: &Path, mute: bool, raw: &str) -> Result<
             let text = fs::read_to_string(&path).unwrap_or_default();
             let orig_from = message::header_ci_before_blank(&text, "from");
             dest_mailbox = reply_mailbox(&orig_from, home, mail_root);
-            orig_file = Some(path);
+            if to.is_none() {
+                orig_file = Some(path);
+            }
         }
     }
 
+    if let Some(mailbox) = to {
+        dest_mailbox = mailbox.to_string();
+    }
     if let Some(path) = &orig_file {
         mark_replied(path);
     }
@@ -298,6 +309,18 @@ mod tests {
         sendmail(&home, d.path(), false, &raw).unwrap();
         assert!(gate.join("cur").join(format!("{msgid}:2,RS")).is_file());
         assert_eq!(fs::read_dir(gate.join("new")).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn a_named_destination_overrides_routing_and_leaves_the_original_unflagged() {
+        let d = testkit::TempDir::new("mail-sendmail");
+        let home = d.path().join("home");
+        fs::create_dir_all(home.join("chamber")).unwrap();
+        let msgid = send_plain(d.path(), "gate", "Gate <gate@spira>", "Enable feature?");
+        let out = sendmail_to(&home, d.path(), false, &reply_raw(Some(&msgid)), Some("operator")).unwrap();
+        assert_eq!(out.dest_mailbox, "operator");
+        assert_eq!(fs::read_dir(d.path().join("operator").join("new")).unwrap().count(), 1);
+        assert!(d.path().join("gate").join("new").join(&msgid).is_file());
     }
 
     #[test]

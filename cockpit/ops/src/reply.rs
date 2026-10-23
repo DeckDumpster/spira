@@ -26,9 +26,13 @@ pub trait Commenter {
 /// What an answer does beyond recording itself: lift the ask hold, reach the live holder.
 pub trait Follow {
     fn lift_hold(&self, id: &str, message_id: &str) -> Result<(), String>;
-    /// Send `text` as the mail reply to the open ask on `id`; true when it was sent, which is
-    /// what lifts the hold. False when the bead has no ask mail to answer.
-    fn answer_ask(&self, id: &str, text: &str) -> bool;
+    fn open_ask(&self, id: &str) -> Option<AskMail>;
+    /// Send `text` as the mail reply to `ask`; true when it was sent, which is what lifts the
+    /// hold.
+    fn answer_ask(&self, ask: &AskMail, text: &str) -> bool;
+    /// Deliver `text` to the operator's mailbox in the ask's own thread, so what the operator
+    /// reads is what the store holds.
+    fn copy_to_operator(&self, ask: &AskMail, text: &str, default: Option<&str>) -> Result<(), String>;
     fn deliver(&self, id: &str, text: &str);
 }
 
@@ -41,26 +45,19 @@ pub fn usage_error(id: &str, text: &str) -> bool {
     id.is_empty() || text.is_empty()
 }
 
-pub const USAGE: &str = "usage: reply <bead-id> \"<text>\"   (or - to read stdin)";
+pub const USAGE: &str = "usage: reply <bead-id> \"<text>\" [--default \"<new default>\"]   (text - reads stdin)";
 
-pub fn run(id: &str, text: &str, db: &Path, commenter: &dyn Commenter, follow: &dyn Follow) -> Outcome {
-    let r = commenter.comment(db, id, text);
-    if r.success {
-        if !follow.answer_ask(id, text) {
-            let message_id = format!("answer-{id}");
-            if let Err(e) = follow.lift_hold(id, &message_id) {
-                eprintln!("reply: ask hold on {id} not lifted: {e}");
-            }
-        }
-        follow.deliver(id, text);
+pub fn run(id: &str, text: &str, default: Option<&str>, db: &Path, commenter: &dyn Commenter, follow: &dyn Follow) -> Outcome {
+    let ask = follow.open_ask(id);
+    if default.is_some() && ask.is_none() {
+        return Outcome::Failed(format!("reply: --default revises an open ask, and {id} has none"));
     }
+    let r = commenter.comment(db, id, text);
     let db_name = db
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    if r.success {
-        Outcome::Replied(format!("replied on {id} ({db_name})"))
-    } else {
+    if !r.success {
         // Unlike the bash original, bd's own output is included — see ../DESIGN.md
         // Decisions.
         let mut msg = format!("reply: failed to comment on {id} in {}\n", db.display());
@@ -70,13 +67,47 @@ pub fn run(id: &str, text: &str, db: &Path, commenter: &dyn Commenter, follow: &
             msg.push('\n');
         }
         msg.pop();
-        Outcome::Failed(msg)
+        return Outcome::Failed(msg);
+    }
+    let mut failures = Vec::new();
+    if let (Some(d), Some(ask)) = (default, &ask) {
+        if !ask.bead.is_empty() {
+            let w = commenter.comment(db, &ask.bead, &format!("Default: {d}"));
+            if !w.success {
+                failures.push(format!("default not recorded on {}: {}", ask.bead, w.combined.trim()));
+            }
+        }
+    }
+    match &ask {
+        Some(ask) => {
+            if default.is_none() && !follow.answer_ask(ask, text) {
+                let message_id = format!("answer-{id}");
+                if let Err(e) = follow.lift_hold(id, &message_id) {
+                    eprintln!("reply: ask hold on {id} not lifted: {e}");
+                }
+            }
+            if let Err(e) = follow.copy_to_operator(ask, text, default) {
+                failures.push(format!("not delivered to the operator's mailbox: {e}"));
+            }
+        }
+        None => {
+            if let Err(e) = follow.lift_hold(id, &format!("answer-{id}")) {
+                eprintln!("reply: ask hold on {id} not lifted: {e}");
+            }
+        }
+    }
+    follow.deliver(id, text);
+    if failures.is_empty() {
+        Outcome::Replied(format!("replied on {id} ({db_name})"))
+    } else {
+        Outcome::Failed(format!("reply: recorded on {id} ({db_name}) but {}", failures.join("; ")))
     }
 }
 
 pub struct AskMail {
     pub message_id: String,
     pub subject: String,
+    pub bead: String,
 }
 
 const ASK_MAILBOXES: [&str; 2] = ["operator", "concierge"];
@@ -101,7 +132,7 @@ pub fn find_open_ask(mail_root: &Path, id: &str) -> Option<AskMail> {
 
 fn read_ask(path: &Path, id: &str) -> Option<AskMail> {
     let f = fs::File::open(path).ok()?;
-    let (mut work, mut kind, mut message_id, mut subject) = (String::new(), String::new(), String::new(), String::new());
+    let (mut work, mut kind, mut message_id, mut subject, mut bead) = (String::new(), String::new(), String::new(), String::new(), String::new());
     for line in BufReader::new(f).lines() {
         let line = line.ok()?;
         if line.trim().is_empty() {
@@ -112,13 +143,14 @@ fn read_ask(path: &Path, id: &str) -> Option<AskMail> {
         match name.to_ascii_lowercase().as_str() {
             "x-spira-work-bead" => work = value,
             "x-spira-kind" => kind = value,
+            "x-spira-bead" => bead = value,
             "message-id" => message_id = value.trim_matches(|c| c == '<' || c == '>').to_string(),
             "subject" => subject = value,
             _ => {}
         }
     }
     let asks = kind == "question" || kind == "decision";
-    (work == id && asks && !message_id.is_empty()).then_some(AskMail { message_id, subject })
+    (work == id && asks && !message_id.is_empty()).then_some(AskMail { message_id, subject, bead })
 }
 
 /// The RFC 5322 reply `mail sendmail` reads: threaded to the ask by `In-Reply-To`, which is
@@ -127,6 +159,20 @@ pub fn answer_message(ask: &AskMail, text: &str, answer_id: &str) -> String {
     let subject = ask.subject.strip_prefix("Re: ").unwrap_or(&ask.subject);
     format!(
         "From: claude <claude@spira>\nSubject: Re: {subject}\nMessage-ID: <{answer_id}@spira>\nIn-Reply-To: <{}>\n\n{text}\n",
+        ask.message_id
+    )
+}
+
+/// The answer addressed to the operator, which never closes the ask (a revision is not his decision): threaded to the ask, subject marked `Revised:`,
+/// and carrying the new default as `X-Spira-Default` so accepting it sends the revised value.
+pub fn operator_copy(ask: &AskMail, text: &str, default: Option<&str>, copy_id: &str) -> String {
+    let subject = ask.subject.trim_start_matches("Re: ").trim_start_matches("Revised: ");
+    let (header, line) = match default {
+        Some(d) => (format!("X-Spira-Default: {}\n", d.split_whitespace().collect::<Vec<_>>().join(" ")), format!("\nDefault is now: {d}\n")),
+        None => (String::new(), String::new()),
+    };
+    format!(
+        "From: claude <claude@spira>\nSubject: Revised: {subject}\nX-Spira-Kind: revision\n{header}Message-ID: <{copy_id}@spira>\nIn-Reply-To: <{}>\n\n{text}\n{line}",
         ask.message_id
     )
 }
@@ -152,15 +198,23 @@ mod tests {
     struct Rec {
         calls: std::cell::RefCell<Vec<String>>,
         has_ask: bool,
+        copy_fails: bool,
     }
     impl Follow for Rec {
         fn lift_hold(&self, id: &str, m: &str) -> Result<(), String> {
             self.calls.borrow_mut().push(format!("lift {id} {m}"));
             Ok(())
         }
-        fn answer_ask(&self, id: &str, _text: &str) -> bool {
-            self.calls.borrow_mut().push(format!("answer {id}"));
-            self.has_ask
+        fn open_ask(&self, _id: &str) -> Option<AskMail> {
+            self.has_ask.then(|| AskMail { message_id: "m@spira".into(), subject: "q".into(), bead: "sp-ask".into() })
+        }
+        fn answer_ask(&self, _ask: &AskMail, _text: &str) -> bool {
+            self.calls.borrow_mut().push("answer".into());
+            true
+        }
+        fn copy_to_operator(&self, _ask: &AskMail, _text: &str, default: Option<&str>) -> Result<(), String> {
+            self.calls.borrow_mut().push(format!("copy {default:?}"));
+            if self.copy_fails { Err("boom".into()) } else { Ok(()) }
         }
         fn deliver(&self, id: &str, text: &str) {
             self.calls.borrow_mut().push(format!("deliver {id} {text}"));
@@ -171,16 +225,52 @@ mod tests {
     fn an_answer_lifts_the_hold_and_reaches_the_holder_in_one_call() {
         let c = Fake { success: true, combined: "" };
         let f = Rec::default();
-        run("sp-abc", "use A", Path::new("/db"), &c, &f);
-        assert_eq!(*f.calls.borrow(), vec!["answer sp-abc", "lift sp-abc answer-sp-abc", "deliver sp-abc use A"]);
+        run("sp-abc", "use A", None, Path::new("/db"), &c, &f);
+        assert_eq!(*f.calls.borrow(), vec!["lift sp-abc answer-sp-abc", "deliver sp-abc use A"]);
     }
 
     #[test]
-    fn an_answer_to_an_open_ask_is_the_mail_reply_and_needs_no_second_lift() {
+    fn an_answer_to_an_open_ask_is_the_mail_reply_and_is_copied_to_the_operator() {
         let c = Fake { success: true, combined: "" };
         let f = Rec { has_ask: true, ..Rec::default() };
-        run("sp-abc", "use A", Path::new("/db"), &c, &f);
-        assert_eq!(*f.calls.borrow(), vec!["answer sp-abc", "deliver sp-abc use A"]);
+        run("sp-abc", "use A", None, Path::new("/db"), &c, &f);
+        assert_eq!(*f.calls.borrow(), vec!["answer", "copy None", "deliver sp-abc use A"]);
+    }
+
+    #[test]
+    fn a_revised_default_is_mailed_to_the_operator_without_answering_the_ask() {
+        let c = Fake { success: true, combined: "" };
+        let f = Rec { has_ask: true, ..Rec::default() };
+        let out = run("sp-abc", "use A", Some("B"), Path::new("/db"), &c, &f);
+        assert!(matches!(out, Outcome::Replied(_)));
+        assert_eq!(*f.calls.borrow(), vec!["copy Some(\"B\")", "deliver sp-abc use A"]);
+    }
+
+    #[test]
+    fn a_failed_mail_delivery_fails_the_reply_after_the_store_write() {
+        let c = Fake { success: true, combined: "" };
+        let f = Rec { has_ask: true, copy_fails: true, ..Rec::default() };
+        match run("sp-abc", "use A", None, Path::new("/db"), &c, &f) {
+            Outcome::Failed(s) => assert!(s.contains("not delivered to the operator's mailbox: boom"), "{s}"),
+            Outcome::Replied(s) => panic!("swallowed: {s}"),
+        }
+    }
+
+    #[test]
+    fn a_default_with_no_open_ask_is_refused_before_anything_is_written() {
+        let c = Fake { success: true, combined: "" };
+        let f = Rec::default();
+        assert!(matches!(run("sp-abc", "x", Some("B"), Path::new("/db"), &c, &f), Outcome::Failed(_)));
+        assert!(f.calls.borrow().is_empty());
+    }
+
+    #[test]
+    fn the_operator_copy_is_threaded_revised_and_states_the_default() {
+        let ask = AskMail { message_id: "m-ask@spira".into(), subject: "Re: which way?".into(), bead: "sp-ask".into() };
+        let msg = operator_copy(&ask, "ok", Some("B"), "rev-1");
+        assert!(msg.contains("In-Reply-To: <m-ask@spira>\n"), "{msg}");
+        assert!(msg.contains("Subject: Revised: which way?\n"), "{msg}");
+        assert!(msg.contains("X-Spira-Default: B\n") && msg.contains("Default is now: B"), "{msg}");
     }
 
     fn put(root: &Path, mailbox: &str, name: &str, headers: &str) {
@@ -208,7 +298,7 @@ mod tests {
     fn a_failed_comment_neither_lifts_nor_delivers() {
         let c = Fake { success: false, combined: "no" };
         let f = Rec::default();
-        run("sp-abc", "use A", Path::new("/db"), &c, &f);
+        run("sp-abc", "use A", None, Path::new("/db"), &c, &f);
         assert!(f.calls.borrow().is_empty());
     }
 
@@ -222,7 +312,7 @@ mod tests {
     #[test]
     fn success_message_names_id_and_db_basename() {
         let c = Fake { success: true, combined: "" };
-        let out = run("sp-abc", "an answer", Path::new("/var/spira/db"), &c, &Rec::default());
+        let out = run("sp-abc", "an answer", None, Path::new("/var/spira/db"), &c, &Rec::default());
         match out {
             Outcome::Replied(s) => assert_eq!(s, "replied on sp-abc (db)"),
             Outcome::Failed(s) => panic!("expected Replied, got Failed({s})"),
@@ -235,7 +325,7 @@ mod tests {
             success: false,
             combined: "refused: no such bead",
         };
-        let out = run("sp-abc", "an answer", Path::new("/db"), &c, &Rec::default());
+        let out = run("sp-abc", "an answer", None, Path::new("/db"), &c, &Rec::default());
         match out {
             Outcome::Failed(s) => {
                 assert!(s.starts_with("reply: failed to comment on sp-abc in /db\n"));

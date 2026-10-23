@@ -9,7 +9,7 @@
 //!   mail read <mailbox> [<message>]
 //!   mail count <mailbox>
 //!   mail unread-age <mailbox>
-//!   mail sendmail                     RFC 5322 on stdin
+//!   mail sendmail [--to <mailbox>]    RFC 5322 on stdin
 //!   mail reconcile                    apply delivered replies to the beads they answer
 //!   mail tidy <mailbox> [--dry-run]
 //!   mail ensure <mailbox>
@@ -267,6 +267,10 @@ fn run_sendmail(args: &[String]) -> ExitCode {
             Err(e) => fail(format!("sendmail --check: {e}")),
         };
     }
+    let to = args.iter().position(|a| a == "--to").and_then(|i| args.get(i + 1)).cloned();
+    if args.iter().any(|a| a == "--to") && to.is_none() {
+        return fail("sendmail: --to needs a mailbox");
+    }
     let mut raw = String::new();
     if io::stdin().read_to_string(&mut raw).is_err() {
         return fail("sendmail: could not read stdin");
@@ -279,7 +283,7 @@ fn run_sendmail(args: &[String]) -> ExitCode {
         return fail("sendmail: empty message — nothing to deliver");
     }
     let spool = sendmail::spool_message(&env.run_dir, &raw);
-    match sendmail::sendmail(&env.home, &env.mail_root, env.mute, &raw) {
+    match sendmail::sendmail_to(&env.home, &env.mail_root, env.mute, &raw, to.as_deref()) {
         Ok(_) => {
             if let Some(p) = spool {
                 let _ = std::fs::remove_file(p);
