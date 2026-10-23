@@ -114,6 +114,7 @@ czar_unclaimed_mins = 10
 db = "/fixture/userhome/spira/db"
 deferral_escalate_at = "5"
 design = ""
+design_asks_repeat = 86400
 desired_dir = "/fixture/userhome/.config/spira/desired"
 desired_fragments_dir = "/fixture/userhome/.config/spira/desired.d"
 disk_floor_pct = "15"
