@@ -214,7 +214,7 @@ pub fn pass(bd: &dyn Bd, lc: &dyn Lc, db_configured: bool, mail_root: &Path, sta
                     continue;
                 }
                 let Ok(text) = fs::read_to_string(&f) else { continue };
-                if message::header_ci_before_blank(&text, "in-reply-to").is_empty() {
+                if message::header_ci_before_blank(&text, "in-reply-to").is_empty() || message::header_ci_before_blank(&text, "x-spira-kind") == "revision" {
                     continue;
                 }
                 let own: String = message::header_ci_before_blank(&text, "message-id").chars().filter(|c| *c != '<' && *c != '>').collect();
