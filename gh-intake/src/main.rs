@@ -9,7 +9,7 @@
 
 use gh_intake::closeout::{self, Ctx, Deps};
 use gh_intake::logic::{self, Config};
-use gh_intake::real::{RealBd, RealGh, RealGit, RealHttp, RealLifecycle, RealMail, RealRepo};
+use gh_intake::real::{RealBd, RealGh, RealGit, RealHttp, RealLifecycle, RealMail, RealRepo, FileStamp};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -330,7 +330,17 @@ fn dispatch() -> ExitCode {
     let repo_port = RealRepo { spira_home };
     let mail = RealMail { mail_bin };
 
-    let report = logic::run(&http, &bd, &repo_port, &mail, &cfg);
+    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    let run_dir = match spira_config::resolve::locate_home_for_process().and_then(|h| spira_config::resolve::resolve_run_dir(&env, &h)) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("gh-intake: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    let stamp = FileStamp(run_dir.join("gh-intake.last-ok"));
+
+    let report = logic::run(&http, &bd, &repo_port, &mail, &stamp, &cfg);
     for line in &report.out {
         println!("{line}");
     }
