@@ -1,0 +1,6 @@
+TYPE=string
+GROUP=repo
+DOC=Product hosts whose filings outbox filings-collect reads over ssh, space-separated NAME=SSH_TARGET:HOME entries (HOME is the directory holding filings/outbox on that host); empty means filings-collect has nothing to do.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_FILINGS_HOSTS:=}"
+SPIRA_CONF_DEFAULT_EOF

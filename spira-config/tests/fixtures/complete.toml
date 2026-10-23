@@ -351,6 +351,7 @@ run = "/fixture/userhome/spira/run"
 kit_crate = ""
 kit_repo = ""
 kit_sites = ""
+filings_hosts = ""
 sccache_dav_addr = "auto:9431"
 sccache_dav_max_gb = 40
 sccache_dav_tailnet_addr = ""

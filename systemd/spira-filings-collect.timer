@@ -1,0 +1,16 @@
+[Unit]
+Description=Collect product-host filings every ten minutes
+
+[Timer]
+OnBootSec=5min
+OnActiveSec=5min
+OnUnitActiveSec=10min
+AccuracySec=1min
+Persistent=true
+Unit=spira-filings-collect.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=observability

@@ -1,0 +1,24 @@
+[Unit]
+Description=Spira filings collect — files or amends one builder bead per product-host filing and acknowledges it on the host
+After=lc-serve.service
+Wants=lc-serve.service
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+Nice=19
+CPUQuota=25%
+ExecStart=@SPIRA_PROD_ROOT@/bin/filings-collect pass --state @SPIRA_RUN@/filings-collect.state
+# Exit 1 names an unreachable host or an unparseable filing; the unit fails so it is seen, and the next pass retries.
+TimeoutStartSec=600
+StandardOutput=append:@SPIRA_RUN@/filings-collect.log
+StandardError=append:@SPIRA_RUN@/filings-collect.log
+
+[Install]
+WantedBy=default.target
+
+[X-Spira]
+Plane=observability

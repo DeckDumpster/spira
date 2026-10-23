@@ -777,6 +777,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v refusal-watch)\""
 
 [[dep]]
+name = "filings-collect"
+tier = "release"
+purpose = "Spira's filings-collect binary, from the release's bin/ — reads product hosts' filings outboxes over ssh into builder beads and acknowledges them"
+version_min = ""
+version_probe = "readlink -f \"$(command -v filings-collect)\""
+
+[[dep]]
 name = "kit-bump"
 tier = "release"
 purpose = "Spira's kit-bump binary, from the release's bin/ — files or amends one bump bead per consuming site whose pinned kit commit is behind the kit's landing tip"
