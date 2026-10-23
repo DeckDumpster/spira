@@ -45,12 +45,12 @@ _da_field() {   # _da_field <file> <key>: a top-level frontmatter value, unquote
 
 _da_asks_text() {   # every open ask body, then the mail of every held ask; non-zero when the store cannot be read
     local json id
-    json="$(timeout 10 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" list --label "$SPIRA_ASK_LABEL" --status open --limit 0 --json 2>/dev/null)" || return 1
+    json="$(timeout 5 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" list --label "$SPIRA_ASK_LABEL" --status open --limit 0 --json 2>/dev/null)" || return 1
     case "$json" in "["*) printf '%s\n' "$json" ;; *) return 1 ;; esac
     while read -r id; do
         [ -n "$id" ] || continue
         grep -lsx "X-Spira-Work-Bead: $id" "$SPIRA_MAIL"/*/new/* "$SPIRA_MAIL"/*/cur/* 2>/dev/null | xargs -r cat
-    done < <(timeout 10 spira-lc list-held ask 2>/dev/null)
+    done < <(timeout 5 spira-lc list-held ask 2>/dev/null)
     return 0
 }
 
