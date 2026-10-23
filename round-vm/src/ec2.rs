@@ -75,6 +75,45 @@ pub fn ami_staleness(images: &[Image], expected: &str) -> Option<String> {
     })
 }
 
+/// A round image with the storage it pins, as `describe-images` reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImageStore {
+    pub image: Image,
+    pub name: String,
+    pub snapshots: Vec<String>,
+    pub gib: u64,
+}
+
+/// Newest round images kept regardless of use: the current one and the one before it.
+pub const KEEP_IMAGES: usize = 2;
+const IMAGE_NAME_PREFIX: &str = "spira-round-";
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct PruneReport {
+    pub removed: Vec<String>,
+    pub gib: u64,
+}
+
+impl std::fmt::Display for PruneReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "removed {} round image(s) {:?}, freed {} GiB", self.removed.len(), self.removed, self.gib)
+    }
+}
+
+/// The images to remove: not among the newest [`KEEP_IMAGES`], not the newest carrying
+/// `current_recipe`, not launched-from by any live instance, and named as a round image.
+pub fn prune_plan(stores: &[ImageStore], in_use: &[String], current_recipe: &str) -> Vec<ImageStore> {
+    let mut by_age: Vec<&ImageStore> = stores.iter().filter(|s| s.name.starts_with(IMAGE_NAME_PREFIX)).collect();
+    by_age.sort_by(|a, b| b.image.created.cmp(&a.image.created));
+    let current = by_age.iter().find(|s| s.image.recipe_sha == current_recipe).map(|s| s.image.id.clone());
+    by_age
+        .into_iter()
+        .skip(KEEP_IMAGES)
+        .filter(|s| Some(&s.image.id) != current.as_ref() && !in_use.contains(&s.image.id))
+        .cloned()
+        .collect()
+}
+
 pub trait Ec2Api {
     /// Launches one instance of `ami` and `instance_type` tagged `TAG_KEY=handle`, `Name=name`; its instance id.
     fn run(&self, ami: &str, instance_type: &str, handle: &str, name: &str, user_data: &str) -> Result<String, String>;
@@ -82,6 +121,12 @@ pub trait Ec2Api {
     fn run_dry(&self, ami: &str, instance_type: &str, handle: &str, name: &str, user_data: &str) -> Result<(), String>;
     /// Every available image tagged as a round image, with its recipe-sha.
     fn images(&self) -> Result<Vec<Image>, String>;
+    /// Every round image in any state, with its name and snapshots.
+    fn image_stores(&self) -> Result<Vec<ImageStore>, String>;
+    /// The image id of every instance in the account that is not terminated, tagged or not.
+    fn images_in_use(&self) -> Result<Vec<String>, String>;
+    fn deregister_image(&self, id: &str) -> Result<(), String>;
+    fn delete_snapshot(&self, id: &str) -> Result<(), String>;
     /// The live instance tagged with `handle`; None once it is terminated or never existed.
     fn find(&self, handle: &str) -> Result<Option<Inst>, String>;
     /// Every live instance carrying `TAG_KEY`; an untagged instance is never listed.
@@ -250,6 +295,23 @@ impl<A: Ec2Api> Ec2<A> {
     /// The newest image built from `recipe_sha`, whatever the release's own recipe is.
     pub fn image_for(&self, recipe_sha: &str) -> Result<Option<String>, String> {
         Ok(select_image(&self.api.images()?, recipe_sha).ok())
+    }
+
+    /// Deregisters the round images [`prune_plan`] selects and deletes their snapshots.
+    pub fn prune_images(&self) -> Result<PruneReport, String> {
+        let stores = self.api.image_stores()?;
+        let in_use = self.api.images_in_use()?;
+        let plan = prune_plan(&stores, &in_use, &self.recipe_sha);
+        let mut report = PruneReport::default();
+        for s in plan {
+            self.api.deregister_image(&s.image.id).map_err(|e| format!("{report}; deregister {}: {e}", s.image.id))?;
+            for snap in &s.snapshots {
+                self.api.delete_snapshot(snap).map_err(|e| format!("{report}; {} deregistered but snapshot {snap}: {e}", s.image.id))?;
+            }
+            report.removed.push(s.image.id.clone());
+            report.gib += s.gib;
+        }
+        Ok(report)
     }
 
     pub fn ami_check(&self) -> Result<Option<String>, String> {
@@ -609,6 +671,32 @@ impl Ec2Api for AwsCli {
         parse_images(&out)
     }
 
+    fn image_stores(&self) -> Result<Vec<ImageStore>, String> {
+        let out = self.aws(vec![
+            "ec2".into(), "describe-images".into(), "--owners".into(), "self".into(),
+            "--filters".into(), format!("Name=tag:{},Values={}", AMI_OWNER_TAG.0, AMI_OWNER_TAG.1),
+            "--output".into(), "json".into(),
+        ])?;
+        parse_image_stores(&out)
+    }
+
+    fn images_in_use(&self) -> Result<Vec<String>, String> {
+        let out = self.aws(vec![
+            "ec2".into(), "describe-instances".into(),
+            "--filters".into(), "Name=instance-state-name,Values=pending,running,stopping,stopped,shutting-down".into(),
+            "--query".into(), "Reservations[].Instances[].ImageId".into(), "--output".into(), "json".into(),
+        ])?;
+        serde_json::from_str::<Vec<String>>(&out).map_err(|e| format!("describe-instances: {e}"))
+    }
+
+    fn deregister_image(&self, id: &str) -> Result<(), String> {
+        self.aws(vec!["ec2".into(), "deregister-image".into(), "--image-id".into(), id.into()]).map(|_| ())
+    }
+
+    fn delete_snapshot(&self, id: &str) -> Result<(), String> {
+        self.aws(vec!["ec2".into(), "delete-snapshot".into(), "--snapshot-id".into(), id.into()]).map(|_| ())
+    }
+
     fn run(&self, ami: &str, instance_type: &str, handle: &str, name: &str, user_data: &str) -> Result<String, String> {
         self.launch(ami, instance_type, handle, name, user_data, false)
     }
@@ -697,6 +785,26 @@ pub fn peer_addr(json: &str, hostname: &str) -> Result<Option<String>, String> {
                 .and_then(|ips| ips.iter().filter_map(Value::as_str).find(|ip| !ip.contains(':')))
                 .map(String::from)
         }))
+}
+
+pub fn parse_image_stores(json: &str) -> Result<Vec<ImageStore>, String> {
+    let v: Value = serde_json::from_str(json).map_err(|e| format!("describe-images: {e}"))?;
+    let raw = v.get("Images").and_then(Value::as_array).cloned().unwrap_or_default();
+    let images = parse_images(&serde_json::json!({ "Images": raw }).to_string())?;
+    Ok(raw
+        .iter()
+        .filter(|i| i.get("ImageId").and_then(Value::as_str).is_some_and(|id| !id.is_empty()))
+        .zip(images)
+        .map(|(i, image)| {
+            let ebs: Vec<&Value> = i.get("BlockDeviceMappings").and_then(Value::as_array).into_iter().flatten().filter_map(|m| m.get("Ebs")).collect();
+            ImageStore {
+                image,
+                name: i.get("Name").and_then(Value::as_str).unwrap_or("").to_string(),
+                snapshots: ebs.iter().filter_map(|e| e.get("SnapshotId").and_then(Value::as_str)).map(String::from).collect(),
+                gib: ebs.iter().filter_map(|e| e.get("VolumeSize").and_then(Value::as_u64)).sum(),
+            }
+        })
+        .collect())
 }
 
 pub fn parse_images(json: &str) -> Result<Vec<Image>, String> {
@@ -1185,5 +1293,58 @@ mod tests {
         assert!(e.contains("SPIRA_ROUND_VM_EC2_PROFILE") && e.contains("tailscale auth key file") && e.contains("absent"), "{e}");
         let none = Ec2Config::from_lookup(&|_| None);
         assert!(none.missing().len() >= 5);
+    }
+
+    fn store(id: &str, sha: &str, created: &str) -> ImageStore {
+        ImageStore { image: image(id, sha, created), name: format!("spira-round-{sha}-{created}"), snapshots: vec![format!("snap-{id}")], gib: 100 }
+    }
+
+    fn ids(v: &[ImageStore]) -> Vec<&str> {
+        v.iter().map(|s| s.image.id.as_str()).collect()
+    }
+
+    #[test]
+    fn prune_keeps_the_newest_two_the_current_recipe_and_anything_in_use() {
+        let stores = [
+            store("ami-1", "a", "2026-10-14"),
+            store("ami-2", "b", "2026-10-15"),
+            store("ami-3", "c", "2026-10-16"),
+            store("ami-4", "d", "2026-10-17"),
+            store("ami-5", "e", "2026-10-18"),
+            store("ami-6", "f", "2026-10-19"),
+        ];
+        assert_eq!(ids(&prune_plan(&stores, &[], "zzz")), ["ami-4", "ami-3", "ami-2", "ami-1"]);
+        assert_eq!(ids(&prune_plan(&stores, &["ami-2".into()], "c")), ["ami-4", "ami-1"]);
+        assert!(prune_plan(&stores[..2], &[], "a").is_empty());
+    }
+
+    #[test]
+    fn prune_never_selects_an_image_that_is_not_named_as_a_round_image() {
+        let mut other = store("ami-ci", "x", "2026-10-01");
+        other.name = "ephemeral-ci-runner-1".into();
+        let stores = [other, store("ami-1", "a", "2026-10-02"), store("ami-2", "b", "2026-10-03"), store("ami-3", "c", "2026-10-04")];
+        assert_eq!(ids(&prune_plan(&stores, &[], "zzz")), ["ami-1"]);
+    }
+
+    #[test]
+    fn describe_images_output_yields_name_snapshots_and_size() {
+        let json = r#"{"Images":[{"ImageId":"ami-1","Name":"spira-round-x","CreationDate":"2026-10-09T00:00:00.000Z",
+            "BlockDeviceMappings":[{"DeviceName":"/dev/sda1","Ebs":{"SnapshotId":"snap-1","VolumeSize":100}},{"DeviceName":"/dev/sdb","VirtualName":"ephemeral0"}]}]}"#;
+        let v = parse_image_stores(json).unwrap();
+        assert_eq!((v[0].name.as_str(), v[0].snapshots.clone(), v[0].gib), ("spira-round-x", vec!["snap-1".to_string()], 100));
+    }
+
+    #[test]
+    fn prune_images_deregisters_then_deletes_snapshots_and_reports_the_gib() {
+        let d = TempDir::new();
+        let fake = FakeEc2::default();
+        for (i, day) in ["14", "15", "16", "17"].iter().enumerate() {
+            fake.plant_store(store(&format!("ami-{i}"), &format!("s{i}"), &format!("2026-10-{day}")));
+        }
+        fake.plant_in_use("ami-1");
+        let p = Ec2::new(fake.clone(), &config(&d)).unwrap();
+        let r = p.prune_images().unwrap();
+        assert_eq!((r.removed, r.gib), (vec!["ami-0".to_string()], 100));
+        assert_eq!(fake.removed(), ["deregister ami-0", "snapshot snap-ami-0"]);
     }
 }

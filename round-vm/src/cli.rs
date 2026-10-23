@@ -19,7 +19,7 @@ use crate::pve::{HttpTransport, Pve};
 use crate::run::{parse_run_args, run, salvage_results, GitHost, RunEnv, SshRemote};
 use crate::schema::ProcId;
 
-pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--on-red <command>]|status [--json]|warm|teardown|template|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]|recipe-sha [--tree <dir>]|ami-for <recipe-sha>|template-check|ami-check|reap|ec2-probe [--dry-run]";
+pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--on-red <command>]|status [--json]|warm|teardown|template|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]|recipe-sha [--tree <dir>]|ami-for <recipe-sha>|template-check|ami-check|ami-prune|reap|ec2-probe [--dry-run]";
 
 fn secs_env(key: &str, default: u64) -> Duration {
     Duration::from_secs(std::env::var(key).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(default))
@@ -280,6 +280,35 @@ fn ami_check() -> i32 {
     }
 }
 
+/// `round-vm ami-prune`: removes superseded, unreferenced round images and their snapshots.
+fn ami_prune() -> i32 {
+    let cfg = match Config::load() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{e}");
+            return 2;
+        }
+    };
+    let ec2cfg = Ec2Config::from_lookup(&crate::config::declared);
+    let p = match Ec2::new(AwsCli::new(&ec2cfg, cfg.state_dir.join("ec2")), &ec2cfg) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("round-vm ami-prune: {e}");
+            return 2;
+        }
+    };
+    match p.prune_images() {
+        Ok(r) => {
+            println!("round-vm ami-prune: {r}");
+            0
+        }
+        Err(e) => {
+            eprintln!("round-vm ami-prune: {e}");
+            2
+        }
+    }
+}
+
 /// What a panic inside round-vm exits with: its own harness fault (DESIGN.md §2.2), never
 /// Rust's 101, which no caller has a row for (sp-dp872).
 pub const PANIC_EXIT: i32 = 2;
@@ -335,6 +364,9 @@ pub fn main_with(args: Vec<String>) -> i32 {
     }
     if verb == "ami-check" {
         return ami_check();
+    }
+    if verb == "ami-prune" {
+        return ami_prune();
     }
     if verb == "ec2-probe" {
         return ec2_probe(&rest);
