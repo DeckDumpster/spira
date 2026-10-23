@@ -7,6 +7,7 @@
 use crate::decide::{self, DedupHit, Scope};
 use crate::ports::{self, Bd, Clock, Mailer};
 
+#[derive(Clone, Copy)]
 pub struct FileConfig<'a> {
     pub db: &'a str,
     pub kind: &'a str,
@@ -165,6 +166,32 @@ pub fn file_one(
         None => file_new(bd, cfg, reference, title, payload, labels, None, log),
     }
 }
+
+/// A due alarm whose reference already has a bead nobody is working (closed, landed) hands
+/// the firing to `file_one`, so the recurrence has an open owner carrying its evidence. A
+/// reference with no bead, or an open one, stays an inbox note only. Looks back past the
+/// filing window: an alarm outlives the week a bead's dedup covers.
+#[allow(clippy::too_many_arguments)]
+pub fn alarm_owner(
+    bd: &dyn Bd,
+    mailer: &dyn Mailer,
+    clock: &dyn Clock,
+    cfg: &FileConfig,
+    reference: &str,
+    title: &str,
+    payload: &[u8],
+    labels: &str,
+    log: &mut Vec<String>,
+) -> Option<FileOutcome> {
+    let wide = FileConfig { dedup_lookback_days: ALARM_LOOKBACK_DAYS.max(cfg.dedup_lookback_days), ..*cfg };
+    let bounded = decide::bound_ref(reference);
+    match dedup_incident(bd, wide.db, &bounded, wide.dedup_lookback_days, clock.now()) {
+        Ok(Some(DedupHit::Open { .. })) | Ok(None) | Err(()) => None,
+        Ok(Some(_)) => Some(file_one(bd, mailer, clock, &wide, reference, title, payload, labels, log)),
+    }
+}
+
+const ALARM_LOOKBACK_DAYS: i64 = 3650;
 
 /// The terminal incident a fresh filing recurs (sp-nmlna).
 struct Predecessor<'a> {
@@ -777,6 +804,43 @@ mod tests {
         let again = file_one(&bd, &mailer, &clock, &c, "incident:landed", "landed failed again", b"fresh payload", "spira,incident", &mut log);
         assert!(matches!(again, FileOutcome::Filed(ref id) if *id == new_id));
         assert_eq!(bd.created.borrow().len(), 1);
+    }
+
+    #[test]
+    fn an_alarm_whose_reference_resolves_to_a_closed_bead_files_a_fresh_owner_with_the_evidence() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_792_800_000); // 2026-10-23, well past the 7-day filing window
+        let known = vec!["spira".to_string()];
+        let c = cfg(&known);
+        bd.rows.borrow_mut().push(BeadRow {
+            id: "sp-old".into(),
+            status: BeadStatus::Terminal,
+            external_ref: Some("incident:slow-query".into()),
+            labels: vec![format!("ref:{}", decide::ref_hash("incident:slow-query"))],
+            closed_at: Some("2026-10-08T00:00:00Z".into()),
+        });
+        let mut log = vec![];
+        let out = alarm_owner(&bd, &mailer, &clock, &c, "incident:slow-query", "SLOW STORE", b"max: 4100ms", "spira,incident", &mut log);
+        let Some(FileOutcome::Filed(id)) = out else { panic!("expected a fresh owner, log: {log:?}") };
+        assert_ne!(id, "sp-old");
+        assert!(bd.bodies.borrow().get(&id).is_some_and(|b| b.contains("max: 4100ms")));
+
+        let again = alarm_owner(&bd, &mailer, &clock, &c, "incident:slow-query", "SLOW STORE", b"max: 4100ms", "spira,incident", &mut log);
+        assert!(again.is_none(), "an open owner exists: the alarm files nothing more");
+        assert_eq!(bd.created.borrow().len(), 1);
+    }
+
+    #[test]
+    fn an_alarm_with_no_bead_history_stays_an_inbox_note() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_792_800_000);
+        let known = vec!["spira".to_string()];
+        let mut log = vec![];
+        let out = alarm_owner(&bd, &mailer, &clock, &cfg(&known), "incident:never-filed", "t", b"p", "spira,incident", &mut log);
+        assert!(out.is_none());
+        assert_eq!(bd.created.borrow().len(), 0);
     }
 
     /// A terminal incident superseded by a live bead has its fix in flight: the recurrence

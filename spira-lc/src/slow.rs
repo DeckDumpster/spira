@@ -99,7 +99,7 @@ pub fn caller_of_pid(pid: i32) -> String {
     clean(&named.or_else(parent).unwrap_or(comm))
 }
 
-pub fn request_done(verb: &str, caller: &str, took: Duration) {
+pub fn request_done(verb: &str, method: &str, caller: &str, took: Duration) {
     let (verb, caller) = (clean(verb), clean(caller));
     if let Ok(mut c) = COUNTERS.lock() {
         let v = c.verbs.entry(verb.clone()).or_default();
@@ -107,7 +107,9 @@ pub fn request_done(verb: &str, caller: &str, took: Duration) {
         v.1 += took.as_millis() as u64;
         *c.callers.entry((verb.clone(), caller.clone())).or_default() += 1;
     }
-    append(took, &verb, &caller, "REQUEST");
+    if !is_batch_method(method) {
+        append(took, &verb, &caller, "REQUEST");
+    }
 }
 
 /// The p95 a served method must stay under (law-hot-reads-answer-in-500ms).
@@ -436,11 +438,14 @@ mod tests {
         let d = testkit::TempDir::new("slow-req");
         let log = d.join("s.log");
         let _env = testkit::env(&[("SPIRA_SLOW_QUERY_LOG", Some(log.to_str().unwrap())), ("SPIRA_SLOW_QUERY_MS", Some("0"))]);
-        request_done("probe-verb", "probe\tcaller", Duration::from_millis(40));
-        request_done("other-verb", "other", Duration::from_millis(7));
-        request_done("probe-verb", "probe\tcaller", Duration::from_millis(60));
+        request_done("probe-verb", "probe-verb", "probe\tcaller", Duration::from_millis(40));
+        request_done("other-verb", "other-verb", "other", Duration::from_millis(7));
+        request_done("probe-verb", "probe-verb", "probe\tcaller", Duration::from_millis(60));
+        request_done("work", "work:submit", "probe\tcaller", Duration::from_millis(9000));
         let got: String = std::fs::read_to_string(&log).unwrap().lines().filter(|l| l.contains("\tprobe-verb\t")).map(|l| format!("{l}\n")).collect();
         assert_eq!(got.lines().count(), 2, "{got}");
+        let all = std::fs::read_to_string(&log).unwrap();
+        assert!(!all.contains("\twork\t"), "a brokered batch tool's runtime is not store latency: {all}");
         assert!(got.lines().all(|l| l.split('\t').collect::<Vec<_>>()[1..] == ["probe-verb", "probe_caller", l.split('\t').nth(3).unwrap(), "REQUEST"][..]), "{got}");
         let s: serde_json::Value = serde_json::from_str(&stats_json()).unwrap();
         assert_eq!(s["verbs"]["probe-verb"], serde_json::json!({"count": 2, "total_ms": 100}));
