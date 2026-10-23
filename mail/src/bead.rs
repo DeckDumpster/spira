@@ -243,8 +243,7 @@ pub fn suit_reason(kind: &str, first_para: &str) -> String {
 
 /// Creates the tracking decision bead a question/decision send wires itself to, and opens its
 /// row on the ask machine (never the bead machine: an ask is not claimable work). `None` if
-/// the store is unconfigured or the create failed (mail.sh: `dec_bead=""` either way — the
-/// send still succeeds, just without a tracking bead).
+/// the store is unconfigured; a failed create is an `Err`, so no ask is ever sent without its id.
 ///
 /// `work_bead` (empty for none) is the bead the question is about; it rides the tracking bead
 /// as a `work-bead:<id>` label, so a path that answers or closes the ASK BEAD rather than
@@ -261,7 +260,7 @@ pub fn create_tracking_bead(bd: &dyn Bd, db_configured: bool, subject: &str, bod
     let out = bd.run(&a(&["create", subject, "-l", &labels, "--type", "decision", "--body-file", "-", "--silent"]), Some(body));
     let id = out.stdout.trim();
     if out.code != 0 || id.is_empty() {
-        return Ok(None);
+        return Err(format!("bead create failed {}", bd_failure_detail(&out)));
     }
     if let Err(e) = retry_until_deadline(|| bd.ensure_ask(id, work_bead)) {
         let closed = abandon_bead(bd, id, &format!("ask row not written: {e}"));

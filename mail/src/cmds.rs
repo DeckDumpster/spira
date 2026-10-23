@@ -260,6 +260,8 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String, deliver:
     // A question's thread bead is its own ask bead, never the work bead it is about: a reply
     // resolves to X-Spira-Bead, and the work bead rides X-Spira-Work-Bead alone.
     let mut x_bead = if asks { String::new() } else { args.bead.to_string() };
+    let mut subject = args.subject.to_string();
+    let mut body = body;
 
     if args.dry_run {
         if asks && db_configured && !rerouted && mailbox != "concierge" {
@@ -308,6 +310,8 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String, deliver:
                     eprintln!("mail: could not record the default on {dec_bead}: {e}");
                 }
             }
+            subject = format!("{} [{dec_bead}]", args.subject);
+            body = format!("{dec_bead}\n\n{body}");
             x_bead = dec_bead;
         }
     }
@@ -324,7 +328,7 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String, deliver:
 
     let mut msg = String::new();
     msg.push_str(&message::header("From", &from)?);
-    msg.push_str(&message::header("Subject", args.subject)?);
+    msg.push_str(&message::header("Subject", &subject)?);
     if !args.kind.is_empty() {
         msg.push_str(&message::header("X-Spira-Kind", args.kind)?);
     }
@@ -752,10 +756,10 @@ mod probe_tests {
         let mut e = env(t.path());
         e.db = "db".into();
         let q = SendArgs { bead: "sp-work1", ..args("May I prove the migration on a copy?", false) };
-        let r = send(&FakeBd::new(vec![]), &e, &q, "## Class basis\nit is policy\n".into()).unwrap();
-        assert!(r.x_bead.is_none(), "{:?}", r.x_bead);
+        let r = send(&FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok("")]), &e, &q, "## Class basis\nit is policy\n".into()).unwrap();
+        assert_eq!(r.x_bead.as_deref(), Some("sp-new1"));
         let text = written_message(t.path());
-        assert!(!text.contains("X-Spira-Bead:"), "{text}");
+        assert!(text.contains("X-Spira-Bead: sp-new1") && !text.contains("X-Spira-Bead: sp-work1"), "{text}");
         assert!(text.contains("X-Spira-Work-Bead: sp-work1"), "{text}");
     }
 
@@ -941,10 +945,10 @@ mod probe_tests {
     #[test]
     fn a_proper_decision_ask_still_carries_the_ask_label() {
         let t = testkit::TempDir::new("mail-ask-proper");
-        let bd = FakeBd::new(vec![BdOut::ok("sp-new1\n"), BdOut::ok("")]);
+        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok("")]);
         let out = send_ask(t.path(), &bd, "grant it", "permissions", "## Question\nq\n\n## Class basis\nneeds a credential\n");
         let calls = bd.calls();
-        assert!(calls[0].0.iter().any(|a| a.starts_with("needs-x")), "{calls:?}");
+        assert!(calls[1].0.iter().any(|a| a.starts_with("needs-x")), "{calls:?}");
         assert!(out.delivered_path.to_string_lossy().contains("/operator/"), "{:?}", out.delivered_path);
     }
 
@@ -966,6 +970,26 @@ mod probe_tests {
 
     fn closed(bd: &FakeBd) -> bool {
         bd.calls().iter().any(|c| c.0[0] == "close" && c.0[1] == "sp-new1")
+    }
+
+    #[test]
+    fn a_delivered_ask_names_its_bead_in_subject_and_first_body_line() {
+        let t = testkit::TempDir::new("mail-ask-names-bead");
+        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok("")]);
+        send(&bd, &ask_env(t.path()), &ask_args(), ASK_BODY.into()).unwrap();
+        let m = body_of(t.path());
+        assert!(m.contains("Subject: Grant it? [sp-new1]\n"), "{m}");
+        let body = m.split_once("\n\n").unwrap().1;
+        assert_eq!(body.lines().next(), Some("sp-new1"), "{m}");
+    }
+
+    #[test]
+    fn an_ask_whose_bead_create_fails_sends_no_mail() {
+        let t = testkit::TempDir::new("mail-ask-create-fails");
+        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::fail(1, "store down")]);
+        let err = send(&bd, &ask_env(t.path()), &ask_args(), ASK_BODY.into()).unwrap_err();
+        assert!(err.contains("ask not sent") && err.contains("store down"), "{err}");
+        assert_eq!(mailbox_entries(t.path()), 0);
     }
 
     #[test]
