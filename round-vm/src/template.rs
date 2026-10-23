@@ -3,7 +3,6 @@
 //! closure change rebuilds only the layers it touches. A finished build is recorded
 //! (`template.json`) and `pve.env` repointed at it by the caller, so no person types a VMID.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
@@ -61,6 +60,9 @@ pub fn parse_template_args(args: &[String]) -> Result<TemplateArgs, String> {
 pub struct Record {
     pub vmid: String,
     pub image: String,
+    /// The recipe the template was built from; absent on a record older than the field.
+    #[serde(default)]
+    pub recipe_sha: Option<String>,
 }
 
 impl Record {
@@ -78,6 +80,11 @@ impl Record {
         let body = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
         std::fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
         std::fs::rename(&tmp, &path).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
+    /// True when the template was built from the recipe `sha` names.
+    pub fn built_from(&self, sha: &str) -> bool {
+        self.recipe_sha.as_deref() == Some(sha)
     }
 
     /// True when the image this template holds is the one named by `tag`.
@@ -150,6 +157,23 @@ pub const TEMPLATE_WORK: &str = "/root/template-work";
 /// installer script: every dependency is installed by a package manager.
 pub const TEMPLATE_SCRIPT: &str = include_str!("template.sh");
 
+/// The AMI guest setup, the one script both providers run; it feeds TEMPLATE_SCRIPT itself.
+pub const AMI_SETUP: &str = include_str!("../ami-setup.sh");
+
+/// The command the VM runs from the unpacked tree: the AMI guest setup, with this provider's
+/// only differences (the cache host and the recipe to record) passed in the environment.
+pub fn setup_command(dir: &str, host_addr: &str, toolchain: &str, cache_home: &str, recipe_sha: &str) -> String {
+    format!(
+        "SPIRA_TEMPLATE_HOST_ADDR={} SPIRA_RECIPE_SHA={} bash {} {} {} {}",
+        shell_quote(host_addr),
+        shell_quote(recipe_sha),
+        shell_quote(&format!("{dir}/round-vm/ami-setup.sh")),
+        shell_quote(dir),
+        shell_quote(toolchain),
+        shell_quote(cache_home)
+    )
+}
+
 /// The image ref TEMPLATE_SCRIPT reported, if it did.
 pub fn reported_image(stdout: &str) -> Option<String> {
     stdout.lines().rev().find_map(|l| l.strip_prefix("image=")).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
@@ -166,7 +190,7 @@ pub trait Guest {
     /// `host_addr` (this box's own LAN address; empty skips the cache), installing
     /// `toolchain` (empty: leave rustup's default alone) at `cache_home` (empty: the
     /// template's own ambient `CARGO_HOME`): (exit code, stdout). 255 is ssh itself.
-    fn prepare(&self, addr: &str, dir: &str, host_addr: &str, toolchain: &str, cache_home: &str) -> Result<(i32, String), String>;
+    fn prepare(&self, addr: &str, dir: &str, host_addr: &str, toolchain: &str, cache_home: &str, recipe_sha: &str) -> Result<(i32, String), String>;
 }
 
 impl Guest for SshRemote {
@@ -215,24 +239,15 @@ impl Guest for SshRemote {
         Ok(())
     }
 
-    fn prepare(&self, addr: &str, dir: &str, host_addr: &str, toolchain: &str, cache_home: &str) -> Result<(i32, String), String> {
-        let mut child = command("ssh")
+    fn prepare(&self, addr: &str, dir: &str, host_addr: &str, toolchain: &str, cache_home: &str, recipe_sha: &str) -> Result<(i32, String), String> {
+        let child = command("ssh")
             .args(self.ssh_opts())
             .arg(format!("{}@{addr}", self.user))
-            .arg(format!(
-                "bash -s -- {} {} {} {}",
-                shell_quote(dir),
-                shell_quote(host_addr),
-                shell_quote(toolchain),
-                shell_quote(cache_home)
-            ))
-            .stdin(Stdio::piped())
+            .arg(setup_command(dir, host_addr, toolchain, cache_home, recipe_sha))
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .spawn()
             .map_err(|e| format!("ssh: {e}"))?;
-        if let Some(mut si) = child.stdin.take() {
-            si.write_all(TEMPLATE_SCRIPT.as_bytes()).map_err(|e| format!("ssh stdin: {e}"))?;
-        }
         let out = child.wait_with_output().map_err(|e| format!("ssh: {e}"))?;
         Ok((out.status.code().unwrap_or(255), String::from_utf8_lossy(&out.stdout).into_owned()))
     }
@@ -257,6 +272,7 @@ pub fn build(
     host_addr: &str,
     toolchain: &str,
     cache_home: &str,
+    recipe_sha: &str,
 ) -> Result<Built, String> {
     let vmid = match vmid {
         Some(v) => v,
@@ -268,7 +284,7 @@ pub fn build(
     let result = p
         .clone_to(&vmid, &name)
         .map_err(|e| format!("clone refused: {e}"))
-        .and_then(|()| prepare_vm(p, g, spec, ssh_tries, tree, commit, &vmid, host_addr, toolchain, cache_home));
+        .and_then(|()| prepare_vm(p, g, spec, ssh_tries, tree, commit, &vmid, host_addr, toolchain, cache_home, recipe_sha));
     match result {
         Ok(image) => Ok(Built { vmid, image }),
         Err(reason) => Err(match destroy_fenced(p, &vmid, &name, t) {
@@ -290,6 +306,7 @@ fn prepare_vm(
     host_addr: &str,
     toolchain: &str,
     cache_home: &str,
+    recipe_sha: &str,
 ) -> Result<String, String> {
     let t = spec.timing;
     let addr = boot(p, vmid, spec)?;
@@ -312,7 +329,7 @@ fn prepare_vm(
     eprintln!("round-vm template: {vmid} at {addr}: unpacking {commit}");
     g.upload(&addr, tree, commit, TEMPLATE_WORK)?;
     eprintln!("round-vm template: building the test image on {vmid} (a cold build: its heartbeat follows)");
-    let (rc, out) = g.prepare(&addr, TEMPLATE_WORK, host_addr, toolchain, cache_home)?;
+    let (rc, out) = g.prepare(&addr, TEMPLATE_WORK, host_addr, toolchain, cache_home, recipe_sha)?;
     if rc != 0 {
         return Err(format!("preparing the template on {vmid} exited {rc}"));
     }
@@ -381,8 +398,8 @@ mod tests {
             self.calls.lock().unwrap().push(format!("upload {addr} {commit} {dir}"));
             Ok(())
         }
-        fn prepare(&self, addr: &str, dir: &str, host_addr: &str, toolchain: &str, cache_home: &str) -> Result<(i32, String), String> {
-            self.calls.lock().unwrap().push(format!("prepare {addr} {dir} {host_addr} {toolchain} {cache_home}"));
+        fn prepare(&self, addr: &str, dir: &str, host_addr: &str, toolchain: &str, cache_home: &str, recipe_sha: &str) -> Result<(i32, String), String> {
+            self.calls.lock().unwrap().push(format!("prepare {addr} {dir} {host_addr} {toolchain} {cache_home} {recipe_sha}"));
             Ok((self.rc, self.out.clone()))
         }
     }
@@ -421,7 +438,7 @@ mod tests {
     fn a_build_clones_builds_the_image_then_converts_a_stopped_vm() {
         let p = FakeProvider::new();
         let g = FakeGuest::ok();
-        let b = build(&p, &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "192.168.1.56", "1.98.1", "/opt/spira/cargo").unwrap();
+        let b = build(&p, &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "192.168.1.56", "1.98.1", "/opt/spira/cargo", "feedface").unwrap();
         assert_eq!(b, Built { vmid: "9120".into(), image: "localhost/spira-testenv:abc123".into() });
         assert!(p.is_template("9120").unwrap());
         assert_eq!(p.name("9120").as_deref(), Some("round-template-0123456789ab"));
@@ -437,7 +454,7 @@ mod tests {
                 // sp-xjnzl: the host's own address, the pinned toolchain and the operator's
                 // own CARGO_HOME all reach the VM side of `prepare`, not just the tree and
                 // the work dir.
-                format!("prepare 10.0.0.9120 {TEMPLATE_WORK} 192.168.1.56 1.98.1 /opt/spira/cargo")
+                format!("prepare 10.0.0.9120 {TEMPLATE_WORK} 192.168.1.56 1.98.1 /opt/spira/cargo feedface")
             ]
         );
     }
@@ -446,19 +463,19 @@ mod tests {
     fn no_toolchain_and_no_cargo_on_the_base_refuses_before_the_tree_is_unpacked() {
         let p = FakeProvider::new();
         let g = FakeGuest { cargo: false, ..FakeGuest::ok() };
-        let e = build(&p, &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "", "").unwrap_err();
+        let e = build(&p, &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "", "", "feedface").unwrap_err();
         assert!(e.contains("no cargo") && e.contains("toolchain"), "{e}");
         assert!(g.calls.lock().unwrap().is_empty(), "nothing was unpacked or built: {:?}", g.calls.lock().unwrap());
         assert!(p.all_vms().is_empty());
         let g = FakeGuest { cargo: false, ..FakeGuest::ok() };
-        build(&FakeProvider::new(), &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "1.99.1", "").unwrap();
+        build(&FakeProvider::new(), &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "1.99.1", "", "feedface").unwrap();
         assert_eq!(g.calls.lock().unwrap().len(), 2, "a pinned toolchain installs, so a base without cargo proceeds");
     }
 
     #[test]
     fn without_a_vmid_the_hypervisor_allocates_one() {
         let p = FakeProvider::new();
-        let b = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("/tree"), SHA, None, "", "", "").unwrap();
+        let b = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("/tree"), SHA, None, "", "", "", "feedface").unwrap();
         assert_eq!(b.vmid, "100");
         assert_eq!(p.count("nextid"), 1);
     }
@@ -467,7 +484,7 @@ mod tests {
     fn a_failed_image_build_destroys_the_half_built_vm_and_converts_nothing() {
         let p = FakeProvider::new();
         let g = FakeGuest { rc: 1, ..FakeGuest::ok() };
-        let e = build(&p, &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "", "").unwrap_err();
+        let e = build(&p, &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "", "", "feedface").unwrap_err();
         assert!(e.contains("exited 1") && e.contains("destroyed"), "{e}");
         assert!(p.all_vms().is_empty(), "{:?}", p.all_vms());
         assert_eq!(p.count("template "), 0);
@@ -477,7 +494,7 @@ mod tests {
     fn no_reported_image_is_a_failure_even_on_exit_0() {
         let p = FakeProvider::new();
         let g = FakeGuest { out: "built something\n".into(), ..FakeGuest::ok() };
-        let e = build(&p, &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "", "").unwrap_err();
+        let e = build(&p, &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "", "", "feedface").unwrap_err();
         assert!(e.contains("reported no image"), "{e}");
         assert!(p.all_vms().is_empty());
     }
@@ -487,12 +504,12 @@ mod tests {
         for step in [Step::Start, Step::Addr, Step::Exec, Step::Shutdown, Step::MakeTemplate] {
             let p = FakeProvider::new();
             p.fail(step);
-            let e = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "", "").unwrap_err();
+            let e = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "", "", "feedface").unwrap_err();
             assert!(p.all_vms().is_empty(), "{step:?} left {:?}: {e}", p.all_vms());
         }
         let p = FakeProvider::new();
         let g = FakeGuest { reachable: false, ..FakeGuest::ok() };
-        let e = build(&p, &g, &spec(), 2, Path::new("/tree"), SHA, Some("9120".into()), "", "", "").unwrap_err();
+        let e = build(&p, &g, &spec(), 2, Path::new("/tree"), SHA, Some("9120".into()), "", "", "", "feedface").unwrap_err();
         assert!(e.contains("never became reachable"), "{e}");
         assert!(p.all_vms().is_empty());
     }
@@ -501,7 +518,7 @@ mod tests {
     fn a_vmid_that_is_taken_is_refused_and_the_vm_there_is_never_touched() {
         let p = FakeProvider::new();
         p.plant("108", "round-template-old");
-        let e = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("/tree"), SHA, Some("108".into()), "", "", "").unwrap_err();
+        let e = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("/tree"), SHA, Some("108".into()), "", "", "", "feedface").unwrap_err();
         assert!(e.contains("clone refused") && e.contains("refusing to destroy"), "{e}");
         assert_eq!(p.name("108").as_deref(), Some("round-template-old"));
         assert_eq!(p.count("destroy"), 0);
@@ -512,7 +529,7 @@ mod tests {
         let p = FakeProvider::new();
         p.fail(Step::Shutdown);
         p.fail(Step::Destroy);
-        let e = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "", "").unwrap_err();
+        let e = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "", "", "feedface").unwrap_err();
         assert!(e.contains("by hand") && e.contains("9120"), "{e}");
     }
 
@@ -603,11 +620,20 @@ mod refresh_tests {
     fn a_record_round_trips_and_names_the_tag_it_holds() {
         let d = TempDir::new();
         assert!(Record::read(d.path()).is_none());
-        let r = Record { vmid: "130".into(), image: "localhost/spira-testenv:6b90b8194ee4".into() };
+        let r = Record { vmid: "130".into(), image: "localhost/spira-testenv:6b90b8194ee4".into(), recipe_sha: Some("feedface".into()) };
         r.write(d.path()).unwrap();
         assert_eq!(Record::read(d.path()), Some(r.clone()));
         assert!(r.holds("6b90b8194ee4"));
         assert!(!r.holds("deadbeef0000"));
+    }
+
+    #[test]
+    fn the_template_runs_the_ami_guest_setup_and_records_the_recipe() {
+        let c = setup_command("/w", "10.0.0.1", "1.99.1", "/c", "abc");
+        assert!(c.contains("round-vm/ami-setup.sh' '/w' '1.99.1' '/c'"), "{c}");
+        assert!(c.contains("SPIRA_RECIPE_SHA='abc'") && c.contains("SPIRA_TEMPLATE_HOST_ADDR='10.0.0.1'"), "{c}");
+        assert!(AMI_SETUP.contains("build-essential"), "the guest setup installs the C toolchain");
+        assert!(AMI_SETUP.contains("src/template.sh") && AMI_SETUP.contains("/etc/spira-round-recipe-sha"));
     }
 
     #[test]
