@@ -218,3 +218,7 @@ testenv-cap|daemon|testenv-cap watch --interval 15|testenv-cap health
 # never committed. One line per stale path, once.
 brain-dirty|daemon|@SPIRA_HOME@/brain-dirty.sh watch --interval 600|@SPIRA_HOME@/brain-dirty.sh health
 runtime-watch|log|@SPIRA_RUN@/runtime-watch.log
+
+# DESIGN-ASKS tells the inbox of each design page in draft or in-review that no open ask names, once a day
+# per page, so a published design cannot wait on approval unseen.
+design-asks|daemon|@SPIRA_HOME@/design-asks.sh watch --interval 600|@SPIRA_HOME@/design-asks.sh health

@@ -1,0 +1,8 @@
+TYPE=u64
+GROUP=archivist
+DOC=SECONDS BETWEEN INBOX LINES FOR A DESIGN PAGE THAT STILL HAS NO OPEN ASK
+SCHEMA=Seconds between design-asks inbox lines for the same design page while it has no open ask.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # SECONDS BETWEEN REMINDERS for one design page in draft or in-review that no open ask names.
+    : "${SPIRA_DESIGN_ASKS_REPEAT:=86400}"
+SPIRA_CONF_DEFAULT_EOF
