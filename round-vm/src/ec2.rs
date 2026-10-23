@@ -36,10 +36,6 @@ pub const AMI_RECIPE_TAG: &str = "recipe-sha";
 /// The round image's root device: the build workflow maps its volume as `/dev/sda1`
 /// (.github/workflows/round-ami-build.yml), the Ubuntu base image's own root name.
 pub const ROOT_DEVICE: &str = "/dev/sda1";
-/// EBS Provisioned Rate for Volume Initialization, MiB/s (the maximum AWS accepts). A root
-/// volume restored from a snapshot otherwise fetches each block from S3 on its first read;
-/// a round touches the image store, the toolchain and the nix store within its first minute.
-pub const VOLUME_INIT_MIBS: u32 = 300;
 
 /// A round image as the CI build tagged it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -588,7 +584,7 @@ impl AwsCli {
             // would otherwise take as "standard". 500 MiB/s keeps the volume itself from
             // capping the initialization rate.
             "--block-device-mappings".into(),
-            format!("DeviceName={ROOT_DEVICE},Ebs={{VolumeType=gp3,Iops=6000,Throughput=500,VolumeInitializationRate={VOLUME_INIT_MIBS}}}"),
+            format!("DeviceName={ROOT_DEVICE},Ebs={{VolumeType=gp3,Iops=6000,Throughput=500}}"),
             "--tag-specifications".into(),
             format!("ResourceType=instance,Tags=[{{Key={ok},Value={ov}}},{{Key={TAG_KEY},Value={handle}}},{{Key=Name,Value={name}}}]"),
             format!("ResourceType=volume,Tags=[{{Key={ok},Value={ov}}}]"),
@@ -954,7 +950,7 @@ mod tests {
     }
 
     #[test]
-    fn the_root_volume_is_initialized_from_its_snapshot_at_a_provisioned_rate() {
+    fn the_root_volume_buys_no_provisioned_initialization_rate() {
         // A volume restored from the AMI's snapshot fetches each block from S3 on its first
         // read: measured on a round instance, 133 MB of rustc read cold in 26.8 s (5 MB/s),
         // and the batch container's systemd missed its 10 s basic.target and user@ waits.
@@ -967,7 +963,7 @@ mod tests {
             let i = a.iter().position(|s| s == "--block-device-mappings").unwrap_or_else(|| panic!("no block-device mapping: {}", a.join(" ")));
             let m = &a[i + 1];
             assert!(m.starts_with(&format!("DeviceName={ROOT_DEVICE},Ebs={{")), "{m}");
-            assert!(m.contains("VolumeType=gp3") && m.contains(&format!("VolumeInitializationRate={VOLUME_INIT_MIBS}")), "{m}");
+            assert!(m.contains("VolumeType=gp3") && !m.contains("VolumeInitializationRate"), "{m}");
         }
     }
 
