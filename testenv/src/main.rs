@@ -75,6 +75,7 @@ fn load_config(who: &str) -> Option<spira_config::SpiraToml> {
 }
 
 fn main() -> ExitCode {
+    testenv::util::drop_activation_env();
     let first = std::env::args().nth(1).unwrap_or_default();
     let op = match first.as_str() {
         o @ ("suites" | "lint" | "owed" | "shots" | "ui" | "preflight" | "status" | "testdb" | "wait" | "container" | "warm") => o,

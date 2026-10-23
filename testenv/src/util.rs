@@ -161,3 +161,21 @@ mod tests {
         );
     }
 }
+
+/// `podman run` treats an inherited `LISTEN_FDS` as fds to preserve into the container, which
+/// breaks its libpod database when the caller is a socket-activated service.
+pub fn drop_activation_env() {
+    for k in ["LISTEN_FDS", "LISTEN_PID", "LISTEN_FDNAMES", "LISTEN_PIDFDID"] {
+        std::env::remove_var(k);
+    }
+}
+
+#[cfg(test)]
+mod activation_env_tests {
+    #[test]
+    fn socket_activation_variables_are_dropped() {
+        let _env = testkit::env(&[("LISTEN_FDS", Some("1"))]);
+        super::drop_activation_env();
+        assert!(std::env::var_os("LISTEN_FDS").is_none());
+    }
+}
