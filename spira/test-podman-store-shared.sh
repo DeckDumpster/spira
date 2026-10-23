@@ -14,17 +14,18 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 command -v podman >/dev/null 2>&1 || skip "no podman on this host"
 BACKING="$(findmnt -n -o SOURCE --target "$HOME/.local/share/containers/storage" 2>/dev/null | sed 's/.*\[\(.*\)\]/\1/')"
-STORE="$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null)"
+STORE="$(timeout 5 podman info --format '{{.Store.GraphRoot}}' 2>/dev/null)"
 [ -n "$STORE" ] || skip "podman reports no graph root"
 REAL="$(realpath "$STORE")"
 
 V="probe-store-shared-$$"
-trap 'podman volume rm "$V" >/dev/null 2>&1' EXIT
-podman volume create "$V" >/dev/null 2>&1
-is "a volume created in this context is listed" "1" "$(podman volume ls -q | grep -cx "$V")"
+trap 'timeout 5 podman volume rm "$V" >/dev/null 2>&1' EXIT
+timeout 5 podman volume create "$V" >/dev/null 2>&1
+is "a volume created in this context is listed" "1" "$(timeout 5 podman volume ls -q | grep -cx "$V")"
 is "it exists as a directory under the store's graph root" "yes" "$([ -d "$REAL/volumes/$V" ] && echo yes || echo no)"
 if [ -n "$BACKING" ] && [ -d "$HOME/spira$BACKING" ]; then
     is "the same directory is visible at the bind mount's backing path" "yes" "$([ -d "$HOME/spira$BACKING/volumes/$V" ] && echo yes || echo no)"
 fi
-is "a container can mount it" "0" "$(podman run --rm -v "$V:/v" "$(podman images -q | head -1)" true >/dev/null 2>&1; echo $?)"
+# batch-job: starts a real container
+is "a container can mount it" "0" "$(timeout 60 podman run --rm -v "$V:/v" "$(timeout 5 podman images -q | head -1)" true >/dev/null 2>&1; echo $?)"
 tl_summary
