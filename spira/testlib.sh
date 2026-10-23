@@ -1091,3 +1091,22 @@ fi
 # rather than lazily on first use: a suite that prints its own name (the common
 # convention this library inherits) does so after `. testlib.sh`, never before.
 _tl_init
+
+# tl_stub_ask_store <dir> — a bd and a spira-lc stand-in for suites whose `mail send` asks must
+# open a tracking bead: `list` finds no duplicate, `create` mints a fresh id, `create-ask` succeeds.
+tl_stub_ask_store() {
+    local d="${1:?tl_stub_ask_store needs a directory}"
+    mkdir -p "$d"
+    cat > "$d/bd-ask-stub" <<STUB
+#!/usr/bin/env bash
+case " \$* " in
+    *" list "*) printf '[]\n' ;;
+    *" create "*) cat >/dev/null; n=\$(( \$(cat "$d/n" 2>/dev/null || echo 0) + 1 )); echo \$n > "$d/n"; echo "sp-stub\$n" ;;
+esac
+exit 0
+STUB
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$d/lc-ask-stub"
+    chmod +x "$d/bd-ask-stub" "$d/lc-ask-stub"
+    export SPIRA_BD="$d/bd-ask-stub" SPIRA_LC_BIN="$d/lc-ask-stub"
+    tl_config SPIRA_BD="$SPIRA_BD"
+}

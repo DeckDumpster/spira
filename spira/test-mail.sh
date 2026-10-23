@@ -40,6 +40,7 @@ tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$SPIRA_MAIL_KINDS" \
     SPIRA_CONCIERGE_INBOX="$TMP/watchd/concierge-inbox.log"
 export SPIRA_CONF=""       # prevent reading a real spira.conf
 
+tl_stub_ask_store "$TMP/askstub"
 cp -r "$HERE/mail/kinds/." "$TMP/kinds/"
 
 run() { mail "$@"; }
