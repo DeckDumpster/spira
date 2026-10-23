@@ -101,7 +101,7 @@ cat > "$T/bin_bd" <<'STUB'
 printf '%s\n' "$*" >> "$BDLOG"
 case " $* " in
     *" list "*)
-        printf '[{"id":"sp-seed","external_ref":"seed","labels":["spira"]}'
+        printf '[{"id":"sp-seed","external_ref":"seed","labels":["spira"]},{"id":"sp-read","external_ref":"github:acme/widgets#99","labels":["spira"]}'
         while read -r line; do printf ',%s' "$line"; done < "$CREATED"
         printf ']\n'
         exit 0 ;;

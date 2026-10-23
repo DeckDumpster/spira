@@ -128,3 +128,19 @@ pub fn last_accept_actor(events_body: &[u8]) -> String {
     }
     actor
 }
+
+/// `owner/name` of a GitHub remote URL (scp-style, `https://` or `ssh://`), `.git` dropped.
+pub fn github_slug(url: &str) -> Option<String> {
+    let url = url.trim();
+    let rest = ["git@github.com:", "https://github.com/", "http://github.com/", "ssh://git@github.com/", "git://github.com/"]
+        .iter()
+        .find_map(|p| url.strip_prefix(p))?;
+    let rest = rest.trim_end_matches('/');
+    let rest = rest.strip_suffix(".git").unwrap_or(rest);
+    let mut parts = rest.split('/');
+    let (owner, name) = (parts.next()?, parts.next()?);
+    if parts.next().is_some() || owner.is_empty() || name.is_empty() {
+        return None;
+    }
+    Some(format!("{owner}/{name}"))
+}
