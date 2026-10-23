@@ -43,6 +43,16 @@ pub fn link_artifacts(worktree: &Path, profile: &str, warm: &Path) -> std::io::R
     std::os::unix::fs::symlink(warm.join(profile_dir(profile)), link)
 }
 
+/// Remove a symlink at `<worktree>/target/<profile dir>` whose target is gone: cargo cannot
+/// create a directory where a dangling link stands.
+pub fn clear_dangling_artifacts(worktree: &Path, profile: &str) -> std::io::Result<()> {
+    let link = artifacts_dir(worktree, profile);
+    match std::fs::symlink_metadata(&link) {
+        Ok(m) if m.file_type().is_symlink() && !link.exists() => std::fs::remove_file(&link),
+        _ => Ok(()),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BuildError {
     /// cargo is not on PATH: the runner's environment (rc 3).
@@ -107,6 +117,10 @@ impl Builder for Cargo {
                 .map(PathBuf::from)
                 .as_deref(),
         );
+        let _ = clear_dangling_artifacts(worktree, profile);
+        if let Some(w) = &warm {
+            let _ = std::fs::create_dir_all(w.join(profile_dir(profile)));
+        }
         let mut cargo_cmd = Command::new("cargo");
         cargo_cmd
             .args(["build", "--profile", profile, "--workspace"])
@@ -255,6 +269,21 @@ mod tests {
         link_artifacts(&wt, "aeon", &slot).unwrap();
         assert!(artifacts_dir(&wt, "aeon").join("tool").is_file());
         assert!(!artifacts_dir(&wt, "aeon").join("stale").exists());
+    }
+
+    #[test]
+    fn a_dangling_artifacts_link_is_cleared_so_the_build_can_recreate_it() {
+        let d = testkit::TempDir::new("dangling-link");
+        let wt = d.join("wt");
+        std::fs::create_dir_all(wt.join("target")).unwrap();
+        let gone = d.join("slot.1").join("aeon");
+        std::os::unix::fs::symlink(&gone, wt.join("target").join("aeon")).unwrap();
+        assert!(std::fs::create_dir_all(wt.join("target").join("aeon")).is_err());
+        clear_dangling_artifacts(&wt, "aeon").unwrap();
+        std::fs::create_dir_all(wt.join("target").join("aeon")).unwrap();
+        std::fs::write(wt.join("target/aeon/keep"), "x").unwrap();
+        clear_dangling_artifacts(&wt, "aeon").unwrap();
+        assert!(wt.join("target/aeon/keep").is_file());
     }
 
     #[test]

@@ -404,22 +404,19 @@ fn empty_dir(dir: &Path) {
     }
 }
 
-/// Hold a slot to `cap_mib` while a build runs in it: past the cap the regenerable
-/// `incremental` trees go first, and if the slot is still over, everything goes. A symlinked
-/// slot is emptied in place, never replaced. True when anything was removed.
+/// Hold a slot to `cap_mib` while a build runs by dropping its regenerable `incremental`
+/// trees. Never anything else: emptying a slot under a running build deletes the cargo
+/// fingerprints it is writing and leaves the worktree's `target/` links dangling; the full
+/// reset is [`reap_over_cap`], at session start. True when the slot was over the cap.
 pub fn enforce_cap(slot: &Path, cap_mib: u64) -> bool {
     let slot = &resolved(slot);
-    let cap = cap_mib * 1024 * 1024;
-    if size_of(slot) <= cap {
+    if size_of(slot) <= cap_mib * 1024 * 1024 {
         return false;
     }
     if let Ok(profiles) = std::fs::read_dir(slot) {
         for p in profiles.flatten() {
             let _ = std::fs::remove_dir_all(p.path().join("incremental"));
         }
-    }
-    if size_of(slot) > cap {
-        empty_dir(slot);
     }
     true
 }
@@ -434,7 +431,7 @@ mod tests {
     }
 
     #[test]
-    fn a_slot_over_its_cap_sheds_incremental_first_and_everything_if_that_is_not_enough() {
+    fn a_slot_over_its_cap_sheds_only_incremental_while_a_build_runs() {
         let d = testkit::TempDir::new("warm-cap");
         let slot = d.path().join("slot.1");
         fill(&slot.join("debug/incremental/a"), 3072);
@@ -446,7 +443,7 @@ mod tests {
         assert!(slot.join("debug/deps/b").exists(), "dropping incremental was enough: deps stay warm");
         fill(&slot.join("debug/deps/c"), 3072);
         assert!(enforce_cap(&slot, 2));
-        assert!(slot.is_dir() && std::fs::read_dir(&slot).unwrap().next().is_none(), "still over: emptied, the directory kept");
+        assert!(slot.join("debug/deps/c").exists(), "still over: a running build's artifacts are never deleted");
     }
 
     #[test]
