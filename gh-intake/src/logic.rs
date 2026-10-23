@@ -3,7 +3,7 @@
 //! already holds, page GitHub's issues, triage each one, and check the post-condition.
 
 use crate::model::{association_trusted, has_accept_label, last_accept_actor, page_len, parse_issues_page, permission_grants_access, GhIssue};
-use crate::ports::{Bd, Http, Mail, Repo};
+use crate::ports::{Bd, Http, Mail, Repo, Stamp};
 use crate::store::{find_ref, ingested, known_untrusted, known_work, total_beads, KnownRef};
 use sha2::{Digest, Sha256};
 
@@ -19,6 +19,7 @@ pub struct Config {
 }
 
 pub const UNTRUSTED_LABEL: &str = "gh-untrusted";
+pub const RATE_LIMIT_ALARM_SECS: i64 = 3 * 3600;
 pub const GITHUB_API: &str = "https://api.github.com";
 
 /// `SPIRA_GH_INTAKE_PRIORITY` — 0-4 or refused, exactly as the bash `case` did.
@@ -46,7 +47,7 @@ impl Report {
     }
 }
 
-pub fn run(http: &dyn Http, bd: &dyn Bd, repo: &dyn Repo, mail: &dyn Mail, cfg: &Config) -> Report {
+pub fn run(http: &dyn Http, bd: &dyn Bd, repo: &dyn Repo, mail: &dyn Mail, stamp: &dyn Stamp, cfg: &Config) -> Report {
     let mut r = Report::ok(Vec::new());
 
     if cfg.repo.is_empty() {
@@ -92,10 +93,13 @@ pub fn run(http: &dyn Http, bd: &dyn Bd, repo: &dyn Repo, mail: &dyn Mail, cfg: 
     let mut page = 1u32;
     loop {
         let url = format!("{}/repos/{}/issues?state=open&per_page=100&page={page}", cfg.api, cfg.repo);
-        let (_status, body) = match http.get(&url, 30) {
+        let (status, body) = match http.get(&url, 30) {
             Ok(v) => v,
             Err(_) => return r.die(format!("could not reach {} — no issues were read", cfg.api)),
         };
+        if rate_limited(status, &body) {
+            return defer_rate_limited(r, http, stamp, cfg);
+        }
         let n = match page_len(&body) {
             Ok(n) => n,
             Err(e) => return r.die(e),
@@ -119,6 +123,9 @@ pub fn run(http: &dyn Http, bd: &dyn Bd, repo: &dyn Repo, mail: &dyn Mail, cfg: 
     }
     all_issues.sort_by_key(|i| i.number);
     r.log(format!("fetched {} open issue(s) from {}", all_issues.len(), cfg.repo));
+    if !cfg.dry_run {
+        stamp.mark_ok(stamp.now());
+    }
 
     if all_issues.is_empty() {
         r.log("no open issues found (all items may be pull requests) — ingest is complete");
@@ -254,6 +261,38 @@ pub fn run(http: &dyn Http, bd: &dyn Bd, repo: &dyn Repo, mail: &dyn Mail, cfg: 
     }
 
     r.log(format!("ok — {} ingested into {},{}; untrusted records carry {}", cfg.repo, cfg.scope, cfg.lane, cfg.untrusted_label));
+    r
+}
+
+fn rate_limited(status: u16, body: &[u8]) -> bool {
+    status == 429 || (status == 403 && String::from_utf8_lossy(body).to_lowercase().contains("rate limit"))
+}
+
+/// A refused budget clears itself at GitHub's reset time, so one refusal is a logged deferral
+/// and exit 0; only a poll that has not succeeded for `RATE_LIMIT_ALARM_SECS` fails the unit.
+fn defer_rate_limited(mut r: Report, http: &dyn Http, stamp: &dyn Stamp, cfg: &Config) -> Report {
+    let now = stamp.now();
+    let reset = match http.get(&format!("{}/rate_limit", cfg.api), 10) {
+        Ok((200, body)) => serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v["resources"]["core"]["reset"].as_i64()),
+        _ => None,
+    };
+    let reset = reset.map_or("unknown".to_string(), |t| format!("{t} (epoch seconds)"));
+    let last = match stamp.last_ok() {
+        Some(t) => t,
+        None => {
+            stamp.mark_ok(now);
+            now
+        }
+    };
+    if now - last > RATE_LIMIT_ALARM_SECS {
+        return r.die(format!(
+            "GitHub's API rate limit has refused every poll since the last success at {last} (epoch seconds), {}s ago — reset {reset}",
+            now - last
+        ));
+    }
+    r.log(format!("deferred: GitHub's API rate limit refused the poll; resets at {reset}; the next run after it does the intake"));
     r
 }
 

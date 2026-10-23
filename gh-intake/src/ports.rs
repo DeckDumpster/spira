@@ -19,6 +19,14 @@ pub trait Http {
     fn get(&self, url: &str, timeout_secs: u64) -> Result<(u16, Vec<u8>), String>;
 }
 
+/// When intake last completed a poll: the only memory a run keeps between runs, so that a
+/// rate-limit deferral can tell one refused run from a persistent one.
+pub trait Stamp {
+    fn now(&self) -> i64;
+    fn last_ok(&self) -> Option<i64>;
+    fn mark_ok(&self, at: i64);
+}
+
 /// The beads store, called directly (`bd -C <db> ...`) exactly as gh-intake.sh did — not
 /// through lib.sh's `bdq` retry wrapper, which this script never used.
 pub trait Bd {

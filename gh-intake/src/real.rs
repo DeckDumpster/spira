@@ -1,4 +1,4 @@
-use crate::ports::{Bd, Gh, Git, Http, LcBead, Lifecycle, Mail, Repo};
+use crate::ports::{Bd, Gh, Git, Http, LcBead, Lifecycle, Mail, Repo, Stamp};
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -31,6 +31,24 @@ impl Http for RealHttp {
 }
 
 use std::io::Read;
+
+/// The last-success epoch, kept in one file under the run dir.
+pub struct FileStamp(pub std::path::PathBuf);
+
+impl Stamp for FileStamp {
+    fn now(&self) -> i64 {
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+    }
+    fn last_ok(&self) -> Option<i64> {
+        std::fs::read_to_string(&self.0).ok()?.trim().parse().ok()
+    }
+    fn mark_ok(&self, at: i64) {
+        let tmp = self.0.with_extension("tmp");
+        if std::fs::write(&tmp, at.to_string()).is_ok() {
+            let _ = std::fs::rename(&tmp, &self.0);
+        }
+    }
+}
 
 pub struct RealLifecycle {
     pub bin: String,
