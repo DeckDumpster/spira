@@ -261,6 +261,9 @@ struct Ec2Inner {
     launched_types: Vec<String>,
     images: Vec<crate::ec2::Image>,
     launched_amis: Vec<String>,
+    stores: Vec<crate::ec2::ImageStore>,
+    in_use: Vec<String>,
+    removed: Vec<String>,
 }
 
 /// An EC2 account in memory: instances, the SSM scripts run on them, the tailnet.
@@ -273,6 +276,15 @@ impl FakeEc2 {
     }
     pub fn plant_image(&self, id: &str, recipe_sha: &str, created: &str) {
         self.0.lock().unwrap().images.push(crate::ec2::Image { id: id.into(), recipe_sha: recipe_sha.into(), created: created.into() });
+    }
+    pub fn plant_store(&self, s: crate::ec2::ImageStore) {
+        self.0.lock().unwrap().stores.push(s);
+    }
+    pub fn plant_in_use(&self, ami: &str) {
+        self.0.lock().unwrap().in_use.push(ami.to_string());
+    }
+    pub fn removed(&self) -> Vec<String> {
+        self.0.lock().unwrap().removed.clone()
     }
     pub fn launched_amis(&self) -> Vec<String> {
         self.0.lock().unwrap().launched_amis.clone()
@@ -309,6 +321,20 @@ impl FakeEc2 {
 impl crate::ec2::Ec2Api for FakeEc2 {
     fn images(&self) -> Result<Vec<crate::ec2::Image>, String> {
         Ok(self.0.lock().unwrap().images.clone())
+    }
+    fn image_stores(&self) -> Result<Vec<crate::ec2::ImageStore>, String> {
+        Ok(self.0.lock().unwrap().stores.clone())
+    }
+    fn images_in_use(&self) -> Result<Vec<String>, String> {
+        Ok(self.0.lock().unwrap().in_use.clone())
+    }
+    fn deregister_image(&self, id: &str) -> Result<(), String> {
+        self.0.lock().unwrap().removed.push(format!("deregister {id}"));
+        Ok(())
+    }
+    fn delete_snapshot(&self, id: &str) -> Result<(), String> {
+        self.0.lock().unwrap().removed.push(format!("snapshot {id}"));
+        Ok(())
     }
     fn run(&self, ami: &str, instance_type: &str, handle: &str, name: &str, user_data: &str) -> Result<String, String> {
         let mut g = self.0.lock().unwrap();
