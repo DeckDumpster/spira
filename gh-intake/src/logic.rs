@@ -3,10 +3,11 @@
 //! already holds, page GitHub's issues, triage each one, and check the post-condition.
 
 use crate::model::{association_trusted, has_accept_label, last_accept_actor, page_len, parse_issues_page, permission_grants_access, GhIssue};
-use crate::ports::{Bd, Http, Mail, Repo, Stamp};
+use crate::ports::{Bd, Http, Mail, Repo, Seen, Stamp};
 use crate::store::{find_ref, ingested, known_untrusted, known_work, total_beads, KnownRef};
 use sha2::{Digest, Sha256};
 
+#[derive(Clone)]
 pub struct Config {
     pub repo: String,
     pub bead_repo: String,
@@ -31,11 +32,13 @@ pub struct Report {
     pub out: Vec<String>,
     pub err: Vec<String>,
     pub code: i32,
+    /// Set when the rest of the pass must not run: a rate-limit refusal binds every repository.
+    pub stop: bool,
 }
 
 impl Report {
     fn ok(out: Vec<String>) -> Self {
-        Report { out, err: Vec::new(), code: 0 }
+        Report { out, err: Vec::new(), code: 0, stop: false }
     }
     fn die(mut self, msg: impl Into<String>) -> Self {
         self.err.push(format!("gh-intake: {}", msg.into()));
@@ -47,28 +50,52 @@ impl Report {
     }
 }
 
-pub fn run(http: &dyn Http, bd: &dyn Bd, repo: &dyn Repo, mail: &dyn Mail, stamp: &dyn Stamp, cfg: &Config) -> Report {
+/// One repository intake reads: its forge slug and the registered repo its beads are filed against.
+struct Target {
+    slug: String,
+    bead_repo: String,
+}
+
+/// The explicit `SPIRA_GH_INTAKE_REPO` slug first, then every registered repository with a
+/// forge remote that the explicit slug does not already name.
+fn targets(repo: &dyn Repo, cfg: &Config) -> Vec<Target> {
+    let mut out = Vec::new();
+    if !cfg.repo.is_empty() {
+        out.push(Target { slug: cfg.repo.clone(), bead_repo: cfg.bead_repo.clone() });
+    }
+    for name in repo.all_names() {
+        if let Some(slug) = repo.forge_slug(&name) {
+            if !out.iter().any(|t| t.slug.eq_ignore_ascii_case(&slug)) {
+                out.push(Target { slug, bead_repo: name });
+            }
+        }
+    }
+    out
+}
+
+pub fn run(http: &dyn Http, bd: &dyn Bd, repo: &dyn Repo, mail: &dyn Mail, stamp: &dyn Stamp, seen: &dyn Seen, cfg: &Config) -> Report {
     let mut r = Report::ok(Vec::new());
 
-    if cfg.repo.is_empty() {
-        r.log("SPIRA_GH_INTAKE_REPO is not set — nothing to ingest");
+    let targets = targets(repo, cfg);
+    if targets.is_empty() {
+        r.log("no registered repository has a forge remote and SPIRA_GH_INTAKE_REPO is not set — nothing to ingest");
         return r;
     }
 
-    let rr = repo.root_with_git(&cfg.bead_repo);
-    let rr = match rr {
-        Some(p) => p,
-        None => {
-            return r.die(format!(
-                "repo:{} does not resolve to a checkout through $SPIRA_REPO_MAP.\n       \
-                 Every ingested bead would be parked by aeon.sh on first claim and left for a\n       \
-                 human. Add {} to that map, or set SPIRA_GH_INTAKE_BEAD_REPO to a\n       \
-                 name that resolves.",
-                cfg.bead_repo, cfg.bead_repo
-            ))
+    if !cfg.repo.is_empty() {
+        match repo.root_with_git(&cfg.bead_repo) {
+            Some(rr) => r.log(format!("beads will be filed against repo:{} ({})", cfg.bead_repo, rr)),
+            None => {
+                return r.die(format!(
+                    "repo:{} does not resolve to a checkout through $SPIRA_REPO_MAP.\n       \
+                     Every ingested bead would be parked by aeon.sh on first claim and left for a\n       \
+                     human. Add {} to that map, or set SPIRA_GH_INTAKE_BEAD_REPO to a\n       \
+                     name that resolves.",
+                    cfg.bead_repo, cfg.bead_repo
+                ))
+            }
         }
-    };
-    r.log(format!("beads will be filed against repo:{} ({})", cfg.bead_repo, rr));
+    }
 
     let before = match bd.list_all_json() {
         Some(v) => v,
@@ -80,13 +107,27 @@ pub fn run(http: &dyn Http, bd: &dyn Bd, repo: &dyn Repo, mail: &dyn Mail, stamp
     }
 
     let all_ingested = ingested(&before);
-    let known_work_rows = known_work(&all_ingested, &cfg.scope);
-    let known_untrusted_rows = known_untrusted(&all_ingested);
     r.log(format!(
         "store holds {before_total} bead(s); {} work, {} untrusted",
-        known_work_rows.len(),
-        known_untrusted_rows.len()
+        known_work(&all_ingested, &cfg.scope).len(),
+        known_untrusted(&all_ingested).len()
     ));
+
+    for t in &targets {
+        let tcfg = Config { repo: t.slug.clone(), bead_repo: t.bead_repo.clone(), ..cfg.clone() };
+        r = ingest_repo(r, http, bd, mail, stamp, seen, &tcfg, &all_ingested);
+        if r.stop {
+            break;
+        }
+    }
+    r
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ingest_repo(mut r: Report, http: &dyn Http, bd: &dyn Bd, mail: &dyn Mail, stamp: &dyn Stamp, seen: &dyn Seen, cfg: &Config, all_ingested: &[KnownRef]) -> Report {
+    let known_work_rows = known_work(all_ingested, &cfg.scope);
+    let known_untrusted_rows = known_untrusted(all_ingested);
+    r.log(format!("reading {} (beads against repo:{})", cfg.repo, cfg.bead_repo));
 
     // ── fetch open issues, paginated ────────────────────────────────────────────────────
     let mut pages: Vec<Vec<u8>> = Vec::new();
@@ -129,8 +170,26 @@ pub fn run(http: &dyn Http, bd: &dyn Bd, repo: &dyn Repo, mail: &dyn Mail, stamp
 
     if all_issues.is_empty() {
         r.log("no open issues found (all items may be pull requests) — ingest is complete");
+        if !cfg.dry_run && seen.load(&cfg.repo).is_none() && !has_refs(all_ingested, &cfg.repo) {
+            seen.save(&cfg.repo, &[]);
+        }
         return r;
     }
+
+    let skip: Vec<u64> = match seen.load(&cfg.repo) {
+        Some(s) => s,
+        None if has_refs(all_ingested, &cfg.repo) => Vec::new(),
+        None => {
+            let numbers: Vec<u64> = all_issues.iter().map(|i| i.number).collect();
+            if cfg.dry_run {
+                r.log(format!("would record {} existing open issue(s) of {} as seen and file none", numbers.len(), cfg.repo));
+            } else {
+                seen.save(&cfg.repo, &numbers);
+                r.log(format!("first read of {}: recorded {} existing open issue(s) as seen, filed none", cfg.repo, numbers.len()));
+            }
+            return r;
+        }
+    };
 
     let mut created = 0u32;
     let mut skipped = 0u32;
@@ -138,6 +197,10 @@ pub fn run(http: &dyn Http, bd: &dyn Bd, repo: &dyn Repo, mail: &dyn Mail, stamp
     let mut new_untrusted: Vec<(u64, String, String, String)> = Vec::new();
 
     for issue in &all_issues {
+        if skip.contains(&issue.number) {
+            skipped += 1;
+            continue;
+        }
         let ext_ref = format!("github:{}#{}", cfg.repo, issue.number);
         let uref = format!("github-untrusted:{}#{}", cfg.repo, issue.number);
 
@@ -264,6 +327,12 @@ pub fn run(http: &dyn Http, bd: &dyn Bd, repo: &dyn Repo, mail: &dyn Mail, stamp
     r
 }
 
+fn has_refs(all: &[KnownRef], slug: &str) -> bool {
+    let work = format!("github:{slug}#");
+    let untrusted = format!("github-untrusted:{slug}#");
+    all.iter().any(|k| k.ext_ref.starts_with(&work) || k.ext_ref.starts_with(&untrusted))
+}
+
 fn rate_limited(status: u16, body: &[u8]) -> bool {
     status == 429 || (status == 403 && String::from_utf8_lossy(body).to_lowercase().contains("rate limit"))
 }
@@ -271,6 +340,7 @@ fn rate_limited(status: u16, body: &[u8]) -> bool {
 /// A refused budget clears itself at GitHub's reset time, so one refusal is a logged deferral
 /// and exit 0; only a poll that has not succeeded for `RATE_LIMIT_ALARM_SECS` fails the unit.
 fn defer_rate_limited(mut r: Report, http: &dyn Http, stamp: &dyn Stamp, cfg: &Config) -> Report {
+    r.stop = true;
     let now = stamp.now();
     let reset = match http.get(&format!("{}/rate_limit", cfg.api), 10) {
         Ok((200, body)) => serde_json::from_slice::<serde_json::Value>(&body)

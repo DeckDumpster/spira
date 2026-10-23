@@ -3,7 +3,7 @@
 //! used to source the bash functions directly (dispatch.md row "GitHub triage/dedup").
 
 use crate::logic::{run, Config};
-use crate::ports::{Bd, Http, Mail, Repo, Stamp};
+use crate::ports::{Bd, Http, Mail, Repo, Seen, Stamp};
 use serde_json::json;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -108,19 +108,37 @@ impl Bd for FakeBd {
 
 struct FakeRepo {
     root: Option<String>,
+    /// (registered name, forge slug)
+    registered: Vec<(&'static str, &'static str)>,
 }
 impl Repo for FakeRepo {
     fn root_with_git(&self, _name: &str) -> Option<String> {
         self.root.clone()
     }
+    fn forge_slug(&self, name: &str) -> Option<String> {
+        self.registered.iter().find(|(n, _)| *n == name).map(|(_, s)| s.to_string())
+    }
     fn all_names(&self) -> Vec<String> {
-        Vec::new()
+        self.registered.iter().map(|(n, _)| n.to_string()).collect()
     }
     fn landref(&self, _repo_path: &str) -> Option<String> {
         None
     }
     fn landrefs(&self, _repo_path: &str) -> Vec<String> {
         Vec::new()
+    }
+}
+
+#[derive(Default)]
+struct FakeSeen {
+    held: RefCell<HashMap<String, Vec<u64>>>,
+}
+impl Seen for FakeSeen {
+    fn load(&self, slug: &str) -> Option<Vec<u64>> {
+        self.held.borrow().get(slug).cloned()
+    }
+    fn save(&self, slug: &str, numbers: &[u64]) {
+        self.held.borrow_mut().insert(slug.to_string(), numbers.to_vec());
     }
 }
 
@@ -171,6 +189,13 @@ fn base_cfg() -> Config {
     }
 }
 
+/// A repository intake has already read once, so the first-pass rule is not in play.
+fn seen_of(cfg: &Config) -> FakeSeen {
+    let seen = FakeSeen::default();
+    seen.save(&cfg.repo, &[]);
+    seen
+}
+
 fn issues_url(cfg: &Config, page: u32) -> String {
     format!("{}/repos/{}/issues?state=open&per_page=100&page={page}", cfg.api, cfg.repo)
 }
@@ -186,10 +211,10 @@ fn trusted_author_creates_a_work_bead() {
     );
     let bd = FakeBd::default();
     bd.seed("some-other-ref", "sp-existing", &["spira"]); // non-empty store, unrelated
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()) };
+    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
-    let report = run(&http, &bd, &repo, &mail, &stamp(), &cfg);
+    let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
 
     assert_eq!(report.code, 0, "stderr: {:?}", report.err);
     let beads = bd.beads.borrow();
@@ -209,10 +234,10 @@ fn rerun_is_idempotent_and_notes_the_existing_bead() {
     );
     let bd = FakeBd::default();
     bd.seed("github:acme/widgets#1", "sp-abc12", &["spira", "plan"]);
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()) };
+    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
-    let report = run(&http, &bd, &repo, &mail, &stamp(), &cfg);
+    let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
 
     assert_eq!(report.code, 0, "stderr: {:?}", report.err);
     // No second bead created for the same ref.
@@ -233,10 +258,10 @@ fn untrusted_author_gets_an_untrusted_record_and_a_digest() {
     );
     let bd = FakeBd::default();
     bd.seed("seed", "sp-seed", &["spira"]);
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()) };
+    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
-    let report = run(&http, &bd, &repo, &mail, &stamp(), &cfg);
+    let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
 
     assert_eq!(report.code, 0, "stderr: {:?}", report.err);
     let beads = bd.beads.borrow();
@@ -259,10 +284,10 @@ fn pull_requests_are_excluded() {
     );
     let bd = FakeBd::default();
     bd.seed("seed", "sp-seed", &["spira"]);
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()) };
+    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
-    let report = run(&http, &bd, &repo, &mail, &stamp(), &cfg);
+    let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
 
     assert_eq!(report.code, 0, "stderr: {:?}", report.err);
     let beads = bd.beads.borrow();
@@ -286,10 +311,10 @@ fn spira_accept_promotes_when_the_actor_has_access() {
 
     let bd = FakeBd::default();
     bd.seed("github-untrusted:acme/widgets#5", "sp-untr5", &[]);
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()) };
+    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
-    let report = run(&http, &bd, &repo, &mail, &stamp(), &cfg);
+    let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
 
     assert_eq!(report.code, 0, "stderr: {:?}", report.err);
     let beads = bd.beads.borrow();
@@ -316,10 +341,10 @@ fn spira_accept_does_not_promote_without_access() {
 
     let bd = FakeBd::default();
     bd.seed("seed", "sp-seed", &["spira"]);
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()) };
+    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
-    let report = run(&http, &bd, &repo, &mail, &stamp(), &cfg);
+    let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
 
     assert_eq!(report.code, 0, "stderr: {:?}", report.err);
     let beads = bd.beads.borrow();
@@ -339,10 +364,10 @@ fn dry_run_makes_no_bd_writes() {
     );
     let bd = FakeBd::default();
     bd.seed("seed", "sp-seed", &["spira"]);
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()) };
+    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
-    let report = run(&http, &bd, &repo, &mail, &stamp(), &cfg);
+    let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
 
     assert_eq!(report.code, 0, "stderr: {:?}", report.err);
     assert_eq!(bd.beads.borrow().len(), 1, "only the seed bead — nothing created under --dry-run");
@@ -364,10 +389,10 @@ fn pagination_follows_a_full_first_page() {
 
     let bd = FakeBd::default();
     bd.seed("seed", "sp-seed", &["spira"]);
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()) };
+    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
-    let report = run(&http, &bd, &repo, &mail, &stamp(), &cfg);
+    let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
 
     assert_eq!(report.code, 0, "stderr: {:?}", report.err);
     assert!(bd.beads.borrow().iter().any(|b| b["external_ref"] == "github:acme/widgets#101"), "second page was fetched");
@@ -379,10 +404,10 @@ fn an_unresolvable_repo_map_entry_is_refused() {
     let cfg = base_cfg();
     let http = FakeHttp::default();
     let bd = FakeBd::default();
-    let repo = FakeRepo { root: None };
+    let repo = FakeRepo { root: None, registered: vec![] };
     let mail = FakeMail::default();
 
-    let report = run(&http, &bd, &repo, &mail, &stamp(), &cfg);
+    let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
 
     assert_eq!(report.code, 1);
     assert!(report.err.iter().any(|l| l.contains("does not resolve to a checkout")));
@@ -393,27 +418,27 @@ fn a_store_reporting_zero_beads_is_refused_not_treated_as_empty() {
     let cfg = base_cfg();
     let http = FakeHttp::default();
     let bd = FakeBd::default(); // no seed — genuinely zero, or the query is broken
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()) };
+    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
-    let report = run(&http, &bd, &repo, &mail, &stamp(), &cfg);
+    let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
 
     assert_eq!(report.code, 1);
     assert!(report.err.iter().any(|l| l.contains("the store reports zero beads")));
 }
 
 #[test]
-fn an_empty_configured_repo_is_a_real_no_op() {
+fn no_configured_repo_and_none_registered_is_a_real_no_op() {
     let cfg = Config { repo: String::new(), ..base_cfg() };
     let http = FakeHttp::default();
     let bd = FakeBd::default();
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()) };
+    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
-    let report = run(&http, &bd, &repo, &mail, &stamp(), &cfg);
+    let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
 
     assert_eq!(report.code, 0);
-    assert!(report.out.iter().any(|l| l.contains("SPIRA_GH_INTAKE_REPO is not set")));
+    assert!(report.out.iter().any(|l| l.contains("nothing to ingest")));
     assert!(http.calls.borrow().is_empty(), "nothing was fetched");
 }
 
@@ -424,10 +449,10 @@ fn the_api_refusing_a_page_is_named_not_swallowed() {
     http.set(&issues_url(&cfg, 1), 404, r#"{"message":"Not Found"}"#);
     let bd = FakeBd::default();
     bd.seed("seed", "sp-seed", &["spira"]);
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()) };
+    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
-    let report = run(&http, &bd, &repo, &mail, &stamp(), &cfg);
+    let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
 
     assert_eq!(report.code, 1);
     assert!(report.err.iter().any(|l| l.contains("Not Found")));
@@ -449,10 +474,10 @@ fn a_bead_the_store_silently_dropped_the_scope_label_from_is_caught_by_the_post_
     bd.seed("seed", "sp-seed", &["spira"]);
     *bd.force_labels.borrow_mut() = Some(vec!["plan".to_string(), "repo:widgets".to_string()]); // no "spira"
 
-    let repo = FakeRepo { root: Some("/repos/widgets".to_string()) };
+    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
     let mail = FakeMail::default();
 
-    let report = run(&http, &bd, &repo, &mail, &stamp(), &cfg);
+    let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
 
     assert_eq!(report.code, 1);
     assert!(report.err.iter().any(|l| l.contains("carry no spira label")));
@@ -518,7 +543,7 @@ fn rate_limited_world(status: u16) -> (Config, FakeHttp, FakeBd, FakeRepo, FakeM
     http.set(&format!("{}/rate_limit", cfg.api), 200, r#"{"resources":{"core":{"limit":60,"remaining":0,"reset":1792773140}}}"#);
     let bd = FakeBd::default();
     bd.seed("some-other-ref", "sp-existing", &["spira"]);
-    (cfg, http, bd, FakeRepo { root: Some("/repos/widgets".to_string()) }, FakeMail::default())
+    (cfg, http, bd, FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] }, FakeMail::default())
 }
 
 #[test]
@@ -527,7 +552,7 @@ fn a_rate_limit_refusal_is_a_logged_deferral_not_a_failure() {
         let (cfg, http, bd, repo, mail) = rate_limited_world(status);
         let st = stamp();
         *st.last.borrow_mut() = Some(st.now - 600);
-        let report = run(&http, &bd, &repo, &mail, &st, &cfg);
+        let report = run(&http, &bd, &repo, &mail, &st, &seen_of(&cfg), &cfg);
         assert_eq!(report.code, 0, "status {status}: {:?}", report.err);
         let log = report.out.join("\n");
         assert!(log.contains("deferred") && log.contains("1792773140"), "{log}");
@@ -541,7 +566,7 @@ fn refusals_past_the_bound_alarm_naming_the_rate_limit_and_the_last_success() {
     let st = stamp();
     let last = st.now - crate::logic::RATE_LIMIT_ALARM_SECS - 1;
     *st.last.borrow_mut() = Some(last);
-    let report = run(&http, &bd, &repo, &mail, &st, &cfg);
+    let report = run(&http, &bd, &repo, &mail, &st, &seen_of(&cfg), &cfg);
     assert_eq!(report.code, 1);
     let err = report.err.join("\n");
     assert!(err.contains("rate limit") && err.contains(&last.to_string()), "{err}");
@@ -551,7 +576,7 @@ fn refusals_past_the_bound_alarm_naming_the_rate_limit_and_the_last_success() {
 fn a_first_ever_refusal_seeds_the_clock_and_does_not_alarm() {
     let (cfg, http, bd, repo, mail) = rate_limited_world(429);
     let st = stamp();
-    let report = run(&http, &bd, &repo, &mail, &st, &cfg);
+    let report = run(&http, &bd, &repo, &mail, &st, &seen_of(&cfg), &cfg);
     assert_eq!(report.code, 0);
     assert_eq!(*st.last.borrow(), Some(st.now));
 }
@@ -564,6 +589,89 @@ fn a_completed_poll_marks_success() {
     let bd = FakeBd::default();
     bd.seed("some-other-ref", "sp-existing", &["spira"]);
     let st = stamp();
-    run(&http, &bd, &FakeRepo { root: Some("/r".to_string()) }, &FakeMail::default(), &st, &cfg);
+    run(&http, &bd, &FakeRepo { root: Some("/r".to_string()), registered: vec![] }, &FakeMail::default(), &st, &seen_of(&cfg), &cfg);
     assert_eq!(*st.last.borrow(), Some(st.now));
+}
+
+fn issue_json(number: u64, assoc: &str) -> String {
+    format!(r#"{{"number":{number},"title":"issue {number}","body":"b","user":{{"login":"u"}},"author_association":"{assoc}","labels":[]}}"#)
+}
+
+fn two_repo_world() -> (Config, FakeHttp, FakeBd, FakeRepo) {
+    let cfg = Config { repo: String::new(), ..base_cfg() };
+    let http = FakeHttp::default();
+    let bd = FakeBd::default();
+    bd.seed("some-other-ref", "sp-existing", &["spira"]);
+    let repo = FakeRepo {
+        root: None,
+        registered: vec![("widgets", "acme/widgets"), ("gadgets", "acme/gadgets")],
+    };
+    (cfg, http, bd, repo)
+}
+
+fn url_for(cfg: &Config, slug: &str) -> String {
+    format!("{}/repos/{slug}/issues?state=open&per_page=100&page=1", cfg.api)
+}
+
+#[test]
+fn an_issue_on_a_second_registered_repo_becomes_a_bead_tagged_with_that_repo() {
+    let (cfg, http, bd, repo) = two_repo_world();
+    http.set(&url_for(&cfg, "acme/widgets"), 200, "[]");
+    http.set(&url_for(&cfg, "acme/gadgets"), 200, &format!("[{}]", issue_json(7, "MEMBER")));
+    let seen = FakeSeen::default();
+    seen.save("acme/widgets", &[]);
+    seen.save("acme/gadgets", &[]);
+
+    let report = run(&http, &bd, &repo, &FakeMail::default(), &stamp(), &seen, &cfg);
+
+    assert_eq!(report.code, 0, "{:?}", report.err);
+    let beads = bd.beads.borrow();
+    let made = beads.iter().find(|b| b["external_ref"] == "github:acme/gadgets#7").expect("bead filed");
+    assert!(made["labels"].as_array().unwrap().iter().any(|l| l == "repo:gadgets"), "{made}");
+}
+
+#[test]
+fn the_first_read_of_a_repo_records_its_open_issues_and_files_nothing() {
+    let (cfg, http, bd, repo) = two_repo_world();
+    http.set(&url_for(&cfg, "acme/widgets"), 200, "[]");
+    http.set(&url_for(&cfg, "acme/gadgets"), 200, &format!("[{},{}]", issue_json(3, "MEMBER"), issue_json(4, "NONE")));
+    let seen = FakeSeen::default();
+
+    let before = bd.beads.borrow().len();
+    let report = run(&http, &bd, &repo, &FakeMail::default(), &stamp(), &seen, &cfg);
+
+    assert_eq!(report.code, 0, "{:?}", report.err);
+    assert_eq!(bd.beads.borrow().len(), before, "a backlog is recorded, never filed");
+    assert_eq!(seen.load("acme/gadgets"), Some(vec![3, 4]));
+    assert_eq!(seen.load("acme/widgets"), Some(vec![]), "a quiet repo is still marked read");
+
+    http.set(&url_for(&cfg, "acme/gadgets"), 200, &format!("[{},{},{}]", issue_json(3, "MEMBER"), issue_json(4, "NONE"), issue_json(9, "MEMBER")));
+    let report = run(&http, &bd, &repo, &FakeMail::default(), &stamp(), &seen, &cfg);
+    assert_eq!(report.code, 0, "{:?}", report.err);
+    let beads = bd.beads.borrow();
+    assert!(beads.iter().any(|b| b["external_ref"] == "github:acme/gadgets#9"), "a new issue after the first pass is filed");
+    assert!(!beads.iter().any(|b| b["external_ref"] == "github:acme/gadgets#3"), "a seen issue stays unfiled");
+}
+
+#[test]
+fn a_rate_limit_on_one_repo_defers_the_rest_of_the_pass() {
+    let (cfg, http, bd, repo) = two_repo_world();
+    http.set(&url_for(&cfg, "acme/widgets"), 429, RATE_BODY);
+    http.set(&format!("{}/rate_limit", cfg.api), 200, r#"{"resources":{"core":{"reset":1792773140}}}"#);
+    let st = stamp();
+    *st.last.borrow_mut() = Some(st.now - 600);
+    let report = run(&http, &bd, &repo, &FakeMail::default(), &st, &FakeSeen::default(), &cfg);
+    assert_eq!(report.code, 0, "{:?}", report.err);
+    assert!(!http.calls.borrow().iter().any(|u| u.contains("acme/gadgets")));
+}
+
+#[test]
+fn github_slug_reads_every_remote_shape() {
+    use crate::model::github_slug;
+    for u in ["git@github.com:acme/widgets.git", "https://github.com/acme/widgets", "ssh://git@github.com/acme/widgets.git", "https://github.com/acme/widgets/\n"] {
+        assert_eq!(github_slug(u).as_deref(), Some("acme/widgets"), "{u}");
+    }
+    for u in ["/srv/git/widgets.git", "git@gitlab.com:acme/widgets.git", "https://github.com/acme", "https://github.com/a/b/c"] {
+        assert_eq!(github_slug(u), None, "{u}");
+    }
 }

@@ -9,7 +9,7 @@
 
 use gh_intake::closeout::{self, Ctx, Deps};
 use gh_intake::logic::{self, Config};
-use gh_intake::real::{RealBd, RealGh, RealGit, RealHttp, RealLifecycle, RealMail, RealRepo, FileStamp};
+use gh_intake::real::{RealBd, RealGh, RealGit, RealHttp, RealLifecycle, RealMail, RealRepo, FileSeen, FileStamp};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -340,7 +340,8 @@ fn dispatch() -> ExitCode {
     };
     let stamp = FileStamp(run_dir.join("gh-intake.last-ok"));
 
-    let report = logic::run(&http, &bd, &repo_port, &mail, &stamp, &cfg);
+    let seen = FileSeen(run_dir.join("gh-intake.seen"));
+    let report = logic::run(&http, &bd, &repo_port, &mail, &stamp, &seen, &cfg);
     for line in &report.out {
         println!("{line}");
     }

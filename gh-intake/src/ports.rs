@@ -27,6 +27,14 @@ pub trait Stamp {
     fn mark_ok(&self, at: i64);
 }
 
+/// The issue numbers a repository already had open when intake first read it: recorded so a
+/// backlog is never filed, and the only way to tell a never-read repository from a quiet one.
+pub trait Seen {
+    /// `None` when intake has never read `slug`.
+    fn load(&self, slug: &str) -> Option<Vec<u64>>;
+    fn save(&self, slug: &str, numbers: &[u64]);
+}
+
 /// The beads store, called directly (`bd -C <db> ...`) exactly as gh-intake.sh did — not
 /// through lib.sh's `bdq` retry wrapper, which this script never used.
 pub trait Bd {
@@ -112,6 +120,12 @@ pub trait Repo {
     /// `Some(path)` when the map has an entry AND that checkout has a `.git`; `None` otherwise
     /// — the two cases gh-intake.sh's caller collapses into one die().
     fn root_with_git(&self, name: &str) -> Option<String>;
+
+    /// `owner/name` of the GitHub remote of registered repo `name`'s checkout; `None` when the
+    /// repo has no checkout, no remote, or a remote that is not on GitHub.
+    fn forge_slug(&self, _name: &str) -> Option<String> {
+        None
+    }
 
     /// `spira_repos` (sp-j3fim): every repo name the map carries, in map order —
     /// `gh-intake backfill`'s scan loop (ported from `gh-issue-backfill.sh`).

@@ -57,7 +57,7 @@ refusal, exit 2 — unchanged from the bash.
 | `SPIRA_BD` | `bd` | the `bd` binary |
 | `SPIRA_MAIL_BIN` | `mail` | the digest mailer |
 | `SPIRA_HOME` | `.` | where `lib.sh` lives, for `repo_root` |
-| `SPIRA_GH_INTAKE_REPO` | *(empty)* | `owner/repo` to ingest; empty is a real no-op, exit 0 |
+| `SPIRA_GH_INTAKE_REPO` | *(empty)* | `owner/repo` to ingest in addition to every registered repo with a GitHub remote; empty with none registered is a real no-op, exit 0 |
 | `SPIRA_GH_INTAKE_BEAD_REPO` | `repo`'s basename | the `repo:` label and repo-map lookup |
 | `SPIRA_SCOPE_LABEL` | `spira` | the label a fayth's predicate reads |
 | `SPIRA_PLAN_LABEL` | `plan` | the lane label |
@@ -66,7 +66,12 @@ refusal, exit 2 — unchanged from the bash.
 
 ### 3.3 Flow
 
-1. Empty `SPIRA_GH_INTAKE_REPO` → log and exit 0. Nothing else runs.
+1. Targets are `SPIRA_GH_INTAKE_REPO` (filed against `SPIRA_GH_INTAKE_BEAD_REPO`) plus every
+   repo-map entry whose checkout has a GitHub remote (`origin`, else the first), filed against
+   that entry. No target → log and exit 0. Steps 3–7 run per target; a refusal on one does
+   not skip the rest, a rate-limit deferral ends the pass. A repo is read for the first time
+   when it has no `Seen` file and no bead carries its ref prefix: its open issues are written
+   to `$SPIRA_RUN/gh-intake.seen/` and nothing is filed; later passes skip those numbers.
 2. `repo_root(bead_repo)` must resolve AND hold a `.git` — otherwise refuse (exit 1) with the
    same remediation text the bash gave (add to the repo-map, or set the bead-repo override).
 3. `bd list --all --json`: total beads must be `> 0` (a positive control — a store that

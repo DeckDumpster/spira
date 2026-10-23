@@ -1,4 +1,4 @@
-use crate::ports::{Bd, Gh, Git, Http, LcBead, Lifecycle, Mail, Repo, Stamp};
+use crate::ports::{Bd, Gh, Git, Http, LcBead, Lifecycle, Mail, Repo, Seen, Stamp};
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -46,6 +46,30 @@ impl Stamp for FileStamp {
         let tmp = self.0.with_extension("tmp");
         if std::fs::write(&tmp, at.to_string()).is_ok() {
             let _ = std::fs::rename(&tmp, &self.0);
+        }
+    }
+}
+
+/// One file per repository under `dir`, one issue number per line.
+pub struct FileSeen(pub std::path::PathBuf);
+
+impl FileSeen {
+    fn path(&self, slug: &str) -> std::path::PathBuf {
+        self.0.join(slug.replace('/', "__"))
+    }
+}
+
+impl Seen for FileSeen {
+    fn load(&self, slug: &str) -> Option<Vec<u64>> {
+        let text = std::fs::read_to_string(self.path(slug)).ok()?;
+        Some(text.lines().filter_map(|l| l.trim().parse().ok()).collect())
+    }
+    fn save(&self, slug: &str, numbers: &[u64]) {
+        let path = self.path(slug);
+        let tmp = path.with_extension("tmp");
+        let body: String = numbers.iter().map(|n| format!("{n}\n")).collect();
+        if std::fs::create_dir_all(&self.0).is_ok() && std::fs::write(&tmp, body).is_ok() {
+            let _ = std::fs::rename(&tmp, &path);
         }
     }
 }
@@ -263,6 +287,15 @@ impl Repo for RealRepo {
         } else {
             None
         }
+    }
+
+    fn forge_slug(&self, name: &str) -> Option<String> {
+        let root = self.root_with_git(name)?;
+        let remotes = Command::new("timeout").args(["5", "git", "-C", &root, "remote"]).stdin(Stdio::null()).output().ok()?;
+        let remotes = String::from_utf8_lossy(&remotes.stdout).to_string();
+        let remote = if remotes.lines().any(|r| r == "origin") { "origin" } else { remotes.lines().next()? };
+        let url = Command::new("timeout").args(["5", "git", "-C", &root, "remote", "get-url", remote]).stdin(Stdio::null()).output().ok()?;
+        crate::model::github_slug(&String::from_utf8_lossy(&url.stdout))
     }
 
     /// `spira_repos` (sp-j3fim) — in-process, same registry construction as every other
