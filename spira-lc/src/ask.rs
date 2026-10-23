@@ -69,8 +69,8 @@ pub fn cmd_show_ask(args: &[String], conn: &Conn) -> (i32, String) {
 /// section reads.
 pub fn cmd_list_asks(args: &[String], conn: &Conn) -> (i32, String) {
     let state = flag(args, "--state").unwrap_or_else(|| "OPEN".into());
-    let filter = if state == "ALL" { String::new() } else { format!(" WHERE state = {}", q(&state)) };
-    match conn.query(&format!("SELECT ask_id, state, work_bead, closed_by, quote, channel, version, opened_at, closed_at FROM ask{filter} ORDER BY opened_at, ask_id")) {
+    let filter = if state == "ALL" { String::new() } else { format!(" WHERE a.state = {}", q(&state)) };
+    match conn.query(&format!("SELECT a.ask_id, a.state, a.work_bead, a.closed_by, a.quote, a.channel, a.version, a.opened_at, a.closed_at, b.title FROM ask a LEFT JOIN bead b ON b.bead_id = a.ask_id{filter} ORDER BY a.opened_at, a.ask_id")) {
         Ok(r) => (0, serde_json::to_string_pretty(&Value::Array(r)).unwrap_or_default()),
         Err(e) => cannot(e),
     }
