@@ -599,12 +599,13 @@ fn template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool, pool
         };
         let named = PveEnv::load(&cfg.pve_env_path, &|k| std::env::var(k).ok()).map(|p| p.template_vmid).ok();
         if let (Some(r), Some(n)) = (Record::read(&cfg.state_dir), named) {
-            if r.vmid == n && r.holds(&tag) {
+            let sha = crate::recipe::sha_of_tree(&a.tree_dir);
+            if r.vmid == n && r.holds(&tag) && sha.as_ref().is_ok_and(|s| r.built_from(s)) {
                 eprintln!("round-vm refresh: template {n} already holds {} — nothing to do", r.image);
                 return 0;
             }
         }
-        eprintln!("round-vm refresh: the template does not hold localhost/spira-testenv:{tag} — rebuilding it");
+        eprintln!("round-vm refresh: the template does not hold localhost/spira-testenv:{tag} built from this tree's recipe — rebuilding it");
     }
     let me = ProcId::current();
     if refresh {
@@ -643,6 +644,13 @@ fn build_template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool
         timing: attempt.timing,
     };
     let guest = SshRemote { user: cfg.ssh_user.clone(), port: cfg.ssh_port, key: cfg.host_key.clone() };
+    let recipe_sha = match crate::recipe::sha_of_tree(&a.tree_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("round-vm template: {e}");
+            return 2;
+        }
+    };
     match crate::template::build(
         attempt.provider.as_ref(),
         &guest,
@@ -654,10 +662,11 @@ fn build_template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool
         cfg.host_addr.as_deref().unwrap_or(""),
         a.toolchain.clone().or_else(|| crate::recipe::tree_channel(&a.tree_dir)).as_deref().unwrap_or(""),
         cfg.cache_home.as_deref().unwrap_or(""),
+        &recipe_sha,
     ) {
         Ok(b) if refresh => {
             println!("{} {}", b.vmid, b.image);
-            let done = Record { vmid: b.vmid.clone(), image: b.image.clone() }
+            let done = Record { vmid: b.vmid.clone(), image: b.image.clone(), recipe_sha: Some(recipe_sha.clone()) }
                 .write(&cfg.state_dir)
                 .and_then(|()| repoint(&cfg.pve_env_path, &b.vmid))
                 .and_then(|()| pool.recycle(&real_attempt));

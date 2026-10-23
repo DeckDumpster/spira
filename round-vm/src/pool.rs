@@ -806,7 +806,7 @@ impl Pool {
             "provisioning": s.provisioning.as_ref().filter(|p| p.owner.alive()).map(|p| serde_json::json!({"owner": p.owner.to_string(), "vm": p.vmid, "since": p.since, "age_secs": age(p.since)})),
             "refreshing": s.refreshing.filter(|r| r.alive()).map(|r| r.to_string()),
             "outage": s.outage.as_ref().map(|o| serde_json::json!({"reason": o.reason, "since": o.since, "age_secs": age(o.since)})),
-            "template": crate::template::Record::read(&self.state_dir).map(|r| serde_json::json!({"vmid": r.vmid, "image": r.image})),
+            "template": crate::template::Record::read(&self.state_dir).map(|r| serde_json::json!({"vmid": r.vmid, "image": r.image, "recipe_sha": r.recipe_sha})),
             "leases": leases,
             "doomed": doomed,
             "vms": vms,
@@ -1483,9 +1483,9 @@ mod tests {
     fn status_json_shows_a_doomed_vm_and_the_template() {
         let d = TempDir::new();
         let pl = pool(&d, 1);
-        crate::template::Record { vmid: "900".into(), image: "reg:tag".into() }.write(&pl.state_dir).unwrap_or_else(|_| {
+        crate::template::Record { vmid: "900".into(), image: "reg:tag".into(), recipe_sha: None }.write(&pl.state_dir).unwrap_or_else(|_| {
             std::fs::create_dir_all(&pl.state_dir).unwrap();
-            crate::template::Record { vmid: "900".into(), image: "reg:tag".into() }.write(&pl.state_dir).unwrap();
+            crate::template::Record { vmid: "900".into(), image: "reg:tag".into(), recipe_sha: None }.write(&pl.state_dir).unwrap();
         });
         pl.with_state(|s| s.doomed.push("77".into())).unwrap();
         let j: serde_json::Value = serde_json::from_str(&pl.status_json().unwrap()).unwrap();

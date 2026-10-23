@@ -1490,6 +1490,11 @@ fn image_build_declared(env: &RunEnv, args: &RunArgs, commit: &str) -> bool {
     if let Some(rec) = Record::read(&env.cfg.state_dir) {
         let names_it = PveEnv::load(&env.cfg.pve_env_path, &|k| std::env::var(k).ok()).map(|pe| pe.template_vmid == rec.vmid).unwrap_or(true);
         if names_it {
+            if let Ok(want) = crate::recipe::sha_of_tree(tree) {
+                if !rec.built_from(&want) {
+                    eprintln!("round-vm run: template {} was not built from this tree's recipe ({want}) — stale; run `round-vm refresh`", rec.vmid);
+                }
+            }
             if rec.holds(&tag) {
                 return false;
             }
@@ -3125,7 +3130,7 @@ mod tests {
         fs::write(&env, format!("PVE_TOKEN_ID=t\nPVE_TOKEN_SECRET=s\nPVE_NODE=n\nPVE_CACERT={}\nPVE_TEMPLATE_VMID={pve_names}\n", ca.display())).unwrap();
         fx.cfg.pve_env_path = env;
         fs::create_dir_all(&fx.cfg.state_dir).unwrap();
-        Record { vmid: vmid.into(), image: image.into() }.write(&fx.cfg.state_dir).unwrap();
+        Record { vmid: vmid.into(), image: image.into(), recipe_sha: None }.write(&fx.cfg.state_dir).unwrap();
     }
 
     fn newer_tree(fx: &Fixture) -> RunArgs {

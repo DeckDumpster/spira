@@ -5,13 +5,13 @@
 # declares the nextest pin and must pass --check on the finished image.
 # Hashed into the recipe (round-vm recipe-sha): editing it makes every older image stale.
 set -euo pipefail
-tree="$1" toolchain="$2" cache_home="$3" foreign="${4:-}"
+tree="$1" toolchain="$2" cache_home="${3:-${HOME:-/root}/.cargo}" foreign="${4:-}"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq podman git curl build-essential pkg-config libssl-dev openssh-server jq sqlite3 xz-utils python3 make
 systemctl enable --now ssh
 mkdir -p /root/.ssh && chmod 700 /root/.ssh
-bash -s -- "$tree" "" "$toolchain" "$cache_home" < "$tree/round-vm/src/template.sh"
+bash -s -- "$tree" "${SPIRA_TEMPLATE_HOST_ADDR:-}" "$toolchain" "$cache_home" < "$tree/round-vm/src/template.sh"
 # template.sh removes its work dir, which may be ours: cargo install needs a cwd that exists.
 cd /
 env_bin="$(readlink -f "${HOME:-/root}/spira-env")/bin"
@@ -44,3 +44,4 @@ UNIT
 systemctl daemon-reload
 systemctl enable --now tailscaled
 printf 'CARGO_HOME=%s\n' "$cache_home" > /etc/spira-round-ami.env
+[ -z "${SPIRA_RECIPE_SHA:-}" ] || printf '%s\n' "$SPIRA_RECIPE_SHA" > /etc/spira-round-recipe-sha
