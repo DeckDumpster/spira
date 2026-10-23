@@ -269,6 +269,9 @@ echo "BATCHED-stranded detection:"
 # Only after that do we verify the BATCHED-in-batch case reports 0 — an all-zero result
 # could pass both tests if the probe is not running at all.
 lc_seed_bead sp-bbb IN_DELIVERY "$(date +%s)"
+out_grace="$(unsent "$TMP/beads.json")"
+is "IN_DELIVERY inside the one-sweep grace → SP_BATCHED_STRANDED=0" "0" "$(printf '%s' "$out_grace" | grep '^SP_BATCHED_STRANDED=' | head -1 | sed 's/^SP_BATCHED_STRANDED=//')"
+lc_seed_bead sp-bbb IN_DELIVERY "$(( $(date +%s) - 700 ))"
 out2="$(unsent "$TMP/beads.json")"
 val2() { printf '%s' "$out2" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 is "BATCHED with no open batch → SP_BATCHED_STRANDED=1" "1" "$(val2 SP_BATCHED_STRANDED)"

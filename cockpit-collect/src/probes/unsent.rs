@@ -72,6 +72,7 @@ fn branch_backlog_section(out: &mut Kv, cfg: &Cfg) {
         // spira_landref/spira_landrefs/ref_remote lib.sh seam.
         let base = spira_config::repos::landref(&reg, &rname);
         let land = reg.land(&rname);
+        let round_members = if in_delivery.is_empty() { HashSet::new() } else { round_status_members(&rname) };
 
         match io::git(rp_path, &["for-each-ref", "--format=%(refname:short) %(committerdate:unix)", "refs/heads/spira/*"]) {
             Some(brs) => {
@@ -135,20 +136,9 @@ fn branch_backlog_section(out: &mut Kv, cfg: &Cfg) {
                     }
                     if batched_check_applies(&status, in_delivery.contains_key(id)) {
                         if let Some(row) = in_delivery.get(id) {
-                            let mut in_batch = false;
-                            if let Ok(entries) = std::fs::read_dir(&qdir) {
-                                for e in entries.flatten() {
-                                    let open_f = e.path().join("open");
-                                    let Ok(oc) = std::fs::read_to_string(&open_f) else { continue };
-                                    if let Some(mems) = oc.lines().find_map(|l| l.strip_prefix("members=")) {
-                                        if mems.split_whitespace().any(|m| m.split(':').next() == Some(id)) {
-                                            in_batch = true;
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            if !in_batch {
+                            let in_batch = in_forge_batch(&qdir, id) || round_members.contains(id);
+                            let settled = row.updated_at.is_some_and(|ep| now - ep >= STRANDED_GRACE_SECS);
+                            if !in_batch && settled {
                                 batched_stranded += 1;
                                 batched_stranded_names.push(id.to_string());
                             }
@@ -228,6 +218,34 @@ fn branch_backlog_section(out: &mut Kv, cfg: &Cfg) {
         }
         push(out, "SP_UNSENT_OLDEST_H", "0");
     }
+}
+
+/// One sweep's grace: a bead IN_DELIVERY for less than the slow-tier interval may simply not
+/// have its round or batch record written yet.
+const STRANDED_GRACE_SECS: i64 = 600;
+
+fn in_forge_batch(qdir: &Path, id: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir(qdir) else { return false };
+    entries.flatten().any(|e| {
+        let Ok(oc) = std::fs::read_to_string(e.path().join("open")) else { return false };
+        oc.lines()
+            .find_map(|l| l.strip_prefix("members="))
+            .is_some_and(|mems| mems.split_whitespace().any(|m| m.split(':').next() == Some(id)))
+    })
+}
+
+/// Every member the queue reports in flight for a repo: its open rounds and the staged one.
+/// A queue that cannot answer reports nothing, so the grace and the forge batches decide.
+fn round_status_members(repo: &str) -> HashSet<String> {
+    io::run_tool("queue", &["round", "status", repo], None).map(|o| members_in_status(&o)).unwrap_or_default()
+}
+
+fn members_in_status(out: &str) -> HashSet<String> {
+    out.lines()
+        .filter_map(|l| l.split_once('='))
+        .filter(|(k, _)| *k == "members" || *k == "staged_members" || (k.starts_with("round") && k.ends_with("_members")))
+        .flat_map(|(_, v)| v.split_whitespace().map(|m| m.split(':').next().unwrap_or(m).to_string()).collect::<Vec<_>>())
+        .collect()
 }
 
 /// A submitted bead's branch under queue.local waits for a round by design; only elsewhere
@@ -762,6 +780,26 @@ mod tests {
         assert!(batched_check_applies(&BeadStatus::Closed { submitted: true }, true));
         assert!(batched_check_applies(&BeadStatus::Open, true));
         assert!(!batched_check_applies(&BeadStatus::Open, false));
+    }
+
+    #[test]
+    fn every_open_and_staged_round_member_is_in_flight() {
+        let st = "rounds=2\nopen_batches=a b\nround=open\nbatch_id=a\nmembers=sp-1:t1 sp-2:t2\nround2=open\nround2_batch_id=b\nround2_members=sp-3:t3\nstaged_members=sp-4:t4\n";
+        let got = members_in_status(st);
+        for id in ["sp-1", "sp-2", "sp-3", "sp-4"] {
+            assert!(got.contains(id), "{id} in {got:?}");
+        }
+        assert!(!got.contains("sp-5"));
+        assert!(members_in_status("round=none\nrepo=x\n").is_empty());
+    }
+
+    #[test]
+    fn a_forge_batch_names_its_members_and_an_absent_one_is_not_in_it() {
+        let d = testkit::TempDir::new("cc-unsent-forge");
+        std::fs::create_dir_all(d.path().join("r")).unwrap();
+        std::fs::write(d.path().join("r/open"), "pr=1\nmembers=sp-in:t\n").unwrap();
+        assert!(in_forge_batch(d.path(), "sp-in"));
+        assert!(!in_forge_batch(d.path(), "sp-out"));
     }
 
     #[test]
