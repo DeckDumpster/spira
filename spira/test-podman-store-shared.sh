@@ -5,14 +5,13 @@
 #   and one created under that path's mount is listed by the session's podman.
 #
 # covers: testenv/src/container.rs testenv/src/run.rs
-# requires: podman
 # host-reason: needs the host's rootless podman store and its bind mount; not available in the container
 # tier: T4
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
-command -v podman >/dev/null 2>&1 || skip "no podman on this host"
+command -v podman >/dev/null 2>&1 || skip "podman not on PATH"
 BACKING="$(findmnt -n -o SOURCE --target "$HOME/.local/share/containers/storage" 2>/dev/null | sed 's/.*\[\(.*\)\]/\1/')"
 # batch-job: podman hang guard
 STORE="$(timeout 120 podman info --format '{{.Store.GraphRoot}}' 2>/dev/null)"
