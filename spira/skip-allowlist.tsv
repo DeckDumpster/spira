@@ -26,3 +26,4 @@ test-aeon-launch-grammar.sh	skip:claude_is_on_PATH_but_--version_exits_N_—_can
 test-concierge-acceptance.sh	skip:the_statute_book_is_empty_on_this_host_—_brief_composition_would_fail_for_a_reason_unrelated_to_what_this_file_tests	this host's statute-book corpus is a property of its own history, not something testenv provisions (T4 host acceptance)
 test-watch-notify-rearm.sh	skip:podman_not_on_PATH	nested podman inside the sandboxed test container; genuinely outside what testenv's container provides
 test-round-vm-e2e.sh	skip:podman_not_found_on_PATH	nested podman inside the sandboxed test container; genuinely outside what testenv's container provides
+test-podman-store-shared.sh	requires:podman	asserts the host session's rootless podman store; there is no nested podman in the sandboxed test container
