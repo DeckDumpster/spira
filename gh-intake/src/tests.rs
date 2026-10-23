@@ -675,3 +675,28 @@ fn github_slug_reads_every_remote_shape() {
         assert_eq!(github_slug(u), None, "{u}");
     }
 }
+
+#[test]
+fn contributor_with_hidden_org_membership_is_named_unverifiable() {
+    let cfg = base_cfg();
+    let http = FakeHttp::default();
+    http.set(
+        &issues_url(&cfg, 1),
+        200,
+        r#"[{"number":7,"title":"a","body":"x","user":{"login":"hidden1"},"labels":[],"author_association":"CONTRIBUTOR"},
+            {"number":8,"title":"b","body":"x","user":{"login":"hidden1"},"labels":[],"author_association":"CONTRIBUTOR"}]"#,
+    );
+    http.set(&format!("{}/orgs/acme/members/hidden1", cfg.api), 404, "");
+    let bd = FakeBd::default();
+    bd.seed("seed", "sp-seed", &["spira"]);
+    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
+    let mail = FakeMail::default();
+
+    let report = run(&http, &bd, &repo, &mail, &stamp(), &seen_of(&cfg), &cfg);
+
+    assert_eq!(report.code, 0, "stderr: {:?}", report.err);
+    assert!(report.out.iter().chain(report.err.iter()).any(|l| l.contains("private member, unverifiable") && l.contains("hidden1")));
+    let notes: Vec<_> = mail.sent.borrow().iter().filter(|(s, _)| s.contains("unverifiable")).cloned().collect();
+    assert_eq!(notes.len(), 1, "once per author");
+    assert!(notes[0].1.contains("make their org membership public"));
+}
