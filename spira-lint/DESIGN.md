@@ -1366,6 +1366,6 @@ overrides win) and otherwise names the file in `$SPIRA_RELEASE` or the exe's own
 
 Flagged in non-test code: `Command::new("<tool>")`, the program slot of a `timeout` argument
 list (`.args([N, "<tool>"…`, `.arg(N).arg("<tool>")`, `"N".to_string(), "<tool>"`),
-`PathBuf::from("<tool>")`, `bin: "<tool>"` and an `unwrap_or_else(|| "<tool>".to_string())`
+`PathBuf::from("<tool>")`, `bin: "<tool>"`, a tool literal opening an argv array (`run(&["<tool>", …`, `vec!["<tool>", …`) and an `unwrap_or_else(|| "<tool>".to_string())`
 default. `spira-lint/release-tool-exec-allow` lists files that cannot take the dependency and
 only shrinks.

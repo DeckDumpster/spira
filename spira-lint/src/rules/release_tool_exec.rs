@@ -99,7 +99,7 @@ spira-lint/release-tool-exec-allow only shrinks."
 fn build(alt: &str) -> Regex {
     let t = format!(r#""(?:{alt})""#);
     Regex::new(&format!(
-        r#"Command::new\({t}\)|Command::new\("timeout"\)\s*\.args\(\[[^,\]\n]*,\s*{t}|Command::new\("timeout"\)\s*\.args\(\w+\)\s*\.args\(\[{t}|unwrap_or_else\(\|\| {t}\.to_string\(\)\)|"\d+"(?:\.to_string\(\))?\s*,\s*{t}|\.arg\("\d+"\)\s*\.arg\({t}\)|PathBuf::from\({t}\)|\bbin:\s*{t}"#
+        r#"Command::new\({t}\)|Command::new\("timeout"\)\s*\.args\(\[[^,\]\n]*,\s*{t}|Command::new\("timeout"\)\s*\.args\(\w+\)\s*\.args\(\[{t}|unwrap_or_else\(\|\| {t}\.to_string\(\)\)|"\d+"(?:\.to_string\(\))?\s*,\s*{t}|\.arg\("\d+"\)\s*\.arg\({t}\)|PathBuf::from\({t}\)|\bbin:\s*{t}|\b\w*run\w*\(\s*&?\[\s*{t}\s*[,\]]|\bargv\s*=\s*&?\[\s*{t}"#
     ))
     .expect("static regex")
 }
@@ -162,10 +162,12 @@ mod tests {
         t.write("d/src/lib.rs", "fn f() { S { spira_lc: PathBuf::from(\"spira-lc\"), dir: PathBuf::from(\"spira\") }; }\n");
         t.write("e/src/lib.rs", "fn f() { Command::new(\"timeout\").args([\"5\", \"queue\"]); }\n");
         t.write("h/src/lib.rs", "fn f() { Command::new(\"timeout\").arg(\"5\").arg(&gh).args([\"release\", \"list\"]); }\n");
+        t.write("i/src/lib.rs", "fn f() { host.run(&[\"queue\", \"set\"]); }\n");
+        t.write("j/src/lib.rs", "fn f() { x.run(&[\"git\", \"queue\"]); y(&[\"queue\", \"b\"]); }\n");
         t.write("g/src/lib.rs", "fn f() { Command::new(tool(\"queue\")); Command::new(\"git\"); }\n// Command::new(\"queue\")\n#[cfg(test)]\nmod t { fn g() { Command::new(\"queue\"); } }\n");
-        let got = run(&t, &["spira-lc/src/main.rs", "queue/src/main.rs", "a/src/lib.rs", "b/src/lib.rs", "c/src/lib.rs", "d/src/lib.rs", "e/src/lib.rs", "g/src/lib.rs", "h/src/lib.rs"]);
+        let got = run(&t, &["spira-lc/src/main.rs", "queue/src/main.rs", "a/src/lib.rs", "b/src/lib.rs", "c/src/lib.rs", "d/src/lib.rs", "e/src/lib.rs", "g/src/lib.rs", "h/src/lib.rs", "i/src/lib.rs"]);
         let files: Vec<&str> = got.iter().map(|g| g.split(": ").nth(1).unwrap().split(':').next().unwrap()).collect();
-        assert_eq!(files, ["a/src/lib.rs", "b/src/lib.rs", "c/src/lib.rs", "d/src/lib.rs", "e/src/lib.rs"], "{got:?}");
+        assert_eq!(files, ["a/src/lib.rs", "b/src/lib.rs", "c/src/lib.rs", "d/src/lib.rs", "e/src/lib.rs", "i/src/lib.rs"], "{got:?}");
     }
 
     #[test]
