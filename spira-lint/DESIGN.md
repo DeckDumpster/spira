@@ -1369,3 +1369,19 @@ list (`.args([N, "<tool>"…`, `.arg(N).arg("<tool>")`, `"N".to_string(), "<tool
 `PathBuf::from("<tool>")`, `bin: "<tool>"`, a tool literal opening an argv array (`run(&["<tool>", …`, `vec!["<tool>", …`) and an `unwrap_or_else(|| "<tool>".to_string())`
 default. `spira-lint/release-tool-exec-allow` lists files that cannot take the dependency and
 only shrinks.
+
+## Rule `bare-unit-name`
+
+**Intent.** `install` writes every spira unit as `spira-<name>-<instance>.<kind>`; a bare
+`spira-<name>.service` literal in code names a unit that is not there, so a restart or poll of
+it fails "not found" and a release fails acceptance on a unit that is running fine.
+`spira_config::unit::unit_name` (or `resolve_unit`) is the one place the name is built.
+
+**Scope.** Every `*.rs` except `target/`, `install/` (which holds the template names),
+`spira-lint/`, `testkit/` and `spira-config/src/unit.rs`.
+
+**Violation.** A string literal in non-test code matching `spira-<name>.service|timer`, one
+finding per literal; comments and test code are ignored. The allow file
+(`spira-lint/bare-unit-name-allow`, exact paths) lists files that carried one when the rule
+landed and only shrinks. System units that are not instance-suffixed are the legitimate
+remainder in it.

@@ -91,6 +91,7 @@ fn plan(configured: bool) -> Box {
         users_file: users.display().to_string(),
         dir,
         ufw_conf,
+        unit: "spira-submission-prod.service".into(),
     };
     Box { _d: d, plan }
 }
@@ -123,7 +124,7 @@ fn a_certificate_near_expiry_is_renewed_and_the_service_restarted() {
     let r = provision(&Cert(&f), &b.plan);
     assert!(r.errors.is_empty(), "{r:?}");
     assert_eq!(count(&f, "tailscale cert"), 1, "{:?}", f.calls);
-    assert_eq!(count(&f, "systemctl --user restart spira-submission.service"), 1, "{:?}", f.calls);
+    assert_eq!(count(&f, "systemctl --user restart spira-submission-prod.service"), 1, "{:?}", f.calls);
     assert_eq!(std::fs::read_to_string(&b.plan.cert).unwrap(), f.fresh_cert);
     assert_eq!(std::fs::metadata(&b.plan.key).unwrap().permissions().mode() & 0o077, 0);
 }
