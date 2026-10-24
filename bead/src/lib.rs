@@ -237,6 +237,38 @@ pub fn has_build_spec(text: &str) -> bool {
     false
 }
 
+pub const INTENT_HEADING: &str = "## Intent";
+pub const USER_PATH_HEADING: &str = "## User path";
+
+/// The non-blank text under `heading` up to the next heading of any level, or `None` when the
+/// heading is absent or has nothing under it.
+pub fn section(text: &str, heading: &str) -> Option<String> {
+    let mut lines = text.lines();
+    lines.find(|l| l.trim_end().eq_ignore_ascii_case(heading))?;
+    let body: Vec<&str> = lines.take_while(|l| !l.trim_start().starts_with('#')).collect();
+    let body = body.join("\n").trim().to_string();
+    (!body.is_empty()).then_some(body)
+}
+
+/// The title and body of a design's pilgrimage bead: its Intent and its User path, and the
+/// acceptance of a clean walk. A design without a User path is refused, since the walk is built from it.
+pub fn pilgrimage_spec(design: &str) -> Result<(String, String), String> {
+    let name = design
+        .lines()
+        .find_map(|l| l.strip_prefix("# "))
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .ok_or("the design has no `# ` title")?;
+    let intent = section(design, INTENT_HEADING).ok_or_else(|| format!("the design has no `{INTENT_HEADING}` section"))?;
+    let path = section(design, USER_PATH_HEADING).ok_or_else(|| {
+        format!("the design has no `{USER_PATH_HEADING}` section: the steps a customer takes, which the pilgrimage walks")
+    })?;
+    let body = format!(
+        "{INTENT_HEADING}\n\n{intent}\n\n{USER_PATH_HEADING}\n\n{path}\n\n## Acceptance\n\nA clean walk: every step of the user path done as written, with no defect filed.\n"
+    );
+    Ok((format!("Pilgrimage: {name}"), body))
+}
+
 /// Whether a bead carrying `labels` is builder work: every `builder_labels` token is present.
 pub fn is_builder_bead(labels: &[String], builder_labels: &[String]) -> bool {
     !builder_labels.is_empty() && builder_labels.iter().all(|b| labels.iter().any(|l| l == b))
@@ -502,6 +534,27 @@ pub fn repos_section(repos: &BTreeMap<String, RepoSection>) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    const DESIGN: &str = "# Agent tools\n\n## Intent\n\nLet an agent save a card.\n\n## User path\n\n1. Sign in.\n2. Save a card.\n\n## Test strategy\n\nfoo\n";
+
+    #[test]
+    fn pilgrimage_spec_carries_intent_and_user_path() {
+        let (title, body) = pilgrimage_spec(DESIGN).unwrap();
+        assert_eq!(title, "Pilgrimage: Agent tools");
+        assert!(body.contains("Let an agent save a card."));
+        assert!(body.contains("2. Save a card."));
+        assert!(body.contains("A clean walk"));
+        assert!(!body.contains("foo"));
+    }
+
+    #[test]
+    fn pilgrimage_spec_refuses_a_design_without_a_user_path() {
+        let planted = DESIGN.replace("## User path", "## Walkthrough");
+        let err = pilgrimage_spec(&planted).unwrap_err();
+        assert!(err.contains("User path"), "{err}");
+        let empty = DESIGN.replace("1. Sign in.\n2. Save a card.\n", "");
+        assert!(pilgrimage_spec(&empty).is_err());
+    }
     use super::*;
 
     // -- repositories (spira-config's own converter — see DESIGN.md "Decisions") --------

@@ -170,6 +170,9 @@ You work a design out with him, then decompose it into beads and let the harness
 3. **File into Spira**, labelled `spira,plan` plus a `repo:<name>` naming the repository the
    work belongs to. A bead may name the persona it wants with `fayth:<name>` — it narrows,
    it never widens.
+   Every product design ends with its pilgrimage: after filing the build beads, run
+   `bead.sh pilgrimage <design-file> --repo <name> --after <build-id>...` naming every one.
+   It refuses a design with no **User path** section; the design gets one first.
 4. **Let the loop run.** The sentinel summons an aeon once work is ready — do not claim
    beads by hand and do not run one yourself; something not being picked up is a fact about
    the graph worth diagnosing, not a reason to step in.
