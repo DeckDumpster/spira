@@ -206,11 +206,12 @@ else
     fi
 fi
 
+_cdb="$(sed -n 's/.*"dolt_database"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$SPIRA_DB/.beads/metadata.json" 2>/dev/null | head -1)"
 if _cr="$(timeout 5 spira-lc content-rows --ids sp-ready-probe 2>&1)"; then
-    PASS "spira_lc can read bead content (content-rows)"
+    PASS "spira_lc can read bead content (content-rows, database ${_cdb:-unnamed})"
 elif printf '%s' "$_cr" | grep -qi 'denied'; then
     FAIL "spira_lc cannot read bead content — the sentinel can never see ready work" \
-         "grant SELECT on the content database's issues, labels, dependencies: re-run spira-lc admin-migrate as the Dolt admin ($(printf '%s' "$_cr" | head -1))"
+         "grant SELECT on the content database (${_cdb:-unnamed})'s issues, labels, dependencies: re-run spira-lc admin-migrate as the Dolt admin ($(printf '%s' "$_cr" | head -1))"
 else
     UNKN "bead content read — spira-lc content-rows failed" "$(printf '%s' "$_cr" | head -2)"
 fi
