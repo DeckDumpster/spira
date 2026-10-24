@@ -30,8 +30,8 @@ pub struct Mail;
 impl Concierge for Mail {
     fn ask(&self, id: &str, subject: &str, body: &str) -> Result<String, String> {
         let default = "Walk the same user path on the concierge tenant; if it is clean, tell the operator the feature is ready to use.";
-        let mut child = Command::new("mail")
-            .args(["send", "concierge", "--from", "Pilgrimage <pilgrimage@spira>", "--subject", subject, "--kind", "question", "--default", default, "--bead", id])
+        let mut child = Command::new("timeout")
+            .args(["5", "mail", "send", "concierge", "--from", "Pilgrimage <pilgrimage@spira>", "--subject", subject, "--kind", "question", "--default", default, "--bead", id])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
