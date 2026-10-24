@@ -2222,6 +2222,10 @@ fn eject(
     rebuild: bool,
 ) -> i32 {
     let label = "round eject";
+    if red && !harness_fault && suites.trim().is_empty() {
+        w.err(format!("queue.sh {label}: --red names no failing check — pass --suites <csv> naming the suite or step that failed, so the resubmit can be held to proving it"));
+        return USAGE;
+    }
     let reason = match read_text(w, reason) {
         Ok(r) if !r.trim().is_empty() => r,
         Ok(_) => {
