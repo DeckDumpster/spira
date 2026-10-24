@@ -737,7 +737,12 @@ fn require_roster_covers_lanes(root: &toml::Value) -> Result<(), String> {
         Some(toml::Value::String(s)) => s.split_whitespace().collect(),
         _ => Vec::new(),
     };
-    if let Some(l) = lanes.iter().find(|l| !roster.contains(l)) {
+    let persona_lane = |l: &str| {
+        roster.iter().any(|p| {
+            root.get("persona").and_then(|v| v.get(*p)).and_then(|v| v.get("lane")).and_then(|v| v.as_str()) == Some(l)
+        })
+    };
+    if let Some(l) = lanes.iter().find(|l| !roster.contains(l) && !persona_lane(l)) {
         return Err(format!(
             "spira.lanes declares {l:?} but spira.fayths does not roster it — nothing can claim that lane's beads; add {l:?} to spira.fayths or drop it from spira.lanes"
         ));
