@@ -140,10 +140,12 @@ pub enum Step {
     Schema(PathBuf),
     Migrations(PathBuf),
     Grants,
+    ContentGrants(PathBuf),
 }
 
 /// The phase's steps for a `lifecycle/` directory: schema, then migrations, then grants
-/// (grants name tables, so they come after every table and column exists).
+/// (grants name tables, so they come after every table and column exists), then admin-migrate
+/// again: the service user exists only once grants.sql has run, and its content grants need it.
 pub fn steps(lifecycle_dir: &Path) -> Result<Vec<Step>, String> {
     let schema = lifecycle_dir.join("schema.sql");
     let migrations = lifecycle_dir.join("migrations");
@@ -156,7 +158,7 @@ pub fn steps(lifecycle_dir: &Path) -> Result<Vec<Step>, String> {
     if !migrations.is_dir() {
         return Err(format!("{} is missing — cannot build the lifecycle store", migrations.display()));
     }
-    Ok(vec![Step::Schema(schema), Step::Migrations(migrations), Step::Grants])
+    Ok(vec![Step::Schema(schema), Step::Migrations(migrations.clone()), Step::Grants, Step::ContentGrants(migrations)])
 }
 
 /// A fresh random credential: 32 bytes of the OS generator, base64 without padding — the
@@ -658,6 +660,7 @@ pub fn apply(
         let (label, args, grants_file) = match &step {
             Step::Schema(p) => ("schema.sql", vec!["admin-apply-ddl".to_string(), p.to_string_lossy().to_string()], None),
             Step::Migrations(p) => ("migrations", vec!["admin-migrate".to_string(), p.to_string_lossy().to_string()], None),
+            Step::ContentGrants(p) => ("content grants", vec!["admin-migrate".to_string(), p.to_string_lossy().to_string()], None),
             Step::Grants => {
                 let g = dir.write("grants.sql", &substituted)?;
                 ("grants.sql", vec!["admin-apply-ddl".to_string(), g.to_string_lossy().to_string()], Some(g))
@@ -866,11 +869,12 @@ mod tests {
             (0, format!("note: near 'IDENTIFIED BY '{RW}''"))
         })
         .unwrap();
-        assert_eq!(calls.len(), 3);
+        assert_eq!(calls.len(), 4);
         assert_eq!(calls[0], ["admin-apply-ddl".to_string(), dir.join("schema.sql").to_string_lossy().to_string()]);
         assert_eq!(calls[1], ["admin-migrate".to_string(), dir.join("migrations").to_string_lossy().to_string()]);
         assert_eq!(calls[2][0], "admin-apply-ddl");
         assert!(calls[2][1].starts_with(tmp.to_str().unwrap()), "grants come from the private dir, never lifecycle/grants.sql itself");
+        assert_eq!(calls[3], calls[1], "admin-migrate runs again after grants.sql creates the service user");
         assert!(!lines.iter().any(|l| l.contains(RW)), "{lines:?}");
         assert_eq!(std::fs::read_dir(&tmp).unwrap().count(), 0, "the private dir is removed");
         assert!(!std::fs::read_to_string(dir.join("grants.sql")).unwrap().contains(RW), "the shipped template is never rewritten");
