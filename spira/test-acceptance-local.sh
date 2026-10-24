@@ -127,10 +127,12 @@ rm -f "$FT/.stub-rc" "$FT/.stub-args"
 printf '0\n' > "$FT/.stub-rc"
 FORENSICS_PASS="$SCRATCH/forensics-pass"
 _rc=0
-SPIRA_ACCEPTANCE_LOCAL_NAME="$CNAME" \
+SPIRA_ACCEPTANCE_LOCAL_NAME="$CNAME" SPIRA_ACCEPTANCE_LOCAL_KEEP="$SCRATCH/keep-pass" \
     SPIRA_ACCEPTANCE_LOCAL_FORENSICS="$FORENSICS_PASS" \
     bash "$SCRIPT" "$FT" >"$SCRATCH/pass.out" 2>&1 || _rc=$?
 wantrc "stub PASS -> acceptance-local.sh exits 0" "0" "$_rc"
+is "a passing run keeps its tarball as the next default predecessor" \
+    "spira-fake.tar.gz" "$(ls "$SCRATCH/keep-pass" 2>/dev/null)"
 [ -d "$FORENSICS_PASS" ] \
     && bad "PASS: forensics not copied" "$FORENSICS_PASS exists" \
     || ok "PASS: forensics not copied"
@@ -144,12 +146,15 @@ rm -f "$FT/.stub-rc" "$FT/.stub-args"
 printf '1\n' > "$FT/.stub-rc"
 FORENSICS_FAIL="$SCRATCH/forensics-fail"
 _rc=0
-SPIRA_ACCEPTANCE_LOCAL_NAME="$CNAME" \
+SPIRA_ACCEPTANCE_LOCAL_NAME="$CNAME" SPIRA_ACCEPTANCE_LOCAL_KEEP="$SCRATCH/keep-fail" \
     SPIRA_ACCEPTANCE_LOCAL_FORENSICS="$FORENSICS_FAIL" \
     bash "$SCRIPT" "$FT" >"$SCRATCH/fail.out" 2>&1 || _rc=$?
 wantrc "stub FAIL -> acceptance-local.sh exits 1" "1" "$_rc"
 is "FAIL: forensics copied out with the real marker (not an empty dir)" \
     "stub forensics" "$(cat "$FORENSICS_FAIL/marker.txt" 2>/dev/null || true)"
+[ -e "$SCRATCH/keep-fail" ] \
+    && bad "a failing run keeps nothing" "$SCRATCH/keep-fail exists" \
+    || ok "a failing run keeps nothing"
 
 # ===========================================================================
 echo
@@ -202,6 +207,33 @@ want "stub received --aged-tag" "--aged-tag spira-release-spira-20990102T000000Z
 want "stub received --aged-tarball in the container" "--aged-tarball /tmp/aged-spira-20990102T000000Z.tar.gz" "$_stub_args"
 bash "$SCRIPT" "$FT" --aged-base spira-release-spira-20990102T000000Z >/dev/null 2>&1
 wantrc "--aged-base without --predecessor -> exit 2" "2" "$?"
+
+# ===========================================================================
+echo
+echo "6c. default predecessor: the newest kept tarball; --no-upgrade opts out"
+# ===========================================================================
+KEEP="$SCRATCH/keep-default"; mkdir -p "$KEEP"
+printf 'old\n' > "$KEEP/spira-20990101T000000Z.tar.gz"
+printf 'newer\n' > "$KEEP/spira-20990103T000000Z.tar.gz"
+rm -f "$FT/.stub-rc" "$FT/.stub-args"; printf '0\n' > "$FT/.stub-rc"
+SPIRA_ACCEPTANCE_LOCAL_NAME="$CNAME" SPIRA_ACCEPTANCE_LOCAL_KEEP="$KEEP" \
+    SPIRA_ACCEPTANCE_LOCAL_FORENSICS="$SCRATCH/forensics-default" \
+    bash "$SCRIPT" "$FT" >"$SCRATCH/default.out" 2>&1
+_stub_args="$(cat "$FT/.stub-args" 2>/dev/null || true)"
+want "no --predecessor: the newest kept tarball is the predecessor" \
+    "--prev-tag spira-release-spira-20990103T000000Z" "$_stub_args"
+want "its tarball is passed in" "--prev-tarball /tmp/spira-20990103T000000Z.tar.gz" "$_stub_args"
+nowant "no waiver by default" "--waive-upgrade" "$_stub_args"
+
+rm -f "$FT/.stub-args"
+SPIRA_ACCEPTANCE_LOCAL_NAME="$CNAME" SPIRA_ACCEPTANCE_LOCAL_KEEP="$KEEP" \
+    SPIRA_ACCEPTANCE_LOCAL_FORENSICS="$SCRATCH/forensics-noup" \
+    bash "$SCRIPT" "$FT" --no-upgrade >"$SCRATCH/noup.out" 2>&1
+_stub_args="$(cat "$FT/.stub-args" 2>/dev/null || true)"
+nowant "--no-upgrade: no predecessor" "--prev-tag" "$_stub_args"
+want "--no-upgrade: the run declares the waiver" "--waive-upgrade" "$_stub_args"
+bash "$SCRIPT" "$FT" --no-upgrade --predecessor spira-release-spira-20990101T000000Z >/dev/null 2>&1
+wantrc "--no-upgrade with --predecessor -> exit 2" "2" "$?"
 
 # ===========================================================================
 echo
