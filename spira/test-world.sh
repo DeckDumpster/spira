@@ -305,7 +305,7 @@ if [ -d "$HARNESS/systemd" ]; then
         || bad "summon_fayth carries the halt gate" "no world.halted check in sentinel/src/summon.rs"
     w="$HARNESS/spira-world/src/bin/world.rs"
     stamp=$(grep -n 'std::fs::write(plane_stamp' "$w" | head -1 | cut -d: -f1)
-    slay=$(grep -n 'Command::new("slay")' "$w" | head -1 | cut -d: -f1)
+    slay=$(grep -n 'release_env::tool("slay")' "$w" | head -1 | cut -d: -f1)
     stop=$(grep -n 'sysctl::run_ok(&\["stop", t\])' "$w" | head -1 | cut -d: -f1)
     [ -n "$stamp" ] && [ -n "$slay" ] && [ -n "$stop" ] && [ "$stamp" -lt "$stop" ] && [ "$stamp" -lt "$slay" ] \
         && ok "stop writes the halt stamp before stopping timers or slaying aeons" \
