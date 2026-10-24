@@ -258,7 +258,7 @@ fn crate_of(root: &Path, rel: &str) -> Option<String> {
     while dir.pop() {
         let manifest = dir.join("Cargo.toml");
         if let Ok(t) = std::fs::read_to_string(&manifest) {
-            if let Some(name) = t.parse::<toml::Table>().ok().and_then(|v| v.get("package")?.get("name")?.as_str().map(str::to_string)) {
+            if let Some(name) = spira_config::parse_foreign::<serde_json::Value>(&t).ok().and_then(|v| v.get("package")?.get("name")?.as_str().map(str::to_string)) {
                 return Some(name);
             }
         }

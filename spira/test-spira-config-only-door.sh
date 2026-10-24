@@ -19,9 +19,8 @@ echo "test-spira-config-only-door.sh"
 # format), never spira.toml.
 # `sim/src/actors.rs`, `sim/src/fit.rs` and `spira/sim/src/drive.rs` parse the simulator's own actors.toml,
 # durations.toml and scenario files, never spira.toml.
-# `habits/src/config.rs` parses a repo's own .spira/habits.toml, never spira.toml.
 # spira/deps.toml is read only through `spira_config::deps`; no other crate parses it.
-EXEMPT_TOML_FROM_STR="desired-state/src/store.rs reconciler-flow/src/io.rs spira-lint/src/rules/lockfile_lint.rs sim/src/actors.rs sim/src/fit.rs spira/sim/src/drive.rs habits/src/config.rs"
+EXEMPT_TOML_FROM_STR="desired-state/src/store.rs reconciler-flow/src/io.rs spira-lint/src/rules/lockfile_lint.rs sim/src/actors.rs sim/src/fit.rs spira/sim/src/drive.rs"
 
 # The lines of $1 before its first `#[cfg(test)]` module, with comment-only lines dropped —
 # production code only, so a doc comment describing the file (or a test fixture that must

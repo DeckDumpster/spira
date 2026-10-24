@@ -67,7 +67,7 @@ pub fn load(root: &Path) -> Result<Option<Config>, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e.to_string()),
     };
-    toml::from_str(&text).map(Some).map_err(|e| e.message().to_string())
+    spira_config::parse_foreign(&text).map(Some)
 }
 
 /// `run` split on whitespace, `{file}` and `{crate}` substituted; no shell is involved.
