@@ -76,6 +76,7 @@ members = [
     "spira/sim",
     "reclaim",
     "sift",
+    "pilgrimage",
     "refusal-watch",
     "kit-bump",
     "pilgrim-login",
