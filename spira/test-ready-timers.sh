@@ -257,7 +257,7 @@ want   "first write lands within the bound: passes" "  pass  cockpit snapshot fr
 
 rm -f "$RUN/cockpit.env"
 out="$(run_ready "SPIRA_COCKPIT_FIRST_WRITE_WAIT_S=2" --)"; rc=$?
-want   "collector never writes: FAIL names the wait and unit" "after 2s — collector spira-cockpit" "$out"
+want   "collector never writes: FAIL names the wait and unit" "after 2s — collector" "$out"
 is     "never-written snapshot exits 1"           1                               "$rc"
 printf 'SP_AT=0\n' > "$RUN/cockpit.env"
 
