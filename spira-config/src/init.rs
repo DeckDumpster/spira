@@ -549,4 +549,60 @@ mod tests {
         assert_eq!(default_out(&m(&[("HOME", "/h")])).unwrap(), PathBuf::from("/h/.config/spira/spira.toml"));
         assert_eq!(default_out(&m(&[("SPIRA_TOML", "/a:/b")])).unwrap(), PathBuf::from("/a:/b"));
     }
+
+    fn parsed_keys(text: &str) -> Vec<String> {
+        let mut keys = Vec::new();
+        let mut rest = text;
+        while let Some(i) = rest.find("cfg_parse") {
+            rest = &rest[i + "cfg_parse".len()..];
+            let call = match rest.strip_prefix("::<") {
+                Some(t) => t.split_once('>').map_or("", |(_, after)| after),
+                None => rest,
+            };
+            if let Some(body) = call.strip_prefix('(').map(str::trim_start).and_then(|t| t.strip_prefix('"')) {
+                let k = body.split('"').next().unwrap_or("");
+                if !k.is_empty() && k.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_') {
+                    keys.push(k.to_string());
+                }
+            }
+        }
+        keys
+    }
+
+    fn rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
+        for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let p = e.path();
+            let name = e.file_name().to_string_lossy().into_owned();
+            if p.is_dir() {
+                if name != "target" && !name.starts_with('.') {
+                    rust_sources(&p, out);
+                }
+            } else if p.extension().is_some_and(|x| x == "rs") {
+                out.push(p);
+            }
+        }
+    }
+
+    #[test]
+    fn a_fresh_config_parses_as_a_number_every_key_a_rust_reader_parses() {
+        assert_eq!(parsed_keys("cfg_parse::<u32>(\"SPIRA_X_1\") cfg_parse(\"SPIRA_Y\")"), ["SPIRA_X_1", "SPIRA_Y"]);
+
+        let mut files = Vec::new();
+        rust_sources(&Path::new(env!("CARGO_MANIFEST_DIR")).join(".."), &mut files);
+        let keys: std::collections::BTreeSet<String> =
+            files.iter().flat_map(|f| parsed_keys(&std::fs::read_to_string(f).unwrap_or_default())).collect();
+        assert!(keys.contains("SPIRA_BATCH_MEM_RESERVE_MIB"), "the scan found no readers in {} files", files.len());
+
+        let d = testkit::TempDir::new("spira-config-init-numeric");
+        let text = render(&full(), &d.path().join("spira.toml"), &reg()).unwrap();
+        let doc = crate::validate(&text).unwrap();
+        let bad: Vec<String> = keys
+            .iter()
+            .filter_map(|k| {
+                let got = crate::get_path(&doc, &key_path(k))?;
+                (got.trim().parse::<f64>().is_err()).then(|| format!("{k} = {got:?}"))
+            })
+            .collect();
+        assert!(bad.is_empty(), "keys a Rust reader parses, written unparseable in a fresh spira.toml: {bad:?}");
+    }
 }

@@ -1,9 +1,6 @@
 TYPE=string
 GROUP=batch
-DOC=SPIRA_BATCH_ORPHAN_MIN_AGE — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
+DOC=SPIRA_BATCH_ORPHAN_MIN_AGE — Seconds a batch container must have lived before it is reaped as an orphan.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # NO DEFAULT. This key carries no `:=`/`=` statement anywhere in
-    # spira_conf_defaults() today; it resolves to an empty string unless the
-    # environment or spira.toml sets it. Registered here only so the allowlist is
-    # generated from one source — conf-gen.sh contributes the name, nothing else.
+    : "${SPIRA_BATCH_ORPHAN_MIN_AGE:=3600}"
 SPIRA_CONF_DEFAULT_EOF
