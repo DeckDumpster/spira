@@ -451,3 +451,8 @@ fn a_config_delta_naming_one_key_twice_is_refused_naming_the_key() {
     let distinct = "[added]\n\"spira.one\" = 1\n\"spira.two\" = \"x\"\n";
     assert_eq!(spira_config::parse_config_delta(distinct).unwrap().0.len(), 2);
 }
+
+#[test]
+fn the_complete_fixture_roster_covers_its_lanes_and_timer_labels() {
+    spira_config::validate_strict(include_str!("fixtures/complete.toml")).expect("a roster that omits a lane's persona strands that lane's beads");
+}

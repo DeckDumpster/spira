@@ -136,6 +136,8 @@ fayths = [
     "maechen",
     "ops",
     "czar",
+    "warden",
+    "mender",
 ]
 flake_quarantine_at = "2"
 flake_window = "604800"
@@ -182,7 +184,7 @@ incident_priority = "3"
 instance = "prod"
 land_gate_reserve = "2700"
 land_maxsec = "5400"
-lanes = "ops groomer qa maechen czar warden mender"
+lanes = "ops groomer maechen czar warden mender"
 lanes_max_live = 2
 lc_live_check_secs = 60
 otel_keep_days = 14
@@ -560,6 +562,42 @@ system_prompt = "replace"
 
 [persona.maechen.lease]
 minutes = 70
+heartbeat_seconds = 30
+
+[persona.mender]
+model = "claude-opus-5-5"
+tools = [
+    "Bash",
+    "Read",
+    "Edit",
+    "Write",
+    "Glob",
+    "Grep",
+    "TodoWrite",
+]
+labels = ["mender-failure"]
+lane = "mender"
+system_prompt = "append"
+
+[persona.mender.lease]
+minutes = 10
+heartbeat_seconds = 15
+
+[persona.warden]
+model = "claude-sonnet-5-5"
+tools = [
+    "Bash",
+    "Read",
+    "Glob",
+    "Grep",
+    "TodoWrite",
+]
+labels = ["warden-sweep"]
+lane = "warden"
+system_prompt = "replace"
+
+[persona.warden.lease]
+minutes = 10
 heartbeat_seconds = 30
 
 [persona.ops]
