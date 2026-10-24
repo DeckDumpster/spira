@@ -76,8 +76,8 @@ fn mint(req: &Request, exec: impl FnOnce(&Request) -> Result<String, String>) ->
 
 fn ssh(req: &Request) -> Result<String, String> {
     let remote = format!("{} {} {}", req.command, req.account, req.ttl_secs);
-    let out = Command::new("ssh")
-        .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", &req.host, &remote])
+    let out = Command::new("timeout")
+        .args(["5", "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "--", &req.host, &remote])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()
@@ -124,7 +124,7 @@ mod tests {
         Request {
             fayth: "pilgrim".into(),
             bead: "sp-abc".into(),
-            account: "pilgrim@example.test".into(),
+            account: "acct-x".into(),
             ttl_secs: 600,
             host: "prod.example.test".into(),
             command: "mint-code".into(),
@@ -137,7 +137,7 @@ mod tests {
         let code = mint(&r, |_| Ok(format!("{CODE}\n"))).unwrap();
         assert_eq!(code, CODE);
         let l = line(&r.fayth, &r.bead, &r.account, r.ttl_secs, "ok");
-        assert!(l.contains("bead=sp-abc") && l.contains("account=pilgrim@example.test"));
+        assert!(l.contains("bead=sp-abc") && l.contains("account=acct-x"));
         assert!(!l.contains(CODE));
     }
 
@@ -146,7 +146,7 @@ mod tests {
         let r = req();
         let mut seen = String::new();
         mint(&r, |q| { seen = format!("{} {} {}", q.command, q.account, q.ttl_secs); Ok(CODE.into()) }).unwrap();
-        assert_eq!(seen, "mint-code pilgrim@example.test 600");
+        assert_eq!(seen, "mint-code acct-x 600");
     }
 
     #[test]
