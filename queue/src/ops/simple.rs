@@ -175,6 +175,10 @@ fn checks_proven(
     use spira_config::proof;
     let mut notes = Vec::new();
     for check in proof::unproven(run, id, tip) {
+        if super::round::ROUND_STEPS.contains(&check.as_str()) {
+            notes.push(format!("{check} has no green round recorded at {tip}; it passes only in a round that contains this tip"));
+            continue;
+        }
         let (rc, out) = w.scripts.suite_run(&check, tip, repo);
         if let Err(e) = proof::record_run(run, id, tip, &check, rc, &out) {
             w.err(format!(

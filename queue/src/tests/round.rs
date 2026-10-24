@@ -235,6 +235,7 @@ fn an_eject_forcing_a_suite_testenv_does_not_know_is_refused_naming_the_known_on
         1
     );
     let e = t.err();
+    assert!(e.contains("round steps: workspace-build unit-tests"), "{e}");
     assert!(
         e.contains("round-vm") && e.contains("does not know") && e.contains("test-b.sh"),
         "{e}"
@@ -3895,6 +3896,55 @@ fn a_resubmit_is_refused_naming_an_ejected_suite_that_does_not_pass_at_the_new_t
         T_FIX,
         "test-x.sh"
     ));
+}
+
+#[test]
+fn an_eject_red_on_unit_tests_records_the_step_as_the_requirement() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    seed_suite(&t, "test-b.sh");
+    assert_eq!(
+        t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "unit-tests"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(
+        t.lib.has("bead_reopen sp-b eject-red unit-tests"),
+        "{:?} {:?}",
+        t.lib.calls.borrow(),
+        t.lc.calls.borrow()
+    );
+}
+
+#[test]
+fn a_round_step_is_a_forceable_check_proven_only_by_a_recorded_pass_at_the_tip() {
+    let t = rework_world(&["manual"]);
+    spira_config::proof::record_failing(&proof_run(&t), "sp-a", &["unit-tests".to_string()])
+        .unwrap();
+    let tip_arg = format!("--tip={T_FIX}");
+    let args = [
+        "resubmit",
+        "sp-a",
+        &tip_arg,
+        "--by=concierge",
+        "--reason=hand-built fix",
+        "--evidence=cargo test 1/0",
+        &ev_tip(),
+    ];
+    assert_eq!(t.run(&args), 1);
+    assert!(
+        t.err().contains("unit-tests has no green round recorded"),
+        "{}",
+        t.err()
+    );
+    assert!(
+        !t.scripts.calls.borrow().iter().any(|c| c.starts_with("suite_run unit-tests")),
+        "a round step is never run as a suite"
+    );
+    spira_config::proof::record_run(&proof_run(&t), "sp-a", T_FIX, "unit-tests", 0, "ok").unwrap();
+    assert_eq!(t.run(&args), 0, "{}", t.err());
 }
 
 #[test]
