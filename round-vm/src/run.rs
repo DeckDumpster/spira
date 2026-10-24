@@ -376,6 +376,34 @@ unit_stream() {
             printf "round-vm: UNIT-TEST %s %s (%d/%d)\n", name, st, k, total > "/dev/stderr"; fflush("/dev/stderr")
             printf "%d %d%s\n", k, total, reds > prog; close(prog) }'
 }
+# A test libtest has flagged as running over its slow threshold is a hung test: the watcher
+# kills that test binary, so cargo fails the crate by name and the run moves on to the next.
+# stdin: a cargo log; prints "<test>\t<binary path>" per flagged test.
+unit_hang_scan() {
+    awk '/^ *Running / { bin = ""; if (match($0, /\(.*\)/)) bin = substr($0, RSTART + 1, RLENGTH - 2); next }
+         /^test .* has been running for over [0-9]+ seconds$/ { print $2 "\t" bin }'
+}
+unit_kill_binary() {
+    local want="${1##*/}" exe p
+    [ -n "$want" ] || return 0
+    for p in /proc/[0-9]*; do
+        exe="$(readlink "$p/exe" 2>/dev/null)" || continue
+        [ "${exe##*/}" = "$want" ] && kill -KILL "${p#/proc/}" 2>/dev/null
+    done
+    return 0
+}
+unit_hang_watch() {
+    local log="$1" report="$2" pid="$3" t b
+    while kill -0 "$pid" 2>/dev/null; do
+        sleep 2
+        while IFS=$'\t' read -r t b; do
+            grep -qxF -- "$t	$b" "$report" 2>/dev/null && continue
+            printf '%s\t%s\n' "$t" "$b" >> "$report"
+            echo "round-vm: UNIT-TESTS: HUNG test=$t binary=${b##*/} past libtest's slow threshold; the binary is killed so the run goes on" >&2
+            unit_kill_binary "$b"
+        done < <(unit_hang_scan < "$log")
+    done
+}
 # The round's one source of config: the tree's complete fixture, with this VM's own paths
 # declared over it. Nothing here is searched for or defaulted.
 mkdir -p "$HOME/round-work/.runtime/spira"
@@ -506,6 +534,10 @@ unit_cargo --no-fail-fast > ~/round-unit-tests.log 2>&1 &
 unit_pid=$!
 tail -n +1 -f --pid="$unit_pid" ~/round-unit-tests.log | unit_stream "$unit_total" "$unit_progress" &
 stream_pid=$!
+unit_hung="$HOME/round-unit-hung"
+: > "$unit_hung"
+unit_hang_watch ~/round-unit-tests.log "$unit_hung" "$unit_pid" &
+hang_pid=$!
 # THE CAP CLOCK runs from testenv's first suite to the bare lane's end: container setup, post-processing,
 # the unit-test wait and the pulls are outside it, each under its own guard. testenv's "running N
 # suite(s)" line is the start mark; one guard times the corpus and the bare lane from it.
@@ -586,11 +618,14 @@ if kill -0 "$unit_pid" 2>/dev/null; then echo "round-vm: UNIT-TESTS: waiting (su
 unit_deadline=$(( $(date +%s) + post_guard ))
 while kill -0 "$unit_pid" 2>/dev/null && [ "$(date +%s)" -lt "$unit_deadline" ]; do sleep 2; done
 if kill -0 "$unit_pid" 2>/dev/null; then
-    echo "round-vm: UNIT-TESTS: HUNG guard=unit-post elapsed=${post_guard}s past the ${post_guard}s guard after the cap clock stopped; killed" >&2
+    unit_running="$(awk '/^ *Running / { if (match($0, /\(.*\)/)) b = substr($0, RSTART + 1, RLENGTH - 2); else b = $0 } END { sub(/.*\//, "", b); print b }' ~/round-unit-tests.log)"
+    echo "round-vm: UNIT-TESTS: HUNG guard=unit-post elapsed=${post_guard}s past the ${post_guard}s guard after the cap clock stopped; binary=${unit_running:-none-started}; killed" | tee -a "$unit_hung" >&2
     pkill -TERM -P "$unit_pid" 2>/dev/null; kill "$unit_pid" 2>/dev/null
 fi
 wait "$unit_pid"; unit_rc=$?
 wait "$stream_pid"
+kill "$hang_pid" 2>/dev/null; wait "$hang_pid" 2>/dev/null
+[ ! -s "$unit_hung" ] || [ "$unit_rc" -ne 0 ] || unit_rc=1
 if [ "$lint_rc" -ne 0 ]; then
     rdir="$HOME/round-work/.runtime/spira/batch-results"
     leaf="$(find "$rdir" -name '*.result' -printf '%h\n' 2>/dev/null | head -1)"
@@ -622,6 +657,7 @@ else
     mkdir -p "$leaf"
     grep -E -A8 '^(test .* FAILED|---- |error(\[|:))|panicked at|^test result:' ~/round-unit-tests.log | head -400 > "$leaf/unit-tests.out"
     [ -s "$leaf/unit-tests.out" ] || tail -200 ~/round-unit-tests.log > "$leaf/unit-tests.out"
+    [ ! -s "$unit_hung" ] || { echo "round-vm: UNIT-TESTS: HUNG (test<TAB>binary):"; cat "$unit_hung"; } >> "$leaf/unit-tests.out"
     [ "$rc" -eq 0 ] && rc=1
 fi
 suites_secs=$suites_clock
@@ -2346,6 +2382,54 @@ mod tests {
         let lines: Vec<&str> = err.lines().collect();
         assert_eq!(lines, ["round-vm: UNIT-TEST alpha ok (1/3)", "round-vm: UNIT-TEST it FAILED (2/3)", "round-vm: UNIT-TEST doc-tests beta ok (3/3)"], "{err}");
         assert_eq!(fs::read_to_string(d.path().join("prog")).unwrap().trim(), "3 3 it");
+    }
+
+    fn unit_fns() -> String {
+        let a = REMOTE_SCRIPT.find("unit_hang_scan() {").unwrap();
+        let b = REMOTE_SCRIPT.find("# The round's one source of config").unwrap();
+        REMOTE_SCRIPT[a..b].to_string()
+    }
+
+    #[test]
+    fn a_unit_test_libtest_flags_as_slow_is_named_with_its_binary() {
+        let d = TempDir::new();
+        let log = "   Running unittests src/lib.rs (target/unittest/deps/alpha-0123abcd)\nrunning 2 tests\ntest a::quick ... ok\n\
+                   test a::sleeps_forever has been running for over 60 seconds\n";
+        let quiet = "   Running unittests src/lib.rs (target/unittest/deps/alpha-0123abcd)\ntest a::quick ... ok\n";
+        fs::write(d.path().join("hung.log"), log).unwrap();
+        fs::write(d.path().join("quiet.log"), quiet).unwrap();
+        let run = |f: &str| {
+            let script = format!("{}\nunit_hang_scan < {f}", unit_fns());
+            let o = std::process::Command::new("bash").arg("-c").arg(&script).current_dir(d.path()).output().unwrap();
+            String::from_utf8_lossy(&o.stdout).to_string()
+        };
+        assert_eq!(run("hung.log"), "a::sleeps_forever\ttarget/unittest/deps/alpha-0123abcd\n");
+        assert_eq!(run("quiet.log"), "", "a log with no slow test names nothing");
+    }
+
+    #[test]
+    fn the_watcher_kills_a_hung_test_binary_and_reports_it_while_the_job_runs() {
+        let d = TempDir::new();
+        fs::write(d.path().join("cargo.log"), "   Running unittests src/lib.rs (target/unittest/deps/sleepy-feedbeef)\ntest t::hangs has been running for over 60 seconds\n").unwrap();
+        let script = format!(
+            "{}\ncp /bin/bash sleepy-feedbeef\n./sleepy-feedbeef -c 'read -t 300 && :' </dev/zero &\njob=$!\nunit_hang_watch cargo.log hung \"$job\" &\nw=$!\nwait \"$job\"; echo job-rc=$?\nkill $w 2>/dev/null; cat hung",
+            unit_fns()
+        );
+        let o = std::process::Command::new("bash").arg("-c").arg(&script).current_dir(d.path()).output().unwrap();
+        let out = String::from_utf8_lossy(&o.stdout);
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert!(out.contains("job-rc=137"), "{out}{err}");
+        assert!(out.contains("t::hangs\ttarget/unittest/deps/sleepy-feedbeef"), "{out}");
+        assert!(err.contains("UNIT-TESTS: HUNG test=t::hangs binary=sleepy-feedbeef"), "{err}");
+    }
+
+    #[test]
+    fn the_unit_run_is_watched_for_hung_tests_and_a_hang_makes_the_round_red() {
+        let run = REMOTE_SCRIPT.find("unit_cargo --no-fail-fast").unwrap();
+        let watch = REMOTE_SCRIPT.find("unit_hang_watch ~/round-unit-tests.log").unwrap();
+        assert!(run < watch);
+        assert!(REMOTE_SCRIPT.contains("[ ! -s \"$unit_hung\" ] || [ \"$unit_rc\" -ne 0 ] || unit_rc=1"));
+        assert!(REMOTE_SCRIPT.contains("binary=${unit_running:-none-started}; killed"), "the post-guard kill names the binary running");
     }
 
     fn lint_segments() -> (String, String) {
