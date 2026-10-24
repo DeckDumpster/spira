@@ -82,13 +82,13 @@ echo "test-bead-pilgrimage.sh"
 : > "$BD_LOG"
 builds=()
 for n in one two three; do
-    id="$(bead_sh file "build $n" --for builder --repo testrepo --body-file /dev/null)"
+    id="$(bead_sh file "build $n" --for builder --repo testrepo --body-file /dev/null 2>/dev/null)"
     builds+=("$id")
 done
 is "N build beads filed" "3" "${#builds[@]}"
 
 args=(); for b in "${builds[@]}"; do args+=(--after "$b"); done
-pid="$(bead_sh pilgrimage "$T/design.md" --repo testrepo "${args[@]}")"; rc=$?
+pid="$(bead_sh pilgrimage "$T/design.md" --repo testrepo "${args[@]}" 2>/dev/null)"; rc=$?
 is   "pilgrimage exits 0" "0" "$rc"
 is   "the pilgrimage is the N+1th bead (got: $pid)" "sp-n4" "$pid"
 creates="$(grep -c '^create' "$BD_LOG")"
@@ -101,12 +101,12 @@ done
 is   "no other edge is wired" "3" "$(grep -c '^dep add' "$BD_LOG")"
 
 : > "$BD_LOG"
-out="$(bead_sh pilgrimage "$T/no-path.md" --repo testrepo "${args[@]}")"; rc=$?
+out="$(bead_sh pilgrimage "$T/no-path.md" --repo testrepo "${args[@]}" 2>&1)"; rc=$?
 is   "a design with no User path is refused" "2" "$rc"
 want "the refusal names the missing section" "User path" "$out"
 is   "nothing is filed for it" "0" "$(grep -c . "$BD_LOG")"
 
-out="$(bead_sh pilgrimage "$T/design.md" --repo testrepo)"; rc=$?
+out="$(bead_sh pilgrimage "$T/design.md" --repo testrepo 2>&1)"; rc=$?
 is   "a pilgrimage with no build bead is refused" "2" "$rc"
 is   "nothing is filed without a build bead" "0" "$(grep -c . "$BD_LOG")"
 
