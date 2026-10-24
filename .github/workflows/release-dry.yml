@@ -8,6 +8,8 @@ on:
     paths:
       - '.github/workflows/release.yml'
       - '.github/workflows/release-dry.yml'
+      - '.github/actions/release-toolchain/**'
+      - '.github/workflows/acceptance-daily.yml'
       - 'spira/build-aerc.sh'
       - 'spira/build-tarball.sh'
       - 'flake.nix'
@@ -22,18 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Read pinned toolchain
-        id: toolchain
-        run: |
-          v=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
-          [ -n "$v" ] || { printf 'rust-toolchain.toml has no channel\n' >&2; exit 1; }
-          printf 'version=%s\n' "$v" >> "$GITHUB_OUTPUT"
-
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ steps.toolchain.outputs.version }}
-
-      - uses: cachix/install-nix-action@v31
+      - uses: ./.github/actions/release-toolchain
 
       - name: Build
         run: make build
