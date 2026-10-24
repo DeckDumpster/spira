@@ -718,7 +718,7 @@ fn require_roster_declares_models(root: &toml::Value) -> Result<(), String> {
     Ok(())
 }
 
-const TIMER_PARTITION_PERSONAS: &[&str] = &["groomer", "maechen", "czar", "warden", "mender"];
+const TIMER_PARTITION_PERSONAS: &[&str] = &["groomer", "maechen", "czar", "warden", "mender", "pilgrim"];
 
 /// A declared lane, or a timer-filed partition label, whose persona is not in an explicit
 /// `spira.fayths` roster is work nothing can claim: refused, naming both keys.

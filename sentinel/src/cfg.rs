@@ -273,7 +273,7 @@ impl Declared {
             lanes_max_live: None,
             queue_throttle_override: String::new(),
             summon_lock_wait: 30,
-            lanes: "ops groomer qa maechen czar warden mender".into(),
+            lanes: "ops groomer qa maechen czar warden mender pilgrimage".into(),
             repo_map: String::new(),
             gh: String::new(),
             batch_maxpar: String::new(),
@@ -603,7 +603,7 @@ pub mod tests {
         let k = Cfg::from_context(&c, Path::new("/h"), Declared::test_default());
         assert_eq!(k.land_maxsec, "5400");
         assert_eq!(k.plan_labels(), vec!["plan"]);
-        assert_eq!(k.lanes_declared, "ops groomer qa maechen czar warden mender");
+        assert_eq!(k.lanes_declared, "ops groomer qa maechen czar warden mender pilgrimage");
         assert_eq!(k.reclaim_grace, 10800);
         assert_eq!(k.summon_lock_wait, 30);
         assert_eq!((k.max_aeons, k.max_live_aeons, k.lanes_max_live), (None, None, None));

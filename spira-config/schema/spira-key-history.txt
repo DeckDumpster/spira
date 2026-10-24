@@ -193,6 +193,7 @@ operator_actor
 overrides
 panel
 path
+pilgrim_label
 plan_label
 prefix_map
 preflight_suite_max_secs

@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=pilgrim
+DOC=THE PILGRIM PARTITION LABEL — the label on the pilgrimage bead that summons a pilgrim.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE PILGRIM PARTITION LABEL — the label on the pilgrimage bead that summons a pilgrim.
+    # Read by pilgrim.fayth's predicate and by whatever files the pilgrimage, so the two agree
+    # (law-schema-over-code). Disjoint from the plan label: a pilgrim must never claim plan work.
+    : "${SPIRA_PILGRIM_LABEL:=pilgrimage}"
+SPIRA_CONF_DEFAULT_EOF

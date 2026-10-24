@@ -17,5 +17,6 @@ DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # reading SPIRA_LANES for the list of scheduled partitions.
     # The warden lane is declared because warden.fayth ships using it.
     # The mender lane is declared because mender.fayth ships using it.
-    : "${SPIRA_LANES:=ops groomer qa maechen czar warden mender}"
+    # The pilgrimage lane is declared because pilgrim.fayth ships using it.
+    : "${SPIRA_LANES:=ops groomer qa maechen czar warden mender pilgrimage}"
 SPIRA_CONF_DEFAULT_EOF
