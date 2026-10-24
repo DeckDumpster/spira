@@ -140,6 +140,9 @@ fn sccache_help_has_webdav(help: &str) -> bool {
 /// passed earlier the same day. Building once, on the release-build machine, and shipping
 /// the binary removes the fragility without touching the law: install still provides aerc,
 /// it just never has to build it.
+/// Deadline for a tool's first run on a cold machine, in seconds as `timeout` takes them.
+const FIRST_RUN_SECS: &str = "120";
+
 const AERC_VERSION: &str = "0.22.0";
 
 /// Where the release build (`spira/build-tarball.sh`) ships the aerc binary it built once,
@@ -269,36 +272,71 @@ fn build_spira_env(dry: bool, home: &str, release_root: Option<&Path>) -> Result
     Ok(())
 }
 
-fn bd_metrics_state() -> Option<bool> {
-    let o = Command::new("timeout").args(["5", "bd", "metrics", "status"]).output().ok()?;
-    let text = String::from_utf8_lossy(&o.stdout);
-    let line = text.lines().find(|l| l.starts_with("Anonymous usage metrics:"))?;
-    Some(line.trim_end().ends_with("ON"))
+fn bd_config_path() -> Option<PathBuf> {
+    match std::env::var("XDG_CONFIG_HOME") {
+        Ok(x) if !x.is_empty() => Some(Path::new(&x).join("bd/config.yaml")),
+        _ => std::env::var("HOME").ok().map(|h| Path::new(&h).join(".config/bd/config.yaml")),
+    }
 }
 
-fn bd_metrics_off(dry: bool) -> Result<(), String> {
-    match bd_metrics_state() {
-        None => {
-            eprintln!("install: cannot read bd metrics status — run: bd metrics off");
-            Ok(())
+fn indent_of(line: &str) -> usize {
+    line.len() - line.trim_start().len()
+}
+
+/// `text` with `metrics.disabled: true` set, or `None` when it already is. Only the
+/// `metrics:` block is touched; every other line is kept as written.
+fn with_bd_metrics_disabled(text: &str) -> Option<String> {
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let Some(head) = lines.iter().position(|l| l.trim_end() == "metrics:") else {
+        lines.push("metrics:".into());
+        lines.push("    disabled: true".into());
+        return Some(lines.join("\n") + "\n");
+    };
+    let mut child = None;
+    for (i, l) in lines.iter().enumerate().skip(head + 1) {
+        if l.trim().is_empty() || l.trim_start().starts_with('#') {
+            continue;
         }
-        Some(false) => {
-            skip("bd metrics already OFF");
-            Ok(())
+        if indent_of(l) == 0 {
+            break;
         }
-        Some(true) if dry => {
-            would("run: bd metrics off");
-            Ok(())
-        }
-        Some(true) => {
-            run_ok("timeout", &["5", "bd", "metrics", "off"]).map_err(|e| format!("cannot turn bd metrics off: {e}"))?;
-            if bd_metrics_state() != Some(false) {
-                return Err("bd metrics status still shows ON after `bd metrics off`".into());
-            }
-            info("set bd metrics OFF (bd metrics off)");
-            Ok(())
+        if l.trim_start().starts_with("disabled:") {
+            child = Some(i);
+            break;
         }
     }
+    match child {
+        Some(i) if lines[i].trim() == "disabled: true" => return None,
+        Some(i) => lines[i] = format!("{}disabled: true", " ".repeat(indent_of(&lines[i]))),
+        None => lines.insert(head + 1, "    disabled: true".into()),
+    }
+    Some(lines.join("\n") + "\n")
+}
+
+/// bd keeps the flag as `metrics.disabled` in its user config; writing it directly means
+/// install never waits on a first `bd` invocation.
+fn bd_metrics_off(dry: bool) -> Result<(), String> {
+    let path = bd_config_path().ok_or("cannot find bd's config: neither XDG_CONFIG_HOME nor HOME is set")?;
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("read {}: {e}", path.display())),
+    };
+    let Some(new) = with_bd_metrics_disabled(&text) else {
+        skip("bd metrics already OFF");
+        return Ok(());
+    };
+    if dry {
+        would(&format!("set metrics.disabled true in {}", path.display()));
+        return Ok(());
+    }
+    let dir = path.parent().ok_or("no parent directory")?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    let tmp = dir.join(".config.yaml.new");
+    std::fs::write(&tmp, new).map_err(|e| format!("write {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("install {}: {e}", path.display()))?;
+    info(&format!("set bd metrics OFF ({})", path.display()));
+    Ok(())
 }
 
 fn render_sendmail_wrapper(releases: &str, toml: &str) -> String {
@@ -373,7 +411,7 @@ fn install_sendmail(dry: bool, home: &str, bin: &Path) -> Result<(), String> {
 
 /// Fetch duckdb into ~/.local/bin when no duckdb is on PATH.
 fn fetch_duckdb(dry: bool, bin: &Path) -> Result<(), String> {
-    let have_duckdb = Command::new("timeout").args(["5", "duckdb", "--version"]).output().map(|o| o.status.success()).unwrap_or(false);
+    let have_duckdb = Command::new("timeout").args([FIRST_RUN_SECS, "duckdb", "--version"]).output().map(|o| o.status.success()).unwrap_or(false);
     if have_duckdb {
         skip("duckdb on PATH");
         return Ok(());
@@ -408,7 +446,7 @@ fn fetch_duckdb(dry: bool, bin: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("chmod duckdb: {e}"))?;
     std::fs::rename(&tmp, &dest).map_err(|e| format!("cannot install {}: {e}", dest.display()))?;
-    let ok = Command::new("timeout").args(["5", dest.to_str().unwrap_or("duckdb"), "--version"]).output().map(|o| o.status.success()).unwrap_or(false);
+    let ok = Command::new("timeout").args([FIRST_RUN_SECS, dest.to_str().unwrap_or("duckdb"), "--version"]).output().map(|o| o.status.success()).unwrap_or(false);
     if !ok {
         return Err(format!("installed {} does not run", dest.display()));
     }
@@ -425,7 +463,7 @@ fn fetch_duckdb(dry: bool, bin: &Path) -> Result<(), String> {
 /// binary instead, which already carries the feature (see SCCACHE_VERSION's comment).
 fn fetch_sccache(dry: bool, bin: &Path) -> Result<(), String> {
     let current_help = Command::new("timeout")
-        .args(["5", "sccache", "--help"])
+        .args([FIRST_RUN_SECS, "sccache", "--help"])
         .output()
         .ok()
         .filter(|o| o.status.success())
@@ -461,7 +499,7 @@ fn fetch_sccache(dry: bool, bin: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("chmod sccache: {e}"))?;
     std::fs::rename(&tmp, &dest).map_err(|e| format!("cannot install {}: {e}", dest.display()))?;
-    let help = Command::new("timeout").args(["5", dest.to_str().unwrap_or("sccache"), "--help"]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    let help = Command::new("timeout").args([FIRST_RUN_SECS, dest.to_str().unwrap_or("sccache"), "--help"]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
     if !sccache_help_has_webdav(&help) {
         return Err(format!("installed {} does not report the webdav backend", dest.display()));
     }
@@ -505,7 +543,7 @@ fn fetch_inotifywait(dry: bool, bin: &Path) -> Result<(), String> {
     std::fs::rename(&tmp, &dest).map_err(|e| format!("cannot install {}: {e}", dest.display()))?;
     // inotifywait --help exits 1 by design (inotify-tools' own release check relies on this
     // too); its first line names the binary, which is all that is worth asserting here.
-    let help = Command::new("timeout").args(["5", dest.to_str().unwrap_or("inotifywait"), "--help"]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    let help = Command::new("timeout").args([FIRST_RUN_SECS, dest.to_str().unwrap_or("inotifywait"), "--help"]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
     if !help.contains("inotifywait") {
         return Err(format!("installed {} does not run", dest.display()));
     }
@@ -532,7 +570,7 @@ fn fetch_inotifywait(dry: bool, bin: &Path) -> Result<(), String> {
 fn install_aerc(dry: bool, bin: &Path, release_root: Option<&Path>) -> Result<(), String> {
     let dest = bin.join("aerc");
     let current = Command::new("timeout")
-        .args(["5", dest.to_str().unwrap_or("aerc"), "-v"])
+        .args([FIRST_RUN_SECS, dest.to_str().unwrap_or("aerc"), "-v"])
         .output()
         .ok()
         .filter(|o| o.status.success())
@@ -575,7 +613,7 @@ fn install_aerc(dry: bool, bin: &Path, release_root: Option<&Path>) -> Result<()
     std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("chmod aerc: {e}"))?;
     std::fs::rename(&tmp, &dest).map_err(|e| format!("cannot install {}: {e}", dest.display()))?;
     let verify = Command::new("timeout")
-        .args(["5", dest.to_str().unwrap_or("aerc"), "-v"])
+        .args([FIRST_RUN_SECS, dest.to_str().unwrap_or("aerc"), "-v"])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_default();
@@ -899,7 +937,7 @@ fn run_main() -> ExitCode {
         // to run at all). This ALSO proves the post-init skip check keeps -C — only the
         // fresh-init call below lost it.
         let bead_count = Command::new("timeout")
-            .args(["5", "bd", "-C", &db, "list", "--limit", "0", "--json"])
+            .args([FIRST_RUN_SECS, "bd", "-C", &db, "list", "--limit", "0", "--json"])
             .output()
             .ok()
             .and_then(|o| o.status.success().then(|| o.stdout))
@@ -1006,12 +1044,12 @@ fn run_main() -> ExitCode {
         }
     }
 
-    let metrics_off = spira_config::bounded::bounded("dolt").args(["config", "--global", "--get", "metrics.disabled"]).output().map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "true").unwrap_or(false);
+    let metrics_off = spira_config::bounded::bounded_for("dolt", FIRST_RUN_SECS).args(["config", "--global", "--get", "metrics.disabled"]).output().map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "true").unwrap_or(false);
     if metrics_off {
         skip("dolt metrics.disabled already true");
     } else if opts.dry {
         would("run: dolt config --global --add metrics.disabled true");
-    } else if spira_config::bounded::bounded("dolt").args(["config", "--global", "--add", "metrics.disabled", "true"]).status().map(|s| s.success()).unwrap_or(false) {
+    } else if spira_config::bounded::bounded_for("dolt", FIRST_RUN_SECS).args(["config", "--global", "--add", "metrics.disabled", "true"]).status().map(|s| s.success()).unwrap_or(false) {
         info("set dolt metrics.disabled true (dolt config --global)");
         changes += 1;
     } else {
@@ -1161,7 +1199,7 @@ fn run_main() -> ExitCode {
                 return ExitCode::from(2);
             }
             info(&format!("dolt-beads.service listening on port {bp}"));
-            let _ = spira_config::bounded::bounded("bd").args(["-C", &db, "doctor", "--fix", "--yes"]).env("BD_NON_INTERACTIVE", "1").status();
+            let _ = spira_config::bounded::bounded_for("bd", FIRST_RUN_SECS).args(["-C", &db, "doctor", "--fix", "--yes"]).env("BD_NON_INTERACTIVE", "1").status();
             let db_max: u64 = nonempty_env("SPIRA_INSTALL_DB_WAIT").and_then(|v| v.parse().ok()).unwrap_or(30);
             if !wait_bd_list(&db, db_max) {
                 eprintln!("install: phase units failed — bd did not accept connections within {db_max}s after dolt-beads.service started");
@@ -1545,7 +1583,7 @@ fn wait_bd_list(db: &str, max_secs: u64) -> bool {
     let start = std::time::Instant::now();
     let mut attempt: u64 = 0;
     loop {
-        let ok = spira_config::bounded::bounded("bd").args(["-C", db, "list", "--json"]).env("BD_NON_INTERACTIVE", "1").output().map(|o| o.status.success()).unwrap_or(false);
+        let ok = spira_config::bounded::bounded_for("bd", FIRST_RUN_SECS).args(["-C", db, "list", "--json"]).env("BD_NON_INTERACTIVE", "1").output().map(|o| o.status.success()).unwrap_or(false);
         if ok {
             return true;
         }
@@ -2215,6 +2253,17 @@ mod dolt_yaml_tests {
 #[cfg(test)]
 mod dolt_metrics_tests {
     use super::*;
+
+    #[test]
+    fn bd_metrics_disabled_is_edited_in_its_block_without_running_bd() {
+        assert_eq!(with_bd_metrics_disabled("").unwrap(), "metrics:\n    disabled: true\n");
+        assert_eq!(with_bd_metrics_disabled("json: true\n").unwrap(), "json: true\nmetrics:\n    disabled: true\n");
+        let on = "metrics:\n  disabled: false\n  endpoint: e\nx: 1\n";
+        assert_eq!(with_bd_metrics_disabled(on).unwrap(), "metrics:\n  disabled: true\n  endpoint: e\nx: 1\n");
+        assert_eq!(with_bd_metrics_disabled("metrics:\n  endpoint: e\n").unwrap(), "metrics:\n    disabled: true\n  endpoint: e\n");
+        assert!(with_bd_metrics_disabled("metrics:\n    disabled: true\n    endpoint: e\n").is_none());
+        assert!(with_bd_metrics_disabled("other:\n  disabled: false\nmetrics:\n  disabled: true\n").is_none());
+    }
 
     #[test]
     fn metrics_disabled_is_written_without_running_dolt_and_keeps_other_keys() {
