@@ -1535,7 +1535,7 @@ fn the_context_answer_parses_into_settings_and_rows() {
 
     assert_eq!((s.run.as_path(), s.land_maxsec, s.gate_reserve), (Path::new("/r"), 3600, 2700));
     assert_eq!(s.home_repo, "spira");
-    assert_eq!(s.queue_bin.as_deref(), Some(Path::new("queue")), "queue by name, on the launcher's PATH");
+    assert_eq!(s.queue_bin.as_deref(), Some(Path::new(&spira_config::release_env::tool("queue"))), "queue resolved through the release");
     assert_eq!(repos[0].name, "spira");
     assert_eq!(repos[0].mode, LandMode::QueueLocal);
     assert_eq!(repos[0].base_remote, None);

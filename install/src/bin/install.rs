@@ -937,7 +937,7 @@ fn run_main() -> ExitCode {
         // to run at all). This ALSO proves the post-init skip check keeps -C — only the
         // fresh-init call below lost it.
         let bead_count = Command::new("timeout")
-            .args([FIRST_RUN_SECS, "bd", "-C", &db, "list", "--limit", "0", "--json"])
+            .args([FIRST_RUN_SECS, spira_config::release_env::tool("bd").as_str(), "-C", &db, "list", "--limit", "0", "--json"])
             .output()
             .ok()
             .and_then(|o| o.status.success().then(|| o.stdout))
@@ -1889,7 +1889,7 @@ fn populate_phase(dry: bool) -> Result<(), String> {
     let port = lc_port(bootstrap::declared("SPIRA_DOLT_DATA").as_deref());
     let counts = install::populate::run(&inputs, |args| {
         // batch-job: one-time install population of the lifecycle store; bounded at 600 s by timeout(1).
-        let out = Command::new("timeout").arg("600").arg("spira-lc").args(args).env("SPIRA_LC_PORT", port.to_string()).stdin(Stdio::null()).output();
+        let out = Command::new("timeout").arg("600").arg(spira_config::release_env::tool("spira-lc")).args(args).env("SPIRA_LC_PORT", port.to_string()).stdin(Stdio::null()).output();
         match out {
             Ok(o) => (o.status.code().unwrap_or(1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
             Err(e) => (127, format!("cannot run spira-lc: {e}")),
@@ -1919,7 +1919,7 @@ fn lifecycle_store_phase(port: u16) -> Result<Vec<String>, String> {
     let run = |args: &[String], env: &[(String, String)]| {
         // batch-job: one-time install DDL against the local Dolt server; bounded at 120 s by timeout(1).
         let mut c = Command::new("timeout");
-        c.arg("120").arg("spira-lc").args(args).stdin(Stdio::null());
+        c.arg("120").arg(spira_config::release_env::tool("spira-lc")).args(args).stdin(Stdio::null());
         for (k, v) in env {
             c.env(k, v);
         }

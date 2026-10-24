@@ -102,7 +102,7 @@ fn parse_args_with(args: &[String], cfg: &dyn Fn(&str) -> Result<String, String>
     if !missing.is_empty() {
         return Err(format!("classify: missing {}", missing.join("; ")));
     }
-    let bd_bin = flag(args, "--bd-bin").or_else(|| cfg("SPIRA_BD").ok().filter(|b| !b.trim().is_empty())).unwrap_or_else(|| "bd".to_string());
+    let bd_bin = flag(args, "--bd-bin").or_else(|| cfg("SPIRA_BD").ok().filter(|b| !b.trim().is_empty())).unwrap_or_else(|| spira_config::release_env::tool("bd"));
     Ok(Args {
         home: flag(args, "--home").map(PathBuf::from),
         bd_bin,

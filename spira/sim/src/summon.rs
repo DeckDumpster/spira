@@ -58,12 +58,12 @@ fn git(work: &Path, args: &[&str]) -> Result<String, String> {
 /// One summon pass; returns the beads it ran the agent for.
 pub fn summon(world: &Path, scenario_file: &Path, state: &Path) -> Result<Vec<String>, String> {
     let scenario = std::fs::read_to_string(scenario_file).unwrap_or_default();
-    let list = run(Command::new("spira-lc").arg("list"), CALL_DEADLINE)?;
+    let list = run(Command::new(spira_config::release_env::tool("spira-lc")).arg("list"), CALL_DEADLINE)?;
     let work = world.join("work");
     let mut ran = Vec::new();
     for (id, lc_state, version) in claimable(&list, &scenario)? {
         run(
-            Command::new("spira-lc").args(["event", "bead", &id, "--expect", &lc_state, "--version", &version.to_string(), "--actor", HOLDER, "--kind", &claim_event()]),
+            Command::new(spira_config::release_env::tool("spira-lc")).args(["event", "bead", &id, "--expect", &lc_state, "--version", &version.to_string(), "--actor", HOLDER, "--kind", &claim_event()]),
             CALL_DEADLINE,
         )?;
         let wt = world.join("wt").join(&id);

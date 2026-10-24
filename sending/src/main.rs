@@ -76,7 +76,7 @@ type ExitCodeLike = i32;
 /// directly never depends on the repo-NAME registry resolving (the full sweep's own
 /// `Real::new` is a different, stricter, path — see its own doc comment).
 fn real_world(status: Option<String>) -> Result<Real, String> {
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("sending"));
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(spira_config::release_env::tool("sending")));
     let home = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe).ok_or("cannot find lib.sh (set SPIRA_HOME)")?;
     Ok(Real::minimal(home, real::run_dir()?, status))
 }
@@ -185,7 +185,7 @@ fn cmd_reap_stale(mut args: Vec<String>) -> ExitCodeLike {
     if !args.is_empty() {
         return die("reap-stale [--dry-run] [--idle-hours <n>]");
     }
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("sending"));
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(spira_config::release_env::tool("sending")));
     let Some(home) = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe) else {
         return die("cannot find lib.sh (set SPIRA_HOME)");
     };
@@ -375,7 +375,7 @@ fn dispatch() -> i32 {
             return 2;
         }
     };
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("sending"));
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(spira_config::release_env::tool("sending")));
     let Some(home) = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe) else {
         eprintln!("sending: cannot find lib.sh (set SPIRA_HOME)");
         return 2;

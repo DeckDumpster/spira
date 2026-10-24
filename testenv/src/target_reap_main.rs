@@ -57,7 +57,7 @@ fn main() -> ExitCode {
     // Landed-ness is the lifecycle record's (sp-2c1n0): `spira-lc state <id>` = LANDED,
     // spira-lc found beside this harness's own release first (census's own rule), or
     // SPIRA_LC_BIN (a suite's pin).
-    let lc_bin = var("SPIRA_LC_BIN").unwrap_or_else(|| "spira-lc".to_string());
+    let lc_bin = var("SPIRA_LC_BIN").unwrap_or_else(|| spira_config::release_env::tool("spira-lc"));
     let path_env = spira_config::release_env::child_path_env(home.parent(), env.get("PATH").map(String::as_str));
     let landed_fn = |id: &str, _wt: &Path| landed::lc_landed(&lc_bin, &path_env, id);
     let busy_fn = |wt: &Path| busy::worktree_busy(wt);

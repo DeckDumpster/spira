@@ -209,6 +209,32 @@ pub fn ensure_release_path() {
     }
 }
 
+/// The program name to exec for a release-shipped tool: the bare `name` when `path` already
+/// finds it (a stub or operator override on `PATH` wins), else its file in the release's
+/// `bin/` or `spira/` (`$SPIRA_RELEASE`, then this exe's own root), else the bare `name`.
+pub fn resolve_tool(name: &str, env_release: Option<&str>, own_root: Option<&Path>, path: Option<&str>) -> String {
+    let runnable = |p: &Path| std::fs::metadata(p).is_ok_and(|m| m.is_file() && std::os::unix::fs::PermissionsExt::mode(&m.permissions()) & 0o111 != 0);
+    if path.unwrap_or("").split(':').filter(|d| !d.is_empty()).any(|d| runnable(&Path::new(d).join(name))) {
+        return name.to_string();
+    }
+    let env_release = env_release.filter(|r| !r.is_empty()).map(PathBuf::from);
+    for release in env_release.iter().map(PathBuf::as_path).chain(own_root) {
+        for dir in ["bin", "spira"] {
+            let p = release.join(dir).join(name);
+            if runnable(&p) {
+                return p.display().to_string();
+            }
+        }
+    }
+    name.to_string()
+}
+
+/// [`resolve_tool`] for this process: how every exec of a release-shipped tool names its
+/// program (`spira-lint`'s `release-tool-exec` refuses a bare name).
+pub fn tool(name: &str) -> String {
+    resolve_tool(name, std::env::var("SPIRA_RELEASE").ok().as_deref(), own_release_root_for_process().as_deref(), std::env::var("PATH").ok().as_deref())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,5 +374,26 @@ mod tests {
     #[test]
     fn ensured_path_is_none_with_no_release_anywhere() {
         assert_eq!(ensured_path(None, None, Some("/bin")), None);
+    }
+
+    #[test]
+    fn resolve_tool_prefers_path_then_the_release_then_the_bare_name() {
+        let t = testkit::TempDir::new("resolve-tool");
+        let release = t.join("rel");
+        let stubs = t.join("stubs");
+        for d in [release.join("bin"), release.join("spira"), stubs.clone()] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        for p in [release.join("bin/spira-lc"), release.join("spira/gate.sh"), stubs.join("queue"), release.join("bin/queue")] {
+            testkit::write_exe(&p, "");
+        }
+        let rel = release.display().to_string();
+        let path = format!("{}:/usr/bin", stubs.display());
+        let r = |n: &str| resolve_tool(n, Some(&rel), None, Some(&path));
+        assert_eq!(r("spira-lc"), format!("{rel}/bin/spira-lc"));
+        assert_eq!(r("gate.sh"), format!("{rel}/spira/gate.sh"));
+        assert_eq!(r("queue"), "queue");
+        assert_eq!(r("nowhere"), "nowhere");
+        assert_eq!(resolve_tool("spira-lc", None, Some(&release), Some("/usr/bin")), format!("{rel}/bin/spira-lc"));
     }
 }

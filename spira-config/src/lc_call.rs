@@ -32,7 +32,7 @@ pub fn lc_bin() -> PathBuf {
         .ok()
         .and_then(|e| e.parent().map(|d| d.join("spira-lc")))
         .filter(|p| p.is_file())
-        .unwrap_or_else(|| PathBuf::from("spira-lc"))
+        .unwrap_or_else(|| PathBuf::from(crate::release_env::tool("spira-lc")))
 }
 
 /// Run `bin args` with a deadline enforced here, not by a `timeout` program. A deadline

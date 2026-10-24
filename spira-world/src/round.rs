@@ -57,7 +57,7 @@ pub fn in_flight_description(s: &RoundVmStatus) -> Option<String> {
 /// callers must treat that as "cannot tell," never as "no round," matching FAIL CLOSED.
 pub fn read() -> Option<RoundVmStatus> {
     // batch-job: round-vm runs for as long as its work does
-    let out = Command::new("round-vm").arg("status").output().ok()?;
+    let out = Command::new(spira_config::release_env::tool("round-vm")).arg("status").output().ok()?;
     if !out.status.success() {
         return None;
     }

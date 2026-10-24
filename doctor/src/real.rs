@@ -179,7 +179,7 @@ impl World for Real {
 
     fn release_status(&self) -> String {
         // batch-job: release runs for as long as its work does
-        Command::new("release").arg("status").stdin(Stdio::null()).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
+        Command::new(spira_config::release_env::tool("release")).arg("status").stdin(Stdio::null()).output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
     }
 
     fn spira_config_validate(&self, toml_path: &Path) -> Result<(), String> {
@@ -272,7 +272,7 @@ impl World for Real {
     fn bd_list(&self, db: &Path, timeout_secs: u64) -> Result<String, String> {
         let out = Command::new("timeout")
             .arg(timeout_secs.to_string())
-            .arg(self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string()))
+            .arg(self.env("SPIRA_BD").unwrap_or_else(|| spira_config::release_env::tool("bd")))
             .arg("-C")
             .arg(db)
             .args(["list", "--limit", "1", "--json"])
@@ -287,7 +287,7 @@ impl World for Real {
     fn bd_role_warnings(&self, db: &Path, cwd: &Path) -> Option<usize> {
         let o = Command::new("timeout")
             .arg("5")
-            .arg(self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string()))
+            .arg(self.env("SPIRA_BD").unwrap_or_else(|| spira_config::release_env::tool("bd")))
             .arg("-C")
             .arg(db)
             .args(["list", "--limit", "1", "--json"])
@@ -355,7 +355,7 @@ impl World for Real {
     }
 
     fn bd_first_id(&self, db: &Path) -> Option<String> {
-        let out = spira_config::bounded::bounded(self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string()))
+        let out = spira_config::bounded::bounded(self.env("SPIRA_BD").unwrap_or_else(|| spira_config::release_env::tool("bd")))
             .arg("-C")
             .arg(db)
             .args(["list", "--limit", "1", "--json"])
@@ -457,7 +457,7 @@ impl World for Real {
     }
 
     fn bd_version(&self) -> Option<String> {
-        let out = spira_config::bounded::bounded(self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string()))
+        let out = spira_config::bounded::bounded(self.env("SPIRA_BD").unwrap_or_else(|| spira_config::release_env::tool("bd")))
             .arg("version")
             .stdin(Stdio::null())
             .output()

@@ -159,7 +159,7 @@ impl Settings {
             git_email: "spira@spira.invalid".into(),
             incident: run.join("home/incident.sh"),
             scope_label: String::new(),
-            queue_bin: Some(PathBuf::from("queue")),
+            queue_bin: Some(PathBuf::from(spira_config::release_env::tool("queue"))),
             queue_dir: run.join("queue"),
             lc_bin: None,
             halt_grace: 30,

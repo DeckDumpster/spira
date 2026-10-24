@@ -30,7 +30,7 @@ fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
 fn world_plane() -> Result<String, String> {
     use std::io::BufRead;
     let mut child = Command::new("timeout")
-        .args(["5", "world", "status"])
+        .args(["5", spira_config::release_env::tool("world").as_str(), "status"])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()

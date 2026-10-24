@@ -18,7 +18,7 @@ impl Real {
     }
 
     fn exe(&self) -> PathBuf {
-        std::env::current_exe().unwrap_or_else(|_| PathBuf::from("gate-run"))
+        std::env::current_exe().unwrap_or_else(|_| PathBuf::from(spira_config::release_env::tool("gate-run")))
     }
 
     /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave

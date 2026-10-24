@@ -85,7 +85,7 @@ pub fn toml_path_at(dir: &Path) -> PathBuf {
 /// own (`install`'s cross-checkout instance seed, sp-31dm0), which must not name this
 /// binary's own flags itself (config-fence: only spira-config names `repo-map`).
 pub fn convert_command(conf: &Path, home: &Path, out: &Path, repo_map: Option<&Path>, fayth: &[PathBuf]) -> std::process::Command {
-    let mut cmd = std::process::Command::new("spira-config");
+    let mut cmd = std::process::Command::new(crate::release_env::tool("spira-config"));
     cmd.arg("convert").arg("--conf").arg(conf).arg("--home").arg(home).arg("--out").arg(out);
     if let Some(rm) = repo_map {
         cmd.arg("--repo-map").arg(rm);

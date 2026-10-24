@@ -172,7 +172,7 @@ fn now() -> u64 {
 
 /// `round-vm`, by name on the launcher's PATH (sp-gypjk), unless --round-vm names another.
 fn default_round_vm() -> PathBuf {
-    PathBuf::from("round-vm")
+    PathBuf::from(spira_config::release_env::tool("round-vm"))
 }
 
 /// Every field sourced from a registered `spira/conf.d` key is read exactly once here, through
@@ -193,11 +193,11 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
         bd: cfg("SPIRA_BD")?,
         forge: PathBuf::from(cfg("SPIRA_FORGE")?),
         // Every harness tool by name, on the launcher's PATH (sp-gypjk).
-        tsd_bin: Some(PathBuf::from("tsd-write")),
+        tsd_bin: Some(PathBuf::from(spira_config::release_env::tool("tsd-write"))),
         round_vm: o.round_vm.clone().unwrap_or_else(default_round_vm),
-        queue_bin: PathBuf::from("queue"),
-        rebase_stale_bin: PathBuf::from("rebase-stale"),
-        testenv_bin: PathBuf::from("testenv"),
+        queue_bin: PathBuf::from(spira_config::release_env::tool("queue")),
+        rebase_stale_bin: PathBuf::from(spira_config::release_env::tool("rebase-stale")),
+        testenv_bin: PathBuf::from(spira_config::release_env::tool("testenv")),
         round_slots: env::var("SPIRA_BATCHER_ROUND_SLOTS").ok().and_then(|v| v.trim().parse().ok()).filter(|n: &u32| *n > 0),
         hypervisor: io::Hypervisor {
             host_mib: cfg_parse::<u64>("SPIRA_HYPERVISOR_MEM_MIB")?,
@@ -211,7 +211,7 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
         wall_secs: cfg_parse::<u64>("SPIRA_BATCHER_WALL_SECS")?,
         git_name: cfg("SPIRA_GIT_NAME")?,
         git_email: cfg("SPIRA_GIT_EMAIL")?,
-        lc_bin: Some(PathBuf::from("spira-lc")),
+        lc_bin: Some(PathBuf::from(spira_config::release_env::tool("spira-lc"))),
         lc_timeout: cfg_parse::<u64>("SPIRA_LC_TIMEOUT")?,
         verdicts: gate::cert::verdicts_dir(env::var("SPIRA_VERDICTS").ok().as_deref(), &run),
         land_lock_attempts: env::var("SPIRA_BATCHER_LAND_LOCK_ATTEMPTS").ok().and_then(|v| v.parse().ok()).unwrap_or(10),
