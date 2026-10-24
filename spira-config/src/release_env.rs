@@ -175,19 +175,26 @@ pub fn child_path_env_for_process() -> Vec<(String, String)> {
     child_path_env(own_release_root_for_process().as_deref(), std::env::var("PATH").ok().as_deref())
 }
 
-/// The `PATH` a process needs so every tool it execs by bare name resolves from the active
-/// release: `<release>/bin:<release>/spira` ahead of `existing_path`. The release is
-/// `$SPIRA_RELEASE` when its `bin/` exists, else the one `own_root` names. `None` when there
-/// is no release or `existing_path` already begins with the release's `bin/` and `spira/`.
+/// The `PATH` a process needs so every tool it execs by bare name can resolve from the active
+/// release: `<release>/bin` and `<release>/spira`, each appended to `existing_path` unless
+/// already an entry of it. Appended, never prepended: an entry the caller put first (a stub, an
+/// operator override) must still win. The release is `$SPIRA_RELEASE` when its `bin/` exists,
+/// else the one `own_root` names. `None` when there is no release or both dirs are on the path.
 pub fn ensured_path(env_release: Option<&str>, own_root: Option<&Path>, existing_path: Option<&str>) -> Option<(PathBuf, String)> {
     let release = env_release.filter(|r| !r.is_empty()).map(|r| PathBuf::from(r.trim_end_matches('/'))).filter(|r| r.join("bin").is_dir()).or_else(|| own_root.map(Path::to_path_buf))?;
-    let prefix = format!("{}/bin:{}/spira", release.display(), release.display());
     let existing = existing_path.unwrap_or("");
-    if existing == prefix || existing.starts_with(&format!("{prefix}:")) {
+    let mut entries: Vec<String> = existing.split(':').filter(|e| !e.is_empty()).map(str::to_string).collect();
+    let before = entries.len();
+    for dir in [release.join("bin"), release.join("spira")] {
+        let dir = dir.display().to_string();
+        if !entries.contains(&dir) {
+            entries.push(dir);
+        }
+    }
+    if entries.len() == before {
         return None;
     }
-    let path = if existing.is_empty() { prefix } else { format!("{prefix}:{existing}") };
-    Some((release, path))
+    Some((release, entries.join(":")))
 }
 
 /// [`ensured_path`] applied to this process: call it first thing in `main`, before any thread
@@ -304,7 +311,7 @@ mod tests {
         std::fs::create_dir_all(t.join("bin")).unwrap();
         let (rel, path) = ensured_path(None, Some(t.path()), Some("/usr/bin:/bin")).unwrap();
         assert_eq!(rel, t.path());
-        assert_eq!(path, format!("{0}/bin:{0}/spira:/usr/bin:/bin", t.path().display()));
+        assert_eq!(path, format!("/usr/bin:/bin:{0}/bin:{0}/spira", t.path().display()));
     }
 
     #[test]
@@ -325,10 +332,17 @@ mod tests {
     }
 
     #[test]
-    fn ensured_path_leaves_a_path_that_already_leads_with_the_release() {
+    fn ensured_path_leaves_a_path_that_already_holds_the_release() {
         let t = testkit::TempDir::new("ensured-already");
-        let p = format!("{0}/bin:{0}/spira:/usr/bin", t.path().display());
+        let p = format!("/usr/bin:{0}/bin:/bin:{0}/spira", t.path().display());
         assert_eq!(ensured_path(None, Some(t.path()), Some(&p)), None);
+    }
+
+    #[test]
+    fn ensured_path_never_shadows_an_entry_the_caller_put_first() {
+        let t = testkit::TempDir::new("ensured-stub");
+        let (_, path) = ensured_path(None, Some(t.path()), Some(&format!("/stubs:{}/spira:/usr/bin", t.path().display()))).unwrap();
+        assert_eq!(path, format!("/stubs:{0}/spira:/usr/bin:{0}/bin", t.path().display()));
     }
 
     #[test]
