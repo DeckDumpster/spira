@@ -76,6 +76,7 @@ impl Bd for FakeBd {
             "labels": stored_labels,
             "priority": priority,
             "body_len": body.len(),
+            "body": String::from_utf8_lossy(body),
         }));
         true
     }
@@ -699,4 +700,50 @@ fn contributor_with_hidden_org_membership_is_named_unverifiable() {
     let notes: Vec<_> = mail.sent.borrow().iter().filter(|(s, _)| s.contains("unverifiable")).cloned().collect();
     assert_eq!(notes.len(), 1, "once per author");
     assert!(notes[0].1.contains("make their org membership public"));
+}
+
+fn bot_issue(login: &str, ty: &str, labels: &str) -> String {
+    format!(r#"[{{"number":5,"title":"acceptance red","body":"b","user":{{"login":"{login}","type":"{ty}"}},"author_association":"NONE","labels":[{labels}]}}]"#)
+}
+
+fn run_bot_issue(login: &str, ty: &str, labels: &str) -> FakeBd {
+    let cfg = base_cfg();
+    let http = FakeHttp::default();
+    http.set(&issues_url(&cfg, 1), 200, &bot_issue(login, ty, labels));
+    let bd = FakeBd::default();
+    bd.seed("some-other-ref", "sp-existing", &["spira"]);
+    let repo = FakeRepo { root: Some("/repos/widgets".to_string()), registered: vec![] };
+    let report = run(&http, &bd, &repo, &FakeMail::default(), &stamp(), &seen_of(&cfg), &cfg);
+    assert_eq!(report.code, 0, "{:?}", report.err);
+    bd
+}
+
+fn work_beads(bd: &FakeBd) -> Vec<serde_json::Value> {
+    bd.beads.borrow().iter().filter(|b| b["external_ref"] == "github:acme/widgets#5").cloned().collect()
+}
+
+#[test]
+fn own_bot_on_an_acceptance_issue_becomes_a_work_bead_with_provenance() {
+    let bd = run_bot_issue("github-actions[bot]", "Bot", r#"{"name":"spira:acceptance"}"#);
+    let made = work_beads(&bd);
+    assert_eq!(made.len(), 1);
+    assert!(made[0]["body"].as_str().unwrap().contains("Admitted: the repo's own github-actions[bot]"));
+}
+
+#[test]
+fn own_bot_without_the_acceptance_label_is_not_trusted() {
+    let bd = run_bot_issue("github-actions[bot]", "Bot", "");
+    assert!(work_beads(&bd).is_empty());
+}
+
+#[test]
+fn another_bot_with_the_acceptance_label_is_not_trusted() {
+    let bd = run_bot_issue("dependabot[bot]", "Bot", r#"{"name":"spira:acceptance"}"#);
+    assert!(work_beads(&bd).is_empty());
+}
+
+#[test]
+fn a_user_named_like_the_bot_is_not_trusted() {
+    let bd = run_bot_issue("github-actions[bot]", "User", r#"{"name":"spira:acceptance"}"#);
+    assert!(work_beads(&bd).is_empty());
 }

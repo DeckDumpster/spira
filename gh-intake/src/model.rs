@@ -6,6 +6,7 @@ pub struct GhIssue {
     pub title: String,
     pub body: String,
     pub login: String,
+    pub user_type: String,
     pub labels: Vec<String>,
     pub association: String,
 }
@@ -45,6 +46,12 @@ pub fn parse_issues_page(body: &[u8]) -> Result<Vec<GhIssue>, String> {
                     .and_then(|l| l.as_str())
                     .unwrap_or("")
                     .to_string();
+                let user_type = i
+                    .get("user")
+                    .and_then(|u| u.get("type"))
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let labels = i
                     .get("labels")
                     .and_then(|l| l.as_array())
@@ -59,7 +66,7 @@ pub fn parse_issues_page(body: &[u8]) -> Result<Vec<GhIssue>, String> {
                     .and_then(|a| a.as_str())
                     .unwrap_or("NONE")
                     .to_string();
-                out.push(GhIssue { number, title, body, login, labels, association });
+                out.push(GhIssue { number, title, body, login, user_type, labels, association });
             }
             Ok(out)
         }
@@ -89,6 +96,16 @@ pub fn page_len(body: &[u8]) -> Result<usize, String> {
 pub fn association_trusted(assoc: &str) -> bool {
     matches!(assoc, "OWNER" | "MEMBER" | "COLLABORATOR")
 }
+
+/// A repo's own workflow token posts as `github-actions[bot]`; only workflows committed to
+/// that repo can hold `issues:write` there, so the bot is trusted on the acceptance label alone.
+pub fn own_bot_acceptance(issue: &GhIssue) -> bool {
+    issue.user_type == "Bot"
+        && issue.login == "github-actions[bot]"
+        && issue.labels.iter().any(|l| l == ACCEPTANCE_LABEL)
+}
+
+pub const ACCEPTANCE_LABEL: &str = "spira:acceptance";
 
 /// `spira:accept` as a whole label, not a substring — the bash matched
 /// `case " $gh_labels " in *" spira:accept "*)`, which is exact-token matching over a
