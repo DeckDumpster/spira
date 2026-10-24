@@ -278,7 +278,7 @@ fn mend(args: &[String], conn: &Conn) -> Reply {
     let fences: Vec<String> = flag(args, "--fences")
         .and_then(|f| serde_json::from_str(&f).ok())
         .ok_or((CANNOT_TELL, "mending mend: --fences must be a JSON list of fence paths".to_string()))?;
-    if row.state != MendingState::Mending {
+    if row.state != MendingState::Mending && !(row.state == MendingState::Waiting && mending::may_settle_unpicked(&actor)) {
         return Err(refuse_logged(conn, &row, Refusal::IllegalTransition { state: row.state.as_str().into(), event: "Mended".into() }, &actor));
     }
     for m in &members {

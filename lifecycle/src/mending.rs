@@ -117,6 +117,11 @@ pub struct MendingEvent {
     pub actor: String,
 }
 
+/// Actors that may record an outcome for a failure no mender picked.
+pub fn may_settle_unpicked(actor: &str) -> bool {
+    matches!(actor, "concierge" | "operator")
+}
+
 fn illegal(row: &MendingRow, kind: &MendingEventKind) -> Outcome<MendingRow> {
     Outcome::refuse(row.clone(), Refusal::IllegalTransition { state: row.state.as_str().to_string(), event: format!("{kind:?}") })
 }
@@ -145,7 +150,24 @@ pub fn apply(row: &MendingRow, ev: &MendingEvent) -> Outcome<MendingRow> {
             Outcome::applied(new)
         }
     };
+    let triager = may_settle_unpicked(&ev.actor);
     match (row.state, kind) {
+        (MendingState::Waiting, MendingEventKind::TriageEnded { at }) if triager && row.triage_ended_at.is_none() => {
+            new.triage_ended_at = Some(*at);
+            Outcome::applied(new)
+        }
+        (MendingState::Waiting, MendingEventKind::Diagnosis { text }) if triager => {
+            new.diagnosis = Some(text.clone());
+            Outcome::applied(new)
+        }
+        (MendingState::Waiting, MendingEventKind::Mended { at }) if triager => settle(new, MendingState::Mended, *at),
+        (MendingState::Waiting, MendingEventKind::Environment { at }) if triager => settle(new, MendingState::Environment, *at),
+        (MendingState::Waiting, MendingEventKind::Flaky { at }) if triager => settle(new, MendingState::Flaky, *at),
+        (MendingState::Waiting, MendingEventKind::Unsure { at }) if triager => settle(new, MendingState::Unsure, *at),
+        (MendingState::Waiting, MendingEventKind::Return { at, diagnosis }) if triager => {
+            new.diagnosis = Some(diagnosis.clone());
+            settle(new, MendingState::Returned, *at)
+        }
         (MendingState::Waiting, MendingEventKind::Pickup { at, deadline_s }) => {
             new.state = MendingState::Mending;
             new.picked_at = Some(*at);
@@ -353,6 +375,28 @@ mod tests {
         assert!(!r.overdue(i64::MAX));
         for kind in [MendingEventKind::Expire { at: i64::MAX }, MendingEventKind::Mended { at: 1 }, MendingEventKind::Diagnosis { text: "x".into() }] {
             assert!(matches!(refusal(&r, kind), Refusal::IllegalTransition { .. }));
+        }
+    }
+
+    #[test]
+    fn the_concierge_and_operator_settle_an_unpicked_failure_and_no_one_else_does() {
+        let r = MendingRow::failed("b1", 1, "s");
+        for actor in ["concierge", "operator"] {
+            for (kind, state) in [
+                (MendingEventKind::Environment { at: 5 }, MendingState::Environment),
+                (MendingEventKind::Flaky { at: 5 }, MendingState::Flaky),
+                (MendingEventKind::Unsure { at: 5 }, MendingState::Unsure),
+                (MendingEventKind::Mended { at: 5 }, MendingState::Mended),
+                (MendingEventKind::Return { at: 5, diagnosis: "d".into() }, MendingState::Returned),
+            ] {
+                let out = apply(&r, &MendingEvent { expect: r.state, version: r.version, kind, actor: actor.into() });
+                assert!(out.applied && out.row.state == state, "{actor} {state:?}: {:?}", out.refusal);
+            }
+        }
+        for actor in ["aeon-x", "unknown", "Concierge"] {
+            let kind = MendingEventKind::Environment { at: 5 };
+            let out = apply(&r, &MendingEvent { expect: r.state, version: r.version, kind, actor: actor.into() });
+            assert!(matches!(out.refusal, Some(Refusal::IllegalTransition { .. })), "{actor}");
         }
     }
 
