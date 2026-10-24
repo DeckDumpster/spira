@@ -15,6 +15,8 @@
 #      A swallowed failure ships a release with no aerc at all.
 #
 # ENV
+#   NIX_BIN             nix to use, tried before the standard profile locations and PATH
+#   BUILD_AERC_NIX_CANDIDATES  space-separated nix paths replacing the standard locations
 #   BUILD_AERC_ATTEMPTS  nix build attempts before giving up (default 4)
 #   BUILD_AERC_BACKOFF   seconds before the first retry, doubling each time (default 5)
 set -uo pipefail
@@ -25,7 +27,16 @@ BACKOFF="${BUILD_AERC_BACKOFF:-5}"
 
 VENDOR_BIN="${1:?usage: build-aerc.sh <vendor-bin-dir>}"
 
-command -v nix >/dev/null 2>&1 || { printf 'build-aerc.sh: no nix to provide aerc\n' >&2; exit 1; }
+NIX=""
+searched=""
+for cand in "${NIX_BIN:-}" ${BUILD_AERC_NIX_CANDIDATES-/nix/var/nix/profiles/default/bin/nix "$HOME/.nix-profile/bin/nix" /run/current-system/sw/bin/nix}; do
+    [ -n "$cand" ] || continue
+    searched="$searched $cand"
+    [ -x "$cand" ] && { NIX="$cand"; break; }
+done
+if [ -z "$NIX" ]; then
+    NIX="$(command -v nix 2>/dev/null)" || { printf 'build-aerc.sh: no nix to provide aerc (looked at:%s, and nix on PATH=%s)\n' "$searched" "$PATH" >&2; exit 1; }
+fi
 flake_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 source_name="nix flake path:$flake_dir#spira-env (aerc, nix binary cache)"
 printf 'build-aerc.sh: taking aerc %s from %s\n' "$AERC_VERSION" "$source_name" >&2
@@ -35,7 +46,7 @@ attempt=1
 delay="$BACKOFF"
 while :; do
     # batch-job: the release build realises spira-env once per release; bounded at 900 s.
-    if env_dir="$(timeout 900 nix --extra-experimental-features 'nix-command flakes' build "path:$flake_dir#spira-env" --no-link --print-out-paths)" \
+    if env_dir="$(timeout 900 "$NIX" --extra-experimental-features 'nix-command flakes' build "path:$flake_dir#spira-env" --no-link --print-out-paths)" \
         && [ -x "$env_dir/bin/aerc" ]; then
         break
     fi

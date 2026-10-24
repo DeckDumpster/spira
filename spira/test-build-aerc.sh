@@ -37,7 +37,7 @@ chmod +x "$work/stubs/git" "$work/stubs/nix"
 
 run() {
     rm -f "$work/nix.count" "$work/git.log"; rm -rf "$work/out"
-    env -i PATH="$work/stubs:/usr/bin:/bin" HOME="$work/home" BUILD_AERC_BACKOFF=0 "$@" \
+    env -i PATH="$work/stubs:/usr/bin:/bin" HOME="$work/home" BUILD_AERC_BACKOFF=0 BUILD_AERC_NIX_CANDIDATES= "$@" \
         bash "$here/build-aerc.sh" "$work/out" > "$work/stdout" 2> "$work/stderr"
 }
 
@@ -51,5 +51,12 @@ run FAIL_FIRST=2; rc=$?
 run FAIL_FIRST=99 BUILD_AERC_ATTEMPTS=3; rc=$?
 { [ "$rc" = 1 ] && [ "$(cat "$work/nix.count")" = 3 ] && grep -q 'spira-env' "$work/stderr" && grep -q 'after 3 attempts' "$work/stderr"; } \
     && check ok "exhausted retries fail naming the source" || check no "exhausted retries (rc=$rc)"
+
+mkdir -p "$work/profile/bin"
+mv "$work/stubs/nix" "$work/profile/bin/nix"
+run BUILD_AERC_NIX_CANDIDATES="$work/profile/bin/nix"; rc=$?
+{ [ "$rc" = 0 ] && [ -x "$work/out/aerc" ]; } && check ok "nix off PATH is found at its profile location" || check no "profile-location nix (rc=$rc)"
+run BUILD_AERC_NIX_CANDIDATES="$work/nowhere/nix"; rc=$?
+{ [ "$rc" = 1 ] && grep -q "$work/nowhere/nix" "$work/stderr"; } && check ok "no nix: failure lists where it looked" || check no "no-nix message (rc=$rc)"
 
 tl_summary
