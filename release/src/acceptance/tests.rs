@@ -694,6 +694,25 @@ fn the_probe_bead_is_filed_with_its_lifecycle_row() {
 }
 
 #[test]
+fn every_probe_bead_names_what_to_build() {
+    let b = Box_::new();
+    let f = b.fake();
+    assert_eq!(phases::run(&f, b.opts(&[])), 0, "{:#?}", b.fails());
+    let bodies: Vec<String> = f
+        .log
+        .borrow()
+        .iter()
+        .filter(|c| c.prog == "bd" && c.args.iter().any(|a| a == "create") && c.args.iter().any(|a| a == "--description"))
+        .filter_map(|c| c.args.iter().position(|a| a == "--description").map(|i| c.args[i + 1].clone()))
+        .collect();
+    assert!(!bodies.is_empty());
+    for body in bodies {
+        let spec = body.split("\n## Build\n").nth(1).unwrap_or("");
+        assert!(spec.lines().any(|l| !l.trim().is_empty()), "no builder spec in: {body}");
+    }
+}
+
+#[test]
 fn a_probe_whose_row_cannot_be_created_fails_bead_filed() {
     let b = Box_::new();
     let mut f = b.fake();
