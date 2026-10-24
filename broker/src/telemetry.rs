@@ -3,7 +3,7 @@
 use spira_otel::metrics::{self, MetricsSink};
 
 pub const COMPONENT: &str = "broker";
-pub const OPERATIONS: &[&str] = &["read", "token"];
+pub const OPERATIONS: &[&str] = &["read", "token", "identity-login-code"];
 
 pub fn sink() -> MetricsSink {
     metrics::sink_for(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), COMPONENT)

@@ -134,3 +134,7 @@ removed = ["spira.broker_enable", "spira.express_label", "spira.overlap_defer_la
 "spira.tsd_keep_days" = 30
 "spira.tsd_keep_days_by_family" = ""
 "spira.main_health_activation_grace_secs" = "1800"
+"spira.pilgrim_account" = ""
+"spira.identity_login_host" = ""
+"spira.identity_login_cmd" = ""
+"spira.identity_login_ttl_secs" = "900"

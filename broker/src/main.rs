@@ -1,3 +1,4 @@
+mod login;
 mod policy;
 mod read;
 mod repo_map;
@@ -62,9 +63,11 @@ fn dispatch() -> ExitCode {
     match sub {
         "read"    => run_read(&args[2..]),
         "token"   => run_token(),
+        "identity-login-code" => run_login_code(),
         _ => {
             eprintln!("broker: usage: broker read <verb> <repo>/<id> [--artifact <name>] [--output-dir <path>]");
             eprintln!("broker:        broker token");
+            eprintln!("broker:        broker identity-login-code");
             ExitCode::from(2)
         }
     }
@@ -74,6 +77,13 @@ fn run_read(args: &[String]) -> ExitCode {
     match read::run(args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => { eprintln!("{}", e); ExitCode::FAILURE }
+    }
+}
+
+fn run_login_code() -> ExitCode {
+    match login::run() {
+        Ok(code) => { println!("{}", code); ExitCode::SUCCESS }
+        Err(e)   => { eprintln!("{}", e); ExitCode::FAILURE }
     }
 }
 
