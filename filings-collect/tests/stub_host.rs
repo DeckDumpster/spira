@@ -103,3 +103,30 @@ fn an_unreachable_host_alarms_naming_the_host() {
     let o = pass(&rig.real, &hosts, &mut State::default(), &mut |_| Ok(()));
     assert!(o.failed.iter().any(|f| f.starts_with("prod: cannot read the outbox")), "{o:?}");
 }
+
+#[test]
+fn concurrent_filings_each_log_their_own_body() {
+    use filings_collect::{Action, Filing, World};
+    let rig = Rig::new();
+    let slow = rig.dir.path().join("bead.sh");
+    let log = rig.dir.path().join("bead.log");
+    testkit::write_exe(
+        &slow,
+        &format!(
+            "#!/bin/bash\nfor a; do [ \"$prev\" = --body-file ] && body=\"$a\"; prev=\"$a\"; done\nsleep 0.3\n{{ cat \"$body\"; echo ---; }} >> {}\necho sp-stub\n",
+            log.display()
+        ),
+    );
+    let file = |marker: &str| {
+        let f = Filing { class: "mech".into(), action: Action::Open, repo: "widgets".into(), title: marker.into(), body: String::new() };
+        rig.real.file(&f, &format!("marker-{marker}"))
+    };
+    let (a, b) = std::thread::scope(|s| {
+        let a = s.spawn(|| file("alpha"));
+        let b = s.spawn(|| file("beta"));
+        (a.join().unwrap(), b.join().unwrap())
+    });
+    assert!(a.is_ok() && b.is_ok(), "{a:?} {b:?}");
+    let text = rig.log();
+    assert!(text.contains("marker-alpha") && text.contains("marker-beta"), "{text}");
+}

@@ -2,6 +2,9 @@ use crate::{Filing, Host, World};
 use spira_config::bounded::{bounded, bounded_for};
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static BODY_SEQ: AtomicUsize = AtomicUsize::new(0);
 
 const TERMINAL: [&str; 4] = ["LANDED", "SUPERSEDED", "DROPPED", "DONE"];
 const PERSONA: &str = "builder";
@@ -46,7 +49,7 @@ impl Real {
     }
 
     fn with_body<T>(&self, body: &str, f: impl FnOnce(&str) -> Result<T, String>) -> Result<T, String> {
-        let p: PathBuf = std::env::temp_dir().join(format!("filings-collect-{}.md", std::process::id()));
+        let p: PathBuf = std::env::temp_dir().join(format!("filings-collect-{}-{}.md", std::process::id(), BODY_SEQ.fetch_add(1, Ordering::Relaxed)));
         std::fs::write(&p, body).map_err(|e| e.to_string())?;
         let r = f(&p.to_string_lossy());
         let _ = std::fs::remove_file(&p);
