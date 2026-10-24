@@ -92,7 +92,7 @@ fn parse_reader_mailboxes(raw: &str) -> Vec<String> {
 /// `concierge: no such mailbox` after every upgrade and spira-notify failed 3.
 pub fn ensure_reader_mailboxes() -> Result<(), String> {
     for name in reader_mailboxes()? {
-        let ok = Command::new("timeout").args(["5", "mail", "ensure", &name]).status().map(|s| s.success()).unwrap_or(false);
+        let ok = Command::new("timeout").args(["120", "mail", "ensure", &name]).status().map(|s| s.success()).unwrap_or(false);
         if !ok {
             return Err(format!("could not create the {name} mailbox (mail ensure {name})"));
         }
