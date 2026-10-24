@@ -187,6 +187,35 @@ fn seed_suite(t: &T, name: &str) {
 }
 
 #[test]
+fn a_red_round_eject_naming_no_suite_is_refused_and_one_naming_a_suite_records_it() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    seed_suite(&t, "test-b.sh");
+    let before = kv_of(&t, "round");
+    assert_eq!(
+        t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--red"]),
+        2
+    );
+    assert!(t.err().contains("names no failing check"), "{}", t.err());
+    assert_eq!(kv_of(&t, "round"), before);
+    assert!(!t.lib.has("bead_reopen") && !t.lc.has("eject-member"));
+    assert_eq!(
+        t.run(&[
+            "round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh"
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
+}
+
+#[test]
 fn an_eject_forcing_a_suite_testenv_does_not_know_is_refused_naming_the_known_ones_and_changes_nothing(
 ) {
     let t = round_world();
