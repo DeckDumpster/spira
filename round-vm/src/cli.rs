@@ -666,7 +666,7 @@ fn build_template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool
         cfg.cache_home.as_deref().unwrap_or(""),
         &recipe_sha,
     ) {
-        Ok(b) if refresh => {
+        Ok(b) => {
             println!("{} {}", b.vmid, b.image);
             let done = Record { vmid: b.vmid.clone(), image: b.image.clone(), recipe_sha: Some(recipe_sha.clone()) }
                 .write(&cfg.state_dir)
@@ -674,25 +674,14 @@ fn build_template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool
                 .and_then(|()| pool.recycle(&real_attempt));
             match done {
                 Ok(n) => {
-                    eprintln!("round-vm refresh: template {} holds {}; {} repointed, {n} warm VM(s) recycled", b.vmid, b.image, cfg.pve_env_path.display());
+                    eprintln!("round-vm {}: template {} holds {}; {} repointed, {n} warm VM(s) recycled", if refresh { "refresh" } else { "template" }, b.vmid, b.image, cfg.pve_env_path.display());
                     0
                 }
                 Err(e) => {
-                    eprintln!("round-vm refresh: template {} built but not put in force: {e}", b.vmid);
+                    eprintln!("round-vm {}: template {} built but not put in force: {e}", if refresh { "refresh" } else { "template" }, b.vmid);
                     1
                 }
             }
-        }
-        Ok(b) => {
-            println!("{} {}", b.vmid, b.image);
-            eprintln!(
-                "round-vm template: template {} holds {} with its build cache. Nothing was repointed: to use it, set PVE_TEMPLATE_VMID={} in {}",
-                b.vmid,
-                b.image,
-                b.vmid,
-                cfg.pve_env_path.display()
-            );
-            0
         }
         Err(e) => {
             eprintln!("round-vm {}: template build failed (exit 1): {e}", if refresh { "refresh" } else { "template" });
