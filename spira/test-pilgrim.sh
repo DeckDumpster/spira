@@ -60,8 +60,8 @@ want "the brief files through the contract" "work file" "$(cat "$BRIEF")"
 want "the brief asks for a failing-first test" "fails first" "$(cat "$BRIEF")"
 want "the brief never asks mid-walk" "Never ask the operator anything mid-walk" "$(cat "$BRIEF")"
 want "the brief refuses the operator's tenant" "never the operator's tenant" "$(cat "$BRIEF")"
-lack "the pilgrim has no Edit" "Edit" "$(fayth_get pilgrim FAYTH_TOOLS)"
-lack "the pilgrim has no Write" "Write" "$(fayth_get pilgrim FAYTH_TOOLS)"
+lack "the pilgrim has no Edit" ",Edit" ",$(fayth_get pilgrim FAYTH_TOOLS)"
+lack "the pilgrim has no Write" ",Write" ",$(fayth_get pilgrim FAYTH_TOOLS)"
 want "positive control: the builder does have Edit" "Edit" "$(fayth_get builder FAYTH_TOOLS)"
 
 tl_summary
