@@ -95,7 +95,16 @@ if git -C "$SPIRA_WIKI" rev-parse --git-dir >/dev/null 2>&1; then
         || exit 1
 fi
 if git -C "$SPIRA_WIKI" rev-parse --git-dir >/dev/null 2>&1 && git -C "$SPIRA_WIKI" remote | grep -q .; then
-    if ! perr=$(timeout 60 git -C "$SPIRA_WIKI" push 2>&1); then  # batch-job: network push to the brain remote
+    published=0
+    for attempt in 1 2; do
+        if ! rerr=$(timeout 60 git -C "$SPIRA_WIKI" pull --rebase --autostash 2>&1); then  # batch-job: network fetch from the brain remote
+            git -C "$SPIRA_WIKI" rebase --abort >/dev/null 2>&1
+            echo "export-beads: git pull --rebase failed: $rerr" >&2
+            exit 1
+        fi
+        perr=$(timeout 60 git -C "$SPIRA_WIKI" push 2>&1) && { published=1; break; }  # batch-job: network push to the brain remote
+    done
+    if [ "$published" -ne 1 ]; then
         echo "export-beads: git push refused or failed: $perr" >&2
         exit 1
     fi
