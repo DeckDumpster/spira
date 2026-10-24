@@ -29,7 +29,7 @@ FAYTH_MODEL=claude-opus-5-5
 FAYTH_MAX_CONCURRENT=1
 FAYTH
 cat > "$T/repos.map" <<MAP
-testrepo | $T/testrepo | push | origin/main | | true | plan,pilgrimage
+testrepo | $T/testrepo | push | origin/main | | true | plan
 MAP
 
 BD_LOG="$T/bd.log"; SEQ="$T/seq"; echo 0 > "$SEQ"
