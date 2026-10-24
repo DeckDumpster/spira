@@ -619,6 +619,7 @@ fn spool_stamp() -> String {
 }
 
 fn main() -> ExitCode {
+    spira_config::release_env::ensure_release_path();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let env_cfg = Env::load();
     if env_cfg.db.is_none() && !matches!(args.first().map(String::as_str), None) {

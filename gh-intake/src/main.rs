@@ -242,6 +242,7 @@ fn ports(db: String, bd_bin: String, home: String) -> (RealBd, RealGh, RealGit, 
 }
 
 fn main() -> ExitCode {
+    spira_config::release_env::ensure_release_path();
     let op = match std::env::args().nth(1).as_deref() {
         Some("closeout") => "closeout",
         Some("unlanded-scan") => "unlanded-scan",

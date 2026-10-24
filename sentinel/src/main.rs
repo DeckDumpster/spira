@@ -187,6 +187,7 @@ fn classify_unclaimable_main() -> i32 {
 }
 
 fn main() {
+    spira_config::release_env::ensure_release_path();
     if std::env::args().nth(1).as_deref() == Some("--classify-unclaimable") {
         std::process::exit(classify_unclaimable_main());
     }

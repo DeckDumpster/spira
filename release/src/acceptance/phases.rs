@@ -720,6 +720,10 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
         r.fast_tier_handoff("phase A");
     }
 
+    println!("\nphase A — no harness tool failed to exec");
+    let exec = super::exec_failures(&r.o.spira_run);
+    r.check("phase A: no run/ log records an exec failure (os error 2, exit 127)", exec.is_empty(), || exec.iter().take(20).cloned().collect::<Vec<_>>().join("\n"));
+
     println!("\nphase A — uninstall and clean state");
     let rc = h.run(&r.uninstall()).rc;
     r.is0("phase A: uninstall.sh --yes exits 0", rc);

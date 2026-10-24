@@ -51,6 +51,7 @@ fn run() -> Result<String, (u8, String)> {
 }
 
 fn main() -> ExitCode {
+    spira_config::release_env::ensure_release_path();
     spira_otel::run::begin("sift", spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref());
     match run() {
         Ok(out) => {

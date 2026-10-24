@@ -53,6 +53,7 @@ const CANNOT_TELL: i32 = 2;
 const REFUSED: i32 = 3;
 
 fn main() {
+    spira_config::release_env::ensure_release_path();
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.first().map(|s| s.as_str()) == Some("serve") {
         std::process::exit(serve::run(&args[1..]));

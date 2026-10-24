@@ -42,6 +42,7 @@ const LOCK_EX: i32 = 2;
 const LOCK_NB: i32 = 4;
 
 fn main() -> ExitCode {
+    spira_config::release_env::ensure_release_path();
     let args: Vec<String> = env::args().collect();
     if args.get(1).map(String::as_str) != Some("--pass") {
         eprintln!("usage: reconciler-flow --pass");

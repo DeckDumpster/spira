@@ -1555,6 +1555,7 @@ fn path_attribute(o: &Opts) -> Result<ExitCode, String> {
 }
 
 fn main() -> std::process::ExitCode {
+    spira_config::release_env::ensure_release_path();
     let first = std::env::args().nth(1);
     spira_otel::exit::finish(telemetry::run(&telemetry::sink(), first.as_deref(), || dispatch().code()))
 }

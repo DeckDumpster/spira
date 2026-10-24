@@ -42,6 +42,7 @@ fn need_rows(ctx: &context::Context) -> Vec<Row> {
 }
 
 fn main() {
+    spira_config::release_env::ensure_release_path();
     let args: Vec<String> = std::env::args().collect();
     let sub = args.get(1).map(|s| s.as_str()).unwrap_or("status");
     let rest = &args[args.len().min(2)..];
