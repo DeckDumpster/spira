@@ -386,7 +386,7 @@ set -uo pipefail
 cd \"\$HOME\"
 export SPIRA_ACCEPTANCE_FORENSICS=\"\$HOME/acceptance-forensics\"
 mkdir -p \"\$SPIRA_ACCEPTANCE_FORENSICS\"
-exec env -i HOME=\"\$HOME\" USER=\"\$USER\" LANG=\"\$LANG\" PATH='$_al_bare_path' \
+exec env -i HOME=\"\$HOME\" USER=\"\${USER:-spirauser}\" LANG=\"\${LANG:-C.UTF-8}\" PATH='$_al_bare_path' \
     XDG_RUNTIME_DIR=\"\${XDG_RUNTIME_DIR:-}\" DBUS_SESSION_BUS_ADDRESS=\"\${DBUS_SESSION_BUS_ADDRESS:-}\" \
     SPIRA_ACCEPTANCE_FORENSICS=\"\$SPIRA_ACCEPTANCE_FORENSICS\" \
     /tmp/release acceptance '$_al_tag' \
