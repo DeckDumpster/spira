@@ -3919,7 +3919,36 @@ fn an_eject_red_on_unit_tests_records_the_step_as_the_requirement() {
 }
 
 #[test]
-fn a_round_step_is_a_forceable_check_proven_only_by_a_recorded_pass_at_the_tip() {
+fn a_round_only_step_is_proven_only_by_a_recorded_pass_at_the_tip() {
+    let t = rework_world(&["manual"]);
+    spira_config::proof::record_failing(&proof_run(&t), "sp-a", &["workspace-build".to_string()])
+        .unwrap();
+    let tip_arg = format!("--tip={T_FIX}");
+    let args = [
+        "resubmit",
+        "sp-a",
+        &tip_arg,
+        "--by=concierge",
+        "--reason=hand-built fix",
+        "--evidence=cargo build 1/0",
+        &ev_tip(),
+    ];
+    assert_eq!(t.run(&args), 1);
+    assert!(
+        t.err().contains("workspace-build has no green round recorded"),
+        "{}",
+        t.err()
+    );
+    assert!(
+        !t.scripts.calls.borrow().iter().any(|c| c.starts_with("suite_run workspace-build")),
+        "a round-only step is never run as a suite"
+    );
+    spira_config::proof::record_run(&proof_run(&t), "sp-a", T_FIX, "workspace-build", 0, "ok").unwrap();
+    assert_eq!(t.run(&args), 0, "{}", t.err());
+}
+
+#[test]
+fn a_bead_ejected_on_unit_tests_resubmits_after_a_green_runner_run_and_not_after_a_red_one() {
     let t = rework_world(&["manual"]);
     spira_config::proof::record_failing(&proof_run(&t), "sp-a", &["unit-tests".to_string()])
         .unwrap();
@@ -3933,18 +3962,12 @@ fn a_round_step_is_a_forceable_check_proven_only_by_a_recorded_pass_at_the_tip()
         "--evidence=cargo test 1/0",
         &ev_tip(),
     ];
+    t.scripts.suite_red.borrow_mut().push("unit-tests".to_string());
     assert_eq!(t.run(&args), 1);
-    assert!(
-        t.err().contains("unit-tests has no green round recorded"),
-        "{}",
-        t.err()
-    );
-    assert!(
-        !t.scripts.calls.borrow().iter().any(|c| c.starts_with("suite_run unit-tests")),
-        "a round step is never run as a suite"
-    );
-    spira_config::proof::record_run(&proof_run(&t), "sp-a", T_FIX, "unit-tests", 0, "ok").unwrap();
+    assert!(t.scripts.calls.borrow().iter().any(|c| c.starts_with("suite_run unit-tests")));
+    t.scripts.suite_red.borrow_mut().clear();
     assert_eq!(t.run(&args), 0, "{}", t.err());
+    assert!(!t.err().contains("--clear"), "{}", t.err());
 }
 
 #[test]

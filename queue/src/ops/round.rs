@@ -38,6 +38,8 @@ pub(super) const BUILD_RED: &str = "workspace-build";
 pub(super) const UNIT_RED: &str = "unit-tests";
 /// Steps a round runs over its whole tree that are not testenv suites; only a green round proves them.
 pub const ROUND_STEPS: [&str; 2] = [BUILD_RED, UNIT_RED];
+/// The round steps `testenv --suites <step>` cannot run for a tip.
+pub const ROUND_ONLY_STEPS: [&str; 1] = [BUILD_RED];
 /// The one red a repository that judges itself reports: its testenv run as a whole.
 pub(super) const REPO_TESTENV_RED: &str = "testenv";
 pub(super) const LC_ACTOR: &str = "queue.sh";
