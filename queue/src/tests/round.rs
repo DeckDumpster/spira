@@ -1598,6 +1598,29 @@ fn certify_hands_the_batch_and_repo_to_round_vm_to_record_its_boundaries() {
 }
 
 #[test]
+fn a_second_certify_of_a_batch_already_being_certified_is_refused_naming_the_holder() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    let g = match crate::lock::try_certify_lock(&t.s().queue_dir, "spira", &batch) {
+        crate::lock::Acquire::Held(g) => g,
+        _ => panic!("lock"),
+    };
+    let before = t.scripts.calls.borrow().len();
+    assert_ne!(t.run(&["round", "certify", &batch]), 0);
+    assert!(
+        t.err().contains("already being certified") && t.err().contains("pid="),
+        "{}",
+        t.err()
+    );
+    assert_eq!(t.scripts.calls.borrow().len(), before, "no pass was started");
+    drop(g);
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+}
+
+#[test]
 fn a_round_through_a_red_pass_an_eject_and_a_green_pass_records_both_passes() {
     let t = round_world();
     *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));

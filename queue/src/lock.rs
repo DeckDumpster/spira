@@ -44,6 +44,19 @@ pub fn holder(queue_dir: &Path, repo: &str) -> String {
         .unwrap_or_default()
 }
 
+/// The per-batch certify lock (`<repo>/certify-<batch>.lock`), held for a whole `round certify`.
+/// `Busy` carries the holder's record: another certify of the batch is running.
+pub fn try_certify_lock(queue_dir: &Path, repo: &str, batch: &str) -> Acquire {
+    try_lock_file(queue_dir, repo, &format!("certify-{batch}.lock"), Some("round certify"))
+}
+
+/// The certify lock's holder record (`pid=<pid> verb=...`); empty when none is recorded.
+pub fn certify_holder(queue_dir: &Path, repo: &str, batch: &str) -> String {
+    fs::read_to_string(queue_dir.join(repo).join(format!("certify-{batch}.lock")))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
 /// The step lock (`<repo>/step.lock`): one stepper per repository. Deliberately NOT the
 /// queue lock — queue verdict and batch.sh take that one themselves inside a step.
 pub fn try_step_lock(queue_dir: &Path, repo: &str) -> Acquire {
@@ -110,6 +123,20 @@ mod tests {
             "an unrecording taker leaves no stale record"
         );
         drop(b);
+    }
+
+    #[test]
+    fn a_batch_certify_lock_is_per_batch_and_names_its_holder() {
+        let _serial = crate::testutil::serial();
+        let d = tmpdir("certlock");
+        let a = try_certify_lock(&d, "spira", "r-1");
+        assert!(matches!(a, Acquire::Held(_)));
+        assert!(matches!(try_certify_lock(&d, "spira", "r-1"), Acquire::Busy));
+        assert!(certify_holder(&d, "spira", "r-1").starts_with(&format!("pid={}", std::process::id())));
+        assert!(matches!(try_certify_lock(&d, "spira", "r-2"), Acquire::Held(_)));
+        assert!(matches!(try_lock(&d, "spira"), Acquire::Held(_)));
+        drop(a);
+        assert!(matches!(try_certify_lock(&d, "spira", "r-1"), Acquire::Held(_)));
     }
 
     #[test]

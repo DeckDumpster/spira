@@ -2376,6 +2376,18 @@ pub fn try_lock(env: &Env, repo: &str) -> Result<Option<Lock>, String> {
     lock_at(&env.queue_dir.join(repo).join("lock"), "batcher")
 }
 
+/// Whether a `round certify` of `batch` is running, asked of the lock it holds for its whole run.
+pub fn certify_driven(env: &Env, repo: &str, batch: &str) -> bool {
+    let path = env.queue_dir.join(repo).join(format!("certify-{batch}.lock"));
+    if !path.exists() {
+        return false;
+    }
+    let Ok(f) = fs::OpenOptions::new().write(true).open(&path) else {
+        return false;
+    };
+    unsafe { flock(f.as_raw_fd(), LOCK_EX | LOCK_NB) != 0 }
+}
+
 /// Like `try_lock` but polls for up to `wait_secs`, for the hand path: a routine sweep's
 /// few-second hold must not make a single invocation silently do nothing.
 pub fn wait_lock(env: &Env, repo: &str, wait_secs: u64) -> Result<Option<Lock>, String> {

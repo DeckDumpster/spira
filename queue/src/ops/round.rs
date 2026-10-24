@@ -1735,6 +1735,18 @@ pub(super) fn certify(
     if idents(w, label, &[("batch id", batch)]).is_err() || require_lc(w, label).is_err() {
         return FAIL;
     }
+    let _certify = match crate::lock::try_certify_lock(&c.s.queue_dir, &c.r.name, batch) {
+        crate::lock::Acquire::Held(g) => g,
+        crate::lock::Acquire::Busy => {
+            let held = crate::lock::certify_holder(&c.s.queue_dir, &c.r.name, batch);
+            w.err(format!("queue.sh {label}: round {batch} is already being certified ({held}) — refused"));
+            return FAIL;
+        }
+        crate::lock::Acquire::Unopenable => {
+            w.err(format!("queue.sh {label}: cannot open the certify lock of round {batch} — refused"));
+            return FAIL;
+        }
+    };
     let who = actor(w);
     if attest.is_some() && attested_ran.unwrap_or(0) == 0 {
         w.err(format!("queue.sh {label}: --attest needs --ran <n> with n > 0 — nothing ran; a vacuous pass is not a certificate"));
