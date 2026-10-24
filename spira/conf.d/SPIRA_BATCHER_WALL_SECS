@@ -1,9 +1,6 @@
 TYPE=string
-GROUP=batcher
-DOC=SPIRA_BATCHER_WALL_SECS — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
+GROUP=batch
+DOC=SPIRA_BATCHER_WALL_SECS — Wall-clock seconds one batcher cut may run before it is abandoned.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # NO DEFAULT. This key carries no `:=`/`=` statement anywhere in
-    # spira_conf_defaults() today; it resolves to an empty string unless the
-    # environment or spira.toml sets it. Registered here only so the allowlist is
-    # generated from one source — conf-gen.sh contributes the name, nothing else.
+    : "${SPIRA_BATCHER_WALL_SECS:=3600}"
 SPIRA_CONF_DEFAULT_EOF
