@@ -1,0 +1,4 @@
+FAIL
+2026-10-24T08:56:37Z spira-release-spira-20261024T084229Z  28 passed, 2 failed
+sha256:9cb9a4c3a80d2a0ac76c0a8ecc49ac0792eb229e7a2640c8b25258f964ed1eff tarball:spira-20261024T084229Z.tar.gz
+upgrade phases waived by operator
