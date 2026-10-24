@@ -339,6 +339,22 @@ fn files_named(root: &Path, f: impl Fn(&str) -> bool + Copy) -> Vec<PathBuf> {
     out
 }
 
+const EXEC_FAILURE_MARKERS: &[&str] = &["(os error 2)", "exited 127", "exit 127", "exit code 127", "failed to execute process", "could not exec "];
+
+/// Every `<log>:<line>: <text>` under `run` where a harness tool could not be exec'd.
+pub fn exec_failures(run: &Path) -> Vec<String> {
+    let mut found = Vec::new();
+    for f in files_named(run, |n| n.ends_with(".log") && !is_secret(n)) {
+        let Ok(text) = fs::read_to_string(&f) else { continue };
+        let name = f.strip_prefix(run).unwrap_or(&f).display().to_string();
+        for (i, l) in text.lines().enumerate().filter(|(_, l)| EXEC_FAILURE_MARKERS.iter().any(|m| l.contains(m))) {
+            found.push(format!("{name}:{}: {}", i + 1, l.trim()));
+        }
+    }
+    found.sort();
+    found
+}
+
 /// The comma-separated `bin/<name>` entries of [`RELEASE_BINS`] missing or not executable
 /// under `release_dir`; empty when nothing is.
 pub fn missing_release_bins(release_dir: &Path) -> String {

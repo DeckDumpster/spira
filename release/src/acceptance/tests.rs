@@ -938,3 +938,27 @@ fn a_repeat_waiver_is_honoured_only_when_declared_for_this_cuts_exact_commit() {
     assert_eq!(phases::run(&f, b.opts(&["--waive-upgrade", "--declared-waiver", sha])), 2, "tag commit unresolvable: refuse");
     assert!(!f.log.borrow().iter().any(|c| c.args.first().map(String::as_str) == Some("install-tarball")), "refused before any phase");
 }
+
+#[test]
+fn exec_failures_names_the_log_and_line_of_every_unexecable_tool() {
+    let root = testkit::TempDir::new("exec-failures");
+    let run = root.path();
+    fs::create_dir_all(run.join("sub")).unwrap();
+    fs::write(run.join("landing.log"), "fine\nspira: queue early: No such file or directory (os error 2)\n").unwrap();
+    fs::write(run.join("sub/verdict.log"), "spira-lc list exited 127: timeout: failed to execute process\n").unwrap();
+    fs::write(run.join("watchd.log"), "watchd: could not exec gh-intake: x\n").unwrap();
+    fs::write(run.join("inbox-keeper.log"), "inbox-keeper.sh: line 25: /proc/5281/cmdline: No such file or directory\n").unwrap();
+    fs::write(run.join("notes.txt"), "exit 127\n").unwrap();
+    let got = exec_failures(run);
+    assert_eq!(got.len(), 3, "{got:?}");
+    assert!(got[0].starts_with("landing.log:2: "), "{got:?}");
+    assert!(got[1].starts_with("sub/verdict.log:1: "), "{got:?}");
+    assert!(got[2].starts_with("watchd.log:1: "), "{got:?}");
+}
+
+#[test]
+fn exec_failures_is_empty_for_a_clean_run_dir() {
+    let root = testkit::TempDir::new("exec-clean");
+    fs::write(root.join("landing.log"), "all good\n").unwrap();
+    assert!(exec_failures(root.path()).is_empty());
+}

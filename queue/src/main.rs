@@ -9,6 +9,7 @@ use queue::real::*;
 use queue::conf::harness_home;
 
 fn main() -> ExitCode {
+    spira_config::release_env::ensure_release_path();
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let cmd = match cli::parse(&argv) {
         Ok(c) => c,

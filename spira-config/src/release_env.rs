@@ -175,6 +175,40 @@ pub fn child_path_env_for_process() -> Vec<(String, String)> {
     child_path_env(own_release_root_for_process().as_deref(), std::env::var("PATH").ok().as_deref())
 }
 
+/// The `PATH` a process needs so every tool it execs by bare name can resolve from the active
+/// release: `<release>/bin` and `<release>/spira`, each appended to `existing_path` unless
+/// already an entry of it. Appended, never prepended: an entry the caller put first (a stub, an
+/// operator override) must still win. The release is `$SPIRA_RELEASE` when its `bin/` exists,
+/// else the one `own_root` names. `None` when there is no release or both dirs are on the path.
+pub fn ensured_path(env_release: Option<&str>, own_root: Option<&Path>, existing_path: Option<&str>) -> Option<(PathBuf, String)> {
+    let release = env_release.filter(|r| !r.is_empty()).map(|r| PathBuf::from(r.trim_end_matches('/'))).filter(|r| r.join("bin").is_dir()).or_else(|| own_root.map(Path::to_path_buf))?;
+    let existing = existing_path.unwrap_or("");
+    let mut entries: Vec<String> = existing.split(':').filter(|e| !e.is_empty()).map(str::to_string).collect();
+    let before = entries.len();
+    for dir in [release.join("bin"), release.join("spira")] {
+        let dir = dir.display().to_string();
+        if !entries.contains(&dir) {
+            entries.push(dir);
+        }
+    }
+    if entries.len() == before {
+        return None;
+    }
+    Some((release, entries.join(":")))
+}
+
+/// [`ensured_path`] applied to this process: call it first thing in `main`, before any thread
+/// starts, so every child inherits a `PATH` that finds the release's `bin/` and `spira/` and a
+/// `SPIRA_RELEASE` naming it, whatever environment launched this process.
+pub fn ensure_release_path() {
+    let env_release = std::env::var("SPIRA_RELEASE").ok();
+    let path = std::env::var("PATH").ok();
+    if let Some((release, path)) = ensured_path(env_release.as_deref(), own_release_root_for_process().as_deref(), path.as_deref()) {
+        std::env::set_var("PATH", path);
+        std::env::set_var(crate::RELEASE_ENV, release);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -269,5 +303,50 @@ mod tests {
         let path = got.iter().find(|(k, _)| k == "PATH").map(|(_, v)| v.as_str()).unwrap();
         assert!(path.starts_with("/opt/spira-releases/abc123/bin:/opt/spira-releases/abc123/spira:"));
         assert!(path.ends_with(bare));
+    }
+
+    #[test]
+    fn ensured_path_prepends_the_release_to_a_bare_path() {
+        let t = testkit::TempDir::new("ensured-bare");
+        std::fs::create_dir_all(t.join("bin")).unwrap();
+        let (rel, path) = ensured_path(None, Some(t.path()), Some("/usr/bin:/bin")).unwrap();
+        assert_eq!(rel, t.path());
+        assert_eq!(path, format!("/usr/bin:/bin:{0}/bin:{0}/spira", t.path().display()));
+    }
+
+    #[test]
+    fn ensured_path_prefers_spira_release_over_the_exe_s_own_root() {
+        let a = testkit::TempDir::new("ensured-env");
+        let b = testkit::TempDir::new("ensured-own");
+        std::fs::create_dir_all(a.join("bin")).unwrap();
+        let (rel, _) = ensured_path(Some(&a.path().display().to_string()), Some(b.path()), Some("/bin")).unwrap();
+        assert_eq!(rel, a.path());
+    }
+
+    #[test]
+    fn ensured_path_ignores_a_spira_release_with_no_bin_and_falls_to_the_own_root() {
+        let a = testkit::TempDir::new("ensured-nobin");
+        let b = testkit::TempDir::new("ensured-own2");
+        let (rel, _) = ensured_path(Some(&a.path().display().to_string()), Some(b.path()), None).unwrap();
+        assert_eq!(rel, b.path());
+    }
+
+    #[test]
+    fn ensured_path_leaves_a_path_that_already_holds_the_release() {
+        let t = testkit::TempDir::new("ensured-already");
+        let p = format!("/usr/bin:{0}/bin:/bin:{0}/spira", t.path().display());
+        assert_eq!(ensured_path(None, Some(t.path()), Some(&p)), None);
+    }
+
+    #[test]
+    fn ensured_path_never_shadows_an_entry_the_caller_put_first() {
+        let t = testkit::TempDir::new("ensured-stub");
+        let (_, path) = ensured_path(None, Some(t.path()), Some(&format!("/stubs:{}/spira:/usr/bin", t.path().display()))).unwrap();
+        assert_eq!(path, format!("/stubs:{0}/spira:/usr/bin:{0}/bin", t.path().display()));
+    }
+
+    #[test]
+    fn ensured_path_is_none_with_no_release_anywhere() {
+        assert_eq!(ensured_path(None, None, Some("/bin")), None);
     }
 }

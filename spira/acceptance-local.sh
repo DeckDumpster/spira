@@ -367,6 +367,9 @@ done
 # bead must be filed where the installed sentinel and aeons read. `release acceptance`'s own
 # default (~/spira-acceptance-test-db) is a path no install creates, so the first local run
 # failed at "bead filed" before reaching anything the release does.
+# THE RELEASE RUNNER'S PATH: system directories only, no rustup shim and no host tool — a unit
+# or row that resolves a harness tool by a bare name the release does not put on PATH fails here.
+_al_bare_path="${SPIRA_ACCEPTANCE_LOCAL_PATH:-/usr/local/bin:/usr/bin:/bin}"
 log "acceptance-local: running release acceptance $([ -n "$PRED" ] && printf 'phases A-D (predecessor %s)' "$PRED" || printf 'phase A') (tag=$_al_tag)"
 testenv container exec --name "$CNAME" --user spirauser bash -c "
 set -uo pipefail
@@ -383,7 +386,10 @@ set -uo pipefail
 cd \"\$HOME\"
 export SPIRA_ACCEPTANCE_FORENSICS=\"\$HOME/acceptance-forensics\"
 mkdir -p \"\$SPIRA_ACCEPTANCE_FORENSICS\"
-exec /tmp/release acceptance '$_al_tag' \
+exec env -i HOME=\"\$HOME\" USER=\"\${USER:-spirauser}\" LANG=\"\${LANG:-C.UTF-8}\" PATH='$_al_bare_path' \
+    XDG_RUNTIME_DIR=\"\${XDG_RUNTIME_DIR:-}\" DBUS_SESSION_BUS_ADDRESS=\"\${DBUS_SESSION_BUS_ADDRESS:-}\" \
+    SPIRA_ACCEPTANCE_FORENSICS=\"\$SPIRA_ACCEPTANCE_FORENSICS\" \
+    /tmp/release acceptance '$_al_tag' \
     --scratch-repo \"\$HOME/scratch-repo\" \
     --tarball '$_al_ctar' \
     --agent '$_al_agent' \
