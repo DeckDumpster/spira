@@ -1,7 +1,13 @@
 use std::io::Read;
 use std::time::Duration;
 
+const HARD_CAP: Duration = Duration::from_secs(240);
+
 fn main() {
+    std::thread::spawn(|| {
+        std::thread::sleep(HARD_CAP);
+        std::process::exit(0);
+    });
     let mut raw = String::new();
     let _ = std::io::stdin().read_to_string(&mut raw);
     let endpoint = spira_config::process::metrics_endpoint();

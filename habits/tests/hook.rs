@@ -97,13 +97,21 @@ impl Repo {
             .spawn()
             .unwrap();
         std::io::Write::write_all(child.stdin.as_mut().unwrap(), input.as_bytes()).unwrap();
-        let o = child.wait_with_output().unwrap();
+        let o = finish(child);
         (o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stdout).into_owned())
     }
 
     fn post(&self, rel: &str) -> (i32, String) {
         self.edit_hook(rel, "PostToolUse")
     }
+}
+
+fn finish(child: std::process::Child) -> std::process::Output {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(child.wait_with_output());
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(60)).expect("habits never exited").unwrap()
 }
 
 fn context(out: &str) -> String {

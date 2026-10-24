@@ -2,6 +2,7 @@ use std::io::Read;
 use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 pub enum Ran {
@@ -10,12 +11,16 @@ pub enum Ran {
     Timeout,
 }
 
-fn drain(mut r: impl Read + Send + 'static) -> std::thread::JoinHandle<String> {
+const DRAIN_GRACE: Duration = Duration::from_millis(250);
+
+fn drain(mut r: impl Read + Send + 'static) -> mpsc::Receiver<String> {
+    let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let mut b = Vec::new();
         let _ = r.read_to_end(&mut b);
-        String::from_utf8_lossy(&b).into_owned()
-    })
+        let _ = tx.send(String::from_utf8_lossy(&b).into_owned());
+    });
+    rx
 }
 
 /// Runs `argv` in its own process group, killing the group when `budget` lapses.
@@ -38,7 +43,7 @@ pub fn run(argv: &[String], cwd: &Path, budget: Duration) -> Ran {
             Err(_) => break true,
         }
     };
-    let (stdout, stderr) = (out.join().unwrap_or_default(), err.join().unwrap_or_default());
+    let (stdout, stderr) = (out.recv_timeout(DRAIN_GRACE).unwrap_or_default(), err.recv_timeout(DRAIN_GRACE).unwrap_or_default());
     if timed_out {
         Ran::Timeout
     } else {
