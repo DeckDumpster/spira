@@ -51,7 +51,7 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$T/stub-lc"; chmod +x "$T/stub-lc"
 TOOLS="$(command -v spira-config)" && TOOLS="$(dirname "$TOOLS")"
 tl_config SPIRA_BD="$T/stub-bd" SPIRA_DB="$T/db" SPIRA_REPO_MAP="$T/repos.map" \
     SPIRA_PLAN_LABEL="plan" SPIRA_PILGRIM_LABEL="walkabout" SPIRA_SCOPE_LABEL="testscope" \
-    SPIRA_INCIDENT_LABEL="incident"
+    SPIRA_INCIDENT_LABEL="incident" SPIRA_RUN="$T/run"
 
 bead_sh() {
     env -i HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" \
