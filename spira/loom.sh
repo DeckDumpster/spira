@@ -11,7 +11,7 @@ set -uo pipefail
 command -v loom >/dev/null 2>&1 || { printf 'loom: not found on PATH (%s)\n' "$PATH" >&2; exit 2; }
 
 _conf_file="$(spira_toml_write_target)"   # the layer an operator edits, in the one source
-_conf_mtime_0="$(stat --format='%Y' "$_conf_file" 2>/dev/null || echo 0)"
+_conf_stamp_0="$(conf_stamp "$_conf_file")"
 _tick="${SPIRA_LOOM_TICK:-5}"
 
 loom "$@" &
@@ -25,7 +25,7 @@ trap '
 
 while kill -0 "$_loom_pid" 2>/dev/null; do
     sleep "$_tick"
-    if conf_changed "$_conf_file" "$_conf_mtime_0"; then
+    if conf_changed "$_conf_file" "$_conf_stamp_0"; then
         printf 'loom.sh: config changed — exiting for restart\n' >&2
         kill "$_loom_pid" 2>/dev/null || true
         wait "$_loom_pid" 2>/dev/null || true
