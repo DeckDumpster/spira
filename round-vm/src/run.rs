@@ -389,7 +389,14 @@ ROUNDCFG
 export SPIRA_TOML="$HOME/round-work/spira-config/tests/fixtures/complete.toml:$HOME/round-config.toml"
 SPIRA_TOML="$(target/release/release config-stage "$HOME/round-work")" || { echo "round-vm: cannot apply the head's config delta" >&2; exit 2; }
 export SPIRA_TOML
-rel_sha="$(SPIRA_HOME="$HOME/round-work/spira" target/release/release build "$(git rev-parse HEAD)" --repo "$HOME/round-work" --bin-dir "$HOME/round-work/target/release" --releases "$HOME/round-releases")"
+release_red() {
+    echo "round-vm: RELEASE-VERIFY: RED at $1 — the head's release cannot be built and verified, so it could not land:" >&2
+    grep -v '^ *$' ~/round-release.err | head -20 >&2
+    exit 4
+}
+SPIRA_TOML="$SPIRA_TOML" target/release/spira-config validate > /dev/null 2> ~/round-release.err || release_red "config"
+rel_sha="$(SPIRA_HOME="$HOME/round-work/spira" target/release/release build "$(git rev-parse HEAD)" --repo "$HOME/round-work" --bin-dir "$HOME/round-work/target/release" --releases "$HOME/round-releases" 2> ~/round-release.err)" || release_red "build"
+SPIRA_HOME="$HOME/round-work/spira" target/release/release verify "$rel_sha" --no-pre-activate --releases "$HOME/round-releases" > /dev/null 2> ~/round-release.err || release_red "verify"
 export SPIRA_RELEASE="$HOME/round-releases/$rel_sha"
 export SPIRA_REPO="$HOME/round-work"
 export PATH="$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -2101,6 +2108,21 @@ mod tests {
         let stage = REMOTE_SCRIPT.find("release config-stage \"$HOME/round-work\"").expect("the delta must be applied");
         let build = REMOTE_SCRIPT.find("release build").unwrap();
         assert!(export < stage && stage < build);
+    }
+
+    #[test]
+    fn the_round_validates_the_staged_config_then_builds_and_verifies_the_release_before_any_suite() {
+        let stage = REMOTE_SCRIPT.find("release config-stage \"$HOME/round-work\"").unwrap();
+        let validate = REMOTE_SCRIPT.find("target/release/spira-config validate").expect("the staged layers are validated by the head's own schema");
+        let build = REMOTE_SCRIPT.find("target/release/release build").unwrap();
+        let verify = REMOTE_SCRIPT.find("target/release/release verify \"$rel_sha\" --no-pre-activate").expect("the built release is verified");
+        let tenv = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
+        assert!(stage < validate && validate < build && build < verify && verify < tenv);
+        for step in ["config", "build", "verify"] {
+            assert!(REMOTE_SCRIPT.contains(&format!("release_red \"{step}\"")), "{step} failure is a named red");
+        }
+        assert!(REMOTE_SCRIPT.contains("RELEASE-VERIFY: RED at $1"));
+        assert!(REMOTE_SCRIPT.contains("grep -v '^ *$' ~/round-release.err | head -20 >&2\n    exit 4"));
     }
 
     #[test]
