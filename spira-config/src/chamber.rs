@@ -581,7 +581,7 @@ mod tests {
             ("SPIRA_MENDER_DEADLINE_SECS", "77"),
         ]
         .into_iter()
-        .chain(["BATCH_JUDGEMENT", "PLAN", "CZAR", "GROOMER", "MAECHEN", "MENDER", "INCIDENT", "SPIKE", "WARDEN"].map(|n| (Box::leak(format!("SPIRA_{n}_LABEL").into_boxed_str()) as &str, "lbl")))
+        .chain(["BATCH_JUDGEMENT", "PLAN", "CZAR", "GROOMER", "MAECHEN", "MENDER", "PILGRIM", "INCIDENT", "SPIKE", "WARDEN"].map(|n| (Box::leak(format!("SPIRA_{n}_LABEL").into_boxed_str()) as &str, "lbl")))
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
         let lookup = |n: &str| env.get(n).cloned();

@@ -53,6 +53,7 @@ removed = ["spira.broker_enable", "spira.express_label", "spira.overlap_defer_la
 "spira.testenv_load_max_pct" = 75
 "spira.testenv_load_wait" = 240
 "spira.mender_label" = "mender-failure"
+"spira.pilgrim_label" = "pilgrimage"
 "spira.round_vm_spill" = ""
 "spira.round_vm_spill_wait_secs" = 30
 "spira.round_vm_warm_idle_secs" = 1800
