@@ -58,7 +58,7 @@ fn refresh(argv: &[String]) -> Result<(), String> {
 
 fn parse(argv: &[String]) -> Result<(Real, Vec<Site>), String> {
     let argv = &expand(argv)?;
-    let (mut registry, mut krate, mut state, mut persona) = (None, None, None, None, "builder".to_string());
+    let (mut registry, mut krate, mut state, mut persona) = (None, None, None, "builder".to_string());
     let mut sites = Vec::new();
     let mut it = argv.iter();
     while let Some(a) = it.next() {
