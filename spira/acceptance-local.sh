@@ -87,7 +87,7 @@ if [ "${1:-}" = start ]; then
         --setenv=SPIRA_REPO="${SPIRA_REPO:-}" --setenv=SPIRA_HOME_REPO="$(spira_home_repo 2>/dev/null)" \
         --setenv=SPIRA_ACCEPTANCE_LOCAL_NAME="${SPIRA_ACCEPTANCE_LOCAL_NAME:-}" \
         --setenv=SPIRA_ACCEPTANCE_LOCAL_FORENSICS="${SPIRA_ACCEPTANCE_LOCAL_FORENSICS:-}" \
-        --setenv=GH_TOKEN="${GH_TOKEN:-}" \
+        --setenv=GH_TOKEN="${GH_TOKEN:-}" --setenv=NIX_BIN="${NIX_BIN:-}" \
         -- "$(command -v acceptance-local.sh)" "$@" || exit 1   # a transient unit has no launcher PATH: hand it the resolved name
     printf 'acceptance-local: started %s\n' "$UNIT"
     printf 'acceptance-local: log at %s\n' "$LOG"
