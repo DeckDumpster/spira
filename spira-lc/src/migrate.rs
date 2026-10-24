@@ -486,6 +486,7 @@ pub fn table_grants(grants: &str) -> Vec<(String, String, String)> {
 /// A table a pending migration has yet to create is skipped until it has run, and a grantee the
 /// server does not have (a world that never created the service users) has nothing to grant to.
 fn apply_grants(admin: &dyn Sql, grants: &str) -> Result<(), String> {
+    apply_content_grants(admin, crate::content_rows::content_db().ok())?;
     for (table, user, stmt) in table_grants(grants) {
         let probe = format!("SELECT table_name FROM information_schema.tables WHERE table_schema = 'spira_lifecycle' AND table_name = {}", quote(&table));
         if admin.rows(&probe).map_err(|e| format!("cannot tell whether {table} exists: {e}"))?.is_empty() {
@@ -495,6 +496,29 @@ fn apply_grants(admin: &dyn Sql, grants: &str) -> Result<(), String> {
         if admin.rows(&who).map_err(|e| format!("cannot tell whether user {user} exists: {e}"))?.is_empty() {
             continue;
         }
+        admin.exec(&stmt).map_err(|e| format!("`{stmt}` failed: {e}"))?;
+    }
+    Ok(())
+}
+
+/// The bead-content tables the service user reads (`content-rows`, sift, reconcile-content).
+pub const CONTENT_TABLES: [&str; 3] = ["issues", "labels", "dependencies"];
+
+/// `GRANT SELECT` on each content table of `cdb` (a quoted identifier) to the service user,
+/// for each table that exists. SELECT only: the content store is never written through lc.
+fn apply_content_grants(admin: &dyn Sql, cdb: Option<&str>) -> Result<(), String> {
+    let Some(cdb) = cdb else { return Ok(()) };
+    let schema = cdb.trim_matches('`');
+    let who = "SELECT user FROM mysql.user WHERE user = 'spira_lc'";
+    if admin.rows(who).map_err(|e| format!("cannot tell whether user spira_lc exists: {e}"))?.is_empty() {
+        return Ok(());
+    }
+    for table in CONTENT_TABLES {
+        let probe = format!("SELECT table_name FROM information_schema.tables WHERE table_schema = {} AND table_name = {}", quote(schema), quote(table));
+        if admin.rows(&probe).map_err(|e| format!("cannot tell whether {schema}.{table} exists: {e}"))?.is_empty() {
+            continue;
+        }
+        let stmt = format!("GRANT SELECT ON {cdb}.{table} TO {SERVICE_GRANTEE}");
         admin.exec(&stmt).map_err(|e| format!("`{stmt}` failed: {e}"))?;
     }
     Ok(())
@@ -725,6 +749,31 @@ pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Recorder(std::cell::RefCell<Vec<String>>);
+    impl Sql for Recorder {
+        fn rows(&self, _: &str) -> Result<Vec<Value>, String> {
+            Ok(vec![serde_json::json!({"x": 1})])
+        }
+        fn exec(&self, sql: &str) -> Result<(), String> {
+            self.0.borrow_mut().push(sql.to_string());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn content_grants_follow_the_configured_database_and_are_select_only() {
+        let r = Recorder(Default::default());
+        apply_content_grants(&r, Some("`acme_beads`")).unwrap();
+        let got = r.0.borrow().clone();
+        assert_eq!(got.len(), CONTENT_TABLES.len(), "{got:?}");
+        for (g, t) in got.iter().zip(CONTENT_TABLES) {
+            assert_eq!(g, &format!("GRANT SELECT ON `acme_beads`.{t} TO 'spira_lc'@'%'"));
+        }
+        let none = Recorder(Default::default());
+        apply_content_grants(&none, None).unwrap();
+        assert!(none.0.borrow().is_empty());
+    }
 
     #[test]
     fn the_provisioned_admin_is_root_with_the_password_file_and_absent_without_one() {
