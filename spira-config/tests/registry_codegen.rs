@@ -131,6 +131,7 @@ fn the_real_registry_converts_every_key_it_declares() {
 
 const HARD_REQUIRED_NUMERIC: &[&str] = &[
     "SPIRA_PREFLIGHT_WALL_SECS",
+    "SPIRA_MAIN_HEALTH_ACTIVATION_GRACE_SECS",
     "SPIRA_FLOW_WINDOW_HOURS",
     "SPIRA_FLOW_BASELINE_HOURS",
     "SPIRA_FLOW_GRACE_SECS",
