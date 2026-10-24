@@ -11,6 +11,12 @@ pub const RENEW_DAYS: i64 = 30;
 pub const WARN_DAYS: i64 = 21;
 pub const UNIT: &str = "spira-submission.service";
 
+pub const OPERATOR_NOTE: &str = "tailscale will not issue a certificate to this user; run once: sudo tailscale set --operator=$USER";
+
+pub fn needs_operator(err: &str) -> bool {
+    err.contains("tailscale set --operator")
+}
+
 pub trait Host {
     fn run(&self, argv: &[&str]) -> Result<String, String>;
     fn now(&self) -> i64;
@@ -244,63 +250,73 @@ pub fn provision(host: &dyn Host, plan: &Plan) -> Report {
         r.notes.push("tailscale is not up: no tailnet address, certificate or firewall rule to provision".into());
     }
 
-    let mut set = |r: &mut Report, key: &str, value: &str, restart: &mut bool| {
+    let set = |r: &mut Report, key: &str, value: &str, restart: &mut bool| -> bool {
         match host.run(&[&spira_config::release_env::tool("spira-config"), "set", &format!("spira.{key}"), value, &layer]) {
             Ok(_) => {
                 r.notes.push(format!("set spira.{key} = {value}"));
                 *restart = true;
+                true
             }
-            Err(e) => r.errors.push(format!("cannot set spira.{key}: {e}")),
+            Err(e) => {
+                r.errors.push(format!("cannot set spira.{key}: {e}"));
+                false
+            }
         }
     };
-    if let Some(ip) = &ip {
-        if eff.addr.is_empty() {
-            set(&mut r, "submission_addr", ip, &mut restart);
-            eff.addr = ip.clone();
-        }
-    }
-    if !eff.addr.is_empty() {
+    let want_addr = if eff.addr.is_empty() { ip.clone().unwrap_or_default() } else { eff.addr.clone() };
+    if !want_addr.is_empty() {
         let d = plan.dir.display();
-        for (key, cur, default) in [
-            ("submission_cert", &mut eff.cert, format!("{d}/cert.pem")),
-            ("submission_key", &mut eff.key, format!("{d}/key.pem")),
-            ("submission_password_file", &mut eff.password_file, format!("{d}/password")),
-            ("submission_from", &mut eff.from, format!("{}@{}", plan.user, plan.rcpt_domain)),
-        ] {
-            if cur.is_empty() {
-                set(&mut r, key, &default, &mut restart);
-                *cur = default;
-            }
-        }
+        let pick = |cur: &str, default: String| if cur.is_empty() { default } else { cur.to_string() };
+        let cert = pick(&eff.cert, format!("{d}/cert.pem"));
+        let key = pick(&eff.key, format!("{d}/key.pem"));
         if let Err(e) = std::fs::create_dir_all(&plan.dir).and_then(|_| std::fs::set_permissions(&plan.dir, std::fs::Permissions::from_mode(0o700))) {
             r.errors.push(format!("{}: {e}", plan.dir.display()));
         }
-    }
 
-    if let (Some(name), false) = (&name, eff.cert.is_empty() || eff.key.is_empty()) {
-        let now = host.now();
-        let days = cert_days(Path::new(&eff.cert), now);
-        if days.is_none_or(|d| d < RENEW_DAYS) {
-            let before = (std::fs::read(&eff.cert).ok(), std::fs::read(&eff.key).ok());
-            match host.run(&["tailscale", "cert", "--cert-file", &eff.cert, "--key-file", &eff.key, name]) {
-                Err(e) => r.errors.push(format!("tailscale cert {name}: {e}")),
-                Ok(_) => {
-                    let _ = std::fs::set_permissions(&eff.key, std::fs::Permissions::from_mode(0o600));
-                    let after = (std::fs::read(&eff.cert).ok(), std::fs::read(&eff.key).ok());
-                    if after != before {
-                        r.notes.push(format!("renewed the certificate for {name}"));
-                        restart = true;
-                    } else {
-                        r.notes.push(format!("tailscale cert left the certificate unchanged ({} days left)", cert_days(Path::new(&eff.cert), now).map_or("?".into(), |d| d.to_string())));
+        let mut obtained = Path::new(&cert).is_file() && Path::new(&key).is_file();
+        if let Some(name) = &name {
+            let now = host.now();
+            let days = cert_days(Path::new(&cert), now);
+            if !obtained || days.is_none_or(|d| d < RENEW_DAYS) {
+                let before = (std::fs::read(&cert).ok(), std::fs::read(&key).ok());
+                match host.run(&["tailscale", "cert", "--cert-file", &cert, "--key-file", &key, name]) {
+                    Err(e) if needs_operator(&e) => r.notes.push(format!("{OPERATOR_NOTE} (tailscale cert {name}: {e})")),
+                    Err(e) => r.errors.push(format!("tailscale cert {name}: {e}")),
+                    Ok(_) => {
+                        let _ = std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600));
+                        let after = (std::fs::read(&cert).ok(), std::fs::read(&key).ok());
+                        if after != before {
+                            r.notes.push(format!("renewed the certificate for {name}"));
+                            restart = true;
+                        } else {
+                            r.notes.push(format!("tailscale cert left the certificate unchanged ({} days left)", cert_days(Path::new(&cert), now).map_or("?".into(), |d| d.to_string())));
+                        }
                     }
                 }
+                obtained = Path::new(&cert).is_file() && Path::new(&key).is_file();
+            } else {
+                r.notes.push(format!("certificate for {name} has {} days left", days.unwrap_or(0)));
             }
-        } else {
-            r.notes.push(format!("certificate for {name} has {} days left", days.unwrap_or(0)));
+        }
+
+        if obtained {
+            for (k, cur, default) in [
+                ("submission_cert", &mut eff.cert, cert),
+                ("submission_key", &mut eff.key, key),
+                ("submission_password_file", &mut eff.password_file, format!("{d}/password")),
+                ("submission_from", &mut eff.from, format!("{}@{}", plan.user, plan.rcpt_domain)),
+                ("submission_addr", &mut eff.addr, want_addr),
+            ] {
+                if cur.is_empty() && set(&mut r, k, &default, &mut restart) {
+                    *cur = default;
+                }
+            }
+        } else if eff.addr.is_empty() {
+            r.notes.push("no certificate yet: spira.submission_* left unset, submission stays not configured".into());
         }
     }
 
-    if !plan.users_file.is_empty() && !eff.password_file.is_empty() {
+    if !plan.users_file.is_empty() && !eff.password_file.is_empty() && !eff.addr.is_empty() {
         match password_state(&eff, &eff.password_file) {
             Password::Ok => {}
             Password::NoSource(e) => r.errors.push(format!("password source unusable: {e}")),
@@ -342,6 +358,12 @@ pub fn provision(host: &dyn Host, plan: &Plan) -> Report {
     r
 }
 
+fn operator_granted(host: &dyn Host) -> Option<bool> {
+    let prefs: serde_json::Value = serde_json::from_str(&host.run(&["tailscale", "debug", "prefs"]).ok()?).ok()?;
+    let user = std::env::var("USER").ok().filter(|u| !u.is_empty())?;
+    Some(user == "root" || prefs.get("OperatorUser")?.as_str() == Some(user.as_str()))
+}
+
 /// What `doctor` reads: one `key=value` per line.
 pub fn status(host: &dyn Host, plan: &Plan) -> String {
     let mut out = Vec::new();
@@ -349,6 +371,9 @@ pub fn status(host: &dyn Host, plan: &Plan) -> String {
     let ip = host.run(&["tailscale", "ip", "-4"]).ok().and_then(|o| tailnet_ip(&o));
     out.push(format!("configured={}", u8::from(configured)));
     out.push(format!("tailnet={}", u8::from(ip.is_some())));
+    if ip.is_some() && operator_granted(host) == Some(false) {
+        out.push("operator=missing".into());
+    }
     if !configured {
         return out.join("\n") + "\n";
     }

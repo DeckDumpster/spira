@@ -814,7 +814,12 @@ pub fn check_submission(w: &dyn World) -> Vec<Line> {
     let kv: std::collections::BTreeMap<&str, &str> = text.lines().filter_map(|l| l.split_once('=')).collect();
     let get = |k: &str| kv.get(k).copied().unwrap_or("");
     if get("configured") != "1" {
-        return vec![if get("tailnet") == "1" {
+        return vec![if get("operator") == "missing" {
+            warn(
+                "spira-submission cannot get a tailscale certificate: this user is not the tailscale operator, so submission stays unconfigured",
+                "Run once: sudo tailscale set --operator=$USER (then: spira-submission provision)",
+            )
+        } else if get("tailnet") == "1" {
             warn(
                 "spira-submission is not configured although tailscale is up — the operator cannot send from a mail client",
                 "Run: spira-submission provision (the provision timer does this daily)",

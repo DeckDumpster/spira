@@ -237,7 +237,7 @@ fn an_unconfigured_or_wildcard_address_never_listens() {
         }
         .to_string())
     };
-    assert!(Config::from_values(&no_cert, vec![]).unwrap_err().contains("SPIRA_SUBMISSION_CERT"));
+    assert!(Config::from_values(&no_cert, vec![]).unwrap().is_none());
 }
 
 fn logged(lines: &Arc<Mutex<Vec<String>>>, needle: &str) -> bool {
