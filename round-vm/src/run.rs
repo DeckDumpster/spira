@@ -609,6 +609,12 @@ if [ "$unit_rc" -eq 0 ]; then
 else
     echo "round-vm: UNIT-TESTS: FAIL (unit run rc=$unit_rc):" >&2
     grep -E -A3 '^(test .* FAILED|---- |error(\[|:))|panicked at' ~/round-unit-tests.log | head -120 >&2
+    rdir="$HOME/round-work/.runtime/spira/batch-results"
+    leaf="$(find "$rdir" -name '*.result' -printf '%h\n' 2>/dev/null | head -1)"
+    leaf="${leaf:-$rdir}"
+    mkdir -p "$leaf"
+    grep -E -A8 '^(test .* FAILED|---- |error(\[|:))|panicked at|^test result:' ~/round-unit-tests.log | head -400 > "$leaf/unit-tests.out"
+    [ -s "$leaf/unit-tests.out" ] || tail -200 ~/round-unit-tests.log > "$leaf/unit-tests.out"
     [ "$rc" -eq 0 ] && rc=1
 fi
 suites_secs=$suites_clock
