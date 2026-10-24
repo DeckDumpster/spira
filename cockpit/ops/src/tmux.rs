@@ -221,9 +221,9 @@ impl Tmux {
     }
 
     pub fn installed(&self) -> bool {
-        match Command::new(&self.bin).env_remove("TMUX").arg("-V").output() {
-            Ok(_) => true,
-            Err(e) => e.kind() != std::io::ErrorKind::NotFound,
+        match spira_config::bounded::bounded(&self.bin).env_remove("TMUX").arg("-V").output() {
+            Ok(o) => o.status.code() != Some(127),
+            Err(_) => true,
         }
     }
 
