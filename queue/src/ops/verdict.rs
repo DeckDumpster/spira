@@ -66,7 +66,10 @@ pub fn settle_forge_leftovers(w: &World, c: &Ctx, path: &Path) -> i32 {
         return OK;
     }
     let Ok(_g) = lock_waiting(w, c) else {
-        w.out(format!("verdict {}: another queue operation holds the lock", c.r.name));
+        w.out(format!(
+            "verdict {}: another queue operation holds the lock",
+            c.r.name
+        ));
         return OK;
     };
     let mut rc = OK;
@@ -461,13 +464,8 @@ pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
         labels.push_str(&c.s.verdict.red_tracker_label);
     }
     let fid = amended.clone().or_else(|| {
-        w.lib.create_bug(
-            &actor,
-            &title,
-            &c.s.publish_red_priority,
-            &labels,
-            &body,
-        )
+        w.lib
+            .create_bug(&actor, &title, &c.s.publish_red_priority, &labels, &body)
     });
     let fid_s = fid.clone().unwrap_or_else(|| "<create-failed>".into());
 
@@ -553,12 +551,11 @@ fn escalate_red_streak(
     }
     let threshold = c.s.publish_red_escalate_after;
     if threshold > 0 && prs.len() >= threshold && !escalated {
-        let waiting = c
-            .r
-            .landref
-            .as_deref()
-            .and_then(|l| super::publish::range_members(w, path, forge_sha, l).ok())
-            .map_or(pr_members, |m| m.len());
+        let waiting =
+            c.r.landref
+                .as_deref()
+                .and_then(|l| super::publish::range_members(w, path, forge_sha, l).ok())
+                .map_or(pr_members, |m| m.len());
         w.scripts.mail_operator(
             &format!("{name}: {} consecutive publishes red", prs.len()),
             &format!(

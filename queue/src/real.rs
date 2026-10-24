@@ -520,7 +520,8 @@ impl Lib for RealLib {
         let mailbox = spira_config::process::cfg("SPIRA_MAIL_SESSION_MAILBOX")?;
         let round_wall_secs =
             spira_config::process::cfg_parse::<u64>("SPIRA_ROUND_CERTIFY_WALL_SECS")?;
-        let round_ami_wait_secs = spira_config::process::cfg_parse::<u64>("SPIRA_ROUND_AMI_WAIT_SECS")?;
+        let round_ami_wait_secs =
+            spira_config::process::cfg_parse::<u64>("SPIRA_ROUND_AMI_WAIT_SECS")?;
         let rounds_max = spira_config::process::cfg_parse::<usize>("SPIRA_QUEUE_ROUNDS_MAX")?;
         let publish_red_priority = spira_config::process::cfg("SPIRA_PUBLISH_RED_PRIORITY")?;
         let publish_red_escalate_after =
@@ -957,7 +958,15 @@ impl Scripts for RealScripts {
         handle: &Path,
         ami: Option<&str>,
     ) -> RunOut {
-        run_round_vm(tree, results, ["--base", base], round, wall_secs, handle, ami)
+        run_round_vm(
+            tree,
+            results,
+            ["--base", base],
+            round,
+            wall_secs,
+            handle,
+            ami,
+        )
     }
     fn recipe_sha(&self, tree: Option<&Path>) -> Option<String> {
         let mut cmd = Command::new("round-vm");
@@ -965,12 +974,20 @@ impl Scripts for RealScripts {
         if let Some(t) = tree {
             cmd.arg("--tree").arg(t);
         }
-        stdout_of(&mut cmd).map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
+        stdout_of(&mut cmd)
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
     }
     fn ami_for(&self, sha: &str) -> AmiLookup {
         // batch-job: one AWS describe-images read, hang-guarded at 60 s
-        match Command::new("timeout").args(["60", "round-vm", "ami-for", sha]).stdin(Stdio::null()).output() {
-            Ok(o) if o.status.code() == Some(0) => AmiLookup::Found(String::from_utf8_lossy(&o.stdout).trim().to_string()),
+        match Command::new("timeout")
+            .args(["60", "round-vm", "ami-for", sha])
+            .stdin(Stdio::null())
+            .output()
+        {
+            Ok(o) if o.status.code() == Some(0) => {
+                AmiLookup::Found(String::from_utf8_lossy(&o.stdout).trim().to_string())
+            }
             Ok(o) if o.status.code() == Some(1) => AmiLookup::Missing,
             Ok(o) => AmiLookup::Unreadable(String::from_utf8_lossy(&o.stderr).trim().to_string()),
             Err(e) => AmiLookup::Unreadable(format!("cannot run round-vm: {e}")),
@@ -985,7 +1002,15 @@ impl Scripts for RealScripts {
         wall_secs: u64,
         handle: &Path,
     ) -> RunOut {
-        run_round_vm(tree, results, ["--ci-entry", entry], round, wall_secs, handle, None)
+        run_round_vm(
+            tree,
+            results,
+            ["--ci-entry", entry],
+            round,
+            wall_secs,
+            handle,
+            None,
+        )
     }
     fn pass_terminate(&self, pid: u32) {
         // SAFETY: a plain SIGTERM to the pid the run wrote to its handle.
@@ -1332,13 +1357,20 @@ impl Forge for RealForge {
         if text.lines().any(|l| l.trim() == "?") {
             return None;
         }
-        Some(text.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
+        Some(
+            text.lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .collect(),
+        )
     }
     fn ami_dispatch(&self, forge: &Path, repo: &Path, ref_: &str) -> bool {
         ok(Command::new(forge).arg("ami-dispatch").arg(repo).arg(ref_))
     }
     fn ami_result(&self, forge: &Path, repo: &Path, branch: &str) -> Option<AmiBuild> {
-        AmiBuild::parse(&stdout_of(Command::new(forge).arg("ami-result").arg(repo).arg(branch))?)
+        AmiBuild::parse(&stdout_of(
+            Command::new(forge).arg("ami-result").arg(repo).arg(branch),
+        )?)
     }
 }
 

@@ -909,7 +909,12 @@ fn block(t: &T, id: &str, by: &[&str]) {
 fn open_skips_a_member_whose_blocker_has_not_landed_and_names_it() {
     let t = round_world();
     block(&t, "sp-b", &["sp-eeg"]);
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a,sp-b"]),
+        0,
+        "{}",
+        t.err()
+    );
     let o = t.out();
     assert!(
         o.contains("skip — sp-b: depends on sp-eeg (")
@@ -923,7 +928,12 @@ fn open_skips_a_member_whose_blocker_has_not_landed_and_names_it() {
 fn open_skips_a_member_whose_blocker_is_only_a_co_member_of_the_round() {
     let t = round_world();
     block(&t, "sp-b", &["sp-a"]);
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a,sp-b"]),
+        0,
+        "{}",
+        t.err()
+    );
     let o = t.out();
     assert!(
         o.contains("skip — sp-b: depends on sp-a (") && !o.contains("sp-b:tb"),
@@ -1354,7 +1364,11 @@ fn an_attestation_of_a_corpus_that_ran_nothing_is_refused() {
         let mut args = vec!["round", "certify", &batch, "--attest", "merged-ta"];
         args.extend_from_slice(extra);
         assert_eq!(t.run(&args), 1, "{}", t.err());
-        assert!(t.err().contains("a vacuous pass is not a certificate"), "{}", t.err());
+        assert!(
+            t.err().contains("a vacuous pass is not a certificate"),
+            "{}",
+            t.err()
+        );
     }
     assert!(!certified_tree_exists(&t));
 }
@@ -1370,7 +1384,15 @@ fn a_green_round_names_how_many_suites_it_ran() {
     );
     let batch = batch_of(&t);
     assert_eq!(
-        t.run(&["round", "certify", &batch, "--attest", "merged-ta", "--ran", "7"]),
+        t.run(&[
+            "round",
+            "certify",
+            &batch,
+            "--attest",
+            "merged-ta",
+            "--ran",
+            "7"
+        ]),
         0,
         "{}",
         t.err()
@@ -1390,7 +1412,15 @@ fn attest_names_the_worktrees_own_head_and_nothing_else() {
     let batch = batch_of(&t);
     t.git.set("refs/heads/elsewhere", "merged-ta");
     assert_eq!(
-        t.run(&["round", "certify", &batch, "--attest", "elsewhere", "--ran", "3"]),
+        t.run(&[
+            "round",
+            "certify",
+            &batch,
+            "--attest",
+            "elsewhere",
+            "--ran",
+            "3"
+        ]),
         1
     );
     assert!(
@@ -1408,7 +1438,15 @@ fn attest_names_the_worktrees_own_head_and_nothing_else() {
     );
 
     assert_eq!(
-        t.run(&["round", "certify", &batch, "--attest", "merged-tb", "--ran", "3"]),
+        t.run(&[
+            "round",
+            "certify",
+            &batch,
+            "--attest",
+            "merged-tb",
+            "--ran",
+            "3"
+        ]),
         0,
         "{}",
         t.err()
@@ -1665,12 +1703,27 @@ fn a_pass_the_vm_could_not_finish_is_incomplete_not_red_or_green() {
 fn suites_started_re_reads_and_survives_repeated_stale_versions() {
     let t = round_world();
     *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
     t.lc.stale_batch_events.set(3);
-    assert_eq!(t.run(&["round", "suites-started", &batch]), 0, "{}", t.err());
-    let shows = t.lc.calls.borrow().iter().filter(|c| c.starts_with("event batch") && c.contains("SuitesStarted")).count();
+    assert_eq!(
+        t.run(&["round", "suites-started", &batch]),
+        0,
+        "{}",
+        t.err()
+    );
+    let shows =
+        t.lc.calls
+            .borrow()
+            .iter()
+            .filter(|c| c.starts_with("event batch") && c.contains("SuitesStarted"))
+            .count();
     assert_eq!(shows, 4, "{:?}", t.lc.calls.borrow());
     t.lc.stale_batch_events.set(100);
     assert_ne!(t.run(&["round", "suites-started", &batch]), 0);
@@ -2479,6 +2532,34 @@ fn round_open_discards_a_stage_whose_round_is_gone() {
 }
 
 #[test]
+fn a_mender_bead_carries_the_resolved_scope_label_though_the_process_env_lacks_it() {
+    let mut t = round_world();
+    t.lib.s.verdict.mender_label = "mend-fixture".into();
+    t.env
+        .resolved
+        .borrow_mut()
+        .insert("SPIRA_SCOPE_LABEL".into(), "scope-fixture".into());
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "failed", &batch, "--suite", "test-z.sh"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let calls = t.lib.calls.borrow();
+    let bug = calls.iter().find(|c| c.starts_with("create_bug")).unwrap();
+    assert!(bug.contains(" scope-fixture,mend-fixture,repo:"), "{bug}");
+}
+
+#[test]
 fn each_red_suite_files_one_mender_lane_bead_carrying_its_output_pass_and_batch() {
     let mut t = round_world();
     t.lib.s.verdict.mender_label = "mend-fixture".into();
@@ -2750,7 +2831,15 @@ fn a_green_write_that_times_out_after_applying_still_certifies_and_certify_is_id
     );
 
     assert_eq!(
-        t.run(&["round", "certify", &batch, "--attest", "merged-ta", "--ran", "3"]),
+        t.run(&[
+            "round",
+            "certify",
+            &batch,
+            "--attest",
+            "merged-ta",
+            "--ran",
+            "3"
+        ]),
         0,
         "{}",
         t.err()
@@ -2779,7 +2868,15 @@ fn a_retry_after_a_timed_out_green_completes_the_missing_certificate() {
     *t.lc.batch_view.borrow_mut() = Some(("GREEN".into(), 1, 1, String::new()));
     let ran = t.scripts.calls.borrow().len();
     assert_eq!(
-        t.run(&["round", "certify", &batch, "--attest", "merged-ta", "--ran", "3"]),
+        t.run(&[
+            "round",
+            "certify",
+            &batch,
+            "--attest",
+            "merged-ta",
+            "--ran",
+            "3"
+        ]),
         0,
         "{}",
         t.err()
@@ -2832,7 +2929,15 @@ fn a_green_batch_at_another_head_is_still_refused_as_changed() {
     *t.lc.batch_view.borrow_mut() = Some(("GREEN".into(), 1, 1, String::new()));
     t.git.set("refs/heads/elsewhere", "merged-ta");
     assert_eq!(
-        t.run(&["round", "certify", &batch, "--attest", "elsewhere", "--ran", "3"]),
+        t.run(&[
+            "round",
+            "certify",
+            &batch,
+            "--attest",
+            "elsewhere",
+            "--ran",
+            "3"
+        ]),
         1
     );
     assert!(!certified_tree_exists(&t));
@@ -3873,13 +3978,11 @@ fn a_repo_that_declares_its_own_testenv_certifies_and_lands_from_its_verdict() {
     assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
     let calls = t.scripts.calls.borrow().clone();
     assert!(
-        calls
-            .iter()
-            .any(|c| {
-                c.starts_with("repo-round-vm ")
-                    && c.contains("entry=deploy/ci.sh all round=")
-                    && c.ends_with("/spira wall=900")
-            }),
+        calls.iter().any(|c| {
+            c.starts_with("repo-round-vm ")
+                && c.contains("entry=deploy/ci.sh all round=")
+                && c.ends_with("/spira wall=900")
+        }),
         "{calls:?}"
     );
     assert!(
@@ -3896,20 +3999,45 @@ fn a_repo_that_declares_its_own_testenv_certifies_and_lands_from_its_verdict() {
 #[test]
 fn a_worktree_moved_by_stabilization_certifies_only_when_the_batcher_names_its_head() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     declare_own_testenv(&t);
     t.git.set("HEAD", "stabilized");
-    t.git.trees.borrow_mut().insert("stabilized".into(), T_ROUND.into());
+    t.git
+        .trees
+        .borrow_mut()
+        .insert("stabilized".into(), T_ROUND.into());
     t.git.ancestor("b0", "stabilized");
 
     assert_eq!(t.run(&["round", "certify", &batch]), 1);
-    assert!(t.err().contains("is not at the round's head"), "{}", t.err());
-    assert_eq!(t.run(&["round", "certify", &batch, "--rehead", "merged-tb"]), 1);
-    assert!(t.err().contains("--rehead merged-tb is not the round worktree's head"), "{}", t.err());
+    assert!(
+        t.err().contains("is not at the round's head"),
+        "{}",
+        t.err()
+    );
+    assert_eq!(
+        t.run(&["round", "certify", &batch, "--rehead", "merged-tb"]),
+        1
+    );
+    assert!(
+        t.err()
+            .contains("--rehead merged-tb is not the round worktree's head"),
+        "{}",
+        t.err()
+    );
     assert!(!certified_tree_exists(&t));
 
-    assert_eq!(t.run(&["round", "certify", &batch, "--rehead", "stabilized"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "certify", &batch, "--rehead", "stabilized"]),
+        0,
+        "{}",
+        t.err()
+    );
     assert_eq!(kv_of(&t, "round")["head"], "stabilized");
     assert_eq!(round_phase(&t), "GREEN");
 }
@@ -4059,7 +4187,12 @@ fn recipe_changing_world() -> (T, String) {
     *t.scripts.recipe_release.borrow_mut() = Some("release-recipe".into());
     *t.scripts.recipe_tree.borrow_mut() = Some("candidate-recipe-sha".into());
     *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok 3 1 fp p e 0".into())];
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     (t, batch)
 }
@@ -4077,8 +4210,17 @@ fn a_recipe_changing_round_builds_its_own_image_and_certifies_on_it() {
     assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
     let branch = format!("spira-round-candidate/{batch}-candidate-re");
     let forge = t.forge.calls.borrow().join("\n");
-    assert_eq!(forge.matches(&format!("ami-dispatch {branch}")).count(), 1, "{forge}");
-    assert!(t.out().contains("waiting for the candidate round image build 41"), "{}", t.out());
+    assert_eq!(
+        forge.matches(&format!("ami-dispatch {branch}")).count(),
+        1,
+        "{forge}"
+    );
+    assert!(
+        t.out()
+            .contains("waiting for the candidate round image build 41"),
+        "{}",
+        t.out()
+    );
     let git = t.lib.calls.borrow().join("\n");
     assert!(git.contains(&format!(":refs/heads/{branch}")), "{git}");
     let vm = t.scripts.calls.borrow().join("\n");
@@ -4101,13 +4243,17 @@ fn a_recipe_change_whose_image_fails_to_build_reds_the_round_naming_the_step() {
     let (t, batch) = recipe_changing_world();
     *t.forge.ami_results.borrow_mut() = vec![
         Some(AmiBuild::NotStarted),
-        Some(AmiBuild::Failure("41".into(), vec!["build / Build, image and tag".into()])),
+        Some(AmiBuild::Failure(
+            "41".into(),
+            vec!["build / Build, image and tag".into()],
+        )),
     ];
 
     assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
     assert!(t.out().contains("red=workspace-build"), "{}", t.out());
     assert!(
-        t.out().contains("build-error=round image build 41 failed at build / Build, image and tag"),
+        t.out()
+            .contains("build-error=round image build 41 failed at build / Build, image and tag"),
         "{}",
         t.out()
     );
@@ -4131,18 +4277,34 @@ fn a_candidate_image_build_that_outlasts_its_wait_leaves_the_round_unjudged() {
     let (t, batch) = recipe_changing_world();
     *t.forge.ami_results.borrow_mut() = vec![Some(AmiBuild::Running("41".into()))];
 
-    assert_eq!(t.run(&["round", "certify", &batch]), crate::ops::round::FAULT, "{}", t.err());
-    assert!(t.err().contains("did not finish within 5400s"), "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "certify", &batch]),
+        crate::ops::round::FAULT,
+        "{}",
+        t.err()
+    );
+    assert!(
+        t.err().contains("did not finish within 5400s"),
+        "{}",
+        t.err()
+    );
 }
 
 #[test]
 fn open_rounds_a_recipe_changing_member_apart_from_the_ordinary_ones() {
     let t = round_world();
     t.git.stat("b0", "tb", &[("round-vm/ami-setup.sh", 1, 1)]);
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b,sp-c"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a,sp-b,sp-c"]),
+        0,
+        "{}",
+        t.err()
+    );
     let o = t.out();
     assert!(
-        o.contains("skip — sp-b: solo: sp-b changes the round recipe") && o.contains("members=sp-a:ta sp-c:tc") && !o.contains("sp-b:tb"),
+        o.contains("skip — sp-b: solo: sp-b changes the round recipe")
+            && o.contains("members=sp-a:ta sp-c:tc")
+            && !o.contains("sp-b:tb"),
         "{o}"
     );
 }
@@ -4152,7 +4314,17 @@ fn open_admits_a_lone_recipe_changing_member_by_itself() {
     let t = round_world();
     t.git.stat("b0", "ta", &[("flake.nix", 1, 1)]);
     t.git.stat("b0", "tb", &[("flake.lock", 1, 1)]);
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a,sp-b"]),
+        0,
+        "{}",
+        t.err()
+    );
     let o = t.out();
-    assert!(o.contains("members=sp-a:ta") && !o.contains("sp-b:tb") && o.contains("sp-b: solo: sp-b changes the round recipe"), "{o}");
+    assert!(
+        o.contains("members=sp-a:ta")
+            && !o.contains("sp-b:tb")
+            && o.contains("sp-b: solo: sp-b changes the round recipe"),
+        "{o}"
+    );
 }

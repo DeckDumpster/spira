@@ -62,7 +62,14 @@ pub fn run(w: &World, r: &Round) -> i32 {
             attest,
             ran,
             rehead,
-        } => certify(w, batch, repo.as_deref(), attest.as_deref(), ran.as_deref().and_then(|r| r.parse().ok()), rehead.as_deref()),
+        } => certify(
+            w,
+            batch,
+            repo.as_deref(),
+            attest.as_deref(),
+            ran.as_deref().and_then(|r| r.parse().ok()),
+            rehead.as_deref(),
+        ),
         Round::Eject {
             batch,
             id,
@@ -421,7 +428,12 @@ pub(super) fn summon_mender(
         format!("{body}\nPath attribution of the pass's reds (batcher path-attribute):\n{attribution}\n")
     };
     let mut labels = String::new();
-    if let Some(scope) = w.var("SPIRA_SCOPE_LABEL").filter(|l| !l.is_empty()) {
+    if let Some(scope) = w
+        .env
+        .config("SPIRA_SCOPE_LABEL")
+        .ok()
+        .filter(|l| !l.is_empty())
+    {
         labels.push_str(&scope);
         labels.push(',');
     }
@@ -438,17 +450,26 @@ pub(super) fn summon_mender(
     }
 }
 
-const REPO_CONFIG_REFUSALS: [&str; 3] = ["declares no ci_entry", "no round AMI carries", "IMAGE-ABSENT"];
+const REPO_CONFIG_REFUSALS: [&str; 3] = [
+    "declares no ci_entry",
+    "no round AMI carries",
+    "IMAGE-ABSENT",
+];
 
 fn repo_config_refusal(output: &str) -> Option<&'static str> {
-    REPO_CONFIG_REFUSALS.into_iter().find(|m| output.contains(m))
+    REPO_CONFIG_REFUSALS
+        .into_iter()
+        .find(|m| output.contains(m))
 }
 
 /// Close every mender bead filed for a batch that is closing: the failure it was filed for ends
 /// with the batch. Idempotent; a close that fails says why and is retried by the next call, and
 /// every call also retires the menders of any other batch the lifecycle already holds terminal.
 fn mender_marker(dir: &Path, batch: &str, pass: impl std::fmt::Display, suite: &str) -> PathBuf {
-    dir.join(format!("{}.mender-{pass}-{suite}", batch.replace('/', "%2F")))
+    dir.join(format!(
+        "{}.mender-{pass}-{suite}",
+        batch.replace('/', "%2F")
+    ))
 }
 
 pub(super) fn retire_menders(w: &World, c: &Ctx, batch: &str, why: &str) {
@@ -629,7 +650,12 @@ pub(super) fn raise_forge_reds(w: &World, c: &Ctx, kv: &Kv, suites_csv: &str) {
         if idents(w, "verdict", &[("suite", suite)]).is_err() {
             continue;
         }
-        let marker = mender_marker(&rounds_dir(c), batch, w.lc.batch_pass(batch).map_or(0, |p| p.0), suite);
+        let marker = mender_marker(
+            &rounds_dir(c),
+            batch,
+            w.lc.batch_pass(batch).map_or(0, |p| p.0),
+            suite,
+        );
         if marker.exists() {
             continue;
         }
@@ -913,8 +939,17 @@ pub(super) fn forget_batch_red(c: &Ctx, id: &str, tip: &str) -> std::io::Result<
 }
 
 fn changes_recipe(w: &World, repo: &Path, base: &str, tip: &str) -> bool {
-    let from = w.git.merge_base(repo, base, tip).unwrap_or_else(|| base.to_string());
-    let changed: Vec<String> = w.git.numstat(repo, &from, tip).unwrap_or_default().into_iter().map(|(p, ..)| p).collect();
+    let from = w
+        .git
+        .merge_base(repo, base, tip)
+        .unwrap_or_else(|| base.to_string());
+    let changed: Vec<String> = w
+        .git
+        .numstat(repo, &from, tip)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(p, ..)| p)
+        .collect();
     spira_config::recipe::touches(&changed)
 }
 
@@ -1071,12 +1106,21 @@ fn open(
 
     let open_recipe = open_now
         .iter()
-        .find(|(_, kv)| kv.members().iter().any(|h| changes_recipe(w, &path, &landed_sha, &h.tip)))
+        .find(|(_, kv)| {
+            kv.members()
+                .iter()
+                .any(|h| changes_recipe(w, &path, &landed_sha, &h.tip))
+        })
         .map(|(_, kv)| kv.get("batch_id").unwrap_or("?").to_string());
-    let (mut recipe, ordinary): (Vec<Member>, Vec<Member>) =
-        admitted.into_iter().partition(|m| changes_recipe(w, &path, &landed_sha, &m.tip));
+    let (mut recipe, ordinary): (Vec<Member>, Vec<Member>) = admitted
+        .into_iter()
+        .partition(|m| changes_recipe(w, &path, &landed_sha, &m.tip));
     let alone = open_recipe.is_none() && ordinary.is_empty();
-    let admitted = if alone { recipe.drain(..1.min(recipe.len())).collect() } else { ordinary };
+    let admitted = if alone {
+        recipe.drain(..1.min(recipe.len())).collect()
+    } else {
+        ordinary
+    };
     for m in &recipe {
         skips.push(match &open_recipe {
             Some(open) => format!("{0}: solo: {0} changes the round recipe — waits for open recipe round {open}, not admitted", m.id),
@@ -1475,11 +1519,17 @@ impl AmiWait {
             return false;
         }
         let Ok(home) = resolve(w, label, Some(&c.s.home_repo)) else {
-            w.out(format!("queue.sh {label}: not waiting for a round AMI: cannot resolve {}", c.s.home_repo));
+            w.out(format!(
+                "queue.sh {label}: not waiting for a round AMI: cannot resolve {}",
+                c.s.home_repo
+            ));
             return false;
         };
         let Some(home_path) = home.r.path.clone() else {
-            w.out(format!("queue.sh {label}: not waiting for a round AMI: {} has no path", c.s.home_repo));
+            w.out(format!(
+                "queue.sh {label}: not waiting for a round AMI: {} has no path",
+                c.s.home_repo
+            ));
             return false;
         };
         let Some(running) = w.forge.ami_runs(&c.s.forge, &home_path) else {
@@ -1497,7 +1547,9 @@ impl AmiWait {
                 .forge
                 .ami_dispatch(&c.s.forge, &home_path, ref_branch(land))
             {
-                w.out(format!("queue.sh {label}: the forge refused the Round AMI build on {land}"));
+                w.out(format!(
+                    "queue.sh {label}: the forge refused the Round AMI build on {land}"
+                ));
                 return false;
             }
             self.triggered = true;
@@ -1530,17 +1582,29 @@ enum Image {
 const IMAGE_UNJUDGED: i32 = 3;
 
 fn candidate_branch(batch: &str, sha: &str) -> String {
-    format!("spira-round-candidate/{batch}-{}", &sha[..sha.len().min(12)])
+    format!(
+        "spira-round-candidate/{batch}-{}",
+        &sha[..sha.len().min(12)]
+    )
 }
 
 /// A round whose head changes the recipe certifies on an image built from that head: the head
 /// is pushed under a per-candidate branch, the Round AMI workflow is dispatched on it, and the
 /// pass waits up to `round_ami_wait_secs` for the image. A recipe already imaged is not rebuilt.
-fn candidate_image(w: &World, label: &str, c: &Ctx, path: &Path, wt: &Path, head: &str, batch: &str) -> Image {
+fn candidate_image(
+    w: &World,
+    label: &str,
+    c: &Ctx,
+    path: &Path,
+    wt: &Path,
+    head: &str,
+    batch: &str,
+) -> Image {
     if !matches!(c.s.round_spill.as_str(), "ec2" | "ec2-always" | "ec2-only") {
         return Image::Release;
     }
-    let (Some(tree), Some(release)) = (w.scripts.recipe_sha(Some(wt)), w.scripts.recipe_sha(None)) else {
+    let (Some(tree), Some(release)) = (w.scripts.recipe_sha(Some(wt)), w.scripts.recipe_sha(None))
+    else {
         return Image::Release;
     };
     if tree == release {
@@ -1548,14 +1612,20 @@ fn candidate_image(w: &World, label: &str, c: &Ctx, path: &Path, wt: &Path, head
     }
     match w.scripts.ami_for(&tree) {
         AmiLookup::Found(id) => return Image::Candidate(id),
-        AmiLookup::Unreadable(e) => return Image::Unjudged(format!("cannot read the round images: {e}")),
+        AmiLookup::Unreadable(e) => {
+            return Image::Unjudged(format!("cannot read the round images: {e}"))
+        }
         AmiLookup::Missing => {}
     }
     let Ok(home) = resolve(w, label, Some(&c.s.home_repo)) else {
-        return Image::Unjudged("cannot resolve the repository the Round AMI workflow runs in".into());
+        return Image::Unjudged(
+            "cannot resolve the repository the Round AMI workflow runs in".into(),
+        );
     };
     let (Some(home_path), Some((remote, _))) = (home.r.path.clone(), c.r.publish.clone()) else {
-        return Image::Unjudged("the repository has no publish remote to push the candidate image build to".into());
+        return Image::Unjudged(
+            "the repository has no publish remote to push the candidate image build to".into(),
+        );
     };
     let branch = candidate_branch(batch, &tree);
     let began = w.clock.now();
@@ -1563,26 +1633,47 @@ fn candidate_image(w: &World, label: &str, c: &Ctx, path: &Path, wt: &Path, head
     let mut idle = 0u32;
     let verdict = loop {
         match w.forge.ami_result(&c.s.forge, &home_path, &branch) {
-            None => break Image::Unjudged("the forge cannot be read for the candidate round image build".into()),
+            None => {
+                break Image::Unjudged(
+                    "the forge cannot be read for the candidate round image build".into(),
+                )
+            }
             Some(AmiBuild::Failure(run, steps)) => {
-                let at = steps.first().cloned().unwrap_or_else(|| "<unknown step>".into());
+                let at = steps
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "<unknown step>".into());
                 break Image::Failed(format!("round image build {run} failed at {at}"));
             }
             Some(AmiBuild::Success(run)) => match w.scripts.ami_for(&tree) {
                 AmiLookup::Found(id) => break Image::Candidate(id),
-                AmiLookup::Missing => break Image::Unjudged(format!("round image build {run} succeeded but no image carries recipe {tree}")),
-                AmiLookup::Unreadable(e) => break Image::Unjudged(format!("cannot read the round images: {e}")),
+                AmiLookup::Missing => {
+                    break Image::Unjudged(format!(
+                        "round image build {run} succeeded but no image carries recipe {tree}"
+                    ))
+                }
+                AmiLookup::Unreadable(e) => {
+                    break Image::Unjudged(format!("cannot read the round images: {e}"))
+                }
             },
             Some(AmiBuild::Running(run)) => {
                 idle = 0;
-                w.out(format!("queue.sh {label}: waiting for the candidate round image build {run}"));
+                w.out(format!(
+                    "queue.sh {label}: waiting for the candidate round image build {run}"
+                ));
             }
             Some(AmiBuild::NotStarted) if !dispatched => {
-                if !w.lib.push(&path.to_path_buf(), &remote, &format!("{head}:refs/heads/{branch}")) {
+                if !w.lib.push(
+                    &path.to_path_buf(),
+                    &remote,
+                    &format!("{head}:refs/heads/{branch}"),
+                ) {
                     break Image::Unjudged(format!("could not push {branch}"));
                 }
                 if !w.forge.ami_dispatch(&c.s.forge, &home_path, &branch) {
-                    break Image::Unjudged(format!("the forge refused the Round AMI build on {branch}"));
+                    break Image::Unjudged(format!(
+                        "the forge refused the Round AMI build on {branch}"
+                    ));
                 }
                 dispatched = true;
                 w.out(format!("queue.sh {label}: recipe {tree} has no image; dispatched the Round AMI build on {branch}"));
@@ -1590,17 +1681,26 @@ fn candidate_image(w: &World, label: &str, c: &Ctx, path: &Path, wt: &Path, head
             Some(AmiBuild::NotStarted) => {
                 idle += 1;
                 if idle >= AmiWait::IDLE_POLLS {
-                    break Image::Unjudged(format!("the Round AMI build dispatched on {branch} never started"));
+                    break Image::Unjudged(format!(
+                        "the Round AMI build dispatched on {branch} never started"
+                    ));
                 }
             }
         }
         if w.clock.now().saturating_sub(began) >= c.s.round_ami_wait_secs {
-            break Image::Unjudged(format!("the candidate round image build did not finish within {}s", c.s.round_ami_wait_secs));
+            break Image::Unjudged(format!(
+                "the candidate round image build did not finish within {}s",
+                c.s.round_ami_wait_secs
+            ));
         }
         w.clock.sleep(AmiWait::POLL_SECS); // waits-on: the Round AMI run on the candidate branch; cap round_ami_wait_secs
     };
     if !matches!(verdict, Image::Unjudged(_)) {
-        let _ = w.lib.push(&path.to_path_buf(), &remote, &format!(":refs/heads/{branch}"));
+        let _ = w.lib.push(
+            &path.to_path_buf(),
+            &remote,
+            &format!(":refs/heads/{branch}"),
+        );
     }
     verdict
 }
@@ -1966,7 +2066,17 @@ pub(super) fn certify(
         return FAIL;
     }
     let wall = timings.suites_s + timings.build_s;
-    finish_green(w, label, &c, &path, batch, &head, &who, &run_id, (ran, wall))
+    finish_green(
+        w,
+        label,
+        &c,
+        &path,
+        batch,
+        &head,
+        &who,
+        &run_id,
+        (ran, wall),
+    )
 }
 
 /// The (repo, tree) certificate a green full-corpus pass earns. Rewriting it is harmless.
