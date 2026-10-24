@@ -869,29 +869,63 @@ fn round_ids(pool: &[Member]) -> Vec<&str> {
 
 #[test]
 fn recipe_member_rounds_alone_after_the_ordinary_three() {
-    let mut pool = vec![m("sp-a", 2, false, 1), m("sp-r", 1, false, 0), m("sp-b", 2, false, 2), m("sp-c", 2, false, 3)];
+    let mut pool = vec![m("sp-a", 2, false, 1), m("sp-r", 3, false, 9), m("sp-b", 2, false, 2), m("sp-c", 2, false, 3)];
     let rec = touching(&["sp-r"]);
-    let (first, lines) = recipe_solo(pool.clone(), &rec);
+    let (first, lines) = recipe_solo(pool.clone(), &rec, &BTreeMap::new(), 1);
     assert_eq!(round_ids(&first), ["sp-a", "sp-b", "sp-c"]);
-    assert_eq!(lines, ["solo: sp-r changes the round recipe"]);
+    assert_eq!(lines, ["solo: sp-r changes the round recipe — skipped 1 cut"]);
     pool.retain(|m| m.id == "sp-r");
-    let (second, lines) = recipe_solo(pool, &rec);
+    let (second, lines) = recipe_solo(pool, &rec, &BTreeMap::new(), 1);
     assert_eq!(round_ids(&second), ["sp-r"]);
-    assert_eq!(lines.len(), 1);
+    assert!(lines.is_empty());
 }
 
 #[test]
 fn a_second_recipe_member_waits_for_the_first_round() {
     let pool = vec![m("sp-r2", 2, false, 5), m("sp-r1", 2, false, 1)];
-    let (round, lines) = recipe_solo(pool, &touching(&["sp-r1", "sp-r2"]));
+    let (round, lines) = recipe_solo(pool, &touching(&["sp-r1", "sp-r2"]), &BTreeMap::new(), 1);
     assert_eq!(round_ids(&round), ["sp-r1"]);
-    assert_eq!(lines.len(), 2);
+    assert_eq!(lines.len(), 1);
 }
 
 #[test]
 fn a_pool_without_recipe_members_is_untouched() {
     let pool = vec![m("sp-a", 1, false, 0), m("sp-b", 1, false, 1)];
-    let (round, lines) = recipe_solo(pool.clone(), &touching(&["sp-zzz"]));
+    let (round, lines) = recipe_solo(pool.clone(), &touching(&["sp-zzz"]), &BTreeMap::new(), 1);
     assert_eq!(round, pool);
     assert!(lines.is_empty());
+}
+
+fn skips(id: &str, n: u32) -> BTreeMap<Id, u32> {
+    BTreeMap::from([(id.to_string(), n)])
+}
+
+#[test]
+fn a_p1_recipe_member_rounds_alone_though_ordinary_members_wait() {
+    let pool = vec![m("sp-a", 2, false, 1), m("sp-r", 1, false, 5), m("sp-b", 2, false, 2)];
+    let (round, lines) = recipe_solo(pool, &touching(&["sp-r"]), &BTreeMap::new(), 1);
+    assert_eq!(round_ids(&round), ["sp-r"]);
+    assert!(lines.is_empty());
+}
+
+#[test]
+fn the_oldest_waiting_recipe_member_rounds_alone() {
+    let pool = vec![m("sp-a", 2, false, 9), m("sp-r", 3, false, 1), m("sp-b", 2, false, 2)];
+    let (round, _) = recipe_solo(pool, &touching(&["sp-r"]), &BTreeMap::new(), 1);
+    assert_eq!(round_ids(&round), ["sp-r"]);
+}
+
+#[test]
+fn a_younger_low_priority_recipe_member_rounds_alone_after_max_skips() {
+    let pool = || vec![m("sp-a", 2, false, 1), m("sp-r", 3, false, 5), m("sp-b", 2, false, 2)];
+    let rec = touching(&["sp-r"]);
+    let (first, lines) = recipe_solo(pool(), &rec, &BTreeMap::new(), 1);
+    assert_eq!(round_ids(&first), ["sp-a", "sp-b"]);
+    assert_eq!(lines, ["solo: sp-r changes the round recipe — skipped 1 cut"]);
+    let (second, lines) = recipe_solo(pool(), &rec, &skips("sp-r", 1), 1);
+    assert_eq!(round_ids(&second), ["sp-r"]);
+    assert!(lines.is_empty());
+    let (held, lines) = recipe_solo(pool(), &rec, &skips("sp-r", 2), 5);
+    assert_eq!(round_ids(&held), ["sp-a", "sp-b"]);
+    assert_eq!(lines, ["solo: sp-r changes the round recipe — skipped 3 cuts"]);
 }

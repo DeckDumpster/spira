@@ -157,6 +157,11 @@ board "$(row sp-prw SUBMITTED "$OLD" '[]')" "$(row sp-qw SUBMITTED "$OLD" '[]')"
     -- "$(cont sp-prw '["repo:prrepo"]')" "$(cont sp-qw '["repo:widgets"]')"
 out="$(run --show)"
 want "positive control: a queue-mode bead past the wait is still WAITING" "SUSPECT sp-qw SUBMITTED WAITING" "$out"
+nowant "a bead not skipped for its recipe is not called starved" "solo: starved" "$out"
+mkdir -p "$TMP/run/solo-skips"; printf '2\n' > "$TMP/run/solo-skips/sp-qw"
+want "a recipe member skipped by cuts is WAITING and solo: starved" "SUSPECT sp-qw SUBMITTED WAITING over" "$(run --show)"
+want "the starved cause is named" "solo: starved" "$(run --show)"
+rm -rf "$TMP/run/solo-skips"
 case "$out" in *sp-prw*WAITING*) bad=1 ;; *) bad=0 ;; esac
 is "a pr-mode bead is not waiting for a round" "0" "$bad"
 

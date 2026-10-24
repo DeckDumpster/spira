@@ -369,6 +369,7 @@ sccache_dav_tailnet_addr = ""
 scope_label = "spira"
 self_window = "60"
 snap_stale_s = "60"
+solo_max_skips = 1
 spike_dir = "docs/spikes"
 spike_label = "spike"
 spike_paths = "docs/spikes"

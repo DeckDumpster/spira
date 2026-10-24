@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=batch
+DOC=SPIRA_SOLO_MAX_SKIPS — how many ordinary rounds a waiting recipe-changing (solo-only) member is skipped before it rounds alone.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # how many ordinary rounds a waiting recipe-changing (solo-only) member is skipped before it rounds alone.
+    : "${SPIRA_SOLO_MAX_SKIPS:=1}"
+SPIRA_CONF_DEFAULT_EOF

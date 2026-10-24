@@ -179,21 +179,48 @@ pub fn refuse_blocked(pool: Vec<Member>) -> (Vec<Member>, Vec<String>) {
     (ok, refusals)
 }
 
-/// A member whose diff touches a round-recipe input rounds alone: ordinary members go first and
-/// the recipe members wait; with none left, the best-ranked recipe member is the whole round.
-/// Returns the round's pool and one `solo:` line per recipe member in the pool.
-pub fn recipe_solo(pool: Vec<Member>, touching: &std::collections::BTreeSet<Id>) -> (Vec<Member>, Vec<String>) {
+/// A member whose diff touches a round-recipe input rounds alone. Ordinary members round first
+/// only while every recipe member is neither the oldest waiting, nor P0/P1, nor already skipped
+/// `max_skips` cuts (`skipped`); the first recipe member in rank order that is due is then the
+/// whole round. With no ordinary member left, the best-ranked recipe member is the round.
+/// Returns the round's pool and one `solo:` line per recipe member left waiting, with its skips.
+pub fn recipe_solo(
+    pool: Vec<Member>,
+    touching: &std::collections::BTreeSet<Id>,
+    skipped: &BTreeMap<Id, u32>,
+    max_skips: u32,
+) -> (Vec<Member>, Vec<String>) {
+    let oldest = pool.iter().min_by_key(|m| (m.certified_at, m.id.clone())).map(|m| m.id.clone());
     let (mut recipe, ordinary): (Vec<Member>, Vec<Member>) = pool.into_iter().partition(|m| touching.contains(&m.id));
     if recipe.is_empty() {
         return (ordinary, Vec::new());
     }
     recipe.sort_by_key(order_key);
-    let lines = recipe.iter().map(|m| format!("solo: {} changes the round recipe", m.id)).collect();
-    if ordinary.is_empty() {
-        recipe.truncate(1);
-        (recipe, lines)
-    } else {
-        (ordinary, lines)
+    let due = |m: &Member| {
+        oldest.as_deref() == Some(m.id.as_str())
+            || m.priority.is_some_and(|p| p <= 1)
+            || skipped.get(&m.id).copied().unwrap_or(0) >= max_skips
+    };
+    let pick = if ordinary.is_empty() { Some(0) } else { recipe.iter().position(due) };
+    let waiting_lines = |waiting: &[Member]| -> Vec<String> {
+        waiting
+            .iter()
+            .map(|m| {
+                let n = skipped.get(&m.id).copied().unwrap_or(0) + 1;
+                format!("solo: {} changes the round recipe — skipped {n} cut{}", m.id, if n == 1 { "" } else { "s" })
+            })
+            .collect()
+    };
+    match pick {
+        Some(i) => {
+            let chosen = recipe.remove(i);
+            let lines = waiting_lines(&recipe);
+            (vec![chosen], lines)
+        }
+        None => {
+            let lines = waiting_lines(&recipe);
+            (ordinary, lines)
+        }
     }
 }
 
