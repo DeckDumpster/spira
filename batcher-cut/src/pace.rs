@@ -235,6 +235,7 @@ pub fn paced(
     files: &Files,
     sm: &Seams,
     open_round: impl FnOnce() -> Result<Option<String>, String>,
+    driven: impl FnOnce(&str) -> bool,
     verdict: impl FnOnce() -> Option<(String, u64)>,
     cut: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
@@ -244,6 +245,10 @@ pub fn paced(
         return Ok(());
     }
     if let Some(id) = open_round()? {
+        if driven(&id) {
+            println!("batcher rounds: {}: round {id} is open and being certified — not re-cut", sm.repo);
+            return Ok(());
+        }
         let (next, pg) = open_page(&st, sm.repo, &id);
         if let Some(text) = pg {
             page(sm, &text)?;
@@ -286,7 +291,7 @@ mod tests {
         let inbox = d.join("inbox.log");
         let sm = Seams { repo, now, inbox: &inbox, stamp: &stamp };
         let cut_ran = Cell::new(false);
-        let r = paced(&Files::new(d, repo), &sm, || Ok(open.map(String::from)), || verdict.map(|(s, a)| (s.to_string(), a)), || {
+        let r = paced(&Files::new(d, repo), &sm, || Ok(open.map(String::from)), |_| false, || verdict.map(|(s, a)| (s.to_string(), a)), || {
             cut_ran.set(true);
             res
         });
@@ -399,6 +404,24 @@ mod tests {
         assert_eq!(inbox(d).matches("ROUND OPEN a b-1 with no driver").count(), 1);
         run(d, "a", 1200, Some("b-2"), None, Ok(()));
         assert_eq!(inbox(d).matches("ROUND OPEN").count(), 2);
+    }
+
+    #[test]
+    fn an_open_round_a_certify_is_driving_is_not_paged() {
+        let t = dir("driven");
+        let d = t.path();
+        let inbox_p = d.join("inbox.log");
+        let sm = Seams { repo: "a", now: 1000, inbox: &inbox_p, stamp: &stamp };
+        let cut = Cell::new(false);
+        paced(&Files::new(d, "a"), &sm, || Ok(Some("b-1".into())), |id| id == "b-1", || None, || {
+            cut.set(true);
+            Ok(())
+        })
+        .unwrap();
+        assert!(!cut.get());
+        assert_eq!(inbox(d), "");
+        run(d, "a", 1100, Some("b-1"), None, Ok(()));
+        assert_eq!(inbox(d).matches("ROUND OPEN a b-1").count(), 1, "undriven it still pages");
     }
 
     #[test]
