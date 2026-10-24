@@ -35,6 +35,7 @@ fn main() {
     spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-bead", &cmd);
     let rc = match cmd.as_str() {
         "file" => cmd_file(&home, &rest),
+        "pilgrimage" => cmd_pilgrimage(&home, &rest),
         "amend" => cmd_amend(&home, &rest),
         "label" => cmd_label(&home, &rest),
         "drop" => cmd_drop(&home, &rest),
@@ -54,7 +55,7 @@ fn main() {
         },
         _ => {
             eprintln!(
-                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F --replace | --append-body F] [--express]\n       bead.sh amend <id> --live --note \"<text>\" | --append-body F [--ack-within <dur>]\n       bead.sh amend <id> --ack <amend-id> --accept | --decline \"<why>\"\n       bead.sh amend --enforce <amend-id>\n       bead.sh label add|remove <id> <label>\n       bead.sh drop <id> --reason <text>\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
+                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh pilgrimage <design-file> --repo <name> --after <build-id>... [--priority N]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F --replace | --append-body F] [--express]\n       bead.sh amend <id> --live --note \"<text>\" | --append-body F [--ack-within <dur>]\n       bead.sh amend <id> --ack <amend-id> --accept | --decline \"<why>\"\n       bead.sh amend --enforce <amend-id>\n       bead.sh label add|remove <id> <label>\n       bead.sh drop <id> --reason <text>\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
             );
             2
         }
@@ -881,6 +882,110 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         }
         rc
     }
+}
+
+/// Files the design's pilgrimage bead for the pilgrim, blocked by every build bead named with `--after`.
+fn cmd_pilgrimage(home: &str, args: &[String]) -> i32 {
+    let usage = "usage: bead.sh pilgrimage <design-file> --repo <name> --after <build-id>... [--priority N]";
+    let mut design: Option<String> = None;
+    let mut repo: Option<String> = None;
+    let mut priority: Option<String> = None;
+    let mut after: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--repo" => {
+                i += 1;
+                repo = args.get(i).cloned();
+            }
+            "--priority" | "-p" => {
+                i += 1;
+                priority = args.get(i).cloned();
+            }
+            "--after" => {
+                i += 1;
+                match args.get(i) {
+                    Some(id) => after.push(id.clone()),
+                    None => {
+                        eprintln!("{usage}");
+                        return 2;
+                    }
+                }
+            }
+            a if a.starts_with('-') => {
+                eprintln!("bead: unknown option: {a}\n{usage}");
+                return 2;
+            }
+            a => design = Some(a.to_string()),
+        }
+        i += 1;
+    }
+    let (Some(design), Some(repo)) = (design, repo) else {
+        eprintln!("{usage}");
+        return 2;
+    };
+    if after.is_empty() {
+        eprintln!("bead: pilgrimage: --after <build-id> required: a pilgrimage with no build bead to wait for is claimable before the feature exists");
+        return 2;
+    }
+    let text = match std::fs::read_to_string(&design) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("bead: pilgrimage: reading {design}: {e}");
+            return 2;
+        }
+    };
+    let (title, body) = match bead::pilgrimage_spec(&text) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("bead: pilgrimage: refusing {design}: {e}");
+            return 2;
+        }
+    };
+    let body_path = env::temp_dir().join(format!("bead-pilgrimage-{}.md", std::process::id()));
+    if let Err(e) = std::fs::write(&body_path, body) {
+        eprintln!("bead: writing {}: {e}", body_path.display());
+        return 1;
+    }
+    let exe = match env::current_exe() {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("bead: pilgrimage: {e}");
+            return 1;
+        }
+    };
+    let mut file = vec!["--home".to_string(), home.to_string(), "file".into(), title, "--for".into(), "pilgrim".into(), "--repo".into(), repo, "--body-file".into(), body_path.to_string_lossy().into_owned()];
+    if let Some(p) = priority {
+        file.push("--priority".into());
+        file.push(p);
+    }
+    // batch-job: re-enters bead file, which bounds its own store calls
+    let out = std::process::Command::new(exe).args(&file).stderr(Stdio::inherit()).output();
+    let _ = std::fs::remove_file(&body_path);
+    let out = match out {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("bead: pilgrimage: {e}");
+            return 1;
+        }
+    };
+    if !out.status.success() {
+        return out.status.code().unwrap_or(1);
+    }
+    let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if id.is_empty() || id.contains(char::is_whitespace) {
+        eprintln!("bead: pilgrimage: filing printed no bead id");
+        return 1;
+    }
+    for dep in &after {
+        let rc = cmd_dep_add(home, &[id.clone(), dep.clone()]);
+        if rc != 0 {
+            eprintln!("bead: pilgrimage: {id} is filed but not blocked by {dep}; wire it with `bead.sh dep add {id} {dep}`");
+            return rc;
+        }
+    }
+    println!("{id}");
+    0
 }
 
 // =========================================================================================
