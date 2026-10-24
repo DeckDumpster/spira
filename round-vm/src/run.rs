@@ -864,7 +864,7 @@ impl Host for GitHost {
         fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
         let r = (|| {
             let mut archive = command("git")
-                .args(["-C", &tree.to_string_lossy(), "archive", "--format=tar", commit, "spira/testenv/Containerfile", "spira/deps.toml"])
+                .args(["-C", &tree.to_string_lossy(), "archive", "--format=tar", commit, "spira/testenv/Containerfile", "spira/deps.toml", "rust-toolchain.toml"])
                 .stdout(Stdio::piped())
                 .spawn()
                 .map_err(|e| format!("git archive: {e}"))?;
@@ -882,7 +882,12 @@ impl Host for GitHost {
             if o.status.success() && !tag.is_empty() {
                 Ok(tag)
             } else {
-                Err(format!("testenv container tag exited {}: {}", o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stderr).trim()))
+                Err(format!(
+                    "`SPIRA_TESTENV_HARNESS={} testenv container tag` exited {}: {}",
+                    scratch.display(),
+                    o.status.code().unwrap_or(-1),
+                    String::from_utf8_lossy(&o.stderr).trim()
+                ))
             }
         })();
         let _ = fs::remove_dir_all(&scratch);
@@ -1961,6 +1966,37 @@ mod tests {
         assert!(progress_refusal("b1", Some(2), b"", b"").contains("said nothing"));
     }
     use super::*;
+
+    #[test]
+    fn the_image_tag_is_computed_from_a_tree_by_a_process_standing_elsewhere() {
+        if std::process::Command::new("testenv").arg("--version").output().is_err() {
+            eprintln!("skipped: no testenv on PATH");
+            return;
+        }
+        let d = TempDir::new();
+        let tree = d.path().join("tree");
+        for (f, body) in [
+            ("spira/testenv/Containerfile", "FROM scratch\n"),
+            ("spira/deps.toml", "[meta]\n"),
+            ("rust-toolchain.toml", "[toolchain]\nchannel = \"1.90.0\"\n"),
+        ] {
+            let p = tree.join(f);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(p, body).unwrap();
+        }
+        let g = |a: &[&str]| {
+            let st = std::process::Command::new("git").arg("-C").arg(&tree).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(a).status().unwrap();
+            assert!(st.success());
+        };
+        g(&["init", "-q"]);
+        g(&["add", "-A"]);
+        g(&["commit", "-qm", "x"]);
+        let host = GitHost { state_dir: d.path().to_path_buf(), mirror_port: 1, listen: String::new(), also_listen: vec![] };
+        let (commit, _) = host.head(&tree).unwrap();
+        let tag = host.image_tag(&tree, &commit);
+        assert!(tag.as_ref().is_ok_and(|t| t.len() == 12), "{tag:?}");
+    }
+
     use crate::config::Fields;
     use crate::pool::{Attempt, Spawner};
     use crate::provider::Timing;

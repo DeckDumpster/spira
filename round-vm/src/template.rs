@@ -12,7 +12,7 @@ use crate::provider::{boot, destroy_fenced, DestroyError, Provider, ProvisionSpe
 use crate::run::{shell_quote, SshRemote};
 
 pub const TEMPLATE_USAGE: &str =
-    "round-vm template: usage: round-vm template|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]";
+    "round-vm template: usage: round-vm template|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>] | template --adopt <vmid> <tree-dir>";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TemplateArgs {
@@ -24,12 +24,14 @@ pub struct TemplateArgs {
     /// hashes the compiler's version string, so an unpinned "stable" drifting out of step
     /// with the host is a silent, permanent cache miss, not an error.
     pub toolchain: Option<String>,
+    /// `--adopt <vmid>`: record and repoint this existing template instead of building one.
+    pub adopt: Option<String>,
 }
 
 pub fn parse_template_args(args: &[String]) -> Result<TemplateArgs, String> {
     let mut it = args.iter();
     let tree = it.next().filter(|a| !a.starts_with("--")).ok_or(TEMPLATE_USAGE)?;
-    let mut r = TemplateArgs { tree_dir: PathBuf::from(tree), rev: None, toolchain: None };
+    let mut r = TemplateArgs { tree_dir: PathBuf::from(tree), rev: None, toolchain: None, adopt: None };
     while let Some(a) = it.next() {
         let (key, inline) = match a.split_once('=') {
             Some((k, v)) if k.starts_with("--") => (k, Some(v.to_string())),
@@ -45,6 +47,10 @@ pub fn parse_template_args(args: &[String]) -> Result<TemplateArgs, String> {
             "--ref" => {
                 let v = inline.or_else(|| it.next().cloned()).ok_or("round-vm template: --ref needs a value")?;
                 r.rev = Some(v).filter(|v| !v.is_empty());
+            }
+            "--adopt" => {
+                let v = inline.or_else(|| it.next().cloned()).ok_or("round-vm template: --adopt needs a VM id")?;
+                r.adopt = Some(v).filter(|v| !v.is_empty());
             }
             "--toolchain" => {
                 let v = inline.or_else(|| it.next().cloned()).ok_or("round-vm template: --toolchain needs a value")?;
@@ -124,6 +130,25 @@ pub fn repoint(pve_env: &Path, vmid: &str) -> Result<(), String> {
     std::fs::write(&tmp, set_env_key(&text, "PVE_TEMPLATE_VMID", vmid)).map_err(|e| format!("{}: {e}", tmp.display()))?;
     std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(mode)).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, pve_env).map_err(|e| format!("{}: {e}", pve_env.display()))
+}
+
+/// Puts an existing template in force without building: it must be a template on the
+/// hypervisor; the record and `pve.env` change together or the record is left as it was.
+pub fn adopt(p: &dyn Provider, state_dir: &Path, pve_env: &Path, vmid: &str, image: &str, recipe_sha: Option<String>) -> Result<Record, String> {
+    if !p.is_template(vmid)? {
+        return Err(format!("VM {vmid} is not a template on the hypervisor — refusing to adopt it"));
+    }
+    let old = Record::read(state_dir);
+    let rec = Record { vmid: vmid.to_string(), image: image.to_string(), recipe_sha };
+    rec.write(state_dir)?;
+    if let Err(e) = repoint(pve_env, vmid) {
+        let _ = match &old {
+            Some(o) => o.write(state_dir),
+            None => std::fs::remove_file(Record::path(state_dir)).map_err(|e| e.to_string()),
+        };
+        return Err(e);
+    }
+    Ok(rec)
 }
 
 /// The name a template build gives its clone. Never `round-<vmid>`, so no acquire, release or
@@ -411,7 +436,7 @@ mod tests {
     fn args_take_a_tree_and_a_toolchain_and_refuse_a_chosen_vmid() {
         assert_eq!(
             parse_template_args(&s(&["/t"])).unwrap(),
-            TemplateArgs { tree_dir: "/t".into(), rev: None, toolchain: None }
+            TemplateArgs { tree_dir: "/t".into(), rev: None, toolchain: None, adopt: None }
         );
         assert!(parse_template_args(&s(&["/t", "--vmid", "9120"])).unwrap_err().contains("hypervisor assigns"));
         assert!(parse_template_args(&s(&["/t", "--vmid=9121"])).unwrap_err().contains("hypervisor assigns"));
@@ -595,7 +620,11 @@ mod tests {
 #[cfg(test)]
 mod refresh_tests {
     use super::*;
-    use crate::testutil::TempDir;
+    use crate::testutil::{FakeProvider, TempDir};
+
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
 
     #[test]
     fn set_env_key_replaces_in_place_and_appends_when_absent() {
@@ -641,5 +670,54 @@ mod refresh_tests {
     fn template_args_take_a_ref() {
         let a = parse_template_args(&["/t".to_string(), "--ref".into(), "local/main".into()]).unwrap();
         assert_eq!(a.rev.as_deref(), Some("local/main"));
+    }
+
+    #[test]
+    fn adopt_args_take_a_vmid_and_a_tree() {
+        let a = parse_template_args(&s(&["/t", "--adopt", "101"])).unwrap();
+        assert_eq!(a.adopt.as_deref(), Some("101"));
+        assert!(parse_template_args(&s(&["/t", "--adopt"])).is_err());
+    }
+
+    #[test]
+    fn adopt_writes_the_record_and_repoints_in_one_step() {
+        let d = crate::testutil::TempDir::new();
+        let pve = d.path().join("pve.env");
+        std::fs::write(&pve, "PVE_TEMPLATE_VMID=9\nOTHER=1\n").unwrap();
+        let p = FakeProvider::new();
+        p.plant("101", "round-template-x");
+        p.stop("101").unwrap();
+        p.make_template("101").unwrap();
+        let r = adopt(&p, d.path(), &pve, "101", "localhost/spira-testenv:1dd2b64c36ca", None).unwrap();
+        assert_eq!(Record::read(d.path()), Some(r));
+        let rec = Record::read(d.path()).unwrap();
+        assert!(rec.vmid == "101" && rec.holds("1dd2b64c36ca") && rec.recipe_sha.is_none());
+        assert_eq!(std::fs::read_to_string(&pve).unwrap(), "PVE_TEMPLATE_VMID=101\nOTHER=1\n");
+    }
+
+    #[test]
+    fn adopt_refuses_a_vm_that_is_not_a_template_and_changes_nothing() {
+        let d = crate::testutil::TempDir::new();
+        let pve = d.path().join("pve.env");
+        std::fs::write(&pve, "PVE_TEMPLATE_VMID=9\n").unwrap();
+        let p = FakeProvider::new();
+        p.plant("101", "round-1");
+        assert!(adopt(&p, d.path(), &pve, "101", "localhost/spira-testenv:t", None).unwrap_err().contains("not a template"));
+        assert!(Record::read(d.path()).is_none());
+        assert_eq!(std::fs::read_to_string(&pve).unwrap(), "PVE_TEMPLATE_VMID=9\n");
+    }
+
+    #[test]
+    fn adopt_restores_the_old_record_when_the_repoint_fails() {
+        let d = crate::testutil::TempDir::new();
+        let missing = d.path().join("no-such-pve.env");
+        let old = Record { vmid: "9".into(), image: "localhost/spira-testenv:old".into(), recipe_sha: None };
+        old.write(d.path()).unwrap();
+        let p = FakeProvider::new();
+        p.plant("101", "round-template-x");
+        p.stop("101").unwrap();
+        p.make_template("101").unwrap();
+        assert!(adopt(&p, d.path(), &missing, "101", "localhost/spira-testenv:new", None).is_err());
+        assert_eq!(Record::read(d.path()), Some(old));
     }
 }
