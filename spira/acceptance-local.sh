@@ -189,6 +189,10 @@ _al_tarball="$(bash "$TREE/spira/build-tarball.sh" build --workspace "$TREE" \
     exit 2
 }
 log "acceptance-local: tarball built: $(basename "$_al_tarball")"
+for _al_tool in go nix; do
+    command -v "$_al_tool" >/dev/null 2>&1 \
+        && log "acceptance-local: NOTE: this host has $_al_tool, which build-aerc.sh may have used; the release runner provides go only through release.yml's Nix install — release-dry.yml proves that path"
+done
 
 # ---------------------------------------------------------------------------
 # 2. CONTAINER — a real systemd user session, the same image CI's suites run
