@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T1
-# covers: testenv/Containerfile ../flake.nix ../flake.lock
+# covers: spira/testenv/Containerfile flake.nix flake.lock
 #
 # The testenv image installs its habit-hook tools from the same nixpkgs revision the flake pins.
 set -uo pipefail
