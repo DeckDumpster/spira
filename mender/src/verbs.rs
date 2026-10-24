@@ -173,19 +173,25 @@ pub fn diagnose(w: &dyn World, spec_path: &str, text: &str) -> Reply {
     event(w, &spec, serde_json::json!({"Diagnosis": {"text": text.trim()}}))
 }
 
-fn triage_stamped(w: &dyn World, spec: &Spec) -> bool {
+fn target_row(w: &dyn World, spec: &Spec) -> Option<serde_json::Value> {
     let (code, out) = w.lc(&["mending", "list", "--batch", &spec.batch]);
     let rows: Vec<serde_json::Value> = if code == 0 { serde_json::from_str(&out).unwrap_or_default() } else { vec![] };
-    rows.iter().any(|r| {
-        r["pass"] == spec.pass && r["suite"] == spec.suite.as_str() && !r["triage_ended_at"].is_null()
-    })
+    rows.into_iter().find(|r| r["pass"] == spec.pass && r["suite"] == spec.suite.as_str())
+}
+
+fn settled_state(row: &serde_json::Value) -> Option<&str> {
+    row["state"].as_str().filter(|s| !matches!(*s, "WAITING" | "MENDING"))
 }
 
 pub fn finish(w: &dyn World, spec_path: &str, kind: &str, diagnosis: &str, checks: Option<&str>) -> Reply {
     let spec = load_spec(w, spec_path)?;
     let kind = Kind::parse(kind).ok_or_else(|| format!("{kind:?} is not an outcome: mended | environment | flaky | return | unsure"))?;
     let text = outcome::validate(&Answer { kind, diagnosis, checks })?;
-    if !triage_stamped(w, &spec) {
+    let row = target_row(w, &spec);
+    if let Some(state) = row.as_ref().and_then(settled_state) {
+        return Ok(format!("no-op: {} pass {} {} is already {state}; no event sent", spec.batch, spec.pass, spec.suite));
+    }
+    if !row.is_some_and(|r| !r["triage_ended_at"].is_null()) {
         event(w, &spec, serde_json::json!({"TriageEnded": {"at": 0}}))?;
     }
     event(w, &spec, serde_json::json!({"Diagnosis": {"text": text}}))?;
@@ -308,6 +314,18 @@ mod tests {
         let events: Vec<String> = w.lc_calls().into_iter().filter(|c| c.contains("mending event")).collect();
         assert_eq!(events.len(), 2);
         assert!(!events.iter().any(|c| c.contains("TriageEnded")), "{events:?}");
+    }
+
+    #[test]
+    fn an_already_terminal_row_is_a_no_op_and_sends_no_event() {
+        let mut w = Fake::new();
+        w.lc_answers.insert(
+            "mending list --batch r-9".into(),
+            (0, r#"[{"pass":3,"suite":"test-x.sh","state":"RETURNED","triage_ended_at":1}]"#.into()),
+        );
+        let out = finish(&w, "/spec", "environment", "EAGAIN at output line 2", None).unwrap();
+        assert!(out.contains("no-op") && out.contains("RETURNED"), "{out}");
+        assert!(!w.lc_calls().iter().any(|c| c.contains("mending event")), "{:?}", w.lc_calls());
     }
 
     #[test]
