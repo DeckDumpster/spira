@@ -69,6 +69,8 @@
             tailscale
             nodejs
             openssl
+            rust-code-analysis  # 0.0.25 — rust-code-analysis-cli, the habit hooks' per-function complexity
+            shellcheck          # the habit hooks' shell lint
           ] ++ [ terraform ];
         };
         default = self.packages.${system}.spira-env;

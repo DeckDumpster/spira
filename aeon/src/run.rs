@@ -1159,7 +1159,7 @@ impl<'a> Run<'a> {
         if self.fayth.project_instructions == "none" {
             a.extend(s(&["--setting-sources", "user"]));
         }
-        a.extend(s(&["--settings", &aeon_settings(self.home())]));
+        a.extend(s(&["--settings", &aeon_settings(self.home(), self.fayth.habits)]));
         Ok(a)
     }
 
@@ -1556,8 +1556,15 @@ pub fn append(p: &Path, text: &str) {
     }
 }
 
+/// The `habits` dispatcher, a release binary on the launcher's PATH like `work`.
+const HABITS_STOP_TIMEOUT_S: u32 = 180;
+
+fn habit_hook(timeout_s: u32) -> String {
+    format!("{{\"type\": \"command\", \"command\": \"habits\", \"timeout\": {timeout_s}}}")
+}
+
 /// `aeon_settings`: the --settings JSON, spelled as python's json.dumps spells it.
-pub fn aeon_settings(home: &Path) -> String {
+pub fn aeon_settings(home: &Path, habits: bool) -> String {
     let q = |p: &Path| serde_json::to_string(&p.display().to_string()).unwrap();
     let hook = |p: &Path| format!("{{\"type\": \"command\", \"command\": {}, \"timeout\": 5}}", q(p));
     let mail = home.join("hooks").join("aeon-mail-deliver.sh");
@@ -1566,7 +1573,14 @@ pub fn aeon_settings(home: &Path) -> String {
     if is_executable(&deliver) {
         post.push(hook(&deliver));
     }
-    let mut hooks = format!("\"PostToolUse\": [{{\"hooks\": [{}]}}]", post.join(", "));
+    let mut groups = vec![format!("{{\"hooks\": [{}]}}", post.join(", "))];
+    if habits {
+        groups.push(format!("{{\"matcher\": \"Edit|Write|MultiEdit\", \"hooks\": [{}]}}", habit_hook(10)));
+    }
+    let mut hooks = format!("\"PostToolUse\": [{}]", groups.join(", "));
+    if habits {
+        hooks.push_str(&format!(", \"Stop\": [{{\"hooks\": [{}]}}]", habit_hook(HABITS_STOP_TIMEOUT_S)));
+    }
     let mut pre = Vec::new();
     for p in [
         home.join("hooks").join("aeon-fence.sh"),
@@ -1595,7 +1609,7 @@ mod tests {
     fn settings_json_matches_python_dumps() {
         let d = testkit::TempDir::new("aeon-settings");
         std::fs::create_dir_all(d.join("hooks")).unwrap();
-        let s0 = aeon_settings(&d);
+        let s0 = aeon_settings(&d, false);
         assert_eq!(
             s0,
             format!(
@@ -1607,9 +1621,25 @@ mod tests {
         let fence = d.join("hooks/aeon-fence.sh");
         // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
         testkit::write_exe(&fence, "#!/bin/sh\n");
-        let s1 = aeon_settings(&d);
+        let s1 = aeon_settings(&d, false);
         assert!(s1.contains("\"PreToolUse\": [{\"hooks\": [{\"type\": \"command\", \"command\": \""));
         let v: serde_json::Value = serde_json::from_str(&s1).unwrap();
         assert_eq!(v["env"]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"], "1");
+        assert!(v["hooks"]["Stop"].is_null(), "no habits: no Stop group");
+    }
+
+    #[test]
+    fn habits_group_only_when_the_fayth_sets_it() {
+        let d = testkit::TempDir::new("aeon-settings-habits");
+        let off: serde_json::Value = serde_json::from_str(&aeon_settings(&d, false)).unwrap();
+        assert_eq!(off["hooks"]["PostToolUse"].as_array().unwrap().len(), 1);
+        assert!(off["hooks"]["Stop"].is_null());
+        let on: serde_json::Value = serde_json::from_str(&aeon_settings(&d, true)).unwrap();
+        let post = on["hooks"]["PostToolUse"].as_array().unwrap();
+        assert_eq!(post.len(), 2);
+        assert_eq!(post[1]["matcher"], "Edit|Write|MultiEdit");
+        assert_eq!(post[1]["hooks"][0]["command"], "habits");
+        assert_eq!(on["hooks"]["Stop"][0]["hooks"][0]["command"], "habits");
+        assert_eq!(post[0], off["hooks"]["PostToolUse"][0], "the existing group is untouched");
     }
 }

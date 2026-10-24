@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T1
-# covers: spira/metrics/grafana/** pilgrimage/src/** tsd/src/pass.rs spira-otel/src/** auron/src/main.rs inbox-triage/src/main.rs store-persist/src/main.rs queue/src/telemetry.rs landing-pass/src/telemetry.rs rebase-stale/src/telemetry.rs round-vm/src/telemetry.rs sccache-dav/src/telemetry.rs release/src/telemetry.rs
+# covers: spira/metrics/grafana/** pilgrimage/src/** tsd/src/pass.rs spira-otel/src/** auron/src/main.rs inbox-triage/src/main.rs store-persist/src/main.rs queue/src/telemetry.rs landing-pass/src/telemetry.rs rebase-stale/src/telemetry.rs round-vm/src/telemetry.rs sccache-dav/src/telemetry.rs release/src/telemetry.rs habits/src/lib.rs
 #
 # The provisioned Grafana dashboards parse, read their data source from a variable, carry no
 # annotations or text panels, and every cert-pass series they query is one the producer pushes.
@@ -26,7 +26,7 @@ print("\n".join(bad))
 PY
 }
 
-for want_f in rounds site-ci bead-store components gate-tooling runs queue-landing pilgrimages; do
+for want_f in rounds site-ci bead-store components gate-tooling runs queue-landing pilgrimages habits; do
   f="$DASH/$want_f.json"
   is "$want_f.json is valid and clean" "" "$(check "$f" 2>&1)"
 done
@@ -64,6 +64,14 @@ pg_queried="$(grep -o 'spira_pilgrimage_[a-z_]*' "$DASH/pilgrimages.json" | sort
 is "pilgrimages.json queries only series the pilgrimage crate pushes" "" "$(comm -13 <(printf '%s\n' "$pg_pushed") <(printf '%s\n' "$pg_queried"))"
 [ -n "$pg_pushed" ] && ok "positive control: the pilgrimage series were found" || bad "no pilgrimage series found"
 is "every series the pilgrimage crate pushes is on the panel" "" "$(comm -23 <(printf '%s\n' "$pg_pushed") <(printf '%s\n' "$pg_queried"))"
+hq="$(grep -o 'habit_[a-z_]*' "$DASH/habits.json" | sort -u)"
+hundeclared=""
+for m in $hq; do grep -qF "\"$m\"" "$ROOT/habits/src/lib.rs" || hundeclared="$hundeclared $m"; done
+is "habits.json queries only series the habits binary pushes" "" "$hundeclared"
+[ -n "$hq" ] && ok "positive control: habit series were found" || bad "no habit series found"
+for m in $(grep -o 'spira_[a-z_]*' "$DASH/habits.json" | sort -u); do
+  grep -rqF "\"$m\"" "$ROOT"/tsd/src/pass.rs "$ROOT"/landing-pass/src/telemetry.rs || bad "habits.json queries $m, which nothing pushes"
+done
 
 mount_src="$(grep -o '"\$HERE/[^"]*:/var/lib/grafana-dashboards' "$HERE/metrics-stack.sh" | sed -E 's#^"\$HERE/##; s#:.*##')"
 want "metrics-stack.sh mounts the dashboards directory" "metrics/grafana/dashboards" "$mount_src"
