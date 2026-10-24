@@ -38,12 +38,13 @@ _bs_classify() {
     timeout 60 spira-lc list --state LANDED,DONE,DROPPED,SUPERSEDED > "$t/term.json" 2>/dev/null || return 1
     local pr_labels="" n
     for n in $(repo_names); do [ "$(repo_land "$n")" = pr ] && pr_labels="$pr_labels repo:$n"; done
-    python3 -I - "$t" "$SPIRA_ASK_LABEL" "$HOME_LABEL" "$HOLD_MIN" "$REWORK_MIN" "$CERT_MIN" "$WAIT_MIN" "$BATCH_MIN" "$pr_labels" "$SPIRA_RUN/scoped-stops" "$SPIRA_SCOPED_STOP_REVIEW_SECS" <<'PY'
+    python3 -I - "$t" "$SPIRA_ASK_LABEL" "$HOME_LABEL" "$HOLD_MIN" "$REWORK_MIN" "$CERT_MIN" "$WAIT_MIN" "$BATCH_MIN" "$pr_labels" "$SPIRA_RUN/scoped-stops" "$SPIRA_SCOPED_STOP_REVIEW_SECS" "$SPIRA_RUN/solo-skips" <<'PY'
 import calendar, json, os, re, subprocess, sys, time
 T, ask, home = sys.argv[1:4]
 hold_min, rework_min, cert_min, wait_min, batch_min = (int(x) for x in sys.argv[4:9])
 pr_labels = set(sys.argv[9].split())
 stops_dir, stop_review = sys.argv[10], int(sys.argv[11])
+solo_dir = sys.argv[12]
 def scoped(prefix):
     out = []
     try:
@@ -160,7 +161,7 @@ for i, r in sorted(rows.items()):
     elif st == "CERTIFIED" and home not in labels and age > cert_min:
         put("SUSPECT", f"CERTIFIED outside {home}, no batch opened")
     elif st in ("SUBMITTED", "CERTIFIED") and age > wait_min and not pr_labels & set(labels):
-        put("SUSPECT", f"WAITING over {wait_min}m for a round")
+        put("SUSPECT", f"WAITING over {wait_min}m for a round" + (" (solo: starved)" if os.path.exists(os.path.join(solo_dir, i)) else ""))
     elif st == "WORKING" and int(r.get("lease_until") or 0) and int(r["lease_until"]) < now:
         put("SUSPECT", f"LEASE EXPIRED holder {str(r.get('holder'))[:28]}")
     else:

@@ -266,7 +266,17 @@ fn cut(o: &Opts) -> Result<(), String> {
         println!("batcher {}: {r}", repo.name);
     }
     let recipe = io::recipe_members(&repo, &pool);
-    let (pool, solo) = batcher::core::recipe_solo(pool, &recipe);
+    let skipped: BTreeMap<String, u32> = recipe.iter().map(|id| (id.clone(), io::solo_skips_read(&env_, id))).collect();
+    let max_skips = cfg_parse::<u32>("SPIRA_SOLO_MAX_SKIPS")?;
+    let waiting: Vec<String> = pool.iter().filter(|m| recipe.contains(&m.id)).map(|m| m.id.clone()).collect();
+    let (pool, solo) = batcher::core::recipe_solo(pool, &recipe, &skipped, max_skips);
+    for id in waiting {
+        if pool.iter().any(|m| m.id == id) {
+            io::solo_skips_clear(&env_, &id);
+        } else {
+            io::solo_skips_bump(&env_, &id);
+        }
+    }
     for line in &solo {
         println!("batcher {}: {line}", repo.name);
     }
