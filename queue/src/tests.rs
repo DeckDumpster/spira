@@ -3767,11 +3767,7 @@ fn land_local_falls_back_to_paths_release_when_the_bin_dir_has_none_and_says_so(
     );
     assert_eq!(
         release_bins(&t),
-        vec![
-            "release".to_string(),
-            "release".to_string(),
-            "release".to_string()
-        ]
+        vec![spira_config::release_env::tool("release"); 3]
     );
     let want = format!("no release binary at {}/release — running PATH's release instead, not this round's own build", bins.display());
     assert!(t.err().contains(&want), "{}", t.err());

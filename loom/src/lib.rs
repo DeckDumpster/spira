@@ -81,9 +81,9 @@ impl Config {
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "systemctl".to_string()),
             metrics_endpoint: cfg("SPIRA_METRICS_ENDPOINT").ok().filter(|e| !e.trim().is_empty()),
-            broker: std::env::var("SPIRA_BROKER").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "broker".to_string()),
+            broker: std::env::var("SPIRA_BROKER").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| spira_config::release_env::tool("broker")),
             desired_dir: cfg("SPIRA_DESIRED_DIR").map_err(|e| format!("loom: {e}"))?,
-            units_install: std::env::var("SPIRA_UNITS_INSTALL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "units-install".to_string()),
+            units_install: std::env::var("SPIRA_UNITS_INSTALL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| spira_config::release_env::tool("units-install")),
         })
     }
 }

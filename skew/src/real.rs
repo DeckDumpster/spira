@@ -212,7 +212,7 @@ impl World for Real {
 
     fn release_verify_no_pre_activate(&self, name: &str, releases: Option<&Path>) -> (bool, String) {
         // batch-job: release runs for as long as its work does
-        let mut c = Command::new("release");
+        let mut c = Command::new(spira_config::release_env::tool("release"));
         c.arg("verify").arg(name).arg("--no-pre-activate");
         if let Some(r) = releases {
             c.arg("--releases").arg(r);
@@ -225,7 +225,7 @@ impl World for Real {
     }
     fn release_status(&self) -> String {
         // batch-job: release runs for as long as its work does
-        Command::new("release")
+        Command::new(spira_config::release_env::tool("release"))
             .arg("status")
             .stdin(Stdio::null())
             .output()
@@ -236,7 +236,7 @@ impl World for Real {
     fn release_build_verify_activate(&self, sha: &str, repo: &Path, base: &str, releases: &Path) -> Result<(), String> {
         let run = |args: &[&str]| -> Result<(), String> {
             // batch-job: release runs for as long as its work does
-            let out = Command::new("release").args(args).stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
+            let out = Command::new(spira_config::release_env::tool("release")).args(args).stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
             if out.status.success() {
                 Ok(())
             } else {

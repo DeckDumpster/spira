@@ -80,7 +80,7 @@ pub struct RealLifecycle {
 
 impl Default for RealLifecycle {
     fn default() -> Self {
-        RealLifecycle { bin: "spira-lc".to_string() }
+        RealLifecycle { bin: spira_config::release_env::tool("spira-lc") }
     }
 }
 

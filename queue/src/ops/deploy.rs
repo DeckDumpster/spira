@@ -94,7 +94,7 @@ fn release_bin(w: &World, bins: Option<&Path>) -> PathBuf {
             candidate.display()
         ));
     }
-    PathBuf::from("release")
+    PathBuf::from(spira_config::release_env::tool("release"))
 }
 
 /// Run one `release` step; forward its stderr (release prefixes its own lines); Err is the

@@ -268,7 +268,7 @@ impl World for Real {
     fn lc_landed(&self, id: &str) -> bool {
         // Bounded like every other subprocess here: a hung record answers "not landed".
         Command::new("timeout")
-            .args(["5", "spira-lc", "state", id])
+            .args(["5", spira_config::release_env::tool("spira-lc").as_str(), "state", id])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output()

@@ -180,9 +180,9 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         incident: PathBuf::from(g("incident")),
         scope_label: g("scope_label"),
         // Every harness tool by name, on the launcher's PATH (sp-gypjk).
-        queue_bin: Some(PathBuf::from("queue")),
+        queue_bin: Some(PathBuf::from(spira_config::release_env::tool("queue"))),
         queue_dir: path_opt("queue_dir").unwrap_or_else(|| PathBuf::from(&run).join("queue")),
-        lc_bin: Some(PathBuf::from("spira-lc")),
+        lc_bin: Some(PathBuf::from(spira_config::release_env::tool("spira-lc"))),
         halt_grace: num("halt_grace", 30).max(0) as u64,
         path: kv.get("path").filter(|v| !v.is_empty()).cloned(),
         bdjson_fixture: path_opt("bdjson_fixture"),

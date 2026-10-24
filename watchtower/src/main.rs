@@ -339,7 +339,7 @@ fn main() {
                 return;
             }
             let cfg = deploy_fault::Cfg {
-                release_bin: getenv("SPIRA_RELEASE_BIN").unwrap_or_else(|| "release".to_string()),
+                release_bin: getenv("SPIRA_RELEASE_BIN").unwrap_or_else(|| spira_config::release_env::tool("release")),
                 repo: getenv("SPIRA_REPO").unwrap_or_default(),
                 retry_secs: getenv_i64("SPIRA_DEPLOY_FAULT_RETRY_SECS", 1800),
                 build_timeout_secs: getenv_i64("SPIRA_DEPLOY_FAULT_BUILD_TIMEOUT", 1800).max(1) as u64,

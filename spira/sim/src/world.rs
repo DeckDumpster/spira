@@ -302,7 +302,7 @@ impl Steps for ProcessSteps {
     }
     fn db_up(&self, world: &Path) -> Result<String, String> {
         let out = run(
-            Command::new("testenv").args(["testdb", "up", "--tag", "simworld", "--bd", "bd", "--dolt", "dolt", "--root"]).arg(db_root(world, &|k| std::env::var(k).ok())),
+            Command::new(spira_config::release_env::tool("testenv")).args(["testdb", "up", "--tag", "simworld", "--bd", "bd", "--dolt", "dolt", "--root"]).arg(db_root(world, &|k| std::env::var(k).ok())),
             CALL_DEADLINE,
         )?;
         out.lines()
@@ -352,7 +352,7 @@ impl Steps for ProcessSteps {
     }
 
     fn db_down(&self, fixture: &str) -> Result<(), String> {
-        run(Command::new("testenv").args(["testdb", "down", "--fixture", fixture]), CALL_DEADLINE).map(|_| ())
+        run(Command::new(spira_config::release_env::tool("testenv")).args(["testdb", "down", "--fixture", fixture]), CALL_DEADLINE).map(|_| ())
     }
 
     fn lc_serve(&self, world: &Path, fixture: &str) -> Result<(), String> {

@@ -23,7 +23,7 @@ pub struct DeliveryRow {
 }
 
 fn program() -> String {
-    std::env::var(PROGRAM_ENV).ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "spira-lc".to_string())
+    std::env::var(PROGRAM_ENV).ok().filter(|s| !s.is_empty()).unwrap_or_else(|| spira_config::release_env::tool("spira-lc"))
 }
 
 fn text(v: &Value, key: &str) -> String {

@@ -33,7 +33,7 @@ impl Closer for RealBd {
     }
 
     fn has_lifecycle_row(&self, id: &str) -> Result<bool, String> {
-        match Command::new("timeout").args(["5", "spira-lc", "show", id]).stdin(Stdio::null()).output() {
+        match Command::new("timeout").args(["5", spira_config::release_env::tool("spira-lc").as_str(), "show", id]).stdin(Stdio::null()).output() {
             Ok(o) => match o.status.code() {
                 Some(0) => Ok(true),
                 Some(1) => Ok(false),

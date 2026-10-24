@@ -1,0 +1,3 @@
+# release-tool-exec: files that still exec a release tool by bare name. Shrink-only.
+# tsd cannot depend on spira-config (spira-config -> tsd would cycle).
+tsd/src/store.rs

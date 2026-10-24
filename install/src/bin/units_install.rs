@@ -370,7 +370,7 @@ fn run_main() -> ExitCode {
     // which is gone) — this call site is preserved unconditionally, matching
     // systemd/install.sh's own unconditional call.
     // batch-job: release runs for as long as its work does
-    let hook_ok = Command::new("release").args(["session-hook", "install"]).status().map(|s| s.success()).unwrap_or(false);
+    let hook_ok = Command::new(spira_config::release_env::tool("release")).args(["session-hook", "install"]).status().map(|s| s.success()).unwrap_or(false);
     if !hook_ok {
         eprintln!("note: the session hook was not registered — run release session-hook install");
     }

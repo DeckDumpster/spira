@@ -1356,3 +1356,16 @@ The repository declares `runtime = "<name>"` in `.spira/testenv.toml`, plus opti
 - A repository declaring no `runtime` is not under the rule (clean, not a refusal); a malformed
   declaration refuses (exit 3).
 - A forge repository runs it as `spira-lint --root .` from its CI select step.
+
+## Rule `release-tool-exec`
+
+A release-shipped tool (every workspace `[[bin]]`, plus `bd`) is exec'd by the name
+`spira_config::release_env::tool("<name>")` returns, never as a bare literal: a unit or shell
+whose PATH lacks the release dies with exit 127. `tool` keeps a name already on PATH (stubs and
+overrides win) and otherwise names the file in `$SPIRA_RELEASE` or the exe's own release.
+
+Flagged in non-test code: `Command::new("<tool>")`, the program slot of a `timeout` argument
+list (`.args([N, "<tool>"…`, `.arg(N).arg("<tool>")`, `"N".to_string(), "<tool>"`),
+`PathBuf::from("<tool>")`, `bin: "<tool>"` and an `unwrap_or_else(|| "<tool>".to_string())`
+default. `spira-lint/release-tool-exec-allow` lists files that cannot take the dependency and
+only shrinks.

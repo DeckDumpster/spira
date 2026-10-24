@@ -534,9 +534,9 @@ impl Lib for RealLib {
             forge: PathBuf::from(g("forge")),
             repo_map: pb(&g("repo_map")),
             // Every harness tool by name, on the launcher's PATH (sp-gypjk).
-            batcher_bin: Some(PathBuf::from("batcher")),
+            batcher_bin: Some(PathBuf::from(spira_config::release_env::tool("batcher"))),
             batcher_off: g("batcher_enable").trim() == "0",
-            lc_bin: Some(PathBuf::from("spira-lc")),
+            lc_bin: Some(PathBuf::from(spira_config::release_env::tool("spira-lc"))),
             submitted_label: g("submitted_label"),
             home_repo: reg.home_repo().to_string(),
             db: g("db"),
@@ -810,7 +810,7 @@ pub struct RealScripts {
 
 impl Scripts for RealScripts {
     fn lint(&self, tip: &str, repo: &Path, verify: bool) -> (i32, String) {
-        let mut c = Command::new("testenv");
+        let mut c = Command::new(spira_config::release_env::tool("testenv"));
         c.arg("lint");
         if verify {
             c.arg("--verify");
@@ -818,7 +818,7 @@ impl Scripts for RealScripts {
         run_combined(c.arg(tip).arg(repo))
     }
     fn suite_run(&self, check: &str, tip: &str, repo: &str) -> (i32, String) {
-        run_combined(Command::new("testenv").args(["--suites", check, tip, repo]))
+        run_combined(Command::new(spira_config::release_env::tool("testenv")).args(["--suites", check, tip, repo]))
     }
     fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str) -> (i32, String) {
         run_combined(
@@ -864,7 +864,7 @@ impl Scripts for RealScripts {
         }
     }
     fn observe_flake(&self, suite: &str, sha: &str) {
-        let _ = ok(Command::new("testenv")
+        let _ = ok(Command::new(spira_config::release_env::tool("testenv"))
             .args(["suites", "observe-flake", suite, sha])
             .stdout(Stdio::null())
             .stderr(Stdio::null()));
@@ -969,7 +969,7 @@ impl Scripts for RealScripts {
         )
     }
     fn recipe_sha(&self, tree: Option<&Path>) -> Option<String> {
-        let mut cmd = Command::new("round-vm");
+        let mut cmd = Command::new(spira_config::release_env::tool("round-vm"));
         cmd.arg("recipe-sha");
         if let Some(t) = tree {
             cmd.arg("--tree").arg(t);
@@ -981,7 +981,7 @@ impl Scripts for RealScripts {
     fn ami_for(&self, sha: &str) -> AmiLookup {
         // batch-job: one AWS describe-images read, hang-guarded at 60 s
         match Command::new("timeout")
-            .args(["60", "round-vm", "ami-for", sha])
+            .args(["60", spira_config::release_env::tool("round-vm").as_str(), "ami-for", sha])
             .stdin(Stdio::null())
             .output()
         {
@@ -1031,7 +1031,7 @@ impl Scripts for RealScripts {
                     let i = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     let Some(id) = ids.get(i) else { break };
                     // batch-job: rebase-stale bounds itself by its own lock wait and gate
-                    let out = match Command::new("rebase-stale")
+                    let out = match Command::new(spira_config::release_env::tool("rebase-stale"))
                         .arg(id)
                         .arg(repo)
                         .stdin(Stdio::null())

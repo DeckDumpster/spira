@@ -51,7 +51,7 @@ pub fn cockpit_db() -> Result<PathBuf, String> {
 
 /// `$SPIRA_LC_BIN` if set and non-empty, else `"spira-lc"` — the one door to bead content.
 pub fn lc_bin() -> String {
-    std::env::var("SPIRA_LC_BIN").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "spira-lc".to_string())
+    std::env::var("SPIRA_LC_BIN").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| spira_config::release_env::tool("spira-lc"))
 }
 
 #[cfg(test)]

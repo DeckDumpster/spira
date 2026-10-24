@@ -7,7 +7,7 @@ pub const LC_BIN_ENV: &str = "SPIRA_LC_BIN";
 const LC_TIMEOUT_SECS: &str = "15";
 
 pub fn lc_bin() -> String {
-    std::env::var(LC_BIN_ENV).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "spira-lc".to_string())
+    std::env::var(LC_BIN_ENV).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| crate::release_env::tool("spira-lc"))
 }
 
 /// An ask is its own lifecycle machine, never a bead row: `spira-lc create-ask` opens it

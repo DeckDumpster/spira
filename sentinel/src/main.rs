@@ -196,7 +196,7 @@ fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     spira_otel::run::operation(argv.first().and_then(|a| a.strip_prefix("--")).unwrap_or("pass"));
     let mode = Mode::from_argv(&argv);
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("sentinel"));
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(spira_config::release_env::tool("sentinel")));
     let Some(home) = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe) else {
         { let code = fatal("cannot find lib.sh (set SPIRA_HOME)"); spira_otel::run::finish(code); std::process::exit(code) };
     };
