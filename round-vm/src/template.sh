@@ -69,7 +69,7 @@ cargo fetch --locked --target x86_64-unknown-linux-gnu >&2
 "$CARGO_HOME/bin/sccache" --stop-server >&2 || true
 # verify-begin
 if ! plain="$(env -i PATH="${PLAIN_PATH:-/usr/local/bin:/usr/bin:/bin}" HOME="$HOME" cargo --version 2>&1)"; then
-    echo "round-vm template: plain cargo does not run on this clone: $plain" >&2
+    echo "round-vm template: plain cargo does not run on this clone, so a round would go red with no output: $plain" >&2
     exit 1
 fi
 # verify-end
