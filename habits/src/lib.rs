@@ -77,8 +77,8 @@ fn answer(event: Option<&str>, text: &str) -> String {
 }
 
 fn repo_root(cwd: &Path) -> PathBuf {
-    Command::new("git")
-        .arg("-C")
+    Command::new("timeout")
+        .args(["5", "git", "-C"])
         .arg(cwd)
         .args(["rev-parse", "--show-toplevel"])
         .output()

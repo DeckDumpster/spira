@@ -4,7 +4,7 @@ use std::process::Command;
 pub type Ranges = Vec<(u32, u32)>;
 
 fn git(root: &Path, args: &[&str]) -> Option<String> {
-    let o = Command::new("git").arg("-C").arg(root).args(args).output().ok()?;
+    let o = Command::new("timeout").args(["5", "git", "-C"]).arg(root).args(args).output().ok()?;
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
