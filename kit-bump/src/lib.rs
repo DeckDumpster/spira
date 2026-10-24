@@ -24,8 +24,9 @@ pub struct Open {
 }
 
 pub trait World {
-    /// The newest non-yanked, non-pre-release version the registry holds for the kit crate.
-    fn latest_release(&self) -> Result<String, String>;
+    /// The newest non-yanked, non-pre-release version the registry holds for the kit crate;
+    /// `None` when the registry has no entry for it yet.
+    fn latest_release(&self) -> Result<Option<String>, String>;
     /// The version requirement the site's manifest states for the kit crate.
     fn site_requirement(&self, site: &Site) -> Result<String, String>;
     /// The version the site's lockfile resolves the kit crate to.
@@ -113,10 +114,13 @@ pub struct Outcome {
     pub amended: Vec<String>,
     pub current: Vec<String>,
     pub failed: Vec<String>,
+    pub unreleased: bool,
 }
 
 pub fn pass(w: &dyn World, sites: &[Site], crate_name: &str) -> Result<Outcome, String> {
-    let release = w.latest_release()?;
+    let Some(release) = w.latest_release()? else {
+        return Ok(Outcome { unreleased: true, ..Outcome::default() });
+    };
     let latest = semver::parse_version(&release).ok_or_else(|| format!("registry version {release:?} is not semver"))?;
     let mut o = Outcome::default();
     for site in sites {

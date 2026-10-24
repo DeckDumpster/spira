@@ -50,6 +50,12 @@ pub fn write(run: &Path, spec: &Spec, reg: &Registry) -> Result<std::path::PathB
 pub fn install(run: &Path, home: &Path, cfg: &dyn Fn(&str) -> Result<String, String>) -> Result<Option<std::path::PathBuf>, String> {
     let (registry, krate, sites) = (cfg("SPIRA_KIT_REGISTRY")?, cfg("SPIRA_KIT_CRATE")?, cfg("SPIRA_KIT_SITES")?);
     if registry.is_empty() {
+        let p = run.join(FILE);
+        match std::fs::remove_file(&p) {
+            Ok(()) => eprintln!("kit-bump: SPIRA_KIT_REGISTRY is empty — removed {}", p.display()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("cannot remove {}: {e}", p.display())),
+        }
         return Ok(None);
     }
     let reg = Registry::from_env(std::env::vars().collect(), home);
@@ -92,6 +98,15 @@ mod tests {
     #[test]
     fn install_writes_nothing_without_a_kit() {
         let d = testkit::TempDir::new("kit-bump-install");
+        let none = |_: &str| Ok(String::new());
+        assert_eq!(install(d.path(), d.path(), &none).unwrap(), None);
+        assert!(!d.path().join(FILE).exists());
+    }
+
+    #[test]
+    fn install_removes_a_stale_conf_when_no_registry_is_configured() {
+        let d = testkit::TempDir::new("kit-bump-stale");
+        std::fs::write(d.path().join(FILE), "kit /k\nkit-ref origin/main\n").unwrap();
         let none = |_: &str| Ok(String::new());
         assert_eq!(install(d.path(), d.path(), &none).unwrap(), None);
         assert!(!d.path().join(FILE).exists());

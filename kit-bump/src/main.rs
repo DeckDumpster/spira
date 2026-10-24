@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 const USAGE: &str = "usage: kit-bump pass [--config FILE] --registry URL --crate NAME --state FILE [--persona NAME] --site NAME:PATH:REF:FILE...";
+const KEYS: [&str; 5] = ["registry", "crate", "state", "persona", "site"];
 pub const COMPONENT: &str = "kit-bump";
 
 fn site(spec: &str) -> Result<Site, String> {
@@ -35,7 +36,11 @@ pub fn expand(argv: &[String]) -> Result<Vec<String>, String> {
         let text = std::fs::read_to_string(f).map_err(|e| format!("cannot read {f}: {e}"))?;
         for l in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
             let (k, v) = l.split_once(char::is_whitespace).ok_or_else(|| format!("{f}: {l:?} has no value"))?;
-            out.push(format!("--{}", k.trim_start_matches('-')));
+            let k = k.trim_start_matches('-');
+            if !KEYS.contains(&k) {
+                return Err(format!("{f}: unknown key {k:?} (known: {})", KEYS.join(", ")));
+            }
+            out.push(format!("--{k}"));
             out.push(v.trim().to_string());
         }
     }
@@ -120,6 +125,11 @@ fn main() -> ExitCode {
     for s in &o.filed {
         sink.push(&[Point::Count { name: "spira_kit_bumps_filed", value: 1 }], &[("site", s)]);
     }
+    if o.unreleased {
+        println!("kit-bump: no release yet — {} has no entry for `{}`", real.registry, real.crate_name);
+        spira_otel::oneshot::end(0);
+        return ExitCode::SUCCESS;
+    }
     println!(
         "kit-bump: {} filed, {} amended, {} current, {} failed",
         o.filed.len(),
@@ -152,5 +162,16 @@ mod tests {
         std::fs::write(&missing, "registry http://r\n").unwrap();
         assert_eq!(unconfigured(&v(&["--config", m])), None);
         assert_eq!(unconfigured(&v(&["--kit", "/k"])), None);
+    }
+
+    #[test]
+    fn a_config_with_an_unknown_key_is_refused_naming_the_key_and_the_file() {
+        let d = testkit::TempDir::new("kit-bump-oldconf");
+        let p = d.path().join("kit-bump.conf");
+        std::fs::write(&p, "kit /home/x/dumpster-kit\nkit-ref origin/main\n").unwrap();
+        let e = expand(&v(&["--config", p.to_str().unwrap()])).unwrap_err();
+        assert!(e.contains("\"kit\"") && e.contains(p.to_str().unwrap()), "{e}");
+        std::fs::write(&p, "registry http://r\ncrate k\nsite a:/p:main:Cargo.toml\n").unwrap();
+        assert_eq!(expand(&v(&["--config", p.to_str().unwrap()])).unwrap().len(), 6);
     }
 }
