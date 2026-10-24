@@ -71,17 +71,17 @@ git -C "$WIKI" config user.email t@t
 branch=$(git -C "$WIKI" symbolic-ref --short HEAD)
 git init -q --bare "$TMP/origin.git"
 git -C "$WIKI" remote add origin "$TMP/origin.git"
-git -C "$WIKI" push -q -u origin "$branch" 2>&1
-git clone -q "$TMP/origin.git" "$TMP/other" && git -C "$TMP/other" config user.name o && git -C "$TMP/other" config user.email o@o
-echo x >"$TMP/other/ingest.txt"; git -C "$TMP/other" add ingest.txt; git -C "$TMP/other" commit -qm "ingest"; git -C "$TMP/other" push -q origin "$branch" 2>&1
+timeout 5 git -C "$WIKI" push -q -u origin "$branch" 2>&1
+timeout 5 git clone -q "$TMP/origin.git" "$TMP/other" && timeout 5 git -C "$TMP/other" config user.name o && timeout 5 git -C "$TMP/other" config user.email o@o
+echo x >"$TMP/other/ingest.txt"; timeout 5 git -C "$TMP/other" add ingest.txt; timeout 5 git -C "$TMP/other" commit -qm "ingest"; timeout 5 git -C "$TMP/other" push -q origin "$branch" 2>&1
 printf '[{"id":"sp-b","title":"B4"},{"id":"sp-a","title":"A"}]' >"$TMP/content.json"
 r=$(run); wantrc "origin ahead: export integrates it and publishes" 0 $?
 is "remote tip is the mirror commit" "$(git -C "$WIKI" log -1 --format=%s)" "$(git -C "$TMP/origin.git" log -1 --format=%s "$branch")"
 is "remote's own commit kept beneath it" "ingest" "$(git -C "$TMP/origin.git" log -1 --format=%s "$branch~1")"
 
-git -C "$TMP/other" pull -q --rebase origin "$branch" 2>&1
+timeout 5 git -C "$TMP/other" pull -q --rebase origin "$branch" 2>&1
 echo "hand edit" >"$TMP/other/raw/spira-beads/spira.jsonl"
-git -C "$TMP/other" commit -qam "hand edit mirror"; git -C "$TMP/other" push -q origin "$branch" 2>&1
+timeout 5 git -C "$TMP/other" commit -qam "hand edit mirror"; timeout 5 git -C "$TMP/other" push -q origin "$branch" 2>&1
 printf '[{"id":"sp-b","title":"B5"},{"id":"sp-a","title":"A"}]' >"$TMP/content.json"
 r=$(run); rc=$?
 [ "$rc" -ne 0 ] && ok "conflicting mirror edit on origin is a refusal" || bad "conflict swallowed"
