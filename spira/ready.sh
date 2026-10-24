@@ -310,6 +310,7 @@ echo "cockpit"
 # =============================================================================
 _rdy_snap="$SPIRA_RUN/cockpit.env"
 _rdy_stale_s="${SPIRA_COCKPIT_STALE_S:-120}"
+_rdy_first_wait_s="${SPIRA_COCKPIT_FIRST_WRITE_WAIT_S:-60}"
 _ckp_unit="$(spira_unit cockpit service)"
 _ckp_tmux_up=0
 if command -v tmux >/dev/null 2>&1 && tmux list-panes -a >/dev/null 2>&1; then
@@ -323,8 +324,13 @@ if [ "$_ckp_unit" = "?" ] && [ "$_ckp_tmux_up" = "0" ]; then
 else
     # Snapshot freshness: a missing or stale cockpit.env means the collector has stopped.
     # Check before pane checks — a pane that cannot read a snapshot is useless even if present.
+    _rdy_waited=0
+    while [ ! -f "$_rdy_snap" ] && [ "$_rdy_waited" -lt "$_rdy_first_wait_s" ]; do
+        sleep 1
+        _rdy_waited=$(( _rdy_waited + 1 ))
+    done
     if [ ! -f "$_rdy_snap" ]; then
-        FAIL "no cockpit snapshot at $_rdy_snap — collector has not written yet" \
+        FAIL "no cockpit snapshot at $_rdy_snap after ${_rdy_waited}s — collector $_ckp_unit has not written" \
              "Check: systemctl --user status $_ckp_unit"
     else
         _rdy_snap_age=$(( $(date +%s) - $(stat --format='%Y' "$_rdy_snap" 2>/dev/null || echo 0) ))
