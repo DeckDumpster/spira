@@ -58,6 +58,11 @@
 # 4. Report the same PASS/FAIL lines and exit code `release acceptance` always
 #    prints; on a phase A FAIL, copy its forensics snapshot out to the host.
 #
+# Without --predecessor, the newest tarball kept in $SPIRA_RUN/acc-local (each run that exits 0
+# keeps its own) is the default predecessor. --no-upgrade opts out and runs phase A only, as a
+# declared waiver; with no kept tarball the run is phase A only and `release acceptance`
+# prints "verdict: PARTIAL", not PASS.
+#
 # EXIT
 #   0  every phase run passed (A, or A-D with --predecessor)
 #   1  a phase failed — see the FAIL lines above and the forensics dir printed
@@ -95,13 +100,14 @@ if [ "${1:-}" = start ]; then
     exit 0
 fi
 
-TREE=""; PRED=""; PRED_TARBALL=""; AGED=""; AGED_TARBALL=""
+TREE=""; PRED=""; PRED_TARBALL=""; AGED=""; AGED_TARBALL=""; NO_UPGRADE=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --predecessor)          PRED="${2:-}"; shift 2 || shift ;;
         --predecessor=*)        PRED="${1#--predecessor=}"; shift ;;
         --predecessor-tarball)  PRED_TARBALL="${2:-}"; shift 2 || shift ;;
         --predecessor-tarball=*) PRED_TARBALL="${1#--predecessor-tarball=}"; shift ;;
+        --no-upgrade)           NO_UPGRADE=1; shift ;;
         --aged-base)            AGED="${2:-}"; shift 2 || shift ;;
         --aged-base=*)          AGED="${1#--aged-base=}"; shift ;;
         --aged-tarball)         AGED_TARBALL="${2:-}"; shift 2 || shift ;;
@@ -112,8 +118,11 @@ while [ $# -gt 0 ]; do
     esac
 done
 if [ -z "$TREE" ] || [ ! -d "$TREE" ]; then
-    printf 'usage: acceptance-local.sh <tree> [--predecessor <tag> [--predecessor-tarball <path>]]\n' >&2
+    printf 'usage: acceptance-local.sh <tree> [--predecessor <tag> [--predecessor-tarball <path>] | --no-upgrade]\n' >&2
     exit 2
+fi
+if [ "$NO_UPGRADE" -eq 1 ] && { [ -n "$PRED" ] || [ -n "$AGED" ]; }; then
+    printf 'acceptance-local: --no-upgrade excludes --predecessor and --aged-base\n' >&2; exit 2
 fi
 if [ -n "$AGED" ] && [ -z "$PRED" ]; then
     printf 'acceptance-local: --aged-base needs --predecessor <tag>\n' >&2; exit 2
@@ -137,6 +146,21 @@ if [ ! -f "$TREE/spira/build-tarball.sh" ]; then
     printf 'acceptance-local: %s does not look like a spira checkout (no spira/build-tarball.sh)\n' \
         "$TREE" >&2
     exit 2
+fi
+
+ACCEPTED_DIR="${SPIRA_ACCEPTANCE_LOCAL_KEEP:-$SPIRA_RUN/acc-local}"
+if [ -z "$PRED" ] && [ "$NO_UPGRADE" -eq 0 ]; then
+    _al_newest="$(ls "$ACCEPTED_DIR"/spira-*.tar.gz 2>/dev/null | sort | tail -1)"
+    if [ -z "$_al_newest" ]; then
+        printf 'acceptance-local: no accepted tarball in %s — phases B-D will be skipped (verdict PARTIAL)\n' "$ACCEPTED_DIR" >&2
+    elif git -C "$TREE" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+        && [ -n "$(git -C "$TREE" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+        printf 'acceptance-local: %s has uncommitted changes — no default predecessor, phases B-D skipped (verdict PARTIAL)\n' "$TREE" >&2
+    else
+        PRED="spira-release-$(basename "$_al_newest" .tar.gz)"
+        PRED_TARBALL="$_al_newest"
+        printf 'acceptance-local: default predecessor %s\n' "$PRED" >&2
+    fi
 fi
 
 CNAME="${SPIRA_ACCEPTANCE_LOCAL_NAME:-spira-acceptance-local}"
@@ -292,6 +316,7 @@ _al_agent="$_al_chome/release-under-test/$_al_release_name/spira/acceptance-agen
 
 _al_tag="local-$(git -C "$TREE" rev-parse --short=12 HEAD 2>/dev/null || printf unknown)-$(date -u +%Y%m%dT%H%M%SZ)"
 _al_prev_args=""
+_al_waive_args=""; [ "$NO_UPGRADE" -eq 1 ] && _al_waive_args="--waive-upgrade"
 if [ -n "$PRED" ]; then
     # deploy.sh needs a spira-release-<stem> tag, and skew reads the one tagged on HEAD above.
     _al_tag="spira-release-$(basename "$_al_tarball" .tar.gz)"
@@ -398,12 +423,16 @@ exec env -i HOME=\"\$HOME\" USER=\"\${USER:-spirauser}\" LANG=\"\${LANG:-C.UTF-8
     --scratch-repo \"\$HOME/scratch-repo\" \
     --tarball '$_al_ctar' \
     --agent '$_al_agent' \
-    --bd-db \"\$HOME/.local/share/spira/db\" $_al_prev_args
+    --bd-db \"\$HOME/.local/share/spira/db\" $_al_prev_args $_al_waive_args
 "
 _al_rc=$?
 if [ "$_al_rc" -eq 0 ] && [ -n "$PRED" ]; then
     spira-config local-pass record acceptance-ad "$(git -C "$TREE" rev-parse HEAD)" acceptance-local.sh \
         || printf 'acceptance-local: phases A-D passed but the pass could not be recorded\n' >&2
+fi
+if [ "$_al_rc" -eq 0 ]; then
+    mkdir -p "$ACCEPTED_DIR" && cp -f "$_al_tarball" "$ACCEPTED_DIR/" \
+        || printf 'acceptance-local: could not keep the accepted tarball in %s\n' "$ACCEPTED_DIR" >&2
 fi
 
 # ---------------------------------------------------------------------------

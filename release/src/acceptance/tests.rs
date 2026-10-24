@@ -962,3 +962,13 @@ fn exec_failures_is_empty_for_a_clean_run_dir() {
     fs::write(root.join("landing.log"), "all good\n").unwrap();
     assert!(exec_failures(root.path()).is_empty());
 }
+
+#[test]
+fn skipped_upgrade_phases_without_a_waiver_are_partial() {
+    use super::phases::verdict_for;
+    assert_eq!(verdict_for(0, true, false), "PASS");
+    assert_eq!(verdict_for(0, false, true), "PASS");
+    assert_eq!(verdict_for(0, false, false), "PARTIAL");
+    assert_eq!(verdict_for(2, false, false), "FAIL");
+    assert_eq!(verdict_for(1, true, false), "FAIL");
+}

@@ -525,6 +525,15 @@ fn waived_predecessor(h: &dyn Host, repo: Option<&Path>, tag: &str) -> Option<St
     None
 }
 
+/// PASS means every phase ran: a run that skipped B/C/D without a waiver is PARTIAL.
+pub(super) fn verdict_for(fail: u32, has_prev: bool, waived: bool) -> &'static str {
+    match (fail, has_prev || waived) {
+        (0, true) => "PASS",
+        (0, false) => "PARTIAL",
+        _ => "FAIL",
+    }
+}
+
 /// The whole run; the exit code.
 pub fn run(h: &dyn Host, o: Opts) -> u8 {
     let mut r = Run::new(h, o);
@@ -777,7 +786,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
     // ---- verdict --------------------------------------------------------------------------
     r.snapshot("end-of-run");
     println!("\n{} passed, {} failed", r.pass, r.fail);
-    let verdict = if r.fail == 0 { "PASS" } else { "FAIL" };
+    let verdict = verdict_for(r.fail, prev.is_some(), r.o.a.waive_upgrade);
     let date = crate::fsutil::rfc3339(h.now());
     println!("verdict: {verdict}  tag={tag}  date={date}");
 
