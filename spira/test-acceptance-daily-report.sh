@@ -67,7 +67,7 @@ want "body carries the FAIL line verbatim" "FAIL  sentinel summons: Access denie
 N="$(grep -l 'sentinel summons' "$STORE"/*.title | head -1 | xargs basename | sed 's/\.title//')"
 want "body carries the commit" "abc123def456" "$(cat "$STORE/$N.body")"
 want "body carries the run link" "https://example.invalid/runs/7" "$(cat "$STORE/$N.body")"
-want "issue carries spira:accept" "spira:accept" "$(cat "$STORE/$N.labels")"
+want "issue carries spira:acceptance" "spira:acceptance" "$(cat "$STORE/$N.labels")"
 nowant "body does not carry another check's line" "probe closes" "$(cat "$STORE/$N.body")"
 
 run_report "$LOG" >/dev/null 2>&1

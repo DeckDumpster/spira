@@ -10,11 +10,9 @@
 # FAIL lines verbatim and the run link. A run that never reached a verdict (provision or
 # build failure) files one issue of its own: it is never silent.
 #
-# THE TRUST ROUTE. gh-intake treats an issue authored by the Actions bot as untrusted, and
-# intake's rule is not weakened: the report step authenticates as a write-access user
-# (repository secret SPIRA_INTAKE_LABEL_TOKEN, issues:write). The issue is then authored by a
-# trusted association and carries `spira:accept` applied by that same user, whose current
-# access intake re-verifies. With the secret absent the report step fails loudly and files nothing.
+# THE TRUST ROUTE. The report step uses the default GITHUB_TOKEN (issues: write), so the issue
+# is authored by github-actions[bot] and labelled `spira:acceptance`; gh-intake trusts exactly
+# that author and label together. No personal token is involved.
 #
 # The provision and teardown jobs reference the operator's own runner infrastructure, as
 # acceptance.yml's do; a clone replaces them or points runs-on at its own runner.
@@ -206,6 +204,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
 
@@ -217,7 +216,7 @@ jobs:
 
       - name: File or append the issues
         env:
-          GH_TOKEN: ${{ secrets.SPIRA_INTAKE_LABEL_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
           _log="$(find "$RUNNER_TEMP/artifact" -name acceptance-daily.log 2>/dev/null | head -1)"

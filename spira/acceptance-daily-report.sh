@@ -8,11 +8,9 @@
 # A log with no FAIL line (the run never reached a verdict) files one issue of its own with
 # the log tail, so a run that could not start is as loud as one that failed.
 #
-# THE TRUST ROUTE. gh-intake treats an issue by the Actions bot as untrusted. GH_TOKEN here
-# must be the token of a user with write access (SPIRA_INTAKE_LABEL_TOKEN in the workflow):
-# the issue is then authored by a trusted association, and `spira:accept` is applied by that
-# same user, which intake re-verifies against current access. Without it nothing is filed
-# silently — the script exits 1 naming the missing token.
+# THE TRUST ROUTE. GH_TOKEN is the workflow's own GITHUB_TOKEN (issues: write), so the author is
+# the repo's github-actions[bot] and the issue carries `spira:acceptance`; gh-intake trusts exactly
+# that combination. Without a token nothing is filed silently: the script exits 1.
 set -uo pipefail
 
 MAX_ISSUES="${ACCEPTANCE_DAILY_MAX_ISSUES:-5}"
@@ -32,7 +30,7 @@ done
     exit 2
 }
 [ -n "${GH_TOKEN:-}" ] || {
-    printf 'acceptance-daily-report: ALARM: no GH_TOKEN (SPIRA_INTAKE_LABEL_TOKEN unset) — a red run cannot be filed as trusted work\n' >&2
+    printf 'acceptance-daily-report: ALARM: no GH_TOKEN — a red run cannot be filed as trusted work\n' >&2
     exit 1
 }
 
@@ -41,7 +39,7 @@ _gh() { timeout 5 gh "$@"; }
 
 _ensure_labels() {
     _gh label create "$LABEL" --repo "$_repo" --color B60205 --description "daily fresh-install acceptance red" >/dev/null 2>&1 || true
-    _gh label create spira:accept --repo "$_repo" --color 0E8A16 --description "promote to work" >/dev/null 2>&1 || true
+    _gh label create spira:acceptance --repo "$_repo" --color 0E8A16 --description "promote to work" >/dev/null 2>&1 || true
 }
 
 _open_numbers() {
@@ -57,7 +55,7 @@ _file() {
         printf '%s\n' "$body" | _gh issue comment "$number" --repo "$_repo" --body-file - >/dev/null || return 1
         printf 'acceptance-daily-report: appended to #%s (%s)\n' "$number" "$title"
     else
-        printf '%s\n' "$body" | _gh issue create --repo "$_repo" --title "$title" --label "$LABEL" --label spira:accept --body-file - >/dev/null || return 1
+        printf '%s\n' "$body" | _gh issue create --repo "$_repo" --title "$title" --label "$LABEL" --label spira:acceptance --body-file - >/dev/null || return 1
         printf 'acceptance-daily-report: filed %s\n' "$title"
     fi
 }
