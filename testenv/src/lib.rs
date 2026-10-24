@@ -33,6 +33,7 @@ pub mod testdb;
 pub mod tap;
 pub mod timing;
 pub mod ui;
+pub mod unit;
 pub mod util;
 pub mod verdict;
 pub mod wait;

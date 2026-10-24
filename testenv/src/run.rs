@@ -1051,7 +1051,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
 
     // ---- selection -----------------------------------------------------------------
     let (selected, producer) = match &args.suites {
-        Some(SuitesArg::List(list)) => match selection::from_list(list, &exists) {
+        Some(SuitesArg::List(list)) => match selection::from_list(&crate::unit::resolve(list), &exists) {
             Ok(v) => {
                 deps.log(&format!("--suites: selected {} explicit suite(s)", v.len()));
                 (v, Producer::Explicit)
@@ -1145,6 +1145,15 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     if selected.is_empty() {
         deps.log("no suites selected — nothing to do");
         return Finish::nothing();
+    }
+    if crate::unit::selected(&selected) {
+        match crate::unit::write_crates(&repo.path, &base, br, &wt.path) {
+            Ok(c) => deps.log(&format!("unit-tests: {} affected crate(s): {}", c.len(), c.join(" "))),
+            Err(e) => {
+                stderr(&format!("batch: unit-tests: {e}"));
+                return Finish::fault(2, "unit-crates", 0);
+            }
+        }
     }
     let headers: HashMap<String, SuiteHeaders> = selected
         .iter()

@@ -143,6 +143,46 @@ pub fn with_dependents(seed: &BTreeSet<String>, members: &[Member]) -> Vec<Strin
     out.into_iter().collect()
 }
 
+/// `seed` plus every member that depends on one of them, directly or through others; sorted.
+pub fn with_transitive_dependents(seed: &BTreeSet<String>, members: &[Member]) -> Vec<String> {
+    let mut out: BTreeSet<String> = seed.clone();
+    loop {
+        let next: BTreeSet<String> = members
+            .iter()
+            .filter(|m| m.deps.iter().any(|d| out.contains(d)))
+            .map(|m| m.name.clone())
+            .collect();
+        let before = out.len();
+        out.extend(next);
+        if out.len() == before {
+            return out.into_iter().collect();
+        }
+    }
+}
+
+/// The `-p` selection for a diff: every workspace member it touches plus its dependents
+/// (`transitive` or direct only) — never `--workspace`. A workspace-wide input (root manifest,
+/// lockfile, toolchain pin) names every member.
+pub fn select_crates(diff_raw: &[u8], metadata_json: &str, transitive: bool) -> Result<Vec<String>, String> {
+    let members = parse_metadata(metadata_json)?;
+    let mut touched = BTreeSet::new();
+    let mut workspace = false;
+    for c in parse_diff_raw(diff_raw) {
+        match classify(&c, &members) {
+            Class::Crate(n) => {
+                touched.insert(n);
+            }
+            Class::Workspace => workspace = true,
+            Class::Units => touched.extend(UNIT_READERS.iter().filter(|r| members.iter().any(|m| m.name == **r)).map(|r| r.to_string())),
+            Class::Doc | Class::Suite | Class::Script | Class::Config => {}
+        }
+    }
+    if workspace {
+        return Ok(members.iter().map(|m| m.name.clone()).collect());
+    }
+    Ok(if transitive { with_transitive_dependents(&touched, &members) } else { with_dependents(&touched, &members) })
+}
+
 /// The inputs that force today's sequence whatever the mode says.
 ///
 /// Ejected suites are not a force (sp-p3srm): a returned bead re-runs exactly what the round
@@ -639,6 +679,25 @@ pub fn reentry_command(suites: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
+    const CHAIN: &str = r#"{"workspace_root":"/w","workspace_members":["p#a 0.1.0 (path+file:///w/a)","p#b 0.1.0 (path+file:///w/b)","p#c 0.1.0 (path+file:///w/c)","p#d 0.1.0 (path+file:///w/d)"],"packages":[
+      {"id":"p#a 0.1.0 (path+file:///w/a)","name":"a","manifest_path":"/w/a/Cargo.toml","dependencies":[]},
+      {"id":"p#b 0.1.0 (path+file:///w/b)","name":"b","manifest_path":"/w/b/Cargo.toml","dependencies":[{"name":"a","path":"/w/a"}]},
+      {"id":"p#c 0.1.0 (path+file:///w/c)","name":"c","manifest_path":"/w/c/Cargo.toml","dependencies":[{"name":"b","path":"/w/b"}]},
+      {"id":"p#d 0.1.0 (path+file:///w/d)","name":"d","manifest_path":"/w/d/Cargo.toml","dependencies":[]}]}"#;
+
+    fn raw(paths: &[&str]) -> Vec<u8> {
+        paths.iter().map(|p| format!(":100644 100644 aaa bbb M\0{p}\0")).collect::<String>().into_bytes()
+    }
+
+    #[test]
+    fn a_unit_selection_reaches_dependents_of_dependents_and_a_direct_one_does_not() {
+        let diff = raw(&["a/src/lib.rs"]);
+        assert_eq!(select_crates(&diff, CHAIN, true).unwrap(), ["a", "b", "c"]);
+        assert_eq!(select_crates(&diff, CHAIN, false).unwrap(), ["a", "b"]);
+        assert!(select_crates(&raw(&["docs/x.md"]), CHAIN, true).unwrap().is_empty());
+        assert_eq!(select_crates(&raw(&["Cargo.lock"]), CHAIN, true).unwrap().len(), 4);
+    }
+
     #[test]
     fn run_all_runs_every_step_of_the_checked_in_chain_and_labels_each() {
         let d = crate::def::parse(&std::fs::read_to_string(

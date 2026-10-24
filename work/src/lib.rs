@@ -89,24 +89,7 @@ pub const LOCAL_VERBS: &[&str] = &["crates", "statute-check"];
 /// dependents — the gate's own selection (`gate::compose`), never `--workspace`. A
 /// workspace-wide input (root manifest, lockfile, toolchain pin) names every member.
 pub fn crates_selection(diff_raw: &[u8], metadata_json: &str) -> Result<Vec<String>, String> {
-    use gate::compose::{classify, parse_diff_raw, parse_metadata, with_dependents, Class, UNIT_READERS};
-    let members = parse_metadata(metadata_json)?;
-    let mut touched = std::collections::BTreeSet::new();
-    let mut workspace = false;
-    for c in parse_diff_raw(diff_raw) {
-        match classify(&c, &members) {
-            Class::Crate(n) => {
-                touched.insert(n);
-            }
-            Class::Workspace => workspace = true,
-            Class::Units => touched.extend(UNIT_READERS.iter().filter(|r| members.iter().any(|m| m.name == **r)).map(|r| r.to_string())),
-            Class::Doc | Class::Suite | Class::Script | Class::Config => {}
-        }
-    }
-    if workspace {
-        return Ok(members.iter().map(|m| m.name.clone()).collect());
-    }
-    Ok(with_dependents(&touched, &members))
+    gate::compose::select_crates(diff_raw, metadata_json, false)
 }
 
 /// What `work statute-check` owes for a plan: `None` when it matches no governed decision (no
