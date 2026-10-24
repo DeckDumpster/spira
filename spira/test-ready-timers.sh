@@ -38,6 +38,16 @@ for a in "$@"; do
         spira-*|dolt-*) unit="$a" ;;
     esac
 done
+if [[ "$*" == *"is-active"* && "$unit" == "spira-loom-prod.service" && -n "${FAKE_LOOM_ACTIVATING:-}" ]]; then
+    left="$(cat "$FAKE_LOOM_ACTIVATING" 2>/dev/null || echo 0)"
+    if [ "$left" -gt 0 ]; then
+        echo $((left - 1)) > "$FAKE_LOOM_ACTIVATING"; printf 'activating\n'; exit 3
+    fi
+    printf 'active\n'; exit 0
+fi
+if [[ "$*" == *"show"* && "$*" == *"RestartUSec"* ]]; then
+    printf '1s\n'; exit 0
+fi
 if [[ "$*" == *"is-active"* ]]; then
     active="${FAKE_SC_ACTIVE:-}"
     if [[ -n "$active" ]] && [[ " $active " == *" $unit "* ]]; then
@@ -188,6 +198,14 @@ printf '[Timer]\nOnBootSec=3min\nOnUnitActiveSec=15min\n' > "$UNIT_DIR/spira-idl
 out="$(run_ready "FAKE_SC_ELAPSED=spira-idle-prod.timer" --)"
 nowant "timers-inactive: no FAIL for inactive timer" "spira-idle-prod.timer" "$out"
 rm -f "$UNIT_DIR/spira-idle-prod.timer"
+
+echo ""
+echo "--- loom: an instance-suffixed unit in auto-restart is waited out ---"
+
+echo 3 > "$TMP/loom-activating"
+out="$(run_ready "FAKE_LOOM_ACTIVATING=$TMP/loom-activating" "FAKE_SC_ENABLED=spira-sentinel-prod.timer spira-loom-prod.service" --)"
+is     "loom wait: the instance unit was polled until active" 0 "$(cat "$TMP/loom-activating")"
+want   "loom wait: passes after the wait" "  pass  loom answers 200" "$out"
 
 echo ""
 echo "--- aeon warm base ---"

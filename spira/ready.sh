@@ -223,12 +223,19 @@ echo "loom"
 # Probe Loom at $SPIRA_LOOM_ADDR/stuck. python3 is a fatal doctor requirement
 # so it is always available. SPIRA_LOOM_PROBE overrides the HTTP call for test fixtures.
 _loom_url="http://$SPIRA_LOOM_ADDR/stuck"
-# A unit in "activating" (auto-restart) is not yet ready: wait it out, bounded, before probing.
-_loom_activating_wait=45
-if [ -z "${SPIRA_LOOM_PROBE:-}" ]; then
+# A unit in "activating" (auto-restart) is not yet ready: wait out its RestartSec plus a start
+# allowance before probing. The unit is resolved by instance, never named.
+_loom_unit="$(spira_unit loom service)"
+if [ "$_loom_unit" != "?" ]; then
+    _loom_restart_s="$("$SC" --user show -p RestartUSec --value "$_loom_unit" 2>/dev/null | awk '
+        { t = 0; for (i = 1; i <= NF; i++) { v = $i + 0
+            if ($i ~ /(ms)$/) t += v / 1000; else if ($i ~ /(us)$/) t += v / 1000000
+            else if ($i ~ /(min)$/) t += v * 60; else if ($i ~ /h$/) t += v * 3600
+            else if ($i ~ /s$/) t += v } printf "%d", t + 0.999 }')"
+    _loom_activating_wait=$(( ${_loom_restart_s:-0} + ${SPIRA_LOOM_READY_GRACE:-20} ))
     _w=0
     while [ "$_w" -lt "$_loom_activating_wait" ] \
-        && [ "$(timeout 5 systemctl --user is-active spira-loom.service 2>/dev/null)" = "activating" ]; do
+        && [ "$(timeout 5 "$SC" --user is-active "$_loom_unit" 2>/dev/null)" = "activating" ]; do
         sleep 1; _w=$((_w + 1))
     done
 fi
