@@ -56,10 +56,15 @@ inferred, and what you could not check.
 ## Sources are kept, not linked
 
 **Every source you fetched is preserved verbatim** in the wiki beside the document, under
-`{{WIKI_DIR}}/wiki/projects/<repo>/designs/<slug>-<date>.sources/`, and cited by its local
+`{{WIKI_DIR}}/raw/spira-spikes/<slug>-<date>/`, and cited by its local
 path alongside its URL. A citation that cannot be
 re-read is not a citation: URLs 403, rotate, and return a 404 page under HTTP 200, and a
 body of research whose evidence all lives on someone else's server has kept none of it.
+
+Sources live in brain `raw/`, never under `wiki/`: every `.md` under `wiki/` must carry
+schema frontmatter and a source has none. Cite them in the spec's `sources:`. The spec's
+frontmatter uses only schema keys (`frontmatter.py --schema`) — no `bead:`; name the bead in
+the body.
 
 Prefer text or markdown to raw HTML — extract the readable content and keep a provenance
 header (source URL, title, retrieval date). For a corpus of hundreds of items, use
@@ -136,13 +141,19 @@ on. A merge conflict is not an escalation.
   commit, push it, and go back to `{{BRANCH}}`.
 - Name that branch in the document, next to the number it produced, so the next reader can
   check your working.
-- Leave nothing on `{{BRANCH}}`: the document and its sources live in the wiki.
+- Leave nothing on `{{BRANCH}}`: the document lives in the wiki and its sources in `raw/`.
 
 ## Finishing
 
-Commit the document and its sources to the wiki through the brain path, naming the files:
+Before committing, lint every wiki path you touched. Do not commit, and do not end DONE,
+while it reports a violation:
 
-    printf '%s\n' wiki/projects/<repo>/designs/<slug>-<date>.md | wiki-commit.sh {{WIKI_DIR}} "{{BEAD_ID}}: <slug>"
+    BRAIN={{WIKI_DIR}} python3 {{WIKI_DIR}}/.claude/skills/wiki-lint/frontmatter.py {{WIKI_DIR}}/wiki/projects/<repo>/designs/<slug>-<date>.md
+
+Commit the document and its sources to the wiki through the brain path, naming every file
+(`wiki-commit.sh` exits non-zero when the remote refuses the update; fix it, do not finish):
+
+    printf '%s\n' wiki/projects/<repo>/designs/<slug>-<date>.md raw/spira-spikes/<slug>-<date>/<file> | wiki-commit.sh {{WIKI_DIR}} "{{BEAD_ID}}: <slug>"
 
 Add a note linking the document and any proof-of-concept branch you left standing:
 

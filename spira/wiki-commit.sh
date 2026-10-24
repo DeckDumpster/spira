@@ -49,7 +49,10 @@ if [ "$rc" -eq 0 ]; then
     fi
 fi
 if [ "$rc" -eq 0 ]; then
-    timeout 5 git -C "$wiki" push 2>/dev/null || true
+    if ! perr=$(timeout 30 git -C "$wiki" push 2>&1) && grep -qi 'rejected' <<<"$perr"; then  # batch-job: network push to the brain remote
+        printf 'wiki-commit.sh: push refused:\n%s\n' "$perr" >&2
+        rc=1
+    fi
 fi
 exec {_wc_lockfd}>&-
 exit "$rc"
