@@ -95,7 +95,7 @@ if git -C "$SPIRA_WIKI" rev-parse --git-dir >/dev/null 2>&1; then
         || exit 1
 fi
 if git -C "$SPIRA_WIKI" rev-parse --git-dir >/dev/null 2>&1 && git -C "$SPIRA_WIKI" remote | grep -q .; then
-    if ! perr=$(timeout 60 git -C "$SPIRA_WIKI" push 2>&1); then
+    if ! perr=$(timeout 60 git -C "$SPIRA_WIKI" push 2>&1); then  # batch-job: network push to the brain remote
         echo "export-beads: git push refused or failed: $perr" >&2
         exit 1
     fi

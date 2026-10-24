@@ -11,12 +11,12 @@ echo "test-spike-brain.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 BIN="$TMP/bin"; RUN="$TMP/run"; mkdir -p "$BIN" "$RUN"
 git init -q --bare -b main "$TMP/remote.git"
-git clone -q "$TMP/remote.git" "$TMP/wiki" 2>/dev/null
+timeout 5 git clone -q "$TMP/remote.git" "$TMP/wiki" 2>/dev/null
 WIKI="$TMP/wiki"
 git -C "$WIKI" config user.name t; git -C "$WIKI" config user.email t@t
 git -C "$WIKI" checkout -q -b main 2>/dev/null
 echo seed >"$WIKI/seed"; git -C "$WIKI" add seed; git -C "$WIKI" commit -qm seed
-git -C "$WIKI" "pu""sh" -q -u origin main 2>/dev/null
+timeout 5 git -C "$WIKI" "pu""sh" -q -u origin main 2>/dev/null
 
 cat >"$BIN/spira-lc" <<'STUB'
 #!/bin/sh
