@@ -223,6 +223,15 @@ echo "loom"
 # Probe Loom at $SPIRA_LOOM_ADDR/stuck. python3 is a fatal doctor requirement
 # so it is always available. SPIRA_LOOM_PROBE overrides the HTTP call for test fixtures.
 _loom_url="http://$SPIRA_LOOM_ADDR/stuck"
+# A unit in "activating" (auto-restart) is not yet ready: wait it out, bounded, before probing.
+_loom_activating_wait=45
+if [ -z "${SPIRA_LOOM_PROBE:-}" ]; then
+    _w=0
+    while [ "$_w" -lt "$_loom_activating_wait" ] \
+        && [ "$(timeout 5 systemctl --user is-active spira-loom.service 2>/dev/null)" = "activating" ]; do
+        sleep 1; _w=$((_w + 1))
+    done
+fi
 # loom is in every release's bin/ (sp-gypjk): there is no "not built" state to skip on.
 {
     _loom_probe_cmd="${SPIRA_LOOM_PROBE:-}"

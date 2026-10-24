@@ -1434,6 +1434,11 @@ fn run_main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // Every config write is behind us: restart loom so its watched baseline is the final file
+    // and it cannot exit for restart mid-readiness.
+    // batch-job: one restart of a service during install; bounded by timeout 30.
+    let _ = Command::new("timeout").args(["30", "systemctl", "--user", "restart", "spira-loom.service"]).status();
+
     println!();
     let ready_rc = tool_status("ready.sh", &[]);
     if ready_rc == 0 {
