@@ -4,14 +4,16 @@
 #
 # Usage: build-aerc.sh <vendor-bin-dir>
 #
-# The source is the aerc in the harness flake's spira-env, pinned by flake.lock and served
-# from the nix binary cache. Nothing is cloned from a third-party git host at release time:
+# The source is the flake's aerc-static (CGO off, no notmuch), pinned by flake.lock and served
+# from the nix binary cache. nixpkgs' own aerc is a wrapper script over a /nix/store ELF and
+# cannot run on a machine without that store. Nothing is cloned from a third-party git host at release time:
 # a release must not depend on one being reachable at the minute it runs.
 #
 # EXIT
 #   0  <vendor-bin-dir>/aerc exists and reports exactly AERC_VERSION
 #   1  any failure, always loud: no nix, the nix build still failing after every attempt
-#      (the message names the source), or a binary that does not report the pinned version.
+#      (the message names the source), a binary that refers into /nix/store, or one that does
+#      not report the pinned version when run with an empty environment.
 #      A swallowed failure ships a release with no aerc at all.
 #
 # ENV
@@ -38,7 +40,7 @@ if [ -z "$NIX" ]; then
     NIX="$(command -v nix 2>/dev/null)" || { printf 'build-aerc.sh: no nix to provide aerc (looked at:%s, and nix on PATH=%s)\n' "$searched" "$PATH" >&2; exit 1; }
 fi
 flake_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-source_name="nix flake path:$flake_dir#spira-env (aerc, nix binary cache)"
+source_name="nix flake path:$flake_dir#aerc-static (nix binary cache)"
 printf 'build-aerc.sh: taking aerc %s from %s\n' "$AERC_VERSION" "$source_name" >&2
 
 env_dir=""
@@ -46,7 +48,7 @@ attempt=1
 delay="$BACKOFF"
 while :; do
     # batch-job: the release build realises spira-env once per release; bounded at 900 s.
-    if env_dir="$(timeout 900 "$NIX" --extra-experimental-features 'nix-command flakes' build "path:$flake_dir#spira-env" --no-link --print-out-paths)" \
+    if env_dir="$(timeout 900 "$NIX" --extra-experimental-features 'nix-command flakes' build "path:$flake_dir#aerc-static" --no-link --print-out-paths)" \
         && [ -x "$env_dir/bin/aerc" ]; then
         break
     fi
@@ -63,7 +65,13 @@ done
 mkdir -p "$VENDOR_BIN" && install -m 755 "$env_dir/bin/aerc" "$VENDOR_BIN/aerc" \
     || { printf 'build-aerc.sh: cannot place aerc at %s\n' "$VENDOR_BIN/aerc" >&2; exit 1; }
 
-ver="$(timeout 5 "$VENDOR_BIN/aerc" -v 2>/dev/null)" || ver=""
+if [ "$(head -c 256 "$VENDOR_BIN/aerc" | head -n 1 | grep -c '/nix/store')" != 0 ] \
+    || ldd "$VENDOR_BIN/aerc" 2>/dev/null | grep -q '/nix/store'; then
+    printf 'build-aerc.sh: %s depends on /nix/store (wrapper script or dynamic link); it would not run on an install host\n' "$VENDOR_BIN/aerc" >&2
+    exit 1
+fi
+
+ver="$(env -i timeout 5 "$VENDOR_BIN/aerc" -v 2>/dev/null)" || ver=""
 case "$ver" in
     "aerc $AERC_VERSION "*) ;;
     *)
