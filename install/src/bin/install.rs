@@ -800,7 +800,7 @@ fn run_main() -> ExitCode {
     // Resolve the locations the rest of install reads, now that the config exists. They
     // were read straight from this process's environment, which a fresh host never sets,
     // so the database phase initialised "" (sp-xbxcb). install.sh used to source conf.sh here.
-    for (key, required) in [("SPIRA_DB", true), ("SPIRA_RUN", true), ("SPIRA_DOLT_DATA", false), ("SPIRA_RELEASES", false)] {
+    for (key, required) in [("SPIRA_DB", true), ("SPIRA_RUN", true), ("SPIRA_DOLT_DATA", false), ("SPIRA_RELEASES", false), (spira_config::build::AEON_WARM_BASE_ENV, false)] {
         if nonempty_env(key).is_some() {
             continue;
         }
@@ -1119,7 +1119,10 @@ fn run_main() -> ExitCode {
         if let Some(base) = nonempty_env(spira_config::build::AEON_WARM_BASE_ENV) {
             match spira_config::build::prepare_warm(Path::new(&base), spira_config::build::AEON_WARM_SLOTS) {
                 Ok(()) => info(&format!("aeon warm slots ready under {base}")),
-                Err(e) => eprintln!("install: cannot create the aeon warm slots under {base}: {e}"),
+                Err(e) => {
+                    eprintln!("install: cannot create the aeon warm slots under {base} (aeon_warm_base): {e}");
+                    return ExitCode::from(2);
+                }
             }
         }
         match install::kit_bump::install(Path::new(&host.run), Path::new(&host.home), &|k| spira_config::process::cfg(k)) {
