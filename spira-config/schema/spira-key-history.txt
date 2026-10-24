@@ -479,6 +479,7 @@ round_ami_wait_secs
 kit_crate
 kit_repo
 kit_sites
+kit_registry
 publish_red_priority
 publish_red_escalate_after
 cold_par

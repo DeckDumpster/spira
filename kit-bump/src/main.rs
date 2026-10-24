@@ -1,16 +1,16 @@
-//! kit-bump pass [--config FILE] --kit PATH --kit-ref REF --crate NAME --state FILE --site NAME:PATH:REF:FILE...
+//! kit-bump pass [--config FILE] --registry URL --crate NAME --state FILE --site NAME:PATH:REF:FILE...
 //!
 //! `--config FILE` holds the same flags, one `name value` per line (`#` comments), so a site list
 //! lives on the host and not in the unit.
 //!
-//! Exit 0 swept, 1 a site failed (retried next pass), 3 the kit tip could not be read.
+//! Exit 0 swept, 1 a site failed (retried next pass), 3 the registry's latest release could not be read.
 
 use kit_bump::{pass, real::Real, Site};
 use spira_otel::metrics::{MetricsSink, Point};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: kit-bump pass [--config FILE] --kit PATH --kit-ref REF --crate NAME --state FILE [--persona NAME] --site NAME:PATH:REF:FILE...";
+const USAGE: &str = "usage: kit-bump pass [--config FILE] --registry URL --crate NAME --state FILE [--persona NAME] --site NAME:PATH:REF:FILE...";
 pub const COMPONENT: &str = "kit-bump";
 
 fn site(spec: &str) -> Result<Site, String> {
@@ -58,14 +58,13 @@ fn refresh(argv: &[String]) -> Result<(), String> {
 
 fn parse(argv: &[String]) -> Result<(Real, Vec<Site>), String> {
     let argv = &expand(argv)?;
-    let (mut kit, mut kit_ref, mut krate, mut state, mut persona) = (None, None, None, None, "builder".to_string());
+    let (mut registry, mut krate, mut state, mut persona) = (None, None, None, "builder".to_string());
     let mut sites = Vec::new();
     let mut it = argv.iter();
     while let Some(a) = it.next() {
         let v = it.next().ok_or_else(|| format!("{a} needs a value"))?.clone();
         match a.as_str() {
-            "--kit" => kit = Some(v),
-            "--kit-ref" => kit_ref = Some(v),
+            "--registry" => registry = Some(v),
             "--crate" => krate = Some(v),
             "--state" => state = Some(PathBuf::from(v)),
             "--persona" => persona = v,
@@ -78,8 +77,7 @@ fn parse(argv: &[String]) -> Result<(Real, Vec<Site>), String> {
     }
     let need = |o: Option<String>, n: &str| o.ok_or_else(|| format!("{n} is required"));
     let real = Real::new(
-        need(kit, "--kit")?,
-        need(kit_ref, "--kit-ref")?,
+        need(registry, "--registry")?,
         need(krate, "--crate")?,
         state.ok_or("--state is required")?,
         persona,
@@ -98,7 +96,7 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     }
     if let Some(f) = unconfigured(&argv[1..]) {
-        println!("kit-bump: unconfigured — {f} does not exist (set SPIRA_KIT_REPO and the pass renders it)");
+        println!("kit-bump: unconfigured — {f} does not exist (set SPIRA_KIT_REGISTRY and the pass renders it)");
         return ExitCode::SUCCESS;
     }
     let (real, sites) = match parse(&argv[1..]) {
@@ -113,7 +111,7 @@ fn main() -> ExitCode {
     let o = match pass(&real, &sites, &real.crate_name) {
         Ok(o) => o,
         Err(e) => {
-            eprintln!("kit-bump: cannot read the kit tip: {e}");
+            eprintln!("kit-bump: cannot read the latest release: {e}");
             spira_otel::oneshot::end(3);
             return ExitCode::from(3);
         }
@@ -121,10 +119,6 @@ fn main() -> ExitCode {
     let sink = MetricsSink::for_component(endpoint.as_deref(), COMPONENT);
     for s in &o.filed {
         sink.push(&[Point::Count { name: "spira_kit_bumps_filed", value: 1 }], &[("site", s)]);
-    }
-    for s in &sites {
-        let lag = o.lag_hours.get(&s.name).copied().unwrap_or(0.0);
-        sink.push(&[Point::Gauge { name: "spira_kit_bump_lag_hours", value: lag }], &[("site", &s.name)]);
     }
     println!(
         "kit-bump: {} filed, {} amended, {} current, {} failed",
@@ -155,7 +149,7 @@ mod tests {
         let missing = d.path().join("kit-bump.conf");
         let m = missing.to_str().unwrap();
         assert_eq!(unconfigured(&v(&["--config", m])), Some(m));
-        std::fs::write(&missing, "kit /k\n").unwrap();
+        std::fs::write(&missing, "registry http://r\n").unwrap();
         assert_eq!(unconfigured(&v(&["--config", m])), None);
         assert_eq!(unconfigured(&v(&["--kit", "/k"])), None);
     }

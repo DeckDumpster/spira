@@ -1,15 +1,14 @@
-use crate::{Commit, Open, Site, World, LABEL};
+use crate::{Open, Site, World, LABEL};
 use spira_config::bounded::{bounded, bounded_for};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const TERMINAL: [&str; 4] = ["LANDED", "SUPERSEDED", "DROPPED", "DONE"];
 
 pub struct Real {
-    pub kit_path: String,
-    pub kit_ref: String,
+    pub registry: String,
     pub crate_name: String,
     pub state: PathBuf,
     pub persona: String,
@@ -25,6 +24,16 @@ fn run(mut c: Command) -> Result<String, String> {
     }
 }
 
+/// Where a crate's entry sits in a sparse index.
+pub fn index_path(name: &str) -> String {
+    let n = name.to_ascii_lowercase();
+    match n.len() {
+        1 | 2 => format!("{}/{n}", n.len()),
+        3 => format!("3/{}/{n}", &n[..1]),
+        _ => format!("{}/{}/{n}", &n[..2], &n[2..4]),
+    }
+}
+
 fn git(path: &str, args: &[&str]) -> Result<String, String> {
     let mut c = bounded("git");
     c.arg("-C").arg(path).args(args);
@@ -32,7 +41,7 @@ fn git(path: &str, args: &[&str]) -> Result<String, String> {
 }
 
 impl Real {
-    pub fn new(kit_path: String, kit_ref: String, crate_name: String, state: PathBuf, persona: String) -> Real {
+    pub fn new(registry: String, crate_name: String, state: PathBuf, persona: String) -> Real {
         let bumps = std::fs::read_to_string(&state)
             .unwrap_or_default()
             .lines()
@@ -41,7 +50,7 @@ impl Real {
                 Some((f.next()?.to_string(), (f.next()?.to_string(), f.next()?.to_string())))
             })
             .collect();
-        Real { kit_path, kit_ref, crate_name, state, persona, bumps: RefCell::new(bumps) }
+        Real { registry, crate_name, state, persona, bumps: RefCell::new(bumps) }
     }
 
     fn record(&self, site: &Site, id: &str, target: &str) -> Result<(), String> {
@@ -66,30 +75,25 @@ impl Real {
 }
 
 impl World for Real {
-    fn kit_tip(&self) -> Result<String, String> {
-        git(&self.kit_path, &["rev-parse", "--verify", &format!("{}^{{commit}}", self.kit_ref)]).map(|s| s.trim().to_string())
+    fn latest_release(&self) -> Result<String, String> {
+        let url = format!("{}/{}", self.registry.trim_end_matches('/'), index_path(&self.crate_name));
+        let mut c = bounded_for("curl", "30");
+        c.args(["-fsS", "--max-time", "25", &url]);
+        let index = run(c)?;
+        crate::newest_release(&index).ok_or_else(|| format!("no release of `{}` in {url}", self.crate_name))
     }
 
-    fn site_pin(&self, site: &Site) -> Result<String, String> {
+    fn site_requirement(&self, site: &Site) -> Result<String, String> {
         let manifest = git(&site.path, &["show", &format!("{}:{}", site.git_ref, site.file)])?;
-        crate::parse_pin(&manifest, &self.crate_name)
-            .ok_or_else(|| format!("no `{}` rev in {}:{}", self.crate_name, site.git_ref, site.file))
+        crate::parse_requirement(&manifest, &self.crate_name)
+            .ok_or_else(|| format!("no `{}` requirement in {}:{}", self.crate_name, site.git_ref, site.file))
     }
 
-    fn is_ancestor(&self, ancestor: &str, descendant: &str) -> bool {
-        git(&self.kit_path, &["merge-base", "--is-ancestor", ancestor, descendant]).is_ok()
-    }
-
-    fn commits(&self, pin: &str, tip: &str) -> Vec<Commit> {
-        let range = format!("{pin}..{tip}");
-        git(&self.kit_path, &["log", "--reverse", "--format=%H%x09%ct%x09%s", &range])
-            .unwrap_or_default()
-            .lines()
-            .filter_map(|l| {
-                let mut f = l.splitn(3, '\t');
-                Some(Commit { sha: f.next()?.into(), at: f.next()?.parse().ok()?, subject: f.next()?.into() })
-            })
-            .collect()
+    fn site_locked(&self, site: &Site) -> Result<String, String> {
+        let lock = Path::new(&site.file).with_file_name("Cargo.lock");
+        let lock = git(&site.path, &["show", &format!("{}:{}", site.git_ref, lock.display())])?;
+        crate::parse_locked(&lock, &self.crate_name)
+            .ok_or_else(|| format!("no `{}` in the lockfile beside {}:{}", self.crate_name, site.git_ref, site.file))
     }
 
     fn open_bump(&self, site: &Site) -> Result<Option<Open>, String> {
@@ -124,9 +128,5 @@ impl World for Real {
         let _ = std::fs::remove_file(&f);
         out?;
         self.record(site, &open.id, target)
-    }
-
-    fn now(&self) -> i64 {
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
     }
 }
