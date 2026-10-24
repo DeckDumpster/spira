@@ -35,7 +35,7 @@ done
 }
 
 _fails="$(grep -E '^[[:space:]]*FAIL[[:space:]]' "$_log" | sed -E 's/^[[:space:]]+//' | sort -u)"
-_gh() { timeout 5 gh "$@"; }
+_gh() { timeout 30 gh "$@"; }
 
 _ensure_labels() {
     _gh label create "$LABEL" --repo "$_repo" --color B60205 --description "daily fresh-install acceptance red" >/dev/null 2>&1 || true

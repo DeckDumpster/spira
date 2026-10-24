@@ -1,0 +1,41 @@
+name: Release build toolchain
+description: Pinned Rust (rust-toolchain.toml) plus a nix for build-aerc.sh's go. Used by every workflow that builds the release tarball.
+
+runs:
+  using: composite
+  steps:
+    - name: Read pinned toolchain
+      id: toolchain
+      shell: bash
+      run: |
+        v=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+        [ -n "$v" ] || { printf 'rust-toolchain.toml has no channel\n' >&2; exit 1; }
+        printf 'version=%s\n' "$v" >> "$GITHUB_OUTPUT"
+
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ steps.toolchain.outputs.version }}
+
+    - name: Assert Rust version
+      shell: bash
+      run: |
+        got=$(rustc --version | awk '{print $2}')
+        want="${{ steps.toolchain.outputs.version }}"
+        [ "$got" = "$want" ] || {
+          printf 'expected Rust %s (rust-toolchain.toml), got %s\n' "$want" "$got" >&2
+          exit 1
+        }
+
+    - name: Find an installed nix
+      id: nix
+      shell: bash
+      run: |
+        if command -v nix >/dev/null 2>&1; then have=true
+        elif [ -x /nix/var/nix/profiles/default/bin/nix ]; then
+          have=true
+          printf '/nix/var/nix/profiles/default/bin\n' >> "$GITHUB_PATH"
+        else have=false; fi
+        printf 'have=%s\n' "$have" >> "$GITHUB_OUTPUT"
+
+    - uses: cachix/install-nix-action@v31
+      if: steps.nix.outputs.have != 'true'
