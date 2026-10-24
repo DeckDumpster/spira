@@ -10,7 +10,7 @@ fn main() {
     }
     let cfg = match Config::from_spira() {
         Ok(Some(c)) => c,
-        Ok(None) => dormant(&cmd, "submission_addr or its certificate settings are empty"),
+        Ok(None) => std::process::exit(dormant(&cmd, "submission_addr or its certificate settings are empty")),
         Err(e) => {
             eprintln!("spira-submission: {e}");
             std::process::exit(2);
@@ -26,7 +26,7 @@ fn main() {
         },
         "" | "serve" => {
             if !cfg.cert.is_file() || !cfg.key.is_file() {
-                dormant(&cmd, "certificate or key file does not exist yet");
+                std::process::exit(dormant(&cmd, "certificate or key file does not exist yet"));
             }
             if let Err(e) = spira_submission::server_config(&cfg.cert, &cfg.key) {
                 eprintln!("spira-submission: {e}");
@@ -50,10 +50,10 @@ fn main() {
     }
 }
 
-fn dormant(cmd: &str, why: &str) -> ! {
+fn dormant(cmd: &str, why: &str) -> i32 {
     eprintln!("spira-submission: {why} — not configured, not listening");
     if cmd == "health" {
-        std::process::exit(0);
+        return 0;
     }
     loop {
         std::thread::park();
