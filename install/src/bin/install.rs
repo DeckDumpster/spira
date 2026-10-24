@@ -186,19 +186,14 @@ fn dependencies(dry: bool) -> Result<(), String> {
     let path = std::env::var("PATH").unwrap_or_default();
     std::env::set_var("PATH", format!("{env_bin}:{path}"));
 
-    let metrics_off = Command::new("timeout")
-        .args(["5", "dolt", "config", "--global", "--get", "metrics.disabled"])
-        .output()
-        .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "true")
-        .unwrap_or(false);
-    if metrics_off {
+    let dolt_global = Path::new(&home).join(".dolt/config_global.json");
+    if dolt_metrics_disabled(&dolt_global) {
         skip("dolt metrics.disabled already true");
     } else if dry {
-        would("run: dolt config --global --add metrics.disabled true");
+        would(&format!("set metrics.disabled true in {}", dolt_global.display()));
     } else {
-        run_ok("timeout", &["5", "dolt", "config", "--global", "--add", "metrics.disabled", "true"])
-            .map_err(|e| format!("cannot set dolt metrics.disabled: {e}"))?;
-        info("set dolt metrics.disabled true (dolt config --global)");
+        set_dolt_metrics_disabled(&dolt_global).map_err(|e| format!("cannot set dolt metrics.disabled: {e}"))?;
+        info(&format!("set dolt metrics.disabled true ({})", dolt_global.display()));
     }
 
     bd_metrics_off(dry)?;
@@ -209,6 +204,33 @@ fn dependencies(dry: bool) -> Result<(), String> {
     install_aerc(dry, &bin, spira_config::release_env::own_release_root_for_process().as_deref())?;
     install_sendmail(dry, &home, &bin)?;
     Ok(())
+}
+
+fn read_dolt_global(path: &Path) -> Result<serde_json::Map<String, serde_json::Value>, String> {
+    match std::fs::read_to_string(path) {
+        Ok(text) if text.trim().is_empty() => Ok(Default::default()),
+        Ok(text) => match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(serde_json::Value::Object(m)) => Ok(m),
+            _ => Err(format!("{} is not a JSON object", path.display())),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Default::default()),
+        Err(e) => Err(format!("read {}: {e}", path.display())),
+    }
+}
+
+fn dolt_metrics_disabled(path: &Path) -> bool {
+    read_dolt_global(path).is_ok_and(|m| m.get("metrics.disabled").and_then(|v| v.as_str()) == Some("true"))
+}
+
+fn set_dolt_metrics_disabled(path: &Path) -> Result<(), String> {
+    let mut m = read_dolt_global(path)?;
+    m.insert("metrics.disabled".into(), "true".into());
+    let dir = path.parent().ok_or("no parent directory")?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
+    let tmp = dir.join(".config_global.json.new");
+    let body = serde_json::to_string(&m).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, body).map_err(|e| format!("write {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("install {}: {e}", path.display()))
 }
 
 /// Builds the pinned tool environment (`flake.nix` at the release root) into
@@ -2184,5 +2206,30 @@ mod dolt_yaml_tests {
         assert!(out.contains(&format!("data_dir: \"{data}\"")), "{out}");
         assert!(!out.contains("@SPIRA_"), "{out}");
         assert_eq!(place_dolt_yaml(&tpl, dest, &[], false), 0);
+    }
+}
+
+#[cfg(test)]
+mod dolt_metrics_tests {
+    use super::*;
+
+    #[test]
+    fn metrics_disabled_is_written_without_running_dolt_and_keeps_other_keys() {
+        let td = testkit::TempDir::new("dolt-metrics");
+        let path = td.path().join(".dolt/config_global.json");
+        assert!(!dolt_metrics_disabled(&path));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, r#"{"user.name":"x"}"#).unwrap();
+        set_dolt_metrics_disabled(&path).unwrap();
+        assert!(dolt_metrics_disabled(&path));
+        assert!(std::fs::read_to_string(&path).unwrap().contains("user.name"));
+    }
+
+    #[test]
+    fn unwritable_or_corrupt_config_fails() {
+        let td = testkit::TempDir::new("dolt-metrics-bad");
+        let path = td.path().join("config_global.json");
+        std::fs::write(&path, "not json").unwrap();
+        assert!(set_dolt_metrics_disabled(&path).is_err());
     }
 }
