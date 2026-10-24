@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-# test-build-aerc.sh — build-aerc.sh takes aerc from nix, never clones a third-party git host,
-# and retries a failed fetch before naming its source.
-#
+# tier: T1
 # covers: spira/build-aerc.sh spira/build-tarball.sh flake.nix
+#
+# build-aerc.sh takes aerc from nix, never clones a third-party git host, and retries a
+# failed fetch before naming its source.
 set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-fail=0
-check() { if [ "$1" = ok ]; then printf 'ok   %s\n' "$2"; else printf 'FAIL %s\n' "$2"; fail=1; fi; }
+. "$here/testlib.sh"
+check() { if [ "$1" = ok ]; then ok "$2"; else bad "$2"; fi; }
 
 mkdir -p "$work/stubs" "$work/envdir/bin"
 cat > "$work/envdir/bin/aerc" <<'AERC'
@@ -51,4 +52,4 @@ run FAIL_FIRST=99 BUILD_AERC_ATTEMPTS=3; rc=$?
 { [ "$rc" = 1 ] && [ "$(cat "$work/nix.count")" = 3 ] && grep -q 'spira-env' "$work/stderr" && grep -q 'after 3 attempts' "$work/stderr"; } \
     && check ok "exhausted retries fail naming the source" || check no "exhausted retries (rc=$rc)"
 
-exit "$fail"
+tl_summary
