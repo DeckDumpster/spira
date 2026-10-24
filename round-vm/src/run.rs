@@ -1351,7 +1351,8 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
             return 2;
         }
     };
-    let build_image = args.ci_entry.is_none() && image_build_declared(env, args, &commit_sha);
+    let image_missing = image_build_declared(env, args, &commit_sha);
+    let build_image = args.ci_entry.is_none() && image_missing;
     let ordered;
     let args = if args.suites.is_none() && args.ci_entry.is_none() {
         match lpt_suites(env.host, &args.tree_dir) {
@@ -1416,7 +1417,7 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
                     std::thread::sleep(Duration::from_millis(50));
                 }
             });
-            let got = env.pool.acquire(env.deps, Some(ProcId::current()));
+            let got = env.pool.acquire_placed(env.deps, Some(ProcId::current()), None, image_missing);
             leasing.store(false, Ordering::SeqCst);
             got
         })
