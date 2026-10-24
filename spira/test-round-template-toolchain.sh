@@ -48,4 +48,28 @@ mkdir -p "$TMP/none/bin"
 run none 1.99.1 >/dev/null
 is "empty home gets the pin" "rustc 1.99.1 (fake)" "$("$TMP/none/bin/rustc" --version)"
 
+sed -n '/^# default-begin$/,/^# default-end$/p' "$ROOT/round-vm/src/template.sh" > "$TMP/default.sh"
+sed -n '/^# verify-begin$/,/^# verify-end$/p' "$ROOT/round-vm/src/template.sh" > "$TMP/verify.sh"
+[ -s "$TMP/default.sh" ] && [ -s "$TMP/verify.sh" ] && ok "default and verify blocks found" || bad "default and verify blocks found" "markers missing"
+
+mkdir -p "$TMP/dbin" "$TMP/home"
+cat > "$TMP/dbin/rustup" <<'R'
+#!/bin/sh
+echo "$RUSTUP_HOME $*" >> "$HOME/rustup.log"
+R
+chmod +x "$TMP/dbin/rustup"
+env -i PATH="$TMP/dbin:/usr/bin:/bin" HOME="$TMP/home" toolchain=1.99.1 bash "$TMP/default.sh" >/dev/null 2>&1
+want "pin is installed in the ambient rustup home" "$TMP/home/.rustup toolchain install 1.99.1" "$(cat "$TMP/home/rustup.log")"
+want "pin becomes the ambient default" "$TMP/home/.rustup default 1.99.1" "$(cat "$TMP/home/rustup.log")"
+
+verify() { env -i PLAIN_PATH="$TMP/$1" PATH=/usr/bin:/bin HOME="$TMP/home" bash "$TMP/verify.sh" 2>&1; }
+mkdir -p "$TMP/vbad" "$TMP/vgood"
+printf '#!/bin/sh\necho "error: rustup could not choose a version of cargo to run" >&2\nexit 1\n' > "$TMP/vbad/cargo"
+printf '#!/bin/sh\necho "cargo 1.99.1"\n' > "$TMP/vgood/cargo"
+chmod +x "$TMP/vbad/cargo" "$TMP/vgood/cargo"
+out="$(verify vbad)"; rc=$?
+[ "$rc" -ne 0 ] && ok "clone where cargo fails is refused" || bad "clone where cargo fails is refused" "exit 0"
+want "refusal carries cargo's error" "rustup could not choose a version" "$out"
+verify vgood >/dev/null && ok "clone where cargo runs passes" || bad "clone where cargo runs passes" "refused"
+
 tl_summary
