@@ -1345,6 +1345,14 @@ fn submission(status: &str) -> Vec<Line> {
 const HEALTHY: &str = "configured=1\ntailnet=1\nlistening=1\naddr=100.64.0.1:2587\niface=tailscale0\nfirewall=open\ncert_days=80\npassword=ok\n";
 
 #[test]
+fn submission_without_the_operator_grant_names_the_command() {
+    let out = submission("configured=0\ntailnet=1\noperator=missing\n");
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0].level, Level::Warn);
+    assert!(out[0].detail.as_deref().unwrap_or("").contains("tailscale set --operator"), "{:?}", out[0].detail);
+}
+
+#[test]
 fn submission_absent_binary_is_silent() {
     assert!(check_submission(&Fake::default()).is_empty());
 }

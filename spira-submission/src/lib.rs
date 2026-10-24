@@ -34,7 +34,7 @@ pub struct Config {
 }
 
 impl Config {
-    /// `Ok(None)` when `SPIRA_SUBMISSION_ADDR` is empty: the service is not enabled on this box.
+    /// `Ok(None)` when the address or any of the cert, key, password file or sender is empty: not enabled on this box.
     pub fn from_spira() -> Result<Option<Config>, String> {
         let get = spira_config::process::cfg;
         Config::from_values(&|k| get(k), vec!["mail".into(), "sendmail".into()])
@@ -56,6 +56,10 @@ impl Config {
         let addr: IpAddr = addr.trim().parse().map_err(|e| format!("SPIRA_SUBMISSION_ADDR={addr:?} is not an IP address: {e}"))?;
         if addr.is_unspecified() {
             return Err(format!("SPIRA_SUBMISSION_ADDR={addr} — never a wildcard"));
+        }
+        let incomplete = ["SPIRA_SUBMISSION_CERT", "SPIRA_SUBMISSION_KEY", "SPIRA_SUBMISSION_PASSWORD_FILE", "SPIRA_SUBMISSION_FROM"].iter().any(|k| get(k).is_ok_and(|v| v.trim().is_empty()));
+        if incomplete {
+            return Ok(None);
         }
         let port: u32 = need("SPIRA_SUBMISSION_PORT")?.parse().map_err(|e| format!("SPIRA_SUBMISSION_PORT does not parse: {e}"))?;
         if !(1025..=65535).contains(&port) {

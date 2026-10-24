@@ -300,3 +300,52 @@ fn status_reports_what_doctor_reads() {
     assert_eq!(status(&f, &plan(false).plan), "configured=0\ntailnet=1\n");
 }
 
+
+struct NoOperator<'a>(&'a Fake);
+
+impl Host for NoOperator<'_> {
+    fn run(&self, argv: &[&str]) -> Result<String, String> {
+        if argv.starts_with(&["tailscale", "cert"]) {
+            self.0.calls.borrow_mut().push(argv.join(" "));
+            return Err("tailscale cert exited 1: Use 'sudo tailscale cert ...'. To not require root, use 'sudo tailscale set --operator=$USER' once.".into());
+        }
+        if argv.starts_with(&["tailscale", "debug", "prefs"]) {
+            return Ok(r#"{"OperatorUser":""}"#.into());
+        }
+        self.0.run(argv)
+    }
+    fn now(&self) -> i64 {
+        self.0.now
+    }
+}
+
+#[test]
+fn a_failed_certificate_leaves_the_submission_keys_unset() {
+    let b = plan(false);
+    let f = fake(NOT_AFTER - 60 * DAY);
+    let r = provision(&NoOperator(&f), &b.plan);
+    assert_eq!(count(&f, "tailscale cert"), 1, "{:?}", f.calls);
+    assert_eq!(count(&f, "spira-config set"), 0, "{:?}", f.calls);
+    assert_eq!(count(&f, "systemctl"), 0);
+    assert!(r.errors.is_empty(), "{r:?}");
+    assert!(r.notes.iter().any(|n| n.contains("sudo tailscale set --operator=$USER")), "{r:?}");
+}
+
+#[test]
+fn the_address_is_written_last() {
+    let b = plan(false);
+    let f = fake(NOT_AFTER - 60 * DAY);
+    provision(&Cert(&f), &b.plan);
+    let sets: Vec<String> = f.calls.borrow().iter().filter(|c| c.starts_with("spira-config set")).cloned().collect();
+    assert_eq!(sets.len(), 5, "{sets:?}");
+    assert!(sets[4].contains("spira.submission_addr"), "{sets:?}");
+}
+
+#[test]
+fn status_reports_a_missing_operator_grant() {
+    let b = plan(false);
+    let f = fake(0);
+    let _env = testkit::env(&[("USER", Some("someone"))]);
+    let s = status(&NoOperator(&f), &b.plan);
+    assert!(s.lines().any(|l| l == "operator=missing"), "{s}");
+}
