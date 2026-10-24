@@ -42,6 +42,7 @@ pub fn mask(text: &str) -> String {
     long.replace_all(&esc.replace_all(text, ""), "<x>").into_owned()
 }
 
+// batch-job: one interactive sign-in; the broker call returns when the verb does.
 fn mint_code(t: &Tools) -> Result<String, String> {
     let out = Command::new(&t.broker)
         .arg("identity-login-code")
@@ -108,6 +109,7 @@ impl Pty {
     }
 }
 
+// batch-job: the browser step is bounded inside the container by `timeout 230`.
 fn browser_step(t: &Tools, login: &str, auth: &str, id_origin: &str) -> Result<String, String> {
     let dir = std::env::temp_dir().join(format!("pilgrim-login-{}", std::process::id()));
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -159,6 +161,7 @@ pub fn clear_needs_auth(home: &Path, name: &str) -> bool {
     std::fs::write(&cache, v.to_string()).is_ok()
 }
 
+// batch-job: waits on claude's own exit after the approval, bounded at 30 s.
 pub fn run(t: &Tools, name: &str, project: &Path, base: &str) -> Result<(), String> {
     let code = mint_code(t)?;
     let login = login_url(base, &code)?;

@@ -8,6 +8,13 @@ use std::process::ExitCode;
 const USAGE: &str = "usage: pilgrim-login <mcp-server-name> <claude-project-dir> [--login-url BASE]";
 
 fn main() -> ExitCode {
+    let metered = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "pilgrim-login", "login");
+    let code = real_main();
+    metered.end(if code == ExitCode::SUCCESS { "ok" } else { "error" });
+    code
+}
+
+fn real_main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let (pos, flag): (Vec<&String>, Option<&String>) = match argv.as_slice() {
         [a, b] => (vec![a, b], None),
