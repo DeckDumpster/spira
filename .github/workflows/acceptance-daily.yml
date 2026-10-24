@@ -1,0 +1,252 @@
+# acceptance-daily.yml — fresh-install acceptance (phase A, no predecessor) of the published
+# main, once a day, on a machine that has never run anything else.
+#
+# A SCHEDULED RUN CUTS NOTHING. It builds a tarball from the checked-out commit and runs
+# `release acceptance` against that tarball; no tag, release or note is created, so there is
+# nothing for a failure to retract. Upgrade phases are not run.
+#
+# GREEN is the run itself. RED opens, or comments on, one GitHub issue per distinct failing
+# check (spira/acceptance-daily-report.sh), titled "acceptance-daily: <check>", carrying the
+# FAIL lines verbatim and the run link. A run that never reached a verdict (provision or
+# build failure) files one issue of its own: it is never silent.
+#
+# THE TRUST ROUTE. The report step uses the default GITHUB_TOKEN (issues: write), so the issue
+# is authored by github-actions[bot] and labelled `spira:acceptance`; gh-intake trusts exactly
+# that author and label together. No personal token is involved.
+#
+# The provision and teardown jobs reference the operator's own runner infrastructure, as
+# acceptance.yml's do; a clone replaces them or points runs-on at its own runner.
+
+name: Acceptance (daily)
+
+on:
+  schedule:
+    - cron: '23 9 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: acceptance-daily
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    outputs:
+      vmid:  ${{ steps.vm.outputs.vmid }}
+      # Can be empty even when the VM carries a token — see gate.yml's provision job.
+      vm-token: ${{ steps.vm.outputs.vm-token }}
+      label: ${{ steps.vm.outputs.label }}
+    # The guest-agent wait defaults to 120s, inside the normal boot range on a busy
+    # hypervisor; unset, a slow healthy boot leaves the job queued on a label no runner holds.
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AGENT_TIMEOUT: 300
+    steps:
+      - uses: DeckDumpster/ephemeral-ci/provision@v2
+        id: vm
+        with:
+          ts-oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          ts-oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
+          runner-reg-pat:     ${{ secrets.RUNNER_REG_PAT }}
+          pve-token-id:       ${{ secrets.PVE_TOKEN_ID }}
+          pve-token-secret:   ${{ secrets.PVE_TOKEN_SECRET }}
+          pve-api-host:       ${{ vars.PVE_API_HOST }}
+          pve-api-hostname:   ${{ vars.PVE_API_HOSTNAME }}
+          pve-ca-cert:        ${{ vars.PVE_CA_CERT }}
+          pve-node:           ${{ vars.PVE_NODE }}
+          template-vmid:      ${{ vars.TEMPLATE_VMID }}
+          spill:              ec2-only
+          spill-after-seconds: 600
+          spill-max-instances: 2
+          aws-role-to-assume: ${{ secrets.AWS_SPILL_ROLE_ARN }}
+
+  # ---------------------------------------------------------------------------
+  # The acceptance run itself, on the provisioned machine.
+  # ---------------------------------------------------------------------------
+  acceptance:
+    needs: provision
+    if: ${{ !cancelled() && needs.provision.result == 'success' }}
+    runs-on: [self-hosted, "${{ needs.provision.outputs.label }}"]
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Confirm provisioned machine
+        run: test "$RUNNER_NAME" = "${{ needs.provision.outputs.label }}"
+
+      - name: Stop apt automation
+        run: |
+          sudo systemctl mask --now apt-daily.timer apt-daily-upgrade.timer unattended-upgrades.service
+          sudo systemctl stop apt-daily-upgrade.service apt-daily.service unattended-upgrades.service || true
+          sudo dpkg --configure -a || true
+
+      - name: Enable systemd user session
+        # The runner process is not a login session, so XDG_RUNTIME_DIR may be
+        # unset and /run/user/<uid> may not exist. Linger creates the runtime
+        # directory and starts the user systemd manager so systemctl --user works.
+        # Both variables are written to GITHUB_ENV so every subsequent step,
+        # including subprocesses of install, inherits them without explicit env:.
+        run: |
+          sudo loginctl enable-linger "$USER"
+          _xdg="/run/user/$(id -u)"
+          echo "XDG_RUNTIME_DIR=${_xdg}" >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=unix:path=${_xdg}/bus" >> "$GITHUB_ENV"
+          for _ in $(seq 10); do
+            XDG_RUNTIME_DIR="${_xdg}" systemctl --user is-system-running >/dev/null 2>&1 && break
+            sleep 1
+          done
+
+      - name: Install gh
+        run: |
+          if ! command -v gh >/dev/null 2>&1; then
+            mkdir -p /etc/apt/keyrings
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+              | sudo gpg --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg
+            sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+            printf 'deb [arch=%s signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\n' \
+              "$(dpkg --print-architecture)" \
+              | sudo tee /etc/apt/sources.list.d/github-cli.list
+            sudo apt-get update -q && sudo apt-get install -yq gh
+          fi
+
+      - name: Install bd
+        # build-bd.sh --from-flake takes bd from the flake's spira-env and installs it to
+        # $HOME/.local/bin/bd and bd-embedded.
+        # The schema check is skipped when no existing store is present — correct for a
+        # fresh machine where the db has not been created yet.
+        run: |
+          export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+          bash spira/build-bd.sh --from-flake --install
+
+      - name: Install dolt
+        # dolt comes from the harness flake's spira-env, pinned by flake.lock.
+        run: |
+          export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+          _env="$(nix --extra-experimental-features 'nix-command flakes' build "path:$PWD#spira-env" --no-link --print-out-paths)"
+          sudo install -m 0755 "$_env/bin/dolt" /usr/local/bin/dolt
+
+      - name: Install bd
+        run: |
+          export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+          bash spira/build-bd.sh --from-flake --install
+
+      - name: Install dolt
+        run: |
+          export PATH="/nix/var/nix/profiles/default/bin:$PATH"
+          _env="$(nix --extra-experimental-features 'nix-command flakes' build "path:$PWD#spira-env" --no-link --print-out-paths)"
+          sudo install -m 0755 "$_env/bin/dolt" /usr/local/bin/dolt
+
+      - name: Read pinned toolchain
+        id: toolchain
+        run: |
+          v=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          [ -n "$v" ] || { printf 'rust-toolchain.toml has no channel\n' >&2; exit 1; }
+          printf 'version=%s\n' "$v" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.version }}
+
+      - name: Build the candidate tarball
+        # The candidate is this commit's own build, exactly as release.yml packages it; its
+        # bin/release is the binary that runs the acceptance.
+        run: |
+          set -euo pipefail
+          make build
+          _tb="$(bash spira/build-tarball.sh build --workspace . --output "$RUNNER_TEMP/artifacts" \
+                   --name "spira-daily" --repo-name "${GITHUB_REPOSITORY#*/}")"
+          mkdir -p "$HOME/.local/bin"
+          tar -xzOf "$_tb" --wildcards '*/bin/release' > "$HOME/.local/bin/release"
+          chmod +x "$HOME/.local/bin/release"
+          printf 'TARBALL=%s\n' "$_tb" >> "$GITHUB_ENV"
+
+      - name: Run acceptance (phase A)
+        env:
+          CONFIGURE_MAX_AEONS: "1"
+          CONFIGURE_MAX_LIVE_AEONS: ""
+          CONFIGURE_DOLT_DATA: ""
+        run: |
+          set -uo pipefail
+          bash spira/acceptance-ci.sh "local-$(git rev-parse --short=12 HEAD)" \
+            --bd-db "$HOME/.local/share/spira/db" \
+            --agent "$GITHUB_WORKSPACE/spira/acceptance-agent.sh" \
+            --tarball "$TARBALL" 2>&1 | tee "$HOME/acceptance-daily.log"
+          exit "${PIPESTATUS[0]}"
+
+      - name: Upload log and forensics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-daily
+          path: |
+            ~/acceptance-daily.log
+            ~/acceptance-forensics
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
+  # A red run, or one that never reached a verdict, becomes issues.
+  # ---------------------------------------------------------------------------
+  report:
+    needs: [provision, acceptance]
+    if: ${{ !cancelled() && (needs.provision.result != 'success' || needs.acceptance.result != 'success') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: acceptance-daily
+          path: ${{ runner.temp }}/artifact
+
+      - name: File or append the issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          _log="$(find "$RUNNER_TEMP/artifact" -name acceptance-daily.log 2>/dev/null | head -1)"
+          if [ -z "$_log" ]; then
+            _log="$RUNNER_TEMP/acceptance-daily.log"
+            printf 'no log: provision=%s acceptance=%s\n' "${{ needs.provision.result }}" "${{ needs.acceptance.result }}" > "$_log"
+          fi
+          bash spira/acceptance-daily-report.sh --log "$_log" --sha "${{ github.sha }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+  # ---------------------------------------------------------------------------
+  # Destroy the machine, whatever happened. Plain cancel only (see gate.yml's teardown).
+  # ---------------------------------------------------------------------------
+  teardown:
+    needs: [provision, acceptance]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: DeckDumpster/ephemeral-ci/teardown@v2
+        with:
+          vmid:  ${{ needs.provision.outputs.vmid }}
+          label: ${{ needs.provision.outputs.label }}
+          runner-reg-pat:     ${{ secrets.RUNNER_REG_PAT }}
+          ts-oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          ts-oauth-secret:    ${{ secrets.TS_OAUTH_SECRET }}
+          pve-token-id:       ${{ secrets.PVE_TOKEN_ID }}
+          pve-token-secret:   ${{ secrets.PVE_TOKEN_SECRET }}
+          pve-api-host:       ${{ vars.PVE_API_HOST }}
+          pve-api-hostname:   ${{ vars.PVE_API_HOSTNAME }}
+          pve-ca-cert:        ${{ vars.PVE_CA_CERT }}
+          pve-node:           ${{ vars.PVE_NODE }}
+          template-vmid:      ${{ vars.TEMPLATE_VMID }}
+          vm-token:           ${{ needs.provision.outputs.vm-token }}
