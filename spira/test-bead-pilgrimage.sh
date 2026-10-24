@@ -90,7 +90,7 @@ is "N build beads filed" "3" "${#builds[@]}"
 args=(); for b in "${builds[@]}"; do args+=(--after "$b"); done
 pid="$(bead_sh pilgrimage "$T/design.md" --repo testrepo "${args[@]}")"; rc=$?
 is   "pilgrimage exits 0" "0" "$rc"
-is   "the pilgrimage is the N+1th bead" "sp-n4" "$pid"
+is   "the pilgrimage is the N+1th bead (got: $pid)" "sp-n4" "$pid"
 creates="$(grep -c '^create' "$BD_LOG")"
 is   "N+1 beads are created" "4" "$creates"
 want "the pilgrimage is titled for the design" "Pilgrimage: Agent tools" "$(grep '^create' "$BD_LOG" | tail -1)"
