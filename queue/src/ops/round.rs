@@ -36,6 +36,8 @@ const PREEMPT_POLLS: u32 = 120;
 pub(super) const RECORD: &str = "round";
 pub(super) const BUILD_RED: &str = "workspace-build";
 pub(super) const UNIT_RED: &str = "unit-tests";
+/// Steps a round runs over its whole tree that are not testenv suites; only a green round proves them.
+pub const ROUND_STEPS: [&str; 2] = [BUILD_RED, UNIT_RED];
 /// The one red a repository that judges itself reports: its testenv run as a whole.
 pub(super) const REPO_TESTENV_RED: &str = "testenv";
 pub(super) const LC_ACTOR: &str = "queue.sh";
@@ -2168,6 +2170,13 @@ fn finish_green(
         // names it, so the gap is loud at the one place it matters.
         w.err(format!("queue.sh {label}: WARNING — round {batch} is green but its full-suite local pass for {head} was not recorded ({e}); publish will refuse this head until it is"));
     }
+    if let Ok(kv) = load(w, label, c, batch) {
+        for m in kv.members() {
+            for step in ROUND_STEPS {
+                let _ = spira_config::proof::record_run(&c.s.run, &m.id, &m.tip, step, 0, &format!("round {batch} green at {head}"));
+            }
+        }
+    }
     mark_running(c, batch);
     landing_log(
         &c.s.run,
@@ -2200,12 +2209,12 @@ fn known_forced_suites(w: &World, label: &str, wt: &Path, suites: &str) -> Resul
     let unknown: Vec<&str> = named
         .iter()
         .copied()
-        .filter(|n| !known.iter().any(|k| k == n))
+        .filter(|n| !ROUND_STEPS.contains(n) && !known.iter().any(|k| k == n))
         .collect();
     if unknown.is_empty() {
         return Ok(());
     }
-    w.err(format!("queue.sh {label}: --suites names {} which testenv does not know — nothing changed; known suites: {}", unknown.join(","), known.join(" ")));
+    w.err(format!("queue.sh {label}: --suites names {} which testenv does not know — nothing changed; known suites: {}; round steps: {}", unknown.join(","), known.join(" "), ROUND_STEPS.join(" ")));
     Err(FAIL)
 }
 
