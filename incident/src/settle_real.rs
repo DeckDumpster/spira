@@ -133,7 +133,9 @@ impl Settler for RealSettler<'_> {
 
 /// The 40-hex directory name of `$SPIRA_RELEASE`, when it is one.
 pub fn release_sha_of(release: &str) -> Option<String> {
-    let name = std::path::Path::new(release.trim_end_matches('/')).file_name()?.to_str()?;
+    let given = std::path::Path::new(release.trim_end_matches('/'));
+    let resolved = std::fs::canonicalize(given).unwrap_or_else(|_| given.to_path_buf());
+    let name = resolved.file_name()?.to_str()?;
     (name.len() == 40 && name.bytes().all(|b| b.is_ascii_hexdigit())).then(|| name.to_string())
 }
 
@@ -164,5 +166,16 @@ mod tests {
         let sha = "9f6f7e976db26649b7e4b753de0a992b1fc2f75b";
         assert_eq!(release_sha_of(&format!("/r/spira-releases/{sha}/")), Some(sha.to_string()));
         assert_eq!(release_sha_of("/r/checkout"), None);
+    }
+
+    #[test]
+    fn release_sha_follows_a_current_symlink() {
+        let sha = "9f6f7e976db26649b7e4b753de0a992b1fc2f75b";
+        let tmp = testkit::TempDir::new("settle-sym");
+        let dir = tmp.path().to_path_buf();
+        std::fs::create_dir_all(dir.join(sha)).unwrap();
+        std::os::unix::fs::symlink(dir.join(sha), dir.join("current")).unwrap();
+        let got = release_sha_of(dir.join("current").to_str().unwrap());
+        assert_eq!(got, Some(sha.to_string()));
     }
 }
