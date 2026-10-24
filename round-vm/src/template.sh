@@ -17,6 +17,15 @@ if [ -n "$toolchain" ] && [ "$have" != "$toolchain" ]; then
     for b in "$RUSTUP_HOME"/toolchains/"$toolchain"-*/bin/*; do ln -sfn "$b" "$CARGO_HOME/bin/${b##*/}"; done
 fi
 # toolchain-end
+# default-begin
+if [ -n "$toolchain" ]; then
+    (
+        export RUSTUP_HOME="${HOME}/.rustup"
+        rustup toolchain install "$toolchain" --profile minimal --no-self-update >&2
+        rustup default "$toolchain" >&2
+    )
+fi
+# default-end
 export PATH="$CARGO_HOME/bin:$PATH"
 export SPIRA_HOME="$work/spira"
 mkdir -p "$work/.runtime/spira"
@@ -58,6 +67,12 @@ podman images --format '{{.Repository}}:{{.Tag}}' \
     | while read -r old; do podman rmi "$old" >&2; done
 cargo fetch --locked --target x86_64-unknown-linux-gnu >&2
 "$CARGO_HOME/bin/sccache" --stop-server >&2 || true
+# verify-begin
+if ! plain="$(env -i PATH="${PLAIN_PATH:-/usr/local/bin:/usr/bin:/bin}" HOME="$HOME" cargo --version 2>&1)"; then
+    echo "round-vm template: plain cargo does not run on this clone: $plain" >&2
+    exit 1
+fi
+# verify-end
 cd /
 rm -rf "$work" /root/.ssh/authorized_keys
 sync
