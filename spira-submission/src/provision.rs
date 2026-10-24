@@ -9,7 +9,6 @@ use std::process::{Command, Stdio};
 
 pub const RENEW_DAYS: i64 = 30;
 pub const WARN_DAYS: i64 = 21;
-pub const UNIT: &str = "spira-submission.service";
 
 pub trait Host {
     fn run(&self, argv: &[&str]) -> Result<String, String>;
@@ -50,6 +49,7 @@ pub struct Plan {
     pub users_file: String,
     pub dir: PathBuf,
     pub ufw_conf: PathBuf,
+    pub unit: String,
 }
 
 impl Plan {
@@ -70,6 +70,7 @@ impl Plan {
             users_file: s("SPIRA_SUBMISSION_USERS_FILE")?,
             dir,
             ufw_conf,
+            unit: spira_config::unit::unit_name("submission", "service", get("SPIRA_INSTANCE")?.trim()),
         })
     }
 }
@@ -334,9 +335,9 @@ pub fn provision(host: &dyn Host, plan: &Plan) -> Report {
     }
 
     if restart {
-        match host.run(&["systemctl", "--user", "restart", UNIT]) {
-            Ok(_) => r.notes.push(format!("restarted {UNIT}")),
-            Err(e) => r.errors.push(format!("cannot restart {UNIT}: {e}")),
+        match host.run(&["systemctl", "--user", "restart", &plan.unit]) {
+            Ok(_) => r.notes.push(format!("restarted {}", plan.unit)),
+            Err(e) => r.errors.push(format!("cannot restart {}: {e}", plan.unit)),
         }
     }
     r

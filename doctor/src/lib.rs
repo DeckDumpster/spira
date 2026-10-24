@@ -828,7 +828,7 @@ pub fn check_submission(w: &dyn World) -> Vec<Line> {
     if get("listening") != "1" {
         out.push(fail(
             format!("spira-submission is configured for {addr} but not listening"),
-            "Check: systemctl --user status spira-submission.service; the log is spira-submission.log under SPIRA_RUN",
+            "Check: systemctl --user status 'spira-submission-*.service'; the log is spira-submission.log under SPIRA_RUN",
         ));
     } else {
         match get("firewall") {
@@ -848,7 +848,7 @@ pub fn check_submission(w: &dyn World) -> Vec<Line> {
         Ok(d) if d <= 0 => out.push(fail("spira-submission certificate has expired", "Run: spira-submission provision")),
         Ok(d) if d < 21 => out.push(warn(
             format!("spira-submission certificate expires in {d} days — the renewal timer is not keeping it fresh"),
-            "systemctl --user status spira-submission-provision.timer; run: spira-submission provision",
+            "systemctl --user status 'spira-submission-provision-*.timer'; run: spira-submission provision",
         )),
         Ok(d) => out.push(ok(format!("spira-submission certificate has {d} days left"))),
     }
