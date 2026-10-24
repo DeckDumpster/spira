@@ -256,6 +256,13 @@ impl Pool {
 
     /// As `acquire`, recording `holder` in the lease in the same write that creates it.
     pub fn acquire_held(&self, deps: &Deps, owner: Option<ProcId>, holder: Option<ProcId>) -> Result<(Vm, AcquireMode), String> {
+        self.acquire_placed(deps, owner, holder, false)
+    }
+
+    /// As `acquire_held`; `needs_ec2` places the pass on EC2 whatever the spill rule says,
+    /// because the local template does not hold the image the pass needs. With no EC2
+    /// provider configured it leases locally, as before.
+    pub fn acquire_placed(&self, deps: &Deps, owner: Option<ProcId>, holder: Option<ProcId>, needs_ec2: bool) -> Result<(Vm, AcquireMode), String> {
         let me = ProcId::current();
         let mut attempts = 0u32;
         let mut waited = false;
@@ -285,9 +292,15 @@ impl Pool {
                 self.reap_unheld(&attempt);
             }
             if let Some(plan) = attempt.spill.as_ref().filter(|_| !spill_failed) {
-                if let Place::Ec2(reason) = decide(&plan.rule, wait_since.map(|t| t.elapsed()), (plan.pressure)()) {
+                let place = if needs_ec2 {
+                    Place::Ec2("the local template does not hold the round's image".into())
+                } else {
+                    decide(&plan.rule, wait_since.map(|t| t.elapsed()), (plan.pressure)())
+                };
+                if let Place::Ec2(reason) = place {
                     match self.spill(&attempt, plan, owner, holder, &reason) {
                         Ok(vm) => return Ok((vm, AcquireMode::Cold)),
+                        Err(e) if needs_ec2 => return Err(format!("round-vm: acquire: EC2 launch failed ({reason}), and a local VM would refuse the pass: {e}")),
                         Err(e) if plan.only || plan.rule.always => return Err(format!("round-vm: acquire: EC2 launch failed ({reason}), placement {} has no local fallback: {e}", if plan.only { "ec2-only" } else { "ec2-always" })),
                         Err(e) => {
                             eprintln!("round-vm: spill to EC2 failed, staying local: {e}");
@@ -1552,6 +1565,19 @@ mod tests {
         assert!(read_state(&pl.state_file()).unwrap().spilled.is_empty());
         pl.release(&vm.handle, ProcId::current(), &f).unwrap();
         assert!(fake.ids().is_empty(), "the instance is terminated on release");
+    }
+
+    #[test]
+    fn a_pass_whose_image_the_template_lacks_leases_on_ec2_without_pressure() {
+        let d = TempDir::new();
+        let (fp, fake, alarm, sp) = (FakeProvider::new(), crate::testutil::FakeEc2::default(), FakeAlarm::default(), FakeSpawner::default());
+        let ec2 = ec2_provider(&d, &fake);
+        let pl = pool(&d, 1);
+        let f = || Ok(spilling(&fp, ec2.clone(), Some(3.0)));
+        let (vm, _) = pl.acquire_placed(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None, None, true).unwrap();
+        assert!(crate::ec2::is_ec2_handle(&vm.handle), "{vm:?}");
+        assert!(fp.live_vms().is_empty());
+        assert!(lease_reason(&pl, &vm.handle).contains("does not hold the round's image"));
     }
 
     #[test]
