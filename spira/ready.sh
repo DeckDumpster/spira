@@ -287,6 +287,24 @@ PYEOF
 
 # =============================================================================
 echo ""
+echo "aeon warm slots"
+# =============================================================================
+# Aeon sessions refuse to start without a warm base (aeon_warm_base), so an unset or
+# unusable one is a loop that is armed and can run nothing.
+_warm="${SPIRA_AEON_WARM_BASE:-}"
+if [ -z "$_warm" ]; then
+    FAIL "SPIRA_AEON_WARM_BASE is not set" \
+         "aeon sessions refuse to start without it; set aeon_warm_base in the config document."
+elif [ ! -d "$_warm" ] || [ ! -w "$_warm" ]; then
+    FAIL "aeon warm base $_warm is not a writable directory" \
+         "create it (install does) or point aeon_warm_base at a directory the loop can write."
+else
+    PASS "aeon warm base $_warm"
+fi
+unset _warm
+
+# =============================================================================
+echo ""
 echo "agent"
 # =============================================================================
 # WARNING BY DESIGN. The loop is armed and will summon nothing when the agent is absent

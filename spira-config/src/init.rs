@@ -34,6 +34,9 @@ pub const HOME_REPO_ROW: &[(&str, &str, &str)] = &[
     ("home_repo_base", "the ref its work lands on", "origin/main"),
 ];
 
+/// Where a fresh install's aeon warm slots live when the operator names no other base.
+pub const DEFAULT_AEON_WARM_BASE: &str = "/var/tmp/spira-aeon-warm";
+
 /// What [`ensure`] did.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -115,6 +118,10 @@ pub fn render(answers: &BTreeMap<String, String>, out: &Path, reg: &Registry<'_>
     // default names the file only once it exists — here, it does not yet.
     if a.get("lc_password_file").is_none_or(|v| v.is_empty()) {
         a.insert("lc_password_file".into(), crate::resolve::lc_credential_default(reg.env));
+    }
+    // Aeon sessions refuse to start with no warm base: written once here, never defaulted at runtime.
+    if a.get("aeon_warm_base").is_none_or(|v| v.is_empty()) {
+        a.insert("aeon_warm_base".into(), DEFAULT_AEON_WARM_BASE.into());
     }
     // The bd every process runs: found once, here, on this box's PATH (what conf.sh's
     // env-bootstrap derived on every source); nothing derives it after the cutover. Not found
@@ -373,6 +380,19 @@ mod tests {
             ),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn a_fresh_config_carries_the_aeon_warm_base_and_an_answer_wins() {
+        let d = testkit::TempDir::new("spira-config-init-warm");
+        let base_of = |answers| {
+            let text = render(&answers, &d.path().join("spira.toml"), &reg()).unwrap();
+            crate::get_path(&crate::validate(&text).unwrap(), "spira.aeon_warm_base").unwrap_or_default()
+        };
+        assert_eq!(base_of(full()), DEFAULT_AEON_WARM_BASE);
+        let mut own = full();
+        own.insert("aeon_warm_base".into(), "/b/warm".into());
+        assert_eq!(base_of(own), "/b/warm");
     }
 
     #[test]
