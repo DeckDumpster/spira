@@ -123,6 +123,7 @@ removed = ["spira.broker_enable", "spira.express_label", "spira.overlap_defer_la
 "spira.design_asks_repeat" = 86400
 "spira.round_ami_wait_secs" = 2400
 "spira.kit_repo" = ""
+"spira.kit_registry" = ""
 "spira.kit_crate" = ""
 "spira.kit_sites" = ""
 "spira.filings_hosts" = ""

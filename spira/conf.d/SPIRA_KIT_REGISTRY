@@ -1,0 +1,6 @@
+TYPE=string
+GROUP=repo
+DOC=Sparse-index base URL of the Cargo registry the shared kit publishes releases to (the directory that holds config.json); kit-bump acts on a new release there, not on kit commits.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_KIT_REGISTRY:=}"
+SPIRA_CONF_DEFAULT_EOF

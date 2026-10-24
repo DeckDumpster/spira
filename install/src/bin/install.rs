@@ -1102,7 +1102,7 @@ fn run_main() -> ExitCode {
         }
         match install::kit_bump::install(Path::new(&host.run), Path::new(&host.home), &|k| spira_config::process::cfg(k)) {
             Ok(Some(p)) => println!("installed {}", p.display()),
-            Ok(None) => skip("SPIRA_KIT_REPO is empty — not writing kit-bump.conf"),
+            Ok(None) => skip("SPIRA_KIT_REGISTRY is empty — not writing kit-bump.conf"),
             Err(e) => {
                 eprintln!("install: kit-bump.conf: {e}");
                 return ExitCode::from(2);

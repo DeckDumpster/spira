@@ -1,6 +1,6 @@
 TYPE=string
 GROUP=repo
-DOC=Repo-map name of the shared kit whose landing tip kit-bump compares each consuming site's pin against; empty means kit-bump has nothing to do.
+DOC=No longer read: kit-bump acts on releases in SPIRA_KIT_REGISTRY, not on the kit repo's commits.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     : "${SPIRA_KIT_REPO:=}"
 SPIRA_CONF_DEFAULT_EOF
