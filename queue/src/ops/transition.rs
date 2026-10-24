@@ -405,12 +405,17 @@ pub fn mode_switch(w: &World, repo: &str, mode: &str) -> i32 {
         "queue.local" => LandMode::QueueLocal,
         "queue.forge" | "queue" => LandMode::Queue,
         _ => {
-            w.err(format!("queue.sh mode-switch: mode must be queue.forge or queue.local, not {mode}"));
+            w.err(format!(
+                "queue.sh mode-switch: mode must be queue.forge or queue.local, not {mode}"
+            ));
             return FAIL;
         }
     };
     if c.r.mode == target {
-        w.err(format!("queue.sh mode-switch: {} is already {mode} — nothing to switch", c.r.name));
+        w.err(format!(
+            "queue.sh mode-switch: {} is already {mode} — nothing to switch",
+            c.r.name
+        ));
         return FAIL;
     }
     if super::require_lc(w, "mode-switch").is_err() {

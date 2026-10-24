@@ -819,7 +819,11 @@ fn a_one_member_red_forge_batch_files_no_mend() {
     t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=sp-a:ta\nopened=500\nbranch=spira/queue/x\nowner=batcher\nbatch_id=spira-1\nversion=3\n");
     t.git.set("origin/main", "b0");
     red_forge_run(&mut t);
-    assert!(red_forge_creates(&t).is_empty(), "{:?}", red_forge_creates(&t));
+    assert!(
+        red_forge_creates(&t).is_empty(),
+        "{:?}",
+        red_forge_creates(&t)
+    );
 }
 
 #[test]
@@ -830,7 +834,11 @@ fn a_red_forge_batch_with_a_member_in_rework_files_no_mend() {
         .borrow_mut()
         .insert("sp-a".into(), ("REWORK".into(), "3".into()));
     red_forge_run(&mut t);
-    assert!(red_forge_creates(&t).is_empty(), "{:?}", red_forge_creates(&t));
+    assert!(
+        red_forge_creates(&t).is_empty(),
+        "{:?}",
+        red_forge_creates(&t)
+    );
 }
 
 #[test]
@@ -1881,11 +1889,17 @@ fn a_mender_bead_of_a_slash_named_batch_is_retired_when_its_pr_closes() {
     t.open_record(&format!("{rec}batch_id=spira/queue/1\nversion=3\n"));
     let rounds = t.s().run.join("rounds");
     fs::create_dir_all(&rounds).unwrap();
-    fs::write(rounds.join("spira%2Fqueue%2F1.mender-1-gate-lint"), "sp-m1\n").unwrap();
+    fs::write(
+        rounds.join("spira%2Fqueue%2F1.mender-1-gate-lint"),
+        "sp-m1\n",
+    )
+    .unwrap();
     *t.forge.pr_state.borrow_mut() = Some("closed".into());
     assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
     assert!(t.lib.has("bead_close sp-m1"), "{:?}", t.lib.calls.borrow());
-    assert!(rounds.join("spira%2Fqueue%2F1.mender-1-gate-lint.retired").exists());
+    assert!(rounds
+        .join("spira%2Fqueue%2F1.mender-1-gate-lint.retired")
+        .exists());
 }
 
 #[test]
@@ -2091,7 +2105,11 @@ fn a_red_publish_tracker_is_filed_at_the_publish_red_priority_not_the_incident_o
     t.lib.s.verdict.incident_priority = "3".into();
     t.lib.s.publish_red_priority = "1".into();
     red_publish(&t, 77);
-    assert!(t.lib.has("create_bug queue.sh 1 "), "{:?}", t.lib.calls.borrow());
+    assert!(
+        t.lib.has("create_bug queue.sh 1 "),
+        "{:?}",
+        t.lib.calls.borrow()
+    );
 }
 
 #[test]
@@ -2107,10 +2125,26 @@ fn three_consecutive_red_publishes_escalate_once_and_a_fourth_does_not() {
     fs::remove_file(t.qfile("publish-red")).unwrap();
     let mails = operator_mails(&t);
     assert_eq!(mails.len(), 1, "{mails:?}");
-    assert!(mails[0].contains("spira: 3 consecutive publishes red"), "{}", mails[0]);
-    assert!(mails[0].contains("Publish PRs 77, 78, 79 for spira"), "{}", mails[0]);
-    assert!(mails[0].contains("Open tracker beads: sp-fix1"), "{}", mails[0]);
-    assert!(mails[0].contains("Landed beads waiting to publish: "), "{}", mails[0]);
+    assert!(
+        mails[0].contains("spira: 3 consecutive publishes red"),
+        "{}",
+        mails[0]
+    );
+    assert!(
+        mails[0].contains("Publish PRs 77, 78, 79 for spira"),
+        "{}",
+        mails[0]
+    );
+    assert!(
+        mails[0].contains("Open tracker beads: sp-fix1"),
+        "{}",
+        mails[0]
+    );
+    assert!(
+        mails[0].contains("Landed beads waiting to publish: "),
+        "{}",
+        mails[0]
+    );
     red_publish(&t, 80);
     assert_eq!(operator_mails(&t).len(), 1);
 }

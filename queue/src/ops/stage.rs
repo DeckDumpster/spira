@@ -638,9 +638,13 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
         let tested = (kv.get("phase") == Some("green"))
             .then(|| kv.get("tested_tree").unwrap_or("").to_string())
             .filter(|t| !t.is_empty());
-        let attested_from = tested
-            .filter(|t| *t == tree)
-            .map(|t| (t, kv.get("head").unwrap_or("").to_string(), kv.get("ran").and_then(|r| r.parse().ok()).unwrap_or(1usize)));
+        let attested_from = tested.filter(|t| *t == tree).map(|t| {
+            (
+                t,
+                kv.get("head").unwrap_or("").to_string(),
+                kv.get("ran").and_then(|r| r.parse().ok()).unwrap_or(1usize),
+            )
+        });
 
         let now = w.clock.now().to_string();
         let mut round = Kv::default();
@@ -669,7 +673,14 @@ pub fn promote(w: &World, repo: Option<&str>) -> i32 {
     match attested_from {
         Some((tree, tested_head, staged_ran)) => {
             w.out(format!("queue.sh {label}: {batch}'s tree {tree} is the tree its staged pass at {tested_head} judged — attesting that pass"));
-            let rc = certify(w, &batch, Some(&repo_name), Some(&head), Some(staged_ran), None);
+            let rc = certify(
+                w,
+                &batch,
+                Some(&repo_name),
+                Some(&head),
+                Some(staged_ran),
+                None,
+            );
             landing_log(&c.s.run, &format!("QUEUE ROUND-ATTEST {} repo={repo_name} batch={batch} head={head} tree={tree} tested={tested_head} rc={rc}", w.clock.now()));
             if rc == OK {
                 w.out("attested=1");

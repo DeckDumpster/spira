@@ -1082,7 +1082,8 @@ impl Lc for FLc {
             .borrow_mut()
             .push(format!("event batch {id} {s} {v} {kind}"));
         if self.stale_batch_events.get() > 0 {
-            self.stale_batch_events.set(self.stale_batch_events.get() - 1);
+            self.stale_batch_events
+                .set(self.stale_batch_events.get() - 1);
             return Err((1, "refused: StaleVersion { given: 4, current: 5 }".into()));
         }
         if self
@@ -1342,6 +1343,7 @@ impl Clock for FClock {
 #[derive(Default)]
 struct FEnv {
     vars: RefCell<BTreeMap<String, String>>,
+    resolved: RefCell<BTreeMap<String, String>>,
     stdin: RefCell<String>,
 }
 
@@ -1357,6 +1359,15 @@ impl Env for FEnv {
     }
     fn read_file(&self, p: &Path) -> Result<String, String> {
         fs::read_to_string(p).map_err(|e| e.to_string())
+    }
+    fn config(&self, k: &str) -> Result<String, String> {
+        Ok(self
+            .resolved
+            .borrow()
+            .get(k)
+            .cloned()
+            .or_else(|| self.var(k))
+            .unwrap_or_default())
     }
 }
 
@@ -2799,7 +2810,12 @@ fn open_batch_preflight_refusal_pushes_nothing_and_leaves_no_branch() {
         "{:?}",
         t.lib.calls.borrow()
     );
-    assert!(!t.forge.calls.borrow().iter().any(|c| c.starts_with("pr-create")));
+    assert!(!t
+        .forge
+        .calls
+        .borrow()
+        .iter()
+        .any(|c| c.starts_with("pr-create")));
     assert!(!t.qfile("open").exists());
 }
 
@@ -4090,15 +4106,38 @@ fn a_stopped_publish_lane_opens_no_pr_and_another_lane_does_not_stop_it() {
     publishable(&t);
     let run = t.s().run.clone();
     let lanes = |l: &str| spira_config::scoped_stop::parse_lanes(l).unwrap();
-    spira_config::scoped_stop::pause_repo(&run, "spira", &lanes("claims,rounds"), "concierge", "hand fix", "fix lands", 1).unwrap();
+    spira_config::scoped_stop::pause_repo(
+        &run,
+        "spira",
+        &lanes("claims,rounds"),
+        "concierge",
+        "hand fix",
+        "fix lands",
+        1,
+    )
+    .unwrap();
     assert_eq!(t.run(&["publish"]), 0);
-    assert!(!t.out().contains("stopped on purpose"), "a claims/rounds stop leaves publish running");
+    assert!(
+        !t.out().contains("stopped on purpose"),
+        "a claims/rounds stop leaves publish running"
+    );
     let t = T::new(LandMode::QueueLocal);
     publishable(&t);
     let run = t.s().run.clone();
-    spira_config::scoped_stop::pause_repo(&run, "spira", &lanes("publish"), "concierge", "hand fix", "fix lands", 1).unwrap();
+    spira_config::scoped_stop::pause_repo(
+        &run,
+        "spira",
+        &lanes("publish"),
+        "concierge",
+        "hand fix",
+        "fix lands",
+        1,
+    )
+    .unwrap();
     assert_eq!(t.run(&["publish"]), 0);
-    assert!(t.out().contains("publish lane stopped on purpose by concierge"));
+    assert!(t
+        .out()
+        .contains("publish lane stopped on purpose by concierge"));
     assert!(!t.qfile("publish").exists(), "no publish PR record");
 }
 

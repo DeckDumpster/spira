@@ -345,7 +345,15 @@ pub trait Scripts {
     /// `round-vm run <tree> --ci-entry <entry> --results-dir <results> --round-batch <batch> --round-repo <repo>` under `timeout`: a repository
     /// that is not the harness judged by its own full CI entry point on a round VM. Exit 0 GREEN, 1 RED
     /// (`ci.result` in `results`), anything else a fault. `handle` receives the pid exactly as `round_vm`'s does.
-    fn repo_round_vm(&self, tree: &Path, results: &Path, entry: &str, round: (&str, &str), wall_secs: u64, handle: &Path) -> RunOut;
+    fn repo_round_vm(
+        &self,
+        tree: &Path,
+        results: &Path,
+        entry: &str,
+        round: (&str, &str),
+        wall_secs: u64,
+        handle: &Path,
+    ) -> RunOut;
     /// SIGTERM to a run's pid: round-vm salvages the finished suites' results and releases the VM.
     fn pass_terminate(&self, pid: u32);
     fn pass_alive(&self, pid: u32) -> bool;
@@ -433,7 +441,10 @@ impl AmiBuild {
             "success" => Some(AmiBuild::Success(id.into())),
             "failure" => Some(AmiBuild::Failure(
                 id.into(),
-                lines.filter_map(|l| l.strip_prefix("failed-step: ")).map(String::from).collect(),
+                lines
+                    .filter_map(|l| l.strip_prefix("failed-step: "))
+                    .map(String::from)
+                    .collect(),
             )),
             _ => None,
         }
