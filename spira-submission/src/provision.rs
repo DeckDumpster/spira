@@ -245,7 +245,7 @@ pub fn provision(host: &dyn Host, plan: &Plan) -> Report {
     }
 
     let mut set = |r: &mut Report, key: &str, value: &str, restart: &mut bool| {
-        match host.run(&["spira-config", "set", &format!("spira.{key}"), value, &layer]) {
+        match host.run(&[&spira_config::release_env::tool("spira-config"), "set", &format!("spira.{key}"), value, &layer]) {
             Ok(_) => {
                 r.notes.push(format!("set spira.{key} = {value}"));
                 *restart = true;

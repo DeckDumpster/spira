@@ -23,6 +23,9 @@ struct Fake {
 
 impl Host for Fake {
     fn run(&self, argv: &[&str]) -> Result<String, String> {
+        let mut named: Vec<&str> = argv.to_vec();
+        named[0] = named[0].rsplit('/').next().unwrap_or(named[0]);
+        let argv = &named[..];
         self.calls.borrow_mut().push(argv.join(" "));
         match argv {
             ["tailscale", "ip", "-4"] if self.tailscale_up => Ok("100.64.0.9\n".into()),

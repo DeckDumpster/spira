@@ -385,8 +385,13 @@ set -uo pipefail
 # SPIRA_REPO (unset here, same as in acceptance-ci.sh) leaves it to discover one.
 cd \"\$HOME\"
 export SPIRA_ACCEPTANCE_FORENSICS=\"\$HOME/acceptance-forensics\"
-mkdir -p \"\$SPIRA_ACCEPTANCE_FORENSICS\"
-exec env -i HOME=\"\$HOME\" USER=\"\${USER:-spirauser}\" LANG=\"\${LANG:-C.UTF-8}\" PATH='$_al_bare_path' \
+mkdir -p \"\$SPIRA_ACCEPTANCE_FORENSICS\" \"\$HOME/al-stubs\"
+# The GitHub runner has a tailnet address, so spira-submission provisions and execs
+# spira-config; the container has no tailscale and never reached that exec. This stub gives
+# it an address, on a PATH that (like the runner's fresh install) lacks the release bin.
+printf '#!/bin/sh\\n[ \"\$1 \$2\" = \"ip -4\" ] && echo 100.64.0.1 && exit 0\\nexit 1\\n' > \"\$HOME/al-stubs/tailscale\"
+chmod +x \"\$HOME/al-stubs/tailscale\"
+exec env -i HOME=\"\$HOME\" USER=\"\${USER:-spirauser}\" LANG=\"\${LANG:-C.UTF-8}\" PATH=\"$_al_bare_path:\$HOME/al-stubs\" \
     XDG_RUNTIME_DIR=\"\${XDG_RUNTIME_DIR:-}\" DBUS_SESSION_BUS_ADDRESS=\"\${DBUS_SESSION_BUS_ADDRESS:-}\" \
     SPIRA_ACCEPTANCE_FORENSICS=\"\$SPIRA_ACCEPTANCE_FORENSICS\" \
     /tmp/release acceptance '$_al_tag' \
