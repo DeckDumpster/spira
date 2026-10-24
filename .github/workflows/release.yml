@@ -70,6 +70,11 @@ jobs:
             exit 1
           }
 
+      - name: Install Nix
+        # build-aerc.sh takes its go from the harness flake's spira-env when the runner has
+        # none usable; ubuntu-latest has neither go at GO_MIN nor nix.
+        uses: cachix/install-nix-action@v31
+
       - name: Build
         run: make build
 
@@ -93,6 +98,8 @@ jobs:
             --repo-name "$reponame" \
             --release-repo "$GITHUB_REPOSITORY")
           printf 'path=%s\n' "$tarball" >> "$GITHUB_OUTPUT"
+          tar -tzf "$tarball" | grep -q '/vendor/bin/aerc$' || {
+            printf 'release: %s carries no vendor/bin/aerc\n' "$tarball" >&2; exit 1; }
 
       - name: Create GitHub release (draft)
         # Draft: acceptance downloads and tests this tarball before it is published.

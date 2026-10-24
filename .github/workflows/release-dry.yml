@@ -1,0 +1,50 @@
+# release-dry.yml — build the release tarball on a fresh ubuntu-latest runner, as release.yml
+# does, so a toolchain removal fails a PR instead of a release. Publishes nothing.
+
+name: Release dry run
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - '.github/workflows/release-dry.yml'
+      - 'spira/build-aerc.sh'
+      - 'spira/build-tarball.sh'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'rust-toolchain.toml'
+
+jobs:
+  tarball:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read pinned toolchain
+        id: toolchain
+        run: |
+          v=$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml)
+          [ -n "$v" ] || { printf 'rust-toolchain.toml has no channel\n' >&2; exit 1; }
+          printf 'version=%s\n' "$v" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.toolchain.outputs.version }}
+
+      - uses: cachix/install-nix-action@v31
+
+      - name: Build
+        run: make build
+
+      - name: Build tarball and assert aerc is in it
+        run: |
+          tarball=$(bash spira/build-tarball.sh build \
+            --workspace . \
+            --output /tmp/artifacts \
+            --name spira-dry \
+            --repo-name dry \
+            --release-repo "$GITHUB_REPOSITORY")
+          tar -tzf "$tarball" | grep -q '/vendor/bin/aerc$' || {
+            printf 'dry run: %s carries no vendor/bin/aerc\n' "$tarball" >&2; exit 1; }
