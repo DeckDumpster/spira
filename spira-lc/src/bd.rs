@@ -310,8 +310,12 @@ pub fn tool(program: &str, args: &[String], stdin: Option<&str>, actor: &str, se
 
 /// [`tool`], with `env` set on the child as well.
 pub fn tool_env(program: &str, args: &[String], stdin: Option<&str>, actor: &str, secs: u64, env: &[(&str, &str)]) -> (i32, String) {
+    let exe = match resolve_tool(program) {
+        Ok(p) => p,
+        Err(e) => return (2, e),
+    };
     let mut cmd = Command::new("timeout");
-    cmd.arg(secs.to_string()).arg(program).args(args).env("SPIRA_FAYTH", actor);
+    cmd.arg(secs.to_string()).arg(&exe).args(args).env("SPIRA_FAYTH", actor);
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -321,12 +325,42 @@ pub fn tool_env(program: &str, args: &[String], stdin: Option<&str>, actor: &str
 /// [`tool_env`] for a tool whose stderr is part of its answer even on success (mail's
 /// "routed to the concierge" notice): nothing it says is dropped.
 pub fn tool_env_noisy(program: &str, args: &[String], stdin: Option<&str>, actor: &str, secs: u64, env: &[(&str, &str)]) -> (i32, String) {
+    let exe = match resolve_tool(program) {
+        Ok(p) => p,
+        Err(e) => return (2, e),
+    };
     let mut cmd = Command::new("timeout");
-    cmd.arg(secs.to_string()).arg(program).args(args).env("SPIRA_FAYTH", actor);
+    cmd.arg(secs.to_string()).arg(&exe).args(args).env("SPIRA_FAYTH", actor);
     for (k, v) in env {
         cmd.env(k, v);
     }
     spawn_with(cmd, stdin, program, true)
+}
+
+/// A bare tool name resolves on PATH, then in the release this broker runs from (its own
+/// `bin/`, then `$SPIRA_RELEASE/bin`), so a unit whose PATH lacks the release still finds the
+/// release's tools. Not found anywhere is an error naming every directory searched.
+fn resolve_tool(program: &str) -> Result<String, String> {
+    let path = std::env::var("PATH").unwrap_or_default();
+    let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(std::path::Path::to_path_buf));
+    let release_bin = std::env::var("SPIRA_RELEASE").ok().filter(|r| !r.is_empty()).map(|r| std::path::Path::new(&r).join("bin"));
+    resolve_in(program, &path, &[exe_dir, release_bin])
+}
+
+fn resolve_in(program: &str, path: &str, fallbacks: &[Option<std::path::PathBuf>]) -> Result<String, String> {
+    use std::os::unix::fs::PermissionsExt;
+    if program.contains('/') {
+        return Ok(program.to_string());
+    }
+    let is_exe = |p: &std::path::Path| std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false);
+    let dirs: Vec<std::path::PathBuf> = std::env::split_paths(path).filter(|d| !d.as_os_str().is_empty()).chain(fallbacks.iter().flatten().cloned()).collect();
+    match dirs.iter().map(|d| d.join(program)).find(|c| is_exe(c)) {
+        Some(found) => Ok(found.to_string_lossy().into_owned()),
+        None => Err(format!(
+            "running {program}: not found in any of: {}",
+            dirs.iter().map(|d| d.display().to_string()).collect::<Vec<_>>().join(":")
+        )),
+    }
 }
 
 fn spawn(cmd: Command, stdin: Option<&str>, what: &str) -> (i32, String) {
@@ -450,5 +484,46 @@ mod verb_tests {
         assert_eq!(verb_of(&["--json", "show", "sp-1"]), "show");
         assert_eq!(verb_of(&["update", "sp-1"]), "update");
         assert_eq!(verb_of(&["--version"]), "unknown");
+    }
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::*;
+
+    fn exe(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+        let p = dir.join(name);
+        testkit::write_exe(&p, "#!/bin/sh\n");
+        p
+    }
+
+    #[test]
+    fn a_tool_missing_from_path_is_found_in_the_release_bin() {
+        let d = testkit::TempDir::new("resolve-release");
+        let want = exe(d.path(), "testenv");
+        let got = resolve_in("testenv", "/nonexistent", &[None, Some(d.path().to_path_buf())]).unwrap();
+        assert_eq!(got, want.to_string_lossy());
+    }
+
+    #[test]
+    fn path_wins_over_the_release_bin() {
+        let a = testkit::TempDir::new("resolve-path");
+        let b = testkit::TempDir::new("resolve-rel");
+        let want = exe(a.path(), "testenv");
+        exe(b.path(), "testenv");
+        let got = resolve_in("testenv", &a.path().display().to_string(), &[Some(b.path().to_path_buf())]).unwrap();
+        assert_eq!(got, want.to_string_lossy());
+    }
+
+    #[test]
+    fn a_tool_found_nowhere_names_what_was_searched() {
+        let d = testkit::TempDir::new("resolve-none");
+        let e = resolve_in("testenv", "/nonexistent-a", &[Some(d.path().to_path_buf())]).unwrap_err();
+        assert!(e.contains("testenv") && e.contains("/nonexistent-a") && e.contains(&d.path().display().to_string()), "{e}");
+    }
+
+    #[test]
+    fn a_path_is_never_searched() {
+        assert_eq!(resolve_in("/x/y", "", &[]).unwrap(), "/x/y");
     }
 }
