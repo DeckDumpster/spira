@@ -428,6 +428,26 @@ mod tests {
     }
 
     #[test]
+    fn ensure_runs_the_releases_rebuild_when_path_lacks_the_release_bin() {
+        let dir = testkit::TempDir::new("sp-qmi9da-rebuild");
+        let run = dir.join("run");
+        let rel = dir.join("rel");
+        std::fs::create_dir_all(&run).unwrap();
+        std::fs::create_dir_all(rel.join("bin")).unwrap();
+        testkit::write_exe(&rel.join("bin/rebuild"), "#!/bin/sh\necho rebuilt-from-release\n");
+        let tmux = dir.join("tmux");
+        testkit::write_exe(&tmux, "#!/bin/sh\nexit 0\n");
+        let mut conf = conf_with(&rel.display().to_string(), "");
+        conf.run = run.clone();
+        let layout = Layout { tmux: Tmux::with_bin(tmux.to_string_lossy().to_string()), conf };
+        let me = std::env::current_exe().unwrap();
+        assert_eq!(layout.ensure(&me, &me), Ok(String::new()));
+        let log = std::fs::read_to_string(run.join("cockpit-heal.log")).unwrap();
+        assert!(log.contains("rebuilt-from-release"), "{log}");
+        assert!(!log.contains("No such file"), "{log}");
+    }
+
+    #[test]
     fn concierge_script_resolves_in_the_release_with_repo_unset() {
         let dir = testkit::TempDir::new("sp-9hn7po-rel");
         testkit::write_exe(&dir.join("concierge.sh"), "#!/bin/sh\n");
@@ -558,6 +578,17 @@ impl Layout {
             use std::io::Write;
             let _ = f.write_all(line.as_bytes());
         }
+    }
+
+    fn release_tool(&self, name: &str) -> PathBuf {
+        let in_release = self.conf.spira_release.as_str();
+        if !in_release.is_empty() {
+            let p = std::path::Path::new(in_release).join("bin").join(name);
+            if p.is_file() {
+                return p;
+            }
+        }
+        PathBuf::from(name)
     }
 
     /// `#{@cockpit} #{pane_id}` lines -> the pane id tagged `role`, if any.
@@ -959,12 +990,10 @@ impl Layout {
             } else if self.heal_ready() {
                 self.touch_heal_stamp();
                 self.heal_log("no cockpit window found anywhere, and no down marker — rebuilding from scratch");
-                // Bare name on the release PATH (sp-llbmi convention: every binary here is
-                // invoked that way, never by a path constructed by hand) — `rebuild` lives
-                // in `$SPIRA_RELEASE/bin`, not under `$SPIRA_COCKPIT`, which is where the
-                // bash scripts it replaces used to live.
+                // The heal unit's PATH need not include the release, so `rebuild` is resolved
+                // under the active release's `bin/`, falling back to PATH.
                 // batch-job: this runs whatever its caller names, as long as that takes
-                match std::process::Command::new("rebuild").output() {
+                match std::process::Command::new(self.release_tool("rebuild")).output() {
                     Ok(out) if out.status.success() => {
                         let mut s = String::from_utf8_lossy(&out.stdout).into_owned();
                         s.push_str(&String::from_utf8_lossy(&out.stderr));
