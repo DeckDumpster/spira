@@ -57,7 +57,7 @@ bead_sh() {
     env -i HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" \
         SPIRA_TOML="$SPIRA_TOML" SPIRA_CONF="$T/none.conf" \
         BD_LOG_PATH="$BD_LOG" SEQ_PATH="$SEQ" SPIRA_LC_BIN="$T/stub-lc" \
-        SPIRA_HOME="$T" SPIRA_REPO="$T" bead.sh "$@" 2>&1
+        SPIRA_HOME="$T" SPIRA_REPO="$T" bead.sh "$@"
 }
 
 cat > "$T/design.md" <<'DESIGN'
