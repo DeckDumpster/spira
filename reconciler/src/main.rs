@@ -2634,7 +2634,7 @@ mod tests {
         let dir = scratch_dir(name);
         let repo = dir.join("repo");
         let git = |args: &[&str]| {
-            let o = std::process::Command::new("git").env("GIT_COMMITTER_DATE", "@1000").arg("-C").arg(&repo).args(args).output().unwrap();
+            let o = std::process::Command::new("git").env("GIT_COMMITTER_DATE", "@1000 +0000").arg("-C").arg(&repo).args(args).output().unwrap();
             assert!(o.status.success(), "git {:?}: {}", args, String::from_utf8_lossy(&o.stderr));
             String::from_utf8_lossy(&o.stdout).trim().to_string()
         };
@@ -2642,7 +2642,7 @@ mod tests {
         git(&["init", "-q", "-b", "main"]);
         fs::write(repo.join("f"), "x").unwrap();
         git(&["add", "f"]);
-        let commit = |msg: &str| git(&["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", msg, "--date", "@1000"]);
+        let commit = |msg: &str| git(&["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", msg]);
         commit("release");
         let release = git(&["rev-parse", "HEAD"]);
         commit("ahead");
