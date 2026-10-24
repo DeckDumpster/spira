@@ -34,7 +34,7 @@
 #      installed release's identity does not come from its own directory name.
 #
 # tier: T0
-# covers: .github/workflows/release.yml .github/workflows/gate.yml spira/build-tarball.sh rust-toolchain.toml UC-test-infrastructure-38
+# covers: .github/actions/release-toolchain/action.yml .github/workflows/release.yml .github/workflows/gate.yml spira/build-tarball.sh rust-toolchain.toml UC-test-infrastructure-38
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 # $HERE is always the spira/ directory, one level below the repo root.
@@ -43,6 +43,7 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 REPO_ROOT="$(cd "$HERE/.." && pwd -P)"
 WORKFLOW="$REPO_ROOT/.github/workflows/release.yml"
 TARBALL_SH="$HERE/build-tarball.sh"
+TOOLCHAIN_ACTION="$REPO_ROOT/.github/actions/release-toolchain/action.yml"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -92,7 +93,9 @@ echo "3. Toolchain — pinned to a semver, not a floating alias"
 nowant "not toolchain: stable" "toolchain: stable" "$(cat "$WORKFLOW")"
 nowant "not toolchain: nightly" "toolchain: nightly" "$(cat "$WORKFLOW")"
 nowant "not toolchain: beta" "toolchain: beta" "$(cat "$WORKFLOW")"
-want "toolchain pin read from rust-toolchain.toml" "rust-toolchain.toml" "$(cat "$WORKFLOW")"
+want "release.yml uses the shared toolchain action" "uses: ./.github/actions/release-toolchain" "$(cat "$WORKFLOW")"
+want "toolchain pin read from rust-toolchain.toml" "rust-toolchain.toml" "$(cat "$TOOLCHAIN_ACTION")"
+nowant "shared action does not float" "toolchain: stable" "$(cat "$TOOLCHAIN_ACTION")"
 
 TOOLCHAIN_TOML="$REPO_ROOT/rust-toolchain.toml"
 if grep -qE 'channel *= *"1\.[0-9]+\.[0-9]+"' "$TOOLCHAIN_TOML" 2>/dev/null; then
@@ -109,7 +112,7 @@ echo "4. Assertion step — rustc --version checked at runtime"
 # The assertion step runs after toolchain installation and exits non-zero if
 # the installed version does not match the pinned value. Without it, a runner
 # that ships the wrong Rust version produces a binary without any notice.
-want "rustc --version checked" "rustc --version" "$(cat "$WORKFLOW")"
+want "rustc --version checked" "rustc --version" "$(cat "$TOOLCHAIN_ACTION")"
 
 # ============================================================================
 echo
