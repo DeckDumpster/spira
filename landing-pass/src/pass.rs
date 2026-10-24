@@ -196,7 +196,7 @@ impl<'a> Pass<'a> {
         // worktree whose bead is closed. It took the slot of land-build-ensure.sh, whose
         // post-landing `cargo build --release --workspace` was redundant once a landing
         // publishes a release from its tested binaries.
-        for script in [PathBuf::from("unit-ensure"), PathBuf::from("target-reap")] {
+        for script in [PathBuf::from(spira_config::release_env::tool("unit-ensure")), PathBuf::from(spira_config::release_env::tool("target-reap"))] {
             for l in self.tools.ensure(&script) {
                 self.log(&l);
             }

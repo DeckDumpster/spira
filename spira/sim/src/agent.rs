@@ -87,7 +87,7 @@ fn git(worktree: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 fn work(worktree: &Path, args: &[&str]) -> Result<String, String> {
-    run(Command::new("work").args(args).current_dir(worktree), CALL_DEADLINE)
+    run(Command::new(spira_config::release_env::tool("work")).args(args).current_dir(worktree), CALL_DEADLINE)
 }
 
 fn exec(worktree: &Path, bead: &str, step: &Step, ordinal: usize) -> Result<(), String> {

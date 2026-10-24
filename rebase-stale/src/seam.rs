@@ -64,7 +64,7 @@ impl LibSeam {
         LibSeam {
             home,
             lc_bin,
-            queue_bin: PathBuf::from("queue"),
+            queue_bin: PathBuf::from(spira_config::release_env::tool("queue")),
             run,
         }
     }

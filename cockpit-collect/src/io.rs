@@ -199,7 +199,7 @@ fn env_or(key: &str, default: &str) -> String {
 pub fn content(args: &[&str]) -> Option<String> {
     if let Ok(fixture) = std::env::var("SPIRA_BDJSON_FIXTURE") {
         if !fixture.is_empty() {
-            let out = Command::new("bdsim")
+            let out = Command::new(spira_config::release_env::tool("bdsim"))
                 .arg(&fixture)
                 .args(args)
                 .stdin(Stdio::null())

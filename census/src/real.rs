@@ -58,7 +58,7 @@ impl Real {
     /// (truncated fresh each attempt) did.
     fn run_bd_sql(&self, query: &str) -> (bool, String, String) {
         let db = self.env("SPIRA_DB").unwrap_or_default();
-        let bd = self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string());
+        let bd = self.env("SPIRA_BD").unwrap_or_else(|| spira_config::release_env::tool("bd"));
         let out = spira_config::bounded::bounded(bd).arg("-C").arg(db).arg("sql").arg(query).stdin(Stdio::null()).output();
         match out {
             Ok(o) => (
@@ -264,7 +264,7 @@ impl World for Real {
 
     fn bd_list_all_json(&self, label_pattern: &str) -> String {
         let db = self.env("SPIRA_DB").unwrap_or_default();
-        let bd = self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string());
+        let bd = self.env("SPIRA_BD").unwrap_or_else(|| spira_config::release_env::tool("bd"));
         spira_config::bounded::bounded(bd)
             .arg("-C")
             .arg(db)
@@ -319,7 +319,7 @@ impl World for Real {
     }
     fn bd_sql_utc_now_row(&self) -> Result<String, String> {
         let db = self.env("SPIRA_DB").unwrap_or_default();
-        let bd = self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string());
+        let bd = self.env("SPIRA_BD").unwrap_or_else(|| spira_config::release_env::tool("bd"));
         let out = spira_config::bounded::bounded(bd)
             .arg("-C")
             .arg(db)

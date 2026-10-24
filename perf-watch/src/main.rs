@@ -172,7 +172,7 @@ impl RealSim {
 
 impl Sim for RealSim {
     fn round_open(&mut self) -> Result<bool, String> {
-        let out = Command::new("timeout").args(["5", "queue", "round", "status"]).stdin(Stdio::null()).stderr(Stdio::null()).output().map_err(|e| format!("queue: {e}"))?;
+        let out = Command::new("timeout").args(["5", spira_config::release_env::tool("queue").as_str(), "round", "status"]).stdin(Stdio::null()).stderr(Stdio::null()).output().map_err(|e| format!("queue: {e}"))?;
         if !out.status.success() {
             return Err(format!("queue round status exited {}", out.status));
         }

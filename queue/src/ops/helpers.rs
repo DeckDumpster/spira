@@ -24,7 +24,7 @@ use crate::real::{RealGit, RealLc};
 /// reconciler's mergeability check, cockpit-collect's "next up" pane) draws from.
 pub fn certified_list(repo: &Path) -> Vec<(String, String, u64)> {
     let lc = RealLc {
-        bin: Some(PathBuf::from("spira-lc")),
+        bin: Some(PathBuf::from(spira_config::release_env::tool("spira-lc"))),
     };
     certified_rows(&lc, &RealGit.branches(repo, "refs/heads/spira/"))
 }

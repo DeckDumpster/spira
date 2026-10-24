@@ -231,7 +231,7 @@ fn provenance_cmd(args: &[String]) -> ExitCode {
 
 #[allow(clippy::type_complexity)]
 fn ports(db: String, bd_bin: String, home: String) -> (RealBd, RealGh, RealGit, RealRepo, RealMail) {
-    let mail_bin = env_nonempty("SPIRA_MAIL_BIN").unwrap_or_else(|| "mail".to_string());
+    let mail_bin = env_nonempty("SPIRA_MAIL_BIN").unwrap_or_else(|| spira_config::release_env::tool("mail"));
     (
         RealBd { bd_bin, db },
         RealGh { bdq_bin: "bdq".to_string() },

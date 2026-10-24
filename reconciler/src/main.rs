@@ -143,7 +143,10 @@ struct Seams {
 
 impl Seams {
     fn production() -> Seams {
-        let name = |n: &str| n.to_string();
+        Seams::resolving(spira_config::release_env::tool)
+    }
+
+    fn resolving(name: impl Fn(&str) -> String) -> Seams {
         Seams {
             systemctl: name("systemctl"),
             tmux: name("tmux"),
@@ -1883,6 +1886,22 @@ fn stamp_pass(cfg: &Config) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn seams_resolve_release_tools_when_path_lacks_the_release_bin() {
+        let dir = testkit::TempDir::new("seams-release");
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        for tool in ["spira-lc", "queue", "rebuild"] {
+            let p = dir.join("bin").join(tool);
+            testkit::write_exe(&p, "");
+        }
+        let release = dir.path().display().to_string();
+        let seams = Seams::resolving(|n| spira_config::release_env::resolve_tool(n, Some(&release), None, Some("/nonexistent")));
+        assert_eq!(seams.spira_lc, format!("{release}/bin/spira-lc"));
+        assert_eq!(seams.queue, format!("{release}/bin/queue"));
+        assert_eq!(seams.rebuild, format!("{release}/bin/rebuild"));
+        assert_eq!(seams.git, "git");
+    }
+
     use super::*;
 
     fn fixture_store() -> std::sync::Arc<tsd::store::Pusher> {

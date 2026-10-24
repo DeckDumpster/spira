@@ -518,7 +518,7 @@ fn run_on_vm(f: &Flags, run: &Path, repo: &str, tip: &str, picks: &[String], sta
     fs::create_dir_all(&rd).map_err(|e| format!("{}: {e}", rd.display()))?;
     let log = rd.with_extension("log");
     // batch-job: round-vm runs for as long as its work does
-    let mut child = Command::new("round-vm")
+    let mut child = Command::new(spira_config::release_env::tool("round-vm"))
         .args(["run", tree, "--maxpar", &num(f, "maxpar", 16)?.to_string(), "--suites", &picks.join(","), "--results-dir"])
         .arg(&rd)
         .env("SPIRA_ROUND_VM_ACQUIRE_DEADLINE", num(f, "start-deadline", 900)?.to_string())
@@ -537,7 +537,7 @@ fn run_on_vm(f: &Flags, run: &Path, repo: &str, tip: &str, picks: &[String], sta
         if now() - began >= start_wait && silent(&rd, &log) {
             let _ = child.kill();
             let _ = child.wait();
-            let admit = Command::new("timeout").args(["5", "spira-admit", "status"]).stdin(Stdio::null()).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_else(|e| format!("spira-admit status: {e}"));
+            let admit = Command::new("timeout").args(["5", spira_config::release_env::tool("spira-admit").as_str(), "status"]).stdin(Stdio::null()).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_else(|e| format!("spira-admit status: {e}"));
             let why = format!("VERDICT no-verdict: round-vm produced no output in {start_wait}s (likely queued in host-wide admission); spira-admit status: {}", admit.replace('\n', " | "));
             eprintln!("cert-sweep: {why}");
             return Ok((Vec::new(), why));
@@ -552,7 +552,7 @@ fn run_on_host(f: &Flags, repo: &str, tip: &str, picks: &[String]) -> Result<(Ve
     let branch = flag(f, "branch").unwrap_or("cert-sweep/tip");
     git(repo, &["branch", "-f", branch, tip])?;
     // batch-job: this runs whatever its caller names, as long as that takes
-    let mut cmd = Command::new("testenv");
+    let mut cmd = Command::new(spira_config::release_env::tool("testenv"));
     if let Some(d) = flag(f, "deadline") {
         cmd.args(["--deadline", d]);
     }

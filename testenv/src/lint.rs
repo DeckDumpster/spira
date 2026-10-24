@@ -110,7 +110,7 @@ pub fn main(args: &[String], run: &Path, resolve: &dyn Fn(&str) -> Option<PathBu
         }
     };
     let decl = git_show(&repo, tip);
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("testenv"));
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(spira_config::release_env::tool("testenv")));
     let run_tiers = |tiers: &[String]| {
         // batch-job: runs the repository's own declared lint tiers, bounded by the tier timeouts
         match Command::new(&exe).args(["--suites", &tiers.join(","), tip]).arg(&repo).output() {

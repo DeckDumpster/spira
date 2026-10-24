@@ -55,7 +55,7 @@ fn build_env() -> Env {
     // just the subcmd, same as before).
     let cockpit_override = std::env::var("SOP_METRIC_COCKPIT").ok().filter(|v| !v.is_empty());
     let cockpit_bash_prefix = cockpit_override.is_some();
-    let cockpit_bin = cockpit_override.unwrap_or_else(|| "cockpit-collect".to_string());
+    let cockpit_bin = cockpit_override.unwrap_or_else(|| spira_config::release_env::tool("cockpit-collect"));
     Env { word_cap, why_cap, actor, cockpit_bin, cockpit_bash_prefix }
 }
 

@@ -93,7 +93,7 @@ fn parse_reader_mailboxes(raw: &str) -> Vec<String> {
 pub fn ensure_reader_mailboxes() -> Result<(), String> {
     for name in reader_mailboxes()? {
         // batch-job: first-run mail ensure on a cold host; bounded at 120 s by timeout(1).
-        let ok = Command::new("timeout").args(["120", "mail", "ensure", &name]).status().map(|s| s.success()).unwrap_or(false);
+        let ok = Command::new("timeout").args(["120", spira_config::release_env::tool("mail").as_str(), "ensure", &name]).status().map(|s| s.success()).unwrap_or(false);
         if !ok {
             return Err(format!("could not create the {name} mailbox (mail ensure {name})"));
         }
@@ -202,7 +202,7 @@ pub fn watch_names() -> Result<Vec<String>, String> {
     let watchers = nonempty_env("SPIRA_WATCHERS").or_else(|| nonempty_env("SPIRA_HOME").map(|h| format!("{h}/watchers")));
     // batch-job: watchd shells into conf.sh, which outlasts a 5s call deadline on a loaded host
     let mut cmd = std::process::Command::new("timeout");
-    cmd.args(["120", "watchd", "units"]);
+    cmd.args(["120", spira_config::release_env::tool("watchd").as_str(), "units"]);
     if let Some(w) = watchers {
         cmd.env("SPIRA_WATCHERS", w);
     }

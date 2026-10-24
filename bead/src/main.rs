@@ -236,7 +236,7 @@ const BD_DEFAULT_PRIORITY: i64 = 2;
 /// instead of bd. Detached: filing has a server deadline and a second connect inside it
 /// overran it. A write that fails is repaired by `spira-lc backfill-titles`.
 fn mirror_to_lifecycle(id: &str, title: Option<&str>, priority: i64, repo: Option<&str>) {
-    let mut args = vec!["30".to_string(), "spira-lc".into(), "create-bead".into(), id.to_string(), "--priority".into(), priority.to_string()];
+    let mut args = vec!["30".to_string(), spira_config::release_env::tool("spira-lc"), "create-bead".into(), id.to_string(), "--priority".into(), priority.to_string()];
     if let Some(t) = title {
         args.extend(["--title".to_string(), t.to_string()]);
     }
@@ -698,7 +698,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         return 2;
     }
 
-    let kind = kind.unwrap_or_else(|| "work".to_string());
+    let kind = kind.unwrap_or_else(|| spira_config::release_env::tool("work"));
     if kind == "gate" {
         eprintln!("bead: kind=gate is a bd-internal type; use bd gate directly");
         return 2;
@@ -1394,7 +1394,7 @@ fn amend_enforce(home: &str, aid: &str) -> i32 {
     let reason = format!("amendment {aid} {why}; slain and requeued with the amendment merged into the body");
     rc |= bdq_status(home, &s(&["note", &id, &format!("Enforced {aid}: {reason}")]));
     // batch-job: slay waits out the holder's shutdown and salvages its work
-    let slay = Command::new("slay")
+    let slay = Command::new(spira_config::release_env::tool("slay"))
         .args(["--bead", &id, "--why", &reason, "--reopen"])
         .envs(spira_config::release_env::child_path_env_for_process())
         .status()
@@ -1800,7 +1800,7 @@ fn dep_type_name(t: &str) -> &str {
 /// and `blocker`. bd already holds the edge, so a failed mirror is reported and repaired by
 /// `spira-lc backfill-deps --force`, never turned into a failed `dep`.
 fn mirror_dep(verb: &str, id: &str, depid: &str, dep_type: Option<&str>) {
-    let mut args = vec!["30".to_string(), "spira-lc".into(), verb.into(), id.into(), depid.into()];
+    let mut args = vec!["30".to_string(), spira_config::release_env::tool("spira-lc"), verb.into(), id.into(), depid.into()];
     if let Some(t) = dep_type {
         args.extend(["--type".to_string(), t.to_string()]);
     }
@@ -1924,7 +1924,7 @@ fn cmd_label(home: &str, args: &[String]) -> i32 {
 /// Point the lifecycle row at the repo a `repo:` label names, before the label moves: claims,
 /// worktrees and rounds read the row, and a WORKING bead is refused by it.
 fn mirror_repo(verb: &str, id: &str, repo: &str) -> Result<(), i32> {
-    let mut args = vec!["30".to_string(), "spira-lc".into(), "set-repo".into(), id.to_string()];
+    let mut args = vec!["30".to_string(), spira_config::release_env::tool("spira-lc"), "set-repo".into(), id.to_string()];
     if verb == "add" {
         args.push(repo.to_string());
     } else {
@@ -1980,7 +1980,7 @@ fn cmd_drop(home: &str, args: &[String]) -> i32 {
 
     // batch-job: ejects from batches and closes the store, bounded by timeout(1)
     let status = Command::new("timeout")
-        .args(["120", "spira-lc", "drop-bead", &id, "--reason", &reason, "--actor", "bead"])
+        .args(["120", spira_config::release_env::tool("spira-lc").as_str(), "drop-bead", &id, "--reason", &reason, "--actor", "bead"])
         .envs(spira_config::release_env::child_path_env_for_process())
         .status()
         .map(|s| s.code().unwrap_or(1))

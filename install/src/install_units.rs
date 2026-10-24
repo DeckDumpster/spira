@@ -330,7 +330,7 @@ fn db_server_wait(ctx: &Ctx) {
     if db.is_empty() || !Path::new(db).join(".beads").is_dir() {
         return;
     }
-    let bd = crate::bootstrap::nonempty_env("SPIRA_BD").unwrap_or_else(|| "bd".to_string());
+    let bd = crate::bootstrap::nonempty_env("SPIRA_BD").unwrap_or_else(|| spira_config::release_env::tool("bd"));
     let interval = crate::bootstrap::nonempty_env("SPIRA_DRAIN_INTERVAL").and_then(|v| v.parse::<u64>().ok()).unwrap_or(2);
     let max = crate::bootstrap::nonempty_env("SPIRA_INSTALL_DB_READY_WAIT").and_then(|v| v.parse::<u64>().ok()).unwrap_or(60);
     let mut waited = 0u64;

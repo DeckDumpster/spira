@@ -229,7 +229,7 @@ fn run_canary_in(stage_root: &Path, env: &[(String, String)], prod: &ProdEnv, o:
     log(&format!("bead: {bead_id}"));
 
     // Its lifecycle row, READY, in the stage's machine: a work bead is the machine's to move.
-    let created = run(staged(Command::new("timeout").args(LC_DEADLINE).args(["spira-lc", "create-bead", &bead_id]), env), "spira-lc create-bead")?;
+    let created = run(staged(Command::new("timeout").args(LC_DEADLINE).args([spira_config::release_env::tool("spira-lc").as_str(), "create-bead", &bead_id]), env), "spira-lc create-bead")?;
     if !created.status.success() {
         return Err(format!("spira-lc create-bead {bead_id} failed ({}): {}", created.status, String::from_utf8_lossy(&created.stderr).trim()));
     }
@@ -238,7 +238,7 @@ fn run_canary_in(stage_root: &Path, env: &[(String, String)], prod: &ProdEnv, o:
     // canary-worker` synchronously: it claims the bead through the machine, commits, and
     // submits the branch's tip.
     log("running sentinel (one pass)");
-    let _ = staged(&mut Command::new("sentinel"), env).status();
+    let _ = staged(&mut Command::new(spira_config::release_env::tool("sentinel")), env).status();
 
     let state = lc_state(env, &bead_id);
     if !spira_config::lc_state::past_builder(state.as_deref().unwrap_or("")) {
@@ -251,7 +251,7 @@ fn run_canary_in(stage_root: &Path, env: &[(String, String)], prod: &ProdEnv, o:
 
     // Run the real landing pass.
     log("running landing pass");
-    let _ = staged(Command::new("landing-pass").arg("land"), env).status();
+    let _ = staged(Command::new(spira_config::release_env::tool("landing-pass")).arg("land"), env).status();
 
     // Assert a commit naming the bead id on origin/main — read from the bare remote
     // directly, no fetch needed, no stale tracking ref.
@@ -291,7 +291,7 @@ fn staged<'c>(cmd: &'c mut Command, env: &[(String, String)]) -> &'c mut Command
 /// The bead's lifecycle state in the stage's machine (`spira-lc show`); `None` when there
 /// is no row or the machine cannot be read.
 fn lc_state(env: &[(String, String)], id: &str) -> Option<String> {
-    let out = staged(Command::new("timeout").args(LC_DEADLINE).args(["spira-lc", "show", id]), env).stdin(Stdio::null()).output().ok()?;
+    let out = staged(Command::new("timeout").args(LC_DEADLINE).args([spira_config::release_env::tool("spira-lc").as_str(), "show", id]), env).stdin(Stdio::null()).output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -380,7 +380,7 @@ pub fn canary_worker() -> Result<(), String> {
 /// `timeout`'s argv for the worker's Submit: `spira-lc work <id> submit --tip <tip> --actor
 /// <holder>`, the verb `work submit` sends for an aeon.
 pub(crate) fn submit_args(id: &str, tip: &str, holder: &str) -> Vec<String> {
-    ["5", "spira-lc", "work", id, "submit", "--tip", tip, "--actor", holder].iter().map(|s| s.to_string()).collect()
+    ["5", spira_config::release_env::tool("spira-lc").as_str(), "work", id, "submit", "--tip", tip, "--actor", holder].iter().map(|s| s.to_string()).collect()
 }
 
 /// The stage's one fayth (stage.rs `fayth_content`): the worker's ready set is this fayth's.
@@ -425,7 +425,7 @@ pub(crate) fn claim_canary_bead(
 /// Let go of a claim the worker cannot finish: `spira-lc unclaim` (lib.sh
 /// `release_own_claim`). Best-effort, as before.
 fn release_bead(id: &str, holder: &str) {
-    let _ = Command::new("timeout").args(["5", "spira-lc", "unclaim", id, holder]).stdin(Stdio::null()).output();
+    let _ = Command::new("timeout").args(["5", spira_config::release_env::tool("spira-lc").as_str(), "unclaim", id, holder]).stdin(Stdio::null()).output();
 }
 
 #[cfg(test)]
