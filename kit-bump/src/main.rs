@@ -168,7 +168,7 @@ mod tests {
     fn a_config_with_an_unknown_key_is_refused_naming_the_key_and_the_file() {
         let d = testkit::TempDir::new("kit-bump-oldconf");
         let p = d.path().join("kit-bump.conf");
-        std::fs::write(&p, "kit /home/x/dumpster-kit\nkit-ref origin/main\n").unwrap();
+        std::fs::write(&p, "kit ./kit-checkout\nkit-ref origin/main\n").unwrap();
         let e = expand(&v(&["--config", p.to_str().unwrap()])).unwrap_err();
         assert!(e.contains("\"kit\"") && e.contains(p.to_str().unwrap()), "{e}");
         std::fs::write(&p, "registry http://r\ncrate k\nsite a:/p:main:Cargo.toml\n").unwrap();
