@@ -24,6 +24,7 @@ FAKE_SPIRA_HOME="$TMP/fakespira"
 mkdir -p "$FAKE_SPIRA_HOME"
 RUN="$TMP/run"; mkdir -p "$RUN"
 DB="$TMP/db"; mkdir -p "$DB/.beads"
+mkdir -p "$TMP/warm"
 
 # Fake systemctl — is-active/is-enabled controlled by FAKE_SC_ACTIVE/FAKE_SC_ENABLED
 # (space-separated unit lists); `show -p <prop> --value <unit>` reports a healthy
@@ -143,7 +144,7 @@ run_ready() {
     done
     [ "${1:-}" = "--" ] && shift
     tl_config SPIRA_PATH="$BIN" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_RUN="$RUN" SPIRA_DB="$DB" \
-        SPIRA_BD="$BIN/bd" SPIRA_INSTANCE="prod" SPIRA_LOOM_ADDR="127.0.0.1:8788" \
+        SPIRA_AEON_WARM_BASE="${WARM_BASE-$TMP/warm}" SPIRA_BD="$BIN/bd" SPIRA_INSTANCE="prod" SPIRA_LOOM_ADDR="127.0.0.1:8788" \
         SPIRA_LOOM_BUDGET_MS="1500" SPIRA_AGENT="fake-agent"
     env -i \
         HOME="$FAKE_HOME" \
@@ -187,6 +188,25 @@ printf '[Timer]\nOnBootSec=3min\nOnUnitActiveSec=15min\n' > "$UNIT_DIR/spira-idl
 out="$(run_ready "FAKE_SC_ELAPSED=spira-idle-prod.timer" --)"
 nowant "timers-inactive: no FAIL for inactive timer" "spira-idle-prod.timer" "$out"
 rm -f "$UNIT_DIR/spira-idle-prod.timer"
+
+echo ""
+echo "--- aeon warm base ---"
+
+echo "positive control: warm base unset -> FAIL, never armed"
+out="$(WARM_BASE= run_ready -- || true)"
+want "warm-unset: FAIL line" "  FAIL  SPIRA_AEON_WARM_BASE is not set" "$out"
+nowant "warm-unset: not armed" "armed: loop is ready" "$out"
+WARM_BASE= run_ready -- >/dev/null 2>&1 \
+    && bad "warm-unset: should exit non-zero" "exited 0" \
+    || ok "warm-unset: exits non-zero"
+
+echo "warm base names a missing directory -> FAIL"
+out="$(WARM_BASE="$TMP/nowhere" run_ready -- || true)"
+want "warm-missing: FAIL line" "  FAIL  aeon warm base $TMP/nowhere is not a writable directory" "$out"
+
+echo "warm base present -> pass"
+out="$(run_ready --)"
+want "warm-ok: pass line" "  pass  aeon warm base $TMP/warm" "$out"
 
 echo ""
 echo "--- exit code ---"
