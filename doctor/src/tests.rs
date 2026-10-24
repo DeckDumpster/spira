@@ -671,6 +671,7 @@ fn warm_base_check_names_an_unset_key_a_base_off_tmpfs_and_a_good_one() {
     let unset = check_aeon_warm(&f);
     assert_eq!(levels(&unset), vec![Level::Fail]);
     assert!(unset[0].msg.contains("SPIRA_AEON_WARM_BASE"), "{:?}", unset[0].msg);
+    assert!(unset[0].detail.as_deref().unwrap_or("").contains("aeon_warm_base"), "{:?}", unset[0].detail);
 
     *f.warm_base.borrow_mut() = Some("/var/warm".into());
     let off = check_aeon_warm(&f);
