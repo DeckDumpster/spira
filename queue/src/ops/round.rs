@@ -1996,6 +1996,14 @@ pub(super) fn certify(
         );
         if out.rc == 1 && reds.is_empty() {
             reds.push(UNIT_RED.into());
+            let failed = fs::read_to_string(results.join("unit-tests.out")).unwrap_or_default();
+            let names: Vec<&str> = failed
+                .lines()
+                .filter_map(|l| l.strip_prefix("test ")?.strip_suffix(" ... FAILED"))
+                .collect();
+            if !names.is_empty() {
+                w.out(format!("unit-tests-failed={}", names.join(",")));
+            }
         }
         reds.sort();
         reds.dedup();
