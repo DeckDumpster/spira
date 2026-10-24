@@ -1,7 +1,8 @@
 //! `round-vm template` (DESIGN.md §2.2b, sp-dvfea): a new round template whose test image
 //! is BUILT on the template, so the template keeps podman's layer cache and a later
 //! closure change rebuilds only the layers it touches. A finished build is recorded
-//! (`template.json`) and `pve.env` repointed at it by the caller, so no person types a VMID.
+//! (`template.json`) and `pve.env` repointed at it by both verbs, so no person types a VMID.
+//! Placement is decided by the `round-vm` that runs the pass, so a stale record is detected there.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;

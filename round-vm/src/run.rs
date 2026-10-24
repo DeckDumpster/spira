@@ -1518,7 +1518,11 @@ fn image_build_declared(env: &RunEnv, args: &RunArgs, commit: &str) -> bool {
             );
             return true;
         }
-        eprintln!("round-vm run: template.json describes template {}, pve.env names another — not checking the image tag against it", rec.vmid);
+        eprintln!(
+            "round-vm run: STALE TEMPLATE RECORD: template.json describes template {} but pve.env names another, so what the template holds is unknown — placing the pass as image-missing; fix: `round-vm refresh <tree-dir>` (never hand-edit PVE_TEMPLATE_VMID)",
+            rec.vmid
+        );
+        return true;
     }
     let Some(base) = &args.base else { return false };
     match env.host.image_tag(tree, base) {
@@ -3205,10 +3209,12 @@ mod tests {
     }
 
     #[test]
-    fn a_record_for_a_template_pve_env_no_longer_names_is_not_evidence() {
+    fn a_record_for_a_template_pve_env_no_longer_names_places_the_pass_as_image_missing() {
         let mut fx = fixture();
         record_template(&mut fx, "130", "localhost/spira-testenv:tagA", "131");
-        assert_eq!(go(&fx, &FakeRemote::green(), &newer_tree(&fx)), 0);
+        let remote = FakeRemote::green();
+        assert_eq!(go(&fx, &remote, &tree(&fx)), 0);
+        assert!(remote.jobs.lock().unwrap()[0].contains("'180' '1234' '77' '' '1' 'refs/rounds/"), "stale record declares the build: {:?}", remote.jobs.lock().unwrap());
     }
 
     #[test]
