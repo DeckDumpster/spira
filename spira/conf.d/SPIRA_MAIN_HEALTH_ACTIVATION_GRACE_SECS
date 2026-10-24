@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=reconciler
+DOC=SPIRA_MAIN_HEALTH_ACTIVATION_GRACE_SECS — seconds local/main may stay ahead of the active release before main-health:lint goes red.
+SCHEMA=Seconds the landing ref may be ahead of the active release before the main-health lint check reports red instead of pending activation (unit: seconds; integer; default 1800). Parsed as an integer by the reconciler, so it must not be empty.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_MAIN_HEALTH_ACTIVATION_GRACE_SECS:=1800}"
+SPIRA_CONF_DEFAULT_EOF

@@ -198,6 +198,7 @@ struct Config {
     max_aeons: String,
     disk_floor_pct: u32,
     grace_secs: u64,
+    activation_grace_secs: u64,
     preflight_wall_secs: u64,
     now_secs: u64,
     now_iso: String,
@@ -255,6 +256,7 @@ impl Config {
             max_aeons: cfg("SPIRA_MAX_AEONS")?,
             disk_floor_pct: cfg_parse::<u32>("SPIRA_DISK_FLOOR_PCT")?,
             grace_secs: cfg_parse::<u64>("SPIRA_RECONCILER_GRACE_SECS")?,
+            activation_grace_secs: cfg_parse::<u64>("SPIRA_MAIN_HEALTH_ACTIVATION_GRACE_SECS")?,
             preflight_wall_secs: cfg_parse::<u64>("SPIRA_PREFLIGHT_WALL_SECS")?,
             now_secs: clock::now_secs(&seams.date),
             now_iso: clock::now_iso(&seams.date),
@@ -1435,6 +1437,31 @@ fn base_fences(cfg: &Config, tree: &str, sha: &str) -> Vec<Fence> {
     ]
 }
 
+fn lint_awaiting_activation(cfg: &Config, repo: &str, sha: &str) -> Option<RawStatus> {
+    let git = &cfg.seams.git;
+    let release = run_cmd(git, &["-C", repo, "rev-parse", "--verify", "--quiet", &format!("{}^{{commit}}", cfg.release)]);
+    let release = release.trim();
+    if release.is_empty() || run_cmd_ok(git, &["-C", repo, "merge-base", "--is-ancestor", sha, release]) {
+        return None;
+    }
+    let oldest = run_cmd(git, &["-C", repo, "log", "--reverse", "--format=%ct", &format!("{}..{}", release, sha)]);
+    let landed: u64 = oldest.lines().next()?.trim().parse().ok()?;
+    let lag = cfg.now_secs.saturating_sub(landed);
+    if lag <= cfg.activation_grace_secs {
+        return Some(RawStatus::Deliberate {
+            reason: format!("pending activation: {} is {}, the active release is {}", MAIN_REF, sha, release),
+        });
+    }
+    Some(RawStatus::Gap {
+        desired: format!("the active release contains {}", MAIN_REF),
+        observed: format!(
+            "lint not judged: {} is {} but the active release is {}; activation has lagged {}s (grace {}s)",
+            MAIN_REF, sha, release, lag, cfg.activation_grace_secs
+        ),
+        since_hint: None,
+    })
+}
+
 fn observe_main_health(cfg: &Config) -> Vec<Check> {
     let Some(repo) = repo_root("spira", &cfg.repo_map) else { return Vec::new() };
     let repo_str = repo.to_string_lossy().to_string();
@@ -1466,16 +1493,19 @@ fn observe_main_health(cfg: &Config) -> Vec<Check> {
             }),
         }
     };
-    let fences = base_fences(cfg, "", &sha);
+    let lint_pending = lint_awaiting_activation(cfg, &repo_str, &sha);
+    let pending_check = lint_pending.map(|raw| Check { key: "main-health:lint".into(), raw, remedy: Remedy::Escalate });
+    let lint_is_pending = pending_check.is_some();
+    let judged = move |f: &Fence| !(lint_is_pending && f.class == "lint");
+    let fences: Vec<Fence> = base_fences(cfg, "", &sha).into_iter().filter(judged).collect();
     if fences.iter().all(|f| cached(&cache, f.class).is_some()) {
-        return fences
-            .iter()
-            .map(|f| Check {
-                key: format!("main-health:{}", f.class),
-                raw: cached(&cache, f.class).expect("checked above"),
-                remedy: Remedy::Escalate,
-            })
-            .collect();
+        let mut checks: Vec<Check> = pending_check.into_iter().collect();
+        checks.extend(fences.iter().map(|f| Check {
+            key: format!("main-health:{}", f.class),
+            raw: cached(&cache, f.class).expect("checked above"),
+            remedy: Remedy::Escalate,
+        }));
+        return checks;
     }
     let tree = paths::main_health_tree(&cfg.spira_run);
     let tree_str = tree.to_string_lossy().to_string();
@@ -1484,8 +1514,8 @@ fn observe_main_health(cfg: &Config) -> Vec<Check> {
     if !run_cmd_ok(git, &["-C", &repo_str, "worktree", "add", "--detach", &tree_str, &sha]) {
         return unobservable(format!("cannot check out {} into {}", sha, tree_str));
     }
-    let mut checks = Vec::new();
-    for fence in base_fences(cfg, &tree_str, &sha) {
+    let mut checks: Vec<Check> = pending_check.into_iter().collect();
+    for fence in base_fences(cfg, &tree_str, &sha).into_iter().filter(judged) {
         // batch-job: a fence over a whole checkout of the landing ref runs as long as the lint does
         let out = spira_config::bounded::bounded(&fence.program)
             .args(&fence.args)
@@ -2600,6 +2630,74 @@ mod tests {
         assert!(!ran.exists(), "no fence re-runs on a sha already judged");
     }
 
+    fn activation_fixture(name: &str) -> (testkit::TempDir, Config, String, String) {
+        let dir = scratch_dir(name);
+        let repo = dir.join("repo");
+        let git = |args: &[&str]| {
+            let o = std::process::Command::new("git").env("GIT_COMMITTER_DATE", "@1000").arg("-C").arg(&repo).args(args).output().unwrap();
+            assert!(o.status.success(), "git {:?}: {}", args, String::from_utf8_lossy(&o.stderr));
+            String::from_utf8_lossy(&o.stdout).trim().to_string()
+        };
+        fs::create_dir_all(&repo).unwrap();
+        git(&["init", "-q", "-b", "main"]);
+        fs::write(repo.join("f"), "x").unwrap();
+        git(&["add", "f"]);
+        let commit = |msg: &str| git(&["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", msg, "--date", "@1000"]);
+        commit("release");
+        let release = git(&["rev-parse", "HEAD"]);
+        commit("ahead");
+        let main = git(&["rev-parse", "HEAD"]);
+        git(&["update-ref", "refs/heads/local/main", "HEAD"]);
+        let map = dir.join("repos");
+        fs::write(&map, format!("spira|{}\n", repo.display())).unwrap();
+        let red = dir.join("red");
+        testkit::write_exe(&red, "#!/usr/bin/env bash\necho planted lint finding\nexit 1\n");
+        let green = dir.join("green");
+        testkit::write_exe(&green, "#!/usr/bin/env bash\nexit 0\n");
+        let cfg = Config {
+            spira_run: dir.to_path_buf(),
+            repo_map: Some(map),
+            release: release.clone(),
+            activation_grace_secs: 600,
+            seams: Seams { lint: red.to_string_lossy().to_string(), guard: green.to_string_lossy().to_string(), ..Seams::production() },
+            ..test_config()
+        };
+        (dir, cfg, release, main)
+    }
+
+    fn lint_of(cfg: &Config) -> RawStatus {
+        observe_main_health(cfg).into_iter().find(|c| c.key == "main-health:lint").expect("lint check").raw
+    }
+
+    #[test]
+    fn main_ahead_of_the_release_within_grace_is_pending_not_red() {
+        let (_dir, cfg, release, main) = activation_fixture("activation-within");
+        let cfg = Config { now_secs: 1000 + 599, ..cfg };
+        match lint_of(&cfg) {
+            RawStatus::Deliberate { reason } => assert!(reason.contains(&release) && reason.contains(&main), "{reason}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn main_ahead_of_the_release_past_grace_is_red_naming_both_shas() {
+        let (_dir, cfg, release, main) = activation_fixture("activation-past");
+        let cfg = Config { now_secs: 1000 + 601, ..cfg };
+        match lint_of(&cfg) {
+            RawStatus::Gap { observed, .. } => {
+                assert!(observed.contains(&release) && observed.contains(&main) && observed.contains("601s"), "{observed}")
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_release_containing_main_keeps_the_lint_verdict() {
+        let (_dir, cfg, _release, main) = activation_fixture("activation-contained");
+        let cfg = Config { release: main, now_secs: 1000 + 100_000, ..cfg };
+        assert!(matches!(lint_of(&cfg), RawStatus::Gap { observed, .. } if observed.contains("lint red at")));
+    }
+
     fn stub_mail_seams(mail: &Path) -> Seams {
         Seams { mail: mail.to_string_lossy().to_string(), ..Seams::production() }
     }
@@ -2631,6 +2729,7 @@ mod tests {
             max_aeons: String::new(),
             disk_floor_pct: 15,
             grace_secs: 300,
+            activation_grace_secs: 1800,
             preflight_wall_secs: 240,
             now_secs: 0,
             now_iso: "2026-09-25T00:00:00Z".into(),
