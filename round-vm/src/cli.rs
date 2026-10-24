@@ -19,7 +19,7 @@ use crate::pve::{HttpTransport, Pve};
 use crate::run::{parse_run_args, run, salvage_results, GitHost, RunEnv, SshRemote};
 use crate::schema::ProcId;
 
-pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--on-red <command>]|status [--json]|warm|teardown|template|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]|recipe-sha [--tree <dir>]|ami-for <recipe-sha>|template-check|ami-check|ami-prune|reap|ec2-probe [--dry-run]";
+pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--on-red <command>]|status [--json]|warm|teardown|template [--adopt <vmid>]|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]|recipe-sha [--tree <dir>]|ami-for <recipe-sha>|template-check|ami-check|ami-prune|reap|ec2-probe [--dry-run]";
 
 fn secs_env(key: &str, default: u64) -> Duration {
     Duration::from_secs(std::env::var(key).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(default))
@@ -580,6 +580,9 @@ fn template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool, pool
         );
         return 2;
     }
+    if let Some(vmid) = &a.adopt {
+        return adopt_template(cfg, a, vmid, &host, pool);
+    }
     let commit = match &a.rev {
         Some(r) => crate::run::git(&["-C", &a.tree_dir.to_string_lossy(), "rev-parse", &format!("{r}^{{commit}}")]),
         None => host.head(&a.tree_dir).map(|h| h.0),
@@ -628,6 +631,42 @@ fn template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool, pool
         pool.end_refresh(me);
     }
     code
+}
+
+/// `round-vm template --adopt <vmid> <tree-dir>`: the image tag is the tree's; `recipe_sha`
+/// stays absent because nothing on a stopped template proves what it was built from.
+fn adopt_template(cfg: &Config, a: &crate::template::TemplateArgs, vmid: &str, host: &GitHost, pool: &Pool) -> i32 {
+    use crate::run::Host;
+    let commit = match &a.rev {
+        Some(r) => crate::run::git(&["-C", &a.tree_dir.to_string_lossy(), "rev-parse", &format!("{r}^{{commit}}")]),
+        None => host.head(&a.tree_dir).map(|h| h.0),
+    };
+    let tag = match commit.and_then(|c| host.image_tag(&a.tree_dir, &c)) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("round-vm template --adopt: cannot compute the image tag: {e}");
+            return 2;
+        }
+    };
+    let attempt = match real_attempt() {
+        Ok(at) => at,
+        Err(e) => {
+            eprintln!("{e}");
+            return 2;
+        }
+    };
+    let image = format!("localhost/spira-testenv:{tag}");
+    match crate::template::adopt(attempt.provider.as_ref(), &cfg.state_dir, &cfg.pve_env_path, vmid, &image, None).and_then(|_| pool.recycle(&real_attempt)) {
+        Ok(n) => {
+            println!("{vmid} {image}");
+            eprintln!("round-vm template: adopted template {vmid} holding {image}; {} repointed, {n} warm VM(s) recycled", cfg.pve_env_path.display());
+            0
+        }
+        Err(e) => {
+            eprintln!("round-vm template --adopt: {e}");
+            1
+        }
+    }
 }
 
 fn build_template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool, pool: &Pool, commit: &str) -> i32 {
@@ -756,7 +795,7 @@ mod tests {
             vm_budget_secs: 300,
             build_budget_secs: 600,
         });
-        let a = crate::template::TemplateArgs { tree_dir: tree, rev: None, toolchain: None };
+        let a = crate::template::TemplateArgs { tree_dir: tree, rev: None, toolchain: None, adopt: None };
         let pool = pool_for(&cfg);
         assert_eq!(template(&cfg, &a, true, &pool), 0);
         assert_eq!(template(&cfg, &a, false, &pool), 2);
