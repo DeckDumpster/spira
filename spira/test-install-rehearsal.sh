@@ -103,7 +103,11 @@ CEXEC=(timeout 120 podman exec --user spirauser
     -e "SPIRA_OPERATED=0"
 )
 # Install runs a dependency phase and doctor: past the 5s a single probe is given.
-INSTALL_EXEC=(timeout 120 "${CEXEC[@]:2}")
+_reh_first_run="$(sed -n 's/^const FIRST_RUN_SECS: &str = "\([0-9]*\)";.*/\1/p' "$HERE/../install/src/bin/install.rs")"
+_reh_cockpit_wait="$(sed -n 's/^_rdy_first_wait_s=.*:-\([0-9]*\)}.*/\1/p' "$HERE/ready.sh")"
+[ -n "$_reh_first_run" ] && [ -n "$_reh_cockpit_wait" ] || { echo "FAIL cannot derive install guard from install.rs/ready.sh"; exit 1; }
+INSTALL_GUARD_S=$(( _reh_first_run + _reh_cockpit_wait + 60 ))
+INSTALL_EXEC=(timeout "$INSTALL_GUARD_S" "${CEXEC[@]:2}")
 
 # ---------------------------------------------------------------------------
 # CREATE STUB SCRIPTS INSIDE THE CONTAINER as spirauser so they are owned by

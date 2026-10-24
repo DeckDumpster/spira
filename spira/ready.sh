@@ -330,6 +330,7 @@ _rdy_snap="$SPIRA_RUN/cockpit.env"
 _rdy_stale_s="${SPIRA_COCKPIT_STALE_S:-120}"
 _rdy_first_wait_s="${SPIRA_COCKPIT_FIRST_WRITE_WAIT_S:-60}"
 _ckp_unit="$(spira_unit cockpit service)"
+[ -f "$SPIRA_RUN/world.halted" ] && _rdy_first_wait_s=0
 _ckp_tmux_up=0
 if command -v tmux >/dev/null 2>&1 && tmux list-panes -a >/dev/null 2>&1; then
     _ckp_tmux_up=1
@@ -347,7 +348,10 @@ else
         sleep 1
         _rdy_waited=$(( _rdy_waited + 1 ))
     done
-    if [ ! -f "$_rdy_snap" ]; then
+    if [ ! -f "$_rdy_snap" ] && [ "$_rdy_first_wait_s" = "0" ]; then
+        WARN "halted: collector not running — no cockpit snapshot at $_rdy_snap" \
+             "The world is halted, so $_ckp_unit is not started. Resume the world."
+    elif [ ! -f "$_rdy_snap" ]; then
         FAIL "no cockpit snapshot at $_rdy_snap after ${_rdy_waited}s — collector $_ckp_unit has not written" \
              "Check: systemctl --user status $_ckp_unit"
     else
