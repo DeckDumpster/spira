@@ -34,8 +34,23 @@
         dontFixup = true;
         installPhase = "install -Dm755 terraform $out/bin/terraform";
       };
+      # nixpkgs' aerc is a wrapProgram script over a dynamically linked ELF whose interpreter and
+      # libraries live in /nix/store, so it cannot run on a machine without that store. The release
+      # ships this CGO-off build instead: one static binary, without notmuch.
+      aerc-static = pkgs.aerc.overrideAttrs (old: {
+        buildInputs = [ ];
+        installPhase = ''
+          runHook preInstall
+          make $makeFlags CGO_ENABLED=0 GOFLAGS="$GOFLAGS" install
+          runHook postInstall
+        '';
+        postFixup = "";
+        doCheck = false;
+        doInstallCheck = false;
+      });
     in {
       packages.${system} = {
+        inherit aerc-static;
         spira-env = pkgs.buildEnv {
           name = "spira-env";
           paths = with pkgs; [

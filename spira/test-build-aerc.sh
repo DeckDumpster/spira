@@ -49,7 +49,7 @@ run FAIL_FIRST=2; rc=$?
 { [ "$rc" = 0 ] && [ "$(cat "$work/nix.count")" = 3 ]; } && check ok "transient fetch failure is retried" || check no "retry (rc=$rc)"
 
 run FAIL_FIRST=99 BUILD_AERC_ATTEMPTS=3; rc=$?
-{ [ "$rc" = 1 ] && [ "$(cat "$work/nix.count")" = 3 ] && grep -q 'spira-env' "$work/stderr" && grep -q 'after 3 attempts' "$work/stderr"; } \
+{ [ "$rc" = 1 ] && [ "$(cat "$work/nix.count")" = 3 ] && grep -q 'aerc-static' "$work/stderr" && grep -q 'after 3 attempts' "$work/stderr"; } \
     && check ok "exhausted retries fail naming the source" || check no "exhausted retries (rc=$rc)"
 
 mkdir -p "$work/profile/bin"
@@ -58,5 +58,16 @@ run BUILD_AERC_NIX_CANDIDATES="$work/profile/bin/nix"; rc=$?
 { [ "$rc" = 0 ] && [ -x "$work/out/aerc" ]; } && check ok "nix off PATH is found at its profile location" || check no "profile-location nix (rc=$rc)"
 run BUILD_AERC_NIX_CANDIDATES="$work/nowhere/nix"; rc=$?
 { [ "$rc" = 1 ] && grep -q "$work/nowhere/nix" "$work/stderr"; } && check ok "no nix: failure lists where it looked" || check no "no-nix message (rc=$rc)"
+
+mkdir -p "$work/wrapped/bin"
+printf '#! /nix/store/abc-bash-5.3/bin/bash -e\nexec /bin/true\n' > "$work/wrapped/bin/aerc"
+chmod +x "$work/wrapped/bin/aerc"
+mv "$work/envdir" "$work/envdir.good"; mv "$work/wrapped" "$work/envdir"
+run BUILD_AERC_NIX_CANDIDATES="$work/profile/bin/nix"; rc=$?
+{ [ "$rc" = 1 ] && grep -q 'depends on /nix/store' "$work/stderr"; } \
+    && check ok "a wrapper script whose shebang is in /nix/store is refused" || check no "nix wrapper accepted (rc=$rc: $(tail -1 "$work/stderr"))"
+rm -rf "$work/envdir"; mv "$work/envdir.good" "$work/envdir"
+
+grep -q 'aerc-static' "$here/../flake.nix" && check ok "flake defines aerc-static" || check no "flake lacks aerc-static"
 
 tl_summary
