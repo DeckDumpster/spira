@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T1
-# covers: spira/metrics/grafana/** tsd/src/pass.rs spira-otel/src/** auron/src/main.rs inbox-triage/src/main.rs store-persist/src/main.rs queue/src/telemetry.rs landing-pass/src/telemetry.rs rebase-stale/src/telemetry.rs round-vm/src/telemetry.rs sccache-dav/src/telemetry.rs release/src/telemetry.rs
+# covers: spira/metrics/grafana/** pilgrimage/src/** tsd/src/pass.rs spira-otel/src/** auron/src/main.rs inbox-triage/src/main.rs store-persist/src/main.rs queue/src/telemetry.rs landing-pass/src/telemetry.rs rebase-stale/src/telemetry.rs round-vm/src/telemetry.rs sccache-dav/src/telemetry.rs release/src/telemetry.rs
 #
 # The provisioned Grafana dashboards parse, read their data source from a variable, carry no
 # annotations or text panels, and every cert-pass series they query is one the producer pushes.
@@ -26,7 +26,7 @@ print("\n".join(bad))
 PY
 }
 
-for want_f in rounds site-ci bead-store components gate-tooling runs queue-landing; do
+for want_f in rounds site-ci bead-store components gate-tooling runs queue-landing pilgrimages; do
   f="$DASH/$want_f.json"
   is "$want_f.json is valid and clean" "" "$(check "$f" 2>&1)"
 done
@@ -58,6 +58,12 @@ undeclared=""
 for m in $ql; do grep -rqF "\"$m\"" "$ROOT"/{queue,landing-pass,rebase-stale}/src/telemetry.rs "$ROOT/spira-otel/src/metrics.rs" || undeclared="$undeclared $m"; done
 is "queue-landing.json queries only series the components push" "" "$undeclared"
 [ -n "$ql" ] && ok "positive control: queue-landing series were found" || bad "no queue-landing series found"
+
+pg_pushed="$(grep -o '^pub const [A-Z_]*: &str = "spira_pilgrimage_[a-z_]*"' "$ROOT/pilgrimage/src/lib.rs" | grep -o 'spira_pilgrimage_[a-z_]*' | sort -u)"
+pg_queried="$(grep -o 'spira_pilgrimage_[a-z_]*' "$DASH/pilgrimages.json" | sort -u)"
+is "pilgrimages.json queries only series the pilgrimage crate pushes" "" "$(comm -13 <(printf '%s\n' "$pg_pushed") <(printf '%s\n' "$pg_queried"))"
+[ -n "$pg_pushed" ] && ok "positive control: the pilgrimage series were found" || bad "no pilgrimage series found"
+is "every series the pilgrimage crate pushes is on the panel" "" "$(comm -23 <(printf '%s\n' "$pg_pushed") <(printf '%s\n' "$pg_queried"))"
 
 mount_src="$(grep -o '"\$HERE/[^"]*:/var/lib/grafana-dashboards' "$HERE/metrics-stack.sh" | sed -E 's#^"\$HERE/##; s#:.*##')"
 want "metrics-stack.sh mounts the dashboards directory" "metrics/grafana/dashboards" "$mount_src"

@@ -1,0 +1,238 @@
+{
+  "uid": "spira-pilgrimages",
+  "title": "Spira pilgrimages: each feature's walk",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "refresh": "5m",
+  "tags": [
+    "spira"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_VM",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "data source"
+      },
+      {
+        "name": "pilgrimage",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_VM}"
+        },
+        "label": "pilgrimage",
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".+",
+        "query": {
+          "query": "label_values(spira_pilgrimage_transitions, pilgrimage)",
+          "refId": "v"
+        },
+        "refresh": 2
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "pilgrimages started and closed per interval",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "sum(sum_over_time(spira_pilgrimage_started{pilgrimage=~\"$pilgrimage\"}[$__interval]))",
+          "legendFormat": "started",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "sum(sum_over_time(spira_pilgrimage_closed{pilgrimage=~\"$pilgrimage\"}[$__interval]))",
+          "legendFormat": "closed clean",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "transitions per interval by state",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "sum by (state) (sum_over_time(spira_pilgrimage_transitions{pilgrimage=~\"$pilgrimage\"}[$__interval]))",
+          "legendFormat": "{{state}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "bargauge",
+      "title": "walks per pilgrimage",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max by (pilgrimage) (max_over_time(spira_pilgrimage_walks{pilgrimage=~\"$pilgrimage\"}[$__range]))",
+          "legendFormat": "{{pilgrimage}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "bargauge",
+      "title": "defects per pilgrimage",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max by (pilgrimage) (max_over_time(spira_pilgrimage_defects{pilgrimage=~\"$pilgrimage\"}[$__range]))",
+          "legendFormat": "{{pilgrimage}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "bargauge",
+      "title": "time from all-landed to clean",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "max by (pilgrimage) (max_over_time(spira_pilgrimage_clean_seconds{pilgrimage=~\"$pilgrimage\"}[$__range]))",
+          "legendFormat": "{{pilgrimage}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "defects filed per interval",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "sum(sum_over_time(spira_pilgrimage_defects_filed{pilgrimage=~\"$pilgrimage\"}[$__interval]))",
+          "legendFormat": "defects filed",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}
