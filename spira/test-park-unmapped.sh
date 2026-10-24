@@ -45,6 +45,9 @@ chmod +x "$TMP/bin/bd"
 cat > "$TMP/bin/spira-lc" <<'STUB'
 #!/usr/bin/env bash
 printf 'spira-lc %s\n' "$*" >> "$CALLS"
+if [ "${1:-}" = show ] && [ -n "${FAKE_STATE:-}" ]; then
+    printf '{"bead":{"state":"%s","version":3,"holder":"","lease_until":0}}' "$FAKE_STATE"
+fi
 exit 0
 STUB
 chmod +x "$TMP/bin/spira-lc"
@@ -119,3 +122,20 @@ else
 fi
 
 tl_summary
+
+echo
+echo "case 4 — a terminal bead is not held or noted; only the claim is released:"
+# ======================================================================================
+export BEADS_ACTOR=aeon-tester
+for st in LANDED SUPERSEDED DROPPED DONE; do
+    : > "$CALLS"
+    FAKE_STATE=$st park_unmapped sp-term1 gone-repo
+    c="$(cat "$CALLS")"
+    if [[ "$c" == *"spira-lc hold"* || "$c" == *"note sp-term1"* || "$c" == *"label add"* ]]; then
+        bad "$st: no hold, note or label" "$c"
+    else ok "$st: no hold, note or label"; fi
+    has "$st: claim still released" "spira-lc unclaim sp-term1 aeon-tester" "$c"
+done
+: > "$CALLS"
+FAKE_STATE=READY park_unmapped sp-live1 gone-repo
+has "READY bead is still held" "spira-lc hold sp-live1 ask" "$(cat "$CALLS")"

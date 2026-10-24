@@ -623,6 +623,11 @@ release_own_claim() {
 # from every fayth predicate and invisible to the operator.
 park_unmapped() {
     local id="$1" repo_name="$2"
+    local row state
+    row="$(lc_bead_row "$id")" && state="${row%%$'\t'*}" || state=""
+    case "$state" in
+        LANDED|SUPERSEDED|DROPPED|DONE) release_own_claim "$id"; return ;;
+    esac
     bdq label add "$id" "overseer"          >/dev/null 2>&1 || true
     # The hold alone (sp-psztcc): a label standing in for it outlived every withdrawal.
     spira-lc hold "$id" ask "repo:$repo_name has no repo-map entry" aeon.sh || true
