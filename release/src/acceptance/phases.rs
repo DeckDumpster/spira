@@ -293,6 +293,14 @@ impl Run<'_> {
         hist.rc == 0 && lifecycle_submitted(&lifecycle_states(&hist.out))
     }
 
+    /// The aeon ledger's closing line for `id` when the aeon ran and ended without a branch.
+    fn declined(&self, id: &str) -> Option<String> {
+        let ledger = fs::read_to_string(self.o.spira_run.join("aeon-ledger.log")).ok()?;
+        let line = ledger.lines().rev().find(|l| l.contains(" done ") && l.contains(id))?;
+        let status = line.split_whitespace().find_map(|w| w.strip_prefix("status="))?;
+        Some(format!("builder declined: {status}"))
+    }
+
     fn spira_units(&self, state: &str) -> Vec<String> {
         let flag = format!("--state={state}");
         first_fields(&self.systemctl(&["list-units", &flag, "--no-legend", "--plain"]).out).into_iter().filter(|u| u.starts_with("spira-")).collect()
@@ -346,7 +354,8 @@ impl Run<'_> {
         if ok {
             self.ok(&format!("{p} stage 2: aeon summoned for {id} — branch created ({t}s)"));
         } else {
-            self.bad(&format!("{p} stage 2: aeon summoned for {id}"), &format!("branch spira/{id} not created after {t}s"));
+            let declined = self.declined(id).map(|d| format!("; {d}")).unwrap_or_default();
+            self.bad(&format!("{p} stage 2: aeon summoned for {id}"), &format!("branch spira/{id} not created after {t}s{declined}"));
         }
 
         let br = format!("spira/{id}");
@@ -439,6 +448,12 @@ impl Run<'_> {
         let o = self.h.run(&self.bd(&["memories"]));
         (o.rc == 0).then(|| o.out.lines().filter(|l| !l.is_empty()).count())
     }
+}
+
+/// A probe bead's description, shaped like real builder work: bead.sh refuses a builder bead
+/// with no `## Build` section, and so does the builder.
+fn probe_body(why: &str) -> String {
+    format!("{why}\n\n## Build\n\nCreate acceptance-probe-<bead-id>.txt at the root of this repository containing the bead id, commit it on the bead's branch, and submit.\n")
 }
 
 const FAST_TIER_BRANCH: &str = "spira/acceptance-fast-tier";
@@ -665,7 +680,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
     let base = r.rev(&format!("origin/{land_ref}")).or_else(|| r.rev("HEAD")).unwrap_or_default();
     let (id, out) = r.file_probe(
         &format!("acceptance-run: trivial land proof for {tag}"),
-        &format!("Acceptance test: commit a file named acceptance-probe-<bead-id>.txt to prove end-to-end landing works. Content: the tag under test is {tag}."),
+        &probe_body(&format!("Acceptance test: prove end-to-end landing works. The tag under test is {tag}.")),
         &labels,
     );
     match &id {
@@ -935,7 +950,7 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
         let base = r.rev(&format!("origin/{land_ref}")).unwrap_or_default();
         let (id, out) = r.file_probe(
             &format!("aged-install: post-upgrade land proof ({pt} → {tag})"),
-            &format!("Prove world resumed and can land work after aged upgrade from {pt} to {tag}."),
+            &probe_body(&format!("Prove world resumed and can land work after aged upgrade from {pt} to {tag}.")),
             labels,
         );
         match id {
