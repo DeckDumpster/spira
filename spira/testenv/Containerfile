@@ -77,6 +77,12 @@ RUN mkdir /out && \
 # tag and only the binary is needed afterwards.
 FROM docker.io/library/rust:${RUST_VERSION}-slim AS rust-builder
 
+# ── Stage 2b: rust-code-analysis-cli for the complexity habit ─────────────────
+# Same version the flake pins for spira-env; built here so only the binary crosses over.
+FROM docker.io/library/rust:${RUST_VERSION}-slim AS rca-builder
+ARG RCA_VERSION=0.0.25
+RUN cargo install --locked --root /out --version "${RCA_VERSION}" rust-code-analysis-cli
+
 FROM docker.io/dolthub/dolt:${DOLT_VERSION} AS dolt-src
 
 FROM docker.io/amazon/aws-cli:${AWS_CLI_VERSION} AS aws-src
@@ -136,6 +142,7 @@ RUN apt-get update -q && \
         nodejs \
         unzip \
         locales \
+        shellcheck \
         inotify-tools \
         aerc \
     && rm -rf /var/lib/apt/lists/*
@@ -199,6 +206,8 @@ RUN ln -s /usr/local/aws-cli/v2/current/bin/aws /usr/local/bin/aws
 # Both bd and bd-embedded are installed: testdb.sh checks for bd-embedded by name.
 COPY --from=bd-builder /out/bd /usr/local/bin/bd
 RUN install -m 0755 /usr/local/bin/bd /usr/local/bin/bd-embedded
+
+COPY --from=rca-builder /out/bin/rust-code-analysis-cli /usr/local/bin/rust-code-analysis-cli
 
 # ── claude stub — satisfies 'command -v claude' checks ────────────────────
 # concierge.sh calls spira_require claude before any subcommand dispatch,
