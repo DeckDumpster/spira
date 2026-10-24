@@ -220,6 +220,13 @@ impl Tmux {
         Tmux { bin: bin.into() }
     }
 
+    pub fn installed(&self) -> bool {
+        match Command::new(&self.bin).env_remove("TMUX").arg("-V").output() {
+            Ok(_) => true,
+            Err(e) => e.kind() != std::io::ErrorKind::NotFound,
+        }
+    }
+
     fn cmd(&self) -> Command {
         let mut c = Command::new(&self.bin);
         c.env_remove("TMUX");
