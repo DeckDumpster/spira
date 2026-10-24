@@ -227,6 +227,11 @@ pub fn run(ctx: &Ctx) -> Report {
     let mut ordered: Vec<String> = ctx.manifest.enable(&ctx.host.instance);
     ordered.sort_by_key(|u| if u == "dolt-beads.service" { 0 } else { 1 });
 
+    let provision = inst_name("spira-submission-provision.service", &ctx.host.instance);
+    if !ctx.world_halted && ordered.contains(&inst_name("spira-submission-provision.timer", &ctx.host.instance)) {
+        let _ = ctx.systemctl.start(&provision);
+    }
+
     let new_by_inst: std::collections::BTreeSet<&String> = new_units.iter().collect();
     for u in &ordered {
         if masked.contains(u) {
@@ -674,6 +679,34 @@ mod tests {
         assert!(!unit_dir.join("spira-round-template-prod.timer").exists());
         assert!(!unit_dir.join("spira-round-template-prod.service.d").exists());
         assert!(sc.disabled_now.borrow().contains(&"spira-round-template-prod.timer".to_string()));
+    }
+
+    #[test]
+    fn submission_provisioning_runs_before_loom_starts() {
+        let td = tempdir();
+        let unit_dir = td.join("units");
+        let tmpl_dir = td.join("templates");
+        fs::create_dir_all(&unit_dir).unwrap();
+        fs::create_dir_all(&tmpl_dir).unwrap();
+        for n in ["spira-loom.service", "spira-submission-provision.service"] {
+            fs::write(tmpl_dir.join(n), "[Service]\nExecStart=/bin/true\n").unwrap();
+        }
+        fs::write(tmpl_dir.join("spira-submission-provision.timer"), "[Unit]\nUnit=spira-submission-provision.service\n[Timer]\nOnCalendar=daily\n").unwrap();
+        let mut manifest = tiny_manifest();
+        manifest.units = build(&Inputs { instance: "prod".into(), dolt_data_set: false, dolt_durable_set: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) })
+            .unwrap()
+            .units
+            .into_iter()
+            .filter(|u| u.name == "spira-loom.service" || u.name.starts_with("spira-submission-provision"))
+            .collect();
+        let h = host();
+        let sc = FakeSystemctl::default();
+        let no_suspend = |_: &str| false;
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        run(&ctx);
+        let order = sc.order.borrow().clone();
+        let at = |what: &str| order.iter().position(|o| o == what).unwrap_or_else(|| panic!("{what} not in {order:?}"));
+        assert!(at("start spira-submission-provision-prod.service") < at("enable_now spira-loom-prod.service"), "{order:?}");
     }
 
     #[test]

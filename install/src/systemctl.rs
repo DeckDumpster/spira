@@ -19,6 +19,8 @@ pub trait Systemctl {
     /// `systemctl restart`. Some units (`dolt-beads.service`, `RefuseManualStop=yes`) refuse
     /// this outright; callers needing that unit's own kill+respawn path use [`Self::kill`].
     fn restart(&self, unit: &str) -> Result<(), String>;
+    /// `systemctl start` — a oneshot unit blocks until it has finished.
+    fn start(&self, unit: &str) -> Result<(), String>;
     /// `systemctl kill` — bypasses job control, for a unit that refuses a restart job.
     fn kill(&self, unit: &str) -> Result<(), String>;
     /// `Type=` (empty when the unit cannot be shown).
@@ -104,6 +106,14 @@ impl Systemctl for RealSystemctl {
             Err(err)
         }
     }
+    fn start(&self, unit: &str) -> Result<(), String> {
+        let (ok, _, err) = self.run(&["start", unit]);
+        if ok {
+            Ok(())
+        } else {
+            Err(err)
+        }
+    }
     fn restart(&self, unit: &str) -> Result<(), String> {
         let (ok, _, err) = self.run(&["restart", unit]);
         if ok {
@@ -153,6 +163,8 @@ pub struct FakeSystemctl {
     pub units: std::cell::RefCell<BTreeMap<String, FakeUnit>>,
     pub reloads: std::cell::Cell<u32>,
     pub restarts: std::cell::RefCell<Vec<String>>,
+    pub started: std::cell::RefCell<Vec<String>>,
+    pub order: std::cell::RefCell<Vec<String>>,
     pub kills: std::cell::RefCell<Vec<String>>,
     pub enabled_now: std::cell::RefCell<Vec<String>>,
     pub disabled_now: std::cell::RefCell<Vec<String>>,
@@ -190,6 +202,7 @@ impl Systemctl for FakeSystemctl {
     }
     fn enable_now(&self, unit: &str) -> Result<(), String> {
         self.enabled_now.borrow_mut().push(unit.to_string());
+        self.order.borrow_mut().push(format!("enable_now {unit}"));
         let mut m = self.units.borrow_mut();
         let e = m.entry(unit.to_string()).or_default();
         e.enabled = Some("enabled".into());
@@ -209,8 +222,14 @@ impl Systemctl for FakeSystemctl {
         self.units.borrow_mut().entry(unit.to_string()).or_default().enabled = Some("disabled".into());
         Ok(())
     }
+    fn start(&self, unit: &str) -> Result<(), String> {
+        self.started.borrow_mut().push(unit.to_string());
+        self.order.borrow_mut().push(format!("start {unit}"));
+        Ok(())
+    }
     fn restart(&self, unit: &str) -> Result<(), String> {
         self.restarts.borrow_mut().push(unit.to_string());
+        self.order.borrow_mut().push(format!("restart {unit}"));
         self.units.borrow_mut().entry(unit.to_string()).or_default().active = true;
         Ok(())
     }
