@@ -170,8 +170,6 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-reclaim.timer", true));
     m.units.push(t("spira-refusal-watch.service", false));
     m.units.push(t("spira-refusal-watch.timer", true));
-    m.units.push(t("spira-acceptance-daily.service", false));
-    m.units.push(t("spira-acceptance-daily.timer", true));
     m.units.push(t("spira-filings-collect.service", false));
     m.units.push(t("spira-filings-collect.timer", true));
     m.units.push(t("spira-kit-bump.service", false));

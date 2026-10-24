@@ -777,13 +777,6 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v refusal-watch)\""
 
 [[dep]]
-name = "acceptance-daily"
-tier = "release"
-purpose = "Spira's acceptance-daily binary, from the release's bin/ — runs the fresh-install acceptance against the landing ref once a day and files or amends one builder bead per failing check"
-version_min = ""
-version_probe = "readlink -f \"$(command -v acceptance-daily)\""
-
-[[dep]]
 name = "filings-collect"
 tier = "release"
 purpose = "Spira's filings-collect binary, from the release's bin/ — reads product hosts' filings outboxes over ssh into builder beads and acknowledges them"

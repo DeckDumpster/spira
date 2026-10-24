@@ -4,6 +4,11 @@
 #
 # Usage: acceptance-ci.sh <tag> [--prev-tag <t>] [--bd-db <path>]
 #                                [--agent <path>] [--record] [--waive-upgrade]
+#                                [--tarball <path>]
+#
+# --tarball tests a tarball built from a checkout instead of a published release: <tag> is then
+# only a label for the run (acceptance-daily.yml passes local-<sha>), and --record is refused
+# because there is no tag to carry the note.
 #
 # The run itself is `release acceptance` (sp-ak7qm; release/DESIGN.md "acceptance"): the
 # candidate's own binary, which acceptance.yml takes from the release asset onto
@@ -24,6 +29,7 @@ _bd_db="$HOME/.local/share/spira/db"
 _agent=""
 _do_record=0
 _waive_upgrade=0
+_tarball=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -35,6 +41,8 @@ while [ $# -gt 0 ]; do
         --agent=*)    _agent="${1#--agent=}"; shift ;;
         --record)     _do_record=1; shift ;;
         --waive-upgrade) _waive_upgrade=1; shift ;;
+        --tarball)    _tarball="${2:-}"; shift 2 ;;
+        --tarball=*)  _tarball="${1#--tarball=}"; shift ;;
         -*)           printf 'acceptance-ci: unknown option: %s\n' "$1" >&2; exit 2 ;;
         *)
             if [ -z "$_tag" ]; then _tag="$1"
@@ -48,6 +56,11 @@ done
     printf 'usage: acceptance-ci.sh <tag> [--prev-tag <t>] [--bd-db <path>]\n' >&2
     exit 2
 }
+
+if [ -n "$_tarball" ]; then
+    [ -f "$_tarball" ] || { printf 'acceptance-ci: --tarball: no such file: %s\n' "$_tarball" >&2; exit 2; }
+    [ "$_do_record" -eq 0 ] || { printf 'acceptance-ci: --tarball cannot be combined with --record\n' >&2; exit 2; }
+fi
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 export PATH="$HOME/.local/bin:$PATH"
@@ -105,6 +118,7 @@ mkdir -p "$SPIRA_ACCEPTANCE_FORENSICS"
 _run_args=("$_tag" --scratch-repo "$HOME/scratch-repo" --bd-db "$_bd_db" --notes-repo "$_NOTES_REPO")
 [ -n "$_agent" ]        && _run_args+=(--agent "$_agent")
 [ "$_do_record" -eq 1 ] && _run_args+=(--record)
+[ -n "$_tarball" ]      && _run_args+=(--tarball "$_tarball")
 [ -n "$_prev_tag" ]     && _run_args+=(--prev-tag "$_prev_tag")
 [ "$_waive_upgrade" -eq 1 ] && _run_args+=(--waive-upgrade)
 [ -n "${_declared_waiver:-}" ] && _run_args+=(--declared-waiver "$_declared_waiver")

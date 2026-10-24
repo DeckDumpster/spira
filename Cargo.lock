@@ -3,17 +3,6 @@
 version = 4
 
 [[package]]
-name = "acceptance-daily"
-version = "0.1.0"
-dependencies = [
- "libc",
- "serde_json",
- "spira-config",
- "spira-otel",
- "testkit",
-]
-
-[[package]]
 name = "aeon"
 version = "1.0.0"
 dependencies = [
