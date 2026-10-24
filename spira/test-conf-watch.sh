@@ -13,7 +13,7 @@
 # left the loop silent for its whole window.
 #
 # tier: T1
-# covers: spira/loom.sh spira/conf.sh UC-cockpit-observability-07
+# covers: spira/metrics-stack.sh spira/loom.sh spira/conf.sh UC-cockpit-observability-07
 # host-reason: runs loom.sh as a real child process against a temp filesystem; no writes outside $TMP
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -32,6 +32,7 @@ chmod +x "$FAKE_BIN"
 # exited early); the change case returns as soon as the loop notices.
 TICK=0.2
 WIN_STAY=0.6
+WIN_STAY_TOUCH=3
 # Startup (sourcing conf.sh) can exceed 3s under a loaded corpus; the window costs time only on failure.
 WIN_CHANGE=15
 
@@ -77,6 +78,17 @@ for name in loom; do
     "run_$name" "$WIN_STAY" >/dev/null 2>/dev/null || ec_stay=$?
     is "$label: no config change — stays running" "124" "$ec_stay"
 
+    # ── SAME-CONTENT REWRITE: mtime moves, content does not — still no restart ─────────
+    marker_same="$RUN/armed-same"
+    "run_$name" "$WIN_STAY_TOUCH" "$marker_same" >/dev/null 2>"$TMP/$name-same.log" &
+    same_pid=$!
+    wait_for_marker "$marker_same" || bad "$label: same-content rewrite — armed" "marker never appeared within 10s"
+    cp "$_TL_CONF_OVERRIDE" "$TMP/same.copy" && cp "$TMP/same.copy" "$_TL_CONF_OVERRIDE"
+    touch "$_TL_CONF_OVERRIDE"
+    ec_same=0
+    wait "$same_pid" || ec_same=$?
+    is "$label: same-content rewrite — stays running" "124" "$ec_same"
+
     # ── CHANGE CASE: touch the override file only once the loop has armed ─────────────
     marker="$RUN/armed"
     err_log="$TMP/$name-err.log"
@@ -87,7 +99,7 @@ for name in loom; do
     else
         bad "$label: config change — armed before the touch" "marker never appeared within 10s"
     fi
-    touch "$_TL_CONF_OVERRIDE"
+    printf '\n# changed\n' >> "$_TL_CONF_OVERRIDE"
     ec_chg=0
     wait "$run_pid" || ec_chg=$?
     is "$label: config change — exits 0" "0" "$ec_chg"

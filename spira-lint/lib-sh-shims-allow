@@ -49,5 +49,6 @@ spira/conf.sh:spira_toml_resolve
 spira/conf.sh:spira_toml_write_target
 
 # --- blocked on group 5 (health.sh, collect.sh, loom.sh — operator surface, "rewrite when
-# --- touched"): a general mtime-changed check with no Spira-specific logic to port.
+# --- touched"): a general content-changed check with no Spira-specific logic to port.
 spira/conf.sh:conf_changed
+spira/conf.sh:conf_stamp

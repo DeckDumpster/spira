@@ -567,12 +567,18 @@ spira_unit() {
         spira-config unit "$1" "${2:-service}"
 }
 
-# conf_changed <path> <mtime0> -> 0 if <path>'s mtime now differs from <mtime0>, 1 otherwise.
-# The one shared implementation of law-long-lived-processes-pin-their-config's watch loop:
-# health.sh, loom.sh and collect.sh each capture their own mtime0 at startup and poll this
-# on their own tick, rather than each repeating the same `stat` comparison.
-conf_changed() {   # conf_changed <path> <mtime0>
-    local path="$1" mtime0="$2"
+# conf_stamp <path> -> the sha256 of <path>'s content, or "absent". The watch loops compare
+# content, never mtime: a rewrite of identical bytes must not restart a long-lived process.
+conf_stamp() {   # conf_stamp <path>
+    local h
+    h="$(sha256sum "$1" 2>/dev/null)" || { printf 'absent'; return 0; }
+    printf '%s' "${h%% *}"
+}
+
+# conf_changed <path> <stamp0> -> 0 if <path>'s content differs from the conf_stamp taken at
+# startup, 1 otherwise. loom.sh and metrics-stack.sh each capture their own stamp and poll this.
+conf_changed() {   # conf_changed <path> <stamp0>
+    local path="$1" stamp0="$2"
     [ -n "$path" ] || return 1
-    [ "$(stat --format='%Y' "$path" 2>/dev/null || echo 0)" != "$mtime0" ]
+    [ "$(conf_stamp "$path")" != "$stamp0" ]
 }

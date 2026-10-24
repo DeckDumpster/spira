@@ -13,10 +13,10 @@ if [ -z "${SPIRA_METRICS_DATA:-}" ]; then
     printf 'metrics-stack: SPIRA_METRICS_DATA is empty — %s stays idle\n' "$part" >&2
     [ -z "${SPIRA_METRICS_IDLE_ONCE:-}" ] || exit 0
     _conf_file="$(spira_toml_write_target)"
-    _conf_mtime_0="$(stat --format='%Y' "$_conf_file" 2>/dev/null || echo 0)"
-    # waits-on: the config file mtime; cap 1 day, then the unit restarts and re-checks
+    _conf_stamp_0="$(conf_stamp "$_conf_file")"
+    # waits-on: the config file content; cap 1 day, then the unit restarts and re-checks
     _idle_end=$((SECONDS + 86400))
-    while ! conf_changed "$_conf_file" "$_conf_mtime_0" && [ "$SECONDS" -lt "$_idle_end" ]; do sleep 5; done
+    while ! conf_changed "$_conf_file" "$_conf_stamp_0" && [ "$SECONDS" -lt "$_idle_end" ]; do sleep 5; done
     exit 0
 fi
 case "$SPIRA_METRICS_DATA" in /*) ;; *) printf 'metrics-stack: SPIRA_METRICS_DATA must be absolute\n' >&2; exit 2 ;; esac
