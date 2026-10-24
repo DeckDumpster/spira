@@ -17,8 +17,8 @@ struct Fake {
 }
 
 impl World for Fake {
-    fn latest_release(&self) -> Result<String, String> {
-        Ok(self.release.clone())
+    fn latest_release(&self) -> Result<Option<String>, String> {
+        Ok((!self.release.is_empty()).then(|| self.release.clone()))
     }
     fn site_requirement(&self, s: &Site) -> Result<String, String> {
         self.reqs.get(&s.name).cloned().ok_or_else(|| "no requirement".into())
@@ -153,6 +153,22 @@ mod registry {
         assert_eq!(index_path("Dumpster-Kit"), "du/mp/dumpster-kit");
     }
 
+    #[test]
+    fn a_404_index_is_no_release_yet_and_other_failures_are_errors() {
+        use crate::real::index_body;
+        assert_eq!(index_body("{\"vers\":\"0.1.0\"}\n200", "u").unwrap(), Some("{\"vers\":\"0.1.0\"}"));
+        assert_eq!(index_body("not found\n404", "u").unwrap(), None);
+        assert!(index_body("oops\n500", "u").is_err());
+        assert!(index_body("", "u").is_err());
+    }
+
+    #[test]
+    fn a_pass_over_an_unpublished_crate_files_nothing_and_says_so() {
+        let o = pass(&Fake::default(), &[site("dumpstar")], "dumpster-kit").unwrap();
+        assert!(o.unreleased);
+        assert_eq!(o, Outcome { unreleased: true, ..Outcome::default() });
+    }
+
     fn g(dir: &std::path::Path, args: &[&str]) {
         let o = std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
         assert!(o.status.success(), "{args:?}: {}", String::from_utf8_lossy(&o.stderr));
@@ -175,7 +191,7 @@ mod registry {
 
         let real = Real::new(format!("file://{}", reg.display()), "dumpster-kit".into(), t.path().join("state"), "builder".into());
         let site = Site { name: "site".into(), path: s.to_string_lossy().into(), git_ref: "main".into(), file: "Cargo.toml".into() };
-        assert_eq!(real.latest_release().unwrap(), "0.3.1");
+        assert_eq!(real.latest_release().unwrap().as_deref(), Some("0.3.1"));
         assert_eq!(real.site_requirement(&site).unwrap(), "0.3");
         assert_eq!(real.site_locked(&site).unwrap(), "0.3.0");
     }

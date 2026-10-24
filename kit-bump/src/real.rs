@@ -34,6 +34,17 @@ pub fn index_path(name: &str) -> String {
     }
 }
 
+/// The index text of a curl reply ending in a `\n<status>` line; `None` for a 404 (nothing published).
+/// `file://` replies carry status 000 and are read as the body they are.
+pub fn index_body<'a>(reply: &'a str, url: &str) -> Result<Option<&'a str>, String> {
+    let (body, status) = reply.rsplit_once('\n').ok_or_else(|| format!("{url}: reply has no status line"))?;
+    match status.trim() {
+        "200" | "000" => Ok(Some(body)),
+        "404" | "410" => Ok(None),
+        s => Err(format!("{url} answered HTTP {s}")),
+    }
+}
+
 fn git(path: &str, args: &[&str]) -> Result<String, String> {
     let mut c = bounded("git");
     c.arg("-C").arg(path).args(args);
@@ -75,12 +86,15 @@ impl Real {
 }
 
 impl World for Real {
-    fn latest_release(&self) -> Result<String, String> {
+    fn latest_release(&self) -> Result<Option<String>, String> {
         let url = format!("{}/{}", self.registry.trim_end_matches('/'), index_path(&self.crate_name));
         let mut c = bounded_for("curl", "30");
-        c.args(["-fsS", "--max-time", "25", &url]);
-        let index = run(c)?;
-        crate::newest_release(&index).ok_or_else(|| format!("no release of `{}` in {url}", self.crate_name))
+        c.args(["-sS", "--max-time", "25", "-w", "\n%{http_code}", &url]);
+        let reply = run(c)?;
+        let Some(index) = index_body(&reply, &url)? else {
+            return Ok(None);
+        };
+        crate::newest_release(index).map(Some).ok_or_else(|| format!("no release of `{}` in {url}", self.crate_name))
     }
 
     fn site_requirement(&self, site: &Site) -> Result<String, String> {
