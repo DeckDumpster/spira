@@ -412,6 +412,40 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 12,
+      "type": "state-timeline",
+      "title": "daily fresh-install acceptance verdict",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {"type": "value", "options": {"1": {"text": "pass", "color": "green"}, "0": {"text": "fail", "color": "red"}, "-1": {"text": "no run", "color": "orange"}}}
+          ]
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "spira_acceptance_verdict",
+          "legendFormat": "{{commit}}",
+          "refId": "A"
+        }
+      ]
     }
   ]
 }

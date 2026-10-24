@@ -1,0 +1,28 @@
+[Unit]
+Description=Spira daily acceptance — fresh install of the landing ref's tip; a red files or amends one builder bead per failing check
+After=lc-serve.service
+Wants=lc-serve.service
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
+Environment=SPIRA_HOME=@SPIRA_HOME@
+Environment=SPIRA_RUN=@SPIRA_RUN@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+Nice=19
+CPUQuota=100%
+IOSchedulingClass=idle
+ExecStart=@SPIRA_PROD_ROOT@/bin/acceptance-daily pass --state @SPIRA_RUN@/acceptance-daily.state
+# Exit 1 is a run that gave no verdict, or a red that could not be filed; the unit fails so it is seen.
+# Up to 4h waiting for a landing round to end, then up to 3h for the run itself.
+TimeoutStartSec=8h
+StandardOutput=append:@SPIRA_RUN@/acceptance-daily.log
+StandardError=append:@SPIRA_RUN@/acceptance-daily.log
+
+[Install]
+WantedBy=default.target
+
+[X-Spira]
+Plane=observability

@@ -79,6 +79,7 @@ members = [
     "refusal-watch",
     "kit-bump",
     "filings-collect",
+    "acceptance-daily",
     "runtime-watch",
     "spira-submission",
     "store-persist",
