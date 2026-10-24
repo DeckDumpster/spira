@@ -959,6 +959,7 @@ fn cmd_pilgrimage(home: &str, args: &[String]) -> i32 {
         file.push("--priority".into());
         file.push(p);
     }
+    // batch-job: re-enters bead file, which bounds its own store calls
     let out = std::process::Command::new(exe).args(&file).stderr(Stdio::inherit()).output();
     let _ = std::fs::remove_file(&body_path);
     let out = match out {
