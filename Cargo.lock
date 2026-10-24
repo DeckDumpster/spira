@@ -1077,6 +1077,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pilgrim-login"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "regex",
+ "serde_json",
+ "spira-config",
+ "testkit",
+]
+
+[[package]]
 name = "pin-project"
 version = "1.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"

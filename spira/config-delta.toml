@@ -138,3 +138,4 @@ removed = ["spira.broker_enable", "spira.express_label", "spira.overlap_defer_la
 "spira.identity_login_host" = ""
 "spira.identity_login_cmd" = ""
 "spira.identity_login_ttl_secs" = "900"
+"spira.identity_login_url" = ""

@@ -824,3 +824,10 @@ tier = "dev"
 purpose = "the bd stand-in the cockpit suites point SPIRA_BDJSON_FIXTURE at; built from the bead crate"
 version_min = ""
 version_probe = "echo built-from-bead"
+
+[[dep]]
+name = "pilgrim-login"
+tier = "release"
+purpose = "Spira's pilgrim-login binary, from the release's bin/ — signs a headless Claude Code in to an MCP server as the pilgrim, with the login code from the broker and the approval completed in the pinned Playwright image"
+version_min = ""
+version_probe = "readlink -f \"$(command -v pilgrim-login)\""

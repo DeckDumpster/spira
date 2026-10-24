@@ -497,3 +497,4 @@ pilgrim_account
 identity_login_host
 identity_login_cmd
 identity_login_ttl_secs
+identity_login_url
