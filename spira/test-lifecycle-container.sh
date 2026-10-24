@@ -160,6 +160,13 @@ want "POSITIVE CONTROL: spira_lc CAN insert+select event (already has rows from 
 
 # ── the content store: spira_lc reads it, and cannot write it ─────────────────────────
 root_sql sql -q "CREATE DATABASE IF NOT EXISTS spira; CREATE TABLE IF NOT EXISTS spira.issues (id VARCHAR(64) PRIMARY KEY, title TEXT, priority INT, issue_type VARCHAR(32), status VARCHAR(32), defer_until DATETIME, created_at DATETIME, updated_at DATETIME, closed_at DATETIME, description TEXT, notes TEXT, external_ref VARCHAR(255)); CREATE TABLE IF NOT EXISTS spira.labels (issue_id VARCHAR(64), label VARCHAR(64), PRIMARY KEY (issue_id, label)); CREATE TABLE IF NOT EXISTS spira.dependencies (id CHAR(36) PRIMARY KEY, issue_id VARCHAR(255) NOT NULL, type VARCHAR(32) NOT NULL DEFAULT 'blocks', depends_on_issue_id VARCHAR(255), depends_on_wisp_id VARCHAR(255), depends_on_external VARCHAR(255))"
+mkdir -p "$TMP/store/.beads"
+printf '{"dolt_mode":"server","dolt_database":"spira"}\n' > "$TMP/store/.beads/metadata.json"
+tl_config SPIRA_DB="$TMP/store"
+out="$(as_user spira_lc "$PASS" sql -q "SELECT COUNT(*) AS n FROM spira.issues" -r json 2>&1)"
+want "grants.sql alone gives spira_lc no read on the content store (the grant is by configured name)" "denied" "$out"
+out="$(SPIRA_LC_ADMIN_USER=root SPIRA_LC_ADMIN_PASSWORD="" "$BIN" admin-migrate "$REPO/lifecycle/migrations" 2>&1)"
+wantrc "admin-migrate grants the content read" 0 $?
 for tbl in issues labels dependencies; do
     out="$(as_user spira_lc "$PASS" sql -q "SELECT COUNT(*) AS n FROM spira.$tbl" -r json 2>&1)"
     want "POSITIVE CONTROL: spira_lc CAN select spira.$tbl" "rows" "$out"

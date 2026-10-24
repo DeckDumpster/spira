@@ -100,6 +100,16 @@ exit 1
 MOCK
 chmod +x "$BIN/sentinel"
 
+cat > "$BIN/spira-lc" <<'MOCK'
+#!/usr/bin/env bash
+case "${FAKE_LC:-ok}" in
+    denied) echo "CannotTell(\"Error 1105: Access denied for user 'spira_lc'\")"; exit 2 ;;
+    err)    echo "connection refused"; exit 2 ;;
+esac
+exit 0
+MOCK
+chmod +x "$BIN/spira-lc"
+
 # Loom probe stub — always answers 200, so ready.sh never reaches its real HTTP probe
 # loop (that loop, not this check, is what flaked test-ready.sh in round 96).
 cat > "$BIN/loom-probe" <<'MOCK'
@@ -224,6 +234,14 @@ is     "loom FAIL exits 1"                        1                             
 out="$(run_ready "FAKE_LOOM=200 9999ms" -- )"; rc=$?
 want   "loom over budget: WARN"                   "  WARN  loom answers 200 but over budget" "$out"
 is     "loom WARN alone exits 0"                  0                               "$rc"
+
+out="$(run_ready "FAKE_LC=denied" -- )"; rc=$?
+want   "content read denied: FAIL names the grant" "  FAIL  spira_lc cannot read bead content" "$out"
+is     "content-read FAIL exits 1"                1                               "$rc"
+
+out="$(run_ready "FAKE_LC=err" -- )"; rc=$?
+want   "content read errors otherwise: ? line"    "  ?     bead content read"       "$out"
+is     "content-read ? exits 1"                   1                               "$rc"
 
 touch -d '2 hours ago' "$RUN/cockpit.env"
 out="$(run_ready --)"; rc=$?

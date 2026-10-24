@@ -17,7 +17,7 @@ const CANNOT_TELL: i32 = 2;
 /// `spira`; a testdb fixture and a sim world name their own (`sptest_…`) on the server lc-serve
 /// reaches. A store that names none is refused by name, never defaulted
 /// (law-a-config-value-has-no-fallback): a guessed name reads some other database.
-fn content_db() -> Result<&'static str, String> {
+pub(crate) fn content_db() -> Result<&'static str, String> {
     static DB: std::sync::OnceLock<Result<String, String>> = std::sync::OnceLock::new();
     DB.get_or_init(|| spira_config::process::cfg("SPIRA_DB").and_then(|db| database_of(std::path::Path::new(db.trim()))))
         .as_deref()
