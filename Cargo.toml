@@ -78,6 +78,7 @@ members = [
     "sift",
     "refusal-watch",
     "kit-bump",
+    "pilgrim-login",
     "filings-collect",
     "runtime-watch",
     "spira-submission",

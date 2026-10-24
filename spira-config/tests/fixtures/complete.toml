@@ -362,6 +362,7 @@ pilgrim_account = ""
 identity_login_host = ""
 identity_login_cmd = ""
 identity_login_ttl_secs = "900"
+identity_login_url = ""
 sccache_dav_addr = "auto:9431"
 sccache_dav_max_gb = 40
 sccache_dav_tailnet_addr = ""

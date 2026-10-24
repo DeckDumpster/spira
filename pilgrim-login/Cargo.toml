@@ -1,0 +1,25 @@
+[package]
+name = "pilgrim-login"
+version = "0.1.0"
+edition = "2021"
+description = "pilgrim-login — signs a headless Claude Code in to an MCP server as the pilgrim: the login code comes from the broker's identity-login-code verb, the approval is completed in the pinned Playwright image."
+
+[lib]
+name = "pilgrim_login"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pilgrim-login"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+spira-config = { path = "../spira-config" }
+spira-otel = { path = "../spira-otel" }
+libc = "0.2"
+regex = "1"
+serde_json = "1"
+
+[dev-dependencies]
+serde_json = "1"
+testkit = { path = "../testkit" }
