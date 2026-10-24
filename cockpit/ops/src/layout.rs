@@ -409,6 +409,25 @@ mod tests {
     }
 
     #[test]
+    fn ensure_on_a_headless_install_is_a_one_line_noop() {
+        let dir = testkit::TempDir::new("sp-sesur6-headless");
+        let run = dir.join("run");
+        std::fs::create_dir_all(&run).unwrap();
+        let mut conf = conf_with("", "");
+        conf.run = run.clone();
+        let present = dir.join("tmux-present");
+        testkit::write_exe(&present, "#!/bin/sh\nexit 0\n");
+        assert!(Tmux::with_bin(present.to_string_lossy().to_string()).installed());
+        let absent = dir.join("no-such-tmux");
+        let layout = Layout { tmux: Tmux::with_bin(absent.to_string_lossy().to_string()), conf };
+        let me = std::env::current_exe().unwrap();
+        assert_eq!(layout.ensure(&me, &me), Ok(String::new()));
+        let log = std::fs::read_to_string(run.join("cockpit-heal.log")).unwrap();
+        assert!(log.contains("headless"), "{log}");
+        assert!(!log.contains("No such file"), "{log}");
+    }
+
+    #[test]
     fn concierge_script_resolves_in_the_release_with_repo_unset() {
         let dir = testkit::TempDir::new("sp-9hn7po-rel");
         testkit::write_exe(&dir.join("concierge.sh"), "#!/bin/sh\n");
@@ -918,6 +937,11 @@ impl Layout {
                 "cockpit: ensure refused — this is a copy, not the installed layout binary; run {} ensure",
                 installed_bin.display()
             ));
+        }
+
+        if !self.tmux.installed() {
+            self.heal_log("headless install: no tmux, nothing to heal");
+            return Ok(String::new());
         }
 
         self.detach_idle_clients();

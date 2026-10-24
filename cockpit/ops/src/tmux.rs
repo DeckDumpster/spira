@@ -220,6 +220,13 @@ impl Tmux {
         Tmux { bin: bin.into() }
     }
 
+    pub fn installed(&self) -> bool {
+        match spira_config::bounded::bounded(&self.bin).env_remove("TMUX").arg("-V").output() {
+            Ok(o) => o.status.code() != Some(127),
+            Err(_) => true,
+        }
+    }
+
     fn cmd(&self) -> Command {
         let mut c = Command::new(&self.bin);
         c.env_remove("TMUX");
