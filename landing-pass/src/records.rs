@@ -111,6 +111,23 @@ impl Files {
         let _ = atomic_write(&self.round_deferred_file(branch), &format!("{tip}\n"));
     }
 
+    /// Count a NO_VERDICT on this exact tip; a different tip starts again at 1.
+    pub fn bump_infra(&self, branch: &str, tip: &str) -> u32 {
+        let file = self.run.join("gate-infra").join(branch_key(branch));
+        let prior = fs::read_to_string(&file).ok().and_then(|t| {
+            let mut l = t.lines();
+            let was = l.next()?.to_string();
+            Some((was, l.next()?.parse::<u32>().ok()?))
+        });
+        let n = match prior {
+            Some((was, n)) if was == tip => n + 1,
+            _ => 1,
+        };
+        let _ = fs::create_dir_all(self.run.join("gate-infra"));
+        let _ = atomic_write(&file, &format!("{tip}\n{n}\n"));
+        n
+    }
+
     pub fn deferred_to_round(&self, branch: &str, tip: &str) -> bool {
         fs::read_to_string(self.round_deferred_file(branch)).map(|t| t.trim() == tip).unwrap_or(false)
     }

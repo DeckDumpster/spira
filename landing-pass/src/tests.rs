@@ -749,6 +749,20 @@ fn no_verdict_is_counted_by_the_seam_and_never_reopens() {
 }
 
 #[test]
+fn repeated_no_verdicts_on_one_tip_defer_it_to_the_round() {
+    let h = H::new(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (75, "gate: VERDICT=NO_VERDICT reason=lock-timeout branch=b repo=spira suite=-\n".into()));
+    for _ in 0..h.s.noverdict_max {
+        assert!(!h.logged("deferred to round: no gate verdict"));
+        h.run();
+    }
+    assert!(h.logged("deferred to round: no gate verdict"));
+    h.run();
+    assert!(h.logged("was deferred to round: over-cap"));
+}
+
+#[test]
 fn a_pass_clears_the_branchs_noverdict_counters() {
     let h = H::new(LandMode::Queue);
     h.closed("sp-a", "t1");

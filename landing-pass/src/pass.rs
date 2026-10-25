@@ -539,6 +539,10 @@ impl<'a> Pass<'a> {
                         self.files.back_off(br, &tip, self.clock.now());
                     }
                     self.lib.noverdict(id, br, name, &reason, g.outcome.word(), &g.out);
+                    if !moved && self.files.bump_infra(br, &tip) >= self.s.noverdict_max.max(1) {
+                        self.files.defer_to_round(br, &tip);
+                        self.log(&format!("CHECK6 {id}: {br} at {tip} deferred to round: no gate verdict {} time(s) running", self.s.noverdict_max.max(1)));
+                    }
                 }
                 _ => {
                     let (closed, st) = self.handed_on_now(id);
