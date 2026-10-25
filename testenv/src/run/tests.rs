@@ -1587,12 +1587,12 @@ fn mounting(rt: &FakeRuntime, slot: PathBuf) {
 
 /// A sibling test's fork can hold a copy of the slot's flock descriptor until its exec, so a
 /// trial that follows another on the same slot first waits for the lock to be really free.
-fn slot_lock_free(lock: &Path) {
+fn slot_lock_free(lock: &Path) -> std::fs::File {
     fs::create_dir_all(lock.parent().unwrap()).unwrap();
     let end = Instant::now() + Duration::from_secs(30);
     while Instant::now() < end {
-        if crate::worktree::try_lock(lock).is_some() {
-            return;
+        if let Some(held) = crate::worktree::try_lock(lock) {
+            return held;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
@@ -1621,7 +1621,7 @@ fn a_warm_trial_claims_the_slots_spare_once_tears_it_down_and_asks_for_a_refill(
     let args = ["--deadline", "300", "--suites", "test-a.sh", "topic"];
 
     // 1st trial: the slot has no spare yet — it boots its own container ON the slot
-    slot_lock_free(&lock);
+    let _ = slot_lock_free(&lock);
     assert_eq!(w.run(&rt, &b, &args, "", &w.root), 0);
     assert!(w.has_line(|l| l.contains("warm slot 0: no spare booted in this slot yet")));
     let ups: Vec<Vec<String>> = rt
@@ -1663,7 +1663,7 @@ fn a_warm_trial_claims_the_slots_spare_once_tears_it_down_and_asks_for_a_refill(
         .iter()
         .filter(|c| c[0] == "up")
         .count();
-    slot_lock_free(&lock);
+    let _ = slot_lock_free(&lock);
     assert_eq!(w.run(&rt, &b, &args, "", &w.root), 0);
     assert!(
         w.has_line(|l| l.contains(&format!("claimed warm spare {spare}"))),
@@ -1696,7 +1696,7 @@ fn a_warm_trial_claims_the_slots_spare_once_tears_it_down_and_asks_for_a_refill(
     assert_eq!(*w.refills.lock().unwrap(), vec![0, 0]);
 
     // 3rd trial with no refill in between: the spare is gone, so it boots cold again
-    slot_lock_free(&lock);
+    let _ = slot_lock_free(&lock);
     assert_eq!(w.run(&rt, &b, &args, "", &w.root), 0);
     assert!(w.has_line(|l| l.contains("no spare booted")));
 }
@@ -2175,8 +2175,7 @@ fn a_forge_repo_tier_runs_beside_another_reader_and_waits_only_for_a_swap() {
         assert_eq!(rt.once_calls.lock().unwrap().len(), 1, "a shared holder does not block a run");
     }
     fs::write(cache.join("holder"), "testenv-foreign-swapper-lint").unwrap();
-    slot_lock_free(&cache.join("lock"));
-    let held = crate::worktree::try_lock(&cache.join("lock")).expect("lock is free");
+    let held = slot_lock_free(&cache.join("lock"));
     assert_eq!(w.run(&rt, &b, &["--deadline", "1", "topic"], "", &w.root), 2);
     assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=deadline-suites");
     assert!(w.lines.lock().unwrap().iter().any(|l| l.contains("held by testenv-foreign-swapper-lint")), "the wait names its holder");
@@ -2205,8 +2204,7 @@ fn a_forge_check_with_no_deadline_gets_the_declared_cap() {
     let b = FakeBuilder::new(None);
     let cache = w.root.path().join("run/foreign-cache").join(w.repo.file_name().unwrap());
     fs::create_dir_all(&cache).unwrap();
-    slot_lock_free(&cache.join("lock"));
-    let held = crate::worktree::try_lock(&cache.join("lock")).expect("lock is free");
+    let held = slot_lock_free(&cache.join("lock"));
     assert_eq!(w.run(&rt, &b, &["topic"], "", &w.root), 2);
     assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=deadline-suites");
     assert!(w.lines.lock().unwrap().iter().any(|l| l.contains("over the 1s cap")), "{:?}", w.lines.lock().unwrap());
