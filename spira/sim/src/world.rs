@@ -209,7 +209,8 @@ pub fn run(cmd: &mut Command, deadline: Duration) -> Result<String, String> {
     if status.success() {
         Ok(stdout)
     } else {
-        Err(format!("{name}: {status}: {}", stderr.trim()))
+        let why = if stderr.trim().is_empty() { stdout.trim() } else { stderr.trim() };
+        Err(format!("{name}: {status}: {why}"))
     }
 }
 

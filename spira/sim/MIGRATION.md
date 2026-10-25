@@ -53,3 +53,25 @@ seen red. The "coverage the world lacks" column above is the work that must land
 is retired by the bead that adds its scenario and shows it red.
 
 test-queue-publish is already gone (moved to the queue crate), so only ten of the eleven remain.
+
+# Sim batch 2: two scenarios built and their suites deleted
+
+The retirement rule is that the scenario was seen red on the suite's planted defect; the sim buys
+realism and seed replay, not speed.
+
+| suite | scenario | suite-seconds removed | red on the planted defect |
+|---|---|---|---|
+| test-supersede-duty | `supersede` | 2 | the duty supersedes on any successor row (`only_a_landed_successor_supersedes`, the bd-note check) |
+| test-batch-claim-race | `claim-vs-batch` | 1 | IN_DELIVERY accepts a claim (`claim-vs-batch.sh` exit 9) |
+
+The scenarios add 38 s to the sim lane (a world costs about 10 s before a scenario acts); the sim lane,
+14 suites, ran 127 s inside a 160 s testenv wall.
+
+Not built; each needs a world capability (the gap roadmap's D2, world parameters):
+
+- `red-gate-holds`, `push-race` (test-landing 137 s, test-landing-race 33 s, test-landing-base-fail
+  56 s): need a repo-mode parameter on the world (push mode with a bare remote a step can move) and a
+  gate whose BASE_FAIL verdict a scenario decides.
+- `eject-mid-step` (test-reopen-queue-eject, test-withdrawn-suites-recert): needs testenv inside the
+  world, because `work submit` after an eject runs `testenv --suites` itself.
+- `spira-claim reopen` was seen to die of SIGBUS once inside a sim container; not reproduced.
