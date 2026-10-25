@@ -406,5 +406,5 @@ fn mail_rows_name_each_message_by_mailbox_kind_bead_read_state_and_subject() {
 fn a_worlds_mail_is_unmuted_and_rooted_inside_it() {
     let s = spira_sim::world::config_settings(Path::new("/w"), &[], Path::new("/w/bin/gh"));
     assert!(s.contains(&("spira.mail_mute".to_string(), "false".to_string())));
-    assert_eq!(spira_sim::world::mail_root(Path::new("/w")), Path::new("/w/home/spira/run/mail"));
+    assert_eq!(spira_sim::world::mail_root(Path::new("/w")), Path::new("/w").join("home").join("spira").join("run").join("mail"));
 }
