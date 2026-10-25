@@ -198,7 +198,12 @@ fn publish_with_a_missing_workflow_mapping_mails_once_per_head() {
             .push(Some("harness_fault\nmissing-workflow: Gate\n".into()));
         assert_eq!(t.run(&["verdict", "spira"]), 0);
     }
-    assert!(t.out().contains("workflow Gate has no run — configuration fault"), "{}", t.out());
+    assert!(
+        t.out()
+            .contains("workflow Gate has no run — configuration fault"),
+        "{}",
+        t.out()
+    );
     let mails = t
         .lib
         .calls
@@ -1509,7 +1514,10 @@ fn a_publish_red_bead_names_the_failing_test_under_build() {
         .cloned()
         .unwrap();
     let build = bug.split("## Build").nth(1).expect(&bug);
-    assert!(build.contains("FAILED tests/test_cubby.py::test_roundtrip"), "{bug}");
+    assert!(
+        build.contains("FAILED tests/test_cubby.py::test_roundtrip"),
+        "{bug}"
+    );
     assert!(build.contains("http://r/77"), "{bug}");
 }
 

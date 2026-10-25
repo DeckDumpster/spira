@@ -818,7 +818,10 @@ impl Scripts for RealScripts {
         run_combined(c.arg(tip).arg(repo))
     }
     fn suite_run(&self, check: &str, tip: &str, repo: &str) -> (i32, String) {
-        run_combined(Command::new(spira_config::release_env::tool("testenv")).args(["--suites", check, tip, repo]))
+        run_combined(
+            Command::new(spira_config::release_env::tool("testenv"))
+                .args(["--suites", check, tip, repo]),
+        )
     }
     fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str) -> (i32, String) {
         run_combined(
@@ -981,7 +984,12 @@ impl Scripts for RealScripts {
     fn ami_for(&self, sha: &str) -> AmiLookup {
         // batch-job: one AWS describe-images read, hang-guarded at 60 s
         match Command::new("timeout")
-            .args(["60", spira_config::release_env::tool("round-vm").as_str(), "ami-for", sha])
+            .args([
+                "60",
+                spira_config::release_env::tool("round-vm").as_str(),
+                "ami-for",
+                sha,
+            ])
             .stdin(Stdio::null())
             .output()
         {
