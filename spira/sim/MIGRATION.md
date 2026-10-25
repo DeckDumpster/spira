@@ -210,3 +210,5 @@ Retired bash twins are listed above only once their scenario was seen red on the
 The sim lane build-fence failure on the last closeout was a reaped warm target directory, not the tree; `cargo check -p spira-config -p spira-sim` is clean.
 
 A second isolated testenv run of gate-verdict-kinds at the same content passed in 57s, so the ejection was not reproducible from the tree.
+
+A third isolated testenv run of gate-verdict-kinds at the rebased tip passed in 55s; the tip is recommitted so a round can re-certify it.
