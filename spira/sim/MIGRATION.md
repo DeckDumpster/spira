@@ -205,4 +205,4 @@ test-lanes (lane concurrency needs live aeon units), and the 30-odd suites that 
 
 The sim lane reads `claim-order` for the real sentinel's claim rank and lease; gate-verdict-kinds fails its first gate once so the rework is steered before the next minute's summon.
 
-Retired bash twins are listed above only once their scenario was seen red on the planted defect; gate-verdict-kinds was re-run green alone under testenv at this tip.
+Retired bash twins are listed above only once their scenario was seen red on the planted defect; gate-verdict-kinds was re-run green alone under testenv on the tip rebased onto the current landing ref, after the red-tip ejection.
