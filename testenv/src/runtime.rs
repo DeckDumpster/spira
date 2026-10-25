@@ -27,6 +27,9 @@ thread_local! {
 }
 
 #[cfg(test)]
+pub static CANCEL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
 pub fn cancelled() -> bool {
     (OBSERVE_CANCEL.with(|o| o.get()) && CANCEL.load(Ordering::SeqCst))
         || LOCAL_CANCEL.with(|l| l.borrow().as_ref().is_some_and(|t| t.load(Ordering::SeqCst)))
@@ -521,6 +524,7 @@ mod tests {
     /// calling thread synchronously, so the flag is visible the instant it returns.
     #[test]
     fn install_signal_handlers_catches_hup() {
+        let _lock = CANCEL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         OBSERVE_CANCEL.with(|o| o.set(true));
         CANCEL.store(false, Ordering::SeqCst);
         install_signal_handlers();

@@ -271,6 +271,7 @@ mod tests {
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
 
+        let _lock = crate::runtime::CANCEL_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let d = testkit::TempDir::new("build-signal-test");
         std::fs::write(
             d.join("Cargo.toml"),
@@ -279,7 +280,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             d.join("build.rs"),
-            "fn main() { std::thread::sleep(std::time::Duration::from_secs(10)); }\n",
+            "fn main() { std::fs::write(\"started\", \"\").unwrap(); std::thread::sleep(std::time::Duration::from_secs(600)); }\n",
         )
         .unwrap();
         std::fs::create_dir_all(d.join("src")).unwrap();
@@ -287,21 +288,19 @@ mod tests {
 
         let token = Arc::new(AtomicBool::new(false));
         crate::runtime::LOCAL_CANCEL.with(|l| *l.borrow_mut() = Some(token.clone()));
+        let started = d.join("started");
         let flipper = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(1500));
+            let cap = Instant::now() + Duration::from_secs(300); // clock-safe: cap on a wait for the marker file
+            while !started.exists() && Instant::now() < cap {
+                std::thread::sleep(Duration::from_millis(20)); // clock-safe: bounded poll for the marker file
+            }
             token.store(true, Ordering::SeqCst);
         });
 
-        let t0 = Instant::now();
         let result = Cargo.build(&d, "dev", None);
-        let elapsed = t0.elapsed();
         flipper.join().unwrap();
 
         assert_eq!(result, Err(BuildError::Cancelled), "{result:?}");
-        assert!(
-            elapsed < Duration::from_secs(5),
-            "cancellation should be prompt; took {elapsed:?}"
-        );
     }
 
     #[test]

@@ -94,7 +94,7 @@ fn a_held_flock_is_seen_held_and_a_released_one_is_not() {
         if seen {
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(50)); // clock-safe: bounded poll for the flock to appear in /proc/locks
     }
     let held = read(&w, &std::fs::read_to_string("/proc/locks").unwrap());
     let _ = std::process::Command::new("kill").arg("-KILL").arg(format!("-{}", holder.id())).status();
@@ -107,7 +107,7 @@ fn a_held_flock_is_seen_held_and_a_released_one_is_not() {
         if free {
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(50)); // clock-safe: bounded poll for the killed holder's flock to clear
     }
     assert!(free, "the flock stayed held after its holder was killed");
 }
