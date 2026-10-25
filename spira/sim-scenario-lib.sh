@@ -18,6 +18,13 @@ sim_failed_commands() {  # sim_failed_commands <run output> — the output of ev
     awk '/^=== t=/ { show = ($0 ~ /exit status: [1-9]/ && $0 !~ /exit status: 3 /) } show' "$w/exec.log" | cut -c1-300 | head -40
 }
 
+sim_summon_lines() {  # sim_summon_lines <run output> — what the summons printed in a kept world: the stub agent's or the real aeon's own log
+    local w
+    w="$(sed -n 's/^sim: world kept at //p' "$1" | head -1)"
+    [ -f "$w/exec.log" ] || return 0
+    grep -E 'sim summon|aeon|builder:|sim-agent' "$w/exec.log" | cut -c1-300 | head -60
+}
+
 sim_scenario_shard() {  # sim_scenario_shard <scenario name>
     local name="$1" here seeds fresh="" sim t repo seed rc start label
     here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -50,6 +57,7 @@ sim_scenario_shard() {  # sim_scenario_shard <scenario name>
         grep -h '^sim: profile' "$t/res.out" | sed "s/^/# $label /"
         [ "$rc" = 0 ] || grep -E '^sim' "$t/res.out" | cut -c1-300 | head -5 | sed 's/^/# /'
         [ "$rc" = 0 ] || sim_failed_commands "$t/res.out" | sed "s/^/# $label /"
+        [ "$rc" = 0 ] || sim_summon_lines "$t/res.out" | sed "s/^/# $label /"
     done
     for w in "$t"/sim-run-*; do [ -d "$w" ] && timeout 60 "$sim" world down "$w" >/dev/null 2>&1; done # batch-job: world teardown stops a whole scratch world
     is "no world serve outlives its run" 0 "$(pgrep -fc "$t/sim-run-" || true)"
