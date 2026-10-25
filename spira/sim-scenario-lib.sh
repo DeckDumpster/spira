@@ -11,6 +11,13 @@ sim_fixture_repo() {  # sim_fixture_repo <dir> — the harness tree as a one-com
         && git -C "$repo" -c user.name=t -c user.email=t@t.invalid commit -q -m seed || bail "fixture repo commit failed"
 }
 
+sim_failed_commands() {  # sim_failed_commands <run output> — the output of every kept-world command that exited neither 0 nor 3
+    local w
+    w="$(sed -n 's/^sim: world kept at //p' "$1" | head -1)"
+    [ -f "$w/exec.log" ] || return 0
+    awk '/^=== t=/ { show = ($0 ~ /exit status: [1-9]/ && $0 !~ /exit status: 3 /) } show' "$w/exec.log" | cut -c1-300 | head -40
+}
+
 sim_scenario_shard() {  # sim_scenario_shard <scenario name>
     local name="$1" here seeds fresh="" sim t repo seed rc start label
     here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -42,6 +49,7 @@ sim_scenario_shard() {  # sim_scenario_shard <scenario name>
         wantrc "$label exits 0 in $((SECONDS - start))s" 0 "$rc"
         grep -h '^sim: profile' "$t/res.out" | sed "s/^/# $label /"
         [ "$rc" = 0 ] || grep -E '^sim' "$t/res.out" | cut -c1-300 | head -5 | sed 's/^/# /'
+        [ "$rc" = 0 ] || sim_failed_commands "$t/res.out" | sed "s/^/# $label /"
     done
     for w in "$t"/sim-run-*; do [ -d "$w" ] && timeout 60 "$sim" world down "$w" >/dev/null 2>&1; done # batch-job: world teardown stops a whole scratch world
     is "no world serve outlives its run" 0 "$(pgrep -fc "$t/sim-run-" || true)"

@@ -1,0 +1,62 @@
+epoch = 1800000000
+horizon = 2400000
+settle = 120000
+goal = "sp-cb01:LANDED"
+real_actors = ["sentinel-summon", "sentinel-landing", "sift"]
+
+[[actor]]
+name = "gate-worker"
+command = "gate-worker run"
+first = 20000
+every = 30000
+duration_min = 2000
+duration_max = 10000
+
+[[step]]
+at = 0
+command = 'spira-config set spira.batcher_enable 0 "$SPIRA_TOML"'
+
+[[step]]
+at = 0
+file = "sp-cb01"
+
+[[step]]
+at = 0
+file = "sp-cb02"
+
+[[step]]
+at = 0
+claim = "sp-cb01"
+script = ["commit out/cb01.txt", "submit"]
+
+[[step]]
+at = 100000
+command = "sh spira/sim/scenarios/steps/claim-vs-batch.sh sp-cb01 sp-cb02"
+
+[[step]]
+at = 200000
+command = "sh spira/sim/scenarios/steps/claim-vs-batch.sh sp-cb01 sp-cb02"
+
+[[step]]
+at = 300000
+command = "sh spira/sim/scenarios/steps/claim-vs-batch.sh sp-cb01 sp-cb02"
+
+[[step]]
+at = 400000
+command = "sh spira/sim/scenarios/steps/claim-vs-batch.sh sp-cb01 sp-cb02"
+
+[[invariant]]
+name = "step_failed"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit NOT IN (0, 3)"
+
+[[expect]]
+name = "landed_on_local_main"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-cb01' AND lc_state = 'LANDED' AND on_local_main"
+
+[[expect]]
+name = "control_claim_released"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-cb02' AND lc_state = 'READY'"
+
+[[expect]]
+name = "race_checked"
+sql = "SELECT 1 FROM events WHERE kind = 'step' AND exit = 0 AND actor IN ('step5', 'step6', 'step7', 'step8')"
