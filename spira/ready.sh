@@ -284,9 +284,15 @@ PYEOF
         "ERR "*)
             _loom_detail="${_loom_result#ERR }"; _loom_detail="${_loom_detail#*ms }"
             _loom_svc="$(spira_unit loom service)"
+            _loom_state="$("${SPIRA_SYSTEMCTL:-systemctl}" --user show "${_loom_svc:-spira-loom.service}" \
+                -p ActiveState -p SubState -p Result -p NRestarts -p ExecMainStatus 2>&1 | tr '\n' ' ')"
+            _loom_log="$(tail -n 15 "${SPIRA_RUN:-/nonexistent}/loom.log" 2>&1)"
             FAIL "loom does not answer at $_loom_url" \
                  "${_loom_detail:-connection refused}
-    Is the loom service active? systemctl --user status ${_loom_svc:-spira-loom.service}"
+    Is the loom service active? systemctl --user status ${_loom_svc:-spira-loom.service}
+    unit state: ${_loom_state:-unknown}
+    loom.log (last 15 lines):
+$(printf '%s\n' "$_loom_log" | sed 's/^/      /')"
             ;;
         "")
             UNKN "loom — probe returned no output for $_loom_url" \

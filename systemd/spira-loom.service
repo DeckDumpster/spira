@@ -26,7 +26,7 @@ ExecStart=@SPIRA_PROD@/loom.sh
 Restart=always
 # The MINIMUM time between restarts. A crash loop is visible in the log; a 5-second floor
 # keeps it from chewing CPU while remaining fast to recover from a transient.
-RestartSec=30
+RestartSec=5
 StandardOutput=append:@SPIRA_RUN@/loom.log
 StandardError=append:@SPIRA_RUN@/loom.log
 
