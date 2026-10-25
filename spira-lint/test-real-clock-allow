@@ -39,7 +39,6 @@
 1 spira-submission/tests/submission.rs
 2 strand/src/state.rs
 5 testenv/src/batch.rs
-2 testenv/src/build.rs
 2 testenv/src/busy.rs
 5 testenv/src/fixture.rs
 1 testenv/src/foreign.rs
