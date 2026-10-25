@@ -2438,6 +2438,7 @@ fn sweep_scratch(deps: &Deps) {
 /// Regenerate `spira/conf.d.*.generated.sh` on the host, as the worktree's owner, before the
 /// container mounts it for its unprivileged user: conf.sh refuses a stale file and cannot
 /// rewrite one there. Runs on the prebuilt-artifacts path too, which skips [`build`].
+// batch-job: a local registry regeneration, bounded by the host rather than a remote
 fn warm_conf_gen(wt: &Path) -> Option<Finish> {
     let conf_gen = wt.join("spira/conf-gen.sh");
     if conf_gen.exists() {
