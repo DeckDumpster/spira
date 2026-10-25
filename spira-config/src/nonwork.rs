@@ -23,6 +23,8 @@ pub enum Kind {
     Alert,
     /// A filed-closed observation (`bead file … insight`).
     Insight,
+    /// A parked idea (`bead file … --kind idea`): open until dropped or started.
+    Idea,
     /// gh-intake's mirror of a GitHub issue.
     Intake,
     /// A coordination or epic bead: closed by `spira-lc close-epic`, never delivered.
@@ -32,7 +34,7 @@ pub enum Kind {
 }
 
 /// bd issue types that never carry a lifecycle row: containers, asks, events and the like.
-pub const NO_ROW_TYPES: &[&str] = &["epic", "decision", "event", "molecule", "gate"];
+pub const NO_ROW_TYPES: &[&str] = &["epic", "decision", "event", "molecule", "gate", "proposal"];
 
 pub fn is_work_type(issue_type: Option<&str>) -> bool {
     !issue_type.is_some_and(|t| NO_ROW_TYPES.contains(&t))

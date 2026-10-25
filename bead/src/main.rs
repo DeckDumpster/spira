@@ -40,6 +40,7 @@ fn main() {
         "label" => cmd_label(&home, &rest),
         "drop" => cmd_drop(&home, &rest),
         "contract" => cmd_contract(&home),
+        "ideas" => cmd_ideas(&home, &rest),
         "lint" => cmd_lint(&home, &rest),
         "judge-create" => cmd_judge_create(&home, &rest),
         "event" => cmd_event(&rest),
@@ -55,7 +56,7 @@ fn main() {
         },
         _ => {
             eprintln!(
-                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh pilgrimage <design-file> --repo <name> --after <build-id>... [--priority N]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F --replace | --append-body F] [--express]\n       bead.sh amend <id> --live --note \"<text>\" | --append-body F [--ack-within <dur>]\n       bead.sh amend <id> --ack <amend-id> --accept | --decline \"<why>\"\n       bead.sh amend --enforce <amend-id>\n       bead.sh label add|remove <id> <label>\n       bead.sh drop <id> --reason <text>\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
+                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh pilgrimage <design-file> --repo <name> --after <build-id>... [--priority N]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F --replace | --append-body F] [--express]\n       bead.sh amend <id> --live --note \"<text>\" | --append-body F [--ack-within <dur>]\n       bead.sh amend <id> --ack <amend-id> --accept | --decline \"<why>\"\n       bead.sh amend --enforce <amend-id>\n       bead.sh label add|remove <id> <label>\n       bead.sh drop <id> --reason <text>\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh ideas [--json]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
             );
             2
         }
@@ -837,8 +838,8 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             return 2;
         }
         let scope_label = schema_name(home, "scope");
-        let insight_label = if kind == "insight" {
-            Some(schema_name(home, "insight"))
+        let insight_label = if kind == "insight" || kind == "idea" {
+            Some(schema_name(home, &kind))
         } else {
             None
         };
@@ -1404,6 +1405,43 @@ fn amend_enforce(home: &str, aid: &str) -> i32 {
         eprintln!("bead: amend: slay --bead {id} failed ({slay}); the amendment is merged and marked enforced");
     }
     rc | slay
+}
+
+// =========================================================================================
+// ideas
+// =========================================================================================
+
+fn cmd_ideas(home: &str, args: &[String]) -> i32 {
+    let json = match args {
+        [] => false,
+        [a] if a == "--json" => true,
+        _ => {
+            eprintln!("usage: bead.sh ideas [--json]");
+            return 2;
+        }
+    };
+    let label = schema_name(home, "idea");
+    if label.is_empty() {
+        eprintln!("bead: ideas: the schema names no idea label");
+        return 1;
+    }
+    let mut argv = s(&["list"]);
+    argv.extend(spira_config::nonwork::status_args(spira_config::nonwork::Kind::Idea, spira_config::nonwork::Which::Open));
+    argv.extend(s(&["--label", &label, "--limit", "0", "--json"]));
+    let (code, out) = bdq_capture(home, &argv);
+    if code != 0 {
+        eprintln!("bead: ideas: bd list exited {code}");
+        return 1;
+    }
+    let rows = bead::idea_rows(&out);
+    if json {
+        println!("{}", serde_json::Value::Array(rows.iter().map(|r| serde_json::json!({"id": r.id, "title": r.title, "created_at": r.created_at})).collect()));
+    } else {
+        for r in &rows {
+            println!("{}\t{}", r.id, r.title);
+        }
+    }
+    0
 }
 
 // =========================================================================================

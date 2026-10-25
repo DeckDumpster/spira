@@ -79,6 +79,7 @@ members = [
     "sift",
     "pilgrimage",
     "refusal-watch",
+    "idea-prompt",
     "kit-bump",
     "pilgrim-login",
     "filings-collect",

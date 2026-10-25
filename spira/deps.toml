@@ -800,6 +800,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v refusal-watch)\""
 
 [[dep]]
+name = "idea-prompt"
+tier = "release"
+purpose = "Spira's idea-prompt binary, from the release's bin/ — mails the operator the parked ideas when Spira has been idle"
+version_min = ""
+version_probe = "readlink -f \"$(command -v idea-prompt)\""
+
+[[dep]]
 name = "filings-collect"
 tier = "release"
 purpose = "Spira's filings-collect binary, from the release's bin/ — reads product hosts' filings outboxes over ssh into builder beads and acknowledges them"

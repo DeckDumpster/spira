@@ -191,6 +191,15 @@ out="$(run_bead "an idea" --kind proposal)"; rc=$?
 is   "proposal: exits 0"         "0"                "$rc"
 want "proposal: --type proposal" "--type proposal"  "$(cat "$BD_LOG")"
 
+out="$(run_bead "park this" --kind idea --repo testrepo)"; rc=$?
+is     "idea: exits 0"                    "0"                "$rc"
+want   "idea: --type proposal"            "--type proposal"  "$(cat "$BD_LOG")"
+want   "idea: idea label present"         "testscope,idea"   "$(cat "$BD_LOG")"
+nowant "idea: filed open, not closed"     "--status closed"  "$(cat "$BD_LOG")"
+nowant "idea: no partition label plan"    ",plan"            "$(cat "$BD_LOG")"
+out="$(run_bead "park this" --for builder --kind idea --repo testrepo)"; rc=$?
+is     "idea: --for is refused"           "2"                "$rc"
+
 out="$(run_bead "a thing we learned" --kind insight)"; rc=$?
 is     "insight: exits 0"                 "0"                "$rc"
 want   "insight: bd create called"        "create"           "$(cat "$BD_LOG")"

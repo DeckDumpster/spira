@@ -702,6 +702,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "idea-prompt"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "spira-config",
+ "spira-otel",
+]
+
+[[package]]
 name = "idna"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
