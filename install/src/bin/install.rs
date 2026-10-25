@@ -1436,10 +1436,10 @@ fn run_main() -> ExitCode {
 
     // Every config write is behind us: restart loom so its watched baseline is the final file
     // and it cannot exit for restart mid-readiness.
-    // batch-job: one restart of a service during install; bounded by timeout 30.
     // The installed unit is instance-qualified (spira-loom-<instance>.service); a bare
     // "spira-loom.service" is "not found", so loom was never restarted here.
     let loom_unit = spira_config::unit::unit_name("loom", "service", &instance);
+    // batch-job: one restart of a service during install; bounded by timeout 30.
     let _ = Command::new("timeout").args(["30", "systemctl", "--user", "restart", &loom_unit]).status();
 
     println!();
