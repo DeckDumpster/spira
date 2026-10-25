@@ -39,3 +39,17 @@ Shared gaps across rows, worth building once: a gate-worker verdict mode per kin
 (`fail`, `no-verdict`, `infra`); a scripted forge actor (PR state, verdict flips, foreign
 push); a mailbox table and a bd bead table the invariants can query; an exit-code expect for
 refused commands; a repo-mode parameter for the world.
+
+## Retirement check (sp-twvl8e)
+
+A suite is deleted only after its sim twin goes red on the defect the suite exists to catch. None
+of the ten present suites qualifies, so none is deleted and no suite-seconds are removed.
+
+No scenario has a reopen step, a non-zero expected exit, a gate verdict other than PASS, a
+mailbox or bead-listing table, or a scripted forge, and those are what the suites pin. A defect
+planted in the withdraw-on-reopen, refusal, FAIL/NO_VERDICT/GateInfra, rebase-mail, early-landing,
+release-build or publish-state paths leaves every existing scenario green, so the twin cannot be
+seen red. The "coverage the world lacks" column above is the work that must land first; each suite
+is retired by the bead that adds its scenario and shows it red.
+
+test-queue-publish is already gone (moved to the queue crate), so only ten of the eleven remain.
