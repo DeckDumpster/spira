@@ -45,6 +45,8 @@ pub struct StepDef {
     pub script: Vec<String>,
     /// With `file`: the bead's priority (bd's `-p`); 2 when absent.
     pub priority: Option<u8>,
+    /// With `file`: the bead's description (bd's `-d`), e.g. the `## Build` section a builder needs.
+    pub body: Option<String>,
     /// With `file` or `claim`: the world repository the bead belongs to; the world's own when absent.
     pub repo: Option<String>,
 }
@@ -195,6 +197,9 @@ impl StepDef {
         if self.priority.is_some_and(|p| p > 4) || (self.priority.is_some() && self.file.is_none()) {
             return Err(format!("scenario: step at {}: priority is 0-4 and belongs to a file step", self.at));
         }
+        if self.body.is_some() && self.file.is_none() {
+            return Err(format!("scenario: step at {}: body belongs to a file step", self.at));
+        }
         if self.repo.is_some() && self.file.is_none() && self.claim.is_none() {
             return Err(format!("scenario: step at {}: repo belongs to a file or claim step", self.at));
         }
@@ -207,7 +212,7 @@ impl StepDef {
             (None, Some(b), None) if self.script.is_empty() => {
                 let b = bead_id(b)?;
                 let named = self.repo.as_ref().map(|r| format!(" --repo {r}")).unwrap_or_default();
-                Ok(format!("bd -C \"$SIM_BEADS_DB\" create {} --id {b} -t task -p {} -l spira -l plan -l repo:{repo} --silent >/dev/null && spira-lc create-bead {b}{named}", shell_quote(&format!("sim {b}")), self.priority.unwrap_or(2)))
+                Ok(format!("bd -C \"$SIM_BEADS_DB\" create {} --id {b} -t task -p {} -l spira -l plan -l repo:{repo}{} --silent >/dev/null && spira-lc create-bead {b}{named}", shell_quote(&format!("sim {b}")), self.priority.unwrap_or(2), self.body.as_ref().map(|d| format!(" -d {}", shell_quote(d))).unwrap_or_default()))
             }
             (None, None, Some(b)) if !self.script.is_empty() => {
                 let b = bead_id(b)?;

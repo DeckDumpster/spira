@@ -8,6 +8,7 @@ real_aeon = true
 [[step]]
 at = 0
 file = "sp-ab01"
+body = "## Build\n\nAdd out/ab01.txt."
 
 [[step]]
 at = 0
