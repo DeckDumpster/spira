@@ -165,6 +165,8 @@ export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:
 rm -rf ~/round-bins ~/round-work ~/round-setup.log ~/round-shims
 exec 2> >(tee ~/round-setup.log >&2)
 exec 1>&2
+res="$HOME/round-work/.runtime/spira/batch-results"
+trap 'rc=$?; if [ "$rc" -ne 0 ] && [ ! -s "$res/ci.out" ]; then sleep 1; mkdir -p "$res"; { cat ~/round-setup.log; echo "round-vm: round script exited $rc before ci_entry left output"; } > "$res/ci.out"; fi' EXIT
 git clone --quiet --no-checkout "git://${host_addr}:${port}/mirror.git" ~/round-work
 git -C ~/round-work fetch --quiet origin "$round_ref"
 git -C ~/round-work checkout --quiet --force --detach FETCH_HEAD
@@ -187,13 +189,13 @@ if [ -n "$rustup_bin" ]; then
     export PATH="$HOME/round-shims:$PATH"
 fi
 rustc -vV >&2 || echo "round-vm: no rustc on PATH" >&2
-res="$HOME/round-work/.runtime/spira/batch-results"
 mkdir -p "$res"
 printf 'tree=%s\n' "$(git rev-parse 'HEAD^{tree}')" > "$res/batch.meta"
 t0=$(date +%s)
 rc=0
-bash -c "$entry" 2>&1 | tee "$res/ci.log" || rc=${PIPESTATUS[0]}
+bash -c "$entry" 2>&1 | tee "$res/ci.out" || rc=${PIPESTATUS[0]}
 if [ "$rc" -eq 0 ]; then status=ok; else status=red; fi
+printf 'round-vm: ci_entry exited %s\n' "$rc" | tee -a "$res/ci.out"
 printf '%s %s %s - - - %s\n' "$status" 1 "$(( $(date +%s) - t0 ))" "$rc" > "$res/ci.result"
 [ "$rc" -eq 0 ]
 "#;
@@ -2618,7 +2620,16 @@ mod tests {
         foreign_run_with(entry, expect, "", |_| {}, &[])
     }
 
+    fn foreign_run_dir(entry: &str) -> (std::process::Output, String, String) {
+        foreign_run_full(entry, None, "", |_| {}, &[])
+    }
+
     fn foreign_run_with(entry: &str, expect: Option<&str>, toolchain: &str, setup: impl Fn(&Path), env: &[(&str, &str)]) -> (std::process::Output, String) {
+        let (out, verdict, _) = foreign_run_full(entry, expect, toolchain, setup, env);
+        (out, verdict)
+    }
+
+    fn foreign_run_full(entry: &str, expect: Option<&str>, toolchain: &str, setup: impl Fn(&Path), env: &[(&str, &str)]) -> (std::process::Output, String, String) {
         let home = TempDir::new();
         setup(home.path());
         let src = home.path().join("src");
@@ -2640,7 +2651,7 @@ mod tests {
             .unwrap();
         let res = home.path().join("round-work/.runtime/spira/batch-results");
         let verdict = fs::read_to_string(res.join("ci.result")).unwrap_or_default();
-        (out, verdict)
+        (out, verdict, fs::read_to_string(res.join("ci.out")).unwrap_or_default())
     }
 
     #[test]
@@ -2664,6 +2675,14 @@ mod tests {
         assert_eq!(out.status.code(), Some(1));
         assert!(verdict.starts_with("red ") && verdict.trim_end().ends_with(" 7"), "{verdict}");
         assert!(String::from_utf8_lossy(&out.stderr).contains("isolation tier failed"));
+    }
+
+    #[test]
+    fn the_foreign_script_leaves_the_entrys_output_and_exit_where_the_mender_reads_it() {
+        let (_, _, out) = foreign_run_dir("echo tier-one; echo oops >&2; exit 7");
+        let (_, _, early) = foreign_run_full("exit 0", Some("0123456789012345678901234567890123456789"), "", |_| {}, &[]);
+        assert!(early.contains("expected the round's commit") && early.contains("exited 2"), "{early}");
+        assert!(out.contains("tier-one") && out.contains("oops") && out.contains("ci_entry exited 7"), "{out}");
     }
 
     #[test]

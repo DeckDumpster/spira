@@ -43,7 +43,7 @@ Every option also accepts the `--opt=value` spelling. An unknown verb or no verb
 `warm` means a ready VM was handed out without waiting. `cold` means `acquire` had to
 wait for a VM, whether it provisioned one itself or waited on the provision in flight.
 
-`--ci-entry CMD` is the round of a registered repository that is not the harness: the VM clones the tree and runs `CMD` (the repository's own CI entry point, declared as `ci_entry` in its `.spira/testenv.toml`) instead of the corpus, so the round covers what CI covers. Its exit status is the one verdict, recorded as `ci.result` (`ok`/`red`) beside `ci.log`; no suite ordering, image build, lint or binaries apply.
+`--ci-entry CMD` is the round of a registered repository that is not the harness: the VM clones the tree and runs `CMD` (the repository's own CI entry point, declared as `ci_entry` in its `.spira/testenv.toml`) instead of the corpus, so the round covers what CI covers. Its exit status is the one verdict, recorded as `ci.result` (`ok`/`red`) beside `ci.out` (its output and exit status, the file the mender bead quotes); no suite ordering, image build, lint or binaries apply.
 
 ### 2.2 `run`
 
