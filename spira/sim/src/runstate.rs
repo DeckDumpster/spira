@@ -16,7 +16,7 @@ pub struct Table {
 pub const TABLES: &[Table] = &[
     Table {
         name: "run_verdicts",
-        columns: &[("key", "VARCHAR"), ("repo", "VARCHAR"), ("branch", "VARCHAR"), ("at", "BIGINT"), ("suites", "VARCHAR"), ("compose", "VARCHAR"), ("by", "VARCHAR")],
+        columns: &[("key", "VARCHAR"), ("repo", "VARCHAR"), ("branch", "VARCHAR"), ("stamped", "BIGINT"), ("suites", "VARCHAR"), ("compose", "VARCHAR"), ("certified_by", "VARCHAR")],
         log: false,
     },
     Table { name: "run_queue", columns: &[("repo", "VARCHAR"), ("file", "VARCHAR"), ("key", "VARCHAR"), ("value", "VARCHAR")], log: false },
@@ -73,8 +73,8 @@ fn lookup<'a>(pairs: &'a [(String, String)], key: &str) -> Option<&'a str> {
 pub fn verdict_row(key: &str, text: &str) -> Value {
     let p = kv(text);
     let get = |k: &str| lookup(&p, k).map(str::to_string);
-    json!({"key": key, "repo": get("repo"), "branch": get("branch"), "at": get("at").and_then(|a| a.parse::<i64>().ok()),
-           "suites": get("suites"), "compose": get("compose"), "by": get("by")})
+    json!({"key": key, "repo": get("repo"), "branch": get("branch"), "stamped": get("at").and_then(|a| a.parse::<i64>().ok()),
+           "suites": get("suites"), "compose": get("compose"), "certified_by": get("by")})
 }
 
 /// `<ts> <repo> <branch> waited=.. ran=.. rc=N ...`

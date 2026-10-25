@@ -16,7 +16,7 @@ fn rows<'a>(all: &'a [(&'static str, Value)], t: &str) -> Vec<&'a Value> {
 #[test]
 fn a_verdict_file_is_a_row_keyed_by_its_name() {
     let r = verdict_row("abc", "when=2026-10-24T13:55:20Z\nat=1792850120\nby=spira/sp-x\nrepo=spira\nbranch=spira/sp-x\nsuites=-\ncompose=unit\n");
-    assert_eq!((r["key"].as_str(), r["at"].as_i64(), r["compose"].as_str(), r["suites"].as_str()), (Some("abc"), Some(1792850120), Some("unit"), Some("-")));
+    assert_eq!((r["key"].as_str(), r["stamped"].as_i64(), r["compose"].as_str(), r["suites"].as_str()), (Some("abc"), Some(1792850120), Some("unit"), Some("-")));
     assert!(verdict_row("k", "garbage")["branch"].is_null());
 }
 
