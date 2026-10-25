@@ -2305,3 +2305,26 @@ fn a_run_under_its_cap_is_not_cut() {
     assert_eq!(w.run(&rt, &b, &["topic"], "", &w.root), 0);
     assert_eq!(w.last(), "VERDICT GREEN ran=1");
 }
+
+#[test]
+fn warm_conf_gen_runs_the_worktrees_generator_and_faults_when_it_fails() {
+    let t = testkit::TempDir::new("warm-conf-gen");
+    let d = t.path().to_path_buf();
+    std::fs::create_dir_all(d.join("spira")).unwrap();
+    assert!(warm_conf_gen(&d).is_none(), "a tree with no generator has nothing to warm");
+    std::fs::write(d.join("spira/conf-gen.sh"), "touch spira/conf.d.keys.generated.sh\n").unwrap();
+    assert!(warm_conf_gen(&d).is_none());
+    assert!(d.join("spira/conf.d.keys.generated.sh").exists());
+    std::fs::write(d.join("spira/conf-gen.sh"), "exit 7\n").unwrap();
+    let fin = warm_conf_gen(&d).expect("a failing generator is a harness fault");
+    assert_eq!(fin.reason.as_deref(), Some("conf-gen"));
+}
+
+#[test]
+fn conf_gen_is_warmed_outside_build_so_the_prebuilt_path_gets_it() {
+    let src = include_str!("../run.rs");
+    let build_fn = &src[src.find("\nfn build(").unwrap()..];
+    let build_fn = &build_fn[..build_fn.find("\n}\n").unwrap()];
+    assert!(!build_fn.contains("conf-gen"), "build() is skipped under --artifacts; warming there leaves rounds stale");
+    assert!(src.contains("warm_conf_gen(&wt.path)"));
+}
