@@ -32,6 +32,9 @@ pub struct ActorDef {
 #[derive(Debug, Deserialize)]
 pub struct StepDef {
     pub at: u64,
+    /// The `actor` of this step's event; `step<N>` by position when absent. A check step exits 0
+    /// when it held, so an `expect` on its event with `exit = 0` is the assertion.
+    pub name: Option<String>,
     pub command: Option<String>,
     /// File this bead: a READY lifecycle row the world's summon can claim.
     pub file: Option<String>,
@@ -42,6 +45,115 @@ pub struct StepDef {
     pub script: Vec<String>,
     /// With `file`: the bead's priority (bd's `-p`); 2 when absent.
     pub priority: Option<u8>,
+}
+
+/// A bead filed through `bead.sh` when the scenario starts: its persona or kind, priority,
+/// labels, dependencies on earlier seeds, and body. `handle` names it inside the scenario; the
+/// id `bead.sh` allocates is read back from `$SPIRA_RUN/seeds/<handle>.id`, which a `command`
+/// step reaches as `{bead:<handle>}`. Seeds with the same `at` run in file order in one step.
+#[derive(Debug, Deserialize)]
+pub struct SeedDef {
+    #[serde(default)]
+    pub at: u64,
+    pub handle: String,
+    pub title: String,
+    #[serde(rename = "for")]
+    pub persona: Option<String>,
+    pub kind: Option<String>,
+    pub repo: Option<String>,
+    pub priority: Option<u8>,
+    #[serde(default)]
+    pub labels: Vec<String>,
+    #[serde(default)]
+    pub deps: Vec<String>,
+    pub body: Option<String>,
+}
+
+const SEEDS_DIR: &str = "$SPIRA_RUN/seeds";
+const DEFAULT_SEED_PERSONA: &str = "builder";
+
+fn handle_ok(h: &str) -> bool {
+    !h.is_empty() && h.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-'))
+}
+
+fn id_file(handle: &str) -> String {
+    format!("\"{SEEDS_DIR}/{handle}.id\"")
+}
+
+impl SeedDef {
+    fn shell(&self) -> Result<String, String> {
+        let h = &self.handle;
+        if !handle_ok(h) {
+            return Err(format!("scenario: seed handle {h:?} is not a name (lowercase letters, digits, _ and -)"));
+        }
+        if self.title.trim().is_empty() || self.priority.is_some_and(|p| p > 4) {
+            return Err(format!("scenario: seed {h}: a title is required and priority is 0-4"));
+        }
+        let who = match (&self.persona, &self.kind) {
+            (Some(p), None) => format!("--for {}", shell_quote(p)),
+            (None, Some(k)) => format!("--kind {}", shell_quote(k)),
+            (None, None) => format!("--for {DEFAULT_SEED_PERSONA}"),
+            (Some(_), Some(_)) => return Err(format!("scenario: seed {h}: `for` and `kind` are exclusive")),
+        };
+        let mut cmd = format!("mkdir -p \"{SEEDS_DIR}\"");
+        let mut file = format!("bead.sh file {} {who} --repo {}", shell_quote(&self.title), shell_quote(self.repo.as_deref().unwrap_or(REPO)));
+        if let Some(p) = self.priority {
+            file += &format!(" --priority {p}");
+        }
+        if let Some(b) = &self.body {
+            let body = format!("\"{SEEDS_DIR}/{h}.body\"");
+            cmd += &format!(" && printf '%s\\n' {} > {body}", shell_quote(b));
+            file += &format!(" --body-file {body}");
+        }
+        cmd += &format!(" && id=$({file}) && printf '%s\\n' \"$id\" > {}", id_file(h));
+        for l in &self.labels {
+            cmd += &format!(" && bead.sh label add \"$id\" {} >/dev/null", shell_quote(l));
+        }
+        for d in &self.deps {
+            if !handle_ok(d) {
+                return Err(format!("scenario: seed {h}: dep {d:?} is not a seed handle"));
+            }
+            cmd += &format!(" && bead.sh dep add \"$id\" \"$(cat {})\" >/dev/null", id_file(d));
+        }
+        Ok(cmd)
+    }
+}
+
+/// `{bead:<handle>}` in a command step is that seed's allocated id.
+pub fn expand_beads(command: &str) -> Result<String, String> {
+    let mut out = String::new();
+    let mut rest = command;
+    while let Some(i) = rest.find("{bead:") {
+        let tail = &rest[i + "{bead:".len()..];
+        let end = tail.find('}').ok_or_else(|| format!("scenario: {command:?}: unclosed {{bead:"))?;
+        let h = &tail[..end];
+        if !handle_ok(h) {
+            return Err(format!("scenario: {{bead:{h}}} is not a seed handle"));
+        }
+        out += &rest[..i];
+        out += &format!("\"$(cat {})\"", id_file(h));
+        rest = &tail[end + 1..];
+    }
+    out += rest;
+    Ok(out)
+}
+
+fn command_handles(command: &str) -> Vec<String> {
+    command.split("{bead:").skip(1).filter_map(|t| t.split_once('}')).map(|(h, _)| h.to_string()).collect()
+}
+
+/// The seeds that share an `at`, as one shell command, in time order.
+pub fn seed_steps(seeds: &[SeedDef]) -> Result<Vec<(u64, String)>, String> {
+    let mut times: Vec<u64> = seeds.iter().map(|s| s.at).collect();
+    times.sort_unstable();
+    times.dedup();
+    times
+        .into_iter()
+        .map(|at| {
+            let parts: Result<Vec<String>, String> = seeds.iter().filter(|s| s.at == at).map(SeedDef::shell).collect();
+            parts.map(|p| (at, p.join(" && ")))
+        })
+        .collect()
 }
 
 /// A scenario's own SQL over the trace tables: an `invariant` is a query whose rows (each with a
@@ -84,7 +196,7 @@ impl StepDef {
             return Err(format!("scenario: step at {}: priority is 0-4 and belongs to a file step", self.at));
         }
         match (&self.command, &self.file, &self.claim) {
-            (Some(c), None, None) if self.script.is_empty() => Ok(c.clone()),
+            (Some(c), None, None) if self.script.is_empty() => expand_beads(c),
             (None, Some(b), None) if self.script.is_empty() => {
                 let b = bead_id(b)?;
                 Ok(format!("bd -C \"$SIM_BEADS_DB\" create {} --id {b} -t task -p {} -l spira -l plan -l repo:{REPO} --silent >/dev/null && spira-lc create-bead {b}", shell_quote(&format!("sim {b}")), self.priority.unwrap_or(2)))
@@ -116,15 +228,26 @@ pub struct Scenario {
     /// units, durations from its fitted series.
     #[serde(default)]
     pub real_actors: Vec<String>,
+    #[serde(default, rename = "seed")]
+    pub seeds: Vec<SeedDef>,
     #[serde(default, rename = "step")]
     pub steps: Vec<StepDef>,
     #[serde(default, rename = "invariant")]
     pub invariants: Vec<SqlDef>,
     #[serde(default, rename = "expect")]
     pub expects: Vec<SqlDef>,
+    /// Read the bead store's rows (`bd`) into `bead_state` too; always so when there are seeds.
+    #[serde(default)]
+    pub bead_rows: bool,
     /// The tree under test `real_actors` resolve against: the world's `work` checkout.
     #[serde(skip)]
     pub tree: Option<PathBuf>,
+}
+
+impl Scenario {
+    pub fn reads_bead_rows(&self) -> bool {
+        self.bead_rows || !self.seeds.is_empty()
+    }
 }
 
 /// A scenario argument: a path, or a bare name of a scenario shipped under `spira/sim/scenarios/`
@@ -150,8 +273,27 @@ pub fn parse_scenario(text: &str) -> Result<Scenario, String> {
     if sc.goal_tag.is_some() && sc.goal.is_none() {
         return Err("scenario: goal_tag needs a goal".to_string());
     }
-    for st in &sc.steps {
+    seed_steps(&sc.seeds)?;
+    let mut seen: Vec<&SeedDef> = Vec::new();
+    for sd in &sc.seeds {
+        if seen.iter().any(|p| p.handle == sd.handle || p.title == sd.title) {
+            return Err(format!("scenario: seed {} repeats a handle or a title", sd.handle));
+        }
+        if let Some(d) = sd.deps.iter().find(|d| !seen.iter().any(|p| &p.handle == *d && p.at <= sd.at)) {
+            return Err(format!("scenario: seed {} depends on {d:?}, which is not an earlier seed at or before its time", sd.handle));
+        }
+        seen.push(sd);
+    }
+    for (i, st) in sc.steps.iter().enumerate() {
+        if let Some(n) = &st.name {
+            if !handle_ok(n) || n.starts_with("seed") || n.starts_with("step") || sc.steps.iter().take(i).any(|p| p.name.as_ref() == Some(n)) {
+                return Err(format!("scenario: step name {n:?} is not a unique name (lowercase letters, digits, _ and -; not starting `seed` or `step`)"));
+            }
+        }
         st.shell()?;
+        if let Some(h) = st.command.iter().flat_map(|c| command_handles(c)).find(|h| !sc.seeds.iter().any(|s| &s.handle == h)) {
+            return Err(format!("scenario: step at {} names {{bead:{h}}}, which no seed declares", st.at));
+        }
     }
     for d in sc.invariants.iter().chain(&sc.expects) {
         d.check()?;
@@ -391,10 +533,12 @@ pub struct ProcessProbe {
     /// Set when the world's `SIM_PROBE` is this binary's own `sim probe`: read in-process, with
     /// the world's locators, instead of through a shell and a second `sim`.
     observer: Option<crate::probe::Observer>,
+    /// Ask the bead store (`bd list`) for every bead's row on each snapshot.
+    bead_rows: bool,
 }
 
 impl ProcessProbe {
-    pub fn for_world(world: &Path, epoch: u64) -> Result<Self, String> {
+    pub fn for_world(world: &Path, epoch: u64, bead_rows: bool) -> Result<Self, String> {
         let sim_env = read_env_file(&world.join("config/sim.env"))?;
         let probe = sim_env.iter().find(|(k, _)| k == PROBE_KEY).map(|(_, v)| v.clone());
         let own = world.canonicalize().ok().zip(std::env::current_exe().ok()).map(|(w, exe)| crate::world::probe_command(&exe, &w));
@@ -405,7 +549,7 @@ impl ProcessProbe {
             }
             _ => None,
         };
-        Ok(ProcessProbe { exec: ProcessExec { world: world.to_path_buf(), epoch }, probe, observer })
+        Ok(ProcessProbe { exec: ProcessExec { world: world.to_path_buf(), epoch }, probe, observer, bead_rows })
     }
 }
 
@@ -418,8 +562,19 @@ impl Probe for ProcessProbe {
     }
 }
 
+const BD_LIST: &str = "bd -C \"$SIM_BEADS_DB\" list --all --limit 0 --json";
+
 impl ProcessProbe {
     fn take(&mut self) -> Result<Snapshot, String> {
+        let mut snap = self.observe()?;
+        if self.bead_rows {
+            let out = run(&mut self.exec.command_with(BD_LIST, 0, false)?, COMMAND_DEADLINE).map_err(|e| format!("bd list: {e}"))?;
+            crate::probe::merge_bd(&mut snap.beads, &out)?;
+        }
+        Ok(snap)
+    }
+
+    fn observe(&mut self) -> Result<Snapshot, String> {
         if let Some(o) = self.observer.as_mut() {
             let seen = o.observe()?;
             let mut snap = Snapshot { refs: seen.refs, ..Snapshot::default() };
@@ -551,9 +706,15 @@ pub fn drive(
             }
         }
     }
+    for (i, (at, command)) in seed_steps(&sc.seeds)?.into_iter().enumerate() {
+        let (command, call) = (command, call.clone());
+        let name = format!("seed{}", i + 1);
+        sim.add_scenario(&name, Box::new(move |_| call(&command)));
+        sim.schedule_step(at, &name);
+    }
     for (i, s) in sc.steps.iter().enumerate() {
         let (command, call) = (s.shell()?, call.clone());
-        let name = format!("step{}", i + 1);
+        let name = s.name.clone().unwrap_or_else(|| format!("step{}", i + 1));
         sim.add_scenario(&name, Box::new(move |_| call(&command)));
         sim.schedule_step(s.at, &name);
     }

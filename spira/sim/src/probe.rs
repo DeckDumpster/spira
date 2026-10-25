@@ -2,8 +2,9 @@
 //! built from the world's own lifecycle (`spira-lc list`, run against the world's store only),
 //! its `run/landstate/` ledger, and the world repository's git.
 //!
-//! `bd_status` is left null: the world's bead content store is read through `bd`, which the
-//! probe does not call, so `inv_closed_is_terminal` cannot fire on probe rows.
+//! The bead store's columns (`bd_status`, title, priority, labels, deps, close reason, body) are
+//! left null here; a scenario that seeds beads has them merged in from `bd list` by `merge_bd`,
+//! so `inv_closed_is_terminal` can fire only on such a scenario.
 
 use crate::world::{is_world, lc_command, run, LANDING_BASE, PRODUCTION_LOCATORS};
 use serde_json::{json, Value};
@@ -133,6 +134,38 @@ pub fn rows(lc_list: &str, landstate: &dyn Fn(&str) -> Option<String>, git: &Git
         }));
     }
     Ok(out)
+}
+
+/// Folds `bd list --json` into `bead_state` rows: the bead store's columns for a bead the rows
+/// already carry, and a row of its own for a bead only the store knows.
+pub fn merge_bd(beads: &mut Vec<Value>, bd_list: &str) -> Result<(), String> {
+    let list: Value = serde_json::from_str(bd_list.trim()).map_err(|e| format!("bd list: not JSON: {e}"))?;
+    let list = list.as_array().ok_or("bd list: not a JSON array")?;
+    for r in list {
+        let id = scalar(r.get("id")).ok_or_else(|| format!("bd list: a row has no id: {r}"))?;
+        let strings = |k: &str| -> Vec<String> { r.get(k).and_then(Value::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default() };
+        let joined = |mut v: Vec<String>| {
+            v.sort();
+            v.join(",")
+        };
+        let deps = joined(r.get("dependencies").and_then(Value::as_array).map(|a| a.iter().filter_map(|d| d["depends_on_id"].as_str().map(str::to_string)).collect()).unwrap_or_default());
+        let at = match beads.iter().position(|b| b["bead"] == id.as_str()) {
+            Some(i) => i,
+            None => {
+                beads.push(crate::trace::bead_row(&json!({ "bead": id }))?);
+                beads.len() - 1
+            }
+        };
+        let row = beads[at].as_object_mut().ok_or("bead row is not an object")?;
+        row.insert("bd_status".into(), scalar(r.get("status")).map_or(Value::Null, Value::String));
+        row.insert("title".into(), scalar(r.get("title")).map_or(Value::Null, Value::String));
+        row.insert("priority".into(), r.get("priority").and_then(Value::as_i64).map_or(Value::Null, |p| json!(p)));
+        row.insert("labels".into(), json!(joined(strings("labels"))));
+        row.insert("deps".into(), json!(deps));
+        row.insert("close_reason".into(), scalar(r.get("close_reason")).map_or(Value::Null, Value::String));
+        row.insert("body".into(), scalar(r.get("description")).map_or(Value::Null, Value::String));
+    }
+    Ok(())
 }
 
 /// Refuses unless `world` is a sim world and every production locator set in `env` points
