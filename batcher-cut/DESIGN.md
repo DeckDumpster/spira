@@ -190,15 +190,15 @@ so a VM round never delays a forge batch; a repo only ever gets its own mode's s
 A forge pass runs no local check: every certified member is batched and CI on the batch PR is the gate, its red handled by eject or bisect.
 `SPIRA_BATCHER_ENABLE=0` holds the home repository's local rounds only (every other queue.local repo is still cut); `SPIRA_BATCHER_FORGE_ENABLE=0` holds forge batches only. `batcher rounds` runs both, in order.
 
-## 6. Pacing (`SPIRA_ROUNDS_PACING`, default off)
+## 6. Pacing (`SPIRA_ROUNDS_PACING`, default on)
 
-With `SPIRA_ROUNDS_PACING=1` each queue.local repo's pass runs through `pace::paced`, state in
+Unless `SPIRA_ROUNDS_PACING=0` each queue.local repo's pass runs through `pace::paced`, state in
 `<run>/rounds-pace/<repo>/` so a repo's hold never touches another's:
 
 - a round that ran and did not land (`NOT LANDED`, or a red local verdict written in the pass)
   writes `pause` and pages the Concierge inbox; `rm pause` lifts it. A cut that admitted nothing
   never pauses, whatever its wording;
-- a round with no verdicts (`NO RESULT`, `OVER-CAP`, `cannot check out`, `certify rc=75`, `left
+- a round with no verdicts (`NO RESULT`, `OVER-CAP`, `cannot check out`, `certify rc=75`, `queue round certify exited 4`, `left
   no verdicts`) backs the repo off 600 s; the second in a row writes `stopped` and pages;
 - an open round at the start of a pass has no driver: paged once per batch, never re-cut;
 - `OPEN FAILED` pages every time and pauses nothing.

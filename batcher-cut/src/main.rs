@@ -804,7 +804,10 @@ fn finish_local_round(
         };
         match io::round_certify(env_, repo, batch, attest, Some(&head)) {
             Ok(()) => println!("batcher {}: certified the round's tree (round GREEN at {})", repo.name, stable.head),
-            Err(e) => return refuse(format!("batcher {}: refused to land locally at {head} — cannot certify the round: {e}", repo.name)),
+            Err(e) => {
+                let refused = refuse(format!("batcher {}: refused to land locally at {head} — cannot certify the round: {e}", repo.name));
+                return if e.contains(pace::CERTIFY_ENV_MARKER) { Err(e) } else { refused };
+            }
         }
     }
     let stage_test = stable.staged.as_ref().and_then(|_| match io::round_stage_test_spawn(env_, repo) {
