@@ -68,7 +68,6 @@ The first five are what batch 2 needs; the other five are worth building only on
 | test-lifecycle-cert | certify-twice, landstate-lifecycle-agree | ? |
 | test-landing-queue-early | long-gate-interleaving | 56 |
 | test-landing-rebase | conflicting-siblings | 64 |
-| test-rebase-escalation | conflicting-siblings | 8 |
 
 Recorded total 239 s, with 5 of the 11 unmeasured, so it is a floor. They are the loop's main path (certify, land, publish, tag) and its two best-known interleavings (conflicting siblings, a long gate), which is why they go first: the sim suite already walks them.
 

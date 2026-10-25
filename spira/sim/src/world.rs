@@ -924,8 +924,13 @@ pub fn config_settings(world: &Path, repos: &[RepoSpec], gh: &Path) -> Vec<(Stri
     repos
         .iter()
         .map(section)
-        .chain([("spira.gh".to_string(), gh.display().to_string()), ("spira.batcher_enable".to_string(), "1".to_string())])
+        .chain([("spira.gh".to_string(), gh.display().to_string()), ("spira.batcher_enable".to_string(), "1".to_string()), ("spira.mail_mute".to_string(), "false".to_string())])
         .collect()
+}
+
+/// The root of the world's Maildirs: the complete base's `mail`, moved under the world's home.
+pub fn mail_root(world: &Path) -> PathBuf {
+    world.join(HOME).join("spira/run/mail")
 }
 
 /// Where the world's Dolt fixture lives. Nested inside testenv, `TESTDB_ROOT` is the

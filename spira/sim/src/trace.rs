@@ -46,6 +46,7 @@ pub struct Snapshot {
     pub refs: Vec<(String, String)>,
     pub tags: Vec<String>,
     pub run: Vec<(&'static str, Value)>,
+    pub mail: Vec<Value>,
 }
 
 /// Rejects a probe row that names no bead or an unknown field, so a misspelt column cannot read as an absent one.
@@ -119,6 +120,7 @@ impl Trace {
         };
         self.append("bead_state", &s.beads.iter().cloned().map(with_seq).collect::<Vec<_>>())?;
         self.append("refs", &s.refs.iter().map(|(r, sha)| json!({"seq": seq, "ref": r, "sha": sha})).collect::<Vec<_>>())?;
+        self.append("mail", &s.mail.iter().cloned().map(with_seq).collect::<Vec<_>>())?;
         self.append("tags", &s.tags.iter().map(|t| json!({"seq": seq, "tag": t})).collect::<Vec<_>>())?;
         for t in crate::runstate::TABLES {
             let mut rows = Vec::new();
@@ -152,6 +154,7 @@ impl Trace {
         s += &src("refs", "seq:'BIGINT', ref:'VARCHAR', sha:'VARCHAR'");
         s += &src("tags", "seq:'BIGINT', tag:'VARCHAR'");
         s += &crate::runstate::load_sql(&self.dir);
+        s += &src("mail", "seq:'BIGINT', mailbox:'VARCHAR', kind:'VARCHAR', bead:'VARCHAR', read:'BOOLEAN', subject:'VARCHAR'");
         s += INVARIANTS;
         s
     }
@@ -165,7 +168,7 @@ impl Trace {
     }
 }
 
-const TABLES: &[&str] = &["events", "bead_state", "refs", "tags"];
+const TABLES: &[&str] = &["events", "bead_state", "refs", "tags", "mail"];
 
 fn duckdb(db: &Path, sql: &str, json_out: bool) -> Result<String, String> {
     let mut cmd = Command::new(duckdb_bin());

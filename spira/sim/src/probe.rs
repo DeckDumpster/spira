@@ -206,6 +206,57 @@ pub fn merge_bd(beads: &mut Vec<Value>, bd_list: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// One header's value from a message's header block, with folded continuations unfolded.
+fn mail_header(text: &str, name: &str) -> String {
+    let prefix = format!("{name}:");
+    let mut lines = text.lines();
+    while let Some(line) = lines.next() {
+        if line.is_empty() {
+            break;
+        }
+        if let Some(v) = line.strip_prefix(&prefix) {
+            let mut out = v.trim_start().to_string();
+            for next in lines.clone().take_while(|n| n.starts_with(' ') || n.starts_with('\t')) {
+                out.push_str(next);
+            }
+            return out.trim_end().to_string();
+        }
+    }
+    String::new()
+}
+
+/// A message is read once its Maildir flags carry `S`; anything in `new/` is unread.
+fn mail_read(dir: &str, file: &str) -> bool {
+    dir == "cur" && file.split_once(":2,").is_some_and(|(_, flags)| flags.contains('S'))
+}
+
+/// The `mail` rows: one per message under `<root>/<mailbox>/{new,cur}`, in mailbox then file order.
+pub fn mail_rows(root: &Path) -> Vec<Value> {
+    let sorted = |dir: &Path| -> Vec<std::fs::DirEntry> {
+        let mut v: Vec<_> = std::fs::read_dir(dir).map(|rd| rd.flatten().collect()).unwrap_or_default();
+        v.sort_by_key(|e| e.file_name());
+        v
+    };
+    let mut out = Vec::new();
+    for mb in sorted(root).iter().filter(|e| e.path().is_dir()) {
+        for sub in ["new", "cur"] {
+            for m in sorted(&mb.path().join(sub)) {
+                let file = m.file_name().to_string_lossy().to_string();
+                let Ok(text) = std::fs::read_to_string(m.path()) else { continue };
+                let (head, _) = text.split_once("\n\n").unwrap_or((text.as_str(), ""));
+                out.push(json!({
+                    "mailbox": mb.file_name().to_string_lossy(),
+                    "kind": mail_header(head, "X-Spira-Kind"),
+                    "bead": mail_header(head, "X-Spira-Bead"),
+                    "read": mail_read(sub, &file),
+                    "subject": mail_header(head, "Subject"),
+                }));
+            }
+        }
+    }
+    out
+}
+
 /// Refuses unless `world` is a sim world and every production locator set in `env` points
 /// inside it: the world's own `sim.env` sets `SPIRA_RUN` to `<world>/run`, which is fine,
 /// and anything else is production (or some other store) and is refused.
@@ -366,6 +417,7 @@ pub struct Observed {
     pub refs: Vec<(String, String)>,
     pub tags: Vec<String>,
     pub rows: Vec<Value>,
+    pub mail: Vec<Value>,
 }
 
 impl Observer {
@@ -411,6 +463,7 @@ impl Observer {
             refs: work.into_iter().collect(),
             tags: all_tags,
             rows: rows(&list, &landstate_of(&self.world), &git)?,
+            mail: mail_rows(&crate::world::mail_root(&self.world)),
         })
     }
 }

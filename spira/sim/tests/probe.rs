@@ -376,3 +376,35 @@ fn a_bead_of_another_repository_is_held_against_that_repositorys_lineage() {
     assert_eq!(got["sp-d"]["on_local_main"], false);
     assert_eq!(got["sp-h"]["on_origin_main"], false, "a bead of the home repository is not found in docs' history");
 }
+
+fn deliver(root: &Path, mailbox: &str, sub: &str, file: &str, text: &str) {
+    let d = root.join(mailbox).join(sub);
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join(file), text).unwrap();
+}
+
+#[test]
+fn mail_rows_name_each_message_by_mailbox_kind_bead_read_state_and_subject() {
+    let d = testkit::TempDir::new("simprobe-mail");
+    let root = d.join("mail");
+    deliver(&root, "concierge", "new", "1.0.1", "From: a\nSubject: loop x3\nX-Spira-Kind: note\nX-Spira-Bead: sp-1\n\nbody\n");
+    deliver(&root, "operator", "cur", "2.0.1:2,S", "Subject: folded\n subject\nX-Spira-Kind: question\n\nX-Spira-Bead: sp-body\n");
+    deliver(&root, "operator", "cur", "3.0.1:2,R", "Subject: seen but not flagged S\n\nbody\n");
+    let rows = spira_sim::probe::mail_rows(&root);
+    assert_eq!(
+        rows,
+        vec![
+            json!({"mailbox": "concierge", "kind": "note", "bead": "sp-1", "read": false, "subject": "loop x3"}),
+            json!({"mailbox": "operator", "kind": "question", "bead": "", "read": true, "subject": "folded subject"}),
+            json!({"mailbox": "operator", "kind": "", "bead": "", "read": false, "subject": "seen but not flagged S"}),
+        ]
+    );
+    assert!(spira_sim::probe::mail_rows(&d.join("absent")).is_empty());
+}
+
+#[test]
+fn a_worlds_mail_is_unmuted_and_rooted_inside_it() {
+    let s = spira_sim::world::config_settings(Path::new("/w"), &[], Path::new("/w/bin/gh"));
+    assert!(s.contains(&("spira.mail_mute".to_string(), "false".to_string())));
+    assert_eq!(spira_sim::world::mail_root(Path::new("/w")), Path::new("/w/home/spira/run/mail"));
+}
