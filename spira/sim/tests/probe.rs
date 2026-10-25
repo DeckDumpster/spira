@@ -351,3 +351,28 @@ fn bd_rows_refuse_what_is_not_a_bead_list() {
         assert!(merge_bd(&mut Vec::new(), bad).is_err(), "{bad}");
     }
 }
+
+#[test]
+fn a_worlds_landing_lineage_is_its_origin_trunk_unless_its_own_repository_is_queue_local() {
+    let t = testkit::TempDir::new("probe-mode");
+    let w = t.join("world");
+    std::fs::create_dir_all(w.join("home")).unwrap();
+    assert!(!spira_sim::probe::lands_on_origin(&w), "no registry yet reads as the default, queue.local");
+    for (row, on_origin) in [("sim|/w/work|queue.local|local/main|||plan", false), ("sim|/w/work|push|origin/main|||plan", true), ("sim|/w/work|hold|origin/main|||plan", true)] {
+        std::fs::write(w.join("home/registry-rows"), format!("{row}\nother|/w/repos/o/work|queue.local|local/main|||plan\n")).unwrap();
+        assert_eq!(spira_sim::probe::lands_on_origin(&w), on_origin, "{row}");
+    }
+}
+
+#[test]
+fn a_bead_of_another_repository_is_held_against_that_repositorys_lineage() {
+    let mut other = Lineage::default();
+    other.messages.push("sp-d: landed in docs".to_string());
+    let mut facts = GitFacts::default();
+    facts.others.insert("docs".to_string(), spira_sim::probe::RepoLineages { local_main: Lineage::default(), origin_main: other });
+    let list = r#"[{"bead_id":"sp-d","state":"LANDED","version":"1","repo":"docs"},{"bead_id":"sp-h","state":"LANDED","version":"1","repo":"sim"}]"#;
+    let got = rows_of(list, &facts);
+    assert_eq!(got["sp-d"]["on_origin_main"], true);
+    assert_eq!(got["sp-d"]["on_local_main"], false);
+    assert_eq!(got["sp-h"]["on_origin_main"], false, "a bead of the home repository is not found in docs' history");
+}

@@ -65,6 +65,39 @@ pub struct GitFacts {
     pub branches: BTreeMap<String, String>,
     pub local_main: Lineage,
     pub origin_main: Lineage,
+    /// The landing and origin lineages of the world's other repositories, by repository name.
+    pub others: BTreeMap<String, RepoLineages>,
+}
+
+#[derive(Default, Clone)]
+pub struct RepoLineages {
+    pub local_main: Lineage,
+    pub origin_main: Lineage,
+}
+
+/// A repository of the world beyond its own, as its registry row names it.
+pub struct ExtraRepo {
+    pub name: String,
+    pub work: PathBuf,
+    pub origin: PathBuf,
+    /// The trunk branch, and whether the repository lands on a local branch (`queue.local`).
+    pub trunk: String,
+    pub local: bool,
+}
+
+/// The registry rows after the world's own.
+pub fn extra_repos(world: &Path) -> Vec<ExtraRepo> {
+    let rows = std::fs::read_to_string(world.join("home/registry-rows")).unwrap_or_default();
+    rows.lines()
+        .skip(1)
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split('|').collect();
+            let (name, path, mode, base) = (f.first()?, f.get(1)?, f.get(2)?, f.get(3)?);
+            let work = PathBuf::from(path);
+            let origin = work.parent()?.join("origin.git");
+            Some(ExtraRepo { name: name.to_string(), work, origin, trunk: base.rsplit('/').next()?.to_string(), local: *mode == "queue.local" })
+        })
+        .collect()
 }
 
 /// Parses `git for-each-ref --format='%(refname) %(objectname)' refs/heads/spira/`.
@@ -120,6 +153,10 @@ pub fn rows(lc_list: &str, landstate: &dyn Fn(&str) -> Option<String>, git: &Git
             None => None,
         };
         let tip = lc_tip.as_deref().or(branch_tip.as_deref());
+        let mains = match field("repo").and_then(|n| git.others.get(&n)) {
+            Some(o) => (&o.local_main, &o.origin_main),
+            None => (&git.local_main, &git.origin_main),
+        };
         out.push(json!({
             "bead": id,
             "bd_status": null,
@@ -129,8 +166,8 @@ pub fn rows(lc_list: &str, landstate: &dyn Fn(&str) -> Option<String>, git: &Git
             "landstate": landstate(id),
             "lc_tip": lc_tip,
             "branch_tip": branch_tip,
-            "on_local_main": git.local_main.holds(id, tip),
-            "on_origin_main": git.origin_main.holds(id, tip),
+            "on_local_main": mains.0.holds(id, tip),
+            "on_origin_main": mains.1.holds(id, tip),
         }));
     }
     Ok(out)
@@ -226,11 +263,27 @@ fn lineage(repo: &Path, r: &str) -> Result<Lineage, String> {
     Ok(Lineage::parse(&git(repo, &["log", "--format=%H%x00%B%x1e", r, "--"])?))
 }
 
+/// Whether the world's own repository lands on its origin's trunk (every mode but `queue.local`),
+/// so `GitFacts::local_main` is the lineage of the ref its beads land on.
+pub fn lands_on_origin(world: &Path) -> bool {
+    let rows = std::fs::read_to_string(world.join("home/registry-rows")).unwrap_or_default();
+    rows.lines().next().and_then(|l| l.split('|').nth(2)).is_some_and(|mode| mode != "queue.local")
+}
+
 pub fn git_facts(world: &Path) -> Result<GitFacts, String> {
     let work = world.join("work");
+    let mut branches = parse_branches(&git(&work, &["for-each-ref", "--format=%(refname) %(objectname)", &format!("refs/heads/{BRANCH_PREFIX}")])?);
+    let mut others = BTreeMap::new();
+    for x in extra_repos(world) {
+        branches.extend(parse_branches(&git(&x.work, &["for-each-ref", "--format=%(refname) %(objectname)", &format!("refs/heads/{BRANCH_PREFIX}")])?));
+        let local_main = if x.local { lineage(&x.work, &format!("refs/heads/local/{}", x.trunk))? } else { Lineage::default() };
+        others.insert(x.name.clone(), RepoLineages { local_main, origin_main: lineage(&x.origin, &format!("refs/heads/{}", x.trunk))? });
+    }
+    let landing = if lands_on_origin(world) { lineage(&world.join("origin.git"), "refs/heads/main")? } else { lineage(&work, &format!("refs/heads/{LANDING_BASE}"))? };
     Ok(GitFacts {
-        branches: parse_branches(&git(&work, &["for-each-ref", "--format=%(refname) %(objectname)", &format!("refs/heads/{BRANCH_PREFIX}")])?),
-        local_main: lineage(&work, &format!("refs/heads/{LANDING_BASE}"))?,
+        branches,
+        others,
+        local_main: landing,
         origin_main: lineage(&world.join("origin.git"), "refs/heads/main")?,
     })
 }
@@ -303,7 +356,8 @@ pub fn read_refs(git_dir: &Path) -> BTreeMap<String, String> {
 /// socket, and a commit's history read once however many snapshots see it.
 pub struct Observer {
     world: PathBuf,
-    lineages: HashMap<(bool, String), Lineage>,
+    on_origin: bool,
+    lineages: HashMap<(PathBuf, String), Lineage>,
 }
 
 pub struct Observed {
@@ -314,26 +368,35 @@ pub struct Observed {
 
 impl Observer {
     pub fn new(world: &Path, env: &dyn Fn(&str) -> Option<String>) -> Result<Self, String> {
-        Ok(Observer { world: refuse_foreign(world, env)?, lineages: HashMap::new() })
+        let world = refuse_foreign(world, env)?;
+        Ok(Observer { on_origin: lands_on_origin(&world), world, lineages: HashMap::new() })
     }
 
-    fn lineage(&mut self, origin: bool, sha: Option<&String>) -> Result<Lineage, String> {
-        let Some(sha) = sha else { return Err(format!("the world's {} has no ref to read", if origin { "origin" } else { "landing branch" })) };
-        if !self.lineages.contains_key(&(origin, sha.clone())) {
-            let repo = if origin { self.world.join("origin.git") } else { self.world.join("work") };
-            self.lineages.insert((origin, sha.clone()), lineage(&repo, sha)?);
+    fn lineage(&mut self, repo: &Path, sha: Option<&String>) -> Result<Lineage, String> {
+        let Some(sha) = sha else { return Err(format!("{} has no ref to read", repo.display())) };
+        let key = (repo.to_path_buf(), sha.clone());
+        if !self.lineages.contains_key(&key) {
+            self.lineages.insert(key.clone(), lineage(repo, sha)?);
         }
-        Ok(self.lineages[&(origin, sha.clone())].clone())
+        Ok(self.lineages[&key].clone())
     }
 
     pub fn observe(&mut self) -> Result<Observed, String> {
         let work = read_refs(&self.world.join("work/.git"));
         let origin = read_refs(&self.world.join("origin.git"));
-        let git = GitFacts {
-            branches: work.iter().filter_map(|(r, sha)| r.strip_prefix(&format!("refs/heads/{BRANCH_PREFIX}")).map(|id| (id.to_string(), sha.clone()))).collect(),
-            local_main: self.lineage(false, work.get(&format!("refs/heads/{LANDING_BASE}")))?,
-            origin_main: self.lineage(true, origin.get("refs/heads/main"))?,
-        };
+        let (home_work, home_origin) = (self.world.join("work"), self.world.join("origin.git"));
+        let heads = |refs: &BTreeMap<String, String>| -> BTreeMap<String, String> { refs.iter().filter_map(|(r, sha)| r.strip_prefix(&format!("refs/heads/{BRANCH_PREFIX}")).map(|id| (id.to_string(), sha.clone()))).collect() };
+        let mut branches = heads(&work);
+        let mut others = BTreeMap::new();
+        for x in extra_repos(&self.world) {
+            let (xwork, xorigin) = (read_refs(&x.work.join(".git")), read_refs(&x.origin));
+            branches.extend(heads(&xwork));
+            let local_main = if x.local { self.lineage(&x.work, xwork.get(&format!("refs/heads/local/{}", x.trunk)))? } else { Lineage::default() };
+            let origin_main = self.lineage(&x.origin, xorigin.get(&format!("refs/heads/{}", x.trunk)))?;
+            others.insert(x.name.clone(), RepoLineages { local_main, origin_main });
+        }
+        let landing = if self.on_origin { self.lineage(&home_origin, origin.get("refs/heads/main"))? } else { self.lineage(&home_work, work.get(&format!("refs/heads/{LANDING_BASE}")))? };
+        let git = GitFacts { branches, others, local_main: landing, origin_main: self.lineage(&home_origin, origin.get("refs/heads/main"))? };
         let socket = crate::world::lc_socket(&self.world);
         let (code, list) = crate::world::ask_body(&socket, &["list"]).ok_or_else(|| format!("spira-lc list: no answer on {}", socket.display()))?;
         if code != 0 {
