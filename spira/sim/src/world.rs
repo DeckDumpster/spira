@@ -763,9 +763,9 @@ pub fn ensure_seed(repo: &Path, tree: &str) -> Result<PathBuf, String> {
 
 /// What a world's checkouts hold: the root files and the directories a world path reads from a
 /// worktree (workflows, lifecycle schema, the agent's `out/`, the sim's tables, timer units,
-/// harness scripts), not crate sources, docs, test suites or the config registry. A new
+/// harness scripts, the allow list the commit hook's fence-scripts rule reads), not crate sources, docs, test suites or the config registry. A new
 /// worktree inherits the patterns, so every checkout the landing code makes is a fraction of the tree.
-const SPARSE_PATTERNS: &str = "/*\n!/*/\n/.github/\n/lifecycle/\n/out/\n/sim/\n/spira/\n/systemd/\n!/spira/test-*.sh\n!/spira/conf.d/\n";
+const SPARSE_PATTERNS: &str = "/*\n!/*/\n/.github/\n/lifecycle/\n/out/\n/sim/\n/spira/\n/systemd/\n!/spira/test-*.sh\n!/spira/conf.d/\n/spira-lint/fence-scripts-allow\n";
 
 /// A copy of a seed repo, its pack files linked rather than copied: a pack is never written to
 /// again, where refs, the index and the reflogs are, and those are copied.
