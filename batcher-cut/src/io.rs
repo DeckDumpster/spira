@@ -2388,11 +2388,54 @@ const LOCK_NB: i32 = 4;
 
 pub struct Lock {
     file: fs::File,
+    beat: Option<Beat>,
+}
+
+const BEAT_FILE: &str = "lock.beat";
+const BEAT_EVERY: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Touches `lock.beat` while the queue-lock holder lives, so the reconciler tells a landing that
+/// is still working from a holder that died with the lock held (the queue crate's holder does the same).
+struct Beat {
+    stop: std::sync::mpsc::Sender<()>,
+    thread: Option<std::thread::JoinHandle<()>>,
+    path: PathBuf,
+}
+
+fn touch(path: &Path) {
+    if let Ok(f) = fs::OpenOptions::new().create(true).write(true).truncate(false).open(path) {
+        let _ = f.set_modified(std::time::SystemTime::now());
+    }
+}
+
+impl Beat {
+    fn start(path: PathBuf, every: std::time::Duration) -> Beat {
+        touch(&path);
+        let (stop, rx) = std::sync::mpsc::channel::<()>();
+        let p = path.clone();
+        let thread = std::thread::spawn(move || {
+            while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = rx.recv_timeout(every) {
+                touch(&p);
+            }
+        });
+        Beat { stop, thread: Some(thread), path }
+    }
+}
+
+impl Drop for Beat {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+        let _ = fs::remove_file(&self.path);
+    }
 }
 
 impl Drop for Lock {
     fn drop(&mut self) {
         let _ = self.file.set_len(0);
+        self.beat.take();
     }
 }
 
@@ -2406,7 +2449,12 @@ fn lock_at(path: &Path, verb: &str) -> Result<Option<Lock>, String> {
     }
     let _ = f.set_len(0);
     let _ = (&f).write_all(format!("pid={} verb={verb}\n", std::process::id()).as_bytes());
-    Ok(Some(Lock { file: f }))
+    let beat = path
+        .file_name()
+        .is_some_and(|n| n == "lock")
+        .then(|| path.with_file_name(BEAT_FILE))
+        .map(|b| Beat::start(b, BEAT_EVERY));
+    Ok(Some(Lock { file: f, beat }))
 }
 
 /// None means another operation already holds the lock — not an error, the caller should
@@ -3517,6 +3565,28 @@ mod wait_lock_tests {
         });
         assert!(wait_lock(&e, "r", 10).unwrap().is_some(), "must acquire once the holder releases");
         t.join().unwrap();
+    }
+
+    #[test]
+    fn a_held_queue_lock_beats_until_it_drops() {
+        let d = testkit::TempDir::new("batcher-cut-beat");
+        let e = super::lifecycle_tests_env(&d);
+        let beat = e.queue_dir.join("r").join(BEAT_FILE);
+        let held = try_lock(&e, "r").unwrap().unwrap();
+        assert!(beat.is_file(), "the batcher's queue-lock holder must beat while it lands");
+        drop(held);
+        assert!(!beat.exists(), "the beat goes with the lock");
+    }
+
+    #[test]
+    fn the_beat_refreshes_its_file() {
+        let d = testkit::TempDir::new("batcher-cut-beat2");
+        let p = d.path().join("b");
+        let b = Beat::start(p.clone(), std::time::Duration::from_millis(20));
+        let t0 = fs::metadata(&p).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(fs::metadata(&p).unwrap().modified().unwrap() > t0);
+        drop(b);
     }
 }
 
