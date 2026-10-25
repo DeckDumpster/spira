@@ -715,11 +715,6 @@ pub fn resubmit(
         ));
         return FAIL;
     }
-    let branch = format!("spira/{id}");
-    if !w.git.branch_set(&path, &branch, tip, true) {
-        w.err(format!("queue.sh resubmit: {id} re-tipped to {tip} but cannot point {branch} at it — set it by hand"));
-        return FAIL;
-    }
     landing_log(
         &c.s.run,
         &format!(

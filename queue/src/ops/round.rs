@@ -1090,7 +1090,7 @@ fn open(
             }
             Some(r) => match r.tip.clone().filter(|t| !t.is_empty()) {
                 Some(tip) if r.ejected_red_tip.as_deref() == Some(tip.as_str()) => {
-                    skips.push(format!("{}: {tip} is a recorded ejected-red tip — not admitted until the tip changes", m.id))
+                    skips.push(format!("{}: {tip} is a recorded ejected-red tip — not admitted until the tip changes or `queue absolve {} --evidence-tip {tip}` withdraws a red that was not the tree's fault", m.id, m.id))
                 }
                 Some(tip) if tip.starts_with(&m.tip) && batch_red_at(&c, &m.id, &tip) => {
                     skips.push(format!("{}: {tip} already went red in a batch — not admitted until the tip changes", m.id))

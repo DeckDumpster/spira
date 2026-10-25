@@ -3279,6 +3279,28 @@ fn resubmit_moves_the_local_branch_to_the_new_tip() {
 }
 
 #[test]
+fn resubmit_leaves_a_branch_it_already_moved_alone_when_branch_f_would_refuse() {
+    let t = rework_world(&["manual"]);
+    t.git.branch_set_fails.set(true);
+    let tip_arg = format!("--tip={T_FIX}");
+    assert_eq!(
+        t.run(&[
+            "resubmit",
+            "sp-a",
+            &tip_arg,
+            "--by=concierge",
+            "--reason=hand-built fix",
+            "--evidence=npm test 1/0",
+            &ev_tip()
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert_eq!(t.git.get("refs/heads/spira/sp-a").as_deref(), Some(T_FIX));
+}
+
+#[test]
 fn resubmit_fetches_an_absent_tip_and_refuses_when_the_fetch_brings_nothing() {
     let t = rework_world(&["manual"]);
     let absent = "6".repeat(40);

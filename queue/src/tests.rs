@@ -29,6 +29,8 @@ struct FGit {
     log: RefCell<Vec<RangeCommit>>,
     current: RefCell<Option<String>>,
     fetch_ok: Cell<bool>,
+    /// `git branch -f` refuses a branch checked out in a worktree.
+    branch_set_fails: Cell<bool>,
     merge_fail: RefCell<BTreeSet<String>>,
     /// Tips whose rebase onto the round's head conflicts, with the paths it names.
     rebase_fail: RefCell<BTreeMap<String, Vec<String>>>,
@@ -144,6 +146,10 @@ impl Git for FGit {
         self.greps.borrow().get(needle).cloned().unwrap_or_default()
     }
     fn branch_set(&self, _: &Path, name: &str, sha: &str, _force: bool) -> bool {
+        self.calls.borrow_mut().push(format!("branch-set {name}"));
+        if self.branch_set_fails.get() {
+            return false;
+        }
         self.set(&format!("refs/heads/{name}"), sha);
         true
     }
