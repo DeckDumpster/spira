@@ -297,6 +297,10 @@ is     "a ? exits 1"                              1                             
 out="$(run_ready "FAKE_LOOM=ERR 5ms refused" -- )"; rc=$?
 want   "loom that does not answer: FAIL"          "  FAIL  loom does not answer"   "$out"
 is     "loom FAIL exits 1"                        1                               "$rc"
+printf 'loom: planted-log-line\n' > "$RUN/loom.log"
+out="$(run_ready "FAKE_LOOM=ERR 5ms refused" -- )"
+want   "loom FAIL carries unit state"             "unit state:"                   "$out"
+want   "loom FAIL carries loom's log tail"        "planted-log-line"              "$out"
 
 out="$(run_ready "FAKE_LOOM=200 9999ms" -- )"; rc=$?
 want   "loom over budget: WARN"                   "  WARN  loom answers 200 but over budget" "$out"
