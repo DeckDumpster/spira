@@ -45,8 +45,9 @@ chmod +x "$TMP/bin/bd"
 cat > "$TMP/bin/spira-lc" <<'STUB'
 #!/usr/bin/env bash
 printf 'spira-lc %s\n' "$*" >> "$CALLS"
-if [ "${1:-}" = show ] && [ -n "${FAKE_STATE:-}" ]; then
-    printf '{"bead":{"state":"%s","version":3,"holder":"","lease_until":0}}' "$FAKE_STATE"
+if [ "${1:-}" = show ]; then
+    [ "${FAKE_STATE:-}" = UNREADABLE ] && exit 1
+    printf '{"bead":{"state":"%s","version":3,"holder":"","lease_until":0}}' "${FAKE_STATE:-READY}"
 fi
 exit 0
 STUB
@@ -139,3 +140,9 @@ done
 : > "$CALLS"
 FAKE_STATE=READY park_unmapped sp-live1 gone-repo
 has "READY bead is still held" "spira-lc hold sp-live1 ask" "$(cat "$CALLS")"
+
+: > "$CALLS"
+FAKE_STATE=UNREADABLE park_unmapped sp-unread1 gone-repo
+c="$(cat "$CALLS")"
+if [[ "$c" == *"spira-lc hold"* ]]; then bad "unreadable row: no hold sent" "$c"; else ok "unreadable row: no hold sent"; fi
+has "unreadable row: claim still released" "spira-lc unclaim sp-unread1 aeon-tester" "$c"
