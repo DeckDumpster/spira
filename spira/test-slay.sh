@@ -169,6 +169,15 @@ SLAY="$HERE/../spira-world/src/bin/slay.rs"
 
 # ---- helpers -----------------------------------------------------------------------
 
+exec 9>&2
+slay() {   # a nonzero exit prints slay's whole output, so a flip names its own cause
+    local _o _r
+    _o="$(command slay "$@" 2>&1)"; _r=$?
+    printf '%s\n' "$_o"
+    [ "$_r" -eq 0 ] || printf '# slay %s -> rc=%s\n%s\n' "$*" "$_r" "$_o" | sed 's/^/# /' >&9
+    return "$_r"
+}
+
 status_of() { bdjson show "$1" | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
