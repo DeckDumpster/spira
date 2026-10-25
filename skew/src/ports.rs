@@ -49,6 +49,8 @@ pub trait World {
     /// `git status --porcelain --untracked-files=no`; empty when clean.
     fn dirty_tracked(&self, repo: &Path) -> String;
     fn stash_push(&self, repo: &Path, tag: &str) -> Result<(), String>;
+    /// `git checkout -- .`; only called when every dirty tracked entry is a deletion.
+    fn restore_deleted(&self, repo: &Path) -> Result<(), String>;
     fn fetch(&self, repo: &Path, remote: &str) -> bool;
     /// `git diff --diff-filter=MAD --name-status <range>`.
     fn diff_status(&self, repo: &Path, range: &str) -> Vec<StatusRow>;

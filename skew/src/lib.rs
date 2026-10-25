@@ -728,7 +728,19 @@ pub fn refresh(w: &dyn World, repo_arg: Option<&str>) -> i32 {
         return 0;
     }
 
-    let dirty = w.dirty_tracked(&repo);
+    let mut dirty = w.dirty_tracked(&repo);
+    if !dirty.is_empty() && dirty.lines().all(|l| l.starts_with(" D")) {
+        match w.restore_deleted(&repo) {
+            Ok(()) => {
+                w.out(&format!("skew: refresh: restored {} deleted tracked file(s)", dirty.lines().count()));
+                dirty = w.dirty_tracked(&repo);
+            }
+            Err(e) => {
+                w.out(&format!("skew: refresh declined — every tracked file change is a deletion and restoring them failed: {e}"));
+                return 1;
+            }
+        }
+    }
     if !dirty.is_empty() {
         let stash_tag = format!("skew-refresh-{}", w.now_stamp());
         match w.stash_push(&repo, &stash_tag) {

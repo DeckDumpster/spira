@@ -27,6 +27,9 @@ pub struct Fake {
     pub rev_list_counts: RefCell<BTreeMap<String, u64>>,
     pub current_branches: RefCell<BTreeMap<String, String>>,
     pub dirty: RefCell<BTreeMap<String, String>>,
+    pub stash_err: RefCell<Option<String>>,
+    pub restore_err: RefCell<Option<String>>,
+    pub restored: RefCell<Vec<PathBuf>>,
     pub fetch_ok: RefCell<bool>,
     pub diff_statuses: RefCell<BTreeMap<String, Vec<StatusRow>>>,
     pub show_files: RefCell<BTreeMap<String, Vec<u8>>>, // key "<repo>|<rev>|<path>"
@@ -137,6 +140,17 @@ impl World for Fake {
         self.dirty.borrow().get(&repo.to_string_lossy().into_owned()).cloned().unwrap_or_default()
     }
     fn stash_push(&self, _repo: &Path, _tag: &str) -> Result<(), String> {
+        match self.stash_err.borrow().clone() {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+    fn restore_deleted(&self, repo: &Path) -> Result<(), String> {
+        if let Some(e) = self.restore_err.borrow().clone() {
+            return Err(e);
+        }
+        self.restored.borrow_mut().push(repo.to_path_buf());
+        self.dirty.borrow_mut().remove(&repo.to_string_lossy().into_owned());
         Ok(())
     }
     fn fetch(&self, _repo: &Path, _remote: &str) -> bool {
@@ -860,4 +874,43 @@ fn units_spira_install_sh_set_but_not_executable_cannot_check() {
 
     assert_eq!(units(&f), EXIT_CANNOT_CHECK);
     assert!(f.stderr_joined().contains("units-install"));
+}
+
+fn dirty_checkout(dirty: &str) -> Fake {
+    let f = Fake::default();
+    f.set_env("SPIRA_REPO", "/repo");
+    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
+    f.landrefs.borrow_mut().insert("/repo".into(), "origin/main".into());
+    f.rev_list_counts.borrow_mut().insert("/repo|HEAD..origin/main".into(), 2);
+    f.current_branches.borrow_mut().insert("/repo".into(), "main".into());
+    f.dirty.borrow_mut().insert("/repo".into(), dirty.into());
+    f
+}
+
+#[test]
+fn refresh_checkout_with_every_tracked_file_deleted_is_restored_not_stashed() {
+    let f = dirty_checkout(" D a.sh\n D b/c.sh\n");
+    *f.stash_err.borrow_mut() = Some("stash must not be tried".into());
+    assert_eq!(refresh(&f, Some("/repo")), 0);
+    assert_eq!(f.restored.borrow().len(), 1);
+    let out = f.stdout_joined();
+    assert!(out.contains("restored 2 deleted tracked file(s)"), "{out}");
+    assert!(!out.contains("declined"), "{out}");
+}
+
+#[test]
+fn refresh_declines_naming_the_restore_failure() {
+    let f = dirty_checkout(" D a.sh\n");
+    *f.restore_err.borrow_mut() = Some("fatal: Unable to create index.lock".into());
+    assert_eq!(refresh(&f, Some("/repo")), 1);
+    assert!(f.stdout_joined().contains("restoring them failed: fatal: Unable to create index.lock"));
+}
+
+#[test]
+fn refresh_declines_naming_the_stash_failure_for_a_mixed_dirty_tree() {
+    let f = dirty_checkout(" D a.sh\n M b.sh\n");
+    *f.stash_err.borrow_mut() = Some("error: could not write index".into());
+    assert_eq!(refresh(&f, Some("/repo")), 1);
+    assert!(f.restored.borrow().is_empty());
+    assert!(f.stdout_joined().contains("stash failed: error: could not write index"));
 }

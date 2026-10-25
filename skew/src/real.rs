@@ -65,6 +65,16 @@ impl Real {
         }
     }
 
+    fn git_checked(&self, repo: &Path, args: &[&str]) -> Result<(), String> {
+        let o = spira_config::bounded::bounded("git").arg("-C").arg(repo).args(args).stdin(Stdio::null()).output().map_err(|e| format!("git did not run: {e}"))?;
+        if o.status.success() {
+            return Ok(());
+        }
+        let said = format!("{}{}", String::from_utf8_lossy(&o.stderr), String::from_utf8_lossy(&o.stdout));
+        let said = said.trim();
+        Err(if said.is_empty() { format!("git {} exited {} with no output", args.join(" "), o.status) } else { said.to_string() })
+    }
+
     fn git_lines(&self, repo: &Path, args: &[&str]) -> Vec<String> {
         let (_, out) = self.git(repo, args);
         out.lines().map(str::to_string).filter(|l| !l.is_empty()).collect()
@@ -178,8 +188,10 @@ impl World for Real {
         self.git(repo, &["status", "--porcelain", "--untracked-files=no"]).1
     }
     fn stash_push(&self, repo: &Path, tag: &str) -> Result<(), String> {
-        let (ok, out) = self.git(repo, &["stash", "push", "-m", tag]);
-        if ok { Ok(()) } else { Err(out) }
+        self.git_checked(repo, &["stash", "push", "-m", tag])
+    }
+    fn restore_deleted(&self, repo: &Path) -> Result<(), String> {
+        self.git_checked(repo, &["checkout", "--", "."])
     }
     fn fetch(&self, repo: &Path, remote: &str) -> bool {
         self.git(repo, &["fetch", "-q", "--no-write-fetch-head", remote]).0
