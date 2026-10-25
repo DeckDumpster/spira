@@ -230,3 +230,12 @@ jobs:
           pve-node:           ${{ vars.PVE_NODE }}
           template-vmid:      ${{ vars.TEMPLATE_VMID }}
           vm-token:           ${{ needs.provision.outputs.vm-token }}
+
+  stale-drafts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail on draft releases older than a day
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash spira/stale-drafts.sh --repo "$GITHUB_REPOSITORY"
