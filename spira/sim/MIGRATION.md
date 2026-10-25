@@ -212,3 +212,5 @@ The sim lane build-fence failure on the last closeout was a reaped warm target d
 A second isolated testenv run of gate-verdict-kinds at the same content passed in 57s, so the ejection was not reproducible from the tree.
 
 A third isolated testenv run of gate-verdict-kinds at the rebased tip passed in 55s; the tip is recommitted so a round can re-certify it.
+
+A fourth gate-verdict-kinds run on the same tip was green (55s); the ejection did not reproduce.
