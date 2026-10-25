@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 const USAGE: &str = "usage: sim world up <dir> [--tree <rev>] [--repo <name>:<mode>[:<trunk>]]...\n       sim world seed [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim round-vm run <tree> --results-dir <dir>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario|name> [--seed N] [--world <dir>] [--keep] [--repo <name>:<mode>[:<trunk>]]...\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>
        sim proc-summary <world|proc-trace.log>
-       sim summon
+       sim summon <systemd-run argv ending in: aeon --home H <fayth>>   (also: invoked as sim-summon)
        sim ci run <workflow.yml> <job> --sha <sha> --workspace <dir> [--skip <step name>]... [--path <dir>]... [--env KEY=VALUE]...";
 
 fn main() {
@@ -16,6 +16,9 @@ fn main() {
     }
     if let Some(name @ ("gh" | "round-vm" | "cargo")) = invoked_as.as_deref() {
         args.insert(0, name.to_string());
+    }
+    if invoked_as.as_deref() == Some(world::SUMMON_TOOL) {
+        args.insert(0, "summon".to_string());
     }
     let op = args.first().map(String::as_str).unwrap_or("usage").to_string();
     spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-sim", &op);
@@ -146,9 +149,12 @@ fn summon_main(env: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {
     use spira_sim::agent::{SCENARIO_VAR, STATE_VAR};
     let need = |k: &str| env(k).filter(|v| !v.is_empty()).ok_or(format!("{k} is not set: sim summon answers only inside a world"));
     let world = need(spira_sim::roundvm::WORLD_ENV)?;
-    let ran = spira_sim::summon::summon(&PathBuf::from(world), &PathBuf::from(need(SCENARIO_VAR)?), &PathBuf::from(need(STATE_VAR)?))?;
-    for id in ran {
-        println!("sim summon: ran the stub agent for {id}");
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let argv = argv.strip_prefix(&["summon".to_string()]).unwrap_or(&argv);
+    let fayth = spira_sim::summon::fayth_of(argv)?;
+    match spira_sim::summon::summon(&PathBuf::from(world), &PathBuf::from(need(SCENARIO_VAR)?), &PathBuf::from(need(STATE_VAR)?), fayth)? {
+        Some(id) => println!("sim summon: ran the stub agent for {id}"),
+        None => println!("sim summon: nothing scripted is claimable for {fayth}"),
     }
     Ok(())
 }

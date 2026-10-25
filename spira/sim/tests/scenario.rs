@@ -1,5 +1,5 @@
 use spira_sim::drive::{parse_scenario, scenario_path, scenario_repos, Scenario};
-use spira_sim::summon::{claimable, routed_repo};
+use spira_sim::summon::{fayth_of, ranked_ids, routed_repo, scripted};
 use spira_sim::world::{base_config, bead_db, config_settings, home_settings, registry_rows, repo_set, stub_gate_steps, RepoSpec, INERT_TOOLS, MODES, REPO_NAME};
 use std::path::Path;
 
@@ -65,13 +65,18 @@ fn the_shipped_happy_path_parses_and_uses_actors_the_shipped_file_declares() {
 }
 
 #[test]
-fn the_summon_claims_only_ready_or_rework_beads_the_scenario_scripts_in_id_order() {
-    let list = r#"[{"bead_id":"sp-b","state":"READY","version":"0"},{"bead_id":"sp-a","state":"READY","version":2},
-        {"bead_id":"sp-c","state":"WORKING","version":"3"},{"bead_id":"sp-d","state":"READY","version":"0"}]"#;
-    let scenario = "sp-b submit\nsp-a commit x\nsp-c submit\n";
-    assert_eq!(claimable(list, scenario).unwrap(), vec![("sp-a".to_string(), "READY".to_string(), 2), ("sp-b".to_string(), "READY".to_string(), 0)]);
-    assert_eq!(claimable(list, "").unwrap(), vec![]);
-    assert!(claimable("not json", scenario).is_err());
+fn the_seam_takes_the_fayth_from_the_aeon_argument_of_a_systemd_run_argv_and_ranks_by_the_sixth_field() {
+    let argv: Vec<String> = ["--user", "--setenv=A=aeon", "aeon", "--home", "/h", "builder"].iter().map(|s| s.to_string()).collect();
+    assert_eq!(fayth_of(&argv).unwrap(), "builder");
+    assert!(fayth_of(&argv[..3]).is_err() && fayth_of(&[]).is_err());
+    assert_eq!(ranked_ids("2\t1\t2\t1\tt\tsp-b\t\n2\t1\t2\t1\tt\tsp-a\t\nshort\n"), vec!["sp-b", "sp-a"]);
+}
+
+#[test]
+fn the_seam_runs_only_beads_the_scenario_scripts() {
+    let scenario = "sp-b submit\nsp-a commit x\n";
+    assert!(scripted(scenario, "sp-a") && scripted(scenario, "sp-b"));
+    assert!(!scripted(scenario, "sp-c") && !scripted("", "sp-a") && !scripted("sp-ab submit\n", "sp-a"));
 }
 
 #[test]
@@ -108,12 +113,6 @@ fn a_bare_scenario_name_resolves_to_the_shipped_scenario_from_anywhere_in_the_ch
     assert!(shipped.ends_with("spira/sim/scenarios/happy-path.toml") && shipped.is_file(), "{shipped:?}");
     assert_eq!(scenario_path(&root, "./happy-path.toml"), Path::new("./happy-path.toml"));
     assert_eq!(scenario_path(&root, "no-such-scenario"), Path::new("no-such-scenario"));
-}
-
-#[test]
-fn a_returned_bead_is_claimed_again_from_rework() {
-    let list = r#"[{"bead_id":"sp-a","state":"REWORK","version":"4"},{"bead_id":"sp-b","state":"SUBMITTED","version":"1"}]"#;
-    assert_eq!(claimable(list, "sp-a drop x\nsp-b submit\n").unwrap(), vec![("sp-a".to_string(), "REWORK".to_string(), 4)]);
 }
 
 #[test]

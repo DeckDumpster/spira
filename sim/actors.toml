@@ -13,8 +13,8 @@ staged = true
 
 [[actor]]
 name = "sentinel-summon"
-command = "sim summon"
-timer = "spira-sentinel.timer"
+command = "sentinel --summon-only"
+timer = "spira-summon.timer"
 duration = "land.phase.tools"
 
 [[actor]]

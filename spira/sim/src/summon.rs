@@ -1,39 +1,36 @@
-//! `sim summon`: the world's stand-in for the sentinel's summon of an aeon. One pass claims
-//! every READY bead the scenario has scripted for the stub agent, gives it a worktree on
-//! `spira/<bead>`, and runs `sim-agent` there as the claimed holder.
+//! `sim-summon`: the world's `SPIRA_SUMMON`, the seam the real sentinel summons an aeon through.
+//! It stands where `systemd-run ... aeon --home H <fayth>` stands: ranks the fayth's claimable
+//! beads with `spira-claim select`, claims the first one the scenario scripts through the
+//! lifecycle machine (`lc_claim_bead`), gives it a worktree on `spira/<bead>`, and runs the stub
+//! agent there as the claimed holder.
 
 use crate::agent::{SCENARIO_VAR, STATE_VAR};
 use crate::world::{run, LANDING_BASE};
-use serde_json::Value;
+use std::io::Write;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
-const CALL_DEADLINE: Duration = Duration::from_secs(120); // batch-job: spira-lc, git and the stub agent against a world
-pub const HOLDER: &str = "sim-aeon";
-const LEASE_UNTIL: u64 = 4_102_444_800;
+const CALL_DEADLINE: Duration = Duration::from_secs(120); // batch-job: spira-claim, spira-lc, git and the stub agent against a world
+pub const HOLDER: &str = "aeon-sim";
+const LEASE_SECS: u64 = 3600;
+const CLAIM_REFUSED: i32 = 3;
+const LC_CLAIM: &str = r#". "$SPIRA_HOME/lib.sh" || exit 2; lc_claim_bead "$1" "$2" "$3" "" 0 0 "$4""#;
 
-/// The READY or REWORK beads in `lc_list` that `scenario` scripts, in id order, with their versions.
-pub fn claimable(lc_list: &str, scenario: &str) -> Result<Vec<(String, String, i64)>, String> {
-    let rows: Value = serde_json::from_str(lc_list.trim()).map_err(|e| format!("spira-lc list: not JSON: {e}"))?;
-    let rows = rows.as_array().ok_or("spira-lc list: not a JSON array")?;
-    let mut out = Vec::new();
-    for r in rows {
-        if !matches!(r["state"].as_str(), Some("READY" | "REWORK")) {
-            continue;
-        }
-        let id = r["bead_id"].as_str().ok_or_else(|| format!("spira-lc list: a row has no bead_id: {r}"))?;
-        if !scenario.lines().any(|l| l.split_whitespace().next() == Some(id)) {
-            continue;
-        }
-        let version = match &r["version"] {
-            Value::String(s) => s.trim().parse::<i64>().ok(),
-            v => v.as_i64(),
-        };
-        out.push((id.to_string(), r["state"].as_str().unwrap_or_default().to_string(), version.ok_or_else(|| format!("spira-lc list: {id} has no numeric version"))?));
-    }
-    out.sort();
-    Ok(out)
+/// The fayth a `systemd-run` summon argv names: the aeon's last argument.
+pub fn fayth_of(argv: &[String]) -> Result<&str, String> {
+    let at = argv.iter().position(|a| a == "aeon").ok_or("sim-summon: no aeon in the summon argv")?;
+    argv.last().filter(|_| argv.len() > at + 1).map(String::as_str).ok_or_else(|| "sim-summon: the summon argv names no fayth".to_string())
+}
+
+/// The bead ids of `spira-claim select`'s ranked rows, best first (the id is the sixth field).
+pub fn ranked_ids(select_out: &str) -> Vec<String> {
+    select_out.lines().filter_map(|l| l.split('\t').nth(5)).filter(|s| !s.is_empty()).map(String::from).collect()
+}
+
+/// Whether `scenario` scripts the stub agent for `bead`.
+pub fn scripted(scenario: &str, bead: &str) -> bool {
+    scenario.lines().any(|l| l.split_whitespace().next() == Some(bead))
 }
 
 /// The repository the scenario routes `bead` to (`<bead> repo <name>`); `None` is the world's own.
@@ -55,50 +52,82 @@ fn agent_bin() -> Result<std::path::PathBuf, String> {
     }
 }
 
-fn claim_event() -> String {
-    serde_json::json!({"Claim": {"holder": HOLDER, "lease_until": LEASE_UNTIL, "persona": "builder"}}).to_string()
-}
-
 fn git(work: &Path, args: &[&str]) -> Result<String, String> {
     run(Command::new("git").arg("-C").arg(work).args(args), CALL_DEADLINE)
 }
 
-/// One summon pass; returns the beads it ran the agent for.
-pub fn summon(world: &Path, scenario_file: &Path, state: &Path) -> Result<Vec<String>, String> {
-    let scenario = std::fs::read_to_string(scenario_file).unwrap_or_default();
-    let list = run(Command::new(spira_config::release_env::tool("spira-lc")).arg("list"), CALL_DEADLINE)?;
-    let mut ran = Vec::new();
-    for (id, lc_state, version) in claimable(&list, &scenario)? {
-        let repo = routed_repo(&scenario, &id);
-        let work = match &repo {
-            Some(name) => world.join("repos").join(name).join("work"),
-            None => world.join("work"),
-        };
-        run(
-            Command::new(spira_config::release_env::tool("spira-lc")).args(["event", "bead", &id, "--expect", &lc_state, "--version", &version.to_string(), "--actor", HOLDER, "--kind", &claim_event()]),
-            CALL_DEADLINE,
-        )?;
-        let wt = world.join("wt").join(&id);
-        let branch = format!("spira/{id}");
-        let wt_arg = wt.display().to_string();
-        let has_branch = git(&work, &["rev-parse", "--verify", "-q", &format!("refs/heads/{branch}")]).is_ok();
-        if !wt.join(".git").exists() {
-            if has_branch {
-                git(&work, &["worktree", "add", &wt_arg, &branch])?;
-            } else {
-                git(&work, &["worktree", "add", "-b", &branch, &wt_arg, if repo.is_some() { "HEAD" } else { LANDING_BASE }])?;
-            }
-        }
-        run(
-            Command::new(agent_bin()?)
-                .current_dir(&wt)
-                .env("BEAD_ID", &id)
-                .env("SPIRA_WORK_BEAD_ID", &id)
-                .env(SCENARIO_VAR, scenario_file)
-                .env(STATE_VAR, state),
-            CALL_DEADLINE,
-        )?;
-        ran.push(id);
+fn claim_tool(args: &[&str], stdin: &str) -> Result<String, String> {
+    let mut child = Command::new(spira_config::release_env::tool("spira-claim")).args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("spira-claim: {e}"))?;
+    child.stdin.take().ok_or("spira-claim: no stdin")?.write_all(stdin.as_bytes()).map_err(|e| e.to_string())?;
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(format!("spira-claim {}: {}: {}", args.join(" "), out.status, String::from_utf8_lossy(&out.stderr).trim()))
     }
-    Ok(ran)
+}
+
+/// The fayth's claimable beads in the order an aeon would take them.
+fn ranked(fayth: &str, scratch: &Path) -> Result<Vec<String>, String> {
+    let ready = claim_tool(&["fayth-ready", fayth, "--json"], "")?;
+    let epics = scratch.join("epics");
+    let resumable = scratch.join("resumable");
+    std::fs::write(&epics, claim_tool(&["epics"], &ready)?).map_err(|e| e.to_string())?;
+    std::fs::write(&resumable, "").map_err(|e| e.to_string())?;
+    let out = claim_tool(
+        &["select", "--fayth", fayth, "--epics", &epics.display().to_string(), "--resumable", &resumable.display().to_string(), "--blockers", "machine"],
+        &ready,
+    )?;
+    Ok(ranked_ids(&out))
+}
+
+/// The lifecycle Claim, by the function an aeon claims with: 0 applied, 3 refused.
+fn claim(id: &str, fayth: &str) -> Result<bool, String> {
+    let lease = spira_config::vtime::now_epoch() + LEASE_SECS;
+    let status = Command::new("bash").args(["-c", LC_CLAIM, "lc-claim", id, HOLDER, &lease.to_string(), fayth]).stdin(Stdio::null()).status().map_err(|e| format!("lc_claim_bead: {e}"))?;
+    match status.code() {
+        Some(0) => Ok(true),
+        Some(CLAIM_REFUSED) => Ok(false),
+        other => Err(format!("lc_claim_bead {id}: exit {other:?}")),
+    }
+}
+
+/// One summon: returns the bead the agent ran for, or none when nothing ranked is scripted.
+pub fn summon(world: &Path, scenario_file: &Path, state: &Path, fayth: &str) -> Result<Option<String>, String> {
+    let scenario = std::fs::read_to_string(scenario_file).unwrap_or_default();
+    std::fs::create_dir_all(state).map_err(|e| e.to_string())?;
+    let mut won = None;
+    for id in ranked(fayth, state)? {
+        if scripted(&scenario, &id) && claim(&id, fayth)? {
+            won = Some(id);
+            break;
+        }
+    }
+    let Some(id) = won else { return Ok(None) };
+    let repo = routed_repo(&scenario, &id);
+    let work = match &repo {
+        Some(name) => world.join("repos").join(name).join("work"),
+        None => world.join("work"),
+    };
+    let wt = world.join("wt").join(&id);
+    let branch = format!("spira/{id}");
+    let wt_arg = wt.display().to_string();
+    let has_branch = git(&work, &["rev-parse", "--verify", "-q", &format!("refs/heads/{branch}")]).is_ok();
+    if !wt.join(".git").exists() {
+        if has_branch {
+            git(&work, &["worktree", "add", &wt_arg, &branch])?;
+        } else {
+            git(&work, &["worktree", "add", "-b", &branch, &wt_arg, if repo.is_some() { "HEAD" } else { LANDING_BASE }])?;
+        }
+    }
+    run(
+        Command::new(agent_bin()?)
+            .current_dir(&wt)
+            .env("BEAD_ID", &id)
+            .env("SPIRA_WORK_BEAD_ID", &id)
+            .env(SCENARIO_VAR, scenario_file)
+            .env(STATE_VAR, state),
+        CALL_DEADLINE,
+    )?;
+    Ok(Some(id))
 }
