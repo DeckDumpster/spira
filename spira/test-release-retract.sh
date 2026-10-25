@@ -27,10 +27,7 @@ case "$1 $2" in
         row="$(grep "^$3 " "$db")" || exit 1
         printf '%s\n' "$(printf '%s' "$row" | cut -d' ' -f2)" ;;
     "release delete") sed -i "/^$3 /d" "$db" ;;
-    "release list")
-        printf '['
-        awk 'NR>1{printf ","} {printf "{\"tagName\":\"%s\",\"isDraft\":%s,\"createdAt\":\"%s\"}",$1,$2,$3}' "$db"
-        printf ']\n' ;;
+    "release list") awk '$2=="true"{printf "%s\t%s\n",$1,$3}' "$db" ;;
     "api --method") sed -i "\#${4##*/}\$#d" "$db.refs" ;;
     *) exit 1 ;;
 esac

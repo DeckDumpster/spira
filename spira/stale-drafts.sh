@@ -17,11 +17,11 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-_json="$(gh release list "${_repo[@]}" --limit 1000 --json tagName,isDraft,createdAt)" || {
+_rows="$(gh release list "${_repo[@]}" --limit 1000 --json tagName,isDraft,createdAt \
+    --jq '.[] | select(.isDraft) | [.tagName, .createdAt] | @tsv')" || {
     printf 'stale-drafts: gh release list failed\n' >&2; exit 2; }
 _cutoff="$(date -u -d "-${_hours} hours" +%Y-%m-%dT%H:%M:%SZ)"
-_stale="$(printf '%s' "$_json" | jq -r --arg c "$_cutoff" \
-    '.[] | select(.isDraft and (.tagName|startswith("spira-release-")) and .createdAt < $c) | .tagName')"
+_stale="$(printf '%s\n' "$_rows" | awk -F'\t' -v c="$_cutoff" '$1 ~ /^spira-release-/ && $2 < c {print $1}')"
 [ -z "$_stale" ] && exit 0
 printf '%s\n' "$_stale"
 printf 'stale-drafts: %s draft release(s) older than %sh\n' "$(printf '%s\n' "$_stale" | wc -l)" "$_hours" >&2
