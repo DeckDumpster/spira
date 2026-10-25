@@ -647,6 +647,26 @@ fn ending_a_round_retires_the_mender_beads_filed_for_it() {
 }
 
 #[test]
+fn a_mender_bead_holding_an_ask_is_not_retired_until_the_ask_is_lifted() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "hand-4"]), 0, "{}", t.err());
+    fs::write(marker(&t, "hand-4", "mender-1-gate-x"), "sp-m13\n").unwrap();
+    t.lc.rows.borrow_mut().as_mut().unwrap().push(crate::model::LcBeadRow {
+        bead_id: "sp-m13".into(),
+        state: "WORKING".into(),
+        holds: vec!["ask".into()],
+        ..Default::default()
+    });
+    assert_eq!(t.run(&["round", "eject", "hand-4", "sp-b", "--reason", "red"]), 0, "{}", t.err());
+    assert!(!t.lib.has("bead_close sp-m13"), "{:?}", t.lib.calls.borrow());
+    assert!(!marker(&t, "hand-4", "mender-1-gate-x.retired").exists());
+    t.lc.rows.borrow_mut().as_mut().unwrap().iter_mut().for_each(|r| r.holds.clear());
+    assert_eq!(t.run(&["round", "abandon", "hand-4", "--reason", "base moved"]), 0, "{}", t.err());
+    assert!(t.lib.has("bead_close sp-m13"), "{:?}", t.lib.calls.borrow());
+    assert!(marker(&t, "hand-4", "mender-1-gate-x.retired").exists());
+}
+
+#[test]
 fn a_later_round_event_retires_the_mender_beads_of_batches_already_closed() {
     let t = round_world();
     assert_eq!(
