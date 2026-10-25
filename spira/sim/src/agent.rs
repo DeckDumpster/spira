@@ -74,13 +74,20 @@ fn next_summon(state: &Path, bead: &str) -> Result<usize, String> {
     Ok(n)
 }
 
+/// The model's restricted PATH, with the release's tools after it: the commit hook needs them and a
+/// release whose binaries are links has no `spira/hooks/../../bin` to find them by.
+fn hook_path() -> Option<String> {
+    let path = std::env::var("PATH").ok();
+    spira_config::release_env::ensured_path(std::env::var(spira_config::RELEASE_ENV).ok().as_deref(), None, path.as_deref()).map(|(_, p)| p)
+}
+
 fn git(worktree: &Path, args: &[&str]) -> Result<String, String> {
     run(
         Command::new("git")
             .arg("-C")
             .arg(worktree)
             .args(args)
-            .envs(spira_config::release_env::child_path_env_for_process())
+            .envs(hook_path().map(|p| ("PATH", p)))
             .env("GIT_AUTHOR_NAME", "sim-agent")
             .env("GIT_AUTHOR_EMAIL", "sim@sim.invalid")
             .env("GIT_COMMITTER_NAME", "sim-agent")

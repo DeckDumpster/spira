@@ -22,7 +22,7 @@ sim_summon_lines() {  # sim_summon_lines <run output> — what the summons print
     local w
     w="$(sed -n 's/^sim: world kept at //p' "$1" | head -1)"
     [ -f "$w/exec.log" ] || return 0
-    grep -B20 -m1 'sim summon: aeon exited' "$w/exec.log" | cut -c1-300; grep -E 'sim summon|sim-agent' "$w/exec.log" | cut -c1-300 | head -20; tail -n 25 "$w"/run/sp-*.log 2>/dev/null | cut -c1-300; ls -l "$w/release" "$w/release/spira/hooks" 2>&1 | head -20; ls "$w/release/bin" | grep -c lint; ls -l "$w/release/bin/spira-lint"; (cd "$w/work" && PATH=/usr/bin:/bin bash -x "$w/aeon-home/hooks/pre-commit" 2>&1 | head -30)
+    grep -B20 -m1 'sim summon: aeon exited' "$w/exec.log" | cut -c1-300; grep -E 'sim summon|sim-agent' "$w/exec.log" | cut -c1-300 | head -20; tail -n 25 "$w"/run/sp-*.log 2>/dev/null | cut -c1-300
 }
 
 sim_scenario_shard() {  # sim_scenario_shard <scenario name>
