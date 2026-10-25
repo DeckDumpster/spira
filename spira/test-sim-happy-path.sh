@@ -53,6 +53,7 @@ dump() {  # dump — what the world did, for a red run (exec.log was copied out 
     [ -f "$w/exec.log" ] || return 0
     grep -c '^=== ' "$w/exec.log" | sed 's/^/# commands run: /'
     grep -A8 'pr=$(gh' "$w/exec.log" | grep -v 'probe' | grep '^===\|^sim\|^gh\|rror\|usage' | cut -c1-200 | tail -8 | sed 's/^/# step: /'
+    awk '/^=== t=.*sentinel --summon-only/ { n++ } n >= 2 && n <= 3' "$w/exec.log" | cut -c1-260 | head -40 | sed 's/^/# summon: /'
     grep '^=== ' "$w/exec.log" | sed -E 's/^=== t=([0-9]+) (.{0,44}).*(exit status: [0-9]+ in [0-9]+ms)$/\3 t=\1 \2/' | tail -14 | sed 's/^/# ran: /'
 }
 
