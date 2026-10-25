@@ -363,6 +363,13 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     let Some(delivers) = flag(args, "--delivers") else {
         return (CANNOT_TELL, "work done: --delivers <path> is required".into());
     };
+    if actor == "mender" {
+        match rows::fetch_bead(conn, bead_id) {
+            Ok(Some(row)) if row.state == bead::BeadState::Dropped => return (0, format!("{bead_id} is already DROPPED; nothing to do")),
+            Ok(_) => {}
+            Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
+        }
+    }
     if actor == "groomer" {
         match rows::fetch_bead(conn, bead_id) {
             Ok(Some(row)) if row.state == bead::BeadState::Done => return (0, format!("{bead_id} is already DONE; nothing to do")),
