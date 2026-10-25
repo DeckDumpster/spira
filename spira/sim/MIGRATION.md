@@ -214,3 +214,5 @@ A second isolated testenv run of gate-verdict-kinds at the same content passed i
 A third isolated testenv run of gate-verdict-kinds at the rebased tip passed in 55s; the tip is recommitted so a round can re-certify it.
 
 A fourth gate-verdict-kinds run on the same tip was green (55s); the ejection did not reproduce.
+
+A fifth gate-verdict-kinds run under testenv on the tip rebased onto the landing ref was green (62s); sim lane and lint clean for the bead's files.
