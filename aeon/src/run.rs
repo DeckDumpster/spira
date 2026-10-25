@@ -1255,6 +1255,9 @@ impl<'a> Run<'a> {
                 if spira_config::build::reap_over_cap(&dir, cap_mib) {
                     self.log(&format!("{}: warm target {} was over {cap_mib} MiB — started empty", self.f(), dir.display()));
                 }
+                for idle in spira_config::build::reap_idle(&warm_base, spira_config::build::AEON_WARM_SLOTS, cap_mib, spira_config::build::AEON_WARM_FULL_PCT) {
+                    self.log(&format!("{}: idle warm target {} emptied (over {cap_mib} MiB or the tmpfs is past {}%)", self.f(), idle.display(), spira_config::build::AEON_WARM_FULL_PCT));
+                }
                 env.set("CARGO_TARGET_DIR", &dir.display().to_string());
                 warm_slot = Some(crate::session::WarmSlot { dir: dir.clone(), cap_mib, every: crate::session::WARM_CHECK_EVERY });
                 Some(lock)
