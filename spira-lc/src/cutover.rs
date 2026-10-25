@@ -695,6 +695,9 @@ pub fn cmd_land(args: &[String], conn: &Conn) -> (i32, String) {
         }) else {
             continue;
         };
+        if !still_in_batch(&delivery_row, batch_id) {
+            continue;
+        }
         let delivered_ev = delivery::DeliveryEvent {
             expect: delivery_row.state,
             version: delivery_row.version,
@@ -1312,6 +1315,11 @@ pub fn cmd_batches_of(args: &[String], conn: &Conn) -> (i32, String) {
     }
 }
 
+/// An ejected member keeps its `batch_member` row but its delivery has left the batch.
+fn still_in_batch(row: &delivery::DeliveryRow, batch_id: &str) -> bool {
+    row.state == delivery::DeliveryState::Batched && row.batch_id.as_deref() == Some(batch_id)
+}
+
 fn fetch_members(conn: &Conn, batch_id: &str) -> Result<Vec<(String, String)>, DbError> {
     let sql = format!("SELECT bead_id, tip FROM batch_member WHERE batch_id = {}", q(batch_id));
     let rows_v = conn.query(&sql)?;
@@ -1420,6 +1428,19 @@ fn name_prerequisites(steps: &mut [CascadeStep], cascade: &[(String, String)]) {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn only_a_member_still_batched_in_this_batch_is_delivered() {
+        let mut row = delivery::DeliveryRow::start_queue("sp-a");
+        assert!(!still_in_batch(&row, "b-1"));
+        row.state = delivery::DeliveryState::Batched;
+        row.batch_id = Some("b-1".into());
+        assert!(still_in_batch(&row, "b-1"));
+        assert!(!still_in_batch(&row, "b-2"));
+        row.state = delivery::DeliveryState::Exited;
+        row.exit = Some(delivery::Exit::Requeued);
+        assert!(!still_in_batch(&row, "b-1"));
+    }
 
     #[test]
     fn every_created_row_carries_since() {
