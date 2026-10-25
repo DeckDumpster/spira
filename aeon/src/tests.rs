@@ -1742,7 +1742,7 @@ fn without_spira_admit_the_session_still_runs_on_the_plain_cache_and_says_so() {
     let sccache = stub(&f, "sccache");
     let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0")], Mode::Claim, BTreeMap::new(), commits_and_closes());
     let env = &o.seen[0].env;
-    if env.get("PATH").is_some_and(|p| p.split(':').any(|d| std::path::Path::new(d).join("spira-admit").exists())) {
+    if std::env::var("PATH").is_ok_and(|p| p.split(':').any(|d| std::path::Path::new(d).join("spira-admit").exists())) {
         return; // the host's PATH carries a spira-admit the fixture cannot hide
     }
     assert_eq!(env.get("RUSTC_WRAPPER").map(String::as_str), Some(sccache.to_str().unwrap()));
