@@ -54,7 +54,15 @@ rm -f "$LOG" "$CUR" "$TMP/run/watchd/asks.health"
 echo '[]' > "$ASKS"
 tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db" SPIRA_ASK_LABEL=ask-x SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_BD="$TMP/fakebd" SPIRA_MAIL="$TMP/mail"
 : > "$INBOX"
-printf '#!/usr/bin/env bash\n[ "$1" = list-held ] && [ -e "%s/armed" ] && echo sp-held\nexit 0\n' "$TMP" > "$TMP/fakebin/spira-lc"; chmod +x "$TMP/fakebin/spira-lc"
+cat > "$TMP/fakebin/spira-lc" <<FAKE
+#!/usr/bin/env bash
+case "\$1" in
+    list-held) [ -e "$TMP/armed" ] && printf 'sp-held\nsp-nomail\n' ;;
+    history) echo '[{"seq":"7","event":"Hold","applied":"1","evidence":"{\\"Hold\\":{\\"kind\\":\\"manual\\",\\"detail\\":\\"no build spec: which repo?\\"}}"}]' ;;
+esac
+exit 0
+FAKE
+chmod +x "$TMP/fakebin/spira-lc"
 (env -i PATH="$TMP/fakebin:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" FAKE_ASKS="$ASKS" bash "$HERE/asks.sh" watch --interval 1 --ticks 4 >/dev/null 2>&1) &
 wpid=$!
 for _ in $(seq 100); do [ -e "$TMP/run/watchd/asks.health" ] && break; sleep 0.1; done
@@ -63,6 +71,9 @@ hl="$(cat "$INBOX")"
 want "an ask hold line carries the question" "Which branch?" "$hl"
 want "an ask hold line carries the default" "take main" "$hl"
 want "an ask hold line carries the message id" "m9@spira" "$hl"
+
+want "an unmailed ask hold line carries the question text" "no build spec: which repo?" "$hl"
+want "an unmailed ask hold line says no mail and how to answer" "spira-lc reply sp-nomail seq:7" "$hl"
 
 grep -q '^asks|daemon|' "$HERE/watchers"; is "watchers manifest carries the asks row" "0" "$?"
 tl_summary

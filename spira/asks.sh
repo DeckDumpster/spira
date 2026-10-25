@@ -45,8 +45,21 @@ _as_hold_line() {
         printf 'NEW ASK HOLD %s: %s | default: %s | message-id: %s' "$id" "$q" "$d" "$m"
         return 0
     fi
-    seq="$(timeout 5 spira-lc history "$id" --machine bead 2>/dev/null | jq -r '[.[] | select(.event == "Hold")] | last | .seq // empty' 2>/dev/null)"
-    printf 'NEW ASK HOLD %s: NO MAIL for the question; answer with spira-lc reply %s seq:%s' "$id" "$id" "${seq:-?}"
+    local row
+    row="$(timeout 5 spira-lc history "$id" --machine bead 2>/dev/null | python3 -c '
+import sys, json
+try: rows = json.load(sys.stdin)
+except Exception: sys.exit(0)
+last = None
+for r in rows:
+    if r.get("event") != "Hold": continue
+    try: h = (json.loads(r.get("evidence") or "{}") or {}).get("Hold") or {}
+    except Exception: h = {}
+    last = (r.get("seq", "?"), " ".join(str(h.get("detail") or "").split())[:400])
+if last: print("%s\t%s" % last)' 2>/dev/null)"
+    seq="${row%%$'\t'*}"; q="${row#*$'\t'}"
+    [ "$q" = "$row" ] && q=""
+    printf 'NEW ASK HOLD %s: %s | NO MAIL for the question; answer with spira-lc reply %s seq:%s' "$id" "${q:-<no text recorded>}" "$id" "${seq:-?}"
 }
 
 _as_tick() {

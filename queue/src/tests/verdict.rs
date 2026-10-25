@@ -232,7 +232,7 @@ fn publish_red_files_one_fix_forward_and_marks_the_head() {
         .unwrap();
     assert!(bug.starts_with("create_bug queue.sh 1 spira,plan,repo:spira publish PR 77 red for spira: test-b.sh,test-a.sh\n"), "{bug}");
     assert!(bug.contains("Publish PR 77 red for spira (http://r/9).\n\nPublished range: f0..m3\nRed suites: test-b.sh,test-a.sh\n\nMembers in this publish: sp-a,sp-b\n\n"));
-    assert!(bug.ends_with("Fix forward on local/main — the next publish carries the fix. Production was never rolled back and no member bead was reopened."));
+    assert!(bug.contains("Fix forward on local/main — the next publish carries the fix. Production was never rolled back and no member bead was reopened."));
     assert!(!t.qfile("publish").exists());
     assert_eq!(
         fs::read_to_string(t.qfile("publish-red")).unwrap(),
@@ -1490,6 +1490,27 @@ fn a_publish_red_from_a_non_suite_step_carries_the_step_and_log_tail_and_files_o
         "{}",
         t.out()
     );
+}
+
+#[test]
+fn a_publish_red_bead_names_the_failing_test_under_build() {
+    let t = T::new(LandMode::QueueLocal);
+    publish_record(&t);
+    t.forge.status.borrow_mut().push(Some(
+        "red\nrun-id: 77\nrun-url: http://r/77\nfailed-step: suites / run\nstep-log: FAILED tests/test_cubby.py::test_roundtrip - assert 1 == 2\n".into(),
+    ));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    let bug = t
+        .lib
+        .calls
+        .borrow()
+        .iter()
+        .find(|c| c.starts_with("create_bug"))
+        .cloned()
+        .unwrap();
+    let build = bug.split("## Build").nth(1).expect(&bug);
+    assert!(build.contains("FAILED tests/test_cubby.py::test_roundtrip"), "{bug}");
+    assert!(build.contains("http://r/77"), "{bug}");
 }
 
 #[test]
