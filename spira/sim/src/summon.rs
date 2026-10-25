@@ -17,9 +17,9 @@ const LEASE_SECS: u64 = 3600;
 const CLAIM_REFUSED: i32 = 3;
 const LC_CLAIM: &str = r#". "$SPIRA_HOME/lib.sh" || exit 2; lc_claim_bead "$1" "$2" "$3" "" 0 0 "$4""#;
 
-/// The fayth a `systemd-run` summon argv names: the aeon's last argument.
+/// The fayth a `systemd-run` summon argv names: the argument after the `aeon` binary's path.
 pub fn fayth_of(argv: &[String]) -> Result<&str, String> {
-    let at = argv.iter().position(|a| a == "aeon").ok_or("sim-summon: no aeon in the summon argv")?;
+    let at = argv.iter().position(|a| Path::new(a).file_name().is_some_and(|n| n == "aeon")).ok_or("sim-summon: no aeon in the summon argv")?;
     argv.last().filter(|_| argv.len() > at + 1).map(String::as_str).ok_or_else(|| "sim-summon: the summon argv names no fayth".to_string())
 }
 

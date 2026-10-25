@@ -66,7 +66,7 @@ fn the_shipped_happy_path_parses_and_uses_actors_the_shipped_file_declares() {
 
 #[test]
 fn the_seam_takes_the_fayth_from_the_aeon_argument_of_a_systemd_run_argv_and_ranks_by_the_sixth_field() {
-    let argv: Vec<String> = ["--user", "--setenv=A=aeon", "aeon", "--home", "/h", "builder"].iter().map(|s| s.to_string()).collect();
+    let argv: Vec<String> = ["--user", "--setenv=A=aeon", "/w/release/bin/aeon", "--home", "/h", "builder"].iter().map(|s| s.to_string()).collect();
     assert_eq!(fayth_of(&argv).unwrap(), "builder");
     assert!(fayth_of(&argv[..3]).is_err() && fayth_of(&[]).is_err());
     assert_eq!(ranked_ids("2\t1\t2\t1\tt\tsp-b\t\n2\t1\t2\t1\tt\tsp-a\t\nshort\n"), vec!["sp-b", "sp-a"]);

@@ -152,7 +152,9 @@ fn summon_main(env: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let argv = argv.strip_prefix(&["summon".to_string()]).unwrap_or(&argv);
     let fayth = spira_sim::summon::fayth_of(argv)?;
-    match spira_sim::summon::summon(&PathBuf::from(world), &PathBuf::from(need(SCENARIO_VAR)?), &PathBuf::from(need(STATE_VAR)?), fayth)? {
+    // The sentinel discards a summon's stderr; its stdout lands in the world's exec.log.
+    let ran = spira_sim::summon::summon(&PathBuf::from(world), &PathBuf::from(need(SCENARIO_VAR)?), &PathBuf::from(need(STATE_VAR)?), fayth).inspect_err(|e| println!("sim summon: {e}"))?;
+    match ran {
         Some(id) => println!("sim summon: ran the stub agent for {id}"),
         None => println!("sim summon: nothing scripted is claimable for {fayth}"),
     }
