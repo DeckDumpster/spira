@@ -15,6 +15,7 @@ TMR="$UNIT_DIR/spira-mend-watch.timer"
 echo "=== service ==="
 execstart="$(grep '^ExecStart=' "$SVC" 2>/dev/null | head -1)"
 want "ExecStart runs spira-lc mend-watch" "spira-lc mend-watch" "$execstart"
+want "the same tick sweeps scoped pauses whose bead condition is met" "spira-lc pause-sweep" "$(grep "^ExecStartPost=" "$SVC" 2>/dev/null)"
 want "output goes to the log the watcher row names" "mend-watch.log" "$(grep '^StandardOutput=' "$SVC" 2>/dev/null)"
 
 echo "=== timer ==="

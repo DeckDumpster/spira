@@ -10,6 +10,7 @@ Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
 ExecStart=@SPIRA_PROD_ROOT@/bin/spira-lc mend-watch --seen @SPIRA_RUN@/mend-watch.seen
+ExecStartPost=@SPIRA_PROD_ROOT@/bin/spira-lc pause-sweep
 TimeoutStartSec=60
 StandardOutput=append:@SPIRA_RUN@/mend-watch.log
 StandardError=append:@SPIRA_RUN@/mend-watch.log
