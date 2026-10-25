@@ -225,14 +225,15 @@ echo
 echo "9. VERSIONED NAMING — the home repository's cut is spira-0.1.N, N from the forge list"
 # ======================================================================================
 GHBIN="$TMP/ghbin"; mkdir -p "$GHBIN"
-cat > "$GHBIN/gh" <<'GHEOF'
+GH_FAKE_DIR="$TMP/ghfake"; mkdir -p "$GH_FAKE_DIR"
+cat > "$GHBIN/gh" <<GHEOF
 #!/usr/bin/env bash
-[ ! -e "$GH_FAKE_DIR/fail" ] || exit 1
-[ "${1:-}" = release ] && [ "${2:-}" = list ] && { cat "$GH_FAKE_DIR/list"; exit 0; }
+GH_FAKE_DIR="$GH_FAKE_DIR"
+[ ! -e "\$GH_FAKE_DIR/fail" ] || exit 1
+[ "\${1:-}" = release ] && [ "\${2:-}" = list ] && { cat "\$GH_FAKE_DIR/list"; exit 0; }
 exit 1
 GHEOF
 chmod +x "$GHBIN/gh"
-export GH_FAKE_DIR="$TMP/ghfake"; mkdir -p "$GH_FAKE_DIR"
 for i in $(seq 1 103); do printf 'spira-release-spira-2026%04dT000000Z\n' "$i"; done > "$GH_FAKE_DIR/list"
 OLDPATH="$PATH"; PATH="$GHBIN:$PATH"
 printf 'spira | %s | push | origin/trunk | sp | |\n' "$REPO" >> "$REPO_MAP"
