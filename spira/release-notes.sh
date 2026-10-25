@@ -99,7 +99,8 @@ generate() {
     local line any
     section() {
         local label="$1" status="$2" pathspec="$3" strip="$4" out
-        out="$(g diff --name-status --diff-filter="$status" "$prev" "$this" -- $pathspec | cut -f2- | sed "s#$strip##" | sort)"
+        set -f; local specs; read -ra specs <<< "$pathspec"; set +f
+        out="$(g diff --name-status --diff-filter="$status" "$prev" "$this" -- "${specs[@]}" | cut -f2- | sed "s#$strip##" | sort)"
         [ -n "$out" ] || return 0
         any=1
         printf '**%s**\n\n' "$label"
@@ -111,12 +112,12 @@ generate() {
     section "Config keys removed" D "spira/conf.d" "spira/conf.d/"
     section "Systemd units/timers added" A "systemd/*.service systemd/*.timer" "systemd/"
     section "Systemd units/timers removed" D "systemd/*.service systemd/*.timer" "systemd/"
-    section "Schema migrations added" A "*/migrations/*.sql" ""
+    section "Schema migrations added" A "*/migrations/*.sql" "^"
     [ -n "$any" ] || printf 'No config key, unit or migration changes.\n\n'
 
     printf '## Verification\n\n'
-    printf 'Landed on the landing ref through the batch rounds; the %d commits above are the range `%s..%s`.\n' \
-        "$n" "$(g rev-parse --short "$prev")" "$(g rev-parse --short "$this")"
+    printf 'Landed through the batch rounds; commit range `%s..%s`.\n' \
+        "$(g rev-parse --short "$prev")" "$(g rev-parse --short "$this")"
     if [ -n "$run_url" ]; then
         printf 'Acceptance run for this commit: %s\n' "$run_url"
     fi
