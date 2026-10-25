@@ -1,0 +1,23 @@
+[Unit]
+After=lc-serve.service
+Wants=lc-serve.service
+Description=Spira idea prompt — mails the operator the parked ideas when Spira has been idle in waking hours
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+Nice=19
+CPUQuota=25%
+ExecStart=@SPIRA_PROD_ROOT@/bin/idea-prompt pass --state @SPIRA_RUN@/idea-prompt.state --idle-secs 1800 --wake-from 7 --wake-until 22 --tz America/Los_Angeles --min-gap-secs 86400
+TimeoutStartSec=300
+StandardOutput=append:@SPIRA_RUN@/idea-prompt.log
+StandardError=append:@SPIRA_RUN@/idea-prompt.log
+
+[Install]
+WantedBy=default.target
+
+[X-Spira]
+Plane=observability

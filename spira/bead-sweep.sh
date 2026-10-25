@@ -111,7 +111,7 @@ for i, r in rows.items():
                 open_batch[l] = min(open_batch.get(l, since), since)
 out ={k: [] for k in ("OK", "BLOCKED", "HELD", "ASK", "SUSPECT")}
 for i, b in content.items():
-    if i not in rows and i not in term and b.get("issue_type") not in ("epic", "event") and ask not in b.get("labels", []):
+    if i not in rows and i not in term and b.get("issue_type") not in ("epic", "event", "proposal") and ask not in b.get("labels", []):
         out["SUSPECT"].append(f"{i} ROWLESS open bead with no lifecycle row")
         if b.get("status") == "open":
             repo = next((l[5:] for l in b.get("labels", []) if l.startswith("repo:")), "-")

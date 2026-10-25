@@ -49,6 +49,8 @@ eq "kind work is a task"        "task"        "$(schema.sh type-of work)"
 eq "kind event is an event"     "event"       "$(schema.sh type-of event)"
 eq "kind insight is a chore"    "chore"       "$(schema.sh type-of insight)"
 eq "kind escalation"            "escalation"  "$(schema.sh type-of escalation)"
+eq "kind idea is a proposal"    "proposal"    "$(schema.sh type-of idea)"
+eq "idea label name"            "idea"        "$(schema.sh name idea)"
 out="$(schema.sh type-of not-a-kind 2>/dev/null)"; rc=$?
 [ "$rc" != 0 ] && ok "undeclared kind fails closed (rc=$rc)" || bad "undeclared kind" "exited 0"
 

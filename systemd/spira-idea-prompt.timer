@@ -1,0 +1,15 @@
+[Unit]
+Description=Check every five minutes whether Spira is idle enough to offer the parked ideas
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5min
+AccuracySec=1min
+Persistent=true
+Unit=spira-idea-prompt.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=observability
