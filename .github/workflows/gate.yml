@@ -309,6 +309,7 @@ jobs:
           template-vmid:      ${{ vars.TEMPLATE_VMID }}
           spill:              ec2-only
           spill-after-seconds: 600
+          spill-market:       ${{ vars.SPILL_MARKET }}
           spill-max-instances: 2
           aws-role-to-assume: ${{ secrets.AWS_SPILL_ROLE_ARN }}
 
