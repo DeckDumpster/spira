@@ -18,12 +18,12 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$_tag" ] || { printf 'usage: release-retract.sh <tag> [--repo <owner/repo>]\n' >&2; exit 2; }
 
-_draft="$(gh release view "$_tag" "${_repo[@]}" --json isDraft --jq .isDraft 2>/dev/null || echo none)"
+_draft="$(timeout 5 gh release view "$_tag" "${_repo[@]}" --json isDraft --jq .isDraft 2>/dev/null || echo none)"
 if [ "$_draft" != "true" ]; then
     printf 'release-retract: %s is not a draft (%s) — leaving it\n' "$_tag" "$_draft"
     exit 0
 fi
-gh release delete "$_tag" --yes "${_repo[@]}" 2>/dev/null || true
+timeout 5 gh release delete "$_tag" --yes "${_repo[@]}" 2>/dev/null || true
 _slug="${_repo[1]:-${GITHUB_REPOSITORY:-}}"
-[ -z "$_slug" ] || gh api --method DELETE "repos/$_slug/git/refs/tags/$_tag" 2>/dev/null || true
+[ -z "$_slug" ] || timeout 5 gh api --method DELETE "repos/$_slug/git/refs/tags/$_tag" 2>/dev/null || true
 printf 'release-retract: retracted draft release and tag %s\n' "$_tag"

@@ -17,7 +17,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-_rows="$(gh release list "${_repo[@]}" --limit 1000 --json tagName,isDraft,createdAt \
+_rows="$(timeout 5 gh release list "${_repo[@]}" --limit 1000 --json tagName,isDraft,createdAt \
     --jq '.[] | select(.isDraft) | [.tagName, .createdAt] | @tsv')" || {
     printf 'stale-drafts: gh release list failed\n' >&2; exit 2; }
 _cutoff="$(date -u -d "-${_hours} hours" +%Y-%m-%dT%H:%M:%SZ)"
