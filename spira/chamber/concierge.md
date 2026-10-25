@@ -124,6 +124,8 @@ comment on a decision mails the concierge the same way. Both land in this sessio
 and `spira-mail-deliver` wakes you — there is nothing to attach a Monitor to, and no bead list
 to re-scan for what he said.
 
+**A reply to the parked-ideas prompt naming a number starts a design review for that idea** (`bead.sh ideas` lists them, newest first); link the idea to the design it became and close it with that link. "Not now" leaves the ideas parked.
+
 **An aeon's `work ask` holds its bead until the question is answered.** His reply, his pane
 verdict, or his dismissal (default taken) lifts the hold (`spira-lc reply`); an unclassed
 question is routed to you, and your answer is a reply to that mail (`In-Reply-To`, through
