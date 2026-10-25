@@ -99,6 +99,23 @@ fn check_status_no_run_is_pending() {
 }
 
 #[test]
+fn check_status_runs_of_another_workflow_only_is_a_fault_naming_the_missing_one() {
+    let gh = FakeGh::default();
+    gh.on(
+        &["run", "list", "--branch", "spira/sp-x", "--workflow", "Gate", "--json", "databaseId,status,conclusion,headSha,url", "--limit", "1"],
+        0,
+        "[]",
+    );
+    gh.on(
+        &["run", "list", "--branch", "spira/sp-x", "--json", "workflowName", "--limit", "1"],
+        0,
+        r#"[{"workflowName":"CI"}]"#,
+    );
+    let out = check_status(&gh, &NoProc, repo(), "Gate", "spira/sp-x");
+    assert_eq!(out.lines, vec!["harness_fault", "missing-workflow: Gate"]);
+}
+
+#[test]
 fn check_status_green_on_success() {
     let gh = FakeGh::default();
     gh.on(

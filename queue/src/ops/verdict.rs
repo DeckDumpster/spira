@@ -320,6 +320,20 @@ fn settle_locked(w: &World, c: &Ctx, path: &Path) -> (i32, String) {
         }
         "red" => RED,
         s => {
+            if let Some(&missing) = tagged(&out, "missing-workflow: ").first() {
+                let marker = c.queue_file("publish-missing-workflow");
+                if std::fs::read_to_string(&marker).ok().as_deref() != Some(head.as_str()) {
+                    let _ = std::fs::write(&marker, &head);
+                    w.lib.notify(
+                        &c.s.mailbox,
+                        name,
+                        &format!("publish PR {pr}: no run of workflow {missing}"),
+                        &format!("PR {pr} for {name} has CI runs, but none of the workflow {missing} that spira.forge_workflows resolves for it — a mapping fault, not a pending run. Add {name}=<workflow name> to spira.forge_workflows."),
+                    );
+                }
+                w.out(format!("verdict {name}: publish PR {pr}: workflow {missing} has no run — configuration fault, waiting"));
+                return (OK, out);
+            }
             w.out(format!("verdict {name}: publish PR {pr}: {s} — waiting"));
             OK
         }
