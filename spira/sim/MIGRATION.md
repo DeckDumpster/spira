@@ -118,3 +118,25 @@ Left, and why:
 | test-land-mode-local | four of five properties are `lib.sh` function checks, not world behaviour; the fifth reads a git-call log |
 | test-landing, test-landing-race, test-landing-base-fail | not G7 alone: G6 verdict kinds and G15 actors |
 | the bead.sh, repo-map, held, cockpit and chamber label suites | they read the registry and the bead CLI, not a running loop; a world adds nothing they lack |
+
+## Run-directory tables (gap G14)
+
+The trace now carries the world's `run/` directory: `run_verdicts` (tree certificates), `run_queue`
+(per-repo queue records, one row per `key=value` line), `run_ejected` (sidecars), `run_locks` (lock
+files, `held` read from `/proc/locks`), `run_gate_log` and `run_landing_log` (each line once, at the
+snapshot that first saw it). `[[expect]]` and `[[invariant]]` query them like `bead_state`. Two
+built-in invariants read them: `inv_round_land_has_certificate` and `inv_no_lock_held_between_events`;
+`run-state-trail` is the scenario, and `test-sim-controls.sh` plants a forged landing line and a held
+lock to see each go red.
+
+No bash suite is retired by this step. The sole-G14 suites, and what each still lacks:
+
+| suite | blocked now by |
+|---|---|
+| test-queue-flush | `queue flush` refuses a `queue.local` repo, the only mode a world has (G7) |
+| test-gate-metering, test-gate-sweep, test-gate-locks, test-gate-admission-suites-only, test-lifecycle-guard-gate, test-build-fence | the world's gate is the stub runner; `gate.sh`, its worktree locks and `gate.log` rows are never written, so there is nothing to read (G6) |
+| test-round-duty, test-publish-backlog | fault cases (failing `queue round status`, unreadable arrival record) and the Concierge mailbox (G8, G3) |
+| test-landing-halt | needs a pass to be signalled mid-run (G8) |
+| test-batcher-cut, test-batcher-cut-land | dozens of ejection and verdict cases per round (G6); the world's happy round covers one |
+| test-tsd | the `run/tsd` families (G16) |
+| test-landing-queue-early | a forge whose verdict flips mid-pass (G6, G10) |
