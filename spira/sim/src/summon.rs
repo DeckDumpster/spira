@@ -5,7 +5,7 @@
 //! agent there as the claimed holder.
 
 use crate::agent::{SCENARIO_VAR, STATE_VAR};
-use crate::world::{run, LANDING_BASE};
+use crate::world::{run, run_capture, LANDING_BASE};
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -58,7 +58,8 @@ fn git(work: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 fn claim_tool(args: &[&str], stdin: &str) -> Result<String, String> {
-    let mut child = Command::new(spira_config::release_env::tool("spira-claim")).args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("spira-claim: {e}"))?;
+    let mut child = Command::new(spira_config::release_env::tool("spira-claim")).args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() // batch-job: spira-claim against a world, stdin-fed
+        .map_err(|e| format!("spira-claim: {e}"))?;
     child.stdin.take().ok_or("spira-claim: no stdin")?.write_all(stdin.as_bytes()).map_err(|e| e.to_string())?;
     let out = child.wait_with_output().map_err(|e| e.to_string())?;
     if out.status.success() {
@@ -86,7 +87,10 @@ fn ranked(fayth: &str, scratch: &Path) -> Result<Vec<String>, String> {
 /// claim is appended to the world's `claim-order` as `<bead> <holder> <lease_until> <fayth>`.
 fn claim(world: &Path, id: &str, fayth: &str) -> Result<bool, String> {
     let lease = spira_config::vtime::now_epoch() + LEASE_SECS;
-    let status = Command::new("bash").args(["-c", LC_CLAIM, "lc-claim", id, HOLDER, &lease.to_string(), fayth]).stdin(Stdio::null()).status().map_err(|e| format!("lc_claim_bead: {e}"))?;
+    let (status, _, _) = run_capture(
+        Command::new("bash").args(["-c", LC_CLAIM, "lc-claim", id, HOLDER, &lease.to_string(), fayth]).envs(spira_config::release_env::child_path_env_for_process()),
+        CALL_DEADLINE,
+    )?;
     match status.code() {
         Some(0) => {
             let mut log = std::fs::OpenOptions::new().create(true).append(true).open(world.join(CLAIM_ORDER)).map_err(|e| e.to_string())?;
