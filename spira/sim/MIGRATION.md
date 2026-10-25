@@ -180,3 +180,25 @@ Left, each because it needs more than the mail table, the only gap its row names
 | test-asks, test-verify-asks, test-mail-dismiss-sweep, test-mail-bead-render | the bead store's rows and message bodies (an `ask` bead table), not just the mail table |
 | test-verdict-flow, test-work-container | `work`/`sendmail` replies and decision-bead closing: the mail table needs a body column and an operator actor that answers |
 | test-pilgrimage, test-sin-exempt | a pilgrimage and an incident actor in the world |
+
+# Sim D3/G1 part 1: the real sentinel summons
+
+The world's `sentinel-summon` actor is `sentinel --summon-only` on `spira-summon.timer`, and the
+world's `SPIRA_SUMMON` is `sim-summon` (`sim` under that name), standing where `systemd-run ... aeon`
+stands. Claim ranking is `spira-claim select`, the claim is `lc_claim_bead` under a virtual-time lease,
+and every applied claim is appended to the world's `claim-order`. `sim summon`'s hand-written Claim
+event is gone. The real aeon replaces the stub-agent launch in part 2.
+
+| suite | scenario | suite-seconds removed | red on the planted defect |
+|---|---|---|---|
+| test-builder-qa-proposed | `builder-excludes-qa-proposed` | 0 | `qa-proposed` dropped from builder.fayth's exclusions: the proposal is claimed |
+
+`claim-rank` is new (a bead's priority decides who the sentinel's summon claims first, and the lease is
+the world's clock plus an hour); seen red with `spira-claim`'s rank sort reversed. The sim lane, 16
+suites, ran 235 s.
+
+Left, and why (each needs the real aeon, part 2, or a full sentinel pass rather than `--summon-only`):
+test-summon-fast-path (also unit-tests lib.sh's `aeon_count`/`fayth_free`), test-sentinel-pass and
+test-dispatch-open-children (full-pass checks and dispatch), test-strand-submitted and
+test-strand-truncated (the strand binary), test-czar-partition (czar-pass), test-warden, test-fayth,
+test-lanes (lane concurrency needs live aeon units), and the 30-odd suites that read the aeon's brief.
