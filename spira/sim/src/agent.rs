@@ -80,6 +80,7 @@ fn git(worktree: &Path, args: &[&str]) -> Result<String, String> {
             .arg("-C")
             .arg(worktree)
             .args(args)
+            .envs(spira_config::release_env::child_path_env_for_process())
             .env("GIT_AUTHOR_NAME", "sim-agent")
             .env("GIT_AUTHOR_EMAIL", "sim@sim.invalid")
             .env("GIT_COMMITTER_NAME", "sim-agent")
