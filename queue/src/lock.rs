@@ -9,6 +9,57 @@ use std::path::Path;
 pub struct Guard {
     f: File,
     recorded: bool,
+    beat: Option<Beat>,
+}
+
+/// A recording holder touches `<lock>.beat` while it lives, so the reconciler tells a landing
+/// that is still working from a holder that died with the lock held.
+const BEAT_FILE: &str = "lock.beat";
+const BEAT_EVERY: std::time::Duration = std::time::Duration::from_secs(20);
+
+struct Beat {
+    stop: std::sync::mpsc::Sender<()>,
+    thread: Option<std::thread::JoinHandle<()>>,
+    path: std::path::PathBuf,
+}
+
+fn touch(path: &Path) {
+    if let Ok(f) = OpenOptions::new().create(true).write(true).truncate(false).open(path) {
+        let _ = f.set_modified(std::time::SystemTime::now());
+    }
+}
+
+impl Beat {
+    fn start(path: std::path::PathBuf, every: std::time::Duration) -> Beat {
+        Beat::start_notifying(path, every, || {})
+    }
+
+    fn start_notifying(
+        path: std::path::PathBuf,
+        every: std::time::Duration,
+        after_touch: impl Fn() + Send + 'static,
+    ) -> Beat {
+        touch(&path);
+        let (stop, rx) = std::sync::mpsc::channel::<()>();
+        let p = path.clone();
+        let thread = std::thread::spawn(move || {
+            while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = rx.recv_timeout(every) {
+                touch(&p);
+                after_touch();
+            }
+        });
+        Beat { stop, thread: Some(thread), path }
+    }
+}
+
+impl Drop for Beat {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+        if let Some(t) = self.thread.take() {
+            let _ = t.join();
+        }
+        let _ = fs::remove_file(&self.path);
+    }
 }
 
 impl Drop for Guard {
@@ -16,6 +67,7 @@ impl Drop for Guard {
         if self.recorded {
             let _ = self.f.set_len(0);
         }
+        self.beat.take();
     }
 }
 
@@ -82,7 +134,9 @@ fn try_lock_file(queue_dir: &Path, repo: &str, file: &str, verb: Option<&str>) -
             use std::io::Write;
             let _ = (&f).write_all(format!("pid={} verb={v}\n", std::process::id()).as_bytes());
         }
-        Acquire::Held(Guard { f, recorded: true })
+        let beat = (file == "lock" && verb.is_some())
+            .then(|| Beat::start(dir.join(BEAT_FILE), BEAT_EVERY));
+        Acquire::Held(Guard { f, recorded: true, beat })
     } else {
         Acquire::Busy
     }
@@ -102,6 +156,24 @@ mod tests {
         assert!(matches!(try_lock(&d, "spira"), Acquire::Busy));
         drop(a);
         assert!(matches!(try_lock(&d, "spira"), Acquire::Held(_)));
+    }
+
+    #[test]
+    fn a_recording_queue_lock_holder_beats_until_it_drops() {
+        let _serial = crate::testutil::serial();
+        let d = tmpdir("lockbeat");
+        let a = try_lock_as(&d, "spira", "land-local");
+        assert!(d.join("spira").join(BEAT_FILE).is_file());
+        drop(a);
+        assert!(!d.join("spira").join(BEAT_FILE).exists());
+        let (tx, ticked) = std::sync::mpsc::channel::<()>();
+        let b = Beat::start_notifying(d.join("beat"), std::time::Duration::from_millis(20), move || {
+            let _ = tx.send(());
+        });
+        let t0 = fs::metadata(d.join("beat")).unwrap().modified().unwrap();
+        ticked.recv().unwrap();
+        assert!(fs::metadata(d.join("beat")).unwrap().modified().unwrap() >= t0);
+        drop(b);
     }
 
     #[test]

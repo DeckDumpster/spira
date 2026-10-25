@@ -1259,11 +1259,14 @@ fn observe_queue_lock_age(cfg: &Config) -> Vec<Check> {
             unsafe { flock(file.as_raw_fd(), 8 /* LOCK_UN */) };
             continue;
         }
-        let mtime = fs::metadata(&lock_path)
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_secs());
+        let beat_path = cfg.queue_dir.join(&repo_name).join("lock.beat");
+        let mtime = [&lock_path, &beat_path]
+            .iter()
+            .filter_map(|p| fs::metadata(p).ok())
+            .filter_map(|m| m.modified().ok())
+            .filter_map(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .max();
         let raw = match mtime {
             None => RawStatus::Unobservable { reason: "lock file mtime unreadable".into() },
             Some(mt) => {

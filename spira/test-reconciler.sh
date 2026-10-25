@@ -541,7 +541,29 @@ sleep 0.3
 rpass
 want "a held, stale lock escalates" "invariant: queue-lock-age:testrepo" "$(cat "$MAIL_LOG")"
 wait "$_holder" 2>/dev/null || true
-rm -f "$_lockfile"
+
+reset_state
+export SPIRA_PREFLIGHT_WALL_SECS=240
+tl_config SPIRA_PREFLIGHT_WALL_SECS=240
+: > "$_lockfile"
+touch -d "@$(( $(date +%s) - 400 ))" "$_lockfile"
+: > "$SPIRA_RUN/queue/testrepo/lock.beat"
+( exec 9<>"$_lockfile"; flock 9; sleep 5 ) &
+_holder=$!
+sleep 0.3
+rpass
+lack "a held lock whose holder is beating does not escalate" "queue-lock-age:testrepo" "$(cat "$MAIL_LOG")"
+wait "$_holder" 2>/dev/null || true
+
+reset_state
+touch -d "@$(( $(date +%s) - 400 ))" "$SPIRA_RUN/queue/testrepo/lock.beat"
+( exec 9<>"$_lockfile"; flock 9; sleep 5 ) &
+_holder=$!
+sleep 0.3
+rpass
+want "a held lock whose beat went stale escalates" "invariant: queue-lock-age:testrepo" "$(cat "$MAIL_LOG")"
+wait "$_holder" 2>/dev/null || true
+rm -f "$_lockfile" "$SPIRA_RUN/queue/testrepo/lock.beat"
 unset SPIRA_PREFLIGHT_WALL_SECS
 # Restore to the complete fixture's own declared default (240) — "nothing has a default"
 # any more (per Ryan 2026-10-05), so unset alone no longer puts this back the way it was.
