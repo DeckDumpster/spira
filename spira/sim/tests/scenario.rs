@@ -1,5 +1,5 @@
 use spira_sim::drive::{parse_scenario, scenario_path, scenario_repos, Scenario};
-use spira_sim::summon::{fayth_of, ranked_ids, routed_repo, scripted};
+use spira_sim::summon::{aeon_command, fayth_of, ranked_ids, real_aeon, routed_repo, scripted, with_home};
 use spira_sim::world::{base_config, bead_db, config_settings, home_settings, registry_rows, repo_set, stub_gate_steps, RepoSpec, INERT_TOOLS, MODES, REPO_NAME};
 use std::path::Path;
 
@@ -237,4 +237,37 @@ fn the_summon_works_a_bead_in_the_repository_the_scenario_routes_it_to() {
     assert_eq!(routed_repo(scenario, "sp-a").as_deref(), Some("docs"));
     assert_eq!(routed_repo(scenario, "sp-b"), None);
     assert!(spira_sim::agent::parse(scenario, "sp-a").is_ok());
+}
+
+#[test]
+fn the_real_aeon_is_asked_for_by_one_marker_line_and_not_by_a_bead_named_like_it() {
+    assert!(real_aeon("sp-a submit\n@real-aeon\n"));
+    assert!(!real_aeon("sp-a submit\n") && !scripted("@real-aeon\n", "sp-a"));
+}
+
+#[test]
+fn a_systemd_run_argv_becomes_the_aeon_command_with_its_setenv_pairs_and_another_home() {
+    let argv: Vec<String> = ["--property=X=1", "--setenv=PATH=/r/bin:/bin", "--setenv=HOME=/h", "/r/bin/aeon", "--home", "/r/spira", "builder"].iter().map(|s| s.to_string()).collect();
+    let (env, cmd) = aeon_command(&argv).unwrap();
+    assert_eq!(env, vec![("PATH".to_string(), "/r/bin:/bin".to_string()), ("HOME".to_string(), "/h".to_string())]);
+    assert_eq!(with_home(&cmd, Path::new("/w/aeon-home")), vec!["/r/bin/aeon", "--home", "/w/aeon-home", "builder"]);
+    assert!(aeon_command(&argv[..2]).is_err());
+}
+
+#[test]
+fn a_file_step_carries_a_body_and_only_a_file_step_may() {
+    let cmd = shell("file = \"sp-b\"\nbody = \"## Build\\n\\nx\"").unwrap();
+    assert!(cmd.contains(" -d '## Build\n\nx' --silent"), "{cmd}");
+    assert!(shell("command = \"true\"\nbody = \"x\"").is_err());
+    assert!(sc("real_aeon = true\n").unwrap().real_aeon);
+}
+
+#[test]
+fn a_world_names_the_stub_agent_launcher_as_its_agent_and_the_launcher_carries_the_paths_the_aeon_drops() {
+    let s = home_settings(Path::new("/w"), "/fx/f1\n", Path::new("/usr/bin/bd"));
+    let get = |k: &str| s.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+    assert_eq!(get("spira.agent"), Some("/w/bin/sim-aeon-agent"));
+    assert_eq!(get("spira.summon_jitter"), Some("0"));
+    let script = spira_sim::world::agent_launcher(Path::new("/r/bin/sim-agent"), Path::new("/w/agent.scenario"), Path::new("/w/agent-state"));
+    assert!(script.contains("SPIRA_SIM_SCENARIO='/w/agent.scenario'") && script.contains("exec '/r/bin/sim-agent' \"$@\""), "{script}");
 }

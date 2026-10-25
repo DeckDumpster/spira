@@ -144,3 +144,31 @@ fn drop_removes_a_committed_file_in_a_commit_of_its_own() {
     assert_eq!(r.subjects().len(), 3);
     assert!(parse("sp-a drop\n", "sp-a").is_err());
 }
+
+#[test]
+fn a_slain_step_parses_with_no_argument_and_is_refused_with_one() {
+    assert_eq!(parse("sp-a slain\nsp-a summon\nsp-a submit\n", "sp-a").unwrap(), vec![vec![Step::Slain], vec![Step::Submit]]);
+    assert!(parse("sp-a slain now\n", "sp-a").is_err());
+}
+
+#[test]
+fn a_brief_row_carries_what_the_agent_was_launched_with_and_counts_the_beads_sessions() {
+    use spira_sim::agent::{brief_row, record_brief, BRIEFS};
+    let t = testkit::TempDir::new("simbrief");
+    let system = t.join("sys.md");
+    std::fs::write(&system, "the system prompt for sp-a").unwrap();
+    let argv: Vec<String> = ["-p", "--system-prompt-file", &system.display().to_string(), "--model", "m"].iter().map(|s| s.to_string()).collect();
+    let env = vec![("BEAD_ID".to_string(), "sp-a".to_string())];
+    let state = t.join("state");
+    let first = brief_row(&state, "sp-a", &argv, "the prompt", Path::new("/w/sp-a"), &env).unwrap();
+    record_brief(&state, &first).unwrap();
+    let again = brief_row(&state, "sp-a", &argv, "p2", Path::new("/w/sp-a"), &env).unwrap();
+    record_brief(&state, &again).unwrap();
+    let other = brief_row(&state, "sp-b", &argv, "p", Path::new("/w/sp-b"), &env).unwrap();
+    assert_eq!((first["n"].as_u64(), again["n"].as_u64(), other["n"].as_u64()), (Some(1), Some(2), Some(1)));
+    assert_eq!(first["system"], "the system prompt for sp-a");
+    assert_eq!(first["prompt"], "the prompt");
+    assert!(first["argv"].as_str().unwrap().contains("--model\nm"));
+    assert_eq!(first["env"], "{\"BEAD_ID\":\"sp-a\"}");
+    assert_eq!(std::fs::read_to_string(state.join(BRIEFS)).unwrap().lines().count(), 2);
+}
