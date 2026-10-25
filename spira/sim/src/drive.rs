@@ -606,7 +606,7 @@ impl ProcessProbe {
     fn observe(&mut self) -> Result<Snapshot, String> {
         if let Some(o) = self.observer.as_mut() {
             let seen = o.observe()?;
-            let mut snap = Snapshot { refs: seen.refs, run: crate::runstate::observe(&self.exec.world), ..Snapshot::default() };
+            let mut snap = Snapshot { refs: seen.refs, mail: seen.mail, run: crate::runstate::observe(&self.exec.world), ..Snapshot::default() };
             for t in seen.tags.into_iter().chain(crate::gh::tag_names(&self.exec.world.join("gh"))?) {
                 if !snap.tags.contains(&t) {
                     snap.tags.push(t);
@@ -619,7 +619,7 @@ impl ProcessProbe {
         }
         let work = self.exec.world.join("work");
         let git = |args: &[&str]| run(Command::new("git").arg("-C").arg(&work).args(args), COMMAND_DEADLINE);
-        let mut snap = Snapshot { run: crate::runstate::observe(&self.exec.world), ..Snapshot::default() };
+        let mut snap = Snapshot { mail: crate::probe::mail_rows(&crate::world::mail_root(&self.exec.world)), run: crate::runstate::observe(&self.exec.world), ..Snapshot::default() };
         for l in git(&["for-each-ref", "--format=%(refname) %(objectname)"])?.lines() {
             if let Some((r, sha)) = l.split_once(' ') {
                 snap.refs.push((r.to_string(), sha.to_string()));

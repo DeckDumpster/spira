@@ -150,3 +150,19 @@ fn an_expectation_is_unmet_exactly_when_its_query_returns_no_row() {
     let unmet = sql("landed", "SELECT 1 FROM bead_state WHERE lc_state = 'LANDED'");
     assert_eq!(spira_sim::trace::unmet(&db, &[met, unmet]).unwrap(), vec!["landed".to_string()]);
 }
+
+#[test]
+fn the_mail_table_is_queryable_by_expect() {
+    if !spira_sim::trace::duckdb_available() {
+        return;
+    }
+    let w = testkit::TempDir::new("sim-trace-mail");
+    let t = Trace::create(&w).unwrap();
+    let m = json!({"mailbox": "concierge", "kind": "note", "bead": "sp-x", "read": false, "subject": "rebase loop"});
+    t.snapshot(1, &Snapshot { mail: vec![m], ..Default::default() }).unwrap();
+    let db = t.load(&w).unwrap();
+    let def = |name: &str, sql: &str| spira_sim::drive::SqlDef { name: name.into(), sql: sql.into() };
+    let met = def("met", "SELECT 1 FROM mail WHERE mailbox = 'concierge' AND kind = 'note' AND bead = 'sp-x' AND NOT read AND subject LIKE '%loop%'");
+    let miss = def("miss", "SELECT 1 FROM mail WHERE mailbox = 'operator'");
+    assert_eq!(spira_sim::trace::unmet(&db, &[met, miss]).unwrap(), vec!["miss".to_string()]);
+}

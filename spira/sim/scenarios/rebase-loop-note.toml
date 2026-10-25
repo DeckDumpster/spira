@@ -1,0 +1,25 @@
+epoch = 1800000000
+horizon = 1200000
+goal = "sp-rl01:LANDED"
+real_actors = ["sentinel-summon", "sentinel-landing", "sift"]
+
+[[step]]
+at = 0
+file = "sp-rl01"
+
+[[step]]
+at = 0
+claim = "sp-rl01"
+script = ["commit out/a.txt", "submit"]
+
+[[step]]
+at = 1000
+command = 'landing-pass ask-rebase-loop sp-rl01 spira/sp-rl01 spira 3 foo.sh ""'
+
+[[invariant]]
+name = "rebase_loop_never_asks_the_operator"
+sql = "SELECT seq, mailbox, kind, subject FROM mail WHERE mailbox = 'operator' OR kind IN ('question', 'decision')"
+
+[[expect]]
+name = "concierge_got_the_rebase_loop_note"
+sql = "SELECT 1 FROM mail WHERE mailbox = 'concierge' AND kind = 'note' AND bead = 'sp-rl01' AND NOT read AND subject LIKE '%spira/sp-rl01 rebase loop x3 in %'"

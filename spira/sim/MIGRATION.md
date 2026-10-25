@@ -13,7 +13,6 @@ seconds from the bead; `?` is unmeasured.
 | suite | s | property it pins | scenario covers today | coverage the world lacks | new scenario needed |
 |---|---|---|---|---|---|
 | test-certified-withdraw | 18 | reopening a certified, unbatched bead withdraws it from the next cut's draw; recertifying a new tip readmits it; the submitted label is stripped for every cause but the admission-exempt one | `resubmit-moved-tip` (tip move on SUBMITTED) | a reopen step; an expect on the cut's certified list; label state in the view | `reopen-certified`: certify, reopen, assert the cut skips it, resubmit, assert it lands |
-| test-rebase-escalation | 8 | a rebase loop mails the Concierge (never the operator) naming conflicting files, GENERATED flags, the base beads that changed them; no needs-ryan bead is filed | `conflicting-siblings` (loser returned to REWORK) | the mail the loser's rebase loop sends; mailbox contents as a queryable table; bd bead listing | extend `conflicting-siblings` with a mailbox table and the repeat-conflict threshold, or a `rebase-loop` variant with a generated file in the conflict |
 | test-queue-submit | 4 | `queue submit` certifies any branch the batcher can adopt and refuses the rest (non `spira/<id>`, bead-less, `spira-suite-state/*`) before any state is written | `happy-path`, `submit-from-other-cwd` (accepted submit only) | refusals: exit code and "no row written" for each refused shape | `submit-refused`: one step per bad shape, `exit` expected non-zero, invariant that no row appears |
 | test-landing-queue-early | 56 | a green forge verdict is landed at the top of the pass (`queue early:`), a pending one at the end (`queue late:`) | `long-gate-interleaving` (ordering of gate vs. landing) | a forge whose verdict changes mid-pass; the pass log as an event stream | `forge-green-early` and `forge-green-late`: scripted forge verdict flip, expect the landing seq before/after the gate event |
 | test-landing-rebase | 64 | survivors are rebased when the base moves; the loop-defer guard (live aeon holds the bead) defers; the checkout refresh runs unconditionally; the escalate path reopens | `conflicting-siblings` (conflict resolution order) | a withheld branch rebased on a base move; a live-aeon hold; operator-checkout state (skew); the reopen count | `survivor-rebase`, `aeon-holds-bead` (needs an aeon-claim actor), and a skew probe on the checkout |
@@ -29,7 +28,7 @@ Ordered by what to migrate first (suite seconds, then how little world each need
 1. test-certify (89 s), test-landing-rebase (64 s), test-landing-queue-early (56 s): the
    largest recorded times. test-certify needs only gate-worker verdict modes. The other two
    need an actor each and are the least certain to beat their suite.
-2. test-certified-withdraw (18 s), test-rebase-escalation (8 s), test-queue-submit (4 s): small
+2. test-certified-withdraw (18 s), test-queue-submit (4 s): small
    suites. Migrate only if a scenario world costs less than the suite, which after sp-wfcvbp
    it may not for the 4 s one.
 3. The five unmeasured suites: measure them first (`suites.sh list` reports the times once a
@@ -160,3 +159,24 @@ No bash suite is deleted. Of the suites whose only gap is G6, each still needs s
 | test-withdrawn-suites-recert | needs the ejected-suites sidecar and testenv inside the world |
 | test-landing-base-fail | needs a `base-fail` mode (exit 76) plus an incident-bead table |
 | test-escape-classify | needs a red round attributed to a member (the round-vm verdict, not the gate) |
+
+## Mail in the world (sp-jyx6yr)
+
+The world's mail is unmuted (`spira.mail_mute = false`) and every event's snapshot carries a
+`mail` table: `mailbox, kind, bead, read, subject`, one row per message under the world's Maildirs.
+`[[expect]]` and `[[invariant]]` query it like `bead_state`.
+
+Moved: test-rebase-escalation, to `rebase-loop-note` (the note reaches the concierge as unread
+kind `note` naming the bead, and the operator mailbox and `question`/`decision` kinds stay empty).
+Seen red with the note sent to the operator as a `question`. Its body assertions (GENERATED flag,
+others named, status line, no blank slot) are the unit tests in `landing-pass/src/ask.rs`, which
+the mail table does not carry.
+
+Left, each because it needs more than the mail table, the only gap its row names:
+
+| suite | what else it needs |
+|---|---|
+| test-mail, test-mail-mailbox-arg, test-mail-tidy, test-mail-health, test-accept-default-folded, test-mail-real-senders | `mail`'s own CLI contract (flags, lint, tidy ages, folded headers); a sim scenario would only wrap the verb. Candidates for the mail crate's unit tests, not the sim |
+| test-asks, test-verify-asks, test-mail-dismiss-sweep, test-mail-bead-render | the bead store's rows and message bodies (an `ask` bead table), not just the mail table |
+| test-verdict-flow, test-work-container | `work`/`sendmail` replies and decision-bead closing: the mail table needs a body column and an operator actor that answers |
+| test-pilgrimage, test-sin-exempt | a pilgrimage and an incident actor in the world |
