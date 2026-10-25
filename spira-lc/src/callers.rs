@@ -77,6 +77,7 @@ pub const VERBS: &[&str] = &[
     "certify",
     "resubmit",
     "retip",
+    "resubmit-submitted",
     "absolve",
     "renew",
     "phase",
@@ -254,6 +255,12 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
                 return usage("resubmit <bead-id> <tip> [actor]");
             }
             resubmit(m, &a(0), &a(1), &actor_or(args.get(2), "lifecycle-cert"))
+        }
+        "resubmit-submitted" => {
+            if !need(2) {
+                return usage("resubmit-submitted <bead-id> <tip> [actor]");
+            }
+            resubmit_submitted(m, &a(0), &a(1), &actor_or(args.get(2), "lifecycle-cert"))
         }
         "retip" => {
             if !need(2) {
@@ -720,6 +727,27 @@ fn certify(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, detail: &str
     let held = state_version(m, id).map(|(_, _, row)| bead_field(&row, "tip")).unwrap_or_default();
     let mut a = Answer::cert(REFUSED, "refused", format!("{outcome} tip={tip}"));
     a.stderr = format!("spira-lc certify: {id} refused: tip mismatch: held {held}, gated {tip}\n");
+    a
+}
+
+/// Move a SUBMITTED row to the branch tip the gate judged: a gate verdict for a tip the row
+/// does not hold is otherwise refused forever.
+fn resubmit_submitted(m: &mut dyn Machine, id: &str, tip: &str, actor: &str) -> Answer {
+    let Some((state, version, row)) = state_version(m, id) else {
+        return Answer::cert(CANNOT_TELL, "cannot-tell", "no lifecycle row yet".into());
+    };
+    if state != "SUBMITTED" {
+        return Answer::cert(REFUSED, "skip", format!("resubmit-submitted: state={state} is not SUBMITTED"));
+    }
+    if bead_field(&row, "tip") == tip {
+        return Answer::cert(APPLIED, "already", format!("resubmit-submitted tip={tip} — row already holds it"));
+    }
+    let (rc, out) = event(m, "bead", id, &state, &version, actor, &submit_kind(tip));
+    if rc == 0 {
+        return Answer::cert(APPLIED, "applied", format!("resubmit-submitted tip={tip}"));
+    }
+    let mut a = Answer::cert(REFUSED, "refused", format!("resubmit-submitted tip={tip}"));
+    a.stderr = format!("spira-lc resubmit-submitted: {id} refused ({}) — nothing changed\n", out.trim());
     a
 }
 

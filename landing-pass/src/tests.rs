@@ -423,13 +423,24 @@ struct FakeLc {
     down: RefCell<Option<String>>,
     certified: RefCell<Vec<String>>,
     refuse_pass: Cell<bool>,
+    held_tip: RefCell<Option<String>>,
+    resubmits: RefCell<Vec<String>>,
 }
 impl crate::lifecycle::Lc for FakeLc {
     fn certify(&self, id: &str, tip: &str, outcome: &str, _: &str) -> Result<String, String> {
         self.certified.borrow_mut().push(format!("{id} {tip} {outcome}"));
-        if outcome == "pass" && self.refuse_pass.get() {
+        let mismatched = self.held_tip.borrow().as_deref().is_some_and(|h| h != tip);
+        if outcome == "pass" && (self.refuse_pass.get() || mismatched) {
             return Err("spira-lc certify exited 3: refused".into());
         }
+        Ok("applied".into())
+    }
+    fn resubmit_submitted(&self, id: &str, tip: &str) -> Result<String, String> {
+        self.resubmits.borrow_mut().push(format!("{id} {tip}"));
+        if self.refuse_pass.get() {
+            return Err("spira-lc resubmit-submitted exited 3: refused".into());
+        }
+        *self.held_tip.borrow_mut() = Some(tip.to_string());
         Ok("applied".into())
     }
     fn probe(&self) -> Result<(), String> {
@@ -1917,6 +1928,20 @@ fn a_refused_gatepass_leaves_the_bead_uncertified() {
     h.lc.refuse_pass.set(true);
     h.run();
     assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 pass"]);
+}
+
+#[test]
+fn a_gatepass_refused_for_a_held_tip_resubmits_the_branch_tip_and_certifies() {
+    let h = H::new(LandMode::QueueLocal);
+    h.bead("sp-a", "SUBMITTED", &[]);
+    h.git.add("spira/sp-a", "t2");
+    *h.lc.held_tip.borrow_mut() = Some("t1".into());
+    h.run();
+    assert_eq!(*h.lc.resubmits.borrow(), vec!["sp-a t2"]);
+    assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t2 pass", "sp-a t2 pass"]);
+    assert!(!h.logged("not offered again"));
+    h.run();
+    assert_eq!(h.lc.resubmits.borrow().len(), 1);
 }
 
 #[test]
