@@ -92,6 +92,11 @@ on:
         type: boolean
         required: false
         default: false
+      sha:
+        description: 'With cut: the commit on main to cut (default: main HEAD)'
+        type: string
+        required: false
+        default: ''
       force_spill:
         description: 'Run the job on EC2 now (spill: ec2-only), skipping Proxmox'
         type: boolean
@@ -817,6 +822,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.sha || github.sha }}
           # release.sh names every bead landed since the PREVIOUS release tag.
           # Without the tags it cannot find the previous one and every cut looks
           # like the first.
@@ -840,7 +846,7 @@ jobs:
         run: |
           set -uo pipefail
           _pr_ref="$(gh api \
-            "repos/$GITHUB_REPOSITORY/commits/${{ github.sha }}/pulls" \
+            "repos/$GITHUB_REPOSITORY/commits/${{ inputs.sha || github.sha }}/pulls" \
             --jq '.[0].head.ref // ""' 2>/dev/null || true)"
           case "${_pr_ref:-}" in
             # spira/publish/*: since queue.local, every merge to main arrives as a
@@ -848,16 +854,16 @@ jobs:
             spira/queue/*|spira/publish/*) ;;
             *)
               printf 'cut: SHA %s is not the head of a queue batch PR (head ref: %s)\n' \
-                "${{ github.sha }}" "${_pr_ref:-<none>}" >&2
+                "${{ inputs.sha || github.sha }}" "${_pr_ref:-<none>}" >&2
               exit 1
               ;;
           esac
           _n="$(gh api \
-            "repos/$GITHUB_REPOSITORY/commits/${{ github.sha }}/check-runs" \
+            "repos/$GITHUB_REPOSITORY/commits/${{ inputs.sha || github.sha }}/check-runs" \
             --jq '[.check_runs[] | select(.name == "gate" and .conclusion == "success")] | length' \
             2>/dev/null || echo 0)"
           [ "${_n:-0}" -gt 0 ] || {
-            printf 'cut: SHA %s has no green gate check\n' "${{ github.sha }}" >&2
+            printf 'cut: SHA %s has no green gate check\n' "${{ inputs.sha || github.sha }}" >&2
             exit 1
           }
           # WALK THE RUNS, DO NOT TAKE THE NEWEST (sp-5h238). A merged queue PR fires a
@@ -865,12 +871,12 @@ jobs:
           # newest run for this SHA, and reading it refused every cut (run 36306259348). The run
           # that tested the SHA is the newest one that actually carries a batch-results artifact.
           _runs="$(gh api \
-            "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=${{ github.sha }}&event=pull_request&status=completed" \
+            "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=${{ inputs.sha || github.sha }}&event=pull_request&status=completed" \
             --jq '.workflow_runs[] | select(.name == "Gate" and .conclusion == "success") | .id' \
             2>/dev/null || true)"
           [ -n "${_runs:-}" ] || {
             printf 'cut: SHA %s has no completed pull_request Gate run to source suites from\n' \
-              "${{ github.sha }}" >&2
+              "${{ inputs.sha || github.sha }}" >&2
             exit 1
           }
           _run_id=""; _art=""
@@ -883,7 +889,7 @@ jobs:
           done
           [ -n "${_art:-}" ] || {
             printf 'cut: no pull_request Gate run for SHA %s carries a batch-results artifact (checked: %s) — no suites ran\n' \
-              "${{ github.sha }}" "$(printf '%s ' $_runs)" >&2
+              "${{ inputs.sha || github.sha }}" "$(printf '%s ' $_runs)" >&2
             exit 1
           }
           gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/${_art}/zip" > /tmp/batch-assert.zip
@@ -956,16 +962,16 @@ jobs:
         run: |
           set -uo pipefail
           _pr="$(gh api \
-            "repos/$GITHUB_REPOSITORY/commits/${{ github.sha }}/pulls" \
+            "repos/$GITHUB_REPOSITORY/commits/${{ inputs.sha || github.sha }}/pulls" \
             --jq '.[0].number // ""' 2>/dev/null || true)"
           _branch="$(gh api \
-            "repos/$GITHUB_REPOSITORY/commits/${{ github.sha }}/pulls" \
+            "repos/$GITHUB_REPOSITORY/commits/${{ inputs.sha || github.sha }}/pulls" \
             --jq '.[0].head.ref // ""' 2>/dev/null || true)"
           _prev="$(git tag -l 'spira-release-*' | sort | tail -1 || true)"
           _args=""
           [ -n "${_pr:-}" ]     && _args="$_args --pr $_pr"
           [ -n "${_branch:-}" ] && _args="$_args --branches $_branch"
-          tag="$(bash spira/release.sh cut "$GITHUB_WORKSPACE" $_args)" || {
+          tag="$(bash spira/release.sh cut "$GITHUB_WORKSPACE" --at "${{ inputs.sha || github.sha }}" $_args)" || {
             printf 'cut: release.sh refused\n' >&2; exit 1; }
           if [ -z "$tag" ]; then
             printf 'cut: land ref did not move since last tag — nothing to tag\n'

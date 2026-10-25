@@ -22,6 +22,9 @@
 #                        the new tag name on stdout. Zero-landed case: says
 #                        so on stderr and exits 0 without creating a tag.
 #
+#           --at <sha>   Tag that commit, which must be on the base branch, instead of its
+#                        HEAD.
+#
 #           --dispatch   Ask for a release instead of cutting one locally: fires
 #                        gate.yml's workflow_dispatch with cut=true. gate.yml's
 #                        own cut job still refuses a HEAD with no green gate. Refused
@@ -44,13 +47,15 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 do_cut() {
     # First positional arg is the repo name or path (optional); remaining are flags.
     local arg="${1:-}"; shift 2>/dev/null || true
-    local pr="" branches="" dispatch=""
+    local pr="" branches="" dispatch="" at=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --pr)         pr="${2:-}"; shift 2 ;;
             --pr=*)       pr="${1#--pr=}"; shift ;;
             --branches)   branches="${2:-}"; shift 2 ;;
             --branches=*) branches="${1#--branches=}"; shift ;;
+            --at)         at="${2:-}"; shift 2 ;;
+            --at=*)       at="${1#--at=}"; shift ;;
             --dispatch)   dispatch=1; shift ;;
             *) printf 'release: unknown argument: %s\n' "$1" >&2; exit 2 ;;
         esac
@@ -83,6 +88,19 @@ do_cut() {
         exit 1
     }
 
+    local tip="$sha"
+    if [ -n "$at" ]; then
+        tip="$(git -C "$repo" rev-parse --verify "${at}^{commit}" 2>/dev/null)" || {
+            printf 'release: --at %s is not a commit in %s\n' "$at" "$repo" >&2
+            exit 1
+        }
+        git -C "$repo" merge-base --is-ancestor "$tip" "$base" || {
+            printf 'release: --at %s is not on %s\n' "$at" "$base" >&2
+            exit 1
+        }
+        sha="$tip"
+    fi
+
     if [ -n "$dispatch" ]; then
         spira-config local-pass check acceptance-ad "$sha" || {
             printf 'release: refusing to dispatch a cut for %s at %s\n' "$name" "$sha" >&2
@@ -108,9 +126,9 @@ do_cut() {
     # unit to point at. Zero-landed means zero COMMITS, not zero bead ids.
     local commit_range
     if [ -n "$prev_tag" ]; then
-        commit_range="${prev_tag}..${base}"
+        commit_range="${prev_tag}..${tip}"
     else
-        commit_range="$base"
+        commit_range="$tip"
     fi
     local commit_count
     commit_count="$(git -C "$repo" rev-list --count "$commit_range" 2>/dev/null)" || commit_count=0
@@ -123,9 +141,9 @@ do_cut() {
     # Collect commit subjects and extract bead ids.
     local subjects
     if [ -n "$prev_tag" ]; then
-        subjects="$(git -C "$repo" log --format='%s' "${prev_tag}..${base}" 2>/dev/null)" || subjects=""
+        subjects="$(git -C "$repo" log --format='%s' "${prev_tag}..${tip}" 2>/dev/null)" || subjects=""
     else
-        subjects="$(git -C "$repo" log --format='%s' "$base" 2>/dev/null)" || subjects=""
+        subjects="$(git -C "$repo" log --format='%s' "$tip" 2>/dev/null)" || subjects=""
     fi
     local id_prefix="${SPIRA_ID_PREFIX:-sp}"
     local ids
