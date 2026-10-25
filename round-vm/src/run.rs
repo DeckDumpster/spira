@@ -1462,7 +1462,7 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
     let results_dir = args.results_dir.clone().unwrap_or_else(|| cfg.run_dir.join("batch-results"));
     let total = args.suites.as_deref().map_or(0, |l| l.split(',').filter(|x| !x.is_empty()).count());
     let budgets = crate::progress::Budgets { vm: cfg.vm_budget_secs, build: cfg.build_budget_secs };
-    let progress = Mutex::new(crate::progress::Progress::start(&cfg.run_dir, &results_dir, &commit_sha, &tree_sha, total, cfg.cap_secs, budgets).on_red(args.on_red.clone()));
+    let progress = Mutex::new(crate::progress::Progress::start(&cfg.run_dir, &results_dir, &commit_sha, &tree_sha, total, cfg.cap_secs, budgets).on_red(args.on_red.clone().filter(|_| args.ci_entry.is_none())));
     if let Some(batch) = args.round_batch.as_deref() {
         if let Err(e) = env.record.pass_started(batch, args.round_repo.as_deref()) {
             eprintln!("round-vm run: {e}; the pass is not run unrecorded");
@@ -3360,6 +3360,36 @@ mod tests {
         assert_eq!(go_recorded(&fx, &FakeRemote::green(), &a, &rec), 2);
         let v: Value = serde_json::from_str(&fs::read_to_string(fx.cfg.run_dir.join("round-progress.json")).unwrap()).unwrap();
         assert_eq!(v["verdict"].as_str(), Some("fault"));
+    }
+
+    #[test]
+    fn a_foreign_round_whose_entry_prints_errors_and_exits_1_is_red_and_fires_no_attribution_hook() {
+        let fx = fixture();
+        let rec = FakeRecorder::default();
+        let marker = fx.d.path().join("hook-fired");
+        let mut remote = FakeRemote { rc: Ok(1), ..FakeRemote::green() };
+        remote.files.insert(
+            "round-work/.runtime/spira/batch-results/",
+            vec![
+                ("KEY/ci.result", "red 1 5 - - - 1\n"),
+                ("KEY/ci.out", "svelte-check found 2 errors\nround-vm: ci_entry exited 1\n"),
+                ("KEY/batch.meta", "tree=treesha\n"),
+            ],
+        );
+        remote.files.remove(REMOTE_BINS);
+        let a = RunArgs {
+            results_dir: Some(fx.d.path().join("results")),
+            round_batch: Some("r-9".into()),
+            round_repo: Some("cubby".into()),
+            ci_entry: Some("npm run check".into()),
+            on_red: Some(vec!["touch".into(), marker.display().to_string()]),
+            ..tree(&fx)
+        };
+        assert_eq!(go_recorded(&fx, &remote, &a, &rec), 1);
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(!marker.exists(), "a foreign round has one verdict and nothing to attribute");
+        let v: Value = serde_json::from_str(&fs::read_to_string(fx.cfg.run_dir.join("round-progress.json")).unwrap()).unwrap();
+        assert_eq!(v["verdict"].as_str(), Some("red"));
     }
 
     #[test]
