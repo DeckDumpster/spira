@@ -363,6 +363,13 @@ fn mender_summons_closed(conn: &Conn, bead_id: &str, actor: &str, verb: &str) ->
     }
 }
 
+fn already_finished_noop(bead_id: &str, state: bead::BeadState) -> Option<(i32, String)> {
+    match state {
+        bead::BeadState::Done | bead::BeadState::Dropped => Some((0, format!("{bead_id} is already {}; nothing to do", state.as_str()))),
+        _ => None,
+    }
+}
+
 fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     if let Some(refusal) = unanswered_amendment_refusal(bead_id) {
         return refusal;
@@ -377,19 +384,16 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     let Some(delivers) = flag(args, "--delivers") else {
         return (CANNOT_TELL, "work done: --delivers <path> is required".into());
     };
-    if actor == "mender" {
-        match rows::fetch_bead(conn, bead_id) {
-            Ok(Some(row)) if row.state == bead::BeadState::Dropped => return (0, format!("{bead_id} is already DROPPED; nothing to do")),
-            Ok(_) => {}
-            Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
+    match rows::fetch_bead(conn, bead_id) {
+        Ok(Some(row)) => {
+            if let Some(noop) = already_finished_noop(bead_id, row.state) {
+                return noop;
+            }
         }
+        Ok(None) => {}
+        Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
     }
     if actor == "groomer" {
-        match rows::fetch_bead(conn, bead_id) {
-            Ok(Some(row)) if row.state == bead::BeadState::Done => return (0, format!("{bead_id} is already DONE; nothing to do")),
-            Ok(_) => {}
-            Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
-        }
         match crate::bd::labels(bead_id) {
             Ok(labels) if labels.iter().any(|l| l == GROOM_TRIGGER_MARKER) => {}
             Ok(_) => return release_untriggered_groom(bead_id, &actor, conn),
@@ -1459,6 +1463,17 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn done_on_a_dropped_or_done_bead_is_a_no_op_for_every_actor() {
+        for st in [bead::BeadState::Dropped, bead::BeadState::Done] {
+            let (code, msg) = already_finished_noop("sp-x", st).unwrap();
+            assert_eq!(code, 0);
+            assert_eq!(msg, format!("sp-x is already {}; nothing to do", st.as_str()));
+        }
+        assert!(already_finished_noop("sp-x", bead::BeadState::Working).is_none());
+        assert!(already_finished_noop("sp-x", bead::BeadState::Landed).is_none());
+    }
 
     #[test]
     fn a_working_exit_the_fayth_does_not_declare_is_refused_by_name() {
