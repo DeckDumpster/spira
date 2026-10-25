@@ -31,12 +31,21 @@ fn touch(path: &Path) {
 
 impl Beat {
     fn start(path: std::path::PathBuf, every: std::time::Duration) -> Beat {
+        Beat::start_notifying(path, every, || {})
+    }
+
+    fn start_notifying(
+        path: std::path::PathBuf,
+        every: std::time::Duration,
+        after_touch: impl Fn() + Send + 'static,
+    ) -> Beat {
         touch(&path);
         let (stop, rx) = std::sync::mpsc::channel::<()>();
         let p = path.clone();
         let thread = std::thread::spawn(move || {
             while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = rx.recv_timeout(every) {
                 touch(&p);
+                after_touch();
             }
         });
         Beat { stop, thread: Some(thread), path }
@@ -157,10 +166,13 @@ mod tests {
         assert!(d.join("spira").join(BEAT_FILE).is_file());
         drop(a);
         assert!(!d.join("spira").join(BEAT_FILE).exists());
-        let b = Beat::start(d.join("beat"), std::time::Duration::from_millis(20));
+        let (tx, ticked) = std::sync::mpsc::channel::<()>();
+        let b = Beat::start_notifying(d.join("beat"), std::time::Duration::from_millis(20), move || {
+            let _ = tx.send(());
+        });
         let t0 = fs::metadata(d.join("beat")).unwrap().modified().unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(120));
-        assert!(fs::metadata(d.join("beat")).unwrap().modified().unwrap() > t0);
+        ticked.recv().unwrap();
+        assert!(fs::metadata(d.join("beat")).unwrap().modified().unwrap() >= t0);
         drop(b);
     }
 

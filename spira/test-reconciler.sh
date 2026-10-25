@@ -543,6 +543,8 @@ want "a held, stale lock escalates" "invariant: queue-lock-age:testrepo" "$(cat 
 wait "$_holder" 2>/dev/null || true
 
 reset_state
+export SPIRA_PREFLIGHT_WALL_SECS=240
+tl_config SPIRA_PREFLIGHT_WALL_SECS=240
 : > "$_lockfile"
 touch -d "@$(( $(date +%s) - 400 ))" "$_lockfile"
 : > "$SPIRA_RUN/queue/testrepo/lock.beat"
