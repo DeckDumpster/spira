@@ -14,6 +14,7 @@ pub mod telemetry;
 #[cfg(test)]
 mod tests;
 
+use spira_config::release_tag::{is_release_tag, sort_release_tags};
 use ports::World;
 use std::path::{Path, PathBuf};
 
@@ -341,7 +342,8 @@ fn is_sha40(s: &str) -> bool {
 /// already printed to stderr (matching bash) before returning the "cannot check" code.
 fn resolve_all_tags(w: &dyn World, repo: &Path) -> Result<Vec<String>, i32> {
     let mut all_tags = w.tags_matching(repo, "spira-release-*");
-    all_tags.sort();
+    all_tags.extend(w.tags_matching(repo, "spira-[0-9]*.[0-9]*.[0-9]*"));
+    all_tags = sort_release_tags(all_tags);
 
     let release_repo = match w.env("SPIRA_RELEASE_REPO") {
         Ok(v) => v.filter(|v| !v.is_empty()),
@@ -380,12 +382,11 @@ fn resolve_all_tags(w: &dyn World, repo: &Path) -> Result<Vec<String>, i32> {
                 ));
                 return Err(EXIT_CANNOT_CHECK);
             }
-            all_tags = w.local_tag_sidecars(&dir_path);
+            all_tags = sort_release_tags(w.local_tag_sidecars(&dir_path));
         } else if let Some(slug) = &rel_repo {
             match w.gh_release_list(slug) {
                 Ok(json) => {
-                    all_tags = parse_gh_release_tags(&json);
-                    all_tags.sort();
+                    all_tags = sort_release_tags(parse_gh_release_tags(&json));
                 }
                 Err(e) => {
                     // USER is not a registered config key — this read of the raw
@@ -417,7 +418,7 @@ fn resolve_all_tags(w: &dyn World, repo: &Path) -> Result<Vec<String>, i32> {
     Ok(all_tags)
 }
 
-/// `gh release list --json tagName,isDraft` -> published (non-draft) `spira-release-*` tags.
+/// `gh release list --json tagName,isDraft` -> published (non-draft) release tags.
 /// A hand-written JSON scan (no serde dependency for one small, fixed shape) — see DESIGN.md
 /// §6 for why this stays intentionally simple rather than pulling in a JSON crate for one
 /// caller.
@@ -430,7 +431,7 @@ fn parse_gh_release_tags(json: &str) -> Vec<String> {
             continue;
         }
         if let Some(tag) = extract_json_string(&obj, "tagName") {
-            if tag.starts_with("spira-release-") {
+            if is_release_tag(&tag) {
                 out.push(tag);
             }
         }

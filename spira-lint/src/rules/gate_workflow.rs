@@ -477,6 +477,7 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
             let on = on_block(a);
             j.located(ACCEPTANCE, "the on: block", &on);
             j.want(ACCEPTANCE, "acceptance fires on release tags", "'spira-release-*'", &on);
+            j.want(ACCEPTANCE, "acceptance fires on versioned release tags", "'spira-[0-9]*.[0-9]*.[0-9]*'", &on);
             j.nowant(ACCEPTANCE, "acceptance does not fire on a branch push", "branches", &on);
             j.nowant(ACCEPTANCE, "acceptance does not fire on pull requests", "pull_request", &on);
             // 26. retract is a job of its own, so a skipped acceptance still retracts; the script refuses a published release

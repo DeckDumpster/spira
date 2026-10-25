@@ -156,7 +156,7 @@ impl World for Real {
             if let Ok(text) = std::fs::read_to_string(&path) {
                 for line in text.lines() {
                     let tag: String = line.chars().filter(|c| *c != ' ' && *c != '\t').collect();
-                    if tag.starts_with("spira-release-") {
+                    if spira_config::release_tag::is_release_tag(&tag) {
                         out.push(tag);
                     }
                 }

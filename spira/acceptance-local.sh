@@ -134,8 +134,8 @@ if [ -n "$PRED_TARBALL" ] && [ -z "$PRED" ]; then
     printf 'acceptance-local: --predecessor-tarball needs --predecessor <tag>\n' >&2; exit 2
 fi
 if [ -n "$PRED" ]; then
-    case "$PRED" in spira-release-spira-*) ;; *)
-        printf 'acceptance-local: --predecessor %s is not a spira-release-spira-* tag\n' "$PRED" >&2; exit 2 ;;
+    case "$PRED" in spira-release-spira-*|spira-[0-9]*.[0-9]*.[0-9]*) ;; *)
+        printf 'acceptance-local: --predecessor %s is not a spira release tag\n' "$PRED" >&2; exit 2 ;;
     esac
     if [ -n "$PRED_TARBALL" ] && [ ! -f "$PRED_TARBALL" ]; then
         printf 'acceptance-local: --predecessor-tarball: no such file: %s\n' "$PRED_TARBALL" >&2; exit 2
@@ -150,14 +150,18 @@ fi
 
 ACCEPTED_DIR="${SPIRA_ACCEPTANCE_LOCAL_KEEP:-$SPIRA_RUN/acc-local}"
 if [ -z "$PRED" ] && [ "$NO_UPGRADE" -eq 0 ]; then
-    _al_newest="$(ls "$ACCEPTED_DIR"/spira-*.tar.gz 2>/dev/null | sort | tail -1)"
+    _al_newest_tag="$(for _f in "$ACCEPTED_DIR"/spira-*.tar.gz; do
+            [ -e "$_f" ] && bash "$HERE/release-order.sh" tag "$(basename "$_f" .tar.gz)"
+        done 2>/dev/null | bash "$HERE/release-order.sh" latest)"
+    _al_newest=""
+    [ -z "$_al_newest_tag" ] || _al_newest="$ACCEPTED_DIR/$(bash "$HERE/release-order.sh" stem "$_al_newest_tag").tar.gz"
     if [ -z "$_al_newest" ]; then
         printf 'acceptance-local: no accepted tarball in %s — phases B-D will be skipped (verdict PARTIAL)\n' "$ACCEPTED_DIR" >&2
     elif git -C "$TREE" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
         && [ -n "$(git -C "$TREE" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
         printf 'acceptance-local: %s has uncommitted changes — no default predecessor, phases B-D skipped (verdict PARTIAL)\n' "$TREE" >&2
     else
-        PRED="spira-release-$(basename "$_al_newest" .tar.gz)"
+        PRED="$_al_newest_tag"
         PRED_TARBALL="$_al_newest"
         printf 'acceptance-local: default predecessor %s\n' "$PRED" >&2
     fi
@@ -241,11 +245,11 @@ if [ -n "$PRED" ]; then
         git clone -q "$TREE" "$_al_mount" 2>/dev/null \
             && timeout 5 git -C "$_al_mount" fetch -q "$TREE" 'refs/tags/*:refs/tags/*' 2>/dev/null \
             && git -C "$_al_mount" checkout -q --detach "$(git -C "$TREE" rev-parse HEAD)" 2>/dev/null \
-            && git -C "$_al_mount" tag -f "spira-release-$_al_stem" HEAD >/dev/null 2>&1 || {
+            && git -C "$_al_mount" tag -f "$(bash "$HERE/release-order.sh" tag "$_al_stem")" HEAD >/dev/null 2>&1 || {
             printf 'acceptance-local: could not build the self-contained clone of %s\n' "$TREE" >&2
             exit 2
         }
-        log "acceptance-local: /workspace is a clone of $(git -C "$TREE" rev-parse --short HEAD) with its release tags + spira-release-$_al_stem"
+        log "acceptance-local: /workspace is a clone of $(git -C "$TREE" rev-parse --short HEAD) with its release tags + $(bash "$HERE/release-order.sh" tag "$_al_stem")"
     fi
     if [ -n "$PRED_TARBALL" ]; then
         _al_pred_file="$PRED_TARBALL"
@@ -319,7 +323,7 @@ _al_prev_args=""
 _al_waive_args=""; [ "$NO_UPGRADE" -eq 1 ] && _al_waive_args="--waive-upgrade"
 if [ -n "$PRED" ]; then
     # deploy.sh needs a spira-release-<stem> tag, and skew reads the one tagged on HEAD above.
-    _al_tag="spira-release-$(basename "$_al_tarball" .tar.gz)"
+    _al_tag="$(bash "$HERE/release-order.sh" tag "$(basename "$_al_tarball" .tar.gz)")"
     _al_cpred="/tmp/$(basename "$_al_pred_file")"
     # batch-job: copies the predecessor tarball into the container
     podman cp "$_al_pred_file" "$CNAME:$_al_cpred" || {

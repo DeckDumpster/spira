@@ -10,9 +10,12 @@
 # same repository. The tag is simultaneously the review unit, the deploy
 # unit and the revert unit: to roll back, deploy the previous tag.
 #
-# NAMING. Tags follow the form spira-release-<reponame>-<YYYYMMDDTHHMMSSZ>.
-# The repo name comes from the repo-map. If two cuts land in the same UTC
-# second a counter suffix (-2, -3, ...) is appended.
+# NAMING. The home repository's tags are spira-<series>.N (series SPIRA_RELEASE_SERIES,
+# default 0.1; bumped by hand). N is one more than the larger of the number of releases on
+# the forge (drafts included) and the highest N seen, so it never repeats or goes back; the
+# cut refuses when the forge list cannot be read. Other repositories keep
+# spira-release-<reponame>-<YYYYMMDDTHHMMSSZ>. Old tags are never rewritten; release-order.sh
+# orders both forms.
 #
 # THE BASE REF comes from spira_landref, never assumed to be 'main' — three
 # of seven repositories here use 'master'.
@@ -118,8 +121,13 @@ do_cut() {
 
     # Find the most recent release tag for this repository (if any).
     local tag_prefix="spira-release-${name}-"
-    local prev_tag
-    prev_tag="$(git -C "$repo" tag -l "${tag_prefix}*" | sort | tail -1)"
+    local versioned="" prev_tag
+    [ "$name" = "$(spira_home_repo)" ] && versioned=1
+    if [ -n "$versioned" ]; then
+        prev_tag="$(git -C "$repo" tag -l 'spira-*' | bash "$HERE/release-order.sh" latest)"
+    else
+        prev_tag="$(git -C "$repo" tag -l "${tag_prefix}*" | sort | tail -1)"
+    fi
 
     # Cut when the land ref moved — even without bead ids. A batch of workflow or
     # docs commits is still a released state and deserves a tag so revert has a
@@ -155,7 +163,19 @@ do_cut() {
     local ts; ts="$(date -u '+%Y%m%dT%H%M%SZ')"
     local tagname="${tag_prefix}${ts}"
     local n=1
+    if [ -n "$versioned" ]; then
+        local listed
+        listed="$(cd "$repo" && gh release list --limit 1000 --json tagName --jq '.[].tagName')" || {
+            printf 'release: cannot list the forge releases — refusing to guess the next number\n' >&2
+            exit 1
+        }
+        local next
+        next="$({ printf '%s\n' "$listed"; git -C "$repo" tag -l 'spira-*'; } | sort -u \
+            | bash "$HERE/release-order.sh" next)"
+        tagname="spira-${SPIRA_RELEASE_SERIES:-0.1}.${next}"
+    fi
     while git -C "$repo" rev-parse --verify "refs/tags/$tagname" >/dev/null 2>&1; do
+        [ -z "$versioned" ] || { printf 'release: %s already exists\n' "$tagname" >&2; exit 1; }
         n=$((n + 1))
         tagname="${tag_prefix}${ts}-${n}"
     done
@@ -166,6 +186,7 @@ do_cut() {
         printf 'spira release: %s\n' "$name"
         printf 'base: %s (%s)\n' "$base" "$sha"
         printf 'prev: %s\n' "${prev_tag:-(none)}"
+        printf 'utc: %s\n' "$ts"
         if [ -n "$pr" ]; then printf 'pr: %s\n' "$pr"; fi
         if [ -n "$branches" ]; then
             printf '%s' "$branches" | tr ',' '\n' | while IFS= read -r _b; do

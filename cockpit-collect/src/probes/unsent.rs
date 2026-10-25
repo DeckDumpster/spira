@@ -622,8 +622,7 @@ fn acceptance_section(out: &mut Kv, cfg: &Cfg) {
                 .unwrap_or_default();
             let mut acc_obj: Option<String> = None;
             if !noted.is_empty() {
-                let mut tags: Vec<String> = io::git(acc_repo_path, &["tag", "-l", "spira-release-*"]).map(|s| s.lines().map(String::from).collect()).unwrap_or_default();
-                tags.sort();
+                let mut tags = release_tags(acc_repo_path);
                 tags.reverse();
                 'outer: for t in &tags {
                     for rev in [t.clone(), format!("{t}^{{commit}}")] {
@@ -642,7 +641,7 @@ fn acceptance_section(out: &mut Kv, cfg: &Cfg) {
             }
             if let Some(obj) = acc_obj {
                 tag = io::git(acc_repo_path, &["tag", "--points-at", &obj])
-                    .and_then(|s| s.lines().find(|l| l.starts_with("spira-release-")).map(String::from))
+                    .and_then(|s| s.lines().find(|l| spira_config::release_tag::is_release_tag(l)).map(String::from))
                     .unwrap_or_else(|| "-".to_string());
                 let note = io::git(acc_repo_path, &["notes", "--ref=acceptance", "show", &obj]).unwrap_or_default();
                 verdict = if note.starts_with("PASS") {
@@ -656,14 +655,13 @@ fn acceptance_section(out: &mut Kv, cfg: &Cfg) {
                 };
                 at = io::git(acc_repo_path, &["log", "-1", "--format=%ct", &obj]).map(|s| s.trim().to_string()).unwrap_or_else(|| "?".to_string());
                 if tag != "-" {
-                    let mut tags2: Vec<String> = io::git(acc_repo_path, &["tag", "-l", "spira-release-*"]).map(|s| s.lines().map(String::from).collect()).unwrap_or_default();
-                    tags2.sort();
+                    let tags2 = release_tags(acc_repo_path);
                     let idx = tags2.iter().position(|t| t == &tag);
                     since = idx.map(|i| (tags2.len() - i - 1).to_string()).unwrap_or_else(|| "?".to_string());
                 }
             } else if io::git(acc_repo_path, &["rev-parse", "--git-dir"]).is_some() {
                 verdict = "NEVER".to_string();
-                since = io::git(acc_repo_path, &["tag", "-l", "spira-release-*"]).map(|s| s.lines().count().to_string()).unwrap_or_else(|| "0".to_string());
+                since = release_tags(acc_repo_path).len().to_string();
             }
         }
     }
@@ -671,6 +669,11 @@ fn acceptance_section(out: &mut Kv, cfg: &Cfg) {
     push(out, "SP_ACCEPT_TAG", tag);
     push(out, "SP_ACCEPT_AT", at);
     push(out, "SP_ACCEPT_SINCE", since);
+}
+
+fn release_tags(repo: &Path) -> Vec<String> {
+    let listed = io::git(repo, &["tag", "-l", "spira-*"]).unwrap_or_default();
+    spira_config::release_tag::sort_release_tags(listed.lines().map(String::from))
 }
 
 // ---------------------------------------------------------------------------------------

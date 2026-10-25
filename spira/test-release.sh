@@ -79,7 +79,7 @@ timeout 5 git -C "$REPO" push -q origin trunk 2>/dev/null
 # --------------------------------------------------------------------------------------
 SH="$TMP/spira"
 mkdir -p "$SH"
-for f in release.sh unhold.sh lib.sh conf.sh suite-covers.sh; do
+for f in release.sh release-order.sh unhold.sh lib.sh conf.sh suite-covers.sh; do
     [ -f "$HERE/$f" ] && cp "$HERE/$f" "$SH/"
 done
 copy_conf_registry "$SH"
@@ -90,7 +90,7 @@ REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/trunk | sp | |\n' "$REPO" > "$REPO_MAP"
 
 run_cut() {   # run_cut [args] -> stdout
-    tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_ID_PREFIX=sp
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_ID_PREFIX=sp ${HOMEREPO:+SPIRA_HOME_REPO=$HOMEREPO}
     env -i PATH="$PATH" HOME="$HOME" \
         SPIRA_CONF=/nonexistent \
         SPIRA_TOML="$SPIRA_TOML" \
@@ -99,7 +99,7 @@ run_cut() {   # run_cut [args] -> stdout
 }
 
 run_show() {  # run_show <tag> -> stdout
-    tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_ID_PREFIX=sp
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_ID_PREFIX=sp ${HOMEREPO:+SPIRA_HOME_REPO=$HOMEREPO}
     env -i PATH="$PATH" HOME="$HOME" \
         SPIRA_CONF=/nonexistent \
         SPIRA_TOML="$SPIRA_TOML" \
@@ -219,6 +219,43 @@ want "pr: line in tag"     "pr: 42" \
 # The bead id from the commit also appears.
 want "bead id still recorded" "sp-zzz" \
     "$(git -C "$REPO" tag -l --format='%(contents)' "$tag_pr" 2>/dev/null)"
+
+# ======================================================================================
+echo
+echo "9. VERSIONED NAMING — the home repository's cut is spira-0.1.N, N from the forge list"
+# ======================================================================================
+GHBIN="$TMP/ghbin"; mkdir -p "$GHBIN"
+cat > "$GHBIN/gh" <<'GHEOF'
+#!/usr/bin/env bash
+[ ! -e "$GH_FAKE_DIR/fail" ] || exit 1
+[ "${1:-}" = release ] && [ "${2:-}" = list ] && { cat "$GH_FAKE_DIR/list"; exit 0; }
+exit 1
+GHEOF
+chmod +x "$GHBIN/gh"
+export GH_FAKE_DIR="$TMP/ghfake"; mkdir -p "$GH_FAKE_DIR"
+for i in $(seq 1 103); do printf 'spira-release-spira-2026%04dT000000Z\n' "$i"; done > "$GH_FAKE_DIR/list"
+OLDPATH="$PATH"; PATH="$GHBIN:$PATH"; HOMEREPO=fixture
+printf 'v1\n' >> "$REPO/f"; git -C "$REPO" add f; git -C "$REPO" commit -qm "sp-v01 — versioned"
+
+touch "$GH_FAKE_DIR/fail"
+before="$(git -C "$REPO" tag -l | wc -l | tr -d ' ')"
+out_fail="$(run_cut fixture)"; rc_fail=$?
+is "cut refuses when the forge list cannot be read" 1 "$rc_fail"
+is "refused cut created no tag" "$before" "$(git -C "$REPO" tag -l | wc -l | tr -d ' ')"
+want "refusal says why" "cannot list" "$out_fail"
+rm -f "$GH_FAKE_DIR/fail"
+
+tag_v1="$(run_cut fixture)"
+is "103 published releases: the next is spira-0.1.104" "spira-0.1.104" "$tag_v1"
+want "the tag records its UTC timestamp" "utc: 20" "$(git -C "$REPO" tag -l --format='%(contents)' "$tag_v1")"
+
+{ cat "$GH_FAKE_DIR/list"; echo spira-0.1.104; } > "$GH_FAKE_DIR/list.new"; mv "$GH_FAKE_DIR/list.new" "$GH_FAKE_DIR/list"
+printf 'v2\n' >> "$REPO/f"; git -C "$REPO" add f; git -C "$REPO" commit -qm "sp-v02 — versioned again"
+tag_v2="$(run_cut fixture)"
+is "the cut after spira-0.1.104 is spira-0.1.105" "spira-0.1.105" "$tag_v2"
+want "prev names the highest version, not the newest stamp" "prev: spira-0.1.104" \
+    "$(git -C "$REPO" tag -l --format='%(contents)' "$tag_v2")"
+PATH="$OLDPATH"; HOMEREPO=
 
 # ======================================================================================
 echo

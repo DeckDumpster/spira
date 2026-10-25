@@ -261,11 +261,11 @@ fn check_not_latest_and_manifest_mismatch_both_fire() {
     f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
     f.repo_lands.borrow_mut().insert("home".into(), "push".into());
     *f.home_repo.borrow_mut() = "home".into();
-    f.tags.borrow_mut().insert("/repo".into(), vec!["spira-release-1".into(), "spira-release-2".into()]);
-    // release_tag resolves to spira-release-1 (not latest), whose tag commit differs from MANIFEST.
-    f.rev_parse.borrow_mut().insert(format!("/repo|spira-release-1^{{commit}}"), "b".repeat(40));
-    f.rev_parse.borrow_mut().insert(format!("/repo|spira-release-2^{{commit}}"), "c".repeat(40));
-    f.files.borrow_mut().insert(PathBuf::from("/releases/.tags/rel-2"), "spira-release-1".into());
+    f.tags.borrow_mut().insert("/repo".into(), vec!["spira-release-spira-20260101T000000Z".into(), "spira-0.1.104".into()]);
+    // release_tag resolves to spira-release-spira-20260101T000000Z (not latest), whose tag commit differs from MANIFEST.
+    f.rev_parse.borrow_mut().insert(format!("/repo|spira-release-spira-20260101T000000Z^{{commit}}"), "b".repeat(40));
+    f.rev_parse.borrow_mut().insert(format!("/repo|spira-0.1.104^{{commit}}"), "c".repeat(40));
+    f.files.borrow_mut().insert(PathBuf::from("/releases/.tags/rel-2"), "spira-release-spira-20260101T000000Z".into());
 
     let rc = check(&f, false);
     assert_eq!(rc, EXIT_FINDING);
@@ -285,9 +285,9 @@ fn check_clean_when_tag_matches_and_is_latest() {
     f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
     f.repo_lands.borrow_mut().insert("home".into(), "push".into());
     *f.home_repo.borrow_mut() = "home".into();
-    f.tags.borrow_mut().insert("/repo".into(), vec!["spira-release-1".into(), "spira-release-2".into()]);
-    f.rev_parse.borrow_mut().insert("/repo|spira-release-2^{commit}".into(), sha.clone());
-    f.files.borrow_mut().insert(PathBuf::from("/releases/.tags/rel-2"), "spira-release-2".into());
+    f.tags.borrow_mut().insert("/repo".into(), vec!["spira-release-spira-20260101T000000Z".into(), "spira-0.1.104".into()]);
+    f.rev_parse.borrow_mut().insert("/repo|spira-0.1.104^{commit}".into(), sha.clone());
+    f.files.borrow_mut().insert(PathBuf::from("/releases/.tags/rel-2"), "spira-0.1.104".into());
 
     assert_eq!(check(&f, false), EXIT_OK);
     assert!(f.stdout_joined().contains("in effect"));
@@ -324,8 +324,8 @@ fn check_cannot_verify_alone_is_exit_3_not_1() {
     f.repo_lands.borrow_mut().insert("home".into(), "push".into());
     *f.home_repo.borrow_mut() = "home".into();
     // No tags resolve to the MANIFEST commit -> release_tag stays empty -> CANNOT-VERIFY only.
-    f.tags.borrow_mut().insert("/repo".into(), vec!["spira-release-1".into()]);
-    f.rev_parse.borrow_mut().insert("/repo|spira-release-1^{commit}".into(), "b".repeat(40));
+    f.tags.borrow_mut().insert("/repo".into(), vec!["spira-release-spira-20260101T000000Z".into()]);
+    f.rev_parse.borrow_mut().insert("/repo|spira-release-spira-20260101T000000Z^{commit}".into(), "b".repeat(40));
 
     let rc = check(&f, false);
     assert_eq!(rc, EXIT_CANNOT_CHECK);

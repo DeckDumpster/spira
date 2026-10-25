@@ -967,7 +967,7 @@ jobs:
           _branch="$(gh api \
             "repos/$GITHUB_REPOSITORY/commits/${{ inputs.sha || github.sha }}/pulls" \
             --jq '.[0].head.ref // ""' 2>/dev/null || true)"
-          _prev="$(git tag -l 'spira-release-*' | sort | tail -1 || true)"
+          _prev="$(git tag -l 'spira-*' | bash spira/release-order.sh latest || true)"
           _args=""
           [ -n "${_pr:-}" ]     && _args="$_args --pr $_pr"
           [ -n "${_branch:-}" ] && _args="$_args --branches $_branch"

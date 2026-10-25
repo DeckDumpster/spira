@@ -142,7 +142,7 @@ fi
     exit 2
 }
 
-# Resolve "latest" to the newest PUBLISHED (non-draft) spira-release-* release.
+# Resolve "latest" to the newest PUBLISHED (non-draft) release, by version order.
 # gh release list skips drafts by filtering isDraft; fall back to git tags if gh unavailable.
 _named_tag=1
 if [ "$tag" = "latest" ]; then
@@ -156,36 +156,34 @@ if [ "$tag" = "latest" ]; then
 import json, sys
 try:
     releases = json.load(sys.stdin)
-    pub = [r["tagName"] for r in releases
-           if not r.get("isDraft", True)
-           and r["tagName"].startswith("spira-release-")]
-    pub.sort(reverse=True)
-    print(pub[0] if pub else "")
+    for r in releases:
+        if not r.get("isDraft", True):
+            print(r["tagName"])
 except Exception:
     pass
-' 2>/dev/null)" || tag=""
+' 2>/dev/null | bash "$HERE/release-order.sh" latest)" || tag=""
     fi
     if [ -z "${tag:-}" ]; then
         if [ -d "$SPIRA_REPO/.git" ] || [ -f "$SPIRA_REPO/.git" ]; then
-            tag="$(git -C "$SPIRA_REPO" tag --list 'spira-release-*' \
-                    --sort=-version:refname 2>/dev/null | head -1)"
+            tag="$(git -C "$SPIRA_REPO" tag --list 'spira-release-*' 'spira-[0-9]*.[0-9]*.[0-9]*' \
+                    2>/dev/null | bash "$HERE/release-order.sh" latest)"
         else
             tag="$(timeout 5 git ls-remote --tags "https://github.com/$_gh_repo" \
-                    'refs/tags/spira-release-*' 2>/dev/null \
+                    'refs/tags/spira-release-*' 'refs/tags/spira-[0-9]*.[0-9]*.[0-9]*' 2>/dev/null \
                 | awk '{print $2}' | sed 's|refs/tags/||' \
-                | sort -V | tail -1)"
+                | bash "$HERE/release-order.sh" latest)"
         fi
     fi
     [ -n "$tag" ] || {
-        printf 'deploy: no published spira-release-* release found\n' >&2; exit 2
+        printf 'deploy: no published release found\n' >&2; exit 2
     }
     log "deploy: latest = $tag"
 fi
 
 # Validate tag format before any remote calls.
-_tag_stem="${tag#spira-release-}"
-[ -n "$_tag_stem" ] && [ "$_tag_stem" != "$tag" ] || {
-    printf 'deploy: tag %s does not match spira-release-<stem> format\n' "$tag" >&2
+_tag_stem="$(printf '%s\n' "$tag" | bash "$HERE/release-order.sh" sort)"
+[ "$_tag_stem" = "$tag" ] || {
+    printf 'deploy: tag %s is not a release tag (spira-<major>.<minor>.<N> or spira-release-<stem>)\n' "$tag" >&2
     exit 2
 }
 unset _tag_stem
@@ -679,9 +677,9 @@ _skew_newer=""
 if [ "$_skew_exit" -eq 1 ] && [ "$_named_tag" = 1 ] \
    && [ -z "$(printf '%s\n' "$_skew_out" | grep -v '^NOT-LATEST ' | grep -v '^[[:space:]]*$' || true)" ]; then
     _skew_newer="$(printf '%s\n' "$_skew_out" \
-        | sed -n 's/^NOT-LATEST .* is not the latest published release \(spira-release-[^ ]*\)$/\1/p' | head -1)"
+        | sed -n 's/^NOT-LATEST .* is not the latest published release \(spira-[^ ]*\)$/\1/p' | head -1)"
     if [ -n "$_skew_newer" ] && [ "$_skew_newer" != "$tag" ] \
-       && [ "$(printf '%s\n%s\n' "$tag" "$_skew_newer" | sort | tail -1)" = "$_skew_newer" ]; then
+       && [ "$(printf '%s\n%s\n' "$tag" "$_skew_newer" | bash "$HERE/release-order.sh" latest)" = "$_skew_newer" ]; then
         log "deploy: skew: NOT-LATEST — a newer release ($_skew_newer) exists; expected, $tag was named explicitly"
         _skew_exit=0
     fi
