@@ -830,7 +830,7 @@ fn prune_seeds(cache: &Path, keep: &Path) {
 }
 
 /// The world's suite runner. The last line of `gate-control` naming the branch's bead picks its verdict:
-/// `fail` (exit 1), `no-verdict` (75, a timeout) or `infra` (75, a harness fault); any other mode, or none,
+/// `fail` (exit 1), `fail-once` (exit 1, then passes), `no-verdict` (75, a timeout) or `infra` (75, a harness fault); any other mode, or none,
 /// passes. Every run is appended to `gate-calls`.
 pub const SUITE_RUNNER: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
@@ -839,6 +839,7 @@ echo "$bead" >> "$dir/gate-calls"
 mode=$(awk -v b="$bead" '$1 == b { m = $2 } END { print m }' "$dir/gate-control" 2>/dev/null)
 case "$mode" in
 fail) echo "gate: VERDICT=FAIL reason=suite-red suite=sim-planted.sh"; exit 1 ;;
+fail-once) echo "$bead pass" >> "$dir/gate-control"; echo "gate: VERDICT=FAIL reason=suite-red suite=sim-planted.sh"; exit 1 ;;
 no-verdict) echo "gate: VERDICT=NO_VERDICT reason=timeout"; exit 75 ;;
 infra) echo "gate: VERDICT=NO_VERDICT reason=harness-fault"; exit 75 ;;
 esac
