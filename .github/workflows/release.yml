@@ -93,8 +93,20 @@ jobs:
             printf 'release: %s already exists with its tarball — not creating a second\n' "$tag"
             exit 0
           fi
+          stem="${tag%-*}"
+          prev_tag="$(git tag -l "${stem}-*" | sort | grep -B1 -Fx "$tag" | head -n1)"
+          [ "$prev_tag" = "$tag" ] && prev_tag=""
+          notes="$(mktemp)"
+          if [ -n "$prev_tag" ]; then
+            bash spira/release-notes.sh --prev "$prev_tag" --this "$sha" --tag "$tag" --prev-tag "$prev_tag" \
+              --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/acceptance.yml?query=branch%3A$tag" > "$notes" \
+              || printf 'Release %s.\n' "$tag" > "$notes"
+          else
+            printf 'Release %s (first release; no previous tag to compare).\n' "$tag" > "$notes"
+          fi
           gh release create "$tag" \
             --title "$tag" \
             --target "$sha" \
+            --notes-file "$notes" \
             --draft \
             "${{ steps.tarball.outputs.path }}"
