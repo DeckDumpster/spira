@@ -175,7 +175,7 @@ except Exception:
         fi
     fi
     [ -n "$tag" ] || {
-        printf 'deploy: no published release found\n' >&2; exit 2
+        printf 'deploy: no published release (spira-<major>.<minor>.<N> or spira-release-*) found\n' >&2; exit 2
     }
     log "deploy: latest = $tag"
 fi
