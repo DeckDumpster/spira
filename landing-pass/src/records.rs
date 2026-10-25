@@ -100,6 +100,21 @@ impl Files {
         let _ = atomic_write(&self.backoff_file(branch), &format!("{tip}\n{now}\n"));
     }
 
+    fn pass_refused_file(&self, branch: &str) -> PathBuf {
+        self.run.join("pass-refused").join(branch_key(branch))
+    }
+
+    /// Record that the lifecycle refused a GatePass for `branch` at `tip`: the same tip is
+    /// not offered again.
+    pub fn refuse_pass(&self, branch: &str, tip: &str) {
+        let _ = fs::create_dir_all(self.run.join("pass-refused"));
+        let _ = atomic_write(&self.pass_refused_file(branch), &format!("{tip}\n"));
+    }
+
+    pub fn pass_refused(&self, branch: &str, tip: &str) -> bool {
+        fs::read_to_string(self.pass_refused_file(branch)).map(|t| t.trim() == tip).unwrap_or(false)
+    }
+
     fn round_deferred_file(&self, branch: &str) -> PathBuf {
         self.run.join("gate-deferred").join(branch_key(branch))
     }

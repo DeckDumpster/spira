@@ -500,6 +500,10 @@ impl<'a> Pass<'a> {
     fn certify_screen(&self, w: &Walk, br: &str, id: &str, bead: &BeadRow) -> Result<String, Flow> {
         let repo = w.repo;
         let tip = self.git.rev_parse(&repo.path, br).unwrap_or_default();
+        if self.files.pass_refused(br, &tip) {
+            self.log(&format!("CHECK6 {id}: lifecycle already refused GatePass for {br} at {tip} — not offered again"));
+            return Err(Flow::Next);
+        }
         if !self.s.gate_worker && !self.budget_allows(bead, &repo.name, id) {
             return Err(Flow::BudgetCut);
         }
@@ -580,6 +584,7 @@ impl<'a> Pass<'a> {
             return Flow::Next;
         }
         if !self.lc_certify(id, &tip, "pass", "gate") {
+            self.files.refuse_pass(br, &tip);
             self.log(&format!("CHECK6 {id}: lifecycle refused GatePass at {tip} — {br} stays uncertified"));
             return Flow::Next;
         }
