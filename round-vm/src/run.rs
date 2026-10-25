@@ -356,7 +356,9 @@ unit_cargo() {
 unit_cov_init() {
     unit_cov_env=""
     if [ -x "$CARGO_HOME/bin/cargo-llvm-cov" ]; then
-        unit_cov_env=$(PATH="$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" cargo llvm-cov show-env --export-prefix) || unit_cov_env=""
+        # A clean environment: an inherited CARGO_TARGET_DIR, LLVM_PROFILE_FILE or CARGO_LLVM_COV_*
+        # (e.g. from an outer coverage run) would point the profiles somewhere the report never reads.
+        unit_cov_env=$(env -i HOME="$HOME" CARGO_HOME="$CARGO_HOME" PATH="$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" cargo llvm-cov show-env --export-prefix) || unit_cov_env=""
     fi
     [ -n "$unit_cov_env" ] || echo "round-vm: COVERAGE: lines unavailable (the image has no cargo-llvm-cov)" >&2
 }
