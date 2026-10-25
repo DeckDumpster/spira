@@ -22,7 +22,7 @@ sim_summon_lines() {  # sim_summon_lines <run output> — what the summons print
     local w
     w="$(sed -n 's/^sim: world kept at //p' "$1" | head -1)"
     [ -f "$w/exec.log" ] || return 0
-    grep -E 'sim summon|aeon|builder:|sim-agent' "$w/exec.log" | cut -c1-300 | head -60
+    grep -B20 -m1 'sim summon: aeon exited' "$w/exec.log" | cut -c1-300; grep -E 'sim summon|sim-agent' "$w/exec.log" | cut -c1-300 | head -20
 }
 
 sim_scenario_shard() {  # sim_scenario_shard <scenario name>
