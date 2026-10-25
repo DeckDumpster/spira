@@ -971,6 +971,9 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
         assert!(snap.contains("SP_SHARED='core'"));
     }
 
+    // Far above any load-induced delay: the timeout is a hang guard, never the thing under test.
+    const PROBE_TEST_TIMEOUT_S: u64 = 600;
+
     #[test]
     fn run_probe_body_success_writes_ok_fragment() {
         let _guard = crate::test_support::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -979,7 +982,7 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
         std::fs::create_dir_all(&cfg.frag_dir).unwrap();
         cfg.probe_exe = PathBuf::from("/bin/echo");
         cfg.probe_exe_args = vec![];
-        let outcome = run_probe_body(&cfg, "now", 5, "SP_AT=1");
+        let outcome = run_probe_body(&cfg, "now", PROBE_TEST_TIMEOUT_S, "SP_AT=1");
         assert!(matches!(outcome, RunOutcome::Ok { .. }));
         let c = std::fs::read_to_string(cfg.frag_dir.join("now.env")).unwrap();
         assert!(c.contains("_PROBE_STATUS=ok"));
@@ -995,7 +998,7 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
         write_never_frag(&cfg.frag_dir, "sending");
         cfg.probe_exe = PathBuf::from("/bin/false");
         cfg.probe_exe_args = vec![];
-        let outcome = run_probe_body(&cfg, "sending", 5, "ignored");
+        let outcome = run_probe_body(&cfg, "sending", PROBE_TEST_TIMEOUT_S, "ignored");
         assert!(matches!(outcome, RunOutcome::Fault { .. }));
         let c = std::fs::read_to_string(cfg.frag_dir.join("sending.env")).unwrap();
         assert!(c.contains("_PROBE_STATUS=error"));
@@ -1014,7 +1017,7 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
         );
         cfg.probe_exe = PathBuf::from("/bin/false");
         cfg.probe_exe_args = vec![];
-        let outcome = run_probe_body(&cfg, "queue", 5, "ignored");
+        let outcome = run_probe_body(&cfg, "queue", PROBE_TEST_TIMEOUT_S, "ignored");
         assert!(matches!(outcome, RunOutcome::Stale { .. }));
         let c = std::fs::read_to_string(cfg.frag_dir.join("queue.env")).unwrap();
         assert!(c.contains("_PROBE_STATUS=stale"));
