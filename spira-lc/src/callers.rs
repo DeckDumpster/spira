@@ -444,6 +444,7 @@ fn not_admitted(kind: &BeadEventKind, state: &str, holds: &[String]) -> Option<&
     match kind {
         BeadEventKind::Reply { .. } | BeadEventKind::AskWithdrawn if !holds.iter().any(|h| h == "ask") => Some("it holds no ask"),
         BeadEventKind::HolderDead if state != "WORKING" => Some("it has no holder to reap"),
+        BeadEventKind::Phase { .. } if BeadState::from_str(state).is_some_and(BeadState::is_terminal) => Some("it is already closed"),
         _ => None,
     }
 }
