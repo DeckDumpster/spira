@@ -588,7 +588,7 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
     let seed = ensure_seed(repo, tree)?;
     let write_files = |fixture: &str| -> Result<(), String> {
         let runner = config.join("suite-runner");
-        std::fs::write(&runner, "#!/bin/sh\nexit 0\n").map_err(|e| e.to_string())?;
+        std::fs::write(&runner, SUITE_RUNNER).map_err(|e| e.to_string())?;
         set_exec(&runner)?;
         let file = config.join("sim.toml");
         let gh_state = dir.join("gh");
@@ -824,6 +824,22 @@ fn prune_seeds(cache: &Path, keep: &Path) {
         let _ = std::fs::remove_dir_all(path);
     }
 }
+
+/// The world's suite runner. The last line of `gate-control` naming the branch's bead picks its verdict:
+/// `fail` (exit 1), `no-verdict` (75, a timeout) or `infra` (75, a harness fault); any other mode, or none,
+/// passes. Every run is appended to `gate-calls`.
+pub const SUITE_RUNNER: &str = r#"#!/bin/sh
+dir=$(dirname "$0")
+bead=${SPIRA_GATE_BRANCH#spira/}
+echo "$bead" >> "$dir/gate-calls"
+mode=$(awk -v b="$bead" '$1 == b { m = $2 } END { print m }' "$dir/gate-control" 2>/dev/null)
+case "$mode" in
+fail) echo "gate: VERDICT=FAIL reason=suite-red suite=sim-planted.sh"; exit 1 ;;
+no-verdict) echo "gate: VERDICT=NO_VERDICT reason=timeout"; exit 75 ;;
+infra) echo "gate: VERDICT=NO_VERDICT reason=harness-fault"; exit 75 ;;
+esac
+exit 0
+"#;
 
 /// The gate string the tree under test carries inside a world: the stub suite runner alone, whose
 /// verdict a scenario decides. The tree's own gate builds tools with cargo and runs suites.
