@@ -114,6 +114,7 @@ ENV RUSTUP_HOME=/usr/local/rustup \
 # nodejs: scripts and suites that still run under node.
 # build-essential: gcc for cargo's C linker when compiling Rust crates.
 # curl+ca-certificates: download gh and dolt release archives.
+# iproute2: `ip -br addr`, which round-vm's mirror daemon reads to check its listen address.
 # locales: locale-gen; suites need a UTF-8 locale for string operations.
 # inotify-tools/aerc: installed above; comments updated there.
 RUN apt-get update -q && \
@@ -136,6 +137,7 @@ RUN apt-get update -q && \
         nodejs \
         unzip \
         locales \
+        iproute2 \
         inotify-tools \
         aerc \
     && rm -rf /var/lib/apt/lists/*
