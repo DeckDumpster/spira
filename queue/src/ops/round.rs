@@ -1491,6 +1491,65 @@ fn first_build_error(err: &str) -> Option<String> {
     })
 }
 
+/// `error[E0425]: message at file:line` as `error[E0425] at file:line`.
+fn reason_form(e: &str) -> String {
+    let (head, at) = e.split_once(" at ").unwrap_or((e, ""));
+    let code = head.split(':').next().unwrap_or(head);
+    if at.is_empty() { code.to_string() } else { format!("{code} at {at}") }
+}
+
+/// Every rustc `error` diagnostic in `err`, whole: from its `error...` line to the blank line
+/// that ends it, so no block is cut to a head or a tail.
+fn error_blocks(err: &str) -> String {
+    let mut out = String::new();
+    let mut inside = false;
+    for l in err.lines() {
+        let starts = l.starts_with("error")
+            && !l.starts_with("error: could not compile")
+            && !l.starts_with("error: aborting");
+        if starts {
+            inside = true;
+        } else if l.trim().is_empty() || l.starts_with("warning") || l.starts_with("round-vm:") {
+            inside = false;
+        }
+        if inside {
+            out.push_str(l);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// A workspace build that failed with no compiler diagnostic and a known machine fault in its
+/// output is the environment's failure, not the members'.
+pub(crate) fn build_environment_cause(err: &str) -> Option<&'static str> {
+    if err.contains("error[") || err.lines().any(|l| l.trim_start().starts_with("-->")) {
+        return None;
+    }
+    const MARKERS: [(&str, &str); 9] = [
+        ("No space left on device", "out of disk"),
+        ("out of memory", "out of memory"),
+        ("signal: 9", "killed (out of memory)"),
+        ("Killed", "killed (out of memory)"),
+        ("sccache is missing", "sccache missing from the image"),
+        ("no cache home", "image records no cache home"),
+        ("can't find crate for `std`", "toolchain component missing"),
+        ("is not installed", "toolchain or component not installed"),
+        ("command not found", "tool missing from the image"),
+    ];
+    MARKERS.iter().find(|(m, _)| err.contains(m)).map(|(_, w)| *w)
+}
+
+/// What a failed workspace build leaves to read: the invocation, how it ended, how long it took,
+/// and every compiler error whole (the output's tail when it carried none).
+fn build_log(err: &str, rc: i32, wall: u64) -> String {
+    let blocks = error_blocks(err);
+    let body = if blocks.is_empty() { tail(err, 200) } else { blocks };
+    format!(
+        "command: cargo build -q --profile release --workspace --config profile.release.incremental=false\nexit: {rc}\nwall_secs: {wall}\n\n{body}\n"
+    )
+}
+
 /// The marker the loop's pacing reads: a stale round image is a wait, not a pool fault.
 pub const STALE_AMI_MARK: &str = "round AMI is stale";
 
@@ -1958,10 +2017,23 @@ pub(super) fn certify(
         {
             out = run_vm();
         }
+        let template_vm = fs::read_to_string(handle_of(&c, batch))
+            .map(|h| h.trim().to_string())
+            .unwrap_or_default();
         let _ = fs::remove_file(handle_of(&c, batch));
         if preempt_marker(&c, batch).exists() {
             w.out(format!("queue.sh {label}: round {batch} was preempted; its pass is recorded by `round preempt`"));
             return PREEMPTED;
+        }
+        let build_env = if out.rc == 4 && !matches!(image, Image::Failed(_)) {
+            build_environment_cause(&out.err)
+        } else {
+            None
+        };
+        if out.rc == 4 && !matches!(image, Image::Failed(_)) {
+            let wall = w.clock.now().saturating_sub(began);
+            let _ = fs::create_dir_all(&results);
+            let _ = fs::write(results.join("workspace-build.out"), build_log(&out.err, out.rc, wall));
         }
         timings = pass_timings(&results, w.clock.now().saturating_sub(began));
         let mut found = Vec::new();
@@ -1971,12 +2043,19 @@ pub(super) fn certify(
             0 | 1 if found.is_empty() => Some("round-vm ran and left no verdicts — a fault of the round machinery, not of the candidates".to_string()),
             0 | 1 => unjudgeable(&wt, &found),
             124 | 137 if !out.err.contains("OVER-CAP") && wall_complete(&wt, &found, &out.err) => None,
+            4 if build_env.is_some() => Some(format!(
+                "workspace-build environment failure: {} (template VM {}, recipe_sha {})",
+                build_env.unwrap_or_default(),
+                if template_vm.is_empty() { "unknown" } else { &template_vm },
+                w.scripts.recipe_sha(Some(&wt)).unwrap_or_else(|| "unknown".into())
+            )),
             4 => {
                 reds.push(BUILD_RED.into());
                 if let Image::Failed(why) = &image {
                     w.out(format!("build-error={why}"));
                 } else if let Some(e) = first_build_error(&out.err) {
                     w.out(format!("build-error={e}"));
+                    w.out(format!("red-reason=workspace-build: {}", reason_form(&e)));
                 }
                 None
             }
