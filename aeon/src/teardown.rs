@@ -260,6 +260,7 @@ impl Run<'_> {
             }
             NoteKey::Slain => {
                 self.release();
+                self.bump_requeue(&cause);
                 if self.checkpoint_across_stop() {
                     self.log(&format!("{f}: {id} slain by a world stop — checkpointed, no attempt charged"));
                     return self.finish(rc, &status);
