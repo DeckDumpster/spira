@@ -2478,6 +2478,20 @@ fn build(
             stderr("batch: interrupted — cargo was still building");
             return Some(Finish::fault(2, "interrupted", 0));
         }
+        Err(BuildError::NoSpace(at)) => {
+            let probe = if at.exists() { at.clone() } else { wt.to_path_buf() };
+            let free = worktree::free_mib(&probe).map_or("unknown".into(), |m| format!("{m} MiB"));
+            stderr(&format!(
+                "batch: the build ran out of space — filesystem {} (path {}), {free} free — harness fault, not the candidate's build failure",
+                worktree::mount_point(&probe).display(),
+                at.display()
+            ));
+            return Some(Finish::fault(3, "build-enospc", 0));
+        }
+        Err(BuildError::Oom) => {
+            stderr("batch: the build was OOM-killed (SIGKILL with a cgroup oom_kill event) — harness fault, not the candidate's build failure");
+            return Some(Finish::fault(3, "build-oom", 0));
+        }
         Err(BuildError::Failed(rc)) => {
             stderr(&format!(
                 "batch: workspace failed to build (cargo rc={rc}) — candidate fault"
