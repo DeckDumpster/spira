@@ -426,14 +426,28 @@ pub fn workflow_for<'a>(default: &'a str, table: &'a str, name: Option<&str>) ->
 
 // ── check-status ─────────────────────────────────────────────────────────────────────────
 
-/// True when the branch has runs of some workflow even though none of the named one: the
-/// name is mapped wrong, so waiting for it can never end.
-fn other_workflow_ran(gh: &dyn Gh, repo: &Path, branch: &str) -> bool {
+/// True when the branch has runs of some workflow and the repository has no workflow of the
+/// named one: the name is mapped wrong, so waiting for it can never end. A workflow that
+/// exists but has not run yet, or a listing that failed, is not a mapping fault.
+fn other_workflow_ran(gh: &dyn Gh, repo: &Path, branch: &str, workflow: &str) -> bool {
     let rl = gh.call(
         Some(repo),
         &["run", "list", "--branch", branch, "--json", "workflowName", "--limit", "1"],
     );
-    first_elem(&parse(&rl.stdout).unwrap_or(Value::Array(vec![]))).is_some()
+    if rl.code != 0 || first_elem(&parse(&rl.stdout).unwrap_or(Value::Array(vec![]))).is_none() {
+        return false;
+    }
+    let wl = gh.call(
+        Some(repo),
+        &["workflow", "list", "--all", "--json", "name", "--limit", "200"],
+    );
+    if wl.code != 0 {
+        return false;
+    }
+    let Some(Value::Array(list)) = parse(&wl.stdout) else {
+        return false;
+    };
+    !list.iter().any(|w| jstr(w, "name").as_deref() == Some(workflow))
 }
 
 pub fn check_status(
@@ -475,7 +489,9 @@ pub fn check_status(
     let head_sha = first.and_then(|r| jstr(r, "headSha")).unwrap_or_default();
     let run_url = first.and_then(|r| jstr(r, "url")).unwrap_or_default();
 
-    let missing_workflow = run_id.is_none() && other_workflow_ran(gh, repo, branch);
+    let missing_workflow = run_list.code == 0
+        && run_id.is_none()
+        && other_workflow_ran(gh, repo, branch, workflow);
     let mut status = if missing_workflow {
         "harness_fault".to_string()
     } else if run_id.is_none() || run_status != "completed" {
