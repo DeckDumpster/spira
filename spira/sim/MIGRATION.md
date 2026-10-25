@@ -202,3 +202,5 @@ test-summon-fast-path (also unit-tests lib.sh's `aeon_count`/`fayth_free`), test
 test-dispatch-open-children (full-pass checks and dispatch), test-strand-submitted and
 test-strand-truncated (the strand binary), test-czar-partition (czar-pass), test-warden, test-fayth,
 test-lanes (lane concurrency needs live aeon units), and the 30-odd suites that read the aeon's brief.
+
+The sim lane reads `claim-order` for the real sentinel's claim rank and lease; gate-verdict-kinds fails its first gate once so the rework is steered before the next minute's summon.
