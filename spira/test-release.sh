@@ -90,8 +90,8 @@ REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/trunk | sp | |\n' "$REPO" > "$REPO_MAP"
 
 run_cut() {   # run_cut [args] -> stdout
-    tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_ID_PREFIX=sp ${HOMEREPO:+SPIRA_HOME_REPO=$HOMEREPO}
-    env -i PATH="$PATH" HOME="$HOME" \
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_ID_PREFIX=sp
+    env -i PATH="$PATH" HOME="$HOME" ${HOMEREPO:+SPIRA_HOME_REPO=$HOMEREPO} \
         SPIRA_CONF=/nonexistent \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_REPO="$SH" \
@@ -99,8 +99,8 @@ run_cut() {   # run_cut [args] -> stdout
 }
 
 run_show() {  # run_show <tag> -> stdout
-    tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_ID_PREFIX=sp ${HOMEREPO:+SPIRA_HOME_REPO=$HOMEREPO}
-    env -i PATH="$PATH" HOME="$HOME" \
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_ID_PREFIX=sp
+    env -i PATH="$PATH" HOME="$HOME" ${HOMEREPO:+SPIRA_HOME_REPO=$HOMEREPO} \
         SPIRA_CONF=/nonexistent \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_REPO="$SH" \
