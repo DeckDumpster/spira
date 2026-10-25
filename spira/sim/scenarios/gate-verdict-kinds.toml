@@ -1,0 +1,151 @@
+epoch = 1800000000
+horizon = 3000000
+goal = "sp-gv03:LANDED"
+real_actors = ["sentinel-summon", "sentinel-landing", "sift"]
+
+[[actor]]
+name = "gate-worker"
+command = "gate-worker run"
+first = 20000
+every = 30000
+duration_min = 2000
+duration_max = 10000
+
+[[step]]
+at = 0
+command = 'spira-config set spira.batcher_enable 0 "$SPIRA_TOML"'
+
+[[step]]
+at = 0
+command = "sh spira/sim/scenarios/steps/gate-mode.sh sp-gv01 fail"
+
+[[step]]
+at = 0
+command = "sh spira/sim/scenarios/steps/gate-mode.sh sp-gv02 no-verdict"
+
+[[step]]
+at = 0
+command = "sh spira/sim/scenarios/steps/gate-mode.sh sp-gv03 infra"
+
+[[step]]
+at = 0
+file = "sp-gv01"
+
+[[step]]
+at = 0
+file = "sp-gv02"
+
+[[step]]
+at = 0
+file = "sp-gv03"
+
+[[step]]
+at = 0
+claim = "sp-gv01"
+script = ["commit out/gv01.txt", "submit", "summon", "commit out/gv01b.txt", "submit"]
+
+[[step]]
+at = 0
+claim = "sp-gv02"
+script = ["commit out/gv02.txt", "submit"]
+
+[[step]]
+at = 0
+claim = "sp-gv03"
+script = ["commit out/gv03.txt", "submit"]
+
+[[step]]
+at = 100000
+command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv01 REWORK pass"
+
+[[step]]
+at = 100000
+command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv02 SUBMITTED pass"
+
+[[step]]
+at = 100000
+command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv03 SUBMITTED pass"
+
+[[step]]
+at = 200000
+command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv01 REWORK pass"
+
+[[step]]
+at = 200000
+command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv02 SUBMITTED pass"
+
+[[step]]
+at = 200000
+command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv03 SUBMITTED pass"
+
+[[step]]
+at = 300000
+command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv01 REWORK pass"
+
+[[step]]
+at = 300000
+command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv02 SUBMITTED pass"
+
+[[step]]
+at = 300000
+command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv03 SUBMITTED pass"
+
+[[step]]
+at = 400000
+command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv01 REWORK pass"
+
+[[step]]
+at = 400000
+command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv02 SUBMITTED pass"
+
+[[step]]
+at = 400000
+command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv03 SUBMITTED pass"
+
+[[step]]
+at = 500000
+command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv01 REWORK pass"
+
+[[step]]
+at = 500000
+command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv02 SUBMITTED pass"
+
+[[step]]
+at = 500000
+command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv03 SUBMITTED pass"
+
+[[step]]
+at = 600000
+command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv01 REWORK pass"
+
+[[step]]
+at = 600000
+command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv02 SUBMITTED pass"
+
+[[step]]
+at = 600000
+command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv03 SUBMITTED pass"
+
+[[step]]
+at = 700000
+command = 'spira-config set spira.batcher_enable 1 "$SPIRA_TOML"'
+
+[[invariant]]
+name = "step_failed"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit NOT IN (0, 3)"
+
+[[expect]]
+name = "red_gate_returned_it"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-gv01' AND lc_state = 'REWORK'"
+
+[[expect]]
+name = "red_then_pass_landed"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-gv01' AND lc_state = 'LANDED'"
+
+[[expect]]
+name = "no_verdict_then_pass_landed"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-gv02' AND lc_state = 'LANDED'"
+
+[[expect]]
+name = "infra_then_pass_landed"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-gv03' AND lc_state = 'LANDED'"
