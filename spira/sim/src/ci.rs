@@ -97,7 +97,7 @@ pub fn expand(text: &str, cx: &Context) -> Result<String, String> {
         let after = &rest[i + 3..];
         let j = after.find("}}").ok_or("unterminated ${{ expression")?;
         let value = match after[..j].trim() {
-            "github.sha" => cx.sha.to_string(),
+            "github.sha" | "inputs.sha || github.sha" => cx.sha.to_string(),
             "github.workspace" => cx.workspace.display().to_string(),
             "github.head_ref" => String::new(),
             "runner.temp" => cx.temp.display().to_string(),
