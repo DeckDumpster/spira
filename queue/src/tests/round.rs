@@ -4298,6 +4298,12 @@ fn a_repo_that_declares_its_own_testenv_goes_red_and_does_not_land_on_a_failing_
 
     assert_eq!(t.run(&["round", "certify", &batch]), 1);
     assert!(t.out().contains("red=testenv"), "{}", t.out());
+    assert!(t.err().contains("is RED at"), "a red exit says why on stderr: {}", t.err());
+    assert!(
+        t.out().lines().any(|l| l.starts_with("red-output=") && l.ends_with("testenv.out")),
+        "{}",
+        t.out()
+    );
     assert!(!certified_tree_exists(&t), "a red round certifies nothing");
     assert_eq!(t.run(&["round", "land", &batch]), 1);
     assert_eq!(t.landed_ref().as_deref(), Some("b0"), "nothing landed");
