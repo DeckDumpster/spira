@@ -653,6 +653,7 @@ pub fn gate_red_reason(raw: &str) -> GateRedReason {
         "no-rebase" => GateRedReason::NoRebase,
         "timeout" => GateRedReason::Timeout,
         "confine" => GateRedReason::Confine,
+        "phantom-bead-id" => GateRedReason::PhantomBeadId,
         _ => GateRedReason::SuitesFailed,
     }
 }

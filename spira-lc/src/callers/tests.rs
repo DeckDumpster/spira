@@ -572,7 +572,7 @@ fn certify_skips_an_infra_verdict_on_a_tip_the_row_has_left() {
 
 #[test]
 fn certify_maps_red_reasons_and_infra_and_refuses_what_it_cannot_reach() {
-    for (raw, want) in [("branch-red", "suites-failed"), ("syntax", "syntax"), ("beads-data", "policy-violation"), ("foreign-harness", "policy-violation"), ("no-rebase", "no-rebase"), ("timeout", "timeout"), ("confine", "confine"), ("a-reason-never-heard-of", "suites-failed")] {
+    for (raw, want) in [("branch-red", "suites-failed"), ("syntax", "syntax"), ("beads-data", "policy-violation"), ("foreign-harness", "policy-violation"), ("no-rebase", "no-rebase"), ("timeout", "timeout"), ("confine", "confine"), ("phantom-bead-id", "phantom-bead-id"), ("a-reason-never-heard-of", "suites-failed")] {
         let mut f = Fake::default();
         f.bead("sp-r", BeadState::Working);
         assert_eq!(go(&mut f, "certify", &["sp-r", "dddddddddddddddddddddddddddddddddddddddd", "red", raw]).code, APPLIED, "{raw}");
