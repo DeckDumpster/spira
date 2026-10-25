@@ -142,7 +142,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
     let (maxpar_requested, maxpar_refusal) =
         crate::settings::resolve_maxpar(&get("SPIRA_BATCH_MAXPAR").unwrap_or_default());
     Settings {
-        resume: get("SPIRA_TESTENV_RESUME").map(PathBuf::from),
+        resume: get("SPIRA_TESTENV_RESUME"),
         results_root: get("SPIRA_BATCH_RESULTS").map(PathBuf::from).unwrap_or_else(|| run.join("batch-results")),
         verdicts: get("SPIRA_VERDICTS").map(PathBuf::from).unwrap_or_else(|| run.join("verdicts")),
         verdict_ttl: num!("SPIRA_VERDICT_TTL").unwrap_or(86_400),
@@ -2360,11 +2360,10 @@ fn suites_run(rt: &FakeRuntime) -> Vec<String> {
         .collect()
 }
 
-#[test]
-fn a_rerun_on_another_instance_skips_exactly_the_suites_that_passed() {
-    let mut w = World::new("resume");
-    let store = w.root.join("resume-store");
-    w.env.insert("SPIRA_TESTENV_RESUME".into(), store.display().to_string());
+fn rerun_skips_exactly_the_suites_that_passed(tag: &str, spec: impl Fn(&World) -> String) {
+    let mut w = World::new(tag);
+    let spec = spec(&w);
+    w.env.insert("SPIRA_TESTENV_RESUME".into(), spec);
     w.env.insert("GITHUB_RUN_ID".into(), "500".into());
     w.env.insert("GITHUB_RUN_ATTEMPT".into(), "1".into());
     w.env.insert("SPIRA_VERDICT_REPEAT_CONSIDERED".into(), "resume test".into());
@@ -2390,6 +2389,25 @@ fn a_rerun_on_another_instance_skips_exactly_the_suites_that_passed() {
     let args_main = ["--suites", "test-a.sh,test-b.sh,test-x.sh", "main"];
     w.run(&other_tree, &b, &args_main, "", &w.root);
     assert_eq!(suites_run(&other_tree).len(), 3, "a different tree skips nothing");
+}
+
+#[test]
+fn a_rerun_on_another_instance_skips_exactly_the_suites_that_passed_in_a_directory_store() {
+    rerun_skips_exactly_the_suites_that_passed("resume-dir", |w| format!("dir:{}", w.root.join("resume-store").display()));
+}
+
+#[test]
+fn an_unrecognised_resume_spec_runs_every_suite() {
+    let mut w = World::new("resume-bad");
+    w.env.insert("SPIRA_TESTENV_RESUME".into(), "gha:cache".into());
+    w.env.insert("SPIRA_VERDICT_REPEAT_CONSIDERED".into(), "resume test".into());
+    let b = FakeBuilder::new(None);
+    let args = ["--suites", "test-a.sh,test-b.sh", "topic"];
+    w.run(&runtime(), &b, &args, "", &w.root);
+    let again = runtime();
+    w.run(&again, &b, &args, "", &w.root);
+    assert_eq!(suites_run(&again).len(), 2);
+    assert!(w.has_line(|l| l.contains("resume:") && l.contains("every suite runs")));
 }
 
 #[test]

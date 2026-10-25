@@ -1336,12 +1336,22 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     }
 
     // ---- resume: suites a previous attempt of this job already passed for this tree ----
-    let resume = s.resume.as_ref().map(|root| {
+    let resume = s.resume.as_deref().and_then(|spec| {
+        let aws = deps.which("aws").unwrap_or_else(|| PathBuf::from("aws"));
+        match crate::resume::backend_from_spec(spec, &aws) {
+            Ok(backend) => backend,
+            Err(e) => {
+                deps.log(&format!("resume: {e} — every suite runs"));
+                None
+            }
+        }
+    });
+    let resume = resume.map(|backend| {
         let label = crate::resume::attempt_label(
             (deps.env)("GITHUB_RUN_ID").as_deref(),
             (deps.env)("GITHUB_RUN_ATTEMPT").as_deref(),
         );
-        crate::resume::Store::new(root, &key_inputs, &label)
+        crate::resume::Store::new(backend, &key_inputs, &label)
     });
     if let Some(store) = &resume {
         let mut left = Vec::new();

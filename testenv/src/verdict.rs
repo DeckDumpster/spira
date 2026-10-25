@@ -43,13 +43,12 @@ impl KeyInputs {
         sha256_hex(text.as_bytes())
     }
 
-    /// The key without the selection: what a suite's pass is reusable under.
-    pub fn resume_key(&self) -> String {
+    /// The test environment a suite's pass is reusable under: the key without the repo, the
+    /// tree and the selection.
+    pub fn resume_env_key(&self) -> String {
         let prebuilt = self.artifacts_id.as_deref().map(|id| format!(" prebuilt={id}")).unwrap_or_default();
         let line = format!(
-            "resume {} {} {} {} {} {} {}{prebuilt}\n",
-            self.repo_name,
-            self.tree,
+            "resume {} {} {} {} {}{prebuilt}\n",
             self.image_tag,
             self.harness_hash,
             self.mode.as_str(),
