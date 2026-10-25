@@ -1,0 +1,12 @@
+## 4.7 Operator surfaces
+
+| Component | Binaries / units | Purpose, reads and writes |
+|---|---|---|
+| **mail** | `mail send\|template\|list\|read\|count\|unread-age\|done\|sendmail\|reconcile\|tidy\|ensure\|sweep-dismissed`; `spira-mail-reconcile.timer` (1 min), `spira-mail-tidy.timer` (15 min) | The operator/persona channel as a Maildir tree `$SPIRA_MAIL/<mailbox>/{tmp,new,cur}`. One gate enforces lint, a repeat-suppression window and per-kind skeletons (`alert decision event note question report suit`). `reconcile` applies replies (matched by `In-Reply-To`, once per Message-ID) to the bead they answer: notes the answer, closes the ask, lifts the ask hold. |
+| **mail delivery** | `spira/spira-mail-deliver.sh`; `spira-mail-deliver.service` | One `inotifywait` watch per registered mailbox (`SPIRA_MAIL_READERS`); wakes the reader and keeps waking while unread mail remains. |
+| **spira-submission** | `spira-submission serve\|provision\|health`; `spira-submission.service`, `spira-submission-provision.timer` | Authenticated implicit-TLS SMTP on a private-network address; hands each accepted message to `mail sendmail`, so a reply from any mail client behaves like a cockpit reply. |
+| **asks** | `spira/asks.sh`; `cockpit/moot-sweep.sh`, `cockpit/verify-asks.sh`; `spira-moot-sweep.timer`, `spira-verify-asks.timer` (15 min) | An ask carries `SPIRA_ASK_LABEL`. `asks.sh` announces new asks and ask holds into the Concierge inbox; moot-sweep closes asks whose `MOOT-WHEN:` predicate passes; verify-asks closes asks whose `VERIFY:` command passes. |
+| **panel** | `panel [--once]` | The decisions TUI (bottom-left cockpit pane): decisions, FYI, notifications and alerts read from the bead store by label. |
+| **concierge** | `concierge.sh start\|here\|attach\|brief\|status\|wake\|stop`; `concierge.timer` (10 min) | The operator's session: a `claude` session on its own tmux socket composed from the `concierge` persona plus the statute book. |
+| **concierge-guard** | `concierge-guard check\|health`; `spira-concierge-guard.timer` (3 min) | Looks for the inbox waiter among the session's descendants; on a lapse writes an inbox row and mails the operator if it persists. |
+| **inbox-triage** | `inbox-triage`; library `inbox-rules` | The Concierge's in-session monitor over `SPIRA_CONCIERGE_INBOX`: drops echoes, dedups, passes the rest. `inbox-rules` is shared with `watchd next` so both agree on what is noise. |

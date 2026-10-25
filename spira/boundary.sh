@@ -26,7 +26,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 MANIFEST="${SPIRA_BOUNDARY:-$HERE/boundary}"
 
-# The README is resolved relative to THIS script, so a run inside an aeon's worktree edits
+# The target document (docs/development.md) is resolved relative to THIS script, so a run inside an aeon's worktree edits
 # that worktree and not the shared checkout.
 #
 # THE WIKI TARGET IS CONFIGURED, NOT DERIVED. It used to be found by walking up from here,
@@ -34,7 +34,7 @@ MANIFEST="${SPIRA_BOUNDARY:-$HERE/boundary}"
 # happens to resolve is indistinguishable from one that was meant. `SPIRA_WIKI` is empty by
 # default, which is the state of every clone that has no wiki at all.
 . "$HERE/conf.sh"
-README="$(cd "$HERE/.." && pwd -P)/README.md"
+README="$(cd "$HERE/.." && pwd -P)/docs/development.md"
 WIKI_REL="${SPIRA_WIKI_BOUNDARY_REL:-wiki/projects/spira/repo-boundary.md}"
 WIKI="${SPIRA_WIKI:+$SPIRA_WIKI/$WIKI_REL}"
 
