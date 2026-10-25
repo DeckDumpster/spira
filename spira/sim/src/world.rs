@@ -830,8 +830,8 @@ fn prune_seeds(cache: &Path, keep: &Path) {
 }
 
 /// The world's suite runner. The last line of `gate-control` naming the branch's bead picks its verdict:
-/// `fail` (exit 1), `fail-once` (exit 1, then passes), `no-verdict` (75, a timeout) or `infra` (75, a harness fault); any other mode, or none,
-/// passes. Every run is appended to `gate-calls`.
+/// `fail` (exit 1), `fail-once` (exit 1, then passes), `no-verdict` (75, a timeout) or `infra` (75, a harness
+/// fault); any other mode, or none, passes. Every run is appended to `gate-calls`.
 pub const SUITE_RUNNER: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 bead=${SPIRA_GATE_BRANCH#spira/}
