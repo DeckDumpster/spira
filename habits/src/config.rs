@@ -16,6 +16,7 @@ pub struct Config {
 pub struct Habit {
     pub name: String,
     pub glob: String,
+    #[serde(default)]
     pub run: String,
     #[serde(default = "default_budget")]
     pub budget_ms: u64,
@@ -46,7 +47,7 @@ impl Habit {
     pub fn format(&self) -> &str {
         match self.format.as_deref() {
             Some(f) => f,
-            None if self.name == "rustfmt" || self.name == "complexity" => &self.name,
+            None if matches!(self.name.as_str(), "rustfmt" | "complexity" | "traceability") => &self.name,
             None => "gcc",
         }
     }

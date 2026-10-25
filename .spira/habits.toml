@@ -21,3 +21,8 @@ budget_ms = 1500
 name = "clippy"
 run = "cargo clippy -p {crate} --message-format short"
 budget_ms = 150000
+
+[[habit]]
+name = "traceability"
+glob = "{spira/test-*.sh,**/*.rs,docs/test-plan/*.toml}"
+budget_ms = 1500

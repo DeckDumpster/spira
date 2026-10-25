@@ -8,6 +8,7 @@ mod exec;
 pub mod glob;
 mod parse;
 mod state;
+mod trace;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -126,7 +127,7 @@ fn edited(cfg: &Config, root: &Path, cwd: &Path, file: &str, repo: &str, tmp: &P
                 let prev = st.seen.get(&slot).cloned().unwrap_or_default();
                 let now: std::collections::BTreeSet<String> = found.iter().map(|f| f.key.clone()).collect();
                 let resolved = prev.difference(&now).count() as u64;
-                let shown: Vec<&Finding> = found.iter().filter(|f| h.format() != "complexity" || !prev.contains(&f.key)).collect();
+                let shown: Vec<&Finding> = found.iter().filter(|f| !matches!(h.format(), "complexity" | "traceability") || !prev.contains(&f.key)).collect();
                 st.seen.insert(slot, now);
                 push(sink, repo, &h.name, found.len() as u64, resolved, ms);
                 if !shown.is_empty() {
@@ -143,20 +144,28 @@ fn edited(cfg: &Config, root: &Path, cwd: &Path, file: &str, repo: &str, tmp: &P
 }
 
 fn push(sink: &MetricsSink, repo: &str, habit: &str, findings: u64, resolved: u64, ms: u64) {
-    sink.push(
-        &[
-            Point::Count { name: "habit_findings_total", value: findings },
-            Point::Count { name: "habit_resolved_total", value: resolved },
-            Point::Gauge { name: "habit_runtime_ms", value: ms as f64 },
-        ],
-        &[("repo", repo), ("habit", habit)],
-    );
+    let mut points = vec![
+        Point::Count { name: "habit_findings_total", value: findings },
+        Point::Count { name: "habit_resolved_total", value: resolved },
+        Point::Gauge { name: "habit_runtime_ms", value: ms as f64 },
+    ];
+    if habit == "traceability" {
+        points.push(Point::Count { name: "habit_traceability_findings", value: findings });
+        points.push(Point::Count { name: "habit_traceability_fixed_in_session", value: resolved });
+    }
+    sink.push(&points, &[("repo", repo), ("habit", habit)]);
 }
 
 fn run_habit(h: &Habit, root: &Path, abs: &Path, rel: &str, touched: &diff::Ranges, tmp: &Path) -> Outcome {
     let file = abs.to_string_lossy();
     let deadline = Instant::now() + Duration::from_millis(h.budget_ms);
     let go = |argv: &[String]| exec::run(argv, root, deadline.saturating_duration_since(Instant::now()));
+    if h.format() == "traceability" {
+        return match trace::check(root, abs, rel, touched) {
+            Ok(f) => Outcome::Findings(f),
+            Err(why) => Outcome::Skipped(why),
+        };
+    }
     if h.format() == "complexity" {
         return complexity(h, root, abs, rel, touched, tmp, &go);
     }
