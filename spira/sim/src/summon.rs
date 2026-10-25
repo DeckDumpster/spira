@@ -17,6 +17,7 @@ pub const HOLDER: &str = "aeon-sim";
 const LEASE_SECS: u64 = 3600;
 const CLAIM_REFUSED: i32 = 3;
 /// The scenario line that turns the summon into the real `aeon`.
+const AEON_HOME: &str = "aeon-home";
 pub const REAL_AEON: &str = "@real-aeon";
 const AEON_DEADLINE: Duration = Duration::from_secs(300); // batch-job: one real aeon session around the stub agent
 pub const CLAIM_ORDER: &str = "claim-order";
@@ -119,10 +120,38 @@ fn claim(world: &Path, id: &str, fayth: &str) -> Result<bool, String> {
     }
 }
 
+/// The home the real aeon is given: a directory of links to every entry of the release's harness
+/// tree, so the aeon's guard against FAYTH keys nothing consumes finds no source workspace above it
+/// to judge against, as in a fixture home.
+fn aeon_home(world: &Path, harness: &Path) -> Result<std::path::PathBuf, String> {
+    let home = world.join(AEON_HOME);
+    std::fs::create_dir_all(&home).map_err(|e| e.to_string())?;
+    for entry in std::fs::read_dir(harness).map_err(|e| format!("{}: {e}", harness.display()))? {
+        let from = entry.map_err(|e| e.to_string())?.path();
+        let at = home.join(from.file_name().ok_or("unnamed harness entry")?);
+        if std::fs::symlink_metadata(&at).is_err() {
+            std::os::unix::fs::symlink(&from, &at).map_err(|e| format!("{}: {e}", at.display()))?;
+        }
+    }
+    Ok(home)
+}
+
+/// `argv` with the `--home` argument of the `aeon` it launches replaced by `home`.
+pub fn with_home(argv: &[String], home: &Path) -> Vec<String> {
+    let mut out = argv.to_vec();
+    if let Some(i) = out.iter().position(|a| a == "--home") {
+        if let Some(h) = out.get_mut(i + 1) {
+            *h = home.display().to_string();
+        }
+    }
+    out
+}
+
 /// One real aeon session: the aeon ranks, claims, builds its worktree and launches `SPIRA_AGENT`
 /// (the stub) itself. Its output goes to the summon's stdout, and so to the world's `exec.log`.
-fn run_aeon(argv: &[String]) -> Result<(), String> {
-    let (env, command) = aeon_command(argv)?;
+fn run_aeon(world: &Path, argv: &[String]) -> Result<(), String> {
+    let harness = argv.iter().position(|a| a == "--home").and_then(|i| argv.get(i + 1)).ok_or("sim-summon: the aeon argv names no --home")?;
+    let (env, command) = aeon_command(&with_home(argv, &aeon_home(world, Path::new(harness))?))?;
     let (prog, args) = command.split_first().ok_or("sim-summon: empty aeon command")?;
     let (status, out, err) = run_capture(Command::new(prog).args(args).envs(spira_config::release_env::child_path_env_for_process()).envs(env), AEON_DEADLINE)?;
     print!("{out}{err}");
@@ -145,7 +174,7 @@ pub enum Ran {
 pub fn summon(world: &Path, scenario_file: &Path, state: &Path, fayth: &str, argv: &[String]) -> Result<Ran, String> {
     let scenario = std::fs::read_to_string(scenario_file).unwrap_or_default();
     if real_aeon(&scenario) {
-        run_aeon(argv)?;
+        run_aeon(world, argv)?;
         return Ok(Ran::Aeon);
     }
     std::fs::create_dir_all(state).map_err(|e| e.to_string())?;
