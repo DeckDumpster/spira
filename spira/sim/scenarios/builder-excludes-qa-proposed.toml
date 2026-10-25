@@ -52,4 +52,4 @@ sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-qa02' AND lc_state = 'READY'"
 
 [[expect]]
 name = "exclusion_checked"
-sql = "SELECT 1 FROM events WHERE kind = 'step' AND exit = 0 AND actor IN ('step7', 'step8', 'step9')"
+sql = "SELECT 1 FROM events WHERE kind = 'step' AND exit = 0 AND actor IN ('step6', 'step7', 'step8')"

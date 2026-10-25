@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tier: T2
 # requires: testenv
-# covers: spira/sim/** spira/sim-scenario-lib.sh spira/lib.sh spira/chamber/builder.fayth sim/actors.toml sim/durations.toml sentinel/src/** spira-claim/src/** lifecycle/src/** spira-lc/src/** systemd/spira-summon.*
+# covers: spira/sim/** spira/sim-scenario-lib.sh spira/lib.sh spira/chamber/builder.fayth sim/actors.toml sim/durations.toml sentinel/src/** spira-claim/src/** lifecycle/src/** spira-lc/src/** systemd/spira-summon.* UC-config-store-preflight-15
 # lane: sim
 # pids: 400
 #
