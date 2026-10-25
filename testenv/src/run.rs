@@ -1335,6 +1335,43 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         }
     }
 
+    // ---- resume: suites a previous attempt of this job already passed for this tree ----
+    let resume = s.resume.as_ref().map(|root| {
+        let label = crate::resume::attempt_label(
+            (deps.env)("GITHUB_RUN_ID").as_deref(),
+            (deps.env)("GITHUB_RUN_ATTEMPT").as_deref(),
+        );
+        crate::resume::Store::new(root, &key_inputs, &label)
+    });
+    if let Some(store) = &resume {
+        let mut left = Vec::new();
+        for n in std::mem::take(&mut active) {
+            match store.passed(&n).filter(|_| !quarantined.contains(&n)) {
+                Some(from) => {
+                    deps.log(&format!("resumed: {n} passed in run/attempt {from} for this tree — not run again"));
+                    let rec = ResultRecord {
+                        status: Status::Ok,
+                        epoch: now_epoch(),
+                        secs: 0,
+                        fingerprint: format!("resumed:{from}"),
+                        mode: Some(args.mode),
+                        producer: Some(producer),
+                        rc: Some(0),
+                    };
+                    batch::write_preempted(&results, &n, &rec);
+                    (deps.out)(&suite_line(&n, &rec));
+                    preempted.insert(n, rec);
+                }
+                None => left.push(n),
+            }
+        }
+        active = left;
+        if active.is_empty() {
+            deps.log("every suite was passed by an earlier attempt of this job — nothing to run");
+            return Finish::green(0);
+        }
+    }
+
     ph.mark("resolve");
     // ---- build in place (or stage the prebuilt set: D8) -----------------------------
     let (pdir, artifacts) = match &prebuilt {
@@ -1906,6 +1943,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             .filter(|n| headers[*n].testdb_embedded)
             .cloned()
             .collect(),
+        resume: resume.clone(),
     };
     if let (Some(d), Some(left)) = (args.deadline, cfg.deadline) {
         deps.log(&format!(

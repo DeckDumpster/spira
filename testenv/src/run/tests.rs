@@ -142,6 +142,7 @@ fn test_settings(env: &HashMap<String, String>) -> Settings {
     let (maxpar_requested, maxpar_refusal) =
         crate::settings::resolve_maxpar(&get("SPIRA_BATCH_MAXPAR").unwrap_or_default());
     Settings {
+        resume: get("SPIRA_TESTENV_RESUME").map(PathBuf::from),
         results_root: get("SPIRA_BATCH_RESULTS").map(PathBuf::from).unwrap_or_else(|| run.join("batch-results")),
         verdicts: get("SPIRA_VERDICTS").map(PathBuf::from).unwrap_or_else(|| run.join("verdicts")),
         verdict_ttl: num!("SPIRA_VERDICT_TTL").unwrap_or(86_400),
@@ -2350,4 +2351,55 @@ fn conf_gen_is_warmed_outside_build_so_the_prebuilt_path_gets_it() {
     let build_fn = &build_fn[..build_fn.find("\n}\n").unwrap()];
     assert!(!build_fn.contains("conf-gen"), "build() is skipped under --artifacts; warming there leaves rounds stale");
     assert!(src.contains("warm_conf_gen(&wt.path)"));
+}
+
+fn suites_run(rt: &FakeRuntime) -> Vec<String> {
+    rt.suite_execs()
+        .iter()
+        .map(|r| r.argv[1].rsplit('/').next().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn a_rerun_on_another_instance_skips_exactly_the_suites_that_passed() {
+    let mut w = World::new("resume");
+    let store = w.root.join("resume-store");
+    w.env.insert("SPIRA_TESTENV_RESUME".into(), store.display().to_string());
+    w.env.insert("GITHUB_RUN_ID".into(), "500".into());
+    w.env.insert("GITHUB_RUN_ATTEMPT".into(), "1".into());
+    w.env.insert("SPIRA_VERDICT_REPEAT_CONSIDERED".into(), "resume test".into());
+    let b = FakeBuilder::new(None);
+    let args = ["--suites", "test-a.sh,test-b.sh,test-x.sh", "topic"];
+
+    let first = runtime();
+    assert_eq!(w.run(&first, &b, &args, "", &w.root), 1);
+    let mut ran = suites_run(&first);
+    ran.sort();
+    assert_eq!(ran, ["test-a.sh", "test-b.sh", "test-x.sh"]);
+
+    w.env.insert("GITHUB_RUN_ATTEMPT".into(), "2".into());
+    let second = runtime();
+    assert_eq!(w.run(&second, &b, &args, "", &w.root), 1);
+    assert_eq!(suites_run(&second), ["test-b.sh"], "only the suite that was red runs again");
+    assert!(w.has_line(|l| l.starts_with("  test-a.sh") && l.contains("resumed — passed in run/attempt 500/1")));
+    assert!(w.has_line(|l| l.starts_with("  test-x.sh") && l.contains("resumed — passed in run/attempt 500/1")));
+    assert!(w.has_line(|l| l.contains("resumed: test-a.sh passed in run/attempt 500/1")));
+    assert!(w.has_line(|l| l.starts_with("  test-b.sh") && l.contains("RED")));
+
+    let other_tree = runtime();
+    let args_main = ["--suites", "test-a.sh,test-b.sh,test-x.sh", "main"];
+    w.run(&other_tree, &b, &args_main, "", &w.root);
+    assert_eq!(suites_run(&other_tree).len(), 3, "a different tree skips nothing");
+}
+
+#[test]
+fn without_a_resume_store_every_suite_runs() {
+    let mut w = World::new("resume-off");
+    w.env.insert("SPIRA_VERDICT_REPEAT_CONSIDERED".into(), "resume test".into());
+    let b = FakeBuilder::new(None);
+    let args = ["--suites", "test-a.sh,test-b.sh", "topic"];
+    w.run(&runtime(), &b, &args, "", &w.root);
+    let again = runtime();
+    w.run(&again, &b, &args, "", &w.root);
+    assert_eq!(suites_run(&again).len(), 2);
 }

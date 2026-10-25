@@ -546,6 +546,15 @@ jobs:
           spira-lint --only workflow-config
           bash spira/orphan-test.sh || [ $? -eq 77 ]
 
+      - name: Resume store — restore what an earlier attempt of this job passed
+        # testenv skips a suite recorded as passed for this exact tree and image
+        # (testenv/src/resume.rs); a miss, a stale or an unreadable record runs it.
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/testenv-resume
+          key: testenv-resume-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: testenv-resume-${{ github.sha }}-
+
       - name: Suites
         # The exit-code mapping matches the repo-map's gate command exactly. Keep
         # them in step: two gates that disagree about what 75 means is how a
@@ -559,6 +568,7 @@ jobs:
           # so testenv finds it locally. Naming the registry here as well keeps
           # the two steps agreeing about which image the gate is entitled to use.
           SPIRA_TESTENV_REGISTRY: ${{ steps.reg.outputs.registry }}
+          SPIRA_TESTENV_RESUME: ${{ runner.temp }}/testenv-resume
         run: |
           set -uo pipefail
           export SPIRA_BATCH_RESULTS="$RUNNER_TEMP/batch"
@@ -654,6 +664,13 @@ jobs:
               exit 75 ;;
             *) printf 'gate: suites failed (batch rc=%s)\n' "$_b" >&2; exit "$_b" ;;
           esac
+
+      - name: Resume store — save what this attempt passed
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/testenv-resume
+          key: testenv-resume-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: G12 — bare-host suites (real systemd, host podman)
         # Every suite marked `# bare-host:` (host-check.sh --bare-suites) builds its OWN

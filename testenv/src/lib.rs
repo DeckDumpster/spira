@@ -18,6 +18,7 @@ pub mod plan;
 pub mod preflight;
 pub mod prebuilt;
 pub mod reap;
+pub mod resume;
 pub mod record;
 pub mod run;
 pub mod runtime;

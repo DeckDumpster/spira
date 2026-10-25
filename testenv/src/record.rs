@@ -284,6 +284,9 @@ impl fmt::Display for ResultRecord {
 pub fn suite_line(suite: &str, rec: &ResultRecord) -> String {
     let rc = rec.rc.unwrap_or(0);
     let tail = match rec.status {
+        Status::Ok if rec.fingerprint.starts_with("resumed:") => {
+            format!("ok      resumed — passed in run/attempt {}", &rec.fingerprint["resumed:".len()..])
+        }
         Status::Ok => format!("ok      {}s", rec.secs),
         Status::Skip => "SKIPPED".to_string(),
         Status::Disabled => "DISABLED".to_string(),
