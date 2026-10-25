@@ -345,6 +345,62 @@ fn short(s: &str) -> String {
     s.chars().take(12).collect()
 }
 
+/// The `## Build` section a builder needs to claim a fix-forward bead: the deliverable, the
+/// failing check and run, and the first failing test or error lines from the log.
+#[allow(clippy::too_many_arguments)]
+fn build_section(
+    name: &str,
+    pr: &str,
+    head: &str,
+    run_url: &str,
+    suites: &str,
+    failed_steps: &[&str],
+    step_log: &[&str],
+    fail_lines: &str,
+) -> String {
+    let mut s = format!(
+        "## Build\n\nMake {name}'s CI green at publish PR {pr}'s head ({}).\n\n",
+        short(head)
+    );
+    let check = if !suites.is_empty() {
+        suites.replace(',', ", ")
+    } else if !failed_steps.is_empty() {
+        failed_steps.join("; ")
+    } else {
+        "<not named by the forge>".to_string()
+    };
+    s.push_str(&format!("Failing check: {check}\n"));
+    s.push_str(&format!(
+        "Run: {}\n\n",
+        if run_url.is_empty() {
+            "<run link unavailable>"
+        } else {
+            run_url
+        }
+    ));
+    let tests: Vec<&str> = step_log
+        .iter()
+        .map(|l| l.trim())
+        .filter(|l| l.starts_with("FAILED "))
+        .collect();
+    let first: Vec<String> = if !tests.is_empty() {
+        tests.iter().take(10).map(|l| l.to_string()).collect()
+    } else if !fail_lines.is_empty() {
+        fail_lines.lines().take(10).map(str::to_string).collect()
+    } else {
+        step_log.iter().take(10).map(|l| l.to_string()).collect()
+    };
+    if first.is_empty() {
+        s.push_str("First failing lines: <none captured — read the run log (gh run view --log-failed)>\n");
+    } else {
+        s.push_str("First failing lines:\n");
+        for l in first {
+            s.push_str(&format!("{l}\n"));
+        }
+    }
+    s
+}
+
 /// The unlocked half of a red publish: attribute locally, file ONE fix-forward bead, retire
 /// the record, mark the head so `publish` waits for a change (§2.1).
 pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
@@ -456,7 +512,17 @@ pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
             &member_ids
         }
     ));
-    body.push_str("Fix forward on local/main — the next publish carries the fix. Production was never rolled back and no member bead was reopened.");
+    body.push_str("Fix forward on local/main — the next publish carries the fix. Production was never rolled back and no member bead was reopened.\n\n");
+    body.push_str(&build_section(
+        name,
+        &pr,
+        &head,
+        &run_url,
+        &suites,
+        &failed_steps,
+        &step_log,
+        &fail_lines,
+    ));
     let title = if suites.is_empty() {
         format!("publish PR {pr} red for {name}")
     } else {
@@ -492,10 +558,12 @@ pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
         &c.queue_file("publish-red"),
         &format!("head={head}\nfix_forward={fid_s}\nsuites={suites}\n"),
     );
-    let suites_s = if suites.is_empty() {
-        "none".to_string()
-    } else {
+    let suites_s = if !suites.is_empty() {
         suites.clone()
+    } else {
+        Some(test_red_csv(out))
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| "none".to_string())
     };
     landing_log(
         &c.s.run,
