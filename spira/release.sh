@@ -165,7 +165,7 @@ do_cut() {
     local n=1
     if [ -n "$versioned" ]; then
         local listed
-        listed="$(cd "$repo" && gh release list --limit 1000 --json tagName --jq '.[].tagName')" || {
+        listed="$(cd "$repo" && timeout 5 gh release list --limit 1000 --json tagName --jq '.[].tagName')" || {
             printf 'release: cannot list the forge releases — refusing to guess the next number\n' >&2
             exit 1
         }
