@@ -12,7 +12,8 @@ use spira_config::scoped_stop;
 
 pub const PACE_OWNER: &str = "batcher";
 
-pub const INFRA_MARKERS: &[&str] = &["NO RESULT", "OVER-CAP", "cannot check out", "certify rc=75", "left no verdicts"];
+pub const CERTIFY_ENV_MARKER: &str = "queue round certify exited 4";
+pub const INFRA_MARKERS: &[&str] = &["NO RESULT", "OVER-CAP", "cannot check out", "certify rc=75", "left no verdicts", CERTIFY_ENV_MARKER];
 pub const STALE_AMI_MARKER: &str = "round AMI is stale";
 pub const BACKOFF_SECS: u64 = 600;
 pub const STOP_AFTER: u32 = 2;
@@ -451,6 +452,21 @@ mod tests {
     fn a_stale_image_refusal_is_recognised_and_a_plain_one_is_not() {
         assert!(is_stale_image("cannot certify the round: round AMI is stale: acquire failed"));
         assert!(!is_stale_image("cannot certify the round: acquire failed: pool exhausted"));
+    }
+
+    #[test]
+    fn a_certify_that_always_exits_4_gets_two_attempts_and_one_alert() {
+        let t = dir("exit4");
+        let d = t.path();
+        let env = || Err(format!("refused — cannot certify the round: {CERTIFY_ENV_MARKER}: no VM"));
+        let mut attempts = 0;
+        for i in 0..10u64 {
+            if run(d, "a", 1000 + i * (BACKOFF_SECS + 1), None, None, env()) {
+                attempts += 1;
+            }
+        }
+        assert_eq!(attempts, 2);
+        assert_eq!(inbox(d).matches("ROUNDS STOPPED a").count(), 1);
     }
 
     #[test]

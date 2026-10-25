@@ -1,10 +1,10 @@
 TYPE=string
 GROUP=batcher
 DOC=Local round pacing by the scheduler on or off: pause on a red, back off on a harness fault, page an orphaned open round.
-SCHEMA=The local round scheduler's pacing (`SPIRA_ROUNDS_PACING`, "1"/"0", default "0"). "1": each queue.local repo's pass holds on a red round, backs off and then stops on consecutive rounds that produced no verdicts, and pages the Concierge inbox; "0": passes cut without pacing.
+SCHEMA=The local round scheduler's pacing (`SPIRA_ROUNDS_PACING`, "1"/"0", default "1"). "1": each queue.local repo's pass holds on a red round, backs off and then stops on consecutive rounds that produced no verdicts, and pages the Concierge inbox; "0": passes cut without pacing.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # Local round pacing by the scheduler, on or off. 1: a red round pauses its repo (rm
+    # Local round pacing by the scheduler, on or off. 1 (default): a red round pauses its repo (rm
     # <run>/rounds-pace/<repo>/pause lifts it), rounds with no verdicts back off then stop the
     # repo, an open round with no driver is paged once. 0: passes cut without pacing.
-    : "${SPIRA_ROUNDS_PACING:=0}"
+    : "${SPIRA_ROUNDS_PACING:=1}"
 SPIRA_CONF_DEFAULT_EOF
