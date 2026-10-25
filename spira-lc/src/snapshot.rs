@@ -150,7 +150,8 @@ mod tests {
     #[test]
     fn a_live_list_carries_the_columns_of_the_service_answer() {
         let out: Vec<Value> = serde_json::from_str(&answer_from(&args(&["list", "--snapshot", "--live"]), &fixture(100), 100, 2).unwrap()).unwrap();
-        assert!(out[0].get("repo").is_none() && out[0].get("blocked_by").is_some());
+        assert!(out[0].get("blocked_by").is_some());
+        assert_eq!(out.iter().map(|b| b["repo"].as_str().unwrap()).collect::<Vec<_>>(), ["spira", "other", "spira"], "the pane tags each row from this column");
         let full: Vec<Value> = serde_json::from_str(&answer_from(&args(&["list", "--snapshot", "--live", "--repo", "spira"]), &fixture(100), 100, 2).unwrap()).unwrap();
         assert!(full[0].get("repo").is_some() && full[0].get("sifted_tip").is_some());
     }

@@ -1014,6 +1014,9 @@ mod tests {
         st.indexes.insert("ask_state_idx".into());
         st.columns.insert(("ops_live".into(), "blocker".into()));
         st.columns.insert(("ops_edges".into(), "last_at".into()));
+        for v in ["ops_live", "ops_recent", "ops_dwell"] {
+            st.columns.insert((v.into(), "repo".into()));
+        }
         Rc::new(RefCell::new(st))
     }
 
