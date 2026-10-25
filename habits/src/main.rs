@@ -2,7 +2,7 @@ use std::io::Read;
 use std::sync::mpsc;
 use std::time::Duration;
 
-const HARD_CAP: Duration = Duration::from_secs(240);
+const HARD_CAP: Duration = Duration::from_secs(590);
 
 fn run() -> Option<String> {
     let mut raw = String::new();

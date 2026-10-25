@@ -9,6 +9,7 @@ pub mod glob;
 mod parse;
 mod state;
 mod trace;
+mod unit;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -60,7 +61,7 @@ pub fn dispatch(raw: &str, state_dir: &Path, sink: &MetricsSink) -> Option<Strin
         }
     };
     let text = if input.hook_event_name.as_deref() == Some("Stop") {
-        stop(&cfg, &root, &repo, &mut st, sink)
+        stop(&cfg, &root, &repo, state_dir, &mut st, sink)
     } else {
         let file = input.tool_input.and_then(|t| t.file_path)?;
         edited(&cfg, &root, &cwd, &file, &repo, state_dir, &mut st, sink)
@@ -222,7 +223,7 @@ fn complexity(h: &Habit, root: &Path, abs: &Path, rel: &str, touched: &diff::Ran
     Outcome::Findings(found)
 }
 
-fn stop(cfg: &Config, root: &Path, repo: &str, st: &mut state::State, sink: &MetricsSink) -> Option<String> {
+fn stop(cfg: &Config, root: &Path, repo: &str, tmp: &Path, st: &mut state::State, sink: &MetricsSink) -> Option<String> {
     if cfg.stop.is_empty() || st.stop_done {
         return None;
     }
@@ -233,6 +234,10 @@ fn stop(cfg: &Config, root: &Path, repo: &str, st: &mut state::State, sink: &Met
     crates.dedup();
     let mut lines = Vec::new();
     for s in &cfg.stop {
+        if s.is_unit_tests() {
+            lines.extend(unit::stop(s, root, repo, tmp, sink));
+            continue;
+        }
         for krate in &crates {
             let t = Instant::now();
             let argv = config::argv(&s.run, &[("crate", krate)]);
