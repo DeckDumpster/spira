@@ -45,8 +45,7 @@ pub fn coverage(path: &str, text: &str) -> SuiteCoverage {
     }
 }
 
-/// The use-case ids a Rust source names on `// covers: UC-…` lines, as one T0 cover under the
-/// file's own path — the same reading `suite-coverage-json.sh` gives them.
+/// A Rust source's `// covers: UC-…` lines as one T0 cover, as `suite-coverage-json.sh` reads them.
 fn rust_coverage(path: &str, text: &str) -> Option<SuiteCoverage> {
     let mut covers: Vec<String> = Vec::new();
     for l in text.lines().filter(|l| l.trim_start().starts_with("// covers: UC-")) {
