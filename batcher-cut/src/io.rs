@@ -3579,14 +3579,17 @@ mod wait_lock_tests {
     }
 
     #[test]
-    fn the_beat_refreshes_its_file() {
+    fn touch_refreshes_a_stale_beat_file() {
         let d = testkit::TempDir::new("batcher-cut-beat2");
         let p = d.path().join("b");
-        let b = Beat::start(p.clone(), std::time::Duration::from_millis(20));
-        let t0 = fs::metadata(&p).unwrap().modified().unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        assert!(fs::metadata(&p).unwrap().modified().unwrap() > t0);
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(600);
+        fs::File::create(&p).unwrap().set_modified(old).unwrap();
+        touch(&p);
+        assert!(fs::metadata(&p).unwrap().modified().unwrap() > old);
+        let b = Beat::start(p.clone(), std::time::Duration::from_secs(3600));
+        assert!(p.is_file());
         drop(b);
+        assert!(!p.exists());
     }
 }
 
