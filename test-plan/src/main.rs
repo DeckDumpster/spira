@@ -36,6 +36,13 @@
 //!                          --out-json PATH --out-md PATH
 //!       matrix + render in one process, written to PATH and PATH instead of stdout.
 //!
+//!   test-plan coverage-report --catalogue-dir DIR --suites FILE|- [--llvm-cov FILE --root DIR]
+//!                             [--prev FILE] [--round ID] --out-json PATH --out-txt PATH
+//!       the round's coverage report: line coverage from `cargo llvm-cov report --json
+//!       --summary-only` (absent: "lines: unavailable") and per-area use-case coverage, written
+//!       as JSON and text; with --prev, the text ends in the delta and one `delta:` line is
+//!       printed. Pushes the gauges to SPIRA_METRICS_ENDPOINT. Reports, never gates.
+//!
 //!   test-plan schema catalogue|matrix
 //!       the JSON Schema the named document is validated against.
 //!
@@ -49,6 +56,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use test_plan::{
+    coverage,
     build_matrix, catalogue_json_schema, coverage_gaps, launcher_gaps, launcher_site_violations, load_catalogues, matrix_json_schema, orphan_violations,
     render_markdown, tier_budget_flags, unknown_uc_violations, LoadedCatalogue, MatrixDoc,
     SuiteCoverage,
@@ -85,6 +93,10 @@ struct Args {
     root: Option<String>,
     out_json: Option<String>,
     out_md: Option<String>,
+    llvm_cov: Option<String>,
+    prev: Option<String>,
+    round: Option<String>,
+    out_txt: Option<String>,
 }
 
 fn parse_args(rest: &[String]) -> Result<Args, String> {
@@ -97,6 +109,10 @@ fn parse_args(rest: &[String]) -> Result<Args, String> {
         root: None,
         out_json: None,
         out_md: None,
+        llvm_cov: None,
+        prev: None,
+        round: None,
+        out_txt: None,
     };
     let mut i = 0;
     while i < rest.len() {
@@ -110,6 +126,10 @@ fn parse_args(rest: &[String]) -> Result<Args, String> {
             "--root" => a.root = val.cloned(),
             "--out-json" => a.out_json = val.cloned(),
             "--out-md" => a.out_md = val.cloned(),
+            "--llvm-cov" => a.llvm_cov = val.cloned(),
+            "--prev" => a.prev = val.cloned(),
+            "--round" => a.round = val.cloned(),
+            "--out-txt" => a.out_txt = val.cloned(),
             other => return Err(format!("unknown argument {other:?}")),
         }
         i += 2;
@@ -540,15 +560,91 @@ fn usage() -> ExitCode {
          \x20 matrix --catalogue-dir DIR --suites FILE|- [--timings FILE]\n\
          \x20 render [--matrix FILE|-]\n\
          \x20 write-matrix --catalogue-dir DIR --suites FILE|- [--timings FILE] --out-json PATH --out-md PATH\n\
+         \x20 coverage-report --catalogue-dir DIR --suites FILE|- [--llvm-cov FILE --root DIR] [--prev FILE] [--round ID] --out-json PATH --out-txt PATH\n\
          \x20 schema <catalogue|matrix>"
     );
     ExitCode::FAILURE
 }
 
+fn cmd_coverage_report(rest: &[String]) -> ExitCode {
+    let a = match parse_args(rest) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("test-plan coverage-report: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let (Some(dir), Some(suites_spec), Some(out_json), Some(out_txt)) = (a.catalogue_dir, a.suites, a.out_json, a.out_txt) else {
+        eprintln!("usage: test-plan coverage-report --catalogue-dir DIR --suites FILE|- [--llvm-cov FILE --root DIR] [--prev FILE] [--round ID] --out-json PATH --out-txt PATH");
+        return ExitCode::FAILURE;
+    };
+    let cats = match load_or_report(&dir) {
+        Ok(c) => c,
+        Err(rc) => return rc,
+    };
+    let suites = match load_suites(&suites_spec) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("test-plan: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let lines = match &a.llvm_cov {
+        None => None,
+        Some(f) => match read_text(f).and_then(|t| coverage::parse_llvm_cov(&t, a.root.as_deref().unwrap_or(""))) {
+            Ok(l) => Some(l),
+            Err(e) => {
+                eprintln!("test-plan: lines unavailable: {e}");
+                None
+            }
+        },
+    };
+    let report = coverage::build_report(a.round.as_deref(), lines, &build_matrix(&cats, &suites, &BTreeMap::new()));
+    let prev: Option<coverage::CoverageReport> = a.prev.as_deref().and_then(|f| {
+        match fs::read_to_string(f).map_err(|e| e.to_string()).and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string())) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                eprintln!("test-plan: no previous report ({f}): {e}");
+                None
+            }
+        }
+    });
+    let mut text = coverage::render_text(&report);
+    if let Some(p) = &prev {
+        text.push_str("\ndelta against the previous landed round");
+        if let Some(r) = &p.round {
+            text.push_str(&format!(" ({r})"));
+        }
+        text.push_str(":\n");
+        text.push_str(&coverage::render_delta(p, &report));
+    }
+    let json = match serde_json::to_string_pretty(&report) {
+        Ok(j) => j,
+        Err(e) => {
+            eprintln!("test-plan: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Err(e) = fs::write(&out_json, json).and_then(|_| fs::write(&out_txt, &text)) {
+        eprintln!("test-plan: {e}");
+        return ExitCode::FAILURE;
+    }
+    print!("{text}");
+    if let Some(p) = &prev {
+        println!("delta: {}", coverage::delta_line(p, &report));
+    }
+    let endpoint = spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok();
+    let sink = spira_otel::metrics::MetricsSink::for_component(endpoint.as_deref(), "test-plan");
+    if let Err(e) = sink.try_push_series(&coverage::metric_series(&report, std::time::SystemTime::now())) {
+        eprintln!("test-plan: coverage metrics not pushed: {e}");
+    }
+    ExitCode::SUCCESS
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let op = match args.first().map(String::as_str) {
-        Some(o @ ("catalogue-ids" | "validate" | "orphans" | "gaps" | "launcher-gaps" | "launcher-sites" | "matrix" | "render" | "write-matrix" | "schema")) => o,
+        Some(o @ ("catalogue-ids" | "validate" | "orphans" | "gaps" | "launcher-gaps" | "launcher-sites" | "matrix" | "render" | "write-matrix" | "coverage-report" | "schema")) => o,
         _ => "other",
     };
     let meter = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "test-plan", op);
@@ -562,6 +658,7 @@ fn main() -> ExitCode {
         Some("matrix") => cmd_matrix(&args[1..]),
         Some("render") => cmd_render(&args[1..]),
         Some("write-matrix") => cmd_write_matrix(&args[1..]),
+        Some("coverage-report") => cmd_coverage_report(&args[1..]),
         Some("schema") => cmd_schema(args.get(1).map(String::as_str)),
         _ => usage(),
     };

@@ -351,8 +351,10 @@ unit_cargo() {
         CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="$RUSTC_WRAPPER" SCCACHE_IGNORE_SERVER_IO_ERROR=1 \
         SCCACHE_WEBDAV_ENDPOINT="$SCCACHE_WEBDAV_ENDPOINT" SCCACHE_WEBDAV_KEY_PREFIX="$SCCACHE_WEBDAV_KEY_PREFIX" \
         GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
-        cargo test --profile unittest --workspace --config profile.unittest.incremental=false "$@"
+        cargo $unit_cov test --profile unittest --workspace --config profile.unittest.incremental=false "$@"
 }
+unit_cov=""
+if [ -x "$CARGO_HOME/bin/cargo-llvm-cov" ]; then unit_cov="llvm-cov --no-report"; else echo "round-vm: COVERAGE: lines unavailable (the image has no cargo-llvm-cov)" >&2; fi
 unit_build_mark="$HOME/round-work/.runtime/spira/batch-results/unit-build"
 mkdir -p "$(dirname "$unit_build_mark")"
 echo building > "$unit_build_mark"
@@ -624,6 +626,20 @@ if kill -0 "$unit_pid" 2>/dev/null; then
 fi
 wait "$unit_pid"; unit_rc=$?
 wait "$stream_pid"
+if [ -n "$unit_cov" ]; then
+    # The line report is read off the profile data the unit run just wrote; it reports and never gates.
+    if unit_cargo_report=$(env -i HOME="$HOME" PATH="$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" CARGO_HOME="$CARGO_HOME" \
+        cargo llvm-cov report --json --summary-only --output-path "$HOME/coverage-lines.json" 2>&1); then
+        cov_rdir="$HOME/round-work/.runtime/spira/batch-results"
+        cov_leaf="$(find "$cov_rdir" -name '*.result' -printf '%h\n' 2>/dev/null | head -1)"
+        cov_leaf="${cov_leaf:-$cov_rdir}"
+        mkdir -p "$cov_leaf"
+        cp "$HOME/coverage-lines.json" "$cov_leaf/coverage-lines.json"
+        printf '%s\n' "$HOME/round-work" > "$cov_leaf/coverage-root"
+    else
+        echo "round-vm: COVERAGE: lines unavailable (cargo llvm-cov report failed): $(printf '%s' "$unit_cargo_report" | tail -5)" >&2
+    fi
+fi
 kill "$hang_pid" 2>/dev/null; wait "$hang_pid" 2>/dev/null
 [ ! -s "$unit_hung" ] || [ "$unit_rc" -ne 0 ] || unit_rc=1
 if [ "$lint_rc" -ne 0 ]; then
@@ -1871,6 +1887,25 @@ pub const REMOTE_RESULTS: &str = "round-work/.runtime/spira/batch-results/";
 /// Everything after the remote corpus returned `remote_rc`: pull results, tsd and binaries,
 /// write the manifest, install by tree sha. Returns `run`'s exit code.
 #[allow(clippy::too_many_arguments)]
+/// The round's coverage artifacts and its delta against the last green round; a fault here is
+/// printed and never changes the round's verdict.
+fn record_coverage(args: &RunArgs, state_dir: &Path, results_dir: &Path, round: &str, green: bool) {
+    let script = args.tree_dir.join("spira").join("coverage-round.sh");
+    let out = command("bash")
+        .arg(&script)
+        .arg(&args.tree_dir)
+        .arg(results_dir)
+        .arg(state_dir)
+        .arg(round)
+        .arg(if green { "1" } else { "0" })
+        .stdin(Stdio::null())
+        .output();
+    match out {
+        Ok(o) => eprint!("{}", String::from_utf8_lossy(&o.stderr)),
+        Err(e) => eprintln!("round-vm run: coverage: {e}"),
+    }
+}
+
 fn after_batch(
     env: &RunEnv,
     args: &RunArgs,
@@ -1975,6 +2010,7 @@ fn after_batch(
         eprintln!("round-vm run: manifest: {e}");
         own_fault = true;
     }
+    record_coverage(args, &cfg.state_dir, &results_dir, tree_sha, remote_rc == 0);
     let target = args.tree_dir.join("target").join("release");
     if let Err(e) = install_bins(&bins, tree_sha, reported.as_deref(), &target) {
         eprintln!("{e}");
@@ -2365,8 +2401,18 @@ mod tests {
         assert!(build < no_run && no_run < suites && no_run < run, "the compile precedes the suites and the run");
         let f = REMOTE_SCRIPT.find("unit_cargo() {").unwrap();
         let body = &REMOTE_SCRIPT[f..f + REMOTE_SCRIPT[f..].find("\n}\n").unwrap()];
-        assert!(body.contains("cargo test --profile unittest --workspace --config profile.unittest.incremental=false"), "{body}");
-        assert_eq!(REMOTE_SCRIPT.matches("cargo test").count(), 1, "one definition of the unit command, shared by compile and run");
+        assert!(body.contains("cargo $unit_cov test --profile unittest --workspace --config profile.unittest.incremental=false"), "{body}");
+        assert_eq!(REMOTE_SCRIPT.matches("cargo $unit_cov test").count(), 1, "one definition of the unit command, shared by compile and run");
+    }
+
+    #[test]
+    fn line_coverage_is_the_unit_command_itself_when_the_image_has_llvm_cov_and_never_a_second_run() {
+        assert!(REMOTE_SCRIPT.contains("unit_cov=\"llvm-cov --no-report\""));
+        assert!(REMOTE_SCRIPT.contains("lines unavailable (the image has no cargo-llvm-cov)"), "a missing tool is reported, not a failed round");
+        let report = REMOTE_SCRIPT.find("cargo llvm-cov report --json --summary-only").unwrap();
+        let waited = REMOTE_SCRIPT.find("wait \"$unit_pid\"; unit_rc=$?").unwrap();
+        assert!(waited < report, "the report is read off the profile data after the unit run");
+        assert_eq!(REMOTE_SCRIPT.matches("cargo $unit_cov test").count(), 1);
     }
 
     #[test]
