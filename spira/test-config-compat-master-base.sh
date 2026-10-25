@@ -7,11 +7,9 @@
 # this area hardcodes `-b main` for its fixture repo and `origin/main` in its
 # repo-map row.
 #
-# THREE ROWS, one per land mode that actually advances a base: the batcher's cut
-# (batch.sh's own merge onto spira_landref, retired sp-vsob2), queue verdict's fast-forward,
-# and landing.sh push. (queue mode's certify step and pr mode never move a base branch
-# themselves, so they carry no row here.) Each drives the real script/binary against a
-# repo whose base is `master`.
+# TWO ROWS: the batcher's cut (batch.sh's own merge onto spira_landref, retired sp-vsob2) and
+# queue verdict's fast-forward, each driving the real binary against a repo whose base is
+# `master`. The push-mode landing row is the sim scenario repo-modes.
 #
 # tier: T2
 # covers: batcher-cut/src/*.rs batcher/src/*.rs queue/src/* landing-pass/src/* spira/lib.sh spira/testlib/lc-fixture.sh UC-landing-merge-queue-45
@@ -221,61 +219,5 @@ want "verdict: reports a fast-forward landing" "landed by fast-forward" "$out"
 nowant "verdict: spira-lc refused no step of the land walk" "refused" "$out"
 is "verdict: the batch is LANDED on spira-lc" "LANDED" \
     "$(lcfix_sql -q "SELECT state FROM batch WHERE batch_id='vtest-1'" -r csv 2>/dev/null | sed -n 2p)"
-
-# ============================================================================
-echo
-echo "landing-pass land: a closed bead's branch lands (push mode) onto a MASTER base:"
-# ============================================================================
-L_REPO="$TMP/landing-repo"; L_REMOTE="$TMP/landing-remote.git"
-L_RUN="$TMP/landing-run"; L_SH="$TMP/landing-spira"
-git init -q --bare -b master "$L_REMOTE"
-git init -q -b master "$L_REPO"
-git -C "$L_REPO" commit -q --allow-empty -m base
-git -C "$L_REPO" remote add origin "$L_REMOTE"
-timeout 5 git -C "$L_REPO" push -q origin master
-timeout 5 git -C "$L_REPO" fetch -q origin
-mkdir -p "$L_RUN/worktree" "$L_SH"
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$L_SH/"
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$L_SH/"
-printf '#!/usr/bin/env bash\necho "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2\nexit 0\n' \
-    > "$L_SH/gate.sh"; chmod +x "$L_SH/gate.sh"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$L_SH/confine.sh"; chmod +x "$L_SH/confine.sh"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$L_SH/skew"; chmod +x "$L_SH/skew"
-lc_path_stub "$L_SH" "$TMP/lcfix-l"
-
-testdb_seed <<'JSONL'
-{"id":"sp-epic2","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
-JSONL
-printf '{"id":"sp-lbase","title":"landing master-base","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-lbase","depends_on_id":"sp-epic2","type":"parent-child"}]}\n' \
-    | testdb_seed
-
-git -C "$L_REPO" worktree add -q -b spira/sp-lbase "$L_RUN/worktree/sp-lbase" master
-printf 'sp-lbase\n' > "$L_RUN/worktree/sp-lbase/sp-lbase.txt"
-git -C "$L_RUN/worktree/sp-lbase" add -A
-git -C "$L_RUN/worktree/sp-lbase" commit -q -m "feat: sp-lbase — work"
-lc_bead SUBMITTED sp-lbase "$(git -C "$L_RUN/worktree/sp-lbase" rev-parse HEAD)" 0   # the hand-off is the lifecycle row (sp-mve9i)
-
-# A real repo-map, not a nonexistent one: landing-pass now needs an explicit `base` to
-# resolve the ref branches land on (CHECK6) — there is no more derive-from-SPIRA_REPO-alone
-# fallback to fall back to (sfail round 3, pattern 7).
-printf '%s | %s | push | origin/master | | |\n' "$(basename "$L_REPO")" "$L_REPO" > "$L_SH/repo-map"
-tl_config SPIRA_BATCHER_ENABLE=1 SPIRA_RUN="$L_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$L_SH/repo-map"
-out="$(SPIRA_HOME="$L_SH" SPIRA_REPO="$L_REPO" PATH="$L_SH:$PATH" \
-        landing-pass land 2>&1)"
-
-want "landing: reports landing the master-base branch" "landed spira/sp-lbase" "$out"
-timeout 5 git -C "$L_REPO" fetch -q origin
-if git -C "$L_REPO" merge-base --is-ancestor spira/sp-lbase origin/master 2>/dev/null; then
-    ok "landing: the branch's own commit is an ancestor of origin/master"
-else
-    bad "landing: the branch's own commit is an ancestor of origin/master" \
-        "spira/sp-lbase is not an ancestor of origin/master"
-fi
-
-status_of() { "${TESTDB_BD:-bd}" -C "$SPIRA_DB" show "$1" --json 2>/dev/null | python3 -c '
-import json, sys
-d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
-print(d[0].get("status") or "")'; }
-is "landing: sp-lbase stays closed" "closed" "$(status_of sp-lbase)"
 
 tl_summary

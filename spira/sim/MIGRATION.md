@@ -95,3 +95,26 @@ Left, each blocked on more than a seed and a column:
 | test-destructive-bead, test-bead-file, test-bead-pilgrimage, test-express-lane | `bead.sh file` refusals asserted on stderr text and the lane guard's config |
 | test-census*, test-livelock, test-deadlock-sweep, test-groomer*, test-unclaimable*, test-maechen-*, test-groom-trigger, test-watchtower-czar-outcome, test-cockpit-reachable | an actor row for the detector (G15) and a bead aged in the store |
 | test-hold, test-unpoison, test-queue-ops, test-verify-landed | the lifecycle verbs and a deploy step (G14, G7) beside the seeds |
+
+## Repository set and modes (sp-gqrlv6)
+
+`sim world up <dir> --repo <name>:<mode>[:<trunk>]` (repeatable; also `sim run --repo`, and
+`repos = [...]` in a scenario) registers repositories in any of push, pr, hold, queue,
+queue.forge, queue.local. The world's own repository (`sim`) is queue.local unless named; any
+other name is a repository of its own under `repos/<name>/` with the given trunk (`master`), and
+a `file`/`claim` step routes a bead to it with `repo = "<name>"`. The probe holds each bead
+against its own repository's refs.
+
+Moved: the push-mode landing row of test-config-compat-master-base (a master-based repo; its
+bash row is deleted) — scenario `repo-modes`, seen red when the push lands on `main` whatever the
+base — and the push landing itself, `push-lands`, seen red when the push goes to the wrong ref.
+
+Left, and why:
+
+| suite | why it stays |
+|---|---|
+| test-config-compat-master-base (batcher cut, queue verdict rows) | a queue.forge cut and verdict on a master base need the forge round trip (G10) |
+| test-landing-modes | its pr and queue sections need a forge that opens PRs and a certify step observed in the pass log (G10); its push section is the positive control that makes their silence mean something |
+| test-land-mode-local | four of five properties are `lib.sh` function checks, not world behaviour; the fifth reads a git-call log |
+| test-landing, test-landing-race, test-landing-base-fail | not G7 alone: G6 verdict kinds and G15 actors |
+| the bead.sh, repo-map, held, cockpit and chamber label suites | they read the registry and the bead CLI, not a running loop; a world adds nothing they lack |

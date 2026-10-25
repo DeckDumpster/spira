@@ -36,6 +36,7 @@ pub fn parse(text: &str, bead: &str) -> Result<Vec<Vec<Step>>, String> {
         }
         let at = |m: &str| format!("scenario line {}: {m}", n + 1);
         let step = match (verb, rest) {
+            ("repo", r) if !r.is_empty() => continue,
             ("summon", "") => {
                 summons.push(vec![]);
                 continue;

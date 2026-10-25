@@ -1,0 +1,19 @@
+epoch = 1800000000
+horizon = 900000
+goal = "sp-pl01:LANDED"
+settle = 60000
+repos = ["sim:push"]
+real_actors = ["sentinel-summon", "sentinel-landing"]
+
+[[step]]
+at = 0
+file = "sp-pl01"
+
+[[step]]
+at = 0
+claim = "sp-pl01"
+script = ["commit out/push.txt", "submit"]
+
+[[expect]]
+name = "landed_on_the_origin_trunk"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-pl01' AND lc_state = 'LANDED' AND on_origin_main"

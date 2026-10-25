@@ -45,6 +45,8 @@ pub struct StepDef {
     pub script: Vec<String>,
     /// With `file`: the bead's priority (bd's `-p`); 2 when absent.
     pub priority: Option<u8>,
+    /// With `file` or `claim`: the world repository the bead belongs to; the world's own when absent.
+    pub repo: Option<String>,
 }
 
 /// A bead filed through `bead.sh` when the scenario starts: its persona or kind, priority,
@@ -193,15 +195,24 @@ impl StepDef {
         if self.priority.is_some_and(|p| p > 4) || (self.priority.is_some() && self.file.is_none()) {
             return Err(format!("scenario: step at {}: priority is 0-4 and belongs to a file step", self.at));
         }
+        if self.repo.is_some() && self.file.is_none() && self.claim.is_none() {
+            return Err(format!("scenario: step at {}: repo belongs to a file or claim step", self.at));
+        }
+        let repo = self.repo.as_deref().unwrap_or(REPO);
+        if !repo.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_')) {
+            return Err(format!("scenario: {repo:?} is not a repository name"));
+        }
         match (&self.command, &self.file, &self.claim) {
             (Some(c), None, None) if self.script.is_empty() => expand_beads(c),
             (None, Some(b), None) if self.script.is_empty() => {
                 let b = bead_id(b)?;
-                Ok(format!("bd -C \"$SIM_BEADS_DB\" create {} --id {b} -t task -p {} -l spira -l plan -l repo:{REPO} --silent >/dev/null && spira-lc create-bead {b}", shell_quote(&format!("sim {b}")), self.priority.unwrap_or(2)))
+                let named = self.repo.as_ref().map(|r| format!(" --repo {r}")).unwrap_or_default();
+                Ok(format!("bd -C \"$SIM_BEADS_DB\" create {} --id {b} -t task -p {} -l spira -l plan -l repo:{repo} --silent >/dev/null && spira-lc create-bead {b}{named}", shell_quote(&format!("sim {b}")), self.priority.unwrap_or(2)))
             }
             (None, None, Some(b)) if !self.script.is_empty() => {
                 let b = bead_id(b)?;
-                let lines: Vec<String> = self.script.iter().map(|l| shell_quote(&format!("{b} {l}"))).collect();
+                let routed = self.repo.as_ref().map(|r| format!("repo {r}"));
+                let lines: Vec<String> = routed.iter().chain(&self.script).map(|l| shell_quote(&format!("{b} {l}"))).collect();
                 Ok(format!("printf '%s\\n' {} >> \"${}\"", lines.join(" "), crate::agent::SCENARIO_VAR))
             }
             _ => Err(format!("scenario: step at {} needs exactly one of command, file, or claim with a script", self.at)),
@@ -228,6 +239,10 @@ pub struct Scenario {
     pub real_actors: Vec<String>,
     #[serde(default, rename = "seed")]
     pub seeds: Vec<SeedDef>,
+    /// The world's repositories as `--repo` writes them (`<name>:<mode>[:<trunk>]`); the world's
+    /// own is `sim:queue.local` unless named here.
+    #[serde(default)]
+    pub repos: Vec<String>,
     #[serde(default, rename = "step")]
     pub steps: Vec<StepDef>,
     #[serde(default, rename = "invariant")]
@@ -272,6 +287,7 @@ pub fn parse_scenario(text: &str) -> Result<Scenario, String> {
         return Err("scenario: goal_tag needs a goal".to_string());
     }
     seed_steps(&sc.seeds)?;
+    let named = scenario_repos(&sc, &[])?;
     let mut seen: Vec<&SeedDef> = Vec::new();
     for sd in &sc.seeds {
         if seen.iter().any(|p| p.handle == sd.handle || p.title == sd.title) {
@@ -292,6 +308,11 @@ pub fn parse_scenario(text: &str) -> Result<Scenario, String> {
         if let Some(h) = st.command.iter().flat_map(|c| command_handles(c)).find(|h| !sc.seeds.iter().any(|s| &s.handle == h)) {
             return Err(format!("scenario: step at {} names {{bead:{h}}}, which no seed declares", st.at));
         }
+        if let Some(r) = &st.repo {
+            if !named.iter().any(|n| &n.name == r) {
+                return Err(format!("scenario: step at {} names repository {r}, which the scenario does not declare", st.at));
+            }
+        }
     }
     for d in sc.invariants.iter().chain(&sc.expects) {
         d.check()?;
@@ -305,6 +326,16 @@ pub fn parse_scenario(text: &str) -> Result<Scenario, String> {
         }
     }
     Ok(sc)
+}
+
+/// The scenario's repositories with `cli` laid over them (a name given on the command line
+/// replaces the scenario's).
+pub fn scenario_repos(sc: &Scenario, cli: &[String]) -> Result<Vec<crate::world::RepoSpec>, String> {
+    let parsed = |v: &[String]| v.iter().map(|r| crate::world::RepoSpec::parse(r)).collect::<Result<Vec<_>, _>>();
+    let (declared, given) = (parsed(&sc.repos)?, parsed(cli)?);
+    let mut all: Vec<_> = declared.into_iter().filter(|d| !given.iter().any(|g| g.name == d.name)).collect();
+    all.extend(given);
+    crate::world::repo_set(&all)
 }
 
 pub fn parse_bead_state(spec: &str) -> Result<(String, String), String> {

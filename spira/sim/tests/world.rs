@@ -1,6 +1,6 @@
 use spira_sim::world::{
-    up_resolving, check_socket_path, db_root, down, is_world_serve, lc_pid_file, lc_socket, prebuilt_release, release_source, serve_argv, up, ProcessSteps,
-    ReleaseSource, Steps, PRODUCTION_LOCATORS, RELEASE_ENV, TESTENV_ENV,
+    up_repos, up_resolving, check_socket_path, db_root, down, is_world_serve, lc_pid_file, lc_socket, prebuilt_release, release_source, serve_argv, up, ProcessSteps,
+    ReleaseSource, RepoSpec, Steps, PRODUCTION_LOCATORS, RELEASE_ENV, TESTENV_ENV,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -506,4 +506,46 @@ fn a_store_that_fails_up_does_not_leave_the_caller_waiting() {
     let dir = t.join("world");
     let e = up(fixture_repo().path(), &dir, "HEAD", &clean, &NoDb).unwrap_err();
     assert!(e.contains("no store"), "{e}");
+}
+
+fn git_in(repo: &Path, args: &[&str]) -> String {
+    let o = std::process::Command::new("git").arg("-C").arg(repo).args(args).output().unwrap();
+    assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+    String::from_utf8(o.stdout).unwrap().trim().to_string()
+}
+
+#[test]
+fn a_world_with_repositories_registers_each_in_its_mode_and_builds_the_ones_beyond_its_own() {
+    let t = testkit::TempDir::new("simw");
+    let dir = t.join("world");
+    let repos: Vec<RepoSpec> = ["sim:push", "docs:queue.local:master", "site:hold"].iter().map(|s| RepoSpec::parse(s).unwrap()).collect();
+    up_repos(fixture_repo().path(), &dir, "HEAD", &clean, &Fake::default(), &repos, &|_| Ok(())).unwrap();
+    let cfg = std::fs::read_to_string(dir.join("config/sim.toml")).unwrap();
+    assert!(cfg.contains(r#""mode":"push""#) && cfg.contains(r#""base":"origin/main""#), "{cfg}");
+    assert!(cfg.contains(r#""mode":"queue.local""#) && cfg.contains(r#""base":"local/master""#) && cfg.contains(r#""mode":"hold""#), "{cfg}");
+    let rows = std::fs::read_to_string(dir.join("home/registry-rows")).unwrap();
+    let dir = dir.canonicalize().unwrap();
+    assert_eq!(rows.lines().count(), 3, "{rows}");
+    for name in ["docs", "site"] {
+        let work = dir.join("repos").join(name).join("work");
+        assert!(rows.contains(&format!("{name}|{}|", work.display())), "{rows}");
+        assert_eq!(git_in(&work, &["rev-parse", "--is-inside-work-tree"]), "true");
+        assert!(work.join("gate.steps").is_file(), "{name} carries the world's stub gate");
+    }
+    let docs = dir.join("repos/docs/work");
+    assert_eq!(git_in(&docs, &["rev-parse", "--abbrev-ref", "HEAD"]), "master");
+    assert_eq!(git_in(&docs, &["rev-parse", "master"]), git_in(&docs, &["rev-parse", "origin/master"]));
+    assert_eq!(git_in(&docs, &["rev-parse", "master"]), git_in(&docs, &["rev-parse", "local/master"]), "a queue.local repository has its landing branch");
+    let site = dir.join("repos/site/work");
+    assert!(std::process::Command::new("git").arg("-C").arg(&site).args(["rev-parse", "--verify", "-q", "local/main"]).output().unwrap().status.code() != Some(0), "only queue.local gets a local landing branch");
+    assert_eq!(git_in(&dir.join("repos/site/origin.git"), &["rev-parse", "--is-bare-repository"]), "true");
+}
+
+#[test]
+fn a_world_without_repositories_is_one_queue_local_repository() {
+    let t = testkit::TempDir::new("simw");
+    let dir = t.join("world");
+    up(fixture_repo().path(), &dir, "HEAD", &clean, &Fake::default()).unwrap();
+    assert_eq!(std::fs::read_to_string(dir.join("home/registry-rows")).unwrap().lines().count(), 1);
+    assert!(!dir.join("repos").exists());
 }

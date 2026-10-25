@@ -1,0 +1,71 @@
+epoch = 1800000000
+horizon = 900000
+goal = "sp-rm01:LANDED"
+settle = 400000
+repos = ["docs:push:master", "held:hold", "forged:queue.forge", "reviewed:pr", "queued:queue", "local:queue.local:master"]
+real_actors = ["sentinel-summon", "sentinel-landing"]
+
+# One repository per land mode beside the world's own, two of them with a master trunk. A branch
+# of the push repository lands on its master; a branch of the hold repository is left for a human.
+
+[[step]]
+at = 0
+file = "sp-rm01"
+repo = "docs"
+
+[[step]]
+at = 0
+claim = "sp-rm01"
+repo = "docs"
+script = ["commit out/docs.txt", "submit"]
+
+[[step]]
+at = 0
+file = "sp-rm02"
+repo = "held"
+
+[[step]]
+at = 0
+claim = "sp-rm02"
+repo = "held"
+script = ["commit out/held.txt", "submit"]
+
+[[expect]]
+name = "push_repository_landed_on_its_master"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-rm01' AND lc_state = 'LANDED' AND on_origin_main"
+
+[[expect]]
+name = "hold_repository_branch_exists_unlanded"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-rm02' AND branch_tip IS NOT NULL AND lc_state <> 'LANDED' AND NOT on_origin_main"
+
+[[invariant]]
+name = "hold_repository_never_lands"
+sql = "SELECT seq, bead, lc_state FROM bead_state WHERE bead = 'sp-rm02' AND (lc_state = 'LANDED' OR on_origin_main)"
+
+[[step]]
+at = 250000
+command = '''
+set -u
+o="$SIM_WORLD/repos/docs/origin.git"
+git -C "$o" rev-parse --verify -q refs/heads/master >/dev/null || exit 4
+git -C "$o" log --format=%s master | grep -q sp-rm01 || exit 3
+! git -C "$o" rev-parse --verify -q refs/heads/main >/dev/null || exit 5
+'''
+
+[[step]]
+at = 400000
+command = '''
+set -u
+o="$SIM_WORLD/repos/docs/origin.git"
+git -C "$o" rev-parse --verify -q refs/heads/master >/dev/null || exit 4
+git -C "$o" log --format=%s master | grep -q sp-rm01 || exit 3
+! git -C "$o" rev-parse --verify -q refs/heads/main >/dev/null || exit 5
+'''
+
+[[invariant]]
+name = "master_repository_gets_no_main"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit NOT IN (0, 3)"
+
+[[expect]]
+name = "master_repository_holds_the_landed_work_and_has_no_main"
+sql = "SELECT 1 FROM events WHERE kind = 'step' AND exit = 0 AND actor IN ('step4', 'step5')"
