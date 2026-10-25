@@ -1308,6 +1308,29 @@ fn a_round_vm_exit_names_the_failure_the_vm_logged() {
 }
 
 #[test]
+fn a_fixture_fault_is_the_round_cause_and_suite_fail_lines_are_not() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.scripts.round_vm.borrow_mut() = RunOut {
+        rc: 3,
+        out: String::new(),
+        err: "  FAIL    loom does not answer at http://127.0.0.1:7300/stuck\n".into(),
+    };
+    *t.scripts.round_vm_files.borrow_mut() = vec![(
+        "fixture-fault.out".into(),
+        "FIXTURE-FAULT: install rc=7: install failed — harness fault\ninstall rc=7 output tail:\nunits-install: no such unit\n".into(),
+    )];
+    assert_eq!(t.run(&["round", "certify", &batch]), 4);
+    let err = t.err();
+    assert!(
+        err.contains("round-vm exited 3: install rc=7: install failed — harness fault [units-install: no such unit]"),
+        "{err}"
+    );
+    assert!(!err.contains("round-vm exited 3: FAIL"), "{err}");
+}
+
+#[test]
 fn a_pass_whose_tests_overran_the_cap_is_a_fault_even_with_every_verdict_in() {
     let t = round_world();
     assert_eq!(
