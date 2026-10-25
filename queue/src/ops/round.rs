@@ -2023,6 +2023,9 @@ pub(super) fn certify(
             if !names.is_empty() {
                 w.out(format!("unit-tests-failed={}", names.join(",")));
             }
+            if let Some(cause) = failed.lines().find_map(|l| l.strip_prefix("UNIT-TESTS-CAUSE: ")) {
+                w.out(format!("unit-tests-cause={cause}"));
+            }
         }
         reds.sort();
         reds.dedup();

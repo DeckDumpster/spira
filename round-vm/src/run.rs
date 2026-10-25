@@ -530,6 +530,7 @@ fi
 unit_progress="$HOME/round-work/.runtime/spira/batch-results/unit-progress"
 mkdir -p "$(dirname "$unit_progress")"
 : > ~/round-unit-tests.log
+unit_t0=$(date +%s)
 unit_cargo --no-fail-fast > ~/round-unit-tests.log 2>&1 &
 unit_pid=$!
 tail -n +1 -f --pid="$unit_pid" ~/round-unit-tests.log | unit_stream "$unit_total" "$unit_progress" &
@@ -623,6 +624,7 @@ if kill -0 "$unit_pid" 2>/dev/null; then
     pkill -TERM -P "$unit_pid" 2>/dev/null; kill "$unit_pid" 2>/dev/null
 fi
 wait "$unit_pid"; unit_rc=$?
+unit_secs=$(( $(date +%s) - unit_t0 ))
 wait "$stream_pid"
 kill "$hang_pid" 2>/dev/null; wait "$hang_pid" 2>/dev/null
 [ ! -s "$unit_hung" ] || [ "$unit_rc" -ne 0 ] || unit_rc=1
@@ -655,8 +657,16 @@ else
     leaf="$(find "$rdir" -name '*.result' -printf '%h\n' 2>/dev/null | head -1)"
     leaf="${leaf:-$rdir}"
     mkdir -p "$leaf"
-    grep -E -A8 '^(test .* FAILED|---- |error(\[|:))|panicked at|^test result:' ~/round-unit-tests.log | head -400 > "$leaf/unit-tests.out"
-    [ -s "$leaf/unit-tests.out" ] || tail -200 ~/round-unit-tests.log > "$leaf/unit-tests.out"
+    if [ "$unit_rc" -gt 128 ]; then unit_cause="killed by signal $(( unit_rc - 128 ))"; else unit_cause="exit status $unit_rc"; fi
+    [ ! -s "$unit_hung" ] || unit_cause="$unit_cause, hung past its guard"
+    unit_last="$(awk '/^ *Running / { if (match($0, /\(.*\)/)) b = substr($0, RSTART + 1, RLENGTH - 2); else b = $0 } END { sub(/.*\//, "", b); print b }' ~/round-unit-tests.log)"
+    unit_failed="$(grep -c -E '^test .* FAILED|^test result: FAILED' ~/round-unit-tests.log)"
+    {
+        echo "UNIT-TESTS-CAUSE: $unit_cause after ${unit_secs}s; last binary=${unit_last:-none-started}; failures=$unit_failed"
+        grep -E -A8 '^(test .* FAILED|---- |error(\[|:))|panicked at|^test result: FAILED|^failures:' ~/round-unit-tests.log | head -400
+        echo "--- last output of the log ---"
+        tail -100 ~/round-unit-tests.log
+    } > "$leaf/unit-tests.out"
     [ ! -s "$unit_hung" ] || { echo "round-vm: UNIT-TESTS: HUNG (test<TAB>binary):"; cat "$unit_hung"; } >> "$leaf/unit-tests.out"
     [ "$rc" -eq 0 ] && rc=1
 fi
@@ -2367,6 +2377,15 @@ mod tests {
         let body = &REMOTE_SCRIPT[f..f + REMOTE_SCRIPT[f..].find("\n}\n").unwrap()];
         assert!(body.contains("cargo test --profile unittest --workspace --config profile.unittest.incremental=false"), "{body}");
         assert_eq!(REMOTE_SCRIPT.matches("cargo test").count(), 1, "one definition of the unit command, shared by compile and run");
+    }
+
+    #[test]
+    fn a_killed_unit_run_saves_its_cause_and_its_last_output() {
+        let f = REMOTE_SCRIPT.find("unit_cause=\"killed by signal").expect("the cause");
+        let tail = &REMOTE_SCRIPT[f..];
+        assert!(tail.contains("killed by signal") && tail.contains("${unit_secs}s"), "{tail}");
+        assert!(tail.contains("tail -100 ~/round-unit-tests.log"), "the saved output ends with the log's own tail");
+        assert!(!REMOTE_SCRIPT.contains("^test result:' ~/round-unit-tests.log | head"), "passing binaries no longer fill the head");
     }
 
     #[test]
