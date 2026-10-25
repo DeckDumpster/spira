@@ -1,0 +1,37 @@
+epoch = 1800000000
+horizon = 900000
+settle = 120000
+goal = "sp-sl01:SUBMITTED"
+real_actors = ["sentinel-summon"]
+real_aeon = true
+
+[[step]]
+at = 0
+file = "sp-sl01"
+body = "## Build\n\nAdd out/sl01.txt."
+
+[[step]]
+at = 0
+claim = "sp-sl01"
+script = ["slain", "summon", "commit out/sl01.txt", "submit"]
+
+[[step]]
+at = 400000
+name = "attempts"
+command = "sh spira/sim/scenarios/steps/attempts.sh sp-sl01 1"
+
+[[invariant]]
+name = "step_failed"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit NOT IN (0, 3)"
+
+[[expect]]
+name = "slain_session_released_the_bead"
+sql = "SELECT 1 FROM bead_state w JOIN bead_state r ON r.bead = w.bead AND r.seq > w.seq WHERE w.bead = 'sp-sl01' AND w.lc_state = 'WORKING' AND r.lc_state = 'READY'"
+
+[[expect]]
+name = "two_sessions_ran"
+sql = "SELECT 1 FROM briefs WHERE bead = 'sp-sl01' AND n = 2"
+
+[[expect]]
+name = "slain_charged_no_attempt"
+sql = "SELECT 1 FROM events WHERE kind = 'step' AND actor = 'attempts' AND exit = 0"

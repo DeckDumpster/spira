@@ -18,6 +18,8 @@ pub enum Step {
     /// Remove a file the branch added, in a commit of its own.
     Drop(String),
     NoProgress,
+    /// Record the `slain` disposition on the bead, as an operator's slay does mid-session.
+    Slain,
     Ask { question: String, default: String },
 }
 
@@ -47,6 +49,7 @@ pub fn parse(text: &str, bead: &str) -> Result<Vec<Vec<Step>>, String> {
             ("submit-from-main", "") => Step::SubmitFromMain,
             ("drop", f) if !f.is_empty() => Step::Drop(f.to_string()),
             ("no-progress", "") => Step::NoProgress,
+            ("slain", "") => Step::Slain,
             ("ask", r) if !r.is_empty() => match r.split_once(" | ") {
                 Some((q, d)) => Step::Ask { question: q.trim().to_string(), default: d.trim().to_string() },
                 None => return Err(at("ask needs `<question> | <default>`")),
@@ -124,6 +127,7 @@ fn exec(worktree: &Path, bead: &str, step: &Step, ordinal: usize) -> Result<(), 
             git(worktree, &["commit", "-q", "-m", &format!("{bead}: sim drop {file}")]).map(|_| ())
         }
         Step::NoProgress => Ok(()),
+        Step::Slain => run(Command::new(spira_config::release_env::tool("spira-lc")).args(["disposition", bead, "slain", "slain by operator", "slay"]).current_dir(worktree), CALL_DEADLINE).map(|_| ()),
         Step::Ask { question, default } => work(worktree, &["blocked", question, "--default", default]).map(|_| ()),
     }
 }
