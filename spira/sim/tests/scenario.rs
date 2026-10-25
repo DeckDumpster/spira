@@ -1,6 +1,6 @@
-use spira_sim::drive::{parse_scenario, scenario_path, Scenario};
-use spira_sim::summon::claimable;
-use spira_sim::world::{base_config, bead_db, home_settings, registry_rows, stub_gate_steps, INERT_TOOLS, REPO_NAME};
+use spira_sim::drive::{parse_scenario, scenario_path, scenario_repos, Scenario};
+use spira_sim::summon::{claimable, routed_repo};
+use spira_sim::world::{base_config, bead_db, config_settings, home_settings, registry_rows, repo_set, stub_gate_steps, RepoSpec, INERT_TOOLS, MODES, REPO_NAME};
 use std::path::Path;
 
 fn sc(steps: &str) -> Result<Scenario, String> {
@@ -86,7 +86,7 @@ fn a_worlds_config_moves_every_fixture_path_inside_it_and_registers_only_its_rep
 
 #[test]
 fn a_world_registers_one_queue_local_row_and_names_its_tools_absolutely() {
-    assert_eq!(registry_rows(Path::new("/w/work")), format!("{REPO_NAME}|/w/work|queue.local|local/main|||plan\n"));
+    assert_eq!(registry_rows(Path::new("/w"), &repo_set(&[]).unwrap()), format!("{REPO_NAME}|/w/work|queue.local|local/main|||plan\n"));
     let s = home_settings(Path::new("/w"), "/fx/f1\n", Path::new("/usr/bin/bd"));
     let get = |k: &str| s.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
     assert_eq!(get("spira.bd"), Some("/usr/bin/bd"));
@@ -179,8 +179,62 @@ fn a_bad_seed_or_a_handle_nothing_declares_is_refused() {
 }
 
 #[test]
+fn a_repo_spec_names_a_mode_and_a_trunk_and_the_ref_its_branches_land_on() {
+    let spec = |s: &str| RepoSpec::parse(s).unwrap();
+    assert_eq!((spec("docs:push").mode.as_str(), spec("docs:push").trunk.as_str(), spec("docs:push").base()), ("push", "main", "origin/main".to_string()));
+    for mode in MODES {
+        assert_eq!(spec(&format!("r:{mode}")).mode, *mode);
+    }
+    assert_eq!(spec("r:queue.local:master").base(), "local/master");
+    assert_eq!(spec("r:pr:master").base(), "origin/master");
+    for bad in ["", "docs", "docs:", ":push", "docs:merge", "Docs:push", "docs:push:", "a:push:b:c", "sim:push:master"] {
+        assert!(RepoSpec::parse(bad).is_err(), "{bad:?}");
+    }
+}
+
+#[test]
 fn the_shipped_bead_contract_parses() {
     let here = Path::new(env!("CARGO_MANIFEST_DIR"));
     let s = parse_scenario(&std::fs::read_to_string(here.join("scenarios/bead-contract.toml")).unwrap()).unwrap();
     assert!(s.reads_bead_rows() && s.expects.len() >= 10);
+}
+
+#[test]
+fn a_world_always_has_its_own_repository_first_and_registers_every_repository_it_was_given() {
+    let spec = |s: &str| RepoSpec::parse(s).unwrap();
+    let only = repo_set(&[spec("docs:hold:master")]).unwrap();
+    assert_eq!(only.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), [REPO_NAME, "docs"]);
+    assert_eq!(only[0].mode, "queue.local");
+    let named = repo_set(&[spec("docs:pr"), spec("sim:push")]).unwrap();
+    assert_eq!(named.iter().map(|r| (r.name.as_str(), r.mode.as_str())).collect::<Vec<_>>(), [(REPO_NAME, "push"), ("docs", "pr")]);
+    assert!(repo_set(&[spec("docs:pr"), spec("docs:push")]).is_err());
+    let w = Path::new("/w");
+    assert_eq!(registry_rows(w, &named), "sim|/w/work|push|origin/main|||plan\ndocs|/w/repos/docs/work|pr|origin/main|||plan\n");
+    let settings = config_settings(w, &only, Path::new("/w/bin/gh"));
+    let section = |k: &str| settings.iter().find(|(n, _)| n == k).map(|(_, v)| serde_json::from_str::<serde_json::Value>(v).unwrap());
+    assert_eq!(section("repo.docs").unwrap(), serde_json::json!({"path": "/w/repos/docs/work", "mode": "hold", "base": "origin/master"}));
+    assert_eq!(section("repo.sim").unwrap()["mode"], "queue.local");
+}
+
+#[test]
+fn a_scenario_declares_repositories_and_routes_its_beads_to_them() {
+    let text = |extra: &str| format!("epoch = 1\nhorizon = 2\nrepos = [\"docs:push:master\"]\n{extra}");
+    let ok = parse_scenario(&text("[[step]]\nat = 0\nfile = \"sp-a\"\nrepo = \"docs\"\n")).unwrap();
+    assert_eq!(scenario_repos(&ok, &[]).unwrap().len(), 2);
+    assert!(ok.steps[0].shell().unwrap().contains("-l repo:docs "));
+    let claim = parse_scenario(&text("[[step]]\nat = 0\nclaim = \"sp-a\"\nrepo = \"docs\"\nscript = [\"submit\"]\n")).unwrap();
+    assert!(claim.steps[0].shell().unwrap().contains("'sp-a repo docs' 'sp-a submit'"));
+    for bad in ["[[step]]\nat = 0\nfile = \"sp-a\"\nrepo = \"nowhere\"\n", "[[step]]\nat = 0\ncommand = \"true\"\nrepo = \"docs\"\n"] {
+        assert!(parse_scenario(&text(bad)).is_err(), "{bad}");
+    }
+    let over = scenario_repos(&ok, &["docs:hold".to_string(), "other:pr".to_string()]).unwrap();
+    assert_eq!(over.iter().map(|r| (r.name.as_str(), r.mode.as_str(), r.trunk.as_str())).collect::<Vec<_>>(), [(REPO_NAME, "queue.local", "main"), ("docs", "hold", "main"), ("other", "pr", "main")]);
+}
+
+#[test]
+fn the_summon_works_a_bead_in_the_repository_the_scenario_routes_it_to() {
+    let scenario = "sp-a repo docs\nsp-a submit\nsp-b submit\n";
+    assert_eq!(routed_repo(scenario, "sp-a").as_deref(), Some("docs"));
+    assert_eq!(routed_repo(scenario, "sp-b"), None);
+    assert!(spira_sim::agent::parse(scenario, "sp-a").is_ok());
 }

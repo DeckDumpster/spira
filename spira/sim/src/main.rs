@@ -2,7 +2,7 @@ use spira_sim::gh;
 use spira_sim::world::{self, ProcessSteps};
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: sim world up <dir> [--tree <rev>]\n       sim world seed [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim round-vm run <tree> --results-dir <dir>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario|name> [--seed N] [--world <dir>] [--keep]\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>
+const USAGE: &str = "usage: sim world up <dir> [--tree <rev>] [--repo <name>:<mode>[:<trunk>]]...\n       sim world seed [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim round-vm run <tree> --results-dir <dir>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario|name> [--seed N] [--world <dir>] [--keep] [--repo <name>:<mode>[:<trunk>]]...\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>
        sim proc-summary <world|proc-trace.log>
        sim summon
        sim ci run <workflow.yml> <job> --sha <sha> --workspace <dir> [--skip <step name>]... [--path <dir>]... [--env KEY=VALUE]...";
@@ -63,8 +63,13 @@ fn run(args: &[String]) -> Result<(), String> {
         _ => {}
     }
     match args.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
-        ["world", "up", dir] => world::up(&cwd, &PathBuf::from(dir), "HEAD", &env, &ProcessSteps::default()),
-        ["world", "up", dir, "--tree", rev] => world::up(&cwd, &PathBuf::from(dir), rev, &env, &ProcessSteps::default()),
+        ["world", "up", rest @ ..] => {
+            let (pos, set, repos) = flags_repeated(&rest.iter().map(|a| a.to_string()).collect::<Vec<_>>(), &["--tree"], &[], &["--repo"])?;
+            let [dir] = pos.as_slice() else { return Err(USAGE.to_string()) };
+            let repos = repos.iter().map(|r| world::RepoSpec::parse(r)).collect::<Result<Vec<_>, _>>()?;
+            let tree = set.get("--tree").map_or("HEAD", String::as_str);
+            world::up_repos(&cwd, &PathBuf::from(dir), tree, &env, &ProcessSteps::default(), &repos, &|_| Ok(()))
+        }
         ["world", "seed"] => world::ensure_seed(&cwd, "HEAD").map(|_| ()),
         ["world", "seed", "--tree", rev] => world::ensure_seed(&cwd, rev).map(|_| ()),
         ["world", "down", dir] => world::down(&PathBuf::from(dir), &ProcessSteps::default()),
@@ -165,6 +170,21 @@ fn flags(args: &[String], known: &[&str], bare: &[&str]) -> Result<(Vec<String>,
     Ok((pos, set))
 }
 
+/// [`flags`], and each flag in `repeated` may be given any number of times (its values, in order).
+fn flags_repeated(args: &[String], known: &[&str], bare: &[&str], repeated: &[&str]) -> Result<(Vec<String>, std::collections::BTreeMap<String, String>, Vec<String>), String> {
+    let (mut rest, mut many) = (Vec::new(), Vec::new());
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if repeated.contains(&a.as_str()) {
+            many.push(it.next().ok_or(format!("usage: {a} needs a value"))?.clone());
+        } else {
+            rest.push(a.clone());
+        }
+    }
+    let (pos, set) = flags(&rest, known, bare)?;
+    Ok((pos, set, many))
+}
+
 fn seed_of(set: &std::collections::BTreeMap<String, String>) -> Result<Option<u64>, String> {
     set.get("--seed").map(|s| s.parse().map_err(|_| format!("usage: --seed {s:?} is not a number"))).transpose()
 }
@@ -180,11 +200,12 @@ fn report(r: &spira_sim::verbs::RunResult) -> Result<(), String> {
 
 fn run_main(cwd: &std::path::Path, args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {
     use spira_sim::drive::{ProcessExec, ProcessProbe, parse_scenario};
-    let (pos, set) = flags(args, &["--seed", "--world"], &["--keep"])?;
+    let (pos, set, cli_repos) = flags_repeated(args, &["--seed", "--world"], &["--keep"], &["--repo"])?;
     let [scenario] = pos.as_slice() else { return Err(USAGE.to_string()) };
     let path = spira_sim::drive::scenario_path(cwd, scenario);
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let sc = parse_scenario(&text)?;
+    let repos = spira_sim::drive::scenario_repos(&sc, &cli_repos)?;
     let seed = match seed_of(&set)? {
         Some(s) => s,
         None => std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?.as_nanos() as u64,
@@ -195,7 +216,7 @@ fn run_main(cwd: &std::path::Path, args: &[String], env: &dyn Fn(&str) -> Option
         None => {
             let d = std::env::temp_dir().join(format!("sim-run-{}-{seed}", std::process::id()));
             let t = std::time::Instant::now();
-            world::up_resolving(cwd, &d, "HEAD", env, &ProcessSteps::default(), &|w| spira_sim::drive::resolve_conf(w, sc.epoch))?;
+            world::up_repos(cwd, &d, "HEAD", env, &ProcessSteps::default(), &repos, &|w| spira_sim::drive::resolve_conf(w, sc.epoch))?;
             world::mark(&d, "up", t);
             (d, true)
         }

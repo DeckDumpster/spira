@@ -28,6 +28,12 @@ const HOME: &str = "home";
 const REGISTRY_ROWS: &str = "registry-rows";
 /// The name the world's one repository is registered under (`repo.<name>` in its config).
 pub const REPO_NAME: &str = "sim";
+/// The land modes a world's repository may be registered under.
+pub const MODES: &[&str] = &["push", "pr", "hold", "queue", "queue.forge", "queue.local"];
+const DEFAULT_MODE: &str = "queue.local";
+const DEFAULT_TRUNK: &str = "main";
+/// Where the repositories beyond the world's own live: `repos/<name>/{work,origin.git}`.
+const EXTRA_REPOS: &str = "repos";
 /// The home every path in the complete fixture config is rooted at (spira-config/tests/fixtures).
 const FIXTURE_HOME: &str = "/fixture/userhome";
 /// The PID world up recorded for the world's `spira-lc serve`; world down signals only it.
@@ -42,6 +48,81 @@ const LC_STOP_DEADLINE: Duration = Duration::from_secs(5); // batch-job: serve e
 /// overrides each locator a world must own. Its `lc_socket` is empty (direct mode) and
 /// is always overwritten below.
 const CONFIG_BASE: &str = include_str!("../../../spira-config/tests/fixtures/complete.toml");
+
+/// One repository of a world: `<name>:<mode>[:<trunk>]`. The world's own repository (`sim`) is
+/// always present, `queue.local` unless named; any other name is a repository of its own,
+/// created empty with its trunk branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepoSpec {
+    pub name: String,
+    pub mode: String,
+    pub trunk: String,
+}
+
+impl RepoSpec {
+    pub fn parse(spec: &str) -> Result<RepoSpec, String> {
+        let bad = |why: &str| format!("usage: --repo {spec:?} is not <name>:<mode>[:<trunk>]: {why}");
+        let parts: Vec<&str> = spec.split(':').collect();
+        let (name, mode, trunk) = match parts.as_slice() {
+            [n, m] => (*n, *m, DEFAULT_TRUNK),
+            [n, m, t] => (*n, *m, *t),
+            _ => return Err(bad("expected two or three fields")),
+        };
+        let word = |w: &str| !w.is_empty() && w.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_'));
+        if !word(name) {
+            return Err(bad("the name is lowercase letters, digits, - and _"));
+        }
+        if !MODES.contains(&mode) {
+            return Err(bad(&format!("the mode is one of {}", MODES.join(", "))));
+        }
+        if !word(trunk) {
+            return Err(bad("the trunk is a plain branch name"));
+        }
+        if name == REPO_NAME && trunk != DEFAULT_TRUNK {
+            return Err(bad(&format!("the world's own repository keeps its {DEFAULT_TRUNK} trunk")));
+        }
+        Ok(RepoSpec { name: name.to_string(), mode: mode.to_string(), trunk: trunk.to_string() })
+    }
+
+    /// The ref its branches land on: a local branch for `queue.local`, the remote's trunk otherwise.
+    pub fn base(&self) -> String {
+        match self.mode.as_str() {
+            "queue.local" => format!("local/{}", self.trunk),
+            _ => format!("origin/{}", self.trunk),
+        }
+    }
+
+    pub fn is_home(&self) -> bool {
+        self.name == REPO_NAME
+    }
+
+    /// Its checkout inside `world`.
+    pub fn work(&self, world: &Path) -> PathBuf {
+        if self.is_home() { world.join("work") } else { world.join(EXTRA_REPOS).join(&self.name).join("work") }
+    }
+
+    pub fn origin(&self, world: &Path) -> PathBuf {
+        if self.is_home() { world.join("origin.git") } else { world.join(EXTRA_REPOS).join(&self.name).join("origin.git") }
+    }
+}
+
+/// The repositories of a world: the home repository first (as named, else `queue.local`), then
+/// the others in the order given. A name given twice is refused.
+pub fn repo_set(specs: &[RepoSpec]) -> Result<Vec<RepoSpec>, String> {
+    let mut out: Vec<RepoSpec> = Vec::new();
+    for s in specs {
+        if out.iter().any(|o| o.name == s.name) {
+            return Err(format!("usage: --repo names {} twice", s.name));
+        }
+        out.push(s.clone());
+    }
+    let home = match out.iter().position(RepoSpec::is_home) {
+        Some(i) => out.remove(i),
+        None => RepoSpec { name: REPO_NAME.to_string(), mode: DEFAULT_MODE.to_string(), trunk: DEFAULT_TRUNK.to_string() },
+    };
+    out.insert(0, home);
+    Ok(out)
+}
 
 /// Where a world's release comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -458,6 +539,12 @@ pub fn up(repo: &Path, dir: &Path, tree: &str, env: &dyn Fn(&str) -> Option<Stri
 /// [`up`], and `resolved` runs once the world's files and seed are in place, beside the store's
 /// schema: what a caller does to the world that does not need the store.
 pub fn up_resolving(repo: &Path, dir: &Path, tree: &str, env: &dyn Fn(&str) -> Option<String>, steps: &dyn Steps, resolved: &(dyn Fn(&Path) -> Result<(), String> + Sync)) -> Result<(), String> {
+    up_repos(repo, dir, tree, env, steps, &[], resolved)
+}
+
+/// [`up_resolving`] with the world's repositories named (see [`repo_set`]).
+pub fn up_repos(repo: &Path, dir: &Path, tree: &str, env: &dyn Fn(&str) -> Option<String>, steps: &dyn Steps, repos: &[RepoSpec], resolved: &(dyn Fn(&Path) -> Result<(), String> + Sync)) -> Result<(), String> {
+    let repos = repo_set(repos)?;
     refuse_production(env)?;
     let source = release_source(env)?;
     if let Ok(abs) = std::path::absolute(dir) {
@@ -470,7 +557,7 @@ pub fn up_resolving(repo: &Path, dir: &Path, tree: &str, env: &dyn Fn(&str) -> O
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let dir = dir.canonicalize().map_err(|e| e.to_string())?;
     std::fs::write(dir.join(MARKER), "").map_err(|e| e.to_string())?;
-    match build(&dir, &repo, tree, &source, steps, resolved) {
+    match build(&dir, &repo, tree, &source, steps, &repos, resolved) {
         Ok(()) => Ok(()),
         Err(e) => {
             let _ = down(&dir, steps);
@@ -479,7 +566,7 @@ pub fn up_resolving(repo: &Path, dir: &Path, tree: &str, env: &dyn Fn(&str) -> O
     }
 }
 
-fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dyn Steps, resolved: &(dyn Fn(&Path) -> Result<(), String> + Sync)) -> Result<(), String> {
+fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dyn Steps, repos: &[RepoSpec], resolved: &(dyn Fn(&Path) -> Result<(), String> + Sync)) -> Result<(), String> {
     check_socket_path(dir)?;
     let release = match source {
         ReleaseSource::Prebuilt(p) => p.clone(),
@@ -519,11 +606,11 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
         crate::roundvm::write_verdict(dir, &crate::roundvm::Verdict::Green)?;
         let home = dir.join(HOME);
         std::fs::create_dir_all(&home).map_err(|e| e.to_string())?;
-        std::fs::write(home.join(REGISTRY_ROWS), registry_rows(&work)).map_err(|e| e.to_string())?;
+        std::fs::write(home.join(REGISTRY_ROWS), registry_rows(dir, repos)).map_err(|e| e.to_string())?;
         std::fs::write(&file, base_config(&home)).map_err(|e| e.to_string())?;
         let t = Instant::now();
         let bd = steps.bd()?;
-        let settings: Vec<(String, String)> = config_settings(&work, &gh_bin).into_iter().chain(home_settings(dir, fixture, &bd)).chain(lc_settings(dir)).collect();
+        let settings: Vec<(String, String)> = config_settings(dir, repos, &gh_bin).into_iter().chain(home_settings(dir, fixture, &bd)).chain(lc_settings(dir)).collect();
         steps.config_set_all(&release, &file, &settings)?;
         mark(dir, "up.config-set", t);
         let port = std::fs::read_to_string(Path::new(fixture).join("server.port")).unwrap_or_default();
@@ -560,11 +647,15 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
         // `written` drops with this closure, so a failure here releases the thread that waits on it.
         let (written, ready) = std::sync::mpsc::channel::<()>();
         let (seed_ref, origin_ref, work_ref, runner_ref) = (&seed, &origin, &work, &runner);
+        let repos_ref = repos;
         let placed = scope.spawn(move || {
             let t = Instant::now();
             let r = place_seed(seed_ref, origin_ref, work_ref, runner_ref);
             mark(dir, "up.seed-repo", t);
             r?;
+            for spec in repos_ref.iter().filter(|r| !r.is_home()) {
+                place_extra(dir, spec, runner_ref)?;
+            }
             ready.recv().map_err(|_| "the world's files were not written".to_string())?;
             let t = Instant::now();
             let r = resolved(dir);
@@ -614,6 +705,28 @@ fn place_seed(seed: &Path, origin: &Path, work: &Path, runner: &Path) -> Result<
     git(work, &["commit", "-q", "-m", "sim gate steps"])?;
     git(work, &["push", "-q", "origin", "main"])?;
     git(work, &["branch", LANDING_BASE, "main"])?;
+    Ok(())
+}
+
+/// A repository beyond the world's own: one commit (the stub gate string, so its gate runs the
+/// world's runner) on its trunk, pushed to its bare origin; a `queue.local` one also gets its
+/// local landing branch.
+fn place_extra(world: &Path, spec: &RepoSpec, runner: &Path) -> Result<(), String> {
+    let (origin, work) = (spec.origin(world), spec.work(world));
+    let p = |x: &Path| x.to_string_lossy().to_string();
+    let branch = format!("--initial-branch={}", spec.trunk);
+    let parent = work.parent().ok_or("a repository has a parent directory")?;
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    git(parent, &["init", "-q", &branch, &p(&work)])?;
+    git(parent, &["init", "-q", "--bare", &branch, &p(&origin)])?;
+    std::fs::write(work.join("gate.steps"), stub_gate_steps(runner)).map_err(|e| e.to_string())?;
+    git(&work, &["add", "gate.steps"])?;
+    git(&work, &["commit", "-q", "-m", &format!("sim repo {}", spec.name)])?;
+    git(&work, &["remote", "add", "origin", &p(&origin)])?;
+    git(&work, &["push", "-q", "-u", "origin", &spec.trunk])?;
+    if spec.mode == "queue.local" {
+        git(&work, &["branch", &spec.base(), &spec.trunk])?;
+    }
     Ok(())
 }
 
@@ -718,9 +831,9 @@ pub fn stub_gate_steps(runner: &Path) -> String {
     format!("step \"{}\"\n", runner.display())
 }
 
-/// The one registry row of a world: `name|path|land|base|format|gate|lanes`.
-pub fn registry_rows(work: &Path) -> String {
-    format!("{REPO_NAME}|{}|queue.local|{LANDING_BASE}|||plan\n", work.display())
+/// The registry rows of a world, one per repository: `name|path|land|base|format|gate|lanes`.
+pub fn registry_rows(world: &Path, repos: &[RepoSpec]) -> String {
+    repos.iter().map(|r| format!("{}|{}|{}|{}|||plan\n", r.name, r.work(world).display(), r.mode, r.base())).collect()
 }
 
 /// The complete base with every path of the fixture's home moved under the world's `home`,
@@ -790,13 +903,13 @@ pub fn probe_command(sim: &Path, world: &Path) -> String {
 /// The world's config settings, as `spira-config set` pairs. `spira-config set`
 /// validates the whole document after every write, so the repository section goes in as
 /// one JSON table: set field by field, `repo.sim.path` alone is refused (no `mode` yet).
-pub fn config_settings(work: &Path, gh: &Path) -> Vec<(String, String)> {
-    let repo = serde_json::json!({ "path": work.display().to_string(), "mode": "queue.local", "base": LANDING_BASE });
-    vec![
-        (format!("repo.{REPO_NAME}"), repo.to_string()),
-        ("spira.gh".to_string(), gh.display().to_string()),
-        ("spira.batcher_enable".to_string(), "1".to_string()),
-    ]
+pub fn config_settings(world: &Path, repos: &[RepoSpec], gh: &Path) -> Vec<(String, String)> {
+    let section = |r: &RepoSpec| (format!("repo.{}", r.name), serde_json::json!({ "path": r.work(world).display().to_string(), "mode": r.mode, "base": r.base() }).to_string());
+    repos
+        .iter()
+        .map(section)
+        .chain([("spira.gh".to_string(), gh.display().to_string()), ("spira.batcher_enable".to_string(), "1".to_string())])
+        .collect()
 }
 
 /// Where the world's Dolt fixture lives. Nested inside testenv, `TESTDB_ROOT` is the

@@ -36,6 +36,14 @@ pub fn claimable(lc_list: &str, scenario: &str) -> Result<Vec<(String, String, i
     Ok(out)
 }
 
+/// The repository the scenario routes `bead` to (`<bead> repo <name>`); `None` is the world's own.
+pub fn routed_repo(scenario: &str, bead: &str) -> Option<String> {
+    scenario.lines().find_map(|l| {
+        let mut w = l.split_whitespace();
+        (w.next() == Some(bead) && w.next() == Some("repo")).then(|| w.next().map(str::to_string)).flatten()
+    })
+}
+
 /// `sim-agent` beside the running `sim`: both are built and released together.
 fn agent_bin() -> Result<std::path::PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -59,9 +67,13 @@ fn git(work: &Path, args: &[&str]) -> Result<String, String> {
 pub fn summon(world: &Path, scenario_file: &Path, state: &Path) -> Result<Vec<String>, String> {
     let scenario = std::fs::read_to_string(scenario_file).unwrap_or_default();
     let list = run(Command::new(spira_config::release_env::tool("spira-lc")).arg("list"), CALL_DEADLINE)?;
-    let work = world.join("work");
     let mut ran = Vec::new();
     for (id, lc_state, version) in claimable(&list, &scenario)? {
+        let repo = routed_repo(&scenario, &id);
+        let work = match &repo {
+            Some(name) => world.join("repos").join(name).join("work"),
+            None => world.join("work"),
+        };
         run(
             Command::new(spira_config::release_env::tool("spira-lc")).args(["event", "bead", &id, "--expect", &lc_state, "--version", &version.to_string(), "--actor", HOLDER, "--kind", &claim_event()]),
             CALL_DEADLINE,
@@ -74,7 +86,7 @@ pub fn summon(world: &Path, scenario_file: &Path, state: &Path) -> Result<Vec<St
             if has_branch {
                 git(&work, &["worktree", "add", &wt_arg, &branch])?;
             } else {
-                git(&work, &["worktree", "add", "-b", &branch, &wt_arg, LANDING_BASE])?;
+                git(&work, &["worktree", "add", "-b", &branch, &wt_arg, if repo.is_some() { "HEAD" } else { LANDING_BASE }])?;
             }
         }
         run(
