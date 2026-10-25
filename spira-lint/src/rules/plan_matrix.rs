@@ -11,7 +11,9 @@ use std::collections::BTreeMap;
 use std::io::Write;
 use std::process::Stdio;
 
-use test_plan::{build_matrix, coverage_gaps, load_catalogues, orphan_violations, render_markdown, SuiteCoverage};
+use test_plan::{
+    build_matrix, coverage_gaps, load_catalogues, orphan_violations, render_markdown, unknown_uc_violations, SuiteCoverage,
+};
 
 use crate::rules::covers_entries::covers_of;
 use crate::{direct_child, Entry, Finding, LintError, Rule, Tree};
@@ -41,6 +43,40 @@ pub fn coverage(path: &str, text: &str) -> SuiteCoverage {
         tier: tier_of(text).filter(|t| !t.is_empty()),
         covers: covers_of(text).unwrap_or_default(),
     }
+}
+
+/// The use-case ids a Rust source names on `// covers: UC-…` lines, as one T0 cover under the
+/// file's own path — the same reading `suite-coverage-json.sh` gives them.
+fn rust_coverage(path: &str, text: &str) -> Option<SuiteCoverage> {
+    let mut covers: Vec<String> = Vec::new();
+    for l in text.lines().filter(|l| l.trim_start().starts_with("// covers: UC-")) {
+        for tok in l.split(|c: char| !(c.is_ascii_alphanumeric() || c == '-')) {
+            if tok.starts_with("UC-") && !covers.iter().any(|c| c == tok) {
+                covers.push(tok.to_string());
+            }
+        }
+    }
+    (!covers.is_empty()).then(|| SuiteCoverage { path: path.to_string(), tier: Some("T0".into()), covers })
+}
+
+/// Every Rust source's `// covers: UC-…` cover as it stood at `rev`.
+fn rust_covers_at(tree: &Tree, rev: &str) -> Result<Vec<SuiteCoverage>, String> {
+    let out = match tree.git(&["grep", "-I", "--no-color", "-E", "^[[:space:]]*// covers: UC-", rev, "--", "*.rs"]) {
+        Ok(o) => o,
+        Err(e) if e.ends_with(": ") => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let prefix = format!("{rev}:");
+    let mut by_path: BTreeMap<String, String> = BTreeMap::new();
+    for l in String::from_utf8_lossy(&out).lines() {
+        let l = l.strip_prefix(&prefix).unwrap_or(l);
+        if let Some((path, line)) = l.split_once(':') {
+            let t = by_path.entry(path.to_string()).or_default();
+            t.push_str(line);
+            t.push('\n');
+        }
+    }
+    Ok(by_path.iter().filter_map(|(p, t)| rust_coverage(p, t)).collect())
 }
 
 /// Every `spira/test-*.sh` as it stood at `rev`, read in one `git cat-file --batch`.
@@ -115,7 +151,7 @@ impl Rule for PlanMatrix {
         self.checked.set(None);
         let base_rev = tree.base_commit()?;
         let base = tree.base.as_deref().unwrap_or_default();
-        let prev = suites_at(tree, &base_rev).map_err(LintError::Refused)?;
+        let mut prev = suites_at(tree, &base_rev).map_err(LintError::Refused)?;
         if prev.is_empty() {
             return Err(LintError::Refused(format!(
                 "the base {base} has no spira/test-*.sh — nothing to judge a deletion against"
@@ -125,6 +161,16 @@ impl Rule for PlanMatrix {
         for e in crate::scope(tree, self)? {
             if let Some(c) = tree.content(e) {
                 cur.push(coverage(&e.path, &String::from_utf8_lossy(c)));
+            }
+        }
+        let suites_here = cur.len();
+        let suites_base = prev.len();
+        prev.extend(rust_covers_at(tree, &base_rev).map_err(LintError::Refused)?);
+        let mut rust_here = Vec::new();
+        for e in tree.entries.iter().filter(|e| e.path.ends_with(".rs")) {
+            let Some(c) = tree.content(e) else { continue };
+            if let Some(sc) = rust_coverage(&e.path, &String::from_utf8_lossy(c)) {
+                rust_here.push(sc);
             }
         }
         let dir = tree.root.join(CATALOGUE_DIR);
@@ -144,11 +190,16 @@ impl Rule for PlanMatrix {
         if use_cases == 0 {
             return Err(LintError::Refused(format!("{CATALOGUE_DIR} declares no use case — nothing to check")));
         }
+        let undeclared: Vec<String> = unknown_uc_violations(&cats, &rust_here)
+            .into_iter()
+            .map(|m| format!("{m} — add the use case to docs/test-plan/<area>.toml, or name a declared one"))
+            .collect();
+        cur.extend(rust_here);
         let orphans = orphan_violations(&cats, &prev, &cur);
         let gaps = coverage_gaps(&cats, &cur)
             .into_iter()
             .filter(|g| !orphans.iter().any(|o| g.starts_with(&format!("gap: {} ", o.split(':').next().unwrap_or("")))));
-        let out: Vec<Finding> = orphans.iter().cloned().chain(gaps).map(finding).collect();
+        let out: Vec<Finding> = orphans.iter().cloned().chain(gaps).chain(undeclared).map(finding).collect();
         // The matrix is built and rendered in memory, as plan-matrix.sh does to disk: a
         // catalogue that loads but cannot be rendered is caught here, not by the next reader.
         let doc = build_matrix(&cats, &cur, &BTreeMap::new());
@@ -156,7 +207,7 @@ impl Rule for PlanMatrix {
             return Err(LintError::Refused("the coverage matrix rendered empty".into()));
         }
         if out.is_empty() {
-            self.checked.set(Some((use_cases, cur.len(), prev.len())));
+            self.checked.set(Some((use_cases, suites_here, suites_base)));
         }
         Ok(out)
     }
@@ -168,7 +219,7 @@ impl Rule for PlanMatrix {
     }
 
     fn hint(&self) -> &'static str {
-        "a use case lost its last covering suite or has none: cover it again, or mark it [use_case.uncovered] in its catalogue"
+        "a use case lost its last cover (suite header or Rust `// covers: UC-…` line) or has none, or a Rust test names an undeclared id: cover it again, mark it [use_case.uncovered], or declare the id in docs/test-plan/<area>.toml"
     }
 }
 
@@ -226,6 +277,24 @@ mod tests {
         let out = check(&t, Some("base")).0.unwrap();
         assert_eq!(out.len(), 1, "{out:?}");
         assert!(out[0].message.starts_with("gap: UC-demo-03"), "{}", out[0]);
+    }
+
+    #[test]
+    fn deleting_a_rust_tests_only_cover_is_a_finding_and_an_undeclared_id_is_refused() {
+        let t = repo();
+        t.write("src/a.rs", "#[test]\n// covers: UC-demo-02\nfn t() {}\n");
+        t.git(&["add", "."]);
+        t.git(&["commit", "-qm", "rust cover"]);
+        t.git(&["tag", "base2"]);
+        assert_eq!(check(&t, Some("base2")).0, Ok(vec![]));
+        t.git(&["rm", "-q", "spira/test-b.sh"]);
+        assert_eq!(check(&t, Some("base2")).0, Ok(vec![]), "the rust cover still holds UC-demo-02");
+        t.git(&["rm", "-q", "src/a.rs"]);
+        let out = check(&t, Some("base2")).0.unwrap();
+        assert!(out.iter().any(|f| f.message.starts_with("UC-demo-02: lost its last covering suite")), "{out:?}");
+        t.write("src/b.rs", "// covers: UC-demo-77\n");
+        let out = check(&t, Some("base2")).0.unwrap();
+        assert!(out.iter().any(|f| f.message.contains("UC-demo-77") && f.message.contains("docs/test-plan")), "{out:?}");
     }
 
     #[test]
