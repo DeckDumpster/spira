@@ -37,8 +37,12 @@ name = "step_failed"
 sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit NOT IN (0, 3)"
 
 [[expect]]
-name = "both_submitted"
-sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-cr02' AND lc_state = 'SUBMITTED' AND bead IN (SELECT bead FROM bead_state WHERE bead = 'sp-cr01' AND lc_state = 'SUBMITTED')"
+name = "first_ranked_submitted"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-cr02' AND lc_state = 'SUBMITTED'"
+
+[[expect]]
+name = "second_ranked_submitted"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-cr01' AND lc_state = 'SUBMITTED'"
 
 [[expect]]
 name = "order_checked"
