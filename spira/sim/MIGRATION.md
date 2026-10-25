@@ -75,3 +75,23 @@ Not built; each needs a world capability (the gap roadmap's D2, world parameters
 - `eject-mid-step` (test-reopen-queue-eject, test-withdrawn-suites-recert): needs testenv inside the
   world, because `work submit` after an eject runs `testenv --suites` itself.
 - `spira-claim reopen` was seen to die of SIGBUS once inside a sim container; not reproduced.
+
+## Bead rows as data (sp-d5joss)
+
+A scenario files beads with `[[seed]]` (persona or kind, priority, labels, body, deps on earlier
+seeds; `{bead:<handle>}` in a `command` step is the id `bead.sh` allocated), and `bead_state` carries
+`title`, `priority`, `labels` and `deps` (comma-joined, sorted), `close_reason` and `body`, read from
+`bd list` on every snapshot of a scenario that seeds or sets `bead_rows = true`. A named step
+(`name = ...`) is its own `actor` in `events`; a check step exits 0 when it held.
+
+Moved, each retired after `bead-contract` went red on its planted defect (the refusals removed from
+`bead.sh label` and `bead.sh amend`): test-bead-label, test-bead-amend.
+
+Left, each blocked on more than a seed and a column:
+
+| suite | what it still needs |
+|---|---|
+| test-bead-dep-add | an epic-typed seed and a raw `bd dep add` of a pre-existing edge; the incident label from config |
+| test-destructive-bead, test-bead-file, test-bead-pilgrimage, test-express-lane | `bead.sh file` refusals asserted on stderr text and the lane guard's config |
+| test-census*, test-livelock, test-deadlock-sweep, test-groomer*, test-unclaimable*, test-maechen-*, test-groom-trigger, test-watchtower-czar-outcome, test-cockpit-reachable | an actor row for the detector (G15) and a bead aged in the store |
+| test-hold, test-unpoison, test-queue-ops, test-verify-landed | the lifecycle verbs and a deploy step (G14, G7) beside the seeds |
