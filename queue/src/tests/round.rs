@@ -2865,6 +2865,53 @@ fn certify_reds_a_failed_workspace_build_naming_the_first_compiler_error() {
 }
 
 #[test]
+fn certify_saves_the_compiler_errors_of_a_failed_workspace_build_and_quotes_the_first() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    let err = "round-vm: building\nerror[E0425]: cannot find value `x` in this scope\n   --> spira/sim/src/x.rs:12:5\n    |\n12  |     x\n\nerror[E0063]: missing field `cpus`\n   --> testenv/src/shots.rs:224:9\n\nerror: could not compile `testenv`\nround-vm: the round's workspace build failed";
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 4, out: String::new(), err: err.into() };
+    assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
+    assert!(
+        t.out().contains("red-reason=workspace-build: error[E0425] at spira/sim/src/x.rs:12:5"),
+        "{}",
+        t.out()
+    );
+    let saved = find_file_named(&t.dir, "workspace-build.out")
+        .expect("workspace-build.out was written");
+    assert!(saved.contains("cargo build") && saved.contains("exit: 4"), "{saved}");
+    assert!(saved.contains("error[E0425]") && saved.contains("error[E0063]"), "{saved}");
+}
+
+#[test]
+fn a_workspace_build_that_died_of_the_environment_is_not_the_members_red() {
+    use crate::ops::round::build_environment_cause;
+    assert_eq!(
+        build_environment_cause("round-vm: building\nerror: failed to write: No space left on device"),
+        Some("out of disk")
+    );
+    assert_eq!(
+        build_environment_cause("error[E0425]: cannot find value\nNo space left on device"),
+        None,
+        "a compiler diagnostic makes it the candidate's"
+    );
+}
+
+fn find_file_named(dir: &std::path::Path, name: &str) -> Option<String> {
+    for e in std::fs::read_dir(dir).ok()?.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            if let Some(s) = find_file_named(&p, name) {
+                return Some(s);
+            }
+        } else if p.file_name().is_some_and(|f| f == name) {
+            return std::fs::read_to_string(p).ok();
+        }
+    }
+    None
+}
+
+#[test]
 fn certify_judges_a_wall_killed_run_whose_results_and_unit_tests_are_complete() {
     let t = round_world();
     assert_eq!(
