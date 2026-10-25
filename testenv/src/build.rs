@@ -70,6 +70,36 @@ pub enum BuildError {
     /// cargo was killed because the run caught TERM/INT/HUP mid-build (sp-tcarr): rc 2, a
     /// signal, never the candidate's rc 4 — nothing about the branch was judged.
     Cancelled,
+    /// The build ran out of space on the filesystem holding `path` (its target or temp dir):
+    /// rc 3, the box's disk, never the candidate's rc 4.
+    NoSpace(PathBuf),
+    /// The build was SIGKILLed with a cgroup OOM event: rc 3, the box's memory.
+    Oom,
+}
+
+const STDERR_TAIL: usize = 64 * 1024;
+
+pub fn is_enospc(stderr_tail: &str) -> bool {
+    stderr_tail.contains("No space left on device") || stderr_tail.contains("os error 28")
+}
+
+/// `oom_kill` from this process's cgroup `memory.events`.
+pub fn cgroup_oom_kills() -> Option<u64> {
+    let cg = std::fs::read_to_string("/proc/self/cgroup").ok()?;
+    let rel = cg.lines().find_map(|l| l.strip_prefix("0::"))?.trim();
+    let ev = std::fs::read_to_string(format!(
+        "/sys/fs/cgroup/{}/memory.events",
+        rel.trim_start_matches('/')
+    ))
+    .ok()?;
+    ev.lines()
+        .find_map(|l| l.strip_prefix("oom_kill "))
+        .and_then(|v| v.trim().parse().ok())
+}
+
+pub fn is_oom(signal: Option<i32>, oom_before: Option<u64>, oom_after: Option<u64>) -> bool {
+    signal == Some(libc::SIGKILL)
+        && matches!((oom_before, oom_after), (Some(b), Some(a)) if a > b)
 }
 
 pub trait Builder: Sync {
@@ -148,11 +178,35 @@ impl Builder for Cargo {
         // long-lived daemon that outlives this build; it must never inherit a caller's lock
         // fd this process did not open itself (sp-ohwg7).
         crate::util::close_inherited_fds(&mut cargo_cmd);
+        cargo_cmd.stderr(Stdio::piped());
+        let oom_before = cgroup_oom_kills();
         let child = cargo_cmd.spawn();
         let mut child = match child {
             Ok(c) => c,
             Err(_) => return Err(BuildError::NoCargo),
         };
+        let tail = child.stderr.take().map(|mut e| {
+            std::thread::spawn(move || {
+                use std::io::{Read, Write};
+                let mut tail = String::new();
+                let mut buf = [0u8; 8192];
+                while let Ok(n) = e.read(&mut buf) {
+                    if n == 0 {
+                        break;
+                    }
+                    let _ = std::io::stderr().write_all(&buf[..n]);
+                    tail.push_str(&String::from_utf8_lossy(&buf[..n]));
+                    if tail.len() > STDERR_TAIL {
+                        let mut cut = tail.len() - STDERR_TAIL;
+                        while !tail.is_char_boundary(cut) {
+                            cut += 1;
+                        }
+                        tail.drain(..cut);
+                    }
+                }
+                tail
+            })
+        });
         let status = loop {
             match child.try_wait() {
                 Ok(Some(st)) => break st,
@@ -176,7 +230,18 @@ impl Builder for Cargo {
             }
             std::thread::sleep(Duration::from_millis(100));
         };
+        let tail = tail.and_then(|t| t.join().ok()).unwrap_or_default();
         if !status.success() {
+            use std::os::unix::process::ExitStatusExt;
+            if is_enospc(&tail) {
+                let at = warm.clone().unwrap_or_else(|| worktree.join("target"));
+                return Err(BuildError::NoSpace(at));
+            }
+            if is_oom(status.signal(), oom_before, cgroup_oom_kills())
+                || (tail.contains("signal: 9, SIGKILL") && is_oom(Some(libc::SIGKILL), oom_before, cgroup_oom_kills()))
+            {
+                return Err(BuildError::Oom);
+            }
             return Err(BuildError::Failed(status.code().unwrap_or(1)));
         }
         if let Some(w) = &warm {
@@ -238,6 +303,21 @@ mod tests {
             elapsed < Duration::from_secs(5),
             "cancellation should be prompt; took {elapsed:?}"
         );
+    }
+
+    #[test]
+    fn enospc_is_read_from_cargos_stderr_and_a_plain_error_is_not() {
+        assert!(is_enospc("failed to write /x/.fingerprint/a: No space left on device (os error 28)"));
+        assert!(is_enospc("io error (os error 28)"));
+        assert!(!is_enospc("error[E0308]: mismatched types"));
+    }
+
+    #[test]
+    fn oom_needs_both_a_sigkill_and_a_cgroup_oom_event() {
+        assert!(is_oom(Some(9), Some(1), Some(2)));
+        assert!(!is_oom(Some(9), Some(2), Some(2)));
+        assert!(!is_oom(Some(15), Some(1), Some(2)));
+        assert!(!is_oom(Some(9), None, Some(2)));
     }
 
     #[test]

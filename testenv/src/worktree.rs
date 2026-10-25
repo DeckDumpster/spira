@@ -67,6 +67,18 @@ pub(crate) fn free_mib(p: &Path) -> Option<u64> {
     spira_config::room::avail_mib(p)
 }
 
+/// The mount point holding `p`: the longest `/proc/self/mountinfo` mount that prefixes it.
+pub(crate) fn mount_point(p: &Path) -> PathBuf {
+    let real = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let info = std::fs::read_to_string("/proc/self/mountinfo").unwrap_or_default();
+    info.lines()
+        .filter_map(|l| l.split(' ').nth(4))
+        .map(|m| PathBuf::from(m.replace("\\040", " ")))
+        .filter(|m| real.starts_with(m))
+        .max_by_key(|m| m.as_os_str().len())
+        .unwrap_or_else(|| PathBuf::from("/"))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeEntry {
     pub path: PathBuf,

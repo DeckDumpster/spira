@@ -22,6 +22,7 @@ struct FakeBuilder {
     /// `BuildError::Cancelled` immediately, the way `Cargo::build` does once `cancelled()`
     /// goes true, without this test needing a real signal.
     cancel: bool,
+    err: Option<BuildError>,
 }
 
 impl FakeBuilder {
@@ -34,6 +35,7 @@ impl FakeBuilder {
             watch: None,
             seen: Mutex::new(vec![]),
             cancel: false,
+            err: None,
         }
     }
     fn slow(delay: Duration) -> Self {
@@ -80,6 +82,9 @@ impl Builder for FakeBuilder {
             .lock()
             .unwrap()
             .push((wt.to_path_buf(), profile.to_string()));
+        if let Some(e) = &self.err {
+            return Err(e.clone());
+        }
         match self.fail {
             Some(rc) => Err(BuildError::Failed(rc)),
             None => Ok(Duration::from_millis(1)),
@@ -837,6 +842,23 @@ fn a_build_failure_is_the_candidates_fault_and_touches_no_container() {
         .unwrap()
         .iter()
         .all(|c| c[0] == "tag"));
+}
+
+#[test]
+fn a_full_disk_or_an_oom_kill_is_a_harness_fault_not_the_candidates() {
+    for (err, reason) in [
+        (BuildError::NoSpace(PathBuf::from("/")), "build-enospc"),
+        (BuildError::Oom, "build-oom"),
+    ] {
+        let w = World::new("enospc");
+        let rt = runtime();
+        let b = FakeBuilder { err: Some(err), ..FakeBuilder::new(None) };
+        assert_eq!(
+            w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root),
+            3
+        );
+        assert_eq!(w.last(), format!("VERDICT FAULT rc=3 ran=0 reason={reason}"));
+    }
 }
 
 #[test]
