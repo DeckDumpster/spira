@@ -834,7 +834,7 @@ bead=${SPIRA_GATE_BRANCH#spira/}
 echo "$bead" >> "$dir/gate-calls"
 mode=$(awk -v b="$bead" '$1 == b { m = $2 } END { print m }' "$dir/gate-control" 2>/dev/null)
 case "$mode" in
-fail) echo "gate: VERDICT=FAIL reason=suite-red suite=sim-planted.sh"; exit 1 ;;
+fail) echo "gate: VERDICT=FAIL reason=suite-red suite=sim-planted.sh"; exit 0 ;;
 no-verdict) echo "gate: VERDICT=NO_VERDICT reason=timeout"; exit 75 ;;
 infra) echo "gate: VERDICT=NO_VERDICT reason=harness-fault"; exit 75 ;;
 esac
