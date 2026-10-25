@@ -309,6 +309,9 @@ pub const AEON_WARM_CAP_ENV: &str = "SPIRA_AEON_WARM_CAP_MIB";
 /// Slots offered: one per aeon name, so a free one always exists below the live-aeon ceiling.
 pub const AEON_WARM_SLOTS: u64 = 10;
 
+/// Tmpfs fullness at which idle slots are emptied at acquire and the watcher speaks.
+pub const AEON_WARM_FULL_PCT: u64 = 85;
+
 pub const TF_PLUGIN_CACHE_ENV: &str = "TF_PLUGIN_CACHE_DIR";
 
 /// The one Terraform provider cache of the box, under the run directory and outside every
@@ -387,6 +390,52 @@ pub fn reap_over_cap(slot: &Path, cap_mib: u64) -> bool {
     true
 }
 
+/// Used percent of the filesystem holding `p`; None when it cannot be read.
+pub fn used_pct(p: &Path) -> Option<u64> {
+    let c = std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).ok()?;
+    // SAFETY: statvfs into a zeroed struct we own, on a NUL-terminated path.
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 || st.f_blocks == 0 {
+        return None;
+    }
+    #[allow(clippy::unnecessary_cast)]
+    let (total, avail) = (st.f_blocks as u64, st.f_bavail as u64);
+    Some((total - avail.min(total)) * 100 / total)
+}
+
+/// Empty every slot under `base` that no session holds and that is over `cap_mib`, or every
+/// such slot whatever its size once the filesystem passes `full_pct`. Each is emptied under
+/// its own lock, so a slot a session takes meanwhile is skipped. Returns the slots emptied.
+pub fn reap_idle(base: &Path, slots: u64, cap_mib: u64, full_pct: u64) -> Vec<PathBuf> {
+    use std::os::unix::io::AsRawFd;
+    let mut out = Vec::new();
+    for n in 1..=slots.max(1) {
+        let dir = base.join(format!("slot.{n}"));
+        if !dir.is_dir() {
+            continue;
+        }
+        let Ok(f) = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(base.join(format!("slot.{n}.lock"))) else {
+            continue;
+        };
+        // SAFETY: flock on a descriptor we own; the lock lives as long as `f`.
+        if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            continue;
+        }
+        let real = resolved(&dir);
+        let full = used_pct(base).is_some_and(|p| p >= full_pct);
+        let reaped = if full && size_of(&real) > 0 {
+            empty_dir(&real);
+            true
+        } else {
+            reap_over_cap(&dir, cap_mib)
+        };
+        if reaped {
+            out.push(dir);
+        }
+    }
+    out
+}
+
 fn resolved(p: &Path) -> PathBuf {
     std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
 }
@@ -444,6 +493,25 @@ mod tests {
         fill(&slot.join("debug/deps/c"), 3072);
         assert!(enforce_cap(&slot, 2));
         assert!(slot.join("debug/deps/c").exists(), "still over: a running build's artifacts are never deleted");
+    }
+
+    #[test]
+    fn an_unlocked_oversized_slot_is_emptied_and_a_held_one_is_not() {
+        use std::os::unix::io::AsRawFd;
+        let d = testkit::TempDir::new("warm-idle");
+        let base = d.path();
+        fill(&base.join("slot.1/debug/x"), 3072);
+        fill(&base.join("slot.2/debug/y"), 3072);
+        fill(&base.join("slot.3/debug/z"), 512);
+        let held = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(base.join("slot.2.lock")).unwrap();
+        assert_eq!(unsafe { libc::flock(held.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
+        let reaped = reap_idle(base, 3, 2, 101);
+        assert_eq!(reaped, vec![base.join("slot.1")]);
+        assert!(std::fs::read_dir(base.join("slot.1")).unwrap().next().is_none());
+        assert!(base.join("slot.2/debug/y").exists(), "a held slot is never touched");
+        assert!(base.join("slot.3/debug/z").exists(), "under the cap and the disk not full: stays warm");
+        let reaped = reap_idle(base, 3, 2, 0);
+        assert_eq!(reaped, vec![base.join("slot.3")], "a full disk empties every idle slot that holds anything");
     }
 
     #[test]
