@@ -204,3 +204,5 @@ test-strand-truncated (the strand binary), test-czar-partition (czar-pass), test
 test-lanes (lane concurrency needs live aeon units), and the 30-odd suites that read the aeon's brief.
 
 The sim lane reads `claim-order` for the real sentinel's claim rank and lease; gate-verdict-kinds fails its first gate once so the rework is steered before the next minute's summon.
+
+Retired bash twins are listed above only once their scenario was seen red on the planted defect; gate-verdict-kinds was re-run green alone under testenv at this tip.
