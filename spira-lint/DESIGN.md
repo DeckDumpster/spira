@@ -1275,6 +1275,23 @@ finding.
 **Known limits.** Line-based: an assert split so the comparison sits in a different statement
 from the `assert` is missed.
 
+## Rule `test-real-clock`
+
+**Intent.** A unit test that sleeps as synchronisation, or compares `Instant::now()` /
+`.elapsed()`, passes on an idle box and flips under load, ejecting a round member that never
+touched the code. Tests synchronise on a channel, barrier, marker file or flag, or take an
+injected clock.
+
+**Scope.** Every `*.rs` except `target/` and `perf-checks/`, judged in test code as `tmp-leak`
+defines it. Complements `wall-clock-budget`, which judges duration assertions.
+
+**Violation.** A `sleep(` call in test code; a line in test code that reads `Instant::now()` or
+`.elapsed()` and compares with `<`/`>`. One finding per line. A line, or the line above it,
+carrying `clock-safe: <why>` is exempt: the clock there is only a cap on a wait for a named signal.
+
+**Allow list.** `spira-lint/test-real-clock-allow`, `<count> <path>`, shrink-only; seeded with
+the counts when the rule landed. A count above what the file has is itself a finding.
+
 ## Rule `py-fstring-compat`
 
 Python in a suite must parse on the round VM's older python3. **Flags**, per line, inside an

@@ -19,7 +19,6 @@ spira/test-mail-deliver.sh
 spira/test-mail.sh
 spira/test-testenv-curl-bounds.sh
 spira/test-testenv-wait.sh
-testenv/src/build.rs
 testenv/src/reap.rs
 watchd/src/health.rs
 watchd/src/lock.rs
