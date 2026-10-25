@@ -428,6 +428,11 @@ impl Run<'_> {
                         Some(body.into_bytes()),
                         None,
                     );
+                    let why = format!("no-progress streak {streak} at {tip}: the Concierge lifts this once the bead's inputs have changed ({reason})");
+                    let held = self.d.exec.exec("spira-lc", &s(&["hold", &id, "manual", &why, "aeon"]), None, None);
+                    if held.code != 0 {
+                        self.log(&format!("{f}: {id} manual hold refused (rc={}): {}", held.code, held.stdout.trim()));
+                    }
                     self.note(&format!("No progress ({o}): {reason}\n\nAfter {streak} consecutive no-progress exits at {tip}, routed to the Concierge as a blocking question: the bead is not claimable again until it is answered. No attempt charged."));
                     self.log(&format!("{f}: {id} no-progress streak {streak}/{cap} at {tip} — routed to the Concierge, no attempt charged"));
                 } else {
