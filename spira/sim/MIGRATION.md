@@ -53,3 +53,34 @@ seen red. The "coverage the world lacks" column above is the work that must land
 is retired by the bead that adds its scenario and shows it red.
 
 test-queue-publish is already gone (moved to the queue crate), so only ten of the eleven remain.
+
+# Sim batch 2: two scenarios built, no suite deleted
+
+Two of the five scenarios exist and were seen red against a planted defect; the three that
+would pay for themselves cannot be built on this world.
+
+| suite | scenario | measured | outcome |
+|---|---|---|---|
+| test-supersede-duty | `supersede` | suite 2 s, scenario 22 s | scenario red when the duty supersedes on any successor row (`only_a_landed_successor_supersedes`, the bd-note check); suite kept |
+| test-batch-claim-race | `claim-vs-batch` | suite 1 s, scenario 16 s | scenario red when IN_DELIVERY accepts a claim (`claim-vs-batch.sh` exit 9); suite kept |
+
+**A world costs about 10 s before a scenario does anything**, so a scenario can only beat a
+suite longer than that. The two suites above are 1 s and 2 s; deleting them removes 3 suite-seconds
+and the scenarios add 38 s to the sim lane. Batch 1's rule (a scenario must cost less than the
+suite it deletes) therefore holds them back. The whole sim lane, 14 suites, ran 127 s of suite time
+inside a 160 s testenv wall.
+
+Not built, and why:
+
+- `red-gate-holds`, `push-race` (test-landing 137 s, test-landing-race 33 s, test-landing-base-fail
+  56 s: the only batch-2 suites above the floor). They assert push-mode landing, a base that fails its
+  own gate, and the incident filed for it. A world registers one `queue.local` repository and its gate
+  is the stub runner, so none of that path runs. The missing piece is a repo-mode parameter on the world
+  (push mode with a bare remote a step can move) and a gate whose BASE_FAIL verdict a scenario decides.
+- `eject-mid-step` (test-reopen-queue-eject 3 s, test-withdrawn-suites-recert unmeasured; there is no
+  test-queue-step-eject-race). After an eject for a red suite `work submit` runs `testenv --suites` for
+  that suite itself, which a world cannot do (no harness), so the resubmission the suites exist to
+  watch is refused before any gate reads the sidecar. A red round is no better: with one member it ends
+  "unattributed red" and abandons, leaving the member BATCHED.
+- `spira-claim reopen` was seen to die of SIGBUS once inside a sim container (second call, same
+  arguments, passed). It was not reproduced.
