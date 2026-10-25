@@ -913,6 +913,7 @@ pub fn home_settings(world: &Path, fixture: &str, bd: &Path) -> Vec<(String, Str
         ("spira.home_repo".to_string(), REPO_NAME.to_string()),
         ("spira.agent".to_string(), world.join("bin").join(AGENT_LAUNCHER).display().to_string()),
         ("spira.aeon_warm_base".to_string(), world.join("warm").display().to_string()),
+        ("spira.summon_jitter".to_string(), "0".to_string()),
     ]
 }
 
