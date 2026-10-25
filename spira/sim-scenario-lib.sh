@@ -50,7 +50,6 @@ sim_scenario_shard() {  # sim_scenario_shard <scenario name>
         grep -h '^sim: profile' "$t/res.out" | sed "s/^/# $label /"
         [ "$rc" = 0 ] || grep -E '^sim' "$t/res.out" | cut -c1-300 | head -5 | sed 's/^/# /'
         [ "$rc" = 0 ] || sim_failed_commands "$t/res.out" | sed "s/^/# $label /"
-        [ "$rc" = 0 ] || { w="$(sed -n 's/^sim: world kept at //p' "$t/res.out" | head -1)"; grep -a -A6 'claim-rank\|sim summon' "$w/exec.log" | cut -c1-250 | head -60 | sed "s/^/# DBG /"; cat "$w/claim-order" | sed "s/^/# ORDER /"; }
     done
     for w in "$t"/sim-run-*; do [ -d "$w" ] && timeout 60 "$sim" world down "$w" >/dev/null 2>&1; done # batch-job: world teardown stops a whole scratch world
     is "no world serve outlives its run" 0 "$(pgrep -fc "$t/sim-run-" || true)"

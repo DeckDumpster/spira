@@ -25,11 +25,11 @@ claim = "sp-cr02"
 script = ["commit out/cr02.txt", "submit"]
 
 [[step]]
-at = 200000
+at = 30000
 command = "sh spira/sim/scenarios/steps/claim-rank.sh sp-cr02 sp-cr01"
 
 [[step]]
-at = 400000
+at = 90000
 command = "sh spira/sim/scenarios/steps/claim-rank.sh sp-cr02 sp-cr01"
 
 [[invariant]]
