@@ -33,3 +33,15 @@ echo 90 > "$TMP/pct"
 want "a crossing after falling under is said again" "90% full" "$(wf "$TMP/warm" pass)"
 echo 84 > "$TMP/pct"; rm -f "$TMP/run/watchd/warm-full.said"
 is "84% is under the limit" "" "$(wf "$TMP/warm" pass)"
+
+echo 40 > "$TMP/pct"; rm -f "$TMP/run/watchd/warm-full.said"
+mkdir -p "$TMP/warm2/slot.1" "$TMP/warm2/slot.2"
+head -c 3145728 /dev/zero > "$TMP/warm2/slot.1/a"
+head -c 3145728 /dev/zero > "$TMP/warm2/slot.2/a"
+exec 8>>"$TMP/warm2/slot.2.lock"; flock -n 8
+wfc() { tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_AEON_WARM_BASE="$TMP/warm2"
+    env -i PATH="$TMP/stub:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" SPIRA_AEON_WARM_CAP_MIB=2 bash "$HERE/warm-full.sh" pass 2>&1; }
+want "a pass reports emptying an idle slot over the cap" "slot.1 emptied" "$(wfc)"
+is "the idle slot is empty after one pass" "0" "$(find "$TMP/warm2/slot.1" -type f | wc -l | tr -d ' ')"
+is "a held slot is left alone" "1" "$(find "$TMP/warm2/slot.2" -type f | wc -l | tr -d ' ')"
+exec 8>&-

@@ -390,6 +390,12 @@ pub fn reap_over_cap(slot: &Path, cap_mib: u64) -> bool {
     true
 }
 
+/// Empty `slot` at session start when it already holds more than half `cap_mib`: a slot that
+/// full cannot absorb a build's growth under the cap. The caller holds the slot's lock.
+pub fn reap_for_build(slot: &Path, cap_mib: u64) -> bool {
+    reap_over_cap(slot, cap_mib / 2)
+}
+
 /// Used percent of the filesystem holding `p`; None when it cannot be read.
 pub fn used_pct(p: &Path) -> Option<u64> {
     let c = std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).ok()?;
@@ -512,6 +518,16 @@ mod tests {
         assert!(base.join("slot.3/debug/z").exists(), "under the cap and the disk not full: stays warm");
         let reaped = reap_idle(base, 3, 2, 0);
         assert_eq!(reaped, vec![base.join("slot.3")], "a full disk empties every idle slot that holds anything");
+    }
+
+    #[test]
+    fn a_slot_over_half_the_cap_starts_empty() {
+        let d = testkit::TempDir::new("warm-start");
+        let slot = d.path().join("slot.1");
+        fill(&slot.join("debug/x"), 1024);
+        assert!(!reap_for_build(&slot, 4));
+        assert!(reap_for_build(&slot, 1));
+        assert!(std::fs::read_dir(&slot).unwrap().next().is_none());
     }
 
     #[test]
