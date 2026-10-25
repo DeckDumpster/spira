@@ -100,7 +100,7 @@ fn a_new_invariant_view_needs_a_violating_and_a_clean_fixture() {
     if !spira_sim::trace::duckdb_available() {
         return;
     }
-    assert_eq!(invariant_views().len(), 6);
+    assert_eq!(invariant_views().len(), 8);
 }
 
 #[test]

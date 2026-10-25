@@ -45,6 +45,7 @@ pub struct Snapshot {
     pub beads: Vec<Value>,
     pub refs: Vec<(String, String)>,
     pub tags: Vec<String>,
+    pub run: Vec<(&'static str, Value)>,
 }
 
 /// Rejects a probe row that names no bead or an unknown field, so a misspelt column cannot read as an absent one.
@@ -65,6 +66,7 @@ pub fn bead_row(v: &Value) -> Result<Value, String> {
 
 pub struct Trace {
     dir: PathBuf,
+    logged: std::cell::RefCell<std::collections::HashSet<String>>,
 }
 
 impl Trace {
@@ -79,10 +81,10 @@ impl Trace {
     pub fn create(world: &Path) -> Result<Self, String> {
         let dir = Self::dir_of(world);
         std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        for t in TABLES {
+        for t in TABLES.iter().copied().chain(crate::runstate::TABLES.iter().map(|t| t.name)) {
             std::fs::write(dir.join(format!("{t}.jsonl")), "").map_err(|e| e.to_string())?;
         }
-        Ok(Trace { dir })
+        Ok(Trace { dir, logged: Default::default() })
     }
 
     pub fn open(world: &Path) -> Result<Self, String> {
@@ -90,7 +92,7 @@ impl Trace {
         if !dir.join("events.jsonl").is_file() {
             return Err(format!("{} has no trace", world.display()));
         }
-        Ok(Trace { dir })
+        Ok(Trace { dir, logged: Default::default() })
     }
 
     fn append(&self, table: &str, rows: &[Value]) -> Result<(), String> {
@@ -117,7 +119,18 @@ impl Trace {
         };
         self.append("bead_state", &s.beads.iter().cloned().map(with_seq).collect::<Vec<_>>())?;
         self.append("refs", &s.refs.iter().map(|(r, sha)| json!({"seq": seq, "ref": r, "sha": sha})).collect::<Vec<_>>())?;
-        self.append("tags", &s.tags.iter().map(|t| json!({"seq": seq, "tag": t})).collect::<Vec<_>>())
+        self.append("tags", &s.tags.iter().map(|t| json!({"seq": seq, "tag": t})).collect::<Vec<_>>())?;
+        for t in crate::runstate::TABLES {
+            let mut rows = Vec::new();
+            for (_, row) in s.run.iter().filter(|(n, _)| *n == t.name) {
+                let row = crate::runstate::normalise(t, row)?;
+                if !t.log || self.logged.borrow_mut().insert(format!("{}{row}", t.name)) {
+                    rows.push(with_seq(row));
+                }
+            }
+            self.append(t.name, &rows)?;
+        }
+        Ok(())
     }
 
     pub fn events(&self) -> Result<Vec<Value>, String> {
@@ -138,6 +151,7 @@ impl Trace {
         s += &src("bead_state", "seq:'BIGINT', bead:'VARCHAR', bd_status:'VARCHAR', lc_state:'VARCHAR', lc_version:'BIGINT', holds:'VARCHAR', landstate:'VARCHAR', lc_tip:'VARCHAR', branch_tip:'VARCHAR', on_local_main:'BOOLEAN', on_origin_main:'BOOLEAN', title:'VARCHAR', priority:'BIGINT', labels:'VARCHAR', deps:'VARCHAR', close_reason:'VARCHAR', body:'VARCHAR'");
         s += &src("refs", "seq:'BIGINT', ref:'VARCHAR', sha:'VARCHAR'");
         s += &src("tags", "seq:'BIGINT', tag:'VARCHAR'");
+        s += &crate::runstate::load_sql(&self.dir);
         s += INVARIANTS;
         s
     }
