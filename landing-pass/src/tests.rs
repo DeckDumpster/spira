@@ -1919,6 +1919,21 @@ fn a_refused_gatepass_leaves_the_bead_uncertified() {
     assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 pass"]);
 }
 
+#[test]
+fn a_refused_gatepass_is_not_offered_again_for_the_same_tip() {
+    let h = H::new(LandMode::QueueLocal);
+    h.bead("sp-a", "SUBMITTED", &[]);
+    h.git.add("spira/sp-a", "t1");
+    h.lc.refuse_pass.set(true);
+    h.run();
+    h.run();
+    assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 pass"]);
+    h.git.refs.borrow_mut().clear();
+    h.git.add("spira/sp-a", "t2");
+    h.run();
+    assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 pass", "sp-a t2 pass"]);
+}
+
 /// sp-vn19s, local acceptance on d40bbb589 (phase A, push-mode scratch repo): the model
 /// finishes with `work submit`, never a bd close, and the push gate's own GatePass moves the
 /// row SUBMITTED -> CERTIFIED before the land. CERTIFIED is past the builder (handed on), so
