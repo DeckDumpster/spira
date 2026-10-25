@@ -100,6 +100,16 @@ impl Record {
     }
 }
 
+/// Why the recorded template is not the current recipe's, or None when it is (or none is recorded).
+pub fn staleness(rec: Option<&Record>, current: &str) -> Option<String> {
+    let r = rec?;
+    match r.recipe_sha.as_deref() {
+        Some(built) if built == current => None,
+        Some(built) => Some(format!("local round template {} is stale: built from recipe {built}, current recipe is {current}; run `round-vm refresh <tree-dir>`", r.vmid)),
+        None => Some(format!("local round template {} records no recipe hash, current recipe is {current}; run `round-vm refresh <tree-dir>`", r.vmid)),
+    }
+}
+
 /// `text` with `key=value` set: the first assignment of `key` replaced in place, else appended.
 pub fn set_env_key(text: &str, key: &str, value: &str) -> String {
     let mut done = false;
@@ -624,6 +634,16 @@ mod refresh_tests {
 
     fn s(v: &[&str]) -> Vec<String> {
         v.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn staleness_names_both_hashes_when_the_recipe_differs() {
+        let rec = |sha: Option<&str>| Record { vmid: "102".into(), image: "r:t".into(), recipe_sha: sha.map(String::from) };
+        assert_eq!(staleness(Some(&rec(Some("aaa"))), "aaa"), None);
+        assert_eq!(staleness(None, "aaa"), None);
+        let m = staleness(Some(&rec(Some("aaa"))), "bbb").unwrap();
+        assert!(m.contains("aaa") && m.contains("bbb") && m.contains("102"), "{m}");
+        assert!(staleness(Some(&rec(None)), "bbb").unwrap().contains("bbb"));
     }
 
     #[test]
