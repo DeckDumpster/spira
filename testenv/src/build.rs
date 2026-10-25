@@ -268,8 +268,8 @@ mod tests {
     /// regression this guards: a signalled build sitting until cargo finishes on its own.
     #[test]
     fn a_caught_signal_mid_build_is_cancelled_promptly_not_after_the_full_sleep() {
-        use crate::runtime::CANCEL;
-        use std::sync::atomic::Ordering;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
 
         let d = testkit::TempDir::new("build-signal-test");
         std::fs::write(
@@ -285,18 +285,17 @@ mod tests {
         std::fs::create_dir_all(d.join("src")).unwrap();
         std::fs::write(d.join("src/main.rs"), "fn main() { println!(\"ok\"); }\n").unwrap();
 
-        crate::runtime::OBSERVE_CANCEL.with(|o| o.set(true));
-        CANCEL.store(false, Ordering::SeqCst);
-        let flipper = std::thread::spawn(|| {
+        let token = Arc::new(AtomicBool::new(false));
+        crate::runtime::LOCAL_CANCEL.with(|l| *l.borrow_mut() = Some(token.clone()));
+        let flipper = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(1500));
-            CANCEL.store(true, Ordering::SeqCst);
+            token.store(true, Ordering::SeqCst);
         });
 
         let t0 = Instant::now();
         let result = Cargo.build(&d, "dev", None);
         let elapsed = t0.elapsed();
         flipper.join().unwrap();
-        CANCEL.store(false, Ordering::SeqCst); // never leak into another test
 
         assert_eq!(result, Err(BuildError::Cancelled), "{result:?}");
         assert!(

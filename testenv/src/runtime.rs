@@ -17,16 +17,20 @@ pub fn cancelled() -> bool {
     CANCEL.load(Ordering::SeqCst) || crate::cap::tripped()
 }
 
-// The flag is process-global; tests that flip it would cancel every concurrent test, so
-// under test only a thread that opted in via `observe_cancel` sees it.
+// The flag is process-global; under test only a thread that opted in via `OBSERVE_CANCEL`
+// sees it, and a test that needs its own cancel installs a per-thread `LOCAL_CANCEL` token.
 #[cfg(test)]
 thread_local! {
     pub static OBSERVE_CANCEL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    pub static LOCAL_CANCEL: std::cell::RefCell<Option<std::sync::Arc<AtomicBool>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(test)]
 pub fn cancelled() -> bool {
-    (OBSERVE_CANCEL.with(|o| o.get()) && CANCEL.load(Ordering::SeqCst)) || crate::cap::tripped()
+    (OBSERVE_CANCEL.with(|o| o.get()) && CANCEL.load(Ordering::SeqCst))
+        || LOCAL_CANCEL.with(|l| l.borrow().as_ref().is_some_and(|t| t.load(Ordering::SeqCst)))
+        || crate::cap::tripped()
 }
 
 extern "C" fn on_signal(_: libc::c_int) {
