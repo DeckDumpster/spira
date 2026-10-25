@@ -1374,6 +1374,9 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     if cancelled() {
         return Finish::fault(2, "interrupted", 0);
     }
+    if let Some(fin) = warm_conf_gen(&wt.path) {
+        return fin;
+    }
     ph.mark("build");
     let _test_lease = admit(admission::Pool::Test, 1);
     shift(_test_lease.waited);
@@ -2432,6 +2435,38 @@ fn sweep_scratch(deps: &Deps) {
     }
 }
 
+/// Regenerate `spira/conf.d.*.generated.sh` on the host, as the worktree's owner, before the
+/// container mounts it for its unprivileged user: conf.sh refuses a stale file and cannot
+/// rewrite one there. Runs on the prebuilt-artifacts path too, which skips [`build`].
+// batch-job: a local registry regeneration, bounded by the host rather than a remote
+fn warm_conf_gen(wt: &Path) -> Option<Finish> {
+    let conf_gen = wt.join("spira/conf-gen.sh");
+    if conf_gen.exists() {
+        match std::process::Command::new("bash").envs(spira_config::release_env::child_path_env_for_process())
+            .arg(&conf_gen)
+            .current_dir(wt)
+            .output()
+        {
+            Ok(o) if o.status.success() => {}
+            Ok(o) => {
+                stderr(&format!(
+                    "batch: spira/conf-gen.sh failed (rc={:?}) against the worktree — harness fault:\n{}",
+                    o.status.code(),
+                    String::from_utf8_lossy(&o.stderr)
+                ));
+                return Some(Finish::fault(3, "conf-gen", 0));
+            }
+            Err(e) => {
+                stderr(&format!(
+                    "batch: spira/conf-gen.sh could not be run against the worktree: {e} — harness fault"
+                ));
+                return Some(Finish::fault(3, "conf-gen", 0));
+            }
+        }
+    }
+    None
+}
+
 /// `cargo build` in place; `Some` is the fault that ends the run.
 fn build(
     args: &RunArgs,
@@ -2497,40 +2532,6 @@ fn build(
                 "batch: workspace failed to build (cargo rc={rc}) — candidate fault"
             ));
             return Some(Finish::fault(4, "build", 0));
-        }
-    }
-    // sp-g3uwp: regenerate spira/conf.d.*.generated.sh HERE, on the host, before the
-    // container mounts this worktree at /workspace — never let conf.sh's own lazy self-heal
-    // be the one that fires inside the container. The container mounts the worktree for the
-    // suite's unprivileged user, who cannot write into it (a rootless-podman uid mapping, the
-    // same reason production's installed release is read-only by design); conf-gen.sh's
-    // write would fail there with EACCES, and conf.sh is specified to fail loudly rather than
-    // paper over a stale generated file, so every suite would fault at install instead of
-    // running. Generating in place here, as whichever user owns the worktree, keeps the
-    // in-container path cold for a correctly-staged branch and exercised only as the fail
-    // closed guard it is meant to be.
-    let conf_gen = wt.join("spira/conf-gen.sh");
-    if conf_gen.exists() {
-        match std::process::Command::new("bash").envs(spira_config::release_env::child_path_env_for_process())
-            .arg(&conf_gen)
-            .current_dir(wt)
-            .output()
-        {
-            Ok(o) if o.status.success() => {}
-            Ok(o) => {
-                stderr(&format!(
-                    "batch: spira/conf-gen.sh failed (rc={:?}) against the worktree — harness fault:\n{}",
-                    o.status.code(),
-                    String::from_utf8_lossy(&o.stderr)
-                ));
-                return Some(Finish::fault(3, "conf-gen", 0));
-            }
-            Err(e) => {
-                stderr(&format!(
-                    "batch: spira/conf-gen.sh could not be run against the worktree: {e} — harness fault"
-                ));
-                return Some(Finish::fault(3, "conf-gen", 0));
-            }
         }
     }
     None
