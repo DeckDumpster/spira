@@ -560,6 +560,9 @@ jobs:
           # so testenv finds it locally. Naming the registry here as well keeps
           # the two steps agreeing about which image the gate is entitled to use.
           SPIRA_TESTENV_REGISTRY: ${{ steps.reg.outputs.registry }}
+          # Where passes survive this runner: an s3://<bucket>/resume prefix the spill instance
+          # profile may write. Unset runs every suite (testenv/src/resume.rs).
+          SPIRA_TESTENV_RESUME: ${{ vars.TESTENV_RESUME }}
         run: |
           set -uo pipefail
           export SPIRA_BATCH_RESULTS="$RUNNER_TEMP/batch"

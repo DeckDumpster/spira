@@ -43,6 +43,7 @@ pub struct BatchCfg {
     /// fixture (DESIGN-testdb.md §2.4) by stripping `SPIRA_TESTDB_MODE=server` from just
     /// their own environment (sp-gjx1b).
     pub embedded_only: BTreeSet<String>,
+    pub resume: Option<crate::resume::Store>,
 }
 
 /// Side effects the executor reports through, so tests can observe them.
@@ -248,6 +249,11 @@ impl Shared<'_> {
             rec,
         );
         write_suite(&self.cfg.results, suite, &rec, output);
+        if rec.status == Status::Ok {
+            if let Some(store) = &self.cfg.resume {
+                store.record(suite);
+            }
+        }
         (self.hooks.line)(&record::suite_line(suite, &rec));
         for l in detail_lines(&rec, output) {
             (self.hooks.line)(&l);
@@ -608,6 +614,7 @@ mod tests {
             deadline: None,
             skip_gate: SkipGate::load("").unwrap(),
             embedded_only: BTreeSet::new(),
+            resume: None,
         }
     }
 

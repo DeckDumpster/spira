@@ -35,6 +35,8 @@ pub struct Settings {
     pub run: PathBuf,
     pub results_root: PathBuf,
     pub verdicts: PathBuf,
+    /// The resume store spec (`none`, `dir:<path>`, `s3://<bucket>/<prefix>`); unset is none.
+    pub resume: Option<String>,
     pub verdict_ttl: u64,
     pub quarantine_max_age: u64,
     pub repeat_reason: Option<String>,
@@ -154,6 +156,7 @@ impl Settings {
         let spira_db = cfg("SPIRA_DB")?;
         Ok(Settings {
             results_root: path("SPIRA_BATCH_RESULTS").unwrap_or_else(|| run.join("batch-results")),
+            resume: src.get("SPIRA_TESTENV_RESUME").filter(|v| !v.trim().is_empty()),
             verdicts: path("SPIRA_VERDICTS").unwrap_or_else(|| run.join("verdicts")),
             verdict_ttl: cfg_parse("SPIRA_VERDICT_TTL")?,
             quarantine_max_age: cfg_parse("SPIRA_QUARANTINE_MAX_AGE")?,
