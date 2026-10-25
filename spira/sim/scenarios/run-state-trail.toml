@@ -1,0 +1,13 @@
+epoch = 1800000000
+horizon = 2400000
+goal = "sp-rs01:LANDED"
+real_actors = ["sentinel-summon", "sentinel-landing", "sift", "gate-worker"]
+
+[[step]]
+at = 0
+file = "sp-rs01"
+
+[[step]]
+at = 0
+claim = "sp-rs01"
+script = ["commit out/a.txt", "submit"]
