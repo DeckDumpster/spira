@@ -20,5 +20,5 @@ for w in "$t"/sim-run-*; do
   echo "-- landing.log"; tail -20 "$w/run/landing.log" "$w/run/landing-pass.log" 2>&1 | cut -c1-200
   timeout 60 "$sim" world down "$w" >/dev/null 2>&1
 done
-ok "dump"
+bad "dump" "see above"
 tl_summary
