@@ -26,3 +26,11 @@ SELECT seq, actor, open_runs FROM (
            OVER (PARTITION BY actor ORDER BY seq ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS open_runs
   FROM events WHERE kind IN ('start', 'complete'))
 WHERE kind = 'start' AND coalesce(open_runs, 0) > 0;
+
+CREATE OR REPLACE VIEW inv_round_land_has_certificate AS
+SELECT l.seq, l.line, l.text FROM run_landing_log l
+WHERE l.event = 'ROUND-LAND'
+  AND NOT EXISTS (SELECT 1 FROM run_verdicts v WHERE v.seq = l.seq);
+
+CREATE OR REPLACE VIEW inv_no_lock_held_between_events AS
+SELECT seq, name, holder FROM run_locks WHERE held;

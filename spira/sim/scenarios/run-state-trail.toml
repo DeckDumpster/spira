@@ -11,3 +11,19 @@ file = "sp-rs01"
 at = 0
 claim = "sp-rs01"
 script = ["commit out/a.txt", "submit"]
+
+[[expect]]
+name = "round_landed_is_logged_with_its_member"
+sql = "SELECT 1 FROM run_landing_log WHERE event = 'ROUND-LAND' AND repo = 'sim' AND text LIKE '%members=sp-rs01:%'"
+
+[[expect]]
+name = "publish_record_names_the_member"
+sql = "SELECT 1 FROM run_queue WHERE repo = 'sim' AND file = 'publish' AND key = 'members' AND value LIKE 'sp-rs01:%'"
+
+[[expect]]
+name = "round_certificate_was_on_disk_when_the_round_landed"
+sql = "SELECT 1 FROM run_landing_log l JOIN run_verdicts v ON v.seq = l.seq WHERE l.event = 'ROUND-LAND'"
+
+[[expect]]
+name = "queue_lock_was_seen_free_between_events"
+sql = "SELECT 1 FROM run_locks WHERE name = 'queue/sim/lock' AND NOT held"

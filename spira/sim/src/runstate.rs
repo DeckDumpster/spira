@@ -29,7 +29,7 @@ pub const TABLES: &[Table] = &[
     },
     Table {
         name: "run_landing_log",
-        columns: &[("file", "VARCHAR"), ("line", "BIGINT"), ("ts", "VARCHAR"), ("repo", "VARCHAR"), ("text", "VARCHAR")],
+        columns: &[("file", "VARCHAR"), ("line", "BIGINT"), ("ts", "VARCHAR"), ("event", "VARCHAR"), ("repo", "VARCHAR"), ("text", "VARCHAR")],
         log: true,
     },
 ];
@@ -85,14 +85,20 @@ pub fn gate_log_row(line_no: usize, line: &str) -> Value {
     json!({"line": line_no, "ts": ts, "repo": repo, "branch": branch, "rc": rc, "text": line})
 }
 
-/// `<ts> <repo>: <text>`, or `<ts> <text>` when the line names no repo.
+/// `<ts> <repo>: <text>` (repo absent when the line names none), or a queue record,
+/// `QUEUE <EVENT> <epoch> key=value...`, which carries its repo as `repo=`.
 pub fn landing_log_row(file: &str, line_no: usize, line: &str) -> Value {
+    if let Some(rest) = line.strip_prefix("QUEUE ") {
+        let (event, text) = rest.split_once(' ').unwrap_or((rest, ""));
+        let repo = text.split_whitespace().find_map(|t| t.strip_prefix("repo="));
+        return json!({"file": file, "line": line_no, "ts": null, "event": event, "repo": repo, "text": text});
+    }
     let (ts, rest) = line.split_once(' ').unwrap_or((line, ""));
     let (repo, text) = match rest.split_once(": ") {
         Some((r, t)) if !r.is_empty() && !r.contains(' ') => (Some(r), t),
         _ => (None, rest),
     };
-    json!({"file": file, "line": line_no, "ts": ts, "repo": repo, "text": text})
+    json!({"file": file, "line": line_no, "ts": ts, "event": null, "repo": repo, "text": text})
 }
 
 pub fn is_lock_name(name: &str) -> bool {
@@ -111,9 +117,9 @@ pub fn flocked_inodes(proc_locks: &str) -> BTreeSet<u64> {
 }
 
 fn holder_of(text: &str) -> Option<String> {
-    let first = text.lines().next()?.trim();
-    let pid = kv(text).into_iter().find(|(k, _)| k == "pid").map(|(_, v)| v);
-    pid.or_else(|| Some(first.split_whitespace().next()?.to_string()))
+    let line = text.lines().next()?;
+    let pid = line.split_whitespace().find_map(|t| t.strip_prefix("pid="));
+    pid.or_else(|| line.split_whitespace().next()).map(str::to_string)
 }
 
 fn files(dir: &Path) -> Vec<(String, PathBuf)> {
