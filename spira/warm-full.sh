@@ -7,7 +7,8 @@
 #   warm-full.sh health                            non-zero when the loop stopped polling
 #
 # The crossing into full is said once; falling back under clears it. Silent while
-# SPIRA_AEON_WARM_BASE is unset or absent.
+# SPIRA_AEON_WARM_BASE is unset or absent. Every pass first empties each slot no session
+# holds that is over SPIRA_AEON_WARM_CAP_MIB, or any idle slot once the tmpfs is past the limit.
 #
 # covers: spira/warm-full.sh spira/watchers
 set -uo pipefail
@@ -24,15 +25,35 @@ _wf_say() {
     return 0
 }
 
+_wf_reap_idle() {
+    local base="$1" pct="$2" lim="$3" cap="${SPIRA_AEON_WARM_CAP_MIB:-0}" lock slot mib
+    for lock in "$base"/slot.[0-9]*.lock; do
+        [ -e "$lock" ] || continue
+        slot="${lock%.lock}"
+        [ -d "$slot" ] || continue
+        (
+            flock -n 9 || exit 0
+            mib="$(du -sm "$slot" 2>/dev/null | awk '{print $1}')"
+            if [ "${mib:-0}" -gt 0 ] && { [ "$pct" -ge "$lim" ] || { [ "$cap" -gt 0 ] && [ "$mib" -gt "$cap" ]; }; }; then
+                find "$slot/" -mindepth 1 -delete 2>/dev/null
+                printf '%s idle %s emptied (%sMiB)\n' "$(date -u +%FT%TZ)" "$(basename "$slot")" "$mib"
+            fi
+        ) 9>>"$lock"
+    done
+}
+
 cmd_pass() {
     local base="${SPIRA_AEON_WARM_BASE:-}" lim=85 pct sizes
     [ -n "$base" ] && [ -d "$base" ] || return 0
     pct="$(df --output=pcent "$base" 2>/dev/null | tail -n 1 | tr -dc '0-9')"
     [ -n "$pct" ] || return 0
+    _wf_reap_idle "$base" "$pct" "$lim"
+    pct="$(df --output=pcent "$base" 2>/dev/null | tail -n 1 | tr -dc '0-9')"
+    [ -n "$pct" ] || return 0
     if [ "$pct" -lt "$lim" ]; then rm -f "$SAID"; return 0; fi
     [ -e "$SAID" ] && return 0
     sizes="$(du -sm "$base"/slot.[0-9]* 2>/dev/null | awk '{n=$2; sub(".*/","",n); printf "%s=%sMiB ", n, $1}')"
-    _wf_say "aeon warm tmpfs $base is ${pct}% full (limit ${lim}%): ${sizes:-no slots}; idle slots are emptied at the next aeon acquire"
+    _wf_say "aeon warm tmpfs $base is ${pct}% full (limit ${lim}%): ${sizes:-no slots}; the slots a session holds cannot be emptied"
     mkdir -p "$(dirname "$SAID")" && : > "$SAID"
 }
 

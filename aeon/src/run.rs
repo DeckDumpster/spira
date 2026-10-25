@@ -1252,8 +1252,8 @@ impl<'a> Run<'a> {
         let mut warm_slot = None;
         let _warm = match spira_config::build::acquire_warm(&warm_base, spira_config::build::AEON_WARM_SLOTS) {
             Some((dir, lock)) => {
-                if spira_config::build::reap_over_cap(&dir, cap_mib) {
-                    self.log(&format!("{}: warm target {} was over {cap_mib} MiB — started empty", self.f(), dir.display()));
+                if spira_config::build::reap_for_build(&dir, cap_mib) {
+                    self.log(&format!("{}: warm target {} held over half of {cap_mib} MiB — started empty", self.f(), dir.display()));
                 }
                 for idle in spira_config::build::reap_idle(&warm_base, spira_config::build::AEON_WARM_SLOTS, cap_mib, spira_config::build::AEON_WARM_FULL_PCT) {
                     self.log(&format!("{}: idle warm target {} emptied (over {cap_mib} MiB or the tmpfs is past {}%)", self.f(), idle.display(), spira_config::build::AEON_WARM_FULL_PCT));
