@@ -492,6 +492,88 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Coverage: workspace line coverage per round",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "spira_coverage_line_percent",
+          "legendFormat": "lines %",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "Coverage: use cases covered / declared per area",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "spira_coverage_uc_covered{area!=\"all\"}",
+          "legendFormat": "covered {{area}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "spira_coverage_uc_declared{area=\"all\"}",
+          "legendFormat": "declared (all)",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "spira_coverage_uc_covered{area=\"all\"}",
+          "legendFormat": "covered (all)",
+          "refId": "C"
+        }
+      ]
     }
   ]
 }

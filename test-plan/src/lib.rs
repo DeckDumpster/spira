@@ -15,6 +15,8 @@
 //! it into one derived, deterministic document; [`render_markdown`] is the only thing allowed
 //! to turn that into prose.
 
+pub mod coverage;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 

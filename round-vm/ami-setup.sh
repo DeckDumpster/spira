@@ -25,6 +25,10 @@ export PATH="$cache_home/bin:$PATH"
 export CARGO_HOME="$cache_home" RUSTUP_HOME="$cache_home/rustup"
 cargo install --locked cargo-nextest --version "$nextest"
 ln -sfn "$cache_home/bin/cargo-nextest" /usr/local/bin/cargo-nextest
+llvm_cov=0.6.16
+cargo install --locked cargo-llvm-cov --version "$llvm_cov"
+ln -sfn "$cache_home/bin/cargo-llvm-cov" /usr/local/bin/cargo-llvm-cov
+rustup component add llvm-tools --toolchain "$toolchain"
 for d in $foreign; do bash "$d/deploy/runner-deps.sh" --check; done
 cat > /etc/systemd/system/tailscaled.service <<UNIT
 [Unit]
