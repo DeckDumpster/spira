@@ -99,7 +99,7 @@ generate() {
     local line any
     section() {
         local label="$1" status="$2" pathspec="$3" strip="$4" out
-        out="$(g diff --name-status --diff-filter="$status" "$prev" "$this" -- "$pathspec" | cut -f2- | sed "s#$strip##" | sort)"
+        out="$(g diff --name-status --diff-filter="$status" "$prev" "$this" -- $pathspec | cut -f2- | sed "s#$strip##" | sort)"
         [ -n "$out" ] || return 0
         any=1
         printf '**%s**\n\n' "$label"
