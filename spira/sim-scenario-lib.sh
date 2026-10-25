@@ -50,7 +50,7 @@ sim_scenario_shard() {  # sim_scenario_shard <scenario name>
         grep -h '^sim: profile' "$t/res.out" | sed "s/^/# $label /"
         [ "$rc" = 0 ] || grep -E '^sim' "$t/res.out" | cut -c1-300 | head -5 | sed 's/^/# /'
         [ "$rc" = 0 ] || sim_failed_commands "$t/res.out" | sed "s/^/# $label /"
-        if [ "$rc" != 0 ]; then for w in "$t"/sim-run-*-$seed; do cat "$w/claim-order" 2>/dev/null | sed 's/^/# DBG claim: /'; awk '/^=== t=.*sentinel --summon-only/' "$w/exec.log" | cut -c1-200 | head -30 | sed 's/^/# DBG sum: /'; awk '/^=== t=.*sentinel --summon-only/ {p=1;n++} p&&n>=4&&n<=9' "$w/exec.log" | cut -c1-250 | head -60 | sed 's/^/# DBG out: /'; done; fi
+        if [ "$rc" != 0 ]; then for w in "$t"/sim-run-*-$seed; do cat "$w/claim-order" 2>/dev/null | sed 's/^/# DBG claim: /'; grep -a '^=== t=.*summon' "$w/exec.log" | cut -c1-160 | sed 's/^/# DBG sum: /' | awk 'NR%5==1' | head -40; grep -a -A6 '^=== t=[3-9][0-9][0-9][0-9][0-9][0-9]* .*summon' "$w/exec.log" | cut -c1-240 | head -50 | sed 's/^/# DBG s2: /'; done; fi
     done
     for w in "$t"/sim-run-*; do [ -d "$w" ] && timeout 60 "$sim" world down "$w" >/dev/null 2>&1; done # batch-job: world teardown stops a whole scratch world
     is "no world serve outlives its run" 0 "$(pgrep -fc "$t/sim-run-" || true)"
