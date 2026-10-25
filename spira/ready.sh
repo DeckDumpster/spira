@@ -248,16 +248,16 @@ fi
         # Python probe: measures wall-clock ms inside the budget ceiling.
         # Outputs "200 Nms" on success, "ERR Nms <reason>" otherwise.
         # A FRESHLY STARTED loom answers slowly or refuses (SPIRA_LOOM_READY_GRACE), and answers
-        # 503 while the content store it reads is still initialising (SPIRA_LOOM_STORE_GRACE).
+        # 503 while the content store it reads is still initialising (waited on for 4x that grace).
         # Each is retried inside its own bounded grace; a 503 FAIL keeps loom's own body, which
         # carries the store's state. A slow ANSWER is judged against the budget below (sp-bn9go).
-        _loom_result="$(python3 - "$_loom_url" "$SPIRA_LOOM_BUDGET_MS" "${SPIRA_LOOM_READY_GRACE:-20}" "${SPIRA_LOOM_STORE_GRACE:-90}" 2>/dev/null <<'PYEOF'
+        _loom_result="$(python3 - "$_loom_url" "$SPIRA_LOOM_BUDGET_MS" "${SPIRA_LOOM_READY_GRACE:-20}" 2>/dev/null <<'PYEOF'
 import sys, urllib.request, urllib.error, time
 url = sys.argv[1]
 budget_ms = float(sys.argv[2])
 start = time.monotonic()
 grace = float(sys.argv[3])
-store_grace = float(sys.argv[4])
+store_grace = 4 * grace
 while True:
     t0 = time.monotonic()
     waiting = "no answer"
@@ -276,7 +276,7 @@ while True:
             body = " ".join(e.read(400).decode("utf-8", "replace").split())[:300]
         except Exception:
             body = ""
-        reason = "HTTP 503 after %ds waiting for the %s (SPIRA_LOOM_STORE_GRACE=%ds): %s" % (
+        reason = "HTTP 503 after %ds waiting for the %s (4 x SPIRA_LOOM_READY_GRACE = %ds): %s" % (
             time.monotonic() - start, waiting, store_grace, body)
         limit = store_grace
     except Exception as e:
