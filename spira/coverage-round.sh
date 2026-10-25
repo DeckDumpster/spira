@@ -8,11 +8,10 @@
 # covers: spira/coverage-round.sh test-plan/
 set -uo pipefail
 tree="${1:?tree}" results="${2:?results-dir}" state="${3:?state-dir}" round="${4:-}" passed="${5:-0}"
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 latest="$state/coverage-latest.json"
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-bash "$HERE/suite-coverage-json.sh" > "$tmp/suites.json" 2>"$tmp/suites.err" \
+bash "$tree/spira/suite-coverage-json.sh" > "$tmp/suites.json" 2>"$tmp/suites.err" \
     || { echo "coverage-round: suite headers unreadable: $(head -3 "$tmp/suites.err")" >&2; exit 0; }
 
 args=(--catalogue-dir "$tree/docs/test-plan" --suites "$tmp/suites.json" --round "$round"
