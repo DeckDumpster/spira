@@ -3,7 +3,7 @@
 //! commits (drift, cached by sha), `world status`, and the aeon ceiling from config. Never runs `bd`.
 
 use cockpit_ops::lctui::{layout, parent_key, Frame, Mode, Ui};
-use cockpit_ops::lcview::{carry_forward, AskRow, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveAeon, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
+use cockpit_ops::lcview::{carry_forward, repo_column, AskRow, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveAeon, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::process::Command;
@@ -278,6 +278,13 @@ fn gather() -> Snapshot {
     match lc_json(&["list", "--live", "--snapshot"]) {
         Ok(rows) => {
             for r in rows {
+                let repo = match repo_column(&r) {
+                    Ok(repo) => repo,
+                    Err(e) => {
+                        s.errors.push(format!("spira-lc list --live: {e}"));
+                        break;
+                    }
+                };
                 let id = text(&r["bead_id"]);
                 if let (Some(pid), Some(ph)) = (r["holder"].as_str().and_then(holder_pid), r["aeon_phase"].as_str()) {
                     phases.insert(pid, ph.to_string());
@@ -302,7 +309,7 @@ fn gather() -> Snapshot {
                     persona: r["persona"].as_str().map(String::from),
                     claimable: None,
                     blocker,
-                    repo: text(&r["repo"]),
+                    repo,
                     tip: r["tip"].as_str().map(String::from),
                     sifted_tip: r["sifted_tip"].as_str().map(String::from),
                     ejected_red_tip: r["ejected_red_tip"].as_str().map(String::from),
@@ -326,10 +333,17 @@ fn gather() -> Snapshot {
         }) {
         Ok(rows) => {
             for r in rows {
+                let repo = match repo_column(&r) {
+                    Ok(repo) => repo,
+                    Err(e) => {
+                        s.errors.push(format!("spira-lc ops-view ops_recent: {e}"));
+                        break;
+                    }
+                };
                 let id = text(&r["bead_id"]);
                 let updated_at = num(&r["updated_at"]).unwrap_or(0);
                 s.meta.entry(id.clone()).or_insert_with(|| Meta { title: text(&r["title"]), priority: num(&r["priority"]), ..Default::default() });
-                s.rows.push(Row { id, state: "LANDED".into(), updated_at, since: num(&r["since"]).unwrap_or(updated_at), ..Default::default() });
+                s.rows.push(Row { id, state: "LANDED".into(), updated_at, since: num(&r["since"]).unwrap_or(updated_at), repo, ..Default::default() });
             }
         }
         Err(e) => s.errors.push(e),

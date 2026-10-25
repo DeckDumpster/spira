@@ -51,7 +51,6 @@ pub struct Row {
     pub claimable: Option<bool>,
     #[serde(default)]
     pub blocker: Option<String>,
-    #[serde(default)]
     pub repo: String,
     #[serde(default)]
     pub tip: Option<String>,
@@ -59,6 +58,15 @@ pub struct Row {
     pub sifted_tip: Option<String>,
     #[serde(default)]
     pub ejected_red_tip: Option<String>,
+}
+
+/// The `repo` of a server bead row: the key must be present, and null means the bead has none.
+pub fn repo_column(row: &serde_json::Value) -> Result<String, String> {
+    match row.get("repo") {
+        Some(serde_json::Value::String(r)) => Ok(r.clone()),
+        Some(serde_json::Value::Null) => Ok(String::new()),
+        _ => Err(format!("bead row {} has no repo column", row["bead_id"].as_str().unwrap_or("?"))),
+    }
 }
 
 /// One open ask, as `spira-lc list-asks` prints it; `title` is the bead table's mirror of it.
@@ -2447,5 +2455,25 @@ BATCH
         let old = serde_json::json!({"now":1,"release":"","world":"","base":"","rows":[],"meta":{},"on_base":{},"ceiling":0,"tails":{},"errors":[]});
         let s: Snapshot = serde_json::from_value(old).unwrap();
         assert!(s.graph.is_empty() && s.dwell.is_empty());
+    }
+
+    #[test]
+    fn a_server_row_without_the_repo_column_fails_and_null_is_no_repo() {
+        let rows: Vec<serde_json::Value> = serde_json::from_str(
+            r#"[{"bead_id":"sp-a","state":"READY","repo":"cubby"},{"bead_id":"sp-b","state":"READY","repo":"spira"},{"bead_id":"sp-c","state":"READY","repo":null},{"bead_id":"sp-d","state":"READY"}]"#,
+        )
+        .unwrap();
+        let got: Vec<Result<String, String>> = rows.iter().map(repo_column).collect();
+        assert_eq!(got[0], Ok("cubby".into()));
+        assert_eq!(got[1], Ok("spira".into()));
+        assert_eq!(got[2], Ok(String::new()));
+        assert!(got[3].as_ref().unwrap_err().contains("sp-d"), "{got:?}");
+        assert!(repo_tag("cubby").contains("cubby") && repo_tag(&got[2].clone().unwrap()).contains('?'));
+    }
+
+    #[test]
+    fn a_stored_row_without_repo_does_not_parse() {
+        let row = serde_json::json!({"id":"sp-a","state":"READY","holder":null,"holds":[],"reason":null,"updated_at":1,"since":1,"lease_until":null});
+        assert!(serde_json::from_value::<Row>(row).is_err());
     }
 }

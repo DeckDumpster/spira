@@ -28,8 +28,8 @@ pub(crate) const LIVE: [&str; 7] = ["OPEN", "READY", "WORKING", "SUBMITTED", "CE
 const BEAD_COLS: &str = "bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, since, express, aeon_phase, disposition, disposition_note, ejected_red_tip, sifted_tip, updated_at, title, priority, repo";
 const DELIVERY_COLS: &str = "bead_id, mode, state, batch_id, pr, merge_sha, version";
 
-pub(crate) const LIST_COLS: [&str; 20] =
-    ["bead_id", "state", "tip", "holder", "persona", "lease_until", "holds", "reason", "updated_at", "version", "stack", "stack_depth", "since", "express", "aeon_phase", "disposition", "disposition_note", "ejected_red_tip", "title", "priority"];
+pub(crate) const LIST_COLS: [&str; 21] =
+    ["bead_id", "state", "tip", "holder", "persona", "lease_until", "holds", "reason", "updated_at", "version", "stack", "stack_depth", "since", "express", "aeon_phase", "disposition", "disposition_note", "ejected_red_tip", "title", "priority", "repo"];
 pub(crate) const FULL_LIST_COLS: [&str; 22] = [
     "bead_id", "state", "tip", "holder", "persona", "lease_until", "holds", "reason", "updated_at", "version", "stack", "stack_depth", "since", "express", "aeon_phase", "disposition", "disposition_note",
     "ejected_red_tip", "sifted_tip", "title", "priority", "repo",
@@ -38,8 +38,8 @@ const SHOW_COLS: [&str; 19] = [
     "bead_id", "state", "tip", "gate_key", "holder", "persona", "lease_until", "holds", "reason", "version", "stack", "stack_depth", "express", "aeon_phase", "disposition", "disposition_note", "ejected_red_tip",
     "sifted_tip", "updated_at",
 ];
-const OPS_LIVE_COLS: [&str; 11] = ["bead_id", "state", "holds", "holder", "persona", "rework", "lease_until", "since", "updated_at", "priority", "title"];
-const OPS_RECENT_COLS: [&str; 6] = ["bead_id", "state", "since", "updated_at", "priority", "title"];
+const OPS_LIVE_COLS: [&str; 12] = ["bead_id", "state", "holds", "holder", "persona", "rework", "lease_until", "since", "updated_at", "priority", "title", "repo"];
+const OPS_RECENT_COLS: [&str; 7] = ["bead_id", "state", "since", "updated_at", "priority", "title", "repo"];
 
 /// What a write changed: the bead keys it touched, or "unknown" (everything is re-read).
 #[derive(Clone, Debug, PartialEq)]
@@ -639,6 +639,21 @@ mod tests {
         assert_eq!(rows[0].as_object().unwrap().keys().cloned().collect::<Vec<_>>(), OPS_LIVE_COLS);
         assert_eq!(ids(&live.ops_view("ops_recent", NOW).unwrap()), ["sp-b"]);
         assert!(live.ops_view("ops_round", NOW).is_none());
+    }
+
+    #[test]
+    fn every_pane_row_set_carries_the_beads_repo_and_null_for_none() {
+        let mut a = bead("sp-a", "READY", 1, NOW);
+        a["repo"] = "cubby".into();
+        let mut b = bead("sp-b", "LANDED", 1, NOW);
+        b["repo"] = "spira".into();
+        let live = loaded(vec![a, b, bead("sp-c", "READY", 1, NOW)], vec![]);
+        let repo = |rows: Vec<Value>, id: &str| rows.into_iter().find(|r| text(r, "bead_id") == id).map(|r| r.get("repo").cloned());
+        let listed = live.list(&ListFilter::default()).unwrap();
+        assert_eq!(repo(listed.clone(), "sp-a"), Some(Some("cubby".into())));
+        assert_eq!(repo(listed, "sp-c"), Some(Some(Value::Null)), "a bead without a repo has an explicit null, not a missing key");
+        assert_eq!(repo(live.ops_view("ops_live", NOW).unwrap(), "sp-a"), Some(Some("cubby".into())));
+        assert_eq!(repo(live.ops_view("ops_recent", NOW).unwrap(), "sp-b"), Some(Some("spira".into())));
     }
 
     #[test]
