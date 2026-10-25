@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=loom
+DOC=Loom answers /stuck with 503 while the content store it reads is still initialising;
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Loom answers /stuck with 503 while the content store it reads is still initialising;
+    # ready.sh waits this many seconds for the store before a 503 is a FAIL. A refused
+    # connection is bounded by SPIRA_LOOM_READY_GRACE instead.
+    : "${SPIRA_LOOM_STORE_GRACE:=90}"
+SPIRA_CONF_DEFAULT_EOF
