@@ -635,6 +635,23 @@ fn resubmit_records_a_moved_tip_with_no_verdict() {
 }
 
 #[test]
+fn resubmit_submitted_moves_a_submitted_row_to_the_gated_tip_and_only_then() {
+    let mut f = Fake::default();
+    let held = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let gated = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    f.bead("sp-s", BeadState::Submitted).tip = Some(held.into());
+    let a = go(&mut f, "certify", &["sp-s", gated, "pass", "gate"]);
+    assert_eq!(a.code, REFUSED, "the stale-tip pass is refused first");
+    let a = go(&mut f, "resubmit-submitted", &["sp-s", gated]);
+    assert_eq!(a.code, APPLIED, "{:?}", a.cert_log);
+    assert_eq!((f.state("sp-s"), f.beads["sp-s"].tip.as_deref()), ("SUBMITTED", Some(gated)));
+    assert_eq!(go(&mut f, "certify", &["sp-s", gated, "pass", "gate"]).code, APPLIED);
+    assert_eq!(f.state("sp-s"), "CERTIFIED");
+    let a = go(&mut f, "resubmit-submitted", &["sp-s", held]);
+    assert_eq!((a.code, f.state("sp-s")), (REFUSED, "CERTIFIED"), "only a SUBMITTED row is moved");
+}
+
+#[test]
 fn resubmit_on_a_rework_bead_names_its_refusal() {
     let mut f = Fake::default();
     f.bead("sp-rw", BeadState::Rework);

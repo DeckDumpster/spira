@@ -148,6 +148,24 @@ impl<'a> Pass<'a> {
         }
     }
 
+    /// A GatePass the row refused because it holds another tip: the gate judged the branch, so
+    /// the row takes the branch tip and the same pass is offered once more.
+    fn lc_certify_pass(&self, id: &str, tip: &str, detail: &str) -> bool {
+        if self.lc_certify(id, tip, "pass", detail) {
+            return true;
+        }
+        match self.lc.resubmit_submitted(id, tip) {
+            Ok(a) => {
+                self.log(&format!("CHECK6 {id}: lifecycle held another tip — resubmitted {tip}: {a}"));
+                self.lc_certify(id, tip, "pass", detail)
+            }
+            Err(why) => {
+                self.log(&format!("CHECK6 {id}: LIFECYCLE: resubmit of {tip} did not happen ({why})"));
+                false
+            }
+        }
+    }
+
     /// The whole pass after the lock and the run record (DESIGN.md §4 steps 3–10). Returns
     /// nothing: every outcome is in the log, the mailbox and the records.
     pub fn run(&self) {
@@ -587,7 +605,7 @@ impl<'a> Pass<'a> {
             self.log(&format!("CHECK6 {id}: bead is now {st} (was closed at scan time) — not certifying {br}"));
             return Flow::Next;
         }
-        if !self.lc_certify(id, &tip, "pass", "gate") {
+        if !self.lc_certify_pass(id, &tip, "gate") {
             self.files.refuse_pass(br, &tip);
             self.log(&format!("CHECK6 {id}: lifecycle refused GatePass at {tip} — {br} stays uncertified"));
             return Flow::Next;
@@ -800,7 +818,7 @@ impl<'a> Pass<'a> {
             let (closed, _) = self.handed_on_now(id);
             if closed {
                 self.log(&format!("CHECK6 {id}: base-fix: {br} is green on {name}'s red suite {suite} — certifying"));
-                if !self.lc_certify(id, tip, "pass", "base-fix") {
+                if !self.lc_certify_pass(id, tip, "base-fix") {
                     self.log(&format!("CHECK6 {id}: lifecycle refused GatePass at {tip} — {br} stays uncertified"));
                     return;
                 }

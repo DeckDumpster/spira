@@ -7,6 +7,8 @@ pub trait Lc {
     fn probe(&self) -> Result<(), String>;
     /// `spira-lc certify <id> <tip> <pass|red|infra> <detail>`: the gate outcome as an event.
     fn certify(&self, id: &str, tip: &str, outcome: &str, detail: &str) -> Result<String, String>;
+    /// `spira-lc resubmit-submitted <id> <tip>`: make a SUBMITTED row hold the branch tip the gate judged.
+    fn resubmit_submitted(&self, id: &str, tip: &str) -> Result<String, String>;
 }
 
 pub struct RealLc {
@@ -36,6 +38,18 @@ impl Lc for RealLc {
         if rc != 0 {
             let e = String::from_utf8_lossy(&se);
             return Err(format!("spira-lc certify exited {rc}: {out} {}", e.lines().next().unwrap_or("")));
+        }
+        Ok(out)
+    }
+
+    fn resubmit_submitted(&self, id: &str, tip: &str) -> Result<String, String> {
+        let mut c = crate::util::command(self.bin()?);
+        c.args(["resubmit-submitted", id, tip, "landing-pass"]).stdin(std::process::Stdio::null());
+        let (rc, so, se) = crate::util::run_capture(c);
+        let out = String::from_utf8_lossy(&so).trim().to_string();
+        if rc != 0 {
+            let e = String::from_utf8_lossy(&se);
+            return Err(format!("spira-lc resubmit-submitted exited {rc}: {out} {}", e.lines().next().unwrap_or("")));
         }
         Ok(out)
     }
