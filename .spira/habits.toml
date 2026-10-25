@@ -1,0 +1,23 @@
+[[habit]]
+name = "rustfmt"
+glob = "**/*.rs"
+run = "rustfmt --check --edition 2021 {file}"
+budget_ms = 1500
+
+[[habit]]
+name = "complexity"
+glob = "**/*.rs"
+run = "rust-code-analysis-cli -m -O json -p {file}"
+threshold = "cognitive > 20 per function"
+budget_ms = 2000
+
+[[habit]]
+name = "shellcheck"
+glob = "**/*.sh"
+run = "shellcheck -f gcc {file}"
+budget_ms = 1500
+
+[[stop]]
+name = "clippy"
+run = "cargo clippy -p {crate} --message-format short"
+budget_ms = 150000
