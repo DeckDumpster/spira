@@ -145,7 +145,7 @@ fn a_seed_files_through_bead_sh_with_its_priority_labels_body_and_deps() {
     let steps = spira_sim::drive::seed_steps(&s.seeds).unwrap();
     assert_eq!(steps.len(), 1, "seeds sharing a time are one step");
     let cmd = &steps[0].1;
-    assert!(cmd.contains("bead.sh file 'it'\\''s a' --for builder --repo 'sim' --priority 1 --body-file"), "{cmd}");
+    assert!(cmd.contains("bead.sh file 'it'\\''s a' --for 'builder' --repo 'sim' --priority 1 --body-file"), "{cmd}");
     assert!(cmd.contains("bead.sh label add \"$id\" 'x'"), "{cmd}");
     assert!(cmd.contains("bead.sh file 'b' --kind 'event'"), "{cmd}");
     assert!(cmd.contains("bead.sh dep add \"$id\" \"$(cat \"$SPIRA_RUN/seeds/a.id\")\""), "{cmd}");
@@ -154,7 +154,7 @@ fn a_seed_files_through_bead_sh_with_its_priority_labels_body_and_deps() {
 
 #[test]
 fn a_command_step_reaches_a_seeds_id_by_handle() {
-    let s = seeded("[[seed]]\nhandle = \"a\"\ntitle = \"a\"\n[[step]]\nat = 1\nname = \"c\"\ncommand = \"bead.sh label add {bead:a} x\"\n").unwrap();
+    let s = seeded("[[seed]]\nhandle = \"a\"\ntitle = \"a\"\nkind = \"event\"\n[[step]]\nat = 1\nname = \"c\"\ncommand = \"bead.sh label add {bead:a} x\"\n").unwrap();
     assert_eq!(s.steps[0].shell().unwrap(), "bead.sh label add \"$(cat \"$SPIRA_RUN/seeds/a.id\")\" x");
 }
 
