@@ -140,3 +140,23 @@ No bash suite is retired by this step. The sole-G14 suites, and what each still 
 | test-batcher-cut, test-batcher-cut-land | dozens of ejection and verdict cases per round (G6); the world's happy round covers one |
 | test-tsd | the `run/tsd` families (G16) |
 | test-landing-queue-early | a forge whose verdict flips mid-pass (G6, G10) |
+
+# Sim D2/G6: gate verdict kinds
+
+The world's suite runner (`SUITE_RUNNER` in `sim/src/world.rs`) now reads `config/gate-control` in the world: the last
+line naming a bead picks `fail` (exit 1), `no-verdict` (75, timeout) or `infra` (75, harness fault); any other mode passes.
+Each run is appended to `config/gate-calls`. Steps steer it with `steps/gate-mode.sh`; `steps/gate-verdicts.sh` waits for a
+bead's gate to have run, fails the step unless the bead sits in the expected state, then steers the next mode.
+
+`gate-verdict-kinds` runs three beads through FAIL (REWORK, re-claimed, lands), NO_VERDICT and infra (both stay
+SUBMITTED, then land once the gate passes). Seen red with `fail` planted to exit 0: `red_gate_returned_it` unmet.
+
+No bash suite is deleted. Of the suites whose only gap is G6, each still needs something this does not add:
+
+| suite | left because |
+|---|---|
+| test-lifecycle-cert | drives spira-lc `certify`/`resubmit` directly, including stale-tip refusal and gate.sh's own verdict(); the scenario reaches only the gate-driven arms |
+| test-certified-withdraw | needs a reopen step and label state in the view |
+| test-withdrawn-suites-recert | needs the ejected-suites sidecar and testenv inside the world |
+| test-landing-base-fail | needs a `base-fail` mode (exit 76) plus an incident-bead table |
+| test-escape-classify | needs a red round attributed to a member (the round-vm verdict, not the gate) |
