@@ -151,7 +151,10 @@ pub fn with_home(argv: &[String], home: &Path) -> Vec<String> {
 /// (the stub) itself. Its output goes to the summon's stdout, and so to the world's `exec.log`.
 fn run_aeon(world: &Path, argv: &[String]) -> Result<(), String> {
     let harness = argv.iter().position(|a| a == "--home").and_then(|i| argv.get(i + 1)).ok_or("sim-summon: the aeon argv names no --home")?;
-    let (env, command) = aeon_command(&with_home(argv, &aeon_home(world, Path::new(harness))?))?;
+    let (mut env, command) = aeon_command(&with_home(argv, &aeon_home(world, Path::new(harness))?))?;
+    for (_, path) in env.iter_mut().filter(|(k, _)| k == "PATH") {
+        *path = format!("{}:{path}", world.join("bin").display());
+    }
     let (prog, args) = command.split_first().ok_or("sim-summon: empty aeon command")?;
     let (status, out, err) = run_capture(Command::new(prog).args(args).envs(spira_config::release_env::child_path_env_for_process()).envs(env), AEON_DEADLINE)?;
     print!("{out}{err}");

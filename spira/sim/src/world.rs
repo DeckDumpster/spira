@@ -17,8 +17,10 @@ pub const RELEASE_ENV: &str = "SPIRA_SIM_RELEASE";
 pub const TESTENV_ENV: &str = "SPIRA_IN_TESTENV";
 /// Host-touching tools the loop calls by bare name at the end of a pass: `unit-ensure`
 /// (re)installs the user's systemd units, `target-reap` removes shared build directories. In a
-/// world each is `sim` invoked under that name, and does nothing.
-pub const INERT_TOOLS: &[&str] = &["unit-ensure", "target-reap"];
+/// world each is `sim` invoked under that name, and does nothing. `spira-lint` is one too: the
+/// aeon's fast tier runs it over the diff, and a world's sparse checkout lacks the crates its
+/// tree-wide rules judge (the commit hook puts the release's own on its PATH first and still runs).
+pub const INERT_TOOLS: &[&str] = &["unit-ensure", "target-reap", "spira-lint"];
 /// What the world's `SPIRA_SUMMON` runs: `sim` under this name, standing where `systemd-run` stands.
 pub const SUMMON_TOOL: &str = "sim-summon";
 
