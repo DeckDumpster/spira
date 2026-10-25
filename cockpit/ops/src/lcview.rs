@@ -696,6 +696,8 @@ impl PassProgress {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct RoundMember {
     pub id: String,
+    #[serde(default)]
+    pub repo: String,
     pub prio: String,
     pub title: String,
     /// How many recent rounds have ejected this bead.
@@ -1118,6 +1120,13 @@ pub fn age(secs: i64) -> String {
     }
 }
 
+pub const TEAL: &str = "\x1b[38;5;30m";
+
+/// The bead's repo as the coloured tag between priority and title; an unknown repo is `?`, never nothing.
+pub fn repo_tag(repo: &str) -> String {
+    format!("{TEAL}{}{R} ", if repo.is_empty() { "?" } else { repo })
+}
+
 pub fn cut(s: &str, n: usize) -> String {
     if s.chars().count() > n {
         format!("{}…", s.chars().take(n.saturating_sub(1)).collect::<String>())
@@ -1137,6 +1146,15 @@ pub fn view(s: &Snapshot) -> View {
     let prio = |id: &str| s.meta.get(id).and_then(|m| m.priority).map(|p| format!("P{p}")).unwrap_or_else(|| "P?".into());
     let title = |id: &str| {
         s.meta.get(id).map(|m| m.title.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| "(no title: not an open bead)".into())
+    };
+    let repo_of = |id: &str| {
+        s.rows
+            .iter()
+            .find(|r| r.id == id)
+            .map(|r| r.repo.clone())
+            .filter(|r| !r.is_empty())
+            .or_else(|| s.meta.get(id).and_then(|m| m.labels.iter().find_map(|l| l.strip_prefix("repo:").map(String::from))))
+            .unwrap_or_default()
     };
     let item = |r: &Row, age_of: i64, note: String| Item {
         id: r.id.clone(),
@@ -1239,7 +1257,7 @@ pub fn view(s: &Snapshot) -> View {
                     .members
                     .iter()
                     .filter(|m| !b.ejected.contains(m))
-                    .map(|m| RoundMember { id: m.clone(), prio: prio(m), title: title(m), ejects: ejects_of(m) })
+                    .map(|m| RoundMember { id: m.clone(), repo: repo_of(m), prio: prio(m), title: title(m), ejects: ejects_of(m) })
                     .collect(),
                 staged: Vec::new(),
             }
@@ -1369,6 +1387,7 @@ pub fn view(s: &Snapshot) -> View {
             id: a.id.clone(),
             age: age(s.now - a.opened_at),
             class: a.class.clone(),
+            repo: repo_of(&a.id),
             title: Some(a.title.clone()).filter(|t| !t.is_empty()).unwrap_or_else(|| title(&a.id)),
             ..Default::default()
         })
@@ -1469,7 +1488,7 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
     });
     for i in v.decide.iter().take(5) {
         let class = if i.class.is_empty() { String::new() } else { format!("{} ", i.class) };
-        out.push(format!("  {YEL}{:<12}{R} {D}{:>4}{R} {class}{}", i.id, i.age, cut(&i.title, w.saturating_sub(24 + class.len()))));
+        out.push(format!("  {YEL}{:<12}{R} {D}{:>4}{R} {class}{}{}", i.id, i.age, repo_tag(&i.repo), cut(&i.title, w.saturating_sub(24 + class.len() + i.repo.len().max(1) + 1))));
     }
     if v.decide.len() > 5 {
         out.push(format!("  {D}+{} more{R}", v.decide.len() - 5));
@@ -1562,7 +1581,7 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
     let tw = w.saturating_sub(48).min(70);
     for i in &v.now_items {
         let tag = if i.rework { format!("{YEL}{B}REWORK{R} ") } else { String::new() };
-        out.push(format!("  {CYN}{:<9}{R} {:<12} {tag}{} {:<tw$} {D}{} · {}{R}", cut(&i.who, 9), i.id, i.prio, cut(&i.title, tw), i.age, i.note));
+        out.push(format!("  {CYN}{:<9}{R} {:<12} {tag}{} {}{:<tw$} {D}{} · {}{R}", cut(&i.who, 9), i.id, i.prio, repo_tag(&i.repo), cut(&i.title, tw), i.age, i.note));
         out.push(format!("  {D}{:<9}{R}", cut(&i.persona, 9)));
         let c = match i.out_level.as_str() {
             "bad" => RED,
@@ -1596,12 +1615,12 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
     }
     out.push(format!("{B}NEXT{R}   {B}{}{R} claimable {D}(claim order: express, REWORK, then priority){R}", v.next_count));
     for i in v.next.iter().take(NEXT_SHOWN) {
-        out.push(format!("  {} {:<12} {}", i.prio, i.id, cut(&i.title, w.saturating_sub(20))));
+        out.push(format!("  {} {:<12} {}{}", i.prio, i.id, repo_tag(&i.repo), cut(&i.title, w.saturating_sub(21 + i.repo.len().max(1)))));
     }
     if !v.blocked.is_empty() {
         out.push(format!("{B}BLOCKED{R} {B}{}{R} {D}(READY, waiting on an unmet dependency){R}", v.blocked.len()));
         for i in v.blocked.iter().take(6) {
-            out.push(format!("  {} {:<26} {}", i.prio, i.note, cut(&i.title, w.saturating_sub(36))));
+            out.push(format!("  {} {}{:<26} {}", i.prio, repo_tag(&i.repo), i.note, cut(&i.title, w.saturating_sub(37 + i.repo.len().max(1)))));
         }
     }
     out.push(format!("{B}RECENT{R} {D}last transitions — when · bead · now{R}"));
@@ -1611,7 +1630,7 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
             "REWORK" | "DROPPED" => YEL,
             _ => "",
         };
-        out.push(format!("  {D}{:>4}{R} {:<12} {c}{:<11}{R} {}", i.age, i.id, i.state, cut(&i.title, w.saturating_sub(34))));
+        out.push(format!("  {D}{:>4}{R} {:<12} {c}{:<11}{R} {}{}", i.age, i.id, i.state, repo_tag(&i.repo), cut(&i.title, w.saturating_sub(35 + i.repo.len().max(1)))));
     }
     out.push(format!("{D}source: spira-lc (state) · work list (titles) · {} commits (drift) — no bd{R}", v.base));
     out

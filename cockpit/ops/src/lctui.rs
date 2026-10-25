@@ -11,7 +11,9 @@
 //!
 //! Everything here is pure (view, choices, size in; lines out) so it is tested without a terminal.
 
-use crate::lcview::{cut, View};
+use crate::lcview::{cut, repo_tag, View};
+#[cfg(test)]
+use crate::lcview::TEAL;
 use std::collections::{HashMap, HashSet};
 
 const B: &str = "\x1b[1m";
@@ -218,7 +220,7 @@ fn waiting_node(v: &View) -> Node {
         .take(WAITING_SHOWN)
         .map(|i| {
             let class = if i.class.is_empty() { String::new() } else { format!("{D}{}{R} ", i.class) };
-            Node::new(format!("decide/{}", i.id), format!("{YEL}{:<12}{R} {D}{:>4}{R} {class}{}", i.id, i.age, i.title))
+            Node::new(format!("decide/{}", i.id), format!("{YEL}{:<12}{R} {D}{:>4}{R} {class}{}{}", i.id, i.age, repo_tag(&i.repo), i.title))
         })
         .collect();
     if v.decide.len() > WAITING_SHOWN {
@@ -277,7 +279,7 @@ pub fn tree(v: &View) -> Vec<Node> {
                     .iter()
                     .map(|m| {
                         let ej = if m.ejects > 0 { format!("{YEL}ejected {}× before{R} ", m.ejects) } else { String::new() };
-                        Node::new(format!("{key}/{}", m.id), format!("{:<14} {} {ej}{}", m.id, m.prio, m.title))
+                        Node::new(format!("{key}/{}", m.id), format!("{:<14} {} {}{ej}{}", m.id, m.prio, repo_tag(&m.repo), m.title))
                     })
                     .collect()
             };
@@ -337,7 +339,7 @@ pub fn tree(v: &View) -> Vec<Node> {
                     Node::new(format!("now/{}/{k}", i.id), format!("{c}{l}{tail}{R}"))
                 }))
                 .collect();
-            let head = format!("{CYN}{:<14}{R} {:<12} {tag}{} {D}{} · {}{R}", cut(&who, 14), i.id, i.prio, i.age, i.note);
+            let head = format!("{CYN}{:<14}{R} {:<12} {tag}{} {}{D}{} · {}{R}", cut(&who, 14), i.id, i.prio, repo_tag(&i.repo), i.age, i.note);
             Node::new(format!("now/{}", i.id), format!("{head} {}", i.title))
                 .open_line(head)
                 .kids(out)
@@ -391,7 +393,7 @@ pub fn tree(v: &View) -> Vec<Node> {
                 } else {
                     format!("{YEL}{}{R} ", i.claim)
                 };
-                let n = Node::new(format!("{sk}/{}", i.id), format!("{claim}{:<12} {D}{:>4}{R} {} {kind}{}{note}", i.id, i.age, i.prio, i.title));
+                let n = Node::new(format!("{sk}/{}", i.id), format!("{claim}{:<12} {D}{:>4}{R} {} {}{kind}{}{note}", i.id, i.age, i.prio, repo_tag(&i.repo), i.title));
                 if i.why.is_empty() {
                     n
                 } else {
@@ -419,7 +421,7 @@ pub fn tree(v: &View) -> Vec<Node> {
     states.push(Node::new("state/terminal", format!("{D}terminal 24h  {}{R}", v.terminal)).elide(R_TERMINAL));
     out.push(Node::new("state", format!("{B}STATES{R}  {D}counts now · moves per hour{R}")).kids(states));
 
-    let blocked = v.blocked.iter().map(|i| Node::new(format!("blocked/{}", i.id), format!("{} {:<26} {}", i.prio, i.note, i.title))).collect();
+    let blocked = v.blocked.iter().map(|i| Node::new(format!("blocked/{}", i.id), format!("{} {}{:<26} {}", i.prio, repo_tag(&i.repo), i.note, i.title))).collect();
     if !v.blocked.is_empty() {
         out.push(
             Node::new("blocked", format!("{B}BLOCKED{R} {B}{}{R} {D}READY, waiting on a dependency{R}", v.blocked.len()))
@@ -969,6 +971,7 @@ pub fn ansi_html(s: &str) -> String {
                 "32" => "grn",
                 "33" => "yel",
                 "36" => "cyn",
+                "38;5;30" => "teal",
                 _ => continue,
             };
             out.push_str(&format!("<span class={class}>"));
@@ -1014,8 +1017,8 @@ fn link_ids(s: &str) -> String {
     out
 }
 
-const PAGE_CSS: &str = ":root{--bg:#fff;--fg:#111;--dim:#6b7280;--grn:#15803d;--yel:#b45309;--red:#b91c1c;--cyn:#0e7490;--line:#e5e7eb}\
-@media (prefers-color-scheme:dark){:root{--bg:#0b0d10;--fg:#e5e7eb;--dim:#9ca3af;--grn:#4ade80;--yel:#fbbf24;--red:#f87171;--cyn:#22d3ee;--line:#1f2937}}\
+const PAGE_CSS: &str = ":root{--bg:#fff;--fg:#111;--dim:#6b7280;--grn:#15803d;--yel:#b45309;--red:#b91c1c;--cyn:#0e7490;--teal:#0f766e;--line:#e5e7eb}\
+@media (prefers-color-scheme:dark){:root{--bg:#0b0d10;--fg:#e5e7eb;--dim:#9ca3af;--grn:#4ade80;--yel:#fbbf24;--red:#f87171;--cyn:#22d3ee;--teal:#2dd4bf;--line:#1f2937}}\
 body{background:var(--bg);color:var(--fg);font:13px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;margin:0;padding:0 16px 24px;max-width:1000px}\
 header{position:sticky;top:0;background:var(--bg);padding:8px 0 6px;border-bottom:1px solid var(--line);z-index:1}\
 nav{margin:6px 0 8px;font-size:12px}nav button{font:inherit;font-size:11px;background:none;color:var(--dim);border:1px solid var(--line);border-radius:4px;padding:1px 6px}\
@@ -1023,7 +1026,7 @@ nav{margin:6px 0 8px;font-size:12px}nav button{font:inherit;font-size:11px;backg
 .kids{padding-left:1.2em;border-left:1px solid var(--line);margin-left:.3em}.leaf{padding:1px 0}\
 .count{color:var(--dim)}details[open]>summary>.count{display:none}\
 details:not([open])>summary>.open-line{display:none}details[open]>summary>.closed-line{display:none}\
-a{color:inherit;text-decoration:underline dotted}.b{font-weight:bold}.d{color:var(--dim)}.red,.bad{color:var(--red)}.grn{color:var(--grn)}.yel{color:var(--yel)}.cyn{color:var(--cyn)}\
+a{color:inherit;text-decoration:underline dotted}.b{font-weight:bold}.d{color:var(--dim)}.red,.bad{color:var(--red)}.grn{color:var(--grn)}.yel{color:var(--yel)}.cyn{color:var(--cyn)}.teal{color:var(--teal)}\
 .rev{background:var(--fg);color:var(--bg)}";
 
 const PAGE_JS: &str = "const K='lcview-open';\
@@ -1098,7 +1101,7 @@ mod tests {
                 live: true,
                 passes: 2,
                 ejected: vec!["sp-x".into()],
-                members: (0..4).map(|k| RoundMember { id: format!("sp-m{k}"), prio: "P1".into(), title: "member".into(), ejects: k }).collect(),
+                members: (0..4).map(|k| RoundMember { id: format!("sp-m{k}"), prio: "P1".into(), title: "member".into(), ejects: k, ..Default::default() }).collect(),
                 staged: Vec::new(),
             }),
             now_items: (0..3).map(|k| item(&format!("sp-w{k}"))).collect(),
@@ -1191,6 +1194,59 @@ mod tests {
         let page = render_page(&epics_view(), None, 10);
         assert!(page.contains("data-key=\"epics/deckdumpster/multi-tenancy\""), "the page carries the epic nodes");
         assert!(page.contains("stacked on") && page.contains("sp-t5980r"), "the hold line is on the page");
+    }
+
+    fn repo_view() -> View {
+        let it = |id: &str, repo: &str| Item { id: id.into(), prio: "P1".into(), title: format!("title of {id}"), repo: repo.into(), age: "5m".into(), who: "anima".into(), persona: "builder".into(), note: "n".into(), ..Default::default() };
+        let mut v = busy_view();
+        let repos = [("sp-c1", "cubby"), ("sp-s1", "spira"), ("sp-d1", "deckdumpster"), ("sp-u1", "")];
+        let items = |_: ()| repos.iter().map(|(i, r)| it(i, r)).collect::<Vec<_>>();
+        v.decide = items(());
+        v.now_items = items(());
+        v.next = items(());
+        v.blocked = items(());
+        v.recent = items(());
+        v.round.as_mut().unwrap().members = repos.iter().map(|(i, r)| RoundMember { id: (*i).into(), repo: (*r).into(), prio: "P1".into(), title: format!("title of {i}"), ejects: 0 }).collect();
+        v.machine = vec![SmState { name: "READY".into(), count: 4, beads: items(()), ..Default::default() }];
+        v
+    }
+
+    fn tagged(line: &str, prio: &str, repo: &str, title: &str) -> bool {
+        let want = format!("{prio} {TEAL}{repo}{R} ");
+        line.find(&want).is_some_and(|i| line[i + want.len()..].contains(title))
+    }
+
+    #[test]
+    fn every_bead_row_in_the_tree_carries_its_repo_tag_between_priority_and_title() {
+        fn walk(n: &[Node], out: &mut Vec<(String, String)>) {
+            for x in n {
+                out.push((x.key.clone(), x.line.clone()));
+                walk(&x.kids, out);
+            }
+        }
+        let mut rows = Vec::new();
+        walk(&tree(&repo_view()), &mut rows);
+        for (prefix, has_prio) in [("round/", true), ("now/", true), ("state/READY/", true), ("blocked/", true)] {
+            for (id, repo) in [("sp-c1", "cubby"), ("sp-s1", "spira"), ("sp-d1", "deckdumpster"), ("sp-u1", "?")] {
+                let line = rows.iter().find(|(k, _)| k == &format!("{prefix}{id}")).unwrap_or_else(|| panic!("{prefix}{id}: {rows:#?}")).1.clone();
+                assert!(has_prio && tagged(&line, "P1", repo, &format!("title of {id}")), "{prefix}{id}: {line:?}");
+            }
+        }
+        for (id, repo) in [("sp-c1", "cubby"), ("sp-u1", "?")] {
+            let line = &rows.iter().find(|(k, _)| k == &format!("decide/{id}")).unwrap().1;
+            assert!(line.contains(&format!("{TEAL}{repo}{R} title of {id}")), "{line:?}");
+        }
+        let page = render_page(&repo_view(), None, 5);
+        assert!(page.contains("<span class=teal>deckdumpster</span>"), "the page paints the tag");
+    }
+
+    #[test]
+    fn the_lc_view_text_render_tags_next_blocked_and_recent_rows() {
+        let out = crate::lcview::render(&repo_view(), 120).join("\n");
+        for (id, repo) in [("sp-c1", "cubby"), ("sp-d1", "deckdumpster"), ("sp-u1", "?")] {
+            let tag = format!("{TEAL}{repo}{R} title of {id}");
+            assert!(out.matches(&tag).count() >= 3, "{id}: {out}");
+        }
     }
 
     #[test]
@@ -1379,7 +1435,7 @@ mod tests {
         let mut staged = v.round.clone().unwrap();
         staged.name = "r-stage-1".into();
         staged.state = "STAGED".into();
-        staged.members = (0..2).map(|k| RoundMember { id: format!("sp-s{k}"), prio: "P1".into(), title: "staged member".into(), ejects: 0 }).collect();
+        staged.members = (0..2).map(|k| RoundMember { id: format!("sp-s{k}"), prio: "P1".into(), title: "staged member".into(), ejects: 0, ..Default::default() }).collect();
         v.round.as_mut().unwrap().staged = vec![staged];
         let t = text(&layout(&v, &Ui::default(), 100, 200));
         let at = |s: &str| t.iter().position(|l| l.contains(s)).unwrap_or_else(|| panic!("{s}: {t:#?}"));
