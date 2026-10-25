@@ -37,6 +37,37 @@ fn valid_name(s: &str) -> bool {
     !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) && !s.starts_with('.')
 }
 
+/// The bead and state of a `bead:ID=STATE` release condition; `None` for free text, which only
+/// a person lifts. A `bead:` condition that does not parse is an error, never free text.
+pub fn bead_condition(until: &str) -> Option<Result<(String, String), String>> {
+    let rest = until.trim().strip_prefix("bead:")?;
+    let parsed = rest.split_once('=').filter(|(b, st)| valid_name(b) && !st.is_empty() && st.chars().all(|c| c.is_ascii_uppercase() || c == '_'));
+    Some(parsed.map(|(b, st)| (b.to_string(), st.to_string())).ok_or_else(|| format!("release condition {until:?} is not bead:<id>=<STATE> (STATE in capitals)")))
+}
+
+/// Whether lifecycle `history` rows show the bead entering `state` at or after `since`.
+pub fn entered_state(history: &[serde_json::Value], state: &str, since: u64) -> bool {
+    let num = |v: Option<&serde_json::Value>| v.and_then(|x| x.as_u64().or_else(|| x.as_str().and_then(|s| s.parse().ok())));
+    history.iter().any(|r| {
+        r.get("to_state").and_then(|v| v.as_str()) == Some(state) && num(r.get("applied")).unwrap_or(0) == 1 && num(r.get("at")).is_some_and(|at| at >= since)
+    })
+}
+
+/// Lifts every stop whose `bead:ID=STATE` condition `reached` reports met; a stop whose
+/// state cannot be read stays. Returns the repos lifted and the conditions that could not be read.
+pub fn sweep(run: &Path, reached: &mut dyn FnMut(&str, &str, u64) -> Result<bool, String>) -> (Vec<String>, Vec<String>) {
+    let (mut lifted, mut unread) = (Vec::new(), Vec::new());
+    for s in repo_stops(run) {
+        let Some(Ok((bead, state))) = bead_condition(&s.until) else { continue };
+        match reached(&bead, &state, s.since) {
+            Ok(true) if unpause_repo(run, &s.repo, &[]).is_ok() => lifted.push(s.repo),
+            Ok(_) => {}
+            Err(e) => unread.push(format!("{}: {e}", s.repo)),
+        }
+    }
+    (lifted, unread)
+}
+
 pub fn parse_lanes(csv: &str) -> Result<Vec<String>, String> {
     let mut out: Vec<String> = Vec::new();
     for l in csv.split(',').map(str::trim).filter(|l| !l.is_empty()) {
@@ -79,6 +110,9 @@ pub fn pause_repo(run: &Path, repo: &str, lanes: &[String], owner: &str, reason:
         if v.trim().is_empty() {
             return Err(format!("a stop needs a {what}"));
         }
+    }
+    if let Some(Err(e)) = bead_condition(until) {
+        return Err(e);
     }
     let prev = read_repo(&repo_path(run, repo));
     let mut all: Vec<String> = prev.as_ref().map(|p| p.lanes.clone()).unwrap_or_default();
@@ -273,6 +307,40 @@ mod tests {
         assert!(pause_repo(d.path(), "spira", &lanes("rounds"), "o", "r", " ", 1).is_err());
         assert!(pause_repo(d.path(), "../x", &lanes("rounds"), "o", "r", "u", 1).is_err());
         assert!(parse_lanes("rounds,bogus").is_err());
+    }
+
+    #[test]
+    fn a_bead_condition_is_typed_and_free_text_is_not() {
+        assert_eq!(bead_condition("bead:sp-x=REWORK"), Some(Ok(("sp-x".into(), "REWORK".into()))));
+        assert!(bead_condition("fix lands").is_none());
+        assert!(bead_condition("bead:sp-x").unwrap().is_err());
+        assert!(bead_condition("bead:sp-x=rework").unwrap().is_err());
+        let d = testkit::TempDir::new("scoped-stop-bad-cond");
+        assert!(pause_repo(d.path(), "spira", &lanes("rounds"), "o", "r", "bead:sp-x", 1).is_err());
+    }
+
+    #[test]
+    fn a_bead_that_passed_through_the_state_since_the_pause_counts() {
+        let h = |to: &str, at: u64| serde_json::json!({"to_state": to, "applied": 1, "at": at.to_string()});
+        let rows = vec![h("REWORK", 100), h("CERTIFIED", 200)];
+        assert!(entered_state(&rows, "REWORK", 100));
+        assert!(!entered_state(&rows, "REWORK", 101), "an entry before the pause is not a release");
+        assert!(!entered_state(&[serde_json::json!({"to_state": "REWORK", "applied": 0, "at": 150})], "REWORK", 100), "a refused event did not happen");
+    }
+
+    #[test]
+    fn sweep_lifts_only_stops_whose_condition_is_met() {
+        let d = testkit::TempDir::new("scoped-stop-sweep");
+        pause_repo(d.path(), "cubby", &lanes("rounds"), "o", "r", "bead:sp-x=REWORK", 10).unwrap();
+        pause_repo(d.path(), "spira", &lanes("rounds"), "o", "r", "fix lands", 10).unwrap();
+        let (lifted, unread) = sweep(d.path(), &mut |b, st, since| Ok(b == "sp-x" && st == "REWORK" && since == 10));
+        assert_eq!((lifted, unread), (vec!["cubby".to_string()], vec![]));
+        assert!(stop_for(d.path(), "cubby", "rounds").is_none());
+        assert!(stop_for(d.path(), "spira", "rounds").is_some());
+        pause_repo(d.path(), "cubby", &lanes("rounds"), "o", "r", "bead:sp-y=DONE", 10).unwrap();
+        let (lifted, unread) = sweep(d.path(), &mut |_, _, _| Err("store down".into()));
+        assert!(lifted.is_empty() && unread.len() == 1);
+        assert!(stop_for(d.path(), "cubby", "rounds").is_some(), "an unreadable bead keeps the stop");
     }
 
     #[test]
