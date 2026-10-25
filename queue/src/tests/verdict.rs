@@ -188,6 +188,28 @@ fn publish_pending_or_faulted_waits_and_changes_nothing() {
 }
 
 #[test]
+fn publish_with_a_missing_workflow_mapping_mails_once_per_head() {
+    let t = T::new(LandMode::QueueLocal);
+    publish_record(&t);
+    for _ in 0..2 {
+        t.forge
+            .status
+            .borrow_mut()
+            .push(Some("harness_fault\nmissing-workflow: Gate\n".into()));
+        assert_eq!(t.run(&["verdict", "spira"]), 0);
+    }
+    assert!(t.out().contains("workflow Gate has no run — configuration fault"), "{}", t.out());
+    let mails = t
+        .lib
+        .calls
+        .borrow()
+        .iter()
+        .filter(|c| c.starts_with("notify spira publish PR 77: no run of workflow Gate"))
+        .count();
+    assert_eq!(mails, 1);
+}
+
+#[test]
 fn publish_red_files_one_fix_forward_and_marks_the_head() {
     // Local attribution (attribute.sh) is retired, sp-uwhx0 — the fix-forward bead now
     // names red suites and members only, no local reproduction.

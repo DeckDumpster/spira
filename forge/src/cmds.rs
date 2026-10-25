@@ -426,6 +426,16 @@ pub fn workflow_for<'a>(default: &'a str, table: &'a str, name: Option<&str>) ->
 
 // ── check-status ─────────────────────────────────────────────────────────────────────────
 
+/// True when the branch has runs of some workflow even though none of the named one: the
+/// name is mapped wrong, so waiting for it can never end.
+fn other_workflow_ran(gh: &dyn Gh, repo: &Path, branch: &str) -> bool {
+    let rl = gh.call(
+        Some(repo),
+        &["run", "list", "--branch", branch, "--json", "workflowName", "--limit", "1"],
+    );
+    first_elem(&parse(&rl.stdout).unwrap_or(Value::Array(vec![]))).is_some()
+}
+
 pub fn check_status(
     gh: &dyn Gh,
     proc: &dyn Proc,
@@ -465,7 +475,10 @@ pub fn check_status(
     let head_sha = first.and_then(|r| jstr(r, "headSha")).unwrap_or_default();
     let run_url = first.and_then(|r| jstr(r, "url")).unwrap_or_default();
 
-    let mut status = if run_id.is_none() || run_status != "completed" {
+    let missing_workflow = run_id.is_none() && other_workflow_ran(gh, repo, branch);
+    let mut status = if missing_workflow {
+        "harness_fault".to_string()
+    } else if run_id.is_none() || run_status != "completed" {
         "pending".to_string()
     } else {
         match run_conclusion.as_str() {
@@ -570,6 +583,9 @@ pub fn check_status(
     }
 
     let mut lines = vec![status.clone()];
+    if missing_workflow {
+        lines.push(format!("missing-workflow: {workflow}"));
+    }
     if !head_sha.is_empty() {
         lines.push(format!("head-sha: {head_sha}"));
     }
