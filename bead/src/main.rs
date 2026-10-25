@@ -1425,8 +1425,10 @@ fn cmd_ideas(home: &str, args: &[String]) -> i32 {
         eprintln!("bead: ideas: the schema names no idea label");
         return 1;
     }
-    let status = spira_config::nonwork::status_filter(spira_config::nonwork::Kind::Idea, spira_config::nonwork::Which::Open);
-    let (code, out) = bdq_capture(home, &s(&["list", "--status", status, "--label", &label, "--limit", "0", "--json"]));
+    let mut argv = s(&["list"]);
+    argv.extend(spira_config::nonwork::status_args(spira_config::nonwork::Kind::Idea, spira_config::nonwork::Which::Open));
+    argv.extend(s(&["--label", &label, "--limit", "0", "--json"]));
+    let (code, out) = bdq_capture(home, &argv);
     if code != 0 {
         eprintln!("bead: ideas: bd list exited {code}");
         return 1;
