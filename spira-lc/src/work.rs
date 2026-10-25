@@ -352,6 +352,17 @@ fn ejected_reasons(conn: &Conn, bead_id: &str, tip: &str) -> Option<String> {
     found.first()?.get("reason")?.as_str().map(str::to_string)
 }
 
+/// A mender's summons the queue already dropped ends without an event the machine would refuse.
+fn mender_summons_closed(conn: &Conn, bead_id: &str, actor: &str, verb: &str) -> Option<(i32, String)> {
+    if actor != "mender" {
+        return None;
+    }
+    match rows::fetch_bead(conn, bead_id) {
+        Ok(Some(row)) if row.state.is_terminal() => Some((0, format!("{bead_id} is already {}; work {verb} has nothing to do", row.state.as_str()))),
+        _ => None,
+    }
+}
+
 fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     if let Some(refusal) = unanswered_amendment_refusal(bead_id) {
         return refusal;
@@ -360,6 +371,9 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
         Ok(a) => a,
         Err(e) => return e,
     };
+    if let Some(quiet) = mender_summons_closed(conn, bead_id, &actor, "done") {
+        return quiet;
+    }
     let Some(delivers) = flag(args, "--delivers") else {
         return (CANNOT_TELL, "work done: --delivers <path> is required".into());
     };
@@ -511,6 +525,9 @@ fn cmd_blocked(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
         Ok(a) => a,
         Err(e) => return e,
     };
+    if let Some(quiet) = mender_summons_closed(conn, bead_id, &actor, "blocked") {
+        return quiet;
+    }
     let Some(question) = args.first() else {
         return (CANNOT_TELL, "work blocked: missing \"<question>\"".into());
     };

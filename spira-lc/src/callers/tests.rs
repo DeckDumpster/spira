@@ -1658,6 +1658,18 @@ fn a_backward_or_foreign_phase_is_refused_and_changes_nothing() {
 }
 
 #[test]
+fn a_phase_for_a_bead_the_queue_already_dropped_sends_no_event() {
+    let mut f = Fake::default();
+    claim_for(&mut f, "sp-t", "aeon-1");
+    let sent = f.events.len();
+    f.beads.get_mut("sp-t").unwrap().state = BeadState::Dropped;
+    let a = go(&mut f, "phase", &["sp-t", "aeon-1", "building"]);
+    assert_eq!(a.code, REFUSED);
+    assert!(a.stderr.contains("already closed"), "{}", a.stderr);
+    assert_eq!(f.events.len(), sent, "a refused event is a row the incident detector counts");
+}
+
+#[test]
 fn disposition_is_recorded_on_the_working_row_and_refused_elsewhere() {
     let mut f = Fake::default();
     claim_for(&mut f, "sp-d", "aeon-1");
