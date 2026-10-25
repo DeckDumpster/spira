@@ -463,6 +463,7 @@ struct FScripts {
     round_vm_results: RefCell<Vec<(String, String)>>,
     /// The `runner.meta` it leaves beside them (empty = none).
     round_vm_meta: RefCell<String>,
+    round_vm_files: RefCell<Vec<(String, String)>>,
     /// A pass `round preempt` can address: its pid is alive until it is sent TERM.
     pass_alive: Cell<bool>,
     /// `round-vm` is preempted while it runs: the marker the verb leaves is there when it returns.
@@ -622,6 +623,9 @@ impl Scripts for FScripts {
                 format!("{status}\n"),
             )
             .unwrap();
+        }
+        for (name, body) in self.round_vm_files.borrow().iter() {
+            fs::write(results.join(name), body).unwrap();
         }
         if !self.round_vm_meta.borrow().is_empty() {
             fs::write(results.join("runner.meta"), &*self.round_vm_meta.borrow()).unwrap();

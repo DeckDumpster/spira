@@ -612,6 +612,8 @@ pkill -P "$guard_pid" 2>/dev/null; kill "$guard_pid" 2>/dev/null; wait "$guard_p
 case "$rc" in 124|137) over_cap=1 ;; esac
 case "$bare_rc" in 124|137) over_cap=1 ;; esac
 bare_rdir="$HOME/round-work/.runtime/spira/batch-results"
+ff="$(find "$bare_rdir" -name fixture-fault.out 2>/dev/null | head -1)"
+if [ -n "$ff" ] && [ "$ff" != "$bare_rdir/fixture-fault.out" ]; then cp -f "$ff" "$bare_rdir/fixture-fault.out"; fi
 bare_leaf="$(find "$bare_rdir" -name '*.result' -printf '%h\n' 2>/dev/null | head -1)"
 bare_leaf="${bare_leaf:-$bare_rdir}"
 mkdir -p "$bare_leaf"
@@ -718,6 +720,8 @@ pub const LAUNCHER_ENV: &str = "round-launcher.env";
 pub const REMOTE_BINS: &str = "round-bins/";
 
 /// The VM script's own stderr, kept so a round that never produced binaries can say why.
+pub const FIXTURE_FAULT_FILE: &str = "fixture-fault.out";
+
 pub const REMOTE_SETUP_LOG: &str = "round-setup.log";
 
 const SETUP_LOG_TAIL: usize = 60;
@@ -1968,6 +1972,10 @@ fn after_batch(
         (results_ok, tsd_pull.join().unwrap_or(false))
     });
     let leaf = results_leaf(&pulled);
+    if pulled.join(FIXTURE_FAULT_FILE).is_file() {
+        let _ = fs::create_dir_all(&results_dir);
+        let _ = fs::copy(pulled.join(FIXTURE_FAULT_FILE), results_dir.join(FIXTURE_FAULT_FILE));
+    }
     if executables(&bins).is_empty() {
         show_setup_log(remote, cfg, &vm.addr, &scratch("setup-log"));
     }

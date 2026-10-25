@@ -172,6 +172,18 @@ impl Harness {
     }
 }
 
+pub const FIXTURE_FAULT_FILE: &str = "fixture-fault.out";
+
+/// First line `FIXTURE-FAULT: <step> rc=<n>: <message>`, then the step's output tail, as the fixture logged it.
+pub fn fixture_fault_text(message: &str, reason: &str, steps: &str) -> String {
+    let head = steps
+        .lines()
+        .next()
+        .and_then(|l| l.strip_suffix(" output tail:"))
+        .unwrap_or(reason);
+    format!("FIXTURE-FAULT: {head}: {message}\n{steps}\n")
+}
+
 pub struct Deps<'a> {
     pub rt: &'a dyn ContainerRuntime,
     pub builder: &'a dyn Builder,
@@ -1538,6 +1550,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             }
         })
     };
+    let setup_log = std::sync::Mutex::new(Vec::<String>::new());
     let (up, setup_res, sim_res) = std::thread::scope(|sc| {
         let sim = sim_session.as_ref().map(|ss| sc.spawn(|| bring_sim(ss)));
         let up = if claimed {
@@ -1559,7 +1572,10 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
                 &runner,
                 !s.skip_install,
                 active.iter().flat_map(|n| headers[n].checkable_requires()),
-                &|m| deps.log(m),
+                &|m| {
+                    setup_log.lock().unwrap_or_else(|e| e.into_inner()).push(m.to_string());
+                    deps.log(m)
+                },
             )
         });
         (up, setup_res, sim.map(|h| h.join()))
@@ -1597,6 +1613,8 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         }
         Some(Err(SetupFault { fault, reason })) => {
             deps.log(fault.message());
+            let steps = setup_log.lock().unwrap_or_else(|e| e.into_inner()).join("\n");
+            let _ = fs::write(results.join(FIXTURE_FAULT_FILE), fixture_fault_text(fault.message(), reason, &steps));
             return Finish::fault(fault.rc(), reason, 0);
         }
         None => return Finish::fault(2, "container-up", 0),

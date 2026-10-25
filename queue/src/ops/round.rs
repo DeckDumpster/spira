@@ -1771,11 +1771,21 @@ fn candidate_image(
     verdict
 }
 
+const FIXTURE_FAULT_TAIL: usize = 8;
+
+/// The fixture step's own failure, as testenv recorded it in the pulled results.
+fn fixture_fault_cause(results: &Path) -> Option<String> {
+    let text = fs::read_to_string(results.join("fixture-fault.out")).ok()?;
+    let head = text.lines().next()?.strip_prefix("FIXTURE-FAULT: ")?;
+    let body: Vec<&str> = text.lines().skip(2).filter(|l| !l.trim().is_empty()).collect();
+    let tail = body[body.len().saturating_sub(FIXTURE_FAULT_TAIL)..].join(" | ");
+    Some(if tail.is_empty() { head.to_string() } else { format!("{head} [{tail}]") })
+}
+
 fn vm_fault_cause(err: &str) -> Option<String> {
     let line = err.lines().rev().find(|l| {
         let l = l.trim_start();
-        l.starts_with("FAIL ")
-            || l.starts_with("round-vm: IMAGE-BUILD-FAILED")
+        l.starts_with("round-vm: IMAGE-BUILD-FAILED")
             || l.starts_with("round-vm: cannot")
     })?;
     Some(line.trim().to_string())
@@ -2066,7 +2076,7 @@ pub(super) fn certify(
                 w.clock.now().saturating_sub(began),
                 c.s.round_wall_secs
             )),
-            rc => Some(match (stale_ami_cause(&out), vm_fault_cause(&out.err)) {
+            rc => Some(match (stale_ami_cause(&out), fixture_fault_cause(&results).or_else(|| vm_fault_cause(&out.err))) {
                 (Some(cause), _) => format!("{STALE_AMI_MARK}: {cause}"),
                 (None, Some(c)) => format!("round-vm exited {rc}: {c}"),
                 (None, None) => format!("round-vm exited {rc}"),

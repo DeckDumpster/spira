@@ -921,6 +921,29 @@ fn an_install_failure_is_rc_3_and_still_tears_down() {
 }
 
 #[test]
+fn an_install_failure_leaves_the_failing_step_in_the_results() {
+    let w = World::new("install-evidence");
+    let rt = runtime();
+    rt.on(
+        |r| r.argv.first().is_some_and(|a| a.ends_with("/bin/units-install")),
+        |_| ExecOutcome {
+            rc: 1,
+            output: "units-install: no such unit\n".into(),
+        },
+    );
+    let b = FakeBuilder::new(None);
+    assert_eq!(w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root), 3);
+    let found: Vec<String> = fs::read_dir(w.root.join("run/batch-results"))
+        .unwrap()
+        .flatten()
+        .filter_map(|d| fs::read_to_string(d.path().join(FIXTURE_FAULT_FILE)).ok())
+        .collect();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].starts_with("FIXTURE-FAULT: install rc=1: install failed"), "{}", found[0]);
+    assert!(found[0].contains("units-install: no such unit"), "{}", found[0]);
+}
+
+#[test]
 fn a_clean_checkout_of_the_branch_is_built_in_place() {
     let w = World::new("inplace");
     sh(&w.repo, "git checkout -q topic");
