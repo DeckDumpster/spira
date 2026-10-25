@@ -592,7 +592,17 @@ over_cap=""
 bare_out="$HOME/round-bare-results"
 rm -rf "$bare_out"; mkdir -p "$bare_out"
 if [ -n "$suites" ]; then bare_sel=(--selected "$suites"); else bare_sel=(--suites all); fi
-bash spira/bare-suites.sh "${bare_sel[@]}" --results "$bare_out" >&2 &
+testenv_pidfile="$HOME/round-testenv-pid"
+rm -f "$testenv_pidfile"
+# The lane boots podman containers of its own: it starts only once the batch has finished its own setup.
+bare_after_setup() {
+    until [ -e "$suites_mark" ]; do
+        [ -s "$testenv_pidfile" ] && ! kill -0 "$(cat "$testenv_pidfile")" 2>/dev/null && break
+        sleep 1
+    done
+    bash spira/bare-suites.sh "$@"
+}
+bare_after_setup "${bare_sel[@]}" --results "$bare_out" >&2 &
 bare_pid=$!
 # The suites run on the build above (--artifacts: testenv never runs cargo a second time).
 if [ -n "$suites" ]; then
@@ -601,6 +611,7 @@ else
     testenv --mode parallel --artifacts "$HOME/round-work/target/release" round > >(suites_mark_stream) 2> >(suites_mark_stream >&2) &
 fi
 testenv_pid=$!
+echo "$testenv_pid" > "$testenv_pidfile"
 suites_cap_guard "$suites_mark" "$cap" "$cap_fired" "$testenv_pid" "$bare_pid" &
 guard_pid=$!
 wait "$testenv_pid"
@@ -2152,6 +2163,9 @@ mod tests {
         assert!(bare < corpus && corpus < unit_wait, "the bare lane starts before the corpus and is waited on after it");
         let lane = &REMOTE_SCRIPT[bare..unit_wait];
         assert!(REMOTE_SCRIPT[bare..corpus].contains("&\nbare_pid=$!"), "the bare lane runs in the background beside the corpus");
+        let gate = REMOTE_SCRIPT.find("bare_after_setup()").unwrap();
+        let call = REMOTE_SCRIPT.find("bare_after_setup \"${bare_sel[@]}\"").unwrap();
+        assert!(gate < call && REMOTE_SCRIPT[gate..call].contains("until [ -e \"$suites_mark\" ]"), "the bare lane's container boots wait for the batch's setup to finish");
         assert!(lane.contains("wait \"$bare_pid\""));
         assert!(lane.contains("--results \"$bare_out\"") || REMOTE_SCRIPT[bare..corpus].contains("--results \"$bare_out\""), "its results are copied beside the corpus's once the corpus has written its own");
         assert!(lane.contains("[ \"$rc\" -eq 0 ] && rc=1"), "a red bare suite makes the round red");
