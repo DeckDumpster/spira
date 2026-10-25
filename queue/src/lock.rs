@@ -24,7 +24,12 @@ struct Beat {
 }
 
 fn touch(path: &Path) {
-    if let Ok(f) = OpenOptions::new().create(true).write(true).truncate(false).open(path) {
+    if let Ok(f) = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(path)
+    {
         let _ = f.set_modified(std::time::SystemTime::now());
     }
 }
@@ -48,7 +53,11 @@ impl Beat {
                 after_touch();
             }
         });
-        Beat { stop, thread: Some(thread), path }
+        Beat {
+            stop,
+            thread: Some(thread),
+            path,
+        }
     }
 }
 
@@ -99,7 +108,12 @@ pub fn holder(queue_dir: &Path, repo: &str) -> String {
 /// The per-batch certify lock (`<repo>/certify-<batch>.lock`), held for a whole `round certify`.
 /// `Busy` carries the holder's record: another certify of the batch is running.
 pub fn try_certify_lock(queue_dir: &Path, repo: &str, batch: &str) -> Acquire {
-    try_lock_file(queue_dir, repo, &format!("certify-{batch}.lock"), Some("round certify"))
+    try_lock_file(
+        queue_dir,
+        repo,
+        &format!("certify-{batch}.lock"),
+        Some("round certify"),
+    )
 }
 
 /// The certify lock's holder record (`pid=<pid> verb=...`); empty when none is recorded.
@@ -136,7 +150,11 @@ fn try_lock_file(queue_dir: &Path, repo: &str, file: &str, verb: Option<&str>) -
         }
         let beat = (file == "lock" && verb.is_some())
             .then(|| Beat::start(dir.join(BEAT_FILE), BEAT_EVERY));
-        Acquire::Held(Guard { f, recorded: true, beat })
+        Acquire::Held(Guard {
+            f,
+            recorded: true,
+            beat,
+        })
     } else {
         Acquire::Busy
     }
@@ -167,9 +185,13 @@ mod tests {
         drop(a);
         assert!(!d.join("spira").join(BEAT_FILE).exists());
         let (tx, ticked) = std::sync::mpsc::channel::<()>();
-        let b = Beat::start_notifying(d.join("beat"), std::time::Duration::from_millis(20), move || {
-            let _ = tx.send(());
-        });
+        let b = Beat::start_notifying(
+            d.join("beat"),
+            std::time::Duration::from_millis(20),
+            move || {
+                let _ = tx.send(());
+            },
+        );
         let t0 = fs::metadata(d.join("beat")).unwrap().modified().unwrap();
         ticked.recv().unwrap();
         assert!(fs::metadata(d.join("beat")).unwrap().modified().unwrap() >= t0);
@@ -203,12 +225,23 @@ mod tests {
         let d = tmpdir("certlock");
         let a = try_certify_lock(&d, "spira", "r-1");
         assert!(matches!(a, Acquire::Held(_)));
-        assert!(matches!(try_certify_lock(&d, "spira", "r-1"), Acquire::Busy));
-        assert!(certify_holder(&d, "spira", "r-1").starts_with(&format!("pid={}", std::process::id())));
-        assert!(matches!(try_certify_lock(&d, "spira", "r-2"), Acquire::Held(_)));
+        assert!(matches!(
+            try_certify_lock(&d, "spira", "r-1"),
+            Acquire::Busy
+        ));
+        assert!(
+            certify_holder(&d, "spira", "r-1").starts_with(&format!("pid={}", std::process::id()))
+        );
+        assert!(matches!(
+            try_certify_lock(&d, "spira", "r-2"),
+            Acquire::Held(_)
+        ));
         assert!(matches!(try_lock(&d, "spira"), Acquire::Held(_)));
         drop(a);
-        assert!(matches!(try_certify_lock(&d, "spira", "r-1"), Acquire::Held(_)));
+        assert!(matches!(
+            try_certify_lock(&d, "spira", "r-1"),
+            Acquire::Held(_)
+        ));
     }
 
     #[test]

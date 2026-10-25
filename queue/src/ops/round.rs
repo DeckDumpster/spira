@@ -83,6 +83,7 @@ pub fn run(w: &World, r: &Round) -> i32 {
             red,
             harness_fault,
             rebuild,
+            with,
         } => eject(
             w,
             batch,
@@ -93,6 +94,7 @@ pub fn run(w: &World, r: &Round) -> i32 {
             *red,
             *harness_fault,
             *rebuild,
+            with,
         ),
         Round::Land { batch, repo } => land(w, batch, repo.as_deref()),
         Round::Abandon {
@@ -512,7 +514,10 @@ fn retire_marked(w: &World, c: &Ctx, ended: impl Fn(&str) -> bool, why: &str) {
         if id.is_empty() {
             continue;
         }
-        if w.lc.bead_row(id).is_some_and(|r| r.holds.iter().any(|h| h == "ask")) {
+        if w.lc
+            .bead_row(id)
+            .is_some_and(|r| r.holds.iter().any(|h| h == "ask"))
+        {
             continue;
         }
         match w.lib.bead_retire(id, &format!("Batch {batch} closed ({why}); the failure this mender bead was filed for ended with it.")) {
@@ -1081,6 +1086,13 @@ fn open(
     let mut skips: Vec<String> = Vec::new();
     let mut admitted: Vec<Member> = Vec::new();
     for m in wanted {
+        if let Some(by) = super::integrate::carried_by(w, &c, &m.id) {
+            skips.push(format!(
+                "{}: carried by integration {by} — lands with it, not admitted",
+                m.id
+            ));
+            continue;
+        }
         match w.lc.bead_row(&m.id) {
             None => skips.push(format!("{}: no lifecycle row (spira-lc could not say) — not admitted", m.id)),
             // SUBMITTED or CERTIFIED (law-a-round-is-feature-first-then-catch-all): the round's own
@@ -1164,6 +1176,7 @@ fn open(
         .collect();
     let mut merged: Vec<Member> = Vec::new();
     let mut unreturned = false;
+    let mut collided: Vec<(Member, String)> = Vec::new();
     for m in admitted {
         if !super::simple::lint_passed(w, label, &path, &m.tip, false) {
             skips.push(format!(
@@ -1214,14 +1227,18 @@ fn open(
                     }
                     Ok(_) => {
                         w.git.merge_abort(&wt);
-                        skips.push(format!("{}: conflicts with the round, and its rebase onto the round's head does not merge", m.id));
+                        let why = format!("{}: conflicts with the round, and its rebase onto the round's head does not merge", m.id);
+                        collided.push((m, why.clone()));
+                        skips.push(why);
                     }
                     Err(paths) => {
-                        skips.push(format!(
-                        "{}: conflicts with the round, and with a rebase onto its head — paths: {}",
-                        m.id,
-                        if paths.is_empty() { "unknown".to_string() } else { paths.join(" ") }
-                    ))
+                        let why = format!(
+                            "{}: conflicts with the round, and with a rebase onto its head — paths: {}",
+                            m.id,
+                            if paths.is_empty() { "unknown".to_string() } else { paths.join(" ") }
+                        );
+                        collided.push((m, why.clone()));
+                        skips.push(why)
                     }
                 }
             }
@@ -1229,6 +1246,36 @@ fn open(
     }
     for s in &skips {
         w.out(format!("queue.sh {label}: skip — {s}"));
+    }
+    if let Some((blocked, _)) = collided.first() {
+        let mut involved = super::integrate::colliding(w, &path, &base_sha, blocked, &merged);
+        involved.push(blocked.clone());
+        let source = format!(
+            "Round open could not merge {} with the round that holds the others.",
+            blocked.id
+        );
+        let evidence = collided
+            .iter()
+            .map(|(_, y)| y.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if super::integrate::file(
+            w, label, &c, &path, &base_sha, &involved, &source, &evidence,
+        )
+        .is_some()
+        {
+            merged.retain(|m| !involved.iter().any(|i| i.id == m.id));
+            if !merged.is_empty() {
+                match assemble(w, &c, &path, &wt, &base_sha, &merged, &base_sha) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        w.err(format!("queue.sh {label}: cannot reassemble the round without the integrated members: {e}"));
+                        w.git.worktree_remove(&path, &wt);
+                        return FAIL;
+                    }
+                }
+            }
+        }
     }
     if unreturned {
         w.err(format!("queue.sh {label}: a member that conflicts with base could not be returned to rework — no round opened for {repo_name}"));
@@ -1495,7 +1542,11 @@ fn first_build_error(err: &str) -> Option<String> {
 fn reason_form(e: &str) -> String {
     let (head, at) = e.split_once(" at ").unwrap_or((e, ""));
     let code = head.split(':').next().unwrap_or(head);
-    if at.is_empty() { code.to_string() } else { format!("{code} at {at}") }
+    if at.is_empty() {
+        code.to_string()
+    } else {
+        format!("{code} at {at}")
+    }
 }
 
 /// Every rustc `error` diagnostic in `err`, whole: from its `error...` line to the blank line
@@ -1537,14 +1588,21 @@ pub(crate) fn build_environment_cause(err: &str) -> Option<&'static str> {
         ("is not installed", "toolchain or component not installed"),
         ("command not found", "tool missing from the image"),
     ];
-    MARKERS.iter().find(|(m, _)| err.contains(m)).map(|(_, w)| *w)
+    MARKERS
+        .iter()
+        .find(|(m, _)| err.contains(m))
+        .map(|(_, w)| *w)
 }
 
 /// What a failed workspace build leaves to read: the invocation, how it ended, how long it took,
 /// and every compiler error whole (the output's tail when it carried none).
 fn build_log(err: &str, rc: i32, wall: u64) -> String {
     let blocks = error_blocks(err);
-    let body = if blocks.is_empty() { tail(err, 200) } else { blocks };
+    let body = if blocks.is_empty() {
+        tail(err, 200)
+    } else {
+        blocks
+    };
     format!(
         "command: cargo build -q --profile release --workspace --config profile.release.incremental=false\nexit: {rc}\nwall_secs: {wall}\n\n{body}\n"
     )
@@ -1777,16 +1835,23 @@ const FIXTURE_FAULT_TAIL: usize = 8;
 fn fixture_fault_cause(results: &Path) -> Option<String> {
     let text = fs::read_to_string(results.join("fixture-fault.out")).ok()?;
     let head = text.lines().next()?.strip_prefix("FIXTURE-FAULT: ")?;
-    let body: Vec<&str> = text.lines().skip(2).filter(|l| !l.trim().is_empty()).collect();
+    let body: Vec<&str> = text
+        .lines()
+        .skip(2)
+        .filter(|l| !l.trim().is_empty())
+        .collect();
     let tail = body[body.len().saturating_sub(FIXTURE_FAULT_TAIL)..].join(" | ");
-    Some(if tail.is_empty() { head.to_string() } else { format!("{head} [{tail}]") })
+    Some(if tail.is_empty() {
+        head.to_string()
+    } else {
+        format!("{head} [{tail}]")
+    })
 }
 
 fn vm_fault_cause(err: &str) -> Option<String> {
     let line = err.lines().rev().find(|l| {
         let l = l.trim_start();
-        l.starts_with("round-vm: IMAGE-BUILD-FAILED")
-            || l.starts_with("round-vm: cannot")
+        l.starts_with("round-vm: IMAGE-BUILD-FAILED") || l.starts_with("round-vm: cannot")
     })?;
     Some(line.trim().to_string())
 }
@@ -1815,11 +1880,15 @@ pub(super) fn certify(
         crate::lock::Acquire::Held(g) => g,
         crate::lock::Acquire::Busy => {
             let held = crate::lock::certify_holder(&c.s.queue_dir, &c.r.name, batch);
-            w.err(format!("queue.sh {label}: round {batch} is already being certified ({held}) — refused"));
+            w.err(format!(
+                "queue.sh {label}: round {batch} is already being certified ({held}) — refused"
+            ));
             return FAIL;
         }
         crate::lock::Acquire::Unopenable => {
-            w.err(format!("queue.sh {label}: cannot open the certify lock of round {batch} — refused"));
+            w.err(format!(
+                "queue.sh {label}: cannot open the certify lock of round {batch} — refused"
+            ));
             return FAIL;
         }
     };
@@ -2043,7 +2112,10 @@ pub(super) fn certify(
         if out.rc == 4 && !matches!(image, Image::Failed(_)) {
             let wall = w.clock.now().saturating_sub(began);
             let _ = fs::create_dir_all(&results);
-            let _ = fs::write(results.join("workspace-build.out"), build_log(&out.err, out.rc, wall));
+            let _ = fs::write(
+                results.join("workspace-build.out"),
+                build_log(&out.err, out.rc, wall),
+            );
         }
         timings = pass_timings(&results, w.clock.now().saturating_sub(began));
         let mut found = Vec::new();
@@ -2112,7 +2184,10 @@ pub(super) fn certify(
             if !names.is_empty() {
                 w.out(format!("unit-tests-failed={}", names.join(",")));
             }
-            if let Some(cause) = failed.lines().find_map(|l| l.strip_prefix("UNIT-TESTS-CAUSE: ")) {
+            if let Some(cause) = failed
+                .lines()
+                .find_map(|l| l.strip_prefix("UNIT-TESTS-CAUSE: "))
+            {
                 w.out(format!("unit-tests-cause={cause}"));
             }
         }
@@ -2270,7 +2345,14 @@ fn finish_green(
     if let Ok(kv) = load(w, label, c, batch) {
         for m in kv.members() {
             for step in ROUND_STEPS {
-                let _ = spira_config::proof::record_run(&c.s.run, &m.id, &m.tip, step, 0, &format!("round {batch} green at {head}"));
+                let _ = spira_config::proof::record_run(
+                    &c.s.run,
+                    &m.id,
+                    &m.tip,
+                    step,
+                    0,
+                    &format!("round {batch} green at {head}"),
+                );
             }
         }
     }
@@ -2326,6 +2408,7 @@ fn eject(
     red: bool,
     harness_fault: bool,
     rebuild: bool,
+    with: &str,
 ) -> i32 {
     let label = "round eject";
     if red && !harness_fault && suites.trim().is_empty() {
@@ -2393,13 +2476,24 @@ fn eject(
         .find(|m| m.id == id)
         .map(|m| m.tip.clone())
         .unwrap_or_default();
+    let withs: Vec<&str> = with
+        .split(',')
+        .filter(|s| !s.is_empty() && *s != id)
+        .collect();
+    if let Some(bad) = withs.iter().find(|i| !members.iter().any(|m| m.id == **i)) {
+        w.err(format!(
+            "queue.sh {label}: --with names {bad}, which is not a member of round {batch}"
+        ));
+        return FAIL;
+    }
     let stacked: Vec<Member> = members
         .iter()
         .filter(|m| {
             m.id != id
-                && w.git
-                    .merge_base(&path, &ejected_tip, &m.tip)
-                    .is_some_and(|mb| !w.git.is_ancestor(&path, &mb, &base_sha))
+                && (withs.contains(&m.id.as_str())
+                    || w.git
+                        .merge_base(&path, &ejected_tip, &m.tip)
+                        .is_some_and(|mb| !w.git.is_ancestor(&path, &mb, &base_sha)))
         })
         .cloned()
         .collect();
@@ -2431,11 +2525,16 @@ fn eject(
     }
     let cause = EjectCause::decide(red, harness_fault, suites);
     let mut unreturned: Vec<&str> = Vec::new();
-    for (bead, why_text, own_cause) in std::iter::once((id, reason.clone(), cause)).chain(
-        stacked
-            .iter()
-            .map(|m| (m.id.as_str(), format!("stacked on {id}"), cause)),
-    ) {
+    for (bead, why_text, own_cause) in
+        std::iter::once((id, reason.clone(), cause)).chain(stacked.iter().map(|m| {
+            let why = if withs.contains(&m.id.as_str()) {
+                format!("red only in combination with {id}; integrated with it")
+            } else {
+                format!("stacked on {id}")
+            };
+            (m.id.as_str(), why, cause)
+        }))
+    {
         if !w.lib.bead_reopen(bead, own_cause.as_str(), suites) {
             w.err(format!(
                 "queue.sh {label}: cannot reopen {bead} (cause {})",
@@ -2478,6 +2577,21 @@ fn eject(
                 "queue.sh {label}: ejected {bead} from round {batch} (stacked on {id})"
             ));
         }
+    }
+
+    if !withs.is_empty() {
+        let mut involved: Vec<Member> = members.iter().filter(|m| m.id == id).cloned().collect();
+        involved.extend(
+            members
+                .iter()
+                .filter(|m| withs.contains(&m.id.as_str()))
+                .cloned(),
+        );
+        let source = format!(
+            "Round {batch} went red only on the combination of {id} with {}.",
+            withs.join(", ")
+        );
+        super::integrate::file(w, label, &c, &path, &base_sha, &involved, &source, &reason);
     }
 
     retire_menders(w, &c, batch, &format!("{id} ejected"));
@@ -2735,6 +2849,7 @@ fn preempt(
             !suites.is_empty(),
             false,
             true,
+            "",
         );
         if rc != OK {
             w.err(format!(

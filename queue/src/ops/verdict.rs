@@ -391,7 +391,9 @@ fn build_section(
         step_log.iter().take(10).map(|l| l.to_string()).collect()
     };
     if first.is_empty() {
-        s.push_str("First failing lines: <none captured — read the run log (gh run view --log-failed)>\n");
+        s.push_str(
+            "First failing lines: <none captured — read the run log (gh run view --log-failed)>\n",
+        );
     } else {
         s.push_str("First failing lines:\n");
         for l in first {

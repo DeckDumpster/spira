@@ -157,6 +157,8 @@ pub struct BeadRow {
     pub labels: Vec<String>,
     #[serde(default)]
     pub priority: Option<i64>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 /// A `spira-lc list` / `show-batch` row, string-valued columns tolerated.

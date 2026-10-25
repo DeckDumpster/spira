@@ -4,6 +4,7 @@
 pub mod batch;
 pub mod deploy;
 pub mod helpers;
+pub mod integrate;
 pub mod land;
 pub mod mend;
 pub mod publish;

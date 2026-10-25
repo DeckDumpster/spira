@@ -207,7 +207,15 @@ fn a_red_round_eject_naming_no_suite_is_refused_and_one_naming_a_suite_records_i
     assert!(!t.lib.has("bead_reopen") && !t.lc.has("eject-member"));
     assert_eq!(
         t.run(&[
-            "round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "test-b.sh"
+            "round",
+            "eject",
+            &batch,
+            "sp-b",
+            "--reason",
+            "red",
+            "--red",
+            "--suites",
+            "test-b.sh"
         ]),
         0,
         "{}",
@@ -649,19 +657,54 @@ fn ending_a_round_retires_the_mender_beads_filed_for_it() {
 #[test]
 fn a_mender_bead_holding_an_ask_is_not_retired_until_the_ask_is_lifted() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb", "--name", "hand-4"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&[
+            "round",
+            "open",
+            "--members",
+            "sp-a:ta,sp-b:tb",
+            "--name",
+            "hand-4"
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
     fs::write(marker(&t, "hand-4", "mender-1-gate-x"), "sp-m13\n").unwrap();
-    t.lc.rows.borrow_mut().as_mut().unwrap().push(crate::model::LcBeadRow {
-        bead_id: "sp-m13".into(),
-        state: "WORKING".into(),
-        holds: vec!["ask".into()],
-        ..Default::default()
-    });
-    assert_eq!(t.run(&["round", "eject", "hand-4", "sp-b", "--reason", "red"]), 0, "{}", t.err());
-    assert!(!t.lib.has("bead_close sp-m13"), "{:?}", t.lib.calls.borrow());
+    t.lc.rows
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .push(crate::model::LcBeadRow {
+            bead_id: "sp-m13".into(),
+            state: "WORKING".into(),
+            holds: vec!["ask".into()],
+            ..Default::default()
+        });
+    assert_eq!(
+        t.run(&["round", "eject", "hand-4", "sp-b", "--reason", "red"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(
+        !t.lib.has("bead_close sp-m13"),
+        "{:?}",
+        t.lib.calls.borrow()
+    );
     assert!(!marker(&t, "hand-4", "mender-1-gate-x.retired").exists());
-    t.lc.rows.borrow_mut().as_mut().unwrap().iter_mut().for_each(|r| r.holds.clear());
-    assert_eq!(t.run(&["round", "abandon", "hand-4", "--reason", "base moved"]), 0, "{}", t.err());
+    t.lc.rows
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .iter_mut()
+        .for_each(|r| r.holds.clear());
+    assert_eq!(
+        t.run(&["round", "abandon", "hand-4", "--reason", "base moved"]),
+        0,
+        "{}",
+        t.err()
+    );
     assert!(t.lib.has("bead_close sp-m13"), "{:?}", t.lib.calls.borrow());
     assert!(marker(&t, "hand-4", "mender-1-gate-x.retired").exists());
 }
@@ -1310,7 +1353,12 @@ fn a_round_vm_exit_names_the_failure_the_vm_logged() {
 #[test]
 fn a_fixture_fault_is_the_round_cause_and_suite_fail_lines_are_not() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     *t.scripts.round_vm.borrow_mut() = RunOut {
         rc: 3,
@@ -1675,7 +1723,12 @@ fn a_second_certify_of_a_batch_already_being_certified_is_refused_naming_the_hol
     let t = round_world();
     *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
     *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     let g = match crate::lock::try_certify_lock(&t.s().queue_dir, "spira", &batch) {
         crate::lock::Acquire::Held(g) => g,
@@ -1688,7 +1741,11 @@ fn a_second_certify_of_a_batch_already_being_certified_is_refused_naming_the_hol
         "{}",
         t.err()
     );
-    assert_eq!(t.scripts.calls.borrow().len(), before, "no pass was started");
+    assert_eq!(
+        t.scripts.calls.borrow().len(),
+        before,
+        "no pass was started"
+    );
     drop(g);
     assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
 }
@@ -2890,27 +2947,45 @@ fn certify_reds_a_failed_workspace_build_naming_the_first_compiler_error() {
 #[test]
 fn certify_saves_the_compiler_errors_of_a_failed_workspace_build_and_quotes_the_first() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     let err = "round-vm: building\nerror[E0425]: cannot find value `x` in this scope\n   --> spira/sim/src/x.rs:12:5\n    |\n12  |     x\n\nerror[E0063]: missing field `cpus`\n   --> testenv/src/shots.rs:224:9\n\nerror: could not compile `testenv`\nround-vm: the round's workspace build failed";
-    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 4, out: String::new(), err: err.into() };
+    *t.scripts.round_vm.borrow_mut() = RunOut {
+        rc: 4,
+        out: String::new(),
+        err: err.into(),
+    };
     assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
     assert!(
-        t.out().contains("red-reason=workspace-build: error[E0425] at spira/sim/src/x.rs:12:5"),
+        t.out()
+            .contains("red-reason=workspace-build: error[E0425] at spira/sim/src/x.rs:12:5"),
         "{}",
         t.out()
     );
-    let saved = find_file_named(&t.dir, "workspace-build.out")
-        .expect("workspace-build.out was written");
-    assert!(saved.contains("cargo build") && saved.contains("exit: 4"), "{saved}");
-    assert!(saved.contains("error[E0425]") && saved.contains("error[E0063]"), "{saved}");
+    let saved =
+        find_file_named(&t.dir, "workspace-build.out").expect("workspace-build.out was written");
+    assert!(
+        saved.contains("cargo build") && saved.contains("exit: 4"),
+        "{saved}"
+    );
+    assert!(
+        saved.contains("error[E0425]") && saved.contains("error[E0063]"),
+        "{saved}"
+    );
 }
 
 #[test]
 fn a_workspace_build_that_died_of_the_environment_is_not_the_members_red() {
     use crate::ops::round::build_environment_cause;
     assert_eq!(
-        build_environment_cause("round-vm: building\nerror: failed to write: No space left on device"),
+        build_environment_cause(
+            "round-vm: building\nerror: failed to write: No space left on device"
+        ),
         Some("out of disk")
     );
     assert_eq!(
@@ -4013,11 +4088,26 @@ fn a_resubmit_is_refused_naming_an_ejected_suite_that_does_not_pass_at_the_new_t
 #[test]
 fn an_eject_red_on_unit_tests_records_the_step_as_the_requirement() {
     let t = round_world();
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     seed_suite(&t, "test-b.sh");
     assert_eq!(
-        t.run(&["round", "eject", &batch, "sp-b", "--reason", "red", "--red", "--suites", "unit-tests"]),
+        t.run(&[
+            "round",
+            "eject",
+            &batch,
+            "sp-b",
+            "--reason",
+            "red",
+            "--red",
+            "--suites",
+            "unit-tests"
+        ]),
         0,
         "{}",
         t.err()
@@ -4047,15 +4137,21 @@ fn a_round_only_step_is_proven_only_by_a_recorded_pass_at_the_tip() {
     ];
     assert_eq!(t.run(&args), 1);
     assert!(
-        t.err().contains("workspace-build has no green round recorded"),
+        t.err()
+            .contains("workspace-build has no green round recorded"),
         "{}",
         t.err()
     );
     assert!(
-        !t.scripts.calls.borrow().iter().any(|c| c.starts_with("suite_run workspace-build")),
+        !t.scripts
+            .calls
+            .borrow()
+            .iter()
+            .any(|c| c.starts_with("suite_run workspace-build")),
         "a round-only step is never run as a suite"
     );
-    spira_config::proof::record_run(&proof_run(&t), "sp-a", T_FIX, "workspace-build", 0, "ok").unwrap();
+    spira_config::proof::record_run(&proof_run(&t), "sp-a", T_FIX, "workspace-build", 0, "ok")
+        .unwrap();
     assert_eq!(t.run(&args), 0, "{}", t.err());
 }
 
@@ -4074,9 +4170,17 @@ fn a_bead_ejected_on_unit_tests_resubmits_after_a_green_runner_run_and_not_after
         "--evidence=cargo test 1/0",
         &ev_tip(),
     ];
-    t.scripts.suite_red.borrow_mut().push("unit-tests".to_string());
+    t.scripts
+        .suite_red
+        .borrow_mut()
+        .push("unit-tests".to_string());
     assert_eq!(t.run(&args), 1);
-    assert!(t.scripts.calls.borrow().iter().any(|c| c.starts_with("suite_run unit-tests")));
+    assert!(t
+        .scripts
+        .calls
+        .borrow()
+        .iter()
+        .any(|c| c.starts_with("suite_run unit-tests")));
     t.scripts.suite_red.borrow_mut().clear();
     assert_eq!(t.run(&args), 0, "{}", t.err());
     assert!(!t.err().contains("--clear"), "{}", t.err());
@@ -4563,5 +4667,203 @@ fn open_admits_a_lone_recipe_changing_member_by_itself() {
             && !o.contains("sp-b:tb")
             && o.contains("sp-b: solo: sp-b changes the round recipe"),
         "{o}"
+    );
+}
+
+fn touches(t: &T, tip: &str, file: &str) {
+    t.git
+        .stats
+        .borrow_mut()
+        .insert(("b0".into(), tip.into()), vec![(file.into(), 3, 1)]);
+}
+
+fn integration_bugs(t: &T) -> Vec<String> {
+    t.lib
+        .calls
+        .borrow()
+        .iter()
+        .filter(|c| c.starts_with("create_bug") && c.contains(" integrate "))
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn open_files_one_integration_with_both_members_context_instead_of_skipping_one() {
+    let t = round_world();
+    touches(&t, "ta", "child.rs");
+    touches(&t, "tb", "other.rs");
+    touches(&t, "tc", "child.rs");
+    t.bd.rows.borrow_mut().push(crate::model::BeadRow {
+        id: "sp-c".into(),
+        title: Some("goal of c".into()),
+        description: Some("ACCEPTANCE-OF-C".into()),
+        ..Default::default()
+    });
+    t.git.merge_fail.borrow_mut().insert("tc".into());
+    t.git
+        .rebase_fail
+        .borrow_mut()
+        .insert("tc".into(), vec!["child.rs".into()]);
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a,sp-b,sp-c"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let bugs = integration_bugs(&t);
+    assert_eq!(bugs.len(), 1, "{bugs:?}");
+    let b = &bugs[0];
+    assert!(
+        b.contains("integrate sp-a + sp-c in spira")
+            && b.contains("spira: land sp-a")
+            && b.contains("spira: land sp-c")
+            && b.contains("Tip: ta")
+            && b.contains("Tip: tc")
+            && b.contains("ACCEPTANCE-OF-C")
+            && b.contains("paths: child.rs")
+            && !b.contains("spira: land sp-b"),
+        "{b}"
+    );
+    let o = t.out();
+    assert!(
+        o.contains("members=sp-b:tb\n"),
+        "only the unrelated member rounds: {o}"
+    );
+
+    let t2 = round_world();
+    t2.git.merge_fail.borrow_mut().insert("tc".into());
+    t2.git.rebase_fail.borrow_mut().insert("tc".into(), vec![]);
+    assert_eq!(
+        t2.run(&["round", "open", "--members", "sp-a,sp-b,sp-c"]),
+        0,
+        "{}",
+        t2.err()
+    );
+    assert!(
+        integration_bugs(&t2).is_empty(),
+        "no readable overlap files nothing"
+    );
+    assert!(t2.out().contains("members=sp-a:ta sp-b:tb"), "{}", t2.out());
+}
+
+#[test]
+fn a_carried_member_is_not_admitted_and_a_second_integration_is_not_filed_while_one_is_open() {
+    let t = round_world();
+    *t.lib.bug_id.borrow_mut() = Some("sp-int".into());
+    t.lc_row("sp-int", "READY", "ti", 100);
+    fs::create_dir_all(t.s().queue_dir.join("spira")).unwrap();
+    fs::write(t.qfile("integrations"), "sp-int sp-a sp-c\n").unwrap();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a,sp-b,sp-c"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let o = t.out();
+    assert!(
+        o.contains("sp-a: carried by integration sp-int")
+            && o.contains("sp-c: carried by integration sp-int"),
+        "{o}"
+    );
+    assert!(o.contains("members=sp-b:tb\n"), "{o}");
+    assert!(
+        integration_bugs(&t).is_empty(),
+        "{:?}",
+        integration_bugs(&t)
+    );
+
+    t.lc.rows
+        .borrow_mut()
+        .as_mut()
+        .unwrap()
+        .iter_mut()
+        .for_each(|r| {
+            if r.bead_id == "sp-int" {
+                r.state = "DROPPED".into();
+            }
+        });
+    let t3 = round_world();
+    fs::create_dir_all(t3.s().queue_dir.join("spira")).unwrap();
+    fs::write(t3.qfile("integrations"), "sp-gone sp-a\n").unwrap();
+    t3.lc_row("sp-gone", "DROPPED", "tg", 100);
+    assert_eq!(
+        t3.run(&["round", "open", "--members", "sp-a,sp-b"]),
+        0,
+        "{}",
+        t3.err()
+    );
+    assert!(
+        t3.out().contains("members=sp-a:ta sp-b:tb"),
+        "a dropped integration releases its members: {}",
+        t3.out()
+    );
+}
+
+#[test]
+fn a_red_that_only_the_combination_produces_files_the_integration_from_the_eject() {
+    let t = round_world();
+    touches(&t, "ta", "x.rs");
+    touches(&t, "tb", "x.rs");
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-c:tc"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    seed_suite(&t, "test-x.sh");
+    assert_eq!(
+        t.run(&[
+            "round",
+            "eject",
+            &batch,
+            "sp-b",
+            "--reason",
+            "sp-b renames what sp-a uses",
+            "--red",
+            "--suites",
+            "test-x.sh",
+            "--with",
+            "sp-a"
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
+    let bugs = integration_bugs(&t);
+    assert_eq!(bugs.len(), 1, "{bugs:?}");
+    assert!(
+        bugs[0].contains("integrate sp-b + sp-a in spira")
+            && bugs[0].contains("sp-b renames what sp-a uses")
+            && bugs[0].contains("spira: land sp-a")
+            && bugs[0].contains("spira: land sp-b"),
+        "{}",
+        bugs[0]
+    );
+    assert!(t.out().contains("members=sp-c:tc"), "{}", t.out());
+
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0);
+    let batch = batch_of(&t);
+    seed_suite(&t, "test-x.sh");
+    assert_eq!(
+        t.run(&[
+            "round",
+            "eject",
+            &batch,
+            "sp-b",
+            "--reason",
+            "r",
+            "--red",
+            "--suites",
+            "test-x.sh"
+        ]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert!(
+        integration_bugs(&t).is_empty(),
+        "a single-member red keeps the eject-to-rework path"
     );
 }
