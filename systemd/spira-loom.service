@@ -5,7 +5,7 @@ Wants=lc-serve.service
 Description=Loom — where work is stuck, read from the lifecycle store
 Documentation=file://@SPIRA_HOME@/loom.sh
 StartLimitIntervalSec=300
-StartLimitBurst=5
+StartLimitBurst=13
 
 [Service]
 # THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built
@@ -24,8 +24,7 @@ Type=simple
 # Running from @SPIRA_HOME@ sets SPIRA_REPO = dev checkout root, where the binary is built.
 ExecStart=@SPIRA_PROD@/loom.sh
 Restart=always
-# The MINIMUM time between restarts. A crash loop is visible in the log; a 5-second floor
-# keeps it from chewing CPU while remaining fast to recover from a transient.
+# Fast recovery (inside the ready grace); the burst keeps retries outlasting a 60s-late store.
 RestartSec=5
 StandardOutput=append:@SPIRA_RUN@/loom.log
 StandardError=append:@SPIRA_RUN@/loom.log
