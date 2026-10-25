@@ -4,8 +4,9 @@
 #
 #   release-order.sh sort      tags in ascending version order
 #   release-order.sh latest    the newest tag (empty when none)
-#   release-order.sh next      the N for the next spira-<series>.N (needs the published
-#                              release list; the total count and the highest N both floor it)
+#   release-order.sh next [also]  the N for the next spira-<series>.N: stdin is the forge release
+#                              list; N is one more than the larger of its length and the highest
+#                              N in it or in the tags listed in file `also` (local tags)
 #   release-order.sh stem <t>  the tarball stem of a tag
 #   release-order.sh tag <s>   the tag of a tarball stem
 #
@@ -31,7 +32,8 @@ case "${1:-}" in
     next)
         _ro_all="$(_ro_sorted)"
         _ro_count="$(printf '%s' "$_ro_all" | grep -c . || true)"
-        _ro_max="$(printf '%s\n' "$_ro_all" | sed -n 's/^spira-[0-9]*\.[0-9]*\.\([0-9]*\)$/\1/p' | sort -n | tail -1)"
+        _ro_max="$({ printf '%s\n' "$_ro_all"; [ -z "${2:-}" ] || cat "$2"; } \
+            | sed -n 's/^spira-[0-9]*\.[0-9]*\.\([0-9]*\)$/\1/p' | sort -n | tail -1)"
         _ro_base=$(( _ro_count > ${_ro_max:-0} ? _ro_count : ${_ro_max:-0} ))
         printf '%s\n' $(( _ro_base + 1 )) ;;
     stem)

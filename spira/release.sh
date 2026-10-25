@@ -170,8 +170,8 @@ do_cut() {
             exit 1
         }
         local next
-        next="$({ printf '%s\n' "$listed"; git -C "$repo" tag -l 'spira-*'; } | sort -u \
-            | bash "$HERE/release-order.sh" next)"
+        next="$(printf '%s\n' "$listed" | bash "$HERE/release-order.sh" next \
+            <(git -C "$repo" tag -l 'spira-*'))"
         tagname="spira-${SPIRA_RELEASE_SERIES:-0.1}.${next}"
     fi
     while git -C "$repo" rev-parse --verify "refs/tags/$tagname" >/dev/null 2>&1; do
