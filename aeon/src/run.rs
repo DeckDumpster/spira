@@ -1156,7 +1156,7 @@ impl<'a> Run<'a> {
         spira_otel::run::event("attempt", &[("fayth", self.f()), ("model", &model), ("rework", if self.s.model_override.is_some() { "escalated" } else { "first" })]);
         let mut a = s(&["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--system-prompt-snapshot", "on", flag, &sys_file.display().to_string()]);
         a.extend(s(&["--model", &model, "--allowedTools", &self.fayth.tools, "--dangerously-skip-permissions"]));
-        if self.fayth.project_instructions == "none" {
+        if self.fayth.project_instructions != "none" {
             a.extend(s(&["--setting-sources", "user"]));
         }
         a.extend(s(&["--settings", &aeon_settings(self.home(), self.fayth.habits)]));
