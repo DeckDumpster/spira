@@ -205,7 +205,7 @@ fn run_main(cwd: &std::path::Path, args: &[String], env: &dyn Fn(&str) -> Option
         spira_sim::drive::resolve_conf(&dir, sc.epoch)?;
         world::mark(&dir, "up.conf-resolve", t);
     }
-    let probe = ProcessProbe::for_world(&dir, sc.epoch)?;
+    let probe = ProcessProbe::for_world(&dir, sc.epoch, sc.reads_bead_rows())?;
     if sc.goal.is_some() && probe.probe.is_none() {
         return Err(format!("the world configures no SIM_PROBE, so goal {:?} cannot be observed", sc.goal.unwrap_or_default()));
     }
@@ -235,8 +235,9 @@ fn step_main(args: &[String]) -> Result<(), String> {
     let dir = PathBuf::from(dir);
     let until = set.get("--until").map(|u| spira_sim::verbs::parse_until(u)).transpose()?;
     let text = std::fs::read_to_string(dir.join("scenario.toml")).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let epoch = spira_sim::drive::parse_scenario(&text)?.epoch;
-    let probe = ProcessProbe::for_world(&dir, epoch)?;
+    let sc = spira_sim::drive::parse_scenario(&text)?;
+    let (epoch, bead_rows) = (sc.epoch, sc.reads_bead_rows());
+    let probe = ProcessProbe::for_world(&dir, epoch, bead_rows)?;
     let exec = ProcessExec { world: dir.clone(), epoch };
     report(&spira_sim::verbs::step_world(&dir, until, Box::new(exec), Box::new(probe))?)
 }

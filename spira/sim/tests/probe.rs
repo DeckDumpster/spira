@@ -1,5 +1,5 @@
 use serde_json::{json, Value};
-use spira_sim::probe::{git_facts, landstate_of, names, parse_branches, probe, read_refs, refuse_foreign, rows, GitFacts, Lineage, Observer};
+use spira_sim::probe::{merge_bd, git_facts, landstate_of, names, parse_branches, probe, read_refs, refuse_foreign, rows, GitFacts, Lineage, Observer};
 use spira_sim::trace::{bead_row, violations, Snapshot, Trace};
 use spira_sim::world::PRODUCTION_LOCATORS;
 use std::collections::BTreeMap;
@@ -326,4 +326,28 @@ fn the_observer_refuses_a_foreign_locator_like_the_probe_command() {
     let (w, _) = world("[]");
     let env = |k: &str| (k == "SPIRA_RUN").then(|| "/prod/run".to_string());
     assert!(Observer::new(&w, &env).is_err());
+}
+
+const BD_LIST: &str = r#"[
+ {"id":"sp-a","title":"a","description":"body\nline","status":"closed","priority":0,"close_reason":"done it","labels":["y","x"]},
+ {"id":"sp-b","title":"b","status":"open","priority":2,"dependencies":[{"issue_id":"sp-b","depends_on_id":"sp-z","type":"blocks"},{"issue_id":"sp-b","depends_on_id":"sp-a","type":"parent-child"}]}
+]"#;
+
+#[test]
+fn bd_rows_fill_the_store_columns_and_add_beads_only_the_store_knows() {
+    let mut beads = vec![bead_row(&json!({"bead": "sp-a", "lc_state": "DROPPED"})).unwrap()];
+    merge_bd(&mut beads, BD_LIST).unwrap();
+    let by: BTreeMap<&str, &Value> = beads.iter().map(|b| (b["bead"].as_str().unwrap(), b)).collect();
+    let a = by["sp-a"];
+    assert_eq!((a["lc_state"].as_str(), a["bd_status"].as_str(), a["title"].as_str(), a["priority"].as_i64()), (Some("DROPPED"), Some("closed"), Some("a"), Some(0)));
+    assert_eq!((a["labels"].as_str(), a["deps"].as_str(), a["close_reason"].as_str(), a["body"].as_str()), (Some("x,y"), Some(""), Some("done it"), Some("body\nline")));
+    let b = by["sp-b"];
+    assert_eq!((b["lc_state"].clone(), b["deps"].as_str(), b["labels"].as_str(), b["close_reason"].clone()), (Value::Null, Some("sp-a,sp-z"), Some(""), Value::Null));
+}
+
+#[test]
+fn bd_rows_refuse_what_is_not_a_bead_list() {
+    for bad in ["", "{}", "[{\"title\":\"no id\"}]"] {
+        assert!(merge_bd(&mut Vec::new(), bad).is_err(), "{bad}");
+    }
 }

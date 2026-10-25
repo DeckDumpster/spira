@@ -134,3 +134,53 @@ fn a_scenarios_own_sql_is_one_select_under_a_plain_name() {
         assert!(own("invariant", name, sql).is_err(), "{name} {sql}");
     }
 }
+
+fn seeded(extra: &str) -> Result<Scenario, String> {
+    sc(&format!("{extra}\n"))
+}
+
+#[test]
+fn a_seed_files_through_bead_sh_with_its_priority_labels_body_and_deps() {
+    let s = seeded("[[seed]]\nhandle = \"a\"\ntitle = \"it's a\"\nfor = \"builder\"\npriority = 1\nlabels = [\"x\"]\nbody = \"b\"\n[[seed]]\nhandle = \"b\"\ntitle = \"b\"\nkind = \"event\"\ndeps = [\"a\"]\n").unwrap();
+    let steps = spira_sim::drive::seed_steps(&s.seeds).unwrap();
+    assert_eq!(steps.len(), 1, "seeds sharing a time are one step");
+    let cmd = &steps[0].1;
+    assert!(cmd.contains("bead.sh file 'it'\\''s a' --for 'builder' --repo 'sim' --priority 1 --body-file"), "{cmd}");
+    assert!(cmd.contains("bead.sh label add \"$id\" 'x'"), "{cmd}");
+    assert!(cmd.contains("bead.sh file 'b' --kind 'event'"), "{cmd}");
+    assert!(cmd.contains("bead.sh dep add \"$id\" \"$(cat \"$SPIRA_RUN/seeds/a.id\")\""), "{cmd}");
+    assert!(s.reads_bead_rows());
+}
+
+#[test]
+fn a_command_step_reaches_a_seeds_id_by_handle() {
+    let s = seeded("[[seed]]\nhandle = \"a\"\ntitle = \"a\"\nkind = \"event\"\n[[step]]\nat = 1\nname = \"c\"\ncommand = \"bead.sh label add {bead:a} x\"\n").unwrap();
+    assert_eq!(s.steps[0].shell().unwrap(), "bead.sh label add \"$(cat \"$SPIRA_RUN/seeds/a.id\")\" x");
+}
+
+#[test]
+fn a_bad_seed_or_a_handle_nothing_declares_is_refused() {
+    for bad in [
+        "[[seed]]\nhandle = \"a\"\ntitle = \"t\"\n",
+        "[[seed]]\nhandle = \"A b\"\ntitle = \"t\"\n",
+        "[[seed]]\nhandle = \"a\"\ntitle = \"\"\n",
+        "[[seed]]\nhandle = \"a\"\ntitle = \"t\"\nfor = \"builder\"\nkind = \"event\"\n",
+        "[[seed]]\nhandle = \"a\"\ntitle = \"t\"\npriority = 5\n",
+        "[[seed]]\nhandle = \"a\"\ntitle = \"t\"\n[[seed]]\nhandle = \"a\"\ntitle = \"u\"\n",
+        "[[seed]]\nhandle = \"a\"\ntitle = \"t\"\n[[seed]]\nhandle = \"b\"\ntitle = \"t\"\n",
+        "[[seed]]\nhandle = \"b\"\ntitle = \"t\"\ndeps = [\"a\"]\n",
+        "[[seed]]\nhandle = \"a\"\ntitle = \"t\"\nat = 5\n[[seed]]\nhandle = \"b\"\ntitle = \"u\"\ndeps = [\"a\"]\n",
+        "[[step]]\nat = 1\ncommand = \"echo {bead:ghost}\"\n",
+        "[[step]]\nat = 1\nname = \"seed9\"\ncommand = \"true\"\n",
+        "[[step]]\nat = 1\nname = \"n\"\ncommand = \"true\"\n[[step]]\nat = 2\nname = \"n\"\ncommand = \"true\"\n",
+    ] {
+        assert!(seeded(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn the_shipped_bead_contract_parses() {
+    let here = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let s = parse_scenario(&std::fs::read_to_string(here.join("scenarios/bead-contract.toml")).unwrap()).unwrap();
+    assert!(s.reads_bead_rows() && s.expects.len() >= 10);
+}

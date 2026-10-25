@@ -12,7 +12,7 @@ WHERE (lc_state = 'LANDED' OR landstate = 'LANDED') AND on_local_main IS NOT TRU
 
 CREATE OR REPLACE VIEW inv_closed_is_terminal AS
 SELECT seq, bead, bd_status, lc_state FROM bead_state
-WHERE bd_status = 'closed' AND (lc_state IS NULL OR lc_state NOT IN ('LANDED', 'SUPERSEDED', 'DROPPED', 'DONE'));
+WHERE bd_status = 'closed' AND (lc_state NOT IN ('LANDED', 'SUPERSEDED', 'DROPPED', 'DONE') OR (lc_state IS NULL AND branch_tip IS NOT NULL));
 
 CREATE OR REPLACE VIEW inv_complete_has_start AS
 SELECT c.seq, c.actor, c.started FROM events c

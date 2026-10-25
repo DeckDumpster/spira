@@ -1,0 +1,128 @@
+epoch = 1800000000
+horizon = 60000
+
+[[seed]]
+handle = "target"
+title = "label target"
+for = "builder"
+body = "## Build\nthe label target"
+priority = 1
+labels = ["alpha", "beta"]
+
+[[seed]]
+handle = "blocked"
+title = "blocked work"
+for = "builder"
+body = "## Build\nthe blocked work"
+priority = 0
+deps = ["target"]
+
+[[seed]]
+handle = "amend_a"
+title = "amend target a"
+for = "builder"
+body = "## Build\nORIGINAL-A line one\nline two"
+
+[[seed]]
+handle = "amend_b"
+title = "amend target b"
+for = "builder"
+body = "## Build\nORIGINAL-B"
+
+[[step]]
+at = 1000
+name = "label_add"
+command = "bead.sh label add {bead:target} groom-trigger"
+
+[[step]]
+at = 2000
+name = "label_remove"
+command = "bead.sh label remove {bead:target} groom-trigger"
+
+[[step]]
+at = 3000
+name = "refuse_fayth_label"
+command = '''out=$(bead.sh label add {bead:target} fayth:builder 2>&1); [ $? = 1 ] && printf '%s' "$out" | grep -q 'bead.sh file --for' '''
+
+[[step]]
+at = 4000
+name = "refuse_partition_label"
+command = "bead.sh label remove {bead:target} plan >/dev/null 2>&1; [ $? = 1 ]"
+
+[[step]]
+at = 5000
+name = "refuse_unknown_bead"
+command = "bead.sh label add sp-nobody groom-trigger >/dev/null 2>&1; [ $? = 1 ]"
+
+[[step]]
+at = 6000
+name = "refuse_label_usage"
+command = "bead.sh label add {bead:target} >/dev/null 2>&1; [ $? = 2 ]"
+
+[[step]]
+at = 10000
+name = "amend_refuse_bare_body"
+command = '''printf 'NEW-BODY\n' > "$SPIRA_RUN/new.md"; out=$(bead.sh amend {bead:amend_a} --body-file "$SPIRA_RUN/new.md" 2>&1); [ $? = 2 ] && printf '%s' "$out" | grep -q -e '--replace' && printf '%s' "$out" | grep -q -e '--append-body' '''
+
+[[step]]
+at = 11000
+name = "amend_replace"
+command = '''out=$(bead.sh amend {bead:amend_a} --body-file "$SPIRA_RUN/new.md" --replace 2>&1) && printf '%s' "$out" | grep -q 'ORIGINAL-A line one' && printf '%s' "$out" | grep -q bytes'''
+
+[[step]]
+at = 12000
+name = "amend_append"
+command = 'bead.sh amend {bead:amend_b} --append-body "$SPIRA_RUN/new.md"'
+
+[[step]]
+at = 20000
+name = "drop"
+command = "bead.sh drop {bead:blocked} --reason 'superseded by the sim'"
+
+[[expect]]
+name = "seed_priority_and_labels"
+sql = "SELECT 1 FROM bead_state WHERE title = 'label target' AND priority = 1 AND list_contains(string_split(labels, ','), 'alpha') AND list_contains(string_split(labels, ','), 'beta') AND list_contains(string_split(labels, ','), 'plan')"
+
+[[expect]]
+name = "seed_dependency_edge"
+sql = "SELECT 1 FROM bead_state d JOIN bead_state t ON d.deps = t.bead WHERE d.title = 'blocked work' AND d.priority = 0 AND t.title = 'label target'"
+
+[[expect]]
+name = "label_added"
+sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'label_add' AND e.exit = 0 AND b.title = 'label target' AND list_contains(string_split(b.labels, ','), 'groom-trigger')"
+
+[[expect]]
+name = "label_dropped"
+sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'label_remove' AND e.exit = 0 AND b.title = 'label target' AND NOT list_contains(string_split(b.labels, ','), 'groom-trigger') AND list_contains(string_split(b.labels, ','), 'alpha')"
+
+[[expect]]
+name = "fayth_label_refused_and_unset"
+sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'refuse_fayth_label' AND e.exit = 0 AND b.title = 'label target' AND NOT list_contains(string_split(b.labels, ','), 'fayth:builder')"
+
+[[expect]]
+name = "partition_label_refused_and_kept"
+sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'refuse_partition_label' AND e.exit = 0 AND b.title = 'label target' AND list_contains(string_split(b.labels, ','), 'plan')"
+
+[[expect]]
+name = "unknown_bead_refused"
+sql = "SELECT 1 FROM events WHERE actor = 'refuse_unknown_bead' AND exit = 0"
+
+[[expect]]
+name = "label_usage_refused"
+sql = "SELECT 1 FROM events WHERE actor = 'refuse_label_usage' AND exit = 0"
+
+[[expect]]
+name = "bare_body_refused_old_body_intact"
+sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'amend_refuse_bare_body' AND e.exit = 0 AND b.title = 'amend target a' AND b.body LIKE '%ORIGINAL-A%' AND b.body NOT LIKE '%NEW-BODY%'"
+
+[[expect]]
+name = "replace_swaps_the_body"
+sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'amend_replace' AND e.exit = 0 AND b.title = 'amend target a' AND b.body LIKE '%NEW-BODY%' AND b.body NOT LIKE '%ORIGINAL-A%'"
+
+[[expect]]
+name = "append_keeps_old_text_and_dates_it"
+sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'amend_append' AND e.exit = 0 AND b.title = 'amend target b' AND b.body LIKE '%ORIGINAL-B%' AND b.body LIKE '%NEW-BODY%' AND b.body LIKE '%--- appended 20%'"
+
+[[expect]]
+name = "drop_records_its_reason"
+sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'drop' AND e.exit = 0 AND b.title = 'blocked work' AND b.bd_status = 'closed' AND b.close_reason LIKE '%superseded by the sim%' AND b.lc_state = 'DROPPED'"

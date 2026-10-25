@@ -7,7 +7,7 @@ use std::time::Duration;
 
 const QUERY_DEADLINE: Duration = Duration::from_secs(60); // batch-job: loading and querying a trace of a few thousand rows
 const INVARIANTS: &str = include_str!("../invariants.sql");
-const BEAD_STATE_FIELDS: &[&str] = &["bead", "bd_status", "lc_state", "lc_version", "holds", "landstate", "lc_tip", "branch_tip", "on_local_main", "on_origin_main"];
+const BEAD_STATE_FIELDS: &[&str] = &["bead", "bd_status", "lc_state", "lc_version", "holds", "landstate", "lc_tip", "branch_tip", "on_local_main", "on_origin_main", "title", "priority", "labels", "deps", "close_reason", "body"];
 
 pub fn duckdb_bin() -> String {
     std::env::var("SPIRA_SIM_DUCKDB").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "duckdb".to_string())
@@ -135,7 +135,7 @@ impl Trace {
         };
         let mut s = String::new();
         s += &src("events", "seq:'BIGINT', vtime:'BIGINT', kind:'VARCHAR', actor:'VARCHAR', started:'BIGINT', completed:'BIGINT', exit:'INTEGER', coalesced:'BOOLEAN', seed:'UBIGINT'");
-        s += &src("bead_state", "seq:'BIGINT', bead:'VARCHAR', bd_status:'VARCHAR', lc_state:'VARCHAR', lc_version:'BIGINT', holds:'VARCHAR', landstate:'VARCHAR', lc_tip:'VARCHAR', branch_tip:'VARCHAR', on_local_main:'BOOLEAN', on_origin_main:'BOOLEAN'");
+        s += &src("bead_state", "seq:'BIGINT', bead:'VARCHAR', bd_status:'VARCHAR', lc_state:'VARCHAR', lc_version:'BIGINT', holds:'VARCHAR', landstate:'VARCHAR', lc_tip:'VARCHAR', branch_tip:'VARCHAR', on_local_main:'BOOLEAN', on_origin_main:'BOOLEAN', title:'VARCHAR', priority:'BIGINT', labels:'VARCHAR', deps:'VARCHAR', close_reason:'VARCHAR', body:'VARCHAR'");
         s += &src("refs", "seq:'BIGINT', ref:'VARCHAR', sha:'VARCHAR'");
         s += &src("tags", "seq:'BIGINT', tag:'VARCHAR'");
         s += INVARIANTS;
