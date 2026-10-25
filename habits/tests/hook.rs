@@ -1,5 +1,5 @@
 //! The hook path end to end: a recorded PostToolUse JSON on stdin of the real `habits` binary,
-//! in a throwaway git repo. rustfmt is the real tool; shellcheck and rust-code-analysis-cli are
+//! in a throwaway git repo. rustfmt, shellcheck and rust-code-analysis-cli are
 //! stubs that print their real output shapes (gcc lines; the `spaces` JSON tree).
 
 use std::path::Path;
@@ -37,6 +37,12 @@ awk 'function flush() { if (name != "") { printf "%s{\"name\":\"%s\",\"start_lin
   /if / { n++ }
   END { flush(); print "]}" }
   BEGIN { printf "{\"name\":\"f\",\"start_line\":1,\"end_line\":1,\"kind\":\"unit\",\"metrics\":{\"cognitive\":{\"sum\":0}},\"spaces\":[" }' "$last"
+"#;
+
+const RUSTFMT_STUB: &str = r#"#!/bin/sh
+for last; do :; done
+awk -v f="$last" '/[a-z]=[0-9]/ { fixed = $0; sub(/ *= */, " = ", fixed); printf "Diff in %s:%d:\n ctx\n-%s\n+%s\n", f, NR - 1, $0, fixed; bad = 1 }
+  END { exit bad }' "$last"
 "#;
 
 const SHELLCHECK_STUB: &str = r#"#!/bin/sh
@@ -89,6 +95,7 @@ impl Repo {
         }
         testkit::write_exe(r.bin.join("rust-code-analysis-cli"), RCA_STUB);
         testkit::write_exe(r.bin.join("shellcheck"), SHELLCHECK_STUB);
+        testkit::write_exe(r.bin.join("rustfmt"), RUSTFMT_STUB);
         r
     }
 
