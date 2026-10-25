@@ -626,11 +626,11 @@ park_unmapped() {
     local row state
     row="$(lc_bead_row "$id")" && state="${row%%$'\t'*}" || state=""
     case "$state" in
-        LANDED|SUPERSEDED|DROPPED|DONE) release_own_claim "$id"; return ;;
+        ""|LANDED|SUPERSEDED|DROPPED|DONE) release_own_claim "$id"; return ;;
     esac
     bdq label add "$id" "overseer"          >/dev/null 2>&1 || true
     # The hold alone (sp-psztcc): a label standing in for it outlived every withdrawal.
-    spira-lc hold "$id" ask "repo:$repo_name has no repo-map entry" aeon.sh || true
+    spira-lc hold "$id" ask "repo:$repo_name has no repo-map entry" aeon.sh >/dev/null 2>&1 || true
     bdq note "$id" "Parked by aeon.sh: this bead carries repo:$repo_name, and $SPIRA_REPO_MAP has no entry for it (or its path is not a git checkout). Held with an ask (and labelled overseer) — no aeon will claim it again until a human corrects the label or adds the repo to the map and withdraws the ask (spira-lc withdraw-ask $id). Refusing to work it in the home repo — a fix landed in the wrong repository passes every check downstream." >/dev/null 2>&1
     release_own_claim "$id"
 }
