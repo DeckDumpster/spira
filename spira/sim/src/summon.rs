@@ -15,6 +15,7 @@ const CALL_DEADLINE: Duration = Duration::from_secs(120); // batch-job: spira-cl
 pub const HOLDER: &str = "aeon-sim";
 const LEASE_SECS: u64 = 3600;
 const CLAIM_REFUSED: i32 = 3;
+pub const CLAIM_ORDER: &str = "claim-order";
 const LC_CLAIM: &str = r#". "$SPIRA_HOME/lib.sh" || exit 2; lc_claim_bead "$1" "$2" "$3" "" 0 0 "$4""#;
 
 /// The fayth a `systemd-run` summon argv names: the argument after the `aeon` binary's path.
@@ -81,12 +82,17 @@ fn ranked(fayth: &str, scratch: &Path) -> Result<Vec<String>, String> {
     Ok(ranked_ids(&out))
 }
 
-/// The lifecycle Claim, by the function an aeon claims with: 0 applied, 3 refused.
-fn claim(id: &str, fayth: &str) -> Result<bool, String> {
+/// The lifecycle Claim, by the function an aeon claims with: 0 applied, 3 refused. An applied
+/// claim is appended to the world's `claim-order` as `<bead> <holder> <lease_until> <fayth>`.
+fn claim(world: &Path, id: &str, fayth: &str) -> Result<bool, String> {
     let lease = spira_config::vtime::now_epoch() + LEASE_SECS;
     let status = Command::new("bash").args(["-c", LC_CLAIM, "lc-claim", id, HOLDER, &lease.to_string(), fayth]).stdin(Stdio::null()).status().map_err(|e| format!("lc_claim_bead: {e}"))?;
     match status.code() {
-        Some(0) => Ok(true),
+        Some(0) => {
+            let mut log = std::fs::OpenOptions::new().create(true).append(true).open(world.join(CLAIM_ORDER)).map_err(|e| e.to_string())?;
+            writeln!(log, "{id} {HOLDER} {lease} {fayth}").map_err(|e| e.to_string())?;
+            Ok(true)
+        }
         Some(CLAIM_REFUSED) => Ok(false),
         other => Err(format!("lc_claim_bead {id}: exit {other:?}")),
     }
@@ -98,7 +104,7 @@ pub fn summon(world: &Path, scenario_file: &Path, state: &Path, fayth: &str) -> 
     std::fs::create_dir_all(state).map_err(|e| e.to_string())?;
     let mut won = None;
     for id in ranked(fayth, state)? {
-        if scripted(&scenario, &id) && claim(&id, fayth)? {
+        if scripted(&scenario, &id) && claim(world, &id, fayth)? {
             won = Some(id);
             break;
         }
