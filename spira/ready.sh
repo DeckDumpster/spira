@@ -247,28 +247,46 @@ fi
     else
         # Python probe: measures wall-clock ms inside the budget ceiling.
         # Outputs "200 Nms" on success, "ERR Nms <reason>" otherwise.
-        # A FRESHLY STARTED loom answers its first request slowly (a cold bd query), and at
-        # install's verify phase it has only just started. An unanswered probe is retried
-        # for a short bounded grace before it is a FAIL; a slow ANSWER is still judged
-        # against the budget below (sp-bn9go).
+        # A FRESHLY STARTED loom answers slowly or refuses (SPIRA_LOOM_READY_GRACE), and answers
+        # 503 while the content store it reads is still initialising (waited on for 4x that grace).
+        # Each is retried inside its own bounded grace; a 503 FAIL keeps loom's own body, which
+        # carries the store's state. A slow ANSWER is judged against the budget below (sp-bn9go).
         _loom_result="$(python3 - "$_loom_url" "$SPIRA_LOOM_BUDGET_MS" "${SPIRA_LOOM_READY_GRACE:-20}" 2>/dev/null <<'PYEOF'
-import sys, urllib.request, time
+import sys, urllib.request, urllib.error, time
 url = sys.argv[1]
 budget_ms = float(sys.argv[2])
-deadline = time.monotonic() + float(sys.argv[3])
+start = time.monotonic()
+grace = float(sys.argv[3])
+store_grace = 4 * grace
 while True:
     t0 = time.monotonic()
+    waiting = "no answer"
     try:
         r = urllib.request.urlopen(url, timeout=budget_ms / 1000)
         ms = int((time.monotonic() - t0) * 1000)
         sys.stdout.write("%d %dms\n" % (r.status, ms))
         break
+    except urllib.error.HTTPError as e:
+        ms = int((time.monotonic() - t0) * 1000)
+        if e.code != 503:
+            sys.stdout.write("%d %dms\n" % (e.code, ms))
+            break
+        waiting = "content store not ready"
+        try:
+            body = " ".join(e.read(400).decode("utf-8", "replace").split())[:300]
+        except Exception:
+            body = ""
+        reason = "HTTP 503 after %ds waiting for the %s (4 x SPIRA_LOOM_READY_GRACE = %ds): %s" % (
+            time.monotonic() - start, waiting, store_grace, body)
+        limit = store_grace
     except Exception as e:
         ms = int((time.monotonic() - t0) * 1000)
-        if time.monotonic() >= deadline:
-            sys.stdout.write("ERR %dms %s\n" % (ms, str(e)[:100]))
-            break
-        time.sleep(1)
+        reason = str(e)[:100]
+        limit = grace
+    if time.monotonic() - start >= limit:
+        sys.stdout.write("ERR %dms %s\n" % (ms, reason))
+        break
+    time.sleep(1)
 PYEOF
         )"
     fi
