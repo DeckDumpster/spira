@@ -147,16 +147,18 @@ fn ci_main(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<(), 
 
 fn summon_main(env: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {
     use spira_sim::agent::{SCENARIO_VAR, STATE_VAR};
+    use spira_sim::summon::Ran;
     let need = |k: &str| env(k).filter(|v| !v.is_empty()).ok_or(format!("{k} is not set: sim summon answers only inside a world"));
     let world = need(spira_sim::roundvm::WORLD_ENV)?;
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let argv = argv.strip_prefix(&["summon".to_string()]).unwrap_or(&argv);
     let fayth = spira_sim::summon::fayth_of(argv)?;
     // The sentinel discards a summon's stderr; its stdout lands in the world's exec.log.
-    let ran = spira_sim::summon::summon(&PathBuf::from(world), &PathBuf::from(need(SCENARIO_VAR)?), &PathBuf::from(need(STATE_VAR)?), fayth).inspect_err(|e| println!("sim summon: {e}"))?;
+    let ran = spira_sim::summon::summon(&PathBuf::from(world), &PathBuf::from(need(SCENARIO_VAR)?), &PathBuf::from(need(STATE_VAR)?), fayth, argv).inspect_err(|e| println!("sim summon: {e}"))?;
     match ran {
-        Some(id) => println!("sim summon: ran the stub agent for {id}"),
-        None => println!("sim summon: nothing scripted is claimable for {fayth}"),
+        Ran::Stub(id) => println!("sim summon: ran the stub agent for {id}"),
+        Ran::Aeon => println!("sim summon: ran the real aeon for {fayth}"),
+        Ran::Nothing => println!("sim summon: nothing scripted is claimable for {fayth}"),
     }
     Ok(())
 }

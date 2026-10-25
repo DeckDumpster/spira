@@ -7,6 +7,7 @@ const CALL_DEADLINE: Duration = Duration::from_secs(120); // batch-job: git comm
 
 pub const SCENARIO_VAR: &str = "SPIRA_SIM_SCENARIO";
 pub const STATE_VAR: &str = "SPIRA_SIM_STATE";
+pub const BRIEFS: &str = "briefs.jsonl";
 
 #[derive(Debug, PartialEq)]
 pub enum Step {
@@ -131,3 +132,25 @@ pub fn play(scenario: &str, state: &Path, bead: &str, worktree: &Path) -> Result
 }
 
 pub const RESULT: &str = r#"{"type":"result","subtype":"success","is_error":false,"duration_ms":100,"num_turns":1,"total_cost_usd":0}"#;
+
+/// The `--system-prompt-file` the session was launched with, read now: the aeon removes it at teardown.
+fn system_prompt(argv: &[String]) -> String {
+    argv.iter().position(|a| a == "--system-prompt-file" || a == "--append-system-prompt-file").and_then(|i| argv.get(i + 1)).and_then(|f| std::fs::read_to_string(f).ok()).unwrap_or_default()
+}
+
+/// One row of the `briefs` trace table: what the aeon handed the agent for `bead` — its argv, the
+/// system prompt file, the prompt on stdin, the cwd and the restricted environment. `n` counts this
+/// bead's sessions from 1.
+pub fn brief_row(state: &Path, bead: &str, argv: &[String], prompt: &str, cwd: &Path, env: &[(String, String)]) -> Result<serde_json::Value, String> {
+    let seen = std::fs::read_to_string(state.join(BRIEFS)).unwrap_or_default().lines().filter(|l| serde_json::from_str::<serde_json::Value>(l).is_ok_and(|v| v["bead"] == bead)).count();
+    let env: std::collections::BTreeMap<&str, &str> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    Ok(serde_json::json!({"bead": bead, "n": seen + 1, "argv": argv.join("\n"), "system": system_prompt(argv), "prompt": prompt, "cwd": cwd.display().to_string(), "env": serde_json::to_string(&env).map_err(|e| e.to_string())?}))
+}
+
+/// Appends the brief the agent was launched with to the world's `briefs.jsonl`.
+pub fn record_brief(state: &Path, row: &serde_json::Value) -> Result<(), String> {
+    use std::io::Write;
+    std::fs::create_dir_all(state).map_err(|e| e.to_string())?;
+    let mut f = std::fs::OpenOptions::new().create(true).append(true).open(state.join(BRIEFS)).map_err(|e| e.to_string())?;
+    writeln!(f, "{row}").map_err(|e| e.to_string())
+}

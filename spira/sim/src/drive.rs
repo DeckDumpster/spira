@@ -249,6 +249,10 @@ pub struct Scenario {
     pub invariants: Vec<SqlDef>,
     #[serde(default, rename = "expect")]
     pub expects: Vec<SqlDef>,
+    /// The world's summon runs the real `aeon` with the stub agent as its `SPIRA_AGENT`, and the
+    /// brief the agent receives is the `briefs` table.
+    #[serde(default)]
+    pub real_aeon: bool,
     /// Read the bead store's rows (`bd`) into `bead_state` too; always so when there are seeds.
     #[serde(default)]
     pub bead_rows: bool,
@@ -700,6 +704,12 @@ pub fn drive(
             }
         }
     };
+    if sc.real_aeon {
+        let command = format!("printf '%s\\n' '{}' >> \"${}\"", crate::summon::REAL_AEON, crate::agent::SCENARIO_VAR);
+        let call = call.clone();
+        sim.add_scenario("real-aeon", Box::new(move |_| call(&command)));
+        sim.schedule_step(0, "real-aeon");
+    }
     for a in &sc.actors {
         let (command, lo, hi, call) = (a.command.clone(), a.duration_min, a.duration_max, call.clone());
         sim.add_actor(&a.name, a.staged, Box::new(move |_, rng| {

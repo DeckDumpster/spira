@@ -21,6 +21,15 @@ pub const TESTENV_ENV: &str = "SPIRA_IN_TESTENV";
 pub const INERT_TOOLS: &[&str] = &["unit-ensure", "target-reap"];
 /// What the world's `SPIRA_SUMMON` runs: `sim` under this name, standing where `systemd-run` stands.
 pub const SUMMON_TOOL: &str = "sim-summon";
+
+/// The world's `SPIRA_AGENT`: a launcher giving the stub agent the scenario and state paths the aeon's restricted environment drops.
+pub const AGENT_LAUNCHER: &str = "sim-aeon-agent";
+
+/// The script at [`AGENT_LAUNCHER`].
+pub fn agent_launcher(agent: &Path, scenario: &Path, state: &Path) -> String {
+    let q = |p: &Path| format!("'{}'", p.display().to_string().replace('\'', "'\\''"));
+    format!("#!/bin/sh\nexport {}={} {}={}\nexec {} \"$@\"\n", crate::agent::SCENARIO_VAR, q(scenario), crate::agent::STATE_VAR, q(state), q(agent))
+}
 /// The release binaries the world itself calls; a prebuilt release without them is refused.
 const RELEASE_BINS: &[&str] = &["bin/spira-config", "bin/spira-lc"];
 /// The world's lifecycle service socket, under the world dir (sp-hq1v76).
@@ -603,6 +612,9 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
         link(&sim_exe, &bin.join("round-vm"))?;
         link(&sim_exe, &bin.join("sim"))?;
         link(&sim_exe, &bin.join(SUMMON_TOOL))?;
+        let launcher = bin.join(AGENT_LAUNCHER);
+        std::fs::write(&launcher, agent_launcher(&sim_exe.with_file_name("sim-agent"), &dir.join("agent.scenario"), &dir.join("agent-state"))).map_err(|e| e.to_string())?;
+        set_exec(&launcher)?;
         for tool in INERT_TOOLS {
             link(&sim_exe, &bin.join(tool))?;
         }
@@ -899,6 +911,8 @@ pub fn home_settings(world: &Path, fixture: &str, bd: &Path) -> Vec<(String, Str
         ("spira.db".to_string(), bead_db(fixture).display().to_string()),
         ("spira.repo_map".to_string(), world.join(HOME).join(REGISTRY_ROWS).display().to_string()),
         ("spira.home_repo".to_string(), REPO_NAME.to_string()),
+        ("spira.agent".to_string(), world.join("bin").join(AGENT_LAUNCHER).display().to_string()),
+        ("spira.aeon_warm_base".to_string(), world.join("warm").display().to_string()),
     ]
 }
 

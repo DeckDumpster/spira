@@ -155,6 +155,7 @@ impl Trace {
         s += &src("tags", "seq:'BIGINT', tag:'VARCHAR'");
         s += &crate::runstate::load_sql(&self.dir);
         s += &src("mail", "seq:'BIGINT', mailbox:'VARCHAR', kind:'VARCHAR', bead:'VARCHAR', read:'BOOLEAN', subject:'VARCHAR'");
+        s += &src("briefs", "bead:'VARCHAR', n:'BIGINT', argv:'VARCHAR', system:'VARCHAR', prompt:'VARCHAR', cwd:'VARCHAR', env:'VARCHAR'");
         s += INVARIANTS;
         s
     }
@@ -163,12 +164,17 @@ impl Trace {
     pub fn load(&self, world: &Path) -> Result<PathBuf, String> {
         let db = Self::db_of(world);
         let _ = std::fs::remove_file(&db);
+        let briefs = world.join("agent-state").join(crate::agent::BRIEFS);
+        if briefs.is_file() {
+            std::fs::copy(&briefs, self.dir.join("briefs.jsonl")).map_err(|e| format!("{}: {e}", briefs.display()))?;
+        }
         duckdb(&db, &self.load_script(), false)?;
         Ok(db)
     }
 }
 
 const TABLES: &[&str] = &["events", "bead_state", "refs", "tags", "mail"];
+const TABLES: &[&str] = &["events", "bead_state", "refs", "tags", "mail", "briefs"];
 
 fn duckdb(db: &Path, sql: &str, json_out: bool) -> Result<String, String> {
     let mut cmd = Command::new(duckdb_bin());
