@@ -2159,11 +2159,17 @@ pub(super) fn certify(
             batch,
             &format!("round {batch} went red: {}", reds.join(",")),
         );
-        w.out(format!(
+        let verdict = format!(
             "queue.sh {label}: round {batch} is RED at {head}: {}",
             reds.join(",")
-        ));
+        );
+        w.out(verdict.clone());
+        w.err(verdict);
         w.out(format!("red={}", reds.join(",")));
+        if reds.iter().any(|r| r == REPO_TESTENV_RED) {
+            let output = rounds_dir(&c).join(format!("{batch}.results")).join(format!("{REPO_TESTENV_RED}.out"));
+            w.out(format!("red-output={}", output.display()));
+        }
         return FAIL;
     }
 

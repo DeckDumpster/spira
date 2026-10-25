@@ -803,8 +803,41 @@ fn finish_local_round(
             Some((stable.head.as_str(), io::all_suites(repo, &stable.green_branch).len()))
         };
         match io::round_certify(env_, repo, batch, attest, Some(&head)) {
-            Ok(()) => println!("batcher {}: certified the round's tree (round GREEN at {})", repo.name, stable.head),
-            Err(e) => {
+            io::Certified::Green => println!("batcher {}: certified the round's tree (round GREEN at {})", repo.name, stable.head),
+            io::Certified::Red { output } => {
+                let text = std::fs::read_to_string(&output).unwrap_or_default();
+                let changed: Vec<(String, Vec<String>)> =
+                    stable.members.iter().map(|m| (m.id.clone(), io::changed_paths(repo, base_sha, &m.tip))).collect();
+                let guilty = io::implicated(&text, &changed);
+                if guilty.is_empty() {
+                    return refuse(format!(
+                        "batcher {}: refused to land locally at {head} — the repository's ci is red and its output names no member's file ({output})",
+                        repo.name
+                    ));
+                }
+                let ci = vec!["ci".to_string()];
+                for id in &guilty {
+                    let paths = changed.iter().find(|(m, _)| m == id).map(|(_, p)| p.as_slice()).unwrap_or_default();
+                    let first = text.lines().find(|l| paths.iter().any(|p| l.contains(p.as_str()))).unwrap_or_default().trim().to_string();
+                    let fails = if first.is_empty() { Vec::new() } else { vec![("ci".to_string(), first)] };
+                    match io::round_eject(env_, repo, batch, id, &ci, &fails, true) {
+                        Ok(()) => println!("batcher {}: ejected {id} from round {batch} — the repository's ci is red on its files ({output})", repo.name),
+                        Err(e) => println!("batcher {}: could not eject {id} from round {batch}: {e}", repo.name),
+                    }
+                }
+                io::round_abandon(env_, repo, batch, &format!("ci red on {}; the rest are re-cut without them", guilty.join(", ")));
+                io::tsd_append_round(
+                    env_,
+                    &[
+                        ("repo", repo.name.clone()),
+                        ("verdict", "ejected".to_string()),
+                        ("duration_ms", ((now() - round_start) * 1000).to_string()),
+                        ("base", base_sha.to_string()),
+                    ],
+                );
+                return Ok(None);
+            }
+            io::Certified::Failed(e) => {
                 let refused = refuse(format!("batcher {}: refused to land locally at {head} — cannot certify the round: {e}", repo.name));
                 return if e.contains(pace::CERTIFY_ENV_MARKER) { Err(e) } else { refused };
             }

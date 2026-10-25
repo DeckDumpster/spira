@@ -1902,7 +1902,7 @@ fn round_eject_with(env: &Env, repo: &Repo, batch: &str, id: &str, reason: &str,
 /// `queue round certify`: with `Some((head, ran))` the batcher's own corpus ran `ran` suites green
 /// on `head`, the round worktree's head, and the verb records that tree's GREEN; with `None` the
 /// verb runs the repo's own CI entry on a round VM and judges the round itself.
-pub fn round_certify(env: &Env, repo: &Repo, batch: &str, attest: Option<(&str, usize)>, rehead: Option<&str>) -> Result<(), String> {
+pub fn round_certify(env: &Env, repo: &Repo, batch: &str, attest: Option<(&str, usize)>, rehead: Option<&str>) -> Certified {
     let ran = attest.map(|(_, n)| n.to_string());
     let mut args = vec!["certify", batch, repo.name.as_str()];
     if let (Some((head, _)), Some(ran)) = (attest, ran.as_deref()) {
@@ -1911,17 +1911,37 @@ pub fn round_certify(env: &Env, repo: &Repo, batch: &str, attest: Option<(&str, 
     if let Some(h) = rehead {
         args.extend(["--rehead", h]);
     }
-    let run = round_verb(env, &args, "")?;
+    let run = match round_verb(env, &args, "") {
+        Ok(r) => r,
+        Err(e) => return Certified::Failed(e),
+    };
     if run.code == Some(0) {
-        Ok(())
-    } else {
-        let failed = verb_failed("queue round certify", &run);
-        Err(if run.err.contains(crate::pace::STALE_AMI_MARKER) {
-            format!("{}: {failed}", crate::pace::STALE_AMI_MARKER)
-        } else {
-            failed
-        })
+        return Certified::Green;
     }
+    if let Some(output) = verb_value(&run.out, "red-output") {
+        return Certified::Red { output };
+    }
+    let failed = verb_failed("queue round certify", &run);
+    Certified::Failed(if run.err.contains(crate::pace::STALE_AMI_MARKER) {
+        format!("{}: {failed}", crate::pace::STALE_AMI_MARKER)
+    } else {
+        failed
+    })
+}
+
+pub enum Certified {
+    Green,
+    /// The repository's own CI judged the round red; `output` is the file holding its output.
+    Red { output: String },
+    Failed(String),
+}
+
+/// The members whose changed files the red output names; a lone member owns any red.
+pub fn implicated(output: &str, changed: &[(String, Vec<String>)]) -> Vec<String> {
+    if let [(id, _)] = changed {
+        return vec![id.clone()];
+    }
+    changed.iter().filter(|(_, paths)| paths.iter().any(|p| output.contains(p.as_str()))).map(|(id, _)| id.clone()).collect()
 }
 
 /// The member ids the round record holds now, as `queue round status` reports them.
@@ -3316,6 +3336,18 @@ mod land_exit_tests {
         testkit::write_exe(&d.join("queue"), &format!("#!/bin/sh\n{script}\n"));
         e.queue_bin = d.join("queue");
         e
+    }
+
+    #[test]
+    fn a_red_ci_implicates_only_the_member_whose_changed_file_it_names() {
+        let changed = vec![
+            ("sp-a".to_string(), vec!["crates/x/src/a.rs".to_string()]),
+            ("sp-b".to_string(), vec!["crates/x/src/parent.rs".to_string()]),
+        ];
+        let out = "Diff in crates/x/src/parent.rs:30:\n";
+        assert_eq!(implicated(out, &changed), vec!["sp-b".to_string()]);
+        assert!(implicated("boom", &changed).is_empty());
+        assert_eq!(implicated("boom", &changed[..1]), vec!["sp-a".to_string()]);
     }
 
     #[test]
