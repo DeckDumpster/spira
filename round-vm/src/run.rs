@@ -146,6 +146,8 @@ pub trait Remote: Sync {
     fn run_batch(&self, addr: &str, job: &BatchJob) -> Result<i32, String>;
     /// Copies the remote directory `remote_path` into `local`.
     fn pull(&self, addr: &str, remote_path: &str, local: &Path) -> Result<(), String>;
+    /// Copies the local directory `local` into the remote `remote_path`.
+    fn push(&self, addr: &str, local: &Path, remote_path: &str) -> Result<(), String>;
     /// Runs one attribution rerun (DESIGN.md §2.2a); its testenv exit code (255: ssh).
     fn run_attr(&self, addr: &str, job: &crate::spool::AttrJob) -> Result<i32, String>;
 }
@@ -471,6 +473,8 @@ else
 fi
 setup_secs=$(( $(date +%s) - t_start - unit_build_secs ))
 if [ -n "$registry" ]; then export SPIRA_TESTENV_REGISTRY="$registry"; fi
+mkdir -p "$HOME/round-resume"
+export SPIRA_TESTENV_RESUME="dir:$HOME/round-resume"
 sig_out="$HOME/round-work/.runtime/spira/tsd/vm-signals.jsonl"
 mkdir -p "$(dirname "$sig_out")"
 cpu_now() { awk '/^cpu /{t=0; for(i=2;i<=9;i++) t+=$i; print t, $6, $9}' /proc/stat; }
@@ -836,6 +840,24 @@ impl Remote for SshRemote {
         }
         let st = child.wait().map_err(|e| format!("ssh: {e}"))?;
         Ok(st.code().unwrap_or(255))
+    }
+
+    fn push(&self, addr: &str, local: &Path, remote_path: &str) -> Result<(), String> {
+        let st = command("rsync")
+            .arg("-a")
+            .arg("-e")
+            .arg(format!("ssh {}", self.ssh_opts().join(" ")))
+            .arg(format!("{}/", local.display()))
+            .arg(format!("{}@{addr}:{remote_path}", self.user))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|e| format!("rsync: {e}"))?;
+        if st.success() {
+            Ok(())
+        } else {
+            Err(format!("rsync to {remote_path} exited {}", st.code().unwrap_or(-1)))
+        }
     }
 
     fn pull(&self, addr: &str, remote_path: &str, local: &Path) -> Result<(), String> {
@@ -1684,6 +1706,10 @@ fn on_vm_run(
         round_sha: commit_sha.to_string(),
         ci_entry: args.ci_entry.clone(),
     };
+    let resume = args.ci_entry.is_none().then(|| resume_dir(cfg, tree_sha));
+    if let Some(dir) = &resume {
+        push_resume(env.remote, &vm.addr, dir);
+    }
     let t0 = Instant::now();
     let stream_scratch = cfg.state_dir.join(format!(".pulled-stream.{}", std::process::id()));
     let mut refused: Option<String> = None;
@@ -1693,7 +1719,7 @@ fn on_vm_run(
             let mut last: Option<Instant> = None;
             while !batch.is_finished() {
                 if last.map_or(true, |l| l.elapsed() >= cfg.stream_every) {
-                    stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir);
+                    stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir, resume.as_deref());
                     progress.update(&results_dir);
                     record_boundary(env, args, &mut progress, &mut refused);
                     last = Some(Instant::now());
@@ -1707,7 +1733,7 @@ fn on_vm_run(
             Ok(255) => {
                 eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
                 progress.marks().lose("ssh dropped");
-                keep_after_lost_ssh(env, vm, &results_dir, keep);
+                keep_after_lost_ssh(env, vm, &results_dir, resume.as_deref(), keep);
                 record_incomplete(env, args, "the batch's ssh dropped");
                 progress.finish(&results_dir, 2);
                 return 2;
@@ -1753,7 +1779,7 @@ fn on_vm_run(
         let mut last: Option<Instant> = None;
         while !batch.is_finished() {
             if last.map_or(true, |l| l.elapsed() >= cfg.stream_every) {
-                stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir);
+                stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir, resume.as_deref());
                 progress.update(&results_dir);
                 record_boundary(env, args, &mut progress, &mut refused);
                 last = Some(Instant::now());
@@ -1766,7 +1792,7 @@ fn on_vm_run(
             Ok(Ok(255)) => {
                 eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
                 progress.marks().lose("ssh dropped");
-                keep_after_lost_ssh(env, vm, &results_dir, keep);
+                keep_after_lost_ssh(env, vm, &results_dir, resume.as_deref(), keep);
                 record_incomplete(env, args, "the batch's ssh dropped");
                 (2, false)
             }
@@ -1800,7 +1826,10 @@ fn on_vm_run(
 
 /// One streaming pass: every verdict the VM has so far lands in `results_dir`, so a run cut
 /// before its final pull keeps them.
-fn stream_pull(remote: &dyn Remote, addr: &str, scratch: &Path, results_dir: &Path) {
+fn stream_pull(remote: &dyn Remote, addr: &str, scratch: &Path, results_dir: &Path, resume: Option<&Path>) {
+    if let Some(dir) = resume {
+        pull_resume(remote, addr, dir);
+    }
     if remote.pull(addr, REMOTE_RESULTS, scratch).is_ok() {
         if let Err(e) = stream_into(scratch, results_dir) {
             eprintln!("round-vm run: streaming results: {e}");
@@ -1867,9 +1896,12 @@ fn keep_vm(env: &RunEnv, vm: &Vm, keep: &AtomicBool) {
 }
 
 /// The batch's ssh dropped, so what the VM holds is unknown: take what it has and keep the VM.
-fn keep_after_lost_ssh(env: &RunEnv, vm: &Vm, results_dir: &Path, keep: &AtomicBool) {
+fn keep_after_lost_ssh(env: &RunEnv, vm: &Vm, results_dir: &Path, resume: Option<&Path>, keep: &AtomicBool) {
     keep_vm(env, vm, keep);
     let _pin = env.pool.pin_pull(&vm.handle);
+    if let Some(dir) = resume {
+        pull_resume(env.remote, &vm.addr, dir);
+    }
     let scratch = env.cfg.state_dir.join(format!(".pulled-lost.{}", std::process::id()));
     let _ = fs::remove_dir_all(&scratch);
     if pull_retry(env.remote, env.cfg, &vm.addr, REMOTE_RESULTS, &scratch) {
@@ -1902,6 +1934,33 @@ pub fn salvage_results(remote: &dyn Remote, addr: &str, results_dir: &Path, scra
 
 /// Where the VM's runner writes its time-series rows.
 const TSD_DIR: &str = "round-work/.runtime/spira/tsd/";
+
+/// The VM's testenv resume store (`SPIRA_TESTENV_RESUME=dir:$HOME/round-resume`), carried to a
+/// re-acquired VM so a round whose spot VM was reclaimed skips the suites the first one passed.
+pub const REMOTE_RESUME: &str = "round-resume/";
+
+/// The host's copy of a tree's resume store.
+fn resume_dir(cfg: &Config, tree_sha: &str) -> PathBuf {
+    cfg.state_dir.join("resume").join(tree_sha)
+}
+
+fn push_resume(remote: &dyn Remote, addr: &str, dir: &Path) {
+    let held = fs::read_dir(dir).is_ok_and(|mut d| d.next().is_some());
+    if !held {
+        return;
+    }
+    match remote.push(addr, dir, REMOTE_RESUME) {
+        Ok(()) => eprintln!("round-vm run: RESUME: pushed {} to {addr}", dir.display()),
+        Err(e) => eprintln!("round-vm run: RESUME: push to {addr} failed, the VM runs everything: {e}"),
+    }
+}
+
+/// A failed pull costs only the skips; the round's verdict never depends on it.
+fn pull_resume(remote: &dyn Remote, addr: &str, dir: &Path) {
+    if remote.pull(addr, REMOTE_RESUME, dir).is_err() {
+        let _ = fs::remove_dir(dir);
+    }
+}
 
 /// Where the VM's testenv writes the corpus's results.
 pub const REMOTE_RESULTS: &str = "round-work/.runtime/spira/batch-results/";
@@ -1954,6 +2013,14 @@ fn after_batch(
     }
     let _pin = env.pool.pin_pull(&vm.handle);
     let remote = env.remote;
+    if args.ci_entry.is_none() {
+        let dir = resume_dir(cfg, tree_sha);
+        if remote_rc == 0 {
+            let _ = fs::remove_dir_all(&dir);
+        } else {
+            pull_resume(remote, &vm.addr, &dir);
+        }
+    }
     let timed = |what: &str, remote_path: &str, local: &Path| {
         let t0 = std::time::Instant::now();
         let ok = pull_retry(remote, cfg, &vm.addr, remote_path, local);
@@ -2735,6 +2802,28 @@ mod tests {
     }
 
     #[test]
+    fn remote_script_exports_the_resume_dir_before_testenv_runs() {
+        let export = REMOTE_SCRIPT.find(r#"export SPIRA_TESTENV_RESUME="dir:$HOME/round-resume""#).expect("exports the resume dir");
+        let corpus = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
+        assert!(export < corpus);
+        assert_eq!(REMOTE_RESUME, "round-resume/");
+    }
+
+    #[test]
+    fn push_resume_sends_only_a_held_dir() {
+        let d = testkit::TempDir::new("rvm-resume");
+        let remote = FakeRemote::green();
+        let held = d.path().join("held");
+        push_resume(&remote, "10.0.0.2", &held);
+        fs::create_dir_all(&held).unwrap();
+        push_resume(&remote, "10.0.0.2", &held);
+        assert!(remote.pushes.lock().unwrap().is_empty());
+        fs::write(held.join("k"), "x").unwrap();
+        push_resume(&remote, "10.0.0.2", &held);
+        assert_eq!(*remote.pushes.lock().unwrap(), vec![(held, REMOTE_RESUME.to_string())]);
+    }
+
+    #[test]
     fn remote_script_checks_cargo_before_paying_for_the_clone() {
         let check = REMOTE_SCRIPT.find("command -v cargo").expect("checks for cargo");
         let clone = REMOTE_SCRIPT.find("git clone").expect("clones the mirror");
@@ -3065,6 +3154,7 @@ mod tests {
         rc: Result<i32, String>,
         files: BTreeMap<&'static str, Vec<(&'static str, &'static str)>>,
         jobs: Mutex<Vec<String>>,
+        pushes: Mutex<Vec<(PathBuf, String)>>,
         /// the corpus runs until the first attribution rerun has started (no sleep to race)
         hold_for_attr: bool,
         /// (job id, whether the batch was still running when the job started)
@@ -3094,6 +3184,7 @@ mod tests {
                 rc: Ok(0),
                 files,
                 jobs: Mutex::new(vec![]),
+                pushes: Mutex::new(vec![]),
                 hold_for_attr: false,
                 attrs: Mutex::new(vec![]),
                 batch_running: std::sync::atomic::AtomicBool::new(false),
@@ -3126,6 +3217,10 @@ mod tests {
             let running = self.batch_running.load(std::sync::atomic::Ordering::SeqCst);
             self.attrs.lock().unwrap().push((job.job.clone(), running));
             Ok(if job.job == "j2" { 1 } else { 0 })
+        }
+        fn push(&self, _: &str, local: &Path, remote_path: &str) -> Result<(), String> {
+            self.pushes.lock().unwrap().push((local.to_path_buf(), remote_path.to_string()));
+            Ok(())
         }
         fn pull(&self, _: &str, remote_path: &str, local: &Path) -> Result<(), String> {
             if remote_path == REMOTE_RESULTS {
