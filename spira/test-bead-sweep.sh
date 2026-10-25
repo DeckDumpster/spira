@@ -188,6 +188,12 @@ touch "$STUB_DIR/refuse-create"; : > "$TMP/inbox"
 run watch --interval 5 --ticks 1 >/dev/null
 want "a repair that fails stays a SUSPECT" "SUSPECT sp-stuck ROWLESS" "$(cat "$TMP/inbox")"
 rm -f "$STUB_DIR/refuse-create"
+idea() { printf '{"id":"%s","labels":["spira","idea"],"issue_type":"proposal","status":"open","priority":2,"title":"a parked idea"}' "$1"; }
+: > "$TMP/inbox"; : > "$STUB_DIR/creates.log"
+board -- "$(idea sp-idea)"
+run watch --interval 5 --ticks 1 >/dev/null
+is "a parked idea is given no lifecycle row" "0" "$(wc -l < "$STUB_DIR/creates.log")"
+nowant "a parked idea is not a SUSPECT" "sp-idea" "$(run --show)"
 
 # Scoped stops are deliberate state: a stopped lane or a reservation is HELD, never SUSPECT,
 # and an overdue stop is surfaced to its owner.
