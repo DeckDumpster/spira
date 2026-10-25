@@ -65,7 +65,8 @@ pub struct GitFacts {
     pub branches: BTreeMap<String, String>,
     pub local_main: Lineage,
     pub origin_main: Lineage,
-    /// The landing and origin lineages of the world's other repositories, by repository name.
+    /// The landing and origin lineages of the world's other repositories, by repository name;
+    /// a repository that does not land on a local branch has its origin trunk as its landing lineage.
     pub others: BTreeMap<String, RepoLineages>,
 }
 
@@ -276,8 +277,9 @@ pub fn git_facts(world: &Path) -> Result<GitFacts, String> {
     let mut others = BTreeMap::new();
     for x in extra_repos(world) {
         branches.extend(parse_branches(&git(&x.work, &["for-each-ref", "--format=%(refname) %(objectname)", &format!("refs/heads/{BRANCH_PREFIX}")])?));
-        let local_main = if x.local { lineage(&x.work, &format!("refs/heads/local/{}", x.trunk))? } else { Lineage::default() };
-        others.insert(x.name.clone(), RepoLineages { local_main, origin_main: lineage(&x.origin, &format!("refs/heads/{}", x.trunk))? });
+        let origin_main = lineage(&x.origin, &format!("refs/heads/{}", x.trunk))?;
+        let local_main = if x.local { lineage(&x.work, &format!("refs/heads/local/{}", x.trunk))? } else { origin_main.clone() };
+        others.insert(x.name.clone(), RepoLineages { local_main, origin_main });
     }
     let landing = if lands_on_origin(world) { lineage(&world.join("origin.git"), "refs/heads/main")? } else { lineage(&work, &format!("refs/heads/{LANDING_BASE}"))? };
     Ok(GitFacts {
@@ -391,8 +393,8 @@ impl Observer {
         for x in extra_repos(&self.world) {
             let (xwork, xorigin) = (read_refs(&x.work.join(".git")), read_refs(&x.origin));
             branches.extend(heads(&xwork));
-            let local_main = if x.local { self.lineage(&x.work, xwork.get(&format!("refs/heads/local/{}", x.trunk)))? } else { Lineage::default() };
             let origin_main = self.lineage(&x.origin, xorigin.get(&format!("refs/heads/{}", x.trunk)))?;
+            let local_main = if x.local { self.lineage(&x.work, xwork.get(&format!("refs/heads/local/{}", x.trunk)))? } else { origin_main.clone() };
             others.insert(x.name.clone(), RepoLineages { local_main, origin_main });
         }
         let landing = if self.on_origin { self.lineage(&home_origin, origin.get("refs/heads/main"))? } else { self.lineage(&home_work, work.get(&format!("refs/heads/{LANDING_BASE}")))? };
