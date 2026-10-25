@@ -42,7 +42,7 @@ file = "sp-gv03"
 [[step]]
 at = 0
 claim = "sp-gv01"
-script = ["commit out/gv01.txt", "submit"]
+script = ["commit out/gv01.txt", "submit", "summon", "commit out/gv01b.txt", "submit"]
 
 [[step]]
 at = 0
@@ -55,23 +55,27 @@ claim = "sp-gv03"
 script = ["commit out/gv03.txt", "submit"]
 
 [[step]]
-at = 400000
+at = 200000
 command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv01 REWORK 1"
 
 [[step]]
-at = 400000
+at = 200000
 command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv02 SUBMITTED 1"
 
 [[step]]
-at = 400000
+at = 200000
 command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv03 SUBMITTED 1"
 
 [[step]]
-at = 500000
+at = 210000
+command = "sh spira/sim/scenarios/steps/gate-mode.sh sp-gv01 pass"
+
+[[step]]
+at = 210000
 command = "sh spira/sim/scenarios/steps/gate-mode.sh sp-gv02 pass"
 
 [[step]]
-at = 500000
+at = 210000
 command = "sh spira/sim/scenarios/steps/gate-mode.sh sp-gv03 pass"
 
 [[step]]
@@ -87,8 +91,8 @@ name = "red_gate_returned_it"
 sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-gv01' AND lc_state = 'REWORK'"
 
 [[expect]]
-name = "never_certified_while_red"
-sql = "SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM bead_state WHERE bead = 'sp-gv01' AND lc_state IN ('CERTIFIED', 'LANDED'))"
+name = "red_then_pass_landed"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-gv01' AND lc_state = 'LANDED'"
 
 [[expect]]
 name = "no_verdict_then_pass_landed"
