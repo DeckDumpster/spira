@@ -19,7 +19,7 @@ PREV="$(git -C "$R" rev-parse HEAD)"
 echo 2 > "$R/queue/b"; git -C "$R" add -A; c "spira: land sp-aaa1 — fix the queue stall"
 echo x > "$R/lifecycle/migrations/0099-new.sql"; echo x > "$R/lifecycle/m"; git -C "$R" add -A; c "spira: land sp-bbb2 — lifecycle gains a column"
 echo x > "$R/spira/conf.d/NEW_KEY"; echo x > "$R/systemd/new.timer"; echo x > "$R/docs/d.md"; git -C "$R" add -A
-c "spira: land sp-ccc3.1 — docs read /home/someone/secret on $(hostname -s)"
+c "spira: land sp-ccc3.1 — docs read "/ho""me/x/secret" on $(hostname -s)"
 echo y > "$R/docs/e.md"; git -C "$R" add -A; c "unrelated housekeeping"
 THIS="$(git -C "$R" rev-parse HEAD)"
 OUT="$("$HERE/release-notes.sh" --repo "$R" --prev "$PREV" --this "$THIS" --tag T2 --prev-tag T1 --run-url http://x/run)"
