@@ -30,6 +30,7 @@ pub struct Fayth {
     pub groom_escalation_check: bool,
     pub graph_only: bool,
     pub requires_build_spec: bool,
+    pub habits: bool,
 }
 
 fn get<'a>(m: &'a BTreeMap<String, String>, k: &str) -> Option<&'a str> {
@@ -59,6 +60,7 @@ impl Fayth {
             groom_escalation_check: get(v, "FAYTH_GROOM_ESCALATION_CHECK") == Some("1"),
             graph_only: get(v, "FAYTH_GRAPH_ONLY") == Some("1"),
             requires_build_spec: get(v, "FAYTH_REQUIRES_BUILD_SPEC") == Some("1"),
+            habits: get(v, "FAYTH_HABITS") == Some("1"),
         }
     }
 

@@ -77,6 +77,17 @@ RUN mkdir /out && \
 # tag and only the binary is needed afterwards.
 FROM docker.io/library/rust:${RUST_VERSION}-slim AS rust-builder
 
+# ── Stage 2b: habit-hook tools from the flake's pinned nixpkgs ────────────────
+# NIXPKGS_REV must equal the nixpkgs input in flake.nix (spira-env); test-testenv-nixpkgs-pin.sh checks it.
+FROM docker.io/nixos/nix:2.24.10 AS nix-tools
+ARG NIXPKGS_REV=7fd4004d0511991fff3a0524856a9be09e28c5f0
+RUN nix --extra-experimental-features 'nix-command flakes' build --no-link --print-out-paths \
+        "github:NixOS/nixpkgs/${NIXPKGS_REV}#rust-code-analysis" \
+        "github:NixOS/nixpkgs/${NIXPKGS_REV}#shellcheck" > /tmp/outs && \
+    mkdir -p /out/nix/store /out/bin && \
+    for p in $(nix-store -qR $(cat /tmp/outs)); do cp -a "$p" /out/nix/store/; done && \
+    for p in $(cat /tmp/outs); do for b in "$p"/bin/*; do if [ -e "$b" ]; then ln -s "$b" "/out/bin/$(basename "$b")"; fi; done; done
+
 FROM docker.io/dolthub/dolt:${DOLT_VERSION} AS dolt-src
 
 FROM docker.io/amazon/aws-cli:${AWS_CLI_VERSION} AS aws-src
@@ -201,6 +212,9 @@ RUN ln -s /usr/local/aws-cli/v2/current/bin/aws /usr/local/bin/aws
 # Both bd and bd-embedded are installed: testdb.sh checks for bd-embedded by name.
 COPY --from=bd-builder /out/bd /usr/local/bin/bd
 RUN install -m 0755 /usr/local/bin/bd /usr/local/bin/bd-embedded
+
+COPY --from=nix-tools /out/nix /nix
+COPY --from=nix-tools /out/bin/ /usr/local/bin/
 
 # ── claude stub — satisfies 'command -v claude' checks ────────────────────
 # concierge.sh calls spira_require claude before any subcommand dispatch,

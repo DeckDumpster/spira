@@ -1,0 +1,26 @@
+[package]
+name = "habits"
+version = "0.1.0"
+edition = "2021"
+description = "habits — the PostToolUse/Stop hook dispatcher: runs the repo's .spira/habits.toml checks on the edited file and hands findings on the touched lines back to the aeon. Feedback only; always exits 0."
+
+[[bin]]
+name = "habits"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+spira-config = { path = "../spira-config" }
+spira-otel = { path = "../spira-otel" }
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

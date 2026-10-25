@@ -111,3 +111,7 @@ FAYTH_SYSTEM_PROMPT=append
 
 # The states a bead claimed by this fayth may leave WORKING for; spira-lc refuses any other.
 FAYTH_WORKING_EXITS="SUBMITTED ask park hold"
+
+# The PostToolUse habit hooks (fmt, lint, complexity on the edited lines) and the Stop-time clippy:
+# feedback only, read from the repo's .spira/habits.toml. Builder only; no other persona sets it.
+FAYTH_HABITS=1
