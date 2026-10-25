@@ -142,8 +142,8 @@ fn pool_for(cfg: &Config) -> Pool {
     }
 }
 
-/// `round-vm template-check`: 0 when the configured local template exists, 1 naming it when it
-/// does not, 3 when this box has no local pool configured.
+/// `round-vm template-check`: 0 when the configured local template exists and was built from the
+/// current recipe, 1 naming it (or both recipe hashes) when not, 3 when this box has no local pool configured.
 fn template_check() -> i32 {
     let cfg = match Config::load() {
         Ok(c) => c,
@@ -167,12 +167,16 @@ fn template_check() -> i32 {
         }
     };
     let pve = Pve { t: transport, env, task_timeout: secs_env("PVE_TASK_TIMEOUT", 300), exec_timeout: secs_env("PVE_EXEC_TIMEOUT", 30), poll: Duration::from_secs(1), mem_mib: 0, vcpus: 0 };
-    match pve.check_template() {
-        Ok(()) => 0,
-        Err(e) => {
-            eprintln!("{e}");
+    if let Err(e) = pve.check_template() {
+        eprintln!("{e}");
+        return 1;
+    }
+    match crate::template::staleness(crate::template::Record::read(&cfg.state_dir).as_ref(), &crate::recipe::sha()) {
+        Some(why) => {
+            eprintln!("{why}");
             1
         }
+        None => 0,
     }
 }
 
