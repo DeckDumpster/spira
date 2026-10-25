@@ -1361,6 +1361,11 @@ fn a_no_progress_streak_at_the_cap_is_routed_to_the_concierge_not_ryan() {
     assert_eq!(mail.1[bead_at + 1], "sp-q");
     let subj_at = mail.1.iter().position(|a| a == "--subject").expect("--subject flag");
     assert!(mail.1[subj_at + 1].starts_with("aeon cannot progress:"), "{:?}", mail.1);
+    assert!(
+        w.exec_calls.iter().any(|(p, a, _)| p == "spira-lc" && a.len() >= 4 && a[..3] == ["hold", "sp-q", "manual"] && a[3].contains("Concierge lifts")),
+        "the mail's blocking edge is not the only hold: a refused or deduplicated mail must still leave the bead unclaimable: {:?}",
+        w.exec_calls
+    );
     assert!(w.notes.iter().any(|(_, n)| n.contains("routed to the Concierge")), "{:?}", w.notes);
     assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-q", "unjudged-no-progress"]), "still exempt past the cap: {:?}", w.seam_calls);
     assert_eq!(w.status["sp-q"], "open", "released, not left claimed, not re-held");
