@@ -236,6 +236,7 @@ export GH_FAKE_DIR="$TMP/ghfake"; mkdir -p "$GH_FAKE_DIR"
 for i in $(seq 1 103); do printf 'spira-release-spira-2026%04dT000000Z\n' "$i"; done > "$GH_FAKE_DIR/list"
 OLDPATH="$PATH"; PATH="$GHBIN:$PATH"; HOMEREPO=fixture
 printf 'v1\n' >> "$REPO/f"; git -C "$REPO" add f; git -C "$REPO" commit -qm "sp-v01 — versioned"
+timeout 5 git -C "$REPO" push -q origin trunk 2>/dev/null
 
 touch "$GH_FAKE_DIR/fail"
 before="$(git -C "$REPO" tag -l | wc -l | tr -d ' ')"
@@ -251,6 +252,7 @@ want "the tag records its UTC timestamp" "utc: 20" "$(git -C "$REPO" tag -l --fo
 
 { cat "$GH_FAKE_DIR/list"; echo spira-0.1.104; } > "$GH_FAKE_DIR/list.new"; mv "$GH_FAKE_DIR/list.new" "$GH_FAKE_DIR/list"
 printf 'v2\n' >> "$REPO/f"; git -C "$REPO" add f; git -C "$REPO" commit -qm "sp-v02 — versioned again"
+timeout 5 git -C "$REPO" push -q origin trunk 2>/dev/null
 tag_v2="$(run_cut fixture)"
 is "the cut after spira-0.1.104 is spira-0.1.105" "spira-0.1.105" "$tag_v2"
 want "prev names the highest version, not the newest stamp" "prev: spira-0.1.104" \
