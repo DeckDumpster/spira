@@ -1,7 +1,7 @@
 epoch = 1800000000
 horizon = 900000
 goal = "sp-rm01:LANDED"
-settle = 120000
+settle = 400000
 repos = ["docs:push:master", "held:hold", "forged:queue.forge", "reviewed:pr", "queued:queue", "local:queue.local:master"]
 real_actors = ["sentinel-summon", "sentinel-landing"]
 
@@ -43,7 +43,17 @@ name = "hold_repository_never_lands"
 sql = "SELECT seq, bead, lc_state FROM bead_state WHERE bead = 'sp-rm02' AND (lc_state = 'LANDED' OR on_origin_main)"
 
 [[step]]
-at = 700000
+at = 250000
+command = '''
+set -u
+o="$SIM_WORLD/repos/docs/origin.git"
+git -C "$o" rev-parse --verify -q refs/heads/master >/dev/null || exit 4
+git -C "$o" log --format=%s master | grep -q sp-rm01 || exit 3
+! git -C "$o" rev-parse --verify -q refs/heads/main >/dev/null || exit 5
+'''
+
+[[step]]
+at = 400000
 command = '''
 set -u
 o="$SIM_WORLD/repos/docs/origin.git"
@@ -55,3 +65,7 @@ git -C "$o" log --format=%s master | grep -q sp-rm01 || exit 3
 [[invariant]]
 name = "master_repository_gets_no_main"
 sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit NOT IN (0, 3)"
+
+[[expect]]
+name = "master_repository_holds_the_landed_work_and_has_no_main"
+sql = "SELECT 1 FROM events WHERE kind = 'step' AND exit = 0 AND actor IN ('step4', 'step5')"
