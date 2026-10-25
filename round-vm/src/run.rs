@@ -636,8 +636,10 @@ unit_secs=$(( $(date +%s) - unit_t0 ))
 wait "$stream_pid"
 if [ -n "$unit_cov_env" ]; then
     # The line report is read off the profile data the unit run just wrote; it reports and never gates.
+    # The report must read the same show-env environment the unit run used, or it looks in the
+    # wrong target dir and finds no binaries ("No filenames specified").
     if unit_cargo_report=$(env -i HOME="$HOME" PATH="$HOME/spira-env/bin:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" CARGO_HOME="$CARGO_HOME" \
-        cargo llvm-cov report --profile unittest --json --summary-only --output-path "$HOME/coverage-lines.json" 2>&1); then
+        UNIT_COV_ENV="$unit_cov_env" bash -c 'eval "$UNIT_COV_ENV"; exec cargo llvm-cov report --profile unittest --json --summary-only --output-path "$HOME/coverage-lines.json"' 2>&1); then
         cov_rdir="$HOME/round-work/.runtime/spira/batch-results"
         cov_leaf="$(find "$cov_rdir" -name '*.result' -printf '%h\n' 2>/dev/null | head -1)"
         cov_leaf="${cov_leaf:-$cov_rdir}"
