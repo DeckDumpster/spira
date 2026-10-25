@@ -2146,13 +2146,14 @@ mod tests {
     // accepted — which today's code (`reason: String`) cannot do at all: any string, known
     // or not, applies.
 
-    const ALL_GATE_RED_REASONS: [GateRedReason; 6] = [
+    const ALL_GATE_RED_REASONS: [GateRedReason; 7] = [
         GateRedReason::SuitesFailed,
         GateRedReason::Syntax,
         GateRedReason::PolicyViolation,
         GateRedReason::NoRebase,
         GateRedReason::Timeout,
         GateRedReason::Confine,
+        GateRedReason::PhantomBeadId,
     ];
     const ALL_RETURNED_REASONS: [ReturnedReason; 6] = [
         ReturnedReason::PrClosedUnmerged,

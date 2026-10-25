@@ -79,6 +79,8 @@ pub enum GateRedReason {
     Timeout,
     /// A sandbox/confinement violation during the run.
     Confine,
+    /// The branch cites a bead id that does not exist; no suite ran.
+    PhantomBeadId,
 }
 
 impl GateRedReason {
@@ -90,6 +92,7 @@ impl GateRedReason {
             GateRedReason::NoRebase => "no-rebase",
             GateRedReason::Timeout => "timeout",
             GateRedReason::Confine => "confine",
+            GateRedReason::PhantomBeadId => "phantom-bead-id",
         }
     }
 
@@ -102,6 +105,7 @@ impl GateRedReason {
             "no-rebase" => GateRedReason::NoRebase,
             "timeout" => GateRedReason::Timeout,
             "confine" => GateRedReason::Confine,
+            "phantom-bead-id" => GateRedReason::PhantomBeadId,
             _ => return None,
         })
     }
