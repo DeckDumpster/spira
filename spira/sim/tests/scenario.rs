@@ -141,7 +141,7 @@ fn seeded(extra: &str) -> Result<Scenario, String> {
 
 #[test]
 fn a_seed_files_through_bead_sh_with_its_priority_labels_body_and_deps() {
-    let s = seeded("[[seed]]\nhandle = \"a\"\ntitle = \"it's a\"\npriority = 1\nlabels = [\"x\"]\nbody = \"b\"\n[[seed]]\nhandle = \"b\"\ntitle = \"b\"\nkind = \"event\"\ndeps = [\"a\"]\n").unwrap();
+    let s = seeded("[[seed]]\nhandle = \"a\"\ntitle = \"it's a\"\nfor = \"builder\"\npriority = 1\nlabels = [\"x\"]\nbody = \"b\"\n[[seed]]\nhandle = \"b\"\ntitle = \"b\"\nkind = \"event\"\ndeps = [\"a\"]\n").unwrap();
     let steps = spira_sim::drive::seed_steps(&s.seeds).unwrap();
     assert_eq!(steps.len(), 1, "seeds sharing a time are one step");
     let cmd = &steps[0].1;
@@ -161,6 +161,7 @@ fn a_command_step_reaches_a_seeds_id_by_handle() {
 #[test]
 fn a_bad_seed_or_a_handle_nothing_declares_is_refused() {
     for bad in [
+        "[[seed]]\nhandle = \"a\"\ntitle = \"t\"\n",
         "[[seed]]\nhandle = \"A b\"\ntitle = \"t\"\n",
         "[[seed]]\nhandle = \"a\"\ntitle = \"\"\n",
         "[[seed]]\nhandle = \"a\"\ntitle = \"t\"\nfor = \"builder\"\nkind = \"event\"\n",

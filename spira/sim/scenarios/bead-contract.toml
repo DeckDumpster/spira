@@ -4,24 +4,30 @@ horizon = 60000
 [[seed]]
 handle = "target"
 title = "label target"
+for = "builder"
+body = "## Build\nthe label target"
 priority = 1
 labels = ["alpha", "beta"]
 
 [[seed]]
 handle = "blocked"
 title = "blocked work"
+for = "builder"
+body = "## Build\nthe blocked work"
 priority = 0
 deps = ["target"]
 
 [[seed]]
 handle = "amend_a"
 title = "amend target a"
-body = "ORIGINAL-A line one\nline two"
+for = "builder"
+body = "## Build\nORIGINAL-A line one\nline two"
 
 [[seed]]
 handle = "amend_b"
 title = "amend target b"
-body = "ORIGINAL-B"
+for = "builder"
+body = "## Build\nORIGINAL-B"
 
 [[step]]
 at = 1000

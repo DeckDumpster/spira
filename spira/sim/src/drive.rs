@@ -70,7 +70,6 @@ pub struct SeedDef {
 }
 
 const SEEDS_DIR: &str = "$SPIRA_RUN/seeds";
-const DEFAULT_SEED_PERSONA: &str = "builder";
 
 fn handle_ok(h: &str) -> bool {
     !h.is_empty() && h.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-'))
@@ -92,8 +91,7 @@ impl SeedDef {
         let who = match (&self.persona, &self.kind) {
             (Some(p), None) => format!("--for {}", shell_quote(p)),
             (None, Some(k)) => format!("--kind {}", shell_quote(k)),
-            (None, None) => format!("--for {DEFAULT_SEED_PERSONA}"),
-            (Some(_), Some(_)) => return Err(format!("scenario: seed {h}: `for` and `kind` are exclusive")),
+            _ => return Err(format!("scenario: seed {h}: exactly one of `for` and `kind`")),
         };
         let mut cmd = format!("mkdir -p \"{SEEDS_DIR}\"");
         let mut file = format!("bead.sh file {} {who} --repo {}", shell_quote(&self.title), shell_quote(self.repo.as_deref().unwrap_or(REPO)));
@@ -707,9 +705,15 @@ pub fn drive(
         }
     }
     for (i, (at, command)) in seed_steps(&sc.seeds)?.into_iter().enumerate() {
-        let (command, call) = (command, call.clone());
+        let (call, last_exit, fatal) = (call.clone(), last_exit.clone(), fatal.clone());
         let name = format!("seed{}", i + 1);
-        sim.add_scenario(&name, Box::new(move |_| call(&command)));
+        let label = name.clone();
+        sim.add_scenario(&name, Box::new(move |_| {
+            call(&command);
+            if last_exit.get().is_some_and(|c| c != 0) {
+                *fatal.borrow_mut() = Some(format!("{label} failed (exit {}): a seed that is not filed leaves the scenario meaning nothing", last_exit.get().unwrap_or(-1)));
+            }
+        }));
         sim.schedule_step(at, &name);
     }
     for (i, s) in sc.steps.iter().enumerate() {
