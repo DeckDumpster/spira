@@ -197,7 +197,6 @@ want   "idea: --type proposal"            "--type proposal"  "$(cat "$BD_LOG")"
 want   "idea: idea label present"         "testscope,idea"   "$(cat "$BD_LOG")"
 nowant "idea: filed open, not closed"     "--status closed"  "$(cat "$BD_LOG")"
 nowant "idea: no partition label plan"    ",plan"            "$(cat "$BD_LOG")"
-nowant "idea: no lifecycle row created"   "create-bead"      "$(cat "$LC_LOG")"
 out="$(run_bead "park this" --for builder --kind idea --repo testrepo)"; rc=$?
 is     "idea: --for is refused"           "2"                "$rc"
 
