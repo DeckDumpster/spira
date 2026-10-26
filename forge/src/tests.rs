@@ -102,17 +102,39 @@ fn check_status_no_run_is_pending() {
 fn check_status_runs_of_another_workflow_only_is_a_fault_naming_the_missing_one() {
     let gh = FakeGh::default();
     gh.on(
-        &["run", "list", "--branch", "spira/sp-x", "--workflow", "Gate", "--json", "databaseId,status,conclusion,headSha,url", "--limit", "1"],
+        &[
+            "run",
+            "list",
+            "--branch",
+            "spira/sp-x",
+            "--workflow",
+            "Gate",
+            "--json",
+            "databaseId,status,conclusion,headSha,url",
+            "--limit",
+            "1",
+        ],
         0,
         "[]",
     );
     gh.on(
-        &["run", "list", "--branch", "spira/sp-x", "--json", "workflowName", "--limit", "1"],
+        &[
+            "run",
+            "list",
+            "--branch",
+            "spira/sp-x",
+            "--json",
+            "workflowName",
+            "--limit",
+            "1",
+        ],
         0,
         r#"[{"workflowName":"CI"}]"#,
     );
     gh.on(
-        &["workflow", "list", "--all", "--json", "name", "--limit", "200"],
+        &[
+            "workflow", "list", "--all", "--json", "name", "--limit", "200",
+        ],
         0,
         r#"[{"name":"CI"}]"#,
     );
@@ -124,17 +146,39 @@ fn check_status_runs_of_another_workflow_only_is_a_fault_naming_the_missing_one(
 fn check_status_other_workflow_ran_but_mapped_one_exists_is_pending() {
     let gh = FakeGh::default();
     gh.on(
-        &["run", "list", "--branch", "spira/sp-x", "--workflow", "Gate", "--json", "databaseId,status,conclusion,headSha,url", "--limit", "1"],
+        &[
+            "run",
+            "list",
+            "--branch",
+            "spira/sp-x",
+            "--workflow",
+            "Gate",
+            "--json",
+            "databaseId,status,conclusion,headSha,url",
+            "--limit",
+            "1",
+        ],
         0,
         "[]",
     );
     gh.on(
-        &["run", "list", "--branch", "spira/sp-x", "--json", "workflowName", "--limit", "1"],
+        &[
+            "run",
+            "list",
+            "--branch",
+            "spira/sp-x",
+            "--json",
+            "workflowName",
+            "--limit",
+            "1",
+        ],
         0,
         r#"[{"workflowName":"Test image"}]"#,
     );
     gh.on(
-        &["workflow", "list", "--all", "--json", "name", "--limit", "200"],
+        &[
+            "workflow", "list", "--all", "--json", "name", "--limit", "200",
+        ],
         0,
         r#"[{"name":"Gate"},{"name":"Test image"}]"#,
     );
@@ -146,12 +190,32 @@ fn check_status_other_workflow_ran_but_mapped_one_exists_is_pending() {
 fn check_status_failed_run_list_is_never_a_mapping_fault() {
     let gh = FakeGh::default();
     gh.on(
-        &["run", "list", "--branch", "spira/sp-x", "--workflow", "Gate", "--json", "databaseId,status,conclusion,headSha,url", "--limit", "1"],
+        &[
+            "run",
+            "list",
+            "--branch",
+            "spira/sp-x",
+            "--workflow",
+            "Gate",
+            "--json",
+            "databaseId,status,conclusion,headSha,url",
+            "--limit",
+            "1",
+        ],
         1,
         "",
     );
     gh.on(
-        &["run", "list", "--branch", "spira/sp-x", "--json", "workflowName", "--limit", "1"],
+        &[
+            "run",
+            "list",
+            "--branch",
+            "spira/sp-x",
+            "--json",
+            "workflowName",
+            "--limit",
+            "1",
+        ],
         0,
         r#"[{"workflowName":"CI"}]"#,
     );
@@ -441,6 +505,74 @@ fn check_status_red_carries_every_failing_line_with_context_counts_and_no_secret
     assert!(ev.iter().any(|l| l.contains("GH_TOKEN=***")), "{ev:?}");
 }
 
+fn red_gate_evidence(log: &str) -> Vec<String> {
+    let gh = FakeGh::default();
+    gh.on(
+        &[
+            "run",
+            "list",
+            "--branch",
+            "b",
+            "--workflow",
+            "Gate",
+            "--json",
+            "databaseId,status,conclusion,headSha,url",
+            "--limit",
+            "1",
+        ],
+        0,
+        r#"[{"databaseId":7,"status":"completed","conclusion":"failure"}]"#,
+    );
+    gh.on(&["api", "repos/{owner}/{repo}/actions/runs/7/jobs"], 0, r#"{"jobs":[{"id":55,"name":"gate","conclusion":"failure","steps":[{"name":"deploy/ci.sh","conclusion":"failure"}]}]}"#);
+    gh.on(
+        &["api", "repos/{owner}/{repo}/actions/jobs/55/logs"],
+        0,
+        log,
+    );
+    check_status(&gh, &NoProc, repo(), "Gate", "b")
+        .lines
+        .iter()
+        .filter_map(|l| l.strip_prefix("fail-evidence: ").map(str::to_string))
+        .collect()
+}
+
+#[test]
+fn check_status_red_evidence_carries_each_repos_failure_shape() {
+    let ev = red_gate_evidence("2026-10-26T15:00:00Z running 3b backup-check\n2026-10-26T15:00:01Z FAIL  and no replica-sync message is needed by backup-check (expected no, got yes)\n2026-10-26T15:00:02Z FAILED: litestream\n2026-10-26T15:00:03Z !! CI FAILED during step: suites\n");
+    assert!(
+        ev.contains(
+            &"FAIL  and no replica-sync message is needed by backup-check (expected no, got yes)"
+                .to_string()
+        ) && ev.contains(&"FAILED: litestream".to_string())
+            && ev.contains(&"!! CI FAILED during step: suites".to_string()),
+        "{ev:?}"
+    );
+    let ev = red_gate_evidence("collected 4 items\nFAILED tests/test_cards.py::test_dedupe - AssertionError: 3 != 4\n=== 1 failed, 3 passed in 0.4s ===\n");
+    assert!(
+        ev.contains(
+            &"FAILED tests/test_cards.py::test_dedupe - AssertionError: 3 != 4".to_string()
+        ),
+        "{ev:?}"
+    );
+    let ev = red_gate_evidence("thread 'main' panicked at src/lib.rs:9:5:\nerror[E0308]: mismatched types\nassertion `left == right` failed\n");
+    assert!(
+        ev.iter().any(|l| l.contains("panicked at src/lib.rs"))
+            && ev.iter().any(|l| l.starts_with("error[E0308]"))
+            && ev.iter().any(|l| l.contains("assertion `left == right`")),
+        "{ev:?}"
+    );
+}
+
+#[test]
+fn check_status_red_with_no_failing_lines_says_so_and_carries_the_log_tail() {
+    let ev = red_gate_evidence("2026-10-26T15:00:00Z doing a thing\n2026-10-26T15:00:01Z exited quietly\n2026-10-26T15:00:02Z ##[error]Process completed with exit code 1.\n");
+    assert_eq!(
+        ev[0], "no FAIL/assert/panic lines found; log tail:",
+        "{ev:?}"
+    );
+    assert!(ev.contains(&"exited quietly".to_string()), "{ev:?}");
+}
+
 #[test]
 fn redact_keeps_file_line_tokens_and_blanks_credentials() {
     assert_eq!(
@@ -487,8 +619,16 @@ fn check_status_run_ci_cancelled_by_a_runner_loss_is_harness_fault_with_its_mark
     let gh = FakeGh::default();
     gh.on(
         &[
-            "run", "list", "--branch", "b", "--workflow", "Gate", "--json",
-            "databaseId,status,conclusion,headSha,url", "--limit", "1",
+            "run",
+            "list",
+            "--branch",
+            "b",
+            "--workflow",
+            "Gate",
+            "--json",
+            "databaseId,status,conclusion,headSha,url",
+            "--limit",
+            "1",
         ],
         0,
         r#"[{"databaseId":40298362089,"status":"completed","conclusion":"failure"}]"#,
@@ -510,8 +650,16 @@ fn check_status_run_ci_cancelled_by_a_runner_loss_is_harness_fault_with_its_mark
     );
     let out = check_status(&gh, &NoProc, repo(), "Gate", "b");
     assert_eq!(out.lines[0], "harness_fault");
-    assert!(out.lines.contains(&"runner-lost: ci / Run CI".to_string()), "{:?}", out.lines);
-    assert!(out.lines.contains(&"runner-market: spot".to_string()), "{:?}", out.lines);
+    assert!(
+        out.lines.contains(&"runner-lost: ci / Run CI".to_string()),
+        "{:?}",
+        out.lines
+    );
+    assert!(
+        out.lines.contains(&"runner-market: spot".to_string()),
+        "{:?}",
+        out.lines
+    );
 }
 
 #[test]
@@ -539,15 +687,30 @@ fn check_status_gate_declared_fault_in_a_failed_step_is_harness_fault_not_red() 
         r#"{"jobs":[{"name":"suites","id":99,"conclusion":"failure","steps":[{"name":"Suites","conclusion":"failure"}]}]}"#,
     );
     let log = "VERDICT FAULT rc=2 ran=481 reason=over-cap\ngate: HARNESS FAULT (batch rc=2) - the container did not come up\n";
-    gh.on(&["api", "repos/{owner}/{repo}/actions/jobs/99/logs"], 0, log);
-    assert_eq!(check_status(&gh, &NoProc, repo(), "Gate", "b").lines[0], "harness_fault");
+    gh.on(
+        &["api", "repos/{owner}/{repo}/actions/jobs/99/logs"],
+        0,
+        log,
+    );
+    assert_eq!(
+        check_status(&gh, &NoProc, repo(), "Gate", "b").lines[0],
+        "harness_fault"
+    );
 
     let log = "FAILED tests/a.rs::t\ngate: suites failed (batch rc=1)\n";
     let gh2 = FakeGh::default();
     gh2.on(
         &[
-            "run", "list", "--branch", "b", "--workflow", "Gate", "--json",
-            "databaseId,status,conclusion,headSha,url", "--limit", "1",
+            "run",
+            "list",
+            "--branch",
+            "b",
+            "--workflow",
+            "Gate",
+            "--json",
+            "databaseId,status,conclusion,headSha,url",
+            "--limit",
+            "1",
         ],
         0,
         r#"[{"databaseId":7,"status":"completed","conclusion":"failure"}]"#,
@@ -557,8 +720,15 @@ fn check_status_gate_declared_fault_in_a_failed_step_is_harness_fault_not_red() 
         0,
         r#"{"jobs":[{"name":"suites","id":99,"conclusion":"failure","steps":[{"name":"Suites","conclusion":"failure"}]}]}"#,
     );
-    gh2.on(&["api", "repos/{owner}/{repo}/actions/jobs/99/logs"], 0, log);
-    assert_eq!(check_status(&gh2, &NoProc, repo(), "Gate", "b").lines[0], "red");
+    gh2.on(
+        &["api", "repos/{owner}/{repo}/actions/jobs/99/logs"],
+        0,
+        log,
+    );
+    assert_eq!(
+        check_status(&gh2, &NoProc, repo(), "Gate", "b").lines[0],
+        "red"
+    );
 }
 
 #[test]
@@ -1469,34 +1639,79 @@ fn pr_preflight_makes_no_create_call() {
 fn ami_runs_lists_only_unfinished_runs_and_says_so_when_unreadable() {
     let gh = FakeGh::default();
     gh.on(
-        &["run", "list", "--workflow", "round-ami-build.yml", "--limit", "20", "--json", "databaseId,status"],
+        &[
+            "run",
+            "list",
+            "--workflow",
+            "round-ami-build.yml",
+            "--limit",
+            "20",
+            "--json",
+            "databaseId,status",
+        ],
         0,
         r#"[{"databaseId":5,"status":"in_progress"},{"databaseId":4,"status":"completed"}]"#,
     );
     assert_eq!(ami_runs(&gh, repo()).lines, vec!["5".to_string()]);
-    assert_eq!(ami_runs(&FakeGh::default(), repo()).lines, vec!["?".to_string()]);
+    assert_eq!(
+        ami_runs(&FakeGh::default(), repo()).lines,
+        vec!["?".to_string()]
+    );
 }
 
 #[test]
 fn ami_result_names_the_failing_step_of_a_failed_candidate_build() {
-    let list = ["run", "list", "--workflow", "round-ami-build.yml", "--branch", "cand", "--limit", "1", "--json", "databaseId,status,conclusion"];
+    let list = [
+        "run",
+        "list",
+        "--workflow",
+        "round-ami-build.yml",
+        "--branch",
+        "cand",
+        "--limit",
+        "1",
+        "--json",
+        "databaseId,status,conclusion",
+    ];
     let gh = FakeGh::default();
-    gh.on(&list, 0, r#"[{"databaseId":9,"status":"completed","conclusion":"failure"}]"#);
+    gh.on(
+        &list,
+        0,
+        r#"[{"databaseId":9,"status":"completed","conclusion":"failure"}]"#,
+    );
     gh.on(
         &["run", "view", "9", "--json", "jobs"],
         0,
         r#"{"jobs":[{"id":1,"name":"build","conclusion":"failure","steps":[{"name":"Stage the tree","conclusion":"success"},{"name":"Build, image and tag","conclusion":"failure"}]}]}"#,
     );
-    assert_eq!(ami_result(&gh, repo(), "cand").lines, vec!["failure 9".to_string(), "failed-step: build / Build, image and tag".to_string()]);
+    assert_eq!(
+        ami_result(&gh, repo(), "cand").lines,
+        vec![
+            "failure 9".to_string(),
+            "failed-step: build / Build, image and tag".to_string()
+        ]
+    );
 
     for (body, want) in [
-        (r#"[{"databaseId":9,"status":"completed","conclusion":"success"}]"#, "success 9"),
-        (r#"[{"databaseId":9,"status":"in_progress","conclusion":""}]"#, "running 9"),
+        (
+            r#"[{"databaseId":9,"status":"completed","conclusion":"success"}]"#,
+            "success 9",
+        ),
+        (
+            r#"[{"databaseId":9,"status":"in_progress","conclusion":""}]"#,
+            "running 9",
+        ),
         ("[]", "none"),
     ] {
         let gh = FakeGh::default();
         gh.on(&list, 0, body);
-        assert_eq!(ami_result(&gh, repo(), "cand").lines, vec![want.to_string()]);
+        assert_eq!(
+            ami_result(&gh, repo(), "cand").lines,
+            vec![want.to_string()]
+        );
     }
-    assert_eq!(ami_result(&FakeGh::default(), repo(), "cand").lines, vec!["?".to_string()]);
+    assert_eq!(
+        ami_result(&FakeGh::default(), repo(), "cand").lines,
+        vec!["?".to_string()]
+    );
 }

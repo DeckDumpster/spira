@@ -356,7 +356,10 @@ fn publish_fault(w: &World, c: &Ctx, path: &Path, kv: &Kv, pr: &str) -> i32 {
         .unwrap_or(0);
     let max = c.s.verdict.infra_retries;
     if classify_fault_rerun(tries, max) {
-        if let Some(r) = w.forge.run_id(&c.s.forge, path, kv.get("branch").unwrap_or("")) {
+        if let Some(r) = w
+            .forge
+            .run_id(&c.s.forge, path, kv.get("branch").unwrap_or(""))
+        {
             w.forge.workflow_rerun(&c.s.forge, path, &r);
         }
         let _ = write_atomic(&file, &format!("{}\n", tries + 1));
@@ -1876,14 +1879,25 @@ fn setup_red(w: &World, c: &Ctx, b: &Batch, out: &str, bo: &str) -> i32 {
 
 /// The failing log lines themselves, per failed step, as the forge reported them.
 fn failure_evidence(out: &str) -> String {
+    const MAX_LINES: usize = 60;
     let mut text = String::new();
+    let mut shown = 0;
+    let mut dropped = 0;
     for l in out.lines() {
         if let Some(step) = l.strip_prefix("failed-step: ") {
             text.push_str(&format!("\nFailed step: {step}\n"));
         } else if let Some(e) = l.strip_prefix("fail-evidence: ") {
-            text.push_str(e);
-            text.push('\n');
+            if shown < MAX_LINES {
+                text.push_str(e);
+                text.push('\n');
+                shown += 1;
+            } else {
+                dropped += 1;
+            }
         }
+    }
+    if dropped > 0 {
+        text.push_str(&format!("... ({dropped} more lines in the run log)\n"));
     }
     text
 }
@@ -1891,14 +1905,28 @@ fn failure_evidence(out: &str) -> String {
 /// A builder has no forge read path, so a member sent back by a red batch carries the failing
 /// lines in its own bead. Once per run: the verdict pass re-reads a settled red.
 fn note_red_evidence(w: &World, b: &Batch, out: &str) {
-    let evidence = failure_evidence(out);
+    let mut evidence = failure_evidence(out);
     let run = tagged(out, "run-id: ")
         .last()
         .map(|r| r.trim().to_string())
         .unwrap_or_default();
     let key = format!("{run}/{}", b.head);
-    if evidence.trim().is_empty() || b.kv.get("evidence_noted") == Some(key.as_str()) {
+    if b.kv.get("evidence_noted") == Some(key.as_str()) {
         return;
+    }
+    if tagged(out, "fail-evidence: ").is_empty() {
+        if run.is_empty() {
+            return;
+        }
+        let tail: Vec<&str> = tagged(out, "step-log: ");
+        evidence = if tail.is_empty() {
+            "No failing lines could be extracted and the forge returned no failed-step log; read the run at the link above.\n".into()
+        } else {
+            format!(
+                "No failing lines could be extracted; log tail:\n{}\n",
+                tail.join("\n")
+            )
+        };
     }
     let url = tagged(out, "run-url: ")
         .last()
