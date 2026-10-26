@@ -123,6 +123,12 @@ where
 
 /// The testenv limits the VM would otherwise take from the tree's test fixture.
 pub(crate) fn testenv_limits() -> Result<String, String> {
+    let env: BTreeMap<String, String> = std::env::vars().collect();
+    let home = spira_config::resolve::locate_home_for_process().map_err(|e| format!("round-vm: {e}"))?;
+    testenv_limits_in(&env, &home)
+}
+
+fn testenv_limits_in(env: &BTreeMap<String, String>, home: &Path) -> Result<String, String> {
     let mut out = String::new();
     for (key, name) in [
         ("testenv_suite_cap", "SPIRA_TESTENV_SUITE_CAP"),
@@ -130,7 +136,8 @@ pub(crate) fn testenv_limits() -> Result<String, String> {
         ("testenv_load_max_pct", "SPIRA_TESTENV_LOAD_MAX_PCT"),
         ("testenv_load_wait", "SPIRA_TESTENV_LOAD_WAIT"),
     ] {
-        let v: u64 = must_cfg_parse(name)?;
+        let raw = spira_config::resolve::resolve_key(env, home, name).map_err(|e| format!("round-vm: {e}"))?;
+        let v: u64 = raw.trim().parse().map_err(|e| format!("round-vm: {name} = {raw:?} does not parse: {e}"))?;
         out.push_str(&format!("{key} = {v}\n"));
     }
     Ok(out)
@@ -455,11 +462,9 @@ mod tests {
     fn the_testenv_limits_are_the_hosts_declared_values_not_the_fixtures() {
         let dir = testkit::TempDir::new("round-vm-limits");
         let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_TESTENV_SUITE_CAP", "600")]);
-        let got = {
-            let home = concat!(env!("CARGO_MANIFEST_DIR"), "/../spira");
-            let _env = testkit::env(&[("SPIRA_TOML", toml.to_str()), ("SPIRA_HOME", Some(home))]);
-            testenv_limits().unwrap()
-        };
+        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let env = BTreeMap::from([("SPIRA_TOML".to_string(), toml.to_str().unwrap().to_string())]);
+        let got = testenv_limits_in(&env, &home).unwrap();
         assert!(got.contains("testenv_suite_cap = 600\n"), "{got}");
         assert!(!got.contains("777"), "{got}");
     }
