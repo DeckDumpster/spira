@@ -1,0 +1,4 @@
+FAIL
+2026-10-26T16:34:21Z spira-0.1.2  35 passed, 4 failed
+sha256:92312793c63a74103cebbd22921cb939dfd06a8474321b2d35b13b80b95b2680 tarball:spira-0.1.2.tar.gz
+aged-install from=spira-release-spira-20261024T230048Z: FAIL
