@@ -452,6 +452,18 @@ mod tests {
     }
 
     #[test]
+    fn the_testenv_limits_are_the_hosts_declared_values_not_the_fixtures() {
+        let dir = testkit::TempDir::new("round-vm-limits");
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_TESTENV_SUITE_CAP", "600")]);
+        let got = {
+            let _env = testkit::env(&[("SPIRA_TOML", toml.to_str())]);
+            testenv_limits().unwrap()
+        };
+        assert!(got.contains("testenv_suite_cap = 600\n"), "{got}");
+        assert!(!got.contains("777"), "{got}");
+    }
+
+    #[test]
     fn cache_home_reads_its_own_dedicated_key_never_the_ambient_cargo_home() {
         // sp-xjnzl-2: a bare CARGO_HOME in the caller's environment must NOT leak in — the
         // production fault this bead fixes was exactly that leak (a systemd unit's own
