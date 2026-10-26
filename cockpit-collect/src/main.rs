@@ -269,7 +269,28 @@ fn cmd_probe(name: Option<&str>) -> i32 {
     }
 }
 
+const COLLECT_LOCK: &str = "cockpit-collect.lock";
+const COLLECT_SKIP: &str = "cockpit-collect collect: previous collect still running (holds the lock) — skipping this start";
+
+/// At most one `collect` per run dir: a second start exits 0 at once rather than stacking
+/// load on a host that is already slow (law-fence-loops-on-shared-hardware).
+fn collect_lock(run_dir: &std::path::Path) -> Result<Option<std::fs::File>, String> {
+    let _ = std::fs::create_dir_all(run_dir);
+    strand::state::try_lock(&run_dir.join(COLLECT_LOCK)).map_err(|e| format!("cockpit-collect collect: lock: {e}"))
+}
+
 fn cmd_collect() -> i32 {
+    let _lock = match collect_lock(&io::run_dir()) {
+        Ok(Some(f)) => f,
+        Ok(None) => {
+            eprintln!("{COLLECT_SKIP}");
+            return 0;
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
     if !supervisor::may_write(instance().as_deref()) {
         eprintln!("cockpit-collect collect: write refused — not the supervised process. Set SPIRA_COCKPIT_FORCE=1 to override.");
         return 1;
