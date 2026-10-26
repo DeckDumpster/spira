@@ -50,10 +50,11 @@ on:
   push:
     tags:
       - 'spira-release-*'
+      - 'spira-[0-9]*.[0-9]*.[0-9]*'
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag to test (spira-release-*)
+        description: Release tag to test (spira-release-* or spira-<major>.<minor>.<N>)
         required: true
       prev-tag:
         description: Previous tag for upgrade/rollback/aged-install phases (optional)
@@ -347,24 +348,23 @@ jobs:
           gh release edit "$_tag" --draft=false --repo "$GITHUB_REPOSITORY"
           printf 'acceptance: published %s\n' "$_tag"
 
-      - name: Retract release and tag on FAIL
-        # Delete the draft release and the tag so no broken release is left visible.
-        # cancelled() as well as failure(): a cancelled run produced no PASS either.
-        # NEVER an already-published release: a re-triggered run against a published
-        # tag must not retract the release every later acceptance run depends on.
-        if: ${{ failure() || cancelled() }}
+  # ---------------------------------------------------------------------------
+  # Retract the draft of a cut that did not publish. A job of its own, not a step of
+  # acceptance: when provision fails acceptance is skipped and a step in it never runs.
+  # release-retract.sh refuses a published release.
+  # ---------------------------------------------------------------------------
+  retract:
+    needs: [guard, acceptance]
+    if: ${{ always() && needs.guard.outputs.already-published != 'true' && needs.acceptance.result != 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Retract release and tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          _tag="${{ inputs.tag || github.ref_name }}"
-          _draft="$(gh release view "$_tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null || echo false)"
-          if [ "$_draft" != "true" ]; then
-            printf 'acceptance: %s is already published — refusing to retract\n' "$_tag"
-            exit 0
-          fi
-          gh release delete "$_tag" --yes --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
-          gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$_tag" 2>/dev/null || true
-          printf 'acceptance: retracted draft release and tag %s\n' "$_tag"
+        run: bash spira/release-retract.sh "${{ inputs.tag || github.ref_name }}" --repo "$GITHUB_REPOSITORY"
 
   # ---------------------------------------------------------------------------
   # Destroy the machine. Runs even when provision or acceptance fail — but not

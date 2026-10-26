@@ -1,6 +1,6 @@
 # release.yml — build and publish a Spira release tarball.
 #
-# Called by gate.yml's publish job for each spira-release-* tag its cut job pushes. The tag is
+# Called by gate.yml's publish job for each release tag its cut job pushes. The tag is
 # cut by release.sh; this workflow builds both Rust binaries against the pinned
 # toolchain, assembles the tarball via build-tarball.sh, and attaches it to a
 # GitHub release of the same name.
@@ -55,19 +55,24 @@ jobs:
         id: tarball
         run: |
           tag="${{ inputs.tag }}"
-          # Derive the tarball stem from the tag so both share one timestamp.
-          # Tag form: spira-release-<reponame>-<YYYYMMDDTHHMMSSZ>
-          # Tarball stem: spira-<YYYYMMDDTHHMMSSZ>
-          ts="${tag##*-}"
+          # Tag forms: spira-<major>.<minor>.<N> (stem is the tag) or the legacy
+          # spira-release-<reponame>-<YYYYMMDDTHHMMSSZ> (stem spira-<YYYYMMDDTHHMMSSZ>).
+          stem="$(bash spira/release-order.sh stem "$tag")" || {
+            printf 'release: %s is not a release tag\n' "$tag" >&2; exit 1; }
           # --repo-name carries the tag's reponame into MANIFEST, so an installed
           # release resolves its identity from that stamp rather than from its own
-          # directory name (spira-<timestamp>, which changes on every upgrade).
-          reponame="${tag#spira-release-}"
-          reponame="${reponame%-"$ts"}"
+          # directory name, which changes on every upgrade.
+          case "$tag" in
+            spira-release-*)
+              ts="${stem#spira-}"
+              reponame="${tag#spira-release-}"
+              reponame="${reponame%-"$ts"}" ;;
+            *) reponame=spira ;;
+          esac
           tarball=$(bash spira/build-tarball.sh build \
             --workspace . \
             --output /tmp/artifacts \
-            --name "spira-${ts}" \
+            --name "$stem" \
             --repo-name "$reponame" \
             --release-repo "$GITHUB_REPOSITORY")
           printf 'path=%s\n' "$tarball" >> "$GITHUB_OUTPUT"
@@ -93,8 +98,20 @@ jobs:
             printf 'release: %s already exists with its tarball — not creating a second\n' "$tag"
             exit 0
           fi
+          prev_tag="$({ git tag -l; printf '%s\n' "$tag"; } | bash spira/release-order.sh sort | uniq | grep -B1 -Fx "$tag" | head -n1)"
+          [ "$prev_tag" = "$tag" ] && prev_tag=""
+          notes="$(mktemp)"
+          if [ -n "$prev_tag" ]; then
+            bash spira/release-notes.sh --prev "$prev_tag" --this "$sha" --tag "$tag" --prev-tag "$prev_tag" \
+              --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/acceptance.yml?query=branch%3A$tag" > "$notes" \
+              || printf 'Release %s.\n' "$tag" > "$notes"
+          else
+            printf 'Release %s (first release; no previous tag to compare).\n' "$tag" > "$notes"
+          fi
+          printf '\ncommit: %s\nutc: %s\n' "$sha" "$(date -u +%Y%m%dT%H%M%SZ)" >> "$notes"
           gh release create "$tag" \
             --title "$tag" \
             --target "$sha" \
+            --notes-file "$notes" \
             --draft \
             "${{ steps.tarball.outputs.path }}"

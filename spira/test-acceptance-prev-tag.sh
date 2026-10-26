@@ -108,6 +108,18 @@ _out="$(run_derive "GH_EXIT=1" -- "spira-release-spira-20260925T030000Z")" || _r
 is "gh unreachable: no prev-tag printed" "" "$_out"
 is "gh unreachable: exits 0 (safe default, not a hard failure)" "0" "$_rc"
 
+# --- PROPERTY 6b: old stamp tags and new 0.1.N tags mixed: version order wins --
+_list='[
+  {"tagName":"spira-release-spira-20261001T000000Z","isDraft":false},
+  {"tagName":"spira-0.1.9","isDraft":false},
+  {"tagName":"spira-0.1.104","isDraft":false},
+  {"tagName":"spira-0.1.105","isDraft":false}
+]'
+_out="$(run_derive "GH_RELEASE_LIST=$_list" -- "spira-0.1.105")"
+is "mixed forms: the newest by version other than the tag under test" "spira-0.1.104" "$_out"
+_out="$(run_derive "GH_RELEASE_LIST=$_list" -- "spira-release-spira-20261001T000000Z")"
+is "mixed forms: a stamp tag never outranks a versioned one" "spira-0.1.105" "$_out"
+
 # --- PROPERTY 7: --repo is forwarded to gh ----------------------------------
 _list='[{"tagName":"spira-release-spira-20260901T000000Z","isDraft":false}]'
 run_derive "GH_RELEASE_LIST=$_list" -- "spira-release-spira-20260925T030000Z" \

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # acceptance-prev-tag.sh — derive the prev-tag for acceptance's upgrade (B) and
-# aged-install (D) phases: the newest spira-release-* tag, other than the one
+# aged-install (D) phases: the newest release tag (either naming form), other than the one
 # under test, that gh reports as published. release.yml creates every release
 # as a draft, so tag order alone is not enough — a draft that never passed
 # acceptance must never be picked as the predecessor to upgrade from.
@@ -47,10 +47,8 @@ try:
     releases = json.load(sys.stdin)
 except Exception:
     sys.exit(0)
-pub = [r.get("tagName", "") for r in releases
-       if not r.get("isDraft", True)
-       and r.get("tagName", "").startswith("spira-release-")
-       and r.get("tagName") != tag]
-pub.sort()
-print(pub[-1] if pub else "")
-' "$_tag"
+for r in releases:
+    t = r.get("tagName", "")
+    if not r.get("isDraft", True) and t != tag:
+        print(t)
+' "$_tag" | bash "$(dirname "${BASH_SOURCE[0]}")/release-order.sh" latest

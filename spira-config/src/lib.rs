@@ -45,6 +45,7 @@ pub mod recipe;
 pub mod registry;
 pub mod release_env;
 pub mod release_skew;
+pub mod release_tag;
 pub mod repo_admin;
 pub mod repos;
 pub mod resolve;

@@ -1,9 +1,10 @@
 # acceptance-daily.yml — fresh-install acceptance (phase A, no predecessor) of the published
 # main, once a day, on a machine that has never run anything else.
 #
-# A SCHEDULED RUN CUTS NOTHING. It builds a tarball from the checked-out commit and runs
-# `release acceptance` against that tarball; no tag, release or note is created, so there is
-# nothing for a failure to retract. Upgrade phases are not run.
+# A RED RUN CUTS NOTHING. It builds a tarball from the checked-out commit and runs
+# `release acceptance` against that tarball; the run itself creates no tag, release or note.
+# Upgrade phases are not run. A scheduled run that passes then asks gate.yml to cut and
+# publish exactly the commit it tested (the cut job below), never whatever main is by then.
 #
 # GREEN is the run itself. RED opens, or comments on, one GitHub issue per distinct failing
 # check (spira/acceptance-daily-report.sh), titled "acceptance-daily: <check>", carrying the
@@ -208,6 +209,52 @@ jobs:
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
   # ---------------------------------------------------------------------------
+  # A green scheduled run releases the commit it tested. The dispatch names that SHA, and
+  # gate.yml's cut job still asserts its green gate check before tagging.
+  # ---------------------------------------------------------------------------
+  cut:
+    needs: [provision, acceptance]
+    if: ${{ !cancelled() && github.event_name == 'schedule' && needs.acceptance.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Mint App token for the dispatch
+        id: app-tok
+        env:
+          SPIRA_GH_APP_PRIVATE_KEY: ${{ secrets.SPIRA_GH_APP_PRIVATE_KEY }}
+          SPIRA_GH_APP_ID: ${{ vars.SPIRA_GH_APP_ID }}
+          SPIRA_GH_APP_INSTALLATION_ID: ${{ vars.SPIRA_GH_APP_INSTALLATION_ID }}
+        run: |
+          set -uo pipefail
+          tok="$(bash spira/app-token.sh)"
+          printf '::add-mask::%s\n' "$tok"
+          printf 'token=%s\n' "$tok" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch the cut for the tested commit
+        env:
+          GH_TOKEN: ${{ steps.app-tok.outputs.token }}
+          TESTED_SHA: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+          _newest="$(git tag -l 'spira-*' | bash spira/release-order.sh latest)"
+          if [ -n "$_newest" ] && [ "$(git rev-parse "${_newest}^{commit}")" = "$TESTED_SHA" ]; then
+            printf 'cut skipped: %s is already the newest published release (%s)\n' "$TESTED_SHA" "$_newest" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          gh workflow run gate.yml --repo "$GITHUB_REPOSITORY" --ref main -f cut=true -f "sha=$TESTED_SHA" || {
+            printf 'cut: could not dispatch gate.yml for %s\n' "$TESTED_SHA" >&2
+            exit 1
+          }
+          printf 'cut dispatched for %s (%s)\n' "$TESTED_SHA" "$_newest" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
   # Destroy the machine, whatever happened. Plain cancel only (see gate.yml's teardown).
   # ---------------------------------------------------------------------------
   teardown:
@@ -230,3 +277,12 @@ jobs:
           pve-node:           ${{ vars.PVE_NODE }}
           template-vmid:      ${{ vars.TEMPLATE_VMID }}
           vm-token:           ${{ needs.provision.outputs.vm-token }}
+
+  stale-drafts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail on draft releases older than a day
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash spira/stale-drafts.sh --repo "$GITHUB_REPOSITORY"

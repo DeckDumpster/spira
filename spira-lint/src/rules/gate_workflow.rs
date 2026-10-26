@@ -477,16 +477,17 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
             let on = on_block(a);
             j.located(ACCEPTANCE, "the on: block", &on);
             j.want(ACCEPTANCE, "acceptance fires on release tags", "'spira-release-*'", &on);
+            j.want(ACCEPTANCE, "acceptance fires on versioned release tags", "'spira-[0-9]*.[0-9]*.[0-9]*'", &on);
             j.nowant(ACCEPTANCE, "acceptance does not fire on a branch push", "branches", &on);
             j.nowant(ACCEPTANCE, "acceptance does not fire on pull requests", "pull_request", &on);
-            // 26. never retract an already-published release
-            let rs = step(a, "Retract release and tag on FAIL", true);
-            j.located(ACCEPTANCE, "the retract step", &rs);
-            j.want(ACCEPTANCE, "retract checks isDraft before deleting", "isDraft", &rs);
-            j.want(ACCEPTANCE, "retract refuses on an already-published release", "$_draft\" != \"true\"", &rs);
-            let retract_if = rs.lines().find_map(|l| l.trim().strip_prefix("if:")).unwrap_or("");
-            j.want(ACCEPTANCE, "retract also fires on a cancelled run", "cancelled()", retract_if);
-            j.want(ACCEPTANCE, "retract still fires on a failed run", "failure()", retract_if);
+            // 26. retract is a job of its own, so a skipped acceptance still retracts; the script refuses a published release
+            let rj = block(a, "retract");
+            j.located(ACCEPTANCE, "the retract job", &rj);
+            j.want(ACCEPTANCE, "retract runs release-retract.sh", "spira/release-retract.sh", &rj);
+            let retract_if = job_if(a, "retract");
+            j.want(ACCEPTANCE, "retract fires even when acceptance is skipped or cancelled", "always()", &retract_if);
+            j.want(ACCEPTANCE, "retract does not fire on a success", "needs.acceptance.result != 'success'", &retract_if);
+            j.want(ACCEPTANCE, "retract skips an already-published tag", "already-published != 'true'", &retract_if);
             let gj = block(a, "guard");
             j.located(ACCEPTANCE, "the guard job", &gj);
             j.want(ACCEPTANCE, "guard runs only on a tag push", "github.event_name == 'push'", &gj);
@@ -630,8 +631,8 @@ mod tests {
 
     #[test]
     fn a_retract_that_ignores_cancellation_is_caught() {
-        let got = planted(acc, "if: ${{ failure() || cancelled() }}", "if: failure()");
-        assert!(got.iter().any(|m| m.contains("retract also fires on a cancelled run")), "{got:?}");
+        let got = planted(acc, "needs.acceptance.result != 'success' }}", "needs.acceptance.result == 'failure' }}");
+        assert!(got.iter().any(|m| m.contains("retract does not fire on a success")), "{got:?}");
     }
 
     #[test]

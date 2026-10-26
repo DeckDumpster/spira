@@ -250,5 +250,28 @@ want "force_spill defaults false" "default: false" "$_fs"
 want "provision always goes straight to EC2 (Ryan 2026-10-15: all test runs on EC2)" "spill:              ec2-only" "$_g"
 want "suites job limit is sized from the EC2 wall, not the contended-host wall" "timeout-minutes: 25" "$_g"
 
+echo "12. acceptance-daily.yml releases the commit a green scheduled run tested, and only that"
+AD_WORKFLOW="$HERE/../.github/workflows/acceptance-daily.yml"
+_adcut="$(awk '/^  cut:$/{f=1;next} f&&/^  [a-z_-]+:$/{exit} f' "$AD_WORKFLOW")"
+_adif="$(printf '%s\n' "$_adcut" | awk '/^    if:/{sub(/^    if: */,"");print;exit}')"
+if [ -z "$_adif" ]; then
+    bad "acceptance-daily cut job's if: was located (positive control)" "awk extracted nothing; assertions below would be vacuous"
+else
+    ok "acceptance-daily cut job's if: was located"
+fi
+want   "cut runs on the schedule only"            "github.event_name == 'schedule'"        "$_adif"
+want   "cut requires acceptance success"          "needs.acceptance.result == 'success'"   "$_adif"
+nowant "a red acceptance cannot reach the cut"    "!= 'success'"                           "$_adif"
+want   "cut dispatches gate.yml"                  "gate.yml"                               "$_adcut"
+want   "the dispatch asks for a cut"              "-f cut=true"                            "$_adcut"
+want   "the dispatched ref is the tested sha"     '-f "sha=$TESTED_SHA"'                   "$_adcut"
+want   "TESTED_SHA is the acceptance run's sha"   'TESTED_SHA: ${{ github.sha }}'          "$_adcut"
+want   "the dispatch uses the App token"          'steps.app-tok.outputs.token'            "$_adcut"
+want   "an already-released commit is skipped"    'already the newest published release'   "$_adcut"
+_gsha="$(awk '/^      sha:$/{f=1;next} f&&/^      [a-z_]+:$/{exit} f' "$GATE_WORKFLOW")"
+want   "gate.yml has a sha input (positive control)" "type: string"                        "$_gsha"
+want   "gate.yml cut checks out the named sha"    'ref: ${{ inputs.sha || github.sha }}'   "$_g"
+want   "release.sh cut takes --at"                '--at)'                                  "$(cat "$HERE/release.sh")"
+
 # ============================================================================
 tl_summary
