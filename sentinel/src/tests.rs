@@ -1025,6 +1025,27 @@ fn the_collective_lane_cap_refuses_a_lane_fayth_and_never_a_task_fayth() {
 }
 
 #[test]
+fn a_ready_lane_spills_over_a_full_fleet_and_nothing_is_refilled_while_over() {
+    let caps = [("SPIRA_MAX_LIVE_AEONS", "4"), ("SPIRA_LANES_MAX_LIVE", "2")];
+    let l = ladder("sp-spill", TASK, LANE, &[("builder", 4)], &[("ops", 1), ("builder", 1)]);
+    assert!(l.summon("ops", None, &caps), "{}", l.sink.text());
+    assert!(l.sink.has("may spill over the ceiling"), "{}", l.sink.text());
+
+    let l = ladder("sp-over", TASK, LANE, &[("builder", 3), ("ops", 1)], &[("builder", 1)]);
+    assert!(!l.summon("builder", None, &caps));
+    assert!(l.sink.has("4/4 aeon(s) live across the whole fleet"), "{}", l.sink.text());
+
+    let l = ladder("sp-bound", TASK, LANE, &[("builder", 4), ("ops", 1)], &[("ops", 1)]);
+    assert!(!l.summon("ops", None, &[("SPIRA_MAX_LIVE_AEONS", "4"), ("SPIRA_LANES_MAX_LIVE", "1")]), "{}", l.sink.text());
+
+    let l = ladder("sp-nolane", TASK, LANE, &[("builder", 4)], &[("builder", 1), ("ops", 1)]);
+    assert!(!l.summon("builder", None, &caps));
+
+    let l = ladder("sp-nocap", TASK, LANE, &[("builder", 4)], &[("ops", 1)]);
+    assert!(!l.summon("ops", None, &[("SPIRA_MAX_LIVE_AEONS", "4")]));
+}
+
+#[test]
 fn the_fleet_ceiling_refuses_whatever_the_persona_and_names_the_count() {
     let ceiling = [("SPIRA_MAX_LIVE_AEONS", "3")];
     let l = ladder("fc-below", ELASTIC, SOLO, &[("builder", 2)], &[("ops", 1)]);

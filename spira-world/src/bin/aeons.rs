@@ -97,6 +97,14 @@ fn cmd_status() -> i32 {
         let task_min = pool_n.saturating_sub(cap);
         println!("  effective split   builders {task_min}-{pool_n}, lanes 0-{cap}");
     }
+    if let (Some(c), Some(cap)) = (ceiling, lanes_cap) {
+        if let Ok(l) = live.parse::<u32>() {
+            if l > c {
+                println!("  spill             live {l} / ceiling {c} — {} lane over, draining", l - c);
+            }
+        }
+        println!("  lane spill        up to {cap} over the ceiling while a lane has ready work; no refill until live <= {c}");
+    }
     if let Some(c) = ceiling {
         println!(
             "  ---\n  at most {c} aeon(s) at once. Without the ceiling it would be {} ({pool_n} pool + {lt} lanes).",

@@ -563,11 +563,20 @@ impl<'a> Sentinel<'a> {
         }
         if let Some(max_live) = self.cfg.max_live_aeons {
             let live_all = self.live_total() as i64;
-            if live_all >= max_live {
-                self.log(&format!("CHECK7 {f}: {live_all}/{max_live} aeon(s) live across the whole fleet — not summoning"));
-                return Attempt { summoned: false, ready: reuse_ready };
-            }
             let home = &self.cfg.home;
+            let is_lane = !spira_config::chamber::fayth_get(home, f, "FAYTH_LANE", "").is_empty();
+            if live_all >= max_live {
+                let spill = is_lane
+                    && self.cfg.lanes_max_live.is_some_and(|m| {
+                        let (_, lane_fayths) = self.task_and_lane_fayths();
+                        live_all < max_live + m && self.lanes_live_total(&lane_fayths) < m
+                    });
+                if !spill {
+                    self.log(&format!("CHECK7 {f}: {live_all}/{max_live} aeon(s) live across the whole fleet — not summoning"));
+                    return Attempt { summoned: false, ready: reuse_ready };
+                }
+                self.log(&format!("CHECK7 {f}: {live_all}/{max_live} aeon(s) live — a lane may spill over the ceiling"));
+            }
             if spira_config::chamber::fayth_get(home, f, "FAYTH_ELASTIC", "0") == "1" {
                 let slots_free = max_live - live_all;
                 if slots_free == 1 {
@@ -585,7 +594,6 @@ impl<'a> Sentinel<'a> {
                     }
                 }
             }
-            let is_lane = !spira_config::chamber::fayth_get(home, f, "FAYTH_LANE", "").is_empty();
             if is_lane {
                 if let Some(lanes_max) = self.cfg.lanes_max_live {
                     let (_, lane_fayths) = self.task_and_lane_fayths();
