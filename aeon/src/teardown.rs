@@ -429,8 +429,8 @@ impl Run<'_> {
                         None,
                     );
                     let why = format!("no-progress streak {streak} at {tip}: the Concierge lifts this once the bead's inputs have changed ({reason})");
-                    let held = self.d.exec.exec("spira-lc", &s(&["hold", &id, "manual", &why, "aeon"]), None, None);
-                    if held.code != 0 {
+                    let held = self.hold_unless_terminal(&id, "manual", &why, "aeon");
+                    if let Some(held) = held.filter(|h| h.code != 0) {
                         self.log(&format!("{f}: {id} manual hold refused (rc={}): {}", held.code, held.stdout.trim()));
                     }
                     self.note(&format!("No progress ({o}): {reason}\n\nAfter {streak} consecutive no-progress exits at {tip}, routed to the Concierge as a blocking question: the bead is not claimable again until it is answered. No attempt charged."));
@@ -441,8 +441,8 @@ impl Run<'_> {
                     let until = util::iso_utc(until_epoch);
                     // A timed `wait` hold on the lifecycle row: claim reads the expiry from its
                     // reason, so nothing has to lift it and no bd status or defer is written.
-                    let held = self.d.exec.exec("spira-lc", &s(&["hold", &id, "wait", &format!("{} no-progress: {reason}", spira_config::lc_state::snooze_reason(until_epoch)), "aeon"]), None, None);
-                    if held.code != 0 {
+                    let held = self.hold_unless_terminal(&id, "wait", &format!("{} no-progress: {reason}", spira_config::lc_state::snooze_reason(until_epoch)), "aeon");
+                    if let Some(held) = held.filter(|h| h.code != 0) {
                         self.log(&format!("{f}: {id} snooze hold refused (rc={}): {}", held.code, held.stdout.trim()));
                     }
                     self.note(&format!("No progress ({o}): {reason}\n\nHeld for {backoff_min}m (no-progress streak {streak}, branch stuck at {tip}) — not re-claimed until {until}. No attempt charged."));

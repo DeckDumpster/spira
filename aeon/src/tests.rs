@@ -2269,3 +2269,105 @@ fn a_claim_with_a_build_spec_proceeds() {
     let w = o.w.lock().unwrap();
     assert!(!w.exec_calls.iter().any(|c| c.0 == "spira-lc" && c.1.first().map(String::as_str) == Some("hold") && c.1.get(3).is_some_and(|r| r.starts_with("no build spec"))), "{}", o.log);
 }
+
+// ---- a hold is never asked of a terminal row ---------------------------------------------
+
+fn holds_asked(o: &Outcome) -> Vec<Vec<String>> {
+    o.w.lock().unwrap().exec_calls.iter().filter(|c| c.0 == "spira-lc" && c.1.first().map(String::as_str) == Some("hold")).map(|c| c.1.clone()).collect()
+}
+
+#[test]
+fn a_build_spec_hold_is_not_asked_of_a_dropped_row() {
+    let f = fx("term-nospec");
+    seed(&f, "sp-ns");
+    f.w.lock().unwrap().lc.insert("sp-ns".into(), "DROPPED".into());
+    let o = go(&f, "spira,plan", &[("FAYTH_REQUIRES_BUILD_SPEC", "1")], Mode::Claim, BTreeMap::new(), no_session());
+    assert!(ledger_lines(&o).iter().any(|l| l.contains("status=no-build-spec")), "the site ran: {}", o.log);
+    assert_eq!(holds_asked(&o), Vec::<Vec<String>>::new(), "{}", o.log);
+}
+
+#[test]
+fn an_escalation_hold_is_not_asked_of_a_dropped_row() {
+    let f = fx("term-esc");
+    let spec = rejected(&f, 5);
+    seed(&f, "sp-e");
+    f.w.lock().unwrap().lc.insert("sp-e".into(), "DROPPED".into());
+    let o = go(&f, "spira,plan", &[("SPIRA_TOML", spec.as_str())], Mode::Claim, BTreeMap::new(), commits_and_closes());
+    assert!(ledger_lines(&o).iter().any(|l| l.contains("status=escalation-hold")), "the site ran: {}", o.log);
+    assert_eq!(holds_asked(&o), Vec::<Vec<String>>::new(), "{}", o.log);
+}
+
+#[test]
+fn a_rapid_recur_hold_is_not_asked_of_a_dropped_row() {
+    let f = fx("term-rr");
+    seed(&f, "sp-rr");
+    std::fs::create_dir_all(&f.run).unwrap();
+    std::fs::write(
+        f.run.join("aeon-ledger.log"),
+        "2026-09-27T00:00:00Z done builder sp-rr rc=0 status=unlanded wall_s=1 api_s=1 turns=1 in_tok=1 cache_read_tok=0 out_tok=1 think_tok=0 cost_usd=0.01\n\
+         2026-09-27T00:00:01Z done builder sp-rr rc=0 status=unlanded wall_s=2 api_s=1 turns=1 in_tok=1 cache_read_tok=0 out_tok=1 think_tok=0 cost_usd=0.01\n",
+    )
+    .unwrap();
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), Box::new(|spec, w, _| {
+        w.lock().unwrap().lc.insert(spec.env.get("BEAD_ID").unwrap().clone(), "DROPPED".into());
+        1
+    }));
+    assert!(o.log.contains("RAPID-RECUR: 3 consecutive sub-10s runs"), "the site ran: {}", o.log);
+    assert_eq!(holds_asked(&o), Vec::<Vec<String>>::new(), "{}", o.log);
+}
+
+#[test]
+fn a_checkpoint_hold_is_not_asked_of_a_dropped_row() {
+    let f = fx("term-ck");
+    seed(&f, "sp-ck");
+    let run = f.run.clone();
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |_, w, _| {
+        std::fs::write(run.join("world.halted"), "stopped\n").unwrap();
+        let mut w = w.lock().unwrap();
+        w.disposition.insert("sp-ck".into(), ("slain".into(), "the world was stopped".into()));
+        w.lc.insert("sp-ck".into(), "DROPPED".into());
+        143
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
+    assert!(o.w.lock().unwrap().seam_calls.iter().any(|c| c.0 == "bump_requeue"), "the site ran: {}", o.log);
+    assert_eq!(holds_asked(&o), Vec::<Vec<String>>::new(), "{}", o.log);
+}
+
+#[test]
+fn a_no_progress_snooze_is_not_asked_of_a_dropped_row() {
+    let f = fx("term-snooze");
+    seed(&f, "sp-o");
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|spec, w, _| {
+        w.lock().unwrap().lc.insert(spec.env.get("BEAD_ID").unwrap().clone(), "DROPPED".into());
+        crate::run::append(
+            &spec.log,
+            "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Nothing has changed\"}]}}\n\
+             {\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n\
+             {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1}\n",
+        );
+        1
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
+    assert!(o.log.contains("no-progress"), "the site ran: {}", o.log);
+    assert_eq!(holds_asked(&o), Vec::<Vec<String>>::new(), "{}", o.log);
+}
+
+#[test]
+fn a_no_progress_escalation_hold_is_not_asked_of_a_dropped_row() {
+    let f = fx("term-manual");
+    seed(&f, "sp-q");
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::from([("thrash_streak_bump", Out::ok("2"))]), {
+        Box::new(|spec, w, _| {
+            w.lock().unwrap().lc.insert(spec.env.get("BEAD_ID").unwrap().clone(), "DROPPED".into());
+            crate::run::append(
+                &spec.log,
+                "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Nothing has changed\"}]}}\n\
+                 {\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n\
+                 {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1}\n",
+            );
+            1
+        })
+    });
+    assert!(o.log.contains("routed to the Concierge"), "the site ran: {}", o.log);
+    assert_eq!(holds_asked(&o), Vec::<Vec<String>>::new(), "{}", o.log);
+}
