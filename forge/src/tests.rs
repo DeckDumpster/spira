@@ -483,6 +483,38 @@ fn check_status_suites_job_cancelled_is_harness_fault_not_a_verdict() {
 }
 
 #[test]
+fn check_status_run_ci_cancelled_by_a_runner_loss_is_harness_fault_with_its_market() {
+    let gh = FakeGh::default();
+    gh.on(
+        &[
+            "run", "list", "--branch", "b", "--workflow", "Gate", "--json",
+            "databaseId,status,conclusion,headSha,url", "--limit", "1",
+        ],
+        0,
+        r#"[{"databaseId":40298362089,"status":"completed","conclusion":"failure"}]"#,
+    );
+    gh.on(
+        &["api", "repos/{owner}/{repo}/actions/runs/40298362089/jobs"],
+        0,
+        r#"{"jobs":[{"name":"gate","id":5,"conclusion":"failure","steps":[{"name":"Report","conclusion":"failure"}]},{"name":"ci","id":4,"conclusion":"cancelled","steps":[{"name":"Set up job","conclusion":"success"},{"name":"Run CI","conclusion":"cancelled"}]}]}"#,
+    );
+    gh.on(
+        &["api", "repos/{owner}/{repo}/actions/jobs/4/logs"],
+        0,
+        "2026-10-26T09:39:39Z ##[error]The runner has received a shutdown signal.\n",
+    );
+    gh.on(
+        &["api", "repos/{owner}/{repo}/actions/variables/SPILL_MARKET"],
+        0,
+        r#"{"name":"SPILL_MARKET","value":"spot"}"#,
+    );
+    let out = check_status(&gh, &NoProc, repo(), "Gate", "b");
+    assert_eq!(out.lines[0], "harness_fault");
+    assert!(out.lines.contains(&"runner-lost: ci / Run CI".to_string()), "{:?}", out.lines);
+    assert!(out.lines.contains(&"runner-market: spot".to_string()), "{:?}", out.lines);
+}
+
+#[test]
 fn check_status_gate_declared_fault_in_a_failed_step_is_harness_fault_not_red() {
     let gh = FakeGh::default();
     gh.on(

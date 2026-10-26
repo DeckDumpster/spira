@@ -523,6 +523,31 @@ fn harness_fault_reruns_within_the_budget_then_closes_and_returns_members() {
 }
 
 #[test]
+fn a_runner_loss_reruns_once_then_escalates_as_environment_and_ejects_nobody() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    *t.forge.run.borrow_mut() = Some("77".into());
+    let lost = "harness_fault\nrunner-lost: ci / Run CI\nrunner-market: spot\n";
+    t.forge
+        .status
+        .borrow_mut()
+        .extend([Some(lost.into()), Some(lost.into())]);
+    assert_eq!(t.run(&["verdict", "spira"]), 0);
+    assert!(t.out().contains("runner lost (ci / Run CI, market spot)"), "{}", t.out());
+    assert!(t.out().contains("re-running (attempt 1/1)"), "{}", t.out());
+    assert_eq!(t.run(&["verdict", "spira"]), 0);
+    assert!(t.out().contains("runner lost"), "{}", t.out());
+    assert!(!t.out().contains("ejected"), "{}", t.out());
+    assert_eq!(count(&t.forge.calls, "workflow-rerun 77"), 1);
+    assert!(t
+        .scripts
+        .calls
+        .borrow()
+        .iter()
+        .any(|c| c.contains("runner lost twice on one tip (environment fault)")));
+}
+
+#[test]
 fn a_capacity_fault_closes_once_backs_off_and_blocks_the_recut_until_it_lapses() {
     let t = T::new(LandMode::Queue);
     lc_batch(&t);
