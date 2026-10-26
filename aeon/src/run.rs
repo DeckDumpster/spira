@@ -535,9 +535,22 @@ impl<'a> Run<'a> {
             return Ok(None);
         };
         self.s.stack = stacks.remove(&id).unwrap_or_default();
-        let raw = bd::json(self.d.bd, &["show", &id]);
-        match bd::first_row(&raw) {
-            Some(row) if row.id == id => {
+        let tries = self.conf.i("SPIRA_CLAIM_RETRIES").max(1) as u32;
+        let delay = Duration::from_secs(self.conf.i("SPIRA_CLAIM_RETRY_DELAY_S").max(0) as u64);
+        let mut raw = String::new();
+        let mut row = None;
+        for i in 1..=tries {
+            raw = bd::json(self.d.bd, &["show", &id]);
+            row = bd::first_row(&raw).filter(|r| r.id == id);
+            if row.is_some() {
+                break;
+            }
+            if i < tries {
+                (self.d.sleep)(delay);
+            }
+        }
+        match row {
+            Some(row) => {
                 let repo = row.label_value("repo:").unwrap_or_default();
                 Ok(Some(claim::Claimed { id, repo, row, raw }))
             }

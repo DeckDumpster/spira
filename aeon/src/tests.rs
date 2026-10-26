@@ -35,6 +35,7 @@ struct World {
     /// `FakeBd::bd`'s own match falls through every argv it does not special-case).
     bd_calls: Vec<Vec<String>>,
     ready_fails: bool,
+    empty_shows: u32,
     claim_taken: BTreeSet<String>,
     /// `spira-claim stack <id>`'s canned stdout for these tests — `None` falls back to `"{}"`
     /// (no `claimable` key, so `stack::parse_proposal` reads it as "no stack", same as a
@@ -131,7 +132,13 @@ impl Bd for FakeBd {
                 w.metadata.entry(id.to_string()).or_default().insert(k.to_string(), v.to_string());
                 Out::ok("")
             }
-            ["show", id, "--json"] => Out::ok(row_json(&w, id)),
+            ["show", id, "--json"] => {
+                if w.empty_shows > 0 {
+                    w.empty_shows -= 1;
+                    return Out::ok("");
+                }
+                Out::ok(row_json(&w, id))
+            }
             ["show", id] => Out::ok(format!("{id} · the title\n💡 tip\nNOTES\nsome note\nLABELS: spira\n")),
             ["note", id, text] => {
                 w.notes.push((id.to_string(), text.to_string()));
@@ -758,6 +765,18 @@ fn enforce_with_an_unreachable_machine_is_claim_error_not_idle() {
     let o = go(&f, "spira,plan", &[], Mode::Claim, a, no_session());
     assert_eq!(o.code, 1);
     assert_eq!(ledger_lines(&o)[1], "awake builder claim-error lifecycle machine unreachable");
+}
+
+#[test]
+fn a_claim_whose_confirmation_read_comes_back_empty_once_is_still_worked() {
+    let f = fx("enf-empty-show");
+    seed(&f, "sp-es");
+    f.w.lock().unwrap().empty_shows = 1;
+    let mut a = BTreeMap::new();
+    a.insert("lc_bead_verified", Out::ok(""));
+    let o = go(&f, "spira,plan", &[("SPIRA_CLAIM_RETRIES", "3")], Mode::Claim, a, commits_and_closes());
+    assert_eq!(ledger_lines(&o)[1], "awake builder sp-es", "{}", o.log);
+    assert!(!o.log.contains("returned no record of it"), "{}", o.log);
 }
 
 #[test]
