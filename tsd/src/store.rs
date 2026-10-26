@@ -191,12 +191,20 @@ impl Reader {
     /// [`Reader::rows`] for a window that may legitimately hold nothing; the store was still
     /// reached, so a refusal elsewhere is still a refusal.
     pub fn rows_or_empty(&self, family: &str, since: u64) -> Result<Vec<Value>, QueryError> {
-        if !crate::valid_family(family) {
-            return Err(QueryError::Malformed(format!("bad family {family:?}")));
-        }
-        let selector = format!("{{__name__=~\"{VALUE}|{ROW}\",tsd_family=\"{family}\"}}");
-        Ok(rebuild(family, &self.store.export(&selector, since)?))
+        Ok(rebuild(family, &self.store.export(&family_selector(family)?, since)?))
     }
+
+    /// Rows of `family` stamped in `[since, until]`; a window may hold nothing.
+    pub fn rows_between(&self, family: &str, since: u64, until: u64) -> Result<Vec<Value>, QueryError> {
+        Ok(rebuild(family, &self.store.export_between(&family_selector(family)?, since, until)?))
+    }
+}
+
+fn family_selector(family: &str) -> Result<String, QueryError> {
+    if !crate::valid_family(family) {
+        return Err(QueryError::Malformed(format!("bad family {family:?}")));
+    }
+    Ok(format!("{{__name__=~\"{VALUE}|{ROW}\",tsd_family=\"{family}\"}}"))
 }
 
 /// Rows from exported series: samples sharing a label set and a timestamp are one row.

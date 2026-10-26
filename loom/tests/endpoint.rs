@@ -424,6 +424,79 @@ async fn units_reads_the_executions_in_the_store_and_only_the_last_week() {
     assert_eq!((flaky["runs_7d"].as_i64(), flaky["last_failure"]["result"].as_str()), (Some(1), Some("exit-code")), "the nine-day-old row is outside the window");
 }
 
+fn busy_week_fixture(units: usize) -> (UnitsFixture, Vec<String>) {
+    let fx = units_fixture(&[]);
+    let names: Vec<String> = (0..units).map(|i| format!("u{i:03}.service")).collect();
+    let list: String = names.iter().map(|n| format!("{n} static -\\n")).collect();
+    let show: String = names.iter().map(|n| format!("Id={n}\\nActiveState=inactive\\nSubState=dead\\nUnitFileState=static\\n\\n")).collect();
+    let lines: Vec<String> = names.iter().map(|n| format!("{n}\\n")).collect();
+    let mut fx = fx;
+    script(
+        &fx.dir.join("systemctl"),
+        &format!("#!/bin/sh\ncase \"$2\" in\nlist-unit-files) printf '{list}';;\nshow) printf '{show}';;\nlist-timers) printf '[]';;\nesac\n"),
+    );
+    script(&fx.dir.join("units-install"), &format!("#!/bin/sh\nprintf '{}'\n", lines.concat()));
+    let rows: Vec<String> = names.iter().enumerate().flat_map(|(i, n)| (0..7 * 24).map(move |h| exec_row(n, 600 + h * 3600, "success", 100, &format!("{i}-{h}")))).collect();
+    tsd::store::push_rows(Some(fx.store.addr()), "unit-run-dbus", &rows).unwrap();
+    fx.cfg.cache = Duration::from_millis(0);
+    (fx, names)
+}
+
+#[tokio::test]
+async fn units_answers_fast_with_every_unit_from_a_week_of_executions() {
+    let (fx, names) = busy_week_fixture(100);
+    let addr = spawn(fx.cfg.clone()).await;
+    let started = std::time::Instant::now();
+    let v = units_json(addr).await;
+    assert!(started.elapsed() < Duration::from_millis(500), "the first request waited on the export: {:?}", started.elapsed());
+    for n in &names {
+        unit(&v, n);
+    }
+    let mut full = false;
+    for _ in 0..100 {
+        let v = units_json(addr).await;
+        if v["errors"].as_array().unwrap().is_empty() && unit(&v, "u000.service")["runs_7d"] == 168 {
+            full = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(full, "the history never completed");
+    let started = std::time::Instant::now();
+    units_json(addr).await;
+    assert!(started.elapsed() < Duration::from_millis(500), "a warm request took {:?}", started.elapsed());
+}
+
+#[tokio::test]
+async fn units_says_a_store_outage_and_a_recovery_clears_it() {
+    let (fx, _) = busy_week_fixture(3);
+    let bind = fx.store.addr().to_string();
+    let addr = spawn(fx.cfg.clone()).await;
+    for _ in 0..50 {
+        if units_json(addr).await["errors"].as_array().unwrap().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let UnitsFixture { dir, cfg, store } = fx;
+    drop(store);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let v = units_json(addr).await;
+    assert!(v["errors"].as_array().unwrap().iter().any(|e| e.as_str().unwrap().contains("metrics-store-unreachable")), "{v}");
+    assert_eq!(unit(&v, "u000.service")["runs_7d"], 168, "the history already read is kept");
+    let _back = spira_otel::fixture::FakeStore::start_on(&bind);
+    let mut cleared = false;
+    for _ in 0..50 {
+        if units_json(addr).await["errors"].as_array().unwrap().is_empty() {
+            cleared = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(cleared, "the error outlived the outage");
+    drop((dir, cfg));
+}
+
 #[tokio::test]
 async fn units_folds_per_instance_names_into_one_family_row() {
     let mut rows = fixture_rows();

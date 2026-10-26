@@ -78,6 +78,13 @@ impl Store {
         parse_export(&body)
     }
 
+    /// [`Store::export`] bounded above by `end_secs`, so a long window can be read in pieces that each fit a deadline.
+    pub fn export_between(&self, selector: &str, start_secs: u64, end_secs: u64) -> Result<Vec<Exported>, QueryError> {
+        let path = format!("/api/v1/export?match[]={}&start={start_secs}&end={end_secs}", encode(selector));
+        let body = self.get(&path)?;
+        parse_export(&body)
+    }
+
     fn get(&self, path: &str) -> Result<Vec<u8>, QueryError> {
         let unreachable = |what: &str, e: std::io::Error| QueryError::Unreachable(format!("{} {what}: {e}", self.addr));
         let end = Instant::now() + self.deadline;
