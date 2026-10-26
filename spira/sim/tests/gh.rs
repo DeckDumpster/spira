@@ -240,7 +240,7 @@ fn cut_step(sha: &str) -> String {
         }
         script.push(l.get(10..).unwrap_or(""));
     }
-    script.join("\n").replace("${{ github.sha }}", sha)
+    script.join("\n").replace("${{ inputs.sha || github.sha }}", sha).replace("${{ github.sha }}", sha)
 }
 
 fn run_cut_assert(w: &W, sha: &str) -> Res {
