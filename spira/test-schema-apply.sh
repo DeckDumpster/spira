@@ -115,6 +115,17 @@ fi
 
 # ======================================================================================
 echo
+echo "a refused statement is printed with the engine's error"
+# ======================================================================================
+_fk="$T/failbd"; mkdir -p "$_fk"
+printf '#!/bin/sh\necho "engine says no: planted" >&2\nexit 1\n' > "$_fk/bd"; chmod +x "$_fk/bd"
+o_fail="$(PATH="$_fk:$PATH" SPIRA_DB="$T/nowhere" schema-apply.sh 2>&1)"; rc_fail=$?
+[ "$rc_fail" = 1 ] && ok "a refused apply exits 1" || bad "a refused apply exits 1" "exited $rc_fail: $o_fail"
+want "and prints the failing statement" "alter table issues add column _is_work" "$o_fail"
+want "and prints the engine's error"    "engine says no: planted"                "$o_fail"
+
+# ======================================================================================
+echo
 echo "apply makes a bare store correct, and a second apply changes nothing"
 # ======================================================================================
 # THE SQL HALF NEEDS A SERVER-MODE STORE, for the reason the section above pins. Where one is
