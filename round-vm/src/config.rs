@@ -456,7 +456,8 @@ mod tests {
         let dir = testkit::TempDir::new("round-vm-limits");
         let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_TESTENV_SUITE_CAP", "600")]);
         let got = {
-            let _env = testkit::env(&[("SPIRA_TOML", toml.to_str())]);
+            let home = concat!(env!("CARGO_MANIFEST_DIR"), "/../spira");
+            let _env = testkit::env(&[("SPIRA_TOML", toml.to_str()), ("SPIRA_HOME", Some(home))]);
             testenv_limits().unwrap()
         };
         assert!(got.contains("testenv_suite_cap = 600\n"), "{got}");
