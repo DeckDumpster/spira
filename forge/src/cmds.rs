@@ -509,6 +509,7 @@ pub fn check_status(
     let mut step_lines: Vec<String> = Vec::new();
     let mut run_attributable = false;
     let mut capacity_line: Option<String> = None;
+    let mut step_declares_fault = false;
     if status == "green" || status == "red" {
         run_attributable = true;
         if let Some(rid) = &run_id {
@@ -563,6 +564,9 @@ pub fn check_status(
                             &format!("repos/{{owner}}/{{repo}}/actions/jobs/{job_id}/logs"),
                         ],
                     );
+                    if logs.text().contains(GATE_FAULT_MARKER) {
+                        step_declares_fault = true;
+                    }
                     step_lines.push(format!("failed-step: {job} / {step}"));
                     step_lines.extend(
                         step_log_tail(&logs.text(), STEP_LOG_TAIL)
@@ -582,6 +586,9 @@ pub fn check_status(
                 if suites_job_faulted(v) {
                     status = "harness_fault".to_string();
                 }
+            }
+            if step_declares_fault {
+                status = "harness_fault".to_string();
             }
         }
     }
@@ -664,6 +671,10 @@ const CAPACITY_MARKERS: [&str; 5] = [
 fn capacity_marker(log: &str) -> Option<&'static str> {
     CAPACITY_MARKERS.iter().copied().find(|m| log.contains(m))
 }
+
+/// The line the gate workflow prints when the suites step ended in a testenv FAULT (the branch
+/// was never tested), then exits non-zero: the job reads as a plain failure without it.
+const GATE_FAULT_MARKER: &str = "gate: HARNESS FAULT";
 
 const STEP_LOG_TAIL: usize = 20;
 const MAX_FAILED_JOBS: usize = 3;

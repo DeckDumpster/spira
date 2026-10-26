@@ -168,8 +168,6 @@ fn publish_green_that_would_not_fast_forward_keeps_the_record_and_says_so() {
 fn publish_pending_or_faulted_waits_and_changes_nothing() {
     for (answer, word) in [
         (Some("pending\n"), "pending"),
-        (Some("harness_fault\n"), "harness_fault"),
-        (Some("provision_fault\n"), "harness_fault"),
         (None, ""),
     ] {
         let t = T::new(LandMode::QueueLocal);
@@ -185,6 +183,34 @@ fn publish_pending_or_faulted_waits_and_changes_nothing() {
         assert!(t.qfile("publish").exists());
         assert!(!t.lib.has("push") && !has_call(&t.forge.calls, "pr-close"));
     }
+}
+
+#[test]
+fn a_publish_harness_fault_reruns_within_the_budget_and_never_files_a_bead() {
+    let t = T::new(LandMode::QueueLocal);
+    publish_record(&t);
+    *t.forge.run.borrow_mut() = Some("77".into());
+    for word in ["harness_fault", "provision_fault", "harness_fault"] {
+        t.forge.status.borrow_mut().push(Some(format!("{word}\n")));
+        assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    }
+    assert_eq!(count(&t.forge.calls, "workflow-rerun 77"), 2);
+    assert!(t
+        .out()
+        .contains("publish PR 77 harness fault — re-running (attempt 2/2)"));
+    assert!(t.out().contains("harness fault — retries exhausted, waiting"));
+    assert_eq!(
+        t.lib
+            .calls
+            .borrow()
+            .iter()
+            .filter(|c| c.starts_with("notify spira publish PR 77: CI harness fault"))
+            .count(),
+        1
+    );
+    assert!(t.qfile("publish").exists());
+    assert!(!t.lib.calls.borrow().iter().any(|c| c.starts_with("create_bug")));
+    assert!(!has_call(&t.forge.calls, "pr-close"));
 }
 
 #[test]

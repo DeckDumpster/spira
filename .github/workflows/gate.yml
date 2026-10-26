@@ -644,7 +644,7 @@ jobs:
           # testenv tests those and runs no cargo (testenv/DESIGN.md D8). Without it
           # every run faulted reason=no-cargo. testenv itself resolves by name, from
           # that same release.
-          printf '%s\n' "$_s" | testenv --artifacts "$SPIRA_RELEASE/bin" --suites - "${{ github.sha }}" || _b=$?
+          printf '%s\n' "$_s" | SPIRA_TESTENV_SUITE_CAP=1380 testenv --artifacts "$SPIRA_RELEASE/bin" --suites - "${{ github.sha }}" || _b=$?
           # A red suite gets one serial re-run; red then green is a flake, not a failure.
           if [ "$_b" = 1 ]; then
             _b=0

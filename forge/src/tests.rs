@@ -483,6 +483,53 @@ fn check_status_suites_job_cancelled_is_harness_fault_not_a_verdict() {
 }
 
 #[test]
+fn check_status_gate_declared_fault_in_a_failed_step_is_harness_fault_not_red() {
+    let gh = FakeGh::default();
+    gh.on(
+        &[
+            "run",
+            "list",
+            "--branch",
+            "b",
+            "--workflow",
+            "Gate",
+            "--json",
+            "databaseId,status,conclusion,headSha,url",
+            "--limit",
+            "1",
+        ],
+        0,
+        r#"[{"databaseId":7,"status":"completed","conclusion":"failure"}]"#,
+    );
+    gh.on(
+        &["api", "repos/{owner}/{repo}/actions/runs/7/jobs"],
+        0,
+        r#"{"jobs":[{"name":"suites","id":99,"conclusion":"failure","steps":[{"name":"Suites","conclusion":"failure"}]}]}"#,
+    );
+    let log = "VERDICT FAULT rc=2 ran=481 reason=over-cap\ngate: HARNESS FAULT (batch rc=2) - the container did not come up\n";
+    gh.on(&["api", "repos/{owner}/{repo}/actions/jobs/99/logs"], 0, log);
+    assert_eq!(check_status(&gh, &NoProc, repo(), "Gate", "b").lines[0], "harness_fault");
+
+    let log = "FAILED tests/a.rs::t\ngate: suites failed (batch rc=1)\n";
+    let gh2 = FakeGh::default();
+    gh2.on(
+        &[
+            "run", "list", "--branch", "b", "--workflow", "Gate", "--json",
+            "databaseId,status,conclusion,headSha,url", "--limit", "1",
+        ],
+        0,
+        r#"[{"databaseId":7,"status":"completed","conclusion":"failure"}]"#,
+    );
+    gh2.on(
+        &["api", "repos/{owner}/{repo}/actions/runs/7/jobs"],
+        0,
+        r#"{"jobs":[{"name":"suites","id":99,"conclusion":"failure","steps":[{"name":"Suites","conclusion":"failure"}]}]}"#,
+    );
+    gh2.on(&["api", "repos/{owner}/{repo}/actions/jobs/99/logs"], 0, log);
+    assert_eq!(check_status(&gh2, &NoProc, repo(), "Gate", "b").lines[0], "red");
+}
+
+#[test]
 fn check_status_build_failure_extracts_deduped_capped_error_lines() {
     let gh = FakeGh::default();
     gh.on(

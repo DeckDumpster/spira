@@ -308,6 +308,7 @@ fn settle_locked(w: &World, c: &Ctx, path: &Path) -> (i32, String) {
             w.forge.pr_close(&c.s.forge, path, &pr);
             let _ = std::fs::remove_file(&pfile);
             let _ = std::fs::remove_file(c.queue_file("publish-red-streak"));
+            let _ = std::fs::remove_file(c.queue_file("publish-fault-retries"));
             landing_log(
                 &c.s.run,
                 &format!(
@@ -319,6 +320,9 @@ fn settle_locked(w: &World, c: &Ctx, path: &Path) -> (i32, String) {
             OK
         }
         "red" => RED,
+        "harness_fault" if tagged(&out, "missing-workflow: ").is_empty() => {
+            publish_fault(w, c, path, &kv, &pr)
+        }
         s => {
             if let Some(&missing) = tagged(&out, "missing-workflow: ").first() {
                 let marker = c.queue_file("publish-missing-workflow");
@@ -339,6 +343,42 @@ fn settle_locked(w: &World, c: &Ctx, path: &Path) -> (i32, String) {
         }
     };
     (rc, out)
+}
+
+/// A publish run the gate says never tested the branch: re-run it within the infra budget.
+/// No fix-forward bead is filed for a fault; past the budget the operator is mailed once.
+fn publish_fault(w: &World, c: &Ctx, path: &Path, kv: &Kv, pr: &str) -> i32 {
+    let name = c.r.name.as_str();
+    let file = c.queue_file("publish-fault-retries");
+    let tries: u64 = std::fs::read_to_string(&file)
+        .ok()
+        .and_then(|t| t.trim().parse().ok())
+        .unwrap_or(0);
+    let max = c.s.verdict.infra_retries;
+    if classify_fault_rerun(tries, max) {
+        if let Some(r) = w.forge.run_id(&c.s.forge, path, kv.get("branch").unwrap_or("")) {
+            w.forge.workflow_rerun(&c.s.forge, path, &r);
+        }
+        let _ = write_atomic(&file, &format!("{}\n", tries + 1));
+        w.out(format!(
+            "verdict {name}: publish PR {pr} harness fault — re-running (attempt {}/{max})",
+            tries + 1
+        ));
+        return OK;
+    }
+    if tries == max {
+        let _ = write_atomic(&file, &format!("{}\n", tries + 1));
+        w.lib.notify(
+            &c.s.mailbox,
+            name,
+            &format!("publish PR {pr}: CI harness fault after {max} re-runs"),
+            &format!("PR {pr} for {name} ended in a harness fault (the branch was not tested) on every one of {max} re-runs. No fix-forward bead was filed: this is not a code failure. The record is left open."),
+        );
+    }
+    w.out(format!(
+        "verdict {name}: publish PR {pr} harness fault — retries exhausted, waiting"
+    ));
+    OK
 }
 
 fn short(s: &str) -> String {
