@@ -3846,6 +3846,46 @@ fn a_later_round_is_cut_on_the_earlier_rounds_head_and_lands_after_it_with_one_c
 }
 
 #[test]
+fn status_keeps_reporting_the_other_open_round_after_one_lands() {
+    let t = concurrent_world();
+    two_green_stacked_rounds(&t);
+    let mark = t.io.out.borrow().len();
+    assert_eq!(t.run(&["round", "status"]), 0, "{}", t.err());
+    let both = t.out()[mark..].to_string();
+    assert!(
+        both.contains("open_batches=r-1 r-2") && both.contains("round2_batch_id=r-2"),
+        "{both}"
+    );
+    assert_eq!(t.run(&["round", "land", "r-1"]), 0, "{}", t.err());
+    let mark = t.io.out.borrow().len();
+    assert_eq!(t.run(&["round", "status"]), 0, "{}", t.err());
+    let after = t.out()[mark..].to_string();
+    assert!(
+        !after.contains("round=none")
+            && after.contains("rounds=1")
+            && after.contains("batch_id=r-2"),
+        "{after}"
+    );
+}
+
+#[test]
+fn open_does_not_count_a_round_the_lifecycle_abandoned_while_status_hides_it() {
+    let t = concurrent_world();
+    open_and_certify(&t, "sp-a", "r-1");
+    t.lc.batch_states
+        .borrow_mut()
+        .insert("r-1".into(), ("ABANDONED".into(), "9".into()));
+    open_and_certify(&t, "sp-a", "r-2");
+    let mark = t.io.out.borrow().len();
+    assert_eq!(t.run(&["round", "status"]), 0, "{}", t.err());
+    let status = t.out()[mark..].to_string();
+    assert!(
+        status.contains("rounds=1") && status.contains("batch_id=r-2"),
+        "{status}"
+    );
+}
+
+#[test]
 fn a_stacked_round_whose_parent_was_abandoned_is_rebuilt_without_it_and_certified_again() {
     let t = concurrent_world();
     two_green_stacked_rounds(&t);
