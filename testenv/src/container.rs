@@ -16,6 +16,10 @@ pub const CONTAINER_CHECKOUT: &str = "/workspace";
 pub const CONTAINER_CARGO: &str = "/var/spira/cargo";
 /// Cargo's build output lives on the named volume, never in the host-owned bind mount.
 pub const CONTAINER_CARGO_TARGET: &str = "/var/spira/cargo/target";
+/// The one named volume a unit-tests batch mounts as its cargo target, so the next batch
+/// rebuilds the workspace crates and not their dependencies. Safe to share only because unit
+/// batches are admitted one at a time host-wide.
+pub const UNIT_TARGET_VOLUME: &str = "spira-unit-cargo-target";
 /// pasta's default forwards a container's loopback to the host's; `-T none` and `--no-map-gw`
 /// close both, so a container never reaches a host service bound to loopback.
 pub const ISOLATED_NETWORK: &str = "pasta:-T,none,--no-map-gw";
@@ -808,6 +812,7 @@ impl Driver<'_> {
         let mut build = true;
         let mut pids_limit = self.conf.pids_limit;
         let mut memory: Option<String> = None;
+        let mut target_volume: Option<String> = None;
         let mut i = 0;
         while i < args.len() {
             if args[i] == "--no-build" {
@@ -827,6 +832,7 @@ impl Driver<'_> {
                     pids_limit = v.parse().unwrap_or(pids_limit)
                 }
                 ("--memory", Some(v)) if !v.is_empty() => memory = Some(v.clone()),
+                ("--cargo-target-volume", Some(v)) if !v.is_empty() => target_volume = Some(v.clone()),
                 ("--name", Some(v)) => name = v.clone(),
                 ("--checkout", Some(v)) => checkout = Some(v.clone()),
                 (a, _) => {
@@ -907,6 +913,7 @@ impl Driver<'_> {
         .chain(self.conf.cpus.iter().flat_map(|c| [s("--cpus"), c.clone()]))
         .chain(memory.iter().flat_map(|m| [s("--memory"), m.clone()]))
         .chain(extra_mounts)
+        .chain(target_volume.iter().flat_map(|v| [s("--volume"), format!("{v}:{CONTAINER_CARGO_TARGET}")]))
         .chain([
             s("--volume"),
             format!("{name}-cargo-reg:{CONTAINER_CARGO}/registry"),

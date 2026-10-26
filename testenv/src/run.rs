@@ -1472,6 +1472,10 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     session.liveness_retries = s.liveness_retries;
     session.liveness_sleep = Duration::from_secs(s.liveness_sleep);
     session.setup_deadline = setup_cutoff.get();
+    let unit_batch = crate::unit::selected(&active);
+    if unit_batch {
+        session.cargo_target_volume = Some(crate::container::UNIT_TARGET_VOLUME.to_string());
+    }
     // A container slot may eat at most half of what is left of setup: past that the trial
     // judged nothing and says `queue`, rather than being cut mid-wait as `deadline-up`.
     session.queue_bound = setup_cutoff
@@ -1502,15 +1506,20 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     let mut warm_word = "off";
     let mut claimed = false;
     if let Some(i) = warm_slot {
-        match warm::claim(
-            deps.rt,
-            &s.run,
-            &deps.owner_dir,
-            i,
-            &wt.path,
-            &image_tag,
-            setup_cutoff.get(),
-        ) {
+        let claim = if unit_batch {
+            warm::Claim::Cold("a unit-tests batch mounts the shared cargo target volume, which a booted spare lacks".into())
+        } else {
+            warm::claim(
+                deps.rt,
+                &s.run,
+                &deps.owner_dir,
+                i,
+                &wt.path,
+                &image_tag,
+                setup_cutoff.get(),
+            )
+        };
+        match claim {
             warm::Claim::Spare(name) => {
                 session.name = name;
                 claimed = true;
