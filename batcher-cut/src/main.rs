@@ -974,6 +974,11 @@ fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &Trigge
 
     let wt = env_.run.join("worktree").join(format!(".batcher-{}", repo.name));
     io::worktree_reset(repo, &wt, &base_sha)?;
+    if repo.land == Land::Local {
+        if let Err(e) = io::template_refresh(env_, &wt) {
+            println!("batcher {}: template refresh before the lease failed ({e}) — cutting on the template as it stands", repo.name);
+        }
+    }
 
     let mut merges = BTreeMap::new();
     for m in &sorted {

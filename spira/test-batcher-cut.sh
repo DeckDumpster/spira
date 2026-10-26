@@ -125,6 +125,7 @@ RMAP
 # first (the wall-bound case); STUB_EXIT4 is testenv's workspace-build failure (exit 4).
 cat > "$SH/round-vm-stub.sh" <<'STUB'
 #!/usr/bin/env bash
+if [ "${1:-}" = refresh ]; then printf 'refresh %s\n' "${2:-}" >> "${STUB_REFRESH_LOG:-/dev/null}"; exit 0; fi
 [ "${1:-}" = run ] || { printf 'round-vm-stub: unexpected verb: %s\n' "${1:-}" >&2; exit 2; }
 shift
 suites_csv="" maxpar="" toolchain="" results="" wt="" spool=""
