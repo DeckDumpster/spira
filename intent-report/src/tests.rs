@@ -30,6 +30,12 @@ fn gate_row(
 }
 
 #[test]
+fn gate_log_line_skips_waited_ms_as_reason() {
+    let t = gate_log_line("2026-09-29T00:00:10Z spira b waited=0s ran=1s rc=0 pass waited_ms=340").unwrap();
+    assert_eq!(t.reason, "pass");
+}
+
+#[test]
 fn durations_and_iso_times_both_parse() {
     assert_eq!(parse_when("24h", T0), Some(T0 - 86_400));
     assert_eq!(parse_when("90m", T0), Some(T0 - 5_400));

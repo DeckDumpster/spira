@@ -172,11 +172,11 @@ if label_self_overlaps "spira/sp-t1" "$EVENTS"; then
 else
     ok "same-branch gates were serialised (their command windows did not overlap)"
 fi
-waits1b="$(grep -oE 'waited=[0-9]+s' "$GATELOG1B" 2>/dev/null \
-    | sed 's/waited=//;s/s$//' | sort -n | tail -1)"
+waits1b="$(grep -oE 'waited_ms=[0-9]+' "$GATELOG1B" 2>/dev/null \
+    | sed 's/waited_ms=//' | sort -n | tail -1)"
 [ "${waits1b:-0}" -gt 0 ] \
-    && ok "the serialisation wait was metered (${waits1b}s)" \
-    || bad "the serialisation wait was metered" "no non-zero waited= in the same-branch gate log"
+    && ok "the serialisation wait was metered (${waits1b}ms)" \
+    || bad "the serialisation wait was metered" "no non-zero waited_ms= in the same-branch gate log"
 
 # --------------------------------------------------------------------------------------
 # CASE 3 (UC-17) — LOCK TIMEOUT DOES NOT FAULT THE BRANCH AND NEVER TOUCHES THE HOLDER'S

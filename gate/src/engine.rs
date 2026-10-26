@@ -84,6 +84,8 @@ struct State {
     gate_log: PathBuf,
     start: u64,
     waited: u64,
+    /// The tree-lock wait at millisecond precision; `waited` truncates a sub-second wait to 0.
+    waited_ms: u64,
     branch_tree: String,
     branch_tip: String,
     suite: String,
@@ -559,6 +561,7 @@ impl<'w, W: World> Trial<'w, W> {
         // gate.log's `waited=`, rather than the tree-lock wait overwriting it.
         let admission_waited = self.s.waited;
         let t0 = w.now();
+        let t0_ms = w.now_ms();
         loop {
             if w.tree_lock_try() {
                 break;
@@ -583,6 +586,7 @@ impl<'w, W: World> Trial<'w, W> {
         self.s.held_lock = true;
         self.s.tree = Some(tree.clone());
         let tree_waited = w.now() - t0;
+        self.s.waited_ms = w.now_ms().saturating_sub(t0_ms);
         self.s.waited = admission_waited + tree_waited;
         self.s.start = w.now();
         if tree_waited > 0 {
@@ -1803,7 +1807,7 @@ impl<'w, W: World> Trial<'w, W> {
             w.append(
                 &self.s.gate_log,
                 &format!(
-                    "{} {} {} waited={}s ran={}s rc={} {}{}\n",
+                    "{} {} {} waited={}s ran={}s rc={} {}{}{}\n",
                     w.utc(),
                     self.s.repo_name,
                     self.a.branch,
@@ -1811,7 +1815,8 @@ impl<'w, W: World> Trial<'w, W> {
                     ran,
                     vd.status,
                     vd.reason,
-                    meter_suffix(&self.s.compose, &self.s.phases, self.s.queue_secs)
+                    meter_suffix(&self.s.compose, &self.s.phases, self.s.queue_secs),
+                    if self.s.waited_ms > 0 { format!(" waited_ms={}", self.s.waited_ms) } else { String::new() }
                 ),
             );
             let run = crate::telemetry::GateRun {

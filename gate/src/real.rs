@@ -941,6 +941,12 @@ impl World for Real {
             .map(|d| d.as_secs())
             .unwrap_or(0)
     }
+    fn now_ms(&self) -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    }
     fn utc(&self) -> String {
         utc_of(self.now())
     }
