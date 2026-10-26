@@ -786,6 +786,12 @@ pub fn confirm_base(repo: &Repo, head: &str) -> Result<String, String> {
     Ok(base)
 }
 
+/// `round-vm refresh` of the template to the tree at `tree`: a no-op when it already holds that
+/// tree's recipe, and synchronous otherwise, so the next lease finds the landed recipe's image.
+pub fn template_refresh(env: &Env, tree: &Path) -> Result<(), String> {
+    run(Command::new(&env.round_vm).arg("refresh").arg(tree), "round-vm refresh").map(|_| ())
+}
+
 pub fn worktree_reset(repo: &Repo, wt: &Path, at_sha: &str) -> Result<(), String> {
     let _ = run(Command::new("git").arg("-C").arg(&repo.path).args(["worktree", "prune"]), "git worktree prune");
     if wt.join(".git").exists() {
@@ -2713,6 +2719,20 @@ mod pool_parity_tests {
 
         let _ = fs::remove_dir_all(&d);
     }
+    #[test]
+    fn template_refresh_runs_round_vm_refresh_on_the_tree_and_reports_its_failure() {
+        let d = testkit::TempDir::new("batcher-cut-refresh");
+        let env = lifecycle_tests_env(d.path());
+        let log = d.path().join("argv");
+        let stub = |code: i32| testkit::write_exe(&env.round_vm, &format!("#!/bin/sh\necho \"$@\" >> {}\nexit {code}\n", log.display()));
+        let tree = d.path().join("tree");
+        stub(0);
+        assert!(template_refresh(&env, &tree).is_ok());
+        assert_eq!(fs::read_to_string(&log).unwrap().trim(), format!("refresh {}", tree.display()));
+        stub(1);
+        assert!(template_refresh(&env, &tree).is_err(), "positive control: a failing refresh is reported");
+    }
+
     /// A pool fixture: a repo with `spira/<id>` branches, a spira-lc stand-in answering
     /// `list` (the given certified ids at their live tips, then every
     /// row in `lc_rows`) and `show`, and a bd stand-in whose `list` honours `--status` the way
