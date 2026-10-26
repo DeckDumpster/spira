@@ -1258,7 +1258,22 @@ fn harness_fault(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
         b.kv.get("retries")
             .and_then(|r| r.trim().parse().ok())
             .unwrap_or(0);
-    let max = c.s.verdict.infra_retries;
+    let mut max = c.s.verdict.infra_retries;
+    let lost = tagged(out, "runner-lost: ").last().map(|l| l.trim());
+    if let Some(lost) = lost {
+        max = max.min(1);
+        let market = tagged(out, "runner-market: ")
+            .last()
+            .map_or("unknown", |m| m.trim());
+        crate::telemetry::sink().push(
+            &[spira_otel::metrics::Point::Count {
+                name: "spira_queue_runner_lost",
+                value: 1,
+            }],
+            &[("repo", name), ("market", market)],
+        );
+        w.out(format!("verdict {name}: PR {pr} runner lost ({lost}, market {market}) — environment fault, no member charged"));
+    }
     if classify_fault_rerun(retries, max) {
         if let Some(r) = w.forge.run_id(&c.s.forge, b.path, &b.branch) {
             w.forge.workflow_rerun(&c.s.forge, b.path, &r);
@@ -1281,6 +1296,13 @@ fn harness_fault(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
         "verdict {name}: PR {pr} harness fault — retries exhausted; closing batch"
     ));
     close_and_certify(w, c, b);
+    if lost.is_some() {
+        w.scripts.mail_operator(
+            &format!("Merge queue: {name} runner lost twice on one tip (environment fault)"),
+            &format!("## Environment fault\nMerge queue batch for {name}: the CI runner vanished on {} consecutive runs of PR {pr} (head {}). No test failed and no member was ejected. Members returned to CERTIFIED.\n", retries + 1, b.head),
+        );
+        return OK;
+    }
     w.scripts.mail_operator(
         &format!("Merge queue: {name} CI fault after {} attempts", retries + 1),
         &format!(

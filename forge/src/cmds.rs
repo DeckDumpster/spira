@@ -510,6 +510,7 @@ pub fn check_status(
     let mut run_attributable = false;
     let mut capacity_line: Option<String> = None;
     let mut step_declares_fault = false;
+    let mut runner_lines: Vec<String> = Vec::new();
     if status == "green" || status == "red" {
         run_attributable = true;
         if let Some(rid) = &run_id {
@@ -590,6 +591,19 @@ pub fn check_status(
             if step_declares_fault {
                 status = "harness_fault".to_string();
             }
+            if let Some(lost) = jv.as_ref().and_then(runner_lost) {
+                status = "harness_fault".to_string();
+                runner_lines.push(format!("runner-lost: {lost}"));
+                let market = gh.call(
+                    Some(repo),
+                    &["api", "repos/{owner}/{repo}/actions/variables/SPILL_MARKET"],
+                );
+                let market = parse(&market.stdout)
+                    .and_then(|v| jstr(&v, "value"))
+                    .filter(|m| !m.is_empty())
+                    .unwrap_or_else(|| "unknown".into());
+                runner_lines.push(format!("runner-market: {market}"));
+            }
         }
     }
 
@@ -624,6 +638,7 @@ pub fn check_status(
         lines.extend(step_lines);
     }
     lines.extend(capacity_line);
+    lines.extend(runner_lines);
     for l in &build_err_lines {
         if !l.is_empty() {
             lines.push(format!("build-error: {l}"));
@@ -872,6 +887,30 @@ fn bad_job_id(v: &Value, name: &str) -> Option<String> {
             if !concl.is_empty() && concl != "success" {
                 return j.get("id").map(|id| id.to_string());
             }
+        }
+    }
+    None
+}
+
+/// `<job> / <step>` of the first job or step a vanished runner ended: cancelled or timed out,
+/// never a test failing. A red batch carrying one is the environment's, not a member's.
+fn runner_lost(v: &Value) -> Option<String> {
+    const LOST: [&str; 2] = ["cancelled", "timed_out"];
+    let lost = |x: &Value| {
+        jstr(x, "conclusion").is_some_and(|c| LOST.contains(&c.to_lowercase().as_str()))
+    };
+    for j in v.get("jobs").and_then(Value::as_array)? {
+        let name = jstr(j, "name").unwrap_or_default();
+        let step = j
+            .get("steps")
+            .and_then(Value::as_array)
+            .and_then(|ss| ss.iter().find(|s| lost(s)))
+            .and_then(|s| jstr(s, "name"));
+        if let Some(step) = step {
+            return Some(format!("{name} / {step}"));
+        }
+        if lost(j) {
+            return Some(name);
         }
     }
     None
