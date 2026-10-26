@@ -1385,6 +1385,20 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     }
 
     ph.mark("resolve");
+    let _unit_lease = if crate::unit::selected(&active)
+        && !(deps.env)(admission::INHERIT_ENV).as_deref().is_some_and(admission::is_gate_token)
+    {
+        let l = admit(admission::Pool::Unit, 1);
+        shift(l.waited);
+        crate::telemetry::note_queue_wait("unit", l.waited);
+        if l.waited > 0 {
+            deps.log(&format!("queue-wait={}s pool=unit", l.waited));
+            ph.mark("admit-unit");
+        }
+        Some(l)
+    } else {
+        None
+    };
     // ---- build in place (or stage the prebuilt set: D8) -----------------------------
     let (pdir, artifacts) = match &prebuilt {
         Some(_) => (
