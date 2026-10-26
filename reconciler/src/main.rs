@@ -1443,9 +1443,19 @@ fn base_fences(cfg: &Config, tree: &str, sha: &str) -> Vec<Fence> {
     ]
 }
 
+fn active_release(cfg: &Config) -> String {
+    if cfg.releases_dir.as_os_str().is_empty() {
+        return cfg.release.clone();
+    }
+    fs::canonicalize(cfg.releases_dir.join("current"))
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| cfg.release.clone())
+}
+
 fn lint_awaiting_activation(cfg: &Config, repo: &str, sha: &str) -> Option<RawStatus> {
     let git = &cfg.seams.git;
-    let release = run_cmd(git, &["-C", repo, "rev-parse", "--verify", "--quiet", &format!("{}^{{commit}}", cfg.release)]);
+    let release = run_cmd(git, &["-C", repo, "rev-parse", "--verify", "--quiet", &format!("{}^{{commit}}", active_release(cfg))]);
     let release = release.trim();
     if release.is_empty() || run_cmd_ok(git, &["-C", repo, "merge-base", "--is-ancestor", sha, release]) {
         return None;
@@ -2711,6 +2721,20 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn a_built_but_unactivated_release_containing_main_is_still_pending() {
+        let (dir, cfg, release, main) = activation_fixture("activation-unflipped");
+        let releases = dir.join("releases");
+        fs::create_dir_all(releases.join(&release)).unwrap();
+        fs::create_dir_all(releases.join(&main)).unwrap();
+        std::os::unix::fs::symlink(releases.join(&release), releases.join("current")).unwrap();
+        let cfg = Config { release: main.clone(), releases_dir: releases.clone(), now_secs: 1000 + 599, ..cfg };
+        assert!(matches!(lint_of(&cfg), RawStatus::Deliberate { .. }));
+        fs::remove_file(releases.join("current")).unwrap();
+        std::os::unix::fs::symlink(releases.join(&main), releases.join("current")).unwrap();
+        assert!(matches!(lint_of(&cfg), RawStatus::Gap { observed, .. } if observed.contains("lint red at")));
     }
 
     #[test]
