@@ -165,6 +165,19 @@ rm -rf "$TMP/run/solo-skips"
 case "$out" in *sp-prw*WAITING*) bad=1 ;; *) bad=0 ;; esac
 is "a pr-mode bead is not waiting for a round" "0" "$bad"
 
+mkdir -p "$TMP/q/widgets"; printf 'sp-int sp-m1 sp-m2\n' > "$TMP/q/widgets/integrations"
+tl_config SPIRA_QUEUE_DIR="$TMP/q"
+board "$(row sp-m1 SUBMITTED "$OLD" '[]')" "$(row sp-m2 CERTIFIED "$OLD" '[]')" "$(row sp-int READY "$OLD" '[]')" "$(row sp-free SUBMITTED "$OLD" '[]')" \
+    -- "$(cont sp-m1 '["repo:widgets"]')" "$(cont sp-m2 '["repo:widgets"]')" "$(cont sp-int '["repo:widgets"]')" "$(cont sp-free '["repo:widgets"]')"
+out="$(run --show)"
+want "positive control: a member of no integration is still WAITING" "SUSPECT sp-free SUBMITTED WAITING" "$out"
+nowant "a member of an open integration is not WAITING" "SUSPECT sp-m1" "$out"
+nowant "a certified member of an open integration is not WAITING" "SUSPECT sp-m2" "$out"
+want "a stalled integration is reported naming its members" "SUSPECT sp-int READY INTEGRATION STALLED over 120m in READY; members sp-m1 sp-m2" "$out"
+board "$(row sp-m1 SUBMITTED "$OLD" '[]')" -- "$(cont sp-m1 '["repo:widgets"]')"
+want "a member whose integration is no longer open is WAITING again" "SUSPECT sp-m1 SUBMITTED WAITING" "$(run --show)"
+tl_config SPIRA_QUEUE_DIR=
+
 ropen() { printf '{"id":"%s","labels":["repo:widgets"],"issue_type":"task","status":"open","priority":0,"title":"fix the thing"}' "$1"; }
 : > "$TMP/inbox"; : > "$STUB_DIR/creates.log"
 board -- "$(ropen sp-orph)"
