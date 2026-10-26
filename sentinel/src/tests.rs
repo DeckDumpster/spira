@@ -192,6 +192,7 @@ impl World {
             ("SPIRA_MAX_AEONS", ""),
             ("SPIRA_MAX_LIVE_AEONS", ""),
             ("SPIRA_LANES_MAX_LIVE", ""),
+            ("SPIRA_LANES_RESERVE", "1"),
             ("SPIRA_QUEUE_THROTTLE_OVERRIDE", ""),
             ("SPIRA_SUMMON_LOCK_WAIT", "30"),
             ("SPIRA_LANES", "ops groomer qa maechen czar warden"),
@@ -234,6 +235,7 @@ impl World {
             max_aeons: opt("SPIRA_MAX_AEONS"),
             max_live_aeons: opt("SPIRA_MAX_LIVE_AEONS"),
             lanes_max_live: opt("SPIRA_LANES_MAX_LIVE"),
+            lanes_reserve: get("SPIRA_LANES_RESERVE").parse().unwrap_or(1),
             queue_throttle_override: get("SPIRA_QUEUE_THROTTLE_OVERRIDE"),
             summon_lock_wait: get("SPIRA_SUMMON_LOCK_WAIT").parse().unwrap_or(30),
             lanes: get("SPIRA_LANES"),
@@ -976,7 +978,7 @@ fn a_task_fayth_yields_the_last_slot_to_a_ready_lane_unless_the_lane_has_no_room
 
     let l = ladder("ln-last", TASK, LANE, &[("builder", 3)], &[("ops", 1), ("builder", 1)]);
     assert!(!l.summon("builder", None, &caps));
-    assert!(l.sink.has("1 fleet slot remaining") && l.sink.has("held back"), "{}", l.sink.text());
+    assert!(l.sink.has("1 fleet slot(s) remaining") && l.sink.has("held back"), "{}", l.sink.text());
     assert!(!l.sink.has("at concurrency cap"));
 
     // The ready lane is at its own cap (one live), the collective lane cap is slack.
@@ -985,6 +987,27 @@ fn a_task_fayth_yields_the_last_slot_to_a_ready_lane_unless_the_lane_has_no_room
 
     let l = ladder("ln-idle", TASK, LANE, &[("builder", 3)], &[("ops", 0), ("builder", 1)]);
     assert!(l.summon("builder", None, &caps), "{}", l.sink.text());
+}
+
+#[test]
+fn the_lane_reserve_is_tunable_and_needs_no_lane_cap() {
+    let max = [("SPIRA_MAX_LIVE_AEONS", "4")];
+    let l = ladder("rs-nocap", TASK, LANE, &[("builder", 3)], &[("ops", 1), ("builder", 1)]);
+    assert!(!l.summon("builder", None, &max));
+    assert!(l.sink.has("held back"), "{}", l.sink.text());
+
+    let two = [("SPIRA_MAX_LIVE_AEONS", "4"), ("SPIRA_LANES_RESERVE", "2")];
+    let l = ladder("rs-two", TASK, LANE, &[("builder", 2)], &[("ops", 1), ("builder", 1)]);
+    assert!(!l.summon("builder", None, &two));
+    let l = ladder("rs-two-free", TASK, LANE, &[("builder", 1)], &[("ops", 1), ("builder", 1)]);
+    assert!(l.summon("builder", None, &two), "{}", l.sink.text());
+
+    let off = [("SPIRA_MAX_LIVE_AEONS", "4"), ("SPIRA_LANES_RESERVE", "0")];
+    let l = ladder("rs-off", TASK, LANE, &[("builder", 3)], &[("ops", 1), ("builder", 1)]);
+    assert!(l.summon("builder", None, &off), "{}", l.sink.text());
+
+    let l = ladder("rs-idle", TASK, LANE, &[("builder", 3)], &[("ops", 0), ("builder", 1)]);
+    assert!(l.summon("builder", None, &max), "{}", l.sink.text());
 }
 
 #[test]

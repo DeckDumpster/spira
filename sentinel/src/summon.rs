@@ -585,31 +585,25 @@ impl<'a> Sentinel<'a> {
                     }
                 }
             }
-            if let Some(lanes_max) = self.cfg.lanes_max_live {
-                let is_lane = !spira_config::chamber::fayth_get(home, f, "FAYTH_LANE", "").is_empty();
-                if is_lane {
+            let is_lane = !spira_config::chamber::fayth_get(home, f, "FAYTH_LANE", "").is_empty();
+            if is_lane {
+                if let Some(lanes_max) = self.cfg.lanes_max_live {
                     let (_, lane_fayths) = self.task_and_lane_fayths();
                     let live_lanes = self.lanes_live_total(&lane_fayths);
                     if live_lanes >= lanes_max {
                         self.log(&format!("CHECK7 {f}: {live_lanes}/{lanes_max} lane slot(s) in use — not summoning"));
                         return Attempt { summoned: false, ready: reuse_ready };
                     }
-                } else {
-                    let inv_slots_free = max_live - live_all;
-                    if inv_slots_free == 1 && !self.lanes_yielding.get() {
-                        let (_, lane_fayths) = self.task_and_lane_fayths();
-                        let live_lanes = self.lanes_live_total(&lane_fayths);
-                        if live_lanes < lanes_max {
-                            for lf in &lane_fayths {
-                                if let ReadyAnswer::Count(lf_r) = self.fayth_ready(lf) {
-                                    if lf_r > 0 {
-                                        let lf_free = self.fayth_free(lf, None, None);
-                                        if lf_free > 0 {
-                                            self.log(&format!("CHECK7 {f}: 1 fleet slot remaining, held back — {lf} has {lf_r} ready lane work"));
-                                            return Attempt { summoned: false, ready: reuse_ready };
-                                        }
-                                    }
-                                }
+                }
+            } else if self.cfg.lanes_reserve > 0 && max_live - live_all <= self.cfg.lanes_reserve && !self.lanes_yielding.get() {
+                let (_, lane_fayths) = self.task_and_lane_fayths();
+                let live_lanes = self.lanes_live_total(&lane_fayths);
+                if self.cfg.lanes_max_live.is_none_or(|m| live_lanes < m) {
+                    for lf in &lane_fayths {
+                        if let ReadyAnswer::Count(lf_r) = self.fayth_ready(lf) {
+                            if lf_r > 0 && self.fayth_free(lf, None, None) > 0 {
+                                self.log(&format!("CHECK7 {f}: {} fleet slot(s) remaining, held back — {lf} has {lf_r} ready lane work", max_live - live_all));
+                                return Attempt { summoned: false, ready: reuse_ready };
                             }
                         }
                     }
