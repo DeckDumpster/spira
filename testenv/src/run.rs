@@ -2146,6 +2146,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             ("cpu_busy_pct", cpu_pct),
             ("suites_wall_s", suites_wall.to_string()),
             ("build_wall_s", build_wall_secs.to_string()),
+            ("suite_cap_s", s.suite_cap.to_string()),
         ],
     );
     let t_tail = Instant::now();
