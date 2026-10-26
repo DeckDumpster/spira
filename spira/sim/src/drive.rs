@@ -45,6 +45,8 @@ pub struct StepDef {
     pub script: Vec<String>,
     /// With `file`: the bead's priority (bd's `-p`); 2 when absent.
     pub priority: Option<u8>,
+    /// With `file`: the bead's description (bd's `-d`), e.g. the `## Build` section a builder needs.
+    pub body: Option<String>,
     /// With `file` or `claim`: the world repository the bead belongs to; the world's own when absent.
     pub repo: Option<String>,
 }
@@ -195,6 +197,9 @@ impl StepDef {
         if self.priority.is_some_and(|p| p > 4) || (self.priority.is_some() && self.file.is_none()) {
             return Err(format!("scenario: step at {}: priority is 0-4 and belongs to a file step", self.at));
         }
+        if self.body.is_some() && self.file.is_none() {
+            return Err(format!("scenario: step at {}: body belongs to a file step", self.at));
+        }
         if self.repo.is_some() && self.file.is_none() && self.claim.is_none() {
             return Err(format!("scenario: step at {}: repo belongs to a file or claim step", self.at));
         }
@@ -207,7 +212,7 @@ impl StepDef {
             (None, Some(b), None) if self.script.is_empty() => {
                 let b = bead_id(b)?;
                 let named = self.repo.as_ref().map(|r| format!(" --repo {r}")).unwrap_or_default();
-                Ok(format!("bd -C \"$SIM_BEADS_DB\" create {} --id {b} -t task -p {} -l spira -l plan -l repo:{repo} --silent >/dev/null && spira-lc create-bead {b}{named}", shell_quote(&format!("sim {b}")), self.priority.unwrap_or(2)))
+                Ok(format!("bd -C \"$SIM_BEADS_DB\" create {} --id {b} -t task -p {} -l spira -l plan -l repo:{repo}{} --silent >/dev/null && spira-lc create-bead {b}{named}", shell_quote(&format!("sim {b}")), self.priority.unwrap_or(2), self.body.as_ref().map(|d| format!(" -d {}", shell_quote(d))).unwrap_or_default()))
             }
             (None, None, Some(b)) if !self.script.is_empty() => {
                 let b = bead_id(b)?;
@@ -249,6 +254,10 @@ pub struct Scenario {
     pub invariants: Vec<SqlDef>,
     #[serde(default, rename = "expect")]
     pub expects: Vec<SqlDef>,
+    /// The world's summon runs the real `aeon` with the stub agent as its `SPIRA_AGENT`, and the
+    /// brief the agent receives is the `briefs` table.
+    #[serde(default)]
+    pub real_aeon: bool,
     /// Read the bead store's rows (`bd`) into `bead_state` too; always so when there are seeds.
     #[serde(default)]
     pub bead_rows: bool,
@@ -700,6 +709,12 @@ pub fn drive(
             }
         }
     };
+    if sc.real_aeon {
+        let command = format!("printf '%s\\n' '{}' >> \"${}\"", crate::summon::REAL_AEON, crate::agent::SCENARIO_VAR);
+        let call = call.clone();
+        sim.add_scenario("real-aeon", Box::new(move |_| call(&command)));
+        sim.schedule_step(0, "real-aeon");
+    }
     for a in &sc.actors {
         let (command, lo, hi, call) = (a.command.clone(), a.duration_min, a.duration_max, call.clone());
         sim.add_actor(&a.name, a.staged, Box::new(move |_, rng| {

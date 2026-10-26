@@ -17,10 +17,21 @@ pub const RELEASE_ENV: &str = "SPIRA_SIM_RELEASE";
 pub const TESTENV_ENV: &str = "SPIRA_IN_TESTENV";
 /// Host-touching tools the loop calls by bare name at the end of a pass: `unit-ensure`
 /// (re)installs the user's systemd units, `target-reap` removes shared build directories. In a
-/// world each is `sim` invoked under that name, and does nothing.
-pub const INERT_TOOLS: &[&str] = &["unit-ensure", "target-reap"];
+/// world each is `sim` invoked under that name, and does nothing. `spira-lint` is one too: the
+/// aeon's fast tier runs it over the diff, and a world's sparse checkout lacks the crates its
+/// tree-wide rules judge (the commit hook puts the release's own on its PATH first and still runs).
+pub const INERT_TOOLS: &[&str] = &["unit-ensure", "target-reap", "spira-lint"];
 /// What the world's `SPIRA_SUMMON` runs: `sim` under this name, standing where `systemd-run` stands.
 pub const SUMMON_TOOL: &str = "sim-summon";
+
+/// The world's `SPIRA_AGENT`: a launcher giving the stub agent the scenario and state paths the aeon's restricted environment drops.
+pub const AGENT_LAUNCHER: &str = "sim-aeon-agent";
+
+/// The script at [`AGENT_LAUNCHER`].
+pub fn agent_launcher(agent: &Path, scenario: &Path, state: &Path) -> String {
+    let q = |p: &Path| format!("'{}'", p.display().to_string().replace('\'', "'\\''"));
+    format!("#!/bin/sh\nexport {}={} {}={}\nexec {} \"$@\"\n", crate::agent::SCENARIO_VAR, q(scenario), crate::agent::STATE_VAR, q(state), q(agent))
+}
 /// The release binaries the world itself calls; a prebuilt release without them is refused.
 const RELEASE_BINS: &[&str] = &["bin/spira-config", "bin/spira-lc"];
 /// The world's lifecycle service socket, under the world dir (sp-hq1v76).
@@ -603,6 +614,9 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
         link(&sim_exe, &bin.join("round-vm"))?;
         link(&sim_exe, &bin.join("sim"))?;
         link(&sim_exe, &bin.join(SUMMON_TOOL))?;
+        let launcher = bin.join(AGENT_LAUNCHER);
+        std::fs::write(&launcher, agent_launcher(&sim_exe.with_file_name("sim-agent"), &dir.join("agent.scenario"), &dir.join("agent-state"))).map_err(|e| e.to_string())?;
+        set_exec(&launcher)?;
         for tool in INERT_TOOLS {
             link(&sim_exe, &bin.join(tool))?;
         }
@@ -751,9 +765,10 @@ pub fn ensure_seed(repo: &Path, tree: &str) -> Result<PathBuf, String> {
 
 /// What a world's checkouts hold: the root files and the directories a world path reads from a
 /// worktree (workflows, lifecycle schema, the agent's `out/`, the sim's tables, timer units,
-/// harness scripts), not crate sources, docs, test suites or the config registry. A new
+/// harness scripts, and the fence scripts and allow list the commit hook's fence-scripts rule reads),
+/// not crate sources, docs, test suites or the config registry. A new
 /// worktree inherits the patterns, so every checkout the landing code makes is a fraction of the tree.
-const SPARSE_PATTERNS: &str = "/*\n!/*/\n/.github/\n/lifecycle/\n/out/\n/sim/\n/spira/\n/systemd/\n!/spira/test-*.sh\n!/spira/conf.d/\n";
+const SPARSE_PATTERNS: &str = "/*\n!/*/\n/.github/\n/lifecycle/\n/out/\n/sim/\n/spira/\n/systemd/\n!/spira/test-*.sh\n!/spira/conf.d/\n/spira/test-*-lint.sh\n/spira/test-*-fence.sh\n/spira-lint/fence-scripts-allow\n";
 
 /// A copy of a seed repo, its pack files linked rather than copied: a pack is never written to
 /// again, where refs, the index and the reflogs are, and those are copied.
@@ -899,6 +914,9 @@ pub fn home_settings(world: &Path, fixture: &str, bd: &Path) -> Vec<(String, Str
         ("spira.db".to_string(), bead_db(fixture).display().to_string()),
         ("spira.repo_map".to_string(), world.join(HOME).join(REGISTRY_ROWS).display().to_string()),
         ("spira.home_repo".to_string(), REPO_NAME.to_string()),
+        ("spira.agent".to_string(), world.join("bin").join(AGENT_LAUNCHER).display().to_string()),
+        ("spira.aeon_warm_base".to_string(), world.join("warm").display().to_string()),
+        ("spira.summon_jitter".to_string(), "0".to_string()),
     ]
 }
 

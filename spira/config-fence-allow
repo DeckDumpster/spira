@@ -59,7 +59,6 @@ spira/test-aeon-lifecycle-cutover.sh
 spira/test-aeon-prod-dirty.sh
 spira/test-aeon-resume-collision.sh
 spira/test-aeon-resume.sh
-spira/test-aeon-slain-attempts.sh
 spira/test-aeon-sweep.sh
 spira/test-aeon-wiki-dirty.sh
 spira/test-aeon-worktree-collision.sh

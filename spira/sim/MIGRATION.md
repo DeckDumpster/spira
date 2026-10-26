@@ -187,7 +187,7 @@ The world's `sentinel-summon` actor is `sentinel --summon-only` on `spira-summon
 world's `SPIRA_SUMMON` is `sim-summon` (`sim` under that name), standing where `systemd-run ... aeon`
 stands. Claim ranking is `spira-claim select`, the claim is `lc_claim_bead` under a virtual-time lease,
 and every applied claim is appended to the world's `claim-order`. `sim summon`'s hand-written Claim
-event is gone. The real aeon replaces the stub-agent launch in part 2.
+event is gone. The real aeon replaces the stub-agent launch in part 2 (below).
 
 | suite | scenario | suite-seconds removed | red on the planted defect |
 |---|---|---|---|
@@ -216,3 +216,45 @@ A third isolated testenv run of gate-verdict-kinds at the rebased tip passed in 
 A fourth gate-verdict-kinds run on the same tip was green (55s); the ejection did not reproduce.
 
 A fifth gate-verdict-kinds run under testenv on the tip rebased onto the landing ref was green (62s); sim lane and lint clean for the bead's files.
+
+# Sim D3/G1 part 2: the real aeon runs under the sentinel
+
+A scenario with `real_aeon = true` makes `sim-summon` run the real `aeon --home H <fayth>` the sentinel's
+summon argv names, with its `--setenv` pairs, instead of the hand-written claim and worktree. The aeon
+ranks, claims, builds its worktree, arms the commit hook, launches `SPIRA_AGENT`, tears down, and runs its
+fast tier. `SPIRA_AGENT` is the world's `bin/sim-aeon-agent`, a launcher that gives the stub agent
+(`sim-agent`) the scenario and state paths the model's restricted environment drops. A scenario's `claim`
+steps script the stub for the bead the aeon picks, and a `file` step may carry the bead's `body` (a builder
+refuses a bead with no `## Build`).
+
+The brief the agent received is the `briefs` trace table, one row per session: `bead`, `n` (the bead's
+sessions from 1), `argv` (newline-joined), `system` (the system prompt file, read before the aeon removes
+it), `prompt` (stdin), `cwd`, and `env` (the restricted environment as one JSON object). An `expect` or an
+`invariant` is SQL over it. A stub-mode scenario's rows carry an empty argv and prompt.
+
+World choices the real aeon forced: the aeon's `--home` is a directory of links to the release's harness
+tree (its guard against FAYTH keys nothing consumes judges a source workspace, which a release is not); the
+world's `spira-lint` is inert (the fast tier's tree-wide rules judge crates the sparse checkout does not
+carry), while the commit hook still runs the release's own; the sparse checkout keeps the fence scripts and
+allow list that hook reads; `spira.summon_jitter` is 0 and `spira.aeon_warm_base` is inside the world.
+
+| suite | scenario | suite-seconds removed | red on the planted defect |
+|---|---|---|---|
+| test-aeon-slain-attempts | `aeon-slain` | 8 | the slain release without its net-zero requeue event: `slain-gap.sh` exit 9, "has 1 attempt(s) after a slain release" |
+
+`aeon-brief` pins what the first session was handed (the builder's system prompt names the bead and its
+branch, repo project instructions reach the model, the session runs in the bead's worktree under an
+environment bound to the bead and holding no credential). It retires no suite by itself; it was seen red
+with `claude_argv`'s project-instructions condition inverted (`repo_instructions_reach_the_model` unmet).
+
+Left, and why:
+
+| suite | why it stays |
+|---|---|
+| test-fayth-project-instructions | half is static (each fayth file declares its value) and half is the archivist's `--add-dir`, neither a session the aeon runs |
+| test-aeon-lifecycle-cutover | the lifecycle functions called by name (`lc_claim_bead`, `lc_release_bead`) and the stacked-dependents ready set need their own rows and a state the world does not seed |
+| test-aeon-worktree-collision, test-aeon-prod-dirty*, test-aeon-resume*, test-concierge | they hold a worktree or a prior session's state across two aeons, or script the resume brief from a transcript; the world has no second concurrent aeon or seeded resume record |
+| test-aeon-dirty-commit, test-aeon-base-ref-qualify, test-branch-guard | `lib.sh` and hook functions called directly in a scratch repository, not a session |
+| test-guards | the PreToolUse fences bind the model's tool calls; a stub agent makes none |
+| test-timeout, test-thrash-teardown, test-aeon-elastic-concurrency | their remaining case is a real signal to a live process group or the aeon's concurrency count, which needs live aeon units (G2) |
+| test-sentinel-pass, test-dispatch-open-children, test-strand-*, test-czar-partition, test-warden, test-lanes | a full sentinel pass, the strand and czar binaries, or lane concurrency, which `--summon-only` does not run |
