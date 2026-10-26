@@ -245,17 +245,19 @@ fn serve_one(c: &mut std::net::TcpStream, samples: &Mutex<Vec<Stored>>) -> Vec<u
     }
     let mut matchers = Vec::new();
     let mut start = 0i64;
+    let mut end = i64::MAX / 1000;
     for pair in query.split('&') {
         let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
         match k {
             "match[]" => matchers.push(parse_selector(&unescape(v))),
             "start" => start = v.parse().unwrap_or(0),
+            "end" => end = v.parse().unwrap_or(end),
             _ => {}
         }
     }
     let held = samples.lock().unwrap();
     let mut series: std::collections::BTreeMap<std::collections::BTreeMap<String, String>, Vec<(i64, f64)>> = Default::default();
-    for s in held.iter().filter(|s| s.ms >= start * 1000 && matchers.iter().any(|m| m.iter().all(|c| c.accepts(&s.labels)))) {
+    for s in held.iter().filter(|s| s.ms >= start * 1000 && s.ms <= end * 1000 && matchers.iter().any(|m| m.iter().all(|c| c.accepts(&s.labels)))) {
         series.entry(s.labels.clone()).or_default().push((s.ms, s.value));
     }
     let mut out = String::new();

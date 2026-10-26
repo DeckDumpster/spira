@@ -702,20 +702,71 @@ pub fn parse_timer_nexts(text: &str) -> Result<BTreeMap<String, i64>, String> {
         .collect())
 }
 
-async fn executions(src: &Sources, now: i64) -> Result<Vec<Value>, String> {
-    let endpoint = src.metrics_endpoint.clone();
-    let since = (now - WEEK).max(0) as u64;
-    tokio::task::spawn_blocking(move || {
-        let rows = tsd::store::Reader::new(endpoint.as_deref()).and_then(|r| r.rows("unit-run-dbus", since)).map_err(|e| e.to_string())?;
-        let mut out: Vec<Value> = rows
-            .iter()
-            .filter_map(|r| Some(json!({"unit": r["unit"].as_str()?, "t": tsd::query::ts_of(r)?, "result": r["result"], "duration_ms": r["duration_ms"], "invocation_id": r["invocation_id"]})))
-            .collect();
-        out.sort_by_key(|r| r["t"].as_i64());
-        Ok(out)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+/// The week of `unit-run-dbus` executions, kept in memory and topped up from the store in
+/// bounded pieces, so no request exports the window.
+#[derive(Default)]
+pub struct History {
+    rows: BTreeMap<(i64, String, String), Value>,
+    cursor: i64,
+    pub synced: bool,
+    pub error: Option<String>,
+}
+
+impl History {
+    pub fn rows(&self) -> Vec<Value> {
+        self.rows.values().cloned().collect()
+    }
+
+    /// What the page says about the history itself, if it is not whole.
+    pub fn problem(&self) -> Option<String> {
+        match (&self.error, self.synced) {
+            (Some(e), _) => Some(e.clone()),
+            (None, false) => Some("history still loading from the metrics store".into()),
+            (None, true) => None,
+        }
+    }
+}
+
+const SYNC_PIECE: i64 = DAY;
+const SYNC_OVERLAP: i64 = 600;
+
+/// Reads the next pieces of the window into `hist`, committing each piece as it lands. A failure
+/// is recorded, never cached past the next sync, and leaves the rows already read.
+pub async fn sync_history(endpoint: Option<String>, hist: &tokio::sync::Mutex<History>, now: i64) {
+    let from = { hist.lock().await.cursor };
+    let mut from = if from == 0 { now - WEEK } else { from - SYNC_OVERLAP }.max(now - WEEK).max(0);
+    loop {
+        let to = (from + SYNC_PIECE).min(now);
+        let ep = endpoint.clone();
+        let piece = tokio::task::spawn_blocking(move || tsd::store::Reader::new(ep.as_deref()).and_then(|r| r.rows_between("unit-run-dbus", from as u64, to as u64)).map_err(|e| e.to_string()))
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|r| r);
+        let mut h = hist.lock().await;
+        match piece {
+            Err(e) => {
+                h.error = Some(format!("unit-run: {e}"));
+                return;
+            }
+            Ok(rows) => {
+                for r in rows {
+                    let (Some(unit), Some(t)) = (r["unit"].as_str(), tsd::query::ts_of(&r)) else { continue };
+                    let t = t as i64;
+                    let inv = r["invocation_id"].as_str().unwrap_or("").to_string();
+                    h.rows.insert((t, unit.to_string(), inv.clone()), json!({"unit": unit, "t": t, "result": r["result"], "duration_ms": r["duration_ms"], "invocation_id": inv}));
+                }
+                h.cursor = to;
+                if to >= now {
+                    let cutoff = now - WEEK;
+                    h.rows.retain(|k, _| k.0 >= cutoff);
+                    h.synced = true;
+                    h.error = h.rows.is_empty().then(|| format!("unit-run: metrics-store-no-series: no unit-run-dbus row since {}; refusing to report an empty window as all-clear", tsd::iso_utc(cutoff.max(0) as u64)));
+                    return;
+                }
+                from = to;
+            }
+        }
+    }
 }
 
 /// The unit set the reconciler declares: the Composite's Units resource, else the installer's enable manifest.
@@ -743,12 +794,12 @@ async fn declared_units(src: &Sources, path: &str) -> Result<BTreeSet<String>, S
     Ok(names)
 }
 
-pub async fn take(src: &Sources, now: i64) -> Snapshot {
+pub async fn take(src: &Sources, now: i64, history: &History) -> Snapshot {
     let path = {
         let inherited = std::env::var("PATH").unwrap_or_default();
         if src.extra_path.is_empty() { inherited } else { format!("{}:{inherited}", src.extra_path) }
     };
-    let (list, rows, nexts, declared) = tokio::join!(unit_list(src, &path), executions(src, now), timer_nexts(src, &path), declared_units(src, &path));
+    let (list, nexts, declared) = tokio::join!(unit_list(src, &path), timer_nexts(src, &path), declared_units(src, &path));
     let mut errors = Vec::new();
     let declared = declared.map_err(|e| errors.push(format!("declared units: {e}"))).ok();
     let (names, mut live) = list.unwrap_or_else(|e| {
@@ -763,11 +814,8 @@ pub async fn take(src: &Sources, now: i64) -> Snapshot {
         }),
         Err(e) => errors.push(format!("timers: {e}")),
     }
-    let rows = rows.unwrap_or_else(|e| {
-        errors.push(format!("unit-run: {e}"));
-        Vec::new()
-    });
-    let execs = parse_execs(&rows);
+    errors.extend(history.problem());
+    let execs = parse_execs(&history.rows());
     let (rows, foreign) = build(now, &parse_families(DEFAULT_FAMILIES), declared.as_ref(), &names, &live, &execs);
     Snapshot { taken: Instant::now(), now, rows, foreign, errors }
 }

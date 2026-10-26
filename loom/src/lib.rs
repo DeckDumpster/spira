@@ -88,6 +88,8 @@ impl Config {
     }
 }
 
+const UNITS_SYNC_WAIT: Duration = Duration::from_millis(300);
+
 pub struct Loom {
     cfg: Config,
     /// The ops snapshot cache. A 5-second TTL: two small file reads and one systemctl call.
@@ -96,6 +98,8 @@ pub struct Loom {
     /// concurrent viewers share one.
     units_cell: Mutex<Option<Arc<units::Snapshot>>>,
     units_refreshing: AtomicBool,
+    units_history: tokio::sync::Mutex<units::History>,
+    units_syncing: AtomicBool,
     forge_ci: forge_rounds::Cache,
     /// `spira-lc` batch reads by query, each held for `cfg.cache`; a failed refresh serves the last good read, marked stale.
     batches_cell: Mutex<std::collections::HashMap<String, (std::time::Instant, Value)>>,
@@ -108,6 +112,8 @@ impl Loom {
             ops_cell: Mutex::new(None),
             units_cell: Mutex::new(None),
             units_refreshing: AtomicBool::new(false),
+            units_history: Default::default(),
+            units_syncing: AtomicBool::new(false),
             forge_ci: forge_rounds::Cache::default(),
             batches_cell: Mutex::new(Default::default()),
         }
@@ -117,7 +123,7 @@ impl Loom {
         &self.cfg
     }
 
-    pub async fn units_snapshot(&self) -> Arc<units::Snapshot> {
+    pub async fn units_snapshot(self: &Arc<Self>) -> Arc<units::Snapshot> {
         let mut held = self.units_cell.lock().await;
         if let Some(s) = held.as_ref().filter(|s| s.taken.elapsed() < self.cfg.cache) {
             return s.clone();
@@ -131,9 +137,23 @@ impl Loom {
             desired_dir: self.cfg.desired_dir.clone(),
             units_install: self.cfg.units_install.clone(),
         };
-        let snap = Arc::new(units::take(&src, now_s()).await);
+        self.sync_units_history().await;
+        let snap = Arc::new(units::take(&src, now_s(), &*self.units_history.lock().await).await);
         *held = Some(snap.clone());
         snap
+    }
+
+    /// Tops the execution history up from the store in the background, waiting a bounded moment for it: a store slower than that is served as the history held, marked as loading or failed.
+    async fn sync_units_history(self: &Arc<Self>) {
+        if self.units_syncing.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let me = self.clone();
+        let task = tokio::spawn(async move {
+            units::sync_history(me.cfg.metrics_endpoint.clone(), &me.units_history, now_s()).await;
+            me.units_syncing.store(false, Ordering::Release);
+        });
+        let _ = tokio::time::timeout(UNITS_SYNC_WAIT, task).await;
     }
 
     /// The units snapshot as held, never waiting on the source: a page with a latency budget
