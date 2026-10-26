@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# stale-drafts.sh — list spira-release-* draft releases older than a day and exit 1 if
+# stale-drafts.sh — list spira-release-* and spira-N.N.N draft releases older than a day and exit 1 if
 # there are any. A cut that did not publish retracts its own draft; one left behind
 # sorts above every published release for maintainers.
 #
@@ -21,7 +21,7 @@ _rows="$(timeout 5 gh release list "${_repo[@]}" --limit 1000 --json tagName,isD
     --jq '.[] | select(.isDraft) | [.tagName, .createdAt] | @tsv')" || {
     printf 'stale-drafts: gh release list failed\n' >&2; exit 2; }
 _cutoff="$(date -u -d "-${_hours} hours" +%Y-%m-%dT%H:%M:%SZ)"
-_stale="$(printf '%s\n' "$_rows" | awk -F'\t' -v c="$_cutoff" '$1 ~ /^spira-release-/ && $2 < c {print $1}')"
+_stale="$(printf '%s\n' "$_rows" | awk -F'\t' -v c="$_cutoff" '$1 ~ /^spira-(release-|[0-9])/ && $2 < c {print $1}')"
 [ -z "$_stale" ] && exit 0
 printf '%s\n' "$_stale"
 printf 'stale-drafts: %s draft release(s) older than %sh\n' "$(printf '%s\n' "$_stale" | wc -l)" "$_hours" >&2

@@ -243,7 +243,7 @@ jobs:
           TESTED_SHA: ${{ github.sha }}
         run: |
           set -uo pipefail
-          _newest="$(git tag -l 'spira-release-*' | sort | tail -1)"
+          _newest="$(git tag -l 'spira-*' | bash spira/release-order.sh latest)"
           if [ -n "$_newest" ] && [ "$(git rev-parse "${_newest}^{commit}")" = "$TESTED_SHA" ]; then
             printf 'cut skipped: %s is already the newest published release (%s)\n' "$TESTED_SHA" "$_newest" | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
