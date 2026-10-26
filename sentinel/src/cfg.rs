@@ -191,6 +191,7 @@ pub struct Declared {
     pub max_aeons: Option<i64>,
     pub max_live_aeons: Option<i64>,
     pub lanes_max_live: Option<i64>,
+    pub lanes_reserve: i64,
     pub queue_throttle_override: String,
     pub summon_lock_wait: u64,
     /// `SPIRA_LANES`, for CHECK 7's own log line (summon.rs) — display only.
@@ -239,6 +240,7 @@ impl Declared {
             max_aeons: opt_i64("SPIRA_MAX_AEONS")?,
             max_live_aeons: opt_i64("SPIRA_MAX_LIVE_AEONS")?,
             lanes_max_live: opt_i64("SPIRA_LANES_MAX_LIVE")?,
+            lanes_reserve: spira_config::process::cfg_parse::<i64>("SPIRA_LANES_RESERVE")?,
             queue_throttle_override: spira_config::process::cfg("SPIRA_QUEUE_THROTTLE_OVERRIDE")?,
             summon_lock_wait: spira_config::process::cfg_parse::<u64>("SPIRA_SUMMON_LOCK_WAIT")?,
             lanes: spira_config::process::cfg("SPIRA_LANES")?,
@@ -271,6 +273,7 @@ impl Declared {
             max_aeons: None,
             max_live_aeons: None,
             lanes_max_live: None,
+            lanes_reserve: 1,
             queue_throttle_override: String::new(),
             summon_lock_wait: 30,
             lanes: "ops groomer qa maechen czar warden mender pilgrimage".into(),
@@ -340,6 +343,8 @@ pub struct Cfg {
     pub max_live_aeons: Option<i64>,
     /// `SPIRA_LANES_MAX_LIVE`: the collective cap on lane aeons. `None` means no cap.
     pub lanes_max_live: Option<i64>,
+    /// `SPIRA_LANES_RESERVE`: fleet slots a task fayth leaves free while a lane has ready work.
+    pub lanes_reserve: i64,
     /// `SPIRA_QUEUE_THROTTLE_OVERRIDE`: "off" pins the task pool unthrottled regardless of
     /// the admission-throttle stamp.
     pub queue_throttle_override: String,
@@ -467,6 +472,7 @@ impl Cfg {
             max_aeons: d.max_aeons,
             max_live_aeons: d.max_live_aeons,
             lanes_max_live: d.lanes_max_live,
+            lanes_reserve: d.lanes_reserve,
             queue_throttle_override: d.queue_throttle_override,
             throttle_stamp: c
                 .get("SPIRA_THROTTLE_STAMP")
