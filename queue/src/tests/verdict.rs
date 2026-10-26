@@ -166,10 +166,7 @@ fn publish_green_that_would_not_fast_forward_keeps_the_record_and_says_so() {
 
 #[test]
 fn publish_pending_or_faulted_waits_and_changes_nothing() {
-    for (answer, word) in [
-        (Some("pending\n"), "pending"),
-        (None, ""),
-    ] {
+    for (answer, word) in [(Some("pending\n"), "pending"), (None, "")] {
         let t = T::new(LandMode::QueueLocal);
         publish_record(&t);
         t.forge.status.borrow_mut().push(answer.map(String::from));
@@ -198,7 +195,9 @@ fn a_publish_harness_fault_reruns_within_the_budget_and_never_files_a_bead() {
     assert!(t
         .out()
         .contains("publish PR 77 harness fault — re-running (attempt 2/2)"));
-    assert!(t.out().contains("harness fault — retries exhausted, waiting"));
+    assert!(t
+        .out()
+        .contains("harness fault — retries exhausted, waiting"));
     assert_eq!(
         t.lib
             .calls
@@ -209,7 +208,12 @@ fn a_publish_harness_fault_reruns_within_the_budget_and_never_files_a_bead() {
         1
     );
     assert!(t.qfile("publish").exists());
-    assert!(!t.lib.calls.borrow().iter().any(|c| c.starts_with("create_bug")));
+    assert!(!t
+        .lib
+        .calls
+        .borrow()
+        .iter()
+        .any(|c| c.starts_with("create_bug")));
     assert!(!has_call(&t.forge.calls, "pr-close"));
 }
 
@@ -533,7 +537,11 @@ fn a_runner_loss_reruns_once_then_escalates_as_environment_and_ejects_nobody() {
         .borrow_mut()
         .extend([Some(lost.into()), Some(lost.into())]);
     assert_eq!(t.run(&["verdict", "spira"]), 0);
-    assert!(t.out().contains("runner lost (ci / Run CI, market spot)"), "{}", t.out());
+    assert!(
+        t.out().contains("runner lost (ci / Run CI, market spot)"),
+        "{}",
+        t.out()
+    );
     assert!(t.out().contains("re-running (attempt 1/1)"), "{}", t.out());
     assert_eq!(t.run(&["verdict", "spira"]), 0);
     assert!(t.out().contains("runner lost"), "{}", t.out());
@@ -2175,6 +2183,46 @@ fn a_red_batch_writes_the_failing_lines_into_every_members_bead_once_per_run() {
             .count(),
         1,
         "one note per run, not per pass: {notes:?}"
+    );
+}
+
+#[test]
+fn a_red_batch_with_no_extracted_lines_still_notes_the_log_tail_and_bounds_a_long_excerpt() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    *t.forge.run.borrow_mut() = Some("77".into());
+    t.forge.status.borrow_mut().push(Some(
+        "red\nrun-id: 77\nrun-url: https://example.test/runs/77\nfailed-step: gate / suites\nstep-log: last words\n".into(),
+    ));
+    t.run(&["verdict", "spira"]);
+    {
+        let calls = t.lib.calls.borrow();
+        assert!(
+            calls.iter().any(|c| c.starts_with("comment sp-a ")
+                && c.contains("No failing lines could be extracted")
+                && c.contains("last words")),
+            "{calls:?}"
+        );
+    }
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    *t.forge.run.borrow_mut() = Some("78".into());
+    let mut red = String::from("red\nrun-id: 78\nfailed-step: gate / suites\n");
+    for i in 0..90 {
+        red.push_str(&format!("fail-evidence: FAIL line {i}\n"));
+    }
+    t.forge.status.borrow_mut().push(Some(red));
+    t.run(&["verdict", "spira"]);
+    let calls = t.lib.calls.borrow();
+    let note = calls
+        .iter()
+        .find(|c| c.starts_with("comment sp-a "))
+        .unwrap();
+    assert!(
+        note.contains("FAIL line 59")
+            && !note.contains("FAIL line 60")
+            && note.contains("30 more lines"),
+        "{note}"
     );
 }
 

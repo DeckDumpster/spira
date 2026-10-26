@@ -432,14 +432,25 @@ pub fn workflow_for<'a>(default: &'a str, table: &'a str, name: Option<&str>) ->
 fn other_workflow_ran(gh: &dyn Gh, repo: &Path, branch: &str, workflow: &str) -> bool {
     let rl = gh.call(
         Some(repo),
-        &["run", "list", "--branch", branch, "--json", "workflowName", "--limit", "1"],
+        &[
+            "run",
+            "list",
+            "--branch",
+            branch,
+            "--json",
+            "workflowName",
+            "--limit",
+            "1",
+        ],
     );
     if rl.code != 0 || first_elem(&parse(&rl.stdout).unwrap_or(Value::Array(vec![]))).is_none() {
         return false;
     }
     let wl = gh.call(
         Some(repo),
-        &["workflow", "list", "--all", "--json", "name", "--limit", "200"],
+        &[
+            "workflow", "list", "--all", "--json", "name", "--limit", "200",
+        ],
     );
     if wl.code != 0 {
         return false;
@@ -447,7 +458,9 @@ fn other_workflow_ran(gh: &dyn Gh, repo: &Path, branch: &str, workflow: &str) ->
     let Some(Value::Array(list)) = parse(&wl.stdout) else {
         return false;
     };
-    !list.iter().any(|w| jstr(w, "name").as_deref() == Some(workflow))
+    !list
+        .iter()
+        .any(|w| jstr(w, "name").as_deref() == Some(workflow))
 }
 
 pub fn check_status(
@@ -489,9 +502,8 @@ pub fn check_status(
     let head_sha = first.and_then(|r| jstr(r, "headSha")).unwrap_or_default();
     let run_url = first.and_then(|r| jstr(r, "url")).unwrap_or_default();
 
-    let missing_workflow = run_list.code == 0
-        && run_id.is_none()
-        && other_workflow_ran(gh, repo, branch, workflow);
+    let missing_workflow =
+        run_list.code == 0 && run_id.is_none() && other_workflow_ran(gh, repo, branch, workflow);
     let mut status = if missing_workflow {
         "harness_fault".to_string()
     } else if run_id.is_none() || run_status != "completed" {
@@ -574,11 +586,16 @@ pub fn check_status(
                             .into_iter()
                             .map(|l| format!("step-log: {}", redact_line(&l))),
                     );
-                    step_lines.extend(
-                        failure_excerpt(&logs.text())
-                            .into_iter()
-                            .map(|l| format!("fail-evidence: {l}")),
-                    );
+                    let mut excerpt = failure_excerpt(&logs.text());
+                    if excerpt.is_empty() {
+                        excerpt.push("no FAIL/assert/panic lines found; log tail:".into());
+                        excerpt.extend(
+                            step_log_tail(&logs.text(), STEP_LOG_TAIL)
+                                .iter()
+                                .map(|l| redact_line(l)),
+                        );
+                    }
+                    step_lines.extend(excerpt.into_iter().map(|l| format!("fail-evidence: {l}")));
                 }
             }
         }
@@ -752,7 +769,12 @@ const EXCERPT_MAX_MATCHES: usize = 60;
 
 fn is_failing_line(l: &str) -> bool {
     let t = l.trim_start();
-    l.contains("FAIL") || l.contains("not ok") || t.starts_with("!!")
+    l.contains("FAIL")
+        || l.contains("not ok")
+        || t.starts_with("!!")
+        || l.contains("panicked")
+        || l.contains("error[")
+        || l.to_ascii_lowercase().contains("assert")
 }
 
 fn is_summary_line(l: &str) -> bool {
@@ -826,7 +848,7 @@ pub fn redact_line(l: &str) -> String {
     out
 }
 
-/// Every failing line of a job log (`FAIL`, `not ok`, `!!`) with up to `EXCERPT_CONTEXT` lines
+/// Every failing line of a job log (`FAIL`, `not ok`, `!!`, `panicked`, `error[`, `assert`) with up to `EXCERPT_CONTEXT` lines
 /// either side while the context budget lasts, then the summary-count lines; timestamps stripped
 /// and credentials blanked. Gaps between kept runs are marked `...`.
 fn failure_excerpt(log: &str) -> Vec<String> {
@@ -1754,14 +1776,32 @@ pub const ROUND_AMI_WORKFLOW: &str = "round-ami-build.yml";
 pub fn ami_runs(gh: &dyn Gh, repo: &Path) -> Out {
     let r = gh.call(
         Some(repo),
-        &["run", "list", "--workflow", ROUND_AMI_WORKFLOW, "--limit", "20", "--json", "databaseId,status"],
+        &[
+            "run",
+            "list",
+            "--workflow",
+            ROUND_AMI_WORKFLOW,
+            "--limit",
+            "20",
+            "--json",
+            "databaseId,status",
+        ],
     );
-    let Some(runs) = (r.code == 0).then(|| parse(&r.stdout)).flatten().and_then(|v| v.as_array().cloned()) else {
+    let Some(runs) = (r.code == 0)
+        .then(|| parse(&r.stdout))
+        .flatten()
+        .and_then(|v| v.as_array().cloned())
+    else {
         return ok(vec!["?".into()]);
     };
     ok(runs
         .iter()
-        .filter(|run| matches!(jstr(run, "status").as_deref(), Some("queued" | "in_progress" | "waiting" | "pending" | "requested")))
+        .filter(|run| {
+            matches!(
+                jstr(run, "status").as_deref(),
+                Some("queued" | "in_progress" | "waiting" | "pending" | "requested")
+            )
+        })
         .filter_map(|run| run.get("databaseId").and_then(Value::as_u64))
         .map(|id| id.to_string())
         .collect())
@@ -1772,8 +1812,14 @@ pub fn ami_dispatch(gh: &dyn Gh, repo: &Path, ref_: &str) -> Out {
         eprintln!("forge: ami-dispatch: ref required");
         return fail(vec![]);
     }
-    let r = gh.call(Some(repo), &["workflow", "run", ROUND_AMI_WORKFLOW, "--ref", ref_]);
-    Out { code: r.code, lines: passthrough(&r) }
+    let r = gh.call(
+        Some(repo),
+        &["workflow", "run", ROUND_AMI_WORKFLOW, "--ref", ref_],
+    );
+    Out {
+        code: r.code,
+        lines: passthrough(&r),
+    }
 }
 
 /// The newest Round AMI run on `branch`: `none` before any run exists, `running <id>`,
@@ -1786,15 +1832,34 @@ pub fn ami_result(gh: &dyn Gh, repo: &Path, branch: &str) -> Out {
     }
     let r = gh.call(
         Some(repo),
-        &["run", "list", "--workflow", ROUND_AMI_WORKFLOW, "--branch", branch, "--limit", "1", "--json", "databaseId,status,conclusion"],
+        &[
+            "run",
+            "list",
+            "--workflow",
+            ROUND_AMI_WORKFLOW,
+            "--branch",
+            branch,
+            "--limit",
+            "1",
+            "--json",
+            "databaseId,status,conclusion",
+        ],
     );
-    let Some(runs) = (r.code == 0).then(|| parse(&r.stdout)).flatten().and_then(|v| v.as_array().cloned()) else {
+    let Some(runs) = (r.code == 0)
+        .then(|| parse(&r.stdout))
+        .flatten()
+        .and_then(|v| v.as_array().cloned())
+    else {
         return ok(vec!["?".into()]);
     };
     let Some(run) = runs.first() else {
         return ok(vec!["none".into()]);
     };
-    let id = run.get("databaseId").and_then(Value::as_u64).map(|n| n.to_string()).unwrap_or_default();
+    let id = run
+        .get("databaseId")
+        .and_then(Value::as_u64)
+        .map(|n| n.to_string())
+        .unwrap_or_default();
     if jstr(run, "status").as_deref() != Some("completed") {
         return ok(vec![format!("running {id}")]);
     }
@@ -1804,7 +1869,11 @@ pub fn ami_result(gh: &dyn Gh, repo: &Path, branch: &str) -> Out {
     let mut lines = vec![format!("failure {id}")];
     let view = gh.call(Some(repo), &["run", "view", &id, "--json", "jobs"]);
     if let Some(v) = (view.code == 0).then(|| parse(&view.stdout)).flatten() {
-        lines.extend(failed_steps(&v).into_iter().map(|(_, job, step)| format!("failed-step: {job} / {step}")));
+        lines.extend(
+            failed_steps(&v)
+                .into_iter()
+                .map(|(_, job, step)| format!("failed-step: {job} / {step}")),
+        );
     }
     ok(lines)
 }
