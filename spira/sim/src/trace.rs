@@ -173,7 +173,6 @@ impl Trace {
     }
 }
 
-const TABLES: &[&str] = &["events", "bead_state", "refs", "tags", "mail"];
 const TABLES: &[&str] = &["events", "bead_state", "refs", "tags", "mail", "briefs"];
 
 fn duckdb(db: &Path, sql: &str, json_out: bool) -> Result<String, String> {
