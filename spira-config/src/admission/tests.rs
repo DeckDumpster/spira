@@ -816,3 +816,27 @@ fn a_hold_releases_when_dropped_or_when_its_cap_passes() {
     }
     panic!("a hold past its cap must release");
 }
+
+#[test]
+fn a_second_unit_tests_batch_waits_for_the_first_and_names_it_while_other_pools_are_free() {
+    let d = run_dir();
+    let p = FakeProcs::with(&[(10, 1, 1), (20, 2, 1), (30, 3, 1)]);
+    let host = Host { cores: 32, mem_avail_mib: 36_000 };
+    let unit = || derive(Pool::Unit, host);
+    assert_eq!(unit(), 1);
+    let first = acquire(&Request { run: &d, pool: Pool::Unit, holder_pid: 10, who: "sp-a", inherit: None, weight: 1 }, &Seams { size_of: &unit, procs: &p, sleep: &|_| panic!("the first unit batch must not wait") }, &mut |_| {});
+    assert!(first.held());
+
+    let test = || derive(Pool::Test, host);
+    let other = acquire(&Request { run: &d, pool: Pool::Test, holder_pid: 30, who: "sp-c", inherit: None, weight: 1 }, &Seams { size_of: &test, procs: &p, sleep: &|_| panic!("a non-unit batch must not wait on the unit slot") }, &mut |_| {});
+    assert!(other.held());
+
+    let first = RefCell::new(Some(first));
+    let mut said = Vec::new();
+    let sleep = |_: Duration| {
+        first.borrow_mut().take();
+    };
+    let second = acquire(&Request { run: &d, pool: Pool::Unit, holder_pid: 20, who: "sp-b", inherit: None, weight: 1 }, &Seams { size_of: &unit, procs: &p, sleep: &sleep }, &mut |l: &str| said.push(l.to_string()));
+    assert!(second.held());
+    assert!(said[0].starts_with("waiting for a unit slot: 1 of 1 held by sp-a"), "{said:?}");
+}

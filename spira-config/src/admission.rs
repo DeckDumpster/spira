@@ -61,10 +61,11 @@ pub enum Pool {
     Test,
     Gate,
     Cold,
+    Unit,
 }
 
 impl Pool {
-    pub const ALL: [Pool; 4] = [Pool::Compile, Pool::Test, Pool::Gate, Pool::Cold];
+    pub const ALL: [Pool; 5] = [Pool::Compile, Pool::Test, Pool::Gate, Pool::Cold, Pool::Unit];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -72,6 +73,7 @@ impl Pool {
             Pool::Test => "test",
             Pool::Gate => "gate",
             Pool::Cold => "cold",
+            Pool::Unit => "unit",
         }
     }
 
@@ -91,6 +93,7 @@ impl Pool {
             Pool::Test => "SPIRA_TEST_PAR",
             Pool::Gate => "SPIRA_CERTIFY_PAR",
             Pool::Cold => "SPIRA_COLD_PAR",
+            Pool::Unit => "SPIRA_UNIT_PAR",
         }
     }
 }
@@ -121,7 +124,7 @@ impl Host {
 /// The derived size of a pool (DESIGN-admission.md §5): from the measured cost of one job of
 /// that phase. Never below 1.
 pub fn derive(pool: Pool, h: Host) -> u64 {
-    if pool == Pool::Cold {
+    if pool == Pool::Cold || pool == Pool::Unit {
         return COLD_PAR;
     }
     let (per_core, per_mib) = match pool {
@@ -133,7 +136,7 @@ pub fn derive(pool: Pool, h: Host) -> u64 {
         Pool::Test => (8, 8192),
         // The gate's own formula (gate/DESIGN.md), unchanged.
         Pool::Gate => (4, 400),
-        Pool::Cold => unreachable!("answered above"),
+        Pool::Cold | Pool::Unit => unreachable!("answered above"),
     };
     (h.cores / per_core).min(h.mem_avail_mib / per_mib).max(1)
 }
@@ -159,7 +162,7 @@ pub fn doc_size(pool: Pool, doc: &crate::SpiraToml) -> Option<u64> {
         Pool::Compile => s.compile_par,
         Pool::Test => s.test_par,
         Pool::Gate => s.certify_par,
-        Pool::Cold => None,
+        Pool::Cold | Pool::Unit => None,
     }
     .map(u64::from)
     .filter(|n| *n > 0)
