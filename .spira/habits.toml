@@ -26,3 +26,9 @@ budget_ms = 150000
 name = "traceability"
 glob = "{spira/test-*.sh,**/*.rs,docs/test-plan/*.toml}"
 budget_ms = 1500
+
+[[stop]]
+name = "unit-tests"
+format = "unit-tests"
+run = "testenv --suites unit-tests {branch}"
+budget_ms = 420000

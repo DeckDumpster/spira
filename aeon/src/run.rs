@@ -1557,7 +1557,7 @@ pub fn append(p: &Path, text: &str) {
 }
 
 /// The `habits` dispatcher, a release binary on the launcher's PATH like `work`.
-const HABITS_STOP_TIMEOUT_S: u32 = 180;
+const HABITS_STOP_TIMEOUT_S: u32 = 600;
 
 fn habit_hook(timeout_s: u32) -> String {
     format!("{{\"type\": \"command\", \"command\": \"habits\", \"timeout\": {timeout_s}}}")

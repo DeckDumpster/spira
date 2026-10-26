@@ -170,6 +170,90 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "unit-tests ignore rate: submitted after a red Stop, then red in a round",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 8,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "count((sum by (bead) (sum_over_time(habit_unit_tests_red_at_stop[$__range])) > 0) and on(bead) (sum by (bead) (sum_over_time(habit_unit_tests_red_in_round[$__range])) > 0)) / clamp_min(count(sum by (bead) (sum_over_time(habit_unit_tests_red_at_stop[$__range])) > 0), 1)",
+          "legendFormat": "ignored",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "unit-tests Stop outcomes: beads red at Stop, fixed before submit, red in a round",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_VM}"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 16,
+        "w": 16,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "count(sum by (bead) (sum_over_time(habit_unit_tests_red_at_stop[$__range])) > 0) or vector(0)",
+          "legendFormat": "red at Stop",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "count(sum by (bead) (sum_over_time(habit_unit_tests_fixed_before_submit[$__range])) > 0) or vector(0)",
+          "legendFormat": "fixed before submit",
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_VM}"
+          },
+          "expr": "count((sum by (bead) (sum_over_time(habit_unit_tests_red_at_stop[$__range])) > 0) and on(bead) (sum by (bead) (sum_over_time(habit_unit_tests_red_in_round[$__range])) > 0)) or vector(0)",
+          "legendFormat": "red at Stop, then red in a round",
+          "refId": "C"
+        }
+      ]
     }
   ]
 }

@@ -9,6 +9,7 @@ pub mod glob;
 mod parse;
 mod state;
 mod trace;
+mod unit;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -60,7 +61,7 @@ pub fn dispatch(raw: &str, state_dir: &Path, sink: &MetricsSink) -> Option<Strin
         }
     };
     let text = if input.hook_event_name.as_deref() == Some("Stop") {
-        stop(&cfg, &root, &repo, &mut st, sink)
+        stop(&cfg, &root, &repo, state_dir, &mut st, sink)
     } else {
         let file = input.tool_input.and_then(|t| t.file_path)?;
         edited(&cfg, &root, &cwd, &file, &repo, state_dir, &mut st, sink)
@@ -143,6 +144,10 @@ fn edited(cfg: &Config, root: &Path, cwd: &Path, file: &str, repo: &str, tmp: &P
     (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
+pub const UNIT_RED_AT_STOP: &str = "habit_unit_tests_red_at_stop";
+pub const UNIT_FIXED: &str = "habit_unit_tests_fixed_before_submit";
+pub const UNIT_RED_IN_ROUND: &str = "habit_unit_tests_red_in_round";
+
 fn push(sink: &MetricsSink, repo: &str, habit: &str, findings: u64, resolved: u64, ms: u64) {
     let mut points = vec![
         Point::Count { name: "habit_findings_total", value: findings },
@@ -222,7 +227,7 @@ fn complexity(h: &Habit, root: &Path, abs: &Path, rel: &str, touched: &diff::Ran
     Outcome::Findings(found)
 }
 
-fn stop(cfg: &Config, root: &Path, repo: &str, st: &mut state::State, sink: &MetricsSink) -> Option<String> {
+fn stop(cfg: &Config, root: &Path, repo: &str, tmp: &Path, st: &mut state::State, sink: &MetricsSink) -> Option<String> {
     if cfg.stop.is_empty() || st.stop_done {
         return None;
     }
@@ -233,6 +238,10 @@ fn stop(cfg: &Config, root: &Path, repo: &str, st: &mut state::State, sink: &Met
     crates.dedup();
     let mut lines = Vec::new();
     for s in &cfg.stop {
+        if s.is_unit_tests() {
+            lines.extend(unit::stop(s, root, repo, tmp, sink));
+            continue;
+        }
         for krate in &crates {
             let t = Instant::now();
             let argv = config::argv(&s.run, &[("crate", krate)]);

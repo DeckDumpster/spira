@@ -25,3 +25,9 @@ pub fn save(dir: &Path, session: &str, st: &State) {
         let _ = std::fs::write(file(dir, session), t);
     }
 }
+
+/// The bead-keyed record of a red unit-tests Stop, kept across sessions so a later green Stop on
+/// the same bead is recognised as the fix.
+pub fn red_marker(dir: &Path, bead: &str) -> PathBuf {
+    file(dir, &format!("unit-tests-red-{bead}"))
+}

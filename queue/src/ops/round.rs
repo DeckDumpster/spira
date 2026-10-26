@@ -2530,6 +2530,12 @@ fn eject(
         return FAIL;
     }
     let cause = EjectCause::decide(red, harness_fault, suites);
+    if red && suites.split(',').any(|s| s == UNIT_RED) {
+        crate::telemetry::sink().push(
+            &[spira_otel::metrics::Point::Count { name: "habit_unit_tests_red_in_round", value: 1 }],
+            &[("repo", c.r.name.as_str()), ("bead", id)],
+        );
+    }
     let mut unreturned: Vec<&str> = Vec::new();
     for (bead, why_text, own_cause) in
         std::iter::once((id, reason.clone(), cause)).chain(stacked.iter().map(|m| {

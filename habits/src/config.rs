@@ -31,6 +31,7 @@ pub struct Stop {
     pub run: String,
     #[serde(default = "default_stop_budget")]
     pub budget_ms: u64,
+    pub format: Option<String>,
 }
 
 fn default_budget() -> u64 {
@@ -39,6 +40,12 @@ fn default_budget() -> u64 {
 
 fn default_stop_budget() -> u64 {
     150_000
+}
+
+impl Stop {
+    pub fn is_unit_tests(&self) -> bool {
+        self.format.as_deref() == Some("unit-tests")
+    }
 }
 
 const DEFAULT_LIMIT: u32 = 20;

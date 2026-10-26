@@ -399,3 +399,31 @@ fn a_suite_with_no_uc_on_its_covers_line_is_named_and_one_with_a_uc_is_not() {
     r.write("spira/test-lease.sh", "#!/usr/bin/env bash\n# covers: spira/dispatch.sh UC-dispatch-01\necho hi\n");
     assert_eq!(r.post("spira/test-lease.sh").1.trim(), "");
 }
+
+const UNIT_STOP: &str = "\n[[stop]]\nname = \"unit-tests\"\nformat = \"unit-tests\"\nrun = \"testenv --suites unit-tests {branch}\"\nbudget_ms = 5000\n";
+
+const RED_OUT: &str = "test a::bad ... FAILED\n---- a::bad stdout ----\nassertion `left == right` failed\nVERDICT RED ran=1 red=unit-tests.sh\n";
+
+#[test]
+fn a_red_unit_tests_stop_reports_once_and_a_later_green_stop_counts_as_the_fix() {
+    use spira_otel::metrics::MetricsSink;
+    let r = Repo::new(Some(&format!("{HABITS}{UNIT_STOP}")));
+    r.write("a.rs", CLEAN_RS);
+    r.commit();
+    let sink_srv = testkit::otlp::Sink::start();
+    let sink = MetricsSink::new(Some(&sink_srv.addr), "spira-habits", std::time::Duration::from_secs(2));
+    let stop = |session: &str| {
+        let input = format!(r#"{{"session_id":"{session}","cwd":"{}","hook_event_name":"Stop"}}"#, r.dir.display());
+        let path = format!("{}:{}", r.bin.display(), std::env::var("PATH").unwrap_or_default());
+        let _env = testkit::env(&[("PATH", Some(&path)), ("SPIRA_WORK_BEAD_ID", Some("sp-seed"))]);
+        habits::dispatch(&input, &r.tmp, &sink)
+    };
+    testkit::write_exe(r.bin.join("testenv"), &format!("#!/bin/sh\ncat <<'EOF'\n{RED_OUT}EOF\n"));
+    let msg = stop("u1").expect("red is reported");
+    assert!(msg.contains("a::bad") && msg.contains("assertion") && msg.contains("RED"), "{msg}");
+    sink_srv.expect(&["habit_unit_tests_red_at_stop", "sp-seed"], std::time::Duration::from_secs(5));
+    testkit::write_exe(r.bin.join("testenv"), "#!/bin/sh\necho 'VERDICT GREEN ran=1'\n");
+    assert!(stop("u2").is_none(), "green says nothing");
+    sink_srv.expect(&["habit_unit_tests_fixed_before_submit", "sp-seed"], std::time::Duration::from_secs(5));
+    assert!(stop("u3").is_none());
+}
