@@ -38,6 +38,41 @@ pub(super) fn carried_by(w: &World, c: &Ctx, member: &str) -> Option<String> {
         .map(|(id, _)| id)
 }
 
+/// The integration `id` has landed at `head`: each recorded member not already terminal lands
+/// by content at the same sha, and the record is closed. Returns the members that did not land.
+pub(super) fn land_carried(w: &World, c: &Ctx, id: &str, head: &str) -> Vec<String> {
+    let all = entries(c);
+    let Some((_, members)) = all.iter().find(|(i, _)| i == id) else {
+        return Vec::new();
+    };
+    let kind = serde_json::json!({"ContentOnBase": {"proof": format!("integration:{id}@{head}")}})
+        .to_string();
+    let who = actor(w);
+    let mut stuck = Vec::new();
+    for m in members {
+        match w.lc.bead_state(m) {
+            None => stuck.push(format!("{m} (no readable row)")),
+            Some((state, _)) if TERMINAL.contains(&state.as_str()) => {}
+            Some((state, version)) => {
+                if let Err((rc, e)) = w.lc.bead_event(m, &state, version.trim(), &who, &kind) {
+                    stuck.push(format!("{m} (LANDED refused, rc={rc}: {e})"));
+                }
+            }
+        }
+    }
+    if stuck.is_empty() {
+        let rest: String = all
+            .iter()
+            .filter(|(i, _)| i != id)
+            .map(|(i, ms)| format!("{i} {}\n", ms.join(" ")))
+            .collect();
+        if let Err(e) = write_atomic(&c.queue_file(RECORD), &rest) {
+            stuck.push(format!("record {id} not closed: {e}"));
+        }
+    }
+    stuck
+}
+
 fn open_integration(w: &World, c: &Ctx) -> Option<String> {
     entries(c)
         .into_iter()

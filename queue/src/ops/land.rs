@@ -373,6 +373,14 @@ pub fn land_local_with(
         .iter()
         .filter(|m| !lc_deliver(w, &path, &head, m))
         .count();
+    for m in &ms {
+        for why in super::integrate::land_carried(w, &c, &m.id, &head) {
+            w.err(format!(
+                "queue.sh land-local: integration {}: member not landed: {why}",
+                m.id
+            ));
+        }
+    }
     // The landing is recorded; now publish its release (§8 D13). A fault never reverts the
     // ref or the records: it leaves `current` where it was and makes the exit non-zero.
     let outcome = plan.as_ref().zip(verified.as_deref()).map(|(p, sha)| {

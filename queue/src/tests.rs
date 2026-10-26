@@ -5436,3 +5436,34 @@ fn a_stacked_bead_is_recut_when_its_prerequisite_tip_moved() {
     );
     assert!(t.out().contains("sp-b: recut onto sp-a"), "{}", t.out());
 }
+
+#[test]
+fn landing_an_integration_lands_its_members_and_closes_the_record() {
+    let t = T::new(LandMode::QueueLocal);
+    local_repo(&t);
+    fs::create_dir_all(t.s().queue_dir.join("spira")).unwrap();
+    fs::write(t.qfile("integrations"), "sp-int sp-a sp-b\nsp-other sp-c\n").unwrap();
+    t.lc.bead_rows
+        .borrow_mut()
+        .insert("sp-b".into(), ("LANDED".into(), "5".into()));
+    assert_eq!(
+        t.run(&["land-local", "--head", "h1", "--members", "sp-int:ta"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let calls = t.lc.calls.borrow().clone();
+    let landed: Vec<_> = calls
+        .iter()
+        .filter(|c| c.starts_with("event bead sp-a ") && c.contains("integration:sp-int@h1"))
+        .collect();
+    assert_eq!(landed.len(), 1, "{calls:?}");
+    assert!(
+        !calls.iter().any(|c| c.starts_with("event bead sp-b ")),
+        "a member already landed is left as is: {calls:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(t.qfile("integrations")).unwrap(),
+        "sp-other sp-c\n"
+    );
+}
