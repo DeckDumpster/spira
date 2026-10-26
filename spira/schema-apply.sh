@@ -54,13 +54,15 @@ run()  {
     _out="$(eval "$@" 2>&1)"; _rc=$?
     if [ "$_rc" != 0 ]; then
         printf 'schema-apply: FAILED (rc=%s): %s\n' "$_rc" "$*" >&2
+        [ "$_rc" = 124 ] && printf '  timed out after %ss\n' "$SQL_DEADLINE" >&2
         [ -n "$_out" ] && printf '  %s\n' "$_out" >&2
         _FAILED="$_FAILED
   $*"
     fi
     return "$_rc"
 }
-sql()  { timeout 5 bd -C "$DB" sql "$1" 2>&1; }
+SQL_DEADLINE=60
+sql()  { timeout "$SQL_DEADLINE" bd -C "$DB" sql "$1" 2>&1; }
 sqlq() { sql "$1" | sed -n '3p' | tr -d ' '; }
 
 # THE ENGINE MUST BE ABLE TO CARRY THE SQL HALF AT ALL. bd in embedded mode answers
@@ -85,20 +87,20 @@ fi
 # type and a typo: with a type unregistered, `bd create --type <it>` is refused outright
 # (verified both directions). An existing record whose type was later unregistered survives.
 want_types="$(schema.sh custom-types | paste -sd, -)"
-have_types="$(timeout 5 bd -C "$DB" config get types.custom 2>/dev/null | tail -1)"
+have_types="$(timeout "$SQL_DEADLINE" bd -C "$DB" config get types.custom 2>/dev/null | tail -1)"
 if [ "$want_types" = "$have_types" ]; then say "custom types already exact: $want_types"
 else say "custom types: [$have_types] -> [$want_types]"
-     run "bd -C '$DB' config set types.custom '$want_types' >/dev/null"
+     run "bd -C '$DB' config set types.custom '$want_types'"
 fi
 
 # ---- 2. custom statuses ----------------------------------------------------------------
 # awaiting_ci is deliberately NOT here — it is a gh:run gate, because a status still requires
 # every reader to remember to exclude it while a gate makes the bead not ready.
 want_st="$(schema.sh statuses | paste -sd, -)"
-have_st="$(timeout 5 bd -C "$DB" config get status.custom 2>/dev/null | tail -1)"
+have_st="$(timeout "$SQL_DEADLINE" bd -C "$DB" config get status.custom 2>/dev/null | tail -1)"
 if [ "$want_st" = "$have_st" ]; then say "custom statuses already exact: $want_st"
 else say "custom statuses: [$have_st] -> [$want_st]"
-     run "bd -C '$DB' config set status.custom '$want_st' >/dev/null"
+     run "bd -C '$DB' config set status.custom '$want_st'"
 fi
 
 # ---- 3. the _is_work generated column ---------------------------------------------------
@@ -111,7 +113,7 @@ if [ "$(sqlq "select count(*) from information_schema.columns where table_name='
     say "_is_work already present"
 else
     say "_is_work: adding generated column over [$work_types]"
-    run "sql \"alter table issues add column _is_work tinyint as ($expr_sql) stored;\" >/dev/null"
+    run "sql \"alter table issues add column _is_work tinyint as ($expr_sql) stored;\""
 fi
 
 # ---- 4. the priority CHECK --------------------------------------------------------------
@@ -122,7 +124,7 @@ if [ "$(sqlq "select count(*) from information_schema.table_constraints where ta
     say "spira_priority_range already present"
 else
     say "spira_priority_range: adding CHECK (priority between 0 and 4)"
-    run "sql \"alter table issues add constraint spira_priority_range check (priority between 0 and 4);\" >/dev/null"
+    run "sql \"alter table issues add constraint spira_priority_range check (priority between 0 and 4);\""
 fi
 
 [ "$DRY" = 1 ] && { say "dry run — nothing changed"; exit 0; }
