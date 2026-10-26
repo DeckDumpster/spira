@@ -819,6 +819,7 @@ impl<'a> Pass<'a> {
             if closed {
                 self.log(&format!("CHECK6 {id}: base-fix: {br} is green on {name}'s red suite {suite} — certifying"));
                 if !self.lc_certify_pass(id, tip, "base-fix") {
+                    self.files.refuse_pass(br, tip);
                     self.log(&format!("CHECK6 {id}: lifecycle refused GatePass at {tip} — {br} stays uncertified"));
                     return;
                 }

@@ -679,6 +679,22 @@ fn a_red_base_files_one_incident_per_repository_per_pass_and_charges_nobody() {
 }
 
 #[test]
+fn a_refused_base_fix_gatepass_is_not_offered_again_for_the_same_tip() {
+    let h = H::new(LandMode::QueueLocal);
+    let mut fix = h.bead("sp-fix", "SUBMITTED", &[]);
+    fix.external_ref = Some("basefail:spira:test-x.sh".into());
+    h.beads.rows.borrow_mut().insert("sp-fix".into(), fix);
+    h.git.add("spira/sp-fix", "tf");
+    let out = "--- base\ntest-x.sh RED\n--- this branch\ntest-x.sh ok\ngate: VERDICT=BASE_FAIL reason=base-red branch=b repo=spira suite=test-x.sh\n";
+    h.tools.gates.borrow_mut().insert("spira/sp-fix".into(), (76, out.into()));
+    h.lc.refuse_pass.set(true);
+    h.run();
+    h.run();
+    assert_eq!(h.tools.gate_calls.borrow().len(), 1);
+    assert!(h.logged("lifecycle already refused GatePass"));
+}
+
+#[test]
 fn a_base_fix_green_on_its_suite_is_certified_first_and_despite_the_budget() {
     let mut h = H::new(LandMode::QueueLocal);
     h.s.land_maxsec = 3600;
