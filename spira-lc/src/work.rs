@@ -370,6 +370,32 @@ fn mender_summons_closed(conn: &Conn, bead_id: &str, actor: &str, verb: &str) ->
     }
 }
 
+/// The failure a mender summons names in its body (`Batch:`, `Pass:`, `Suite:` lines).
+fn summons_failure(text: &str) -> Option<(String, u32, String)> {
+    let field = |k: &str| text.lines().find_map(|l| l.trim().strip_prefix(k).map(|v| v.trim().to_string()));
+    Some((field("Batch: ")?, field("Pass: ")?.parse().ok()?, field("Suite: ")?))
+}
+
+/// A mender's summons does not close DONE while the failure it was filed for is still unsettled:
+/// the round would sit in attributing with nothing to move it.
+fn unrecorded_outcome_refusal(conn: &Conn, bead_id: &str, actor: &str, verb: &str) -> Option<(i32, String)> {
+    if actor != "mender" {
+        return None;
+    }
+    let (batch, pass, suite) = summons_failure(&crate::bd::show(bead_id).ok()?)?;
+    let row = crate::mending::fetch(conn, &batch, pass, &suite).ok()??;
+    if row.state.is_terminal() {
+        return None;
+    }
+    Some((
+        REFUSED,
+        format!(
+            "refused: work {verb} would close {bead_id} while {batch} pass {pass} {suite} is still {} — record it with `work mender outcome <spec> <mended|environment|flaky|return|unsure>`; if the summons names no spec, say so with `work blocked`",
+            row.state.as_str()
+        ),
+    ))
+}
+
 fn already_finished_noop(bead_id: &str, state: bead::BeadState) -> Option<(i32, String)> {
     match state {
         bead::BeadState::Done | bead::BeadState::Dropped => Some((0, format!("{bead_id} is already {}; nothing to do", state.as_str()))),
@@ -387,6 +413,9 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     };
     if let Some(quiet) = mender_summons_closed(conn, bead_id, &actor, "done") {
         return quiet;
+    }
+    if let Some(refusal) = unrecorded_outcome_refusal(conn, bead_id, &actor, "done") {
+        return refusal;
     }
     let Some(delivers) = flag(args, "--delivers") else {
         return (CANNOT_TELL, "work done: --delivers <path> is required".into());
@@ -1440,6 +1469,13 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_summons_body_names_its_failure() {
+        let body = "  spec: /x/y.json\n  Batch: r-1\n  Pass: 2\n  Suite: test-a.sh\n";
+        assert_eq!(super::summons_failure(body), Some(("r-1".into(), 2, "test-a.sh".into())));
+        assert_eq!(super::summons_failure("an integrate summons"), None);
+    }
+
     #[test]
     fn a_release_after_an_ask_is_seen_and_a_plain_release_is_not() {
         let h = |xs: &[(&str, &str)]| xs.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect::<Vec<_>>();
