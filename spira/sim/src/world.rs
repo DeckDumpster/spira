@@ -19,6 +19,8 @@ pub const TESTENV_ENV: &str = "SPIRA_IN_TESTENV";
 /// (re)installs the user's systemd units, `target-reap` removes shared build directories. In a
 /// world each is `sim` invoked under that name, and does nothing.
 pub const INERT_TOOLS: &[&str] = &["unit-ensure", "target-reap"];
+/// What the world's `SPIRA_SUMMON` runs: `sim` under this name, standing where `systemd-run` stands.
+pub const SUMMON_TOOL: &str = "sim-summon";
 /// The release binaries the world itself calls; a prebuilt release without them is refused.
 const RELEASE_BINS: &[&str] = &["bin/spira-config", "bin/spira-lc"];
 /// The world's lifecycle service socket, under the world dir (sp-hq1v76).
@@ -600,6 +602,7 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
         link(&sim_exe, &gh_bin)?;
         link(&sim_exe, &bin.join("round-vm"))?;
         link(&sim_exe, &bin.join("sim"))?;
+        link(&sim_exe, &bin.join(SUMMON_TOOL))?;
         for tool in INERT_TOOLS {
             link(&sim_exe, &bin.join(tool))?;
         }
@@ -617,7 +620,7 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
         std::fs::write(
             config.join("sim.env"),
             format!(
-                "SPIRA_RUN={}\nSPIRA_HOME={}\nSPIRA_SIM_GATE_RUNNER={}\nSIM_GH_DIR={}\nSIM_BIN={}\nSIM_PROBE={}\n{}={}\nSPIRA_RELEASE={}\nSPIRA_LC_SOCKET={}\nSPIRA_LC_HOST=127.0.0.1\nSPIRA_LC_PORT={}\nSPIRA_LC_USER=root\nSIM_BEADS_DB={}\n{}={}\n{}={}\nSPIRA_BATCHER_POLL_SECS={}\n{}",
+                "SPIRA_RUN={}\nSPIRA_HOME={}\nSPIRA_SIM_GATE_RUNNER={}\nSIM_GH_DIR={}\nSIM_BIN={}\nSIM_PROBE={}\n{}={}\nSPIRA_RELEASE={}\nSPIRA_LC_SOCKET={}\nSPIRA_LC_HOST=127.0.0.1\nSPIRA_LC_PORT={}\nSPIRA_LC_USER=root\nSIM_BEADS_DB={}\n{}={}\n{}={}\nSPIRA_BATCHER_POLL_SECS={}\nSPIRA_SUMMON={}\n{}",
                 run_dir.display(),
                 dir.join("release/spira").display(),
                 runner.display(),
@@ -635,6 +638,7 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
                 crate::agent::STATE_VAR,
                 dir.join("agent-state").display(),
                 BATCHER_POLL_SECS,
+                bin.join(SUMMON_TOOL).display(),
                 GO_RUNTIME_ENV
             ),
         )
@@ -826,8 +830,8 @@ fn prune_seeds(cache: &Path, keep: &Path) {
 }
 
 /// The world's suite runner. The last line of `gate-control` naming the branch's bead picks its verdict:
-/// `fail` (exit 1), `no-verdict` (75, a timeout) or `infra` (75, a harness fault); any other mode, or none,
-/// passes. Every run is appended to `gate-calls`.
+/// `fail` (exit 1), `fail-once` (exit 1, then passes), `no-verdict` (75, a timeout) or `infra` (75, a harness
+/// fault); any other mode, or none, passes. Every run is appended to `gate-calls`.
 pub const SUITE_RUNNER: &str = r#"#!/bin/sh
 dir=$(dirname "$0")
 bead=${SPIRA_GATE_BRANCH#spira/}
@@ -835,6 +839,7 @@ echo "$bead" >> "$dir/gate-calls"
 mode=$(awk -v b="$bead" '$1 == b { m = $2 } END { print m }' "$dir/gate-control" 2>/dev/null)
 case "$mode" in
 fail) echo "gate: VERDICT=FAIL reason=suite-red suite=sim-planted.sh"; exit 1 ;;
+fail-once) echo "$bead pass" >> "$dir/gate-control"; echo "gate: VERDICT=FAIL reason=suite-red suite=sim-planted.sh"; exit 1 ;;
 no-verdict) echo "gate: VERDICT=NO_VERDICT reason=timeout"; exit 75 ;;
 infra) echo "gate: VERDICT=NO_VERDICT reason=harness-fault"; exit 75 ;;
 esac

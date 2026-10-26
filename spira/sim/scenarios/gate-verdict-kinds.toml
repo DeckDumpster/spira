@@ -17,7 +17,7 @@ command = 'spira-config set spira.batcher_enable 0 "$SPIRA_TOML"'
 
 [[step]]
 at = 0
-command = "sh spira/sim/scenarios/steps/gate-mode.sh sp-gv01 fail"
+command = "sh spira/sim/scenarios/steps/gate-mode.sh sp-gv01 fail-once"
 
 [[step]]
 at = 0

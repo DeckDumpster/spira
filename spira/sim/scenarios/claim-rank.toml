@@ -1,0 +1,49 @@
+epoch = 1800000000
+horizon = 900000
+settle = 120000
+goal = "sp-cr01:SUBMITTED"
+real_actors = ["sentinel-summon"]
+
+[[step]]
+at = 0
+file = "sp-cr01"
+priority = 2
+
+[[step]]
+at = 0
+file = "sp-cr02"
+priority = 0
+
+[[step]]
+at = 0
+claim = "sp-cr01"
+script = ["commit out/cr01.txt", "submit"]
+
+[[step]]
+at = 0
+claim = "sp-cr02"
+script = ["commit out/cr02.txt", "submit"]
+
+[[step]]
+at = 30000
+command = "sh spira/sim/scenarios/steps/claim-rank.sh sp-cr02 sp-cr01"
+
+[[step]]
+at = 90000
+command = "sh spira/sim/scenarios/steps/claim-rank.sh sp-cr02 sp-cr01"
+
+[[invariant]]
+name = "step_failed"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit NOT IN (0, 3)"
+
+[[expect]]
+name = "first_ranked_submitted"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-cr02' AND lc_state = 'SUBMITTED'"
+
+[[expect]]
+name = "second_ranked_submitted"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-cr01' AND lc_state = 'SUBMITTED'"
+
+[[expect]]
+name = "order_checked"
+sql = "SELECT 1 FROM events WHERE kind = 'step' AND exit = 0 AND actor IN ('step5', 'step6')"

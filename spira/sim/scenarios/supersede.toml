@@ -1,6 +1,6 @@
 epoch = 1800000000
 horizon = 3600000
-settle = 600000
+settle = 900000
 goal = "sp-su01:LANDED"
 real_actors = ["sentinel-summon", "sentinel-landing", "sift", "gate-worker"]
 

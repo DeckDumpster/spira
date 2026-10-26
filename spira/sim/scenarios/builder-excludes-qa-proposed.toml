@@ -1,0 +1,55 @@
+epoch = 1800000000
+horizon = 900000
+settle = 240000
+goal = "sp-qa01:SUBMITTED"
+real_actors = ["sentinel-summon"]
+
+[[step]]
+at = 0
+file = "sp-qa01"
+
+[[step]]
+at = 0
+file = "sp-qa02"
+
+[[step]]
+at = 0
+command = 'bd -C "$SIM_BEADS_DB" label add sp-qa02 qa-proposed'
+
+[[step]]
+at = 0
+claim = "sp-qa01"
+script = ["commit out/qa01.txt", "submit"]
+
+[[step]]
+at = 0
+claim = "sp-qa02"
+script = ["commit out/qa02.txt", "submit"]
+
+[[step]]
+at = 30000
+command = "sh spira/sim/scenarios/steps/partition-excludes.sh sp-qa01 sp-qa02"
+
+[[step]]
+at = 150000
+command = "sh spira/sim/scenarios/steps/partition-excludes.sh sp-qa01 sp-qa02"
+
+[[step]]
+at = 300000
+command = "sh spira/sim/scenarios/steps/partition-excludes.sh sp-qa01 sp-qa02"
+
+[[invariant]]
+name = "step_failed"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit NOT IN (0, 3)"
+
+[[expect]]
+name = "plain_bead_claimed_and_submitted"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-qa01' AND lc_state = 'SUBMITTED'"
+
+[[expect]]
+name = "proposal_never_claimed"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-qa02' AND lc_state = 'READY'"
+
+[[expect]]
+name = "exclusion_checked"
+sql = "SELECT 1 FROM events WHERE kind = 'step' AND exit = 0 AND actor IN ('step6', 'step7', 'step8')"
