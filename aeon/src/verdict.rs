@@ -51,6 +51,16 @@ impl Run<'_> {
         spira_config::lc_state::parse_show(&o.stdout).ok().flatten()
     }
 
+    /// `spira-lc hold` unless the row is already terminal: the machine refuses a Hold from a
+    /// terminal state, and the refusal is noise this caller cannot act on. `None` = skipped.
+    pub(crate) fn hold_unless_terminal(&self, id: &str, kind: &str, reason: &str, actor: &str) -> Option<crate::util::Out> {
+        if self.lc_bead(id).is_some_and(|r| r.terminal()) {
+            self.log(&format!("{}: {id} is terminal — {kind} hold skipped", self.f()));
+            return None;
+        }
+        Some(self.d.exec.exec("spira-lc", &s(&["hold", id, kind, reason, actor]), None, None))
+    }
+
     fn ts_print(&self, msg: &str) {
         // aeon.sh printf'd these lines itself: `<ts> spira: <fayth>: <id> …`.
         self.d.sink.out(&util::log_line(self.now(), msg));

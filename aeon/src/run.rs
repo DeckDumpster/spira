@@ -257,7 +257,7 @@ impl<'a> Run<'a> {
         self.log(&format!("{}: {id} RAPID-RECUR: {count} consecutive sub-10s runs — parking, a setup loop cannot be learned from a retry", self.f()));
         let _ = self.d.bd.bd(&s(&["label", "add", &id, "overseer"]));
         // spira-lc's caller verb, as in verdict.rs's eviction-race escalation.
-        let _ = self.d.exec.exec("spira-lc", &s(&["hold", &id, "ask", &format!("rapid-recur: {count} consecutive sub-10s aeon summons"), self.f()]), None, None);
+        let _ = self.hold_unless_terminal(&id, "ask", &format!("rapid-recur: {count} consecutive sub-10s aeon summons"), self.f());
         bd::note(
             self.d.bd,
             &id,
@@ -282,7 +282,7 @@ impl<'a> Run<'a> {
         let id = &c.id;
         let reason = format!("no build spec: {id} has no `{}` section naming what to build. Choosing a mechanism is design work: file the outcome --for spike for a proposed spec, or add the section.", bead::BUILD_HEADING);
         self.release();
-        let _ = self.d.exec.exec("spira-lc", &s(&["hold", id, "ask", &reason, self.f()]), None, None);
+        let _ = self.hold_unless_terminal(id, "ask", &reason, self.f());
         self.note(&reason);
         self.log(&format!("{}: {id} {reason}", self.f()));
         self.ledger_done(0, "no-build-spec");
@@ -309,7 +309,7 @@ impl<'a> Run<'a> {
                 self.release();
                 let reason = escalation::hold_reason(st.stronger_rejections);
                 self.record_fact(escalation::ESCALATED, &format!("hold rejections={}", st.stronger_rejections));
-                let _ = self.d.exec.exec("spira-lc", &s(&["hold", id, "manual", &reason, escalation::HOLD_ACTOR]), None, None);
+                let _ = self.hold_unless_terminal(id, "manual", &reason, escalation::HOLD_ACTOR);
                 self.note(&reason);
                 self.log(&format!("{}: {id} {reason}", self.f()));
                 self.ledger_done(0, "escalation-hold");
@@ -1411,7 +1411,9 @@ impl<'a> Run<'a> {
         }
         let now = self.now();
         let reason = spira_config::lc_state::checkpoint_reason(now + checkpoint::HOLD_SECS);
-        let held = self.d.exec.exec("spira-lc", &s(&["hold", id, "wait", &reason, "aeon"]), None, None);
+        let Some(held) = self.hold_unless_terminal(id, "wait", &reason, "aeon") else {
+            return false;
+        };
         if !held.success() {
             self.log(&format!("{}: {id} checkpoint hold refused (rc={}): {}", self.f(), held.code, held.stdout.trim()));
             return false;
