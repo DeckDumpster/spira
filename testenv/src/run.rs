@@ -1351,9 +1351,11 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             (deps.env)("GITHUB_RUN_ID").as_deref(),
             (deps.env)("GITHUB_RUN_ATTEMPT").as_deref(),
         );
-        crate::resume::Store::new(backend, &key_inputs, &label)
+        let first_attempt = (deps.env)("GITHUB_RUN_ATTEMPT").as_deref() == Some("1");
+        crate::resume::Store::new(backend, &key_inputs, &label, !first_attempt)
     });
     if let Some(store) = &resume {
+        deps.log(&format!("resume: lookup took {} ms", store.lookup_time().as_millis()));
         let mut left = Vec::new();
         for n in std::mem::take(&mut active) {
             match store.passed(&n).filter(|_| !quarantined.contains(&n)) {
@@ -1978,6 +1980,9 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     };
     if let Some(line) = sim_session.as_ref().and_then(|x| x.pids_peak_line()) {
         deps.log(&format!("sim container: {line}"));
+    }
+    if let Some(store) = &resume {
+        store.flush();
     }
     let suites_wall = t_suites.elapsed().as_secs();
     ph.mark("suites");
