@@ -336,3 +336,66 @@ fn metrics_count_findings_and_the_resolution_of_the_previous_run() {
     let body = sink_srv.expect(&["habit_resolved_total"], std::time::Duration::from_secs(5));
     assert!(body.matches("habit_resolved_total").count() >= 2);
 }
+
+const TRACE_HABIT: &str = "[[habit]]\nname = \"traceability\"\nglob = \"{spira/test-*.sh,**/*.rs,docs/test-plan/*.toml}\"\nbudget_ms = 5000\n";
+const PLAN: &str = "api_version = \"test-plan/v1\"\narea = \"dispatch\"\n\n[[use_case]]\nid = \"UC-dispatch-01\"\ntier = \"T1\"\nstatement = \"a claim writes a lease\"\n\n[[use_case]]\nid = \"UC-dispatch-02\"\ntier = \"T1\"\nstatement = \"a stale lease is reclaimed\"\n";
+
+fn trace_repo() -> Repo {
+    let r = Repo::new(Some(TRACE_HABIT));
+    std::fs::create_dir_all(r.dir.join("docs/test-plan")).unwrap();
+    std::fs::create_dir_all(r.dir.join("dispatch/src")).unwrap();
+    r.write("docs/test-plan/dispatch.toml", PLAN);
+    r.write("dispatch/src/lib.rs", "pub fn f() {}\n");
+    r.commit();
+    r
+}
+
+const NEW_TEST: &str = "pub fn f() {}\n\n#[test]\nfn a_stale_lease_is_reclaimed() {\n    assert!(true);\n}\n";
+
+#[test]
+fn a_rust_test_naming_no_uc_gets_one_finding_with_candidates() {
+    let r = trace_repo();
+    r.write("dispatch/src/lib.rs", NEW_TEST);
+    let (code, out) = r.post("dispatch/src/lib.rs");
+    assert_eq!(code, 0);
+    let ctx = context(&out);
+    assert!(ctx.contains("traceability found 1 "), "{ctx}");
+    assert!(ctx.contains("a_stale_lease_is_reclaimed") && ctx.contains("UC-dispatch-02"), "{ctx}");
+}
+
+#[test]
+fn a_rust_test_naming_a_declared_uc_says_nothing() {
+    let r = trace_repo();
+    r.write("dispatch/src/lib.rs", &NEW_TEST.replace("#[test]\n", "#[test]\n// covers: UC-dispatch-02\n"));
+    let (code, out) = r.post("dispatch/src/lib.rs");
+    assert_eq!((code, out.trim()), (0, ""));
+}
+
+#[test]
+fn an_undeclared_uc_id_is_named() {
+    let r = trace_repo();
+    r.write("dispatch/src/lib.rs", &NEW_TEST.replace("#[test]\n", "#[test]\n// covers: UC-dispatch-77\n"));
+    let ctx = context(&r.post("dispatch/src/lib.rs").1);
+    assert!(ctx.contains("UC-dispatch-77 is not declared"), "{ctx}");
+}
+
+#[test]
+fn a_uc_added_to_the_plan_that_no_test_names_is_a_reminder_said_once() {
+    let r = trace_repo();
+    r.write("docs/test-plan/dispatch.toml", &format!("{PLAN}\n[[use_case]]\nid = \"UC-dispatch-03\"\ntier = \"T1\"\nstatement = \"x\"\n"));
+    let ctx = context(&r.post("docs/test-plan/dispatch.toml").1);
+    assert!(ctx.contains("UC-dispatch-03 is in the plan and no test names it"), "{ctx}");
+    assert_eq!(r.post("docs/test-plan/dispatch.toml").1.trim(), "");
+}
+
+#[test]
+fn a_suite_with_no_uc_on_its_covers_line_is_named_and_one_with_a_uc_is_not() {
+    let r = trace_repo();
+    std::fs::create_dir_all(r.dir.join("spira")).unwrap();
+    r.write("spira/test-lease.sh", "#!/usr/bin/env bash\n# covers: spira/dispatch.sh\necho hi\n");
+    assert!(context(&r.post("spira/test-lease.sh").1).contains("names no UC id"));
+    let r = trace_repo();
+    std::fs::create_dir_all(r.dir.join("spira")).unwrap();
+    r.write("spira/test-lease.sh", "#!/usr/bin/env bash\n# covers: spira/dispatch.sh UC-dispatch-01\necho hi\n");
+    assert_eq!(r.post("spira/test-lease.sh").1.trim(), "");
+}

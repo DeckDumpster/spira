@@ -606,6 +606,8 @@ dependencies = [
  "serde_json",
  "spira-config",
  "spira-otel",
+ "suite-select",
+ "test-plan",
  "testkit",
 ]
 
