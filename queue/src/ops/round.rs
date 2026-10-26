@@ -714,6 +714,19 @@ pub(crate) fn open_records(c: &Ctx) -> Vec<(PathBuf, Kv)> {
         .collect()
 }
 
+fn lifecycle_dead(w: &World, kv: &Kv) -> bool {
+    matches!(w.lc.batch_state(kv.get("batch_id").unwrap_or("")), Some((s, _)) if matches!(s.as_str(), "ABANDONED" | "DISCARDED"))
+}
+
+/// The open rounds the lifecycle still holds; status and open both count these, so one never
+/// reports no round while the other refuses on it.
+fn live_records(w: &World, c: &Ctx) -> Vec<(PathBuf, Kv)> {
+    open_records(c)
+        .into_iter()
+        .filter(|(_, kv)| !lifecycle_dead(w, kv))
+        .collect()
+}
+
 pub(super) fn record_of(c: &Ctx, batch: &str) -> Option<(PathBuf, Kv)> {
     open_records(c)
         .into_iter()
@@ -1014,7 +1027,7 @@ fn open(
     let Ok(_g) = lock(w, label, &c) else {
         return FAIL;
     };
-    let open_now = open_records(&c);
+    let open_now = live_records(w, &c);
     let limit = c.s.rounds_max.max(1);
     if open_now.len() >= limit {
         let held: Vec<String> = open_now
@@ -1387,8 +1400,7 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
     let Ok(c) = resolve(w, label, repo) else {
         return FAIL;
     };
-    let mut open = open_records(&c);
-    open.retain(|(_, kv)| !matches!(w.lc.batch_state(kv.get("batch_id").unwrap_or("")), Some((s, _)) if matches!(s.as_str(), "ABANDONED" | "DISCARDED")));
+    let open = live_records(w, &c);
     let Some((_, kv)) = open.first() else {
         w.out(format!("round=none\nrepo={}", c.r.name));
         return OK;
