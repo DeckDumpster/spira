@@ -4759,6 +4759,13 @@ fn open_files_one_integration_with_both_members_context_instead_of_skipping_one(
     let bugs = integration_bugs(&t);
     assert_eq!(bugs.len(), 1, "{bugs:?}");
     let b = &bugs[0];
+    let labels = b.lines().next().unwrap().split(' ').nth(3).unwrap();
+    assert!(
+        labels.split(',').any(|l| l == "mender-failure")
+            && labels.split(',').any(|l| l == "integrate")
+            && !labels.split(',').any(|l| l == "plan"),
+        "{labels}"
+    );
     assert!(
         b.contains("integrate sp-a + sp-c in spira")
             && b.contains("spira: land sp-a")

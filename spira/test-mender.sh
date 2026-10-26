@@ -33,6 +33,11 @@ want "the predicate reads the mender label" 'SPIRA_MENDER_LABEL' "$(grep '^FAYTH
 lack() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 lack "no plan label" 'plan' "$(grep '^FAYTH_LABELS=' "$FAYTH")"
 
+echo; echo "INTEGRATE: the mender owns the summons kind, the builder cannot claim it"
+want "the brief carries the integrate remit" "## An integration" "$(grep -o '^## An integration' "$BRIEF")"
+want "the mender may submit a branch" "SUBMITTED" "$(fayth_var FAYTH_WORKING_EXITS | grep -o SUBMITTED)"
+lack "the integrate summons is not on the plan label" 'integrate' "$(grep '^FAYTH_LABELS=' "$HERE/chamber/builder.fayth")"
+
 echo; echo "VERBS: brief, binary and allow table agree"
 USAGE="$(grep -o '^const USAGE: &str = "[^"]*"' "$HARNESS/mender/src/main.rs")"
 verbs="start pack diff bead members failures passes verdicts landing triaged diagnose outcome"

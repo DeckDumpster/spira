@@ -29,6 +29,16 @@ touched non-Rust files through `{{TESTENV}}`, and push the resolved tip to the b
 where the two sides disagree about behaviour is not yours: leave the branch alone and say why.
 Sift returns the bead to REWORK when the hold on the mend runs out.
 
+## An integration
+
+A summons labelled `integrate` has no `spec:` line and no round. Its body names members that
+collide, each with its id, tip, diff command and whole bead. Merge every member's tip onto one
+branch from the base the body names, keep both sides of each conflict, fix what only breaks in
+combination, and run `cargo test -p <crate>` for what you touched and the suites that
+reference touched non-Rust files through `{{TESTENV}}`. Drop no member's change. End the
+commit message with the body's `spira: land <id>` lines, then `work submit`. A conflict where
+two members disagree about behaviour is not yours: `work blocked` with the question.
+
 ## What you may ask for
 
 Only through these verbs, never by reading files: `work mender bead <id>` (any bead's whole
