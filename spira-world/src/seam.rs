@@ -30,8 +30,15 @@ use std::process::Stdio;
 /// `(stdout, success)`; stderr is inherited so lib.sh's own chatter is visible, exactly as
 /// sentinel's seams do.
 pub fn run(lib_sh: &Path, name: &str, script: &str, envs: &[(&str, &str)], stdin: &str) -> (String, bool) {
+    let (out, rc) = run_for(lib_sh, name, script, envs, stdin, spira_config::bounded::CALL_TIMEOUT_SECS);
+    (out, rc == Some(0))
+}
+
+/// [`run`] with the caller's own deadline (seconds, as `timeout` takes them) and the exit
+/// code: `Some(124)` is the deadline, `None` is a seam that never started or has no code.
+pub fn run_for(lib_sh: &Path, name: &str, script: &str, envs: &[(&str, &str)], stdin: &str, secs: &str) -> (String, Option<i32>) {
     let full = format!("set -uo pipefail\n. \"$SPIRA_HOME_LIB\" >&2 || exit 97\n{script}\n");
-    let mut cmd = spira_config::bounded::bounded("bash");
+    let mut cmd = spira_config::bounded::bounded_for("bash", secs);
     cmd.args(["-c", &full, name]);
     cmd.env("SPIRA_HOME_LIB", lib_sh);
     // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own release's
@@ -45,7 +52,7 @@ pub fn run(lib_sh: &Path, name: &str, script: &str, envs: &[(&str, &str)], stdin
     cmd.stderr(Stdio::inherit());
     let mut child = match cmd.spawn() {
         Ok(c) => c,
-        Err(_) => return (String::new(), false),
+        Err(_) => return (String::new(), None),
     };
     {
         use std::io::Write;
@@ -54,8 +61,8 @@ pub fn run(lib_sh: &Path, name: &str, script: &str, envs: &[(&str, &str)], stdin
         }
     }
     match child.wait_with_output() {
-        Ok(o) => (String::from_utf8_lossy(&o.stdout).into_owned(), o.status.success()),
-        Err(_) => (String::new(), false),
+        Ok(o) => (String::from_utf8_lossy(&o.stdout).into_owned(), o.status.code()),
+        Err(_) => (String::new(), None),
     }
 }
 
@@ -249,5 +256,15 @@ mod tests {
         let d = testkit::TempDir::new("seam-run-missing");
         let (_out, ok) = run(&d.join("no-such-lib.sh"), "test", "true", &[], "");
         assert!(!ok);
+    }
+
+    #[test]
+    fn run_for_reports_the_deadline_and_the_exit_code() {
+        let d = testkit::TempDir::new("seam-run-for");
+        std::fs::write(d.join("lib.sh"), ":\n").unwrap();
+        let (_, rc) = run_for(&d.join("lib.sh"), "t", "sleep 5", &[], "", "1");
+        assert_eq!(rc, Some(124));
+        let (_, rc) = run_for(&d.join("lib.sh"), "t", "exit 3", &[], "", "5");
+        assert_eq!(rc, Some(3));
     }
 }

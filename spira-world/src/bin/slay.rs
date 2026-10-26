@@ -120,6 +120,8 @@ fn parse_args(argv: &[String]) -> Args {
     Args { id, mode_close, keep, why }
 }
 
+const FINISH_DEADLINE_SECS: &str = "120";
+
 fn say(s: &str) {
     println!("{s}");
 }
@@ -292,7 +294,7 @@ fn main() {
     let run_str = run.to_string_lossy().into_owned();
     let seam_fail = match lib_sh.as_deref() {
         Some(lib) => {
-            let (out, ok) = seam::run(
+            let (out, rc) = seam::run_for(
                 lib,
                 "slay-finish",
                 seam::SLAY_FINISH,
@@ -309,14 +311,25 @@ fn main() {
                     ("SPIRA_SUBMITTED_LABEL", &submitted_label),
                 ],
                 "",
+                FINISH_DEADLINE_SECS,
             );
-            let mut result_fail = !ok;
+            let mut result_fail = rc != Some(0);
+            let mut saw_result = false;
             for line in out.lines() {
                 if let Some(v) = line.strip_prefix("___SLAY_RESULT___\t") {
+                    saw_result = true;
                     result_fail = result_fail || v.trim() != "0";
                 } else {
                     println!("{line}");
                 }
+            }
+            if rc == Some(124) {
+                say(&format!("slay: the finish step (claim, work, note) hit its {FINISH_DEADLINE_SECS}s deadline and was killed (rc=124)"));
+            } else if rc != Some(0) {
+                say(&format!("slay: the finish step (claim, work, note) failed: rc={}", rc.map_or("none".to_string(), |c| c.to_string())));
+            } else if !saw_result {
+                say("slay: the finish step exited 0 but never reported its result");
+                result_fail = true;
             }
             result_fail
         }
