@@ -50,7 +50,7 @@ for f in md_files():
             if e:
                 bad.append(e)
 
-refs = subprocess.run(['git', '-C', root, 'grep', '-hoI', r'README\.md#[A-Za-z0-9_-]*'], capture_output=True, text=True).stdout.split()
+refs = subprocess.run(['git', '-C', root, 'grep', '-hoI', r'README\.md#[A-Za-z0-9_-]*', '--', ':!spira/test-docs-links.sh'], capture_output=True, text=True).stdout.split()
 for r in sorted(set(refs)):
     frag = r.split('#', 1)[1]
     if frag not in anchors(os.path.join(root, 'README.md')):

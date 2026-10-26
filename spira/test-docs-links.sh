@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-docs-links.sh — README.md and docs/ carry no broken relative link or anchor, no
-# README.md# reference in the tree dangles, and the README stays a front door.
+# README anchor reference in the tree dangles, and the README stays a front door.
 #
 # tier: T1
 # covers: README.md docs/** spira/docs-links.py

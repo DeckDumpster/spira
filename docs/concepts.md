@@ -85,8 +85,8 @@ Rules the machine enforces itself:
   `REWORK` row) are refused unless they carry a reason, the evidence (command and result) and
   an evidence tip equal to the tip admitted.
 
-Gate-red reasons are `suites-failed`, `syntax`, `policy-violation`, `no-rebase`, `timeout` and
-`confine`. Return reasons are `pr-closed-unmerged`, `pr-changes-requested`, `push-rejected`,
+Gate-red reasons are `suites-failed`, `syntax`, `policy-violation`, `no-rebase`, `timeout`, `confine` and
+`phantom-bead-id`. Return reasons are `pr-closed-unmerged`, `pr-changes-requested`, `push-rejected`,
 `batch-ejected`, `batch-ejected-red` and `base-withdrawn`.
 
 ### Holds
