@@ -19,7 +19,7 @@
 #
 # THE FIXTURE IS A MINIMAL SCRATCH HARNESS rooted under TMP. boundary.sh derives the
 # repository root one directory up from itself, so the scratch layout mirrors the shipped
-# layout: TMP/spira/boundary.sh, TMP/spira/boundary (the manifest), TMP/README.md (the
+# layout: TMP/spira/boundary.sh, TMP/spira/boundary (the manifest), TMP/docs/development.md (the
 # published target). conf.sh is stubbed to set SPIRA_WIKI="" — this test is for the
 # filesystem check, not for wiki rendering.
 #
@@ -34,18 +34,18 @@ echo "test-boundary.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # ---------------------------------------------------------------------------------------
-# THE SCRATCH HARNESS. boundary.sh resolves README as "$HERE/../README.md" and sources
+# THE SCRATCH HARNESS. boundary.sh resolves its target as "$HERE/../docs/development.md" and sources
 # conf.sh from the same directory; the wiki target is skipped when SPIRA_WIKI is empty.
 # ---------------------------------------------------------------------------------------
 HARNESS="$TMP/harness"
-mkdir -p "$HARNESS/spira"
+mkdir -p "$HARNESS/spira" "$HARNESS/docs"
 
 # Stub conf.sh: skip the wiki check so the test is not coupled to the operator's wiki page.
 printf 'SPIRA_WIKI=""\n' > "$HARNESS/spira/conf.sh"
 
 # A README with the required marker pair.
 printf '# README\n<!-- BOUNDARY:BEGIN -->\nstale\n<!-- BOUNDARY:END -->\n' \
-    > "$HARNESS/README.md"
+    > "$HARNESS/docs/development.md"
 
 # Copy the real boundary.sh into the scratch harness so it resolves paths relative to itself.
 cp "$HERE/boundary.sh" "$HARNESS/spira/boundary.sh"
