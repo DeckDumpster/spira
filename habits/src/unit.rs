@@ -85,13 +85,13 @@ pub fn stop(s: &Stop, root: &Path, repo: &str, tmp: &Path, sink: &MetricsSink) -
             crate::push(sink, repo, &s.name, 0, 0, ms);
             if marker.exists() {
                 let _ = std::fs::remove_file(&marker);
-                count(sink, "habit_unit_tests_fixed_before_submit", repo, &bead);
+                count(sink, crate::UNIT_FIXED, repo, &bead);
             }
             None
         }
         Verdict::Red { failed } => {
             crate::push(sink, repo, &s.name, failed.len().max(1) as u64, 0, ms);
-            count(sink, "habit_unit_tests_red_at_stop", repo, &bead);
+            count(sink, crate::UNIT_RED_AT_STOP, repo, &bead);
             let _ = std::fs::create_dir_all(tmp);
             let _ = std::fs::write(&marker, &branch);
             let mut lines = vec![format!("habits: {} is RED on the committed tip of {branch}: {} failing test(s)", s.name, failed.len())];

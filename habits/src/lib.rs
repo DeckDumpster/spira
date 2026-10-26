@@ -144,6 +144,10 @@ fn edited(cfg: &Config, root: &Path, cwd: &Path, file: &str, repo: &str, tmp: &P
     (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
+pub const UNIT_RED_AT_STOP: &str = "habit_unit_tests_red_at_stop";
+pub const UNIT_FIXED: &str = "habit_unit_tests_fixed_before_submit";
+pub const UNIT_RED_IN_ROUND: &str = "habit_unit_tests_red_in_round";
+
 fn push(sink: &MetricsSink, repo: &str, habit: &str, findings: u64, resolved: u64, ms: u64) {
     let mut points = vec![
         Point::Count { name: "habit_findings_total", value: findings },
