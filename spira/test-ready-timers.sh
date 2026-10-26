@@ -225,12 +225,14 @@ PYS
 serve_store() { python3 "$TMP/store-server.py" "$1" & STORE_PID=$!; sleep 1; }
 
 serve_store 6
-out="$(run_ready "SPIRA_LOOM_PROBE=" "SPIRA_LOOM_READY_GRACE=4" --)"
+tl_config SPIRA_LOOM_READY_GRACE=4
+out="$(run_ready "SPIRA_LOOM_PROBE=" --)"
 kill "$STORE_PID" 2>/dev/null; wait "$STORE_PID" 2>/dev/null
 want "store wait: 503 then 200 passes inside the store grace" "  pass  loom answers 200" "$out"
 
 serve_store 600  # outlasts 4 x 1s
-out="$(run_ready "SPIRA_LOOM_PROBE=" "SPIRA_LOOM_READY_GRACE=1" -- || true)"
+tl_config SPIRA_LOOM_READY_GRACE=1
+out="$(run_ready "SPIRA_LOOM_PROBE=" -- || true)"
 kill "$STORE_PID" 2>/dev/null; wait "$STORE_PID" 2>/dev/null
 want "store wait: 503 past the grace is a FAIL" "  FAIL  loom does not answer" "$out"
 want "store wait: the FAIL names what it waited for" "waiting for the content store not ready" "$out"
