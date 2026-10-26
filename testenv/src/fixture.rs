@@ -327,6 +327,8 @@ pub struct Session<'a> {
     /// `up`'s `--pids-limit` / `--memory` for a container with a budget of its own.
     pub pids_limit: Option<u32>,
     pub memory: Option<String>,
+    /// A named volume to mount as the container's cargo target (`up --cargo-target-volume`).
+    pub cargo_target_volume: Option<String>,
 }
 
 fn kv(k: &str, v: impl Into<String>) -> (String, String) {
@@ -348,6 +350,7 @@ impl<'a> Session<'a> {
             queue_bound: None,
             pids_limit: None,
             memory: None,
+            cargo_target_volume: None,
         }
     }
 
@@ -441,6 +444,9 @@ impl<'a> Session<'a> {
         }
         if let Some(m) = &self.memory {
             args.extend(["--memory".into(), m.clone()]);
+        }
+        if let Some(v) = &self.cargo_target_volume {
+            args.extend(["--cargo-target-volume".into(), v.clone()]);
         }
         let up = self.rt.testenv(&args, self.setup_deadline);
         if up.rc == RC_DEADLINE {
@@ -1581,6 +1587,16 @@ mod tests {
         let rt = FakeRuntime::new();
         rt.testenv_rc.lock().unwrap().insert("probe".into(), 1);
         assert_eq!(session(&rt).up(Path::new("/wt")).unwrap_err().rc(), 2);
+    }
+
+    #[test]
+    fn a_target_volume_is_passed_to_up_and_otherwise_absent() {
+        let rt = FakeRuntime::new();
+        let mut s = session(&rt);
+        s.cargo_target_volume = Some("vol-x".into());
+        s.up(Path::new("/wt")).unwrap();
+        let calls = rt.testenv_calls.lock().unwrap().clone();
+        assert!(calls[0].windows(2).any(|w| w == ["--cargo-target-volume", "vol-x"]));
     }
 
     #[test]
