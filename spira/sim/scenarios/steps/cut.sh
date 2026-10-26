@@ -18,6 +18,6 @@ results=$(ls "$ws"/spira/test-*.sh | sed 's|.*/||; s|$|.result|' | paste -sd, -)
 sim ghctl "$SIM_GH_DIR" check-run "$sha" gate completed success || exit 9
 sim ghctl "$SIM_GH_DIR" run-add --branch "$branch" --sha "$sha" --conclusion success --artifact "batch-results-1:$results" >/dev/null || exit 9
 sim ghctl "$SIM_GH_DIR" pr-merge "$pr" || exit 9
-timeout 5 git -C "$ws" fetch -q origin || exit 9
+git -C "$ws" update-ref refs/remotes/origin/main "$sha" || exit 9
 if [ "${1:-}" = with-release ]; then set -- --path "$SPIRA_RELEASE/bin"; else set --; fi
 sim ci run "$ws/.github/workflows/gate.yml" cut --sha "$sha" --workspace "$ws" --skip "Mint App token for tag push" --env "SPIRA_TOML=$SPIRA_TOML" "$@" || exit 9
