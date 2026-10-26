@@ -1701,6 +1701,7 @@ fn summon_forge_mender(
     super::round::summon_mender(
         w,
         c,
+        &b.kv,
         batch_id,
         &suite,
         &format!(

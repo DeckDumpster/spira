@@ -4920,3 +4920,36 @@ fn a_red_that_only_the_combination_produces_files_the_integration_from_the_eject
         "a single-member red keeps the eject-to-rework path"
     );
 }
+
+#[test]
+fn a_mender_summons_carries_a_failure_spec_its_verbs_can_read() {
+    let mut t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
+    let results = t.lib.s.run.join("rounds").join(format!("{batch}.results"));
+    std::fs::create_dir_all(&results).unwrap();
+    std::fs::write(results.join("test-z.sh.out"), "assertion Z failed\n").unwrap();
+    assert_eq!(t.run(&["round", "failed", &batch, "--suite", "test-z.sh"]), 0, "{}", t.err());
+
+    let calls = t.lib.calls.borrow();
+    let bug = calls.iter().find(|c| c.starts_with("create_bug")).expect("a mender bead");
+    let path = bug
+        .lines()
+        .find_map(|l| l.strip_prefix("spec: "))
+        .unwrap_or_else(|| panic!("the summons names no spec: {bug}"));
+    let spec: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(spec["batch"], batch.as_str());
+    assert_eq!(spec["pass"], 1);
+    assert_eq!(spec["suite"], "test-z.sh");
+    assert_eq!(spec["output"], "assertion Z failed");
+    assert!(spec["repo"].as_str().is_some_and(|r| !r.is_empty()), "{spec}");
+    let members: Vec<(&str, &str)> = spec["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| (m["bead"].as_str().unwrap(), m["tip"].as_str().unwrap()))
+        .collect();
+    assert_eq!(members, [("sp-a", "ta"), ("sp-b", "tb")]);
+}

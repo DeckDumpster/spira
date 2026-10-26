@@ -319,12 +319,12 @@ fn failed_verb(w: &World, batch: &str, repo: Option<&str>, suite: &str) -> i32 {
     if idents(w, "round failed", &[("suite", suite)]).is_err() {
         return FAIL;
     }
-    pass_verb(w, "round failed", batch, repo, |c, _| {
+    pass_verb(w, "round failed", batch, repo, |c, kv| {
         suites_started(w, batch, false)?;
         pass_event(w, batch, |_, n, _| {
             Some(serde_json::json!({"Failed": {"suite": suite, "n": n}}).to_string())
         })?;
-        summon_mender(w, c, batch, suite, "", None);
+        summon_mender(w, c, kv, batch, suite, "", None);
         Ok(())
     })
 }
@@ -385,7 +385,7 @@ fn raise_unreported_reds(w: &World, c: &Ctx, batch: &str, kv: &Kv, reds: &[Strin
             })
         });
         match sent {
-            Ok(()) => summon_mender(w, c, batch, suite, &attribution, None),
+            Ok(()) => summon_mender(w, c, kv, batch, suite, &attribution, None),
             Err((rc, e)) => w.err(format!("queue.sh round certify: WARNING — no mender for {suite} of {batch}: the Failed event was refused (rc={rc}): {e}")),
         }
     }
@@ -397,6 +397,7 @@ fn raise_unreported_reds(w: &World, c: &Ctx, batch: &str, kv: &Kv, reds: &[Strin
 pub(super) fn summon_mender(
     w: &World,
     c: &Ctx,
+    kv: &Kv,
     batch: &str,
     suite: &str,
     attribution: &str,
@@ -424,9 +425,29 @@ pub(super) fn summon_mender(
         w.out(format!("queue.sh round failed: no mender bead for {suite} in pass {pass} of {batch}: {} was refused for a repo-config reason ({cause}) that no mend can fix", c.r.name));
         return;
     }
+    let Some(repo_path) = c.r.path.as_ref() else {
+        w.err(format!("queue.sh round failed: WARNING — no mender bead filed for {suite} of {batch}: the repo has no path, so the failure spec cannot name it"));
+        return;
+    };
+    let spec_path = spec_file(&rounds_dir(c), batch, pass, suite);
+    let spec = serde_json::json!({
+        "batch": batch,
+        "pass": pass,
+        "suite": suite,
+        "repo": repo_path.display().to_string(),
+        "base": kv.get("base").unwrap_or(""),
+        "output": output,
+        "tree": kv.get("worktree").filter(|t| !t.is_empty()),
+        "members": kv.members().iter().map(|m| serde_json::json!({"bead": m.id, "tip": m.tip})).collect::<Vec<_>>(),
+    });
+    if let Err(e) = write_atomic(&spec_path, &spec.to_string()) {
+        w.err(format!("queue.sh round failed: WARNING — no mender bead filed for {suite} of {batch}: the failure spec could not be written: {e}"));
+        return;
+    }
     let body = format!(
-        "A suite went red in pass {pass} of round {batch} ({repo}): {suite}.\n\nBatch: {batch}\nPass: {pass}\nSuite: {suite}\nDeadline: the machine stamps it when you claim this failure; list it with `spira-lc mending list --batch {batch} --live`. Record your outcome with `queue round mended|return|environment|flaky|unsure {batch} {suite}` before it passes.\n\nSuite output (tail):\n{output}\n",
+        "A suite went red in pass {pass} of round {batch} ({repo}): {suite}.\n\nspec: {spec}\nBatch: {batch}\nPass: {pass}\nSuite: {suite}\nDeadline: the machine stamps it when you claim this failure; list it with `spira-lc mending list --batch {batch} --live`. Record your outcome with `queue round mended|return|environment|flaky|unsure {batch} {suite}` before it passes.\n\nSuite output (tail):\n{output}\n",
         repo = c.r.name,
+        spec = spec_path.display(),
     );
     let body = if attribution.trim().is_empty() {
         body
@@ -476,6 +497,10 @@ fn mender_marker(dir: &Path, batch: &str, pass: impl std::fmt::Display, suite: &
         "{}.mender-{pass}-{suite}",
         batch.replace('/', "%2F")
     ))
+}
+
+fn spec_file(dir: &Path, batch: &str, pass: impl std::fmt::Display, suite: &str) -> PathBuf {
+    dir.join(format!("{}.spec-{pass}-{suite}.json", batch.replace('/', "%2F")))
 }
 
 pub(super) fn retire_menders(w: &World, c: &Ctx, batch: &str, why: &str) {
@@ -673,7 +698,7 @@ pub(super) fn raise_forge_reds(w: &World, c: &Ctx, kv: &Kv, suites_csv: &str) {
         }
         let sent = send_failed(w, batch, kv.get("head").unwrap_or(""), suite);
         match sent {
-            Ok(()) => summon_mender(w, c, batch, suite, "", None),
+            Ok(()) => summon_mender(w, c, kv, batch, suite, "", None),
             Err((rc, e)) => w.err(format!("verdict {}: WARNING — no mender for {suite} of {batch}: the Failed event was refused (rc={rc}): {e}", c.r.name)),
         }
     }
