@@ -1,6 +1,6 @@
 //! Members that collide with each other are integrated by one aeon holding every involved
-//! bead's context, not skipped or ejected one at a time. The integration is an ordinary bead
-//! the builder lane picks up; the members it names are carried by it: no round admits them
+//! bead's context, not skipped or ejected one at a time. The integration is filed for the mender
+//! (its summons kind `integrate`), never the builder lane; the members it names are carried by it: no round admits them
 //! while it is open, and they land by their `spira: land <id>` lines when its tip does.
 
 use std::collections::BTreeSet;
@@ -11,6 +11,7 @@ use crate::model::Member;
 use crate::records::write_atomic;
 
 const RECORD: &str = "integrations";
+const KIND_LABEL: &str = "integrate";
 const TERMINAL: [&str; 4] = ["LANDED", "SUPERSEDED", "DROPPED", "DONE"];
 
 fn entries(c: &Ctx) -> Vec<(String, Vec<String>)> {
@@ -147,7 +148,17 @@ pub(super) fn file(
         ctx = ctx.join("\n"),
     );
     let title = format!("integrate {} in {}", ids.join(" + "), c.r.name);
-    let labels = format!("spira,plan,repo:{}", c.r.name);
+    let scope = w
+        .env
+        .config("SPIRA_SCOPE_LABEL")
+        .ok()
+        .filter(|l| !l.is_empty())
+        .map(|l| format!("{l},"))
+        .unwrap_or_default();
+    let labels = format!(
+        "{scope}{},{KIND_LABEL},repo:{}",
+        c.s.verdict.mender_label, c.r.name
+    );
     let Some(id) = w.lib.create_bug(&actor(w), &title, "1", &labels, &body) else {
         w.err(format!(
             "queue.sh {label}: WARNING — the integration bead for {list} could not be filed; the collision stays on today's path"
