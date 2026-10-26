@@ -97,6 +97,14 @@ jobs:
         run: |
           set -uo pipefail
           _tag="${{ github.ref_name }}"
+          _earlier="$(gh run list --workflow acceptance.yml --repo "$GITHUB_REPOSITORY" --event push \
+            --branch "$_tag" --json databaseId \
+            --jq "[.[] | select(.databaseId < ${{ github.run_id }})] | length" 2>/dev/null || echo 0)"
+          if [ "${_earlier:-0}" -gt 0 ]; then
+            printf 'guard: an earlier acceptance run exists for %s — one run per tag, skipping\n' "$_tag"
+            printf 'already-published=true\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           _draft="$(gh release view "$_tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null || echo true)"
           if [ "$_draft" = "false" ]; then
             printf 'guard: %s is already published — skipping acceptance re-run\n' "$_tag"
@@ -270,17 +278,21 @@ jobs:
           # Declared waiver (see TRIGGERS above): acceptance-ci.sh applies this
           # only when it names the commit THIS tag resolves to.
           SPIRA_WAIVE_UPGRADE_COMMIT: ${{ vars.WAIVE_UPGRADE_COMMIT }}
+          STANDING_WAIVER: ${{ vars.ACCEPTANCE_WAIVE_UPGRADE }}
         run: |
           set -uo pipefail
           _tag="${{ inputs.tag || github.ref_name }}"
           _prev="${{ inputs.prev-tag || '' }}"
-          _waive="${{ inputs.waive-upgrade || 'false' }}"
+          _waive="$(bash spira/acceptance-waiver.sh --event "$GITHUB_EVENT_NAME" \
+                      --input "${{ inputs.waive-upgrade || 'false' }}" \
+                      --standing "${STANDING_WAIVER:-}")" || exit 1
+          [ "$_waive" = "waive" ] && _waive=true
           _args=("$_tag"
                  --bd-db  "$HOME/.local/share/spira/db"
                  --agent  "$GITHUB_WORKSPACE/spira/acceptance-agent.sh"
                  --record)
           if [ "$_waive" = "true" ]; then
-            # Operator waiver (workflow_dispatch only, never a tag push): skip
+            # Operator input or the standing ruling (see acceptance-waiver.sh): skip
             # derivation entirely so no prev-tag is passed at all, and release acceptance
             # prints its existing "skip phase B+C / phase D" lines.
             _args+=(--waive-upgrade)
