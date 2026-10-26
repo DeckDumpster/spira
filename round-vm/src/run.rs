@@ -125,6 +125,8 @@ pub struct BatchJob {
     pub setup_alarm_secs: u64,
     /// The cap clock: first suite to the bare lane's end. Past it the VM kills the lane and exits 124.
     pub cap_secs: u64,
+    /// `key = value` lines for the VM's `round-config.toml`: the operator's testenv limits.
+    pub testenv_limits: String,
     /// Seconds the VM waits for the unit-test job once the cap clock has stopped.
     pub post_guard_secs: u64,
     /// Mirror ref `base` holds the landing ref; set: the round lints before its suites.
@@ -213,6 +215,8 @@ printf '%s %s %s - - - %s\n' "$status" 1 "$(( $(date +%s) - t0 ))" "$rc" > "$res
 /// into `~/round-bins/` so the host pulls the binaries and not cargo's target directory.
 pub const REMOTE_SCRIPT: &str = r#"set -euo pipefail
 host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" cap="$9" post_guard="${10}" lint="${11}" build_image="${12}" round_ref="${13}" round_sha="${14}"
+testenv_limits="${16:-}"
+[ -n "$testenv_limits" ] || { echo "round-vm: the host sent no testenv limits; a round never takes them from the tree's test fixture" >&2; exit 2; }
 t_start=$(date +%s)
 export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 if ! command -v cargo >/dev/null 2>&1; then
@@ -427,6 +431,7 @@ run = "$HOME/round-work/.runtime/spira"   # where REMOTE_RESULTS pulls batch-res
 releases = "$HOME/round-releases"
 home_repo = "$HOME/round-work"
 batch_maxpar = $maxpar
+$testenv_limits
 ROUNDCFG
 export SPIRA_TOML="$HOME/round-work/spira-config/tests/fixtures/complete.toml:$HOME/round-config.toml"
 SPIRA_TOML="$(target/release/release config-stage "$HOME/round-work")" || { echo "round-vm: cannot apply the head's config delta" >&2; exit 2; }
@@ -788,7 +793,8 @@ pub fn remote_command(job: &BatchJob) -> String {
     ];
     args.push(job.round_ref.clone());
     args.push(job.round_sha.clone());
-    args.extend(job.ci_entry.clone());
+    args.push(job.ci_entry.clone().unwrap_or_default());
+    args.push(job.testenv_limits.clone());
     let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
     format!("bash -s -- {}", quoted.join(" "))
 }
@@ -1714,6 +1720,7 @@ fn on_vm_run(
         testenv_registry: cfg.testenv_registry.clone(),
         setup_alarm_secs: cfg.setup_alarm_secs,
         cap_secs: cfg.cap_secs,
+        testenv_limits: cfg.testenv_limits.clone(),
         post_guard_secs: cfg.post_guard_secs,
         lint: args.base.is_some() && args.ci_entry.is_none(),
         build_image,
@@ -2812,6 +2819,7 @@ mod tests {
             testenv_registry: Some("registry.example/spira".into()),
             setup_alarm_secs: 45,
             cap_secs: 900,
+            testenv_limits: "testenv_suite_cap = 600\n".into(),
             post_guard_secs: 600,
             lint: false,
             build_image: false,
@@ -2819,8 +2827,16 @@ mod tests {
             round_sha: "abc".into(),
             ci_entry: Some("deploy/ci.sh all".into()),
         });
-        assert_eq!(cmd, "bash -s -- '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all'");
+        assert_eq!(cmd, "bash -s -- '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n'");
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+    }
+
+    #[test]
+    fn the_round_config_carries_the_hosts_testenv_limits_not_the_fixtures() {
+        let cfg = REMOTE_SCRIPT.find("cat > \"$HOME/round-config.toml\"").unwrap();
+        let end = cfg + REMOTE_SCRIPT[cfg..].find("ROUNDCFG\nexport").unwrap();
+        assert!(REMOTE_SCRIPT[cfg..end].contains("\n$testenv_limits\n"), "the heredoc declares the host's limits over the fixture");
+        assert!(REMOTE_SCRIPT.contains("[ -n \"$testenv_limits\" ] ||"), "no limits sent is a refusal");
     }
 
     #[test]
@@ -2872,7 +2888,7 @@ mod tests {
         let out = std::process::Command::new("bash")
             .arg("-c")
             .arg(REMOTE_SCRIPT)
-            .arg("round-vm-test")
+            .args(["", "60", "900", "600", "", "", "refs/rounds/t", "abc", "", "testenv_suite_cap = 600\n"])
             .args(["host", "9430", "", "16", ""])
             .arg(&cache_home)
             .args(["", "60", "900", "600", "", "", "refs/rounds/t", "abc"])
@@ -3318,6 +3334,7 @@ mod tests {
             stream_every_secs: 10,
             attr_linger_secs: 3600,
             cap_secs: 1234,
+            testenv_limits: "testenv_suite_cap = 600\n".into(),
             post_guard_secs: 77,
             vm_budget_secs: 300,
             build_budget_secs: 600,
