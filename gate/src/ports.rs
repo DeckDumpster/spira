@@ -191,6 +191,9 @@ pub trait World {
 
     // ---- time and signals
     fn now(&self) -> u64;
+    fn now_ms(&self) -> u64 {
+        self.now() * 1000
+    }
     fn utc(&self) -> String;
     fn sleep_ms(&self, ms: u64);
     fn pid(&self) -> u32;

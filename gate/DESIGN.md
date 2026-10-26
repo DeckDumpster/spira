@@ -210,7 +210,7 @@ merge-failed messages, which are new.
 
 | file | format | when |
 |---|---|---|
-| `$SPIRA_GATE_LOG` | `<UTC %Y-%m-%dT%H:%M:%SZ> <repo> <branch> waited=<n>s ran=<n>s rc=<status>[ <reason>][ compose=<label> phases=<phase>:<secs>,…]\n`, appended | every verdict once the repository resolved; the composition fields once one was chosen |
+| `$SPIRA_GATE_LOG` | `<UTC %Y-%m-%dT%H:%M:%SZ> <repo> <branch> waited=<n>s ran=<n>s rc=<status>[ <reason>][ compose=<label> phases=<phase>:<secs>,…][ waited_ms=<n>]\n`, appended | every verdict once the repository resolved; the composition fields once one was chosen |
 | `$SPIRA_VERDICTS/<key>` | `when=<UTC>\nat=<epoch>\nby=<caller>\nrepo=<name>\nbranch=<br>\nsuites=<csv or ->\ncompose=<label>\n`, written to `.<key>.<pid>` and renamed | PASS from a trial only |
 | `$SPIRA_VERDICTS/trees/<repo>/<T>` (the tree certificate, `src/cert.rs`) | `verdict=PASS\nsource=gate\ntree=<T>\nrepo=<name>\nrev=<gate revision>\nbranch=<br>\nby=<caller>\nwhen=<UTC>\nat=<epoch>\nharness=<harness_h or ->\nsuites=<csv or ->\n`, temp + rename | every PASS (`pass`, `cached`, `syntax-only`) once the merged tree `T` is known |
 | `$SPIRA_RUN/gate-admission/slot.<n>.lock` | empty; `flock` held for the trial | unless `SPIRA_GATE_SUITES=off` and no suites were named against the bead |

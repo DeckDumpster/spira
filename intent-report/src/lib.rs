@@ -132,7 +132,7 @@ pub fn gate_log_line(l: &str) -> Option<Trial> {
             compose = c.to_string();
         } else if let Some(q) = f.strip_prefix("queue=") {
             queue = q.parse().unwrap_or(0.0);
-        } else if reason.is_empty() && !f.starts_with("phases=") {
+        } else if reason.is_empty() && !f.starts_with("phases=") && !f.starts_with("waited_ms=") {
             reason = f.to_string();
         }
     }
