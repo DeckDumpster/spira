@@ -1171,6 +1171,9 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
             let (Some(subject), Some(kind), Some(default)) = (get(&f, "--subject"), get(&f, "--kind"), get(&f, "--default")) else {
                 return Err(usage(verb, "--subject, --kind and --default are all required (an ask without a default is incomplete)"));
             };
+            if subject.trim().is_empty() || subject.starts_with("--") {
+                return Err(usage(verb, &format!("--subject {subject:?} is not a question; usage: work ask --subject \"<the question>\" --kind question --default \"<what you would do>\"")));
+            }
             if !MAIL_KINDS.contains(&kind) {
                 return Err(usage(verb, &format!("--kind {kind:?} (want one of {})", MAIL_KINDS.join(", "))));
             }
@@ -1917,6 +1920,15 @@ mod tests {
         assert_eq!(p.len(), 1, "no AskHold: {p:?}");
         let Step::Ask { args, .. } = &p[0] else { panic!() };
         assert!(args.contains(&s("--dry-run")), "{args:?}");
+    }
+
+    #[test]
+    fn an_ask_whose_question_is_a_flag_name_is_refused_with_the_usage() {
+        for subject in ["--default", "", "  "] {
+            let e = plan("ask", "sp-me1", &call(&["--subject", subject, "--kind", "question", "--default", "x"], "mender")).unwrap_err();
+            assert!(e.1.contains("usage: work ask --subject"), "{e:?}");
+        }
+        assert!(plan("ask", "sp-me1", &call(&["--subject", "May I?", "--kind", "question", "--default", "x"], "mender")).is_ok());
     }
 
     #[test]
