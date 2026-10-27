@@ -57,6 +57,7 @@ test-answers.sh	T1	23.5
 test-archivist.sh	T1	30.0
 test-artifact-install.sh	T1	2.5
 test-attempts.sh	T1	44.0
+# exposure: test-heimdall.sh sp-acp3lx renamed from test-auron.sh, same suite and time
 test-heimdall.sh	T1	83.0
 test-batch-bisect-expiry.sh	T1	53.0
 test-batch-cited-commit.sh	T2	18.0
