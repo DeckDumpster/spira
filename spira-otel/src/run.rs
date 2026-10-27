@@ -11,7 +11,11 @@ use crate::metrics::{MetricsSink, Point};
 pub const RUNS: &str = "spira_component_runs";
 pub const RUN_SECONDS: &str = "spira_component_run_seconds";
 pub const EVENTS: &str = "spira_component_events";
-pub const DEADLINE: Duration = Duration::from_secs(2);
+/// What the push may add to the command's own wall time; a slower endpoint loses the sample.
+pub const DEADLINE: Duration = Duration::from_millis(250);
+/// Set by a caller timing this process (perf-watch): the phases are printed to stderr at exit.
+pub const PHASES_ENV: &str = "PERFWATCH_PHASES";
+pub const PHASES_PREFIX: &str = "PERFWATCH_PHASES=";
 
 pub struct Run {
     sink: MetricsSink,
@@ -35,10 +39,16 @@ impl Run {
 
     fn push(&self, ok: bool, class: String) {
         let outcome = if ok { "ok" } else { "error" };
+        let pushing = Instant::now();
         self.sink.push(
             &[Point::Count { name: RUNS, value: 1 }, Point::Seconds { name: RUN_SECONDS, value: self.started.elapsed().as_secs_f64() }],
             &[("component", &self.component), ("operation", &self.operation), ("outcome", outcome), ("error_class", &class)],
         );
+        if std::env::var_os(PHASES_ENV).is_some() {
+            let mut phases = PHASES.lock().map(|p| p.clone()).unwrap_or_default();
+            phases.push(("push".to_string(), pushing.elapsed().as_millis() as u64));
+            eprintln!("{PHASES_PREFIX}{}", render_phases(&phases));
+        }
     }
 
     /// One domain event of this component (a summons, a rejection, a rework), `kind` bounded by the caller.
@@ -57,6 +67,18 @@ impl Run {
 }
 
 static CURRENT: Mutex<Option<Run>> = Mutex::new(None);
+static PHASES: Mutex<Vec<(String, u64)>> = Mutex::new(Vec::new());
+
+/// Records where `millis` of this run went (`reply`, say); named in the phases line a timed run prints.
+pub fn phase(name: &str, millis: u64) {
+    if let Ok(mut p) = PHASES.lock() {
+        p.push((name.to_string(), millis));
+    }
+}
+
+pub fn render_phases(phases: &[(String, u64)]) -> String {
+    phases.iter().map(|(n, ms)| format!("{n}={ms}")).collect::<Vec<_>>().join(",")
+}
 
 fn with(f: impl FnOnce(&mut Run)) {
     if let Ok(mut g) = CURRENT.lock() {
@@ -159,6 +181,16 @@ mod tests {
         Run::new(MetricsSink::new(Some(&addr), "spira-x", DEADLINE), "x").push(false, "exit_unrecorded".into());
         let body = h.join().unwrap();
         assert!(body.contains("exit_unrecorded") && body.contains("error"));
+    }
+
+    #[test]
+    fn the_exit_time_push_deadline_is_within_the_hot_read_budget() {
+        assert!(DEADLINE <= Duration::from_millis(250));
+    }
+
+    #[test]
+    fn phases_render_in_the_order_they_were_recorded() {
+        assert_eq!(render_phases(&[("reply".into(), 12), ("push".into(), 250)]), "reply=12,push=250");
     }
 
     #[test]

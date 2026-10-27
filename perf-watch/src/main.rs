@@ -1,4 +1,4 @@
-//! `perf-watch --probes FILE [--stats "CMD"] [--record FILE] [--health FILE] [--inbox FILE]`
+//! `perf-watch --probes FILE [--stats "CMD"] [--record FILE] [--slow-log FILE] [--health FILE] [--inbox FILE]`
 //! Budget, interval and reminder come from config. Alarm lines go to stdout; a quiet pass
 //! prints nothing. `--health` is rewritten each pass that probes.
 
@@ -28,12 +28,13 @@ const SCOPED: &str = "t0=$(date +%s%N); \"$@\"; rc=$?; t1=$(date +%s%N); echo \"
 struct Spawn {
     scoped: bool,
     measured: Option<u64>,
+    phases: Option<String>,
 }
 
 impl Spawn {
     fn new() -> Spawn {
         let scoped = Command::new("timeout").args(["5", "systemd-run", "--version"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
-        Spawn { scoped, measured: None }
+        Spawn { scoped, measured: None, phases: None }
     }
 }
 
@@ -42,8 +43,13 @@ impl Runner for Spawn {
         self.measured
     }
 
+    fn phases(&self) -> Option<String> {
+        self.phases.clone()
+    }
+
     fn run(&mut self, argv: &[String]) -> Result<String, String> {
         self.measured = None;
+        self.phases = None;
         let mut cmd = if self.scoped {
             let mut c = Command::new("systemd-run");
             c.args(["--user", "--scope", "--quiet", "--collect", "--", "sh", "-c", SCOPED, "perf-probe"]).args(argv);
@@ -54,6 +60,7 @@ impl Runner for Spawn {
             c
         };
         let mut child = cmd
+            .env(spira_otel::run::PHASES_ENV, "1")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(if self.scoped { Stdio::piped() } else { Stdio::null() })
@@ -80,6 +87,7 @@ impl Runner for Spawn {
             let mut err = String::new();
             let _ = std::io::Read::read_to_string(&mut se, &mut err);
             self.measured = err.lines().rev().find_map(|l| l.strip_prefix(TIMER_PREFIX)).and_then(|n| n.trim().parse().ok());
+            self.phases = err.lines().rev().find_map(|l| l.strip_prefix(spira_otel::run::PHASES_PREFIX)).map(str::to_string);
         }
         if self.scoped && status.code() == Some(127) {
             return Err(format!("{}: not found", argv[0]));
@@ -96,17 +104,18 @@ fn main() {
     }
 }
 
-const USAGE: &str = "usage: perf-watch --probes FILE [--stats \"CMD\"] [--record FILE] [--health FILE] [--inbox FILE]";
+const USAGE: &str = "usage: perf-watch --probes FILE [--stats \"CMD\"] [--record FILE] [--slow-log FILE] [--health FILE] [--inbox FILE]";
 
 fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
-    let (mut probes, mut stats, mut record, mut health, mut inbox) = (None, "spira-lc stats".to_string(), None, None, None);
+    let (mut probes, mut stats, mut record, mut health, mut inbox, mut slow_log) = (None, "spira-lc stats".to_string(), None, None, None, None);
     while let Some(a) = args.next() {
         let v = args.next();
         match (a.as_str(), v) {
             ("--probes", Some(v)) => probes = Some(v),
             ("--stats", Some(v)) => stats = v,
             ("--record", Some(v)) => record = Some(v),
+            ("--slow-log", Some(v)) => slow_log = Some(v),
             ("--health", Some(v)) => health = Some(v),
             ("--inbox", Some(v)) => inbox = Some(v),
             _ => return Err(USAGE.to_string()),
@@ -133,6 +142,11 @@ fn run() -> Result<(), String> {
     for l in &out.lines {
         println!("{l}");
         perf_watch::append_inbox(&inbox, &perf_watch::inbox_line(now, l));
+    }
+    if let Some(f) = slow_log {
+        for l in &out.slow {
+            perf_watch::append_inbox(&f, l);
+        }
     }
     if let Some(r) = record {
         let body: String = out.timings.iter().map(|t| format!("{}\t{}\n", t.name, t.millis)).collect();
