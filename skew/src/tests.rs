@@ -59,6 +59,9 @@ pub struct Fake {
     pub harness_dirs_wd: RefCell<BTreeMap<String, Vec<String>>>,  // key "<repo>"
     pub now: RefCell<String>,
     pub queue_locked: RefCell<bool>,
+    pub lock_age: RefCell<Option<u64>>,
+    pub git_live: RefCell<bool>,
+    pub run_log: RefCell<Vec<(String, String)>>,
 }
 
 impl Fake {
@@ -233,6 +236,15 @@ impl World for Fake {
     }
     fn stamp_write(&self, key: &str, val: &str) {
         self.stamps.borrow_mut().insert(key.to_string(), val.to_string());
+    }
+    fn run_log_append(&self, name: &str, line: &str) {
+        self.run_log.borrow_mut().push((name.to_string(), line.to_string()));
+    }
+    fn index_lock_age_secs(&self, _repo: &Path) -> Option<u64> {
+        *self.lock_age.borrow()
+    }
+    fn git_running_in(&self, _repo: &Path) -> bool {
+        *self.git_live.borrow()
     }
     fn out(&self, s: &str) {
         self.stdout.borrow_mut().push(s.to_string());
@@ -913,4 +925,60 @@ fn refresh_declines_naming_the_stash_failure_for_a_mixed_dirty_tree() {
     assert_eq!(refresh(&f, Some("/repo")), 1);
     assert!(f.restored.borrow().is_empty());
     assert!(f.stdout_joined().contains("stash failed: error: could not write index"));
+}
+
+// ============================================================================ refresh() decline streak
+
+fn declining_checkout() -> Fake {
+    let f = Fake::default();
+    f.set_env("SPIRA_RELEASES", "");
+    f.git_repos.borrow_mut().push(PathBuf::from("/prod"));
+    f.landrefs.borrow_mut().insert("/prod".into(), "origin/main".into());
+    f.rev_list_counts.borrow_mut().insert("/prod|HEAD..origin/main".into(), 2);
+    f.dirty.borrow_mut().insert("/prod".into(), " M ci.yml\n M CLAUDE.md\n".into());
+    *f.stash_err.borrow_mut() = Some("Unable to create index.lock".into());
+    f
+}
+
+#[test]
+fn refresh_decline_names_dirty_files_and_a_stale_lock_and_raises_a_row_on_the_third_pass() {
+    let f = declining_checkout();
+    *f.lock_age.borrow_mut() = Some(86_400);
+    for pass in 1..=3 {
+        assert_eq!(refresh(&f, Some("/prod")), 1);
+        let rows = f.run_log.borrow().len();
+        assert_eq!(rows, if pass < 3 { 0 } else { 1 }, "pass {pass}");
+    }
+    let said = f.stdout_joined();
+    assert!(said.contains("STALE-INDEX-LOCK"), "{said}");
+    assert!(said.contains("M ci.yml, M CLAUDE.md"), "{said}");
+    let log = f.run_log.borrow();
+    assert_eq!(log[0].0, REFRESH_ALARM_LOG);
+    assert!(log[0].1.contains("3 consecutive") && log[0].1.contains("/prod") && log[0].1.contains("STALE-INDEX-LOCK"), "{}", log[0].1);
+    assert!(f.removed.borrow().is_empty(), "the lock and the dirt are never touched");
+}
+
+#[test]
+fn refresh_decline_does_not_call_a_fresh_or_owned_lock_stale() {
+    let f = declining_checkout();
+    *f.lock_age.borrow_mut() = Some(30);
+    refresh(&f, Some("/prod"));
+    assert!(!f.stdout_joined().contains("STALE-INDEX-LOCK"));
+    *f.lock_age.borrow_mut() = Some(86_400);
+    *f.git_live.borrow_mut() = true;
+    refresh(&f, Some("/prod"));
+    assert!(!f.stdout_joined().contains("STALE-INDEX-LOCK"));
+}
+
+#[test]
+fn refresh_success_resets_the_decline_streak() {
+    let f = declining_checkout();
+    refresh(&f, Some("/prod"));
+    refresh(&f, Some("/prod"));
+    f.rev_list_counts.borrow_mut().insert("/prod|HEAD..origin/main".into(), 0);
+    assert_eq!(refresh(&f, Some("/prod")), 0);
+    f.rev_list_counts.borrow_mut().insert("/prod|HEAD..origin/main".into(), 2);
+    refresh(&f, Some("/prod"));
+    refresh(&f, Some("/prod"));
+    assert!(f.run_log.borrow().is_empty(), "two passes after a reset is not three in a row");
 }

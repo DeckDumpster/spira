@@ -225,3 +225,8 @@ runtime-watch|log|@SPIRA_RUN@/runtime-watch.log
 # DESIGN-ASKS tells the inbox of each design page in draft or in-review that no open ask names, once a day
 # per page, so a published design cannot wait on approval unseen.
 design-asks|daemon|@SPIRA_HOME@/design-asks.sh watch --interval 600|@SPIRA_HOME@/design-asks.sh health
+
+# SKEW-REFRESH is the alarm for a checkout `skew refresh` keeps declining: skew appends one line
+# when the same repo has declined three passes running (naming the dirty tracked files and any stale
+# index.lock) and again every 180 passes while it persists. A quiet log means refreshes are landing.
+skew-refresh|log|@SPIRA_RUN@/skew-refresh.log

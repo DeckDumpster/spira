@@ -112,6 +112,12 @@ pub trait World {
     fn queue_lock_held(&self, repo_name: &str) -> bool;
     fn stamp_read(&self, key: &str) -> Option<String>;
     fn stamp_write(&self, key: &str, val: &str);
+    /// Appends one line to `<SPIRA_RUN>/<name>.log`, the log a watchd `log` row reads.
+    fn run_log_append(&self, name: &str, line: &str);
+    /// Seconds since the repo's `index.lock` was last modified; None when there is no lock.
+    fn index_lock_age_secs(&self, repo: &Path) -> Option<u64>;
+    /// True while a `git` process has `repo` as its working directory.
+    fn git_running_in(&self, repo: &Path) -> bool;
 
     // ---- output (so tests can capture without touching real stdout/stderr) ----
     fn out(&self, s: &str);

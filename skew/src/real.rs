@@ -432,6 +432,39 @@ impl World for Real {
         let _ = std::fs::create_dir_all(&dir);
         let _ = std::fs::write(dir.join(key), val);
     }
+    fn run_log_append(&self, name: &str, line: &str) {
+        let run = match self.env("SPIRA_RUN") {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("skew: {e}");
+                return;
+            }
+        };
+        let Some(run) = run.filter(|v| !v.is_empty()) else { return };
+        let dir = PathBuf::from(&run);
+        let _ = std::fs::create_dir_all(&dir);
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join(format!("{name}.log"))) {
+            let _ = writeln!(f, "{line}");
+        }
+    }
+    fn index_lock_age_secs(&self, repo: &Path) -> Option<u64> {
+        let (ok, out) = self.git(repo, &["rev-parse", "--git-path", "index.lock"]);
+        let rel = out.trim();
+        if !ok || rel.is_empty() {
+            return None;
+        }
+        let meta = std::fs::metadata(repo.join(rel)).ok()?;
+        Some(meta.modified().ok()?.elapsed().map(|d| d.as_secs()).unwrap_or(0))
+    }
+    fn git_running_in(&self, repo: &Path) -> bool {
+        let Ok(want) = std::fs::canonicalize(repo) else { return false };
+        let Ok(procs) = std::fs::read_dir("/proc") else { return false };
+        procs.flatten().any(|e| {
+            let p = e.path();
+            let is_git = std::fs::read_to_string(p.join("comm")).map(|c| c.trim() == "git").unwrap_or(false);
+            is_git && std::fs::read_link(p.join("cwd")).map(|c| c == want).unwrap_or(false)
+        })
+    }
 
     fn out(&self, s: &str) {
         println!("{s}");

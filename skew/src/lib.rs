@@ -726,6 +726,7 @@ pub fn refresh(w: &dyn World, repo_arg: Option<&str>) -> i32 {
 
     let behind = w.rev_list_count(&repo, &format!("HEAD..{base}")).unwrap_or(0);
     if behind == 0 {
+        decline_streak_clear(w, &repo);
         return 0;
     }
 
@@ -738,6 +739,7 @@ pub fn refresh(w: &dyn World, repo_arg: Option<&str>) -> i32 {
             }
             Err(e) => {
                 w.out(&format!("skew: refresh declined — every tracked file change is a deletion and restoring them failed: {e}"));
+                decline_streak_bump(w, &repo, &dirty);
                 return 1;
             }
         }
@@ -750,7 +752,10 @@ pub fn refresh(w: &dyn World, repo_arg: Option<&str>) -> i32 {
                 w.out(&dirty);
             }
             Err(e) => {
-                w.out(&format!("skew: refresh declined — tracked files are modified and stash failed: {e}"));
+                let lock = stale_lock_note(w, &repo);
+                let files = dirty_files(&dirty);
+                w.out(&format!("skew: refresh declined — tracked files are modified and stash failed: {e}{lock}; dirty tracked files: {files}"));
+                decline_streak_bump(w, &repo, &files);
                 return 1;
             }
         }
@@ -760,6 +765,7 @@ pub fn refresh(w: &dyn World, repo_arg: Option<&str>) -> i32 {
     if current != base_branch {
         let shown = if current.is_empty() { "a detached HEAD".to_string() } else { current };
         w.out(&format!("skew: refresh declined — checkout is on {shown}, not {base_branch}"));
+        decline_streak_bump(w, &repo, &format!("on {shown}, not {base_branch}"));
         return 1;
     }
 
@@ -806,9 +812,52 @@ pub fn refresh(w: &dyn World, repo_arg: Option<&str>) -> i32 {
         return 1;
     }
 
+    decline_streak_clear(w, &repo);
     w.out(&format!("skew: refreshed to {base} ({behind} commit(s))"));
     w.overrides_apply(&repo);
     0
+}
+
+pub const DECLINE_ALARM_AFTER: u64 = 3;
+pub const DECLINE_REALARM_EVERY: u64 = 180;
+pub const STALE_LOCK_SECS: u64 = 600;
+pub const REFRESH_ALARM_LOG: &str = "skew-refresh";
+
+fn decline_key(repo: &Path) -> String {
+    format!("skew.refresh-declined-{}", cksum(&repo.to_string_lossy()))
+}
+
+fn decline_streak_clear(w: &dyn World, repo: &Path) {
+    let key = decline_key(repo);
+    if w.stamp_read(&key).map(|v| v != "0").unwrap_or(false) {
+        w.stamp_write(&key, "0");
+    }
+}
+
+fn decline_streak_bump(w: &dyn World, repo: &Path, what: &str) {
+    let key = decline_key(repo);
+    let n = w.stamp_read(&key).and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(0) + 1;
+    w.stamp_write(&key, &n.to_string());
+    if n == DECLINE_ALARM_AFTER || (n > DECLINE_ALARM_AFTER && (n - DECLINE_ALARM_AFTER) % DECLINE_REALARM_EVERY == 0) {
+        let lock = stale_lock_note(w, repo);
+        w.run_log_append(
+            REFRESH_ALARM_LOG,
+            &format!("skew: refresh of {} has declined {n} consecutive passes{lock}; {what}", repo.display()),
+        );
+    }
+}
+
+fn dirty_files(porcelain: &str) -> String {
+    porcelain.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(", ")
+}
+
+fn stale_lock_note(w: &dyn World, repo: &Path) -> String {
+    match w.index_lock_age_secs(repo) {
+        Some(age) if age > STALE_LOCK_SECS && !w.git_running_in(repo) => {
+            format!(" [STALE-INDEX-LOCK: index.lock is {age}s old and no git process is running in the repo; remove it by hand once confirmed]")
+        }
+        _ => String::new(),
+    }
 }
 
 fn repo_name_for_path(w: &dyn World, path: &Path) -> Option<String> {
