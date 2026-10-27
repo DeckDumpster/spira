@@ -45,7 +45,7 @@ serde_json = "1"
 libc = "0.2"
 spira-config = { path = "../../spira-config" }
 bead = { path = "../../bead" }
-sending = { path = "../../sending" }
+hel = { path = "../../hel" }
 
 [dev-dependencies]
 testkit = { path = "../../testkit" }

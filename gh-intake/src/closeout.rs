@@ -7,7 +7,7 @@
 //!
 //! `ask_already_open` is NOT shared with sentinel's or landing-pass's own native copies
 //! (sp-31hjr gave each of those crates its own; this codebase does not thread a shared lib
-//! dependency across binaries for a function this small — see `sending`'s `landed()`,
+//! dependency across binaries for a function this small — see `hel`'s `landed()`,
 //! `cockpit-collect`'s and `sentinel`'s own copies of the same subject-grep shape for the
 //! established precedent). This is gh-intake's own copy, not a bash fallback — lib.sh's
 //! copy retires outright once this lands: no bash caller is left anywhere in the tree.

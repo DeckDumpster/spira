@@ -414,7 +414,7 @@ impl<'a> Sentinel<'a> {
             };
             let unit = spira_config::chamber::fayth_get(&self.cfg.home, lane, "FAYTH_NAME", lane);
             let bead = stem[unit.len() + 1..].to_string();
-            if bead.starts_with("sweep-") || !sending::reap::aeon_alive(&e.path()) {
+            if bead.starts_with("sweep-") || !hel::reap::aeon_alive(&e.path()) {
                 continue;
             }
             let Ok(started) = e.metadata().and_then(|m| m.modified()) else { continue };

@@ -210,7 +210,7 @@ anywhere a test module's own `mod name;` loads transitively.
 empty at birth: the rule's own first run over the whole tree found 24 pre-existing sites
 outside the eight binaries sp-ivfu3 itself fixed (`broker`, `census`, `cockpit-collect`,
 `cockpit/ops`, `doctor`, `gate-run`, `gh-intake`, `groomer`, `install`, `loom`, `queue`,
-`reconciler-alert`, `rule`, `sending`, `skew`, `spira-lc`, `spira-world/src/bin/slay.rs`,
+`reconciler-alert`, `rule`, `hel`, `skew`, `spira-lc`, `spira-world/src/bin/slay.rs`,
 `tsd-lifecycle-export`, `watchd`, `work`) — each the same shape, each its own follow-on fix
 in the crate it lives in, listed in the allow file rather than bundled into this bead.
 

@@ -294,7 +294,7 @@ is "D: ZERO bd ready calls — the summon pass's ready set is the machine's" "0"
 want "D: log reports the summon-only pass" "summon-only pass complete" "$out_d1"
 nowant "D: no full-pass state line" "state: open=" "$out_d1"
 nowant "D: no full-pass CHECK7c" "CHECK7c" "$out_d1"
-nowant "D: no Sending" "sending:" "$out_d1"
+nowant "D: no Hel" "hel:" "$out_d1"
 
 echo
 echo "D — the machine, not bd, decides: beads bd calls open but the machine holds summon nothing:"

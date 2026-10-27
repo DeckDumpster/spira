@@ -5,7 +5,7 @@
 ```
                   +------------------- systemd (user + system) -------------------+
                   |  timers: sentinel, summon, sift, rounds(-forge), gate-worker,   |
-                  |  landing-pass, verdict, czar-pass, watchtower, skew, sending... |
+                  |  landing-pass, verdict, czar-pass, watchtower, skew, hel... |
                   +---+-----------------------------------------------------------+
                       |
  operator / Concierge |                                       aeon unit (transient)
@@ -28,7 +28,7 @@
                             ^                            |  landing ref, spira/<id>  |
  sentinel, spira-claim, sift|                            |  branches, round branches |
  batcher, landing-pass,     +-- read/write via --------- +-------------+-------------+
- queue, sending, strand ...    spira-lc / bd                           |
+ queue, hel, strand ...    spira-lc / bd                           |
                                                                        v
  run/ ($SPIRA_RUN)                                          <releases>/<sha>/
    verdicts/trees/<repo>/<tree>  tree certificates          <releases>/current -> <sha>
@@ -128,7 +128,7 @@ and unit that does it.
     `Deliver`, then `Delivered` → `LANDED`. A later fault never undoes the landing; a failed
     `Delivered` is reported and the ref stays. Waiting beads are rebased onto the new base.
 
-12. **Cleanup.** `sending` deletes the branch and worktree of every bead whose work has landed,
+12. **Cleanup.** `hel` deletes the branch and worktree of every bead whose work has landed,
     and nothing else; the sentinel runs it each pass, `spira-straggler-sweep` covers queue
     repositories hourly, and `spira-worktree-reaper` removes stale worktrees. Content found
     already on the base is closed by `ContentOnBase`.
@@ -147,7 +147,7 @@ and unit that does it.
 Several units exist only to notice the loop failing and turn that into work or mail rather than
 silence: `watchtower` (hands `ops` the pipeline's vital signs), `czar-pass` (30 s queue-stall
 detection with deterministic remedies), `reconciler` (declared structural invariants: remedy or
-escalate), `auron` (escalates a stalled loop and does nothing else), `strand` (stranded-work
+escalate), `heimdall` (escalates a stalled loop and does nothing else), `strand` (stranded-work
 detector), `cert-sweep` (re-certifies the landing ref's tip on a schedule), `refusal-watch`,
 `mend-watch`, and the `spira-lc event-continuity` check. `cockpit-collect` and `cockpit/`
 present the same stores to the operator.

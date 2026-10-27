@@ -19,7 +19,7 @@ use serde_json::Value;
 pub enum Kind {
     /// An escalation to Ryan (`ask` label): open until answered.
     Ask,
-    /// An auron/watchtower alert: open while the condition fires.
+    /// An heimdall/watchtower alert: open while the condition fires.
     Alert,
     /// A filed-closed observation (`bead file … insight`).
     Insight,

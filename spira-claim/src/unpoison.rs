@@ -631,7 +631,7 @@ pub fn live_stop_holder(run: &std::path::Path, id: &str, why: &str) -> Result<()
         // batch-job: a unit stop lasts as long as the aeon takes to exit
         let _ = std::process::Command::new(&systemctl).args(["--user", "stop", unit]).status();
     };
-    sending::reap::stop_occupants(std::path::Path::new("/proc"), &run.join("worktree").join(id), &mut stop, 20, &|| {
+    hel::reap::stop_occupants(std::path::Path::new("/proc"), &run.join("worktree").join(id), &mut stop, 20, &|| {
         // waits-on: worktree occupants exiting; cap 20 polls
         std::thread::sleep(std::time::Duration::from_millis(500))
     })

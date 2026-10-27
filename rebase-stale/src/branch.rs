@@ -12,7 +12,7 @@
 //! `.rebase.<repo-basename>`, because a leftover tree from before this port must still be
 //! found at the same path.
 //!
-//! Any worktree pruning or pre-destruction salvage in this path goes through `sending`'s
+//! Any worktree pruning or pre-destruction salvage in this path goes through `hel`'s
 //! destruction chokepoint (wave 4.20, sp-9envm) in-process — never a raw `git worktree
 //! remove` or `git branch -D` (there is none of either here: `rebase_branch` only adds a
 //! scratch worktree and moves a branch ref by ordinary update, and the one leftover
@@ -28,7 +28,7 @@ pub struct BranchConfig {
     /// `$SPIRA_RUN` — the scratch tree lives at `<run>/worktree/.rebase.<repo-basename>`.
     pub run: PathBuf,
     /// `$SPIRA_REAPLOG` (or `<run>/reap.log`) — the chokepoint's own log, named here because
-    /// `sending::reap::{prune_worktrees,salvage}` take it as an explicit argument.
+    /// `hel::reap::{prune_worktrees,salvage}` take it as an explicit argument.
     pub reaplog: PathBuf,
     pub git_name: String,
     pub git_email: String,
@@ -104,7 +104,7 @@ fn ensure_scratch(cfg: &BranchConfig, repo_git: &Git, repo: &Path, scratch: &Pat
     if let Some(d) = scratch.parent() {
         let _ = std::fs::create_dir_all(d);
     }
-    let _ = sending::reap::prune_worktrees(&cfg.reaplog, repo);
+    let _ = hel::reap::prune_worktrees(&cfg.reaplog, repo);
     repo_git.ok(["worktree", "add", "-q", "--detach", &scratch.display().to_string(), onto])
 }
 
@@ -152,7 +152,7 @@ pub fn rebase_branch(cfg: &BranchConfig, repo: &Path, br: &str, onto: &str, name
         let id = br.rsplit('/').next().unwrap_or(br);
         // Salvage's own result is not checked — matches the bash, which piped it to
         // `/dev/null` with no `||` chain and proceeded to the hard reset regardless.
-        let _ = sending::reap::salvage(&cfg.run, &cfg.reaplog, &format!("{id}-prerebase"), &wt);
+        let _ = hel::reap::salvage(&cfg.run, &cfg.reaplog, &format!("{id}-prerebase"), &wt);
         let _ = wt_git.ok(["reset", "-q", "--hard", "HEAD"]);
     }
 

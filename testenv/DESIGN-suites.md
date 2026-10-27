@@ -304,7 +304,7 @@ filing another.
 
 with `SPIRA_INCIDENT_TYPE=bug SPIRA_INCIDENT_PRIORITY=<§3.2> SPIRA_INCIDENT_ACTOR=suites
 SPIRA_INCIDENT_LABELS=[<scope>,]plan SPIRA_INCIDENT_REPO=<home_repo>
-SPIRA_INCIDENT_REF=flake:<s> SPIRA_SIN_EXEMPT=1 SPIRA_INCIDENT_PATH=<harness>/spira/<s>
+SPIRA_INCIDENT_REF=flake:<s> SPIRA_FENRIR_EXEMPT=1 SPIRA_INCIDENT_PATH=<harness>/spira/<s>
 SPIRA_INCIDENT_CAUSE=suite-flaky SPIRA_DB=<db>`. The id is the last stdout line with
 whitespace removed; it must be `[A-Za-z0-9-]+` not starting or ending with `-`.
 

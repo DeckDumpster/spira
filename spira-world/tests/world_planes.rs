@@ -49,7 +49,7 @@ fn a_timer_and_its_service_share_a_plane() {
 
 #[test]
 fn detectors_are_observability_and_the_loop_is_work() {
-    for d in ["auron", "watchtower", "skew", "notify", "refresh", "verify-asks", "gate-check", "cert-sweep-full", "cert-sweep-sample", "refusal-watch", "idea-prompt", "kit-bump", "filings-collect", "runtime-watch"] {
+    for d in ["heimdall", "watchtower", "skew", "notify", "refresh", "verify-asks", "gate-check", "cert-sweep-full", "cert-sweep-sample", "refusal-watch", "idea-prompt", "kit-bump", "filings-collect", "runtime-watch"] {
         assert_eq!(plane_of_shipped(&format!("spira-{d}.timer")), Some(Plane::Observability), "{d}");
     }
     for w in ["summon", "sentinel", "landing-pass", "verdict", "publish", "reconciler", "reconciler-flow", "groom", "gh-intake", "ops", "czar-pass", "mimir", "straggler-sweep", "reap-terminal"] {
@@ -145,7 +145,7 @@ fn a_plain_stop_halts_the_work_plane_and_leaves_detectors_and_maintenance() {
     let f = Fixture::new("planes-stop-work");
     let (out, calls) = f.world(&["stop"]);
     assert!(stopped(&calls, "summon") && stopped(&calls, "sentinel"), "positive control: work timers must stop\n{out}\n{calls:?}");
-    for kept in ["auron", "watchtower", "skew", "gate-check", "verify-asks", "watch-notify", "archivist", "mail-tidy"] {
+    for kept in ["heimdall", "watchtower", "skew", "gate-check", "verify-asks", "watch-notify", "archivist", "mail-tidy"] {
         assert!(!stopped(&calls, kept), "{kept} must keep running through a work halt\n{out}");
     }
     assert!(f.stamp("world.halted"), "the work plane's stamp is world.halted");
@@ -156,7 +156,7 @@ fn a_plain_stop_halts_the_work_plane_and_leaves_detectors_and_maintenance() {
 fn stop_observability_stops_only_the_detectors_and_does_not_set_the_work_stamp() {
     let f = Fixture::new("planes-stop-obs");
     let (out, calls) = f.world(&["stop", "--observability"]);
-    assert!(stopped(&calls, "auron") && stopped(&calls, "watchtower") && stopped(&calls, "gate-check"), "{out}\n{calls:?}");
+    assert!(stopped(&calls, "heimdall") && stopped(&calls, "watchtower") && stopped(&calls, "gate-check"), "{out}\n{calls:?}");
     assert!(!stopped(&calls, "summon") && !stopped(&calls, "archivist"), "{out}");
     assert!(f.stamp("world.halted.observability"));
     assert!(!f.stamp("world.halted"), "a detector detecting world.halted must not read an observability stop as a work halt");
@@ -167,7 +167,7 @@ fn stop_maintenance_is_its_own_switch() {
     let f = Fixture::new("planes-stop-maint");
     let (out, calls) = f.world(&["stop", "--maintenance"]);
     assert!(stopped(&calls, "archivist") && stopped(&calls, "mail-tidy"), "{out}\n{calls:?}");
-    assert!(!stopped(&calls, "summon") && !stopped(&calls, "auron"));
+    assert!(!stopped(&calls, "summon") && !stopped(&calls, "heimdall"));
 }
 
 #[test]
@@ -177,7 +177,7 @@ fn start_brings_back_work_and_observability_but_not_maintenance_and_clears_their
     assert!(f.stamp("world.halted") && f.stamp("world.halted.observability") && f.stamp("world.halted.maintenance"));
     let (out, calls) = f.world(&["start"]);
     let started = |b: &str| calls.iter().any(|c| c == &format!("start spira-{b}-prod.timer"));
-    assert!(started("summon") && started("auron"), "{out}\n{calls:?}");
+    assert!(started("summon") && started("heimdall"), "{out}\n{calls:?}");
     assert!(!started("archivist"), "{out}");
     assert!(!f.stamp("world.halted") && !f.stamp("world.halted.observability"));
     assert!(f.stamp("world.halted.maintenance"), "maintenance stays stopped until its own start");

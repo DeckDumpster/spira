@@ -194,7 +194,7 @@ impl Intake for Real {
             .env("SPIRA_INCIDENT_LABELS", &f.labels)
             .env("SPIRA_INCIDENT_REPO", &f.repo)
             .env("SPIRA_INCIDENT_REF", &f.reference)
-            .env("SPIRA_SIN_EXEMPT", "1")
+            .env("SPIRA_FENRIR_EXEMPT", "1")
             .env("SPIRA_INCIDENT_PATH", &f.path)
             .env("SPIRA_INCIDENT_CAUSE", "suite-flaky")
             .env("SPIRA_DB", &f.db)

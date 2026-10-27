@@ -47,7 +47,7 @@ stub strand        'exit 0'
 # THE RUST SENTINEL (sentinel.sh is gone): sentinel, spira-claim and landing-pass are found by
 # name on PATH; the fixture home $SH goes FIRST on PATH, so its stubs (strand, gate.sh, ...)
 # are the ones a bare name reaches (sp-gypjk).
-stub sending       'exit 0'
+stub hel       'exit 0'
 stub reflect.sh    'exit 0'
 stub gate.sh       'echo "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2; exit 0'
 stub confine.sh    'exit 0'

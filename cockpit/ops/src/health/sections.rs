@@ -177,22 +177,22 @@ pub fn header_line(
     out.extend(hotfix_banner(snap));
 
     out.push(format!(
-        "{B}{ACC}SPIRA{RST} {hhmm}   {DIM}sentinel{RST} {} {}s  {DIM}ops{RST} {} {}s  {DIM}auron{RST} {} {}{stale}{pass_dur}",
+        "{B}{ACC}SPIRA{RST} {hhmm}   {DIM}sentinel{RST} {} {}s  {DIM}ops{RST} {} {}s  {DIM}heimdall{RST} {} {}{stale}{pass_dur}",
         dot(snap.get("SP_SENTINEL_TIMER") == Some("1")),
         snap.q("SP_SENTINEL_AGE"),
         dot(snap.get("SP_OPS_TIMER") == Some("1")),
         snap.q("SP_OPS_AGE"),
-        dot(snap.get("SP_AURON_TIMER") == Some("1")),
-        age_str(snap.q("SP_AURON_AGE"), 180),
+        dot(snap.get("SP_HEIMDALL_TIMER") == Some("1")),
+        age_str(snap.q("SP_HEIMDALL_AGE"), 180),
     ));
 
-    let firing = snap.get("SP_AURON_FIRING").unwrap_or("0");
+    let firing = snap.get("SP_HEIMDALL_FIRING").unwrap_or("0");
     if firing == "?" {
         out.push(format!(
-            " {DIM}ALERT{RST}  {BAD}{B}? — Auron's heartbeat could not be read{RST}"
+            " {DIM}ALERT{RST}  {BAD}{B}? — Heimdall's heartbeat could not be read{RST}"
         ));
     } else if firing != "0" {
-        let keys = snap.q("SP_AURON_KEYS").replace(',', " ");
+        let keys = snap.q("SP_HEIMDALL_KEYS").replace(',', " ");
         out.push(format!(" {DIM}ALERT{RST}  {BAD}{B}{firing}{RST} firing  {BAD}{keys}{RST}"));
     }
 

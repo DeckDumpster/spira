@@ -11,7 +11,7 @@
 # setting does nothing to it — only a sweep does.
 #
 # ANCESTOR PROOF, NOT CONTENT-LANDED. spira_destroy_branch (lib.sh) asks
-# spira-lc content-landed so a caller that already vouched for a branch (the Sending, an
+# spira-lc content-landed so a caller that already vouched for a branch (the Hel, an
 # empty-commit landing) is not refused for lacking a direct ancestor edge. This
 # sweep has no such vouching caller behind it — a remote branch here may be a
 # stale orphan nobody ever certified — so it asks the strictly narrower question

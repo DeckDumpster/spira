@@ -198,7 +198,7 @@ if [ "$(type -t write_lapse_record 2>/dev/null)" = function ]; then
     SPIRA_RUN="$TMP/run" write_lapse_record sp-whole-lapsed 600 "writing output file" cafe5 >/dev/null
 fi
 snap="$(wt)"
-for section in 'The far end' 'The Sending' 'The workers' 'The graph' 'Lapsed aeons' 'The menu' 'Can this snapshot be believed'; do
+for section in 'The far end' 'The Hel' 'The workers' 'The graph' 'Lapsed aeons' 'The menu' 'Can this snapshot be believed'; do
     want "the snapshot still carries: $section" "$section" "$snap"
 done
 want "and still warns that ? is not a zero" "never treat it as a zero" "$snap"
@@ -322,13 +322,13 @@ wt_file_multi() {   # wt_file_multi [VAR=val ...] -> appends incident subjects t
         SPIRA_INCIDENT_SH="$mock" \
         "$@" watchtower 2>/dev/null
 }
-# wt_sinexempt_multi: like wt_file_multi but captures SPIRA_SIN_EXEMPT (UC-ops-detection-
-# remediation-07) alongside the subject, one "<subject>|<SPIRA_SIN_EXEMPT>" line per
-# incident.sh call — proving the DRAINING escalation cannot itself become a Sin, not just
-# that incident.sh's own exemption plumbing works (that half is test-sin-exempt.sh's job).
+# wt_sinexempt_multi: like wt_file_multi but captures SPIRA_FENRIR_EXEMPT (UC-ops-detection-
+# remediation-07) alongside the subject, one "<subject>|<SPIRA_FENRIR_EXEMPT>" line per
+# incident.sh call — proving the DRAINING escalation cannot itself become a Fenrir, not just
+# that incident.sh's own exemption plumbing works (that half is test-fenrir-exempt.sh's job).
 wt_sinexempt_multi() {   # wt_sinexempt_multi [VAR=val ...] -> appends to $TMP/inc-sinexempt
     local mock="$TMP/mock-inc-sinexempt.sh"
-    printf '#!/usr/bin/env bash\nprintf "%%s|%%s\n" "$2" "${SPIRA_SIN_EXEMPT:-}" >> "%s"\ncat > /dev/null\n' \
+    printf '#!/usr/bin/env bash\nprintf "%%s|%%s\n" "$2" "${SPIRA_FENRIR_EXEMPT:-}" >> "%s"\ncat > /dev/null\n' \
         "$TMP/inc-sinexempt" > "$mock"
     chmod +x "$mock"
     tl_config SPIRA_RUN="$TMP/run"
@@ -341,14 +341,14 @@ wt_sinexempt_multi() {   # wt_sinexempt_multi [VAR=val ...] -> appends to $TMP/i
         "$@" watchtower 2>/dev/null
 }
 # The threshold logic is escalate::tests; what only this seam proves is that the compiled
-# binary carries SPIRA_SIN_EXEMPT through to incident.sh, so the escalation cannot itself
-# become a Sin.
+# binary carries SPIRA_FENRIR_EXEMPT through to incident.sh, so the escalation cannot itself
+# become a Fenrir.
 fresh
 printf '2026-09-08 20:02:00 UTC\nsummons gated.\n' > "$TMP/run/world.draining"
 touch -d "@$(( NOW - 1200 ))" "$TMP/run/world.draining" 2>/dev/null || true
 rm -f "$TMP/inc-sinexempt" "$TMP/ops-prompt"
 wt_sinexempt_multi SPIRA_DRAIN_WARN_MINS=15
-want "the drain escalation sets SPIRA_SIN_EXEMPT=1" "DRAINING: world.sh summons gated|1" \
+want "the drain escalation sets SPIRA_FENRIR_EXEMPT=1" "DRAINING: world.sh summons gated|1" \
      "$(cat "$TMP/inc-sinexempt" 2>/dev/null || echo "")"
 
 # ======================================================================================

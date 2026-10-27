@@ -640,14 +640,14 @@ impl Lib for RealLib {
         if !RealGit.ref_exists(Path::new(&root), &format!("refs/heads/{branch}")) {
             return Ok(false);
         }
-        // batch-job: the Sending's verified branch+worktree deletion (a content fence over
+        // batch-job: the Hel's verified branch+worktree deletion (a content fence over
         // the branch's diff), bounded by its own SPIRA_REAP_TIMEOUT below.
         let timeout = std::env::var("SPIRA_REAP_TIMEOUT")
             .ok()
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "300".into());
         let mut c = Command::new("timeout");
-        c.arg(timeout).arg("sending").arg("reap-landed-branch");
+        c.arg(timeout).arg("hel").arg("reap-landed-branch");
         if let Ok(f) = std::env::var("SPIRA_STATUS_FILE") {
             c.arg("--status-from").arg(f);
         }

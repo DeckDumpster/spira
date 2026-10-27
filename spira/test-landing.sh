@@ -6,14 +6,14 @@
 #   ./test-landing.sh
 #
 # THE CASE THIS IS WRITTEN FOR. A pass reads its branch list once and then runs for minutes,
-# so by the time it reaches the tail of that list the head of it may be gone. The Sending
+# so by the time it reaches the tail of that list the head of it may be gone. The Hel
 # reaps a landed branch on its own timer, and `rebase_branch` against a ref that is no longer
 # there fails with exactly the exit status and exactly the empty conflict list that a real
 # disagreement produces:
 #
 #   21:51:17  landed spira/<id>                      pass A lands it
 #   21:52:13  landing: starting a pass               pass B enumerates, <id> still present
-#   21:52:36  REMOVED branch spira/<id>              the Sending reaps it
+#   21:52:36  REMOVED branch spira/<id>              the Hel reaps it
 #   22:00:51  landed spira/<other>                   pass B is eight minutes into one gate
 #   22:00:55  reopened <id> — does not rebase onto origin/main; conflicts in unknown
 #
@@ -93,7 +93,7 @@ events() { cat "$RUN/events.log" 2>/dev/null; }
 
 # THE GATE IS ALSO THE REAPER, and that is the whole fixture. A pass holds its branch list
 # across the gate, which is the only long call in it, so a branch removed from inside the
-# stub is removed at precisely the point the Sending removed the real one — after the list
+# stub is removed at precisely the point the Hel removed the real one — after the list
 # was read and before the loop reached the tail of it. Anything staged outside the pass would
 # be testing a list that was stale before it was taken, which is a different bug.
 #
@@ -164,7 +164,7 @@ landing() {
     # repositories the operator has registered and counts THEIR branches, so a suite
     # asserting about one fixture branch would be asserting about a box.
     # AND THE ESCALATION CHANNEL IS PINNED SHUT. Two paths out of this pass reach the
-    # operator — the repeated-NO_VERDICT ask and the intake's Sin escalation — and both
+    # operator — the repeated-NO_VERDICT ask and the intake's Fenrir escalation — and both
     # resolve their command from configuration. Left unpinned a suite inherits whatever this
     # box has installed there and puts a fixture's verdict in a real pane
     # (law-gates-run-in-a-clean-environment).
@@ -348,7 +348,7 @@ drop_branch sp-bbb
 cat > "$REMOTE/hooks/pre-receive" <<HOOK
 #!/usr/bin/env bash
 # Reject the first push only, advancing the base and removing the branch — simulating a
-# concurrent commit (genuine race) and the Sending arriving in the one window this arm
+# concurrent commit (genuine race) and the Hel arriving in the one window this arm
 # occupies. The base MUST move so the classification guard introduced by sp-utvi treats
 # this as a real race rather than a non-race push failure (law-a-pattern-match-is-not-
 # an-identity-check). Without a moved base the guard correctly stops before the retry, and

@@ -1,4 +1,4 @@
-//! The SENDING / SELF / aeon-ledger keys: two log files in, flat `KEY=value` pairs out. Pure
+//! The HEL / SELF / aeon-ledger keys: two log files in, flat `KEY=value` pairs out. Pure
 //! over its inputs so fixtures can drive it; a source that cannot be read renders `?` for the
 //! keys that depend on it, never 0.
 
@@ -172,7 +172,7 @@ pub fn ledger_metrics(lines: &[&str], since: i64) -> Keys {
     .collect()
 }
 
-pub fn sending_metrics(lines: &[&str], since: i64, now: i64) -> Keys {
+pub fn hel_metrics(lines: &[&str], since: i64, now: i64) -> Keys {
     let (mut sent, mut failed, mut held, mut kept) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
     let mut failed_last: Option<i64> = None;
     let mut cur: Option<i64> = None;
@@ -292,7 +292,7 @@ const SENTINEL_KEYS: &[&str] = &[
     "SP_PASSES", "SP_ACTS", "SP_FALSE_ACTS", "SP_FALSE_PER_PASS", "SP_SINCE_JUDGEMENT", "SP_STARVED_PASSES",
 ];
 const LEDGER_KEYS: &[&str] = &["SP_AEON_BORN", "SP_AEON_LIVED", "SP_AEON_STILLBORN", "SP_AEON_WORKED", "SP_AEON_THRASH"];
-const SENDING_KEYS: &[&str] = &["SP_SENT", "SP_SENT_HELD", "SP_SENT_KEPT", "SP_SENT_FAILED", "SP_SENT_FAILED_AGE_M"];
+const HEL_KEYS: &[&str] = &["SP_SENT", "SP_SENT_HELD", "SP_SENT_KEPT", "SP_SENT_FAILED", "SP_SENT_FAILED_AGE_M"];
 const SELF_KEYS: &[&str] = &[
     "SP_SELF_REPEATING_N", "SP_SELF_STILLBORN_W", "SP_SELF_STILLBORN_LAST", "SP_SELF_STARVED_W", "SP_SELF_STARVED_LAST",
 ];
@@ -322,7 +322,7 @@ pub fn collect(sentinel_log: &str, ledger_log: &str, hours: f64, self_window_min
     let mut out = Keys::new();
     out.extend(sent.as_deref().map_or_else(|| unknown(SENTINEL_KEYS), |l| sentinel_metrics(l, since)));
     out.extend(led.as_deref().map_or_else(|| unknown(LEDGER_KEYS), |l| ledger_metrics(l, since)));
-    out.extend(sent.as_deref().map_or_else(|| unknown(SENDING_KEYS), |l| sending_metrics(l, since, now)));
+    out.extend(sent.as_deref().map_or_else(|| unknown(HEL_KEYS), |l| hel_metrics(l, since, now)));
     out.extend(match (sent.as_deref(), led.as_deref(), self_window_min) {
         (Some(s), Some(l), Some(w)) => self_metrics(s, l, now - (w * 60.0) as i64, now),
         _ => unknown(SELF_KEYS),
@@ -362,7 +362,7 @@ mod tests {
     }
 
     #[test]
-    fn sending_counts_distinct_branches_and_attributes_by_preceding_timestamp() {
+    fn hel_counts_distinct_branches_and_attributes_by_preceding_timestamp() {
         let state = format!("{} spira: state: open=0 plan_ready=0 in_progress=0 aeons=0", ts(-300));
         let lines = [
             "SENT before-any-timestamp x",
@@ -371,7 +371,7 @@ mod tests {
             "SENT sp-test1  again",
             "FAILED sp-f x",
         ];
-        let k = sending_metrics(&lines, NOW - 86400, NOW);
+        let k = hel_metrics(&lines, NOW - 86400, NOW);
         assert_eq!(k["SP_SENT"], "1");
         assert_eq!(k["SP_SENT_FAILED"], "1");
         assert_eq!(k["SP_SENT_FAILED_AGE_M"], "5");

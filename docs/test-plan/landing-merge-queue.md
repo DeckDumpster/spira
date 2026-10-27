@@ -135,7 +135,7 @@ The **ci_secs** column is per file, from signals.tsv. Where one file covers seve
 | 18 | test-landing-rebase::survivor sweep, sweep reopens, aeon-taken untouched, loop defers | integration / (129) | KEEP (T3, embedded testdb) |
 | 19 | test-landing::escalate at threshold; test-landing-pr::merge-conflict event dedupe | integration / (249), (71) | KEEP escalate in test-landing; MERGE-INTO test-landing the dedupe case (unrelated to PR mode) |
 | 20 | test-landing-pr::PR opened … escalate once | integration (server Dolt) / 71 | KEEP, switch to embedded testdb |
-| 21 | test-superseded::plain lands, superseded not reopened, both closed | integration / 14 | KEEP (the sending half belongs to landed-audit-reaping) |
+| 21 | test-superseded::plain lands, superseded not reopened, both closed | integration / 14 | KEEP (the hel half belongs to landed-audit-reaping) |
 | 22 | test-landing::bulk scan, ghost branch, no repo label, reopened during gate ×2 | integration / (249) | KEEP; bulk scan could be a T1 stub-count test |
 | 23 | test-landing::verdict TTL prune, reused verdict | integration / (249) | DEMOTE-TO-T1 (prune); keep the reused-verdict line |
 | 24 | test-landing-halt::(all) | component / 11 | KEEP; DELETE the vacuous "positive control" (a string that greps itself) |

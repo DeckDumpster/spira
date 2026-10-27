@@ -102,7 +102,7 @@
 > `list`/`show`/`memories` from a `SPIRA_BDJSON_FIXTURE` JSON file; `lib.sh`'s `bdq()` routes
 > there when the variable is set, which is the one chokepoint every `*_keys` function's bd
 > read already funnels through. Converted off `testdb_up` onto that seam: dup-refs,
-> repo-labels, sphere, and sop (which absorbed sweep's cases; `test-cockpit-sweep.sh` is
+> repo-labels, well, and sop (which absorbed sweep's cases; `test-cockpit-sweep.sh` is
 > deleted — coverage row 14, cluster 5). `test-cockpit-bd-contract.sh` is new: one real-bd row
 > per query shape (label AND + lookback, default exclude-closed, `--all`, bare `memories`,
 > `SP_READY`), including `test-cockpit-ready-seeded.sh`'s two cases per coverage row 08 (that
@@ -295,7 +295,7 @@ Current cost is the ci_secs from main-push run 35947142904. The Rust sources car
 | 10 | test-cockpit-landed.sh::SP_CLOSED 24h, SP_LANDED, SP_UNLANDED_N; test-cockpit-unlanded.sh::main+master, zero case, pane QUEUE; test-cockpit-queue-section.sh::body mention; test-cockpit-queue.sh::SP_UNLANDED_N | T3 real bd + git: 14 + 15 + parts | **MERGE** landed into test-cockpit-unlanded.sh (keep its main/master pair and add the body-mention case from queue-section). **DEMOTE-TO-T2**: stub bd returns the closed list, git stays real. Call the section, not `once`. |
 | 11 | test-cockpit-queue.sh (all); test-cockpit-queue-section.sh (all) | T3 real bd: 9 + 13 | **MERGE** test-cockpit-queue.sh INTO test-cockpit-queue-section.sh, keeping only its unique quarantine and BATCH_AGE rows. Replace embedded Dolt with fixture JSON. Separate priority from epoch in the ordering case. |
 | 12 | test-cockpit-unsent.sh (13 cases); test-cockpit-unadopted-queue.sh (5) | T3: 39 + 12 | **MERGE** unadopted-queue INTO test-cockpit-unsent.sh (same `sp-true-stray` fixture). Run `cockpit.sh unsent` rather than 7× `once`, with stub bd and real git. Move `no timeout(1) wraps a shell function` to **T0 (SOURCE-GREP to lint)**. |
-| 13 | test-cockpit-dup-refs.sh (6); test-cockpit-repo-labels.sh (8); test-cockpit-sphere.sh (5) | T3 real bd: 7 + 6 + 7 | **DEMOTE-TO-T1** each, using fixture JSON through a stub `bdjson`. Keep one real-bd row per query (label filter, `--all`, lookback) in test-cockpit-bd-contract.sh. Dup-refs currently rebuilds the store 5× (`testdb_up`). |
+| 13 | test-cockpit-dup-refs.sh (6); test-cockpit-repo-labels.sh (8); test-cockpit-well.sh (5) | T3 real bd: 7 + 6 + 7 | **DEMOTE-TO-T1** each, using fixture JSON through a stub `bdjson`. Keep one real-bd row per query (label filter, `--all`, lookback) in test-cockpit-bd-contract.sh. Dup-refs currently rebuilds the store 5× (`testdb_up`). |
 | 14 | test-cockpit-sop.sh (9); test-cockpit-sweep.sh (9) | T3 real bd: 4 + 4 | **MERGE** test-cockpit-sweep.sh INTO test-cockpit-sop.sh (identical `run_sops` harness, same broken-shelf and dir-as-ledger fixtures). DEMOTE-TO-T1 with a stub bd. Replace the `<60 s` wall-clock bound with `SPIRA_NOW`. |
 | 15 | test-cockpit-gate.sh (8); test-cockpit-fuse.sh (9) | T2: 14 + 5 | test-cockpit-gate.sh: **DEMOTE-TO-T1/T2**. Six full `once` runs against a missing DB are the whole 14 s; call the land/gate section function instead. KEEP fuse, and tighten `grep -q ?` to the exact column. |
 | 16 | test-cockpit.sh::ratelim ×2; test-cockpit-self.sh::repeating, stillborn ×7 | T2: 6 + 6 | **DEMOTE-TO-T1**: call the ratelim parser and cockpit-metrics.py functions with a fixed now. Replace the 4-fixture "no SELF rows" guard with one row in the UC-21 renderer table. |
@@ -372,7 +372,7 @@ Current cost is the ci_secs from main-push run 35947142904. The Rust sources car
 
 | Logic | Today tested through | Seam for a T1 test |
 |---|---|---|
-| Per-section probe functions (`queue_keys`, `unsent_keys`, `dup_refs_keys`, `repo_label_keys`, `sphere_keys`, `sop_keys`, `reachable_keys`, `core_counts_keys`) in spira/cockpit.sh | full `cockpit.sh once` (all 16 probes) on embedded Dolt; 7× in unsent alone | Two changes:<br>• every section already has a subcommand (`cockpit.sh unsent`, `sops`, `reachable`, …), so tests must call it, not `once`;<br>• route all bd reads through `bdjson`, overridable by `SPIRA_BDJSON_FIXTURE=<file>`, so the Python classification gets canned JSON.<br>Real bd is kept only in test-cockpit-bd-contract.sh. |
+| Per-section probe functions (`queue_keys`, `unsent_keys`, `dup_refs_keys`, `repo_label_keys`, `well_keys`, `sop_keys`, `reachable_keys`, `core_counts_keys`) in spira/cockpit.sh | full `cockpit.sh once` (all 16 probes) on embedded Dolt; 7× in unsent alone | Two changes:<br>• every section already has a subcommand (`cockpit.sh unsent`, `sops`, `reachable`, …), so tests must call it, not `once`;<br>• route all bd reads through `bdjson`, overridable by `SPIRA_BDJSON_FIXTURE=<file>`, so the Python classification gets canned JSON.<br>Real bd is kept only in test-cockpit-bd-contract.sh. |
 | `_merge_fragments` (Python) | pasted copy in two tests | Tests call the existing `collect.sh merge <dir>` on fixture fragments. |
 | `health.sh` section renderers | ~25 `health.sh once` process starts per suite (1,844 lines + conf.sh each) | Add `health.sh render-many <dir>`, which renders every `*.env` in a directory in one process. probe-fault, now, mail-pane, drain-banner, snap-absent, self and gate then become one-spawn table tests. |
 | `trace_stats`, `trace_tail`, `model_short`, and the collector's SAID sanitiser | health.sh renders; `model_short` is pulled out with `sed+eval`; the sanitiser is re-implemented in the test | Move them into a sourceable `cockpit/lib-trace.sh` (or a Python module) and call them directly. |
@@ -436,7 +436,7 @@ Current cost is the ci_secs from main-push run 35947142904. The Rust sources car
 sparklines 3 + collect-probes 1 + quota 4 + watchdog 4 + conf-change 8 + dup-refs 7 + fuse 5
 + gate 14 + landed 14 + layout-conf 4 + ensure-focus 4 + identity 3 + layout-mail 5 + layout 8
 + mouse 7 + probe-fault 13 + queue-section 13 + queue 9 + reachable 4 + ready-seeded 9 + ready(c) 6
-+ rebuild 18 + remote 1 + repo-labels 6 + self 6 + snap-absent 2 + sop 4 + sphere 7 + sweep 4
++ rebuild 18 + remote 1 + repo-labels 6 + self 6 + snap-absent 2 + sop 4 + well 7 + sweep 4
 + tiered 17 + tmp 11 + unadopted-queue 12 + unclaimable 3 + unlanded 15 + unsent 39 + watcher-owner 3
 + cockpit 6 + ctx-pointer 5 + drain-banner 2 + event 11 + layout-guard 6 + limits 13 + loom-conf 6
 + loom-page 9 + loom-rebuild 2 + loom 31 + mail-pane 2 + model-switch 1 + now 8 + pane-fyi 17
@@ -454,7 +454,7 @@ sparklines 3 + collect-probes 1 + quota 4 + watchdog 4 + conf-change 8 + dup-ref
 | Unsent + unadopted merge; section subcommand; stub bd | 39 + 12 = 51 → 8 | −43 |
 | Landed + unlanded merge; stub bd, real git | 14 + 15 = 29 → 5 | −24 |
 | Queue + queue-section merge; fixture JSON | 9 + 13 = 22 → 5 | −17 |
-| Real-bd meters to T1, plus one shared contract suite:<br>• dup-refs 7→1<br>• repo-labels 6→1<br>• sphere 7→1<br>• sop 4 + sweep 4 → 2<br>• ready-seeded 9 → 0<br>• loom-page 9 → 3<br>• new test-cockpit-bd-contract.sh 10 | 46 → 18 | −28 |
+| Real-bd meters to T1, plus one shared contract suite:<br>• dup-refs 7→1<br>• repo-labels 6→1<br>• well 7→1<br>• sop 4 + sweep 4 → 2<br>• ready-seeded 9 → 0<br>• loom-page 9 → 3<br>• new test-cockpit-bd-contract.sh 10 | 46 → 18 | −28 |
 | Gate section, not `once` | 14 → 3 | −11 |
 | Collector: tiered + collect-probes (real merge, short tick); quota split out (0) | 17 + 1 + 4 = 22 → 6 | −16 |
 | Config-change trio with an injected tick | 8 + 6 → 2 + 2 | −10 |

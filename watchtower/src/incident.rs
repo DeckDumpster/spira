@@ -59,7 +59,7 @@ pub struct Finding {
     pub incident_type: String,
     pub priority: u32,
     pub actor: String,
-    pub sin_exempt: bool,
+    pub fenrir_exempt: bool,
     pub repo: String,
     pub reference: Option<String>,
     pub cause: Option<String>,
@@ -75,7 +75,7 @@ impl Finding {
             incident_type: "task".to_string(),
             priority: 2,
             actor: "watchtower".to_string(),
-            sin_exempt: true,
+            fenrir_exempt: true,
             repo: repo.to_string(),
             reference: None,
             cause: None,
@@ -137,8 +137,8 @@ fn run_verb(incident_sh: &str, verb: &str, f: &Finding) -> Option<String> {
     cmd.env("SPIRA_INCIDENT_TYPE", &f.incident_type);
     cmd.env("SPIRA_INCIDENT_PRIORITY", f.priority.to_string());
     cmd.env("SPIRA_INCIDENT_ACTOR", &f.actor);
-    if f.sin_exempt {
-        cmd.env("SPIRA_SIN_EXEMPT", "1");
+    if f.fenrir_exempt {
+        cmd.env("SPIRA_FENRIR_EXEMPT", "1");
     }
     cmd.env("SPIRA_INCIDENT_REPO", &f.repo);
     if let Some(r) = &f.reference {

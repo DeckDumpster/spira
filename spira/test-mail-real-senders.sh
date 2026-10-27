@@ -16,11 +16,11 @@
 # path directly, skew's through a real `skew check --escalate` against a minimal
 # NOT-LATEST fixture.
 #
-# incident.sh's SIN escalation is driven through incident-stub-bd (a genuinely stateful
-# fake bd, not a canned response — test-sin-exempt.sh already established that it reproduces
+# incident.sh's FENRIR escalation is driven through incident-stub-bd (a genuinely stateful
+# fake bd, not a canned response — test-fenrir-exempt.sh already established that it reproduces
 # the create-then-recur sequence faithfully) rather than a real bd store: what this suite
 # checks is that the message incident.sh builds clears mail's own lint, which needs the
-# real mail, not a real database. Standing up a real recurrence count is test-sin-exempt.sh
+# real mail, not a real database. Standing up a real recurrence count is test-fenrir-exempt.sh
 # and test-incident-recur-cause.sh's job, not this one's.
 #
 # archivist's sweep, driven for real over a fabricated transcript that ctx-meter.sh measures
@@ -157,47 +157,47 @@ tl_config SPIRA_RUN="$SPIRA_RUN"
 is "skew escalate delivers exactly one message" "$((before + 1))" "$after"
 
 echo
-echo "incident.sh: SIN escalation (question)"
+echo "incident.sh: FENRIR escalation (question)"
 
 INC=incident.sh   # invoked by name on the suite's PATH (sp-gypjk)
-SIN_STATE="$TMP/sin-state.json"
-SIN_LOG="$TMP/sin-bd.log"
-SIN_AT=2
+FENRIR_STATE="$TMP/fenrir-state.json"
+FENRIR_LOG="$TMP/fenrir-bd.log"
+FENRIR_AT=2
 # sp-jgjvh: incident's dedup reads each incident bead's lifecycle row; a stand-in spira-lc
 # tells the stub store's story in lifecycle terms (testlib.sh lc_mirror_bd), passed to the
 # filer alone so the rest of this suite keeps its own environment.
-_keep_lc="${SPIRA_LC_BIN-}"; lc_mirror_bd "$TMP/sin-lc"; SIN_LC="$SPIRA_LC_BIN"; SPIRA_LC_BIN="$_keep_lc"
+_keep_lc="${SPIRA_LC_BIN-}"; lc_mirror_bd "$TMP/fenrir-lc"; FENRIR_LC="$SPIRA_LC_BIN"; SPIRA_LC_BIN="$_keep_lc"
 
-# file_sin_incident <ref> <title> <payload> — a real incident.sh subprocess against
+# file_fenrir_incident <ref> <title> <payload> — a real incident.sh subprocess against
 # incident-stub-bd, with the real mail (SPIRA_HOME/SPIRA_MAIL from the suite-wide
-# exports above) so the SIN message actually clears mail's lint.
-file_sin_incident() {
+# exports above) so the FENRIR message actually clears mail's lint.
+file_fenrir_incident() {
     local ref="$1" title="$2" payload="$3"
     # SPIRA_BD/SPIRA_DB are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
     # declare via tl_config, not the env prefix below, which no process reads any more.
     tl_config SPIRA_BD="$(command -v incident-stub-bd)" SPIRA_DB="fakedb"
     printf '%s' "$payload" | \
-        env STUB_BD_STATE="$SIN_STATE" STUB_BD_LOG="$SIN_LOG" \
-        SPIRA_LC_BIN="$SIN_LC" \
+        env STUB_BD_STATE="$FENRIR_STATE" STUB_BD_LOG="$FENRIR_LOG" \
+        SPIRA_LC_BIN="$FENRIR_LC" \
         SPIRA_INCIDENT_REF="$ref" \
-        SPIRA_INCIDENT_LOCK="$TMP/run/real-sender-sin.lock" \
+        SPIRA_INCIDENT_LOCK="$TMP/run/real-sender-fenrir.lock" \
         SPIRA_INCIDENT_REPO=real-sender-fixture \
-        SPIRA_SIN_AT="$SIN_AT" \
+        SPIRA_FENRIR_AT="$FENRIR_AT" \
         "$INC" file "$title" - 2>/dev/null
 }
 
-ref="incident:real-sender-sin-test"
+ref="incident:real-sender-fenrir-test"
 before="$(unread)"
-# SIN_AT counts RECURRENCES, not sightings: the filing that creates the bead is recurrence 0,
-# so reaching SIN_AT recurrences takes one create plus SIN_AT recurring filings (test-sin-exempt.sh).
-for i in $(seq 1 "$(( SIN_AT + 1 ))"); do
-    file_sin_incident "$ref" "real sender SIN test" "payload $i" >/dev/null
+# FENRIR_AT counts RECURRENCES, not sightings: the filing that creates the bead is recurrence 0,
+# so reaching FENRIR_AT recurrences takes one create plus FENRIR_AT recurring filings (test-fenrir-exempt.sh).
+for i in $(seq 1 "$(( FENRIR_AT + 1 ))"); do
+    file_fenrir_incident "$ref" "real sender FENRIR test" "payload $i" >/dev/null
 done
 after="$(unread)"
-is "incident.sh SIN escalation delivers exactly one message" "$((before + 1))" "$after"
+is "incident.sh FENRIR escalation delivers exactly one message" "$((before + 1))" "$after"
 body="$(cat "$(newest_ask)" 2>/dev/null)"
-want "incident.sh SIN message carries a Default"     "## Default"  "$body"
-want "incident.sh SIN message names the recurrence"  "recurred"    "$body"
+want "incident.sh FENRIR message carries a Default"     "## Default"  "$body"
+want "incident.sh FENRIR message names the recurrence"  "recurred"    "$body"
 
 echo
 echo "archivist: sweep over the top band sends no per-session note"

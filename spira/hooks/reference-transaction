@@ -19,7 +19,7 @@
 # destruction section may call `git branch -D`, and spira_destroy_branch carries the
 # content-on-base guard (`spira-lc content-landed`) that refuses to delete a branch whose commits are not on the
 # base — the exact guard that would have saved all 24. But that rule was prose. A
-# one-liner walked past it, and because it never reached sending.sh, nothing was
+# one-liner walked past it, and because it never reached hel.sh, nothing was
 # written to reap.log either: the destruction was silent as well as unguarded.
 #
 # WHY HERE. git runs this hook for EVERY ref create, update and delete, in every

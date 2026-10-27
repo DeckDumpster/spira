@@ -5,7 +5,7 @@
 # lifecycle store's state as `lifecycle_state` beside the content store's own `status`, which
 # no longer decides anything. Statute-book memories follow as {"_type":"memory"} lines.
 # Commits to the wiki checkout only when the file's content changes; an unchanged pass still
-# touches it, because its mtime is what the mirror-stale alarm (auron) reads.
+# touches it, because its mtime is what the mirror-stale alarm (heimdall) reads.
 #
 # With no SPIRA_WIKI configured this exits 0 having written nothing. A store that returns
 # fewer than half the beads already mirrored is refused, not written.

@@ -1,6 +1,6 @@
 TYPE=u32
 GROUP=disk
-DOC=Seconds a git lock file must have sat untouched, with no git process in the repo, before the Sending moves it aside and retries once; 0 turns the recovery off.
+DOC=Seconds a git lock file must have sat untouched, with no git process in the repo, before the Hel moves it aside and retries once; 0 turns the recovery off.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     : "${SPIRA_GIT_LOCK_STALE_SECS:=600}"
 SPIRA_CONF_DEFAULT_EOF

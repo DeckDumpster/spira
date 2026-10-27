@@ -27,7 +27,7 @@ test = false
 spira-otel = { path = "../spira-otel" }
 spira-ctrl = { path = "../spira-ctrl" }
 spira-config = { path = "../spira-config" }
-sending = { path = "../sending" }
+hel = { path = "../hel" }
 serde_json = "1"
 
 [dev-dependencies]

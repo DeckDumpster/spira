@@ -11,7 +11,7 @@
 # An aeon works in a worktree of the shared checkout on its own branch. If it cd-s back
 # to the shared checkout and commits there, the commit lands on the base branch — bypassing
 # its worktree branch, the landing gate, and every instrument that reads refs/heads/spira/*:
-# the landing check, the Sending, and the unsent count are all blind to it.
+# the landing check, the Hel, and the unsent count are all blind to it.
 #
 # The path that produces the defect: aeon.sh sets the worktree at $SPIRA_RUN/worktree/$BEAD_ID
 # and cd-s into it. An aeon that ran `git commit` in its worktree would have committed on its
@@ -120,7 +120,7 @@ staged)
         printf '\n'
         printf 'An aeon works in a worktree on its own branch. A commit here bypasses the\n'
         printf 'gate and is invisible to every instrument that reads refs/heads/spira/* —\n'
-        printf 'the landing check, the Sending, and the unsent count all miss it.\n'
+        printf 'the landing check, the Hel, and the unsent count all miss it.\n'
         printf '\n'
         printf 'Use the worktree: git -C $WORK commit ...   ($WORK is set in your session)\n'
         printf '\n'

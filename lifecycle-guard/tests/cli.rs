@@ -176,7 +176,7 @@ fn bd_in_docs_and_disabled_personas_and_rust_comments_is_not_reported() {
     assert!(findings.is_empty(), "{findings:#?}");
 }
 
-const SPIRA_LC_ONLY_CRATES: &[&str] = &["gate", "batcher-cut", "czar-pass", "gh-intake", "auron", "cockpit/ops"];
+const SPIRA_LC_ONLY_CRATES: &[&str] = &["gate", "batcher-cut", "czar-pass", "gh-intake", "heimdall", "cockpit/ops"];
 
 #[test]
 fn spira_lc_only_crates_never_read_the_landstate_ledger() {

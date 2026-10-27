@@ -1950,13 +1950,13 @@ mod tests {
 
     #[test]
     fn now_rows_carry_a_rework_tag_and_the_persona_under_the_name() {
-        let s = snap(vec![now_row("sp-rw", Some("ops"), true), now_row("sp-fresh", Some("guardian"), false), now_row("sp-nul", None, false)]);
+        let s = snap(vec![now_row("sp-rw", Some("ops"), true), now_row("sp-fresh", Some("warden"), false), now_row("sp-nul", None, false)]);
         let v = view(&s);
         let pane = plain(&render(&v, 120));
         let l: Vec<&str> = pane.lines().collect();
         let at = |id: &str| l.iter().position(|x| x.contains(id)).unwrap();
         assert!(l[at("sp-rw")].contains("REWORK") && l[at("sp-rw") + 1].trim() == "ops", "{pane}");
-        assert!(!l[at("sp-fresh")].contains("REWORK") && l[at("sp-fresh") + 1].trim() == "guardian", "{pane}");
+        assert!(!l[at("sp-fresh")].contains("REWORK") && l[at("sp-fresh") + 1].trim() == "warden", "{pane}");
         assert_eq!(l[at("sp-nul") + 1].trim(), "—", "a NULL persona is a dash, not omitted");
         assert_page_draws_the_tree(&v);
         assert!(render(&v, 120).iter().any(|x| x.contains(&format!("{YEL}{B}REWORK{R}"))), "colour on the tag");
@@ -1995,7 +1995,7 @@ mod tests {
 
     fn working(tail: Option<Tail>) -> Snapshot {
         let mut r = row("sp-w", "WORKING", 1);
-        r.holder = Some("aeon-guardian".into());
+        r.holder = Some("aeon-warden".into());
         let mut s = snap(vec![r]);
         if let Some(t) = tail {
             s.tails.insert("sp-w".into(), t);
@@ -2171,7 +2171,7 @@ mod tests {
 
     fn healthy() -> Snapshot {
         let mut s = snap(vec![row("sp-r", "READY", 90_000), row("sp-w", "WORKING", 99_000), row("sp-c", "CERTIFIED", 99_000)]);
-        s.rows[1].holder = Some("aeon-guardian".into());
+        s.rows[1].holder = Some("aeon-warden".into());
         s.rows[1].lease_until = Some(100_500);
         s.rows[2].repo = "spira".into();
         s.graph = graph(true);

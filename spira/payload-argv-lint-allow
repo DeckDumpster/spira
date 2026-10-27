@@ -20,5 +20,5 @@
 # list). The fix moves each onto stdin or a temp file and changes the reader's body, which is
 # not a call-site edit — listed in the cutover report for a rewrite:
 ^spira/ctrl\.sh:[0-9]+: (suspended_subjects|has_entry)="\$\(python3 - "\$ctrl_json"
-^spira/auron\.sh:[0-9]+: RESTART_ALERTS="\$_restart_alerts_json"
+^spira/heimdall\.sh:[0-9]+: RESTART_ALERTS="\$_restart_alerts_json"
 ^spira/tap-jsonl\.sh:[0-9]+: -v uc="\$uc_json"

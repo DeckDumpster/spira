@@ -163,7 +163,7 @@ cp -a /workspace/concierge.sh /tmp/spira-prod/
 # (below) means units are only enabled, never started, so no-op stubs satisfy install.sh's
 # executable-bit check. NOT PROVEN here: the tree's own build staged as this bin/ (sp-isom7).
 mkdir -p /tmp/spira-prod/bin
-for b in sentinel queue aeon spira-supervise landing-pass reconciler-flow sending; do
+for b in sentinel queue aeon spira-supervise landing-pass reconciler-flow hel; do
     printf '#!/bin/sh\nexit 0\n' > /tmp/spira-prod/bin/\$b && chmod +x /tmp/spira-prod/bin/\$b
 done
 " >&2
@@ -174,7 +174,7 @@ iszero "stubs created inside container" "$?"
 # PATH, the gate and the watcher manifest to answer. The stubbed names stay stubs.
 _reh_bin="$(dirname "$(command -v spira-install 2>/dev/null)")"
 [ -d "$_reh_bin" ] || bail "spira-install is not on PATH (the tree's build provides it)"
-tar -C "$_reh_bin" --exclude=sentinel --exclude=queue --exclude=aeon --exclude=spira-supervise --exclude=landing-pass --exclude=reconciler-flow --exclude=sending -cf - . > /tmp/spira-reh-bin.tar
+tar -C "$_reh_bin" --exclude=sentinel --exclude=queue --exclude=aeon --exclude=spira-supervise --exclude=landing-pass --exclude=reconciler-flow --exclude=hel -cf - . > /tmp/spira-reh-bin.tar
 # batch-job: streaming the tree's release bin/ into the rehearsal container
 podman exec -i --user spirauser "$CNAME" tar -C /tmp/spira-prod/bin -xf - < /tmp/spira-reh-bin.tar >&2
 iszero "the tree's release bin/ is staged in the container" "$?"

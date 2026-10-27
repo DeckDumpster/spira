@@ -362,7 +362,7 @@ impl<'a> Sentinel<'a> {
 
     /// Stop whatever still works in the bead's worktree before the bead goes back to READY.
     fn stop_holder(&self, id: &str) -> bool {
-        self.h.run(Spec::args_owned(self.cfg.sending_bin.clone(), vec!["stop-holder".into(), id.to_string()]).err(Io::Null)).ok()
+        self.h.run(Spec::args_owned(self.cfg.hel_bin.clone(), vec!["stop-holder".into(), id.to_string()]).err(Io::Null)).ok()
     }
 
     /// One attempt-history fact appended to the lifecycle event log, best-effort.

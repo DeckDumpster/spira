@@ -20,7 +20,7 @@ with an identity that survives across recurrences. Three properties are load-bea
    that bead's lifecycle row is terminal (LANDED/DONE/SUPERSEDED/DROPPED): then the
    recurrence is a new incident, filed fresh and citing the closed one as its predecessor
    (sp-nmlna).
-3. **A Sin escalates exactly once.** Past `SIN_AT` recurrences with no fix holding, the
+3. **A Fenrir escalates exactly once.** Past `FENRIR_AT` recurrences with no fix holding, the
    operator is paged once — a second page would bury the first.
 
 ## Contract
@@ -36,7 +36,7 @@ incident list                     open incidents
 
 Environment (unchanged names from the bash): `SPIRA_DB` (required — refuses if unset, never
 falls through to bd's own auto-discovery), `SPIRA_RUN`, `SPIRA_SPOOL`, `SPIRA_INCIDENT_LOG`,
-`SPIRA_SIN_AT` (5), `SPIRA_SIN_EXEMPT`, `SPIRA_INCIDENT_DEDUP_LOOKBACK` (7 days),
+`SPIRA_FENRIR_AT` (5), `SPIRA_FENRIR_EXEMPT`, `SPIRA_INCIDENT_DEDUP_LOOKBACK` (7 days),
 `SPIRA_WATCHER_INTERVAL_S` (1800), `SPIRA_INCIDENT_CAUSE`, `SPIRA_INCIDENT_UNIT`,
 `SPIRA_INCIDENT_PATH`, `SPIRA_INCIDENT_LABELS` (default `spira,$SPIRA_INCIDENT_LABEL`),
 `SPIRA_INCIDENT_REPO`, `SPIRA_INCIDENT_TYPE` (bug), `SPIRA_INCIDENT_PRIORITY`,
@@ -67,13 +67,13 @@ refused the filing, or (for `drain`) at least one entry is still stuck.
   `test-counter-events-sentinel.sh` (all three `. "$HERE/incident.sh"` to call `file_one`/
   `_dedup_incident` directly) and `test-incident-migrations.sh` (drove the retired
   subcommands). A shim has nothing to source; their coverage moves to this crate's unit
-  tests (`decide::tests::dedup_scan_*`, `recur_note_body_*`, `sin_thresholds`, `reopen_cause_*`,
+  tests (`decide::tests::dedup_scan_*`, `recur_note_body_*`, `fenrir_thresholds`, `reopen_cause_*`,
   `invalid_repo_label_*`). Removed from `spira/config-fence-allow` and
   `spira/tier-budget-allowlist` in the same change (both are shrink-only lists).
-- **The bash's age-in-hours clause in the Sin ask** silently never fired: it grepped bd's
+- **The bash's age-in-hours clause in the Fenrir ask** silently never fired: it grepped bd's
   `--json` for a literal `"created"` key, but real bd's schema names the field
   `created_at` (verified against a live `bd create`/`bd show --json` in this session).
-  `real.rs::show_created_at` reads `created_at` (falling back to `created`), so the Sin
+  `real.rs::show_created_at` reads `created_at` (falling back to `created`), so the Fenrir
   ask's "over Xh Ym" clause now actually appears — a named, deliberate difference, not a
   silent behaviour change (wave-brief "name any intended difference").
 
@@ -94,13 +94,13 @@ refused the filing, or (for `drain`) at least one entry is still stuck.
   the write-ahead spool (byte-identical on-disk format, so a spool directory populated by
   the bash mid-cutover still drains under the new binary), the two-pass label-keyed-then-
   fallback dedupe, the reopen-vs-recurrence classification, the payload-hash dedup on the
-  recurrence note body, the Sin escalation mail, the undeclared-repo ask, the `delivers:`
+  recurrence note body, the Fenrir escalation mail, the undeclared-repo ask, the `delivers:`
   label decision.
 
 ## Schema / architecture
 
 - `decide.rs` — pure decision logic, no IO: ref hashing, cause sanitisation, the dedupe scan,
-  reopen-cause classification, the recurrence-note payload-hash dedupe, the Sin threshold,
+  reopen-cause classification, the recurrence-note payload-hash dedupe, the Fenrir threshold,
   the three `bd create` guards, plus the small pure helpers (`home_repo`, `repo_names`,
   `provenance`, `unit_from_cgroup_line`) `main.rs` composes at the edges. Every function is a
   table-driven unit test.
@@ -144,7 +144,7 @@ refused the filing, or (for `drain`) at least one entry is still stuck.
   store.
 - Black-box parity: the real-bd suites `test-incident.sh`, `test-incident-systemd.sh`,
   `test-incident-spool-drain.sh`, `test-incident-delivers-satisfiable.sh`,
-  `test-incident-delivers-reopen-mismatch.sh`, `test-sin-exempt.sh` and
+  `test-incident-delivers-reopen-mismatch.sh`, `test-fenrir-exempt.sh` and
   `test-mail-real-senders.sh`'s incident section all invoke `incident.sh` by name (or via
   `SPIRA_INCIDENT_SH`) unchanged — they now exercise the shim → the compiled binary, and are
   this bead's end-to-end parity evidence once run through `testenv` (never on the host).
@@ -162,7 +162,7 @@ refused the filing, or (for `drain`) at least one entry is still stuck.
   bdq") as a real regression: `bdq` applies them to every `bd create` incident.sh has ever
   made, so a Rust port that calls `bd` directly and skips them would let a destructive-phrase
   title or an invalid `repo:` label through where the bash never did.
-- **The age-in-hours clause in the Sin ask now actually fires** (see "Retired" above) —
+- **The age-in-hours clause in the Fenrir ask now actually fires** (see "Retired" above) —
   reads `created_at`, the real bd field, instead of the bash's dead `"created"` grep.
 - **Delivered at P1** (bead priority).
 - **The dedup reads an incident's state from its lifecycle row (sp-jgjvh).** An incident bead
@@ -188,7 +188,7 @@ refused the filing, or (for `drain`) at least one entry is still stuck.
   usual. Kept: a handed-on but non-terminal incident (SUBMITTED/CERTIFIED/IN_DELIVERY) is
   still reopened, since its row can still move. Rejected: giving the machine a move out of
   a terminal state, which would break "terminal" for every other consumer; and keeping
-  the recurrence count on the old bead, since its Sin escalation can never be worked under
+  the recurrence count on the old bead, since its Fenrir escalation can never be worked under
   a LANDED row (the fresh bead counts from zero and its body names the history). A failed
   `relate` is logged, not fatal: the bead exists and its body still cites the
   predecessor.

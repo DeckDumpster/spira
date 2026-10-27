@@ -211,8 +211,8 @@ FAYTH_LABELS="spira,plan"
 FAYTH_MAX_CONCURRENT=2
 FAYTH_ELASTIC=1
 F
-cat > "$LANES_HOME/chamber/guardian.fayth" <<'F'
-FAYTH_NAME=guardian
+cat > "$LANES_HOME/chamber/warden.fayth" <<'F'
+FAYTH_NAME=warden
 FAYTH_LABELS="spira,incident"
 FAYTH_MAX_CONCURRENT=1
 FAYTH_LANE=priority
@@ -223,20 +223,20 @@ export SPIRA_HOME="$LANES_HOME"
 # never an environment override" (spira-config/src/main.rs, cmd_fayth) — the lib.sh bash
 # wrapper's raw-env forwarding to the spira-config subprocess is a leftover from before
 # the one-source migration and is now ignored for this exact-match roster (round 5).
-tl_config SPIRA_FAYTHS="worker guardian" SPIRA_CHAMBER="$LANES_HOME/chamber"
+tl_config SPIRA_FAYTHS="worker warden" SPIRA_CHAMBER="$LANES_HOME/chamber"
 
 lane="$(spira_lane_fayths)"
 task="$(spira_task_fayths)"
 
-is "spira_lane_fayths returns the FAYTH_LANE fayth"      "guardian" "$lane"
+is "spira_lane_fayths returns the FAYTH_LANE fayth"      "warden" "$lane"
 is "spira_task_fayths excludes the FAYTH_LANE fayth"     "worker"   "$task"
-nowant "the lane fayth does not appear in task fayths"   "guardian" "$task"
+nowant "the lane fayth does not appear in task fayths"   "warden" "$task"
 nowant "the task fayth does not appear in lane fayths"   "worker"   "$lane"
 
 # tl_config's SPIRA_FAYTHS persists in the override file (no per-call scoping) until
 # something changes it again — every later section in this file that relies on the
 # fixture's own default roster (builder/ops/groomer etc.) via a plain `export SPIRA_FAYTHS`
-# would otherwise keep seeing "worker guardian" here (round 6).
+# would otherwise keep seeing "worker warden" here (round 6).
 spira-config unset spira.fayths "$_TL_CONF_OVERRIDE" >/dev/null
 
 # POSITIVE CONTROL: both functions return something, so absence above is the exclusion

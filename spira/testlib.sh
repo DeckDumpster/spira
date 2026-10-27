@@ -73,7 +73,7 @@
 # instinct holds: a helper that can fail for a reason OTHER than the assertion itself
 # (a missing binary, a broken pipe) must not be indistinguishable from the assertion
 # failing. [[ ]] has no such failure mode.
-# Every suite's binaries find lib.sh through SPIRA_HOME first. Without it, slay/sending/
+# Every suite's binaries find lib.sh through SPIRA_HOME first. Without it, slay/hel/
 # spira-world walk up from their own resolved exe — which the gate builds outside the tree
 # (a tmpfs target), so the walk finds nothing and every destroy/slay answers 2. A suite that
 # sets its own SPIRA_HOME keeps it; production units always set it (sp-wiqcq is the binaries'
@@ -1001,7 +1001,7 @@ lc_socket_mirror() {
     mkdir -p "$dir"
     export SPIRA_LC_SOCKET="$dir/lc.sock"
     # round 3 fix (pattern 3/7): SPIRA_LC_SOCKET is a registered key — the plain export
-    # above is for this function's own shell use; a real binary (sending, queue, ...)
+    # above is for this function's own shell use; a real binary (hel, queue, ...)
     # only finds this mock's socket through SPIRA_TOML now, or it falls to the complete
     # fixture's placeholder /run/user/.../spira-lc/sock and reports "did not answer".
     tl_config SPIRA_LC_SOCKET="$SPIRA_LC_SOCKET"

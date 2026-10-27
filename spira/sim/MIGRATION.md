@@ -179,7 +179,7 @@ Left, each because it needs more than the mail table, the only gap its row names
 | test-mail, test-mail-mailbox-arg, test-mail-tidy, test-mail-health, test-accept-default-folded, test-mail-real-senders | `mail`'s own CLI contract (flags, lint, tidy ages, folded headers); a sim scenario would only wrap the verb. Candidates for the mail crate's unit tests, not the sim |
 | test-asks, test-verify-asks, test-mail-dismiss-sweep, test-mail-bead-render | the bead store's rows and message bodies (an `ask` bead table), not just the mail table |
 | test-verdict-flow, test-work-container | `work`/`sendmail` replies and decision-bead closing: the mail table needs a body column and an operator actor that answers |
-| test-pilgrimage, test-sin-exempt | a pilgrimage and an incident actor in the world |
+| test-pilgrimage, test-fenrir-exempt | a pilgrimage and an incident actor in the world |
 
 # Sim D3/G1 part 1: the real sentinel summons
 

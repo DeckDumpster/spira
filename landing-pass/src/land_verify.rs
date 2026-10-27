@@ -7,7 +7,7 @@
 //! `Git::content_on_base` (`RealGit`).
 //!
 //! The pr/ask/reap-adjacent pieces (`conflict_reopen_note`'s git plumbing, `close_on_land`'s
-//! bd close + reap) run real subprocesses (`bdq`, `sending`) by bare name on PATH
+//! bd close + reap) run real subprocesses (`bdq`, `hel`) by bare name on PATH
 //! (sp-gypjk), the same convention every other direct-subprocess call in this crate and in
 //! `groomer`/`rebase-stale` already follows — never through the lib.sh seam, which this
 //! family retires for these names.
@@ -162,11 +162,11 @@ fn bdq_close(id: &str, reason: &str) -> bool {
     spira_config::lifecycle_row::close_landed(id, reason, "landing-pass").is_ok()
 }
 
-/// `sending reap-landed-branch [--status-from <f>] <id> <branch> <repo> <why>` — the same
+/// `hel reap-landed-branch [--status-from <f>] <id> <branch> <repo> <why>` — the same
 /// shim `spira_reap_landed_branch` execs. `Ok(())` sent, `Err(its output)` otherwise
-/// (failed or refused — both are "left for the Sending" from here).
-fn sending_reap(status_file: Option<&str>, id: &str, branch: &str, repo: &str, why: &str) -> Result<(), String> {
-    let mut c = spira_config::bounded::bounded("sending");
+/// (failed or refused — both are "left for the Hel" from here).
+fn hel_reap(status_file: Option<&str>, id: &str, branch: &str, repo: &str, why: &str) -> Result<(), String> {
+    let mut c = spira_config::bounded::bounded("hel");
     c.arg("reap-landed-branch");
     if let Some(f) = status_file {
         c.arg("--status-from").arg(f);
@@ -188,7 +188,7 @@ fn sending_reap(status_file: Option<&str>, id: &str, branch: &str, repo: &str, w
 
 /// The push pass's close-on-land `<id> <sha>` — the only place a work bead is closed for a
 /// landed reason. Acts only on a bead [`should_close_on_land`] says the builder handed on;
-/// one never handed on, or ended another way, is left alone. On a successful close, best-effort reaps the branch through `sending` (family X's own chokepoint; never touched
+/// one never handed on, or ended another way, is left alone. On a successful close, best-effort reaps the branch through `hel` (family X's own chokepoint; never touched
 /// directly here).
 #[allow(clippy::too_many_arguments)]
 pub fn close_on_land(git: &dyn Git, out: &Reporter, home: &Path, row: Option<&BeadRow>, id: &str, sha: &str) {
@@ -211,9 +211,9 @@ pub fn close_on_land(git: &dyn Git, out: &Reporter, home: &Path, row: Option<&Be
         return;
     }
     let status_file = std::env::var("SPIRA_STATUS_FILE").ok();
-    match sending_reap(status_file.as_deref(), id, branch_label, &root, &format!("landed at {shown_sha}")) {
+    match hel_reap(status_file.as_deref(), id, branch_label, &root, &format!("landed at {shown_sha}")) {
         Ok(()) => out.log(&format!("land-close {id}: reaped branch {branch_label}")),
-        Err(e) => out.log(&format!("land-close {id}: branch {branch_label} not reaped: {e} — left for the Sending")),
+        Err(e) => out.log(&format!("land-close {id}: branch {branch_label} not reaped: {e} — left for the Hel")),
     }
 }
 

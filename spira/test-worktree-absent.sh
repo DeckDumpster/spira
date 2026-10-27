@@ -8,7 +8,7 @@
 # THE BUG (sp-hl92). The reaper refused to remove a registered worktree whose path
 # was outside the sanctioned root — the fence ran before the absent-directory check,
 # so a /tmp-style gate worktree whose session had ended could never be cleared.
-# sentinel.log accrued "was not removed" on every Sending pass, permanently, because
+# sentinel.log accrued "was not removed" on every Hel pass, permanently, because
 # the gap between "not under the root" and "directory does not exist" had no code path.
 #
 # THE FIX. The absent-directory check now runs before the fence. git worktree prune

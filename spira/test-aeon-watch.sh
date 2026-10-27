@@ -31,7 +31,7 @@ echo '0::/user.slice/spira-aeon-ifrit-1.service' > "$TMP/proc/4343/cgroup"
 export STUB_UNITS="$TMP/units" STUB_PS="$TMP/ps"
 printf 'spira-aeon-ifrit-1.service loaded active running aeon\n' > "$TMP/units"
 claim() { echo 4242 > "$TMP/run/aeon-$2-$1.pid"; printf '%s' "$3" > "$TMP/run/aeon-$2-$1.name"; }
-claim sp-test1 guardian ifrit
+claim sp-test1 warden ifrit
 LEDGER="$TMP/run/aeon-ledger.log"
 ledger_at() { printf '%s %s\n' "$(date -u -d "$1" +%Y-%m-%dT%H:%M:%SZ)" "$2" >> "$LEDGER"; }
 : > "$LEDGER"; : > "$TMP/ps"
@@ -46,7 +46,7 @@ run() {
 }
 
 out="$(run --show)"
-want "positive control: the live aeon is named with its bead" "guardian/ifrit sp-test1" "$out"
+want "positive control: the live aeon is named with its bead" "warden/ifrit sp-test1" "$out"
 want "the live count is reported" "aeons live: 1" "$out"
 for f in STALL GATE TESTENV CHURN REOPENS "no claim"; do
     case "$out" in *"$f"*) bad=1 ;; *) bad=0 ;; esac
@@ -82,7 +82,7 @@ want "REOPENS fires at 3" "REOPENS 3" "$out"
 case "$out" in *CHURN*) bad=1 ;; *) bad=0 ;; esac
 is "REOPENS alone does not raise CHURN" "0" "$bad"
 
-rm -f "$TMP"/run/aeon-*-sp-test1.*; claim xx-test2 guardian ifrit
+rm -f "$TMP"/run/aeon-*-sp-test1.*; claim xx-test2 warden ifrit
 : > "$TMP/run/xx-test2.log"; touch -d '-40 min' "$TMP/run/xx-test2.log"
 tl_config SPIRA_ID_PREFIX=xx
 out="$(run --show)"

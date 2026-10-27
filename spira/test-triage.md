@@ -142,7 +142,7 @@ Migrated (sp-uxdjnk). Wall before is the table's round-VM median; the alone figu
 | test-incident.sh | 80 | the intake dedupe holds against two concurrent filers of the same ref | keep | A real race on a real store; two connections are the point. |
 | test-census.sh | 31 | census against a real bd fixture for three ops-detection use cases | keep | Declared the one server-mode census suite. |
 | test-census-events.sh | 78 | census reads requeue/reclaim/recur events written by `bump_*` | unit | Event classification; dominated by seeding a store. |
-| test-auron.sh | 75 | the watchdog reconciler raises, clears and re-raises against a real bd | sim | A watcher over time; the classifier is already pure. |
+| test-heimdall.sh | 75 | the watchdog reconciler raises, clears and re-raises against a real bd | sim | A watcher over time; the classifier is already pure. |
 | test-groom-escalation-check.sh | 71 | the groom ask label is a conf key defaulting to `groom-asked` | unit | One config key; the plan asks fixtures pin a non-default. |
 | test-mimir-closed-record.sh | 32 | the closed-record INVALID-CLOSED trigger and allowlist | unit | A trigger over rows. |
 | test-yield.sh | 32 | a gate red lands in the right column; an unreadable record says `?` | unit | Panel column rule. |

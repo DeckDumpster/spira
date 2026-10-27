@@ -97,7 +97,7 @@ tier = "T1"
 statement = "CHECK 7c reports an unclaimable ready bead once, naming the rejection reason"
 
 [use_case.uncovered]
-reason = "the sentinel audit worker (spira-audit) was retired and CHECK 4/rowless/6b/7c/7d with it; their sentinel unit tests (check4_*, rowless_*, sending_7c_7d_*, on_check4_note_*, the tip-moved poison lift, two_beads_touching_one_file_*) were deleted, not ported. A need for any of them is re-added elsewhere only when shown."
+reason = "the sentinel audit worker (spira-audit) was retired and CHECK 4/rowless/6b/7c/7d with it; their sentinel unit tests (check4_*, rowless_*, hel_7c_7d_*, on_check4_note_*, the tip-moved poison lift, two_beads_touching_one_file_*) were deleted, not ported. A need for any of them is re-added elsewhere only when shown."
 date = "2026-10-12"
 bead = "sp-2yclhz"
 

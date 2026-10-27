@@ -64,7 +64,7 @@ spira/test-aeon-wiki-dirty.sh
 spira/test-aeon-worktree-collision.sh
 # literal-ok: a file path, not the world-stop literal itself
 spira/test-aeon-world-stop.sh
-spira/test-auron.sh
+spira/test-heimdall.sh
 spira/test-batcher-cut.sh
 spira/test-bead-contract.sh
 spira/test-bead-file.sh
@@ -161,9 +161,9 @@ spira/test-reconciler.sh
 spira/test-released-defects.sh
 spira/test-release.sh
 spira/test-repo-map.sh
-spira/test-sending-closed-reap.sh
-spira/test-sending-mode-filter.sh
-spira/test-sending.sh
+spira/test-hel-closed-reap.sh
+spira/test-hel-mode-filter.sh
+spira/test-hel.sh
 spira/test-sentinel-pass.sh
 spira/test-session-hook.sh
 spira/test-skew-copies.sh

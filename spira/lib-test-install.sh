@@ -113,7 +113,7 @@ EOF
 # beside the spira/ its SPIRA_PROD names. Nothing here runs them — install only places and
 # starts units against a mock systemctl.
 # DERIVED, never hand-listed: every @SPIRA_PROD_ROOT@/bin/<name> a unit template in this tree
-# execs (ExecStart, ExecStartPre, ExecCondition, ...). A hand list went stale the day auron moved
+# execs (ExecStart, ExecStartPre, ExecCondition, ...). A hand list went stale the day heimdall moved
 # into bin/ and turned three install suites red on the base.
 _install_fixture_unit_bins() {
     local sysd

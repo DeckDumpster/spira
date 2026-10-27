@@ -2042,7 +2042,7 @@ mod tests {
     fn in_delivery_is_left_only_by_a_delivery_exit_event() {
         // The three delivery exit events are delivered/returned/requeued. The orthogonal
         // any-non-terminal-state events (content_on_base/supersede/drop) are the design's
-        // own deliberate bypass — e.g. the Sending proving content already landed by a
+        // own deliberate bypass — e.g. the Hel proving content already landed by a
         // squash merge the delivery machine never reconciled — so they are legitimate ways
         // to leave IN_DELIVERY too, just not *delivery* exits. Everything else must leave
         // the row in IN_DELIVERY or be refused outright (property test, design §7).
@@ -2189,7 +2189,7 @@ mod tests {
             let mut r = row(state);
             r.tip = Some("1111111111111111111111111111111111111111".into());
             r.holder = Some("aeon-x@1.2".into());
-            r.persona = Some("guardian".into());
+            r.persona = Some("warden".into());
             r.lease_until = Some(9_999_999_999);
             r
         };
