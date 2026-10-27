@@ -81,11 +81,12 @@ main{padding:0}\
 h2{margin:0;padding:.45rem .75rem .2rem;font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;color:var(--dim);font-weight:600}\
 details>summary{list-style:none;cursor:pointer}details>summary::-webkit-details-marker{display:none}\
 .line{display:flex;flex-wrap:wrap;gap:.1rem .5rem;align-items:baseline;padding:.4rem .75rem;border-bottom:1px solid var(--line)}\
-details>summary.line:after{content:'›';margin-left:auto;color:var(--dim)}details[open]>summary.line:after{content:'⌄'}\
+summary.line{flex-wrap:nowrap}summary.line>*{flex:0 0 auto}summary.line>.small,summary.line>.t{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\
+details>summary.line:after{content:'›';margin-left:auto;padding-left:.3rem;color:var(--dim)}details[open]>summary.line:after{content:'⌄'}\
 .line .n{font-weight:700;font-variant-numeric:tabular-nums;min-width:2.2ch;text-align:right}.line .k{font-weight:600;min-width:7.5em}\
 .body{background:var(--row);border-bottom:1px solid var(--line)}\
 .row{display:flex;flex-wrap:wrap;gap:0 .5rem;align-items:baseline;padding:.35rem .75rem .35rem 1.25rem;border-top:1px solid var(--line)}.row:first-child{border-top:0}\
-.row .t{flex:1 1 100%;min-width:0}.dim{color:var(--dim)}.red{color:var(--red)}.amber{color:var(--amber)}.green{color:var(--green)}.small{font-size:.8rem}\
+.row .t{flex:1 1 100%;min-width:0}.dim{color:var(--dim)}.red{color:var(--red)}.amber{color:var(--amber)}.green{color:var(--green)}.small{font-size:.8rem}.s{font-size:.8rem;color:var(--dim)}\
 .bar{display:inline-block;width:5.5rem;height:6px;border-radius:3px;background:var(--bar);overflow:hidden;vertical-align:middle}.bar i{display:block;height:100%;background:var(--acc)}.bar i.red{background:var(--red)}\
 pre{white-space:pre-wrap;font-size:.75rem;margin:.2rem 0;color:var(--dim)}\
 .badge{display:inline-block;font-size:.72rem;padding:0 .35rem;border-radius:4px;background:var(--bar)}.badge.red{background:var(--redbg);color:var(--red)}";
@@ -221,13 +222,13 @@ fn pipeline(p: &Page) -> String {
         let out: i64 = s.edges.iter().map(|e| e.rate_1h).sum();
         let refused: i64 = s.edges.iter().flat_map(|e| e.events.iter()).map(|(_, n, _)| *n).sum();
         let summary = format!(
-            "<span class=\"n{c}\">{count}</span><span class=\"k{c}\">{name}</span><span class=\"small dim\">{detail}</span>{out}{refused}{dot}",
+            "<span class=\"n{c}\">{count}</span><span class=\"k{c}\">{name}</span><span class=\"small dim\">{detail}{out}{refused}</span>{dot}",
             c = if s.red { " red" } else { "" },
             count = s.count,
             name = esc(&s.name),
             detail = esc(&s.detail),
-            out = if out > 0 { format!(" <span class=\"small dim\">{out}/h out</span>") } else { String::new() },
-            refused = if refused > 0 { format!(" <span class=\"small red\">{refused} refused</span>") } else { String::new() },
+            out = if out > 0 { format!(" · {out}/h out") } else { String::new() },
+            refused = if refused > 0 { format!(" · <span class=red>{refused} refused</span>") } else { String::new() },
             dot = if s.red { " <span class=red>●</span>" } else { "" },
         );
         let edges: String = s
@@ -292,7 +293,7 @@ fn round_line(r: &RepoRound, prog: Option<&lcview::PassProgress>, now: i64, only
         None if r.total > 0 => format!("{}{}", progress_bar(r.done as u64, r.total as u64, r.red > 0), if r.red > 0 { format!(" <span class=\"small red\">{} red</span>", r.red) } else { String::new() }),
         None => format!("<span class=small>{}</span>", esc(&r.phase)),
     };
-    let summary = format!("<span class=\"small dim\">{}</span><span class=id>{}</span>{state}<span class=\"small dim\">{}</span>", esc(&r.repo), esc(r.batch.rsplit('/').next().unwrap_or(&r.batch)), esc(&r.age));
+    let summary = format!("<span class=s>{}</span><span class=id>{}</span>{state}<span class=s>{}</span>", esc(&r.repo), esc(r.batch.rsplit('/').next().unwrap_or(&r.batch)), esc(&r.age));
     let mut body = format!("<div class=\"row small\"><a class=id href=\"{link}\">{}</a><span class=dim>{} · {}</span></div>", esc(&r.batch), esc(&r.kind), esc(&r.phase));
     let mut links = Vec::new();
     if !r.pr_url.is_empty() {
@@ -367,7 +368,7 @@ fn aeons(p: &Page) -> String {
         b.push_str(&plain("<span class=\"small dim\">no aeon is live</span>"));
     }
     for i in &v.now_items {
-        let summary = format!("<span class=\"small dim\">{}</span>{}<span class=\"small dim\">{}</span><span class=t>{}</span>", esc(&i.persona), bead(&i.id), esc(&i.age), esc(&i.title));
+        let summary = format!("<span class=s>{}</span>{}<span class=s>{}</span><span class=t>{}</span>", esc(&i.persona), bead(&i.id), esc(&i.age), esc(&i.title));
         b.push_str(&fold(&format!("a-{}", i.id), false, &summary, &item_row(i)));
     }
     b
