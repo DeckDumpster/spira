@@ -356,3 +356,7 @@ test-world-timer-names.sh	T1	4.0
 test-world-timer-service-result.sh	T1	4.0
 test-world.sh	T1	10.0
 test-yield.sh	T1	44.5
+# exposure: test-mimir-blind-window.sh sp-vt8lbr
+# exposure: test-mimir-sibling-blind.sh sp-vt8lbr
+# exposure: test-mimir-trigger.sh sp-vt8lbr
+# exposure: test-mimir.sh sp-vt8lbr
