@@ -33,6 +33,7 @@
 //!   spira-config convert ...            spira.conf + repo-map + *.fayth -> spira.toml
 //!   spira-config set <path> <v> <file>  write one value into <file> in place
 //!   spira-config unset <path> <file>    remove one value from <file> in place
+//!   spira-config rename-persona <old> <new> <file>  move [persona.<old>] and its fayths/lanes entries
 //!   spira-config writeback <candidate>  the write target any REGENERATING caller resolves
 //!                                       through first (wave 4.7, sp-ksrss) — `candidate`
 //!                                       unchanged on the installed release or
@@ -1020,6 +1021,24 @@ fn cmd_set(path: &str, value: &str, file: &str) -> ExitCode {
     }
 }
 
+/// `rename-persona <old> <new> <file>` — move a persona table and its roster and lane entries.
+fn cmd_rename_persona(old: &str, new: &str, file: &str) -> ExitCode {
+    let text = match fs::read_to_string(file) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("spira-config rename-persona: {file}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match spira_config::rename::rename_persona_text(&text, old, new) {
+        Ok(out) => write_doc(file, &out, "rename-persona"),
+        Err(e) => {
+            eprintln!("spira-config rename-persona: {file}: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 /// `unset <dotted.path> <file>` — remove one path's value from `file` in place, so the key
 /// stops appearing rather than being left behind as an empty string.
 fn cmd_unset(path: &str, file: &str) -> ExitCode {
@@ -1561,6 +1580,13 @@ fn dispatch(args: &[String]) -> ExitCode {
             (Some(path), Some(file)) => cmd_unset(path, file),
             _ => {
                 eprintln!("usage: spira-config unset <dotted.path> <file>");
+                ExitCode::FAILURE
+            }
+        },
+        Some("rename-persona") => match (args.get(1), args.get(2), args.get(3)) {
+            (Some(old), Some(new), Some(file)) => cmd_rename_persona(old, new, file),
+            _ => {
+                eprintln!("usage: spira-config rename-persona <old> <new> <file>");
                 ExitCode::FAILURE
             }
         },

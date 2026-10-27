@@ -42,6 +42,7 @@ pub mod nonwork;
 pub mod process;
 pub mod proof;
 pub mod recipe;
+pub mod rename;
 pub mod registry;
 pub mod release_env;
 pub mod release_skew;

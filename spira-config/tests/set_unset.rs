@@ -199,3 +199,29 @@ fn set_leaves_every_other_line_byte_identical() {
     let after_c = fs::read_to_string(&toml).unwrap();
     assert_eq!(after_c.replace("batcher_enable = \"0\"", "batcher_enable = \"1\""), after_b);
 }
+
+#[test]
+fn rename_persona_moves_table_roster_and_lane_and_still_validates() {
+    let dir = scratch_dir("rename-persona");
+    let src = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/complete.toml"))
+        .unwrap()
+        .replace("persona.mimir", "persona.maechen")
+        .replace("\"mimir\"", "\"maechen\"")
+        .replace("lanes = \"ops groomer mimir", "lanes = \"ops groomer maechen");
+    let toml = write_tmp(&dir, "spira.toml", &src);
+    let f = toml.to_str().unwrap();
+    let before = spira_config(&["validate", f]);
+    assert!(before.status.success(), "{}", String::from_utf8_lossy(&before.stderr));
+
+    let out = spira_config(&["rename-persona", "maechen", "mimir", f]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let text = fs::read_to_string(&toml).unwrap();
+    assert!(!text.contains("maechen"), "{text}");
+    assert!(text.contains("[persona.mimir.lease]"));
+    assert_eq!(String::from_utf8_lossy(&spira_config(&["get", "spira.lanes", f]).stdout).trim(), "ops groomer mimir czar warden mender pilgrimage");
+    assert!(spira_config(&["validate", f]).status.success());
+    assert_eq!(backups_in(&dir).len(), 1);
+
+    let again = spira_config(&["rename-persona", "maechen", "mimir", f]);
+    assert!(!again.status.success());
+}
