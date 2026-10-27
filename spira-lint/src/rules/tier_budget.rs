@@ -92,7 +92,9 @@ impl Rule for Ledger {
             LintError::Refused(format!("no {} at the base {base} — cannot judge shrink-only", self.path))
         })?;
         let exposed: BTreeSet<String> = exposures(&now).difference(&exposures(&prior)).cloned().collect();
-        let (now, prior) = (ledger(&now), ledger(&prior));
+        let prior: BTreeMap<String, String> =
+            ledger(&prior).into_iter().map(|(k, v)| (crate::rules::ffx_vocabulary::renamed(&k), v)).collect();
+        let now = ledger(&now);
         let mut out = Vec::new();
         for (k, v) in &now {
             if exposed.contains(k) {

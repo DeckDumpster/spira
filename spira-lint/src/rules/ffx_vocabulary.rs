@@ -46,6 +46,12 @@ const TERMS: &[&str] = &[
 /// Case-sensitive: "Sin" is the villain, "sin" is English.
 const CASED: &[&str] = &["Sin"];
 
+/// A base-side name as the rename cutover now spells it, so a name carried across the
+/// cutover is the same entry, not a new one.
+pub fn renamed(s: &str) -> String {
+    s.replace("aeons", "dwarves").replace("aeon", "dwarf")
+}
+
 fn exempt(path: &str) -> bool {
     path == SELF_PATH
         || path == KEY_HISTORY_PATH
