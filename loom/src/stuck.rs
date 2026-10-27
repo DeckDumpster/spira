@@ -290,6 +290,29 @@ pub fn render_bead(now: i64, id: &str, detail: &Value, rounds: &str) -> String {
     shell("stuck", id, 30, &b)
 }
 
+pub fn render_ask(now: i64, id: &str, ask: &Value, content: &Value) -> String {
+    let content = content.as_array().and_then(|a| a.first()).unwrap_or(content);
+    let mut b = format!("<header><h1><a href=/stuck>← stuck</a> <span class=dim>/</span> {}</h1><div class=dim>{}</div></header>", esc(id), esc(&text(&content["title"])));
+    let state = text(&ask["state"]);
+    b.push_str(&format!("<div style=\"padding:.5rem .8rem\"><div>ask <b>{}</b></div>", esc(&state)));
+    let work = text(&ask["work_bead"]);
+    if !work.is_empty() {
+        b.push_str(&format!("<div>holds <a class=id href=\"/beads/{0}\" style=\"text-decoration:underline\">{0}</a></div>", esc(&work)));
+    }
+    if let Some(at) = num(&ask["opened_at"]) {
+        b.push_str(&format!("<div class=dim>opened {} ago</div>", dur(now - at)));
+    }
+    let body = text(&content["description"]);
+    b.push_str(&format!("<pre style=\"white-space:pre-wrap\">{}</pre>", esc(&body)));
+    if state == "OPEN" {
+        b.push_str(&format!("<div>Answer by replying to the mail for this ask, or in chat naming <b>{}</b>; it closes on your reply.</div>", esc(id)));
+    } else {
+        b.push_str(&format!("<div class=dim>closed: {} — {}</div>", esc(&text(&ask["closed_by"])), esc(&text(&ask["quote"]))));
+    }
+    b.push_str("</div>");
+    shell("stuck", id, 30, &b)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
