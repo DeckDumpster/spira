@@ -60,7 +60,12 @@ fn main() {
         let mut s = String::new();
         std::io::Read::read_to_string(&mut std::io::stdin(), &mut s).map(|_| s).map_err(|e| e.to_string())
     };
-    let (verb_args, body) = match work::collect_body(&verb_args, |p| std::fs::read_to_string(p).map_err(|e| e.to_string()), read_stdin) {
+    let collected = if verb == "mender" {
+        work::collect_mender_body(&verb_args, read_stdin)
+    } else {
+        work::collect_body(&verb_args, |p| std::fs::read_to_string(p).map_err(|e| e.to_string()), read_stdin)
+    };
+    let (verb_args, body) = match collected {
         Ok(r) => r,
         Err(e) => {
             eprintln!("{e}");
