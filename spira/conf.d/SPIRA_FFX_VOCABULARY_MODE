@@ -1,0 +1,8 @@
+TYPE=string
+GROUP=gate
+DOC=THE FFX-VOCABULARY LINT MODE — report lists every remaining Final Fantasy X term and exits 0; enforce fails on any.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE FFX-VOCABULARY LINT MODE — "report" lists every remaining Final Fantasy X term
+    # (the rename's progress meter) and exits 0; "enforce" fails the lint on any hit.
+    : "${SPIRA_FFX_VOCABULARY_MODE:=report}"
+SPIRA_CONF_DEFAULT_EOF
