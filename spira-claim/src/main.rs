@@ -63,7 +63,7 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim ready-args [--raw] [--scope-label L] [--noloop-label L]   (READY_ARGS/ready_raw_args, one token a line)
        spira-claim shared-exclude                                            (ready_shared_exclude)
        spira-claim ready-count <labels> [<exclude-labels>] [--json] [--express]          (ready_count; prints '0' on a failed query too; --json: the rows)
-       spira-claim urgent                                                    (claimable P0 and REWORK beads: id, priority, rework 0|1, express 0|1, tab-separated)
+       spira-claim urgent [<fayth>...]                                                  (claimable P0 and REWORK beads: id, priority, rework 0|1, express 0|1, tab-separated)
        spira-claim claim-retry <bd query argv...>                            (claim_retry; retried SPIRA_CLAIM_RETRIES x)
        spira-claim fayth-exclude <fayth> [own-exclusions]                    (fayth_exclude; resolves $SPIRA_HOME in-process, $SPIRA_FAYTHS)
        spira-claim fayth-ready <fayth> [--json] [--express]                             (fayth_ready; ditto, plus $SPIRA_READY_CACHE; --json: the rows themselves, never cached)
@@ -735,8 +735,34 @@ fn cmd_ready_count(a: &Args, env: &mut Env) -> Outcome {
     }
 }
 
-/// `urgent`: the claimable beads that outrank the lanes — P0, or in REWORK. A machine that
-/// cannot answer is a refusal, never an empty list.
+/// The partitions named by `urgent`'s positional fayths; empty when none are named. A fayth
+/// that is not in the chamber or whose predicate would widen is a refusal, never skipped.
+fn urgent_scope(a: &Args, env: &Env) -> Result<Vec<ready::FaythPart>, String> {
+    if a.pos.is_empty() {
+        return Ok(Vec::new());
+    }
+    let home = fayth_home()?;
+    let mut parts = Vec::new();
+    for f in &a.pos {
+        if !spira_config::chamber::chamber_dir(&home).join(format!("{f}.fayth")).is_file() {
+            return Err(format!("no fayth in the chamber: {f}"));
+        }
+        let p = spira_config::chamber::fayth_predicate(&home, f).map_err(|e| e.to_string())?;
+        if p.labels.is_empty() {
+            continue;
+        }
+        let exclude = fayth_exclude_str(env, &home, f, &p.exclude_labels);
+        parts.push(ready::FaythPart { name: f.clone(), inc: ready::split_csv(&p.labels), exc: ready::split_csv(&exclude) });
+    }
+    if parts.is_empty() {
+        return Err("none of the named fayths has a claim partition".into());
+    }
+    Ok(parts)
+}
+
+/// `urgent [<fayth>...]`: the claimable beads that outrank the lanes — P0, or in REWORK —
+/// restricted to those claimable under one of the named fayths' partitions when any are
+/// named. A machine that cannot answer is a refusal, never an empty list.
 fn cmd_urgent(a: &Args, env: &mut Env) -> Outcome {
     if let Err(e) = a.check_known(&["--scope-label", "--noloop-label"]) {
         return Outcome::usage(e);
@@ -758,8 +784,16 @@ fn cmd_urgent(a: &Args, env: &mut Env) -> Outcome {
         Ok(e) => e,
         Err(e) => return fail(e),
     };
+    let parts = match urgent_scope(a, env) {
+        Ok(p) => p,
+        Err(e) => return fail(e),
+    };
+    let queue_wait = queue_wait_label(env);
     let mut out = String::new();
     for r in rows.iter().filter(|r| !rank::is_container(r)) {
+        if !parts.is_empty() && !ready::in_any_partition(r, &parts, &queue_wait) {
+            continue;
+        }
         let (p0, rw) = (r.prio() == 0, rework.contains_key(&r.id));
         if p0 || rw {
             out.push_str(&format!("{}\t{}\t{}\t{}\n", r.id, r.prio(), u8::from(rw), u8::from(express.contains(&r.id))));
