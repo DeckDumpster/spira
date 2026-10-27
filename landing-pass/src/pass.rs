@@ -444,7 +444,7 @@ impl<'a> Pass<'a> {
         }
         if bead.superseded {
             self.log(&format!(
-                "CHECK6 {id}: {br} is superseded — its work landed under the successor's id; leaving it for the Sending to reap"
+                "CHECK6 {id}: {br} is superseded — its work landed under the successor's id; leaving it for the Hel to reap"
             ));
             return Screen::Done(Flow::Next);
         }

@@ -171,7 +171,7 @@ mod tests {
     #[test]
     fn one_aeon_one_round_one_gate_all_show_with_progress() {
         let src = [
-            Some(vec![row("sp-1", "guardian", None)]),
+            Some(vec![row("sp-1", "warden", None)]),
             Some(vec![row("spira/b1", "certifying", Some((412, Some(475))))]),
             Some(vec![row("spira-x", "pre-merge", None)]),
         ];

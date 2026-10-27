@@ -3,7 +3,7 @@
 //! lives in [`probe`] so other crates can call it in-process instead of each keeping its
 //! own copy (`bead`, `cockpit-collect`) or bridging back into lib.sh.
 //!
-//! `probe::holder_alive` is itself a thin wrapper onto `sending::reap::holder_alive` — the
+//! `probe::holder_alive` is itself a thin wrapper onto `hel::reap::holder_alive` — the
 //! destruction chokepoint's own canonical implementation (sp-9envm) — so there is exactly
 //! ONE holder-liveness predicate in the whole tree, not a third copy here.
 //!

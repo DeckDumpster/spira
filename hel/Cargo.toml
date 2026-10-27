@@ -1,8 +1,8 @@
 [package]
-name = "sending"
+name = "hel"
 version = "1.0.0"
 edition = "2021"
-description = "sending — the Sending: delete the branch and worktree of every bead whose work has landed, and nothing else. Replaces spira/sending.sh (sp-arpjt)."
+description = "hel — the Hel: delete the branch and worktree of every bead whose work has landed, and nothing else. Replaces spira/hel.sh (sp-arpjt)."
 
 [dependencies]
 serde_json = "1"
@@ -10,11 +10,11 @@ spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
 
 [lib]
-name = "sending"
+name = "hel"
 path = "src/lib.rs"
 
 [[bin]]
-name = "sending"
+name = "hel"
 path = "src/main.rs"
 test = false
 

@@ -67,7 +67,7 @@ fn main() {
             // The landing is recorded through the caller verb `content-on-base`, so the
             // switch and the machine are read exactly as that verb reads them.
             let mut record = |id: &str, proof: &str| {
-                let a = vec![id.to_string(), proof.to_string(), "sending".to_string()];
+                let a = vec![id.to_string(), proof.to_string(), "hel".to_string()];
                 let ans = callers::run("content-on-base", &a, &mut Live { conn: None });
                 if !ans.stderr.is_empty() {
                     eprint!("{}", ans.stderr);

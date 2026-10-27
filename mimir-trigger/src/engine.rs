@@ -277,7 +277,7 @@ sp-herv0: delete flipping suite test-watch-notify.sh
 spira: land sp-k6m1m
 sp-k6m1m: merge local/main
 sp-k6m1m: merge local/main
-sp-k6m1m: test-sending's stub store answers the list positive control
+sp-k6m1m: test-hel's stub store answers the list positive control
 spira: land sp-z61hj
 sp-k6m1m: stub stores answer the list positive control; boundary README regenerated
 sp-z61hj: merge local/main (sp-htrqk)

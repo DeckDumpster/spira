@@ -373,7 +373,7 @@ fn content_on_base_lands_any_non_terminal_state_with_its_proof() {
     assert_eq!(go(&mut f, "content-on-base", &["sp-c", "merge-tree:abc"]).code, APPLIED);
     assert_eq!(f.state("sp-c"), "LANDED");
     assert_eq!(f.beads["sp-c"].reason.as_deref(), Some("merge-tree:abc"));
-    assert_eq!(f.events[0].4, "sending", "lc_content_on_base's default actor");
+    assert_eq!(f.events[0].4, "hel", "lc_content_on_base's default actor");
     assert_eq!(go(&mut f, "content-on-base", &["sp-c", "again"]).code, REFUSED);
 }
 

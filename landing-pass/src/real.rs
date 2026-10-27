@@ -1230,12 +1230,12 @@ pub fn pid_alive(pid: &str) -> bool {
 }
 
 impl Procs for RealProcs {
-    /// A thin wrapper onto `sending::reap::holder_alive` — the destruction chokepoint's own
+    /// A thin wrapper onto `hel::reap::holder_alive` — the destruction chokepoint's own
     /// canonical implementation (sp-9envm) — rather than this crate's own copy (wave 4.23,
-    /// sp-0ffox: "holder_alive is reached through sending's library"). ONE holder-liveness
+    /// sp-0ffox: "holder_alive is reached through hel's library"). ONE holder-liveness
     /// predicate in the whole tree, not landing-pass's own second one.
     fn holder_alive(&self, id: &str) -> bool {
-        sending::reap::holder_alive(&self.run, id)
+        hel::reap::holder_alive(&self.run, id)
     }
 }
 
@@ -1254,7 +1254,7 @@ impl Clock for RealClock {
 mod holder_alive_tests {
     use super::*;
 
-    // The liveness predicates live in sending::reap; this confirms RealProcs reaches them.
+    // The liveness predicates live in hel::reap; this confirms RealProcs reaches them.
     #[test]
     fn holder_alive_checks_the_hold_pidfile_by_pid_only() {
         let run = testkit::TempDir::new("landing-pass-holder-alive");

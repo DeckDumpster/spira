@@ -42,7 +42,7 @@ pub fn witness(run: &Path, id: &str, seam: &dyn Seam) -> Option<String> {
         let suffix = format!("-{id}.pid");
         for e in rd.flatten() {
             let n = e.file_name().to_string_lossy().into_owned();
-            if n.starts_with("aeon-") && n.ends_with(&suffix) && sending::reap::aeon_alive(&e.path()) {
+            if n.starts_with("aeon-") && n.ends_with(&suffix) && hel::reap::aeon_alive(&e.path()) {
                 return Some(format!("{n} holds a running identity lease"));
             }
         }

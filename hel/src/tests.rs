@@ -1,6 +1,6 @@
-//! The Sending against REAL git repositories (every disposition is a git question) and a
+//! The Hel against REAL git repositories (every disposition is a git question) and a
 //! recording world for lib.sh's chokepoints, bd, the forge and the lifecycle machine. The
-//! fixture is test-sending.sh's, branch for branch; the chokepoints themselves (salvage,
+//! fixture is test-hel.sh's, branch for branch; the chokepoints themselves (salvage,
 //! the verified deletion, the content fence) are lib.sh's and stay proven by the suites
 //! that drive the binary end to end.
 
@@ -150,7 +150,7 @@ impl World for Fake {
     }
 }
 
-/// test-sending.sh's fixture: one repository whose base is `main` (no remote), a branch per
+/// test-hel.sh's fixture: one repository whose base is `main` (no remote), a branch per
 /// disposition.
 struct Fx {
     _t: testkit::TempDir,
@@ -161,7 +161,7 @@ struct Fx {
 }
 
 fn fixture() -> (Fx, Fake) {
-    let t = testkit::TempDir::new("sending-fx");
+    let t = testkit::TempDir::new("hel-fx");
     let r = t.path().join("repo");
     let run = t.path().join("run");
     std::fs::create_dir_all(run.join("worktree")).unwrap();
@@ -364,7 +364,7 @@ fn one_pass_sends_reaps_keeps_archives_and_holds() {
     assert!(out.contains("SENT sp-orphan  home spira/sp-orphan  orphaned worktree (branch was already gone)"), "{out}");
     assert!(!f.called("destroy .landing.repo"));
     assert!(f.called("prune"));
-    assert!(out.ends_with("LOG sending: 11 sent, 0 failed"), "{out}");
+    assert!(out.ends_with("LOG hel: 11 sent, 0 failed"), "{out}");
 }
 
 #[test]
@@ -425,7 +425,7 @@ fn dry_run_says_would_and_changes_nothing() {
     assert!(out.contains("WOULD  sp-noone  archive orphan branch spira/sp-noone (1 commit(s) not in main) to refs/archive/spira/sp-noone"));
     assert!(out.contains("WOULD  sp-sq  reap squash-merged branch spira/sp-sq (PR merged at this tip)"));
     assert!(out.contains("WOULD  sp-orphan  remove orphaned worktree"));
-    assert!(!out.contains("LOG sending:"), "no tally line on a dry run");
+    assert!(!out.contains("LOG hel:"), "no tally line on a dry run");
     for c in f.calls.borrow().iter() {
         assert!(c == "prefetch" || c.starts_with("bead ") || c.starts_with("gh "), "a dry run only reads: {c}");
     }
@@ -492,7 +492,7 @@ fn one_bead_sweeps_one_branch_and_skips_pass_two() {
 #[test]
 fn repositories_that_cannot_be_judged_are_skipped_loudly() {
     let (fx, mut f) = fixture();
-    let t = testkit::TempDir::new("sending-other");
+    let t = testkit::TempDir::new("hel-other");
     let plain = t.path().join("plain");
     std::fs::create_dir_all(&plain).unwrap();
     let repos = [
@@ -538,12 +538,12 @@ fn flags_parse_as_the_shells_did() {
 
 #[test]
 fn harness_home_is_env_first_then_the_release_layout() {
-    let t = testkit::TempDir::new("sending-home");
+    let t = testkit::TempDir::new("hel-home");
     let rel = t.path().join("rel");
     std::fs::create_dir_all(rel.join("bin")).unwrap();
     std::fs::create_dir_all(rel.join("spira")).unwrap();
     std::fs::write(rel.join("spira/lib.sh"), "").unwrap();
-    let exe = rel.join("bin/sending");
+    let exe = rel.join("bin/hel");
     assert_eq!(crate::locate_home(Some("/h"), &exe), Some(PathBuf::from("/h")));
     assert_eq!(crate::locate_home(None, &exe), Some(rel.join("spira").canonicalize().unwrap()));
     assert_eq!(crate::locate_home(None, &t.path().join("x/y")), None);
@@ -624,7 +624,7 @@ mod terminal_reaper {
     }
 
     fn hold_world() -> (testkit::TempDir, Fake) {
-        let t = testkit::TempDir::new("sending-hold");
+        let t = testkit::TempDir::new("hel-hold");
         let wts = t.path().join("run/worktree");
         std::fs::create_dir_all(&wts).unwrap();
         let f = Fake { wts, ..Default::default() };
@@ -694,7 +694,7 @@ mod terminal_reaper {
     }
 
     fn world() -> (testkit::TempDir, PathBuf, Fake) {
-        let t = testkit::TempDir::new("sending-terminal");
+        let t = testkit::TempDir::new("hel-terminal");
         let repo = t.path().join("repo");
         let wts = t.path().join("run/worktree");
         std::fs::create_dir_all(&repo).unwrap();

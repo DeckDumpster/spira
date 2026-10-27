@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-superseded.sh — landing.sh leaves superseded beads alone; sending.sh reaps them.
+# test-superseded.sh — landing.sh leaves superseded beads alone; hel.sh reaps them.
 #
 #   ./test-superseded.sh
 #
@@ -11,14 +11,14 @@
 # superseded by sp-35pl.
 #
 # TWO HALVES. The landing fix (skip rather than reopen) is the guard that prevents the false
-# alarm. The sending fix (reap) is what makes the branch disappear so the skip is rarely
+# alarm. The hel fix (reap) is what makes the branch disappear so the skip is rarely
 # needed. Both must hold, and the positive control for each is an identical bead that is NOT
 # superseded — because every silence below would pass just as well against a version of the
 # fix that skipped every branch, or reaped nothing.
 #
 # defect: sp-amac
 # tier: T2
-# covers: landing-pass/* sending/src/* spira/lib.sh UC-landing-merge-queue-21
+# covers: landing-pass/* hel/src/* spira/lib.sh UC-landing-merge-queue-21
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -68,9 +68,9 @@ landing() {
         landing-pass land 2>&1
 }
 
-sending() {
+hel() {
     SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_REPO="$REPO" \
-        command sending --all 2>&1
+        command hel --all 2>&1
 }
 
 seed() {
@@ -154,16 +154,16 @@ is   "the superseded bead stays closed"                           closed "$(stat
 drop_branch sp-pln
 
 # --------------------------------------------------------------------------------------
-# THE SENDING REAPS THE SUPERSEDED BRANCH.
+# THE HEL REAPS THE SUPERSEDED BRANCH.
 #
 # sp-sup's branch is still there after landing (landing skipped it; nothing landed it).
-# Sending should reap it because it is superseded, even though spira-lc content-landed is false.
+# Hel should reap it because it is superseded, even though spira-lc content-landed is false.
 # --------------------------------------------------------------------------------------
 timeout 5 git -C "$REPO" fetch -q origin
-out="$(sending)"
+out="$(hel)"
 echo "$out" | head -20 >&2
 
-want "the Sending reaps the superseded branch"                    "REAPED sp-sup" "$out"
+want "the Hel reaps the superseded branch"                    "REAPED sp-sup" "$out"
 nowant "it does not keep it as unlanded"                          "KEEP   sp-sup" "$out"
 # Verify the branch is actually gone.
 if git -C "$REPO" show-ref --verify --quiet "refs/heads/spira/sp-sup" 2>/dev/null; then
@@ -176,7 +176,7 @@ fi
 # A SUPERSEDED BRANCH THAT ADDS UNIQUE CONTENT IS KEPT, NOT REAPED. (sp-bxd0)
 #
 # The supersedes edge is a claim, not proof. If the superseded branch would merge without
-# conflict — meaning it adds content not on the base — the Sending must not reap it.
+# conflict — meaning it adds content not on the base — the Hel must not reap it.
 # Reaping would silently destroy work the successor never carried.
 #
 # This is the shape of the near-miss on 2026-09-08 (sp-r6wf): a branch marked superseded
@@ -198,7 +198,7 @@ git -C "$RUN/worktree/sp-unique" commit -q -m "feat: sp-unique — add file not 
 printf '{"id":"sp-unique","title":"sp-unique","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-unique","depends_on_id":"sp-epic","type":"parent-child"},{"issue_id":"sp-unique","depends_on_id":"sp-succ","type":"supersedes"}]}\n' \
     | testdb_seed
 timeout 5 git -C "$REPO" fetch -q origin
-out="$(sending)"
+out="$(hel)"
 echo "$out" | head -20 >&2
 
 want "superseded branch with unique content is kept"  "KEEP   sp-unique" "$out"
@@ -206,15 +206,15 @@ nowant "it is not reaped"                              "REAPED sp-unique" "$out"
 want "and the reason names the unlanded commits"       "unlanded" "$out"
 # Branch must still exist — its unique file would be lost if reaped.
 if git -C "$REPO" show-ref --verify --quiet "refs/heads/spira/sp-unique" 2>/dev/null; then
-    ok "branch with unique content survives a sending pass"
+    ok "branch with unique content survives a hel pass"
 else
-    bad "branch with unique content survives a sending pass" "branch was reaped — unique-file.txt would be lost"
+    bad "branch with unique content survives a hel pass" "branch was reaped — unique-file.txt would be lost"
 fi
 # The branch is kept, but nothing needs to hold its worktree open any longer — a
 # standing worktree is what made spira_destroy_branch refuse a later, correctly
 # superseded branch (sp-bf31a).
 if [ -e "$RUN/worktree/sp-unique" ]; then
-    bad "kept branch's worktree is freed" "worktree still present after sending"
+    bad "kept branch's worktree is freed" "worktree still present after hel"
 else
     ok "kept branch's worktree is freed (branch itself untouched)"
 fi
@@ -222,11 +222,11 @@ git -C "$REPO" worktree remove --force "$RUN/worktree/sp-unique" >/dev/null 2>&1
 git -C "$REPO" branch -D "spira/sp-unique" >/dev/null 2>&1 || true
 
 # --------------------------------------------------------------------------------------
-# THE POSITIVE CONTROL FOR SENDING: a non-superseded unlanded branch is KEPT, not reaped.
+# THE POSITIVE CONTROL FOR HEL: a non-superseded unlanded branch is KEPT, not reaped.
 # --------------------------------------------------------------------------------------
 seed; branch sp-kept kept.txt "kept branch"
 # Don't advance the base — sp-kept is unlanded and not superseded.
-out="$(sending)"
+out="$(hel)"
 want "a non-superseded unlanded branch is kept"   "KEEP   sp-kept" "$out"
 nowant "and is not reaped"                         "REAPED sp-kept" "$out"
 drop_branch sp-kept
@@ -239,7 +239,7 @@ superseded_branch sp-drysup conflict.txt "dry run test"
 advance_base conflict.txt "base content for dry run"
 timeout 5 git -C "$REPO" fetch -q origin
 out="$(SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_REPO="$REPO" \
-    command sending --dry-run 2>&1)"
+    command hel --dry-run 2>&1)"
 want "dry-run names the superseded branch" "WOULD  sp-drysup" "$out"
 want "and mentions the reason"             "superseded" "$out"
 # After dry-run, the branch must still be there.
@@ -251,7 +251,7 @@ drop_branch sp-drysup
 # --------------------------------------------------------------------------------------
 # SUPERSEDED ANCESTOR BRANCH (sp-bf31a). A superseded branch with zero commits ahead of
 # the base (is-ancestor) was kept forever before the spira-lc content-landed fix. With the fix,
-# spira-lc content-landed returns 0 for ancestor branches, so the Sending reaches the content-
+# spira-lc content-landed returns 0 for ancestor branches, so the Hel reaches the content-
 # landed path and reaps the branch via SENT (not REAPED — the superseded block is not
 # entered when spira-lc content-landed returns 0).
 # --------------------------------------------------------------------------------------
@@ -277,10 +277,10 @@ else
     bad "sp-anc fixture" "expected 0 ahead, got ${_anc_ahead:-?}"
 fi
 git -C "$REPO" worktree remove --force "$RUN/worktree/sp-anc" >/dev/null 2>&1 || true
-out="$(sending)"
+out="$(hel)"
 echo "$out" | head -20 >&2
 
-want   "the Sending reaps a superseded ancestor branch"  "SENT sp-anc"  "$out"
+want   "the Hel reaps a superseded ancestor branch"  "SENT sp-anc"  "$out"
 nowant "it does not keep it"                             "KEEP   sp-anc" "$out"
 if git -C "$REPO" show-ref --verify --quiet "refs/heads/spira/sp-anc" 2>/dev/null; then
     bad "the superseded ancestor branch is gone" "spira/sp-anc still exists"

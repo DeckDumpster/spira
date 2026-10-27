@@ -145,7 +145,7 @@ Unchanged field list and heredoc layout from the bash (see `render::render` doc 
 the full field-by-field source map). Writes `$SPIRA_WATCH_PROMPT_FILE` (default
 `$SPIRA_RUN/ops-sweep-prompt.txt`) atomically, advances `$SPIRA_RUN/lapsed.swept` only on a
 successful write, and (default mode only, non-halted, non-nominal) files the same nine
-threshold escalations the bash filed: drain, sending-oldest-unsent, unadopted-refs, hotfix,
+threshold escalations the bash filed: drain, hel-oldest-unsent, unadopted-refs, hotfix,
 batched-stranded, batched-too-long, closed-stranded, dedup-meter, idle-while-ready — then
 runs `cockpit/moot-sweep.sh --apply`.
 
@@ -193,5 +193,5 @@ fake systemctl).
 - **Not the collector.** `collect.sh`/`cockpit.sh` write `cockpit.env`; this only reads it.
 - **Not the yield meter.** `yield.sh` computes `YIELD_*`; this shells to it exactly as the
   bash did (out of scope this bead).
-- **Not incident.sh's dedup.** That logic (lookback window, `SPIRA_SIN_EXEMPT`) lives in
+- **Not incident.sh's dedup.** That logic (lookback window, `SPIRA_FENRIR_EXEMPT`) lives in
   incident.sh; this crate only calls it with the same `SPIRA_INCIDENT_*` env the bash used.

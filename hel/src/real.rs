@@ -123,7 +123,7 @@ impl Real {
         self.seam(Op::LabelRemove, &[id, label]);
     }
 
-    /// `sending destroy-branch`'s own entry point: the trait only has the combined `send`
+    /// `hel destroy-branch`'s own entry point: the trait only has the combined `send`
     /// (witness recheck + full reap), so a standalone destroy-branch (for bash callers that
     /// are not the sweep itself — `held.sh`, and lib.sh's `spira_destroy_branch` shim) goes
     /// through this instead.
@@ -132,7 +132,7 @@ impl Real {
         reap::destroy_branch(&self.run(), &self.reaplog_path(), id, br, repo, why, caller, base, self)
     }
 
-    /// `sending salvage`'s own entry point.
+    /// `hel salvage`'s own entry point.
     #[allow(clippy::result_unit_err)]
     pub fn salvage(&self, id: &str, w: &Path) -> Result<Option<PathBuf>, ()> {
         reap::salvage(&self.run(), &self.reaplog_path(), id, w)
@@ -142,12 +142,12 @@ impl Real {
         let home = self.home.to_string_lossy().into_owned();
         let mut all = vec![home.as_str(), self.status.as_str()];
         all.extend_from_slice(vals);
-        // `-s sending.seam.sh`: bash still reads the script from stdin; the extra word is only
+        // `-s hel.seam.sh`: bash still reads the script from stdin; the extra word is only
         // so lib.sh's spira_caller (which names the `*.sh` programs up the process chain in
         // every reap-log line) can name this one — a bare `bash` under a binary names nothing.
         // batch-job: runs a gate, build or forge script that takes as long as its work
         let child = Command::new("bash")
-            .args(["-s", "sending.seam.sh"])
+            .args(["-s", "hel.seam.sh"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -276,7 +276,7 @@ impl World for Real {
     }
     fn content_on_base(&self, id: &str, proof: &str) {
         let _ = spira_config::bounded::bounded("spira-lc")
-            .args(["content-on-base", id, proof, "sending"])
+            .args(["content-on-base", id, proof, "hel"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -351,7 +351,7 @@ mod tests {
     /// re-proving `spira_config::repos`' own rungs, which have their own unit tests.
     #[test]
     fn base_resolves_through_spira_config_repos_with_no_remote() {
-        let dir = testkit::TempDir::new("sending-real-base");
+        let dir = testkit::TempDir::new("hel-real-base");
         let repo = dir.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
         run_git(&repo, &["init", "-q", "-b", "trunk"]);
@@ -367,7 +367,7 @@ mod tests {
 
     #[test]
     fn base_is_none_for_a_path_that_is_not_a_git_checkout() {
-        let dir = testkit::TempDir::new("sending-real-base-not-a-repo");
+        let dir = testkit::TempDir::new("hel-real-base-not-a-repo");
         let r = Real::minimal(dir.path().to_path_buf(), dir.join("run"), None);
         assert_eq!(r.base(dir.path()), None);
     }

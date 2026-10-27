@@ -1,4 +1,4 @@
-//! Orchestration: the dedupe scan, filing a new bead or bumping a recurrence, the Sin
+//! Orchestration: the dedupe scan, filing a new bead or bumping a recurrence, the Fenrir
 //! escalation and the undeclared-repo ask. Pure decision-making lives in `decide.rs`; this
 //! module only sequences calls to the `Bd`/`Mailer`/`Clock` ports and never contains a
 //! judgement call `decide.rs` could have made instead — table-driven parity against the
@@ -14,8 +14,8 @@ pub struct FileConfig<'a> {
     pub priority: &'a str,
     pub actor: Option<&'a str>,
     pub cause: &'a str,
-    pub sin_at: u32,
-    pub sin_exempt: bool,
+    pub fenrir_at: u32,
+    pub fenrir_exempt: bool,
     pub watcher_interval_s: i64,
     pub dedup_lookback_days: i64,
     pub repo_declared: Option<&'a str>,
@@ -241,13 +241,13 @@ fn bump_and_note(
     let log_suffix = if was_reopened { " (reopened from closed)" } else { "" };
     log.push(format!("{reference} recurred ({n}) — {id}{log_suffix}"));
 
-    let already_sin = bd.label_list(cfg.db, id).iter().any(|l| l == "sin");
+    let already_fenrir = bd.label_list(cfg.db, id).iter().any(|l| l == "fenrir");
     if events_unknown {
-        log.push(format!("{reference}: recurrence count unknown — events query failed; Sin is blind this cycle"));
-    } else if cfg.sin_exempt && n >= cfg.sin_at {
-        log.push(format!("{reference} crossed SIN_AT={} ({n} recurrences) but is exempt — no escalation", cfg.sin_at));
-    } else if decide::crosses_sin(n, cfg.sin_at, cfg.sin_exempt, events_unknown, already_sin) {
-        bd.label_add(cfg.db, id, "sin");
+        log.push(format!("{reference}: recurrence count unknown — events query failed; Fenrir is blind this cycle"));
+    } else if cfg.fenrir_exempt && n >= cfg.fenrir_at {
+        log.push(format!("{reference} crossed FENRIR_AT={} ({n} recurrences) but is exempt — no escalation", cfg.fenrir_at));
+    } else if decide::crosses_sin(n, cfg.fenrir_at, cfg.fenrir_exempt, events_unknown, already_fenrir) {
+        bd.label_add(cfg.db, id, "fenrir");
         let age = bd
             .show_created_at(cfg.db, id)
             .and_then(|c| parse_iso8601(&c))
@@ -263,7 +263,7 @@ fn bump_and_note(
             String::from_utf8_lossy(&evidence)
         );
         mailer.send_operator_question(&subject, &default, &body);
-        log.push(format!("{reference} is a SIN at {n} recurrences — escalated once"));
+        log.push(format!("{reference} is a FENRIR at {n} recurrences — escalated once"));
     }
     FileOutcome::Filed(id.to_string())
 }
@@ -617,8 +617,8 @@ mod tests {
             priority: "2",
             actor: None,
             cause: "systemd-fail",
-            sin_at: 5,
-            sin_exempt: false,
+            fenrir_at: 5,
+            fenrir_exempt: false,
             watcher_interval_s: 1800,
             dedup_lookback_days: 7,
             repo_declared: Some("spira"),
@@ -898,7 +898,7 @@ mod tests {
     }
 
     #[test]
-    fn sin_threshold_escalates_exactly_once() {
+    fn fenrir_threshold_escalates_exactly_once() {
         let bd = FakeBd::new();
         let mailer = FakeMailer { sent: RefCell::new(vec![]) };
         let clock = FixedClock(1_000_000);
@@ -911,7 +911,7 @@ mod tests {
             labels: vec![],
             closed_at: None,
         });
-        c.sin_at = 1;
+        c.fenrir_at = 1;
         let mut log = vec![];
         let out = file_one(&bd, &mailer, &clock, &c, "incident:y", "y failed", b"payload", "spira,incident", &mut log);
         assert!(matches!(out, FileOutcome::Filed(_)));
@@ -919,7 +919,7 @@ mod tests {
 
         let out2 = file_one(&bd, &mailer, &clock, &c, "incident:y", "y failed", b"payload", "spira,incident", &mut log);
         assert!(matches!(out2, FileOutcome::Filed(_)));
-        assert_eq!(mailer.sent.borrow().len(), 1, "a bead already labelled sin is never paged twice");
+        assert_eq!(mailer.sent.borrow().len(), 1, "a bead already labelled fenrir is never paged twice");
     }
 
     #[test]

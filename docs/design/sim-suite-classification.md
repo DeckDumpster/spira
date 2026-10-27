@@ -47,7 +47,7 @@ Proposed ten, each named by the suites that need it:
 | `claim-order` | several READY beads (priorities, epics, an open child, an express bead); the order they are claimed in | dispatch-open-children, epic-claim-order, express-lane, branch-collision-park, claim-retry |
 | `second-repo` | a bead for a non-home repo, one with a `master` base | cross-repo, config-compat-master-base, landing-modes |
 | `forge-batch` | queue.forge: open batch, PR checks, verdict, owner mutations, via the fake GitHub | queue-open-batch, queue-owner-*, queue-transition, lifecycle-delivery-cutover |
-| `reap-after-land` | closed and superseded branches after landing; what is reaped | sending, sending-closed-reap, sending-mode-filter |
+| `reap-after-land` | closed and superseded branches after landing; what is reaped | hel, hel-closed-reap, hel-mode-filter |
 | `stuck-pipeline` | a stub agent that stalls and a bead that strands; detectors run as actors | watchtower, watchtower-lapse, closed-strand, strand-submitted |
 
 The first five are what batch 2 needs; the other five are worth building only once the first two batches are moving.
@@ -217,7 +217,7 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | cockpit-self | no | - | 4 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-snap-absent | no | - | 3 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-sop | no | - | 9 | cockpit/pane rendering and its probes: no loop actor changes state |
-| cockpit-sphere | no | - | 12 | cockpit/pane rendering and its probes: no loop actor changes state |
+| cockpit-well | no | - | 12 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-strand-keys | no | - | 2 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-tmp | no | - | 10 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit-tmux-scope | no | - | ? | cockpit/pane rendering and its probes: no loop actor changes state |
@@ -447,10 +447,10 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | scope-label | no | - | 5 | static, configuration or single-tool contract: no hand-off between loop actors |
 | script-lint-rules | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | script-running-guard | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
-| sending-closed-reap | partly | new:reap-after-land | 14 | branch reaping after close; shapes needing hand-made branches stay bash |
-| sending-metrics | no | - | 2 | cockpit/pane rendering and its probes: no loop actor changes state |
-| sending-mode-filter | partly | new:reap-after-land | ? | skip-queue/queue-only sweeps; needs a mixed-mode world |
-| sending | partly | new:reap-after-land | ? | disposition per branch; pure send_disposition rows stay bash |
+| hel-closed-reap | partly | new:reap-after-land | 14 | branch reaping after close; shapes needing hand-made branches stay bash |
+| hel-metrics | no | - | 2 | cockpit/pane rendering and its probes: no loop actor changes state |
+| hel-mode-filter | partly | new:reap-after-land | ? | skip-queue/queue-only sweeps; needs a mixed-mode world |
+| hel | partly | new:reap-after-land | ? | disposition per branch; pure send_disposition rows stay bash |
 | sentinel-pass | partly | happy-path | 9 | real end-to-end sentinel passes; audit dispatch rows stay bash |
 | session-hook | no | - | 17 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
 | set-state-semantics | no | - | 4 | static, configuration or single-tool contract: no hand-off between loop actors |
@@ -458,7 +458,7 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | sim-happy-path | already sim | happy-path | ? | already a sim suite (runs one scenario) |
 | sim-world-lc | already sim | - | ? | already a sim suite (world up runs its own spira-lc) |
 | sim-world-prebuilt | already sim | - | ? | already a sim suite (world up uses a prebuilt release) |
-| sin-exempt | no | - | 66 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
+| fenrir-exempt | no | - | 66 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | single-selector | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | skew-check-release | no | - | 3 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | skew-copies | no | - | 10 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
@@ -486,7 +486,7 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | summon-fast-path | partly | happy-path, long-gate-interleaving | ? | a freed slot refills in seconds; needs virtual-time assertion |
 | summon-fayth | no | - | 4 | single-tool or static contract: no hand-off between loop actors |
 | supersede-duty | replaceable | new:supersede | ? | supersede request adjudicated within one pass against a real spira-lc |
-| superseded | partly | new:supersede | 24 | landing leaves superseded beads alone; sending reaps them |
+| superseded | partly | new:supersede | 24 | landing leaves superseded beads alone; hel reaps them |
 | tarball-bins | no | - | 2 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | testdb-concurrent | no | - | 12 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | testdb-failsafe | no | - | 21 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |

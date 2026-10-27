@@ -163,7 +163,7 @@ pub fn stop_holder_in(
     let live = || -> Option<std::path::PathBuf> {
         std::fs::read_dir(run).ok()?.flatten().map(|e| e.path()).find(|p| {
             p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("aeon-") && n.ends_with(&suffix))
-                && sending::reap::lease_live(p, now())
+                && hel::reap::lease_live(p, now())
         })
     };
     if live().is_none() {

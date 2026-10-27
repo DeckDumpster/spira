@@ -237,7 +237,7 @@ fn aeon_pidfiles() -> Vec<PathBuf> {
 }
 
 fn aeon_lease_running(pf: &std::path::Path) -> bool {
-    sending::reap::aeon_alive(pf)
+    hel::reap::aeon_alive(pf)
 }
 
 fn live_aeon_pidfiles() -> Vec<PathBuf> {

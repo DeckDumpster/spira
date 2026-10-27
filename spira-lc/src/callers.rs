@@ -188,7 +188,7 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
                 return usage("content-on-base <bead-id> <proof> [actor]");
             }
             let proof = a(1);
-            with_row(m, &a(0), &actor_or(args.get(2), "sending"), |_| Ok(BeadEventKind::ContentOnBase { proof: proof.clone() }))
+            with_row(m, &a(0), &actor_or(args.get(2), "hel"), |_| Ok(BeadEventKind::ContentOnBase { proof: proof.clone() }))
         }
         "supersede" => {
             if !need(2) {
@@ -576,7 +576,7 @@ fn deliver(args: &[String], m: &mut dyn Machine) -> Answer {
     });
     let Some((state, version)) = rec else {
         // PUSH MODE HAS NO DELIVERY ROUND (sp-51lgh). A CERTIFIED bead landed by push has no
-        // delivery row to carry the landing, and the sending sweep's ContentOnBase fires only
+        // delivery row to carry the landing, and the hel sweep's ContentOnBase fires only
         // for a branch still ahead of the base — never for a fast-forward — so the row stayed
         // CERTIFIED with its commit on the base. Record the landing on the bead itself, with
         // the ancestry proof; every other no-row case is unchanged.

@@ -217,7 +217,7 @@ are the same algorithm. Unifying them would be a behaviour change this bead does
 sp-31hjr gave sentinel (`pass.rs`) and landing-pass (`real.rs`'s `RealBeads::ask_open`)
 each their own native copy rather than a shared library dependency between binaries; this
 crate's `closeout.rs` copy is the third, following the same precedent (see also
-`sending`'s/`cockpit-collect`'s/`sentinel`'s own separate copies of the subject-grep
+`hel`'s/`cockpit-collect`'s/`sentinel`'s own separate copies of the subject-grep
 "landed" shape). lib.sh's bash copy retires outright with this bead — no caller is left
 anywhere in the tree.
 

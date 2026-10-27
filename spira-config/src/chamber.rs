@@ -645,7 +645,7 @@ mod tests {
         let ws = testkit::TempDir::new("spira-config-chamber-task");
         write_fayth(&ws, "builder", "FAYTH_LABELS=spira,plan\n");
         write_fayth(&ws, "human", "FAYTH_SUMMON=manual\n");
-        write_fayth(&ws, "guardian", "FAYTH_LANE=groom\n");
+        write_fayth(&ws, "warden", "FAYTH_LANE=groom\n");
         write_fayth(&ws, "worker", "FAYTH_ROLE=party\n");
         assert_eq!(spira_task_fayths(&ws, None), "builder");
     }
@@ -654,9 +654,9 @@ mod tests {
     fn spira_lane_fayths_is_the_declared_lane_fayth_only() {
         let ws = testkit::TempDir::new("spira-config-chamber-lane");
         write_fayth(&ws, "builder", "FAYTH_LABELS=spira,plan\n");
-        write_fayth(&ws, "guardian", "FAYTH_LANE=groom\n");
+        write_fayth(&ws, "warden", "FAYTH_LANE=groom\n");
         write_fayth(&ws, "human", "FAYTH_SUMMON=manual\nFAYTH_LANE=groom\n");
-        assert_eq!(spira_lane_fayths(&ws, None), "guardian");
+        assert_eq!(spira_lane_fayths(&ws, None), "warden");
     }
 
     #[test]

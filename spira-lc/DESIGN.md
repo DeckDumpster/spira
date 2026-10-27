@@ -27,7 +27,7 @@ it existed).
 | `hold <id> <poison\|ask\|wait\|manual> [cause] [actor=sentinel]` | `lc_hold` | 0 applied · 1 no row · 2 cannot tell · 3 refused |
 | `unhold <id> <kind> [actor]`, `release <id> [actor]`, `holder-dead <id> [actor]` | `lc_unhold`, `lc_release`, `lc_holderdead`/`lc_holder_dead` | same |
 | `drop <id> <reason> [actor]`, `returned <id> <reason> [actor]` | `lc_drop`, `lc_returned` | same; the typed reason is `unwanted` / `batch-ejected`, the prose stays the caller's |
-| `content-on-base <id> <proof> [actor=sending]` | `lc_content_on_base` | same |
+| `content-on-base <id> <proof> [actor=hel]` | `lc_content_on_base` | same |
 | `state <id>` | `lc_show` + a state read | prints the state; 0 · 1 no row · 2 cannot tell |
 | `holds <id>` · `held <id> <kind>` | `lc_holds` · `lc_held` | kinds one per line, 0 · 0 held / 1 not |
 | `list-held <kind>` · `list-state <state>` · `list-all` | `lc_list_*` | `id` · `id\tlease\tholds,` · `id\tstate\tholder`; always 0 |
@@ -46,8 +46,8 @@ nothing in shell writes a claim, a status or a close around the machine any more
 **Two verbs touch no lifecycle state.** `content-landed <repo> <branch> <base>`
 (0 base holds every change the branch makes · 1 not · 2 usage) and `close-on-land <id> [sha]` (closes a
 submitted, unclosed work bead citing the sha, marks the ledger LANDED, reaps the branch through
-`sending`; best-effort, always 0). The first replaces lib.sh's bash merge-tree check; the second
-is what every landing path calls to close a landed bead (sending's seam directly; the queue still
+`hel`; best-effort, always 0). The first replaces lib.sh's bash merge-tree check; the second
+is what every landing path calls to close a landed bead (hel's seam directly; the queue still
 through lib.sh's one-line shim until sp-du6dl), in place of the landing pass's own subcommand.
 
 **There is no switch.** `lifecycle_enforce` once gave every caller verb an off-answer that

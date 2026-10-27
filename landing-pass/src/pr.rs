@@ -135,7 +135,7 @@ impl<'a> PrPass<'a> {
                 continue;
             }
             if bead.superseded {
-                self.log(&format!("landing-pass {name}: {id} is superseded — leaving it for the Sending to reap"));
+                self.log(&format!("landing-pass {name}: {id} is superseded — leaving it for the Hel to reap"));
                 continue;
             }
             if self.git.content_on_base(&r.path, br, &base_fq) {

@@ -1,8 +1,8 @@
-//! Fire-and-forget OTLP metrics for `sending`: one run and its seconds per invocation, by operation and outcome.
+//! Fire-and-forget OTLP metrics for `hel`: one run and its seconds per invocation, by operation and outcome.
 
 use spira_otel::metrics::{self, MetricsSink};
 
-pub const COMPONENT: &str = "sending";
+pub const COMPONENT: &str = "hel";
 pub const OPERATIONS: &[&str] = &["reap-terminal", "destroy-worktree", "destroy-branch", "reap-landed-branch", "prune", "reap-stale", "salvage", "witness", "hold-alive", "holder-alive", "stop-holder", "worktree-of", "caller", "reaplog"];
 
 pub fn sink() -> MetricsSink {
@@ -31,7 +31,7 @@ mod tests {
         let (code, got) = fixture::capture(|s| run(s, Some("reap-terminal"), || 1));
         assert_eq!(code, 1);
         let runs = got.iter().find(|c| c.name == metrics::RUNS).expect("run count pushed");
-        assert_eq!((runs.label("component"), runs.label("operation"), runs.label("outcome")), (Some("sending"), Some("reap-terminal"), Some("error")));
+        assert_eq!((runs.label("component"), runs.label("operation"), runs.label("outcome")), (Some("hel"), Some("reap-terminal"), Some("error")));
         assert!(got.iter().any(|c| c.name == metrics::RUN_DURATION), "run seconds pushed");
     }
 

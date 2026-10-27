@@ -4,11 +4,11 @@
 //! (`spira_destroy_worktree`, `spira_destroy_branch`, `spira_reap_landed_branch`,
 //! `spira_prune_worktrees`, `salvage`, `hold_alive`, `holder_alive`,
 //! `spira_holder_witnesses`, `worktree_of`, `spira_caller`, `spira_reaplog`), which become
-//! one-line shims in lib.sh calling this crate's `sending` binary (`destroy-worktree`,
+//! one-line shims in lib.sh calling this crate's `hel` binary (`destroy-worktree`,
 //! `destroy-branch`, `prune`, `salvage`, plus the smaller plumbing verbs the shims need).
 //!
 //! WHY IT IS ONE SITE, and what it unconditionally refuses: see lib.sh's own DESTRUCTION
-//! header (preserved there) — it is reproduced in full in `sending/DESIGN.md` §5 and is not
+//! header (preserved there) — it is reproduced in full in `hel/DESIGN.md` §5 and is not
 //! repeated here. In short: only paths under `$SPIRA_RUN/worktree/` may be removed; two
 //! liveness witnesses are required (a live process, and the bead's own status, the latter
 //! proved reachable before its absence counts); salvage runs first and its failure aborts
@@ -49,7 +49,7 @@ pub fn utc_now() -> String {
 /// than matched against a command line (a pattern matches the searcher's own argv, which is
 /// how `pgrep -f` once reported a collector healthy by finding the shell that was killing
 /// it). Walks the ancestor chain up to 6 levels; the interesting name is rarely the
-/// immediate one (`sending.sh` tells you nothing, `test-repo.sh -> sending.sh` tells you
+/// immediate one (`hel.sh` tells you nothing, `test-repo.sh -> hel.sh` tells you
 /// everything).
 pub fn spira_caller() -> String {
     let mut out: Vec<String> = Vec::new();
@@ -77,7 +77,7 @@ pub fn spira_caller() -> String {
         "unknown".to_string()
     } else {
         // Names were collected innermost-first; the shell built the chain outermost-first
-        // ("a -> b -> sending.seam.sh"), so reverse.
+        // ("a -> b -> hel.seam.sh"), so reverse.
         out.reverse();
         out.join(" -> ")
     }
@@ -388,9 +388,9 @@ pub enum DestroyBranchErr {
 }
 
 /// lib.sh `spira_destroy_branch <id> <branch> <repo> <why> [caller]`. `caller` non-empty
-/// (`"sending"`, `"slain"`, `"archived"`, or any other value a future caller uses) means the
+/// (`"hel"`, `"slain"`, `"archived"`, or any other value a future caller uses) means the
 /// caller has already verified safety by its own means and the content fence is skipped;
-/// empty applies it. CONTENT, NOT ANCESTRY: the fence asks the same question the Sending's
+/// empty applies it. CONTENT, NOT ANCESTRY: the fence asks the same question the Hel's
 /// own selector asks (`content_on_base`), never `merge-base --is-ancestor`, or the two sides
 /// contradict on an empty-commit branch.
 #[allow(clippy::too_many_arguments)]
@@ -399,7 +399,7 @@ pub fn destroy_branch(run: &Path, reaplog_path: &Path, id: &str, br: &str, repo:
     if !g.branch_exists(br) {
         return Ok(());
     }
-    // CERTIFIED/BATCHED GUARD. No caller bypass: even the Sending must not race verdict.sh's
+    // CERTIFIED/BATCHED GUARD. No caller bypass: even the Hel must not race verdict.sh's
     // LANDED write.
     if let Some(state) = lc_state(id).filter(|s| is_queued_state(s)) {
         reaplog(reaplog_path, "REFUSED", id, &format!("branch {br} — lifecycle state is {state}; not deleting a queued branch"));
@@ -464,7 +464,7 @@ fn delete_branch_recovering(g: &Git, br: &str, reaplog_path: &Path, id: &str, st
     }
 }
 
-/// The outcome of `reap_landed_branch`. Unlike `sending`'s own `World::send` (which rechecks
+/// The outcome of `reap_landed_branch`. Unlike `hel`'s own `World::send` (which rechecks
 /// the witness in the same breath so nothing can claim the bead between the two, and so can
 /// be `Held`), this function itself never reports held — a caller who wants that recheck
 /// does it with `holder_witnesses` immediately before calling this.
@@ -579,7 +579,7 @@ mod tests {
     use testkit::TempDir;
 
     fn tempdir() -> TempDir {
-        TempDir::new("sending-reap-test")
+        TempDir::new("hel-reap-test")
     }
 
     /// The lifecycle row's state for every bead (`None`: the machine did not answer; an
@@ -762,7 +762,7 @@ mod tests {
         git(&repo, &["add", "new.txt"]);
         git(&repo, &["commit", "-q", "-m", "unlanded but caller already verified"]);
         git(&repo, &["checkout", "-q", "main"]);
-        let res = destroy_branch(&run, &run.join("reap.log"), "sp-bypass", "spira/sp-bypass", &repo, "why", "sending", None, &open());
+        let res = destroy_branch(&run, &run.join("reap.log"), "sp-bypass", "spira/sp-bypass", &repo, "why", "hel", None, &open());
         assert!(res.is_ok());
         assert!(!Git(&repo).branch_exists("spira/sp-bypass"));
     }

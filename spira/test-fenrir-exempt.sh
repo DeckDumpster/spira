@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
 #
-# test-sin-exempt.sh — a SIN-exempt ref recurs without paging; a non-exempt ref still pages.
+# test-fenrir-exempt.sh — a FENRIR-exempt ref recurs without paging; a non-exempt ref still pages.
 #
-#   ./test-sin-exempt.sh
+#   ./test-fenrir-exempt.sh
 #
 # THE TWO CONTROLS (law-absence-needs-a-positive-control):
 #
-#   1. A non-exempt ref that recurs past SIN_AT gets the `sin` label and triggers the
-#      escalation path. Without this, the exemption is indistinguishable from a SIN that
+#   1. A non-exempt ref that recurs past FENRIR_AT gets the `fenrir` label and triggers the
+#      escalation path. Without this, the exemption is indistinguishable from a FENRIR that
 #      never fires at all.
-#   2. An exempt ref that recurs past SIN_AT does NOT get the `sin` label and does NOT
+#   2. An exempt ref that recurs past FENRIR_AT does NOT get the `fenrir` label and does NOT
 #      trigger escalation. Its recurrence counter still advances and its notes still record
 #      what happened — only the page is suppressed.
 #
 # WHY THIS SUITE EXISTS. The watchtower files a sweep on every ten-minute pass. incident.sh
 # dedupes on the external ref and bumps sp-recur-N. N counts intervals in which nobody closed
-# a routine health report, not unremediated failures. At SIN_AT=5 the page fires after fifty
+# a routine health report, not unremediated failures. At FENRIR_AT=5 the page fires after fifty
 # minutes of quiet — zero defects. Closing the bead re-arms the cycle. $18/day of aeon cost
-# (measured sp-kufh). SPIRA_SIN_EXEMPT=1 is the brake: the watchtower sets it so its ref
-# cannot reach the SIN escalation.
+# (measured sp-kufh). SPIRA_FENRIR_EXEMPT=1 is the brake: the watchtower sets it so its ref
+# cannot reach the FENRIR escalation.
 #
 # DEMOTED TO T1 (UC-ops-detection-remediation-07). recurs_of -> _counter_events_query needs
 # only row 3 of `bd sql`'s output, which embedded testdb refuses entirely (it answers every
@@ -28,7 +28,7 @@
 # call), so the whole sequence — create, recur, recur, escalate — runs against it exactly as
 # it would against real bd, without a fixture database at all.
 #
-# The DRAINING-escalation exemption claim ("watchtower sets SPIRA_SIN_EXEMPT=1") is
+# The DRAINING-escalation exemption claim ("watchtower sets SPIRA_FENRIR_EXEMPT=1") is
 # SOURCE-GREPPED from test-watchtower.sh instead of here, which already captures the
 # incident env on that call site.
 #
@@ -39,7 +39,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
-echo "test-sin-exempt.sh"
+echo "test-fenrir-exempt.sh"
 
 STUB_BD="$(command -v incident-stub-bd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -102,47 +102,47 @@ recur_max() { lc_fact_count "$TMP/lc" "$1" recurred; }
 
 # ======================================================================================
 echo
-echo "the positive control — a non-exempt ref reaches SIN:"
+echo "the positive control — a non-exempt ref reaches FENRIR:"
 # ======================================================================================
-# File the same ref SIN_AT + 1 times. SIN_AT counts RECURRENCES, not sightings — incident.sh
-# escalates "past SIN_AT recurrences" and its counter starts at zero on the filing that
-# CREATES the bead. So reaching a count of SIN_AT takes one create plus SIN_AT recurring
+# File the same ref FENRIR_AT + 1 times. FENRIR_AT counts RECURRENCES, not sightings — incident.sh
+# escalates "past FENRIR_AT recurrences" and its counter starts at zero on the filing that
+# CREATES the bead. So reaching a count of FENRIR_AT takes one create plus FENRIR_AT recurring
 # filings.
-SIN_AT=3
-ref="incident:test-nonexempt-sin"
+FENRIR_AT=3
+ref="incident:test-nonexempt-fenrir"
 title="non-exempt incident"
-for i in $(seq 1 "$(( SIN_AT + 1 ))"); do
-    file_incident "$ref" "$title" "payload $i" SPIRA_SIN_AT="$SIN_AT" >/dev/null
+for i in $(seq 1 "$(( FENRIR_AT + 1 ))"); do
+    file_incident "$ref" "$title" "payload $i" SPIRA_FENRIR_AT="$FENRIR_AT" >/dev/null
 done
 
 bid="$(bead_of "$ref")"
 [ -n "$bid" ] && ok "the bead was created" || bad "the bead was created" "no bead found for ref $ref"
 
 if [ -n "$bid" ]; then
-    has_label "$bid" sin && ok "the non-exempt bead gets the sin label" \
-        || bad "the non-exempt bead gets the sin label" "labels: $(labels_of "$bid")"
-    is "the recurrence counter reached $SIN_AT" "$SIN_AT" "$(recur_max "$bid")"
+    has_label "$bid" fenrir && ok "the non-exempt bead gets the fenrir label" \
+        || bad "the non-exempt bead gets the fenrir label" "labels: $(labels_of "$bid")"
+    is "the recurrence counter reached $FENRIR_AT" "$FENRIR_AT" "$(recur_max "$bid")"
     want "the ask was filed" "recurred" "$(cat "$MAIL_LOG" 2>/dev/null)"
 fi
 
 # ======================================================================================
 echo
-echo "an exempt ref does NOT reach SIN:"
+echo "an exempt ref does NOT reach FENRIR:"
 # ======================================================================================
 rm -f "$STUB_BD_STATE" "$STUB_BD_LOG" "$TMP/lc/facts.tsv"; : > "$MAIL_LOG"
-ref="incident:test-exempt-sin"
+ref="incident:test-exempt-fenrir"
 title="exempt incident"
-for i in $(seq 1 "$(( SIN_AT + 1 ))"); do
-    file_incident "$ref" "$title" "payload $i" SPIRA_SIN_AT="$SIN_AT" SPIRA_SIN_EXEMPT=1 >/dev/null
+for i in $(seq 1 "$(( FENRIR_AT + 1 ))"); do
+    file_incident "$ref" "$title" "payload $i" SPIRA_FENRIR_AT="$FENRIR_AT" SPIRA_FENRIR_EXEMPT=1 >/dev/null
 done
 
 bid="$(bead_of "$ref")"
 [ -n "$bid" ] && ok "the exempt bead was created" || bad "the exempt bead was created" "no bead found for ref $ref"
 
 if [ -n "$bid" ]; then
-    has_label "$bid" sin && bad "the exempt bead does NOT get the sin label" "labels: $(labels_of "$bid")" \
-        || ok "the exempt bead does NOT get the sin label"
-    is "the recurrence counter still advances" "$SIN_AT" "$(recur_max "$bid")"
+    has_label "$bid" fenrir && bad "the exempt bead does NOT get the fenrir label" "labels: $(labels_of "$bid")" \
+        || ok "the exempt bead does NOT get the fenrir label"
+    is "the recurrence counter still advances" "$FENRIR_AT" "$(recur_max "$bid")"
     is "the ask was NOT filed" "" "$(cat "$MAIL_LOG" 2>/dev/null | tr -d '[:space:]')"
 fi
 
@@ -150,12 +150,12 @@ fi
 echo
 echo "an exempt ref past the threshold still increments:"
 # ======================================================================================
-file_incident "$ref" "$title" "payload extra" SPIRA_SIN_AT="$SIN_AT" SPIRA_SIN_EXEMPT=1 >/dev/null
+file_incident "$ref" "$title" "payload extra" SPIRA_FENRIR_AT="$FENRIR_AT" SPIRA_FENRIR_EXEMPT=1 >/dev/null
 if [ -n "$bid" ]; then
-    is "the counter advances past SIN_AT" "$(( SIN_AT + 1 ))" "$(recur_max "$bid")"
-    has_label "$bid" sin \
-        && bad "still no sin label after passing SIN_AT" "labels: $(labels_of "$bid")" \
-        || ok "still no sin label after passing SIN_AT"
+    is "the counter advances past FENRIR_AT" "$(( FENRIR_AT + 1 ))" "$(recur_max "$bid")"
+    has_label "$bid" fenrir \
+        && bad "still no fenrir label after passing FENRIR_AT" "labels: $(labels_of "$bid")" \
+        || ok "still no fenrir label after passing FENRIR_AT"
 fi
 
 tl_summary

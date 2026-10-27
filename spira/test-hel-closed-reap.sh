@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# test-sending-closed-reap.sh — sending.sh reaps closed-bead branches in three shapes
+# test-hel-closed-reap.sh — hel.sh reaps closed-bead branches in three shapes
 #   that previously accumulated forever (sp-v4652).
 #
-#   ./test-sending-closed-reap.sh
+#   ./test-hel-closed-reap.sh
 #
-# THREE SHAPES (all tested in one sending pass):
+# THREE SHAPES (all tested in one hel pass):
 #
 #   A. NON-CODE DELIVERS, EMPTY BRANCH. A bead that carries a delivers: label (note,
 #      beads, action, etc.) was never expected to commit. Its branch is 0 ahead and an
@@ -15,7 +15,7 @@
 #
 #   B. SUPERSEDED BEAD, EMPTY BRANCH. A closed duplicate with a supersedes edge and a
 #      zero-ahead branch. spira-lc content-landed's ancestor check (sp-bf31a) reaps it the same
-#      way as shape A, before sending.sh's superseded-specific arm is ever reached — SENT,
+#      way as shape A, before hel.sh's superseded-specific arm is ever reached — SENT,
 #      not REAPED. Positive control: a superseded bead with n>0 and unique content (no
 #      conflict) is still KEPT.
 #
@@ -26,16 +26,16 @@
 #      Positive control: a closed bead whose id does NOT appear on the base is KEPT.
 #
 # tier: T2
-# covers: sending/src/* spira/lib.sh
+# covers: hel/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
-testdb_require test-sending-closed-reap
+testdb_require test-hel-closed-reap
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up closed-reap || { echo "test-sending-closed-reap: could not build a fixture database"; exit 1; }
+testdb_up closed-reap || { echo "test-hel-closed-reap: could not build a fixture database"; exit 1; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 REPO="$TMP/repo"; RUN="$TMP/run"; REMOTE="$TMP/remote.git"; SH="$TMP/spira"
@@ -63,23 +63,23 @@ in_fixture() {
         "$@"
 }
 
-# "LANDED" IS THE LIFECYCLE RECORD'S STATE (sp-2c1n0): the Sending asks `spira-lc state <id>`,
-# never a commit subject. A stub ahead of the real spira-lc on the Sending's PATH answers
+# "LANDED" IS THE LIFECYCLE RECORD'S STATE (sp-2c1n0): the Hel asks `spira-lc state <id>`,
+# never a commit subject. A stub ahead of the real spira-lc on the Hel's PATH answers
 # `state` (sp-btch LANDED — its batch landed it; every other id has no row) and hands every
 # other verb to the real binary.
 REAL_LC="$(command -v spira-lc)"
 printf '#!/usr/bin/env bash\nif [ "${1:-}" = state ]; then [ "${2:-}" = sp-btch ] && { echo LANDED; exit 0; }; exit 1; fi\nexec "%s" "$@"\n' \
     "$REAL_LC" > "$SH/spira-lc"
 chmod +x "$SH/spira-lc"
-# sp-mve9i: the Sending's claim witness reads the lifecycle row, never bd status; with no
+# sp-mve9i: the Hel's claim witness reads the lifecycle row, never bd status; with no
 # lifecycle store here a stand-in service tells it the fixture's bd story in lifecycle terms
 # (testlib.sh lc_socket_mirror) — a machine that does not answer would hold every branch.
 lc_socket_mirror "$TMP/lcsock"
 
-sending() {
+hel() {
     tl_config SPIRA_RUN="$RUN" SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$SH/repo-map"
     SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
-        command sending --no-fetch 2>&1
+        command hel --no-fetch 2>&1
 }
 
 # ---------------------------------------------------------------------------
@@ -146,7 +146,7 @@ testdb_seed <<'JSONL'
 {"id":"sp-keep","title":"unlanded","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-05T00:00:00Z","closed_at":"2026-09-05T00:00:00Z","dependencies":[]}
 JSONL
 
-echo "test-sending-closed-reap.sh"
+echo "test-hel-closed-reap.sh"
 
 # ---------------------------------------------------------------------------
 # Fixture verification.
@@ -166,11 +166,11 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# THE MAIN ASSERTION: one sending pass covering all three shapes.
+# THE MAIN ASSERTION: one hel pass covering all three shapes.
 # ---------------------------------------------------------------------------
 echo ""
 echo "All shapes in one pass:"
-out="$(sending --all 2>&1)"
+out="$(hel --all 2>&1)"
 printf '%s\n' "$out" >&2
 
 # Shape A

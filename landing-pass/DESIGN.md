@@ -434,7 +434,7 @@ are values like any other.
 | S13 `push` | `spira_git_push <tree> -q <remote> <refspec>` (stderr returned) | GitHub App credentials |
 | S14 | ~~`land_subject`~~ | **retired (sp-81t4d):** native — `Lib::land_subject` reads the title through this crate's own `Beads::show`, no second bd subprocess. `landing-pass land-subject <id>` is the shim target. |
 | S15 `deliver_*` | `spira-lc deliver push-delivered / push-requeued / push-returned` (lc-delivery.sh's `lc_deliver_push_*` until sp-arpjt) | delivery CAS |
-| S16 | ~~`closeout` / `close_on_land`~~ | **both retired:** `gh_issue_closeout` moved natively into gh-intake (sp-j3fim, "wave 4.31") — this crate shells to `gh-intake closeout <id> <sha> <repo>` by bare name now, stdout relayed through `Reporter::raw`. `bead_close_on_land` is native too (sp-81t4d, "wave 4.17": family R) — `Lib::close_on_land` calls `land_verify::close_on_land` (bd close + `land_mark` + a direct `sending reap-landed-branch` call, never this seam). `landing-pass close-on-land <id> [sha]` is the shim target for the latter. |
+| S16 | ~~`closeout` / `close_on_land`~~ | **both retired:** `gh_issue_closeout` moved natively into gh-intake (sp-j3fim, "wave 4.31") — this crate shells to `gh-intake closeout <id> <sha> <repo>` by bare name now, stdout relayed through `Reporter::raw`. `bead_close_on_land` is native too (sp-81t4d, "wave 4.17": family R) — `Lib::close_on_land` calls `land_verify::close_on_land` (bd close + `land_mark` + a direct `hel reap-landed-branch` call, never this seam). `landing-pass close-on-land <id> [sha]` is the shim target for the latter. |
 | S17 `prune_worktrees` | `spira_prune_worktrees <repo>` | the one destruction site |
 | S18 | ~~`gh_unlanded_scan`~~ | **retired (sp-j3fim, wave 4.31):** `_gh_unlanded_scan` moved natively into gh-intake; this crate shells to `gh-intake unlanded-scan` by bare name now. |
 | S19 | ~~`ask_refresh_loop`~~ (sp-t4y60) | **retired (sp-31hjr):** `spira_ask_refresh_loop` is native — `Lib::ask_refresh_loop` in `real.rs`, text in `ask.rs`; `needs_refresh`'s own escalation, distinct from the rebase-loop ask. |
@@ -508,7 +508,7 @@ The pr timer is unchanged: `systemd/spira-landing-pass.service:8` keeps
 | 13 | `spira/chamber/czar.md:122` | ``Halt the landing pass with `landing.sh halt` `` | ``Halt the landing pass with `landing-pass halt --reason-file -` `` |
 | 14 | `spira/timeout-lint.sh:41` | `files=("$HERE/landing.sh")   # aeon.sh and sentinel.sh are Rust now; …` | the default file set is now empty: **retire** `timeout-lint.sh` and `test-timeout-lint.sh` (no caller, in no gate string), with their lines `spira-lint/fence-scripts-allow:36,40` and `spira/tier-budget-allowlist:409` |
 | 15 | `spira/lc-delivery.sh:4,14,106,115,122,125` | header names landing.sh's push mode; actor string `landing.sh` | keep the file (pr-pass-branch.sh sources it); header "pr-pass-branch.sh (landing-pass's pr helper) and landing-pass's push mode"; actor strings may stay `landing.sh` (lifecycle history actor names) or become `landing-pass` — the actor is a label, nothing matches on it |
-| 16 | `spira/pr-pass-branch.sh:4`, `spira/land-build-ensure.sh:13`, `spira/confine.sh:13,52`, `spira/gate.sh:41,341,415-416,630`, `spira/gate-lib.sh:39,67`, `spira/lib.sh:774,4784,4837,6682,7442,8267,8843,9200-9202`, `spira/sending.sh:232,594`, `spira/watchtower.sh:343,429`, `spira/conf.sh:1104` | comments / `covers:` naming `landing.sh` | name `landing-pass` (comments only). **One is text a human acts on:** `lib.sh:774` `run \`$SPIRA_HOME/landing.sh\` by hand` → `run \`$SPIRA_LANDING_PASS_BIN land\` by hand` |
+| 16 | `spira/pr-pass-branch.sh:4`, `spira/land-build-ensure.sh:13`, `spira/confine.sh:13,52`, `spira/gate.sh:41,341,415-416,630`, `spira/gate-lib.sh:39,67`, `spira/lib.sh:774,4784,4837,6682,7442,8267,8843,9200-9202`, `spira/hel.sh:232,594`, `spira/watchtower.sh:343,429`, `spira/conf.sh:1104` | comments / `covers:` naming `landing.sh` | name `landing-pass` (comments only). **One is text a human acts on:** `lib.sh:774` `run \`$SPIRA_HOME/landing.sh\` by hand` → `run \`$SPIRA_LANDING_PASS_BIN land\` by hand` |
 | 17 | `spira/config-fence-allow:18` | `landing-pass/src/main.rs` | **delete** (no .rs file in the crate names the config files any more; shrink-only list) |
 | 18 | `spira/config-fence-allow:55` | `spira/landing.sh` | **delete** (the file is deleted) |
 | 19 | `spira/binary-path-fence-allow:22-26` | the comment block and `landing-pass/src/main.rs` | **delete** (the private bin/-then-target resolver is gone; `SPIRA_LC_BIN` comes from conf.sh) |
@@ -732,8 +732,8 @@ build or locate the binary — the testenv container already builds the workspac
   for `land_subject`) are untouched — each already shells into the bash *name*, which is now
   a one-line shim onto this crate's own binary (`landing-pass land-subject` /
   `landing-pass other-beads` / …), exactly how `land_mark`/`land_state` shims serve every
-  caller but this crate since sp-cnnt6. `sending`'s own `Git::landed`/`Git::content_landed`
-  (`sending/src/git.rs`, predating this bead) are a pre-existing, independent native copy —
+  caller but this crate since sp-cnnt6. `hel`'s own `Git::landed`/`Git::content_landed`
+  (`hel/src/git.rs`, predating this bead) are a pre-existing, independent native copy —
   left alone; unifying the two is not this bead's scope. **Kept, not dropped:** `landed`'s
   optional `<repo>` argument (defaults to `repo_root()`) — the shim computes the default in
   bash (where `repo_root` already lives) and always hands the binary an explicit path, so
@@ -742,7 +742,7 @@ build or locate the binary — the testenv container already builds the workspac
   `BeadRow::raw_status` + the submitted label directly, not `BeadRow::status` (which already
   folds a submitted label into `"closed"` for every other reader) — the two states must stay
   distinguishable here or a bead already closed for real would be re-closed.
-  `bead_close_on_land`'s reap step calls `sending reap-landed-branch` as a direct
+  `bead_close_on_land`'s reap step calls `hel reap-landed-branch` as a direct
   subprocess (bare name on PATH), the same program `spira_reap_landed_branch`'s own shim
   already execs — never a second lib.sh seam hop.
 

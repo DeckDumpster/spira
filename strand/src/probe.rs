@@ -199,7 +199,7 @@ pub fn roster(cfg: &Config, want: Option<&str>) -> Result<Vec<PartitionSpec>, St
 // Liveness and the fleet
 // ------------------------------------------------------------------------------------------
 
-pub use sending::reap::{lease_file, lease_live};
+pub use hel::reap::{lease_file, lease_live};
 
 /// Write an identity lease: the deadline, in epoch seconds, before which the aeon is alive.
 pub fn write_lease(pidfile: &Path, deadline: i64) {
@@ -213,7 +213,7 @@ pub fn write_lease(pidfile: &Path, deadline: i64) {
 /// An aeon is alive while its identity lease is ahead of the clock — the one liveness signal.
 /// The pidfile names the identity; the pid and `/proc` are never consulted.
 pub fn aeon_alive(pf: &Path) -> bool {
-    sending::reap::aeon_alive(pf)
+    hel::reap::aeon_alive(pf)
 }
 
 fn pidfiles(run: &Path, prefix: &str, suffix: &str) -> Vec<PathBuf> {
@@ -229,11 +229,11 @@ fn pidfiles(run: &Path, prefix: &str, suffix: &str) -> Vec<PathBuf> {
 }
 
 /// Is a live process working this bead: a hold pidfile (pid alive), or an aeon pidfile
-/// (pid alive and an aeon). A thin wrapper onto `sending::reap::holder_alive` — the
+/// (pid alive and an aeon). A thin wrapper onto `hel::reap::holder_alive` — the
 /// destruction chokepoint's own canonical implementation (sp-9envm) — rather than this
 /// crate's own copy (wave 4.23, sp-0ffox): ONE holder-liveness predicate, not two.
 pub fn holder_alive(run: &Path, id: &str) -> bool {
-    sending::reap::holder_alive(run, id)
+    hel::reap::holder_alive(run, id)
 }
 
 fn unit_count(cfg: &Config, pattern: &str, exclude: Option<&str>) -> u32 {
@@ -437,10 +437,10 @@ mod tests {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64
     }
 
-    // ---- holder_alive: delegates to sending::reap (wave 4.23, sp-0ffox) -------------------
+    // ---- holder_alive: delegates to hel::reap (wave 4.23, sp-0ffox) -------------------
 
     #[test]
-    fn holder_alive_is_sendings_own_predicate() {
+    fn holder_alive_is_hels_own_predicate() {
         let run = testkit::TempDir::new("strand-holder-alive");
         std::fs::write(run.join("hold-sp-h1.pid"), std::process::id().to_string()).unwrap();
         assert!(holder_alive(&run, "sp-h1"));

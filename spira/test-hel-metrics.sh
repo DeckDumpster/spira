@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# test-sending-metrics.sh — the Sending's counters count BRANCHES, and one event is counted once.
+# test-hel-metrics.sh — the Hel's counters count BRANCHES, and one event is counted once.
 #
-#   ./test-sending-metrics.sh
+#   ./test-hel-metrics.sh
 #
 # WHAT THIS SUITE IS FOR
 # ----------------------
@@ -16,13 +16,13 @@
 # broken counter looks like (law-alerts-must-be-actionable: a false alert spends attention,
 # and the next true one is not believed).
 #
-#   1. LINES, NOT BRANCHES. The sending runs every two minutes, so one branch it cannot
+#   1. LINES, NOT BRANCHES. The hel runs every two minutes, so one branch it cannot
 #      delete scores ~720 a day. The identical bug was found and fixed for held/kept — "the
 #      pane read 'held 221' for 23 distinct branches" — and sent/failed were left as bare
 #      counters directly beneath the comment recording it.
 #
-#   2. ONE EVENT COUNTED TWICE. The predicate matched both sending.sh's per-branch
-#      `FAILED <id>` and sentinel.sh's per-pass summary "sending reported a branch it could
+#   2. ONE EVENT COUNTED TWICE. The predicate matched both hel.sh's per-branch
+#      `FAILED <id>` and sentinel.sh's per-pass summary "hel reported a branch it could
 #      not delete", which is emitted only when the former is already present in the same
 #      captured output. 93 refusals rendered as 186.
 #
@@ -34,7 +34,7 @@
 # CAN see a second distinct branch, in the same fixture where it must not see a second copy of
 # the first.
 #
-# NO DATABASE, NO BOX. sending_metrics is a pure function over log lines, so the fixture is a
+# NO DATABASE, NO BOX. hel_metrics is a pure function over log lines, so the fixture is a
 # string and the suite is hermetic by construction.
 #
 # defect: sp-1smg
@@ -44,7 +44,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
-echo "test-sending-metrics.sh"
+echo "test-hel-metrics.sh"
 
 COLLECT="$(command -v cockpit-collect)"
 EMPTY="$(mktemp)"; trap 'rm -f "$EMPTY"' EXIT
@@ -72,7 +72,7 @@ fixture_one_stuck() {
     for i in 1 2 3 4 5; do
         printf '2026-09-07T0%d:00:00Z spira: state: pass\n' "$i"
         printf 'FAILED sp-gate-rebuild  branch and worktree\n'
-        printf '2026-09-07T0%d:00:01Z spira: sending reported a branch it could not delete\n' "$i"
+        printf '2026-09-07T0%d:00:01Z spira: hel reported a branch it could not delete\n' "$i"
     done
 }
 read -r s h k f <<< "$(fixture_one_stuck | run_fixture)"
@@ -87,7 +87,7 @@ fixture_two_stuck() {
     fixture_one_stuck
     printf '2026-09-07T09:00:00Z spira: state: pass\n'
     printf 'FAILED sp-supersede-key  branch and worktree\n'
-    printf '2026-09-07T09:00:01Z spira: sending reported a branch it could not delete\n'
+    printf '2026-09-07T09:00:01Z spira: hel reported a branch it could not delete\n'
     printf '2026-09-07T10:00:00Z spira: state: pass\n'
     printf 'FAILED sp-supersede-key  branch and worktree\n'
 }
@@ -98,11 +98,11 @@ is "a second distinct branch IS seen" "2" "$f"
 # THE SUMMARY LINE ALONE IS NOT A FIEND. sentinel.sh's per-pass line carries no branch id;
 # it is a report ABOUT the output above it. Counting it was half of the doubling.
 # ---------------------------------------------------------------------------------------
-read -r s h k f <<< "$(printf '2026-09-07T01:00:00Z spira: state: pass\n2026-09-07T01:00:01Z spira: sending reported a branch it could not delete\n' | run_fixture)"
+read -r s h k f <<< "$(printf '2026-09-07T01:00:00Z spira: state: pass\n2026-09-07T01:00:01Z spira: hel reported a branch it could not delete\n' | run_fixture)"
 is "the per-pass summary alone counts nothing" "0" "$f"
 
 # ---------------------------------------------------------------------------------------
-# SENT HAS THE SAME DEFECT AND THE SAME FIX. A branch re-sent across passes is one sending.
+# SENT HAS THE SAME DEFECT AND THE SAME FIX. A branch re-sent across passes is one hel.
 # ---------------------------------------------------------------------------------------
 fixture_resent() {
     for i in 1 2 3; do
@@ -113,7 +113,7 @@ fixture_resent() {
     printf 'SENT sp-xyz  branch and worktree\n'
 }
 read -r s h k f <<< "$(fixture_resent | run_fixture)"
-is "a branch sent on three passes is ONE sending" "2" "$s"
+is "a branch sent on three passes is ONE hel" "2" "$s"
 
 # ---------------------------------------------------------------------------------------
 # HELD/KEPT ALREADY COUNTED BRANCHES. Asserted here so a future edit to this function cannot
@@ -142,7 +142,7 @@ fixture_old_failures() {
     for i in 1 2 3; do
         printf '%s spira: state: pass\n' "$(mins_ago 1169)"
         printf 'FAILED sp-kq8l  branch and worktree\n'
-        printf '%s spira: sending reported a branch it could not delete\n' "$(mins_ago 1169)"
+        printf '%s spira: hel reported a branch it could not delete\n' "$(mins_ago 1169)"
     done
 }
 read -r f age <<< "$(fixture_old_failures | run_fixture_age)"

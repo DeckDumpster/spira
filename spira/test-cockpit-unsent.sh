@@ -227,7 +227,7 @@ nowant "SP_UNADOPTED_NAMES excludes orphan work" "tmp-stray" "$(val SP_UNADOPTED
 # ======================================================================================
 # sp-ghi5q: spira/round-NN has no bead and its commits are (by design) not yet on base
 # while a round is in flight — the same shape as tmp-stray above, so a name-blind probe
-# folds it into SP_ORPHAN_WORK, permanently, every round. sending.sh:377 already excludes
+# folds it into SP_ORPHAN_WORK, permanently, every round. hel.sh:377 already excludes
 # round-* branches for exactly this reason; cockpit-collect's classifier did not.
 git -C "$ALPHA" checkout -q -b spira/round-81
 git -C "$ALPHA" commit --allow-empty -m "round 81 in flight" -q

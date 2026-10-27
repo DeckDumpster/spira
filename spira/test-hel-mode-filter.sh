@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 #
-# test-sending-mode-filter.sh — sending.sh --skip-queue leaves a queue-mode (queue.forge)
+# test-hel-mode-filter.sh — hel.sh --skip-queue leaves a queue-mode (queue.forge)
 #   repository's branches untouched across passes; --queue-only sweeps only queue.forge
 #   repositories. A queue.local repository is swept by both: no forge retires its branches.
 #
-#   ./test-sending-mode-filter.sh
+#   ./test-hel-mode-filter.sh
 #
 # WHY THIS EXISTS (sp-jci6o). A queue-mode repository's landed batch members are now reaped
-# at landing itself (spira-lc close-on-land -> sending reap-landed-branch), so re-scanning
-# every one of its branches in the per-pass sentinel Sending every two minutes rediscovers,
+# at landing itself (spira-lc close-on-land -> hel reap-landed-branch), so re-scanning
+# every one of its branches in the per-pass sentinel Hel every two minutes rediscovers,
 # by ancestry, what already left. --skip-queue removes that repository from the per-pass
 # walk entirely; --queue-only is the daily straggler sweep that replaces it. This suite
 # proves the two flags partition the REPOSITORY set, never a branch within one — a repo
-# swept under either flag is judged exactly as sending.sh always judged it.
+# swept under either flag is judged exactly as hel.sh always judged it.
 #
 # tier: T1
-# covers: sending/src/* spira/lib.sh
+# covers: hel/src/* spira/lib.sh
 # hermetic-ok: a stub bd (always answers "no bead"), local git repos — no database, no
 #   systemd, no real network
 set -uo pipefail
@@ -49,7 +49,7 @@ EOF
 chmod +x "$STUB_BD"
 export SPIRA_BD="$STUB_BD" SPIRA_DB="$TMP/no-such-db"
 tl_config SPIRA_BD="$SPIRA_BD" SPIRA_DB="$SPIRA_DB"
-# sp-mve9i: the Sending's claim witness reads the lifecycle row, never bd status; with no
+# sp-mve9i: the Hel's claim witness reads the lifecycle row, never bd status; with no
 # lifecycle store here a stand-in service tells it the fixture's bd story in lifecycle terms
 # (testlib.sh lc_socket_mirror) — a machine that does not answer would hold every branch.
 lc_socket_mirror "$TMP/lcsock"
@@ -82,15 +82,15 @@ printf '%s | %s | queue | | |\n%s | %s | push | | |\n%s | %s | queue.local | | |
 export SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_HOME_REPO="$PNAME" SPIRA_REPO="$PREPO"
 tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_HOME_REPO="$SPIRA_HOME_REPO"
 
-sending() {
+hel() {
     SPIRA_HOME="$HERE" SPIRA_REPO="$PREPO" \
-        command sending --no-fetch "$@" 2>&1
+        command hel --no-fetch "$@" 2>&1
 }
 branch_exists() {   # branch_exists <repo> <branch>
     git -C "$1" show-ref --verify -q "refs/heads/$2" 2>/dev/null
 }
 
-echo "test-sending-mode-filter.sh"
+echo "test-hel-mode-filter.sh"
 
 # ======================================================================================
 echo
@@ -100,7 +100,7 @@ git -C "$QREPO" branch spira/sp-skip-q main
 git -C "$PREPO" branch spira/sp-skip-p main
 git -C "$QLREPO" branch spira/sp-skip-ql main
 
-out1="$(sending --skip-queue)"
+out1="$(hel --skip-queue)"
 
 want "push-mode repo's branch is SENT under --skip-queue" "SENT sp-skip-p" "$out1"
 is   "push-mode branch is gone" 1 "$(branch_exists "$PREPO" spira/sp-skip-p; echo $?)"
@@ -115,7 +115,7 @@ is   "queue.local branch is gone after --skip-queue" 1 \
 
 # A second --skip-queue pass changes nothing further for the queue-mode repo: this is not
 # a one-time exemption but a standing partition of the repository set.
-out1b="$(sending --skip-queue)"
+out1b="$(hel --skip-queue)"
 nowant "a second --skip-queue pass still never mentions the queue-mode repo's branch" \
     "sp-skip-q " "$out1b"
 is   "queue-mode branch still exists after a second --skip-queue pass" 0 \
@@ -129,7 +129,7 @@ git -C "$QREPO" branch spira/sp-only-q main
 git -C "$PREPO" branch spira/sp-only-p main
 git -C "$QLREPO" branch spira/sp-only-ql main
 
-out2="$(sending --queue-only)"
+out2="$(hel --queue-only)"
 
 want "sp-skip-q (left standing by --skip-queue) is SENT under --queue-only" \
     "SENT sp-skip-q " "$out2"
@@ -149,7 +149,7 @@ is   "push-mode branch still exists after --queue-only" 0 \
 echo
 echo "--skip-queue and --queue-only together refuse rather than silently picking one:"
 # ======================================================================================
-out3="$(sending --skip-queue --queue-only)"; rc3=$?
+out3="$(hel --skip-queue --queue-only)"; rc3=$?
 is   "both flags together exits non-zero" 1 "$([ "$rc3" -ne 0 ] && echo 1 || echo 0)"
 want "both flags together names the conflict" "mutually exclusive" "$out3"
 

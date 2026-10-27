@@ -97,7 +97,7 @@ impl Env {
 }
 
 /// `SPIRA_HOME`, else the first directory holding `lib.sh` among the release and cargo
-/// layouts around this executable (same pattern as `sending::locate_home`, `queue`'s
+/// layouts around this executable (same pattern as `hel::locate_home`, `queue`'s
 /// `harness_home` — every crate re-derives this itself; conf.sh deliberately never exports
 /// `SPIRA_HOME` to child processes, "and that is a fence", so a caller that sources conf.sh
 /// without also exporting it — every `env -i` test fixture, and any real caller that never

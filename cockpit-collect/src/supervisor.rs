@@ -29,7 +29,7 @@ pub const PROBES: &[Probe] = &[
     Probe { name: "admission", interval_s: 60, timeout_s: 20, subcommand: "admission" },
     Probe { name: "tsd", interval_s: 60, timeout_s: 30, subcommand: "tsd" },
     Probe { name: "reachable", interval_s: 60, timeout_s: 120, subcommand: "reachable" },
-    Probe { name: "sphere", interval_s: 60, timeout_s: 90, subcommand: "sphere" },
+    Probe { name: "well", interval_s: 60, timeout_s: 90, subcommand: "well" },
     Probe { name: "repo_labels", interval_s: 60, timeout_s: 90, subcommand: "repo_labels" },
     Probe { name: "strands", interval_s: 60, timeout_s: 90, subcommand: "strands" },
     Probe { name: "ratelim", interval_s: 60, timeout_s: 90, subcommand: "ratelim" },
@@ -46,7 +46,7 @@ pub const PROBES: &[Probe] = &[
     Probe { name: "statute", interval_s: 600, timeout_s: 300, subcommand: "statute" },
     Probe { name: "drift", interval_s: 600, timeout_s: 300, subcommand: "drift" },
     Probe { name: "czar_triggers", interval_s: 600, timeout_s: 300, subcommand: "czar_triggers" },
-    Probe { name: "sending", interval_s: 600, timeout_s: 300, subcommand: "sending" },
+    Probe { name: "hel", interval_s: 600, timeout_s: 300, subcommand: "hel" },
 ];
 
 pub struct Config {
@@ -949,12 +949,12 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
         let cfg = cfg(&run);
         std::fs::create_dir_all(&cfg.frag_dir).unwrap();
         write_atomic(
-            &cfg.frag_dir.join("sending.env"),
+            &cfg.frag_dir.join("hel.env"),
             "_PROBE_AT=0\n_PROBE_STATUS=timeout\n_PROBE_KILLED=1\n",
         );
         assert!(merge_fragments(&cfg));
         let snap = std::fs::read_to_string(&cfg.snap).unwrap();
-        assert!(snap.contains("_PROBE_STATUS_sending='timeout'"));
+        assert!(snap.contains("_PROBE_STATUS_hel='timeout'"));
         assert!(!snap.contains("SP_SENT="));
     }
 
@@ -995,12 +995,12 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
         let run = TempDir::new("cc-run-fault");
         let mut cfg = cfg(&run);
         std::fs::create_dir_all(&cfg.frag_dir).unwrap();
-        write_never_frag(&cfg.frag_dir, "sending");
+        write_never_frag(&cfg.frag_dir, "hel");
         cfg.probe_exe = PathBuf::from("/bin/false");
         cfg.probe_exe_args = vec![];
-        let outcome = run_probe_body(&cfg, "sending", PROBE_TEST_TIMEOUT_S, "ignored");
+        let outcome = run_probe_body(&cfg, "hel", PROBE_TEST_TIMEOUT_S, "ignored");
         assert!(matches!(outcome, RunOutcome::Fault { .. }));
-        let c = std::fs::read_to_string(cfg.frag_dir.join("sending.env")).unwrap();
+        let c = std::fs::read_to_string(cfg.frag_dir.join("hel.env")).unwrap();
         assert!(c.contains("_PROBE_STATUS=error"));
         assert!(c.contains("_PROBE_KILLED=1"));
     }

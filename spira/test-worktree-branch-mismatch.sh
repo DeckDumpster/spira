@@ -8,7 +8,7 @@
 #
 # THE BUG (sp-87csm). A worktree path is keyed on the bead (its directory name), but a
 # child bead created sharing its parent's branch label leaves a worktree directory named
-# for the child while the branch checked out inside it names the parent. sending.sh's
+# for the child while the branch checked out inside it names the parent. hel.sh's
 # landing sweep parses the id from the LANDED BRANCH, not from the path, and asked
 # spira_holder_witnesses only about that branch's bead. Once the parent bead had no aeon
 # left (it was already closed), the witness said "nobody home" and the child's own worktree
@@ -33,7 +33,7 @@
 #
 # defect: sp-87csm
 # tier: T1
-# covers: spira/lib.sh sending/src/*
+# covers: spira/lib.sh hel/src/*
 # scar: a bead's own worktree, checked out on a branch inherited from its parent, was
 #   destroyed the moment the parent's branch landed and the parent's own aeon had already
 #   gone, because the liveness check asked only about the branch's bead, never the path's.

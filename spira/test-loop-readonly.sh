@@ -164,7 +164,7 @@ printf '#!/bin/sh\nexit 0\n' > "$STUB_LAUNCH"; chmod +x "$STUB_LAUNCH"
 STUB_NOTIFY="$SCRATCH/notify.sh"
 printf '#!/bin/sh\nexit 0\n' > "$STUB_NOTIFY"; chmod +x "$STUB_NOTIFY"
 
-# Minimal git repo so sending.sh and landing find a real remote with no
+# Minimal git repo so hel.sh and landing find a real remote with no
 # unlanded branches.
 GIT_REMOTE="$SCRATCH/remote.git"
 GIT_REPO="$SCRATCH/repo"

@@ -15,7 +15,7 @@
 //!
 //! GIT AND `spira-lc` ARE REACHED AS SUBPROCESSES, BY NAME ON PATH, never re-derived:
 //! "landed" is the lifecycle record's LANDED state (`spira-lc state <id>`). Content-on-base is
-//! the Sending's own proof (`sending::git::Git::content_on_base`, the same answer as
+//! the Hel's own proof (`hel::git::Git::content_on_base`, the same answer as
 //! `spira-lc content-landed`), called in-process; the plain merge-tree clean check runs `git`.
 //! `detect_invalid_closed`'s statute-phrase predicates live in [`crate::closereason`], shared
 //! with aeon's close-time fence (`strand close-reason`) so the two cannot disagree.
@@ -65,8 +65,8 @@ fn list_beads(cfg: &Config, args: &[&str]) -> Vec<Bead> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// git plumbing the detectors need. The content-on-base proof itself is the Sending's own
-// (`sending::git::Git::content_on_base`), not a copy here.
+// git plumbing the detectors need. The content-on-base proof itself is the Hel's own
+// (`hel::git::Git::content_on_base`), not a copy here.
 // ──────────────────────────────────────────────────────────────────────────────
 
 fn git_branch_exists(repo: &Path, branch: &str) -> bool {

@@ -33,7 +33,7 @@ members = [
     "lifecycle",
     "spira-lc",
     "spira-otel",
-    "sending",
+    "hel",
     "tsd-lifecycle-export",
     "work",
     "spira-lint",

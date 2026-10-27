@@ -156,7 +156,7 @@ pub fn full_pass(cfg: &Cfg) -> Kv {
     out.extend(round::round_keys(cfg.round_cap_secs, &cfg.queue_dir));
     out.extend(inflight::inflight_keys(cfg));
     out.extend(reachable::reachable_keys(cfg));
-    out.extend(sphere_keys(cfg));
+    out.extend(well_keys(cfg));
     out.extend(repo_label_keys(cfg));
     out.extend(strand_keys());
     out.extend(dup_refs_keys());
@@ -196,7 +196,7 @@ pub fn run(subcommand: &str, cfg: &Cfg) -> Option<Kv> {
         "round" => Some(round::round_keys(cfg.round_cap_secs, &cfg.queue_dir)),
         "inflight" => Some(inflight::inflight_keys(cfg)),
         "reachable" => Some(reachable::reachable_keys(cfg)),
-        "sphere" => Some(sphere_keys(cfg)),
+        "well" => Some(well_keys(cfg)),
         "repo_labels" => Some(repo_label_keys(cfg)),
         "livelock" => Some(livelock_keys()),
         "dup_refs" => Some(dup_refs_keys()),
@@ -207,7 +207,7 @@ pub fn run(subcommand: &str, cfg: &Cfg) -> Option<Kv> {
         "drift" => Some(drift_keys()),
         "mail" => Some(mail_keys(cfg)),
         "czar_triggers" => Some(czar_triggers_keys(cfg)),
-        "sending" => Some(sending_keys()),
+        "hel" => Some(hel_keys()),
         _ => None,
     }
 }
@@ -725,10 +725,10 @@ pub fn slots_keys(cfg: &Cfg) -> Kv {
 }
 
 // ---------------------------------------------------------------------------------------
-// sphere_keys
+// well_keys
 // ---------------------------------------------------------------------------------------
 
-pub fn sphere_keys(cfg: &Cfg) -> Kv {
+pub fn well_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
     // A work bead's state is the lifecycle row's (design §3.4); `None` renders `?`.
     match (lc::held_rows("poison"), lc::held_rows("ask")) {
@@ -769,7 +769,7 @@ pub fn sphere_keys(cfg: &Cfg) -> Kv {
                     }
                 })
                 .collect();
-            let (open_n, inprog_n, needsop_n) = sphere_counts(&work, &lc);
+            let (open_n, inprog_n, needsop_n) = well_counts(&work, &lc);
             push(&mut out, "SP_OPEN", open_n.to_string());
             push(&mut out, "SP_INPROG", inprog_n.to_string());
             push(&mut out, "SP_NEEDSOP", needsop_n.to_string());
@@ -1317,10 +1317,10 @@ fn read_mail_subject(path: &Path) -> String {
 }
 
 // ---------------------------------------------------------------------------------------
-// sending_keys — the SENDING / SELF / aeon-ledger keys, from crate::metrics.
+// hel_keys — the HEL / SELF / aeon-ledger keys, from crate::metrics.
 // ---------------------------------------------------------------------------------------
 
-const SENDING_KEYS: &[&str] = &[
+const HEL_KEYS: &[&str] = &[
     "SP_SENT", "SP_SENT_HELD", "SP_SENT_KEPT", "SP_SENT_FAILED", "SP_SENT_FAILED_AGE_M",
     "SP_PASSES", "SP_ACTS", "SP_FALSE_ACTS", "SP_FALSE_PER_PASS", "SP_SINCE_JUDGEMENT",
     "SP_STARVED_PASSES", "SP_AEON_BORN", "SP_AEON_LIVED", "SP_AEON_STILLBORN",
@@ -1328,7 +1328,7 @@ const SENDING_KEYS: &[&str] = &[
     "SP_SELF_STILLBORN_LAST", "SP_SELF_STARVED_W", "SP_SELF_STARVED_LAST",
 ];
 
-pub fn sending_keys() -> Kv {
+pub fn hel_keys() -> Kv {
     let run = io::run_dir();
     let sentinel_log = run.join("sentinel.log");
     let ledger = run.join("aeon-ledger.log");
@@ -1340,7 +1340,7 @@ pub fn sending_keys() -> Kv {
         crate::timeutil::now_secs(),
     );
     let mut out: Kv = keys.into_iter().collect();
-    out.retain(|(k, _)| SENDING_KEYS.contains(&k.as_str()));
+    out.retain(|(k, _)| HEL_KEYS.contains(&k.as_str()));
     out
 }
 
@@ -1388,7 +1388,7 @@ pub fn ask_hold_count(lc: &HashMap<String, lc::Row>) -> usize {
 /// no lifecycle row: it is a coordination bead, whose bd status is its only state
 /// (spira_config::nonwork). Any other item with no row is not counted: the machine cannot
 /// tell its state, and a rowless bead can never be claimed (CHECK-ROWLESS reports it).
-pub fn sphere_counts(work: &[&Value], lc: &HashMap<String, lc::Row>) -> (usize, usize, usize) {
+pub fn well_counts(work: &[&Value], lc: &HashMap<String, lc::Row>) -> (usize, usize, usize) {
     let has = |i: &Value, lab: &str| {
         i.get("labels")
             .and_then(Value::as_array)
@@ -1494,7 +1494,7 @@ mod tests {
 
     /// sp-mve9i: the counts follow the lifecycle row, whatever bd's status says.
     #[test]
-    fn sphere_counts_read_the_lifecycle_state_not_bd_status() {
+    fn well_counts_read_the_lifecycle_state_not_bd_status() {
         let rows: Vec<Value> = serde_json::from_str(
             r#"[{"id":"a","status":"closed","issue_type":"task","labels":["ask"]},
                 {"id":"b","status":"open","issue_type":"task"},
@@ -1507,9 +1507,9 @@ mod tests {
         let lc = lcmap(&[("a", "REWORK", &[]), ("b", "LANDED", &[]), ("c", "SUBMITTED", &["ask"])]);
         // a: open (REWORK), and its ask LABEL is not a hold (sp-psztcc); b: over; c: open, not
         // WORKING, needs-op by its ask hold; d: rowless, not counted; e: an epic, open by bd.
-        assert_eq!(sphere_counts(&work, &lc), (3, 0, 1));
+        assert_eq!(well_counts(&work, &lc), (3, 0, 1));
         let lc = lcmap(&[("d", "WORKING", &[])]);
-        assert_eq!(sphere_counts(&work, &lc), (2, 1, 0));
+        assert_eq!(well_counts(&work, &lc), (2, 1, 0));
     }
 
     #[test]
@@ -1541,8 +1541,8 @@ mod tests {
     }
 
     #[test]
-    fn sphere_reports_zero_not_question_mark_on_empty() {
-        // sphere_keys hits bd for real; this only checks the pure classification helper
+    fn well_reports_zero_not_question_mark_on_empty() {
+        // well_keys hits bd for real; this only checks the pure classification helper
         // it shares with the other probes stays honest about refusal vs empty.
         assert_eq!(io::json_rows(Some("[]".to_string())), Some(vec![]));
     }

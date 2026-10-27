@@ -1,14 +1,14 @@
-//! sending — the Sending (DESIGN.md). Delete the branch and the worktree of every bead whose
+//! hel — the Hel (DESIGN.md). Delete the branch and the worktree of every bead whose
 //! work has landed, and nothing else.
 //!
-//!   sending --all               one pass over every repository (no arguments: usage, exit 2)
-//!   sending --dry-run           print each branch's disposition, change nothing
-//!   sending <bead-id|branch>    send exactly one bead's branch and worktree
-//!   sending --status-from <f>   read `id<TAB>status` from a file instead of bd (tests)
-//!   sending --skip-queue        every repository EXCEPT queue/queue.local ones (the sentinel)
-//!   sending --queue-only        ONLY queue/queue.local repositories (the straggler sweep)
-//!   sending --budget-secs <n>   stop after n seconds, exit 0, leave the rest for the next pass
-//!   sending --no-fetch          judge against the base refs as they stand
+//!   hel --all               one pass over every repository (no arguments: usage, exit 2)
+//!   hel --dry-run           print each branch's disposition, change nothing
+//!   hel <bead-id|branch>    send exactly one bead's branch and worktree
+//!   hel --status-from <f>   read `id<TAB>status` from a file instead of bd (tests)
+//!   hel --skip-queue        every repository EXCEPT queue/queue.local ones (the sentinel)
+//!   hel --queue-only        ONLY queue/queue.local repositories (the straggler sweep)
+//!   hel --budget-secs <n>   stop after n seconds, exit 0, leave the rest for the next pass
+//!   hel --no-fetch          judge against the base refs as they stand
 //!
 //! Exit 0 when nothing failed, 1 when a deletion failed, 2 on a usage or context error.
 //!
@@ -16,23 +16,23 @@
 //! lib.sh's now-shimmed functions call, and the ones other bash callers (`held.sh`) use by
 //! bare name instead of bypassing the chokepoint:
 //!
-//!   sending reap-terminal [--dry-run]   remove terminal beads' worktrees and aged scratch
-//!   sending destroy-worktree    [--status-from <f>] <id> <path> <repo> <why>
-//!   sending destroy-branch      [--status-from <f>] [--base <ref>] <id> <branch> <repo> <why> [<caller>]
-//!   sending reap-landed-branch  [--status-from <f>] <id> <branch> <repo> <why> [<caller>]
-//!   sending prune               <repo>
-//!   sending reap-stale          [--dry-run] [--idle-hours <n>]
-//!   sending salvage             <id> <worktree-path>
-//!   sending witness             [--status-from <f>] <id>
+//!   hel reap-terminal [--dry-run]   remove terminal beads' worktrees and aged scratch
+//!   hel destroy-worktree    [--status-from <f>] <id> <path> <repo> <why>
+//!   hel destroy-branch      [--status-from <f>] [--base <ref>] <id> <branch> <repo> <why> [<caller>]
+//!   hel reap-landed-branch  [--status-from <f>] <id> <branch> <repo> <why> [<caller>]
+//!   hel prune               <repo>
+//!   hel reap-stale          [--dry-run] [--idle-hours <n>]
+//!   hel salvage             <id> <worktree-path>
+//!   hel witness             [--status-from <f>] <id>
 //!
 //! and the smaller plumbing the shims need. None of these touch bd, so none of them need
 //! lib.sh's context at all — they read `$SPIRA_RUN`/`$SPIRA_REAPLOG` straight from the
 //! environment, exactly as the bash functions they replace did:
 //!
-//!   sending hold-alive <pidfile>          sending holder-alive <id>
-//!   sending stop-holder <id>
-//!   sending worktree-of <branch> [<repo>] sending caller
-//!   sending reaplog <verb> <id> [<detail>]
+//!   hel hold-alive <pidfile>          hel holder-alive <id>
+//!   hel stop-holder <id>
+//!   hel worktree-of <branch> [<repo>] hel caller
+//!   hel reaplog <verb> <id> [<detail>]
 //!
 //! Every subcommand above exits 0 on success, 1 on refusal/failure, 2 on a usage error —
 //! except `reap-landed-branch`, which uses 2 for "certified-queued" (the one 3-way split
@@ -41,10 +41,10 @@
 
 use std::path::{Path, PathBuf};
 
-use sending::ports::World;
-use sending::real::{self, Real};
-use sending::sweep::Sweep;
-use sending::{locate_home, parse, reap, terminal};
+use hel::ports::World;
+use hel::real::{self, Real};
+use hel::sweep::Sweep;
+use hel::{locate_home, parse, reap, terminal};
 
 /// Pulls a leading `--status-from <f>` / `--base <r>` pair out of `args`, wherever it
 /// appears, leaving the rest in order — the chokepoint subcommands accept these mixed in
@@ -59,12 +59,12 @@ fn take_flag(args: &mut Vec<String>, flag: &str) -> Option<String> {
 }
 
 fn die(msg: &str) -> ExitCodeLike {
-    eprintln!("sending: {msg}");
+    eprintln!("hel: {msg}");
     2
 }
 
 fn fail(msg: &str) -> ExitCodeLike {
-    eprintln!("sending: {msg}");
+    eprintln!("hel: {msg}");
     1
 }
 
@@ -76,7 +76,7 @@ type ExitCodeLike = i32;
 /// directly never depends on the repo-NAME registry resolving (the full sweep's own
 /// `Real::new` is a different, stricter, path — see its own doc comment).
 fn real_world(status: Option<String>) -> Result<Real, String> {
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(spira_config::release_env::tool("sending")));
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(spira_config::release_env::tool("hel")));
     let home = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe).ok_or("cannot find lib.sh (set SPIRA_HOME)")?;
     Ok(Real::minimal(home, real::run_dir()?, status))
 }
@@ -176,7 +176,7 @@ fn cmd_reap_stale(mut args: Vec<String>) -> ExitCodeLike {
         None => false,
     };
     let idle_secs = match take_flag(&mut args, "--idle-hours") {
-        None => sending::stale::DEFAULT_IDLE_SECS,
+        None => hel::stale::DEFAULT_IDLE_SECS,
         Some(h) => match h.parse::<u64>() {
             Ok(h) => h * 3600,
             Err(_) => return die("reap-stale [--dry-run] [--idle-hours <n>]"),
@@ -185,7 +185,7 @@ fn cmd_reap_stale(mut args: Vec<String>) -> ExitCodeLike {
     if !args.is_empty() {
         return die("reap-stale [--dry-run] [--idle-hours <n>]");
     }
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(spira_config::release_env::tool("sending")));
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(spira_config::release_env::tool("hel")));
     let Some(home) = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe) else {
         return die("cannot find lib.sh (set SPIRA_HOME)");
     };
@@ -193,7 +193,7 @@ fn cmd_reap_stale(mut args: Vec<String>) -> ExitCodeLike {
         Ok(x) => x,
         Err(e) => return die(&format!("cannot read the harness context: {e}")),
     };
-    let t = sending::stale::run(&w, &repos, sending::stale::Opts { dry, idle_secs });
+    let t = hel::stale::run(&w, &repos, hel::stale::Opts { dry, idle_secs });
     println!("reap-stale: {} {}, {} kept, {} failed", t.removed, if dry { "would be removed" } else { "removed" }, t.kept, t.failed);
     i32::from(t.failed > 0)
 }
@@ -364,20 +364,20 @@ fn dispatch() -> i32 {
     }
 
     if args.is_empty() {
-        eprintln!("usage: sending <verb> | sending [--dry-run] [--no-fetch] [--skip-queue|--queue-only] [--budget-secs <n>] [<bead-id|branch>]");
+        eprintln!("usage: hel <verb> | hel [--dry-run] [--no-fetch] [--skip-queue|--queue-only] [--budget-secs <n>] [<bead-id|branch>]");
         eprintln!("       verbs: reap-terminal destroy-worktree destroy-branch reap-landed-branch prune salvage witness");
         return 2;
     }
     let (opts, status) = match parse(&args) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("sending: {e}");
+            eprintln!("hel: {e}");
             return 2;
         }
     };
-    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(spira_config::release_env::tool("sending")));
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(spira_config::release_env::tool("hel")));
     let Some(home) = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe) else {
-        eprintln!("sending: cannot find lib.sh (set SPIRA_HOME)");
+        eprintln!("hel: cannot find lib.sh (set SPIRA_HOME)");
         return 2;
     };
     let (w, repos) = match Real::new(home, status) {
@@ -385,7 +385,7 @@ fn dispatch() -> i32 {
         Err(e) => {
             // FAIL CLOSED: a sweep that cannot read which repositories exist deletes nothing
             // and says so, rather than reporting a clean pass over none of them.
-            eprintln!("sending: cannot read the harness context: {e}");
+            eprintln!("hel: cannot read the harness context: {e}");
             return 2;
         }
     };
@@ -396,6 +396,6 @@ fn dispatch() -> i32 {
 
 fn main() {
     let first = std::env::args().nth(1);
-    let code = sending::telemetry::run(&sending::telemetry::sink(), first.as_deref(), dispatch);
+    let code = hel::telemetry::run(&hel::telemetry::sink(), first.as_deref(), dispatch);
     std::process::exit(code);
 }

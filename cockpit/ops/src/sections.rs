@@ -89,7 +89,7 @@ mod tests {
         v.drift = vec!["sp-d".into()];
         v.epics = vec![crate::lcview::EpicRow { repo: "r".into(), epic: "e".into(), landed: 1, ..Default::default() }];
         v.now_items = vec![item()];
-        v.inflight = Inflight { seg: "\u{2699} 1 aeon".into(), rows: vec!["aeon|sp-1|guardian|900||".into()] };
+        v.inflight = Inflight { seg: "\u{2699} 1 aeon".into(), rows: vec!["aeon|sp-1|warden|900||".into()] };
         v.machine = vec![crate::lcview::SmState { name: "READY".into(), ..Default::default() }];
         v.blocked = vec![item()];
         v.refused = vec![SmRefusal { what: "w".into(), n: 1, ..Default::default() }];

@@ -100,7 +100,7 @@ The format is `<YYYY-MM-DDTHH:MM:SSZ> spira: <msg>` (lib.sh `log`), in UTC.
 | `ACT <msg>` for every act/progress (`summoned a <f> aeon`, `invoked reflection`, `poisoned <id> after <n> attempts`, `reclaimed <n> stale lease(s)`, …) | cockpit-collect metrics:65,69, cockpit.sh:626 |
 | `pass complete — <a> action(s), <p> progress` | heimdall/src/judge.rs |
 | `summon-only pass complete — <a> action(s)` | nothing outside tests |
-| untimestamped `RECLAIMED`, `SENT`, `HELD`, `KEEP`, `FAILED` lines passed through from strand and sending | cockpit.sh:637, cockpit-collect metrics:236 |
+| untimestamped `RECLAIMED`, `SENT`, `HELD`, `KEEP`, `FAILED` lines passed through from strand and hel | cockpit.sh:637, cockpit-collect metrics:236 |
 
 Every other message is kept word for word as well, because the bash suites and the operator
 grep them. The exact strings are the ones §4 quotes; `src/tests.rs` pins the parsed ones
@@ -648,7 +648,7 @@ functions have their own tests:
 - `check8_should_judge`;
 - bead_context;
 - the status-file parsers;
-- the Sending skip test.
+- the Hel skip test.
 
 ## 8. Cutover (applied by the Concierge; nothing below is edited by this branch)
 
@@ -726,7 +726,7 @@ named unit tests.
 | 35 | `test-install-exec.sh:146,207` | drop `sentinel.sh` from the executable list; the render-fallback assertion becomes `ExecStart=$(dirname "$HERE")/bin/sentinel` |
 | 36 | `test-install-conflicts.sh:57` | the fake foreign unit becomes `ExecStart=$FOREIGN_HOME/../bin/sentinel` |
 | 37 | `test-deploy.sh:140,433` | the stub moves to `current/bin/sentinel` |
-| 39 | `spira/sending.sh:488` | `lc_content_on_base …` | the `sending` binary writes the ContentOnBase event (sending/DESIGN.md §2); the OFF-mode `content-landed` label went with the switch (sp-v62vn) |
+| 39 | `spira/hel.sh:488` | `lc_content_on_base …` | the `hel` binary writes the ContentOnBase event (hel/DESIGN.md §2); the OFF-mode `content-landed` label went with the switch (sp-v62vn) |
 | 40 | `strand` crate (`check.rs` `act_ghost`; the wait-held exemption in `probe.rs`) | spira-lc only | deleted with the OFF mode (sp-v62vn): a dead holder is CHECK 2's stale-lease reaper's |
 | 38 | lib.sh functions left with no production caller | **DONE at sp-8itaf.** `check2_protect_waiting` (was 1363), `check2c_lc_consistency` (was 2335), `check2_reclaim_stale` (was 2348) — ported to `lifecycle.rs`; `check8_should_judge` (was 1697, → `judge::tests::judgement_table`); `check4_closed_branched` (was 5600); `ready_cache_populate` (was 1563); `roster_warnings` (was 1051, Rust port already in `pass.rs`) all deleted outright, along with `test-check2-reclaim.sh`, `test-check2-reaper.sh`, `test-check8-progressed.sh`, `test-roster-warn.sh` and the `test-poison.sh`/`test-sentinel-store-reads.sh` references to them. **Correction:** this row's earlier note said `dispatchable_open` stays — re-grepped at sp-8itaf (whole tree, including Rust string literals), it had zero live callers too (`all_partition_members` already covers `groomer deadlocked`, as this row said before `groomer.sh` itself moved to Rust) and was deleted with the rest. |
 
@@ -782,7 +782,7 @@ About 30 suites carry `# covers: … spira/sentinel.sh`. That changes to
 - **B13. Re-read before every write (G11, sp-du8bv).** A CHECK 4 poison or ask is also
   skipped when the re-read fails. It used to go ahead on the snapshot row with "could not
   read the bead" as its evidence. CHECK 2c no longer strips a claim taken after the snapshot.
-- **B10. The Sending's "every swept repo is stamped" test matches `<name>=` at the start of
+- **B10. The Hel's "every swept repo is stamped" test matches `<name>=` at the start of
   a stamp line.** The bash `grep -qF "<name>="` matched it anywhere, so `a=` was satisfied
   by `ba=…`.
 

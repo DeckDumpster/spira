@@ -56,7 +56,7 @@ normally sends the event.
 | `IN_DELIVERY` | `Requeued {tip}` | `SUBMITTED`, `CERTIFIED` (if certified at that tip), or `REWORK` (if the tip was ejected red) | `queue`, `spira-claim` |
 | `SUBMITTED`, `CERTIFIED` | `Restack {tip, stack}` | `SUBMITTED` (certification and screen verdict dropped) | stacked-dependent cascade |
 | `SUBMITTED`, `CERTIFIED` | `Sifted {tip}` | same state; records the tip the screen passed | `sift` |
-| any non-terminal | `ContentOnBase {proof}` | `LANDED` (the content is already on the landing ref) | `sending`, content reconciliation |
+| any non-terminal | `ContentOnBase {proof}` | `LANDED` (the content is already on the landing ref) | `hel`, content reconciliation |
 | any non-terminal | `Supersede {by}` | `SUPERSEDED` | `groomer`, `sift` |
 | any non-terminal | `Drop {reason}` | `DROPPED` (`closed-no-branch` or `unwanted`) | `groomer`, the operator |
 | any non-terminal | `Hold`, `Unhold` | same state; adds or removes a hold | see Holds |

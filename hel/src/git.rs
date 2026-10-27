@@ -1,4 +1,4 @@
-//! Every git question the Sending asks. Mostly read-only (`fetch` and `update-ref` of an
+//! Every git question the Hel asks. Mostly read-only (`fetch` and `update-ref` of an
 //! archive ref being the exceptions noted in the original header) plus, since the
 //! destruction chokepoint moved here from lib.sh (sp-9envm), the mutations that chokepoint
 //! itself makes: `worktree remove`, `branch -D` under `SPIRA_REF_SANCTIONED`, and the

@@ -13,7 +13,7 @@
 #    see the section itself for why.
 #
 # tier: T1
-# covers: spira/git-credential-app.sh spira/lib.sh landing-pass/src/* sending/src/* queue/src/* spira/conf.sh
+# covers: spira/git-credential-app.sh spira/lib.sh landing-pass/src/* hel/src/* queue/src/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -179,7 +179,7 @@ done
 # =========================================================================
 # 8. STATIC CHECK — covered scripts use spira_git_push — RETIRED (sp-uwhx0). Its own
 # subjects: landing.sh (already handled above — the landing-pass binary, pushes through its
-# own seam, source-grep cannot see it), sending.sh (now the `sending` binary, sp-arpjt),
+# own seam, source-grep cannot see it), hel.sh (now the `hel` binary, sp-arpjt),
 # queue.sh/verdict.sh (now the `queue` binary, sp-flj4a; verdict runs in process inside it),
 # and batch.sh (deleted, sp-uwhx0 — the batcher crate cuts and the queue binary pushes the
 # batch now). Every one of them is either Rust — a source grep cannot see through a seam

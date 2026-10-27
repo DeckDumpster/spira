@@ -1,6 +1,6 @@
-# sending — DESIGN
+# hel — DESIGN
 
-The Sending, as a binary (sp-arpjt; `spira/sending.sh` until then). Rewrite wave 2.
+The Hel, as a binary (sp-arpjt; `spira/hel.sh` until then). Rewrite wave 2.
 
 ## 1. Intent
 
@@ -20,7 +20,7 @@ unlanded and KEEPS the branch: the failure biases toward hoarding, which is reco
 ## 2. Contract
 
 ```
-sending [--dry-run] [--no-fetch] [--status-from <file>] [--skip-queue|--queue-only] [<bead-id|branch>]
+hel [--dry-run] [--no-fetch] [--status-from <file>] [--skip-queue|--queue-only] [<bead-id|branch>]
 ```
 
 | exit | meaning |
@@ -29,9 +29,9 @@ sending [--dry-run] [--no-fetch] [--status-from <file>] [--skip-queue|--queue-on
 | 1 | a deletion failed (a `FAILED` line names it) |
 | 2 | usage error, or the harness context could not be read — **nothing was judged** |
 
-**Callers.** `spira-straggler-sweep.service` runs `bin/sending --budget-secs 900` hourly over every
+**Callers.** `spira-straggler-sweep.service` runs `bin/hel --budget-secs 900` hourly over every
 repository — the only scheduled sweep of queue.local and push repos; an operator runs
-`sending --dry-run` or `sending <bead-id>` by hand (watchtower's escalations say so).
+`hel --dry-run` or `hel <bead-id>` by hand (watchtower's escalations say so).
 
 **Scope.** Every repository `spira_repos` names; `--skip-queue` drops queue/queue.local
 repositories (their landed members are reaped at landing by `spira-lc close-on-land`),
@@ -56,7 +56,7 @@ computed. Otherwise, in order (the forge is asked only after every local check s
 | ORPHAN no-bead | no bead, real commits | write `refs/archive/<br>`, read it back, then reap |
 
 **Evidence before a content-landed delete** (only when the branch carried commits):
-`spira-lc content-on-base <id> merge-tree:<base-sha> sending`. The off-mode
+`spira-lc content-on-base <id> merge-tree:<base-sha> hel`. The off-mode
 `content-landed` label went with the off mode (sp-v62vn).
 
 **PASS 2 — orphaned worktrees** (skipped for a one-bead run): a registered worktree under
@@ -64,7 +64,7 @@ computed. Otherwise, in order (the forge is asked only after every local check s
 holder witnesses say nobody is home, is removed through `spira_destroy_worktree`; then
 `spira_prune_worktrees`. `--dry-run` says `WOULD …` for every action and changes nothing.
 
-**`sending reap-terminal [--dry-run]`** (hourly, `spira-reap-terminal.timer`) is the reaper for
+**`hel reap-terminal [--dry-run]`** (hourly, `spira-reap-terminal.timer`) is the reaper for
 the directory itself, independent of branch dispositions. State comes from one `spira-lc
 list`; an empty or failed listing refuses and deletes nothing. For every entry under
 `$SPIRA_RUN/worktree/` (dot-named trees are never touched):
@@ -79,11 +79,11 @@ list`; an empty or failed listing refuses and deletes nothing. For every entry u
 A checkout whose HEAD holds commits that neither a land ref nor any branch or archive ref
 reaches is kept either way, as is one whose land ref or HEAD cannot be read. Attached to its
 own branch, a worktree holds nothing unsaved: the branch keeps the commits. Branches are
-`sending --all`'s business, not this verb's. `sending` with no arguments prints usage and
-exits 2; the full sweep is `sending --all`.
+`hel --all`'s business, not this verb's. `hel` with no arguments prints usage and
+exits 2; the full sweep is `hel --all`.
 
 **Output** is the shell's, line for line (`SENT`, `REAPED`, `ARCHIVED`, `KEEP`, `HELD`,
-`SKIP`, `WOULD`, `FAILED`, lib.sh `log` lines), ending `… spira: sending: <n> sent,
+`SKIP`, `WOULD`, `FAILED`, lib.sh `log` lines), ending `… spira: hel: <n> sent,
 <m> failed` unless dry. The wire token is `SENT` (test-wire-token.sh).
 
 ## 3. Structure
@@ -97,7 +97,7 @@ exits 2; the full sweep is `sending --all`.
 
 ## 4. The lib.sh seam
 
-`bash -s sending.seam.sh` reading a fixed script from stdin followed by NUL-terminated
+`bash -s hel.seam.sh` reading a fixed script from stdin followed by NUL-terminated
 values (the landing-pass construction, law-payloads-go-on-stdin). The first two values are
 `$SPIRA_HOME` and the `--status-from` file, loaded into `spira_status_seam` before every
 operation, so a suite's status map governs every bd question the chokepoint still asks
@@ -114,9 +114,9 @@ passed through in order for the ops that remain.
 ## 5. Decisions
 
 - **A crate of its own, not a verb of spira-lc.** The bead named the lifecycle crates as
-  candidate homes; the Sending's domain is branch and worktree reaping through lib.sh's
+  candidate homes; the Hel's domain is branch and worktree reaping through lib.sh's
   chokepoints and git. spira-lc is the lifecycle machine's client and must not grow a git
-  and lib.sh dependency; the Sending calls it for one event, by bare name.
+  and lib.sh dependency; the Hel calls it for one event, by bare name.
 - **Decisions in Rust, destruction in lib.sh — superseded by sp-9envm (wave 4.20).** This
   decision held that porting the verified deletion a second time would recreate the
   six-site problem lib.sh's DESTRUCTION section exists to end, and said it moves "when
@@ -125,7 +125,7 @@ passed through in order for the ops that remain.
   `holder_alive`, `spira_holder_witnesses`, `worktree_of`, `spira_caller`, `spira_reaplog`)
   is now this crate's `reap.rs`, called in-process by `World for Real`'s own
   `witness`/`send`/`destroy_worktree`/`prune` — no bash seam call for any of them any more.
-  Those lib.sh functions are now one-line shims calling a `sending` CLI
+  Those lib.sh functions are now one-line shims calling a `hel` CLI
   (`destroy-worktree`/`destroy-branch`/`reap-landed-branch`/`prune`/`salvage`/`witness`,
   plus `hold-alive`/`holder-alive`/`worktree-of`/`caller`/`reaplog`), so the 50-odd bash
   sourcers keep working unchanged, per wave4-decomposition.md's "shims, not a big bang."
@@ -135,10 +135,10 @@ passed through in order for the ops that remain.
   replacing `Witness`/`Send`/`DestroyWorktree`/`Prune`)/`Bead` seam ops, parameterized via a
   small `BdProbe` trait rather than hand-rolled a second time. **One wrinkle this forced**:
   `spira_status_seam` now also materializes a real FILE (`$SPIRA_STATUS_FILE`) alongside its
-  bash array, because the `sending` binary has no bash array to read; every shim threads it
+  bash array, because the `hel` binary has no bash array to read; every shim threads it
   through as `--status-from`. **Other crates' own bash seams** (aeon, gate, landing-pass,
   spira-world's `slay`) that call these now-shimmed lib.sh functions by name keep working
-  unchanged too — cutting them over to call `sending::reap` in-process is explicitly a
+  unchanged too — cutting them over to call `hel::reap` in-process is explicitly a
   follow-up bead (wave4-decomposition.md's plan: "the Rust seams of the crate that owns the
   family switch to in-process calls [in this bead]; other crates' seams switch in follow-up
   beads"). `held.sh --drop-empty` is the one bash caller that changed: it used to delete
@@ -152,32 +152,32 @@ passed through in order for the ops that remain.
   unsuffixed). Those trees were superseded by the per-repository `.landing.<repo>` /
   `.rebase.<repo>` long ago; none exists in production (checked 2026-09-30). An accreted
   one-time migration.
-- **Dropped: the source guard.** sending.sh could be sourced by a suite to call
+- **Dropped: the source guard.** hel.sh could be sourced by a suite to call
   `send_disposition`/`send_branch` directly; those are unit tests now
   (`every_branch_gets_the_shells_disposition`, `mid_send_hold_queue_and_failure`).
 - **Kept as it was:** a HELD or CERTIFIED/BATCHED answer at the mid-send recheck still
   lets `spira-lc close-on-land` run for a landed arm (the work did land; only the ref stays),
   and the content-landed evidence is written before a delete that may then be refused.
 - **Intended differences, named:** (1) OFF mode writes the `content-landed` label (§2);
-  (2) the reap log's caller chain names `sending.seam.sh` where it named `sending.sh`;
+  (2) the reap log's caller chain names `hel.seam.sh` where it named `hel.sh`;
   (3) exit 2 on an unreadable context (above); (4) the two repository SKIP lines say "no
   path is configured for it" / "configure its `base`" (config-fence: only spira-config names
   the config files).
 
 ## 6. Parity (sp-arpjt)
 
-Old `spira/sending.sh` (local/main) and this binary, on identical deterministic fixtures
-with every disposition planted (test-sending.sh's, plus a submitted bead closed on land and
+Old `spira/hel.sh` (local/main) and this binary, on identical deterministic fixtures
+with every disposition planted (test-hel.sh's, plus a submitted bead closed on land and
 a CERTIFIED branch the chokepoint refuses), same lib.sh, same stub bd and gh: stdout
 identical after timestamp normalization, refs/remote refs/worktree registrations
 identical, exit identical, for a full pass, `--dry-run`, and a one-bead run, against both
 the old and the new lib.sh. The only differences are the intended ones in §5.
 
 **sp-9envm's own intended differences**, same category as §5's existing two (the caller
-chain naming `sending.seam.sh`/`sending.sh`): the reap log's `[by …]` chain now has one
-MORE hop when a bash caller reaches the chokepoint through a shim (`… -> sending`, where
+chain naming `hel.seam.sh`/`hel.sh`): the reap log's `[by …]` chain now has one
+MORE hop when a bash caller reaches the chokepoint through a shim (`… -> hel`, where
 the bash process that ran `spira_destroy_worktree` used to be the innermost name) and one
-FEWER when `sending`'s own sweep reaps a branch in-process (no `sending.seam.sh` hop at
+FEWER when `hel`'s own sweep reaps a branch in-process (no `hel.seam.sh` hop at
 all). No suite asserts the chain's content (checked: `git grep '\[by ' spira/test-*.sh`
 finds nothing), only the REFUSED/REMOVED/FAILED/SALVAGE lines before it, which are
 byte-for-byte unchanged.

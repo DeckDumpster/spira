@@ -509,7 +509,7 @@ mod tests {
             assert!(root.join(f).is_file(), "{f} is in the manifest but not on disk");
         }
         let svc = std::fs::read_to_string(root.join("spira-worktree-reaper.service")).unwrap();
-        assert!(svc.contains("sending reap-stale"));
+        assert!(svc.contains("hel reap-stale"));
     }
 
     #[test]
@@ -517,7 +517,7 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("systemd");
         let svc = std::fs::read_to_string(root.join("spira-straggler-sweep.service")).unwrap();
         let exec = svc.lines().find(|l| l.starts_with("ExecStart=")).unwrap();
-        assert!(exec.contains("sending --budget-secs"));
+        assert!(exec.contains("hel --budget-secs"));
         assert!(!exec.contains("--queue-only") && !exec.contains("--skip-queue"), "{exec}");
     }
 

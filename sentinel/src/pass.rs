@@ -718,7 +718,7 @@ pub fn pid_count(run: &Path, fayth: &str) -> usize {
         if !(name.starts_with(&prefix) && name.ends_with(".pid")) {
             continue;
         }
-        if sending::reap::aeon_alive(&e.path()) {
+        if hel::reap::aeon_alive(&e.path()) {
             n += 1;
         } else {
             let _ = std::fs::remove_file(e.path());

@@ -344,7 +344,7 @@ impl<'a> Sentinel<'a> {
 
     pub(crate) fn holder_alive(&self, id: &str) -> bool {
         self.h
-            .run(Spec::args_owned(self.cfg.sending_bin.clone(), vec!["holder-alive".into(), id.to_string()]).err(Io::Null))
+            .run(Spec::args_owned(self.cfg.hel_bin.clone(), vec!["holder-alive".into(), id.to_string()]).err(Io::Null))
             .ok()
     }
 
@@ -352,7 +352,7 @@ impl<'a> Sentinel<'a> {
         self.h
             .run(
                 Spec::args_owned(
-                    self.cfg.sending_bin.clone(),
+                    self.cfg.hel_bin.clone(),
                     vec!["destroy-worktree".into(), id.into(), path.into(), repo_root.into(), why.into()],
                 )
                 .err(Io::Null),

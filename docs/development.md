@@ -26,7 +26,7 @@ Generic mechanism. A colleague clones this and it carries none of the operator's
 
 | path | what it is |
 |---|---|
-| `spira/` | the harness proper — aeon runner, sentinel and its checks, gate, sending, strand, the chamber and its fayth format, lib.sh, and the test suites that hold them |
+| `spira/` | the harness proper — aeon runner, sentinel and its checks, gate, hel, strand, the chamber and its fayth format, lib.sh, and the test suites that hold them |
 | `spira/boundary` | this manifest — it describes the harness, so it travels with it |
 | `spira/boundary.sh` | renders this manifest into every document that publishes it; the wiki-side target is configured and skipped when unset, per rule 2 |
 | `spira/conf.sh` | the one configuration surface: the loader, the key allowlist, the derived defaults, and `spira_require`, which names a missing program instead of dying as a shell error |

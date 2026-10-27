@@ -140,10 +140,10 @@ surface gets an accounting, and none of it turned out to be dead).
   workspace; every other crate (`aeon`, `queue`, `spira-lc`) shells out the same way. The
   `Bd` trait is the seam that keeps this testable without one.
 
-- **Binary name `mail`, bare, matching `sending`/`queue`/`testenv`.** No `mail`/`mailx` is
+- **Binary name `mail`, bare, matching `hel`/`queue`/`testenv`.** No `mail`/`mailx` is
   present on this host's system directories, so there is no name-clash risk under the
-  release's own shadow-check (`release::clashes`); the workspace convention (`sending.sh` →
-  `sending`, not `spira-sending`) is unambiguous either way.
+  release's own shadow-check (`release::clashes`); the workspace convention (`hel.sh` →
+  `hel`, not `spira-hel`) is unambiguous either way.
 
 - **`mail.sh` ships as a compatibility symlink, deliberately, not just deleted.** Every
   caller this tree can see was repointed to bare `mail`, but three cannot be git-grepped

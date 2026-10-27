@@ -270,7 +270,7 @@ echo "heimdall-classify — the log format it actually reads:"
 # A tail that still holds those lines must parse, not be silently skipped as unmatched.
 sed 's/plan_ready=/ready=/' "$TMP/starved.log" > "$TMP/oldfmt.log"
 check "the older state-line spelling still parses" summon-starved "$(obs "$TMP/oldfmt.log")"
-# Lines with no timestamp — a git merge notice, sending.sh's REAPED rows — are skipped.
+# Lines with no timestamp — a git merge notice, hel.sh's REAPED rows — are skipped.
 { echo "Auto-merging spira/sentinel.sh"; echo "REAPED sp-x  branch and worktree";
   cat "$TMP/healthy.log"; } > "$TMP/noise.log"
 check "untimestamped lines are skipped, not misparsed" - "$(obs "$TMP/noise.log")"

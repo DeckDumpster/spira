@@ -1,4 +1,4 @@
-//! sending as a library: the destruction chokepoint (DESIGN.md §5, "Decisions in Rust,
+//! hel as a library: the destruction chokepoint (DESIGN.md §5, "Decisions in Rust,
 //! destruction in Rust") lives here so other binaries in this crate — and, in follow-up
 //! beads, other crates — can call it in-process instead of shelling back into lib.sh.
 

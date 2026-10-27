@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 #
-# test-sending.sh — the Sending gives every spira/* branch exactly one disposition, and
+# test-hel.sh — the Hel gives every spira/* branch exactly one disposition, and
 #   the extracted send_disposition decides it without touching a ref, a worktree, or bd.
 #
-#   ./test-sending.sh
+#   ./test-hel.sh
 #
 # WHY THIS EXISTS (sp-rg46a). Six suites and half of a seventh each built their own
-# testdb, bare remote and clone just to run one sending.sh pass over one or two branches:
-# test-sending-{unlanded-guard,certified-guard,content-label,empty-commit,landstate-assert,
-# squash-merged}.sh and the sending half of test-content-landed-empty-branch.sh — 50s of
+# testdb, bare remote and clone just to run one hel.sh pass over one or two branches:
+# test-hel-{unlanded-guard,certified-guard,content-label,empty-commit,landstate-assert,
+# squash-merged}.sh and the hel half of test-content-landed-empty-branch.sh — 50s of
 # duplicate fixture cost for facts about the same function. This suite is their
 # replacement: one fixture, one pass, a row per disposition, driven by a stub bd instead
-# of a throwaway database (sending.sh reaches bd only through `bdjson show` and
+# of a throwaway database (hel.sh reaches bd only through `bdjson show` and
 # `bdq label add/remove`, so a stub answering those two shapes is the seam contract, not a
 # model that can drift — the same argument test-held.sh already made for held.sh).
 #
@@ -19,7 +19,7 @@
 # base ("zero ahead" and "ancestor" are the same fact, sp-bf31a), so such a branch is SENT
 # through the content-landed arm, with no event; there is no separate fast-forward arm.
 #
-# THE BINARY (sp-arpjt). sending.sh is the `sending` binary now (sending/DESIGN.md), run
+# THE BINARY (sp-arpjt). hel.sh is the `hel` binary now (hel/DESIGN.md), run
 # here by name from the tree's own build, end to end against the real lib.sh chokepoints.
 # Its dispositions, the mid-send recheck and the OFF-mode content-landed label are its own
 # unit tests; this suite is what they cannot see — the real deletions, the real machine.
@@ -32,7 +32,7 @@
 #
 # defect: sp-mqsl, sp-e5ow0, sp-796o, sp-kq8l, sp-bjzj, sp-3gih, sp-hl92, sp-1smg
 # tier: T2
-# covers: sending/src/* spira/lib.sh UC-landed-audit-reaping-14 UC-landed-audit-reaping-16 UC-landed-audit-reaping-17 UC-landed-audit-reaping-18 UC-landed-audit-reaping-19 UC-landed-audit-reaping-20 UC-landed-audit-reaping-21 UC-landed-audit-reaping-22
+# covers: hel/src/* spira/lib.sh UC-landed-audit-reaping-14 UC-landed-audit-reaping-16 UC-landed-audit-reaping-17 UC-landed-audit-reaping-18 UC-landed-audit-reaping-19 UC-landed-audit-reaping-20 UC-landed-audit-reaping-21 UC-landed-audit-reaping-22
 # host-reason: starts its own disposable `dolt sql-server`, same shape as test-lc-hold.sh
 #   (sp-ki12s) — testenv-batch.sh already provides the container.
 set -uo pipefail
@@ -50,8 +50,8 @@ export SPIRA_CONF="$TMP/no-such-conf"
 
 # --------------------------------------------------------------------------------------
 # A THROWAWAY spira-lc/Dolt SERVER, the same shape test-lc-hold.sh and
-# test-check2-reaper.sh use. Exported so the `sending.sh` subprocess the
-# `sending()` helper below spawns inherits it too.
+# test-check2-reaper.sh use. Exported so the `hel.sh` subprocess the
+# `hel()` helper below spawns inherits it too.
 # --------------------------------------------------------------------------------------
 LCREPO="$(cd "$HERE/.." && pwd)"
 # A literal base port, not 3309's conf.sh default: conf.sh is not sourced
@@ -98,7 +98,7 @@ tl_config SPIRA_LC_PASSWORD_FILE=""
 spira-lc admin-apply-ddl "$LCREPO/lifecycle/schema.sql" >"$LC_TMP/schema.log" 2>&1
 wantrc "spira_lifecycle schema applies cleanly" 0 $?
 
-# Every fixture bead carries its lifecycle row (sp-mve9i): sending's claim witness reads the
+# Every fixture bead carries its lifecycle row (sp-mve9i): hel's claim witness reads the
 # row, never bd status — bd open → READY, in_progress → WORKING, closed (the builder's submit)
 # → SUBMITTED; a bead with no row is one nothing proves unclaimed, so it would be HELD.
 seed_lc() {   # seed_lc <bead-id> <state>
@@ -109,11 +109,11 @@ seed_lc() {   # seed_lc <bead-id> <state>
 lc_row_state() { lc_root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='$1'" -r csv 2>/dev/null | tail -1; }
 
 # --------------------------------------------------------------------------------------
-# THE STUB BD. sending.sh's remaining bd seams are `bdjson show <id>` (read) and
+# THE STUB BD. hel.sh's remaining bd seams are `bdjson show <id>` (read) and
 # `bdq label add/remove <id> <label>` (write, for branch: affinity only now — content-landed
 # is a real spira-lc event, above). One JSON object per id, under $STUB_BEADS_DIR/<id>.json;
 # label add/remove mutate it in place, so the branch: label assertions read back what
-# sending.sh actually wrote — a real seam contract, not a canned answer
+# hel.sh actually wrote — a real seam contract, not a canned answer
 # (law-a-control-that-cannot-check-must-refuse's positive twin: a stub that cannot be
 # written to cannot prove a write happened).
 # --------------------------------------------------------------------------------------
@@ -175,7 +175,7 @@ has_label() { case ",$(labels_of "$1")," in *",$2,"*) return 0 ;; *) return 1 ;;
 # --------------------------------------------------------------------------------------
 # THE GIT FIXTURE. One repository, one bare remote, one repo-map with two rows: the home
 # repo (resolvable base, real remote) and a second, unresolvable-ref repo for the SKIP
-# case (UC-21) — both swept in the SAME sending.sh invocation.
+# case (UC-21) — both swept in the SAME hel.sh invocation.
 # --------------------------------------------------------------------------------------
 REPO="$TMP/repo"; REMOTE="$TMP/remote.git"; RUN="$TMP/run"
 git init -q --bare -b main "$REMOTE"
@@ -200,12 +200,12 @@ printf '%s | %s | push | | |\nother | %s | push | | |\n' "$HOME_REPO" "$REPO" "$
 
 STATUS_FILE="$TMP/status-from"
 
-sending() {
+hel() {
     tl_config SPIRA_RUN="$RUN" SPIRA_BD="$STUB_BD" SPIRA_HOME_REPO="$HOME_REPO" \
         SPIRA_GH="$STUB_GH" SPIRA_REPO_MAP="$TMP/repo-map"
     SPIRA_HOME="$HERE" SPIRA_DB="$SPIRA_DB" \
     SPIRA_REPO="$REPO" \
-        command sending --no-fetch --status-from "$STATUS_FILE" "$@" 2>&1
+        command hel --no-fetch --status-from "$STATUS_FILE" "$@" 2>&1
 }
 branch_exists() { git -C "$REPO" show-ref --verify -q "refs/heads/$1" 2>/dev/null; }
 
@@ -284,8 +284,8 @@ git -C "$REPO" add shared-sq.txt && git -C "$REPO" commit -q -m "unrelated: adva
 bead sp-sq closed
 seed_lc sp-sq SUBMITTED
 
-# The `gh` stub. sending.sh's ghq wrapper (lib.sh) calls ${SPIRA_GH:-gh}; keyed by branch
-# name, like test-sending-squash-merged.sh's own stub, so only sp-sq resolves to a merged
+# The `gh` stub. hel.sh's ghq wrapper (lib.sh) calls ${SPIRA_GH:-gh}; keyed by branch
+# name, like test-hel-squash-merged.sh's own stub, so only sp-sq resolves to a merged
 # PR at its own tip.
 STUB_GH="$TMP/gh-stub"
 cat > "$STUB_GH" <<GHEOF
@@ -371,11 +371,11 @@ git -C "$REPO" worktree add -q -b spira/sp-orphan "$RUN/worktree/sp-orphan" main
 git -C "$REPO" update-ref -d refs/heads/spira/sp-orphan
 
 # A HARNESS TREE (leading dot, per-repository): never judged by PASS 2. (The retirement of
-# the unsuffixed legacy .landing/.rebase trees went with sending.sh, sp-arpjt: none exists.)
+# the unsuffixed legacy .landing/.rebase trees went with hel.sh, sp-arpjt: none exists.)
 git -C "$REPO" worktree add -q --detach "$RUN/worktree/.landing.$(basename "$REPO")" main >/dev/null 2>&1
 
-# One live remote branch, to prove the Sending deletes it too (UC-19) — sp-cl1 is going to
-# be SENT, so give it a remote counterpart before the pass. --no-fetch means sending.sh
+# One live remote branch, to prove the Hel deletes it too (UC-19) — sp-cl1 is going to
+# be SENT, so give it a remote counterpart before the pass. --no-fetch means hel.sh
 # will not fetch on its own, so the local tracking ref send_branch reads must already
 # exist here.
 timeout 5 git -C "$REPO" push -q origin spira/sp-cl1
@@ -400,7 +400,7 @@ touch "$RUN/sp-cl1.log"
 timeout 5 git -C "$REPO" push -q origin main
 timeout 5 git -C "$REPO" fetch -q origin
 
-echo "test-sending.sh"
+echo "test-hel.sh"
 
 # ---- fixture confirmation -------------------------------------------------------------
 # shellcheck disable=SC1090
@@ -430,8 +430,8 @@ fi
 
 # ---- the pass ---------------------------------------------------------------------------
 echo
-echo "one sending pass, every disposition:"
-out="$(sending --all 2>&1)"
+echo "one hel pass, every disposition:"
+out="$(hel --all 2>&1)"
 rc=$?
 printf '%s\n' "$out" >&2
 
@@ -559,14 +559,14 @@ tl_config SPIRA_RUN="$DRUN" SPIRA_BD="$STUB_BD" SPIRA_HOME_REPO="$DHOME" \
     SPIRA_REPO_MAP="$TMP/dry-repo-map"
 dry_out="$(SPIRA_HOME="$HERE" SPIRA_DB="$SPIRA_DB" \
     SPIRA_REPO="$DREPO" SPIRA_REAPLOG="$DRUN/reap.log" \
-        command sending --dry-run --no-fetch 2>&1)"
+        command hel --dry-run --no-fetch 2>&1)"
 want "dry-run reports WOULD, not SENT"  "WOULD  sp-dry  send branch" "$dry_out"
 nowant "dry-run never reports SENT"     "SENT sp-dry"                "$dry_out"
 is "dry-run leaves the branch in place" 0 "$(git -C "$DREPO" show-ref --verify -q refs/heads/spira/sp-dry; echo $?)"
 is "dry-run does not fire a ContentOnBase event" "SUBMITTED" "$(lc_row_state sp-dry)"
 
-# ---- mid-send HELD — the recheck immediately before a deletion is sending's own unit test
-# now (sending/src/tests.rs `mid_send_hold_queue_and_failure`): with sending.sh gone there is
+# ---- mid-send HELD — the recheck immediately before a deletion is hel's own unit test
+# now (hel/src/tests.rs `mid_send_hold_queue_and_failure`): with hel.sh gone there is
 # no sourced send_branch for a suite to call between the loop's check and the deletion.
 
 # ---- FAILED and a non-zero exit status --------------------------------------------------
@@ -599,7 +599,7 @@ tl_config SPIRA_RUN="$FRUN" SPIRA_BD="$STUB_BD" SPIRA_HOME_REPO="$FHOME" \
     SPIRA_REPO_MAP="$TMP/fail-repo-map"
 fail_out="$(SPIRA_HOME="$HERE" SPIRA_DB="$SPIRA_DB" \
     SPIRA_REPO="$FREPO" SPIRA_REAPLOG="$FRUN/reap.log" \
-        command sending --no-fetch 2>&1)"
+        command hel --no-fetch 2>&1)"
 fail_rc=$?
 want "sp-fail is reported FAILED" "FAILED sp-fail" "$fail_out"
 wantrc "the pass exits non-zero when failed > 0" 1 "$fail_rc"

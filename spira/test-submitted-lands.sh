@@ -22,7 +22,7 @@
 #      moves the row to REWORK and nothing lands — and the next aeon really claims it again
 #      and re-submits. A red that left it unclaimable would strand it: open, excluded from
 #      every claim, never landed.
-#   3. pr/hold mode: the merge happens off-box, and the Sending is the first to see the work
+#   3. pr/hold mode: the merge happens off-box, and the Hel is the first to see the work
 #      on the base. A SUBMITTED bead whose branch is found landed there is closed.
 #   4. push mode: a bead whose lifecycle row the push gate moved from
 #      SUBMITTED to CERTIFIED is still landed by that same pass, and ends LANDED.
@@ -35,7 +35,7 @@
 #
 # defect: sp-qsona (acceptance phase A stage 5)
 # tier: T3
-# covers: landing-pass/* sending/src/* spira/lib.sh aeon/src/* work/* spira-lc/*
+# covers: landing-pass/* hel/src/* spira/lib.sh aeon/src/* work/* spira-lc/*
 # hermetic-ok: uses fixture databases (bd, and a private dolt sql-server for spira_lifecycle) and local git repos, no systemd or gh
 # timeout: 240
 set -uo pipefail
@@ -175,9 +175,9 @@ landing() {
     SPIRA_REPO="$REPO" \
         landing-pass land 2>&1
 }
-sending() {
+hel() {
     SPIRA_REPO="$REPO" \
-        command sending --all 2>&1
+        command hel --all 2>&1
 }
 on_base() { timeout 5 git -C "$REPO" fetch -q origin 2>/dev/null; git -C "$REPO" log --format=%s origin/main 2>/dev/null; }
 branch_tip() { git -C "$REPO" rev-parse "spira/$1" 2>/dev/null; }
@@ -226,10 +226,10 @@ is   "at the new tip"                                                     "$(bra
 
 # ======================================================================================
 echo
-echo "3. pr/hold mode — a submitted bead whose branch the Sending finds on the base closes:"
+echo "3. pr/hold mode — a submitted bead whose branch the Hel finds on the base closes:"
 # ======================================================================================
 # The forge (or a human) merged the branch; nothing on this box landed it. Simulated with a
-# merge made directly on origin/main, then the Sending sweep.
+# merge made directly on origin/main, then the Hel sweep.
 testdb_reset
 git -C "$REPO" branch -q -f spira/sp-sl3 origin/main
 git -C "$REPO" worktree add -q "$TMP/wt3" spira/sp-sl3
@@ -242,8 +242,8 @@ git -C "$REPO" merge -q --no-ff -m "Merge pull request #3 from spira/sp-sl3" spi
 timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 timeout 5 git -C "$REPO" fetch -q origin
 is   "setup: open and SUBMITTED before the sweep" "open SUBMITTED" "$(field sp-sl3 status) $(lcfix_state sp-sl3)"
-out="$(sending)"
-want "the Sending sends the landed branch"             "sp-sl3" "$out"
+out="$(hel)"
+want "the Hel sends the landed branch"             "sp-sl3" "$out"
 is   "and closes the submitted bead"                   closed "$(field sp-sl3 status)"
 want "with the landed outcome"                         "OUTCOME: landed" "$(field sp-sl3 close_reason)"
 

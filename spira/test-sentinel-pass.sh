@@ -81,7 +81,7 @@ LAUNCH_ARGV="$TMP/launch-argv"
 # mock-launch stands in for systemd-run: it records every dispatch's own argv.
 printf '#!/bin/sh\necho "$@" >> "%s"\nexit 0\n' "$LAUNCH_ARGV" > "$STUBS/mock-launch"; chmod +x "$STUBS/mock-launch"
 printf '#!/bin/sh\nexit 0\n'         > "$STUBS/mock-notify";    chmod +x "$STUBS/mock-notify"
-touch "$STUBS/repo-map"   # empty: no repos, Sending finds nothing to walk
+touch "$STUBS/repo-map"   # empty: no repos, Hel finds nothing to walk
 # THE REAL CHAMBER, symlinked once up front: `ln -sf` onto a directory that already
 # exists creates the link INSIDE it instead of replacing it, so this must run before
 # anything else ever creates $STUBS/chamber as a plain directory.
@@ -133,9 +133,9 @@ testdb_seed <<'JSONL'
 JSONL
 
 SUMMON_LOG="$TMP/summon.log"
-SENDING_LOG="$TMP/sending.log"
-printf '#!/bin/sh\necho "called $*" >> "%s"\n' "$SENDING_LOG" > "$STUBS/sending"
-chmod +x "$STUBS/sending"
+HEL_LOG="$TMP/hel.log"
+printf '#!/bin/sh\necho "called $*" >> "%s"\n' "$HEL_LOG" > "$STUBS/hel"
+chmod +x "$STUBS/hel"
 # mock-summon records each summon so the fill assertion can count them.
 printf '#!/bin/sh\necho summoned >> "$SUMMON_LOG"\n' > "$STUBS/mock-summon"; chmod +x "$STUBS/mock-summon"
 
@@ -160,22 +160,22 @@ run_pass() {
         SPIRA_LAUNCH="$STUBS/mock-launch" \
         SPIRA_SUMMON="$STUBS/mock-summon" \
         SUMMON_LOG="$SUMMON_LOG" \
-        SENDING_LOG="$SENDING_LOG" \
+        HEL_LOG="$HEL_LOG" \
         "$@" \
         sentinel "${sarg[@]}" 2>&1
 }
 
 mkdir -p "$TMP/home"
 _run="$TMP/run-pass"
-rm -f "$SUMMON_LOG" "$SENDING_LOG" "$LAUNCH_ARGV"
+rm -f "$SUMMON_LOG" "$HEL_LOG" "$LAUNCH_ARGV"
 pass1_out="$(run_pass "$_run" "")"
 is   "pass 1 fill: pool=3 + 5 ready beads -> 3 summons" \
      "3" "$(grep -c . "$SUMMON_LOG" 2>/dev/null || echo 0)"
 want "pass 1 order: CHECK7 line appears in log" "CHECK7" "$pass1_out"
 lack "pass 1: does NOT report DATABASE UNREADABLE (positive control: DB is readable)" \
      "DATABASE UNREADABLE" "$pass1_out"
-is   "pass 1: sending is not called by the sentinel" \
-     "0" "$(grep -c . "$SENDING_LOG" 2>/dev/null || echo 0)"
+is   "pass 1: hel is not called by the sentinel" \
+     "0" "$(grep -c . "$HEL_LOG" 2>/dev/null || echo 0)"
 nowant "pass 1: no audit worker is dispatched" \
      "spira-audit" "$(cat "$LAUNCH_ARGV" 2>/dev/null)"
 
@@ -191,7 +191,7 @@ nowant "land dispatch carries no CPUQuota"  "CPUQuota" "$_land_argv"
 nowant "land dispatch carries no Nice"      "Nice="    "$_land_argv"
 
 # The retired knob is inert: setting it in the environment adds no quota.
-rm -f "$LAUNCH_ARGV" "$SUMMON_LOG" "$SENDING_LOG"
+rm -f "$LAUNCH_ARGV" "$SUMMON_LOG" "$HEL_LOG"
 out_customquota="$(run_pass "$_run" "" SPIRA_LAND_CPU_QUOTA=55)"
 _land_argv="$(grep -- '--unit=spira-landing' "$LAUNCH_ARGV" 2>/dev/null)"
 want   "retired SPIRA_LAND_CPU_QUOTA: the land dispatch still happens" \

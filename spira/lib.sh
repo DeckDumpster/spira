@@ -1125,7 +1125,7 @@ _counter_events_query() {   # _counter_events_query <id> <event_type> -> count, 
     # '?' ON FAILURE, NOT '0'. A query that cannot reach the events table and one that
     # reached it and found nothing print the same digit if both return '0' — the reader
     # cannot tell "no activity" from "the driver is down" (law-absence-needs-a-positive-
-    # control). recurs_of's caller (incident.sh's Sin decision, before recurs_of moved to
+    # control). recurs_of's caller (incident.sh's Fenrir decision, before recurs_of moved to
     # the incident crate) once folded that silence into zero recurrences and stayed
     # silent through an outage forever (sp-39yd3).
     local id="${1:-}" etype="${2:-}" out
@@ -1958,52 +1958,52 @@ spira_publish_forge() {  # spira_publish_forge <name> -> "<remote> <branch>"
 
 # --------------------------------------------------------------------------------------
 # worktree_of <branch> [repo] -> the registered worktree path holding it, or empty.
-# Ported to Rust (sp-9envm, wave 4.20): the library is `sending::reap`, called in-process
-# by the `sending` binary itself; this is a one-line shim for bash callers.
+# Ported to Rust (sp-9envm, wave 4.20): the library is `hel::reap`, called in-process
+# by the `hel` binary itself; this is a one-line shim for bash callers.
 # --------------------------------------------------------------------------------------
 worktree_of() {
-    sending worktree-of "$1" "${2:-$(repo_root)}"
+    hel worktree-of "$1" "${2:-$(repo_root)}"
 }
 
 # --------------------------------------------------------------------------------------
 # hold_alive <pidfile> -> 0 if the recorded pid is a live process. Ported to Rust
-# (sp-9envm); see `sending::reap::hold_alive` for the rationale (unlike aeon_alive this does
+# (sp-9envm); see `hel::reap::hold_alive` for the rationale (unlike aeon_alive this does
 # NOT check argv, because the holder can be any process).
 # --------------------------------------------------------------------------------------
 hold_alive() {
-    sending hold-alive "$1"
+    hel hold-alive "$1"
 }
 
 # --------------------------------------------------------------------------------------
 # holder_alive <id> -> 0 if a live process is working this bead. Ported to Rust (sp-9envm);
-# see `sending::reap::holder_alive` for the rationale (checks BOTH hold pidfiles and aeon
+# see `hel::reap::holder_alive` for the rationale (checks BOTH hold pidfiles and aeon
 # pidfiles, by different liveness tests, satisfying the SAME predicate the reaper reads).
 # --------------------------------------------------------------------------------------
 holder_alive() {
-    sending holder-alive "$1"
+    hel holder-alive "$1"
 }
 
 # ======================================================================================
 # DESTRUCTION. Every removal of a bead's worktree or branch goes through this section, and
 # nothing outside it may call `git worktree remove`, `git branch -D` or `rm -rf` on a tree.
 #
-# PORTED TO RUST (sp-9envm, wave 4.20: `sending::reap`, plus a `sending` CLI with
+# PORTED TO RUST (sp-9envm, wave 4.20: `hel::reap`, plus a `hel` CLI with
 # `destroy-worktree`/`destroy-branch`/`reap-landed-branch`/`prune`/`salvage`/`witness`
 # verbs). Every function below is now a one-line shim; the chokepoint itself, its full
 # rationale (why it is one site, what it refuses and why), and its tests live there. This
-# keeps working for the 50-odd bash sourcers unchanged — see sending/DESIGN.md §5 for what
-# moved and sending/src/reap.rs's own header for the refusal list, reproduced from here.
+# keeps working for the 50-odd bash sourcers unchanged — see hel/DESIGN.md §5 for what
+# moved and hel/src/reap.rs's own header for the refusal list, reproduced from here.
 # ======================================================================================
 SPIRA_REAPLOG="${SPIRA_REAPLOG:-$SPIRA_RUN/reap.log}"
 
 # The program that reached the chokepoint. Ported to Rust (sp-9envm); see
-# `sending::reap::spira_caller`.
+# `hel::reap::spira_caller`.
 spira_caller() {
-    sending caller
+    hel caller
 }
 
 spira_reaplog() {        # spira_reaplog <verb> <id> <detail> — ported to Rust (sp-9envm)
-    sending reaplog "$1" "$2" "${3:-}"
+    hel reaplog "$1" "$2" "${3:-}"
 }
 
 # queue_notify_concierge and queue_local_check_divergence are RETIRED (sp-hwjsq,
@@ -2064,7 +2064,7 @@ spira_event() {          # spira_event <kind> <target|-> <title> [detail]
 # The status witness, and the seam a suite drives it through. `--status-from` is the honest
 # manual entry point too: it says exactly what the caller believes about each bead.
 #
-# SPIRA_STATUS_FILE, added by sp-9envm: a real FILE holding the same rows, for the `sending`
+# SPIRA_STATUS_FILE, added by sp-9envm: a real FILE holding the same rows, for the `hel`
 # binary's own `--status-from` (it has no bash array to read). A `-` caller's rows exist only
 # on this function's stdin, so they are materialized to a temp file here; a real path is used
 # as given. Every shim this file's now-ported chokepoint functions call threads this through
@@ -2116,20 +2116,20 @@ spira_db_reachable() {
 }
 
 # spira_holder_witnesses <id> -> 0 and prints WHY somebody may be home; 1 if nobody is.
-# Ported to Rust (sp-9envm); see `sending::reap::holder_witnesses`.
+# Ported to Rust (sp-9envm); see `hel::reap::holder_witnesses`.
 spira_holder_witnesses() {
-    sending witness ${SPIRA_STATUS_FILE:+--status-from "$SPIRA_STATUS_FILE"} "$1"
+    hel witness ${SPIRA_STATUS_FILE:+--status-from "$SPIRA_STATUS_FILE"} "$1"
 }
 
 # salvage <label> <worktree-path> -> 0 saved or nothing to save. Ported to Rust (sp-9envm);
-# see `sending::reap::salvage` for the untracked-file-by-content and timestamped-filename
+# see `hel::reap::salvage` for the untracked-file-by-content and timestamped-filename
 # rationale. $SALVAGED is dropped: nothing outside this file ever read it.
 SALVAGED=""
 salvage() {
     SALVAGED=""
     local _out _rc
-    _out="$(sending salvage "$1" "$2")"; _rc=$?
-    # `sending salvage` prints lib.sh's own old line verbatim on success-with-content
+    _out="$(hel salvage "$1" "$2")"; _rc=$?
+    # `hel salvage` prints lib.sh's own old line verbatim on success-with-content
     # ("  salvaged uncommitted changes to <path>"), nothing when there was nothing to
     # save. $SALVAGED is kept for spira-world's slay, the one caller that reads it.
     case "$_out" in
@@ -2139,17 +2139,17 @@ salvage() {
 }
 
 # spira_destroy_worktree <id> <path> <repo> <why> -> 0 removed or nothing to remove. Ported
-# to Rust (sp-9envm); see `sending::reap::destroy_worktree`.
+# to Rust (sp-9envm); see `hel::reap::destroy_worktree`.
 spira_destroy_worktree() {
-    sending destroy-worktree ${SPIRA_STATUS_FILE:+--status-from "$SPIRA_STATUS_FILE"} "$1" "$2" "$3" "$4"
+    hel destroy-worktree ${SPIRA_STATUS_FILE:+--status-from "$SPIRA_STATUS_FILE"} "$1" "$2" "$3" "$4"
 }
 
 # spira_destroy_branch <id> <branch> <repo> <why> [caller] -> 0 gone, 1 refused or survived.
-# Ported to Rust (sp-9envm); see `sending::reap::destroy_branch` for the CERTIFIED/BATCHED
+# Ported to Rust (sp-9envm); see `hel::reap::destroy_branch` for the CERTIFIED/BATCHED
 # guard, the holder witnesses, the checked-out-worktree guard and the CALLER EXCEPTIONS
-# ("sending"/"slain"/"archived"/anything else all skip the content fence; empty applies it).
+# ("hel"/"slain"/"archived"/anything else all skip the content fence; empty applies it).
 spira_destroy_branch() {
-    local _err; _err="$(sending destroy-branch ${SPIRA_STATUS_FILE:+--status-from "$SPIRA_STATUS_FILE"} "$1" "$2" "$3" "$4" "${5:-}")"
+    local _err; _err="$(hel destroy-branch ${SPIRA_STATUS_FILE:+--status-from "$SPIRA_STATUS_FILE"} "$1" "$2" "$3" "$4" "${5:-}")"
     local _rc=$?
     SPIRA_DESTROY_ERR="$_err"
     return $_rc
@@ -2157,23 +2157,23 @@ spira_destroy_branch() {
 
 # spira_reap_landed_branch <id> <branch> <repo> <why> [caller] -> 0 sent, 1 failed, 2 refused
 # (certified-queued or the content fence). Sets SPIRA_REAP_ERR on 1 or 2. Ported to Rust
-# (sp-9envm); see `sending::reap::reap_landed_branch`. Still resolves the land ref and its
-# remote itself (through the unchanged `spira_landref`/family-W seam the `sending` binary
+# (sp-9envm); see `hel::reap::reap_landed_branch`. Still resolves the land ref and its
+# remote itself (through the unchanged `spira_landref`/family-W seam the `hel` binary
 # already has, not through bash), so `spira-lc close-on-land`, the production hot path for
 # every landing, keeps working unchanged.
 spira_reap_landed_branch() {
-    local _err; _err="$(sending reap-landed-branch ${SPIRA_STATUS_FILE:+--status-from "$SPIRA_STATUS_FILE"} "$1" "$2" "$3" "$4" "${5:-}")"
+    local _err; _err="$(hel reap-landed-branch ${SPIRA_STATUS_FILE:+--status-from "$SPIRA_STATUS_FILE"} "$1" "$2" "$3" "$4" "${5:-}")"
     local _rc=$?
     SPIRA_REAP_ERR="$_err"
     return $_rc
 }
 
 # spira_prune_worktrees <repo> — `git worktree prune`, with the one case it gets wrong.
-# Ported to Rust (sp-9envm); see `sending::reap::prune_worktrees` for the repair-not-prune
+# Ported to Rust (sp-9envm); see `hel::reap::prune_worktrees` for the repair-not-prune
 # rationale (an entry whose directory still exists would otherwise free its branch and
 # leave a live tree registered nowhere).
 spira_prune_worktrees() {
-    sending prune "$1"
+    hel prune "$1"
 }
 
 # --------------------------------------------------------------------------------------
@@ -2194,7 +2194,7 @@ spira_prune_worktrees() {
 # rationale this header used to carry (why the branch's own worktree, why failures are
 # named, why a formatter failure changes nothing, why only the branch's own paths are
 # committed). `format_rebased` folded into the port; nothing else called it. Any worktree
-# pruning or pre-reset salvage in the port goes through `sending`'s destruction chokepoint
+# pruning or pre-reset salvage in the port goes through `hel`'s destruction chokepoint
 # in-process, never a raw git removal.
 # --------------------------------------------------------------------------------------
 REBASE_CONFLICTS=""

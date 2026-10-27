@@ -41,7 +41,7 @@ Every finding goes through `incident.sh`, whose intake contract is:
   concurrent filers.
 - A recent close is reopened rather than duplicated.
 - Recurrences are counted as events with bounded notes.
-- At `SPIRA_SIN_AT` recurrences the incident escalates once, unless the ref is exempt.
+- At `SPIRA_FENRIR_AT` recurrences the incident escalates once, unless the ref is exempt.
 
 The census ranks failure classes by distinct beads since a watermark. A remedy that has not
 landed suppresses its class. Mimir is triggered by a landing count or a time gap, and it
@@ -87,12 +87,12 @@ produced the 36 use cases. Columns marked **applied** reflect code that is actua
 | 04 | Demote to T1 (counting stub bd, no Dolt). | **Applied**: `incident-stub-bd` (incident/src/stub_bd.rs). |
 | 05 | Demote to T1 (stub bd plus a maildir). | **Applied**. |
 | 06 | Demote the note-size decision to T1; keep one real row; delete `test-incident-recur-bounded.sh`. | **Applied**. |
-| 07 | Demote `test-sin-exempt.sh` to T1 against a stub-`bd sql` count; merge the real-events row into the census integration suite; move the watchtower DRAINING-exempt assertion to `test-watchtower.sh`. | **Applied** except the real-events row, which was deferred by `sp-fhzib.3` until `sp-fhzib.2` landed. **Landed by this bead** (`sp-n1twd`): `test-census.sh` gained the Sin real-events row — see §8. |
+| 07 | Demote `test-fenrir-exempt.sh` to T1 against a stub-`bd sql` count; merge the real-events row into the census integration suite; move the watchtower DRAINING-exempt assertion to `test-watchtower.sh`. | **Applied** except the real-events row, which was deferred by `sp-fhzib.3` until `sp-fhzib.2` landed. **Landed by this bead** (`sp-n1twd`): `test-census.sh` gained the Fenrir real-events row — see §8. |
 | 07b | Delete the backfill-recur-causes test; propose retiring the migration itself. | **Retired** (`sp-76ec4`): rows removed from `test-incident-recur-cause.sh` and `test-incident-migrations.sh`; the migration itself deleted from `incident.sh` — `sp-lzt` removed every `sp-recur-N` label write, so nothing bare is left to backfill. |
 | 08 | Rewrite `test-incident-delivers-satisfiable.sh` from source-grep to a real T1 behaviour test; merge `test-batch-repeat-refused-delivers.sh` in. | **Applied**. |
 | 09 | Move the REF/CAUSE pairing check to the gate's T0 fence stage. | **Applied**: `spira/incident-cause-lint.sh`, wired into `gate-spira.sh`. |
 | 10 | New suite against a genuinely unreachable bd (gap G1). | **Applied**: `test-incident-spool-drain.sh`. |
-| 11-15 | Extract census's heredoc python to `spira/census/*.py`; table-test on canned rows; keep one server-mode suite for the SQL-writes-events and since-filter contract. | **Applied** (`sp-fhzib.3`): `spira/census/{count,merge,covers,covers_closed}.py`; `test-census-pipeline.sh` (T1) + `test-census.sh` (T3, 3 rows + the Sin row landed by this bead). `test-census-reopen.sh`, `test-census-watermark.sh` deleted. |
+| 11-15 | Extract census's heredoc python to `spira/census/*.py`; table-test on canned rows; keep one server-mode suite for the SQL-writes-events and since-filter contract. | **Applied** (`sp-fhzib.3`): `spira/census/{count,merge,covers,covers_closed}.py`; `test-census-pipeline.sh` (T1) + `test-census.sh` (T3, 3 rows + the Fenrir row landed by this bead). `test-census-reopen.sh`, `test-census-watermark.sh` deleted. |
 | 16-17 | Keep `test-mimir-trigger.sh`; delete `test-mimir-blind-window.sh` and `test-mimir-sibling-blind.sh`. | **Applied** (`sp-fhzib.3`). |
 | 18-22 | Split Heimdall's classifier half into its own T1 suite; merge the five `test-strand-*` classifier files into one table; keep `test-strand-lock.sh`/`test-strand-truncated.sh` for their own T2 properties. | **Not applied.** `test-heimdall.sh` and the five `test-strand-*.sh` files are unchanged. `sp-fhzib.4` did this work on the retired branch; it was reopened as its own bead and has not landed on `main`. |
 | 23 | Port the four log-pattern detectors plus CI-STALLED/CI-RED/STARVED to Rust `#[test]`s against the real reconciler-engine code; retire `test-watchtower-queue.sh` once ported. | **Applied, then superseded.** czar-pass was rewritten onto the reconciler engine (`sp-pu7v6`) after the original Rust port landed, which deleted the marker-file helpers (`fs_record`/`fs_get`/`fs_clear`/`fs_path`/`latency_secs`) those tests exercised; 5 of the 22 tests named functions that no longer exist, so `cargo test -p czar-pass` did not even compile on `main`. **This bead removes those 5 dead tests and adds 25 new ones,** bringing the file to 42 passing tests, exercising every `detect_*` function's fire/silent boundary against the current `Config`/`StateMap`/reconciler-engine shape — see §8. `test-watchtower-queue.sh` is gone (`sp-fhzib.5`); `test-czar-pass.sh` gained a `cargo test -p czar-pass` case (case 0) so the unit layer is verified as part of the suite, which is what would have caught the compile failure. |
@@ -106,7 +106,7 @@ produced the 36 use cases. Columns marked **applied** reflect code that is actua
 | # | Behaviour | Files | Status |
 |---|---|---|---|
 | D1 | Incident dedup: N filings → 1 bead + N-1 recurrences | test-incident.sh, test-incident-dedup.sh, test-incident-recur-bounded.sh, test-incident-recur-cause.sh | Resolved (`sp-fhzib.2`) |
-| D2 | Sin escalation at SIN_AT | test-sin-exempt.sh, test-incident-recur-cause.sh | Resolved (`sp-fhzib.2`) |
+| D2 | Fenrir escalation at FENRIR_AT | test-fenrir-exempt.sh, test-incident-recur-cause.sh | Resolved (`sp-fhzib.2`) |
 | D3 | NULL-cause / empty new_value distinct-bead count | test-census-events.sh ×2, test-census-reopen.sh, test-census.sh | Resolved (`sp-fhzib.3`) |
 | D4 | Since-watermark counting / trigger watermark | test-census-watermark.sh, test-mimir-blind-window.sh, test-mimir-trigger.sh | Resolved (`sp-fhzib.3`) |
 | D5 | czar-pass CI-STALLED/STARVED/halted | test-watchtower-queue.sh, test-czar-pass.sh | Resolved (`sp-fhzib.5`): the former deleted, its properties absorbed into `test-czar-pass.sh`. |
@@ -215,10 +215,10 @@ What `sp-fhzib` itself still owed, on a fresh branch from `origin/main`:
   layer's 42 tests (17 surviving helper tests + 25 new detector tests) are verified as part
   of this suite's own run — which is exactly the run that would have caught the compile
   break above, had it existed before now.
-- **The Sin real-events row (UC-07/UC-12), deferred by `sp-fhzib.3` until `sp-fhzib.2`
+- **The Fenrir real-events row (UC-07/UC-12), deferred by `sp-fhzib.3` until `sp-fhzib.2`
   landed.** `test-census.sh` — the one suite already holding a real `testdb_up` fixture for
-  UC-12/UC-14 — gained a fourth section: three Sin-escalation events for one ref (below
-  `SPIRA_SIN_AT`) leave the class's detection count at 3 with no `sin` label reachable
+  UC-12/UC-14 — gained a fourth section: three Fenrir-escalation events for one ref (below
+  `SPIRA_FENRIR_AT`) leave the class's detection count at 3 with no `fenrir` label reachable
   through the census path, and the same fixture is reused rather than a fifth
   `testdb_up`/`testdb_drop` round trip.
 
@@ -239,7 +239,7 @@ After (measured this run):
                               suite already paid for)
   test-census.sh       73 s  (+64 s: this run built its own fresh embedded testdb baseline
                               rather than reusing a warm one, which section 1-5's original
-                              9 s baseline did not have to pay; the Sin row itself is one
+                              9 s baseline did not have to pay; the Fenrir row itself is one
                               `recurs_of` shell-out against data section 1 already wrote)
 ```
 

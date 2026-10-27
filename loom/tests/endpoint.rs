@@ -590,7 +590,7 @@ async fn lifecycle_shows_work_in_flight_from_the_collector_snapshot_and_never_id
     let at = now_s();
     std::fs::write(
         run.join("cockpit.env"),
-        format!("SP_AT='{at}'\nSP_INFLIGHT_WORLD='draining'\nSP_INFLIGHT_SEG='\u{2699} 1 aeon \u{b7} 1 round (412/475) \u{b7} draining'\nSP_INFLIGHT_ROW0='aeon|sp-1|guardian|{at}||'\nSP_INFLIGHT_ROW1='round|spira/b1|certifying|{at}|412|475'\n"),
+        format!("SP_AT='{at}'\nSP_INFLIGHT_WORLD='draining'\nSP_INFLIGHT_SEG='\u{2699} 1 aeon \u{b7} 1 round (412/475) \u{b7} draining'\nSP_INFLIGHT_ROW0='aeon|sp-1|warden|{at}||'\nSP_INFLIGHT_ROW1='round|spira/b1|certifying|{at}|412|475'\n"),
     )
     .unwrap();
     let (_, page) = get(addr, "/lifecycle").await;
@@ -980,7 +980,7 @@ SP_SLOTS_CEILING='4'
 SP_SLOTS_FREE='2'
 SP_SLOTS_POOL='4'
 SP_AEON0_NAME='tidus'
-SP_AEON0_FAYTH='guardian'
+SP_AEON0_FAYTH='warden'
 SP_AEON0_BEAD='sp-aaa11'
 SP_AEON0_TITLE='first <b>title</b>'
 SP_AEON0_PRI='1'

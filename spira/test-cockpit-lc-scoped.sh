@@ -44,7 +44,7 @@ echo "test-cockpit-lc-scoped.sh"
 full="$(env SPIRA_BDJSON_FIXTURE="$TMP/store.json" "$SPIRA_LC_BIN" list | wc -c)"
 is "the fixture store's full list ($full bytes) exceeds 64 KiB" y "$([ "$full" -gt 65536 ] && echo y)"
 
-for name in sphere reachable dup_refs czar_triggers; do
+for name in well reachable dup_refs czar_triggers; do
     : > "$LOG"
     out="$(probe "$name")"
     nowant "$name renders no ? for want of a lifecycle read" "=?" "$out"
@@ -57,5 +57,5 @@ for name in sphere reachable dup_refs czar_triggers; do
 done
 
 : > "$LOG"
-out="$(probe sphere)"
+out="$(probe well)"
 is "SP_POISON still counts the poison holds" "3" "$(printf '%s\n' "$out" | sed -n 's/^SP_POISON=//p')"

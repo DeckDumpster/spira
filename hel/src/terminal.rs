@@ -123,7 +123,7 @@ fn held_by(p: &Path) -> Option<&'static str> {
 pub fn run(w: &dyn World, states: &HashMap<String, String>, max_age: Duration, dry: bool) -> i32 {
     let root = w.worktrees();
     let Ok(rd) = std::fs::read_dir(&root) else {
-        w.log(&format!("sending: reap-terminal: cannot read {}", root.display()));
+        w.log(&format!("hel: reap-terminal: cannot read {}", root.display()));
         return 1;
     };
     let mut names: Vec<String> = rd.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
@@ -174,7 +174,7 @@ pub fn run(w: &dyn World, states: &HashMap<String, String>, max_age: Duration, d
         w.prune(r);
     }
     if !dry {
-        w.log(&format!("sending: reap-terminal: {removed} removed, {failed} failed"));
+        w.log(&format!("hel: reap-terminal: {removed} removed, {failed} failed"));
     }
     i32::from(failed != 0)
 }

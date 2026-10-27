@@ -142,8 +142,8 @@ FAYTH_MAX_CONCURRENT=1
 FAYTH_TIMEOUT_SECONDS=3600
 FAYTH2
 done
-# Stubs: pilgrimage, sending, reflect all exit 0 with no output.
-for _s in pilgrimage.sh sending reflect.sh; do
+# Stubs: pilgrimage, hel, reflect all exit 0 with no output.
+for _s in pilgrimage.sh hel reflect.sh; do
     printf '#!/bin/sh\n' > "$TMP/stubs2/$_s"; chmod +x "$TMP/stubs2/$_s"
 done
 # strand ALSO backs lib.sh's aeon_alive/aeon_count/aeons_live_total/aeons_live_lanes shims

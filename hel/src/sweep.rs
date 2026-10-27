@@ -1,4 +1,4 @@
-//! The Sending (DESIGN.md §2): every `spira/*` branch gets exactly one disposition, and
+//! The Hel (DESIGN.md §2): every `spira/*` branch gets exactly one disposition, and
 //! only a branch whose every change the base already holds is ever deleted.
 
 use std::path::Path;
@@ -180,7 +180,7 @@ impl<'a> Sweep<'a> {
             self.repo(r);
         }
         if !self.opts.dry {
-            self.w.log(&format!("sending: {} sent, {} failed", self.tally.sent, self.tally.failed));
+            self.w.log(&format!("hel: {} sent, {} failed", self.tally.sent, self.tally.failed));
         }
         i32::from(self.tally.failed != 0)
     }
@@ -189,7 +189,7 @@ impl<'a> Sweep<'a> {
         if self.deadline.is_some_and(|d| Instant::now() >= d) {
             if !self.truncated {
                 self.truncated = true;
-                self.w.log("sending: time budget spent — remaining branches and worktrees wait for the next pass");
+                self.w.log("hel: time budget spent — remaining branches and worktrees wait for the next pass");
             }
             return true;
         }
@@ -359,7 +359,7 @@ impl<'a> Sweep<'a> {
                     self.say(&format!("WOULD  {id}  reap superseded branch {br}{}", wt_suffix()));
                     return;
                 }
-                let _ = self.branch(c, id, br, "REAPED", "sending");
+                let _ = self.branch(c, id, br, "REAPED", "hel");
             }
             Disp::ReapSquashMerged => {
                 if dry {
@@ -396,7 +396,7 @@ impl<'a> Sweep<'a> {
     /// send_landed: send, then close a submitted work bead at the land ref's sha — in pr and
     /// hold mode this sweep is the first place that sees the work land.
     fn send_landed(&mut self, c: &Ctx, id: &str, br: &str, verb: &str) {
-        if self.branch(c, id, br, verb, "sending").is_err() {
+        if self.branch(c, id, br, verb, "hel").is_err() {
             return;
         }
         let sha = Git(c.repo).rev_parse(&c.base.landref).unwrap_or_else(|| c.base.landref.clone());
@@ -423,7 +423,7 @@ impl<'a> Sweep<'a> {
             self.tally.failed += 1;
             return;
         }
-        self.w.log(&format!("sending: archived {} {br} at {tip} -> {archive}", c.name));
+        self.w.log(&format!("hel: archived {} {br} at {tip} -> {archive}", c.name));
         let _ = self.branch(c, id, br, "ARCHIVED", "archived");
     }
 }

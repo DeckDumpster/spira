@@ -7,7 +7,7 @@
 #
 # WHAT THIS SUITE IS FOR
 # -----------------------
-# docs/test-plan/cockpit-observability.md section 5 demotes dup-refs, repo-labels, sphere
+# docs/test-plan/cockpit-observability.md section 5 demotes dup-refs, repo-labels, well
 # and sop off a real testdb_up store and onto SPIRA_BDJSON_FIXTURE (bead/tests/fixtures/bdsim.rs's pure
 # list/show/memories functions). That is safe only if bdsim's filtering — label AND
 # matching, the default exclude-closed, --all, and the query shapes bd reads for `ready` and
@@ -107,15 +107,15 @@ is "real bd: default list excludes the closed bead" "1" "$(field "$out" SP_REPO_
 
 # ======================================================================================
 echo
-echo "list --all --label <single> (sphere_keys' poison shape):"
+echo "list --all --label <single> (well_keys' poison shape):"
 # ======================================================================================
 testdb_reset
 testdb_seed <<JSONL
 {"id":"sp-cbsph1","title":"poisoned, incident-only","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","incident","spira-poison"],"updated_at":"2026-09-08T00:00:00Z"}
 {"id":"sp-cbsph2","title":"poisoned but closed","status":"closed","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","incident","spira-poison"],"updated_at":"2026-09-08T00:00:00Z"}
 JSONL
-out="$(run_probe sphere)"
-is "real bd: --all sees the poison label past sphere-grid scoping, excludes closed" \
+out="$(run_probe well)"
+is "real bd: --all sees the poison label past well-grid scoping, excludes closed" \
    "1" "$(field "$out" SP_POISON)"
 
 # ======================================================================================
