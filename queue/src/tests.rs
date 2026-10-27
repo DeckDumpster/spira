@@ -1179,7 +1179,7 @@ impl Lc for FLc {
     fn land_batch(&self, id: &str, v: &str, _: &str, sha: &str) -> Result<(), (i32, String)> {
         self.calls.borrow_mut().push(format!("land {id} {v} {sha}"));
         if self.activated.get() && self.retired_keys.get() {
-            return Err((2, "SPIRA_AEON_WARM_CAP_MIB is not declared".into()));
+            return Err((2, "SPIRA_RETIRED_KEY is not declared".into()));
         }
         match self.land_refused.get() {
             Some(why) => Err((3, why.into())),
@@ -1215,7 +1215,7 @@ impl Lc for FLc {
     fn mending_close_ended(&self, _: &str) -> Result<(), (i32, String)> {
         self.calls.borrow_mut().push("mending-close-ended".into());
         if self.activated.get() && self.retired_keys.get() {
-            return Err((2, "SPIRA_AEON_WARM_CAP_MIB is not declared".into()));
+            return Err((2, "SPIRA_RETIRED_KEY is not declared".into()));
         }
         Ok(())
     }
