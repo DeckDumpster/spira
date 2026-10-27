@@ -154,6 +154,10 @@ removed = ["spira.broker_enable", "spira.express_label", "spira.overlap_defer_la
 "spira.mimir_remedy_label" = "mimir-remedy"
 "spira.runes_dir" = ""
 "spira.runes_overlay" = ""
+"spira.call_jitter" = 20
+"spira.call_lock_wait" = 30
+"spira.max_dwarves" = 4
+"spira.max_live_dwarves" = 2
 "spira.runes" = ["spike", "builder", "groomer", "mimir", "ops", "czar", "warden", "mender"]
 
 [renamed]
