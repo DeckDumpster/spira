@@ -349,6 +349,12 @@ pub trait Rule: Send + Sync {
     fn checked(&self) -> Option<(usize, String)> {
         None
     }
+
+    /// Text a report-mode rule prints to stdout after its check, in place of findings: a rule
+    /// that measures a migration rather than fences it exits 0 and still has to be read.
+    fn report(&self) -> Option<String> {
+        None
+    }
 }
 
 /// The files `rule` applies to, refusing an empty scope.
@@ -448,6 +454,8 @@ pub struct RuleResult {
     pub outcome: Result<Vec<Finding>, LintError>,
     /// [`Rule::checked`], read after the check.
     pub checked: Option<(usize, String)>,
+    /// [`Rule::report`], read after the check.
+    pub report: Option<String>,
 }
 
 /// Run `rules` over `tree`, results in `rules`' order. The rules are independent reads of
@@ -461,7 +469,7 @@ pub fn run(tree: &Tree, rules: &[Box<dyn Rule>]) -> Vec<RuleResult> {
             v.sort_by(|a, b| (&a.path, a.line).cmp(&(&b.path, b.line)));
             v
         });
-        RuleResult { rule: r.name(), hint: r.hint(), outcome, checked: r.checked() }
+        RuleResult { rule: r.name(), hint: r.hint(), outcome, checked: r.checked(), report: r.report() }
     };
     let workers = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -678,7 +686,7 @@ mod tests {
         t.write("spira-lint/testlib-migrated-allow", "");
         t.git(&["add", "."]);
         let tree = Tree::from_git(t.path()).unwrap();
-        let contract = ["cockpit-no-bd", "cockpit-no-round-files", "pool-state-readers", "liveness-readers", "gate-state-readers", "aeon-state-readers", "release-state-readers", "sift-state-readers", "testenv-result-readers", "event-taxonomy", "gate-workflow", "conf-key-registry", "lib-sh-shims", "tmp-leak", "py-fstring-compat", "release-spawn-env", "config-literal-fallback", "config-env-read", "chmod-exec-leak", "no-download-install", "env-set-var-leak", "call-deadline", "hash-iter-output", "process-exit-in-library", "plan-matrix", "plan-lint", "lockfile-lint", "config-delta", "config-fixture", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas", "workflow-config", "fresh-host-entry", "otel-binaries", "journal-reads", "release-tool-exec", "bare-unit-name", "test-real-clock"];
+        let contract = ["cockpit-no-bd", "cockpit-no-round-files", "pool-state-readers", "liveness-readers", "gate-state-readers", "aeon-state-readers", "release-state-readers", "sift-state-readers", "testenv-result-readers", "event-taxonomy", "gate-workflow", "conf-key-registry", "lib-sh-shims", "tmp-leak", "py-fstring-compat", "release-spawn-env", "config-literal-fallback", "config-env-read", "chmod-exec-leak", "no-download-install", "env-set-var-leak", "call-deadline", "hash-iter-output", "process-exit-in-library", "plan-matrix", "plan-lint", "lockfile-lint", "config-delta", "config-fixture", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas", "workflow-config", "fresh-host-entry", "otel-binaries", "journal-reads", "release-tool-exec", "bare-unit-name", "test-real-clock", "ffx-vocabulary"];
         let mut rules = all_rules();
         rules.retain(|r| !contract.contains(&r.name()));
         let mut lines = Vec::new();

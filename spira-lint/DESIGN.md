@@ -1402,3 +1402,38 @@ finding per literal; comments and test code are ignored. The allow file
 (`spira-lint/bare-unit-name-allow`, exact paths) lists files that carried one when the rule
 landed and only shrinks. System units that are not instance-suffixed are the legitimate
 remainder in it.
+
+## Rule `ffx-vocabulary`
+
+**Intent.** The Final Fantasy X working vocabulary is being replaced term by term; this rule is
+the migration's progress meter and, once switched to `enforce`, the fence that stops the old
+words returning. The mapping is the replacing design's, not repeated here.
+
+**Scope.** Every walked path and every text file's contents, minus `docs/spikes/`, `raw/spira-beads/`
+(the bead mirror), `*.tsv` corpora and this rule's own source. A file holding a NUL byte is
+matched by path only. Commit history is not walked.
+
+**Matching.** A name or line is split into words at every non-alphanumeric and at camelCase
+joins (`AeonState`, `SPIRA_MAX_AEONS` and `aeon-fence.sh` each yield the term). A word is a
+hit when its lowercase form is one of the terms in the rule's table — the identity names,
+the ordinary-English words the vocabulary retired, with their plural or inflected forms. Two
+deliberate edges:
+
+- `Sin` is matched case-sensitively and whole: lowercase `sin` and `SIN` are English and the
+  constant, not the villain.
+- A longer word is not a hit: `Single`, `chambermaid`, and the legal plural `summonses` (absent
+  from the table on purpose). The price of camelCase splitting is a false hit on a word
+  joined from a term, such as `AtmoSphere`.
+
+`the Sending` (any case of `the`, capital `Sending`) and `sending_keys` are matched as phrases;
+`sending` alone is ordinary English and is not a hit.
+
+**Mode.** The config key `ffx_vocabulary_mode` (`SPIRA_FFX_VOCABULARY_MODE`), shipped as
+`report`, anything but `report` or `enforce` being a refusal (exit 3).
+
+- `report` prints every hit to stdout as `ffx-vocabulary: <path>:<line>:<term>` (line 0 is a hit in
+  the path itself), then a `count <term> <n>` line per term and a closing `remaining <n> hit(s)`
+  line, and exits 0. Each gate round's lint step logs it.
+- `enforce` reports each hit as an ordinary finding, so the run exits 1.
+
+**No allow list.** The migration is the allow list; nothing is excepted but the history paths above.

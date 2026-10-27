@@ -154,6 +154,9 @@ fn real_main() -> ExitCode {
         if let Some((n, unit)) = &r.checked {
             controls.push(format!("fence: {} checked {n} {unit}", r.rule));
         }
+        if let Some(text) = &r.report {
+            print!("{text}");
+        }
         match r.outcome {
             Ok(mut v) => {
                 if let Some(s) = scope.as_ref().filter(|_| !spira_lint::BASE_RELATIVE.contains(&r.rule)) {
