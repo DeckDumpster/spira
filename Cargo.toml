@@ -155,6 +155,7 @@ opt-level = 2
 # gate for sha2 over its own binaries (~10 MB/s).
 [profile.aeon.package."*"]
 opt-level = 2
+debug = false
 
 # Every Rust binary resolves its config at start (13 ms here at opt-level 0, 3 ms optimised), and
 # a sim world starts a few hundred of them; the sim is the stand-in for the forge and the probes
