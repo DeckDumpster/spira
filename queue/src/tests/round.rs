@@ -1878,7 +1878,40 @@ fn suites_started_re_reads_and_survives_repeated_stale_versions() {
             .filter(|c| c.starts_with("event batch") && c.contains("SuitesStarted"))
             .count();
     assert_eq!(shows, 4, "{:?}", t.lc.calls.borrow());
+    *t.lc.batch_view.borrow_mut() = Some(("CI_RUNNING".into(), 9, 1, "build".into()));
     t.lc.stale_batch_events.set(100);
+    assert_ne!(t.run(&["round", "suites-started", &batch]), 0);
+}
+
+#[test]
+fn a_repeated_suites_started_for_one_pass_is_a_no_op_success() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
+    for _ in 0..2 {
+        assert_eq!(t.run(&["round", "suites-started", &batch]), 0, "{}", t.err());
+    }
+    assert_eq!(
+        events_of(&t, &batch),
+        [
+            "{\"PassStarted\":{\"n\":1,\"head\":\"merged-ta\"}}",
+            "{\"SuitesStarted\":{\"n\":1}}",
+        ]
+    );
+}
+
+#[test]
+fn suites_started_outside_the_build_phase_of_a_pass_still_refuses() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "suites-started", &batch]), 0, "{}", t.err());
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 9, 1, String::new()));
+    t.lc.batch_event_refused.set(Some("SuitesStarted"));
     assert_ne!(t.run(&["round", "suites-started", &batch]), 0);
 }
 
