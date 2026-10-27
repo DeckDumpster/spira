@@ -960,6 +960,18 @@ fn suites_job_faulted(v: &Value) -> bool {
                     }
                 }
             }
+            let step_concl = |name: &str| {
+                steps
+                    .iter()
+                    .find(|s| jstr(s, "name").as_deref() == Some(name))
+                    .map(|s| jstr(s, "conclusion").unwrap_or_default().to_lowercase())
+            };
+            let ran = |c: &Option<String>| matches!(c.as_deref(), Some("success" | "failure"));
+            if step_concl("Acquire the test image").as_deref() == Some("failure")
+                && !ran(&step_concl("Suites"))
+            {
+                return true;
+            }
         }
     }
     false
