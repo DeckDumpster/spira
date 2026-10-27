@@ -1264,7 +1264,8 @@ impl<'a> Run<'a> {
         }
         let mut warm_slot = None;
         let _warm = match spira_config::build::acquire_warm(&warm_base, spira_config::build::AEON_WARM_SLOTS) {
-            Some((dir, lock)) => {
+            Some((dir, mut lock)) => {
+                spira_config::build::note_holder(&mut lock, &bead);
                 if spira_config::build::reap_for_build(&dir, cap_mib) {
                     self.log(&format!("{}: warm target {} held over half of {cap_mib} MiB — started empty", self.f(), dir.display()));
                 }
@@ -1272,7 +1273,7 @@ impl<'a> Run<'a> {
                     self.log(&format!("{}: idle warm target {} emptied (over {cap_mib} MiB or the tmpfs is past {}%)", self.f(), idle.display(), spira_config::build::AEON_WARM_FULL_PCT));
                 }
                 env.set("CARGO_TARGET_DIR", &dir.display().to_string());
-                warm_slot = Some(crate::session::WarmSlot { dir: dir.clone(), cap_mib, every: crate::session::WARM_CHECK_EVERY });
+                warm_slot = Some(crate::session::WarmSlot { dir: dir.clone(), cap_mib, every: crate::session::WARM_CHECK_EVERY, spill: work.join("target") });
                 Some(lock)
             }
             None => {
