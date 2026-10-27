@@ -334,26 +334,26 @@ fn certified_round() -> (T, String) {
 }
 
 #[test]
-fn land_rides_out_a_store_restart_after_activation_and_records_the_batch() {
+fn land_records_and_closes_mending_before_activating_a_release_that_retires_keys() {
     let (t, batch) = certified_round();
-    t.lc.down_for.set(5);
+    t.lc.retired_keys.set(true);
     assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
     assert!(
-        t.lc.has(&format!("land {batch} 4 merged-tb")),
+        t.lc.has(&format!("land {batch} 4 merged-tb")) && t.lc.has("mending-close-ended"),
         "{:?}",
         t.lc.calls.borrow()
     );
-    assert!(!t.err().contains("ALARM"), "{}", t.err());
+    let e = t.err();
+    assert!(!e.contains("ALARM") && !e.contains("not declared"), "{e}");
 }
 
 #[test]
-fn land_with_the_store_down_past_the_deadline_exits_nonzero_naming_the_batch() {
+fn land_with_the_record_refused_exits_nonzero_naming_the_batch() {
     let (t, batch) = certified_round();
-    t.lc.down_for.set(10_000);
+    t.lc.land_refused.set(Some("store unreachable"));
     assert_eq!(t.run(&["round", "land", &batch]), 1, "{}", t.err());
     let e = t.err();
     assert!(e.contains(&batch) && e.contains("ALARM"), "{e}");
-    assert!(!t.lc.has("land "), "{:?}", t.lc.calls.borrow());
     assert_eq!(
         t.landed_ref().as_deref(),
         Some("merged-tb"),

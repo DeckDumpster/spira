@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::batch::lc_return;
-use super::land::land_local_with;
+use super::land::land_local_deferring;
 use super::stage;
 use super::{
     actor, converge_orphans, czar_ok, idents, landing_log, lc_abandon, lc_cas, lc_eject_member,
@@ -3126,16 +3126,20 @@ fn land(w: &World, batch: &str, repo: Option<&str>) -> i32 {
         .join("release")
         .is_dir()
         .then_some(wt.as_path());
-    let rc = land_local_with(
+    let (rc, pending) = land_local_deferring(
         w,
         Some(&c.r.name),
         &head,
         &Text::Arg(csv(&members)),
         bins,
         true,
+        true,
     );
     let base = c.r.landref.clone().unwrap_or_default();
     if rc != OK && !w.git.is_ancestor(&path, &head, &base) {
+        if let Some(p) = pending {
+            p.discard();
+        }
         return rc;
     }
 
@@ -3178,6 +3182,11 @@ fn land(w: &World, batch: &str, repo: Option<&str>) -> i32 {
         "queue.sh {label}: round {batch} landed at {head} — {} member(s)",
         members.len()
     ));
+    // Activation is the last step: the new release may retire keys the steps above still need.
+    let rc = match pending.map(|p| p.activate(w)) {
+        Some(super::deploy::Outcome::Fault(_)) => super::DEPLOY_FAULT,
+        _ => rc,
+    };
     if !recorded {
         w.err(format!("queue.sh {label}: round {batch} has NO batch landing record; the release is live — exiting non-zero"));
         return if rc == OK { FAIL } else { rc };

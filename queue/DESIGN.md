@@ -168,6 +168,9 @@ the tests; CAUGHT/GATE_COST/BATCH are read only by `stats`.
 - **Refusal changes nothing.** Every refusal before the CAS writes nothing. The release step
   (§8 D13) runs after the landing is recorded and does not revert it: a build, verify or
   activate failure leaves `current` where it was, is loud, and makes the exit non-zero.
+- **Activation is a landing's last step.** The new release may retire config keys the running
+  (old) release's tools require, so `round land` records the batch landing and ends the
+  closed batches' MENDING rows before `release activate`; nothing after it needs config.
 - **One writer per repo.** Every mutating subcommand takes `$SPIRA_QUEUE_DIR/<repo>/lock`
   with a non-blocking exclusive flock (the same file the batcher's `try_lock` takes).
 - **CAS on the landing ref.** `update-ref <ref> <new> <old>`, never a plain write.

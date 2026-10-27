@@ -877,7 +877,9 @@ struct FLc {
     /// Per-batch answers to `show-batch`, ahead of `batch_view`.
     batch_states: RefCell<BTreeMap<String, (String, String)>>,
     /// Reads of `show-batch` that fail once the release is activated (the store restarting).
-    down_for: Cell<u32>,
+    /// Once the release is activated, every record step fails: the new release retired a key
+    /// the running (old) release's tools still require.
+    retired_keys: Cell<bool>,
     /// `show-batch` finds no row for any batch.
     no_batch_row: Cell<bool>,
     activated: std::rc::Rc<Cell<bool>>,
@@ -918,7 +920,7 @@ impl Default for FLc {
             cut_refused: Cell::new(None),
             cut_refuses_member: Cell::new(None),
             deadline_after_write: Cell::new(None),
-            down_for: Cell::new(0),
+            retired_keys: Cell::new(false),
             no_batch_row: Cell::new(false),
             activated: Default::default(),
             batch_states: RefCell::default(),
@@ -964,10 +966,6 @@ impl Lc for FLc {
         }
         if let Some(s) = self.batch_states.borrow().get(id) {
             return Some(s.clone());
-        }
-        if self.activated.get() && self.down_for.get() > 0 {
-            self.down_for.set(self.down_for.get() - 1);
-            return None;
         }
         match &*self.batch_view.borrow() {
             Some((s, v, _, _)) => Some((s.clone(), v.to_string())),
@@ -1180,6 +1178,9 @@ impl Lc for FLc {
     }
     fn land_batch(&self, id: &str, v: &str, _: &str, sha: &str) -> Result<(), (i32, String)> {
         self.calls.borrow_mut().push(format!("land {id} {v} {sha}"));
+        if self.activated.get() && self.retired_keys.get() {
+            return Err((2, "SPIRA_RETIRED_KEY is not declared".into()));
+        }
         match self.land_refused.get() {
             Some(why) => Err((3, why.into())),
             None => Ok(()),
@@ -1213,6 +1214,9 @@ impl Lc for FLc {
     }
     fn mending_close_ended(&self, _: &str) -> Result<(), (i32, String)> {
         self.calls.borrow_mut().push("mending-close-ended".into());
+        if self.activated.get() && self.retired_keys.get() {
+            return Err((2, "SPIRA_RETIRED_KEY is not declared".into()));
+        }
         Ok(())
     }
     fn mending_event(
