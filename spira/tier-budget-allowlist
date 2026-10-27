@@ -361,3 +361,12 @@ test-yield.sh	T1	44.5
 # exposure: test-mimir-sibling-blind.sh sp-vt8lbr
 # exposure: test-mimir-trigger.sh sp-vt8lbr
 # exposure: test-mimir.sh sp-vt8lbr
+# exposure: test-cockpit-well.sh sp-o0kc8l
+# exposure: test-fenrir-exempt.sh sp-o0kc8l
+# exposure: test-hel-certified-guard.sh sp-o0kc8l
+# exposure: test-hel-closed-reap.sh sp-o0kc8l
+# exposure: test-hel-content-label.sh sp-o0kc8l
+# exposure: test-hel-empty-commit.sh sp-o0kc8l
+# exposure: test-hel-metrics.sh sp-o0kc8l
+# exposure: test-hel-squash-merged.sh sp-o0kc8l
+# exposure: test-hel-unlanded-guard.sh sp-o0kc8l
