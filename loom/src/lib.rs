@@ -4,6 +4,7 @@
 
 pub mod aeons;
 pub mod forge_rounds;
+pub mod next;
 pub mod now;
 pub mod ops;
 pub mod shell;
@@ -758,8 +759,44 @@ async fn shot_route(State(loom): State<Arc<Loom>>, axum::extract::Path((bead, ti
     }
 }
 
+async fn next_route(State(loom): State<Arc<Loom>>, uri: axum::http::Uri) -> Response {
+    let fragment = uri.query().is_some_and(|q| q.split('&').any(|kv| kv == "fragment" || kv.starts_with("fragment=")));
+    let (mut snap, age) = match lifecycle_snapshot(&loom) {
+        Ok(x) => x,
+        Err(e) => return unavailable("overview", &e),
+    };
+    let now = now_s();
+    // The pass file is read fresh, as the old lifecycle page did, so the bar is live; the
+    // overview draws it once, on the round it names.
+    if let Some(p) = std::fs::read(std::path::Path::new(&loom.config().run).join("round-progress.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .and_then(|v| cockpit_ops::lcview::PassProgress::from_json(&v))
+    {
+        snap.progress = Some(p);
+    }
+    snap.loom_base = Some(String::new());
+    let view = cockpit_ops::lcview::view(&snap);
+    let flight = inflight(&loom);
+    let held = loom.units_held();
+    let units = match held.as_deref() {
+        None => now::UnitsState::Pending,
+        Some(u) => now::UnitsState::Held { snap: u, age_s: u.taken.elapsed().as_secs() as i64, stale: u.taken.elapsed() >= loom.config().cache },
+    };
+    let page = next::Page { snap: &snap, view: &view, flight: &flight, units: &units, now, age_s: age };
+    let (ctype, body) = if fragment { ("application/json", next::fragment(&page)) } else { ("text/html; charset=utf-8", next::page(&page)) };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, ctype)
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(body.into())
+        .expect("a response with a valid status and headers")
+}
+
 pub fn router(loom: Arc<Loom>) -> Router {
     Router::new()
+        .route("/next", get(next_route))
+        .route("/next/", get(next_route))
         .route("/shots/{bead}/{tip}/{file}", get(shot_route))
         .route("/lifecycle", get(lifecycle_page_route))
         .route("/rounds/{batch}", get(vm_round_route))
