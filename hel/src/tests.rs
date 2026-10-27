@@ -415,6 +415,22 @@ fn a_branch_holding_only_a_stacked_base_merge_is_sent() {
 }
 
 #[test]
+fn a_squash_landed_branch_is_sent_when_the_landing_ref_names_the_bead() {
+    let (fx, mut f) = fixture();
+    let r = fx.repo.clone();
+    git(&r, &["checkout", "-q", "-b", "spira/sp-sqx", "main"]);
+    git(&r, &["commit", "-q", "--allow-empty", "-m", "wip"]);
+    git(&r, &["checkout", "-q", "main"]);
+    git(&r, &["commit", "-q", "--allow-empty", "-m", "sp-sqx: squashed (#9)"]);
+    f.put("sp-sqx", json!({"status": "closed", "labels": [], "dependencies": []}));
+    sweep(&f, opts(), &[repo(&fx)]);
+    let out = f.out();
+    assert!(!out.contains("KEEP   sp-sqx"), "{out}");
+    assert!(!exists(&fx, "spira/sp-sqx"), "{out}");
+    assert!(out.contains("KEEP   sp-vac"), "no naming commit on either side stays kept: {out}");
+}
+
+#[test]
 fn dry_run_says_would_and_changes_nothing() {
     let (fx, f) = fixture();
     let rc = sweep(&f, Opts { dry: true, ..opts() }, &[repo(&fx)]);

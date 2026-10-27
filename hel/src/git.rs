@@ -78,6 +78,16 @@ impl Git<'_> {
         })
     }
 
+    /// A commit on <base> itself names <id>: a squash merge carries the bead id on the landing
+    /// ref, not on the branch's own commits.
+    pub fn base_names(&self, base: &str, id: &str, window: u32) -> bool {
+        let n = format!("-n{window}");
+        let grep = format!("--grep={id}");
+        self.out(&["log", "--format=%s", n.as_str(), "-F", grep.as_str(), base]).is_some_and(|s| {
+            s.lines().any(|l| l.match_indices(id).any(|(i, _)| !l[i + id.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '.' || c == '-')))
+        })
+    }
+
     /// Every commit in `base..br` is the claim-time stacked-base merge, which carries no change
     /// of its own; false when there are none.
     pub fn only_stacked_base(&self, base: &str, br: &str) -> bool {
