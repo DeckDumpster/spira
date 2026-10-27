@@ -58,6 +58,8 @@ pub struct WarmSlot {
     pub dir: PathBuf,
     pub cap_mib: u64,
     pub every: Duration,
+    /// Where the build continues when trimming `incremental` leaves the slot over the cap.
+    pub spill: PathBuf,
 }
 
 /// Everything one session launch needs.
@@ -113,14 +115,22 @@ impl Launcher for RealLauncher {
         let mut forwarded = false;
         let mut signalled_at: Option<Instant> = None;
         let mut warm_checked = Instant::now();
+        let mut spilled = spec.warm.as_ref().is_some_and(|w| spira_config::build::is_spilled(&w.dir));
         let code = loop {
-            if let Some(w) = &spec.warm {
+            if let Some(w) = spec.warm.as_ref().filter(|_| !spilled) {
                 if warm_checked.elapsed() >= w.every {
                     warm_checked = Instant::now();
                     if spira_config::build::enforce_cap(&w.dir, w.cap_mib) {
-                        if let Ok(mut f) = OpenOptions::new().append(true).open(&spec.log) {
-                            use std::io::Write;
-                            let _ = writeln!(f, "aeon: warm target {} passed {} MiB — trimmed while the session ran", w.dir.display(), w.cap_mib);
+                        let mut say = |m: String| {
+                            if let Ok(mut f) = OpenOptions::new().append(true).open(&spec.log) {
+                                use std::io::Write;
+                                let _ = writeln!(f, "{m}");
+                            }
+                        };
+                        say(format!("aeon: warm target {} passed {} MiB — trimmed while the session ran", w.dir.display(), w.cap_mib));
+                        if spira_config::build::spill(&w.dir, &w.spill, w.cap_mib) {
+                            spilled = true;
+                            say(format!("aeon: warm target {} still over {} MiB — the build continues in {}", w.dir.display(), w.cap_mib, w.spill.display()));
                         }
                     }
                 }
@@ -146,6 +156,11 @@ impl Launcher for RealLauncher {
             std::thread::sleep(Duration::from_millis(100));
         };
         stop.pgid.store(0, Ordering::SeqCst);
+        if spilled {
+            if let Some(w) = &spec.warm {
+                spira_config::build::unspill(&w.dir);
+            }
+        }
         if timed_out {
             124
         } else {
@@ -480,10 +495,27 @@ mod tests {
         let mut env = BTreeMap::new();
         env.insert("PATH".to_string(), std::env::var("PATH").unwrap_or_default());
         let script = format!("mkdir -p {0}/debug/incremental; head -c 3145728 /dev/zero > {0}/debug/incremental/x; sleep 1", slot.display());
-        let spec = SessionSpec { prog: "sh".into(), args: vec!["-c".into(), script], stdin_file: task, log: d.join("log"), cwd: d.to_path_buf(), env, timeout: None, halted: None, warm: Some(WarmSlot { dir: slot.clone(), cap_mib: 1, every: Duration::from_millis(100) }) };
+        let spec = SessionSpec { prog: "sh".into(), args: vec!["-c".into(), script], stdin_file: task, log: d.join("log"), cwd: d.to_path_buf(), env, timeout: None, halted: None, warm: Some(WarmSlot { dir: slot.clone(), cap_mib: 1, every: Duration::from_millis(100), spill: d.join("disk") }) };
         assert_eq!(RealLauncher.run(&spec, &Stop::default()), 0);
         assert!(!slot.join("debug/incremental/x").exists(), "the growth past the cap was refused");
         assert!(std::fs::read_to_string(d.join("log")).unwrap().contains("trimmed while the session ran"));
+    }
+
+    #[test]
+    fn growth_past_the_cap_outside_incremental_spills_to_disk_and_the_session_keeps_building() {
+        let d = tmp("warm-spill");
+        let slot = d.join("slot.1");
+        std::fs::create_dir_all(&slot).unwrap();
+        let task = d.join("task.md");
+        std::fs::write(&task, "").unwrap();
+        let mut env = BTreeMap::new();
+        env.insert("PATH".to_string(), std::env::var("PATH").unwrap_or_default());
+        let script = format!("mkdir -p {0}/debug/deps; head -c 3145728 /dev/zero > {0}/debug/deps/x; sleep 1; mkdir -p {0}/debug/deps; echo more > {0}/debug/deps/y; sleep 1", slot.display());
+        let spec = SessionSpec { prog: "sh".into(), args: vec!["-c".into(), script], stdin_file: task, log: d.join("log"), cwd: d.to_path_buf(), env, timeout: None, halted: None, warm: Some(WarmSlot { dir: slot.clone(), cap_mib: 1, every: Duration::from_millis(100), spill: d.join("disk") }) };
+        assert_eq!(RealLauncher.run(&spec, &Stop::default()), 0);
+        assert!(d.join("disk/debug/deps/y").exists(), "the build after the cap went to disk");
+        assert!(slot.is_dir() && !std::fs::symlink_metadata(&slot).unwrap().file_type().is_symlink(), "the slot is a real directory again");
+        assert!(!slot.join("debug/deps/x").exists());
     }
 
     #[test]

@@ -476,6 +476,57 @@ pub fn enforce_cap(slot: &Path, cap_mib: u64) -> bool {
     true
 }
 
+/// Move a running session's slot over its cap onto `disk`: the slot name becomes a symlink to
+/// `disk`, so the next cargo invocation builds there and the tmpfs gets the space back. Never
+/// run on a slot already spilled. True when it spilled.
+pub fn spill(slot: &Path, disk: &Path, cap_mib: u64) -> bool {
+    size_of(slot) > cap_mib * 1024 * 1024 && move_to_disk(slot, disk)
+}
+
+/// Spill a slot at session start when the tmpfs is already past `full_pct`: a session handed a
+/// slot on a full tmpfs would otherwise fail its first build.
+pub fn spill_if_full(slot: &Path, disk: &Path, full_pct: u64) -> bool {
+    slot.parent().and_then(used_pct).is_some_and(|p| p >= full_pct) && move_to_disk(slot, disk)
+}
+
+pub fn is_spilled(slot: &Path) -> bool {
+    std::fs::symlink_metadata(slot).is_ok_and(|m| m.file_type().is_symlink())
+}
+
+fn move_to_disk(slot: &Path, disk: &Path) -> bool {
+    if is_spilled(slot) {
+        return false;
+    }
+    let Some(name) = slot.file_name().map(|n| n.to_string_lossy().into_owned()) else { return false };
+    let old = slot.with_file_name(format!("{name}.spill"));
+    if std::fs::create_dir_all(disk).is_err() || std::fs::rename(slot, &old).is_err() {
+        return false;
+    }
+    if std::os::unix::fs::symlink(disk, slot).is_err() {
+        let _ = std::fs::rename(&old, slot);
+        return false;
+    }
+    std::thread::spawn(move || {
+        let _ = std::fs::remove_dir_all(old);
+    });
+    true
+}
+
+/// Put a real, empty slot directory back where [`spill`] left a symlink.
+pub fn unspill(slot: &Path) {
+    if is_spilled(slot) {
+        let _ = std::fs::remove_file(slot);
+        let _ = std::fs::create_dir_all(slot);
+    }
+}
+
+/// Record `who` in the slot's lock file so the watcher can name the holder.
+pub fn note_holder(lock: &mut std::fs::File, who: &str) {
+    use std::io::Write;
+    let _ = lock.set_len(0);
+    let _ = lock.write_all(who.as_bytes());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -519,6 +570,33 @@ mod tests {
         assert!(base.join("slot.3/debug/z").exists(), "under the cap and the disk not full: stays warm");
         let reaped = reap_idle(base, 3, 2, 0);
         assert_eq!(reaped, vec![base.join("slot.3")], "a full disk empties every idle slot that holds anything");
+    }
+
+    #[test]
+    fn a_slot_still_over_its_cap_spills_to_disk_and_is_restored() {
+        let d = testkit::TempDir::new("warm-spill");
+        let slot = d.path().join("slot.1");
+        let disk = d.path().join("disk");
+        fill(&slot.join("debug/deps/a"), 3072);
+        assert!(!spill(&slot, &disk, 4), "under the cap nothing moves");
+        assert!(spill(&slot, &disk, 2));
+        fill(&slot.join("debug/deps/b"), 16);
+        assert!(disk.join("debug/deps/b").exists(), "later writes land on disk");
+        assert!(!spill(&slot, &disk, 0), "a spilled slot is not spilled again");
+        unspill(&slot);
+        assert!(slot.is_dir() && !std::fs::symlink_metadata(&slot).unwrap().file_type().is_symlink());
+        assert!(std::fs::read_dir(&slot).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn a_slot_on_a_full_tmpfs_starts_spilled() {
+        let d = testkit::TempDir::new("warm-start-full");
+        let slot = d.path().join("slot.1");
+        let disk = d.path().join("disk");
+        std::fs::create_dir_all(&slot).unwrap();
+        assert!(!spill_if_full(&slot, &disk, 101), "a filesystem below the limit leaves the slot alone");
+        assert!(spill_if_full(&slot, &disk, 0));
+        assert!(is_spilled(&slot));
     }
 
     #[test]

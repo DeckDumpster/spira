@@ -42,6 +42,18 @@ _wf_reap_idle() {
     done
 }
 
+_wf_holders() {
+    local lock out="" who
+    for lock in "$1"/slot.[0-9]*.lock; do
+        [ -e "$lock" ] || continue
+        (flock -n 9) 9>>"$lock" && continue
+        who="$(tr -dc 'A-Za-z0-9._-' < "$lock" 2>/dev/null)"
+        out="$out $(basename "${lock%.lock}")=${who:-unknown}"
+    done
+    [ -n "$out" ] && printf ' (held by:%s)' "$out"
+    return 0
+}
+
 cmd_pass() {
     local base="${SPIRA_AEON_WARM_BASE:-}" lim=85 pct sizes
     [ -n "$base" ] && [ -d "$base" ] || return 0
@@ -53,7 +65,7 @@ cmd_pass() {
     if [ "$pct" -lt "$lim" ]; then rm -f "$SAID"; return 0; fi
     [ -e "$SAID" ] && return 0
     sizes="$(du -sm "$base"/slot.[0-9]* 2>/dev/null | awk '{n=$2; sub(".*/","",n); printf "%s=%sMiB ", n, $1}')"
-    _wf_say "aeon warm tmpfs $base is ${pct}% full (limit ${lim}%): ${sizes:-no slots}; the slots a session holds cannot be emptied"
+    _wf_say "aeon warm tmpfs $base is ${pct}% full (limit ${lim}%): ${sizes:-no slots}; the slots a session holds cannot be emptied$(_wf_holders "$base")"
     mkdir -p "$(dirname "$SAID")" && : > "$SAID"
 }
 

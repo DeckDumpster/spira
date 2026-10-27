@@ -44,4 +44,7 @@ wfc() { tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_AEON
 want "a pass reports emptying an idle slot over the cap" "slot.1 emptied" "$(wfc)"
 is "the idle slot is empty after one pass" "0" "$(find "$TMP/warm2/slot.1" -type f | wc -l | tr -d ' ')"
 is "a held slot is left alone" "1" "$(find "$TMP/warm2/slot.2" -type f | wc -l | tr -d ' ')"
+printf 'sp-held1' > "$TMP/warm2/slot.2.lock"
+echo 90 > "$TMP/pct"; rm -f "$TMP/run/watchd/warm-full.said"
+want "the alarm names the bead holding a slot" "slot.2=sp-held1" "$(wfc)"
 exec 8>&-
