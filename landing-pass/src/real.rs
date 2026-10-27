@@ -306,7 +306,7 @@ fn mail_send(program: &str, to: &str, from: &str, subject: &str, kind: &str, def
     Err(format!("exit {} — {}", o.status.code().map_or("signal".into(), |c| c.to_string()), if err.is_empty() { "no stderr" } else { &err }))
 }
 
-fn class_window_elapsed(anchor: &Path, window: i64, now: u64) -> bool {
+fn class_window_closed(anchor: &Path, window: i64, now: u64) -> bool {
     let Ok(md) = std::fs::metadata(anchor) else { return false };
     let mtime = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
     now.saturating_sub(mtime) as i64 >= window
@@ -338,7 +338,7 @@ impl<'a> Lib for RealLib<'a> {
             let since = dir.join(format!("{key}.since"));
             let refused = dir.join(format!("{key}.refused"));
             let anchor = if asked.exists() { &asked } else { &since };
-            if class_window_elapsed(anchor, self.s.noverdict_class_window, unix_now()) {
+            if class_window_closed(anchor, self.s.noverdict_class_window, unix_now()) {
                 for f in [&file, &asked, &branches_file, &since, &refused] {
                     let _ = std::fs::remove_file(f);
                 }
@@ -1418,10 +1418,10 @@ mod mail_refusal_tests {
     fn the_class_window_runs_from_the_anchor_file() {
         let d = crate::testutil::tmpdir("mail");
         let f = d.join("since");
-        assert!(!class_window_elapsed(&f, 0, 1 << 40));
+        assert!(!class_window_closed(&f, 0, u64::MAX));
         std::fs::write(&f, "").unwrap();
         let mtime = std::fs::metadata(&f).unwrap().modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-        assert!(!class_window_elapsed(&f, 3600, mtime + 10));
-        assert!(class_window_elapsed(&f, 3600, mtime + 3600));
+        assert!(!class_window_closed(&f, 3600, mtime + 10));
+        assert!(class_window_closed(&f, 3600, mtime + 3600));
     }
 }
