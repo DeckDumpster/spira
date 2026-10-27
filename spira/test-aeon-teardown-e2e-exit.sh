@@ -125,7 +125,7 @@ echo "ROW: a question closed without an answer withdraws the ask — resolve on 
 # bead (work-bead:<id>). The concierge resolving that ask bead itself — moot, or established
 # without him — is the question closed with no answer: withdraw-ask, not reply.
 printf '## Question\nMay the fixture rotate its deploy key?\n\n## Default\nno\n\n## Class basis\nthe deploy key is a credential only the operator holds\n' \
-    | SPIRA_WORK_BEAD_ID=sp-ow2 SPIRA_FAYTH=builder work ask --subject "rotate the fixture deploy key" --kind question --default no --class permissions --body-file - \
+    | SPIRA_WORK_BEAD_ID=sp-ow2 SPIRA_RUNE=builder work ask --subject "rotate the fixture deploy key" --kind question --default no --class permissions --body-file - \
     > "$FA_TMP/ask2.out" 2>&1
 is   "a classed work ask is applied" "0" "$?"
 is   "the row is held again" "READY ask" "$(ow_row sp-ow2)"

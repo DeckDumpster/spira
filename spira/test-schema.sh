@@ -70,7 +70,7 @@ want "dims include repo"  "repo"  "$(schema.sh dims | tr '\n' ' ')"
 want "dims include gate"  "gate"  "$(schema.sh dims | tr '\n' ' ')"
 out="$(schema.sh contract 2>/dev/null)"
 want "contract names the store section" "STORE" "$out"
-want "contract reads personas from the chamber" "PERSONAS" "$out"
+want "contract reads personas from the runes" "PERSONAS" "$out"
 
 echo
 echo "the whole point: no OTHER harness file may carry a declared literal"

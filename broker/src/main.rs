@@ -10,7 +10,7 @@ use spira_otel::exit::ExitCode;
 /// `SPIRA_*` values a bash process this binary spawns must never see pre-set — the same
 /// per-copy-fact / host-policy keys `cockpit-collect`'s `bootstrap_config` names
 /// (wave4-decomposition.md row (b)).
-const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "SPIRA_REPO_MAP", "SPIRA_FAYTHS", "SPIRA_MAX_AEONS"];
+const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "SPIRA_REPO_MAP", "SPIRA_RUNES", "SPIRA_MAX_AEONS"];
 
 /// Wave 4.8 ("retire conf re-import seams in Rust"): every `std::env::var(...)` read across
 /// this crate's submodules (read.rs, repo_map.rs, token.rs) used to

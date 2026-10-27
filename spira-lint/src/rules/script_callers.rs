@@ -74,7 +74,7 @@ fn bare_token_re() -> &'static Regex {
 /// `sp-yv4b3`'s shape (`unwrap_or_else(|| PathBuf::from("forge.sh"))`) and the production
 /// fleet-control defect this rule's own run turned up (`Command::new("slay.sh")`) are both
 /// this shape; a log message naming the old script for an operator's benefit
-/// (`"escape.sh {fayth}: …"`) and a `queue.sh …` usage string are not, and a literal-text
+/// (`"escape.sh {rune}: …"`) and a `queue.sh …` usage string are not, and a literal-text
 /// scan with no such anchor flagged both — over a thousand hits, nearly all of them this.
 fn literal_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -597,7 +597,7 @@ mod tests {
         let t = TempDir::new("sc-rust-log");
         t.write(
             "aeon/src/escape.rs",
-            "fn f(fayth: &str) -> String { format!(\"escape.sh {fayth}: nothing ready\") }\nconst USAGE: &str = \"usage: queue.sh submit\";\n",
+            "fn f(rune: &str) -> String { format!(\"escape.sh {rune}: nothing ready\") }\nconst USAGE: &str = \"usage: queue.sh submit\";\n",
         );
         assert!(run(&t, &["aeon/src/escape.rs"]).unwrap().is_empty());
     }

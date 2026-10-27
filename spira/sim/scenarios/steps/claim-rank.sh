@@ -8,8 +8,8 @@ log="$SIM_WORLD/claim-order"
 [ "$(wc -l < "$log" 2>/dev/null || echo 0)" -ge 2 ] || exit 3
 [ "$(sed -n 1p "$log" | cut -d' ' -f1)" = "$first" ] || fail "$first was not claimed first: $(tr '\n' ';' < "$log")"
 [ "$(sed -n 2p "$log" | cut -d' ' -f1)" = "$second" ] || fail "$second was not claimed second: $(tr '\n' ';' < "$log")"
-while read -r bead holder lease fayth; do
-    [ "$fayth" = builder ] || fail "$bead was claimed for $fayth"
+while read -r bead holder lease rune; do
+    [ "$rune" = builder ] || fail "$bead was claimed for $rune"
     [ "$lease" -gt "$SPIRA_NOW" ] || fail "$bead lease $lease is not after the world's clock $SPIRA_NOW"
     [ "$lease" -le $((SPIRA_NOW + 3600)) ] || fail "$bead lease $lease is more than an hour past the world's clock $SPIRA_NOW"
 done < "$log"

@@ -30,8 +30,8 @@ testdb_up mailaeon || { echo "test-mail-aeon: could not build fixture db"; exit 
 # bdq is a lib.sh function; define a thin wrapper so test-level calls reach the fixture db.
 bdq() { BD_IGNORE_SCHEMA_SKEW=1 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"; } # batch-job: fixture bd call against the suite's throwaway store
 
-export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_HOME/hooks"
-tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
+export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/runes" "$SPIRA_HOME/hooks"
+tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
 # conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-aeon-world-stop.sh, ...): aeon's
 # own in-process config registry (spira_config::resolve, aeon::conf::merge_resolved_config)
 # derives conf.d from THIS --home and now REFUSES to start if it is missing (sp-1cdgq) --
@@ -143,15 +143,15 @@ timeout 5 git -C "$AEON_REPO" push -q origin main 2>/dev/null
 printf 'fixture | %s | push | origin/main | |\n' "$AEON_REPO" > "$SPIRA_HOME/repo-map"
 SPIRA_REPO_MAP="$SPIRA_HOME/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 
-cat > "$SPIRA_HOME/chamber/builder.fayth" <<'FAYTH'
-FAYTH_NAME=builder
-FAYTH_WORKING_EXITS="SUBMITTED ask park hold"
-FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}partition:${SPIRA_PLAN_LABEL}"
-FAYTH_EXCLUDE_LABELS="spira-poison"
-FAYTH_MAX_CONCURRENT=1
-FAYTH_HEARTBEAT_SECONDS=600
-FAYTH
-printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
+cat > "$SPIRA_HOME/runes/builder.rune" <<'RUNE'
+RUNE_NAME=builder
+RUNE_WORKING_EXITS="SUBMITTED ask park hold"
+RUNE_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}partition:${SPIRA_PLAN_LABEL}"
+RUNE_EXCLUDE_LABELS="spira-poison"
+RUNE_MAX_CONCURRENT=1
+RUNE_HEARTBEAT_SECONDS=600
+RUNE
+printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/runes/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"
 # sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; the

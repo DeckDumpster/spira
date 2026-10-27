@@ -320,7 +320,7 @@ fn ingest_repo(mut r: Report, http: &dyn Http, bd: &dyn Bd, mail: &dyn Mail, sta
 
     if !cfg.dry_run {
         // The post-check: re-read the store and refuse to finish quietly if a work bead
-        // was filed that carries no scope label (aeon.sh's fayths can never claim it).
+        // was filed that carries no scope label (aeon.sh's runes can never claim it).
         if let Some(after) = bd.list_all_json() {
             let after_ingested = ingested(&after);
             let left: Vec<&KnownRef> = after_ingested
@@ -329,7 +329,7 @@ fn ingest_repo(mut r: Report, http: &dyn Http, bd: &dyn Bd, mail: &dyn Mail, sta
                 .collect();
             if !left.is_empty() {
                 r.err.push(format!(
-                    "gh-intake: {} work bead(s) carry no {} label and no fayth can claim them:",
+                    "gh-intake: {} work bead(s) carry no {} label and no rune can claim them:",
                     left.len(),
                     cfg.scope
                 ));

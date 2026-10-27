@@ -1,0 +1,4 @@
+# builder.rune — a persona definition.
+
+RUNE_NAME=builder
+RUNE_DESC="closes its own bead by running bd close directly"

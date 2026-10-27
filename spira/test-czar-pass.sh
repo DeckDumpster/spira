@@ -66,7 +66,7 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 # czar-pass is found directly on this suite's PATH (sp-gypjk).
 
 # Minimal test environment — no real database needed: incident is stubbed,
-# summon_fayth silently returns 1 when fayth_ready finds no db (|| true guards it).
+# summon_rune silently returns 1 when rune_ready finds no db (|| true guards it).
 export SPIRA_HOME="$HERE"
 SPIRA_RUN="$T/run"
 SPIRA_DB="$T/db"

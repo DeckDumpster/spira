@@ -309,14 +309,14 @@ fn cmd_bdq(args: &[String]) -> i32 {
         }
     }
 
-    // The czar fence: a live SPIRA_FAYTH=czar session with a class mutating the queue
+    // The czar fence: a live SPIRA_RUNE=czar session with a class mutating the queue
     // (reopen always; update/close unless it is the trigger bead itself) must pass
     // czar-fence.sh first. czar-fence.sh's own exit code is NOT propagated — bdq always
     // normalizes a refusal here to 1, matching the bash's bare `|| return 1`.
-    let fayth = env_or("SPIRA_FAYTH", "");
+    let rune = env_or("SPIRA_RUNE", "");
     let czar_class = env_or("SPIRA_CZAR_CLASS", "");
     let czar_trigger = env_or("SPIRA_CZAR_TRIGGER_BEAD", "");
-    if let Some(class) = czar_fence_class(&fayth, &czar_class, &czar_trigger, args) {
+    if let Some(class) = czar_fence_class(&rune, &czar_class, &czar_trigger, args) {
         let ok = Command::new("czar-fence.sh").arg(class).status().map(|s| s.success()).unwrap_or(false);
         if !ok {
             return 1;

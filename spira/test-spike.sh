@@ -34,14 +34,14 @@
 # is not the property under test — the failure it exists to stop is a landing pass that never
 # consults it, which is why a change to `landing.sh` has to select this suite too.
 #
-# CHAMBER-INTEGRITY LINTS (placeholders, commands, brief clauses, fayth syntax, the
-# `bd reopen` call-site rule) moved to test-lint-chamber.sh (UC-safety-fences-33): pure
+# RUNES-INTEGRITY LINTS (placeholders, commands, brief clauses, rune syntax, the
+# `bd reopen` call-site rule) moved to test-lint-runes.sh (UC-safety-fences-33): pure
 # text reads that paid for this suite's Dolt fixture and bare git remote without needing
 # either.
 #
 # defect: sp-qkf
 # tier: T3
-# covers: spira/confine.sh landing-pass/* spira/chamber/* spira-claim/* UC-safety-fences-32 spira/lib.sh
+# covers: spira/confine.sh landing-pass/* spira/runes/* spira-claim/* UC-safety-fences-32 spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -77,13 +77,13 @@ echo "the partition is the spike's own:"
 # ======================================================================================
 SPIRA_RUN="$TMP/run"; tl_config SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_HOME="$TMP/home" PATH="$TMP/home:$PATH"
-mkdir -p "$SPIRA_RUN" "$SPIRA_HOME/chamber"
-# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
-# point it at this suite's own fixture chamber explicitly.
-tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
-# `summon_fayth` is a `sentinel --summon` shim now (wave 4.27, family G, sp-gzmd2): a real
+mkdir -p "$SPIRA_RUN" "$SPIRA_HOME/runes"
+# SPIRA_RUNES_DIR no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture runes explicitly.
+tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
+# `summon_rune` is a `sentinel --summon` shim now (wave 4.27, family G, sp-gzmd2): a real
 # subprocess with SPIRA_HOME=$SPIRA_HOME, which needs a working lib.sh at its own context
-# probe — the same one-line symlink trick test-summon-fayth.sh's own `aeon --escape`
+# probe — the same one-line symlink trick test-summon-rune.sh's own `aeon --escape`
 # fixture uses.
 printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"
 ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
@@ -95,8 +95,8 @@ ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
 # kept only because answering "open" here is also harmless.
 printf '#!/bin/sh\ncase "$1 $2" in\n"capacity paused") exit 1 ;;\nesac\nexit 0\n' > "$SPIRA_HOME/aeon"
 chmod +x "$SPIRA_HOME/aeon"
-export PATH="$SPIRA_HOME:$PATH"   # summon_fayth launches the aeon on PATH; a stub here
-# Readiness is the lifecycle's (sp-860zj): the bd fixture is told to fayth_ready in lifecycle
+export PATH="$SPIRA_HOME:$PATH"   # summon_rune launches the aeon on PATH; a stub here
+# Readiness is the lifecycle's (sp-860zj): the bd fixture is told to rune_ready in lifecycle
 # terms — open is READY, the spira-poison label and the ask label are holds.
 lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
 SUMMONED="$TMP/summoned.txt"
@@ -104,10 +104,10 @@ export SPIRA_SUMMON="$TMP/summon.sh"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> %s\n' "$SUMMONED" > "$SPIRA_SUMMON"
 chmod +x "$SPIRA_SUMMON"
 
-# THE REAL FAYTH FILES, copied rather than reconstructed. A fixture that writes its own
+# THE REAL RUNE FILES, copied rather than reconstructed. A fixture that writes its own
 # predicate is asserting about the fixture; what has to be true is that the persona SHIPPED
-# in the chamber selects its own beads.
-cp "$HERE/chamber/builder.fayth" "$HERE/chamber/spike.fayth" "$SPIRA_HOME/chamber/"
+# in the runes selects its own beads.
+cp "$HERE/runes/builder.rune" "$HERE/runes/spike.rune" "$SPIRA_HOME/runes/"
 
 beads() { testdb_reset; [ $# -gt 0 ] || return 0; printf '%s\n' "$@" | testdb_seed; }
 bead() {  # bead <id> <labels-csv> [type] [status]
@@ -117,18 +117,18 @@ bead() {  # bead <id> <labels-csv> [type] [status]
 beads
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
-summon() { : > "$SUMMONED"; summon_fayth "$1" >"$TMP/log" 2>&1; printf '%s' "$?"; }
+summon() { : > "$SUMMONED"; summon_rune "$1" >"$TMP/log" 2>&1; printf '%s' "$?"; }
 
-want "the shipped fayth is discovered without being listed" "spike" "$(spira_fayths)"
+want "the shipped rune is discovered without being listed" "spike" "$(spira_runes)"
 
 beads "$(bead sp-spike-1 "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL")"
-is "a spike bead is in the spike's partition" 1 "$(fayth_ready spike)"
-is "and not in the builder's"                 0 "$(fayth_ready builder)"
+is "a spike bead is in the spike's partition" 1 "$(rune_ready spike)"
+is "and not in the builder's"                 0 "$(rune_ready builder)"
 is "so the spike is summoned"                 0 "$(summon spike)"
 is "and the builder is not"                   1 "$(summon builder)"
 
 beads "$(bead sp-plan-1 "${SPIRA_SCOPE_LABEL},plan")"
-is "a plan bead is not in the spike's partition" 0 "$(fayth_ready spike)"
+is "a plan bead is not in the spike's partition" 0 "$(rune_ready spike)"
 is "and the spike is not summoned for it"        1 "$(summon spike)"
 is "while the builder is"                        0 "$(summon builder)"
 
@@ -136,11 +136,11 @@ is "while the builder is"                        0 "$(summon builder)"
 # something else — an installation that imported a predecessor's beads holds thousands of
 # them, and a persona that ORs its way in races a live worker.
 beads "$(bead xx-1 "$SPIRA_SPIKE_LABEL")"
-is "a partial label match is not in the partition" 0 "$(fayth_ready spike)"
+is "a partial label match is not in the partition" 0 "$(rune_ready spike)"
 beads "$(bead sp-spike-2 "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL,$SPIRA_ASK_LABEL")"
-is "an escalation is never dispatched as spike work" 0 "$(fayth_ready spike)"
+is "an escalation is never dispatched as spike work" 0 "$(rune_ready spike)"
 beads "$(bead sp-spike-3 "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL,spira-poison")"
-is "nor is a poisoned spike"                         0 "$(fayth_ready spike)"
+is "nor is a poisoned spike"                         0 "$(rune_ready spike)"
 
 # ======================================================================================
 echo
@@ -233,7 +233,7 @@ echo "and the landing worker actually asks:"
 # ======================================================================================
 # The wiring, end to end. confine.sh passing in isolation proves nothing about a landing
 # worker that never calls it — which is the failure mode a persona-level suite is built to
-# catch, and the one ops.fayth sat in for a day.
+# catch, and the one ops.rune sat in for a day.
 REMOTE="$TMP/remote.git"; RUN="$TMP/lrun"; SH="$TMP/lspira"
 LREPO="$TMP/lrepo"
 git init -q --bare -b main "$REMOTE"

@@ -32,7 +32,7 @@ const STAGE_KEYS: &[&str] = &[
     "SPIRA_BD",
     "SPIRA_REPO",
     "SPIRA_REPO_MAP",
-    "SPIRA_FAYTHS",
+    "SPIRA_RUNES",
     "SPIRA_MAX_AEONS",
     "SPIRA_NOTIFY",
     "SPIRA_SUMMON",
@@ -160,7 +160,7 @@ pub fn canary(o: &CanaryOpts) -> Result<CanaryResult, String> {
 
     let (stage_root, env, own_stage) = match &o.external_stage {
         Some(root) => {
-            if !root.join("spira/chamber/canary.fayth").is_file() {
+            if !root.join("spira/runes/canary.rune").is_file() {
                 return Err(format!("--stage {} does not look like a stage", root.display()));
             }
             // Honour the caller's own environment for the rest (mirrors `eval "$(stage.sh
@@ -383,8 +383,8 @@ pub(crate) fn submit_args(id: &str, tip: &str, holder: &str) -> Vec<String> {
     ["5", spira_config::release_env::tool("spira-lc").as_str(), "work", id, "submit", "--tip", tip, "--actor", holder].iter().map(|s| s.to_string()).collect()
 }
 
-/// The stage's one fayth (stage.rs `fayth_content`): the worker's ready set is this fayth's.
-const CANARY_FAYTH: &str = "canary";
+/// The stage's one rune (stage.rs `rune_content`): the worker's ready set is this rune's.
+const CANARY_RUNE: &str = "canary";
 /// The worker's claim holder when the stage sets no `BEADS_ACTOR`.
 const CANARY_HOLDER: &str = "canary-worker";
 const CANARY_LEASE_SECS: u64 = 3600;
@@ -392,7 +392,7 @@ const CANARY_LEASE_SECS: u64 = 3600;
 const LC_CLAIM: &str = r#". "$SPIRA_HOME/lib.sh" || exit 2; lc_claim_bead "$1" "$2" "$3" "" 0 0 "$4""#;
 
 /// The worker's ready set and claim, through the one ready set an aeon claims from (sp-7g5q6):
-/// `spira-claim fayth-ready canary --json` — the machine's READY/REWORK rows — never a
+/// `spira-claim rune-ready canary --json` — the machine's READY/REWORK rows — never a
 /// `bd ready --claim` of its own. Each candidate in order is claimed the way an aeon claims
 /// it: the lifecycle Claim event (`lc_claim_bead`; a refusal means another holder won it, so
 /// the next is tried). `Ok(None)` is nothing ready; a ready set that cannot
@@ -407,14 +407,14 @@ pub(crate) fn claim_canary_bead(
     run: &mut Tools,
 ) -> Result<Option<String>, String> {
     let own = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<String>>();
-    let (rc, out) = run("spira-claim", &own(&["fayth-ready", CANARY_FAYTH, "--json"]));
+    let (rc, out) = run("spira-claim", &own(&["rune-ready", CANARY_RUNE, "--json"]));
     if rc != 0 {
-        return Err(format!("spira-claim fayth-ready {CANARY_FAYTH} --json failed (rc={rc})"));
+        return Err(format!("spira-claim rune-ready {CANARY_RUNE} --json failed (rc={rc})"));
     }
-    let rows: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("spira-claim fayth-ready {CANARY_FAYTH}: not JSON: {e}"))?;
+    let rows: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("spira-claim rune-ready {CANARY_RUNE}: not JSON: {e}"))?;
     let ids: Vec<String> = rows.as_array().into_iter().flatten().filter_map(|r| r.get("id").and_then(|i| i.as_str()).map(str::to_string)).collect();
     for id in ids {
-        let rc = run("bash", &own(&["-c", LC_CLAIM, "lc-claim", &id, holder, &lease_until.to_string(), CANARY_FAYTH])).0;
+        let rc = run("bash", &own(&["-c", LC_CLAIM, "lc-claim", &id, holder, &lease_until.to_string(), CANARY_RUNE])).0;
         if rc == 0 {
             return Ok(Some(id));
         }
@@ -454,7 +454,7 @@ mod claim_tests {
         let got = claim_canary_bead("canary-worker", 99, &mut t).unwrap();
         drop(t);
         assert_eq!(got.as_deref(), Some("sp-canary"));
-        assert_eq!(calls[0], "spira-claim fayth-ready canary --json");
+        assert_eq!(calls[0], "spira-claim rune-ready canary --json");
         assert!(calls[1].starts_with("bash -c ") && calls[1].ends_with("lc-claim sp-won-elsewhere canary-worker 99 canary"), "{calls:?}");
         assert!(calls[2].ends_with("lc-claim sp-canary canary-worker 99 canary"), "{calls:?}");
         assert!(!calls.iter().any(|c| c.starts_with("bd ") || c.contains(" ready ") || c.contains("--claim")), "{calls:?}");

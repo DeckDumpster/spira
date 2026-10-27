@@ -8,7 +8,7 @@
 | `spira-config`, `lifecycle`, `spira-lc`, `beads-store` | config, the lifecycle machines and their service, the bead-store seam |
 | `sentinel`, `aeon`, `landing-pass`, `queue`, `batcher-cut`, `gate*`, `testenv`, `release`, `install` | the loop: dispatch, aeon runner, landing, rounds, gate, test runner, releases, installer |
 | `loom`, `cockpit/`, `cockpit-collect`, `watchd`, `mail`, `doctor`, `census`, `strand` | read surfaces and operator tools |
-| `spira/` | shell not yet ported, `conf.sh` / `lib.sh`, the registry (`conf.d/`, `conf.toml.d/`), personas (`chamber/`), hooks (`hooks/`), `deps.toml`, `watchers`, and every suite (`test-*.sh`) |
+| `spira/` | shell not yet ported, `conf.sh` / `lib.sh`, the registry (`conf.d/`, `conf.toml.d/`), personas (`runes/`), hooks (`hooks/`), `deps.toml`, `watchers`, and every suite (`test-*.sh`) |
 | `systemd/` | unit templates (`@PLACEHOLDER@` substitution; `.service` + `.timer` pairs) |
 | `docs/test-plan/*.toml` | the use-case catalogue suites declare coverage against |
 | `gate.steps` | this repository's certification gate |
@@ -26,7 +26,7 @@ Generic mechanism. A colleague clones this and it carries none of the operator's
 
 | path | what it is |
 |---|---|
-| `spira/` | the harness proper — aeon runner, sentinel and its checks, gate, hel, strand, the chamber and its fayth format, lib.sh, and the test suites that hold them |
+| `spira/` | the harness proper — aeon runner, sentinel and its checks, gate, hel, strand, the runes and its rune format, lib.sh, and the test suites that hold them |
 | `spira/boundary` | this manifest — it describes the harness, so it travels with it |
 | `spira/boundary.sh` | renders this manifest into every document that publishes it; the wiki-side target is configured and skipped when unset, per rule 2 |
 | `spira/conf.sh` | the one configuration surface: the loader, the key allowlist, the derived defaults, and `spira_require`, which names a missing program instead of dying as a shell error |

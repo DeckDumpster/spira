@@ -243,7 +243,7 @@ pub fn now_keys(cfg: &Cfg) -> Kv {
                 continue;
             }
             let base = pf.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
-            // base = aeon-<fayth>-<bead>
+            // base = aeon-<rune>-<bead>
             let rest = base.strip_prefix("aeon-").unwrap_or("");
             let (fay, bead) = rest.split_once('-').unwrap_or(("", rest));
             let st = aeon_static(&run, &home, bead, fay, &pf);
@@ -254,16 +254,16 @@ pub fn now_keys(cfg: &Cfg) -> Kv {
             push(&mut out, &format!("SP_AEON{i}_PARTITION"), st.partition.clone());
             push(&mut out, &format!("SP_AEON{i}_TITLE"), st.title.clone());
             push(&mut out, &format!("SP_AEON{i}_NAME"), st.name.clone());
-            push(&mut out, &format!("SP_AEON{i}_FAYTH"), if fay.is_empty() { "?".into() } else { fay.to_string() });
+            push(&mut out, &format!("SP_AEON{i}_RUNE"), if fay.is_empty() { "?".into() } else { fay.to_string() });
 
-            let seed = std::fs::read_to_string(home.join("chamber").join(format!("{fay}.fayth")))
+            let seed = std::fs::read_to_string(home.join("runes").join(format!("{fay}.rune")))
                 .ok()
-                .and_then(|c| c.lines().find_map(|l| l.strip_prefix("FAYTH_MODEL=").map(|s| s.trim_matches(|c| c == '"' || c == '\'').to_string())));
-            let fayth_model = st.fayth_model.clone();
+                .and_then(|c| c.lines().find_map(|l| l.strip_prefix("RUNE_MODEL=").map(|s| s.trim_matches(|c| c == '"' || c == '\'').to_string())));
+            let rune_model = st.rune_model.clone();
             let repo_name = st.repo.clone();
-            let overridden = seed.as_deref().is_some_and(|s| !s.is_empty() && s != fayth_model) && fayth_model != "?";
+            let overridden = seed.as_deref().is_some_and(|s| !s.is_empty() && s != rune_model) && rune_model != "?";
             push(&mut out, &format!("SP_AEON{i}_MODEL_OVERRIDE"), if overridden { "1" } else { "0" }.to_string());
-            push(&mut out, &format!("SP_AEON{i}_FAYTH_MODEL"), fayth_model);
+            push(&mut out, &format!("SP_AEON{i}_RUNE_MODEL"), rune_model);
             push(&mut out, &format!("SP_AEON{i}_BEAD"), bead);
             push(&mut out, &format!("SP_AEON{i}_MIN"), (secs / 60).to_string());
 
@@ -503,9 +503,9 @@ pub(super) fn gate_run_scan(run: &Path) -> (Vec<(String, String, String, String)
 /// (`Cfg::load`); `SPIRA_SYSTEMCTL` is not a registered config key, so it is still read
 /// straight from the environment, the same per-copy-fact reading `capacity_pause_file`
 /// (above) does for its own non-registered key.
-pub(super) fn unit_active_key(fayth: &str, kind: &str, instance: &str) -> String {
+pub(super) fn unit_active_key(rune: &str, kind: &str, instance: &str) -> String {
     let systemctl = std::env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemctl".to_string());
-    let unit = spira_config::unit::resolve_unit(fayth, kind, instance, &systemctl);
+    let unit = spira_config::unit::resolve_unit(rune, kind, instance, &systemctl);
     match io::unit_active(&unit) {
         Some(true) => "1".to_string(),
         Some(false) => "0".to_string(),
@@ -535,7 +535,7 @@ struct AeonStatic {
     title: String,
     repo: String,
     partition: String,
-    fayth_model: String,
+    rune_model: String,
 }
 
 fn aeon_static_path(run: &std::path::Path, bead: &str) -> std::path::PathBuf {
@@ -554,7 +554,7 @@ fn aeon_static_load(path: &std::path::Path, now: i64) -> Option<AeonStatic> {
         title: f("title")?,
         repo: f("repo")?,
         partition: f("partition")?,
-        fayth_model: f("fayth_model")?,
+        rune_model: f("rune_model")?,
     })
 }
 
@@ -569,20 +569,20 @@ fn aeon_static(run: &std::path::Path, home: &std::path::Path, bead: &str, fay: &
     }
     let name = io::lib_call(home, "aeon_named", &[pf.to_str().unwrap_or("")]).unwrap_or_else(|| "?".to_string());
     let (pri, title, repo) = parse_show_meta(io::contentjson(&["show", bead]), bead);
-    let partition = io::content(&["state", bead, "fayth"])
+    let partition = io::content(&["state", bead, "rune"])
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "?".to_string());
-    let fayth_model = io::lib_call(home, "persona_model", &[fay])
+    let rune_model = io::lib_call(home, "persona_model", &[fay])
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "?".to_string());
-    let st = AeonStatic { name, pri, title, repo, partition, fayth_model };
-    let whole = [&st.name, &st.pri, &st.title, &st.partition, &st.fayth_model].iter().all(|s| s.as_str() != "?");
+    let st = AeonStatic { name, pri, title, repo, partition, rune_model };
+    let whole = [&st.name, &st.pri, &st.title, &st.partition, &st.rune_model].iter().all(|s| s.as_str() != "?");
     if whole {
         let body = serde_json::json!({
             "at": now, "name": st.name, "pri": st.pri, "title": st.title,
-            "repo": st.repo, "partition": st.partition, "fayth_model": st.fayth_model,
+            "repo": st.repo, "partition": st.partition, "rune_model": st.rune_model,
         });
         let tmp = path.with_extension(format!("tmp{}", std::process::id()));
         if std::fs::write(&tmp, body.to_string()).is_ok() {
@@ -1440,7 +1440,7 @@ mod tests {
         let t = testkit::TempDir::new("aeon-static");
         let d = t.path().to_path_buf();
         let p = aeon_static_path(&d, "sp-x");
-        let row = |at: i64| serde_json::json!({"at": at, "name": "n", "pri": "2", "title": "t", "repo": "r", "partition": "p", "fayth_model": "m"});
+        let row = |at: i64| serde_json::json!({"at": at, "name": "n", "pri": "2", "title": "t", "repo": "r", "partition": "p", "rune_model": "m"});
         std::fs::write(&p, row(1000).to_string()).unwrap();
         let hit = aeon_static_load(&p, 1000 + AEON_STATIC_TTL_S).expect("fresh row is served");
         assert_eq!((hit.name.as_str(), hit.partition.as_str()), ("n", "p"));

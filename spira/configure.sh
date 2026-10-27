@@ -153,7 +153,7 @@ fi
 
 if [ -z "$_maxlive_given" ]; then
     _maxlive="$(_ask \
-        "SPIRA_MAX_LIVE_AEONS — whole-fleet ceiling (pool + lane fayths combined).
+        "SPIRA_MAX_LIVE_AEONS — whole-fleet ceiling (pool + lane runes combined).
   Empty takes the registered default. Set it when your API account
   limits how many parallel sessions you can run across ALL personas." \
         SPIRA_MAX_LIVE_AEONS "$(_def SPIRA_MAX_LIVE_AEONS)")"

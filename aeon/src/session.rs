@@ -69,7 +69,7 @@ pub struct SessionSpec {
     pub log: PathBuf,
     pub cwd: PathBuf,
     pub env: BTreeMap<String, String>,
-    /// FAYTH_TIMEOUT_SECONDS: killed after this, rc 124 (`timeout`'s code).
+    /// RUNE_TIMEOUT_SECONDS: killed after this, rc 124 (`timeout`'s code).
     pub timeout: Option<u64>,
     /// The world-halted stamp: while it exists, a signal waits for a turn boundary first.
     pub halted: Option<PathBuf>,
@@ -197,7 +197,7 @@ const IDENTITY_TTL_FLOOR: i64 = 90;
 
 pub struct Heartbeat {
     pub bead: String,
-    pub fayth: String,
+    pub rune: String,
     pub run: PathBuf,
     pub lease_s: i64,
     pub every: Duration,
@@ -210,7 +210,7 @@ impl Heartbeat {
     }
 
     fn identity_pidfile(&self) -> PathBuf {
-        self.run.join(format!("aeon-{}-{}.pid", self.fayth, self.bead))
+        self.run.join(format!("aeon-{}-{}.pid", self.rune, self.bead))
     }
 
     fn renew_identity(&self, now: i64) {
@@ -253,7 +253,7 @@ impl Heartbeat {
                 let why = crate::stop::reason(&self.run, &self.bead);
                 crate::stop::clear(&self.run, &self.bead);
                 b.disposition("slain", &why);
-                b.log(&format!("{}: {} stop requested — stopping the session", self.fayth, self.bead));
+                b.log(&format!("{}: {} stop requested — stopping the session", self.rune, self.bead));
                 stop.trip(libc::SIGTERM);
                 return None;
             }
@@ -268,7 +268,7 @@ impl Heartbeat {
                     let quiet = now - cur;
                     let last = if last.is_empty() { "?".to_string() } else { last };
                     b.disposition("lapsed", &format!("{quiet}\t{last}"));
-                    b.log(&format!("{}: {} lease lapsed (trace quiet {quiet}s, last: {last}) — killing", self.fayth, self.bead));
+                    b.log(&format!("{}: {} lease lapsed (trace quiet {quiet}s, last: {last}) — killing", self.rune, self.bead));
                     stop.trip(libc::SIGTERM);
                     return Some(HbTick::Lapse);
                 }
@@ -279,7 +279,7 @@ impl Heartbeat {
                     b.disposition("thrash", &last);
                     b.log(&format!(
                         "{}: {} deliverable stalled {fuse}m session {dsess}m (wall {}m) — requeueing for thrash",
-                        self.fayth, self.bead, self.wall_min
+                        self.rune, self.bead, self.wall_min
                     ));
                     stop.trip(libc::SIGTERM);
                     return Some(HbTick::Thrash);
@@ -359,7 +359,7 @@ mod tests {
     #[test]
     fn silent_trace_lapses_and_trips() {
         let d = tmp("lapse");
-        let hb = Heartbeat { bead: "sp-a".into(), fayth: "builder".into(), run: d.to_path_buf(), lease_s: 120, every: Duration::from_millis(1), wall_min: 20 };
+        let hb = Heartbeat { bead: "sp-a".into(), rune: "builder".into(), run: d.to_path_buf(), lease_s: 120, every: Duration::from_millis(1), wall_min: 20 };
         let b = FakeBeat { now: Mutex::new(0), mtimes: Mutex::new(vec![5]), fuse: "0".into(), logs: Mutex::new(vec![]), beats: Mutex::new(0), ..Default::default() };
         let stop = Stop::default();
         let r = hb.run(&b, &stop, &AtomicBool::new(false));
@@ -378,7 +378,7 @@ mod tests {
     #[test]
     fn growing_trace_with_a_stale_fuse_thrashes() {
         let d = tmp("thrash");
-        let hb = Heartbeat { bead: "sp-a".into(), fayth: "builder".into(), run: d.to_path_buf(), lease_s: 600, every: Duration::from_millis(1), wall_min: 2 };
+        let hb = Heartbeat { bead: "sp-a".into(), rune: "builder".into(), run: d.to_path_buf(), lease_s: 600, every: Duration::from_millis(1), wall_min: 2 };
         let b = FakeBeat { now: Mutex::new(0), mtimes: Mutex::new(vec![1, 2, 2, 2, 2, 2]), fuse: "30".into(), logs: Mutex::new(vec![]), beats: Mutex::new(0), ..Default::default() };
         let stop = Stop::default();
         let r = hb.run(&b, &stop, &AtomicBool::new(false));
@@ -398,7 +398,7 @@ mod tests {
     #[test]
     fn a_session_longer_than_its_lease_renews_on_every_beat_with_an_advancing_deadline() {
         let d = tmp("renew");
-        let hb = Heartbeat { bead: "sp-a".into(), fayth: "builder".into(), run: d.to_path_buf(), lease_s: 120, every: Duration::from_millis(1), wall_min: 10_000 };
+        let hb = Heartbeat { bead: "sp-a".into(), rune: "builder".into(), run: d.to_path_buf(), lease_s: 120, every: Duration::from_millis(1), wall_min: 10_000 };
         // The trace grows every beat: a live session. now() steps 60s a call.
         let b = FakeBeat { mtimes: Mutex::new((1..=40).collect()), fuse: "?".into(), stop_after: 20, ..Default::default() };
         let stop = Stop::default();
@@ -414,7 +414,7 @@ mod tests {
     #[test]
     fn a_stop_request_trips_the_session_and_is_consumed() {
         let d = tmp("stopreq");
-        let hb = Heartbeat { bead: "sp-a".into(), fayth: "builder".into(), run: d.to_path_buf(), lease_s: 600, every: Duration::from_millis(1), wall_min: 10_000 };
+        let hb = Heartbeat { bead: "sp-a".into(), rune: "builder".into(), run: d.to_path_buf(), lease_s: 600, every: Duration::from_millis(1), wall_min: 10_000 };
         std::fs::create_dir_all(d.join("aeon")).unwrap();
         std::fs::write(crate::stop::request_file(&d, "sp-a"), "why\n").unwrap();
         let b = FakeBeat { mtimes: Mutex::new((1..=10).collect()), fuse: "?".into(), ..Default::default() };
@@ -431,7 +431,7 @@ mod tests {
         let d = tmp("idlease");
         let pf = d.join("aeon-builder-sp-a.pid");
         std::fs::write(&pf, "1\n").unwrap();
-        let hb = Heartbeat { bead: "sp-a".into(), fayth: "builder".into(), run: d.to_path_buf(), lease_s: 6000, every: Duration::from_millis(1), wall_min: 10_000 };
+        let hb = Heartbeat { bead: "sp-a".into(), rune: "builder".into(), run: d.to_path_buf(), lease_s: 6000, every: Duration::from_millis(1), wall_min: 10_000 };
         let b = FakeBeat { mtimes: Mutex::new((1..=10).collect()), fuse: "?".into(), stop_after: 3, ..Default::default() };
         assert_eq!(hb.run(&b, &Stop::default(), &AtomicBool::new(false)), None);
         let deadline: i64 = std::fs::read_to_string(strand::probe::lease_file(&pf)).unwrap().trim().parse().unwrap();
@@ -441,7 +441,7 @@ mod tests {
     #[test]
     fn shutdown_ends_quietly() {
         let d = tmp("down");
-        let hb = Heartbeat { bead: "sp-a".into(), fayth: "b".into(), run: d.to_path_buf(), lease_s: 600, every: Duration::from_secs(60), wall_min: 20 };
+        let hb = Heartbeat { bead: "sp-a".into(), rune: "b".into(), run: d.to_path_buf(), lease_s: 600, every: Duration::from_secs(60), wall_min: 20 };
         let b = FakeBeat { now: Mutex::new(0), mtimes: Mutex::new(vec![1]), fuse: "?".into(), logs: Mutex::new(vec![]), beats: Mutex::new(0), ..Default::default() };
         let stop = Stop::default();
         assert_eq!(hb.run(&b, &stop, &AtomicBool::new(true)), None);

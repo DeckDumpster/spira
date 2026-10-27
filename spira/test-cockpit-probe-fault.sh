@@ -467,10 +467,10 @@ else
 fi
 
 # ---- SP_NEXT_N: core_detail_keys, bd exits non-zero ----------------------------------
-# Without fayth files, _PART_MAP is empty → sentinel → SP_NEXT_N=? ("unreadable chamber").
+# Without rune files, _PART_MAP is empty → sentinel → SP_NEXT_N=? ("unreadable runes").
 # That is the correct refused-probe behaviour for this field.
 echo
-echo "SP_NEXT_N — core_detail_keys (no chamber / bd exits non-zero)"
+echo "SP_NEXT_N — core_detail_keys (no runes / bd exits non-zero)"
 out_next="$(run_probe core_detail bd-fail)"
 if grep -q '^SP_NEXT_N=?' <<< "$out_next"; then
     ok "SP_NEXT_N: probe failure renders SP_NEXT_N=?"

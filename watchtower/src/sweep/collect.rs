@@ -65,7 +65,7 @@ pub struct SweepData {
     pub ask_label: String,
 
     // Carried through for escalate.rs, computed once here to avoid a second gather pass.
-    pub idle_while_ready: Vec<(String, u32, String)>, // (fayth, ready, last_idle_reason)
+    pub idle_while_ready: Vec<(String, u32, String)>, // (rune, ready, last_idle_reason)
     pub release_status: Option<String>,
     pub slow_probes: Vec<String>,
 }
@@ -293,7 +293,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
         if ledger_path.is_file() { ledger_path.to_str() } else { None },
     );
     let aeons_live_disp = match &probe {
-        Some(p) => p.fayth_counts.iter().map(|(_, n)| *n as i64).sum::<i64>().to_string(),
+        Some(p) => p.rune_counts.iter().map(|(_, n)| *n as i64).sum::<i64>().to_string(),
         None => "?".to_string(),
     };
     let active_since: Vec<i64> = ["WORKING", "SUBMITTED"]
@@ -479,9 +479,9 @@ fn guard_block(cfg: &Cfg) -> String {
     }
 }
 
-/// A fayth with ready work whose last N summons ALL came back "idle", no aeon of it is
+/// A rune with ready work whose last N summons ALL came back "idle", no aeon of it is
 /// alive, and no bead entered WORKING/SUBMITTED since the first of those summons. Lifecycle
-/// rows carry no persona, so any such transition in the window counts as the fayth working.
+/// rows carry no persona, so any such transition in the window counts as the rune working.
 fn idle_while_ready_hits(
     ledger_path: &std::path::Path,
     probe: &Option<seams::PipelineProbe>,
@@ -497,7 +497,7 @@ fn idle_while_ready_hits(
         return out;
     };
     let lines: Vec<&str> = text.lines().collect();
-    for (fayth, ready) in &p.ready_by_fayth {
+    for (rune, ready) in &p.ready_by_rune {
         if *ready == 0 {
             continue;
         }
@@ -505,7 +505,7 @@ fn idle_while_ready_hits(
             .iter()
             .filter(|l| {
                 let f: Vec<&str> = l.split_whitespace().collect();
-                f.len() >= 3 && f[1] == "awake" && f[2] == fayth.as_str()
+                f.len() >= 3 && f[1] == "awake" && f[2] == rune.as_str()
             })
             .cloned()
             .collect();
@@ -517,7 +517,7 @@ fn idle_while_ready_hits(
             .iter()
             .map(|l| l.split_whitespace().skip(3).collect::<Vec<_>>().join(" "))
             .collect();
-        if p.fayth_counts.iter().any(|(f, c)| f == fayth && *c > 0) {
+        if p.rune_counts.iter().any(|(f, c)| f == rune && *c > 0) {
             continue;
         }
         let window_start = last_n[0].split_whitespace().next().and_then(crate::log::parse_iso_utc);
@@ -527,7 +527,7 @@ fn idle_while_ready_hits(
             }
         }
         if reasons.iter().all(|r| r == "idle") {
-            out.push((fayth.clone(), *ready, reasons.last().cloned().unwrap_or_default()));
+            out.push((rune.clone(), *ready, reasons.last().cloned().unwrap_or_default()));
         }
     }
     out
@@ -567,8 +567,8 @@ mod tests {
 
     fn probe(ready: &[(&str, u32)]) -> Option<seams::PipelineProbe> {
         Some(seams::PipelineProbe {
-            fayth_counts: Vec::new(),
-            ready_by_fayth: ready.iter().map(|(f, n)| (f.to_string(), *n)).collect(),
+            rune_counts: Vec::new(),
+            ready_by_rune: ready.iter().map(|(f, n)| (f.to_string(), *n)).collect(),
         })
     }
 
@@ -638,7 +638,7 @@ mod tests {
     }
 
     #[test]
-    fn five_idle_summons_with_ready_work_is_a_hit_naming_fayth_count_and_reason() {
+    fn five_idle_summons_with_ready_work_is_a_hit_naming_rune_count_and_reason() {
         let d = testkit::TempDir::new("wt-iwr-hit");
         let l = ledger(&d, &[IDLE; 5]);
         let hits = idle_while_ready_hits(&l, &probe(&[("builder", 3)]), 5, &[]);
@@ -662,7 +662,7 @@ mod tests {
     }
 
     #[test]
-    fn too_few_summons_other_fayths_and_a_missing_probe_or_ledger_are_no_hit() {
+    fn too_few_summons_other_runes_and_a_missing_probe_or_ledger_are_no_hit() {
         let d = testkit::TempDir::new("wt-iwr-short");
         let mut lines = vec!["2026-01-01T00:00:01Z awake other idle"; 5];
         lines.extend([IDLE; 4]);
@@ -673,10 +673,10 @@ mod tests {
         assert_eq!(idle_while_ready_hits(&l, &probe(&[("builder", 1)]), 4, &[]).len(), 1);
     }
 
-    fn live_probe(fayth: &str, ready: u32, live: u32) -> Option<seams::PipelineProbe> {
+    fn live_probe(rune: &str, ready: u32, live: u32) -> Option<seams::PipelineProbe> {
         Some(seams::PipelineProbe {
-            fayth_counts: vec![(fayth.to_string(), live)],
-            ready_by_fayth: vec![(fayth.to_string(), ready)],
+            rune_counts: vec![(rune.to_string(), live)],
+            ready_by_rune: vec![(rune.to_string(), ready)],
         })
     }
 
@@ -690,7 +690,7 @@ mod tests {
     }
 
     #[test]
-    fn a_live_aeon_of_the_fayth_is_not_a_hit() {
+    fn a_live_aeon_of_the_rune_is_not_a_hit() {
         let d = testkit::TempDir::new("wt-iwr-live");
         let l = ledger(&d, &[IDLE; 5]);
         assert!(idle_while_ready_hits(&l, &live_probe("builder", 1, 1), 5, &[]).is_empty());

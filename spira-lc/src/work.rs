@@ -469,37 +469,37 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     apply_bead_event(conn, bead_id, &actor, BeadEventKind::Done { delivers })
 }
 
-/// A bead leaves WORKING only by an exit its claiming fayth declares (`FAYTH_WORKING_EXITS`);
-/// the refusal names the fayth, the attempted state and the exits it may take.
+/// A bead leaves WORKING only by an exit its claiming rune declares (`RUNE_WORKING_EXITS`);
+/// the refusal names the rune, the attempted state and the exits it may take.
 fn working_exit_refusal(verb: &str, exit: &str, row: &bead::BeadRow, actor: &str) -> Option<(i32, String)> {
     if row.state != bead::BeadState::Working {
         return None;
     }
     match spira_config::resolve::locate_home_for_process() {
-        Ok(home) => working_exit_refusal_in(&spira_config::chamber::chamber_dir(std::path::Path::new(&home)), verb, exit, row, actor),
+        Ok(home) => working_exit_refusal_in(&spira_config::runes::runes_dir(std::path::Path::new(&home)), verb, exit, row, actor),
         Err(e) => Some((CANNOT_TELL, format!("cannot tell: {e}"))),
     }
 }
 
-fn working_exit_refusal_in(chamber: &std::path::Path, verb: &str, exit: &str, row: &bead::BeadRow, actor: &str) -> Option<(i32, String)> {
+fn working_exit_refusal_in(runes: &std::path::Path, verb: &str, exit: &str, row: &bead::BeadRow, actor: &str) -> Option<(i32, String)> {
     if row.state != bead::BeadState::Working {
         return None;
     }
-    let fayth = row.persona.clone().unwrap_or_else(|| actor.to_string());
-    let exits = match spira_config::chamber::working_exits_in(chamber, &fayth) {
+    let rune = row.persona.clone().unwrap_or_else(|| actor.to_string());
+    let exits = match spira_config::runes::working_exits_in(runes, &rune) {
         Ok(e) => e,
         Err(e) => return Some((REFUSED, format!("refused: work {verb}: {e}"))),
     };
-    working_exit_check(verb, exit, &fayth, &exits)
+    working_exit_check(verb, exit, &rune, &exits)
 }
 
-fn working_exit_check(verb: &str, exit: &str, fayth: &str, exits: &[String]) -> Option<(i32, String)> {
+fn working_exit_check(verb: &str, exit: &str, rune: &str, exits: &[String]) -> Option<(i32, String)> {
     if exits.iter().any(|e| e == exit) {
         return None;
     }
     Some((
         REFUSED,
-        format!("refused: work {verb}: fayth {fayth} may not leave WORKING for {exit}; its exits are {}", exits.join(" ")),
+        format!("refused: work {verb}: rune {rune} may not leave WORKING for {exit}; its exits are {}", exits.join(" ")),
     ))
 }
 
@@ -689,7 +689,7 @@ fn cmd_superseded_by(bead_id: &str, args: &[String], conn: &Conn) -> (i32, Strin
 // command" passthrough, because that would re-open exactly the hole this closes.
 //
 // Who may run what is ONE table, [`ALLOW`]. The caller's persona is the `--actor` the `work`
-// client appends from its own environment (`SPIRA_FAYTH`, else `SPIRA_WORK_ACTOR`); the
+// client appends from its own environment (`SPIRA_RUNE`, else `SPIRA_WORK_ACTOR`); the
 // client refuses a user-typed `--actor`; serve binds it to the peer's uid ([`bind_peer`]) for
 // every uid listed in `<socket>.personas`, since the environment is the caller's to set.
 
@@ -1522,7 +1522,7 @@ mod tests {
     }
 
     #[test]
-    fn a_working_exit_the_fayth_does_not_declare_is_refused_by_name() {
+    fn a_working_exit_the_rune_does_not_declare_is_refused_by_name() {
         let exits = v(&["DONE", "ask", "park", "hold"]);
         let (code, msg) = working_exit_check("submit", "SUBMITTED", "spike", &exits).unwrap();
         assert_eq!(code, REFUSED);
@@ -1539,9 +1539,9 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_fayths_send_a_spike_to_done_and_a_builder_to_submitted() {
-        let chamber = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/chamber");
-        let go = |persona: &str, verb: &str, exit: &str| working_exit_refusal_in(&chamber, verb, exit, &working_row(persona), persona);
+    fn the_shipped_runes_send_a_spike_to_done_and_a_builder_to_submitted() {
+        let runes = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+        let go = |persona: &str, verb: &str, exit: &str| working_exit_refusal_in(&runes, verb, exit, &working_row(persona), persona);
         let (code, msg) = go("spike", "submit", "SUBMITTED").unwrap();
         assert_eq!(code, REFUSED);
         assert!(msg.contains("spike") && msg.contains("SUBMITTED") && msg.contains("DONE ask park hold"), "{msg}");
@@ -1550,7 +1550,7 @@ mod tests {
         assert!(go("builder", "done", "DONE").is_some());
         let mut submitted = working_row("spike");
         submitted.state = bead::BeadState::Submitted;
-        assert!(working_exit_refusal_in(&chamber, "submit", "SUBMITTED", &submitted, "spike").is_none());
+        assert!(working_exit_refusal_in(&runes, "submit", "SUBMITTED", &submitted, "spike").is_none());
     }
 
     fn v(xs: &[&str]) -> Vec<String> {

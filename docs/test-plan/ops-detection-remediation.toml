@@ -114,7 +114,7 @@ statement = "`strand.sh check` mails exactly one escalation per episode even und
 [[use_case]]
 id = "UC-ops-detection-remediation-22"
 tier = "T2"
-statement = "`strand.sh report` detects an exhausted sentinel pass budget (\"CHECK7 <fayth>: not evaluated\" in the latest pass) and reports pass-truncated, marking every fayth not evaluated and summoning none."
+statement = "`strand.sh report` detects an exhausted sentinel pass budget (\"CHECK7 <rune>: not evaluated\" in the latest pass) and reports pass-truncated, marking every rune not evaluated and summoning none."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-23"

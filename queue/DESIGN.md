@@ -87,7 +87,7 @@ seam calls (`<ts> spira: land-close …`) pass through to stdout as before.
 **Environment switches read** (unchanged meaning): `SPIRA_QUEUE_LOCK_HELD=1` (land-local,
 publish, rollback-local skip their own flock — the caller holds it), `SPIRA_QUEUE_ACTOR`,
 `BEADS_ACTOR`, `SPIRA_AEON`, `USER` (actor), `SPIRA_QUEUE_OWNER_OVERRIDE=1`,
-`SPIRA_FAYTH`/`SPIRA_CZAR_CLASS` (czar fence), `SPIRA_CERTIFY_SUITES` (submit),
+`SPIRA_RUNE`/`SPIRA_CZAR_CLASS` (czar fence), `SPIRA_CERTIFY_SUITES` (submit),
 `SPIRA_QUEUE_BATCH_WAIT` (flush forces 0 for the batcher), `SPIRA_PREFLIGHT_WALL_SECS`,
 `SPIRA_QUEUE_TRANSITION_POLLSEC`/`_MAXSEC`, `SPIRA_PUBLISH_REMOTE[_<NAME>]`,
 `SPIRA_PUBLISH_BRANCH_<NAME>`, `SPIRA_LAND_UNGATED` and `SPIRA_VERDICTS` (land-local, §8 D12),
@@ -118,7 +118,7 @@ nothing changed), then effects in order.
 | `rebase-waiting [repo]` | any | none | started detached at the end of `land-local` (and so `round land`) once the landing is recorded. For every bead SUBMITTED or CERTIFIED, or REWORK with reason `no-rebase`, whose `spira/<id>` is in the repo: `rebase-stale <id> <repo>`, four at a time. Exit 0 with a tip the row does not carry: `Submit{tip}` in place (REWORK: `Claim` then `Submit`, actor `rebase-stale`). Exit 1: `GateRed{no-rebase}` if the row still waits, and a `rebase-conflict` comment naming the paths (for the mender). Exit 2/3: logged, nothing moved. One `QUEUE REBASE-WAITING` line per bead. Exit 0 always but for an unreachable spira-lc. |
 | `rollback-local` | queue.local | queue lock unless LOCK_HELD | round-seq ≥ 2; `refs/archive/rounds/<n-1>`; a release in force and `$SPIRA_RELEASES/<prev>` present; `release verify <prev>` → `release activate <prev>` (never rebuilt, §8 D13); CAS the ref back; mail. Bead state untouched. |
 
-The czar fence (`SPIRA_FAYTH=czar` with `SPIRA_CZAR_CLASS`) runs `czar-fence.sh <class>`
+The czar fence (`SPIRA_RUNE=czar` with `SPIRA_CZAR_CLASS`) runs `czar-fence.sh <class>`
 first on eject, abandon, open-batch, land-local, publish and rollback-local, as before.
 
 ### 2.3 Callers
@@ -139,7 +139,7 @@ most read the exit status only.
 | operator notes `round.sh:207-209` | `SPIRA_BATCH_BINS_TARGET_DIR=… bash queue.sh land-local spira --head H --members "$_mem"` | status |
 | operator notes `round.sh:262` | `exec bash queue.sh publish spira` | status |
 | `~/.config/spira/overrides/apply.sh:44` | greps an override's output for `holds the lock` | that phrase (kept) |
-| `spira/chamber/czar.md:40,90,107,154`, `czar.fayth:90` (`Bash(*queue.sh*)`) | the czar persona runs eject/abandon/step | the tool pattern |
+| `spira/runes/czar.md:40,90,107,154`, `czar.rune:90` (`Bash(*queue.sh*)`) | the czar persona runs eject/abandon/step | the tool pattern |
 | `spira/hooks/aeon-fence.sh:117-122` | refuses `*/queue.sh*` for aeons except `stats` | the command shape |
 | prose: `spira/watchtower.sh:1397`, `spira/skew.sh:387`, `spira/repo-map.example:36,146`, `README.md:156-158` | operator instructions naming `queue.sh <cmd>` | — |
 
@@ -368,8 +368,8 @@ neighbours. Apply in one landing, in this order.
 | 13 | operator notes `round.sh:207-209` | `SPIRA_BATCH_BINS_TARGET_DIR="$w/.runtime/spira/cargo-target-bins" bash "$H/spira/queue.sh" land-local spira --head "$head" --members "$_mem"` | `"$SPIRA_QUEUE_BIN" land-local spira --head "$head" --members-file "$M" --worktree "$w"` (the members file already holds one `id:tip` per line) |
 | 14 | operator notes `round.sh:212-213` | `_bins="$w/.runtime/spira/cargo-target-bins/<tree>/release"` | `_bins="$w/target/release"` (as testenv/DESIGN.md §8 already lists) |
 | 15 | operator notes `round.sh:262` | `exec bash "$H/spira/queue.sh" publish spira` | `exec "$SPIRA_QUEUE_BIN" publish spira` |
-| 16 | `spira/chamber/czar.fayth:90` | `Bash(*queue.sh*)` | `Bash(*queue *)` |
-| 17 | `spira/chamber/czar.md:40,90,107,154` | `queue.sh eject / abandon`, `queue.sh step`, "`queue.sh eject` already wrote landstate=RED", "`queue.sh` reachable" | `queue eject / abandon`, `queue step`, same sentence with `queue eject` (it now also records the cause: pass `--red` when the member broke a test), "`queue` reachable (`queue stats`)" |
+| 16 | `spira/runes/czar.rune:90` | `Bash(*queue.sh*)` | `Bash(*queue *)` |
+| 17 | `spira/runes/czar.md:40,90,107,154` | `queue.sh eject / abandon`, `queue.sh step`, "`queue.sh eject` already wrote landstate=RED", "`queue.sh` reachable" | `queue eject / abandon`, `queue step`, same sentence with `queue eject` (it now also records the cause: pass `--red` when the member broke a test), "`queue` reachable (`queue stats`)" |
 | 18 | `spira/hooks/aeon-fence.sh:117-122` | matches `*"/queue.sh"*`, allows `*"/queue.sh stats"*` | also match the binary: `*"/queue.sh"*\|*"queue "*\|*"$SPIRA_QUEUE_BIN"*`, allow only `* stats` for either |
 | 19 | `spira/watchtower.sh:1397` | `queue.sh abandon <repo> --reason "conflict"` | `queue abandon <repo> --reason "conflict"` |
 | 20 | `spira/skew.sh:387` (and the comments at :10, :439, :471, :493) | `queue.sh land-local` / `queue.sh rollback-local` | `queue land-local` / `queue rollback-local` |

@@ -2,11 +2,11 @@
 #
 # test-concierge-roster.sh — the concierge roster, its resume id, and the session hook that
 #   records it: three seams named in section 5 of the operator-channel test plan, moved out
-#   of the 760-line mixed test-concierge.sh into their own file with a fixture chamber.
+#   of the 760-line mixed test-concierge.sh into their own file with a fixture runes.
 #
-# ROSTER (UC-operator-channel-39) — a fayth with FAYTH_SUMMON=operator never enters the task
+# ROSTER (UC-operator-channel-39) — a rune with RUNE_SUMMON=operator never enters the task
 # pool or the lanes. The shipped concierge is operator-only and the builder stays summonable.
-# This carries its own positive control: an ordinary fayth sits in the same fixture chamber
+# This carries its own positive control: an ordinary rune sits in the same fixture runes
 # and MUST appear, because a test asserting only absence passes just as well against a roster
 # that is empty for some unrelated reason (law-absence-needs-a-positive-control).
 #
@@ -23,7 +23,7 @@
 #
 # defect: sp-u4x
 # covers: spira/lib.sh concierge.sh spira/hooks/session.sh UC-operator-channel-39 UC-operator-channel-40
-# hermetic-ok: fixture chamber, no systemd, tmux or database
+# hermetic-ok: fixture runes, no systemd, tmux or database
 # requires: claude
 # host-reason: the resume-id and hook sections invoke concierge.sh, which refuses to run any subcommand without claude on PATH (spira_require)
 # tier: T1
@@ -35,74 +35,74 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 echo "the roster — who the sentinel may summon"
 
-# A FIXTURE CHAMBER, NOT THE REAL ONE. The shipped $SPIRA_FAYTHS omits the concierge on every
+# A FIXTURE RUNES, NOT THE REAL ONE. The shipped $SPIRA_RUNES omits the concierge on every
 # host today, so a suite reading the live roster would pass for a reason that has nothing to do
-# with FAYTH_SUMMON — and would keep passing after the property was deleted.
-CH="$TMP/chamber"; mkdir -p "$CH"
-cat > "$CH/worker.fayth" <<'EOF'
-FAYTH_NAME=worker
-FAYTH_LABELS="spira,${SPIRA_PLAN_LABEL}"
+# with RUNE_SUMMON — and would keep passing after the property was deleted.
+CH="$TMP/runes"; mkdir -p "$CH"
+cat > "$CH/worker.rune" <<'EOF'
+RUNE_NAME=worker
+RUNE_LABELS="spira,${SPIRA_PLAN_LABEL}"
 EOF
-cat > "$CH/laner.fayth" <<'EOF'
-FAYTH_NAME=laner
-FAYTH_LABELS="spira,${SPIRA_INCIDENT_LABEL}"
-FAYTH_LANE=ops
+cat > "$CH/laner.rune" <<'EOF'
+RUNE_NAME=laner
+RUNE_LABELS="spira,${SPIRA_INCIDENT_LABEL}"
+RUNE_LANE=ops
 EOF
-cat > "$CH/human.fayth" <<'EOF'
-FAYTH_NAME=human
-FAYTH_SUMMON=operator
+cat > "$CH/human.rune" <<'EOF'
+RUNE_NAME=human
+RUNE_SUMMON=operator
 EOF
-# A persona that is BOTH operator-summoned and in a lane. FAYTH_SUMMON must win: the lane
-# loop is a second door into the sentinel, and a fayth kept out of one list and handed to the
+# A persona that is BOTH operator-summoned and in a lane. RUNE_SUMMON must win: the lane
+# loop is a second door into the sentinel, and a rune kept out of one list and handed to the
 # other is summoned exactly as if nothing had been declared.
-cat > "$CH/humanlane.fayth" <<'EOF'
-FAYTH_NAME=humanlane
-FAYTH_LABELS="spira,${SPIRA_INCIDENT_LABEL}"
-FAYTH_LANE=ops
-FAYTH_SUMMON=operator
+cat > "$CH/humanlane.rune" <<'EOF'
+RUNE_NAME=humanlane
+RUNE_LABELS="spira,${SPIRA_INCIDENT_LABEL}"
+RUNE_LANE=ops
+RUNE_SUMMON=operator
 EOF
 
 roster() { # roster <function>
-    # SPIRA_CHAMBER EXPLICITLY: the complete fixture declares a fixed chamber path of its
+    # SPIRA_RUNES_DIR EXPLICITLY: the complete fixture declares a fixed runes path of its
     # own now, no longer derived from SPIRA_HOME when unset.
-    tl_config SPIRA_FAYTHS="worker laner human humanlane" SPIRA_CHAMBER="$TMP/chamber"
+    tl_config SPIRA_RUNES="worker laner human humanlane" SPIRA_RUNES_DIR="$TMP/runes"
     env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_CONF="$TMP/no.conf" \
         SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$TMP" \
         bash -c '. "$2"/lib.sh 2>/dev/null; "$1"' _ "$1" "$HERE" 2>/dev/null
 }
-# The fixture chamber must sit under SPIRA_HOME, which is where fayth_get and fayth_names look.
-ln -sfn "$CH" "$TMP/chamber"
+# The fixture runes must sit under SPIRA_HOME, which is where rune_get and rune_names look.
+ln -sfn "$CH" "$TMP/runes"
 # SPIRA_HOME="$TMP" in roster() IS the home now (locate_home no longer searches); every
 # binary (lib.sh sources conf.sh) reads <home>/conf.d, so the stub needs the registry.
 ln -sfn "$HERE/conf.d" "$TMP/conf.d"
 
-is "the task pool is the ordinary fayth alone"        "worker"          "$(roster spira_task_fayths)"
-is "the lane list is the ordinary lane fayth alone"   "laner"           "$(roster spira_lane_fayths)"
+is "the task pool is the ordinary rune alone"        "worker"          "$(roster spira_task_runes)"
+is "the lane list is the ordinary lane rune alone"   "laner"           "$(roster spira_lane_runes)"
 
-nowant "an operator persona is never in the task pool"  "human" "$(roster spira_task_fayths)"
-nowant "nor in the lane list, which is the second door" "human" "$(roster spira_lane_fayths)"
+nowant "an operator persona is never in the task pool"  "human" "$(roster spira_task_runes)"
+nowant "nor in the lane list, which is the second door" "human" "$(roster spira_lane_runes)"
 
-# THE POSITIVE CONTROL FOR THE CONTROL. Strip FAYTH_SUMMON from the fixture and the same
+# THE POSITIVE CONTROL FOR THE CONTROL. Strip RUNE_SUMMON from the fixture and the same
 # persona MUST appear — otherwise these assertions would pass against a roster that was empty
 # for some unrelated reason, which is the shape of a test that guards nothing.
-printf 'FAYTH_NAME=human\n' > "$CH/human.fayth"
-want "without FAYTH_SUMMON that persona IS summoned" "human" "$(roster spira_task_fayths)"
+printf 'RUNE_NAME=human\n' > "$CH/human.rune"
+want "without RUNE_SUMMON that persona IS summoned" "human" "$(roster spira_task_runes)"
 
 echo
 echo "the shipped concierge — real persona, summoned by nobody"
 
-ship() { # ship <function>   — the REAL chamber, with the concierge listed in the roster
-    tl_config SPIRA_FAYTHS="builder ops concierge" SPIRA_CHAMBER="$HERE/chamber"
+ship() { # ship <function>   — the REAL runes, with the concierge listed in the roster
+    tl_config SPIRA_RUNES="builder ops concierge" SPIRA_RUNES_DIR="$HERE/runes"
     env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_CONF="$TMP/no.conf" \
         SPIRA_TOML="$SPIRA_TOML" SPIRA_HOME="$HERE" \
         bash -c '. "$2"/lib.sh 2>/dev/null; "$1"' _ "$1" "$HERE" 2>/dev/null
 }
-# LISTED IN $SPIRA_FAYTHS ON PURPOSE. No host lists it today, so the roster alone would keep
+# LISTED IN $SPIRA_RUNES ON PURPOSE. No host lists it today, so the roster alone would keep
 # it out — and that is a second reason, not the one under test. Naming it here removes the
-# reason that is doing the work by accident and leaves only FAYTH_SUMMON holding the line.
-nowant "the shipped concierge is not in the task pool"   "concierge" "$(ship spira_task_fayths)"
-nowant "the shipped concierge is not in the lane list"   "concierge" "$(ship spira_lane_fayths)"
-want   "and the other personas are still summonable"     "builder"   "$(ship spira_task_fayths)"
+# reason that is doing the work by accident and leaves only RUNE_SUMMON holding the line.
+nowant "the shipped concierge is not in the task pool"   "concierge" "$(ship spira_task_runes)"
+nowant "the shipped concierge is not in the lane list"   "concierge" "$(ship spira_lane_runes)"
+want   "and the other personas are still summonable"     "builder"   "$(ship spira_task_runes)"
 
 echo
 echo "resume — the recorded session id is used only when the cwd still matches"

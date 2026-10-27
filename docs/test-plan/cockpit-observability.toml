@@ -84,7 +84,7 @@ statement = "`SP_RATELIM_*` comes from the newest `rate_limit_event` and is `?` 
 [[use_case]]
 id = "UC-cockpit-observability-17"
 tier = "T1"
-statement = "`SP_NEXT` attributes each ready bead to the persona that will claim it, or marks it `unclaimable` when its `fayth:` preference cannot match"
+statement = "`SP_NEXT` attributes each ready bead to the persona that will claim it, or marks it `unclaimable` when its `rune:` preference cannot match"
 
 [[use_case]]
 id = "UC-cockpit-observability-18"
@@ -124,7 +124,7 @@ bead = "sp-94lbj.2"
 [[use_case]]
 id = "UC-cockpit-observability-23"
 tier = "T1"
-statement = "NOW rows come from `trace_stats`/`trace_tail`: turns are distinct message ids, ctx is the last usage, only the current attempt counts, MODEL mismatch with `FAYTH_MODEL` shows a warning, an unreadable trace gives `?` and an empty trace gives `-`, live-aeon count comes from pidfiles and /proc"
+statement = "NOW rows come from `trace_stats`/`trace_tail`: turns are distinct message ids, ctx is the last usage, only the current attempt counts, MODEL mismatch with `RUNE_MODEL` shows a warning, an unreadable trace gives `?` and an empty trace gives `-`, live-aeon count comes from pidfiles and /proc"
 
 [use_case.uncovered]
 reason = "NOW-row derivation is unit-tested in aeon::trace (trace_stats_* cases) and health::sections now_section tests; the Rust seam is not drivable from bash and the MODEL-mismatch warning and pidfile live-count have no test"

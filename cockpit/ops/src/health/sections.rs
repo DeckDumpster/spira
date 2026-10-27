@@ -362,7 +362,7 @@ pub fn aeon_row(snap: &Snapshot, i: usize, working: &[(String, String)]) -> Aeon
     let g = |k: &str| snap.q(&format!("SP_AEON{i}_{k}")).to_string();
     let o = |k: &str| snap.get(&format!("SP_AEON{i}_{k}")).unwrap_or("").to_string();
     let md = g("MODEL");
-    let fm = g("FAYTH_MODEL");
+    let fm = g("RUNE_MODEL");
     let mut model = model_short(&md);
     if md != "?" && md != "-" && fm != "?" && fm != "-" && md != fm {
         model = format!("{model} \u{26a0}{}", model_short(&fm));
@@ -378,7 +378,7 @@ pub fn aeon_row(snap: &Snapshot, i: usize, working: &[(String, String)]) -> Aeon
     }
     AeonRow {
         name: g("NAME"),
-        faith: g("FAYTH"),
+        faith: g("RUNE"),
         model,
         bead,
         title: o("TITLE"),
@@ -1274,7 +1274,7 @@ mod tests {
 
     #[test]
     fn now_section_names_the_phase_the_row_records_for_a_snapshotted_aeon() {
-        let s = snap(&[("SP_AEON_N", "1"), ("SP_AEON0_BEAD", "sp-a"), ("SP_AEON0_NAME", "aeon-x"), ("SP_AEON0_FAYTH", "builder")]);
+        let s = snap(&[("SP_AEON_N", "1"), ("SP_AEON0_BEAD", "sp-a"), ("SP_AEON0_NAME", "aeon-x"), ("SP_AEON0_RUNE", "builder")]);
         let working = vec![("sp-a".to_string(), "session".to_string())];
         let out = now_section(&s, 120, Some(&working), 0).join("\n");
         assert!(out.contains("\u{b7} session \u{b7}"), "{out}");

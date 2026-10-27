@@ -94,7 +94,7 @@ write `spira.toml` or the repo map; the `config-fence` lint refuses any other co
 | `spira-config init [--out F] [--answers F] [--<key> V]...` | write a first `spira.toml` (never overwrites) |
 | `spira-config schema` | the JSON Schema `spira.toml` is validated against |
 | `spira-config repo names\|all\|field\|add\|check ...` | the repository registry |
-| `spira-config fayth names\|get\|roster\|task\|lane\|partitions\|for-labels\|model` | the persona registry |
+| `spira-config rune names\|get\|roster\|task\|lane\|partitions\|for-labels\|model` | the persona registry |
 
 On an installed (read-only) release, callers that regenerate config resolve their write target
 through `spira-config writeback <candidate>`, which redirects away from the release unless
@@ -132,8 +132,8 @@ Register one with `spira-config repo add <name> --path P --queue local|forge [--
 <name>|--all`. A repository carries its own gate in the tree under test (`gate.steps`) and, for
 repositories other than the harness, its test entry in `.spira/testenv.toml`.
 
-**Personas.** `spira/chamber/<name>.fayth` and `<name>.md` ([concepts](concepts.md)). The live model per
-persona is `persona.<name>.model`; the `FAYTH_MODEL` line only seeds it. The aeon pool size is
+**Personas.** `spira/runes/<name>.rune` and `<name>.md` ([concepts](concepts.md)). The live model per
+persona is `persona.<name>.model`; the `RUNE_MODEL` line only seeds it. The aeon pool size is
 `spira.max_aeons`.
 
 ## Starting and stopping the world

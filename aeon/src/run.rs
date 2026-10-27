@@ -10,7 +10,7 @@ use crate::bd::{self, BeadRow};
 use crate::checkpoint;
 use crate::brief::{self, FixtureInfo, Tokens};
 use crate::claim::{self, Selection, Selector};
-use crate::conf::{self, Conf, Fayth, SystemPrompt};
+use crate::conf::{self, Conf, Rune, SystemPrompt};
 use crate::decide::{self, WorldStop};
 use crate::ledger::{self, Ledger};
 use crate::ports::{s, Bd, Env, Exec, Git, Seam};
@@ -117,7 +117,7 @@ pub const PHASE_REFUSED: i32 = 3;
 pub struct Run<'a> {
     pub d: Deps<'a>,
     pub conf: Conf,
-    pub fayth: Fayth,
+    pub rune: Rune,
     pub snap: Snapshot,
     pub mode: Mode,
     pub ledger: Ledger,
@@ -129,7 +129,7 @@ pub struct Run<'a> {
     pub stop: Arc<Stop>,
     pub hb_shutdown: Arc<AtomicBool>,
     pub hb_done: Arc<AtomicBool>,
-    pub fayth_file: PathBuf,
+    pub rune_file: PathBuf,
     pub s: State,
 }
 
@@ -217,7 +217,7 @@ impl<'a> Run<'a> {
     }
 
     pub fn f(&self) -> &str {
-        &self.fayth.name
+        &self.rune.name
     }
 
     /// `ledger_done <rc> <status>`: the line, then tsd and the rapid-recur check.
@@ -276,7 +276,7 @@ impl<'a> Run<'a> {
     /// A persona that requires a build spec stops at once on a bead without one: the bead is
     /// held with an ask for the Concierge, and no session starts to invent a mechanism.
     fn build_spec_gate(&mut self, c: &claim::Claimed) -> Option<i32> {
-        if !self.fayth.requires_build_spec || bead::has_build_spec(c.row.description.as_deref().unwrap_or("")) {
+        if !self.rune.requires_build_spec || bead::has_build_spec(c.row.description.as_deref().unwrap_or("")) {
             return None;
         }
         let id = &c.id;
@@ -300,12 +300,12 @@ impl<'a> Run<'a> {
                 self.log(&format!("{}: {id} rejected {} times — claim runs on {model}", self.f(), st.rejections));
                 self.record_fact(escalation::ESCALATED, &format!("model={model} rejections={}", st.rejections));
                 self.s.rejection_brief = escalation::history_brief(&st.history, &model);
-                spira_otel::run::event("escalated", &[("fayth", self.f()), ("model", &model)]);
+                spira_otel::run::event("escalated", &[("rune", self.f()), ("model", &model)]);
                 self.s.model_override = Some(model);
                 None
             }
             Tier::Hold => {
-                spira_otel::run::event("held", &[("fayth", self.f())]);
+                spira_otel::run::event("held", &[("rune", self.f())]);
                 self.release();
                 let reason = escalation::hold_reason(st.stronger_rejections);
                 self.record_fact(escalation::ESCALATED, &format!("hold rejections={}", st.stronger_rejections));
@@ -359,7 +359,7 @@ impl<'a> Run<'a> {
     // ==== the whole run ================================================================
 
     pub fn main(&mut self) -> i32 {
-        if let Err(lines) = conf::fenced(self.f(), &self.fayth.labels, &self.conf.s("SPIRA_SCOPE_LABEL")) {
+        if let Err(lines) = conf::fenced(self.f(), &self.rune.labels, &self.conf.s("SPIRA_SCOPE_LABEL")) {
             for l in lines {
                 self.log(&l);
             }
@@ -378,7 +378,7 @@ impl<'a> Run<'a> {
             return self.dry_run();
         }
         if let Err(code) = self.claim() { return code }
-        spira_otel::run::event("summon", &[("fayth", self.f())]);
+        spira_otel::run::event("summon", &[("rune", self.f())]);
         // ---- armed: every exit from here runs the teardown ----
         std::thread::scope(|sc| {
             let rc = match self.work(sc) {
@@ -403,9 +403,9 @@ impl<'a> Run<'a> {
     fn decline(&mut self) -> Option<i32> {
         let own = self.own_unit.clone();
         let have: i64 = self.sv("aeon_count", &s(&[self.f(), &own])).text().trim().parse().unwrap_or(0);
-        let mut limit = self.fayth.max_concurrent as i64;
+        let mut limit = self.rune.max_concurrent as i64;
         let mut pool = String::new();
-        if self.fayth.elastic {
+        if self.rune.elastic {
             // SPIRA_MAX_AEONS is registered (a real spira/conf.d default, 4) — reached
             // through `Conf::i`, never `self.conf.v` directly: that raw map read used to
             // let an absent/unparseable value silently skip this whole branch instead of
@@ -414,7 +414,7 @@ impl<'a> Run<'a> {
             limit = max;
             pool = (if max > have { max - have } else { 0 }).to_string();
         }
-        let free = self.sv("fayth_free", &s(&[self.f(), &pool, &own])).text();
+        let free = self.sv("rune_free", &s(&[self.f(), &pool, &own])).text();
         if free.trim().parse::<i64>().ok() == Some(0) {
             self.log(&format!("{}: at capacity ({have}/{limit}), not summoning", self.f()));
             self.ledger.awake(self.now(), self.f(), "capacity");
@@ -446,8 +446,8 @@ impl<'a> Run<'a> {
         None
     }
 
-    /// The ready set, as JSON: spira-claim's `fayth-ready --json`, the lifecycle machine's
-    /// claimable rows in this fayth's partition — the rows CHECK 7 counted when it summoned
+    /// The ready set, as JSON: spira-claim's `rune-ready --json`, the lifecycle machine's
+    /// claimable rows in this rune's partition — the rows CHECK 7 counted when it summoned
     /// this aeon; bd supplies only their content.
     fn ready_set(&self, tries: u32, delay: Duration) -> Result<String, String> {
         let tries = tries.max(1);
@@ -461,7 +461,7 @@ impl<'a> Run<'a> {
                 (self.d.sleep)(delay);
             }
         }
-        Err(format!("fayth-ready: query failed after {tries} attempt(s): {}", last.first_err_line()))
+        Err(format!("rune-ready: query failed after {tries} attempt(s): {}", last.first_err_line()))
     }
 
     /// `spira-claim stack <id>` — the stack this claim would carry, or an empty, unstacked
@@ -512,13 +512,13 @@ impl<'a> Run<'a> {
             self.log(&format!("{who}: refusing to claim — {held} is already WORKING under another live session of {}", self.s.aeon));
             return Err(1);
         }
-        let until = (self.now() + self.fayth.lease_seconds()).to_string();
+        let until = (self.now() + self.rune.lease_seconds()).to_string();
         let mut stacks = std::collections::BTreeMap::new();
         let (won, logs, unreachable) = claim::lc_claim_loop(ids, resumable, tier, who, |id| {
             let p = self.stack_proposal(id, who);
             let rc = self.sdo(
                 "lc_claim_bead",
-                &s(&[id, &holder, &until, &stack::stack_json(&p.stack), &p.stack_depth.to_string(), &p.stack_max_depth.to_string(), &self.fayth.name]),
+                &s(&[id, &holder, &until, &stack::stack_json(&p.stack), &p.stack_depth.to_string(), &p.stack_max_depth.to_string(), &self.rune.name]),
             );
             stacks.insert(id.to_string(), p.stack);
             rc
@@ -587,7 +587,7 @@ impl<'a> Run<'a> {
         let ready = if ready.trim().is_empty() { "[]".to_string() } else { ready };
         let claim_bin = self.claim_bin.clone();
         let who = format!("{}/{}", self.f(), self.s.aeon);
-        let sel = Selector { exec: self.d.exec, git: self.d.git, claim_bin: &claim_bin, fayth: &self.fayth.name, scratch: &self.conf.run, pid: self.pid, repos: &self.conf.repos };
+        let sel = Selector { exec: self.d.exec, git: self.d.git, claim_bin: &claim_bin, rune: &self.rune.name, scratch: &self.conf.run, pid: self.pid, repos: &self.conf.repos };
         let (ids, resumable, tier) = match sel.select(&ready) {
             Selection::ClaimError { log, ledger } => {
                 self.log(&log);
@@ -606,7 +606,7 @@ impl<'a> Run<'a> {
         self.s.claimed = Some(c.row.clone());
         self.log(&format!("{who}: claimed {}", c.id));
         self.ledger.awake(self.now(), self.f(), &c.id);
-        self.sdo("spira_event", &s(&["aeon.claimed", &c.id, &format!("{} claimed {}", self.s.aeon, c.id), &format!("summoned from the {} fayth", self.f())]));
+        self.sdo("spira_event", &s(&["aeon.claimed", &c.id, &format!("{} claimed {}", self.s.aeon, c.id), &format!("summoned from the {} rune", self.f())]));
 
         // The baseline verdict compares the description against at close. A metadata write, so
         // not a description edit as bdq's live-claim fence reads it.
@@ -745,7 +745,7 @@ impl<'a> Run<'a> {
         let pidfile = self.run_dir().join(format!("aeon-{}-{}.pid", self.f(), c.id));
         let logf = self.run_dir().join(format!("{}.log", c.id));
         let _ = std::fs::write(&pidfile, format!("{}\n", self.pid));
-        strand::probe::write_lease(&pidfile, self.now() + self.fayth.lease_seconds());
+        strand::probe::write_lease(&pidfile, self.now() + self.rune.lease_seconds());
         let _ = std::fs::write(pidfile.with_extension("name"), &self.s.aeon);
         let mark = ledger::trace_mark_line(&logf, &self.s.aeon, &self.conf.trace_mark(), self.now());
         append(&logf, &format!("{mark}\n"));
@@ -800,7 +800,7 @@ impl<'a> Run<'a> {
         }
         self.d.env.set("BEAD_ID", &bead);
         self.d.env.set("SPIRA_MAIL", &mail);
-        self.d.env.set("SPIRA_MAIL_FROM", &self.fayth.mail_from());
+        self.d.env.set("SPIRA_MAIL_FROM", &self.rune.mail_from());
         self.start_heartbeat(sc);
         self.phase("building");
         self.check_stop()?;
@@ -845,7 +845,7 @@ impl<'a> Run<'a> {
         let mut branch = self.s.branch.clone();
         let repo = self.s.repo.clone();
         let acts = {
-            let e = worktree::Ensure { git: self.d.git, repo: &repo, work: &work, bead_id: &bead, root: &root, base: &self.s.base, base_fq: &self.s.base_fq, fayth: &self.fayth.name, now: self.now() };
+            let e = worktree::Ensure { git: self.d.git, repo: &repo, work: &work, bead_id: &bead, root: &root, base: &self.s.base, base_fq: &self.s.base_fq, rune: &self.rune.name, now: self.now() };
             let prune = || {
                 let _ = self.d.seam.call("spira_prune_worktrees", &s(&[&repo.display().to_string()]));
             };
@@ -900,7 +900,7 @@ impl<'a> Run<'a> {
 
         // ---- exported for the commit guard and the session ----
         self.d.env.set("SPIRA_WORK", &wdisp);
-        self.d.env.set("SPIRA_FAYTH", self.f());
+        self.d.env.set("SPIRA_RUNE", self.f());
         if self.f() == "czar" {
             let class = self.s.claimed.as_ref().and_then(|r| r.label_value("czar-class:")).unwrap_or_default();
             self.d.env.set("SPIRA_CZAR_CLASS", &class);
@@ -938,7 +938,7 @@ impl<'a> Run<'a> {
 
         // ---- the groom log, before ----
         self.s.session_epoch = self.now();
-        if self.fayth.groom_escalation_check {
+        if self.rune.groom_escalation_check {
             self.s.groom_lines_before = std::fs::read_to_string(self.run_dir().join("groom.log")).map(|t| t.lines().count()).unwrap_or(0);
         }
         self.check_stop()?;
@@ -1006,11 +1006,11 @@ impl<'a> Run<'a> {
         let park = brief::park_brief(&self.s.repo_land, &self.s.branch, &self.s.repo_name, &self.s.base_branch);
         let finish = brief::finish_brief(&bead);
         let fixture = brief::fixture_brief(self.s.fixture.as_ref(), &self.conf.s("SPIRA_TESTDB_LIB"), fixture_ms);
-        let deadline_at = self.fayth.timeout_seconds.map(|t| self.t0 + t as i64);
+        let deadline_at = self.rune.timeout_seconds.map(|t| self.t0 + t as i64);
         let deadline = brief::deadline_brief(deadline_at, self.now(), deadline_at.and_then(util::local_hms_zone));
 
-        let chamber_file = self.home().join("chamber").join(format!("{}.md", self.f()));
-        let (chamber, logs) = brief::chamber_with_overlays(self.f(), &chamber_file, &overlay);
+        let runes_file = self.home().join("runes").join(format!("{}.md", self.f()));
+        let (runes, logs) = brief::runes_with_overlays(self.f(), &runes_file, &overlay);
         for l in logs {
             self.log(&format!("{}: {bead} {l}", self.f()));
         }
@@ -1102,7 +1102,7 @@ impl<'a> Run<'a> {
             deadline: blocks[2].clone(),
             finish: blocks[3].clone(),
         };
-        let prompt = brief::render_prompt(&chamber, &tokens, banner.as_deref());
+        let prompt = brief::render_prompt(&runes, &tokens, banner.as_deref());
         let statutes = self.statutes().map_err(Abort::Die)?;
         let (sys, mut task) = brief::split(&statutes, &prompt);
         task.push_str(&self.s.rejection_brief);
@@ -1117,7 +1117,7 @@ impl<'a> Run<'a> {
         Ok(())
     }
 
-    /// `render_memories "${FAYTH_MEMORY_PREFIXES:-law-}" "" "${FAYTH_STATUTE_CORE:-}"`, with
+    /// `render_memories "${RUNE_MEMORY_PREFIXES:-law-}" "" "${RUNE_STATUTE_CORE:-}"`, with
     /// this installation's own `SPIRA_STATUTE_CORE_LOCAL` slugs appended to whatever core the
     /// persona resolves (`brief::with_local_core`). Err when a declared core slug — local or
     /// not — names no memory: the brief would be silently thinned.
@@ -1146,19 +1146,19 @@ impl<'a> Run<'a> {
                 let _ = std::fs::write(&cache, format!("{}\n", json.trim_end_matches('\n')));
             }
         }
-        let core = if self.fayth.statute_core.is_empty() { self.conf.s("SPIRA_STATUTE_CORE") } else { self.fayth.statute_core.clone() };
+        let core = if self.rune.statute_core.is_empty() { self.conf.s("SPIRA_STATUTE_CORE") } else { self.rune.statute_core.clone() };
         let core = brief::with_local_core(&core, &self.conf.s("SPIRA_STATUTE_CORE_LOCAL"));
         let harness = self.conf.or("SPIRA_REPO", "<harness>");
-        let missing = brief::missing_core(&json, &self.fayth.memory_prefixes, &core);
+        let missing = brief::missing_core(&json, &self.rune.memory_prefixes, &core);
         if !missing.is_empty() {
             return Err(format!("{}: core statute(s) declared but not found: {} — refusing to start with a thinned brief", self.f(), missing.join(", ")));
         }
-        Ok(brief::render_memories(&json, &self.fayth.memory_prefixes, 120_000, &core, &harness))
+        Ok(brief::render_memories(&json, &self.rune.memory_prefixes, 120_000, &core, &harness))
     }
 
     /// `aeon_claude_argv <flag> <file>`.
     pub fn claude_argv(&self, sys_file: &Path) -> Result<Vec<String>, String> {
-        let flag = match self.fayth.system_prompt {
+        let flag = match self.rune.system_prompt {
             SystemPrompt::Replace => "--system-prompt-file",
             SystemPrompt::Append => "--append-system-prompt-file",
         };
@@ -1166,13 +1166,13 @@ impl<'a> Run<'a> {
             Some(m) => m.clone(),
             None => conf::persona_model(self.f(), &self.conf.s("SPIRA_TOML"))?,
         };
-        spira_otel::run::event("attempt", &[("fayth", self.f()), ("model", &model), ("rework", if self.s.model_override.is_some() { "escalated" } else { "first" })]);
+        spira_otel::run::event("attempt", &[("rune", self.f()), ("model", &model), ("rework", if self.s.model_override.is_some() { "escalated" } else { "first" })]);
         let mut a = s(&["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--system-prompt-snapshot", "on", flag, &sys_file.display().to_string()]);
-        a.extend(s(&["--model", &model, "--allowedTools", &self.fayth.tools, "--dangerously-skip-permissions"]));
-        if self.fayth.project_instructions == "none" {
+        a.extend(s(&["--model", &model, "--allowedTools", &self.rune.tools, "--dangerously-skip-permissions"]));
+        if self.rune.project_instructions == "none" {
             a.extend(s(&["--setting-sources", "user"]));
         }
-        a.extend(s(&["--settings", &aeon_settings(self.home(), self.fayth.habits)]));
+        a.extend(s(&["--settings", &aeon_settings(self.home(), self.rune.habits)]));
         Ok(a)
     }
 
@@ -1315,7 +1315,7 @@ impl<'a> Run<'a> {
             };
             (agent, argv, restrict::restricted_env(&bead, &child, &model_bin))
         };
-        let spec = SessionSpec { prog, args, stdin_file: task_file, log: logf, cwd: work.to_path_buf(), env: spec_env, timeout: self.fayth.timeout_seconds, halted: Some(self.run_dir().join("world.halted")), warm: warm_slot };
+        let spec = SessionSpec { prog, args, stdin_file: task_file, log: logf, cwd: work.to_path_buf(), env: spec_env, timeout: self.rune.timeout_seconds, halted: Some(self.run_dir().join("world.halted")), warm: warm_slot };
         let rc = self.d.launcher.run(&spec, &self.stop);
         // Interrupted: bash's trap ran before `SESSION_RC=$rc`, so SESSION_RC stays 0.
         self.check_stop()?;
@@ -1369,7 +1369,7 @@ impl<'a> Run<'a> {
         let who = self.s.aeon.clone();
         let facts = self.d.exec.exec("spira-lc", &s(&["facts", "--ids", &bead, "--kinds", &format!("{},{}", checkpoint::SESSION, checkpoint::CHECKPOINTED)]), None, None);
         let facts = if facts.success() { checkpoint::parse_facts(&facts.stdout) } else { Vec::new() };
-        let persona = checkpoint::persona_hash(&std::fs::read(self.home().join("chamber").join(format!("{}.md", self.f()))).unwrap_or_default());
+        let persona = checkpoint::persona_hash(&std::fs::read(self.home().join("runes").join(format!("{}.md", self.f()))).unwrap_or_default());
         let cfg = checkpoint::config_dir(&self.d.env.child());
         let plan = checkpoint::plan(&facts, self.f(), &persona, work.is_dir(), |id| checkpoint::transcript_exists(&cfg, id));
         let (id, args) = match plan {
@@ -1390,7 +1390,7 @@ impl<'a> Run<'a> {
                 (id, args)
             }
         };
-        let fact = checkpoint::SessionFact { id: id.clone(), fayth: self.f().to_string(), persona, worktree: work.display().to_string() };
+        let fact = checkpoint::SessionFact { id: id.clone(), rune: self.f().to_string(), persona, worktree: work.display().to_string() };
         let wrote = self.d.exec.exec("spira-lc", &s(&["fact", &bead, "--kind", checkpoint::SESSION, "--actor", &who, "--cause", &fact.cause()]), None, None);
         if !wrote.success() {
             self.log(&format!("{}: {bead} could not record session {id} (rc={}): a stop will not be checkpointed", self.f(), wrote.code));
@@ -1434,10 +1434,10 @@ impl<'a> Run<'a> {
     {
         let hb = Heartbeat {
             bead: self.s.bead.clone(),
-            fayth: self.fayth.name.clone(),
+            rune: self.rune.name.clone(),
             run: self.conf.run.clone(),
-            lease_s: self.fayth.lease_seconds(),
-            every: Duration::from_secs(self.fayth.heartbeat_seconds.max(1)),
+            lease_s: self.rune.lease_seconds(),
+            every: Duration::from_secs(self.rune.heartbeat_seconds.max(1)),
             wall_min: self.conf.i("SPIRA_THRASH_MINUTES"),
         };
         let beat = RealBeat {
@@ -1644,7 +1644,7 @@ mod tests {
     }
 
     #[test]
-    fn habits_group_only_when_the_fayth_sets_it() {
+    fn habits_group_only_when_the_rune_sets_it() {
         let d = testkit::TempDir::new("aeon-settings-habits");
         let off: serde_json::Value = serde_json::from_str(&aeon_settings(&d, false)).unwrap();
         assert_eq!(off["hooks"]["PostToolUse"].as_array().unwrap().len(), 1);

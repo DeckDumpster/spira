@@ -1,4 +1,4 @@
-//! Typed views of the snapshot: the persona (`Fayth`) and conf.sh's resolution (`Conf`),
+//! Typed views of the snapshot: the persona (`Rune`) and conf.sh's resolution (`Conf`),
 //! with aeon.sh's defaults for every key it defaulted inline.
 
 use std::collections::BTreeMap;
@@ -13,7 +13,7 @@ pub enum SystemPrompt {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Fayth {
+pub struct Rune {
     pub name: String,
     pub labels: String,
     pub exclude_labels: String,
@@ -41,35 +41,35 @@ fn num<T: std::str::FromStr>(m: &BTreeMap<String, String>, k: &str) -> Option<T>
     get(m, k).and_then(|s| s.trim().parse().ok())
 }
 
-impl Fayth {
-    pub fn from_vars(name: &str, v: &BTreeMap<String, String>) -> Fayth {
-        Fayth {
+impl Rune {
+    pub fn from_vars(name: &str, v: &BTreeMap<String, String>) -> Rune {
+        Rune {
             name: name.to_string(),
-            labels: get(v, "FAYTH_LABELS").unwrap_or("").to_string(),
-            exclude_labels: get(v, "FAYTH_EXCLUDE_LABELS").unwrap_or("").to_string(),
-            max_concurrent: num(v, "FAYTH_MAX_CONCURRENT").unwrap_or(1),
-            elastic: get(v, "FAYTH_ELASTIC") == Some("1"),
-            lease_minutes: num(v, "FAYTH_LEASE_MINUTES"),
-            heartbeat_seconds: num(v, "FAYTH_HEARTBEAT_SECONDS").unwrap_or(30),
-            timeout_seconds: num(v, "FAYTH_TIMEOUT_SECONDS"),
-            memory_prefixes: get(v, "FAYTH_MEMORY_PREFIXES").unwrap_or("law-").to_string(),
-            statute_core: get(v, "FAYTH_STATUTE_CORE").unwrap_or("").to_string(),
-            tools: get(v, "FAYTH_TOOLS").unwrap_or("Bash,Read,Edit,Write,Glob,Grep").to_string(),
-            project_instructions: get(v, "FAYTH_PROJECT_INSTRUCTIONS").unwrap_or("").to_string(),
-            system_prompt: if get(v, "FAYTH_SYSTEM_PROMPT") == Some("replace") { SystemPrompt::Replace } else { SystemPrompt::Append },
-            groom_escalation_check: get(v, "FAYTH_GROOM_ESCALATION_CHECK") == Some("1"),
-            graph_only: get(v, "FAYTH_GRAPH_ONLY") == Some("1"),
-            requires_build_spec: get(v, "FAYTH_REQUIRES_BUILD_SPEC") == Some("1"),
-            habits: get(v, "FAYTH_HABITS") == Some("1"),
+            labels: get(v, "RUNE_LABELS").unwrap_or("").to_string(),
+            exclude_labels: get(v, "RUNE_EXCLUDE_LABELS").unwrap_or("").to_string(),
+            max_concurrent: num(v, "RUNE_MAX_CONCURRENT").unwrap_or(1),
+            elastic: get(v, "RUNE_ELASTIC") == Some("1"),
+            lease_minutes: num(v, "RUNE_LEASE_MINUTES"),
+            heartbeat_seconds: num(v, "RUNE_HEARTBEAT_SECONDS").unwrap_or(30),
+            timeout_seconds: num(v, "RUNE_TIMEOUT_SECONDS"),
+            memory_prefixes: get(v, "RUNE_MEMORY_PREFIXES").unwrap_or("law-").to_string(),
+            statute_core: get(v, "RUNE_STATUTE_CORE").unwrap_or("").to_string(),
+            tools: get(v, "RUNE_TOOLS").unwrap_or("Bash,Read,Edit,Write,Glob,Grep").to_string(),
+            project_instructions: get(v, "RUNE_PROJECT_INSTRUCTIONS").unwrap_or("").to_string(),
+            system_prompt: if get(v, "RUNE_SYSTEM_PROMPT") == Some("replace") { SystemPrompt::Replace } else { SystemPrompt::Append },
+            groom_escalation_check: get(v, "RUNE_GROOM_ESCALATION_CHECK") == Some("1"),
+            graph_only: get(v, "RUNE_GRAPH_ONLY") == Some("1"),
+            requires_build_spec: get(v, "RUNE_REQUIRES_BUILD_SPEC") == Some("1"),
+            habits: get(v, "RUNE_HABITS") == Some("1"),
         }
     }
 
-    /// `fayth_lease_seconds`: minutes × 60, 10 minutes when undeclared.
+    /// `rune_lease_seconds`: minutes × 60, 10 minutes when undeclared.
     pub fn lease_seconds(&self) -> i64 {
         self.lease_minutes.unwrap_or(10) as i64 * 60
     }
 
-    /// "Builder <builder@spira>" — `${FAYTH^}`.
+    /// "Builder <builder@spira>" — `${RUNE^}`.
     pub fn mail_from(&self) -> String {
         let mut c = self.name.chars();
         let cap = match c.next() {
@@ -80,16 +80,16 @@ impl Fayth {
     }
 }
 
-/// `fayth_fenced`: Ok, or the two log lines it prints before refusing.
+/// `rune_fenced`: Ok, or the two log lines it prints before refusing.
 pub fn fenced(name: &str, labels: &str, scope: &str) -> Result<(), Vec<String>> {
     if labels.is_empty() {
-        return Err(vec![format!("FENCE {name}: FAYTH_LABELS is empty — that predicate selects the whole database.")]);
+        return Err(vec![format!("FENCE {name}: RUNE_LABELS is empty — that predicate selects the whole database.")]);
     }
     if scope.is_empty() || labels.split(',').any(|l| l == scope) {
         return Ok(());
     }
     Err(vec![
-        format!("FENCE {name}: FAYTH_LABELS='{labels}' does not require '{scope}' (SPIRA_SCOPE_LABEL)."),
+        format!("FENCE {name}: RUNE_LABELS='{labels}' does not require '{scope}' (SPIRA_SCOPE_LABEL)."),
         format!("FENCE {name}: Add '{scope}' to it, or set SPIRA_SCOPE_LABEL= to allow unrestricted scope."),
     ])
 }
@@ -179,7 +179,7 @@ impl Conf {
         self.s("SPIRA_SUBMITTED_LABEL")
     }
     pub fn overlay(&self) -> PathBuf {
-        PathBuf::from(self.s("SPIRA_CHAMBER_OVERLAY"))
+        PathBuf::from(self.s("SPIRA_RUNES_OVERLAY"))
     }
     pub fn trace_mark(&self) -> String {
         self.or("SPIRA_TRACE_MARK", "=== spira attempt")
@@ -281,7 +281,7 @@ pub fn persona_escalation_model(name: &str, spec: &str) -> Option<String> {
 
 /// Where the harness's `spira/` directory is (DESIGN.md §2.1).
 pub fn resolve_home(flag: Option<&str>, env: &BTreeMap<String, String>, exe: Option<&Path>) -> Option<PathBuf> {
-    let ok = |p: &Path| p.join("lib.sh").is_file() && p.join("chamber").is_dir();
+    let ok = |p: &Path| p.join("lib.sh").is_file() && p.join("runes").is_dir();
     if let Some(f) = flag {
         let p = PathBuf::from(f);
         return ok(&p).then_some(p);
@@ -315,7 +315,7 @@ pub fn resolve_home(flag: Option<&str>, env: &BTreeMap<String, String>, exe: Opt
 /// sourced `lib.sh`/`conf.sh` — a second, bash-shaped derivation of values
 /// `spira_config::resolve()` already computes in-process. This merges that in-process
 /// answer into `snap.vars` instead, via `entry().or_insert()` so nothing the seam itself
-/// still supplies (`seam::SNAPSHOT_VARS` — every `FAYTH_*`, ...) is ever
+/// still supplies (`seam::SNAPSHOT_VARS` — every `RUNE_*`, ...) is ever
 /// overridden, matching conf.sh's own `${VAR:=default}` rule.
 ///
 /// `SPIRA_HOME`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED` are inserted explicitly: `resolve()`
@@ -362,11 +362,11 @@ pub fn merge_resolved_config(snap: &mut crate::seam::Snapshot, home: &Path, env:
     Ok(())
 }
 
-/// The warning for a fayth still declaring the retired `FAYTH_SOP_REQUIRED`; the key is never honoured.
-pub fn retired_sop_required_warning(vars: &BTreeMap<String, String>, fayth: &str) -> Option<String> {
-    vars.get("FAYTH_SOP_REQUIRED")
+/// The warning for a rune still declaring the retired `RUNE_SOP_REQUIRED`; the key is never honoured.
+pub fn retired_sop_required_warning(vars: &BTreeMap<String, String>, rune: &str) -> Option<String> {
+    vars.get("RUNE_SOP_REQUIRED")
         .is_some_and(|v| !v.is_empty())
-        .then(|| format!("{fayth}: FAYTH_SOP_REQUIRED is retired (sp-loycl) and ignored — remove it from the fayth"))
+        .then(|| format!("{rune}: RUNE_SOP_REQUIRED is retired (sp-loycl) and ignored — remove it from the rune"))
 }
 
 #[cfg(test)]
@@ -378,8 +378,8 @@ mod tests {
     }
 
     #[test]
-    fn fayth_defaults_match_aeon_sh() {
-        let f = Fayth::from_vars("builder", &vars(&[("FAYTH_LABELS", "spira,plan")]));
+    fn rune_defaults_match_aeon_sh() {
+        let f = Rune::from_vars("builder", &vars(&[("RUNE_LABELS", "spira,plan")]));
         assert_eq!(f.max_concurrent, 1);
         assert_eq!(f.heartbeat_seconds, 30);
         assert_eq!(f.lease_seconds(), 600);
@@ -387,7 +387,7 @@ mod tests {
         assert_eq!(f.tools, "Bash,Read,Edit,Write,Glob,Grep");
         assert_eq!(f.system_prompt, SystemPrompt::Append);
         assert_eq!(f.mail_from(), "Builder <builder@spira>");
-        let g = Fayth::from_vars("x", &vars(&[("FAYTH_LEASE_MINUTES", "90"), ("FAYTH_SYSTEM_PROMPT", "replace")]));
+        let g = Rune::from_vars("x", &vars(&[("RUNE_LEASE_MINUTES", "90"), ("RUNE_SYSTEM_PROMPT", "replace")]));
         assert_eq!(g.lease_seconds(), 5400);
         assert_eq!(g.system_prompt, SystemPrompt::Replace);
     }
@@ -423,17 +423,17 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    fn reads_fayth_model(src: &str) -> bool {
-        src.contains("${FAYTH_MODEL") || src.contains("$FAYTH_MODEL")
+    fn reads_rune_model(src: &str) -> bool {
+        src.contains("${RUNE_MODEL") || src.contains("$RUNE_MODEL")
     }
 
     #[test]
-    fn no_launcher_scrapes_a_model_out_of_the_fayth_or_hardcodes_one() {
-        assert!(reads_fayth_model("--model \"${FAYTH_MODEL:-x}\""), "the matcher can see its offender");
-        assert!(!reads_fayth_model(include_str!("../../spira/lib.sh")));
+    fn no_launcher_scrapes_a_model_out_of_the_rune_or_hardcodes_one() {
+        assert!(reads_rune_model("--model \"${RUNE_MODEL:-x}\""), "the matcher can see its offender");
+        assert!(!reads_rune_model(include_str!("../../spira/lib.sh")));
         let concierge = include_str!("../../concierge.sh");
-        assert!(!reads_fayth_model(concierge));
-        assert!(concierge.contains("MODEL=\"$(persona_model \"$FAYTH\")\""));
+        assert!(!reads_rune_model(concierge));
+        assert!(concierge.contains("MODEL=\"$(persona_model \"$RUNE\")\""));
         let reflect = include_str!("../../spira/reflect.sh");
         assert!(!reflect.contains("--model claude-opus-5"));
         assert!(reflect.contains("SPIRA_REFLECT_MODEL:-claude-opus-5"));
@@ -563,11 +563,11 @@ mod tests {
     }
 
     #[test]
-    fn a_retired_sop_required_key_draws_a_warning_naming_the_fayth_and_an_absent_one_none() {
-        let set = BTreeMap::from([("FAYTH_SOP_REQUIRED".to_string(), "1".to_string())]);
+    fn a_retired_sop_required_key_draws_a_warning_naming_the_rune_and_an_absent_one_none() {
+        let set = BTreeMap::from([("RUNE_SOP_REQUIRED".to_string(), "1".to_string())]);
         let w = retired_sop_required_warning(&set, "builder").expect("planted offender");
-        assert!(w.starts_with("builder: FAYTH_SOP_REQUIRED is retired (sp-loycl)"), "{w}");
+        assert!(w.starts_with("builder: RUNE_SOP_REQUIRED is retired (sp-loycl)"), "{w}");
         assert_eq!(retired_sop_required_warning(&BTreeMap::new(), "builder"), None);
-        assert_eq!(retired_sop_required_warning(&BTreeMap::from([("FAYTH_SOP_REQUIRED".to_string(), String::new())]), "builder"), None);
+        assert_eq!(retired_sop_required_warning(&BTreeMap::from([("RUNE_SOP_REQUIRED".to_string(), String::new())]), "builder"), None);
     }
 }

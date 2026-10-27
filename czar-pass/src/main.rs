@@ -341,7 +341,7 @@ fn infer(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str) {
                 "czar pass: {} → inference (filed, summoning czar)",
                 class
             ));
-            summon_fayth_czar(cfg);
+            summon_rune_czar(cfg);
         }
     }
 }
@@ -388,7 +388,7 @@ fn infer_urgent(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str, r
                 "czar pass: {} → inference (filed, summoning czar)",
                 class
             ));
-            summon_fayth_czar(cfg);
+            summon_rune_czar(cfg);
         }
     }
 }
@@ -404,11 +404,11 @@ fn det_action(cfg: &Config, class: &str, desc: &str, action: impl FnOnce()) {
 }
 
 /// `sentinel --summon czar` directly — no lib.sh sourcing at all (wave 4.27, family G,
-/// sp-gzmd2: `summon_fayth` moved in-process into the sentinel crate). The own
+/// sp-gzmd2: `summon_rune` moved in-process into the sentinel crate). The own
 /// `world.halted` pre-check this used to need is gone too: `sentinel --summon` runs the
 /// SAME `world_gate` sentinel's own pass does, which also catches a live DRAIN this
 /// hand-rolled check never did.
-fn summon_fayth_czar(cfg: &Config) {
+fn summon_rune_czar(cfg: &Config) {
     // batch-job: this runs whatever its caller names, as long as that takes
     let _ = Command::new(&cfg.seams.sentinel)
         .arg("--summon")

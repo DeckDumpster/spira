@@ -5,7 +5,7 @@ Rust-rewrite wave 7c (sp-aufxu). Replaces `spira/groomer.sh` and
 
 ## Intent
 
-The groomer persona (`chamber/groomer.md`) does graph hygiene — splitting beads that
+The groomer persona (`runes/groomer.md`) does graph hygiene — splitting beads that
 cannot land on their own, merging duplicates, closing premise-gone litter, correcting
 mislabelled lanes, and triaging `spira-poison` — and this crate is its tool, not its
 judgement. Every subcommand is a **mechanical** operation: it either does exactly what it
@@ -95,7 +95,7 @@ the bash suites' `STUB_BD` argv-recording technique without a subprocess.
 - **groomer.sh's own bash-side argv validation (`--with requires a value`, `unknown
   option: %s`) is reproduced verbatim in `src/main.rs::parse_flags`**, including exit code
   1 for every case, so the CLI's error surface does not change shape for any caller
-  (aeon.sh, the chamber brief, an operator at a terminal) mid-rewrite.
+  (aeon.sh, the runes brief, an operator at a terminal) mid-rewrite.
 - **Every write verb discards bd's own stdout, keeping stderr visible.**
   `groomer.sh` redirected most of its write calls to `/dev/null` (`split-piece`'s
   `set-state`/`label remove` most pointedly — `split-piece`'s own stdout contract is the

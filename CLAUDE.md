@@ -2,7 +2,7 @@
 
 This file is for an agent working **on** the harness — changing its code. It is not the brief
 an aeon gets when the harness summons it to work a bead; that comes from a persona in
-`spira/chamber/`.
+`spira/runes/`.
 
 Read `README.md` first for what the thing is. This is what is different about editing it.
 

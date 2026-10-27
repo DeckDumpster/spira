@@ -82,7 +82,7 @@ has "overseer label is applied"               "label add sp-typo1 overseer"     
 has "a note is left on the bead"              "note sp-typo1"                      "$calls"
 has "the ask hold is put on the lifecycle row"  "spira-lc hold sp-typo1 ask"        "$calls"
 # Through spira-lc unclaim (sp-hyo5e): the machine releases the row only if this aeon still
-# holds it — under the aeon's own name, never the fayth's. bd is not written (sp-v62vn).
+# holds it — under the aeon's own name, never the rune's. bd is not written (sp-v62vn).
 has "the claim is released (spira-lc unclaim under the aeon's name)" \
     "spira-lc unclaim sp-typo1 aeon-tester" "$calls"
 

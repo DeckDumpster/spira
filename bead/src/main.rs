@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 use spira_config::amendment;
 use bead::claimdesc::notify_live_aeon;
 use bead::{
-    branch_candidate, branch_label, chamber_partitions, epic_blocks_refusal, incident_blocks_refusal, is_blocks_type,
+    branch_candidate, branch_label, runes_partitions, epic_blocks_refusal, incident_blocks_refusal, is_blocks_type,
     awaits_dispatch, lane_check, stack_after_refusal, find_id_by_title, lint_judge, parse_created_id, PARTITION_CHECK_TYPES, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
     persona_line, repos_by_name, repos_section, work_labels, LaneCheck,
 };
@@ -304,7 +304,7 @@ fn s(strs: &[&str]) -> Vec<String> {
     strs.iter().map(|s| s.to_string()).collect()
 }
 
-/// `FAYTH_LABELS`, plainly evaluated — delegates to `spira_config::chamber::fayth_get`
+/// `RUNE_LABELS`, plainly evaluated — delegates to `spira_config::runes::rune_get`
 /// (sp-xsnid retired this crate's OWN hand-rolled bash-bridge, which carried an
 /// independently-drifted three-key label overlay — `SPIRA_CZAR_LABEL`/
 /// `SPIRA_GROOMER_LABEL`/`SPIRA_MIMIR_LABEL` only, never `SPIRA_INCIDENT_LABEL`/
@@ -312,59 +312,59 @@ fn s(strs: &[&str]) -> Vec<String> {
 /// `SPIRA_CI_LABEL` — a SECOND hand-curated list with its own gaps, on top of
 /// `spira-config`'s own five-key one). For REPORTING call sites only (`bead contract`,
 /// `bead lint`): an empty result here just means the report shows an empty partition for
-/// that persona, never a claim decision, so it never needs [`fayth_predicate`]'s
-/// fail-closed refusal. `home` is [`chamber_home`]'s own `$SPIRA_HOME`-override
-/// precedence, matching every other chamber read in this file.
-fn fayth_label(home: &str, fayth: &str) -> String {
-    spira_config::chamber::fayth_get(Path::new(&chamber_home(home)), fayth, "FAYTH_LABELS", "")
+/// that persona, never a claim decision, so it never needs [`rune_predicate`]'s
+/// fail-closed refusal. `home` is [`runes_home`]'s own `$SPIRA_HOME`-override
+/// precedence, matching every other runes read in this file.
+fn rune_label(home: &str, rune: &str) -> String {
+    spira_config::runes::rune_get(Path::new(&runes_home(home)), rune, "RUNE_LABELS", "")
 }
 
-const REQUIRES_BUILD_SPEC_KEY: &str = "FAYTH_REQUIRES_BUILD_SPEC";
+const REQUIRES_BUILD_SPEC_KEY: &str = "RUNE_REQUIRES_BUILD_SPEC";
 
-fn requires_build_spec(home: &str, fayth: &str) -> bool {
-    spira_config::chamber::fayth_get(Path::new(&chamber_home(home)), fayth, REQUIRES_BUILD_SPEC_KEY, "") == "1"
+fn requires_build_spec(home: &str, rune: &str) -> bool {
+    spira_config::runes::rune_get(Path::new(&runes_home(home)), rune, REQUIRES_BUILD_SPEC_KEY, "") == "1"
 }
 
-/// `FAYTH_LABELS`/`FAYTH_EXCLUDE_LABELS`, fully resolved and FAIL-CLOSED — delegates to
-/// `spira_config::chamber::fayth_predicate`, the one shared evaluator every
+/// `RUNE_LABELS`/`RUNE_EXCLUDE_LABELS`, fully resolved and FAIL-CLOSED — delegates to
+/// `spira_config::runes::rune_predicate`, the one shared evaluator every
 /// ready-counting/claiming/FILING caller now goes through (sp-xsnid). For the one call
 /// site that decides what a bead gets FILED as (`bead file --for`): a predicate that
 /// would otherwise widen to the whole ready queue must refuse the filing outright, never
 /// hand back an empty label silently.
-fn fayth_predicate(home: &str, fayth: &str) -> Result<spira_config::chamber::Predicate, spira_config::chamber::Refusal> {
-    spira_config::chamber::fayth_predicate(Path::new(&chamber_home(home)), fayth)
+fn rune_predicate(home: &str, rune: &str) -> Result<spira_config::runes::Predicate, spira_config::runes::Refusal> {
+    spira_config::runes::rune_predicate(Path::new(&runes_home(home)), rune)
 }
 
 /// `SPIRA_HOME`, preferring an explicit override from THIS process's own environment over
 /// the `--home` argument (`dirname "$0"`, `bead.sh`'s own location). This is the one place
-/// `chamber_dir` ever differed from `home`: several suites (`test-bead-contract.sh`,
-/// notably) pin a scratch chamber by exporting `SPIRA_HOME` themselves, distinct from
+/// `runes_dir` ever differed from `home`: several suites (`test-bead-contract.sh`,
+/// notably) pin a scratch runes by exporting `SPIRA_HOME` themselves, distinct from
 /// wherever the real `bead.sh` lives on PATH — a fact that survives `exec` on its own
 /// (an already-exported var keeps its export attribute across reassignment, and across
 /// `exec`, with no help from `bead.sh`), so it needed no re-export even before wave 4.9.
 /// `home_arg` is the correct answer only for the UNEXPORTED, no-override, production case
 /// — exactly conf.sh's own `SPIRA_HOME="${SPIRA_HOME:-$_spira_conf_here}"` derived default,
 /// which is this same `--home` value.
-fn chamber_home(home_arg: &str) -> String {
+fn runes_home(home_arg: &str) -> String {
     env::var("SPIRA_HOME")
         .ok()
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| home_arg.to_string())
 }
 
-fn chamber_dir(home: &str) -> String {
-    spira_config::chamber::chamber_dir(Path::new(&chamber_home(home))).to_string_lossy().into_owned()
+fn runes_dir(home: &str) -> String {
+    spira_config::runes::runes_dir(Path::new(&runes_home(home))).to_string_lossy().into_owned()
 }
 
-/// `fayth_names`: every `*.fayth` basename under `<home>/chamber`, sorted — bash's own
+/// `rune_names`: every `*.rune` basename under `<home>/runes`, sorted — bash's own
 /// glob expansion sorts lexicographically, so this matches it with `Vec::sort`.
-fn fayth_names(home: &str) -> Vec<String> {
-    let mut names = match std::fs::read_dir(chamber_dir(home)) {
+fn rune_names(home: &str) -> Vec<String> {
+    let mut names = match std::fs::read_dir(runes_dir(home)) {
         Ok(rd) => rd
             .filter_map(|e| e.ok())
             .filter_map(|e| {
                 let p = e.path();
-                if p.extension().and_then(|x| x.to_str()) == Some("fayth") {
+                if p.extension().and_then(|x| x.to_str()) == Some("rune") {
                     p.file_stem().and_then(|s| s.to_str()).map(str::to_string)
                 } else {
                     None
@@ -438,7 +438,7 @@ fn resolve_full_tip(repo_path: &str, raw: &str) -> Result<String, String> {
 
 /// `SPIRA_REPO_MAP` through `cfg` (per Ryan 2026-10-05: one source of config) — the config
 /// file `cfg` reads is the same whatever `--home` says; `--home` only ever selects
-/// chamber/registry PATHS (`chamber_home`/`chamber_dir`/`fayth_names`), never which
+/// runes/registry PATHS (`runes_home`/`runes_dir`/`rune_names`), never which
 /// config file is in force.
 fn load_repos() -> std::collections::BTreeMap<String, spira_config::RepoSection> {
     let path = cfg_label("SPIRA_REPO_MAP");
@@ -547,7 +547,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
     }
     let title = args[0].clone();
 
-    let mut for_fayth: Option<String> = None;
+    let mut for_rune: Option<String> = None;
     let mut repo: Option<String> = None;
     let mut priority: Option<String> = None;
     let mut body_file: Option<String> = None;
@@ -573,7 +573,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             }
             "--for" => {
                 i += 1;
-                for_fayth = args.get(i).cloned();
+                for_rune = args.get(i).cloned();
             }
             "--repo" => {
                 i += 1;
@@ -694,7 +694,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         }
     }
 
-    if kind.is_some() && for_fayth.is_some() {
+    if kind.is_some() && for_rune.is_some() {
         eprintln!("bead: --kind and --for are mutually exclusive");
         return 2;
     }
@@ -728,7 +728,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
     }
 
     if kind == "work" {
-        let for_fayth = match for_fayth {
+        let for_rune = match for_rune {
             Some(f) => f,
             None => {
                 eprintln!("bead: --for <persona> required");
@@ -753,28 +753,28 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
                 }
             }
         }
-        let fpath = format!("{}/{}.fayth", chamber_dir(home), for_fayth);
+        let fpath = format!("{}/{}.rune", runes_dir(home), for_rune);
         if !Path::new(&fpath).is_file() {
-            eprintln!("bead: no such persona: {for_fayth}");
+            eprintln!("bead: no such persona: {for_rune}");
             return 2;
         }
-        let fayth_labels = match fayth_predicate(home, &for_fayth) {
+        let rune_labels = match rune_predicate(home, &for_rune) {
             Ok(p) => p.labels,
             Err(e) => {
                 eprintln!("bead: {e}");
                 return 2;
             }
         };
-        if fayth_labels.is_empty() {
-            eprintln!("bead: persona {for_fayth} has no partition labels");
+        if rune_labels.is_empty() {
+            eprintln!("bead: persona {for_rune} has no partition labels");
             return 2;
         }
 
-        if requires_build_spec(home, &for_fayth) {
+        if requires_build_spec(home, &for_rune) {
             let body = body_file.as_deref().map(|f| std::fs::read_to_string(f).unwrap_or_default()).unwrap_or_default();
             if !bead::has_build_spec(&body) {
                 eprintln!(
-                    "bead: refusing: a bead for {for_fayth} must name what to build under a `{}` heading (the artifact, component or change, and where). An outcome with no named deliverable is design work: file it --for spike, which returns a proposed build spec for approval.",
+                    "bead: refusing: a bead for {for_rune} must name what to build under a `{}` heading (the artifact, component or change, and where). An outcome with no named deliverable is design work: file it --for spike, which returns a proposed build spec for approval.",
                     bead::BUILD_HEADING
                 );
                 return 2;
@@ -784,7 +784,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         let lane_override = env::var("SPIRA_BEAD_LANE_OVERRIDE")
             .map(|v| !v.is_empty())
             .unwrap_or(false);
-        if let LaneCheck::Refused(msg) = lane_check(&fayth_labels, &repo, &repos, lane_override) {
+        if let LaneCheck::Refused(msg) = lane_check(&rune_labels, &repo, &repos, lane_override) {
             eprintln!("{msg}");
             return 2;
         }
@@ -798,7 +798,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             }
         }
 
-        let mut labels = work_labels(&fayth_labels, &repo);
+        let mut labels = work_labels(&rune_labels, &repo);
         if submitted {
             labels.push(',');
             labels.push_str(&cfg_label("SPIRA_SUBMITTED_LABEL"));
@@ -829,7 +829,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         let mirror_priority = priority.as_deref().and_then(bead::parse_priority_arg).unwrap_or(BD_DEFAULT_PRIORITY);
         let rc = bdq_create(home, &bd_args, incident_parent.as_deref(), stack_after.as_deref(), Some((&title_for_mirror, mirror_priority)), express, tip.as_deref(), Some(repo.as_str()));
         if rc == 0 {
-            spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", &for_fayth), ("repo", &repo), ("kind", "work")]);
+            spira_otel::oneshot::event("spira_beads_filed", 1, &[("persona", &for_rune), ("repo", &repo), ("kind", "work")]);
         }
         rc
     } else {
@@ -1450,8 +1450,8 @@ fn cmd_ideas(home: &str, args: &[String]) -> i32 {
 
 fn cmd_contract(home: &str) -> i32 {
     println!("PERSONAS");
-    for f in fayth_names(home) {
-        let labels = fayth_label(home, &f);
+    for f in rune_names(home) {
+        let labels = rune_label(home, &f);
         println!("{}", persona_line(&f, &labels));
     }
     println!();
@@ -1526,14 +1526,14 @@ fn cmd_judge_create(home: &str, args: &[String]) -> i32 {
     if !scope.is_empty() && !labels.split_whitespace().any(|l| l == scope) {
         return 0;
     }
-    let personas: Vec<(String, String)> = fayth_names(home)
+    let personas: Vec<(String, String)> = rune_names(home)
         .into_iter()
         .map(|f| {
-            let l = fayth_label(home, &f);
+            let l = rune_label(home, &f);
             (f, l)
         })
         .collect();
-    let partitions = chamber_partitions(&personas, &scope);
+    let partitions = runes_partitions(&personas, &scope);
     let no_loop = cfg_label("SPIRA_NO_LOOP_LABEL");
     // A bead being filed is about to wait for dispatch.
     let (_, out) = lint_judge(&labels, true, ty, &partitions.join(" "), &no_loop);
@@ -1566,10 +1566,10 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
         args.to_vec()
     };
 
-    let personas: Vec<(String, String)> = fayth_names(home)
+    let personas: Vec<(String, String)> = rune_names(home)
         .into_iter()
         .map(|f| {
-            let labels = fayth_label(home, &f);
+            let labels = rune_label(home, &f);
             (f, labels)
         })
         .collect();
@@ -1577,13 +1577,13 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
     // reads `${SPIRA_SCOPE_LABEL:-}`, a different default than `file`'s `schema.sh name
     // scope` call. Preserved exactly; see DESIGN.md.
     let scope_for_partitions = cfg_label("SPIRA_SCOPE_LABEL");
-    let partitions = chamber_partitions(&personas, &scope_for_partitions);
+    let partitions = runes_partitions(&personas, &scope_for_partitions);
     let partitions_joined = partitions.join(" ");
 
-    let spec_partitions: Vec<Vec<String>> = fayth_names(home)
+    let spec_partitions: Vec<Vec<String>> = rune_names(home)
         .into_iter()
         .filter(|f| requires_build_spec(home, f))
-        .map(|f| fayth_label(home, &f).split(',').map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
+        .map(|f| rune_label(home, &f).split(',').map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
         .collect();
 
     let no_loop_label = cfg_label("SPIRA_NO_LOOP_LABEL");
@@ -1922,15 +1922,15 @@ fn cmd_label(home: &str, args: &[String]) -> i32 {
         }
     };
 
-    let personas: Vec<(String, String)> = fayth_names(home)
+    let personas: Vec<(String, String)> = rune_names(home)
         .into_iter()
         .map(|f| {
-            let labels = fayth_label(home, &f);
+            let labels = rune_label(home, &f);
             (f, labels)
         })
         .collect();
-    let partitions = chamber_partitions(&personas, "");
-    if partitions.iter().any(|p| p == &label) || label.starts_with("fayth:") {
+    let partitions = runes_partitions(&personas, "");
+    if partitions.iter().any(|p| p == &label) || label.starts_with("rune:") {
         eprintln!("bead: label {verb}: refusing — {label} is a partition label; `bead.sh file --for <persona>` derives those from the persona's own predicate, so a hand-set one can disagree with it");
         return 1;
     }

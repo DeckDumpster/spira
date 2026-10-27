@@ -20,14 +20,14 @@
 #     blocked only on a CERTIFIED-but-not-LANDED prerequisite is invisible to bd's own
 #     `ready` (bd has no concept of CERTIFIED, so an open blocker hides it) but is claimed
 #     end to end through aeon's ready set — the machine's READY rows, `spira-claim
-#     fayth-ready --json`.
+#     rune-ready --json`.
 #
 # host-reason: starts its own disposable `dolt sql-server`, same shape as
 # test-lifecycle-container.sh / test-work-container.sh; testenv-batch.sh already provides
 # the container this suite executes in.
 #
 # tier: T2
-# covers: aeon/src/* spira/lib.sh spira/conf.sh spira/chamber/builder.md work/* spira-lc/* spira-claim/src/*
+# covers: aeon/src/* spira/lib.sh spira/conf.sh spira/runes/builder.md work/* spira-lc/* spira-claim/src/*
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -282,7 +282,7 @@ git -C "$FREPO" config user.email t@t; git -C "$FREPO" config user.name t
 printf 'seed\n' > "$FREPO/f"
 git -C "$FREPO" add f; git -C "$FREPO" commit -qm seed; timeout 5 git -C "$FREPO" push -q origin main 2>/dev/null
 
-export SPIRA_HOME="$TMP/spira-home"; mkdir -p "$SPIRA_HOME/chamber"
+export SPIRA_HOME="$TMP/spira-home"; mkdir -p "$SPIRA_HOME/runes"
 # work-env.sh is retired (sp-zpaq0): the aeon binary builds its own restricted environment.
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$SPIRA_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
@@ -290,19 +290,19 @@ cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 SPIRA_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$FREPO" > "$SPIRA_REPO_MAP"
-# SPIRA_CHAMBER EXPLICITLY: the complete fixture declares a fixed chamber path of its own
+# SPIRA_RUNES_DIR EXPLICITLY: the complete fixture declares a fixed runes path of its own
 # now (no longer derived from SPIRA_HOME when unset), so the fixture persona built below
-# under $SPIRA_HOME/chamber would otherwise never be found.
-tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_CHAMBER="$SPIRA_HOME/chamber"
-cat > "$SPIRA_HOME/chamber/builder.fayth" <<'FAYTH'
-FAYTH_NAME=builder
-FAYTH_WORKING_EXITS="SUBMITTED ask park hold"
-FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}"
-FAYTH_EXCLUDE_LABELS="spira-poison,needs-operator"
-FAYTH_MAX_CONCURRENT=1
-FAYTH_HEARTBEAT_SECONDS=600
-FAYTH
-printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
+# under $SPIRA_HOME/runes would otherwise never be found.
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
+cat > "$SPIRA_HOME/runes/builder.rune" <<'RUNE'
+RUNE_NAME=builder
+RUNE_WORKING_EXITS="SUBMITTED ask park hold"
+RUNE_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}"
+RUNE_EXCLUDE_LABELS="spira-poison,needs-operator"
+RUNE_MAX_CONCURRENT=1
+RUNE_HEARTBEAT_SECONDS=600
+RUNE
+printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/runes/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export TMP
 tl_config SPIRA_AGENT="$BIN/claude"
@@ -394,7 +394,7 @@ seed_bead "$DEP" READY
 ready_ids=" $(bdq "${READY_ARGS[@]}" --json 2>/dev/null | bead_id_lines | tr '\n' ' ') "
 nowant "bd ready hides the dependent behind its bd-open, CERTIFIED blocker" " $DEP " "$ready_ids"
 
-set_ids=" $(_spira_claim fayth-ready builder --json 2>/dev/null | bead_id_lines | tr '\n' ' ') "
+set_ids=" $(_spira_claim rune-ready builder --json 2>/dev/null | bead_id_lines | tr '\n' ' ') "
 want "the aeon's ready set (the machine's READY rows) carries the dependent" " $DEP " "$set_ids"
 nowant "the aeon's ready set leaves out the CERTIFIED prerequisite bd shows in_progress" " $PREREQ " "$set_ids"
 

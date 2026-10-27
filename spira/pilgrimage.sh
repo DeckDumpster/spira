@@ -33,7 +33,7 @@
 # reconciling against a graph this harness had quietly falsified.
 #
 # The label partition is therefore load-bearing, not a convenience. SPIRA_EPIC_LABELS is
-# AND-scoped exactly as the fayth's claim predicate is, so this can only ever act on beads
+# AND-scoped exactly as the rune's claim predicate is, so this can only ever act on beads
 # that belong to Spira's own plan.
 #
 # NOTIFY BEFORE CLOSING

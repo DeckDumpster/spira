@@ -49,9 +49,9 @@ Where it runs: **cert** = certification/every commit, **batch** = batch CI, **ma
 | UC-aeon-execution-03 | A bead found to carry `spira-poison` right after the claim is released before workspace setup, with ledger `poison-raced` (aeon.sh:430-446). | FC, Cc | T1 | cert |
 | UC-aeon-execution-04 | World-stop fence. An unlabelled bead never calls `world.sh`. A `world-stop` bead with a live aeon is refused: the claim is released, the note and log name the live aeon and `SPIRA_WORLD_STOP_SKIP`, and the ledger reads `world-stop-fence`. With no live aeon it runs stop → session → start. The override proceeds and is logged. | C, FC, O | T1 decision + T3 one case | cert / batch |
 | UC-aeon-execution-05 | Sweep mode claims nothing and sets no `branch:` label. It writes born/awake/done, delivers the prompt (including from stdin), exits 0 if the session acted and non-zero if the API refused it, and refuses when capacity is paused or the world is draining. | C, O | T1 gating + T3 one case | cert / batch |
-| UC-aeon-execution-06 | Launch argv is a function of the fayth: `FAYTH_SYSTEM_PROMPT` picks `--system-prompt-file` for replace and `--append-system-prompt-file` otherwise; statutes go to system.md and the bead id to stdin; `FAYTH_PROJECT_INSTRUCTIONS=none` gives `--setting-sources user` **in both sweep and bead mode**; `--settings` names `aeon-fence.sh` only when the hook exists. Shipped fayths declare every knob. | C, CF, K | T1 argv builder + T0 fayth-schema lint | cert |
+| UC-aeon-execution-06 | Launch argv is a function of the rune: `RUNE_SYSTEM_PROMPT` picks `--system-prompt-file` for replace and `--append-system-prompt-file` otherwise; statutes go to system.md and the bead id to stdin; `RUNE_PROJECT_INSTRUCTIONS=none` gives `--setting-sources user` **in both sweep and bead mode**; `--settings` names `aeon-fence.sh` only when the hook exists. Shipped runes declare every knob. | C, CF, K | T1 argv builder + T0 rune-schema lint | cert |
 | UC-aeon-execution-07 | Brief rendering. RESUME names the prior-commit count after rebasing onto a moved base. SLAIN appears only when the last commit is a slay wip salvage. DEADLINE gives the kill time and remaining seconds, or says "no wall-clock deadline". ALREADY_DONE instructs `bd supersede` plus successor verification. No `{{` reaches the model. | C, K | T1 render + T2 temp-git for the count | cert |
-| UC-aeon-execution-08 | Lease: trace growth renews; silence past `FAYTH_LEASE_SECONDS` writes a `.lapsed` marker (quiet seconds, trailing trace) and kills `-$$`. A trailing `result` line is not activity. The pane countdown renders `?` for a missing, empty or garbage lease. | C, R, O | T1 (after extracting the tick) | cert |
+| UC-aeon-execution-08 | Lease: trace growth renews; silence past `RUNE_LEASE_SECONDS` writes a `.lapsed` marker (quiet seconds, trailing trace) and kills `-$$`. A trailing `result` line is not activity. The pane countdown renders `?` for a missing, empty or garbage lease. | C, R, O | T1 (after extracting the tick) | cert |
 | UC-aeon-execution-09 | Thrash wall. The fuse probe reads `?` with no worktree, 0 when fresh, N minutes when idle, and `gate` while a live gate pid exists (not for a dead pid). It trips only when fuse≥wall **and** session age≥wall (sp-sv34w). `?` never trips. A trip kills the process group. | C, FC, R | T1 predicate + T2 probe | cert |
 | UC-aeon-execution-10 | Session outcome: empty, 429 or refused-after-acting → `refused`; missing trace → `unknown`; tool calls with no terminal record → `killed`; ran to its end → `unlanded`; `api_error_status:null` is not a refusal. Only the last trace segment is judged. A headless session waiting for a background task → `yield-headless`. `outcome_charges` is true only for `unlanded` (and yield-headless, pre-session and lapsed via their branches), and anything unenumerated is free (default deny). | C, FC | T1 | cert |
 | UC-aeon-execution-11 | Open-bead teardown disposition in precedence order (aeon.sh `cleanup()` 647-930): capacity → slain → thrash → lapsed → gate-unfinished → decision-blocked → timeout(rc 124, nothing committed) → harness REQUEUE_CAUSE → operator-wait → yield-headless → pre-session → `session_outcome`. Each branch releases the claim, writes its note, log and ledger status, and either charges (lapsed, yield-headless, pre-session, unlanded) or records a `bump_requeue` event (thrash, unjudged-*, the requeue cause). `cleanup` disarms errexit first. | C, FC, O, R | **T1 table** + T3 wiring (4 rows) | cert / batch |
@@ -59,12 +59,12 @@ Where it runs: **cert** = certification/every commit, **batch** = batch CI, **ma
 | UC-aeon-execution-13 | Close verdict. A commit naming the bead (branch walk, or landrefs within `SPIRA_VERDICT_WINDOW`) keeps it closed. No commit → reopened with the claim released and a note. Superseded, `delivers:action`, `delivers:beads` with children and `delivers:check` passing all stay closed. **Aeon and sentinel decide delivers types identically.** | C, FC, K | T1 shared classifier + T2 git landref walk | cert |
 | UC-aeon-execution-14 | Eviction race: closed while landstate is `EJECTED` or `RED` with an eviction reason at the current tip → reopen with an `eviction-race` note. A stale tip, CERTIFIED, a non-eviction RED or no landstate → stays closed. More than 2 reopens per hour → capped, labelled with the ask label. | C, FC, R | T1 | cert |
 | UC-aeon-execution-15 | Closing with the gate still running, with a FAIL verdict or with no gate run leaves a distinct note and log line but does not reopen. | O | T1 | cert |
-| UC-aeon-execution-16 | Close guards: (a) a dirty **own** worktree reopens the bead naming the paths and `SPIRA_ALLOW_PROD_DIRTY`, and a dirty shared checkout does not; (b) a statute phrase in the close reason reopens, a quoted mention does not, and the note names `SPIRA_CLOSE_REASON_OVERRIDE`; (c) `FAYTH_SOP_REQUIRED=1` with no SOP write, amend or pass reopens and poisons, and a corrupt ledger fails open; (d) with `FAYTH_GROOM_ESCALATION_CHECK`, an `ESCALATED sp-X` not backed by an in-session ask bead reopens and poisons. The checks bind to the knob, not the persona name. | C, FC, CF | T1 predicates + T3 one case for (a) | cert / batch |
+| UC-aeon-execution-16 | Close guards: (a) a dirty **own** worktree reopens the bead naming the paths and `SPIRA_ALLOW_PROD_DIRTY`, and a dirty shared checkout does not; (b) a statute phrase in the close reason reopens, a quoted mention does not, and the note names `SPIRA_CLOSE_REASON_OVERRIDE`; (c) `RUNE_SOP_REQUIRED=1` with no SOP write, amend or pass reopens and poisons, and a corrupt ledger fails open; (d) with `RUNE_GROOM_ESCALATION_CHECK`, an `ESCALATED sp-X` not backed by an in-session ask bead reopens and poisons. The checks bind to the knob, not the persona name. | C, FC, CF | T1 predicates + T3 one case for (a) | cert / batch |
 | UC-aeon-execution-17 | Wiki writes made by the aeon are committed at exit under an `aeon-` author with the bead id. Files already dirty before the session and `wiki/tasks.md` are excluded. Concurrent `wiki-commit.sh` callers each land their own commit. | C, Cc, I | T1 selection + T2 concurrency | cert |
 | UC-aeon-execution-18 | Exit and ledger. The aeon exits 0 when the bead closed, whatever claude's rc, so the systemd unit never goes FAILED. It exits non-zero when the bead is unclosed and rc≠0. The `done` line carries the real rc, the status and 8 spend fields from the attempt's own trace segment: summed per-turn fields, last cumulative cost/api_s, `wall_s ≥ api_s`, and `?` never 0 when a field is missing. | C, O | T1 | cert |
 | UC-aeon-execution-19 | Attempts = in_progress transitions from the events trail, minus claim-then-close, thrash requeue and unjudged requeue. A label containing `in_progress` is not counted. `check4_bulk_data` equals the per-bead queries. No script writes counter labels. | C, K, P | T2 (bd contract) + T0 lint | batch |
-| UC-aeon-execution-20 | Claim release is compare-and-swap: `bd unclaim --if-assignee` must name the claiming aeon actor, and naming the fayth leaves it held. | Cc, K | T2 (bd contract) | batch |
-| UC-aeon-execution-21 | CHECK 4 poison valve. It examines every dispatchable bead (fayth predicates, not goal children) and poisons at `POISON_AT` (`POISON_AT=0` edge). A held bead is poisoned but keeps its claim. Epics, partition-excluded beads and beads closed mid-pass are skipped. Stale poison below the threshold is cleared. Thrash events do not count. CHECK 7 does not summon a poisoned bead. | C, FC, I | T1 `check4_decide` + T3 one sentinel pass | cert / batch |
+| UC-aeon-execution-20 | Claim release is compare-and-swap: `bd unclaim --if-assignee` must name the claiming aeon actor, and naming the rune leaves it held. | Cc, K | T2 (bd contract) | batch |
+| UC-aeon-execution-21 | CHECK 4 poison valve. It examines every dispatchable bead (rune predicates, not goal children) and poisons at `POISON_AT` (`POISON_AT=0` edge). A held bead is poisoned but keeps its claim. Epics, partition-excluded beads and beads closed mid-pass are skipped. Stale poison below the threshold is cleared. Thrash events do not count. CHECK 7 does not summon a poisoned bead. | C, FC, I | T1 `check4_decide` + T3 one sentinel pass | cert / batch |
 | UC-aeon-execution-22 | Poison ask is sent once per (bead, attempt count). The label clear does not re-arm it; a higher count re-asks. The title reads "N in_progress transition(s) without landing"; BRANCH shows the commit count or "no commits"; the body has `## Default` and a log excerpt; `bead.poisoned` is logged to events.log, not mailed. | I, O | T1 | cert |
 | UC-aeon-execution-23 | Requeue cap stays silent below `REQUEUE_AT` and sends one mail at the cap ("completed and requeued N times"), deduplicated per bead across higher counts. `delivers:action` is exempt. It never adds poison. The reclaim cap (`RECLAIM_AT`, sentinel.sh:382) does the same with "aeons died holding" wording, and the checks are not hard-coded to one partition. | C, I, O | T1 | cert |
 | UC-aeon-execution-24 | `attempts.sh deadlocked` lists poisoned-but-cleanly-mergeable beads (WOULD) and keeps branchless ones (KEEP with a reason). A dry run changes nothing. `--apply` lifts poison, keeps the attempt record and notes why. | C, R | T2 | batch |
@@ -89,7 +89,7 @@ Cost is the CI seconds of the whole file (main push). "e2e" means the proposed s
 | 03 | test-timeout.sh::poison-after-claim guard precedes workspace setup (line-order grep) | grep / (in 156) | SOURCE-GREP → T1 row in the disposition table (G7) |
 | 04 | test-aeon-world-stop.sh (19 asserts, 4 runs) | T3 / 20 | DEMOTE-TO-T1 (`world_stop_decide`: label, pidfiles, override) + 1 e2e row (stop precedes start) |
 | 05 | test-aeon-sweep.sh (6 runs); test-aeon-exit.sh::{sweep rc=1 but ran, refused sweep} | T3 / 10 + (part of) 16 | DEMOTE-TO-T1 (capacity, draining, settings JSON) + 1 e2e sweep row |
-| 06 | test-aeon-prompt-layers.sh (4 runs + fayth greps); test-fayth-project-instructions.sh (sweep only) | T3 / 23, T2 / 2 | DEMOTE-TO-T1 argv builder. The fayth-value greps move to T0 fayth-schema lint (SOURCE-GREP). The "positive control" in prompt-layers is vacuous: DELETE it. |
+| 06 | test-aeon-prompt-layers.sh (4 runs + rune greps); test-rune-project-instructions.sh (sweep only) | T3 / 23, T2 / 2 | DEMOTE-TO-T1 argv builder. The rune-value greps move to T0 rune-schema lint (SOURCE-GREP). The "positive control" in prompt-layers is vacuous: DELETE it. |
 | 07 | test-aeon-resume.sh (7 runs); test-aeon-verdict.sh::{walled persona deadline, no-wall persona, already-done brief} | T3 / 33 + part of 77 | DEMOTE-TO-T1 (render from commit list) + T2 temp-git for the count after rebase; stale-base → e2e |
 | 08 | test-aeon-lease.sh (7 real `aeon_lease_minutes` cases; 5 cases test `hb_check`, **a copy inside the test**); test-aeon-heartbeat.sh (not run; tests `heartbeat_model_idle`, `youngest_in_subtree` and `subtree_has_flock`, none of which is called anywhere outside lib.sh) | T1 / 4; NA | KEEP test-aeon-lease.sh, rewritten to call an extracted `hb_tick`. DELETE test-aeon-heartbeat.sh along with the three dead lib.sh functions. |
 | 09 | test-thrash-wall.sh (9/10 asserts test `thrash_check`, a copy); test-thrash.sh::{no worktree ?, just-written 0, stale ~90m, live gate suppresses, dead gate pid} + 9 grep/line-order checks + cockpit-metrics cases | T1 / 3; T1+grep / 30 | MERGE test-thrash-wall INTO test-aeon-lease (`hb_tick` table). KEEP the probe cases of test-thrash.sh as T2 (~3 s). SOURCE-GREP: replace its 9 greps with disposition rows. Move the metrics cases to the cockpit area. |
@@ -105,8 +105,8 @@ Cost is the CI seconds of the whole file (main push). "e2e" means the proposed s
 | 17 | test-aeon-wiki-dirty.sh (4 runs, 6 repos); test-aeon-wiki-concurrent.sh | T3 / 28; T2 / 1 | DEMOTE-TO-T1 (snapshot set difference minus tasks.md) + 1 e2e row (author, message). KEEP wiki-concurrent (T2) but force an interleave: today it can pass without the lock. |
 | 18 | test-aeon-exit.sh (5 runs); test-aeon-ledger.sh (8 runs, ~46 asserts) | T3 / 16; T3 / 36 | DEMOTE-TO-T1: the exit-code mapping, and the spend parser on fixture traces (40 of 46 asserts). The segment-boundary case → e2e (second run on the same bead). |
 | 19 | test-attempts.sh::dolt fixture b1..b8 + SQL greps; test-check4-events.sh::{criterion 1 greps, criterion 2 counts}; test-check4-batch.sh::{criterion 1 format, criterion 2 agreement}; test-timeout.sh::{fresh bead 0, one timeout 0, in_progress → 1}; test-requeue.sh counters | mixed / 30+127+103+156 | MERGE-INTO new `test-attempts-sql.sh` (T2, one embedded store, one seed; b1..b8 + bulk≡per-bead + label-with-in_progress). The counter-label ban and bump_* no-op checks go to one T0 lint (SOURCE-GREP, asserted 3 times today). |
-| 20 | test-attempts.sh::claim records aeon / release as fayth fails | T2 / (in 30) | MERGE-INTO test-attempts-sql.sh; run it as a **bd contract** test (on a bd version bump + batch), not per commit |
-| 21 | test-poison.sh (all, 304); test-poison-edge.sh::{stale cleared, thrash no poison, POISON_AT=0 ×2, CONTROL three failures}; test-poison-ask.sh::{closed mid-pass, empty chamber}; test-check4-events.sh::criterion 3; test-check4-batch.sh::criterion 3; test-requeue-cap-accept.sh::{no attempt events never poisoned, at threshold still poisoned}; test-requeue-cap.sh::thrash no poison | T3 server mode / 304+228+179+127+103+235+213 | DEMOTE-TO-T1 `check4-unit`. KEEP test-poison.sh as the **only** T3 sentinel CHECK 4 pass: one seed with events inserted by SQL (as poison-edge already does), one bead per row, 2 passes. MERGE poison-edge and poison-ask; DELETE criterion 3 of both check4 files. |
+| 20 | test-attempts.sh::claim records aeon / release as rune fails | T2 / (in 30) | MERGE-INTO test-attempts-sql.sh; run it as a **bd contract** test (on a bd version bump + batch), not per commit |
+| 21 | test-poison.sh (all, 304); test-poison-edge.sh::{stale cleared, thrash no poison, POISON_AT=0 ×2, CONTROL three failures}; test-poison-ask.sh::{closed mid-pass, empty runes}; test-check4-events.sh::criterion 3; test-check4-batch.sh::criterion 3; test-requeue-cap-accept.sh::{no attempt events never poisoned, at threshold still poisoned}; test-requeue-cap.sh::thrash no poison | T3 server mode / 304+228+179+127+103+235+213 | DEMOTE-TO-T1 `check4-unit`. KEEP test-poison.sh as the **only** T3 sentinel CHECK 4 pass: one seed with events inserted by SQL (as poison-edge already does), one bead per row, 2 passes. MERGE poison-edge and poison-ask; DELETE criterion 3 of both check4 files. |
 | 22 | test-poison.sh::{operator asked, ask body, event recorded, event not mailed, already-poisoned}; test-poison-edge.sh::{ask title, BRANCH line ×2}; test-poison-ask.sh::{asks once, cleared label no re-arm, fourth attempt re-asks} | T3 / (above) | DEMOTE-TO-T1 (ask formatting and the `poison-asked` dedup key); the ask-title assertion is duplicated verbatim in 2 files |
 | 23 | test-requeue-cap.sh (6 asserts, 213 s); test-requeue-cap-accept.sh (7 asserts, 235 s) | T3 / 448 | MERGE both INTO check4-unit (the cap/dedup/exemption rows) + 1 row in the T3 poison pass. The reclaim cap has no test (G11). |
 | 24 | test-requeue.sh::{deadlock sweep dry run, --apply} | T3 / (in 294) | Move to T2 `test-deadlock-sweep.sh` (stub the landability check or use a 1-commit temp repo; no aeon runs) |
@@ -131,7 +131,7 @@ Cost is the CI seconds of the whole file (main push). "e2e" means the proposed s
 | D11 | Liveness classification | test-aeon-heartbeat.sh (model_idle, superseded by the lease per sp-9ix, aeon.sh:975-985) vs test-aeon-lease.sh | test-aeon-lease.sh (calling real code) |
 | D12 | Ledger `status=` field | test-aeon-ledger.sh, test-aeon-presession-death.sh, test-aeon-yield-headless.sh, test-aeon-exit.sh::ledger records closed | Disposition table (the status column) |
 | D13 | Rendered prompt text | test-aeon-resume.sh, test-aeon-verdict.sh (DEADLINE/ALREADY_DONE), test-aeon-prompt-layers.sh | One T1 brief-render suite |
-| D14 | Fayth knob declarations grep | test-aeon-prompt-layers.sh (FAYTH_SYSTEM_PROMPT ×6), test-fayth-project-instructions.sh (×6), test-ops-closing.sh (FAYTH_SOP_REQUIRED), test-groom-escalation-check.sh (conf keys) | One T0 fayth-schema lint |
+| D14 | Rune knob declarations grep | test-aeon-prompt-layers.sh (RUNE_SYSTEM_PROMPT ×6), test-rune-project-instructions.sh (×6), test-ops-closing.sh (RUNE_SOP_REQUIRED), test-groom-escalation-check.sh (conf keys) | One T0 rune-schema lint |
 | D15 | Full-aeon fixture pattern | 20 suites each build a fresh bd store, a bare origin, a clone and a claude shim per case (r1 note: "17 of the aeon suites"). test-aeon-verdict.sh, test-aeon-eviction-race.sh and test-cross-repo.sh each copy every non-test `*.sh` into SPIRA_HOME. | One shared fixture library + one e2e suite |
 
 ## 5. Unit-extractable logic
@@ -149,7 +149,7 @@ Every seam below turns a full `aeon.sh` or `sentinel.sh` run on a real Dolt stor
 | Session spend parser | lib.sh python block ~2190-2236 + aeon.sh per-attempt segmenting | test-aeon-ledger.sh (8 aeon runs) | call the parser directly on fixture trace files; expose `trace_segment <log> <attempt>` |
 | `session_yield_headless` | lib.sh | 2 aeon runs, one phrasing | direct call on fixture logs (already a pure predicate; no test calls it) |
 | Brief rendering | aeon.sh 1183-1222 (RESUME/SLAIN), 1549-1580 (DEADLINE), 1634 (ALREADY_DONE) | test-aeon-resume.sh, test-aeon-verdict.sh (20 runs) | `render_resume_brief <count> <last_subject>`, `render_deadline_brief <at> <now>`; the count stays T2 (temp git) |
-| Launch argv | aeon.sh 235 (sweep) and 1786 (bead): two copies of `--setting-sources` | test-aeon-prompt-layers.sh, test-fayth-project-instructions.sh (sweep only) | `aeon_claude_argv <mode>` used by both call sites, which also closes gap G12 |
+| Launch argv | aeon.sh 235 (sweep) and 1786 (bead): two copies of `--setting-sources` | test-aeon-prompt-layers.sh, test-rune-project-instructions.sh (sweep only) | `aeon_claude_argv <mode>` used by both call sites, which also closes gap G12 |
 | World-stop fence | aeon.sh 448-504 | test-aeon-world-stop.sh (4 runs, a `sleep 300` fake aeon) | `world_stop_decide <labels> <live-aeon-list> <skip>` |
 | Read-after-claim poison | aeon.sh 430-446 | grep only | `bead_has_label <json> spira-poison` |
 | Wiki commit selection | aeon.sh wiki section (~1304, ~1819) | test-aeon-wiki-dirty.sh (4 runs, 6 repos) | `wiki_new_since <snapshot> <porcelain>` minus tasks.md |
@@ -172,12 +172,12 @@ Every seam below turns a full `aeon.sh` or `sentinel.sh` run on a real Dolt stor
 | G9 | Eviction-race cap: more than 2 `eviction-race` reopens per hour → no reopen, note "Guard defect suspected", ask label | aeon.sh 1918-1925; flagged untested by the mapper for test-aeon-eviction-race.sh |
 | G10 | `worktree_evict_foreign`: a stale foreign worktree is moved aside (rc 0) or refused (rc 2) | aeon.sh 1092-1100; no test references it |
 | G11 | Reclaim cap `RECLAIM_AT` ("aeons died holding") | sentinel.sh 382-394; the test-requeue-cap.sh header promises it but no case asserts it, and `SPIRA_RECLAIM_AT` is set in -accept but never exercised |
-| G12 | Bead-mode `--setting-sources` (aeon.sh:1786) | test-fayth-project-instructions.sh drives only the sweep call site (235) |
+| G12 | Bead-mode `--setting-sources` (aeon.sh:1786) | test-rune-project-instructions.sh drives only the sweep call site (235) |
 | G13 | Requeue cap across partitions: the `tinc` persona is written "to prove the check is not hard-coded" but never seeded | test-requeue-cap.sh (mapper note) |
 | G14 | CHECK 4 performance: "no per-bead queries" (sp-f1m7f motive) is claimed but never asserted | test-check4-batch.sh. Add a T1 row: `check4` loop with `attempts_of` stubbed to fail if called. |
 | G15 | `unjudged-<cause>` requeue for killed, refused and unknown outcomes (note "Not judged", no charge) is asserted only by grep | aeon.sh 916-921; test-attempts.sh::not-judged branch grep |
 | G16 | Test integrity: test-attempts.sh's exit-77 skip can fire after earlier failures and hide them, and wiki-concurrent can pass without the lock (no forced interleave) | mapper notes. Fix within the suites. |
-| G17 | **Resolved by retirement (sp-loycl):** the SOP closing rule (`FAYTH_SOP_REQUIRED`) and its aeon runs in test-ops-closing.sh are gone; a fayth still carrying the key is ignored with a warning. | test-ops-closing.sh; chamber/ops.fayth |
+| G17 | **Resolved by retirement (sp-loycl):** the SOP closing rule (`RUNE_SOP_REQUIRED`) and its aeon runs in test-ops-closing.sh are gone; a rune still carrying the key is ignored with a warning. | test-ops-closing.sh; runes/ops.rune |
 
 ## 7. Cost
 
@@ -190,7 +190,7 @@ poison 304 + requeue 294 + requeue-cap-accept 235 + poison-edge 228 + requeue-ca
 + aeon-resume 33 + aeon-prod-dirty 33 + thrash 30 + attempts 30 + aeon-wiki-dirty 28
 + prompt-layers 23 + world-stop 20 + gate-close-silent 16 + aeon-exit 16
 + yield-headless 15 + presession-death 15 + operator-wait 14 + decision-blocked 11
-+ aeon-sweep 10 + cross-repo 7 + aeon-lease 4 + thrash-wall 3 + fayth-project-instr 2
++ aeon-sweep 10 + cross-repo 7 + aeon-lease 4 + thrash-wall 3 + rune-project-instr 2
 + delivers-parity 1 + wiki-concurrent 1                                                   =   564
                                                                               TOTAL      = 2,505 suite-s
 ```
@@ -201,7 +201,7 @@ That is 26% of the 9,587 suite-seconds on main push. 77% of it (1,941 s) sits in
 
 | Tier | Suite (new or kept) | Est. s | Basis |
 |---|---|---|---|
-| T0 | counter-label ban, `set +e`, fayth-schema, conf-key lint (folded into the existing lint) | 2 | greps |
+| T0 | counter-label ban, `set +e`, rune-schema, conf-key lint (folded into the existing lint) | 2 | greps |
 | T1 | disposition table; `hb_tick`; close/delivers/eviction verdict; session-outcome + spend parser + yield; brief + argv render; check4-decide + ask format; slay args; timeout ask | 8 | ~1 s each, 8 files (lib.sh source ≈ 0.5 s, per test-aeon-lease.sh) |
 | T2 | test-attempts-sql (one embedded store: b1..b8, bulk≡per-bead, unclaim CAS) | 30 | test-attempts.sh today is 30 s including the classifier half |
 | T2 | test-slay.sh minus arg/`-h` cases | 45 | 60 − ~15 |
@@ -257,7 +257,7 @@ because they need the testlib/plan-lint dependencies actually present in `origin
 - The rest of §3/§4's file consolidations and §5's other seams, all of which require
   `spira/testlib.sh` to exist for the AC's "suites all use testlib" requirement.
 - The gap tests in §6, fail-closed rows first (G1, G4-G7, G9-G11, G13-G14), and G17's decision
-  for Ryan (the SOP mechanism is off for every shipped fayth but its tests still hold most of
+  for Ryan (the SOP mechanism is off for every shipped rune but its tests still hold most of
   test-ops-closing.sh's runs).
 
 Verified: `bash spira/testenv-batch.sh --suites test-host-reason.sh,test-gate-verdict.sh
@@ -365,9 +365,9 @@ check on the rest of `lib.sh`.
 
 D2, D3, D5-D8, D10, D12-D15 are NOT applied this slice. Each targets a table or suite this
 bead's own dependencies (sp-eq8a4.2.1-.2.5) build — `aeon_disposition`, `hb_tick`,
-`close_verdict`/`delivers_verdict`, `check4_decide`, the brief-render and fayth-schema seams —
+`close_verdict`/`delivers_verdict`, `check4_decide`, the brief-render and rune-schema seams —
 and each of the five files those commits touch (`test-attempts.sh`, `test-check4-events.sh`,
-`test-timeout.sh`, `test-aeon-prompt-layers.sh`, `test-fayth-project-instructions.sh`,
+`test-timeout.sh`, `test-aeon-prompt-layers.sh`, `test-rune-project-instructions.sh`,
 `test-ops-closing.sh`, `test-groom-escalation-check.sh`, `spira/lib.sh` itself) is also
 touched by one of those branches. All five beads show closed via `bd show`, but closed is
 not landed: `git merge-base --is-ancestor <branch-tip> origin/main` says no for all five branch
@@ -434,16 +434,16 @@ slices actually left behind, rather than the pre-seam tree sp-eq8a4.2.6 saw:
   `test-attempts-sql.sh`, built by sp-eq8a4.2.4.
 - D10 (`aeon_fuse_minutes` probe): `test-thrash.sh` was already trimmed to exactly this by
   sp-eq8a4.2.2.
-- D13 (rendered prompt text) and D14 (fayth knob declarations): re-checked against the
+- D13 (rendered prompt text) and D14 (rune knob declarations): re-checked against the
   current files rather than assumed resolved. `test-aeon-resume.sh` already is the T1
   brief-render suite D13 asks for (`render_resume_brief`/`render_deadline_brief`, extracted
   by sp-eq8a4.2.5). What looked like duplication in test-aeon-verdict.sh's DEADLINE/
   ALREADY_DONE rows and test-aeon-prompt-layers.sh's argv/STICKING POINT rows, on inspection,
   is not: each asserts the prompt text a **real aeon.sh run** produces (template
-  substitution wired through a live fayth), which the T1 table cannot stand in for — the
+  substitution wired through a live rune), which the T1 table cannot stand in for — the
   T1/e2e split this test plan asks for elsewhere, not a leftover copy. Likewise D14: the
-  four files named (test-aeon-prompt-layers.sh, test-fayth-project-instructions.sh,
-  test-ops-closing.sh, test-groom-escalation-check.sh) each assert a *different* FAYTH_*
+  four files named (test-aeon-prompt-layers.sh, test-rune-project-instructions.sh,
+  test-ops-closing.sh, test-groom-escalation-check.sh) each assert a *different* RUNE_*
   knob using a similar grep idiom, not the same fact twice; there was no duplicate assertion
   left to collapse into a lint. Building one anyway would be an abstraction with no
   coverage gain.
@@ -475,7 +475,7 @@ test-attempts-sql.sh spira/sp-eq8a4.2.7` in testenv — all green.
 
 ## 12. D8/D12/D15 landed (sp-g44ke)
 
-`full-aeon-fixture.sh` builds the bare origin, clone, chamber and claude shim once
+`full-aeon-fixture.sh` builds the bare origin, clone, runes and claude shim once
 (`fa_setup`/`fa_reset`/`fa_teardown`), and `test-aeon-teardown-e2e.sh` replaces the seven
 suites named in D8/D12/D15 (test-aeon-decision-blocked.sh, test-aeon-operator-wait.sh,
 test-requeue.sh, test-aeon-ledger.sh, test-aeon-presession-death.sh,
@@ -499,10 +499,10 @@ test-testlib-migrated.sh,test-aeon-resume.sh spira/sp-g44ke` — all green. `pla
 reimplements the logic natively: aeon/src/decide.rs, brief.rs, ledger.rs, run.rs, worktree.rs)
 are deleted outright rather than ported: `outcome_charges`, `aeon_disposition`,
 `session_result_fields`, both `bead_has_label` definitions, `spira_trace_mark`,
-`trace_segment`, `still_waiting`, `fayth_lease_seconds`, `hb_wait_outcome`, `hb_tick`,
+`trace_segment`, `still_waiting`, `rune_lease_seconds`, `hb_wait_outcome`, `hb_tick`,
 `world_stop_decide`, `sop_rule_verdict`, `aeon_settings`, `aeon_claude_argv`,
 `render_resume_brief`, `render_slain_brief`, `render_deadline_brief`, `bound_bead_notes`,
-`render_holds_brief`, `aeon_own_unit`, `fayth_fenced`, `eviction_reopen`,
+`render_holds_brief`, `aeon_own_unit`, `rune_fenced`, `eviction_reopen`,
 `worktree_move_aside`, `worktree_evict_foreign`.
 
 Suites that only exercised these functions directly are deleted with them:
@@ -510,7 +510,7 @@ Suites that only exercised these functions directly are deleted with them:
 `test-aeon-settings-guard-allowlist.sh`. Suites that mixed a dead row with a still-live one
 (`test-aeon-disposition.sh`, `test-aeon-world-stop.sh`, `test-aeon-resume.sh`,
 `test-aeon-lease.sh`, `test-holds.sh`, `test-aeon-eviction-race.sh`,
-`test-aeon-prompt-layers.sh`, `test-fayth-project-instructions.sh`, `test-persona-model.sh`)
+`test-aeon-prompt-layers.sh`, `test-rune-project-instructions.sh`, `test-persona-model.sh`)
 keep their e2e/live rows and lose only the dead-function row. UC-aeon-execution-03 and
 UC-aeon-execution-08 lose their last covering suite and are marked `[use_case.uncovered]` in
 the TOML catalogue, citing the Rust unit tests that now prove the same behaviour
@@ -649,7 +649,7 @@ every removed row becomes a `aeon::trace` unit test):
   counter, the SPIRA_THRASH_MINUTES conf.d default) are untouched.
 - `test-aeon-lease.sh` — the `alm`-driven table (no lease file, a future deadline, a past
   deadline, an empty file, a non-numeric file, an empty bead id) moved to
-  `trace::tests::aeon_lease_minutes_table`. The `fayth_get`/chamber-fayth section (a
+  `trace::tests::aeon_lease_minutes_table`. The `rune_get`/runes-rune section (a
   different family) is untouched.
 - `test-aeon-wiki-dirty.sh` — T1 (`wiki_commit_paths` via a bash sourcing shim) moved to
   `trace::tests::wiki_commit_paths_selects_own_dirty_writes_never_tasks_md`. T3, a whole-run

@@ -3,7 +3,7 @@
 //! Ranking is `spira-claim`'s: the ready set goes to it on STDIN and the epic lookup and the
 //! resumable set in FILES — never argv (sp-o4trx: the claim outage was argv E2BIG). The one
 //! thing left here is resumability, which needs the repo map and git and which spira-claim
-//! by design leaves to its caller. Nothing in this module knows about briefs or chambers
+//! by design leaves to its caller. Nothing in this module knows about briefs or runes
 //! (sp-f0qhr).
 
 use std::collections::BTreeMap;
@@ -46,7 +46,7 @@ pub struct Selector<'a> {
     pub exec: &'a dyn Exec,
     pub git: &'a dyn Git,
     pub claim_bin: &'a str,
-    pub fayth: &'a str,
+    pub rune: &'a str,
     pub scratch: &'a Path,
     pub pid: u32,
     /// spira_config::repos (sp-o88bx, "wave 4.12") in-process, instead of the
@@ -74,7 +74,7 @@ impl Selector<'_> {
             return Selection::ClaimError {
                 log: format!(
                     "{}: claim-error epic_parent_lookup failed (rc={}) — not reporting idle for a lookup that never completed",
-                    self.fayth, lk.code
+                    self.rune, lk.code
                 ),
                 ledger: format!("claim-error epic_parent_lookup failed rc={}", lk.code),
             };
@@ -85,20 +85,20 @@ impl Selector<'_> {
         let lkf = lk_file.display().to_string();
 
         // The top tier only: resumability costs one git process per candidate.
-        let tier = self.exec.exec(self.claim_bin, &self.select_args(&["select", "--fayth", self.fayth, "--epics", &lkf, "--top-tier"]), Some(ready.clone()), None);
+        let tier = self.exec.exec(self.claim_bin, &self.select_args(&["select", "--rune", self.rune, "--epics", &lkf, "--top-tier"]), Some(ready.clone()), None);
         let band = if tier.success() { parse_tier(&tier.stdout) } else { Vec::new() };
         let (resumable, tier_label) = self.resumable(&band);
 
         let _ = std::fs::write(&rs_file, resumable.join(","));
         let rsf = rs_file.display().to_string();
-        let ranked = self.exec.exec(self.claim_bin, &self.select_args(&["select", "--fayth", self.fayth, "--epics", &lkf, "--resumable", &rsf]), Some(ready), None);
+        let ranked = self.exec.exec(self.claim_bin, &self.select_args(&["select", "--rune", self.rune, "--epics", &lkf, "--resumable", &rsf]), Some(ready), None);
         let _ = std::fs::remove_file(&lk_file);
         let _ = std::fs::remove_file(&rs_file);
         if !ranked.success() {
             return Selection::ClaimError {
                 log: format!(
                     "{}: claim-error epic_rank_rows failed (rc={}) — not reporting idle for a rank that never completed",
-                    self.fayth, ranked.code
+                    self.rune, ranked.code
                 ),
                 ledger: format!("claim-error epic_rank_rows failed rc={}", ranked.code),
             };
@@ -268,7 +268,7 @@ mod tests {
     }
 
     fn sel<'a>(e: &'a FakeExec, repos: &'a spira_config::repos::Registry, g: &'a FakeGit, dir: &'a Path) -> Selector<'a> {
-        Selector { exec: e, git: g, claim_bin: "spira-claim", fayth: "builder", scratch: dir, pid: 7, repos }
+        Selector { exec: e, git: g, claim_bin: "spira-claim", rune: "builder", scratch: dir, pid: 7, repos }
     }
 
     const READY: &str = r#"[{"id":"sp-a","priority":1,"labels":["repo:svc"]},{"id":"sp-b","priority":1,"labels":["repo:svc","branch:spira/x"]}]"#;
@@ -310,7 +310,7 @@ mod tests {
         };
         let repos = svc_registry(&dir);
         let g = FakeGit(0);
-        let sel = Selector { exec: &e, git: &g, claim_bin: "spira-claim", fayth: "builder", scratch: &dir, pid: 7, repos: &repos };
+        let sel = Selector { exec: &e, git: &g, claim_bin: "spira-claim", rune: "builder", scratch: &dir, pid: 7, repos: &repos };
         let _ = sel.select(READY);
         let calls = e.calls.lock().unwrap();
         // epics, --top-tier, --resumable — --blockers machine on both select calls only.

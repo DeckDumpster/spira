@@ -348,7 +348,7 @@ impl Resolved {
     /// (sorted) order. This is `conf.sh`'s own `eval` target (sp-ubcgo, "wave 4.5"): a bash
     /// caller that SOURCES this process's output, rather than one that INHERITS it across an
     /// exec boundary, is exactly the "read in-process" case `EXPORT_KEYS`'s own doc carves
-    /// out for `SPIRA_REPO_MAP`, `SPIRA_FAYTHS` and `SPIRA_MAX_AEONS` — so this method is the
+    /// out for `SPIRA_REPO_MAP`, `SPIRA_RUNES` and `SPIRA_MAX_AEONS` — so this method is the
     /// one place those three (and every other registry key `to_sh(EXPORT_KEYS)` leaves out)
     /// do reach a bash reader. `conf.sh` itself decides, separately and explicitly, which of
     /// these it then re-exports to its OWN children — that decision is `EXPORT_KEYS`, applied
@@ -374,9 +374,9 @@ impl Resolved {
 /// elsewhere in `conf.sh`) stay deliberately left out: adding them here would claim a
 /// contract this function does not keep.
 ///
-/// DELIBERATELY ABSENT, even though `resolve` computes them: `SPIRA_REPO_MAP`, `SPIRA_FAYTHS`
+/// DELIBERATELY ABSENT, even though `resolve` computes them: `SPIRA_REPO_MAP`, `SPIRA_RUNES`
 /// and `SPIRA_MAX_AEONS` are host policy, read in-process, never exported to a child
-/// (`SPIRA_FAYTHS` leaking to a test's own sentinel is the scar `law-gates-run-in-a-clean-
+/// (`SPIRA_RUNES` leaking to a test's own sentinel is the scar `law-gates-run-in-a-clean-
 /// environment` is named for). `SPIRA_HOME` and `SPIRA_REPO` are per-copy facts and are not
 /// even IN `resolve`'s output (see [`ResolveInput`]) — exporting "where this copy of the
 /// harness happens to sit" is exactly what broke the eleven tests `conf.sh`'s own comment
@@ -1176,7 +1176,7 @@ mod tests {
         let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&crate::fixture_doc(&e)), conf_d: &home.join("conf.d") })
             .unwrap();
         let sh = r.to_sh(EXPORT_KEYS);
-        for forbidden in ["SPIRA_HOME=", "SPIRA_REPO=", "SPIRA_REPO_MAP=", "SPIRA_FAYTHS=", "SPIRA_MAX_AEONS="] {
+        for forbidden in ["SPIRA_HOME=", "SPIRA_REPO=", "SPIRA_REPO_MAP=", "SPIRA_RUNES=", "SPIRA_MAX_AEONS="] {
             assert!(!sh.contains(forbidden), "to_sh leaked {forbidden}:\n{sh}");
         }
         assert!(sh.contains("SPIRA_RUN="), "{sh}");

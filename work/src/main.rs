@@ -52,7 +52,7 @@ fn main() {
             { let code = CANNOT_TELL; spira_otel::run::finish(code); std::process::exit(code) };
         }
     };
-    let actor = std::env::var("SPIRA_FAYTH").or_else(|_| std::env::var("SPIRA_WORK_ACTOR")).unwrap_or_else(|_| "aeon".to_string());
+    let actor = std::env::var("SPIRA_RUNE").or_else(|_| std::env::var("SPIRA_WORK_ACTOR")).unwrap_or_else(|_| "aeon".to_string());
 
     let tip = if verb == "submit" { read_tip(&bound) } else { None };
 
@@ -220,7 +220,7 @@ fn statute_check(args: &[String]) -> i32 {
             return REFUSED;
         }
     };
-    let actor = std::env::var("SPIRA_FAYTH").or_else(|_| std::env::var("SPIRA_WORK_ACTOR")).unwrap_or_else(|_| "aeon".to_string());
+    let actor = std::env::var("SPIRA_RUNE").or_else(|_| std::env::var("SPIRA_WORK_ACTOR")).unwrap_or_else(|_| "aeon".to_string());
     let req = match work::build_request_with_body(&bound, "note", &["-".to_string()], None, &actor, Some(&note)) {
         Ok(r) => r,
         Err(e) => {

@@ -100,7 +100,7 @@ out = []
 for i in range(n):
     t = end - (n - 1 - i) * 120
     ts = datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    out.append("%s spira: state: open=20 plan_ready=%s in_progress=0 aeons=%s fayths=[builder ]"
+    out.append("%s spira: state: open=20 plan_ready=%s in_progress=0 aeons=%s runes=[builder ]"
                % (ts, os.environ["READY"], os.environ["AEONS"]))
     if os.environ["EXTRA"]:
         out.append("%s spira: %s" % (ts, os.environ["EXTRA"]))
@@ -266,7 +266,7 @@ check "conditions do not mask each other" db-unreachable,sentinel-stalled \
 
 echo
 echo "heimdall-classify — the log format it actually reads:"
-# `ready=` was the field name before the plan's count was named apart from every fayth's.
+# `ready=` was the field name before the plan's count was named apart from every rune's.
 # A tail that still holds those lines must parse, not be silently skipped as unmatched.
 sed 's/plan_ready=/ready=/' "$TMP/starved.log" > "$TMP/oldfmt.log"
 check "the older state-line spelling still parses" summon-starved "$(obs "$TMP/oldfmt.log")"

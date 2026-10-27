@@ -25,35 +25,35 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 NONE="$T/none.conf"
-mkdir -p "$T/chamber" "$T/run"
+mkdir -p "$T/runes" "$T/run"
 # SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
 # <home>/conf.d, so this stub home needs the registry (sfail round 2, pattern 1).
 ln -s "$HERE/conf.d" "$T/conf.d"
-# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# SPIRA_RUNES_DIR is registered and the fixture declares a fixed, nonexistent path — nothing
 # derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
-tl_config SPIRA_CHAMBER="$T/chamber"
+tl_config SPIRA_RUNES_DIR="$T/runes"
 
 # ---------------------------------------------------------------------------
-# FAKE FAYTHS. builder (plan lane), mimir (mimir-sweep lane), empty (no labels).
+# FAKE RUNES. builder (plan lane), mimir (mimir-sweep lane), empty (no labels).
 # ---------------------------------------------------------------------------
-cat > "$T/chamber/builder.fayth" <<'FAYTH'
-FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan}"
-FAYTH_TOOLS="Bash,Edit,Write"
-FAYTH_MODEL=claude-sonnet-5
-FAYTH_MAX_CONCURRENT=4
-FAYTH
-cat > "$T/chamber/mimir.fayth" <<'FAYTH'
-FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_MIMIR_LABEL:-mimir-sweep}"
-FAYTH_TOOLS="Bash"
-FAYTH_MODEL=claude-haiku-4-5-20251001
-FAYTH_MAX_CONCURRENT=1
-FAYTH
-cat > "$T/chamber/empty.fayth" <<'FAYTH'
-FAYTH_LABELS=""
-FAYTH_TOOLS="Bash"
-FAYTH_MODEL=claude-haiku-4-5-20251001
-FAYTH_MAX_CONCURRENT=1
-FAYTH
+cat > "$T/runes/builder.rune" <<'RUNE'
+RUNE_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan}"
+RUNE_TOOLS="Bash,Edit,Write"
+RUNE_MODEL=claude-sonnet-5
+RUNE_MAX_CONCURRENT=4
+RUNE
+cat > "$T/runes/mimir.rune" <<'RUNE'
+RUNE_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_MIMIR_LABEL:-mimir-sweep}"
+RUNE_TOOLS="Bash"
+RUNE_MODEL=claude-haiku-4-5-20251001
+RUNE_MAX_CONCURRENT=1
+RUNE
+cat > "$T/runes/empty.rune" <<'RUNE'
+RUNE_LABELS=""
+RUNE_TOOLS="Bash"
+RUNE_MODEL=claude-haiku-4-5-20251001
+RUNE_MAX_CONCURRENT=1
+RUNE
 
 # ---------------------------------------------------------------------------
 # REPO MAP. testrepo is plan-only (default); dev-repo is develop (no mimir-sweep);
@@ -336,10 +336,10 @@ out="$(run_bead "testrepo x: y" --for builder --repo testrepo --harness-title 2>
 is   "harness-title flag still accepted: exits 0" "0" "$rc"
 
 # a persona that requires a build spec refuses an outcome-only body and names its exit
-cat > "$T/chamber/specbuilder.fayth" <<'FAYTH'
-FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan}"
-FAYTH_REQUIRES_BUILD_SPEC=1
-FAYTH
+cat > "$T/runes/specbuilder.rune" <<'RUNE'
+RUNE_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan}"
+RUNE_REQUIRES_BUILD_SPEC=1
+RUNE
 printf 'A routine deploy causes no failed requests, whatever the mechanism.\n' > "$T/outcome.md"
 printf 'Why.\n\n## Build\n\nA guard in spira/x.\n' > "$T/spec.md"
 

@@ -1,8 +1,8 @@
 TYPE=string
 GROUP=spike
-DOC=THE SPIKE PARTITION, in one place because it is read in four: the spike fayth's
+DOC=THE SPIKE PARTITION, in one place because it is read in four: the spike rune's
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # THE SPIKE PARTITION, in one place because it is read in four: the spike fayth's
+    # THE SPIKE PARTITION, in one place because it is read in four: the spike rune's
     # predicate, the brief handed to a spike aeon, the confinement check the landing worker
     # runs, and whatever files the bead. A literal in four files is how four programs come to
     # disagree, and the half nobody notices is wrong is the one that simply matches less.

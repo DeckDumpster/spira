@@ -321,7 +321,7 @@ Kept deliberately close to `spira/activate.sh`'s own behaviour rather than upgra
 `spira/stage.sh`'s replacement: stand up (or tear down) a fully isolated Spira for
 testing — its own git repo and bare remote, its own beads database (`bd-embedded`, via a
 private `bin/bd` symlink so nothing this stage runs can resolve the caller's real `bd`), its
-own `SPIRA_RUN`, a minimal chamber (one `canary` fayth, `FAYTH_MAX_CONCURRENT=1`), a
+own `SPIRA_RUN`, a minimal runes (one `canary` rune, `RUNE_MAX_CONCURRENT=1`), a
 six-column `repo-map` line, and the two synthetic dispatch scripts `sentinel` needs in place
 of `systemd-run`: `fake-summon.sh` (execs `release canary-worker` synchronously) and
 `fake-launch.sh` (records the landing dispatch timestamp and exits 0 — `release canary` runs
@@ -332,7 +332,7 @@ run from, never a checkout — DESIGN.md's own Intent) is symlinked into the sta
 `spira/`, so a stage runs the actual code, not a copy frozen at setup. Isolation is asserted
 at build time: `up` refuses to return an env block where `SPIRA_DB`, `SPIRA_RUN` or
 `SPIRA_HOME` resolves outside the stage root, the same assertion `stage.sh` made. `down`
-refuses a path with no `spira/chamber/canary.fayth` — the one check that stands between it
+refuses a path with no `spira/runes/canary.rune` — the one check that stands between it
 and an arbitrary `rm -rf`.
 
 `SPIRA_SCOPE_LABEL` is always empty in a stage's own env, never read from the caller's: the
@@ -354,7 +354,7 @@ On failure it files a `spira,incident` bead in the **production** database — t
 stage's, and never lets a forensics failure change canary's own exit status.
 
 `canary-worker` claims the first bead of the one ready set an aeon claims from (`spira-claim
-fayth-ready canary --json`: the machine's READY/REWORK rows) the way an aeon claims it — the
+rune-ready canary --json`: the machine's READY/REWORK rows) the way an aeon claims it — the
 lifecycle Claim event (lib.sh `lc_claim_bead`, a refusal falling through to the next
 candidate; a give-up is `spira-lc unclaim`) — never a `bd ready --claim` of its own
 (sp-7g5q6). It then creates branch
@@ -629,7 +629,7 @@ the releases directory resolving, which it has nothing to do with).
 | `activate` | activate, rollback, the hotfix rule, history, status |
 | `prune` | prune |
 | `install` | `install-tarball`: unpack, swap, restart, prune a timestamp-named release |
-| `stage` | stand up / tear down an isolated Spira; the fayth, repo-map and dispatch-script content |
+| `stage` | stand up / tear down an isolated Spira; the rune, repo-map and dispatch-script content |
 | `canary` | the end-to-end canary run, and `canary-worker`, the synthetic aeon |
 | `acceptance` | `release acceptance`: the release acceptance run (phases A-D), its checks, forensics and note |
 | `session_hook` | `release session-hook`: the client's `SessionStart` hook and `statusLine` |
@@ -637,7 +637,7 @@ the releases directory resolving, which it has nothing to do with).
 
 Unit tests run activation and rollback against a fake `Systemctl` and a temporary unit
 directory; `install-tarball` against a fake `Systemctl` and a fake `Unpack` (no real `tar`);
-`stage`'s pure content (the fayth, the repo-map line) and its build-time refusals directly;
+`stage`'s pure content (the rune, the repo-map line) and its build-time refusals directly;
 `intake` against a fake `Templates` (no real `find`) and the same fake `Systemctl`.
 `session_hook`'s JSON transformation is pure and needs no fake at all; one further test
 (`release/tests/session_hook_minimal_env.rs`) runs the real `session.sh`/`ctx-meter.sh`

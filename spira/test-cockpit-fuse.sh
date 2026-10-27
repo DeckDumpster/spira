@@ -234,7 +234,7 @@ pane() {
 }
 
 # LEASE COUNTDOWN renders as "Nm" on the bead row (time left in the liveness lease).
-{ printf 'SP_AEON_N=1\nSP_AEON0_NAME=valefor\nSP_AEON0_FAYTH=builder\nSP_AEON0_BEAD=sp-fuse\n'
+{ printf 'SP_AEON_N=1\nSP_AEON0_NAME=valefor\nSP_AEON0_RUNE=builder\nSP_AEON0_BEAD=sp-fuse\n'
   printf 'SP_AEON0_MIN=20\nSP_AEON0_TURNS=37\nSP_AEON0_CTX=100000\nSP_AEON0_FILES=3\n'
   printf 'SP_AEON0_QUIET=60\nSP_AEON0_ACT=Bash test\nSP_AEON0_TITLE=fuse test bead\n'
   printf 'SP_AEON0_LEASE=10\nSP_NEXT_N=0\nSP_AWAITING_N=0\n'; } | snap
@@ -246,7 +246,7 @@ else
 fi
 
 # LOW LEASE (<3m) renders (still as "Nm" — the colour changes, the format does not).
-{ printf 'SP_AEON_N=1\nSP_AEON0_NAME=valefor\nSP_AEON0_FAYTH=builder\nSP_AEON0_BEAD=sp-gate\n'
+{ printf 'SP_AEON_N=1\nSP_AEON0_NAME=valefor\nSP_AEON0_RUNE=builder\nSP_AEON0_BEAD=sp-gate\n'
   printf 'SP_AEON0_MIN=20\nSP_AEON0_TURNS=37\nSP_AEON0_CTX=100000\nSP_AEON0_FILES=3\n'
   printf 'SP_AEON0_QUIET=60\nSP_AEON0_ACT=Bash test\nSP_AEON0_TITLE=gate test bead\n'
   printf 'SP_AEON0_LEASE=1\nSP_NEXT_N=0\nSP_AWAITING_N=0\n'; } | snap
@@ -258,7 +258,7 @@ else
 fi
 
 # MISSING LEASE (key absent from snapshot) renders as "?".
-{ printf 'SP_AEON_N=1\nSP_AEON0_NAME=valefor\nSP_AEON0_FAYTH=builder\nSP_AEON0_BEAD=sp-miss\n'
+{ printf 'SP_AEON_N=1\nSP_AEON0_NAME=valefor\nSP_AEON0_RUNE=builder\nSP_AEON0_BEAD=sp-miss\n'
   printf 'SP_AEON0_MIN=20\nSP_AEON0_TURNS=37\nSP_AEON0_CTX=100000\nSP_AEON0_FILES=3\n'
   printf 'SP_AEON0_QUIET=60\nSP_AEON0_ACT=Bash test\nSP_AEON0_TITLE=missing fuse bead\n'
   printf 'SP_NEXT_N=0\nSP_AWAITING_N=0\n'; } | snap

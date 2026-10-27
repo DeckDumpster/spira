@@ -19,7 +19,7 @@ seam, this suite's own fault-injection tests — that call one probe by name), a
 supervisor has no meaning without the probes it schedules.
 
 **RETIRE rather than port** (the wave's rule): every `lib.sh` function `cockpit.sh` called —
-`bdjson`/`bdq`, `spira_repos`, `repo_root`, `spira_landref`, `fayth_get`, `aeon_alive`,
+`bdjson`/`bdq`, `spira_repos`, `repo_root`, `spira_landref`, `rune_get`, `aeon_alive`,
 `detect_livelocked`, `queue_sort_rows`, and a dozen more — stays exactly what it was: a
 `lib.sh` function, called the same way (wave 4 proposes `lib.sh` last, and "leave `lib.sh`
 alone" is still the standing instruction). This crate owns the orchestration (which probe

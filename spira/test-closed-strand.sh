@@ -32,7 +32,7 @@ git -C "$REPO" remote add origin "$REMOTE"
 timeout 5 git -C "$REPO" push -q origin main
 timeout 5 git -C "$REPO" fetch -q origin
 git -C "$REPO" remote set-head origin main
-mkdir -p "$RUN/worktree" "$SH/chamber"
+mkdir -p "$RUN/worktree" "$SH/runes"
 lc_path_stub "$SH" "$TMP/lcfix"
 
 cp "$HERE/lib.sh" "$HERE/conf.sh" \
@@ -53,8 +53,8 @@ stub gate.sh       'echo "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}"
 stub confine.sh    'exit 0'
 stub gh            'exit 1'
 stub ask.sh        'true'
-printf 'FAYTH_LABELS="spira,plan"\nFAYTH_EXCLUDE_LABELS="spira-poison,spira-ask,spira-ci"\nFAYTH_MAX_CONCURRENT=0\n' \
-    > "$SH/chamber/t.fayth"
+printf 'RUNE_LABELS="spira,plan"\nRUNE_EXCLUDE_LABELS="spira-poison,spira-ask,spira-ci"\nRUNE_MAX_CONCURRENT=0\n' \
+    > "$SH/runes/t.rune"
 
 printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$REPONAME" "$REPO" push main '' '' > "$SH/repo-map"
 
@@ -68,13 +68,13 @@ printf '#!/usr/bin/env bash\nprintf %%s\\\\n inactive\n' > "$TMP/systemctl"; chm
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/launch"; chmod +x "$TMP/launch"
 
 sentinel() {
-    # SPIRA_RUN/SPIRA_DB/SPIRA_HOME_REPO/SPIRA_FAYTHS/SPIRA_NOTIFY/SPIRA_REPO_MAP are
+    # SPIRA_RUN/SPIRA_DB/SPIRA_HOME_REPO/SPIRA_RUNES/SPIRA_NOTIFY/SPIRA_REPO_MAP are
     # registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config,
     # not the per-call env prefix below, which no process reads them from any more.
-    # round 2 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME.
+    # round 2 fix (pattern 6): SPIRA_RUNES_DIR no longer derives from SPIRA_HOME.
     tl_config SPIRA_BATCHER_ENABLE=1 SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_HOME_REPO="$REPONAME" \
-        SPIRA_FAYTHS="t" SPIRA_NOTIFY="$SH/ask.sh" SPIRA_REPO_MAP="$SH/repo-map" \
-        SPIRA_CHAMBER="$SH/chamber"
+        SPIRA_RUNES="t" SPIRA_NOTIFY="$SH/ask.sh" SPIRA_REPO_MAP="$SH/repo-map" \
+        SPIRA_RUNES_DIR="$SH/runes"
     SPIRA_HOME="$SH" \
     SPIRA_REPO="$REPO" \
     SPIRA_INFERENCE_EVERY=999999 \
@@ -188,12 +188,12 @@ YAML
         || { echo "spira_lifecycle schema failed: $(cat "$TMP/lc-schema.log")" >&2; exit 1; }
 
     # SPIRA_HOME_REPO/SPIRA_SCOPE_LABEL/SPIRA_RUN/SPIRA_DB/SPIRA_BD/SPIRA_REPO_MAP/
-    # SPIRA_FAYTHS/SPIRA_PATH/SPIRA_CERT_WINDOW_MINS are registered keys (per Ryan
+    # SPIRA_RUNES/SPIRA_PATH/SPIRA_CERT_WINDOW_MINS are registered keys (per Ryan
     # 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML
     # through env -i, which clears it and which no process reads these from any more.
     tl_config SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SCOPE" SPIRA_RUN="$RUN2" \
         SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" SPIRA_REPO_MAP="$MAP" \
-        SPIRA_FAYTHS=t SPIRA_PATH="$BD_PATH" SPIRA_CERT_WINDOW_MINS=90
+        SPIRA_RUNES=t SPIRA_PATH="$BD_PATH" SPIRA_CERT_WINDOW_MINS=90
     cout="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 "${LC_ENV[@]}" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$ALPHA" SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" \

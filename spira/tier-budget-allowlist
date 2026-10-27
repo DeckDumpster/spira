@@ -91,7 +91,6 @@ test-census-watermark.sh	T1	52.5
 test-census.sh	T1	79.5
 test-certified-withdraw.sh	T1	22.0
 test-certify.sh	T1	114.0
-test-chamber-repo-labels.sh	T1	4.5
 test-check2-reclaim.sh	T1	23.0
 test-check4-batch.sh	T1	50.5
 test-check4-events.sh	T1	80.5
@@ -168,9 +167,6 @@ test-deploy.sh	T1	17.5
 test-destroy-branch.sh	T2	18.5
 test-destructive-bead.sh	T1	8.0
 test-express-lane.sh	T1	25.5
-test-fayth-project-instructions.sh	T1	4.5
-test-fayth-ready-error.sh	T1	15.0
-test-fayth.sh	T1	6.0
 test-forge-batch-ci-status.sh	T1	2.0
 test-forge-check-status.sh	T1	8.0
 test-forge-orphan-runs.sh	T1	2.0
@@ -316,7 +312,6 @@ test-suite-state-fence.sh	T1	6.0
 test-suite-times.sh	T1	2.0
 test-suites-fixture-fault.sh	T1	19.5
 test-suites-timeout.sh	T2	14.0
-test-summon-fayth.sh	T1	4.0
 test-superseded.sh	T1	19.0
 test-tarball-bins.sh	T1	4.0
 test-testdb-concurrent.sh	T1	12.5

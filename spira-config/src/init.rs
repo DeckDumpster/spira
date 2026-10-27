@@ -182,26 +182,26 @@ pub fn render(answers: &BTreeMap<String, String>, out: &Path, reg: &Registry<'_>
             Err(e) => unset.push(format!("{path} = {v:?} ({e})")),
         }
     }
-    // The personas: one [persona.<name>] per `*.fayth` the release ships beside its registry
-    // (spira/chamber), read the way convert reads them, against the [spira] just written.
-    let chamber = reg.conf_d.parent().unwrap_or(Path::new("/")).join("chamber");
-    let mut fayths: Vec<PathBuf> = std::fs::read_dir(&chamber)
-        .map_err(|e| format!("no personas: {}: {e}", chamber.display()))?
+    // The personas: one [persona.<name>] per `*.rune` the release ships beside its registry
+    // (spira/runes), read the way convert reads them, against the [spira] just written.
+    let runes_dir = reg.conf_d.parent().unwrap_or(Path::new("/")).join("runes");
+    let mut runes: Vec<PathBuf> = std::fs::read_dir(&runes_dir)
+        .map_err(|e| format!("no personas: {}: {e}", runes_dir.display()))?
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "fayth"))
+        .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "rune"))
         .collect();
-    fayths.sort();
-    if fayths.is_empty() {
-        return Err(format!("no personas: no *.fayth under {}", chamber.display()));
+    runes.sort();
+    if runes.is_empty() {
+        return Err(format!("no personas: no *.rune under {}", runes_dir.display()));
     }
     let spira_section = doc.spira.clone().unwrap_or_default();
     let mut warnings = crate::convert::ConvertWarnings::default();
-    for f in &fayths {
+    for f in &runes {
         let text = std::fs::read_to_string(f).map_err(|e| format!("{}: {e}", f.display()))?;
         let (name, section) = crate::convert::persona_section(&text, &spira_section, &mut warnings);
         if name.is_empty() {
-            return Err(format!("{}: no FAYTH_NAME", f.display()));
+            return Err(format!("{}: no RUNE_NAME", f.display()));
         }
         doc.persona.insert(name, section);
     }
@@ -402,7 +402,7 @@ mod tests {
         let d = testkit::TempDir::new("spira-config-init-nodefault");
         let conf_d = d.path().join("spira/conf.d");
         std::fs::create_dir_all(&conf_d).unwrap();
-        std::os::unix::fs::symlink(reg().conf_d.parent().unwrap().join("chamber"), d.path().join("spira/chamber")).unwrap();
+        std::os::unix::fs::symlink(reg().conf_d.parent().unwrap().join("runes"), d.path().join("spira/runes")).unwrap();
         for e in std::fs::read_dir(reg().conf_d).unwrap().flatten() {
             let mut t = std::fs::read_to_string(e.path()).unwrap();
             if e.file_name() == "SPIRA_SUMMON_LOCK_WAIT" {

@@ -509,3 +509,6 @@ mimir_max_gap_seconds
 mimir_remedy_label
 heimdall_restarts
 heimdall_restart_window
+runes
+runes_dir
+runes_overlay

@@ -246,10 +246,10 @@ mod tests {
         // going to be one line regardless.
         inputs.snapshot_content = "SP_AT='1000000000'\n\
              SP_SENTINEL_TIMER='1'\nSP_OPS_TIMER='1'\nSP_HEIMDALL_TIMER='1'\n\
-             SP_AEON_N='1'\nSP_AEON0_NAME='shiva'\nSP_AEON0_FAYTH='builder'\n\
+             SP_AEON_N='1'\nSP_AEON0_NAME='shiva'\nSP_AEON0_RUNE='builder'\n\
              SP_AEON0_BEAD='sp-llbmi'\nSP_AEON0_MIN='1'\nSP_AEON0_TURNS='1'\n\
              SP_AEON0_CTX='100'\nSP_AEON0_MODEL='claude-sonnet-4-6'\n\
-             SP_AEON0_FAYTH_MODEL='claude-sonnet-4-6'\nSP_AEON0_FILES='1'\n\
+             SP_AEON0_RUNE_MODEL='claude-sonnet-4-6'\nSP_AEON0_FILES='1'\n\
              SP_AEON0_PRI='1'\nSP_AEON0_PARTITION='builder'\nSP_AEON0_TITLE='t'\n\
              SP_AEON0_LEASE='8'\nSP_AEON0_QUIET='1'\n\
              SP_NEXT_N='1'\nSP_NEXT0='P1 builder sp-a some next bead'\n\

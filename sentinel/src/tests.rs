@@ -349,8 +349,8 @@ pub fn run_mode<'a>(
     extra: &[(&str, &str)],
     repos: Option<&[&str]>,
 ) -> i32 {
-    let chamber = w.home.join("chamber");
-    let _env = testkit::env(&[("SPIRA_TOML", None), ("SPIRA_CHAMBER", chamber.to_str())]);
+    let runes = w.home.join("runes");
+    let _env = testkit::env(&[("SPIRA_TOML", None), ("SPIRA_RUNES_DIR", runes.to_str())]);
     let h: &'a Host<'a> = Box::leak(Box::new(Host::new(r, clock, sink)));
     let s = Sentinel::new(
         h,
@@ -433,7 +433,7 @@ fn skip_reclaim_skips_the_db_check() {
 fn full_pass_reads_the_store_once_and_exports_it() {
     let (w, r, sink, clock) = setup("full");
     r.on(|s| {
-        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("bulk-ready-by-fayth") {
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("bulk-ready-by-rune") {
             return ok("builder 1\nops 0\n");
         }
         None
@@ -448,7 +448,7 @@ fn full_pass_reads_the_store_once_and_exports_it() {
         }
         None
     });
-    // CK7 runs in-process now (wave 4.27): `fayth_ready` reaches `spira-claim` directly;
+    // CK7 runs in-process now (wave 4.27): `rune_ready` reaches `spira-claim` directly;
     // left unstubbed here it answers "0" (the fixture's point is the ONE bulk read, not
     // a summon), so CHECK 7 contributes no action this pass.
     //
@@ -466,7 +466,7 @@ fn full_pass_reads_the_store_once_and_exports_it() {
     // decides nothing).
     assert_eq!(r.count(|s| s.prog == "spira-lc"), 1, "{:#?}", r.lines());
     assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args[0] == "list"), 1);
-    assert!(sink.has("spira: state: open=2 plan_ready=1 in_progress=1 aeons=0 fayths=[builder ops]"), "{}", sink.text());
+    assert!(sink.has("spira: state: open=2 plan_ready=1 in_progress=1 aeons=0 runes=[builder ops]"), "{}", sink.text());
     assert!(sink.has("RECLAIMED sp-x — ghost"));
     assert!(sink.has("ACT handled 1 stranded item(s)"));
     assert!(sink.has("ACT escalated 1 stranded item(s)"));
@@ -735,16 +735,16 @@ fn summon_only_gates_then_reads_ready_once() {
 
     let (w, r, sink, clock) = setup("summon2");
     r.on(|s| {
-        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("bulk-ready-by-fayth") {
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("bulk-ready-by-rune") {
             return ok("builder 1\nops 0\n");
         }
         None
     });
     r.on(|s| if s.args.iter().any(|a| a == "list-units") { ok("spira-aeon-builder-1 loaded active\nspira-aeon-ops-2 loaded active\nspira-aeon-opsx-3 x\n") } else { None });
-    // CK7 runs in-process now too: `fayth_ready` reaches `spira-claim fayth-ready`
+    // CK7 runs in-process now too: `rune_ready` reaches `spira-claim rune-ready`
     // directly, reading the SAME SPIRA_READY_CACHE the pass already wrote.
     r.on(|s| {
-        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("fayth-ready") {
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("rune-ready") {
             let cache = std::fs::read_to_string(env_of(s, "SPIRA_READY_CACHE").unwrap()).unwrap();
             assert_eq!(cache, "builder 1\nops 0\n");
             let n = if s.args.get(1).map(String::as_str) == Some("builder") { "1" } else { "0" };
@@ -753,18 +753,18 @@ fn summon_only_gates_then_reads_ready_once() {
             None
         }
     });
-    // "builder" is 1/1 live already (the list-units fixture above), so fayth_free refuses
+    // "builder" is 1/1 live already (the list-units fixture above), so rune_free refuses
     // the concurrency cap before ever reaching for `aeon` on PATH — no systemd-run call,
     // and no action is tallied; this pass proves the ready-cache plumbing, not a summon.
     assert_eq!(
         run_mode(&w, &r, &sink, &clock, Mode::SummonOnly, &[], None),
         0
     );
-    // The ready set is fetched ONCE, by spira-claim inside bulk-ready-by-fayth: the sentinel
+    // The ready set is fetched ONCE, by spira-claim inside bulk-ready-by-rune: the sentinel
     // itself no longer reads bd here (it counted nothing from it after sp-uqrdn).
     assert_eq!(r.count(|s| s.prog == "bd"), 0, "the sentinel makes no bd call of its own");
-    assert_eq!(r.count(|s| s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("bulk-ready-by-fayth")), 1);
-    assert!(sink.has("summon-only: live=2 fayths=[builder ops]"));
+    assert_eq!(r.count(|s| s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("bulk-ready-by-rune")), 1);
+    assert!(sink.has("summon-only: live=2 runes=[builder ops]"));
     assert!(sink.has("CHECK7 builder: 1 ready, at concurrency cap"), "{}", sink.text());
     assert!(sink.has("summon-only pass complete — 0 action(s)"));
 }
@@ -801,7 +801,7 @@ fn summon_only_fails_closed_on_an_unreadable_capacity_pause_file() {
 
 #[test]
 fn world_gate_cmd_halts_and_a_drain_holds_however_old() {
-    let mode = |f: &str| Mode::WorldGate { fayth: f.into(), prefix: "CHECK7".into() };
+    let mode = |f: &str| Mode::WorldGate { rune: f.into(), prefix: "CHECK7".into() };
 
     // No stamp at all: permitted, silently.
     let (w, r, sink, clock) = setup("wg-open");
@@ -837,7 +837,7 @@ fn summon_cmd_refuses_without_aeon_and_summons_when_everything_lines_up() {
         &r,
         &sink,
         &clock,
-        Mode::Summon { fayth: "builder".into(), pool: None, require_express: false },
+        Mode::Summon { rune: "builder".into(), pool: None, require_express: false },
         &[],
         None,
     );
@@ -846,7 +846,7 @@ fn summon_cmd_refuses_without_aeon_and_summons_when_everything_lines_up() {
     assert_eq!(r.count(|s| s.prog == "systemd-run"), 0);
 
     // Everything in place: ready, free, `aeon` resolvable — summons, and the aeon binary
-    // plus `--home`/the fayth land on the systemd-run argv exactly as lib.sh built them.
+    // plus `--home`/the rune land on the systemd-run argv exactly as lib.sh built them.
     let (w, r, sink, clock) = setup("summon-ok");
     let bin = w.dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
@@ -858,7 +858,7 @@ fn summon_cmd_refuses_without_aeon_and_summons_when_everything_lines_up() {
         &r,
         &sink,
         &clock,
-        Mode::Summon { fayth: "builder".into(), pool: None, require_express: true },
+        Mode::Summon { rune: "builder".into(), pool: None, require_express: true },
         &[("PATH", &format!("{}:/usr/bin:/bin", bin.display()))],
         None,
     );
@@ -874,9 +874,9 @@ fn summon_cmd_refuses_without_aeon_and_summons_when_everything_lines_up() {
 }
 
 // ---------------------------------------------------------------------------------------
-// summon_fayth's refusal ladder (the rows test-summon-fayth.sh used to prove in a shell).
-// The roster is `builder`, `ops`; each rule binds to a declaration (FAYTH_ELASTIC,
-// FAYTH_LANE, FAYTH_MAX_CONCURRENT), so the same two names play different roles per test.
+// summon_rune's refusal ladder (the rows test-summon-rune.sh used to prove in a shell).
+// The roster is `builder`, `ops`; each rule binds to a declaration (RUNE_ELASTIC,
+// RUNE_LANE, RUNE_MAX_CONCURRENT), so the same two names play different roles per test.
 
 struct Ladder {
     w: World,
@@ -888,9 +888,9 @@ struct Ladder {
 
 fn ladder(tag: &str, builder: &str, ops: &str, live: &[(&str, usize)], ready: &[(&str, i64)]) -> Ladder {
     let (w, r, sink, clock) = setup(tag);
-    std::fs::create_dir_all(w.home.join("chamber")).unwrap();
-    std::fs::write(w.home.join("chamber/builder.fayth"), builder).unwrap();
-    std::fs::write(w.home.join("chamber/ops.fayth"), ops).unwrap();
+    std::fs::create_dir_all(w.home.join("runes")).unwrap();
+    std::fs::write(w.home.join("runes/builder.rune"), builder).unwrap();
+    std::fs::write(w.home.join("runes/ops.rune"), ops).unwrap();
     let bin = w.dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     exe(&bin.join("aeon"));
@@ -898,7 +898,7 @@ fn ladder(tag: &str, builder: &str, ops: &str, live: &[(&str, usize)], ready: &[
     let calls = std::rc::Rc::new(RefCell::new(Vec::new()));
     let calls_c = calls.clone();
     r.on(move |s| {
-        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("fayth-ready") {
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("rune-ready") {
             let f = s.args.get(1).cloned().unwrap_or_default();
             calls_c.borrow_mut().push(f.clone());
             return ok(&ready.iter().find(|(x, _)| *x == f).map_or(0, |(_, n)| *n).to_string());
@@ -928,32 +928,32 @@ fn ladder(tag: &str, builder: &str, ops: &str, live: &[(&str, usize)], ready: &[
 }
 
 impl Ladder {
-    fn summon(&self, fayth: &str, pool: Option<i64>, extra: &[(&str, &str)]) -> bool {
+    fn summon(&self, rune: &str, pool: Option<i64>, extra: &[(&str, &str)]) -> bool {
         let path = format!("{}:/usr/bin:/bin", self.w.dir.join("bin").display());
         let mut all: Vec<(&str, &str)> = vec![("PATH", &path)];
         all.extend_from_slice(extra);
-        let rc = run_mode(&self.w, &self.r, &self.sink, &self.clock, Mode::Summon { fayth: fayth.into(), pool, require_express: false }, &all, None);
-        let summoned = self.r.find(|s| s.prog == "systemd-run").is_some_and(|s| s.args.last().map(String::as_str) == Some(fayth));
+        let rc = run_mode(&self.w, &self.r, &self.sink, &self.clock, Mode::Summon { rune: rune.into(), pool, require_express: false }, &all, None);
+        let summoned = self.r.find(|s| s.prog == "systemd-run").is_some_and(|s| s.args.last().map(String::as_str) == Some(rune));
         assert_eq!(rc == 0, summoned, "rc and the launch agree: {}", self.sink.text());
         summoned
     }
 }
 
-const TASK: &str = "FAYTH_MAX_CONCURRENT=4\n";
-const ELASTIC: &str = "FAYTH_MAX_CONCURRENT=4\nFAYTH_ELASTIC=1\n";
-const SOLO: &str = "FAYTH_MAX_CONCURRENT=1\n";
-const LANE: &str = "FAYTH_MAX_CONCURRENT=1\nFAYTH_LANE=ops\n";
+const TASK: &str = "RUNE_MAX_CONCURRENT=4\n";
+const ELASTIC: &str = "RUNE_MAX_CONCURRENT=4\nRUNE_ELASTIC=1\n";
+const SOLO: &str = "RUNE_MAX_CONCURRENT=1\n";
+const LANE: &str = "RUNE_MAX_CONCURRENT=1\nRUNE_LANE=ops\n";
 
 #[test]
-fn an_elastic_fayth_is_held_back_on_the_last_slot_only_while_a_non_elastic_one_has_work() {
+fn an_elastic_rune_is_held_back_on_the_last_slot_only_while_a_non_elastic_one_has_work() {
     let ceiling = [("SPIRA_MAX_LIVE_AEONS", "3")];
-    // 2 free slots: summoned although the non-elastic fayth is also ready, and the
-    // reservation is never even consulted (one readiness call, for the fayth itself).
+    // 2 free slots: summoned although the non-elastic rune is also ready, and the
+    // reservation is never even consulted (one readiness call, for the rune itself).
     let l = ladder("el-free", ELASTIC, SOLO, &[("builder", 1)], &[("ops", 1), ("builder", 1)]);
     assert!(l.summon("builder", Some(4), &ceiling), "{}", l.sink.text());
     assert_eq!(*l.ready_calls.borrow(), vec!["builder"]);
 
-    // 1 slot free and the non-elastic fayth has work: refused, naming it, and not as a cap.
+    // 1 slot free and the non-elastic rune has work: refused, naming it, and not as a cap.
     let l = ladder("el-last", ELASTIC, SOLO, &[("builder", 2)], &[("ops", 1), ("builder", 1)]);
     assert!(!l.summon("builder", Some(4), &ceiling));
     assert!(l.sink.has("held back") && l.sink.has("ops has 1 ready"), "{}", l.sink.text());
@@ -964,14 +964,14 @@ fn an_elastic_fayth_is_held_back_on_the_last_slot_only_while_a_non_elastic_one_h
     let l = ladder("el-clear", ELASTIC, SOLO, &[("builder", 2)], &[("ops", 0), ("builder", 1)]);
     assert!(l.summon("builder", Some(4), &ceiling), "{}", l.sink.text());
 
-    // The rule binds to the declaration: the same live state, but the summoned fayth is the
+    // The rule binds to the declaration: the same live state, but the summoned rune is the
     // non-elastic one, is never subject to it.
     let l = ladder("el-solo", ELASTIC, SOLO, &[("builder", 2)], &[("ops", 1), ("builder", 1)]);
     assert!(l.summon("ops", None, &ceiling), "{}", l.sink.text());
 }
 
 #[test]
-fn a_task_fayth_yields_the_last_slot_to_a_ready_lane_unless_the_lane_has_no_room() {
+fn a_task_rune_yields_the_last_slot_to_a_ready_lane_unless_the_lane_has_no_room() {
     let caps = [("SPIRA_MAX_LIVE_AEONS", "4"), ("SPIRA_LANES_MAX_LIVE", "1")];
     let l = ladder("ln-free", TASK, LANE, &[("builder", 2)], &[("ops", 1), ("builder", 1)]);
     assert!(l.summon("builder", None, &caps), "{}", l.sink.text());
@@ -1011,7 +1011,7 @@ fn the_lane_reserve_is_tunable_and_needs_no_lane_cap() {
 }
 
 #[test]
-fn the_collective_lane_cap_refuses_a_lane_fayth_and_never_a_task_fayth() {
+fn the_collective_lane_cap_refuses_a_lane_rune_and_never_a_task_rune() {
     let caps = [("SPIRA_MAX_LIVE_AEONS", "4"), ("SPIRA_LANES_MAX_LIVE", "1")];
     let l = ladder("lc-below", TASK, LANE, &[], &[("ops", 1)]);
     assert!(l.summon("ops", None, &caps), "{}", l.sink.text());
@@ -1056,7 +1056,7 @@ fn the_fleet_ceiling_refuses_whatever_the_persona_and_names_the_count() {
 }
 
 #[test]
-fn a_task_fayth_honours_the_pool_and_a_lane_fayth_is_summoned_without_one() {
+fn a_task_rune_honours_the_pool_and_a_lane_rune_is_summoned_without_one() {
     let l = ladder("pool-1", ELASTIC, LANE, &[], &[("builder", 1)]);
     assert!(l.summon("builder", Some(1), &[]), "{}", l.sink.text());
     let l = ladder("pool-0", TASK, LANE, &[], &[("builder", 1)]);
@@ -1069,7 +1069,7 @@ fn a_task_fayth_honours_the_pool_and_a_lane_fayth_is_summoned_without_one() {
 }
 
 #[test]
-fn an_elastic_fayth_takes_the_pool_remainder_whole_and_a_capped_one_nets_out_what_runs() {
+fn an_elastic_rune_takes_the_pool_remainder_whole_and_a_capped_one_nets_out_what_runs() {
     for live in 0..=3usize {
         let l = ladder(&format!("rem-{live}"), ELASTIC, SOLO, &[("builder", live)], &[("builder", 9)]);
         assert!(l.summon("builder", Some(5), &[]), "have={live} must not reduce a pool=5 remainder: {}", l.sink.text());
@@ -1111,21 +1111,21 @@ fn a_halt_refuses_a_summon_loudly_and_an_old_drain_stamp_still_holds() {
     assert!(stamp.is_file() && l.sink.has("draining — not summoning") && !l.sink.has("EXPIRED"), "{}", l.sink.text());
 }
 
-/// sp-hh599, law-a-control-that-cannot-check-must-refuse: `fayth_ready`'s own rc contract
+/// sp-hh599, law-a-control-that-cannot-check-must-refuse: `rune_ready`'s own rc contract
 /// (sp-3ntca) already maps every nonzero OTHER than 2 to `ReadyAnswer::Failed` — this
 /// proves the CONSUMING side holds up its half: a claim-error must be LOUD (stderr, not
 /// the routine stdout log a healthy pass fills) and must never read like the routine "no
-/// fayth in the chamber" skip, which is what let this bead's own defect (a home-resolution
+/// rune in the runes" skip, which is what let this bead's own defect (a home-resolution
 /// refusal sharing rc 2 with "no such file") hide silently for every pass since wave 4.25.
 #[test]
 fn summon_cmd_a_claim_error_is_loud_and_never_reads_as_a_routine_skip() {
     let (w, r, sink, clock) = setup("summon-claim-error");
     r.on(|s| {
-        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("fayth-ready") {
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("rune-ready") {
             Some(Out {
                 rc: 1,
                 stdout: "0".into(),
-                stderr: "spira-claim: fayth_ready: cannot resolve SPIRA_HOME: no release found above this executable's own location (set SPIRA_HOME to override)".into(),
+                stderr: "spira-claim: rune_ready: cannot resolve SPIRA_HOME: no release found above this executable's own location (set SPIRA_HOME to override)".into(),
             })
         } else {
             None
@@ -1136,7 +1136,7 @@ fn summon_cmd_a_claim_error_is_loud_and_never_reads_as_a_routine_skip() {
         &r,
         &sink,
         &clock,
-        Mode::Summon { fayth: "builder".into(), pool: None, require_express: false },
+        Mode::Summon { rune: "builder".into(), pool: None, require_express: false },
         &[],
         None,
     );
@@ -1144,7 +1144,7 @@ fn summon_cmd_a_claim_error_is_loud_and_never_reads_as_a_routine_skip() {
     assert!(sink.has("[stderr]"), "a claim-error must go out LOUDLY, on stderr: {}", sink.text());
     assert!(sink.has("CLAIM-ERROR"), "{}", sink.text());
     assert!(sink.has("cannot resolve SPIRA_HOME"), "{}", sink.text());
-    assert!(!sink.has("no fayth in the chamber"), "a could-not-evaluate claim error read as a routine absence: {}", sink.text());
+    assert!(!sink.has("no rune in the runes"), "a could-not-evaluate claim error read as a routine absence: {}", sink.text());
     assert!(!sink.has("skipped"), "a claim-error must not read like a routine skip: {}", sink.text());
 }
 
@@ -1192,9 +1192,9 @@ fn ck7_summon_pass_rotates_across_two_real_passes() {
     use std::cell::RefCell;
     use std::rc::Rc;
     let (w, r, sink, clock) = setup("rotate");
-    std::fs::create_dir_all(w.home.join("chamber")).unwrap();
-    std::fs::write(w.home.join("chamber/builder.fayth"), "FAYTH_LANE=builder\nFAYTH_MAX_CONCURRENT=1\n").unwrap();
-    std::fs::write(w.home.join("chamber/ops.fayth"), "FAYTH_LANE=ops\nFAYTH_MAX_CONCURRENT=1\n").unwrap();
+    std::fs::create_dir_all(w.home.join("runes")).unwrap();
+    std::fs::write(w.home.join("runes/builder.rune"), "RUNE_LANE=builder\nRUNE_MAX_CONCURRENT=1\n").unwrap();
+    std::fs::write(w.home.join("runes/ops.rune"), "RUNE_LANE=ops\nRUNE_MAX_CONCURRENT=1\n").unwrap();
     let bin = w.dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     exe(&bin.join("aeon"));
@@ -1256,11 +1256,11 @@ fn ck7_summon_pass_rotates_across_two_real_passes() {
 // forever and the bypass never fired again. Wave 4.27/sp-gzmd2 ported `_ck7_summon_body`
 // faithfully — meaning it ported that silent `false` too. These four rows are the
 // predicate restored: express ready grants the bypass; no express ready holds the
-// throttle; and the bypass never overrides the gates that sit ABOVE it in `summon_fayth`
+// throttle; and the bypass never overrides the gates that sit ABOVE it in `summon_rune`
 // (world halted, account capacity) even when it fires.
 
-/// A `spira-claim` stub answering `fayth-exclude` (empty — no exclusions in this
-/// fixture), `fayth-ready` (ordinary per-fayth readiness; "builder" alone is ready) and
+/// A `spira-claim` stub answering `rune-exclude` (empty — no exclusions in this
+/// fixture), `rune-ready` (ordinary per-rune readiness; "builder" alone is ready) and
 /// `ready-count` (the express query `express_ready_in_task_pool` issues — ready only when
 /// it was handed `--express`).
 fn stub_express_claim(r: &FakeRunner) {
@@ -1271,27 +1271,27 @@ fn stub_express_claim(r: &FakeRunner) {
         let verb = s.args.first().map(String::as_str).unwrap_or("");
         let arg1 = s.args.get(1).map(String::as_str).unwrap_or("");
         match verb {
-            "fayth-exclude" => ok(""),
-            "fayth-ready" => ok(if arg1 == "builder" { "1" } else { "0" }),
+            "rune-exclude" => ok(""),
+            "rune-ready" => ok(if arg1 == "builder" { "1" } else { "0" }),
             "ready-count" => ok(if s.args.iter().any(|a| a == "--express") { "1" } else { "0" }),
             _ => None,
         }
     });
 }
 
-/// `builder`/`ops` chamber files carrying `FAYTH_LABELS` — `express_ready_in_task_pool`
-/// skips a fayth with none (lib.sh's own `[ -n "${FAYTH_LABELS:-}" ] || exit 1` guard),
-/// and without this fixture neither fayth would even be asked.
-fn express_chamber(w: &World) {
-    std::fs::create_dir_all(w.home.join("chamber")).unwrap();
-    std::fs::write(w.home.join("chamber/builder.fayth"), "FAYTH_LABELS=spira,plan\nFAYTH_MAX_CONCURRENT=4\n").unwrap();
-    std::fs::write(w.home.join("chamber/ops.fayth"), "FAYTH_LABELS=spira,incident\nFAYTH_MAX_CONCURRENT=4\n").unwrap();
+/// `builder`/`ops` runes files carrying `RUNE_LABELS` — `express_ready_in_task_pool`
+/// skips a rune with none (lib.sh's own `[ -n "${RUNE_LABELS:-}" ] || exit 1` guard),
+/// and without this fixture neither rune would even be asked.
+fn express_runes(w: &World) {
+    std::fs::create_dir_all(w.home.join("runes")).unwrap();
+    std::fs::write(w.home.join("runes/builder.rune"), "RUNE_LABELS=spira,plan\nRUNE_MAX_CONCURRENT=4\n").unwrap();
+    std::fs::write(w.home.join("runes/ops.rune"), "RUNE_LABELS=spira,incident\nRUNE_MAX_CONCURRENT=4\n").unwrap();
 }
 
 #[test]
 fn express_ready_in_task_pool_bypasses_the_throttle_and_summons() {
     let (w, r, sink, clock) = setup("express-bypass");
-    express_chamber(&w);
+    express_runes(&w);
     let bin = w.dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     exe(&bin.join("aeon"));
@@ -1315,7 +1315,7 @@ fn express_ready_in_task_pool_bypasses_the_throttle_and_summons() {
         launch.args
     );
     // Exactly one summon: the express grant sets the pool to EXACTLY 1 — a second ready
-    // task fayth (ops has none in this fixture, but the cap matters regardless) must not
+    // task rune (ops has none in this fixture, but the cap matters regardless) must not
     // also draw on it.
     assert_eq!(r.count(|s| s.prog == "systemd-run"), 1);
 }
@@ -1323,7 +1323,7 @@ fn express_ready_in_task_pool_bypasses_the_throttle_and_summons() {
 #[test]
 fn no_express_ready_stays_throttled() {
     let (w, r, sink, clock) = setup("express-none");
-    express_chamber(&w);
+    express_runes(&w);
     let bin = w.dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     exe(&bin.join("aeon"));
@@ -1334,8 +1334,8 @@ fn no_express_ready_stays_throttled() {
             return None;
         }
         match s.args.first().map(String::as_str).unwrap_or("") {
-            "fayth-exclude" => ok(""),
-            "fayth-ready" => ok("1"),
+            "rune-exclude" => ok(""),
+            "rune-ready" => ok("1"),
             "ready-count" => ok("0"),
             _ => None,
         }
@@ -1354,18 +1354,18 @@ fn no_express_ready_stays_throttled() {
     assert_eq!(r.count(|s| s.prog == "systemd-run"), 0, "nothing should launch while held at 0");
 }
 
-/// sp-xsnid: `builder`'s own `FAYTH_LABELS` references `$SPIRA_PLAN_LABEL` bare (no
-/// `${VAR:+...}` guard) — exactly `builder.fayth`'s own real shape — and nothing in this
+/// sp-xsnid: `builder`'s own `RUNE_LABELS` references `$SPIRA_PLAN_LABEL` bare (no
+/// `${VAR:+...}` guard) — exactly `builder.rune`'s own real shape — and nothing in this
 /// fixture resolves it (no `spira.toml`, no `conf.d` registry under `w.home`), so
-/// `fayth_predicate` refuses rather than handing back an empty label
+/// `rune_predicate` refuses rather than handing back an empty label
 /// `express_ready_in_task_pool` would otherwise query as "anything express" — the whole
 /// queue's worth of express work, not builder's own partition. The refusal must be LOUD (CLAIM-ERROR, stderr) and
 /// must never reach `ready-count` for builder at all.
 #[test]
 fn express_ready_in_task_pool_a_claim_error_is_loud_and_never_widens() {
     let (w, r, sink, clock) = setup("express-claim-error");
-    std::fs::create_dir_all(w.home.join("chamber")).unwrap();
-    std::fs::write(w.home.join("chamber/builder.fayth"), "FAYTH_LABELS=\"$SPIRA_PLAN_LABEL\"\nFAYTH_MAX_CONCURRENT=4\n").unwrap();
+    std::fs::create_dir_all(w.home.join("runes")).unwrap();
+    std::fs::write(w.home.join("runes/builder.rune"), "RUNE_LABELS=\"$SPIRA_PLAN_LABEL\"\nRUNE_MAX_CONCURRENT=4\n").unwrap();
     let bin = w.dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     exe(&bin.join("aeon"));
@@ -1375,8 +1375,8 @@ fn express_ready_in_task_pool_a_claim_error_is_loud_and_never_widens() {
             return None;
         }
         match s.args.first().map(String::as_str).unwrap_or("") {
-            "fayth-exclude" => ok(""),
-            "fayth-ready" => ok("0"),
+            "rune-exclude" => ok(""),
+            "rune-ready" => ok("0"),
             "ready-count" => {
                 assert!(
                     !s.args.get(1).is_some_and(|a| a.contains('$')),
@@ -1406,7 +1406,7 @@ fn express_ready_in_task_pool_a_claim_error_is_loud_and_never_widens() {
 #[test]
 fn express_ready_but_world_halted_does_not_summon() {
     let (w, r, sink, clock) = setup("express-halted");
-    express_chamber(&w);
+    express_runes(&w);
     let bin = w.dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     exe(&bin.join("aeon"));
@@ -1419,8 +1419,8 @@ fn express_ready_but_world_halted_does_not_summon() {
     let extra: Vec<(&str, &str)> = vec![("PATH", &path)];
     assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonPass, &extra, None), 0);
     // The bypass still computes and grants the pool slot — exactly what the bash original
-    // did (pool math runs before any per-persona summon_fayth call) — but the halted gate,
-    // checked first inside summon_fayth, refuses every attempt regardless.
+    // did (pool math runs before any per-persona summon_rune call) — but the halted gate,
+    // checked first inside summon_rune, refuses every attempt regardless.
     assert!(sink.has("CHECK7 pool: throttle active — express bead ready, granting pool=1"), "{}", sink.text());
     assert!(sink.has("CHECK7 builder: halted — not summoning"), "{}", sink.text());
     assert!(!sink.has("ACT summoned"), "{}", sink.text());
@@ -1430,7 +1430,7 @@ fn express_ready_but_world_halted_does_not_summon() {
 #[test]
 fn express_ready_but_capacity_unknown_does_not_summon() {
     let (w, r, sink, clock) = setup("express-capacity-unknown");
-    express_chamber(&w);
+    express_runes(&w);
     let bin = w.dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     exe(&bin.join("aeon"));
@@ -1752,7 +1752,7 @@ fn probe_merges_resolved_config_into_vars_without_shelling_a_second_time() {
     // @vars already carries SPIRA_HOME_REPO_RESOLVED from the (fixed) script itself —
     // merge_resolved_config must never override it — and nothing else, matching the
     // post-wave-4.8 PROBE script's own shape.
-    let raw = "@vars\0SPIRA_HOME_REPO_RESOLVED=spira\0SPIRA_TOML_FILE=\0@fayths\0@partitions\0@chamber\0@end\0";
+    let raw = "@vars\0SPIRA_HOME_REPO_RESOLVED=spira\0SPIRA_TOML_FILE=\0@runes\0@partitions\0@all_runes\0@end\0";
     let r = FakeRunner::new();
     r.on(move |_| ok(raw));
     let ctx = crate::probe(&r, &w.home);
@@ -1773,7 +1773,7 @@ fn roster_warnings_name_each_left_out_persona_once() {
         &[
             ("SPIRA_RUN", &run),
             ("SPIRA_DB", "/db"),
-            ("SPIRA_FAYTHS", "builder"),
+            ("SPIRA_RUNES", "builder"),
         ],
         &[],
         &["builder\tspira,plan\t"],
@@ -1796,8 +1796,8 @@ fn roster_warnings_name_each_left_out_persona_once() {
         "p".into(),
     )
     .run();
-    assert!(sink.has("WARN ops.fayth is in the chamber but not in SPIRA_FAYTHS — that persona will never be summoned here"));
-    assert!(sink.has("WARN spike.fayth is in the chamber"));
+    assert!(sink.has("WARN ops.rune is in the runes but not in SPIRA_RUNES — that persona will never be summoned here"));
+    assert!(sink.has("WARN spike.rune is in the runes"));
     assert_eq!(
         std::fs::read_to_string(w.run.join("roster-warn.stamp")).unwrap(),
         "ops spike "
@@ -2120,9 +2120,9 @@ struct UrgentFleet {
 
 fn urgent_fleet(tag: &str, urgent_row: &str, units: &[&str]) -> UrgentFleet {
     let (w, r, sink, clock) = setup(tag);
-    std::fs::create_dir_all(w.home.join("chamber")).unwrap();
-    std::fs::write(w.home.join("chamber/builder.fayth"), "FAYTH_LABELS=spira,plan\nFAYTH_MAX_CONCURRENT=4\n").unwrap();
-    std::fs::write(w.home.join("chamber/ops.fayth"), "FAYTH_LANE=ops\nFAYTH_LABELS=spira,incident\nFAYTH_MAX_CONCURRENT=2\n").unwrap();
+    std::fs::create_dir_all(w.home.join("runes")).unwrap();
+    std::fs::write(w.home.join("runes/builder.rune"), "RUNE_LABELS=spira,plan\nRUNE_MAX_CONCURRENT=4\n").unwrap();
+    std::fs::write(w.home.join("runes/ops.rune"), "RUNE_LANE=ops\nRUNE_LABELS=spira,incident\nRUNE_MAX_CONCURRENT=2\n").unwrap();
     let bin = w.dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     exe(&bin.join("aeon"));
@@ -2144,8 +2144,8 @@ fn urgent_fleet(tag: &str, urgent_row: &str, units: &[&str]) -> UrgentFleet {
         }
         match s.args.first().map(String::as_str).unwrap_or("") {
             "urgent" => ok(&row),
-            "fayth-exclude" => ok(""),
-            "fayth-ready" | "ready-count" => ok("1"),
+            "rune-exclude" => ok(""),
+            "rune-ready" | "ready-count" => ok("1"),
             _ => None,
         }
     });
@@ -2218,7 +2218,7 @@ fn a_rework_bead_makes_lanes_yield() {
 }
 
 #[test]
-fn the_urgent_query_names_only_task_pool_fayths() {
+fn the_urgent_query_names_only_task_pool_runes() {
     let f = urgent_fleet("urgent-scope", "", &["builder-1"]);
     run_urgent(&f);
     let q = f.r.find(|s| s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("urgent")).unwrap();

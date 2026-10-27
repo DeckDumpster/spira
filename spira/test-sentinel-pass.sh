@@ -82,10 +82,10 @@ LAUNCH_ARGV="$TMP/launch-argv"
 printf '#!/bin/sh\necho "$@" >> "%s"\nexit 0\n' "$LAUNCH_ARGV" > "$STUBS/mock-launch"; chmod +x "$STUBS/mock-launch"
 printf '#!/bin/sh\nexit 0\n'         > "$STUBS/mock-notify";    chmod +x "$STUBS/mock-notify"
 touch "$STUBS/repo-map"   # empty: no repos, Hel finds nothing to walk
-# THE REAL CHAMBER, symlinked once up front: `ln -sf` onto a directory that already
+# THE REAL RUNES, symlinked once up front: `ln -sf` onto a directory that already
 # exists creates the link INSIDE it instead of replacing it, so this must run before
-# anything else ever creates $STUBS/chamber as a plain directory.
-ln -s "$HERE/chamber" "$STUBS/chamber"
+# anything else ever creates $STUBS/runes as a plain directory.
+ln -s "$HERE/runes" "$STUBS/runes"
 
 echo "test-sentinel-pass.sh"
 
@@ -99,7 +99,7 @@ FAILING_BD="$TMP/failing-bd"
 printf '#!/bin/sh\nexit 1\n' > "$FAILING_BD"; chmod +x "$FAILING_BD"
 _run_unreadable="$TMP/run-unreadable"; mkdir -p "$_run_unreadable"
 tl_config SPIRA_RUN="$_run_unreadable" SPIRA_DB="$TMP/irrelevant-db" SPIRA_BD="$FAILING_BD" \
-    SPIRA_FAYTHS="" SPIRA_NOTIFY="$STUBS/mock-notify" SPIRA_CHAMBER="$STUBS/chamber"
+    SPIRA_RUNES="" SPIRA_NOTIFY="$STUBS/mock-notify" SPIRA_RUNES_DIR="$STUBS/runes"
 out_unreadable="$(env -i \
     PATH="$STUBS:$PATH" HOME="$HOME" \
     SPIRA_HOME="$STUBS" \
@@ -148,8 +148,8 @@ run_pass() {
     mkdir -p "$run"
     local -a sarg=(); [ -n "$arg" ] && sarg=("$arg")
     tl_config SPIRA_RUN="$run" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" SPIRA_PATH="$SPIRA_PATH" \
-        SPIRA_NOTIFY="$STUBS/mock-notify" SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL= \
-        SPIRA_MAX_AEONS=3 SPIRA_CHAMBER="$STUBS/chamber"
+        SPIRA_NOTIFY="$STUBS/mock-notify" SPIRA_RUNES=builder SPIRA_SCOPE_LABEL= \
+        SPIRA_MAX_AEONS=3 SPIRA_RUNES_DIR="$STUBS/runes"
     env -i \
         PATH="$STUBS:$PATH" HOME="$TMP/home" \
         SPIRA_HOME="$STUBS" \

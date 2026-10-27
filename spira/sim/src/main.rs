@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 const USAGE: &str = "usage: sim world up <dir> [--tree <rev>] [--repo <name>:<mode>[:<trunk>]]...\n       sim world seed [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim round-vm run <tree> --results-dir <dir>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario|name> [--seed N] [--world <dir>] [--keep] [--repo <name>:<mode>[:<trunk>]]...\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>
        sim proc-summary <world|proc-trace.log>
-       sim summon <systemd-run argv ending in: aeon --home H <fayth>>   (also: invoked as sim-summon)
+       sim summon <systemd-run argv ending in: aeon --home H <rune>>   (also: invoked as sim-summon)
        sim ci run <workflow.yml> <job> --sha <sha> --workspace <dir> [--skip <step name>]... [--path <dir>]... [--env KEY=VALUE]...";
 
 fn main() {
@@ -152,13 +152,13 @@ fn summon_main(env: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {
     let world = need(spira_sim::roundvm::WORLD_ENV)?;
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let argv = argv.strip_prefix(&["summon".to_string()]).unwrap_or(&argv);
-    let fayth = spira_sim::summon::fayth_of(argv)?;
+    let rune = spira_sim::summon::rune_of(argv)?;
     // The sentinel discards a summon's stderr; its stdout lands in the world's exec.log.
-    let ran = spira_sim::summon::summon(&PathBuf::from(world), &PathBuf::from(need(SCENARIO_VAR)?), &PathBuf::from(need(STATE_VAR)?), fayth, argv).inspect_err(|e| println!("sim summon: {e}"))?;
+    let ran = spira_sim::summon::summon(&PathBuf::from(world), &PathBuf::from(need(SCENARIO_VAR)?), &PathBuf::from(need(STATE_VAR)?), rune, argv).inspect_err(|e| println!("sim summon: {e}"))?;
     match ran {
         Ran::Stub(id) => println!("sim summon: ran the stub agent for {id}"),
-        Ran::Aeon => println!("sim summon: ran the real aeon for {fayth}"),
-        Ran::Nothing => println!("sim summon: nothing scripted is claimable for {fayth}"),
+        Ran::Aeon => println!("sim summon: ran the real aeon for {rune}"),
+        Ran::Nothing => println!("sim summon: nothing scripted is claimable for {rune}"),
     }
     Ok(())
 }

@@ -1,8 +1,8 @@
 # aeon — the runner that claims one bead, works it, and accounts for it
 
 Replaces `spira/aeon.sh` (2,839 lines). Binary `aeon`, invoked by the harness exactly where
-`aeon.sh` was: as the ExecStart of a transient user unit `spira-aeon-<fayth>-<ts>.service`
-(`summon_fayth`, `escape.sh`) and of `spira-ops.service` (sweep mode).
+`aeon.sh` was: as the ExecStart of a transient user unit `spira-aeon-<rune>-<ts>.service`
+(`summon_rune`, `escape.sh`) and of `spira-ops.service` (sweep mode).
 
 This document was written before the implementation (operator's directive: intent,
 contract, schema first). The port is **not** line by line: the bash grew by scar over two
@@ -17,13 +17,13 @@ the bead store, the lifecycle machine, git and a handful of files under `$SPIRA_
 
 1. **Decides whether to work at all** — capacity, `world.halted`, `world.draining`, the
    account's capacity pause. Declining is a healthy outcome (exit 0, `awake <f> <reason>`).
-2. **Selects and claims one bead** — `spira-claim fayth-ready` supplies the lifecycle
+2. **Selects and claims one bead** — `spira-claim rune-ready` supplies the lifecycle
    machine's ready set and ranks it epic-first; a CAS Claim event on the lifecycle row is the
    claim. There is no bd claim and no off mode (`lifecycle_enforce` is retired, sp-v62vn).
 3. **Builds one workspace** — one bead, one worktree, under the sanctioned root
    `$SPIRA_RUN/worktree/<bead>`; never adopts a tree another bead holds; never deletes a
    tree (moves it aside).
-4. **Renders the brief** — the persona's chamber template with `{{…}}` placeholders, the
+4. **Renders the brief** — the persona's runes template with `{{…}}` placeholders, the
    operator's overlays, and session-specific blocks; the session finishes through the
    `work` verbs (`work submit` and kin) — the model has no `bd`.
 5. **Runs the model session** under a liveness lease (trace growth renews it) and a
@@ -49,7 +49,7 @@ ledger, the session — no claim, no worktree, no verdict.
   reopens, from `spira-claim requeues --json` — went with the eviction-race block, below.)
 - **Brief rendering is a separate module from claim selection** (`brief.rs` vs
   `claim.rs`): sp-f0qhr was ejected twice for mixing them. Nothing in `claim.rs` knows
-  about chambers or `{{FINISH}}`.
+  about runes or `{{FINISH}}`.
 - **Not lib.sh.** lib.sh stays. Broad shared machinery is called through one documented
   subprocess seam (§5); aeon-specific decisions and all rendering are Rust.
 
@@ -58,19 +58,19 @@ ledger, the session — no claim, no worktree, no verdict.
 ### 2.1 Invocation
 
 ```
-aeon [--home DIR] <fayth>                       claim one bead and work it
-aeon [--home DIR] <fayth> --dry-run             print candidates, claim nothing, write no ledger
-aeon [--home DIR] <fayth> --sweep [--prompt <text> | --prompt - | -]
+aeon [--home DIR] <rune>                       claim one bead and work it
+aeon [--home DIR] <rune> --dry-run             print candidates, claim nothing, write no ledger
+aeon [--home DIR] <rune> --sweep [--prompt <text> | --prompt - | -]
                                                  beadless session; `-` reads the prompt on stdin
 ```
 
-`--home DIR` is the harness's `spira/` directory (where `lib.sh`, `chamber/`, `world.sh`,
+`--home DIR` is the harness's `spira/` directory (where `lib.sh`, `runes/`, `world.sh`,
 `gate-run.sh`… live). New, and the only interface addition: `aeon.sh` found it from its
 own location. Resolution when absent: `$SPIRA_HOME`, else `<harness>/spira` from
 `~/.config/spira/harness`, else `<exe-dir>/../spira`, else `<exe-dir>/../../spira`
-(a `target/<profile>/` build). The directory must contain `lib.sh` and `chamber/`.
+(a `target/<profile>/` build). The directory must contain `lib.sh` and `runes/`.
 
-Usage errors (no fayth): `FATAL usage: aeon.sh <fayth> [--dry-run | --sweep [--prompt <text>|-]]`
+Usage errors (no rune): `FATAL usage: aeon.sh <rune> [--dry-run | --sweep [--prompt <text>|-]]`
 on stderr, exit 1 (wording kept: callers grep `FATAL`).
 
 ### 2.2 Exit codes
@@ -78,7 +78,7 @@ on stderr, exit 1 (wording kept: callers grep `FATAL`).
 | exit | when |
 |---|---|
 | 0 | declined (capacity, halted, draining, paused, idle); dry run; poison raced; world-stop fence refused; lifecycle claim refused/unreachable; **bead closed or converted to submitted**; sweep that ran (outcome `unlanded`/`killed`) |
-| 1 | usage; no such fayth; unfenced predicate; claim-error (ready query / epic lookup / rank failed); a retired `SPIRA_LIFECYCLE_ENFORCE` that says off (refused by name, sp-v62vn); a release with no `model-bin/`; unmapped repo; unresolvable base; worktree could not be made; pre-session death (a `rc=0` there is coerced to 1) |
+| 1 | usage; no such rune; unfenced predicate; claim-error (ready query / epic lookup / rank failed); a retired `SPIRA_LIFECYCLE_ENFORCE` that says off (refused by name, sp-v62vn); a release with no `model-bin/`; unmapped repo; unresolvable base; worktree could not be made; pre-session death (a `rc=0` there is coerced to 1) |
 | `SESSION_RC` | session ran and the bead was left open (unlanded / not-judged / yield-headless / submitted-but-open paths exit the session's own code, e.g. 1 or 124) |
 | `rc` (see below) | the disposition branches capacity, slain, thrash, lapsed, gate-unfinished, decision-blocked, timeout, requeue, operator-wait, submitted, pre-session |
 
@@ -97,7 +97,7 @@ Every progress line is `lib.sh`'s `log` format on **stdout**:
 `... spira: FATAL <message>`. Message texts are kept verbatim from aeon.sh — tests and
 humans grep them (e.g. `resuming <id>`, `trying the next ranked candidate`,
 `taking a fresh branch instead of dying`, `REOPENED`, `POISONED`, `claim-error`). The two
-closing-rule lines are printed with `spira: <fayth>: <id> …` exactly as aeon.sh's
+closing-rule lines are printed with `spira: <rune>: <id> …` exactly as aeon.sh's
 `printf` did. `--dry-run` prints `bd ready` text (filtered of bd hint lines, first 10) on
 stdout.
 
@@ -106,10 +106,10 @@ stdout.
 Append-only, one line per write, `O_APPEND`, no lock. Timestamp is UTC second precision.
 
 ```
-<ts> born <fayth> <pid>
-<ts> awake <fayth> <bead-id | idle | capacity | halted | draining | paused | sweep>
-<ts> awake <fayth> claim-error <bd's first stderr line | epic_parent_lookup failed rc=N | epic_rank_rows failed rc=N>
-<ts> done <fayth> <bead-id|sweep> rc=<n> status=<status> wall_s=<n|?> api_s=<n|?> turns=<n|?> in_tok=<n|?> cache_read_tok=<n|?> out_tok=<n|?> think_tok=<n|?> cost_usd=<x.xxxx|?>
+<ts> born <rune> <pid>
+<ts> awake <rune> <bead-id | idle | capacity | halted | draining | paused | sweep>
+<ts> awake <rune> claim-error <bd's first stderr line | epic_parent_lookup failed rc=N | epic_rank_rows failed rc=N>
+<ts> done <rune> <bead-id|sweep> rc=<n> status=<status> wall_s=<n|?> api_s=<n|?> turns=<n|?> in_tok=<n|?> cache_read_tok=<n|?> out_tok=<n|?> think_tok=<n|?> cost_usd=<x.xxxx|?>
 ```
 
 - `born` is written right after the fence, before any check that takes time; `awake` once
@@ -141,15 +141,15 @@ After each `done` line: `_tsd_aeon_session` (native since sp-27d3d — wave 4.34
 
 | path | r/w | what |
 |---|---|---|
-| `$SPIRA_HOME/chamber/<fayth>.fayth` | r | persona config (sourced by the seam, §5) |
-| `$SPIRA_HOME/chamber/<fayth>.md` | r | brief template |
-| `$SPIRA_CHAMBER_OVERLAY/<fayth>.md`, `<fayth>.<Section_Name>.md`, `<fayth>.append.md`, `blocks/{PARK,FIXTURE,DEADLINE,FINISH}.md` | r | operator overlays |
+| `$SPIRA_HOME/runes/<rune>.rune` | r | persona config (sourced by the seam, §5) |
+| `$SPIRA_HOME/runes/<rune>.md` | r | brief template |
+| `$SPIRA_RUNES_OVERLAY/<rune>.md`, `<rune>.<Section_Name>.md`, `<rune>.append.md`, `blocks/{PARK,FIXTURE,DEADLINE,FINISH}.md` | r | operator overlays |
 | `$SPIRA_RUN/aeon-ledger.log` | a | §2.4 |
-| `$SPIRA_RUN/aeon-<fayth>-<bead>.pid`, `.name` | w/rm | this aeon's pid and name; removed **last** in teardown (strand reads both witnesses) |
-| `$SPIRA_RUN/aeon-<fayth>-sweep-<pid>.pid`, `.name` | w/rm | sweep identity |
+| `$SPIRA_RUN/aeon-<rune>-<bead>.pid`, `.name` | w/rm | this aeon's pid and name; removed **last** in teardown (strand reads both witnesses) |
+| `$SPIRA_RUN/aeon-<rune>-sweep-<pid>.pid`, `.name` | w/rm | sweep identity |
 | `$SPIRA_RUN/aeon-*.pid` | r/rm | world-stop fence: peers; a pidfile whose pid has no `/proc/<pid>` is removed |
 | `$SPIRA_RUN/<bead>.log` | a | the session trace; one `=== spira attempt N aeon=<name> at=<ts> kept=<bytes>` mark per attempt |
-| `$SPIRA_RUN/sweep-<fayth>-<pid>.log`, `.system.md`, `.task.md` | w | sweep trace and prompt |
+| `$SPIRA_RUN/sweep-<rune>-<pid>.log`, `.system.md`, `.task.md` | w | sweep trace and prompt |
 | `$SPIRA_RUN/<bead>.system.md`, `<bead>.task.md` | w | the split prompt |
 | `$SPIRA_RUN/aeon/<bead>.lease` | w/rm | lease deadline epoch, written beside + renamed; removed at teardown |
 | `$SPIRA_RUN/worktree/<bead>` | w | the worktree (the sanctioned root) |
@@ -204,8 +204,8 @@ which runs `spira-lint` by name: a fresh worktree commits with no build of its o
 
 | caller | line | how |
 |---|---|---|
-| `spira/lib.sh` `summon_fayth` | 2726-2730 | `systemd-run --user --collect --quiet --unit=spira-aeon-$f-<ts> <summon_argv> [--setenv=SPIRA_REQUIRE_LABEL=…] "$SPIRA_HOME/aeon.sh" "$f"` |
-| `aeon --escape <fayth>` (this binary, `escape.rs`; was `spira/escape.sh`) | — | same shape, unit `spira-aeon-$FAYTH-escape-<ts>`, `[--dry-run]` |
+| `spira/lib.sh` `summon_rune` | 2726-2730 | `systemd-run --user --collect --quiet --unit=spira-aeon-$f-<ts> <summon_argv> [--setenv=SPIRA_REQUIRE_LABEL=…] "$SPIRA_HOME/aeon.sh" "$f"` |
+| `aeon --escape <rune>` (this binary, `escape.rs`; was `spira/escape.sh`) | — | same shape, unit `spira-aeon-$RUNE-escape-<ts>`, `[--dry-run]` |
 | `systemd/spira-ops.service` | 46 | `exec @SPIRA_PROD@/aeon.sh ops --sweep --prompt - < @SPIRA_RUN@/ops-sweep-prompt.txt` |
 | `spira/lib.sh` `aeon_alive` | 822 | identifies a live aeon by `aeon.sh` in `/proc/<pid>/cmdline` |
 | `install.sh` `_conflict_aeon` | 246 | refuses install while a process cmdline is `<home>/aeon.sh` |
@@ -216,14 +216,14 @@ No `.github/workflows` file and no `round.sh` line invokes aeon.sh.
 
 ### 2.9 Environment
 
-Read from the unit's environment: `SPIRA_REQUIRE_LABEL` (folded into `FAYTH_LABELS`),
+Read from the unit's environment: `SPIRA_REQUIRE_LABEL` (folded into `RUNE_LABELS`),
 `AEON_OWN_UNIT` (test override of `/proc/self/cgroup`), and every key conf.sh reads.
 `SPIRA_LIFECYCLE_ENFORCE` is retired (sp-v62vn): one that says off is refused by name before
 anything runs (`spira_config::check_lifecycle_switch_env`); one that says on is a warning. The **child** environment
 (session, hooks, scripts) is conf.sh's exported environment (snapshot, §5) plus, exactly as
 aeon.sh exported them: `SPIRA_AEON`, `BEADS_ACTOR=aeon-<name>`, `GIT_{AUTHOR,COMMITTER}_{NAME,EMAIL}`,
-`SPIRA_INCIDENT_REPO`, `BEAD_ID`, `SPIRA_MAIL`, `SPIRA_MAIL_FROM=<Fayth> <<fayth>@spira>`,
-`SPIRA_WORK`, `SPIRA_FAYTH`, `SPIRA_CZAR_CLASS`/`SPIRA_CZAR_TRIGGER_BEAD` (czar),
+`SPIRA_INCIDENT_REPO`, `BEAD_ID`, `SPIRA_MAIL`, `SPIRA_MAIL_FROM=<Rune> <<rune>@spira>`,
+`SPIRA_WORK`, `SPIRA_RUNE`, `SPIRA_CZAR_CLASS`/`SPIRA_CZAR_TRIGGER_BEAD` (czar),
 `TESTDB_*` (own fixture only; inherited ones are unset),
 `GH_CONFIG_DIR=$SPIRA_RUN/aeon-empty-gh`, `GIT_SSH_COMMAND=<refusal>`,
 `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS=/bin/false`; `GH_TOKEN`/`GITHUB_TOKEN` removed.
@@ -262,11 +262,11 @@ struct Snapshot {
     env: BTreeMap<String, String>,   // conf.sh's EXPORTED environment (the children's base)
     vars: BTreeMap<String, String>,  // SNAPSHOT_VARS: set shell variables, exported or not
     ready_args: Vec<String>,         // READY_ARGS — the sentinel's own query, never copied
-    claim_exclude: String,           // fayth_exclude <fayth> <FAYTH_EXCLUDE_LABELS>
+    claim_exclude: String,           // rune_exclude <rune> <RUNE_EXCLUDE_LABELS>
 }
 
-// [conf] the persona (FAYTH_* after sourcing the .fayth) and a typed view of conf.sh
-struct Fayth { name, labels, exclude_labels: String, max_concurrent: u32, elastic: bool,
+// [conf] the persona (RUNE_* after sourcing the .rune) and a typed view of conf.sh
+struct Rune { name, labels, exclude_labels: String, max_concurrent: u32, elastic: bool,
     lease_minutes: Option<u32> /* 10 */, heartbeat_seconds: u64 /* 30 */,
     timeout_seconds: Option<u64>, memory_prefixes /* "law-" */, statute_core,
     tools /* "Bash,Read,Edit,Write,Glob,Grep" */, project_instructions: String,
@@ -339,9 +339,9 @@ Ports (`ports.rs`, `session.rs`): `Bd::bd(args) -> Out`, `Seam::call(func, args)
 
 ### 4.1 Claim phase order (unchanged)
 
-fayth file → `SPIRA_REQUIRE_LABEL` fold → fence (`FAYTH_LABELS` non-empty and, when
+rune file → `SPIRA_REQUIRE_LABEL` fold → fence (`RUNE_LABELS` non-empty and, when
 `SPIRA_SCOPE_LABEL` is set, containing it) → ledger trim → `born` → [sweep branch] →
-capacity (`fayth_free` with the elastic pool = `SPIRA_MAX_AEONS - have`) → `world.halted`
+capacity (`rune_free` with the elastic pool = `SPIRA_MAX_AEONS - have`) → `world.halted`
 → `world.draining` → `capacity_paused` → [dry run] → name → ready query → `spira-claim
 epics` → `spira-claim select --top-tier` → resumability (branch ahead of its base) →
 `spira-claim select --resumable` → claim loop → `awake` → `aeon.claimed` event → poison
@@ -354,7 +354,7 @@ fenced; the code fences it — kept, see §8).
 
 ### 4.2 Heartbeat (`hb_tick`)
 
-Every `FAYTH_HEARTBEAT_SECONDS` (default 30): trace mtime changed → renew (deadline = now +
+Every `RUNE_HEARTBEAT_SECONDS` (default 30): trace mtime changed → renew (deadline = now +
 lease); else now ≥ deadline → **lapse**; else fuse (`aeon_fuse_minutes`, integer) ≥ wall
 (`SPIRA_THRASH_MINUTES`, 20) **and** session minutes ≥ wall → **thrash**; else ok. Then
 `spira-lc renew <id> <holder> <deadline>` renews the lifecycle row's lease (sp-2jf0a); a
@@ -420,10 +420,10 @@ One helper, `LibSeam`, runs `bash -c <FIXED>` where `FIXED` is a compile-time co
 (`src/seam.rs`). **All data is on stdin**, NUL-framed:
 
 ```
-<lib.sh path>\0<fayth file path or empty>\0<function>\0<arg1>\0<arg2>\0...
+<lib.sh path>\0<rune file path or empty>\0<function>\0<arg1>\0<arg2>\0...
 ```
 
-The fixed script reads the records, sources `lib.sh` (and thus `conf.sh`) and the fayth file
+The fixed script reads the records, sources `lib.sh` (and thus `conf.sh`) and the rune file
 (then folds `SPIRA_REQUIRE_LABEL` exactly as aeon.sh did), refuses any function not on its
 allowlist (exit 97), and calls it. stdout is the answer, the exit code is the function's.
 The environment is the aeon's own (identity exports like `BEADS_ACTOR` included — they
@@ -451,7 +451,7 @@ is reimplemented in Rust, §6):
 
 | function | used for |
 |---|---|
-| `aeon_count`, `fayth_free` | capacity (systemd unit list / pidfiles) |
+| `aeon_count`, `rune_free` | capacity (systemd unit list / pidfiles) |
 | `spira_event` | `aeon.claimed` |
 | `release_own_claim` | every release: `spira-lc unclaim` (lifecycle Release + bd `unclaim --if-assignee`, sp-hyo5e) |
 | `lc_claim_bead`, `lc_bead_verified` | lifecycle machine |
@@ -490,14 +490,14 @@ Other subprocess seams are the scripts aeon.sh already called (§2.7), invoked t
 
 `log`/`die`; `bdq`/`bdjson`/`json_only`/`claim_retry` (for the aeon's own bd calls — the czar
 fence and create-time checks do not apply to any call the aeon makes itself); `aeon_own_unit`;
-`fayth_fenced`; `fayth_lease_seconds`; `world_stop_decide`; `hb_tick`; `aeon_disposition`;
+`rune_fenced`; `rune_lease_seconds`; `world_stop_decide`; `hb_tick`; `aeon_disposition`;
 `outcome_charges`; `sop_rule_verdict`; `bead_has_label`;
 `session_result_fields`; `attempt_trace`; `spira_trace_mark`; `worktree_evict_foreign`;
 `worktree_move_aside`; `render_memories`; `system_prompt_split`; `aeon_settings`;
 `aeon_claude_argv` (`persona_model` through the spira-config library on conf.sh's resolved
 `SPIRA_TOML_FILE`); `render_resume_brief`; `render_slain_brief`; `render_deadline_brief`;
 `render_holds_brief`; `bound_bead_notes`; the band/rank python (now `spira-claim`); the
-chamber overlay; placeholder substitution; `aeon_name_take`/`aeon_named` (`aeon/src/naming.rs`,
+runes overlay; placeholder substitution; `aeon_name_take`/`aeon_named` (`aeon/src/naming.rs`,
 wave 4.23 sp-0ffox — this crate was `aeon_name_take`'s only caller, so it dropped off the
 seam entirely rather than keeping a lib.sh shim; `aeon_named` keeps an `aeon aeon-named
 <pidfile>` subcommand for cockpit-collect, the one caller left outside this crate).
@@ -522,8 +522,8 @@ Fakes for `Bd`, `Seam`, `Exec` and `Launcher`; git is real
 | `claim` | ready set on stdin and nothing in argv; lookup/rank failure is claim-error; resumable tier; lost race falls through; claim_retry |
 | `worktree` | fresh cut + resume; mislabeled branch reset (sp-om71s case 1); own branch at a previous path moved aside (case 2); test-aeon-worktree-evict-foreign.sh row for row, including the refused move |
 | `session` | lease lapse and thrash trip the stop and write their markers; the trip signals the session's group, never the aeon's; timeout is 124 |
-| `seam` | NUL framing; the fixed script sources lib.sh and the fayth, folds SPIRA_REQUIRE_LABEL, refuses a function off the allowlist; snapshot parsing |
-| `conf` | fayth defaults, the fence, persona_model |
+| `seam` | NUL framing; the fixed script sources lib.sh and the rune, folds SPIRA_REQUIRE_LABEL, refuses a function off the allowlist; snapshot parsing |
+| `conf` | rune defaults, the fence, persona_model |
 | `run::tests` / `tests` | whole runs: fence, capacity, halted/draining/paused order, dry run, claim-error, idle, hold race, the machine's claim restricts the model, refused lifecycle claim, world-stop fence, unmapped repo (+ world restarted), happy path to submitted (ledger, brief, argv, env scrub), unlanded exit code, slain (verdict skipped, rc 143), pre-session death, rebase-conflict requeue, sweep |
 | `main` | argv grammar |
 
@@ -587,8 +587,8 @@ Changed:
     agent binary. The acceptance property is unchanged ("in the provided aeon environment,
     `command -v bd` fails and no credential is readable") and is now a `cargo test -p aeon`
     fact (`restrict.rs`'s own tests) instead of a bash integration fixture's.
-14. **`spira/escape.sh` is retired into this binary as `aeon --escape <fayth> [--dry-run]`.**
-    (sp-zpaq0.) `world_gate`, `capacity_paused`, `fayth_ready` and `summon_argv` are still
+14. **`spira/escape.sh` is retired into this binary as `aeon --escape <rune> [--dry-run]`.**
+    (sp-zpaq0.) `world_gate`, `capacity_paused`, `rune_ready` and `summon_argv` are still
     reached through the lib.sh seam (§5) — they carry real side effects (a capacity probe
     can clear the pause file; an expired drain is lifted and logged) that a Rust
     reimplementation would have to duplicate exactly or drift from; `escape.rs` is the
@@ -632,17 +632,17 @@ Kept, although they look wrong (flagged for the operator):
    export SPIRA_AEON_BIN
    ```
    (spira-claim's own cutover item 1 adds the first half; apply once.)
-2. **spira/lib.sh:2724-2730** (`summon_fayth`). Insert before line 2725
+2. **spira/lib.sh:2724-2730** (`summon_rune`). Insert before line 2725
    (`local _sargv; mapfile -t _sargv …`):
    `    [ -x "${SPIRA_AEON_BIN:-}" ] || { log "CHECK7 $f: aeon binary not built (SPIRA_AEON_BIN) — not summoning"; return 1; }`
    and at line 2730
    current: `        "$SPIRA_HOME/aeon.sh" "$f" 2>/dev/null`
    replace: `        "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" "$f" 2>/dev/null`
-3. **spira/escape.sh:52-56**. Insert before line 52 (`log "escape.sh $FAYTH: $r ready …`):
-   `[ -x "${SPIRA_AEON_BIN:-}" ] || die "escape.sh $FAYTH: aeon binary not built (SPIRA_AEON_BIN)"`
+3. **spira/escape.sh:52-56**. Insert before line 52 (`log "escape.sh $RUNE: $r ready …`):
+   `[ -x "${SPIRA_AEON_BIN:-}" ] || die "escape.sh $RUNE: aeon binary not built (SPIRA_AEON_BIN)"`
    and at line 56
-   current: `    "$SPIRA_HOME/aeon.sh" "$FAYTH" ${DRY_FLAG} 2>/dev/null`
-   replace: `    "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" "$FAYTH" ${DRY_FLAG} 2>/dev/null`
+   current: `    "$SPIRA_HOME/aeon.sh" "$RUNE" ${DRY_FLAG} 2>/dev/null`
+   replace: `    "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" "$RUNE" ${DRY_FLAG} 2>/dev/null`
 4. **systemd/spira-ops.service:46**
    current: `ExecStart=/bin/bash -c 'exec @SPIRA_PROD@/aeon.sh ops --sweep --prompt - < @SPIRA_RUN@/ops-sweep-prompt.txt'`
    replace: `ExecStart=/bin/bash -c 'exec @SPIRA_REPO@/bin/aeon --home @SPIRA_PROD@ ops --sweep --prompt - < @SPIRA_RUN@/ops-sweep-prompt.txt'`
@@ -651,7 +651,7 @@ Kept, although they look wrong (flagged for the operator):
    current: `    grep -qF 'aeon.sh' <<< "$cmd" || return 1`
    replace: `    grep -qE '(^|/)aeon( |$)|aeon\.sh' <<< "$cmd" || return 1`
 6. **install.sh:246** (`_conflict_aeon`) — a binary aeon's cmdline is
-   `<repo>/bin/aeon\0--home\0<home>\0<fayth>`; match its path as the second pattern:
+   `<repo>/bin/aeon\0--home\0<home>\0<rune>`; match its path as the second pattern:
    current: `    match="$(printf '%s\n' "$home/aeon.sh" \`
    replace: `    match="$(printf '%s\n' "$home/aeon.sh" "$(dirname "$home")/bin/aeon" \`
 7. **spira/timeout-lint.sh:41** — drop `"$HERE/aeon.sh"` from the default list (the lint
@@ -667,8 +667,8 @@ Kept, although they look wrong (flagged for the operator):
 12. **Suites.** Each of these executes `aeon.sh`; repoint the invocation to
     `"$SPIRA_AEON_BIN" --home "$SPIRA_HOME"` (or `$HERE`) and drop its
     `grep -q 'SPIRA_AGENT' aeon.sh` guard (the binary honours `SPIRA_AGENT` the same way):
-    `test-aeon-elastic-concurrency.sh:68,79` (and drop the `fayth_free` grep at :52),
-    `test-aeon-chamber-overlay.sh:54`, `test-aeon-eviction-race.sh:135`,
+    `test-aeon-elastic-concurrency.sh:68,79` (and drop the `rune_free` grep at :52),
+    `test-aeon-runes-overlay.sh:54`, `test-aeon-eviction-race.sh:135`,
     `test-aeon-gate-close-silent.sh:184`, `test-aeon-gate-unfinished-attempts.sh:90`,
     `test-aeon-prod-dirty.sh:92`, `test-aeon-resume-collision.sh:47`,
     `test-aeon-resume.sh:148`, `test-aeon-prompt-layers.sh:112`,
@@ -731,10 +731,10 @@ One helper, `LibSeam`, runs `bash -c <FIXED>` where `FIXED` is a compile-time co
 (`src/seam.rs`). **All data is on stdin**, NUL-framed:
 
 ```
-<lib.sh path>\0<fayth file path or empty>\0<function>\0<arg1>\0<arg2>\0...
+<lib.sh path>\0<rune file path or empty>\0<function>\0<arg1>\0<arg2>\0...
 ```
 
-The fixed script reads the records, sources `lib.sh` (and thus `conf.sh`) and the fayth file
+The fixed script reads the records, sources `lib.sh` (and thus `conf.sh`) and the rune file
 (then folds `SPIRA_REQUIRE_LABEL` exactly as aeon.sh did), refuses any function not on its
 allowlist (exit 97), and calls it. stdout is the answer, the exit code is the function's.
 The environment is the aeon's own (identity exports like `BEADS_ACTOR` included — they
@@ -762,7 +762,7 @@ is reimplemented in Rust, §6):
 
 | function | used for |
 |---|---|
-| `aeon_count`, `fayth_free` | capacity (systemd unit list / pidfiles) |
+| `aeon_count`, `rune_free` | capacity (systemd unit list / pidfiles) |
 | `spira_event` | `aeon.claimed` |
 | `release_own_claim` | every release: `spira-lc unclaim` (lifecycle Release + bd `unclaim --if-assignee`, sp-hyo5e) |
 | `lc_claim_bead`, `lc_bead_verified` | lifecycle machine |
@@ -801,14 +801,14 @@ Other subprocess seams are the scripts aeon.sh already called (§2.7), invoked t
 
 `log`/`die`; `bdq`/`bdjson`/`json_only`/`claim_retry` (for the aeon's own bd calls — the czar
 fence and create-time checks do not apply to any call the aeon makes itself); `aeon_own_unit`;
-`fayth_fenced`; `fayth_lease_seconds`; `world_stop_decide`; `hb_tick`; `aeon_disposition`;
+`rune_fenced`; `rune_lease_seconds`; `world_stop_decide`; `hb_tick`; `aeon_disposition`;
 `outcome_charges`; `sop_rule_verdict`; `bead_has_label`;
 `session_result_fields`; `attempt_trace`; `spira_trace_mark`; `worktree_evict_foreign`;
 `worktree_move_aside`; `render_memories`; `system_prompt_split`; `aeon_settings`;
 `aeon_claude_argv` (`persona_model` through the spira-config library on conf.sh's resolved
 `SPIRA_TOML_FILE`); `render_resume_brief`; `render_slain_brief`; `render_deadline_brief`;
 `render_holds_brief`; `bound_bead_notes`; the band/rank python (now `spira-claim`); the
-chamber overlay; placeholder substitution; `aeon_name_take`/`aeon_named` (`aeon/src/naming.rs`,
+runes overlay; placeholder substitution; `aeon_name_take`/`aeon_named` (`aeon/src/naming.rs`,
 wave 4.23 sp-0ffox — this crate was `aeon_name_take`'s only caller, so it dropped off the
 seam entirely rather than keeping a lib.sh shim; `aeon_named` keeps an `aeon aeon-named
 <pidfile>` subcommand for cockpit-collect, the one caller left outside this crate).
@@ -833,8 +833,8 @@ Fakes for `Bd`, `Seam`, `Exec` and `Launcher`; git is real
 | `claim` | ready set on stdin and nothing in argv; lookup/rank failure is claim-error; resumable tier; lost race falls through; claim_retry |
 | `worktree` | fresh cut + resume; mislabeled branch reset (sp-om71s case 1); own branch at a previous path moved aside (case 2); test-aeon-worktree-evict-foreign.sh row for row, including the refused move |
 | `session` | lease lapse and thrash trip the stop and write their markers; the trip signals the session's group, never the aeon's; timeout is 124 |
-| `seam` | NUL framing; the fixed script sources lib.sh and the fayth, folds SPIRA_REQUIRE_LABEL, refuses a function off the allowlist; snapshot parsing |
-| `conf` | fayth defaults, the fence, persona_model |
+| `seam` | NUL framing; the fixed script sources lib.sh and the rune, folds SPIRA_REQUIRE_LABEL, refuses a function off the allowlist; snapshot parsing |
+| `conf` | rune defaults, the fence, persona_model |
 | `run::tests` / `tests` | whole runs: fence, capacity, halted/draining/paused order, dry run, claim-error, idle, hold race, the machine's claim restricts the model, refused lifecycle claim, world-stop fence, unmapped repo (+ world restarted), happy path to submitted (ledger, brief, argv, env scrub), unlanded exit code, slain (verdict skipped, rc 143), pre-session death, rebase-conflict requeue, sweep |
 | `main` | argv grammar |
 
@@ -898,8 +898,8 @@ Changed:
     agent binary. The acceptance property is unchanged ("in the provided aeon environment,
     `command -v bd` fails and no credential is readable") and is now a `cargo test -p aeon`
     fact (`restrict.rs`'s own tests) instead of a bash integration fixture's.
-14. **`spira/escape.sh` is retired into this binary as `aeon --escape <fayth> [--dry-run]`.**
-    (sp-zpaq0.) `world_gate`, `capacity_paused`, `fayth_ready` and `summon_argv` are still
+14. **`spira/escape.sh` is retired into this binary as `aeon --escape <rune> [--dry-run]`.**
+    (sp-zpaq0.) `world_gate`, `capacity_paused`, `rune_ready` and `summon_argv` are still
     reached through the lib.sh seam (§5) — they carry real side effects (a capacity probe
     can clear the pause file; an expired drain is lifted and logged) that a Rust
     reimplementation would have to duplicate exactly or drift from; `escape.rs` is the
@@ -948,17 +948,17 @@ Kept, although they look wrong (flagged for the operator):
    export SPIRA_AEON_BIN
    ```
    (spira-claim's own cutover item 1 adds the first half; apply once.)
-2. **spira/lib.sh:2724-2730** (`summon_fayth`). Insert before line 2725
+2. **spira/lib.sh:2724-2730** (`summon_rune`). Insert before line 2725
    (`local _sargv; mapfile -t _sargv …`):
    `    [ -x "${SPIRA_AEON_BIN:-}" ] || { log "CHECK7 $f: aeon binary not built (SPIRA_AEON_BIN) — not summoning"; return 1; }`
    and at line 2730
    current: `        "$SPIRA_HOME/aeon.sh" "$f" 2>/dev/null`
    replace: `        "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" "$f" 2>/dev/null`
-3. **spira/escape.sh:52-56**. Insert before line 52 (`log "escape.sh $FAYTH: $r ready …`):
-   `[ -x "${SPIRA_AEON_BIN:-}" ] || die "escape.sh $FAYTH: aeon binary not built (SPIRA_AEON_BIN)"`
+3. **spira/escape.sh:52-56**. Insert before line 52 (`log "escape.sh $RUNE: $r ready …`):
+   `[ -x "${SPIRA_AEON_BIN:-}" ] || die "escape.sh $RUNE: aeon binary not built (SPIRA_AEON_BIN)"`
    and at line 56
-   current: `    "$SPIRA_HOME/aeon.sh" "$FAYTH" ${DRY_FLAG} 2>/dev/null`
-   replace: `    "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" "$FAYTH" ${DRY_FLAG} 2>/dev/null`
+   current: `    "$SPIRA_HOME/aeon.sh" "$RUNE" ${DRY_FLAG} 2>/dev/null`
+   replace: `    "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" "$RUNE" ${DRY_FLAG} 2>/dev/null`
 4. **systemd/spira-ops.service:46**
    current: `ExecStart=/bin/bash -c 'exec @SPIRA_PROD@/aeon.sh ops --sweep --prompt - < @SPIRA_RUN@/ops-sweep-prompt.txt'`
    replace: `ExecStart=/bin/bash -c 'exec @SPIRA_REPO@/bin/aeon --home @SPIRA_PROD@ ops --sweep --prompt - < @SPIRA_RUN@/ops-sweep-prompt.txt'`
@@ -967,7 +967,7 @@ Kept, although they look wrong (flagged for the operator):
    current: `    grep -qF 'aeon.sh' <<< "$cmd" || return 1`
    replace: `    grep -qE '(^|/)aeon( |$)|aeon\.sh' <<< "$cmd" || return 1`
 6. **install.sh:246** (`_conflict_aeon`) — a binary aeon's cmdline is
-   `<repo>/bin/aeon\0--home\0<home>\0<fayth>`; match its path as the second pattern:
+   `<repo>/bin/aeon\0--home\0<home>\0<rune>`; match its path as the second pattern:
    current: `    match="$(printf '%s\n' "$home/aeon.sh" \`
    replace: `    match="$(printf '%s\n' "$home/aeon.sh" "$(dirname "$home")/bin/aeon" \`
 7. **spira/timeout-lint.sh:41** — drop `"$HERE/aeon.sh"` from the default list (the lint
@@ -983,8 +983,8 @@ Kept, although they look wrong (flagged for the operator):
 12. **Suites.** Each of these executes `aeon.sh`; repoint the invocation to
     `"$SPIRA_AEON_BIN" --home "$SPIRA_HOME"` (or `$HERE`) and drop its
     `grep -q 'SPIRA_AGENT' aeon.sh` guard (the binary honours `SPIRA_AGENT` the same way):
-    `test-aeon-elastic-concurrency.sh:68,79` (and drop the `fayth_free` grep at :52),
-    `test-aeon-chamber-overlay.sh:54`, `test-aeon-eviction-race.sh:135`,
+    `test-aeon-elastic-concurrency.sh:68,79` (and drop the `rune_free` grep at :52),
+    `test-aeon-runes-overlay.sh:54`, `test-aeon-eviction-race.sh:135`,
     `test-aeon-gate-close-silent.sh:184`, `test-aeon-gate-unfinished-attempts.sh:90`,
     `test-aeon-prod-dirty.sh:92`, `test-aeon-resume-collision.sh:47`,
     `test-aeon-resume.sh:148`, `test-aeon-prompt-layers.sh:112`,

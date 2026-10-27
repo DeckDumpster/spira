@@ -1750,10 +1750,10 @@ fn install_tarball_prunes_the_oldest_timestamp_named_releases_beyond_keep_never_
 // ---------------------------------------------------------------- stage
 
 #[test]
-fn stage_fayth_names_the_canary_persona_with_one_concurrent_slot() {
-    let f = crate::stage::fayth_content();
-    assert!(f.contains("FAYTH_NAME=canary"));
-    assert!(f.contains("FAYTH_MAX_CONCURRENT=1"));
+fn stage_rune_names_the_canary_persona_with_one_concurrent_slot() {
+    let f = crate::stage::rune_content();
+    assert!(f.contains("RUNE_NAME=canary"));
+    assert!(f.contains("RUNE_MAX_CONCURRENT=1"));
     assert!(f.contains("SPIRA_SCOPE_LABEL"));
 }
 
@@ -1930,7 +1930,7 @@ fn a_renamed_delta_moves_the_persona_table_roster_and_lane_at_activation() {
     let w = World::with_git(delta_git(delta));
     file(
         Path::new(&w.cfg.toml_spec().unwrap()),
-        "[spira]\nid_prefix = \"sp\"\nfayths = [\"ops\", \"maechen\"]\nlanes = \"ops maechen czar\"\n\n[persona.maechen]\nmodel = \"m\"\n\n[persona.maechen.lease]\nminutes = 5\n",
+        "[spira]\nid_prefix = \"sp\"\nrunes = [\"ops\", \"maechen\"]\nlanes = \"ops maechen czar\"\n\n[persona.maechen]\nmodel = \"m\"\n\n[persona.maechen.lease]\nminutes = 5\n",
     );
     build_with_schema(&w, A, &[], &[]);
     build_with_schema(&w, B, &[], &[]);

@@ -29,16 +29,16 @@ impl Ledger {
         }
     }
 
-    pub fn born(&self, now: i64, fayth: &str, pid: u32) {
-        self.write(now, &format!("born {fayth} {pid}"));
+    pub fn born(&self, now: i64, rune: &str, pid: u32) {
+        self.write(now, &format!("born {rune} {pid}"));
     }
 
-    pub fn awake(&self, now: i64, fayth: &str, what: &str) {
-        self.write(now, &format!("awake {fayth} {what}"));
+    pub fn awake(&self, now: i64, rune: &str, what: &str) {
+        self.write(now, &format!("awake {rune} {what}"));
     }
 
-    pub fn done(&self, now: i64, fayth: &str, bead: &str, rc: i32, status: &str, fields: &SessionFields) {
-        self.write(now, &done_rest(fayth, bead, rc, status, fields));
+    pub fn done(&self, now: i64, rune: &str, bead: &str, rc: i32, status: &str, fields: &SessionFields) {
+        self.write(now, &done_rest(rune, bead, rc, status, fields));
     }
 
     /// Bounded here rather than by logrotate: >20,000 lines keeps the last 5,000.
@@ -56,8 +56,8 @@ impl Ledger {
     }
 }
 
-pub fn done_rest(fayth: &str, bead: &str, rc: i32, status: &str, fields: &SessionFields) -> String {
-    format!("done {fayth} {bead} rc={rc} status={status} {}", fields.render())
+pub fn done_rest(rune: &str, bead: &str, rc: i32, status: &str, fields: &SessionFields) -> String {
+    format!("done {rune} {bead} rc={rc} status={status} {}", fields.render())
 }
 
 /// What a session spent, parsed from its trace's `result` records. `None` renders `?`.

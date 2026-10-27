@@ -1,4 +1,4 @@
-//! The brief (DESIGN.md §1.4): the chamber template, the operator's overlays, the
+//! The brief (DESIGN.md §1.4): the runes template, the operator's overlays, the
 //! session-specific blocks and the split into system.md / task.md.
 //!
 //! Pure: every input is in the arguments. Nothing here claims, selects or reads the store —
@@ -66,10 +66,10 @@ branch reaches `{base_branch}` from there is described above, and none of it nee
 /// `./spira/testenv.sh`, the container helper, instead: sp-4vq2q).
 pub const TESTENV: &str = "testenv";
 
-/// The chamber's tool placeholders. The model's PATH holds only `work` (sp-st0mm), so each
+/// The runes's tool placeholders. The model's PATH holds only `work` (sp-st0mm), so each
 /// is the `work` verb that reaches the same tool through the spira-lc broker — `{{GROOM}}
 /// close <id>` is `work groom close <id>`, run by the broker under the persona's own allow
-/// row. Unconditional: the chamber is written for these verbs.
+/// row. Unconditional: the runes is written for these verbs.
 pub fn tool_tokens() -> Vec<(&'static str, String)> {
     vec![
         ("SOP", "work sop".to_string()),
@@ -442,24 +442,24 @@ Start there — do not spend a turn rediscovering it from the note history below
     )
 }
 
-// ---- the chamber and its overlays ---------------------------------------------------
+// ---- the runes and its overlays ---------------------------------------------------
 
-/// The chamber brief after the operator's overlays (whole file, sections, append), and the
+/// The runes brief after the operator's overlays (whole file, sections, append), and the
 /// log lines the overlay pass printed. Trailing newlines stripped, as `$(cat …)` did.
-pub fn chamber_with_overlays(fayth: &str, chamber_file: &Path, overlay: &Path) -> (String, Vec<String>) {
+pub fn runes_with_overlays(rune: &str, runes_file: &Path, overlay: &Path) -> (String, Vec<String>) {
     let mut logs = Vec::new();
-    let whole = overlay.join(format!("{fayth}.md"));
-    let append = overlay.join(format!("{fayth}.append.md"));
+    let whole = overlay.join(format!("{rune}.md"));
+    let append = overlay.join(format!("{rune}.append.md"));
     let read = |p: &Path| std::fs::read_to_string(p).map(|s| s.trim_end_matches('\n').to_string());
     if !overlay.as_os_str().is_empty() && whole.is_file() {
         logs.push(format!("brief replaced whole-file by {}", whole.display()));
         return (read(&whole).unwrap_or_default(), logs);
     }
-    let mut content = read(chamber_file).unwrap_or_default();
+    let mut content = read(runes_file).unwrap_or_default();
     if overlay.as_os_str().is_empty() {
         return (content, logs);
     }
-    let prefix = format!("{fayth}.");
+    let prefix = format!("{rune}.");
     let mut sections: Vec<std::path::PathBuf> = std::fs::read_dir(overlay)
         .map(|rd| {
             rd.filter_map(|e| e.ok().map(|e| e.path()))
@@ -481,12 +481,12 @@ pub fn chamber_with_overlays(fayth: &str, chamber_file: &Path, overlay: &Path) -
         if content.lines().any(|l| l == heading) {
             let repl: String = std::fs::read_to_string(&f).unwrap_or_default().lines().map(|l| format!("{l}\n")).collect();
             content = splice_section(&content, &heading, &repl);
-            logs.push(format!("chamber section '{heading}' overlaid by {}", f.display()));
+            logs.push(format!("runes section '{heading}' overlaid by {}", f.display()));
         } else {
             logs.push(format!(
-                "chamber overlay {} names a section ({heading}) absent from {} — ignored",
+                "runes overlay {} names a section ({heading}) absent from {} — ignored",
                 f.display(),
-                chamber_file.display()
+                runes_file.display()
             ));
         }
     }
@@ -544,8 +544,8 @@ pub struct Tokens {
 /// The substitution, in aeon.sh's order: the single-line tokens everywhere, then each
 /// multi-line block into its FIRST occurrence, in the order BEAD, PARK, FIXTURE, DEADLINE,
 /// FINISH; then the thrash banner just after the first `<!-- task -->` (or at the top).
-pub fn render_prompt(chamber: &str, t: &Tokens, banner: Option<&str>) -> String {
-    let mut p = chamber.to_string();
+pub fn render_prompt(runes: &str, t: &Tokens, banner: Option<&str>) -> String {
+    let mut p = runes.to_string();
     for (k, v) in &t.single {
         p = p.replace(&format!("{{{{{k}}}}}"), v);
     }
@@ -573,8 +573,8 @@ pub fn split(statutes: &str, prompt: &str) -> (String, String) {
 }
 
 /// Appends this installation's own core slugs (`SPIRA_STATUTE_CORE_LOCAL`) to whatever core a
-/// persona already resolved (its `FAYTH_STATUTE_CORE`, else `SPIRA_STATUTE_CORE`). The shipped
-/// chamber and the shipped default both carry only mechanism
+/// persona already resolved (its `RUNE_STATUTE_CORE`, else `SPIRA_STATUTE_CORE`). The shipped
+/// runes and the shipped default both carry only mechanism
 /// (law-harness-ships-mechanism-not-inventory); a slug naming this operator's own
 /// repositories, labels or preferences lives in `SPIRA_STATUTE_CORE_LOCAL` instead, in config
 /// that never ships. A missing local slug refuses exactly like any other missing core slug —
@@ -689,7 +689,7 @@ mod tests {
     #[test]
     fn no_bd_line_is_one_token() {
         assert!(no_bd_brief().contains("You have no `bd`"));
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/chamber");
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
         let mut uses = 0;
         for e in std::fs::read_dir(&dir).unwrap() {
             let p = e.unwrap().path();
@@ -703,10 +703,10 @@ mod tests {
         assert!(uses >= 7, "positive control: the persona prompts carry {{{{NO_BD}}}} ({uses})");
     }
 
-    // The shipped builder chamber renders both tokens, and leaves no relative runner path.
+    // The shipped builder runes renders both tokens, and leaves no relative runner path.
     #[test]
-    fn builder_chamber_renders_runner_and_followup() {
-        let chamber = include_str!("../../spira/chamber/builder.md");
+    fn builder_runes_renders_runner_and_followup() {
+        let runes = include_str!("../../spira/runes/builder.md");
         {
             let t = Tokens {
                 single: vec![
@@ -718,7 +718,7 @@ mod tests {
                 ],
                 ..Default::default()
             };
-            let p = render_prompt(chamber, &t, None);
+            let p = render_prompt(runes, &t, None);
             // The only runner line is the reproduce-one-named-suite form; a no-`--suites`
             // pre-close run duplicates the gate's work outside its admission (sp-4vq2q follow-up).
             assert!(p.contains("    testenv --suites <suite> spira/sp-a spira\n"), "{p}");
@@ -746,8 +746,8 @@ mod tests {
 
     // The batcher brief, too, allows only the reproduce-one-named-suite run, never a pre-close one.
     #[test]
-    fn batcher_chamber_runs_only_a_named_suite() {
-        let chamber = include_str!("../../spira/chamber/batcher.md");
+    fn batcher_runes_runs_only_a_named_suite() {
+        let runes = include_str!("../../spira/runes/batcher.md");
         let t = Tokens {
             single: vec![
                 ("TESTENV", TESTENV.into()),
@@ -755,7 +755,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let p = render_prompt(chamber, &t, None);
+        let p = render_prompt(runes, &t, None);
         assert!(p.contains("    testenv --suites <suite> <branch> spira\n"), "{p}");
         assert!(!p.contains("    testenv <branch> spira\n"), "{p}");
         let lines = runner_lines(&p, "    testenv ");
@@ -851,22 +851,22 @@ mod tests {
     #[test]
     fn overlays_whole_section_append_and_absent() {
         let d = tmpdir("ov");
-        let chamber = d.join("builder.md");
-        std::fs::write(&chamber, "# Builder\n## Tests\nrelease tests\nmore\n## Finishing\n{{FINISH}}\n\n").unwrap();
+        let runes = d.join("builder.md");
+        std::fs::write(&runes, "# Builder\n## Tests\nrelease tests\nmore\n## Finishing\n{{FINISH}}\n\n").unwrap();
         let ov = d.join("overlay");
         std::fs::create_dir_all(ov.join("blocks")).unwrap();
-        let (c, logs) = chamber_with_overlays("builder", &chamber, &ov);
+        let (c, logs) = runes_with_overlays("builder", &runes, &ov);
         assert_eq!(c, "# Builder\n## Tests\nrelease tests\nmore\n## Finishing\n{{FINISH}}");
         assert!(logs.is_empty());
         std::fs::write(ov.join("builder.Tests.md"), "## Tests\nmine\n").unwrap();
         std::fs::write(ov.join("builder.No_Such.md"), "## No Such\nx\n").unwrap();
         std::fs::write(ov.join("builder.append.md"), "APPENDED\n").unwrap();
-        let (c, logs) = chamber_with_overlays("builder", &chamber, &ov);
+        let (c, logs) = runes_with_overlays("builder", &runes, &ov);
         assert_eq!(c, "# Builder\n## Tests\nmine\n## Finishing\n{{FINISH}}\n\nAPPENDED");
         assert!(logs.iter().any(|l| l.contains("names a section (## No Such) absent from") && l.ends_with("— ignored")));
-        assert!(logs.iter().any(|l| l.starts_with("chamber section '## Tests' overlaid by")));
+        assert!(logs.iter().any(|l| l.starts_with("runes section '## Tests' overlaid by")));
         std::fs::write(ov.join("builder.md"), "WHOLE\n").unwrap();
-        let (c, logs) = chamber_with_overlays("builder", &chamber, &ov);
+        let (c, logs) = runes_with_overlays("builder", &runes, &ov);
         assert_eq!(c, "WHOLE");
         assert!(logs[0].starts_with("brief replaced whole-file by"));
         std::fs::write(ov.join("blocks/PARK.md"), "my park\n").unwrap();
@@ -893,13 +893,13 @@ mod tests {
 
     #[test]
     fn the_shipped_builder_brief_has_one_way_to_verify_and_the_work_verbs_to_finish() {
-        let chamber = include_str!("../../spira/chamber/builder.md");
+        let runes = include_str!("../../spira/runes/builder.md");
         let t = Tokens {
             single: vec![("TESTENV", TESTENV.into()), ("FOLLOWUP", followup_brief("sp-a")), ("BRANCH", "spira/sp-a".into()), ("REPO_NAME", "spira".into())],
             finish: finish_brief("sp-a"),
             ..Default::default()
         };
-        let (sys, task) = split("LAW", &render_prompt(chamber, &t, None));
+        let (sys, task) = split("LAW", &render_prompt(runes, &t, None));
         let both = format!("{sys}{task}");
         assert!(both.contains("DO NOT run the full landing") && both.contains("testenv"), "{both}");
         assert!(!both.contains("gate-run.sh") && !both.contains("{{GATE}}"), "{both}");
@@ -910,7 +910,7 @@ mod tests {
 
     #[test]
     fn the_shipped_groomer_splits_operations_into_system_and_finishing_into_task() {
-        let (sys, task) = split("LAW", &render_prompt(include_str!("../../spira/chamber/groomer.md"), &Tokens::default(), None));
+        let (sys, task) = split("LAW", &render_prompt(include_str!("../../spira/runes/groomer.md"), &Tokens::default(), None));
         assert!(sys.contains("Four operations, one refusal") && sys.contains("MUST NOT do"));
         assert!(task.contains("finish the trigger bead"));
         assert!(!task.contains("Memories in force") && !task.contains("Four operations, one refusal"));
@@ -1005,7 +1005,7 @@ mod tests {
     /// Concierge's own prompt is the operator's session and keeps its tools.
     #[test]
     fn no_aeon_persona_prompt_names_a_bd_reaching_command() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/chamber");
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
         let raw_bd = regex::Regex::new(r"(?m)(^|[^A-Za-z0-9_./-])bd\s+(-C\b|[a-z][a-z-]*)").unwrap();
         let mut seen = 0;
         let mut bad = Vec::new();
@@ -1026,7 +1026,7 @@ mod tests {
                 }
             }
         }
-        assert!(seen >= 9, "positive control: the chamber's persona prompts were read ({seen})");
+        assert!(seen >= 9, "positive control: the runes's persona prompts were read ({seen})");
         // A tool placeholder a prompt uses must expand to a `work` verb, never the binary it
         // once named (mail, groomer, bead.sh, sop, incident.sh) — none is on the model's PATH.
         let tokens = tool_tokens();

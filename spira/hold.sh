@@ -7,7 +7,7 @@
 #   hold.sh <bead-id> --release    release a held bead (equivalent to unhold.sh)
 #
 # WHY THIS EXISTS. The reaper checks holder_alive, which looks for a pidfile named
-# aeon-<fayth>-<id>.pid with a process whose argv contains aeon.sh. A non-aeon session
+# aeon-<rune>-<id>.pid with a process whose argv contains aeon.sh. A non-aeon session
 # (brain, concierge, a hand-run tool) passes neither test: no pidfile exists and no argv
 # matches, so strand.sh reclaims the bead within seconds of the next pass. On 2026-09-07
 # this cost sp-7pi eight attempts, none of which was a fact about the work.

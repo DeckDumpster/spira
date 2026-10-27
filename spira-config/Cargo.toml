@@ -3,7 +3,7 @@ name = "spira-config"
 version = "1.0.0"
 edition = "2021"
 default-run = "spira-config"
-description = "spira-config — typed spira.toml: schema, validate, get, export --sh, and a converter from spira.conf/repo-map/fayth."
+description = "spira-config — typed spira.toml: schema, validate, get, export --sh, and a converter from spira.conf/repo-map/rune."
 
 [dependencies]
 spira-otel = { path = "../spira-otel" }

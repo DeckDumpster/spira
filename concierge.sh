@@ -43,7 +43,7 @@
 # is fully usable. The concierge keeping its own socket preserves the Remote Control name
 # (`--remote-control concierge`) and the kill/restart lifecycle independently of the layout.
 #
-# WHY IT IS COMPOSED FROM A FAYTH
+# WHY IT IS COMPOSED FROM A RUNE
 # -------------------------------
 # It was not, and that was the defect. An aeon is summoned with a brief, a statute book and a
 # model resolved from a file somebody maintains; this session got a working directory and the
@@ -56,15 +56,15 @@
 # summon", described aeons only. The statute that the harness checkout is production had been
 # in force for weeks and had never been delivered to the session that kept violating it.
 #
-# So `chamber/concierge.fayth` and `chamber/concierge.md` now define this session exactly as
-# `builder.fayth` defines a Guardian, and what follows renders them. The one property that
-# makes the concierge different is declared in the fayth rather than arranged: FAYTH_SUMMON is
-# `operator`, and `spira_task_fayths` / `spira_lane_fayths` both refuse to hand it to the
+# So `runes/concierge.rune` and `runes/concierge.md` now define this session exactly as
+# `builder.rune` defines a Guardian, and what follows renders them. The one property that
+# makes the concierge different is declared in the rune rather than arranged: RUNE_SUMMON is
+# `operator`, and `spira_task_runes` / `spira_lane_runes` both refuse to hand it to the
 # sentinel. Nothing but a human starts this.
 set -uo pipefail
 
 # lib.sh AND NOT conf.sh ALONE. conf.sh resolves configuration; the helpers this file needs —
-# `fayth_get` to read the persona and `render_memories` to render the statute book — live in
+# `rune_get` to read the persona and `render_memories` to render the statute book — live in
 # lib.sh, which sources conf.sh itself. Sourcing only conf.sh left both as "command not
 # found", and the refusal below caught it on the first run, which is what the refusal is for.
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/spira" && pwd -P)/lib.sh"
@@ -72,7 +72,7 @@ HARNESS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SESSION="${CONCIERGE_SESSION:-concierge}"
 SOCKET="${CONCIERGE_SOCKET:-concierge}"
 BRAIN="${SPIRA_WIKI:-$SPIRA_REPO}"
-FAYTH="${CONCIERGE_FAYTH:-concierge}"
+RUNE="${CONCIERGE_RUNE:-concierge}"
 spira_require claude tmux || exit 1
 
 TM="tmux -L $SOCKET"
@@ -97,26 +97,26 @@ TM="tmux -L $SOCKET"
 # is the exact session this file exists to stop shipping: it looks identical to a working one
 # from outside, and the way anybody finds out is the next violated statute.
 compose_brief() {
-    local md="$SPIRA_HOME/chamber/$FAYTH.md" out statutes n
+    local md="$SPIRA_HOME/runes/$RUNE.md" out statutes n
     local bead_tool="bead.sh"
     local wiki_clause=""
     [ -n "${SPIRA_WIKI:-}" ] && wiki_clause=" It is the brain wiki — read its \`CLAUDE.md\` first; it governs over anything here that disagrees. Brain carries no copy of the harness."
     [ -f "$md" ] || { echo "concierge: no brief at $md" >&2; return 1; }
 
-    # `law-` unless the fayth says otherwise — the same key builder and ops declare, read the
+    # `law-` unless the rune says otherwise — the same key builder and ops declare, read the
     # same way, so the concierge cannot end up reading a different book from the one its
     # persona file asks for.
     # THE CORE SET COMES FROM THE PERSONA, not from the box. An operator session and a builder
     # need different statutes in full text; the rest arrive as an index either way. See
-    # FAYTH_STATUTE_CORE in the fayth for which ones and why.
+    # RUNE_STATUTE_CORE in the rune for which ones and why.
     #
     # PLUS THIS INSTALLATION'S OWN (sp-crr3n): SPIRA_STATUTE_CORE_LOCAL names slugs that never
-    # ship with the fayth — this operator's own repositories, labels or preferences
+    # ship with the rune — this operator's own repositories, labels or preferences
     # (law-harness-ships-mechanism-not-inventory) — appended to the persona's core exactly the
     # way aeon's statutes() does it. A local slug the database lacks is demoted to the index
     # the same as any other unresolved core slug; see the refusal check just below.
     local core_local="${SPIRA_STATUTE_CORE_LOCAL:-}" core_persona core_merged
-    core_persona="$(fayth_get "$FAYTH" FAYTH_STATUTE_CORE "")"
+    core_persona="$(rune_get "$RUNE" RUNE_STATUTE_CORE "")"
     case "$core_persona,$core_local" in
         ,) core_merged="" ;;
         *,) core_merged="$core_persona" ;;
@@ -124,7 +124,7 @@ compose_brief() {
         *) core_merged="$core_persona,$core_local" ;;
     esac
     statutes="$(render_memories \
-        "$(fayth_get "$FAYTH" FAYTH_MEMORY_PREFIXES law-)" "" \
+        "$(rune_get "$RUNE" RUNE_MEMORY_PREFIXES law-)" "" \
         "$core_merged")" || statutes=""
     if [ -z "$statutes" ]; then
         # render_memories swallows bd's stderr, so empty output means either "bd could not
@@ -165,11 +165,11 @@ compose_brief() {
     # recognise to the index tier, so one mistyped or retired slug costs that statute its full
     # text and says nothing. All of them mistyped costs the whole point of the persona, and the
     # brief still looks complete: 24KB, every placeholder filled, the law apparently present.
-    # core_merged, not a fresh FAYTH_STATUTE_CORE read: a core made up entirely of
-    # SPIRA_STATUTE_CORE_LOCAL slugs demotes the same way an empty FAYTH_STATUTE_CORE would,
+    # core_merged, not a fresh RUNE_STATUTE_CORE read: a core made up entirely of
+    # SPIRA_STATUTE_CORE_LOCAL slugs demotes the same way an empty RUNE_STATUTE_CORE would,
     # and must refuse the same way.
     if [ -n "$core_merged" ] && ! grep -q '^## law-' "$out"; then
-        echo "concierge: a core statute (FAYTH_STATUTE_CORE or SPIRA_STATUTE_CORE_LOCAL) is declared but no statute rendered in full" >&2
+        echo "concierge: a core statute (RUNE_STATUTE_CORE or SPIRA_STATUTE_CORE_LOCAL) is declared but no statute rendered in full" >&2
         echo "  every slug in it was demoted to the index — check them against:" >&2
         echo "  $HARNESS/rule.sh list" >&2
         return 1
@@ -368,7 +368,7 @@ start)
     # the first compaction opens a context with no Monitor attached and nothing arms one.
     #
     # NO SPIRA_HOME OVERRIDE, ANY MORE (sp-7jr34). It used to be pinned to THIS FILE'S OWN
-    # LOCATION so the registration never depended on whatever chamber a caller was composing
+    # LOCATION so the registration never depended on whatever runes a caller was composing
     # a brief from — but that also pinned the registered command to whichever release
     # happened to invoke this, which is exactly how 27 sha-pinned entries accumulated, one per
     # activation. `release session-hook install` addresses the hook through `current` itself,
@@ -448,12 +448,12 @@ start)
     bash "$_tmuxenv" scrub -L "$SOCKET" 2>/dev/null
     unset $(bash "$_tmuxenv" names) 2>/dev/null || true
     BRIEF="$(compose_brief)" || exit 1
-    MODEL="$(persona_model "$FAYTH")"
+    MODEL="$(persona_model "$RUNE")"
     brief_summary "$BRIEF" "$MODEL"
     SHIM_DIR="$(write_tmux_shim)" || exit 1
 
     # NO --allowedTools. For an interactive session under bypassed permissions that flag can
-    # only SUBTRACT, and the persona's remit is unbounded — see concierge.fayth, where the
+    # only SUBTRACT, and the persona's remit is unbounded — see concierge.rune, where the
     # absence is the declaration. Every other persona names its tools because aeon.sh passes
     # them as an allow list that keeps a worker inside its job.
     #

@@ -69,8 +69,8 @@ certify_always_covers = "spira/lib.sh spira-config/*"
 certify_par = 3
 certify_suites = "off"
 cert_window_mins = "90"
-chamber = "/fixture/userhome/spira/spira-releases/current/spira/chamber"
-chamber_overlay = "/fixture/userhome/.config/spira/chamber"
+runes_dir = "/fixture/userhome/spira/spira-releases/current/spira/runes"
+runes_overlay = "/fixture/userhome/.config/spira/runes"
 check5_max_file = "5"
 ci_label = "awaiting-ci"
 ci_runner_mem_mib = 16384
@@ -129,7 +129,7 @@ dolt_persist_compact_pct = 150
 eviction_escalate_at = "3"
 exporter = ""
 failed_unit_runs = 3
-fayths = [
+runes = [
     "spike",
     "builder",
     "groomer",

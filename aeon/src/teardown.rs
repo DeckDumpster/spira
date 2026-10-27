@@ -142,7 +142,7 @@ impl Run<'_> {
     pub fn teardown(&mut self, rc: i32) -> i32 {
         let mut rc = rc;
         let id = self.s.bead.clone();
-        let f = self.fayth.name.clone();
+        let f = self.rune.name.clone();
         self.stop_heartbeat();
         let lc = self.lc_bead(&id);
         if lc.as_ref().is_some_and(|r| r.working()) {
@@ -290,7 +290,7 @@ impl Run<'_> {
                 self.sdo("bump_lapsed", &s(&[&id, l]));
                 let tip = short_tip(self);
                 self.sdo("write_lapse_record", &s(&[&id, q, l, &tip]));
-                self.note(&format!("Lease lapsed: the trace was silent for {q}s (limit {}s). Last: {l}. Branch spira/{id} preserved. Attempt 2 should start from where attempt 1 wedged.", self.fayth.lease_seconds()));
+                self.note(&format!("Lease lapsed: the trace was silent for {q}s (limit {}s). Last: {l}. Branch spira/{id} preserved. Attempt 2 should start from where attempt 1 wedged.", self.rune.lease_seconds()));
                 self.log(&format!("{f}: {id} lease lapsed — attempt charged (quiet {q}s)"));
                 self.release();
                 return self.finish(rc, &status);
@@ -311,7 +311,7 @@ impl Run<'_> {
                 return self.finish(rc, &status);
             }
             NoteKey::Timeout => {
-                let t = self.fayth.timeout_seconds.map(|t| t.to_string()).unwrap_or_else(|| "?".into());
+                let t = self.rune.timeout_seconds.map(|t| t.to_string()).unwrap_or_else(|| "?".into());
                 self.note(&format!("Timeout: the session was killed by the lane cap ({t}s) with nothing committed. This is the harness's clock ending the turn, not a verdict about the work. No attempt charged."));
                 self.log(&format!("{f}: {id} timed out — no attempt charged"));
                 self.release();

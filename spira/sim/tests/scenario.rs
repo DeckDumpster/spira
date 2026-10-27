@@ -1,5 +1,5 @@
 use spira_sim::drive::{parse_scenario, scenario_path, scenario_repos, Scenario};
-use spira_sim::summon::{aeon_command, fayth_of, ranked_ids, real_aeon, routed_repo, scripted, with_home};
+use spira_sim::summon::{aeon_command, rune_of, ranked_ids, real_aeon, routed_repo, scripted, with_home};
 use spira_sim::world::{base_config, bead_db, config_settings, home_settings, registry_rows, repo_set, stub_gate_steps, RepoSpec, INERT_TOOLS, MODES, REPO_NAME};
 use std::path::Path;
 
@@ -65,10 +65,10 @@ fn the_shipped_happy_path_parses_and_uses_actors_the_shipped_file_declares() {
 }
 
 #[test]
-fn the_seam_takes_the_fayth_from_the_aeon_argument_of_a_systemd_run_argv_and_ranks_by_the_sixth_field() {
+fn the_seam_takes_the_rune_from_the_aeon_argument_of_a_systemd_run_argv_and_ranks_by_the_sixth_field() {
     let argv: Vec<String> = ["--user", "--setenv=A=aeon", "/w/release/bin/aeon", "--home", "/h", "builder"].iter().map(|s| s.to_string()).collect();
-    assert_eq!(fayth_of(&argv).unwrap(), "builder");
-    assert!(fayth_of(&argv[..3]).is_err() && fayth_of(&[]).is_err());
+    assert_eq!(rune_of(&argv).unwrap(), "builder");
+    assert!(rune_of(&argv[..3]).is_err() && rune_of(&[]).is_err());
     assert_eq!(ranked_ids("2\t1\t2\t1\tt\tsp-b\t\n2\t1\t2\t1\tt\tsp-a\t\nshort\n"), vec!["sp-b", "sp-a"]);
 }
 
@@ -86,7 +86,7 @@ fn a_worlds_config_moves_every_fixture_path_inside_it_and_registers_only_its_rep
     assert!(!cfg.contains("/fixture/userhome"), "a path still points outside the world");
     assert!(!cfg.contains("[repo.spira]"));
     assert!(cfg.contains("/w/hm/spira/run"), "run moved under the world's home");
-    assert!(cfg.contains("/w/release/spira/chamber"), "the release paths follow the world's release link");
+    assert!(cfg.contains("/w/release/spira/runes"), "the release paths follow the world's release link");
 }
 
 #[test]

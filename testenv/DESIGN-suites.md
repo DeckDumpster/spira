@@ -220,8 +220,8 @@ come from the one lib.sh seam (§4), because conf.sh derives them in ways no lib
 | `spira/gate-check.sh:147` (spira-gate-check.timer) | `bash "$HERE/suites.sh" observe-flake "$_suite" "$_run_id"` | nothing (`|| true`) |
 | `spira/verdict.sh:1719` (spira-verdict.service) | `bash "$HERE/suites.sh" observe-flake "<suite>" "$batch_head"` | nothing |
 | `spira/aeon.sh:2073` | `{{SUITES}}` → `$SPIRA_HOME/suites.sh` in persona prompts | — |
-| `spira/chamber/ops.md:8,55` | tells Ops to run `{{SUITES}} run` (retired; §7 F4) | — |
-| `spira/chamber/ops.fayth:165`, prod `persona.ops` tools | `Bash(*suites.sh*)` | — |
+| `spira/runes/ops.md:8,55` | tells Ops to run `{{SUITES}} run` (retired; §7 F4) | — |
+| `spira/runes/ops.rune:165`, prod `persona.ops` tools | `Bash(*suites.sh*)` | — |
 | operator / Ops by hand | `list`, `names`, `corpus`, `quarantine`, `disable`, `activate`, `hygiene` | — |
 
 No systemd unit or workflow invokes suites.sh directly. `hygiene` and `corpus` have no
@@ -403,7 +403,7 @@ sources name none of spira-lc / SPIRA_LC_BIN / lc.sh).
   suite for a run of the landing ref). An operator decision; unchanged here.
 * **F3 — `hygiene` and `corpus` have no automated caller.** gate-spira.sh:235 and
   suite-state-fence.sh:6 describe hygiene as if it ran.
-* **F4 — the Ops prompt instructs a retired command.** spira/chamber/ops.md:55 tells every
+* **F4 — the Ops prompt instructs a retired command.** spira/runes/ops.md:55 tells every
   Ops aeon to run `{{SUITES}} run` "before you start diagnosing"; it exits 2 with a usage
   line. The Cutover drops that step.
 
@@ -432,11 +432,11 @@ Line numbers against 4764d03ec. `SPIRA_TESTENV_BIN` is new, resolved like its ne
 | 3 | `spira/gate-check.sh:147` | `bash "$HERE/suites.sh" observe-flake "$_suite" "$_run_id" 2>/dev/null \|\| true` | `"$SPIRA_TESTENV_BIN" suites observe-flake "$_suite" "$_run_id" 2>/dev/null \|\| true` |
 | 4 | `spira/verdict.sh:1719` | `bash "$HERE/suites.sh" observe-flake "${_line#flaky: }" "$batch_head" \` | `"$SPIRA_TESTENV_BIN" suites observe-flake "${_line#flaky: }" "$batch_head" \` |
 | 5 | `spira/aeon.sh:2073` | `-e "s\|{{SUITES}}\|$SPIRA_HOME/suites.sh\|g"` | `-e "s\|{{SUITES}}\|$SPIRA_TESTENV_BIN suites\|g"` |
-| 6 | `spira/chamber/ops.md:8` | "`{{SUITES}}` below all resolve to scripts under it" | "`{{SUITES}}` (the `testenv suites` tool) … resolve to tools under it" |
-| 7 | `spira/chamber/ops.md:49-66` | step 2 running `{{SUITES}} run` | replace the command with `{{SUITES}} status` and the paragraph with: "It prints which suites run nowhere and what each last said; name the timed suites it reports in your close. A red there is ordinary work for whoever can change the code." (drop the "budgeted to fit inside your wall" text; nothing runs) |
-| 8 | `spira/chamber/ops.fayth:165` | `Bash(*suites.sh*),Bash(*testenv-batch.sh*)` | `Bash(*testenv *)` (testenv's own cutover makes the same change for testenv-batch.sh) |
+| 6 | `spira/runes/ops.md:8` | "`{{SUITES}}` below all resolve to scripts under it" | "`{{SUITES}}` (the `testenv suites` tool) … resolve to tools under it" |
+| 7 | `spira/runes/ops.md:49-66` | step 2 running `{{SUITES}} run` | replace the command with `{{SUITES}} status` and the paragraph with: "It prints which suites run nowhere and what each last said; name the timed suites it reports in your close. A red there is ordinary work for whoever can change the code." (drop the "budgeted to fit inside your wall" text; nothing runs) |
+| 8 | `spira/runes/ops.rune:165` | `Bash(*suites.sh*),Bash(*testenv-batch.sh*)` | `Bash(*testenv *)` (testenv's own cutover makes the same change for testenv-batch.sh) |
 | 9 | prod `~/.config/spira/spira.toml` `persona.ops` tools (`"Bash(*suites.sh*)"`, line 225) | — | `"Bash(*testenv *)"`, through `spira-config` (law-config-through-the-cli-only) |
-| 10 | `spira/test-lint-chamber.sh:127` | `-e "s\|{{SUITES}}\|$HERE/suites.sh\|g"` | `-e "s\|{{SUITES}}\|testenv suites\|g"` |
+| 10 | `spira/test-lint-runes.sh:127` | `-e "s\|{{SUITES}}\|$HERE/suites.sh\|g"` | `-e "s\|{{SUITES}}\|testenv suites\|g"` |
 | 11 | `spira/conf.sh:1750,1764-1769,1832-1836`, `spira.conf.example:271-293`, `README.md:321,467`, `CLAUDE.md:48,59-61`, `spira/gate-suites` header, `spira/gate-spira.sh:235,374`, `spira/suite-state-fence.sh:6`, `spira/suite-covers.sh:3-12,73`, `spira/tap-jsonl.sh:5,12`, `spira/suite-assert.sh:5-10`, `spira/aeon.sh:1733`, `spira/test-lifecycle-guard.sh:7`, `spira/test-test-plan-crate.sh:9` | comments naming `suites.sh` | name `testenv suites` (comments only) |
 | 12 | **delete** `spira/suites.sh` | — | replaced by `testenv suites` |
 | 13 | `spira/suite-state.sh` | **done (sp-9gd4e).** `suites.sh` and `testenv-batch.sh` are both already gone; the one remaining blocker, `suite-state-fence.sh`'s `suite_state_lint`/`suite_state_parse`, is now `testenv suites lint` (§2.3, §6b). File deleted, along with `test-suite-state.sh` (§6b). |

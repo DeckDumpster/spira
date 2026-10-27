@@ -52,7 +52,7 @@ _aw_claim_of() {
 }
 
 _aw_tick() {
-    local now ts u n=0 unknown=0 st stS pfname role name bead fayth age idle flag
+    local now ts u n=0 unknown=0 st stS pfname role name bead rune age idle flag
     now="$(date +%s)"; ts="$(date -u +%H:%MZ)"
     local lines=""
     while read -r u; do
@@ -65,7 +65,7 @@ _aw_tick() {
         [ -n "$pfname" ] || bead=""
         role="${pfname#aeon-}"; role="${role%%-*}"
         name="$(cat "$SPIRA_RUN/${pfname%.pid}.name" 2>/dev/null)"
-        fayth="${role:-?}/${name:-?}"
+        rune="${role:-?}/${name:-?}"
         age=$(( (now - stS) / 60 )); idle="?"; flag=""
         if [ -n "$bead" ] && [ -f "$SPIRA_RUN/$bead.log" ]; then
             idle=$(( (now - $(stat -c %Y "$SPIRA_RUN/$bead.log")) / 60 ))
@@ -73,7 +73,7 @@ _aw_tick() {
         fi
         if [ -z "$bead" ]; then flag=" (no claim seen yet)"; unknown=$((unknown + 1)); fi
         lines="$lines
-  ${fayth} ${bead:-?}: ${age}m on it, log idle ${idle}m$flag"
+  ${rune} ${bead:-?}: ${age}m on it, log idle ${idle}m$flag"
     done < <(systemctl --user list-units 'spira-aeon-*' --state=active --no-legend --plain 2>/dev/null | awk '{print $1}')
 
     local pid et comm m long=""

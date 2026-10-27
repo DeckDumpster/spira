@@ -32,17 +32,17 @@ timeout 5 git -C "$REPO" fetch -q origin
 
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
-cp -r "$HERE/chamber" "$SH/"
-# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
-# point it at this suite's own fixture chamber explicitly.
-tl_config SPIRA_CHAMBER="$SH/chamber"
+cp -r "$HERE/runes" "$SH/"
+# SPIRA_RUNES_DIR no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture runes explicitly.
+tl_config SPIRA_RUNES_DIR="$SH/runes"
 
 # Repo-map must exist before any bead.sh call; bdq validates repo: labels against it.
 cat > "$SH/repo-map" <<RMAP
 $REPONAME | $REPO | queue | origin/main | | |
 RMAP
 # SPIRA_REPO_MAP is a registered key too — no process reads env for it, and it does not
-# derive from SPIRA_HOME any more either (same gap as SPIRA_CHAMBER above).
+# derive from SPIRA_HOME any more either (same gap as SPIRA_RUNES_DIR above).
 tl_config SPIRA_REPO_MAP="$SH/repo-map"
 
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }

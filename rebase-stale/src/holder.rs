@@ -37,7 +37,7 @@ pub fn witness(run: &Path, id: &str, seam: &dyn Seam) -> Option<String> {
     if let Some(pid) = live_pid(&run.join(format!("hold-{id}.pid"))) {
         return Some(format!("hold-{id}.pid names live pid {pid}"));
     }
-    // 2. the bead's aeon: aeon-<fayth>-<id>.pid whose identity lease is still running.
+    // 2. the bead's aeon: aeon-<rune>-<id>.pid whose identity lease is still running.
     if let Ok(rd) = std::fs::read_dir(run) {
         let suffix = format!("-{id}.pid");
         for e in rd.flatten() {

@@ -103,7 +103,7 @@ by hand. `spira-config`, the crate and its CLI, is the only thing that may find,
 write either. A second reader or writer is a second schema that drifts.
 
 **Scope.** Tracked and untracked-not-ignored files matching the git pathspecs
-`spira/*.sh`, `spira/gate-suites`, `spira/chamber/*.fayth`, `spira/chamber/*.md` or `*.rs`
+`spira/*.sh`, `spira/gate-suites`, `spira/runes/*.rune`, `spira/runes/*.md` or `*.rs`
 (`*` crosses `/`, as git's default pathspec does), minus anything under `spira-config/`.
 
 **Violations**, reported as one finding per file whose message lists the kinds
@@ -137,7 +137,7 @@ pub struct ConfigAllow(BTreeSet<String>);   // entry == Finding.path
 - `write` in shell was a line regex. It caught `> "$SPIRA_TOML_TMP"` (a different variable,
   since `SPIRA_(TOML|REPO_MAP)` was a prefix) and missed `mv "$tmp" "$SPIRA_TOML"` and
   `tee "$SPIRA_TOML"`. It now matches the construct and the exact variable. The write
-  checks also no longer run on prose (`.md`, `.fayth`) or on `gate-suites`, which contain
+  checks also no longer run on prose (`.md`, `.rune`) or on `gate-suites`, which contain
   no shell. A persona that tells an agent to write the config names it, and `name` catches
   that.
 
@@ -191,8 +191,8 @@ anywhere a test module's own `mod name;` loads transitively.
   empty string, `PathBuf::new()`) is an absence, never a guessed path.
 
   The key decides which literal defaults count: [`CONFIG_IDENTITY_KEYS`] (`SPIRA_RUN`,
-  `SPIRA_HOME`, `SPIRA_REPO`, `SPIRA_INSTANCE`, `SPIRA_CHAMBER`, `SPIRA_CHAMBER_OVERLAY`,
-  `SPIRA_FAYTHS`, `SPIRA_DB`, `SPIRA_WORKSPACES`, `SPIRA_REPO_MAP`, `SPIRA_TOML`,
+  `SPIRA_HOME`, `SPIRA_REPO`, `SPIRA_INSTANCE`, `SPIRA_RUNES_DIR`, `SPIRA_RUNES_OVERLAY`,
+  `SPIRA_RUNES`, `SPIRA_DB`, `SPIRA_WORKSPACES`, `SPIRA_REPO_MAP`, `SPIRA_TOML`,
   `SPIRA_CONF`, `SPIRA_HOME_REPO` — "where/who/which copy") trip it on ANY literal default;
   every other `SPIRA_*` key trips it only when the default is PATH-SHAPED (contains `/`).
   A key outside that list with a short, non-path default (`SPIRA_SYSTEMCTL` defaulting to
@@ -665,14 +665,14 @@ Ported from `spira/bd-stdin-lint.sh` (sp-pppt0; defect sp-j5z3), which is delete
 discard the heredoc body that follows it — six beads shipped with a dash where their body or
 notes should be. The stdin forms (`--stdin`, `--body-file -`) are the fix.
 
-**Scope.** Every file under `spira/` or `chamber/` (git's default pathspec `*`, crossing
+**Scope.** Every file under `spira/` or `runes/` (git's default pathspec `*`, crossing
 `/`), one pass per file over both shapes together (never two passes for the same file).
 
 **Violation.** A live (non-comment) line matching either shape:
 `bd … note … <space>-<space><<` or `bd … create … (-d<space>-|-d-|--description<space>-)`
 followed by `<`, end of line, or a non-`-` character. One finding per line.
 
-**Refuses** (exit 3): no `spira/` or `chamber/` files in scope. **Positive control:**
+**Refuses** (exit 3): no `spira/` or `runes/` files in scope. **Positive control:**
 `fence: bd-stdin-lint checked <n> files`.
 
 ## Rule `cockpit-no-bd`
@@ -980,12 +980,12 @@ empty list, which would make every tree "clean" (law-absence-needs-a-positive-co
 
 **The box's config file is not an input (sp-g9f3t).** `schema.sh` sources conf.sh, whose
 config search reads the operator's own `spira.toml` (explicit `SPIRA_CONF`/`SPIRA_TOML`, else
-XDG) — but only when that file is newer than the tree's `spira/chamber/*.fayth`; otherwise it
+XDG) — but only when that file is newer than the tree's `spira/runes/*.rune`; otherwise it
 regenerates a persona-only `spira.toml` into the tree and reads that. On the gate the same
 local/main tree and the same binary flipped between 0 and 5 findings on mtimes alone (the
 operator's `ask_label = "needs-ryan"` was read or not), and two base trials were judged red
 on it. Every `schema.sh` call therefore runs with `SPIRA_CONF`, `SPIRA_TOML` and
-`SPIRA_CHAMBER` pinned to paths that do not exist: the names are the tree's own declarations
+`SPIRA_RUNES_DIR` pinned to paths that do not exist: the names are the tree's own declarations
 plus any override the process environment carries (`SPIRA_ASK_LABEL` exported by an aeon
 still counts), identical on every box. A label an operator sets only in a config file is not
 guarded by this fence; a tree's verdict cannot depend on one box's file.

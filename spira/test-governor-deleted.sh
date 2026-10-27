@@ -43,7 +43,7 @@
 #                                including this one; that row will name "governor" for as
 #                                long as this suite keeps its name, and it is bookkeeping
 #                                about wall-clock time, not a claim about governor.sh.
-#   spira/test-summon-fayth.sh — one dated, bead-cited note (gap row G7) recording that
+#   spira/test-summon-rune.sh — one dated, bead-cited note (gap row G7) recording that
 #                                governor.sh was already deleted (sp-8mzsh) before that suite
 #                                was written and there is no hook left to test against —
 #                                history, like docs/test-plan/*.md, just not shaped as one of
@@ -66,7 +66,7 @@ command -v git >/dev/null 2>&1 || skip "git not on PATH"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
-EXCLUDE_RE='^spira/testdata/|^docs/test-plan/|^docs/spikes/|^spira/test-governor-deleted\.sh$|^spira/tier-budget-allowlist$|^spira/test-summon-fayth\.sh$'
+EXCLUDE_RE='^spira/testdata/|^docs/test-plan/|^docs/spikes/|^spira/test-governor-deleted\.sh$|^spira/tier-budget-allowlist$|^spira/test-summon-rune\.sh$'
 
 # scan <repo-root> -> tracked files, minus the historical/data/self exclusions above, that
 # contain 'governor' (case-insensitive). Reads the tree; changes nothing.

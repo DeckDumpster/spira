@@ -185,7 +185,7 @@ All paths under `$SPIRA_RUN` unless absolute. Formats unchanged (§3).
 | `systemd/spira-landing-pass.service:8` | `@SPIRA_LANDING_PASS_BIN@ --pass` (timer every 90 s) | pr pass |
 | `spira/canary.sh:160` | `bash "$SPIRA_HOME/landing.sh"` | a real pass; `landing.status` |
 | `spira/world.sh:174-175` `live_workers` | argv match on `landing.sh` | halt completeness |
-| `spira/chamber/czar.fayth:90`, `czar.md:122` | `landing.sh halt` | the verb |
+| `spira/runes/czar.rune:90`, `czar.md:122` | `landing.sh halt` | the verb |
 | ~45 bash suites (§7.4) | run the pass, source landing-lib.sh, grep landing.sh | — |
 
 ### 2.7 Guarantees
@@ -504,8 +504,8 @@ The pr timer is unchanged: `systemd/spira-landing-pass.service:8` keeps
 | 9 | `spira/canary.sh:18`, `spira/stage.sh:27-30,148-154` | comments: "canary.sh runs landing.sh directly" | "canary.sh runs `landing-pass land` directly" |
 | 10 | `spira/world.sh:175-176` `live_workers` | `argv_has "$p" "$SPIRA_HOME/gate.sh" "$SPIRA_HOME/landing.sh" "${SPIRA_PROD:-$SPIRA_HOME}/gate.sh" "${SPIRA_PROD:-$SPIRA_HOME}/landing.sh"` | `argv_has "$p" "$SPIRA_HOME/gate.sh" "${SPIRA_PROD:-$SPIRA_HOME}/gate.sh" "$(dirname "${SPIRA_PROD:-$SPIRA_HOME}")/bin/landing-pass" ${SPIRA_LANDING_PASS_BIN:+"$SPIRA_LANDING_PASS_BIN"}` (as the aeon cutover did for `bin/aeon`; note it also matches a 90 s pr pass in flight) |
 | 11 | `spira/world.sh:165,598` | comments naming landing.sh | "landing-pass" |
-| 12 | `spira/chamber/czar.fayth:90` | `Bash(*landing.sh halt*)` | `Bash(*landing-pass halt*)` |
-| 13 | `spira/chamber/czar.md:122` | ``Halt the landing pass with `landing.sh halt` `` | ``Halt the landing pass with `landing-pass halt --reason-file -` `` |
+| 12 | `spira/runes/czar.rune:90` | `Bash(*landing.sh halt*)` | `Bash(*landing-pass halt*)` |
+| 13 | `spira/runes/czar.md:122` | ``Halt the landing pass with `landing.sh halt` `` | ``Halt the landing pass with `landing-pass halt --reason-file -` `` |
 | 14 | `spira/timeout-lint.sh:41` | `files=("$HERE/landing.sh")   # aeon.sh and sentinel.sh are Rust now; …` | the default file set is now empty: **retire** `timeout-lint.sh` and `test-timeout-lint.sh` (no caller, in no gate string), with their lines `spira-lint/fence-scripts-allow:36,40` and `spira/tier-budget-allowlist:409` |
 | 15 | `spira/lc-delivery.sh:4,14,106,115,122,125` | header names landing.sh's push mode; actor string `landing.sh` | keep the file (pr-pass-branch.sh sources it); header "pr-pass-branch.sh (landing-pass's pr helper) and landing-pass's push mode"; actor strings may stay `landing.sh` (lifecycle history actor names) or become `landing-pass` — the actor is a label, nothing matches on it |
 | 16 | `spira/pr-pass-branch.sh:4`, `spira/land-build-ensure.sh:13`, `spira/confine.sh:13,52`, `spira/gate.sh:41,341,415-416,630`, `spira/gate-lib.sh:39,67`, `spira/lib.sh:774,4784,4837,6682,7442,8267,8843,9200-9202`, `spira/hel.sh:232,594`, `spira/watchtower.sh:343,429`, `spira/conf.sh:1104` | comments / `covers:` naming `landing.sh` | name `landing-pass` (comments only). **One is text a human acts on:** `lib.sh:774` `run \`$SPIRA_HOME/landing.sh\` by hand` → `run \`$SPIRA_LANDING_PASS_BIN land\` by hand` |

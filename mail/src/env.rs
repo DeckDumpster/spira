@@ -105,7 +105,7 @@ impl Env {
 /// itself, which derives `SPIRA_HOME` from *mail.sh's own* `BASH_SOURCE`, not from the
 /// environment. A compiled binary has no `BASH_SOURCE`; deriving from `current_exe()`'s own
 /// location is the equivalent). Sp-ooh1k's own regression: `SPIRA_MAIL_KINDS` (and the
-/// chamber-persona check in `sendmail::reply_mailbox`) silently resolved relative to `.`
+/// runes-persona check in `sendmail::reply_mailbox`) silently resolved relative to `.`
 /// instead, so `--kind question`/`event`/etc. refused as "unknown kind" the moment a caller
 /// did not also happen to export `SPIRA_HOME` — found by `test-pr-notify.sh`'s `env -i`
 /// fixture, the one case that does not.

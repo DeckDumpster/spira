@@ -353,26 +353,26 @@ want "the drain escalation sets SPIRA_FENRIR_EXEMPT=1" "DRAINING: world.sh summo
 
 # ======================================================================================
 echo
-echo "idle-while-ready escalation (sp-o4trx): a fayth with ready work whose last N"
+echo "idle-while-ready escalation (sp-o4trx): a rune with ready work whose last N"
 echo "summons ALL ledgered idle is a claim-error masquerading as an empty queue:"
 # ======================================================================================
-# A FIXTURE CHAMBER, NOT THE REAL ONE. bulk_ready_by_fayth reads FAYTH_LABELS from
-# $SPIRA_HOME/chamber/<fayth>.fayth; a minimal
-# fixture pins FAYTH_LABELS to a literal (never the shipped default) and avoids this
-# suite depending on the real builder.fayth's own label composition.
-IWR_HOME="$TMP/iwr-home"; mkdir -p "$IWR_HOME/chamber"
-# SPIRA_CHAMBER EXPLICITLY: the complete fixture declares a fixed chamber path of its own
+# A FIXTURE RUNES, NOT THE REAL ONE. bulk_ready_by_rune reads RUNE_LABELS from
+# $SPIRA_HOME/runes/<rune>.rune; a minimal
+# fixture pins RUNE_LABELS to a literal (never the shipped default) and avoids this
+# suite depending on the real builder.rune's own label composition.
+IWR_HOME="$TMP/iwr-home"; mkdir -p "$IWR_HOME/runes"
+# SPIRA_RUNES_DIR EXPLICITLY: the complete fixture declares a fixed runes path of its own
 # now, no longer derived from SPIRA_HOME when unset.
-tl_config SPIRA_FAYTHS=builder SPIRA_CHAMBER="$IWR_HOME/chamber"
-cat > "$IWR_HOME/chamber/builder.fayth" <<'FAYTH'
-FAYTH_NAME=builder
-FAYTH_WORKING_EXITS="SUBMITTED ask park hold"
-FAYTH_LABELS=plan
-FAYTH_EXCLUDE_LABELS=""
-FAYTH
-# READY WORK IS spira-claim's ANSWER (sp-860zj: bulk-ready-by-fayth asks the lifecycle for READY
+tl_config SPIRA_RUNES=builder SPIRA_RUNES_DIR="$IWR_HOME/runes"
+cat > "$IWR_HOME/runes/builder.rune" <<'RUNE'
+RUNE_NAME=builder
+RUNE_WORKING_EXITS="SUBMITTED ask park hold"
+RUNE_LABELS=plan
+RUNE_EXCLUDE_LABELS=""
+RUNE
+# READY WORK IS spira-claim's ANSWER (sp-860zj: bulk-ready-by-rune asks the lifecycle for READY
 # rows and bd for their labels; the old SPIRA_READY_SNAPSHOT is read by nothing). Readiness itself
-# is spira-claim's subject, tested there; here a stub first on PATH answers bulk-ready-by-fayth
+# is spira-claim's subject, tested there; here a stub first on PATH answers bulk-ready-by-rune
 # from a fixture file and hands every other verb to the real spira-claim. The watchtower's probe
 # sources $SPIRA_HOME/lib.sh, so the fixture home gets the real one.
 printf '. "%s/lib.sh"\n' "$HERE" > "$IWR_HOME/lib.sh"
@@ -381,7 +381,7 @@ IWR_BIN="$TMP/iwr-bin"; mkdir -p "$IWR_BIN"
 _iwr_real_claim="$(command -v spira-claim)"
 cat > "$IWR_BIN/spira-claim" <<STUB
 #!/usr/bin/env bash
-[ "\${1:-}" = bulk-ready-by-fayth ] && { cat "\$IWR_READY" 2>/dev/null; exit 0; }
+[ "\${1:-}" = bulk-ready-by-rune ] && { cat "\$IWR_READY" 2>/dev/null; exit 0; }
 exec "$_iwr_real_claim" "\$@"
 STUB
 chmod +x "$IWR_BIN/spira-claim"
@@ -390,7 +390,7 @@ printf 'builder 1\n' > "$iwr_ready_nonempty"
 iwr_ready_empty="$TMP/iwr-ready-empty.txt"
 : > "$iwr_ready_empty"
 
-# Five idle summons of a fayth that has ready work is the escalation; the other cases are
+# Five idle summons of a rune that has ready work is the escalation; the other cases are
 # collect::tests.
 fresh
 : > "$TMP/run/aeon-ledger.log"
@@ -401,7 +401,7 @@ rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
 wt_file_multi SPIRA_HOME="$IWR_HOME" PATH="$IWR_BIN:$PATH" IWR_READY="$iwr_ready_nonempty"
 subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
 want "5 idles + ready work fires the idle-while-ready escalation" "IDLE-WHILE-READY:" "$subjects"
-want "it names the fayth" "builder" "$subjects"
+want "it names the rune" "builder" "$subjects"
 
 echo
 tl_summary

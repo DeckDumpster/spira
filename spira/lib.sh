@@ -1,6 +1,6 @@
 # lib.sh — shared helpers for the Spira harness. Sourced, never executed.
 #
-# Spira runs personas as AEONS: summoned from a FAYTH (a persona definition), they claim
+# Spira runs personas as AEONS: summoned from a RUNE (a persona definition), they claim
 # one bead with a lease, work it, close or fail it, and exit. Nothing is long-lived except
 # the systemd timers, because a session that dies takes its state with it — the scar behind
 # cockpit-ensure.timer — while a lease is recovered by whoever runs `bd reclaim` next.
@@ -32,19 +32,19 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # batcher-cut already read. The bash file itself is left on disk, unsourced: dozens of
 # install/lib fixtures still `cp`/`ln -s` it alongside lib.sh/conf.sh from before this
 # change, and none of them need editing since nothing reads the copy either.
-# FAYTH SHIMS NOW EXEC spira-config (wave 4.22, sp-r5zd2: fayth_get and friends below are
-# one-line shims onto `spira-config fayth ...`). A `.fayth` file is sourced inside THAT
+# RUNE SHIMS NOW EXEC spira-config (wave 4.22, sp-r5zd2: rune_get and friends below are
+# one-line shims onto `spira-config rune ...`). A `.rune` file is sourced inside THAT
 # binary's own subprocess, which inherits only the real process environment — not this
 # shell's unexported variables, the way the old in-shell `( subshell )` did.
 #
 # THE EXPORT THIS COMMENT ONCE DESCRIBED IS RETIRED (wave 4.9, sp-k80sa): this file used to
 # `export SPIRA_CZAR_LABEL SPIRA_GROOMER_LABEL SPIRA_MIMIR_LABEL
 # SPIRA_BATCH_JUDGEMENT_LABEL SPIRA_HOME_REPO` here, the same narrow re-export
-# spira/bead.sh:49 and rule.sh:50 carried for the same reason — a `.fayth`'s FAYTH_LABELS
-# line references these by parameter expansion (grepped: spira/chamber/*.fayth), and the
-# `spira-config fayth` subprocess that sources it needs them in ITS OWN environment, not
-# this shell's. `spira-config/src/chamber.rs`'s `fayth_get` now resolves all five itself —
-# `fayth_label_overlay` calls `spira_config::resolve::resolve_for_process` in-process and
+# spira/bead.sh:49 and rule.sh:50 carried for the same reason — a `.rune`'s RUNE_LABELS
+# line references these by parameter expansion (grepped: spira/runes/*.rune), and the
+# `spira-config rune` subprocess that sources it needs them in ITS OWN environment, not
+# this shell's. `spira-config/src/runes.rs`'s `rune_get` now resolves all five itself —
+# `rune_label_overlay` calls `spira_config::resolve::resolve_for_process` in-process and
 # sets them explicitly on the sourcing subshell's `Command` — so this shell no longer needs
 # to carry them across the exec boundary at all. An unexported key here is no longer a trap:
 # the resolution lives where the sourcing happens, not in whichever caller sourced lib.sh.
@@ -62,7 +62,7 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # subprocess call away. `spira-lint`'s `lib-sh-shims` rule enforces this mechanically: a
 # function here that is not a shim fails the gate unless it is named, with why, in
 # `spira-lint/lib-sh-shims-allow` — today that is `host_cores`; `ready_raw_args`/
-# `ready_count` (and the bare `READY_ARGS` array); `fayth_free`; aeon.sh's own bead-machine
+# `ready_count` (and the bare `READY_ARGS` array); `rune_free`; aeon.sh's own bead-machine
 # seam (`lc_bead_row` through `park_unmapped`, row I's "aeon half"); `spira_status_seam`/`spira_bead_status`/`spira_db_reachable`/`_tsd_slots_sample`, each
 # with a live bash caller a Rust port has not yet replaced; and conf.sh's own locator
 # family, which cannot shim onto `spira-config` because it is what finds `spira-config`'s
@@ -112,7 +112,7 @@ mkdir -p "$SPIRA_RUN"
 # `spira-config repo ...` shell-out), so the binary needs these five in its OWN environment —
 # `command bdq` only inherits what this shim threads through explicitly, the same shape
 # `_spira_config_repo` above already uses. Every other value `bdq` reads (SPIRA_DB, SPIRA_BD,
-# SPIRA_ASK_LABEL, SPIRA_RUN) is already on conf.sh's own export list; SPIRA_FAYTH/
+# SPIRA_ASK_LABEL, SPIRA_RUN) is already on conf.sh's own export list; SPIRA_RUNE/
 # SPIRA_CZAR_CLASS/SPIRA_CZAR_TRIGGER_BEAD/SPIRA_BDJSON_FIXTURE/BD_TIMEOUT/
 # SPIRA_BDQ_CONN_RETRIES/SOP_APPLIED_TRACE* are never conf.sh keys at all — set (if at all) by
 # whatever already-exported environment spawned this shell — so none of those need
@@ -212,9 +212,9 @@ json_count() { command bdq __json_count; }           # stdin: JSON; stdout: an i
 # / aeon-count / aeons-live-total / aeons-live-lanes`; the logic lives in
 # strand/src/probe.rs, and this file keeps the names so bash sourcers (hold.sh) need no change.
 #
-# aeons_live_lanes ALONE threads SPIRA_HOME/SPIRA_FAYTHS through explicitly: conf.sh
+# aeons_live_lanes ALONE threads SPIRA_HOME/SPIRA_RUNES through explicitly: conf.sh
 # deliberately never exports either (a fact about this one copy of the harness, not
-# configuration — see _spira_config_fayth's own comment), so a bare exec would see neither
+# configuration — see _spira_config_rune's own comment), so a bare exec would see neither
 # and silently count zero lane aeons forever, the exact shape of sp-nki5w's scar. The other
 # three need only SPIRA_RUN/SPIRA_SUMMON/SPIRA_SYSTEMCTL, all already exported.
 # --------------------------------------------------------------------------------------
@@ -222,7 +222,7 @@ aeon_alive() {           # aeon_alive <pidfile> -> 0 if the identity's lease is 
     strand aeon-alive "$1"
 }
 
-aeon_count() {           # aeon_count <fayth> [exclude-unit] -> live aeons of that persona
+aeon_count() {           # aeon_count <rune> [exclude-unit] -> live aeons of that persona
     strand aeon-count "$@"
 }
 
@@ -230,39 +230,39 @@ aeons_live_total() {     # how many aeons exist right now, across every persona 
     strand aeons-live-total
 }
 
-aeons_live_lanes() {     # how many lane aeons exist right now, across all lane fayths
-    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_FAYTHS="${SPIRA_FAYTHS:-}" strand aeons-live-lanes
+aeons_live_lanes() {     # how many lane aeons exist right now, across all lane runes
+    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_RUNES="${SPIRA_RUNES:-}" strand aeons-live-lanes
 }
 
 # --------------------------------------------------------------------------------------
-# THE CHAMBER. A fayth carries FAYTH_LABELS / FAYTH_EXCLUDE_LABELS precisely so that its
+# THE RUNES. A rune carries RUNE_LABELS / RUNE_EXCLUDE_LABELS precisely so that its
 # partition of the graph is ITS OWN, and every question the harness asks about a persona
 # must be asked through that persona's own predicate. Asking one predicate on behalf of all
 # of them is not a rounding error, it is an unreachable persona: sentinel.sh CHECK 7 gated
 # every summon on a single `--label spira,plan` count, so Ops could only ever wake when the
-# BUILDER had work — exactly backwards for an on-call role, and ops.fayth shipped complete
+# BUILDER had work — exactly backwards for an on-call role, and ops.rune shipped complete
 # and inert, with a correct predicate nothing ever evaluated.
 #
 # The list of personas is likewise DISCOVERED, never hardcoded. A default of `builder`
 # meant a persona that landed was not a persona that ran, and nothing said so; enumerating
-# the chamber makes installing a fayth the whole of installing a persona.
+# the runes makes installing a rune the whole of installing a persona.
 # --------------------------------------------------------------------------------------
-# fayth_names, spira_fayths and its task/lane splits, fayth_get, fayth_partitions,
-# fayths_for_labels and persona_model (below) are SHIMS onto `spira-config fayth ...`
-# (wave 4.22, sp-r5zd2: the chamber registry's home is spira-config now — the chamber IS
-# config). The logic, including the leading-space quirk `spira_fayths` can carry when
-# there are no fixed fayths, lives in spira-config/src/chamber.rs; this file keeps the
+# rune_names, spira_runes and its task/lane splits, rune_get, rune_partitions,
+# runes_for_labels and persona_model (below) are SHIMS onto `spira-config rune ...`
+# (wave 4.22, sp-r5zd2: the runes registry's home is spira-config now — the runes IS
+# config). The logic, including the leading-space quirk `spira_runes` can carry when
+# there are no fixed runes, lives in spira-config/src/runes.rs; this file keeps the
 # names so the ~50 bash sourcers that call them need no change.
-fayth_names() {          # every persona defined in the chamber, one per line
-    _spira_config_fayth names
+rune_names() {          # every persona defined in the runes, one per line
+    _spira_config_rune names
 }
 
-spira_fayths() {         # the personas this harness runs, space separated, IN PRIORITY ORDER
-    _spira_config_fayth roster
+spira_runes() {         # the personas this harness runs, space separated, IN PRIORITY ORDER
+    _spira_config_rune roster
 }
 
-# spira_task_fayths -> the personas the sentinel's pool summons: everything that is not a
-# party member and not a lane fayth.
+# spira_task_runes -> the personas the sentinel's pool summons: everything that is not a
+# party member and not a lane rune.
 #
 # EVERY OTHER USE OF THE ROSTER KEEPS THEM. A party member's beads must still be reaped when
 # its lease dies, its partition still swept for stalled work, and its closed beads still
@@ -270,49 +270,49 @@ spira_fayths() {         # the personas this harness runs, space separated, IN P
 # and the fix was to ask every persona's own predicate. Narrowing THAT would restore the bug
 # by another door. This narrows only who the pool summons.
 #
-# FAYTH_LANE is the declared form; FAYTH_ROLE=party is preserved as a backward-compatible
-# alias so an operator's custom fayth still works after upgrading. Both say the same thing:
+# RUNE_LANE is the declared form; RUNE_ROLE=party is preserved as a backward-compatible
+# alias so an operator's custom rune still works after upgrading. Both say the same thing:
 # this persona is not drawn from SPIRA_MAX_AEONS.
-spira_task_fayths() {
-    _spira_config_fayth task
+spira_task_runes() {
+    _spira_config_rune task
 }
 
-# spira_lane_fayths -> the personas that belong to a declared lane (FAYTH_LANE set).
+# spira_lane_runes -> the personas that belong to a declared lane (RUNE_LANE set).
 #
-# A lane fayth draws from its own FAYTH_MAX_CONCURRENT rather than from SPIRA_MAX_AEONS,
-# so the pool can be fully occupied by builders and a lane fayth still has room. The
-# sentinel's CHECK 7 handles lane fayths in a separate loop after the task pool, calling
-# summon_fayth without a pool argument so the pool never clamps a lane fayth's capacity.
+# A lane rune draws from its own RUNE_MAX_CONCURRENT rather than from SPIRA_MAX_AEONS,
+# so the pool can be fully occupied by builders and a lane rune still has room. The
+# sentinel's CHECK 7 handles lane runes in a separate loop after the task pool, calling
+# summon_rune without a pool argument so the pool never clamps a lane rune's capacity.
 #
 # THE NAME MUST APPEAR IN SPIRA_LANES for the lane to be declared, but that is a
-# documentation and validation concern — a fayth that names an undeclared lane still
-# functions, because the mechanism (FAYTH_LANE present → not a task fayth) does not
+# documentation and validation concern — a rune that names an undeclared lane still
+# functions, because the mechanism (RUNE_LANE present → not a task rune) does not
 # require the name to be on the list.
-spira_lane_fayths() {
-    _spira_config_fayth lane
+spira_lane_runes() {
+    _spira_config_rune lane
 }
 
-# persona_model <fayth> [default] -> the model this persona launches under.
+# persona_model <rune> [default] -> the model this persona launches under.
 #
 # THE ONE RESOLVER (sp-z134z, sp-zs04v.4): every launch path calls this rather than each
-# reading a model out of its own copy of the fayth. Reads persona.<fayth>.model out of
+# reading a model out of its own copy of the rune. Reads persona.<rune>.model out of
 # spira.toml through spira-config — the operator's override surface, changeable without a
-# change to main — falling back to a built-in default. NOT a fallback to the fayth's own
-# FAYTH_MODEL: that was the file-scraping this resolver replaces, so a persona with no
-# [persona.<name>] table launches under the bare built-in default, not its fayth's
-# declaration (conf.sh's spira_toml_resolve seeds that table from the fayth on first read,
+# change to main — falling back to a built-in default. NOT a fallback to the rune's own
+# RUNE_MODEL: that was the file-scraping this resolver replaces, so a persona with no
+# [persona.<name>] table launches under the bare built-in default, not its rune's
+# declaration (conf.sh's spira_toml_resolve seeds that table from the rune on first read,
 # so the declared value is not lost — see its own comment for the production-safety case).
 #
 # CALLS spira_toml_resolve() FRESH, not $SPIRA_TOML_FILE cached at conf.sh-sourcing time —
 # the same staleness fix repo_field/repo_names carry (sp-zs04v.3): a long-lived process
-# (cockpit, a sweep) must see a fayth edited after it started, and spira_toml_resolve's own
+# (cockpit, a sweep) must see a rune edited after it started, and spira_toml_resolve's own
 # mtime check keeps a call that finds nothing stale cheap.
 persona_model() {
-    _spira_config_fayth model "$1" "${2:-}"
+    _spira_config_rune model "$1" "${2:-}"
 }
 
-fayth_get() {            # fayth_get <fayth> <VAR> [default] -> one field of a fayth
-    _spira_config_fayth get "$1" "$2" "${3:-}"
+rune_get() {            # rune_get <rune> <VAR> [default] -> one field of a rune
+    _spira_config_rune get "$1" "$2" "${3:-}"
 }
 
 # READY_ARGS — the ONE definition of "a bead an aeon can take". Everything that counts
@@ -345,7 +345,7 @@ fayth_get() {            # fayth_get <fayth> <VAR> [default] -> one field of a f
 # other repositories out of every count, claim and strand report. An empty key means the
 # operator has explicitly disabled scope restriction; the ready set is then unrestricted,
 # which is the correct behaviour for a fleet with no scope boundary. The same convention
-# appears in fayth_scope_check (lib.sh) and orphan_claims.
+# appears in rune_scope_check (lib.sh) and orphan_claims.
 #
 # detect_unclaimable_ready intentionally does NOT use READY_ARGS; it reads the full ready
 # set (no scope filter) so that beads missing the scope label are seen and reported as
@@ -355,7 +355,7 @@ fayth_get() {            # fayth_get <fayth> <VAR> [default] -> one field of a f
 # and computing them through a subprocess at source time corrupted the aeon's seam snapshot.
 # On the Rust side the one constant is `spira_claim::READY_ARGS_BASE`. Neither decides what
 # is ready (the lifecycle machine is the only mode, sp-v62vn): spira-claim's counts and an aeon's ready set come from
-# the lifecycle machine's rows (spira-claim `ready-count`, `fayth-ready [--json]`).
+# the lifecycle machine's rows (spira-claim `ready-count`, `rune-ready [--json]`).
 
 ready_raw_args() {
     local args=(ready --limit 0 --exclude-type epic,event -u)
@@ -372,8 +372,8 @@ ready_count() {
 }
 
 # `_spira_claim`: the exec-boundary shim for the rest of family F (epic_parent_lookup
-# through bulk_ready_by_fayth, plus ready_shared_exclude) — same pattern
-# `_spira_config_fayth`/`_spira_config_repo` use. `SPIRA_QUEUE_WAIT_LABEL`/
+# through bulk_ready_by_rune, plus ready_shared_exclude) — same pattern
+# `_spira_config_rune`/`_spira_config_repo` use. `SPIRA_QUEUE_WAIT_LABEL`/
 # `SPIRA_OPEN_CHILDREN_LABEL` are threaded explicitly because conf.sh never exports them
 # (the exec-boundary trap); `SPIRA_NO_LOOP_LABEL` is exported but threaded anyway for
 # defence in depth. `SPIRA_SCOPE_LABEL` is threaded too: it is an unexported shell var for callers that source
@@ -381,7 +381,7 @@ ready_count() {
 # `SPIRA_SUBMITTED_LABEL` need no entry here: the first two are resolved by spira-claim
 # itself from spira.toml, and the last is exported.
 _spira_claim() {
-    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_FAYTHS="${SPIRA_FAYTHS:-}" \
+    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_RUNES="${SPIRA_RUNES:-}" \
     SPIRA_NO_LOOP_LABEL="${SPIRA_NO_LOOP_LABEL:-}" SPIRA_QUEUE_WAIT_LABEL="${SPIRA_QUEUE_WAIT_LABEL:-}" \
     SPIRA_OPEN_CHILDREN_LABEL="${SPIRA_OPEN_CHILDREN_LABEL:-}" \
     SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" \
@@ -402,15 +402,15 @@ epic_rank_rows() {
     _rsf="$(mktemp)" || { rm -f "$_lkf"; return 1; }
     printf '%s' "$2" > "$_lkf"
     printf '%s' "${3:-}" > "$_rsf"
-    printf '%s' "$1" | _spira_claim select --fayth "${FAYTH:-any}" --epics "$_lkf" --resumable "$_rsf"
+    printf '%s' "$1" | _spira_claim select --rune "${RUNE:-any}" --epics "$_lkf" --resumable "$_rsf"
     _rc=$?
     rm -f "$_lkf" "$_rsf"
     return $_rc
 }
 
-# claim_retry, fayth_exclude, fayth_ready, bulk_ready_by_fayth, ready_shared_exclude ->
+# claim_retry, rune_exclude, rune_ready, bulk_ready_by_rune, ready_shared_exclude ->
 # moved to spira-claim (wave 4.25, sp-obhv6). `ready_shared_exclude`'s only caller besides
-# `fayth_exclude` is test-dispatch-open-children.sh, which calls it directly — kept as its
+# `rune_exclude` is test-dispatch-open-children.sh, which calls it directly — kept as its
 # own shim (onto `shared-exclude`, spira-claim/src/ready.rs `shared_exclude4`) rather than
 # deleted. `express_ready_in_task_pool` has had no live caller since sentinel.sh (the only
 # thing that ever called it) was retired for the Rust sentinel crate — deleted outright
@@ -419,16 +419,16 @@ claim_retry() {
     _spira_claim claim-retry "$@"
 }
 
-fayth_exclude() {        # fayth_exclude <fayth> -> comma-separated exclusions
-    _spira_claim fayth-exclude "$1" "${2:-}"
+rune_exclude() {        # rune_exclude <rune> -> comma-separated exclusions
+    _spira_claim rune-exclude "$1" "${2:-}"
 }
 
-fayth_ready() {
-    _spira_claim fayth-ready "$1"
+rune_ready() {
+    _spira_claim rune-ready "$1"
 }
 
-bulk_ready_by_fayth() {
-    _spira_claim bulk-ready-by-fayth
+bulk_ready_by_rune() {
+    _spira_claim bulk-ready-by-rune
 }
 
 ready_shared_exclude() {
@@ -444,7 +444,7 @@ ready_shared_exclude() {
 # `ck7_pool_subtracts_task_live_and_floors_at_zero`,
 # `ck7_throttled_is_the_stamp_unless_the_override_pins_it_clear` and
 # `ck7_fill_cap_stops_on_either_the_pool_or_the_per_persona_cap` for the same cases
-# test-watchtower-throttle.sh/test-express-lane.sh/test-summon-fayth.sh used to assert
+# test-watchtower-throttle.sh/test-express-lane.sh/test-summon-rune.sh used to assert
 # directly against the bash originals.
 
 # mark_queue_waiters / close_landed_queue_waiters — apply/remove SPIRA_QUEUE_WAIT_LABEL on
@@ -534,7 +534,7 @@ lc_event_bead() {
 # through the stale-lease reaper's HolderDead, not through the next claimant. Also refused:
 # DepthExceeded, when stack-depth exceeds stack-max-depth. The trailing three args are the
 # caller's own stack proposal, forwarded as given; omitted, an unstacked claim.
-# The seventh arg is the claiming persona (fayth), recorded on the row; omitted, NULL.
+# The seventh arg is the claiming persona (rune), recorded on the row; omitted, NULL.
 #
 # An applied claim appends the `claimed` fact the attempt counters fold.
 lc_claim_bead() {
@@ -598,9 +598,9 @@ lc_bead_verified() {
 # <me> still holds it — a bead reaped and handed to another aeon in between keeps its new
 # holder — and writes nothing to bd, whose assignee nobody reads.
 #
-# THE NAME IS THE AEON'S, NOT THE FAYTH'S. aeon.sh claims under BEADS_ACTOR="aeon-$AEON",
+# THE NAME IS THE AEON'S, NOT THE RUNE'S. aeon.sh claims under BEADS_ACTOR="aeon-$AEON",
 # the per-instance name — `aeon-mindy`, not `aeon-builder`. Release sites that derived the
-# actor a second time as "aeon-$FAYTH" compared against a string no bead has ever carried:
+# actor a second time as "aeon-$RUNE" compared against a string no bead has ever carried:
 # bd answered "assignee mismatch", exited 1 into >/dev/null, and changed nothing, so every
 # aeon that ended without closing left its name standing and the next `bd ready --claim`
 # skipped that bead forever. Deriving the actor twice is what let the two disagree, which is
@@ -615,12 +615,12 @@ release_own_claim() {
 #
 # PARK, NOT RELEASE. release_own_claim alone puts the bead back on the ready queue, where
 # the sentinel re-summons an aeon within two minutes — an infinite loop burning the pool.
-# The ask hold makes the machine leave it out of every fayth's claimable set, so the
+# The ask hold makes the machine leave it out of every rune's claimable set, so the
 # bead sits open but unclaimed until a human corrects the label or the repo-map. Scar:
 # sp-nlhy accumulated four identical notes, one per summon, before a keyboard session
 # fixed the label by hand. (sp-4l0d)
 # overseer keeps the bead visible in the decisions pane; without it the bead is excluded
-# from every fayth predicate and invisible to the operator.
+# from every rune predicate and invisible to the operator.
 park_unmapped() {
     local id="$1" repo_name="$2"
     local row state
@@ -635,7 +635,7 @@ park_unmapped() {
     release_own_claim "$id"
 }
 
-# fayth_free <fayth> [pool-remaining] [exclude-unit] -> free concurrency slots, never negative.
+# rune_free <rune> [pool-remaining] [exclude-unit] -> free concurrency slots, never negative.
 # exclude-unit is passed straight through to aeon_count: a live aeon asking its own capacity
 # question must not count its own unit (sp-0hnm6).
 #
@@ -649,21 +649,21 @@ park_unmapped() {
 # fight and dismissed after it. Ops is Yuna — persistent, always present, not summoned for a
 # task. A builder is Ifrit — summoned onto one bead, and gone when it is done.
 #
-#   PARTY MEMBERS (FAYTH_ROLE=party) — the tank and the healer. They are NOT drawn from this
+#   PARTY MEMBERS (RUNE_ROLE=party) — the tank and the healer. They are NOT drawn from this
 #   pool, because they are not task-specific work: they are persistent roles that are always
 #   present, with their own summoner (Ops has spira-ops.timer). Ops is the healer. Keeping it
 #   out of the pool is what actually guarantees it a place — a reserved slot inside a shared
 #   pool is still a slot somebody has to release, and builders hold theirs for ~10 minutes (p50 9.4 min, p90 18.6 min measured over 28 runs).
 #
-#   TASK FAYTHS (the default) — summoned for one bead and gone. This pool is theirs alone.
-#   FAYTH_ELASTIC means "no number of your own, take what is left": builders are the DPS, and
+#   TASK RUNES (the default) — summoned for one bead and gone. This pool is theirs alone.
+#   RUNE_ELASTIC means "no number of your own, take what is left": builders are the DPS, and
 #   "as much as I can" is exactly the right cap for them.
 #
-# WHERE THE METAPHOR DIVERGES, deliberately: in the game one fayth yields one aeon, so a
-# party of three builders would need three statues in the chamber. Here a fayth is the CLASS
+# WHERE THE METAPHOR DIVERGES, deliberately: in the game one rune yields one aeon, so a
+# party of three builders would need three statues in the runes. Here a rune is the CLASS
 # — a persona definition — and an aeon one summoned instance of it, which is what lets
-# FAYTH_MAX_CONCURRENT exist at all. Lore-exact would buy nothing but three near-identical
-# .fayth files to keep in step.
+# RUNE_MAX_CONCURRENT exist at all. Lore-exact would buy nothing but three near-identical
+# .rune files to keep in step.
 #
 # A PARTY MEMBER SHOULD ALWAYS BE PRESENT, which is the part that is not in this file: Ops
 # is only summoned when an incident bead is waiting, so a quiet hour means the healer is not
@@ -675,10 +675,10 @@ park_unmapped() {
 # them. Ops could take one and the builder three whether or not the box could carry four,
 # and an on-call persona had no more claim on a slot than a feature worker.
 #
-# The order in SPIRA_FAYTHS IS the priority. Each persona takes up to its own
-# FAYTH_MAX_CONCURRENT from what the ones before it left, so the first one named can never be
+# The order in SPIRA_RUNES IS the priority. Each persona takes up to its own
+# RUNE_MAX_CONCURRENT from what the ones before it left, so the first one named can never be
 # crowded out by work that is merely plentiful — which is the whole point of putting Ops
-# there. A persona declaring FAYTH_ELASTIC=1 ignores its own cap and takes the remainder,
+# there. A persona declaring RUNE_ELASTIC=1 ignores its own cap and takes the remainder,
 # which is what "builders scale to fill" means; it belongs last.
 #
 # WHY THERE IS NO RESERVATION MECHANISM. The first version of this gave Ops a reserved slot
@@ -691,24 +691,24 @@ park_unmapped() {
 #
 # DELIBERATELY NOT SHIMMED (wave 4.23, sp-0ffox), unlike aeon_count/aeons_live_total above.
 # strand/src/probe.rs carries its own Rust copy of this same arithmetic for any FUTURE
-# in-process Rust caller, but THIS body stays bash: it calls fayth_get/aeon_count BY NAME,
-# and six suites (test-summon-fayth.sh, test-aeon-elastic-concurrency.sh, test-fayth.sh,
+# in-process Rust caller, but THIS body stays bash: it calls rune_get/aeon_count BY NAME,
+# and six suites (test-summon-rune.sh, test-aeon-elastic-concurrency.sh, test-rune.sh,
 # test-builder-qa-proposed.sh, test-czar-partition.sh, test-dependents.sh) redefine those
-# bash functions after sourcing this file, to control fayth_free's inputs without a real
-# process table. Reducing fayth_free itself to a one-line exec shim would move that
+# bash functions after sourcing this file, to control rune_free's inputs without a real
+# process table. Reducing rune_free itself to a one-line exec shim would move that
 # arithmetic into a separate process where a bash-level override of aeon_count can never
 # reach it again (the EXEC-BOUNDARY TRAP) — breaking every one of those suites for no
-# behavior change in production (aeon_count below is itself already a shim, so fayth_free
+# behavior change in production (aeon_count below is itself already a shim, so rune_free
 # calling it by name already reaches strand exactly as a one-line shim would).
-fayth_free() {           # fayth_free <fayth> [pool-remaining] [exclude-unit]
+rune_free() {           # rune_free <rune> [pool-remaining] [exclude-unit]
     local f="$1" pool="${2:-}" exclude="${3:-}" max have free
-    max="$(fayth_get "$f" FAYTH_MAX_CONCURRENT 1)"; max="${max:-1}"
+    max="$(rune_get "$f" RUNE_MAX_CONCURRENT 1)"; max="${max:-1}"
     # ELASTIC: the remainder of the pool, not this persona's own number. With no pool given
     # there is no remainder to take, so it falls back to its declared cap rather than to
     # unbounded — an elastic persona on a host that never enforced a pool must not become
     # the one that discovers the box's limits.
     local is_remainder=0
-    if [ "$(fayth_get "$f" FAYTH_ELASTIC 0)" = 1 ] && [ -n "$pool" ]; then
+    if [ "$(rune_get "$f" RUNE_ELASTIC 0)" = 1 ] && [ -n "$pool" ]; then
         max="$pool"
         is_remainder=1
     fi
@@ -728,7 +728,7 @@ fayth_free() {           # fayth_free <fayth> [pool-remaining] [exclude-unit]
     printf '%d' "$free"
 }
 
-# fayth_partitions -> every partition this host watches, one "<labels>\t<exclude-labels>" a line.
+# rune_partitions -> every partition this host watches, one "<labels>\t<exclude-labels>" a line.
 #
 # THE ROSTER ANSWERS "WHOSE WORK IS THERE" FOR EVERY CHECK, not only for summoning. Reaping
 # a dead lease, reporting stalled work and verifying that a closed bead actually landed were
@@ -736,36 +736,36 @@ fayth_free() {           # fayth_free <fayth> [pool-remaining] [exclude-unit]
 # arriving by three more doors. An aeon of any other persona that died left its bead
 # in_progress with no reaper looking at it, its stall was never reported as stalled, and its
 # bead could close without landing and pass the sweep that exists to catch exactly that. The
-# fix is the same one fayth_ready made: ask each persona's OWN predicate.
+# fix is the same one rune_ready made: ask each persona's OWN predicate.
 #
 # DEDUPLICATED, because two personas may legitimately share a partition and a sweep run twice
 # over the same labels does the same work twice and counts it twice.
 #
-# EMPTY WHEN THE CHAMBER IS EMPTY, and callers must say so rather than fall back to a
+# EMPTY WHEN THE RUNES IS EMPTY, and callers must say so rather than fall back to a
 # partition name: a fallback would restore the hardcoded constant by another route, and a
 # sweep that silently watches nothing is indistinguishable from one that found nothing
 # (law-absence-needs-a-positive-control).
-fayth_partitions() {
-    _spira_config_fayth partitions
+rune_partitions() {
+    _spira_config_rune partitions
     return 0
 }
 
-fayths_for_labels() {    # fayths_for_labels <labels> -> personas whose partition IS <labels>
-    _spira_config_fayth for-labels "$1"
+runes_for_labels() {    # runes_for_labels <labels> -> personas whose partition IS <labels>
+    _spira_config_rune for-labels "$1"
     return 0
 }
 
-# summon_fayth <fayth> [pool-remaining] [require-express] [reuse-ready] -> 0 if an aeon was
+# summon_rune <rune> [pool-remaining] [require-express] [reuse-ready] -> 0 if an aeon was
 # started, 1 otherwise.
 #
 # A non-empty require-express is passed to the aeon as SPIRA_REQUIRE_EXPRESS, which narrows
 # its ready set to beads whose lifecycle row is express. Set it only when the slot itself is
 # restricted — an express grant, say. A normal summon leaves it unset and claims under the
-# fayth's own predicate exactly as before.
+# rune's own predicate exactly as before.
 #
-# reuse-ready=1 skips the fayth_ready bd round trip and uses SUMMON_FAYTH_CACHED_READY
-# (set by the previous call, in this same shell, for the SAME fayth) instead — a caller
-# looping repeated summons for one fayth in one pass already knows the count from its last
+# reuse-ready=1 skips the rune_ready bd round trip and uses SUMMON_RUNE_CACHED_READY
+# (set by the previous call, in this same shell, for the SAME rune) instead — a caller
+# looping repeated summons for one rune in one pass already knows the count from its last
 # call, decremented by exactly the summon it just made; asking bd again for the same
 # partition, once per attempt, was the cost CHECK7's fill loop paid for nothing (sp-994y9).
 # Every other caller omits it, defaulting to 0: always a live query, exactly today's
@@ -775,7 +775,7 @@ fayths_for_labels() {    # fayths_for_labels <labels> -> personas whose partitio
 # for "summoned" would swallow the log lines below with it, and the sentinel's stdout IS the
 # sentinel log — so the one pass that did something would be the one that explained itself
 # least.
-# world_gate <fayth> <log-prefix> -> 0 if summons are permitted, 1 if halted or draining.
+# world_gate <rune> <log-prefix> -> 0 if summons are permitted, 1 if halted or draining.
 # Extracted so a second caller can share the exact check rather than a second copy of it.
 # aeon --escape calls this too (sp-uyw4n, sp-2w2wu; escape.sh before it, retired sp-zpaq0):
 # it reaches around a broken scheduler, not around a halt or drain the operator asked for.
@@ -798,28 +798,28 @@ fayths_for_labels() {    # fayths_for_labels <labels> -> personas whose partitio
 # LIFTING IT HERE IS LOUD, NEVER SILENT — a quiet lift would hide the forgotten resume,
 # which is the defect worth seeing. A STAMP WITH NO `expires` LINE expires at stamp-mtime +
 # TTL, so a drain written by the older world.sh cannot wedge the loop forever either.
-# world_gate/summon_refill_argv/summon_argv/summon_fayth/_ck7_summon_body/ck7_summon_pass/
+# world_gate/summon_refill_argv/summon_argv/summon_rune/_ck7_summon_body/ck7_summon_pass/
 # named_unit_stop RETIRED INTO sentinel (wave 4.27, family G, sp-gzmd2): the whole summon
 # loop — world (halt/drain) gate, the account's capacity, the fleet ceiling, the elastic
 # and inverted last-slot reservations, the lane-then-pool fill loop, and the flock that
 # serializes it against every other caller — now runs in-process in
-# sentinel/src/summon.rs (`Sentinel::world_gate`/`summon_fayth`/`ck7_summon_body`/
+# sentinel/src/summon.rs (`Sentinel::world_gate`/`summon_rune`/`ck7_summon_body`/
 # `ck7_summon_pass`), under a real OS flock on the SAME `$SPIRA_RUN/summon.lock` rather
 # than a bash seam under one. These shims exist only for `aeon --escape`'s own seam
 # (world_gate, summon_argv — still bash, out of this bead's scope) and
-# `acceptance-local.sh` (named_unit_stop); `summon_fayth` itself has no bash caller left
+# `acceptance-local.sh` (named_unit_stop); `summon_rune` itself has no bash caller left
 # but czar-pass, which now calls `sentinel --summon` directly, with no lib.sh sourcing at
 # all. `_ck7_summon_body`'s own unlocked-race test row is retired with it (wave4-
 # decomposition.md (c)8): a compiled binary offers no shell-function-by-name override to
 # stub around the lock, so the race it proved is now structurally impossible rather than
 # merely refused — see test-summon-fast-path.sh's own note where that row used to be.
-world_gate() {         # world_gate <fayth> <log-prefix> -> 0 if summons are permitted, 1 if halted or draining
+world_gate() {         # world_gate <rune> <log-prefix> -> 0 if summons are permitted, 1 if halted or draining
     sentinel --world-gate "$1" "$2"
 }
-summon_argv() {         # summon_argv <fayth> -> systemd-run property/setenv flags, one per line
+summon_argv() {         # summon_argv <rune> -> systemd-run property/setenv flags, one per line
     sentinel --summon-argv "$1"
 }
-summon_fayth() {         # summon_fayth <fayth> [pool-remaining] [require-express] -> 0 if an aeon was started, 1 otherwise
+summon_rune() {         # summon_rune <rune> [pool-remaining] [require-express] -> 0 if an aeon was started, 1 otherwise
     sentinel --summon "$1" "${2:-}" "${3:-}"
 }
 ck7_summon_pass() {
@@ -833,7 +833,7 @@ named_unit_stop() {      # named_unit_stop <systemd --user unit glob> -> stop ev
 # API CAPACITY — the account's own five-hour window, and the second unrelated thing in this
 # harness called "capacity".
 #
-# The other one: FAYTH_MAX_CONCURRENT is how many aeons may run at once. It has nothing to do
+# The other one: RUNE_MAX_CONCURRENT is how many aeons may run at once. It has nothing to do
 # with this one, which is whether the API will answer at all. The name collision is why the
 # condition went unhandled for so long — `grep capacity` returned confident, irrelevant hits.
 #
@@ -1221,7 +1221,7 @@ census_deliberate_run_sql() {   # census_deliberate_run_sql [since_epoch_s] -> t
 # each time, default 2s) moved with the query into census/src/real.rs — the one piece of
 # this family that was never pure SQL text. `CENSUS_RETRY_DELAY_S`/`SPIRA_BD`/`SPIRA_DB`
 # need no re-threading: all three are ordinary (exported-when-set) env vars, not the
-# conf.sh-withheld kind `fayth_get`'s shim has to carry across the exec boundary by hand.
+# conf.sh-withheld kind `rune_get`'s shim has to carry across the exec boundary by hand.
 census_events_run_sql() {
     census sql run-events "${1:-}"
 }
@@ -1438,7 +1438,7 @@ conflict_reopen_note() {
 # is production sat OUTSIDE the core set while the operator's own session violated it for
 # thirty-nine turns (sp-u4x). Delivered, it would still have arrived as a slug in an index.
 #
-# A fayth declares its own with FAYTH_STATUTE_CORE; unset, it gets $SPIRA_STATUTE_CORE, which
+# A rune declares its own with RUNE_STATUTE_CORE; unset, it gets $SPIRA_STATUTE_CORE, which
 # is what every persona got before this parameter existed.
 #
 # PORTED (wave 4.35, sp-kelr2, row Q): the tiering/cache/seam logic above lives in `rule`
@@ -1461,7 +1461,7 @@ render_memories() {      # render_memories <prefix-csv> [char-budget] [core-csv]
 # Split a rendered persona prompt on <!-- task --> and write system.md / task.md.
 # system_prompt_split <sysfile> <taskfile> <statutes_text> <rendered_prompt>
 # Sets SPIRA_SYSTEM_FLAG to the appropriate --*-system-prompt-file value.
-# Reads FAYTH_SYSTEM_PROMPT (replace|append, default append): replace uses
+# Reads RUNE_SYSTEM_PROMPT (replace|append, default append): replace uses
 # --system-prompt-file; append (or unset) uses --append-system-prompt-file so
 # Claude Code's coding guidance stays underneath the persona layer.
 #
@@ -1475,7 +1475,7 @@ render_memories() {      # render_memories <prefix-csv> [char-budget] [core-csv]
 system_prompt_split() {
     local sysfile="$1" taskfile="$2" statutes="$3" prompt="$4"
     rule system-prompt-split "$sysfile" "$taskfile" "$statutes" "$prompt"
-    case "${FAYTH_SYSTEM_PROMPT:-append}" in
+    case "${RUNE_SYSTEM_PROMPT:-append}" in
         replace) SPIRA_SYSTEM_FLAG="--system-prompt-file" ;;
         *)       SPIRA_SYSTEM_FLAG="--append-system-prompt-file" ;;
     esac
@@ -1486,7 +1486,7 @@ system_prompt_split() {
 # match, one id per line, deduped — EVERY EXCLUSION DROPPED (moved out of spira/attempts.sh,
 # sp-rfodk; its own header comment, verbatim: "a poisoned bead is excluded from dispatch and
 # is exactly the bead whose count most needs reading, so filtering it out here would hide
-# the evidence"). The claimable-set predicate (fayth_ready/bdq) answers a different
+# the evidence"). The claimable-set predicate (rune_ready/bdq) answers a different
 # question — what CAN be claimed right now — and applies exclusions to answer it; this
 # answers "whose is it", which a poisoned or asked-about bead still is. groomer.sh's
 # `deadlocked` and any future census over the full board read this, not the claimable set.
@@ -1504,7 +1504,7 @@ all_partition_members() {
 # with SPIRA_ASK_LABEL/overseer.
 #
 # Ported to Rust (sp-fbqsv, "wave 4.28"); see `sentinel::detect` for the full rationale
-# each of these carried (the fifteen-hour fayth:-preference strand, the unclaimable-
+# each of these carried (the fifteen-hour rune:-preference strand, the unclaimable-
 # reporting-its-own-report cycle guard, the sp-lyglx/sp-vcxmz branch-collision incidents).
 # `detect_unclaimable_ready` classifies in-process (sentinel/src/unclaimable.rs); the pure classifier
 # is also `sentinel --classify-unclaimable`, so a fixture-JSON table (test-unclaimable.sh) and
@@ -1537,17 +1537,17 @@ park_branch_collisions() {   # park_branch_collisions <detect_branch_collisions 
 #
 # FOUR CATEGORIES, each found by a different predicate:
 #
-#   unclaimable          no persona can claim it: fayth: preference does not match the
+#   unclaimable          no persona can claim it: rune: preference does not match the
 #                        partition, or the bead carries no partition label at all. The
 #                        sentinel reports every queue empty, truthfully; this names which
 #                        beads are responsible. (Reuses detect_unclaimable_ready logic.)
 #
-#   ask-no-overseer      carries SPIRA_ASK_LABEL (excluded from every fayth predicate) but
+#   ask-no-overseer      carries SPIRA_ASK_LABEL (excluded from every rune predicate) but
 #                        lacks overseer (the label the decisions pane selects on). The bead
 #                        is invisible to both the loop and to the operator — it cannot be
 #                        answered and cannot be dispatched.
 #
-#   ci-stuck             carries awaiting-ci (excluded from every fayth predicate, and from
+#   ci-stuck             carries awaiting-ci (excluded from every rune predicate, and from
 #                        the stranded-work report) but the repository's land mode is not `pr`,
 #                        so no run will ever report back. The label is a permanent hold that
 #                        no mechanism will ever clear.
@@ -1581,7 +1581,7 @@ detect_livelocked() {
 # is actually a code change, the queue starves it until a human reads the bead and moves the
 # label by hand (sp-awm1q, sp-qlcvc, sp-c1ot2, sp-18v9k — the same misroute, caught by hand
 # every time). The signal has to be one that cannot fire on a genuinely operational incident:
-# ops.fayth gives Ops no Edit or Write tool, so a commit on an incident bead's own branch is
+# ops.rune gives Ops no Edit or Write tool, so a commit on an incident bead's own branch is
 # never Ops's own work. It exists only if code was already written for this bead under some
 # other persona — which is exactly "the remaining work is a code change", fully computable,
 # with nothing left to a model's judgment.
@@ -1617,8 +1617,8 @@ detect_invalid_closed() {
 # `repo:<name>` label, the same partition every imported Gas Town bead already carries —
 # and `repo-map` says what that name means on this disk.
 #
-# It used to come from the fayth, as FAYTH_REPO, which is a constant per persona: every
-# fayth in the chamber pointed at the home checkout, so Spira could not touch any other
+# It used to come from the rune, as RUNE_REPO, which is a constant per persona: every
+# rune in the runes pointed at the home checkout, so Spira could not touch any other
 # repository on the box. Collapsing the per-repository databases into one made the cross-repo
 # DEPENDENCY expressible and left the cross-repo WORK impossible, which is most of what the
 # collapse was for. It surfaced the day the operator endorsed fixing ~37 grep -q
@@ -1655,12 +1655,12 @@ SPIRA_REPO_MAP="${SPIRA_REPO_MAP:-$SPIRA_HOME/repo-map}"
 # comment on SPIRA_REPO_DERIVED says why) — a bare `spira-config repo ...` run from a
 # function below would see none of them, so every shim threads them through explicitly
 # instead of trusting export.
-# _spira_config_fayth <verb> ... -> `spira-config fayth <verb> ...` with the two values it reads
-# passed per call. conf.sh deliberately never exports SPIRA_HOME or SPIRA_FAYTHS, and a bare
+# _spira_config_rune <verb> ... -> `spira-config rune <verb> ...` with the two values it reads
+# passed per call. conf.sh deliberately never exports SPIRA_HOME or SPIRA_RUNES, and a bare
 # exec saw neither: in production the roster came back EMPTY (sp-nki5w), which on world start
 # summons no one. Same shape as _spira_config_repo below.
-_spira_config_fayth() {
-    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_FAYTHS="${SPIRA_FAYTHS:-}" spira-config fayth "$@"
+_spira_config_rune() {
+    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_RUNES="${SPIRA_RUNES:-}" spira-config rune "$@"
 }
 
 _spira_config_repo() {

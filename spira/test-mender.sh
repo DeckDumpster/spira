@@ -4,39 +4,39 @@
 # verbs and the broker's allow table name the same set.
 #
 # tier: T1
-# covers: spira/chamber/mender.* spira/conf.d/SPIRA_MENDER_* spira/conf.d/SPIRA_LANES mender/src/* spira-lc/src/work.rs work/src/lib.rs
+# covers: spira/runes/mender.* spira/conf.d/SPIRA_MENDER_* spira/conf.d/SPIRA_LANES mender/src/* spira-lc/src/work.rs work/src/lib.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 HARNESS="$(cd "$HERE/.." && pwd -P)"
 . "$HERE/testlib.sh"
 
 echo "test-mender.sh"
-FAYTH="$HERE/chamber/mender.fayth"
-BRIEF="$HERE/chamber/mender.md"
-fayth_var() { ( set +u; . "$FAYTH" 2>/dev/null; eval "printf '%s' \"\${$1:-}\"" ); }
+RUNE="$HERE/runes/mender.rune"
+BRIEF="$HERE/runes/mender.md"
+rune_var() { ( set +u; . "$RUNE" 2>/dev/null; eval "printf '%s' \"\${$1:-}\"" ); }
 
 echo; echo "LANE: its own, outside the builder pool"
-want "the fayth is a lane" "mender" "$(fayth_var FAYTH_LANE)"
+want "the rune is a lane" "mender" "$(rune_var RUNE_LANE)"
 want "the lane is declared" "mender" "$(cat "$HERE/conf.d/SPIRA_LANES")"
-want "the ceiling is the config key, not a literal" "3" "$(SPIRA_MENDER_MAX=3 fayth_var FAYTH_MAX_CONCURRENT)"
-want "the ceiling defaults to eight" "8" "$(env -u SPIRA_MENDER_MAX bash -c 'set +u; . "$0"; printf %s "$FAYTH_MAX_CONCURRENT"' "$FAYTH")"
-want "Opus" "opus" "$(fayth_var FAYTH_MODEL)"
+want "the ceiling is the config key, not a literal" "3" "$(SPIRA_MENDER_MAX=3 rune_var RUNE_MAX_CONCURRENT)"
+want "the ceiling defaults to eight" "8" "$(env -u SPIRA_MENDER_MAX bash -c 'set +u; . "$0"; printf %s "$RUNE_MAX_CONCURRENT"' "$RUNE")"
+want "Opus" "opus" "$(rune_var RUNE_MODEL)"
 for k in SPIRA_MENDER_MAX SPIRA_MENDER_DEADLINE_SECS SPIRA_MENDER_LABEL; do
     [ -f "$HERE/conf.d/$k" ] && ok "$k is a registered key" || bad "$k is a registered key" "no spira/conf.d/$k"
 done
 want "the deadline defaults to five minutes" "SPIRA_MENDER_DEADLINE_SECS:=300" "$(cat "$HERE/conf.d/SPIRA_MENDER_DEADLINE_SECS")"
-want "the session wall outlasts the deadline" "420" "$(env -u SPIRA_MENDER_DEADLINE_SECS bash -c 'set +u; . "$0"; printf %s "$FAYTH_TIMEOUT_SECONDS"' "$FAYTH")"
-want "a pinned deadline moves the wall" "620" "$(SPIRA_MENDER_DEADLINE_SECS=500 bash -c 'set +u; . "$0"; printf %s "$FAYTH_TIMEOUT_SECONDS"' "$FAYTH")"
+want "the session wall outlasts the deadline" "420" "$(env -u SPIRA_MENDER_DEADLINE_SECS bash -c 'set +u; . "$0"; printf %s "$RUNE_TIMEOUT_SECONDS"' "$RUNE")"
+want "a pinned deadline moves the wall" "620" "$(SPIRA_MENDER_DEADLINE_SECS=500 bash -c 'set +u; . "$0"; printf %s "$RUNE_TIMEOUT_SECONDS"' "$RUNE")"
 
 echo; echo "PARTITION: the summons label alone, never plan work"
-want "the predicate reads the mender label" 'SPIRA_MENDER_LABEL' "$(grep '^FAYTH_LABELS=' "$FAYTH")"
+want "the predicate reads the mender label" 'SPIRA_MENDER_LABEL' "$(grep '^RUNE_LABELS=' "$RUNE")"
 lack() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
-lack "no plan label" 'plan' "$(grep '^FAYTH_LABELS=' "$FAYTH")"
+lack "no plan label" 'plan' "$(grep '^RUNE_LABELS=' "$RUNE")"
 
 echo; echo "INTEGRATE: the mender owns the summons kind, the builder cannot claim it"
 want "the brief carries the integrate remit" "## An integration" "$(grep -o '^## An integration' "$BRIEF")"
-want "the mender may submit a branch" "SUBMITTED" "$(fayth_var FAYTH_WORKING_EXITS | grep -o SUBMITTED)"
-lack "the integrate summons is not on the plan label" 'integrate' "$(grep '^FAYTH_LABELS=' "$HERE/chamber/builder.fayth")"
+want "the mender may submit a branch" "SUBMITTED" "$(rune_var RUNE_WORKING_EXITS | grep -o SUBMITTED)"
+lack "the integrate summons is not on the plan label" 'integrate' "$(grep '^RUNE_LABELS=' "$HERE/runes/builder.rune")"
 
 echo; echo "VERBS: brief, binary and allow table agree"
 USAGE="$(grep -o '^const USAGE: &str = "[^"]*"' "$HARNESS/mender/src/main.rs")"

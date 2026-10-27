@@ -12,8 +12,8 @@
 # lib.sh's mark_open_children) applies SPIRA_OPEN_CHILDREN_LABEL to a bead with any non-closed
 # child (from the store snapshot), the same out-of-band-label seam mark_queue_waiters
 # uses for a predicate bd cannot express as a dependency. ready_shared_exclude carries the
-# label into fayth_exclude and strand.sh's classify_one, so every "is this claimable"
-# predicate — ready_count, fayth_ready, and the aeon claim built from CLAIM_EXCLUDE — excludes
+# label into rune_exclude and strand.sh's classify_one, so every "is this claimable"
+# predicate — ready_count, rune_ready, and the aeon claim built from CLAIM_EXCLUDE — excludes
 # it without any change to the claim algorithm itself.
 #
 # WHAT THIS SUITE CHECKS.
@@ -21,11 +21,11 @@
 #      proving the defect is real before checking that the fix closes it.
 #   2. mark_open_children applies the label to a parent with two open children.
 #   3. The label is on the bead in the db.
-#   4. fayth_ready excludes the labeled parent (count drops to 0).
+#   4. rune_ready excludes the labeled parent (count drops to 0).
 #   5. Second pass is idempotent (no error, label stays).
 #   6. Closing only ONE of two children leaves the label in place — ALL children must close.
 #   7. Closing the second child and re-running mark_open_children removes the label.
-#   8. fayth_ready counts the parent again once unlabeled.
+#   8. rune_ready counts the parent again once unlabeled.
 #   9. A bead with no children is never labeled.
 #
 # defect: sp-zazkt
@@ -119,7 +119,7 @@ has   "2: mark_open_children applies $LABEL to sp-parent" \
 has   "3: label is on the bead in the db" \
       "$LABEL" "$(B label list sp-parent 2>/dev/null)"
 
-lacks "4: sp-parent no longer in the ready set (fayth_ready excludes it)" \
+lacks "4: sp-parent no longer in the ready set (rune_ready excludes it)" \
       "sp-parent" "$(ready_ids)"
 
 # =====================================================================================

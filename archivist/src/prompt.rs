@@ -1,5 +1,5 @@
 //! The archivist's own prompt templating: substituting `{{PLACEHOLDER}}` tokens into
-//! `chamber/archivist.md`, and splitting the rendered prompt into a system file and a
+//! `runes/archivist.md`, and splitting the rendered prompt into a system file and a
 //! task file on `<!-- task -->` — ported from lib.sh's `system_prompt_split` directly
 //! (not through the seam) because it is pure string manipulation with no shared state
 //! any other script reads or writes; lib.sh's own copy is untouched and still serves
@@ -16,8 +16,8 @@ pub fn substitute(template: &str, vars: &[(&str, &str)]) -> String {
 }
 
 /// Split a rendered prompt on `<!-- task -->` into `(system_file_contents,
-/// task_file_contents)`. Archivist always renders with `FAYTH_SYSTEM_PROMPT=replace`, so
-/// its system flag is always `--system-prompt-file` — unlike a `.fayth` persona, which can
+/// task_file_contents)`. Archivist always renders with `RUNE_SYSTEM_PROMPT=replace`, so
+/// its system flag is always `--system-prompt-file` — unlike a `.rune` persona, which can
 /// ask for append instead; this crate has no caller that does, so that branch is not
 /// reproduced here.
 pub fn system_prompt_split(statutes: &str, prompt: &str) -> (String, String) {

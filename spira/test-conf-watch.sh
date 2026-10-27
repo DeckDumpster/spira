@@ -49,11 +49,11 @@ wait_for_marker() {
 }
 
 run_loom() {      # run_loom <window> <marker>
-    # SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP/SPIRA_FAYTHS are registered keys (per Ryan
+    # SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP/SPIRA_RUNES are registered keys (per Ryan
     # 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML
     # through env -i, which clears it. There is no separate SPIRA_CONF env var any more;
     # loom.sh's watched path is $_TL_CONF_OVERRIDE (SPIRA_TOML's last layer).
-    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_RUNES=t
     # Back-date the override file tl_config just wrote (same trick the old CONF_CHG fixture
     # used): everything here runs well under 1s, so without this the baseline loom.sh
     # captures and the later real touch can land in the same integer mtime second and the

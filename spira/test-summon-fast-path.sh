@@ -18,8 +18,8 @@
 # B — ck7_summon_pass's summon.lock serializing two real contenders — MOVED (wave 4.27,
 #     family G, sp-gzmd2): `_ck7_summon_body`, bare and unlocked, used to be reachable as
 #     a bash function this suite could stub (aeon_count/capacity_paused/world_gate/
-#     fayth_ready/act, by name) to PROVE the unlocked race and then prove the lock
-#     removes it. `ck7_summon_pass`/`world_gate`/`summon_fayth` are now one-line shims
+#     rune_ready/act, by name) to PROVE the unlocked race and then prove the lock
+#     removes it. `ck7_summon_pass`/`world_gate`/`summon_rune` are now one-line shims
 #     onto a compiled `sentinel` process, which offers no shell-function-by-name override
 #     — the race this row used to demonstrate is now structurally impossible rather than
 #     merely refused: there is no entry point to the unlocked body left to call bare. The
@@ -55,25 +55,25 @@ _fastpath_cleanup() { testdb_drop 2>/dev/null; rm -rf "$T"; }
 trap _fastpath_cleanup EXIT
 trap '_fastpath_cleanup; trap - INT; kill -INT $$' INT
 trap '_fastpath_cleanup; trap - TERM; kill -TERM $$' TERM
-mkdir -p "$T/run" "$T/chamber" "$T/bin"
+mkdir -p "$T/run" "$T/runes" "$T/bin"
 # lib.sh sources conf.sh, which resolves every registered key straight from SPIRA_TOML
 # (inherited here — this is the main suite shell, not under env -i), so these are declared
 # through tl_config rather than export, or conf.sh's own resolve would overwrite them right
 # back to the fixture's values the moment lib.sh is sourced below.
-# SPIRA_CHAMBER too — the fixture declares a fixed, nonexistent path; nothing derives it
+# SPIRA_RUNES_DIR too — the fixture declares a fixed, nonexistent path; nothing derives it
 # from SPIRA_HOME any more (sfail round 2, pattern 6).
-tl_config SPIRA_RUN="$T/run" SPIRA_DB="$T/no-db" SPIRA_CHAMBER="$T/chamber"
+tl_config SPIRA_RUN="$T/run" SPIRA_DB="$T/no-db" SPIRA_RUNES_DIR="$T/runes"
 export SPIRA_CONF="$T/no-such.conf"
 export SPIRA_HOME="$T" PATH="$T:$PATH"
 
 # `summon_argv` (section E) is a `sentinel --summon-argv` shim now (wave 4.27, family G,
 # sp-gzmd2) — a real subprocess with SPIRA_HOME=$T, which needs a working $T/lib.sh to
-# source at its own context probe. Same one-line symlink trick test-summon-fayth.sh's own
+# source at its own context probe. Same one-line symlink trick test-summon-rune.sh's own
 # `aeon --escape` fixture uses.
 printf '. "%s/lib.sh"\n' "$HERE" > "$T/lib.sh"
 ln -s "$HERE/conf.d" "$T/conf.d"
 
-# THE AEON IS A BINARY (aeon.sh is gone): summon_fayth hands systemd-run the aeon it finds
+# THE AEON IS A BINARY (aeon.sh is gone): summon_rune hands systemd-run the aeon it finds
 # on PATH (sp-gypjk). The mock SPIRA_SUMMON never execs it.
 command -v aeon >/dev/null 2>&1 \
     || { echo "test-summon-fast-path: aeon is not on PATH" >&2; exit 1; }
@@ -113,15 +113,15 @@ printf 'spira-aeon-builder-1700000000.service\n' > "$MOCK_UNITS_FILE"
 rm -f "$SPIRA_RUN"/aeon-builder-*.pid "$SPIRA_RUN"/aeon-builder-*.lease
 is "the pidfile gap: a live unit with NO pidfile still counts as 1" "1" "$(aeon_count builder)"
 
-# PRECISION: a unit for a DIFFERENT fayth does not count toward this one.
+# PRECISION: a unit for a DIFFERENT rune does not count toward this one.
 is "precision: a builder unit does not count toward ops" "0" "$(aeon_count ops)"
 
-# Two units for the same fayth -> 2.
+# Two units for the same rune -> 2.
 printf 'spira-aeon-builder-1700000001.service\n' >> "$MOCK_UNITS_FILE"
 is "two live units -> aeon_count returns 2" "2" "$(aeon_count builder)"
 
 # SELF-EXCLUSION (sp-0hnm6): a caller's own unit must not count toward its own capacity
-# question, or the FIRST aeon of a fayth with max=1 reads "1/1 at capacity" forever.
+# question, or the FIRST aeon of a rune with max=1 reads "1/1 at capacity" forever.
 : > "$MOCK_UNITS_FILE"
 printf 'spira-aeon-builder-1700000002.service\n' > "$MOCK_UNITS_FILE"
 is "sole unit is the caller's own -> excluded, count is 0" "0" \
@@ -132,22 +132,22 @@ is "own unit excluded, one OTHER unit still counts -> 1" "1" \
 is "no exclusion given -> both units count (unaffected callers keep old behaviour)" "2" \
    "$(aeon_count builder)"
 
-# fayth_free must carry the same exclusion through to aeon_count — aeon.sh's own
-# capacity gate (aeon.sh:228) goes through fayth_free, not aeon_count directly.
-cat > "$T/chamber/onecap.fayth" <<'F'
-FAYTH_NAME=onecap
-FAYTH_LABELS="test"
-FAYTH_MAX_CONCURRENT=1
-FAYTH_HEARTBEAT_SECONDS=60
+# rune_free must carry the same exclusion through to aeon_count — aeon.sh's own
+# capacity gate (aeon.sh:228) goes through rune_free, not aeon_count directly.
+cat > "$T/runes/onecap.rune" <<'F'
+RUNE_NAME=onecap
+RUNE_LABELS="test"
+RUNE_MAX_CONCURRENT=1
+RUNE_HEARTBEAT_SECONDS=60
 F
 : > "$MOCK_UNITS_FILE"
 printf 'spira-aeon-onecap-self.service\n' > "$MOCK_UNITS_FILE"
-is "fayth_free: sole unit is caller's own -> 1 slot free, not 0" "1" \
-   "$(fayth_free onecap "" spira-aeon-onecap-self.service)"
+is "rune_free: sole unit is caller's own -> 1 slot free, not 0" "1" \
+   "$(rune_free onecap "" spira-aeon-onecap-self.service)"
 printf 'spira-aeon-onecap-other.service\n' >> "$MOCK_UNITS_FILE"
-is "fayth_free: own unit excluded, one other live -> 0 free (still capped)" "0" \
-   "$(fayth_free onecap "" spira-aeon-onecap-self.service)"
-rm -f "$T/chamber/onecap.fayth"
+is "rune_free: own unit excluded, one other live -> 0 free (still capped)" "0" \
+   "$(rune_free onecap "" spira-aeon-onecap-self.service)"
+rm -f "$T/runes/onecap.rune"
 
 echo
 echo "A (fallback) — a non-systemd-run SPIRA_SUMMON (test doubles) still counts by pidfile:"
@@ -207,7 +207,7 @@ JSONL
 
 DSTUBS="$T/dstubs"
 mkdir -p "$DSTUBS"
-ln -s "$HERE/chamber" "$DSTUBS/chamber"
+ln -s "$HERE/runes" "$DSTUBS/runes"
 # THE SENTINEL IS A BINARY (sentinel.sh is gone): it sources lib.sh from SPIRA_HOME.
 for _s in lib.sh conf.sh suite-covers.sh; do ln -s "$HERE/$_s" "$DSTUBS/$_s"; done
 ln -s "$HERE/conf.d" "$DSTUBS/conf.d"
@@ -229,7 +229,7 @@ exec "$REAL_BD" "\$@"
 EOF
 chmod +x "$DSTUBS/counting-bd"
 
-# THE READY SET IS THE MACHINE'S. spira-claim (bulk-ready-by-fayth, inside the summon pass)
+# THE READY SET IS THE MACHINE'S. spira-claim (bulk-ready-by-rune, inside the summon pass)
 # reads the lifecycle machine's READY rows from `spira-lc list`, then bd only for those
 # beads' content. The stand-in (testlib lc_mirror_bd) answers `list` from the fixture's
 # real bd store — open beads are READY rows, unless $LCMIRROR/states pins a row otherwise —
@@ -249,8 +249,8 @@ run_summon_only() {   # run_summon_only <run-dir> [KEY=VAL ...]
     local run="$1"; shift
     mkdir -p "$run"
     tl_config SPIRA_RUN="$run" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$DSTUBS/counting-bd" \
-        SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL="" SPIRA_MAX_AEONS=2 \
-        SPIRA_CHAMBER="$DSTUBS/chamber"
+        SPIRA_RUNES=builder SPIRA_SCOPE_LABEL="" SPIRA_MAX_AEONS=2 \
+        SPIRA_RUNES_DIR="$DSTUBS/runes"
     # SPIRA_DB/SPIRA_BD also passed literally: the spira-lc stub chain (lc_mirror_bd,
     # wrapped by LCBIN's counting shim) is plain bash reading them straight from its own
     # environment, never through spira-config (sfail round 3, pattern 8).
@@ -264,7 +264,7 @@ run_summon_only() {   # run_summon_only <run-dir> [KEY=VAL ...]
         sentinel --summon-only 2>&1
 }
 
-# builder is elastic (FAYTH_ELASTIC=1, builder.fayth): its fill loop is bound by the POOL,
+# builder is elastic (RUNE_ELASTIC=1, builder.rune): its fill loop is bound by the POOL,
 # not by the ready count, because the mock summon below never actually claims a bead — the
 # same shape test-sentinel-pass.sh's own "fill" pass exercises. Pool=2 here so the summon
 # count this asserts (2) is unambiguous rather than an artifact of the fixture's 2 ready beads.

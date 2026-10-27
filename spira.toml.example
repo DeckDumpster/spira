@@ -15,7 +15,7 @@ ask_label = "needs-operator"
 ci_label = "awaiting-ci"
 scope_label = "myproject"
 max_aeons = 4
-fayths = ["builder", "ops"]
+runes = ["builder", "ops"]
 certify_suites = "off"
 czar_stage_deadlock = "shadow"
 

@@ -48,8 +48,8 @@ git -C "$REPO" add f; git -C "$REPO" commit -qm seed
 timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
 # Minimal harness layout in $TMP.
-export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
-tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
+export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/runes"
+tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SPIRA_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
@@ -57,22 +57,22 @@ SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
 SPIRA_REPO_MAP="$TMP/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 
-# Custom fayth: uses the test-label partition; no SOP_REQUIRED so the closing rule
+# Custom rune: uses the test-label partition; no SOP_REQUIRED so the closing rule
 # does not fire and confuse the attempt-label check.
-FAYTH_LABELS_T="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}test-sweep-bead"
-cat > "$SPIRA_HOME/chamber/testsweep.fayth" <<FAYTH
-FAYTH_NAME=testsweep
-FAYTH_LABELS="$FAYTH_LABELS_T"
-FAYTH_EXCLUDE_LABELS="spira-poison,\$SPIRA_ASK_LABEL"
-FAYTH_MAX_CONCURRENT=1
-FAYTH_HEARTBEAT_SECONDS=600
-FAYTH
+RUNE_LABELS_T="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}test-sweep-bead"
+cat > "$SPIRA_HOME/runes/testsweep.rune" <<RUNE
+RUNE_NAME=testsweep
+RUNE_LABELS="$RUNE_LABELS_T"
+RUNE_EXCLUDE_LABELS="spira-poison,\$SPIRA_ASK_LABEL"
+RUNE_MAX_CONCURRENT=1
+RUNE_HEARTBEAT_SECONDS=600
+RUNE
 printf 'work {{BEAD_ID}} on {{BRANCH}}\n{{PARK}}\n' \
-    > "$SPIRA_HOME/chamber/testsweep.md"
-# persona.testsweep.model: aeon::conf::persona_model refuses outright when a fayth's
+    > "$SPIRA_HOME/runes/testsweep.md"
+# persona.testsweep.model: aeon::conf::persona_model refuses outright when a rune's
 # model is undeclared (no built-in fallback, per Ryan 2026-10-05) — the complete fixture
 # declares every REAL persona's model but has never heard of this suite's own "testsweep"
-# fayth. tl_config only knows the SPIRA_FOO -> spira.foo mapping, not [persona.*] tables,
+# rune. tl_config only knows the SPIRA_FOO -> spira.foo mapping, not [persona.*] tables,
 # so this sets the dotted path directly (same pattern as test-aeon-teardown-e2e.sh's
 # sweeper fixture).
 spira-config set persona.testsweep.model claude-sonnet-5-5 "$_TL_CONF_OVERRIDE" >/dev/null \
@@ -127,7 +127,7 @@ sys.exit(1)' 2>/dev/null
 # it; if it fails last, the preceding 'no attempt label' assertion has already been
 # accepted as meaningful when it is not.
 BID_PC="$(BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" create "positive control bead" --type task \
-    -l "$FAYTH_LABELS_T,repo:fixture" 2>/dev/null \
+    -l "$RUNE_LABELS_T,repo:fixture" 2>/dev/null \
     | grep -oE 'sp-[a-z0-9]+' | head -1)"
 [ -n "$BID_PC" ] || { printf 'test-aeon-sweep: could not create positive control bead\n' >&2; exit 1; }
 
@@ -157,7 +157,7 @@ labels_pc="$(bead_labels "$BID_PC" 2>/dev/null || true)"
 # BID_PC now carries a branch label. Sweep assertions below are scoped to BID
 # (not the whole database) because BID_PC's labels would otherwise confound them.
 BID="$(BD_IGNORE_SCHEMA_SKEW=1 timeout 5 bd -C "$SPIRA_DB" create "sweep test incident" --type task \
-    -l "$FAYTH_LABELS_T,repo:fixture" 2>/dev/null \
+    -l "$RUNE_LABELS_T,repo:fixture" 2>/dev/null \
     | grep -oE 'sp-[a-z0-9]+' | head -1)"
 [ -n "$BID" ] || { printf 'test-aeon-sweep: could not create bead\n' >&2; exit 1; }
 
@@ -219,10 +219,10 @@ rm -f "$CAP_FILE"; unset SPIRA_CAPACITY_PAUSE_FILE
 echo
 echo "--sweep: the capacity check excludes the caller's own unit (sp-0hnm6):"
 # ======================================================================================
-# Since sp-0y2av, aeon_count lists live spira-aeon-<fayth>-* units — and a freshly
+# Since sp-0y2av, aeon_count lists live spira-aeon-<rune>-* units — and a freshly
 # summoned aeon's own transient unit already exists (systemd-run created it before this
 # script ever ran), so a naive count sees it too. Left unexcluded, "1/1 at capacity"
-# fires on the FIRST aeon of a fayth with FAYTH_MAX_CONCURRENT=1 (testsweep, like the
+# fires on the FIRST aeon of a rune with RUNE_MAX_CONCURRENT=1 (testsweep, like the
 # groomer), and it never sweeps at all.
 #
 # AEON_OWN_UNIT (env override, same idiom as SPIRA_INCIDENT_UNIT) stands in for a real
@@ -244,7 +244,7 @@ export SPIRA_SYSTEMCTL="$BIN/mock-systemctl"
 export AEON_OWN_UNIT="spira-aeon-testsweep-selfunit.service"
 MOCK_UNITS_FILE="$TMP/mock-units"; export MOCK_UNITS_FILE
 
-# THE DEFECT ITSELF: the only live unit of this fayth is the caller's own. Today's code
+# THE DEFECT ITSELF: the only live unit of this rune is the caller's own. Today's code
 # (aeon_count with no exclusion) counts it, sees 1/1, and refuses to sweep at all.
 rm -f "$LEDGER"
 printf '%s\n' "$AEON_OWN_UNIT" > "$MOCK_UNITS_FILE"
@@ -255,7 +255,7 @@ want  "own unit excluded: the sweep proceeds" "awake testsweep sweep" "$(cat "$L
 want  "own unit excluded: teardown still runs" "done testsweep" "$(cat "$LEDGER" 2>/dev/null)"
 nowant "own unit excluded: no capacity refusal" "awake testsweep capacity" "$(cat "$LEDGER" 2>/dev/null)"
 
-# THE COMPANION CHECK: a second, genuinely OTHER live unit of the same fayth must still
+# THE COMPANION CHECK: a second, genuinely OTHER live unit of the same rune must still
 # trip the cap — excluding the caller's own unit must not disable the check entirely.
 rm -f "$LEDGER"
 printf '%s\nspira-aeon-testsweep-other.service\n' "$AEON_OWN_UNIT" > "$MOCK_UNITS_FILE"

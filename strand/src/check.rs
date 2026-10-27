@@ -58,11 +58,11 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
             let mut excl: Vec<String> =
                 exclude.split(',').map(str::trim).filter(|x| !x.is_empty()).map(str::to_string).collect();
             excl.extend(cfg.shared_exclude());
-            (s.labels, excl, s.fayths)
+            (s.labels, excl, s.runes)
         })
         .collect();
     if parts.is_empty() {
-        warn("WARN no persona in the chamber declares a partition — no work is being watched for strands");
+        warn("WARN no persona in the runes declares a partition — no work is being watched for strands");
         return Ok(Classified { rows: Vec::new(), watching: Vec::new() });
     }
 
@@ -94,19 +94,19 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
         .collect();
     let mut rows = Vec::new();
     let mut watching = Vec::new();
-    for (labels, excl, fayths) in parts {
+    for (labels, excl, runes) in parts {
         watching.push(labels.clone());
         let need: Vec<&str> = labels.split(',').map(str::trim).filter(|x| !x.is_empty()).collect();
         let ready = probe::ready(cfg, &labels, &excl)?;
         let facts = Facts {
             now,
-            live: fayths.iter().map(|f| probe::aeon_count(cfg, f, None)).sum(),
+            live: runes.iter().map(|f| probe::aeon_count(cfg, f, None)).sum(),
             total_live,
             max_aeons: cfg.max_live_aeons,
             capacity_paused: capacity.clone(),
             pool_paused: cfg.max_aeons == Some(0),
             world: world_state(&run_dir),
-            pass_truncated: probe::pass_truncated(&log_text, &fayths),
+            pass_truncated: probe::pass_truncated(&log_text, &runes),
             throttle: throttle.clone(),
         };
         let p = Partition {
@@ -134,7 +134,7 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
                     .into_iter()
                     .map(|row| PartRow { part: crate::unrostered::PART.to_string(), row }),
             ),
-            Err(e) => warn(&format!("WARN the persona chamber could not be read ({e}) — unrostered READY beads are not checked")),
+            Err(e) => warn(&format!("WARN the persona runes could not be read ({e}) — unrostered READY beads are not checked")),
         }
     }
     Ok(Classified { rows, watching })
@@ -371,7 +371,7 @@ pub fn check(cfg: &Config, c: Classified, dry: bool) -> i32 {
 /// snapshot. None when the roster cannot be read.
 fn lane_live_now(cfg: &Config, specs: Result<Vec<probe::PartitionSpec>, String>) -> Option<u32> {
     let specs = specs.ok()?;
-    Some(specs.iter().flat_map(|s| s.fayths.iter()).map(|f| probe::aeon_count(cfg, f, None)).sum())
+    Some(specs.iter().flat_map(|s| s.runes.iter()).map(|f| probe::aeon_count(cfg, f, None)).sum())
 }
 
 /// Only a lane read as live withholds the ask; a failed probe must not suppress it silently.
@@ -729,7 +729,7 @@ mod tests {
     fn a_starved_ask_is_withheld_while_the_lane_has_a_live_aeon() {
         let d = scratch("starved-live");
         let spec = || {
-            Ok(vec![probe::PartitionSpec { labels: "spira,plan".into(), exclude: String::new(), fayths: vec!["mimir".into()] }])
+            Ok(vec![probe::PartitionSpec { labels: "spira,plan".into(), exclude: String::new(), runes: vec!["mimir".into()] }])
         };
         let mk = |lines: &str| {
             let p = d.join("systemctl");

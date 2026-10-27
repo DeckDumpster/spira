@@ -4,7 +4,7 @@
 # and its partition never reaches plan beads.
 #
 # tier: T1
-# covers: spira/warden-trigger.sh spira/chamber/warden.* spira/conf.d/SPIRA_WARDEN_LABEL systemd/spira-warden.* install/src/manifest.rs
+# covers: spira/warden-trigger.sh spira/runes/warden.* spira/conf.d/SPIRA_WARDEN_LABEL systemd/spira-warden.* install/src/manifest.rs
 # hermetic-ok: no real database; SPIRA_BD is a stub
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -140,20 +140,20 @@ tl_config SPIRA_WARDEN_LABEL=warden-sweep
 
 echo; echo "PARTITION: warden claims only its sweep, never plan work"
 export SPIRA_HOME="$HERE" SPIRA_CONF="$T/none.conf"
-# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
-# point it at the real chamber fayth_get below reads from.
-SPIRA_RUN="$T/run"; tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_CHAMBER="$HERE/chamber"
+# SPIRA_RUNES_DIR no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at the real runes rune_get below reads from.
+SPIRA_RUN="$T/run"; tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_RUNES_DIR="$HERE/runes"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
-wl="$(fayth_get warden FAYTH_LABELS)"
+wl="$(rune_get warden RUNE_LABELS)"
 want "warden labels include the warden label" "warden-sweep" "$wl"
 lack "warden labels exclude plan" "plan" "$wl"
 lack "warden labels exclude incident" "incident" "$wl"
-lack "builder labels exclude warden" "warden-sweep" "$(fayth_get builder FAYTH_LABELS)"
-is "warden lane" "warden" "$(fayth_get warden FAYTH_LANE)"
+lack "builder labels exclude warden" "warden-sweep" "$(rune_get builder RUNE_LABELS)"
+is "warden lane" "warden" "$(rune_get warden RUNE_LANE)"
 want "warden lane is declared" "warden" "${SPIRA_LANES:-}"
-want "brief forbids claiming plan beads" "Never claim a plan bead" "$(cat "$HERE/chamber/warden.md")"
-want "brief files follow-ups through the contract" "work file" "$(cat "$HERE/chamber/warden.md")"
+want "brief forbids claiming plan beads" "Never claim a plan bead" "$(cat "$HERE/runes/warden.md")"
+want "brief files follow-ups through the contract" "work file" "$(cat "$HERE/runes/warden.md")"
 
 echo
 tl_summary

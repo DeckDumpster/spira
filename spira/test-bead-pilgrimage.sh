@@ -5,29 +5,29 @@
 # no User path is refused before anything is filed.
 #
 # tier: T1
-# covers: spira/bead.sh spira/chamber/pilgrim.fayth bead/**
+# covers: spira/bead.sh spira/runes/pilgrim.rune bead/**
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
-mkdir -p "$T/chamber" "$T/run" "$T/testrepo"
+mkdir -p "$T/runes" "$T/run" "$T/testrepo"
 ln -s "$HERE/conf.d" "$T/conf.d"
-tl_config SPIRA_CHAMBER="$T/chamber"
+tl_config SPIRA_RUNES_DIR="$T/runes"
 
-cat > "$T/chamber/builder.fayth" <<'FAYTH'
-FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan}"
-FAYTH_TOOLS="Bash,Edit,Write"
-FAYTH_MODEL=claude-sonnet-5
-FAYTH_MAX_CONCURRENT=4
-FAYTH
-cat > "$T/chamber/pilgrim.fayth" <<'FAYTH'
-FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PILGRIM_LABEL:-pilgrimage}"
-FAYTH_LANE=pilgrimage
-FAYTH_TOOLS="Bash,Read"
-FAYTH_MODEL=claude-opus-5-5
-FAYTH_MAX_CONCURRENT=1
-FAYTH
+cat > "$T/runes/builder.rune" <<'RUNE'
+RUNE_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan}"
+RUNE_TOOLS="Bash,Edit,Write"
+RUNE_MODEL=claude-sonnet-5
+RUNE_MAX_CONCURRENT=4
+RUNE
+cat > "$T/runes/pilgrim.rune" <<'RUNE'
+RUNE_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PILGRIM_LABEL:-pilgrimage}"
+RUNE_LANE=pilgrimage
+RUNE_TOOLS="Bash,Read"
+RUNE_MODEL=claude-opus-5-5
+RUNE_MAX_CONCURRENT=1
+RUNE
 cat > "$T/repos.map" <<MAP
 testrepo | $T/testrepo | push | origin/main | | true | plan
 MAP

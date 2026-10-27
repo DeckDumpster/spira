@@ -166,7 +166,7 @@ pub struct BeadRow {
     pub tip: Option<String>,
     pub gate_key: Option<String>,
     pub holder: Option<String>,
-    /// The claiming persona (fayth), recorded at `claim`; NULL for a row claimed before it was recorded.
+    /// The claiming persona (rune), recorded at `claim`; NULL for a row claimed before it was recorded.
     #[serde(default)]
     pub persona: Option<String>,
     pub lease_until: Option<i64>,

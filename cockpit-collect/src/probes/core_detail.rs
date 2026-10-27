@@ -15,12 +15,12 @@ pub fn core_detail_keys(cfg: &Cfg) -> Kv {
     let home = io::home_dir();
     let run = io::run_dir();
 
-    // ---- partition map: label-set -> persona name, from the chamber -------------------
+    // ---- partition map: label-set -> persona name, from the runes -------------------
     let mut part_map: HashMap<String, String> = HashMap::new();
-    if let Some(fayths) = io::lib_call(&home, "spira_fayths", &[]) {
-        for f in fayths.split_whitespace() {
-            let fname = io::lib_call(&home, "fayth_get", &[f, "FAYTH_NAME", f]).unwrap_or_else(|| f.to_string());
-            let flabels = io::lib_call(&home, "fayth_get", &[f, "FAYTH_LABELS"]).unwrap_or_default();
+    if let Some(runes) = io::lib_call(&home, "spira_runes", &[]) {
+        for f in runes.split_whitespace() {
+            let fname = io::lib_call(&home, "rune_get", &[f, "RUNE_NAME", f]).unwrap_or_else(|| f.to_string());
+            let flabels = io::lib_call(&home, "rune_get", &[f, "RUNE_LABELS"]).unwrap_or_default();
             if !fname.is_empty() && !flabels.is_empty() {
                 part_map.insert(flabels, fname);
             }
@@ -97,7 +97,7 @@ fn next_section(out: &mut Kv, part_map: &HashMap<String, String>, cfg: &Cfg) {
 
     for (n, i) in rows.iter().take(5).enumerate() {
         let labels: HashSet<&str> = i.get("labels").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-        let pref: HashSet<&str> = labels.iter().filter_map(|l| l.strip_prefix("fayth:")).collect();
+        let pref: HashSet<&str> = labels.iter().filter_map(|l| l.strip_prefix("rune:")).collect();
         let part = if !pref.is_empty() {
             part_map
                 .iter()

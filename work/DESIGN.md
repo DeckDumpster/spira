@@ -10,14 +10,14 @@ socket (`SPIRA_LC_SOCKET`; default `/run/spira-lc/sock` in system mode, `/run/us
 ## 2. Contract
 
 - **In:** `SPIRA_WORK_BEAD_ID` (the bound bead; any other bead id in the arguments is
-  refused), `SPIRA_FAYTH`/`SPIRA_WORK_ACTOR` (the actor), and git `HEAD` of the worktree for
+  refused), `SPIRA_RUNE`/`SPIRA_WORK_ACTOR` (the actor), and git `HEAD` of the worktree for
   `submit`.
 - **Exit:** the machine's own exit code on a reply. `2` means cannot tell: unbound, socket
   unreachable, or a malformed reply; retrying is safe. `3` means refused: a foreign bead, an
   unknown verb; do not retry.
 - **Callers:** only the model, and only under the aeon's restricted environment (design
   §3.5; `aeon/src/restrict.rs`, formerly the `work-env.sh` wrap, retired sp-zpaq0) and the
-  `{{FINISH}}` brief, and every persona prompt in the chamber plus the archivist's (sp-st0mm).
+  `{{FINISH}}` brief, and every persona prompt in the runes plus the archivist's (sp-st0mm).
   No harness script invokes `work`.
 
 ## 2a. Lane verbs (sp-st0mm)
@@ -45,7 +45,7 @@ environment; a caller-typed `--actor`/`--stdin` is refused. A body (`-`, or a
 `--body-file`/`--reason-file`/`--why` file) is read by the client and sent as `--stdin`,
 since the broker cannot read the aeon's files.
 
-**Limit:** the persona comes from the aeon's environment (`SPIRA_FAYTH`), which the model's
+**Limit:** the persona comes from the aeon's environment (`SPIRA_RUNE`), which the model's
 own shell can override; the broker does not yet authenticate the caller (peer credentials).
 
 ## 3. Lifecycle switch (retired)

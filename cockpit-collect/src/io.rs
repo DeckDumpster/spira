@@ -12,7 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// The keys `resolve()` computes (or this process itself derives) that [`bootstrap_config`]
 /// deliberately never sets into THIS process's own environment, even though the `compgen
 /// -v` dump it replaces used to (wave4-decomposition.md row (b): "Hazard: this exports
-/// SPIRA_HOME, SPIRA_REPO, SPIRA_REPO_MAP and SPIRA_FAYTHS to every child cockpit-collect
+/// SPIRA_HOME, SPIRA_REPO, SPIRA_REPO_MAP and SPIRA_RUNES to every child cockpit-collect
 /// spawns. That is exactly what conf.sh forbids" — conf.sh's own comment: an inherited
 /// SPIRA_HOME/SPIRA_REPO is "the seam every test suite drives a fixture through", and
 /// letting it leak to a child that was just told, by argument, to source a DIFFERENT
@@ -30,7 +30,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 ///
 /// Anything this crate still needs from this set for the CHILD-PROCESS registry bridge is
 /// read through [`Boot`]/[`repo_registry`] instead, never `std::env::var`.
-const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "SPIRA_REPO_MAP", "SPIRA_FAYTHS", "SPIRA_MAX_AEONS"];
+const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "SPIRA_REPO_MAP", "SPIRA_RUNES", "SPIRA_MAX_AEONS"];
 
 /// [`bootstrap_config`]'s own answer, cached in-process (never in `std::env`) for the one
 /// call site that still needs a [`NEVER_EXPORTED`] value for a CHILD process:
@@ -688,7 +688,7 @@ mod tests {
             ("SPIRA_REPO", "/should-never-leak"),
             ("SPIRA_REPO_DERIVED", "/should-never-leak"),
             ("SPIRA_REPO_MAP", "/should-never-leak"),
-            ("SPIRA_FAYTHS", "builder groomer"),
+            ("SPIRA_RUNES", "builder groomer"),
             ("SPIRA_MAX_AEONS", "12"),
             ("SPIRA_WIKI", "/var/spira/wiki"),
         ]);

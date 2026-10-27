@@ -357,23 +357,23 @@ fn idle_while_ready(d: &SweepData, cfg: &Cfg) {
         log(&format!("watchtower: {} is missing — idle-while-ready escalation not filed", cfg.incident_sh));
         return;
     };
-    for (fayth, ready, reason) in &d.idle_while_ready {
+    for (rune, ready, reason) in &d.idle_while_ready {
         let body = format!(
-            "{fayth} has {ready} ready bead(s), but its last {} summons all came back idle.\n\nLast idle reason: {reason}\n\nA rank/lookup failure (epic_parent_lookup/epic_rank_rows in lib.sh) can render exactly this way: an empty ranked list reads as \"nothing ready to claim\" even though bd ready is non-empty. Check the ledger for claim-error lines before assuming the queue really is empty.\n",
+            "{rune} has {ready} ready bead(s), but its last {} summons all came back idle.\n\nLast idle reason: {reason}\n\nA rank/lookup failure (epic_parent_lookup/epic_rank_rows in lib.sh) can render exactly this way: an empty ranked list reads as \"nothing ready to claim\" even though bd ready is non-empty. Check the ledger for claim-error lines before assuming the queue really is empty.\n",
             cfg.idle_while_ready_n
         );
         let f = Finding::new(
             &cfg.db,
             &cfg.home_repo,
-            &format!("IDLE-WHILE-READY: {fayth} has ready work but keeps reporting idle"),
+            &format!("IDLE-WHILE-READY: {rune} has ready work but keeps reporting idle"),
             &body,
         )
         .priority(1)
-        .reference(format!("incident:idle-while-ready:{fayth}"))
+        .reference(format!("incident:idle-while-ready:{rune}"))
         .cause("idle-while-ready");
         incident::alarm(inc, &f);
         log(&format!(
-            "watchtower: idle-while-ready escalation filed for {fayth} (ready={ready}, last {} summons idle)",
+            "watchtower: idle-while-ready escalation filed for {rune} (ready={ready}, last {} summons idle)",
             cfg.idle_while_ready_n
         ));
     }

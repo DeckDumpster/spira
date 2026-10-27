@@ -166,7 +166,7 @@ surface gets an accounting, and none of it turned out to be dead).
   fingerprint/normalisation and its bounded-wait timeout; bead-block rendering (including
   truncation and the notes/close-reason fallback) and the suit-verdict mapping, both against
   a fake `Bd`; `tidy`'s three keep rules, dedup and fail-closed guards; `sendmail`'s reply
-  routing (sender mailbox / chamber persona / no-route, all → the right destination) and
+  routing (sender mailbox / runes persona / no-route, all → the right destination) and
   tracking-bead close; Maildir mechanics (deliver, mute, flags, msgid uniqueness); the RFC
   822 date formatter against a known timestamp.
 - **Integration** (existing bash suites, repointed to call `mail` by bare name instead of

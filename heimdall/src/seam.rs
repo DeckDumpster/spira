@@ -6,8 +6,8 @@
 //! `bead_reopen`'s rules in step with lib.sh by hand; this is the same design
 //! aeon's own seam uses for the same reason (aeon/src/seam.rs).
 //!
-//! Unlike aeon's seam, this one does not source a fayth file or set `FAYTH` — heimdall has
-//! no fayth of its own. `bash -c <FIXED>` with every datum NUL-framed on stdin, same as
+//! Unlike aeon's seam, this one does not source a rune file or set `RUNE` — heimdall has
+//! no rune of its own. `bash -c <FIXED>` with every datum NUL-framed on stdin, same as
 //! aeon's, for the same reason: a bead body can be arbitrarily long and an argv has a
 //! kernel ceiling (law-payloads-go-on-stdin).
 //!

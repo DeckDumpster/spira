@@ -62,7 +62,7 @@ impl Run<'_> {
     }
 
     fn ts_print(&self, msg: &str) {
-        // aeon.sh printf'd these lines itself: `<ts> spira: <fayth>: <id> …`.
+        // aeon.sh printf'd these lines itself: `<ts> spira: <rune>: <id> …`.
         self.d.sink.out(&util::log_line(self.now(), msg));
     }
 
@@ -139,7 +139,7 @@ impl Run<'_> {
 
     pub fn verdict(&mut self) {
         let id = self.s.bead.clone();
-        let f = self.fayth.name.clone();
+        let f = self.rune.name.clone();
         let repo = self.s.repo.display().to_string();
         let branch = self.s.branch.clone();
 
@@ -205,7 +205,7 @@ impl Run<'_> {
         }
 
         // ---- the groom escalation rule ----
-        if self.fayth.groom_escalation_check && submitted && !superseded {
+        if self.rune.groom_escalation_check && submitted && !superseded {
             let text = std::fs::read_to_string(self.run_dir().join("groom.log")).unwrap_or_default();
             let new: String = text.lines().skip(self.s.groom_lines_before).map(|l| format!("{l}\n")).collect();
             let new = new.trim_end_matches('\n').to_string();

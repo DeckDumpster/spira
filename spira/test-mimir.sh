@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-mimir.sh — mimir.fayth and chamber/mimir.md: the retrospective persona
+# test-mimir.sh — mimir.rune and runes/mimir.md: the retrospective persona
 #   and its brief encode the five-step pass, the three-occurrence threshold, the
 #   four-property output bar, and the per-pass output bound.
 #
@@ -8,7 +8,7 @@
 #
 # WHAT THIS SUITE GUARDS
 # ----------------------
-# mimir.fayth must declare a lane so it draws from its own capacity rather than the
+# mimir.rune must declare a lane so it draws from its own capacity rather than the
 # task pool, and must not set an assignee.
 #
 # mimir.md must explicitly encode all four items the bead requires. The test checks
@@ -24,7 +24,7 @@
 # four of the other checks; the "positive control" grep is the one that fails.
 #
 # tier: T0
-# covers: spira/chamber/mimir.fayth spira/chamber/mimir.md spira/conf.sh UC-ops-detection-remediation-17
+# covers: spira/runes/mimir.rune spira/runes/mimir.md spira/conf.sh UC-ops-detection-remediation-17
 # hermetic-ok: no database, no systemd; reads files only
 # scar: unrecorded
 set -uo pipefail
@@ -35,8 +35,8 @@ lack() { case "$3" in *"$2"*) bad "$1" "did not want [$2] in output" ;; *) ok "$
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 NONE="$T/no-such.conf"
-FAYTH="$HERE/chamber/mimir.fayth"
-BRIEF="$HERE/chamber/mimir.md"
+RUNE="$HERE/runes/mimir.rune"
+BRIEF="$HERE/runes/mimir.md"
 
 # SPIRA_CONFIG_DIR: the directory holding spira-config on THIS invocation's own PATH, so
 # the stripped-down PATH built for run_conf below can still find it — conf.sh now refuses
@@ -57,9 +57,9 @@ echo "test-mimir.sh"
 
 # ==========================================================================================
 echo
-echo "mimir.fayth — file exists"
+echo "mimir.rune — file exists"
 # ==========================================================================================
-if [ -f "$FAYTH" ]; then ok "mimir.fayth exists"; else bad "mimir.fayth" "not found at $FAYTH"; fi
+if [ -f "$RUNE" ]; then ok "mimir.rune exists"; else bad "mimir.rune" "not found at $RUNE"; fi
 
 # ==========================================================================================
 echo
@@ -69,40 +69,40 @@ if [ -f "$BRIEF" ]; then ok "mimir.md exists"; else bad "mimir.md" "not found at
 
 # ==========================================================================================
 echo
-echo "mimir.fayth — FAYTH_LANE=mimir (draws from own capacity, not the task pool)"
+echo "mimir.rune — RUNE_LANE=mimir (draws from own capacity, not the task pool)"
 # ==========================================================================================
-lane="$(run_conf ". '$FAYTH' && printf '%s' \"\${FAYTH_LANE:-}\"")"
-is "FAYTH_LANE=mimir" "mimir" "$lane"
+lane="$(run_conf ". '$RUNE' && printf '%s' \"\${RUNE_LANE:-}\"")"
+is "RUNE_LANE=mimir" "mimir" "$lane"
 
 # ==========================================================================================
 echo
-echo "mimir.fayth — no FAYTH_ASSIGNEE set (partition labels come from predicate only)"
+echo "mimir.rune — no RUNE_ASSIGNEE set (partition labels come from predicate only)"
 # ==========================================================================================
-assignee="$(run_conf ". '$FAYTH' && printf '%s' \"\${FAYTH_ASSIGNEE:-UNSET}\"")"
-is "FAYTH_ASSIGNEE is not set" "UNSET" "$assignee"
+assignee="$(run_conf ". '$RUNE' && printf '%s' \"\${RUNE_ASSIGNEE:-UNSET}\"")"
+is "RUNE_ASSIGNEE is not set" "UNSET" "$assignee"
 
 # ==========================================================================================
 echo
-echo "mimir.fayth — FAYTH_EXCLUDE_LABELS names no hold label (poison/ask are lifecycle holds, sp-psztcc)"
+echo "mimir.rune — RUNE_EXCLUDE_LABELS names no hold label (poison/ask are lifecycle holds, sp-psztcc)"
 # ==========================================================================================
-excl="$(run_conf ". '$FAYTH' && printf '%s' \"\${FAYTH_EXCLUDE_LABELS:-}\"")"
-nowant "FAYTH_EXCLUDE_LABELS names no spira-poison" "spira-poison" "$excl"
+excl="$(run_conf ". '$RUNE' && printf '%s' \"\${RUNE_EXCLUDE_LABELS:-}\"")"
+nowant "RUNE_EXCLUDE_LABELS names no spira-poison" "spira-poison" "$excl"
 
 # ==========================================================================================
 echo
-echo "spira_fayths — mimir appears in the persona roster"
+echo "spira_runes — mimir appears in the persona roster"
 # ==========================================================================================
-# POSITIVE CONTROL: enumerating chamber/*.fayth discovers mimir automatically; this fails
+# POSITIVE CONTROL: enumerating runes/*.rune discovers mimir automatically; this fails
 # if the file is removed or renamed.
 export SPIRA_HOME="$HERE"
 export SPIRA_CONF="$NONE"
 export SPIRA_RUN="$T"
-# round 3 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — without it,
-# spira_fayths cannot enumerate chamber/*.fayth at all.
-tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_CHAMBER="$HERE/chamber"
+# round 3 fix (pattern 6): SPIRA_RUNES_DIR no longer derives from SPIRA_HOME — without it,
+# spira_runes cannot enumerate runes/*.rune at all.
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_RUNES_DIR="$HERE/runes"
 . "$HERE/lib.sh"
-roster="$(spira_fayths)"
-want "mimir appears in spira_fayths" "mimir" "$roster"
+roster="$(spira_runes)"
+want "mimir appears in spira_runes" "mimir" "$roster"
 want "builder also appears (roster is not empty)"  "builder"  "$roster"
 
 # ==========================================================================================

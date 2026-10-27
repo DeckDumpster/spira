@@ -833,7 +833,7 @@ STUB
 # aeon's PATH), for the legacy aeon suites whose model shim closes its bead in bd. The aeon
 # reads a bead's state from its lifecycle row, never bd status (sp-mve9i), and since sp-v62vn
 # (no off mode) it also CLAIMS through the machine: its ready set is `spira-lc list` (through
-# spira-claim fayth-ready --json) and its claim is a Claim event. So the fixture's bd story is
+# spira-claim rune-ready --json) and its claim is a Claim event. So the fixture's bd story is
 # told to it in lifecycle terms, a row per non-epic bd bead:
 #   $SPIRA_RUN/lc-row/<id> ("<STATE> [reason] [tip]"), when the suite wrote one;
 #   else bd closed (the builder's close is its submit) → SUBMITTED;

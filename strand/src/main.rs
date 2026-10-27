@@ -13,7 +13,7 @@
 //! use this crate in-process instead):
 //!
 //!   strand aeon-alive <pidfile>            strand aeons-live-total
-//!   strand aeon-count <fayth> [exclude]     strand aeons-live-lanes
+//!   strand aeon-count <rune> [exclude]     strand aeons-live-lanes
 //!
 //! lib.sh family T-b (wave 4.29, sp-8ofmt) — the stranded-work detectors its now-shimmed
 //! functions call, plus the direct target for `groomer`/`mimir-trigger`/`cockpit-collect`
@@ -113,12 +113,12 @@ fn cmd_aeon_alive(args: Vec<String>) -> i32 {
     i32::from(!probe::aeon_alive(std::path::Path::new(&args[0])))
 }
 
-/// `aeon_count <fayth> [exclude-unit]` (lib.sh): live aeons of one persona. `exclude-unit`
+/// `aeon_count <rune> [exclude-unit]` (lib.sh): live aeons of one persona. `exclude-unit`
 /// is the caller's own transient unit (sp-0hnm6's fix), matched only in the systemd-run
 /// branch, exactly as the bash original.
 fn cmd_aeon_count(args: Vec<String>) -> i32 {
     if args.is_empty() || args.len() > 2 {
-        return die("aeon-count <fayth> [exclude-unit]");
+        return die("aeon-count <rune> [exclude-unit]");
     }
     let cfg = cfg_or_die();
     let exclude = args.get(1).filter(|s| !s.is_empty()).map(String::as_str);
@@ -136,7 +136,7 @@ fn cmd_aeons_live_total(args: Vec<String>) -> i32 {
     0
 }
 
-/// `aeons_live_lanes` (lib.sh): every lane aeon, across all lane fayths.
+/// `aeons_live_lanes` (lib.sh): every lane aeon, across all lane runes.
 fn cmd_aeons_live_lanes(args: Vec<String>) -> i32 {
     if !args.is_empty() {
         return die("aeons-live-lanes");

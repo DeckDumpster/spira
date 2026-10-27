@@ -2,12 +2,12 @@
 Description=Wake Ops on a timer and hand it the pipeline's vital signs
 
 [Timer]
-# THIRTY MINUTES, AND ops.fayth's FAYTH_TIMEOUT_SECONDS IS SET UNDER IT. The two numbers are
+# THIRTY MINUTES, AND ops.rune's RUNE_TIMEOUT_SECONDS IS SET UNDER IT. The two numbers are
 # a pair: a sweep arriving faster than Ops can finish one queues snapshots behind a session
 # already working a stale picture, and the first live sweep ran eighteen minutes against a
 # ten-minute cadence. Whoever shortens this must check that wall first.
 #
-# THIS FILE IS THE ONLY PLACE THE CADENCE IS WRITTEN. ops.fayth's comment names it; nothing
+# THIS FILE IS THE ONLY PLACE THE CADENCE IS WRITTEN. ops.rune's comment names it; nothing
 # reads a SPIRA_WATCH_EVERY key, because none exists.
 #
 # WIDENED FROM TEN because the sweep wakes Ops whether or not anything is wrong, and one

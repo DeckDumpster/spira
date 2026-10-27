@@ -163,7 +163,7 @@ Verdict key: **KEEP** · **MERGE-INTO** · **DEMOTE-TO-T1** · **DELETE** · **S
    → UC-07.
 4. **Landstate rows:** GATED, REBASED, LANDED-tip-ancestor, restore from `refs/remotes/origin/spira/<id>`, and CERTIFIED with the tip gone (`sentinel.sh:834–890`). Only BATCHED and CERTIFIED-restore are tested. → UC-08.
 5. **Push-mode "branch ahead, CHECK 6 lands it" versus a zero-ahead branch that reopens** (`sentinel.sh:852–860`, the zero-ahead scar sp-qc4kn) is never asserted on the sentinel side. → UC-09.
-6. **The hand-closed skip** (`[ -f $SPIRA_RUN/$id.log ]`) has no negative row. The every-partition enumeration and the "chamber declares no partition" note (`sentinel.sh:~905`) are untested apart from mimir-sweep. → UC-11.
+6. **The hand-closed skip** (`[ -f $SPIRA_RUN/$id.log ]`) has no negative row. The every-partition enumeration and the "runes declares no partition" note (`sentinel.sh:~905`) are untested apart from mimir-sweep. → UC-11.
 7. **`spira_destroy_branch` refusals:** the holder-witness refusal, the "checked out at" refusal and the "survived deletion" FAILED path (`lib.sh:4855–4890`) have no tests. The CERTIFIED guard is only tested through hel. → UC-15.
 8. **There is no base `test-hel.sh`.** These dispositions are untested:
    - `HELD` (live holder, including mid-send).

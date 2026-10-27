@@ -201,7 +201,7 @@ pub fn actor(w: &World) -> String {
 
 /// The czar fence: a czar session with a class set runs czar-fence.sh first.
 pub fn czar_ok(w: &World) -> bool {
-    if w.var("SPIRA_FAYTH").as_deref() == Some("czar") {
+    if w.var("SPIRA_RUNE").as_deref() == Some("czar") {
         if let Some(class) = w.var("SPIRA_CZAR_CLASS") {
             if let Err(e) = crate::ident::check("czar class", &class) {
                 w.err(format!("queue.sh: {e}"));

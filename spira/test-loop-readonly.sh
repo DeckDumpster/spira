@@ -176,12 +176,12 @@ git -C "$GIT_REPO" remote add origin "$GIT_REMOTE"
 timeout 5 git -C "$GIT_REPO" push -q origin main
 timeout 5 git -C "$GIT_REPO" fetch -q origin
 
-# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# SPIRA_RUNES_DIR is registered and the fixture declares a fixed, nonexistent path — nothing
 # derives it from SPIRA_HOME any more (sfail round 2, pattern 6); the release tarball's real
-# chamber/ is what sentinel must be pointed at explicitly.
+# runes/ is what sentinel must be pointed at explicitly.
 tl_config SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$(command -v bd)}" SPIRA_FAYTHS=builder SPIRA_MAX_AEONS=1 \
-    SPIRA_NOTIFY="$STUB_NOTIFY" SPIRA_CHAMBER="$CURRENT/spira/chamber"
+    SPIRA_BD="${SPIRA_BD:-$(command -v bd)}" SPIRA_RUNES=builder SPIRA_MAX_AEONS=1 \
+    SPIRA_NOTIFY="$STUB_NOTIFY" SPIRA_RUNES_DIR="$CURRENT/spira/runes"
 SENTINEL_OUT="$(
     SPIRA_HOME="$CURRENT/spira" \
     SPIRA_REPO="$GIT_REPO" \

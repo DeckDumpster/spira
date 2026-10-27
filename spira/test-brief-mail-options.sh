@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# test-brief-mail-options.sh — every --flag on a send operator invocation in a chamber brief
+# test-brief-mail-options.sh — every --flag on a send operator invocation in a runes brief
 # is a known cmd_send option (law-a-matcher-reads-code-not-prose).
 #
 # tier: T0
-# covers: mail/src/* spira/chamber/*.md UC-operator-channel-13
+# covers: mail/src/* spira/runes/*.md UC-operator-channel-13
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -11,7 +11,7 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 # left to scan a case statement out of. `run_send` in main.rs is the same option loop,
 # one `"--flag" => { ... }` match arm per option; read that file's source instead.
 MAIL_MAIN_RS="$HERE/../mail/src/main.rs"
-CHAMBER="$HERE/chamber"
+RUNES="$HERE/runes"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 
@@ -118,10 +118,10 @@ fi
 
 # ===========================================================================
 echo
-echo "real chamber briefs"
+echo "real runes briefs"
 # ===========================================================================
 found_any=0
-for f in "$CHAMBER"/*.md; do
+for f in "$RUNES"/*.md; do
     [ -f "$f" ] || continue
     found_any=1
     name="$(basename "$f")"
@@ -134,7 +134,7 @@ for f in "$CHAMBER"/*.md; do
 done
 
 if [ "$found_any" -eq 0 ]; then
-    bad "no .md files found in $CHAMBER — cannot verify" ""
+    bad "no .md files found in $RUNES — cannot verify" ""
 fi
 
 tl_summary

@@ -69,8 +69,8 @@ fn fixtures() -> Vec<(&'static str, Vec<Value>)> {
     let n = now();
     let aeon: Vec<Value> = (0..90).map(|i| {
         let wall = if i % 11 == 0 { json!("?") } else { json!(30 + rng.next(900)) };
-        let (at, bead, fayth, status, turns) = (n - 120 - rng.next(70 * 3600), format!("sp-{}", rng.next(60)), ["builder", "reviewer"][rng.next(2) as usize], ["submitted", "ok", "failed"][rng.next(3) as usize], rng.next(40));
-        env("aeon-session", at, json!({"bead": bead, "fayth": fayth, "rc": 0, "status": status, "wall_s": wall, "turns": turns}))
+        let (at, bead, rune, status, turns) = (n - 120 - rng.next(70 * 3600), format!("sp-{}", rng.next(60)), ["builder", "reviewer"][rng.next(2) as usize], ["submitted", "ok", "failed"][rng.next(3) as usize], rng.next(40));
+        env("aeon-session", at, json!({"bead": bead, "rune": rune, "rc": 0, "status": status, "wall_s": wall, "turns": turns}))
     }).collect();
     let sentinel: Vec<Value> = (0..40).flat_map(|p| (1..=5).map(move |c| (p, c))).map(|(p, c)| {
         env("sentinel-phase", n - 300 - (40 - p) * 1500 + c, json!({"pass": format!("pass-{p}"), "check": format!("CHECK{c}"), "secs": (p * 7 + c * 13) % 90}))
@@ -196,7 +196,7 @@ fn every_moved_family_query_answers_what_the_file_query_answered() {
         assert!(want.as_array().is_some_and(|a| !a.is_empty() && a.iter().any(|r| r.as_object().is_some_and(|o| o.values().any(|v| v.as_f64().is_some_and(|f| f != 0.0))))), "{args:?}: the fixture must exercise the query: {want}");
         same(&got, &want, tol, &args.join(" "));
     }
-    for args in [vec!["count-by", "aeon-session", "status", "24"], vec!["by-group", "aeon-session", "fayth", "turns", "48"], vec!["count-by", "bead-stage", "to_state"]] {
+    for args in [vec!["count-by", "aeon-session", "status", "24"], vec!["by-group", "aeon-session", "rune", "turns", "48"], vec!["count-by", "bead-stage", "to_state"]] {
         let (ok, want) = legacy(&dir, &args);
         assert!(ok, "{args:?}");
         let (code, got, err) = read(&dir, Some(store.addr()), &args);
@@ -235,7 +235,7 @@ fn every_moved_query_refuses_by_name_when_the_store_cannot_answer() {
     let queries: Vec<Vec<&str>> = vec![
         vec!["where"], vec!["rework"], vec!["sentinel"], vec!["time"], vec!["bead", "sp-1"],
         vec!["baseline", "sentinel-phase", "secs", "24"], vec!["rate", "aeon-session", "24"],
-        vec!["dwell", "aeon-session", "wall_s", "0.5"], vec!["by-group", "aeon-session", "fayth", "wall_s"], vec!["count-by", "bead-stage", "to_state"], vec!["rows", "bead-stage"],
+        vec!["dwell", "aeon-session", "wall_s", "0.5"], vec!["by-group", "aeon-session", "rune", "wall_s"], vec!["count-by", "bead-stage", "to_state"], vec!["rows", "bead-stage"],
     ];
     for args in queries {
         for (endpoint, name) in [(Some(stopped.as_str()), "metrics-store-unreachable"), (Some(empty.addr()), "metrics-store-no-series"), (None, "metrics-store-not-configured")] {

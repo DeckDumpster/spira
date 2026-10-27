@@ -112,7 +112,7 @@ set_key() { "$SPIRA_RELEASE/bin/spira-config" set "spira.$1" "$2" "$CONFIGURE_OU
 set_key instance "$CONFIGURE_INSTANCE"
 set_key workspaces "$CONFIGURE_RUN"
 set_key prod "$CONFIGURE_PROD"
-set_key chamber "$CONFIGURE_PROD/chamber"
+set_key runes_dir "$CONFIGURE_PROD/runes"
 set_key ctrl "$CONFIGURE_RUN/control"
 set_key bd "$(command -v bd)"
 set_key run "$CONFIGURE_RUN"

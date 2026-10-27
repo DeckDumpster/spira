@@ -2621,7 +2621,7 @@ fn eject_refuses_an_id_that_is_not_an_identifier() {
 #[test]
 fn czar_fence_refusal_stops_eject_before_anything() {
     let t = T::new(LandMode::Queue);
-    t.var("SPIRA_FAYTH", "czar");
+    t.var("SPIRA_RUNE", "czar");
     t.var("SPIRA_CZAR_CLASS", "deadlock");
     t.scripts.fence_ok.set(false);
     open_batch_record(&t);

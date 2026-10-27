@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
-use crate::conf::{Conf, Fayth};
+use crate::conf::{Conf, Rune};
 use crate::ledger::Ledger;
 use crate::ports::{Bd, Env, Exec, RealGit, Seam};
 use crate::run::{Deps, Mode, Run, State};
@@ -173,11 +173,11 @@ impl Seam for FakeSeam {
             return o.clone();
         }
         match func {
-            // spira-claim `fayth-ready --json`: the lifecycle machine's ready rows. bd's own
+            // spira-claim `rune-ready --json`: the lifecycle machine's ready rows. bd's own
             // status plays no part, so a row bd shows in_progress is offered like any other.
             "_aeon_ready_set" => {
                 if w.ready_fails {
-                    return Out::fail(1, "spira-claim: fayth_ready: cannot tell\n");
+                    return Out::fail(1, "spira-claim: rune_ready: cannot tell\n");
                 }
                 let rows: Vec<serde_json::Value> = w.ready.iter().map(|id| serde_json::from_str::<serde_json::Value>(&row_json(&w, id)).unwrap()[0].clone()).collect();
                 Out::ok(serde_json::Value::Array(rows).to_string())
@@ -188,7 +188,7 @@ impl Seam for FakeSeam {
                 Out::ok("")
             }
             "aeon_count" => Out::ok("0"),
-            "fayth_free" => Out::ok("1"),
+            "rune_free" => Out::ok("1"),
             "_aeon_rebase" => Out::ok(""),
             "_aeon_thrash_meta" => Out::ok("\n\n\n"),
             "release_own_claim" => {
@@ -315,15 +315,15 @@ fn fx(name: &str) -> Fx {
     let home = dir.join("home");
     let run = dir.join("run");
     let repo = dir.join("repo");
-    std::fs::create_dir_all(home.join("chamber")).unwrap();
+    std::fs::create_dir_all(home.join("runes")).unwrap();
     std::fs::create_dir_all(&run).unwrap();
     std::fs::create_dir_all(&repo).unwrap();
     std::fs::write(
-        home.join("chamber/builder.md"),
+        home.join("runes/builder.md"),
         "You are a builder. DB {{DB}}.\n<!-- task -->\n## The bead\n{{BEAD}}\nwork {{BEAD_ID}} in {{REPO}} on {{BRANCH}} ({{LANDING}})\n{{PARK}}\n{{FIXTURE}}\n## Finishing\n{{FINISH}}\n",
     )
     .unwrap();
-    std::fs::write(home.join("chamber/builder.fayth"), "").unwrap();
+    std::fs::write(home.join("runes/builder.rune"), "").unwrap();
     git(&repo, &["init", "-q", "-b", "main"]);
     std::fs::write(repo.join("f"), "seed\n").unwrap();
     git(&repo, &["add", "f"]);
@@ -385,13 +385,13 @@ fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], mode: Mode, seam_answers: BT
     go_as("builder", f, labels, extra, mode, seam_answers, act)
 }
 
-/// `go`, with the fayth NAME parameterized (sp-1zxru-2: the no-progress fix is a property
-/// of decide::disposition/teardown.rs, not of any one persona, so a non-"builder" fayth
+/// `go`, with the rune NAME parameterized (sp-1zxru-2: the no-progress fix is a property
+/// of decide::disposition/teardown.rs, not of any one persona, so a non-"builder" rune
 /// needs covering too — `an_ops_lane_aeons_no_progress_exit_is_held_too` is the one caller;
-/// it must have already written `chamber/<fayth_name>.md`/`.fayth` into `f.home`, same as
+/// it must have already written `runes/<rune_name>.md`/`.rune` into `f.home`, same as
 /// `fx()` does for "builder").
 #[allow(clippy::too_many_arguments)]
-fn go_as(fayth_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], mode: Mode, seam_answers: BTreeMap<&'static str, Out>, act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync>) -> Outcome {
+fn go_as(rune_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], mode: Mode, seam_answers: BTreeMap<&'static str, Out>, act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync>) -> Outcome {
     // Every registered key's declared value, from spira-config's own "every key declared"
     // fixture (per Ryan 2026-10-05: one source of config) — not a hand-picked partial map.
     // `Conf`'s accessors for registered keys no longer carry a Rust-side default, so a key
@@ -408,7 +408,7 @@ fn go_as(fayth_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], mode: M
         ("SPIRA_TRACE_MARK", "=== spira attempt".to_string()),
         ("SPIRA_CLAIM_RETRIES", "1".to_string()),
         ("SPIRA_CLAIM_RETRY_DELAY_S", "0".to_string()),
-        ("FAYTH_LABELS", labels.to_string()),
+        ("RUNE_LABELS", labels.to_string()),
         // spira_config::repos (sp-37rmg): no registered-repository fixture here, so the
         // home repo resolves through the SPIRA_REPO override exactly as the old FakeSeam's
         // "repo_root"/"repo_land"/"spira_home_repo" answers always did — f.repo, "fixture",
@@ -477,7 +477,7 @@ fn go_as(fayth_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], mode: M
     };
     let env = Env::new(base.clone(), base);
     let conf = Conf::new(&snap, &f.home);
-    let fayth = Fayth::from_vars(fayth_name, &vars);
+    let rune = Rune::from_vars(rune_name, &vars);
     let bd = FakeBd(Arc::clone(&f.w));
     let seam = FakeSeam { w: Arc::clone(&f.w), answers: seam_answers };
     let git = RealGit { env: &env };
@@ -500,7 +500,7 @@ fn go_as(fayth_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], mode: M
             d: Deps { bd: &bd, seam: &seam, git: &git, exec: &exec, launcher: &launcher, sink: &sink, env: &env, clock: &clock, sleep: &sleep },
             ledger: Ledger { path: conf.ledger(), dry },
             conf,
-            fayth,
+            rune,
             snap,
             mode,
             pid: 4242,
@@ -511,7 +511,7 @@ fn go_as(fayth_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], mode: M
             stop: Arc::new(Stop::default()),
             hb_shutdown: Arc::new(AtomicBool::new(false)),
             hb_done: Arc::new(AtomicBool::new(false)),
-            fayth_file: f.home.join(format!("chamber/{fayth_name}.fayth")),
+            rune_file: f.home.join(format!("runes/{rune_name}.rune")),
             s: State::default(),
         };
         run.main()
@@ -563,7 +563,7 @@ fn unfenced_predicate_refuses_before_any_ledger_line() {
 fn at_capacity_lives_and_declines() {
     let f = fx("cap");
     let mut a = BTreeMap::new();
-    a.insert("fayth_free", Out::ok("0"));
+    a.insert("rune_free", Out::ok("0"));
     let o = go(&f, "spira,plan", &[], Mode::Claim, a, no_session());
     assert_eq!(o.code, 0);
     assert_eq!(ledger_lines(&o), vec!["born builder 4242", "awake builder capacity"]);
@@ -606,7 +606,7 @@ fn a_failed_ready_query_is_claim_error_not_idle() {
     f.w.lock().unwrap().ready_fails = true;
     let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), no_session());
     assert_eq!(o.code, 1);
-    assert_eq!(ledger_lines(&o)[1], "awake builder claim-error fayth-ready: query failed after 1 attempt(s): spira-claim: fayth_ready: cannot tell");
+    assert_eq!(ledger_lines(&o)[1], "awake builder claim-error rune-ready: query failed after 1 attempt(s): spira-claim: rune_ready: cannot tell");
 }
 
 #[test]
@@ -738,7 +738,7 @@ fn enforce_renews_the_lifecycle_lease_on_every_heartbeat_while_the_session_runs(
         }
         commits_and_closes()(spec, w, stop)
     });
-    let o = go(&f, "spira,plan", &[("FAYTH_HEARTBEAT_SECONDS", "1")], Mode::Claim, a, act);
+    let o = go(&f, "spira,plan", &[("RUNE_HEARTBEAT_SECONDS", "1")], Mode::Claim, a, act);
     assert_eq!(ledger_lines(&o)[1], "awake builder sp-lr", "{}", o.log);
     let w = o.w.clone();
     let r = renews(&w);
@@ -1059,10 +1059,10 @@ fn happy_path_submits_through_the_machine() {
 }
 
 #[test]
-fn a_replace_fayth_launches_with_system_prompt_file_and_user_only_settings() {
+fn a_replace_rune_launches_with_system_prompt_file_and_user_only_settings() {
     let f = fx("replace");
     seed(&f, "sp-r");
-    let extra = [("FAYTH_SYSTEM_PROMPT", "replace"), ("FAYTH_PROJECT_INSTRUCTIONS", "none")];
+    let extra = [("RUNE_SYSTEM_PROMPT", "replace"), ("RUNE_PROJECT_INSTRUCTIONS", "none")];
     let o = go(&f, "spira,plan", &extra, Mode::Claim, BTreeMap::new(), commits_and_closes());
     assert_eq!(o.code, 0, "{}", o.log);
     let a = o.seen[0].args.join(" ");
@@ -1077,10 +1077,10 @@ fn a_replace_fayth_launches_with_system_prompt_file_and_user_only_settings() {
 }
 
 #[test]
-fn an_append_fayth_with_repo_instructions_adds_neither_replace_nor_setting_sources() {
+fn an_append_rune_with_repo_instructions_adds_neither_replace_nor_setting_sources() {
     let f = fx("append");
     seed(&f, "sp-a");
-    let extra = [("FAYTH_SYSTEM_PROMPT", "append"), ("FAYTH_PROJECT_INSTRUCTIONS", "repo")];
+    let extra = [("RUNE_SYSTEM_PROMPT", "append"), ("RUNE_PROJECT_INSTRUCTIONS", "repo")];
     let o = go(&f, "spira,plan", &extra, Mode::Claim, BTreeMap::new(), commits_and_closes());
     assert_eq!(o.code, 0, "{}", o.log);
     let a = o.seen[0].args.join(" ");
@@ -1090,18 +1090,18 @@ fn an_append_fayth_with_repo_instructions_adds_neither_replace_nor_setting_sourc
 }
 
 #[test]
-fn the_launch_model_is_the_toml_persona_model_not_a_fayth_declaration() {
+fn the_launch_model_is_the_toml_persona_model_not_a_rune_declaration() {
     let f = fx("model");
     let over = f._dir.join("over.toml");
     std::fs::write(&over, "[persona.builder]\nmodel = \"toml-override-model\"\n").unwrap();
     let spec = format!("{}:{}", complete_vars()["SPIRA_TOML"], over.display());
     seed(&f, "sp-m");
-    let extra = [("SPIRA_TOML", spec.as_str()), ("FAYTH_MODEL", "fayth-declared-model-should-not-be-used")];
+    let extra = [("SPIRA_TOML", spec.as_str()), ("RUNE_MODEL", "rune-declared-model-should-not-be-used")];
     let o = go(&f, "spira,plan", &extra, Mode::Claim, BTreeMap::new(), commits_and_closes());
     assert_eq!(o.code, 0, "{}", o.log);
     let a = o.seen[0].args.join(" ");
     assert!(a.contains("--model toml-override-model "), "{a}");
-    assert!(!a.contains("fayth-declared-model"), "{a}");
+    assert!(!a.contains("rune-declared-model"), "{a}");
 }
 
 fn rejected(f: &Fx, n: usize) -> String {
@@ -1198,7 +1198,7 @@ fn l_done(o: &Outcome) -> String {
 
 fn brief_fx(name: &str, extra: &[(&str, &str)]) -> String {
     let f = fx(name);
-    std::fs::write(f.home.join("chamber/builder.md"), "sys\n<!-- task -->\nwork {{BEAD_ID}}\n{{DEADLINE}}\n{{PARK}}\n").unwrap();
+    std::fs::write(f.home.join("runes/builder.md"), "sys\n<!-- task -->\nwork {{BEAD_ID}}\n{{DEADLINE}}\n{{PARK}}\n").unwrap();
     seed(&f, "sp-b");
     go(&f, "spira,plan", extra, Mode::Claim, BTreeMap::new(), closes_only(false));
     std::fs::read_to_string(f.run.join("sp-b.task.md")).unwrap()
@@ -1207,7 +1207,7 @@ fn brief_fx(name: &str, extra: &[(&str, &str)]) -> String {
 #[test]
 fn a_persona_with_a_wall_is_told_its_deadline_inside_the_window() {
     let before = crate::util::now_epoch();
-    let task = brief_fx("walled", &[("FAYTH_TIMEOUT_SECONDS", "300")]);
+    let task = brief_fx("walled", &[("RUNE_TIMEOUT_SECONDS", "300")]);
     assert!(!task.contains("{{"), "{task}");
     assert!(task.contains("This session is killed at"), "{task}");
     assert!(!task.contains("no wall-clock deadline"), "{task}");
@@ -1432,21 +1432,21 @@ fn a_branch_already_ahead_with_no_new_commit_this_session_is_still_held_not_char
     assert_eq!(w.status["sp-aa"], "open");
 }
 
-// sp-al5ng's own shape: fayth "ops", not "builder" — the no-progress fix is a property of
+// sp-al5ng's own shape: rune "ops", not "builder" — the no-progress fix is a property of
 // decide::disposition/teardown.rs, not of any one persona's code path, so an ops-lane aeon's
 // no-progress exit must be held exactly the same way.
 #[test]
 fn an_ops_lane_aeons_no_progress_exit_is_held_too() {
     let f = fx("ops-no-progress");
-    // go_as looks up chamber/<fayth_name>.md/.fayth by name (run.rs::write_prompt,
-    // main.rs::fayth_file) — fx() only wrote "builder"'s; "ops" needs its own (content is
-    // irrelevant to this test, same shape as fx()'s own builder.md/.fayth).
+    // go_as looks up runes/<rune_name>.md/.rune by name (run.rs::write_prompt,
+    // main.rs::rune_file) — fx() only wrote "builder"'s; "ops" needs its own (content is
+    // irrelevant to this test, same shape as fx()'s own builder.md/.rune).
     std::fs::write(
-        f.home.join("chamber/ops.md"),
+        f.home.join("runes/ops.md"),
         "You are ops. DB {{DB}}.\n<!-- task -->\n## The bead\n{{BEAD}}\nwork {{BEAD_ID}} in {{REPO}} on {{BRANCH}} ({{LANDING}})\n{{PARK}}\n{{FIXTURE}}\n## Finishing\n{{FINISH}}\n",
     )
     .unwrap();
-    std::fs::write(f.home.join("chamber/ops.fayth"), "").unwrap();
+    std::fs::write(f.home.join("runes/ops.rune"), "").unwrap();
     seed(&f, "sp-ao");
     let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|spec, _, _| {
         crate::run::append(&spec.log, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1}\n");
@@ -1483,8 +1483,8 @@ fn a_silent_session_exit_is_a_harness_red_and_charges_no_attempt() {
 #[test]
 fn a_persona_with_no_declared_model_is_a_harness_red_with_a_done_line_not_a_silent_exit() {
     let f = fx("no-model");
-    std::fs::write(f.home.join("chamber/ghost.md"), std::fs::read_to_string(f.home.join("chamber/builder.md")).unwrap()).unwrap();
-    std::fs::write(f.home.join("chamber/ghost.fayth"), "").unwrap();
+    std::fs::write(f.home.join("runes/ghost.md"), std::fs::read_to_string(f.home.join("runes/builder.md")).unwrap()).unwrap();
+    std::fs::write(f.home.join("runes/ghost.rune"), "").unwrap();
     seed(&f, "sp-g");
     let o = go_as("ghost", &f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), no_session());
     assert_eq!(o.code, 1, "{}", o.log);
@@ -1568,7 +1568,7 @@ fn a_superseded_close_behind_a_conflicting_base_is_not_reopened() {
 #[test]
 fn sweep_runs_without_a_bead() {
     let f = fx("sweep");
-    std::fs::write(f.home.join("chamber/builder.md"), "persona\n<!-- task -->\nstanding brief\n").unwrap();
+    std::fs::write(f.home.join("runes/builder.md"), "persona\n<!-- task -->\nstanding brief\n").unwrap();
     // A believable trace (acted, no API error) so the native session_outcome classifies it
     // as `unlanded` rather than `refused` — a bare result record with no tool_use is not an
     // attempt (see decide::tests::session_outcome_table).
@@ -1589,35 +1589,35 @@ fn sweep_runs_without_a_bead() {
 #[test]
 fn a_declared_core_statute_that_does_not_exist_refuses_the_start() {
     let f = fx("corefail");
-    std::fs::write(f.home.join("chamber/builder.md"), "persona\n<!-- task -->\nstanding brief\n").unwrap();
+    std::fs::write(f.home.join("runes/builder.md"), "persona\n<!-- task -->\nstanding brief\n").unwrap();
     let cache = f.run.join("memories.json");
     std::fs::write(&cache, r#"{"law-real":"text"}"#).unwrap();
     let cache_s = cache.display().to_string();
     let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|_, _, _| 0);
-    let o = go(&f, "spira,plan", &[("SPIRA_MEMORIES_CACHE", &cache_s), ("FAYTH_STATUTE_CORE", "law-slug-that-does-not-exist")], Mode::Sweep { prompt: Some("x".into()) }, BTreeMap::new(), act);
+    let o = go(&f, "spira,plan", &[("SPIRA_MEMORIES_CACHE", &cache_s), ("RUNE_STATUTE_CORE", "law-slug-that-does-not-exist")], Mode::Sweep { prompt: Some("x".into()) }, BTreeMap::new(), act);
     assert_eq!(o.code, 1);
     assert!(o.log.contains("law-slug-that-does-not-exist"), "{}", o.log);
     assert!(o.seen.is_empty(), "no session may start");
     assert!(!f.run.join("sweep-builder-4242.task.md").exists());
 
     let f = fx("coreok");
-    std::fs::write(f.home.join("chamber/builder.md"), "persona\n<!-- task -->\nstanding brief\n").unwrap();
+    std::fs::write(f.home.join("runes/builder.md"), "persona\n<!-- task -->\nstanding brief\n").unwrap();
     let cache = f.run.join("memories.json");
     std::fs::write(&cache, r#"{"law-real":"text"}"#).unwrap();
     let cache_s = cache.display().to_string();
     let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|_, _, _| 0);
-    let o = go(&f, "spira,plan", &[("SPIRA_MEMORIES_CACHE", &cache_s), ("FAYTH_STATUTE_CORE", "law-real")], Mode::Sweep { prompt: Some("x".into()) }, BTreeMap::new(), act);
+    let o = go(&f, "spira,plan", &[("SPIRA_MEMORIES_CACHE", &cache_s), ("RUNE_STATUTE_CORE", "law-real")], Mode::Sweep { prompt: Some("x".into()) }, BTreeMap::new(), act);
     assert!(!o.seen.is_empty(), "positive control: a resolvable core slug starts the session: {}", o.log);
 }
 
 // sp-crr3n: SPIRA_STATUTE_CORE_LOCAL is this installation's own addition to whatever core
-// the persona already resolves (FAYTH_STATUTE_CORE here) — never shipped with the fayth,
+// the persona already resolves (RUNE_STATUTE_CORE here) — never shipped with the rune,
 // per law-harness-ships-mechanism-not-inventory. A slug it names renders in full exactly
-// like a FAYTH_STATUTE_CORE one, and a missing one refuses the start the same way.
+// like a RUNE_STATUTE_CORE one, and a missing one refuses the start the same way.
 #[test]
 fn spira_statute_core_local_renders_in_full_and_a_missing_one_refuses() {
     let f = fx("corelocalok");
-    std::fs::write(f.home.join("chamber/builder.md"), "persona\n<!-- task -->\nstanding brief\n").unwrap();
+    std::fs::write(f.home.join("runes/builder.md"), "persona\n<!-- task -->\nstanding brief\n").unwrap();
     let cache = f.run.join("memories.json");
     std::fs::write(&cache, r#"{"law-real":"text","law-local":"local text"}"#).unwrap();
     let cache_s = cache.display().to_string();
@@ -1625,7 +1625,7 @@ fn spira_statute_core_local_renders_in_full_and_a_missing_one_refuses() {
     let o = go(
         &f,
         "spira,plan",
-        &[("SPIRA_MEMORIES_CACHE", &cache_s), ("FAYTH_STATUTE_CORE", "law-real"), ("SPIRA_STATUTE_CORE_LOCAL", "law-local")],
+        &[("SPIRA_MEMORIES_CACHE", &cache_s), ("RUNE_STATUTE_CORE", "law-real"), ("SPIRA_STATUTE_CORE_LOCAL", "law-local")],
         Mode::Sweep { prompt: Some("x".into()) },
         BTreeMap::new(),
         act,
@@ -1633,7 +1633,7 @@ fn spira_statute_core_local_renders_in_full_and_a_missing_one_refuses() {
     assert!(!o.seen.is_empty(), "a resolvable local core slug, appended to the persona's own, starts the session: {}", o.log);
 
     let f = fx("corelocalfail");
-    std::fs::write(f.home.join("chamber/builder.md"), "persona\n<!-- task -->\nstanding brief\n").unwrap();
+    std::fs::write(f.home.join("runes/builder.md"), "persona\n<!-- task -->\nstanding brief\n").unwrap();
     let cache = f.run.join("memories.json");
     std::fs::write(&cache, r#"{"law-real":"text"}"#).unwrap();
     let cache_s = cache.display().to_string();
@@ -1641,14 +1641,14 @@ fn spira_statute_core_local_renders_in_full_and_a_missing_one_refuses() {
     let o = go(
         &f,
         "spira,plan",
-        &[("SPIRA_MEMORIES_CACHE", &cache_s), ("FAYTH_STATUTE_CORE", "law-real"), ("SPIRA_STATUTE_CORE_LOCAL", "law-gone-local")],
+        &[("SPIRA_MEMORIES_CACHE", &cache_s), ("RUNE_STATUTE_CORE", "law-real"), ("SPIRA_STATUTE_CORE_LOCAL", "law-gone-local")],
         Mode::Sweep { prompt: Some("x".into()) },
         BTreeMap::new(),
         act,
     );
     assert_eq!(o.code, 1);
     assert!(o.log.contains("law-gone-local"), "{}", o.log);
-    assert!(o.seen.is_empty(), "a missing SPIRA_STATUTE_CORE_LOCAL slug refuses the start exactly like a missing FAYTH_STATUTE_CORE one");
+    assert!(o.seen.is_empty(), "a missing SPIRA_STATUTE_CORE_LOCAL slug refuses the start exactly like a missing RUNE_STATUTE_CORE one");
 }
 
 // ---- admission and summon jitter (sp-f4ig1) -------------------------------------------
@@ -1888,12 +1888,12 @@ fn snoozed(w: &World) -> bool {
 const CK_SESSION: &str = "0b9d6f3a-1c2e-4f5a-8b7c-9d0e1f2a3b4c";
 
 fn persona_of(f: &Fx) -> String {
-    crate::checkpoint::persona_hash(&std::fs::read(f.home.join("chamber/builder.md")).unwrap())
+    crate::checkpoint::persona_hash(&std::fs::read(f.home.join("runes/builder.md")).unwrap())
 }
 
-fn checkpoint_facts(fayth: &str, persona: &str) -> String {
+fn checkpoint_facts(rune: &str, persona: &str) -> String {
     serde_json::json!([
-        {"issue_id": "sp-ck", "event_type": "session", "new_value": format!("{CK_SESSION} {fayth} {persona} /w/sp-ck")},
+        {"issue_id": "sp-ck", "event_type": "session", "new_value": format!("{CK_SESSION} {rune} {persona} /w/sp-ck")},
         {"issue_id": "sp-ck", "event_type": "checkpointed", "new_value": "1000"},
     ])
     .to_string()
@@ -1953,10 +1953,10 @@ fn a_checkpointed_aeon_resumes_its_session_and_is_told_the_world_was_stopped() {
 
 #[test]
 fn an_unresumable_session_falls_back_to_a_cold_claim_and_the_note_says_why() {
-    for (case, fayth, persona, transcript, why) in [
+    for (case, rune, persona, transcript, why) in [
         ("expired", "builder", None, false, "transcript"),
         ("persona", "builder", Some("000000000000"), true, "persona changed"),
-        ("other-fayth", "ops", None, true, "ran as ops"),
+        ("other-rune", "ops", None, true, "ran as ops"),
     ] {
         let f = fx(&format!("ck-cold-{case}"));
         seed(&f, "sp-ck");
@@ -1964,7 +1964,7 @@ fn an_unresumable_session_falls_back_to_a_cold_claim_and_the_note_says_why() {
             keep_transcript(&f);
         }
         let persona = persona.map(String::from).unwrap_or_else(|| persona_of(&f));
-        f.w.lock().unwrap().facts = checkpoint_facts(fayth, &persona);
+        f.w.lock().unwrap().facts = checkpoint_facts(rune, &persona);
         let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), ends_clean());
         let spec = &o.seen[0];
         assert!(!spec.args.contains(&"--resume".to_string()), "{case}: {:?}", spec.args);
@@ -2250,7 +2250,7 @@ fn a_submission_with_a_clean_close_reason_stands_submitted() {
 fn a_claim_without_a_build_spec_holds_with_an_ask_and_starts_no_session() {
     let f = fx("nospec");
     seed(&f, "sp-ns");
-    let o = go(&f, "spira,plan", &[("FAYTH_REQUIRES_BUILD_SPEC", "1")], Mode::Claim, BTreeMap::new(), no_session());
+    let o = go(&f, "spira,plan", &[("RUNE_REQUIRES_BUILD_SPEC", "1")], Mode::Claim, BTreeMap::new(), no_session());
     let w = o.w.lock().unwrap();
     let hold = w.exec_calls.iter().find(|c| c.0 == "spira-lc" && c.1.first().map(String::as_str) == Some("hold")).unwrap_or_else(|| panic!("{}", o.log));
     assert_eq!(&hold.1[..3], ["hold", "sp-ns", "ask"]);
@@ -2265,7 +2265,7 @@ fn a_claim_with_a_build_spec_proceeds() {
     let f = fx("withspec");
     seed(&f, "sp-ws");
     f.w.lock().unwrap().descriptions.insert("sp-ws".into(), "Why.\n\n## Build\n\nA guard in aeon/src/run.rs.\n".into());
-    let o = go(&f, "spira,plan", &[("FAYTH_REQUIRES_BUILD_SPEC", "1")], Mode::Claim, BTreeMap::new(), commits_and_closes());
+    let o = go(&f, "spira,plan", &[("RUNE_REQUIRES_BUILD_SPEC", "1")], Mode::Claim, BTreeMap::new(), commits_and_closes());
     let w = o.w.lock().unwrap();
     assert!(!w.exec_calls.iter().any(|c| c.0 == "spira-lc" && c.1.first().map(String::as_str) == Some("hold") && c.1.get(3).is_some_and(|r| r.starts_with("no build spec"))), "{}", o.log);
 }
@@ -2281,7 +2281,7 @@ fn a_build_spec_hold_is_not_asked_of_a_dropped_row() {
     let f = fx("term-nospec");
     seed(&f, "sp-ns");
     f.w.lock().unwrap().lc.insert("sp-ns".into(), "DROPPED".into());
-    let o = go(&f, "spira,plan", &[("FAYTH_REQUIRES_BUILD_SPEC", "1")], Mode::Claim, BTreeMap::new(), no_session());
+    let o = go(&f, "spira,plan", &[("RUNE_REQUIRES_BUILD_SPEC", "1")], Mode::Claim, BTreeMap::new(), no_session());
     assert!(ledger_lines(&o).iter().any(|l| l.contains("status=no-build-spec")), "the site ran: {}", o.log);
     assert_eq!(holds_asked(&o), Vec::<Vec<String>>::new(), "{}", o.log);
 }

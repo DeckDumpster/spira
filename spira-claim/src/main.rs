@@ -42,7 +42,7 @@ impl Outcome {
     fn cannot_tell(msg: impl Into<String>) -> Self {
         Outcome { code: CANNOT_TELL, out: String::new(), err: format!("spira-claim: cannot tell: {}", msg.into()) }
     }
-    /// A real error — never `CANNOT_TELL` (callers read that 2 as "no fayth / nothing
+    /// A real error — never `CANNOT_TELL` (callers read that 2 as "no rune / nothing
     /// there", not "something is broken"): code 1, the message, no `USAGE_TEXT`. Per the
     /// Concierge's sp-hh599 decision (2026-10-05): `store::load_config`'s own failure is
     /// this, for every verb, not a per-verb "cannot tell".
@@ -57,17 +57,17 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim decide [thresholds] [--] <n> <requeues> <reclaims> <labels> <stamp> [poisoned]
        spira-claim poison-decide <bead> [--labels CSV] [--asked RQ:RC:PO[:PL]] [--poisoned 0|1] [thresholds] [--events F] [--json]
        spira-claim epics [--ready F]                       (ready JSON on stdin by default)
-       spira-claim select --fayth NAME [--ready F] [--epics F] [--resumable F] [--top-tier|--count|--json]
+       spira-claim select --rune NAME [--ready F] [--epics F] [--resumable F] [--top-tier|--count|--json]
                           [--blockers bd|machine] [--lifecycle F] [--blocker-records F] [--stack-max-depth N]
        spira-claim stack <bead> [--lifecycle F] [--blocker-records F] [--stack-max-depth N]
        spira-claim ready-args [--raw] [--scope-label L] [--noloop-label L]   (READY_ARGS/ready_raw_args, one token a line)
        spira-claim shared-exclude                                            (ready_shared_exclude)
        spira-claim ready-count <labels> [<exclude-labels>] [--json] [--express]          (ready_count; prints '0' on a failed query too; --json: the rows)
-       spira-claim urgent [<fayth>...]                                                  (claimable P0 and REWORK beads: id, priority, rework 0|1, express 0|1, tab-separated)
+       spira-claim urgent [<rune>...]                                                  (claimable P0 and REWORK beads: id, priority, rework 0|1, express 0|1, tab-separated)
        spira-claim claim-retry <bd query argv...>                            (claim_retry; retried SPIRA_CLAIM_RETRIES x)
-       spira-claim fayth-exclude <fayth> [own-exclusions]                    (fayth_exclude; resolves $SPIRA_HOME in-process, $SPIRA_FAYTHS)
-       spira-claim fayth-ready <fayth> [--json] [--express]                             (fayth_ready; ditto, plus $SPIRA_READY_CACHE; --json: the rows themselves, never cached)
-       spira-claim bulk-ready-by-fayth                                      (bulk_ready_by_fayth; the machine's claimable set)
+       spira-claim rune-exclude <rune> [own-exclusions]                    (rune_exclude; resolves $SPIRA_HOME in-process, $SPIRA_RUNES)
+       spira-claim rune-ready <rune> [--json] [--express]                             (rune_ready; ditto, plus $SPIRA_READY_CACHE; --json: the rows themselves, never cached)
+       spira-claim bulk-ready-by-rune                                      (bulk_ready_by_rune; the machine's claimable set)
        spira-claim unpoison --bead ID [--bead ID...] --cause TEXT [--dry-run]
                             [--credit SLUG] [--actor NAME] [--poison-at N]   (the one writer: DESIGN.md §8)
        spira-claim audit --candidates F [--events F] [--lifecycle F]        (every partition's own bd list, exclusions dropped)
@@ -92,8 +92,8 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
         write-event also 1 = could not write (a no-op on an empty bead/event-type is 0);
         reopen also 1 = the lifecycle reopen/note each separately failed (refused);
         deliberate-exempt is a bare exit code (0 exempt, 1 not), no stdout;
-        fayth-ready also exits 2 (no fayth in the chamber) or 1 (query failed) — stdout is
-        '0' in both cases, matching fayth_ready's own historic contract (sp-3ntca)";
+        rune-ready also exits 2 (no rune in the runes) or 1 (query failed) — stdout is
+        '0' in both cases, matching rune_ready's own historic contract (sp-3ntca)";
 
 /// Parsed flags and positionals. Flags listed in `BOOL_FLAGS` take no value.
 struct Args {
@@ -239,9 +239,9 @@ pub fn dispatch(raw: &[String], stdin: &mut dyn Read) -> Outcome {
         "shared-exclude" => cmd_shared_exclude(&a, &env),
         "ready-count" => cmd_ready_count(&a, &mut env),
         "urgent" => cmd_urgent(&a, &mut env),
-        "fayth-exclude" => cmd_fayth_exclude(&a, &mut env),
-        "fayth-ready" => cmd_fayth_ready(&a, &mut env),
-        "bulk-ready-by-fayth" => cmd_bulk_ready_by_fayth(&a, &mut env),
+        "rune-exclude" => cmd_rune_exclude(&a, &mut env),
+        "rune-ready" => cmd_rune_ready(&a, &mut env),
+        "bulk-ready-by-rune" => cmd_bulk_ready_by_rune(&a, &mut env),
         "unpoison" => cmd_unpoison(&a, &env),
         "audit" => cmd_audit(&a, &mut env),
         "deadlocked" => cmd_deadlocked(&a, &mut env),
@@ -436,14 +436,14 @@ fn cmd_epics(a: &Args, env: &mut Env) -> Outcome {
 
 fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
     let known = [
-        "--fayth", "--ready", "--epics", "--resumable", "--top-tier", "--count", "--json", "--blockers",
+        "--rune", "--ready", "--epics", "--resumable", "--top-tier", "--count", "--json", "--blockers",
         "--lifecycle", "--blocker-records", "--stack-max-depth",
     ];
     if let Err(e) = a.check_known(&known) {
         return Outcome::usage(e);
     }
-    let Some(fayth) = a.get("--fayth").filter(|f| !f.is_empty()).map(str::to_string) else {
-        return Outcome::usage("select needs --fayth <name>");
+    let Some(rune) = a.get("--rune").filter(|f| !f.is_empty()).map(str::to_string) else {
+        return Outcome::usage("select needs --rune <name>");
     };
     if !a.pos.is_empty() {
         return Outcome::usage("select takes no positional arguments (the ready set comes on stdin or --ready)");
@@ -481,14 +481,14 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
             Ok(m) => m,
             Err(e) => {
                 return Outcome::cannot_tell(format!(
-                    "{fayth}: lifecycle snapshot: {e} (the machine must answer)"
+                    "{rune}: lifecycle snapshot: {e} (the machine must answer)"
                 ))
             }
         };
         rank::mark_stack_conflicts(&mut lc, std::path::Path::new(&env.config.run));
         match lc_text.map_or_else(|| st.express_ids(), |t| t.and_then(|t| rank::express_ids(&t))) {
             Ok(e) => rank::mark_express(&mut rows, &e),
-            Err(e) => return Outcome::cannot_tell(format!("{fayth}: express set: {e}")),
+            Err(e) => return Outcome::cannot_tell(format!("{rune}: express set: {e}")),
         }
         let wanted = rank::all_blockers(&rows);
         let recs = match a.get("--blocker-records") {
@@ -498,7 +498,7 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
         };
         let bd = match recs {
             Ok(r) => rank::index_rows(r),
-            Err(e) => return Outcome::cannot_tell(format!("{fayth}: blocker records: {e}")),
+            Err(e) => return Outcome::cannot_tell(format!("{rune}: blocker records: {e}")),
         };
         rows.retain(|r| matches!(rank::claimable(r, &lc, &bd, rank::stack_cap(r, &env.config.incident_label, stack_max)), Verdict::Claimable { .. }));
         retain_unstopped(&mut rows, std::path::Path::new(&env.config.run));
@@ -512,7 +512,7 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
     let lookup = match a.get("--epics") {
         Some(p) => match read_source(p, env.stdin).and_then(|t| rank::parse_lookup(&t)) {
             Ok(l) => l,
-            Err(e) => return Outcome::cannot_tell(format!("{fayth}: epic lookup: {e}")),
+            Err(e) => return Outcome::cannot_tell(format!("{rune}: epic lookup: {e}")),
         },
         None => match fetch_lookup(a, env, &rows, machine_lc.as_ref()) {
             Ok(l) => l,
@@ -622,7 +622,7 @@ fn cmd_stack(a: &Args, env: &mut Env) -> Outcome {
 
 // =========================================================================================
 // ready / claim (wave 4.25, sp-obhv6, row F): READY_ARGS, ready_count, claim_retry,
-// fayth_exclude, fayth_ready, bulk_ready_by_fayth. See ready.rs for the pure predicate
+// rune_exclude, rune_ready, bulk_ready_by_rune. See ready.rs for the pure predicate
 // logic and store.rs for the bd calls; this is env/flag wiring only, same split as the
 // rest of this file.
 // =========================================================================================
@@ -630,23 +630,23 @@ fn cmd_stack(a: &Args, env: &mut Env) -> Outcome {
 /// `$SPIRA_HOME`, resolved IN-PROCESS — law-a-binary-resolves-the-config-it-reads
 /// (sp-hh599): `spira-sentinel.service`/`spira-summon.service` carry `SPIRA_RELEASE`/
 /// `PATH` and nothing else (wave 4.25, sp-obhv6, stopped `conf.sh` from exporting
-/// `SPIRA_HOME` at all). Every `fayth-ready`/`fayth-exclude`/`bulk-ready-by-fayth` call the
+/// `SPIRA_HOME` at all). Every `rune-ready`/`rune-exclude`/`bulk-ready-by-rune` call the
 /// sentinel makes is ITS OWN in-process child (never through `lib.sh`), so under that
-/// unit's real environment this used to refuse outright — and `summon.rs`'s `fayth_ready`
-/// read that refusal's rc 2 as "no fayth", skipping every fayth every pass, forever,
+/// unit's real environment this used to refuse outright — and `summon.rs`'s `rune_ready`
+/// read that refusal's rc 2 as "no rune", skipping every rune every pass, forever,
 /// silently (this bead's own repro). The environment is an OVERRIDE a caller may still set
 /// on purpose (a fixture pinning a different tree; a lib.sh shim that already resolved it
 /// and threads it through for free) — never the ONLY source. Absent, this falls back to
 /// this process's own release root (`spira_config::release_env::own_release_root_for_process`,
 /// sp-kgzql's identical ascending search `sentinel::locate_home`/`spira_world::locate_home`
 /// already run for the home THEIR OWN binary needs — reused rather than invented a fourth
-/// way) plus `/spira`, the directory `conf.sh` itself lives beside and where the chamber
+/// way) plus `/spira`, the directory `conf.sh` itself lives beside and where the runes
 /// lives too (exactly `SPIRA_HOME=<release>/spira`, matching this bead's own manual repro).
 /// `Err` only when NEITHER source answers — no ancestor of this executable holds a release
 /// at all (a bare `cargo test` binary, or a truly detached shell) — a genuine "cannot
-/// evaluate", and every caller below is careful never to let that read as "no fayth" (see
-/// `cmd_fayth_ready`'s own exit-code doc, just below).
-fn fayth_home() -> Result<std::path::PathBuf, String> {
+/// evaluate", and every caller below is careful never to let that read as "no rune" (see
+/// `cmd_rune_ready`'s own exit-code doc, just below).
+fn rune_home() -> Result<std::path::PathBuf, String> {
     if let Ok(h) = std::env::var("SPIRA_HOME") {
         if !h.is_empty() {
             return Ok(std::path::PathBuf::from(h));
@@ -735,33 +735,33 @@ fn cmd_ready_count(a: &Args, env: &mut Env) -> Outcome {
     }
 }
 
-/// The partitions named by `urgent`'s positional fayths; empty when none are named. A fayth
-/// that is not in the chamber or whose predicate would widen is a refusal, never skipped.
-fn urgent_scope(a: &Args, env: &Env) -> Result<Vec<ready::FaythPart>, String> {
+/// The partitions named by `urgent`'s positional runes; empty when none are named. A rune
+/// that is not in runes/ or whose predicate would widen is a refusal, never skipped.
+fn urgent_scope(a: &Args, env: &Env) -> Result<Vec<ready::RunePart>, String> {
     if a.pos.is_empty() {
         return Ok(Vec::new());
     }
-    let home = fayth_home()?;
+    let home = rune_home()?;
     let mut parts = Vec::new();
     for f in &a.pos {
-        if !spira_config::chamber::chamber_dir(&home).join(format!("{f}.fayth")).is_file() {
-            return Err(format!("no fayth in the chamber: {f}"));
+        if !spira_config::runes::runes_dir(&home).join(format!("{f}.rune")).is_file() {
+            return Err(format!("no rune in runes: {f}"));
         }
-        let p = spira_config::chamber::fayth_predicate(&home, f).map_err(|e| e.to_string())?;
+        let p = spira_config::runes::rune_predicate(&home, f).map_err(|e| e.to_string())?;
         if p.labels.is_empty() {
             continue;
         }
-        let exclude = fayth_exclude_str(env, &home, f, &p.exclude_labels);
-        parts.push(ready::FaythPart { name: f.clone(), inc: ready::split_csv(&p.labels), exc: ready::split_csv(&exclude) });
+        let exclude = rune_exclude_str(env, &home, f, &p.exclude_labels);
+        parts.push(ready::RunePart { name: f.clone(), inc: ready::split_csv(&p.labels), exc: ready::split_csv(&exclude) });
     }
     if parts.is_empty() {
-        return Err("none of the named fayths has a claim partition".into());
+        return Err("none of the named runes has a claim partition".into());
     }
     Ok(parts)
 }
 
-/// `urgent [<fayth>...]`: the claimable beads that outrank the lanes — P0, or in REWORK —
-/// restricted to those claimable under one of the named fayths' partitions when any are
+/// `urgent [<rune>...]`: the claimable beads that outrank the lanes — P0, or in REWORK —
+/// restricted to those claimable under one of the named runes' partitions when any are
 /// named. A machine that cannot answer is a refusal, never an empty list.
 fn cmd_urgent(a: &Args, env: &mut Env) -> Outcome {
     if let Err(e) = a.check_known(&["--scope-label", "--noloop-label"]) {
@@ -843,41 +843,41 @@ fn cmd_claim_retry(bd_args: &[String], cfg: &Config) -> Outcome {
     }
 }
 
-/// `spira_fayths`'s roster, as a `Vec<String>` — `fayth-exclude`/`fayth-ready`/
-/// `bulk-ready-by-fayth` all need it. `SPIRA_FAYTHS` (`spira.fayths`, a list) is the one
-/// source of config now (per Ryan 2026-10-05): `env.config.fayths`, read once at
+/// `spira_runes`'s roster, as a `Vec<String>` — `rune-exclude`/`rune-ready`/
+/// `bulk-ready-by-rune` all need it. `SPIRA_RUNES` (`spira.runes`, a list) is the one
+/// source of config now (per Ryan 2026-10-05): `env.config.runes`, read once at
 /// construction — never the environment directly.
-fn roster(home: &std::path::Path, fayths: &str) -> Vec<String> {
-    let ov = (!fayths.is_empty()).then_some(fayths);
-    spira_config::chamber::spira_fayths(home, ov).split_whitespace().map(str::to_string).collect()
+fn roster(home: &std::path::Path, runes: &str) -> Vec<String> {
+    let ov = (!runes.is_empty()).then_some(runes);
+    spira_config::runes::spira_runes(home, ov).split_whitespace().map(str::to_string).collect()
 }
 
-fn fayth_exclude_str(env: &Env, home: &std::path::Path, me: &str, own: &str) -> String {
+fn rune_exclude_str(env: &Env, home: &std::path::Path, me: &str, own: &str) -> String {
     let shared = ready::shared_exclude(&queue_wait_label(env), &open_children_label(env));
-    ready::fayth_exclude(me, own, &roster(home, &env.config.fayths), &shared)
+    ready::rune_exclude(me, own, &roster(home, &env.config.runes), &shared)
 }
 
-/// `fayth-exclude <fayth> [own-exclusions]`: `fayth_exclude` (lib.sh:666).
-fn cmd_fayth_exclude(a: &Args, env: &mut Env) -> Outcome {
+/// `rune-exclude <rune> [own-exclusions]`: `rune_exclude` (lib.sh:666).
+fn cmd_rune_exclude(a: &Args, env: &mut Env) -> Outcome {
     if let Err(e) = a.check_known(&[]) {
         return Outcome::usage(e);
     }
     let me = match a.pos.first() {
         Some(m) if !m.is_empty() => m.clone(),
-        _ => return Outcome::usage("fayth-exclude needs <fayth> [own-exclusions]"),
+        _ => return Outcome::usage("rune-exclude needs <rune> [own-exclusions]"),
     };
     let own = a.pos.get(1).map(String::as_str).unwrap_or("");
-    let home = match fayth_home() {
+    let home = match rune_home() {
         Ok(h) => h,
-        Err(e) => return Outcome::cannot_tell(format!("fayth-exclude: {e}")),
+        Err(e) => return Outcome::cannot_tell(format!("rune-exclude: {e}")),
     };
-    Outcome::ok(fayth_exclude_str(env, &home, &me, own))
+    Outcome::ok(rune_exclude_str(env, &home, &me, own))
 }
 
 /// `shared-exclude`: `ready_shared_exclude` (lib.sh:652) — the four labels every "is this
-/// claimable" predicate excludes regardless of caller. `fayth_exclude`/`fayth-exclude`
+/// claimable" predicate excludes regardless of caller. `rune_exclude`/`rune-exclude`
 /// folds this in already; this verb exists only because `test-dispatch-open-children.sh`
-/// calls `ready_shared_exclude` directly, not through `fayth_exclude`.
+/// calls `ready_shared_exclude` directly, not through `rune_exclude`.
 fn cmd_shared_exclude(a: &Args, env: &Env) -> Outcome {
     if let Err(e) = a.check_known(&[]) {
         return Outcome::usage(e);
@@ -886,7 +886,7 @@ fn cmd_shared_exclude(a: &Args, env: &Env) -> Outcome {
 }
 
 /// `SPIRA_READY_CACHE`'s own lookup (`awk -v f="$f" '$1==f{print $2} END{...}'`): the
-/// first matching line's second field, or 0 when the fayth has no line at all — never an
+/// first matching line's second field, or 0 when the rune has no line at all — never an
 /// error, because sentinel's `export_ready_cache` never writes an empty-but-existing file
 /// for a nonempty roster.
 fn ready_cache_lookup(text: &str, me: &str) -> u64 {
@@ -966,18 +966,18 @@ fn retain_unstopped(rows: &mut Vec<rank::ReadyRow>, run: &std::path::Path) {
     });
 }
 
-/// `fayth-ready <fayth>`: `fayth_ready` (lib.sh:693). Exit code names which of FOUR things
-/// happened (sp-3ntca; widened by sp-hh599, then sp-xsnid): 2 = no such fayth file — the
-/// ONE outcome a resolved chamber was actually consulted and came back empty, the only rc
-/// `sentinel::summon::fayth_ready` may map to `ReadyAnswer::NoFayth`; 1 = "could not
-/// evaluate" — the chamber was never reached at all (SPIRA_HOME itself would not resolve)
-/// OR the file exists but the query failed; 3 = the fayth's OWN predicate would WIDEN
-/// rather than narrow (a bare config reference `FAYTH_LABELS`/`FAYTH_EXCLUDE_LABELS` uses
+/// `rune-ready <rune>`: `rune_ready` (lib.sh:693). Exit code names which of FOUR things
+/// happened (sp-3ntca; widened by sp-hh599, then sp-xsnid): 2 = no such rune file — the
+/// ONE outcome a resolved runes was actually consulted and came back empty, the only rc
+/// `sentinel::summon::rune_ready` may map to `ReadyAnswer::NoRune`; 1 = "could not
+/// evaluate" — the runes was never reached at all (SPIRA_HOME itself would not resolve)
+/// OR the file exists but the query failed; 3 = the rune's OWN predicate would WIDEN
+/// rather than narrow (a bare config reference `RUNE_LABELS`/`RUNE_EXCLUDE_LABELS` uses
 /// resolved empty — sp-xsnid's own bug: `ops`/`spike`/`builder` all read `234`, the WHOLE
 /// ready queue, because `$SPIRA_INCIDENT_LABEL`/`$SPIRA_SPIKE_LABEL`/`$SPIRA_PLAN_LABEL`
 /// resolved empty under the sentinel unit's own bare environment); 0 = a real count, zero
 /// included. law-a-control-that-cannot-check-must-refuse: an rc that means "could not
-/// evaluate" (1) or "would widen" (3) must never collapse into "no fayth" (2) — both
+/// evaluate" (1) or "would widen" (3) must never collapse into "no rune" (2) — both
 /// bugs this bead's own two parts fixed were exactly that collapse. Stdout is '0' in
 /// every case but a real count — callers read only stdout, never the exit code, for the
 /// number itself.
@@ -986,33 +986,33 @@ fn retain_unstopped(rows: &mut Vec<rank::ReadyRow>, run: &std::path::Path) {
 /// still live — it sets this for the bash child it shells into for unported dispatch
 /// logic) is kept; it is read straight from the environment because it is a per-pass
 /// signal file path, not a config key, and sentinel genuinely exports it. ITS OWN COUNTS
-/// come from `ctx.fayths` (sentinel's probe script, a REAL `bash -c '. conf.sh; ...'`
+/// come from `ctx.runes` (sentinel's probe script, a REAL `bash -c '. conf.sh; ...'`
 /// subshell where every label IS exported — sp-xsnid's "the sentinel's own lane count
 /// already said ops has 25" is this fast path, already correct, untouched here), so a
-/// cache hit skips [`spira_config::chamber::fayth_predicate`] entirely, on purpose.
+/// cache hit skips [`spira_config::runes::rune_predicate`] entirely, on purpose.
 ///
 /// `--json` prints the counted rows instead of their number: an aeon's ready set, so what it
 /// claims from is what the sentinel summoned it for.
-fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
+fn cmd_rune_ready(a: &Args, env: &mut Env) -> Outcome {
     if let Err(e) = a.check_known(&["--scope-label", "--noloop-label", "--json", "--express"]) {
         return Outcome::usage(e);
     }
     let me = match a.pos.first() {
         Some(m) if !m.is_empty() => m.clone(),
-        _ => return Outcome::usage("fayth-ready needs <fayth>"),
+        _ => return Outcome::usage("rune-ready needs <rune>"),
     };
-    let home = match fayth_home() {
-        // rc 1, NEVER 2: the chamber was never reached, so this is "could not evaluate",
-        // not "no fayth in the chamber" — see this function's own doc above.
+    let home = match rune_home() {
+        // rc 1, NEVER 2: the runes was never reached, so this is "could not evaluate",
+        // not "no rune in the runes" — see this function's own doc above.
         Ok(h) => h,
-        Err(e) => return Outcome { code: 1, out: "0".into(), err: format!("spira-claim: fayth_ready: {e}") },
+        Err(e) => return Outcome { code: 1, out: "0".into(), err: format!("spira-claim: rune_ready: {e}") },
     };
-    let file = spira_config::chamber::chamber_dir(&home).join(format!("{me}.fayth"));
+    let file = spira_config::runes::runes_dir(&home).join(format!("{me}.rune"));
     if !file.is_file() {
         return Outcome {
             code: 2,
             out: "0".into(),
-            err: format!("spira-claim: fayth_ready: no fayth in the chamber: {}", file.display()),
+            err: format!("spira-claim: rune_ready: no rune in the runes: {}", file.display()),
         };
     }
     let json = a.has("--json");
@@ -1024,16 +1024,16 @@ fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
         }
     }
     // rc 3, NEVER 2 or an empty-string widen: see this function's own doc above.
-    let predicate = match spira_config::chamber::fayth_predicate(&home, &me) {
+    let predicate = match spira_config::runes::rune_predicate(&home, &me) {
         Ok(p) => p,
-        Err(e) => return Outcome { code: 3, out: "0".into(), err: format!("spira-claim: fayth_ready: {e}") },
+        Err(e) => return Outcome { code: 3, out: "0".into(), err: format!("spira-claim: rune_ready: {e}") },
     };
-    let exclude = fayth_exclude_str(env, &home, &me, &predicate.exclude_labels);
+    let exclude = rune_exclude_str(env, &home, &me, &predicate.exclude_labels);
     let rows = match machine_claimable(a, env) {
         Ok(r) => r,
-        Err(e) => return Outcome { code: 1, out: "0".into(), err: format!("spira-claim: fayth_ready: {}", first_line(&e)) },
+        Err(e) => return Outcome { code: 1, out: "0".into(), err: format!("spira-claim: rune_ready: {}", first_line(&e)) },
     };
-    let part = ready::FaythPart { name: me, inc: ready::split_csv(&predicate.labels), exc: ready::split_csv(&exclude) };
+    let part = ready::RunePart { name: me, inc: ready::split_csv(&predicate.labels), exc: ready::split_csv(&exclude) };
     let mine = ready::partition(&rows, &part, &queue_wait_label(env));
     if json {
         return Outcome::ok(format!("{}\n", serde_json::to_string(&mine).unwrap()));
@@ -1041,26 +1041,26 @@ fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
     Outcome::ok(mine.len().to_string())
 }
 
-/// `bulk-ready-by-fayth`: `bulk_ready_by_fayth` (lib.sh:734) plus the former ready-bucket script's own
+/// `bulk-ready-by-rune`: `bulk_ready_by_rune` (lib.sh:734) plus the former ready-bucket script's own
 /// bucketing ([`ready::bucket`]) over the machine's claimable set ([`machine_claimable`]).
-fn cmd_bulk_ready_by_fayth(a: &Args, env: &mut Env) -> Outcome {
+fn cmd_bulk_ready_by_rune(a: &Args, env: &mut Env) -> Outcome {
     if let Err(e) = a.check_known(&["--scope-label", "--noloop-label"]) {
         return Outcome::usage(e);
     }
-    let home = match fayth_home() {
+    let home = match rune_home() {
         Ok(h) => h,
-        Err(e) => return Outcome::cannot_tell(format!("bulk-ready-by-fayth: {e}")),
+        Err(e) => return Outcome::cannot_tell(format!("bulk-ready-by-rune: {e}")),
     };
     let mut parts = Vec::new();
     let mut warnings = Vec::new();
-    for f in roster(&home, &env.config.fayths) {
-        // sp-xsnid: a fayth whose predicate would WIDEN (a bare config reference resolved
-        // empty) is skipped exactly like a declared-empty one — `bulk_ready_by_fayth`'s
+    for f in roster(&home, &env.config.runes) {
+        // sp-xsnid: a rune whose predicate would WIDEN (a bare config reference resolved
+        // empty) is skipped exactly like a declared-empty one — `bulk_ready_by_rune`'s
         // own `[ -n "$inc" ] || continue` already never widened on an empty label, only
         // undercounted it, which is the safe direction — but it is LOUD here, never
         // silent, because undercounting a real incident/spike partition is a real defect
         // worth seeing even though it is not the dangerous one.
-        let predicate = match spira_config::chamber::fayth_predicate(&home, &f) {
+        let predicate = match spira_config::runes::rune_predicate(&home, &f) {
             Ok(p) => p,
             Err(e) => {
                 warnings.push(e.to_string());
@@ -1068,21 +1068,21 @@ fn cmd_bulk_ready_by_fayth(a: &Args, env: &mut Env) -> Outcome {
             }
         };
         if predicate.labels.is_empty() {
-            continue; // bulk_ready_by_fayth's own `[ -n "$inc" ] || continue`
+            continue; // bulk_ready_by_rune's own `[ -n "$inc" ] || continue`
         }
-        // sp-85p8t: the SAME exclusion `fayth-ready` and an aeon's `select` apply (own,
-        // shared incl. open-children, and every other fayth's `fayth:<name>`) — counting with
+        // sp-85p8t: the SAME exclusion `rune-ready` and an aeon's `select` apply (own,
+        // shared incl. open-children, and every other rune's `rune:<name>`) — counting with
         // the bare own list let the sentinel summon builders for epics with open children
         // that no builder could claim (56 summons in 10 minutes, each "nothing ready").
-        let exc = fayth_exclude_str(env, &home, &f, &predicate.exclude_labels);
-        parts.push(ready::FaythPart { name: f, inc: ready::split_csv(&predicate.labels), exc: ready::split_csv(&exc) });
+        let exc = rune_exclude_str(env, &home, &f, &predicate.exclude_labels);
+        parts.push(ready::RunePart { name: f, inc: ready::split_csv(&predicate.labels), exc: ready::split_csv(&exc) });
     }
     if parts.is_empty() {
         return Outcome { code: 0, out: String::new(), err: warnings.join("\n") };
     }
     let rows = match machine_claimable(a, env) {
         Ok(r) => r,
-        Err(e) => return Outcome::cannot_tell(format!("bulk-ready-by-fayth: {}", first_line(&e))),
+        Err(e) => return Outcome::cannot_tell(format!("bulk-ready-by-rune: {}", first_line(&e))),
     };
     let counts = ready::bucket(&rows, &parts, &queue_wait_label(env));
     Outcome {
@@ -1168,7 +1168,7 @@ fn cmd_unpoison(a: &Args, env: &Env) -> Outcome {
 /// `audit`'s candidate set: every bead a partition's own labels would match, exclusions
 /// dropped on purpose (attempts.sh's own rule — a poisoned or asked-about bead is exactly
 /// the one whose count most needs reading). The caller's own `bd list --label` per
-/// partition is where the exclusion-free query lives (lib.sh's chamber reading does not
+/// partition is where the exclusion-free query lives (lib.sh's runes reading does not
 /// belong in this binary, same boundary as `select`'s ready set); this only folds what it
 /// is handed.
 fn cmd_audit(a: &Args, env: &mut Env) -> Outcome {

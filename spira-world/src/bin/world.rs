@@ -244,7 +244,7 @@ fn live_aeon_pidfiles() -> Vec<PathBuf> {
     aeon_pidfiles().into_iter().filter(|p| aeon_lease_running(p)).collect()
 }
 
-/// `aeon-<fayth>-<bead>.pid` -> `<bead>` (drop the `aeon-` prefix, then everything up to
+/// `aeon-<rune>-<bead>.pid` -> `<bead>` (drop the `aeon-` prefix, then everything up to
 /// and including the first remaining `-`), matching world.sh's own
 /// `bead="${bead#aeon-}"; bead="${bead#*-}"`.
 fn bead_of_pidfile(path: &std::path::Path) -> String {
@@ -685,7 +685,7 @@ fn cmd_drain(args: &[String]) -> i32 {
     let _ = std::fs::write(
         drain_stamp_or_die(),
         format!(
-            "{}\nsummons gated in summon_fayth; loop and landing still running. Lift with: {exe} resume\n{}\n{}",
+            "{}\nsummons gated in summon_rune; loop and landing still running. Lift with: {exe} resume\n{}\n{}",
             Command::new("date").arg("+%Y-%m-%d %H:%M:%S %Z").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default(),
             spira_world::DRAIN_HOLDS_UNTIL_RESUME,
             drain.render()

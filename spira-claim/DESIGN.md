@@ -18,7 +18,7 @@ the same way every time:
    none — a pure function of the counts, thresholds and dedup state. Deterministic and
    instant, so its tests are unit tests and not six-minute sentinel passes (sp-ytbma).
 3. **Which bead should this persona claim next?** The ranked claimable candidates for a
-   fayth (epic-first rank, sp-ns46j), with the stacked-dependents claim rule (a `blocks`
+   rune (epic-first rank, sp-ns46j), with the stacked-dependents claim rule (a `blocks`
    edge onto a same-repository work bead is satisfied at CERTIFIED) when the lifecycle
    machine is the source (sp-f0qhr).
 
@@ -29,10 +29,10 @@ It replaces the scattered bash: `_attempts_sql_query`, `attempts_of`, `reopens_o
 ### What it is deliberately NOT
 
 - **Not the brief.** sp-f0qhr was ejected twice because its aeon.sh change bypassed
-  sp-wmcvb's lifecycle-aware brief rendering (test-aeon-chamber-overlay: the brief tells
+  sp-wmcvb's lifecycle-aware brief rendering (test-aeon-runes-overlay: the brief tells
   the model it has no bd). Brief rendering and `{{FINISH}}` selection are about *how the
   claimed bead is worked*; this program only decides *which bead*. It has no knowledge of
-  briefs, chambers or `bd` in the aeon environment, and its cutover touches none of those
+  briefs, runes or `bd` in the aeon environment, and its cutover touches none of those
   lines.
 - **Not the claim itself.** The atomic `bd update --claim` and the lifecycle CAS
   (`lc_claim_bead`) stay where they are; `select` only orders candidates.
@@ -110,7 +110,7 @@ spira-claim poison-decide <bead> [--labels CSV] [--asked RQ:RC:PO[:PL]] [--poiso
     -> counts from the events, then `decide`. Same output as decide; --json adds counts.
 spira-claim epics [--ready F]                   (ready JSON on stdin by default)
     -> the epic lookup JSON (epic_parent_lookup's output shape).
-spira-claim select --fayth NAME [--ready F] [--epics F] [--resumable F]
+spira-claim select --rune NAME [--ready F] [--epics F] [--resumable F]
                    [--top-tier | --count | --json]
                    [--blockers bd|machine] [--lifecycle F] [--blocker-records F]
                    [--stack-max-depth N]
@@ -124,7 +124,7 @@ spira-claim select --fayth NAME [--ready F] [--epics F] [--resumable F]
                      "resumable","age"}...] in rank order.
 ```
 
-`--fayth` is required on `select` (attribution in diagnostics, and so a caller cannot
+`--rune` is required on `select` (attribution in diagnostics, and so a caller cannot
 forget which predicate built the ready set); the predicate itself (labels, exclusions,
 `-u`, `--exclude-type epic,event`, scope, no-loop) is applied by the caller's bd query,
 exactly as `READY_ARGS` does today. Rows of type epic/event are dropped defensively anyway.
@@ -279,7 +279,7 @@ real red (measured on sp-vd9dn: 5 `reopened`, 7 `reopen` rows).
 | POISON_AT=0 edge: zero attempts never poisons, one does | unit: `poison_at_zero_needs_a_charged_attempt` |
 | ask once per (bead, count); a new count asks again | unit: `ask_suppressed_by_stamp`, `ask_again_at_new_count` (dedup state is the stamp) |
 | closed mid-pass never poisons | **stays end-to-end** (a race in sentinel's loop) |
-| empty chamber | **stays end-to-end** |
+| empty runes | **stays end-to-end** |
 | G11 reclaim cap | unit: `reclaim_mail_at_cap`, `counts_reclaims` |
 | G13 requeue cap for another partition | unit: `unpaired_reopened_counts`, `decide_requeue_mail_at_cap`; partition half stays e2e |
 | sp-wiyr2 lift survives next pass | unit: `lift_at_or_above_n_suppresses_poison`, `new_failure_after_lift_poisons` |
@@ -335,14 +335,14 @@ sp-j1q6o commit).
    epic_rank_rows() {
        local _lkf _rsf _rc; _lkf="$(mktemp)" || return 1; _rsf="$(mktemp)" || { rm -f "$_lkf"; return 1; }
        printf '%s' "$2" > "$_lkf"; printf '%s' "${3:-}" > "$_rsf"
-       printf '%s' "$1" | "$SPIRA_CLAIM_BIN" select --fayth "${FAYTH:-any}" --epics "$_lkf" --resumable "$_rsf"
+       printf '%s' "$1" | "$SPIRA_CLAIM_BIN" select --rune "${RUNE:-any}" --epics "$_lkf" --resumable "$_rsf"
        _rc=$?; rm -f "$_lkf" "$_rsf"; return $_rc
    }
    ```
 10. **spira/aeon.sh:371-395 (the `band_lines=… python3` block)** →
     ```bash
     _lkf="$SPIRA_RUN/.epic-lookup.$$"; printf '%s' "$epic_lookup" > "$_lkf"
-    band_lines="$(printf '%s' "$ready_json" | "$SPIRA_CLAIM_BIN" select --fayth "$FAYTH" --epics "$_lkf" --top-tier 2>/dev/null)"
+    band_lines="$(printf '%s' "$ready_json" | "$SPIRA_CLAIM_BIN" select --rune "$RUNE" --epics "$_lkf" --top-tier 2>/dev/null)"
     rm -f "$_lkf"
     ```
     (Lines 336-358 — the ready query and `epic_parent_lookup` call — and 397-460 — the
@@ -353,10 +353,10 @@ sp-j1q6o commit).
 11. **Machine selection (sp-f0qhr), when the operator enables it**: aeon.sh:337's
     `claim_retry "${READY_ARGS[@]}" …` becomes, behind the existing
     `lifecycle_selection_available` gate from sp-f0qhr's branch (not added here),
-    `claim_retry list --status open --no-assignee --exclude-type epic,event --limit 0 --label "$FAYTH_LABELS" --exclude-label "$CLAIM_EXCLUDE"`
+    `claim_retry list --status open --no-assignee --exclude-type epic,event --limit 0 --label "$RUNE_LABELS" --exclude-label "$CLAIM_EXCLUDE"`
     and the rank/tier calls gain `--blockers machine`. `ready_count` (lib.sh:1167)
-    becomes the same list query piped to `select --fayth "$f" --blockers machine --count`.
-    `fayth_ready`/`bulk_ready_by_fayth` (lib.sh:1513/1575) and the retired ready-bucket script count through
+    becomes the same list query piped to `select --rune "$f" --blockers machine --count`.
+    `rune_ready`/`bulk_ready_by_rune` (lib.sh:1513/1575) and the retired ready-bucket script count through
     that `ready_count`.
 12. ~~spira/unpoison.sh:123~~ — **superseded by §8.6**: unpoison.sh is deleted outright and
     `spira-claim unpoison` takes the requeue count from the same fold CHECK 4 uses.
@@ -386,7 +386,7 @@ sp-j1q6o commit).
 `lifecycle_enforce` was the switch for everything that touches the lifecycle machine
 (operator decision, 2026-09-28). After the cutover every decision reads spira-lc, and the off
 mode was a second, untested-in-production code path; sp-v62vn retired it. There is no switch
-to resolve: `select`, `ready-count`, `fayth-ready`, `bulk-ready-by-fayth`, `epics`, `audit`,
+to resolve: `select`, `ready-count`, `rune-ready`, `bulk-ready-by-rune`, `epics`, `audit`,
 `unpoison`, `deadlocked` and `reopen` read the machine, always. A config or environment that
 still says off is refused by spira-config (`spira_config::check_lifecycle_switch_env`,
 `validate`), naming the exit.
@@ -700,7 +700,7 @@ Line numbers against this branch's base (4764d03ec).
      unpoison".
    - brain wiki pages that mention unpoison.sh are dated records (notes, log) and stay as
      written.
-8. **spira/chamber/groomer.md:184-187** — unchanged: it invokes `groomer.sh unpoison`,
+8. **spira/runes/groomer.md:184-187** — unchanged: it invokes `groomer.sh unpoison`,
    whose interface does not change.
 9. Build/install: `spira-claim` is already on the workspace and §5 item 15's artifact list.
 
@@ -730,9 +730,9 @@ spira-claim audit --candidates F|- [--events F] [--lifecycle F]
 
 `--candidates` is a `bd list`-shaped JSON array (id, labels — [`rank::ReadyRow`]), supplied
 by the caller, not fetched here. That caller is `groomer.sh`'s (or an operator's) own
-exclusion-free query over every fayth partition's labels — attempts.sh's own `candidates()`,
+exclusion-free query over every rune partition's labels — attempts.sh's own `candidates()`,
 moved to lib.sh as `all_partition_members` (§9.3) because git has no place reading a
-chamber's `.fayth` files, and `select`'s ready set is built the same way for the same reason
+runes's `.rune` files, and `select`'s ready set is built the same way for the same reason
 (§7). **Exclusions are dropped on purpose, unchanged from attempts.sh's own rule:** a
 poisoned or asked-about bead is excluded from *dispatch*, and is exactly the bead whose
 count most needs reading, so filtering it out here would hide the evidence.
@@ -855,7 +855,7 @@ out to be wrong and a lift reaching work in progress.
 ### 9.6 Parity evidence (read-only, 2026-09-30)
 
 - **`attempts`, exact match.** The live `bd` store's own claimable candidates (230 ids, every
-  fayth partition, exclusions dropped), old `attempts.sh audit` (bash, run to a 280 s
+  rune partition, exclusions dropped), old `attempts.sh audit` (bash, run to a 280 s
   timeout twice — it never finished the candidate set once, the same slowness this rewrite
   exists to fix) against new `spira-claim audit` (same candidates, same store, under 1 s):
   **18 of 18 overlapping ids agree on `attempts` exactly**, including sp-g3uwp (1),

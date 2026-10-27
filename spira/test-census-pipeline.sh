@@ -22,7 +22,7 @@
 # which UC-ops-detection-remediation-12 covers with 3 real rows in test-census.sh.
 #
 # tier: T1
-# covers: census/src/* spira/chamber/mimir.md UC-ops-detection-remediation-11 UC-ops-detection-remediation-13 UC-ops-detection-remediation-14 UC-ops-detection-remediation-15
+# covers: census/src/* spira/runes/mimir.md UC-ops-detection-remediation-11 UC-ops-detection-remediation-13 UC-ops-detection-remediation-14 UC-ops-detection-remediation-15
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

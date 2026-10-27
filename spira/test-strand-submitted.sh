@@ -2,7 +2,7 @@
 #
 # test-strand-submitted.sh — a partition whose only ready-looking bead carries the
 #   submitted label is not starved: strand.sh's ready count must use the same predicate
-#   the sentinel uses to summon (fayth_exclude/CHECK7), or the two disagree about what
+#   the sentinel uses to summon (rune_exclude/CHECK7), or the two disagree about what
 #   "ready" means.
 #
 #   ./test-strand-submitted.sh
@@ -11,7 +11,7 @@
 # while the sentinel's CHECK7 — in the very same pass — correctly said "nothing ready in
 # its partition". The bead both were looking at carried SPIRA_SUBMITTED_LABEL: the
 # groomer had finished it and it was waiting on the landing pass, not on an aeon.
-# fayth_exclude (CHECK7's predicate) has excluded the submitted label for a long time;
+# rune_exclude (CHECK7's predicate) has excluded the submitted label for a long time;
 # classify_one (strand.sh's predicate) never did, so a submitted bead read as "ready and
 # unserved" and starvation was escalated for a partition that was, correctly, empty.
 #
@@ -104,7 +104,7 @@ echo
 echo "case 1 — the bug: only ready bead carries the submitted label → NOT starved:"
 # ======================================================================================
 # strand must put the submitted label in the exclude list it hands spira-claim, same as
-# fayth_exclude does for CHECK7's summon predicate. 'starved' was reported here (sp-wnsks)
+# rune_exclude does for CHECK7's summon predicate. 'starved' was reported here (sp-wnsks)
 # when strand's ready query never named SPIRA_SUBMITTED_LABEL.
 out1="$(run_report)"
 nowant "the bug: starved is NOT reported for a submitted-only partition" "starved" "$out1"

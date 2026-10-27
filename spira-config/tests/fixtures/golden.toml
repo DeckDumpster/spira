@@ -9,10 +9,6 @@ ci_label = "fixture-ci-label"
 czar_stage_deadlock = "shadow"
 db = "/opt/fixture-home/.local/share/spira/db"
 dolt_data = "/srv/beads"
-fayths = [
-    "builder",
-    "ops",
-]
 gh_intake_repo = "example-org/example-repo"
 home_repo = "home"
 id_prefix = "sp"
@@ -30,6 +26,10 @@ queue_batch_wait = 1200
 queue_ci_maxsec = 21600
 queue_throttle_release_at = 12
 run = "/opt/fixture-home/.local/state/spira"
+runes = [
+    "builder",
+    "ops",
+]
 scope_label = "myproject"
 tz = "America/Los_Angeles"
 view = "/opt/spira/bin/view-follower"

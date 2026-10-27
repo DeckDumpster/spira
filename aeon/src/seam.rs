@@ -1,8 +1,8 @@
 //! The lib.sh seam (DESIGN.md §5): `bash -c <FIXED>` with every datum on stdin.
 //!
 //! FIXED is a compile-time constant. It reads NUL-framed records from stdin — the lib.sh
-//! path, the fayth file, the fayth name, the function, then its arguments — sources lib.sh
-//! (and so conf.sh) and the fayth exactly as aeon.sh did at its top, refuses any function
+//! path, the rune file, the rune name, the function, then its arguments — sources lib.sh
+//! (and so conf.sh) and the rune exactly as aeon.sh did at its top, refuses any function
 //! not on its allowlist, and calls it. Inside bash a function's arguments are not a
 //! process argv, so no payload size can hit E2BIG (law-payloads-go-on-stdin).
 //!
@@ -16,7 +16,7 @@
 //! `aeon_name_take` is dropped the same way (wave 4.23, sp-0ffox): this crate was its
 //! only caller, so `run.rs::take_name`/`sweep.rs::sweep` now call `crate::naming` directly
 //! and lib.sh's own `aeon_name_take` is retired outright, not shimmed. `aeon_count` and
-//! `fayth_free` stay on the seam — their owning crate is `strand`, not this one, so the
+//! `rune_free` stay on the seam — their owning crate is `strand`, not this one, so the
 //! unchanged bash names (now one-line shims) are still the right way to reach them.
 //!
 //! Bead and delivery state is read and written through `spira-lc` via `self.d.exec`, never this seam.
@@ -35,15 +35,15 @@ use crate::util::{self, Out, Spec};
 
 pub const FIXED: &str = r#"set -uo pipefail
 IFS= read -r -d '' __aeon_lib || exit 96
-IFS= read -r -d '' __aeon_fayth_file || exit 96
-IFS= read -r -d '' __aeon_fayth_name || exit 96
+IFS= read -r -d '' __aeon_rune_file || exit 96
+IFS= read -r -d '' __aeon_rune_name || exit 96
 IFS= read -r -d '' __aeon_fn || exit 96
 __aeon_args=()
 while IFS= read -r -d '' __aeon_a; do __aeon_args+=("$__aeon_a"); done
 case "$__aeon_fn" in
     _aeon_snapshot|_aeon_rebase|\
-    _aeon_thrash_meta|_aeon_world_gate|_aeon_fayth_ready|_aeon_ready_set|_aeon_summon_argv|\
-    aeon_count|fayth_free|spira_event|release_own_claim|lc_claim_bead|\
+    _aeon_thrash_meta|_aeon_world_gate|_aeon_rune_ready|_aeon_ready_set|_aeon_summon_argv|\
+    aeon_count|rune_free|spira_event|release_own_claim|lc_claim_bead|\
     lc_bead_verified|park_unmapped|\
     spira_prune_worktrees|bead_reopen|bump_requeue|\
     bump_lapsed|write_lapse_record|thrash_streak_bump|requeues_of|\
@@ -52,11 +52,11 @@ case "$__aeon_fn" in
     *) printf 'aeon seam: %s is not on the allowlist\n' "$__aeon_fn" >&2; exit 97 ;;
 esac
 . "$__aeon_lib" || exit 98
-if [ -n "$__aeon_fayth_file" ]; then
+if [ -n "$__aeon_rune_file" ]; then
     # shellcheck disable=SC1090
-    . "$__aeon_fayth_file" || exit 98
+    . "$__aeon_rune_file" || exit 98
 fi
-FAYTH="$__aeon_fayth_name"
+RUNE="$__aeon_rune_name"
 
 _aeon_snapshot() {
     env -0
@@ -69,20 +69,20 @@ _aeon_snapshot() {
     local __r
     for __r in "${READY_ARGS[@]}"; do printf '%s\0' "$__r"; done
     printf '__AEON_EXCLUDE__\0'
-    printf '%s\0' "$(fayth_exclude "$FAYTH" "${FAYTH_EXCLUDE_LABELS:-}")"
+    printf '%s\0' "$(rune_exclude "$RUNE" "${RUNE_EXCLUDE_LABELS:-}")"
 }
 _aeon_world_gate() {
-    world_gate "$FAYTH" "$1" >&2; local __rc=$?
+    world_gate "$RUNE" "$1" >&2; local __rc=$?
     return $__rc
 }
-_aeon_fayth_ready() {
-    fayth_ready "$FAYTH"
+_aeon_rune_ready() {
+    rune_ready "$RUNE"
 }
 _aeon_ready_set() {
-    _spira_claim fayth-ready "$FAYTH" --json ${SPIRA_REQUIRE_EXPRESS:+--express}
+    _spira_claim rune-ready "$RUNE" --json ${SPIRA_REQUIRE_EXPRESS:+--express}
 }
 _aeon_summon_argv() {
-    summon_argv "$FAYTH"
+    summon_argv "$RUNE"
 }
 _aeon_rebase() {
     rebase_branch "$@" >&2; local __rc=$?
@@ -98,7 +98,7 @@ _aeon_thrash_meta() {
 "#;
 
 /// The shell variables captured once at startup (exported or not), still read through the
-/// bash seam. FAYTH_* come from the sourced fayth file; SPIRA_HOME/SPIRA_REPO/
+/// bash seam. RUNE_* come from the sourced rune file; SPIRA_HOME/SPIRA_REPO/
 /// SPIRA_REPO_DERIVED are per-copy facts `spira_config::resolve()` never produces (see that
 /// module's `ResolveInput` doc); the rest here (SPIRA_WORLD_STOP_SKIP, SPIRA_TOML_FILE,
 /// SPIRA_MEMORIES_CMD, SPIRA_ALLOW_PROD_DIRTY, SPIRA_CLOSE_REASON_OVERRIDE,
@@ -121,11 +121,11 @@ pub const SNAPSHOT_VARS: &[&str] = &[
     "SPIRA_ALLOW_PROD_DIRTY", "SPIRA_CLOSE_REASON_OVERRIDE", "SPIRA_WORKFLOW_RUN_CONSIDERED",
     "BD_TIMEOUT", "SPIRA_BDQ_CONN_RETRIES", "SPIRA_BDJSON_FIXTURE",
     "SPIRA_TRACE_MARK", "SPIRA_SUMMON", "PATH", "HOME", "DB",
-    "FAYTH_NAME", "FAYTH_LABELS", "FAYTH_EXCLUDE_LABELS", "FAYTH_MAX_CONCURRENT",
-    "FAYTH_ELASTIC", "FAYTH_LEASE_MINUTES", "FAYTH_HEARTBEAT_SECONDS", "FAYTH_TIMEOUT_SECONDS",
-    "FAYTH_MEMORY_PREFIXES", "FAYTH_STATUTE_CORE", "FAYTH_TOOLS", "FAYTH_PROJECT_INSTRUCTIONS",
-    "FAYTH_SYSTEM_PROMPT", "FAYTH_SOP_REQUIRED", "FAYTH_GROOM_ESCALATION_CHECK",
-    "FAYTH_GRAPH_ONLY", "FAYTH_REQUIRES_BUILD_SPEC", "FAYTH_HABITS",
+    "RUNE_NAME", "RUNE_LABELS", "RUNE_EXCLUDE_LABELS", "RUNE_MAX_CONCURRENT",
+    "RUNE_ELASTIC", "RUNE_LEASE_MINUTES", "RUNE_HEARTBEAT_SECONDS", "RUNE_TIMEOUT_SECONDS",
+    "RUNE_MEMORY_PREFIXES", "RUNE_STATUTE_CORE", "RUNE_TOOLS", "RUNE_PROJECT_INSTRUCTIONS",
+    "RUNE_SYSTEM_PROMPT", "RUNE_SOP_REQUIRED", "RUNE_GROOM_ESCALATION_CHECK",
+    "RUNE_GRAPH_ONLY", "RUNE_REQUIRES_BUILD_SPEC", "RUNE_HABITS",
 ];
 
 /// Every `SNAPSHOT_VARS` name wave 4.8 retired from the bash seam call, resolved
@@ -133,7 +133,7 @@ pub const SNAPSHOT_VARS: &[&str] = &[
 /// parity check can diff this crate's old and new answers key by key.
 pub const RETIRED_SNAPSHOT_VARS: &[&str] = &[
     "SPIRA_RUN", "SPIRA_DB", "SPIRA_BD", "SPIRA_MAIL", "SPIRA_WIKI",
-    "SPIRA_CHAMBER_OVERLAY", "SPIRA_TESTDB_LIB", "SPIRA_WORLD_STOP_LABEL",
+    "SPIRA_RUNES_OVERLAY", "SPIRA_TESTDB_LIB", "SPIRA_WORLD_STOP_LABEL",
     "SPIRA_ASK_LABEL", "SPIRA_SUBMITTED_LABEL", "SPIRA_SCOPE_LABEL",
     "SPIRA_REPO_MAP", "SPIRA_HOME_REPO", "SPIRA_THRASH_MINUTES",
     "SPIRA_THRASH_STREAK_CAP", "SPIRA_BRIEF_KEEP_RECURRENCES", "SPIRA_BRIEF_NOTES_MAX_CHARS",
@@ -221,14 +221,14 @@ pub fn parse_snapshot(raw: &str) -> Result<Snapshot, String> {
 /// The real seam.
 pub struct BashSeam<'a> {
     pub lib: PathBuf,
-    pub fayth_file: PathBuf,
-    pub fayth: String,
+    pub rune_file: PathBuf,
+    pub rune: String,
     pub env: &'a Env,
 }
 
-pub fn frame(lib: &str, fayth_file: &str, fayth: &str, func: &str, args: &[String]) -> Vec<u8> {
+pub fn frame(lib: &str, rune_file: &str, rune: &str, func: &str, args: &[String]) -> Vec<u8> {
     let mut b = Vec::new();
-    for r in [lib, fayth_file, fayth, func].into_iter().chain(args.iter().map(|s| s.as_str())) {
+    for r in [lib, rune_file, rune, func].into_iter().chain(args.iter().map(|s| s.as_str())) {
         b.extend_from_slice(r.as_bytes());
         b.push(0);
     }
@@ -238,7 +238,7 @@ pub fn frame(lib: &str, fayth_file: &str, fayth: &str, func: &str, args: &[Strin
 impl Seam for BashSeam<'_> {
     fn call(&self, func: &str, args: &[String]) -> Out {
         let env = self.env.seam();
-        let data = frame(&self.lib.display().to_string(), &self.fayth_file.display().to_string(), &self.fayth, func, args);
+        let data = frame(&self.lib.display().to_string(), &self.rune_file.display().to_string(), &self.rune, func, args);
         util::run(Spec {
             prog: "bash",
             args: vec!["-c".into(), FIXED.into()],
@@ -264,13 +264,13 @@ mod tests {
 
     #[test]
     fn snapshot_parses_all_sections() {
-        let raw = "PATH=/bin\0HOME=/h\0__AEON_VARS__\0SPIRA_RUN\0/run\0FAYTH_LABELS\0spira,plan\0__AEON_READY__\0ready\0--limit\0\u{30}\0__AEON_EXCLUDE__\0spira-poison,fayth:ops\0";
+        let raw = "PATH=/bin\0HOME=/h\0__AEON_VARS__\0SPIRA_RUN\0/run\0RUNE_LABELS\0spira,plan\0__AEON_READY__\0ready\0--limit\0\u{30}\0__AEON_EXCLUDE__\0spira-poison,rune:ops\0";
         let s = parse_snapshot(raw).unwrap();
         assert_eq!(s.env.get("PATH").unwrap(), "/bin");
         assert_eq!(s.vars.get("SPIRA_RUN").unwrap(), "/run");
-        assert_eq!(s.vars.get("FAYTH_LABELS").unwrap(), "spira,plan");
+        assert_eq!(s.vars.get("RUNE_LABELS").unwrap(), "spira,plan");
         assert_eq!(s.ready_args, vec!["ready", "--limit", "0"]);
-        assert_eq!(s.claim_exclude, "spira-poison,fayth:ops");
+        assert_eq!(s.claim_exclude, "spira-poison,rune:ops");
     }
 
     #[test]
@@ -279,31 +279,31 @@ mod tests {
     }
 
     /// The fixed script against a stand-in lib.sh: the allowlist refuses, the args arrive
-    /// intact (spaces, newlines, empty), the fayth is sourced and SPIRA_REQUIRE_EXPRESS reaches the ready-set call.
+    /// intact (spaces, newlines, empty), the rune is sourced and SPIRA_REQUIRE_EXPRESS reaches the ready-set call.
     #[test]
-    fn fixed_script_sources_lib_and_fayth_and_passes_args_on_stdin() {
+    fn fixed_script_sources_lib_and_rune_and_passes_args_on_stdin() {
         let dir = testkit::TempDir::new("aeon-seam");
         let lib = dir.join("lib.sh");
         let mut f = std::fs::File::create(&lib).unwrap();
-        writeln!(f, "READY_ARGS=(ready --limit 0)\nfayth_exclude() {{ printf 'x:%s:%s' \"$1\" \"$2\"; }}\naeon_count() {{ printf '%s|' \"$@\"; printf '%s' \"$FAYTH_LABELS\"; }}\n_spira_claim() {{ printf '%s|' \"$@\"; }}").unwrap();
-        std::fs::write(dir.join("b.fayth"), "FAYTH_LABELS=spira,plan\nFAYTH_EXCLUDE_LABELS=p\n").unwrap();
+        writeln!(f, "READY_ARGS=(ready --limit 0)\nrune_exclude() {{ printf 'x:%s:%s' \"$1\" \"$2\"; }}\naeon_count() {{ printf '%s|' \"$@\"; printf '%s' \"$RUNE_LABELS\"; }}\n_spira_claim() {{ printf '%s|' \"$@\"; }}").unwrap();
+        std::fs::write(dir.join("b.rune"), "RUNE_LABELS=spira,plan\nRUNE_EXCLUDE_LABELS=p\n").unwrap();
         let mut orig = BTreeMap::new();
         orig.insert("PATH".to_string(), std::env::var("PATH").unwrap_or_default());
         let plain = Env::new(orig.clone(), BTreeMap::new());
         orig.insert("SPIRA_REQUIRE_EXPRESS".to_string(), "1".to_string());
         let env = Env::new(orig, BTreeMap::new());
-        let seam = BashSeam { lib: lib.clone(), fayth_file: dir.join("b.fayth"), fayth: "builder".into(), env: &env };
+        let seam = BashSeam { lib: lib.clone(), rune_file: dir.join("b.rune"), rune: "builder".into(), env: &env };
         let o = seam.call("aeon_count", &["a b\nc".into(), "".into()]);
         assert_eq!(o.stdout, "a b\nc||spira,plan");
         let o = seam.call("rm_rf_everything", &[]);
         assert_eq!(o.code, 97);
-        let o = seam.call("_aeon_snapshot", &["FAYTH_LABELS".into(), "NOPE".into()]);
+        let o = seam.call("_aeon_snapshot", &["RUNE_LABELS".into(), "NOPE".into()]);
         let s = parse_snapshot(&o.stdout).unwrap();
-        assert_eq!(s.vars.get("FAYTH_LABELS").unwrap(), "spira,plan");
+        assert_eq!(s.vars.get("RUNE_LABELS").unwrap(), "spira,plan");
         assert!(!s.vars.contains_key("NOPE"));
-        assert_eq!(seam.call("_aeon_ready_set", &[]).stdout, "fayth-ready|builder|--json|--express|");
-        let plain_seam = BashSeam { lib: lib.clone(), fayth_file: dir.join("b.fayth"), fayth: "builder".into(), env: &plain };
-        assert_eq!(plain_seam.call("_aeon_ready_set", &[]).stdout, "fayth-ready|builder|--json|");
+        assert_eq!(seam.call("_aeon_ready_set", &[]).stdout, "rune-ready|builder|--json|--express|");
+        let plain_seam = BashSeam { lib: lib.clone(), rune_file: dir.join("b.rune"), rune: "builder".into(), env: &plain };
+        assert_eq!(plain_seam.call("_aeon_ready_set", &[]).stdout, "rune-ready|builder|--json|");
         assert_eq!(s.ready_args, vec!["ready", "--limit", "0"]);
         assert_eq!(s.claim_exclude, "x:builder:p");
         let _ = std::fs::remove_dir_all(&dir);

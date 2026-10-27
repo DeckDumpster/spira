@@ -168,12 +168,12 @@ spira_toml_file() {
     printf '%s' "$SPIRA_TOML"
 }
 
-# _spira_fayth_paths -> every "*.fayth" file under the chamber in force, one per line.
-# SPIRA_CHAMBER_OVERLAY only replaces prompt text (aeon.sh's *.md overlay); fayth files
-# themselves are never overlaid, so only SPIRA_CHAMBER (or its default) is read here.
-_spira_fayth_paths() {
-    local dir="${SPIRA_CHAMBER:-$SPIRA_HOME/chamber}" f
-    for f in "$dir"/*.fayth; do
+# _spira_rune_paths -> every "*.rune" file under the runes in force, one per line.
+# SPIRA_RUNES_OVERLAY only replaces prompt text (aeon.sh's *.md overlay); rune files
+# themselves are never overlaid, so only SPIRA_RUNES_DIR (or its default) is read here.
+_spira_rune_paths() {
+    local dir="${SPIRA_RUNES_DIR:-$SPIRA_HOME/runes}" f
+    for f in "$dir"/*.rune; do
         [ -f "$f" ] && printf '%s\n' "$f"
     done
 }
@@ -235,7 +235,7 @@ SPIRA_TOML_FILE="$(spira_toml_file)"
 # (sp-ubcgo, "wave 4.5: conf.sh becomes an eval of resolve").
 #
 # `--sh-all`, NOT `--sh`: this shell SOURCES the result rather than inheriting it across an
-# exec boundary, so every resolved key belongs here — including SPIRA_REPO_MAP, SPIRA_FAYTHS
+# exec boundary, so every resolved key belongs here — including SPIRA_REPO_MAP, SPIRA_RUNES
 # and SPIRA_MAX_AEONS, which `--sh`'s narrower, typed export set deliberately omits because
 # those three must never reach a CHILD process (see "WHAT IS EXPORTED, AND WHAT MUST NEVER
 # BE" below, which re-exports only that narrower set to this process's own children — the
@@ -339,8 +339,8 @@ SPIRA_BD="$SPIRA_BD" SPIRA_DB="${SPIRA_DB:-}" SPIRA_RUN="${SPIRA_RUN:-}" \
 # has run. The database was at schema v61, migrated by the accidental v1.2.0/v1.2.1 release,
 # and every bd newer than v1.1.0 refused it outright — a refusal that EXITS 0 with the
 # complaint on stdout, so a caller checking status read success and parsed an error as data.
-# On 2026-09-08 a CGO rebuild of bd landed in ~/.local/bin, fayth_ready returned nothing, the
-# sentinel logged "no fayth in the chamber" for every persona, and Spira summoned nothing for
+# On 2026-09-08 a CGO rebuild of bd landed in ~/.local/bin, rune_ready returned nothing, the
+# sentinel logged "no rune in the runes" for every persona, and Spira summoned nothing for
 # six minutes while the panes showed 0 ready rather than a fault.
 #
 # The rollback (sp-6ylz, 2026-09-08 18:14) ran and was reverted three minutes later at 18:17:
@@ -362,7 +362,7 @@ SPIRA_BD="$SPIRA_BD" SPIRA_DB="${SPIRA_DB:-}" SPIRA_RUN="${SPIRA_RUN:-}" \
 # dropped and the tool silently reads a different database.
 #
 # NOT EXPORTED: EVERYTHING DERIVED FROM WHERE THIS FILE SITS. SPIRA_HOME, SPIRA_REPO, the
-# maps, the chamber, the cockpit, the runtime directory. Those differ per COPY of the
+# maps, the runes, the cockpit, the runtime directory. Those differ per COPY of the
 # harness, and anything that sources its own conf.sh must resolve them from its own location.
 # Exporting them cost eleven tests in one go: a fixture library, sourced by a suite for its
 # database helpers, published the live installation's SPIRA_HOME into the environment of the
@@ -374,8 +374,8 @@ SPIRA_BD="$SPIRA_BD" SPIRA_DB="${SPIRA_DB:-}" SPIRA_RUN="${SPIRA_RUN:-}" \
 # `env -i`: configuration reaches the harness's own children and stops at the boundary of
 # anything being judged.
 #
-# SPIRA_FAYTHS and SPIRA_MAX_AEONS are also not exported. They are policy for THIS host, read
-# in-process, and exporting SPIRA_FAYTHS is the scar that statute is named for — it reached a
+# SPIRA_RUNES and SPIRA_MAX_AEONS are also not exported. They are policy for THIS host, read
+# in-process, and exporting SPIRA_RUNES is the scar that statute is named for — it reached a
 # test suite through systemd and made the suite assert the host's roster instead of the
 # defaults it was written to check.
 

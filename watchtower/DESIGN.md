@@ -163,7 +163,7 @@ runs `cockpit/moot-sweep.sh --apply`.
   via a literal `"${SPIRA_HOME}/world.sh"`, genuinely `SPIRA_HOME`-driven, not `$0`-relative.
   Conflating the two was a real bug (sp-lnmbq): a caller that points `SPIRA_HOME` at a
   fixture directory holding data files but no lib.sh (test-watchtower.sh's idle-while-ready
-  section, which overrides `SPIRA_HOME` so `bulk_ready_by_fayth`'s chamber lookup reads its
+  section, which overrides `SPIRA_HOME` so `bulk_ready_by_rune`'s runes lookup reads its
   fixture, while still expecting the real lib.sh code to run) made every lib.sh-sourcing
   seam fail closed with no error. `SPIRA_HOME` still reaches lib.sh's own functions
   correctly either way — it is inherited in the seam's subprocess environment, never

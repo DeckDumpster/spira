@@ -10,7 +10,7 @@
 # -----------------------
 # The groomer had a defect: it logged "ESCALATED sp-X" without ever calling mail, and the
 # sentinel accepted the log line as evidence (CHECK5 only checks the line exists).
-# FAYTH_GROOM_ESCALATION_CHECK=1 tells the aeon to verify the claim against the database at
+# RUNE_GROOM_ESCALATION_CHECK=1 tells the aeon to verify the claim against the database at
 # close: if no ask bead was created in this session naming that bead, the trigger is reopened
 # and poisoned.
 #
@@ -26,7 +26,7 @@
 # the bd spira-poison label.
 #
 # tier: T2
-# covers: aeon/src/* spira/chamber/groomer.fayth spira/conf.sh UC-aeon-execution-16
+# covers: aeon/src/* spira/runes/groomer.rune spira/conf.sh UC-aeon-execution-16
 # defect: sp-yr4ih
 # scar: groomer wrote ESCALATED to the groom log without calling mail; sentinel accepted the log line as evidence of the escalation
 set -uo pipefail
@@ -54,7 +54,7 @@ git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q origin main 2>/dev/null # batch-job: fixture setup against the suite's throwaway repo and bd
 
-HOMEDIR="$TMP/home"; mkdir -p "$HOMEDIR/chamber"
+HOMEDIR="$TMP/home"; mkdir -p "$HOMEDIR/runes"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$HOMEDIR/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$HOMEDIR/"
 cp -r "$HERE/actors" "$HOMEDIR/" 2>/dev/null || true
@@ -63,26 +63,26 @@ GROOM_LOG="$RUN/groom.log"
 REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$REPO_MAP"
 
-# THE GROOM PARTITION LABEL. Use a non-default so the test proves the fayth predicate
+# THE GROOM PARTITION LABEL. Use a non-default so the test proves the rune predicate
 # reads the key rather than a literal. A test asserting against the default "groom" would
 # pass even if the code hardcoded it (law-gates-run-in-a-clean-environment).
 GROOM_LABEL="test-hygiene"
 
-# TWO FAYTHS. `scrubber` declares the check; `tiler` does not.
+# TWO RUNES. `scrubber` declares the check; `tiler` does not.
 # This proves the check is bound to the declaration rather than to the name.
 for f in scrubber tiler; do
-    cat > "$HOMEDIR/chamber/$f.fayth" <<FAYTH
-FAYTH_NAME=$f
-FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}$GROOM_LABEL"
-FAYTH_EXCLUDE_LABELS="spira-poison,\${SPIRA_ASK_LABEL}"
-FAYTH_MAX_CONCURRENT=1
-FAYTH_HEARTBEAT_SECONDS=600
-FAYTH
-    printf 'trigger {{BEAD_ID}} scrub\n' > "$HOMEDIR/chamber/$f.md"
+    cat > "$HOMEDIR/runes/$f.rune" <<RUNE
+RUNE_NAME=$f
+RUNE_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}$GROOM_LABEL"
+RUNE_EXCLUDE_LABELS="spira-poison,\${SPIRA_ASK_LABEL}"
+RUNE_MAX_CONCURRENT=1
+RUNE_HEARTBEAT_SECONDS=600
+RUNE
+    printf 'trigger {{BEAD_ID}} scrub\n' > "$HOMEDIR/runes/$f.md"
     spira-config set "persona.$f.model" claude-sonnet-5-5 "$_TL_CONF_OVERRIDE" >/dev/null \
         || { echo "test-groom-escalation-check: could not declare persona.$f.model" >&2; exit 1; }
 done
-printf 'FAYTH_GROOM_ESCALATION_CHECK=1\n' >> "$HOMEDIR/chamber/scrubber.fayth"
+printf 'RUNE_GROOM_ESCALATION_CHECK=1\n' >> "$HOMEDIR/runes/scrubber.rune"
 
 # THE SHIM IS THE SESSION. It always closes the trigger bead and optionally writes the
 # groom log and/or files an ask bead, controlled by $TMP/act.
@@ -138,11 +138,11 @@ SHIM
 chmod +x "$BIN/claude"
 aeon_fixture_agent "$BIN/claude" GROOM_LOG SPIRA_ASK_LABEL
 
-run_aeon() {    # run_aeon <fayth> <act>
+run_aeon() {    # run_aeon <rune> <act>
     printf '%s' "$2" > "$TMP/act"
     rm -rf "$RUN/worktree"
     tl_config SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-        SPIRA_REPO_MAP="$REPO_MAP" SPIRA_AGENT="$SPIRA_AGENT" SPIRA_CHAMBER="$HOMEDIR/chamber" \
+        SPIRA_REPO_MAP="$REPO_MAP" SPIRA_AGENT="$SPIRA_AGENT" SPIRA_RUNES_DIR="$HOMEDIR/runes" \
         SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}"
     env -i HOME="$HOME" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" TMP="$TMP" \
         SPIRA_CONF="$TMP/nonexistent.conf" \
@@ -190,7 +190,7 @@ is     "no lifecycle poison hold" no "$([ -e "$RUN/lc-hold/sp-gc-2" ] && echo ye
 want   "check saw the ask bead"   "groom-escalation-check: all claimed escalations verified" "$(cat "$TMP/out")"
 
 echo
-echo "a TILER (no FAYTH_GROOM_ESCALATION_CHECK) that claims ESCALATED — not held to the rule:"
+echo "a TILER (no RUNE_GROOM_ESCALATION_CHECK) that claims ESCALATED — not held to the rule:"
 fresh sp-gc-5; run_aeon tiler log-claim
 is     "the hand-on stands SUBMITTED"  SUBMITTED "$(rowstate sp-gc-5)"
 nowant "trigger is not poisoned"  "spira-poison" "$(labels sp-gc-5)"

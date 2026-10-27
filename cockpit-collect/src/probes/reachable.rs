@@ -1,7 +1,7 @@
 //! `reachable_keys` — `SP_REACHABLE`/`SP_STRANDED`: a BFS over `blocks` edges from ready/
 //! in_progress seeds, the same reachability query `spira/cockpit.sh` ran in an embedded
 //! `python3 -c` (DESIGN.md "Design"). The BFS itself ([`reachable_bfs`]) is pure and unit
-//! tested directly; only the data gathering (bd, the ctrl file, the chamber) is impure.
+//! tested directly; only the data gathering (bd, the ctrl file, the runes) is impure.
 
 use super::{push, Cfg, Kv};
 use crate::io;
@@ -10,7 +10,7 @@ use spira_config::lc_state;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// A label set that, if fully contained in a bead's labels, marks it a "stopper" — never
-/// reachable, never a seed. Suspended-fayth sets and the "no live partition matches" test
+/// reachable, never a seed. Suspended-rune sets and the "no live partition matches" test
 /// are both expressed this way.
 pub type LabelSet = HashSet<String>;
 
@@ -122,9 +122,9 @@ pub fn reachable_keys(cfg: &Cfg) -> Kv {
     let ask = spira_config::resolve::key_for_process("SPIRA_ASK_LABEL").unwrap_or_default(); // the configured ask label; never a literal fallback (literal-lint ask_fallback)
 
     let mut live: Vec<LabelSet> = Vec::new();
-    if let Some(fayths) = io::lib_call(&home, "spira_fayths", &[]) {
-        for f in fayths.split_whitespace() {
-            if let Some(labels) = io::lib_call(&home, "fayth_get", &[f, "FAYTH_LABELS"]) {
+    if let Some(runes) = io::lib_call(&home, "spira_runes", &[]) {
+        for f in runes.split_whitespace() {
+            if let Some(labels) = io::lib_call(&home, "rune_get", &[f, "RUNE_LABELS"]) {
                 let set: LabelSet = labels.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
                 if !set.is_empty() {
                     live.push(set);
@@ -144,10 +144,10 @@ pub fn reachable_keys(cfg: &Cfg) -> Kv {
                     if !has_suspend {
                         continue;
                     }
-                    let fayth_file = home.join("chamber").join(format!("{subj}.fayth"));
-                    if let Ok(content) = std::fs::read_to_string(&fayth_file) {
-                        if let Some(line) = content.lines().find(|l| l.starts_with("FAYTH_LABELS=")) {
-                            let v = line["FAYTH_LABELS=".len()..].trim();
+                    let rune_file = home.join("runes").join(format!("{subj}.rune"));
+                    if let Ok(content) = std::fs::read_to_string(&rune_file) {
+                        if let Some(line) = content.lines().find(|l| l.starts_with("RUNE_LABELS=")) {
+                            let v = line["RUNE_LABELS=".len()..].trim();
                             let set: LabelSet = v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
                             if !set.is_empty() {
                                 suspended.push(set);
@@ -253,7 +253,7 @@ mod tests {
 
     #[test]
     fn bead_matching_no_live_partition_is_stranded() {
-        let live = vec![["fayth:builder".to_string()].into_iter().collect::<LabelSet>()];
+        let live = vec![["rune:builder".to_string()].into_iter().collect::<LabelSet>()];
         let beads = vec![bead("sp-1", "open", &["plan"], &[])];
         let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &live); // literal-ok: fixture/fallback
         assert_eq!((reach, total), (0, 1));
@@ -303,8 +303,8 @@ mod tests {
 
     #[test]
     fn suspended_partition_stops_a_bead_even_when_seeded() {
-        let suspended = vec![["fayth:ops".to_string()].into_iter().collect::<LabelSet>()];
-        let beads = vec![bead("sp-1", "open", &["plan", "fayth:ops"], &[])];
+        let suspended = vec![["rune:ops".to_string()].into_iter().collect::<LabelSet>()];
+        let beads = vec![bead("sp-1", "open", &["plan", "rune:ops"], &[])];
         let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &suspended, &[]); // literal-ok: fixture/fallback
         assert_eq!((reach, total), (0, 1));
     }

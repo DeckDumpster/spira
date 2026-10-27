@@ -1,8 +1,8 @@
 TYPE=u32
 GROUP=max
-DOC=THE WHOLE-FLEET CEILING — how many aeons may exist at once, counting lane fayths.
+DOC=THE WHOLE-FLEET CEILING — how many aeons may exist at once, counting lane runes.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # THE WHOLE-FLEET CEILING — how many aeons may exist at once, counting lane fayths.
+    # THE WHOLE-FLEET CEILING — how many aeons may exist at once, counting lane runes.
     # SPIRA_MAX_AEONS is the task pool and a lane draws outside it, so the two of them
     # together are the box's real ceiling (pool + one per lane) and neither one alone is the
     # answer to "how many aeons run at once". That is correct while the constraint is cores.

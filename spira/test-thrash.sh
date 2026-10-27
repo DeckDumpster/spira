@@ -52,11 +52,11 @@ else
 
     # Now add timestamped ledger lines (cockpit-collect metrics expects ISO timestamps).
     NOW="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-    printf '%s awake fayth sp-aaa worked\n' "$NOW" >> "$LEDGER"
-    printf '%s done fayth sp-bbb rc=0 status=requeue-thrash\n' "$NOW" >> "$LEDGER"
-    printf '%s done fayth sp-ccc rc=0 status=requeue-thrash\n' "$NOW" >> "$LEDGER"
-    printf '%s done fayth sp-ddd rc=0 status=requeue-thrash\n' "$NOW" >> "$LEDGER"
-    printf '%s done fayth sp-eee rc=0 status=requeue-slain\n' "$NOW" >> "$LEDGER"
+    printf '%s awake rune sp-aaa worked\n' "$NOW" >> "$LEDGER"
+    printf '%s done rune sp-bbb rc=0 status=requeue-thrash\n' "$NOW" >> "$LEDGER"
+    printf '%s done rune sp-ccc rc=0 status=requeue-thrash\n' "$NOW" >> "$LEDGER"
+    printf '%s done rune sp-ddd rc=0 status=requeue-thrash\n' "$NOW" >> "$LEDGER"
+    printf '%s done rune sp-eee rc=0 status=requeue-slain\n' "$NOW" >> "$LEDGER"
     out3="$(call_ledger)"
     thrash_count="$(key_val SP_AEON_THRASH "$out3")"
     is "three requeue-thrash lines → SP_AEON_THRASH=3" "3" "$thrash_count"
