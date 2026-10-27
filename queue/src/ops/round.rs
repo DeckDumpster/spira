@@ -2046,9 +2046,16 @@ pub(super) fn certify(
             }
             head = at.unwrap_or_default();
             set(&mut kv, "head", &head);
-        } else if w.git.rev_parse(&wt, "HEAD").as_deref() != Some(head.as_str()) {
-            w.err(format!("queue.sh {label}: the round worktree {} is not at the round's head {head} — refused", wt.display()));
-            return FAIL;
+        } else {
+            match carry_mends(w, label, &c, &path, &wt, batch, &mut kv) {
+                Ok(Some(h)) => head = h,
+                Ok(None) => {}
+                Err(()) => return FAIL,
+            }
+            if w.git.rev_parse(&wt, "HEAD").as_deref() != Some(head.as_str()) {
+                w.err(format!("queue.sh {label}: the round worktree {} is not at the round's head {head} — refused", wt.display()));
+                return FAIL;
+            }
         }
         // A round the lifecycle already holds GREEN was certified; what is missing (the
         // certificate, after a lost reply) is completed without running the pass again: a
@@ -2791,6 +2798,53 @@ fn eject(
         return FAIL;
     }
     OK
+}
+
+/// A recorded mend moves a member's tip, not the round's head: before a pass starts, the head is
+/// rebuilt from the base with every member at its mended tip. `Ok(None)` when nothing was mended.
+fn carry_mends(
+    w: &World,
+    label: &str,
+    c: &Ctx,
+    path: &Path,
+    wt: &Path,
+    batch: &str,
+    kv: &mut crate::records::Kv,
+) -> Result<Option<String>, ()> {
+    let members = kv.members();
+    let beads: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
+    let recorded = w.lc.mend_tips(&beads).map_err(|e| {
+        w.err(format!("queue.sh {label}: cannot read the recorded mends: {e}"));
+    })?;
+    let carried: Vec<Member> = members
+        .iter()
+        .map(|m| Member {
+            tip: recorded.get(&m.id).cloned().unwrap_or_else(|| m.tip.clone()),
+            ..m.clone()
+        })
+        .collect();
+    if carried.iter().zip(&members).all(|(a, b)| a.tip == b.tip) {
+        return Ok(None);
+    }
+    let old_head = kv.get("head").unwrap_or("").to_string();
+    let base = kv.get("base").unwrap_or("").to_string();
+    let new_head = assemble(w, c, path, wt, &base, &carried, &old_head).map_err(|why| {
+        w.err(format!("queue.sh {label}: cannot rebuild the round with its mended tips: {why} — refused"));
+    })?;
+    let rebuilt = serde_json::json!({"PassRebuilt": {"head": new_head}}).to_string();
+    warn_unrecorded(
+        w,
+        label,
+        batch,
+        "the rebuilt head",
+        pass_event(w, batch, |s, _, _| (s == "ATTRIBUTING").then_some(rebuilt)),
+    );
+    set(kv, "members", &render_members(&carried));
+    set(kv, "head", &new_head);
+    w.out(format!(
+        "queue.sh {label}: round {batch} rebuilt at {new_head} with its mended tips"
+    ));
+    Ok(Some(new_head))
 }
 
 /// Stops the round's running pass without letting it finish: TERM to the run's handle so
