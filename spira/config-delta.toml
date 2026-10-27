@@ -144,7 +144,7 @@ removed = ["spira.broker_enable", "spira.express_label", "spira.overlap_defer_la
 "spira.identity_login_url" = ""
 "spira.solo_max_skips" = 1
 "spira.lanes_reserve" = 1
-"spira.ffx_vocabulary_mode" = "report"
+"spira.ffx_vocabulary_mode" = "enforce"
 # literal-ok: shipped default of the registry key
 "spira.mimir_label" = "mimir-sweep"
 "spira.mimir_landing_interval" = "25"
