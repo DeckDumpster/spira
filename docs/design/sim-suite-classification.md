@@ -369,9 +369,9 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | livelock | no | - | 71 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | local-pass | partly | cut-in-bare-env | ? | cut refuses without a recorded local pass; override rows stay bash |
 | loop-readonly | partly | happy-path | 21 | sentinel claims from a read-only release; needs the world to run read-only |
-| maechen-closed-record | no | - | 27 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
-| maechen-trigger | no | - | 16 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
-| maechen | no | - | 6 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| mimir-closed-record | no | - | 27 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
+| mimir-trigger | no | - | 16 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
+| mimir | no | - | 6 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
 | mail-aeon-hook | no | - | 2 | operator mail channel and ask flow: Maildir and lint behaviour, no loop hand-off |
 | mail-aeon | no | - | 16 | operator mail channel and ask flow: Maildir and lint behaviour, no loop hand-off |
 | mail-bead-render | no | - | 7 | operator mail channel and ask flow: Maildir and lint behaviour, no loop hand-off |

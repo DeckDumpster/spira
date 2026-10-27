@@ -2,7 +2,7 @@
 //! from `spira/lib.sh` (wave4-decomposition.md row V, wave 4.35, sp-kelr2). Pure
 //! argv-in/string-out logic lives here; `real.rs`'s `Real` supplies the registry lookup and
 //! the label values — resolved via `spira_config::resolve` (the same `env_or` precedence
-//! `run()`'s own `maechen_label` already uses), never read raw, per
+//! `run()`'s own `mimir_label` already uses), never read raw, per
 //! law-a-binary-resolves-the-config-it-reads.
 //!
 //! `_spira_expand_lanes` is folded into [`repo_lanes`] rather than kept as its own CLI door:
@@ -19,7 +19,7 @@ pub struct LaneLabels {
     pub plan: String,
     pub incident: String,
     pub groomer: String,
-    pub maechen: String,
+    pub mimir: String,
     pub spike: String,
     pub czar: String,
 }
@@ -28,14 +28,14 @@ impl LaneLabels {
     /// Validation order AND the unknown-lane refusal's "valid:" list order — `$p,$inc,$gr,
     /// $mae,$sp,$cz` in the bash.
     fn known(&self) -> [&str; 6] {
-        [self.plan.as_str(), self.incident.as_str(), self.groomer.as_str(), self.maechen.as_str(), self.spike.as_str(), self.czar.as_str()]
+        [self.plan.as_str(), self.incident.as_str(), self.groomer.as_str(), self.mimir.as_str(), self.spike.as_str(), self.czar.as_str()]
     }
 
     /// `spira_repo_lanes`'s own no-lanes-column fallback: `"$p $inc $gr $mae $sp $cz"`.
-    /// NOTE this is a DIFFERENT label order than `self` mode below (maechen before spike,
+    /// NOTE this is a DIFFERENT label order than `self` mode below (mimir before spike,
     /// not after) — verbatim from the bash, not a typo here.
     fn default_set(&self) -> String {
-        format!("{} {} {} {} {} {}", self.plan, self.incident, self.groomer, self.maechen, self.spike, self.czar)
+        format!("{} {} {} {} {} {}", self.plan, self.incident, self.groomer, self.mimir, self.spike, self.czar)
     }
 }
 
@@ -45,7 +45,7 @@ fn expand(name: &str, raw: &str, l: &LaneLabels) -> Result<String, String> {
     match raw {
         "consume" => return Ok(l.plan.clone()),
         "develop" => return Ok(format!("{} {} {} {}", l.plan, l.incident, l.groomer, l.spike)),
-        "self" => return Ok(format!("{} {} {} {} {} {}", l.plan, l.incident, l.groomer, l.spike, l.maechen, l.czar)),
+        "self" => return Ok(format!("{} {} {} {} {} {}", l.plan, l.incident, l.groomer, l.spike, l.mimir, l.czar)),
         _ => {}
     }
     let known = l.known();
@@ -97,7 +97,7 @@ mod tests {
             plan: "plan".into(),
             incident: "incident".into(),
             groomer: "groom".into(),
-            maechen: "maechen-sweep".into(), // literal-ok: test fixture
+            mimir: "mimir-sweep".into(), // literal-ok: test fixture
             spike: "spike".into(),
             czar: "czar-trigger".into(),
         }
@@ -106,7 +106,7 @@ mod tests {
     #[test]
     fn no_lanes_column_admits_every_lane() {
         let out = repo_lanes("alpha", None, &labels()).unwrap();
-        for l in ["plan", "incident", "groom", "maechen-sweep", "spike", "czar-trigger"] { // literal-ok: test fixture
+        for l in ["plan", "incident", "groom", "mimir-sweep", "spike", "czar-trigger"] { // literal-ok: test fixture
             assert!(out.split(' ').any(|x| x == l), "{out} missing {l}");
         }
     }
@@ -129,7 +129,7 @@ mod tests {
 
     #[test]
     fn self_mode_yields_all_six_in_order() {
-        assert_eq!(repo_lanes("gamma", Some("self"), &labels()).unwrap(), "plan incident groom spike maechen-sweep czar-trigger"); // literal-ok: test fixture
+        assert_eq!(repo_lanes("gamma", Some("self"), &labels()).unwrap(), "plan incident groom spike mimir-sweep czar-trigger"); // literal-ok: test fixture
     }
 
     #[test]

@@ -115,13 +115,13 @@ FIVE_OPEN='[{"bead_id":"x1","state":"READY"},{"bead_id":"x2","state":"WORKING"},
 # BD_LIST_OUTPUT feeds the dedup's bd list response. SPIRA_RUN=$T/run gives tests a writable, predictable lastpass dir.
 # SPIRA_HOME="$HERE": groom-trigger.sh's own conf.sh derives SPIRA_HOME from $_spira_conf_here
 # (where conf.sh sits) when unset, but that derivation is a local, unexported shell var —
-# `maechen-trigger --home "$SPIRA_HOME" open-trigger-count ...` (lib.sh's
-# spira_open_trigger_count) only feeds its own `--home` flag from it, which maechen-trigger
+# `mimir-trigger --home "$SPIRA_HOME" open-trigger-count ...` (lib.sh's
+# spira_open_trigger_count) only feeds its own `--home` flag from it, which mimir-trigger
 # uses for repo-registry lookups, NEVER for locating $SPIRA_TOML: that is
 # spira_config::process::cfg's own locate_home_for_process, which reads SPIRA_HOME/
 # SPIRA_RELEASE straight out of the environment and refuses when neither is an actual env
 # var. Production has SPIRA_RELEASE ambient from the unit; this suite's env -i has neither,
-# so maechen-trigger refused before ever calling bd, and groom-trigger.sh's dedup silently
+# so mimir-trigger refused before ever calling bd, and groom-trigger.sh's dedup silently
 # read that failure as "0 open" and fell through to the short-circuit instead (one source of
 # config, per Ryan 2026-10-05).
 run_trigger() {

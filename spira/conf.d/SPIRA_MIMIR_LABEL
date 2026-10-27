@@ -1,0 +1,12 @@
+TYPE=string
+GROUP=mimir
+DOC=THE MIMIR PARTITION AND TUNING KNOBS. Mimir is the retrospective persona: it reads
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE MIMIR PARTITION AND TUNING KNOBS. Mimir is the retrospective persona: it reads
+    # the failure distribution, names recurring classes, and cuts remedy beads.
+    #
+    # SPIRA_MIMIR_LABEL — the sweep label that wakes Mimir. Read by mimir.fayth's
+    # predicate and by whatever trigger files sweep beads (sp-emzov). One definition keeps
+    # them consistent.
+    : "${SPIRA_MIMIR_LABEL:=mimir-sweep}"
+SPIRA_CONF_DEFAULT_EOF

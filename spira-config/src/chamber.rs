@@ -40,7 +40,7 @@ use crate::{discover, load, SpiraToml};
 /// The pure half of [`fayth_label_overlay`]: every key an
 /// already-[`crate::resolve::resolve_for_process`]d [`crate::resolve::Resolved`] carries,
 /// as the subshell's overlay — sp-xsnid widened this from a hand-curated five-key slice
-/// (`SPIRA_CZAR_LABEL`/`SPIRA_GROOMER_LABEL`/`SPIRA_MAECHEN_LABEL`/
+/// (`SPIRA_CZAR_LABEL`/`SPIRA_GROOMER_LABEL`/`SPIRA_MIMIR_LABEL`/
 /// `SPIRA_BATCH_JUDGEMENT_LABEL`/`SPIRA_HOME_REPO`) to the FULL resolved map, because the
 /// slice had already drifted: it never carried `SPIRA_INCIDENT_LABEL`, `SPIRA_SPIKE_LABEL`,
 /// `SPIRA_PLAN_LABEL`, `SPIRA_SCOPE_LABEL`, `SPIRA_ASK_LABEL` or `SPIRA_CI_LABEL` — every
@@ -328,7 +328,7 @@ pub fn working_exits_in(chamber: &Path, fayth: &str) -> Result<Vec<String>, Stri
 /// evaluator every ready-counting/claiming caller (`spira-claim`, sentinel's own
 /// `express_ready_in_task_pool`, `bead --for`) goes through, replacing each one's own copy
 /// (sp-xsnid: `bead`'s private `fayth_get` carried a THIRD, independently drifted
-/// three-key overlay — `SPIRA_CZAR_LABEL`/`SPIRA_GROOMER_LABEL`/`SPIRA_MAECHEN_LABEL`
+/// three-key overlay — `SPIRA_CZAR_LABEL`/`SPIRA_GROOMER_LABEL`/`SPIRA_MIMIR_LABEL`
 /// only — on top of this module's own five-key one; two hand-curated lists, two different
 /// sets of gaps).
 ///
@@ -581,7 +581,7 @@ mod tests {
             ("SPIRA_MENDER_DEADLINE_SECS", "77"),
         ]
         .into_iter()
-        .chain(["BATCH_JUDGEMENT", "PLAN", "CZAR", "GROOMER", "MAECHEN", "MENDER", "PILGRIM", "INCIDENT", "SPIKE", "WARDEN"].map(|n| (Box::leak(format!("SPIRA_{n}_LABEL").into_boxed_str()) as &str, "lbl")))
+        .chain(["BATCH_JUDGEMENT", "PLAN", "CZAR", "GROOMER", "MIMIR", "MENDER", "PILGRIM", "INCIDENT", "SPIKE", "WARDEN"].map(|n| (Box::leak(format!("SPIRA_{n}_LABEL").into_boxed_str()) as &str, "lbl")))
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
         let lookup = |n: &str| env.get(n).cloned();

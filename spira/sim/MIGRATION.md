@@ -92,7 +92,7 @@ Left, each blocked on more than a seed and a column:
 |---|---|
 | test-bead-dep-add | an epic-typed seed and a raw `bd dep add` of a pre-existing edge; the incident label from config |
 | test-destructive-bead, test-bead-file, test-bead-pilgrimage, test-express-lane | `bead.sh file` refusals asserted on stderr text and the lane guard's config |
-| test-census*, test-livelock, test-deadlock-sweep, test-groomer*, test-unclaimable*, test-maechen-*, test-groom-trigger, test-watchtower-czar-outcome, test-cockpit-reachable | an actor row for the detector (G15) and a bead aged in the store |
+| test-census*, test-livelock, test-deadlock-sweep, test-groomer*, test-unclaimable*, test-mimir-*, test-groom-trigger, test-watchtower-czar-outcome, test-cockpit-reachable | an actor row for the detector (G15) and a bead aged in the store |
 | test-hold, test-unpoison, test-queue-ops, test-verify-landed | the lifecycle verbs and a deploy step (G14, G7) beside the seeds |
 
 ## Repository set and modes (sp-gqrlv6)

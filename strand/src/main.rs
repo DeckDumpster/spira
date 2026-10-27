@@ -16,7 +16,7 @@
 //!   strand aeon-count <fayth> [exclude]     strand aeons-live-lanes
 //!
 //! lib.sh family T-b (wave 4.29, sp-8ofmt) — the stranded-work detectors its now-shimmed
-//! functions call, plus the direct target for `groomer`/`maechen-trigger`/`cockpit-collect`
+//! functions call, plus the direct target for `groomer`/`mimir-trigger`/`cockpit-collect`
 //! (they use this crate in-process instead):
 //!
 //!   strand detect-livelocked               strand detect-incident-needs-builder

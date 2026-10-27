@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# maechen-trigger.sh — thin shim; all logic is in the maechen-trigger binary (sp-0ekp7,
+# mimir-trigger.sh — thin shim; all logic is in the mimir-trigger binary (sp-0ekp7,
 # wave 7b).
 #
-# RESOLVED VIA `command -v`, NEVER A BARE `exec maechen-trigger` (scar, sp-0ekp7). bash's
+# RESOLVED VIA `command -v`, NEVER A BARE `exec mimir-trigger` (scar, sp-0ekp7). bash's
 # `exec` builtin falls back to a CWD-relative lookup when its PATH search finds nothing —
 # even with "." nowhere in PATH — and this checkout's own crate source directory,
-# maechen-trigger/ at the repo root, collides with the binary's bare name whenever a
+# mimir-trigger/ at the repo root, collides with the binary's bare name whenever a
 # caller's working directory is the checkout root (a systemd unit's WorkingDirectory=, a
 # test harness invoked from the repo root, …). `command -v` does not have that fallback and
 # correctly skips a same-named directory to keep searching PATH, so resolving through it
@@ -13,8 +13,8 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/conf.sh"
-bin="$(command -v maechen-trigger)" || {
-    printf 'maechen-trigger.sh: maechen-trigger is not on PATH\n' >&2
+bin="$(command -v mimir-trigger)" || {
+    printf 'mimir-trigger.sh: mimir-trigger is not on PATH\n' >&2
     exit 1
 }
 # conf.sh sets SPIRA_HOME as a plain shell variable, never exported (it is read within
@@ -27,6 +27,6 @@ bin="$(command -v maechen-trigger)" || {
 # `main.rs` parses `--home` once, at the top, and every later `spira_config::resolve_for_
 # process` call (including the one behind its own lib.sh-sourcing seam, `real.rs`'s `seam`/
 # `seam_ok`, which still `.env("SPIRA_HOME", ...)`s that subprocess explicitly) now reads
-# it from there. Found originally via every seam call in test-maechen-trigger.sh failing
+# it from there. Found originally via every seam call in test-mimir-trigger.sh failing
 # uniformly (source-lib.sh rc=96, SPIRA_HOME seen as ".") — this fix keeps that path closed.
 exec "$bin" --home "$HERE" "$@"

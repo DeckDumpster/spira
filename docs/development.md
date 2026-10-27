@@ -38,7 +38,7 @@ Generic mechanism. A colleague clones this and it carries none of the operator's
 | `auron/` | the watchdog over the loop (Rust) — reads timestamps and counters, raises or clears an alert bead. Its only power is speech: it repairs nothing, restarts nothing and summons nothing |
 | `skew/` | is the activated release the latest published (Rust) — the hourly check that the installed release matches the most recent release tag; also the landing gate's fence against work landing in a copy nothing executes |
 | `doctor/` | read-only preflight (Rust) — every missing program, unreadable database, unmapped repository and unbuilt panel, named in one pass |
-| `census/` | the Maechen census (Rust) — failure classes ranked by frequency from the events table, with open-remedy suppression |
+| `census/` | the Mimir census (Rust) — failure classes ranked by frequency from the events table, with open-remedy suppression |
 | `spira/incident.sh` | turns a production event into a bead Ops can claim — systemd OnFailure, arbitrary payload, or a spool drain; deduplicates by external_ref |
 | `spira/statutes/` | the SEED statute book, one file per statute. Statutes live in the beads KV store, which is per-installation, so a clone gets the mechanism and none of the law unless it ships as text |
 | `spira/seed.sh` | writes those statutes into a fresh database, and never over one already in force |

@@ -50,7 +50,7 @@ Tier key: T0 static · T1 unit · T2 component · T3 integration · T4 acceptanc
 - **UC-landed-audit-reaping-10.** A closed bead whose `repo:` is absent from the repo-map is skipped, and the skip is logged once per repo per pass. — observability, config-compat · **T1** · cert.
 - **UC-landed-audit-reaping-11.** CHECK 5 enumerates every persona partition, not only `spira,plan`. Hand-closed beads (no `<id>.log`) are skipped. — correctness · **T3** row · batch.
 - **UC-landed-audit-reaping-12.** The seam contract: `bd list --status closed --json` carries `labels`, the `supersedes` dependency type, the `delivers:` labels and `started_at`. The row reader keeps empty middle columns (`\x1f`, not tab). — contract · **T3** (real bd, once) + **T1** (the reader function itself) · batch / cert.
-- **UC-landed-audit-reaping-13.** Sweep triggers (maechen, groom) file their beads with `delivers:note:${SPIRA_RUN}/<name>.log`. — contract · **T1** (stub-bd argv) · cert. *This belongs with the trigger suites.*
+- **UC-landed-audit-reaping-13.** Sweep triggers (mimir, groom) file their beads with `delivers:note:${SPIRA_RUN}/<name>.log`. — contract · **T1** (stub-bd argv) · cert. *This belongs with the trigger suites.*
 
 ### Reaping (sending.sh) and the destroy fence
 - **UC-landed-audit-reaping-14.** `content_landed repo br base` returns 0 only when the branch has commits ahead and merging them would leave the base tree unchanged. That covers squash, ancestor and empty-commit review branches. It returns 1 for zero-ahead, conflict or differing-tree branches. — correctness, fail-closed · **T2** table (git only) · cert.
@@ -107,9 +107,9 @@ Verdict key: **KEEP** · **MERGE-INTO** · **DEMOTE-TO-T1** · **DELETE** · **S
 | 08 | check5-landstate::BATCHED, CERTIFIED-RESTORE | T3 14 | **MERGE-INTO test-check5.sh** (restore row, real git) and **DEMOTE-TO-T1** (state table) |
 | 09 | check5-hold-no-reopen::hold ahead>0 / ahead==0 | T3 22 | **DEMOTE-TO-T1**; one hold-repo row stays in test-check5.sh, because its `\|` repo-map format incidentally covers the second map parser |
 | 10 | check5-unmapped-repo::stay closed, log once | T3 15 (3 identical seeds) | **DEMOTE-TO-T1** |
-| 11 | check5-sweep-delivers (maechen-sweep partition) | T3 18 | **MERGE-INTO test-check5.sh** (one non-builder-partition row) |
+| 11 | check5-sweep-delivers (mimir-sweep partition) | T3 18 | **MERGE-INTO test-check5.sh** (one non-builder-partition row) |
 | 12 | check5-drop::bulk listing labels/supersedes; check5-nopayload::bulk carries delivers; content-landed-no-reopen::seam; landed-no-delivers::IFS read of a literal line | T3 | seam rows → **MERGE-INTO test-check5.sh**. landed-no-delivers → **DEMOTE-TO-T1**: extract sentinel's row reader and test it. Today's case restates the bash idiom and cannot catch a separator change in sentinel.sh. |
-| 13 | check5-sweep-delivers::case 4, 5 | T1-in-T3 | **MERGE-INTO test-maechen-trigger.sh / test-groom-trigger.sh** |
+| 13 | check5-sweep-delivers::case 4, 5 | T1-in-T3 | **MERGE-INTO test-mimir-trigger.sh / test-groom-trigger.sh** |
 | 14 | content-landed-empty-branch::empty not landed, squash landed; destroy-branch::content_landed refuses/approves; sending-empty-commit::content_landed approves/refuses; sending-unlanded-guard::fixture rows; sending-certified-guard::fixture rows; sending-squash-merged::sp-sq (conflict) | T3 7 / T2 1 / T3 8 / 7 / 5 / 8 | the content_landed rows **MERGE-INTO test-destroy-branch.sh** (git only), which becomes the content_landed + fence table |
 | 15 | destroy-branch::refuses unlanded, bypass, squash; reclaim-slay-branch-guard::gate ±ctrl, no-bypass refuse/allow; sending-certified-guard::sp-cert survives + REFUSED | T2 1 / T3 13 / T3 5 | destroy-branch **KEEP** (the model suite) and add the CERTIFIED/BATCHED, holder and checked-out rows. reclaim-slay gate section → **DELETE** (duplicate). |
 | 16 | sending-unlanded-guard::KEEP sp-ul / SENT sp-la; sending-empty-commit::SENT sp-empty, KEEP sp-real; content-landed-empty-branch::sending reaps ff / not empty; sending-squash-merged::REAPED sp-sq, KEEP sp-post/sp-unland; sending-certified-guard::SENT sp-norm, no SENT sp-cert | T3 7 / 8 / 7 / 8 / 5 | all → **MERGE-INTO test-sending.sh** (one fixture, one pass, stub bd). Each suite rebuilds the same bare+clone+testdb today for a single pass. |
@@ -163,7 +163,7 @@ Verdict key: **KEEP** · **MERGE-INTO** · **DEMOTE-TO-T1** · **DELETE** · **S
    → UC-07.
 4. **Landstate rows:** GATED, REBASED, LANDED-tip-ancestor, restore from `refs/remotes/origin/spira/<id>`, and CERTIFIED with the tip gone (`sentinel.sh:834–890`). Only BATCHED and CERTIFIED-restore are tested. → UC-08.
 5. **Push-mode "branch ahead, CHECK 6 lands it" versus a zero-ahead branch that reopens** (`sentinel.sh:852–860`, the zero-ahead scar sp-qc4kn) is never asserted on the sentinel side. → UC-09.
-6. **The hand-closed skip** (`[ -f $SPIRA_RUN/$id.log ]`) has no negative row. The every-partition enumeration and the "chamber declares no partition" note (`sentinel.sh:~905`) are untested apart from maechen-sweep. → UC-11.
+6. **The hand-closed skip** (`[ -f $SPIRA_RUN/$id.log ]`) has no negative row. The every-partition enumeration and the "chamber declares no partition" note (`sentinel.sh:~905`) are untested apart from mimir-sweep. → UC-11.
 7. **`spira_destroy_branch` refusals:** the holder-witness refusal, the "checked out at" refusal and the "survived deletion" FAILED path (`lib.sh:4855–4890`) have no tests. The CERTIFIED guard is only tested through sending. → UC-15.
 8. **There is no base `test-sending.sh`.** These dispositions are untested:
    - `HELD` (live holder, including mid-send).
@@ -213,7 +213,7 @@ Verdict key: **KEEP** · **MERGE-INTO** · **DEMOTE-TO-T1** · **DELETE** · **S
 | check2-reclaim | KEEP (move area) | 7 | unchanged |
 | dependents: T1 classification + one seed | T1 + T3 | 8 | 18 s at 5 reseeds, down to 1 |
 
-Sum: 1+2+15+2+4+3+2+9+2+7+8 = **55 s**. That rounds to about **57 s** with 2 s allowed for the trigger rows added to test-maechen-trigger and test-groom-trigger, and it also retires test-delivers-parity (1 s, another area).
+Sum: 1+2+15+2+4+3+2+9+2+7+8 = **55 s**. That rounds to about **57 s** with 2 s allowed for the trigger rows added to test-mimir-trigger and test-groom-trigger, and it also retires test-delivers-parity (1 s, another area).
 
 **Net saving ≈ 402 suite-seconds (−88%).** Of that, 334 → 18 s comes from CHECK 5 alone (decide 1 + search 2 + integration 15). Only one suite in the area (`test-check5.sh`) needs real bd for the audit. What the real-bd runs are then for is the `bd list` field-shape contract and the Sending→CHECK 5 label handoff, not re-proving decision logic.
 

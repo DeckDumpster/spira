@@ -46,9 +46,9 @@ fg() {
         bash -c '. "$1"/lib.sh; fayth_get "$2" "$3" "$4"' _ "$HERE" "$1" "$2" "$3"
 }
 is "builder.fayth declares a 90-minute lease" "90" "$(fg builder FAYTH_LEASE_MINUTES 10)"
-is "maechen.fayth declares a 70-minute lease" "70" "$(fg maechen FAYTH_LEASE_MINUTES 10)"
+is "mimir.fayth declares a 70-minute lease" "70" "$(fg mimir FAYTH_LEASE_MINUTES 10)"
 is "spike.fayth declares a 60-minute lease"   "60" "$(fg spike FAYTH_LEASE_MINUTES 10)"
-for fy in builder czar groomer maechen ops spike; do
+for fy in builder czar groomer mimir ops spike; do
     if grep -q '^FAYTH_LEASE_SECONDS=' "$HERE/chamber/$fy.fayth"; then
         bad "$fy.fayth does not declare the dead FAYTH_LEASE_SECONDS key"
     else

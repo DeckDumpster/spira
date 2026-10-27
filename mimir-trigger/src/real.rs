@@ -28,7 +28,7 @@ impl Real {
     /// of through the `lib.sh` seam.
     fn strand_cfg(&self) -> &strand::config::Config {
         self.strand_cfg.get_or_init(|| strand::config::Config::resolve(&strand::config::Live::load()).unwrap_or_else(|e| {
-            eprintln!("maechen-trigger: {e}");
+            eprintln!("mimir-trigger: {e}");
             std::process::exit(1)
         }))
     }
@@ -65,18 +65,18 @@ impl Real {
 impl World for Real {
     fn log(&self, msg: &str) {
         eprintln!(
-            "{} maechen-trigger: {}",
+            "{} mimir-trigger: {}",
             humantime_utc_now(),
             msg
         );
     }
 
     fn read_watermark(&self) -> i64 {
-        self.read_epoch_file("maechen.watermark")
+        self.read_epoch_file("mimir.watermark")
     }
 
     fn read_lastpass(&self) -> i64 {
-        self.read_epoch_file("maechen.lastpass")
+        self.read_epoch_file("mimir.lastpass")
     }
 
     fn now(&self) -> i64 {
@@ -177,8 +177,8 @@ impl World for Real {
         }
         let status = child.wait().map_err(|e| format!("bd create: {e}"))?;
         if status.success() {
-            if let Err(e) = spira_config::lifecycle_row::after_create("maechen-trigger", &created) {
-            eprintln!("maechen-trigger: LIFECYCLE: row not written after create: {e}; the new bead is rowless and cannot be claimed");
+            if let Err(e) = spira_config::lifecycle_row::after_create("mimir-trigger", &created) {
+            eprintln!("mimir-trigger: LIFECYCLE: row not written after create: {e}; the new bead is rowless and cannot be claimed");
         }
             Ok(())
         } else {

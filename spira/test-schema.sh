@@ -29,7 +29,7 @@ echo "test-schema.sh"
 
 echo
 echo "every declared name resolves to something non-empty"
-for k in ask ci scope spike groomer maechen maechen_remedy review world_stop insight; do
+for k in ask ci scope spike groomer mimir mimir_remedy review world_stop insight; do
     v="$(schema.sh name "$k" 2>/dev/null)"; rc=$?
     if [ "$rc" = 0 ] && [ -n "$v" ]; then ok "name $k -> $v"; else bad "name $k" "rc=$rc value=[$v]"; fi
 done
@@ -77,7 +77,7 @@ echo "the whole point: no OTHER harness file may carry a declared literal"
 # Advisory here (the gate-wired lint is its own bead, sp-4wd); this asserts the property is
 # measurable and reports the current count so the lint's starting point is known.
 lits=0
-for k in ask ci groomer maechen spike; do
+for k in ask ci groomer mimir spike; do
     v="$(schema.sh name "$k")"
     c=$(grep -rlF -- "$v" "$HERE"/*.sh 2>/dev/null | grep -v -e '/schema.sh$' -e '/test-' | wc -l)
     lits=$((lits+c))

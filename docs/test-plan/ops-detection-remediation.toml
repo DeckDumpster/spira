@@ -79,12 +79,12 @@ statement = "The census SQL call retries transient failures three times and surf
 [[use_case]]
 id = "UC-ops-detection-remediation-16"
 tier = "T2"
-statement = "Maechen triggers on a completed-pass gap exceeding `MAX_GAP` or on a bead-naming-landing interval (non-bead commits do not count; land/merge/PR-merge forms dedup per bead; a non-`origin` remote works; the home repo is not double-counted); an existing open or in_progress trigger suppresses a second one; `bd create` failure exits 1; the trigger never advances the watermark itself."
+statement = "Mimir triggers on a completed-pass gap exceeding `MAX_GAP` or on a bead-naming-landing interval (non-bead commits do not count; land/merge/PR-merge forms dedup per bead; a non-`origin` remote works; the home repo is not double-counted); an existing open or in_progress trigger suppresses a second one; `bd create` failure exits 1; the trigger never advances the watermark itself."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-17"
 tier = "T0"
-statement = "The Maechen brief encodes the five-step pass, the threshold, the output bar and the compare-and-swap watermark advance, with every `{{SPIRA_HOME}}` path in it resolving."
+statement = "The Mimir brief encodes the five-step pass, the threshold, the output bar and the compare-and-swap watermark advance, with every `{{SPIRA_HOME}}` path in it resolving."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-18"
@@ -205,7 +205,7 @@ bead = "sp-fhzib.4"
 [[use_case]]
 id = "UC-ops-detection-remediation-38"
 tier = "T1"
-statement = "Neither `maechen-trigger.sh` nor `groom-trigger.sh` files a second trigger bead when two callers race the list-then-create dedup check (a lock, not a timing window, closes the race)."
+statement = "Neither `mimir-trigger.sh` nor `groom-trigger.sh` files a second trigger bead when two callers race the list-then-create dedup check (a lock, not a timing window, closes the race)."
 
 [use_case.uncovered]
 reason = "gap G10: neither trigger takes a lock around its dedup check yet; the fix is sp-fhzib.4's scope, reopened separately and not yet landed"

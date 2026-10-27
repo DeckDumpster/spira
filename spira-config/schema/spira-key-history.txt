@@ -501,3 +501,8 @@ identity_login_ttl_secs
 identity_login_url
 solo_max_skips
 lanes_reserve
+mimir_label
+mimir_landing_interval
+mimir_max_beads
+mimir_max_gap_seconds
+mimir_remedy_label

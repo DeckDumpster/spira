@@ -916,17 +916,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "maechen-trigger"
-version = "1.0.0"
-dependencies = [
- "serde_json",
- "spira-config",
- "spira-otel",
- "strand",
- "testkit",
-]
-
-[[package]]
 name = "mail"
 version = "1.0.0"
 dependencies = [
@@ -977,6 +966,17 @@ name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
+
+[[package]]
+name = "mimir-trigger"
+version = "1.0.0"
+dependencies = [
+ "serde_json",
+ "spira-config",
+ "spira-otel",
+ "strand",
+ "testkit",
+]
 
 [[package]]
 name = "mio"

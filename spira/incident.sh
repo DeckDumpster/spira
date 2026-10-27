@@ -12,7 +12,7 @@
 # "Decisions".
 #
 # RESOLVED VIA `command -v`, NEVER A BARE `exec incident` (scar, sp-0ekp7 — the same fix
-# maechen-trigger.sh needed). bash's `exec` builtin falls back to a CWD-relative lookup
+# mimir-trigger.sh needed). bash's `exec` builtin falls back to a CWD-relative lookup
 # when its PATH search finds nothing — even with "." nowhere in PATH — and this
 # checkout's own crate source directory, incident/ at the repo root, collides with the
 # binary's bare name whenever a caller's working directory is the checkout root. `command

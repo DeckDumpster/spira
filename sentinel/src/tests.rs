@@ -195,7 +195,7 @@ impl World {
             ("SPIRA_LANES_RESERVE", "1"),
             ("SPIRA_QUEUE_THROTTLE_OVERRIDE", ""),
             ("SPIRA_SUMMON_LOCK_WAIT", "30"),
-            ("SPIRA_LANES", "ops groomer qa maechen czar warden"),
+            ("SPIRA_LANES", "ops groomer qa mimir czar warden"),
             ("SPIRA_REPO_MAP", ""),
             ("SPIRA_GH", ""),
             ("SPIRA_BATCH_MAXPAR", ""),

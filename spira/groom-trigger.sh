@@ -57,7 +57,7 @@ fi
 
 # DEDUP — at most one open-or-in_progress trigger bead at a time. The query uses the
 # same labels the groomer's predicate uses; a bead present here is one the groomer will
-# claim. Shared with maechen-trigger.sh via spira_open_trigger_count (duplicate cluster
+# claim. Shared with mimir-trigger.sh via spira_open_trigger_count (duplicate cluster
 # D14), which is also where in_progress got included (sp-mp9s): a claimed trigger bead
 # leaves --status open, and a query scoped to open alone would file a duplicate on the
 # very next tick.
@@ -72,7 +72,7 @@ fi
 
 # LANE CHECK. Skip when no repository admits the groom lane — on a consuming install
 # this prevents trigger beads from accumulating for work nobody can do. Shared with
-# maechen-trigger.sh via spira_lane_admitted (duplicate cluster D14).
+# mimir-trigger.sh via spira_lane_admitted (duplicate cluster D14).
 _gr_lane="${SPIRA_GROOMER_LABEL:-groom}"  # literal-ok: bash fallback; SPIRA_GROOMER_LABEL set by conf.sh
 if ! spira_lane_admitted "$_gr_lane"; then
     log "no repository admits lane ${_gr_lane} — skipping trigger"

@@ -16,7 +16,7 @@ groomer/src/main.rs
 groomer/src/seam.rs
 install/src/bootstrap.rs
 landing-pass/src/signals.rs
-maechen-trigger/src/real.rs
+mimir-trigger/src/real.rs
 round-vm/src/cli.rs
 strand/src/main.rs
 watchd/src/main.rs

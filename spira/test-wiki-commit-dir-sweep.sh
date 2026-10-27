@@ -8,7 +8,7 @@
 # THE DEFECT (sp-0wow1). `git status --short` collapses a wholly-untracked directory to
 # one line naming the directory, not its files. aeon.sh's wiki dirty-diff read that output
 # and handed the result straight to wiki-commit.sh as a list of "paths it wrote". When the
-# directory line named someone else's uncommitted work — a maechen pass swept 48 files
+# directory line named someone else's uncommitted work — a mimir pass swept 48 files
 # from the concierge's still-under-review design pages this way (brain c7c79af) — the
 # commit picked up every file under it, none of which the committing session wrote.
 # `git add -- <dir>/` recurses exactly like `git add -A` for that subtree; it is not one

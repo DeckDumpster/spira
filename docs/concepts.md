@@ -172,7 +172,7 @@ Shipped personas (`spira/chamber/`):
 | `ops` | Diagnostician. Claims incident beads and sweeps, matches them against the SOP shelf, files the fix. Read-mostly tools. |
 | `czar` | Acts on merge-queue stall escalations. |
 | `groomer` | Graph hygiene: splits, merges duplicates, closes beads whose premise is gone, corrects mislabelled lanes. Graph-only. |
-| `maechen` | Retrospective: reads the failure distribution, names recurring classes, files work to end them. |
+| `mimir` | Retrospective: reads the failure distribution, names recurring classes, files work to end them. |
 | `warden` | Read-only judge of whether landed work is actually in force; attributes anomalies. |
 | `mender` | Judges one failing suite of a round pass and mends the member at fault, inside a machine-enforced deadline. |
 | `batcher` (the Judge) | Settles a double-red or CI-only red a round could not attribute. |
@@ -188,11 +188,11 @@ Shipped personas (`spira/chamber/`):
    capacity from its own `FAYTH_MAX_CONCURRENT` instead of the shared pool
    (`SPIRA_MAX_AEONS`), so builders can occupy the whole pool without starving the rest.
 2. **Repository lane** (`lanes` in a repository's registry row): which kinds of bead a
-   repository admits (`plan`, `incident`, `groom`, `maechen-sweep`, `spike`, `czar-trigger`).
+   repository admits (`plan`, `incident`, `groom`, `mimir-sweep`, `spike`, `czar-trigger`).
 
 Partitions are expressed as bead labels, each a configuration key rather than a literal
 (`SPIRA_PLAN_LABEL`, `SPIRA_INCIDENT_LABEL`, `SPIRA_CZAR_LABEL`, `SPIRA_GROOMER_LABEL`,
-`SPIRA_SPIKE_LABEL`, `SPIRA_MENDER_LABEL`, `SPIRA_WARDEN_LABEL`, `SPIRA_MAECHEN_LABEL`,
+`SPIRA_SPIKE_LABEL`, `SPIRA_MENDER_LABEL`, `SPIRA_WARDEN_LABEL`, `SPIRA_MIMIR_LABEL`,
 `SPIRA_BATCH_JUDGEMENT_LABEL`), so persona predicates, the sentinel and every other reader
 agree on what a label means. `SPIRA_SCOPE_LABEL`, when set, is ANDed into every persona's
 predicate to restrict Spira to one project's beads.

@@ -70,7 +70,7 @@ members = [
     "gh-intake",
     "sop",
     "incident",
-    "maechen-trigger",
+    "mimir-trigger",
     "rule",
     "bead",
     "sim",

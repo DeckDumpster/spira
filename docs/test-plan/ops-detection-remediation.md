@@ -7,7 +7,7 @@ branch became a shared catch-all across five beads and was never merged — see
 differs from its draft.
 
 Subjects: `incident.sh`, `census.sh` (and the `cluster.py`/`cluster_merge.py`/`covers.py` files it
-calls), `maechen-trigger.sh` + `chamber/maechen.md`, `auron.sh` + `auron classify`,
+calls), `mimir-trigger.sh` + `chamber/mimir.md`, `auron.sh` + `auron classify`,
 `strand.sh` + `strand-classify.py`, `watchtower.sh`, `czar-pass` → `czar-pass/src/main.rs` (on
 the reconciler-engine, sp-pu7v6), `czar-fence.sh`, `groomer`, `groom-trigger.sh`,
 `hold.sh`/`unhold.sh`, `cockpit.sh livelock` + `strand close-reason`, `archivist`.
@@ -44,7 +44,7 @@ Every finding goes through `incident.sh`, whose intake contract is:
 - At `SPIRA_SIN_AT` recurrences the incident escalates once, unless the ref is exempt.
 
 The census ranks failure classes by distinct beads since a watermark. A remedy that has not
-landed suppresses its class. Maechen is triggered by a landing count or a time gap, and it
+landed suppresses its class. Mimir is triggered by a landing count or a time gap, and it
 must not blind its own window.
 
 Mechanical remedies are applied idempotently, and a dry run reports without writing: the
@@ -93,7 +93,7 @@ produced the 36 use cases. Columns marked **applied** reflect code that is actua
 | 09 | Move the REF/CAUSE pairing check to the gate's T0 fence stage. | **Applied**: `spira/incident-cause-lint.sh`, wired into `gate-spira.sh`. |
 | 10 | New suite against a genuinely unreachable bd (gap G1). | **Applied**: `test-incident-spool-drain.sh`. |
 | 11-15 | Extract census's heredoc python to `spira/census/*.py`; table-test on canned rows; keep one server-mode suite for the SQL-writes-events and since-filter contract. | **Applied** (`sp-fhzib.3`): `spira/census/{count,merge,covers,covers_closed}.py`; `test-census-pipeline.sh` (T1) + `test-census.sh` (T3, 3 rows + the Sin row landed by this bead). `test-census-reopen.sh`, `test-census-watermark.sh` deleted. |
-| 16-17 | Keep `test-maechen-trigger.sh`; delete `test-maechen-blind-window.sh` and `test-maechen-sibling-blind.sh`. | **Applied** (`sp-fhzib.3`). |
+| 16-17 | Keep `test-mimir-trigger.sh`; delete `test-mimir-blind-window.sh` and `test-mimir-sibling-blind.sh`. | **Applied** (`sp-fhzib.3`). |
 | 18-22 | Split Auron's classifier half into its own T1 suite; merge the five `test-strand-*` classifier files into one table; keep `test-strand-lock.sh`/`test-strand-truncated.sh` for their own T2 properties. | **Not applied.** `test-auron.sh` and the five `test-strand-*.sh` files are unchanged. `sp-fhzib.4` did this work on the retired branch; it was reopened as its own bead and has not landed on `main`. |
 | 23 | Port the four log-pattern detectors plus CI-STALLED/CI-RED/STARVED to Rust `#[test]`s against the real reconciler-engine code; retire `test-watchtower-queue.sh` once ported. | **Applied, then superseded.** czar-pass was rewritten onto the reconciler engine (`sp-pu7v6`) after the original Rust port landed, which deleted the marker-file helpers (`fs_record`/`fs_get`/`fs_clear`/`fs_path`/`latency_secs`) those tests exercised; 5 of the 22 tests named functions that no longer exist, so `cargo test -p czar-pass` did not even compile on `main`. **This bead removes those 5 dead tests and adds 25 new ones,** bringing the file to 42 passing tests, exercising every `detect_*` function's fire/silent boundary against the current `Config`/`StateMap`/reconciler-engine shape — see §8. `test-watchtower-queue.sh` is gone (`sp-fhzib.5`); `test-czar-pass.sh` gained a `cargo test -p czar-pass` case (case 0) so the unit layer is verified as part of the suite, which is what would have caught the compile failure. |
 | 24 | Keep the smoke rows in `test-czar-pass.sh`; fix its two tautological exit-code assertions (gap G5). | **Applied**, landed separately in Concierge round 37 (commit `40eeb1dba`, "test-czar-pass reads czar's real exit code on the halted pass"). |
@@ -108,7 +108,7 @@ produced the 36 use cases. Columns marked **applied** reflect code that is actua
 | D1 | Incident dedup: N filings → 1 bead + N-1 recurrences | test-incident.sh, test-incident-dedup.sh, test-incident-recur-bounded.sh, test-incident-recur-cause.sh | Resolved (`sp-fhzib.2`) |
 | D2 | Sin escalation at SIN_AT | test-sin-exempt.sh, test-incident-recur-cause.sh | Resolved (`sp-fhzib.2`) |
 | D3 | NULL-cause / empty new_value distinct-bead count | test-census-events.sh ×2, test-census-reopen.sh, test-census.sh | Resolved (`sp-fhzib.3`) |
-| D4 | Since-watermark counting / trigger watermark | test-census-watermark.sh, test-maechen-blind-window.sh, test-maechen-trigger.sh | Resolved (`sp-fhzib.3`) |
+| D4 | Since-watermark counting / trigger watermark | test-census-watermark.sh, test-mimir-blind-window.sh, test-mimir-trigger.sh | Resolved (`sp-fhzib.3`) |
 | D5 | czar-pass CI-STALLED/STARVED/halted | test-watchtower-queue.sh, test-czar-pass.sh | Resolved (`sp-fhzib.5`): the former deleted, its properties absorbed into `test-czar-pass.sh`. |
 | D6 | Shadow vs act staging + stage-key allowlist | test-czar-shadow.sh, test-czar-pass.sh | Resolved: conf keys live at T0, czar-shadow keeps the fence. |
 | D7 | strand-classify.py harness + `starved` positive control | 6 test-strand-* files | **Open** (`sp-fhzib.4`) |
@@ -117,8 +117,8 @@ produced the 36 use cases. Columns marked **applied** reflect code that is actua
 | D10 | Livelock categories + detector re-run | test-livelock.sh | **Open** (`sp-fhzib.4`) |
 | D11 | Close-reason phrase flags | test-livelock.sh, test-ops-closing.sh | **Open** (`sp-fhzib.4`) |
 | D12 | "Every snapshot section present" loop | test-watchtower.sh, test-watchtower-lapse.sh | **Open** (`sp-fhzib.4`) |
-| D13 | Watermark prose greps of maechen.md | test-maechen.sh, test-maechen-sibling-blind.sh | Resolved (`sp-fhzib.3`) |
-| D14 | Trigger shape (dedup, threshold, lane guard) | test-groom-trigger.sh, test-maechen-trigger.sh | **Open** (`sp-fhzib.4`) |
+| D13 | Watermark prose greps of mimir.md | test-mimir.sh, test-mimir-sibling-blind.sh | Resolved (`sp-fhzib.3`) |
+| D14 | Trigger shape (dedup, threshold, lane guard) | test-groom-trigger.sh, test-mimir-trigger.sh | **Open** (`sp-fhzib.4`) |
 
 ---
 

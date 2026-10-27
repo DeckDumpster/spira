@@ -38,7 +38,7 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # shell's unexported variables, the way the old in-shell `( subshell )` did.
 #
 # THE EXPORT THIS COMMENT ONCE DESCRIBED IS RETIRED (wave 4.9, sp-k80sa): this file used to
-# `export SPIRA_CZAR_LABEL SPIRA_GROOMER_LABEL SPIRA_MAECHEN_LABEL
+# `export SPIRA_CZAR_LABEL SPIRA_GROOMER_LABEL SPIRA_MIMIR_LABEL
 # SPIRA_BATCH_JUDGEMENT_LABEL SPIRA_HOME_REPO` here, the same narrow re-export
 # spira/bead.sh:49 and rule.sh:50 carried for the same reason — a `.fayth`'s FAYTH_LABELS
 # line references these by parameter expansion (grepped: spira/chamber/*.fayth), and the
@@ -1175,7 +1175,7 @@ _census_class_fold_map() {
 # line — the single declared list of reopen causes that are the system working, not a
 # fault (law-a-deliberate-state-is-not-a-fault): firing queue.sh eject, or converting a
 # closed work bead to submitted, is a correct outcome, so census must count these but
-# never rank them for a Maechen remedy (sp-eiatd). Both bead_reopen and
+# never rank them for a Mimir remedy (sp-eiatd). Both bead_reopen and
 # _census_events_sql/_census_deliberate_sql read this one list; it now lives in
 # spira-claim (wave 4.19, sp-3wfcb, row I) since bead_reopen does — this and
 # _census_reopen_admission_exempt are shims so row M's SQL producers below see the exact
@@ -1799,7 +1799,7 @@ repo_land_queued() {
 # An unknown mode name or unknown lane label is a hard error naming the row — a typo must
 # not quietly disable a lane.
 #
-# PORTED (wave 4.35, sp-kelr2, row V) to maechen-trigger's `lanes` module, called in-process
+# PORTED (wave 4.35, sp-kelr2, row V) to mimir-trigger's `lanes` module, called in-process
 # by its own sweep; this is now the one-line shim onto its `repo-lanes` CLI door, which
 # groom-trigger.sh (the one surviving bash caller) and test-repo-map.sh both reach the
 # same way. SPIRA_HOME is threaded explicitly — conf.sh deliberately never exports it (the
@@ -1807,18 +1807,18 @@ repo_land_queued() {
 # helper this function used to call, had no caller outside this one and is retired rather
 # than given its own shim.
 spira_repo_lanes() {
-    SPIRA_HOME="${SPIRA_HOME:-}" maechen-trigger --home "${SPIRA_HOME:-}" repo-lanes "$1"
+    SPIRA_HOME="${SPIRA_HOME:-}" mimir-trigger --home "${SPIRA_HOME:-}" repo-lanes "$1"
 }
 
 # spira_lane_admitted <lane> -> 0 if the home repo or some repo in SPIRA_REPO_MAP admits
-# it, 1 otherwise. Shared by groom-trigger.sh and maechen-trigger (duplicate cluster D14) —
+# it, 1 otherwise. Shared by groom-trigger.sh and mimir-trigger (duplicate cluster D14) —
 # on a consuming install with no repo willing to run a lane, its trigger would otherwise
 # accumulate trigger beads for work nobody can do.
 #
 # PORTED (wave 4.35, sp-kelr2, row V) — see spira_repo_lanes above; same shim pattern, same
 # CLI binary, its `lane-admitted` door.
 spira_lane_admitted() {
-    SPIRA_HOME="${SPIRA_HOME:-}" maechen-trigger --home "${SPIRA_HOME:-}" lane-admitted "$1"
+    SPIRA_HOME="${SPIRA_HOME:-}" mimir-trigger --home "${SPIRA_HOME:-}" lane-admitted "$1"
 }
 
 # spira_open_trigger_count <labels> -> count of open-or-in_progress beads carrying every
@@ -1826,14 +1826,14 @@ spira_lane_admitted() {
 # read: callers must refuse to file, never treat it as zero.
 # in_progress is included because a claimed trigger bead leaves --status open, and a dedup
 # query scoped to open alone would file a duplicate on the very next tick (sp-mp9s — the
-# defect that motivated including it in maechen-trigger.sh, extracted here so
+# defect that motivated including it in mimir-trigger.sh, extracted here so
 # groom-trigger.sh gets the same fix rather than drifting from it).
 #
 # PORTED (wave 4.35, sp-kelr2, row V) — see spira_repo_lanes above; SPIRA_DB/SPIRA_BD are
 # already exported by conf.sh (`spira_config::resolve::EXPORT_KEYS`), so no re-threading is
 # needed here the way SPIRA_HOME needs it above.
 spira_open_trigger_count() {
-    maechen-trigger --home "${SPIRA_HOME:-}" open-trigger-count "$1"
+    mimir-trigger --home "${SPIRA_HOME:-}" open-trigger-count "$1"
 }
 
 repo_gate() {            # repo_gate <name> -> the repo's own gate command, possibly empty

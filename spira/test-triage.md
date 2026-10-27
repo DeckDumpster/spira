@@ -144,7 +144,7 @@ Migrated (sp-uxdjnk). Wall before is the table's round-VM median; the alone figu
 | test-census-events.sh | 78 | census reads requeue/reclaim/recur events written by `bump_*` | unit | Event classification; dominated by seeding a store. |
 | test-auron.sh | 75 | the watchdog reconciler raises, clears and re-raises against a real bd | sim | A watcher over time; the classifier is already pure. |
 | test-groom-escalation-check.sh | 71 | the groom ask label is a conf key defaulting to `groom-asked` | unit | One config key; the plan asks fixtures pin a non-default. |
-| test-maechen-closed-record.sh | 32 | the closed-record INVALID-CLOSED trigger and allowlist | unit | A trigger over rows. |
+| test-mimir-closed-record.sh | 32 | the closed-record INVALID-CLOSED trigger and allowlist | unit | A trigger over rows. |
 | test-yield.sh | 32 | a gate red lands in the right column; an unreadable record says `?` | unit | Panel column rule. |
 | test-holds.sh | 42 | holds reports open beads whose branch touches a set of paths | unit | Path-overlap set logic. |
 | test-mail-aeon.sh | 36 | amend mails the live aeon; the mailbox is removed on exit | sim | A message hand-off with a lifecycle end. |

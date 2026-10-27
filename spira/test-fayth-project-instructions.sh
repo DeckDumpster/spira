@@ -12,7 +12,7 @@
 #    zero live callers) used to live here under this bead's original defect id. See
 #    the aeon crate's whole-run tests (a_replace_fayth_launches_…, an_append_fayth_…) for the same table's
 #    coverage end to end through the real `aeon` binary.
-# 2. Each production fayth declares the right value: ops/maechen/groomer/czar → none,
+# 2. Each production fayth declares the right value: ops/mimir/groomer/czar → none,
 #    builder/spike → repo.
 # 3. archivist passes --add-dir <wiki> when SPIRA_WIKI is set.
 #    Positive control: when SPIRA_WIKI is unset, --add-dir is absent.
@@ -23,7 +23,7 @@
 # defect: sp-1f56o
 # tier: T1
 # covers: aeon/src/* spira/lib.sh archivist/src/* spira/chamber/ops.fayth UC-aeon-execution-06
-#   spira/chamber/maechen.fayth spira/chamber/groomer.fayth spira/chamber/czar.fayth
+#   spira/chamber/mimir.fayth spira/chamber/groomer.fayth spira/chamber/czar.fayth
 #   spira/chamber/builder.fayth spira/chamber/spike.fayth
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -52,7 +52,7 @@ echo "test-fayth-project-instructions.sh"
 echo
 echo "production fayths declare the correct FAYTH_PROJECT_INSTRUCTIONS:"
 # ==========================================================================================
-for f in ops maechen groomer czar; do
+for f in ops mimir groomer czar; do
     val="$(grep '^FAYTH_PROJECT_INSTRUCTIONS=' "$HERE/chamber/$f.fayth" 2>/dev/null \
           | cut -d= -f2 | tr -d '"' | head -1)"
     is "$f.fayth declares none" "none" "$val"

@@ -754,15 +754,15 @@ pub const ALLOW: &[(&str, &[&str])] = &[
     ("list", ANY),
     ("search", ANY),
     // Writes to other beads.
-    ("note-on", &["groomer", "czar", "maechen", "ops", "batcher", "archivist", "warden"]),
-    ("label-add", &["groomer", "batcher", "maechen"]),
+    ("note-on", &["groomer", "czar", "mimir", "ops", "batcher", "archivist", "warden"]),
+    ("label-add", &["groomer", "batcher", "mimir"]),
     ("label-remove", &["groomer", "batcher"]),
     ("dep-add", &["ops", "groomer", "batcher", "czar", "warden"]),
     ("relate", &["archivist", "groomer"]),
-    ("reopen", &["groomer", "czar", "maechen"]),
+    ("reopen", &["groomer", "czar", "mimir"]),
     ("close-other", &["czar"]),
     ("close-ask", &["archivist"]),
-    ("file", &["ops", "spike", "archivist", "maechen", "czar", "groomer", "batcher", "warden"]),
+    ("file", &["ops", "spike", "archivist", "mimir", "czar", "groomer", "batcher", "warden"]),
     // Tools.
     ("groom sweep", &["groomer"]),
     ("groom split-piece", &["groomer"]),
@@ -783,7 +783,7 @@ pub const ALLOW: &[(&str, &[&str])] = &[
     ("sop log", &["ops"]),
     ("sop applied", &["ops"]),
     ("sop write", &["ops"]),
-    ("census", &["maechen"]),
+    ("census", &["mimir"]),
     ("queue stats", &["czar"]),
     ("queue step", &["czar"]),
     ("queue eject", &["czar"]),
@@ -1694,7 +1694,7 @@ mod tests {
     fn the_allowed_persona_passes() {
         assert!(gate("groom", &v(&["close", "sp-x1", "--evidence", "e", "--actor", "groomer"])).is_ok());
         assert!(gate("queue", &v(&["eject", "sp-x1", "--actor", "czar"])).is_ok());
-        assert!(gate("census", &v(&["--with-suppressed", "--actor", "maechen"])).is_ok());
+        assert!(gate("census", &v(&["--with-suppressed", "--actor", "mimir"])).is_ok());
     }
 
     #[test]
@@ -2025,8 +2025,8 @@ mod tests {
 
     #[test]
     fn census_takes_only_its_one_flag() {
-        assert_eq!(plan("census", "-", &call(&["--with-suppressed"], "maechen")).unwrap(), vec![tool("census", &["--with-suppressed"])]);
-        assert!(plan("census", "-", &call(&["run-events"], "maechen")).is_err());
+        assert_eq!(plan("census", "-", &call(&["--with-suppressed"], "mimir")).unwrap(), vec![tool("census", &["--with-suppressed"])]);
+        assert!(plan("census", "-", &call(&["run-events"], "mimir")).is_err());
     }
 
     #[test]

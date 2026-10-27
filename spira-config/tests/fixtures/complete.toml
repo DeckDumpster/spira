@@ -133,7 +133,7 @@ fayths = [
     "spike",
     "builder",
     "groomer",
-    "maechen",
+    "mimir",
     "ops",
     "czar",
     "warden",
@@ -185,7 +185,7 @@ incident_priority = "3"
 instance = "prod"
 land_gate_reserve = "2700"
 land_maxsec = "5400"
-lanes = "ops groomer maechen czar warden mender pilgrimage"
+lanes = "ops groomer mimir czar warden mender pilgrimage"
 lanes_max_live = 2
 lanes_reserve = 1
 lc_live_check_secs = 60
@@ -205,11 +205,11 @@ loom_budget_ms = 1500
 loom_cache_s = "15"
 loom_ready_grace = "20"
 loop_stall_secs = "3000"
-maechen_label = "maechen-sweep"
-maechen_landing_interval = "25"
-maechen_max_beads = "3"
-maechen_max_gap_seconds = "10800"
-maechen_remedy_label = "maechen-remedy"
+mimir_label = "mimir-sweep"
+mimir_landing_interval = "25"
+mimir_max_beads = "3"
+mimir_max_gap_seconds = "10800"
+mimir_remedy_label = "mimir-remedy"
 mail = "/fixture/userhome/spira/run/mail"
 mail_index = "/fixture/userhome/spira/run/mail/index"
 mail_kinds = "/fixture/userhome/spira/spira-releases/current/spira/mail/kinds"
@@ -558,7 +558,7 @@ system_prompt = "replace"
 minutes = 10
 heartbeat_seconds = 30
 
-[persona.maechen]
+[persona.mimir]
 model = "claude-sonnet-5-5"
 tools = [
     "Bash",
@@ -567,11 +567,11 @@ tools = [
     "Grep",
     "TodoWrite",
 ]
-labels = ["maechen-sweep"]
-lane = "maechen"
+labels = ["mimir-sweep"]
+lane = "mimir"
 system_prompt = "replace"
 
-[persona.maechen.lease]
+[persona.mimir.lease]
 minutes = 70
 heartbeat_seconds = 30
 

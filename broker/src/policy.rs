@@ -39,7 +39,7 @@ mod tests {
     #[test]
     fn login_code_is_allowed_to_pilgrim_only() {
         assert!(allows_login_code("pilgrim"));
-        for f in ["builder", "groomer", "concierge", "czar", "ops", "mender", "batcher", "warden", "spike", "maechen", "", "Pilgrim"] {
+        for f in ["builder", "groomer", "concierge", "czar", "ops", "mender", "batcher", "warden", "spike", "mimir", "", "Pilgrim"] {
             assert!(!allows_login_code(f), "{f}");
         }
     }

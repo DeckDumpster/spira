@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=mimir
+DOC=SPIRA_MIMIR_REMEDY_LABEL — the label applied to every bead Mimir cuts. The
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    #
+    # SPIRA_MIMIR_REMEDY_LABEL — the label applied to every bead Mimir cuts. The
+    # admissibility check (sp-ymwz5) and the flatline measurement query by this label.
+    : "${SPIRA_MIMIR_REMEDY_LABEL:=mimir-remedy}"
+SPIRA_CONF_DEFAULT_EOF

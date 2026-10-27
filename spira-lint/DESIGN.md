@@ -975,7 +975,7 @@ happens to match the configured value or the shipped default, and which of the t
 has one home, and a second copy is exactly the class of drift this fence exists to catch. When
 `spira/schema.sh` is missing, not executable, or its `names` call fails or yields nothing, the
 rule warns on stderr and falls back to the shipped defaults (`needs-operator`, `needs-ryan`,
-`awaiting-ci`, `maechen-sweep`, `maechen-remedy`, `review-finding`, `world-stop`) — never an
+`awaiting-ci`, `mimir-sweep`, `mimir-remedy`, `review-finding`, `world-stop`) — never an
 empty list, which would make every tree "clean" (law-absence-needs-a-positive-control).
 
 **The box's config file is not an input (sp-g9f3t).** `schema.sh` sources conf.sh, whose

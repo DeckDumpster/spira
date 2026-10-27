@@ -59,7 +59,7 @@ and unit that does it.
 
 1. **File.** A bead is created: `bead.sh file`, `work file` / `file-followup` / `split` from a
    session, `gh-intake` from GitHub issues, or a trigger unit (`spira-groom`, `spira-warden`,
-   `spira-maechen`, `watchtower`, `incident`). `bead` also writes its lifecycle row in `READY`.
+   `spira-mimir`, `watchtower`, `incident`). `bead` also writes its lifecycle row in `READY`.
    A label places it in a persona's partition (the plan label, for builders).
 
 2. **Sentinel and summon.** `spira-sentinel.timer` (every 2 min) runs `sentinel`;

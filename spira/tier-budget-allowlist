@@ -241,10 +241,10 @@ test-limits.sh	T1	21.5
 test-literal-lint.sh	T1	51.5
 test-livelock.sh	T1	48.0
 test-loop-readonly.sh	T1	10.0
-test-maechen-blind-window.sh	T1	21.5
-test-maechen-sibling-blind.sh	T1	2.0
-test-maechen-trigger.sh	T1	12.0
-test-maechen.sh	T1	3.0
+test-mimir-blind-window.sh	T1	21.5
+test-mimir-sibling-blind.sh	T1	2.0
+test-mimir-trigger.sh	T1	12.0
+test-mimir.sh	T1	3.0
 test-mail-bead-render.sh	T1	6.0
 test-mail-deliver.sh	T2	13.5
 test-mail-dismiss-sweep.sh	T2	24.0

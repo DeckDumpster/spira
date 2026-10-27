@@ -729,14 +729,14 @@ mod tests {
     fn a_starved_ask_is_withheld_while_the_lane_has_a_live_aeon() {
         let d = scratch("starved-live");
         let spec = || {
-            Ok(vec![probe::PartitionSpec { labels: "spira,plan".into(), exclude: String::new(), fayths: vec!["maechen".into()] }])
+            Ok(vec![probe::PartitionSpec { labels: "spira,plan".into(), exclude: String::new(), fayths: vec!["mimir".into()] }])
         };
         let mk = |lines: &str| {
             let p = d.join("systemctl");
             testkit::write_exe(&p, &format!("#!/bin/sh\n{lines}\n"));
             Config { systemctl: p.to_string_lossy().into_owned(), ..Config::test_fixture() }
         };
-        let live = mk("echo 'spira-aeon-maechen-1.service loaded active running x'");
+        let live = mk("echo 'spira-aeon-mimir-1.service loaded active running x'");
         assert_eq!(lane_live_now(&live, spec()), Some(1));
         let none = mk("true");
         assert_eq!(lane_live_now(&none, spec()), Some(0), "positive control: an empty lane reads as starved");

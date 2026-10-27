@@ -1,4 +1,4 @@
-# maechen.fayth — Maechen: the retrospective persona. Reads the failure distribution,
+# mimir.fayth — Mimir: the retrospective persona. Reads the failure distribution,
 # identifies recurring failure classes, and cuts the work to end them — post-landing,
 # incremental, watermarked.
 #
@@ -6,24 +6,24 @@
 # a predicate carving its partition out of the graph, the memories it must read, the tools
 # it may use, and what wakes it.
 
-FAYTH_NAME=maechen
-FAYTH_DESC="Maechen — the unsent historian: reads the failure distribution, names recurring classes, cuts the work to end them"
+FAYTH_NAME=mimir
+FAYTH_DESC="Mimir — the unsent historian: reads the failure distribution, names recurring classes, cuts the work to end them"
 
-# THE PARTITION. Maechen runs in beadless sweep mode, like QA: it is not summoned by
+# THE PARTITION. Mimir runs in beadless sweep mode, like QA: it is not summoned by
 # claiming a work bead but by a trigger that fires a sweep. The label is read from
-# SPIRA_MAECHEN_LABEL so the operator can rename it without touching this file.
-FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_MAECHEN_LABEL"
+# SPIRA_MIMIR_LABEL so the operator can rename it without touching this file.
+FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_MIMIR_LABEL"
 FAYTH_EXCLUDE_LABELS="$SPIRA_CI_LABEL"
 
-# Statutes only. Maechen reads failure patterns and writes designs — a runbook shelf
+# Statutes only. Mimir reads failure patterns and writes designs — a runbook shelf
 # for production incidents would push the statutes it actually needs off the context budget.
 FAYTH_MEMORY_PREFIXES="law-"
 
 # NO FAYTH_REPO. The repository comes from the BEAD — a `repo:<name>` label resolved
 # through repo-map. The sweep bead carries no repo: label, so aeon.sh falls back to
-# spira_home_repo(), which is the harness's own home checkout. Maechen works on the
+# spira_home_repo(), which is the harness's own home checkout. Mimir works on the
 # harness — its failure record is local — so that fallback is correct. Remedy beads that
-# Maechen cuts use `repo:${SPIRA_HOME_REPO}` (from the brief) so the name is derived,
+# Mimir cuts use `repo:${SPIRA_HOME_REPO}` (from the brief) so the name is derived,
 # not hardcoded, and resolves on any install.
 
 # OPUS 5. The census step is recognition and enumeration, which a small model handles.
@@ -41,21 +41,21 @@ FAYTH_MEMORY_PREFIXES="law-"
 # diagnosis (large) is the likely optimisation — item 7's scorecard makes that
 # evidence-based rather than a guess. (Ryan, 2026-09-11: "Start with Opus 5, get that
 # working, then we'll tweak with other models later.")
-# SEED ONLY (sp-zs04v.4): the live value is persona.maechen.model in spira.toml,
+# SEED ONLY (sp-zs04v.4): the live value is persona.mimir.model in spira.toml,
 # resolved by lib.sh's persona_model — this line only seeds that table on first
 # convert and is no longer read at launch.
 FAYTH_MODEL=claude-sonnet-5-5
 FAYTH_MAX_CONCURRENT=1
 
-# THE MAECHEN LANE. Maechen draws from its own capacity rather than from SPIRA_MAX_AEONS,
-# so a fully-occupied builder pool cannot prevent a retrospective pass. The maechen lane
+# THE MIMIR LANE. Mimir draws from its own capacity rather than from SPIRA_MAX_AEONS,
+# so a fully-occupied builder pool cannot prevent a retrospective pass. The mimir lane
 # is declared in SPIRA_LANES; without that declaration the lane still functions (the
 # mechanism is FAYTH_LANE set, not membership in the list), but the declaration makes it
 # visible to operators reading SPIRA_LANES for the list of scheduled partitions.
-FAYTH_LANE=maechen
+FAYTH_LANE=mimir
 
-# TIMEOUT AND LEASE. A Maechen pass reads the whole corpus, demonstrates a mechanism,
-# and writes at most SPIRA_MAECHEN_MAX_BEADS beads — more than QA's enumeration pass
+# TIMEOUT AND LEASE. A Mimir pass reads the whole corpus, demonstrates a mechanism,
+# and writes at most SPIRA_MIMIR_MAX_BEADS beads — more than QA's enumeration pass
 # but bounded by the same one-pass constraint. One hour matches QA's ceiling; the 3h
 # trigger gap means a pass that fills its wall cannot start another before that gap
 # expires. The lease extends past the wall so a killed session's bead is reclaimable
@@ -64,15 +64,15 @@ FAYTH_TIMEOUT_SECONDS=3600
 FAYTH_LEASE_MINUTES=70
 FAYTH_HEARTBEAT_SECONDS=30
 
-# READ-AND-FILE TOOLSET. Maechen reads the corpus, runs diagnostic commands, and files
+# READ-AND-FILE TOOLSET. Mimir reads the corpus, runs diagnostic commands, and files
 # beads. It does not write code; it does not edit the harness. A retrospective that lands
 # code also decides whether the fix is worth its runtime — that is the judgement that
-# produced the 17-minute gate. Withholding Edit and Write enforces "Maechen proposes;
+# produced the 17-minute gate. Withholding Edit and Write enforces "Mimir proposes;
 # it does not build."
 FAYTH_TOOLS="Bash,Read,Glob,Grep,TodoWrite"
 FAYTH_PROJECT_INSTRUCTIONS=none
 
-# REPLACE: Maechen reads and files — never writes code. The default coding guidance
+# REPLACE: Mimir reads and files — never writes code. The default coding guidance
 # competes with the standing constraints.
 FAYTH_SYSTEM_PROMPT=replace
 

@@ -22,7 +22,7 @@
 # which UC-ops-detection-remediation-12 covers with 3 real rows in test-census.sh.
 #
 # tier: T1
-# covers: census/src/* spira/chamber/maechen.md UC-ops-detection-remediation-11 UC-ops-detection-remediation-13 UC-ops-detection-remediation-14 UC-ops-detection-remediation-15
+# covers: census/src/* spira/chamber/mimir.md UC-ops-detection-remediation-11 UC-ops-detection-remediation-13 UC-ops-detection-remediation-14 UC-ops-detection-remediation-15
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -324,7 +324,7 @@ chmod +x "$T/spira-lc-stub"
 run_census_fake() {   # run_census_fake <SPIRA_RUN> [census-args...]
     local rundir="$1"; shift
     tl_config SPIRA_BD="$FAKE_BD" SPIRA_DB="$T/fixture.db" \
-        SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy \
+        SPIRA_MIMIR_REMEDY_LABEL=mimir-remedy \
         SPIRA_RUN="$rundir" SPIRA_REPO_MAP="$T/no-repo-map" \
         SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S="${SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S:-120}"
     env SPIRA_NOW="$CENSUS_FIXED_HOST_EPOCH" \
@@ -347,13 +347,13 @@ want "no watermark file: falls back to all-time output" "1 sp-recur-fallback-tes
 want "no watermark file: stderr says so" "no watermark file" "$(cat "$T/nowm.stderr")"
 
 RUN_BAD_WM="$T/run-bad-wm"; mkdir -p "$RUN_BAD_WM"
-printf 'not-a-number' > "$RUN_BAD_WM/maechen.watermark"
+printf 'not-a-number' > "$RUN_BAD_WM/mimir.watermark"
 badwm_out="$(run_census_fake "$RUN_BAD_WM" 2>"$T/badwm.stderr")"
 want "unreadable watermark: falls back to all-time output" "1 sp-recur-fallback-test (1 victims, 1 detections)" "$badwm_out"
 want "unreadable watermark: stderr says so" "unreadable" "$(cat "$T/badwm.stderr")"
 
 RUN_WM="$T/run-wm"; mkdir -p "$RUN_WM"
-printf '1000000000\n' > "$RUN_WM/maechen.watermark"
+printf '1000000000\n' > "$RUN_WM/mimir.watermark"
 wm_out="$(run_census_fake "$RUN_WM" 2>"$T/wm.stderr")"
 want "valid watermark: since-watermark format used (cluster_merge path)" \
     "sp-recur-fallback-test (1 victims, 1 detections, 1 all-time)" "$wm_out"
@@ -474,12 +474,12 @@ printf '' > "$T/nofold.txt"
 printf 'sp-requeue-merge-conflict sp-reopen-rebase-conflict\n' > "$T/fold.txt"
 
 want "covers: open bead's covers: label extracted" "sp-recur-open-class" \
-    "$(covers_of "$T/nofold.txt" '[{"labels":["spira","maechen-remedy","covers:sp-recur-open-class"]}]')"
+    "$(covers_of "$T/nofold.txt" '[{"labels":["spira","mimir-remedy","covers:sp-recur-open-class"]}]')"
 want "covers: fold-map resolves a pre-fold alias to the canonical class" \
     "sp-reopen-rebase-conflict" \
     "$(covers_of "$T/fold.txt" '[{"labels":["covers:sp-requeue-merge-conflict"]}]')"
 lack "covers: non-covers labels produce no class" "spira" \
-    "$(covers_of "$T/nofold.txt" '[{"labels":["spira","maechen-remedy"]}]')"
+    "$(covers_of "$T/nofold.txt" '[{"labels":["spira","mimir-remedy"]}]')"
 want "covers: multiple beads each contribute their class" "sp-recur-a" \
     "$(covers_of "$T/nofold.txt" '[{"labels":["covers:sp-recur-a"]},{"labels":["covers:sp-recur-b"]}]')"
 want "covers: multiple beads, second class also present" "sp-recur-b" \
@@ -507,7 +507,7 @@ CENSUS_OPEN_JSON="$T/open.json"
 CENSUS_CLOSED_JSON="$T/closed.json"
 
 # Open remedy suppresses.
-printf '[{"id":"open-remedy","labels":["maechen-remedy","covers:sp-recur-fallback-test"]}]' > "$CENSUS_OPEN_JSON"
+printf '[{"id":"open-remedy","labels":["mimir-remedy","covers:sp-recur-fallback-test"]}]' > "$CENSUS_OPEN_JSON"
 printf '[]' > "$CENSUS_CLOSED_JSON"
 RUN_OPEN="$T/run-open"; mkdir -p "$RUN_OPEN"
 open_out="$(run_census_fake "$RUN_OPEN")"
@@ -516,19 +516,19 @@ want "open remedy: --with-suppressed annotates it" "[suppressed]" \
     "$(run_census_fake "$RUN_OPEN" --with-suppressed)"
 
 # covers: alone is the key: a remedy filed by any persona suppresses, and the bd query
-# selects on covers:*, never on the maechen-remedy provenance label.
+# selects on covers:*, never on the mimir-remedy provenance label.
 printf '[{"id":"open-delivers","labels":["delivers:action","covers:sp-recur-fallback-test"]}]' > "$CENSUS_OPEN_JSON"
 CENSUS_LIST_ARGS_FILE="$T/list-args"; : > "$CENSUS_LIST_ARGS_FILE"
-lack "open bead with covers: and no maechen-remedy suppresses the class" "sp-recur-fallback-test" \
+lack "open bead with covers: and no mimir-remedy suppresses the class" "sp-recur-fallback-test" \
     "$(run_census_fake "$RUN_OPEN")"
 # One content query for every remedy, open or closed (sp-mve9i): no bd status filter.
 want "the remedy query selects on covers:*" "1" "$(grep -c -- '--label-pattern covers:\*' "$CENSUS_LIST_ARGS_FILE")"
 lack "no bd list query filters on bd status" "--status" "$(cat "$CENSUS_LIST_ARGS_FILE")"
-lack "no bd list query filters on --label" "--label maechen" "$(cat "$CENSUS_LIST_ARGS_FILE")"
+lack "no bd list query filters on --label" "--label mimir" "$(cat "$CENSUS_LIST_ARGS_FILE")"
 unset CENSUS_LIST_ARGS_FILE
 
 # Unrelated covers: label does not suppress.
-printf '[{"id":"open-unrelated","labels":["maechen-remedy","covers:sp-recur-unrelated"]}]' > "$CENSUS_OPEN_JSON"
+printf '[{"id":"open-unrelated","labels":["mimir-remedy","covers:sp-recur-unrelated"]}]' > "$CENSUS_OPEN_JSON"
 want "unrelated covers: label does not suppress the class" "sp-recur-fallback-test" \
     "$(run_census_fake "$RUN_OPEN")"
 printf '[]' > "$CENSUS_OPEN_JSON"
@@ -538,7 +538,7 @@ CENSUS_REPO="$T/fixture-repo"
 git init -q "$CENSUS_REPO"
 GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=t@t \
     git -C "$CENSUS_REPO" commit --allow-empty -q -m initial
-printf '[{"id":"sp-inflight","closed_at":"%s","labels":["maechen-remedy","covers:sp-recur-fallback-test"]}]' \
+printf '[{"id":"sp-inflight","closed_at":"%s","labels":["mimir-remedy","covers:sp-recur-fallback-test"]}]' \
     "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$CENSUS_CLOSED_JSON"
 git -C "$CENSUS_REPO" branch "spira/sp-inflight" >/dev/null 2>&1
 RUN_CLOSED="$T/run-closed"; mkdir -p "$RUN_CLOSED"
@@ -558,7 +558,7 @@ lack "landed remedy: no suppression annotation" "[suppressed" "$landed_out"
 
 # Closed remedy, no branch naming the bead -> orphaned, unsuppressed and annotated.
 git -C "$CENSUS_REPO" branch -D "spira/sp-inflight" >/dev/null 2>&1
-printf '[{"id":"sp-orphan","closed_at":"%s","labels":["maechen-remedy","covers:sp-recur-fallback-test"]}]' \
+printf '[{"id":"sp-orphan","closed_at":"%s","labels":["mimir-remedy","covers:sp-recur-fallback-test"]}]' \
     "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$CENSUS_CLOSED_JSON"
 RUN_ORPHAN="$T/run-orphan"; mkdir -p "$RUN_ORPHAN"
 orphan_out="$(run_census_fake "$RUN_ORPHAN")"

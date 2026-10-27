@@ -874,7 +874,7 @@ pub fn dup_refs_keys() -> Kv {
 
 /// `strand::config::Config`, resolved fresh per call — a probe call is already a fresh
 /// process-equivalent pass (DESIGN.md: data fetching goes through `io` each time), and
-/// `groomer`/`maechen-trigger` resolve their own copy the same independent way.
+/// `groomer`/`mimir-trigger` resolve their own copy the same independent way.
 fn strand_cfg() -> strand::config::Config {
     strand::config::Config::resolve(&strand::config::Live::load()).unwrap_or_else(|e| {
         eprintln!("cockpit-collect: {e}");

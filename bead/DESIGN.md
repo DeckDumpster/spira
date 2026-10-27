@@ -91,7 +91,7 @@ code compared line for line. Every one of these suites continues to run unmodifi
 transparently the new binary.
 
 **The one real parity defect this proof caught:** `conf.sh` derives several values
-(`SPIRA_REPO_MAP`'s default, `SPIRA_GROOMER_LABEL`/`SPIRA_MAECHEN_LABEL`/`SPIRA_CZAR_LABEL`)
+(`SPIRA_REPO_MAP`'s default, `SPIRA_GROOMER_LABEL`/`SPIRA_MIMIR_LABEL`/`SPIRA_CZAR_LABEL`)
 as plain shell variables, never exported — harmless for the bash `bead.sh`, which ran
 sourcing `conf.sh` inline in its own process, but invisible to a binary this file `exec`s
 into, since only the environment table crosses that boundary. `test-express-lane.sh` (which

@@ -14,9 +14,9 @@
 # former test-effective-lanes.sh) was retired at sp-27hsi along with the dead functions it
 # drove (_spira_lane_diag, _spira_modes_lanes, _spira_fayths_lane_set): nothing calls that
 # three-way-intersection-with-named-refusal diagnostic any more. Lane admission in the live
-# path is maechen-trigger/groom-trigger.sh's much simpler spira_lane_admitted (any repo-map
+# path is mimir-trigger/groom-trigger.sh's much simpler spira_lane_admitted (any repo-map
 # lanes column membership, no .spira/modes or SPIRA_FAYTHS intersection, no refusal naming),
-# which stays and is exercised through maechen-trigger's own mocked-port unit tests, not a
+# which stays and is exercised through mimir-trigger's own mocked-port unit tests, not a
 # bash suite. See docs/test-plan/dispatch.toml for the UC-dispatch-13 [use_case.uncovered].
 #
 # THE DEFECT (sp-fayth-predicate). sentinel.sh CHECK 7 computed one $ready from the

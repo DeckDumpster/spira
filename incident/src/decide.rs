@@ -555,7 +555,7 @@ mod tests {
     #[test]
     fn unit_from_cgroup_line_recognises_unit_suffixes() {
         assert_eq!(unit_from_cgroup_line("0::/user.slice/spira-groom.service"), "spira-groom.service");
-        assert_eq!(unit_from_cgroup_line("0::/user.slice/spira-maechen.timer"), "spira-maechen.timer");
+        assert_eq!(unit_from_cgroup_line("0::/user.slice/spira-mimir.timer"), "spira-mimir.timer");
         assert_eq!(unit_from_cgroup_line("0::/user.slice/session.scope"), "session.scope");
         assert_eq!(unit_from_cgroup_line("0::/user.slice/something-else"), "?");
         assert_eq!(unit_from_cgroup_line(""), "?");

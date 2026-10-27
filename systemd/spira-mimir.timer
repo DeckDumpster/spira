@@ -1,5 +1,5 @@
 [Unit]
-Description=Evaluate Maechen trigger conditions every 15 minutes
+Description=Evaluate Mimir trigger conditions every 15 minutes
 
 [Timer]
 # FIFTEEN MINUTES. The two conditions are a 25-landing count and a 3-hour time gap.
@@ -9,14 +9,14 @@ Description=Evaluate Maechen trigger conditions every 15 minutes
 # trigger detects them at the next 15-minute tick.
 #
 # THE INTERVAL IS THE ONLY PLACE THE CADENCE IS WRITTEN. Nothing reads a
-# SPIRA_MAECHEN_TRIGGER_EVERY key because none exists; the two configuration keys
-# (SPIRA_MAECHEN_LANDING_INTERVAL, SPIRA_MAECHEN_MAX_GAP_SECONDS) govern the
+# SPIRA_MIMIR_TRIGGER_EVERY key because none exists; the two configuration keys
+# (SPIRA_MIMIR_LANDING_INTERVAL, SPIRA_MIMIR_MAX_GAP_SECONDS) govern the
 # thresholds, not the check frequency.
 OnBootSec=15min
 OnActiveSec=15min
 OnUnitActiveSec=15min
 AccuracySec=2min
-Unit=spira-maechen.service
+Unit=spira-mimir.service
 
 [Install]
 WantedBy=timers.target

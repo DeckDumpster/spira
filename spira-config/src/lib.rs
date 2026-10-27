@@ -423,7 +423,7 @@ pub enum Lane {
     Plan,
     Incident,
     Groom,
-    MaechenSweep,
+    MimirSweep,
     Spike,
     CzarTrigger,
 }
@@ -563,6 +563,11 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     // Spira works the whole backlog continuously; there is no single goal bead (per Ryan,
     // 2026-09-30, sp-2f9sa). The id prefix it used to imply is its own key now: id_prefix.
     RetiredKey { key: "goal", bead: "sp-k6m1m" },
+    RetiredKey { key: "maechen_label", bead: "sp-vt8lbr" },
+    RetiredKey { key: "maechen_landing_interval", bead: "sp-vt8lbr" },
+    RetiredKey { key: "maechen_max_beads", bead: "sp-vt8lbr" },
+    RetiredKey { key: "maechen_max_gap_seconds", bead: "sp-vt8lbr" },
+    RetiredKey { key: "maechen_remedy_label", bead: "sp-vt8lbr" },
     RetiredKey { key: "queue_local_gate", bead: "sp-vsob2" },
     RetiredKey { key: "queue_batch_idle_cut", bead: "sp-vsob2" },
     RetiredKey { key: "cert_idle_skip", bead: "sp-6d9th" },
@@ -719,7 +724,7 @@ fn require_roster_declares_models(root: &toml::Value) -> Result<(), String> {
     Ok(())
 }
 
-const TIMER_PARTITION_PERSONAS: &[&str] = &["groomer", "maechen", "czar", "warden", "mender", "pilgrim"];
+const TIMER_PARTITION_PERSONAS: &[&str] = &["groomer", "mimir", "czar", "warden", "mender", "pilgrim"];
 
 /// A declared lane, or a timer-filed partition label, whose persona is not in an explicit
 /// `spira.fayths` roster is work nothing can claim: refused, naming both keys.

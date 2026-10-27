@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 pub trait World {
     fn log(&self, msg: &str);
 
-    /// `$SPIRA_RUN/maechen.watermark` — epoch seconds, or 0 if missing/unparseable.
+    /// `$SPIRA_RUN/mimir.watermark` — epoch seconds, or 0 if missing/unparseable.
     fn read_watermark(&self) -> i64;
-    /// `$SPIRA_RUN/maechen.lastpass` — epoch seconds, or 0 if missing/unparseable.
+    /// `$SPIRA_RUN/mimir.lastpass` — epoch seconds, or 0 if missing/unparseable.
     fn read_lastpass(&self) -> i64;
     fn now(&self) -> i64;
 

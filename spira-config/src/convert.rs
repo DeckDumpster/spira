@@ -156,7 +156,7 @@ fn expand_lane_mode(token: &str) -> Vec<Lane> {
     match token {
         "consume" => vec![Plan],
         "develop" => vec![Plan, Incident, Groom, Spike],
-        "self" => vec![Plan, Incident, Groom, Spike, MaechenSweep, CzarTrigger],
+        "self" => vec![Plan, Incident, Groom, Spike, MimirSweep, CzarTrigger],
         _ => Vec::new(),
     }
 }
@@ -167,7 +167,7 @@ fn parse_lane_token(tok: &str) -> Option<Lane> {
         "incident" => Lane::Incident,
         "groom" => Lane::Groom,
         // literal-ok: matches the repo-map lane token this old format actually writes
-        "maechen-sweep" => Lane::MaechenSweep,
+        "mimir-sweep" => Lane::MimirSweep,
         "spike" => Lane::Spike,
         "czar-trigger" => Lane::CzarTrigger,
         _ => return None,
@@ -384,7 +384,7 @@ fn label_defaults() -> BTreeMap<String, String> {
         ("SPIRA_MENDER_LABEL", "mender-failure"),
         ("SPIRA_GROOMER_LABEL", "groom"),
         // literal-ok: mirrors conf.sh's own derived defaults; see above
-        ("SPIRA_MAECHEN_LABEL", "maechen-sweep"),
+        ("SPIRA_MIMIR_LABEL", "mimir-sweep"),
         ("SPIRA_PLAN_LABEL", "plan"),
         ("SPIRA_INCIDENT_LABEL", "incident"),
         ("SPIRA_CZAR_LABEL", "czar-trigger"),
