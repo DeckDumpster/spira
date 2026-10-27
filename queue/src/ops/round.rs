@@ -219,7 +219,7 @@ const STALE_TRIES: u32 = 5;
 fn suites_started(w: &World, batch: &str, strict: bool) -> Result<(), (i32, String)> {
     let send = || {
         pass_event(w, batch, |_, n, phase| {
-            (strict || phase == "build")
+            (phase == "build" || (strict && phase != "suites"))
                 .then(|| serde_json::json!({"SuitesStarted": {"n": n}}).to_string())
         })
     };
