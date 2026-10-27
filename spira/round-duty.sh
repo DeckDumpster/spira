@@ -22,6 +22,7 @@ ROUNDS="$SPIRA_RUN/rounds"
 HEALTH_FILE="$SPIRA_RUN/watchd/round-duty.health"
 _rd_last_due=0 _rd_last_unknown=0 _rd_last_c="" _rd_last_change=0 _rd_last_stopped=""
 declare -A _rd_lines
+_rd_stamp=0
 
 _rd_say() {
     printf '%s %s\n' "$(date -u +%FT%TZ)" "$1"
@@ -66,11 +67,14 @@ _rd_may_cut() {
 }
 
 _rd_tick() {
-    local f n p c now idle
+    local f n p c now idle cur nxt
     mkdir -p "$ROUNDS"
+    cur="$ROUNDS/.scan-$_rd_stamp"; _rd_stamp=$((1 - _rd_stamp)); nxt="$ROUNDS/.scan-$_rd_stamp"
+    : > "$nxt"
     for f in "$ROUNDS"/*.result; do
         [ -e "$f" ] || continue
-        n="$(wc -l < "$f")"; p="${_rd_lines[$f]:-}"
+        [ -n "${_rd_lines[$f]:-}" ] && [ -e "$cur" ] && ! [ "$f" -nt "$cur" ] && continue
+        n=0; while IFS= read -r _; do n=$((n + 1)); done < "$f"; p="${_rd_lines[$f]:-}"
         if [ -z "$p" ]; then _rd_lines[$f]=$n; continue; fi
         if [ "$n" -gt "$p" ]; then
             tail -n $((n - p)) "$f" | while IFS= read -r l; do
