@@ -57,10 +57,11 @@ pub fn validate(a: &Answer) -> Result<String, String> {
     }
 }
 
-/// The terminal mending event. The clock is the machine's: `at` is overwritten there.
+/// The terminal mending event for every outcome but a mend, which goes through `mending mend`.
+/// The clock is the machine's: `at` is overwritten there.
 pub fn terminal_event(kind: Kind, diagnosis: &str) -> Value {
     match kind {
-        Kind::Mended => json!({"Mended": {"at": 0}}),
+        Kind::Mended => unreachable!("a mend is assessed by `mending mend`, never sent as an event"),
         Kind::Environment => json!({"Environment": {"at": 0}}),
         Kind::Flaky => json!({"Flaky": {"at": 0}}),
         Kind::Unsure => json!({"Unsure": {"at": 0}}),

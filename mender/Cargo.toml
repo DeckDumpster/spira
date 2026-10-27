@@ -5,6 +5,7 @@ edition = "2021"
 description = "mender — what a mender dwarf is given and how it answers: the evidence pack for one failing suite, the whole-bead context, the read verbs, and the triage outcomes recorded on the MENDING row."
 
 [dependencies]
+lifecycle = { path = "../lifecycle" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 spira-config = { path = "../spira-config" }

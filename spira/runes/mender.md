@@ -52,7 +52,7 @@ menders of this round), `work mender passes <spec>` (earlier passes), `work mend
 
 | kind | when | what it needs |
 |---|---|---|
-| `mended` | a member's code is at fault and you committed the fix | `--checks "<what ran and that it passed>"` |
+| `mended` | a member's code is at fault and you committed the fix | `--checks "crate:<dir> suite:<path> ..."` — each check you ran green, as the machine names it |
 | `environment` | the box failed, not the code | the signature and the output line that shows it |
 | `flaky` | the test is unreliable | the evidence it passed or failed independent of the diffs |
 | `return` | a member's code is at fault and the fix is out of your reach | the defect as `<file>:<line>`, and why |
@@ -74,7 +74,7 @@ diff that touches what the suite exercises outranks it.
 - Before `mended`: run `cargo test -p <crate>` for every crate the mend touched, and, through
   `{{TESTENV}} --suites <suite> <member-branch> {{REPO_NAME}}`, the suites that reference any touched non-Rust file — in the pass tree the spec
   names, inside your deadline. Never run a suite on the host. If a check fails, the outcome is
-  `return`, not `mended`; record what ran in `--checks`.
+  `return`, not `mended`; list only what passed in `--checks`. Push the fix to each member's `spira/<bead>` branch first: that head is the mended tip.
 - You may change whatever the fix needs, including gate and fence code. When the mend changes
   a gate, a fence, a test's expectation, or code outside every member's diff, send one ask in
   the same action, saying what changed, the failure it answered and how to revert it:
