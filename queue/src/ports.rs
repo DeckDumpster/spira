@@ -564,6 +564,10 @@ pub trait Lc {
         kind: &str,
         actor: &str,
     ) -> Result<(), (i32, String)>;
+    /// `mending close-ended`: end every live MENDING row whose batch is already terminal.
+    fn mending_close_ended(&self, _actor: &str) -> Result<(), (i32, String)> {
+        Ok(())
+    }
     /// `mending mend`: take the mended tips (`bead:from:to,...`) if the machine's checks hold.
     #[allow(clippy::too_many_arguments)]
     fn mend(

@@ -509,6 +509,9 @@ pub(super) fn retire_menders(w: &World, c: &Ctx, batch: &str, why: &str) {
 }
 
 pub(super) fn sweep_menders(w: &World, c: &Ctx) {
+    if let Err((rc, e)) = w.lc.mending_close_ended("concierge") {
+        w.err(format!("queue.sh: WARNING — MENDING rows of closed batches were not ended (rc={rc}): {e}"));
+    }
     retire_marked(
         w,
         c,
