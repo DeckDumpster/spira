@@ -1742,6 +1742,14 @@ impl Lc for RealLc {
             Err((rc, out.trim().to_string()))
         }
     }
+    fn mending_close_ended(&self, actor: &str) -> Result<(), (i32, String)> {
+        let (rc, out) = self.run(&["mending", "close-ended", "--actor", actor]);
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err((rc, out.trim().to_string()))
+        }
+    }
     fn mend(
         &self,
         batch_id: &str,

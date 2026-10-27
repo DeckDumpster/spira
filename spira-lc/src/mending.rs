@@ -95,9 +95,10 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("event") => event(&args[1..], conn),
         Some("sweep") => sweep(&args[1..], conn),
         Some("list") => list(&args[1..], conn),
+        Some("close-ended") => close_ended(&args[1..], conn),
         Some("mend") => mend(&args[1..], conn),
         Some("tips") => tips(&args[1..], conn),
-        _ => Err((CANNOT_TELL, "usage: spira-lc mending pickup <batch> --pass N --suite S --deadline-secs D --actor A | event <batch> --pass N --suite S --kind <json> --actor A | mend <batch> --pass N --suite S --members bead:from:to,... --facts <json> --fences <json> --actor A | tips --beads a,b | sweep --actor A | list [--batch B] [--live]".to_string())),
+        _ => Err((CANNOT_TELL, "usage: spira-lc mending pickup <batch> --pass N --suite S --deadline-secs D --actor A | event <batch> --pass N --suite S --kind <json> --actor A | mend <batch> --pass N --suite S --members bead:from:to,... --facts <json> --fences <json> --actor A | tips --beads a,b | sweep --actor A | close-ended --actor A [--batch B] | list [--batch B] [--live]".to_string())),
     };
     match result {
         Ok(out) => (0, out),
@@ -191,6 +192,32 @@ pub fn expire_overdue(conn: &Conn, actor: &str) -> Result<usize, DbError> {
         }
     }
     Ok(applied)
+}
+
+const BATCH_ENDED: &str = "SELECT batch_id FROM batch WHERE state IN ('LANDED', 'SETTLED', 'ABANDONED', 'DISCARDED')";
+
+fn close_ended(args: &[String], conn: &Conn) -> Reply {
+    let actor = flag(args, "--actor").ok_or((CANNOT_TELL, "mending close-ended: --actor is required".to_string()))?;
+    let scope = flag(args, "--batch").map_or(String::new(), |b| format!(" AND batch_id = '{}'", escape(&b)));
+    let rows = conn
+        .query(&format!("SELECT {COLUMNS} FROM mending WHERE state IN ('WAITING', 'MENDING') AND batch_id IN ({BATCH_ENDED}){scope}"))
+        .map_err(cannot)?;
+    let mut closed = 0;
+    for row in rows.iter().map(from_json) {
+        let mut row = row.map_err(cannot)?;
+        let now = crate::db::now_epoch();
+        if row.overdue(now) {
+            closed += usize::from(apply(conn, &row, MendingEventKind::Expire { at: now }, &actor).is_ok());
+            continue;
+        }
+        if row.triage_ended_at.is_none() && apply(conn, &row, MendingEventKind::TriageEnded { at: now }, &actor).is_ok() {
+            row = fetch(conn, &row.batch_id, row.pass, &row.suite).map_err(cannot)?.unwrap_or(row);
+        }
+        let why = "the batch closed; the failure ended with it";
+        let diagnosis = row.diagnosis.as_ref().map_or(why.to_string(), |d| format!("{d}\n{why}"));
+        closed += usize::from(apply(conn, &row, MendingEventKind::Return { at: now, diagnosis }, &actor).is_ok());
+    }
+    Ok(closed.to_string())
 }
 
 fn list(args: &[String], conn: &Conn) -> Reply {
