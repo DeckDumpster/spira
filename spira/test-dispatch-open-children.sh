@@ -13,7 +13,7 @@
 # child (from the store snapshot), the same out-of-band-label seam mark_queue_waiters
 # uses for a predicate bd cannot express as a dependency. ready_shared_exclude carries the
 # label into rune_exclude and strand.sh's classify_one, so every "is this claimable"
-# predicate — ready_count, rune_ready, and the aeon claim built from CLAIM_EXCLUDE — excludes
+# predicate — ready_count, rune_ready, and the dwarf claim built from CLAIM_EXCLUDE — excludes
 # it without any change to the claim algorithm itself.
 #
 # WHAT THIS SUITE CHECKS.
@@ -110,7 +110,7 @@ has   "1: bd ready lists sp-parent before mark_open_children runs — the defect
 
 # =====================================================================================
 echo
-echo "assertions 2-4 — two open children: label applied, bead excluded from summon:"
+echo "assertions 2-4 — two open children: label applied, bead excluded from call:"
 # =====================================================================================
 mark_open_children
 has   "2: mark_open_children applies $LABEL to sp-parent" \
@@ -141,7 +141,7 @@ has   "6: one child still open — sp-parent stays labeled" \
 
 # =====================================================================================
 echo
-echo "assertions 7-8 — last child closes: label removed, bead is summonable again:"
+echo "assertions 7-8 — last child closes: label removed, bead is callable again:"
 # =====================================================================================
 kid_closed 2
 mark_open_children

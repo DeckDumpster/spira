@@ -8,7 +8,7 @@
 //!    runs under) now sets `SPIRA_HOME` (and `SPIRA_RELEASE`) explicitly, and an unset one
 //!    is a refusal.
 //! 2. "Tip is an ancestor of the landing ref" is trivially true for a worktree JUST cut
-//!    from base — a fresh aeon claim with zero commits of its own. Landed is the lifecycle
+//!    from base — a fresh dwarf claim with zero commits of its own. Landed is the lifecycle
 //!    record's LANDED (`spira-lc state`, sp-2c1n0) — a fresh claim is WORKING there — or a
 //!    freshly claimed worktree gets its target/ deleted mid-compile.
 //!
@@ -55,7 +55,7 @@ fn sp_x9kbg_target_reap_with_spira_home_set_reaps_only_the_truly_landed_worktree
     run_git(&repo, &["init", "-q", "-b", "main"]);
     commit(&repo, "f", "base");
 
-    // sp-land1: a real landing. Its own commit names the bead (law-aeon-commits-name-
+    // sp-land1: a real landing. Its own commit names the bead (law-dwarf-commits-name-
     // their-bead), and main is fast-forwarded onto it — exactly what a push-mode landing
     // does, no merge commit required.
     run_git(&repo, &["checkout", "-q", "-b", "feature-landed"]);
@@ -72,14 +72,14 @@ fn sp_x9kbg_target_reap_with_spira_home_set_reaps_only_the_truly_landed_worktree
     let landed_wt = worktrees.join("concierge-sp-land1");
     run_git(&repo, &["worktree", "add", "-q", landed_wt.to_str().unwrap(), "feature-landed"]);
 
-    // sp-fresh: a brand-new aeon claim, cut from main a moment ago. Zero commits of its
+    // sp-fresh: a brand-new dwarf claim, cut from main a moment ago. Zero commits of its
     // own — tip equals main's tip, so "is an ancestor" is trivially true, but main holds
     // no commit naming sp-fresh at all.
     let fresh_wt = worktrees.join("sp-fresh");
     run_git(&repo, &["worktree", "add", "-q", "-b", "feature-fresh", fresh_wt.to_str().unwrap(), "main"]);
 
     for (wt, bytes) in [(&landed_wt, 4096usize), (&fresh_wt, 2048usize)] {
-        let d = wt.join("target/aeon");
+        let d = wt.join("target/dwarf");
         fs::create_dir_all(&d).unwrap();
         fs::write(d.join("x"), vec![1u8; bytes]).unwrap();
     }
@@ -120,7 +120,7 @@ fn sp_x9kbg_target_reap_with_spira_home_set_reaps_only_the_truly_landed_worktree
 
     assert!(out.status.success(), "target-reap with SPIRA_HOME/SPIRA_TOML set must resolve its own harness home: {text}");
     assert!(!landed_wt.join("target").exists(), "the truly landed worktree's target/ must go: {text}");
-    assert!(fresh_wt.join("target/aeon/x").is_file(), "a freshly cut, zero-commit worktree must NEVER be reaped: {text}");
+    assert!(fresh_wt.join("target/dwarf/x").is_file(), "a freshly cut, zero-commit worktree must NEVER be reaped: {text}");
 }
 
 /// Per Ryan 2026-10-05 (one source of config): `target-reap` no longer searches beside its

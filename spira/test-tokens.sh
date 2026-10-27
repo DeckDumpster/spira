@@ -4,7 +4,7 @@
 #
 #   ./test-tokens.sh
 #
-# Verifies three-bucket attribution (aeons / archivist / session), dedupe across aeon
+# Verifies three-bucket attribution (dwarves / archivist / session), dedupe across dwarf
 # logs and worktree transcripts, and the split the pane renders.
 #
 # No database, no network, under a second.
@@ -37,21 +37,21 @@ mkdir -p "$PROJ/$WT_DIR_NAME" "$PROJ/$ARC_DIR_NAME" "$PROJ/$SESS_DIR_NAME"
 # ---------------------------------------------------------------------------
 # Fixture: four inputs, five unique message ids
 #
-#   aeon log:              msg_shared, msg_aeon_only
+#   dwarf log:              msg_shared, msg_dwarf_only
 #   worktree transcript:   msg_shared, msg_wt_only
 #   archivist transcript:  msg_archivist
 #   session transcript:    msg_session
 #
-# msg_shared appears in both the aeon log and the worktree transcript; after
-# dedupe it must be counted exactly once, under aeons.
+# msg_shared appears in both the dwarf log and the worktree transcript; after
+# dedupe it must be counted exactly once, under dwarves.
 # ---------------------------------------------------------------------------
 NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-cat > "$RUN/sp-test.log" <<AEONLOG
+cat > "$RUN/sp-test.log" <<DWARFLOG
 {"type":"system","subtype":"init","session_id":"s1"}
 {"type":"assistant","message":{"id":"msg_shared","usage":{"input_tokens":100,"cache_creation_input_tokens":200,"cache_read_input_tokens":300,"output_tokens":50}},"timestamp":"$NOW"}
-{"type":"assistant","message":{"id":"msg_aeon_only","usage":{"input_tokens":100,"cache_creation_input_tokens":200,"cache_read_input_tokens":300,"output_tokens":50}},"timestamp":"$NOW"}
-AEONLOG
+{"type":"assistant","message":{"id":"msg_dwarf_only","usage":{"input_tokens":100,"cache_creation_input_tokens":200,"cache_read_input_tokens":300,"output_tokens":50}},"timestamp":"$NOW"}
+DWARFLOG
 
 cat > "$PROJ/$WT_DIR_NAME/transcript.jsonl" <<WTJSONL
 {"type":"assistant","message":{"id":"msg_shared","usage":{"input_tokens":100,"cache_creation_input_tokens":200,"cache_read_input_tokens":300,"output_tokens":50}},"timestamp":"$NOW"}
@@ -83,30 +83,30 @@ run_tokens() {
 ENV_OUT="$(run_tokens env)"
 field() { sed -n "s/^$1=//p" <<< "$ENV_OUT"; }
 
-# The shared turn is counted once, under aeons. The worktree-only turn is also
-# under aeons. Five unique turns across four inputs: 3 aeon, 1 archivist, 1 session.
-is "aeon turns (log + worktree, deduped)"  "3" "$(field SP_TOK_AEON_TURNS)"
+# The shared turn is counted once, under dwarves. The worktree-only turn is also
+# under dwarves. Five unique turns across four inputs: 3 dwarf, 1 archivist, 1 session.
+is "dwarf turns (log + worktree, deduped)"  "3" "$(field SP_TOK_DWARF_TURNS)"
 is "archivist turns"                       "1" "$(field SP_TOK_ARC_TURNS)"
 is "session turns (positive test)"         "1" "$(field SP_TOK_SESS_TURNS)"
 
-# No turn in both: aeon + archivist + session equals the five unique messages.
-TOTAL=$(( $(field SP_TOK_AEON_TURNS) + $(field SP_TOK_ARC_TURNS) + $(field SP_TOK_SESS_TURNS) ))
+# No turn in both: dwarf + archivist + session equals the five unique messages.
+TOTAL=$(( $(field SP_TOK_DWARF_TURNS) + $(field SP_TOK_ARC_TURNS) + $(field SP_TOK_SESS_TURNS) ))
 is "total turns equals unique messages (no double-count)" "5" "$TOTAL"
 
 # The three pane percentages must sum to <= 100.
-AEON_WIN="$(field SP_TOK_AEON_WIN)"
+DWARF_WIN="$(field SP_TOK_DWARF_WIN)"
 ARC_WIN="$(field SP_TOK_ARC_WIN)"
 SESS_WIN="$(field SP_TOK_SESS_WIN)"
 TOK_WIN="$(field SP_TOK_WIN)"
 if [ "$TOK_WIN" -gt 0 ]; then
-    AEON_PCT=$(( AEON_WIN * 100 / TOK_WIN ))
+    DWARF_PCT=$(( DWARF_WIN * 100 / TOK_WIN ))
     ARC_PCT=$(( ARC_WIN * 100 / TOK_WIN ))
     SESS_PCT=$(( SESS_WIN * 100 / TOK_WIN ))
-    SUM_PCT=$(( AEON_PCT + ARC_PCT + SESS_PCT ))
+    SUM_PCT=$(( DWARF_PCT + ARC_PCT + SESS_PCT ))
     if [ "$SUM_PCT" -le 100 ]; then
-        ok "aeon% + archivist% + session% <= 100 ($AEON_PCT + $ARC_PCT + $SESS_PCT = $SUM_PCT)"
+        ok "dwarf% + archivist% + session% <= 100 ($DWARF_PCT + $ARC_PCT + $SESS_PCT = $SUM_PCT)"
     else
-        bad "aeon% + archivist% + session% <= 100" "got $SUM_PCT"
+        bad "dwarf% + archivist% + session% <= 100" "got $SUM_PCT"
     fi
 fi
 
@@ -117,7 +117,7 @@ is "report: session share is 20%" "20" "$SHARE"
 
 # ---------------------------------------------------------------------------
 # Positive control 1: rename the worktree dir so it does not match the prefix.
-# The worktree turns that were attributed to aeons now land in session.
+# The worktree turns that were attributed to dwarves now land in session.
 # Archivist is still in its correct dir (law-absence-needs-a-positive-control).
 # ---------------------------------------------------------------------------
 echo ""
@@ -135,7 +135,7 @@ ENV2="$(env -i PATH="$PATH" HOME="$TMP" \
     tokens.sh env 2>/dev/null)"
 field2() { sed -n "s/^$1=//p" <<< "$ENV2"; }
 
-is "control1: aeon turns from log only"       "2" "$(field2 SP_TOK_AEON_TURNS)"
+is "control1: dwarf turns from log only"       "2" "$(field2 SP_TOK_DWARF_TURNS)"
 is "control1: archivist turns still correct"  "1" "$(field2 SP_TOK_ARC_TURNS)"
 is "control1: session turns get the rest"     "2" "$(field2 SP_TOK_SESS_TURNS)"
 

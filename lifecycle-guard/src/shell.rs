@@ -421,7 +421,7 @@ pub fn scan(files: &[PathBuf], root: &Path, rules: &Rules) -> Result<ShellScan, 
 /// The oracle subcommand `call` invokes, when its command is landing-pass (a bare name or any
 /// path ending in it, `$VAR/bin/landing-pass` included) and its first argument is literally
 /// one of [`ORACLE_SUBCOMMANDS`]. A prefix `env [VAR=…]… `, `command ` or `exec ` is looked
-/// through, as aeon's `env SPIRA_RUN=… landing-pass mark …` was written.
+/// through, as dwarf's `env SPIRA_RUN=… landing-pass mark …` was written.
 fn oracle_subcommand(call: &CallSite) -> Option<&'static str> {
     let words: Vec<String> = std::iter::once(strip_quotes(&call.callee))
         .chain(call.args.iter().map(|a| match a {

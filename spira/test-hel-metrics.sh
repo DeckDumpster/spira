@@ -122,7 +122,7 @@ is "a branch sent on three passes is ONE hel" "2" "$s"
 fixture_held() {
     for i in 1 2 3 4; do
         printf '2026-09-07T0%d:00:00Z spira: state: pass\n' "$i"
-        printf 'HELD sp-live  a live aeon holds it\n'
+        printf 'HELD sp-live  a live dwarf holds it\n'
         printf 'KEEP sp-unlanded  2 commit(s) not in base\n'
     done
 }

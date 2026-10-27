@@ -23,7 +23,7 @@ fn pid_alive(pid: &str) -> bool {
 }
 
 /// Releases named by a git hook in any worktree under `<run>/worktree`: a hook that points at
-/// a deleted release fails every commit there, and the aeon cannot rewrite it.
+/// a deleted release fails every commit there, and the dwarf cannot rewrite it.
 fn hook_referenced(cfg: &Config) -> BTreeSet<String> {
     let mut out = BTreeSet::new();
     let Some(run) = cfg.run.as_ref() else { return out };

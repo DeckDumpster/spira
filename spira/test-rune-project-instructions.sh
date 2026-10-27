@@ -2,16 +2,16 @@
 #
 # test-rune-project-instructions.sh — RUNE_PROJECT_INSTRUCTIONS=none gets
 #   --setting-sources user (the one argv table both the sweep and the bead call site build
-#   through, now aeon/src/run.rs); archivist gets --add-dir for brain's CLAUDE.md.
+#   through, now dwarf/src/run.rs); archivist gets --add-dir for brain's CLAUDE.md.
 #
 #   ./test-rune-project-instructions.sh
 #
 # WHAT IS TESTED
 # --------------
-# 1. RETIRED (sp-j89pd, wave 4.2): a direct-call row against aeon_claude_argv (lib.sh,
+# 1. RETIRED (sp-j89pd, wave 4.2): a direct-call row against dwarf_claude_argv (lib.sh,
 #    zero live callers) used to live here under this bead's original defect id. See
-#    the aeon crate's whole-run tests (a_replace_rune_launches_…, an_append_rune_…) for the same table's
-#    coverage end to end through the real `aeon` binary.
+#    the dwarf crate's whole-run tests (a_replace_rune_launches_…, an_append_rune_…) for the same table's
+#    coverage end to end through the real `dwarf` binary.
 # 2. Each production rune declares the right value: ops/mimir/groomer/czar → none,
 #    builder/spike → repo.
 # 3. archivist passes --add-dir <wiki> when SPIRA_WIKI is set.
@@ -22,7 +22,7 @@
 #
 # defect: sp-1f56o
 # tier: T1
-# covers: aeon/src/* spira/lib.sh archivist/src/* spira/runes/ops.rune UC-aeon-execution-06
+# covers: dwarf/src/* spira/lib.sh archivist/src/* spira/runes/ops.rune UC-dwarf-execution-06
 #   spira/runes/mimir.rune spira/runes/groomer.rune spira/runes/czar.rune
 #   spira/runes/builder.rune spira/runes/spike.rune
 set -uo pipefail

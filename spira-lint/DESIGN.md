@@ -732,22 +732,22 @@ record, and never by matching `gate.sh` in a process listing.
 **Refuses** (exit 3): no file in scope. **Positive control:** `fence: gate-state-readers checked
 <n> files`.
 
-## Rule `aeon-state-readers`
+## Rule `dwarf-state-readers`
 
-**Intent.** An aeon's phase and how its session was cut short are fields of its WORKING row,
+**Intent.** A dwarf's phase and how its session was cut short are fields of its WORKING row,
 read through spira-lc. Nothing writes or reads the retired `.lapsed`, `.thrash` and `.slain`
 marker files, and the operator-facing health and panel readers read no pidfile, lease file,
 ledger or `/proc` entry.
 
-**Scope.** `.rs` and `.sh` files under `cockpit/`, `cockpit-collect/`, `watchtower/`, `aeon/`,
+**Scope.** `.rs` and `.sh` files under `cockpit/`, `cockpit-collect/`, `watchtower/`, `dwarf/`,
 `spira-world/` and `spira/*.sh` for the marker names; `cockpit/ops/src/health*` and
 `cockpit/panel/` for the pid, lease, ledger and `/proc` reads. Suites, `tests.rs`, `tests/` and
 everything after a `#[cfg(test)]` line are out of scope.
 
 **Violation.** A live line naming a marker file in a string (`<id>.slain`, `"…thrash"`), or in a
-reader, `/proc`, `procfs::`, a `.pid` or `.lease` name, or `aeon-ledger`.
+reader, `/proc`, `procfs::`, a `.pid` or `.lease` name, or `dwarf-ledger`.
 
-**Refuses** (exit 3): no file in scope. **Positive control:** `fence: aeon-state-readers
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: dwarf-state-readers
 checked <n> files`; its unit tests plant a read of each kind and require a finding for it.
 
 ## Rule `release-state-readers`
@@ -986,7 +986,7 @@ local/main tree and the same binary flipped between 0 and 5 findings on mtimes a
 operator's `ask_label = "needs-ryan"` was read or not), and two base trials were judged red
 on it. Every `schema.sh` call therefore runs with `SPIRA_CONF`, `SPIRA_TOML` and
 `SPIRA_RUNES_DIR` pinned to paths that do not exist: the names are the tree's own declarations
-plus any override the process environment carries (`SPIRA_ASK_LABEL` exported by an aeon
+plus any override the process environment carries (`SPIRA_ASK_LABEL` exported by a dwarf
 still counts), identical on every box. A label an operator sets only in a config file is not
 guarded by this fence; a tree's verdict cannot depend on one box's file.
 
@@ -1017,11 +1017,11 @@ motivated the lint sailed through reporting "clean". Reading the declaration at 
 
 Ported from `spira/scratch-fence.sh` (deleted).
 
-**Intent.** Aeon working notes committed to the harness root ship to every consumer and widen
+**Intent.** Dwarf working notes committed to the harness root ship to every consumer and widen
 the suite-selection fallback (a file no suite declares runs the full corpus) on every branch
 that follows them — ten accumulated before this fence existed.
 
-**Scope.** Tracked, root-level (no `/` in the path) files matching `sp-*` (an aeon working note
+**Scope.** Tracked, root-level (no `/` in the path) files matching `sp-*` (a dwarf working note
 named after a bead) or `*.fixed` (a hand-patched artefact). Untracked files are not scanned —
 the bash original read `git ls-files` with no `--others`.
 
@@ -1129,7 +1129,7 @@ candidates. A candidate names a script two ways:
 A resolved path missing from the tree is a finding, **unless** the same file creates that
 exact basename itself: a redirect (`>`, `>>`, `>|`, `<>`, `&>`, `&>>`) onto it, or it is an
 argument to `cp`/`install`/`ln`/`tee`/`write_exe` — `test-world-drain-deadline.sh`'s
-`printf … > "$SH/aeon.sh"` before `bash "$SH/aeon.sh"`, and every `test-world-*.sh`'s
+`printf … > "$SH/dwarf.sh"` before `bash "$SH/dwarf.sh"`, and every `test-world-*.sh`'s
 `cp "$WORLD_BIN" "$SH/world.sh"`, are exempt this way, deliberately: `SH` there is pointed
 at a sandbox, and the suite's whole point is to exercise the real binary under that name.
 
@@ -1168,7 +1168,7 @@ one occurrence; a listed path with no findings left is itself a finding, so the 
 exact). Seeded at authorship with exactly one entry, `spira-world/src/bin/world.rs`: this
 rule's own first run against the real tree caught `world stop`/`drain --deadline` still
 spawning the retired `spira/slay.sh` (`Command::new("slay.sh")`, sp-6onps repointed
-`world.sh`/`aeons.sh`/`ctrl.sh` but missed this one) — genuine, but not a trivial fix here:
+`world.sh`/`dwarves.sh`/`ctrl.sh` but missed this one) — genuine, but not a trivial fix here:
 a dozen suites stub a fake `$SH/slay.sh` on PATH to intercept the call, so repointing the
 binary needs every one of those renamed in the same change. Left listed, named, and
 reported rather than folded into this delivery; the allow file's own comment carries the
@@ -1410,11 +1410,11 @@ the migration's progress meter and, once switched to `enforce`, the fence that s
 words returning. The mapping is the replacing design's, not repeated here.
 
 **Scope.** Every walked path and every text file's contents, minus `docs/spikes/`, `raw/spira-beads/`
-(the bead mirror), `*.tsv` corpora and this rule's own source. A file holding a NUL byte is
+(the bead mirror), `lifecycle/migrations/`, the config key history, `*.tsv` corpora, this rule's own source and any line carrying `ffx-ok` (a retired name kept on purpose, such as a retired config key). A file holding a NUL byte is
 matched by path only. Commit history is not walked.
 
 **Matching.** A name or line is split into words at every non-alphanumeric and at camelCase
-joins (`AeonState`, `SPIRA_MAX_AEONS` and `aeon-fence.sh` each yield the term). A word is a
+joins (`AeonState`, `SPIRA_MAX_AEONS` and `aeon-fence.sh` each yield the term). A word is a <!-- ffx-ok -->
 hit when its lowercase form is one of the terms in the rule's table — the identity names,
 the ordinary-English words the vocabulary retired, with their plural or inflected forms. Two
 deliberate edges:
@@ -1436,4 +1436,4 @@ deliberate edges:
   line, and exits 0. Each gate round's lint step logs it.
 - `enforce` reports each hit as an ordinary finding, so the run exits 1.
 
-**No allow list.** The migration is the allow list; nothing is excepted but the history paths above.
+**No allow list.** The migration is the allow list; nothing is excepted but the history paths and `ffx-ok` lines above.

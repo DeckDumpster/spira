@@ -9,7 +9,7 @@ where `heimdall.sh` was: the `ExecStart` of `spira-heimdall.service`, on a two-m
 
 Heimdall's only power is speech. It reads timestamps and counters out of files, asks the
 database one question, and compares what it found to thresholds. It does not repair,
-restart, reclaim, land, kill or summon anything, and it must not grow the ability to — a
+restart, reclaim, land, kill or call anything, and it must not grow the ability to — a
 watchdog that can act is a second controller with no supervisor of its own, and the first
 thing it would do wrong is fight the sentinel over the same resource.
 
@@ -57,7 +57,7 @@ forever, reopened and flap-counted.
 
 `heimdall [--home DIR] [--report]` — `--report` classifies and prints, writing nothing.
 `--home` defaults to `$SPIRA_HOME`, else `$SPIRA_RELEASE/spira` (`main.rs::resolve_home`);
-the unit passes `--home @SPIRA_PROD@` explicitly, the same convention `aeon`'s launchers
+the unit passes `--home @SPIRA_PROD@` explicitly, the same convention `dwarf`'s launchers
 use.
 
 ### 2.2 Exit codes
@@ -98,7 +98,7 @@ against real sentinel log. `classify::run` calls it in-process.
 ### 2.5 The lib.sh seam (`seam.rs`)
 
 Three functions, each `bash -c <FIXED>` with every datum NUL-framed on stdin — the same
-design as `aeon/src/seam.rs`, independently instantiated (no cross-crate dependency; see
+design as `dwarf/src/seam.rs`, independently instantiated (no cross-crate dependency; see
 §6 Decisions):
 
 - `_heimdall_bdq` — `bdq "$@"`. Kept as a seam call rather than reimplemented because `bdq`
@@ -138,17 +138,17 @@ subshell of this one, so a bash variable set here would not reach it.
 
 ## 3. Decisions
 
-1. **`heimdall` is its own crate, not a module of `sentinel` or `aeon`.** No existing crate
+1. **`heimdall` is its own crate, not a module of `sentinel` or `dwarf`.** No existing crate
    owned this area (heimdall watches the LOOP, including the sentinel, so living inside
    sentinel would be the watchdog housed inside what it watches) — new crate, per the
    wave brief's own rule ("moves into the crate that already owns the area, or a new
    crate only if none fits").
-2. **The lib.sh seam is duplicated, not shared with `aeon`'s.** Both are `bash -c <FIXED
+2. **The lib.sh seam is duplicated, not shared with `dwarf`'s.** Both are `bash -c <FIXED
    NUL-framed script>`, and the shapes rhyme on purpose, but heimdall has no rune, no
-   `RUNE_REQUIRE_LABEL` folding, and a three-function allowlist instead of aeon's
-   thirty-odd — sharing would mean heimdall depending on aeon's crate for an unrelated
+   `RUNE_REQUIRE_LABEL` folding, and a three-function allowlist instead of dwarf's
+   thirty-odd — sharing would mean heimdall depending on dwarf's crate for an unrelated
    concern, against this workspace's own convention of small independent crates (each
-   port carries its own `util.rs`; `sentinel/src/host.rs` and `aeon/src/util.rs` are not
+   port carries its own `util.rs`; `sentinel/src/host.rs` and `dwarf/src/util.rs` are not
    shared either).
 3. **`maintain_probe`'s "create after a failed update is a recovery" property
    (`_probe_had` in the bash) is ported as it actually behaves, not as its comment
@@ -173,7 +173,7 @@ subshell of this one, so a bash variable set here would not reach it.
    decision logic (baseline reset on a count going down, window-expiry slide) worth
    holding to its own unit tests independent of any systemctl fake.
 7. **No `--sweep`-style mode, no rune.** Heimdall is not a persona and claims nothing; its
-   CLI is `[--home DIR] [--report]` only, unlike `aeon`'s richer grammar.
+   CLI is `[--home DIR] [--report]` only, unlike `dwarf`'s richer grammar.
 
 ## 4. Parity evidence
 

@@ -1,4 +1,4 @@
-//! The HEL / SELF / aeon-ledger keys: two log files in, flat `KEY=value` pairs out. Pure
+//! The HEL / SELF / dwarf-ledger keys: two log files in, flat `KEY=value` pairs out. Pure
 //! over its inputs so fixtures can drive it; a source that cannot be read renders `?` for the
 //! keys that depend on it, never 0.
 
@@ -47,8 +47,8 @@ fn not_an_event(text: &str) -> bool {
     if text == "invoked reflection" {
         return true;
     }
-    text.strip_prefix("summoned a ")
-        .and_then(|r| r.strip_suffix(" aeon"))
+    text.strip_prefix("called a ")
+        .and_then(|r| r.strip_suffix(" dwarf"))
         .is_some_and(|w| !w.is_empty() && !w.contains(char::is_whitespace))
 }
 
@@ -161,11 +161,11 @@ pub fn ledger_metrics(lines: &[&str], since: i64) -> Keys {
         }
     }
     [
-        ("SP_AEON_BORN", born),
-        ("SP_AEON_LIVED", lived),
-        ("SP_AEON_STILLBORN", (born - lived).max(0)),
-        ("SP_AEON_WORKED", worked),
-        ("SP_AEON_THRASH", thrash),
+        ("SP_DWARF_BORN", born),
+        ("SP_DWARF_LIVED", lived),
+        ("SP_DWARF_STILLBORN", (born - lived).max(0)),
+        ("SP_DWARF_WORKED", worked),
+        ("SP_DWARF_THRASH", thrash),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -291,7 +291,7 @@ fn ago(latest: Option<i64>, now: i64) -> String {
 const SENTINEL_KEYS: &[&str] = &[
     "SP_PASSES", "SP_ACTS", "SP_FALSE_ACTS", "SP_FALSE_PER_PASS", "SP_SINCE_JUDGEMENT", "SP_STARVED_PASSES",
 ];
-const LEDGER_KEYS: &[&str] = &["SP_AEON_BORN", "SP_AEON_LIVED", "SP_AEON_STILLBORN", "SP_AEON_WORKED", "SP_AEON_THRASH"];
+const LEDGER_KEYS: &[&str] = &["SP_DWARF_BORN", "SP_DWARF_LIVED", "SP_DWARF_STILLBORN", "SP_DWARF_WORKED", "SP_DWARF_THRASH"];
 const HEL_KEYS: &[&str] = &["SP_SENT", "SP_SENT_HELD", "SP_SENT_KEPT", "SP_SENT_FAILED", "SP_SENT_FAILED_AGE_M"];
 const SELF_KEYS: &[&str] = &[
     "SP_SELF_REPEATING_N", "SP_SELF_STILLBORN_W", "SP_SELF_STILLBORN_LAST", "SP_SELF_STARVED_W", "SP_SELF_STARVED_LAST",
@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn hel_counts_distinct_branches_and_attributes_by_preceding_timestamp() {
-        let state = format!("{} spira: state: open=0 plan_ready=0 in_progress=0 aeons=0", ts(-300));
+        let state = format!("{} spira: state: open=0 plan_ready=0 in_progress=0 dwarves=0", ts(-300));
         let lines = [
             "SENT before-any-timestamp x",
             &state,
@@ -387,9 +387,9 @@ mod tests {
         ];
         let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
         let k = ledger_metrics(&refs, NOW - 86400);
-        assert_eq!(k["SP_AEON_THRASH"], "2");
-        assert_eq!(k["SP_AEON_WORKED"], "1");
-        assert_eq!(ledger_metrics(&[], NOW - 86400)["SP_AEON_THRASH"], "0");
+        assert_eq!(k["SP_DWARF_THRASH"], "2");
+        assert_eq!(k["SP_DWARF_WORKED"], "1");
+        assert_eq!(ledger_metrics(&[], NOW - 86400)["SP_DWARF_THRASH"], "0");
     }
 
     #[test]
@@ -416,7 +416,7 @@ mod tests {
 
     #[test]
     fn starved_reads_old_prefixed_state_lines() {
-        assert!(starved("t spira: state: open=2 plan_ready=0 in_progress=0 aeons=0"));
+        assert!(starved("t spira: state: open=2 plan_ready=0 in_progress=0 dwarves=0"));
         assert!(starved("t spira: state: x=1 open=2 plan_ready=0 in_progress=0"));
         assert!(!starved("t spira: state: open=2 plan_ready=1 in_progress=0"));
     }

@@ -68,7 +68,7 @@ pub fn hold_reason(rejections: usize) -> String {
     format!("escalation-ceiling: {rejections} rejections on the stronger model — Concierge: mend it, split it or report it, then lift this hold")
 }
 
-/// The brief section of an escalated claim: every rejection, so the aeon starts from what went wrong.
+/// The brief section of an escalated claim: every rejection, so the dwarf starts from what went wrong.
 pub fn history_brief(history: &[Rejection], model: &str) -> String {
     if history.is_empty() {
         return String::new();

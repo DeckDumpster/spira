@@ -1,5 +1,5 @@
 #!/bin/sh
-# claim-rank.sh <first> <second> — the sentinel's summons claim in spira-claim's rank, under a lease.
+# claim-rank.sh <first> <second> — the sentinel's calls claim in spira-claim's rank, under a lease.
 # <first> is the better-ranked bead. Exit 3 until both are claimed, 0 once they are, 9 on a wrong order or lease.
 set -u
 first="$1"; second="$2"

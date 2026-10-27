@@ -14,7 +14,7 @@
 //!                                       SPIRA_REPO come from this process's own environment)
 //!   spira-config resolve --sh-all [file]  the same resolution, but EVERY resolved key —
 //!                                       conf.sh's own `eval` target (sp-ubcgo), which needs
-//!                                       SPIRA_REPO_MAP/SPIRA_RUNES/SPIRA_MAX_AEONS and every
+//!                                       SPIRA_REPO_MAP/SPIRA_RUNES/SPIRA_MAX_DWARVES and every
 //!                                       other registry key too, not only the typed export set
 //!   ... --conf-d DIR                    read the registry from DIR instead of
 //!                                       SPIRA_HOME/conf.d — conf.sh's own fix for its
@@ -274,7 +274,7 @@ fn cmd_link_model_bin(release: &str) -> ExitCode {
 ///
 /// `all`: false prints only [`EXPORT_KEYS`] (the set any caller may safely re-export to a
 /// child process); true prints every resolved key, `SPIRA_REPO_MAP`/`SPIRA_RUNES`/
-/// `SPIRA_MAX_AEONS` included — `conf.sh` is sourced, not exec'd, so reading those in-process
+/// `SPIRA_MAX_DWARVES` included — `conf.sh` is sourced, not exec'd, so reading those in-process
 /// here is the same thing bash's own `spira_conf_defaults` always did; `conf.sh` decides
 /// separately, in bash, which names to then `export` to ITS children.
 ///
@@ -934,7 +934,7 @@ fn cmd_schema() -> ExitCode {
 
 /// Reads and validates `file` for `set`/`unset`, or starts from an empty document when it
 /// does not exist yet — the file argument is required for both, unlike `validate`/`get`/
-/// `export`, because their callers (`deploy.sh`, `install.sh`, `aeons.sh`) already know
+/// `export`, because their callers (`deploy.sh`, `install.sh`, `dwarves.sh`) already know
 /// exactly which file is in force and mutate it in place.
 fn read_doc_or_default(file: &str) -> Result<SpiraToml, String> {
     if !Path::new(file).exists() {
@@ -1393,7 +1393,7 @@ fn cmd_rune(args: &[String]) -> ExitCode {
                  \x20 names                           every persona in the runes, one per line\n\
                  \x20 get <rune> <var> [default]      one field of a rune\n\
                  \x20 roster                           spira_runes: the active roster, in priority order\n\
-                 \x20 task                             spira_task_runes: the pool's summon set\n\
+                 \x20 task                             spira_task_runes: the pool's call set\n\
                  \x20 lane                              spira_lane_runes: the declared lane runes\n\
                  \x20 partitions                       rune_partitions: labels\\texclude-labels, one per line\n\
                  \x20 for-labels <labels>              runes_for_labels: personas whose partition IS <labels>\n\

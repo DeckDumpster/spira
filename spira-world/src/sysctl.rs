@@ -56,15 +56,15 @@ pub fn run_lines(args: &[&str]) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Parse `list-units` lines into the live `spira-aeon-*` service units (instance-qualified
+/// Parse `list-units` lines into the live `spira-dwarf-*` service units (instance-qualified
 /// included). Header-less, column-split: first field is the unit, the third is ACTIVE.
-pub fn parse_aeon_units(lines: &[String]) -> Vec<String> {
+pub fn parse_dwarf_units(lines: &[String]) -> Vec<String> {
     lines
         .iter()
         .filter_map(|l| {
             let f: Vec<&str> = l.split_whitespace().map(|t| t.trim_start_matches('●')).filter(|t| !t.is_empty()).collect();
             let unit = *f.first()?;
-            if !unit.starts_with("spira-aeon-") || !unit.ends_with(".service") {
+            if !unit.starts_with("spira-dwarf-") || !unit.ends_with(".service") {
                 return None;
             }
             match f.get(2) {
@@ -75,10 +75,10 @@ pub fn parse_aeon_units(lines: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// Live aeons according to systemd — the authority; a /proc argv scan is blind to any
-/// aeon whose command line is not the script path.
-pub fn live_aeon_units() -> Vec<String> {
-    parse_aeon_units(&run_lines(&["list-units", "spira-aeon-*", "--no-legend", "--plain", "--no-pager"]))
+/// Live dwarves according to systemd — the authority; a /proc argv scan is blind to any
+/// dwarf whose command line is not the script path.
+pub fn live_dwarf_units() -> Vec<String> {
+    parse_dwarf_units(&run_lines(&["list-units", "spira-dwarf-*", "--no-legend", "--plain", "--no-pager"]))
 }
 
 /// Whether `name` is a unit systemd has LOADED AT ALL — enabled or not, active or not.
@@ -166,11 +166,11 @@ pub fn is_essential_timer(timer: &str, instance: &str, priority: &[&str]) -> boo
     priority.contains(&subj.as_str())
 }
 
-/// The fixed order `world.sh` stops cleanly in: summons first so nothing new is born, then
+/// The fixed order `world.sh` stops cleanly in: calls first so nothing new is born, then
 /// the legs that act on what already exists.
 pub const TIMER_PRIORITY: &[&str] = &[
     "spira-sentinel",
-    "spira-summon",
+    "spira-call",
     "spira-ops",
     "spira-watchtower",
     "spira-archivist",
@@ -240,18 +240,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_aeon_units_keeps_only_active_aeon_services() {
+    fn parse_dwarf_units_keeps_only_active_dwarf_services() {
         let l: Vec<String> = [
-            "spira-aeon-sp-1.service loaded active running aeon sp-1",
-            "● spira-aeon-prod-sp-2.service loaded failed failed aeon sp-2",
-            "spira-aeon-sp-3.service loaded activating start aeon sp-3",
+            "spira-dwarf-sp-1.service loaded active running dwarf sp-1",
+            "● spira-dwarf-prod-sp-2.service loaded failed failed dwarf sp-2",
+            "spira-dwarf-sp-3.service loaded activating start dwarf sp-3",
             "spira-loom.service loaded active running loom",
             "inactive",
         ]
         .iter()
         .map(|s| s.to_string())
         .collect();
-        assert_eq!(parse_aeon_units(&l), vec!["spira-aeon-sp-1.service", "spira-aeon-sp-3.service"]);
+        assert_eq!(parse_dwarf_units(&l), vec!["spira-dwarf-sp-1.service", "spira-dwarf-sp-3.service"]);
     }
 
     #[test]

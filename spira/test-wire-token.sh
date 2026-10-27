@@ -82,7 +82,7 @@ FIXTURE_LINE='SENT sp-test1  myrepo mybranch  orphaned worktree (branch was alre
 COLLECT="$(command -v cockpit-collect)"
 NOW_TS="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 TMPD="$(mktemp -d)"; trap 'rm -rf "$TMPD"' EXIT
-printf '%s\n' "$NOW_TS spira: state: open=0 plan_ready=0 in_progress=0 aeons=0" "$FIXTURE_LINE" > "$TMPD/sentinel.log"
+printf '%s\n' "$NOW_TS spira: state: open=0 plan_ready=0 in_progress=0 dwarves=0" "$FIXTURE_LINE" > "$TMPD/sentinel.log"
 : > "$TMPD/ledger.log"
 out="$("$COLLECT" metrics "$TMPD/sentinel.log" "$TMPD/ledger.log" 24 2>/dev/null | sed -n 's/^SP_SENT=//p')"
 is "cockpit-collect metrics counts the fixture SENT line" "1" "$out"

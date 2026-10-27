@@ -18,7 +18,7 @@
 #
 # heimdall.sh is retired into the `heimdall` binary (sp-zpaq0, rewrite wave 5); this suite now
 # drives that binary (`command heimdall --home "$SH"`) instead of `bash "$SH/heimdall.sh"`,
-# exactly test-aeon-sweep.sh's own `command aeon --home ...` pattern for the same reason
+# exactly test-dwarf-sweep.sh's own `command dwarf --home ...` pattern for the same reason
 # (the wrapper function below is itself named `heimdall`, shadowing the bare binary name).
 # tier: T2
 # covers: heimdall/src/* spira/conf.sh UC-ops-detection-remediation-19
@@ -30,21 +30,21 @@ command -v heimdall >/dev/null 2>&1 \
     || { echo "test-heimdall: heimdall is not on PATH" >&2; exit 1; }
 
 # mklog — a synthetic sentinel log, in the format lib.sh's log() actually writes.
-#   mklog <passes> <ready> <aeons> <summoned:0|1> <complete:0|1> <last-pass-ends-at>
+#   mklog <passes> <ready> <dwarves> <called:0|1> <complete:0|1> <last-pass-ends-at>
 mklog() {
-    N="$1" READY="$2" AEONS="$3" SUMM="$4" DONE="$5" END="$6" EXTRA="${7:-}" python3 -c '
+    N="$1" READY="$2" DWARVES="$3" SUMM="$4" DONE="$5" END="$6" EXTRA="${7:-}" python3 -c '
 import datetime, os
 n, end = int(os.environ["N"]), int(os.environ["END"])
 out = []
 for i in range(n):
     t = end - (n - 1 - i) * 120
     ts = datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    out.append("%s spira: state: open=20 plan_ready=%s in_progress=0 aeons=%s runes=[builder ]"
-               % (ts, os.environ["READY"], os.environ["AEONS"]))
+    out.append("%s spira: state: open=20 plan_ready=%s in_progress=0 dwarves=%s runes=[builder ]"
+               % (ts, os.environ["READY"], os.environ["DWARVES"]))
     if os.environ["EXTRA"]:
         out.append("%s spira: %s" % (ts, os.environ["EXTRA"]))
     if os.environ["SUMM"] == "1":
-        out.append("%s spira: CHECK7 builder: %s ready, 1 free — summoning" % (ts, os.environ["READY"]))
+        out.append("%s spira: CHECK7 builder: %s ready, 1 free — calling" % (ts, os.environ["READY"]))
     if os.environ["DONE"] == "1":
         out.append("%s spira: pass complete — 0 action(s), 0 progress" % ts)
 print("\n".join(out))'

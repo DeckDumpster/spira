@@ -29,7 +29,7 @@
 # segment answers a question about a window that has already reopened — so scan reads only
 # the last one, through capacity_reset_at. Earlier segments are there to be read by a person
 # asking what happened; they are not evidence about the attempt now on the ladder. The fix
-# that matters is still the one in aeon.sh that stops charging the attempt in the first
+# that matters is still the one in dwarf.sh that stops charging the attempt in the first
 # place, and this is only the cleanup behind it.
 #
 # EVIDENCE OUTLIVES THE WITHDRAWAL IT JUSTIFIES, so this keeps a ledger. A log that ends in
@@ -54,9 +54,9 @@ scan() {
         [ -e "$f" ] || continue
         id="$(basename "$f" .log)"
         # The ledger and the harness's own logs live in this directory too and are not
-        # session traces. A bead id is what aeon.sh names its log after; anything else here
+        # session traces. A bead id is what dwarf.sh names its log after; anything else here
         # belongs to some other writer.
-        case "$id" in aeon-*|sentinel|landing|reflect|collector|beadtable|strands) continue ;; esac
+        case "$id" in dwarf-*|sentinel|landing|reflect|collector|beadtable|strands) continue ;; esac
         at="$(capacity_reset_at "$f")" || continue
         printf '%s %s\n' "$id" "$at"
     done

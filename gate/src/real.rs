@@ -977,9 +977,9 @@ impl World for Real {
 const NOVERDICT_RC: i32 = crate::engine::NOVERDICT;
 
 /// [`World::install_tools`] on the filesystem (sp-g9f3t). Copies, never links: a hard link
-/// into `target/aeon` would change under the next build of a different tree.
+/// into `target/dwarf` would change under the next build of a different tree.
 pub fn install_tools_at(tree: &Path, pkgs: &[String], dir: &Path, tree_id: &str) -> Result<(), String> {
-    install_from(&tree.join("target").join("aeon"), pkgs, dir, tree_id)
+    install_from(&tree.join("target").join("dwarf"), pkgs, dir, tree_id)
 }
 
 /// [`install_tools_at`] from any directory of built binaries (`<src>/<pkg>`).
@@ -1019,10 +1019,10 @@ pub fn install_from(src_dir: &Path, pkgs: &[String], dir: &Path, tree_id: &str) 
 
 /// [`World::tool_inputs`] on the filesystem.
 pub fn tool_inputs_at(tree: &Path, pkgs: &[String]) -> Result<Vec<String>, String> {
-    let aeon = tree.join("target").join("aeon");
+    let dwarf = tree.join("target").join("dwarf");
     let mut out = Vec::new();
     for p in pkgs {
-        let d = aeon.join(format!("{p}.d"));
+        let d = dwarf.join(format!("{p}.d"));
         let text = fs::read_to_string(&d).map_err(|e| format!("cannot read {}: {e}", d.display()))?;
         let deps = crate::toolkey::dep_info_paths(&text);
         if deps.is_empty() {
@@ -1030,7 +1030,7 @@ pub fn tool_inputs_at(tree: &Path, pkgs: &[String]) -> Result<Vec<String>, Strin
         }
         out.extend(deps);
     }
-    if let Ok(rd) = fs::read_dir(aeon.join("build")) {
+    if let Ok(rd) = fs::read_dir(dwarf.join("build")) {
         for e in rd.flatten() {
             if let Ok(text) = fs::read_to_string(e.path().join("output")) {
                 out.extend(crate::toolkey::rerun_paths(&text));
@@ -1137,8 +1137,8 @@ mod tests {
         use std::fs;
         let t = testkit::TempDir::new("gate-tools");
         let tree = t.path();
-        fs::create_dir_all(tree.join("target/aeon")).unwrap();
-        fs::write(tree.join("target/aeon/spira-lint"), "built-from-A").unwrap();
+        fs::create_dir_all(tree.join("target/dwarf")).unwrap();
+        fs::write(tree.join("target/dwarf/spira-lint"), "built-from-A").unwrap();
         let root = tree.join(crate::def::TOOLS_DIR);
         fs::create_dir_all(root.join("B")).unwrap();
         fs::write(root.join("B/spira-lint"), "built-from-B").unwrap();
@@ -1148,7 +1148,7 @@ mod tests {
         assert_eq!(fs::read_to_string(dir.join("TREE")).unwrap(), "A\n");
         assert!(!root.join("B").exists(), "another tree's tools survived");
         // A later build of the tree does not reach into the installed copy.
-        fs::write(tree.join("target/aeon/spira-lint"), "built-from-C").unwrap();
+        fs::write(tree.join("target/dwarf/spira-lint"), "built-from-C").unwrap();
         assert_eq!(fs::read_to_string(dir.join("spira-lint")).unwrap(), "built-from-A");
         // A package the build did not produce: Err, and nothing left at the keyed path.
         let e = super::install_tools_at(tree, &["nope".into()], &root.join("D"), "D").unwrap_err();
@@ -1202,7 +1202,7 @@ mod tests {
     }
     /// sp-z61hj's rule, which sp-nv7btk's on-disk warm slot broke: every build directory of a
     /// gate tree lands on the tmpfs root, none on the disk. The slot (`<run>/gate-warm/slot.N/
-    /// aeon`, 23-25 GiB each, on the one SATA disk) took every aeon build of every spira gate —
+    /// dwarf`, 23-25 GiB each, on the one SATA disk) took every dwarf build of every spira gate —
     /// the unit build, the re-entry and base trials' in-place `cargo build --workspace` — and
     /// relinked all 87 workspace binaries into it per trial (a fresh gate tree's sources are
     /// all newer than the slot's outputs, so nothing in the workspace was ever fresh there),

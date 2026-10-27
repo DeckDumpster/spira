@@ -122,7 +122,7 @@ This is rebase-conflict attempt {rq_n} on this bead. The branch carries {rn} com
 session — resume from the existing work."
     );
     if other_beads.is_empty() {
-        note.push_str(" A merge conflict is not an escalation — the next aeon is handed the rebase and must resolve it.");
+        note.push_str(" A merge conflict is not an escalation — the next dwarf is handed the rebase and must resolve it.");
     } else {
         note.push_str(&format!(
             " Those files were changed on {base_display} by {other_beads} — check whether this work is already landed before resolving."

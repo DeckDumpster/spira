@@ -89,7 +89,7 @@ statement = "The Mimir brief encodes the five-step pass, the threshold, the outp
 [[use_case]]
 id = "UC-ops-detection-remediation-18"
 tier = "T1"
-statement = "The Heimdall classifier: a healthy loop (including a replay of a real log) fires nothing; wedged passes or a dead timer raise `sentinel-stalled` with evidence naming the cause; an unreadable log is `sentinel-unobservable`; halt or drain suppresses the alarm; summon starvation needs sustained passes and excludes governor/capacity withholds and aeons at cap; DB, mirror, ghost-lease and restart-loop alerts are distinct and do not mask each other; the old `ready=` spelling still parses."
+statement = "The Heimdall classifier: a healthy loop (including a replay of a real log) fires nothing; wedged passes or a dead timer raise `sentinel-stalled` with evidence naming the cause; an unreadable log is `sentinel-unobservable`; halt or drain suppresses the alarm; call starvation needs sustained passes and excludes governor/capacity withholds and dwarves at cap; DB, mirror, ghost-lease and restart-loop alerts are distinct and do not mask each other; the old `ready=` spelling still parses."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-19"
@@ -99,7 +99,7 @@ statement = "Heimdall reconcile: an alert must be seen twice before it raises a 
 [[use_case]]
 id = "UC-ops-detection-remediation-20"
 tier = "T1"
-statement = "The strand classifier: ready work with no live aeon is `starved`; capacity-paused, pool-paused, fleet-saturated and pass-truncated each replace `starved` with an info row; a deferred bead with a live blocker or an ask label is exempt, otherwise `deferred-unescalated`; an expired lease with a live holder pidfile is not a ghost; starved rows cite only their own partition's beads and state slots."
+statement = "The strand classifier: ready work with no live dwarf is `starved`; capacity-paused, pool-paused, fleet-saturated and pass-truncated each replace `starved` with an info row; a deferred bead with a live blocker or an ask label is exempt, otherwise `deferred-unescalated`; an expired lease with a live holder pidfile is not a ghost; starved rows cite only their own partition's beads and state slots."
 
 [use_case.uncovered]
 reason = "the classifier is Rust (strand::classify) with its cases in cargo tests; the strand binary has no bash seam that feeds it a bead graph, only the already-classified tsv path"
@@ -114,7 +114,7 @@ statement = "`strand.sh check` mails exactly one escalation per episode even und
 [[use_case]]
 id = "UC-ops-detection-remediation-22"
 tier = "T2"
-statement = "`strand.sh report` detects an exhausted sentinel pass budget (\"CHECK7 <rune>: not evaluated\" in the latest pass) and reports pass-truncated, marking every rune not evaluated and summoning none."
+statement = "`strand.sh report` detects an exhausted sentinel pass budget (\"CHECK7 <rune>: not evaluated\" in the latest pass) and reports pass-truncated, marking every rune not evaluated and calling none."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-23"
@@ -195,7 +195,7 @@ statement = "Detector and trigger conf keys are allowlisted with documented defa
 [[use_case]]
 id = "UC-ops-detection-remediation-37"
 tier = "T1"
-statement = "aeon.sh's lapse-record write and the watchtower lapse reader agree on format: a real writer-produced record parses correctly, the same seam `land_mark` already gives landstate."
+statement = "dwarf.sh's lapse-record write and the watchtower lapse reader agree on format: a real writer-produced record parses correctly, the same seam `land_mark` already gives landstate."
 
 [use_case.uncovered]
 reason = "write_lapse_record() extraction and the writer-into-reader test are sp-fhzib.4's scope (gap G8), reopened separately and not yet landed"

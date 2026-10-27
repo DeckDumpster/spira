@@ -59,7 +59,7 @@ pub fn count_events(store: &Store, id: &str, etype: &str) -> Result<u64, String>
 // =========================================================================================
 
 /// The exact record format `watchtower` parses — lib.sh's own comment: "written in the
-/// same format aeon.sh uses".
+/// same format dwarf.sh uses".
 pub fn lapse_record_content(bead: &str, quiet: &str, last: &str, tip: &str) -> String {
     format!("bead: {bead}\nquiet: {quiet}s\nlast: {last}\nbranch: spira/{bead}\ntip: {tip}\n")
 }

@@ -5,7 +5,7 @@ The Hel, as a binary (sp-arpjt; `spira/hel.sh` until then). Rewrite wave 2.
 ## 1. Intent
 
 Send finished work out properly: **delete the branch and the worktree of every bead whose
-work has landed, and nothing else.** Every aeon leaves a branch and a worktree behind; git
+work has landed, and nothing else.** Every dwarf leaves a branch and a worktree behind; git
 refuses to delete a branch a worktree holds, and a cleanup that does not verify its own
 effect reports success on the strength of having tried (the re-land-forever loop the shell
 header documented). So every deletion is lib.sh's verified chokepoint, and every branch gets
@@ -136,7 +136,7 @@ passed through in order for the ops that remain.
   small `BdProbe` trait rather than hand-rolled a second time. **One wrinkle this forced**:
   `spira_status_seam` now also materializes a real FILE (`$SPIRA_STATUS_FILE`) alongside its
   bash array, because the `hel` binary has no bash array to read; every shim threads it
-  through as `--status-from`. **Other crates' own bash seams** (aeon, gate, landing-pass,
+  through as `--status-from`. **Other crates' own bash seams** (dwarf, gate, landing-pass,
   spira-world's `slay`) that call these now-shimmed lib.sh functions by name keep working
   unchanged too — cutting them over to call `hel::reap` in-process is explicitly a
   follow-up bead (wave4-decomposition.md's plan: "the Rust seams of the crate that owns the

@@ -24,15 +24,15 @@ the same way every time:
 
 It replaces the scattered bash: `_attempts_sql_query`, `attempts_of`, `reopens_of`,
 `_requeue_return_causes_sql`, `_check4_bulk_sql`, `check4_bulk_data`, `check4_decide`,
-`epic_parent_lookup`, `epic_rank_rows` (lib.sh) and aeon.sh's band/rank python.
+`epic_parent_lookup`, `epic_rank_rows` (lib.sh) and dwarf.sh's band/rank python.
 
 ### What it is deliberately NOT
 
-- **Not the brief.** sp-f0qhr was ejected twice because its aeon.sh change bypassed
-  sp-wmcvb's lifecycle-aware brief rendering (test-aeon-runes-overlay: the brief tells
+- **Not the brief.** sp-f0qhr was ejected twice because its dwarf.sh change bypassed
+  sp-wmcvb's lifecycle-aware brief rendering (test-dwarf-runes-overlay: the brief tells
   the model it has no bd). Brief rendering and `{{FINISH}}` selection are about *how the
   claimed bead is worked*; this program only decides *which bead*. It has no knowledge of
-  briefs, runes or `bd` in the aeon environment, and its cutover touches none of those
+  briefs, runes or `bd` in the dwarf environment, and its cutover touches none of those
   lines.
 - **Not the claim itself.** The atomic `bd update --claim` and the lifecycle CAS
   (`lc_claim_bead`) stay where they are; `select` only orders candidates.
@@ -44,8 +44,8 @@ It replaces the scattered bash: `_attempts_sql_query`, `attempts_of`, `reopens_o
   `attempts` floors on and must be judged by `decide`, and a clear verified by a different
   count from the one CHECK 4 uses is what broke unpoison.sh (sp-r66qd).
 - **Not resumability.** Whether a top-tier candidate already has commits ahead of its base
-  needs `repo_root` + `spira_landref` + git; that stays in aeon.sh. `select --top-tier`
-  hands aeon.sh the tier to check and `select --resumable FILE` takes the answer back.
+  needs `repo_root` + `spira_landref` + git; that stays in dwarf.sh. `select --top-tier`
+  hands dwarf.sh the tier to check and `select --resumable FILE` takes the answer back.
 
 ## 2. Contract
 
@@ -116,7 +116,7 @@ spira-claim select --rune NAME [--ready F] [--epics F] [--resumable F]
                    [--stack-max-depth N]
     -> default: TSV, best first, epic_rank_rows's 7 columns:
        epic_priority  epic_started(0|1)  bead_priority  resumable(0|1)  created_at  id  epic_id
-       --top-tier: aeon.sh's band lines "id|branch|repo|eprio|estarted|bprio" for the
+       --top-tier: dwarf.sh's band lines "id|branch|repo|eprio|estarted|bprio" for the
                    candidates in the best (eprio, estarted, bprio) tier only.
        --count:    the number of claimable candidates (ready_count parity: counts and
                    claims come from the same function over the same rows).
@@ -273,7 +273,7 @@ real red (measured on sp-vd9dn: 5 `reopened`, 7 `reopen` rows).
 | ask mail title/BRANCH/Default/log excerpt, events.log record | **stays end-to-end** (sentinel.sh's mail rendering, not this program) |
 | already-poisoned emits nothing new | unit: `decide_already_poisoned_no_poison_token` |
 | excluded label / epic never poisoned | **stays end-to-end** (predicate); `select` drops epic rows defensively (unit) |
-| held bead keeps its claim; CHECK 7 declines to summon | **stays end-to-end** (sentinel side effects) |
+| held bead keeps its claim; CHECK 7 declines to call | **stays end-to-end** (sentinel side effects) |
 | stale poison clear | unit: `decide_clear_below_threshold_when_poisoned` |
 | thrash requeues do not poison | unit: `thrash_is_net_zero`, `unjudged_is_net_zero` |
 | POISON_AT=0 edge: zero attempts never poisons, one does | unit: `poison_at_zero_needs_a_charged_attempt` |
@@ -339,7 +339,7 @@ sp-j1q6o commit).
        _rc=$?; rm -f "$_lkf" "$_rsf"; return $_rc
    }
    ```
-10. **spira/aeon.sh:371-395 (the `band_lines=… python3` block)** →
+10. **spira/dwarf.sh:371-395 (the `band_lines=… python3` block)** →
     ```bash
     _lkf="$SPIRA_RUN/.epic-lookup.$$"; printf '%s' "$epic_lookup" > "$_lkf"
     band_lines="$(printf '%s' "$ready_json" | "$SPIRA_CLAIM_BIN" select --rune "$RUNE" --epics "$_lkf" --top-tier 2>/dev/null)"
@@ -347,10 +347,10 @@ sp-j1q6o commit).
     ```
     (Lines 336-358 — the ready query and `epic_parent_lookup` call — and 397-460 — the
     resumability loop, `epic_rank_rows`, the claim loop — stay as they are and pick up
-    items 8-9. Nothing from aeon.sh:461 on is touched: the poison race
+    items 8-9. Nothing from dwarf.sh:461 on is touched: the poison race
     check, `lc_claim_bead`, `lifecycle_enforce` and brief rendering are outside this
     component.)
-11. **Machine selection (sp-f0qhr), when the operator enables it**: aeon.sh:337's
+11. **Machine selection (sp-f0qhr), when the operator enables it**: dwarf.sh:337's
     `claim_retry "${READY_ARGS[@]}" …` becomes, behind the existing
     `lifecycle_selection_available` gate from sp-f0qhr's branch (not added here),
     `claim_retry list --status open --no-assignee --exclude-type epic,event --limit 0 --label "$RUNE_LABELS" --exclude-label "$CLAIM_EXCLUDE"`
@@ -373,7 +373,7 @@ sp-j1q6o commit).
 
 - **Rank parity.** The live `bd ready` set for `spira` (163 beads, 1.87 MB — 14x
   MAX_ARG_STRLEN) ranked by lib.sh's own `epic_rank_rows` python and by `select`: byte-identical
-  TSV; same for `--resumable`; aeon.sh's band python vs `--top-tier`: identical.
+  TSV; same for `--resumable`; dwarf.sh's band python vs `--top-tier`: identical.
 - **Count parity.** 400 beads with claims/reopens since 2026-09-20, legacy `_check4_bulk_sql`
   (pre-sp-j1q6o) vs `counts` (0.6 s for all 400): reclaims identical; attempts identical but
   one (sp-bf31a 1 → 0: a `queue-eject` ended an open claim); requeues differ on 116 — beads
@@ -453,14 +453,14 @@ For each bead it:
    poisoning at the same count is asked about again;
 3. releases the lifecycle `poison` hold through spira-lc (and best-effort removes the
    vestigial `spira-poison` label, which nothing reads any more);
-4. notes the bead with the cause (the next aeon reads it);
+4. notes the bead with the cause (the next dwarf reads it);
 5. closes the operator ask the poisoning raised
    (`Spira bead <id> — … — change the approach or drop it?`);
 6. **verifies** — re-reads the events, the hold and the labels and asks `decide` (CHECK 4's
    own function, same counts) what the next pass will do. Anything but "not poison, hold
    gone, attempts below threshold" is a FAIL.
 
-It never touches live work: a bead an aeon holds is refused, and the refusal names the exit.
+It never touches live work: a bead a dwarf holds is refused, and the refusal names the exit.
 
 ### 8.2 Contract
 
@@ -486,7 +486,7 @@ width, as unpoison.sh's):
 ```
 OK   <id>: cleared — attempts <n> -> <m>, check4 decides "<tokens>"
 SKIP <id>: not poisoned and attempts <n> < <P> — nothing to clear
-FAIL <id>: held by <holder> (<where>) — live work is never touched: let that aeon finish (or stop it: spira/slay.sh --bead <id>), then re-run
+FAIL <id>: held by <holder> (<where>) — live work is never touched: let that dwarf finish (or stop it: spira/slay.sh --bead <id>), then re-run
 FAIL <id>: no such bead
 FAIL <id>: cannot tell (<what>) — nothing was written
 FAIL <id>: could not write the poison.cleared floor (<err>) — nothing else was changed
@@ -605,7 +605,7 @@ ask-history file); the tests implement it in memory.
 |---|---|
 | clear then verify OK with **zero events after the floor** (sp-r66qd) | `clear_then_verify_ok_with_zero_events` |
 | floor written before the hold is released | `floor_is_written_before_the_hold_is_released` |
-| refuse when an aeon holds it (bd) / (lifecycle WORKING holder), nothing written, exit names slay | `refuse_when_held_by_bd_assignee`, `refuse_when_lifecycle_holder` |
+| refuse when a dwarf holds it (bd) / (lifecycle WORKING holder), nothing written, exit names slay | `refuse_when_held_by_bd_assignee`, `refuse_when_lifecycle_holder` |
 | ask closed by title match; requeue ask and another bead's ask untouched | `ask_closed_by_title_match_only` |
 | SKIP a healthy bead | `skip_when_not_poisoned_and_below_threshold` |
 | cannot tell on unreadable events / lifecycle → FAIL, no write | `cannot_tell_writes_nothing` |
@@ -847,7 +847,7 @@ be fed from the same query.
 `deadlocked`'s precondition, copied from `unpoison`'s (§8.2 #4): a held bead — with
 a lifecycle row in `WORKING` with a holder — is
 refused rather than lifted — `FAIL <id>: held by … — live work is never touched: let that
-aeon finish (or stop it: spira/slay.sh --bead <id>), then re-run`. attempts.sh's own
+dwarf finish (or stop it: spira/slay.sh --bead <id>), then re-run`. attempts.sh's own
 `deadlocked` had no such guard (a poisoned bead should never be claimed in the first place,
 so it was never exercised); this is the one check standing between a git verdict that turns
 out to be wrong and a lift reaching work in progress.

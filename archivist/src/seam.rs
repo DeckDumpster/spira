@@ -1,5 +1,5 @@
 //! The impure boundary: the capacity pause (shared, cross-process state this crate must
-//! not re-derive — `aeon` reads and writes the same pause file, `aeon::capacity` is now
+//! not re-derive — `dwarf` reads and writes the same pause file, `dwarf::capacity` is now
 //! both crates' shared implementation, wave 4.26), the three external tools archivist.sh
 //! always shelled out to (`ctx-meter.sh`, `archive.sh`, `mail`), and the agent process
 //! itself. Production shells out for real (except capacity, in-process now); every test
@@ -106,12 +106,12 @@ impl RealSeam {
 }
 
 impl Seam for RealSeam {
-    // wave 4.26: family K (capacity pause) moved to `aeon::capacity`, called in-process
-    // here instead of shelling into lib.sh. aeon is the probe's one owner now
+    // wave 4.26: family K (capacity pause) moved to `dwarf::capacity`, called in-process
+    // here instead of shelling into lib.sh. dwarf is the probe's one owner now
     // (wave4-decomposition.md (c)3) — this is a pure READ (never `capacity_probe_maybe`,
     // never a file removal), so a refusal archivist's own session hits still gets
     // recorded (`capacity_pause_set`, below — recording evidence is not probing), but the
-    // early-lift probe itself runs only from aeon's own call sites.
+    // early-lift probe itself runs only from dwarf's own call sites.
     fn capacity_paused(&self) -> Option<i64> {
         // SPIRA_RUN is a registered config key (spira/conf.d) — the one source of config,
         // through `spira_config::process::cfg`, not this seam's own `conf()`. An
@@ -124,12 +124,12 @@ impl Seam for RealSeam {
                 return Some(self.capacity_backoff());
             }
         };
-        let now = aeon::util::now_epoch();
-        match aeon::capacity::pause_state(&self.capacity_pause_file(&run)) {
-            aeon::capacity::PauseState::Paused { until, .. } if until > now => Some(until - now),
+        let now = dwarf::util::now_epoch();
+        match dwarf::capacity::pause_state(&self.capacity_pause_file(&run)) {
+            dwarf::capacity::PauseState::Paused { until, .. } if until > now => Some(until - now),
             // Fail closed (never "OK"/None on an unreadable file — wave4-decomposition.md
             // (c)3): treat as paused for at least one backoff interval, never as open.
-            aeon::capacity::PauseState::Unknown => Some(self.capacity_backoff()),
+            dwarf::capacity::PauseState::Unknown => Some(self.capacity_backoff()),
             _ => None,
         }
     }
@@ -140,13 +140,13 @@ impl Seam for RealSeam {
         // unresolvable config is just one more reason this particular write does not happen.
         let Ok(run) = spira_config::process::cfg("SPIRA_RUN") else { return };
         let pause = self.capacity_pause_file(&run);
-        let ledger = PathBuf::from(&run).join("aeon-ledger.log");
-        let now = aeon::util::now_epoch();
-        let _ = aeon::capacity::pause_set(&pause, &ledger, now, self.capacity_backoff(), at, why);
+        let ledger = PathBuf::from(&run).join("dwarf-ledger.log");
+        let now = dwarf::util::now_epoch();
+        let _ = dwarf::capacity::pause_set(&pause, &ledger, now, self.capacity_backoff(), at, why);
     }
 
     fn capacity_reset_at(&self, logfile: &Path) -> Option<i64> {
-        aeon::capacity::reset_at(logfile, &self.trace_mark())
+        dwarf::capacity::reset_at(logfile, &self.trace_mark())
     }
 
     fn conf(&self, key: &str) -> String {

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-groom-escalation-check.sh — the groom escalation check's wiring through a real aeon run.
+# test-groom-escalation-check.sh — the groom escalation check's wiring through a real dwarf run.
 # SPIRA_GROOM_ASK_LABEL being a conf key defaulting to groom-asked is proved in
 # spira-config/tests/resolve_real_registry.rs.
 #
@@ -10,23 +10,23 @@
 # -----------------------
 # The groomer had a defect: it logged "ESCALATED sp-X" without ever calling mail, and the
 # sentinel accepted the log line as evidence (CHECK5 only checks the line exists).
-# RUNE_GROOM_ESCALATION_CHECK=1 tells the aeon to verify the claim against the database at
+# RUNE_GROOM_ESCALATION_CHECK=1 tells the dwarf to verify the claim against the database at
 # close: if no ask bead was created in this session naming that bead, the trigger is reopened
 # and poisoned.
 #
 # RETIRED (wave 4.34, sp-27d3d): groom_claims_verified was lib.sh; it is ported to
-# aeon::trace::groom_claims_verified, called in-process from Run::verdict
-# (aeon/src/verdict.rs). Its T1 table (no escalation keyword, a claim with no ask bead, a
+# dwarf::trace::groom_claims_verified, called in-process from Run::verdict
+# (dwarf/src/verdict.rs). Its T1 table (no escalation keyword, a claim with no ask bead, a
 # fresh matching ask, an ask bead created before the session epoch, the id named in the
 # description rather than the title, two claims with only one backed, "flagged" as a claim
-# keyword, and an empty log) is groom_claims_verified_table (aeon/src/trace.rs).
+# keyword, and an empty log) is groom_claims_verified_table (dwarf/src/trace.rs).
 #
 # The T3 rows judge the restricted hand-on (decide::builder_submitted, sp-v62vn): an unbacked
 # claim sends the lifecycle row back to REWORK and places a lifecycle poison hold, not only
 # the bd spira-poison label.
 #
 # tier: T2
-# covers: aeon/src/* spira/runes/groomer.rune spira/conf.sh UC-aeon-execution-16
+# covers: dwarf/src/* spira/runes/groomer.rune spira/conf.sh UC-dwarf-execution-16
 # defect: sp-yr4ih
 # scar: groomer wrote ESCALATED to the groom log without calling mail; sentinel accepted the log line as evidence of the escalation
 set -uo pipefail
@@ -39,7 +39,7 @@ echo "test-groom-escalation-check.sh"
 
 # ===========================================================================================
 echo
-echo "T3: real aeon runs prove the wiring"
+echo "T3: real dwarf runs prove the wiring"
 # ===========================================================================================
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -89,24 +89,24 @@ printf 'RUNE_GROOM_ESCALATION_CHECK=1\n' >> "$HOMEDIR/runes/scrubber.rune"
 # The guard against the real model: conf.sh REPLACES $PATH, so shimming by PATH alone
 # would invoke the real model.
 BIN="$TMP/bin"; mkdir -p "$BIN"
-# sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; the
-# shim's bd close is told to it in lifecycle terms (testlib.sh lc_aeon_mirror).
-lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
-# aeon and the spira-claim it ranks through are found by name on the suite's PATH, which
-# run_aeon's env -i carries over (sp-gypjk).
-command -v aeon >/dev/null 2>&1 \
-    || { echo "test-groom-escalation-check: aeon is not on PATH — refusing to run the real model" >&2; exit 1; }
+# sp-mve9i: the dwarf reads its bead's state from the lifecycle row, never bd status; the
+# shim's bd close is told to it in lifecycle terms (testlib.sh lc_dwarf_mirror).
+lc_dwarf_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
+# dwarf and the spira-claim it ranks through are found by name on the suite's PATH, which
+# run_dwarf's env -i carries over (sp-gypjk).
+command -v dwarf >/dev/null 2>&1 \
+    || { echo "test-groom-escalation-check: dwarf is not on PATH — refusing to run the real model" >&2; exit 1; }
 command -v spira-claim >/dev/null 2>&1 \
-    || { echo "test-groom-escalation-check: spira-claim is not on PATH — the aeon cannot claim" >&2; exit 1; }
+    || { echo "test-groom-escalation-check: spira-claim is not on PATH — the dwarf cannot claim" >&2; exit 1; }
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
 id="$(sed -n 's/^trigger \(sp-[a-z0-9-]*\) .*/\1/p' "$TMP/prompt" | head -1)"
-# Commit something so aeon.sh sees committed=yes and the groom check is the only
-# verdict mechanism that fires. Without a commit aeon.sh reopens for a different
+# Commit something so dwarf.sh sees committed=yes and the groom check is the only
+# verdict mechanism that fires. Without a commit dwarf.sh reopens for a different
 # reason before the groom check can run.
 printf 'groom pass for %s\n' "$id" >> f
-git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id — groom pass"
+git add -A && git -c user.email=a@a -c user.name=dwarf commit -qm "$id — groom pass"
 case "$(cat "$TMP/act")" in
     log-claim)
         # Write ESCALATED to the groom log without filing an ask bead.
@@ -136,9 +136,9 @@ printf '{"type":"result","subtype":"success","is_error":false,"result":"done","n
 exit 0
 SHIM
 chmod +x "$BIN/claude"
-aeon_fixture_agent "$BIN/claude" GROOM_LOG SPIRA_ASK_LABEL
+dwarf_fixture_agent "$BIN/claude" GROOM_LOG SPIRA_ASK_LABEL
 
-run_aeon() {    # run_aeon <rune> <act>
+run_dwarf() {    # run_dwarf <rune> <act>
     printf '%s' "$2" > "$TMP/act"
     rm -rf "$RUN/worktree"
     tl_config SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
@@ -148,7 +148,7 @@ run_aeon() {    # run_aeon <rune> <act>
         SPIRA_CONF="$TMP/nonexistent.conf" \
         SPIRA_HOME="$HOMEDIR" \
         BEADS_NO_AUTO_IMPORT=1 \
-        timeout 240 aeon --home "$HOMEDIR" "$1" > "$TMP/out" 2>&1 # batch-job: the real aeon run end to end
+        timeout 240 dwarf --home "$HOMEDIR" "$1" > "$TMP/out" 2>&1 # batch-job: the real dwarf run end to end
 }
 # batch-job: fixture read against the suite's throwaway bd
 field()  { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
@@ -157,7 +157,7 @@ d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.a
 labels() { bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; } # batch-job: fixture setup against the suite's throwaway repo and bd
 
 # seed a trigger bead for the scrubber/tiler lane.
-# repo:fixture matches the repo map entry so aeon.sh resolves the workspace.
+# repo:fixture matches the repo map entry so dwarf.sh resolves the workspace.
 seed_trigger() {  # seed_trigger <id>
     local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"$GROOM_LABEL\",\"repo:fixture\""
     printf '{"id":"%s","title":"Groomer pass","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-20T00:00:00Z"}\n' \
@@ -174,7 +174,7 @@ rowstate() { SPIRA_RUN="$RUN" lc_row_state "$1"; }
 
 echo
 echo "a groom log that claims ESCALATED without an ask bead — the submission is refused to REWORK and poisoned:"
-fresh sp-gc-1; run_aeon scrubber log-claim
+fresh sp-gc-1; run_dwarf scrubber log-claim
 is   "the lifecycle row goes back to REWORK" REWORK "$(rowstate sp-gc-1)"
 is   "trigger is reopened in bd"   open        "$(field sp-gc-1 status)"
 is   "a lifecycle poison hold is placed" yes "$([ -s "$RUN/lc-hold/sp-gc-1" ] && grep -q '^poison ' "$RUN/lc-hold/sp-gc-1" && echo yes || echo no)"
@@ -183,7 +183,7 @@ want "poison message names the uncorroborated bead" "sp-gc1" "$(cat "$TMP/out")"
 
 echo
 echo "a groom log that claims ESCALATED WITH a matching ask bead — the submission stands:"
-fresh sp-gc-2; run_aeon scrubber log-and-ask
+fresh sp-gc-2; run_dwarf scrubber log-and-ask
 is     "the hand-on stands SUBMITTED"  SUBMITTED "$(rowstate sp-gc-2)"
 nowant "trigger is not poisoned"  "spira-poison" "$(labels sp-gc-2)"
 is     "no lifecycle poison hold" no "$([ -e "$RUN/lc-hold/sp-gc-2" ] && echo yes || echo no)"
@@ -191,7 +191,7 @@ want   "check saw the ask bead"   "groom-escalation-check: all claimed escalatio
 
 echo
 echo "a TILER (no RUNE_GROOM_ESCALATION_CHECK) that claims ESCALATED — not held to the rule:"
-fresh sp-gc-5; run_aeon tiler log-claim
+fresh sp-gc-5; run_dwarf tiler log-claim
 is     "the hand-on stands SUBMITTED"  SUBMITTED "$(rowstate sp-gc-5)"
 nowant "trigger is not poisoned"  "spira-poison" "$(labels sp-gc-5)"
 nowant "check did not run at all" "groom-escalation-check" "$(cat "$TMP/out")"

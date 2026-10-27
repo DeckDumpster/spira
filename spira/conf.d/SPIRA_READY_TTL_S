@@ -1,6 +1,6 @@
 TYPE=u32
 GROUP=claim
-DOC=Seconds ready-count shares one computed ready set between every reader before recomputing it (0 = every call recomputes). Bounds how stale a summon count can be; claiming never reads it.
+DOC=Seconds ready-count shares one computed ready set between every reader before recomputing it (0 = every call recomputes). Bounds how stale a call count can be; claiming never reads it.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     : "${SPIRA_READY_TTL_S:=60}"
 SPIRA_CONF_DEFAULT_EOF

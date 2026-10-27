@@ -357,7 +357,7 @@ git -C "$REPO" branch -q spira/sp-stray main
 # send_disposition is ever called.
 git -C "$REPO" checkout -q -b spira/sp-held main
 printf 'work in flight\n' > "$REPO/sp-held.txt"
-git -C "$REPO" add sp-held.txt && git -C "$REPO" commit -q -m "sp-held: an aeon is still here"
+git -C "$REPO" add sp-held.txt && git -C "$REPO" commit -q -m "sp-held: a dwarf is still here"
 git -C "$REPO" checkout -q main
 bead sp-held in_progress
 seed_lc sp-held WORKING
@@ -388,7 +388,7 @@ timeout 5 git -C "$REPO" fetch -q origin
 bead sp-cl1 closed '[]' '["branch:spira/sp-cl1"]'
 printf 'LANDED %s %s\n' "$(git -C "$REPO" rev-parse spira/sp-cl1)" "$(date +%s)" \
     > "$RUN/landstate/sp-cl1"
-# The aeon session log must be KEPT after the send (CHECK 5 depends on its existence).
+# The dwarf session log must be KEPT after the send (CHECK 5 depends on its existence).
 touch "$RUN/sp-cl1.log"
 
 # SYNC origin/main to local main's tip. LANDREF resolves to origin/main (rung 2, since the
@@ -522,7 +522,7 @@ nowant "the per-repository .landing tree is never judged" ".landing" "$out"
 # The unresolvable-ref repo
 want "the unresolvable-ref repo is SKIPPED, naming the cause" "cannot resolve the ref it lands on" "$out"
 
-# UC-19: remote branch delete, branch: label removal, aeon log kept.
+# UC-19: remote branch delete, branch: label removal, dwarf log kept.
 if timeout 5 git -C "$REPO" ls-remote --exit-code "$REMOTE" "refs/heads/spira/sp-cl1" >/dev/null 2>&1; then
     bad "the remote copy of spira/sp-cl1 is deleted too" "still on the remote"
 else
@@ -531,8 +531,8 @@ fi
 is "the branch: label is removed once the ref is verifiably gone" no \
     "$(has_label sp-cl1 branch:spira/sp-cl1 && echo yes || echo no)"
 [ -f "$RUN/sp-cl1.log" ] \
-    && ok "the aeon session log is kept" \
-    || bad "the aeon session log is kept" "was deleted"
+    && ok "the dwarf session log is kept" \
+    || bad "the dwarf session log is kept" "was deleted"
 
 is "the pass exits 0 when nothing failed" 0 "$rc"
 

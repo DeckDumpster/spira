@@ -159,7 +159,7 @@ want "census reports sp-reopen-gate-red from the real reopen row" "1 sp-reopen-g
 echo
 echo "2b. sp-eiatd: queue.sh eject is a deliberate reopen cause — counted, never ranked"
 # ==============================================================================
-# The census aeon's own evidence (sp-eiatd): a correctly-attributed queue.sh eject is the
+# The census dwarf's own evidence (sp-eiatd): a correctly-attributed queue.sh eject is the
 # system working (law-a-deliberate-state-is-not-a-fault), not a failure class. Before the
 # fix, sp-reopen-eject competed for the top unsuppressed Mimir slot alongside genuine
 # defects. PAIRED WITH A NON-DELIBERATE CAUSE (law-absence-needs-a-positive-control): if

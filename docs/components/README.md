@@ -9,11 +9,11 @@ registered in `spira/conf.d/`. A "shim" is a `spira/*.sh` file that sources `con
 Crates that are libraries only: `lifecycle` (pure state machines), `spira-otel`, `batcher`
 (the round decisions; its I/O is `batcher-cut`), `migration-numbers`, `inbox-rules`,
 `reconciler-engine` and `testkit` (a dev-dependency). `spira-world` is a library that builds
-`world`, `aeons` and `slay`.
+`world`, `dwarves` and `slay`.
 
 - [Lifecycle and store](1-lifecycle-and-store.md)
 - [Work intake and claiming](2-work-intake-and-claiming.md)
-- [Aeons and personas](3-aeons-and-personas.md)
+- [Dwarves and personas](3-dwarves-and-personas.md)
 - [Gating, rounds and landing](4-gating-rounds-and-landing.md)
 - [Releases and activation](5-releases-and-activation.md)
 - [Observation](6-observation.md)

@@ -19,7 +19,7 @@
 #   ask-no-overseer      SPIRA_ASK_LABEL without overseer: invisible to the decisions pane
 #                        and excluded from every rune predicate.
 #
-#   unmapped-repo        repo:bogus not in the repo-map; aeon.sh refuses at claim time.
+#   unmapped-repo        repo:bogus not in the repo-map; dwarf.sh refuses at claim time.
 #
 #   ci-stuck             awaiting-ci on a push-mode repo; no run will ever report.
 #

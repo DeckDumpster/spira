@@ -2,7 +2,7 @@
 name = "spira-world"
 version = "1.0.0"
 edition = "2021"
-description = "spira-world — stop/start/drain/resume the loop, the aeon fleet ceiling, and slaying one aeon cleanly. Replaces spira/world.sh, spira/aeons.sh, spira/slay.sh."
+description = "spira-world — stop/start/drain/resume the loop, the dwarf fleet ceiling, and slaying one dwarf cleanly. Replaces spira/world.sh, spira/dwarves.sh, spira/slay.sh."
 
 [lib]
 name = "spira_world"
@@ -14,8 +14,8 @@ path = "src/bin/world.rs"
 test = false
 
 [[bin]]
-name = "aeons"
-path = "src/bin/aeons.rs"
+name = "dwarves"
+path = "src/bin/dwarves.rs"
 test = false
 
 [[bin]]

@@ -60,11 +60,11 @@ printf '@end\0'
 "#;
 
 /// S1/S2 RETIRED (wave 4.27, family G, sp-gzmd2): the world gate and CHECK 7's whole
-/// summon loop (`world_gate`, `ck7_summon_pass`, `summon_rune`, `summon_argv`) now run
-/// in-process — `pass::Sentinel::world_gate`/`ck7_summon_pass` in `summon.rs`, under a
-/// real OS flock on `summon.lock` rather than a bash seam under one. lib.sh's own copies
-/// are one-line shims onto `sentinel --world-gate`/`--summon`/`--summon-argv`/
-/// `--named-unit-stop`, kept only for `aeon --escape`'s seam and `acceptance-local.sh`.
+/// call loop (`world_gate`, `ck7_call_pass`, `call_rune`, `call_argv`) now run
+/// in-process — `pass::Sentinel::world_gate`/`ck7_call_pass` in `call.rs`, under a
+/// real OS flock on `call.lock` rather than a bash seam under one. lib.sh's own copies
+/// are one-line shims onto `sentinel --world-gate`/`--call`/`--call-argv`/
+/// `--named-unit-stop`, kept only for `dwarf --escape`'s seam and `acceptance-local.sh`.
 
 // S4 (CHECK 3b: mark_queue_waiters/close_landed_queue_waiters) and S7–S10 (CHECK 7c/7d's
 // detectors) are retired (wave 4.28, sp-fbqsv): native now, in waiters.rs and detect.rs.

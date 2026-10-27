@@ -26,7 +26,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 MANIFEST="${SPIRA_BOUNDARY:-$HERE/boundary}"
 
-# The target document (docs/development.md) is resolved relative to THIS script, so a run inside an aeon's worktree edits
+# The target document (docs/development.md) is resolved relative to THIS script, so a run inside a dwarf's worktree edits
 # that worktree and not the shared checkout.
 #
 # THE WIKI TARGET IS CONFIGURED, NOT DERIVED. It used to be found by walking up from here,

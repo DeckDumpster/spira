@@ -145,11 +145,11 @@ covers the closeout half's own 20.
 
 - `systemd/spira-gh-intake.service`: `ExecStart=@SPIRA_PROD@/gh-intake.sh` →
   `ExecStart=@SPIRA_PROD_ROOT@/bin/gh-intake` (sp-gypjk's own convention — the same one
-  `sentinel`/`queue`/`aeon`/... already use). `gh-intake` is a workspace `[[bin]]` target,
+  `sentinel`/`queue`/`dwarf`/... already use). `gh-intake` is a workspace `[[bin]]` target,
   so `build-tarball.sh --workspace`/`--bin-dir` ships it with no new flag.
 - `spira/lib-test-install.sh`'s `INSTALL_FIXTURE_UNIT_BINS` gained `gh-intake` so the
   install-fixture suites stage a stub at `bin/gh-intake` the same way they already do for
-  `sentinel`/`queue`/`aeon`.
+  `sentinel`/`queue`/`dwarf`.
 - `spira/test-gh-intake.sh` is rewritten as a thin T1 wiring smoke test of the real binary
   (§5 lists what it and the cargo suite each cover) rather than sourcing the deleted
   script's functions under `GH_INTAKE_LIB=1`.

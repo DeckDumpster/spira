@@ -23,7 +23,7 @@
 #   agent       — configured agent binary is present  [WARNING BY DESIGN]
 #   cockpit     — panel and health panes present
 #
-# AGENT ROW — WARNING by design. The loop is armed and will summon nothing when the
+# AGENT ROW — WARNING by design. The loop is armed and will call nothing when the
 # agent is absent or uncredentialed. Under an ephemeral profile the agent is absent and
 # the installation still answers; that is expected output, not a fault.
 #
@@ -131,7 +131,7 @@ else
     fi
     if [ -n "$_predates" ]; then
         FAIL "world halted — $STAMP (mtime $_halt_h) PREDATES this install" \
-             "The halt in $SPIRA_RUN survived uninstall/reinstall; the loop will not summon.
+             "The halt in $SPIRA_RUN survived uninstall/reinstall; the loop will not call.
     Clear it: world.sh start"
     else
         FAIL "world halted — $STAMP (mtime $_halt_h)" \
@@ -202,7 +202,7 @@ else
         printf '%s\n' "$_rep" | head -7 | sed 's/^/        /'
     else
         WARN "sentinel sees no open plan work" \
-             "No plan beads are currently open — nothing to summon."
+             "No plan beads are currently open — nothing to call."
     fi
 fi
 
@@ -327,19 +327,19 @@ $(printf '%s\n' "$_loom_log" | sed 's/^/      /')"
 
 # =============================================================================
 echo ""
-echo "aeon warm slots"
+echo "dwarf warm slots"
 # =============================================================================
-# Aeon sessions refuse to start without a warm base (aeon_warm_base), so an unset or
+# Dwarf sessions refuse to start without a warm base (dwarf_warm_base), so an unset or
 # unusable one is a loop that is armed and can run nothing.
-_warm="${SPIRA_AEON_WARM_BASE:-}"
+_warm="${SPIRA_DWARF_WARM_BASE:-}"
 if [ -z "$_warm" ]; then
-    FAIL "SPIRA_AEON_WARM_BASE is not set" \
-         "aeon sessions refuse to start without it; set aeon_warm_base in the config document."
+    FAIL "SPIRA_DWARF_WARM_BASE is not set" \
+         "dwarf sessions refuse to start without it; set dwarf_warm_base in the config document."
 elif [ ! -d "$_warm" ] || [ ! -w "$_warm" ]; then
-    FAIL "aeon warm base $_warm is not a writable directory" \
-         "create it (install does) or point aeon_warm_base at a directory the loop can write."
+    FAIL "dwarf warm base $_warm is not a writable directory" \
+         "create it (install does) or point dwarf_warm_base at a directory the loop can write."
 else
-    PASS "aeon warm base $_warm"
+    PASS "dwarf warm base $_warm"
 fi
 unset _warm
 
@@ -347,7 +347,7 @@ unset _warm
 echo ""
 echo "agent"
 # =============================================================================
-# WARNING BY DESIGN. The loop is armed and will summon nothing when the agent is absent
+# WARNING BY DESIGN. The loop is armed and will call nothing when the agent is absent
 # or uncredentialed. Under an ephemeral profile the binary is absent and the installation
 # still answers — that is expected output, not a fault. The row names whichever agent
 # SPIRA_AGENT configures (default: claude) and distinguishes absent from present so the
@@ -357,7 +357,7 @@ if _agent_path="$(command -v "$AGENT" 2>/dev/null)"; then
     WARN "agent present — SPIRA_AGENT=$AGENT at $_agent_path" \
          "WARNING by design: present but may lack credentials. Under an ephemeral profile this is expected."
 else
-    WARN "agent absent — SPIRA_AGENT=$AGENT not on PATH; no summons will succeed" \
+    WARN "agent absent — SPIRA_AGENT=$AGENT not on PATH; no calls will succeed" \
          "Install the agent or set SPIRA_AGENT and SPIRA_PATH in spira.conf.
     Under an ephemeral profile this is expected output, not a fault."
 fi

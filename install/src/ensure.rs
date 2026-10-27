@@ -1,4 +1,4 @@
-//! The non-disruptive unit installer (`systemd/unit-ensure.sh`, in Rust): safe while aeons
+//! The non-disruptive unit installer (`systemd/unit-ensure.sh`, in Rust): safe while dwarves
 //! are active — installs missing or changed unit files and daemon-reloads, but never
 //! restarts a running service. `landing-pass` runs this after every pass.
 

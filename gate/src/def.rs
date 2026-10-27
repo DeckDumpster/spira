@@ -110,10 +110,10 @@ impl Def {
         s
     }
 
-    /// Where `bin`'s binary lands in `tree`: the aeon profile, the tree's own target dir
+    /// Where `bin`'s binary lands in `tree`: the dwarf profile, the tree's own target dir
     /// (the gate command runs under `env -i`, so no CARGO_TARGET_DIR moves it).
     pub fn bin_path(tree: &std::path::Path, b: &Bin) -> std::path::PathBuf {
-        tree.join("target").join("aeon").join(&b.package)
+        tree.join("target").join("dwarf").join(&b.package)
     }
 
     /// Where a trial's tools live (sp-g9f3t): a directory of the gate tree keyed by the git
@@ -136,11 +136,11 @@ impl Def {
             return None;
         }
         let pkgs = self.bins.iter().fold(String::new(), |acc, b| acc + " -p " + &b.package);
-        let mut c = format!("cargo build --profile aeon {} -j {jobs}{pkgs}", spira_config::build::one_shot_words("aeon"));
+        let mut c = format!("cargo build --profile dwarf {} -j {jobs}{pkgs}", spira_config::build::one_shot_words("dwarf"));
         for b in &self.bins {
             c.push_str(&format!(
                 // path-ok: the gate builds this binary into the gate tree and names where it lands.
-                " && {{ [ -x target/aeon/{p} ] || {{ echo 'gate: {PATH}: bin {v} {p} built no target/aeon/{p}'; exit 1; }}; }}",
+                " && {{ [ -x target/dwarf/{p} ] || {{ echo 'gate: {PATH}: bin {v} {p} built no target/dwarf/{p}'; exit 1; }}; }}",
                 p = b.package,
                 v = b.var
             ));
@@ -242,14 +242,14 @@ mod tests {
     fn tools_command_builds_each_bin_and_proves_it() {
         let d = parse("bin SPIRA_LINT_BIN spira-lint\nstep a\n").unwrap();
         let c = d.tools_command(4).unwrap();
-        assert!(c.starts_with("cargo build --profile aeon --config profile.aeon.incremental=false -j 4 -p spira-lint && "), "{c}");
+        assert!(c.starts_with("cargo build --profile dwarf --config profile.dwarf.incremental=false -j 4 -p spira-lint && "), "{c}");
         // path-ok: asserting the tools phase's own proof of the binary it built.
-        assert!(c.contains("[ -x target/aeon/spira-lint ]"), "{c}");
+        assert!(c.contains("[ -x target/dwarf/spira-lint ]"), "{c}");
         assert_eq!(parse("step a\n").unwrap().tools_command(4), None);
         assert_eq!(
             Def::bin_path(std::path::Path::new("/t"), &d.bins[0]),
             // path-ok: the gate tree's build output, asserted.
-            std::path::PathBuf::from("/t/target/aeon/spira-lint")
+            std::path::PathBuf::from("/t/target/dwarf/spira-lint")
         );
     }
 

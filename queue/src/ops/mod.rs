@@ -190,11 +190,11 @@ pub fn lc_eject_member(
     )
 }
 
-/// The acting identity: SPIRA_QUEUE_ACTOR, BEADS_ACTOR, aeon-$SPIRA_AEON, USER, unknown.
+/// The acting identity: SPIRA_QUEUE_ACTOR, BEADS_ACTOR, dwarf-$SPIRA_DWARF, USER, unknown.
 pub fn actor(w: &World) -> String {
     w.var("SPIRA_QUEUE_ACTOR")
         .or_else(|| w.var("BEADS_ACTOR"))
-        .or_else(|| w.var("SPIRA_AEON").map(|a| format!("aeon-{a}")))
+        .or_else(|| w.var("SPIRA_DWARF").map(|a| format!("dwarf-{a}")))
         .or_else(|| w.var("USER"))
         .unwrap_or_else(|| "unknown".into())
 }

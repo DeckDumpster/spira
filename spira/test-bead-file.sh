@@ -299,7 +299,7 @@ is   "builder plan: exits 0"          "0"      "$rc"
 want "builder plan: bd create called" "create" "$(cat "$BD_LOG")"
 
 # =====================================================================================
-# --parent: the aeon semantic layer's file-followup/split, filed through this same
+# --parent: the dwarf semantic layer's file-followup/split, filed through this same
 # contract (sp-3m1p9). --no-inherit-labels always rides along — a bare --parent would
 # inherit the parent's branch: label too (groomer split-piece's own comment on why).
 # =====================================================================================

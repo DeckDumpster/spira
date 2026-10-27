@@ -408,7 +408,7 @@ fn a_mixed_batch_reports_every_suite_and_a_red_verdict() {
     // without --deadline: no deadline lines, nothing deferred (D7)
     assert!(!meta.contains("deadline=") && !meta.contains("deferred"));
     assert!(!w.has_line(|l| l.contains("DEFERRED") || l.contains("deadline")));
-    assert!(meta.contains("selection=explicit\nprofile=aeon\n"));
+    assert!(meta.contains("selection=explicit\nprofile=dwarf\n"));
     assert!(fs::read_to_string(res.join("timing.tsv"))
         .unwrap()
         .contains("test-b.sh\t"));
@@ -421,9 +421,9 @@ fn a_mixed_batch_reports_every_suite_and_a_red_verdict() {
     assert!(v.starts_with("verdict=red\n"));
     assert!(v.contains("red_suites=test-b.sh\n"));
 
-    // built once, in the throwaway/slot worktree, aeon profile; exclusive suite ran; container torn down
+    // built once, in the throwaway/slot worktree, dwarf profile; exclusive suite ran; container torn down
     assert_eq!(b.calls.load(Ordering::SeqCst), 1);
-    assert_eq!(b.dirs.lock().unwrap()[0].1, "aeon");
+    assert_eq!(b.dirs.lock().unwrap()[0].1, "dwarf");
     let calls = rt.testenv_calls.lock().unwrap().clone();
     assert_eq!(calls.first().unwrap(), &vec!["tag".to_string()]);
     assert!(calls.iter().any(|c| c[0] == "up"));
@@ -443,7 +443,7 @@ fn a_mixed_batch_reports_every_suite_and_a_red_verdict() {
     assert!(rows.contains("\"tier\":\"T2\""));
 
     // every suite exec carries the launcher contract: the staged release and a PATH from it
-    assert_staged(&rt, "/workspace/target/aeon");
+    assert_staged(&rt, "/workspace/target/dwarf");
 }
 
 /// sp-3azqi end-to-end: podman's own exec loses one suite's exit status (rc 255, its
@@ -1384,10 +1384,10 @@ fn without_artifacts_the_build_and_batch_meta_are_unchanged() {
     );
     assert_eq!(b.calls.load(Ordering::SeqCst), 1);
     let m = meta(&w.results_dir());
-    assert!(m.contains("profile=aeon\nartifacts="));
-    assert!(m.contains("/target/aeon\n"));
+    assert!(m.contains("profile=dwarf\nartifacts="));
+    assert!(m.contains("/target/dwarf\n"));
     assert!(!m.contains("build=") && !m.contains("artifacts_id=") && !m.contains("staged="));
-    assert_staged(&rt, "/workspace/target/aeon");
+    assert_staged(&rt, "/workspace/target/dwarf");
 }
 
 /// The build at `artifacts` was staged as a release before any suite ran, and every suite's

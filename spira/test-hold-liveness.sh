@@ -5,7 +5,7 @@
 #
 #   ./test-hold-liveness.sh
 #
-# THE PROPERTY UNDER TEST. A non-aeon session (brain, concierge, a hand-run tool) must be
+# THE PROPERTY UNDER TEST. A non-dwarf session (brain, concierge, a hand-run tool) must be
 # able to hold a bead for the duration of a piece of hand-work, and holder_alive must say
 # so — otherwise strand.sh reclaims it mid-landing and charges an attempt that is not a
 # fact about the work (sp-oz0b, sp-7pi). None of that needs a bead database: it is a
@@ -58,7 +58,7 @@ else ok "hold_alive rejects a missing pidfile"; fi
 # ======================================================================================
 echo
 echo "3. holder_alive checks hold pidfiles. Before sp-oz0b, holder_alive only looked"
-echo "   at aeon-*-<id>.pid."
+echo "   at dwarf-*-<id>.pid."
 # ======================================================================================
 echo $$ > "$SPIRA_RUN/hold-sp-ha.pid"
 if holder_alive sp-ha; then ok "holder_alive sees a hold pidfile"

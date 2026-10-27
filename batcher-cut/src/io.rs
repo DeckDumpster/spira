@@ -164,7 +164,7 @@ pub fn bead_reopen(env: &Env, id: &str, cause: &str, note: &str) {
 }
 
 /// Tries the mechanical rebase before a member conflicting with the base is handed to an
-/// aeon (sp-oxwvc). Returns the rebase-stale binary's own exit code: 0 (rebased — mechanically or
+/// dwarf (sp-oxwvc). Returns the rebase-stale binary's own exit code: 0 (rebased — mechanically or
 /// cleanly — and re-certified at the new tip) and 1/2 (a real content conflict or a red
 /// gate) all mean the script itself already did everything the caller would otherwise do —
 /// certify and note it, or reopen the bead with the conflicting hunk or gate output quoted
@@ -172,7 +172,7 @@ pub fn bead_reopen(env: &Env, id: &str, cause: &str, note: &str) {
 /// or a scratch-worktree failure) leaves the caller's own fallback bookkeeping to run, the
 /// same as if this call had never been made. A code the script never documents (a crash, a
 /// missing binary) is folded into 3 for the same reason — silence must fail closed to "an
-/// aeon still sees this", never to "nobody did anything and the round moved on".
+/// dwarf still sees this", never to "nobody did anything and the round moved on".
 pub fn rebase_stale(env: &Env, repo_name: &str, id: &str) -> i32 {
     // batch-job: this runs whatever its caller names, as long as that takes
     let mut cmd = Command::new(&env.rebase_stale_bin);
@@ -548,7 +548,7 @@ pub struct OpenBatch {
     /// "batcher" when this record was written by this crate; empty for a record batch.sh
     /// wrote (batch.sh never writes this key, so its absence IS the legacy owner — no
     /// separate default to keep in sync). verdict.sh read it to decide whether a CI red
-    /// on this PR was its own attribution's or the summoned batcher persona's (sp-lomk3);
+    /// on this PR was its own attribution's or the called batcher persona's (sp-lomk3);
     /// `queue verdict` sends every red to the persona (queue/DESIGN-verdict.md D1).
     pub owner: String,
     /// spira-lc's own key for this batch and its current CAS version (sp-o7nbr.4, same
@@ -2272,7 +2272,7 @@ pub fn tsd_append(env: &Env, family: &str, fields: &[(&str, String)]) {
 // bead in this harness does (sp-47kq1).
 // ---------------------------------------------------------------------------------------
 
-/// File a judgement bead for the summoned batcher persona and return its id. The body is
+/// File a judgement bead for the called batcher persona and return its id. The body is
 /// written to a scratch file under `env.run/tmp` rather than passed inline, matching every
 /// other `--body-file` caller in this harness (arbitrary suite output as a shell argument is
 /// how a stray backtick becomes command substitution).

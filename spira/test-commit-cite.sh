@@ -45,7 +45,7 @@ rungate_real() {
 }
 
 # commit_citing <branch> <bead-id> — one commit off origin/main whose subject cites the id,
-# the way an aeon's own commit does (law-aeon-commits-name-their-bead).
+# the way a dwarf's own commit does (law-dwarf-commits-name-their-bead).
 commit_citing() {
     local br="$1" id="$2" extra="${3:-}" w
     w="$(mktemp -d)"

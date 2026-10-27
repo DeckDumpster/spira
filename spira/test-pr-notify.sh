@@ -350,7 +350,7 @@ timeout 5 git clone --quiet --bare "$BRANCH_REPO" "$BARE"
 git -C "$BRANCH_REPO" remote add origin "$BARE"
 timeout 5 git -C "$BRANCH_REPO" fetch --quiet origin
 git -C "$BRANCH_REPO" checkout -q -b spira/test-bead
-printf 'aeon work\n' > "$BRANCH_REPO/work"
+printf 'dwarf work\n' > "$BRANCH_REPO/work"
 git -C "$BRANCH_REPO" add work
 git -C "$BRANCH_REPO" commit -q -m "spira/test-bead: work"
 timeout 5 git -C "$BRANCH_REPO" push -q origin spira/test-bead

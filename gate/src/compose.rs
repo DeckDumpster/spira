@@ -384,7 +384,7 @@ pub const BUILD_FENCE_STEP: &str = "bash spira/build-fence.sh";
 
 /// THE GATE STRING A COMPOSITION RUNS (sp-aprxm). A unit composition has its own build
 /// phase, which compiles every touched crate and its direct dependents, every target, in the
-/// `aeon` profile; the build fence's cold release `make build` of the whole workspace in
+/// `dwarf` profile; the build fence's cold release `make build` of the whole workspace in
 /// front of it only proved the same thing again, at 85% of a Rust-only gate's wall. So a unit
 /// composition runs the gate string with the build fence's step removed, and every other
 /// composition (suites, fences) runs it whole.
@@ -501,7 +501,7 @@ pub fn run_all(cmd: &str) -> String {
     s
 }
 
-/// The unit phases' commands, in order: build (the `aeon` profile), then the tests.
+/// The unit phases' commands, in order: build (the `dwarf` profile), then the tests.
 ///
 /// The build is `cargo build --all-targets` (sp-aprxm), not `cargo test --no-run`: the latter
 /// compiles a binary crate only under `cfg(test)` unless it has integration tests, so code
@@ -513,11 +513,11 @@ pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2
     [
         (
             "build",
-            format!("cargo build --profile aeon {} -j {jobs} --all-targets{p}", spira_config::build::one_shot_words("aeon")),
+            format!("cargo build --profile dwarf {} -j {jobs} --all-targets{p}", spira_config::build::one_shot_words("dwarf")),
         ),
         (
             "test",
-            format!("cargo test --profile aeon {} -j {jobs}{p} -- --test-threads={jobs}", spira_config::build::one_shot_words("aeon")),
+            format!("cargo test --profile dwarf {} -j {jobs}{p} -- --test-threads={jobs}", spira_config::build::one_shot_words("dwarf")),
         ),
     ]
 }
@@ -753,14 +753,14 @@ mod tests {
         }
     }
 
-    /// spira-config ← queue ← landing-pass; spira-config ← aeon; gate alone; a nested
+    /// spira-config ← queue ← landing-pass; spira-config ← dwarf; gate alone; a nested
     /// member (cockpit/panel) under a directory that also holds bash.
     fn ws() -> Vec<Member> {
         vec![
             m("spira-config", "spira-config", &[]),
             m("queue", "queue", &["spira-config"]),
             m("landing-pass", "landing-pass", &["queue"]),
-            m("aeon", "aeon", &["spira-config"]),
+            m("dwarf", "dwarf", &["spira-config"]),
             m("gate", "gate", &[]),
             m("panel", "cockpit/panel", &[]),
             m("release", "release", &[]),
@@ -868,7 +868,7 @@ mod tests {
         let c = unit(GateMode::Unit, &["spira-config/src/lib.rs"]);
         assert_eq!(
             crates(&c),
-            ["aeon", "queue", "spira-config"],
+            ["dwarf", "queue", "spira-config"],
             "landing-pass depends on queue, not on spira-config: a transitive dependent is not rebuilt"
         );
         let Composition::Unit { touched, .. } = &c else {
@@ -898,7 +898,7 @@ mod tests {
             assert_eq!(
                 crates(&c),
                 [
-                    "aeon",
+                    "dwarf",
                     "gate",
                     "landing-pass",
                     "panel",
@@ -1110,12 +1110,12 @@ mod tests {
         assert_eq!(b.0, "build");
         assert_eq!(
             b.1,
-            "cargo build --profile aeon --config profile.aeon.incremental=false -j 4 --all-targets -p gate -p queue"
+            "cargo build --profile dwarf --config profile.dwarf.incremental=false -j 4 --all-targets -p gate -p queue"
         );
         assert_eq!(t.0, "test");
         assert_eq!(
             t.1,
-            "cargo test --profile aeon --config profile.aeon.incremental=false -j 4 -p gate -p queue -- --test-threads=4"
+            "cargo test --profile dwarf --config profile.dwarf.incremental=false -j 4 -p gate -p queue -- --test-threads=4"
         );
     }
 

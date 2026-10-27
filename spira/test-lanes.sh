@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # test-lanes.sh — ops.rune's lane guarantee: RUNE_LANE=ops draws from its own
-# RUNE_MAX_CONCURRENT, never from SPIRA_MAX_AEONS. The roster-split and pool/escape
-# rows moved to test-rune.sh/test-summon-rune.sh (sp-9ce60.2.1/.2.2); this is what's
+# RUNE_MAX_CONCURRENT, never from SPIRA_MAX_DWARVES. The roster-split and pool/escape
+# rows moved to test-rune.sh/test-call-rune.sh (sp-9ce60.2.1/.2.2); this is what's
 # left.
 #
 #   ./test-lanes.sh
@@ -36,17 +36,17 @@ nowant "ops.rune no longer uses RUNE_ROLE=party" "RUNE_ROLE=party" "$(grep -v '^
 want "SPIRA_LANES is a recognised conf key" "SPIRA_LANES" "$(ls "$HERE/conf.d")"
 want "ops is in the SPIRA_LANES default"    "ops"          "$(grep 'SPIRA_LANES:=' "$HERE/conf.d/SPIRA_LANES")"
 
-# The sentinel handles lane runes in a separate loop, inside the summon pass it shares with
-# --summon-only (sp-0y2av): both paths now reach it in-process (wave 4.27, family G,
-# sp-gzmd2), under the same `ck7_summon_pass` flock on summon.lock rather than a bash seam
+# The sentinel handles lane runes in a separate loop, inside the call pass it shares with
+# --call-only (sp-0y2av): both paths now reach it in-process (wave 4.27, family G,
+# sp-gzmd2), under the same `ck7_call_pass` flock on call.lock rather than a bash seam
 # under one — lib.sh's own copy is a one-line shim onto it.
-want "the sentinel runs the shared summon pass" "ck7_summon_pass" "$(cat "$HERE/lib.sh")"
-want "the summon body splits the roster on RUNE_LANE" "RUNE_LANE" \
-    "$(cat "$HERE"/../sentinel/src/summon.rs)"
-want "the summon body computes lane_runes" "lane_runes" \
-    "$(cat "$HERE"/../sentinel/src/summon.rs)"
+want "the sentinel runs the shared call pass" "ck7_call_pass" "$(cat "$HERE/lib.sh")"
+want "the call body splits the roster on RUNE_LANE" "RUNE_LANE" \
+    "$(cat "$HERE"/../sentinel/src/call.rs)"
+want "the call body computes lane_runes" "lane_runes" \
+    "$(cat "$HERE"/../sentinel/src/call.rs)"
 
-# escape.sh is retired into the aeon binary itself (`aeon --escape <rune>`, sp-zpaq0);
-# its own behaviour rows moved to test-summon-rune.sh, which already covers this area.
+# escape.sh is retired into the dwarf binary itself (`dwarf --escape <rune>`, sp-zpaq0);
+# its own behaviour rows moved to test-call-rune.sh, which already covers this area.
 
 tl_summary

@@ -5,10 +5,10 @@
 #
 # THE DEFECT (sp-b0j0s / sp-recur-unclaimable). detect_unclaimable_ready derived rune
 # label requirements from whatever checkout sourced lib.sh, while filing incidents into the
-# shared production database. An aeon working on conf.sh — renaming SPIRA_PLAN_LABEL's
+# shared production database. A dwarf working on conf.sh — renaming SPIRA_PLAN_LABEL's
 # default from "plan" to "partition:plan" — caused the detector to flag 24 beads as
 # UNCLAIMABLE (against the production checkout's 1) because no bead carried the new label.
-# 40 P1 incidents were filed in ~2 minutes; ops aeons "fixed" 40 correct beads by adding
+# 40 P1 incidents were filed in ~2 minutes; ops dwarves "fixed" 40 correct beads by adding
 # a label no production code reads.
 #
 # THE FIX. detect_unclaimable_ready checks whether it was called from a non-main worktree
@@ -71,7 +71,7 @@ cp -r "$HERE" "$PROD_ROOT/spira"
 git -C "$PROD_ROOT" add spira
 git -C "$PROD_ROOT" commit -qm "seed"
 git -C "$PROD_ROOT" worktree add --detach "$FAKE_WT" HEAD 2>/dev/null
-# Patch the worktree's conf.sh to simulate an aeon branch that renamed the partition labels.
+# Patch the worktree's conf.sh to simulate a dwarf branch that renamed the partition labels.
 sed -i \
     -e 's/: "${SPIRA_PLAN_LABEL:=plan}"/: "${SPIRA_PLAN_LABEL:=partition:plan}"/' \
     -e 's/: "${SPIRA_INCIDENT_LABEL:=incident}"/: "${SPIRA_INCIDENT_LABEL:=partition:incident}"/' \

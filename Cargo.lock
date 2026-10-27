@@ -3,23 +3,6 @@
 version = 4
 
 [[package]]
-name = "aeon"
-version = "1.0.0"
-dependencies = [
- "bead",
- "libc",
- "regex",
- "serde",
- "serde_json",
- "sha2",
- "signal-hook",
- "spira-config",
- "spira-otel",
- "strand",
- "testkit",
-]
-
-[[package]]
 name = "aho-corasick"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -38,7 +21,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 name = "archivist"
 version = "1.0.0"
 dependencies = [
- "aeon",
+ "dwarf",
  "libc",
  "serde",
  "serde_json",
@@ -210,7 +193,7 @@ dependencies = [
 name = "census"
 version = "1.0.0"
 dependencies = [
- "aeon",
+ "dwarf",
  "serde_json",
  "spira-config",
  "testkit",
@@ -237,8 +220,8 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 name = "cockpit-collect"
 version = "1.0.0"
 dependencies = [
- "aeon",
  "bead",
+ "dwarf",
  "serde_json",
  "spira-config",
  "spira-otel",
@@ -340,6 +323,23 @@ name = "doctor"
 version = "1.0.0"
 dependencies = [
  "spira-config",
+ "testkit",
+]
+
+[[package]]
+name = "dwarf"
+version = "1.0.0"
+dependencies = [
+ "bead",
+ "libc",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "signal-hook",
+ "spira-config",
+ "spira-otel",
+ "strand",
  "testkit",
 ]
 
@@ -1630,7 +1630,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 name = "sentinel"
 version = "1.0.0"
 dependencies = [
- "aeon",
+ "dwarf",
  "hel",
  "libc",
  "serde",

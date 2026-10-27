@@ -108,14 +108,14 @@ exit 0
 WATCHD
 chmod +x "$FIXTURE/bin/watchd"
 
-# Mock systemctl: always reports no aeons, never active (so the live-aeon fence
+# Mock systemctl: always reports no dwarves, never active (so the live-dwarf fence
 # does not fire and we reach the end-state check, which also needs to be silent).
 MOCK_BIN="$TMP/mock-bin"
 mkdir -p "$MOCK_BIN"
 cat > "$MOCK_BIN/systemctl" <<'MOCK'
 #!/usr/bin/env bash
 case "$*" in
-    *list-units*aeon*) exit 0 ;;
+    *list-units*dwarf*) exit 0 ;;
     *daemon-reload*)   exit 0 ;;
     *is-active*)       printf 'active\n'; exit 0 ;;
     *enable*)          exit 0 ;;

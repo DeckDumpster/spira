@@ -111,7 +111,7 @@ pub fn run(c: &Ctx, repo: &Path, br: &str, id: &str, baseref: &str, name: &str, 
                 "bead.reopened",
                 id,
                 &format!("reopened {id} — {br} does not rebase onto {baseref} in {name}"),
-                &format!("conflicts in {}; the next aeon is handed the rebase", if rb.conflicts.is_empty() { "unknown" } else { &rb.conflicts }),
+                &format!("conflicts in {}; the next dwarf is handed the rebase", if rb.conflicts.is_empty() { "unknown" } else { &rb.conflicts }),
             );
         }
         return 3;
@@ -556,7 +556,7 @@ mod tests {
     /// Regression (sp-li2pv, same defect class as sp-cgklh in landing.sh's CHECK6 loop):
     /// past `SPIRA_REBASE_ESCALATE_AT` the escalate branch must STILL reopen the bead, not
     /// only ask. The historical bug called `spira_ask_rebase_loop` without ever calling
-    /// `bead_reopen`, leaving the bead closed with an unlandable branch no aeon could claim.
+    /// `bead_reopen`, leaving the bead closed with an unlandable branch no dwarf could claim.
     /// Ported from test-landing-pass.sh TEST 4, retired with pr-pass-branch.sh (sp-t4y60).
     #[test]
     fn escalating_past_the_rebase_threshold_still_reopens_the_bead() {

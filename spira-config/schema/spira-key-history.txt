@@ -512,3 +512,9 @@ heimdall_restart_window
 runes
 runes_dir
 runes_overlay
+call_jitter
+call_lock_wait
+dwarf_warm_base
+dwarf_warm_cap_mib
+max_dwarves
+max_live_dwarves

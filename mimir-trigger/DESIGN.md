@@ -8,7 +8,7 @@ law-rust-rewrites-start-from-intent). `spira/mimir-trigger.sh` becomes a thin sh
 ## Intent
 
 Evaluate, on a timer (`spira-mimir.timer`, 10 min), whether the Mimir persona should be
-summoned to run a retrospective pass over recent failures. File **at most one** open trigger
+called to run a retrospective pass over recent failures. File **at most one** open trigger
 bead at a time; never let a live trigger accumulate a backlog of duplicates.
 
 Three independent conditions, any one of which files (or — since they share one dedup guard —
@@ -63,7 +63,7 @@ Side effects (unchanged from the bash):
 ## Schema / architecture
 
 - `engine.rs` — pure decision logic, no IO: commit-subject → bead-id extraction (the three
-  landing forms plus the aeon-prefix form), repo-map line parsing, the two numeric trigger
+  landing forms plus the dwarf-prefix form), repo-map line parsing, the two numeric trigger
   predicates, invalid-closed row filtering/dedup, and all of the bead title/description/label
   string assembly. Every function is a table-driven unit test; this is the surface `sp-0ekp7`'s
   parity proof rests on.

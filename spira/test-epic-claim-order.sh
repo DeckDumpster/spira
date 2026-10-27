@@ -3,12 +3,12 @@
 # test-epic-claim-order.sh — the epic-first claim rank (sp-ns46j, per Ryan 2026-09-28):
 # rank ready beads by min(epic priority, bead priority), then a started epic before an unstarted
 # one at equal priority, then the bead's own priority, then resumable-before-fresh, then
-# oldest. Covers epic_parent_lookup/epic_rank_rows (lib.sh) directly and aeon.sh's wiring
+# oldest. Covers epic_parent_lookup/epic_rank_rows (lib.sh) directly and dwarf.sh's wiring
 # of them into the actual claim.
 #
 # THE DEFECT THIS FIXES. `bd ready --claim` orders by bead priority alone, so a bead ejected
 # back to ready from the epic being delivered competes on its own P-number with every
-# unrelated P0 — narrow the fleet to a few aeons and the epic stalls behind work that has
+# unrelated P0 — narrow the fleet to a few dwarves and the epic stalls behind work that has
 # nothing to do with it. T3 below reproduces exactly that shape: a started P0 epic's
 # lower-priority child against a fresh, unrelated P0 bead.
 #
@@ -25,7 +25,7 @@
 #
 # defect: sp-ns46j sp-o4trx
 # tier: T3
-# covers: spira/lib.sh aeon/src/* spira-claim/*
+# covers: spira/lib.sh dwarf/src/* spira-claim/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -208,8 +208,8 @@ echo "T7: a ready set past MAX_ARG_STRLEN (128 KiB) still ranks every bead (sp-o
 # THE CLIFF THIS REPRODUCES. epic_parent_lookup/epic_rank_rows used to pass the whole
 # ready-set JSON to python3 -c as a single argv element. At 142 real ready beads that
 # argument exceeded the kernel's per-argument limit (MAX_ARG_STRLEN, 128 KiB): the exec died
-# "Argument list too long" (rc 126), both functions printed nothing, and every builder aeon
-# read the empty ranked list as "nothing ready to claim" for an hour (572 idle summons
+# "Argument list too long" (rc 126), both functions printed nothing, and every builder dwarf
+# read the empty ranked list as "nothing ready to claim" for an hour (572 idle calls
 # against 142 ready beads). Every other fixture in this suite uses a handful of beads, so
 # none of them ever reached the threshold — this one must.
 big_desc="$(python3 -c 'print("x" * 900)')"
@@ -246,7 +246,7 @@ is "epic_rank_rows succeeds (rc=0) against the oversized ready set" "0" "$t7_ran
 
 # ==========================================================================================
 echo
-echo "T6: aeon.sh's own claim, wired end to end, claims the epic-first candidate — not"
+echo "T6: dwarf.sh's own claim, wired end to end, claims the epic-first candidate — not"
 echo "    whatever 'bd ready --claim' would have taken on bead priority alone"
 # ==========================================================================================
 seed <<JSONL
@@ -262,17 +262,17 @@ git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
-AEON_HOME="$TMP/aeonhome"; mkdir -p "$AEON_HOME/runes"
+DWARF_HOME="$TMP/dwarfhome"; mkdir -p "$DWARF_HOME/runes"
 # round 2 fix (pattern 6): SPIRA_RUNES_DIR no longer derives from SPIRA_HOME — the complete
 # fixture declares its own /fixture/userhome/.../runes. Declare this suite's real one.
-tl_config SPIRA_RUNES_DIR="$AEON_HOME/runes"
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$AEON_HOME/"
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$AEON_HOME/"
-cp -r "$HERE/actors" "$AEON_HOME/" 2>/dev/null || true
-AEON_RUN="$TMP/aeonrun"; mkdir -p "$AEON_RUN"
-AEON_REPO_MAP="$TMP/repo-map"
-printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$AEON_REPO_MAP"
-cat > "$AEON_HOME/runes/builder.rune" <<RUNE
+tl_config SPIRA_RUNES_DIR="$DWARF_HOME/runes"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$DWARF_HOME/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$DWARF_HOME/"
+cp -r "$HERE/actors" "$DWARF_HOME/" 2>/dev/null || true
+DWARF_RUN="$TMP/dwarfrun"; mkdir -p "$DWARF_RUN"
+DWARF_REPO_MAP="$TMP/repo-map"
+printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$DWARF_REPO_MAP"
+cat > "$DWARF_HOME/runes/builder.rune" <<RUNE
 RUNE_NAME=builder
 RUNE_WORKING_EXITS="SUBMITTED ask park hold"
 RUNE_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}plan"
@@ -280,46 +280,46 @@ RUNE_EXCLUDE_LABELS="spira-poison"
 RUNE_MAX_CONCURRENT=1
 RUNE_HEARTBEAT_SECONDS=600
 RUNE
-printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$AEON_HOME/runes/builder.md"
+printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$DWARF_HOME/runes/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
 tl_config SPIRA_AGENT="$SPIRA_AGENT"
-# The model session is restricted (sp-v62vn); the shim is a fixture — testlib aeon_fixture_agent.
-aeon_fixture_agent "$BIN/claude"
+# The model session is restricted (sp-v62vn); the shim is a fixture — testlib dwarf_fixture_agent.
+dwarf_fixture_agent "$BIN/claude"
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
 id="$(sed -n 's/^work \(sp-[a-z0-9-]*\) .*/\1/p' "$TMP/prompt" | head -1)"
 printf 'claimed\n' >> f
-git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id - claimed"
+git add -A && git -c user.email=a@a -c user.name=dwarf commit -qm "$id - claimed"
 bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1
 printf '{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":3}\n'
 exit 0
 SHIM
 chmod +x "$BIN/claude"
 
-# THE AEON CLAIMS THROUGH THE MACHINE (sp-v62vn: no off mode): its ready set is spira-lc
+# THE DWARF CLAIMS THROUGH THE MACHINE (sp-v62vn: no off mode): its ready set is spira-lc
 # `list` and its claim a Claim event, so its runs get the stateful stand-in (testlib
-# lc_aeon_mirror) ahead of the suite's read-only lc_mirror_bd. It logs every applied claim
+# lc_dwarf_mirror) ahead of the suite's read-only lc_mirror_bd. It logs every applied claim
 # in $SPIRA_RUN/lc-claims.log, and reads the shim's bd close as the builder's submit.
-lc_aeon_mirror "$TMP/lc-aeon"
+lc_dwarf_mirror "$TMP/lc-dwarf"
 # SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
 # CONFIG): declare via tl_config, not the env prefix below, which no process reads any more.
-tl_config SPIRA_RUN="$AEON_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$AEON_REPO_MAP"
-( PATH="$TMP/lc-aeon:$PATH" SPIRA_HOME="$AEON_HOME" \
+tl_config SPIRA_RUN="$DWARF_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$DWARF_REPO_MAP"
+( PATH="$TMP/lc-dwarf:$PATH" SPIRA_HOME="$DWARF_HOME" \
   SPIRA_CONF="$TMP/no-such2.conf" \
-  aeon --home "$AEON_HOME" builder > "$TMP/aeon-out" 2>&1 )
+  dwarf --home "$DWARF_HOME" builder > "$TMP/dwarf-out" 2>&1 )
 
-# WHICH BEAD THE AEON TOOK is the claim the machine recorded: the holder of sp-e1-rework's
+# WHICH BEAD THE DWARF TOOK is the claim the machine recorded: the holder of sp-e1-rework's
 # Claim, and nobody's on the unrelated P0 head. (The old reading — bd status reopened to
 # open plus spira-submitted by the teardown's bd-close conversion, sp-qsona — is gone with
 # sp-v62vn: every session runs restricted, and a restricted session's bd close is inert.)
-is "aeon.sh claimed the started epic's reworked child, not the unrelated P0 head" \
-    "yes" "$(grep -q '^sp-e1-rework ' "$AEON_RUN/lc-claims.log" 2>/dev/null && echo yes || echo no)"
+is "dwarf.sh claimed the started epic's reworked child, not the unrelated P0 head" \
+    "yes" "$(grep -q '^sp-e1-rework ' "$DWARF_RUN/lc-claims.log" 2>/dev/null && echo yes || echo no)"
 want "and its session was handed that bead" "work sp-e1-rework " "$(cat "$TMP/prompt" 2>/dev/null)"
 is "the unrelated P0 bead was left alone, never claimed" \
-    "no" "$(grep -q '^sp-unrelated-p0 ' "$AEON_RUN/lc-claims.log" 2>/dev/null && echo yes || echo no)"
-want "the log names the epic-first rank as the reason" "epic-first rank" "$(cat "$TMP/aeon-out")"
+    "no" "$(grep -q '^sp-unrelated-p0 ' "$DWARF_RUN/lc-claims.log" 2>/dev/null && echo yes || echo no)"
+want "the log names the epic-first rank as the reason" "epic-first rank" "$(cat "$TMP/dwarf-out")"
 
 # ==========================================================================================
 echo
@@ -336,10 +336,10 @@ $(bead sp-unrelated-p0 "" 0)
 JSONL
 
 # A spira-claim SHIM that fails only the final rank — the `select --resumable` call, the
-# aeon binary's epic_rank_rows (aeon/src/claim.rs Selector::select) — and hands every other
+# dwarf binary's epic_rank_rows (dwarf/src/claim.rs Selector::select) — and hands every other
 # call (the epic lookup, the --top-tier band) to the real spira-claim, so the lookup and the
 # resumability pass still run for real and only the rank itself is forced to fail. Ranking
-# moved out of python (aeon.sh's epic_rank_rows) into spira-claim with the Rust cutover, so
+# moved out of python (dwarf.sh's epic_rank_rows) into spira-claim with the Rust cutover, so
 # the old python3 shim no longer reached the call under test.
 REAL_CLAIM="$(command -v spira-claim)" \
     || { echo "test-epic-claim-order: spira-claim is not on PATH — T8 cannot force the rank" >&2; exit 1; }
@@ -357,21 +357,21 @@ exec "$REAL_CLAIM" "\$@"
 STUB
 chmod +x "$BIN2/spira-claim"
 
-AEON_RUN2="$TMP/aeonrun2"; mkdir -p "$AEON_RUN2"
+DWARF_RUN2="$TMP/dwarfrun2"; mkdir -p "$DWARF_RUN2"
 # SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
 # CONFIG): declare via tl_config, not the env prefix below, which no process reads any more.
-tl_config SPIRA_RUN="$AEON_RUN2" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$AEON_REPO_MAP"
-( PATH="$BIN2:$TMP/lc-aeon:$PATH" SPIRA_HOME="$AEON_HOME" \
+tl_config SPIRA_RUN="$DWARF_RUN2" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$DWARF_REPO_MAP"
+( PATH="$BIN2:$TMP/lc-dwarf:$PATH" SPIRA_HOME="$DWARF_HOME" \
   SPIRA_CONF="$TMP/no-such3.conf" \
-  aeon --home "$AEON_HOME" builder > "$TMP/aeon-out2" 2>&1 )
+  dwarf --home "$DWARF_HOME" builder > "$TMP/dwarf-out2" 2>&1 )
 t8_rc=$?
 
-[ "$t8_rc" -ne 0 ] && ok "aeon.sh exits non-zero on a forced rank failure (never the 'idle' success exit)" \
-                   || bad "aeon.sh exits non-zero on a forced rank failure (never the 'idle' success exit)" "rc=0"
-want "the log names it a claim-error, not idle" "claim-error" "$(cat "$TMP/aeon-out2")"
-t8_ledger="$(cat "$AEON_RUN2/aeon-ledger.log" 2>/dev/null)"
+[ "$t8_rc" -ne 0 ] && ok "dwarf.sh exits non-zero on a forced rank failure (never the 'idle' success exit)" \
+                   || bad "dwarf.sh exits non-zero on a forced rank failure (never the 'idle' success exit)" "rc=0"
+want "the log names it a claim-error, not idle" "claim-error" "$(cat "$TMP/dwarf-out2")"
+t8_ledger="$(cat "$DWARF_RUN2/dwarf-ledger.log" 2>/dev/null)"
 want "the ledger records claim-error" "claim-error" "$t8_ledger"
-is "the ledger never records this as an idle summons" "0" \
+is "the ledger never records this as an idle calls" "0" \
     "$(printf '%s\n' "$t8_ledger" | grep -c ' idle$')"
 
 tl_summary

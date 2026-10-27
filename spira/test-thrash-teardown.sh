@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# test-thrash-teardown.sh — G2: the thrash-requeue teardown branch in aeon.sh's cleanup(),
-#   driven through the real aeon.sh rather than asserted by line-order/awk greps.
+# test-thrash-teardown.sh — G2: the thrash-requeue teardown branch in dwarf.sh's cleanup(),
+#   driven through the real dwarf.sh rather than asserted by line-order/awk greps.
 #
 # What stays here is the one property only a real process can show: a real SIGTERM to the
 # process group mid-thrash runs cleanup() once, not twice (CASE 3 below). The thrash dispositions
 # themselves (first requeue exempt, streak at the cap charged, the sticking-point note) are
-# aeon::tests (`cargo test -p aeon thrash`).
+# dwarf::tests (`cargo test -p dwarf thrash`).
 #
 # defect: sp-4rzlw
 # tier: T2
-# covers: aeon/src/* spira/lib.sh UC-aeon-execution-11
+# covers: dwarf/src/* spira/lib.sh UC-dwarf-execution-11
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -21,10 +21,10 @@ TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up thrash-teardown || { bail "could not build fixture database"; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
-# The summon jitter is a random sleep before the session starts; CASE 3 signals the group
+# The call jitter is a random sleep before the session starts; CASE 3 signals the group
 # once the shim is hung, so the race is removed by pinning it to 0, not waited out.
-export SPIRA_SUMMON_JITTER=0
-tl_config SPIRA_SUMMON_JITTER=0
+export SPIRA_CALL_JITTER=0
+tl_config SPIRA_CALL_JITTER=0
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
 REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
@@ -36,14 +36,14 @@ export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/runes"
 # round 2 fix (pattern 6): SPIRA_RUNES_DIR no longer derives from SPIRA_HOME — the complete
 # fixture declares its own /fixture/userhome/.../runes. Declare this suite's real one.
 tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
-printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"   # the aeon binary sources <home>/lib.sh; this is the real one, as aeon.sh sourced it
-# conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-aeon-world-stop.sh,
-# test-aeon-elastic-concurrency.sh, ...): since wave 4.8 (sp-mz7dn), aeon resolves every
-# RETIRED_SNAPSHOT_VARS key (SPIRA_SUMMON_JITTER among them, sp-1cdgq) through the in-process
-# spira_config::resolve() registry pass (aeon::conf::merge_resolved_config), which derives
+printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"   # the dwarf binary sources <home>/lib.sh; this is the real one, as dwarf.sh sourced it
+# conf.d IS COPIED IN (matching test-dwarf-sweep.sh, test-dwarf-world-stop.sh,
+# test-dwarf-elastic-concurrency.sh, ...): since wave 4.8 (sp-mz7dn), dwarf resolves every
+# RETIRED_SNAPSHOT_VARS key (SPIRA_CALL_JITTER among them, sp-1cdgq) through the in-process
+# spira_config::resolve() registry pass (dwarf::conf::merge_resolved_config), which derives
 # conf.d from THIS --home, not — the way the old bash seam's conf.sh derived it — from
 # wherever lib.sh/conf.sh actually live. A --home with no conf.d resolves the whole generic
-# registry to nothing, so SPIRA_SUMMON_JITTER=0 (exported above) never reaches aeon's Conf
+# registry to nothing, so SPIRA_CALL_JITTER=0 (exported above) never reaches dwarf's Conf
 # despite being set in the environment: the jitter falls back to its 20s default regardless,
 # reopening sp-1cdgq's own regression through the config seam instead of the bash allowlist.
 cp -r "$HERE/conf.d" "$SPIRA_HOME/"
@@ -68,18 +68,18 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/r
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
 tl_config SPIRA_AGENT="$SPIRA_AGENT"
-# The model session is restricted (sp-v62vn); the shim is a fixture — testlib aeon_fixture_agent.
-aeon_fixture_agent "$BIN/claude"
-# The lifecycle machine (testlib lc_aeon_mirror): since sp-v62vn the aeon's ready set is
+# The model session is restricted (sp-v62vn); the shim is a fixture — testlib dwarf_fixture_agent.
+dwarf_fixture_agent "$BIN/claude"
+# The lifecycle machine (testlib lc_dwarf_mirror): since sp-v62vn the dwarf's ready set is
 # `spira-lc list` and its claim a Claim event; the stand-in tells the fixture's bd story in
 # lifecycle terms, ahead of the tree's spira-lc on PATH.
-lc_aeon_mirror "$TMP/lc"; export PATH="$TMP/lc:$PATH"
-command -v aeon >/dev/null 2>&1 \
-    || bail "aeon is not on PATH — refusing to run the real model"
+lc_dwarf_mirror "$TMP/lc"; export PATH="$TMP/lc:$PATH"
+command -v dwarf >/dev/null 2>&1 \
+    || bail "dwarf is not on PATH — refusing to run the real model"
 
 # Shim C: records the disposition, then hangs — standing in for a session the real heartbeat
 # hasn't killed YET, so a real `kill -TERM` sent to the process group from outside (below)
-# reaches aeon.sh itself as a signal, not as cleanup() running off the natural EXIT path.
+# reaches dwarf.sh itself as a signal, not as cleanup() running off the natural EXIT path.
 { printf '#!/usr/bin/env bash\nRUN_DIR=%q\n' "$SPIRA_RUN"; cat <<'SHIM'
 cat /dev/stdin > /dev/null
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
@@ -115,7 +115,7 @@ d = json.load(sys.stdin)
 d = d if isinstance(d, list) else [d]
 print(d[0].get("notes", "") or "")' 2>/dev/null
 }
-ledger_count() { grep -c " done builder $1 " "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null; }
+ledger_count() { grep -c " done builder $1 " "$SPIRA_RUN/dwarf-ledger.log" 2>/dev/null; }
 fresh() { testdb_reset; }
 
 echo "test-thrash-teardown.sh"
@@ -135,21 +135,21 @@ fresh; seed sp-tt-3
 rm -rf "$SPIRA_RUN/worktree"
 marker="$SPIRA_RUN/sp-tt-3.hung"
 rm -f "$marker"
-setsid aeon --home "$SPIRA_HOME" builder > "$TMP/out3" 2>&1 &
-aeon_pid=$!
+setsid dwarf --home "$SPIRA_HOME" builder > "$TMP/out3" 2>&1 &
+dwarf_pid=$!
 
 _waited=0
 while [ ! -f "$marker" ] && [ "$_waited" -lt 600 ]; do sleep 0.1; _waited=$((_waited + 1)); done
 if [ ! -f "$marker" ]; then
     bad "thrash marker appeared before signalling" "not found after 60s"
-    kill -TERM -"$aeon_pid" 2>/dev/null
+    kill -TERM -"$dwarf_pid" 2>/dev/null
 else
-    kill -TERM -"$aeon_pid" 2>/dev/null
+    kill -TERM -"$dwarf_pid" 2>/dev/null
 fi
 
 _waited=0
-while kill -0 "$aeon_pid" 2>/dev/null && [ "$_waited" -lt 600 ]; do sleep 0.1; _waited=$((_waited + 1)); done
-wait "$aeon_pid" 2>/dev/null
+while kill -0 "$dwarf_pid" 2>/dev/null && [ "$_waited" -lt 600 ]; do sleep 0.1; _waited=$((_waited + 1)); done
+wait "$dwarf_pid" 2>/dev/null
 
 is    "bead is still open (requeued by the signal-delivered teardown)" "open" "$(bead_status sp-tt-3)"
 is    "exactly ONE ledger done-line for this run — one teardown, not two" "1" "$(ledger_count sp-tt-3)"
@@ -163,8 +163,8 @@ nowant "note is NOT ALSO contaminated by the fallthrough's Not judged" "Not judg
 # waiting on a foreground process), so the trip would not actually stop it in time.
 # ======================================================================================
 echo
-# RETIRED with aeon.sh: the process-group kill is now the Rust aeon's, pinned by
-# `cargo test -p aeon session::tests::trip_signals_session_group`.
-echo "(structural thrash-kill check retired — cargo test -p aeon session::tests::trip_signals_session_group)"
+# RETIRED with dwarf.sh: the process-group kill is now the Rust dwarf's, pinned by
+# `cargo test -p dwarf session::tests::trip_signals_session_group`.
+echo "(structural thrash-kill check retired — cargo test -p dwarf session::tests::trip_signals_session_group)"
 
 tl_summary

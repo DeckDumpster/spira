@@ -10,8 +10,8 @@
 # 1. PRUNE: a spira-watch-*-test.service unit that was installed for a watcher row now
 #    absent from the manifest is disabled. The old template pattern (spira-watch@*.service)
 #    is gone; prune operates on per-instance names.
-# 2. AEON ISOLATION: installing the 'test' instance succeeds even when 'prod' aeons are
-#    live, because the guard matches spira-aeon-*-test.service, not spira-aeon-*-prod.service.
+# 2. DWARF ISOLATION: installing the 'test' instance succeeds even when 'prod' dwarves are
+#    live, because the guard matches spira-dwarf-*-test.service, not spira-dwarf-*-prod.service.
 # 3. WATCHER INSTALL: when the manifest has a 'testview' row, install.sh writes
 #    spira-watch-testview-test.service (not spira-watch@testview.service).
 #
@@ -210,21 +210,21 @@ nowant  "watcher install: no @-template name in enable/restart calls" \
 
 # ==========================================================================
 echo
-echo "AEON ISOLATION — installing test does not block on prod aeons:"
+echo "DWARF ISOLATION — installing test does not block on prod dwarves:"
 # ==========================================================================
 
 printf '# empty\n' > "$WATCHERS"
 
 # SPIRA_INSTALL_FORCE=1 (used in all inst() calls to bypass the landref check in the
-# container) also bypasses the live-aeons guard. The guard's instance-scoping is verified
-# through install/src/checks.rs's live_aeons, which uses "spira-aeon-*-${SPIRA_INSTANCE}.service"
-# (lib.sh's own spira_live_aeons retired alongside it; its only callers are gone).
+# container) also bypasses the live-dwarves guard. The guard's instance-scoping is verified
+# through install/src/checks.rs's live_dwarves, which uses "spira-dwarf-*-${SPIRA_INSTANCE}.service"
+# (lib.sh's own spira_live_dwarves retired alongside it; its only callers are gone).
 # The key assertion here is exit 0: a 'test' install does not fail because 'prod' services
 # happen to be running.
-aeon_out="$(SPIRA_WATCHERS="$WATCHERS" inst)"
-aeon_rc=$?
+dwarf_out="$(SPIRA_WATCHERS="$WATCHERS" inst)"
+dwarf_rc=$?
 
-iszero "aeon isolation: exit 0 when prod aeons are live during test install" "$aeon_rc"
+iszero "dwarf isolation: exit 0 when prod dwarves are live during test install" "$dwarf_rc"
 
 # ==========================================================================
 echo

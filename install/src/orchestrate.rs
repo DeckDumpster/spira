@@ -57,7 +57,7 @@ pub struct ConflictInputs {
     pub our_unit_dir: String,
     pub installed_foreign_exec_dir: Option<String>,
     pub our_home: String,
-    pub aeon_cmdlines: Vec<(String, String)>,
+    pub dwarf_cmdlines: Vec<(String, String)>,
     pub gate_lock_path: String,
     pub gate_lock_held: bool,
     pub conf_instance: Option<String>,
@@ -73,7 +73,7 @@ pub struct ConflictInputs {
 
 pub fn phase_0_5_conflicts(instance: &str, c: &ConflictInputs) -> Result<(), guards::Conflict> {
     guards::conflict_foreign(instance, c.installed_foreign_exec_dir.as_deref(), &c.our_home)?;
-    guards::conflict_aeon(&c.our_home, c.aeon_cmdlines.iter().map(|(p, s)| (p.as_str(), s.as_str())))?;
+    guards::conflict_dwarf(&c.our_home, c.dwarf_cmdlines.iter().map(|(p, s)| (p.as_str(), s.as_str())))?;
     guards::conflict_lock(&c.gate_lock_path, c.gate_lock_held)?;
     guards::conflict_instance_arg(instance, c.conf_instance.as_deref(), &c.conf_file)?;
     guards::conflict_instance_run(&c.run_dir, &c.our_sentinel_unit, c.other_sentinel_run_dirs.iter().map(|(a, b)| (a.as_str(), b.as_str())))?;
@@ -156,7 +156,7 @@ mod tests {
     fn conflicts_run_in_order_and_the_first_hit_wins() {
         let mut c = ConflictInputs { our_home: "/home".into(), ..Default::default() };
         c.installed_foreign_exec_dir = Some("/other".into());
-        c.aeon_cmdlines = vec![("1".into(), "bash\0/home/aeon.sh".into())];
+        c.dwarf_cmdlines = vec![("1".into(), "bash\0/home/dwarf.sh".into())];
         let err = phase_0_5_conflicts("prod", &c).unwrap_err();
         assert!(err.message.contains("foreign") || err.message.contains("exec from"), "{}", err.message);
     }

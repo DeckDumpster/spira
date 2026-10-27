@@ -37,7 +37,7 @@ cat > "$MOCK_BIN/systemctl" <<'MOCK'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${MOCK_LOG}"
 case "$*" in
-    *list-units*active*spira-aeon*) true ;;
+    *list-units*active*spira-dwarf*) true ;;
     *is-active*) printf 'active\n' ;;
 esac
 exit 0

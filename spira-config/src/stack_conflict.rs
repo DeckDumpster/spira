@@ -1,4 +1,4 @@
-//! Prerequisites whose certified tip a dependent's stacked base could not merge. The aeon
+//! Prerequisites whose certified tip a dependent's stacked base could not merge. The dwarf
 //! that refused the claim writes the marker; `spira-claim` reads it so the dependent stays
 //! blocked on that prerequisite until its tip moves.
 

@@ -1,6 +1,6 @@
 # groomer.rune — the Groomer: reconciles the DAG for graph hygiene.
 #
-# A rune is a persona DEFINITION; an aeon is one summoned instance of it. Four things:
+# A rune is a persona DEFINITION; a dwarf is one called instance of it. Four things:
 # a predicate carving its partition out of the graph, the memories it must read, the tools
 # it may use, and what wakes it.
 
@@ -19,7 +19,7 @@ RUNE_EXCLUDE_LABELS="$SPIRA_CI_LABEL"
 # persona makes is graph-only by construction — true of a groom-trigger.sh bead (which
 # stamps its own delivers:note) and equally true of one filed by hand with no delivers:
 # label at all (sp-yyzm3: filed by `overseer`, no such label, stranded in spira-submitted
-# forever because a graph edit never produces the commit that label waits for). aeon.sh's
+# forever because a graph edit never produces the commit that label waits for). dwarf.sh's
 # teardown reads this flag to skip that conversion for the whole persona, not bead by bead
 # (sp-wnsks).
 RUNE_GRAPH_ONLY=1
@@ -38,7 +38,7 @@ RUNE_MEMORY_PREFIXES="law-"
 # is a rounding error against one builder session.
 #
 # VERIFIED: `claude --model claude-sonnet-5-5 -p 'ok'` answers on this box. An id the
-# CLI rejects does not fail loudly — every summon dies and the lane looks merely quiet.
+# CLI rejects does not fail loudly — every call dies and the lane looks merely quiet.
 # Probe a candidate id before writing it here.
 # SEED ONLY (sp-zs04v.4): the live value is persona.groomer.model in spira.toml,
 # resolved by lib.sh's persona_model — this line only seeds that table on first
@@ -47,7 +47,7 @@ RUNE_MODEL=claude-sonnet-5-5
 RUNE_MAX_CONCURRENT=1
 
 # THE GROOMER LANE. A lane rune draws from its own RUNE_MAX_CONCURRENT rather than from
-# SPIRA_MAX_AEONS, so a fully-occupied builder pool cannot prevent a groom pass. The groomer
+# SPIRA_MAX_DWARVES, so a fully-occupied builder pool cannot prevent a groom pass. The groomer
 # lane is declared in SPIRA_LANES; without that declaration the lane still functions — a
 # rune with RUNE_LANE set is never a task rune — but the lane is invisible to operators
 # reading SPIRA_LANES for the list of scheduled partitions.
@@ -75,7 +75,7 @@ RUNE_PROJECT_INSTRUCTIONS=none
 RUNE_SYSTEM_PROMPT=replace
 
 # THE ESCALATION CHECK. A groom log line claiming ESCALATED or inquiry for bead X must be
-# backed by an ask bead created in the same session — aeon.sh verifies this after the
+# backed by an ask bead created in the same session — dwarf.sh verifies this after the
 # session closes.
 RUNE_GROOM_ESCALATION_CHECK=1
 

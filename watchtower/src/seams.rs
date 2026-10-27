@@ -19,12 +19,12 @@ pub fn registry(spira_home: &str) -> spira_config::repos::Registry {
 }
 
 pub struct PipelineProbe {
-    /// `(rune, aeon_count)` for every `spira_runes` entry — the harness's own primitive
-    /// for "how many aeons are alive", counted from pidfiles/`/proc`, never a `pgrep -f`
-    /// substring scan (that failure mode is the whole reason `aeon_count` exists).
+    /// `(rune, dwarf_count)` for every `spira_runes` entry — the harness's own primitive
+    /// for "how many dwarves are alive", counted from pidfiles/`/proc`, never a `pgrep -f`
+    /// substring scan (that failure mode is the whole reason `dwarf_count` exists).
     pub rune_counts: Vec<(String, u32)>,
     /// `(rune, ready)` from `bulk_ready_by_rune` — one `bd` round trip, only paid when the
-    /// ledger file is readable (the common "no aeon has ever summoned here" case skips it).
+    /// ledger file is readable (the common "no dwarf has ever called here" case skips it).
     pub ready_by_rune: Vec<(String, u32)>,
 }
 
@@ -32,7 +32,7 @@ const PIPELINE_PROBE_SCRIPT: &str = r#"
 set -uo pipefail
 . "$1/lib.sh" >/dev/null 2>&1 || exit 97
 for f in $(spira_runes 2>/dev/null); do
-    printf 'F\t%s\t%s\n' "$f" "$(aeon_count "$f" 2>/dev/null || echo 0)"
+    printf 'F\t%s\t%s\n' "$f" "$(dwarf_count "$f" 2>/dev/null || echo 0)"
 done
 _ledger="${2:-}"
 if [ -n "$_ledger" ] && [ -r "$_ledger" ]; then
@@ -46,10 +46,10 @@ fi
 "#;
 
 /// `None` means the seam itself failed (lib.sh could not be sourced) — the caller reports
-/// aeons-alive and idle-while-ready as `?`, never as zero.
+/// dwarves-alive and idle-while-ready as `?`, never as zero.
 pub fn pipeline_probe(spira_home: &str, ledger_path: Option<&str>) -> Option<PipelineProbe> {
     let out = crate::deadline::output(
-        "aeons alive / ready (bd)",
+        "dwarves alive / ready (bd)",
         Command::new("bash")
             .arg("-c")
             .arg(PIPELINE_PROBE_SCRIPT)
@@ -114,7 +114,7 @@ mod tests {
         let d = testkit::TempDir::new("wt-seams-probe");
         std::fs::write(
             d.join("lib.sh"),
-            "spira_runes() { printf 'builder\\nops\\n'; }\naeon_count() { [ \"$1\" = builder ] && echo 2 || echo 0; }\nbulk_ready_by_rune() { echo 'builder 5'; }\n",
+            "spira_runes() { printf 'builder\\nops\\n'; }\ndwarf_count() { [ \"$1\" = builder ] && echo 2 || echo 0; }\nbulk_ready_by_rune() { echo 'builder 5'; }\n",
         )
         .unwrap();
         let p = pipeline_probe(d.to_str().unwrap(), None).unwrap();
@@ -130,10 +130,10 @@ mod tests {
         let d = testkit::TempDir::new("wt-seams-probe-ledger");
         std::fs::write(
             d.join("lib.sh"),
-            "spira_runes() { printf 'builder\\n'; }\naeon_count() { echo 1; }\nbulk_ready_by_rune() { echo 'builder 5'; }\n",
+            "spira_runes() { printf 'builder\\n'; }\ndwarf_count() { echo 1; }\nbulk_ready_by_rune() { echo 'builder 5'; }\n",
         )
         .unwrap();
-        let ledger = d.join("aeon-ledger.log");
+        let ledger = d.join("dwarf-ledger.log");
         std::fs::write(&ledger, "x\n").unwrap();
         let p = pipeline_probe(d.to_str().unwrap(), Some(ledger.to_str().unwrap())).unwrap();
         assert_eq!(p.ready_by_rune, vec![("builder".to_string(), 5)]);

@@ -261,8 +261,8 @@ N=8
 race_pids=()
 for i in $(seq 1 "$N"); do
     (
-        "$BIN" event bead sp-race --expect READY --version 0 --actor "aeon-$i" \
-            --kind "{\"Claim\":{\"holder\":\"aeon-$i\",\"lease_until\":$i}}" >"$TMP/race-$i.rc" 2>&1
+        "$BIN" event bead sp-race --expect READY --version 0 --actor "dwarf-$i" \
+            --kind "{\"Claim\":{\"holder\":\"dwarf-$i\",\"lease_until\":$i}}" >"$TMP/race-$i.rc" 2>&1
         echo $? >> "$TMP/race-$i.rc"
     ) &
     race_pids+=("$!")

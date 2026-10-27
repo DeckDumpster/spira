@@ -70,7 +70,7 @@ pub struct Store {
 }
 
 impl Store {
-    /// From an already-resolved config snapshot (`gate`'s `Ctx::vars`, `aeon`'s `Conf`, a
+    /// From an already-resolved config snapshot (`gate`'s `Ctx::vars`, `dwarf`'s `Conf`, a
     /// test fixture) — `get` answers exactly like that snapshot's own accessor: an absent or
     /// empty value is "not set". `None` when the operator never named a store — a build must
     /// treat that exactly like any other absence: the local-disk cache, never a refusal.
@@ -90,7 +90,7 @@ impl Store {
     /// [`Store::from_values`], resolved in-process from this binary's own environment and
     /// whichever `spira.toml` [`crate::discover`] finds (law-a-binary-resolves-the-config-it-
     /// reads) — for a caller (`testenv`, `release`) that builds no config snapshot of its own
-    /// the way `gate`/`aeon` already do. `None` on an unset `SPIRA_HOME` or any resolution
+    /// the way `gate`/`dwarf` already do. `None` on an unset `SPIRA_HOME` or any resolution
     /// error, same as a genuinely unconfigured store: a build never refuses for want of this.
     pub fn from_env() -> Option<Store> {
         let addr = addr_from_env()?;
@@ -301,16 +301,16 @@ pub fn one_shot_words(profile: &str) -> String {
     format!("--config profile.{profile}.incremental=false")
 }
 
-/// Registry keys: the directory holding each aeon slot's warm `CARGO_TARGET_DIR` (a tmpfs of
+/// Registry keys: the directory holding each dwarf slot's warm `CARGO_TARGET_DIR` (a tmpfs of
 /// its own), and the MiB one slot may hold.
-pub const AEON_WARM_BASE_ENV: &str = "SPIRA_AEON_WARM_BASE";
-pub const AEON_WARM_CAP_ENV: &str = "SPIRA_AEON_WARM_CAP_MIB";
+pub const DWARF_WARM_BASE_ENV: &str = "SPIRA_DWARF_WARM_BASE";
+pub const DWARF_WARM_CAP_ENV: &str = "SPIRA_DWARF_WARM_CAP_MIB";
 
-/// Slots offered: one per aeon name, so a free one always exists below the live-aeon ceiling.
-pub const AEON_WARM_SLOTS: u64 = 10;
+/// Slots offered: one per dwarf name, so a free one always exists below the live-dwarf ceiling.
+pub const DWARF_WARM_SLOTS: u64 = 10;
 
 /// Tmpfs fullness at which idle slots are emptied at acquire and the watcher speaks.
-pub const AEON_WARM_FULL_PCT: u64 = 85;
+pub const DWARF_WARM_FULL_PCT: u64 = 85;
 
 pub const TF_PLUGIN_CACHE_ENV: &str = "TF_PLUGIN_CACHE_DIR";
 
@@ -711,7 +711,7 @@ mod tests {
         for w in [wrapper(&path, None).unwrap(), Wrapper::Off] {
             assert!(w.env(None).iter().all(|(k, _)| !k.starts_with("CARGO_")), "{:?}", w.env(None));
         }
-        assert_eq!(one_shot("aeon"), ["--config".to_string(), "profile.aeon.incremental=false".to_string()]);
+        assert_eq!(one_shot("dwarf"), ["--config".to_string(), "profile.dwarf.incremental=false".to_string()]);
         assert_eq!(one_shot_words("release"), "--config profile.release.incremental=false");
     }
 

@@ -3410,7 +3410,7 @@ fn land_local_ungated_override_refuses_without_by_or_evidence_on_the_tip() {
             "SPIRA_LAND_UNGATED_BY must be concierge or operator",
         ),
         (
-            Some("aeon"),
+            Some("dwarf"),
             Some("b0"),
             "SPIRA_LAND_UNGATED_BY must be concierge or operator",
         ),

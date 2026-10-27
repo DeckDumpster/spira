@@ -838,7 +838,7 @@ fn run_main() -> ExitCode {
     // Resolve the locations the rest of install reads, now that the config exists. They
     // were read straight from this process's environment, which a fresh host never sets,
     // so the database phase initialised "" (sp-xbxcb). install.sh used to source conf.sh here.
-    for (key, required) in [("SPIRA_DB", true), ("SPIRA_RUN", true), ("SPIRA_DOLT_DATA", false), ("SPIRA_RELEASES", false), (spira_config::build::AEON_WARM_BASE_ENV, false)] {
+    for (key, required) in [("SPIRA_DB", true), ("SPIRA_RUN", true), ("SPIRA_DOLT_DATA", false), ("SPIRA_RELEASES", false), (spira_config::build::DWARF_WARM_BASE_ENV, false)] {
         if nonempty_env(key).is_some() {
             continue;
         }
@@ -1154,11 +1154,11 @@ fn run_main() -> ExitCode {
             let _ = std::fs::create_dir_all(&run);
             let _ = std::fs::create_dir_all(Path::new(&run).join("watchd"));
         }
-        if let Some(base) = nonempty_env(spira_config::build::AEON_WARM_BASE_ENV) {
-            match spira_config::build::prepare_warm(Path::new(&base), spira_config::build::AEON_WARM_SLOTS) {
-                Ok(()) => info(&format!("aeon warm slots ready under {base}")),
+        if let Some(base) = nonempty_env(spira_config::build::DWARF_WARM_BASE_ENV) {
+            match spira_config::build::prepare_warm(Path::new(&base), spira_config::build::DWARF_WARM_SLOTS) {
+                Ok(()) => info(&format!("dwarf warm slots ready under {base}")),
                 Err(e) => {
-                    eprintln!("install: cannot create the aeon warm slots under {base} (aeon_warm_base): {e}");
+                    eprintln!("install: cannot create the dwarf warm slots under {base} (dwarf_warm_base): {e}");
                     return ExitCode::from(2);
                 }
             }
@@ -1220,8 +1220,8 @@ fn run_main() -> ExitCode {
     }
 
     // ---- phase 4.5: lifecycle store -------------------------------------------------------
-    // sp-xfqnr: a fresh same-user install never built spira_lifecycle, so an aeon was
-    // summoned but could not claim or submit, and `spira-lc history` exited 2. The lifecycle
+    // sp-xfqnr: a fresh same-user install never built spira_lifecycle, so a dwarf was
+    // called but could not claim or submit, and `spira-lc history` exited 2. The lifecycle
     // machine is the only mode (sp-v62vn): there is no switch to turn on afterwards. Here,
     // after phase 4 has dolt-beads.service listening: schema, migrations, grants —
     // idempotent, and fatal when it cannot be done (no silent skip).
@@ -1254,7 +1254,7 @@ fn run_main() -> ExitCode {
                 }
                 // lc-serve.service was enabled in phase 4, before this store existed, and may
                 // have given up (StartLimitBurst): restart it now and require it to be active —
-                // fail closed, since an aeon cannot claim without it (sp-xfqnr).
+                // fail closed, since a dwarf cannot claim without it (sp-xfqnr).
                 // batch-job: one start of the socket; bounded by timeout 30.
                 let _ = Command::new("timeout").args(["30", "systemctl", "--user", "start", "lc-serve.socket"]).status();
                 // batch-job: one restart of a service during install; bounded by timeout 30.
@@ -1652,9 +1652,9 @@ fn conflicts(instance: &str) -> Result<(), install::guards::Conflict> {
         conflict_foreign(instance, installed_exec_dir.as_deref(), &bin_dir)?;
     }
 
-    // Conflict 2: a live aeon under this installation.
+    // Conflict 2: a live dwarf under this installation.
     let cmdlines = proc_cmdlines();
-    conflict_aeon(&home, cmdlines.iter().map(|(p, c)| (p.as_str(), c.as_str())))?;
+    conflict_dwarf(&home, cmdlines.iter().map(|(p, c)| (p.as_str(), c.as_str())))?;
 
     // Conflict 3: the landing gate's tree lock.
     let repo_base = nonempty_env("SPIRA_REPO").map(|r| Path::new(&r).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()).unwrap_or_default();

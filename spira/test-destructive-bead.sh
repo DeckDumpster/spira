@@ -6,8 +6,8 @@
 #   ./test-destructive-bead.sh
 #
 # THE DEFECT THIS PREVENTS. sp-6ylz had "needs the world stopped" in its title and was
-# dispatchable anyway. An aeon claimed it and ran world.sh stop from step 2, killing the
-# sentinel, ops timer, both watchers, and three live aeons. The filer had written the danger
+# dispatchable anyway. A dwarf claimed it and ran world.sh stop from step 2, killing the
+# sentinel, ops timer, both watchers, and three live dwarves. The filer had written the danger
 # into the title and still filed it dispatchable. The fence converts the symptom — the title
 # — into the mechanism. (sp-6hdi, law-destructive-beads-are-never-dispatchable)
 #

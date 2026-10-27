@@ -65,7 +65,7 @@ pub trait RoundOps {
     /// `members` and return that base and the members that merged. `None` when it did not
     /// move — a retry would change no input.
     fn base_moved(&mut self, members: &[Member]) -> Result<Option<(String, Vec<Member>)>, String>;
-    /// A red no single member reproduces, still red on a changed input: summon the Judge.
+    /// A red no single member reproduces, still red on a changed input: call the Judge.
     fn judge(&mut self, suites: &[String], members: &[Id]);
     /// `kind`: `base`, `unattributed`, `integration` or `workspace-build`.
     fn incident(&mut self, kind: &str, suites: &[String]);

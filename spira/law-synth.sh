@@ -6,7 +6,7 @@
 # the next `rule.sh enact` overwrites it. Amend the statute instead.
 #
 # WITH NO SPIRA_WIKI CONFIGURED, this exits 0 having written nothing: the statute book itself
-# (one beads database) is the only thing every aeon actually reads at summon, so a harness
+# (one beads database) is the only thing every dwarf actually reads at call, so a harness
 # with no wiki checkout is not missing a dependency, it just has no second copy to keep in
 # sync (law-a-hand-fix-names-its-root-cause).
 set -uo pipefail
@@ -107,8 +107,8 @@ body.append(
 )
 body.append("")
 body.append(
-    "These statutes are injected into **every aeon's session at summon** by "
-    "the harness's `spira/aeon.sh`, which reads them whole out of the same database rather than "
+    "These statutes are injected into **every dwarf's session at call** by "
+    "the harness's `spira/dwarf.sh`, which reads them whole out of the same database rather than "
     "from any copy. That is the whole point: a preference stated once should never be "
     "re-derived by an agent, and should never come back as the same decision twice."
 )

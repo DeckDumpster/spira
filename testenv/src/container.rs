@@ -95,7 +95,7 @@ pub trait Host {
     /// Each of `dir`'s immediate entries that is a symlink, resolved to its target's own
     /// absolute, canonical parent directory, each listed once (sp-e5v53-3): the extra bind
     /// mounts a checkout whose build directories are themselves symlinks elsewhere (a gate
-    /// tree's `target/{aeon,release,debug,gate-tools}`, gate/src/target.rs's tmpfs root)
+    /// tree's `target/{dwarf,release,debug,gate-tools}`, gate/src/target.rs's tmpfs root)
     /// needs, so the symlink still resolves once the checkout itself is bind-mounted into a
     /// container — nothing outside the checkout is otherwise visible in there, and a bind
     /// mount preserves a symlink as a symlink, never resolving it for the mount. Empty for a
@@ -862,7 +862,7 @@ impl Driver<'_> {
             return RC_QUEUE;
         }
         // sp-e5v53-3: a checkout whose build directories are themselves symlinks elsewhere
-        // (a gate tree's `target/{aeon,release,debug,gate-tools}`, gate/src/target.rs's
+        // (a gate tree's `target/{dwarf,release,debug,gate-tools}`, gate/src/target.rs's
         // tmpfs root) needs that elsewhere mounted too — the bind mount below preserves the
         // symlink as a symlink, and nothing outside the checkout is otherwise visible once
         // inside the container, so a suite built through it "was not built" from in here.

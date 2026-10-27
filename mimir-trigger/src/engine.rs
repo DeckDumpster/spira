@@ -40,7 +40,7 @@ fn first_bead_id(s: &str) -> Option<String> {
 }
 
 /// `[a-z0-9]+-[a-z0-9]+` matched from position 0 of `line`, immediately followed by `:`
-/// (the aeon commit-prefix form `<id>: ...`), or `None`.
+/// (the dwarf commit-prefix form `<id>: ...`), or `None`.
 fn id_prefix_colon(line: &str) -> Option<String> {
     let b = line.as_bytes();
     let n = b.len();
@@ -67,7 +67,7 @@ fn id_prefix_colon(line: &str) -> Option<String> {
 }
 
 /// The bead id a single commit subject names as landed, by the three forms the harness
-/// writes plus the aeon prefix form (mimir-trigger.sh `_count_landings`'s awk program).
+/// writes plus the dwarf prefix form (mimir-trigger.sh `_count_landings`'s awk program).
 /// Dispatch is mutually exclusive and ordered exactly as the awk program's pattern blocks:
 /// `spira: land ` first, then any `spira/`, then the bare prefix form.
 pub fn landing_id(line: &str) -> Option<String> {
@@ -235,7 +235,7 @@ mod tests {
     }
 
     #[test]
-    fn landing_id_aeon_prefix_form() {
+    fn landing_id_dwarf_prefix_form() {
         assert_eq!(
             landing_id("sp-htrqk: retire test-batch-red-main.sh — subject covered by queue crate unit tests"),
             Some("sp-htrqk".to_string())

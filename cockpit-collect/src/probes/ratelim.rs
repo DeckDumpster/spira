@@ -1,5 +1,5 @@
 //! `ratelim_keys` — the account's two rate-limit windows, read from the newest
-//! `rate_limit_event` across live aeon traces, plus an ETA extrapolated from the collector's
+//! `rate_limit_event` across live dwarf traces, plus an ETA extrapolated from the collector's
 //! own history CSV. Ported from the `python3 /dev/fd/3` heredoc in `spira/cockpit.sh`
 //! (DESIGN.md "Design" — native `serde_json` in place of the embedded interpreter).
 

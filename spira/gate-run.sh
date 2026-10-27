@@ -10,7 +10,7 @@
 # The logic is the Rust `gate-run` binary (gate-run/DESIGN.md, sp-ubw2o): the same bounded-
 # wait state machine, same state directory, same exit codes (0 pass, 1 fail, 2 still
 # deciding, 3 no gate, 4 stale verdict, 5 died without a verdict). This file stays the one
-# entry point every caller names (aeon, landing-pass, the suites); it only resolves the
+# entry point every caller names (dwarf, landing-pass, the suites); it only resolves the
 # binary and hands over — the same shim `gate.sh` uses for `gate` (sp-0tpcs).
 #
 # `exec -a "$0"` keeps this script's path in the process's argv, so `alive()` (this crate's

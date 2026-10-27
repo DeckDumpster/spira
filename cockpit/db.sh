@@ -18,7 +18,7 @@
 #
 # Gas Town's own databases are not addressed from here at all, and nothing else addresses
 # them either: `rule.sh` writes the statute book to this same database, and it is the one
-# every aeon reads its law from at summon.
+# every dwarf reads its law from at call.
 # Every path comes from the harness's one configuration surface. It is two directories
 # away because the cockpit ships beside the harness, not inside it.
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")/../spira" && pwd -P)/conf.sh"

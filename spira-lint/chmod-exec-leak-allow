@@ -11,11 +11,11 @@
 # chmod, so there is no write-fd for a concurrent fork to inherit. Converting would mean
 # rewriting file content the test never changes, just to dodge a textual pattern.
 #
-# aeon/src/worktree.rs, spira-config/src/writeback.rs: chmod on a DIRECTORY (0o555/0o755),
+# dwarf/src/worktree.rs, spira-config/src/writeback.rs: chmod on a DIRECTORY (0o555/0o755),
 # simulating and then restoring a read-only parent for an unwritable-destination test —
 # never an executable fixture, so testkit::write_exe is not the fix for either.
 testenv/src/suites/real.rs
 release/src/tests.rs
 release/src/acceptance/tests.rs
-aeon/src/worktree.rs
+dwarf/src/worktree.rs
 spira-config/src/writeback.rs

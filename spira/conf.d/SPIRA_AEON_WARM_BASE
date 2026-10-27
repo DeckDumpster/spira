@@ -1,7 +1,0 @@
-TYPE=string
-GROUP=aeon
-DOC=Directory on a tmpfs holding each aeon session's warm CARGO_TARGET_DIR (slot.N). Required: an aeon refuses to start without it, and doctor flags a base that is not a tmpfs.
-SCHEMA=REQUIRED: the tmpfs directory holding the aeon warm build slots (slot.N). Incremental builds write ~50 MB/s; this keeps them off the store's disk. Nothing defaults it; `doctor` fails a base that is not a tmpfs.
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # NO DEFAULT. Resolves to an empty string unless the environment or spira.toml sets it.
-SPIRA_CONF_DEFAULT_EOF

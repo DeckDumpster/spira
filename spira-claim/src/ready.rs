@@ -197,7 +197,7 @@ pub fn bucket(rows: &[ReadyRow], parts: &[RunePart], queue_wait: &str) -> Vec<(S
 }
 
 /// One rune's own rows by [`bucket`]'s predicate: what `rune-ready` counts is exactly
-/// what `rune-ready --json` hands an aeon to claim from.
+/// what `rune-ready --json` hands a dwarf to claim from.
 pub fn partition<'a>(rows: &'a [ReadyRow], part: &RunePart, queue_wait: &str) -> Vec<&'a ReadyRow> {
     let shared: Vec<&str> = [queue_wait].into_iter().filter(|s| !s.is_empty()).collect();
     let now = now_epoch();

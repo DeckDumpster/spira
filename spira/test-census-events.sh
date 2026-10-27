@@ -525,9 +525,9 @@ nowant "sp-reopen-recurrence absent: it's a timing verdict, not a cause" "sp-reo
 
 # ======================================================================================
 echo
-echo "sp-wkgyc: requeued/unjudged-<cause> — aeon_disposition's own free verdict is never ranked"
+echo "sp-wkgyc: requeued/unjudged-<cause> — dwarf_disposition's own free verdict is never ranked"
 # ======================================================================================
-# disposition() (aeon/src/decide.rs) marks EVERY unjudged-<cause> free but the one
+# disposition() (dwarf/src/decide.rs) marks EVERY unjudged-<cause> free but the one
 # CHARGING_OUTCOME; census reads that constant.
 # POSITIVE CONTROL (law-a-regression-test-must-be-seen-to-fail): on the unfixed tree
 # census ranks sp-requeue-unjudged-operator-wait — a correct escalation, not a failure
@@ -546,7 +546,7 @@ _rqn="$(requeues_of "sp-u1")"
 is "requeues_of still counts the event" "1" "$_rqn"
 
 # Not a finite hardcoded list: groomer.sh unpoison writes free-text unjudged-<cause> values
-# (e.g. "precondition-satisfied") that never appear as a literal anywhere in aeon_disposition
+# (e.g. "precondition-satisfied") that never appear as a literal anywhere in dwarf_disposition
 # or in this suite until now — the exclusion must still catch it.
 testdb_reset
 testdb_seed <<'JSONL'
@@ -558,7 +558,7 @@ out="$(census_out)"
 nowant "an arbitrary unjudged-<cause> (not a hardcoded literal) is also never ranked" \
     "sp-requeue-unjudged-precondition-satisfied" "$out"
 
-# NEGATIVE CONTROL: unlanded is the one outcome aeon_disposition charges. A requeued event
+# NEGATIVE CONTROL: unlanded is the one outcome dwarf_disposition charges. A requeued event
 # naming it must still rank — proving the exclusion reads CHARGING_OUTCOME rather than
 # blindly trusting the unjudged- prefix (law-a-pattern-match-is-not-an-identity-check).
 testdb_reset

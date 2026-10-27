@@ -246,12 +246,12 @@ mod tests {
         // going to be one line regardless.
         inputs.snapshot_content = "SP_AT='1000000000'\n\
              SP_SENTINEL_TIMER='1'\nSP_OPS_TIMER='1'\nSP_HEIMDALL_TIMER='1'\n\
-             SP_AEON_N='1'\nSP_AEON0_NAME='shiva'\nSP_AEON0_RUNE='builder'\n\
-             SP_AEON0_BEAD='sp-llbmi'\nSP_AEON0_MIN='1'\nSP_AEON0_TURNS='1'\n\
-             SP_AEON0_CTX='100'\nSP_AEON0_MODEL='claude-sonnet-4-6'\n\
-             SP_AEON0_RUNE_MODEL='claude-sonnet-4-6'\nSP_AEON0_FILES='1'\n\
-             SP_AEON0_PRI='1'\nSP_AEON0_PARTITION='builder'\nSP_AEON0_TITLE='t'\n\
-             SP_AEON0_LEASE='8'\nSP_AEON0_QUIET='1'\n\
+             SP_DWARF_N='1'\nSP_DWARF0_NAME='andvari'\nSP_DWARF0_RUNE='builder'\n\
+             SP_DWARF0_BEAD='sp-llbmi'\nSP_DWARF0_MIN='1'\nSP_DWARF0_TURNS='1'\n\
+             SP_DWARF0_CTX='100'\nSP_DWARF0_MODEL='claude-sonnet-4-6'\n\
+             SP_DWARF0_RUNE_MODEL='claude-sonnet-4-6'\nSP_DWARF0_FILES='1'\n\
+             SP_DWARF0_PRI='1'\nSP_DWARF0_PARTITION='builder'\nSP_DWARF0_TITLE='t'\n\
+             SP_DWARF0_LEASE='8'\nSP_DWARF0_QUIET='1'\n\
              SP_NEXT_N='1'\nSP_NEXT0='P1 builder sp-a some next bead'\n\
              SP_EVENT0='5s builder landed sp-b a recent landing'\n\
              SP_INFLOW_N='1'\nSP_INFLOW0='5s task P1 sp-c an inflow bead'\n\

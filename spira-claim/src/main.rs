@@ -553,7 +553,7 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
 /// `stack <bead>`: the same claimability rule `select --blockers machine` applies, but for
 /// one already-known candidate and reporting the stack proposal — `{prereq: certified_tip}`
 /// — a claim of it would carry, rather than a yes/no filtered out of a ready set. The one
-/// caller is the aeon crate, right after it wins the bd claim: the Claim event and the
+/// caller is the dwarf crate, right after it wins the bd claim: the Claim event and the
 /// worktree's own merged base both need the same map, so this is where it is computed once.
 fn cmd_stack(a: &Args, env: &mut Env) -> Outcome {
     if let Err(e) = a.check_known(&["--lifecycle", "--blocker-records", "--stack-max-depth"]) {
@@ -628,11 +628,11 @@ fn cmd_stack(a: &Args, env: &mut Env) -> Outcome {
 // =========================================================================================
 
 /// `$SPIRA_HOME`, resolved IN-PROCESS — law-a-binary-resolves-the-config-it-reads
-/// (sp-hh599): `spira-sentinel.service`/`spira-summon.service` carry `SPIRA_RELEASE`/
+/// (sp-hh599): `spira-sentinel.service`/`spira-call.service` carry `SPIRA_RELEASE`/
 /// `PATH` and nothing else (wave 4.25, sp-obhv6, stopped `conf.sh` from exporting
 /// `SPIRA_HOME` at all). Every `rune-ready`/`rune-exclude`/`bulk-ready-by-rune` call the
 /// sentinel makes is ITS OWN in-process child (never through `lib.sh`), so under that
-/// unit's real environment this used to refuse outright — and `summon.rs`'s `rune_ready`
+/// unit's real environment this used to refuse outright — and `call.rs`'s `rune_ready`
 /// read that refusal's rc 2 as "no rune", skipping every rune every pass, forever,
 /// silently (this bead's own repro). The environment is an OVERRIDE a caller may still set
 /// on purpose (a fixture pinning a different tree; a lib.sh shim that already resolved it
@@ -969,7 +969,7 @@ fn retain_unstopped(rows: &mut Vec<rank::ReadyRow>, run: &std::path::Path) {
 /// `rune-ready <rune>`: `rune_ready` (lib.sh:693). Exit code names which of FOUR things
 /// happened (sp-3ntca; widened by sp-hh599, then sp-xsnid): 2 = no such rune file — the
 /// ONE outcome a resolved runes was actually consulted and came back empty, the only rc
-/// `sentinel::summon::rune_ready` may map to `ReadyAnswer::NoRune`; 1 = "could not
+/// `sentinel::call::rune_ready` may map to `ReadyAnswer::NoRune`; 1 = "could not
 /// evaluate" — the runes was never reached at all (SPIRA_HOME itself would not resolve)
 /// OR the file exists but the query failed; 3 = the rune's OWN predicate would WIDEN
 /// rather than narrow (a bare config reference `RUNE_LABELS`/`RUNE_EXCLUDE_LABELS` uses
@@ -991,8 +991,8 @@ fn retain_unstopped(rows: &mut Vec<rank::ReadyRow>, run: &std::path::Path) {
 /// already said ops has 25" is this fast path, already correct, untouched here), so a
 /// cache hit skips [`spira_config::runes::rune_predicate`] entirely, on purpose.
 ///
-/// `--json` prints the counted rows instead of their number: an aeon's ready set, so what it
-/// claims from is what the sentinel summoned it for.
+/// `--json` prints the counted rows instead of their number: a dwarf's ready set, so what it
+/// claims from is what the sentinel called it for.
 fn cmd_rune_ready(a: &Args, env: &mut Env) -> Outcome {
     if let Err(e) = a.check_known(&["--scope-label", "--noloop-label", "--json", "--express"]) {
         return Outcome::usage(e);
@@ -1070,10 +1070,10 @@ fn cmd_bulk_ready_by_rune(a: &Args, env: &mut Env) -> Outcome {
         if predicate.labels.is_empty() {
             continue; // bulk_ready_by_rune's own `[ -n "$inc" ] || continue`
         }
-        // sp-85p8t: the SAME exclusion `rune-ready` and an aeon's `select` apply (own,
+        // sp-85p8t: the SAME exclusion `rune-ready` and a dwarf's `select` apply (own,
         // shared incl. open-children, and every other rune's `rune:<name>`) — counting with
-        // the bare own list let the sentinel summon builders for epics with open children
-        // that no builder could claim (56 summons in 10 minutes, each "nothing ready").
+        // the bare own list let the sentinel call builders for epics with open children
+        // that no builder could claim (56 calls in 10 minutes, each "nothing ready").
         let exc = rune_exclude_str(env, &home, &f, &predicate.exclude_labels);
         parts.push(ready::RunePart { name: f, inc: ready::split_csv(&predicate.labels), exc: ready::split_csv(&exc) });
     }
@@ -1278,7 +1278,7 @@ fn cmd_write_event(a: &Args, env: &Env) -> Outcome {
         _ => return Outcome::usage("write-event: expected <bead> <event-type> [cause]"),
     };
     // `_bump_write_event_try`'s own no-op: an empty bead or event-type writes nothing
-    // and is not a failure (aeon.sh calls bump_requeue bare under `set -e`).
+    // and is not a failure (dwarf.sh calls bump_requeue bare under `set -e`).
     if id.is_empty() || etype.is_empty() {
         return Outcome::ok(String::new());
     }

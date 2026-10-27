@@ -327,22 +327,22 @@ echo
 echo "sentinel CHECK7: throttle stamp gates task pool to 0 (G2/G3)"
 # ======================================================================================
 # ck7_pool/ck7_throttled/check7_pool_decision/ck7_fill_cap moved in-process into the
-# sentinel crate (wave 4.27, family G, sp-gzmd2) — `_ck7_summon_body` (lib.sh), their only
+# sentinel crate (wave 4.27, family G, sp-gzmd2) — `_ck7_call_body` (lib.sh), their only
 # caller, is itself now a one-line shim, so there is no bash function left to `libcall`
 # here. The exact same cases (ck7_pool's subtraction and floor, ck7_throttled's stamp and
 # override, check7_pool_decision's throttle-leak fix, ck7_fill_cap's pool/cap stop) are
-# `summon::tests::ck7_pool_subtracts_task_live_and_floors_at_zero`,
+# `call::tests::ck7_pool_subtracts_task_live_and_floors_at_zero`,
 # `ck7_throttled_is_the_stamp_unless_the_override_pins_it_clear`,
 # `check7_pool_decision_matches_the_throttle_leak_fix` and
-# `ck7_fill_cap_stops_on_either_the_pool_or_the_per_persona_cap` in sentinel/src/summon.rs.
+# `ck7_fill_cap_stops_on_either_the_pool_or_the_per_persona_cap` in sentinel/src/call.rs.
 
 # Structural control retained: lanes must still precede the pool/throttle gate in
-# `ck7_summon_body` (sentinel/src/summon.rs — CHECK 7's lane+pool loop, shared by the full
-# pass and --summon-only under ck7_summon_pass's flock, sp-0y2av) — a real behaviour row
+# `ck7_call_body` (sentinel/src/call.rs — CHECK 7's lane+pool loop, shared by the full
+# pass and --call-only under ck7_call_pass's flock, sp-0y2av) — a real behaviour row
 # cannot see source ordering, so this stays a source check.
-summon_rs="$HERE/../sentinel/src/summon.rs"
-lane_line="$(grep -n 'for f in &rotated_lanes' "$summon_rs" 2>/dev/null | head -1 | cut -d: -f1 || echo 0)"
-gate_line="$(grep -n 'if ck7_throttled(' "$summon_rs" 2>/dev/null | head -1 | cut -d: -f1 || echo 0)"
+call_rs="$HERE/../sentinel/src/call.rs"
+lane_line="$(grep -n 'for f in &rotated_lanes' "$call_rs" 2>/dev/null | head -1 | cut -d: -f1 || echo 0)"
+gate_line="$(grep -n 'if ck7_throttled(' "$call_rs" 2>/dev/null | head -1 | cut -d: -f1 || echo 0)"
 if [ -n "$lane_line" ] && [ -n "$gate_line" ] && \
    [ "$lane_line" -gt 0 ] && [ "$gate_line" -gt 0 ] && \
    [ "$lane_line" -lt "$gate_line" ]; then

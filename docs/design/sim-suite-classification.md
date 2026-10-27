@@ -29,7 +29,7 @@ Timings are the median of each suite's runs in `suite-times.log` (batch results 
 
 The classes for **replaceable and partly** were set from each suite's header, its `# covers:` line and what it exercises. The **no** reasons are by family (the pattern of the name and the covers line), not a reading of every body; a suite that looks misfiled is worth a second look before it is acted on, and the cost of a wrong **no** is only a missed saving.
 
-What the stub agent cannot do also bounds the table: the sim runs `sim summon`, not `aeon`, so suites about the real aeon session (brief, resume, teardown, fences) stay out. A scenario that runs the real aeon under a scripted model is a possible later extension and would pull about 50 of the **no** suites toward **partly**; it is not proposed here.
+What the stub agent cannot do also bounds the table: the sim runs `sim call`, not `dwarf`, so suites about the real dwarf session (brief, resume, teardown, fences) stay out. A scenario that runs the real dwarf under a scripted model is a possible later extension and would pull about 50 of the **no** suites toward **partly**; it is not proposed here.
 
 ## The scenarios
 
@@ -107,34 +107,34 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | acceptance-local-stop | no | - | ? | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | acceptance-local | no | - | 1 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | acceptance-prev-tag | no | - | 1 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
-| aeon-base-ref-qualify | no | - | 4 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-runes-overlay-mech | no | - | ? | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-runes-overlay | no | - | 33 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-dirty-commit | no | - | 4 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-elastic-concurrency | no | - | 4 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-eviction-race | no | - | 55 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-fence-exec-ctx | no | - | ? | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-gate-close-silent | no | - | 30 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-gate-unfinished-attempts | no | - | ? | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-launch-grammar | no | - | 2 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-lease | no | - | 3 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-lifecycle-cutover | no | - | ? | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-prod-dirty-rest | no | - | ? | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-prod-dirty | no | - | 49 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-prompt-layers-sticking | no | - | ? | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-prompt-layers | no | - | 41 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-resume-collision | no | - | 17 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-resume | no | - | 54 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-slain-attempts | no | - | ? | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-sweep | no | - | 26 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-teardown-e2e-exit | no | - | ? | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-teardown-e2e-wired | no | - | ? | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-teardown-e2e | no | - | ? | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-watch | no | - | ? | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-wiki-concurrent | no | - | 8 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-wiki-dirty | no | - | 41 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-worktree-collision | no | - | 33 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-world-stop | no | - | 29 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| dwarf-base-ref-qualify | no | - | 4 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-runes-overlay-mech | no | - | ? | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-runes-overlay | no | - | 33 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-dirty-commit | no | - | 4 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-elastic-concurrency | no | - | 4 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-eviction-race | no | - | 55 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-fence-exec-ctx | no | - | ? | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-gate-close-silent | no | - | 30 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-gate-unfinished-attempts | no | - | ? | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-launch-grammar | no | - | 2 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-lease | no | - | 3 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-lifecycle-cutover | no | - | ? | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-prod-dirty-rest | no | - | ? | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-prod-dirty | no | - | 49 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-prompt-layers-sticking | no | - | ? | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-prompt-layers | no | - | 41 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-resume-collision | no | - | 17 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-resume | no | - | 54 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-slain-attempts | no | - | ? | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-sweep | no | - | 26 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-teardown-e2e-exit | no | - | ? | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-teardown-e2e-wired | no | - | ? | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-teardown-e2e | no | - | ? | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-watch | no | - | ? | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-wiki-concurrent | no | - | 8 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-wiki-dirty | no | - | 41 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-worktree-collision | no | - | 33 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| dwarf-world-stop | no | - | 29 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | archive-growing | no | - | ? | static, configuration or single-tool contract: no hand-off between loop actors |
 | archive-no-sessions | no | - | ? | static, configuration or single-tool contract: no hand-off between loop actors |
 | archivist-conf | no | - | 18 | single-tool or static contract: no hand-off between loop actors |
@@ -146,7 +146,7 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | heimdall-classify | no | - | 6 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | heimdall | no | - | 105 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | bare-main | no | - | ? | static, configuration or single-tool contract: no hand-off between loop actors |
-| batch-claim-race | replaceable | new:claim-vs-batch | ? | a batch landing racing an aeon's claim: the claim is refused |
+| batch-claim-race | replaceable | new:claim-vs-batch | ? | a batch landing racing a dwarf's claim: the claim is refused |
 | batch-owner | no | - | 2 | static, configuration or single-tool contract: no hand-off between loop actors |
 | batch-timing | no | - | 3 | static, configuration or single-tool contract: no hand-off between loop actors |
 | batcher-cut-land | partly | conflicting-siblings | ? | land-mode half of the cut suite; real-git conflict cases stay bash |
@@ -165,7 +165,7 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | branch-collision-park | partly | new:claim-order | 15 | a bead whose branch is held by another bead's worktree is parked |
 | branch-guard | no | - | 3 | static, configuration or single-tool contract: no hand-off between loop actors |
 | branch-sweep | no | - | ? | single-tool or static contract: no hand-off between loop actors |
-| brief-mail-options | no | - | 3 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| brief-mail-options | no | - | 3 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | broker-allowlist-lint | no | - | 2 | static, configuration or single-tool contract: no hand-off between loop actors |
 | broker-units | no | - | 1 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | broker | no | - | 20 | static, configuration or single-tool contract: no hand-off between loop actors |
@@ -185,7 +185,7 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | census | no | - | 64 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | certified-withdraw | replaceable | resubmit-moved-tip | 18 | reopen strips the submitted label; resubmit is the re-entry |
 | certify | replaceable | certify-twice, resubmit-moved-tip | 89 | gated once per tip, re-certified when the tip moves |
-| runes-repo-labels | no | - | 4 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| runes-repo-labels | no | - | 4 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | citations | no | - | 16 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | claim-retry | partly | new:claim-order | 6 | transient bd failure retried; the failure itself is injection, stays bash |
 | close-reason-flags | no | - | 3 | single-tool or static contract: no hand-off between loop actors |
@@ -227,10 +227,10 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | cockpit-watcher-owner | no | - | 4 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cockpit | no | - | 13 | cockpit/pane rendering and its probes: no loop actor changes state |
 | commit-cite | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
-| concierge-acceptance | no | - | 4 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| concierge-inbox | no | - | ? | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| concierge-roster | no | - | 6 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| concierge | no | - | 14 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| concierge-acceptance | no | - | 4 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| concierge-inbox | no | - | ? | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| concierge-roster | no | - | 6 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| concierge | no | - | 14 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | conf-key-merge | no | - | ? | static, configuration or single-tool contract: no hand-off between loop actors |
 | conf-registry-merge | no | - | ? | static, configuration or single-tool contract: no hand-off between loop actors |
 | conf-registry-parity | no | - | ? | static, configuration or single-tool contract: no hand-off between loop actors |
@@ -247,8 +247,8 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | ctrl | no | - | 45 | static, configuration or single-tool contract: no hand-off between loop actors |
 | ctx-pointer | no | - | 5 | cockpit/pane rendering and its probes: no loop actor changes state |
 | cutover-deploy | no | - | ? | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
-| czar-lint | no | - | 1 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| czar-partition | no | - | 5 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| czar-lint | no | - | 1 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| czar-partition | no | - | 5 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | czar-pass | no | - | 19 | single-tool or static contract: no hand-off between loop actors |
 | czar-shadow | no | - | 5 | single-tool or static contract: no hand-off between loop actors |
 | deadlock-sweep | no | - | ? | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
@@ -265,8 +265,8 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | escape-classify | no | - | ? | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | exclude | no | - | 1 | static, configuration or single-tool contract: no hand-off between loop actors |
 | express-lane | partly | new:claim-order | 20 | express label bypasses sentinel admission |
-| rune-project-instructions | no | - | 5 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| rune | no | - | 3 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| rune-project-instructions | no | - | 5 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| rune | no | - | 3 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | first-run | no | - | ? | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | freshclone | no | - | 7 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | gate-admission-suites-only | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
@@ -296,7 +296,7 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | git-env-isolation | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | git-push-app | no | - | 3 | static, configuration or single-tool contract: no hand-off between loop actors |
 | retired-component-absence | no | - | 3 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
-| groom-escalation-check | no | - | 43 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| groom-escalation-check | no | - | 43 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | groom-trigger | no | - | 6 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | groomer-conf | no | - | 7 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | groomer-litter-predicate | no | - | 7 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
@@ -317,7 +317,7 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | incident-spool-drain | no | - | 42 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | incident-systemd | no | - | 8 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | incident | no | - | 81 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
-| install-aeons | no | - | 65 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
+| install-dwarves | no | - | 65 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | install-conf-seed | no | - | 40 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | install-dolt-breaker | no | - | 12 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | install-dolt-port-wait | no | - | 2 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
@@ -348,7 +348,7 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | landing-rebase | replaceable | conflicting-siblings | 64 | survivor sweep rebases a withheld branch when the base moves |
 | landing | replaceable | conflicting-siblings + new:red-gate-holds | 137 | work goes back on the board only when it disagrees with the base |
 | landstate-checks-deleted | no | - | ? | single-tool or static contract: no hand-off between loop actors |
-| lanes | no | - | 4 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| lanes | no | - | 4 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | launchers-as-launched | no | - | ? | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | launchers-bare-env | no | - | ? | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | law-synth | no | - | 8 | static, configuration or single-tool contract: no hand-off between loop actors |
@@ -365,15 +365,15 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | lifecycle-migrate | no | - | ? | lifecycle store, schema and read models against a real Dolt: the store is the sim world's dependency, not its subject |
 | lifecycle-stack-migration | no | - | ? | lifecycle store, schema and read models against a real Dolt: the store is the sim world's dependency, not its subject |
 | limits | no | - | 16 | cockpit/pane rendering and its probes: no loop actor changes state |
-| lint-runes | no | - | 7 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| lint-runes | no | - | 7 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | livelock | no | - | 71 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | local-pass | partly | cut-in-bare-env | ? | cut refuses without a recorded local pass; override rows stay bash |
 | loop-readonly | partly | happy-path | 21 | sentinel claims from a read-only release; needs the world to run read-only |
 | mimir-closed-record | no | - | 27 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | mimir-trigger | no | - | 16 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
-| mimir | no | - | 6 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| mail-aeon-hook | no | - | 2 | operator mail channel and ask flow: Maildir and lint behaviour, no loop hand-off |
-| mail-aeon | no | - | 16 | operator mail channel and ask flow: Maildir and lint behaviour, no loop hand-off |
+| mimir | no | - | 6 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| mail-dwarf-hook | no | - | 2 | operator mail channel and ask flow: Maildir and lint behaviour, no loop hand-off |
+| mail-dwarf | no | - | 16 | operator mail channel and ask flow: Maildir and lint behaviour, no loop hand-off |
 | mail-bead-render | no | - | 7 | operator mail channel and ask flow: Maildir and lint behaviour, no loop hand-off |
 | mail-deliver | no | - | 11 | operator mail channel and ask flow: Maildir and lint behaviour, no loop hand-off |
 | mail-dismiss-sweep | no | - | 20 | operator mail channel and ask flow: Maildir and lint behaviour, no loop hand-off |
@@ -389,14 +389,14 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | migrate-ask | no | - | 6 | operator mail channel and ask flow: Maildir and lint behaviour, no loop hand-off |
 | model-switch-report | no | - | 2 | cockpit/pane rendering and its probes: no loop actor changes state |
 | noverdict-class | no | - | ? | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
-| ops-allowlist | no | - | 1 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| ops-allowlist | no | - | 1 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | ops-closing | no | - | 128 | single-tool or static contract: no hand-off between loop actors |
 | ops-read-model | no | - | ? | lifecycle store, schema and read models against a real Dolt: the store is the sim world's dependency, not its subject |
-| ops-repo-orientation | no | - | 1 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| ops-repo-orientation | no | - | 1 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | orphan-test | no | - | 2 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | overrides | no | - | 46 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | park-unmapped | no | - | 3 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
-| persona-model | no | - | 35 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| persona-model | no | - | 35 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | pilgrimage | no | - | 22 | operator mail channel and ask flow: Maildir and lint behaviour, no loop hand-off |
 | plan-lint | no | - | 2 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | plan-matrix-merge | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
@@ -432,7 +432,7 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | release-workflow | no | - | 2 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | release | partly | cut-in-bare-env, publish-then-cut | 8 | cut names the beads landed since the previous tag; show/format rows stay bash |
 | released-defects | no | - | 6 | cockpit/pane rendering and its probes: no loop actor changes state |
-| render-memories | no | - | 13 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| render-memories | no | - | 13 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | reopen-queue-eject | replaceable | resubmit-moved-tip + new:eject-mid-step | 3 | ejected-suites sidecar survives a failed re-cert |
 | repo-map | no | - | ? | static, configuration or single-tool contract: no hand-off between loop actors |
 | resolve-output | no | - | 1 | single-tool or static contract: no hand-off between loop actors |
@@ -452,7 +452,7 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | hel-mode-filter | partly | new:reap-after-land | ? | skip-queue/queue-only sweeps; needs a mixed-mode world |
 | hel | partly | new:reap-after-land | ? | disposition per branch; pure send_disposition rows stay bash |
 | sentinel-pass | partly | happy-path | 9 | real end-to-end sentinel passes; audit dispatch rows stay bash |
-| session-hook | no | - | 17 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| session-hook | no | - | 17 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | set-state-semantics | no | - | 4 | static, configuration or single-tool contract: no hand-off between loop actors |
 | set-state-writers | no | - | 14 | static, configuration or single-tool contract: no hand-off between loop actors |
 | sim-happy-path | already sim | happy-path | ? | already a sim suite (runs one scenario) |
@@ -470,7 +470,7 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | slay | no | - | 67 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | sop-gate-wired | no | - | 22 | static, configuration or single-tool contract: no hand-off between loop actors |
 | sop | no | - | 32 | static, configuration or single-tool contract: no hand-off between loop actors |
-| spike | no | - | 33 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| spike | no | - | 33 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | spira-config-cutover | no | - | 31 | lifecycle store, schema and read models against a real Dolt: the store is the sim world's dependency, not its subject |
 | spira-config-only-door | no | - | ? | lifecycle store, schema and read models against a real Dolt: the store is the sim world's dependency, not its subject |
 | statute-projection | no | - | 12 | static, configuration or single-tool contract: no hand-off between loop actors |
@@ -483,8 +483,8 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | suite-select-cli | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | suite-state-fence | no | - | 6 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | suite-state-rules | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
-| summon-fast-path | partly | happy-path, long-gate-interleaving | ? | a freed slot refills in seconds; needs virtual-time assertion |
-| summon-rune | no | - | 4 | single-tool or static contract: no hand-off between loop actors |
+| call-fast-path | partly | happy-path, long-gate-interleaving | ? | a freed slot refills in seconds; needs virtual-time assertion |
+| call-rune | no | - | 4 | single-tool or static contract: no hand-off between loop actors |
 | supersede-duty | replaceable | new:supersede | ? | supersede request adjudicated within one pass against a real spira-lc |
 | superseded | partly | new:supersede | 24 | landing leaves superseded beads alone; hel reaps them |
 | tarball-bins | no | - | 2 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
@@ -497,8 +497,8 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | testenv-wait | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | testenv | no | - | 1 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | testlib | no | - | 2 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
-| thrash-teardown | no | - | 22 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| thrash | no | - | 3 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| thrash-teardown | no | - | 22 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
+| thrash | no | - | 3 | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | timeout | partly | new:red-gate-holds | 37 | lane-cap kill charges no attempt; needs a stub agent that overruns |
 | timer-restart-safety | no | - | ? | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | timer-templates | no | - | 2 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
@@ -519,14 +519,14 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | verdict-flow | no | - | 25 | operator mail channel and ask flow: Maildir and lint behaviour, no loop hand-off |
 | verify-asks | no | - | 8 | operator mail channel and ask flow: Maildir and lint behaviour, no loop hand-off |
 | verify-landed | no | - | ? | static, configuration or single-tool contract: no hand-off between loop actors |
-| warden | no | - | ? | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| warden | no | - | ? | persona, brief or real-dwarf session wiring: the stub agent does not run dwarf, so the sim cannot see it |
 | watch-notify-rearm | no | - | ? | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | watch-refresh | no | - | 7 | static, configuration or single-tool contract: no hand-off between loop actors |
 | watchd-unit-name | no | - | 5 | static, configuration or single-tool contract: no hand-off between loop actors |
 | watchtower-czar-outcome | no | - | 17 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | watchtower-failed-units | no | - | 10 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | watchtower-hotfix | no | - | ? | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
-| watchtower-lapse | partly | new:stuck-pipeline | 122 | lapsed-aeon section; needs a stub agent that stalls |
+| watchtower-lapse | partly | new:stuck-pipeline | 122 | lapsed-dwarf section; needs a stub agent that stalls |
 | watchtower-throttle | no | - | 14 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | watchtower | partly | new:stuck-pipeline | 107 | the pipeline detector reading the far end of its own queue |
 | wiki-commit-dir-sweep | no | - | 1 | static, configuration or single-tool contract: no hand-off between loop actors |

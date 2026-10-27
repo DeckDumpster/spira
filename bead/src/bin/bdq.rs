@@ -524,8 +524,8 @@ fn acknowledge_forced_edit(timeout_s: &str, bd_bin: &str, db: &str, id: &str, cl
     // Best-effort notification: by this point `cfg` has already resolved successfully at
     // least once in this process (SPIRA_DB/SPIRA_BD above), so these two cannot newly
     // fail; `unwrap_or_default` only ever matters if SPIRA_RUN/SPIRA_MAIL themselves
-    // resolve empty, which `notify_live_aeon` already treats as "nothing to notify".
+    // resolve empty, which `notify_live_dwarf` already treats as "nothing to notify".
     let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
     let mail = spira_config::process::cfg("SPIRA_MAIL").unwrap_or_default();
-    claimdesc::notify_live_aeon(id, &claimdesc::holder_message(&actor, reason), &run, &mail);
+    claimdesc::notify_live_dwarf(id, &claimdesc::holder_message(&actor, reason), &run, &mail);
 }

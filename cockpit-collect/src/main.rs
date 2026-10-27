@@ -174,11 +174,11 @@ fn append_history(run_dir: &std::path::Path) {
     let at = snap.get("SP_AT").cloned().unwrap_or_else(|| io::now().to_string());
     let row = format!(
         "{at},{},{},{},{},{},{},{},{}",
-        get("SP_TOK_WIN"), get("SP_TOK_AEON_WIN"), get("SP_TOK_SESS_WIN"),
-        get("SP_TOK_AEON_TURNS"), get("SP_TOK_SESS_TURNS"),
+        get("SP_TOK_WIN"), get("SP_TOK_DWARF_WIN"), get("SP_TOK_SESS_WIN"),
+        get("SP_TOK_DWARF_TURNS"), get("SP_TOK_SESS_TURNS"),
         get("SP_CTX_NOW"), get("SP_RATELIM_5H"), get("SP_RATELIM_7D"),
     );
-    const HIST_COLS: &str = "ts,tok_win,tok_aeon_win,tok_sess_win,tok_aeon_turns,tok_sess_turns,ctx_now,ratelim_5h,ratelim_7d";
+    const HIST_COLS: &str = "ts,tok_win,tok_dwarf_win,tok_sess_win,tok_dwarf_turns,tok_sess_turns,ctx_now,ratelim_5h,ratelim_7d";
     let hist_path = run_dir.join("cockpit-history.csv");
     let existing = std::fs::read_to_string(&hist_path).ok();
     let needs_header = match &existing {
@@ -385,7 +385,7 @@ mod tests {
 
 fn cmd_metrics(args: &[String]) -> i32 {
     let (Some(sent), Some(ledger)) = (args.first(), args.get(1)) else {
-        eprintln!("usage: cockpit-collect metrics <sentinel.log> <aeon-ledger.log> [hours]");
+        eprintln!("usage: cockpit-collect metrics <sentinel.log> <dwarf-ledger.log> [hours]");
         return 1;
     };
     let hours = match args.get(2).map(|h| h.parse::<f64>()) {

@@ -5,7 +5,7 @@
 #   ./test-cockpit-well.sh
 #
 # THE DEFECT THIS SUITE EXISTS FOR (sp-b3ub). cockpit-collect computed SP_POISON inside the
-# spira,plan-scoped well-grid block. Poison is applied only by aeon.sh's closing rule
+# spira,plan-scoped well-grid block. Poison is applied only by dwarf.sh's closing rule
 # when SOP_REQUIRED=1 — which fires for ops and qa personas whose beads carry `incident`,
 # not `plan`. So the filter and the population were disjoint by construction, and SP_POISON
 # was structurally always zero against eleven open poisoned beads on the day of discovery.

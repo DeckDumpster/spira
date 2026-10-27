@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# test-slay.sh — slay.sh stops one aeon cleanly, removes its work, and makes
+# test-slay.sh — slay.sh stops one dwarf cleanly, removes its work, and makes
 # the bead say what is true.
 #
 #   ./test-slay.sh
 #
-# THE PROPERTY UNDER TEST. An operator kills an aeon and the harness must
+# THE PROPERTY UNDER TEST. An operator kills a dwarf and the harness must
 # reflect what actually happened: the bead is released, the branch is deleted
 # or parked, uncommitted work is salvaged, and no attempt is charged. Every
 # absence assertion has a presence assertion beside it so an empty result cannot
@@ -18,8 +18,8 @@
 #
 # defect: sp-ekio
 # tier: T2
-# covers: spira-world/src/bin/slay.rs spira/lib.sh spira-lc/* lifecycle/* UC-aeon-execution-26
-# scar: slay.sh left the bead in an inconsistent state after terminating the aeon and did not salvage uncommitted work from the worktree.
+# covers: spira-world/src/bin/slay.rs spira/lib.sh spira-lc/* lifecycle/* UC-dwarf-execution-26
+# scar: slay.sh left the bead in an inconsistent state after terminating the dwarf and did not salvage uncommitted work from the worktree.
 # timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -197,7 +197,7 @@ lc_seed_working() {   # lc_seed_working <bead-id> — the lifecycle row a real C
 }
 
 seed() {
-    local id="$1" st="${2:-in_progress}" as="${3:-aeon-test}"
+    local id="$1" st="${2:-in_progress}" as="${3:-dwarf-test}"
     testdb_reset
     [ "$st" = in_progress ] && lc_seed_working "$id"
     local line; line="{\"id\":\"$id\",\"title\":\"test bead\",\"status\":\"$st\",\"issue_type\":\"task\",\"labels\":[\"spira\",\"plan\"]"
@@ -226,13 +226,13 @@ teardown() {
     rm -rf "$wt"
     git -C "$REPO" branch -D "spira/$id" 2>/dev/null || true
     git -C "$REPO" update-ref -d "refs/slain/$id" 2>/dev/null || true
-    rm -rf "$SPIRA_RUN/reaped" "$SPIRA_RUN"/aeon-*-"$id".pid
+    rm -rf "$SPIRA_RUN/reaped" "$SPIRA_RUN"/dwarf-*-"$id".pid
 }
 
 # ======================================================================================
 # STRUCTURAL: the slain disposition is the first action.
 #
-# The disposition must be recorded on the row before anything is stopped, because the aeon's
+# The disposition must be recorded on the row before anything is stopped, because the dwarf's
 # exit path reads it to decide whether to charge an attempt. If the kill arrives first,
 # the exit path sees a normal 143 and charges — and three charges poison the bead.
 # ======================================================================================
@@ -253,13 +253,13 @@ echo "default slay (reopen):"
 seed sp-s1
 make_work sp-s1
 is "bead starts in_progress"   in_progress "$(status_of sp-s1)"
-is "bead starts assigned"      aeon-test   "$(assignee_of sp-s1)"
+is "bead starts assigned"      dwarf-test   "$(assignee_of sp-s1)"
 
 out="$(slay --bead sp-s1 2>&1)"
 rc=$?
 is  "slay exits 0"             0    "$rc"
 # bd's own STATUS is no longer slay.sh's to flip (sp-rlyl0: HolderDead goes through
-# spira-lc, not bd reopen) — bd's field is left exactly where a live aeon left it; the
+# spira-lc, not bd reopen) — bd's field is left exactly where a live dwarf left it; the
 # lifecycle row is the one this tool actually releases now, against a real spira-lc.
 is  "bd's own status field is unmoved by slay now" in_progress "$(status_of sp-s1)"
 is  "the lifecycle row is released instead — WORKING to READY" READY "$(lc_state_of sp-s1)"

@@ -42,7 +42,7 @@ Subcommands, argv and environment variables are unchanged from `sop.sh`'s own he
 (`SPIRA_DB` implicitly, via `lib.sh`; `SPIRA_HOME` to locate it; `SOP_WORD_CAP` default 250;
 `SOP_WHY_CAP` default 400; `SPIRA_SOP_LEDGER` default `$SPIRA_RUN/sop/applied.jsonl`;
 `SOP_PAGE`/`SPIRA_WIKI` for `synth`'s output path; `SPIRA_TZ`/`TZ` for `synth`'s date;
-`SOP_METRIC_COCKPIT` for the METRIC probe override; `BEADS_ACTOR`/`SPIRA_AEON`/`USER` for the
+`SOP_METRIC_COCKPIT` for the METRIC probe override; `BEADS_ACTOR`/`SPIRA_DWARF`/`USER` for the
 recorded actor).
 
 ### 3.1 Module map
@@ -143,11 +143,11 @@ ledger file shape this crate writes.
 - `spira/gate-suites`, `spira/runes/concierge.md`, `spira/runes/ops.md`,
   `spira/runes/ops.rune`, `README.md`: every `sop.sh <subcommand>` instruction is now
   `sop <subcommand>` — bare name, same as `forge`/`czar-pass`/`gh-intake` before it.
-- `aeon/src/verdict.rs`, `aeon/src/run.rs`, `aeon/src/brief.rs`: the string literal `"sop.sh"`
-  (used both as an argv-executable name in `aeon`'s own port checks and in the brief text
+- `dwarf/src/verdict.rs`, `dwarf/src/run.rs`, `dwarf/src/brief.rs`: the string literal `"sop.sh"`
+  (used both as an argv-executable name in `dwarf`'s own port checks and in the brief text
   rendered to the Ops persona) becomes `"sop"`.
 - `spira/watchtower.sh`, `spira/incident.sh`, `spira/lib.sh`: comment-only mentions updated
   for accuracy.
-- `spira/test-guards.sh`, `spira/test-aeon-wiki-dirty.sh`, `spira/test-lint-runes.sh`,
+- `spira/test-guards.sh`, `spira/test-dwarf-wiki-dirty.sh`, `spira/test-lint-runes.sh`,
   `spira/test-render-memories.sh`, `spira/test-ops-closing.sh`: repointed to invoke `sop` by
   binary name rather than `$HERE/sop.sh`.

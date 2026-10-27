@@ -99,7 +99,7 @@ mod tests {
         assert_eq!(lines("spira/runes/builder.rune", "RUNE_EXCLUDE_LABELS=\"spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL\"\n"), vec![1]);
         assert_eq!(lines("spira/runes/ops.rune", "RUNE_EXCLUDE_LABELS=\"$SPIRA_ASK_LABEL\"\n"), vec![1]);
         let rs = "fn a() { let _ = self.d.bd.bd(&s(&[\"label\", \"add\", &id, \"spira-poison\"])); }\nfn b() { let _ = self.d.bd.bd(&s(&[\"label\", \"add\", &id, &ask])); }\nfn c() { self.bd().quiet(self.h, &[\"label\", \"add\", &c.id, &self.cfg.ask], None); }\n";
-        assert_eq!(lines("aeon/src/run.rs", rs), vec![1, 2, 3]);
+        assert_eq!(lines("dwarf/src/run.rs", rs), vec![1, 2, 3]);
         let sh = "park() {\n    bdq label add \"$id\" \"$SPIRA_ASK_LABEL\" >/dev/null\n    bdq label add \"$id\" spira-poison\n}\n";
         assert_eq!(lines("spira/lib.sh", sh), vec![2, 3]);
     }
@@ -108,7 +108,7 @@ mod tests {
     fn the_non_hold_labels_comments_and_tests_are_not_findings() {
         assert!(lines("spira/runes/builder.rune", "RUNE_EXCLUDE_LABELS=\"$SPIRA_CI_LABEL,qa-proposed\"\n# RUNE_EXCLUDE_LABELS=\"spira-poison\"\n").is_empty());
         let rs = "fn a() { bd(&[\"label\", \"add\", &id, \"overseer\"]); }\n// bd(&[\"label\", \"add\", &id, \"spira-poison\"])\n#[cfg(test)]\nmod tests {\n    fn t() { bd(&[\"label\", \"add\", \"sp-1\", \"spira-poison\"]); }\n}\n";
-        assert!(lines("aeon/src/run.rs", rs).is_empty());
+        assert!(lines("dwarf/src/run.rs", rs).is_empty());
         assert!(lines("spira/lib.sh", "bdq label add \"$id\" overseer\n# bdq label add \"$id\" spira-poison\n").is_empty());
     }
 }

@@ -10,7 +10,7 @@ Scope: 31 primary suites (459 CI suite-seconds on main-push run 35947142904) and
 
 ## 1. Intent (de facto spec)
 
-A bead that an aeon closed is only *done* when its work is on its repository's base branch. The sentinel's CHECK 5 re-audits every closed bead in every persona's partition on each pass. It searches the base's full history, bodies included, for a commit naming the bead. When that search finds nothing, it reopens the bead with a remedy note, unless a typed exemption says no commit will ever come. The exemptions are superseded, dropped, content-landed, poisoned, a verified `delivers:` claim, a queued or landed landstate, a hold-mode repo, a branch still ahead of the base, or an unmapped repo. When the base cannot be resolved, CHECK 5 declines to judge rather than reopening.
+A bead that a dwarf closed is only *done* when its work is on its repository's base branch. The sentinel's CHECK 5 re-audits every closed bead in every persona's partition on each pass. It searches the base's full history, bodies included, for a commit naming the bead. When that search finds nothing, it reopens the bead with a remedy note, unless a typed exemption says no commit will ever come. The exemptions are superseded, dropped, content-landed, poisoned, a verified `delivers:` claim, a queued or landed landstate, a hold-mode repo, a branch still ahead of the base, or an unmapped repo. When the base cannot be resolved, CHECK 5 declines to judge rather than reopening.
 
 The Hel reaps `spira/*` branches only when their content is demonstrably on the base: by `content_landed`'s merge-tree test, by fast-forward plus a naming commit, or by a merged PR at the same tip. Every deletion goes through `spira_destroy_branch`. That function refuses queued (CERTIFIED/BATCHED), held, checked-out or unlanded branches and records the refusal in the reap log. `slay` parks unlanded tips at `refs/slain/<id>` rather than losing them.
 
@@ -26,7 +26,7 @@ Tier key: T0 static · T1 unit · T2 component · T3 integration · T4 acceptanc
 - **UC-landed-audit-reaping-03.** When the land refs are unresolvable, the answer is "cannot tell": `landed` returns rc 2 and CHECK 5 logs "not judging". Neither may reopen. — fail-closed, observability · **T1** (decision) + **T2** (rc 2) · cert.
 
 ### CHECK 5 decision
-- **UC-landed-audit-reaping-04.** A closed, aeon-worked bead (with `$SPIRA_RUN/<id>.log`) that has no naming commit, no exemption and no branch ahead is reopened exactly once per pass. The reason is `closed-without-commit`, no `sp-attempt-*` label is written, and the note names `bd supersede` as the remedy. — correctness, observability · **T1** decision + **T3** once · cert / batch.
+- **UC-landed-audit-reaping-04.** A closed, dwarf-worked bead (with `$SPIRA_RUN/<id>.log`) that has no naming commit, no exemption and no branch ahead is reopened exactly once per pass. The reason is `closed-without-commit`, no `sp-attempt-*` label is written, and the note names `bd supersede` as the remedy. — correctness, observability · **T1** decision + **T3** once · cert / batch.
 - **UC-landed-audit-reaping-05.** A bead whose work landed is never reopened, and a second pass changes nothing and charges no attempt. — idempotency · **T3** (two passes, one seed) · batch.
 - **UC-landed-audit-reaping-06.** The exemptions: superseded (a `supersedes` dependency, under either JSON spelling), `spira-dropped`, `content-landed` and `spira-poison` are never reopened. — correctness · **T1** table · cert.
 - **UC-landed-audit-reaping-07.** `delivers:` typed evidence:
@@ -72,7 +72,7 @@ Tier key: T0 static · T1 unit · T2 component · T3 integration · T4 acceptanc
   It never hands an unlanded branch to the destroyer. — correctness, fail-closed · **T2** table, stub bd / status seam · cert.
 - **UC-landed-audit-reaping-17.** When the Hel reaps by content, it labels the bead `content-landed`, but only when the branch had commits of its own. That lets CHECK 5 still catch a zero-commit branch, and CHECK 5 reads the label (writer→reader seam). — contract · **T2** (label argv) + **T3** row (real writer then real reader) · cert / batch.
 - **UC-landed-audit-reaping-18.** Reaping a content-landed branch that has no landstate logs `ASSERT <id>` but does not block the reap. — observability · **T2** row · cert.
-- **UC-landed-audit-reaping-19.** Once a branch is sent, the Hel also deletes the remote branch when one exists and removes the `branch:` label. It keeps the aeon session log, because CHECK 5 depends on it. — recovery, contract · **T2** row · cert.
+- **UC-landed-audit-reaping-19.** Once a branch is sent, the Hel also deletes the remote branch when one exists and removes the `branch:` label. It keeps the dwarf session log, because CHECK 5 depends on it. — recovery, contract · **T2** row · cert.
 - **UC-landed-audit-reaping-20.** Hel pass 2 removes orphaned worktrees whose branch is gone, unless a holder is live, and never touches the shared checkout. `spira_destroy_worktree` prunes an absent out-of-root registration and refuses an existing out-of-root directory. — recovery, fail-closed · **T2** · cert.
 - **UC-landed-audit-reaping-21.** The Hel skips loudly when a repo's land ref cannot be resolved, and exits non-zero when anything failed. — fail-closed · **T2** · cert.
 - **UC-landed-audit-reaping-22.** The hel counters count distinct branches, not log lines. `SP_SENT_FAILED_AGE_M` renders `?` when there is no failure. — correctness, observability · **T1** · cert.
@@ -84,7 +84,7 @@ Tier key: T0 static · T1 unit · T2 component · T3 integration · T4 acceptanc
 
 ### Misplaced (verdict given; move them out)
 - **UC-landed-audit-reaping-26.** Handled by `test-check2-reclaim.sh`: CHECK 2 protects an in_progress bead whose only open dependency is an ask, and removes that protection when the ask closes. → dispatch.
-- **UC-landed-audit-reaping-27.** Handled by `test-dependents.sh`: dependents of a closed blocker with CERTIFIED or BATCHED landstate are labelled queue-waiting and excluded from summon, and the label clears in a single pass once the blocker is LANDED. → landing-merge-queue. Superseded for same-repo work-bead blockers by the stacked-dependents rule (release at CERTIFIED, capped by `stack_max_depth`) — see `wiki/projects/spira/designs/stacked-dependents-2026-09-28.md`; cross-repo and non-work blockers still wait for LANDED.
+- **UC-landed-audit-reaping-27.** Handled by `test-dependents.sh`: dependents of a closed blocker with CERTIFIED or BATCHED landstate are labelled queue-waiting and excluded from call, and the label clears in a single pass once the blocker is LANDED. → landing-merge-queue. Superseded for same-repo work-bead blockers by the stacked-dependents rule (release at CERTIFIED, capped by `stack_max_depth`) — see `wiki/projects/spira/designs/stacked-dependents-2026-09-28.md`; cross-repo and non-work blockers still wait for LANDED.
 
 ## 3. Coverage map
 
@@ -103,7 +103,7 @@ Verdict key: **KEEP** · **MERGE-INTO** · **DEMOTE-TO-T1** · **DELETE** · **S
 | 04 | positive control in all 15 CHECK 5 suites; check5-drop::no sp-attempt, ::note names bd supersede; landed-no-delivers::control 'closed without landing' | T3, ×15 | **DEMOTE-TO-T1** (decide table), with one control row kept in test-check5.sh |
 | 05 | check5-landed-assert::pass 1, pass 2; landed-stays-landed::pass 2 | T3 22 / 46 | landed-assert → **MERGE-INTO test-check5.sh** (second pass over the whole seed) |
 | 06 | check5-drop::dropped/superseded; content-landed-no-reopen::content-landed/poisoned; check5-content-landed::CHECK 5 does NOT reopen sp-cl | T3 18 / 24 / 23 | drop → **DEMOTE-TO-T1** (its bulk-list seam checks move to test-check5.sh). content-landed-no-reopen → **MERGE-INTO test-check5.sh** (seam rows) with exemptions as T1. check5-content-landed → **MERGE-INTO test-check5.sh** (writer→reader row). |
-| 07 | check5-delivers-action::*; check5-delivers-check::true/false/no-command; check5-delivers-falls-through::commit wins/none/verified; check5-nopayload::beads±child, note fresh/stale/missing, no-payload retired; check5-sweep-delivers::case 1–3 | T3 9 / 16 / 19 / 48 / 18 | action, check, falls-through, nopayload → **DEMOTE-TO-T1** (delivers_verify table; also retires test-delivers-parity.sh, 1 s, since aeon.sh and sentinel share it). sweep-delivers cases 1–3 → **DELETE** (duplicate nopayload note rows). |
+| 07 | check5-delivers-action::*; check5-delivers-check::true/false/no-command; check5-delivers-falls-through::commit wins/none/verified; check5-nopayload::beads±child, note fresh/stale/missing, no-payload retired; check5-sweep-delivers::case 1–3 | T3 9 / 16 / 19 / 48 / 18 | action, check, falls-through, nopayload → **DEMOTE-TO-T1** (delivers_verify table; also retires test-delivers-parity.sh, 1 s, since dwarf.sh and sentinel share it). sweep-delivers cases 1–3 → **DELETE** (duplicate nopayload note rows). |
 | 08 | check5-landstate::BATCHED, CERTIFIED-RESTORE | T3 14 | **MERGE-INTO test-check5.sh** (restore row, real git) and **DEMOTE-TO-T1** (state table) |
 | 09 | check5-hold-no-reopen::hold ahead>0 / ahead==0 | T3 22 | **DEMOTE-TO-T1**; one hold-repo row stays in test-check5.sh, because its `\|` repo-map format incidentally covers the second map parser |
 | 10 | check5-unmapped-repo::stay closed, log once | T3 15 (3 identical seeds) | **DEMOTE-TO-T1** |
@@ -131,7 +131,7 @@ Verdict key: **KEEP** · **MERGE-INTO** · **DEMOTE-TO-T1** · **DELETE** · **S
 1. **The CHECK 5 positive control, ×15.** Every CHECK 5 suite builds an embedded-Dolt fixture and runs one or more full `sentinel.sh` passes, just to show that a bare closed bead is reopened. That covers 15 suites and 334 s. The fixture (a `testdb.sh` seed plus the stubbed pilgrimage/strand/hel/governor/reflect/ask/launch/systemctl set) is copy-pasted in all of them. *Keep:* a single control row in `test-check5.sh`.
 2. **The window and body-only search (sp-d9x93, sp-a9g, sp-37q, sp-m0s7), ×4.** Evidence: `test-check5-body-search.sh`, `test-landed-stays-landed.sh` and `test-check5-landed-assert.sh` each build a 401-commit padded history (one `git commit` process per pad), and `test-census-window.sh` checks the same `landed()` window at depth 4. Cost 22 + 46 + 22 + 2 = 92 s. *Keep:* `test-landed-search.sh` (T2, git only), built from `test-census-window.sh`. Build the depth fixture with `git fast-import` or `commit-tree` in one process. It proves no-window with `SPIRA_VERDICT_WINDOW` set small, not with 401 commits.
 3. **The content-landed exemption, ×3.** Evidence: `test-check5-content-landed.sh` and `test-content-landed-no-reopen.sh` both assert "bare reopened, content-landed stays closed". `test-hel-content-label.sh` asserts the writer half. *Keep:* the T1 exemption row, the argv row in `test-hel.sh`, and one writer→reader row in `test-check5.sh`.
-4. **The `delivers:note` fresh/stale/missing checks, ×3.** Evidence: `test-check5-nopayload.sh` (cases 5–7), `test-check5-sweep-delivers.sh` (cases 2–3) and `test-check5-delivers-falls-through.sh` (verified note). The r1 reducer also found the delivers case block duplicated between `aeon.sh` (around line 1854) and `sentinel.sh` (lines 676–760), guarded by `test-delivers-parity.sh`. *Keep:* one `delivers_verify` in lib.sh with one T1 table. Delete the parity suite.
+4. **The `delivers:note` fresh/stale/missing checks, ×3.** Evidence: `test-check5-nopayload.sh` (cases 5–7), `test-check5-sweep-delivers.sh` (cases 2–3) and `test-check5-delivers-falls-through.sh` (verified note). The r1 reducer also found the delivers case block duplicated between `dwarf.sh` (around line 1854) and `sentinel.sh` (lines 676–760), guarded by `test-delivers-parity.sh`. *Keep:* one `delivers_verify` in lib.sh with one T1 table. Delete the parity suite.
 5. **The spira_destroy_branch gate, ×2.** Evidence: the gate section of `test-reclaim-slay-branch-guard.sh` (bypass deletes, no-bypass refuses with REFUSED, landed allowed) repeats `test-destroy-branch.sh` case for case, at 13 s against 1 s. *Keep:* `test-destroy-branch.sh`.
 6. **The Hel selector fixture, ×6.** Evidence: `test-hel-{unlanded-guard,certified-guard,content-label,empty-commit,landstate-assert,squash-merged}.sh` and the hel half of `test-content-landed-empty-branch.sh` each run `testdb_up` plus bare+clone plus one `hel.sh` pass. unlanded-guard and certified-guard share an identical LANDED-squash positive control. Total 50 s. *Keep:* `test-hel.sh`, with one fixture, one pass and a row per disposition.
 7. **content_landed fixture self-checks, ×5.** "content_landed sees X as landed/unlanded" appears as a precondition in destroy-branch, unlanded-guard, certified-guard, empty-commit and content-landed-empty-branch. *Keep:* the content_landed table in `test-destroy-branch.sh`.
@@ -141,7 +141,7 @@ Verdict key: **KEEP** · **MERGE-INTO** · **DEMOTE-TO-T1** · **DELETE** · **S
 | logic | where | tested today only via | seam for T1 |
 |---|---|---|---|
 | CHECK 5 verdict | `sentinel.sh` 632–910, inline in the `while read` loop | 15 full sentinel passes over real bd | Extract `check5_decide` taking the row fields (`superseded dropped sentcontent delivers started_at`) plus injected facts (`refs_ok commit_found ls_state ls_tip tip_is_ancestor land_mode branch_exists ahead restore_tip`). It prints `skip:<reason>`, `restore:<tip>` or `reopen:<reason>`. The loop keeps only the I/O. |
-| delivers verification | `sentinel.sh` 676–760; `aeon.sh` ~1854 | sentinel passes; parity suite | `delivers_verify <delivers> <started_at> <id>` in lib.sh, with `bdjson children` behind an overridable function. Rows cover every type plus unknown, empty path and empty command. `check` runs in a subshell with a timeout, which is a new property. |
+| delivers verification | `sentinel.sh` 676–760; `dwarf.sh` ~1854 | sentinel passes; parity suite | `delivers_verify <delivers> <started_at> <id>` in lib.sh, with `bdjson children` behind an overridable function. Rows cover every type plus unknown, empty path and empty command. `check` runs in a subshell with a timeout, which is a new property. |
 | row reader | the `\x1f` reader in `sentinel.sh` and the python emitter at 910–945 | `landed-no-delivers` restating the idiom | Move the python emitter into a named function, `check5_rows`, fed JSON on stdin. A T1 test pipes canned `bd list` JSON through the real emitter and the real reader and checks the columns, including the `dependency_type`/`type` spellings. |
 | commit search | `lib.sh:landed` 2980; the inlined walk in `sentinel.sh` 813–829 | 401-commit sentinel suites | CHECK 5 re-implements `landed` over a cached `git log %B`. Make both call one `landed_in <subjects> <id>` token matcher, so T1 can table substring and body cases against a string. |
 | Hel disposition | `hel.sh:sweep_repo` 182–345 | 6 suites × real bd | The disposition is a function of (holder, content_landed, superseded, closed, pr_tip == br_tip, ahead, is_ancestor, landed, has_bead). Extract `send_disposition`. bd is only read through `bdjson show`, so a stub bd returning canned JSON plus `--status-from` removes testdb entirely. |
@@ -181,7 +181,7 @@ Verdict key: **KEEP** · **MERGE-INTO** · **DEMOTE-TO-T1** · **DELETE** · **S
 10. **Header claims the code does not honour:**
     - `test-cockpit-unlanded.sh` claims "a body mention does not count", but has no fixture for it.
     - `test-check5-delivers-action.sh` claims to cover incident.sh and watchtower.sh.
-    - `test-check5-delivers-check.sh` claims to cover aeon.sh.
+    - `test-check5-delivers-check.sh` claims to cover dwarf.sh.
     - `test-check5-landstate.sh` claims to cover batch.sh and conf.sh.
     - `test-check2-reclaim.sh` claims "the reaper reclaims on the same pass".
     - `test-hel-landstate-assert.sh` says "NO DATABASE".
@@ -286,7 +286,7 @@ brief, and each noting the dependency it is blocked on:
   used for `sp-pyowh`/`sp-rg46a`.
 - **Gap 10, the rest.** Fixed independently of UC-26/27 because the bead named these
   fragments explicitly: `test-check5-delivers-action.sh` and `test-check5-delivers-check.sh`
-  claimed to cover `incident.sh`/`watchtower.sh`/`aeon.sh` on their `# covers:` lines, but
+  claimed to cover `incident.sh`/`watchtower.sh`/`dwarf.sh` on their `# covers:` lines, but
   none of those files are copied into either suite's fixture (only `sentinel.sh`, `lib.sh`,
   `landing.sh`, `conf.sh` are, plus a handful of scripts stubbed to `exit 0`) — trimmed.
   `test-check5-landstate.sh` claimed `batch.sh`, which is never touched either — trimmed;
@@ -297,7 +297,7 @@ brief, and each noting the dependency it is blocked on:
 ### UC-04 through UC-13 (added by sp-pyowh, superseding the deferral above)
 
 sp-qsona's C3 did not land the skip/restore/reopen decision table these UCs describe. It
-replaced CHECK 5 with a single straight-line invariant — closed, aeon-worked, not
+replaced CHECK 5 with a single straight-line invariant — closed, dwarf-worked, not
 superseded/dropped/`delivers:`-labeled, no ancestry-verified LANDED tip → file an Ops
 incident; otherwise leave the bead alone — and deleted all 15 old suites plus
 `test-content-landed-no-reopen.sh` and `test-landed-stays-landed.sh` itself, replacing them
@@ -339,7 +339,7 @@ Gaps filled directly in `test-hel.sh`: HELD (including the mid-send recheck insi
 `send_branch`, exercised by calling it directly now that `hel.sh` carries the same
 `BASH_SOURCE[0] != $0` guard `landing.sh`/`pilgrimage.sh` already do), UNADOPTED, pass-2
 orphaned-worktree SENT, legacy `.landing`/`.rebase` RETIRED, SKIP for an unresolvable land
-ref, the remote branch delete and `branch:` label removal (with the aeon log confirmed
+ref, the remote branch delete and `branch:` label removal (with the dwarf log confirmed
 kept), and the FAILED/non-zero-exit path (a worktree whose `.git` pointer is corrupted, so
 salvage refuses rather than guessing the tree is clean).
 

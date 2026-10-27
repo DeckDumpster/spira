@@ -1,6 +1,6 @@
 //! The bead-store operations heimdall needs, above the raw seam: list-by-label, create,
 //! update, close, label add/remove, reopen. A trait so the reconciliation logic
-//! (`alerts.rs`) can be driven by an in-memory fake in tests, exactly aeon's own `Bd` port.
+//! (`alerts.rs`) can be driven by an in-memory fake in tests, exactly dwarf's own `Bd` port.
 
 use serde::Deserialize;
 use serde_json::Value;

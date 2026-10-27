@@ -33,7 +33,7 @@ done
 "#;
 
 /// `PARTS`/`ALL_PARTS`'s shared line shape: `<name>|<labels-csv>|<exclude-csv>\n`. A rune
-/// with no labels at all (a manual-summon persona) is skipped — lib.sh's own `[ -n "$inc" ]`
+/// with no labels at all (a manual-call persona) is skipped — lib.sh's own `[ -n "$inc" ]`
 /// guard.
 fn parts_line(name: &str, labels: &str, exclude: &str) -> Option<String> {
     if labels.is_empty() {
@@ -460,7 +460,7 @@ impl<'a> Sentinel<'a> {
                 &format!("branch {} squatted by {}'s worktree at {}", c.branch, c.holder_id, c.holder_path),
             );
             let note = format!(
-                "Parked by detect_branch_collisions: recorded branch {} is checked out in {}'s worktree at {}, not this bead's own canonical path. Every summon reaches aeon.sh's law-one-aeon-one-worktree refusal (or a no-op self-correct, when this bead's own default branch is the squatted one) before a session can start, and nothing about the input changes on retry. Held with an ask (and labelled overseer) so dispatch stops spending a claim here — free {} or correct the branch: label, then withdraw the ask (spira-lc withdraw-ask {}).",
+                "Parked by detect_branch_collisions: recorded branch {} is checked out in {}'s worktree at {}, not this bead's own canonical path. Every call reaches dwarf.sh's law-one-dwarf-one-worktree refusal (or a no-op self-correct, when this bead's own default branch is the squatted one) before a session can start, and nothing about the input changes on retry. Held with an ask (and labelled overseer) so dispatch stops spending a claim here — free {} or correct the branch: label, then withdraw the ask (spira-lc withdraw-ask {}).",
                 c.branch, c.holder_id, c.holder_path, c.holder_path, c.id
             );
             self.bd().quiet(self.h, &["note", &c.id, "--stdin"], Some(&note));
@@ -541,6 +541,6 @@ mod tests {
     #[test]
     fn parts_line_skips_a_rune_with_no_labels() {
         assert_eq!(parts_line("builder", "spira,plan", "spira-poison"), Some("builder|spira,plan|spira-poison\n".to_string()));
-        assert_eq!(parts_line("human", "", ""), None, "a manual-summon persona contributes no partition");
+        assert_eq!(parts_line("human", "", ""), None, "a manual-call persona contributes no partition");
     }
 }

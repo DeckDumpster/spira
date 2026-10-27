@@ -89,7 +89,7 @@ run() {
         FORGE_LOG="$FORGE_LOG" \
         RUNS_FILE="$RUNS_FILE" \
         CANCEL_FAIL="$CANCEL_FAIL" \
-        BEADS_ACTOR="aeon-abandontest" \
+        BEADS_ACTOR="dwarf-abandontest" \
         SPIRA_EVENT_COOLDOWN=0 \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_HOME="$SH" queue "$@" 2>&1
@@ -188,9 +188,9 @@ real_run() {
 
 testdb_reset
 testdb_seed <<'JSONL'
-{"id":"sp-ej01","title":"ej01","status":"closed","issue_type":"task","labels":[],"assignee":"aeon-someone","updated_at":"2026-09-17T00:00:00Z","closed_at":"2026-09-17T00:00:00Z"}
+{"id":"sp-ej01","title":"ej01","status":"closed","issue_type":"task","labels":[],"assignee":"dwarf-someone","updated_at":"2026-09-17T00:00:00Z","closed_at":"2026-09-17T00:00:00Z"}
 {"id":"sp-ej02","title":"ej02","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-17T00:00:00Z","closed_at":"2026-09-17T00:00:00Z"}
-{"id":"sp-ab01","title":"ab01","status":"closed","issue_type":"task","labels":[],"assignee":"aeon-holder","updated_at":"2026-09-17T00:00:00Z","closed_at":"2026-09-17T00:00:00Z"}
+{"id":"sp-ab01","title":"ab01","status":"closed","issue_type":"task","labels":[],"assignee":"dwarf-holder","updated_at":"2026-09-17T00:00:00Z","closed_at":"2026-09-17T00:00:00Z"}
 {"id":"sp-ab02","title":"ab02","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-17T00:00:00Z","closed_at":"2026-09-17T00:00:00Z"}
 JSONL
 
@@ -212,7 +212,7 @@ comment_out="$(B comments sp-ej01 2>/dev/null || true)"
 echo
 echo "real bd: eject on a CERTIFIED, unbatched bead withdraws it (no open batch at all):"
 testdb_seed <<'JSONL'
-{"id":"sp-ej-cert","title":"ej-cert","status":"closed","issue_type":"task","labels":[],"assignee":"aeon-someone-else","updated_at":"2026-09-17T00:00:00Z","closed_at":"2026-09-17T00:00:00Z"}
+{"id":"sp-ej-cert","title":"ej-cert","status":"closed","issue_type":"task","labels":[],"assignee":"dwarf-someone-else","updated_at":"2026-09-17T00:00:00Z","closed_at":"2026-09-17T00:00:00Z"}
 JSONL
 rm -f "$OPEN_FILE"
 lcfix_seed sp-ej-cert CERTIFIED "$TIP03"
@@ -251,7 +251,7 @@ ab01_st="$(field sp-ab01 status)"
 [ "$ab01_st" = "closed" ] && ok "G7: sp-ab01 bead status untouched by abandon (still closed)" \
     || bad "G7: sp-ab01 status untouched" "got $ab01_st"
 ab01_assignee="$(field sp-ab01 assignee)"
-[ "$ab01_assignee" = "aeon-holder" ] && ok "G7: sp-ab01 assignee untouched by abandon" \
+[ "$ab01_assignee" = "dwarf-holder" ] && ok "G7: sp-ab01 assignee untouched by abandon" \
     || bad "G7: sp-ab01 assignee untouched" "got $ab01_assignee"
 ab01_comments="$(B comments sp-ab01 2>/dev/null || true)"
 want "G7: abandon posted no comment to sp-ab01" "No comments" "$ab01_comments"

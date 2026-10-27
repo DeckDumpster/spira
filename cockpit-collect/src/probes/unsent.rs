@@ -409,7 +409,7 @@ fn value_to_plain(v: &Value) -> String {
 // ---------------------------------------------------------------------------------------
 // The 24h landing funnel: SP_CLOSED/SP_LANDED/SP_UNLANDED_N/SP_STRANDED_N/SP_CERT_N/
 // SP_FUNNEL_DONE_AGE. A closed bead is LANDED only when a commit subject on the base names
-// it (a body mention does not count) — `law-aeon-commits-name-their-bead`.
+// it (a body mention does not count) — `law-dwarf-commits-name-their-bead`.
 // ---------------------------------------------------------------------------------------
 
 fn landing_funnel_section(out: &mut Kv, run: &Path, cfg: &Cfg) {

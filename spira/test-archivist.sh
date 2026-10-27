@@ -363,7 +363,7 @@ _st2="$(sed -n 's/^state=//p' "$T/run/archivist/sess-after.state" 2>/dev/null)"
 is   "the next session was not attempted" "" "$_st2"
 
 # THE PAUSE IS RAISED, so the next pass stops at the sweep-level gate instead of reaching a
-# session at all — and the rest of the harness stops summoning too.
+# session at all — and the rest of the harness stops calling too.
 # NOT THE STUB'S EPOCH. capacity_pause_set refuses a resetsAt that is not in the future and
 # substitutes now + backoff, so the suite's synthetic 1750000000-era clock cannot survive into
 # the file. What is being asserted is that a pause was raised and says who raised it.

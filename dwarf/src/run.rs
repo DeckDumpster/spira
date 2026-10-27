@@ -1,0 +1,1665 @@
+//! The run: decline or claim, build the workspace, render the brief, run the session.
+//! verdict.rs judges what the session left; teardown.rs accounts for it.
+
+use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+use std::time::Duration;
+
+use crate::bd::{self, BeadRow};
+use crate::checkpoint;
+use crate::brief::{self, FixtureInfo, Tokens};
+use crate::claim::{self, Selection, Selector};
+use crate::conf::{self, Conf, Rune, SystemPrompt};
+use crate::decide::{self, WorldStop};
+use crate::ledger::{self, Ledger};
+use crate::ports::{s, Bd, Env, Exec, Git, Seam};
+use crate::restrict;
+use crate::seam::Snapshot;
+use crate::session::{self, Beat, Heartbeat, Launcher, SessionSpec, Stop};
+use crate::stack;
+use crate::trace;
+use crate::util::{self, Out, Sink};
+use crate::worktree;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Mode {
+    Claim,
+    DryRun,
+    Sweep { prompt: Option<String> },
+}
+
+/// Why the work phase stopped early. Every variant still runs the teardown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Abort {
+    /// dwarf.sh's `die`: `FATAL <msg>` on stderr, rc 1.
+    Die(String),
+    /// A plain `exit <n>` inside the armed region.
+    Exit(i32),
+    /// TERM/INT, or the heartbeat's own trip: rc 128+sig.
+    Signal(i32),
+    /// The harness cannot start the session (config it needs is absent): the work is not at
+    /// fault, so the teardown records a harness red and charges no attempt.
+    Harness(String),
+}
+
+pub struct Deps<'a> {
+    pub bd: &'a dyn Bd,
+    pub seam: &'a dyn Seam,
+    pub git: &'a dyn Git,
+    pub exec: &'a dyn Exec,
+    pub launcher: &'a dyn Launcher,
+    pub sink: &'a dyn Sink,
+    pub env: &'a Env,
+    pub clock: &'a (dyn Fn() -> i64 + Sync),
+    /// The call jitter's sleep (sp-f4ig1): one second at a time, the stop flag checked between.
+    pub sleep: &'a (dyn Fn(Duration) + Sync),
+}
+
+/// Everything learned along the way — dwarf.sh's globals, now fields.
+#[derive(Debug, Default)]
+pub struct State {
+    pub dwarf: String,
+    /// The claim holder: `dwarf-<name>@<pid>.<starttime>`, one per process (spira_config::session).
+    pub holder: String,
+    pub bead: String,
+    pub claimed: Option<BeadRow>,
+    pub repo_name: String,
+    pub repo: PathBuf,
+    pub repo_land: String,
+    pub branch: String,
+    pub pidfile: Option<PathBuf>,
+    pub logf: Option<PathBuf>,
+    pub work: Option<PathBuf>,
+    pub base: String,
+    pub base_branch: String,
+    pub base_remote: String,
+    pub base_fq: String,
+    pub world_was_stopped: bool,
+    pub fixture: Option<FixtureInfo>,
+    pub fixture_lib: Option<PathBuf>,
+    pub session_started: bool,
+    pub harness_red: Option<String>,
+    /// The claude session id this run launched or resumed (empty before launch).
+    pub session_id: String,
+    pub session_rc: i32,
+    /// The verdict's `committed`; false until the verdict block ran.
+    pub committed: bool,
+    /// The branch's tip (full hash), read right before the session starts (sp-1zxru-2).
+    /// Empty (never read) or `?` (the read failed) both compare unequal to nothing but
+    /// themselves — [`decide::tip_moved`] treats either as "cannot tell", not as moved.
+    /// Distinct from `committed` (`verdict_committed`'s own job: a commit naming this bead
+    /// ANYWHERE in the window, branch or landing refs, for the close/SOP/groom/eviction
+    /// checks that must see a prior session's work too): this field answers only "did THIS
+    /// session's own turn move the branch" — the Unlanded/NoProgress split needs that
+    /// narrower question, or a branch already ahead from an earlier session reads
+    /// `committed` forever and never lands in NoProgress no matter how many more sessions
+    /// add nothing (sp-iku03, sp-al5ng).
+    pub session_start_tip: String,
+    pub lc_model_restricted: bool,
+    /// The stronger model this claim runs on, and the rejection history its brief carries.
+    pub model_override: Option<String>,
+    pub rejection_brief: String,
+    pub requeue_cause: Option<String>,
+    pub requeue_why: String,
+    pub session_epoch: i64,
+    pub rebase_conflicts: String,
+    pub groom_lines_before: usize,
+    /// The claim's stack proposal (design stacked-dependents-2026-09-28 §1): the certified
+    /// tip of every prerequisite this claim was built on, keyed by prerequisite bead id.
+    /// Empty for a claim that is not stacked on anything.
+    pub stack: std::collections::BTreeMap<String, String>,
+}
+
+/// `spira-lc phase`'s exit for a move the machine refused (not WORKING, not the holder, not forward).
+pub const PHASE_REFUSED: i32 = 3;
+
+pub struct Run<'a> {
+    pub d: Deps<'a>,
+    pub conf: Conf,
+    pub rune: Rune,
+    pub snap: Snapshot,
+    pub mode: Mode,
+    pub ledger: Ledger,
+    pub pid: u32,
+    pub own_unit: String,
+    pub t0: i64,
+    /// `spira-claim`, by name on the launcher's PATH; a field so a test can point it at a fixture.
+    pub claim_bin: String,
+    pub stop: Arc<Stop>,
+    pub hb_shutdown: Arc<AtomicBool>,
+    pub hb_done: Arc<AtomicBool>,
+    pub rune_file: PathBuf,
+    pub s: State,
+}
+
+impl<'a> Run<'a> {
+    pub fn now(&self) -> i64 {
+        (self.d.clock)()
+    }
+
+    pub fn log(&self, msg: &str) {
+        self.d.sink.out(&util::log_line(self.now(), msg));
+    }
+
+    pub fn die_line(&self, msg: &str) {
+        self.d.sink.err(&util::log_line(self.now(), &format!("FATAL {msg}")));
+    }
+
+    /// A lib.sh function whose stdout is the answer; its stderr is passed through.
+    pub fn sv(&self, f: &str, args: &[String]) -> Out {
+        let o = self.d.seam.call(f, args);
+        for l in o.stderr.lines() {
+            self.d.sink.err(l);
+        }
+        o
+    }
+
+    /// A lib.sh function called for its effect; what it prints is passed through.
+    pub fn sdo(&self, f: &str, args: &[String]) -> i32 {
+        let o = self.d.seam.call(f, args);
+        for l in o.stdout.lines() {
+            self.d.sink.out(l);
+        }
+        for l in o.stderr.lines() {
+            self.d.sink.err(l);
+        }
+        o.code
+    }
+
+    pub fn note(&self, text: &str) {
+        bd::note(self.d.bd, &self.s.bead, text);
+    }
+
+    pub fn release(&self) {
+        self.sdo("release_own_claim", &s(&[&self.s.bead]));
+    }
+
+    /// Record this run's next phase on the bead's lifecycle row. Best-effort: a refusal (the
+    /// row already left WORKING, or the machine is unreachable) never ends the run.
+    pub fn phase(&self, name: &str) {
+        let o = self.d.exec.exec("spira-lc", &s(&["phase", &self.s.bead, &self.s.holder, name]), None, None);
+        if o.code != 0 && o.code != crate::run::PHASE_REFUSED {
+            self.log(&format!("{}: lifecycle phase {name} not recorded (rc={}): {}", self.s.bead, o.code, o.first_err_line()));
+        }
+    }
+
+    pub fn bead_reopen(&self, cause: &str, note: &str) -> i32 {
+        self.sdo("bead_reopen", &s(&[&self.s.bead, cause, note]))
+    }
+
+    /// The digest of the bead's latest `fast-tier-red` fact; empty when it has none.
+    pub fn last_fast_tier_red(&self) -> String {
+        let o = self.d.exec.exec("spira-lc", &s(&["facts", "--ids", &self.s.bead, "--kinds", crate::fast_tier::KIND]), None, None);
+        if !o.success() {
+            return String::new();
+        }
+        checkpoint::parse_facts(&o.stdout).into_iter().rev().find(|f| f.kind == crate::fast_tier::KIND).map(|f| f.cause).unwrap_or_default()
+    }
+
+    pub fn record_fact(&self, kind: &str, cause: &str) {
+        let o = self.d.exec.exec("spira-lc", &s(&["fact", &self.s.bead, "--kind", kind, "--actor", &self.s.dwarf, "--cause", cause]), None, None);
+        if !o.success() {
+            self.log(&format!("{}: {} could not record {kind} fact (rc={})", self.f(), self.s.bead, o.code));
+        }
+    }
+
+    pub fn bump_requeue(&self, cause: &str) {
+        self.sdo("bump_requeue", &s(&[&self.s.bead, cause]));
+    }
+
+    pub fn home(&self) -> &Path {
+        &self.conf.home
+    }
+
+    pub fn run_dir(&self) -> &Path {
+        &self.conf.run
+    }
+
+    pub fn f(&self) -> &str {
+        &self.rune.name
+    }
+
+    /// `ledger_done <rc> <status>`: the line, then tsd and the rapid-recur check.
+    pub fn ledger_done(&self, rc: i32, status: &str) {
+        let fields = ledger::session_result_fields(self.s.logf.as_deref(), &self.conf.trace_mark());
+        self.ledger.done(self.now(), self.f(), &self.s.bead, rc, status, &fields);
+        trace::tsd_dwarf_session(self.d.exec, &self.run_dir().display().to_string(), &self.s.bead, self.f(), rc, status, &fields);
+        self.rapid_recur_check();
+    }
+
+    /// `rapid_recur_check`: three (SPIRA_RAPID_RECUR_THRESHOLD) consecutive sub-10s `done`
+    /// lines for this bead are a setup loop that recurs identically on every retry
+    /// (law-a-retry-must-change-an-input) — park with the ask label and `overseer` rather
+    /// than keep re-calling into the same fault. Reads the ledger the `done` line above
+    /// just wrote.
+    fn rapid_recur_check(&self) {
+        let id = self.s.bead.clone();
+        if id.is_empty() {
+            return;
+        }
+        let threshold = self.conf.i("SPIRA_RAPID_RECUR_THRESHOLD").max(0) as usize;
+        if threshold == 0 {
+            return;
+        }
+        let Ok(text) = std::fs::read_to_string(self.conf.ledger()) else { return };
+        let needle = regex::Regex::new(&format!(r" done \S+ {} ", regex::escape(&id))).unwrap();
+        let matches: Vec<&str> = text.lines().filter(|l| needle.is_match(l) && !l.contains(" status=worktree-held ")).collect();
+        let tail = &matches[matches.len().saturating_sub(threshold)..];
+        let count = decide::rapid_recur_streak(tail);
+        if count < threshold as i64 {
+            return;
+        }
+        // Already parked is the row's ask hold, never a label (sp-psztcc).
+        if self.lc_bead(&id).is_some_and(|r| r.held("ask")) {
+            return;
+        }
+        self.log(&format!("{}: {id} RAPID-RECUR: {count} consecutive sub-10s runs — parking, a setup loop cannot be learned from a retry", self.f()));
+        let _ = self.d.bd.bd(&s(&["label", "add", &id, "overseer"]));
+        // spira-lc's caller verb, as in verdict.rs's eviction-race escalation.
+        let _ = self.hold_unless_terminal(&id, "ask", &format!("rapid-recur: {count} consecutive sub-10s dwarf calls"), self.f());
+        bd::note(
+            self.d.bd,
+            &id,
+            &format!(
+                "RAPID-RECUR: {count} consecutive sub-10s dwarf runs on {id}. Each call dies before meaningful work, suggesting a setup loop — the defect recurs identically on every retry. Parked with an ask hold (and the overseer label) instead of only annotated: a fourth call cannot learn anything the third did not. Check: worktree path, conflicting branches, or box state. Details in dwarf-ledger."
+            ),
+        );
+        self.sdo(
+            "spira_event",
+            &s(&["dwarf.rapid", &id, &format!("Rapid-recur: {id} — {count} consecutive sub-10s dwarf calls (setup loop) — parked")]),
+        );
+    }
+
+    /// A bead rejected twice claims on the persona's stronger model with its history in the
+    /// brief; at the third rejection it is released and held for the Concierge instead of run.
+    /// A persona that requires a build spec stops at once on a bead without one: the bead is
+    /// held with an ask for the Concierge, and no session starts to invent a mechanism.
+    fn build_spec_gate(&mut self, c: &claim::Claimed) -> Option<i32> {
+        if !self.rune.requires_build_spec || bead::has_build_spec(c.row.description.as_deref().unwrap_or("")) {
+            return None;
+        }
+        let id = &c.id;
+        let reason = format!("no build spec: {id} has no `{}` section naming what to build. Choosing a mechanism is design work: file the outcome --for spike for a proposed spec, or add the section.", bead::BUILD_HEADING);
+        self.release();
+        let _ = self.hold_unless_terminal(id, "ask", &reason, self.f());
+        self.note(&reason);
+        self.log(&format!("{}: {id} {reason}", self.f()));
+        self.ledger_done(0, "no-build-spec");
+        Some(0)
+    }
+
+    fn escalation_gate(&mut self, id: &str) -> Option<i32> {
+        use spira_config::escalation::{self, Tier};
+        let o = self.d.exec.exec("spira-claim", &s(&["rejections", id]), None, None);
+        let st: escalation::Standing = o.success().then(|| serde_json::from_str(o.stdout.trim()).ok()).flatten()?;
+        match escalation::tier(&st) {
+            Tier::Normal => None,
+            Tier::Stronger => {
+                let model = conf::persona_escalation_model(self.f(), &self.conf.s("SPIRA_TOML"))?;
+                self.log(&format!("{}: {id} rejected {} times — claim runs on {model}", self.f(), st.rejections));
+                self.record_fact(escalation::ESCALATED, &format!("model={model} rejections={}", st.rejections));
+                self.s.rejection_brief = escalation::history_brief(&st.history, &model);
+                spira_otel::run::event("escalated", &[("rune", self.f()), ("model", &model)]);
+                self.s.model_override = Some(model);
+                None
+            }
+            Tier::Hold => {
+                spira_otel::run::event("held", &[("rune", self.f())]);
+                self.release();
+                let reason = escalation::hold_reason(st.stronger_rejections);
+                self.record_fact(escalation::ESCALATED, &format!("hold rejections={}", st.stronger_rejections));
+                let _ = self.hold_unless_terminal(id, "manual", &reason, escalation::HOLD_ACTOR);
+                self.note(&reason);
+                self.log(&format!("{}: {id} {reason}", self.f()));
+                self.ledger_done(0, "escalation-hold");
+                Some(0)
+            }
+        }
+    }
+
+    fn check_stop(&self) -> Result<(), Abort> {
+        match self.stop.signalled() {
+            Some(sig) => Err(Abort::Signal(sig)),
+            None => Ok(()),
+        }
+    }
+
+    /// `capacity_paused`, in-process now (wave 4.26 — family K's home is this crate; dwarf
+    /// is the probe's one owner). Shared by `decline()` and `sweep()`.
+    pub(crate) fn capacity_check(&self) -> crate::capacity::Verdict {
+        let v = crate::capacity::check_and_probe(&self.conf, self.d.exec, self.now());
+        for l in &v.log {
+            self.log(l);
+        }
+        if v.clear_file {
+            let _ = std::fs::remove_file(self.conf.capacity_pause());
+        }
+        v
+    }
+
+    fn take_name(&mut self) {
+        // In-process (wave 4.23, sp-0ffox): this crate is dwarf_name_take's own owning
+        // crate — the ONLY caller besides this one is sweep.rs's own copy of the same
+        // call, so there is no cross-crate reason left to round-trip through lib.sh.
+        let name = crate::naming::dwarf_name_take(self.run_dir(), self.f());
+        let actor = format!("dwarf-{name}");
+        let holder = spira_config::session::own_holder(&actor);
+        let env = self.d.env;
+        env.set("SPIRA_DWARF", &name);
+        env.set("BEADS_ACTOR", &holder);
+        env.set("GIT_AUTHOR_NAME", &actor);
+        env.set("GIT_AUTHOR_EMAIL", &format!("{actor}@spira.local"));
+        env.set("GIT_COMMITTER_NAME", &actor);
+        env.set("GIT_COMMITTER_EMAIL", &format!("{actor}@spira.local"));
+        self.s.dwarf = name;
+        self.s.holder = holder;
+    }
+
+    // ==== the whole run ================================================================
+
+    pub fn main(&mut self) -> i32 {
+        if let Err(lines) = conf::fenced(self.f(), &self.rune.labels, &self.conf.s("SPIRA_SCOPE_LABEL")) {
+            for l in lines {
+                self.log(&l);
+            }
+            self.die_line(&format!("{}: refusing to claim behind an unfenced predicate", self.f()));
+            return 1;
+        }
+        self.ledger.trim();
+        self.ledger.born(self.now(), self.f(), self.pid);
+        if let Mode::Sweep { prompt } = self.mode.clone() {
+            return self.sweep(prompt);
+        }
+        if let Some(code) = self.decline() {
+            return code;
+        }
+        if self.mode == Mode::DryRun {
+            return self.dry_run();
+        }
+        if let Err(code) = self.claim() { return code }
+        spira_otel::run::event("call", &[("rune", self.f())]);
+        // ---- armed: every exit from here runs the teardown ----
+        std::thread::scope(|sc| {
+            let rc = match self.work(sc) {
+                Ok(()) => 0,
+                Err(Abort::Die(m)) => {
+                    self.die_line(&m);
+                    1
+                }
+                Err(Abort::Harness(m)) => {
+                    self.die_line(&m);
+                    self.s.harness_red = Some(m);
+                    1
+                }
+                Err(Abort::Exit(n)) => n,
+                Err(Abort::Signal(sig)) => 128 + sig,
+            };
+            self.teardown(rc)
+        })
+    }
+
+    /// The capacity / halted / draining / paused declines: Some(exit code) to stop.
+    fn decline(&mut self) -> Option<i32> {
+        let own = self.own_unit.clone();
+        let have: i64 = self.sv("dwarf_count", &s(&[self.f(), &own])).text().trim().parse().unwrap_or(0);
+        let mut limit = self.rune.max_concurrent as i64;
+        let mut pool = String::new();
+        if self.rune.elastic {
+            // SPIRA_MAX_DWARVES is registered (a real spira/conf.d default, 4) — reached
+            // through `Conf::i`, never `self.conf.v` directly: that raw map read used to
+            // let an absent/unparseable value silently skip this whole branch instead of
+            // naming the key (per Ryan 2026-10-05, round 2: a missing key is an error).
+            let max = self.conf.i("SPIRA_MAX_DWARVES");
+            limit = max;
+            pool = (if max > have { max - have } else { 0 }).to_string();
+        }
+        let free = self.sv("rune_free", &s(&[self.f(), &pool, &own])).text();
+        if free.trim().parse::<i64>().ok() == Some(0) {
+            self.log(&format!("{}: at capacity ({have}/{limit}), not calling", self.f()));
+            self.ledger.awake(self.now(), self.f(), "capacity");
+            return Some(0);
+        }
+        if self.run_dir().join("world.halted").is_file() {
+            self.log(&format!("{}: halted — claiming nothing (world.sh start to lift)", self.f()));
+            self.ledger.awake(self.now(), self.f(), "halted");
+            return Some(0);
+        }
+        if self.run_dir().join("world.draining").is_file() {
+            self.log(&format!("{}: draining — claiming nothing (world.sh resume to lift)", self.f()));
+            self.ledger.awake(self.now(), self.f(), "draining");
+            return Some(0);
+        }
+        match self.capacity_check().state {
+            crate::capacity::Paused::Open => {}
+            crate::capacity::Paused::Paused(left) => {
+                self.log(&format!("{}: the account is out of capacity for another {left}s — claiming nothing", self.f()));
+                self.ledger.awake(self.now(), self.f(), "paused");
+                return Some(0);
+            }
+            crate::capacity::Paused::Unknown => {
+                self.log(&format!("{}: the account's capacity pause file could not be read — claiming nothing (failing closed)", self.f()));
+                self.ledger.awake(self.now(), self.f(), "paused");
+                return Some(0);
+            }
+        }
+        None
+    }
+
+    /// The ready set, as JSON: spira-claim's `rune-ready --json`, the lifecycle machine's
+    /// claimable rows in this rune's partition — the rows CHECK 7 counted when it called
+    /// this dwarf; bd supplies only their content.
+    fn ready_set(&self, tries: u32, delay: Duration) -> Result<String, String> {
+        let tries = tries.max(1);
+        let mut last = Out::default();
+        for i in 1..=tries {
+            last = self.d.seam.call("_dwarf_ready_set", &[]);
+            if last.success() {
+                return Ok(util::json_only(&last.stdout));
+            }
+            if i < tries {
+                (self.d.sleep)(delay);
+            }
+        }
+        Err(format!("rune-ready: query failed after {tries} attempt(s): {}", last.first_err_line()))
+    }
+
+    /// `spira-claim stack <id>` — the stack this claim would carry, or an empty, unstacked
+    /// proposal when the binary is missing or its answer does not parse: a claim never
+    /// blocks on this the way it blocks on `lc_claim_bead` itself, since the worst case is
+    /// only that this round misses the speed the stack would have bought it.
+    fn stack_proposal(&self, id: &str, who: &str) -> stack::Proposal {
+        let claim_bin = self.claim_bin.clone();
+        let o = self.d.exec.exec(&claim_bin, &s(&["stack", id]), None, None);
+        match stack::parse_proposal(&o.stdout) {
+            Some(p) => p,
+            None => {
+                self.log(&format!("{who}: {id} — spira-claim stack did not answer ({}) — proceeding unstacked", o.first_err_line()));
+                stack::Proposal::default()
+            }
+        }
+    }
+
+    fn dry_run(&self) -> i32 {
+        self.log(&format!("{}: dry run — candidates:", self.f()));
+        let rows: serde_json::Value = self.ready_set(1, Duration::ZERO).ok().and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default();
+        for r in rows.as_array().into_iter().flatten().take(10) {
+            self.d.sink.out(r["id"].as_str().unwrap_or("?"));
+        }
+        0
+    }
+
+    /// A WORKING bead this name holds under another session that is still running: claiming
+    /// a second would silently double-hold. A dead session's row is the reaper's, not a refusal.
+    fn double_hold(&self, mine: &str) -> Option<String> {
+        let o = self.d.exec.exec("spira-lc", &s(&["list-all"]), None, None);
+        if o.code != 0 {
+            return None;
+        }
+        o.stdout.lines().find_map(|l| {
+            let mut f = l.split('\t');
+            let (id, state, holder) = (f.next()?, f.next()?, f.next()?);
+            let live = !spira_config::session::session_gone(holder, &spira_config::admission::RealProcs);
+            (state == "WORKING" && live && spira_config::session::same_name_other_session(holder, mine)).then(|| id.to_string())
+        })
+    }
+
+    /// The lifecycle claim: a Claim event per ranked candidate, carrying its stack proposal,
+    /// until one applies. bd is read afterwards for the bead's content only. Ok(None): idle.
+    fn lc_claim(&mut self, ids: &[String], resumable: &[String], tier: Option<&str>, who: &str) -> Result<Option<claim::Claimed>, i32> {
+        let holder = self.s.holder.clone();
+        if let Some(held) = self.double_hold(&holder) {
+            self.log(&format!("{who}: refusing to claim — {held} is already WORKING under another live session of {}", self.s.dwarf));
+            return Err(1);
+        }
+        let until = (self.now() + self.rune.lease_seconds()).to_string();
+        let mut stacks = std::collections::BTreeMap::new();
+        let (won, logs, unreachable) = claim::lc_claim_loop(ids, resumable, tier, who, |id| {
+            let p = self.stack_proposal(id, who);
+            let rc = self.sdo(
+                "lc_claim_bead",
+                &s(&[id, &holder, &until, &stack::stack_json(&p.stack), &p.stack_depth.to_string(), &p.stack_max_depth.to_string(), &self.rune.name]),
+            );
+            stacks.insert(id.to_string(), p.stack);
+            rc
+        });
+        for l in logs {
+            self.log(&l);
+        }
+        let Some(id) = won else {
+            if unreachable {
+                self.log(&format!("{}: claim-error the lifecycle machine answered no claim — not reporting idle for a claim that never completed", self.f()));
+                self.ledger.awake(self.now(), self.f(), "claim-error lifecycle machine unreachable");
+                return Err(1);
+            }
+            return Ok(None);
+        };
+        self.s.stack = stacks.remove(&id).unwrap_or_default();
+        let tries = self.conf.i("SPIRA_CLAIM_RETRIES").max(1) as u32;
+        let delay = Duration::from_secs(self.conf.i("SPIRA_CLAIM_RETRY_DELAY_S").max(0) as u64);
+        let mut raw = String::new();
+        let mut row = None;
+        for i in 1..=tries {
+            raw = bd::json(self.d.bd, &["show", &id]);
+            row = bd::first_row(&raw).filter(|r| r.id == id);
+            if row.is_some() {
+                break;
+            }
+            if i < tries {
+                (self.d.sleep)(delay);
+            }
+        }
+        match row {
+            Some(row) => {
+                let repo = row.label_value("repo:").unwrap_or_default();
+                Ok(Some(claim::Claimed { id, repo, row, raw }))
+            }
+            _ => {
+                self.s.bead = id.clone();
+                self.release();
+                self.log(&format!("{who}: claimed {id}, but bd returned no record of it — released"));
+                self.ledger.awake(self.now(), self.f(), &format!("claim-error no bd record for {id}"));
+                Err(1)
+            }
+        }
+    }
+
+    /// The holds on a just-claimed row that make it unclaimable: the Claim event does not
+    /// read holds, so a hold applied between the ready read and the claim is caught here.
+    fn blocking_holds(&self, id: &str) -> Vec<String> {
+        let o = self.d.exec.exec("spira-lc", &s(&["holds", id]), None, None);
+        o.stdout.lines().map(str::trim).filter(|h| !h.is_empty() && *h != "wait").map(String::from).collect()
+    }
+
+    fn claim(&mut self) -> Result<(), i32> {
+        self.take_name();
+        let tries = self.conf.i("SPIRA_CLAIM_RETRIES").max(1) as u32;
+        let delay = Duration::from_secs(self.conf.i("SPIRA_CLAIM_RETRY_DELAY_S").max(0) as u64);
+        let ready = match self.ready_set(tries, delay) {
+            Ok(j) => j,
+            Err(e) => {
+                let e = if e.is_empty() { "bd gave no reason".to_string() } else { e };
+                self.log(&format!("{}: claim-error {e} — retries exhausted, not reporting idle for a query that never completed", self.f()));
+                self.ledger.awake(self.now(), self.f(), &format!("claim-error {e}"));
+                return Err(1);
+            }
+        };
+        let ready = if ready.trim().is_empty() { "[]".to_string() } else { ready };
+        let claim_bin = self.claim_bin.clone();
+        let who = format!("{}/{}", self.f(), self.s.dwarf);
+        let sel = Selector { exec: self.d.exec, git: self.d.git, claim_bin: &claim_bin, rune: &self.rune.name, scratch: &self.conf.run, pid: self.pid, repos: &self.conf.repos };
+        let (ids, resumable, tier) = match sel.select(&ready) {
+            Selection::ClaimError { log, ledger } => {
+                self.log(&log);
+                self.ledger.awake(self.now(), self.f(), &ledger);
+                return Err(1);
+            }
+            Selection::Ranked { ids, resumable, tier } => (ids, resumable, tier),
+        };
+        let claimed = self.lc_claim(&ids, &resumable, tier.as_deref(), &who)?;
+        let Some(c) = claimed else {
+            self.log(&format!("{}: nothing ready to claim", self.f()));
+            self.ledger.awake(self.now(), self.f(), "idle");
+            return Err(0);
+        };
+        self.s.bead = c.id.clone();
+        self.s.claimed = Some(c.row.clone());
+        self.log(&format!("{who}: claimed {}", c.id));
+        self.ledger.awake(self.now(), self.f(), &c.id);
+        self.sdo("spira_event", &s(&["dwarf.claimed", &c.id, &format!("{} claimed {}", self.s.dwarf, c.id), &format!("called from the {} rune", self.f())]));
+
+        // The baseline verdict compares the description against at close. A metadata write, so
+        // not a description edit as bdq's live-claim fence reads it.
+        if let Some(h) = bead::claimdesc::desc_hash(&bd::json(self.d.bd, &["show", &c.id])) {
+            let _ = self.d.bd.bd(&s(&["update", &c.id, "--set-metadata", &format!("{}={h}", bead::claimdesc::HASH_KEY)]));
+        }
+
+        // Read-after-claim: the predicate and the claim are not atomic.
+        let held = self.blocking_holds(&c.id);
+        if !held.is_empty() {
+            self.release();
+            self.log(&format!("{who}: {} carries a {} hold — released immediately after claim (race with the hold)", c.id, held.join(",")));
+            self.ledger_done(0, "hold-raced");
+            return Err(0);
+        }
+
+        if let Some(rc) = self.build_spec_gate(&c) {
+            return Err(rc);
+        }
+
+        if let Some(rc) = self.escalation_gate(&c.id) {
+            return Err(rc);
+        }
+
+        let occupants = worktree::live_occupants(std::path::Path::new("/proc"), &self.run_dir().join("worktree").join(&c.id), self.pid);
+        if !occupants.is_empty() {
+            self.release();
+            let pids = occupants.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
+            self.log(&format!("{who}: {} worktree is held by live process(es) {pids} — released, one dwarf per worktree", c.id));
+            self.note(&format!("Released by dwarf: live process(es) {pids} have their working directory in this bead's worktree. Claiming it would put two sessions in one checkout; it is claimable again once they exit."));
+            self.ledger_done(0, "worktree-held");
+            return Err(0);
+        }
+
+        // ---- world-stop fence ----
+        let label = self.conf.s("SPIRA_WORLD_STOP_LABEL");
+        let has = bd::show(self.d.bd, &c.id).is_some_and(|r| r.has_label(&label));
+        let live = self.live_peers();
+        let skip = self.conf.set_nonempty("SPIRA_WORLD_STOP_SKIP");
+        match decide::world_stop(has, &live, skip) {
+            WorldStop::Refuse => {
+                self.release();
+                self.log(&format!("{who}: {} carries {label} — live dwarves present ({live}) — released. Set SPIRA_WORLD_STOP_SKIP=1 to override.", c.id));
+                self.note(&format!("Released by dwarf.sh: this bead carries {label} and requires the world halted while it runs. Live dwarves are present ({live}) and the world was not stopped. Wait for them to finish, or set SPIRA_WORLD_STOP_SKIP=1 to proceed with live dwarves."));
+                self.ledger_done(0, "world-stop-fence"); // literal-ok: ledger status name, not a label
+                return Err(0);
+            }
+            WorldStop::Stop => {
+                let extra = if live.is_empty() { String::new() } else { format!(" (SPIRA_WORLD_STOP_SKIP set, live: {live})") };
+                self.log(&format!("{who}: {} carries {label} — stopping the world before this session{extra}", c.id));
+                if !self.d.exec.exec("world.sh", &s(&["stop", "--why", &format!("{label} bead {}", c.id)]), None, None).success() {
+                    self.log(&format!("{who}: {} world.sh stop returned non-zero — proceeding", c.id));
+                }
+                self.s.world_was_stopped = true;
+            }
+            WorldStop::None => {}
+        }
+
+        // ---- the repository comes from the bead; an unknown name is refused ----
+        // spira_config::repos (sp-37rmg, "wave 4.11") in-process, instead of a bash seam
+        // call per lookup — repo_root/repo_land/spira_home_repo were the most-called family
+        // in the whole decomposition.
+        self.s.repo_name = if c.repo.is_empty() { self.conf.repos.home_repo().to_string() } else { c.repo.clone() };
+        let root = self.conf.repos.root(&self.s.repo_name);
+        let repo = root.clone().map(PathBuf::from).unwrap_or_default();
+        if root.is_none() || !repo.join(".git").exists() {
+            self.log(&format!("{}: {} names repo:{}, which repo-map does not resolve to a checkout", self.f(), c.id, self.s.repo_name));
+            self.sdo("park_unmapped", &s(&[&c.id, &self.s.repo_name]));
+            self.ledger_done(1, "unmapped-repo");
+            // DESIGN.md §8.2: the world stopped for this bead is started again even here.
+            self.restore_world();
+            return Err(1);
+        }
+        self.s.repo = repo;
+        self.s.repo_land = self.conf.repos.land(&self.s.repo_name);
+        self.d.env.set("SPIRA_INCIDENT_REPO", &self.s.repo_name);
+        self.log(&format!("{}: {} works repo:{} at {} (land={})", self.f(), c.id, self.s.repo_name, self.s.repo.display(), self.s.repo_land));
+
+        // ---- the stacked base: a conflict here is a claim refusal, not a work-session
+        // failure, so it is decided now, before work() ever arms the session (an unresolvable
+        // base ref itself is left to work()'s own base block below, which refuses it exactly
+        // as it always has — this check only ever fires when there is a stack to merge).
+        if !self.s.stack.is_empty() {
+            // spira_config::repos (sp-o88bx, "wave 4.12") in-process, instead of the
+            // _dwarf_base/qualify_base_ref bash seam.
+            let base = spira_config::repos::landref(&self.conf.repos, &self.s.repo.display().to_string()).unwrap_or_default();
+            if !base.is_empty() {
+                let mut base_fq = spira_config::repos::qualify_base_ref(&base, &self.s.repo.display().to_string());
+                if base_fq.is_empty() {
+                    base_fq = base.clone();
+                }
+                match stack::build_stacked_base(self.d.git, &self.s.repo, &base_fq, &self.s.stack) {
+                    Ok(merged) => self.s.base_fq = merged,
+                    Err(conflict) => {
+                        self.release();
+                        let note = conflict.note();
+                        self.bump_requeue("stack-conflict");
+                        for prereq in [&conflict.a, &conflict.b] {
+                            if let Some(tip) = self.s.stack.get(prereq) {
+                                spira_config::stack_conflict::record(&self.run_dir(), prereq, tip);
+                                bd::note(
+                                    self.d.bd,
+                                    prereq,
+                                    &format!(
+                                        "{note} — a dependent's claim of {} could not merge this prerequisite's tip with another's cleanly, and was refused. The stack stays held until one of the two conflicting prerequisites changes.",
+                                        c.id
+                                    ),
+                                );
+                            }
+                        }
+                        self.log(&format!("{who}: {} — {note} — claim refused, stack stays held", c.id));
+                        self.note(&format!("Released by dwarf.sh: {note} while building this claim's stacked base. The stack stays held; it becomes claimable again once one of the conflicting prerequisites changes."));
+                        self.ledger_done(0, "stack-conflict");
+                        return Err(0);
+                    }
+                }
+            }
+        }
+
+        // ---- the branch is recorded on the bead ----
+        let st = self.d.bd.bd(&s(&["state", &c.id, "branch"]));
+        let mut br = if st.success() { st.text() } else { String::new() };
+        if br.starts_with('(') {
+            br.clear();
+        }
+        if br.is_empty() {
+            br = format!("spira/{}", c.id);
+            let _ = self.d.bd.bd(&s(&["set-state", &c.id, &format!("branch={br}")]));
+            self.log(&format!("{who}: {} takes branch {br}", c.id));
+        } else {
+            self.log(&format!("{who}: {} resumes recorded branch {br}", c.id));
+        }
+        self.s.branch = br;
+
+        // ---- identity on disk, and the attempt's segment ----
+        let pidfile = self.run_dir().join(format!("dwarf-{}-{}.pid", self.f(), c.id));
+        let logf = self.run_dir().join(format!("{}.log", c.id));
+        let _ = std::fs::write(&pidfile, format!("{}\n", self.pid));
+        strand::probe::write_lease(&pidfile, self.now() + self.rune.lease_seconds());
+        let _ = std::fs::write(pidfile.with_extension("name"), &self.s.dwarf);
+        let mark = ledger::trace_mark_line(&logf, &self.s.dwarf, &self.conf.trace_mark(), self.now());
+        append(&logf, &format!("{mark}\n"));
+        self.s.pidfile = Some(pidfile);
+        self.s.logf = Some(logf);
+        Ok(())
+    }
+
+    /// Other live dwarves' pidfile names; a pidfile whose lease has run out is removed.
+    fn live_peers(&self) -> String {
+        let mut names = Vec::new();
+        let Ok(rd) = std::fs::read_dir(self.run_dir()) else { return String::new() };
+        let mut files: Vec<PathBuf> = rd
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| {
+                let n = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                n.starts_with("dwarf-") && n.ends_with(".pid")
+            })
+            .collect();
+        files.sort();
+        for pf in files {
+            if !strand::probe::dwarf_alive(&pf) {
+                let _ = std::fs::remove_file(&pf);
+                let _ = std::fs::remove_file(strand::probe::lease_file(&pf));
+                continue;
+            }
+            names.push(pf.file_stem().and_then(|n| n.to_str()).unwrap_or("").to_string());
+        }
+        names.join(", ")
+    }
+
+    pub fn restore_world(&mut self) {
+        if self.s.world_was_stopped {
+            self.s.world_was_stopped = false;
+            self.log(&format!("{}: {} {} bead — starting the world", self.f(), self.s.bead, self.conf.s("SPIRA_WORLD_STOP_LABEL")));
+            let _ = self.d.exec.exec("world.sh", &s(&["start"]), None, None);
+        }
+    }
+
+    // ==== the armed region =============================================================
+
+    fn work<'s>(&mut self, sc: &'s std::thread::Scope<'s, '_>) -> Result<(), Abort>
+    where
+        'a: 's,
+    {
+        let bead = self.s.bead.clone();
+        let mail = self.conf.s("SPIRA_MAIL");
+        if !mail.is_empty() {
+            for sub in ["new", "cur", "tmp"] {
+                let _ = std::fs::create_dir_all(Path::new(&mail).join(format!("dwarf-{bead}")).join(sub));
+            }
+        }
+        self.d.env.set("BEAD_ID", &bead);
+        self.d.env.set("SPIRA_MAIL", &mail);
+        self.d.env.set("SPIRA_MAIL_FROM", &self.rune.mail_from());
+        self.start_heartbeat(sc);
+        self.phase("building");
+        self.check_stop()?;
+
+        // ---- the base: a freshly fetched remote-tracking ref, never guessed ----
+        // spira_config::repos (sp-o88bx, "wave 4.12") in-process, instead of the
+        // _dwarf_base/qualify_base_ref bash seam.
+        let repo_disp = self.s.repo.display().to_string();
+        let Some(base) = spira_config::repos::landref(&self.conf.repos, &repo_disp) else {
+            self.log(&format!("{}: {bead} names repo:{}, whose land ref cannot be resolved", self.f(), self.s.repo_name));
+            let map = self.conf.s("SPIRA_REPO_MAP");
+            self.note(&format!("Released by dwarf.sh: repo:{} has no resolvable default branch — {map} declares no `base` for it, its remote publishes no HEAD, and it is not a local-only repository. Give it a base column. Refusing to guess: a branch cut from a guessed base rebases onto a ref nobody chose, and `main` is a guess that is wrong wherever a repository still uses `master`.", self.s.repo_name));
+            return Err(Abort::Exit(1));
+        };
+        self.s.base_branch = spira_config::repos::ref_branch(&base);
+        self.s.base_remote = spira_config::repos::ref_remote(&base, Some(&repo_disp)).unwrap_or_default();
+        self.s.base = base;
+        if !self.s.base_remote.is_empty() && !self.d.git.git(&self.s.repo, &["fetch", "-q", &self.s.base_remote]).success() {
+            self.log(&format!("{}: fetch of {} failed — basing on a possibly stale {}", self.f(), self.s.base_remote, self.s.base));
+        }
+        if self.s.stack.is_empty() {
+            self.s.base_fq = spira_config::repos::qualify_base_ref(&self.s.base, &repo_disp);
+            if self.s.base_fq.is_empty() {
+                self.s.base_fq = self.s.base.clone();
+            }
+        }
+        // else: claim() already built base_fq as the landing ref merged with this claim's
+        // stack (stacked-dependents-2026-09-28 §1) — every read site below inherits it.
+
+        // ---- one dwarf, one worktree, under the sanctioned root ----
+        let root = self.run_dir().join("worktree");
+        let work = root.join(&bead);
+        self.s.work = Some(work.clone());
+        match worktree::evict_foreign(self.d.git, &work, &self.s.repo, self.now()) {
+            worktree::Evict::Refused => return Err(Abort::Die(format!("{} belongs to another repository and could not be moved aside", work.display()))),
+            worktree::Evict::Moved(aside) => {
+                self.log(&format!("{}: {} was a worktree of another repository — moved to {}", self.f(), work.display(), aside.display()));
+                self.note(&format!("Moved aside by dwarf.sh: the worktree at {} belonged to a different repository than this bead's repo:{}. It is preserved at {} — nothing was deleted — and a fresh worktree was cut in the right checkout. A bead whose repo: label is corrected keeps its old worktree path, so without this every later call would go on working it in the old repository.", work.display(), self.s.repo_name, aside.display()));
+            }
+            worktree::Evict::Kept => {}
+        }
+        let mut branch = self.s.branch.clone();
+        let repo = self.s.repo.clone();
+        let acts = {
+            let e = worktree::Ensure { git: self.d.git, repo: &repo, work: &work, bead_id: &bead, root: &root, base: &self.s.base, base_fq: &self.s.base_fq, rune: &self.rune.name, now: self.now() };
+            let prune = || {
+                let _ = self.d.seam.call("spira_prune_worktrees", &s(&[&repo.display().to_string()]));
+            };
+            worktree::ensure(&e, &mut branch, &prune)
+        };
+        let acts = acts.map_err(Abort::Die)?;
+        for a in acts {
+            match a {
+                worktree::Act::Log(l) => self.log(&l),
+                worktree::Act::Note(n) => self.note(&n),
+                worktree::Act::SetBranch(b) => {
+                    let _ = self.d.bd.bd(&s(&["set-state", &bead, &format!("branch={b}")]));
+                }
+            }
+        }
+        self.s.branch = branch;
+        self.check_stop()?;
+
+        // ---- a retry is rebased now, while nothing else can be inside ----
+        let mut rebase_text = String::new();
+        let rb = self.d.seam.call("_dwarf_rebase", &s(&[&self.s.branch, &self.s.base_fq, &repo.display().to_string(), &self.s.repo_name]));
+        for l in rb.stderr.lines() {
+            self.d.sink.out(l);
+        }
+        if !rb.success() {
+            self.s.rebase_conflicts = rb.stdout.trim_end().to_string();
+            let c = if self.s.rebase_conflicts.is_empty() { "unknown".to_string() } else { self.s.rebase_conflicts.clone() };
+            self.log(&format!("{}: {} does not rebase onto {} — conflicts in {c}", self.f(), self.s.branch, self.s.base));
+            rebase_text = brief::rebase_brief(&self.s.branch, &self.s.base, &work.display().to_string(), &self.s.rebase_conflicts);
+        }
+
+        // ---- prior work on the branch ----
+        let range = format!("{}..{}", self.s.base_fq, self.s.branch);
+        let n = self.d.git.git(&repo, &["rev-list", "--count", &range]);
+        let n_prior = if n.success() { n.text().trim().to_string() } else { String::new() };
+        let prior_log = match n_prior.as_str() {
+            "" | "0" | "?" => String::new(),
+            _ => self.d.git.git(&repo, &["log", "--format=  %h %s", "-n", "5", &self.s.branch]).text(),
+        };
+        let wdisp = work.display().to_string();
+        let resume = brief::resume_brief(&self.s.branch, &wdisp, &n_prior, &prior_log);
+        let mut slain = String::new();
+        if n_prior.parse::<i64>().unwrap_or(0) > 0 {
+            let last = self.d.git.git(&repo, &["log", "--format=%s", "-1", &self.s.branch]).text();
+            let (mut when, mut ds) = (String::new(), String::new());
+            if last.contains(brief::SLAY_MARK) {
+                when = self.d.git.git(&repo, &["log", "--format=%ci", "-1", &self.s.branch]).text();
+                ds = self.d.git.git(&repo, &["diff", "--stat", &self.s.base_fq, &self.s.branch]).stdout.lines().last().unwrap_or("").to_string();
+            }
+            slain = brief::slain_brief(&last, &n_prior, &self.s.base, &when, &ds, &self.s.logf.as_ref().map(|p| p.display().to_string()).unwrap_or_default());
+        }
+
+        // ---- exported for the commit guard and the session ----
+        self.d.env.set("SPIRA_WORK", &wdisp);
+        self.d.env.set("SPIRA_RUNE", self.f());
+        if self.f() == "czar" {
+            let class = self.s.claimed.as_ref().and_then(|r| r.label_value("czar-class:")).unwrap_or_default();
+            self.d.env.set("SPIRA_CZAR_CLASS", &class);
+            self.d.env.set("SPIRA_CZAR_TRIGGER_BEAD", &bead);
+        }
+
+        // ---- pre-session dirty files and the worktree's hooks ----
+        let mut dirty = Vec::new();
+        let gd = self.d.git.git(&work, &["rev-parse", "--path-format=absolute", "--git-dir"]);
+        if gd.success() && !gd.text().is_empty() {
+            let gitdir = PathBuf::from(gd.text());
+            let _ = self.d.git.git(&repo, &["config", "extensions.worktreeConfig", "true"]);
+            let mut set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+            set.extend(self.d.git.git(&work, &["diff", "--name-only", "HEAD"]).stdout.lines().map(String::from));
+            set.extend(self.d.git.git(&work, &["ls-files", "--others", "--exclude-standard"]).stdout.lines().map(String::from));
+            set.retain(|l| !l.is_empty());
+            dirty = set.into_iter().collect::<Vec<_>>();
+            let body: String = dirty.iter().map(|l| format!("{l}\n")).collect();
+            let _ = std::fs::write(gitdir.join("spira-dirty-before"), body);
+            // The worktree's hooks are the RELEASE's (sp-31gtu): the dwarf's --home is the
+            // release's spira/ (its launcher passes it), worktree-hooks.sh arms the worktree
+            // with core.hooksPath naming hooks that run `<home>/hooks/pre-commit` by absolute
+            // path, and those call spira-lint by name on the launcher's release PATH — so a
+            // fresh worktree commits with no build of its own.
+            let hooks_home = self.home().display().to_string();
+            let _ = self.d.exec.exec("env", &s(&[&format!("SPIRA_HOME={hooks_home}"), "worktree-hooks.sh", "install", &wdisp]), None, None);
+        }
+
+        // ---- one test fixture for the whole session ----
+        let fixture_ms = self.build_fixture(&work);
+        self.check_stop()?;
+
+        // ---- the brief ----
+        self.write_prompt(&work, fixture_ms, &resume, &slain, &rebase_text, &dirty)?;
+
+        // ---- the groom log, before ----
+        self.s.session_epoch = self.now();
+        if self.rune.groom_escalation_check {
+            self.s.groom_lines_before = std::fs::read_to_string(self.run_dir().join("groom.log")).map(|t| t.lines().count()).unwrap_or(0);
+        }
+        self.check_stop()?;
+
+        // ---- this session's own starting tip, read right before the model's turn (sp-1zxru-2) ----
+        let start_tip = self.d.git.git(&work, &["rev-parse", "HEAD"]);
+        self.s.session_start_tip = if start_tip.success() { start_tip.text().trim().to_string() } else { "?".into() };
+
+        // ---- work ----
+        self.phase("session");
+        self.session(&work)?;
+        self.wiki_commit();
+        self.verdict();
+        Ok(())
+    }
+
+    fn build_fixture(&mut self, work: &Path) -> u64 {
+        for k in ["TESTDB_SHARED", "TESTDB_NAME", "TESTDB_DIR", "TESTDB_BASELINE", "TESTDB_BIN", "TESTDB_SERVER_INIT_HASH"] {
+            self.d.env.unset(k);
+        }
+        let rel = self.conf.s("SPIRA_TESTDB_LIB");
+        let lib = work.join(&rel);
+        if rel.is_empty() || !lib.is_file() {
+            return 0;
+        }
+        let name = format!("dwarf{}", self.s.bead.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>());
+        let t = std::time::Instant::now();
+        let mut data = Vec::new();
+        for r in [lib.display().to_string(), name] {
+            data.extend_from_slice(r.as_bytes());
+            data.push(0);
+        }
+        let o = self.d.exec.exec("bash", &s(&["-c", FIXTURE_UP]), Some(data), None);
+        let ms = t.elapsed().as_millis() as u64;
+        if !o.stdout.is_empty() {
+            let mut l = o.stdout.lines().map(String::from);
+            let mut nx = || l.next().unwrap_or_default();
+            let f = FixtureInfo { name: nx(), dir: nx(), baseline: nx(), bin: nx(), started_service: nx(), mode: nx(), server_init_hash: nx() };
+            let env = self.d.env;
+            env.set("TESTDB_SHARED", "1");
+            env.set("TESTDB_NAME", &f.name);
+            env.set("TESTDB_DIR", &f.dir);
+            env.set("TESTDB_BASELINE", &f.baseline);
+            env.set("TESTDB_BIN", &f.bin);
+            env.set("TESTDB_STARTED_SERVICE", &f.started_service);
+            env.set("TESTDB_MODE", &f.mode);
+            env.set("TESTDB_SERVER_INIT_HASH", &f.server_init_hash);
+            let mode = if f.mode.is_empty() { "embedded" } else { &f.mode };
+            self.log(&format!("{}: {} shares one test fixture {} ({mode}), built in {ms}ms", self.f(), self.s.bead, f.name));
+            self.s.fixture = Some(f);
+            self.s.fixture_lib = Some(lib);
+        } else {
+            let why: String = o.stderr.replace('\n', " ").chars().take(500).collect();
+            self.log(&format!("{}: {} has no shared test fixture — its suites will each build their own: {why}", self.f(), self.s.bead));
+        }
+        ms
+    }
+
+    fn write_prompt(&mut self, work: &Path, fixture_ms: u64, resume: &str, slain: &str, rebase: &str, dirty: &[String]) -> Result<(), Abort> {
+        let bead = self.s.bead.clone();
+        let wdisp = work.display().to_string();
+        let overlay = self.conf.overlay();
+        let db = self.conf.db();
+        let landing = brief::landing_brief(&self.s.repo_land, &self.s.branch, &self.s.base_branch, &self.s.repo_name, &self.s.base);
+        let park = brief::park_brief(&self.s.repo_land, &self.s.branch, &self.s.repo_name, &self.s.base_branch);
+        let finish = brief::finish_brief(&bead);
+        let fixture = brief::fixture_brief(self.s.fixture.as_ref(), &self.conf.s("SPIRA_TESTDB_LIB"), fixture_ms);
+        let deadline_at = self.rune.timeout_seconds.map(|t| self.t0 + t as i64);
+        let deadline = brief::deadline_brief(deadline_at, self.now(), deadline_at.and_then(util::local_hms_zone));
+
+        let runes_file = self.home().join("runes").join(format!("{}.md", self.f()));
+        let (runes, logs) = brief::runes_with_overlays(self.f(), &runes_file, &overlay);
+        for l in logs {
+            self.log(&format!("{}: {bead} {l}", self.f()));
+        }
+        let mut blocks = Vec::new();
+        for (name, text) in [("PARK", park), ("FIXTURE", fixture), ("DEADLINE", deadline), ("FINISH", finish)] {
+            let (t, l) = brief::block_overlay(&overlay, name, text);
+            if let Some(l) = l {
+                self.log(&format!("{}: {bead} {l}", self.f()));
+            }
+            blocks.push(t);
+        }
+
+        // The bead, bounded; then who else holds the files it names.
+        let shown = self.d.bd.bd(&s(&["show", &bead]));
+        let body = util::strip_bd_hints(&shown.stdout).trim_end_matches('\n').to_string();
+        let keep = self.conf.i("SPIRA_BRIEF_KEEP_RECURRENCES").max(0) as usize;
+        let max = self.conf.i("SPIRA_BRIEF_NOTES_MAX_CHARS").max(0) as usize;
+        let mut body = brief::bound_bead_notes(&format!("{body}\n"), keep, max).trim_end_matches('\n').to_string();
+        let red = self.last_fast_tier_red();
+        let tracked = if self.s.repo.join(".git").exists() {
+            let o = self.d.git.git(&self.s.repo, &["ls-files"]);
+            if o.success() { o.stdout } else { String::new() }
+        } else {
+            String::new()
+        };
+        let paths: Vec<String> = trace::bead_named_paths(&body, &tracked);
+        if !paths.is_empty() {
+            let mut a = s(&["--repo", &self.s.repo_name]);
+            a.extend(paths);
+            let h = self.d.exec.exec("holds.sh", &a, None, None);
+            let hb = brief::holds_brief(&bead, h.code, &h.stdout);
+            if !hb.is_empty() {
+                body = format!("{body}\n\n{hb}");
+            }
+        }
+
+        body = format!("{}{body}", brief::fast_tier_red_brief(&crate::fast_tier::current_digest(self.d.git, &self.s.repo, work, &self.s.base_fq, &red)));
+
+        // A thrashed bead leads with its sticking point, while the tip has not moved.
+        let mut banner = None;
+        let meta = self.sv("_dwarf_thrash_meta", &s(&[&bead])).stdout;
+        let mut ml = meta.lines();
+        let (streak, tip, last) = (ml.next().unwrap_or("").to_string(), ml.next().unwrap_or("").to_string(), ml.next().unwrap_or("").to_string());
+        if streak.trim().parse::<i64>().unwrap_or(0) >= 1 {
+            let cur = self.d.git.git(work, &["rev-parse", "--short", "HEAD"]);
+            let cur = if cur.success() { cur.text() } else { "?".into() };
+            if !tip.is_empty() && tip == cur {
+                banner = Some(brief::thrash_banner(&streak, &last));
+            }
+        }
+
+        let scope = self.conf.s("SPIRA_SCOPE_LABEL");
+        let home = self.home().display().to_string();
+        let home_repo = self.conf.repos.home_repo().to_string();
+        let mut single = vec![
+            ("BEAD_ID", bead.clone()),
+            ("BRANCH", self.s.branch.clone()),
+            ("REPO", wdisp.clone()),
+            ("REPO_NAME", self.s.repo_name.clone()),
+            ("HOME_REPO", home_repo),
+            ("LANDING", landing),
+            ("DB", db.clone()),
+            ("SPIKE_DIR", self.conf.s("SPIRA_SPIKE_DIR")),
+            ("SPIKE_PATHS", self.conf.s("SPIRA_SPIKE_PATHS")),
+            ("WIKI_DIR", self.conf.s("SPIRA_WIKI")),
+            // Tools by bare name (sp-gypjk): the dwarf's environment carries the
+            // launcher's PATH, whose first entries are the release's bin/ and spira/.
+            ("SUITES", format!("{} suites", brief::TESTENV)),
+            ("TESTENV", brief::TESTENV.into()),
+            ("FOLLOWUP", brief::followup_brief(&bead)),
+            ("NO_BD", brief::no_bd_brief()),
+            ("SPIRA_HOME", home.clone()),
+            ("RUN", self.run_dir().display().to_string()),
+            ("MAX_BEADS", self.conf.s("SPIRA_MIMIR_MAX_BEADS")),
+            ("REMEDY_LABEL", self.conf.s("SPIRA_MIMIR_REMEDY_LABEL")),
+            ("SCOPE", if scope.is_empty() { String::new() } else { format!("{scope},") }),
+        ];
+        // The tool placeholders (ASK, GROOM, INCIDENT, SOP, DEP): `work` verbs, since the
+        // model has no bd-reaching tool (sp-st0mm).
+        single.extend(brief::tool_tokens());
+        // The model has no bd and no path into the release (sp-st0mm, sp-zf4q3): no prompt
+        // names the database or the harness's home, so neither is handed over.
+        single.retain(|(k, _)| !brief::WITHHELD.contains(k));
+        let tokens = Tokens {
+            single,
+            bead: body,
+            park: blocks[0].clone(),
+            fixture: blocks[1].clone(),
+            deadline: blocks[2].clone(),
+            finish: blocks[3].clone(),
+        };
+        let prompt = brief::render_prompt(&runes, &tokens, banner.as_deref());
+        let statutes = self.statutes().map_err(Abort::Die)?;
+        let (sys, mut task) = brief::split(&statutes, &prompt);
+        task.push_str(&self.s.rejection_brief);
+        task.push_str(&brief::dirty_brief(dirty));
+        task.push_str(resume);
+        task.push_str(slain);
+        task.push_str(&brief::already_done_brief(&self.s.base, &bead, &wdisp));
+        task.push_str(&brief::close_brief(&self.s.base, &wdisp, &self.s.base_remote));
+        task.push_str(rebase);
+        let _ = std::fs::write(self.run_dir().join(format!("{bead}.system.md")), sys);
+        let _ = std::fs::write(self.run_dir().join(format!("{bead}.task.md")), task);
+        Ok(())
+    }
+
+    /// `render_memories "${RUNE_MEMORY_PREFIXES:-law-}" "" "${RUNE_STATUTE_CORE:-}"`, with
+    /// this installation's own `SPIRA_STATUTE_CORE_LOCAL` slugs appended to whatever core the
+    /// persona resolves (`brief::with_local_core`). Err when a declared core slug — local or
+    /// not — names no memory: the brief would be silently thinned.
+    pub fn statutes(&self) -> Result<String, String> {
+        let cache = self.conf.s("SPIRA_MEMORIES_CACHE");
+        let age = self.conf.i("SPIRA_MEMORIES_CACHE_AGE");
+        let mut json = String::new();
+        if !cache.is_empty() && Path::new(&cache).is_file() {
+            let m = session::mtime(Path::new(&cache));
+            if self.now() - m < age {
+                json = std::fs::read_to_string(&cache).unwrap_or_default();
+            }
+        }
+        if json.trim().is_empty() {
+            // Not a registered config key — `Conf::or`, not the strict `Conf::s`.
+            let cmd = self.conf.or("SPIRA_MEMORIES_CMD", "");
+            json = if !cmd.is_empty() {
+                self.d.exec.exec("bash", &s(&["-c", &cmd]), None, None).stdout
+            } else {
+                bd::json(self.d.bd, &["memories"])
+            };
+            if !cache.is_empty() && !json.trim().is_empty() {
+                if let Some(p) = Path::new(&cache).parent() {
+                    let _ = std::fs::create_dir_all(p);
+                }
+                let _ = std::fs::write(&cache, format!("{}\n", json.trim_end_matches('\n')));
+            }
+        }
+        let core = if self.rune.statute_core.is_empty() { self.conf.s("SPIRA_STATUTE_CORE") } else { self.rune.statute_core.clone() };
+        let core = brief::with_local_core(&core, &self.conf.s("SPIRA_STATUTE_CORE_LOCAL"));
+        let harness = self.conf.or("SPIRA_REPO", "<harness>");
+        let missing = brief::missing_core(&json, &self.rune.memory_prefixes, &core);
+        if !missing.is_empty() {
+            return Err(format!("{}: core statute(s) declared but not found: {} — refusing to start with a thinned brief", self.f(), missing.join(", ")));
+        }
+        Ok(brief::render_memories(&json, &self.rune.memory_prefixes, 120_000, &core, &harness))
+    }
+
+    /// `dwarf_claude_argv <flag> <file>`.
+    pub fn claude_argv(&self, sys_file: &Path) -> Result<Vec<String>, String> {
+        let flag = match self.rune.system_prompt {
+            SystemPrompt::Replace => "--system-prompt-file",
+            SystemPrompt::Append => "--append-system-prompt-file",
+        };
+        let model = match &self.s.model_override {
+            Some(m) => m.clone(),
+            None => conf::persona_model(self.f(), &self.conf.s("SPIRA_TOML"))?,
+        };
+        spira_otel::run::event("attempt", &[("rune", self.f()), ("model", &model), ("rework", if self.s.model_override.is_some() { "escalated" } else { "first" })]);
+        let mut a = s(&["-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages", "--system-prompt-snapshot", "on", flag, &sys_file.display().to_string()]);
+        a.extend(s(&["--model", &model, "--allowedTools", &self.rune.tools, "--dangerously-skip-permissions"]));
+        if self.rune.project_instructions == "none" {
+            a.extend(s(&["--setting-sources", "user"]));
+        }
+        a.extend(s(&["--settings", &dwarf_settings(self.home(), self.rune.habits)]));
+        Ok(a)
+    }
+
+    fn agent_bin(&self) -> String {
+        let agent = self.conf.agent();
+        if agent.contains('/') {
+            return agent;
+        }
+        let path = self.d.env.child().get("PATH").cloned().unwrap_or_default();
+        for d in path.split(':').filter(|d| !d.is_empty()) {
+            let p = Path::new(d).join(&agent);
+            if is_executable(&p) {
+                return p.display().to_string();
+            }
+        }
+        agent
+    }
+
+    fn session(&mut self, work: &Path) -> Result<(), Abort> {
+        let bead = self.s.bead.clone();
+        let logf = self.s.logf.clone().expect("armed");
+        self.log(&format!("{}: working {bead} on {} (log: {})", self.f(), self.s.branch, logf.display()));
+        if !work.is_dir() {
+            return Err(Abort::Die(format!("worktree missing: {}", work.display())));
+        }
+        let _ = std::env::set_current_dir(work);
+        let gh = self.run_dir().join("dwarf-empty-gh");
+        let _ = std::fs::create_dir_all(&gh);
+        let env = self.d.env;
+        env.set("GH_CONFIG_DIR", &gh.display().to_string());
+        env.unset("GH_TOKEN");
+        env.unset("GITHUB_TOKEN");
+        env.set("GIT_SSH_COMMAND", "echo 'dwarf: no SSH credentials — landing.sh and the batcher handle forge writes' >&2; exit 1");
+        env.set("GIT_TERMINAL_PROMPT", "0");
+        env.set("GIT_ASKPASS", "/bin/false");
+        // THE BUILD CACHE (sp-z61hj; spira-config/DESIGN-build-cache.md): the agent's cargo
+        // compiles through the box's one sccache, so a worktree never builds its dependencies
+        // cold. A session is not a build: absent sccache falls back — loudly — to uncached.
+        let path = env.child().get("PATH").cloned().unwrap_or_default();
+        let setting = env.child().get(spira_config::build::CACHE_ENV).cloned();
+        //
+        // THE COMPILE POOL (sp-f4ig1; gate/DESIGN-admission.md §3.3): the same compiler, fronted
+        // by `spira-admit`, so each cargo the agent starts takes a host-wide compile slot and
+        // N agents never compile all at once. Absent spira-admit (an older release) falls back,
+        // loudly, to the plain wrapper: a scheduling tool never stops a session.
+        let admit = spira_config::build::find_on(&path, spira_config::admission::BIN);
+        let run_dir = self.conf.run.display().to_string();
+        // THE SHARED STORE (sp-xtdqi): `SPIRA_SCCACHE_DAV_ADDR`, resolved in-process into
+        // `self.conf` (`conf::merge_resolved_config`) the same as every other
+        // `spira.toml`-only key — never a bare env read, which only ever saw it when an
+        // operator's own shell had happened to export it first.
+        let store = spira_config::build::Store::from_values(|k| {
+            let v = self.conf.s(k);
+            (!v.is_empty()).then_some(v)
+        });
+        match spira_config::build::wrapper(&path, setting.as_deref()) {
+            Ok(w) => {
+                let vars = match &admit {
+                    Some(a) => w.admitted_env(a, &run_dir, &bead, store.as_ref()),
+                    None => {
+                        self.log(&format!("{}: spira-admit not on PATH — this session's builds are not admitted", self.f()));
+                        w.env(store.as_ref())
+                    }
+                };
+                for (k, v) in vars {
+                    env.set(&k, &v);
+                }
+                if w == spira_config::build::Wrapper::Off {
+                    self.log(&format!("{}: {}", self.f(), w.describe()));
+                }
+            }
+            Err(e) => self.log(&format!("{}: {e} — this session's builds are UNCACHED", self.f())),
+        }
+        match spira_config::build::tf_plugin_cache(self.run_dir()) {
+            Ok(d) => env.set(spira_config::build::TF_PLUGIN_CACHE_ENV, &d.display().to_string()),
+            Err(e) => self.log(&format!("{}: no terraform provider cache ({e}) — terraform init downloads per worktree", self.f())),
+        }
+        // THE WARM TARGET: the session builds into its slot's directory, kept between sessions
+        // and worktrees (cargo's fingerprints cover the different checkout), so a second session
+        // on a bead recompiles only what changed. The slot's lock is held until this returns.
+        let warm_base = self.conf.s(spira_config::build::DWARF_WARM_BASE_ENV);
+        if warm_base.is_empty() {
+            return Err(Abort::Harness(format!("{} is not set — the dwarf warm slots have no home; set dwarf_warm_base in the config document", spira_config::build::DWARF_WARM_BASE_ENV)));
+        }
+        let warm_base = PathBuf::from(warm_base);
+        let cap_mib = self.conf.i(spira_config::build::DWARF_WARM_CAP_ENV).max(1) as u64;
+        if !spira_config::build::on_tmpfs(&warm_base) {
+            self.log(&format!("{}: warm base {} is not a tmpfs — builds write to its disk", self.f(), warm_base.display()));
+        }
+        let mut warm_slot = None;
+        let _warm = match spira_config::build::acquire_warm(&warm_base, spira_config::build::DWARF_WARM_SLOTS) {
+            Some((dir, mut lock)) => {
+                spira_config::build::note_holder(&mut lock, &bead);
+                if spira_config::build::reap_for_build(&dir, cap_mib) {
+                    self.log(&format!("{}: warm target {} held over half of {cap_mib} MiB — started empty", self.f(), dir.display()));
+                }
+                for idle in spira_config::build::reap_idle(&warm_base, spira_config::build::DWARF_WARM_SLOTS, cap_mib, spira_config::build::DWARF_WARM_FULL_PCT) {
+                    self.log(&format!("{}: idle warm target {} emptied (over {cap_mib} MiB or the tmpfs is past {}%)", self.f(), idle.display(), spira_config::build::DWARF_WARM_FULL_PCT));
+                }
+                let spill = work.join("target");
+                if spira_config::build::spill_if_full(&dir, &spill, spira_config::build::AEON_WARM_FULL_PCT) {
+                    self.log(&format!("{}: warm tmpfs is past {}% — this session builds in {}", self.f(), spira_config::build::AEON_WARM_FULL_PCT, spill.display()));
+                }
+                env.set("CARGO_TARGET_DIR", &dir.display().to_string());
+                warm_slot = Some(crate::session::WarmSlot { dir: dir.clone(), cap_mib, every: crate::session::WARM_CHECK_EVERY, spill });
+                Some(lock)
+            }
+            None => {
+                self.log(&format!("{}: every warm target slot is busy — this session builds in its worktree", self.f()));
+                None
+            }
+        };
+        let _cold = self.cold_slot(work, warm_slot.as_ref().map(|w| w.dir.as_path()))?;
+        // THE CALL JITTER (sp-f4ig1 §3.4): dwarves a pass called together start apart.
+        let max = self.conf.i(spira_config::admission::JITTER_ENV).max(0) as u64;
+        let seed = ((std::process::id() as u64) << 32)
+            ^ std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos() as u64).unwrap_or(0);
+        let j = spira_config::admission::jitter(max, seed);
+        if j > 0 {
+            self.log(&format!("{}: call jitter {j}s", self.f()));
+            for _ in 0..j {
+                self.check_stop()?;
+                (self.d.sleep)(Duration::from_secs(1));
+            }
+            self.check_stop()?;
+        }
+        let sys_file = self.run_dir().join(format!("{bead}.system.md"));
+        let task_file = self.run_dir().join(format!("{bead}.task.md"));
+        let mut argv = self.claude_argv(&sys_file).map_err(Abort::Harness)?;
+        argv.extend(self.checkpoint_args(work, &task_file));
+        self.s.session_started = true;
+        let agent = self.agent_bin();
+        let child = env.child();
+        let (prog, args, spec_env) = {
+            // The model runs bound to this bead under the restricted environment (design
+            // §3.5; replaces the work-env.sh wrapper process, sp-zpaq0): same allow-list,
+            // now applied in-process rather than through a subprocess and `env -i`.
+            self.s.lc_model_restricted = true;
+            // sp-zf4q3: the model's PATH names the release's model-bin/ (only `work`), never
+            // the bin/ that holds `work` beside ~40 tools that call bd. Fail-closed.
+            let path = child.get("PATH").cloned().unwrap_or_default();
+            let model_bin = match restrict::model_bin_dir(&child, &path, |p| is_executable(p)) {
+                Ok(d) => d,
+                Err(e) => return Err(Abort::Die(format!("work-env: {e}"))),
+            };
+            (agent, argv, restrict::restricted_env(&bead, &child, &model_bin))
+        };
+        let spec = SessionSpec { prog, args, stdin_file: task_file, log: logf, cwd: work.to_path_buf(), env: spec_env, timeout: self.rune.timeout_seconds, halted: Some(self.run_dir().join("world.halted")), warm: warm_slot };
+        let rc = self.d.launcher.run(&spec, &self.stop);
+        // Interrupted: bash's trap ran before `SESSION_RC=$rc`, so SESSION_RC stays 0.
+        self.check_stop()?;
+        self.s.session_rc = rc;
+        self.log(&format!("{}: {bead} session exited rc={rc}", self.f()));
+        Ok(())
+    }
+
+    /// The host-wide cold-build slot (`Pool::Cold`): a session whose first build is cold waits
+    /// here, saying so, until the one running cold build's hold ends. A warm session passes.
+    fn cold_slot(&mut self, work: &Path, warm: Option<&Path>) -> Result<Option<spira_config::admission::Hold>, Abort> {
+        use spira_config::admission as adm;
+        let title = self.s.claimed.as_ref().and_then(|c| c.title.clone()).unwrap_or_default();
+        let base = self.s.base_fq.clone();
+        let touched: Vec<String> = if base.is_empty() {
+            Vec::new()
+        } else {
+            let o = self.d.git.git(work, &["diff", "--name-only", &format!("{base}...HEAD")]);
+            if o.success() { o.stdout.lines().map(str::to_string).collect() } else { Vec::new() }
+        };
+        let target = warm.map(Path::to_path_buf).unwrap_or_else(|| work.join("target"));
+        let Some(why) = adm::cold_reason(&title, &touched).or_else(|| adm::target_is_cold(&target).then(|| format!("no warm target at {}", target.display()))) else {
+            return Ok(None);
+        };
+        let bead = self.s.bead.clone();
+        let q = adm::Request { run: &self.conf.run, pool: adm::Pool::Cold, holder_pid: std::process::id(), who: &bead, inherit: None, weight: 1 };
+        let size_of = || adm::size_from_env(adm::Pool::Cold);
+        let sleep = |d: Duration| (self.d.sleep)(d);
+        let seams = adm::Seams { size_of: &size_of, procs: &adm::RealProcs, sleep: &sleep };
+        let f = self.f().to_string();
+        let mut waiting = false;
+        let mut say = |l: &str| {
+            waiting = true;
+            self.log(&format!("{f}: waiting on cold-build slot ({why}): {l}"));
+        };
+        let stop = &self.stop;
+        let guard = adm::acquire_unless(&q, &seams, &mut say, &|| stop.signalled().is_some());
+        let Some(guard) = guard else {
+            self.check_stop()?;
+            return Ok(None);
+        };
+        self.log(&format!("{f}: cold build ({why}) — holds the cold-build slot{}", if waiting { " after waiting" } else { "" }));
+        Ok(Some(adm::Hold::new(guard, Duration::from_secs(adm::COLD_HOLD_SECS))))
+    }
+
+    /// The session-id arguments for this launch. A checkpoint left by a world stop is
+    /// resumed (the task file becomes the message that the world was down); one that cannot
+    /// be resumed falls back to a cold claim of the kept branch, and the bead note says why.
+    fn checkpoint_args(&mut self, work: &Path, task_file: &Path) -> Vec<String> {
+        let bead = self.s.bead.clone();
+        let who = self.s.dwarf.clone();
+        let facts = self.d.exec.exec("spira-lc", &s(&["facts", "--ids", &bead, "--kinds", &format!("{},{}", checkpoint::SESSION, checkpoint::CHECKPOINTED)]), None, None);
+        let facts = if facts.success() { checkpoint::parse_facts(&facts.stdout) } else { Vec::new() };
+        let persona = checkpoint::persona_hash(&std::fs::read(self.home().join("runes").join(format!("{}.md", self.f()))).unwrap_or_default());
+        let cfg = checkpoint::config_dir(&self.d.env.child());
+        let plan = checkpoint::plan(&facts, self.f(), &persona, work.is_dir(), |id| checkpoint::transcript_exists(&cfg, id));
+        let (id, args) = match plan {
+            checkpoint::Plan::Resume { session, stopped_at } => {
+                let msg = checkpoint::resume_message(stopped_at, self.now(), &self.s.branch);
+                let _ = std::fs::write(task_file, msg);
+                self.log(&format!("{}: {bead} resumes session {} after a world stop", self.f(), session.id));
+                let args = s(&["--resume", &session.id]);
+                (session.id, args)
+            }
+            plan => {
+                if let checkpoint::Plan::Cold { reason } = plan {
+                    self.log(&format!("{}: {bead} checkpoint not resumable — claiming cold: {reason}", self.f()));
+                    self.note(&format!("Checkpoint not resumed: {reason}. This dwarf claimed the kept branch cold, from the bead and its notes, with no attempt charged for the stop."));
+                }
+                let id = checkpoint::new_session_id();
+                let args = s(&["--session-id", &id]);
+                (id, args)
+            }
+        };
+        let fact = checkpoint::SessionFact { id: id.clone(), rune: self.f().to_string(), persona, worktree: work.display().to_string() };
+        let wrote = self.d.exec.exec("spira-lc", &s(&["fact", &bead, "--kind", checkpoint::SESSION, "--actor", &who, "--cause", &fact.cause()]), None, None);
+        if !wrote.success() {
+            self.log(&format!("{}: {bead} could not record session {id} (rc={}): a stop will not be checkpointed", self.f(), wrote.code));
+            self.s.session_id.clear();
+        } else {
+            self.s.session_id = id;
+        }
+        args
+    }
+
+    /// A slain session whose world is halted is held, not abandoned: the bead leaves WORKING
+    /// but stays unclaimable until `world start` lifts the checkpoint hold. False when the
+    /// session was never recorded or the hold was refused (the plain release then stands).
+    pub(crate) fn checkpoint_across_stop(&self) -> bool {
+        let id = &self.s.bead;
+        if self.s.session_id.is_empty() || !self.run_dir().join("world.halted").is_file() {
+            return false;
+        }
+        let now = self.now();
+        let reason = spira_config::lc_state::checkpoint_reason(now + checkpoint::HOLD_SECS);
+        let Some(held) = self.hold_unless_terminal(id, "wait", &reason, "dwarf") else {
+            return false;
+        };
+        if !held.success() {
+            self.log(&format!("{}: {id} checkpoint hold refused (rc={}): {}", self.f(), held.code, held.stdout.trim()));
+            return false;
+        }
+        let wrote = self.d.exec.exec("spira-lc", &s(&["fact", id, "--kind", checkpoint::CHECKPOINTED, "--actor", &self.s.dwarf, "--cause", &now.to_string()]), None, None);
+        if !wrote.success() {
+            let _ = self.d.exec.exec("spira-lc", &s(&["unhold", id, "wait", "dwarf"]), None, None);
+            self.log(&format!("{}: {id} checkpoint fact refused (rc={}): hold withdrawn", self.f(), wrote.code));
+            return false;
+        }
+        self.note(&format!("Checkpointed across a world stop: session {} is kept with branch {} and its worktree; `world start` lifts the hold and the next claim resumes it. No attempt charged.", self.s.session_id, self.s.branch));
+        true
+    }
+
+    fn start_heartbeat<'s>(&self, sc: &'s std::thread::Scope<'s, '_>)
+    where
+        'a: 's,
+    {
+        let hb = Heartbeat {
+            bead: self.s.bead.clone(),
+            rune: self.rune.name.clone(),
+            run: self.conf.run.clone(),
+            lease_s: self.rune.lease_seconds(),
+            every: Duration::from_secs(self.rune.heartbeat_seconds.max(1)),
+            wall_min: self.conf.i("SPIRA_THRASH_MINUTES"),
+        };
+        let beat = RealBeat {
+            logf: self.s.logf.clone().unwrap_or_default(),
+            bead: self.s.bead.clone(),
+            work: self.run_dir().join("worktree").join(&self.s.bead),
+            run: self.conf.run.clone(),
+            repo_name: self.s.repo_name.clone(),
+            mark: self.conf.trace_mark(),
+            seam: self.d.seam,
+            git: self.d.git,
+            bd: self.d.bd,
+            exec: self.d.exec,
+            holder: self.s.holder.clone(),
+            renew_rc: std::sync::Mutex::new(0),
+            sink: self.d.sink,
+            clock: self.d.clock,
+            repos: self.conf.repos.clone(),
+        };
+        let stop = Arc::clone(&self.stop);
+        let shutdown = Arc::clone(&self.hb_shutdown);
+        let done = Arc::clone(&self.hb_done);
+        sc.spawn(move || {
+            hb.run(&beat, &stop, &shutdown);
+            done.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+    }
+}
+
+/// The heartbeat's view of the world.
+pub struct RealBeat<'a> {
+    pub logf: PathBuf,
+    pub bead: String,
+    pub work: PathBuf,
+    pub run: PathBuf,
+    pub repo_name: String,
+    pub mark: String,
+    pub seam: &'a dyn Seam,
+    pub git: &'a dyn Git,
+    pub bd: &'a dyn Bd,
+    /// `spira-lc renew`'s runner, found by name like every other spira-lc call here.
+    pub exec: &'a dyn Exec,
+    /// The claim's holder — the name `lc_claim` claimed under (`dwarf-<name>`).
+    pub holder: String,
+    /// The last renewal's exit, so a refusal is logged once per change, not every beat.
+    pub renew_rc: std::sync::Mutex<i32>,
+    pub sink: &'a dyn Sink,
+    pub clock: &'a (dyn Fn() -> i64 + Sync),
+    /// spira_config::repos (sp-o88bx, "wave 4.12"): the heartbeat's base-ref read
+    /// (family W, spira_landref) in-process, no longer through the seam. Owned, not
+    /// borrowed: the heartbeat thread outlives `start_heartbeat`'s own `&self`, and
+    /// `Registry` is cheap to clone (a repo-map's rows, a handful of strings).
+    pub repos: spira_config::repos::Registry,
+}
+
+impl Beat for RealBeat<'_> {
+    fn now(&self) -> i64 {
+        (self.clock)()
+    }
+    fn trace_mtime(&self) -> i64 {
+        session::mtime(&self.logf)
+    }
+    fn fuse(&self) -> String {
+        // `base` (family W, base refs): spira_config::repos in-process (sp-o88bx, "wave
+        // 4.12"), not the spira_landref seam.
+        let base: Option<String> =
+            if self.repo_name.is_empty() { None } else { spira_config::repos::landref(&self.repos, &self.repo_name) };
+        let commit_ahead_ts = base.as_deref().and_then(|b| {
+            let o = self.git.git(&self.work, &["log", "--format=%ct", "-1", &format!("{b}..HEAD")]);
+            o.success().then(|| o.text()).filter(|t| !t.is_empty()).and_then(|t| t.parse::<i64>().ok())
+        });
+        trace::dwarf_fuse_minutes(&self.bead, &self.work, &self.run, commit_ahead_ts, (self.clock)())
+    }
+    fn trace_last(&self, n: usize) -> String {
+        let t = trace::trace_last(&self.logf, &self.mark);
+        let b = t.as_bytes();
+        String::from_utf8_lossy(&b[..b.len().min(n)]).into_owned()
+    }
+    fn renew(&self, lease_until: i64) -> bool {
+        // The lifecycle row's lease (sp-2jf0a); there is no bd claim to `bd heartbeat`. Never ends the heartbeat — its
+        // lapse and thrash guards must keep watching the session whatever the machine says.
+        // A refusal (reaped and handed on, already submitted, the machine unreachable) is
+        // logged once per change; a holder that stops renewing simply expires.
+        let o = self.exec.exec("spira-lc", &s(&["renew", &self.bead, &self.holder, &lease_until.to_string()]), None, None);
+        let mut last = self.renew_rc.lock().unwrap_or_else(|e| e.into_inner());
+        if o.code != *last {
+            if o.code != 0 {
+                self.log(&format!("{}: lifecycle lease renewal refused (rc={}): {}", self.bead, o.code, o.first_err_line()));
+            }
+            *last = o.code;
+        }
+        true
+    }
+    fn disposition(&self, status: &str, note: &str) {
+        let o = self.exec.exec("spira-lc", &s(&["disposition", &self.bead, status, note, &self.holder]), None, None);
+        if o.code != 0 {
+            self.log(&format!("{}: lifecycle disposition {status} refused (rc={}): {}", self.bead, o.code, o.first_err_line()));
+        }
+    }
+    fn log(&self, msg: &str) {
+        self.sink.out(&util::log_line((self.clock)(), msg));
+    }
+}
+
+/// The fixture build: the worktree's own testdb library, in a subshell, with the lib path
+/// and the fixture name on stdin. Its seven lines are the whole interface.
+pub const FIXTURE_UP: &str = r#"IFS= read -r -d '' __lib || exit 96
+IFS= read -r -d '' __name || exit 96
+. "$__lib" && testdb_up "$__name" >&2 &&
+printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
+    "$TESTDB_NAME" "$TESTDB_DIR" "$TESTDB_BASELINE" "${TESTDB_BIN:-}" \
+    "${TESTDB_STARTED_SERVICE:-0}" "${TESTDB_MODE:-embedded}" \
+    "${TESTDB_SERVER_INIT_HASH:-}"
+"#;
+
+/// The fixture drop: only a fixture this process built (TESTDB_SHARED=0 marks the owner).
+pub const FIXTURE_DROP: &str = r#"IFS= read -r -d '' __lib || exit 96
+TESTDB_SHARED=0
+. "$__lib" && testdb_drop
+"#;
+
+pub fn is_executable(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+}
+
+pub fn append(p: &Path, text: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
+        let _ = f.write_all(text.as_bytes());
+    }
+}
+
+/// The `habits` dispatcher, a release binary on the launcher's PATH like `work`.
+const HABITS_STOP_TIMEOUT_S: u32 = 600;
+
+fn habit_hook(timeout_s: u32) -> String {
+    format!("{{\"type\": \"command\", \"command\": \"habits\", \"timeout\": {timeout_s}}}")
+}
+
+/// `dwarf_settings`: the --settings JSON, spelled as python's json.dumps spells it.
+pub fn dwarf_settings(home: &Path, habits: bool) -> String {
+    let q = |p: &Path| serde_json::to_string(&p.display().to_string()).unwrap();
+    let hook = |p: &Path| format!("{{\"type\": \"command\", \"command\": {}, \"timeout\": 5}}", q(p));
+    let mail = home.join("hooks").join("dwarf-mail-deliver.sh");
+    let deliver = home.join("bd-unacked-comment-deliver.sh");
+    let mut post = vec![hook(&mail)];
+    if is_executable(&deliver) {
+        post.push(hook(&deliver));
+    }
+    let mut groups = vec![format!("{{\"hooks\": [{}]}}", post.join(", "))];
+    if habits {
+        groups.push(format!("{{\"matcher\": \"Edit|Write|MultiEdit\", \"hooks\": [{}]}}", habit_hook(10)));
+    }
+    let mut hooks = format!("\"PostToolUse\": [{}]", groups.join(", "));
+    if habits {
+        hooks.push_str(&format!(", \"Stop\": [{{\"hooks\": [{}]}}]", habit_hook(HABITS_STOP_TIMEOUT_S)));
+    }
+    let mut pre = Vec::new();
+    for p in [
+        home.join("hooks").join("dwarf-fence.sh"),
+        home.join("hooks").join("dwarf-amend-block.sh"),
+        home.join("bd-close-unacked-guard.sh"),
+        home.join("script-running-guard.sh"),
+    ] {
+        if is_executable(&p) {
+            pre.push(hook(&p));
+        }
+    }
+    if !pre.is_empty() {
+        hooks.push_str(&format!(", \"PreToolUse\": [{{\"hooks\": [{}]}}]", pre.join(", ")));
+    }
+    format!(
+        "{{\"hooks\": {{{hooks}}}, \"env\": {{\"BASH_DEFAULT_TIMEOUT_MS\": \"1800000\", \"BASH_MAX_TIMEOUT_MS\": \"3600000\", \"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS\": \"1\"}}}}"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // test-dwarf-settings-guard-allowlist.sh / test-dwarf-launch-grammar.sh.
+    #[test]
+    fn settings_json_matches_python_dumps() {
+        let d = testkit::TempDir::new("dwarf-settings");
+        std::fs::create_dir_all(d.join("hooks")).unwrap();
+        let s0 = dwarf_settings(&d, false);
+        assert_eq!(
+            s0,
+            format!(
+                "{{\"hooks\": {{\"PostToolUse\": [{{\"hooks\": [{{\"type\": \"command\", \"command\": \"{}/hooks/dwarf-mail-deliver.sh\", \"timeout\": 5}}]}}]}}, \"env\": {{\"BASH_DEFAULT_TIMEOUT_MS\": \"1800000\", \"BASH_MAX_TIMEOUT_MS\": \"3600000\", \"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS\": \"1\"}}}}",
+                d.display()
+            )
+        );
+        assert!(!s0.contains("dwarf-fence.sh"), "no fence installed: --settings does not name it");
+        let fence = d.join("hooks/dwarf-fence.sh");
+        // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
+        testkit::write_exe(&fence, "#!/bin/sh\n");
+        let s1 = dwarf_settings(&d, false);
+        assert!(s1.contains("\"PreToolUse\": [{\"hooks\": [{\"type\": \"command\", \"command\": \""));
+        let v: serde_json::Value = serde_json::from_str(&s1).unwrap();
+        assert_eq!(v["env"]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"], "1");
+        assert!(v["hooks"]["Stop"].is_null(), "no habits: no Stop group");
+    }
+
+    #[test]
+    fn habits_group_only_when_the_rune_sets_it() {
+        let d = testkit::TempDir::new("dwarf-settings-habits");
+        let off: serde_json::Value = serde_json::from_str(&dwarf_settings(&d, false)).unwrap();
+        assert_eq!(off["hooks"]["PostToolUse"].as_array().unwrap().len(), 1);
+        assert!(off["hooks"]["Stop"].is_null());
+        let on: serde_json::Value = serde_json::from_str(&dwarf_settings(&d, true)).unwrap();
+        let post = on["hooks"]["PostToolUse"].as_array().unwrap();
+        assert_eq!(post.len(), 2);
+        assert_eq!(post[1]["matcher"], "Edit|Write|MultiEdit");
+        assert_eq!(post[1]["hooks"][0]["command"], "habits");
+        assert_eq!(on["hooks"]["Stop"][0]["hooks"][0]["command"], "habits");
+        assert_eq!(post[0], off["hooks"]["PostToolUse"][0], "the existing group is untouched");
+    }
+}

@@ -1,8 +1,8 @@
-# batcher.rune — the Judge: summoned when the batcher-cut binary (or
+# batcher.rune — the Judge: called when the batcher-cut binary (or
 # queue verdict) cannot resolve a round's red mechanically — a local double-red that survived
 # its re-run, or a CI-only red on a batcher-owned batch PR.
 #
-# A rune is a persona DEFINITION; an aeon is one summoned instance of it: a predicate
+# A rune is a persona DEFINITION; a dwarf is one called instance of it: a predicate
 # carving its partition out of the graph, the statutes it must read, the tools it may use,
 # and what wakes it.
 

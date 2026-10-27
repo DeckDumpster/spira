@@ -1,7 +1,7 @@
 //! CHECK 2d: an ask hold must not outlive the condition that raised it.
 //!
 //! A hold raised for a machine condition carries that condition as its reason, in the shape
-//! its producer writes (`park_unmapped` in lib.sh, `rapid_recur_check` in aeon), and
+//! its producer writes (`park_unmapped` in lib.sh, `rapid_recur_check` in dwarf), and
 //! [`condition`] reads it back as a predicate the sentinel re-evaluates each pass. A hold
 //! whose ask is gone — closed, answered, or relabelled off — is withdrawn too. And when held
 //! beads are a large share of READY the builder partition reads "nothing ready", so that is
@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn conditions_parse_the_producers_wording_and_nothing_else() {
         assert_eq!(condition("repo:spira has no mapped entry"), Some(Condition::Unmapped("spira".into())));
-        assert_eq!(condition("rapid-recur: 3 consecutive sub-10s aeon summons"), Some(Condition::RapidRecur));
+        assert_eq!(condition("rapid-recur: 3 consecutive sub-10s dwarf calls"), Some(Condition::RapidRecur));
         assert_eq!(condition("should we ship?"), None);
         assert_eq!(condition("repo: has no mapped entry"), None);
         assert_eq!(condition("repo:a b has no mapped entry"), None);
@@ -217,7 +217,7 @@ mod tests {
     #[test]
     fn a_rapid_recur_hold_is_retried_only_after_the_grace() {
         let s = snap(r#"[{"id":"sp-a","status":"open","labels":["needs-operator"]}]"#); // literal-ok: test fixture
-        let why = "rapid-recur: 3 consecutive sub-10s aeon summons";
+        let why = "rapid-recur: 3 consecutive sub-10s dwarf calls";
         let fresh = vec![row("sp-a", "READY", &["ask"], Some(why), NOW - 10)];
         assert!(stale_ask_holds(&fresh, &s, "needs-operator", NOW, GRACE, &|_| false).is_empty()); // literal-ok: test fixture
         let old = vec![row("sp-a", "READY", &["ask"], Some(why), NOW - GRACE)];

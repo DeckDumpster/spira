@@ -4,7 +4,7 @@
 # bead.sh amend --ack records accept/decline, --enforce slays and requeues with the body merged.
 #
 # tier: T2
-# covers: spira/bead.sh spira/hooks/aeon-amend-block.sh bead/src/main.rs spira-config/src/amendment.rs spira-lc/src/work.rs work/src/lib.rs
+# covers: spira/bead.sh spira/hooks/dwarf-amend-block.sh bead/src/main.rs spira-config/src/amendment.rs spira-lc/src/work.rs work/src/lib.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -22,7 +22,7 @@ testdb_seed <<'JSONL'
 JSONL
 
 MAIL="$TMP/mail"
-mkdir -p "$MAIL/aeon-sp-aml-a/new" "$MAIL/aeon-sp-aml-b/new" "$TMP/bin" "$TMP/run"
+mkdir -p "$MAIL/dwarf-sp-aml-a/new" "$MAIL/dwarf-sp-aml-b/new" "$TMP/bin" "$TMP/run"
 cat > "$TMP/bin/slay" <<'S'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$SLAY_LOG"
@@ -34,9 +34,9 @@ S
 chmod +x "$TMP/bin/slay" "$TMP/bin/mail"
 
 record() { # id bead state deadline text
-    mkdir -p "$MAIL/aeon-$2/amend"
+    mkdir -p "$MAIL/dwarf-$2/amend"
     printf '{"id":"%s","bead":"%s","amender":"concierge","text":"%s","created":1000,"deadline":%s,"state":"%s","reason":""}' \
-        "$1" "$2" "$5" "$4" "$3" > "$MAIL/aeon-$2/amend/$1.json"
+        "$1" "$2" "$5" "$4" "$3" > "$MAIL/dwarf-$2/amend/$1.json"
 }
 
 run_bead() {
@@ -49,7 +49,7 @@ desc_of() {
         | python3 -c 'import json,sys; d=json.load(sys.stdin); d=d[0] if isinstance(d,list) else d; print(d.get("description",""))'
 }
 hook() {
-    SPIRA_MAIL="$MAIL" BEAD_ID="$1" "$HERE/hooks/aeon-amend-block.sh" <<<"$2"
+    SPIRA_MAIL="$MAIL" BEAD_ID="$1" "$HERE/hooks/dwarf-amend-block.sh" <<<"$2"
 }
 
 echo
@@ -68,7 +68,7 @@ echo
 echo "T2: accept records, merges the text into the description, unblocks"
 run_bead sp-aml-a --ack am-aa --accept
 wantrc "accept ok" "0" "$RC"
-want "state is accepted" '"state":"accepted"' "$(cat "$MAIL/aeon-sp-aml-a/amend/am-aa.json")"
+want "state is accepted" '"state":"accepted"' "$(cat "$MAIL/dwarf-sp-aml-a/amend/am-aa.json")"
 want "text merged into the description" "709cfac" "$(desc_of sp-aml-a)"
 want "original kept" "ORIGINAL-A" "$(desc_of sp-aml-a)"
 nowant "hook no longer blocks" "block" "$(hook sp-aml-a '{"tool_name":"Bash","tool_input":{"command":"ls"}}')"
@@ -82,9 +82,9 @@ run_bead sp-aml-b --ack am-bb --decline
 wantrc "decline without a reason is a usage error" "2" "$RC"
 run_bead sp-aml-b --ack am-bb --decline "pinned dependency would break"
 wantrc "decline ok" "0" "$RC"
-want "reason recorded" "pinned dependency would break" "$(cat "$MAIL/aeon-sp-aml-b/amend/am-bb.json")"
+want "reason recorded" "pinned dependency would break" "$(cat "$MAIL/dwarf-sp-aml-b/amend/am-bb.json")"
 nowant "description untouched" "switch approach" "$(desc_of sp-aml-b)"
-nowant "a declined amendment no longer blocks the aeon" "block" "$(hook sp-aml-b '{"tool_name":"Bash","tool_input":{"command":"ls"}}')"
+nowant "a declined amendment no longer blocks the dwarf" "block" "$(hook sp-aml-b '{"tool_name":"Bash","tool_input":{"command":"ls"}}')"
 
 echo
 echo "T4: --enforce refuses inside the window and after an accept; slays and requeues after a decline or the deadline"
@@ -100,7 +100,7 @@ wantrc "past the deadline" "0" "$RC"
 want "slays the holder, reopening the bead" "--bead sp-aml-a" "$(cat "$TMP/slay.log")"
 want "reopens" "--reopen" "$(cat "$TMP/slay.log")"
 want "amendment merged into the body" "second amendment" "$(desc_of sp-aml-a)"
-want "recorded as enforced" '"state":"enforced"' "$(cat "$MAIL/aeon-sp-aml-a/amend/am-cc.json")"
+want "recorded as enforced" '"state":"enforced"' "$(cat "$MAIL/dwarf-sp-aml-a/amend/am-cc.json")"
 NOW=9001 run_bead --enforce am-cc
 wantrc "enforcing twice is refused" "1" "$RC"
 : > "$TMP/slay.log"
@@ -109,11 +109,11 @@ wantrc "a decline is enforceable at once" "0" "$RC"
 want "slays on a decline" "--bead sp-aml-b" "$(cat "$TMP/slay.log")"
 
 echo
-echo "T5: --live with no live aeon falls back to the advisory amend and records nothing"
+echo "T5: --live with no live dwarf falls back to the advisory amend and records nothing"
 run_bead sp-aml-b --live --note "advisory only"
 wantrc "advisory ok" "0" "$RC"
-want "says so" "no live aeon" "$OUT"
-ls "$MAIL/aeon-sp-aml-b/amend" | grep -c . | grep -q '^1$' && ok "no new record" || bad "no new record"
+want "says so" "no live dwarf" "$OUT"
+ls "$MAIL/dwarf-sp-aml-b/amend" | grep -c . | grep -q '^1$' && ok "no new record" || bad "no new record"
 
 echo
 echo "T6: --live refuses what it cannot hold for acknowledgement"

@@ -1,5 +1,5 @@
-//! mender — what a mender aeon is given and how it answers (see the library). Run through
-//! `work mender <verb> <spec> ...`; `<spec>` is the failure spec the summons carries.
+//! mender — what a mender dwarf is given and how it answers (see the library). Run through
+//! `work mender <verb> <spec> ...`; `<spec>` is the failure spec the calls carries.
 
 use std::io::Read;
 use std::process::Command;

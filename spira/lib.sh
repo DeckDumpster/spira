@@ -1,6 +1,6 @@
 # lib.sh — shared helpers for the Spira harness. Sourced, never executed.
 #
-# Spira runs personas as AEONS: summoned from a RUNE (a persona definition), they claim
+# Spira runs personas as DWARVES: called from a RUNE (a persona definition), they claim
 # one bead with a lease, work it, close or fail it, and exit. Nothing is long-lived except
 # the systemd timers, because a session that dies takes its state with it — the scar behind
 # cockpit-ensure.timer — while a lease is recovered by whoever runs `bd reclaim` next.
@@ -62,8 +62,8 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # subprocess call away. `spira-lint`'s `lib-sh-shims` rule enforces this mechanically: a
 # function here that is not a shim fails the gate unless it is named, with why, in
 # `spira-lint/lib-sh-shims-allow` — today that is `host_cores`; `ready_raw_args`/
-# `ready_count` (and the bare `READY_ARGS` array); `rune_free`; aeon.sh's own bead-machine
-# seam (`lc_bead_row` through `park_unmapped`, row I's "aeon half"); `spira_status_seam`/`spira_bead_status`/`spira_db_reachable`/`_tsd_slots_sample`, each
+# `ready_count` (and the bare `READY_ARGS` array); `rune_free`; dwarf.sh's own bead-machine
+# seam (`lc_bead_row` through `park_unmapped`, row I's "dwarf half"); `spira_status_seam`/`spira_bead_status`/`spira_db_reachable`/`_tsd_slots_sample`, each
 # with a live bash caller a Rust port has not yet replaced; and conf.sh's own locator
 # family, which cannot shim onto `spira-config` because it is what finds `spira-config`'s
 # own inputs — see that allow file for the reasoning on each, not repeated here.
@@ -203,35 +203,35 @@ bdjson() { bdq "$@" --json 2>/dev/null | json_only; }
 json_count() { command bdq __json_count; }           # stdin: JSON; stdout: an integer, 0 on anything unparseable
 
 # --------------------------------------------------------------------------------------
-# Liveness is the lease and nothing else: an aeon is alive while the deadline in its
+# Liveness is the lease and nothing else: a dwarf is alive while the deadline in its
 # identity's `.lease` file is ahead of the clock, renewed every heartbeat and removed at
 # teardown. No pidfile pid is probed, no /proc cmdline read, and never pgrep -f (the pattern
 # is a substring of any command line that mentions it, the caller's own included).
 #
-# aeon_alive/aeon_count/aeons_live_total/aeons_live_lanes are SHIMS onto `strand aeon-alive
-# / aeon-count / aeons-live-total / aeons-live-lanes`; the logic lives in
+# dwarf_alive/dwarf_count/dwarves_live_total/dwarves_live_lanes are SHIMS onto `strand dwarf-alive
+# / dwarf-count / dwarves-live-total / dwarves-live-lanes`; the logic lives in
 # strand/src/probe.rs, and this file keeps the names so bash sourcers (hold.sh) need no change.
 #
-# aeons_live_lanes ALONE threads SPIRA_HOME/SPIRA_RUNES through explicitly: conf.sh
+# dwarves_live_lanes ALONE threads SPIRA_HOME/SPIRA_RUNES through explicitly: conf.sh
 # deliberately never exports either (a fact about this one copy of the harness, not
 # configuration — see _spira_config_rune's own comment), so a bare exec would see neither
-# and silently count zero lane aeons forever, the exact shape of sp-nki5w's scar. The other
-# three need only SPIRA_RUN/SPIRA_SUMMON/SPIRA_SYSTEMCTL, all already exported.
+# and silently count zero lane dwarves forever, the exact shape of sp-nki5w's scar. The other
+# three need only SPIRA_RUN/SPIRA_CALL/SPIRA_SYSTEMCTL, all already exported.
 # --------------------------------------------------------------------------------------
-aeon_alive() {           # aeon_alive <pidfile> -> 0 if the identity's lease is still running
-    strand aeon-alive "$1"
+dwarf_alive() {           # dwarf_alive <pidfile> -> 0 if the identity's lease is still running
+    strand dwarf-alive "$1"
 }
 
-aeon_count() {           # aeon_count <rune> [exclude-unit] -> live aeons of that persona
-    strand aeon-count "$@"
+dwarf_count() {           # dwarf_count <rune> [exclude-unit] -> live dwarves of that persona
+    strand dwarf-count "$@"
 }
 
-aeons_live_total() {     # how many aeons exist right now, across every persona and lane
-    strand aeons-live-total
+dwarves_live_total() {     # how many dwarves exist right now, across every persona and lane
+    strand dwarves-live-total
 }
 
-aeons_live_lanes() {     # how many lane aeons exist right now, across all lane runes
-    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_RUNES="${SPIRA_RUNES:-}" strand aeons-live-lanes
+dwarves_live_lanes() {     # how many lane dwarves exist right now, across all lane runes
+    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_RUNES="${SPIRA_RUNES:-}" strand dwarves-live-lanes
 }
 
 # --------------------------------------------------------------------------------------
@@ -239,7 +239,7 @@ aeons_live_lanes() {     # how many lane aeons exist right now, across all lane 
 # partition of the graph is ITS OWN, and every question the harness asks about a persona
 # must be asked through that persona's own predicate. Asking one predicate on behalf of all
 # of them is not a rounding error, it is an unreachable persona: sentinel.sh CHECK 7 gated
-# every summon on a single `--label spira,plan` count, so Ops could only ever wake when the
+# every call on a single `--label spira,plan` count, so Ops could only ever wake when the
 # BUILDER had work — exactly backwards for an on-call role, and ops.rune shipped complete
 # and inert, with a correct predicate nothing ever evaluated.
 #
@@ -261,28 +261,28 @@ spira_runes() {         # the personas this harness runs, space separated, IN PR
     _spira_config_rune roster
 }
 
-# spira_task_runes -> the personas the sentinel's pool summons: everything that is not a
+# spira_task_runes -> the personas the sentinel's pool calls: everything that is not a
 # party member and not a lane rune.
 #
 # EVERY OTHER USE OF THE ROSTER KEEPS THEM. A party member's beads must still be reaped when
 # its lease dies, its partition still swept for stalled work, and its closed beads still
 # checked for having landed — those were each written against one hardcoded partition once
 # and the fix was to ask every persona's own predicate. Narrowing THAT would restore the bug
-# by another door. This narrows only who the pool summons.
+# by another door. This narrows only who the pool calls.
 #
 # RUNE_LANE is the declared form; RUNE_ROLE=party is preserved as a backward-compatible
 # alias so an operator's custom rune still works after upgrading. Both say the same thing:
-# this persona is not drawn from SPIRA_MAX_AEONS.
+# this persona is not drawn from SPIRA_MAX_DWARVES.
 spira_task_runes() {
     _spira_config_rune task
 }
 
 # spira_lane_runes -> the personas that belong to a declared lane (RUNE_LANE set).
 #
-# A lane rune draws from its own RUNE_MAX_CONCURRENT rather than from SPIRA_MAX_AEONS,
+# A lane rune draws from its own RUNE_MAX_CONCURRENT rather than from SPIRA_MAX_DWARVES,
 # so the pool can be fully occupied by builders and a lane rune still has room. The
 # sentinel's CHECK 7 handles lane runes in a separate loop after the task pool, calling
-# summon_rune without a pool argument so the pool never clamps a lane rune's capacity.
+# call_rune without a pool argument so the pool never clamps a lane rune's capacity.
 #
 # THE NAME MUST APPEAR IN SPIRA_LANES for the lane to be declared, but that is a
 # documentation and validation concern — a rune that names an undeclared lane still
@@ -315,9 +315,9 @@ rune_get() {            # rune_get <rune> <VAR> [default] -> one field of a rune
     _spira_config_rune get "$1" "$2" "${3:-}"
 }
 
-# READY_ARGS — the ONE definition of "a bead an aeon can take". Everything that counts
-# candidates, lists them or claims one reads this array, so the count the sentinel summons
-# on and the query the aeon claims through cannot ask different questions. Copies of a
+# READY_ARGS — the ONE definition of "a bead a dwarf can take". Everything that counts
+# candidates, lists them or claims one reads this array, so the count the sentinel calls
+# on and the query the dwarf claims through cannot ask different questions. Copies of a
 # predicate agree only until somebody edits one of them, and the disagreement presents as a
 # healthy queue.
 #
@@ -330,15 +330,15 @@ rune_get() {            # rune_get <rune> <VAR> [default] -> one field of a rune
 #
 # `-u` is not optional, and it is the hardest of the three to see. `bd ready` counts a bead
 # by status and blockers; `bd ready --claim` refuses one already carrying another actor's
-# assignee. So a bead orphaned by a dead aeon is counted forever and taken never. Measured
-# 2026-09-06: 13 plan beads were open, unleased and assigned to aeons that no longer existed,
-# and CHECK 7 summoned an aeon every two minutes to report idle within one second. Both
+# assignee. So a bead orphaned by a dead dwarf is counted forever and taken never. Measured
+# 2026-09-06: 13 plan beads were open, unleased and assigned to dwarves that no longer existed,
+# and CHECK 7 called a dwarf every two minutes to report idle within one second. Both
 # programs were right and they were answering different questions; `-u` makes it one
 # question (law-absence-needs-a-positive-control — a "ready" that cannot be claimed is worse
 # than a zero, because it reads as a healthy queue).
 #
 # claim.pools is unset on this installation, so nothing is legitimately pre-assigned to an
-# alias an aeon could still claim. If that ever changes, this is the line that must learn
+# alias a dwarf could still claim. If that ever changes, this is the line that must learn
 # about it: `-u` would then hide pool work that `--claim` would happily take.
 #
 # `--label SPIRA_SCOPE_LABEL` is included when the key is non-empty, keeping beads from
@@ -351,10 +351,10 @@ rune_get() {            # rune_get <rune> <VAR> [default] -> one field of a rune
 # set (no scope filter) so that beads missing the scope label are seen and reported as
 # UNCLAIMABLE. They are excluded from claims, counts and strand reports via READY_ARGS, but
 # the detector's job is to name the condition — exclusion is not a reason to stay silent.
-# READY_ARGS and ready_raw_args stay bash: aeon's seam reads the array directly,
-# and computing them through a subprocess at source time corrupted the aeon's seam snapshot.
+# READY_ARGS and ready_raw_args stay bash: dwarf's seam reads the array directly,
+# and computing them through a subprocess at source time corrupted the dwarf's seam snapshot.
 # On the Rust side the one constant is `spira_claim::READY_ARGS_BASE`. Neither decides what
-# is ready (the lifecycle machine is the only mode, sp-v62vn): spira-claim's counts and an aeon's ready set come from
+# is ready (the lifecycle machine is the only mode, sp-v62vn): spira-claim's counts and a dwarf's ready set come from
 # the lifecycle machine's rows (spira-claim `ready-count`, `rune-ready [--json]`).
 
 ready_raw_args() {
@@ -366,7 +366,7 @@ READY_ARGS=(ready --limit 0 --exclude-type epic,event -u)
 [[ -n "${SPIRA_SCOPE_LABEL:-}" ]] && READY_ARGS+=(--label "$SPIRA_SCOPE_LABEL")
 [[ -n "${SPIRA_NO_LOOP_LABEL:-}" ]] && READY_ARGS+=(--exclude-label "$SPIRA_NO_LOOP_LABEL")
 
-# ready_count <labels> [<exclude-labels>] — spira-claim's count: it counts the lifecycle machine's claimable rows, the set an aeon claims from.
+# ready_count <labels> [<exclude-labels>] — spira-claim's count: it counts the lifecycle machine's claimable rows, the set a dwarf claims from.
 ready_count() {
     _spira_claim ready-count "$1" "${2:-}"
 }
@@ -437,14 +437,14 @@ ready_shared_exclude() {
 
 # check7_pool_decision/lane_rotate/ck7_pool/ck7_throttled/ck7_fill_cap RETIRED OUTRIGHT
 # (wave 4.27, family G, sp-gzmd2): each was pure arithmetic with no caller left but
-# `_ck7_summon_body`, itself retired the same bead onto `sentinel`'s own in-process
-# `ck7_summon_pass` (sentinel/src/summon.rs). Ported, not just deleted — see
-# `summon::tests::check7_pool_decision_matches_the_throttle_leak_fix`,
+# `_ck7_call_body`, itself retired the same bead onto `sentinel`'s own in-process
+# `ck7_call_pass` (sentinel/src/call.rs). Ported, not just deleted — see
+# `call::tests::check7_pool_decision_matches_the_throttle_leak_fix`,
 # `lane_rotate_moves_last_and_everything_before_it_to_the_end`,
 # `ck7_pool_subtracts_task_live_and_floors_at_zero`,
 # `ck7_throttled_is_the_stamp_unless_the_override_pins_it_clear` and
 # `ck7_fill_cap_stops_on_either_the_pool_or_the_per_persona_cap` for the same cases
-# test-watchtower-throttle.sh/test-express-lane.sh/test-summon-rune.sh used to assert
+# test-watchtower-throttle.sh/test-express-lane.sh/test-call-rune.sh used to assert
 # directly against the bash originals.
 
 # mark_queue_waiters / close_landed_queue_waiters — apply/remove SPIRA_QUEUE_WAIT_LABEL on
@@ -477,7 +477,7 @@ bead_reopen() {
 
 # --------------------------------------------------------------------------------------
 # ENDING A CLAIM. An assignee is written when a bead is claimed, and it is the ONLY thing
-# standing between the next aeon and the work, because `bd ready --claim` refuses a bead
+# standing between the next dwarf and the work, because `bd ready --claim` refuses a bead
 # carrying another actor's name. So every path that ends a claim without the work being
 # done has to unwrite it.
 #
@@ -488,7 +488,7 @@ bead_reopen() {
 #
 # WHY `bd assign <id> ""` AND NOT `bd unclaim --force`. assign refuses to overwrite another
 # actor's LIVE in_progress claim unless forced; unclaim --force by definition does not. That
-# refusal is the safety property, because these run from a timer against a database aeons
+# refusal is the safety property, because these run from a timer against a database dwarves
 # are claiming out of concurrently: the primitive that loses a race harmlessly is the
 # correct one, and --force is how a sweep robs a live worker.
 # --------------------------------------------------------------------------------------
@@ -497,9 +497,9 @@ release_claim() {        # release_claim <id> -> 0 if the assignee is now clear
 }
 
 # ---- lifecycle: the bead machine, via spira-lc (design §3.1.1, §3.5) -----------------
-# aeon.sh is the trusted driver, not the sandboxed model, so it calls spira-lc directly —
-# never through `work`, whose whole point is binding one bead to one aeon's restricted
-# unit. These three functions are the only place aeon.sh's own claim/release/holder-dead
+# dwarf.sh is the trusted driver, not the sandboxed model, so it calls spira-lc directly —
+# never through `work`, whose whole point is binding one bead to one dwarf's restricted
+# unit. These three functions are the only place dwarf.sh's own claim/release/holder-dead
 # reach the machine.
 
 # lc_bead_row <id> -> "STATE<TAB>VERSION<TAB>HOLDER<TAB>LEASE_UNTIL", or a non-zero return
@@ -530,7 +530,7 @@ lc_event_bead() {
 # lc_claim_bead <id> <holder> <lease-until-epoch> [<stack-json> <stack-depth>
 # <stack-max-depth>] -> 0 applied, 3 refused, 2 cannot tell. THE CLAIM: the row is the only
 # record of who holds the bead, and Claim applies only to READY or REWORK, so a bead another
-# aeon holds is refused here, never taken over — a dead holder's row goes back to READY
+# dwarf holds is refused here, never taken over — a dead holder's row goes back to READY
 # through the stale-lease reaper's HolderDead, not through the next claimant. Also refused:
 # DepthExceeded, when stack-depth exceeds stack-max-depth. The trailing three args are the
 # caller's own stack proposal, forwarded as given; omitted, an unstacked claim.
@@ -581,7 +581,7 @@ lc_release_bead() {
 # lc_bead_verified <id> -> 0 when the bead machine's row already carries a definitive,
 # non-failing outcome (SUBMITTED and beyond, or DONE). bd's own status never changes for a
 # work-verb-driven session (design §3.4: bd status is inert for work beads) — this is
-# aeon.sh's replacement for reading "closed" off bd to decide a session actually finished.
+# dwarf.sh's replacement for reading "closed" off bd to decide a session actually finished.
 lc_bead_verified() {
     local row state
     row="$(lc_bead_row "$1" 2>/dev/null)" || return 1
@@ -592,32 +592,32 @@ lc_bead_verified() {
     esac
 }
 
-# release_own_claim <id> — an aeon hands back a bead it is still holding.
+# release_own_claim <id> — a dwarf hands back a bead it is still holding.
 #
 # ONE CALL, THROUGH THE MACHINE: `spira-lc unclaim`. It releases the lifecycle row only if
-# <me> still holds it — a bead reaped and handed to another aeon in between keeps its new
+# <me> still holds it — a bead reaped and handed to another dwarf in between keeps its new
 # holder — and writes nothing to bd, whose assignee nobody reads.
 #
-# THE NAME IS THE AEON'S, NOT THE RUNE'S. aeon.sh claims under BEADS_ACTOR="aeon-$AEON",
-# the per-instance name — `aeon-mindy`, not `aeon-builder`. Release sites that derived the
-# actor a second time as "aeon-$RUNE" compared against a string no bead has ever carried:
+# THE NAME IS THE DWARF'S, NOT THE RUNE'S. dwarf.sh claims under BEADS_ACTOR="dwarf-$DWARF",
+# the per-instance name — `dwarf-austri`, not `dwarf-builder`. Release sites that derived the
+# actor a second time as "dwarf-$RUNE" compared against a string no bead has ever carried:
 # bd answered "assignee mismatch", exited 1 into >/dev/null, and changed nothing, so every
-# aeon that ended without closing left its name standing and the next `bd ready --claim`
+# dwarf that ended without closing left its name standing and the next `bd ready --claim`
 # skipped that bead forever. Deriving the actor twice is what let the two disagree, which is
 # why there is one function here and no copies of it anywhere.
 release_own_claim() {
-    local id="$1" me="${BEADS_ACTOR:-aeon-${SPIRA_AEON:-}}"
-    [ -n "$me" ] && [ "$me" != "aeon-" ] || return 1
+    local id="$1" me="${BEADS_ACTOR:-dwarf-${SPIRA_DWARF:-}}"
+    [ -n "$me" ] && [ "$me" != "dwarf-" ] || return 1
     spira-lc unclaim "$id" "$me" >/dev/null 2>&1
 }
 
 # park_unmapped <id> <repo-name> — repo-map has no checkout for the bead's repo:<repo-name>.
 #
 # PARK, NOT RELEASE. release_own_claim alone puts the bead back on the ready queue, where
-# the sentinel re-summons an aeon within two minutes — an infinite loop burning the pool.
+# the sentinel re-calls a dwarf within two minutes — an infinite loop burning the pool.
 # The ask hold makes the machine leave it out of every rune's claimable set, so the
 # bead sits open but unclaimed until a human corrects the label or the repo-map. Scar:
-# sp-nlhy accumulated four identical notes, one per summon, before a keyboard session
+# sp-nlhy accumulated four identical notes, one per call, before a keyboard session
 # fixed the label by hand. (sp-4l0d)
 # overseer keeps the bead visible in the decisions pane; without it the bead is excluded
 # from every rune predicate and invisible to the operator.
@@ -630,43 +630,32 @@ park_unmapped() {
     esac
     bdq label add "$id" "overseer"          >/dev/null 2>&1 || true
     # The hold alone (sp-psztcc): a label standing in for it outlived every withdrawal.
-    spira-lc hold "$id" ask "repo:$repo_name has no repo-map entry" aeon.sh >/dev/null 2>&1 || true
-    bdq note "$id" "Parked by aeon.sh: this bead carries repo:$repo_name, and $SPIRA_REPO_MAP has no entry for it (or its path is not a git checkout). Held with an ask (and labelled overseer) — no aeon will claim it again until a human corrects the label or adds the repo to the map and withdraws the ask (spira-lc withdraw-ask $id). Refusing to work it in the home repo — a fix landed in the wrong repository passes every check downstream." >/dev/null 2>&1
+    spira-lc hold "$id" ask "repo:$repo_name has no repo-map entry" dwarf.sh >/dev/null 2>&1 || true
+    bdq note "$id" "Parked by dwarf.sh: this bead carries repo:$repo_name, and $SPIRA_REPO_MAP has no entry for it (or its path is not a git checkout). Held with an ask (and labelled overseer) — no dwarf will claim it again until a human corrects the label or adds the repo to the map and withdraws the ask (spira-lc withdraw-ask $id). Refusing to work it in the home repo — a fix landed in the wrong repository passes every check downstream." >/dev/null 2>&1
     release_own_claim "$id"
 }
 
 # rune_free <rune> [pool-remaining] [exclude-unit] -> free concurrency slots, never negative.
-# exclude-unit is passed straight through to aeon_count: a live aeon asking its own capacity
+# exclude-unit is passed straight through to dwarf_count: a live dwarf asking its own capacity
 # question must not count its own unit (sp-0hnm6).
 #
-# THE POOL IS A BATTLE PARTY (the operator, 2026-09-07: "i have a tank, a healer, and then as
-# much DPS as i can"). SPIRA_MAX_AEONS is the party size, and every persona is one of two
-# kinds:
+# SPIRA_MAX_DWARVES is the pool size, and every persona is one of two kinds:
 #
-# THE DISTINCTION IS YUNA AND IFRIT (the operator, 2026-09-07: "as i travel around Spira with
-# my party, i have Yuna the summoner always around, but Ifrit the Aeon is only around during
-# combat when i NEED Ifrit"). A party member travels with you; an aeon is called for the
-# fight and dismissed after it. Ops is Yuna — persistent, always present, not summoned for a
-# task. A builder is Ifrit — summoned onto one bead, and gone when it is done.
+#   RESIDENT RUNES (RUNE_ROLE=party) are NOT drawn from this pool: they are persistent roles
+#   with their own caller (Ops has spira-ops.timer). Keeping them out of the pool is what
+#   guarantees them a place; a reserved slot inside a shared pool is still a slot somebody has
+#   to release, and builders hold theirs for ~10 minutes (p50 9.4 min, p90 18.6 min measured
+#   over 28 runs).
 #
-#   PARTY MEMBERS (RUNE_ROLE=party) — the tank and the healer. They are NOT drawn from this
-#   pool, because they are not task-specific work: they are persistent roles that are always
-#   present, with their own summoner (Ops has spira-ops.timer). Ops is the healer. Keeping it
-#   out of the pool is what actually guarantees it a place — a reserved slot inside a shared
-#   pool is still a slot somebody has to release, and builders hold theirs for ~10 minutes (p50 9.4 min, p90 18.6 min measured over 28 runs).
+#   TASK RUNES (the default) are called for one bead and gone. This pool is theirs alone.
+#   RUNE_ELASTIC means "no number of your own, take what is left": builders take what the
+#   pool has.
 #
-#   TASK RUNES (the default) — summoned for one bead and gone. This pool is theirs alone.
-#   RUNE_ELASTIC means "no number of your own, take what is left": builders are the DPS, and
-#   "as much as I can" is exactly the right cap for them.
-#
-# WHERE THE METAPHOR DIVERGES, deliberately: in the game one rune yields one aeon, so a
-# party of three builders would need three statues in the runes. Here a rune is the CLASS
-# — a persona definition — and an aeon one summoned instance of it, which is what lets
-# RUNE_MAX_CONCURRENT exist at all. Lore-exact would buy nothing but three near-identical
-# .rune files to keep in step.
+# A rune is the CLASS, a persona definition, and a dwarf one called instance of it, which is
+# what lets RUNE_MAX_CONCURRENT exist at all.
 #
 # A PARTY MEMBER SHOULD ALWAYS BE PRESENT, which is the part that is not in this file: Ops
-# is only summoned when an incident bead is waiting, so a quiet hour means the healer is not
+# is only called when an incident bead is waiting, so a quiet hour means the healer is not
 # in the party at all and the role exists only on paper. The watchtower binary is what keeps it
 # seated — it hands Ops the pipeline's vital signs on a timer whether or not anything has
 # crashed, so the persistent role has something to be persistent about. Until now it was a documented, validated
@@ -689,16 +678,16 @@ park_unmapped() {
 # THE POOL IS A CEILING, NOT A FLOOR. It only ever lowers what a persona may start, so a
 # host that sets nothing behaves exactly as before.
 #
-# DELIBERATELY NOT SHIMMED (wave 4.23, sp-0ffox), unlike aeon_count/aeons_live_total above.
+# DELIBERATELY NOT SHIMMED (wave 4.23, sp-0ffox), unlike dwarf_count/dwarves_live_total above.
 # strand/src/probe.rs carries its own Rust copy of this same arithmetic for any FUTURE
-# in-process Rust caller, but THIS body stays bash: it calls rune_get/aeon_count BY NAME,
-# and six suites (test-summon-rune.sh, test-aeon-elastic-concurrency.sh, test-rune.sh,
+# in-process Rust caller, but THIS body stays bash: it calls rune_get/dwarf_count BY NAME,
+# and six suites (test-call-rune.sh, test-dwarf-elastic-concurrency.sh, test-rune.sh,
 # test-builder-qa-proposed.sh, test-czar-partition.sh, test-dependents.sh) redefine those
 # bash functions after sourcing this file, to control rune_free's inputs without a real
 # process table. Reducing rune_free itself to a one-line exec shim would move that
-# arithmetic into a separate process where a bash-level override of aeon_count can never
+# arithmetic into a separate process where a bash-level override of dwarf_count can never
 # reach it again (the EXEC-BOUNDARY TRAP) — breaking every one of those suites for no
-# behavior change in production (aeon_count below is itself already a shim, so rune_free
+# behavior change in production (dwarf_count below is itself already a shim, so rune_free
 # calling it by name already reaches strand exactly as a one-line shim would).
 rune_free() {           # rune_free <rune> [pool-remaining] [exclude-unit]
     local f="$1" pool="${2:-}" exclude="${3:-}" max have free
@@ -716,7 +705,7 @@ rune_free() {           # rune_free <rune> [pool-remaining] [exclude-unit]
     # from sentinel.sh) is how many MORE may start. Subtracting the running count from it
     # again withholds more the more is running, so the system saturates at half its ceiling
     # and reports itself at its limit.
-    have="$(aeon_count "$f" "$exclude")"
+    have="$(dwarf_count "$f" "$exclude")"
     if [ "$is_remainder" = 1 ]; then
         free="$max"
     else
@@ -730,10 +719,10 @@ rune_free() {           # rune_free <rune> [pool-remaining] [exclude-unit]
 
 # rune_partitions -> every partition this host watches, one "<labels>\t<exclude-labels>" a line.
 #
-# THE ROSTER ANSWERS "WHOSE WORK IS THERE" FOR EVERY CHECK, not only for summoning. Reaping
+# THE ROSTER ANSWERS "WHOSE WORK IS THERE" FOR EVERY CHECK, not only for calling. Reaping
 # a dead lease, reporting stalled work and verifying that a closed bead actually landed were
 # each written against one hardcoded partition — the builder's — which is CHECK 7's defect
-# arriving by three more doors. An aeon of any other persona that died left its bead
+# arriving by three more doors. A dwarf of any other persona that died left its bead
 # in_progress with no reaper looking at it, its stall was never reported as stalled, and its
 # bead could close without landing and pass the sweep that exists to catch exactly that. The
 # fix is the same one rune_ready made: ask each persona's OWN predicate.
@@ -755,29 +744,29 @@ runes_for_labels() {    # runes_for_labels <labels> -> personas whose partition 
     return 0
 }
 
-# summon_rune <rune> [pool-remaining] [require-express] [reuse-ready] -> 0 if an aeon was
+# call_rune <rune> [pool-remaining] [require-express] [reuse-ready] -> 0 if a dwarf was
 # started, 1 otherwise.
 #
-# A non-empty require-express is passed to the aeon as SPIRA_REQUIRE_EXPRESS, which narrows
+# A non-empty require-express is passed to the dwarf as SPIRA_REQUIRE_EXPRESS, which narrows
 # its ready set to beads whose lifecycle row is express. Set it only when the slot itself is
-# restricted — an express grant, say. A normal summon leaves it unset and claims under the
+# restricted — an express grant, say. A normal call leaves it unset and claims under the
 # rune's own predicate exactly as before.
 #
-# reuse-ready=1 skips the rune_ready bd round trip and uses SUMMON_RUNE_CACHED_READY
+# reuse-ready=1 skips the rune_ready bd round trip and uses CALL_RUNE_CACHED_READY
 # (set by the previous call, in this same shell, for the SAME rune) instead — a caller
-# looping repeated summons for one rune in one pass already knows the count from its last
-# call, decremented by exactly the summon it just made; asking bd again for the same
+# looping repeated calls for one rune in one pass already knows the count from its last
+# call, decremented by exactly the call it just made; asking bd again for the same
 # partition, once per attempt, was the cost CHECK7's fill loop paid for nothing (sp-994y9).
 # Every other caller omits it, defaulting to 0: always a live query, exactly today's
 # behaviour.
 #
 # THE STATUS IS THE ANSWER, not a word on stdout. A caller that captured the output to look
-# for "summoned" would swallow the log lines below with it, and the sentinel's stdout IS the
+# for "called" would swallow the log lines below with it, and the sentinel's stdout IS the
 # sentinel log — so the one pass that did something would be the one that explained itself
 # least.
-# world_gate <rune> <log-prefix> -> 0 if summons are permitted, 1 if halted or draining.
+# world_gate <rune> <log-prefix> -> 0 if calls are permitted, 1 if halted or draining.
 # Extracted so a second caller can share the exact check rather than a second copy of it.
-# aeon --escape calls this too (sp-uyw4n, sp-2w2wu; escape.sh before it, retired sp-zpaq0):
+# dwarf --escape calls this too (sp-uyw4n, sp-2w2wu; escape.sh before it, retired sp-zpaq0):
 # it reaches around a broken scheduler, not around a halt or drain the operator asked for.
 #
 # HALTED — world.sh stop writes this stamp; only world.sh start removes it. Checked before
@@ -786,44 +775,44 @@ runes_for_labels() {    # runes_for_labels <labels> -> personas whose partition 
 # DRAINING — the operator asked for an empty pool and is waiting on it. Checked ahead of
 # capacity and readiness, because it is the only condition here a person is actively
 # blocked on: a rollout that must not kill work in flight needs the pool to reach zero, and
-# it never does while summons continue.
+# it never does while calls continue.
 #
 # A DRAIN EXPIRES, AND THIS IS WHAT EXPIRES IT. A drain is a held breath: right for the
 # minutes an operation needs, never for an hour. Whoever sets one can die before lifting it
 # — 2026-09-09, an Ops sweep drained at 18:02:03, finished its SOP at 18:04:29, exited
-# without resuming, and the world sat gated for 59 minutes with 25 beads ready and no aeons,
-# every pass logging "pass complete" with nothing summoned, because a drain is a MODE and
+# without resuming, and the world sat gated for 59 minutes with 25 beads ready and no dwarves,
+# every pass logging "pass complete" with nothing called, because a drain is a MODE and
 # nothing treated the mode as a fault.
 #
 # LIFTING IT HERE IS LOUD, NEVER SILENT — a quiet lift would hide the forgotten resume,
 # which is the defect worth seeing. A STAMP WITH NO `expires` LINE expires at stamp-mtime +
 # TTL, so a drain written by the older world.sh cannot wedge the loop forever either.
-# world_gate/summon_refill_argv/summon_argv/summon_rune/_ck7_summon_body/ck7_summon_pass/
-# named_unit_stop RETIRED INTO sentinel (wave 4.27, family G, sp-gzmd2): the whole summon
+# world_gate/call_refill_argv/call_argv/call_rune/_ck7_call_body/ck7_call_pass/
+# named_unit_stop RETIRED INTO sentinel (wave 4.27, family G, sp-gzmd2): the whole call
 # loop — world (halt/drain) gate, the account's capacity, the fleet ceiling, the elastic
 # and inverted last-slot reservations, the lane-then-pool fill loop, and the flock that
 # serializes it against every other caller — now runs in-process in
-# sentinel/src/summon.rs (`Sentinel::world_gate`/`summon_rune`/`ck7_summon_body`/
-# `ck7_summon_pass`), under a real OS flock on the SAME `$SPIRA_RUN/summon.lock` rather
-# than a bash seam under one. These shims exist only for `aeon --escape`'s own seam
-# (world_gate, summon_argv — still bash, out of this bead's scope) and
-# `acceptance-local.sh` (named_unit_stop); `summon_rune` itself has no bash caller left
-# but czar-pass, which now calls `sentinel --summon` directly, with no lib.sh sourcing at
-# all. `_ck7_summon_body`'s own unlocked-race test row is retired with it (wave4-
+# sentinel/src/call.rs (`Sentinel::world_gate`/`call_rune`/`ck7_call_body`/
+# `ck7_call_pass`), under a real OS flock on the SAME `$SPIRA_RUN/call.lock` rather
+# than a bash seam under one. These shims exist only for `dwarf --escape`'s own seam
+# (world_gate, call_argv — still bash, out of this bead's scope) and
+# `acceptance-local.sh` (named_unit_stop); `call_rune` itself has no bash caller left
+# but czar-pass, which now calls `sentinel --call` directly, with no lib.sh sourcing at
+# all. `_ck7_call_body`'s own unlocked-race test row is retired with it (wave4-
 # decomposition.md (c)8): a compiled binary offers no shell-function-by-name override to
 # stub around the lock, so the race it proved is now structurally impossible rather than
-# merely refused — see test-summon-fast-path.sh's own note where that row used to be.
-world_gate() {         # world_gate <rune> <log-prefix> -> 0 if summons are permitted, 1 if halted or draining
+# merely refused — see test-call-fast-path.sh's own note where that row used to be.
+world_gate() {         # world_gate <rune> <log-prefix> -> 0 if calls are permitted, 1 if halted or draining
     sentinel --world-gate "$1" "$2"
 }
-summon_argv() {         # summon_argv <rune> -> systemd-run property/setenv flags, one per line
-    sentinel --summon-argv "$1"
+call_argv() {         # call_argv <rune> -> systemd-run property/setenv flags, one per line
+    sentinel --call-argv "$1"
 }
-summon_rune() {         # summon_rune <rune> [pool-remaining] [require-express] -> 0 if an aeon was started, 1 otherwise
-    sentinel --summon "$1" "${2:-}" "${3:-}"
+call_rune() {         # call_rune <rune> [pool-remaining] [require-express] -> 0 if a dwarf was started, 1 otherwise
+    sentinel --call "$1" "${2:-}" "${3:-}"
 }
-ck7_summon_pass() {
-    sentinel --summon-pass
+ck7_call_pass() {
+    sentinel --call-pass
 }
 named_unit_stop() {      # named_unit_stop <systemd --user unit glob> -> stop every live unit matching it, by NAME
     sentinel --named-unit-stop "$1"
@@ -833,11 +822,11 @@ named_unit_stop() {      # named_unit_stop <systemd --user unit glob> -> stop ev
 # API CAPACITY — the account's own five-hour window, and the second unrelated thing in this
 # harness called "capacity".
 #
-# The other one: RUNE_MAX_CONCURRENT is how many aeons may run at once. It has nothing to do
+# The other one: RUNE_MAX_CONCURRENT is how many dwarves may run at once. It has nothing to do
 # with this one, which is whether the API will answer at all. The name collision is why the
 # condition went unhandled for so long — `grep capacity` returned confident, irrelevant hits.
 #
-# WHAT GOES WRONG WITHOUT THIS. aeon.sh takes the session's exit code and any non-zero
+# WHAT GOES WRONG WITHOUT THIS. dwarf.sh takes the session's exit code and any non-zero
 # becomes a failed attempt, so a session the API refused to serve is recorded as work that
 # could not be done. That is not merely a miscount: attempts poison at a threshold, so an
 # outage does not just stop the queue, it DESTROYS it — every bead claimed while the window
@@ -869,14 +858,14 @@ SPIRA_CAPACITY_PAUSE="${SPIRA_CAPACITY_PAUSE:-$SPIRA_RUN/capacity-pause}"
 SPIRA_CAPACITY_BACKOFF="${SPIRA_CAPACITY_BACKOFF:-900}"
 
 # --------------------------------------------------------------------------------------
-# WAVE 4.26 ("capacity pause (K) -> aeon"): every function below is now a one-line shim
-# onto `aeon capacity <verb>` (aeon/src/capacity.rs). aeon is the probe's one owner —
+# WAVE 4.26 ("capacity pause (K) -> dwarf"): every function below is now a one-line shim
+# onto `dwarf capacity <verb>` (dwarf/src/capacity.rs). dwarf is the probe's one owner —
 # `capacity_probe_maybe`/`capacity_probe` are retired outright, not shimmed: nothing but
 # `capacity_paused` ever called them, and that logic now lives entirely in the binary
 # (wave4-decomposition.md (c)3: "keep exactly one owner for the probe"). The pause file
 # stays the contract every language reads: `$SPIRA_CAPACITY_PAUSE`, `<epoch> <iso> <why>`,
 # unchanged. Streams: the verb's plain answer is on stdout, any `log`-style chatter is on
-# stderr — `capacity_paused`'s own `SPIRA_CAPACITY_LEFT="$(aeon capacity paused)"` below
+# stderr — `capacity_paused`'s own `SPIRA_CAPACITY_LEFT="$(dwarf capacity paused)"` below
 # captures only the number, never the chatter.
 # --------------------------------------------------------------------------------------
 
@@ -885,34 +874,34 @@ SPIRA_CAPACITY_BACKOFF="${SPIRA_CAPACITY_BACKOFF:-900}"
 # log does not exist, is unparseable, or the session failed for its own reasons — reading
 # a genuine failure as an outage would stop a bead ever being poisoned).
 capacity_reset_at() {
-    aeon capacity reset-at "${1:-}"
+    dwarf capacity reset-at "${1:-}"
 }
 
 # capacity_pause_set <epoch> <reason> — record that the account is out until <epoch>. An
 # existing pause is only ever EXTENDED, never shortened.
 capacity_pause_set() {
-    aeon capacity pause-set "${1:-0}" "${2:-unknown}"
+    dwarf capacity pause-set "${1:-0}" "${2:-unknown}"
 }
 
 capacity_pause_until() {  # -> the epoch a pause runs to, or 0 if none is recorded
-    aeon capacity pause-until
+    dwarf capacity pause-until
 }
 
 # capacity_paused -> rc 0 while the window is still shut, and sets $SPIRA_CAPACITY_LEFT to
 # the seconds remaining ("?" when the pause file exists but could not be read or parsed —
 # fail closed, never treated as open). Probes when the horizon is far out
 # (SPIRA_CAPACITY_PROBE_WINDOW) and lifts the pause early on a served probe, same as
-# before — that whole decision is `aeon::capacity::paused` now.
+# before — that whole decision is `dwarf::capacity::paused` now.
 SPIRA_CAPACITY_LEFT=0
 capacity_paused() {
-    SPIRA_CAPACITY_LEFT="$(aeon capacity paused)"
+    SPIRA_CAPACITY_LEFT="$(dwarf capacity paused)"
 }
 
 # Path for the probe-last timestamp. Lives beside the other capacity state files.
 SPIRA_CAPACITY_PROBE_LAST="${SPIRA_CAPACITY_PROBE_LAST:-$SPIRA_RUN/capacity-probe-last}"
 
 capacity_pause_why() {   # -> what was being worked when the account ran out
-    aeon capacity pause-why
+    dwarf capacity pause-why
 }
 
 # --------------------------------------------------------------------------------------
@@ -926,7 +915,7 @@ capacity_pause_why() {   # -> what was being worked when the account ran out
 # which is not a defence: a hand-run command invites being run again.
 #
 # THE MARK IS KEYED ON THE LOG'S CONTENT, not on the bead and not on a date. The horizon is
-# one attempt deep by construction — aeon.sh truncates `$SPIRA_RUN/<id>.log` on every
+# one attempt deep by construction — dwarf.sh truncates `$SPIRA_RUN/<id>.log` on every
 # attempt — so "has this refusal already been paid back" is exactly "is this the same log I
 # paid back last time". A NEW refusal rewrites the file, the fingerprint moves, and the next
 # withdrawal is made. A bead keyed mark would refuse the second outage; a dated one would
@@ -939,22 +928,22 @@ capacity_pause_why() {   # -> what was being worked when the account ran out
 SPIRA_CAPACITY_WITHDRAWN="${SPIRA_CAPACITY_WITHDRAWN:-$SPIRA_RUN/capacity-withdrawn}"
 
 # capacity_log_fingerprint <log> -> a string that moves when the log's content does; rc 1
-# if there is no readable content to fingerprint. sha2 in-process now (aeon::capacity),
+# if there is no readable content to fingerprint. sha2 in-process now (dwarf::capacity),
 # replacing the sha256sum/cksum fallback — both the write and the read are this one
 # binary's now, so only internal consistency matters, never the algorithm's name.
 capacity_log_fingerprint() {
-    aeon capacity log-fingerprint "${1:-}"
+    dwarf capacity log-fingerprint "${1:-}"
 }
 
 capacity_withdrawn_fp() {   # capacity_withdrawn_fp <id> -> the fingerprint already paid back, or nothing
-    aeon capacity withdrawn-fp "${1:-}"
+    dwarf capacity withdrawn-fp "${1:-}"
 }
 
 # capacity_withdrawn_mark <id> <fingerprint> <attempt> — record that this exact log has been
 # paid back. Written whole rather than appended: one line per bead is the entire question,
 # and a file that only ever grows is one more thing to prune.
 capacity_withdrawn_mark() {
-    aeon capacity withdrawn-mark "${1:-}" "${2:-}" "${3:-0}"
+    dwarf capacity withdrawn-mark "${1:-}" "${2:-}" "${3:-0}"
 }
 
 # --------------------------------------------------------------------------------------
@@ -965,7 +954,7 @@ capacity_withdrawn_mark() {
 #                  a bead being worked.
 #   sp-requeue-N   the HARNESS put finished work back. The session committed and closed the
 #                  bead, and a rebase onto a base that had moved underneath it no longer
-#                  replayed — so the bead was reopened and the next aeon inherits the
+#                  replayed — so the bead was reopened and the next dwarf inherits the
 #                  conflict. Diagnostic; feeds nothing.
 #
 # The third exists because the first two cannot express it and the first one was taking it.
@@ -981,12 +970,12 @@ capacity_withdrawn_mark() {
 # a fact worth seeing: the queue is manufacturing conflicts faster than the work can absorb
 # them, and without a number nobody would know (law-take-the-simple-fix-with-a-meter).
 #
-# They were one counter, and one aeon dying cost a bead TWO of its three attempts: the
+# They were one counter, and one dwarf dying cost a bead TWO of its three attempts: the
 # teardown bumped on the way out and strand.sh bumped again when it reclaimed the same bead
 # after the lease expired. Beads were poisoned without their work ever having been tried —
 # the sessions were refused by the API seconds in. Poison then fires hardest during
 # infrastructure flapping, which is exactly when the queue can least afford to lose work.
-# "This bead cannot be worked" and "this host keeps killing aeons" are different claims and
+# "This bead cannot be worked" and "this host keeps killing dwarves" are different claims and
 # neither is evidence for the other.
 #
 # Kept as labels rather than metadata because a label is visible in every listing and
@@ -1001,18 +990,18 @@ capacity_withdrawn_mark() {
 # --------------------------------------------------------------------------------------
 # ATTEMPTS ARE COMPUTED FROM THE EVENTS TRAIL, NOT STORED AS LABELS.
 #
-# An aeon claiming a bead writes event_type='claimed'. A hand-driven transition through
+# A dwarf claiming a bead writes event_type='claimed'. A hand-driven transition through
 # `bd update --status in_progress` writes event_type='status_changed' with new_value
 # containing 'in_progress'. BOTH are attempts and the count is the union of the two.
 #
 # THE ORIGINAL PREDICATE COUNTED ONLY status_changed AND THEREFORE RETURNED 0 FOR EVERY
-# BEAD AN AEON HAD EVER WORKED. Measured 2026-09-12 across four real beads: shipped=0 for
-# all of them while claimed=1 for each of the three an aeon had taken. Since poisoning is
+# BEAD A DWARF HAD EVER WORKED. Measured 2026-09-12 across four real beads: shipped=0 for
+# all of them while claimed=1 for each of the three a dwarf had taken. Since poisoning is
 # `attempts >= 3`, nothing could ever be poisoned and a looping bead would loop for ever —
 # a silent failure of a safety mechanism, which is worse than a loud one.
 #
 # The error came from the brief, not the implementation: the predicate was verified against
-# `bd update --status in_progress` and generalised to "how an aeon claims", which is a
+# `bd update --status in_progress` and generalised to "how a dwarf claims", which is a
 # different code path writing a different event_type. Verify the path the system actually
 # takes, not one that resembles it.
 #
@@ -1028,7 +1017,7 @@ capacity_withdrawn_mark() {
 # `events::fold` (spira-claim/src/events.rs, DESIGN.md §3), unit-tested by
 # `cargo test -p spira-claim events::tests` and proven against the identical b1..b8 fixture
 # this file's own test-attempts-sql.sh still seeds. attempts_of is a one-line shim so every
-# existing caller (capacity.sh, the Rust seams in aeon/landing-pass/rebase-stale/etc. that
+# existing caller (capacity.sh, the Rust seams in dwarf/landing-pass/rebase-stale/etc. that
 # still call it by name) keeps working unchanged.
 #
 # FAIL CLOSED, NOT OPEN. A query failure used to fall through to `printf '0'` with a 0 exit —
@@ -1056,8 +1045,8 @@ attempts_of() {
 # properly quoted through store::sql_quote rather than interpolated raw), reached by name
 # so doctor's events-substrate probe and every test fixture that calls this directly with
 # an arbitrary event_type (census's recurred/reclaimed local wrappers) keep working.
-# _bump_write_event must keep returning 0: aeon.sh runs under `set -e` and calls
-# bump_requeue bare, so a failing return would kill a live aeon mid-requeue.
+# _bump_write_event must keep returning 0: dwarf.sh runs under `set -e` and calls
+# bump_requeue bare, so a failing return would kill a live dwarf mid-requeue.
 _bump_write_event_try() {
     local id="${1:-}" etype="${2:-}" cause="${3:-unrecorded}"
     [ -n "$id" ] && [ -n "$etype" ] || return 0
@@ -1092,21 +1081,21 @@ bead_metadata() {
 
 # THRASH STREAK — how many consecutive thrash requeues have landed on this bead with its
 # branch tip unchanged. Stored as bead metadata (thrash_tip, thrash_streak, thrash_last)
-# because it must survive between aeon summons — unlike $SPIRA_RUN, which is this session's
+# because it must survive between dwarf calls — unlike $SPIRA_RUN, which is this session's
 # scratch, and unlike spira-poison, this is never read at selection time so it does not need
 # a label's visibility.
 #
-# A thrash requeue is exempted from the poison count on the theory that the aeon was killed
-# for stalling, not judged on its work (aeon.sh, THRASH IS NOT FAILURE). That theory holds
+# A thrash requeue is exempted from the poison count on the theory that the dwarf was killed
+# for stalling, not judged on its work (dwarf.sh, THRASH IS NOT FAILURE). That theory holds
 # for one requeue; it does not hold for a bead requeued again and again at the SAME commit,
-# which is a bead nothing is moving rather than one aeon that got unlucky — sp-gs24i got five
-# summons across seven hours this way and none of them charged, because "no new commit" was
+# which is a bead nothing is moving rather than one dwarf that got unlucky — sp-gs24i got five
+# calls across seven hours this way and none of them charged, because "no new commit" was
 # never checked.
 #
 # thrash_streak_bump <id> <tip> <note> -> the streak AFTER this bump (an integer, printed).
 # Same tip as last time bumps the streak; any other tip (including the first thrash ever, or
 # one that moved) resets it to 1. The caller decides what a streak at or over the configured
-# cap means — see aeon.sh's .thrash handler.
+# cap means — see dwarf.sh's .thrash handler.
 # PORTED TO spira-claim (wave 4.18, sp-sn1re): same metadata keys, same note truncation
 # (tr '\n\r' '  ' | cut -c1-300) — see counters::{next_streak,truncate_note,thrash_streak_bump}.
 thrash_streak_bump() {
@@ -1139,9 +1128,9 @@ _counter_events_query() {   # _counter_events_query <id> <event_type> -> count, 
 # requeues_of <id> -> raw COUNT(*) of 'requeued' events, or '?' if it cannot be told.
 # NOT the judged, exemption-aware count `spira-claim requeues` answers for CHECK 4's own
 # accounting (DESIGN.md §6) — this stays the bare _counter_events_query census.sh,
-# landing-pass and aeon/teardown.rs already depend on counting EVERY requeue, including
+# landing-pass and dwarf/teardown.rs already depend on counting EVERY requeue, including
 # a rebase-conflict one that attempts_of exempts (test-census-events.sh sp-9edq8,
-# test-landing-rebase.sh, test-aeon-teardown-e2e.sh all assert exactly that). Tried
+# test-landing-rebase.sh, test-dwarf-teardown-e2e.sh all assert exactly that). Tried
 # shimming this onto `spira-claim requeues` first; all three suites went red on that
 # exact distinction, which is the regression this comment now guards against.
 requeues_of() { _counter_events_query "${1:-}" requeued; }
@@ -1284,7 +1273,7 @@ poison_asked_clear() {
 
 # --------------------------------------------------------------------------------------
 # Landing verification. CLOSED is not landed: a bead is only done when its work is in the
-# commit graph. Every aeon is required to name its bead id in the commit subject, which is
+# commit graph. Every dwarf is required to name its bead id in the commit subject, which is
 # what makes this checkable by a program instead of by reading a diff.
 # --------------------------------------------------------------------------------------
 # --------------------------------------------------------------------------------------
@@ -1297,32 +1286,32 @@ poison_asked_clear() {
 # labels, and the whole description — the problem statement in the bead's own words.
 # --------------------------------------------------------------------------------------
 # --------------------------------------------------------------------------------------
-# AN AEON HAS A NAME. Every instance used to be `aeon-builder`, so two of them were
+# A DWARF HAS A NAME. Every instance used to be `dwarf-builder`, so two of them were
 # indistinguishable in the pane, in `bd` history and in the commit graph — you could see
-# that AN aeon closed a bead and never which one, which made "what is it doing" an
-# unanswerable question (the operator, verbatim: "i really want to know what the aeon is
+# that A dwarf closed a bead and never which one, which made "what is it doing" an
+# unanswerable question (the operator, verbatim: "i really want to know what the dwarf is
 # doing (it should have an identity)").
 #
-# Named for the aeons of Spira, which is the whole reason the system carries that name.
-# The prefix stays `aeon-` so every existing count that greps for it still works.
+# Named for the dwarves of Spira, which is the whole reason the system carries that name.
+# The prefix stays `dwarf-` so every existing count that greps for it still works.
 #
-# aeon_name_take is RETIRED (wave 4.23, sp-0ffox), not shimmed: its only caller, besides
+# dwarf_name_take is RETIRED (wave 4.23, sp-0ffox), not shimmed: its only caller, besides
 # its own definition, was this crate's own seam call from run.rs/sweep.rs — a whole-tree
-# grep found no bash caller and no other Rust seam reaching it — so `aeon` now computes it
-# in-process (aeon/src/naming.rs) with no lib.sh round trip left to shim. SPIRA_AEON_NAMES
+# grep found no bash caller and no other Rust seam reaching it — so `dwarf` now computes it
+# in-process (dwarf/src/naming.rs) with no lib.sh round trip left to shim. SPIRA_DWARF_NAMES
 # moves there too (the `NAMES` constant); nothing else read it.
 #
-# aeon_named keeps a one-line shim: cockpit-collect still calls it by name, across the
+# dwarf_named keeps a one-line shim: cockpit-collect still calls it by name, across the
 # crate boundary.
 # --------------------------------------------------------------------------------------
-aeon_named() {           # aeon_named <pidfile> -> the name held by that aeon, if any
-    aeon aeon-named "$1"
+dwarf_named() {           # dwarf_named <pidfile> -> the name held by that dwarf, if any
+    dwarf dwarf-named "$1"
 }
 
 # --------------------------------------------------------------------------------------
 # ONE SESSION LOG PER BEAD, APPENDED TO, WITH ONE SEGMENT PER ATTEMPT.
 #
-# aeon.sh used to open the log with `>`, so an attempt erased its predecessor and only the
+# dwarf.sh used to open the log with `>`, so an attempt erased its predecessor and only the
 # last one of a bead had a trace at all. On a day when a capacity outage killed 121 sessions
 # in three to seven seconds each, three traces survived; every other one had been overwritten
 # by the next attempt on the same bead, and with them the only record of why the session
@@ -1338,7 +1327,7 @@ aeon_named() {           # aeon_named <pidfile> -> the name held by that aeon, i
 # so every reader that asks "what is happening" must read the LAST segment and not the whole
 # file: a `result` record from attempt 1 taken for attempt 3's would pause the harness for a
 # capacity outage that ended hours ago, or report a finished session's last tool call as a
-# live one's. `attempt_trace` was that boundary; it is `aeon::ledger::attempt_trace` now
+# live one's. `attempt_trace` was that boundary; it is `dwarf::ledger::attempt_trace` now
 # (Rust, wave 4.26 — its last bash caller, `capacity_reset_at`, is a shim onto the binary),
 # and it is the only place the mark is parsed.
 #
@@ -1346,12 +1335,12 @@ aeon_named() {           # aeon_named <pidfile> -> the name held by that aeon, i
 # an operator who changed it would make every log already on disk unreadable by the code that
 # writes the next line of it. It is defined once here (still a plain shell variable — the
 # bash seam reads it off the sourced lib.sh for every Rust caller that has not yet moved to
-# `spira-config`) and written by aeon.sh through spira_trace_mark, so the writer and the
+# `spira-config`) and written by dwarf.sh through spira_trace_mark, so the writer and the
 # readers cannot drift.
 #
 # It is not JSON and does not start with `{`, which is what makes it inert: every consumer of
 # this trace already skips any line that is not a JSON object, so the mark passes through
-# `aeon::capacity::reset_at` without special handling here, and through aeon::trace
+# `dwarf::capacity::reset_at` without special handling here, and through dwarf::trace
 # (trace_last, trace_stats, trace_tail, wiki_write_paths — wave 4.34) the same way.
 # --------------------------------------------------------------------------------------
 SPIRA_TRACE_MARK='=== spira attempt'
@@ -1396,7 +1385,7 @@ pr_merged() {
 # in different words, one lands, and the other's rebase stops on exactly the files the
 # first one changed. The note "resolve the conflict" is misleading in that case — the
 # correct resolution may be to drop the branch rather than replay it. This function does
-# not decide; it names the evidence so the next aeon can judge. Ported to Rust (sp-81t4d,
+# not decide; it names the evidence so the next dwarf can judge. Ported to Rust (sp-81t4d,
 # "wave 4.17" — family R); see `land_verify::other_beads_on_conflicts`.
 other_beads_on_conflicts() {
     landing-pass other-beads "$1" "$2" "$3" "$4"
@@ -1408,18 +1397,18 @@ conflict_reopen_note() {
 }
 
 # --------------------------------------------------------------------------------------
-# Memory delivery. An aeon has no SessionStart hook, so this is how it reads the law — and
+# Memory delivery. A dwarf has no SessionStart hook, so this is how it reads the law — and
 # now also how Ops reads its runbooks, since a statute and an SOP are the same mechanism
 # under two prefixes (law- and sop-).
 #
 # TWO DEFECTS THIS REPLACES. `bd memories` is a LISTING: it truncates every body at ~110
-# characters with an ellipsis, so every aeon so far has been reading half-sentences —
+# characters with an ellipsis, so every dwarf so far has been reading half-sentences —
 # "check YOUR OWN LAST ACTION befo..." teaches nothing, and a statute nobody can finish
 # reading is not in force. And the caller then cut the listing with `head -400`, which
 # silently drops whichever statutes sort last. Read the JSON, print it whole, and when a
 # budget really is exceeded say so in the output rather than trimming in the dark.
 #
-# The prefix filter is what keeps the two books apart. Without it every builder aeon pays
+# The prefix filter is what keeps the two books apart. Without it every builder dwarf pays
 # for every runbook it will never execute, and the runbooks push the law off the end.
 #
 # TIERED RENDERING (sp-4e69e). Two tiers, one chokepoint:
@@ -1466,8 +1455,8 @@ render_memories() {      # render_memories <prefix-csv> [char-budget] [core-csv]
 # Claude Code's coding guidance stays underneath the persona layer.
 #
 # PORTED (wave 4.35, sp-kelr2, row Q): the split/file-write itself is `rule`'s
-# `system-prompt-split` CLI door (`rule::memories::split`); aeon.sh retired its own call to
-# this function already (sp-j89pd, wave 4.2 — it renders through aeon/src/brief.rs
+# `system-prompt-split` CLI door (`rule::memories::split`); dwarf.sh retired its own call to
+# this function already (sp-j89pd, wave 4.2 — it renders through dwarf/src/brief.rs
 # in-process), so test-render-memories.sh's G-08 delivery-fence check is this shim's one
 # live caller now. The SPIRA_SYSTEM_FLAG assignment has no caller left either (same retirement)
 # but stays here, computed locally rather than moved into the binary, since it is a plain
@@ -1552,7 +1541,7 @@ park_branch_collisions() {   # park_branch_collisions <detect_branch_collisions 
 #                        so no run will ever report back. The label is a permanent hold that
 #                        no mechanism will ever clear.
 #
-#   unmapped-repo        carries repo:<name> where <name> is not in the repo-map. aeon.sh
+#   unmapped-repo        carries repo:<name> where <name> is not in the repo-map. dwarf.sh
 #                        refuses to claim it at claim time and leaves it open forever.
 #
 # SKIPS beads that are merely BLOCKED (open dependency), since those are correct
@@ -1622,12 +1611,12 @@ detect_invalid_closed() {
 # repository on the box. Collapsing the per-repository databases into one made the cross-repo
 # DEPENDENCY expressible and left the cross-repo WORK impossible, which is most of what the
 # collapse was for. It surfaced the day the operator endorsed fixing ~37 grep -q
-# pipelines in another repository and there was no aeon that could open the file.
+# pipelines in another repository and there was no dwarf that could open the file.
 #
 # UNKNOWN NAMES FAIL CLOSED. Every lookup here returns non-zero for a name the map does not
 # carry, and every caller must treat that as a refusal rather than reach for a default. A
 # default of the home checkout is precisely how another repository's bead gets "fixed" in the
-# home repo, and the aeon would report success — it committed, on a branch, naming its bead.
+# home repo, and the dwarf would report success — it committed, on a branch, naming its bead.
 # `repo:town` is deliberately unmapped for the same reason it is deliberately unfenced: Gas
 # Town is still serving and new dispatch into it is frozen.
 # --------------------------------------------------------------------------------------
@@ -1658,7 +1647,7 @@ SPIRA_REPO_MAP="${SPIRA_REPO_MAP:-$SPIRA_HOME/repo-map}"
 # _spira_config_rune <verb> ... -> `spira-config rune <verb> ...` with the two values it reads
 # passed per call. conf.sh deliberately never exports SPIRA_HOME or SPIRA_RUNES, and a bare
 # exec saw neither: in production the roster came back EMPTY (sp-nki5w), which on world start
-# summons no one. Same shape as _spira_config_repo below.
+# calls no one. Same shape as _spira_config_repo below.
 _spira_config_rune() {
     SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_RUNES="${SPIRA_RUNES:-}" spira-config rune "$@"
 }
@@ -1692,7 +1681,7 @@ spira_containment_check() {
 }
 
 # Run at source time. The cost is one read of the map file and, for non-prod instances,
-# one `git remote -v` per registered checkout — a fraction of a second on summon.
+# one `git remote -v` per registered checkout — a fraction of a second on call.
 spira_containment_check
 
 # The name is DERIVED from the checkout the harness is installed in (conf.sh: basename of
@@ -1752,7 +1741,7 @@ repo_root() {
 # spira_same_repo <a> <b> -> 0 if those two paths are the same repository.
 #
 # BY OBJECT STORE, NEVER BY PATH STRING. A worktree and the checkout it was cut from are one
-# repository under two paths, and this harness runs from both — every aeon works in a
+# repository under two paths, and this harness runs from both — every dwarf works in a
 # worktree and the landing gate extracts one. A string comparison therefore calls the copy in
 # force "some other repository", so a fence keyed on it fires on every branch, and a check
 # keyed on it reports a second copy that does not exist. Ported (sp-37rmg); `_spira_gitstore`
@@ -1784,7 +1773,7 @@ repo_land() {            # repo_land <name> -> push | pr | hold | queue | queue.
 }
 
 # repo_land_queued <name> -> 0 when the repo is EITHER merge-queue mode (queue or
-# queue.local), 1 otherwise. Certification (queue.sh submit, aeon.sh's own self-cert), the
+# queue.local), 1 otherwise. Certification (queue.sh submit, dwarf.sh's own self-cert), the
 # landing pass's "no local rebase" arm, and the periodic step/verdict dispatch all judge a
 # SUBMITTED branch the same way regardless of how its round eventually lands — only the
 # round's own terminal step (a batch PR vs. land-local) differs between the two.
@@ -1893,8 +1882,8 @@ bead_repo() {            # bead_repo <id> -> its repo name, or the home repo if 
 # lands by pushing `landing:<branch>` to the remote from the .landing worktree and never
 # pulls the shared checkout, so the local ref there is however stale the last human left it. Every
 # Spira bead edits the same handful of files under .claude/spira, and the queue is
-# serialised at one aeon, so a branch cut from that stale ref collides with whatever landed
-# while the previous aeon worked — by construction, every single time. Measured:
+# serialised at one dwarf, so a branch cut from that stale ref collides with whatever landed
+# while the previous dwarf worked — by construction, every single time. Measured:
 # sp-poison-retry based at 8ed6cca with main already at 5da8438, conflicting in sentinel.sh,
 # lib.sh, gate.sh and log.md, none of which it had touched.
 #
@@ -1902,7 +1891,7 @@ bead_repo() {            # bead_repo <id> -> its repo name, or the home repo if 
 # across seven rows of a real repo-map: two had no ref named `main` anywhere, remote or local
 # — their default is `master` — and a third had no remote named `origin` at all. For those
 # three the old answer named a branch
-# that does not exist, so `git worktree add -b spira/<id> "$WORK" "$BASE"` failed and no aeon
+# that does not exist, so `git worktree add -b spira/<id> "$WORK" "$BASE"` failed and no dwarf
 # could get a workspace in them at all; CHECK 6's rebase failed and REOPENED finished work
 # with "does not rebase onto main"; and `gh pr create --base main` opened against nothing.
 #
@@ -1967,7 +1956,7 @@ worktree_of() {
 
 # --------------------------------------------------------------------------------------
 # hold_alive <pidfile> -> 0 if the recorded pid is a live process. Ported to Rust
-# (sp-9envm); see `hel::reap::hold_alive` for the rationale (unlike aeon_alive this does
+# (sp-9envm); see `hel::reap::hold_alive` for the rationale (unlike dwarf_alive this does
 # NOT check argv, because the holder can be any process).
 # --------------------------------------------------------------------------------------
 hold_alive() {
@@ -1976,7 +1965,7 @@ hold_alive() {
 
 # --------------------------------------------------------------------------------------
 # holder_alive <id> -> 0 if a live process is working this bead. Ported to Rust (sp-9envm);
-# see `hel::reap::holder_alive` for the rationale (checks BOTH hold pidfiles and aeon
+# see `hel::reap::holder_alive` for the rationale (checks BOTH hold pidfiles and dwarf
 # pidfiles, by different liveness tests, satisfying the SAME predicate the reaper reads).
 # --------------------------------------------------------------------------------------
 holder_alive() {
@@ -2022,7 +2011,7 @@ spira_reaplog() {        # spira_reaplog <verb> <id> <detail> — ported to Rust
 #
 # An event is a CLOSED `event` bead written through `$SPIRA_NOTIFY`, which is the one place
 # that knows the shape: no labels at all, because an OPEN bead carrying `spira,plan` is
-# claimable by an aeon and one carrying `overseer` lands in the queue of things awaiting the
+# claimable by a dwarf and one carrying `overseer` lands in the queue of things awaiting the
 # operator; `--kind` for the badge the panel renders; and `--target` for the bead the outcome
 # happened TO, in its own column, so the stream filters per bead rather than per substring.
 # That column comes back from `bd --json` as `target` — only `event_kind` keeps the prefix
@@ -2041,7 +2030,7 @@ spira_reaplog() {        # spira_reaplog <verb> <id> <detail> — ported to Rust
 # than the window simply being silent: a panel that renders a storm as one quiet row is a
 # check reporting all-clear on the thing it exists to show.
 #
-# PER-KEY FILES, NOT ONE TABLE. aeon.sh, landing.sh and strand.sh emit from separate
+# PER-KEY FILES, NOT ONE TABLE. dwarf.sh, landing.sh and strand.sh emit from separate
 # processes at the same time, and a read-modify-write of a shared table loses the OTHER
 # pairs' counts under a race. One file per pair races only with itself, and the worst
 # outcome of that race is one duplicate row.
@@ -2185,8 +2174,8 @@ spira_prune_worktrees() {
 # runs on the result and is committed as part of the rebase. The branch tip therefore MOVES
 # on success, and a caller holding a tip from before the call is holding a stale one.
 #
-# THE CALLER MUST HAVE ESTABLISHED THAT NO LIVE AEON HOLDS THE BRANCH. This rewrites
-# commits beneath a working tree; doing that under a running aeon destroys work in flight.
+# THE CALLER MUST HAVE ESTABLISHED THAT NO LIVE DWARF HOLDS THE BRANCH. This rewrites
+# commits beneath a working tree; doing that under a running dwarf destroys work in flight.
 # `holder_alive` is the precondition — unchanged; this shim adds no liveness check of its
 # own, exactly as the function it replaces did not.
 #
@@ -2240,10 +2229,10 @@ recut_onto() {
 }
 
 
-# spira_live_aeons RETIRED (wave 4.23, sp-0ffox): its callers, the promote flow and
-# systemd/install.sh, are both gone — the install crate's own `checks::live_aeons`
+# spira_live_dwarves RETIRED (wave 4.23, sp-0ffox): its callers, the promote flow and
+# systemd/install.sh, are both gone — the install crate's own `checks::live_dwarves`
 # (install/src/checks.rs, reimplemented directly against its own Systemctl port) is the
-# live-aeon guard now, independent of lib.sh. A whole-tree grep found no remaining caller.
+# live-dwarf guard now, independent of lib.sh. A whole-tree grep found no remaining caller.
 
 # _prune_candidates retired with activate.sh (sp-jsnbm): release install-tarball's own
 # prune (release/src/install.rs) replaces it; nothing else called this function.
@@ -2363,7 +2352,7 @@ queue_sort_rows() {
 
 # bead_is_work_type <issue-type> -> 0 if it is one of SPIRA_WORK_CLOSE_TYPES (task bug
 # feature by default) — the types a builder's own close is converted to submitted instead
-# of left closed (aeon.sh, at session teardown). Non-code types (spike, ask, insight,
+# of left closed (dwarf.sh, at session teardown). Non-code types (spike, ask, insight,
 # investigation, event, chore, epic) close by the agent's own hand, unchanged. Ported to
 # Rust (sp-81t4d, "wave 4.17" — family R); see `land_verify::is_work_type`.
 bead_is_work_type() {

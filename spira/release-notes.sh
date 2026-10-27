@@ -32,7 +32,7 @@ AREAS=(
     "Lifecycle|lifecycle bead work spira-claim spira-submission"
     "Testenv and simulation|testenv sim testkit spira-world test-plan suite-select"
     "Cockpit and ops pane|cockpit watchd watchtower census"
-    "Habits and personas|habits runes aeon persona"
+    "Habits and personas|habits runes dwarf persona"
     "Install and release|release install .github build-tarball"
     "Docs|docs README AGENTS CLAUDE wiki"
 )

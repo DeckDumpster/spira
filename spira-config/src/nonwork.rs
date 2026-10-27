@@ -1,5 +1,5 @@
 //! bd status for a bead that is not a work bead (sp-mve9i). Design §3.4 makes bd `status`
-//! inert for *work* beads — a task, bug or feature an aeon claims, whose state is the
+//! inert for *work* beads — a task, bug or feature a dwarf claims, whose state is the
 //! lifecycle machine's (`lc_state`). An ask, an alert, an insight, an
 //! intake mirror of a GitHub issue or an epic is never claimed or delivered: the machine
 //! models none of its life, so bd's `status` is the only state it has, and opening or

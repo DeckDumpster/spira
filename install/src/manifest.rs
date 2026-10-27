@@ -79,8 +79,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
 
     m.units.push(t("spira-sentinel.service", false));
     m.units.push(t("spira-sentinel.timer", true));
-    m.units.push(t("spira-summon.service", false));
-    m.units.push(t("spira-summon.timer", true));
+    m.units.push(t("spira-call.service", false));
+    m.units.push(t("spira-call.timer", true));
     m.units.push(t("spira-ops.service", false));
     m.units.push(t("spira-ops.timer", true));
     m.units.push(t("spira-heimdall.service", false));
@@ -185,7 +185,7 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     // never by the per-instance flow this manifest drives.
     m.optional.push("spira-lc.service".into());
 
-    // lc-serve.service (sp-xfqnr): the SAME-USER answer to the socket an aeon's `work`
+    // lc-serve.service (sp-xfqnr): the SAME-USER answer to the socket a dwarf's `work`
     // reaches spira-lc through — `spira-lc serve` as the operator on %t/spira-lc/sock, the
     // path spira_config::resolve::lc_socket_default gives every caller in this mode. In
     // system mode spira-lc.socket already answers /run/spira-lc/sock as its own Unix user,

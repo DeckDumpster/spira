@@ -21,7 +21,7 @@
 # that population for its stale-tip and unsent measurements, and queue verdict
 # already reaps the local half of it once a batch lands. Reported separately.
 #
-# aeon sessions have no forge credentials (GIT_SSH_COMMAND is neutered) and
+# dwarf sessions have no forge credentials (GIT_SSH_COMMAND is neutered) and
 # cannot push a delete; this script is for a context that has them.
 
 # covers: spira/branch-sweep.sh

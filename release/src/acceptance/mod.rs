@@ -135,7 +135,7 @@ pub struct Opts {
     pub token_projects: PathBuf,
     pub gh_repo: Option<String>,
     pub notes_repo: Option<PathBuf>,
-    pub summon_secs: u64,
+    pub call_secs: u64,
     pub asset_wait_secs: u64,
     pub pid: u32,
 }
@@ -584,7 +584,7 @@ pub fn main(argv: &[String]) -> u8 {
         token_projects: env("SPIRA_TOKEN_PROJECTS").map(PathBuf::from).unwrap_or_else(|| home.join(".claude/projects")),
         gh_repo,
         notes_repo,
-        summon_secs: secs("SPIRA_ACCEPT_SUMMON_SECS", 180),
+        call_secs: secs("SPIRA_ACCEPT_CALL_SECS", 180),
         asset_wait_secs: secs("SPIRA_ACCEPT_ASSET_WAIT_SECS", 600),
         pid: std::process::id(),
         a,

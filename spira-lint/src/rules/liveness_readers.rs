@@ -1,6 +1,6 @@
-//! `liveness-readers` — operator-facing tooling asks whether an aeon or a watcher is alive
-//! through the verbs (`aeon stop`, `watchd status`, the lifecycle row's lease), never by
-//! scanning processes: a `pgrep` pattern, a `/proc/<pid>/cmdline` read or an `aeon-*.pid`
+//! `liveness-readers` — operator-facing tooling asks whether a dwarf or a watcher is alive
+//! through the verbs (`dwarf stop`, `watchd status`, the lifecycle row's lease), never by
+//! scanning processes: a `pgrep` pattern, a `/proc/<pid>/cmdline` read or a `dwarf-*.pid`
 //! pidfile is a second record of liveness that disagrees with the lease.
 //!
 //! Files that still read liveness that way are listed in `spira-lint/liveness-readers-allow`,
@@ -31,7 +31,7 @@ const SCOPE: [&str; 3] = ["cockpit/*", "cockpit-collect/*", "spira-world/*"];
 
 fn pattern() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r#"pgrep|\bcmdline\b|aeon-[^"\s]*\.pid"#).expect("static regex"))
+    RE.get_or_init(|| Regex::new(r#"pgrep|\bcmdline\b|dwarf-[^"\s]*\.pid"#).expect("static regex"))
 }
 
 fn scan(text: &str) -> Vec<(usize, String)> {
@@ -105,8 +105,8 @@ impl Rule for LivenessReaders {
     }
 
     fn hint(&self) -> &'static str {
-        "liveness is the lease: ask `watchd status` or the lifecycle row, and stop an aeon with `aeon stop <bead>`. \
-Never scan processes or read an aeon pidfile."
+        "liveness is the lease: ask `watchd status` or the lifecycle row, and stop a dwarf with `dwarf stop <bead>`. \
+Never scan processes or read a dwarf pidfile."
     }
 }
 
@@ -124,8 +124,8 @@ mod tests {
     fn a_planted_process_scan_or_pidfile_read_is_caught() {
         let t = TempDir::new("lr");
         t.write("cockpit/a.rs", "let c = fs::read(format!(\"/proc/{pid}/cmdline\"));\n");
-        t.write("cockpit-collect/x.sh", "pgrep -f 'aeon.sh builder'\n");
-        t.write("spira-world/src/b.rs", "let p = run.join(\"aeon-builder-sp-1.pid\");\n");
+        t.write("cockpit-collect/x.sh", "pgrep -f 'dwarf.sh builder'\n");
+        t.write("spira-world/src/b.rs", "let p = run.join(\"dwarf-builder-sp-1.pid\");\n");
         let got = run(&t, &["cockpit/a.rs", "cockpit-collect/x.sh", "spira-world/src/b.rs"]).unwrap();
         assert_eq!(got.len(), 3, "{got:?}");
     }
@@ -134,10 +134,10 @@ mod tests {
     fn comments_other_trees_and_listed_files_are_silent() {
         let t = TempDir::new("lr-ok");
         t.write("cockpit/a.rs", "// pgrep is retired\nlet s = Command::new(\"watchd\");\n");
-        t.write("aeon/y.rs", "let p = \"aeon-x.pid\";\n");
+        t.write("dwarf/y.rs", "let p = \"dwarf-x.pid\";\n");
         t.write("spira-world/old.rs", "pgrep x\n");
         t.write(ALLOW_FILE, "spira-world/old.rs\n");
-        assert_eq!(run(&t, &["cockpit/a.rs", "aeon/y.rs", "spira-world/old.rs", ALLOW_FILE]).unwrap(), Vec::<String>::new());
+        assert_eq!(run(&t, &["cockpit/a.rs", "dwarf/y.rs", "spira-world/old.rs", ALLOW_FILE]).unwrap(), Vec::<String>::new());
     }
 
     #[test]

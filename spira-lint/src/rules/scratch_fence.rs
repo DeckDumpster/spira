@@ -1,4 +1,4 @@
-//! `scratch-fence` — refuse aeon scratch files tracked at the harness root.
+//! `scratch-fence` — refuse dwarf scratch files tracked at the harness root.
 //! Contract: DESIGN.md. Ported from `spira/scratch-fence.sh` (deleted).
 
 use crate::{Entry, Finding, LintError, Rule, Tree};
@@ -9,7 +9,7 @@ const NAME: &str = "scratch-fence";
 /// Set for the one commit that removes existing offenders; named in the commit message.
 const OVERRIDE_VAR: &str = "SCRATCH_FENCE_OK";
 
-/// A tracked, root-level `sp-*` aeon working note or a `*.fixed` hand-patched artefact.
+/// A tracked, root-level `sp-*` dwarf working note or a `*.fixed` hand-patched artefact.
 pub fn is_offender(path: &str) -> bool {
     if path.contains('/') {
         return false;
@@ -40,7 +40,7 @@ fn check_with_override(rule: &ScratchFence, tree: &Tree, override_on: bool) -> R
             rule: NAME,
             path: e.path.clone(),
             line: None,
-            message: "aeon scratch file at the harness root — delete it, or set SCRATCH_FENCE_OK=1 only for the commit that removes it".to_string(),
+            message: "dwarf scratch file at the harness root — delete it, or set SCRATCH_FENCE_OK=1 only for the commit that removes it".to_string(),
         })
         .collect())
 }
@@ -63,7 +63,7 @@ impl Rule for ScratchFence {
     }
 
     fn hint(&self) -> &'static str {
-        "Aeon working notes committed to the harness root ship to every consumer and widen the \
+        "Dwarf working notes committed to the harness root ship to every consumer and widen the \
 suite-coverage fallback on every branch that follows. Delete them; SCRATCH_FENCE_OK=1 is the \
 named override, valid only for the commit that removes existing offenders."
     }

@@ -4,27 +4,27 @@ area = "safety-fences"
 [[use_case]]
 id = "UC-safety-fences-01"
 tier = "T1"
-statement = "in an aeon session, queue- and landing-operating commands (`batch.sh`, `git push`, `gh pr create`, `queue.sh flush`, `verdict.sh`, `landing.sh`) are refused, `queue.sh stats` is allowed; a blocked name used as a file argument or suite name is not an invocation, but a compound that also invokes it is"
+statement = "in a dwarf session, queue- and landing-operating commands (`batch.sh`, `git push`, `gh pr create`, `queue.sh flush`, `verdict.sh`, `landing.sh`) are refused, `queue.sh stats` is allowed; a blocked name used as a file argument or suite name is not an invocation, but a compound that also invokes it is"
 
 [[use_case]]
 id = "UC-safety-fences-02"
 tier = "T1"
-statement = "in an aeon session, writes under `SPIRA_PROD` or `SPIRA_RUN/queue` are refused (redirect, rm, mv, tee, `sed -i`, `git -C` add/commit/reset/checkout/clean); reads/exec from prod, rendered brief commands, `census.sh`, and prod paths in heredoc/prose are allowed"
+statement = "in a dwarf session, writes under `SPIRA_PROD` or `SPIRA_RUN/queue` are refused (redirect, rm, mv, tee, `sed -i`, `git -C` add/commit/reset/checkout/clean); reads/exec from prod, rendered brief commands, `census.sh`, and prod paths in heredoc/prose are allowed"
 
 [[use_case]]
 id = "UC-safety-fences-03"
 tier = "T1"
-statement = "aeon-fence carries no `bd create` rule: in an aeon session, of any persona, a `bd create` passes the fence — no aeon persona has bd (model PATH holds only `work`, sp-zf4q3; bead operations are `work` verbs, sp-st0mm; sp-j7l3q)"
+statement = "dwarf-fence carries no `bd create` rule: in a dwarf session, of any persona, a `bd create` passes the fence — no dwarf persona has bd (model PATH holds only `work`, sp-zf4q3; bead operations are `work` verbs, sp-st0mm; sp-j7l3q)"
 
 [[use_case]]
 id = "UC-safety-fences-04"
 tier = "T1"
-statement = "an aeon may not `bd close` while an operator comment posted after its claim is unacknowledged; an `ACK <uuid>` note satisfies the guard; pre-claim and the aeon's own comments are exempt, and the refusal names the comment id and `SPIRA_CLOSE_UNACKED_CONSIDERED`"
+statement = "a dwarf may not `bd close` while an operator comment posted after its claim is unacknowledged; an `ACK <uuid>` note satisfies the guard; pre-claim and the dwarf's own comments are exempt, and the refusal names the comment id and `SPIRA_CLOSE_UNACKED_CONSIDERED`"
 
 [[use_case]]
 id = "UC-safety-fences-05"
 tier = "T1"
-statement = "a post-claim operator comment is delivered to the aeon exactly once as PostToolUse `additionalContext`, naming the ACK command; pre-claim and self comments are not delivered"
+statement = "a post-claim operator comment is delivered to the dwarf exactly once as PostToolUse `additionalContext`, naming the ACK command; pre-claim and self comments are not delivered"
 
 [[use_case]]
 id = "UC-safety-fences-13"
@@ -44,37 +44,37 @@ statement = "every guard blocks through one documented PreToolUse protocol namin
 [[use_case]]
 id = "UC-safety-fences-16"
 tier = "T1"
-statement = "`aeon_settings` registers every guard meant for aeons, identically for the sweep and the claimed launch; a guard that is missing or not executable is reported, never silently dropped"
+statement = "`dwarf_settings` registers every guard meant for dwarves, identically for the sweep and the claimed launch; a guard that is missing or not executable is reported, never silently dropped"
 
 [use_case.uncovered]
-reason = "aeon_settings (lib.sh) retired dead (sp-j89pd, wave 4.2: zero live callers) — test-aeon-settings-guard-allowlist.sh deleted and test-guards.sh's Gap 2 (aeon_settings' python3-failure fallback) removed with it: aeon::run::aeon_settings is pure Rust with a fixed two-entry allow-list and no python3 subprocess, so that failure mode is structurally gone, not merely moved. Covered by aeon/src/run.rs::tests::settings_json_matches_python_dumps (missing-hook-excluded / present-hook-named)"
+reason = "dwarf_settings (lib.sh) retired dead (sp-j89pd, wave 4.2: zero live callers) — test-dwarf-settings-guard-allowlist.sh deleted and test-guards.sh's Gap 2 (dwarf_settings' python3-failure fallback) removed with it: dwarf::run::dwarf_settings is pure Rust with a fixed two-entry allow-list and no python3 subprocess, so that failure mode is structurally gone, not merely moved. Covered by dwarf/src/run.rs::tests::settings_json_matches_python_dumps (missing-hook-excluded / present-hook-named)"
 date = "2026-09-30"
 bead = "sp-j89pd"
 
 [[use_case]]
 id = "UC-safety-fences-17"
 tier = "T2"
-statement = "an aeon commit that stages a path already dirty before the session began is refused, naming the path; own-path commits succeed, and `SPIRA_ALLOW_DIRTY_STAGE=1` overrides"
+statement = "a dwarf commit that stages a path already dirty before the session began is refused, naming the path; own-path commits succeed, and `SPIRA_ALLOW_DIRTY_STAGE=1` overrides"
 
 [[use_case]]
 id = "UC-safety-fences-18"
 tier = "T2"
-statement = "`branch-guard.sh staged` refuses an aeon-identity commit on the base branch and an aeon commit outside `SPIRA_WORK`, naming email/branch/both; operator identity, non-base branches and sweeps pass"
+statement = "`branch-guard.sh staged` refuses a dwarf-identity commit on the base branch and a dwarf commit outside `SPIRA_WORK`, naming email/branch/both; operator identity, non-base branches and sweeps pass"
 
 [[use_case]]
 id = "UC-safety-fences-19"
 tier = "T2"
-statement = "`branch-guard.sh check` reports an aeon commit at a base tip and a shared checkout ahead of its remote, and reports clean after an operator commit on top"
+statement = "`branch-guard.sh check` reports a dwarf commit at a base tip and a shared checkout ahead of its remote, and reports clean after an operator commit on top"
 
 [[use_case]]
 id = "UC-safety-fences-20"
 tier = "T2"
-statement = "the `reference-transaction` hook refuses unsanctioned deletion of `refs/heads/spira/*` (including `spira/queue/*`) even from inside an aeon worktree; `SPIRA_REF_SANCTIONED=1` allows it, non-spira refs are untouched, the committed phase exits 0, and large stdin drains without SIGPIPE"
+statement = "the `reference-transaction` hook refuses unsanctioned deletion of `refs/heads/spira/*` (including `spira/queue/*`) even from inside a dwarf worktree; `SPIRA_REF_SANCTIONED=1` allows it, non-spira refs are untouched, the committed phase exits 0, and large stdin drains without SIGPIPE"
 
 [[use_case]]
 id = "UC-safety-fences-21"
 tier = "T2"
-statement = "`worktree-hooks.sh install` arms every canonical hook in an aeon worktree; its composed `pre-commit` runs the canonical fences first then the dirty-path guard; an install failure in `aeon.sh` is loud"
+statement = "`worktree-hooks.sh install` arms every canonical hook in a dwarf worktree; its composed `pre-commit` runs the canonical fences first then the dirty-path guard; an install failure in `dwarf.sh` is loud"
 
 [[use_case]]
 id = "UC-safety-fences-22"

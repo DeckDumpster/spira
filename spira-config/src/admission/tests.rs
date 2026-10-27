@@ -385,7 +385,7 @@ fn release_like_rustc_invocations_weigh_more() {
     assert_eq!(build_weight(&v(&["--crate-name", "x", "-C", "lto=off"])), 1);
     assert_eq!(build_weight(&v(&["--crate-name", "x"])), 1);
     assert_eq!(profile_weight("release"), WEIGHT_RELEASE);
-    assert_eq!(profile_weight("aeon"), 1);
+    assert_eq!(profile_weight("dwarf"), 1);
 }
 
 /// THE POOLS AS A MODEL, IN VIRTUAL TIME (sp-f4ig1 acceptance: correctness, no load on the box).
@@ -496,9 +496,9 @@ fn fourteen_agents_in_one_instant_are_spread_across_the_phases_and_all_finish() 
 
 #[test]
 fn the_pool_sizes_and_jitter_are_typed_config_keys_exported_to_the_shell() {
-    let doc = crate::validate("[spira]\nid_prefix = \"sp\"\ncompile_par = 5\ntest_par = 2\nsummon_jitter = 7\n").unwrap();
+    let doc = crate::validate("[spira]\nid_prefix = \"sp\"\ncompile_par = 5\ntest_par = 2\ncall_jitter = 7\n").unwrap();
     let sh = crate::export_sh(&doc);
-    for line in ["COMPILE_PAR='5'", "TEST_PAR='2'", "SUMMON_JITTER='7'"] {
+    for line in ["COMPILE_PAR='5'", "TEST_PAR='2'", "CALL_JITTER='7'"] {
         assert!(sh.lines().any(|l| l == line || l == line.replace('\'', "")), "{line} in {sh}");
     }
     // What conf.sh exports is what the pools read: SPIRA_COMPILE_PAR=5 sizes the compile pool.
@@ -508,10 +508,10 @@ fn the_pool_sizes_and_jitter_are_typed_config_keys_exported_to_the_shell() {
     // spira.conf spelling converts too.
     let mut w = crate::convert::ConvertWarnings::default();
     let vars: std::collections::BTreeMap<String, String> =
-        [("SPIRA_COMPILE_PAR", "6"), ("SPIRA_TEST_PAR", "3"), ("SPIRA_SUMMON_JITTER", "0")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        [("SPIRA_COMPILE_PAR", "6"), ("SPIRA_TEST_PAR", "3"), ("SPIRA_CALL_JITTER", "0")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
     let s = crate::convert::spira_section(&vars, &mut w).unwrap();
     assert!(w.0.is_empty(), "{:?}", w.0);
-    assert_eq!((s.compile_par, s.test_par, s.summon_jitter), (Some(6), Some(3), Some(0)));
+    assert_eq!((s.compile_par, s.test_par, s.call_jitter), (Some(6), Some(3), Some(0)));
 }
 
 #[test]
@@ -788,7 +788,7 @@ fn only_a_toolchain_change_or_an_empty_target_is_cold() {
     assert!(cold_reason("Fix a typo", &files(&["rust-toolchain.toml"])).is_some());
     assert!(cold_reason("Bump", &files(&["Cargo.lock"])).is_some());
     assert!(cold_reason("Bump", &files(&["flake.lock"])).is_some());
-    assert_eq!(cold_reason("Fix a typo", &files(&["aeon/Cargo.lock", "aeon/src/run.rs"])), None, "only the top-level lock");
+    assert_eq!(cold_reason("Fix a typo", &files(&["dwarf/Cargo.lock", "dwarf/src/run.rs"])), None, "only the top-level lock");
     let t = run_dir();
     assert!(target_is_cold(t.path()));
     fs::write(t.join(".rustc_info.json"), "{}").unwrap();

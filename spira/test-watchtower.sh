@@ -32,7 +32,7 @@
 #
 # defect: sp-86q8
 # tier: T1
-# covers: landing-pass/src/* cockpit-collect/src/* spira/lib.sh aeon/src/* watchtower/src/* UC-ops-detection-remediation-26 UC-ops-detection-remediation-27
+# covers: landing-pass/src/* cockpit-collect/src/* spira/lib.sh dwarf/src/* watchtower/src/* UC-ops-detection-remediation-26 UC-ops-detection-remediation-27
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -191,14 +191,14 @@ echo "the snapshot still renders as a whole:"
 # `set -u` failure would truncate silently — leaving a `sed` that matches nothing and a
 # handful of assertions that never ran. Plants both a landed record and a lapse record so
 # this one snapshot exercises every section — D12: this used to be two near-identical loops,
-# here and in test-watchtower-lapse.sh, differing only in 'The graph' vs 'Lapsed aeons'.
+# here and in test-watchtower-lapse.sh, differing only in 'The graph' vs 'Lapsed dwarves'.
 fresh
 lc_bead LANDED sp-whole cafe5 "$(( NOW - 600 ))"
 if [ "$(type -t write_lapse_record 2>/dev/null)" = function ]; then
     SPIRA_RUN="$TMP/run" write_lapse_record sp-whole-lapsed 600 "writing output file" cafe5 >/dev/null
 fi
 snap="$(wt)"
-for section in 'The far end' 'The Hel' 'The workers' 'The graph' 'Lapsed aeons' 'The menu' 'Can this snapshot be believed'; do
+for section in 'The far end' 'The Hel' 'The workers' 'The graph' 'Lapsed dwarves' 'The menu' 'Can this snapshot be believed'; do
     want "the snapshot still carries: $section" "$section" "$snap"
 done
 want "and still warns that ? is not a zero" "never treat it as a zero" "$snap"
@@ -293,7 +293,7 @@ echo "a draining world still files the sweep:"
 # ======================================================================================
 # Unlike a halt, a drain leaves the loop and landing running, so the sweep is needed.
 fresh
-printf '2026-09-08 20:02:00 UTC\nsummons gated.\n' > "$TMP/run/world.draining"
+printf '2026-09-08 20:02:00 UTC\ncalls gated.\n' > "$TMP/run/world.draining"
 wt_file
 is "a draining world still writes the prompt file" "1" \
    "$([ -f "$TMP/ops-prompt" ] && echo 1 || echo 0)"
@@ -344,17 +344,17 @@ wt_sinexempt_multi() {   # wt_sinexempt_multi [VAR=val ...] -> appends to $TMP/i
 # binary carries SPIRA_FENRIR_EXEMPT through to incident.sh, so the escalation cannot itself
 # become a Fenrir.
 fresh
-printf '2026-09-08 20:02:00 UTC\nsummons gated.\n' > "$TMP/run/world.draining"
+printf '2026-09-08 20:02:00 UTC\ncalls gated.\n' > "$TMP/run/world.draining"
 touch -d "@$(( NOW - 1200 ))" "$TMP/run/world.draining" 2>/dev/null || true
 rm -f "$TMP/inc-sinexempt" "$TMP/ops-prompt"
 wt_sinexempt_multi SPIRA_DRAIN_WARN_MINS=15
-want "the drain escalation sets SPIRA_FENRIR_EXEMPT=1" "DRAINING: world.sh summons gated|1" \
+want "the drain escalation sets SPIRA_FENRIR_EXEMPT=1" "DRAINING: world.sh calls gated|1" \
      "$(cat "$TMP/inc-sinexempt" 2>/dev/null || echo "")"
 
 # ======================================================================================
 echo
 echo "idle-while-ready escalation (sp-o4trx): a rune with ready work whose last N"
-echo "summons ALL ledgered idle is a claim-error masquerading as an empty queue:"
+echo "calls ALL ledgered idle is a claim-error masquerading as an empty queue:"
 # ======================================================================================
 # A FIXTURE RUNES, NOT THE REAL ONE. bulk_ready_by_rune reads RUNE_LABELS from
 # $SPIRA_HOME/runes/<rune>.rune; a minimal
@@ -390,12 +390,12 @@ printf 'builder 1\n' > "$iwr_ready_nonempty"
 iwr_ready_empty="$TMP/iwr-ready-empty.txt"
 : > "$iwr_ready_empty"
 
-# Five idle summons of a rune that has ready work is the escalation; the other cases are
+# Five idle calls of a rune that has ready work is the escalation; the other cases are
 # collect::tests.
 fresh
-: > "$TMP/run/aeon-ledger.log"
+: > "$TMP/run/dwarf-ledger.log"
 for i in 1 2 3 4 5; do
-    printf '2026-01-01T00:00:%02dZ awake builder idle\n' "$i" >> "$TMP/run/aeon-ledger.log"
+    printf '2026-01-01T00:00:%02dZ awake builder idle\n' "$i" >> "$TMP/run/dwarf-ledger.log"
 done
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
 wt_file_multi SPIRA_HOME="$IWR_HOME" PATH="$IWR_BIN:$PATH" IWR_READY="$iwr_ready_nonempty"

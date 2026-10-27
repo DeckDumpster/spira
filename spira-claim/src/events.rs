@@ -871,7 +871,7 @@ mod tests {
         let r: Vec<EventRow> = spec.iter().map(|(t, at, v)| EventRow::new("sp-vd9dn", t, v, at)).collect();
         let l = fold("sp-vd9dn", &r);
         assert_eq!(l.requeues, 0, "{l:#?}");
-        // bahamut's released-without-close session stays charged, exactly as the old SQL did.
+        // alviss's released-without-close session stays charged, exactly as the old SQL did.
         assert_eq!(l.attempts, legacy_sql(&r));
         assert_eq!(l.attempts, 1);
     }

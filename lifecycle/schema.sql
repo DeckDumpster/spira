@@ -39,8 +39,8 @@ CREATE TABLE IF NOT EXISTS bead (
     repo        VARCHAR(64) NULL,
     -- Ahead of the line (Express/Unexpress events); migrations/0010-express.sql for an existing database.
     express     BOOLEAN NOT NULL DEFAULT FALSE,
-    -- The holder's phase and how its session was cut short, set only while WORKING; migrations/0016-aeon-phase.sql for an existing database.
-    aeon_phase       VARCHAR(16) NULL,
+    -- The holder's phase and how its session was cut short, set only while WORKING; migrations/0029-dwarf-phase.sql for an existing database.
+    dwarf_phase       VARCHAR(16) NULL,
     disposition      VARCHAR(16) NULL,
     disposition_note TEXT NULL,
     -- The tip a round last ejected as red; submit refuses it. migrations/0018-ejected-red-tip.sql for an existing database.

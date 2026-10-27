@@ -28,13 +28,13 @@
 # client hook a `.sh` name and the two cannot collide.
 set -uo pipefail
 
-# AN AEON MUST NEVER SEE THIS OUTPUT. aeon.sh exports SPIRA_AEON into every session it
-# summons, and this hook fires for every Claude session on the box. An aeon that sees the
+# A DWARF MUST NEVER SEE THIS OUTPUT. dwarf.sh exports SPIRA_DWARF into every session it
+# calls, and this hook fires for every Claude session on the box. A dwarf that sees the
 # latch block obeys it — it attaches a persistent Monitor, which holds its session open for
 # the timeout after the work is done, blocking landing for as long as the lease is held.
 # Worse, the Monitor's cursor advances as it reads, consuming the operator's verdicts and
 # marking them delivered to a session that cannot act on them.
-[ -n "${SPIRA_AEON:-}" ] && exit 0
+[ -n "${SPIRA_DWARF:-}" ] && exit 0
 
 # RESOLVED FROM THIS FILE, NEVER FROM THE WORKING DIRECTORY. A session starts in whatever
 # repository the operator is in, so cwd says nothing about where the harness is; conf.sh

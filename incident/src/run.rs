@@ -304,7 +304,7 @@ fn file_new(
         None => payload_text.into_owned(),
     };
     // bd create rejects titles over 500 chars; clip (full text stays in the body) so a long
-    // aeon-filed title does not re-spool forever (sp-nredi).
+    // dwarf-filed title does not re-spool forever (sp-nredi).
     let clipped: String = title.chars().take(490).collect();
     let title = clipped.as_str();
     let id = match bd.create(cfg.db, title, cfg.kind, cfg.priority, labels, reference, &body, cfg.actor) {
@@ -388,7 +388,7 @@ fn file_new(
             cfg.db,
             &id,
             &format!(
-                "Repository not declared — SPIRA_INCIDENT_REPO was not set. An aeon claiming this bead works it in the home-repo fallback, which may be the wrong checkout. Set the repo dimension with: bd set-state {id} repo=<name>."
+                "Repository not declared — SPIRA_INCIDENT_REPO was not set. A dwarf claiming this bead works it in the home-repo fallback, which may be the wrong checkout. Set the repo dimension with: bd set-state {id} repo=<name>."
             ),
         );
         log.push(format!("{reference} labelled needs-repo-triage — repo undeclared"));

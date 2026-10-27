@@ -10,7 +10,7 @@
 # while the per-instance migration (sp-trn1) renamed the live units to
 # spira-sentinel-prod.timer. systemctl stop exits 0 against a disabled unit, so
 # world.sh stop printed "stopped spira-sentinel.timer" while the live timer kept firing.
-# The loop re-summoned aeons within two minutes of a "successful" halt.
+# The loop re-called dwarves within two minutes of a "successful" halt.
 #
 # TWO PROPERTIES, each verified under BOTH naming schemes:
 #
@@ -66,7 +66,7 @@ exit 0
 # (sp-ivfu3-2: resolution is now by EXISTENCE — list-unit-files/cat — not by
 # enabled/active state, and a base nothing claims to exist is a REFUSAL, not a quiet
 # plain-name default).
-OTHER_BASES_PLAIN="spira-summon.timer spira-ops.timer spira-watchtower.timer spira-archivist.timer spira-archive.timer spira-skew.timer"
+OTHER_BASES_PLAIN="spira-call.timer spira-ops.timer spira-watchtower.timer spira-archivist.timer spira-archive.timer spira-skew.timer"
 
 # write_sc ENABLED_TIMER ACTIVE_TIMER LEGACY_WATCH INSTANCE_WATCH [SENTINEL_EXISTING]
 #   ENABLED_TIMER     — unit name that is-enabled should confirm (empty = none)

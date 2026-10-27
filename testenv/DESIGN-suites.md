@@ -92,7 +92,7 @@ unknown subcommand (exit 2), as it already was.
 | hygiene | always | — | — |
 | lint | clean, or the lifecycle file is absent (nothing to lint) | any parse/existence/state/reason/bead violation (§6b) | — |
 | observe-flake | recorded (filed, below threshold, or filing failed — all say so on stdout) | — | suite or run id missing, no such suite |
-| quarantine/disable/activate | change bead filed or handed, claimed; `spira/<bead>` created, committed and submitted; branch name on stdout | refused under `SPIRA_AEON`; filing, claim, git or queue failure; `spira/<bead>` already exists | suite/bead/reason missing or malformed, no such suite, `--change-bead` not a ref component |
+| quarantine/disable/activate | change bead filed or handed, claimed; `spira/<bead>` created, committed and submitted; branch name on stdout | refused under `SPIRA_DWARF`; filing, claim, git or queue failure; `spira/<bead>` already exists | suite/bead/reason missing or malformed, no such suite, `--change-bead` not a ref component |
 
 ### 2.3 Output (callers parse these)
 
@@ -155,7 +155,7 @@ empty rather than a fault).
 
 **Transitions** — stdout is exactly the branch name; queue's own output goes to stderr (as
 `queue.sh submit … >&2` did). Refusals, on stderr:
-`suites <state>: aeons may not write suite-state transitions; submit a branch from an operator or Ops session`,
+`suites <state>: dwarves may not write suite-state transitions; submit a branch from an operator or Ops session`,
 `suites <state>: suite name required`, `suites <state>: no such suite: <s>`,
 `suites quarantine: bead id required`, `suites <state>: reason required`,
 `suites <state>: cannot create branch <b>`, `suites <state>: commit failed`,
@@ -204,7 +204,7 @@ Precedence as testenv's own (§2.5 of DESIGN.md): environment, then spira.toml t
 | `SPIRA_QUARANTINE_MAX_AGE` | `spira.quarantine_max_age` | 604800 |
 | `SPIRA_INCIDENT` | — | `incident.sh` on PATH (sp-gypjk) |
 | `SPIRA_MAIL_CMD` (new) | — | `mail` on PATH (sp-gypjk) |
-| `SPIRA_AEON` | — | non-empty refuses transitions |
+| `SPIRA_DWARF` | — | non-empty refuses transitions |
 | `SPIRA_GIT_NAME`, `SPIRA_GIT_EMAIL` | — | `spira`, `spira@spira.invalid` |
 | `SPIRA_TESTENV_HARNESS` | — | the harness root (testenv's `Harness::locate`) |
 
@@ -219,7 +219,7 @@ come from the one lib.sh seam (§4), because conf.sh derives them in ways no lib
 | `spira/watchtower.sh:966-970` (spira-watchtower.timer) | `bash "$SUITES" status` (`SPIRA_SUITES_SH` override for tests) | stdout verbatim |
 | `spira/gate-check.sh:147` (spira-gate-check.timer) | `bash "$HERE/suites.sh" observe-flake "$_suite" "$_run_id"` | nothing (`|| true`) |
 | `spira/verdict.sh:1719` (spira-verdict.service) | `bash "$HERE/suites.sh" observe-flake "<suite>" "$batch_head"` | nothing |
-| `spira/aeon.sh:2073` | `{{SUITES}}` → `$SPIRA_HOME/suites.sh` in persona prompts | — |
+| `spira/dwarf.sh:2073` | `{{SUITES}}` → `$SPIRA_HOME/suites.sh` in persona prompts | — |
 | `spira/runes/ops.md:8,55` | tells Ops to run `{{SUITES}} run` (retired; §7 F4) | — |
 | `spira/runes/ops.rune:165`, prod `persona.ops` tools | `Bash(*suites.sh*)` | — |
 | operator / Ops by hand | `list`, `names`, `corpus`, `quarantine`, `disable`, `activate`, `hygiene` | — |
@@ -404,7 +404,7 @@ sources name none of spira-lc / SPIRA_LC_BIN / lc.sh).
 * **F3 — `hygiene` and `corpus` have no automated caller.** gate-spira.sh:235 and
   suite-state-fence.sh:6 describe hygiene as if it ran.
 * **F4 — the Ops prompt instructs a retired command.** spira/runes/ops.md:55 tells every
-  Ops aeon to run `{{SUITES}} run` "before you start diagnosing"; it exits 2 with a usage
+  Ops dwarf to run `{{SUITES}} run` "before you start diagnosing"; it exits 2 with a usage
   line. The Cutover drops that step.
 
 ## 8. Verification
@@ -416,7 +416,7 @@ sources name none of spira-lc / SPIRA_LC_BIN / lc.sh).
   497/150); `names` (539), `corpus` (559) and `list` identical as sets, differing only in
   order (D10).
 * `testenv suites run` → usage, exit 2; `observe-flake` with no suite → exit 2;
-  `SPIRA_AEON=x … quarantine` → the aeon refusal, exit 1.
+  `SPIRA_DWARF=x … quarantine` → the dwarf refusal, exit 1.
 * Transitions were exercised only against a scratch git repository (real git plumbing,
   `suites::real::tests::commit_file_builds_a_branch_without_touching_the_checkout`) and
   fakes; no queue submit was run.
@@ -431,13 +431,13 @@ Line numbers against 4764d03ec. `SPIRA_TESTENV_BIN` is new, resolved like its ne
 | 2 | `spira/watchtower.sh:966-970` | `SUITES="${SPIRA_SUITES_SH:-$(dirname "$0")/suites.sh}"` … `if [ -r "$SUITES" ]; then suites_block="$(bash "$SUITES" status 2>/dev/null)"` | `if [ -n "${SPIRA_SUITES_SH:-}" ]; then suites_block="$(bash "$SPIRA_SUITES_SH" status 2>/dev/null)"; elif [ -x "${SPIRA_TESTENV_BIN:-}" ]; then suites_block="$("$SPIRA_TESTENV_BIN" suites status 2>/dev/null)"; else suites_block="  (unavailable — the testenv binary is missing, so nothing knows which suites run nowhere)"; fi` then the existing empty-output line with `testenv suites status produced nothing` |
 | 3 | `spira/gate-check.sh:147` | `bash "$HERE/suites.sh" observe-flake "$_suite" "$_run_id" 2>/dev/null \|\| true` | `"$SPIRA_TESTENV_BIN" suites observe-flake "$_suite" "$_run_id" 2>/dev/null \|\| true` |
 | 4 | `spira/verdict.sh:1719` | `bash "$HERE/suites.sh" observe-flake "${_line#flaky: }" "$batch_head" \` | `"$SPIRA_TESTENV_BIN" suites observe-flake "${_line#flaky: }" "$batch_head" \` |
-| 5 | `spira/aeon.sh:2073` | `-e "s\|{{SUITES}}\|$SPIRA_HOME/suites.sh\|g"` | `-e "s\|{{SUITES}}\|$SPIRA_TESTENV_BIN suites\|g"` |
+| 5 | `spira/dwarf.sh:2073` | `-e "s\|{{SUITES}}\|$SPIRA_HOME/suites.sh\|g"` | `-e "s\|{{SUITES}}\|$SPIRA_TESTENV_BIN suites\|g"` |
 | 6 | `spira/runes/ops.md:8` | "`{{SUITES}}` below all resolve to scripts under it" | "`{{SUITES}}` (the `testenv suites` tool) … resolve to tools under it" |
 | 7 | `spira/runes/ops.md:49-66` | step 2 running `{{SUITES}} run` | replace the command with `{{SUITES}} status` and the paragraph with: "It prints which suites run nowhere and what each last said; name the timed suites it reports in your close. A red there is ordinary work for whoever can change the code." (drop the "budgeted to fit inside your wall" text; nothing runs) |
 | 8 | `spira/runes/ops.rune:165` | `Bash(*suites.sh*),Bash(*testenv-batch.sh*)` | `Bash(*testenv *)` (testenv's own cutover makes the same change for testenv-batch.sh) |
 | 9 | prod `~/.config/spira/spira.toml` `persona.ops` tools (`"Bash(*suites.sh*)"`, line 225) | — | `"Bash(*testenv *)"`, through `spira-config` (law-config-through-the-cli-only) |
 | 10 | `spira/test-lint-runes.sh:127` | `-e "s\|{{SUITES}}\|$HERE/suites.sh\|g"` | `-e "s\|{{SUITES}}\|testenv suites\|g"` |
-| 11 | `spira/conf.sh:1750,1764-1769,1832-1836`, `spira.conf.example:271-293`, `README.md:321,467`, `CLAUDE.md:48,59-61`, `spira/gate-suites` header, `spira/gate-spira.sh:235,374`, `spira/suite-state-fence.sh:6`, `spira/suite-covers.sh:3-12,73`, `spira/tap-jsonl.sh:5,12`, `spira/suite-assert.sh:5-10`, `spira/aeon.sh:1733`, `spira/test-lifecycle-guard.sh:7`, `spira/test-test-plan-crate.sh:9` | comments naming `suites.sh` | name `testenv suites` (comments only) |
+| 11 | `spira/conf.sh:1750,1764-1769,1832-1836`, `spira.conf.example:271-293`, `README.md:321,467`, `CLAUDE.md:48,59-61`, `spira/gate-suites` header, `spira/gate-spira.sh:235,374`, `spira/suite-state-fence.sh:6`, `spira/suite-covers.sh:3-12,73`, `spira/tap-jsonl.sh:5,12`, `spira/suite-assert.sh:5-10`, `spira/dwarf.sh:1733`, `spira/test-lifecycle-guard.sh:7`, `spira/test-test-plan-crate.sh:9` | comments naming `suites.sh` | name `testenv suites` (comments only) |
 | 12 | **delete** `spira/suites.sh` | — | replaced by `testenv suites` |
 | 13 | `spira/suite-state.sh` | **done (sp-9gd4e).** `suites.sh` and `testenv-batch.sh` are both already gone; the one remaining blocker, `suite-state-fence.sh`'s `suite_state_lint`/`suite_state_parse`, is now `testenv suites lint` (§2.3, §6b). File deleted, along with `test-suite-state.sh` (§6b). |
 
@@ -448,7 +448,7 @@ Tests (bash; none run here):
 | `test-suites-hygiene.sh`, `test-suites-flake-report.sh`, `test-suites-stale-unreached.sh` | **retire** — covered by `cargo test -p testenv suites::` (flake window/dedupe/threshold/filing, hygiene max-age/once-only, stale debris ignored) |
 | `test-queue-submit.sh:226-290` (transition → queue submit) | **repoint** to `"$SPIRA_TESTENV_BIN" suites quarantine …` with `SPIRA_QUEUE_BIN` pointing at its queue stub; assert the branch exists in the fixture repo **and the fixture checkout's HEAD did not move** (D2) |
 | `test-guards.sh:256` | the rendered-brief allow case `"${FAKE_PROD}/suites.sh status"` becomes `"${FAKE_PROD_BIN}/testenv suites status"` (whatever path row 5 renders) |
-| `test-guards.sh:609-616` | repoint the aeon refusal to `SPIRA_AEON=x "$SPIRA_TESTENV_BIN" suites quarantine …` (message unchanged) |
+| `test-guards.sh:609-616` | repoint the dwarf refusal to `SPIRA_DWARF=x "$SPIRA_TESTENV_BIN" suites quarantine …` (message unchanged) |
 | `test-verdict.sh:254-259`, `test-verdict-replay.sh:100-104`, `test-eject-unattributed.sh:124-128` | the `$SH/suites.sh` stub becomes a `SPIRA_TESTENV_BIN` stub that logs `$*` (the log now starts `suites observe-flake …`) |
 | `test-watchtower*.sh`, `test-snap-stale-threshold.sh` | unchanged: they inject `SPIRA_SUITES_SH`, which row 2 keeps as the test seam |
 | `test-config-compat-master-base.sh:182`, `test-queue-step-eject-race.sh:66`, `test-install-hooks-artifact.sh:126` | drop `suites.sh` from the stubbed-script lists |

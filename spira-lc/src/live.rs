@@ -25,17 +25,17 @@ pub const WINDOW_SECS: i64 = 24 * 3600;
 const TERMINAL: [&str; 4] = ["LANDED", "SUPERSEDED", "DROPPED", "DONE"];
 pub(crate) const LIVE: [&str; 7] = ["OPEN", "READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "REWORK"];
 
-const BEAD_COLS: &str = "bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, since, express, aeon_phase, disposition, disposition_note, ejected_red_tip, sifted_tip, updated_at, title, priority, repo";
+const BEAD_COLS: &str = "bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, since, express, dwarf_phase, disposition, disposition_note, ejected_red_tip, sifted_tip, updated_at, title, priority, repo";
 const DELIVERY_COLS: &str = "bead_id, mode, state, batch_id, pr, merge_sha, version";
 
 pub(crate) const LIST_COLS: [&str; 21] =
-    ["bead_id", "state", "tip", "holder", "persona", "lease_until", "holds", "reason", "updated_at", "version", "stack", "stack_depth", "since", "express", "aeon_phase", "disposition", "disposition_note", "ejected_red_tip", "title", "priority", "repo"];
+    ["bead_id", "state", "tip", "holder", "persona", "lease_until", "holds", "reason", "updated_at", "version", "stack", "stack_depth", "since", "express", "dwarf_phase", "disposition", "disposition_note", "ejected_red_tip", "title", "priority", "repo"];
 pub(crate) const FULL_LIST_COLS: [&str; 22] = [
-    "bead_id", "state", "tip", "holder", "persona", "lease_until", "holds", "reason", "updated_at", "version", "stack", "stack_depth", "since", "express", "aeon_phase", "disposition", "disposition_note",
+    "bead_id", "state", "tip", "holder", "persona", "lease_until", "holds", "reason", "updated_at", "version", "stack", "stack_depth", "since", "express", "dwarf_phase", "disposition", "disposition_note",
     "ejected_red_tip", "sifted_tip", "title", "priority", "repo",
 ];
 const SHOW_COLS: [&str; 19] = [
-    "bead_id", "state", "tip", "gate_key", "holder", "persona", "lease_until", "holds", "reason", "version", "stack", "stack_depth", "express", "aeon_phase", "disposition", "disposition_note", "ejected_red_tip",
+    "bead_id", "state", "tip", "gate_key", "holder", "persona", "lease_until", "holds", "reason", "version", "stack", "stack_depth", "express", "dwarf_phase", "disposition", "disposition_note", "ejected_red_tip",
     "sifted_tip", "updated_at",
 ];
 const OPS_LIVE_COLS: [&str; 12] = ["bead_id", "state", "holds", "holder", "persona", "rework", "lease_until", "since", "updated_at", "priority", "title", "repo"];

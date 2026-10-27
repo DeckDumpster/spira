@@ -4,7 +4,7 @@
 //! landing used to hold its target/ hostage, sp-x9kbg) and never a search of the base's
 //! commit subjects (the retired landed oracle, deleted by sp-2c1n0). A fresh, just-claimed
 //! worktree is WORKING on the record, so its tip trivially equalling the base it was cut
-//! from (round 198's reaped aeons) can no longer read as landed.
+//! from (round 198's reaped dwarves) can no longer read as landed.
 
 use std::process::{Command, Stdio};
 

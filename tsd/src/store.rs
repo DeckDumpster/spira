@@ -15,7 +15,7 @@ use spira_otel::query::{Exported, QueryError, Store};
 pub const MOVED: &[&str] = &[
     "sentinel-phase",
     "bead-stage",
-    "aeon-session",
+    "dwarf-session",
     "reconciler-status",
     "reconciler-remedy",
     "unit-run-dbus",

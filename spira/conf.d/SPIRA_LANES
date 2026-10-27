@@ -3,7 +3,7 @@ GROUP=lanes
 DOC=THE DECLARED LANES — named scheduling partitions whose capacity does not compete with
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # THE DECLARED LANES — named scheduling partitions whose capacity does not compete with
-    # SPIRA_MAX_AEONS. A lane rune draws from its own RUNE_MAX_CONCURRENT rather than from
+    # SPIRA_MAX_DWARVES. A lane rune draws from its own RUNE_MAX_CONCURRENT rather than from
     # the pool, so the pool can be fully occupied by builders while the lane rune still has
     # room. This is what "ops cannot be starved by builders" has always meant; SPIRA_LANES
     # makes it declared configuration rather than a property implied by RUNE_ROLE=party.

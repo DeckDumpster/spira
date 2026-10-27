@@ -100,7 +100,7 @@ pub struct Meta {
     pub notes_tail: String,
 }
 
-/// The tail of one aeon's session log: its last meaningful lines and the log's mtime.
+/// The tail of one dwarf's session log: its last meaningful lines and the log's mtime.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Tail {
     pub lines: Vec<String>,
@@ -217,17 +217,17 @@ pub struct BatchRow {
     pub log: String,
 }
 
-/// One live aeon: its unit, main pid, when it started, and its phase from its process tree
+/// One live dwarf: its unit, main pid, when it started, and its phase from its process tree
 /// (session while its agent runs, else closeout and the step: build-fence, ...).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct LiveAeon {
+pub struct LiveDwarf {
     pub unit: String,
     pub pid: i64,
     pub started: i64,
     pub phase: String,
 }
 
-/// The pid a lifecycle holder names: `aeon-<name>@<pid>.<start>`.
+/// The pid a lifecycle holder names: `dwarf-<name>@<pid>.<start>`.
 pub fn holder_pid(holder: &str) -> Option<i64> {
     holder.split_once('@')?.1.split('.').next()?.parse().ok()
 }
@@ -281,10 +281,10 @@ pub struct Snapshot {
     /// Bead ids whose own commit (`<id>:` subject, or a round's `merge <id> (`) is on the base.
     pub on_base: HashMap<String, String>,
     pub ceiling: usize,
-    /// The aeons actually live (their systemd units), with what each is doing; `None` when it
+    /// The dwarves actually live (their systemd units), with what each is doing; `None` when it
     /// could not be read, and NOW falls back to WORKING beads.
     #[serde(default)]
-    pub live: Option<Vec<LiveAeon>>,
+    pub live: Option<Vec<LiveDwarf>>,
     /// Log tails of WORKING beads, by bead id; a bead with no log is absent.
     pub tails: HashMap<String, Tail>,
     /// The label that marks a question for the operator (SPIRA_ASK_LABEL); such a bead is in
@@ -432,7 +432,7 @@ pub struct Item {
     pub holds: Vec<String>,
     #[serde(default)]
     pub class: String,
-    /// The aeon's last output lines, how old, and ok|warn|bad|none.
+    /// The dwarf's last output lines, how old, and ok|warn|bad|none.
     pub out: Vec<String>,
     pub out_age: String,
     pub out_level: String,
@@ -1168,7 +1168,7 @@ pub fn view(s: &Snapshot) -> View {
         id: r.id.clone(),
         prio: prio(&r.id),
         title: title(&r.id),
-        who: r.holder.as_deref().unwrap_or("").trim_start_matches("aeon-").to_string(),
+        who: r.holder.as_deref().unwrap_or("").trim_start_matches("dwarf-").to_string(),
         age: age(s.now - age_of),
         note,
         state: r.state.clone(),
@@ -1334,8 +1334,8 @@ pub fn view(s: &Snapshot) -> View {
         it
     };
     match &s.live {
-        // NOW is the aeons actually live (per Ryan 2026-10-09), each with its bead and phase: an
-        // aeon in closeout holds a slot after its bead has left WORKING.
+        // NOW is the dwarves actually live (per Ryan 2026-10-09), each with its bead and phase: an
+        // dwarf in closeout holds a slot after its bead has left WORKING.
         Some(live) => {
             let mut live = live.clone();
             live.sort_by_key(|a| a.started);
@@ -1349,7 +1349,7 @@ pub fn view(s: &Snapshot) -> View {
                             it.age = age(s.now - a.started);
                             it
                         }
-                        None => Item { id: "?".into(), who: a.unit.trim_start_matches("spira-aeon-").trim_end_matches(".service").into(), note: phase, age: age(s.now - a.started), ..Default::default() },
+                        None => Item { id: "?".into(), who: a.unit.trim_start_matches("spira-dwarf-").trim_end_matches(".service").into(), note: phase, age: age(s.now - a.started), ..Default::default() },
                     }
                 })
                 .collect();
@@ -1477,7 +1477,7 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
     let w = width.max(60);
     let mut out = Vec::new();
     out.push(format!(
-        "{B}LIFECYCLE{R} {D}{}{R}  release {B}{}{R}  {}  aeons {B}{}/{}{R}  {D}refresh {}ms · failures {}{R}",
+        "{B}LIFECYCLE{R} {D}{}{R}  release {B}{}{R}  {}  dwarves {B}{}/{}{R}  {D}refresh {}ms · failures {}{R}",
         v.clock,
         v.release,
         if v.world_running { format!("{GRN}world RUNNING{R}") } else { format!("{RED}world {}{R}", cut(&v.world, 30)) },
@@ -1791,22 +1791,22 @@ mod tests {
     }
 
     #[test]
-    fn now_is_the_live_aeons_with_their_phase_even_after_their_bead_left_working() {
+    fn now_is_the_live_dwarves_with_their_phase_even_after_their_bead_left_working() {
         let mut w = row("sp-w", "WORKING", 99_000);
-        w.holder = Some("aeon-ixion@111.5".into());
+        w.holder = Some("dwarf-dvalin@111.5".into());
         let mut c = row("sp-c", "SUBMITTED", 99_500);
-        c.holder = Some("aeon-sandy@222.7".into());
+        c.holder = Some("dwarf-nordri@222.7".into());
         let mut mine = row("sp-mine", "WORKING", 1);
         mine.holder = Some("concierge".into());
         let mut s = snap(vec![w, c, mine]);
         s.live = Some(vec![
-            LiveAeon { unit: "spira-aeon-builder-1.service".into(), pid: 111, started: 99_000, phase: "session".into() },
-            LiveAeon { unit: "spira-aeon-builder-2.service".into(), pid: 222, started: 98_000, phase: "closeout · build-fence".into() },
+            LiveDwarf { unit: "spira-dwarf-builder-1.service".into(), pid: 111, started: 99_000, phase: "session".into() },
+            LiveDwarf { unit: "spira-dwarf-builder-2.service".into(), pid: 222, started: 98_000, phase: "closeout · build-fence".into() },
         ]);
         let v = view(&s);
-        assert_eq!(v.now_items.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["sp-c", "sp-w"], "live aeons only, oldest first; the Concierge's claim is not an aeon");
+        assert_eq!(v.now_items.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["sp-c", "sp-w"], "live dwarves only, oldest first; the Concierge's claim is not a dwarf");
         assert!(v.now_items[0].note.starts_with("closeout · build-fence"), "{:?}", v.now_items[0].note);
-        assert_eq!(holder_pid("aeon-ixion@111.5"), Some(111));
+        assert_eq!(holder_pid("dwarf-dvalin@111.5"), Some(111));
         assert_eq!(holder_pid("concierge"), None);
     }
 
@@ -1942,7 +1942,7 @@ mod tests {
 
     fn now_row(id: &str, persona: Option<&str>, rework: bool) -> Row {
         let mut r = row(id, "WORKING", 1);
-        r.holder = Some("aeon-mindy".into());
+        r.holder = Some("dwarf-austri".into());
         r.persona = persona.map(String::from);
         r.rework = rework;
         r
@@ -1995,7 +1995,7 @@ mod tests {
 
     fn working(tail: Option<Tail>) -> Snapshot {
         let mut r = row("sp-w", "WORKING", 1);
-        r.holder = Some("aeon-warden".into());
+        r.holder = Some("dwarf-warden".into());
         let mut s = snap(vec![r]);
         if let Some(t) = tail {
             s.tails.insert("sp-w".into(), t);
@@ -2035,7 +2035,7 @@ mod tests {
     }
 
     #[test]
-    fn a_silent_aeon_goes_amber_at_five_minutes_and_red_at_fifteen() {
+    fn a_silent_dwarf_goes_amber_at_five_minutes_and_red_at_fifteen() {
         for (age_s, level, color) in [(299, "ok", D), (300, "warn", YEL), (899, "warn", YEL), (900, "bad", RED), (20 * 60, "bad", RED)] {
             let v = view(&working(Some(Tail { lines: vec!["x".into()], mtime: 100_000 - age_s })));
             assert_eq!(v.now_items[0].out_level, level, "{age_s}s");
@@ -2171,7 +2171,7 @@ mod tests {
 
     fn healthy() -> Snapshot {
         let mut s = snap(vec![row("sp-r", "READY", 90_000), row("sp-w", "WORKING", 99_000), row("sp-c", "CERTIFIED", 99_000)]);
-        s.rows[1].holder = Some("aeon-warden".into());
+        s.rows[1].holder = Some("dwarf-warden".into());
         s.rows[1].lease_until = Some(100_500);
         s.rows[2].repo = "spira".into();
         s.graph = graph(true);

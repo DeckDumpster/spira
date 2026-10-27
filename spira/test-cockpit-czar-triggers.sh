@@ -128,13 +128,13 @@ echo "one fired, open -> pending"
 BD_PENDING="$TMP/bd-pending"
 cat > "$BD_PENDING" <<'EOF'
 #!/usr/bin/env bash
-printf '[{"id":"sp-p1","labels":["czar-fixture"],"status":"open","assignee":"aeon-fake","external_ref":"incident:queue-deadlock-batch-open","created_at":"2026-09-20T10:00:00Z","closed_at":null}]'
+printf '[{"id":"sp-p1","labels":["czar-fixture"],"status":"open","assignee":"dwarf-fake","external_ref":"incident:queue-deadlock-batch-open","created_at":"2026-09-20T10:00:00Z","closed_at":null}]'
 EOF
 chmod +x "$BD_PENDING"
 
 out="$(run_czar "$BD_PENDING")"
 is "SP_CZAR_DEADLOCK_FIRED" "2026-09-20T10:00Z" "$(field "$out" SP_CZAR_DEADLOCK_FIRED)"
-is "SP_CZAR_DEADLOCK_BY"    "aeon-fake"          "$(field "$out" SP_CZAR_DEADLOCK_BY)"
+is "SP_CZAR_DEADLOCK_BY"    "dwarf-fake"          "$(field "$out" SP_CZAR_DEADLOCK_BY)"
 is "SP_CZAR_DEADLOCK_OUTCOME" "pending"          "$(field "$out" SP_CZAR_DEADLOCK_OUTCOME)"
 # The other three classes were not fired by this fixture.
 is "SP_CZAR_ATTRIB_FIRED=- (not this class)" "-" "$(field "$out" SP_CZAR_ATTRIB_FIRED)"
@@ -148,7 +148,7 @@ echo "one fired, closed, nothing created after -> outcome yes (the fix held)"
 BD_HELD="$TMP/bd-held"
 cat > "$BD_HELD" <<'EOF'
 #!/usr/bin/env bash
-printf '[{"id":"sp-h1","labels":["czar-fixture"],"status":"closed","assignee":"aeon-fake","external_ref":"incident:queue-sort-failed-ranking","created_at":"2026-09-20T10:00:00Z","closed_at":"2026-09-20T11:00:00Z"}]'
+printf '[{"id":"sp-h1","labels":["czar-fixture"],"status":"closed","assignee":"dwarf-fake","external_ref":"incident:queue-sort-failed-ranking","created_at":"2026-09-20T10:00:00Z","closed_at":"2026-09-20T11:00:00Z"}]'
 EOF
 chmod +x "$BD_HELD"
 
@@ -166,8 +166,8 @@ BD_RECUR="$TMP/bd-recur"
 cat > "$BD_RECUR" <<'EOF'
 #!/usr/bin/env bash
 printf '[
-  {"id":"sp-r1","labels":["czar-fixture"],"status":"closed","assignee":"aeon-one","external_ref":"incident:queue-loop-stalled","created_at":"2026-09-20T10:00:00Z","closed_at":"2026-09-20T11:00:00Z"},
-  {"id":"sp-r2","labels":["czar-fixture"],"status":"closed","assignee":"aeon-two","external_ref":"incident:queue-loop-stalled","created_at":"2026-09-21T09:00:00Z","closed_at":"2026-09-21T10:00:00Z"}
+  {"id":"sp-r1","labels":["czar-fixture"],"status":"closed","assignee":"dwarf-one","external_ref":"incident:queue-loop-stalled","created_at":"2026-09-20T10:00:00Z","closed_at":"2026-09-20T11:00:00Z"},
+  {"id":"sp-r2","labels":["czar-fixture"],"status":"closed","assignee":"dwarf-two","external_ref":"incident:queue-loop-stalled","created_at":"2026-09-21T09:00:00Z","closed_at":"2026-09-21T10:00:00Z"}
 ]'
 EOF
 chmod +x "$BD_RECUR"
@@ -175,7 +175,7 @@ chmod +x "$BD_RECUR"
 out="$(run_czar "$BD_RECUR")"
 # The newest bead (sp-r2) reports BY and OUTCOME; sp-r2 was created after sp-r1 closed,
 # so the earlier fix is judged not to have held.
-is "SP_CZAR_STALL_BY (newest)" "aeon-two" "$(field "$out" SP_CZAR_STALL_BY)"
+is "SP_CZAR_STALL_BY (newest)" "dwarf-two" "$(field "$out" SP_CZAR_STALL_BY)"
 is "SP_CZAR_STALL_OUTCOME (recurred)" "no" "$(field "$out" SP_CZAR_STALL_OUTCOME)"
 
 tl_summary

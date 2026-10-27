@@ -530,8 +530,8 @@ impl World for Real {
         spira_config::hostaddr::resolve_hostport(&v).ok()
     }
 
-    fn aeon_warm_base(&self) -> Option<PathBuf> {
-        spira_config::process::cfg(spira_config::build::AEON_WARM_BASE_ENV).ok().filter(|v| !v.is_empty()).map(PathBuf::from)
+    fn dwarf_warm_base(&self) -> Option<PathBuf> {
+        spira_config::process::cfg(spira_config::build::DWARF_WARM_BASE_ENV).ok().filter(|v| !v.is_empty()).map(PathBuf::from)
     }
 
     fn on_tmpfs(&self, p: &Path) -> bool {

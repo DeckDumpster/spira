@@ -5,7 +5,7 @@
 #
 # WHAT THIS SUITE IS GUARDING (sp-iruqq)
 # ----------------------------------------------
-# A poisoned bead admits no claim (aeon.sh refuses it at claim time). Before this suite,
+# A poisoned bead admits no claim (dwarf.sh refuses it at claim time). Before this suite,
 # a WORK'S-FAULT poison verdict had no tool of its own: the groomer's only options were
 # `unpoison` (which credits the harness — wrong when the charge really was the work's
 # fault) or leaving a bare note ("poison stands, next claim must fix X") while the label

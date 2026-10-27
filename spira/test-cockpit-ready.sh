@@ -79,7 +79,7 @@ chmod +x "$BD_EMPTY"
 
 # ======================================================================================
 # AN UNRESOLVABLE PERSONA IS A REFUSAL, NOT AN EMPTY QUEUE. The partition map is built
-# from rune_get, which resolves variables the way the summoner does. When SPIRA_RUNES
+# from rune_get, which resolves variables the way the caller does. When SPIRA_RUNES
 # names a persona that does not exist, rune_get finds no file, the map stays empty, and
 # core_detail_keys emits SP_READY=? rather than a zero (law-failed-probe-renders-question).
 
@@ -139,7 +139,7 @@ if [ "$1" = content-rows ]; then
     exec "$(spira-config get spira.bd 2>/dev/null)" list --id "$3" --json
 fi
 [ "$1" = list ] || exit 2
-printf '%s\n' '[{"bead_id":"sp-ck-held","state":"WORKING","holder":"aeon-1","holds":"[]"},{"bead_id":"sp-ck-take","state":"READY","holds":"[]"}]'
+printf '%s\n' '[{"bead_id":"sp-ck-held","state":"WORKING","holder":"dwarf-1","holds":"[]"},{"bead_id":"sp-ck-take","state":"READY","holds":"[]"}]'
 LC
 chmod +x "$LCBIN/spira-lc"
 BD_LC="$TMP/bd-lc"

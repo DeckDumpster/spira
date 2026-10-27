@@ -66,7 +66,7 @@ fn halt_banner(h: &HaltState) -> Vec<String> {
         return Vec::new();
     }
     let mut out = vec![format!(
-        "{B}{BAD} \u{25a0} SPIRA STOPPED {RST}{DIM} no aeons are summoned; nothing lands{RST}"
+        "{B}{BAD} \u{25a0} SPIRA STOPPED {RST}{DIM} no dwarves are called; nothing lands{RST}"
     )];
     if !h.since.is_empty() {
         out.push(format!("  {DIM}since{RST} {}", h.since));
@@ -92,12 +92,12 @@ fn drain_banner(d: &DrainState, now: i64) -> Vec<String> {
     let Some(mtime) = d.stamp_mtime else { return Vec::new() };
     let mins_disp = if mtime > 0 { (now - mtime) / 60 } else {
         return vec![
-            format!("{B}{WARN} \u{23f8} DRAINING {RST}{DIM} summons gated for {RST}?{DIM}m — loop and landing continue{RST}"),
+            format!("{B}{WARN} \u{23f8} DRAINING {RST}{DIM} calls gated for {RST}?{DIM}m — loop and landing continue{RST}"),
             format!("  {DIM}lift it:{RST} world.sh resume"),
         ];
     };
     vec![
-        format!("{B}{WARN} \u{23f8} DRAINING {RST}{DIM} summons gated for {RST}{mins_disp}{DIM}m — loop and landing continue{RST}"),
+        format!("{B}{WARN} \u{23f8} DRAINING {RST}{DIM} calls gated for {RST}{mins_disp}{DIM}m — loop and landing continue{RST}"),
         format!("  {DIM}lift it:{RST} world.sh resume"),
     ]
 }
@@ -227,7 +227,7 @@ pub fn header_line(
     out
 }
 
-/// `slots_line` — live/ceiling/free aeon slots. Fixed like the tokens rows so a long MAIL
+/// `slots_line` — live/ceiling/free dwarf slots. Fixed like the tokens rows so a long MAIL
 /// section cannot push it off a short pane; the builder/lane split shows only when a lane cap
 /// is declared.
 pub fn slots_line(snap: &Snapshot) -> String {
@@ -268,7 +268,7 @@ pub fn tokens_section(snap: &Snapshot, cols: i64, extra: &TokensExtra) -> Vec<St
         tok(snap.q("SP_TOK_WIN")),
         extra.tok_win_spark,
     ));
-    for (prefix, label) in [("AEON", "aeons"), ("ARC", "archivist"), ("SESS", "session")] {
+    for (prefix, label) in [("DWARF", "dwarves"), ("ARC", "archivist"), ("SESS", "session")] {
         let w = snap.q(&format!("SP_TOK_{prefix}_WIN"));
         let t = snap.q(&format!("SP_TOK_{prefix}_TURNS"));
         let c = snap.q(&format!("SP_TOK_{prefix}_CTX"));
@@ -334,10 +334,10 @@ fn unread_row(label: &str, what: &str) -> String {
     format!(" {DIM}{label:<6}{RST} {BAD}{B}?{RST} {DIM}{what}{RST}")
 }
 
-/// One aeon as NOW reads it from the snapshot: the single source for the pane's rows and
-/// Loom's Aeons page.
+/// One dwarf as NOW reads it from the snapshot: the single source for the pane's rows and
+/// Loom's Dwarves page.
 #[derive(Debug, Clone)]
-pub struct AeonRow {
+pub struct DwarfRow {
     pub name: String,
     pub faith: String,
     pub model: String,
@@ -358,9 +358,9 @@ pub struct AeonRow {
     pub trail: Vec<String>,
 }
 
-pub fn aeon_row(snap: &Snapshot, i: usize, working: &[(String, String)]) -> AeonRow {
-    let g = |k: &str| snap.q(&format!("SP_AEON{i}_{k}")).to_string();
-    let o = |k: &str| snap.get(&format!("SP_AEON{i}_{k}")).unwrap_or("").to_string();
+pub fn dwarf_row(snap: &Snapshot, i: usize, working: &[(String, String)]) -> DwarfRow {
+    let g = |k: &str| snap.q(&format!("SP_DWARF{i}_{k}")).to_string();
+    let o = |k: &str| snap.get(&format!("SP_DWARF{i}_{k}")).unwrap_or("").to_string();
     let md = g("MODEL");
     let fm = g("RUNE_MODEL");
     let mut model = model_short(&md);
@@ -376,7 +376,7 @@ pub fn aeon_row(snap: &Snapshot, i: usize, working: &[(String, String)]) -> Aeon
     while !o(&format!("ACT{}", trail.len())).is_empty() {
         trail.push(o(&format!("ACT{}", trail.len())));
     }
-    AeonRow {
+    DwarfRow {
         name: g("NAME"),
         faith: g("RUNE"),
         model,
@@ -397,17 +397,17 @@ pub fn aeon_row(snap: &Snapshot, i: usize, working: &[(String, String)]) -> Aeon
     }
 }
 
-/// Every aeon in the snapshot, in the order NOW draws them.
-pub fn aeon_rows(snap: &Snapshot, working: &[(String, String)]) -> Vec<AeonRow> {
-    let n: usize = snap.get("SP_AEON_N").and_then(|v| v.parse().ok()).unwrap_or(0);
-    (0..n).map(|i| aeon_row(snap, i, working)).collect()
+/// Every dwarf in the snapshot, in the order NOW draws them.
+pub fn dwarf_rows(snap: &Snapshot, working: &[(String, String)]) -> Vec<DwarfRow> {
+    let n: usize = snap.get("SP_DWARF_N").and_then(|v| v.parse().ok()).unwrap_or(0);
+    (0..n).map(|i| dwarf_row(snap, i, working)).collect()
 }
 
-/// One aeon's four rows for `now_section`. `lease` is `?` or minutes. Trailing moments
-/// (`SP_AEON{i}_ACT{j}`) are rendered newest-last when present; otherwise the single
-/// `SP_AEON{i}_ACT` plus `SP_AEON{i}_SAID` fall back to the original single-line shape.
-fn now_aeon_rows(snap: &Snapshot, cols: i64, i: usize, is_first: bool, trace_lines: i64, working: &[(String, String)]) -> Vec<String> {
-    let r = aeon_row(snap, i, working);
+/// One dwarf's four rows for `now_section`. `lease` is `?` or minutes. Trailing moments
+/// (`SP_DWARF{i}_ACT{j}`) are rendered newest-last when present; otherwise the single
+/// `SP_DWARF{i}_ACT` plus `SP_DWARF{i}_SAID` fall back to the original single-line shape.
+fn now_dwarf_rows(snap: &Snapshot, cols: i64, i: usize, is_first: bool, trace_lines: i64, working: &[(String, String)]) -> Vec<String> {
+    let r = dwarf_row(snap, i, working);
     let (nm, fy, bd, mn, ac, ti, pr, pa, tn, cx, fl, qt, sd, lease, phase, model_disp) =
         (r.name, r.faith, r.bead, r.minutes, r.act, r.title, r.priority, r.repo, r.turns, r.ctx, r.files, r.quiet, r.said, r.lease, r.phase, r.model);
 
@@ -452,7 +452,7 @@ fn now_aeon_rows(snap: &Snapshot, cols: i64, i: usize, is_first: bool, trace_lin
     let mut trail_have = 0i64;
     if trace_lines > 0 {
         loop {
-            if snap.get(&format!("SP_AEON{i}_ACT{trail_have}")).unwrap_or("").is_empty() {
+            if snap.get(&format!("SP_DWARF{i}_ACT{trail_have}")).unwrap_or("").is_empty() {
                 break;
             }
             trail_have += 1;
@@ -463,7 +463,7 @@ fn now_aeon_rows(snap: &Snapshot, cols: i64, i: usize, is_first: bool, trace_lin
     if trail_n > 0 {
         let start = trail_have - trail_n;
         for j in start..trail_have {
-            let line = snap.get(&format!("SP_AEON{i}_ACT{j}")).unwrap_or("").to_string();
+            let line = snap.get(&format!("SP_DWARF{i}_ACT{j}")).unwrap_or("").to_string();
             if j == trail_have - 1 {
                 let aw = (cols - 12 - qs.chars().count() as i64).max(2);
                 let f = fit(if line.is_empty() { "-" } else { &line }, aw);
@@ -490,35 +490,35 @@ fn now_aeon_rows(snap: &Snapshot, cols: i64, i: usize, is_first: bool, trace_lin
 /// NOW reads the WORKING rows of the lifecycle store (`(bead, phase)`; `None` when the store
 /// cannot answer). The snapshot only adds the detail a row does not carry.
 pub fn now_section(snap: &Snapshot, cols: i64, working: Option<&[(String, String)]>, trace_lines: i64) -> Vec<String> {
-    let live_aeon_n = working.map_or(-1, |w| w.len() as i64);
+    let live_dwarf_n = working.map_or(-1, |w| w.len() as i64);
     let rows = working.unwrap_or(&[]);
-    let snap_n_raw = snap.get("SP_AEON_N");
+    let snap_n_raw = snap.get("SP_DWARF_N");
     if snap_n_raw.is_none() || snap_n_raw == Some("?") {
-        return if live_aeon_n > 0 {
-            vec![format!(" {DIM}NOW{RST}    {OK}{B}{live_aeon_n} aeon(s) live{RST} {DIM}\u{2014} details pending snapshot{RST}")]
-        } else if live_aeon_n == 0 {
-            vec![format!(" {DIM}NOW{RST}    {DIM}no aeon working{RST}")]
+        return if live_dwarf_n > 0 {
+            vec![format!(" {DIM}NOW{RST}    {OK}{B}{live_dwarf_n} dwarf(s) live{RST} {DIM}\u{2014} details pending snapshot{RST}")]
+        } else if live_dwarf_n == 0 {
+            vec![format!(" {DIM}NOW{RST}    {DIM}no dwarf working{RST}")]
         } else {
-            vec![unread_row("NOW", "cannot read the aeon roster")]
+            vec![unread_row("NOW", "cannot read the dwarf roster")]
         };
     }
     let snap_n: i64 = snap_n_raw.unwrap().parse().unwrap_or(0);
-    if snap_n == 0 && live_aeon_n == 0 {
-        return vec![format!(" {DIM}NOW{RST}    {DIM}no aeon working{RST}")];
+    if snap_n == 0 && live_dwarf_n == 0 {
+        return vec![format!(" {DIM}NOW{RST}    {DIM}no dwarf working{RST}")];
     }
-    if snap_n == 0 && live_aeon_n > 0 {
+    if snap_n == 0 && live_dwarf_n > 0 {
         let phases: Vec<String> = rows.iter().map(|(b, p)| format!("{b} {p}")).collect();
-        return vec![format!(" {DIM}NOW{RST}    {OK}{B}{live_aeon_n} aeon(s) live{RST} {DIM}\u{2014} {}{RST}", phases.join(", "))];
+        return vec![format!(" {DIM}NOW{RST}    {OK}{B}{live_dwarf_n} dwarf(s) live{RST} {DIM}\u{2014} {}{RST}", phases.join(", "))];
     }
     let mut out = Vec::new();
     for i in 0..snap_n as usize {
-        out.extend(now_aeon_rows(snap, cols, i, i == 0, trace_lines, rows));
+        out.extend(now_dwarf_rows(snap, cols, i, i == 0, trace_lines, rows));
     }
-    let extra = live_aeon_n - snap_n;
+    let extra = live_dwarf_n - snap_n;
     if extra > 0 {
-        let shown: Vec<&str> = (0..snap_n as usize).filter_map(|i| snap.get(&format!("SP_AEON{i}_BEAD"))).collect();
+        let shown: Vec<&str> = (0..snap_n as usize).filter_map(|i| snap.get(&format!("SP_DWARF{i}_BEAD"))).collect();
         let rest: Vec<String> = rows.iter().filter(|(b, _)| !shown.contains(&b.as_str())).map(|(b, p)| format!("{b} {p}")).collect();
-        out.push(format!("        {DIM}+{extra} more aeon(s) live \u{2014} not yet in snapshot: {}{RST}", rest.join(", ")));
+        out.push(format!("        {DIM}+{extra} more dwarf(s) live \u{2014} not yet in snapshot: {}{RST}", rest.join(", ")));
     }
     out
 }
@@ -1263,18 +1263,18 @@ mod tests {
         let s = snap(&[]);
         let out = now_section(&s, 80, None, 2);
         assert_eq!(out.len(), 1);
-        assert!(out[0].contains("cannot read the aeon roster"));
+        assert!(out[0].contains("cannot read the dwarf roster"));
     }
 
     #[test]
     fn now_section_says_idle_from_the_store_even_with_no_snapshot() {
         let out = now_section(&snap(&[]), 80, Some(&[]), 2);
-        assert!(out[0].contains("no aeon working"), "{out:?}");
+        assert!(out[0].contains("no dwarf working"), "{out:?}");
     }
 
     #[test]
-    fn now_section_names_the_phase_the_row_records_for_a_snapshotted_aeon() {
-        let s = snap(&[("SP_AEON_N", "1"), ("SP_AEON0_BEAD", "sp-a"), ("SP_AEON0_NAME", "aeon-x"), ("SP_AEON0_RUNE", "builder")]);
+    fn now_section_names_the_phase_the_row_records_for_a_snapshotted_dwarf() {
+        let s = snap(&[("SP_DWARF_N", "1"), ("SP_DWARF0_BEAD", "sp-a"), ("SP_DWARF0_NAME", "dwarf-x"), ("SP_DWARF0_RUNE", "builder")]);
         let working = vec![("sp-a".to_string(), "session".to_string())];
         let out = now_section(&s, 120, Some(&working), 0).join("\n");
         assert!(out.contains("\u{b7} session \u{b7}"), "{out}");
@@ -1282,17 +1282,17 @@ mod tests {
 
     #[test]
     fn now_section_names_a_working_row_the_snapshot_has_not_caught_up_to() {
-        let s = snap(&[("SP_AEON_N", "0")]);
+        let s = snap(&[("SP_DWARF_N", "0")]);
         let working = vec![("sp-new".to_string(), "building".to_string())];
         let out = now_section(&s, 120, Some(&working), 0).join("\n");
-        assert!(out.contains("1 aeon(s) live") && out.contains("sp-new building"), "{out}");
+        assert!(out.contains("1 dwarf(s) live") && out.contains("sp-new building"), "{out}");
     }
 
     #[test]
     fn now_section_idle_when_both_zero() {
-        let s = snap(&[("SP_AEON_N", "0")]);
+        let s = snap(&[("SP_DWARF_N", "0")]);
         let out = now_section(&s, 80, Some(&[]), 2);
-        assert_eq!(out, vec![format!(" {DIM}NOW{RST}    {DIM}no aeon working{RST}")]);
+        assert_eq!(out, vec![format!(" {DIM}NOW{RST}    {DIM}no dwarf working{RST}")]);
     }
 
     #[test]

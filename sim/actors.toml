@@ -12,9 +12,9 @@ duration = "gate.ran"
 staged = true
 
 [[actor]]
-name = "sentinel-summon"
-command = "sentinel --summon-only"
-timer = "spira-summon.timer"
+name = "sentinel-call"
+command = "sentinel --call-only"
+timer = "spira-call.timer"
 duration = "land.phase.tools"
 
 [[actor]]

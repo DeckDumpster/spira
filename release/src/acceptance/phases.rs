@@ -293,9 +293,9 @@ impl Run<'_> {
         hist.rc == 0 && lifecycle_submitted(&lifecycle_states(&hist.out))
     }
 
-    /// The aeon ledger's closing line for `id` when the aeon ran and ended without a branch.
+    /// The dwarf ledger's closing line for `id` when the dwarf ran and ended without a branch.
     fn declined(&self, id: &str) -> Option<String> {
-        let ledger = fs::read_to_string(self.o.spira_run.join("aeon-ledger.log")).ok()?;
+        let ledger = fs::read_to_string(self.o.spira_run.join("dwarf-ledger.log")).ok()?;
         let line = ledger.lines().rev().find(|l| l.contains(" done ") && l.contains(id))?;
         let status = line.split_whitespace().find_map(|w| w.strip_prefix("status="))?;
         Some(format!("builder declined: {status}"))
@@ -336,7 +336,7 @@ impl Run<'_> {
         let out = self.h.run(&self.bd(&["create", "--title", title, "--description", description, "--label", &l, "--type", "task"]));
         let Some(id) = extract_bead_id(&out.text) else { return (None, out.text) };
         // File the way bead.sh does: the bead's lifecycle row is part of filing it. Under
-        // the machine a rowless bead is never claimable, so the probe sat unsummoned
+        // the machine a rowless bead is never claimable, so the probe sat uncalled
         // (sp-6ka75); a row that cannot be created fails "bead filed", naming why.
         let lc = self.h.run(&self.tool("spira-lc").args(["create-bead", &id]));
         if lc.rc != 0 {
@@ -345,17 +345,17 @@ impl Run<'_> {
         (Some(id), out.text)
     }
 
-    /// Stages 2-5 for a filed bead: summoned (branch), committed, closed, landed by ancestry
+    /// Stages 2-5 for a filed bead: called (branch), committed, closed, landed by ancestry
     /// on `origin/<land_ref>` past `base`.
     fn follow(&mut self, p: &str, id: &str, land_ref: &str, base: &str, landed_name: &str) {
         self.start_sentinel();
         let branch = format!("refs/heads/spira/{id}");
-        let (ok, t) = self.poll(self.o.summon_secs, 2, || self.h.run(&self.git(&["show-ref", "--verify", "-q", &branch])).rc == 0);
+        let (ok, t) = self.poll(self.o.call_secs, 2, || self.h.run(&self.git(&["show-ref", "--verify", "-q", &branch])).rc == 0);
         if ok {
-            self.ok(&format!("{p} stage 2: aeon summoned for {id} — branch created ({t}s)"));
+            self.ok(&format!("{p} stage 2: dwarf called for {id} — branch created ({t}s)"));
         } else {
             let declined = self.declined(id).map(|d| format!("; {d}")).unwrap_or_default();
-            self.bad(&format!("{p} stage 2: aeon summoned for {id}"), &format!("branch spira/{id} not created after {t}s{declined}"));
+            self.bad(&format!("{p} stage 2: dwarf called for {id}"), &format!("branch spira/{id} not created after {t}s{declined}"));
         }
 
         let br = format!("spira/{id}");
@@ -395,8 +395,8 @@ impl Run<'_> {
         }
     }
 
-    /// A stub builder's handoff through the release's own fast tier (`aeon fast-tier`, the
-    /// code the aeon's teardown runs before it hands a branch on). The tier only exists in a
+    /// A stub builder's handoff through the release's own fast tier (`dwarf fast-tier`, the
+    /// code the dwarf's teardown runs before it hands a branch on). The tier only exists in a
     /// harness tree, so the scratch repo cannot host it — a tree carrying `gate.steps` takes
     /// over that repository's landing gate — and the release's own tree, minus what a release
     /// adds, is committed as the base of a temporary repository instead.
@@ -425,7 +425,7 @@ impl Run<'_> {
         let bare = self.h.run(&self.tool("bash").arg("-c").arg(FAST_TIER_BARE_LINT).arg("_").arg(&dir_s));
         let name = format!("{label}: positive control: spira-lint with no base refuses");
         self.check(&name, bare.rc != 0, || format!("exit 0 — a bare spira-lint passed:\n{}", tail(&bare.text, 8)));
-        let c = self.tool("aeon").args(["fast-tier", &dir_s, &dir_s, FAST_TIER_BRANCH, "main"]);
+        let c = self.tool("dwarf").args(["fast-tier", &dir_s, &dir_s, FAST_TIER_BRANCH, "main"]);
         let out = self.h.run(&c);
         let name = format!("{label}: stub builder's handoff passes the fast tier (rebase check, spira-lint against the base, build fence)");
         self.check(&name, out.rc == 0, || format!("exit {}\n{}", out.rc, tail(&out.text, 12)));
@@ -652,7 +652,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
         let m = missing_release_bins(&releases.join("current"));
         r.check("phase A: all native binaries present and executable", m.is_empty(), || format!("missing: {m}"));
         // sp-zf4q3: the model's PATH names model-bin/ only; a tarball without it would
-        // leave every aeon refusing its session.
+        // leave every dwarf refusing its session.
         let mb = spira_config::release_env::model_bin_problems(&releases.join("current"));
         r.check("phase A: model-bin/ holds work and nothing else", mb.is_empty(), || mb.join("; "));
     }
@@ -683,7 +683,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
         println!("{}", ready.text);
     }
 
-    println!("\nphase A — end-to-end bead: file, sentinel summons aeon, land by ancestry");
+    println!("\nphase A — end-to-end bead: file, sentinel calls dwarf, land by ancestry");
     let land_ref = h.run(&r.git(&["rev-parse", "--abbrev-ref", "HEAD"])).out.trim().to_string();
     let land_ref = if land_ref.is_empty() { "main".to_string() } else { land_ref };
     let base = r.rev(&format!("origin/{land_ref}")).or_else(|| r.rev("HEAD")).unwrap_or_default();

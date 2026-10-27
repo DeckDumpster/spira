@@ -97,7 +97,7 @@ impl Rule for EventTaxonomy {
         // The WIRED check below proves the matcher is not measuring nothing just as well as a
         // shell `spira_event <kind>` call does — and, as the wave-4 Rust rewrite peels function
         // families out of lib.sh one at a time, every shell call site is eventually retired on
-        // purpose (sp-8kqww: rapid_recur_check's `spira_event aeon.rapid` was the last one in
+        // purpose (sp-8kqww: rapid_recur_check's `spira_event dwarf.rapid` was the last one in
         // spira/*.sh). Scoping the positive control to shell-only made it fire on a retirement
         // that had nothing to do with the taxonomy itself.
         let mut any_wired = false;
@@ -182,8 +182,8 @@ mod tests {
 
     #[test]
     fn declared_kinds_must_fit_the_column() {
-        assert!(kind_valid("aeon.claimed").is_ok());
-        assert!(kind_valid("Aeon.claimed").is_err());
+        assert!(kind_valid("dwarf.claimed").is_ok());
+        assert!(kind_valid("Dwarf.claimed").is_err());
         assert!(kind_valid(".x").is_err());
         assert!(kind_valid("x.").is_err());
         assert!(kind_valid("a..b").is_err());
@@ -207,7 +207,7 @@ mod tests {
         );
     }
 
-    // sp-8kqww (wave 4.33): rapid_recur_check's `spira_event aeon.rapid` was the last literal
+    // sp-8kqww (wave 4.33): rapid_recur_check's `spira_event dwarf.rapid` was the last literal
     // shell call site anywhere in spira/*.sh — every other family the wave peels out of
     // lib.sh will eventually retire its own shell call sites the same way. The positive
     // control must not fire just because the shell side of the taxonomy went fully native;

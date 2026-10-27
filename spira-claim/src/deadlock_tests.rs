@@ -244,7 +244,7 @@ fn apply_unholds_and_never_touches_an_absent_label() {
 #[test]
 fn bd_in_progress_without_a_working_row_is_not_held() {
     use lifecycle::bead::{BeadState, HoldKind};
-    let mut w = Fake::default().bead("sp-s", "in_progress", Some("aeon-1"), &[]).lc("sp-s", BeadState::Ready, &[HoldKind::Poison], None);
+    let mut w = Fake::default().bead("sp-s", "in_progress", Some("dwarf-1"), &[]).lc("sp-s", BeadState::Ready, &[HoldKind::Poison], None);
     let (code, out) = run(&opts(false), &[cand("sp-s", true, "")], &mut w);
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("WOULD    sp-s"), "{out}");
@@ -257,11 +257,11 @@ fn a_lifecycle_working_holder_refuses_and_touches_nothing() {
         "sp-s",
         BeadState::Working,
         &[HoldKind::Poison],
-        Some("aeon-2"),
+        Some("dwarf-2"),
     );
     let (code, out) = run(&opts(true), &[cand("sp-s", true, "")], &mut w);
     assert_eq!(code, 3);
-    assert!(out.contains("held by aeon-2 (lifecycle WORKING)"), "{out}");
+    assert!(out.contains("held by dwarf-2 (lifecycle WORKING)"), "{out}");
     assert!(w.notes.is_empty());
     assert!(w.removed_labels.is_empty());
 }

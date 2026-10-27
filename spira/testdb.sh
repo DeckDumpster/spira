@@ -238,7 +238,7 @@ testdb_up() {            # testdb_up <tag>
         #
         # SPIRA_PATH AS WELL AS PATH. conf.sh rebuilds PATH from scratch:
         #   export PATH="${SPIRA_PATH:+$SPIRA_PATH:}$HOME/.local/bin:..."
-        # Any child process that sources conf.sh (including aeon.sh when it runs as a
+        # Any child process that sources conf.sh (including dwarf.sh when it runs as a
         # subprocess of a test suite) loses a bare PATH modification. conf.sh honors
         # SPIRA_PATH from the environment (env-first `:=` pattern), so prepending
         # TESTDB_BIN there makes the shim survive conf.sh resets in every child.

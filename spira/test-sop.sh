@@ -21,7 +21,7 @@
 #      inside a worktree of `SPIRA_WIKI` lands the page in the WORKTREE, never the shared
 #      checkout every other worktree hangs off (the exact defect the bash's own header
 #      warned about).
-#   4. the runes briefs and `aeon`'s rendered "Runbooks on the shelf" hint both name a
+#   4. the runes briefs and `dwarf`'s rendered "Runbooks on the shelf" hint both name a
 #      bare `sop`, not a deleted `sop.sh` path.
 #
 # tier: T1
@@ -184,7 +184,7 @@ want "the failure names the git step" "failed" "$out"
 rm -f "$T/wiki-remote.git/hooks/pre-receive"
 
 echo
-echo "8. the runes briefs and aeon's rendered hint name a bare sop, not a deleted sop.sh"
+echo "8. the runes briefs and dwarf's rendered hint name a bare sop, not a deleted sop.sh"
 if grep -rqE '(^|[^.])\bsop\.sh\b' "$HERE/runes/ops.md" "$HERE/runes/ops.rune" "$HERE/runes/concierge.md" 2>/dev/null; then
     bad "no runes brief names sop.sh" "$(grep -rnE '(^|[^.])\bsop\.sh\b' "$HERE/runes/ops.md" "$HERE/runes/ops.rune" "$HERE/runes/concierge.md" 2>/dev/null)"
 else

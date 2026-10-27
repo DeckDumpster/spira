@@ -78,10 +78,10 @@ for f in "$UNIT_DIR"/*.timer; do
     fi
 done
 
-if grep -q '^OnCalendar=' "$UNIT_DIR/spira-summon.timer" && ! grep -q '^OnUnitActiveSec=' "$UNIT_DIR/spira-summon.timer"; then
-    ok "spira-summon.timer is wall-clock (re-arms though its service never activates)"
+if grep -q '^OnCalendar=' "$UNIT_DIR/spira-call.timer" && ! grep -q '^OnUnitActiveSec=' "$UNIT_DIR/spira-call.timer"; then
+    ok "spira-call.timer is wall-clock (re-arms though its service never activates)"
 else
-    bad "spira-summon.timer is wall-clock" "OnUnitActiveSec re-arms only from a service activation; a stalled one stays elapsed forever"
+    bad "spira-call.timer is wall-clock" "OnUnitActiveSec re-arms only from a service activation; a stalled one stays elapsed forever"
 fi
 
 [ "$n" -gt 0 ] || bad "found timer templates to check" "no *.timer files under $UNIT_DIR"

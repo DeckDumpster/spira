@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-warden.sh — the warden is summoned on a schedule, files exactly one sweep at a time,
+# test-warden.sh — the warden is called on a schedule, files exactly one sweep at a time,
 # and its partition never reaches plan beads.
 #
 # tier: T1
@@ -31,7 +31,7 @@ STUB
 chmod +x "$STUB"
 
 # Whether a sweep is still open is its lifecycle row's answer, never bd status (sp-mve9i):
-# a sweep is filed work the warden's aeon claims and delivers, so the machine holds its
+# a sweep is filed work the warden's dwarf claims and delivers, so the machine holds its
 # state. bd only says which beads carry the labels; the rows live in this stand-in spira-lc.
 lc_fix_init "$T/lc"
 

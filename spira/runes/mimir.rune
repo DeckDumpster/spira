@@ -2,14 +2,14 @@
 # identifies recurring failure classes, and cuts the work to end them — post-landing,
 # incremental, watermarked.
 #
-# A rune is a persona DEFINITION; an aeon is one summoned instance of it. Four things:
+# A rune is a persona DEFINITION; a dwarf is one called instance of it. Four things:
 # a predicate carving its partition out of the graph, the memories it must read, the tools
 # it may use, and what wakes it.
 
 RUNE_NAME=mimir
 RUNE_DESC="Mimir — the unsent historian: reads the failure distribution, names recurring classes, cuts the work to end them"
 
-# THE PARTITION. Mimir runs in beadless sweep mode, like QA: it is not summoned by
+# THE PARTITION. Mimir runs in beadless sweep mode, like QA: it is not called by
 # claiming a work bead but by a trigger that fires a sweep. The label is read from
 # SPIRA_MIMIR_LABEL so the operator can rename it without touching this file.
 RUNE_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_MIMIR_LABEL"
@@ -20,7 +20,7 @@ RUNE_EXCLUDE_LABELS="$SPIRA_CI_LABEL"
 RUNE_MEMORY_PREFIXES="law-"
 
 # NO RUNE_REPO. The repository comes from the BEAD — a `repo:<name>` label resolved
-# through repo-map. The sweep bead carries no repo: label, so aeon.sh falls back to
+# through repo-map. The sweep bead carries no repo: label, so dwarf.sh falls back to
 # spira_home_repo(), which is the harness's own home checkout. Mimir works on the
 # harness — its failure record is local — so that fallback is correct. Remedy beads that
 # Mimir cuts use `repo:${SPIRA_HOME_REPO}` (from the brief) so the name is derived,
@@ -34,7 +34,7 @@ RUNE_MEMORY_PREFIXES="law-"
 #
 # VERIFIED, NOT ASSUMED. `claude --model claude-sonnet-5-5 -p ...` answers on this box,
 # exit 0, verified 2026-09-11. qa.rune carries the scar for skipping that check: an
-# id the CLI rejects does not fail loudly, every summon dies and the role looks merely
+# id the CLI rejects does not fail loudly, every call dies and the role looks merely
 # quiet, which is the outage shape this harness is worst at noticing. Probe a candidate
 # id before writing it here. Cost basis for revisiting: ~8 passes/day at the 3h ceiling.
 # If census turns out to be most of the tokens, splitting census (small model) from
@@ -47,7 +47,7 @@ RUNE_MEMORY_PREFIXES="law-"
 RUNE_MODEL=claude-sonnet-5-5
 RUNE_MAX_CONCURRENT=1
 
-# THE MIMIR LANE. Mimir draws from its own capacity rather than from SPIRA_MAX_AEONS,
+# THE MIMIR LANE. Mimir draws from its own capacity rather than from SPIRA_MAX_DWARVES,
 # so a fully-occupied builder pool cannot prevent a retrospective pass. The mimir lane
 # is declared in SPIRA_LANES; without that declaration the lane still functions (the
 # mechanism is RUNE_LANE set, not membership in the list), but the declaration makes it

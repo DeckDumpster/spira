@@ -5,7 +5,7 @@
 #   ./test-cockpit.sh
 #
 # THE FAILURE THIS SUITE EXISTS FOR. cockpit.sh writes the snapshot the health
-# pane reads, and nothing else may: an aeon running the collector from its
+# pane reads, and nothing else may: a dwarf running the collector from its
 # worktree, a retired brain collector calling a vendored copy, or a manual
 # `cockpit-collect once` each overwrites the live snapshot with whatever keys its
 # branch carries, and the pane reads `?` for every key the interloper lacked.
@@ -17,7 +17,7 @@
 # defect: sp-20d
 # tier: T1
 # covers: cockpit-collect/src/* UC-cockpit-observability-01 UC-cockpit-observability-02
-# scar: cockpit.sh wrote the snapshot unconditionally; an aeon running a vendored copy or a manual invocation overwrote the live snapshot, and the pane read `?` for every key the interloper lacked.
+# scar: cockpit.sh wrote the snapshot unconditionally; a dwarf running a vendored copy or a manual invocation overwrote the live snapshot, and the pane read `?` for every key the interloper lacked.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

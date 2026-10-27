@@ -246,7 +246,7 @@ fn fixture() -> (Fx, Fake) {
     git(&r, &["branch", "spira/sp-stray", "main"]);
     // sp-held: a live claim.
     git(&r, &["checkout", "-q", "-b", "spira/sp-held", "main"]);
-    commit_file(&r, "sp-held.txt", "in flight\n", "sp-held: an aeon is still here");
+    commit_file(&r, "sp-held.txt", "in flight\n", "sp-held: a dwarf is still here");
     git(&r, &["checkout", "-q", "main"]);
     f.put("sp-held", b("in_progress"));
     f.held.insert("sp-held".into());

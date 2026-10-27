@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# test-world-deadline-notice.sh — world drain mails each live aeon its deadline.
+# test-world-deadline-notice.sh — world drain mails each live dwarf its deadline.
 #
-#   1. No live aeons: nothing is sent.
-#   2. A live aeon with an open mailbox receives the notice, naming both choices.
+#   1. No live dwarves: nothing is sent.
+#   2. A live dwarf with an open mailbox receives the notice, naming both choices.
 #
 # tier: T1
 # covers: spira-world/src/notice.rs spira-world/src/bin/world.rs
@@ -42,8 +42,8 @@ exit 0
 SLAY
 chmod +x "$SH/slay"
 
-# Fake aeon.sh so live_aeons() finds the process in /proc via argv match.
-printf '#!/usr/bin/env bash\nsleep 120\n' > "$SH/aeon.sh"; chmod +x "$SH/aeon.sh"
+# Fake dwarf.sh so live_dwarves() finds the process in /proc via argv match.
+printf '#!/usr/bin/env bash\nsleep 120\n' > "$SH/dwarf.sh"; chmod +x "$SH/dwarf.sh"
 
 # SPIRA_PROD/SPIRA_RUN/SPIRA_DB are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
 # CONFIG): declare via tl_config, not the env prefixes below, which no process reads them
@@ -60,24 +60,24 @@ drain() {
 TEST_BEAD="sp-drain-test"
 
 # --------------------------------------------------------------------------------------
-# 1. POSITIVE CONTROL — no live aeons.
+# 1. POSITIVE CONTROL — no live dwarves.
 # --------------------------------------------------------------------------------------
-MAILBOX="$RUN/mail/aeon-sp-notice-test"
+MAILBOX="$RUN/mail/dwarf-sp-notice-test"
 count() { find "$MAILBOX/new" -type f 2>/dev/null | wc -l | tr -d ' '; }
 mkdir -p "$MAILBOX/new" "$MAILBOX/cur" "$MAILBOX/tmp"
 tl_config SPIRA_MAIL="$RUN/mail" SPIRA_MAIL_MUTE=0
 
 echo
-echo "no live aeons — nothing sent:"
+echo "no live dwarves — nothing sent:"
 drain --deadline 0
-is "no notice without a live aeon" 0 "$(count)"
+is "no notice without a live dwarf" 0 "$(count)"
 
 echo
-echo "a live aeon is mailed its deadline:"
-bash "$SH/aeon.sh" & WORKER_PID=$!
+echo "a live dwarf is mailed its deadline:"
+bash "$SH/dwarf.sh" & WORKER_PID=$!
 sleep 0.3
-printf '%s\n' "$WORKER_PID" > "$RUN/aeon-valefor-sp-notice-test.pid"
-printf '%s' "$(( $(date +%s) + 3600 ))" > "$RUN/aeon-valefor-sp-notice-test.lease"
+printf '%s\n' "$WORKER_PID" > "$RUN/dwarf-brokkr-sp-notice-test.pid"
+printf '%s' "$(( $(date +%s) + 3600 ))" > "$RUN/dwarf-brokkr-sp-notice-test.lease"
 rm -f "$RUN/world.draining"
 drain --deadline 0
 is "exactly one notice delivered" 1 "$(count)"
@@ -87,6 +87,6 @@ want "offers submit" "work submit" "$msg"
 want "offers a checkpoint" "WIP checkpoint" "$msg"
 want "asks for a bead note" "work note" "$msg"
 
-rm -f "$RUN/aeon-valefor-sp-notice-test.pid" "$RUN/aeon-valefor-sp-notice-test.lease"
+rm -f "$RUN/dwarf-brokkr-sp-notice-test.pid" "$RUN/dwarf-brokkr-sp-notice-test.lease"
 kill -- -"$WORKER_PID" 2>/dev/null; wait "$WORKER_PID" 2>/dev/null; WORKER_PID=""
 tl_summary

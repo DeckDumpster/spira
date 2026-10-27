@@ -8,7 +8,7 @@ use crate::quoting::sanitize;
 use std::path::Path;
 
 const MAX_ROWS: usize = 12;
-const KINDS: [(&str, &str); 3] = [("aeon", "aeons"), ("round", "rounds"), ("gate", "gates")];
+const KINDS: [(&str, &str); 3] = [("dwarf", "dwarves"), ("round", "rounds"), ("gate", "gates")];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Row {
@@ -27,7 +27,7 @@ pub enum World {
 
 pub fn inflight_keys(_cfg: &Cfg) -> Kv {
     let run = io::run_dir();
-    let sources = [aeon_rows(&run), round_rows(), gate_rows(&run)];
+    let sources = [dwarf_rows(&run), round_rows(), gate_rows(&run)];
     compose(&sources, world(&run))
 }
 
@@ -43,13 +43,13 @@ fn world(run: &Path) -> Option<World> {
     }
 }
 
-fn aeon_rows(run: &Path) -> Option<Vec<Row>> {
+fn dwarf_rows(run: &Path) -> Option<Vec<Row>> {
     let mut rows = Vec::new();
     for e in std::fs::read_dir(run).ok()?.flatten() {
         let path = e.path();
         let name = e.file_name().to_string_lossy().into_owned();
-        let Some(rest) = name.strip_prefix("aeon-").and_then(|n| n.strip_suffix(".pid")) else { continue };
-        if !strand::probe::aeon_alive(&path) {
+        let Some(rest) = name.strip_prefix("dwarf-").and_then(|n| n.strip_suffix(".pid")) else { continue };
+        if !strand::probe::dwarf_alive(&path) {
             continue;
         }
         let (persona, bead) = rest.split_once('-').unwrap_or(("?", rest));
@@ -169,14 +169,14 @@ mod tests {
     }
 
     #[test]
-    fn one_aeon_one_round_one_gate_all_show_with_progress() {
+    fn one_dwarf_one_round_one_gate_all_show_with_progress() {
         let src = [
             Some(vec![row("sp-1", "warden", None)]),
             Some(vec![row("spira/b1", "certifying", Some((412, Some(475))))]),
             Some(vec![row("spira-x", "pre-merge", None)]),
         ];
         let kv = compose(&src, Some(World::Running));
-        assert_eq!(get(&kv, "SP_INFLIGHT_SEG"), "\u{2699} 1 aeon \u{b7} 1 round (412/475) \u{b7} 1 gate");
+        assert_eq!(get(&kv, "SP_INFLIGHT_SEG"), "\u{2699} 1 dwarf \u{b7} 1 round (412/475) \u{b7} 1 gate");
         assert_eq!(get(&kv, "SP_INFLIGHT_ROUND_N"), "1");
         assert_eq!(get(&kv, "SP_INFLIGHT_ROW1"), "round|spira/b1|certifying|100|412|475");
     }
@@ -201,7 +201,7 @@ mod tests {
     #[test]
     fn drain_reads_draining_with_work_and_drained_without() {
         let busy = [Some(vec![row("sp-1", "g", None)]), Some(vec![]), Some(vec![])];
-        assert_eq!(get(&compose(&busy, Some(World::Draining)), "SP_INFLIGHT_SEG"), "\u{2699} 1 aeon \u{b7} draining");
+        assert_eq!(get(&compose(&busy, Some(World::Draining)), "SP_INFLIGHT_SEG"), "\u{2699} 1 dwarf \u{b7} draining");
         let idle = [Some(vec![]), Some(vec![]), Some(vec![])];
         assert_eq!(get(&compose(&idle, Some(World::Draining)), "SP_INFLIGHT_SEG"), "\u{2699} drained");
     }

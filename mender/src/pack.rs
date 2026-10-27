@@ -9,7 +9,7 @@ pub struct MemberSpec {
     pub tip: String,
 }
 
-/// The failure as the summons states it. Every field is a fact about the pass; nothing in it
+/// The failure as the calls states it. Every field is a fact about the pass; nothing in it
 /// is the mender's to set.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 pub struct Spec {

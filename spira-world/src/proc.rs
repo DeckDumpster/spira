@@ -1,4 +1,4 @@
-//! /proc scanning — world.sh's `argv_has`, `live_aeons`, `live_workers`, and the
+//! /proc scanning — world.sh's `argv_has`, `live_dwarves`, `live_workers`, and the
 //! `work_services` exclusion, all NEVER `pgrep -f` (law-pgrep-nominates: a substring match
 //! against the whole command line nominates any shell whose `-c` text merely mentions the
 //! path, including this process's own). Every predicate here matches an EXACT argv element,
@@ -69,19 +69,19 @@ mod tests {
 
     #[test]
     fn argv_has_matches_exact_element_only() {
-        let c = cmdline(&["bash", "-c", "echo /opt/x/spira/aeon.sh"]);
+        let c = cmdline(&["bash", "-c", "echo /opt/x/spira/dwarf.sh"]);
         // The path only appears inside a -c STRING, never as its own argv element.
-        assert!(!argv_has(&c, &["/opt/x/spira/aeon.sh"]));
-        let c2 = cmdline(&["/opt/x/spira/aeon.sh", "--bead", "sp-1"]);
-        assert!(argv_has(&c2, &["/opt/x/spira/aeon.sh"]));
+        assert!(!argv_has(&c, &["/opt/x/spira/dwarf.sh"]));
+        let c2 = cmdline(&["/opt/x/spira/dwarf.sh", "--bead", "sp-1"]);
+        assert!(argv_has(&c2, &["/opt/x/spira/dwarf.sh"]));
     }
 
     #[test]
     fn argv_has_is_immune_to_operator_discussing_the_path() {
         // The scar world.sh's own comment names: a shell whose -c text merely mentions the
         // path must not be nominated.
-        let c = cmdline(&["bash", "-c", "cat $SPIRA_PROD/aeon.sh"]);
-        assert!(!argv_has(&c, &["/prod/aeon.sh"]));
+        let c = cmdline(&["bash", "-c", "cat $SPIRA_PROD/dwarf.sh"]);
+        assert!(!argv_has(&c, &["/prod/dwarf.sh"]));
     }
 
     #[test]

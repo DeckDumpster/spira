@@ -60,9 +60,9 @@ state; see §4 R7).
 | the bead store | `$SPIRA_LIST_SNAPSHOT` when readable (sentinel's `bd list --all --limit 0` of this pass), else **one** `bd -C $SPIRA_DB list --all --limit 0 --brief --json` | the WHOLE store, closed beads included. One read per run, not per partition. |
 | the claimable set | per partition `spira-claim ready-count <labels> <exclude> --json` (§9) | the machine's READY/REWORK rows; a refusal is an `Err`, never an empty set |
 | partitions | `SPIRA_LABELS` (+ `SPIRA_EXCLUDE_LABELS`) narrows to one; otherwise the **roster probe** (§2.5) | exclusions: `SPIRA_EXCLUDE_LABELS` overrides all, else the rune's own, else `spira-poison,<ask>,<ci>` |
-| aeon liveness | `$SPIRA_RUN/hold-<id>.pid` (pid alive) and `$SPIRA_RUN/aeon-*-<id>.pid` (pid alive AND `/proc/<pid>/cmdline` contains `aeon.sh`) | never `pgrep -f` |
-| aeons per partition / fleet | `systemctl --user list-units 'spira-aeon-<rune>-*' --no-legend` (and `'spira-aeon-*'`) when `SPIRA_SUMMON` is `systemd-run` (default); else live pidfiles | read-only: dead pidfiles are no longer deleted here |
-| capacity pause | first field of `$SPIRA_CAPACITY_PAUSE` (default `$SPIRA_RUN/capacity-pause`), an epoch | read-only: the probe/lift side effects of `capacity_paused` belong to the summon path |
+| dwarf liveness | `$SPIRA_RUN/hold-<id>.pid` (pid alive) and `$SPIRA_RUN/dwarf-*-<id>.pid` (pid alive AND `/proc/<pid>/cmdline` contains `dwarf.sh`) | never `pgrep -f` |
+| dwarves per partition / fleet | `systemctl --user list-units 'spira-dwarf-<rune>-*' --no-legend` (and `'spira-dwarf-*'`) when `SPIRA_CALL` is `systemd-run` (default); else live pidfiles | read-only: dead pidfiles are no longer deleted here |
+| capacity pause | first field of `$SPIRA_CAPACITY_PAUSE` (default `$SPIRA_RUN/capacity-pause`), an epoch | read-only: the probe/lift side effects of `capacity_paused` belong to the call path |
 | admission throttle | `$SPIRA_THROTTLE_STAMP` (default `$SPIRA_RUN/queue-throttled`) | exists+readable+non-empty ⇒ shut (`depth=N` parsed); exists but unreadable/empty ⇒ unreadable; absent ⇒ open |
 | pass truncation | `$SPIRA_RUN/sentinel.log`: after the last `: state: open=` line (the sentinel's pass-start marker), a `CHECK7 <rune>: not evaluated` for a rune of the partition | |
 | harness pulse (report header) | `systemctl --user is-active <unit>` for `spira-sentinel[-<instance>].timer`; mtime of sentinel.log | `?` unit ⇒ `unknown` |
@@ -95,7 +95,7 @@ Mechanical fixes, unchanged in effect:
 Escalation: `$SPIRA_HOME/mail send operator --from 'Strand check <strand@spira>'
 --subject <title> --kind question --default <action>`, body on **stdin**; titles exactly as
 before (`Spira: <id> is stranded (<kind>)`, `Spira: the [<part>] queue is stranded
-(<kind>)`, `Spira: <id> keeps losing its aeon — the host, not the bead`). The body is the
+(<kind>)`, `Spira: <id> keeps losing its dwarf — the host, not the bead`). The body is the
 bead context (`bd show <id> --json`, rendered as before) + `WHY THIS IS ESCALATED` + the
 last 12 sentinel log lines. No `mail` ⇒ no mail, state still marked (as before).
 
@@ -130,13 +130,13 @@ the `conf.sh` default. strand never parses `spira.toml` itself.
 | submitted label | `SPIRA_SUBMITTED_LABEL` | `submitted_label` | `spira-submitted` |
 | queue-wait label | `SPIRA_QUEUE_WAIT_LABEL` | `queue_wait_label` | `spira-queue-waiting` |
 | open-children label | `SPIRA_OPEN_CHILDREN_LABEL` | `open_children_label` | `spira-open-children` |
-| pool | `SPIRA_MAX_AEONS` | `max_aeons` | unset (explicit 0 ⇒ pool-paused) |
-| fleet cap | `SPIRA_MAX_LIVE_AEONS` | `max_live_aeons` | 0 (unconfigured) |
+| pool | `SPIRA_MAX_DWARVES` | `max_dwarves` | unset (explicit 0 ⇒ pool-paused) |
+| fleet cap | `SPIRA_MAX_LIVE_DWARVES` | `max_live_dwarves` | 0 (unconfigured) |
 | throttle release | `SPIRA_QUEUE_THROTTLE_RELEASE_AT` | `queue_throttle_release_at` | 8 |
 | instance | `SPIRA_INSTANCE` | `instance` | `prod` |
 | grace windows | `SPIRA_STRAND_GRACE` (900), `SPIRA_EVENT_COOLDOWN` (3600), `BD_TIMEOUT` (180) | — | as shown |
 | snapshots | `SPIRA_LIST_SNAPSHOT` | — | none |
-| test seams | `SPIRA_SYSTEMCTL`, `SPIRA_SUMMON`, `SPIRA_CAPACITY_PAUSE`, `SPIRA_THROTTLE_STAMP`, `SPIRA_NOW` | — | |
+| test seams | `SPIRA_SYSTEMCTL`, `SPIRA_CALL`, `SPIRA_CAPACITY_PAUSE`, `SPIRA_THROTTLE_STAMP`, `SPIRA_NOW` | — | |
 
 ## 3. Schema
 
@@ -228,7 +228,7 @@ Rules:
   unstarted dependent.** Unstarted = open child, not moving, parked, poisoned or delegated.
   A blocker absent from the store still counts (named `(not in the store)`).
 - **R4 — a `blocks` edge onto an epic is intentional sequencing.** In bd's data model an
-  epic is a container, never a unit of work an aeon claims; the only reason to make a bead
+  epic is a container, never a unit of work a dwarf claims; the only reason to make a bead
   block on one is "start after that whole epic". (bd forbids a parent from blocking its own
   child, so the target is never the dependent's own epic.) Such edges produce an `info` row
   `sequenced`, never an escalation. The target epic's own stalls are reported on the target,
@@ -291,7 +291,7 @@ throttle-state parsing; `--from` parsing.
 | 10 | `spira/heimdall.sh:92` (comment) | names strand-classify.py | **MOOT.** heimdall.sh is retired (sp-zpaq0); the comment does not exist to reword |
 | 11 | later | roster probe (§2.5) | retire when `[persona.<name>]` carries labels and exclusions |
 
-This branch also carries `a21b071a1` (an aeon's earlier bash fix of the same defect in
+This branch also carries `a21b071a1` (a dwarf's earlier bash fix of the same defect in
 strand.sh/strand-classify.py/test-strand-classify.sh). It is superseded by this crate and
 dies with row 4; the operator may keep it as the interim fix until the cutover lands.
 
@@ -305,7 +305,7 @@ escalation — is deleted.
 
 - **spira-lc:** never run by strand (sp-7g5q6).
 - **A partition's ready set:** `spira-claim ready-count <labels> <exclude> --json` — the
-  machine's READY/REWORK rows, the set the summoner counts and an aeon claims from; a
+  machine's READY/REWORK rows, the set the caller counts and a dwarf claims from; a
   refusal is an `Err`, never an empty set.
 - **A dead holder:** not strand's. bd's in_progress and lease are written by no claim; a
   WORKING row whose lease expired past its grace and is not wait-held is CHECK 2's

@@ -14,24 +14,24 @@ use crate::temps;
 pub enum Mode {
     Pass,
     Report,
-    SummonOnly,
+    CallOnly,
     /// CHECK 3c alone; `dry` prints the decision and writes nothing.
     OpenChildren { dry: bool },
     /// `land_escalate` alone, stdin `<why>\n<evidence>` (sp-31hjr): the real-sender
     /// suites' way to drive the native escalation without a whole pass.
     LandEscalate,
-    /// `summon_rune` alone (wave 4.27, family G): lib.sh's own shim target, and
+    /// `call_rune` alone (wave 4.27, family G): lib.sh's own shim target, and
     /// czar-pass's direct call — no lib.sh sourcing at all any more.
-    Summon { rune: String, pool: Option<i64>, require_express: bool },
-    /// `summon_argv` alone: `aeon --escape`'s own seam reaches it through lib.sh's shim.
-    SummonArgv { rune: String },
+    Call { rune: String, pool: Option<i64>, require_express: bool },
+    /// `call_argv` alone: `dwarf --escape`'s own seam reaches it through lib.sh's shim.
+    CallArgv { rune: String },
     /// `world_gate` alone: ditto.
     WorldGate { rune: String, prefix: String },
     /// `named_unit_stop` alone: `acceptance-local.sh`'s own shim target.
     NamedUnitStop { glob: String },
-    /// `ck7_summon_pass` alone, under its own flock — lib.sh's shim target, and the way a
+    /// `ck7_call_pass` alone, under its own flock — lib.sh's shim target, and the way a
     /// bash fixture now proves the lock serializes two real contenders without a database.
-    SummonPass,
+    CallPass,
     /// lib.sh `mark_queue_waiters`'s shim target (wave 4.28, sp-fbqsv).
     MarkQueueWaiters,
     /// lib.sh `close_landed_queue_waiters`'s shim target (wave 4.28, sp-fbqsv).
@@ -53,7 +53,7 @@ impl Mode {
     pub fn from_first(a: Option<&str>) -> Mode {
         match a {
             Some("--report") => Mode::Report,
-            Some("--summon-only") => Mode::SummonOnly,
+            Some("--call-only") => Mode::CallOnly,
             Some("--open-children") => Mode::OpenChildren { dry: false },
             Some("--land-escalate") => Mode::LandEscalate,
             Some("--mark-queue-waiters") => Mode::MarkQueueWaiters,
@@ -75,24 +75,24 @@ impl Mode {
     }
 
     /// The full argv (sans argv[0]) — the only modes that take more than a flag and an
-    /// optional `--dry-run` (`--summon`, `--summon-argv`, `--world-gate`,
+    /// optional `--dry-run` (`--call`, `--call-argv`, `--world-gate`,
     /// `--named-unit-stop`) are parsed here; everything else falls back to
     /// [`Mode::from_args`] unchanged.
     pub fn from_argv(args: &[String]) -> Mode {
         let a0 = args.first().map(String::as_str);
         match a0 {
-            Some("--summon") => Mode::Summon {
+            Some("--call") => Mode::Call {
                 rune: args.get(1).cloned().unwrap_or_default(),
                 pool: args.get(2).filter(|s| !s.is_empty()).and_then(|s| s.parse().ok()),
                 require_express: args.get(3).is_some_and(|s| !s.is_empty()),
             },
-            Some("--summon-argv") => Mode::SummonArgv { rune: args.get(1).cloned().unwrap_or_default() },
+            Some("--call-argv") => Mode::CallArgv { rune: args.get(1).cloned().unwrap_or_default() },
             Some("--world-gate") => Mode::WorldGate {
                 rune: args.get(1).cloned().unwrap_or_default(),
                 prefix: args.get(2).cloned().unwrap_or_default(),
             },
             Some("--named-unit-stop") => Mode::NamedUnitStop { glob: args.get(1).cloned().unwrap_or_default() },
-            Some("--summon-pass") => Mode::SummonPass,
+            Some("--call-pass") => Mode::CallPass,
             _ => Mode::from_args(a0, args.get(1).map(String::as_str)),
         }
     }
@@ -106,7 +106,7 @@ pub struct Sentinel<'a> {
     pub acted: Cell<u32>,
     pub progressed: Cell<u32>,
     /// Set while this CHECK 7 pass has yielded the lanes to an urgent bead: the lane-last-slot
-    /// reservation must not hold a task persona back for a lane that will not be summoned.
+    /// reservation must not hold a task persona back for a lane that will not be called.
     pub lanes_yielding: Cell<bool>,
     /// The seams' act/progress mailbox (DESIGN.md §6).
     pub tally_file: PathBuf,
@@ -352,14 +352,14 @@ impl<'a> Sentinel<'a> {
 
     pub fn run(&self) -> i32 {
         match &self.mode {
-            Mode::SummonOnly => self.summon_only(),
+            Mode::CallOnly => self.call_only(),
             Mode::OpenChildren { dry } => self.open_children_only(*dry),
             Mode::LandEscalate => self.land_escalate_cmd(),
-            Mode::Summon { rune, pool, require_express } => self.summon_cmd(rune, *pool, *require_express),
-            Mode::SummonArgv { rune } => self.summon_argv_cmd(rune),
+            Mode::Call { rune, pool, require_express } => self.call_cmd(rune, *pool, *require_express),
+            Mode::CallArgv { rune } => self.call_argv_cmd(rune),
             Mode::WorldGate { rune, prefix } => self.world_gate_cmd(rune, prefix),
             Mode::NamedUnitStop { glob } => self.named_unit_stop_cmd(glob),
-            Mode::SummonPass => self.ck7_summon_pass(),
+            Mode::CallPass => self.ck7_call_pass(),
             Mode::MarkQueueWaiters => {
                 self.mark_queue_waiters(None);
                 0
@@ -412,7 +412,7 @@ impl<'a> Sentinel<'a> {
         0
     }
 
-    /// The bulk reads and the DB check (every mode but --summon-only).
+    /// The bulk reads and the DB check (every mode but --call-only).
     fn read_store(&self) -> Result<Snapshot, i32> {
         let bd = self.bd();
         let r = store::bulk(&bd, self.h, &store::ready_raw_args(&self.cfg));
@@ -462,7 +462,7 @@ impl<'a> Sentinel<'a> {
         let n_open = open_plan.len();
         let live = self.live_total();
         self.log(&format!(
-            "state: open={} plan_ready={} in_progress={} aeons={} runes=[{}]",
+            "state: open={} plan_ready={} in_progress={} dwarves={} runes=[{}]",
             n_open,
             plan_ready
                 .map(|n| n.to_string())
@@ -518,7 +518,7 @@ impl<'a> Sentinel<'a> {
         self.mark_open_children(&snap, false);
         self.close_landed_red_trackers(&snap, false);
         self.phase("CHECK7");
-        self.ck7_summon_pass();
+        self.ck7_call_pass();
 
         self.phase("CHECK8");
         self.check8(plan_ready, plan_inprog, n_open, &open_plan);
@@ -533,7 +533,7 @@ impl<'a> Sentinel<'a> {
     }
 
     /// A machine that could not be read or written fails the unit, every pass,
-    /// until it is fixed — after the rest of the pass (landing, summoning) has run.
+    /// until it is fixed — after the rest of the pass (landing, calling) has run.
     fn exit_code(&self) -> i32 {
         i32::from(self.lc_failed.get())
     }
@@ -608,8 +608,8 @@ impl<'a> Sentinel<'a> {
     }
 
     /// `ready_count "<scope,>plan" "spira-poison,<ask>"`, asked live: spira-claim's
-    /// `ready-count`, the one ready set (the machine's READY/REWORK rows) the summoner counts
-    /// and an aeon claims from — never `bd ready`, whose status and assignee no claim writes
+    /// `ready-count`, the one ready set (the machine's READY/REWORK rows) the caller counts
+    /// and a dwarf claims from — never `bd ready`, whose status and assignee no claim writes
     /// (sp-7g5q6). A refusal is `None` (unknown), never 0.
     pub fn plan_ready_live(&self) -> Option<usize> {
         let o = self.h.run(Spec::args_owned(
@@ -621,17 +621,17 @@ impl<'a> Sentinel<'a> {
         if o.ok() { o.stdout.trim().parse().ok() } else { None }
     }
 
-    /// The fleet: `aeon_count` summed over the roster, from one unit listing.
+    /// The fleet: `dwarf_count` summed over the roster, from one unit listing.
     pub fn live_total(&self) -> usize {
         let names = self.ctx.rune_names();
-        if self.cfg.summon == "systemd-run" {
+        if self.cfg.call == "systemd-run" {
             let o = self.h.run(
                 Spec::args_owned(
                     self.cfg.systemctl.clone(),
                     vec![
                         "--user".into(),
                         "list-units".into(),
-                        "spira-aeon-*".into(),
+                        "spira-dwarf-*".into(),
                         "--no-legend".into(),
                     ],
                 )
@@ -647,7 +647,7 @@ impl<'a> Sentinel<'a> {
                 .map(|f| {
                     units
                         .iter()
-                        .filter(|u| u.starts_with(&format!("spira-aeon-{f}-")))
+                        .filter(|u| u.starts_with(&format!("spira-dwarf-{f}-")))
                         .count()
                 })
                 .sum();
@@ -680,7 +680,7 @@ impl<'a> Sentinel<'a> {
         }
         let _ = std::fs::write(&self.cfg.roster_stamp, &stamp);
         for f in excluded {
-            self.log(&format!("WARN {f}.rune is in the runes but not in SPIRA_RUNES — that persona will never be summoned here"));
+            self.log(&format!("WARN {f}.rune is in the runes but not in SPIRA_RUNES — that persona will never be called here"));
         }
     }
 }
@@ -705,10 +705,10 @@ pub fn grep_w(text: &str, word: &str) -> bool {
     false
 }
 
-/// The pidfile fallback of `aeon_count`: pidfiles whose identity lease is running; dead ones
-/// are removed, as aeon_count does.
+/// The pidfile fallback of `dwarf_count`: pidfiles whose identity lease is running; dead ones
+/// are removed, as dwarf_count does.
 pub fn pid_count(run: &Path, rune: &str) -> usize {
-    let prefix = format!("aeon-{rune}-");
+    let prefix = format!("dwarf-{rune}-");
     let Ok(rd) = std::fs::read_dir(run) else {
         return 0;
     };
@@ -718,7 +718,7 @@ pub fn pid_count(run: &Path, rune: &str) -> usize {
         if !(name.starts_with(&prefix) && name.ends_with(".pid")) {
             continue;
         }
-        if hel::reap::aeon_alive(&e.path()) {
+        if hel::reap::dwarf_alive(&e.path()) {
             n += 1;
         } else {
             let _ = std::fs::remove_file(e.path());
@@ -765,7 +765,7 @@ mod tests {
     fn only_the_first_argument_selects_a_mode() {
         assert_eq!(Mode::from_first(None), Mode::Pass);
         assert_eq!(Mode::from_first(Some("--report")), Mode::Report);
-        assert_eq!(Mode::from_first(Some("--summon-only")), Mode::SummonOnly);
+        assert_eq!(Mode::from_first(Some("--call-only")), Mode::CallOnly);
         assert_eq!(Mode::from_first(Some("--bogus")), Mode::Pass);
         assert_eq!(
             Mode::from_args(Some("--open-children"), None),

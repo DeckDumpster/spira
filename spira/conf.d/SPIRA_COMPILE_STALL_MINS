@@ -1,5 +1,5 @@
 TYPE=u64
-GROUP=summon
+GROUP=call
 DOC=MINUTES A COMPILE-POOL SLOT MAY BE HELD WHILE NO RUSTC/CC PROCESS IN THE HOLDER'S SUBTREE
 SCHEMA=Minutes a compile slot may be held with no compiler CPU advancing before it is reclaimed (0 disables; unset: 30).
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

@@ -146,11 +146,11 @@ member_field() {   # member_field <id> <table> <column>
 }
 
 # certify <id> <tip> — walks a fresh bead through claim/submit/gate-pass to CERTIFIED,
-# exactly the bead-machine path a real aeon's submit would drive.
+# exactly the bead-machine path a real dwarf's submit would drive.
 certify() {
     local id="$1" tip="$2"
     lc create-bead "$id" >/dev/null
-    lc event bead "$id" --expect READY --version 0 --actor test --kind '{"Claim":{"holder":"aeon-1","lease_until":1}}' >/dev/null
+    lc event bead "$id" --expect READY --version 0 --actor test --kind '{"Claim":{"holder":"dwarf-1","lease_until":1}}' >/dev/null
     lc event bead "$id" --expect WORKING --version 1 --actor test --kind "{\"Submit\":{\"tip\":\"$tip\"}}" >/dev/null
     lc event bead "$id" --expect SUBMITTED --version 2 --actor test --kind '{"GatePass":{"tip":"'"$tip"'","gate_key":"k1"}}' >/dev/null
 }
@@ -162,7 +162,7 @@ certify_stacked() {
     local id="$1" tip="$2" prereq="$3" prereq_tip="$4"
     lc create-bead "$id" >/dev/null
     lc event bead "$id" --expect READY --version 0 --actor test \
-        --kind "{\"Claim\":{\"holder\":\"aeon-1\",\"lease_until\":1,\"stack\":{\"$prereq\":\"$prereq_tip\"},\"stack_depth\":1,\"stack_max_depth\":4}}" >/dev/null
+        --kind "{\"Claim\":{\"holder\":\"dwarf-1\",\"lease_until\":1,\"stack\":{\"$prereq\":\"$prereq_tip\"},\"stack_depth\":1,\"stack_max_depth\":4}}" >/dev/null
     lc event bead "$id" --expect WORKING --version 1 --actor test --kind "{\"Submit\":{\"tip\":\"$tip\"}}" >/dev/null
     lc event bead "$id" --expect SUBMITTED --version 2 --actor test --kind '{"GatePass":{"tip":"'"$tip"'","gate_key":"k1"}}' >/dev/null
 }
@@ -171,7 +171,7 @@ certify_stacked() {
 submit() {
     local id="$1" tip="$2"
     lc create-bead "$id" >/dev/null
-    lc event bead "$id" --expect READY --version 0 --actor test --kind '{"Claim":{"holder":"aeon-1","lease_until":1}}' >/dev/null
+    lc event bead "$id" --expect READY --version 0 --actor test --kind '{"Claim":{"holder":"dwarf-1","lease_until":1}}' >/dev/null
     lc event bead "$id" --expect WORKING --version 1 --actor test --kind "{\"Submit\":{\"tip\":\"$tip\"}}" >/dev/null
 }
 
@@ -745,7 +745,7 @@ want "the eject-member summary meters the one cascaded base_withdrawn" '"base_wi
 # design stacked-dependents-2026-09-28 §1's hold-release table: a same-repo work-bead
 # blocker releases the wait hold at CERTIFIED (criterion 5 above stacks on exactly that);
 # "anything else (epic, decision, other repo)" still needs the blocker closed. An epic is
-# never a work bead the aeon machine claims/submits/certifies, so it never gets its own
+# never a work bead the dwarf machine claims/submits/certifies, so it never gets its own
 # spira-lc row (rank.rs's stack_plan falls back to the bd record's own status precisely
 # because `lc.get(&epic_id)` is `None`) — this fixture reflects that: only B gets a
 # spira-lc row. This rule is implemented in spira-claim's own stack_plan/claimable
@@ -846,18 +846,18 @@ is "discarding returns nothing: the member is still CERTIFIED" "CERTIFIED" "$(me
 out="$(lc promote batch-staged-dead --head h --base b --actor test)"
 wantrc "PLANTED VIOLATION: a discarded stage is not promoted" 3 $?
 
-# ── an aeon's phase and disposition on the WORKING row, against the real store ──
+# ── a dwarf's phase and disposition on the WORKING row, against the real store ──
 lc create-bead sp-lc-ph >/dev/null
-lc event bead sp-lc-ph --expect READY --version 0 --actor aeon-ph --kind '{"Claim":{"holder":"aeon-ph","lease_until":1}}' >/dev/null
-phase_of() { lc show sp-lc-ph | python3 -c 'import json,sys; print(json.load(sys.stdin)["bead"]["aeon_phase"])'; }
+lc event bead sp-lc-ph --expect READY --version 0 --actor dwarf-ph --kind '{"Claim":{"holder":"dwarf-ph","lease_until":1}}' >/dev/null
+phase_of() { lc show sp-lc-ph | python3 -c 'import json,sys; print(json.load(sys.stdin)["bead"]["dwarf_phase"])'; }
 is "a claim starts the row in phase claimed" "claimed" "$(phase_of)"
-lc phase sp-lc-ph aeon-ph building >/dev/null
+lc phase sp-lc-ph dwarf-ph building >/dev/null
 wantrc "the holder records its next phase" 0 $?
 is "show reads exactly the recorded phase" "building" "$(phase_of)"
-out="$(lc phase sp-lc-ph aeon-ph claimed 2>&1)"
+out="$(lc phase sp-lc-ph dwarf-ph claimed 2>&1)"
 wantrc "a step back is refused" 3 $?
 want "the refusal names the state and phase" "WORKING/building" "$out"
-lc phase sp-lc-ph aeon-other session >/dev/null 2>&1
+lc phase sp-lc-ph dwarf-other session >/dev/null 2>&1
 wantrc "a phase from a non-holder is refused" 3 $?
 is "the refused moves left the phase where it was" "building" "$(phase_of)"
 lc disposition sp-lc-ph lapsed "300	last words" watchdog >/dev/null
@@ -866,9 +866,9 @@ lc disposition sp-lc-ph slain "by hand" slay >/dev/null
 wantrc "a stronger disposition replaces it" 0 $?
 lc disposition sp-lc-ph thrash "x" heartbeat >/dev/null 2>&1
 wantrc "a weaker one never does" 3 $?
-is "list --state WORKING carries the phase and the disposition" "building slain by hand" "$(lc list --state WORKING | python3 -c 'import json,sys; b=[x for x in json.load(sys.stdin) if x["bead_id"]=="sp-lc-ph"][0]; print(b["aeon_phase"], b["disposition"], b["disposition_note"])')"
-lc release sp-lc-ph aeon-ph >/dev/null
-is "leaving WORKING clears the phase and the disposition" "None None" "$(lc show sp-lc-ph | python3 -c 'import json,sys; b=json.load(sys.stdin)["bead"]; print(b["aeon_phase"], b["disposition"])')"
+is "list --state WORKING carries the phase and the disposition" "building slain by hand" "$(lc list --state WORKING | python3 -c 'import json,sys; b=[x for x in json.load(sys.stdin) if x["bead_id"]=="sp-lc-ph"][0]; print(b["dwarf_phase"], b["disposition"], b["disposition_note"])')"
+lc release sp-lc-ph dwarf-ph >/dev/null
+is "leaving WORKING clears the phase and the disposition" "None None" "$(lc show sp-lc-ph | python3 -c 'import json,sys; b=json.load(sys.stdin)["bead"]; print(b["dwarf_phase"], b["disposition"])')"
 lc disposition sp-lc-ph slain "late" slay >/dev/null 2>&1
 wantrc "a disposition outside WORKING is refused" 3 $?
 

@@ -138,12 +138,12 @@ mod tests {
     #[test]
     fn running_work_lists_every_kind_with_a_bar_for_rounds() {
         let out = render(
-            "SP_INFLIGHT_SEG='\u{2699} 1 aeon \u{b7} 1 round (5/10) \u{b7} 1 gate'\n\
-             SP_INFLIGHT_ROW0='aeon|sp-1|warden|100||'\nSP_INFLIGHT_ROW1='round|spira/b1|certifying|100|5|10'\n\
+            "SP_INFLIGHT_SEG='\u{2699} 1 dwarf \u{b7} 1 round (5/10) \u{b7} 1 gate'\n\
+             SP_INFLIGHT_ROW0='dwarf|sp-1|warden|100||'\nSP_INFLIGHT_ROW1='round|spira/b1|certifying|100|5|10'\n\
              SP_INFLIGHT_ROW2='gate|spira-x|pre-merge|?||'\n",
         );
         assert_eq!(out.len(), 4);
-        assert!(out[0].contains("1 aeon") && out[0].contains("1 gate"));
+        assert!(out[0].contains("1 dwarf") && out[0].contains("1 gate"));
         assert!(out[1].contains("sp-1") && out[1].contains("warden") && out[1].contains("10m"));
         assert!(out[2].contains("\u{2588}\u{2588}\u{2588}\u{2588}\u{2588}\u{2591}") && out[2].contains("5/10"));
         assert!(out[3].contains("pre-merge") && out[3].contains("?"));

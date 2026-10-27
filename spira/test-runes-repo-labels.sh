@@ -7,7 +7,7 @@
 # ----------------------
 # A remedy bead cut by following a runes brief inherits the repo: label verbatim. A
 # hardcoded literal absent from the installer's repo-map parks every bead born from it
-# under needs-operator — aeon.sh refuses to work a bead in the wrong repository rather
+# under needs-operator — dwarf.sh refuses to work a bead in the wrong repository rather
 # than guess. The loop cannot break from inside: each retrospective pass files the same
 # remedy bead, also parked. Two remedy beads accumulated this way on this install before
 # db-mis landed (sp-mimir-remedy-born-parked).
@@ -19,7 +19,7 @@
 # resolve the suite exits non-zero naming the file:line.
 #
 # BEAD INVARIANT: every repo: label on an open bead resolves via repo_root. An open bead
-# with an unresolvable repo: label is permanently parked: no aeon will ever claim it.
+# with an unresolvable repo: label is permanently parked: no dwarf will ever claim it.
 #
 # POSITIVE CONTROL IS FIRST. A check that silently finds nothing looks identical to one
 # whose matcher never fires. A bare literal is planted in a scratch file; the matcher must
@@ -37,7 +37,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # Load the harness functions so repo_root and SPIRA_DB are available.
 # This check needs the REAL repo-map — it is a data-integrity assertion about what names
-# a following-the-brief aeon would emit, and whether those names resolve on this install.
+# a following-the-brief dwarf would emit, and whether those names resolve on this install.
 # Conf.sh is idempotent (SPIRA_CONF_LOADED guard): re-sourcing in a gate that already
 # loaded it is a no-op with no side effects.
 . "$HERE/conf.sh"

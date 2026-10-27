@@ -1,8 +1,8 @@
 TYPE=string
 GROUP=runes
-DOC=WHERE AN OPERATOR'S OWN COPY OF A BRIEF LIVES, so a hand edit to what an aeon is told
+DOC=WHERE AN OPERATOR'S OWN COPY OF A BRIEF LIVES, so a hand edit to what a dwarf is told
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # WHERE AN OPERATOR'S OWN COPY OF A BRIEF LIVES, so a hand edit to what an aeon is told
+    # WHERE AN OPERATOR'S OWN COPY OF A BRIEF LIVES, so a hand edit to what a dwarf is told
     # survives the harness's own releases instead of being reverted by the next one. Operator
     # state beside the repo-map, never inside the checkout a `spira: land` push can overwrite.
     : "${SPIRA_RUNES_OVERLAY:=${XDG_CONFIG_HOME:-$HOME/.config}/spira/runes}"

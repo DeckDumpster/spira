@@ -15,7 +15,7 @@
 # plants both shapes.
 #
 # ALSO ABSORBED (coverage row 12 / cluster 4, formerly test-cockpit-unadopted-queue.sh): an
-# aeon following sop-unadopted-refs-stale-db once deleted spira/queue/<stamp> while its CI was
+# dwarf following sop-unadopted-refs-stale-db once deleted spira/queue/<stamp> while its CI was
 # running. The probe counted the branch as SP_UNADOPTED (no bead resolves for a queue suffix),
 # the watchtower filed an incident, and the SOP said to delete it. The local deletion did no
 # damage only because origin kept the ref. (sp-ctag9) The reapable set is defined positively:

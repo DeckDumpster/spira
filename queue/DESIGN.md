@@ -86,7 +86,7 @@ seam calls (`<ts> spira: land-close …`) pass through to stdout as before.
 
 **Environment switches read** (unchanged meaning): `SPIRA_QUEUE_LOCK_HELD=1` (land-local,
 publish, rollback-local skip their own flock — the caller holds it), `SPIRA_QUEUE_ACTOR`,
-`BEADS_ACTOR`, `SPIRA_AEON`, `USER` (actor), `SPIRA_QUEUE_OWNER_OVERRIDE=1`,
+`BEADS_ACTOR`, `SPIRA_DWARF`, `USER` (actor), `SPIRA_QUEUE_OWNER_OVERRIDE=1`,
 `SPIRA_RUNE`/`SPIRA_CZAR_CLASS` (czar fence), `SPIRA_CERTIFY_SUITES` (submit),
 `SPIRA_QUEUE_BATCH_WAIT` (flush forces 0 for the batcher), `SPIRA_PREFLIGHT_WALL_SECS`,
 `SPIRA_QUEUE_TRANSITION_POLLSEC`/`_MAXSEC`, `SPIRA_PUBLISH_REMOTE[_<NAME>]`,
@@ -140,7 +140,7 @@ most read the exit status only.
 | operator notes `round.sh:262` | `exec bash queue.sh publish spira` | status |
 | `~/.config/spira/overrides/apply.sh:44` | greps an override's output for `holds the lock` | that phrase (kept) |
 | `spira/runes/czar.md:40,90,107,154`, `czar.rune:90` (`Bash(*queue.sh*)`) | the czar persona runs eject/abandon/step | the tool pattern |
-| `spira/hooks/aeon-fence.sh:117-122` | refuses `*/queue.sh*` for aeons except `stats` | the command shape |
+| `spira/hooks/dwarf-fence.sh:117-122` | refuses `*/queue.sh*` for dwarves except `stats` | the command shape |
 | prose: `spira/watchtower.sh:1397`, `spira/skew.sh:387`, `spira/repo-map.example:36,146`, `README.md:156-158` | operator instructions naming `queue.sh <cmd>` | — |
 
 Tests (retired or repointed in §7): `test-queue-submit`, `test-withdrawn-suites-recert`,
@@ -149,7 +149,7 @@ Tests (retired or repointed in §7): `test-queue-submit`, `test-withdrawn-suites
 `test-queue-open-batch`, `test-queue-land-local`, `test-queue-publish`,
 `test-queue-transition`, `test-land-local-release`, `test-skew-refresh`, `test-batcher-cut`
 (case L), `test-lifecycle-cutover` (sources queue.sh for `_lc_*`), and the stubs in
-`test-certify`, `test-aeon-gate-close-silent`, `test-landing-order`,
+`test-certify`, `test-dwarf-gate-close-silent`, `test-landing-order`,
 `test-landing-starvation`, `test-landing-cutover-round`, `test-reconciler`; static checks
 `test-timer-templates:321`, `test-guards:159,162`, `test-ops-allowlist:150`,
 `test-git-push-app:177`, `test-queue-flush:77`.
@@ -370,7 +370,7 @@ neighbours. Apply in one landing, in this order.
 | 15 | operator notes `round.sh:262` | `exec bash "$H/spira/queue.sh" publish spira` | `exec "$SPIRA_QUEUE_BIN" publish spira` |
 | 16 | `spira/runes/czar.rune:90` | `Bash(*queue.sh*)` | `Bash(*queue *)` |
 | 17 | `spira/runes/czar.md:40,90,107,154` | `queue.sh eject / abandon`, `queue.sh step`, "`queue.sh eject` already wrote landstate=RED", "`queue.sh` reachable" | `queue eject / abandon`, `queue step`, same sentence with `queue eject` (it now also records the cause: pass `--red` when the member broke a test), "`queue` reachable (`queue stats`)" |
-| 18 | `spira/hooks/aeon-fence.sh:117-122` | matches `*"/queue.sh"*`, allows `*"/queue.sh stats"*` | also match the binary: `*"/queue.sh"*\|*"queue "*\|*"$SPIRA_QUEUE_BIN"*`, allow only `* stats` for either |
+| 18 | `spira/hooks/dwarf-fence.sh:117-122` | matches `*"/queue.sh"*`, allows `*"/queue.sh stats"*` | also match the binary: `*"/queue.sh"*\|*"queue "*\|*"$SPIRA_QUEUE_BIN"*`, allow only `* stats` for either |
 | 19 | `spira/watchtower.sh:1397` | `queue.sh abandon <repo> --reason "conflict"` | `queue abandon <repo> --reason "conflict"` |
 | 20 | `spira/skew.sh:387` (and the comments at :10, :439, :471, :493) | `queue.sh land-local` / `queue.sh rollback-local` | `queue land-local` / `queue rollback-local` |
 | 21 | `spira/repo-map.example:36,146`, `README.md:156-158` | `queue.sh protect`, `queue.sh publish`, `queue.sh to-forge` / `to-local` | `queue protect`, `queue publish`, `queue to-forge` / `to-local` |
@@ -394,7 +394,7 @@ store, and the real forge seam.
 | `test-queue-ops.sh`, `test-queue-owner-refuse.sh`, `test-queue-owner-mail.sh`, `test-queue-open-batch.sh`, `test-queue-publish.sh`, `test-queue-transition.sh`, `test-queue-land-local.sh`, `test-land-local-release.sh`, `test-queue-protect.sh`, `test-queue-flush.sh` | **repoint** to `$SPIRA_QUEUE_BIN` and cut to one case per subcommand that proves the seam (a real landstate write, a real mail, a real forge stub call); the decision cases are covered by the unit tests named in §9. `test-queue-publish.sh` gains sp-bauwt's red: land two rounds while a publish PR is open, delete their landstate, settle, publish — the second PR carries the second round's members. `test-queue-transition.sh` gains the in-delivery refusal. `test-queue-land-local.sh`/`test-land-local-release.sh` pass `--worktree` and drop `SPIRA_BATCH_BINS_TARGET_DIR`. |
 | `test-queue-submit.sh`, `test-withdrawn-suites-recert.sh`, `test-queue-step-eject-race.sh`, `test-czar-shadow.sh`, `test-skew-refresh.sh`, `test-batcher-cut.sh` case L | **repoint** the invocation only (`bash "$REPO/spira/queue.sh"` → `"$SPIRA_QUEUE_BIN"`); `test-czar-shadow` expects the cause `eject` on its unflagged ejects |
 | `test-lifecycle-cutover.sh:540-612` (sources queue.sh for `_lc_cut_batch`/`_lc_eject_member`/`_lc_abandon_batch`) | **repoint** to `queue open-batch`/`eject`/`abandon` against a seeded record carrying `batch_id`, or **retire** those cases: the CAS shape is `ops::batch::lc_cas`, unit-tested (`eject_with_a_batch_id_ejects_on_spira_lc_too`, switch ON) |
-| stubs: `test-certify.sh:52,352`, `test-aeon-gate-close-silent.sh:112-136`, `test-landing-order.sh:62`, `test-landing-starvation.sh:73`, `test-landing-cutover-round.sh:54`, `test-reconciler.sh:253-256,450` | stub `SPIRA_QUEUE_BIN` instead of writing a fake `queue.sh` (`SPIRA_QUEUE_SH` → `SPIRA_QUEUE_BIN` for the reconciler) |
+| stubs: `test-certify.sh:52,352`, `test-dwarf-gate-close-silent.sh:112-136`, `test-landing-order.sh:62`, `test-landing-starvation.sh:73`, `test-landing-cutover-round.sh:54`, `test-reconciler.sh:253-256,450` | stub `SPIRA_QUEUE_BIN` instead of writing a fake `queue.sh` (`SPIRA_QUEUE_SH` → `SPIRA_QUEUE_BIN` for the reconciler) |
 | static: `test-timer-templates.sh:321`, `test-queue-flush.sh:77`, `test-guards.sh:159,162`, `test-ops-allowlist.sh:150`, `test-git-push-app.sh:177` | grep for the new call shapes (`"$SPIRA_QUEUE_BIN" step`, `queue eject`); `test-git-push-app` checks `spira_git_push` is used — it now is, through seam R12, not in queue.sh |
 
 ### 7.5 Interfaces to widen later (findings, not blockers)

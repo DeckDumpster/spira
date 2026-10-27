@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
 #
-# test-world-drain-deadline.sh — drain --deadline slays live aeons at the deadline.
+# test-world-drain-deadline.sh — drain --deadline slays live dwarves at the deadline.
 #
 # WHAT THIS COVERS
 # ----------------
-# drain --deadline N: on reaching N seconds with aeons still live, slay them
+# drain --deadline N: on reaching N seconds with dwarves still live, slay them
 # (--keep-work --reopen) rather than warning and leaving them running. The operator
-# who gave a deadline cannot proceed with aeons alive; warn-and-return at a named
+# who gave a deadline cannot proceed with dwarves alive; warn-and-return at a named
 # deadline is not useful.
 #
 # THREE PROPERTIES (law-absence-needs-a-positive-control):
 #
-#   1. POSITIVE CONTROL — no live aeons: --deadline 0 exits 0 and says DRAINED without
+#   1. POSITIVE CONTROL — no live dwarves: --deadline 0 exits 0 and says DRAINED without
 #      calling slay.sh. A stub that always fails would look green without this.
 #
-#   2. --deadline 0 with a live aeon: slay.sh is called with --bead <id>, --keep-work
+#   2. --deadline 0 with a live dwarf: slay.sh is called with --bead <id>, --keep-work
 #      and --reopen; drain exits 0; the stamp stays (fleet quiet, gate still held).
 #
-#   3. --timeout 0 with a live aeon: NOT DRAINED, exit 1, slay.sh not called (unchanged).
+#   3. --timeout 0 with a live dwarf: NOT DRAINED, exit 1, slay.sh not called (unchanged).
 #
 # defect: sp-yqslx
 # tier: T1
@@ -57,8 +57,8 @@ exit 0
 SLAY
 chmod +x "$SH/slay"
 
-# Fake aeon.sh so live_aeons() finds the process in /proc via argv match.
-printf '#!/usr/bin/env bash\nsleep 120\n' > "$SH/aeon.sh"; chmod +x "$SH/aeon.sh"
+# Fake dwarf.sh so live_dwarves() finds the process in /proc via argv match.
+printf '#!/usr/bin/env bash\nsleep 120\n' > "$SH/dwarf.sh"; chmod +x "$SH/dwarf.sh"
 
 # SPIRA_PROD/SPIRA_RUN/SPIRA_DB are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
 # CONFIG): declare via tl_config, not the env prefixes below, which no process reads them
@@ -75,15 +75,15 @@ drain() {
 TEST_BEAD="sp-drain-test"
 
 # --------------------------------------------------------------------------------------
-# 1. POSITIVE CONTROL — no live aeons.
+# 1. POSITIVE CONTROL — no live dwarves.
 # --------------------------------------------------------------------------------------
 echo
-echo "positive control — no live aeons:"
+echo "positive control — no live dwarves:"
 
 : > "$SLAY_CALLS"; rm -f "$RUN/world.draining"
 drain --deadline 0
-[ "$rc" = "0" ] && ok "--deadline 0 with no aeons exits 0" \
-               || bad "--deadline 0 with no aeons exits 0" "got rc=$rc"
+[ "$rc" = "0" ] && ok "--deadline 0 with no dwarves exits 0" \
+               || bad "--deadline 0 with no dwarves exits 0" "got rc=$rc"
 want "says DRAINED" "DRAINED" "$out"
 slay_out="$(cat "$SLAY_CALLS" 2>/dev/null)"
 nowant "does not call slay.sh when nobody is running" "--bead" "$slay_out"
@@ -91,15 +91,15 @@ nowant "does not call slay.sh when nobody is running" "--bead" "$slay_out"
 rm -f "$RUN/world.draining"
 
 # --------------------------------------------------------------------------------------
-# 2. --deadline 0 WITH A LIVE AEON.
+# 2. --deadline 0 WITH A LIVE DWARF.
 # --------------------------------------------------------------------------------------
 echo
-echo "drain --deadline 0 with a live aeon:"
+echo "drain --deadline 0 with a live dwarf:"
 
-bash "$SH/aeon.sh" & WORKER_PID=$!
+bash "$SH/dwarf.sh" & WORKER_PID=$!
 sleep 0.3   # let the process appear in /proc
-printf '%s\n' "$WORKER_PID" > "$RUN/aeon-valefor-${TEST_BEAD}.pid"
-printf '%s' "$(( $(date +%s) + 3600 ))" > "$RUN/aeon-valefor-${TEST_BEAD}.lease"
+printf '%s\n' "$WORKER_PID" > "$RUN/dwarf-brokkr-${TEST_BEAD}.pid"
+printf '%s' "$(( $(date +%s) + 3600 ))" > "$RUN/dwarf-brokkr-${TEST_BEAD}.lease"
 
 : > "$SLAY_CALLS"; rm -f "$RUN/world.draining"
 drain --deadline 0
@@ -112,7 +112,7 @@ want "slay.sh received the correct bead id"     "$TEST_BEAD"  "$slay_args"
 want "slay.sh received --keep-work"             "--keep-work" "$slay_args"
 want "slay.sh received --reopen"                "--reopen"    "$slay_args"
 nowant "slay.sh did not receive --close"        "--close"     "$slay_args"
-want   "output names the slain aeon"            "$TEST_BEAD"  "$out"
+want   "output names the slain dwarf"            "$TEST_BEAD"  "$out"
 nowant "does not print NOT DRAINED"             "NOT DRAINED" "$out"
 [ -f "$RUN/world.draining" ] && ok "stamp stays (gate held after slay)" \
                              || bad "stamp stays" "stamp was removed"
@@ -120,47 +120,47 @@ nowant "does not print NOT DRAINED"             "NOT DRAINED" "$out"
 stamp_text="$(cat "$RUN/world.draining" 2>/dev/null)"
 want   "stamp holds until resume"               "holds until resume" "$stamp_text"
 nowant "stamp carries no clock expiry"          "expires"     "$stamp_text"
-want   "output names the awaited bead"          "waiting for 1 aeon(s): $TEST_BEAD" "$out"
+want   "output names the awaited bead"          "waiting for 1 dwarf(s): $TEST_BEAD" "$out"
 
-rm -f "$RUN/aeon-valefor-${TEST_BEAD}.pid" "$RUN/aeon-valefor-${TEST_BEAD}.lease"
+rm -f "$RUN/dwarf-brokkr-${TEST_BEAD}.pid" "$RUN/dwarf-brokkr-${TEST_BEAD}.lease"
 kill -- -"$WORKER_PID" 2>/dev/null; wait "$WORKER_PID" 2>/dev/null; WORKER_PID=""
 rm -f "$RUN/world.draining"
 
 # --------------------------------------------------------------------------------------
-# 3. --timeout 0 WITH A LIVE AEON — unchanged warn-and-return behaviour.
+# 3. --timeout 0 WITH A LIVE DWARF — unchanged warn-and-return behaviour.
 # --------------------------------------------------------------------------------------
 echo
-echo "drain --timeout 0 with a live aeon (warn-and-return unchanged):"
+echo "drain --timeout 0 with a live dwarf (warn-and-return unchanged):"
 
-bash "$SH/aeon.sh" & WORKER_PID=$!
+bash "$SH/dwarf.sh" & WORKER_PID=$!
 sleep 0.3
-printf '%s\n' "$WORKER_PID" > "$RUN/aeon-valefor-${TEST_BEAD}.pid"
-printf '%s' "$(( $(date +%s) + 3600 ))" > "$RUN/aeon-valefor-${TEST_BEAD}.lease"
+printf '%s\n' "$WORKER_PID" > "$RUN/dwarf-brokkr-${TEST_BEAD}.pid"
+printf '%s' "$(( $(date +%s) + 3600 ))" > "$RUN/dwarf-brokkr-${TEST_BEAD}.lease"
 
 : > "$SLAY_CALLS"; rm -f "$RUN/world.draining"
 drain --timeout 0
 slay_args="$(cat "$SLAY_CALLS" 2>/dev/null)"
 
-[ "$rc" = "1" ] && ok "--timeout exits 1 when aeon is live" \
-               || bad "--timeout exits 1 when aeon is live" "got rc=$rc"
+[ "$rc" = "1" ] && ok "--timeout exits 1 when dwarf is live" \
+               || bad "--timeout exits 1 when dwarf is live" "got rc=$rc"
 want   "prints NOT DRAINED"                    "NOT DRAINED" "$out"
-want   "says summons remain gated"             "REMAIN GATED" "$out"
+want   "says calls remain gated"             "REMAIN GATED" "$out"
 nowant "--timeout does not call slay.sh"       "--bead"       "${slay_args:-}"
 
-rm -f "$RUN/aeon-valefor-${TEST_BEAD}.pid" "$RUN/aeon-valefor-${TEST_BEAD}.lease"
+rm -f "$RUN/dwarf-brokkr-${TEST_BEAD}.pid" "$RUN/dwarf-brokkr-${TEST_BEAD}.lease"
 kill -- -"$WORKER_PID" 2>/dev/null; wait "$WORKER_PID" 2>/dev/null; WORKER_PID=""
 rm -f "$RUN/world.draining"
 
 # --------------------------------------------------------------------------------------
-# 3b. systemd is the authority — a live spira-aeon-* unit with no /proc argv match.
+# 3b. systemd is the authority — a live spira-dwarf-* unit with no /proc argv match.
 # --------------------------------------------------------------------------------------
 echo
-echo "drain sees a live spira-aeon-* unit that /proc cannot (control: no unit => DRAINED):"
+echo "drain sees a live spira-dwarf-* unit that /proc cannot (control: no unit => DRAINED):"
 
 cat > "$TMP/systemctl-units" <<'SC'
 #!/usr/bin/env bash
 case "$*" in
-    *list-units*) [ -f "$UNITS_LIVE" ] && echo "spira-aeon-prod-sp-live.service loaded active running aeon sp-live" ;;
+    *list-units*) [ -f "$UNITS_LIVE" ] && echo "spira-dwarf-prod-sp-live.service loaded active running dwarf sp-live" ;;
     *) echo inactive; exit 3 ;;
 esac
 exit 0

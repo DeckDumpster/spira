@@ -1,7 +1,7 @@
 round-vm: EC2 instance type c7i.8xlarge for ec2-6ad146ee-1fb4ef-0
 round-vm: SUITES-CLOCK: start (cap 900s from the first suite)
   test-round-ami-ssm-commands.sh   ok      1s
-  test-aeon-launch-grammar.sh      SKIPPED
+  test-dwarf-launch-grammar.sh      SKIPPED
   test-podman-exec-diag.sh         ok      1s
   test-landing-parity.sh           ok      1s
   test-cadence-tool.sh             SKIPPED
@@ -33,7 +33,7 @@ round-vm: SUITES-CLOCK: start (cap 900s from the first suite)
   test-otel-query.sh               ok      5s
   test-workflow-yaml-keys.sh       ok      3s
   test-cockpit-lc-scoped.sh        ok      10s
-  test-summon-fayth.sh             ok      5s
+  test-call-fayth.sh             ok      5s
   test-watch-refresh.sh            ok      5s
   test-bead-identity.sh            ok      12s
   test-bead-statute.sh             ok      12s
@@ -42,16 +42,16 @@ round-vm: SUITES-CLOCK: start (cap 900s from the first suite)
   test-sim-certify-twice.sh        ok      21s
   test-spike.sh                    ok      19s
   test-sim-cut-in-bare-env.sh      ok      6s
-  test-aeon-teardown-e2e-exit.sh   ok      16s
+  test-dwarf-teardown-e2e-exit.sh   ok      16s
   test-sim-controls.sh             ok      12s
-  test-aeon-sweep.sh               ok      18s
+  test-dwarf-sweep.sh               ok      18s
   test-spira-config-only-door.sh   ok      19s
   test-express-lane.sh             ok      10s
   test-slay.sh                     ok      22s
   test-landing-rebase.sh           ok      19s
   test-thrash-teardown.sh          ok      7s
   test-statute-projection.sh       ok      26s
-  test-aeon-resume-collision.sh    ok      22s
+  test-dwarf-resume-collision.sh    ok      22s
   test-lifecycle-cutover.sh        ok      28s
   test-uninstall.sh                ok      28s
   test-bead-dep-add.sh             ok      12s
@@ -70,7 +70,7 @@ round-vm: SUITES-CLOCK: start (cap 900s from the first suite)
   test-queue-open-batch.sh         ok      17s
   test-canary.sh                   ok      40s
   test-batcher-cut.sh              ok      41s
-  test-aeon-prod-dirty-rest.sh     ok      40s
+  test-dwarf-prod-dirty-rest.sh     ok      40s
   test-fayth.sh                    ok      2s
   test-certify.sh                  ok      20s
   test-cockpit-ready.sh            ok      5s
@@ -85,14 +85,14 @@ round-vm: SUITES-CLOCK: start (cap 900s from the first suite)
   test-batcher-cut-land.sh         ok      46s
   test-submitted-lands.sh          ok      48s
   test-bead-file.sh                ok      7s
-  test-aeon-prod-dirty.sh          ok      42s
+  test-dwarf-prod-dirty.sh          ok      42s
   test-attempts-sql.sh             ok      13s
   test-cockpit.sh                  ok      4s
   test-testenv-curl-bounds.sh      ok      47s
   test-commit-cite.sh              ok      12s
   test-land-local-release.sh       ok      9s
   test-units-lint.sh               ok      47s
-  test-aeon-worktree-collision.sh  ok      50s
+  test-dwarf-worktree-collision.sh  ok      50s
   test-skew-refresh.sh             ok      6s
   test-sentinel-pass.sh            ok      7s
   test-census.sh                   ok      14s
@@ -103,20 +103,20 @@ round-vm: SUITES-CLOCK: start (cap 900s from the first suite)
   test-reopen-queue-eject.sh       ok      7s
   test-asks.sh                     ok      16s
   test-work-container.sh           ok      11s
-  test-aeon-lifecycle-cutover.sh   ok      53s
+  test-dwarf-lifecycle-cutover.sh   ok      53s
   test-watchtower-failed-units.sh  ok      5s
   test-ops-read-model.sh           ok      17s
   test-limits.sh                   ok      9s
   test-landing-base-fail.sh        ok      10s
   test-watchtower-lapse.sh         ok      5s
-  test-aeon-wiki-dirty.sh          ok      23s
-  test-aeon-halt-all.sh          ok      29s
+  test-dwarf-wiki-dirty.sh          ok      23s
+  test-dwarf-halt-all.sh          ok      29s
   test-sim-world-lc.sh             ok      2s
-  test-install-aeons.sh            ok      53s
+  test-install-dwarves.sh            ok      53s
   test-sim-world-prebuilt.sh       ok      0s
   test-sim-happy-path.sh           ok      9s
   test-deploy.sh                   ok      14s
-  test-aeon-resume.sh              ok      57s
+  test-dwarf-resume.sh              ok      57s
   test-session-hook.sh             ok      8s
   test-acceptance-ci-scratch-queue.sh ok      0s
   test-publish-backlog.sh          ok      3s
@@ -127,12 +127,12 @@ round-vm: SUITES-CLOCK: start (cap 900s from the first suite)
   test-queue-submit.sh             ok      4s
   test-queue-owner-refuse.sh       ok      7s
   test-withdrawn-suites-recert.sh  ok      4s
-  test-mail-aeon.sh                ok      12s
+  test-mail-dwarf.sh                ok      12s
   test-dispatch-open-children.sh   ok      8s
   test-testdb-concurrent.sh        ok      7s
   test-drift.sh                    ok      13s
   test-watchtower.sh               ok      4s
-  test-summon-fast-path.sh         ok      6s
+  test-call-fast-path.sh         ok      6s
   test-queue-owner-mail.sh         ok      5s
   test-sending.sh                  ok      5s
   test-landing-modes.sh            ok      10s
@@ -205,14 +205,14 @@ round-vm: SUITES-CLOCK: start (cap 900s from the first suite)
   test-cockpit-queue-section.sh    ok      5s
   test-cockpit-fuse.sh             ok      2s
   test-attempts.sh                 ok      5s
-  test-aeon-eviction-race.sh       ok      23s
+  test-dwarf-eviction-race.sh       ok      23s
   test-sin-exempt.sh               ok      4s
   test-verify-asks.sh              ok      7s
   test-install-unit-prune.sh       ok      10s
   test-install-unit-ensure.sh      ok      3s
   test-lifecycle-classify.sh       ok      7s
   test-lifecycle-delivery-cutover.sh ok      2s
-  test-aeon-slain-attempts.sh      ok      6s
+  test-dwarf-slain-attempts.sh      ok      6s
   test-mail-bead-render.sh         ok      5s
   test-watchtower-throttle.sh      ok      5s
   test-gate-sweep.sh               ok      3s
@@ -220,7 +220,7 @@ round-vm: SUITES-CLOCK: start (cap 900s from the first suite)
   test-acceptance-agent.sh         ok      1s
   test-certified-withdraw.sh       ok      5s
   test-incident-spool-drain.sh     ok      4s
-  test-aeon-base-ref-qualify.sh    ok      2s
+  test-dwarf-base-ref-qualify.sh    ok      2s
   test-release.sh                  ok      1s
   test-repo-map.sh                 ok      4s
   test-world-timer-names.sh        ok      3s
@@ -228,7 +228,7 @@ round-vm: SUITES-CLOCK: start (cap 900s from the first suite)
   test-lc-hold.sh                  ok      2s
   test-tsd.sh                      ok      4s
   test-gh-run-gate.sh              ok      6s
-  test-aeon-dirty-commit.sh        ok      1s
+  test-dwarf-dirty-commit.sh        ok      1s
   test-units-optional.sh           ok      5s
   test-bd-contract.sh              ok      4s
   test-watchtower-hotfix.sh        ok      2s
@@ -247,7 +247,7 @@ round-vm: SUITES-CLOCK: start (cap 900s from the first suite)
   test-gate-base-selection.sh      ok      2s
   test-unit-name.sh                ok      1s
   test-containment.sh              ok      3s
-  test-aeon-gate-close-silent.sh   ok      4s
+  test-dwarf-gate-close-silent.sh   ok      4s
   test-skew-local-release.sh       ok      2s
   test-queue-sort-large.sh         ok      6s
   test-hold.sh                     ok      5s
@@ -266,8 +266,8 @@ round-vm: SUITES-CLOCK: start (cap 900s from the first suite)
   test-destructive-bead.sh         ok      3s
   test-cockpit-dup-refs.sh         ok      1s
   test-watchtower-czar-outcome.sh  ok      4s
-  test-aeon-elastic-concurrency.sh ok      4s
-  test-aeon-fence-exec-ctx.sh      ok      1s
+  test-dwarf-elastic-concurrency.sh ok      4s
+  test-dwarf-fence-exec-ctx.sh      ok      1s
   test-bead-repo-guard.sh          ok      3s
   test-chamber-core-check.sh       ok      4s
   test-skew-check-release.sh       ok      1s
@@ -289,7 +289,7 @@ round-vm: SUITES-CLOCK: start (cap 900s from the first suite)
   test-skew-copies.sh              ok      2s
   test-cockpit-health-term-size.sh ok      4s
   test-branch-sweep.sh             ok      1s
-  test-aeon-watch.sh               ok      1s
+  test-dwarf-watch.sh               ok      1s
   test-verify-landed.sh            ok      5s
   test-install-dolt-refuse-stop.sh ok      2s
   test-schema.sh                   ok      2s
@@ -312,7 +312,7 @@ round-vm: SUITES-CLOCK: start (cap 900s from the first suite)
   test-overrides.sh                ok      2s
   test-work-services-exclusion.sh  ok      1s
   test-broker-units.sh             ok      1s
-  test-aeon-lease.sh               ok      1s
+  test-dwarf-lease.sh               ok      1s
   test-broker.sh                   ok      1s
   test-cockpit-watcher-owner.sh    ok      2s
   test-builder-qa-proposed.sh      ok      1s
@@ -367,7 +367,7 @@ round-vm: SUITES-CLOCK: start (cap 900s from the first suite)
   test-build-bd-release.sh         ok      1s
   test-queue-protect.sh            ok      3s
   test-timer-templates.sh          ok      4s
-  test-aeon-wiki-concurrent.sh     ok      2s
+  test-dwarf-wiki-concurrent.sh     ok      2s
   test-bd-schema-stamp.sh          ok      3s
   test-scope-label.sh              ok      3s
   test-archivist-conf.sh           ok      2s
@@ -424,7 +424,7 @@ round-vm: SUITES-CLOCK: start (cap 900s from the first suite)
   test-lifecycle-guard-gate.sh     ok      2s
   test-pre-commit-release-path.sh  ok      2s
   test-resolve-output.sh           ok      1s
-  test-mail-aeon-hook.sh           ok      2s
+  test-mail-dwarf-hook.sh           ok      2s
   test-gate-unit.sh                ok      3s
   test-script-lint-rules.sh        ok      1s
   test-priority-bands.sh           ok      2s

@@ -8,7 +8,7 @@
 //! the design's test strategy names it specifically ("given round 1's three double-reds, its
 //! actions must match what was done"). Rounds 2-15 remain unreconstructed: the page is a
 //! prose narrative log, not structured data, and each round's facts are told with a
-//! different level of detail rather than in a fixture-ready shape. A future aeon with the
+//! different level of detail rather than in a fixture-ready shape. A future dwarf with the
 //! time to extract them should read that page round by round rather than trust a summary
 //! here. The rest of the cases below are synthetic: an all-conflict round, a flip on
 //! re-run, an express member, a stale stacked base, and a stale bisect record.
@@ -687,7 +687,7 @@ fn a_full_round_from_trigger_through_pr_record() {
     assert_eq!(events.iter().map(|e| e.kind).collect::<Vec<_>>(), vec!["cut", "evicted", "opened"]);
 }
 
-// -- Judgement: when the crate cannot resolve a red mechanically, summon the persona --------
+// -- Judgement: when the crate cannot resolve a red mechanically, call the persona --------
 
 #[test]
 fn judgement_for_is_none_when_nothing_survives_the_rerun_as_double_red() {

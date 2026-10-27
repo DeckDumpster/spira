@@ -1,5 +1,5 @@
 //! Clock formatting, the log line, and one bounded process runner — the same small,
-//! per-crate utility every Rust port in this workspace carries (aeon/src/util.rs,
+//! per-crate utility every Rust port in this workspace carries (dwarf/src/util.rs,
 //! sentinel/src/host.rs, …): duplicated on purpose rather than shared, so no crate here
 //! depends on another's internals for something this small.
 
@@ -124,7 +124,7 @@ pub fn iso_utc(epoch: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", secs / 3600, (secs % 3600) / 60, secs % 60)
 }
 
-/// Howard Hinnant's days-to-civil (same algorithm as aeon/src/util.rs).
+/// Howard Hinnant's days-to-civil (same algorithm as dwarf/src/util.rs).
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
     let era = z.div_euclid(146_097);

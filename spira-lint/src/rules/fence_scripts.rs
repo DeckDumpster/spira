@@ -97,7 +97,7 @@ mod tests {
     fn scope_is_direct_children_of_spira() {
         assert!(is_fence_script("spira/foo-fence.sh"));
         assert!(is_fence_script("spira/test-foo-lint.sh"));
-        assert!(!is_fence_script("spira/hooks/aeon-fence.sh"));
+        assert!(!is_fence_script("spira/hooks/dwarf-fence.sh"));
         assert!(!is_fence_script("spira/gate-fences.sh"));
         assert!(!is_fence_script("other/foo-lint.sh"));
     }

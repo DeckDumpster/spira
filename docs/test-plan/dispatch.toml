@@ -49,17 +49,17 @@ statement = "the roster is discovered from `runes/*.rune`; lane xor task xor ope
 [[use_case]]
 id = "UC-dispatch-08"
 tier = "T1"
-statement = "every auto-summoned predicate is built from `$SPIRA_*_LABEL`, never a literal"
+statement = "every auto-called predicate is built from `$SPIRA_*_LABEL`, never a literal"
 
 [[use_case]]
 id = "UC-dispatch-09"
 tier = "T1"
-statement = "`summon_rune` asks each persona's own predicate; partitions don't cross-leak"
+statement = "`call_rune` asks each persona's own predicate; partitions don't cross-leak"
 
 [[use_case]]
 id = "UC-dispatch-10"
 tier = "T1"
-statement = "the `summon_rune` refusal ladder runs in order and logs its real reason"
+statement = "the `call_rune` refusal ladder runs in order and logs its real reason"
 
 [[use_case]]
 id = "UC-dispatch-11"
@@ -69,7 +69,7 @@ statement = "`rune_free` arithmetic: elastic pool remainder, non-elastic cap-min
 [[use_case]]
 id = "UC-dispatch-12"
 tier = "T1"
-statement = "a live drain gates every summon; an expired drain is lifted and logged"
+statement = "a live drain gates every call; an expired drain is lifted and logged"
 
 [[use_case]]
 id = "UC-dispatch-13"
@@ -89,7 +89,7 @@ statement = "CHECK 7 draws lanes round-robin then fills the task pool in roster 
 [[use_case]]
 id = "UC-dispatch-15"
 tier = "T1"
-statement = "`escape.sh` summons directly on ready work, bypassing pool and lane caps"
+statement = "`escape.sh` calls directly on ready work, bypassing pool and lane caps"
 
 [[use_case]]
 id = "UC-dispatch-16"
@@ -149,7 +149,7 @@ statement = "an unmapped-repo bead is parked with ask+overseer before its claim 
 [[use_case]]
 id = "UC-dispatch-23"
 tier = "T1"
-statement = "summoning passes no `CPUQuota`/`Nice` (sp-b4oct), and passes `RUNE_TIMEOUT_SECONDS` and `--setting-sources` correctly"
+statement = "calling passes no `CPUQuota`/`Nice` (sp-b4oct), and passes `RUNE_TIMEOUT_SECONDS` and `--setting-sources` correctly"
 
 [[use_case]]
 id = "UC-dispatch-24"

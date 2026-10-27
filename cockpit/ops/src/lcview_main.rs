@@ -1,9 +1,9 @@
 //! `lc-view tui|once|fit|loop [secs]` — the lifecycle-lens ops pane (sp-lpw5ol; interactive since sp-5j35g5). Gathers from the built
 //! tools only: `spira-lc list --live` (state, title, priority), the landing ref's
-//! commits (drift, cached by sha), `world status`, and the aeon ceiling from config. Never runs `bd`.
+//! commits (drift, cached by sha), `world status`, and the dwarf ceiling from config. Never runs `bd`.
 
 use cockpit_ops::lctui::{layout, parent_key, Frame, Mode, Ui};
-use cockpit_ops::lcview::{carry_forward, repo_column, AskRow, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveAeon, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
+use cockpit_ops::lcview::{carry_forward, repo_column, AskRow, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveDwarf, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::process::Command;
@@ -213,10 +213,10 @@ fn on_base_cached(root: &str, base: &str) -> Result<HashMap<String, String>, Str
     Ok(m)
 }
 
-/// The live aeons: every `spira-aeon-*` unit's main pid and start (one systemctl call), and its
+/// The live dwarves: every `spira-dwarf-*` unit's main pid and start (one systemctl call), and its
 /// phase read from its process tree (status only, never its work).
-fn live_aeons() -> Option<Vec<LiveAeon>> {
-    let units: Vec<String> = run("systemctl", &["--user", "list-units", "spira-aeon-*", "--no-legend", "--plain"])
+fn live_dwarves() -> Option<Vec<LiveDwarf>> {
+    let units: Vec<String> = run("systemctl", &["--user", "list-units", "spira-dwarf-*", "--no-legend", "--plain"])
         .ok()?
         .lines()
         .filter_map(|l| l.split_whitespace().next().map(String::from))
@@ -236,7 +236,7 @@ fn live_aeons() -> Option<Vec<LiveAeon>> {
             continue;
         }
         let started = get("ActiveEnterTimestamp").trim_start_matches('@').parse().unwrap_or(0);
-        out.push(LiveAeon { unit: get("Id"), pid, started, phase: String::new() });
+        out.push(LiveDwarf { unit: get("Id"), pid, started, phase: String::new() });
     }
     Some(out)
 }
@@ -266,14 +266,14 @@ fn gather() -> Snapshot {
 
     let world = std::thread::spawn(world_plane);
     let git = std::thread::spawn(base_commits);
-    let live = std::thread::spawn(live_aeons);
+    let live = std::thread::spawn(live_dwarves);
     let sm = std::thread::spawn(|| {
         let mut t = Snapshot::default();
         gather_state_machine(&mut t);
         gather_vm_runs(&mut t);
         t
     });
-    // An aeon's phase is on its lifecycle row (sp-vknc2j.16); the pane never scans /proc.
+    // A dwarf's phase is on its lifecycle row (sp-vknc2j.16); the pane never scans /proc.
     let mut phases: HashMap<i64, String> = HashMap::new();
     match lc_json(&["list", "--live", "--snapshot"]) {
         Ok(rows) => {
@@ -286,7 +286,7 @@ fn gather() -> Snapshot {
                     }
                 };
                 let id = text(&r["bead_id"]);
-                if let (Some(pid), Some(ph)) = (r["holder"].as_str().and_then(holder_pid), r["aeon_phase"].as_str()) {
+                if let (Some(pid), Some(ph)) = (r["holder"].as_str().and_then(holder_pid), r["dwarf_phase"].as_str()) {
                     phases.insert(pid, ph.to_string());
                 }
                 let holds: Vec<String> = r["holds"].as_str().and_then(|h| serde_json::from_str(h).ok()).unwrap_or_default();
@@ -412,7 +412,7 @@ fn gather() -> Snapshot {
     s.forge_base = spira_config::process::cfg("SPIRA_FORGE_REPO").ok().and_then(|r| r.trim().split_once('/').map(|(o, _)| format!("https://github.com/{o}"))).unwrap_or_default();
     s.loom_base = spira_config::process::cfg("SPIRA_LOOM_ADDR").ok().map(|a| a.trim().to_string()).filter(|a| !a.is_empty()).map(|a| format!("http://{}", a.replacen("0.0.0.0", "localhost", 1)));
     gather_menders(&mut s);
-    s.ceiling = spira_config::process::cfg("SPIRA_MAX_LIVE_AEONS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
+    s.ceiling = spira_config::process::cfg("SPIRA_MAX_LIVE_DWARVES").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0);
     s.failures = s.errors.len() as u64;
     s.gather_ms = started.elapsed().as_millis() as u64;
     s

@@ -6,7 +6,7 @@
 //! In AUTO, the pane gives up detail only as far as it is forced to, deepest and least important
 //! first: RECENT, HOLDS, REFUSED, BLOCKED and DRIFT thin out; then the state machine drops its idle
 //! transitions, then its empty states, then folds the rest into their states; then REWORK
-//! shortens; then NOW folds each aeon's output. ROUND and NOW themselves are never cut.
+//! shortens; then NOW folds each dwarf's output. ROUND and NOW themselves are never cut.
 //! Anything AUTO removed comes back on the next frame once there is room or it is not empty.
 //!
 //! Everything here is pure (view, choices, size in; lines out) so it is tested without a terminal.
@@ -180,7 +180,7 @@ fn dot(red: bool) -> String {
 
 fn banner(v: &View) -> Vec<String> {
     let mut out = vec![format!(
-        "{B}SPIRA{R} {D}{}{R}  release {B}{}{R}  {}  aeons {B}{}/{}{R}  {D}refresh {}ms · failures {}{R}",
+        "{B}SPIRA{R} {D}{}{R}  release {B}{}{R}  {}  dwarves {B}{}/{}{R}  {D}refresh {}ms · failures {}{R}",
         v.clock,
         v.release,
         if v.world_running { format!("{GRN}world RUNNING{R}") } else { format!("{RED}world {}{R}", cut(&v.world, 24)) },
@@ -310,7 +310,7 @@ pub fn tree(v: &View) -> Vec<Node> {
         out.push(epics);
     }
 
-    let mut aeons: Vec<Node> = v
+    let mut dwarves: Vec<Node> = v
         .now_items
         .iter()
         .map(|i| {
@@ -327,7 +327,7 @@ pub fn tree(v: &View) -> Vec<Node> {
                 _ => D,
             };
             let age = if i.out_age.is_empty() { String::new() } else { format!(" {} ago", i.out_age) };
-            // The bead's title is the first line of the expanded view, whole: on the aeon's own
+            // The bead's title is the first line of the expanded view, whole: on the dwarf's own
             // line it was cut short by everything else there (per Ryan 2026-10-09).
             let title = Node::new(format!("now/{}/title", i.id), format!("{B}{}{R}", i.title));
             let out = std::iter::once(title).chain(i
@@ -346,10 +346,10 @@ pub fn tree(v: &View) -> Vec<Node> {
                 .fold(R_NOW_FOLD)
         })
         .collect();
-    if aeons.is_empty() {
-        aeons.push(Node::new("now/none", format!("{D}no aeon is live{R}")));
+    if dwarves.is_empty() {
+        dwarves.push(Node::new("now/none", format!("{D}no dwarf is live{R}")));
     }
-    out.push(Node::new("now", format!("{B}NOW{R}    {B}{}{R} live {D}of {} — aeon · bead · phase{R}", v.now_items.len(), v.ceiling)).kids(aeons));
+    out.push(Node::new("now", format!("{B}NOW{R}    {B}{}{R} live {D}of {} — dwarf · bead · phase{R}", v.now_items.len(), v.ceiling)).kids(dwarves));
 
     out.push(inflight_node(v));
 
@@ -1085,7 +1085,7 @@ mod tests {
             id: id.into(),
             prio: "P1".into(),
             title: format!("title of {id}"),
-            who: "anima".into(),
+            who: "galar".into(),
             age: "5m".into(),
             persona: "builder".into(),
             out: vec!["▸ cargo test".into(), "▸ git commit".into()],
@@ -1151,7 +1151,7 @@ mod tests {
         let mut v = busy_view();
         v.now = 100_000;
         v.epics = vec![
-            e("", "round EC2 spill", [3, 0, 0, 0, 1], Some(100_000 - 8 * 3600), &[("not dispatchable to aeons", 1)]),
+            e("", "round EC2 spill", [3, 0, 0, 0, 1], Some(100_000 - 8 * 3600), &[("not dispatchable to dwarves", 1)]),
             e("deckdumpster", "deckdumpster lakehouse", [0, 3, 1, 0, 11], Some(100_000 - 9 * 3600), &[("Ryan's ruling", 4)]),
             e("deckdumpster", "deckdumpster multi-tenancy", [2, 4, 5, 0, 3], Some(100_000 - 9 * 3600), &[("stacked on sp-t5980r", 8), ("prod cutover runbook", 1), ("suspect in the deckdumpster UI-tier DB hang", 1)]),
             e("ephemeral-ci", "Nix phase", [0, 0, 0, 1, 0], None, &[]),
@@ -1175,12 +1175,12 @@ mod tests {
     }
 
     #[test]
-    fn a_70x50_pane_with_epics_still_shows_round_and_every_aeon_and_never_wraps() {
+    fn a_70x50_pane_with_epics_still_shows_round_and_every_dwarf_and_never_wraps() {
         let t = text(&layout(&epics_view(), &Ui::default(), 70, 50));
         assert!(t.len() <= 50 && t.iter().all(|l| l.chars().count() <= 70), "{t:#?}");
         assert!(has(&t, "r-auto-96") && has(&t, "EPICS"), "{t:#?}");
         for k in 0..3 {
-            assert!(has(&t, &format!("sp-w{k}")), "aeon sp-w{k} missing: {t:#?}");
+            assert!(has(&t, &format!("sp-w{k}")), "dwarf sp-w{k} missing: {t:#?}");
         }
     }
 
@@ -1197,7 +1197,7 @@ mod tests {
     }
 
     fn repo_view() -> View {
-        let it = |id: &str, repo: &str| Item { id: id.into(), prio: "P1".into(), title: format!("title of {id}"), repo: repo.into(), age: "5m".into(), who: "anima".into(), persona: "builder".into(), note: "n".into(), ..Default::default() };
+        let it = |id: &str, repo: &str| Item { id: id.into(), prio: "P1".into(), title: format!("title of {id}"), repo: repo.into(), age: "5m".into(), who: "galar".into(), persona: "builder".into(), note: "n".into(), ..Default::default() };
         let mut v = busy_view();
         let repos = [("sp-c1", "cubby"), ("sp-s1", "spira"), ("sp-d1", "deckdumpster"), ("sp-u1", "")];
         let items = |_: ()| repos.iter().map(|(i, r)| it(i, r)).collect::<Vec<_>>();
@@ -1250,13 +1250,13 @@ mod tests {
     }
 
     #[test]
-    fn a_70x50_pane_shows_round_and_every_aeon_and_never_wraps() {
+    fn a_70x50_pane_shows_round_and_every_dwarf_and_never_wraps() {
         let t = text(&layout(&busy_view(), &Ui::default(), 70, 50));
         assert!(t.len() <= 50, "{} rows", t.len());
         assert!(t.iter().all(|l| l.chars().count() <= 70), "{t:#?}");
         assert!(has(&t, "r-auto-96") && has(&t, "pass 2"), "{t:#?}");
         for k in 0..3 {
-            assert!(has(&t, &format!("sp-w{k}")), "aeon sp-w{k} missing: {t:#?}");
+            assert!(has(&t, &format!("sp-w{k}")), "dwarf sp-w{k} missing: {t:#?}");
         }
         assert!(has(&t, "STATES"));
     }
@@ -1574,20 +1574,20 @@ mod tests {
     }
 
     #[test]
-    fn an_expanded_aeon_puts_its_bead_title_first_and_whole() {
+    fn an_expanded_dwarf_puts_its_bead_title_first_and_whole() {
         let mut ui = Ui::default();
         ui.set("now", Mode::Open);
         ui.set("now/sp-w0", Mode::Open);
         let f = layout(&busy_view(), &ui, 200, 80);
         let row = |key: &str| f.rows.iter().find(|(_, k)| k == key).map(|(r, _)| strip(&f.lines[*r])).expect(key);
-        assert!(!row("now/sp-w0").contains("title of sp-w0"), "the open aeon line drops the title");
+        assert!(!row("now/sp-w0").contains("title of sp-w0"), "the open dwarf line drops the title");
         assert!(row("now/sp-w0/title").contains("title of sp-w0"));
         let (r0, _) = f.rows.iter().find(|(_, k)| k == "now/sp-w0").unwrap();
         assert_eq!(f.rows.iter().find(|(r, _)| r == &(r0 + 1)).map(|(_, k)| k.as_str()), Some("now/sp-w0/title"));
         ui.set("now/sp-w0", Mode::Collapsed);
         let f = layout(&busy_view(), &ui, 200, 80);
         let (r, _) = f.rows.iter().find(|(_, k)| k == "now/sp-w0").unwrap();
-        assert!(strip(&f.lines[*r]).contains("title of sp-w0"), "a folded aeon keeps the title on its line");
+        assert!(strip(&f.lines[*r]).contains("title of sp-w0"), "a folded dwarf keeps the title on its line");
     }
 
     #[test]

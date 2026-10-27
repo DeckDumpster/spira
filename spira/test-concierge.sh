@@ -19,7 +19,7 @@
 # hermetic-ok: fixture runes and a private tmux socket; no systemd and no database
 # requires: claude
 # host-reason: concierge.sh refuses to run any subcommand without claude and tmux on PATH (spira_require); the `here` section also needs a real tmux binary and skips on its own if one is not on PATH
-# scar: the concierge persona lacked RUNE_SUMMON=operator and could be claimed by the sentinel as an ordinary worker.
+# scar: the concierge persona lacked RUNE_CALL=operator and could be claimed by the sentinel as an ordinary worker.
 # tier: T2
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

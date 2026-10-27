@@ -130,9 +130,9 @@ lc-backup|daemon|@SPIRA_HOME@/lc-backup.sh watch --interval 900|@SPIRA_HOME@/lc-
 # `watchd.sh tail stranded-runner`.
 stranded-runner|daemon|@SPIRA_HOME@/stranded-runner.sh watch --interval 120|@SPIRA_HOME@/stranded-runner.sh health
 
-# AEON-WATCH is the standing look at the fleet: one line per live aeon, and STALL, GATE,
-# TESTENV, CHURN, REOPENS flags. Status only — never an aeon's transcript or a process argv.
-aeon-watch|daemon|@SPIRA_HOME@/aeon-watch.sh watch --interval 600|@SPIRA_HOME@/aeon-watch.sh health
+# DWARF-WATCH is the standing look at the fleet: one line per live dwarf, and STALL, GATE,
+# TESTENV, CHURN, REOPENS flags. Status only — never a dwarf's transcript or a process argv.
+dwarf-watch|daemon|@SPIRA_HOME@/dwarf-watch.sh watch --interval 600|@SPIRA_HOME@/dwarf-watch.sh health
 
 # queue-watch — merge-queue transitions for every `mode = "queue"` repository: batch opened,
 # CI, ejected, re-pushed, landed (verified on base), closed without landing, forced cuts,
@@ -211,7 +211,7 @@ mend-watch|log|@SPIRA_RUN@/mend-watch.log
 # requires the SMTP banner. Unconfigured (SPIRA_SUBMISSION_ADDR empty) health exits 0 and serve idles.
 spira-submission|extern|spira-submission|spira-submission health
 
-# WARM-FULL raises one inbox line, with per-slot sizes, when the aeon warm tmpfs passes 85%.
+# WARM-FULL raises one inbox line, with per-slot sizes, when the dwarf warm tmpfs passes 85%.
 warm-full|daemon|@SPIRA_HOME@/warm-full.sh watch --interval 120|@SPIRA_HOME@/warm-full.sh health
 
 testenv-cap|daemon|testenv-cap watch --interval 15|testenv-cap health

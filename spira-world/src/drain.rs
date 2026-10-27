@@ -107,7 +107,7 @@ pub fn check(
 
     if owner_alive(&d) == Some(false) && !already_paged(stamp, PAGED_ORPHAN) {
         let body = format!(
-            "The drain's owner is gone and nothing has lifted it.\n\n{held}\n\nThe drain stays in force: summons are gated. Decide, then lift with: world.sh resume\n"
+            "The drain's owner is gone and nothing has lifted it.\n\n{held}\n\nThe drain stays in force: calls are gated. Decide, then lift with: world.sh resume\n"
         );
         return if page("ORPHANED DRAIN: owner is dead, drain still in force", &body) {
             record_paged(stamp, PAGED_ORPHAN);
@@ -120,7 +120,7 @@ pub fn check(
     let over = matches!((d.cap_secs, d.age_secs(now)), (Some(c), Some(a)) if a >= c);
     if over && !already_paged(stamp, PAGED_CAP) {
         let body = format!(
-            "A drain has been in force past its cap. The cap pages; it does not lift.\n\n{held}\n\nThe drain stays in force: summons are gated. Lift with: world.sh resume\n"
+            "A drain has been in force past its cap. The cap pages; it does not lift.\n\n{held}\n\nThe drain stays in force: calls are gated. Lift with: world.sh resume\n"
         );
         return if page("DRAIN past its cap — still in force", &body) {
             record_paged(stamp, PAGED_CAP);

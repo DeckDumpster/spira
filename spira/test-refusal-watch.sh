@@ -28,12 +28,12 @@ def ev(bead, event, frm, refusal, actor, at):
     return "('bead','%s','%s','%s','%s','%s',0,'%s','{}','%s',%d)" % (bead, event, frm, frm, frm, refusal, actor, at)
 rows = []
 for i in range(9):
-    rows.append(ev("sp-p%d" % i, "Submit", "WORKING", "stale_version", "aeon:planted", now - 600 - i))
+    rows.append(ev("sp-p%d" % i, "Submit", "WORKING", "stale_version", "dwarf:planted", now - 600 - i))
 for i in range(5):
-    rows.append(ev("sp-q%d" % i, "Claim", "READY", "wrong_state", "aeon:atbaseline", now - 300 - i))
+    rows.append(ev("sp-q%d" % i, "Claim", "READY", "wrong_state", "dwarf:atbaseline", now - 300 - i))
 for i in range(20):
-    rows.append(ev("sp-o%d" % i, "Drop", "OPEN", "wrong_state", "aeon:ancient", now - 3 * 86400 - i))
-rows.append("('bead','sp-ok','Claim','READY','READY','WORKING',1,NULL,'{}','aeon:fine',%d)" % (now - 100))
+    rows.append(ev("sp-o%d" % i, "Drop", "OPEN", "wrong_state", "dwarf:ancient", now - 3 * 86400 - i))
+rows.append("('bead','sp-ok','Claim','READY','READY','WORKING',1,NULL,'{}','dwarf:fine',%d)" % (now - 100))
 print("INSERT INTO event (machine,lc_key,event,expect,from_state,to_state,applied,refusal,evidence,actor,at) VALUES")
 print(",\n".join(rows) + ";")
 PY
@@ -41,10 +41,10 @@ lcfix_sql < "$TMP/seed.sql" >/dev/null 2>"$TMP/seed.err" || bail "seed failed: $
 
 raw="$(spira-lc ops-refusals 86400)"
 count_of() { python3 -I -c 'import json,sys; d=json.load(sys.stdin); print(sum(int(c["n"]) for c in d["classes"] if c["actor"]==sys.argv[1]))' "$1" <<<"$raw"; }
-is "the planted caller's nine refusals are one counted class" 9 "$(count_of aeon:planted)"
-is "an applied event is not a refusal" 0 "$(count_of aeon:fine)"
-is "refusals outside the window are not counted" 0 "$(count_of aeon:ancient)"
-is "the newest examples come back with their times" "sp-p0@$((NOW - 600))" "$(python3 -I -c 'import json,sys; d=json.load(sys.stdin); print([c for c in d["classes"] if c["actor"]=="aeon:planted"][0]["examples"].split(",")[0])' <<<"$raw")"
+is "the planted caller's nine refusals are one counted class" 9 "$(count_of dwarf:planted)"
+is "an applied event is not a refusal" 0 "$(count_of dwarf:fine)"
+is "refusals outside the window are not counted" 0 "$(count_of dwarf:ancient)"
+is "the newest examples come back with their times" "sp-p0@$((NOW - 600))" "$(python3 -I -c 'import json,sys; d=json.load(sys.stdin); print([c for c in d["classes"] if c["actor"]=="dwarf:planted"][0]["examples"].split(",")[0])' <<<"$raw")"
 spira-lc ops-refusals 0 >/dev/null 2>&1
 wantrc "a zero window is refused" 2 $?
 
@@ -58,8 +58,8 @@ export REFUSAL_WATCH_FILER="$TMP/filer"
 refusal-watch pass --state "$TMP/state" >"$TMP/out" 2>&1
 wantrc "a pass exits 0" 0 $?
 filed="$(cat "$TMP/filed" 2>/dev/null)"
-want "positive control: the planted class is filed" "TITLE refused Submit from WORKING (stale_version) by aeon:planted" "$filed"
-want "the filing names the caller and an example bead" "Caller: aeon:planted" "$filed"
+want "positive control: the planted class is filed" "TITLE refused Submit from WORKING (stale_version) by dwarf:planted" "$filed"
+want "the filing names the caller and an example bead" "Caller: dwarf:planted" "$filed"
 want "the filing carries an example bead with its time" "- sp-p0 at " "$filed"
 nowant "a class exactly at baseline is not filed" "atbaseline" "$filed"
 nowant "refusals outside the window are not filed" "ancient" "$filed"

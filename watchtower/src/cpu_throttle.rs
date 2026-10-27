@@ -16,7 +16,7 @@ pub struct Cfg {
     pub systemctl: String,
 }
 
-pub const DEFAULT_UNITS: &str = "dolt-beads.service spira-landing-pass.service spira-sentinel.service spira-summon.service spira-verdict.service";
+pub const DEFAULT_UNITS: &str = "dolt-beads.service spira-landing-pass.service spira-sentinel.service spira-call.service spira-verdict.service";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Sample {

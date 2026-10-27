@@ -1,8 +1,8 @@
-//! spira-world — shared primitives for `world.sh`, `aeons.sh` and `slay.sh` (DESIGN.md).
+//! spira-world — shared primitives for `world.sh`, `dwarves.sh` and `slay.sh` (DESIGN.md).
 //!
-//! Three tools, one crate, because `world.sh stop` slays aeons the same way `slay.sh` does,
+//! Three tools, one crate, because `world.sh stop` slays dwarves the same way `slay.sh` does,
 //! `world.sh start` reads suspensions the same way `ctrl.sh` (now `spira-ctrl`) does, and
-//! `aeons.sh status` counts live aeons the same way `world.sh status` does — in bash these
+//! `dwarves.sh status` counts live dwarves the same way `world.sh status` does — in bash these
 //! were three separate re-derivations (the exact drift lib.sh's own comments warn about);
 //! in Rust they are one function each, called from three binaries.
 
@@ -54,7 +54,7 @@ pub fn instance() -> Result<String, String> {
 /// does (DESIGN.md §2.7): the environment if set, else the first ancestor of this executable
 /// that holds `lib.sh`, across both the release layout (`bin/<exe>` next to `spira/lib.sh`)
 /// and a cargo target layout. Needed only by the seams that call into lib.sh (slay's work
-/// destruction, aeons' lane report) — `world.sh` and `ctrl.sh` proper never need it.
+/// destruction, dwarves' lane report) — `world.sh` and `ctrl.sh` proper never need it.
 pub fn locate_home(exe: &Path) -> Option<PathBuf> {
     if let Ok(h) = env::var("SPIRA_HOME") {
         if !h.is_empty() {
@@ -69,8 +69,8 @@ pub fn locate_home(exe: &Path) -> Option<PathBuf> {
 }
 
 /// `SPIRA_PROD`'s declared value if non-empty, else `home` — the same "both homes" fallback
-/// `live_aeons` and `live_workers` use in world.sh, because in split-checkout mode every
-/// aeon executes `$SPIRA_PROD/aeon.sh` while `home` is the development checkout. `prod` is
+/// `live_dwarves` and `live_workers` use in world.sh, because in split-checkout mode every
+/// dwarf executes `$SPIRA_PROD/dwarf.sh` while `home` is the development checkout. `prod` is
 /// the caller's own `spira_config::process::cfg("SPIRA_PROD")` read, resolved once at the
 /// binary's top level and handed in here — never read from the environment in this pure
 /// function (per Ryan 2026-10-05: one source of config).
@@ -92,7 +92,7 @@ pub fn halt_stamp() -> Result<PathBuf, String> {
 /// whichever of those two is in force (`dirname(prod)/bin/landing-pass`, matching
 /// `landing.sh`'s retirement into that binary), and whatever `landing-pass` resolves to
 /// on the launcher's own PATH right now. world.sh's own comment: "both homes, for the
-/// same reason live_aeons matches both" — this is that set, gathered once so `status` and
+/// same reason live_dwarves matches both" — this is that set, gathered once so `status` and
 /// any other caller can't each grow their own partial copy. `prod` is the caller's own
 /// already-resolved [`spira_prod_or_home`] result — passed through, not re-derived.
 pub fn live_worker_paths(home: &Path, prod: &Path) -> Vec<String> {

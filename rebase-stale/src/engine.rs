@@ -299,7 +299,7 @@ pub fn run(
                 exit: Exit::Conflict,
                 stdout: None,
                 stderr: Some(format!(
-                    "rebase-stale: {br} has a real conflict — returned to an aeon; files: {}",
+                    "rebase-stale: {br} has a real conflict — returned to a dwarf; files: {}",
                     if files.is_empty() { "unknown" } else { &files }
                 )),
             };
@@ -364,7 +364,7 @@ pub fn run(
             exit: Exit::GateRed,
             stdout: None,
             stderr: Some(format!(
-                "rebase-stale: {br} rebased but failed its gate at {new_tip} — returned to an aeon"
+                "rebase-stale: {br} rebased but failed its gate at {new_tip} — returned to a dwarf"
             )),
         };
     }
@@ -375,7 +375,7 @@ pub fn run(
         (Outcome::Clean, "clean")
     };
     log(outcome, &format!("tip={new_tip}"));
-    seam.note(id, &format!("rebase-stale: rebased {br} onto {} ({kind}) and re-certified at {new_tip}. No aeon session used.", info.landref));
+    seam.note(id, &format!("rebase-stale: rebased {br} onto {} ({kind}) and re-certified at {new_tip}. No dwarf session used.", info.landref));
     Report {
         exit: Exit::Ok,
         stdout: Some(format!(

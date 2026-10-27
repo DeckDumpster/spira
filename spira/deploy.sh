@@ -33,8 +33,8 @@
 #   4. Fetch the release tarball from the forge.
 #   5. Check DB migration compatibility before drain.
 #   7. Pre-deploy health check: run doctor; refuse if any FAIL (pre-existing issue, not release).
-#   8. world.sh drain — wait for live aeons to finish; refuse if they do not.
-#      With --force: drain --timeout 0, then slay each live aeon (--keep-work --reopen).
+#   8. world.sh drain — wait for live dwarves to finish; refuse if they do not.
+#      With --force: drain --timeout 0, then slay each live dwarf (--keep-work --reopen).
 #   9. Write SPIRA_PROD to spira.conf before restarting services.
 #  10. release install-tarball — unpack, atomic symlink swap, daemon-reload, restart units.
 #  11. activated release's install.sh — re-render unit files with SPIRA_HOME and SPIRA_PROD
@@ -284,7 +284,7 @@ if [ "$dry_run" = 1 ]; then
     printf 'deploy: would install asset: %s.tar.gz\n' "$release_stem"
     printf 'deploy: would check DB migration compatibility\n'
     if [ "$force" = 1 ]; then
-        printf 'deploy: would world.sh drain --timeout 0, then slay live aeons (--force)\n'
+        printf 'deploy: would world.sh drain --timeout 0, then slay live dwarves (--force)\n'
     else
         printf 'deploy: would world.sh drain\n'
     fi
@@ -418,16 +418,16 @@ if [ -n "$_pre_deploy_fails" ]; then
 fi
 unset _pre_deploy_fails
 
-# Drain: wait for live aeons to finish; refuse if they do not.
-# With --force: set the gate immediately, then slay any remaining aeons.
+# Drain: wait for live dwarves to finish; refuse if they do not.
+# With --force: set the gate immediately, then slay any remaining dwarves.
 log "deploy: draining"
 if [ "$force" = 1 ]; then
     "$_WORLD" drain --timeout 0 2>/dev/null || true
-    for _pf in "$SPIRA_RUN"/aeon-*.pid; do
+    for _pf in "$SPIRA_RUN"/dwarf-*.pid; do
         [ -e "$_pf" ] || continue
         _apid="$(cat "$_pf" 2>/dev/null)"
         [ -n "$_apid" ] && [ -d "/proc/$_apid" ] || { rm -f "$_pf"; continue; }
-        _abead="$(basename "$_pf" .pid)"; _abead="${_abead#aeon-}"; _abead="${_abead#*-}"
+        _abead="$(basename "$_pf" .pid)"; _abead="${_abead#dwarf-}"; _abead="${_abead#*-}"
         [ -n "$_abead" ] || continue
         log "deploy: --force: slaying $_abead"
         "$_SLAY" --bead "$_abead" --keep-work --reopen --why "deploy $tag" || true
@@ -435,7 +435,7 @@ if [ "$force" = 1 ]; then
     unset _pf _apid _abead
 else
     "$_WORLD" drain || {
-        printf 'deploy: drain refused — live aeons did not finish in time\n' >&2
+        printf 'deploy: drain refused — live dwarves did not finish in time\n' >&2
         exit 1
     }
 fi
@@ -531,7 +531,7 @@ _rollback() {
         "$_SC" --user daemon-reload 2>/dev/null || true
         "$_SC" --user list-units "spira-*-${SPIRA_INSTANCE}.service" \
             --state=active --no-legend 2>/dev/null \
-            | awk '{print $1}' | grep -v "spira-aeon-" \
+            | awk '{print $1}' | grep -v "spira-dwarf-" \
             | xargs -r "$_SC" --user restart 2>/dev/null || true
         "$_WORLD" resume 2>/dev/null || true
         printf 'deploy: restored %s\n' "$prev_release" >&2
@@ -542,7 +542,7 @@ _rollback() {
         "$_SC" --user daemon-reload 2>/dev/null || true
         "$_SC" --user list-units "spira-*-${SPIRA_INSTANCE}.service" \
             --state=active --no-legend 2>/dev/null \
-            | awk '{print $1}' | grep -v "spira-aeon-" \
+            | awk '{print $1}' | grep -v "spira-dwarf-" \
             | xargs -r "$_SC" --user restart 2>/dev/null || true
         "$_WORLD" resume 2>/dev/null || true
         printf 'deploy: no prior release — units restored to checkout\n' >&2
@@ -632,7 +632,7 @@ _render_release_units || {
 log "deploy: ensuring cockpit"
 "$_COCKPIT" ensure 2>/dev/null || true
 
-# Remove the drain stamp so aeons can be summoned again.
+# Remove the drain stamp so dwarves can be called again.
 log "deploy: resuming"
 "$_WORLD" resume
 

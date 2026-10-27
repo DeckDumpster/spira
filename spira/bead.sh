@@ -12,7 +12,7 @@
 #   bead.sh contract                 legal personas, repos and kinds, read from source
 #   bead.sh amend <id> [--note "<text>"] [--body-file F --replace | --append-body F] [--express] [--priority N]
 #   bead.sh amend <id> --live --note "<text>" | --append-body F [--ack-within <dur>]
-#                                     block the live aeon until `work ack <amend-id>`; default 10m
+#                                     block the live dwarf until `work ack <amend-id>`; default 10m
 #   bead.sh amend <id> --ack <amend-id> --accept | --decline "<why>"
 #   bead.sh amend --enforce <amend-id>
 #                                     after a decline or the deadline: slay, requeue, amendment merged

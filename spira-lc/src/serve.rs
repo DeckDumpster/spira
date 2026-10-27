@@ -9,7 +9,7 @@
 //!
 //! Deploys inert: nothing connects to this socket yet. The wire format (one JSON line in —
 //! an argv array, exactly what `env::args().skip(1)` would have produced — one JSON line
-//! out) is deliberately minimal; the aeon-facing semantic layer (design §3.5, a separate
+//! out) is deliberately minimal; the dwarf-facing semantic layer (design §3.5, a separate
 //! bead) is the real client this exists for.
 
 use std::io::{BufRead, BufReader, Write};
@@ -304,7 +304,7 @@ pub const TOOL_DEADLINE: Duration = Duration::from_secs(305);
 
 /// The request's deadline: [`REQUEST_DEADLINE`] for every store call. Two verbs are batch
 /// jobs this service brokers, not calls, and keep the bound they had: `work`'s lane verbs run a
-/// harness tool (groomer sweep, bead filing, mail) for the aeon, and `facts-query` is census's
+/// harness tool (groomer sweep, bead filing, mail) for the dwarf, and `facts-query` is census's
 /// aggregate over the whole fact history.
 fn request_deadline(argv: &[String]) -> Duration {
     match argv.first().map(String::as_str) {

@@ -19,7 +19,7 @@ queue — so the numbers that matter are the depth of that queue, how long its o
 has waited, and how long it has been since anything came out of the far end.
 
 **It does not decide** (the operator's call, 2026-09-07, over a threshold-driven detector).
-This program gathers and hands over; an Ops aeon reads the snapshot and decides what is
+This program gathers and hands over; an Ops dwarf reads the snapshot and decides what is
 wrong and what beads to cut. Thresholds anticipate only the outage already had — every
 stall so far has been a shape nobody had a number for.
 

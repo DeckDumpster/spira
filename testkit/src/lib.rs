@@ -73,7 +73,7 @@ impl Drop for TempDir {
 /// A spawned test fixture process, killed when this value is dropped — including when a
 /// failing test unwinds out from under it (sp-r70dc).
 ///
-/// A test fixture that stands in for a long-lived process (a fake aeon, a fake gate —
+/// A test fixture that stands in for a long-lived process (a fake dwarf, a fake gate —
 /// typically `bash -c "exec -a NAME sleep 9999"`, held alive only long enough for one
 /// assertion) used to be killed by an explicit `child.kill(); child.wait();` written after
 /// the assertion. A failed assertion, a `panic!`, or the test binary itself being killed

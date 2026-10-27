@@ -15,7 +15,7 @@
 # a working implementation from a no-op.
 #
 # RETIRED (sp-j89pd, wave 4.2): rune_fenced (lib.sh) had zero live callers — it is now
-# aeon::conf::rune_fenced (aeon/src/conf.rs) and release::stage (release/src/stage.rs).
+# dwarf::conf::rune_fenced (dwarf/src/conf.rs) and release::stage (release/src/stage.rs).
 # Its "scope label present/absent/empty" table, item 4 of this suite, is deleted with it.
 #
 # defect: law-scope-is-a-runtime-key (sp-9xsjm), sp-4mpy6

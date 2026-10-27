@@ -1,16 +1,16 @@
 # qa.rune — the QA persona: sweeps the scar record, proposes test beads for unguarded
 # defects, and records what it looked at whether or not it finds anything.
 #
-# A rune is a persona DEFINITION; an aeon is one summoned instance of it. Four things:
+# A rune is a persona DEFINITION; a dwarf is one called instance of it. Four things:
 # a predicate carving its partition out of the graph, the memories it must read, the tools
 # it may use, and what wakes it.
 
 RUNE_NAME=qa
 RUNE_DESC="QA — sweeps the scar record and proposes test beads for unguarded defects"
 
-# The fence. The fence check in aeon.sh requires RUNE_LABELS to contain SPIRA_SCOPE_LABEL
+# The fence. The fence check in dwarf.sh requires RUNE_LABELS to contain SPIRA_SCOPE_LABEL
 # (when non-empty) before both sweep and claim modes; it runs before the sweep branch and
-# cannot be skipped. QA runs in beadless sweep mode (aeon.sh --sweep) on every timer tick —
+# cannot be skipped. QA runs in beadless sweep mode (dwarf.sh --sweep) on every timer tick —
 # it does not claim qa-sweep beads. The 'qa-sweep' suffix is kept so that a manually-filed
 # sweep bead is still claimable if one is ever created by hand.
 RUNE_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}qa-sweep"
@@ -22,7 +22,7 @@ RUNE_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"
 RUNE_MEMORY_PREFIXES="law-"
 
 # NO RUNE_REPO. The repository comes from the BEAD — a `repo:<name>` label resolved
-# through repo-map. The sweep bead carries no repo: label, so aeon.sh falls back to
+# through repo-map. The sweep bead carries no repo: label, so dwarf.sh falls back to
 # spira_home_repo(), which is the harness's own home checkout.
 
 # HAIKU. QA is recognition and enumeration rather than construction — it reads a small,
@@ -35,15 +35,15 @@ RUNE_MEMORY_PREFIXES="law-"
 # VERIFIED, NOT ASSUMED. `claude --model claude-haiku-4-5-20251001 -p ...` answers on this
 # box. The dated id is the one that answers — the catalog at CLI 2.1.263 rejects
 # claude-haiku-5 and claude-haiku-4-6 outright. An id the CLI rejects does not fail loudly:
-# every summon dies and the role looks merely quiet, which is the shape of outage this
+# every call dies and the role looks merely quiet, which is the shape of outage this
 # harness is worst at noticing. Probe a candidate id before writing it here.
 RUNE_MODEL=claude-haiku-4-5-20251001
 RUNE_MAX_CONCURRENT=1
 
-# THE QA LANE — QA must never compete with builders for the aeon pool. A sweep that is
+# THE QA LANE — QA must never compete with builders for the dwarf pool. A sweep that is
 # waiting on a pool slot already occupied by builders misses exactly the defects that
 # escaped during a busy sprint. RUNE_LANE=qa places it in a named partition whose capacity
-# is its own RUNE_MAX_CONCURRENT, never drawn from SPIRA_MAX_AEONS.
+# is its own RUNE_MAX_CONCURRENT, never drawn from SPIRA_MAX_DWARVES.
 #
 # The qa lane is declared in SPIRA_LANES (default: "ops qa"), and a user who wants
 # QA-level scheduling for their own persona names their lane there and sets RUNE_LANE=qa

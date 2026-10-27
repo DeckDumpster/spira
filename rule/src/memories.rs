@@ -2,7 +2,7 @@
 //! row Q, wave 4.35, sp-kelr2). Pure string transforms; the cache read/write and the
 //! `SPIRA_MEMORIES_CMD`/`bdq` seam that fills `mem_json` live in `main.rs` (I/O at the edge,
 //! same split every crate in this workspace draws). `groom_claims_verified`/
-//! `bead_named_paths`, row Q's other two functions, are a separate bead's scope (aeon-only,
+//! `bead_named_paths`, row Q's other two functions, are a separate bead's scope (dwarf-only,
 //! wave4-decomposition.md bead 34) and are not touched here.
 
 use std::collections::BTreeMap;

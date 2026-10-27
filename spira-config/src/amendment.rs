@@ -27,7 +27,7 @@ pub struct Record {
 }
 
 pub fn dir(mail: &str, bead: &str) -> PathBuf {
-    Path::new(mail).join(format!("aeon-{bead}")).join("amend")
+    Path::new(mail).join(format!("dwarf-{bead}")).join("amend")
 }
 
 fn file(mail: &str, bead: &str, id: &str) -> PathBuf {
@@ -125,7 +125,7 @@ pub fn find(mail: &str, id: &str) -> Option<Record> {
     }
     std::fs::read_dir(mail).ok()?.filter_map(|e| e.ok()).find_map(|e| {
         let name = e.file_name().into_string().ok()?;
-        load(mail, name.strip_prefix("aeon-")?, id)
+        load(mail, name.strip_prefix("dwarf-")?, id)
     })
 }
 
@@ -184,7 +184,7 @@ pub fn submit_refusal(mail: &str, bead: &str) -> Option<String> {
     ))
 }
 
-/// What the hook shows the blocked aeon.
+/// What the hook shows the blocked dwarf.
 pub fn block_text(r: &Record) -> String {
     format!(
         "Amendment {id} from {who} must be answered before you do anything else.\n\n{text}\n\nRun `work ack {id} --accept` to take it on, or `work ack {id} --decline \"<why>\"`. Unanswered by deadline (epoch {dl}) or declined, the amender may slay this session and requeue the bead with the amendment merged in.",
@@ -201,7 +201,7 @@ mod tests {
 
     fn tmp(tag: &str) -> testkit::TempDir {
         let d = testkit::TempDir::new(tag);
-        std::fs::create_dir_all(d.join("aeon-sp-x1")).unwrap();
+        std::fs::create_dir_all(d.join("dwarf-sp-x1")).unwrap();
         d
     }
 

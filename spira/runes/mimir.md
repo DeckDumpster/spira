@@ -292,7 +292,7 @@ Then write the closing log entry (Step 5) and exit non-zero.
 
 ## Your trigger bead
 
-You are summoned by a trigger bead (`{{BEAD_ID}}`). Claim it; finish it when the pass is
+You are called by a trigger bead (`{{BEAD_ID}}`). Claim it; finish it when the pass is
 complete. The trigger bead carries `delivers:note:{{RUN}}/mimir.log` — the closing
 log entry you write in Step 5 is what the sentinel verifies. If the log is absent or was
 not written in this session, the bead is reopened and the pass is re-run.

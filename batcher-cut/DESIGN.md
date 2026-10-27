@@ -153,7 +153,7 @@ says why and not only that.
 round order (`merge_member`, the round's own commit subject), committed on
 `spira/batcher-attr/<repo>-<round>-j<job>`. The build a job asks round-vm for is `artifacts`
 (reuse the round's release binaries) when no removed member changed anything but `*.sh`/`*.md`
-files, else `aeon` (a fresh debug build of that tree); the survivors' verification is `round`.
+files, else `dwarf` (a fresh debug build of that tree); the survivors' verification is `round`.
 
 ### 4.4 Tests (`cargo test -p batcher -p batcher-cut`, each well under a second)
 

@@ -34,7 +34,7 @@ git -C "$REPO" add -A; git -C "$REPO" commit -q -m "base: the suite the sidecar 
 timeout 5 git -C "$REPO" push -q origin main; timeout 5 git -C "$REPO" fetch -q origin
 gate_fixture_branch "$BR"
 
-# HOST MAILBOX SENTINEL (sp-rya9d): models whatever SPIRA_MAIL an outer process (an aeon
+# HOST MAILBOX SENTINEL (sp-rya9d): models whatever SPIRA_MAIL an outer process (a dwarf
 # session, or a batch container's own install) has already exported by the time this suite
 # runs. conf.sh's `: "${SPIRA_MAIL:=...}"` only derives from SPIRA_RUN when SPIRA_MAIL is
 # still unset — overriding SPIRA_RUN below is not enough once something upstream already set

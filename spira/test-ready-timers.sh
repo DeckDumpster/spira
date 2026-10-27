@@ -154,7 +154,7 @@ run_ready() {
     done
     [ "${1:-}" = "--" ] && shift
     tl_config SPIRA_PATH="$BIN" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_RUN="$RUN" SPIRA_DB="$DB" \
-        SPIRA_AEON_WARM_BASE="${WARM_BASE-$TMP/warm}" SPIRA_BD="$BIN/bd" SPIRA_INSTANCE="prod" SPIRA_LOOM_ADDR="127.0.0.1:8788" \
+        SPIRA_DWARF_WARM_BASE="${WARM_BASE-$TMP/warm}" SPIRA_BD="$BIN/bd" SPIRA_INSTANCE="prod" SPIRA_LOOM_ADDR="127.0.0.1:8788" \
         SPIRA_LOOM_BUDGET_MS="1500" SPIRA_AGENT="fake-agent"
     env -i \
         HOME="$FAKE_HOME" \
@@ -239,11 +239,11 @@ want "store wait: the FAIL names what it waited for" "waiting for the content st
 want "store wait: the FAIL keeps the store's own state" "no metadata.json" "$out"
 
 echo ""
-echo "--- aeon warm base ---"
+echo "--- dwarf warm base ---"
 
 echo "positive control: warm base unset -> FAIL, never armed"
 out="$(WARM_BASE= run_ready -- || true)"
-want "warm-unset: FAIL line" "  FAIL  SPIRA_AEON_WARM_BASE is not set" "$out"
+want "warm-unset: FAIL line" "  FAIL  SPIRA_DWARF_WARM_BASE is not set" "$out"
 nowant "warm-unset: not armed" "armed: loop is ready" "$out"
 WARM_BASE= run_ready -- >/dev/null 2>&1 \
     && bad "warm-unset: should exit non-zero" "exited 0" \
@@ -251,11 +251,11 @@ WARM_BASE= run_ready -- >/dev/null 2>&1 \
 
 echo "warm base names a missing directory -> FAIL"
 out="$(WARM_BASE="$TMP/nowhere" run_ready -- || true)"
-want "warm-missing: FAIL line" "  FAIL  aeon warm base $TMP/nowhere is not a writable directory" "$out"
+want "warm-missing: FAIL line" "  FAIL  dwarf warm base $TMP/nowhere is not a writable directory" "$out"
 
 echo "warm base present -> pass"
 out="$(run_ready --)"
-want "warm-ok: pass line" "  pass  aeon warm base $TMP/warm" "$out"
+want "warm-ok: pass line" "  pass  dwarf warm base $TMP/warm" "$out"
 
 echo ""
 echo "--- exit code ---"

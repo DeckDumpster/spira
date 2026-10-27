@@ -39,7 +39,7 @@
 #                                                           {state, wip, dwell_p50_s, dwell_max_s}
 #   tsd-query.sh rework [<hours>]                          reopens (to REWORK) vs landed beads:
 #                                                           one '*' row, then one row per reason
-#   tsd-query.sh time   [<hours>]                          seconds in aeon sessions, gate runs,
+#   tsd-query.sh time   [<hours>]                          seconds in dwarf sessions, gate runs,
 #                                                           batch rounds, and empty slots
 #   tsd-query.sh slots  [<hours>]                          empty-slot-minutes, split by whether
 #                                                           work was ready

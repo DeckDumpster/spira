@@ -1666,7 +1666,7 @@ fn member_lint_reds(w: &World, b: &Batch, out: &str) -> Vec<(Member, Vec<String>
 /// A red forge-batch step is judged like a red VM-round suite: the Failed event opens the
 /// mending row and a mender bead names the member and the step. The member's red tip stays
 /// barred, so the next batch carries only a mended tip.
-fn summon_forge_mender(
+fn call_forge_mender(
     w: &World,
     c: &Ctx,
     b: &Batch,
@@ -1701,7 +1701,7 @@ fn summon_forge_mender(
         .map(|(m, _)| m.id.as_str())
         .collect::<Vec<_>>()
         .join(",");
-    super::round::summon_mender(
+    super::round::call_mender(
         w,
         c,
         &b.kv,
@@ -1728,7 +1728,7 @@ fn eject_red_members(
     let (name, pr) = (b.name, &b.pr);
     let batch_id = b.kv.get("batch_id").unwrap_or("").to_string();
     let mut failed = false;
-    summon_forge_mender(w, c, b, faulty, step);
+    call_forge_mender(w, c, b, faulty, step);
     for (m, lines) in faulty {
         let why = format!("batch PR {pr} red at {}: {}", m.tip, lines.join(" | "));
         if let Err(e) = super::round::record_batch_red(c, &m.id, &m.tip) {
@@ -1957,7 +1957,7 @@ fn red(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
     };
     if let Some(j) = b.kv.get("judgement").filter(|j| !j.is_empty()) {
         w.out(format!(
-            "verdict {name}: PR {pr} red — {bo}judgement already summoned ({j})"
+            "verdict {name}: PR {pr} red — {bo}judgement already called ({j})"
         ));
         return OK;
     }
@@ -1995,12 +1995,12 @@ fn red(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
         } else {
             "batcher-owned but ".into()
         };
-        w.err(format!("verdict {name}: PR {pr} red ({suites}) — {lead}the batcher is off (SPIRA_BATCHER_ENABLE=0); cannot summon judgement"));
+        w.err(format!("verdict {name}: PR {pr} red ({suites}) — {lead}the batcher is off (SPIRA_BATCHER_ENABLE=0); cannot call judgement"));
         return FAIL;
     }
     let Some(bin) = c.s.batcher_bin.as_ref() else {
         w.err(format!(
-            "verdict {name}: PR {pr} red ({suites}) — no batcher program; cannot summon judgement"
+            "verdict {name}: PR {pr} red ({suites}) — no batcher program; cannot call judgement"
         ));
         return FAIL;
     };
@@ -2027,7 +2027,7 @@ fn red(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
                 return FAIL;
             }
             w.out(format!(
-                "verdict {name}: PR {pr} red ({suites}) — {bo}summoned judgement ({id})"
+                "verdict {name}: PR {pr} red ({suites}) — {bo}called judgement ({id})"
             ));
             OK
         }

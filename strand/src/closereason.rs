@@ -1,4 +1,4 @@
-//! The statute-phrase predicates over a close reason, shared by the close-time fence (aeon)
+//! The statute-phrase predicates over a close reason, shared by the close-time fence (dwarf)
 //! and the invalid-close detector so the two cannot disagree about what an unfinished close
 //! is (law-no-close-reason-admits-unfinished).
 //!

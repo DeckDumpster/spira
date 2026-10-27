@@ -273,7 +273,7 @@ fn run_main() -> ExitCode {
         }
     }
 
-    // Path collisions, landref currency and live aeons — refuse before touching anything,
+    // Path collisions, landref currency and live dwarves — refuse before touching anything,
     // unless overridden.
     if nonempty_env("SPIRA_INSTALL_FORCE").is_none() {
         if let Err(lines) = install::checks::preflight(&instance, &host, &systemctl) {
@@ -359,7 +359,7 @@ fn run_main() -> ExitCode {
     for glob in [format!("spira-*-{instance}.service"), format!("spira-*-{instance}.timer")] {
         let mut candidates = systemctl.list_matching(&glob);
         candidates.extend(glob_dir(&dir, &glob));
-        for u in install_units::prune_targets(candidates.iter().map(|s| s.as_str()), &expected, |n| n.starts_with("spira-watch-") || n.starts_with("spira-aeon-")) {
+        for u in install_units::prune_targets(candidates.iter().map(|s| s.as_str()), &expected, |n| n.starts_with("spira-watch-") || n.starts_with("spira-dwarf-")) {
             let _ = systemctl.disable_now(&u);
             let _ = std::fs::remove_file(dir.join(&u));
             println!("pruned    {u} (no longer in the manifest)");

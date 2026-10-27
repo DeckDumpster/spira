@@ -3,7 +3,7 @@
 # test-install-dolt-refuse-stop.sh — dolt-beads.service ships RefuseManualStop=yes, and
 # install.sh's own apply path for it never asks systemd for a stop/restart job.
 #
-# WHY THIS UNIT CARRIES THE GUARD (sp-39gqq): aeons stopped the live bead database twice
+# WHY THIS UNIT CARRIES THE GUARD (sp-39gqq): dwarves stopped the live bead database twice
 # on 2026-09-25 by running suites directly on the host. RefuseManualStop=yes denies
 # `systemctl stop`/`restart` on the unit unless the caller lifts the refusal explicitly
 # (see the unit's own header for the sanctioned deliberate-stop path). That refusal also

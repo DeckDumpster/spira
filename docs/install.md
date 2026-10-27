@@ -9,7 +9,7 @@ list is `spira/deps.toml`, which `doctor` reads:
 | Tier | Tools | Notes |
 |---|---|---|
 | runtime (the loop cannot run) | `bd`, `dolt`, `git`, `python3`, `flock`, `tar`, `gunzip`, `duckdb` | `bd`, `dolt`, `duckdb`, `gh`, `jq`, `zstd`, `sccache`, `awscli2`, `inotify-tools`, `aerc`, `go`, `nodejs`, `openssl`, `terraform` and `tailscale` are pinned in `flake.nix` as the `spira-env` package; the installer builds it with `nix build` when `nix` is present. |
-| optional (one feature off) | `claude` (the agent CLI; `SPIRA_AGENT` names the binary), `tmux` (cockpit), `gh` + `openssl` (`pr`-mode repositories), `jq`, `zstd`, `aws` (EC2 spill), `node`, `cargo` | With no `claude` the loop is armed and summons nothing; `ready.sh` warns. |
+| optional (one feature off) | `claude` (the agent CLI; `SPIRA_AGENT` names the binary), `tmux` (cockpit), `gh` + `openssl` (`pr`-mode repositories), `jq`, `zstd`, `aws` (EC2 spill), `node`, `cargo` | With no `claude` the loop is armed and calls nothing; `ready.sh` warns. |
 | operator | `sccache` (WebDAV backend), `inotifywait`, `aerc`, `hunk`, `go` | The installer fetches `duckdb`, `sccache`, `inotifywait` into `~/.local/bin` and copies a vendored `aerc` from the release when they are missing. |
 | development | `rustup` (toolchain pinned by `rust-toolchain.toml`), `nix`, `podman`, `bd-embedded`, `terraform` | `podman` runs the test containers; `bd-embedded` is the embedded-Dolt build of `bd` used as the test-fixture engine. |
 
@@ -58,7 +58,7 @@ terminal it prompts; with neither it refuses and names the missing inputs.
 units, lifecycle store, desired state, hooks, cockpit, verify (ending with `ready.sh`).
 `--system-user` and `--populate-lifecycle` are standalone single-phase modes. Exit codes: 0
 ready, 1 preflight refused, 2 a phase failed, 3 installed but not ready, 5 a conflict (another
-copy's units, a live aeon, the gate lock, an instance/run-dir or Dolt-port collision; the
+copy's units, a live dwarf, the gate lock, an instance/run-dir or Dolt-port collision; the
 message names the remedy and the override `SPIRA_INSTALL_CONFLICT_CONSIDERED=1`). It refuses a
 beads database inside a git checkout, or one whose own repository has a remote.
 
@@ -67,7 +67,7 @@ To re-render and re-enable units without a full install: `units-install [<instan
 `unit-ensure [--diff]`. After a release activates, `spira/first-run.sh --range <A>..<B> --repo
 <path>` starts each newly shipped oneshot unit once and files a bead for any that fails.
 
-Put `<releases>/current/bin` and `<releases>/current/spira` on your `PATH`; units and aeons get
+Put `<releases>/current/bin` and `<releases>/current/spira` on your `PATH`; units and dwarves get
 that prefix from their launchers.
 
 ## Configuration
@@ -86,7 +86,7 @@ write `spira.toml` or the repo map; the `config-fence` lint refuses any other co
 | Command | Does |
 |---|---|
 | `spira-config validate [file]` | exit 1 naming the TOML path of the first error; also refuses a `[spira]` table with no `id_prefix` |
-| `spira-config get <dotted.path> [file]` | one value, e.g. `spira.max_aeons`, `repo.<name>.mode`, `persona.builder.model` |
+| `spira-config get <dotted.path> [file]` | one value, e.g. `spira.max_dwarves`, `repo.<name>.mode`, `persona.builder.model` |
 | `spira-config set <dotted.path> <value> <file>` / `unset <dotted.path> <file>` | edit one value in place |
 | `spira-config export --sh [file]` | `[spira]` as quoted `KEY=value` lines |
 | `spira-config resolve --sh\|--sh-all [--conf-d DIR] [file]` | env > toml > default, as shell assignments |
@@ -98,7 +98,7 @@ write `spira.toml` or the repo map; the `config-fence` lint refuses any other co
 
 On an installed (read-only) release, callers that regenerate config resolve their write target
 through `spira-config writeback <candidate>`, which redirects away from the release unless
-`SPIRA_CONFIG_WRITE=1`. `aeons` (below) is the friendly door for the two pool-size keys.
+`SPIRA_CONFIG_WRITE=1`. `dwarves` (below) is the friendly door for the two pool-size keys.
 
 **The key registry** is `spira/conf.d/<KEY>`, one file per key: `TYPE=` (`string|u32|u64|bool|list|onoff|czar_stage`),
 optional `MAX=` and `SCHEMA=`, `GROUP=`, `DOC=`, and a default block holding the default as one
@@ -133,8 +133,8 @@ Register one with `spira-config repo add <name> --path P --queue local|forge [--
 repositories other than the harness, its test entry in `.spira/testenv.toml`.
 
 **Personas.** `spira/runes/<name>.rune` and `<name>.md` ([concepts](concepts.md)). The live model per
-persona is `persona.<name>.model`; the `RUNE_MODEL` line only seeds it. The aeon pool size is
-`spira.max_aeons`.
+persona is `persona.<name>.model`; the `RUNE_MODEL` line only seeds it. The dwarf pool size is
+`spira.max_dwarves`.
 
 ## Starting and stopping the world
 
@@ -144,16 +144,16 @@ persona is `persona.<name>.model`; the `RUNE_MODEL` line only seeds it. The aeon
 | Command | Effect |
 |---|---|
 | `world status` | halted / draining / running, essential timers, round-VM state |
-| `world stop [--why "..."] [--work\|--observability\|--maintenance\|--all\|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS]` | halt planes (default `work`); `--hard` = work + observability; live aeons are stopped through `slay`, never killed |
+| `world stop [--why "..."] [--work\|--observability\|--maintenance\|--all\|--hard] [--round-drain] [--round-drain-timeout SECS] [--grace SECS]` | halt planes (default `work`); `--hard` = work + observability; live dwarves are stopped through `slay`, never killed |
 | `world start [--work\|--observability\|--maintenance\|--all]` | default starts work + observability |
-| `world drain [--reboot] [--timeout SECS \| --deadline SECS]` | stop summoning new aeons only; loop and landing keep running; `--deadline` slays what remains at the end |
+| `world drain [--reboot] [--timeout SECS \| --deadline SECS]` | stop calling new dwarves only; loop and landing keep running; `--deadline` slays what remains at the end |
 | `world resume` | lift a drain |
 
 `world` never stops Dolt, the cockpit or the Concierge. A halt names any round in flight;
 `--round-drain` waits for it first.
 
-Pool size: `aeons` (show), `aeons set <n>` (fleet ceiling across all personas), `aeons unset`,
-`aeons pool <n>` (the task pool, `SPIRA_MAX_AEONS`). Stop one aeon: `aeon stop <bead> [--why
+Pool size: `dwarves` (show), `dwarves set <n>` (fleet ceiling across all personas), `dwarves unset`,
+`dwarves pool <n>` (the task pool, `SPIRA_MAX_DWARVES`). Stop one dwarf: `dwarf stop <bead> [--why
 <text>]` or `slay --bead <id> [--why "<text>"] [--keep-work] [--close "<reason>" | --reopen]`.
 
 ## Checking health

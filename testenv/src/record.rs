@@ -118,7 +118,7 @@ impl Mode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Producer {
-    /// a person or aeon named the suites via `--suites`
+    /// a person or dwarf named the suites via `--suites`
     Explicit,
     /// the selector derived them from the branch diff
     Diff,

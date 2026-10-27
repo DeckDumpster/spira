@@ -21,11 +21,11 @@ fn line_re() -> &'static Regex {
 fn state_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| {
-        Regex::new(r"^state: (?:\w+=\S+ )?open=([0-9]+) (?:plan_)?ready=([0-9]+) in_progress=([0-9]+) aeons=([0-9]+)").unwrap()
+        Regex::new(r"^state: (?:\w+=\S+ )?open=([0-9]+) (?:plan_)?ready=([0-9]+) in_progress=([0-9]+) dwarves=([0-9]+)").unwrap()
     })
 }
 
-const SUMMONED: &str = "— summoning";
+const CALLED: &str = "— calling";
 const WITHHELD: [&str; 1] = ["out of capacity"];
 
 fn truthy(v: Option<&Value>) -> bool {
@@ -106,8 +106,8 @@ pub fn iso_to_epoch(s: &str) -> i64 {
 struct Pass {
     at: i64,
     ready: i64,
-    aeons: i64,
-    summoned: bool,
+    dwarves: i64,
+    called: bool,
     withheld: bool,
     complete: bool,
     last: i64,
@@ -123,8 +123,8 @@ fn parse_passes(text: &str) -> Vec<Pass> {
             passes.push(Pass {
                 at,
                 ready: st[2].parse().unwrap_or(0),
-                aeons: st[4].parse().unwrap_or(0),
-                summoned: false,
+                dwarves: st[4].parse().unwrap_or(0),
+                called: false,
                 withheld: false,
                 complete: false,
                 last: at,
@@ -133,8 +133,8 @@ fn parse_passes(text: &str) -> Vec<Pass> {
         }
         let Some(cur) = passes.last_mut() else { continue };
         cur.last = at;
-        if msg.contains(SUMMONED) {
-            cur.summoned = true;
+        if msg.contains(CALLED) {
+            cur.called = true;
         }
         if WITHHELD.iter().any(|w| msg.contains(w)) {
             cur.withheld = true;
@@ -147,7 +147,7 @@ fn parse_passes(text: &str) -> Vec<Pass> {
 }
 
 fn starved(p: &Pass) -> bool {
-    p.ready > 0 && p.aeons == 0 && !p.summoned && !p.withheld
+    p.ready > 0 && p.dwarves == 0 && !p.called && !p.withheld
 }
 
 fn fmt_age(sec: i64) -> String {
@@ -238,7 +238,7 @@ pub fn classify(o: &Value) -> Result<Vec<Firing>, String> {
                      LOG       {}, last written {} ago\n\
                      SHAPE     {}\n\n\
                      Nothing is being claimed, landed, reaped or reclaimed while this holds.\n\
-                     Aeons already running are unaffected and will finish.\n\n\
+                     Dwarves already running are unaffected and will finish.\n\n\
                      --- sentinel.log (tail) ---\n{}",
                     fmt_age(age),
                     if done.is_some() { "" } else { " (no completed pass in the tail at all)" },
@@ -260,15 +260,15 @@ pub fn classify(o: &Value) -> Result<Vec<Firing>, String> {
                 if fresh && window.iter().all(|p| starved(p)) {
                     let rows: Vec<String> = window
                         .iter()
-                        .map(|p| format!("  {}s ago  ready={:<3} aeons={}  summoned=no", now - p.at, p.ready, p.aeons))
+                        .map(|p| format!("  {}s ago  ready={:<3} dwarves={}  called=no", now - p.at, p.ready, p.dwarves))
                         .collect();
                     alert(
-                        "summon-starved",
-                        format!("{} ready beads, no aeon running, and {} passes in a row summoned nothing", last.ready, starve_passes),
+                        "call-starved",
+                        format!("{} ready beads, no dwarf running, and {} passes in a row called nothing", last.ready, starve_passes),
                         format!(
                             "PASSES    {} consecutive, spanning {}\n\
                              READY     {} claimable beads at the last pass\n\
-                             AEONS     0 — every slot is free, so this is not the concurrency cap\n\
+                             DWARVES     0 — every slot is free, so this is not the concurrency cap\n\
                              WITHHELD  no — the account's window did not decline\n\
                              NOISE     2 passes of 962 matched this rule over 33 hours, in one streak of 2; the threshold is {}\n\n\
                              The loop is running and is refusing to start work it has capacity for.\n\
@@ -292,7 +292,7 @@ pub fn classify(o: &Value) -> Result<Vec<Firing>, String> {
             "The Spira beads database did not answer".into(),
             format!(
                 "DB        {}\nERROR     {}\n\n\
-                 Every claim, close, lease and label goes through this. Aeons already\n\
+                 Every claim, close, lease and label goes through this. Dwarves already\n\
                  running will fail their next bd call; the sentinel's passes will complete\n\
                  having done nothing. This alert is in {} because it could not be written\n\
                  to beads — which is the condition it is reporting.",
@@ -362,7 +362,7 @@ pub fn classify(o: &Value) -> Result<Vec<Firing>, String> {
             .collect();
         alert(
             "lease-unreclaimed",
-            format!("{} bead(s) have held a lease with no live aeon for over {}", ghosts.len(), fmt_age(ghost_stale)),
+            format!("{} bead(s) have held a lease with no live dwarf for over {}", ghosts.len(), fmt_age(ghost_stale)),
             format!(
                 "THRESHOLD {} — strand reclaims a ghost within one pass and escalates once\n\
                  if it cannot, so a ghost still standing after this is the REAPER failing,\n\
@@ -418,7 +418,7 @@ mod tests {
     fn an_unreadable_log_alerts_and_a_halted_stale_one_does_not() {
         let f = classify(&json!({"now": 1800000000, "sentinel_log_readable": false})).unwrap();
         assert_eq!(f.iter().map(|x| x.key.as_str()).collect::<Vec<_>>(), ["sentinel-unobservable"]);
-        let log = "2026-09-06T18:00:00Z spira: state: open=1 ready=0 in_progress=0 aeons=0\n2026-09-06T18:00:20Z spira: pass complete\n";
+        let log = "2026-09-06T18:00:00Z spira: state: open=1 ready=0 in_progress=0 dwarves=0\n2026-09-06T18:00:20Z spira: pass complete\n";
         let o = json!({"now": 1800000000, "sentinel_log_readable": true, "sentinel_log": log, "world_halted": true});
         assert!(classify(&o).unwrap().is_empty());
         let o = json!({"now": 1800000000, "sentinel_log_readable": true, "sentinel_log": log});

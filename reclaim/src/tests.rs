@@ -26,7 +26,7 @@ fn cfg(root: &Path) -> Config {
     Config {
         patterns: vec![format!("{}/worktree/.tgt-*", root.display()), format!("{}/tgt-*", root.display()), format!("{}/worktree/*/target", root.display())],
         require: vec![],
-        lease_dir: Some(root.join("aeon")),
+        lease_dir: Some(root.join("dwarf")),
         idle_secs: 2 * DAY,
         min_free_mib: 100,
         target_free_mib: 200,
@@ -55,8 +55,8 @@ fn stale_unheld_targets_go_and_fresh_held_leased_stay() {
     let fresh = tgt(root, "worktree/.tgt-fresh", 60);
     let held = tgt(root, "worktree/.tgt-held", 9 * DAY);
     let live_wt = tgt(root, "worktree/sp-live/target", 9 * DAY);
-    fs::create_dir_all(root.join("aeon")).unwrap();
-    fs::write(root.join("aeon/sp-live.lease"), "").unwrap();
+    fs::create_dir_all(root.join("dwarf")).unwrap();
+    fs::write(root.join("dwarf/sp-live.lease"), "").unwrap();
     let (r, log) = go(&cfg(root), &[held.join("artifact")], 10);
     assert!(r.is_ok(), "{log:?}");
     for gone in [&stale, &stale2, &stale_wt] {

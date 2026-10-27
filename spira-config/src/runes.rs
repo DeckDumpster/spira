@@ -76,7 +76,7 @@ fn extract_label_overlay(resolved: &crate::resolve::Resolved) -> BTreeMap<String
 /// exists to catch instead of letting it widen a partition silently.
 ///
 /// RESOLVED ONCE PER PROCESS per (home, environment): every [`rune_get`] asked for it, and one
-/// `sentinel --summon` makes ~200 such lookups — each re-deriving the repo through git and
+/// `sentinel --call` makes ~200 such lookups — each re-deriving the repo through git and
 /// re-resolving the whole config (~100 ms), 19 s of a pass. A process pins the config it
 /// started with (law-long-lived-processes-pin-their-config).
 fn rune_label_overlay(home: &Path) -> BTreeMap<String, String> {
@@ -162,7 +162,7 @@ pub fn rune_get(home: &Path, rune: &str, var: &str, default: &str) -> String {
     if !f.is_file() {
         return default.to_string();
     }
-    // ONE read per (file as it stands, var, default, overlay) per process: a summon asked the
+    // ONE read per (file as it stands, var, default, overlay) per process: a call asked the
     // same few fields of the same six runes ~200 times. The file's mtime is in the key, so an
     // edited rune is read again.
     static GOT: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<(PathBuf, Option<std::time::SystemTime>, String, String, BTreeMap<String, String>), String>>> = std::sync::OnceLock::new();
@@ -408,14 +408,14 @@ pub fn spira_runes(home: &Path, env_override: Option<&str>) -> String {
     format!("{fixed_trimmed}{elastic_sep}{elastic_trimmed}")
 }
 
-/// `spira_task_runes` — the personas the sentinel's pool summons: everything from
+/// `spira_task_runes` — the personas the sentinel's pool calls: everything from
 /// [`spira_runes`] that is not a party member (`RUNE_ROLE=party`) and not a lane rune
-/// (`RUNE_LANE` set), and that is summonable at all (`RUNE_SUMMON=auto`, the default).
+/// (`RUNE_LANE` set), and that is callable at all (`RUNE_CALL=auto`, the default).
 pub fn spira_task_runes(home: &Path, env_override: Option<&str>) -> String {
     let roster = spira_runes(home, env_override);
     let mut out = String::new();
     for f in roster.split_whitespace() {
-        if rune_get(home, f, "RUNE_SUMMON", "auto") != "auto" {
+        if rune_get(home, f, "RUNE_CALL", "auto") != "auto" {
             continue;
         }
         if rune_get(home, f, "RUNE_ROLE", "task") == "party" {
@@ -431,14 +431,14 @@ pub fn spira_task_runes(home: &Path, env_override: Option<&str>) -> String {
 }
 
 /// `spira_lane_runes` — the personas that belong to a declared lane (`RUNE_LANE` set),
-/// drawn from [`spira_runes`] under the same `RUNE_SUMMON=auto` gate `spira_task_runes`
-/// applies (the sentinel summons from both lists, so a persona excluded from one by
-/// `RUNE_SUMMON` must be excluded from the other too).
+/// drawn from [`spira_runes`] under the same `RUNE_CALL=auto` gate `spira_task_runes`
+/// applies (the sentinel calls from both lists, so a persona excluded from one by
+/// `RUNE_CALL` must be excluded from the other too).
 pub fn spira_lane_runes(home: &Path, env_override: Option<&str>) -> String {
     let roster = spira_runes(home, env_override);
     let mut out = String::new();
     for f in roster.split_whitespace() {
-        if rune_get(home, f, "RUNE_SUMMON", "auto") != "auto" {
+        if rune_get(home, f, "RUNE_CALL", "auto") != "auto" {
             continue;
         }
         if !rune_get(home, f, "RUNE_LANE", "").is_empty() {
@@ -487,7 +487,7 @@ pub fn runes_for_labels(home: &Path, want: &str) -> Vec<String> {
 /// document resolves, the document has no `[persona.<rune>]` table, or its `model` is
 /// empty. ALWAYS LOCATES FRESH, never a cached path — a long-lived process (cockpit, a
 /// sweep) must see a rune edited after it started, the same requirement lib.sh's own
-/// comment carries. Mirrors the aeon crate's own `conf::persona_model` (sp-z134z,
+/// comment carries. Mirrors the dwarf crate's own `conf::persona_model` (sp-z134z,
 /// sp-zs04v.4), which reads an already-resolved toml path instead of locating one itself.
 pub fn persona_model(rune: &str, default: Option<&str>) -> String {
     const BUILTIN_DEFAULT: &str = "claude-opus-5";
@@ -641,10 +641,10 @@ mod tests {
     }
 
     #[test]
-    fn spira_task_runes_excludes_party_and_lane_and_unsummonable() {
+    fn spira_task_runes_excludes_party_and_lane_and_uncallable() {
         let ws = testkit::TempDir::new("spira-config-runes-task");
         write_rune(&ws, "builder", "RUNE_LABELS=spira,plan\n");
-        write_rune(&ws, "human", "RUNE_SUMMON=manual\n");
+        write_rune(&ws, "human", "RUNE_CALL=manual\n");
         write_rune(&ws, "warden", "RUNE_LANE=groom\n");
         write_rune(&ws, "worker", "RUNE_ROLE=party\n");
         assert_eq!(spira_task_runes(&ws, None), "builder");
@@ -655,7 +655,7 @@ mod tests {
         let ws = testkit::TempDir::new("spira-config-runes-lane");
         write_rune(&ws, "builder", "RUNE_LABELS=spira,plan\n");
         write_rune(&ws, "warden", "RUNE_LANE=groom\n");
-        write_rune(&ws, "human", "RUNE_SUMMON=manual\nRUNE_LANE=groom\n");
+        write_rune(&ws, "human", "RUNE_CALL=manual\nRUNE_LANE=groom\n");
         assert_eq!(spira_lane_runes(&ws, None), "warden");
     }
 
@@ -665,7 +665,7 @@ mod tests {
         write_rune(&ws, "builder", "RUNE_LABELS=spira,plan\n");
         write_rune(&ws, "czar", "RUNE_LABELS=spira,plan\n");
         write_rune(&ws, "ops", "RUNE_LABELS=ops\nRUNE_EXCLUDE_LABELS=no-ops\n");
-        write_rune(&ws, "human", "RUNE_SUMMON=manual\n");
+        write_rune(&ws, "human", "RUNE_CALL=manual\n");
         let got = rune_partitions(&ws, None);
         assert_eq!(
             got,

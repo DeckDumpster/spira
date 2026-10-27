@@ -385,7 +385,7 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
             after.insert(key.clone(), serde_json::Value::String(text.clone()));
             after
         },
-        "Statute is live in every agent session at its next summon.",
+        "Statute is live in every agent session at its next call.",
     )
 }
 

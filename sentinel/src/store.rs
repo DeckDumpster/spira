@@ -227,7 +227,7 @@ impl Snapshot {
             .collect()
     }
 
-    /// Plan beads an aeon holds: lifecycle WORKING (was `bd list --status in_progress`).
+    /// Plan beads a dwarf holds: lifecycle WORKING (was `bd list --status in_progress`).
     pub fn plan_inprog(&self, cfg: &Cfg) -> usize {
         let need = cfg.plan_labels();
         self.list

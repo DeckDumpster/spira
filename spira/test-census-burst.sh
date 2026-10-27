@@ -3,7 +3,7 @@
 #
 # One operator action touching many beads in the same minute used to rank as that many
 # failures; and one teardown reported under two names (unjudged-killed by the component
-# that killed the session, unjudged-slain by the aeon's own cleanup) ranked twice.
+# that killed the session, unjudged-slain by the dwarf's own cleanup) ranked twice.
 #
 # Positive control: on the unfixed ranker the first assertion reads "8 ... (8 detections" /
 # a leading 8 for the folded class, and the spaced class below still ranks 5 — the spaced
