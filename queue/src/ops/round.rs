@@ -500,7 +500,10 @@ fn mender_marker(dir: &Path, batch: &str, pass: impl std::fmt::Display, suite: &
 }
 
 fn spec_file(dir: &Path, batch: &str, pass: impl std::fmt::Display, suite: &str) -> PathBuf {
-    dir.join(format!("{}.spec-{pass}-{suite}.json", batch.replace('/', "%2F")))
+    dir.join(format!(
+        "{}.spec-{pass}-{suite}.json",
+        batch.replace('/', "%2F")
+    ))
 }
 
 pub(super) fn retire_menders(w: &World, c: &Ctx, batch: &str, why: &str) {
@@ -510,7 +513,9 @@ pub(super) fn retire_menders(w: &World, c: &Ctx, batch: &str, why: &str) {
 
 pub(super) fn sweep_menders(w: &World, c: &Ctx) {
     if let Err((rc, e)) = w.lc.mending_close_ended("concierge") {
-        w.err(format!("queue.sh: WARNING — MENDING rows of closed batches were not ended (rc={rc}): {e}"));
+        w.err(format!(
+            "queue.sh: WARNING — MENDING rows of closed batches were not ended (rc={rc}): {e}"
+        ));
     }
     retire_marked(
         w,
@@ -1898,7 +1903,8 @@ fn vm_fault_cause(err: &str) -> Option<String> {
 
 const EXCERPT_CAP: usize = 300;
 const SHELL_CONTEXT: usize = 2;
-pub(crate) const NO_FAILURE_FOUND: &str = "(no failure lines matched; the last 80 lines of the output follow)";
+pub(crate) const NO_FAILURE_FOUND: &str =
+    "(no failure lines matched; the last 80 lines of the output follow)";
 
 /// The failure itself, not the output's tail: cargo's `---- test stdout ----` blocks, failures
 /// list, `test result: FAILED` and `error: N target(s) failed`; or a shell suite's FAIL / not ok
@@ -1927,7 +1933,10 @@ pub(crate) fn failure_excerpt(text: &str) -> String {
                 keep[i] = true;
             }
             inside = false;
-        } else if t.starts_with("error: ") && t.contains("failed") && !t.starts_with("error: could not compile") {
+        } else if t.starts_with("error: ")
+            && t.contains("failed")
+            && !t.starts_with("error: could not compile")
+        {
             keep[i] = true;
         } else if t.starts_with("error: could not compile") && t.contains("test") {
             keep[i] = true;
@@ -1940,7 +1949,11 @@ pub(crate) fn failure_excerpt(text: &str) -> String {
     if !cargo {
         for (i, l) in lines.iter().enumerate() {
             if l.contains("FAIL") || l.trim_start().starts_with("not ok") {
-                for k in keep.iter_mut().take(lines.len().min(i + 1 + SHELL_CONTEXT)).skip(i) {
+                for k in keep
+                    .iter_mut()
+                    .take(lines.len().min(i + 1 + SHELL_CONTEXT))
+                    .skip(i)
+                {
                     *k = true;
                 }
             }
@@ -2350,7 +2363,9 @@ pub(super) fn certify(
         w.err(verdict);
         w.out(format!("red={}", reds.join(",")));
         if reds.iter().any(|r| r == REPO_TESTENV_RED) {
-            let output = rounds_dir(&c).join(format!("{batch}.results")).join(format!("{REPO_TESTENV_RED}.out"));
+            let output = rounds_dir(&c)
+                .join(format!("{batch}.results"))
+                .join(format!("{REPO_TESTENV_RED}.out"));
             w.out(format!("red-output={}", output.display()));
         }
         return FAIL;
@@ -2640,7 +2655,10 @@ fn eject(
     let cause = EjectCause::decide(red, harness_fault, suites);
     if red && suites.split(',').any(|s| s == UNIT_RED) {
         crate::telemetry::sink().push(
-            &[spira_otel::metrics::Point::Count { name: "habit_unit_tests_red_in_round", value: 1 }],
+            &[spira_otel::metrics::Point::Count {
+                name: "habit_unit_tests_red_in_round",
+                value: 1,
+            }],
             &[("repo", c.r.name.as_str()), ("bead", id)],
         );
     }

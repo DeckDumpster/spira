@@ -26,6 +26,7 @@ pub enum Op {
     PfGate,
     CreateBug,
     AmendBug,
+    BeadLive,
 }
 
 /// The record separator that precedes a seam's machine-readable answer on stdout, so any
@@ -168,6 +169,10 @@ if BEADS_ACTOR="$1" bdq note "$2" --file "$__f" >/dev/null 2>&1; then printf '\0
 rm -f "$__f"
 exit 0
 "#,
+        Op::BeadLive => r#"__r="$(lc_bead_row "$1" 2>/dev/null)" || { printf '\036'; exit 0; }
+case "${__r%%$'\t'*}" in ""|LANDED|SUPERSEDED|DROPPED|DONE) printf '\036' ;; *) printf '\036live' ;; esac
+exit 0
+"#,
     }
 }
 
@@ -229,6 +234,7 @@ mod tests {
             Op::PfGate,
             Op::CreateBug,
             Op::AmendBug,
+            Op::BeadLive,
         ] {
             let s = script(op);
             assert!(s.starts_with("{\n") && s.ends_with("}\n"), "{op:?}");

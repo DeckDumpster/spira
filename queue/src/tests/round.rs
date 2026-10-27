@@ -4442,9 +4442,15 @@ fn a_repo_that_declares_its_own_testenv_goes_red_and_does_not_land_on_a_failing_
 
     assert_eq!(t.run(&["round", "certify", &batch]), 1);
     assert!(t.out().contains("red=testenv"), "{}", t.out());
-    assert!(t.err().contains("is RED at"), "a red exit says why on stderr: {}", t.err());
     assert!(
-        t.out().lines().any(|l| l.starts_with("red-output=") && l.ends_with("testenv.out")),
+        t.err().contains("is RED at"),
+        "a red exit says why on stderr: {}",
+        t.err()
+    );
+    assert!(
+        t.out()
+            .lines()
+            .any(|l| l.starts_with("red-output=") && l.ends_with("testenv.out")),
         "{}",
         t.out()
     );
@@ -4925,29 +4931,49 @@ fn a_red_that_only_the_combination_produces_files_the_integration_from_the_eject
 fn a_mender_summons_carries_a_failure_spec_its_verbs_can_read() {
     let mut t = round_world();
     *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
     let results = t.lib.s.run.join("rounds").join(format!("{batch}.results"));
     std::fs::create_dir_all(&results).unwrap();
     std::fs::write(results.join("test-z.sh.out"), "assertion Z failed\n").unwrap();
-    assert_eq!(t.run(&["round", "failed", &batch, "--suite", "test-z.sh"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "failed", &batch, "--suite", "test-z.sh"]),
+        0,
+        "{}",
+        t.err()
+    );
 
     let calls = t.lib.calls.borrow();
-    let bug = calls.iter().find(|c| c.starts_with("create_bug")).expect("a mender bead");
+    let bug = calls
+        .iter()
+        .find(|c| c.starts_with("create_bug"))
+        .expect("a mender bead");
     let path = bug
         .lines()
         .find_map(|l| l.strip_prefix("spec: "))
         .unwrap_or_else(|| panic!("the summons names no spec: {bug}"));
-    let spec: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let spec: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     assert_eq!(spec["batch"], batch.as_str());
     assert_eq!(spec["pass"], 1);
     assert_eq!(spec["suite"], "test-z.sh");
     assert_eq!(
         spec["output"],
-        format!("{}\nassertion Z failed", crate::ops::round::NO_FAILURE_FOUND)
+        format!(
+            "{}\nassertion Z failed",
+            crate::ops::round::NO_FAILURE_FOUND
+        )
     );
-    assert!(spec["repo"].as_str().is_some_and(|r| !r.is_empty()), "{spec}");
+    assert!(
+        spec["repo"].as_str().is_some_and(|r| !r.is_empty()),
+        "{spec}"
+    );
     let members: Vec<(&str, &str)> = spec["members"]
         .as_array()
         .unwrap()
@@ -4962,11 +4988,18 @@ fn a_failure_excerpt_names_the_failing_test_past_forty_crates_of_doc_tests() {
     use crate::ops::round::failure_excerpt;
     let mut o = String::from("     Running unittests src/lib.rs (target/debug/deps/gate-abc)\n\nrunning 2 tests\ntest a ... ok\ntest b ... FAILED\n\nfailures:\n\n---- b stdout ----\nthread 'b' panicked at gate/src/lib.rs:42:9:\nassertion failed: x\n\nfailures:\n    b\n\ntest result: FAILED. 1 passed; 1 failed\n\n");
     for i in 0..40 {
-        o.push_str(&format!("   Doc-tests crate{i}\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed\n\n"));
+        o.push_str(&format!(
+            "   Doc-tests crate{i}\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed\n\n"
+        ));
     }
     o.push_str("error: 1 target failed:\n    `-p gate --lib`\n");
     let x = failure_excerpt(&o);
-    assert!(x.contains("---- b stdout ----") && x.contains("gate/src/lib.rs:42:9") && x.contains("test result: FAILED"), "{x}");
+    assert!(
+        x.contains("---- b stdout ----")
+            && x.contains("gate/src/lib.rs:42:9")
+            && x.contains("test result: FAILED"),
+        "{x}"
+    );
     assert!(x.contains("error: 1 target failed"), "{x}");
     assert!(!x.contains("crate7"), "{x}");
 }
@@ -4975,5 +5008,8 @@ fn a_failure_excerpt_names_the_failing_test_past_forty_crates_of_doc_tests() {
 fn a_failure_excerpt_of_a_shell_suite_keeps_its_fail_lines() {
     use crate::ops::round::failure_excerpt;
     let x = failure_excerpt("ok one\nFAIL: two\n  expected 1\n  got 2\nok three\nok four\n");
-    assert!(x.starts_with("FAIL: two") && x.contains("got 2") && !x.contains("ok four"), "{x}");
+    assert!(
+        x.starts_with("FAIL: two") && x.contains("got 2") && !x.contains("ok four"),
+        "{x}"
+    );
 }

@@ -143,17 +143,31 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
     if let Ok(Some(kv)) = records::read_kv(&red_file) {
         if kv.get("head") == Some(head_sha.as_str()) {
             let fid = kv.get("fix_forward").unwrap_or("<unknown>");
-            w.out(format!("queue.sh publish: waiting on fix-forward {fid} for {name} — {base} has not moved past the red head"));
-            landing_log(
-                &c.s.run,
-                &format!(
-                    "QUEUE PUBLISH_WAIT {} repo={name} fix_forward={fid} head={head_sha}",
-                    w.clock.now()
-                ),
-            );
-            return OK;
+            let tracked = fid.starts_with(|ch: char| ch.is_ascii_alphanumeric());
+            if tracked && !w.lib.bead_live(fid) {
+                w.out(format!("queue.sh publish: fix-forward {fid} for {name} is closed and {base} has not moved past the red head — no fix is in flight; republishing"));
+                landing_log(
+                    &c.s.run,
+                    &format!(
+                        "QUEUE PUBLISH_FIX_FORWARD_DEAD {} repo={name} fix_forward={fid} head={head_sha}",
+                        w.clock.now()
+                    ),
+                );
+                let _ = std::fs::remove_file(&red_file);
+            } else {
+                w.out(format!("queue.sh publish: waiting on fix-forward {fid} for {name} — {base} has not moved past the red head"));
+                landing_log(
+                    &c.s.run,
+                    &format!(
+                        "QUEUE PUBLISH_WAIT {} repo={name} fix_forward={fid} head={head_sha}",
+                        w.clock.now()
+                    ),
+                );
+                return OK;
+            }
+        } else {
+            let _ = std::fs::remove_file(&red_file);
         }
-        let _ = std::fs::remove_file(&red_file);
     }
 
     let members = match range_members(w, &path, &forge_sha, &head_sha) {

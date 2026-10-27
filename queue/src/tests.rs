@@ -261,6 +261,7 @@ struct FLib {
     /// What `create_bug` answers (None: bd created nothing).
     bug_id: RefCell<Option<String>>,
     amend_ok: Cell<bool>,
+    dead_beads: RefCell<Vec<String>>,
     pf_rc: Cell<i32>,
     conflict_with_base: RefCell<BTreeSet<String>>,
     /// R22's answer (step --all).
@@ -423,6 +424,9 @@ impl Lib for FLib {
     fn amend_bug(&self, actor: &str, id: &str, note: &str) -> bool {
         self.log(format!("amend_bug {actor} {id} {note}"));
         self.amend_ok.get()
+    }
+    fn bead_live(&self, id: &str) -> bool {
+        !self.dead_beads.borrow().iter().any(|d| d == id)
     }
 }
 
@@ -1482,6 +1486,7 @@ impl T {
             push_ok: Cell::new(true),
             bug_id: RefCell::new(Some("sp-fix1".into())),
             amend_ok: Cell::new(true),
+            dead_beads: RefCell::new(Vec::new()),
             pf_rc: Cell::new(0),
             conflict_with_base: RefCell::default(),
             repos: RefCell::new(Ok(vec!["spira".into()])),
@@ -4193,6 +4198,19 @@ fn publish_refuses_a_divergence_an_open_publish_and_a_range_without_land_commits
         .err()
         .contains("no land commit (spira: land <id>) in range — refusing"));
     assert!(!t.lib.has("push"));
+}
+
+#[test]
+fn publish_does_not_wait_on_a_closed_fix_forward_that_never_moved_the_head() {
+    let t = T::new(LandMode::QueueLocal);
+    publishable(&t);
+    fs::write(t.qfile("publish-red"), "head=m3\nfix_forward=sp-fix\n").unwrap();
+    t.lib.dead_beads.borrow_mut().push("sp-fix".into());
+    full_suite_passed(&t, "m3");
+    let _ = t.run(&["publish"]);
+    assert!(t.out().contains("no fix is in flight"), "{}", t.out());
+    assert!(t.landing_log().contains("QUEUE PUBLISH_FIX_FORWARD_DEAD"));
+    assert!(!t.landing_log().contains("QUEUE PUBLISH_WAIT"));
 }
 
 #[test]
