@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS bead (
     express     BOOLEAN NOT NULL DEFAULT FALSE,
     -- The holder's phase and how its session was cut short, set only while WORKING; migrations/0029-dwarf-phase.sql for an existing database.
     dwarf_phase       VARCHAR(16) NULL,
+    -- Retired, read by nothing: migration 0016 probes for it, and a fresh store must show every migration applied.
+    aeon_phase        VARCHAR(16) NULL, -- ffx-ok
     disposition      VARCHAR(16) NULL,
     disposition_note TEXT NULL,
     -- The tip a round last ejected as red; submit refuses it. migrations/0018-ejected-red-tip.sql for an existing database.
