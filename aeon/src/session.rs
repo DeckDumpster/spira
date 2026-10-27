@@ -115,7 +115,7 @@ impl Launcher for RealLauncher {
         let mut forwarded = false;
         let mut signalled_at: Option<Instant> = None;
         let mut warm_checked = Instant::now();
-        let mut spilled = false;
+        let mut spilled = spec.warm.as_ref().is_some_and(|w| spira_config::build::is_spilled(&w.dir));
         let code = loop {
             if let Some(w) = spec.warm.as_ref().filter(|_| !spilled) {
                 if warm_checked.elapsed() >= w.every {

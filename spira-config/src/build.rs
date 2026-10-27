@@ -480,7 +480,21 @@ pub fn enforce_cap(slot: &Path, cap_mib: u64) -> bool {
 /// `disk`, so the next cargo invocation builds there and the tmpfs gets the space back. Never
 /// run on a slot already spilled. True when it spilled.
 pub fn spill(slot: &Path, disk: &Path, cap_mib: u64) -> bool {
-    if std::fs::symlink_metadata(slot).is_ok_and(|m| m.file_type().is_symlink()) || size_of(slot) <= cap_mib * 1024 * 1024 {
+    size_of(slot) > cap_mib * 1024 * 1024 && move_to_disk(slot, disk)
+}
+
+/// Spill a slot at session start when the tmpfs is already past `full_pct`: a session handed a
+/// slot on a full tmpfs would otherwise fail its first build.
+pub fn spill_if_full(slot: &Path, disk: &Path, full_pct: u64) -> bool {
+    slot.parent().and_then(used_pct).is_some_and(|p| p >= full_pct) && move_to_disk(slot, disk)
+}
+
+pub fn is_spilled(slot: &Path) -> bool {
+    std::fs::symlink_metadata(slot).is_ok_and(|m| m.file_type().is_symlink())
+}
+
+fn move_to_disk(slot: &Path, disk: &Path) -> bool {
+    if is_spilled(slot) {
         return false;
     }
     let Some(name) = slot.file_name().map(|n| n.to_string_lossy().into_owned()) else { return false };
@@ -500,7 +514,7 @@ pub fn spill(slot: &Path, disk: &Path, cap_mib: u64) -> bool {
 
 /// Put a real, empty slot directory back where [`spill`] left a symlink.
 pub fn unspill(slot: &Path) {
-    if std::fs::symlink_metadata(slot).is_ok_and(|m| m.file_type().is_symlink()) {
+    if is_spilled(slot) {
         let _ = std::fs::remove_file(slot);
         let _ = std::fs::create_dir_all(slot);
     }
@@ -572,6 +586,17 @@ mod tests {
         unspill(&slot);
         assert!(slot.is_dir() && !std::fs::symlink_metadata(&slot).unwrap().file_type().is_symlink());
         assert!(std::fs::read_dir(&slot).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn a_slot_on_a_full_tmpfs_starts_spilled() {
+        let d = testkit::TempDir::new("warm-start-full");
+        let slot = d.path().join("slot.1");
+        let disk = d.path().join("disk");
+        std::fs::create_dir_all(&slot).unwrap();
+        assert!(!spill_if_full(&slot, &disk, 101), "a filesystem below the limit leaves the slot alone");
+        assert!(spill_if_full(&slot, &disk, 0));
+        assert!(is_spilled(&slot));
     }
 
     #[test]

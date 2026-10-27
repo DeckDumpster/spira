@@ -1272,8 +1272,12 @@ impl<'a> Run<'a> {
                 for idle in spira_config::build::reap_idle(&warm_base, spira_config::build::AEON_WARM_SLOTS, cap_mib, spira_config::build::AEON_WARM_FULL_PCT) {
                     self.log(&format!("{}: idle warm target {} emptied (over {cap_mib} MiB or the tmpfs is past {}%)", self.f(), idle.display(), spira_config::build::AEON_WARM_FULL_PCT));
                 }
+                let spill = work.join("target");
+                if spira_config::build::spill_if_full(&dir, &spill, spira_config::build::AEON_WARM_FULL_PCT) {
+                    self.log(&format!("{}: warm tmpfs is past {}% — this session builds in {}", self.f(), spira_config::build::AEON_WARM_FULL_PCT, spill.display()));
+                }
                 env.set("CARGO_TARGET_DIR", &dir.display().to_string());
-                warm_slot = Some(crate::session::WarmSlot { dir: dir.clone(), cap_mib, every: crate::session::WARM_CHECK_EVERY, spill: work.join("target") });
+                warm_slot = Some(crate::session::WarmSlot { dir: dir.clone(), cap_mib, every: crate::session::WARM_CHECK_EVERY, spill });
                 Some(lock)
             }
             None => {
