@@ -1429,7 +1429,7 @@ deliberate edges:
 `sending` alone is ordinary English and is not a hit.
 
 **Mode.** The config key `ffx_vocabulary_mode` (`SPIRA_FFX_VOCABULARY_MODE`), shipped as
-`report`, anything but `report` or `enforce` being a refusal (exit 3).
+`enforce`, anything but `report` or `enforce` being a refusal (exit 3).
 
 - `report` prints every hit to stdout as `ffx-vocabulary: <path>:<line>:<term>` (line 0 is a hit in
   the path itself), then a `count <term> <n>` line per term and a closing `remaining <n> hit(s)`
