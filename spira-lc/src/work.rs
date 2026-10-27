@@ -567,6 +567,10 @@ fn release_untriggered_groom(bead_id: &str, actor: &str, conn: &Conn) -> (i32, S
     }
 }
 
+fn not_a_question(text: &str) -> Option<String> {
+    (text.trim().is_empty() || text.starts_with("--")).then(|| format!("{text:?} is not a question"))
+}
+
 fn cmd_blocked(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     let actor = match require_actor(args) {
         Ok(a) => a,
@@ -578,6 +582,9 @@ fn cmd_blocked(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     let Some(question) = args.first() else {
         return (CANNOT_TELL, "work blocked: missing \"<question>\"".into());
     };
+    if let Some(e) = not_a_question(question) {
+        return (CANNOT_TELL, format!("work blocked: {e}; usage: work blocked \"<the question>\" --default \"<what you would do>\""));
+    }
     let Some(default) = flag(args, "--default") else {
         return (CANNOT_TELL, "work blocked: --default <default> is required".into());
     };
@@ -1171,8 +1178,8 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
             let (Some(subject), Some(kind), Some(default)) = (get(&f, "--subject"), get(&f, "--kind"), get(&f, "--default")) else {
                 return Err(usage(verb, "--subject, --kind and --default are all required (an ask without a default is incomplete)"));
             };
-            if subject.trim().is_empty() || subject.starts_with("--") {
-                return Err(usage(verb, &format!("--subject {subject:?} is not a question; usage: work ask --subject \"<the question>\" --kind question --default \"<what you would do>\"")));
+            if let Some(e) = not_a_question(subject) {
+                return Err(usage(verb, &format!("{e}; usage: work ask --subject \"<the question>\" --kind question --default \"<what you would do>\"")));
             }
             if !MAIL_KINDS.contains(&kind) {
                 return Err(usage(verb, &format!("--kind {kind:?} (want one of {})", MAIL_KINDS.join(", "))));
@@ -1929,6 +1936,14 @@ mod tests {
             assert!(e.1.contains("usage: work ask --subject"), "{e:?}");
         }
         assert!(plan("ask", "sp-me1", &call(&["--subject", "May I?", "--kind", "question", "--default", "x"], "mender")).is_ok());
+    }
+
+    #[test]
+    fn a_question_that_is_empty_or_a_flag_name_is_not_a_question() {
+        for q in ["--default", "--default x", "", "  "] {
+            assert!(not_a_question(q).is_some(), "{q:?}");
+        }
+        assert!(not_a_question("May I?").is_none());
     }
 
     #[test]
