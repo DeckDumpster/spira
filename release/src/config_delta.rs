@@ -27,11 +27,13 @@ type Table = Map<String, Value>;
 pub struct Delta {
     pub added: BTreeMap<String, Value>,
     pub removed: Vec<String>,
+    /// `persona.<old>` → `persona.<new>`: the persona's table, roster entry and lane entry move.
+    pub renamed: BTreeMap<String, String>,
 }
 
 impl Delta {
     pub fn is_empty(&self) -> bool {
-        self.added.is_empty() && self.removed.is_empty()
+        self.added.is_empty() && self.removed.is_empty() && self.renamed.is_empty()
     }
 
     pub fn parse(text: &str) -> Result<Delta, String> {
@@ -48,7 +50,15 @@ impl Delta {
                         d.removed.push(s);
                     }
                 }
-                (other, _) => return Err(format!("unknown or mistyped entry {other:?}: only `added` (a table of key = value) and `removed` (a list of keys) are allowed")),
+                ("renamed", Value::Table(t)) => {
+                    for (from, to) in t {
+                        let Value::String(to) = to else { return Err("renamed must map key paths to key paths as strings".into()) };
+                        persona_name(&from)?;
+                        persona_name(&to)?;
+                        d.renamed.insert(from, to);
+                    }
+                }
+                (other, _) => return Err(format!("unknown or mistyped entry {other:?}: only `added` (a table of key = value), `removed` (a list of keys) and `renamed` (persona.<old> = \"persona.<new>\") are allowed")),
             }
         }
         spira_config::placeholder_paths(d.added.iter().map(|(k, v)| (k.as_str(), v)))?;
@@ -68,10 +78,20 @@ impl Delta {
         if !self.removed.is_empty() {
             top.insert("removed".into(), Value::Array(self.removed.iter().cloned().map(Value::String).collect()));
         }
+        if !self.renamed.is_empty() {
+            top.insert("renamed".into(), Value::Table(self.renamed.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect()));
+        }
         if !self.added.is_empty() {
             top.insert("added".into(), Value::Table(self.added.clone().into_iter().collect()));
         }
         toml::to_string_pretty(&Value::Table(top)).unwrap_or_default()
+    }
+}
+
+fn persona_name(path: &str) -> Result<&str, String> {
+    match path.strip_prefix("persona.") {
+        Some(n) if !n.is_empty() && !n.contains('.') => Ok(n),
+        _ => Err(format!("{path:?}: only persona tables can be renamed, as persona.<name>")),
     }
 }
 
@@ -210,6 +230,22 @@ fn apply(original: &[Table], delta: &Delta, retired: &[String], defer: bool) -> 
         }
         if let Some(v) = dropped {
             undo.added.insert(k.clone(), v);
+        }
+    }
+    for (from, to) in &delta.renamed {
+        let (old, new) = (persona_name(from)?, persona_name(to)?);
+        let mut moved = false;
+        for t in post.iter_mut() {
+            let text = toml::to_string_pretty(&Value::Table(t.clone())).map_err(|e| e.to_string())?;
+            let out = spira_config::rename::rename_persona_lenient(&text, old, new)?;
+            let Value::Table(renamed) = out.parse::<Value>().map_err(|e| e.to_string())? else { return Err("rename left a non-table".into()) };
+            if renamed != *t {
+                *t = renamed;
+                moved = true;
+            }
+        }
+        if moved {
+            undo.renamed.insert(to.clone(), from.clone());
         }
     }
     Ok((pre, post, undo))

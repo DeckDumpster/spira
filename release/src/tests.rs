@@ -1925,6 +1925,25 @@ fn activating_over_a_config_that_sets_the_sixteen_unread_keys_strips_them_one_re
 }
 
 #[test]
+fn a_renamed_delta_moves_the_persona_table_roster_and_lane_at_activation() {
+    let delta = "[renamed]\n\"persona.maechen\" = \"persona.mimir\"\n";
+    let w = World::with_git(delta_git(delta));
+    file(
+        Path::new(&w.cfg.toml_spec().unwrap()),
+        "[spira]\nid_prefix = \"sp\"\nfayths = [\"ops\", \"maechen\"]\nlanes = \"ops maechen czar\"\n\n[persona.maechen]\nmodel = \"m\"\n\n[persona.maechen.lease]\nminutes = 5\n",
+    );
+    build_with_schema(&w, A, &[], &[]);
+    build_with_schema(&w, B, &[], &[]);
+    let sc = FakeSystemctl::new(w.units());
+    activate::activate(&ctx(&w, &sc), A, None).unwrap();
+    activate::activate(&ctx(&w, &sc), B, None).unwrap();
+    let text = cfg_text(&w);
+    assert!(!text.contains("maechen"), "{text}");
+    assert!(text.contains("[persona.mimir.lease]"), "{text}");
+    assert!(text.contains("ops mimir czar"), "{text}");
+}
+
+#[test]
 fn verify_pre_activate_sees_the_config_with_the_delta_applied_and_leaves_the_files_alone() {
     let probe = "#!/bin/sh\nPATH=/usr/bin:/bin\ncat $(echo \"$SPIRA_TOML\" | tr : ' ') | grep -q new_key || { echo 'FAIL units: new_key is not declared' >&2; exit 1; }\nexit 0\n";
     let mut g = delta_git("[added]\n\"spira.new_key\" = 300\n");
