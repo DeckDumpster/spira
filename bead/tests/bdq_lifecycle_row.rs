@@ -83,6 +83,13 @@ fn a_bead_created_closed_gets_no_row() {
 }
 
 #[test]
+fn a_no_row_type_create_gets_no_row() {
+    let r = bdq("echo sp-probe", "exit 0", &["create", "Heimdall write probe", "--type", "event", "--labels", "heimdall:probe,overseer", "--silent"]);
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert_eq!(r.lc_calls, "", "a probe is not work: no claimable row");
+}
+
+#[test]
 fn json_create_output_is_read() {
     let r = bdq("echo '{\"id\":\"sp-js\"}'", "exit 0", &["create", "a plain title", "--json"]);
     assert_eq!(r.lc_calls, "create-bead sp-js\n");

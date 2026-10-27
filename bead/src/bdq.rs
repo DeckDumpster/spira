@@ -373,6 +373,17 @@ pub fn creates_closed(args: &[String]) -> bool {
     value.is_some_and(|v| is_closed(Kind::Insight, v))
 }
 
+/// A bead created with a `--type` that never carries a lifecycle row (`nonwork::NO_ROW_TYPES`):
+/// an alert or write probe is an `event`, and a row would make it claimable and strand-visible.
+pub fn creates_rowless_type(args: &[String]) -> bool {
+    let ty = args
+        .windows(2)
+        .find(|w| w[0] == "--type" || w[0] == "-t")
+        .map(|w| w[1].as_str())
+        .or_else(|| args.iter().find_map(|a| a.strip_prefix("--type=")));
+    !spira_config::nonwork::is_work_type(ty)
+}
+
 // =========================================================================================
 // The czar fence's dispatch decision (the fence itself is `czar-fence.sh`, a subprocess —
 // see `src/bin/bdq.rs`). Pure: "should the caller shell out to czar-fence.sh at all, and
@@ -648,6 +659,17 @@ mod tests {
     }
 
     // -- is_create ----------------------------------------------------------------------------
+
+    #[test]
+    fn a_no_row_type_create_leaves_no_lifecycle_row() {
+        for ty in ["event", "epic", "decision", "gate"] {
+            assert!(creates_rowless_type(&s(&["create", "t", "--type", ty])), "{ty}");
+        }
+        assert!(creates_rowless_type(&s(&["create", "t", "--type=event"])));
+        assert!(creates_rowless_type(&s(&["create", "t", "-t", "event"])));
+        assert!(!creates_rowless_type(&s(&["create", "t", "--type", "task"])));
+        assert!(!creates_rowless_type(&s(&["create", "event"])));
+    }
 
     #[test]
     fn creates_closed_reads_the_status_flag() {
