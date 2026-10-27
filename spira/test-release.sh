@@ -231,6 +231,7 @@ cat > "$GHBIN/gh" <<GHEOF
 GH_FAKE_DIR="$GH_FAKE_DIR"
 [ ! -e "\$GH_FAKE_DIR/fail" ] || exit 1
 [ "\${1:-}" = release ] && [ "\${2:-}" = list ] && { cat "\$GH_FAKE_DIR/list"; exit 0; }
+[ "\${1:-}" = run ] && [ "\${2:-}" = list ] && { cat "\$GH_FAKE_DIR/runs" 2>/dev/null; exit 0; }
 exit 1
 GHEOF
 chmod +x "$GHBIN/gh"
@@ -259,6 +260,12 @@ tag_v2="$(run_cut spira)"
 is "the cut after spira-0.1.104 is spira-0.1.105" "spira-0.1.105" "$tag_v2"
 want "prev names the highest version, not the newest stamp" "prev: spira-0.1.104" \
     "$(git -C "$REPO" tag -l --format='%(contents)' "$tag_v2")"
+
+printf 'spira-0.1.106\nspira-0.1.106\n' > "$GH_FAKE_DIR/runs"
+printf 'v3\n' >> "$REPO/f"; git -C "$REPO" add f; git -C "$REPO" commit -qm "sp-v03 — after a retracted tag"
+timeout 5 git -C "$REPO" push -q origin trunk 2>/dev/null
+tag_v3="$(run_cut spira)"
+is "a retracted spira-0.1.106 that had an acceptance run is never reused" "spira-0.1.107" "$tag_v3"
 PATH="$OLDPATH"
 
 # ======================================================================================

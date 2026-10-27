@@ -13,7 +13,8 @@
 # NAMING. The home repository's tags are spira-<series>.N (series SPIRA_RELEASE_SERIES,
 # default 0.1; bumped by hand). N is one more than the larger of the number of releases on
 # the forge (drafts included) and the highest N seen, so it never repeats or goes back; the
-# cut refuses when the forge list cannot be read. Other repositories keep
+# cut refuses when the forge list cannot be read. A tag with an acceptance run counts as
+# seen even once retracted. Other repositories keep
 # spira-release-<reponame>-<YYYYMMDDTHHMMSSZ>. Old tags are never rewritten; release-order.sh
 # orders both forms.
 #
@@ -169,9 +170,14 @@ do_cut() {
             printf 'release: cannot list the forge releases — refusing to guess the next number\n' >&2
             exit 1
         }
+        local ran
+        ran="$(cd "$repo" && timeout 10 gh run list --workflow acceptance.yml --event push --limit 1000 --json headBranch --jq '.[].headBranch')" || {
+            printf 'release: cannot list the acceptance runs — refusing to guess the next number\n' >&2
+            exit 1
+        }
         local next
         next="$(printf '%s\n' "$listed" | bash "$HERE/release-order.sh" next \
-            <(git -C "$repo" tag -l 'spira-*'))"
+            <({ git -C "$repo" tag -l 'spira-*'; printf '%s\n' "$ran"; }))"
         tagname="spira-${SPIRA_RELEASE_SERIES:-0.1}.${next}"
     fi
     while git -C "$repo" rev-parse --verify "refs/tags/$tagname" >/dev/null 2>&1; do
