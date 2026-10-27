@@ -171,7 +171,7 @@ do_cut() {
             exit 1
         }
         local ran
-        ran="$(cd "$repo" && timeout 10 gh run list --workflow acceptance.yml --event push --limit 1000 --json headBranch --jq '.[].headBranch')" || {
+        ran="$(cd "$repo" && timeout 5 gh run list --workflow acceptance.yml --event push --limit 1000 --json headBranch --jq '.[].headBranch')" || {
             printf 'release: cannot list the acceptance runs — refusing to guess the next number\n' >&2
             exit 1
         }
