@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # acceptance-agent.sh — deterministic stub for acceptance CI.
-# Set SPIRA_AGENT to this path. Replaces claude in aeon.sh: drains stdin
-# (the aeon prompt), commits acceptance-probe-<bead-id>.txt, finishes the bead with
+# Set SPIRA_AGENT to this path. Replaces claude in dwarf.sh: drains stdin
+# (the dwarf prompt), commits acceptance-probe-<bead-id>.txt, finishes the bead with
 # `work submit` exactly as the builder's {{FINISH}} brief tells a real model to, and
-# prints the minimal JSON result aeon.sh expects.
+# prints the minimal JSON result dwarf.sh expects.
 #
 # IT RUNS IN THE MODEL'S RESTRICTED ENVIRONMENT AND MAY USE NOTHING A MODEL CANNOT. Under
 # lifecycle enforcement that environment has no bd, no SPIRA_DB and no release bin/ — PATH
@@ -14,9 +14,9 @@
 # (local acceptance phases A and D, 2026-10-05).
 set -uo pipefail
 
-cat >/dev/null  # drain the aeon prompt from stdin
+cat >/dev/null  # drain the dwarf prompt from stdin
 
-# A SWEEP SESSION HAS NO BEAD. Ops and the other sweep personas summon the agent with no
+# A SWEEP SESSION HAS NO BEAD. Ops and the other sweep personas call the agent with no
 # BEAD_ID; there is nothing to commit or close, so report a finished turn and succeed. Exiting
 # 1 here left spira-ops FAILED and every later deploy's pre-health check refused on it.
 if [ -z "${BEAD_ID:-}" ]; then
@@ -24,7 +24,7 @@ if [ -z "${BEAD_ID:-}" ]; then
     exit 0
 fi
 
-# aeon.sh cd'd to the worktree before invoking us; PWD is the worktree.
+# dwarf.sh cd'd to the worktree before invoking us; PWD is the worktree.
 # ONE FILE PER BEAD, WITH THE BEAD IN IT. A fixed empty acceptance-probe.txt was committed
 # once, in phase A, and phase D's bead (same scratch repo, surviving state) then had nothing
 # to commit — it closed on nothing and never landed.

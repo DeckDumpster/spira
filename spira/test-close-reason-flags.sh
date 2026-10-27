@@ -17,7 +17,7 @@
 # most of its 19 resets purely to exercise these two functions).
 #
 # check_close_reason (quote-masked, mention-file-aware) is the close-time FENCE's own
-# function, used through aeon and the `strand close-reason` CLI; test-ops-closing.sh
+# function, used through dwarf and the `strand close-reason` CLI; test-ops-closing.sh
 # already table-tests it end to end (its own area — not duplicated here).
 #
 # test-livelock.sh keeps ONE row of each family proving detect_invalid_closed's output
@@ -66,7 +66,7 @@ is "a clean close reason is not flagged" \
 is "'temporary' describing something other than the fix is not flagged" \
     "" "$(invalid_closed 'Default derived from nproc and landed. The drop-in was a temporary measure and is removed.')"
 is "'workaround' alone does not discriminate — it can be complete and landed" \
-    "" "$(invalid_closed 'Workaround implemented by aeon-yojimbo, verified, landed on origin/main. Ready for merge.')"
+    "" "$(invalid_closed 'Workaround implemented by dwarf-fjalar, verified, landed on origin/main. Ready for merge.')"
 
 # ==========================================================================================
 echo

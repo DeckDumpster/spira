@@ -55,7 +55,7 @@ pub fn path_tail(current: &str, spira_path: &str, home: &str) -> String {
 /// `SPIRA_BD` — resolved once, deterministically, from `path` (the PATH [`path_tail`] just
 /// assembled, never whatever PATH the calling context happened to carry in). sp-s2zvn's
 /// scar: a bare `${SPIRA_BD:-bd}` fallback in lib.sh picked a different binary depending on
-/// whether the caller was a login shell, a systemd unit or an aeon's confined environment —
+/// whether the caller was a login shell, a systemd unit or a dwarf's confined environment —
 /// all three disagree about PATH order. Mirrors `command -v bd`'s own search: the first `bd`
 /// on `path` that is a regular file with any execute bit set; an empty PATH segment means
 /// the current directory, exactly as the shell resolves one. Falls back to the bare name

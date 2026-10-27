@@ -1,7 +1,7 @@
 //! `release stage up|down` (DESIGN.md "stage"): stand up / tear down a fully isolated
 //! Spira for testing — its own git repo and bare remote, its own beads database, its own
 //! `SPIRA_RUN`, a minimal runes, and the synthetic dispatch scripts that replace
-//! `systemd-run` at the two harness seams `sentinel` needs (`SPIRA_SUMMON`, `SPIRA_LAUNCH`).
+//! `systemd-run` at the two harness seams `sentinel` needs (`SPIRA_CALL`, `SPIRA_LAUNCH`).
 //! Nothing inside a stage touches the caller's `SPIRA_DB`, `SPIRA_RUN`, or any real git
 //! repository. Replaces `spira/stage.sh`; `crate::canary` is the caller that most needs it.
 //!
@@ -16,8 +16,8 @@
 //!
 //! THE TWO HARNESS SEAMS:
 //!
-//! - `SPIRA_SUMMON` replaces `systemd-run` for sentinel's aeon-summon check. The stage
-//!   writes `fake-summon.sh` here; it ignores every systemd flag and execs `release
+//! - `SPIRA_CALL` replaces `systemd-run` for sentinel's dwarf-call check. The stage
+//!   writes `fake-call.sh` here; it ignores every systemd flag and execs `release
 //!   canary-worker` synchronously in the inherited stage env — the model is the one part
 //!   canary cannot test, and this is the boundary.
 //! - `SPIRA_LAUNCH` replaces `systemd-run` for sentinel's landing-dispatch check. The stage
@@ -85,7 +85,7 @@ fn lc_content_shim(db: &Path) -> String {
     )
 }
 
-/// `runes/canary.rune`'s content. `RUNE_MAX_CONCURRENT=1` lets sentinel summon exactly
+/// `runes/canary.rune`'s content. `RUNE_MAX_CONCURRENT=1` lets sentinel call exactly
 /// one worker; `RUNE_LABELS` must include `SPIRA_SCOPE_LABEL` (when non-empty) to pass
 /// `rune_fenced`.
 pub fn rune_content() -> &'static str {
@@ -103,7 +103,7 @@ pub fn repo_map_line(repo: &Path) -> String {
     format!("{name} | {} | push | origin/main | |\n", repo.display())
 }
 
-const FAKE_SUMMON: &str = "#!/usr/bin/env bash\n# Replaces systemd-run for sentinel's aeon-summon check. Runs the canary worker synchronously.\nexec release canary-worker\n";
+const FAKE_CALL: &str = "#!/usr/bin/env bash\n# Replaces systemd-run for sentinel's dwarf-call check. Runs the canary worker synchronously.\nexec release canary-worker\n";
 
 const FAKE_LAUNCH: &str = "#!/usr/bin/env bash\n# Replaces systemd-run for sentinel's landing-dispatch check. Records dispatch, exits 0.\n# release canary drives `landing-pass land` directly.\n[ -n \"${SPIRA_RUN:-}\" ] && date +%s > \"$SPIRA_RUN/landing.dispatched\"\nexit 0\n";
 
@@ -247,7 +247,7 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
         std::os::unix::fs::symlink(&p, &link).map_err(|e| format!("cannot symlink {name}: {e}"))?;
     }
 
-    write_exec(&sh.join("fake-summon.sh"), FAKE_SUMMON)?;
+    write_exec(&sh.join("fake-call.sh"), FAKE_CALL)?;
     write_exec(&sh.join("fake-launch.sh"), FAKE_LAUNCH)?;
 
     fs::write(sh.join("runes/canary.rune"), rune_content()).map_err(|e| format!("cannot write canary.rune: {e}"))?;
@@ -291,10 +291,10 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
         ("SPIRA_REPO".to_string(), repo.display().to_string()),
         ("SPIRA_REPO_MAP".to_string(), stage_repomap_path.display().to_string()),
         ("SPIRA_RUNES".to_string(), "canary".to_string()),
-        ("SPIRA_MAX_AEONS".to_string(), "1".to_string()),
+        ("SPIRA_MAX_DWARVES".to_string(), "1".to_string()),
         ("SPIRA_NOTIFY".to_string(), "/bin/true".to_string()),
         ("SPIRA_BATCHER_ENABLE".to_string(), "1".to_string()),
-        ("SPIRA_SUMMON".to_string(), sh.join("fake-summon.sh").display().to_string()),
+        ("SPIRA_CALL".to_string(), sh.join("fake-call.sh").display().to_string()),
         ("SPIRA_LAUNCH".to_string(), sh.join("fake-launch.sh").display().to_string()),
         ("PATH".to_string(), path_env),
         ("SPIRA_PATH".to_string(), bin.display().to_string()),

@@ -2,11 +2,11 @@
 # bd-unacked-comment-deliver.sh — PostToolUse hook: deliver post-claim bead comments.
 #
 # After each tool call, finds comments on BEAD_ID that were added after the bead
-# was claimed (started_at) by parties other than BEADS_ACTOR (the current aeon).
+# was claimed (started_at) by parties other than BEADS_ACTOR (the current dwarf).
 # Each comment is delivered once as additionalContext. Tracks delivered ids in
-# $SPIRA_RUN/aeon-$BEAD_ID-comment-delivered.
+# $SPIRA_RUN/dwarf-$BEAD_ID-comment-delivered.
 #
-# The aeon acknowledges each delivered comment with:
+# The dwarf acknowledges each delivered comment with:
 #   bd note $BEAD_ID "ACK <comment-id>: <how it was applied or why not>"
 # bd-close-unacked-guard.sh refuses a close while any are unacknowledged.
 set -uo pipefail
@@ -26,7 +26,7 @@ actor = os.environ["BEADS_ACTOR"]
 bd    = os.environ["SPIRA_BD"]
 db    = os.environ["SPIRA_DB"]
 run   = os.environ["SPIRA_RUN"]
-state = os.path.join(run, "aeon-" + bid + "-comment-delivered")
+state = os.path.join(run, "dwarf-" + bid + "-comment-delivered")
 
 started_at = ""
 delivered  = set()

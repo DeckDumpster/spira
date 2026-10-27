@@ -393,7 +393,7 @@ mod tests {
                 assert!(out.applied && out.row.state == state, "{actor} {state:?}: {:?}", out.refusal);
             }
         }
-        for actor in ["aeon-x", "unknown", "Concierge"] {
+        for actor in ["dwarf-x", "unknown", "Concierge"] {
             let kind = MendingEventKind::Environment { at: 5 };
             let out = apply(&r, &MendingEvent { expect: r.state, version: r.version, kind, actor: actor.into() });
             assert!(matches!(out.refusal, Some(Refusal::IllegalTransition { .. })), "{actor}");

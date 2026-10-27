@@ -6,7 +6,7 @@
 #   ./test-wiki-commit-dir-sweep.sh
 #
 # THE DEFECT (sp-0wow1). `git status --short` collapses a wholly-untracked directory to
-# one line naming the directory, not its files. aeon.sh's wiki dirty-diff read that output
+# one line naming the directory, not its files. dwarf.sh's wiki dirty-diff read that output
 # and handed the result straight to wiki-commit.sh as a list of "paths it wrote". When the
 # directory line named someone else's uncommitted work — a mimir pass swept 48 files
 # from the concierge's still-under-review design pages this way (brain c7c79af) — the
@@ -15,7 +15,7 @@
 # of the literal forms wiki-add-fence.sh scans for, so that fence never saw it.
 #
 # THE FIX. wiki-commit.sh refuses any staged path that is a directory rather than adding
-# it, and aeon.sh now takes its dirty-diff with `--untracked-files=all` so a wholly-new
+# it, and dwarf.sh now takes its dirty-diff with `--untracked-files=all` so a wholly-new
 # directory is named file by file and this refusal is never hit in the ordinary case.
 #
 # POSITIVE CONTROL FIRST. Case 1 plants exactly the collapsed-directory input the old
@@ -27,7 +27,7 @@
 # Requires only git and bash — no database fixture.
 #
 # tier: T1
-# covers: spira/wiki-commit.sh aeon/src/*
+# covers: spira/wiki-commit.sh dwarf/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

@@ -18,14 +18,14 @@ pub const TESTENV_ENV: &str = "SPIRA_IN_TESTENV";
 /// Host-touching tools the loop calls by bare name at the end of a pass: `unit-ensure`
 /// (re)installs the user's systemd units, `target-reap` removes shared build directories. In a
 /// world each is `sim` invoked under that name, and does nothing. `spira-lint` is one too: the
-/// aeon's fast tier runs it over the diff, and a world's sparse checkout lacks the crates its
+/// dwarf's fast tier runs it over the diff, and a world's sparse checkout lacks the crates its
 /// tree-wide rules judge (the commit hook puts the release's own on its PATH first and still runs).
 pub const INERT_TOOLS: &[&str] = &["unit-ensure", "target-reap", "spira-lint"];
-/// What the world's `SPIRA_SUMMON` runs: `sim` under this name, standing where `systemd-run` stands.
-pub const SUMMON_TOOL: &str = "sim-summon";
+/// What the world's `SPIRA_CALL` runs: `sim` under this name, standing where `systemd-run` stands.
+pub const CALL_TOOL: &str = "sim-call";
 
-/// The world's `SPIRA_AGENT`: a launcher giving the stub agent the scenario and state paths the aeon's restricted environment drops.
-pub const AGENT_LAUNCHER: &str = "sim-aeon-agent";
+/// The world's `SPIRA_AGENT`: a launcher giving the stub agent the scenario and state paths the dwarf's restricted environment drops.
+pub const AGENT_LAUNCHER: &str = "sim-dwarf-agent";
 
 /// The script at [`AGENT_LAUNCHER`].
 pub fn agent_launcher(agent: &Path, scenario: &Path, state: &Path) -> String {
@@ -613,7 +613,7 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
         link(&sim_exe, &gh_bin)?;
         link(&sim_exe, &bin.join("round-vm"))?;
         link(&sim_exe, &bin.join("sim"))?;
-        link(&sim_exe, &bin.join(SUMMON_TOOL))?;
+        link(&sim_exe, &bin.join(CALL_TOOL))?;
         let launcher = bin.join(AGENT_LAUNCHER);
         std::fs::write(&launcher, agent_launcher(&sim_exe.with_file_name("sim-agent"), &dir.join("agent.scenario"), &dir.join("agent-state"))).map_err(|e| e.to_string())?;
         set_exec(&launcher)?;
@@ -634,7 +634,7 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
         std::fs::write(
             config.join("sim.env"),
             format!(
-                "SPIRA_RUN={}\nSPIRA_HOME={}\nSPIRA_SIM_GATE_RUNNER={}\nSIM_GH_DIR={}\nSIM_BIN={}\nSIM_PROBE={}\n{}={}\nSPIRA_RELEASE={}\nSPIRA_LC_SOCKET={}\nSPIRA_LC_HOST=127.0.0.1\nSPIRA_LC_PORT={}\nSPIRA_LC_USER=root\nSIM_BEADS_DB={}\n{}={}\n{}={}\nSPIRA_BATCHER_POLL_SECS={}\nSPIRA_SUMMON={}\n{}",
+                "SPIRA_RUN={}\nSPIRA_HOME={}\nSPIRA_SIM_GATE_RUNNER={}\nSIM_GH_DIR={}\nSIM_BIN={}\nSIM_PROBE={}\n{}={}\nSPIRA_RELEASE={}\nSPIRA_LC_SOCKET={}\nSPIRA_LC_HOST=127.0.0.1\nSPIRA_LC_PORT={}\nSPIRA_LC_USER=root\nSIM_BEADS_DB={}\n{}={}\n{}={}\nSPIRA_BATCHER_POLL_SECS={}\nSPIRA_CALL={}\n{}",
                 run_dir.display(),
                 dir.join("release/spira").display(),
                 runner.display(),
@@ -652,7 +652,7 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
                 crate::agent::STATE_VAR,
                 dir.join("agent-state").display(),
                 BATCHER_POLL_SECS,
-                bin.join(SUMMON_TOOL).display(),
+                bin.join(CALL_TOOL).display(),
                 GO_RUNTIME_ENV
             ),
         )
@@ -915,8 +915,8 @@ pub fn home_settings(world: &Path, fixture: &str, bd: &Path) -> Vec<(String, Str
         ("spira.repo_map".to_string(), world.join(HOME).join(REGISTRY_ROWS).display().to_string()),
         ("spira.home_repo".to_string(), REPO_NAME.to_string()),
         ("spira.agent".to_string(), world.join("bin").join(AGENT_LAUNCHER).display().to_string()),
-        ("spira.aeon_warm_base".to_string(), world.join("warm").display().to_string()),
-        ("spira.summon_jitter".to_string(), "0".to_string()),
+        ("spira.dwarf_warm_base".to_string(), world.join("warm").display().to_string()),
+        ("spira.call_jitter".to_string(), "0".to_string()),
     ]
 }
 

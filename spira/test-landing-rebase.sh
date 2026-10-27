@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-landing-rebase.sh — the survivor sweep (rebased when a landing moves the base
-# under a withheld branch), the loop-defer guard (live aeon holds the bead), and the
+# under a withheld branch), the loop-defer guard (live dwarf holds the bead), and the
 # checkout refresh (skew.sh keeps the operator's working copy current) — cases that need
 # landing.sh's own fixture (repo-map, gate stub, testdb).
 #
@@ -82,8 +82,8 @@ c="$SPIRA_RUN/claim-during-gate"
 if [ -s "$c" ]; then
     while read -r id pid; do
         [ -n "$id" ] || continue
-        printf "%s\\n" "$pid" > "$SPIRA_RUN/aeon-builder-$id.pid"
-        printf '%s' "$(( $(date +%s) + 3600 ))" > "$SPIRA_RUN/aeon-builder-$id.lease"
+        printf "%s\\n" "$pid" > "$SPIRA_RUN/dwarf-builder-$id.pid"
+        printf '%s' "$(( $(date +%s) + 3600 ))" > "$SPIRA_RUN/dwarf-builder-$id.lease"
     done < "$c"
     : > "$c"
 fi
@@ -228,35 +228,35 @@ want "and the escalation suggests decomposition, not another hand rebase" \
      "smaller beads" "$(cat "$EMITTED")"
 drop_branch sp-recut2
 
-# A BRANCH AN AEON TOOK WHILE THE PASS RAN IS NEVER REWRITTEN.
+# A BRANCH A DWARF TOOK WHILE THE PASS RAN IS NEVER REWRITTEN.
 seed; branch sp-taken taken.txt; branch sp-tlands tlands.txt
 withhold_gate sp-taken
-printf '#!/usr/bin/env bash\nwhile :; do sleep 1; done\n' > "$TMP/aeon.sh"; chmod +x "$TMP/aeon.sh"
-"$TMP/aeon.sh" >/dev/null 2>&1 & aeon_pid=$!
-claim_during_gate sp-taken "$aeon_pid"
+printf '#!/usr/bin/env bash\nwhile :; do sleep 1; done\n' > "$TMP/dwarf.sh"; chmod +x "$TMP/dwarf.sh"
+"$TMP/dwarf.sh" >/dev/null 2>&1 & dwarf_pid=$!
+claim_during_gate sp-taken "$dwarf_pid"
 out="$(landing)"
-claimed="$(cat "$RUN/aeon-builder-sp-taken.pid" 2>/dev/null)"
-kill "$aeon_pid" 2>/dev/null; wait "$aeon_pid" 2>/dev/null
-rm -f "$RUN/aeon-builder-sp-taken.pid" "$RUN/aeon-builder-sp-taken.lease"
-is     "the fixture did claim it mid-pass"      "$aeon_pid" "$claimed"
-want   "the pass says an aeon took it"          "an aeon took spira/sp-taken while this pass ran" "$out"
+claimed="$(cat "$RUN/dwarf-builder-sp-taken.pid" 2>/dev/null)"
+kill "$dwarf_pid" 2>/dev/null; wait "$dwarf_pid" 2>/dev/null
+rm -f "$RUN/dwarf-builder-sp-taken.pid" "$RUN/dwarf-builder-sp-taken.lease"
+is     "the fixture did claim it mid-pass"      "$dwarf_pid" "$claimed"
+want   "the pass says a dwarf took it"          "a dwarf took spira/sp-taken while this pass ran" "$out"
 is     "and its tip is exactly as the loop left it" \
        "$(tip_at_gate sp-taken)" "$(tip_of sp-taken)"
 nowant "and nothing rebased it"                 "rebased spira/sp-taken" "$out"
 drop_branch sp-taken; drop_branch sp-tlands
 
 # --------------------------------------------------------------------------------------
-# THE LANDING LOOP DEFERS WHEN A LIVE AEON HOLDS THE BEAD
+# THE LANDING LOOP DEFERS WHEN A LIVE DWARF HOLDS THE BEAD
 # --------------------------------------------------------------------------------------
 seed; branch sp-loop-held loop-held.txt
-"$TMP/aeon.sh" >/dev/null 2>&1 & loop_held_pid=$!
-printf '%s\n' "$loop_held_pid" > "$RUN/aeon-builder-sp-loop-held.pid"
-printf '%s' "$(( $(date +%s) + 3600 ))" > "$RUN/aeon-builder-sp-loop-held.lease"
+"$TMP/dwarf.sh" >/dev/null 2>&1 & loop_held_pid=$!
+printf '%s\n' "$loop_held_pid" > "$RUN/dwarf-builder-sp-loop-held.pid"
+printf '%s' "$(( $(date +%s) + 3600 ))" > "$RUN/dwarf-builder-sp-loop-held.lease"
 out="$(landing)"
 kill "$loop_held_pid" 2>/dev/null; wait "$loop_held_pid" 2>/dev/null
-rm -f "$RUN/aeon-builder-sp-loop-held.pid" "$RUN/aeon-builder-sp-loop-held.lease"
-want   "the loop defers when a live aeon holds the bead" \
-       "a live aeon still holds spira/sp-loop-held — deferring the land" "$out"
+rm -f "$RUN/dwarf-builder-sp-loop-held.pid" "$RUN/dwarf-builder-sp-loop-held.lease"
+want   "the loop defers when a live dwarf holds the bead" \
+       "a live dwarf still holds spira/sp-loop-held — deferring the land" "$out"
 nowant "and the branch was not landed"                   "landed spira/sp-loop-held" "$out"
 is     "and the bead stays closed"                       closed "$(status_of sp-loop-held)"
 drop_branch sp-loop-held
@@ -336,7 +336,7 @@ want "and the decline names the branch" "not main" "$out"
 # law-a-regression-test-must-be-seen-to-fail). Past SPIRA_REBASE_ESCALATE_AT the escalate
 # branch was taken instead of the reopen branch, leaving the bead closed and unworkable —
 # sp-vjfv6 had 23 such escalations with no reopen ever recorded. This is the ordinary
-# per-bead loop, not the rebase_survivors sweep: an aeon can actually claim this bead, so
+# per-bead loop, not the rebase_survivors sweep: a dwarf can actually claim this bead, so
 # reopening it (in addition to asking) is what makes the escalation actionable rather than
 # a permanent, silent dead end. Run against the unfixed tree:
 #   FAIL  escalate path reopens the bead: wanted [open] got [closed]

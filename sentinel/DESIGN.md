@@ -15,8 +15,8 @@ heuristics; drop down to inference when judgement is required."
 
 The pass has four jobs, in order of how much stalls when each is late:
 
-1. **Keep the fleet full.** When there is ready work and a free slot, summon an aeon
-   (CHECK 7). This runs every 15 s on its own path (`--summon-only`) and again inside every
+1. **Keep the fleet full.** When there is ready work and a free slot, call a dwarf
+   (CHECK 7). This runs every 15 s on its own path (`--call-only`) and again inside every
    full pass.
 2. **Keep work moving.** Reap dead holders (CHECK 2, 2b, 2c), fix stale blocked flags
    (CHECK 3), gate queue-mode dependents (CHECK 3b/3c), and dispatch the landing worker
@@ -36,9 +36,9 @@ times.
 
 ### What it is deliberately NOT
 
-- **Not the summoner.** Lanes, the pool, the fleet ceiling, the express grant and the
-  elastic reservations are handled by `ck7_summon_pass`, `summon_rune` and friends in
-  lib.sh. That code is shared with `aeon --escape` and the aeon units, so it is reached through
+- **Not the caller.** Lanes, the pool, the fleet ceiling, the express grant and the
+  elastic reservations are handled by `ck7_call_pass`, `call_rune` and friends in
+  lib.sh. That code is shared with `dwarf --escape` and the dwarf units, so it is reached through
   a seam (§6).
 - **Not the poison arithmetic.** Attempt, requeue and reclaim counts, and the CHECK 4
   decision itself, belong to `spira-claim` (`counts`, `decide`, `attempts`).
@@ -69,8 +69,8 @@ status, labels, assignee and lease as the claim record — is deleted, not kept 
 ```
 sentinel                 one full pass                                  (spira-sentinel.service)
 sentinel --report        STATE only: print the open plan beads, change nothing
-sentinel --summon-only   CHECK 7 alone                                  (spira-summon.service;
-                         every aeon unit's ExecStopPost via lib.sh summon_refill_argv)
+sentinel --call-only   CHECK 7 alone                                  (spira-call.service;
+                         every dwarf unit's ExecStopPost via lib.sh call_refill_argv)
 sentinel --open-children [--dry-run]
                          CHECK 3c alone over a fresh snapshot (the suites' entry point).
                          --dry-run prints `would add|remove <label> to|from <id>` and
@@ -83,7 +83,7 @@ other first argument, or none, means a full pass. The one second argument read i
 
 | exit | when |
 |---|---|
-| 0 | the pass ran to its end. That includes every `--summon-only` pass whether it summoned or declined, and `--report` |
+| 0 | the pass ran to its end. That includes every `--call-only` pass whether it called or declined, and `--report` |
 | 1 | `DATABASE UNREADABLE` (the bulk store read failed), skipped under `SPIRA_SKIP_RECLAIM=1`. Also any mode when the harness itself cannot be found: the context probe failed, or lib.sh was not found (new, `FATAL` line). Also a full pass in which the lifecycle machine could not be read or written (`LIFECYCLE UNREACHABLE`); that pass still runs every other check first |
 
 Nothing is printed on stdout except log lines, the verbatim output of the scripts it calls,
@@ -95,11 +95,11 @@ The format is `<YYYY-MM-DDTHH:MM:SSZ> spira: <msg>` (lib.sh `log`), in UTC.
 
 | line | parsed by |
 |---|---|
-| `state: open=<n> plan_ready=<n> in_progress=<n> aeons=<n> runes=[<f …>]` | strand (`: state: open=` marks a pass start, `probe::PASS_MARKER`), heimdall/src/judge.rs, cockpit-collect metrics:64,75, runes/czar.md |
+| `state: open=<n> plan_ready=<n> in_progress=<n> dwarves=<n> runes=[<f …>]` | strand (`: state: open=` marks a pass start, `probe::PASS_MARKER`), heimdall/src/judge.rs, cockpit-collect metrics:64,75, runes/czar.md |
 | `CHECK7 <rune>: not evaluated (pass budget exhausted)` (the seam emits it) | strand probe.rs:363, strand.sh:369 |
-| `ACT <msg>` for every act/progress (`summoned a <f> aeon`, `invoked reflection`, `poisoned <id> after <n> attempts`, `reclaimed <n> stale lease(s)`, …) | cockpit-collect metrics:65,69, cockpit.sh:626 |
+| `ACT <msg>` for every act/progress (`called a <f> dwarf`, `invoked reflection`, `poisoned <id> after <n> attempts`, `reclaimed <n> stale lease(s)`, …) | cockpit-collect metrics:65,69, cockpit.sh:626 |
 | `pass complete — <a> action(s), <p> progress` | heimdall/src/judge.rs |
-| `summon-only pass complete — <a> action(s)` | nothing outside tests |
+| `call-only pass complete — <a> action(s)` | nothing outside tests |
 | untimestamped `RECLAIMED`, `SENT`, `HELD`, `KEEP`, `FAILED` lines passed through from strand and hel | cockpit.sh:637, cockpit-collect metrics:236 |
 
 Every other message is kept word for word as well, because the bash suites and the operator
@@ -118,10 +118,10 @@ grep them. The exact strings are the ones §4 quotes; `src/tests.rs` pins the pa
 | `poison-asked/<id>`, `requeue-asked/<id>`, `reclaim-asked/<id>` | r, append | one count per line | lib.sh (`spira-claim unpoison` clears `poison-asked`) |
 | `poison-lifted/<id>` | r | last line = count lifted at | written by `spira-claim deadlocked` (via `groomer deadlocked`, spira-claim/DESIGN.md §9) |
 | `landstate/<id>` | r | `<STATE> <tip> …` | the landing pass |
-| `<id>.log` | existence (CHECK 5), trace tail (ask) | aeon session log | aeon.sh |
+| `<id>.log` | existence (CHECK 5), trace tail (ask) | dwarf session log | dwarf.sh |
 | `roster-warn` stamp (`$SPIRA_ROSTER_WARN_STAMP`) | r/w | sorted excluded runes | lib.sh |
 | `reflect.log` | append (reflect.sh output) | — | — |
-| `summon.lock` | flock (inside the CHECK 7 seam) | — | `aeon --escape` |
+| `call.lock` | flock (inside the CHECK 7 seam) | — | `dwarf --escape` |
 | `.sentinel-tally.<pid>` | w/r/removed around each seam | `act\|progress<TAB>msg` lines (§6) | — |
 
 The directory paths come from the probe's variables (§6, S0): `SPIRA_POISON_ASKED`,
@@ -161,10 +161,10 @@ The directory paths come from the probe's variables (§6, S0): `SPIRA_POISON_ASK
 
 - `spira-sentinel[-<inst>].timer` → `.service` runs `sentinel` every 2 min. Type=oneshot,
   TimeoutStartSec=900. CHECK 5 and its skip switch are gone.
-- `spira-summon[-<inst>].timer` → `.service` runs `sentinel --summon-only` every 15 s.
+- `spira-call[-<inst>].timer` → `.service` runs `sentinel --call-only` every 15 s.
   TimeoutStartSec=60.
-- Every aeon unit's `ExecStopPost=<systemd-run> --user --collect --quiet <sentinel>
-  --summon-only`. This is lib.sh `summon_refill_argv`, and it runs **with no `--setenv`**,
+- Every dwarf unit's `ExecStopPost=<systemd-run> --user --collect --quiet <sentinel>
+  --call-only`. This is lib.sh `call_refill_argv`, and it runs **with no `--setenv`**,
   so the binary must find its harness from its own path (§2.7).
 
 **Transient unit it starts.** The unit name is the mutex and `--collect` is
@@ -187,12 +187,12 @@ environment has no effect.
 **Liveness query:** `${SPIRA_SYSTEMCTL:-systemctl} --user is-active <unit>.service`
 (`active` means in flight).
 
-**Aeon count:** `${SPIRA_SYSTEMCTL:-systemctl} --user list-units 'spira-aeon-*' --no-legend`
-when `SPIRA_SUMMON` is `systemd-run` (the default). A unit counts for rune `f` iff its name
-starts `spira-aeon-<f>-`, which is the same match as the old per-rune glob, in one call
+**Dwarf count:** `${SPIRA_SYSTEMCTL:-systemctl} --user list-units 'spira-dwarf-*' --no-legend`
+when `SPIRA_CALL` is `systemd-run` (the default). A unit counts for rune `f` iff its name
+starts `spira-dwarf-<f>-`, which is the same match as the old per-rune glob, in one call
 instead of one per rune. Otherwise the fallback is live pidfiles
-`$SPIRA_RUN/aeon-<f>-*.pid`: the pid exists and `/proc/<pid>/cmdline` contains `aeon.sh`.
-Dead ones are deleted, as `aeon_count` does.
+`$SPIRA_RUN/dwarf-<f>-*.pid`: the pid exists and `/proc/<pid>/cmdline` contains `dwarf.sh`.
+Dead ones are deleted, as `dwarf_count` does.
 
 **Scripts and binaries it calls** (interfaces unchanged):
 
@@ -230,7 +230,7 @@ names live as plain `Cfg` fields so a unit test can point one at a fixture.
 | `SPIRA_LAND_UNIT` | `spira-landing` | CHECK 6 |
 | `SPIRA_LAND_MAXSEC` | 3600 | CHECK 6 |
 | `SPIRA_LAND_STALE` | 1800 | CHECK 6 |
-| `SPIRA_LAUNCH`, `SPIRA_SYSTEMCTL`, `SPIRA_SUMMON` | `systemd-run`, `systemctl`, `systemd-run` | test seams |
+| `SPIRA_LAUNCH`, `SPIRA_SYSTEMCTL`, `SPIRA_CALL` | `systemd-run`, `systemctl`, `systemd-run` | test seams |
 | `SPIRA_SKIP_RECLAIM` | 0 | fixture fast path (skips the DB check, STATE, CHECK 2/2c/3) |
 | `SPIRA_LIFECYCLE_ENFORCE` | — | **retired** (sp-v62vn). Unset or on: nothing (on prints a deprecation warning). Anything else: the sentinel refuses to start, naming the exit (remove it) |
 | `SPIRA_RUNES` | the runes | the roster (lib.sh `spira_runes`, via the probe) |
@@ -264,7 +264,7 @@ caller verb acts on the machine unconditionally.
   `LIFECYCLE UNREACHABLE — <why>; CHECK 2/2c/4 make no lifecycle decision this pass and the unit exits 1 (…)`;
 - an event that cannot be applied, `rc=2` (cannot tell) or `127`.
 
-After either, the rest of the pass (landing, summoning) still runs, and the process then
+After either, the rest of the pass (landing, calling) still runs, and the process then
 exits 1. A CAS refusal (rc 3) is the normal race: a WARN, and it is retried next pass.
 
 ### 2.7 Finding the harness
@@ -294,8 +294,8 @@ lets the refill ExecStopPost, is handed SPIRA_TOML, SPIRA_RELEASE and PATH by it
 - **G4. `progressed` counts only DAG movement.** It is counted from both mailboxes too
   (drain by rename, every drain file, each line exactly once). CHECK 8 reads `progressed`,
   never `acted`.
-- **G5. One pass per summon slot.** CHECK 7 only ever runs inside `ck7_summon_pass`'s flock,
-  shared by the full pass and `--summon-only`.
+- **G5. One pass per call slot.** CHECK 7 only ever runs inside `ck7_call_pass`'s flock,
+  shared by the full pass and `--call-only`.
 - **G6. The landing worker never runs twice.** The unit name is the
   mutex, and `--collect` is always passed.
 - **G7. Positive controls.** `landing.status`, `*.dispatched` and the stale
@@ -308,11 +308,11 @@ lets the refill ExecStopPost, is handed SPIRA_TOML, SPIRA_RELEASE and PATH by it
   and skips any whose status is no longer what the snapshot showed, whose row is gone, or
   whose re-read failed (`<CHECK> <id>: <was> in this pass's snapshot, <now> now — skipped,
   the next pass decides it again`). CHECK 2c also requires the same assignee and no live
-  lease, because `bd assign <id> ""` is unconditional and would strip a claim an aeon took
+  lease, because `bd assign <id> ""` is unconditional and would strip a claim a dwarf took
   after the snapshot. Covered: CHECK 2's protect label, CHECK 2c's release, CHECK 3c's
   label, CHECK 4's poison and ask, and the stale-poison lift. ON-mode lifecycle writes are
   exempt because `spira-lc apply` carries the row version and the machine refuses a stale
-  one. Summons are exempt because an aeon claims through `bd ready --claim`, which reads
+  one. Calls are exempt because a dwarf claims through `bd ready --claim`, which reads
   live. `bd reclaim` queries live itself. Implemented in `src/fresh.rs`.
 - **G9. No payload in argv or env to a seam.** Seam scripts are constants. Data travels on
   stdin, and the environment carries only configuration and file paths.
@@ -365,7 +365,7 @@ enum Judge { Yes, Cooldown, No }
 
 /// The pass's bookkeeping.
 struct Tally { acted: u32, progressed: u32 }
-enum Mode { Pass, Report, SummonOnly, OpenChildren { dry: bool } }
+enum Mode { Pass, Report, CallOnly, OpenChildren { dry: bool } }
 ```
 
 ## 4. The pass, check by check
@@ -382,15 +382,15 @@ pass writes them.
 2. Run the context probe (S0), which gives the environment, the roster and the repos.
 3. Every child process then runs with exactly that environment, plus the snapshot paths.
 
-**--summon-only.**
+**--call-only.**
 
-1. S1 (the world gate and capacity, with the same `summon-only: …` lines).
-2. `live` summed over the runes, logged as `summon-only: live=<n> runes=[…]`.
+1. S1 (the world gate and capacity, with the same `call-only: …` lines).
+2. `live` summed over the runes, logged as `call-only: live=<n> runes=[…]`.
 3. The ready cache, from `spira-claim bulk-ready-by-rune`: the lifecycle machine's
    READY/REWORK rows, bucketed per rune. No `bd ready` call at all — neither the
    sentinel's nor spira-claim's (sp-v62vn); bd is read only for those beads' content.
-4. S2 (`ck7_summon_pass`).
-5. Log `summon-only pass complete — <a> action(s)` and exit 0.
+4. S2 (`ck7_call_pass`).
+5. Log `call-only pass complete — <a> action(s)` and exit 0.
 
 **Full pass and --report.**
 
@@ -408,7 +408,7 @@ pass writes them.
   `status ≠ closed` and type not `epic`/`event` — the whole open plan backlog, wherever a
   bead is parented. Logged as `open=`.
 - `plan_ready`: `spira-claim ready-count "<scope,>plan"
-  "spira-poison,<ask>"` — the machine's ready set, the one an aeon claims from; a refusal is
+  "spira-poison,<ask>"` — the machine's ready set, the one a dwarf claims from; a refusal is
   unknown (`?`), never 0 (sp-7g5q6). CHECK 3's recount asks the same.
 - `plan_inprog`: the machine's WORKING rows (the pass's one `spira-lc list`) whose bead carries those labels
   — bd's in_progress is written by no claim (sp-7g5q6).
@@ -570,7 +570,7 @@ itself takes milliseconds.
 | mode | target (p50) | alarm | hard ceiling |
 |---|---|---|---|
 | full pass | ≤ 20 s (Rust aims under 10 s: the snapshot reads are ~1.2 s + ~1 s, and the seams are ~0.2 s each plus their own work) | `WARN pass took <s>s — over the <T>s pass budget (SPIRA_SENTINEL_PASS_TARGET_SECS)`, logged when wall > T (default 60) | TimeoutStartSec=900 |
-| --summon-only | ≤ 2 s | — | TimeoutStartSec=60 |
+| --call-only | ≤ 2 s | — | TimeoutStartSec=60 |
 | CHECK 7 inside a pass | — | `not evaluated (pass budget exhausted)` | `SPIRA_SENTINEL_PASS_BUDGET_SECS=90` (in the seam) |
 
 **Store reads per full pass: exactly one of each:**
@@ -615,12 +615,12 @@ counter semantics lib.sh functions had when they ran in-process.
 | id | name | script body (after the prelude) | stdin | stdout |
 |---|---|---|---|---|
 | S0 | probe | `env -0`; then the NUL-separated sections `@vars` (fixed list: `SPIRA_POISON_ASKED SPIRA_REQUEUE_ASKED SPIRA_RECLAIM_ASKED SPIRA_POISON_LIFTED SPIRA_ROSTER_WARN_STAMP SPIRA_CAPACITY_PAUSE SPIRA_HOME_REPO_RESOLVED=$(spira_home_repo)`), `@runes` (`spira_runes`, each with `RUNE_LABELS`/`RUNE_EXCLUDE_LABELS` via `rune_get`), `@partitions` (`rune_partitions`), `@runes` (`rune_names`), and, when `SENTINEL_PROBE_REPOS=1`, `@repos` (`spira_repos`, each with `repo_root`, `spira_landrefs`, `repo_land_queued`) | — | parsed |
-| S1 | summon-gate | `world_gate fleet summon-only \|\| exit 1; if capacity_paused; then log "summon-only: account out of capacity for another ${SPIRA_CAPACITY_LEFT}s — not summoning"; exit 1; fi` | — | inherited (log) |
-| S2 | ck7 | `ck7_summon_pass` | — | inherited |
+| S1 | call-gate | `world_gate fleet call-only \|\| exit 1; if capacity_paused; then log "call-only: account out of capacity for another ${SPIRA_CAPACITY_LEFT}s — not calling"; exit 1; fi` | — | inherited (log) |
+| S2 | ck7 | `ck7_call_pass` | — | inherited |
 | S3 | ~~land-escalate~~ | **retired (sp-31hjr):** `land_escalate` (and the `ask_already_open` dedupe it leans on) is native Rust now — `dispatch.rs::land_escalate`/`pass.rs::ask_already_open`, called in-process from CHECK 6. `sentinel --land-escalate` (stdin: line 1 = why, rest = evidence) drives it alone for the real-sender suites that used to source lib.sh directly. | — | — |
 | S4 | ~~check3b~~ | **retired (sp-fbqsv, wave 4.28):** `mark_queue_waiters`/`close_landed_queue_waiters` are native Rust now — `waiters.rs`, called in-process from `full()` with the pass's own broad ready snapshot already in memory (no `$SPIRA_READY_SNAPSHOT` temp-file round trip). `sentinel --mark-queue-waiters`/`--close-landed-queue-waiters` drive each alone for lib.sh's own shims. (`mark_open_children` is CHECK 3c, also in Rust.) | — | — |
 | S5 | event | `IFS= read -r -d '' k; IFS= read -r -d '' t; IFS= read -r -d '' ti; IFS= read -r -d '' de; spira_event "$k" "$t" "$ti" "$de" \|\| true` | 4 NUL-terminated fields | — |
-| S6 | ~~trace-tail~~ | retired (sp-27d3d, wave 4.34): `trace_tail` was lib.sh; `check4.rs` now calls `aeon::trace::trace_tail` in-process (`SPIRA_TRACE_MARK` read from S0's `@vars`), no seam | — | — |
+| S6 | ~~trace-tail~~ | retired (sp-27d3d, wave 4.34): `trace_tail` was lib.sh; `check4.rs` now calls `dwarf::trace::trace_tail` in-process (`SPIRA_TRACE_MARK` read from S0's `@vars`), no seam | — | — |
 | S7 | ~~detect-unclaimable~~ | **retired (sp-fbqsv, wave 4.28):** `detect_unclaimable_ready` is native Rust now — `detect.rs`, called in-process from CHECK 7c. It still shells to `sentinel --classify-unclaimable` for the classification itself (kept as the one shared, independently-tested classifier — cockpit-collect's own suite cross-checks against it); this seam only carried the bash orchestration around that call. `sentinel --detect-unclaimable` drives it alone. | — | — |
 | S8 | ~~file-unclaimable~~ | **retired (sp-fbqsv, wave 4.28):** `file_unclaimable_incidents` is native Rust now — `detect.rs`. `sentinel --file-unclaimable` (stdin: S7's output) drives it alone. | — | — |
 | S9 | ~~detect-collisions~~ | **retired (sp-fbqsv, wave 4.28):** `detect_branch_collisions` is native Rust now — `detect.rs`, called in-process from CHECK 7d. `sentinel --detect-collisions` drives it alone. | — | — |
@@ -664,7 +664,7 @@ Line numbers are against this branch's base, `7ce25b21b`.
 |---|---|---|---|
 | 1 | `Makefile:46` | `for _b in loom broker czar-pass reconciler queue-watch spira-supervise spira-config tsd-write spira reconciler-flow; do \` | `for _b in loom broker czar-pass reconciler queue-watch spira-supervise spira-config tsd-write spira reconciler-flow sentinel strand spira-claim; do \` (strand and spira-claim per their own cutovers; the sentinel needs both at runtime) |
 | 2 | `Makefile:53` | `… tsd-write spira reconciler-flow panel; do \` | `… tsd-write spira reconciler-flow sentinel strand spira-claim panel; do \` |
-| 3 | `spira/conf.sh` after `:2310` (`export SPIRA_LC_BIN`) | — | `: "${SPIRA_SENTINEL_BIN:=$(spira_bin sentinel 2>/dev/null)}"; export SPIRA_SENTINEL_BIN`. Also add spira-claim's own item 1 (`SPIRA_CLAIM_BIN`) and strand's row 1 (`SPIRA_STRAND_BIN`). The sentinel falls back to `spira_bin` without them, but aeon.sh and lib.sh need them. |
+| 3 | `spira/conf.sh` after `:2310` (`export SPIRA_LC_BIN`) | — | `: "${SPIRA_SENTINEL_BIN:=$(spira_bin sentinel 2>/dev/null)}"; export SPIRA_SENTINEL_BIN`. Also add spira-claim's own item 1 (`SPIRA_CLAIM_BIN`) and strand's row 1 (`SPIRA_STRAND_BIN`). The sentinel falls back to `spira_bin` without them, but dwarf.sh and lib.sh need them. |
 
 **Units**
 
@@ -672,9 +672,9 @@ Line numbers are against this branch's base, `7ce25b21b`.
 |---|---|---|---|
 | 4 | `systemd/spira-sentinel.service:16` | `ExecStart=@SPIRA_PROD@/sentinel.sh` | `ExecStart=@SPIRA_PROD_ROOT@/bin/sentinel` |
 | 5 | `systemd/spira-sentinel.service:6` | `Documentation=file://@SPIRA_HOME@/sentinel.sh` | `Documentation=file://@SPIRA_PROD_ROOT@/sentinel/DESIGN.md` |
-| 6 | `systemd/spira-summon.service:11` | `ExecStart=@SPIRA_PROD@/sentinel.sh --summon-only` | `ExecStart=@SPIRA_PROD_ROOT@/bin/sentinel --summon-only` |
-| 7 | `systemd/spira-summon.service:6` | `Documentation=file://@SPIRA_HOME@/sentinel.sh` | `Documentation=file://@SPIRA_PROD_ROOT@/sentinel/DESIGN.md` |
-| 8 | `spira/lib.sh:2570-2573` (`summon_refill_argv`) | `printf -- '--property=ExecStopPost=%s --user --collect --quiet %s --summon-only' "$bin" "$SPIRA_HOME/sentinel.sh"` | `printf -- '--property=ExecStopPost=%s --user --collect --quiet %s --summon-only' "$bin" "${SPIRA_SENTINEL_BIN:-$(spira_bin sentinel 2>/dev/null)}"`. Not `${…:?}`: that would kill summon_rune's shell mid-summon. The binary finds its harness from its own path (§2.7), so no `--setenv` is needed. |
+| 6 | `systemd/spira-call.service:11` | `ExecStart=@SPIRA_PROD@/sentinel.sh --call-only` | `ExecStart=@SPIRA_PROD_ROOT@/bin/sentinel --call-only` |
+| 7 | `systemd/spira-call.service:6` | `Documentation=file://@SPIRA_HOME@/sentinel.sh` | `Documentation=file://@SPIRA_PROD_ROOT@/sentinel/DESIGN.md` |
+| 8 | `spira/lib.sh:2570-2573` (`call_refill_argv`) | `printf -- '--property=ExecStopPost=%s --user --collect --quiet %s --call-only' "$bin" "$SPIRA_HOME/sentinel.sh"` | `printf -- '--property=ExecStopPost=%s --user --collect --quiet %s --call-only' "$bin" "${SPIRA_SENTINEL_BIN:-$(spira_bin sentinel 2>/dev/null)}"`. Not `${…:?}`: that would kill call_rune's shell mid-call. The binary finds its harness from its own path (§2.7), so no `--setenv` is needed. |
 | 9 | `~/.config/systemd/user/spira-sentinel-prod.service.d/skip-check5-until-lifecycle-cutover.conf` | `Environment=SPIRA_SKIP_CLOSED_CHECK=1` | unchanged, but note it **starts taking effect** with this binary (§9, B1). Today CHECK 5 runs in the audit worker regardless: 979 `CHECK5` lines in `run/audit.log`, the last at 03:58Z 2026-09-29. Since sp-jnwbn CHECK 5 is deleted and the drop-in is dead weight; remove it. |
 
 Then `systemd/install.sh` (or `unit-ensure.sh`) re-renders, and `daemon-reload`.
@@ -694,7 +694,7 @@ Then `systemd/install.sh` (or `unit-ensure.sh`) re-renders, and `daemon-reload`.
 | 13 | `spira/ready.sh:192` | `if ! _rep="$(timeout 20 "$SPIRA_HOME/sentinel.sh" --report 2>&1)"; then` | `if ! _rep="$(timeout 20 "$SPIRA_SENTINEL_BIN" --report 2>&1)"; then` |
 | 14 | `spira/ready.sh:193` | `UNKN "ready work — sentinel.sh --report failed or timed out" \` | `UNKN "ready work — sentinel --report failed or timed out" \` |
 | 15 | `spira/canary.sh:136` | `bash "$SPIRA_HOME/sentinel.sh" 2>&1 \| sed 's/^/  sentinel: /' \|\| true` | `"$SPIRA_SENTINEL_BIN" 2>&1 \| sed 's/^/  sentinel: /' \|\| true` |
-| 16 | `spira/timeout-lint.sh:41` | `files=("$HERE/aeon.sh" "$HERE/sentinel.sh" "$HERE/landing.sh")` | `files=("$HERE/aeon.sh" "$HERE/landing.sh")` |
+| 16 | `spira/timeout-lint.sh:41` | `files=("$HERE/dwarf.sh" "$HERE/sentinel.sh" "$HERE/landing.sh")` | `files=("$HERE/dwarf.sh" "$HERE/landing.sh")` |
 | 17 | `spira/config-fence-allow:68` | `spira/sentinel.sh` | delete the line |
 
 **Delete**
@@ -702,7 +702,7 @@ Then `systemd/install.sh` (or `unit-ensure.sh`) re-renders, and `daemon-reload`.
 | # | file:line | current | replacement |
 |---|---|---|---|
 | 19 | `spira/sentinel.sh` | the component | delete |
-| 20 | (retired ready-bucket script) | — | **keep**: `bulk_ready_by_rune` still feeds the watchtower crate's `--show`/sweep (idle-while-ready, via `seams::pipeline_probe`, sp-lnmbq). The sentinel buckets the cache in Rust (`summon::bucket`, a port of it). |
+| 20 | (retired ready-bucket script) | — | **keep**: `bulk_ready_by_rune` still feeds the watchtower crate's `--show`/sweep (idle-while-ready, via `seams::pipeline_probe`, sp-lnmbq). The sentinel buckets the cache in Rust (`call::bucket`, a port of it). |
 
 **Bash tests to repoint or retire.** Each is either repointed at the binary
 (`"$SPIRA_SENTINEL_BIN"` for `bash "$SH/sentinel.sh"`, with a fixture that also puts the
@@ -712,7 +712,7 @@ named unit tests.
 | # | test | action |
 |---|---|---|
 | 21 | `test-sentinel-pass.sh` | repoint. The rest are `tests::*` (whole passes against the fake runner) |
-| 22 | `test-summon-fast-path.sh:342` | `*"--property=ExecStopPost=$T/bin/mock-summon-noop --user --collect --quiet $T/sentinel.sh --summon-only"*)` → `… --quiet $SPIRA_SENTINEL_BIN --summon-only"*)` |
+| 22 | `test-call-fast-path.sh:342` | `*"--property=ExecStopPost=$T/bin/mock-call-noop --user --collect --quiet $T/sentinel.sh --call-only"*)` → `… --quiet $SPIRA_SENTINEL_BIN --call-only"*)` |
 | 23 | `test-poison.sh` | reduce to the "stays end-to-end" rows of spira-claim/DESIGN.md §4, run against the binary |
 | 26 | `test-closed-strand.sh` | repoint |
 | 27 | `test-loop-readonly.sh` | repoint: run `$CURRENT/bin/sentinel` |

@@ -1,4 +1,4 @@
-//! slay.sh — stop one aeon cleanly and make its bead say what is true. Replaces
+//! slay.sh — stop one dwarf cleanly and make its bead say what is true. Replaces
 //! spira/slay.sh (bash).
 //!
 //!   slay.sh --bead <id> [--why "<text>"] [--keep-work] [--close "<reason>" | --reopen]
@@ -7,7 +7,7 @@
 //! used to become the bead id, so a reason written beside the id silently replaced it.
 //!
 //! WHAT MOVED WHERE (DESIGN.md Decisions has the full account): the disposition record, the
-//! hold-vs-aeon distinction, the systemd-unit-or-pid stop and the wait/escalate-to-KILL
+//! hold-vs-dwarf distinction, the systemd-unit-or-pid stop and the wait/escalate-to-KILL
 //! loop are native Rust (`spira_world::proc`, `spira_world::sysctl`) — this is the part of
 //! the original file that was genuinely process-control logic, and the part whose own
 //! history (the positional-argument bug, the pidfile-vs-environment BEAD_ID bug, the
@@ -24,12 +24,12 @@ use std::path::PathBuf;
 use spira_world::{seam, sysctl};
 
 fn usage_text() -> &'static str {
-    r#"slay.sh — stop one aeon cleanly and make its bead say what is true.
+    r#"slay.sh — stop one dwarf cleanly and make its bead say what is true.
 
   slay.sh --bead <id> [--why "<text>"] [--keep-work] [--close "<reason>" | --reopen]
 
 REQUIRED
-  --bead <id>        The bead whose aeon is to be stopped. Must exist in SPIRA_DB;
+  --bead <id>        The bead whose dwarf is to be stopped. Must exist in SPIRA_DB;
                      an id no bead carries is refused rather than acted on.
 
 OPTIONAL
@@ -48,7 +48,7 @@ WHAT HAPPENS TO THE WORK WITHOUT --keep-work
   the branch left in refs/heads, not because you fear losing the commits.
 
 EXIT
-  0  the aeon was stopped and the bead says what is true
+  0  the dwarf was stopped and the bead says what is true
   1  something could not be done — the message names it
   2  usage: no --bead, an unknown flag, a positional argument, two --bead values,
      or a bead id the store does not carry
@@ -128,7 +128,7 @@ fn say(s: &str) {
 
 /// sp-ivfu3: `spira_world::spira_run` resolves `spira.run` in-process through
 /// `spira_config` and REFUSES with a named error rather than guess `/tmp/spira` — slay.sh
-/// has no sensible "keep going anyway" here (it would act on the wrong aeon's pidfiles),
+/// has no sensible "keep going anyway" here (it would act on the wrong dwarf's pidfiles),
 /// so the refusal exits.
 fn spira_run() -> PathBuf {
     spira_world::spira_run().unwrap_or_else(|e| {
@@ -141,10 +141,10 @@ fn epoch() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-/// `$SPIRA_RUN/aeon-*-<id>.pid`, first match (bash's `ls ... | head -1`; glob order, which
+/// `$SPIRA_RUN/dwarf-*-<id>.pid`, first match (bash's `ls ... | head -1`; glob order, which
 /// on a healthy box is at most one match — two pidfiles for the same bead is itself a
 /// defect this refuses to silently pick between by taking whichever sorts first).
-fn find_aeon_pidfile(run: &std::path::Path, id: &str) -> Option<PathBuf> {
+fn find_dwarf_pidfile(run: &std::path::Path, id: &str) -> Option<PathBuf> {
     let rd = std::fs::read_dir(run).ok()?;
     let suffix = format!("-{id}.pid");
     let mut matches: Vec<PathBuf> = rd
@@ -153,7 +153,7 @@ fn find_aeon_pidfile(run: &std::path::Path, id: &str) -> Option<PathBuf> {
         .filter(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
-                .map(|n| n.starts_with("aeon-") && n.ends_with(&suffix))
+                .map(|n| n.starts_with("dwarf-") && n.ends_with(&suffix))
                 .unwrap_or(false)
         })
         .collect();
@@ -198,7 +198,7 @@ fn main() {
     // ---- 1. the disposition: the row says why the session ends -------------------------
     let _ = spira_config::bounded::bounded("spira-lc").args(["disposition", id, "slain", &args.why, "slay"]).output();
 
-    // ---- 2/3. the holder (aeon OR manual hold) ------------------------------------------
+    // ---- 2/3. the holder (dwarf OR manual hold) ------------------------------------------
     let mut name = String::new();
     let mut pid = String::new();
     let mut unit = String::new();
@@ -224,14 +224,14 @@ fn main() {
             if hbpid.is_empty() { "none" } else { &hbpid }
         ));
     } else {
-        let pf = find_aeon_pidfile(&run, id);
+        let pf = find_dwarf_pidfile(&run, id);
         if let Some(pf) = &pf {
             pid = std::fs::read_to_string(pf).unwrap_or_default().trim().to_string();
             let name_file = pf.with_extension("name");
             name = std::fs::read_to_string(&name_file).unwrap_or_default().trim().to_string();
         }
         if !pid.is_empty() {
-            for u in sysctl::run_lines(&["list-units", "spira-aeon-*", "--no-legend"]) {
+            for u in sysctl::run_lines(&["list-units", "spira-dwarf-*", "--no-legend"]) {
                 if let Some(unit_name) = sysctl::first_field(&u) {
                     if sysctl::run(&["show", "-p", "MainPID", "--value", unit_name]) == pid {
                         unit = unit_name.to_string();
@@ -242,20 +242,20 @@ fn main() {
         }
         let alive = !pid.is_empty() && std::path::Path::new(&format!("/proc/{pid}")).is_dir();
         if !alive {
-            say(&format!("aeon: none running for {id} (no live pid file) — setting the bead and the work only"));
+            say(&format!("dwarf: none running for {id} (no live pid file) — setting the bead and the work only"));
             if let Some(pf) = &pf {
                 let _ = std::fs::remove_file(pf);
                 let _ = std::fs::remove_file(pf.with_extension("name"));
             }
         } else {
             if !unit.is_empty() {
-                say(&format!("aeon: {} pid {pid} is {unit} — stopping the unit", if name.is_empty() { "?" } else { &name }));
+                say(&format!("dwarf: {} pid {pid} is {unit} — stopping the unit", if name.is_empty() { "?" } else { &name }));
                 if !sysctl::run_ok(&["stop", &unit]) {
-                    say(&format!("aeon: systemctl stop failed — sending TERM to {pid}"));
+                    say(&format!("dwarf: systemctl stop failed — sending TERM to {pid}"));
                     let _ = spira_config::bounded::bounded("kill").args(["-TERM", &pid]).status();
                 }
             } else {
-                say(&format!("aeon: {} pid {pid} has no unit — sending TERM", if name.is_empty() { "?" } else { &name }));
+                say(&format!("dwarf: {} pid {pid} has no unit — sending TERM", if name.is_empty() { "?" } else { &name }));
                 let _ = spira_config::bounded::bounded("kill").args(["-TERM", &pid]).status();
             }
             let t0 = epoch();
@@ -267,7 +267,7 @@ fn main() {
                 }
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 if epoch() - t0 >= 60 {
-                    say("aeon: still alive after 60s — KILL");
+                    say("dwarf: still alive after 60s — KILL");
                     let _ = spira_config::bounded::bounded("kill").args(["-KILL", &pid]).status();
                     std::thread::sleep(std::time::Duration::from_secs(1));
                     if let Some(pf) = &pf {
@@ -278,10 +278,10 @@ fn main() {
                 }
             }
             if std::path::Path::new(&format!("/proc/{pid}")).is_dir() {
-                say(&format!("aeon: pid {pid} SURVIVED a KILL — investigate by hand"));
+                say(&format!("dwarf: pid {pid} SURVIVED a KILL — investigate by hand"));
                 fail = true;
             } else {
-                say(&format!("aeon: stopped ({}s)", epoch() - t0));
+                say(&format!("dwarf: stopped ({}s)", epoch() - t0));
             }
         }
     }
@@ -344,7 +344,7 @@ fn main() {
     if !pid.is_empty() && std::path::Path::new(&format!("/proc/{pid}")).is_dir() {
         fail = true;
     }
-    if find_aeon_pidfile(&run, id).is_some() {
+    if find_dwarf_pidfile(&run, id).is_some() {
         say(&format!("verify: a pid file for {id} remains"));
         fail = true;
     }

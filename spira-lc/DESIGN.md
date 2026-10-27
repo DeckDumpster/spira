@@ -11,7 +11,7 @@ One place where "apply this lifecycle event on behalf of a caller" is implemente
 and switched. Before sp-arpjt that was three sourced bash libraries that each re-parsed
 `spira-lc show` JSON with inline python, spelled event JSON by hand, and each had its own
 copy of the on/off switch — and a caller that had not sourced the right one silently had
-no lifecycle writes at all (aeon's `lc_hold` answered "command not found" for as long as
+no lifecycle writes at all (dwarf's `lc_hold` answered "command not found" for as long as
 it existed).
 
 ## 2. Contract
@@ -33,7 +33,7 @@ it existed).
 | `list-held <kind>` · `list-state <state>` · `list-all` | `lc_list_*` | `id` · `id\tlease\tholds,` · `id\tstate\tholder`; always 0 |
 | `deliver pr-merged <repo> <id> <branch> <sha>` · `pr-closed <id>` · `push-delivered <id> <sha>` · `push-requeued <id> <tip>` · `push-returned <id>` | `lc_deliver_*` | 0 applied · 1 skipped (no delivery row / wrong state, logged) · 2/3 as `event`; lib.sh `log` lines on stdout |
 | `certify <id> <tip> <pass\|red\|infra> [detail] [actor=lifecycle-cert]` · `resubmit <id> <tip> [actor]` | `lc_certify` · `lc_resubmit` | 0 · 2 cannot tell · 3 refused/skipped; each outcome appended to `$SPIRA_RUN/lifecycle-cert.log` as before |
-| `renew <id> <holder> <lease-until>` | `bd heartbeat` (sp-2jf0a: the aeon's heartbeat renews its lifecycle lease) | 0 renewed · 1 not this holder's WORKING row · 2 cannot tell · 3 refused (race, or a deadline that does not advance); the machine refuses a non-holder with `NotHolder` |
+| `renew <id> <holder> <lease-until>` | `bd heartbeat` (sp-2jf0a: the dwarf's heartbeat renews its lifecycle lease) | 0 renewed · 1 not this holder's WORKING row · 2 cannot tell · 3 refused (race, or a deadline that does not advance); the machine refuses a non-holder with `NotHolder` |
 
 **Two verbs release a claim or close an epic** (sp-hyo5e —
 nothing in shell writes a claim, a status or a close around the machine any more):
@@ -79,7 +79,7 @@ content (`git_evidence::content_on_base`, the `content-landed` verb's proof), el
   lines lose its `landing-pass <id>:` prefix (they are spira-lc's own lines now). (3) The
   gate's certification actor is `gate` (it was `lib.sh`, the `$0` of the gate's seam).
   (4) Every lib.sh caller now reaches the machine when the switch is on, not only those that
-  had sourced lc.sh (aeon's `park_unmapped`/rapid-recur holds and the eviction-race hold
+  had sourced lc.sh (dwarf's `park_unmapped`/rapid-recur holds and the eviction-race hold
   were silent no-ops in ON mode before).
 - **Transitional adapters.** `lc_certify`/`lc_resubmit` remain in lib.sh as one-line calls
   of `spira-lc certify/resubmit` for batch.sh's stale-certification sweep, whose own port

@@ -6,7 +6,7 @@ Description=Sweep the live sessions for unfinished business when enough turns ha
 # turns over many of them, and the archivist's answer stays true for as long as the session
 # is idle. The sentinel is fast because a lease dies in minutes; nothing here does.
 #
-# It is also not free. A drift that exceeds the threshold summons a model session, so the
+# It is also not free. A drift that exceeds the threshold calls a model session, so the
 # cadence is the ceiling on how often that can happen.
 OnBootSec=5min
 OnActiveSec=5min

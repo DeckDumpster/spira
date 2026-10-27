@@ -188,15 +188,15 @@ pub struct Declared {
     pub work_types: Vec<String>,
     pub reclaim_grace: i64,
     pub land_maxsec: String,
-    pub max_aeons: Option<i64>,
-    pub max_live_aeons: Option<i64>,
+    pub max_dwarves: Option<i64>,
+    pub max_live_dwarves: Option<i64>,
     pub lanes_max_live: Option<i64>,
     pub lanes_reserve: i64,
     pub queue_throttle_override: String,
-    pub summon_lock_wait: u64,
-    /// `SPIRA_LANES`, for CHECK 7's own log line (summon.rs) — display only.
+    pub call_lock_wait: u64,
+    /// `SPIRA_LANES`, for CHECK 7's own log line (call.rs) — display only.
     pub lanes: String,
-    /// Forwarded verbatim to every spawned aeon's `--setenv` (dispatch.rs/summon.rs).
+    /// Forwarded verbatim to every spawned dwarf's `--setenv` (dispatch.rs/call.rs).
     pub repo_map: String,
     /// Forwarded verbatim; empty means "the system gh" (dispatch.rs).
     pub gh: String,
@@ -237,12 +237,12 @@ impl Declared {
                 .collect(),
             reclaim_grace: spira_config::process::cfg_parse::<i64>("SPIRA_RECLAIM_GRACE_SECS")?,
             land_maxsec: spira_config::process::cfg("SPIRA_LAND_MAXSEC")?,
-            max_aeons: opt_i64("SPIRA_MAX_AEONS")?,
-            max_live_aeons: opt_i64("SPIRA_MAX_LIVE_AEONS")?,
+            max_dwarves: opt_i64("SPIRA_MAX_DWARVES")?,
+            max_live_dwarves: opt_i64("SPIRA_MAX_LIVE_DWARVES")?,
             lanes_max_live: opt_i64("SPIRA_LANES_MAX_LIVE")?,
             lanes_reserve: spira_config::process::cfg_parse::<i64>("SPIRA_LANES_RESERVE")?,
             queue_throttle_override: spira_config::process::cfg("SPIRA_QUEUE_THROTTLE_OVERRIDE")?,
-            summon_lock_wait: spira_config::process::cfg_parse::<u64>("SPIRA_SUMMON_LOCK_WAIT")?,
+            call_lock_wait: spira_config::process::cfg_parse::<u64>("SPIRA_CALL_LOCK_WAIT")?,
             lanes: spira_config::process::cfg("SPIRA_LANES")?,
             repo_map: spira_config::process::cfg("SPIRA_REPO_MAP")?,
             gh: spira_config::process::cfg("SPIRA_GH")?,
@@ -270,12 +270,12 @@ impl Declared {
             work_types: vec!["task".into(), "bug".into(), "feature".into()],
             reclaim_grace: 10800,
             land_maxsec: "5400".into(),
-            max_aeons: None,
-            max_live_aeons: None,
+            max_dwarves: None,
+            max_live_dwarves: None,
             lanes_max_live: None,
             lanes_reserve: 1,
             queue_throttle_override: String::new(),
-            summon_lock_wait: 30,
+            call_lock_wait: 30,
             lanes: "ops groomer qa mimir czar warden mender pilgrimage".into(),
             repo_map: String::new(),
             gh: String::new(),
@@ -312,7 +312,7 @@ pub struct Cfg {
     pub land_escalate_every: i64,
     pub launch: String,
     pub systemctl: String,
-    pub summon: String,
+    pub call: String,
     pub skip_reclaim: bool,
     /// Spira tools, invoked by bare name on the launcher's PATH (sp-gypjk). Plain fields so a
     /// unit test can point one at a fixture; nothing reads them from the environment.
@@ -331,17 +331,17 @@ pub struct Cfg {
     pub runes_str: String,
     pub pass_target: i64,
     pub roster_stamp: PathBuf,
-    /// The capacity pause file (family K, wave 4.26 — owned by `aeon`; this is a pure
-    /// read, never a probe: `aeon::capacity::pause_state`).
+    /// The capacity pause file (family K, wave 4.26 — owned by `dwarf`; this is a pure
+    /// read, never a probe: `dwarf::capacity::pause_state`).
     pub capacity_pause: PathBuf,
-    /// `SPIRA_MAX_AEONS`: the task pool's ceiling. `None` (unset/empty) means no pool at
+    /// `SPIRA_MAX_DWARVES`: the task pool's ceiling. `None` (unset/empty) means no pool at
     /// all — every persona's own concurrency cap applies unchanged.
-    pub max_aeons: Option<i64>,
-    /// `SPIRA_MAX_LIVE_AEONS`: the whole-fleet ceiling `summon_rune` enforces above every
+    pub max_dwarves: Option<i64>,
+    /// `SPIRA_MAX_LIVE_DWARVES`: the whole-fleet ceiling `call_rune` enforces above every
     /// per-persona cap and above the pool. `None` means no ceiling (today's behaviour).
     /// `ck7_fill_cap`'s own per-persona-per-pass cap defaults this to 4 when unset.
-    pub max_live_aeons: Option<i64>,
-    /// `SPIRA_LANES_MAX_LIVE`: the collective cap on lane aeons. `None` means no cap.
+    pub max_live_dwarves: Option<i64>,
+    /// `SPIRA_LANES_MAX_LIVE`: the collective cap on lane dwarves. `None` means no cap.
     pub lanes_max_live: Option<i64>,
     /// `SPIRA_LANES_RESERVE`: fleet slots a task rune leaves free while a lane has ready work.
     pub lanes_reserve: i64,
@@ -353,14 +353,14 @@ pub struct Cfg {
     /// `SPIRA_SENTINEL_PASS_BUDGET_SECS` (default 90s): CHECK 7's own per-partition budget,
     /// distinct from `pass_target`, the whole pass's budget.
     pub pass_budget_secs: i64,
-    /// `SPIRA_SUMMON_LOCK_WAIT` (default 30s): how long `ck7_summon_pass` waits on
-    /// `summon.lock` before giving up this pass to whoever already holds it.
-    pub summon_lock_wait: u64,
-    /// `$SPIRA_RUN/lane-round-robin`: the lane rune summoned last pass.
+    /// `SPIRA_CALL_LOCK_WAIT` (default 30s): how long `ck7_call_pass` waits on
+    /// `call.lock` before giving up this pass to whoever already holds it.
+    pub call_lock_wait: u64,
+    /// `$SPIRA_RUN/lane-round-robin`: the lane rune called last pass.
     pub lane_round_robin: PathBuf,
-    /// `$SPIRA_RUN/summon.lock`: the one lock every `ck7_summon_pass` caller serializes on.
-    pub summon_lock: PathBuf,
-    /// `SPIRA_LANES` as declared — summon.rs's own CHECK 7 lane log line. From `Declared`,
+    /// `$SPIRA_RUN/call.lock`: the one lock every `ck7_call_pass` caller serializes on.
+    pub call_lock: PathBuf,
+    /// `SPIRA_LANES` as declared — call.rs's own CHECK 7 lane log line. From `Declared`,
     /// never read ad hoc off `Context` (that used to default to "none" when unset; the key
     /// itself always resolves now — `spira/conf.d/SPIRA_LANES` declares the default).
     pub lanes_declared: String,
@@ -398,7 +398,7 @@ impl Cfg {
         }
         // The spec this sentinel runs under — every launch runs under the same one source.
         raw.insert("SPIRA_TOML".into(), spira_config::process::spec().unwrap_or_default());
-        // Registered keys forwarded to a spawned aeon's `--setenv`: from `d`, not Context.
+        // Registered keys forwarded to a spawned dwarf's `--setenv`: from `d`, not Context.
         raw.insert("SPIRA_RUN".into(), run.to_string_lossy().into_owned());
         raw.insert("SPIRA_DB".into(), d.db.clone());
         raw.insert("SPIRA_REPO_MAP".into(), d.repo_map.clone());
@@ -446,7 +446,7 @@ impl Cfg {
             land_stale: num("SPIRA_LAND_STALE", 1800),
             launch: or("SPIRA_LAUNCH", "systemd-run"),
             systemctl: or("SPIRA_SYSTEMCTL", "systemctl"),
-            summon: or("SPIRA_SUMMON", "systemd-run"),
+            call: or("SPIRA_CALL", "systemd-run"),
             skip_reclaim: c.get("SPIRA_SKIP_RECLAIM") == Some("1"),
             tsd_bin: "tsd-write".into(),
             lc_bin: "spira-lc".into(),
@@ -469,8 +469,8 @@ impl Cfg {
             roster_stamp: dir("SPIRA_ROSTER_WARN_STAMP", "roster-warn.stamp"),
             // literal-ok: conf.sh's default before sp-i2m7y retired the key
             capacity_pause: dir("SPIRA_CAPACITY_PAUSE", "capacity-pause"),
-            max_aeons: d.max_aeons,
-            max_live_aeons: d.max_live_aeons,
+            max_dwarves: d.max_dwarves,
+            max_live_dwarves: d.max_live_dwarves,
             lanes_max_live: d.lanes_max_live,
             lanes_reserve: d.lanes_reserve,
             queue_throttle_override: d.queue_throttle_override,
@@ -480,9 +480,9 @@ impl Cfg {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| run.join("queue-throttled")),
             pass_budget_secs: num("SPIRA_SENTINEL_PASS_BUDGET_SECS", 90),
-            summon_lock_wait: d.summon_lock_wait,
+            call_lock_wait: d.call_lock_wait,
             lane_round_robin: run.join("lane-round-robin"),
-            summon_lock: run.join("summon.lock"),
+            call_lock: run.join("call.lock"),
             lanes_declared: d.lanes,
             raw,
             home,
@@ -611,8 +611,8 @@ pub mod tests {
         assert_eq!(k.plan_labels(), vec!["plan"]);
         assert_eq!(k.lanes_declared, "ops groomer qa mimir czar warden mender pilgrimage");
         assert_eq!(k.reclaim_grace, 10800);
-        assert_eq!(k.summon_lock_wait, 30);
-        assert_eq!((k.max_aeons, k.max_live_aeons, k.lanes_max_live), (None, None, None));
+        assert_eq!(k.call_lock_wait, 30);
+        assert_eq!((k.max_dwarves, k.max_live_dwarves, k.lanes_max_live), (None, None, None));
         assert_eq!(k.raw.get("SPIRA_ASK_LABEL").map(String::as_str), Some(""));
     }
 }

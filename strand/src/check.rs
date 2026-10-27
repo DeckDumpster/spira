@@ -70,7 +70,7 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
     let now = timefmt::now();
     let log_text = cfg.sentinel_log().and_then(|p| fs::read_to_string(p).ok()).unwrap_or_default();
     let run_dir = cfg.run.clone().ok_or("SPIRA_RUN is unknown (not in the environment, no [spira].run)")?;
-    let total_live = probe::aeons_live_total(cfg);
+    let total_live = probe::dwarves_live_total(cfg);
     let capacity = probe::capacity(cfg, now);
     let throttle = probe::throttle(cfg);
 
@@ -100,11 +100,11 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
         let ready = probe::ready(cfg, &labels, &excl)?;
         let facts = Facts {
             now,
-            live: runes.iter().map(|f| probe::aeon_count(cfg, f, None)).sum(),
+            live: runes.iter().map(|f| probe::dwarf_count(cfg, f, None)).sum(),
             total_live,
-            max_aeons: cfg.max_live_aeons,
+            max_dwarves: cfg.max_live_dwarves,
             capacity_paused: capacity.clone(),
-            pool_paused: cfg.max_aeons == Some(0),
+            pool_paused: cfg.max_dwarves == Some(0),
             world: world_state(&run_dir),
             pass_truncated: probe::pass_truncated(&log_text, &runes),
             throttle: throttle.clone(),
@@ -367,11 +367,11 @@ pub fn check(cfg: &Config, c: Classified, dry: bool) -> i32 {
     0
 }
 
-/// Live aeons of the partition's personas, read now rather than from the classification's
+/// Live dwarves of the partition's personas, read now rather than from the classification's
 /// snapshot. None when the roster cannot be read.
 fn lane_live_now(cfg: &Config, specs: Result<Vec<probe::PartitionSpec>, String>) -> Option<u32> {
     let specs = specs.ok()?;
-    Some(specs.iter().flat_map(|s| s.runes.iter()).map(|f| probe::aeon_count(cfg, f, None)).sum())
+    Some(specs.iter().flat_map(|s| s.runes.iter()).map(|f| probe::dwarf_count(cfg, f, None)).sum())
 }
 
 /// Only a lane read as live withholds the ask; a failed probe must not suppress it silently.
@@ -392,7 +392,7 @@ fn mark(path: &Path, st: &mut state::State, part: &str, row: &Row, what: Mark) {
 /// `$SPIRA_RUN/events/<key>` ("<last> <suppressed>"). `bead::event::emit`
 /// (`bead/src/event.rs`, sp-ogu8x, wave 4.24, family Z) is the same algorithm's owning-crate
 /// home now, but THIS copy is not delegated to it: `bead` depends on `strand` already (for
-/// `strand::probe::aeon_alive`), and a `strand` -> `bead` dependency the other way would be a
+/// `strand::probe::dwarf_alive`), and a `strand` -> `bead` dependency the other way would be a
 /// cycle Cargo refuses to build. See `bead/DESIGN.md` "event" — "strand's own duplicate" for
 /// the full account and the follow-up this leaves (break the cycle with a third, lower crate
 /// before actually collapsing this copy).
@@ -478,7 +478,7 @@ fn wall_clock_now() -> i64 {
 
 pub fn title_for(part: &str, kind: &str, id: &str) -> String {
     if kind == "reclaim-ceiling" {
-        format!("Spira: {id} keeps losing its aeon — the host, not the bead")
+        format!("Spira: {id} keeps losing its dwarf — the host, not the bead")
     } else if !id.is_empty() && id != "-" {
         format!("Spira: {id} is stranded ({kind})")
     } else if !part.is_empty() && part != "-" {
@@ -660,7 +660,7 @@ mod tests {
         assert_eq!(title_for("spira,plan", "stuck", "sp-1"), "Spira: sp-1 is stranded (stuck)");
         assert_eq!(title_for("spira,plan", "starved", "-"), "Spira: the [spira,plan] queue is stranded (starved)");
         assert_eq!(title_for("-", "starved", "-"), "Spira: the plan is stranded (starved)");
-        assert_eq!(title_for("p", "reclaim-ceiling", "sp-1"), "Spira: sp-1 keeps losing its aeon — the host, not the bead");
+        assert_eq!(title_for("p", "reclaim-ceiling", "sp-1"), "Spira: sp-1 keeps losing its dwarf — the host, not the bead");
     }
 
     #[test]
@@ -726,7 +726,7 @@ mod tests {
     }
 
     #[test]
-    fn a_starved_ask_is_withheld_while_the_lane_has_a_live_aeon() {
+    fn a_starved_ask_is_withheld_while_the_lane_has_a_live_dwarf() {
         let d = scratch("starved-live");
         let spec = || {
             Ok(vec![probe::PartitionSpec { labels: "spira,plan".into(), exclude: String::new(), runes: vec!["mimir".into()] }])
@@ -736,7 +736,7 @@ mod tests {
             testkit::write_exe(&p, &format!("#!/bin/sh\n{lines}\n"));
             Config { systemctl: p.to_string_lossy().into_owned(), ..Config::test_fixture() }
         };
-        let live = mk("echo 'spira-aeon-mimir-1.service loaded active running x'");
+        let live = mk("echo 'spira-dwarf-mimir-1.service loaded active running x'");
         assert_eq!(lane_live_now(&live, spec()), Some(1));
         let none = mk("true");
         assert_eq!(lane_live_now(&none, spec()), Some(0), "positive control: an empty lane reads as starved");

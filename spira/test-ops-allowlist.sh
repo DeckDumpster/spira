@@ -118,7 +118,7 @@ EOF_DENY
 OPS_TOOLS="$(rune_tools ops)"
 [ -n "$OPS_TOOLS" ] || bail "ops.rune not found or RUNE_TOOLS unset"
 
-OPS_ALLOW="systemctl status spira-aeon-builder.service|systemctl status
+OPS_ALLOW="systemctl status spira-dwarf-builder.service|systemctl status
 systemctl show spira-sentinel.service|systemctl show
 cat /var/log/spira/ops.log|cat
 grep -r 'error' /var/log/spira/|grep
@@ -127,12 +127,12 @@ git log --oneline -10|git log
 git -C /srv/spira/harness log --oneline -5|git -C ... log
 git status|git status"
 
-OPS_DENY="bd -C /srv/spira/db show sp-xyz|bd show NOT granted (aeons reach the store only through work)
-bd -C /srv/spira/db note sp-xyz 'diagnosis'|bd note NOT granted (aeons reach the store only through work)
+OPS_DENY="bd -C /srv/spira/db show sp-xyz|bd show NOT granted (dwarves reach the store only through work)
+bd -C /srv/spira/db note sp-xyz 'diagnosis'|bd note NOT granted (dwarves reach the store only through work)
 rm -rf /srv/spira/run/worktree|rm
-systemctl restart spira-aeon-builder.service|systemctl restart
+systemctl restart spira-dwarf-builder.service|systemctl restart
 systemctl start spira-sentinel.service|systemctl start
-systemctl stop spira-aeon-builder.service|systemctl stop
+systemctl stop spira-dwarf-builder.service|systemctl stop
 git branch -D spira/sp-xyz|git branch -D"
 
 persona_table ops "$OPS_TOOLS" "$OPS_ALLOW" "$OPS_DENY"
@@ -152,8 +152,8 @@ git log --oneline -10|git log
 cat /var/log/spira/czar.log|cat
 ls -la /srv/spira/run/worktree|ls"
 
-CZAR_DENY="bd -C /srv/spira/db show sp-xyz|bd show NOT granted (aeons reach the store only through work)
-bd -C /srv/spira/db note sp-xyz 'diagnosis'|bd note NOT granted (aeons reach the store only through work)
+CZAR_DENY="bd -C /srv/spira/db show sp-xyz|bd show NOT granted (dwarves reach the store only through work)
+bd -C /srv/spira/db note sp-xyz 'diagnosis'|bd note NOT granted (dwarves reach the store only through work)
 rm -rf /srv/spira/run/worktree|rm
 systemctl restart spira-sentinel.service|systemctl restart
 systemctl start spira-sentinel.service|systemctl start

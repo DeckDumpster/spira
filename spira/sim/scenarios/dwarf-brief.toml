@@ -1,0 +1,52 @@
+epoch = 1800000000
+horizon = 900000
+settle = 120000
+goal = "sp-ab01:SUBMITTED"
+real_actors = ["sentinel-call"]
+real_dwarf = true
+
+[[step]]
+at = 0
+file = "sp-ab01"
+body = "## Build\n\nAdd out/ab01.txt."
+
+[[step]]
+at = 0
+claim = "sp-ab01"
+script = ["commit out/ab01.txt", "submit"]
+
+[[invariant]]
+name = "step_failed"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit NOT IN (0, 3)"
+
+[[invariant]]
+name = "credential_in_session_env"
+sql = "SELECT 0 AS seq, bead FROM briefs WHERE env LIKE '%SPIRA_DB%' OR env LIKE '%SPIRA_BD%' OR env LIKE '%TOKEN%' OR env LIKE '%PASSWORD%'"
+
+[[expect]]
+name = "session_submitted"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-ab01' AND lc_state = 'SUBMITTED'"
+
+[[expect]]
+name = "one_brief_for_the_bead"
+sql = "SELECT 1 FROM briefs WHERE bead = 'sp-ab01' AND n = 1"
+
+[[expect]]
+name = "brief_names_bead_and_branch"
+sql = "SELECT 1 FROM briefs WHERE bead = 'sp-ab01' AND system LIKE '%sp-ab01%' AND system LIKE '%spira/sp-ab01%'"
+
+[[expect]]
+name = "brief_is_the_builders"
+sql = "SELECT 1 FROM briefs WHERE bead = 'sp-ab01' AND system LIKE '%Warden%'"
+
+[[expect]]
+name = "repo_instructions_reach_the_model"
+sql = "SELECT 1 FROM briefs WHERE bead = 'sp-ab01' AND argv NOT LIKE '%--setting-sources%'"
+
+[[expect]]
+name = "session_runs_in_the_beads_worktree"
+sql = "SELECT 1 FROM briefs WHERE bead = 'sp-ab01' AND cwd LIKE '%/sp-ab01'"
+
+[[expect]]
+name = "session_env_is_bound_to_the_bead"
+sql = "SELECT 1 FROM briefs WHERE bead = 'sp-ab01' AND env LIKE '%\"BEAD_ID\":\"sp-ab01\"%'"

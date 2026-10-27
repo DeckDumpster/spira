@@ -13,7 +13,7 @@
 # full toolset on purpose — for most interesting questions the only honest answer to "is this
 # feasible" comes from trying it — so nothing stops it committing an experiment beside its
 # write-up, and the landing worker would then merge the experiment into the base while every
-# downstream check passed: the aeon committed, the commit names the bead, the gate ran, the
+# downstream check passed: the dwarf committed, the commit names the bead, the gate ran, the
 # branch landed. `confine.sh` is the refusal, and this is the suite that holds it.
 #
 # THE POSITIVE CONTROL COMES FIRST and everything after it is read through that. A confinement
@@ -81,28 +81,28 @@ mkdir -p "$SPIRA_RUN" "$SPIRA_HOME/runes"
 # SPIRA_RUNES_DIR no longer derives from SPIRA_HOME (the fixture declares its own path) —
 # point it at this suite's own fixture runes explicitly.
 tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
-# `summon_rune` is a `sentinel --summon` shim now (wave 4.27, family G, sp-gzmd2): a real
+# `call_rune` is a `sentinel --call` shim now (wave 4.27, family G, sp-gzmd2): a real
 # subprocess with SPIRA_HOME=$SPIRA_HOME, which needs a working lib.sh at its own context
-# probe — the same one-line symlink trick test-summon-rune.sh's own `aeon --escape`
+# probe — the same one-line symlink trick test-call-rune.sh's own `dwarf --escape`
 # fixture uses.
 printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"
 ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
-# $SPIRA_HOME/aeon is the LAUNCH TARGET `which("aeon", PATH)` resolves to below — a bare
+# $SPIRA_HOME/dwarf is the LAUNCH TARGET `which("dwarf", PATH)` resolves to below — a bare
 # "exit 0" stands in for it, since nothing here ever execs it for real. Its "capacity
 # paused" branch is a leftover from when that question was a subprocess call this stub
 # could intercept (sp-wm2a3, wave 4.26/sp-kn6d8): capacity_paused is an in-process read
-# now (aeon::capacity::pause_state), never a subprocess, so this branch is dead weight,
+# now (dwarf::capacity::pause_state), never a subprocess, so this branch is dead weight,
 # kept only because answering "open" here is also harmless.
-printf '#!/bin/sh\ncase "$1 $2" in\n"capacity paused") exit 1 ;;\nesac\nexit 0\n' > "$SPIRA_HOME/aeon"
-chmod +x "$SPIRA_HOME/aeon"
-export PATH="$SPIRA_HOME:$PATH"   # summon_rune launches the aeon on PATH; a stub here
+printf '#!/bin/sh\ncase "$1 $2" in\n"capacity paused") exit 1 ;;\nesac\nexit 0\n' > "$SPIRA_HOME/dwarf"
+chmod +x "$SPIRA_HOME/dwarf"
+export PATH="$SPIRA_HOME:$PATH"   # call_rune launches the dwarf on PATH; a stub here
 # Readiness is the lifecycle's (sp-860zj): the bd fixture is told to rune_ready in lifecycle
 # terms — open is READY, the spira-poison label and the ask label are holds.
-lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
-SUMMONED="$TMP/summoned.txt"
-export SPIRA_SUMMON="$TMP/summon.sh"
-printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> %s\n' "$SUMMONED" > "$SPIRA_SUMMON"
-chmod +x "$SPIRA_SUMMON"
+lc_dwarf_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
+CALLED="$TMP/called.txt"
+export SPIRA_CALL="$TMP/call.sh"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> %s\n' "$CALLED" > "$SPIRA_CALL"
+chmod +x "$SPIRA_CALL"
 
 # THE REAL RUNE FILES, copied rather than reconstructed. A fixture that writes its own
 # predicate is asserting about the fixture; what has to be true is that the persona SHIPPED
@@ -117,20 +117,20 @@ bead() {  # bead <id> <labels-csv> [type] [status]
 beads
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
-summon() { : > "$SUMMONED"; summon_rune "$1" >"$TMP/log" 2>&1; printf '%s' "$?"; }
+call() { : > "$CALLED"; call_rune "$1" >"$TMP/log" 2>&1; printf '%s' "$?"; }
 
 want "the shipped rune is discovered without being listed" "spike" "$(spira_runes)"
 
 beads "$(bead sp-spike-1 "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL")"
 is "a spike bead is in the spike's partition" 1 "$(rune_ready spike)"
 is "and not in the builder's"                 0 "$(rune_ready builder)"
-is "so the spike is summoned"                 0 "$(summon spike)"
-is "and the builder is not"                   1 "$(summon builder)"
+is "so the spike is called"                 0 "$(call spike)"
+is "and the builder is not"                   1 "$(call builder)"
 
 beads "$(bead sp-plan-1 "${SPIRA_SCOPE_LABEL},plan")"
 is "a plan bead is not in the spike's partition" 0 "$(rune_ready spike)"
-is "and the spike is not summoned for it"        1 "$(summon spike)"
-is "while the builder is"                        0 "$(summon builder)"
+is "and the spike is not called for it"        1 "$(call spike)"
+is "while the builder is"                        0 "$(call builder)"
 
 # AND over the labels, never OR. A bead carrying the spike label without `spira` belongs to
 # something else — an installation that imported a predecessor's beads holds thousands of
@@ -202,7 +202,7 @@ is "an unreadable bead is not treated as a spike" 0 "$(confine_rc sp-gone)"
 echo
 echo "the allowed trees are path prefixes, not string prefixes:"
 # ======================================================================================
-# `notes/spikes-scratch` is exactly the name an aeon reaches for when told to keep its
+# `notes/spikes-scratch` is exactly the name a dwarf reaches for when told to keep its
 # experiment beside its notes, and a naive `case $f in $p*)` admits it.
 beads "$(bead sp-adj "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL" task closed)"
 spike_branch sp-adj notes/spikes-scratch/poc.rs
@@ -293,15 +293,15 @@ land_branch sp-land-poc notes/spikes/answer2.md src/experiment.rs
 # THE DEAD CLAIMANT'S NAME MUST COME OFF, and it is asserted on this path rather than assumed
 # from the one next to it. `bd reopen` keeps the assignee and `bd ready --claim` skips an
 # assigned bead while `bd ready` still lists it, so a reopen that forgets this puts the bead
-# back in the graph wearing a name no aeon will ever claim past — visible, at P0, and dead.
+# back in the graph wearing a name no dwarf will ever claim past — visible, at P0, and dead.
 # Every reopen site goes through bead_reopen for that reason; a refusal is a reopen like any
 # other, and a new refusal path is exactly where the clearing gets left out.
-bd -C "$SPIRA_DB" update sp-land-poc --assignee aeon-dead >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
+bd -C "$SPIRA_DB" update sp-land-poc --assignee dwarf-dead >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
 out="$(land)"
 want   "an unconfined spike branch is refused" "reopened sp-land-poc" "$out"
 nowant "and is not landed"                     "landed spira/sp-land-poc" "$out"
 is     "and the bead is genuinely reopened"    open "$(status_of sp-land-poc)"
-is     "and unassigned, so the next aeon can claim it" "" "$(assignee_of sp-land-poc)"
+is     "and unassigned, so the next dwarf can claim it" "" "$(assignee_of sp-land-poc)"
 want   "and the note carries the offending path" "src/experiment.rs" \
        "$(bd -C "$SPIRA_DB" show sp-land-poc 2>/dev/null)" # batch-job: fixture bd call against the suite's throwaway store
 timeout 5 git -C "$LREPO" fetch -q origin

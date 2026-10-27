@@ -8,12 +8,12 @@
 # WHY THIS EXISTS. sp-lsh22, sp-fmhwi (2026-09-24): the [spira,plan] queue escalated as
 # "stranded (starved)" while CHECK7's own log line in the same pass read "throttle active
 # (... depth=12 since_land=4m) — task pool held at 0". Ryan's verdict: "nothing was
-# stranded; the queue depth was too high to allocate work to aeons" — the detector must
-# check the throttle before calling withheld aeons a strand.
+# stranded; the queue depth was too high to allocate work to dwarves" — the detector must
+# check the throttle before calling withheld dwarves a strand.
 #
 # FOUR CASES (law-absence-needs-a-positive-control):
 #
-#   0. POSITIVE CONTROL — THROTTLE_STATE=open, ready beads, no live aeon → classifier
+#   0. POSITIVE CONTROL — THROTTLE_STATE=open, ready beads, no live dwarf → classifier
 #      DOES produce "starved". Proves the check can fire before we trust its silence.
 #
 #   1. THROTTLE SHUT — THROTTLE_STATE=shut, same fixture → no "starved" in output;

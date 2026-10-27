@@ -76,7 +76,7 @@ out="$(check_table "$TABLE" "$ROOT")"; rc=$?
 wantrc "every cell is a real test, a reasoned n/a, or a gap with its bead" 0 "$rc"
 [ -z "$out" ] || echo "$out"
 for m in "sift screening" "known-red tip refusal" "provisional-member gate-red eject" \
-         "eject names its evidence" "mender summons on a red suite" "pass telemetry" \
+         "eject names its evidence" "mender calls on a red suite" "pass telemetry" \
          "stale-red / back-pressure" "freeze / maintenance-window" "landing verification"; do
     want "row present: $m" "$m" "$(cat "$TABLE")"
 done

@@ -1,12 +1,12 @@
 # Build IO — one compilation cache, no cold dependency builds, ephemeral targets on tmpfs
 
 Bead: **sp-z61hj** (P0). Module: `spira_config::build` (`src/build.rs`); callers in `gate`,
-`testenv`, `release`, `aeon`; the reaper is `testenv`'s `target-reap` binary.
+`testenv`, `release`, `dwarf`; the reaper is `testenv`'s `target-reap` binary.
 
 ## 1. Intent
 
 The box wrote ~19 GiB/hour to one consumer SATA SSD (2.25 TB in 118 h), and the cause was
-compilation, not data: every worktree — aeons, agents, gate trees, landings — compiled the
+compilation, not data: every worktree — dwarves, agents, gate trees, landings — compiled the
 whole workspace, **every third-party dependency included**, cold into its own `target/`
 (159 target dirs, 236 GiB). Dependencies are the cacheable part and were rebuilt every time.
 
@@ -48,17 +48,17 @@ one_shot(profile)       -> ["--config", "profile.<profile>.incremental=false"]
   a unit composition, or `--release-bins` (`NO_VERDICT reason=no-build-cache`; a column-gated
   repository whose gate builds nothing is judged without it), testenv (`VERDICT FAULT rc=3 reason=no-build-cache`),
   `release build` (error). The refusal names `spira/deps.toml` and the opt-out.
-* **The aeon falls back, loudly.** An aeon session is not a build; it hands its agent an
+* **The dwarf falls back, loudly.** A dwarf session is not a build; it hands its agent an
   environment. With sccache absent the session still runs, with a log line saying its builds
-  are uncached (`aeon: sccache not on PATH …`). Refusing a session over a cache would stop
+  are uncached (`dwarf: sccache not on PATH …`). Refusing a session over a cache would stop
   the world over a performance tool.
 
 ### 2.2 Why `--config profile.<p>.incremental=false` and not `CARGO_INCREMENTAL=0`
 
 **Measured (2026-09-30):** sccache hashes every `CARGO_*` environment variable into a
 compilation's key. A dependency built with `CARGO_INCREMENTAL=0` and the same dependency
-built without it (an aeon's interactive `cargo test`) are **two cache entries** — 0 hits
-across the two. `--config profile.aeon.incremental=false` is a command-line switch: the
+built without it (a dwarf's interactive `cargo test`) are **two cache entries** — 0 hits
+across the two. `--config profile.dwarf.incremental=false` is a command-line switch: the
 dependency's key is unchanged (3/3 hits), and cargo still passes no `-C incremental` to the
 workspace crates. The same finding forbids `CARGO_TARGET_DIR` as an **environment variable**
 on any cached build: two target dirs set that way never share a key (0 hits measured);
@@ -67,10 +67,10 @@ on any cached build: two target dirs set that way never share a key (0 hits meas
 
 ### 2.3 The gate tree's target on tmpfs
 
-`<gate tree>/target` stays a real directory, and each of its build directories — `aeon`,
+`<gate tree>/target` stays a real directory, and each of its build directories — `dwarf`,
 `release`, `debug`, `gate-tools` — is a **symlink** to `<root>/<gate tree basename>/<dir>`,
 where `<root>` is `$SPIRA_GATE_TARGET_ROOT`, else `/tmp/spira-gate-target-<sha256(SPIRA_RUN)[..6]>`
-when `/tmp` is a tmpfs. Every path consumer (`target/aeon/<pkg>`, `target/gate-tools/<tree
+when `/tmp` is a tmpfs. Every path consumer (`target/dwarf/<pkg>`, `target/gate-tools/<tree
 id>`, `git clean -e target`, `make build`) is unchanged; only where the bytes land moves.
 **Why the links are inside `target/` and not `target` itself:** `.gitignore` says `target/`,
 which matches a directory only. A `target` symlink would be an *untracked file* to every
@@ -102,7 +102,7 @@ target-reap [--dry-run] [--worktrees DIR]
 ```
 
 Candidates: each `<DIR>/<name>/target` (default `$SPIRA_RUN/worktree`) where `<name>` is a
-bead id (`sp-…`, optionally `.N` children) — the aeon and Concierge worktree convention.
+bead id (`sp-…`, optionally `.N` children) — the dwarf and Concierge worktree convention.
 One `bd show <ids…> --json` reads their status; a target whose bead is `closed` is removed.
 A bead bd does not know, or a failed `bd` call, removes nothing (fail closed: never guess).
 Gate trees and testenv slots are not candidates — the gate and testenv own those.
@@ -169,7 +169,7 @@ No new config keys in `spira.toml`. Environment only:
 
 | variable | read by | meaning |
 |---|---|---|
-| `SPIRA_BUILD_CACHE` | gate, testenv, release, aeon | unset/`sccache`: required; `off`: explicit opt-out |
+| `SPIRA_BUILD_CACHE` | gate, testenv, release, dwarf | unset/`sccache`: required; `off`: explicit opt-out |
 | `SPIRA_GATE_TARGET_ROOT` | gate | tmpfs root for gate-tree targets |
 | `SPIRA_GATE_TARGET_CAP_MIB` | gate | total size cap before LRU eviction (12288) |
 | `SPIRA_GATE_TARGET_MIN_FREE_MIB` / `_MIN_MEM_MIB` | gate | room a trial needs (4096 / 4096) |
@@ -181,8 +181,8 @@ box; the fixture image waives it, `spira/testenv/doctor-waivers`): the cache liv
 ## 4. Decisions
 
 * **sccache, not a shared `CARGO_TARGET_DIR`.** cargo takes an exclusive lock on a target
-  directory for a whole build, so a shared one serialises every concurrent gate, aeon and
-  landing (certify_par=4 would become 1). It would also put every tree's `target/aeon/<pkg>`
+  directory for a whole build, so a shared one serialises every concurrent gate, dwarf and
+  landing (certify_par=4 would become 1). It would also put every tree's `target/dwarf/<pkg>`
   at one path, which is exactly what sp-g9f3t's tree-keyed tools exist to stop. sccache
   keeps each tree's own target (attribution unchanged) and shares only compiler outputs,
   keyed by their full inputs; concurrent builds are safe.
@@ -253,7 +253,7 @@ through the box's shared sccache. Two measurements per candidate:
   branch that fails and is re-landed at the same commit).
 
 All eight builds ran **one at a time** (never in parallel) on a box otherwise busy with
-~16 concurrent aeons (load average 20–90 on 32 cores over the session; noted per row). Midway
+~16 concurrent dwarves (load average 20–90 on 32 cores over the session; noted per row). Midway
 through, the Concierge capped `~/.cargo/config.toml`'s `[build] jobs` at 8 (18:41:54 UTC,
 2026-09-30) to ease the same contention; every number below is **under that cap** — the first
 pass's uncapped numbers (profile A cold 173s/108s, B 171s/167s, C cold 168s) were discarded

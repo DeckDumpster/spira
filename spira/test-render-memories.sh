@@ -15,7 +15,7 @@
 # real-bd case is the positive control that the seam and the live path agree.
 #
 # G-08 — THE DELIVERY FENCE. CLAUDE.md records that a hand-started session gets no
-# statutes at all: render_memories is called only from aeon.sh (via system_prompt_split)
+# statutes at all: render_memories is called only from dwarf.sh (via system_prompt_split)
 # and concierge.sh (via compose_brief). Nothing asserted that either entry point actually
 # carries the "# Memories in force" section — a silent regression in either wrapper would
 # leave a session governed by nothing, looking identical to one that read the law.
@@ -28,7 +28,7 @@
 # PAIRS (law-absence-needs-a-positive-control): every negative case has a positive pair.
 #
 # tier: T2
-# covers: spira/lib.sh spira/conf.sh aeon/src/* UC-operator-channel-42 G-08
+# covers: spira/lib.sh spira/conf.sh dwarf/src/* UC-operator-channel-42 G-08
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -235,9 +235,9 @@ else
 fi
 
 echo
-echo "=== G-08: the delivery fence — aeon.sh's entry point carries the section ==="
+echo "=== G-08: the delivery fence — dwarf.sh's entry point carries the section ==="
 
-# aeon.sh's entry point is system_prompt_split, called with render_memories's own output.
+# dwarf.sh's entry point is system_prompt_split, called with render_memories's own output.
 # It needs no fixture runes or bd at all — it is a pure function of its arguments. The
 # other rune-composed entry point, concierge.sh's compose_brief, is asserted in
 # test-concierge.sh (its brief-composition section already checks for this section; that
@@ -245,7 +245,7 @@ echo "=== G-08: the delivery fence — aeon.sh's entry point carries the section
 # concierge.sh, which refuses to start at all without it).
 SYS="$TMP/g08.system.md"; TASK="$TMP/g08.task.md"
 ( . "$LIB_SH"; system_prompt_split "$SYS" "$TASK" "some statute text" "a prompt<!-- task -->the task" )
-want   "aeon.sh path: system.md carries the section" "# Memories in force" "$(cat "$SYS" 2>/dev/null)"
-nowant "aeon.sh path: task.md does not"              "# Memories in force" "$(cat "$TASK" 2>/dev/null)"
+want   "dwarf.sh path: system.md carries the section" "# Memories in force" "$(cat "$SYS" 2>/dev/null)"
+nowant "dwarf.sh path: task.md does not"              "# Memories in force" "$(cat "$TASK" 2>/dev/null)"
 
 tl_summary

@@ -78,7 +78,7 @@ the next run overwrites it. Amend an SOP instead:"
     b.push(
         "Statutes are how to behave; SOPs are how to fix. They share one mechanism, split by \
 prefix — `law-` and `sop-` — so the [[spira]] Ops persona reads its runbooks exactly the way \
-every agent already reads [[common-law]]. Ops is summoned by an incident bead filed from a \
+every agent already reads [[common-law]]. Ops is called by an incident bead filed from a \
 failed systemd unit, matches the payload against the `MATCH:` lines below, and executes the \
 first one that fires."
             .into(),
@@ -92,7 +92,7 @@ first one that fires."
         "**An incident resolved without an SOP must produce one.** This is \
 `law-bake-rules-into-tools` applied to production, and it is enforced rather than asked for: \
 writing an SOP is what regenerates this page, the regenerated page is the commit that names \
-the incident bead, and a bead closed with no commit naming it is reopened by `aeon.sh`. An \
+the incident bead, and a bead closed with no commit naming it is reopened by `dwarf.sh`. An \
 incident fixed by hand and forgotten does not close."
             .into(),
     );

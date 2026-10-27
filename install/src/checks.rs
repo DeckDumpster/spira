@@ -1,6 +1,6 @@
 //! The three refusals `units-install` and the root `install` phase 4 both run before
 //! touching a unit: path collisions with a sibling instance's config, landref currency, and
-//! live aeons under this installation. Shared here so the two callers cannot drift.
+//! live dwarves under this installation. Shared here so the two callers cannot drift.
 
 use crate::bootstrap::nonempty_env;
 use crate::guards;
@@ -73,12 +73,12 @@ pub fn check_landref(host: &HostValues) -> Result<(), String> {
     Ok(())
 }
 
-/// `spira_live_aeons` (lib.sh), reimplemented directly against [`Systemctl`]. Active units
+/// `spira_live_dwarves` (lib.sh), reimplemented directly against [`Systemctl`]. Active units
 /// only — `list_matching`'s file-known-or-ever-loaded union would also catch a dead or
-/// never-started aeon unit left over from a prior run, which is not one this install would
+/// never-started dwarf unit left over from a prior run, which is not one this install would
 /// disrupt.
-pub fn live_aeons(systemctl: &dyn Systemctl, instance: &str) -> Vec<String> {
-    systemctl.list_active_matching(&format!("spira-aeon-*-{instance}.service"))
+pub fn live_dwarves(systemctl: &dyn Systemctl, instance: &str) -> Vec<String> {
+    systemctl.list_active_matching(&format!("spira-dwarf-*-{instance}.service"))
 }
 
 /// Run all three, in the same order `units-install` does, `Err` naming every refusal line.
@@ -90,9 +90,9 @@ pub fn preflight(instance: &str, host: &HostValues, systemctl: &dyn Systemctl) -
     if let Err(e) = check_landref(host) {
         lines.push(e);
     }
-    let live = live_aeons(systemctl, instance);
+    let live = live_dwarves(systemctl, instance);
     if !live.is_empty() {
-        lines.push(format!("refusing — live aeons for instance {instance} would be disrupted: {}", live.join(", ")));
+        lines.push(format!("refusing — live dwarves for instance {instance} would be disrupted: {}", live.join(", ")));
     }
     if lines.is_empty() {
         Ok(())

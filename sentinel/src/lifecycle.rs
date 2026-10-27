@@ -522,8 +522,8 @@ mod tests {
             lease_until: Some(9_000),
             ..Default::default()
         };
-        let rows = vec![row("orphan", "aeon-mindy@7.99"), row("running", "aeon-mindy@8.120")];
-        let gone = |h: &str| h == "aeon-mindy@7.99";
+        let rows = vec![row("orphan", "dwarf-austri@7.99"), row("running", "dwarf-austri@8.120")];
+        let gone = |h: &str| h == "dwarf-austri@7.99";
         assert_eq!(stale_leases(&rows, 1000, 500, |_| true, gone), vec![("orphan".to_string(), -8000)]);
     }
 

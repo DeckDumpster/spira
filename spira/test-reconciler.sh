@@ -16,7 +16,7 @@
 #   7. Store: the store unit down NEVER runs a remedy command — it only escalates,
 #      whatever state it is in (sp-ocmes evidence, 2026-09-25: never restart dolt-beads).
 #   8. Fleet: a fleet of 3 with 150 ready and 0 live → gap, escalate, no remedy command
-#      (starting an aeon is not one of this bead's deterministic remedies).
+#      (starting a dwarf is not one of this bead's deterministic remedies).
 #   9. Fleet, POSITIVE CONTROL: a staffed partition → satisfied, nothing escalated.
 #  10. Cockpit, POSITIVE CONTROL: sessions + both dashboards present → satisfied.
 #  11. Cockpit: no dashboards, no `cockpit.down` marker → gap → `layout ensure` run; no tmux
@@ -35,17 +35,17 @@
 #  20. A remedy that does not close its gap escalates on the next pass instead of being
 #      retried blind, and is not retried a second time.
 #  21. Fleet: a materialised Composite's ceiling is read even when the configured
-#      SPIRA_MAX_LIVE_AEONS column is empty (so this is a gap, not unobservable).
+#      SPIRA_MAX_LIVE_DWARVES column is empty (so this is a gap, not unobservable).
 #  22. Units: a materialised Composite's UnitsSpec names the unit set — the installer's ENABLE
 #      own list is not consulted once one exists.
 #  23. Cockpit: a materialised Composite's CockpitSpec.dashboards replaces the hardcoded
 #      health+mail pair, both when it demands more and when it demands less.
 #  24. Release: a materialised Composite's ReleaseSpec names the target explicitly, and
 #      allow_override lets a local divergence from it satisfy instead of escalating.
-#  25. Fleet: the task pool deliberately at 0 (SPIRA_MAX_AEONS=0) satisfies a starved task
+#  25. Fleet: the task pool deliberately at 0 (SPIRA_MAX_DWARVES=0) satisfies a starved task
 #      partition instead of gapping — a deliberate state is not a fault (sp-qsz01).
 #  26. Fleet: that same pool-at-0 carve-out does not silence a lane partition, which draws
-#      outside SPIRA_MAX_AEONS and so is starved for a different reason.
+#      outside SPIRA_MAX_DWARVES and so is starved for a different reason.
 #  27. Disk, POSITIVE CONTROL: every path above its floor -> satisfied, no remedy run.
 #  28. Disk: a path below the floor -> gap -> the remedy sequence (target-reap, podman prunes).
 #  29. Disk: a Composite-named path df cannot read -> unobservable, never satisfied, no remedy run.
@@ -55,7 +55,7 @@
 #      (SPIRA_DISK_FLOOR_PCT), so the same reading can gap under one and satisfy the other.
 #
 # Unit tests in reconciler/src/main.rs cover what config cannot express here: no Fleet ceiling
-# at all (SPIRA_MAX_LIVE_AEONS is a u32 that always resolves) is unobservable, never satisfied,
+# at all (SPIRA_MAX_LIVE_DWARVES is a u32 that always resolves) is unobservable, never satisfied,
 # and is ONE escalation however many partitions report.
 #
 #  33. Junk rows: a READY lifecycle row whose id is no bead in the store is dropped through
@@ -210,7 +210,7 @@ printf '#!/usr/bin/env bash\n[ "$1" = "--list-enable" ] && cat "%s"\n' "$UNITS_L
 chmod +x "$STUB_BIN/units-install"
 
 # FLEET_LINES: "<labels>\t<ready>\t<live>\t<is-task>" per partition (a missing 4th column
-# means task). The runes, the claimable-work count and the live-aeon count are three tools,
+# means task). The runes, the claimable-work count and the live-dwarf count are three tools,
 # so three stubs read this one fixture; a partition's rune is its labels with commas as "_".
 FLEET_LINES="$T/fleet-lines"
 : > "$FLEET_LINES"
@@ -233,7 +233,7 @@ awk -F'\t' -v l="$2" '$1==l{print $2; found=1} END{if(!found)print 0}' "$FLEET_L
 FEOF
 cat > "$STUB_BIN/strand" <<'FEOF'
 #!/usr/bin/env bash
-[ "$1" = "aeon-count" ] || exit 1
+[ "$1" = "dwarf-count" ] || exit 1
 awk -F'\t' -v f="$2" '{l=$1; gsub(",","_",l); if("p-" l==f){print $3; found=1}} END{if(!found)print 0}' "$FLEET_LINES"
 FEOF
 chmod +x "$STUB_BIN/spira-config" "$STUB_BIN/spira-claim" "$STUB_BIN/strand"
@@ -434,7 +434,7 @@ printf '\n%s\n' "8. Fleet: 3 live ceiling, 150 ready, 0 live -> gap, escalate, n
 reset_state
 : > "$UNITS_LIST"
 printf 'builder\t150\t0\n' > "$FLEET_LINES"
-tl_config SPIRA_MAX_LIVE_AEONS=3 SPIRA_MAX_AEONS=6
+tl_config SPIRA_MAX_LIVE_DWARVES=3 SPIRA_MAX_DWARVES=6
 rpass
 want "fleet gap escalates" "invariant: fleet:builder" "$(cat "$MAIL_LOG")"
 want "status jsonl records desired=3 observed=0" '"desired":"3","observed":"0"' "$(status_jsonl)"
@@ -613,11 +613,11 @@ is "pass 2 does not retry the remedy blind" "1" "$_n2"
 want "pass 2 escalates instead" "invariant: units-timer:r.timer" "$(cat "$MAIL_LOG")"
 
 # ==========================================================================================
-printf '\n%s\n' "21. Fleet: a materialised Composite's ceiling is read instead of the configured SPIRA_MAX_LIVE_AEONS"
+printf '\n%s\n' "21. Fleet: a materialised Composite's ceiling is read instead of the configured SPIRA_MAX_LIVE_DWARVES"
 # ==========================================================================================
 reset_state
 printf 'builder\t5\t0\n' > "$FLEET_LINES"
-tl_config SPIRA_MAX_LIVE_AEONS=9   # the configured ceiling would desire 5 live; the Composite's 3 must win
+tl_config SPIRA_MAX_LIVE_DWARVES=9   # the configured ceiling would desire 5 live; the Composite's 3 must win
 desired_state_write \
 '[[resource]]
 apiVersion = "spira/v1"
@@ -723,11 +723,11 @@ rpass
 want "allow_override lets a local override satisfy — a deliberate state is not a fault" '"key":"release","status":"satisfied"' "$(status_jsonl)"
 
 # ==========================================================================================
-printf '\n%s\n' "25. Fleet: SPIRA_MAX_AEONS=0 satisfies a starved task partition, not a gap"
+printf '\n%s\n' "25. Fleet: SPIRA_MAX_DWARVES=0 satisfies a starved task partition, not a gap"
 # ==========================================================================================
 reset_state
 printf 'builder\t150\t0\t1\n' > "$FLEET_LINES"
-tl_config SPIRA_MAX_LIVE_AEONS=3 SPIRA_MAX_AEONS=0   # pool 0 == deliberately paused
+tl_config SPIRA_MAX_LIVE_DWARVES=3 SPIRA_MAX_DWARVES=0   # pool 0 == deliberately paused
 rpass
 want "a deliberately paused task pool satisfies the builder partition" '"key":"fleet:builder","status":"satisfied"' "$(status_jsonl)"
 lack "no escalation while the pool is deliberately paused" "invariant: fleet:builder" "$(cat "$MAIL_LOG")"
@@ -736,12 +736,12 @@ lack "no escalation while the pool is deliberately paused" "invariant: fleet:bui
 printf '\n%s\n' "26. Fleet: the pool-at-0 carve-out does not cover a lane partition"
 # ==========================================================================================
 reset_state
-printf 'ops\t5\t0\t0\n' > "$FLEET_LINES"   # is-task=0: ops draws outside SPIRA_MAX_AEONS
+printf 'ops\t5\t0\t0\n' > "$FLEET_LINES"   # is-task=0: ops draws outside SPIRA_MAX_DWARVES
 rpass
 want "a starved lane partition still gaps while the task pool is paused" '"key":"fleet:ops","status":"gap"' "$(status_jsonl)"
 want "a starved lane partition still escalates while the task pool is paused" "invariant: fleet:ops" "$(cat "$MAIL_LOG")"
 : > "$FLEET_LINES"
-tl_config SPIRA_MAX_AEONS=6
+tl_config SPIRA_MAX_DWARVES=6
 
 # ==========================================================================================
 printf '\n%s\n' "27. Disk, POSITIVE CONTROL: every path above its floor -> satisfied, no remedy"

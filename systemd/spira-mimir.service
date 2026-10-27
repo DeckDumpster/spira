@@ -3,9 +3,9 @@ After=lc-serve.service
 Wants=lc-serve.service
 # The Mimir persona's TIMER trigger. The timer path evaluates two trigger conditions
 # — a landing count and a time gap — against a shared watermark, then files a sweep
-# bead carrying SPIRA_MIMIR_LABEL. The sentinel detects the bead and summons a
-# Mimir aeon to claim it. This service evaluates the trigger; it does not run the
-# aeon.
+# bead carrying SPIRA_MIMIR_LABEL. The sentinel detects the bead and calls a
+# Mimir dwarf to claim it. This service evaluates the trigger; it does not run the
+# dwarf.
 #
 # TWO CONDITIONS, ONE BEAD. mimir-trigger.sh checks both the landing count
 # (SPIRA_MIMIR_LANDING_INTERVAL, default 25) and the time gap

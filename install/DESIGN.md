@@ -57,7 +57,7 @@ unit-ensure [--diff]
 | `systemctl` | (new: `systemd/install.sh`'s and `unit-ensure.sh`'s inline `systemctl --user ...` calls) | A `Systemctl` trait (enable/enable-now/disable-now/restart/kill/is-active/is-enabled/list-matching) with a real (subprocess) and fake (in-memory) implementation. Richer than `release::systemctl::Systemctl` (which only needs reload/state/restart/list-active for `activate`), so it is its own trait rather than widening that one under every implementor. |
 | `install_units` | `systemd/install.sh`'s main body | Render, write, mask detection, ExecStart executability, `--render`/`--diff`, the enable/restart/prune loop (via `decide`), legacy-unit migration, cockpit-state migration, prune-target computation. |
 | `ensure` | `systemd/unit-ensure.sh` | The same render/write, without restart: enable+start only newly-installed units, the MISSING-TARGET guard, and run on every invocation. |
-| `checks` | root `install.sh`'s path-collision/landref/live-aeon refusals as `units-install` runs them | Shared between `units-install` and `install`'s phase 4 so the two cannot resolve a different answer from the same box. |
+| `checks` | root `install.sh`'s path-collision/landref/live-dwarf refusals as `units-install` runs them | Shared between `units-install` and `install`'s phase 4 so the two cannot resolve a different answer from the same box. |
 | `orchestrate` | root `install.sh`'s phase sequencing (the parts worth unit-testing without doctor.sh/a real dolt server/systemd) | The `Deps` trait for external tools not yet ported, the dolt-query-ready retry loop, phase 4's wiring, `spira-config path-tail`'s logic read in-process instead of shelled out to. |
 | `bootstrap` | glue `systemd/install.sh`/`unit-ensure.sh` both had (source conf.sh/units.sh, call `watchd.sh units`, read `ctrl.sh`'s suspended set) | Resolve host values, the manifest and the unit directory from the environment a caller already set — the one place this is done, so `install`, `units-install` and `unit-ensure` cannot each derive it slightly differently. Also applies the two plain `conf.sh` defaults that matter to rendering (`SPIRA_SNAP_STALE_S=60`, `SPIRA_COCKPIT=dirname(SPIRA_HOME)/cockpit`) when the caller's environment leaves them unset — see Decisions. |
 
@@ -162,8 +162,8 @@ template this box ever actually renders, not a synthetic fixture.
   makes that a function call. The standalone `units-install` binary still exists for
   `deploy.sh`'s re-render step, which needs it as a separate process pinned to a different
   release's environment (`release/DESIGN.md` "Render").
-- **The landref and live-aeon checks are re-derived directly, not shelled into `lib.sh`.**
-  `spira_live_aeons` (lib.sh) is a one-line `systemctl --user list-units` query; reimplementing
+- **The landref and live-dwarf checks are re-derived directly, not shelled into `lib.sh`.**
+  `spira_live_dwarves` (lib.sh) is a one-line `systemctl --user list-units` query; reimplementing
   it against this crate's own `Systemctl` trait is simpler and more testable than sourcing
   bash for one query, and does not touch `lib.sh` (per Ryan: "leave lib.sh alone" stands —
   nothing here edits it, this only stops depending on it for a query it does not need to be

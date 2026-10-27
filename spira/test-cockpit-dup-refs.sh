@@ -193,7 +193,7 @@ echo
 echo "a closed predecessor and a recurrence created after its close are not surplus:"
 # ======================================================================================
 # incident.sh files a fresh bead when the predecessor is terminal; that pair is a
-# recurrence, not a dedup failure, and aeons cannot add duplicate-of: to say so.
+# recurrence, not a dedup failure, and dwarves cannot add duplicate-of: to say so.
 cat > "$TMP/recur.json" <<'JSON'
 [
   {"id":"sp-rec1","title":"predecessor","status":"closed","issue_type":"task","labels":["spira","incident"],"created_at":"2099-01-01T00:00:00Z","updated_at":"2099-01-02T00:00:00Z","closed_at":"2099-01-02T00:00:00Z","external_ref":"recur-ref"},

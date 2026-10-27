@@ -1,7 +1,7 @@
 # concierge.rune — the Concierge persona: the operator's own session, and the phone's way
-# in. It is the only persona in this runes that NOTHING may summon except a human.
+# in. It is the only persona in this runes that NOTHING may call except a human.
 #
-# A rune is a persona DEFINITION; an aeon is one summoned instance of it. The other five
+# A rune is a persona DEFINITION; a dwarf is one called instance of it. The other five
 # define a worker: a predicate carving a partition out of the graph, the memories it must
 # read, the tools it may use, and what wakes it. This one defines an OPERATOR, and three of
 # those four still apply — the memories, the tools, and the brief. Only the partition does
@@ -9,36 +9,36 @@
 #
 # WHY IT IS A PERSONA AT ALL, rather than a shell script that runs `claude`
 # ------------------------------------------------------------------------
-# It was the latter, and the difference was the defect. An aeon is summoned with its brief,
+# It was the latter, and the difference was the defect. A dwarf is called with its brief,
 # its statute book and its model resolved from a file somebody maintains; the operator's own
 # session got a working directory and nothing else. The operator, 2026-09-12: "when we spin
-# up aeons, they come with a system prompt and a set of overlays. you don't. i think that's
+# up dwarves, they come with a system prompt and a set of overlays. you don't. i think that's
 # the defect here."
 #
 # It was not a matter of degree. `render_memories` — the function that renders `law-`
-# memories in full at summon — is called from `aeon.sh` and from nowhere else, so the claim
+# memories in full at call — is called from `dwarf.sh` and from nowhere else, so the claim
 # in brain's CLAUDE.md that the harness "injects a `# Memories in force` section into every
-# agent session at summon" was true of aeons and false of every session the operator sat in
+# agent session at call" was true of dwarves and false of every session the operator sat in
 # front of. The statute that the harness checkout is production had been in force for weeks
 # and had never once been delivered to the session that kept violating it (sp-u4x).
 #
-# So the concierge is composed the way an aeon is, out of this file, by concierge.sh.
+# So the concierge is composed the way a dwarf is, out of this file, by concierge.sh.
 
 RUNE_NAME=concierge
 RUNE_DESC="Concierge — the operator's session: unbounded remit, reachable from the phone, claims nothing"
 
-# NOTHING SUMMONS THIS. Not the sentinel's pool, not a lane, not the watchtower. `auto` is
+# NOTHING CALLS THIS. Not the sentinel's pool, not a lane, not the watchtower. `auto` is
 # the default and every other persona takes it; `operator` means a human starts it, which
 # in practice means `concierge.sh start` or the operator's own terminal.
 #
 # DECLARED RATHER THAN ARRANGED. Every other property that would keep this out of the pool
 # does so as a SIDE EFFECT — no RUNE_LABELS, no RUNE_LANE — and a side effect is exactly
 # what somebody changes while meaning something else.
-RUNE_SUMMON=operator
+RUNE_CALL=operator
 
 # NO PARTITION, AND THE ABSENCE IS THE POINT. The concierge reaches Spira through beads it
 # FILES, never through beads it claims: it is not a second control plane, and a bead it held
-# would be a bead no aeon could work while it sat in a session that runs for days.
+# would be a bead no dwarf could work while it sat in a session that runs for days.
 #
 # rune_partitions and the cockpit's partition map both skip a rune with no RUNE_LABELS,
 # so leaving these empty is what keeps the concierge out of every predicate, every readiness
@@ -93,7 +93,7 @@ RUNE_STATUTE_CORE="law-escalate-decisions-not-problems,law-escalations-carry-the
 RUNE_MODEL=claude-opus-5-5
 
 # NO RUNE_TOOLS, AND THAT IS THE DECLARATION RATHER THAN AN OMISSION. Every other persona
-# names its tools because `aeon.sh` passes them to `--allowedTools`, which is an ALLOW LIST:
+# names its tools because `dwarf.sh` passes them to `--allowedTools`, which is an ALLOW LIST:
 # naming tools is how a worker is kept inside its job. The concierge runs interactively under
 # bypassed permissions, where the same flag can only ever SUBTRACT from what the operator can
 # reach — so a list here could not widen the remit and could only narrow it by accident, on
@@ -106,7 +106,7 @@ RUNE_MODEL=claude-opus-5-5
 # NO DEADLINE, NO LEASE, NO HEARTBEAT, NO CONCURRENCY CEILING — and every one of those
 # absences is deliberate rather than unset.
 #
-# An aeon is bounded because it holds a bead: the wall is what returns the work to the queue
+# A dwarf is bounded because it holds a bead: the wall is what returns the work to the queue
 # when a session stops moving. The concierge holds nothing, so there is nothing to return,
 # and a wall would only end a conversation the operator is in the middle of. It runs until it
 # is stopped.
@@ -118,14 +118,14 @@ RUNE_MODEL=claude-opus-5-5
 
 # HANDLING "DISPATCH <workflow> ON <branch>" MAIL QUESTIONS
 # -----------------------------------------------------------------------
-# When a builder's close is undone by aeon.sh's close-time workflow-run fence because its
+# When a builder's close is undone by dwarf.sh's close-time workflow-run fence because its
 # branch touches a workflow file and no valid run URL is in the close reason, it mails the
 # operator asking for a dispatch. The subject is "dispatch <workflow-file> on <branch>".
 #
 # Three steps, in order:
 #
-# 1. PUSH THE BRANCH. The aeon's branch must be on the forge before gh workflow run resolves
-#    it. Aeon branches are not pushed until certification, so the concierge pushes first.
+# 1. PUSH THE BRANCH. The dwarf's branch must be on the forge before gh workflow run resolves
+#    it. Dwarf branches are not pushed until certification, so the concierge pushes first.
 #    A rebased branch needs --force-with-lease:
 #
 #      git push origin <branch>:<branch> --force-with-lease

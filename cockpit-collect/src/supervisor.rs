@@ -875,11 +875,11 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
         std::fs::create_dir_all(&cfg.frag_dir).unwrap();
         write_atomic(
             &cfg.frag_dir.join("now.env"),
-            "_PROBE_AT=123\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=123\nSP_AEONS=2\n",
+            "_PROBE_AT=123\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=123\nSP_DWARVES=2\n",
         );
         assert!(merge_fragments(&cfg));
         let snap = std::fs::read_to_string(&cfg.snap).unwrap();
-        assert!(snap.contains("SP_AEONS='2'"));
+        assert!(snap.contains("SP_DWARVES='2'"));
         assert!(snap.contains("_PROBE_STATUS_now='ok'"));
         assert!(snap.contains("SP_COLLECTOR_REV="));
     }

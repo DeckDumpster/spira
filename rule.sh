@@ -17,7 +17,7 @@
 # discovered the deliverable is a guard or a command, never a note.
 #
 # ONE DATABASE. Statutes live in the Spira beads database and nowhere else; that is the
-# store every aeon reads its memories from at summon. There is no propagation step,
+# store every dwarf reads its memories from at call. There is no propagation step,
 # because there is nothing to propagate to. `SPIRA_DB` overrides the path, as it does for
 # every tool in this repo.
 #

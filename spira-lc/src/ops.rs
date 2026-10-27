@@ -528,7 +528,7 @@ mod tests {
     #[test]
     fn a_hold_label_is_the_first_clause_without_its_stamp() {
         assert_eq!(hold_label("review-by:2026-10-19 Ryan's ruling: deckdumpster lakehouse work"), "Ryan's ruling");
-        assert_eq!(hold_label("not dispatchable to aeons: the EC2 spill proof"), "not dispatchable to aeons");
+        assert_eq!(hold_label("not dispatchable to dwarves: the EC2 spill proof"), "not dispatchable to dwarves");
         assert_eq!(hold_label("review-by:2026-10-19 "), "no reason given");
     }
 

@@ -3,7 +3,7 @@
 # test-script-running-guard.sh — a write to a shell script a live process is executing is refused.
 #
 # tier: T1
-# covers: spira/script-running-guard.sh aeon/src/run.rs
+# covers: spira/script-running-guard.sh dwarf/src/run.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

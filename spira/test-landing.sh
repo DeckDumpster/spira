@@ -20,7 +20,7 @@
 # Nothing recreated that ref and nothing needed to: the branch list was twenty-three seconds
 # older than the reap, refs sort by name, and the branch ahead of it in the list held the
 # pass for eight minutes. "conflicts in unknown" is the tell — a real conflict names files.
-# The cost is a whole session: an aeon is summoned onto a bead whose work is already on the
+# The cost is a whole session: a dwarf is called onto a bead whose work is already on the
 # base, finds nothing to rebase, and learns that.
 #
 # So the property under test is not "the reaped branch is skipped" but the stronger one the
@@ -126,17 +126,17 @@ if [ -s "$w" ] && grep -qx "$1" "$w"; then
     echo "gate: VERDICT=NO_VERDICT reason=stub-busy branch=$1 repo=${2:-?}" >&2
     exit "${SPIRA_GATE_NOVERDICT:?the gate protocol constant is not in the environment}"
 fi
-# AN AEON ARRIVING MID-PASS, on the PASS path only — so it lands in the window between the
+# A DWARF ARRIVING MID-PASS, on the PASS path only — so it lands in the window between the
 # loop walking past an earlier branch and the landing that sweeps it, which is the window the
 # sweep repeats its own liveness check for. Each line is "<bead> <pid>"; the pid belongs to a
-# process the suite started, because aeon_alive reads /proc and will not be fooled by a
+# process the suite started, because dwarf_alive reads /proc and will not be fooled by a
 # pidfile naming something that is not a runner.
 c="$SPIRA_RUN/claim-during-gate"
 if [ -s "$c" ]; then
     while read -r id pid; do
         [ -n "$id" ] || continue
-        printf "%s\\n" "$pid" > "$SPIRA_RUN/aeon-builder-$id.pid"
-        printf '%s' "$(( $(date +%s) + 3600 ))" > "$SPIRA_RUN/aeon-builder-$id.lease"
+        printf "%s\\n" "$pid" > "$SPIRA_RUN/dwarf-builder-$id.pid"
+        printf '%s' "$(( $(date +%s) + 3600 ))" > "$SPIRA_RUN/dwarf-builder-$id.lease"
     done < "$c"
     : > "$c"
 fi
@@ -169,7 +169,7 @@ landing() {
     # box has installed there and puts a fixture's verdict in a real pane
     # (law-gates-run-in-a-clean-environment).
     # SPIRA_HOME_REPO IS PINNED, AND TO A NON-DEFAULT. conf.sh only derives it when it is
-    # unset, so an aeon session that exports it hands this pass the name of a real repository
+    # unset, so a dwarf session that exports it hands this pass the name of a real repository
     # — and the incident below is labelled `repo:<name>`, so the suite would file a fixture's
     # finding against somebody's actual checkout and then assert against whatever leaked.
     # SPIRA_BD IS PINNED TO THE FIXTURE'S EMBEDDED BINARY. conf.sh resolves it from PATH when

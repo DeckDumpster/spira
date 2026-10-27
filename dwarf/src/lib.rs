@@ -1,0 +1,32 @@
+//! dwarf — the runner called to claim one bead, build its worktree, render its brief, run
+//! the model session and account for the outcome. See DESIGN.md.
+
+pub mod bd;
+pub mod brief;
+pub mod capacity;
+pub mod capacity_cli;
+pub mod checkpoint;
+pub mod claim;
+pub mod conf;
+pub mod decide;
+pub mod escape;
+pub mod fast_tier;
+pub mod rune_keys;
+pub mod ledger;
+pub mod naming;
+pub mod ports;
+pub mod restrict;
+pub mod run;
+pub mod seam;
+pub mod session;
+pub mod stack;
+pub mod stop;
+pub mod sweep;
+pub mod teardown;
+pub mod trace;
+pub mod util;
+pub mod verdict;
+pub mod worktree;
+
+#[cfg(test)]
+mod tests;

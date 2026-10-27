@@ -21,7 +21,7 @@ use std::path::PathBuf;
 /// `Command::new()` inherits env into every child this crate spawns, and these are the
 /// per-copy-fact / host-policy keys `cockpit-collect`'s `bootstrap_config` names
 /// (wave4-decomposition.md row (b)).
-const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "SPIRA_REPO_MAP", "SPIRA_RUNES", "SPIRA_MAX_AEONS"];
+const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "SPIRA_REPO_MAP", "SPIRA_RUNES", "SPIRA_MAX_DWARVES"];
 
 /// `spira_config::resolve()`'s in-process answer, applied to this process's own
 /// environment — the one self-sourcing step every one of `health`/`layout`/`rebuild`
@@ -65,7 +65,7 @@ mod tests {
         // conf.sh's own convention is ${VAR:-default}; a caller override must survive.
         let env = testkit::env(&[
             ("SPIRA_COCKPIT", None),
-            ("SPIRA_MAX_AEONS", None),
+            ("SPIRA_MAX_DWARVES", None),
             ("SPIRA_RELEASE", Some(release_root)),
             ("SPIRA_TOML", Some(toml.to_str().unwrap())),
             ("COCKPIT_RIGHT_PCT", Some("50")),
@@ -75,12 +75,12 @@ mod tests {
 
         let got_cockpit = std::env::var("SPIRA_COCKPIT").ok();
         let got_right_pct = std::env::var("COCKPIT_RIGHT_PCT").ok();
-        let got_max_aeons = std::env::var_os("SPIRA_MAX_AEONS");
+        let got_max_dwarves = std::env::var_os("SPIRA_MAX_DWARVES");
         drop(env);
 
         assert_eq!(got_cockpit, Some("/resolved/cockpit".to_string()), "a registry default must reach the real environment");
         assert_eq!(got_right_pct, Some("50".to_string()), "an explicit env override must survive self_source");
-        assert_eq!(got_max_aeons, None, "SPIRA_MAX_AEONS must never leak into this process's own environment");
+        assert_eq!(got_max_dwarves, None, "SPIRA_MAX_DWARVES must never leak into this process's own environment");
     }
 
     #[test]

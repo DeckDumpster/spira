@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 const USAGE: &str = "usage: sim world up <dir> [--tree <rev>] [--repo <name>:<mode>[:<trunk>]]...\n       sim world seed [--tree <rev>]\n       sim world down <dir>\n       sim gh <gh arguments...>\n       sim round-vm run <tree> --results-dir <dir>\n       sim ghctl <state-dir> <verb> ...\n       sim run <scenario|name> [--seed N] [--world <dir>] [--keep] [--repo <name>:<mode>[:<trunk>]]...\n       sim step <dir> [--until <vtime|bead:<bead>:<STATE>>]\n       sim replay <dir> --seed N\n       sim probe <dir>
        sim proc-summary <world|proc-trace.log>
-       sim summon <systemd-run argv ending in: aeon --home H <rune>>   (also: invoked as sim-summon)
+       sim call <systemd-run argv ending in: dwarf --home H <rune>>   (also: invoked as sim-call)
        sim ci run <workflow.yml> <job> --sha <sha> --workspace <dir> [--skip <step name>]... [--path <dir>]... [--env KEY=VALUE]...";
 
 fn main() {
@@ -17,8 +17,8 @@ fn main() {
     if let Some(name @ ("gh" | "round-vm" | "cargo")) = invoked_as.as_deref() {
         args.insert(0, name.to_string());
     }
-    if invoked_as.as_deref() == Some(world::SUMMON_TOOL) {
-        args.insert(0, "summon".to_string());
+    if invoked_as.as_deref() == Some(world::CALL_TOOL) {
+        args.insert(0, "call".to_string());
     }
     let op = args.first().map(String::as_str).unwrap_or("usage").to_string();
     spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-sim", &op);
@@ -49,7 +49,7 @@ fn run(args: &[String]) -> Result<(), String> {
         Some("run") => return run_main(&cwd, &args[1..], &env),
         Some("step") => return step_main(&args[1..]),
         Some("replay") => return replay_main(&args[1..]),
-        Some("summon") => return summon_main(&env),
+        Some("call") => return call_main(&env),
         Some("proc-summary") => {
             let [target] = &args[1..] else { return Err(USAGE.to_string()) };
             let path = PathBuf::from(target);
@@ -145,20 +145,20 @@ fn ci_main(args: &[String], env: &dyn Fn(&str) -> Option<String>) -> Result<(), 
     if code == 0 { Ok(()) } else { Err(format!("job {job} failed with exit {code}")) }
 }
 
-fn summon_main(env: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {
+fn call_main(env: &dyn Fn(&str) -> Option<String>) -> Result<(), String> {
     use spira_sim::agent::{SCENARIO_VAR, STATE_VAR};
-    use spira_sim::summon::Ran;
-    let need = |k: &str| env(k).filter(|v| !v.is_empty()).ok_or(format!("{k} is not set: sim summon answers only inside a world"));
+    use spira_sim::call::Ran;
+    let need = |k: &str| env(k).filter(|v| !v.is_empty()).ok_or(format!("{k} is not set: sim call answers only inside a world"));
     let world = need(spira_sim::roundvm::WORLD_ENV)?;
     let argv: Vec<String> = std::env::args().skip(1).collect();
-    let argv = argv.strip_prefix(&["summon".to_string()]).unwrap_or(&argv);
-    let rune = spira_sim::summon::rune_of(argv)?;
-    // The sentinel discards a summon's stderr; its stdout lands in the world's exec.log.
-    let ran = spira_sim::summon::summon(&PathBuf::from(world), &PathBuf::from(need(SCENARIO_VAR)?), &PathBuf::from(need(STATE_VAR)?), rune, argv).inspect_err(|e| println!("sim summon: {e}"))?;
+    let argv = argv.strip_prefix(&["call".to_string()]).unwrap_or(&argv);
+    let rune = spira_sim::call::rune_of(argv)?;
+    // The sentinel discards a call's stderr; its stdout lands in the world's exec.log.
+    let ran = spira_sim::call::call(&PathBuf::from(world), &PathBuf::from(need(SCENARIO_VAR)?), &PathBuf::from(need(STATE_VAR)?), rune, argv).inspect_err(|e| println!("sim call: {e}"))?;
     match ran {
-        Ran::Stub(id) => println!("sim summon: ran the stub agent for {id}"),
-        Ran::Aeon => println!("sim summon: ran the real aeon for {rune}"),
-        Ran::Nothing => println!("sim summon: nothing scripted is claimable for {rune}"),
+        Ran::Stub(id) => println!("sim call: ran the stub agent for {id}"),
+        Ran::Dwarf => println!("sim call: ran the real dwarf for {rune}"),
+        Ran::Nothing => println!("sim call: nothing scripted is claimable for {rune}"),
     }
     Ok(())
 }

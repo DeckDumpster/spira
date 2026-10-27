@@ -55,7 +55,7 @@ run_report() {
         "$@" 2>/dev/null
 }
 
-write_ledger()  { printf '%s\n' "$@" > "$SPIRA_RUN_DIR/aeon-ledger.log"; }
+write_ledger()  { printf '%s\n' "$@" > "$SPIRA_RUN_DIR/dwarf-ledger.log"; }
 write_landing() { printf '%s\n' "$@" > "$SPIRA_RUN_DIR/landing.log"; }
 reset_sop()     { : > "$SOP_LEDGER"; }
 append_sop()    { printf '%s\n' "$@" >> "$SOP_LEDGER"; }

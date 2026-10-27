@@ -6,13 +6,13 @@
 #   ./test-cockpit-repo-labels.sh
 #
 # THE FAILURE THIS SUITE EXISTS FOR (sp-sqlk). Hand-filed beads occasionally carry
-# `repo:spira-harness` (the PATH) instead of `repo:spira` (the label). Each costs an aeon
+# `repo:spira-harness` (the PATH) instead of `repo:spira` (the label). Each costs a dwarf
 # start and a bogus needs-ryan. A shim on bd binds every session for a check that costs one
 # graph read; watchtower reads the graph on a timer already. The vital signs added here are
 # the right rung.
 #
 # BOTH CATEGORIES ARE COUNTED SEPARATELY. An unmapped label (`repo:bogus`) and no label at
-# all fail closed identically — both park the aeon at unmapped-repo — but the counts are
+# all fail closed identically — both park the dwarf at unmapped-repo — but the counts are
 # kept separate so the sweep can say whether the root cause is a mis-set label or a missing
 # one.
 #

@@ -51,7 +51,7 @@ fn converts_conf_repo_map_and_runes() {
         spira.run,
         Some("/opt/fixture-home/.local/state/spira".to_string())
     );
-    assert_eq!(spira.max_aeons, Some(4));
+    assert_eq!(spira.max_dwarves, Some(4));
     assert_eq!(spira.runes, Some(vec!["builder".to_string(), "ops".to_string()]));
     assert_eq!(spira.certify_suites, Some(spira_config::OnOff::Off));
     assert_eq!(
@@ -512,10 +512,10 @@ fn rune_only_convert_does_not_silently_wipe_scalar_spira_keys() {
 // conf_key_parity::a_planted_unmapped_key_is_refused_not_dropped.
 #[test]
 fn retired_cpu_quota_keys_convert_with_a_warning() {
-    let conf = "SPIRA_AEON_CPU_QUOTA=400\nSPIRA_LAND_CPU_QUOTA=70\n";
+    let conf = "SPIRA_DWARF_CPU_QUOTA=400\nSPIRA_LAND_CPU_QUOTA=70\n";
     let (doc, warnings) = convert(conf, "/opt/fixture-home", "", &[])
         .expect("a retired key must not refuse the whole convert");
-    for key in ["SPIRA_AEON_CPU_QUOTA", "SPIRA_LAND_CPU_QUOTA"] {
+    for key in ["SPIRA_DWARF_CPU_QUOTA", "SPIRA_LAND_CPU_QUOTA"] {
         assert!(
             warnings.0.iter().any(|w| w.contains(key) && w.contains("sp-b4oct")),
             "no warning for {key}: {:?}",

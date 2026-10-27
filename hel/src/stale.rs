@@ -13,7 +13,7 @@ pub const DEFAULT_IDLE_SECS: u64 = 48 * 3600;
 /// A tree no bead names has no finished state to wait for, so idleness is its only rule.
 pub const UNBEADED_IDLE_SECS: u64 = 4 * 3600;
 /// A branch with no commits is an ancestor of the land ref the moment it is cut, so the
-/// merged rule alone would reap a worktree its aeon has just been given.
+/// merged rule alone would reap a worktree its dwarf has just been given.
 pub const MERGED_GRACE_SECS: u64 = 3600;
 
 #[derive(Debug, Clone, Copy)]

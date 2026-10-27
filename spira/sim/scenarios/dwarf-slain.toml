@@ -1,0 +1,123 @@
+epoch = 1800000000
+horizon = 900000
+settle = 240000
+goal = "sp-sl01:SUBMITTED"
+real_actors = ["sentinel-call"]
+real_dwarf = true
+
+[[step]]
+at = 0
+file = "sp-sl01"
+body = "## Build\n\nAdd out/sl01.txt."
+
+[[step]]
+at = 0
+claim = "sp-sl01"
+script = ["slain", "call", "commit out/sl01.txt", "submit"]
+
+[[step]]
+at = 20000
+name = "gap1"
+command = "sh spira/sim/scenarios/steps/slain-gap.sh sp-sl01"
+
+[[step]]
+at = 30000
+name = "gap2"
+command = "sh spira/sim/scenarios/steps/slain-gap.sh sp-sl01"
+
+[[step]]
+at = 40000
+name = "gap3"
+command = "sh spira/sim/scenarios/steps/slain-gap.sh sp-sl01"
+
+[[step]]
+at = 50000
+name = "gap4"
+command = "sh spira/sim/scenarios/steps/slain-gap.sh sp-sl01"
+
+[[step]]
+at = 60000
+name = "gap5"
+command = "sh spira/sim/scenarios/steps/slain-gap.sh sp-sl01"
+
+[[step]]
+at = 70000
+name = "gap6"
+command = "sh spira/sim/scenarios/steps/slain-gap.sh sp-sl01"
+
+[[step]]
+at = 80000
+name = "gap7"
+command = "sh spira/sim/scenarios/steps/slain-gap.sh sp-sl01"
+
+[[step]]
+at = 90000
+name = "gap8"
+command = "sh spira/sim/scenarios/steps/slain-gap.sh sp-sl01"
+
+[[step]]
+at = 100000
+name = "gap9"
+command = "sh spira/sim/scenarios/steps/slain-gap.sh sp-sl01"
+
+[[step]]
+at = 110000
+name = "gap10"
+command = "sh spira/sim/scenarios/steps/slain-gap.sh sp-sl01"
+
+[[step]]
+at = 120000
+name = "gap11"
+command = "sh spira/sim/scenarios/steps/slain-gap.sh sp-sl01"
+
+[[step]]
+at = 130000
+name = "gap12"
+command = "sh spira/sim/scenarios/steps/slain-gap.sh sp-sl01"
+
+[[step]]
+at = 140000
+name = "gap13"
+command = "sh spira/sim/scenarios/steps/slain-gap.sh sp-sl01"
+
+[[step]]
+at = 150000
+name = "gap14"
+command = "sh spira/sim/scenarios/steps/slain-gap.sh sp-sl01"
+
+[[step]]
+at = 160000
+name = "gap15"
+command = "sh spira/sim/scenarios/steps/slain-gap.sh sp-sl01"
+
+[[step]]
+at = 170000
+name = "gap16"
+command = "sh spira/sim/scenarios/steps/slain-gap.sh sp-sl01"
+
+[[step]]
+at = 180000
+name = "gap17"
+command = "sh spira/sim/scenarios/steps/slain-gap.sh sp-sl01"
+
+[[step]]
+at = 190000
+name = "gap18"
+command = "sh spira/sim/scenarios/steps/slain-gap.sh sp-sl01"
+
+[[step]]
+at = 200000
+name = "gap19"
+command = "sh spira/sim/scenarios/steps/slain-gap.sh sp-sl01"
+
+[[invariant]]
+name = "step_failed"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit NOT IN (0, 3)"
+
+[[expect]]
+name = "slain_session_released_the_bead_for_a_second"
+sql = "SELECT 1 FROM briefs WHERE bead = 'sp-sl01' AND n = 2"
+
+[[expect]]
+name = "slain_charged_no_attempt"
+sql = "SELECT 1 FROM events WHERE kind = 'step' AND actor LIKE 'gap%' AND exit = 0"

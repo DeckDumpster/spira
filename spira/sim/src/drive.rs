@@ -36,10 +36,10 @@ pub struct StepDef {
     /// when it held, so an `expect` on its event with `exit = 0` is the assertion.
     pub name: Option<String>,
     pub command: Option<String>,
-    /// File this bead: a READY lifecycle row the world's summon can claim.
+    /// File this bead: a READY lifecycle row the world's call can claim.
     pub file: Option<String>,
     /// Script the stub agent for this bead (`script` lines are `agent::parse` steps); the
-    /// world's summon claims the bead and plays them.
+    /// world's call claims the bead and plays them.
     pub claim: Option<String>,
     #[serde(default)]
     pub script: Vec<String>,
@@ -254,10 +254,10 @@ pub struct Scenario {
     pub invariants: Vec<SqlDef>,
     #[serde(default, rename = "expect")]
     pub expects: Vec<SqlDef>,
-    /// The world's summon runs the real `aeon` with the stub agent as its `SPIRA_AGENT`, and the
+    /// The world's call runs the real `dwarf` with the stub agent as its `SPIRA_AGENT`, and the
     /// brief the agent receives is the `briefs` table.
     #[serde(default)]
-    pub real_aeon: bool,
+    pub real_dwarf: bool,
     /// Read the bead store's rows (`bd`) into `bead_state` too; always so when there are seeds.
     #[serde(default)]
     pub bead_rows: bool,
@@ -709,11 +709,11 @@ pub fn drive(
             }
         }
     };
-    if sc.real_aeon {
-        let command = format!("printf '%s\\n' '{}' >> \"${}\"", crate::summon::REAL_AEON, crate::agent::SCENARIO_VAR);
+    if sc.real_dwarf {
+        let command = format!("printf '%s\\n' '{}' >> \"${}\"", crate::call::REAL_DWARF, crate::agent::SCENARIO_VAR);
         let call = call.clone();
-        sim.add_scenario("real-aeon", Box::new(move |_| call(&command)));
-        sim.schedule_step(0, "real-aeon");
+        sim.add_scenario("real-dwarf", Box::new(move |_| call(&command)));
+        sim.schedule_step(0, "real-dwarf");
     }
     for a in &sc.actors {
         let (command, lo, hi, call) = (a.command.clone(), a.duration_min, a.duration_max, call.clone());

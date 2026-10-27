@@ -14,7 +14,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use lifecycle::bead::{AeonPhase, BeadEventKind, BeadState, BreakGlass, DispositionStatus, HoldKind};
+use lifecycle::bead::{DwarfPhase, BeadEventKind, BeadState, BreakGlass, DispositionStatus, HoldKind};
 use lifecycle::delivery::DeliveryEventKind;
 use lifecycle::reason::{DropReason, GateRedReason, HoldCause, ReturnedReason};
 use serde_json::Value;
@@ -823,12 +823,12 @@ fn absolve(m: &mut dyn Machine, id: &str, tip: &str, actor: &str, glass: BreakGl
     a
 }
 
-/// `renew <id> <holder> <lease-until>` — a working aeon extends its own lease (sp-2jf0a). The
+/// `renew <id> <holder> <lease-until>` — a working dwarf extends its own lease (sp-2jf0a). The
 /// Claim sets `lease_until` once; without this the stale-lease reaper clears every session
 /// that outlives lease + reclaim_grace. Like `unclaim`, it acts only on a row WORKING under
 /// `holder`, and sends the event AS the holder, so the machine's own holder check (a
-/// `NotHolder` refusal) backs this read: a reaped aeon's late renewal can never extend the
-/// lease of the aeon the bead was handed to. A holder that stops renewing still expires.
+/// `NotHolder` refusal) backs this read: a reaped dwarf's late renewal can never extend the
+/// lease of the dwarf the bead was handed to. A holder that stops renewing still expires.
 ///
 /// Exit: 0 renewed · 1 not this holder's WORKING row (held by another, past WORKING, no row)
 /// · 2 cannot tell, or usage · 3 refused (a race, or a deadline that does not advance).
@@ -867,8 +867,8 @@ fn phase(m: &mut dyn Machine, args: &[String]) -> Answer {
     let (Some(id), Some(holder), Some(name)) = (args.first(), args.get(1), args.get(2)) else {
         return usage("phase <bead-id> <holder> <claimed|building|session|teardown>");
     };
-    let Some(phase) = AeonPhase::from_str(name) else {
-        return usage(&format!("phase: unknown phase {name:?}; one of {}", AeonPhase::ALL.map(AeonPhase::as_str).join(" ")));
+    let Some(phase) = DwarfPhase::from_str(name) else {
+        return usage(&format!("phase: unknown phase {name:?}; one of {}", DwarfPhase::ALL.map(DwarfPhase::as_str).join(" ")));
     };
     with_row(m, id, holder, |_| Ok(BeadEventKind::Phase { phase }))
 }
@@ -883,7 +883,7 @@ fn disposition(m: &mut dyn Machine, args: &[String]) -> Answer {
         return usage(&format!("disposition: unknown status {name:?}; one of {}", DispositionStatus::ALL.map(DispositionStatus::as_str).join(" ")));
     };
     let note = args.get(2).cloned().unwrap_or_default();
-    with_row(m, id, &actor_or(args.get(3), "aeon"), |_| Ok(BeadEventKind::Disposition { status, note: note.clone() }))
+    with_row(m, id, &actor_or(args.get(3), "dwarf"), |_| Ok(BeadEventKind::Disposition { status, note: note.clone() }))
 }
 
 /// The ReturnedReason a reopen's free-text cause earns: an eject is the batch's own, anything
@@ -1460,12 +1460,12 @@ pub fn drop_orphans(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> An
     Answer::out(code, lines.join("\n"))
 }
 
-/// `unclaim <id> <actor>` — an aeon hands back a bead it still holds (lib.sh
+/// `unclaim <id> <actor>` — a dwarf hands back a bead it still holds (lib.sh
 /// `release_own_claim`).
 ///
 /// The lifecycle row IS the claim and the only record touched: a row WORKING under `actor`
 /// gets `Release`; a row WORKING under anyone else is refused, because a sweep that reaped
-/// this aeon may already have handed the bead on; a row past WORKING means the claim is
+/// this dwarf may already have handed the bead on; a row past WORKING means the claim is
 /// already over. bd is not written — nothing reads its assignee.
 ///
 /// Exit: 0 released, or nothing held · 1 not this actor's claim, or no such bead · 2 cannot

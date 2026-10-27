@@ -1,10 +1,10 @@
 [Unit]
-Description=Summon an Ops aeon for any waiting incident
+Description=Call an Ops dwarf for any waiting incident
 
 [Timer]
 # Slower than the sentinel's two minutes on purpose. An incident is already a failure that
 # has happened; the cost of noticing it ninety seconds later is nothing, and the cost of
-# waking a model every two minutes to find an empty queue is real. aeon.sh no-ops in a
+# waking a model every two minutes to find an empty queue is real. dwarf.sh no-ops in a
 # fraction of a second when nothing is ready, so the floor here is the ExecStartPre pair.
 OnBootSec=300
 OnActiveSec=300

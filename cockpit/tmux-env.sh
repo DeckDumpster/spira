@@ -14,7 +14,7 @@
 # days, across reboots of everything except tmux itself.
 #
 # On 2026-09-09 the cockpit server (pid 1640264) had been forked by cockpit/rebuild.sh
-# running inside an archivist AEON. It captured CLAUDE_CODE_CHILD_SESSION=1, and the
+# running inside an archivist DWARF. It captured CLAUDE_CODE_CHILD_SESSION=1, and the
 # operator's own brain session — opened in a pane of that server hours later — inherited it.
 # A client that believes it is a child session DOES NOT WRITE A TRANSCRIPT. Two things then
 # broke at once, and neither error named the cause:
@@ -23,7 +23,7 @@
 #   CTX    no session at the keyboard          (ctx-meter.sh finds no transcript to read)
 #
 # It also carried a STALE CLAUDE_CODE_SESSION_ID and a CLAUDE_CODE_EXECPATH pinned to a
-# client version that had since been replaced, so the operator's session reported the aeon's
+# client version that had since been replaced, so the operator's session reported the dwarf's
 # session id and an older binary's path.
 #
 # WHY SCRUB RATHER THAN SET. There is no correct value for any of these in a shared server:

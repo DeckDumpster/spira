@@ -25,7 +25,7 @@ Four properties are the point; everything else serves them:
    job). testenv then runs no cargo at all; it validates the set, stages it to
    `target/prebuilt/`, and keys the cache on its content (D8).
 2. **A stable build path.** The worktree is the caller's own when it already holds the tree
-   under test (an aeon's worktree, a round worktree — both outlive the run), otherwise a
+   under test (a dwarf's worktree, a round worktree — both outlive the run), otherwise a
    warm, reused scratch slot. Either way cargo is incremental: a one-line shell edit
    compiles nothing.
 3. **Absence is never green.** A selected suite with no result is `unreached`; a fault in
@@ -53,7 +53,7 @@ testenv [--mode parallel|serial] [--suites <a.sh,b.sh,...|->] [--profile <p>]
 | `--suites LIST` | comma list; each name must exist in the suite dir, else exit 2 with `batch: unknown suite: <name>`. Duplicates dropped, order kept. Given twice → exit 2. |
 | `--suites -` | names one per line on stdin, blank lines ignored; **empty stdin = nothing to run, exit 0**. |
 | (no `--suites`) | diff-derived: the `suite-select` library (`io::select_diff`, linked; sp-wx2tw) over `<landref>...<branch>`, no all-suites fallback, tiers `$SPIRA_BATCH_TIERS` (T2,T3); its mode names the producer (`diff`/`all`). A selection it cannot compute is `FAULT rc=2 reason=select-refused` (an unclaimed source file: `select-unclaimed`), never an empty selection. |
-| `--profile P` | cargo profile. Default `aeon` (aeon and gate runs). A round passes `release` (its binaries ship). |
+| `--profile P` | cargo profile. Default `dwarf` (dwarf and gate runs). A round passes `release` (its binaries ship). |
 | `--with-bins` | **no build mode of its own** (builds, unless `--artifacts`). Accepted as an alias for `--profile release` when `--profile` is not given, because every caller that passes it today is a round whose binaries ship (round.sh, round-vm.sh, batcher-cut). See §7, decision D1. |
 | `--artifacts DIR` | **do not build**: DIR holds the workspace's executables, prebuilt from this tree (CI's `bin/`). Relative to the current directory. Validated before anything else happens: DIR must be a directory holding an executable for every workspace binary target of the tree under test (read from the worktree's `Cargo.toml` files) and at least `spira-config`, `test-plan` and `testenv`; otherwise `VERDICT FAULT rc=2 reason=artifacts-invalid` naming what is missing — never a build, never a partial set. Exclusive with `--profile` and `--with-bins` (usage error). Only the flag selects this mode: an inherited `SPIRA_ARTIFACTS` is still ignored (§5). See D8. |
 | `--deadline S` | a **hard** wall-clock budget, in whole seconds (> 0), for the **whole trial** (sp-govet, §11): the clock starts when testenv starts. Setup (build, container, install, test databases) must finish within its share of S (`SPIRA_TESTENV_SETUP_SHARE`, default 50 %) or the run is `VERDICT FAULT rc=2 reason=deadline-<phase>`; the suite phase gets what is left of S: after that no suite starts and running suites are killed; both are recorded `deferred`. It also selects the warm path (§11.2). Absent = no deadline, and the run is byte-for-byte what it was before the flag existed. See D7, D9. |
@@ -241,7 +241,7 @@ ISO timestamps→`TIMESTAMP`, `HH:MM:SS`→`TIME`, `[0-9]{3,}`→`N`; then POSIX
   sp-wx2tw; `select.sh` is gone), then
   `suite-covers.sh` from the harness dir — the runner and the selector, as before
   (`$0` was the script).
-* `profile` replaces `WITH_BINS`: an `aeon` green must not replay for a `release` run.
+* `profile` replaces `WITH_BINS`: a `dwarf` green must not replay for a `release` run.
 * Under `--artifacts` only, `profile` is `prebuilt` and ` prebuilt=<artifacts_id>` is appended
   before the newline, where `artifacts_id` = sha256 of `<name>\0<sha256 of the file>\n` for
   every executable directly under DIR, sorted by name. A prebuilt green therefore never
@@ -436,7 +436,7 @@ parse args ─ resolve repo, landref, tree ─ acquire worktree (in place | scra
         staged to <wt>/target/prebuilt here instead of building  ─ artifacts …/prebuilt
   ─ orphan sweeps ─ claim owner file ─ testenv container up / probe
   ─ stage the tree as a release, PATH from it (§5; rc 3 reason=stage)
-  ─ configure, suspend loom+cockpit+queue-watch+summon units, install  (skippable)
+  ─ configure, suspend loom+cockpit+queue-watch+call units, install  (skippable)
   ─ requirements check (skip-req records) ─ testdb template (else shared baseline)
   ─ schedule: exclusive first, then LPT; maxpar; PSI pause; per-suite timeout
   ─ faults: container death, exec storm, user-account loss → reclassify, rc 2
@@ -477,7 +477,7 @@ uid 1001, `XDG_RUNTIME_DIR=/run/user/1001`, `CARGO_HOME=/var/spira/cargo`,
   `testenv container probe`. The runner owns neither the Containerfile nor the tag scheme; the
   `container` subcommand (§12) does.
 * **Install** (unless `SPIRA_BATCH_SKIP_INSTALL`): `configure.sh` with
-  `CONFIGURE_PROD=/workspace/spira CONFIGURE_MAX_AEONS=1 CONFIGURE_MAX_LIVE_AEONS=1
+  `CONFIGURE_PROD=/workspace/spira CONFIGURE_MAX_DWARVES=1 CONFIGURE_MAX_LIVE_DWARVES=1
   CONFIGURE_LOOM_ADDR=127.0.0.1:7300 CONFIGURE_DOLT_DATA=`; `ctrl.sh suspend
   spira-loom|spira-cockpit|spira-watch-queue-watch --reason ... --owner sp-fud1` (the
   queue-watch watcher execs `/workspace/bin/queue-watch`, which the container never has; a
@@ -566,11 +566,11 @@ other tool by name. `testlib.sh` does not touch PATH. Host-side helpers (`gate-t
 set by whoever launched testenv. testenv still strips an inherited `SPIRA_ARTIFACTS` from
 cargo and `testenv.sh`, as hygiene against a stale shell.
 
-## 6. Build profile (`[profile.aeon]`, already in the workspace Cargo.toml)
+## 6. Build profile (`[profile.dwarf]`, already in the workspace Cargo.toml)
 
 `inherits = "dev"`, `opt-level = 0`, `incremental = true`, `debug = "line-tables-only"`;
-outputs to `target/aeon` (the profile's name); `dev` maps to cargo's `debug` directory.
-Measured in this worktree, 2026-09-28, full workspace (`cargo build --profile aeon
+outputs to `target/dwarf` (the profile's name); `dev` maps to cargo's `debug` directory.
+Measured in this worktree, 2026-09-28, full workspace (`cargo build --profile dwarf
 --workspace`), host rustc 1.82.0:
 
 | case | wall | what cargo compiled |
@@ -582,7 +582,7 @@ Measured in this worktree, 2026-09-28, full workspace (`cargo build --profile ae
 | warm, one-line edit to a shared crate (`spira-config/src/lib.rs`) | 2.84 s | spira-config and its 3 dependents (+ the leaf above, reverted) |
 | `cargo build --release -p testenv` (LTO, `opt-level=z`) | 87 s | testenv and its dependencies |
 
-So a warm one-suite aeon run after a shell edit spends ~0.1 s in the build step; the
+So a warm one-suite dwarf run after a shell edit spends ~0.1 s in the build step; the
 <30 s-to-first-suite target of the bead is then the container tier (`testenv.sh up`,
 install, baseline), not cargo. The old path rebuilt spira-config and test-plan from cold
 into a fresh `cargo-target-bins/<tree>` on every new tree (95-116 s, sp-zv7j4).
@@ -591,7 +591,7 @@ into a fresh `cargo-target-bins/<tree>` on every new tree (95-116 s, sp-zv7j4).
 
 * **D1 — `--with-bins` = `--profile release` unless `--profile` is given.** The operator
   asked for a no-op alias; a pure no-op would silently turn every round (round.sh,
-  round-vm.sh, batcher-cut all pass `--with-bins`) into an `aeon`-profile build and leave
+  round-vm.sh, batcher-cut all pass `--with-bins`) into a `dwarf`-profile build and leave
   `target/release` stale for land. Mapping it keeps "switch by name" true. Flagged for
   the operator.
   **Amended 2026-09-29 (D8):** D1 as first written also said testenv *always* builds. That
@@ -716,7 +716,7 @@ production; `SPIRA_ARTIFACTS` inside a test run). A round that tests its own run
 | `spira/runes/*.rune` `RUNE_TOOLS` (`Bash(*testenv-batch.sh*)`) and the statute `law-tests-run-only-through-testenv-batch` | names the script | name the binary (`Bash(*testenv *)`) |
 | **delete** `spira/testenv-batch.sh`, `spira/cargo-target-bins-prune.sh`, `spira/test-testenv-batch-with-bins.sh`, `spira/test-cargo-target-bins-prune.sh` (if present) | — | replaced by this crate |
 | `spira/binary-path-fence-allow:11,63` | allows `spira/testenv-batch.sh`, `spira/test-testenv-batch.sh` | remove once deleted |
-| suites that source/grep testenv-batch.sh's text (`test-testenv-batch*.sh`, `test-select.sh` E2-E5, `test-testenv-tmux-isolation.sh` C2, `test-gate-workflow.sh`, `test-aeon-fence.sh` E1-E3, `test-testenv-batch-fence.sh`) | assert on the script | rewrite against `cargo test -p testenv` or the binary's behaviour |
+| suites that source/grep testenv-batch.sh's text (`test-testenv-batch*.sh`, `test-select.sh` E2-E5, `test-testenv-tmux-isolation.sh` C2, `test-gate-workflow.sh`, `test-dwarf-fence.sh` E1-E3, `test-testenv-batch-fence.sh`) | assert on the script | rewrite against `cargo test -p testenv` or the binary's behaviour |
 
 ## 9. Findings
 
@@ -732,7 +732,7 @@ production; `SPIRA_ARTIFACTS` inside a test run). A round that tests its own run
   `cargo build`, `configure`/`suspend`/`install` and the testdb baseline execs carry no
   timeout (`ExecRequest::timeout` is `None`). The outer bound is gate.sh's
   `timeout ${SPIRA_GATE_TIMEOUT:-2700}` around the whole gate string. Measured on
-  2026-09-29, the D7 end-to-end run (`--deadline 60`, three suites, an aeon worktree's first
+  2026-09-29, the D7 end-to-end run (`--deadline 60`, three suites, a dwarf worktree's first
   build, a busy host), 381 s wall in all: cargo build 44 s; orphan sweep + owner claim 55 s;
   `testenv.sh up` + probe 178 s; configure/suspend/install 12 s; testdb baseline 11 s;
   **suite phase 61 s** (the cut: deadline + the kill); results, teardown and gate-timing 16 s.
@@ -863,7 +863,7 @@ cut phase last in `phases`, so an overrun is visible to every reader of the fami
   *Rejected:* making `/workspace` a symlink into a shared mount of every worktree — every
   trial could then read every other trial's tree.
 * **D10a — the warm path is chosen by `--deadline`.** Rounds (`--profile release`) must
-  build in their own worktree (§4.1, land reads `target/release` there); aeon runs have
+  build in their own worktree (§4.1, land reads `target/release` there); dwarf runs have
   their own warm worktree. The gate trial is the one caller that pays setup on every run.
 * **D10b — the refill is detached, and failure is quiet.** A refill failing (image pull,
   admission timeout) only costs the next trial a cold boot, which is today's path; it must
@@ -1109,17 +1109,17 @@ default conf.sh carries — conf.sh is no longer sourced:
   `cut -c` byte-truncation of heartbeat lines (now characters); `df -Ph`/`free -h` (now statvfs and `/proc/meminfo` MemAvailable, same units).
 * **D23 — a symlinked build directory gets its own mount too, so a bind-mounted checkout's
   `/workspace` can still see what it points to (sp-e5v53-3).** Found 2026-10-01: a gate
-  tree's `target/{aeon,release,debug,gate-tools}` are each a symlink to a tmpfs root
+  tree's `target/{dwarf,release,debug,gate-tools}` are each a symlink to a tmpfs root
   *outside* the checkout (gate/src/target.rs, sp-z61hj — "every path a step or the tools
   phase reads is unchanged; only where the bytes land moves"). `up`'s bind mount of the
   checkout preserves that symlink as a symlink; a binary built right through it is
-  genuinely there on the host, but `/workspace/target/aeon` inside the container resolves
-  to a host path nothing mounted there, so `stage` faults "aeon was not built into
-  /workspace/target/aeon" — a suite the gate's own targeted base-suite rerun (sp-kqger,
+  genuinely there on the host, but `/workspace/target/dwarf` inside the container resolves
+  to a host path nothing mounted there, so `stage` faults "dwarf was not built into
+  /workspace/target/dwarf" — a suite the gate's own targeted base-suite rerun (sp-kqger,
   sp-e5v53, sp-e5v53-2) was the first caller to hit, because it is the one caller that
   builds "in place" directly inside a gate tree rather than a warm or scratch slot (those
   are ordinary directories, never symlinked this way). Reproduced directly: `cargo build
-  --profile aeon --workspace` in such a tree succeeds; `stage` still faults rc=1, same
+  --profile dwarf --workspace` in such a tree succeeds; `stage` still faults rc=1, same
   message, until the extra mount is added. Fix: `Host::symlinked_targets(dir)` lists each
   of `dir`'s immediate entries that is a symlink, resolved to its target's own canonical
   parent, each listed once — every `[LINKED]` entry in a gate tree shares one root

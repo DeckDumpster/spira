@@ -20,8 +20,8 @@ Together they cost 58 s. They are kept in the arithmetic in section 7, so the to
 > UC-08, -09 and -11 lost `test-activate.sh`, their only cover, and now carry
 > `[use_case.uncovered]` in the toml: the behaviour moved to `install-tarball` and is proved by
 > that crate's own unit tests (`cargo test -p release`), which this matrix — bash-suite-only by
-> design (`spira/test-*.sh` — `plan_matrix.rs`'s `is_suite`) — cannot see. UC-10's live-aeon
-> guard is dropped by design, not merely untested: under runtime-is-a-release an aeon's worktree
+> design (`spira/test-*.sh` — `plan_matrix.rs`'s `is_suite`) — cannot see. UC-10's live-dwarf
+> guard is dropped by design, not merely untested: under runtime-is-a-release a dwarf's worktree
 > is never under `spira-releases/`, so there is nothing left for an install to disrupt.
 > `test-canary.sh` (misfiled, priced only here) is unaffected in shape, only in what it now
 > calls.
@@ -30,9 +30,9 @@ Together they cost 58 s. They are kept in the arithmetic in section 7, so the to
 
 ## 1. Intent (the de facto spec)
 
-A Spira instance is built into an immutable, timestamped release tarball, and the tarball carries every binary its units execute. Activating a release unpacks it read-only beside earlier releases and atomically swaps `current`. Activation then restarts only non-aeon units, and it refuses while aeons are live unless forced. `deploy.sh` wraps activation in resolve, drain, health check and automatic rollback.
+A Spira instance is built into an immutable, timestamped release tarball, and the tarball carries every binary its units execute. Activating a release unpacks it read-only beside earlier releases and atomically swaps `current`. Activation then restarts only non-dwarf units, and it refuses while dwarves are live unless forced. `deploy.sh` wraps activation in resolve, drain, health check and automatic rollback.
 
-The installer renders one instance-qualified unit set from templates. It refuses early, before writing anything, on any condition that would damage another instance or live work: a foreign harness, live aeons, a landing in flight, a stale landref, a path collision, or a non-executable ExecStart. It is idempotent: it changes, restarts and daemon-reloads only what differs. It respects operator state (masked, disabled, ctrl-suspended, world halted).
+The installer renders one instance-qualified unit set from templates. It refuses early, before writing anything, on any condition that would damage another instance or live work: a foreign harness, live dwarves, a landing in flight, a stale landref, a path collision, or a non-executable ExecStart. It is idempotent: it changes, restarts and daemon-reloads only what differs. It respects operator state (masked, disabled, ctrl-suspended, world halted).
 
 Drift between installed units and templates, and between the activated release and the newest tag, is reported with a 0/1/3 exit contract. Exit 3 means "cannot check" and is never read as a pass. `uninstall.sh` removes exactly what `owned.sh` says the instance owns and reports strays without deleting them. `world.sh` stops, drains, resumes and starts the loop honestly: it never claims STOPPED when a stop failed, never touches cockpit or Loom, and never starts what the operator suspended.
 
@@ -59,7 +59,7 @@ Where they run: **cert** = certification (every commit, local and gate), **batch
 |---|---|---|---|
 | UC-instance-lifecycle-08 | `activate.sh` unpacks to a versioned, read-only release dir, atomically repoints `current` and keeps the previous release. `--dry-run` changes nothing. | COR, REC | T2 / cert |
 | UC-instance-lifecycle-09 | `activate.sh` prunes releases beyond `SPIRA_RELEASES_KEEP`, oldest first, and never prunes the `current` target. | REC, FC | T1 (prune selection) / cert |
-| UC-instance-lifecycle-10 | `activate.sh` refuses while this instance's aeons are live (naming them and `SPIRA_ACTIVATE_FORCE`), leaving `current` untouched. After the swap it daemon-reloads and restarts only non-aeon units. | FC, CONC | T2 / cert |
+| UC-instance-lifecycle-10 | `activate.sh` refuses while this instance's dwarves are live (naming them and `SPIRA_ACTIVATE_FORCE`), leaving `current` untouched. After the swap it daemon-reloads and restarts only non-dwarf units. | FC, CONC | T2 / cert |
 | UC-instance-lifecycle-11 | Rollback is re-activation of an already-unpacked release (unpack skipped), after which units execute the older code. | REC | T2 / cert |
 | UC-instance-lifecycle-12 | `deploy.sh` resolves `latest`, refuses drafts, the already-current release, a DB-migration mismatch and a failed pre-deploy doctor, all before any disruptive step. | FC, COR | T2 / cert |
 | UC-instance-lifecycle-13 | `deploy.sh` drains first: a drain refusal blocks the deploy, and `--force` slays with `--keep-work --reopen`. It writes `SPIRA_PROD` into spira.conf before activate restarts services, then re-renders units with `SPIRA_PROD=releases/current/spira`. | COR, CONC | T2 / cert |
@@ -69,13 +69,13 @@ Where they run: **cert** = certification (every commit, local and gate), **batch
 ### Install (root `install.sh` and `systemd/install.sh`)
 | ID | Requirement | Dims | Tier / where |
 |---|---|---|---|
-| UC-instance-lifecycle-16 | Root install refuses with exit 5 on each conflict (foreign harness owns the unit names, live `aeon.sh` for this home, gate lock held, instance mismatch, Dolt port serving another data_dir), naming the remedy and `SPIRA_INSTALL_CONFLICT_CONSIDERED`. A clean box passes. | FC, CONC | T1 per predicate / cert |
+| UC-instance-lifecycle-16 | Root install refuses with exit 5 on each conflict (foreign harness owns the unit names, live `dwarf.sh` for this home, gate lock held, instance mismatch, Dolt port serving another data_dir), naming the remedy and `SPIRA_INSTALL_CONFLICT_CONSIDERED`. A clean box passes. | FC, CONC | T1 per predicate / cert |
 | UC-instance-lifecycle-17 | Root install refuses a git-checkout `SPIRA_PROD` (exit 2, override named) and a `CONFIGURE_PROD` without `conf.sh`. On an empty `SPIRA_RELEASES` it bootstraps `releases/bootstrap` with `current -> bootstrap`. Otherwise it refuses with exit 2 and names `activate.sh`. | FC, CFG | T1 / cert |
 | UC-instance-lifecycle-18 | Root install exits 3 when installed but `ready.sh` fails. `--dry-run` prints each phase and mutates nothing. | CON, OBS | T2 / cert |
 | UC-instance-lifecycle-19 | The unit installer refuses a checkout on the wrong branch or behind the landref, before writing any unit. It skips the check for artifact deploys and exact-tag detached HEADs, and `SPIRA_INSTALL_FORCE` overrides it. | FC, CFG | T1 (decision) + T2 (git) / cert |
 | UC-instance-lifecycle-20 | The unit installer refuses when another instance's config shares any of `SPIRA_RUN`, `SPIRA_DB`, `SPIRA_PROD` or `SPIRA_DOLT_DATA`, naming the key, the other instance and its file. It writes no unit on refusal. | FC, CONC | T1 / cert |
-| UC-instance-lifecycle-21 | The unit installer refuses while this instance's aeons are live (before daemon-reload), and refuses when any ExecStart target is missing or lacks +x. | FC | T1 / cert |
-| UC-instance-lifecycle-22 | Per-unit apply decision, as a table: changed → write, restart, count; unchanged → nothing, no daemon-reload, "unchanged"; masked → left, reported masked; operator-disabled → not re-enabled; ctrl-suspended → not enabled; world halted → `enable` without `--now`; `spira-aeon-*` → never restarted or enabled. | IDEM, COR | T1 / cert |
+| UC-instance-lifecycle-21 | The unit installer refuses while this instance's dwarves are live (before daemon-reload), and refuses when any ExecStart target is missing or lacks +x. | FC | T1 / cert |
+| UC-instance-lifecycle-22 | Per-unit apply decision, as a table: changed → write, restart, count; unchanged → nothing, no daemon-reload, "unchanged"; masked → left, reported masked; operator-disabled → not re-enabled; ctrl-suspended → not enabled; world halted → `enable` without `--now`; `spira-dwarf-*` → never restarted or enabled. | IDEM, COR | T1 / cert |
 | UC-instance-lifecycle-23 | A changed timer whose oneshot is mid-pass is applied only after the oneshot drains. After install, any enabled-but-inactive unit makes the installer exit non-zero. | CONC, OBS | T2 / cert |
 | UC-instance-lifecycle-24 | Rendering produces instance-suffixed `spira-*-<inst>` units whose timers target `Unit=spira-*-<inst>.service`. Shared units (cockpit-ensure, concierge, dolt-beads) keep plain names. Watchers render as `spira-watch-<name>-<inst>.service`, never `@`. No `@PLACEHOLDER@` survives. | COR, CFG | T1 over one shared render / cert |
 | UC-instance-lifecycle-25 | Optional units are gated by what is present: loom and broker by their binary, mail-deliver by `inotifywait`, suites by `SPIRA_SELF_TEST` (derived from `.git` presence, overridable). A missing prerequisite marks the unit OPTIONAL, not installed and not enabled, with a note. | CFG, FC | T1 / cert |
@@ -104,7 +104,7 @@ Where they run: **cert** = certification (every commit, local and gate), **batch
 |---|---|---|---|
 | UC-instance-lifecycle-41 | `world.sh stop` stops active work units (resolved instance-qualified name, with plain fallback). It never stops `spira-cockpit*`, `spira-loom*` or landing, and spares CI watchers unless `--hard`. `--hard` stops watchers in both name forms. On any failed stop it exits non-zero without printing STOPPED. | COR, OBS, FC | T1: `spira-world::proc::is_excluded_work_service` unit tests (sp-6onps; world.sh is the `world` binary now) + T2 / cert |
 | UC-instance-lifecycle-42 | `world.sh start` starts timers except those ctrl-suspended (with the reason printed) or systemd-disabled. It revives non-oneshot watchers stopped by `--hard` and leaves active ones alone. | COR, IDEM | T1: `spira-world::sysctl::start_action` unit tests (sp-6onps) + T2 / cert. `test-world-decide.sh` retired — it sourced `world.sh`/`ctrl.sh` as bash libraries (`WORLD_LIB=1`/`CTRL_LIB=1`), which stopped being possible once both became Rust binaries; the same decision table now lives as native Rust tests next to the code it decides for. |
-| UC-instance-lifecycle-43 | `world.sh drain` touches no unit and writes a stamp with a resume hint. `--timeout` exits 1 with NOT DRAINED / REMAIN GATED. `--deadline` slays with `--keep-work --reopen`. `resume` clears the stamp. Every aeon door carries both the drain and halt gates. | CONC, FC | T2 / cert; door coverage T0 |
+| UC-instance-lifecycle-43 | `world.sh drain` touches no unit and writes a stamp with a resume hint. `--timeout` exits 1 with NOT DRAINED / REMAIN GATED. `--deadline` slays with `--keep-work --reopen`. `resume` clears the stamp. Every dwarf door carries both the drain and halt gates. | CONC, FC | T2 / cert; door coverage T0 |
 | UC-instance-lifecycle-44 | `world.sh status` reports landing, live gate and landing workers from `/proc`, DRAINING, active CI watchers, and `svc: <result>` for a failed last run. It says "unknown" (not "inactive") for an unresolvable unit. | OBS | T1: `spira-world::sysctl::status_timer_row` unit tests (sp-6onps) + T2 /proc / cert |
 | UC-instance-lifecycle-45 | `ctrl.sh`: a suspension needs a reason and an owner. check, list and resume work, and divergence reports suspended-but-running and masked-but-undeclared units. | FC, OBS | T1: `spira-ctrl` lib unit tests (sp-6onps; ctrl.sh is the `ctrl` binary now, `ctrl.sh` a compat symlink) + `test-ctrl.sh` (unchanged black-box CLI suite, now exercising the Rust binary) / cert |
 
@@ -129,7 +129,7 @@ The cost column is ci_secs from the main-push run; NA means not run there.
 | 06 | test-release.sh::1–7 | T2, 6 | KEEP. Drop case 8 (a trivially-true self-check). |
 | 08 | test-activate.sh::basic, dry-run; test-rollback.sh::activate-A/B; test-loop-readonly.sh::activate/ro; test-artifact-install.sh::activate | T2, 2 (+4 +12 +152 dup legs) | KEEP test-activate.sh. Delete the activate legs elsewhere. |
 | 09 | test-activate.sh::prune | T2, 2 | KEEP + fix. The test sets `current` to the oldest release, but activation repoints it before the prune runs, so "never prunes current" is not exercised (Gap G4). |
-| 10 | test-activate.sh::aeon-guard, force, restart | T2, 2 | KEEP. Add the reload-before-restart ordering assertion. |
+| 10 | test-activate.sh::dwarf-guard, force, restart | T2, 2 | KEEP. Add the reload-before-restart ordering assertion. |
 | 11 | test-rollback.sh::rollback | T2, 4 | MERGE-INTO test-activate.sh (only the rollback step is unique). |
 | 12–14 | test-deploy.sh::P1–P23 | T2, 14 | KEEP. Factor the 6 copy-pasted `env -i` blocks into one runner and collapse the ~8 redundant healthy-deploy runs. Fix the tautological controls P4, P9 and P12. |
 | 15 | test-artifact-install.sh::conf resolves SPIRA_LOOM_BIN, cargo build, /api/beads 200, ready.sh; test-loop-readonly.sh::sentinel from ro | T4-in-CI, 152; T3, 12 | test-artifact-install: DEMOTE-TO-T1 the conf-resolution case (the actual defect). Move the cargo build and live loom to acceptance.yml, which already builds loom once, and use the real `build-tarball.sh` there. test-loop-readonly: KEEP as T3 on main; drop its activate leg and use a `chmod a-w` copy. |
@@ -138,9 +138,9 @@ The cost column is ci_secs from the main-push run; NA means not run there.
 | 18 | *(none behavioural)*; test-release-acceptance greps | — | GAP G3 |
 | 19 | test-install-landref.sh::all | T2, 4 | KEEP (exemplar). Add rc assertions to the FORCE nowant cases. |
 | 20 | test-install-collisions.sh::collision/distinct/no-conf/same-instance | T1, <1 | DONE. `_check_path_collisions` sourced under `SPIRA_INSTALL_LIB=1`, driven with a temp dir of `spira-*.conf` files, no rendered DEST tree, no real systemd. Covers all five keys; the vacuous "no unit written" check is gone with the DEST tree it was checking. |
-| 21 | test-install-aeons.sh::aeon guard, force; test-install-exec.sh::clean/missing/noexec/tarball | T2, 57 + 29 | install-exec: DEMOTE-TO-T1 (the executability check is a path predicate). Use a 2-file fake release instead of tar-copying the repo, and derive NOEXEC from templates. install-aeons: KEEP the guard cases only. |
-| 22 | test-install-idempotent.sh::positive-ctrl, idempotent, masked, disabled; test-install-aeons.sh::no-op, selective, aeon safety; test-install-halt.sh::running/halted; test-ctrl.sh::install no suspension/suspended/after resume; test-install-unit-ensure.sh::no-op | T2 ×5, 42+57+17+27+12 | MERGE into one new **T1 table** `test-install-decide.sh`, over an extracted `_unit_action(state)` in systemd/install.sh. install-idempotent, install-halt and the ctrl install tier become MERGE-INTO it. Fix the `$?`-after-cat bug in install-idempotent before porting; its exit-0 assertions are vacuous today. |
-| 23 | test-install-aeons.sh::drain, end-state | T2, (in 57) | KEEP in test-install-aeons.sh (trimmed to guard + drain + end-state, ~15 s). |
+| 21 | test-install-dwarves.sh::dwarf guard, force; test-install-exec.sh::clean/missing/noexec/tarball | T2, 57 + 29 | install-exec: DEMOTE-TO-T1 (the executability check is a path predicate). Use a 2-file fake release instead of tar-copying the repo, and derive NOEXEC from templates. install-dwarves: KEEP the guard cases only. |
+| 22 | test-install-idempotent.sh::positive-ctrl, idempotent, masked, disabled; test-install-dwarves.sh::no-op, selective, dwarf safety; test-install-halt.sh::running/halted; test-ctrl.sh::install no suspension/suspended/after resume; test-install-unit-ensure.sh::no-op | T2 ×5, 42+57+17+27+12 | MERGE into one new **T1 table** `test-install-decide.sh`, over an extracted `_unit_action(state)` in systemd/install.sh. install-idempotent, install-halt and the ctrl install tier become MERGE-INTO it. Fix the `$?`-after-cat bug in install-idempotent before porting; its exit-0 assertions are vacuous today. |
+| 23 | test-install-dwarves.sh::drain, end-state | T2, (in 57) | KEEP in test-install-dwarves.sh (trimmed to guard + drain + end-state, ~15 s). |
 | 24 | test-install-instance.sh::naming, watcher install; test-install-unit-directive.sh::unit directive; test-owned.sh::unit rows match render; test-pr-notify.sh §9 | T2 + real systemd, 37 + 14 | install-instance naming: DEMOTE-TO-T1 over one shared render. install-unit-directive render half: MERGE-INTO the unit-lint over the shared render; it is needlessly container-gated today. Remove the unit-render section from test-pr-notify (secondary; it is covered generically). |
 | 25 | test-install-loom-broker.sh::A–D; test-install-mail-deliver.sh::A/B; test-install-self-test.sh::A–C | T1, 2+3+5 | MERGE all three into one table `test-install-loom-broker.sh`, renamed to test-units-optional. Make mail-deliver skip (not fail) without inotifywait, and stub `.git` detection instead of depending on the harness being a checkout. |
 | 26 | test-install-dolt.sh::renderer, doctor; test-install-exec.sh::conf empty, render fallback, cockpit path, heal log | T1, 7; T2 (in 29) | test-install-dolt: SOURCE-GREP. Awk-extracting the renderer from install.sh's heredoc couples the test to source layout. Move the renderer to `systemd/render.py` and call it directly. |
@@ -173,9 +173,9 @@ The cost column is ci_secs from the main-push run; NA means not run there.
 ## 4. Duplicate clusters
 
 1. **Per-unit apply decision (changed / unchanged / masked / disabled / halted / suspended).**
-   - Files: test-install-idempotent (42), test-install-aeons no-op + selective (≈30 of 57), test-install-halt (17), test-ctrl install tier (≈15 of 27), test-install-unit-ensure no-op (unit-ensure.sh's copy of the same decision).
+   - Files: test-install-idempotent (42), test-install-dwarves no-op + selective (≈30 of 57), test-install-halt (17), test-ctrl install tier (≈15 of 27), test-install-unit-ensure no-op (unit-ensure.sh's copy of the same decision).
    - Evidence: every one of them seeds DEST from `--render` with the same copy-pasted loop, then runs the full `systemd/install.sh` 2–5 times against a recording systemctl, and asserts on `daemon-reload` / `enable --now` / "unchanged".
-   - **Keep:** a new T1 `test-install-decide.sh`, table-driven over an extracted `_unit_action`, plus one T2 smoke in test-install-aeons.sh.
+   - **Keep:** a new T1 `test-install-decide.sh`, table-driven over an extracted `_unit_action`, plus one T2 smoke in test-install-dwarves.sh.
 
 2. **Basic activation (unpack, swap `current`, read-only, previous kept).**
    - Files: test-activate (2), test-rollback (4), test-loop-readonly (12), test-artifact-install (152).
@@ -187,7 +187,7 @@ The cost column is ci_secs from the main-push run; NA means not run there.
    - Evidence: all three grep for `SPIRA_OPERATED` per phase, the clone `ready.sh` path and rc capture (release-acceptance cases 16/18 ≡ acceptance-run). acceptance-ready runs a copy of the idiom.
    - **Keep:** none as they stand. Keep T1 tests of the extracted functions, plus the real acceptance run.
 
-4. **Drain `--timeout` with a live aeon → NOT DRAINED / REMAIN GATED / exit 1.**
+4. **Drain `--timeout` with a live dwarf → NOT DRAINED / REMAIN GATED / exit 1.**
    - Files: test-world.sh, test-world-drain-deadline.sh case 3 (near-verbatim).
    - **Keep:** test-world-drain-deadline.sh.
 
@@ -217,7 +217,7 @@ The cost column is ci_secs from the main-push run; NA means not run there.
     - **Keep:** test-watchd-unit-name.sh for the formula and test-install-instance for the installed name. Delete the two NA suites.
 
 11. **Render→DEST fixture boilerplate** (not duplicated assertions, but duplicated cost).
-    - Copied into test-uninstall, test-unit-drift, test-owned, test-install-{aeons,idempotent,halt,conf-seed,exec,instance,migrate,unit-prune,unit-directive}: roughly 12 suites × 1–6 `--render` runs.
+    - Copied into test-uninstall, test-unit-drift, test-owned, test-install-{dwarves,idempotent,halt,conf-seed,exec,instance,migrate,unit-prune,unit-directive}: roughly 12 suites × 1–6 `--render` runs.
     - **Keep:** one `lib-test-install.sh` helper that renders once per suite into a cached dir keyed on the templates' hash.
 
 ---
@@ -229,7 +229,7 @@ The cost column is ci_secs from the main-push run; NA means not run there.
 | Per-unit apply decision (UC-22) | `systemd/install.sh` main loop (903 lines, not sourceable) | 5 suites, ~150 s of full installs | Extract `_unit_action <rendered> <installed> <is-enabled> <halted> <suspended>` → `write\|skip\|masked\|operator-disabled\|enable\|enable-now`. Add a `SPIRA_INSTALL_LIB=1` guard so the file can be sourced without running `main`. |
 | Path-collision check | `systemd/install.sh:_check_path_collisions` | test-install-collisions (T1, <1 s) | DONE. Sourced under the same `SPIRA_INSTALL_LIB=1` guard as `_unit_action`, fed a temp dir of `spira-*.conf` files. |
 | Landref currency | `systemd/install.sh:_check_landref_current` | test-install-landref (4 s, 3 git repos) | Inject `git` via a `SPIRA_GIT` shim, or pass (branch, behind, tag) directly. Low priority; already cheap. |
-| Conflict predicates 1–5 | root `install.sh` phase 0.5 (inline, lines 148–266) | test-install-conflicts (~8 full root installs, /proc, fixed port) | One function per conflict (`_conflict_foreign`, `_conflict_aeon <proc-root>`, `_conflict_lock`, `_conflict_instance`, `_conflict_dolt <port-probe>`), with injectable `/proc` root and probe command. |
+| Conflict predicates 1–5 | root `install.sh` phase 0.5 (inline, lines 148–266) | test-install-conflicts (~8 full root installs, /proc, fixed port) | One function per conflict (`_conflict_foreign`, `_conflict_dwarf <proc-root>`, `_conflict_lock`, `_conflict_instance`, `_conflict_dolt <port-probe>`), with injectable `/proc` root and probe command. |
 | SPIRA_PROD git and bootstrap guards | root `install.sh` early phases | test-install-prod-checkout, test-install-bootstrap-release (12-stub fixture) | `_prod_guard <path>` and `_bootstrap_decision <prod> <releases>`. |
 | Unit renderer | Python heredoc inside `systemd/install.sh`, awk-extracted by test-install-dolt | test-install-dolt; every `--render` | Move to `systemd/render.py` with named argparse flags (11 positional args break silently today). |
 | Conf seeding (append-if-absent) | `systemd/install.sh` | test-install-conf-seed (30 s, 5 full installs) | `_seed_instance_conf <file> <inst>`. |
@@ -269,7 +269,7 @@ The cost column is ci_secs from the main-push run; NA means not run there.
 
 **Now.** 58 primary files with timings sum to 1,092 suite-seconds. The 4 NA files add 0 because they did not run.
 
-Top contributors: artifact-install 152, uninstall 78, world-start-honours-ctrl 71, world-drain 58, install-aeons 57, acceptance-run 43, install-idempotent 42, install-paths 39, install-instance 37, install-migrate 31, install-conf-seed 30, install-exec 29, install-unit-prune 28, canary 27, ctrl 27, world 25. Those 16 files account for 794 s (73%).
+Top contributors: artifact-install 152, uninstall 78, world-start-honours-ctrl 71, world-drain 58, install-dwarves 57, acceptance-run 43, install-idempotent 42, install-paths 39, install-instance 37, install-migrate 31, install-conf-seed 30, install-exec 29, install-unit-prune 28, canary 27, ctrl 27, world 25. Those 16 files account for 794 s (73%).
 
 **Projected, file by file:**
 
@@ -279,7 +279,7 @@ Top contributors: artifact-install 152, uninstall 78, world-start-honours-ctrl 7
 | uninstall | 78 → 20 | shared render, no git |
 | world-start-honours-ctrl (+revives-watchers 20) | 91 → 6 | ctrl single read + T1 table |
 | world-drain | 58 → 0 | deleted |
-| install-aeons | 57 → 15 | guard + drain + end-state only |
+| install-dwarves | 57 → 15 | guard + drain + end-state only |
 | acceptance-run | 43 → 2 | real bd init deleted, T1 extraction |
 | install-idempotent, install-halt | 42 + 17 → 0 | merged into new test-install-decide, +3 |
 | install-paths | 39 → 2 | |

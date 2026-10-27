@@ -1,0 +1,30 @@
+[Unit]
+After=lc-serve.service
+Wants=lc-serve.service
+# The fast path: CHECK 7 alone, so a slot an exiting dwarf just freed refills in seconds
+# rather than waiting for spira-sentinel's own 2-minute pass. Also fired directly by every
+# dwarf unit's own ExecStopPost (sp-0y2av); this timer is the fallback cadence between exits.
+Description=Spira fast call — refill a freed dwarf slot without a full sentinel pass
+Documentation=file://@SPIRA_PROD_ROOT@/sentinel/DESIGN.md
+
+[Service]
+# THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built
+# from it alone — nothing inherited from the user manager — so every tool invoked by bare
+# name is that release's. Rendered from the release root (spira-releases/<sha>; the harness
+# checkout's root until the release deploy lands).
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+ExecStart=@SPIRA_PROD_ROOT@/bin/sentinel --call-only
+# Target ~1s; generous headroom for a call.lock wait behind a concurrent full pass.
+TimeoutStartSec=60
+StandardOutput=append:@SPIRA_RUN@/sentinel.log
+StandardError=append:@SPIRA_RUN@/sentinel.log
+
+[Install]
+WantedBy=default.target
+
+[X-Spira]
+Plane=work

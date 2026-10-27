@@ -57,7 +57,7 @@ tl_config SPIRA_RUN="$TMP/run"
 
 # A starved partition — one row in strand-classify.py's output format.
 # kind=starved id=- disp=escalate → hits the escalation path in cmd_check.
-printf 'starved\t-\tescalate\t0 ready beads, 0 live aeons — nothing can move\tfile a needs-ryan ask with the symptoms\n' \
+printf 'starved\t-\tescalate\t0 ready beads, 0 live dwarves — nothing can move\tfile a needs-ryan ask with the symptoms\n' \
     > "$TMP/fixture.tsv"
 
 echo "sentinel ok" > "$TMP/run/sentinel.log"
@@ -206,7 +206,7 @@ echo "case 3 — no mail on pool-paused (D8): an info row never reaches mail:"
 # the skip; the classifier-level distinction between them is strand-classify.py's job
 # (test-strand-classify.sh), not this suite's.
 rm -f "$TMP/run/strands.json" "$TMP/run/strands.json.lock"
-printf 'pool-paused\t-\tinfo\t1 bead(s) ready but the task pool is set to zero: sp-example\taeons.sh pool <n>\n' \
+printf 'pool-paused\t-\tinfo\t1 bead(s) ready but the task pool is set to zero: sp-example\tdwarves.sh pool <n>\n' \
     > "$TMP/fixture-info.tsv"
 
 MAIL_SENT="$TMP/mail-sent-info"
@@ -222,7 +222,7 @@ echo "case 4 — full stack: a starved row's evidence carries its own partition'
 # Exercises strand.sh check's own plumbing (classify()'s --from label-prepending, and
 # escalate()'s mail body), not just the classifier in isolation (sp-15u9f).
 rm -f "$TMP/run/strands.json" "$TMP/run/strands.json.lock"
-printf 'starved\t-\tescalate\t1 bead(s) ready and no live aeon; 0 of 3 aeon slot(s) are serving this partition (1 live across fleet): sp-pa1\tcheck sentinel\n' \
+printf 'starved\t-\tescalate\t1 bead(s) ready and no live dwarf; 0 of 3 dwarf slot(s) are serving this partition (1 live across fleet): sp-pa1\tcheck sentinel\n' \
     > "$TMP/fixture-partition.tsv"
 
 ARGS_A="$TMP/mail-args-a"

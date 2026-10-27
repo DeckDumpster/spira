@@ -23,7 +23,7 @@ use spira_config::nonwork::{self, Kind, Which};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// The capacity pause file's path (wave 4.26: family K's home is `aeon::capacity`, read
+/// The capacity pause file's path (wave 4.26: family K's home is `dwarf::capacity`, read
 /// in-process here instead of shelling into lib.sh via `io::lib_call`). `SPIRA_CAPACITY_PAUSE`
 /// is a lib.sh literal, never a spira-config registry key, so an operator override is read
 /// straight from the environment — the same ad hoc path every other reader of this key uses.
@@ -51,7 +51,7 @@ fn push(out: &mut Kv, k: &str, v: impl Into<String>) {
 pub struct Cfg {
     pub instance: String,
     pub trace_lines: i64,
-    pub max_live_aeons: i64,
+    pub max_live_dwarves: i64,
     pub lanes_max_live: String,
     pub scope_label: String,
     pub czar_label: String,
@@ -81,7 +81,7 @@ impl Cfg {
         Ok(Cfg {
             instance: spira_config::resolve::resolve_instance(&env, &home)?,
             trace_lines: cfg_parse::<i64>("COCKPIT_TRACE_LINES")?,
-            max_live_aeons: cfg_parse::<i64>("SPIRA_MAX_LIVE_AEONS")?,
+            max_live_dwarves: cfg_parse::<i64>("SPIRA_MAX_LIVE_DWARVES")?,
             lanes_max_live: cfg("SPIRA_LANES_MAX_LIVE")?,
             scope_label: cfg("SPIRA_SCOPE_LABEL")?,
             czar_label: cfg("SPIRA_CZAR_LABEL")?,
@@ -233,28 +233,28 @@ pub fn now_keys(cfg: &Cfg) -> Kv {
             .filter(|p| {
                 p.file_name()
                     .and_then(|n| n.to_str())
-                    .map(|n| n.starts_with("aeon-") && n.ends_with(".pid"))
+                    .map(|n| n.starts_with("dwarf-") && n.ends_with(".pid"))
                     .unwrap_or(false)
             })
             .collect();
         pidfiles.sort();
         for pf in pidfiles {
-            if !aeon_alive(&pf) {
+            if !dwarf_alive(&pf) {
                 continue;
             }
             let base = pf.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
-            // base = aeon-<rune>-<bead>
-            let rest = base.strip_prefix("aeon-").unwrap_or("");
+            // base = dwarf-<rune>-<bead>
+            let rest = base.strip_prefix("dwarf-").unwrap_or("");
             let (fay, bead) = rest.split_once('-').unwrap_or(("", rest));
-            let st = aeon_static(&run, &home, bead, fay, &pf);
+            let st = dwarf_static(&run, &home, bead, fay, &pf);
             let pid = io::read_trim(&pf).and_then(|s| s.trim().parse::<i64>().ok());
             let secs = pid.and_then(io::proc_etimes).unwrap_or(0);
 
-            push(&mut out, &format!("SP_AEON{i}_PRI"), st.pri.clone());
-            push(&mut out, &format!("SP_AEON{i}_PARTITION"), st.partition.clone());
-            push(&mut out, &format!("SP_AEON{i}_TITLE"), st.title.clone());
-            push(&mut out, &format!("SP_AEON{i}_NAME"), st.name.clone());
-            push(&mut out, &format!("SP_AEON{i}_RUNE"), if fay.is_empty() { "?".into() } else { fay.to_string() });
+            push(&mut out, &format!("SP_DWARF{i}_PRI"), st.pri.clone());
+            push(&mut out, &format!("SP_DWARF{i}_PARTITION"), st.partition.clone());
+            push(&mut out, &format!("SP_DWARF{i}_TITLE"), st.title.clone());
+            push(&mut out, &format!("SP_DWARF{i}_NAME"), st.name.clone());
+            push(&mut out, &format!("SP_DWARF{i}_RUNE"), if fay.is_empty() { "?".into() } else { fay.to_string() });
 
             let seed = std::fs::read_to_string(home.join("runes").join(format!("{fay}.rune")))
                 .ok()
@@ -262,12 +262,12 @@ pub fn now_keys(cfg: &Cfg) -> Kv {
             let rune_model = st.rune_model.clone();
             let repo_name = st.repo.clone();
             let overridden = seed.as_deref().is_some_and(|s| !s.is_empty() && s != rune_model) && rune_model != "?";
-            push(&mut out, &format!("SP_AEON{i}_MODEL_OVERRIDE"), if overridden { "1" } else { "0" }.to_string());
-            push(&mut out, &format!("SP_AEON{i}_RUNE_MODEL"), rune_model);
-            push(&mut out, &format!("SP_AEON{i}_BEAD"), bead);
-            push(&mut out, &format!("SP_AEON{i}_MIN"), (secs / 60).to_string());
+            push(&mut out, &format!("SP_DWARF{i}_MODEL_OVERRIDE"), if overridden { "1" } else { "0" }.to_string());
+            push(&mut out, &format!("SP_DWARF{i}_RUNE_MODEL"), rune_model);
+            push(&mut out, &format!("SP_DWARF{i}_BEAD"), bead);
+            push(&mut out, &format!("SP_DWARF{i}_MIN"), (secs / 60).to_string());
 
-            // aeon_fuse_minutes (wave 4.34, sp-27d3d): ported to aeon::trace, called
+            // dwarf_fuse_minutes (wave 4.34, sp-27d3d): ported to dwarf::trace, called
             // in-process. `base` (family W, base refs) is in-process too now (sp-k6lku,
             // "wave 4.13") through the same `io::repo_registry()` unsent.rs/queue.rs
             // already use, not the generic lib.sh bridge — the commit-ahead timestamp and
@@ -277,37 +277,37 @@ pub fn now_keys(cfg: &Cfg) -> Kv {
                 .filter(|b| !b.is_empty())
                 .and_then(|base| io::git(&wt, &["log", "--format=%ct", "-1", &format!("{base}..HEAD")]))
                 .and_then(|t| t.trim().parse::<i64>().ok());
-            let fuse = aeon::trace::aeon_fuse_minutes(bead, &wt, &run, commit_ahead_ts, io::now());
-            push(&mut out, &format!("SP_AEON{i}_FUSE"), fuse);
-            push(&mut out, &format!("SP_AEON{i}_WALL"), (secs / 60).to_string());
+            let fuse = dwarf::trace::dwarf_fuse_minutes(bead, &wt, &run, commit_ahead_ts, io::now());
+            push(&mut out, &format!("SP_DWARF{i}_FUSE"), fuse);
+            push(&mut out, &format!("SP_DWARF{i}_WALL"), (secs / 60).to_string());
 
-            let lease = aeon::trace::aeon_lease_minutes(bead, &run, io::now());
-            push(&mut out, &format!("SP_AEON{i}_LEASE"), lease);
+            let lease = dwarf::trace::dwarf_lease_minutes(bead, &run, io::now());
+            push(&mut out, &format!("SP_DWARF{i}_LEASE"), lease);
 
             let mark = std::env::var("SPIRA_TRACE_MARK").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "=== spira attempt".to_string());
             let log_path = run.join(format!("{bead}.log"));
-            let stats = aeon::trace::trace_stats(&log_path, &mark, io::now());
+            let stats = dwarf::trace::trace_stats(&log_path, &mark, io::now());
             for line in stats.lines() {
                 if let Some((k, v)) = line.split_once('=') {
-                    push(&mut out, &format!("SP_AEON{i}_{k}"), v.to_string());
+                    push(&mut out, &format!("SP_DWARF{i}_{k}"), v.to_string());
                 }
             }
             let tl: i64 = cfg.trace_lines;
             if tl > 0 {
-                let tail = aeon::trace::trace_tail(&log_path, &mark, tl as usize);
+                let tail = dwarf::trace::trace_tail(&log_path, &mark, tl as usize);
                 let lines: Vec<&str> = tail.lines().map(sanitize_line).collect();
                 let lines: Vec<&str> = lines.into_iter().filter(|l| !l.is_empty()).collect();
                 let n = lines.len();
                 let start_n = n.saturating_sub(tl as usize);
                 for (j, l) in lines[start_n..].iter().enumerate() {
-                    push(&mut out, &format!("SP_AEON{i}_ACT{j}"), l.to_string());
+                    push(&mut out, &format!("SP_DWARF{i}_ACT{j}"), l.to_string());
                 }
             }
             i += 1;
         }
     }
-    push(&mut out, "SP_AEON_N", i.to_string());
-    sweep_aeon_static(&run, io::now());
+    push(&mut out, "SP_DWARF_N", i.to_string());
+    sweep_dwarf_static(&run, io::now());
 
     push(&mut out, "SP_SENTINEL_TIMER", unit_active_key("sentinel", "timer", &cfg.instance));
     push(&mut out, "SP_SENTINEL_AGE", age_of(&run.join("sentinel.log")));
@@ -318,7 +318,7 @@ pub fn now_keys(cfg: &Cfg) -> Kv {
         for e in entries.flatten() {
             let name = e.file_name();
             let name = name.to_string_lossy();
-            if name.starts_with("aeon-ops-") && name.ends_with(".pid") && aeon_alive(&e.path()) {
+            if name.starts_with("dwarf-ops-") && name.ends_with(".pid") && dwarf_alive(&e.path()) {
                 ops_age = "0".to_string();
                 break;
             }
@@ -363,27 +363,27 @@ pub fn now_keys(cfg: &Cfg) -> Kv {
     push(&mut out, "SP_GATE_N", gate_n.to_string());
     push(&mut out, "SP_GATE_LIVE", gate_live.to_string());
 
-    let mut live_aeons = 0;
+    let mut live_dwarves = 0;
     if let Ok(entries) = std::fs::read_dir(&run) {
         for e in entries.flatten() {
             let name = e.file_name();
             let name = name.to_string_lossy();
-            if name.starts_with("aeon-") && name.ends_with(".pid") && aeon_alive(&e.path()) {
-                live_aeons += 1;
+            if name.starts_with("dwarf-") && name.ends_with(".pid") && dwarf_alive(&e.path()) {
+                live_dwarves += 1;
             }
         }
     }
-    push(&mut out, "SP_AEONS", live_aeons.to_string());
+    push(&mut out, "SP_DWARVES", live_dwarves.to_string());
 
     let cap_now = io::now();
-    match aeon::capacity::pause_state(&capacity_pause_file(&run)) {
-        aeon::capacity::PauseState::Paused { until, why } if until > cap_now => {
+    match dwarf::capacity::pause_state(&capacity_pause_file(&run)) {
+        dwarf::capacity::PauseState::Paused { until, why } if until > cap_now => {
             push(&mut out, "SP_CAPACITY_PAUSED", "1");
             push(&mut out, "SP_CAPACITY_LEFT", (until - cap_now).to_string());
             push(&mut out, "SP_CAPACITY_AT", fmt_hm(until));
             push(&mut out, "SP_CAPACITY_WHY", why);
         }
-        aeon::capacity::PauseState::Unknown => {
+        dwarf::capacity::PauseState::Unknown => {
             // Fail closed (wave4-decomposition.md (c)3): an unreadable or corrupt pause
             // file must never render as "0"/open on the dashboard — `?`, never a claim
             // this probe cannot back.
@@ -517,19 +517,19 @@ fn age_of(path: &Path) -> String {
     io::mtime_age_secs(path).map(|s| s.to_string()).unwrap_or_else(|| "?".to_string())
 }
 
-/// `aeon_alive` (`lib.sh`): the one canonical implementation (`strand::probe::aeon_alive`,
+/// `dwarf_alive` (`lib.sh`): the one canonical implementation (`strand::probe::dwarf_alive`,
 /// wave 4.23 sp-0ffox — "collapsing the bead/cockpit-collect copies"), called in-process —
 /// a Rust-to-Rust call costs nothing extra over this crate's own former copy, unlike the
 /// `bash`-bridge round trip per pidfile this probe still avoids for the `lib.sh` helpers
 /// that do real work (this one was always three token comparisons).
-fn aeon_alive(pidfile: &Path) -> bool {
-    strand::probe::aeon_alive(pidfile)
+fn dwarf_alive(pidfile: &Path) -> bool {
+    strand::probe::dwarf_alive(pidfile)
 }
 
 /// `show <bead>` -> (priority, sanitized title, repo name), `?`/empty on any failure.
-const AEON_STATIC_TTL_S: i64 = 300;
+const DWARF_STATIC_TTL_S: i64 = 300;
 
-struct AeonStatic {
+struct DwarfStatic {
     name: String,
     pri: String,
     title: String,
@@ -538,17 +538,17 @@ struct AeonStatic {
     rune_model: String,
 }
 
-fn aeon_static_path(run: &std::path::Path, bead: &str) -> std::path::PathBuf {
-    run.join(format!("cockpit-aeon-{bead}.cache"))
+fn dwarf_static_path(run: &std::path::Path, bead: &str) -> std::path::PathBuf {
+    run.join(format!("cockpit-dwarf-{bead}.cache"))
 }
 
-fn aeon_static_load(path: &std::path::Path, now: i64) -> Option<AeonStatic> {
+fn dwarf_static_load(path: &std::path::Path, now: i64) -> Option<DwarfStatic> {
     let v: Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
-    if now - v.get("at")?.as_i64()? > AEON_STATIC_TTL_S {
+    if now - v.get("at")?.as_i64()? > DWARF_STATIC_TTL_S {
         return None;
     }
     let f = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_string);
-    Some(AeonStatic {
+    Some(DwarfStatic {
         name: f("name")?,
         pri: f("pri")?,
         title: f("title")?,
@@ -558,16 +558,16 @@ fn aeon_static_load(path: &std::path::Path, now: i64) -> Option<AeonStatic> {
     })
 }
 
-/// What a running aeon's row shows that does not change while it runs: read once per
-/// `AEON_STATIC_TTL_S` instead of costing ~4 subprocesses per live aeon per 5 s tick. A
+/// What a running dwarf's row shows that does not change while it runs: read once per
+/// `DWARF_STATIC_TTL_S` instead of costing ~4 subprocesses per live dwarf per 5 s tick. A
 /// cannot-tell field (`?`) is never cached, so a transient failure heals on the next tick.
-fn aeon_static(run: &std::path::Path, home: &std::path::Path, bead: &str, fay: &str, pf: &std::path::Path) -> AeonStatic {
-    let path = aeon_static_path(run, bead);
+fn dwarf_static(run: &std::path::Path, home: &std::path::Path, bead: &str, fay: &str, pf: &std::path::Path) -> DwarfStatic {
+    let path = dwarf_static_path(run, bead);
     let now = io::now();
-    if let Some(hit) = aeon_static_load(&path, now) {
+    if let Some(hit) = dwarf_static_load(&path, now) {
         return hit;
     }
-    let name = io::lib_call(home, "aeon_named", &[pf.to_str().unwrap_or("")]).unwrap_or_else(|| "?".to_string());
+    let name = io::lib_call(home, "dwarf_named", &[pf.to_str().unwrap_or("")]).unwrap_or_else(|| "?".to_string());
     let (pri, title, repo) = parse_show_meta(io::contentjson(&["show", bead]), bead);
     let partition = io::content(&["state", bead, "rune"])
         .map(|s| s.trim().to_string())
@@ -577,7 +577,7 @@ fn aeon_static(run: &std::path::Path, home: &std::path::Path, bead: &str, fay: &
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "?".to_string());
-    let st = AeonStatic { name, pri, title, repo, partition, rune_model };
+    let st = DwarfStatic { name, pri, title, repo, partition, rune_model };
     let whole = [&st.name, &st.pri, &st.title, &st.partition, &st.rune_model].iter().all(|s| s.as_str() != "?");
     if whole {
         let body = serde_json::json!({
@@ -592,18 +592,18 @@ fn aeon_static(run: &std::path::Path, home: &std::path::Path, bead: &str, fay: &
     st
 }
 
-fn sweep_aeon_static(run: &std::path::Path, now: i64) {
+fn sweep_dwarf_static(run: &std::path::Path, now: i64) {
     let Ok(entries) = std::fs::read_dir(run) else { return };
     for e in entries.flatten() {
         let name = e.file_name();
         let name = name.to_string_lossy();
-        if !(name.starts_with("cockpit-aeon-") && name.ends_with(".cache")) {
+        if !(name.starts_with("cockpit-dwarf-") && name.ends_with(".cache")) {
             continue;
         }
         let age = e.metadata().and_then(|m| m.modified()).ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| now - d.as_secs() as i64);
-        if age.is_some_and(|a| a > 2 * AEON_STATIC_TTL_S) {
+        if age.is_some_and(|a| a > 2 * DWARF_STATIC_TTL_S) {
             let _ = std::fs::remove_file(e.path());
         }
     }
@@ -680,14 +680,14 @@ pub fn core_counts_keys() -> Kv {
 pub fn slots_keys(cfg: &Cfg) -> Kv {
     let mut out = Kv::new();
     let home = io::home_dir();
-    let live = io::lib_call(&home, "aeons_live_total", &[]).unwrap_or_else(|| "?".to_string());
+    let live = io::lib_call(&home, "dwarves_live_total", &[]).unwrap_or_else(|| "?".to_string());
     push(&mut out, "SP_SLOTS_LIVE", live.clone());
 
-    let pool: i64 = io::max_aeons().parse().ok().unwrap_or(0);
-    // SPIRA_MAX_LIVE_AEONS now carries a real, always-declared value (the config file); the
+    let pool: i64 = io::max_dwarves().parse().ok().unwrap_or(0);
+    // SPIRA_MAX_LIVE_DWARVES now carries a real, always-declared value (the config file); the
     // pool+lanes computation this ceiling used to fall back to when the key resolved empty
     // is gone with that default.
-    let ceiling = cfg.max_live_aeons;
+    let ceiling = cfg.max_live_dwarves;
     push(&mut out, "SP_SLOTS_CEILING", ceiling.to_string());
 
     // A failed live read must never resolve to a reassuring free count.
@@ -699,7 +699,7 @@ pub fn slots_keys(cfg: &Cfg) -> Kv {
     push(&mut out, "SP_SLOTS_POOL", pool.to_string());
     push(&mut out, "SP_SLOTS_LANES_CAP", cfg.lanes_max_live.clone());
 
-    let lanes_live = io::lib_call(&home, "aeons_live_lanes", &[]).unwrap_or_else(|| "?".to_string());
+    let lanes_live = io::lib_call(&home, "dwarves_live_lanes", &[]).unwrap_or_else(|| "?".to_string());
     push(&mut out, "SP_SLOTS_LANES_LIVE", lanes_live);
 
     let snap = io::run_dir().join("cockpit.env");
@@ -714,10 +714,10 @@ pub fn slots_keys(cfg: &Cfg) -> Kv {
 
     let run = io::run_dir();
     let cap_now = io::now();
-    let capacity_paused = match aeon::capacity::pause_state(&capacity_pause_file(&run)) {
-        aeon::capacity::PauseState::Paused { until, .. } if until > cap_now => "1",
+    let capacity_paused = match dwarf::capacity::pause_state(&capacity_pause_file(&run)) {
+        dwarf::capacity::PauseState::Paused { until, .. } if until > cap_now => "1",
         // Fail closed: never "0"/open on an unreadable file (wave4-decomposition.md (c)3).
-        aeon::capacity::PauseState::Unknown => "?",
+        dwarf::capacity::PauseState::Unknown => "?",
         _ => "0",
     };
     push(&mut out, "SP_SLOTS_CAPACITY_PAUSED", capacity_paused);
@@ -1317,21 +1317,21 @@ fn read_mail_subject(path: &Path) -> String {
 }
 
 // ---------------------------------------------------------------------------------------
-// hel_keys — the HEL / SELF / aeon-ledger keys, from crate::metrics.
+// hel_keys — the HEL / SELF / dwarf-ledger keys, from crate::metrics.
 // ---------------------------------------------------------------------------------------
 
 const HEL_KEYS: &[&str] = &[
     "SP_SENT", "SP_SENT_HELD", "SP_SENT_KEPT", "SP_SENT_FAILED", "SP_SENT_FAILED_AGE_M",
     "SP_PASSES", "SP_ACTS", "SP_FALSE_ACTS", "SP_FALSE_PER_PASS", "SP_SINCE_JUDGEMENT",
-    "SP_STARVED_PASSES", "SP_AEON_BORN", "SP_AEON_LIVED", "SP_AEON_STILLBORN",
-    "SP_AEON_WORKED", "SP_AEON_THRASH", "SP_SELF_REPEATING_N", "SP_SELF_STILLBORN_W",
+    "SP_STARVED_PASSES", "SP_DWARF_BORN", "SP_DWARF_LIVED", "SP_DWARF_STILLBORN",
+    "SP_DWARF_WORKED", "SP_DWARF_THRASH", "SP_SELF_REPEATING_N", "SP_SELF_STILLBORN_W",
     "SP_SELF_STILLBORN_LAST", "SP_SELF_STARVED_W", "SP_SELF_STARVED_LAST",
 ];
 
 pub fn hel_keys() -> Kv {
     let run = io::run_dir();
     let sentinel_log = run.join("sentinel.log");
-    let ledger = run.join("aeon-ledger.log");
+    let ledger = run.join("dwarf-ledger.log");
     let keys = crate::metrics::collect(
         sentinel_log.to_str().unwrap_or(""),
         ledger.to_str().unwrap_or(""),
@@ -1436,17 +1436,17 @@ pub fn czar_progress(bead: &Value, lc: Option<&HashMap<String, lc::Row>>) -> Cza
 #[cfg(test)]
 mod tests {
     #[test]
-    fn aeon_static_cache_honours_ttl_and_refuses_partial_rows() {
-        let t = testkit::TempDir::new("aeon-static");
+    fn dwarf_static_cache_honours_ttl_and_refuses_partial_rows() {
+        let t = testkit::TempDir::new("dwarf-static");
         let d = t.path().to_path_buf();
-        let p = aeon_static_path(&d, "sp-x");
+        let p = dwarf_static_path(&d, "sp-x");
         let row = |at: i64| serde_json::json!({"at": at, "name": "n", "pri": "2", "title": "t", "repo": "r", "partition": "p", "rune_model": "m"});
         std::fs::write(&p, row(1000).to_string()).unwrap();
-        let hit = aeon_static_load(&p, 1000 + AEON_STATIC_TTL_S).expect("fresh row is served");
+        let hit = dwarf_static_load(&p, 1000 + DWARF_STATIC_TTL_S).expect("fresh row is served");
         assert_eq!((hit.name.as_str(), hit.partition.as_str()), ("n", "p"));
-        assert!(aeon_static_load(&p, 1001 + AEON_STATIC_TTL_S).is_none(), "an expired row is re-read");
+        assert!(dwarf_static_load(&p, 1001 + DWARF_STATIC_TTL_S).is_none(), "an expired row is re-read");
         std::fs::write(&p, r#"{"at":1000,"name":"n"}"#).unwrap();
-        assert!(aeon_static_load(&p, 1000).is_none(), "a row missing fields is not served");
+        assert!(dwarf_static_load(&p, 1000).is_none(), "a row missing fields is not served");
     }
 
     use super::*;
@@ -1568,14 +1568,14 @@ mod tests {
     }
 
     #[test]
-    fn aeon_alive_delegates_to_strands_canonical_predicate() {
+    fn dwarf_alive_delegates_to_strands_canonical_predicate() {
         // Wave 4.23 (sp-0ffox) retired this crate's own cmdline check; the positive/negative
         // controls for the predicate now live with strand's own suite. This just confirms
         // the probe reaches it rather than a local reimplementation.
-        let dir = testkit::TempDir::new("cockpit-collect-aeon-alive");
+        let dir = testkit::TempDir::new("cockpit-collect-dwarf-alive");
         let pf = dir.join("x.pid");
         std::fs::write(&pf, "999999999").unwrap();
-        assert!(!aeon_alive(&pf), "a pid that does not exist is never alive");
+        assert!(!dwarf_alive(&pf), "a pid that does not exist is never alive");
     }
 
     fn strand_kv(json: &str) -> impl Fn(&str) -> Option<String> {

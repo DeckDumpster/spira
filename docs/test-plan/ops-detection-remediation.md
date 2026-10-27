@@ -22,7 +22,7 @@ piece of tracked work. It does not stay silent, and it does not flood.
 Detectors each read one kind of evidence:
 - **watchtower**: cockpit.env, landstate, gate.log and lapse records.
 - **Heimdall**: the sentinel log, DB reachability and the systemd restart count.
-- **strand**: ready beads against live aeons.
+- **strand**: ready beads against live dwarves.
 - **czar-pass**: landing.log, forge CI state and strands.json, through the reconciler
   engine's hysteresis (`reconciler-engine/src/core.rs`) rather than a hand-rolled
   first-seen marker file.
@@ -135,8 +135,8 @@ Gaps opened by the original analysis, and their current state:
 5. **G5 (czar-pass's two tautological exit-code assertions)** — closed, landed in
    Concierge round 37 independently of this bead's branch.
 6. **G6 (strand partition filtering untested)** — still open (`sp-fhzib.4`).
-7. **G7 (aeon teardown ordering)** — out of this area's scope; belongs to
-   aeon-execution, cross-referenced only.
+7. **G7 (dwarf teardown ordering)** — out of this area's scope; belongs to
+   dwarf-execution, cross-referenced only.
 8. **G8 (lapse writer/reader contract)** — still open (`sp-fhzib.4`).
 9. **G9 (incident migrations untested)** — closed (`sp-fhzib.2`,
    `test-incident-migrations.sh`).

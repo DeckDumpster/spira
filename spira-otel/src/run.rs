@@ -51,14 +51,14 @@ impl Run {
         }
     }
 
-    /// One domain event of this component (a summons, a rejection, a rework), `kind` bounded by the caller.
+    /// One domain event of this component (a calls, a rejection, a rework), `kind` bounded by the caller.
     pub fn event(&self, kind: &str, labels: &[(&str, &str)]) {
         let mut all = vec![("component", self.component.as_str()), ("operation", self.operation.as_str()), ("kind", kind)];
         all.extend_from_slice(labels);
         self.sink.push(&[Point::Count { name: EVENTS, value: 1 }], &all);
     }
 
-    /// A duration this component measured itself (claim-to-submit, a summon's wall), seconds.
+    /// A duration this component measured itself (claim-to-submit, a call's wall), seconds.
     pub fn seconds(&self, name: &str, value: f64, labels: &[(&str, &str)]) {
         let mut all = vec![("component", self.component.as_str()), ("operation", self.operation.as_str())];
         all.extend_from_slice(labels);

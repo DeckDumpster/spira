@@ -1634,7 +1634,7 @@ fn a_fresh_cached_pass_skips_admission_and_the_trial() {
         key::render_entry(
             "2026-09-28T00:00:00Z",
             999_000,
-            "aeon",
+            "dwarf",
             "spira",
             BR,
             "test-a.sh",
@@ -1645,7 +1645,7 @@ fn a_fresh_cached_pass_skips_admission_and_the_trial() {
     assert!(f.verdict_line().contains("reason=cached"));
     assert!(
         f.stderr()
-            .contains("already passed spira's gate at 2026-09-28T00:00:00Z (aeon)")
+            .contains("already passed spira's gate at 2026-09-28T00:00:00Z (dwarf)")
             && f.stderr().contains("covered suites: test-a.sh")
     );
     assert!(f.ran.borrow().is_empty() && f.checkouts.borrow().is_empty());
@@ -2038,11 +2038,11 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
     // spira-config brings its dependent queue
     assert_eq!(
         cmds[1],
-        "cargo build --profile aeon --config profile.aeon.incremental=false -j 8 --all-targets -p queue -p spira-config"
+        "cargo build --profile dwarf --config profile.dwarf.incremental=false -j 8 --all-targets -p queue -p spira-config"
     );
     assert_eq!(
         cmds[2],
-        "cargo test --profile aeon --config profile.aeon.incremental=false -j 8 -p queue -p spira-config -- --test-threads=8"
+        "cargo test --profile dwarf --config profile.dwarf.incremental=false -j 8 -p queue -p spira-config -- --test-threads=8"
     );
     assert!(f.stderr().contains(
         "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for: queue spira-config (touched: spira-config)"
@@ -2074,7 +2074,7 @@ fn a_unit_gate_builds_once_and_every_other_composition_keeps_the_build_fence() {
     let cmds = f.cmds.borrow().clone();
     assert_eq!(cmds[0], "bash spira/lint.sh && run-suites", "{cmds:?}");
     assert!(
-        cmds[1].starts_with("cargo build --profile aeon"),
+        cmds[1].starts_with("cargo build --profile dwarf"),
         "{cmds:?}"
     );
     assert!(cmds.iter().all(|c| !c.contains("build-fence")), "{cmds:?}");
@@ -2632,7 +2632,7 @@ fn a_cached_pass_and_a_syntax_only_pass_certify_too() {
     });
     f.files.borrow_mut().insert(
         PathBuf::from(format!("{RUN}/verdicts/{k}")),
-        key::render_entry("w", 999_000, "aeon", "spira", BR, "test-a.sh"),
+        key::render_entry("w", 999_000, "dwarf", "spira", BR, "test-a.sh"),
     );
     assert_eq!(f.run(), PASS);
     assert!(f.verdict_line().contains("reason=cached"));
@@ -2880,7 +2880,7 @@ fn a_tree_definition_is_the_gate_and_the_column_is_ignored() {
     assert!(f.stderr().contains("repo-map gate column is ignored"), "{}", f.stderr());
     // The tools phase ran first and the steps got the tree's spira-lint.
     let cmds = f.cmds.borrow();
-    assert!(cmds[0].starts_with("cargo build --profile aeon") && cmds[0].contains("-p spira-lint"), "{cmds:?}");
+    assert!(cmds[0].starts_with("cargo build --profile dwarf") && cmds[0].contains("-p spira-lint"), "{cmds:?}");
     let lint = f.env_of(1, "SPIRA_LINT_BIN");
     // The binary the tools phase built, installed keyed by the merge's tree (sp-g9f3t).
     assert_eq!(lint, format!("{GATE_TREE}/target/gate-tools/tree-of-{MERGE_SHA}/spira-lint"));
@@ -3089,7 +3089,7 @@ fn the_runners_budget_knobs_reach_the_gate_command() {
 
 /// The 2026-09-30 base-red, as a fixture: the branch trial is red on its own, so the base
 /// trial runs in the same gate tree. A spira-lint from another tree — the unkeyed
-/// `target/aeon/spira-lint` the branch trial left, or a keyed directory stamped for some other
+/// `target/dwarf/spira-lint` the branch trial left, or a keyed directory stamped for some other
 /// tree — flags literals the base's own spira-lint allows. Reading either would charge the
 /// branch's red to local/main (BASE_FAIL); the base's own tools, keyed by its tree, pass.
 #[test]
@@ -3097,9 +3097,9 @@ fn the_base_trial_runs_tools_keyed_by_the_base_tree_never_a_stale_one() {
     let f = tree_owned(Some(STEPS), Some(STEPS));
     f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "a-fence: red on the branch".into()));
     // literal-ok: the 2026-09-30 finding, quoted as the stale tool's answer.
-    let stale = (1, "literal-lint: aeon/src/tests.rs:249: \"needs-ryan\"".to_string());
+    let stale = (1, "literal-lint: dwarf/src/tests.rs:249: \"needs-ryan\"".to_string());
     // path-ok: the unkeyed build output the branch trial left in the gate tree.
-    let unkeyed = format!("{GATE_TREE}/target/aeon/spira-lint");
+    let unkeyed = format!("{GATE_TREE}/target/dwarf/spira-lint");
     let other = format!("{GATE_TREE}/target/gate-tools/tree-of-OTHER/spira-lint");
     f.lint_by_bin.borrow_mut().insert(unkeyed.clone(), stale.clone());
     f.lint_by_bin.borrow_mut().insert(other.clone(), stale);
@@ -3340,9 +3340,9 @@ fn a_build_that_loses_sccache_is_no_verdict_but_a_compile_error_is_red() {
 #[test]
 fn tree_builds_are_one_shot() {
     let d = crate::def::parse("bin SPIRA_LINT_BIN spira-lint\nstep \"$SPIRA_LINT_BIN\"\n").unwrap();
-    assert!(d.tools_command(4).unwrap().contains("--config profile.aeon.incremental=false"));
+    assert!(d.tools_command(4).unwrap().contains("--config profile.dwarf.incremental=false"));
     for (_, c) in crate::compose::unit_commands(&["tsd".to_string()], 4) {
-        assert!(c.contains("--config profile.aeon.incremental=false"), "{c}");
+        assert!(c.contains("--config profile.dwarf.incremental=false"), "{c}");
     }
 }
 
@@ -3396,7 +3396,7 @@ fn a_cached_pass_with_release_bins_still_builds_the_judged_tree() {
     let k = key_for(&f, "", "none");
     f.files.borrow_mut().insert(
         PathBuf::from(format!("{RUN}/verdicts/{k}")),
-        key::render_entry("2026-09-28T00:00:00Z", 999_000, "aeon", "spira", BR, "test-a.sh"),
+        key::render_entry("2026-09-28T00:00:00Z", 999_000, "dwarf", "spira", BR, "test-a.sh"),
     );
     assert_eq!(f.run_with(true), PASS, "{}", f.stderr());
     assert!(f.stderr().contains("VERDICT=PASS reason=cached"), "{}", f.stderr());
@@ -3567,7 +3567,7 @@ fn shared_fake() -> Fake {
         format!("{GATE_TREE}/spira-config/src/lib.rs"),
         format!("{GATE_TREE}/spira-config/../spira/conf.d"),
         "/cargo-home/registry/src/regex-1/src/lib.rs".into(),
-        format!("{GATE_TREE}/target/aeon/build/spira-config-1/out/spira_section.rs"),
+        format!("{GATE_TREE}/target/dwarf/build/spira-config-1/out/spira_section.rs"),
         "src/parser.c".into(),
     ]);
     f
@@ -3708,13 +3708,13 @@ fn tools_that_cannot_be_keyed_are_built_for_the_tree_alone() {
 fn toolkey_reads_dep_info_build_outputs_and_paths() {
     use crate::toolkey::*;
     assert_eq!(
-        dep_info_paths("/t/target/aeon/x: /t/a/src/main.rs /t/a\\ b/c.rs\n\n/t/a/src/main.rs:\n"),
+        dep_info_paths("/t/target/dwarf/x: /t/a/src/main.rs /t/a\\ b/c.rs\n\n/t/a/src/main.rs:\n"),
         ["/t/a/src/main.rs", "/t/a b/c.rs"]
     );
     assert_eq!(rerun_paths("cargo:rerun-if-env-changed=CC\ncargo:rerun-if-changed=/t/x/../spira/conf.d\ncargo::rerun-if-changed=build.rs\n"), ["/t/x/../spira/conf.d", "build.rs"]);
     let t = Path::new("/t");
     assert_eq!(relative(t, "/t/x/../spira/conf.d").as_deref(), Some("spira/conf.d"));
-    assert_eq!(relative(t, "/t/target/aeon/out.rs"), None);
+    assert_eq!(relative(t, "/t/target/dwarf/out.rs"), None);
     assert_eq!(relative(t, "/cargo-home/registry/a.rs"), None);
     assert_eq!(relative(t, "/tx/a.rs"), None);
     assert_eq!(relative(t, "build.rs"), None, "package-relative: its own package's");
@@ -3772,7 +3772,7 @@ fn the_real_store_publishes_atomically_and_keeps_the_newest() {
 }
 
 fn tools_timeout(f: &Fake) -> Option<u64> {
-    f.timeouts.borrow().iter().find(|(c, _)| c.starts_with("cargo build --profile aeon")).map(|(_, t)| t.parse().unwrap())
+    f.timeouts.borrow().iter().find(|(c, _)| c.starts_with("cargo build --profile dwarf")).map(|(_, t)| t.parse().unwrap())
 }
 
 /// A store miss is a cold build: it is never cut at the tools cap, only by the deadline — so

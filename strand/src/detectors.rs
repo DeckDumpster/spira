@@ -18,7 +18,7 @@
 //! the Hel's own proof (`hel::git::Git::content_on_base`, the same answer as
 //! `spira-lc content-landed`), called in-process; the plain merge-tree clean check runs `git`.
 //! `detect_invalid_closed`'s statute-phrase predicates live in [`crate::closereason`], shared
-//! with aeon's close-time fence (`strand close-reason`) so the two cannot disagree.
+//! with dwarf's close-time fence (`strand close-reason`) so the two cannot disagree.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -227,7 +227,7 @@ pub fn detect_livelocked(cfg: &Config) -> String {
         }
         let title = sanitize_title(b.title.as_deref().unwrap_or(""), 60);
         out.push(format!(
-            "LIVELOCK {} ask-no-overseer — missing overseer label; the decisions pane cannot see this bead and no aeon can claim it; add overseer label. title: {}",
+            "LIVELOCK {} ask-no-overseer — missing overseer label; the decisions pane cannot see this bead and no dwarf can claim it; add overseer label. title: {}",
             b.id, title
         ));
     }
@@ -269,7 +269,7 @@ pub fn detect_livelocked(cfg: &Config) -> String {
                 }
                 let title = sanitize_title(b.title.as_deref().unwrap_or(""), 60);
                 out.push(format!(
-                    "LIVELOCK {} unmapped-repo — repo:{} not in the repo map; aeon.sh refuses to claim it; fix the label or add the repo to the repo map. title: {}",
+                    "LIVELOCK {} unmapped-repo — repo:{} not in the repo map; dwarf.sh refuses to claim it; fix the label or add the repo to the repo map. title: {}",
                     b.id,
                     bad.join(", "),
                     title
@@ -352,7 +352,7 @@ fn read_allowlist(cfg: &Config) -> std::collections::HashMap<String, String> {
 
 /// `INVALID-CLOSED` / `UNFILED-FOLLOW` / `ALLOWED-IC` lines over a `bd list --json` payload.
 /// The detector scans the raw reason (`detect_close_reason`) so every occurrence reaches
-/// Mimir; the quote-masked fence belongs to aeon.
+/// Mimir; the quote-masked fence belongs to dwarf.
 fn classify_invalid_closed(raw: &str, cfg: &Config) -> String {
     use crate::closereason::{check_unfiled_follow, detect_close_reason};
     let Ok(d) = serde_json::from_str::<serde_json::Value>(raw) else { return String::new() };

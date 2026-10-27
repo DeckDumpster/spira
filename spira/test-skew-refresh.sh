@@ -2,7 +2,7 @@
 # tier: T2
 # covers: skew/src/* landing-pass/* queue/src/* release/src/* UC-instance-lifecycle-37 spira/lib.sh
 #
-# test-skew-refresh.sh — stage-and-swap refresh advances regardless of live aeon leases;
+# test-skew-refresh.sh — stage-and-swap refresh advances regardless of live dwarf leases;
 # running processes keep their old inode; dirty tracked files are stashed; gap reports
 # commits behind with a positive control that verifies the ref is resolvable; a queue-mode
 # repo's checkout is advanced by the landing pass's own refresh loop; and, under queue.local,
@@ -122,13 +122,13 @@ reset_repo
 echo
 echo "refresh — POSITIVE CONTROL: live lease does NOT block advance:"
 # ===========================================================================
-# stage-and-swap is safe while aeons run — each file replaced atomically, old inodes kept.
+# stage-and-swap is safe while dwarves run — each file replaced atomically, old inodes kept.
 # This test fails if the refusal approach is ever restored, which is the discriminating signal.
 
 RUN3="$(mktemp -d "$TMP/run-XXXXX")"
-mkdir -p "$RUN3/aeon"
+mkdir -p "$RUN3/dwarf"
 FAKE_BEAD="sp-testaa"
-printf '%s' "$(($(date +%s) + 3600))" > "$RUN3/aeon/$FAKE_BEAD.lease"
+printf '%s' "$(($(date +%s) + 3600))" > "$RUN3/dwarf/$FAKE_BEAD.lease"
 reset_repo
 
 out3="$(run_skew_cmd "$RUN3" refresh "$REPO")"; rc3=$?

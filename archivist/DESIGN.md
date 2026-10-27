@@ -50,14 +50,14 @@ process exits however it exits, because the guard is a file descriptor, not a tr
 
 **Account capacity is a global, cooperative pause**, not a per-session concern: a
 `capacity_reset_at` refusal on the session log pauses the whole harness
-(`capacity_pause_set`, shared with `aeon.sh`'s own capacity checks) and returns
+(`capacity_pause_set`, shared with `dwarf.sh`'s own capacity checks) and returns
 `ARC_RC_CAPACITY` so the sweep loop stops the rest of its pass rather than launching one
 `claude` per remaining candidate for the account to refuse in turn.
 
 ## What stays in lib.sh, and how this crate reaches it
 
 `capacity_paused`, `capacity_pause_set` and `capacity_reset_at` live in `spira/lib.sh` and
-stay there — they are shared, cross-process state (`aeon.sh` reads and writes the same
+stay there — they are shared, cross-process state (`dwarf.sh` reads and writes the same
 pause file) and lib.sh is the rewrite programme's own group 4, proposed last, with Ryan's
 standing instruction to leave it alone. `archivist` reaches them the way `sentinel` and
 `groomer` reach their own lib.sh seams: `bash -c '. "$LIB"; <call>'` (`src/seam.rs`, the
@@ -67,7 +67,7 @@ recording `FakeSeam`.
 `system_prompt_split` and the transcript `slug` rule (`live_transcripts`'s exclusion of the
 harness's own sessions) are ported **directly into Rust**, not through the seam: both are
 pure string/path manipulation with no shared state any other script reads or writes.
-lib.sh's own copies are untouched and still serve every other caller (`aeon.sh`,
+lib.sh's own copies are untouched and still serve every other caller (`dwarf.sh`,
 `incident.sh`, and — for `slug` — `concierge.sh`'s comment pointing at this crate instead
 of reproducing the rule a second time).
 

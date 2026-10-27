@@ -8,7 +8,7 @@
 # ---------------------
 # 1. EXECUTABLE: configure.sh exists and is executable.
 # 2. NON-INTERACTIVE: runs to completion with only env vars, no stdin reads.
-# 3. TRAP KEYS ACTIVE: SPIRA_PROD, SPIRA_MAX_AEONS, SPIRA_MAX_LIVE_AEONS,
+# 3. TRAP KEYS ACTIVE: SPIRA_PROD, SPIRA_MAX_DWARVES, SPIRA_MAX_LIVE_DWARVES,
 #    SPIRA_LOOM_ADDR, SPIRA_DOLT_DATA appear as active (uncommented) lines.
 # 4. EVERY KEY DECLARED: non-trap keys are written as active lines, and the file resolves.
 # 5. NO OVERWRITE: an existing config file is not touched; the script reports it.
@@ -43,13 +43,13 @@ echo "positive control (a) — conf.sh refuses an unknown key:"
 # a toml file and asks the same `spira-config validate` the round-trip check below uses,
 # rather than sourcing conf.sh against a SPIRA_CONF-style file nothing reads any more.
 _pc_conf="$TMP/pc-bad.toml"
-printf '[spira]\nmax_aeons = "value"\n' > "$_pc_conf"
+printf '[spira]\nmax_dwarves = "value"\n' > "$_pc_conf"
 _pc_warn="$(spira-config validate "$_pc_conf" 2>&1)"; _pc_rc=$?
-if [ "$_pc_rc" -ne 0 ] && printf '%s\n' "$_pc_warn" | grep -q 'max_aeons'; then
+if [ "$_pc_rc" -ne 0 ] && printf '%s\n' "$_pc_warn" | grep -q 'max_dwarves'; then
     ok "spira-config validate refuses a malformed value in the config file"
 else
     bad "positive control (a)" \
-        "spira-config validate did not refuse a malformed max_aeons — round-trip test would be vacuous: $_pc_warn"
+        "spira-config validate did not refuse a malformed max_dwarves — round-trip test would be vacuous: $_pc_warn"
 fi
 
 # ==========================================================================
@@ -88,8 +88,8 @@ run_configure() {
         SPIRA_TOML="$SPIRA_TOML" \
         CONFIGURE_OUT="$OUT" \
         CONFIGURE_PROD="$FAKE_PROD" \
-        CONFIGURE_MAX_AEONS="2" \
-        CONFIGURE_MAX_LIVE_AEONS="" \
+        CONFIGURE_MAX_DWARVES="2" \
+        CONFIGURE_MAX_LIVE_DWARVES="" \
         CONFIGURE_LOOM_ADDR="127.0.0.1:8788" \
         CONFIGURE_DOLT_DATA="" \
         "$HERE/configure.sh" "$@" 2>&1
@@ -118,12 +118,12 @@ _prod_val="$(_active_key prod)"
                     || bad "SPIRA_PROD missing as active line" "in: $OUT"
 is "SPIRA_PROD value matches CONFIGURE_PROD" "$FAKE_PROD" "$_prod_val"
 
-_max_aeons_val="$(_active_key max_aeons)"
-is "SPIRA_MAX_AEONS value is 2 (what we passed)" "2" "$_max_aeons_val"
+_max_dwarves_val="$(_active_key max_dwarves)"
+is "SPIRA_MAX_DWARVES value is 2 (what we passed)" "2" "$_max_dwarves_val"
 
-# SPIRA_MAX_LIVE_AEONS was set to "" — nothing answered it, so the registered default is declared
-_max_live_val="$(_active_key max_live_aeons)"
-is "SPIRA_MAX_LIVE_AEONS empty takes the registered default" "2" "$_max_live_val"
+# SPIRA_MAX_LIVE_DWARVES was set to "" — nothing answered it, so the registered default is declared
+_max_live_val="$(_active_key max_live_dwarves)"
+is "SPIRA_MAX_LIVE_DWARVES empty takes the registered default" "2" "$_max_live_val"
 
 _loom_val="$(_active_key loom_addr)"
 is "SPIRA_LOOM_ADDR value is 127.0.0.1:8788" "127.0.0.1:8788" "$_loom_val"

@@ -3,7 +3,7 @@ After=lc-serve.service
 Wants=lc-serve.service
 # The watchdog OVER the loop, not a second loop. Its only power is speech: it reads
 # timestamps and counters, compares them to thresholds, and raises or clears an alert
-# bead. It repairs nothing, restarts nothing and summons nothing, and it must not grow the
+# bead. It repairs nothing, restarts nothing and calls nothing, and it must not grow the
 # ability to — a watchdog that can act is a second controller with no supervisor of its
 # own, and the first thing it does wrong is fight the sentinel over the same resource.
 #
@@ -32,7 +32,7 @@ Type=oneshot
 # itself the moment the file is there. No step for anyone to remember, which is the scar
 # ops.rune left: it landed complete and never ran.
 # @SPIRA_PROD_ROOT@ is the release root; @SPIRA_PROD@ (its spira/ subdir) is --home, the
-# same convention aeon's own launchers use. The ExecCondition guards the same path
+# same convention dwarf's own launchers use. The ExecCondition guards the same path
 # ExecStart runs; testing a path that differs from ExecStart would make the guard moot.
 ExecCondition=/usr/bin/test -x @SPIRA_PROD_ROOT@/bin/heimdall
 ExecStart=@SPIRA_PROD_ROOT@/bin/heimdall --home @SPIRA_PROD@

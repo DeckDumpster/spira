@@ -3,6 +3,6 @@ GROUP=lanes
 DOC=THE LANE RESERVE — how many fleet slots a task rune leaves free while a lane has ready work.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # THE LANE RESERVE — how many fleet slots a task rune leaves free while a lane has
-    # ready work and room under its caps. Needs SPIRA_MAX_LIVE_AEONS. 0 turns the reserve off.
+    # ready work and room under its caps. Needs SPIRA_MAX_LIVE_DWARVES. 0 turns the reserve off.
     : "${SPIRA_LANES_RESERVE:=1}"
 SPIRA_CONF_DEFAULT_EOF

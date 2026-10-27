@@ -223,7 +223,7 @@ harness, `.claude/` or any code — and never `git add -A` or `git commit -a`
 That prints the conversation — the operator's messages, your predecessor's prose, and one line
 per tool call — with tool *results* dropped, which is where the bulk of the bytes are. Reading
 the raw `.jsonl` would spend more context rescuing this session than the session is carrying,
-which would make you the problem you were summoned to fix. `--full` adds a truncated head of
+which would make you the problem you were called to fix. `--full` adds a truncated head of
 each tool result; reach for it only for a stretch whose findings are genuinely in the output.
 
 Everything up to turn {{FROM_TURN}} was archived by an earlier pass, so concentrate on what

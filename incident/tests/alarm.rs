@@ -32,7 +32,7 @@ fn a_condition_fired_twice_is_one_inbox_line_and_no_bead() {
     assert_eq!(text.lines().count(), 1, "{text}");
     assert!(text.contains("ALARM SLOW QUERY: select 1 [incident:slow-query-a]"));
 
-    assert!(alarm(&toml, "DRAINING: world.sh summons gated", "incident:draining"));
+    assert!(alarm(&toml, "DRAINING: world.sh calls gated", "incident:draining"));
     assert_eq!(std::fs::read_to_string(&inbox).unwrap().lines().count(), 2);
     assert!(!run.join("incident-spool").exists(), "an alarm must never reach the bead spool");
 }

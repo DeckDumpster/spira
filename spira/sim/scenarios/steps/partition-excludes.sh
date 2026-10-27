@@ -1,5 +1,5 @@
 #!/bin/sh
-# partition-excludes.sh <plain> <excluded> — the sentinel's builder summons claim <plain> and never <excluded>.
+# partition-excludes.sh <plain> <excluded> — the sentinel's builder calls claim <plain> and never <excluded>.
 # Exit 3 until <plain> is claimed, 0 while only it has been, 9 once <excluded> is claimed or still not READY.
 set -u
 plain="$1"; excluded="$2"

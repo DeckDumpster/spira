@@ -148,7 +148,7 @@ impl<'a> Sentinel<'a> {
         let subj = format!("{SUBJECT} — {why}");
         let dflt = "run `landing-pass land` by hand to see the failure, then file the fix as a bead";
         let body = format!(
-            "## Question\n{subj}\n\n## Default\n{dflt}\n\nevery finished branch in every repository is standing unlanded until this is fixed; aeons go on working and closing beads, so the board will read as healthy while nothing reaches a base branch\n\n{ev}\n"
+            "## Question\n{subj}\n\n## Default\n{dflt}\n\nevery finished branch in every repository is standing unlanded until this is fixed; dwarves go on working and closing beads, so the board will read as healthy while nothing reaches a base branch\n\n{ev}\n"
         );
         // An escalation is a write, never a movement: counting a report of paralysis as
         // progress would mute the one check that notices paralysis.
@@ -257,7 +257,7 @@ impl<'a> Sentinel<'a> {
             a.extend(self.setenv(&[
                 "PATH",
                 // The release the worker's PATH was built from (sp-31gtu), for its own
-                // launches (a gate, an aeon worktree's hooks) to build theirs.
+                // launches (a gate, a dwarf worktree's hooks) to build theirs.
                 "SPIRA_RELEASE",
                 // The one source of config every launched process resolves from.
                 "SPIRA_TOML",

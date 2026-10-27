@@ -30,8 +30,8 @@ fn world_pushes_its_run_by_subcommand() {
 }
 
 #[test]
-fn aeons_pushes_its_run_by_subcommand() {
-    expect(&run(env!("CARGO_BIN_EXE_aeons"), &["status"], "aeons-telemetry"), &["spira_component_invocations", "spira-aeons", "status"]);
+fn dwarves_pushes_its_run_by_subcommand() {
+    expect(&run(env!("CARGO_BIN_EXE_dwarves"), &["status"], "dwarves-telemetry"), &["spira_component_invocations", "spira-dwarves", "status"]);
 }
 
 #[test]

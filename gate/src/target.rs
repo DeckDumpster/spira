@@ -4,7 +4,7 @@
 //! `<tree>/target` stays a real directory — git ignores it in every revision a gate tree can
 //! hold (`target/`), so nothing inside it is ever an untracked file to a fence — and each of
 //! its build directories ([`LINKED`]) is a symlink to `<root>/<tree basename>/<dir>` on a
-//! RAM-backed tmpfs. Every path a step or the tools phase reads (`target/aeon/<pkg>`,
+//! RAM-backed tmpfs. Every path a step or the tools phase reads (`target/dwarf/<pkg>`,
 //! `target/gate-tools/<id>`) is unchanged; only where the bytes land moves.
 
 use std::fs;
@@ -12,9 +12,9 @@ use std::path::{Path, PathBuf};
 
 /// The build directories of a gate tree that live on the tmpfs: the unit/tools profile, the
 /// build fence's `make build` (release), a stray dev build, and the tree-keyed tools.
-pub const LINKED: [&str; 4] = ["aeon", "release", "debug", "gate-tools"];
+pub const LINKED: [&str; 4] = ["dwarf", "release", "debug", "gate-tools"];
 
-/// Directory under the run dir that held sp-nv7btk's warm per-slot `aeon` targets, **retired**
+/// Directory under the run dir that held sp-nv7btk's warm per-slot `dwarf` targets, **retired**
 /// (DESIGN.md "The gate tree's target is on tmpfs", sp-z61hj). A slot sat at a fixed path on the
 /// disk while the gate tree it was linked from changed path with every branch, and every file of
 /// a fresh gate tree is newer than the slot's outputs, so cargo found nothing in the workspace
@@ -454,7 +454,7 @@ mod tests {
         let s = Scratch::new("link");
         let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
         let tree = trees.join(".gate.harness.b");
-        write_mib(&tree.join("target/aeon/deps/libx.rlib"), 2);
+        write_mib(&tree.join("target/dwarf/deps/libx.rlib"), 2);
         let p = prepare(&root, &trees, &tree, &lim(100), &roomy, &mem).unwrap();
         assert_eq!(p.dir, root.join(".gate.harness.b"));
         assert_eq!(p.disk_freed_mib, 2);
@@ -464,10 +464,10 @@ mod tests {
             assert_eq!(fs::read_link(&l).unwrap(), root.join(".gate.harness.b").join(d));
         }
         // cargo writes through the link; a second prepare leaves it (and the bytes) alone.
-        write_mib(&tree.join("target/aeon/deps/liby.rlib"), 1);
+        write_mib(&tree.join("target/dwarf/deps/liby.rlib"), 1);
         let p2 = prepare(&root, &trees, &tree, &lim(100), &roomy, &mem).unwrap();
         assert_eq!(p2.disk_freed_mib, 0);
-        assert!(root.join(".gate.harness.b/aeon/deps/liby.rlib").is_file());
+        assert!(root.join(".gate.harness.b/dwarf/deps/liby.rlib").is_file());
         // `target` itself stays a real directory: git ignores `target/` in every revision.
         assert!(fs::symlink_metadata(tree.join("target")).unwrap().is_dir());
     }
@@ -499,7 +499,7 @@ mod tests {
         prepare(&root, &trees, &tree, &lim(100), &roomy, &mem).unwrap();
         fs::remove_dir_all(root.join(".gate.harness.b")).unwrap(); // evicted by another trial
         prepare(&root, &trees, &tree, &lim(100), &roomy, &mem).unwrap();
-        assert!(tree.join("target/aeon").is_dir(), "the link resolves again");
+        assert!(tree.join("target/dwarf").is_dir(), "the link resolves again");
     }
 
     #[test]
@@ -508,7 +508,7 @@ mod tests {
         let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
         for t in ["old", "mid", "held"] {
             fs::create_dir_all(trees.join(format!(".gate.harness.{t}"))).unwrap();
-            write_mib(&root.join(format!(".gate.harness.{t}/aeon/x")), 2);
+            write_mib(&root.join(format!(".gate.harness.{t}/dwarf/x")), 2);
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         // "held" is the oldest now, and a running trial holds its lock.
@@ -517,14 +517,14 @@ mod tests {
         let f = fs::File::create(&lock).unwrap();
         use std::os::unix::io::AsRawFd;
         assert_eq!(unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
-        write_mib(&root.join(".gate.harness.gone/aeon/x"), 1); // its tree was swept
+        write_mib(&root.join(".gate.harness.gone/dwarf/x"), 1); // its tree was swept
         let tree = trees.join(".gate.harness.new");
         fs::create_dir_all(&tree).unwrap();
         let p = prepare(&root, &trees, &tree, &lim(5), &roomy, &mem).unwrap();
         assert_eq!(p.orphans, vec![".gate.harness.gone".to_string()]);
         assert_eq!(p.evicted, vec![".gate.harness.old".to_string()], "held is skipped, old goes, then under the cap");
-        assert!(root.join(".gate.harness.held/aeon/x").is_file());
-        assert!(root.join(".gate.harness.mid/aeon/x").is_file());
+        assert!(root.join(".gate.harness.held/dwarf/x").is_file());
+        assert!(root.join(".gate.harness.mid/dwarf/x").is_file());
         drop(f);
     }
 
@@ -567,7 +567,7 @@ mod tests {
         let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
         for t in ["old", "mid", "held"] {
             fs::create_dir_all(trees.join(format!(".gate.harness.{t}"))).unwrap();
-            write_mib(&root.join(format!(".gate.harness.{t}/aeon/x")), 1);
+            write_mib(&root.join(format!(".gate.harness.{t}/dwarf/x")), 1);
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         // "held" is the oldest now, and a running trial holds its lock.
@@ -593,8 +593,8 @@ mod tests {
         let lim_floor = Limits { cap_mib: 1_000_000, min_free_mib: 10, min_mem_mib: 10, shed_free_mib: 200, reserve_mib: 0 };
         let p = prepare(&root, &trees, &tree, &lim_floor, &short, &mem).unwrap();
         assert_eq!(p.evicted, vec![".gate.harness.old".to_string()], "held is skipped despite being the LRU; old alone clears the floor");
-        assert!(root.join(".gate.harness.held/aeon/x").is_file());
-        assert!(root.join(".gate.harness.mid/aeon/x").is_file());
+        assert!(root.join(".gate.harness.held/dwarf/x").is_file());
+        assert!(root.join(".gate.harness.mid/dwarf/x").is_file());
 
         // CONTROL: the identical 50 MiB reading, but a floor it already clears — nothing
         // is shed, so the behavior above is the floor's, not an eviction that always runs.
@@ -612,10 +612,10 @@ mod tests {
         let tree = trees.join(".gate.harness.b");
         fs::create_dir_all(&tree).unwrap();
         prepare(&root, &trees, &tree, &lim(100), &roomy, &mem).unwrap();
-        write_mib(&tree.join("target/aeon/x"), 2);
+        write_mib(&tree.join("target/dwarf/x"), 2);
         write_mib(&tree.join("target/release/y"), 1);
         assert_eq!(release_tree(&tree, true), 2);
-        assert!(!root.join(".gate.harness.b/aeon").exists());
+        assert!(!root.join(".gate.harness.b/dwarf").exists());
         assert!(root.join(".gate.harness.b/release/y").is_file(), "release is spared for staging");
         release_tree(&tree, false);
         assert!(!root.join(".gate.harness.b").exists(), "nothing left: the dir goes too");
@@ -628,7 +628,7 @@ mod tests {
         fs::create_dir_all(&trees).unwrap();
         let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3 * 3600);
         for n in ["stale", "held", "busy", "fresh"] {
-            write_mib(&root.join(n).join("aeon/x"), 1);
+            write_mib(&root.join(n).join("dwarf/x"), 1);
             if n != "fresh" {
                 fs::File::open(root.join(n)).unwrap().set_modified(old).unwrap();
             }
@@ -648,7 +648,7 @@ mod tests {
         assert_eq!(reap_stale(&root, &trees, two_h, false, &busy), vec!["stale".to_string()]);
         assert!(!root.join("stale").exists());
         for n in ["held", "busy", "fresh"] {
-            assert!(root.join(n).join("aeon/x").is_file(), "{n} kept");
+            assert!(root.join(n).join("dwarf/x").is_file(), "{n} kept");
         }
     }
 
@@ -684,16 +684,16 @@ mod tests {
     fn a_tree_left_linked_into_a_retired_warm_slot_is_relinked_and_never_clears_the_slot() {
         let s = Scratch::new("retired-warm");
         let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
-        let slot = s.1.join("run").join(WARM_DIR).join("slot.1").join("aeon");
+        let slot = s.1.join("run").join(WARM_DIR).join("slot.1").join("dwarf");
         let tree = trees.join(".gate.harness.w");
         fs::create_dir_all(tree.join("target")).unwrap();
         write_mib(&slot.join("deps/libz.rlib"), 1);
-        std::os::unix::fs::symlink(&slot, tree.join("target/aeon")).unwrap();
+        std::os::unix::fs::symlink(&slot, tree.join("target/dwarf")).unwrap();
         release_tree(&tree, false);
         assert!(slot.join("deps/libz.rlib").is_file(), "release_tree cleared a warm slot through a stale link");
-        std::os::unix::fs::symlink(&slot, tree.join("target/aeon")).unwrap();
+        std::os::unix::fs::symlink(&slot, tree.join("target/dwarf")).unwrap();
         prepare(&root, &trees, &tree, &lim(100), &roomy, &mem).unwrap();
-        assert_eq!(fs::read_link(tree.join("target/aeon")).unwrap(), root.join(".gate.harness.w/aeon"), "relinked to the tmpfs");
+        assert_eq!(fs::read_link(tree.join("target/dwarf")).unwrap(), root.join(".gate.harness.w/dwarf"), "relinked to the tmpfs");
         assert!(slot.join("deps/libz.rlib").is_file(), "prepare cleared a warm slot through a stale link");
     }
 }

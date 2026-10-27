@@ -4,11 +4,11 @@
 //! claim and submitted-label interaction a bare `bd reopen` does not have).
 //! Reimplementing either in Rust would mean keeping a second copy of `bdq`'s guards and
 //! `bead_reopen`'s rules in step with lib.sh by hand; this is the same design
-//! aeon's own seam uses for the same reason (aeon/src/seam.rs).
+//! dwarf's own seam uses for the same reason (dwarf/src/seam.rs).
 //!
-//! Unlike aeon's seam, this one does not source a rune file or set `RUNE` — heimdall has
+//! Unlike dwarf's seam, this one does not source a rune file or set `RUNE` — heimdall has
 //! no rune of its own. `bash -c <FIXED>` with every datum NUL-framed on stdin, same as
-//! aeon's, for the same reason: a bead body can be arbitrarily long and an argv has a
+//! dwarf's, for the same reason: a bead body can be arbitrarily long and an argv has a
 //! kernel ceiling (law-payloads-go-on-stdin).
 //!
 //! NOT COLLAPSED onto a direct `bdq`-binary call (sp-pwmlj, wave 4.15 — considered and

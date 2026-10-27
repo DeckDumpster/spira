@@ -21,8 +21,8 @@ pub enum Build {
     /// Reuse the round's own release binaries: the tree differs from the round's only in
     /// files no binary is built from.
     Artifacts,
-    /// A debug (`aeon` profile) build of the job's own tree.
-    Aeon,
+    /// A debug (`dwarf` profile) build of the job's own tree.
+    Dwarf,
     /// In `~/round-work` after the corpus: an incremental release build whose binaries land.
     Round,
 }
@@ -31,14 +31,14 @@ impl Build {
     pub fn word(self) -> &'static str {
         match self {
             Build::Artifacts => "artifacts",
-            Build::Aeon => "aeon",
+            Build::Dwarf => "dwarf",
             Build::Round => "round",
         }
     }
     pub fn parse(s: &str) -> Option<Build> {
         match s {
             "artifacts" => Some(Build::Artifacts),
-            "aeon" => Some(Build::Aeon),
+            "dwarf" => Some(Build::Dwarf),
             "round" => Some(Build::Round),
             _ => None,
         }
@@ -103,7 +103,7 @@ round)
     rm -rf "$HOME/round-bins"; mkdir -p "$HOME/round-bins"
     find target/release -maxdepth 1 -type f -executable -exec cp {} "$HOME/round-bins/" \; 2>/dev/null
     exit "$rc" ;;
-artifacts|aeon)
+artifacts|dwarf)
     d="$HOME/attr/$job"
     rm -rf "$d"; mkdir -p "$HOME/attr"
     git clone --quiet --reference "$HOME/round-work" --branch "$ref" "git://${host_addr}:${port}/mirror.git" "$d" || exit 2
@@ -111,7 +111,7 @@ artifacts|aeon)
     if [ "$build" = artifacts ]; then
         "$tenv" --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" HEAD
     else
-        "$tenv" --mode parallel --profile aeon --suites "$suites" HEAD
+        "$tenv" --mode parallel --profile dwarf --suites "$suites" HEAD
     fi
     rc=$?
     cd "$HOME" && rm -rf "$d"
@@ -356,11 +356,11 @@ mod tests {
 
     #[test]
     fn a_request_names_its_branch_suites_and_build() {
-        let r = parse_request("j7", "branch=spira/batcher-attr/x-j7\nsuites=test-a.sh\nbuild=aeon\n").unwrap();
-        assert_eq!((r.branch.as_str(), r.suites.as_str(), r.build), ("spira/batcher-attr/x-j7", "test-a.sh", Build::Aeon));
+        let r = parse_request("j7", "branch=spira/batcher-attr/x-j7\nsuites=test-a.sh\nbuild=dwarf\n").unwrap();
+        assert_eq!((r.branch.as_str(), r.suites.as_str(), r.build), ("spira/batcher-attr/x-j7", "test-a.sh", Build::Dwarf));
         assert!(parse_request("j7", "branch=b\nsuites=s\nbuild=warp\n").is_err());
-        assert!(parse_request("j7", "suites=s\nbuild=aeon\n").is_err());
-        assert!(parse_request("../x", "branch=b\nsuites=s\nbuild=aeon\n").is_err());
+        assert!(parse_request("j7", "suites=s\nbuild=dwarf\n").is_err());
+        assert!(parse_request("../x", "branch=b\nsuites=s\nbuild=dwarf\n").is_err());
     }
 
     #[test]

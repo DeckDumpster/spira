@@ -2,7 +2,7 @@
 name = "habits"
 version = "0.1.0"
 edition = "2021"
-description = "habits — the PostToolUse/Stop hook dispatcher: runs the repo's .spira/habits.toml checks on the edited file and hands findings on the touched lines back to the aeon. Feedback only; always exits 0."
+description = "habits — the PostToolUse/Stop hook dispatcher: runs the repo's .spira/habits.toml checks on the edited file and hands findings on the touched lines back to the dwarf. Feedback only; always exits 0."
 
 [[bin]]
 name = "habits"

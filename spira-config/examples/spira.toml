@@ -13,7 +13,7 @@ ask_label = "needs-operator"
 # literal-ok: the shipped example demonstrates the schema's own default label names
 ci_label = "awaiting-ci"
 scope_label = "myproject"
-max_aeons = 4
+max_dwarves = 4
 runes = ["builder", "ops"]
 certify_suites = "off"
 czar_stage_deadlock = "shadow"

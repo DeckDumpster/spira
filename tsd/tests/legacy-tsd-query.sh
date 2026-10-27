@@ -215,7 +215,7 @@ case "$cmd" in
         ;;
     time)
         hours="${1:-$DEFAULT_HOURS}"; _check_hours "$hours"
-        apath="$(_check_family aeon-session)" || exit $?
+        apath="$(_check_family dwarf-session)" || exit $?
         gpath="$(_check_family gate-run)" || exit $?
         spath="$(_check_family slots)" || exit $?
         rpath="$(_family_path batch-round)"
@@ -230,7 +230,7 @@ case "$cmd" in
             )
             SELECT
                 (SELECT CAST(COALESCE(sum(wall_s), 0) AS BIGINT) FROM $(_rows $apath ts bead rune status wall_s)
-                    WHERE CAST(ts AS TIMESTAMPTZ) >= now() - INTERVAL '$hours hours') AS aeon_s,
+                    WHERE CAST(ts AS TIMESTAMPTZ) >= now() - INTERVAL '$hours hours') AS dwarf_s,
                 (SELECT CAST(COALESCE(sum(ran_secs), 0) AS BIGINT) FROM $(_rows $gpath ts bead status reason ran_secs)
                     WHERE CAST(ts AS TIMESTAMPTZ) >= now() - INTERVAL '$hours hours') AS gate_s,
                 (SELECT CAST(COALESCE(sum(secs), 0) AS BIGINT) FROM ($rsrc)) AS round_s,
@@ -261,9 +261,9 @@ case "$cmd" in
         [[ "$id" =~ $BEAD_RE ]] || { printf 'tsd-query: bad bead %q\n' "$id" >&2; exit 2; }
         path="$(_check_family "$STAGE_FAMILY")" || exit $?
         extra=""
-        [ -f "$(_family_path aeon-session)" ] && extra="$extra
-            UNION ALL SELECT ts, 'aeon', rune || ' ' || status, CAST(wall_s AS BIGINT)
-            FROM $(_rows $(_family_path aeon-session) ts bead rune status wall_s) WHERE bead = $(_sqlstr "$id")"
+        [ -f "$(_family_path dwarf-session)" ] && extra="$extra
+            UNION ALL SELECT ts, 'dwarf', rune || ' ' || status, CAST(wall_s AS BIGINT)
+            FROM $(_rows $(_family_path dwarf-session) ts bead rune status wall_s) WHERE bead = $(_sqlstr "$id")"
         [ -f "$(_family_path gate-run)" ] && extra="$extra
             UNION ALL SELECT ts, 'gate', status || ' ' || COALESCE(reason, ''), CAST(ran_secs AS BIGINT)
             FROM $(_rows $(_family_path gate-run) ts bead status reason ran_secs) WHERE bead = $(_sqlstr "$id")"

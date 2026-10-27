@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use spira_config::amendment;
-use bead::claimdesc::notify_live_aeon;
+use bead::claimdesc::notify_live_dwarf;
 use bead::{
     branch_candidate, branch_label, runes_partitions, epic_blocks_refusal, incident_blocks_refusal, is_blocks_type,
     awaits_dispatch, lane_check, stack_after_refusal, find_id_by_title, lint_judge, parse_created_id, PARTITION_CHECK_TYPES, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
@@ -86,7 +86,7 @@ fn main() {
 /// boundary to the binary — the same exec-boundary trap this wave's rules name, worked
 /// around here by re-resolving in bash rather than in this process. Collapsing it for real
 /// needs `spira-config resolve` in-process first (wave4-decomposition.md rows 4–6, not yet
-/// landed) so this binary can build the registry itself, the way `aeon`/`cockpit-collect`
+/// landed) so this binary can build the registry itself, the way `dwarf`/`cockpit-collect`
 /// already do.
 const BDQ_SCRIPT: &str = r#"home="$1"; shift; . "$home/lib.sh" || exit 90; bdq "$@""#;
 
@@ -1140,10 +1140,10 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
     if live {
         let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
         let mail = spira_config::process::cfg("SPIRA_MAIL").unwrap_or_default();
-        if bead::claimdesc::live_aeon(&id, &run, &mail) {
+        if bead::claimdesc::live_dwarf(&id, &run, &mail) {
             return amend_live(home, &id, &mail, note.as_deref(), append_file.as_deref(), ack_within.as_deref());
         }
-        eprintln!("bead: amend: no live aeon on {id}; recording the amendment without an acknowledgement");
+        eprintln!("bead: amend: no live dwarf on {id}; recording the amendment without an acknowledgement");
     }
 
     let mut changed = String::new();
@@ -1248,11 +1248,11 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
 
     // Best-effort notification, same as bdq's own `acknowledge_forced_edit`: the real
     // amend above has already landed, so a config-resolution failure here must not abort
-    // and lose `rc` — `notify_live_aeon` already treats an empty SPIRA_RUN/SPIRA_MAIL as
+    // and lose `rc` — `notify_live_dwarf` already treats an empty SPIRA_RUN/SPIRA_MAIL as
     // "nothing to notify".
     let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
     let mail = spira_config::process::cfg("SPIRA_MAIL").unwrap_or_default();
-    notify_live_aeon(&id, &changed, &run, &mail);
+    notify_live_dwarf(&id, &changed, &run, &mail);
     rc
 }
 
@@ -1327,13 +1327,13 @@ fn amend_live(home: &str, id: &str, mail: &str, note: Option<&str>, append_file:
     };
     let rc = bdq_status(home, &s(&["note", id, &format!("Live amendment {} by {} awaiting acknowledgement (within {secs}s):\n\n{}", rec.id, rec.amender, rec.text.trim())]));
     bead::claimdesc::mail_to(
-        &format!("aeon-{id}"),
+        &format!("dwarf-{id}"),
         "amend <amend@spira>",
         "Amendment to answer",
         &amendment::block_text(&rec),
     );
     println!("{}", rec.id);
-    eprintln!("bead: amend: {} recorded on {id}; the aeon is blocked until it runs `work ack {} --accept|--decline`; after {secs}s or a decline: bead.sh amend --enforce {}", rec.id, rec.id, rec.id);
+    eprintln!("bead: amend: {} recorded on {id}; the dwarf is blocked until it runs `work ack {} --accept|--decline`; after {secs}s or a decline: bead.sh amend --enforce {}", rec.id, rec.id, rec.id);
     rc
 }
 
@@ -1353,11 +1353,11 @@ fn amend_ack(home: &str, id: &str, aid: &str, answer: amendment::State) -> i32 {
     let (verdict, tell) = match &answer {
         amendment::State::Accepted => {
             rc |= merge_into_body(home, id, &rec.text);
-            ("accepted".to_string(), format!("Amendment {aid} on {id} was accepted by the aeon and is merged into the description."))
+            ("accepted".to_string(), format!("Amendment {aid} on {id} was accepted by the dwarf and is merged into the description."))
         }
         amendment::State::Declined(why) => (
             format!("declined: {why}"),
-            format!("Amendment {aid} on {id} was DECLINED by the aeon: {why}\n\nTo slay the session and requeue with the amendment merged: bead.sh amend --enforce {aid}"),
+            format!("Amendment {aid} on {id} was DECLINED by the dwarf: {why}\n\nTo slay the session and requeue with the amendment merged: bead.sh amend --enforce {aid}"),
         ),
         _ => unreachable!(),
     };
@@ -1465,7 +1465,7 @@ fn cmd_contract(home: &str) -> i32 {
 
 // =========================================================================================
 // event — sp-ogu8x, wave 4.24, family Z. `spira/lib.sh`'s `spira_event` is now a one-line
-// shim onto this subcommand (see DESIGN.md "event"); every other caller (the aeon/gate-check/
+// shim onto this subcommand (see DESIGN.md "event"); every other caller (the dwarf/gate-check/
 // landing-pass/queue/sentinel seams) still types the bash function name unchanged.
 // =========================================================================================
 
@@ -1517,7 +1517,7 @@ fn cmd_event(args: &[String]) -> i32 {
 
 /// `bead judge-create <labels-csv> [type]` — the lint judge applied to a bead about to be
 /// created open. Exit 1 with the partition list on stderr when the bead would be unclaimable;
-/// the aeon fence calls this so a raw `bd create` is refused by the same rule `file` obeys.
+/// the dwarf fence calls this so a raw `bd create` is refused by the same rule `file` obeys.
 fn cmd_judge_create(home: &str, args: &[String]) -> i32 {
     let labels_csv = args.first().cloned().unwrap_or_default();
     let ty = args.get(1).map(String::as_str).unwrap_or("task");

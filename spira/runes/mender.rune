@@ -1,11 +1,11 @@
-# mender.rune — the Mender: summoned per failing suite of a round pass, decides what the
+# mender.rune — the Mender: called per failing suite of a round pass, decides what the
 # failure is and, when it is a member's code, fixes it on the member's branch while the pass
 # keeps running.
 
 RUNE_NAME=mender
 RUNE_DESC="Mender — judges one failing suite of a round pass and mends the member at fault, inside a machine-enforced deadline"
 
-# The partition is the summons label alone: a mender that matched the plan label would be a
+# The partition is the calls label alone: a mender that matched the plan label would be a
 # second builder. One bead per failure, filed when the pass reports it red.
 RUNE_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_MENDER_LABEL"
 RUNE_EXCLUDE_LABELS="$SPIRA_CI_LABEL"

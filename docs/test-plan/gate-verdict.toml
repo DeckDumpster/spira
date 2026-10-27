@@ -149,7 +149,7 @@ statement = "`gate-sweep.sh` removes stale `.gate.<repo>[.<key>]` worktrees and 
 [[use_case]]
 id = "UC-gate-verdict-21"
 tier = "T3"
-statement = "Under contention (N aeon gates plus a landing pass with a small lock wait), every gate reaches a verdict. None is starved to 75, no tree is crossed, landing verdicts come from the cache, and the whole soak finishes inside its deadline."
+statement = "Under contention (N dwarf gates plus a landing pass with a small lock wait), every gate reaches a verdict. None is starved to 75, no tree is crossed, landing verdicts come from the cache, and the whole soak finishes inside its deadline."
 
 [use_case.uncovered]
 reason = "the contention soak needs N concurrent gate processes against a shared gate worktree and lock; no suite drives it since the bash gate was replaced"

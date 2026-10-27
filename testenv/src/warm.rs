@@ -293,7 +293,7 @@ pub fn boot(
         return Err(format!("slot {} has no checkout yet", slot.display()));
     }
     let name = fresh_name(i);
-    let mut session = Session::new(rt, "warm", "aeon");
+    let mut session = Session::new(rt, "warm", "dwarf");
     session.name = name.clone();
     session.setup_deadline = Some(Instant::now() + timeout);
     if let Err(f) = session.up(&slot) {

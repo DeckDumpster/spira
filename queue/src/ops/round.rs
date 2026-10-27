@@ -324,7 +324,7 @@ fn failed_verb(w: &World, batch: &str, repo: Option<&str>, suite: &str) -> i32 {
         pass_event(w, batch, |_, n, _| {
             Some(serde_json::json!({"Failed": {"suite": suite, "n": n}}).to_string())
         })?;
-        summon_mender(w, c, kv, batch, suite, "", None);
+        call_mender(w, c, kv, batch, suite, "", None);
         Ok(())
     })
 }
@@ -385,7 +385,7 @@ fn raise_unreported_reds(w: &World, c: &Ctx, batch: &str, kv: &Kv, reds: &[Strin
             })
         });
         match sent {
-            Ok(()) => summon_mender(w, c, kv, batch, suite, &attribution, None),
+            Ok(()) => call_mender(w, c, kv, batch, suite, &attribution, None),
             Err((rc, e)) => w.err(format!("queue.sh round certify: WARNING — no mender for {suite} of {batch}: the Failed event was refused (rc={rc}): {e}")),
         }
     }
@@ -394,7 +394,7 @@ fn raise_unreported_reds(w: &World, c: &Ctx, batch: &str, kv: &Kv, reds: &[Strin
 /// File the mender-lane bead for a failure whose MENDING row the event just opened. A marker
 /// per (batch, pass, suite) keeps a repeated report from filing twice; a filing that fails is
 /// said aloud and leaves no marker, so the next report of the same failure files it.
-pub(super) fn summon_mender(
+pub(super) fn call_mender(
     w: &World,
     c: &Ctx,
     kv: &Kv,
@@ -706,7 +706,7 @@ pub(super) fn raise_forge_reds(w: &World, c: &Ctx, kv: &Kv, suites_csv: &str) {
         }
         let sent = send_failed(w, batch, kv.get("head").unwrap_or(""), suite);
         match sent {
-            Ok(()) => summon_mender(w, c, kv, batch, suite, "", None),
+            Ok(()) => call_mender(w, c, kv, batch, suite, "", None),
             Err((rc, e)) => w.err(format!("verdict {}: WARNING — no mender for {suite} of {batch}: the Failed event was refused (rc={rc}): {e}", c.r.name)),
         }
     }

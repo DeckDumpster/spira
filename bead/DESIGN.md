@@ -2,7 +2,7 @@
 
 Replaces the logic of `spira/bead.sh` (497 lines) with one Rust binary, `bead`.
 `spira/bead.sh` stays as the one entry point every caller already names —
-`batcher-cut/src/io.rs`, every aeon/runes brief that names `bead.sh file`/`bead.sh dep
+`batcher-cut/src/io.rs`, every dwarf/runes brief that names `bead.sh file`/`bead.sh dep
 add`, `concierge.sh`'s `bead_tool="bead.sh"`, and the suites — the same shim pattern
 `gate/DESIGN.md` established for `gate.sh`: `exec -a "$0" bead --home "$(dirname "$0")"
 "$@"`. Bead: sp-g9mhe (rewrite wave 5f).
@@ -45,8 +45,8 @@ inline `python3 -c` scripts):**
   blocks-edge refusals (ask-onto-ask, any-onto-incident).
 - `dep add`'s incident-blocks refusal.
 - `contract`'s three-section listing.
-- `amend`'s live-aeon liveness check (`aeon_alive`: `/proc/<pid>/cmdline` against the
-  `aeon`/`aeon.sh` pattern) — ordinary Rust, no shell needed.
+- `amend`'s live-dwarf liveness check (`dwarf_alive`: `/proc/<pid>/cmdline` against the
+  `dwarf`/`dwarf.sh` pattern) — ordinary Rust, no shell needed.
 
 **Routed through `spira-config` (not hand-rolled — `config-fence` reserves the repository
 map's format to the crate that owns it):** the map named by `$SPIRA_REPO_MAP` is read with
@@ -73,11 +73,11 @@ Rust cutover was "leave lib.sh alone"):**
 - `.rune` files are read the same way `rune_get` reads them: `bash -c '. "$1" 2>/dev/null;
   eval "printf %s \"\${$2:-\$3}\""' -- <rune-file> RUNE_LABELS ""`. A `.rune` file is an
   arbitrary shell fragment (the fixtures use `${SPIRA_SCOPE_LABEL:+...}` parameter
-  expansion) — the same shape `aeon/src/seam.rs`'s `BashSeam` already treats as "the runes
+  expansion) — the same shape `dwarf/src/seam.rs`'s `BashSeam` already treats as "the runes
   format is shell, not a value to be reparsed," so this follows that precedent rather than
   writing a second, partial shell-fragment parser.
 - `schema.sh type-of <kind>` / `schema.sh kinds` (kind→bd-type mapping; schema.sh is group 4).
-- `mail send` (`amend`'s live-aeon notify; `mail.sh` itself was rewritten and retired by
+- `mail send` (`amend`'s live-dwarf notify; `mail.sh` itself was rewritten and retired by
   sp-ooh1k — a compat symlink remains for callers outside this tree, but this crate calls
   the real `mail` binary by bare name).
 
@@ -159,7 +159,7 @@ this process's own environment happened to inherit.
   compiled binary, so behaviour is unaffected end to end. Switching this crate's own bridge
   to an in-process call (`bead::bdq::...`, trivial now that both live in the same crate) is
   sp-pwmlj's job (wave 4.15, "collapse the bdq copies onto bead::bdq"), done together with
-  aeon/bd.rs, cockpit-collect's io::bdq, incident/decide.rs's fences, heimdall's `_heimdall_bdq`
+  dwarf/bd.rs, cockpit-collect's io::bdq, incident/decide.rs's fences, heimdall's `_heimdall_bdq`
   seam and the sop seam — all independent reimplementations or bridges this bead
   deliberately left alone, so sp-w3h16 could land by itself.
 - **`--parent` always adds `--no-inherit-labels`** (unchanged from the bash): the label set
@@ -187,7 +187,7 @@ json_count             # stdin filter: array length, 1 for any other JSON value,
 ```
 
 **Why a `bdq` binary, not just more of `bead`'s own CLI:** every caller — 31+ bash scripts,
-35+ suites, `aeon`'s/`cockpit-collect`'s/`incident`'s own seams — types `bdq` (or `bdjson`/
+35+ suites, `dwarf`'s/`cockpit-collect`'s/`incident`'s own seams — types `bdq` (or `bdjson`/
 `ghq`/`json_only`/`json_count`) by that bare name. `lib.sh` keeps one-line shims with that
 exact name so none of those callers change; each shim execs into the compiled binary via
 `command bdq ...` (never a bare `bdq`, which bash's own function-lookup would recurse into
@@ -205,7 +205,7 @@ shims in `lib.sh` thread them through explicitly on every call, the same shape
 `SPIRA_BD`, `SPIRA_ASK_LABEL`, `SPIRA_RUN` — is already on `conf.sh`'s own export list, and
 `SPIRA_RUNE`/`SPIRA_CZAR_CLASS`/`SPIRA_CZAR_TRIGGER_BEAD`/`SPIRA_BDJSON_FIXTURE`/
 `BD_TIMEOUT`/`SPIRA_BDQ_CONN_RETRIES`/`SOP_APPLIED_TRACE*`/`GH_TIMEOUT`/`SPIRA_GH` are never
-`conf.sh` keys at all (set, if at all, by an already-exported caller environment — an aeon's
+`conf.sh` keys at all (set, if at all, by an already-exported caller environment — a dwarf's
 session env, a test fixture's `export`, a systemd unit's `Environment=`), so none of those
 need re-threading. `spira/test-repo-map.sh`'s "EXEC BOUNDARY" section sets the five
 unexported names via plain assignment (no `export`) ahead of sourcing `lib.sh`, proving the
@@ -230,14 +230,14 @@ fence runs, matching the bash's `_bdq_check_x "$@" || return 1` chain.
 
 **`sp-ab2z1` folded in — moot, not applied.** sp-ab2z1 asked to move a duplicate, argv-based
 `bead_has_label` (lib.sh's OWN copy, a different function from anything in this family) onto
-stdin. `sp-j89pd` (wave 4.2, "retire dead aeon-side lib.sh functions") already deleted both
+stdin. `sp-j89pd` (wave 4.2, "retire dead dwarf-side lib.sh functions") already deleted both
 `bead_has_label` definitions as dead code before this bead started — grepped: no definition
 survives in `spira/lib.sh` on this branch. Nothing to fold in; `sp-ab2z1` should close as
 superseded rather than land.
 
 **Four other `bdq` copies are deliberately untouched by this bead** (collapsing them is
-sp-pwmlj, wave 4.15, which depends on this one): `aeon/src/bd.rs`'s own native
-reimplementation (no create-time fences — the aeon never creates), `cockpit-collect/src/
+sp-pwmlj, wave 4.15, which depends on this one): `dwarf/src/bd.rs`'s own native
+reimplementation (no create-time fences — the dwarf never creates), `cockpit-collect/src/
 io.rs`'s own `bdq`/`bdjson`/`json_only` (read-only, same reason), `incident/src/decide.rs`'s
 pure ports of the three fences (`invalid_repo_label`/`destructive_phrase`/
 `contains_schema_delete` — close in spirit to this bead's own, but a separate, pre-existing
@@ -251,7 +251,7 @@ is unaffected either way — it exercises the new shim without any change here. 
 `spira/lib.sh`'s `spira_event` — the harness's one rate-limited outcome stream, `$SPIRA_RUN/
 events.log` plus a per-(kind, target) cooldown file in `$SPIRA_RUN/events/` — is now
 `bead::event::emit` (`bead/src/event.rs`) plus a `bead event` subcommand. `lib.sh` keeps a
-one-line shim with the same name, since every caller (the `aeon`, `gate-check`,
+one-line shim with the same name, since every caller (the `dwarf`, `gate-check`,
 `landing-pass`, `queue` and `sentinel` seams) types `spira_event` by that bare name, not
 `bead event`:
 
@@ -294,11 +294,11 @@ its own `src/timefmt.rs`) to emit `branch.reclaimed`, predating this family's as
 an owning crate. The first draft of this bead had `strand` depend on `bead` and delegate to
 `bead::event::emit` — until merging `local/main` landed a concurrent bead that added
 `bead -> strand` (`bead/src/main.rs`'s `cmd_amend`'s liveness check now calls
-`strand::probe::aeon_alive` instead of its own copy). `strand -> bead` the other way would
+`strand::probe::dwarf_alive` instead of its own copy). `strand -> bead` the other way would
 make a cycle Cargo refuses to build, and this bead has no mandate to re-architect that
 landed dependency to make room for its own. Reverted to two independent copies, each with
 its own `wall_clock_now()` fix. **Follow-up, not done here:** break the cycle with a third,
-lower crate (or move `aeon_alive` out of `strand` into something both can depend on) before
+lower crate (or move `dwarf_alive` out of `strand` into something both can depend on) before
 actually collapsing `spira_event` onto one writer; until then, the call site `strand/src/
 check.rs:299`, `spira_event(cfg, "branch.reclaimed", id, ...)` — also spira-lint's
 `event-taxonomy` WIRED needle for that kind — is untouched by this bead either way.

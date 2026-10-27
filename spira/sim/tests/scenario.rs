@@ -1,5 +1,5 @@
 use spira_sim::drive::{parse_scenario, scenario_path, scenario_repos, Scenario};
-use spira_sim::summon::{aeon_command, rune_of, ranked_ids, real_aeon, routed_repo, scripted, with_home};
+use spira_sim::call::{dwarf_command, rune_of, ranked_ids, real_dwarf, routed_repo, scripted, with_home};
 use spira_sim::world::{base_config, bead_db, config_settings, home_settings, registry_rows, repo_set, stub_gate_steps, RepoSpec, INERT_TOOLS, MODES, REPO_NAME};
 use std::path::Path;
 
@@ -65,8 +65,8 @@ fn the_shipped_happy_path_parses_and_uses_actors_the_shipped_file_declares() {
 }
 
 #[test]
-fn the_seam_takes_the_rune_from_the_aeon_argument_of_a_systemd_run_argv_and_ranks_by_the_sixth_field() {
-    let argv: Vec<String> = ["--user", "--setenv=A=aeon", "/w/release/bin/aeon", "--home", "/h", "builder"].iter().map(|s| s.to_string()).collect();
+fn the_seam_takes_the_rune_from_the_dwarf_argument_of_a_systemd_run_argv_and_ranks_by_the_sixth_field() {
+    let argv: Vec<String> = ["--user", "--setenv=A=dwarf", "/w/release/bin/dwarf", "--home", "/h", "builder"].iter().map(|s| s.to_string()).collect();
     assert_eq!(rune_of(&argv).unwrap(), "builder");
     assert!(rune_of(&argv[..3]).is_err() && rune_of(&[]).is_err());
     assert_eq!(ranked_ids("2\t1\t2\t1\tt\tsp-b\t\n2\t1\t2\t1\tt\tsp-a\t\nshort\n"), vec!["sp-b", "sp-a"]);
@@ -232,7 +232,7 @@ fn a_scenario_declares_repositories_and_routes_its_beads_to_them() {
 }
 
 #[test]
-fn the_summon_works_a_bead_in_the_repository_the_scenario_routes_it_to() {
+fn the_call_works_a_bead_in_the_repository_the_scenario_routes_it_to() {
     let scenario = "sp-a repo docs\nsp-a submit\nsp-b submit\n";
     assert_eq!(routed_repo(scenario, "sp-a").as_deref(), Some("docs"));
     assert_eq!(routed_repo(scenario, "sp-b"), None);
@@ -240,18 +240,18 @@ fn the_summon_works_a_bead_in_the_repository_the_scenario_routes_it_to() {
 }
 
 #[test]
-fn the_real_aeon_is_asked_for_by_one_marker_line_and_not_by_a_bead_named_like_it() {
-    assert!(real_aeon("sp-a submit\n@real-aeon\n"));
-    assert!(!real_aeon("sp-a submit\n") && !scripted("@real-aeon\n", "sp-a"));
+fn the_real_dwarf_is_asked_for_by_one_marker_line_and_not_by_a_bead_named_like_it() {
+    assert!(real_dwarf("sp-a submit\n@real-dwarf\n"));
+    assert!(!real_dwarf("sp-a submit\n") && !scripted("@real-dwarf\n", "sp-a"));
 }
 
 #[test]
-fn a_systemd_run_argv_becomes_the_aeon_command_with_its_setenv_pairs_and_another_home() {
-    let argv: Vec<String> = ["--property=X=1", "--setenv=PATH=/r/bin:/bin", "--setenv=HOME=/h", "/r/bin/aeon", "--home", "/r/spira", "builder"].iter().map(|s| s.to_string()).collect();
-    let (env, cmd) = aeon_command(&argv).unwrap();
+fn a_systemd_run_argv_becomes_the_dwarf_command_with_its_setenv_pairs_and_another_home() {
+    let argv: Vec<String> = ["--property=X=1", "--setenv=PATH=/r/bin:/bin", "--setenv=HOME=/h", "/r/bin/dwarf", "--home", "/r/spira", "builder"].iter().map(|s| s.to_string()).collect();
+    let (env, cmd) = dwarf_command(&argv).unwrap();
     assert_eq!(env, vec![("PATH".to_string(), "/r/bin:/bin".to_string()), ("HOME".to_string(), "/h".to_string())]);
-    assert_eq!(with_home(&cmd, Path::new("/w/aeon-home")), vec!["/r/bin/aeon", "--home", "/w/aeon-home", "builder"]);
-    assert!(aeon_command(&argv[..2]).is_err());
+    assert_eq!(with_home(&cmd, Path::new("/w/dwarf-home")), vec!["/r/bin/dwarf", "--home", "/w/dwarf-home", "builder"]);
+    assert!(dwarf_command(&argv[..2]).is_err());
 }
 
 #[test]
@@ -259,15 +259,15 @@ fn a_file_step_carries_a_body_and_only_a_file_step_may() {
     let cmd = shell("file = \"sp-b\"\nbody = \"## Build\\n\\nx\"").unwrap();
     assert!(cmd.contains(" -d '## Build\n\nx' --silent"), "{cmd}");
     assert!(shell("command = \"true\"\nbody = \"x\"").is_err());
-    assert!(sc("real_aeon = true\n").unwrap().real_aeon);
+    assert!(sc("real_dwarf = true\n").unwrap().real_dwarf);
 }
 
 #[test]
-fn a_world_names_the_stub_agent_launcher_as_its_agent_and_the_launcher_carries_the_paths_the_aeon_drops() {
+fn a_world_names_the_stub_agent_launcher_as_its_agent_and_the_launcher_carries_the_paths_the_dwarf_drops() {
     let s = home_settings(Path::new("/w"), "/fx/f1\n", Path::new("/usr/bin/bd"));
     let get = |k: &str| s.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
-    assert_eq!(get("spira.agent"), Some("/w/bin/sim-aeon-agent"));
-    assert_eq!(get("spira.summon_jitter"), Some("0"));
+    assert_eq!(get("spira.agent"), Some("/w/bin/sim-dwarf-agent"));
+    assert_eq!(get("spira.call_jitter"), Some("0"));
     let script = spira_sim::world::agent_launcher(Path::new("/r/bin/sim-agent"), Path::new("/w/agent.scenario"), Path::new("/w/agent-state"));
     assert!(script.contains("SPIRA_SIM_SCENARIO='/w/agent.scenario'") && script.contains("exec '/r/bin/sim-agent' \"$@\""), "{script}");
 }

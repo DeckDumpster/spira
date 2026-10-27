@@ -100,7 +100,7 @@ pub fn spira_section(
             "SPIRA_GOAL" => warnings.push(format!(
                 "spira.conf: {key} is retired (sp-k6m1m: there is no goal bead; set SPIRA_ID_PREFIX) and ignored — remove it"
             )),
-            "SPIRA_AEON_CPU_QUOTA" | "SPIRA_LAND_CPU_QUOTA" => warnings.push(format!(
+            "SPIRA_DWARF_CPU_QUOTA" | "SPIRA_LAND_CPU_QUOTA" => warnings.push(format!(
                 "spira.conf: {key} is retired (sp-b4oct: no explicit CPU quotas) and ignored — remove it"
             )),
             "SPIRA_QUARANTINE_CLEAN_RUNS" => warnings.push(format!(

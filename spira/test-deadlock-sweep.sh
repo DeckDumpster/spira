@@ -7,8 +7,8 @@
 # record standing as history. Replaces spira/attempts.sh's `deadlocked` verb, deleted at
 # sp-rfodk when attempts.sh moved into spira-claim.
 #
-# Split out of test-requeue.sh (sp-g44ke, docs/test-plan/aeon-execution.md D15, UC-24): no
-# aeon.sh run is needed here — the "deadlock" is a branch that already merges cleanly, built
+# Split out of test-requeue.sh (sp-g44ke, docs/test-plan/dwarf-execution.md D15, UC-24): no
+# dwarf.sh run is needed here — the "deadlock" is a branch that already merges cleanly, built
 # with one real commit on a throwaway origin, never a live session.
 #
 # THE HOLD, NOT THE LABEL (sp-i2m7y): `spira-claim deadlocked` reads a real spira-lc hold,
@@ -26,7 +26,7 @@
 # binary and the real spira-claim binary — not a model of either.
 #
 # tier: T2
-# covers: groomer/src/deadlocked.rs spira/lib.sh spira-claim/* UC-aeon-execution-24
+# covers: groomer/src/deadlocked.rs spira/lib.sh spira-claim/* UC-dwarf-execution-24
 set -uo pipefail
 CLAIM_SEQ=0   # one minute per seeded event, past the double-claim window
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -121,7 +121,7 @@ printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 # would ever be ready. Declare the empty scope this suite has always meant.
 tl_config SPIRA_SCOPE_LABEL=""
 # attempts.sh's candidates() reads rune_partitions from the runes (lib.sh) — the same
-# partition builder.rune declares, so this tool and the summoner cannot disagree about
+# partition builder.rune declares, so this tool and the caller cannot disagree about
 # which beads are "ours" (attempts.sh's own header comment).
 cat > "$SPIRA_HOME/runes/builder.rune" <<RUNE
 RUNE_NAME=builder

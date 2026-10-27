@@ -29,10 +29,10 @@ pub trait Systemctl {
     /// <glob>` — everything systemd currently knows about matching `glob`, deduplicated.
     fn list_matching(&self, glob: &str) -> Vec<String>;
     /// Names from `list-units --state=active --no-legend <glob>` alone — currently RUNNING
-    /// units matching `glob`, not merely known to systemd. [`crate::checks::live_aeons`]'s one
-    /// caller: `spira_live_aeons` (lib.sh) queried `--state=active` and nothing else, and a
+    /// units matching `glob`, not merely known to systemd. [`crate::checks::live_dwarves`]'s one
+    /// caller: `spira_live_dwarves` (lib.sh) queried `--state=active` and nothing else, and a
     /// unit file left on disk or loaded-but-dead from a prior run must not read as a live
-    /// aeon disrupting this install.
+    /// dwarf disrupting this install.
     fn list_active_matching(&self, glob: &str) -> Vec<String>;
 }
 

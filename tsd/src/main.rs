@@ -1,5 +1,5 @@
 // tsd-write — the IO seam: appends one row to a run/tsd/ family file under an exclusive
-// flock, so concurrent producers (suites racing in a batch, aeons on different hosts) never
+// flock, so concurrent producers (suites racing in a batch, dwarves on different hosts) never
 // interleave partial lines. The row format itself lives in lib.rs and is tested there without
 // touching a filesystem.
 //

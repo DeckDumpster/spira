@@ -2,7 +2,7 @@
 //! `GET /api/ops` for the Spira ops dashboard, and `/units`, the per-unit run history. Every one reads the lifecycle read model or
 //! the collector's snapshot files; none reads `bd`.
 
-pub mod aeons;
+pub mod dwarves;
 pub mod forge_rounds;
 pub mod now;
 pub mod ops;
@@ -525,27 +525,27 @@ async fn working_rows(loom: &Loom) -> (Vec<(String, String)>, Option<String>) {
     }
 }
 
-async fn aeons_data(loom: &Loom) -> Result<(cockpit_ops::health::model::Snapshot, Vec<(String, String)>, Option<String>), String> {
+async fn dwarves_data(loom: &Loom) -> Result<(cockpit_ops::health::model::Snapshot, Vec<(String, String)>, Option<String>), String> {
     let path = std::path::Path::new(&loom.config().run).join("cockpit.env");
     let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let (working, note) = working_rows(loom).await;
     Ok((cockpit_ops::health::model::Snapshot::parse(&text), working, note))
 }
 
-async fn aeons_page_route(State(loom): State<Arc<Loom>>) -> Response {
-    match aeons_data(&loom).await {
+async fn dwarves_page_route(State(loom): State<Arc<Loom>>) -> Response {
+    match dwarves_data(&loom).await {
         Ok((snap, working, note)) => {
             let bar = lifecycle_snapshot(&loom).map_or_else(|_| shell::Bar::default(), |(s, _)| now::bar(Some(&s), now_s()));
-            html_response(StatusCode::OK, shell::with_bar(&aeons::render_page(&snap, &working, note.as_deref()), &bar))
+            html_response(StatusCode::OK, shell::with_bar(&dwarves::render_page(&snap, &working, note.as_deref()), &bar))
         }
-        Err(e) => unavailable("aeons view", &e),
+        Err(e) => unavailable("dwarves view", &e),
     }
 }
 
-async fn aeons_api_route(State(loom): State<Arc<Loom>>) -> Response {
-    let (status, body) = match aeons_data(&loom).await {
+async fn dwarves_api_route(State(loom): State<Arc<Loom>>) -> Response {
+    let (status, body) = match dwarves_data(&loom).await {
         Ok((snap, working, note)) => {
-            let mut v = aeons::render_json(&snap, &working);
+            let mut v = dwarves::render_json(&snap, &working);
             v["note"] = serde_json::json!(note);
             (StatusCode::OK, v.to_string())
         }
@@ -777,8 +777,8 @@ pub fn router(loom: Arc<Loom>) -> Router {
         .route("/rounds/spira/{id}/log", get(round_log_route))
         .route("/api/rounds/spira/{id}", get(round_api_route))
         .route("/api/ops", get(ops_route))
-        .route("/aeons", get(aeons_page_route))
-        .route("/api/aeons", get(aeons_api_route))
+        .route("/dwarves", get(dwarves_page_route))
+        .route("/api/dwarves", get(dwarves_api_route))
         .route("/", get(now_route))
         .route("/rounds/{repo}/{batch}", get(round_route))
         .with_state(loom)

@@ -57,14 +57,14 @@ run_report() { env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP" STORE="$STORE" GH_TO
     bash "$SCRIPT" --log "$1" --sha abc123def456 --run-url https://example.invalid/runs/7 --repo acme/spira; }
 
 LOG="$TMP/red.log"
-printf '  PASS  install\n  FAIL  sentinel summons: Access denied for bead content\n  FAIL  probe closes: timed out\n' > "$LOG"
+printf '  PASS  install\n  FAIL  sentinel calls: Access denied for bead content\n  FAIL  probe closes: timed out\n' > "$LOG"
 
 run_report "$LOG" >/dev/null 2>&1; rc=$?
 is "red run exits 0 when everything was filed" 0 "$rc"
 is "one issue per distinct failing check" 2 "$(ls "$STORE"/*.title | wc -l)"
-want "title names the check" "acceptance-daily: sentinel summons" "$(cat "$STORE"/*.title)"
-want "body carries the FAIL line verbatim" "FAIL  sentinel summons: Access denied for bead content" "$(cat "$STORE"/*.body)"
-N="$(grep -l 'sentinel summons' "$STORE"/*.title | head -1 | xargs basename | sed 's/\.title//')"
+want "title names the check" "acceptance-daily: sentinel calls" "$(cat "$STORE"/*.title)"
+want "body carries the FAIL line verbatim" "FAIL  sentinel calls: Access denied for bead content" "$(cat "$STORE"/*.body)"
+N="$(grep -l 'sentinel calls' "$STORE"/*.title | head -1 | xargs basename | sed 's/\.title//')"
 want "body carries the commit" "abc123def456" "$(cat "$STORE/$N.body")"
 want "body carries the run link" "https://example.invalid/runs/7" "$(cat "$STORE/$N.body")"
 want "issue carries spira:acceptance" "spira:acceptance" "$(cat "$STORE/$N.labels")"

@@ -25,7 +25,7 @@ fn waiting_world() -> T {
         rows.insert("sp-b".into(), ("CERTIFIED".into(), "6".into()));
         rows.insert("sp-c".into(), ("REWORK".into(), "7".into()));
     }
-    t.scripts.rebase.borrow_mut().insert("sp-b".into(), RunOut { rc: 1, out: String::new(), err: "rebase-stale: spira/sp-b has a real conflict — returned to an aeon; files: src/x.rs docs/y.md\n".into() });
+    t.scripts.rebase.borrow_mut().insert("sp-b".into(), RunOut { rc: 1, out: String::new(), err: "rebase-stale: spira/sp-b has a real conflict — returned to a dwarf; files: src/x.rs docs/y.md\n".into() });
     t
 }
 

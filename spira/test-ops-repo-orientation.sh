@@ -8,11 +8,11 @@
 # THE DEFECT (sp-0wow1). ops.md's very first instructions are commands built from
 # {{INCIDENT}}, {{SOP}}, {{ASK}} and {{SUITES}}, which all render to $SPIRA_HOME — the
 # production checkout, correct for those read-only utilities. The persona did not say
-# {{REPO}} (the aeon's own worktree, where code is Read and Edited) was a *different* tree
-# until "How you must work", well past a dozen production-path examples. An aeon that
+# {{REPO}} (the dwarf's own worktree, where code is Read and Edited) was a *different* tree
+# until "How you must work", well past a dozen production-path examples. A dwarf that
 # reads a source file to diagnose an incident carried the only path prefix it had seen —
 # $SPIRA_HOME — into the Read, then into the Edit, writing its fix into production instead
-# of its worktree (run/sp-5l3zv.log: the aeon Read, then Edited,
+# of its worktree (run/sp-5l3zv.log: the dwarf Read, then Edited,
 # $SPIRA_HOME/mail, and only much later discovered {{REPO}} was different).
 #
 # THE FIX. A "Where you are" section, naming {{REPO}} as the only place to Read or Edit

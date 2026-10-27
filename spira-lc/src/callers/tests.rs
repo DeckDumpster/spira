@@ -54,7 +54,7 @@ impl Fake {
             "bead_id": r.bead_id, "state": r.state.as_str(), "tip": opt(&r.tip), "gate_key": opt(&r.gate_key),
             "holder": opt(&r.holder), "lease_until": r.lease_until.map(|n| Value::String(n.to_string())).unwrap_or(Value::Null),
             "holds": serde_json::to_string(&holds).unwrap(), "reason": opt(&r.reason), "version": r.version.to_string(),
-            "aeon_phase": r.phase.map(|p| Value::String(p.as_str().into())).unwrap_or(Value::Null),
+            "dwarf_phase": r.phase.map(|p| Value::String(p.as_str().into())).unwrap_or(Value::Null),
             "disposition": r.disposition.map(|d| Value::String(d.as_str().into())).unwrap_or(Value::Null),
             "disposition_note": opt(&r.disposition_note),
         })
@@ -302,11 +302,11 @@ fn a_snooze_with_an_explanation_holds_and_a_malformed_one_is_refused_unheld() {
 #[test]
 fn release_and_holder_dead_return_working_to_ready_and_refuse_elsewhere() {
     let mut f = Fake::default();
-    f.bead("sp-r", BeadState::Working).holder = Some("aeon-1".into());
+    f.bead("sp-r", BeadState::Working).holder = Some("dwarf-1".into());
     assert_eq!(go(&mut f, "release", &["sp-r", "t"]).code, APPLIED);
     assert_eq!(f.state("sp-r"), "READY");
     assert_eq!(go(&mut f, "release", &["sp-r"]).code, REFUSED);
-    f.bead("sp-d", BeadState::Working).holder = Some("aeon-2".into());
+    f.bead("sp-d", BeadState::Working).holder = Some("dwarf-2".into());
     assert_eq!(go(&mut f, "holder-dead", &["sp-d", "slay"]).code, APPLIED);
     assert_eq!(f.state("sp-d"), "READY");
     assert_eq!(f.events.last().unwrap().5, r#""HolderDead""#);
@@ -330,7 +330,7 @@ fn writers_acting_on_a_state_that_moved_send_no_event() {
 fn a_reply_by_hold_seq_lifts_an_ask_whose_mail_is_lost() {
     let mut f = Fake::default();
     f.bead("sp-q", BeadState::Working);
-    assert_eq!(go(&mut f, "hold", &["sp-q", "ask", "which way?", "aeon"]).code, APPLIED);
+    assert_eq!(go(&mut f, "hold", &["sp-q", "ask", "which way?", "dwarf"]).code, APPLIED);
     assert_eq!(go(&mut f, "reply", &["sp-q", "seq:9", "ops"]).code, REFUSED, "no such seq");
     assert_eq!(go(&mut f, "holds", &["sp-q"]).stdout, "ask");
     assert_eq!(go(&mut f, "reply", &["sp-q", "seq:1", "ops"]).code, APPLIED);
@@ -395,7 +395,7 @@ fn supersede_retires_a_non_terminal_bead_by_its_successor_and_refuses_a_terminal
 fn state_and_the_bulk_lists_keep_their_line_shapes() {
     let mut f = Fake::default();
     let w = f.bead("sp-1", BeadState::Working);
-    w.holder = Some("aeon-1".into());
+    w.holder = Some("dwarf-1".into());
     w.lease_until = Some(1_700_000_000);
     w.holds.insert(HoldKind::Wait);
     w.holds.insert(HoldKind::Poison);
@@ -405,7 +405,7 @@ fn state_and_the_bulk_lists_keep_their_line_shapes() {
     assert_eq!(go(&mut f, "state", &["sp-9"]).code, NO_ROW);
     assert_eq!(go(&mut f, "list-held", &["poison"]).stdout, "sp-1\nsp-2");
     assert_eq!(go(&mut f, "list-state", &["WORKING"]).stdout, "sp-1\t1700000000\tpoison,wait\nsp-3\t\t");
-    assert_eq!(go(&mut f, "list-all", &[]).stdout, "sp-1\tWORKING\taeon-1\nsp-2\tREADY\t\nsp-3\tWORKING\t");
+    assert_eq!(go(&mut f, "list-all", &[]).stdout, "sp-1\tWORKING\tdwarf-1\nsp-2\tREADY\t\nsp-3\tWORKING\t");
 }
 
 #[test]
@@ -507,7 +507,7 @@ fn deliver_pr_merged_proves_by_merge_tree_when_the_squash_holds_the_diff() {
 #[test]
 fn certify_submits_a_working_bead_before_the_verdict_lands() {
     let mut f = Fake::default();
-    f.bead("sp-w", BeadState::Working).holder = Some("aeon".into());
+    f.bead("sp-w", BeadState::Working).holder = Some("dwarf".into());
     let a = go(&mut f, "certify", &["sp-w", "f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6", "pass", "keyB", "gate"]);
     assert_eq!((a.code, a.cert_log.clone()), (APPLIED, Some(("applied".into(), "pass tip=f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6f6".into()))));
     assert_eq!(f.state("sp-w"), "CERTIFIED");
@@ -955,8 +955,8 @@ impl Bd for FakeBd {
 #[test]
 fn unclaim_releases_the_row_under_the_holders_name() {
     let mut f = Fake::default();
-    f.bead("sp-u", BeadState::Working).holder = Some("aeon-1".into());
-    assert_eq!(unclaim(&v(&["sp-u", "aeon-1"]), &mut f).code, APPLIED);
+    f.bead("sp-u", BeadState::Working).holder = Some("dwarf-1".into());
+    assert_eq!(unclaim(&v(&["sp-u", "dwarf-1"]), &mut f).code, APPLIED);
     assert_eq!(f.state("sp-u"), "READY");
     assert_eq!(f.events.last().unwrap().5, r#""Release""#);
 }
@@ -965,15 +965,15 @@ fn unclaim_releases_the_row_under_the_holders_name() {
 fn unclaim_never_robs_another_holder_and_a_claim_already_over_is_success() {
     let mut f = Fake::default();
     f.bead("sp-s", BeadState::Submitted);
-    assert_eq!(unclaim(&v(&["sp-s", "aeon-1"]), &mut f).code, APPLIED);
+    assert_eq!(unclaim(&v(&["sp-s", "dwarf-1"]), &mut f).code, APPLIED);
     assert!(f.events.is_empty(), "past WORKING: nothing to release, no event");
-    // Reaped and handed to another aeon in between: refused, the new holder keeps it.
-    f.bead("sp-h", BeadState::Working).holder = Some("aeon-2".into());
-    let a = unclaim(&v(&["sp-h", "aeon-1"]), &mut f);
+    // Reaped and handed to another dwarf in between: refused, the new holder keeps it.
+    f.bead("sp-h", BeadState::Working).holder = Some("dwarf-2".into());
+    let a = unclaim(&v(&["sp-h", "dwarf-1"]), &mut f);
     assert_eq!(a.code, NO_ROW, "{}", a.stderr);
     assert_eq!(f.state("sp-h"), "WORKING");
     assert!(f.events.is_empty());
-    assert_eq!(unclaim(&v(&["sp-none", "aeon-1"]), &mut f).code, NO_ROW);
+    assert_eq!(unclaim(&v(&["sp-none", "dwarf-1"]), &mut f).code, NO_ROW);
 }
 
 #[test]
@@ -1026,55 +1026,55 @@ fn close_epic_moves_the_lifecycle_row_to_done_and_refuses_a_live_child() {
     assert_eq!(close_epic(&v(&["sp-e", "x"]), &mut f, &mut bd).code, APPLIED, "a row already terminal gets no second event");
 }
 
-// ---- renew (sp-2jf0a): the working aeon's lease renewal --------------------------------
+// ---- renew (sp-2jf0a): the working dwarf's lease renewal --------------------------------
 
 #[test]
 fn renew_advances_the_holders_lease_and_keeps_the_row_working() {
     let mut f = Fake::default();
     let r = f.bead("sp-n", BeadState::Working);
-    r.holder = Some("aeon-1".into());
+    r.holder = Some("dwarf-1".into());
     r.lease_until = Some(600);
     for until in ["660", "720", "780"] {
-        let a = go(&mut f, "renew", &["sp-n", "aeon-1", until]);
+        let a = go(&mut f, "renew", &["sp-n", "dwarf-1", until]);
         assert_eq!(a.code, APPLIED, "{}", a.stderr);
         assert_eq!(f.state("sp-n"), "WORKING");
         assert_eq!(f.beads["sp-n"].lease_until, Some(until.parse().unwrap()));
     }
     let (_, _, expect, _, actor, kind) = f.events.last().unwrap().clone();
-    assert_eq!((expect.as_str(), actor.as_str(), kind.as_str()), ("WORKING", "aeon-1", r#"{"Renew":{"lease_until":780}}"#));
+    assert_eq!((expect.as_str(), actor.as_str(), kind.as_str()), ("WORKING", "dwarf-1", r#"{"Renew":{"lease_until":780}}"#));
 }
 
 #[test]
 fn renew_by_a_non_holder_is_refused_and_leaves_the_lease_alone() {
     let mut f = Fake::default();
     let r = f.bead("sp-h", BeadState::Working);
-    r.holder = Some("aeon-2".into());
+    r.holder = Some("dwarf-2".into());
     r.lease_until = Some(600);
-    let a = go(&mut f, "renew", &["sp-h", "aeon-1", "9999"]);
+    let a = go(&mut f, "renew", &["sp-h", "dwarf-1", "9999"]);
     assert_eq!(a.code, NO_ROW, "{}", a.stderr);
-    assert!(a.stderr.contains("aeon-2"), "{}", a.stderr);
+    assert!(a.stderr.contains("dwarf-2"), "{}", a.stderr);
     assert_eq!(f.beads["sp-h"].lease_until, Some(600));
     assert!(f.events.is_empty(), "a renewal that is not ours sends nothing");
     // Past WORKING (submitted, or reaped back to READY): nothing to renew, and nothing sent.
     f.bead("sp-s", BeadState::Submitted);
-    assert_eq!(go(&mut f, "renew", &["sp-s", "aeon-1", "9999"]).code, NO_ROW);
+    assert_eq!(go(&mut f, "renew", &["sp-s", "dwarf-1", "9999"]).code, NO_ROW);
     f.bead("sp-r", BeadState::Ready);
-    assert_eq!(go(&mut f, "renew", &["sp-r", "aeon-1", "9999"]).code, NO_ROW);
+    assert_eq!(go(&mut f, "renew", &["sp-r", "dwarf-1", "9999"]).code, NO_ROW);
     assert!(f.events.is_empty());
-    assert_eq!(go(&mut f, "renew", &["sp-none", "aeon-1", "9999"]).code, NO_ROW);
+    assert_eq!(go(&mut f, "renew", &["sp-none", "dwarf-1", "9999"]).code, NO_ROW);
 }
 
 #[test]
 fn renew_needs_a_numeric_deadline_and_reads_nothing_without_one() {
     let mut f = Fake::default();
-    for args in [vec!["sp-a", "aeon-1"], vec!["sp-a", "aeon-1", "soon"], vec!["sp-a", "", "5"]] {
+    for args in [vec!["sp-a", "dwarf-1"], vec!["sp-a", "dwarf-1", "soon"], vec!["sp-a", "", "5"]] {
         let a = go(&mut f, "renew", &args);
         assert_eq!(a.code, CANNOT_TELL, "{args:?}");
         assert!(a.stderr.starts_with("usage: spira-lc "), "{}", a.stderr);
     }
     assert_eq!(f.calls, 0);
     let mut down = Fake { down: true, ..Default::default() };
-    assert_eq!(go(&mut down, "renew", &["sp-a", "aeon-1", "5"]).code, CANNOT_TELL);
+    assert_eq!(go(&mut down, "renew", &["sp-a", "dwarf-1", "5"]).code, CANNOT_TELL);
 }
 
 // ---- reconcile-closed (sp-bc0rlt) ------------------------------------------------------
@@ -1479,8 +1479,8 @@ fn claimable_by_a_builder(f: &mut Fake, id: &str) -> bool {
         &BeadEvent {
             expect: row.state,
             version: row.version,
-            kind: BeadEventKind::Claim { holder: "aeon-2".into(), lease_until: 1, stack: Default::default(), stack_depth: 0, stack_max_depth: 4, persona: None },
-            actor: "aeon-2".into(),
+            kind: BeadEventKind::Claim { holder: "dwarf-2".into(), lease_until: 1, stack: Default::default(), stack_depth: 0, stack_max_depth: 4, persona: None },
+            actor: "dwarf-2".into(),
             at: None,
         },
     );
@@ -1501,7 +1501,7 @@ fn reopen_records_the_event_each_row_state_implies_and_leaves_the_bead_claimable
         let mut f = Fake::default();
         f.bead("sp-o", from).tip = Some("abc".into());
         let mut bd = FakeBd::default();
-        let a = reopen_cmd(&v(&["sp-o", "rebase-conflict", "aeon-1"]), &mut f, &mut bd);
+        let a = reopen_cmd(&v(&["sp-o", "rebase-conflict", "dwarf-1"]), &mut f, &mut bd);
         assert_eq!(bd.reopened, vec!["sp-o".to_string()], "{from:?}: the store follows the row");
         assert_eq!(a.code, APPLIED, "{from:?}: {}", a.stderr);
         assert_eq!(f.state("sp-o"), to, "{from:?}");
@@ -1566,7 +1566,7 @@ fn reopen_is_refused_while_a_live_round_holds_the_bead() {
     d.state = DeliveryState::Batched;
     f.deliveries.insert("sp-b".into(), d);
     let mut bd = FakeBd::default();
-    let a = reopen_cmd(&v(&["sp-b", "push-rejected", "aeon-1"]), &mut f, &mut bd);
+    let a = reopen_cmd(&v(&["sp-b", "push-rejected", "dwarf-1"]), &mut f, &mut bd);
     assert_eq!(a.code, REFUSED, "{}", a.stderr);
     assert_eq!(f.state("sp-b"), "IN_DELIVERY");
     assert!(f.events.is_empty() && bd.reopened.is_empty());
@@ -1651,36 +1651,36 @@ fn claim_for(f: &mut Fake, id: &str, holder: &str) {
 #[test]
 fn phase_walks_the_holder_forward_and_show_reads_back_exactly_what_was_recorded() {
     let mut f = Fake::default();
-    claim_for(&mut f, "sp-p", "aeon-1");
+    claim_for(&mut f, "sp-p", "dwarf-1");
     for name in ["building", "session", "teardown"] {
-        let a = go(&mut f, "phase", &["sp-p", "aeon-1", name]);
+        let a = go(&mut f, "phase", &["sp-p", "dwarf-1", name]);
         assert_eq!(a.code, APPLIED, "{name}: {}", a.stderr);
         let shown: Value = serde_json::from_str(&f.call(&v(&["show", "sp-p"])).1).unwrap();
-        assert_eq!(bead_field(&shown, "aeon_phase"), name);
+        assert_eq!(bead_field(&shown, "dwarf_phase"), name);
     }
 }
 
 #[test]
 fn a_backward_or_foreign_phase_is_refused_and_changes_nothing() {
     let mut f = Fake::default();
-    claim_for(&mut f, "sp-p", "aeon-1");
-    assert_eq!(go(&mut f, "phase", &["sp-p", "aeon-1", "session"]).code, APPLIED);
-    let back = go(&mut f, "phase", &["sp-p", "aeon-1", "building"]);
+    claim_for(&mut f, "sp-p", "dwarf-1");
+    assert_eq!(go(&mut f, "phase", &["sp-p", "dwarf-1", "session"]).code, APPLIED);
+    let back = go(&mut f, "phase", &["sp-p", "dwarf-1", "building"]);
     assert_eq!(back.code, REFUSED);
     assert!(back.stderr.contains("WORKING/session"), "{}", back.stderr);
-    assert_eq!(go(&mut f, "phase", &["sp-p", "aeon-2", "teardown"]).code, REFUSED);
-    assert_eq!(f.beads["sp-p"].phase, Some(AeonPhase::Session));
-    assert_eq!(go(&mut f, "phase", &["sp-p", "aeon-1", "nonsense"]).code, CANNOT_TELL);
-    assert_eq!(go(&mut f, "phase", &["sp-none", "aeon-1", "session"]).code, NO_ROW);
+    assert_eq!(go(&mut f, "phase", &["sp-p", "dwarf-2", "teardown"]).code, REFUSED);
+    assert_eq!(f.beads["sp-p"].phase, Some(DwarfPhase::Session));
+    assert_eq!(go(&mut f, "phase", &["sp-p", "dwarf-1", "nonsense"]).code, CANNOT_TELL);
+    assert_eq!(go(&mut f, "phase", &["sp-none", "dwarf-1", "session"]).code, NO_ROW);
 }
 
 #[test]
 fn a_phase_for_a_bead_the_queue_already_dropped_sends_no_event() {
     let mut f = Fake::default();
-    claim_for(&mut f, "sp-t", "aeon-1");
+    claim_for(&mut f, "sp-t", "dwarf-1");
     let sent = f.events.len();
     f.beads.get_mut("sp-t").unwrap().state = BeadState::Dropped;
-    let a = go(&mut f, "phase", &["sp-t", "aeon-1", "building"]);
+    let a = go(&mut f, "phase", &["sp-t", "dwarf-1", "building"]);
     assert_eq!(a.code, REFUSED);
     assert!(a.stderr.contains("already closed"), "{}", a.stderr);
     assert_eq!(f.events.len(), sent, "a refused event is a row the incident detector counts");
@@ -1689,7 +1689,7 @@ fn a_phase_for_a_bead_the_queue_already_dropped_sends_no_event() {
 #[test]
 fn disposition_is_recorded_on_the_working_row_and_refused_elsewhere() {
     let mut f = Fake::default();
-    claim_for(&mut f, "sp-d", "aeon-1");
+    claim_for(&mut f, "sp-d", "dwarf-1");
     let a = go(&mut f, "disposition", &["sp-d", "lapsed", "300\tlast words", "watchdog"]);
     assert_eq!(a.code, APPLIED, "{}", a.stderr);
     assert_eq!(f.beads["sp-d"].disposition, Some(DispositionStatus::Lapsed));
@@ -1757,7 +1757,7 @@ fn a_dropped_bead_leaves_its_batches_first_and_is_never_claimable_again() {
     assert!(f.batches["sp-b"].is_empty(), "no batch still names it");
     assert_eq!(f.state("sp-b"), "DROPPED");
     let again = drop_bead(&v(&["sp-b", "--reason", "no"]), &mut f, &mut bd);
-    assert_eq!(again.code, REFUSED, "terminal: nothing further can batch or summon it");
+    assert_eq!(again.code, REFUSED, "terminal: nothing further can batch or call it");
 }
 
 #[test]
@@ -1800,7 +1800,7 @@ fn drop_bead_needs_a_reason_and_a_work_bead() {
 fn free_text_in_the_actor_slot_is_refused_not_sent() {
     let mut f = Fake::default();
     f.bead("sp-q", BeadState::Working);
-    assert_eq!(go(&mut f, "hold", &["sp-q", "ask", "which way?", "aeon"]).code, APPLIED);
+    assert_eq!(go(&mut f, "hold", &["sp-q", "ask", "which way?", "dwarf"]).code, APPLIED);
     let text = "Cause found: the Concierge's worktree; DROP TABLE x; --";
     let a = go(&mut f, "reply", &["sp-q", "seq:1", text]);
     assert_eq!(a.code, REFUSED);

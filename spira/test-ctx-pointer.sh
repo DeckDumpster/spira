@@ -7,17 +7,17 @@
 #
 # WHAT THIS SUITE IS GUARDING. The collector's CTX row must describe the operator's session.
 # Without the pointer, env mode picks the newest-mtime transcript across every project, and
-# with aeons running that is nearly always an aeon's worktree transcript. The status-line hook
+# with dwarves running that is nearly always a dwarf's worktree transcript. The status-line hook
 # persists a pointer on every tick; env mode reads that pointer instead of scanning.
 #
-# THE FIXTURE HAS TWO TRANSCRIPTS: an operator's and a newer aeon's. The acceptance criterion
-# from the bead is that env mode reports the operator's, not the aeon's, when the pointer is
-# fresh — and reports `-` when the pointer is stale, never the aeon's.
+# THE FIXTURE HAS TWO TRANSCRIPTS: an operator's and a newer dwarf's. The acceptance criterion
+# from the bead is that env mode reports the operator's, not the dwarf's, when the pointer is
+# fresh — and reports `-` when the pointer is stale, never the dwarf's.
 #
 # defect: sp-881
 # tier: T1
 # covers: spira/ctx-meter.sh UC-cockpit-observability-36
-# scar: ctx-meter env mode picked the newest-mtime transcript across every project; with aeons running it reported an aeon's worktree transcript rather than the operator's session.
+# scar: ctx-meter env mode picked the newest-mtime transcript across every project; with dwarves running it reported a dwarf's worktree transcript rather than the operator's session.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -27,7 +27,7 @@ has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "no [$3] in [$2]" ;; esac; }
 hasnt() { case "$2" in *"$3"*) bad "$1" "found [$3] in [$2]" ;; *) ok "$1" ;; esac; }
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
-mkdir -p "$T/home" "$T/run" "$T/projects/-operator-project" "$T/projects/-aeon-worktree"
+mkdir -p "$T/home" "$T/run" "$T/projects/-operator-project" "$T/projects/-dwarf-worktree"
 
 NONE="$T/no-such.conf"
 CW=900; CH=1800; CL=2700
@@ -60,9 +60,9 @@ print(json.dumps({
 PY
 }
 
-# Two transcripts: operator at 115k/19t, aeon at 49k/1t. The aeon's is NEWER by mtime.
+# Two transcripts: operator at 115k/19t, dwarf at 49k/1t. The dwarf's is NEWER by mtime.
 OP_TP="$T/projects/-operator-project/op-session.jsonl"
-AEON_TP="$T/projects/-aeon-worktree/aeon-session.jsonl"
+DWARF_TP="$T/projects/-dwarf-worktree/dwarf-session.jsonl"
 
 # The operator's transcript: 19 turns at 115k.
 for i in $(seq 1 19); do
@@ -70,9 +70,9 @@ for i in $(seq 1 19); do
         "$i" "$((115000 / 19))" >> "$OP_TP"
 done
 
-# The aeon's transcript: 1 turn at 49k, written AFTER the operator's so its mtime is newer.
+# The dwarf's transcript: 1 turn at 49k, written AFTER the operator's so its mtime is newer.
 sleep 0.05
-printf '{"type":"assistant","message":{"id":"m-aeon-1","usage":{"input_tokens":49000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":10}}}\n' > "$AEON_TP"
+printf '{"type":"assistant","message":{"id":"m-dwarf-1","usage":{"input_tokens":49000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":10}}}\n' > "$DWARF_TP"
 
 PTR="$T/run/ctx-operator.ptr"
 
@@ -98,12 +98,12 @@ has "it carries the timestamp" "$(cat "$PTR")" "ts=$EPOCH"
 echo
 echo "env reads the pointer and reports the operator's session"
 # ==========================================================================================
-# The aeon transcript is newer by mtime, but the pointer says the operator's.
+# The dwarf transcript is newer by mtime, but the pointer says the operator's.
 E="$(meter env "$EPOCH")"
 # The operator has 19 turns.
 is "env reports the operator's turn count" "19" "$(val SP_CTX_TURNS <<<"$E")"
 is "SP_CTX_AGE is 0 (pointer just written)" "0" "$(val SP_CTX_AGE <<<"$E")"
-hasnt "it does not report 49000 (the aeon)" "$E" "SP_CTX_NOW=49000"
+hasnt "it does not report 49000 (the dwarf)" "$E" "SP_CTX_NOW=49000"
 
 # ==========================================================================================
 echo
@@ -128,7 +128,7 @@ is "SP_CTX_AGE is 0" "0" "$(val SP_CTX_AGE <<<"$E")"
 echo
 echo "a named transcript in env mode (the archivist) ignores the pointer"
 # ==========================================================================================
-E="$(meter env "$EPOCH" "$AEON_TP")"
+E="$(meter env "$EPOCH" "$DWARF_TP")"
 is "a named transcript reports that transcript's turns" "1" "$(val SP_CTX_TURNS <<<"$E")"
 
 # ==========================================================================================

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # bd-close-unacked-guard.sh — PreToolUse hook: refuse bd close while the bead has
-#   post-claim comments that the current aeon has not acknowledged.
+#   post-claim comments that the current dwarf has not acknowledged.
 #
-# An aeon acknowledges a delivered comment with:
+# A dwarf acknowledges a delivered comment with:
 #   bd note $BEAD_ID "ACK <comment-id>: <how it was applied or why not>"
 #
 # The guard reads the bead's notes field for ACK <uuid>: patterns and checks each
@@ -16,7 +16,7 @@ set -uo pipefail
 
 PAYLOAD="$(cat)"
 
-[ -n "${SPIRA_AEON:-}" ] || exit 0
+[ -n "${SPIRA_DWARF:-}" ] || exit 0
 
 BID="${BEAD_ID:-}"; ACTOR="${BEADS_ACTOR:-}"
 DB="${SPIRA_DB:-}"; BD="${SPIRA_BD:-bd}"
@@ -82,7 +82,7 @@ try:
 except Exception:
     sys.exit(0)
 
-# ACKs written by the aeon via: bd note $BID "ACK <uuid>: <explanation>"
+# ACKs written by the dwarf via: bd note $BID "ACK <uuid>: <explanation>"
 acked = set(re.findall(
     r"ACK\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*:",
     notes

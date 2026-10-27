@@ -286,7 +286,7 @@ fn clearing_forced_suites_removes_the_proof_and_the_sidecar_and_is_gated_on_who_
             "forced-suites",
             "sp-a",
             "--clear",
-            "--by=aeon",
+            "--by=dwarf",
             "--reason=x"
         ]),
         1
@@ -3519,7 +3519,7 @@ fn an_unclaimed_ready_bead_is_resubmitted_and_its_branch_set_to_the_tip() {
 }
 
 #[test]
-fn a_bead_a_live_aeon_holds_is_not_resubmitted_and_the_refusal_names_the_holder() {
+fn a_bead_a_live_dwarf_holds_is_not_resubmitted_and_the_refusal_names_the_holder() {
     let t = rework_world(&[]);
     for r in
         t.lc.rows
@@ -3530,7 +3530,7 @@ fn a_bead_a_live_aeon_holds_is_not_resubmitted_and_the_refusal_names_the_holder(
             .filter(|r| r.bead_id == "sp-a")
     {
         r.state = "WORKING".into();
-        r.holder = Some("aeon-7".into());
+        r.holder = Some("dwarf-7".into());
     }
     let tip_arg = format!("--tip={T_FIX}");
     assert_eq!(
@@ -3545,7 +3545,7 @@ fn a_bead_a_live_aeon_holds_is_not_resubmitted_and_the_refusal_names_the_holder(
         ]),
         1
     );
-    assert!(t.err().contains("aeon-7"), "{}", t.err());
+    assert!(t.err().contains("dwarf-7"), "{}", t.err());
     assert!(!t.lc.has("retip"), "{:?}", t.lc.calls.borrow());
 }
 
@@ -3602,7 +3602,7 @@ fn resubmit_refuses_a_stranger_a_short_tip_an_unknown_commit_and_a_non_rework_ro
             "resubmit",
             "sp-a",
             &ok,
-            "--by=aeon-x",
+            "--by=dwarf-x",
             "--reason=r",
             "--evidence=npm test 1/0",
             &ev_tip()
@@ -4085,7 +4085,7 @@ fn rework_returns_an_unbatched_submitted_bead_and_refuses_a_round_member() {
     );
     assert!(!t.lc.has("\"GateRed\""), "{:?}", t.lc.calls.borrow());
 
-    assert_eq!(t.run(&["rework", "sp-c", "--by=aeon-x", "--reason=red"]), 1);
+    assert_eq!(t.run(&["rework", "sp-c", "--by=dwarf-x", "--reason=red"]), 1);
     assert_eq!(
         t.run(&["rework", "sp-c", "--by=concierge"]),
         2,
@@ -4098,7 +4098,7 @@ fn rework_returns_an_unbatched_submitted_bead_and_refuses_a_round_member() {
             "rework",
             "sp-c",
             "--by=concierge",
-            "--reason=red on test-install-aeons"
+            "--reason=red on test-install-dwarves"
         ]),
         0,
         "{}",
@@ -4301,7 +4301,7 @@ fn absolve_refuses_without_evidence_and_with_it_readmits_a_red_tip() {
         t.run(&[
             "absolve",
             "sp-b",
-            "--by=aeon",
+            "--by=dwarf",
             "--reason=infra red",
             "--evidence=e",
             "--evidence-tip=tb"
@@ -4961,7 +4961,7 @@ fn a_red_that_only_the_combination_produces_files_the_integration_from_the_eject
 }
 
 #[test]
-fn a_mender_summons_carries_a_failure_spec_its_verbs_can_read() {
+fn a_mender_calls_carries_a_failure_spec_its_verbs_can_read() {
     let mut t = round_world();
     *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
     assert_eq!(
@@ -4990,7 +4990,7 @@ fn a_mender_summons_carries_a_failure_spec_its_verbs_can_read() {
     let path = bug
         .lines()
         .find_map(|l| l.strip_prefix("spec: "))
-        .unwrap_or_else(|| panic!("the summons names no spec: {bug}"));
+        .unwrap_or_else(|| panic!("the call names no spec: {bug}"));
     let spec: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     assert_eq!(spec["batch"], batch.as_str());

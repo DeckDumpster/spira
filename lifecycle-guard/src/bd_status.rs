@@ -65,7 +65,7 @@ fn res() -> &'static Res {
         Res {
             // A status-named expression: an identifier with `status` in it (not a type: those
             // are capitalised, and `.status()` is a process's ExitStatus), the key `"status"`,
-            // or the short local `st` the aeon and landing-pass use for one.
+            // or the short local `st` the dwarf and landing-pass use for one.
             status_tok: Regex::new(r#"(?:\b[a-z_]*status[a-z_]*\b(?:\s*[^\s(]|\s*$)|"status"|\bst\b)"#).unwrap(),
             cmp_right: Regex::new(&format!(r#"(?:==|!=)\s*(?:Some\(\s*)?{lit}"#)).unwrap(),
             cmp_left: Regex::new(&format!(r#"{lit}\s*\)?\s*(?:==|!=)"#)).unwrap(),

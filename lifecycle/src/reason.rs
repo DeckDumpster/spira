@@ -153,14 +153,14 @@ impl DropReason {
 pub enum HoldCause {
     /// CHECK 4: the bead has failed enough attempts to stop retrying it.
     AttemptsExhausted,
-    /// semantic layer `work blocked`: an aeon asked the operator a question.
+    /// semantic layer `work blocked`: a dwarf asked the operator a question.
     OperatorQuestion,
     /// CHECK 3b: blocked on a dependency that has not landed.
     UnlandedBlocker,
     /// a session ended without moving the branch: the timed snooze before the bead is
     /// offered again, with no blocking edge behind it.
     NoProgressBackoff,
-    /// an aeon's own request that the bead be superseded, pending confirmation.
+    /// a dwarf's own request that the bead be superseded, pending confirmation.
     SupersedeRequest,
     /// an operator's own manual hold, for no mechanically-detected cause.
     ManualHold,

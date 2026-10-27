@@ -156,7 +156,7 @@ fn flags_in_both_forms_and_the_waiver_clears_prev_tag() {
 
 // ---- whole runs against a fake host ------------------------------------------------------
 
-/// A scripted world: a scratch repo where every probe bead is summoned, committed, closed and
+/// A scripted world: a scratch repo where every probe bead is called, committed, closed and
 /// landed; `release install-tarball` unpacks a fake release; `deploy.sh` switches `current`
 /// and writes the tag sidecar. Knobs break one thing at a time.
 struct Fake {
@@ -264,7 +264,7 @@ impl Fake {
                 ok("")
             }
             ("bash", ["-c", script, "_", _]) if script.contains("spira-lint") => Out { rc: self.bare_lint_rc, text: "plan-matrix: error: no base to compare against\n".into(), out: String::new() },
-            ("aeon", ["fast-tier", ..]) => Out { rc: self.fast_tier_rc, text: if self.fast_tier_rc == 0 { "fast tier green\n".into() } else { "spira-lint failed (rc=3):\nplan-matrix: no base to compare against\n".into() }, out: String::new() },
+            ("dwarf", ["fast-tier", ..]) => Out { rc: self.fast_tier_rc, text: if self.fast_tier_rc == 0 { "fast tier green\n".into() } else { "spira-lint failed (rc=3):\nplan-matrix: no base to compare against\n".into() }, out: String::new() },
             ("bash", ["-c", script, "_", _]) => {
                 let key = script.split("${").nth(1).and_then(|k| k.split(':').next()).unwrap_or("");
                 match key {
@@ -413,7 +413,7 @@ impl Box_ {
             token_projects: self.root.join("projects"),
             gh_repo: None,
             notes_repo: Some(self.root.join("notes")),
-            summon_secs: 180,
+            call_secs: 180,
             asset_wait_secs: 600,
             pid: 4242,
         }
@@ -832,7 +832,7 @@ fn a_builders_handoff_goes_through_the_fast_tier_in_phases_a_and_d() {
         }
     }
     let log = f.log.borrow();
-    let tiers: Vec<&Cmd> = log.iter().filter(|c| c.prog == "aeon").collect();
+    let tiers: Vec<&Cmd> = log.iter().filter(|c| c.prog == "dwarf").collect();
     assert_eq!(tiers.len(), 2);
     let cur = b.root.join("tmp/releases/current");
     for c in tiers {

@@ -648,8 +648,8 @@ pub fn base_fail_body(repo: &str, round_branch: &str, suites: &[Id], evidence: &
 // Judgement: a red the corpus or CI produced that this crate cannot resolve mechanically —
 // re-run already happened (classify), delete-if-it-flips already didn't apply. What is left
 // is Scope C: pin it to a member, fix it, sequence it behind a dependency, or revert main.
-// That authority belongs to the summoned persona (sp-47kq1), not this crate; this core only
-// says when a summon is warranted and what the summoned aeon needs to start.
+// That authority belongs to the called persona (sp-47kq1), not this crate; this core only
+// says when a call is warranted and what the called dwarf needs to start.
 // ---------------------------------------------------------------------------------------
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -712,10 +712,10 @@ pub fn judgement_event(j: &Judgement, repo: &str) -> Event {
         RedSource::Local => "local corpus",
         RedSource::Ci => "CI",
     };
-    ev("judgement", vec![], format!("{repo}: {where_} double-red ({}) — summoned batcher for judgement", j.suites.join(",")))
+    ev("judgement", vec![], format!("{repo}: {where_} double-red ({}) — called batcher for judgement", j.suites.join(",")))
 }
 
-/// The body of the bead filed for the summoned aeon: everything a person doing this by hand
+/// The body of the bead filed for the called dwarf: everything a person doing this by hand
 /// on 2026-09-24 had in front of them — repo, where the red was seen, which suites, which
 /// members were in the round (a double-red's culprit is one of these), and where the
 /// evidence lives (a local results dir, or a CI run link once sp-lomk3 supplies one).

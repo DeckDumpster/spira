@@ -186,12 +186,12 @@ pub fn refresh_loop_mail(
     bead_context: &str,
 ) -> (String, String, String) {
     let subj = format!("Spira: {id}'s pull request has been rebased {n} time(s) and still has not merged");
-    let dflt = format!("reopen {id} at P0 so an aeon owns the pull request's own failure, and leave the branch alone until it does");
+    let dflt = format!("reopen {id} at P0 so a dwarf owns the pull request's own failure, and leave the branch alone until it does");
     let ev = format!(
         "BRANCH    {branch} in {repo_name}\nBASE      {base}, {behind} commit(s) ahead of the branch\nREFRESHED {n} time(s); the cap is {cap}\n\n{bead_context}\n"
     );
     let body = format!(
-        "## Question\n{subj}\n\n## Default\n{dflt}\n\nthe bead is closed and its aeon is gone, so nothing is watching this pull request. Spira has been dragging {branch} back onto {base} every time the base moved, and {n} rebases have not got it merged — which means the obstacle is not staleness.\n\nWHAT THIS BEAD IS FOR:\n{ev}\n"
+        "## Question\n{subj}\n\n## Default\n{dflt}\n\nthe bead is closed and its dwarf is gone, so nothing is watching this pull request. Spira has been dragging {branch} back onto {base} every time the base moved, and {n} rebases have not got it merged — which means the obstacle is not staleness.\n\nWHAT THIS BEAD IS FOR:\n{ev}\n"
     );
     (subj, dflt, body)
 }

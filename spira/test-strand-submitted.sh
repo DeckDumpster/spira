@@ -2,7 +2,7 @@
 #
 # test-strand-submitted.sh — a partition whose only ready-looking bead carries the
 #   submitted label is not starved: strand.sh's ready count must use the same predicate
-#   the sentinel uses to summon (rune_exclude/CHECK7), or the two disagree about what
+#   the sentinel uses to call (rune_exclude/CHECK7), or the two disagree about what
 #   "ready" means.
 #
 #   ./test-strand-submitted.sh
@@ -10,7 +10,7 @@
 # WHY THIS EXISTS. sp-wnsks: strand.sh reported [spira,groom] starved and escalated it,
 # while the sentinel's CHECK7 — in the very same pass — correctly said "nothing ready in
 # its partition". The bead both were looking at carried SPIRA_SUBMITTED_LABEL: the
-# groomer had finished it and it was waiting on the landing pass, not on an aeon.
+# groomer had finished it and it was waiting on the landing pass, not on a dwarf.
 # rune_exclude (CHECK7's predicate) has excluded the submitted label for a long time;
 # classify_one (strand.sh's predicate) never did, so a submitted bead read as "ready and
 # unserved" and starvation was escalated for a partition that was, correctly, empty.
@@ -77,7 +77,7 @@ run_report() {
     # spira-config — tl_config's declaration never reaches a child process's environment.
     SPIRA_HOME="$TMP/home" PATH="$TMP/home:$TMP/lc:$PATH" \
     SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd" \
-    SPIRA_SUMMON=stub \
+    SPIRA_CALL=stub \
     SPIRA_LABELS="spira,test-groom" \
         strand report 2>/dev/null
 }
@@ -94,7 +94,7 @@ tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/no-db" SPIRA_SUBMITTED_LABEL=some-
     SPIRA_BD="$TMP/mock-bd"
 out0="$(SPIRA_HOME="$TMP/home" PATH="$TMP/home:$TMP/lc:$PATH" \
         SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd" \
-        SPIRA_SUMMON=stub \
+        SPIRA_CALL=stub \
         SPIRA_LABELS="spira,test-groom" \
             strand report 2>/dev/null)"
 want "positive control: starved IS reported" "starved" "$out0"
@@ -104,7 +104,7 @@ echo
 echo "case 1 — the bug: only ready bead carries the submitted label → NOT starved:"
 # ======================================================================================
 # strand must put the submitted label in the exclude list it hands spira-claim, same as
-# rune_exclude does for CHECK7's summon predicate. 'starved' was reported here (sp-wnsks)
+# rune_exclude does for CHECK7's call predicate. 'starved' was reported here (sp-wnsks)
 # when strand's ready query never named SPIRA_SUBMITTED_LABEL.
 out1="$(run_report)"
 nowant "the bug: starved is NOT reported for a submitted-only partition" "starved" "$out1"

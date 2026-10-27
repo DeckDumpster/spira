@@ -2,7 +2,7 @@ epoch = 1800000000
 horizon = 900000
 settle = 120000
 goal = "sp-cr01:SUBMITTED"
-real_actors = ["sentinel-summon"]
+real_actors = ["sentinel-call"]
 
 [[step]]
 at = 0

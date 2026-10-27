@@ -119,7 +119,7 @@ statement = "A branch reaped or slain mid-pass, or between a race and its retry,
 [[use_case]]
 id = "UC-landing-merge-queue-18"
 tier = "T3"
-statement = "After a landing moves the base, withheld survivors are rebased at once. A survivor that truly conflicts is reopened, naming the landing. A branch held by a live aeon is never rewritten or landed."
+statement = "After a landing moves the base, withheld survivors are rebased at once. A survivor that truly conflicts is reopened, naming the landing. A branch held by a live dwarf is never rewritten or landed."
 
 [[use_case]]
 id = "UC-landing-merge-queue-19"
@@ -219,7 +219,7 @@ bead = "sp-vsob2"
 [[use_case]]
 id = "UC-landing-merge-queue-38"
 tier = "T2"
-statement = "The citation-aware conflict handling (declared/named citation, an automatic rebase attempt before reopening) was part of batch.sh's own member-merge loop. The batcher's own conflict handling (section F) is simpler by design: a member whose tip conflicts with base is reopened for rebase directly, with no citation check and no automatic rebase attempt of its own — see `batcher/src/core.rs`'s `stale_retry_due` and `spira/test-batcher-cut.sh` case C. `bead_cited_commit_on_base` itself is not retired — aeon.sh still uses it — and its own unit cases stay in `test-batch-cited-commit.sh`."
+statement = "The citation-aware conflict handling (declared/named citation, an automatic rebase attempt before reopening) was part of batch.sh's own member-merge loop. The batcher's own conflict handling (section F) is simpler by design: a member whose tip conflicts with base is reopened for rebase directly, with no citation check and no automatic rebase attempt of its own — see `batcher/src/core.rs`'s `stale_retry_due` and `spira/test-batcher-cut.sh` case C. `bead_cited_commit_on_base` itself is not retired — dwarf.sh still uses it — and its own unit cases stay in `test-batch-cited-commit.sh`."
 
 [use_case.uncovered]
 reason = "retired (sp-vsob2): The citation-aware conflict handling (declared/named citation, an automatic rebase attempt before reopening) was part of batch.sh's own memb"
@@ -239,7 +239,7 @@ bead = "sp-vsob2"
 [[use_case]]
 id = "UC-landing-merge-queue-40"
 tier = "T2"
-statement = "`SPIRA_QUEUE_LOCAL_GATE` and the fast-suites-only local gate it toggled are gone: the batcher's own round already runs the full corpus locally before opening a PR (a superset of what this gate covered), and a red with no reproducing member is not blindly opened — it is classified (flip on rerun vs. double-red) and, on a double-red, filed for the summoned batcher persona's judgement (sp-47kq1) rather than ejected by reproduction. See `batcher/src/core.rs`'s `classify`/`judgement_for` and `spira/test-batcher-cut.sh` case B."
+statement = "`SPIRA_QUEUE_LOCAL_GATE` and the fast-suites-only local gate it toggled are gone: the batcher's own round already runs the full corpus locally before opening a PR (a superset of what this gate covered), and a red with no reproducing member is not blindly opened — it is classified (flip on rerun vs. double-red) and, on a double-red, filed for the called batcher persona's judgement (sp-47kq1) rather than ejected by reproduction. See `batcher/src/core.rs`'s `classify`/`judgement_for` and `spira/test-batcher-cut.sh` case B."
 
 [use_case.uncovered]
 reason = "retired (sp-vsob2): `SPIRA_QUEUE_LOCAL_GATE` and the fast-suites-only local gate it toggled are gone: the batcher's own round already runs the full corpus local"

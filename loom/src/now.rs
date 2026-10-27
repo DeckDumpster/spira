@@ -10,7 +10,7 @@ const TOP: usize = 3;
 const LANDED_SHOWN: usize = 5;
 const DAY_S: i64 = 86_400;
 
-pub fn aeons(snap: &Snapshot) -> usize {
+pub fn dwarves(snap: &Snapshot) -> usize {
     snap.live.as_ref().map_or_else(|| snap.rows.iter().filter(|r| r.state == "WORKING").count(), Vec::len)
 }
 
@@ -18,7 +18,7 @@ pub fn bar(snap: Option<&Snapshot>, now: i64) -> Bar {
     snap.map_or_else(Bar::default, |s| Bar {
         release: s.release.clone(),
         world: s.world.clone(),
-        aeons: Some((aeons(s), s.ceiling)),
+        dwarves: Some((dwarves(s), s.ceiling)),
         age_s: Some(now - s.now),
     })
 }
@@ -103,9 +103,9 @@ pub fn render_now(snap: &Snapshot, view: &View, units: &UnitsState) -> String {
         }
     }
 
-    b.push_str(&heading("Aeons", &format!("{}/{}", aeons(snap), snap.ceiling)));
+    b.push_str(&heading("Dwarves", &format!("{}/{}", dwarves(snap), snap.ceiling)));
     if view.now_items.is_empty() {
-        b.push_str("<p class=dim>no aeon is live</p>");
+        b.push_str("<p class=dim>no dwarf is live</p>");
     }
     for i in &view.now_items {
         b.push_str(&format!(

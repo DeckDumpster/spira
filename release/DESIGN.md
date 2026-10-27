@@ -33,7 +33,7 @@ release status                                          current, previous, RUNNI
 release install-tarball <tarball> [--dry-run] [--settle S]   the public pipeline's own install
 release stage up [ROOT] | down <ROOT>                   an isolated Spira for testing
 release canary [--stage ROOT] [--deadline S]            end-to-end pipeline canary on a stage
-release canary-worker                                   the stage's synthetic aeon (internal)
+release canary-worker                                   the stage's synthetic dwarf (internal)
 release acceptance <tag> --scratch-repo P [...]         release acceptance on a clean machine (DESIGN.md "acceptance")
 release session-hook install|status|uninstall|prune S  the client's SessionStart hook + statusLine (DESIGN.md "session-hook")
 release intake install|status|uninstall                 wire systemd alert units into incident intake (DESIGN.md "intake")
@@ -166,9 +166,9 @@ tool-directory tail (`spira.path`, or its `SPIRA_PATH` environment override), ap
 ordinary case, not a refusal. `host_values` itself refuses (naming the entry) before
 rendering anything when a tail segment resolves inside a release or a checkout.
 
-**Live aeons.** `activate.sh` refused while aeons ran. Activation here never restarts an
-aeon (they are transient units with no file in the unit directory) and never restarts a
-oneshot mid-run, and an aeon's tools stay on disk in its release. So there is no guard.
+**Live dwarves.** `activate.sh` refused while dwarves ran. Activation here never restarts an
+dwarf (they are transient units with no file in the unit directory) and never restarts a
+oneshot mid-run, and a dwarf's tools stay on disk in its release. So there is no guard.
 
 ### config delta
 
@@ -295,12 +295,12 @@ Kept deliberately close to `spira/activate.sh`'s own behaviour rather than upgra
   because `deploy.sh` (its only caller) already wraps the call in its own rollback at the
   whole-deploy grain, and a public-pipeline install has no "previous unit files" to restore
   to in the first place (it never renders any).
-- **No live-aeon guard.** `spira/activate.sh` refused while aeons were live
-  (`SPIRA_ACTIVATE_FORCE=1` overrode it) — installing while aeons held worktrees under the
+- **No live-dwarf guard.** `spira/activate.sh` refused while dwarves were live
+  (`SPIRA_ACTIVATE_FORCE=1` overrode it) — installing while dwarves held worktrees under the
   release directory destroyed in-flight work (scar: sp-s6hk). Under the "running system is a
-  release" design (DESIGN.md's own Intent) an aeon's worktree is never under
+  release" design (DESIGN.md's own Intent) a dwarf's worktree is never under
   `spira-releases/`, so there is nothing left to disrupt, and the same reasoning
-  `activate`'s own "Live aeons" section already gives applies here unchanged; the guard and
+  `activate`'s own "Live dwarves" section already gives applies here unchanged; the guard and
   its override are dropped rather than ported.
 - **A bad tarball name or missing file is a refusal (exit 1), not a usage error (exit 2).**
   It is a domain refusal, like "no release `<sha>` in ..." from `verify::release_dir` — the
@@ -323,7 +323,7 @@ testing — its own git repo and bare remote, its own beads database (`bd-embedd
 private `bin/bd` symlink so nothing this stage runs can resolve the caller's real `bd`), its
 own `SPIRA_RUN`, a minimal runes (one `canary` rune, `RUNE_MAX_CONCURRENT=1`), a
 six-column `repo-map` line, and the two synthetic dispatch scripts `sentinel` needs in place
-of `systemd-run`: `fake-summon.sh` (execs `release canary-worker` synchronously) and
+of `systemd-run`: `fake-call.sh` (execs `release canary-worker` synchronously) and
 `fake-launch.sh` (records the landing dispatch timestamp and exits 0 — `release canary` runs
 `landing-pass land` directly so it controls the timing).
 
@@ -343,23 +343,23 @@ created with `plan` only, and `plan_ready` stays 0 (the same reasoning `stage.sh
 
 `spira/canary.sh`'s replacement: an end-to-end pipeline canary on a `stage`. Files a
 synthetic bead, runs the real `sentinel` (which dispatches `release canary-worker` via
-`SPIRA_SUMMON`), runs the real `landing-pass land` directly, and asserts a commit naming the
+`SPIRA_CALL`), runs the real `landing-pass land` directly, and asserts a commit naming the
 bead id appears on `origin/main` inside `--deadline` (default 120s). **The one thing that is
 fake is the model:** `canary-worker` claims, commits and closes the bead without invoking
-Claude — the model is the one part canary cannot test, and `SPIRA_SUMMON`/`SPIRA_LAUNCH` are
+Claude — the model is the one part canary cannot test, and `SPIRA_CALL`/`SPIRA_LAUNCH` are
 exactly that boundary.
 
 On failure it files a `spira,incident` bead in the **production** database — the caller's own
 `SPIRA_DB`, captured before a stage's env (own or `--stage`'s) replaces it — never the
 stage's, and never lets a forensics failure change canary's own exit status.
 
-`canary-worker` claims the first bead of the one ready set an aeon claims from (`spira-claim
-rune-ready canary --json`: the machine's READY/REWORK rows) the way an aeon claims it — the
+`canary-worker` claims the first bead of the one ready set a dwarf claims from (`spira-claim
+rune-ready canary --json`: the machine's READY/REWORK rows) the way a dwarf claims it — the
 lifecycle Claim event (lib.sh `lc_claim_bead`, a refusal falling through to the next
 candidate; a give-up is `spira-lc unclaim`) — never a `bd ready --claim` of its own
 (sp-7g5q6). It then creates branch
 `spira/<id>`, commits a marker file as `canary`/`canary@example.invalid`, pushes, records
-`branch=<name>` on the bead, and closes it. It is invoked only by `fake-summon.sh`, inheriting
+`branch=<name>` on the bead, and closes it. It is invoked only by `fake-call.sh`, inheriting
 the full stage env; there is no per-stage copy of it (unlike `stage.sh`'s own
 `canary-worker.sh`, written fresh into every stage) because it is a subcommand of the one
 binary already on every launcher's `PATH`.
@@ -397,7 +397,7 @@ release acceptance <tag> --scratch-repo <path> [--prev-tag <tag>] [--record]
 The flags keep the script's meanings (`--tarball`: phase A uses a local file and every deploy of
 `<tag>` gets `deploy.sh --tarball`; `--prev-tarball` does the same for `<prev-tag>`;
 `--waive-upgrade` clears any `--prev-tag` and skips B/C/D, and the note says so). The one new
-flag is `--notes-repo`. Environment knobs are unchanged: `SPIRA_ACCEPT_SUMMON_SECS` (180),
+flag is `--notes-repo`. Environment knobs are unchanged: `SPIRA_ACCEPT_CALL_SECS` (180),
 `SPIRA_ACCEPT_ASSET_WAIT_SECS` (600), `SPIRA_ACCEPTANCE_FORENSICS`, `SPIRA_NOTES_REPO`,
 `SPIRA_FORGE_REPO`/`GH_REPO`/`GITHUB_REPOSITORY`.
 
@@ -411,7 +411,7 @@ positive control of the binary check, then acquires the tarball (a bounded wait 
 asset, sp-5olmi), stages it into the local release source, and runs `install-tarball`. It then
 requires every native binary, runs `install.sh --skip-build`, and requires `ready.sh` to
 exit 0. It files a probe bead, requires the builder predicate to be able to claim it, and
-follows it through summoned, committed, closed-or-submitted and landed by ancestry on
+follows it through called, committed, closed-or-submitted and landed by ancestry on
 `origin/<land ref>`. Finally it uninstalls and requires no `spira-*` unit to remain. **B**
 installs `<prev-tag>`, snapshots the unit set, runs `deploy.sh --allow-draft <tag>`, and
 starts every oneshot. It requires the `.tags/<current>` sidecar to name `<tag>` and
@@ -630,7 +630,7 @@ the releases directory resolving, which it has nothing to do with).
 | `prune` | prune |
 | `install` | `install-tarball`: unpack, swap, restart, prune a timestamp-named release |
 | `stage` | stand up / tear down an isolated Spira; the rune, repo-map and dispatch-script content |
-| `canary` | the end-to-end canary run, and `canary-worker`, the synthetic aeon |
+| `canary` | the end-to-end canary run, and `canary-worker`, the synthetic dwarf |
 | `acceptance` | `release acceptance`: the release acceptance run (phases A-D), its checks, forensics and note |
 | `session_hook` | `release session-hook`: the client's `SessionStart` hook and `statusLine` |
 | `intake` | `release intake`: systemd alert templates wired to `incident.sh` via a drop-in |

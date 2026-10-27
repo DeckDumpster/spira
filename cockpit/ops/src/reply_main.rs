@@ -104,7 +104,7 @@ impl Follow for RealFollow {
     fn deliver(&self, id: &str, text: &str) {
         let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
         let mail = spira_config::process::cfg("SPIRA_MAIL").unwrap_or_default();
-        bead::claimdesc::notify_live_aeon(id, text, &run, &mail);
+        bead::claimdesc::notify_live_dwarf(id, text, &run, &mail);
     }
 }
 

@@ -6,6 +6,6 @@
 //! the `spira-claim` binary by bare name, same as `bdq`/`spira-lc`/`spira-config`.
 
 /// `READY_ARGS`'s fixed prefix (lib.sh's own array literal) — "the one definition of a bead
-/// an aeon can take" (lib.sh:434). `cockpit-collect`'s queue probe used to keep its own copy
+/// a dwarf can take" (lib.sh:434). `cockpit-collect`'s queue probe used to keep its own copy
 /// of exactly these five tokens (`probes/queue.rs`); importing this one is the fix.
 pub const READY_ARGS_BASE: &[&str] = &["ready", "--limit", "0", "--exclude-type", "epic,event", "-u"];

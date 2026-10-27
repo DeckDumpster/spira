@@ -63,10 +63,10 @@ pub fn run_sweep(now: i64, cfg: &Cfg) {
     if atomic_write(&prompt_file, &rendered) {
         let _ = std::fs::write(&lapsed_marker, format!("{}\n", data.lapsed_now));
         log(&format!(
-            "watchtower: swept — {}m since the last landing, {} unlanded, {} aeons, {} lapsed{}",
+            "watchtower: swept — {}m since the last landing, {} unlanded, {} dwarves, {} lapsed{}",
             data.since_land_disp,
             data.env.g("SP_UNLANDED_N"),
-            data.aeons_live_disp,
+            data.dwarves_live_disp,
             data.lapsed_count_disp,
             slow_suffix(&data.slow_probes)
         ));

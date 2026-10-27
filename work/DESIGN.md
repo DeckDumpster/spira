@@ -1,8 +1,8 @@
-# work — the aeon's lifecycle client
+# work — the dwarf's lifecycle client
 
 ## 1. Intent
 
-`work <verb>` is how a builder aeon acts on its one bound bead when it has no `bd` (lifecycle
+`work <verb>` is how a builder dwarf acts on its one bound bead when it has no `bd` (lifecycle
 design §3.5). The verbs are `show`, `note`, `submit`, `done`, `blocked`, `file-followup`,
 `split` and `superseded-by`. It holds no database code. It speaks one JSON line to spira-lc's
 socket (`SPIRA_LC_SOCKET`; default `/run/spira-lc/sock` in system mode, `/run/user/<uid>/spira-lc/sock` — install's `lc-serve.service` — in same-user mode, see `spira_config::resolve::lc_socket_default`) and prints the reply.
@@ -15,14 +15,14 @@ socket (`SPIRA_LC_SOCKET`; default `/run/spira-lc/sock` in system mode, `/run/us
 - **Exit:** the machine's own exit code on a reply. `2` means cannot tell: unbound, socket
   unreachable, or a malformed reply; retrying is safe. `3` means refused: a foreign bead, an
   unknown verb; do not retry.
-- **Callers:** only the model, and only under the aeon's restricted environment (design
-  §3.5; `aeon/src/restrict.rs`, formerly the `work-env.sh` wrap, retired sp-zpaq0) and the
+- **Callers:** only the model, and only under the dwarf's restricted environment (design
+  §3.5; `dwarf/src/restrict.rs`, formerly the `work-env.sh` wrap, retired sp-zpaq0) and the
   `{{FINISH}}` brief, and every persona prompt in the runes plus the archivist's (sp-st0mm).
   No harness script invokes `work`.
 
 ## 2a. Lane verbs (sp-st0mm)
 
-**Order (operator, 2026-10-05): no aeon model runs `bd`.** Every bead operation a persona
+**Order (operator, 2026-10-05): no dwarf model runs `bd`.** Every bead operation a persona
 needs is a `work` verb; the spira-lc broker (`spira-lc/src/work.rs`) is the only thing that
 calls bd or a bd-reaching tool. Beyond the bound verbs above, the lane verbs name their own
 target, and run unbound too (the archivist has no bead; it sends `-` in the bound slot):
@@ -43,9 +43,9 @@ target, and run unbound too (the archivist has no bead; it sends `-` in the boun
 from it is refused for everyone. The persona is the `--actor` the client appends from its own
 environment; a caller-typed `--actor`/`--stdin` is refused. A body (`-`, or a
 `--body-file`/`--reason-file`/`--why` file) is read by the client and sent as `--stdin`,
-since the broker cannot read the aeon's files.
+since the broker cannot read the dwarf's files.
 
-**Limit:** the persona comes from the aeon's environment (`SPIRA_RUNE`), which the model's
+**Limit:** the persona comes from the dwarf's environment (`SPIRA_RUNE`), which the model's
 own shell can override; the broker does not yet authenticate the caller (peer credentials).
 
 ## 3. Lifecycle switch (retired)
@@ -54,8 +54,8 @@ own shell can override; the broker does not yet authenticate the caller (peer cr
 socket, since the machine was not the host's record. After the cutover (2026-10-05) the
 machine is the only record, and sp-v62vn retired the switch: every verb goes to the socket,
 an unreachable socket is `cannot tell` (exit 2), and a config or environment still saying off
-is refused by spira-config, naming its exit. The aeon's restricted environment
-(`aeon/src/restrict.rs`) no longer carries `SPIRA_LIFECYCLE_ENFORCE`.
+is refused by spira-config, naming its exit. The dwarf's restricted environment
+(`dwarf/src/restrict.rs`) no longer carries `SPIRA_LIFECYCLE_ENFORCE`.
 
 **Tests:** `tests/switch.rs::a_verb_reaches_the_socket`, `an_unreachable_socket_is_cannot_tell`.
 

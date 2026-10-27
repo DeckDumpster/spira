@@ -112,14 +112,14 @@ pub fn conflict_foreign(instance: &str, installed_exec_dir: Option<&str>, our_di
     ))
 }
 
-/// Conflict 2: a live aeon under this installation. `cmdlines` stands in for scanning
+/// Conflict 2: a live dwarf under this installation. `cmdlines` stands in for scanning
 /// `/proc/*/cmdline` (never `pgrep -f`, which matches the caller's own command line —
 /// law-a-pattern-match-is-not-an-identity-check): each entry is `(pid, cmdline)`.
-pub fn conflict_aeon<'a>(home: &str, cmdlines: impl IntoIterator<Item = (&'a str, &'a str)>) -> Result<(), Conflict> {
-    let needle = format!("{home}/aeon.sh");
+pub fn conflict_dwarf<'a>(home: &str, cmdlines: impl IntoIterator<Item = (&'a str, &'a str)>) -> Result<(), Conflict> {
+    let needle = format!("{home}/dwarf.sh");
     for (pid, cmd) in cmdlines {
         if cmd.split('\0').any(|a| a == needle) {
-            return Err(Conflict::new(format!("live aeon running under this installation (pid {pid})"), format!("wait for it to finish, or run: {home}/world.sh stop; then re-run install")));
+            return Err(Conflict::new(format!("live dwarf running under this installation (pid {pid})"), format!("wait for it to finish, or run: {home}/world.sh stop; then re-run install")));
         }
     }
     Ok(())
@@ -303,11 +303,11 @@ mod tests {
     }
 
     #[test]
-    fn conflict_aeon_matches_the_full_argv_entry_only() {
-        assert!(conflict_aeon("/home", [("123", "bash\0/home/aeon.sh\0--foo")]).is_err());
+    fn conflict_dwarf_matches_the_full_argv_entry_only() {
+        assert!(conflict_dwarf("/home", [("123", "bash\0/home/dwarf.sh\0--foo")]).is_err());
         // A caller whose OWN cmdline merely mentions the path (e.g. this grep's argv) must
         // not match — law-a-pattern-match-is-not-an-identity-check.
-        assert!(conflict_aeon("/home", [("999", "grep\0-alFf\0/dev/stdin\0looking for /home/aeon.sh")]).is_ok());
+        assert!(conflict_dwarf("/home", [("999", "grep\0-alFf\0/dev/stdin\0looking for /home/dwarf.sh")]).is_ok());
     }
 
     #[test]

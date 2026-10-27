@@ -123,7 +123,7 @@ git -C "$GITREPO" commit -q -m "$CONTENT_SUBJECT"
 # shapes, or this fixture proves nothing about the migration fixture requirement.
 case "$CONTENT_SUBJECT" in
     "spira: land sp-contentbase") bail "fixture setup error: subject accidentally matches the queue-landing shape" ;;
-    "sp-contentbase:"*)           bail "fixture setup error: subject accidentally matches the aeon-own-commit shape" ;;
+    "sp-contentbase:"*)           bail "fixture setup error: subject accidentally matches the dwarf-own-commit shape" ;;
 esac
 ok "POSITIVE CONTROL: the content-on-base fixture's own subject matches neither landed() shape"
 git -C "$GITREPO" branch spira/sp-contentbase HEAD

@@ -138,7 +138,7 @@ impl World {
             ("SPIRA_SUBMITTED_LABEL", "spira-submitted"),
             ("PATH", "/usr/bin:/bin"),
             ("HOME", "/home/x"),
-            ("SPIRA_SUMMON", "systemd-run"),
+            ("SPIRA_CALL", "systemd-run"),
         ];
         let owned: Vec<(String, String)> = extra
             .iter()
@@ -189,12 +189,12 @@ impl World {
             // existing argv assertions (dispatch tests' RuntimeMaxSec=3600) don't drift.
             // spira/conf.d/SPIRA_LAND_MAXSEC's own declared default is 5400.
             ("SPIRA_LAND_MAXSEC", "3600"),
-            ("SPIRA_MAX_AEONS", ""),
-            ("SPIRA_MAX_LIVE_AEONS", ""),
+            ("SPIRA_MAX_DWARVES", ""),
+            ("SPIRA_MAX_LIVE_DWARVES", ""),
             ("SPIRA_LANES_MAX_LIVE", ""),
             ("SPIRA_LANES_RESERVE", "1"),
             ("SPIRA_QUEUE_THROTTLE_OVERRIDE", ""),
-            ("SPIRA_SUMMON_LOCK_WAIT", "30"),
+            ("SPIRA_CALL_LOCK_WAIT", "30"),
             ("SPIRA_LANES", "ops groomer qa mimir czar warden"),
             ("SPIRA_REPO_MAP", ""),
             ("SPIRA_GH", ""),
@@ -232,12 +232,12 @@ impl World {
             work_types: get("SPIRA_WORK_CLOSE_TYPES").split_whitespace().map(str::to_string).collect(),
             reclaim_grace: get("SPIRA_RECLAIM_GRACE_SECS").parse().unwrap_or(10800),
             land_maxsec: get("SPIRA_LAND_MAXSEC"),
-            max_aeons: opt("SPIRA_MAX_AEONS"),
-            max_live_aeons: opt("SPIRA_MAX_LIVE_AEONS"),
+            max_dwarves: opt("SPIRA_MAX_DWARVES"),
+            max_live_dwarves: opt("SPIRA_MAX_LIVE_DWARVES"),
             lanes_max_live: opt("SPIRA_LANES_MAX_LIVE"),
             lanes_reserve: get("SPIRA_LANES_RESERVE").parse().unwrap_or(1),
             queue_throttle_override: get("SPIRA_QUEUE_THROTTLE_OVERRIDE"),
-            summon_lock_wait: get("SPIRA_SUMMON_LOCK_WAIT").parse().unwrap_or(30),
+            call_lock_wait: get("SPIRA_CALL_LOCK_WAIT").parse().unwrap_or(30),
             lanes: get("SPIRA_LANES"),
             repo_map: get("SPIRA_REPO_MAP"),
             gh: get("SPIRA_GH"),
@@ -320,7 +320,7 @@ pub fn store_is(r: &FakeRunner, list: &'static str) {
 }
 
 /// `spira-lc list` rows for a bd fixture: open READY, in_progress WORKING (held by its bd
-/// assignee, else a live aeon, so CHECK 2c sees a consistent row), closed LANDED; epics and
+/// assignee, else a live dwarf, so CHECK 2c sees a consistent row), closed LANDED; epics and
 /// events have no row (the machine tracks work beads).
 pub fn lc_mirror(list: &str) -> String {
     let rows: Vec<serde_json::Value> = serde_json::from_str(list).unwrap();
@@ -450,7 +450,7 @@ fn full_pass_reads_the_store_once_and_exports_it() {
     });
     // CK7 runs in-process now (wave 4.27): `rune_ready` reaches `spira-claim` directly;
     // left unstubbed here it answers "0" (the fixture's point is the ONE bulk read, not
-    // a summon), so CHECK 7 contributes no action this pass.
+    // a call), so CHECK 7 contributes no action this pass.
     //
     // Queue waiters (wave 4.28, sp-fbqsv) are native now too and run unconditionally
     // inside the full pass; disabled here (empty label) because this test is about the
@@ -466,7 +466,7 @@ fn full_pass_reads_the_store_once_and_exports_it() {
     // decides nothing).
     assert_eq!(r.count(|s| s.prog == "spira-lc"), 1, "{:#?}", r.lines());
     assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args[0] == "list"), 1);
-    assert!(sink.has("spira: state: open=2 plan_ready=1 in_progress=1 aeons=0 runes=[builder ops]"), "{}", sink.text());
+    assert!(sink.has("spira: state: open=2 plan_ready=1 in_progress=1 dwarves=0 runes=[builder ops]"), "{}", sink.text());
     assert!(sink.has("RECLAIMED sp-x — ghost"));
     assert!(sink.has("ACT handled 1 stranded item(s)"));
     assert!(sink.has("ACT escalated 1 stranded item(s)"));
@@ -715,16 +715,16 @@ fn report_lists_the_open_plan_beads_and_nothing_when_empty() {
 }
 
 // ---------------------------------------------------------------------------------------
-// --summon-only
+// --call-only
 
 #[test]
-fn summon_only_gates_then_reads_ready_once() {
-    let (w, r, sink, clock) = setup("summon");
+fn call_only_gates_then_reads_ready_once() {
+    let (w, r, sink, clock) = setup("call");
     // world_gate runs in-process now (wave 4.27): a halted world is the real file, not a
     // stubbed seam.
     std::fs::write(w.run.join("world.halted"), "").unwrap();
     assert_eq!(
-        run_mode(&w, &r, &sink, &clock, Mode::SummonOnly, &[], None),
+        run_mode(&w, &r, &sink, &clock, Mode::CallOnly, &[], None),
         0
     );
     assert_eq!(
@@ -733,14 +733,14 @@ fn summon_only_gates_then_reads_ready_once() {
         "a halted world costs no bd call"
     );
 
-    let (w, r, sink, clock) = setup("summon2");
+    let (w, r, sink, clock) = setup("call2");
     r.on(|s| {
         if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("bulk-ready-by-rune") {
             return ok("builder 1\nops 0\n");
         }
         None
     });
-    r.on(|s| if s.args.iter().any(|a| a == "list-units") { ok("spira-aeon-builder-1 loaded active\nspira-aeon-ops-2 loaded active\nspira-aeon-opsx-3 x\n") } else { None });
+    r.on(|s| if s.args.iter().any(|a| a == "list-units") { ok("spira-dwarf-builder-1 loaded active\nspira-dwarf-ops-2 loaded active\nspira-dwarf-opsx-3 x\n") } else { None });
     // CK7 runs in-process now too: `rune_ready` reaches `spira-claim rune-ready`
     // directly, reading the SAME SPIRA_READY_CACHE the pass already wrote.
     r.on(|s| {
@@ -754,49 +754,49 @@ fn summon_only_gates_then_reads_ready_once() {
         }
     });
     // "builder" is 1/1 live already (the list-units fixture above), so rune_free refuses
-    // the concurrency cap before ever reaching for `aeon` on PATH — no systemd-run call,
-    // and no action is tallied; this pass proves the ready-cache plumbing, not a summon.
+    // the concurrency cap before ever reaching for `dwarf` on PATH — no systemd-run call,
+    // and no action is tallied; this pass proves the ready-cache plumbing, not a call.
     assert_eq!(
-        run_mode(&w, &r, &sink, &clock, Mode::SummonOnly, &[], None),
+        run_mode(&w, &r, &sink, &clock, Mode::CallOnly, &[], None),
         0
     );
     // The ready set is fetched ONCE, by spira-claim inside bulk-ready-by-rune: the sentinel
     // itself no longer reads bd here (it counted nothing from it after sp-uqrdn).
     assert_eq!(r.count(|s| s.prog == "bd"), 0, "the sentinel makes no bd call of its own");
     assert_eq!(r.count(|s| s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("bulk-ready-by-rune")), 1);
-    assert!(sink.has("summon-only: live=2 runes=[builder ops]"));
+    assert!(sink.has("call-only: live=2 runes=[builder ops]"));
     assert!(sink.has("CHECK7 builder: 1 ready, at concurrency cap"), "{}", sink.text());
-    assert!(sink.has("summon-only pass complete — 0 action(s)"));
+    assert!(sink.has("call-only pass complete — 0 action(s)"));
 }
 
 /// Family K, wave 4.26: sentinel reads the pause file in-process now (never through the
 /// bash `capacity_paused`, which also ran the probe and could delete the file — a second
-/// probe owner alongside aeon's own, wave4-decomposition.md (c)3). This proves the gate
+/// probe owner alongside dwarf's own, wave4-decomposition.md (c)3). This proves the gate
 /// still stops the pass, and that sentinel never touches the file it read.
 #[test]
-fn summon_only_respects_a_capacity_pause_without_probing_or_mutating_the_file() {
-    let (w, r, sink, clock) = setup("summon-cap");
+fn call_only_respects_a_capacity_pause_without_probing_or_mutating_the_file() {
+    let (w, r, sink, clock) = setup("call-cap");
     std::fs::write(w.run.join("capacity-pause"), format!("{} iso why\n", NOW + 321)).unwrap();
-    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonOnly, &[], None), 0);
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::CallOnly, &[], None), 0);
     assert_eq!(r.count(|s| s.prog == "bd"), 0, "a capacity pause costs no bd call");
-    assert!(sink.has("summon-only: account out of capacity for another 321s — not summoning"));
-    assert!(w.run.join("capacity-pause").is_file(), "sentinel must not mutate the pause file aeon owns");
+    assert!(sink.has("call-only: account out of capacity for another 321s — not calling"));
+    assert!(w.run.join("capacity-pause").is_file(), "sentinel must not mutate the pause file dwarf owns");
 }
 
 /// Fail closed (wave4-decomposition.md (c)3): an unreadable/corrupt pause file must gate
-/// summoning, never be read as "open" the way the bash `capacity_pause_until`'s `0` once
+/// calling, never be read as "open" the way the bash `capacity_pause_until`'s `0` once
 /// did for both "no file" and "cannot parse it".
 #[test]
-fn summon_only_fails_closed_on_an_unreadable_capacity_pause_file() {
-    let (w, r, sink, clock) = setup("summon-cap-unknown");
+fn call_only_fails_closed_on_an_unreadable_capacity_pause_file() {
+    let (w, r, sink, clock) = setup("call-cap-unknown");
     std::fs::write(w.run.join("capacity-pause"), "not-a-number\n").unwrap();
-    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonOnly, &[], None), 0);
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::CallOnly, &[], None), 0);
     assert_eq!(r.count(|s| s.prog == "bd"), 0, "an unreadable pause file must gate, never fail open");
-    assert!(sink.has("summon-only: the capacity pause file could not be read — not summoning (failing closed)"));
+    assert!(sink.has("call-only: the capacity pause file could not be read — not calling (failing closed)"));
 }
 
 // ---------------------------------------------------------------------------------------
-// world_gate / summon / summon-argv / named-unit-stop (wave 4.27, family G, sp-gzmd2) —
+// world_gate / call / call-argv / named-unit-stop (wave 4.27, family G, sp-gzmd2) —
 // lib.sh's own shim targets, in-process now.
 
 #[test]
@@ -813,44 +813,44 @@ fn world_gate_cmd_halts_and_a_drain_holds_however_old() {
     std::fs::write(w.run.join("world.halted"), "").unwrap();
     std::fs::write(w.run.join("world.draining"), "").unwrap(); // halt wins even if both exist
     assert_eq!(run_mode(&w, &r, &sink, &clock, mode("builder"), &[], None), 1);
-    assert!(sink.has("CHECK7 builder: halted — not summoning (world.sh start to lift)"));
+    assert!(sink.has("CHECK7 builder: halted — not calling (world.sh start to lift)"));
 
     // DRAINING, however the stamp reads or however old: refused, stamp untouched.
     for (tag, text) in [("wg-holds", "then\ngated\nholds until resume\n"), ("wg-legacy-expires", format!("expires {}\n", NOW - 10).leak() as &str), ("wg-bare", "")] {
         let (w, r, sink, clock) = setup(tag);
         std::fs::write(w.run.join("world.draining"), text).unwrap();
         assert_eq!(run_mode(&w, &r, &sink, &clock, mode("builder"), &[], None), 1, "{tag}");
-        assert!(sink.has("CHECK7 builder: draining — not summoning (world.sh resume to lift)"), "{tag}");
+        assert!(sink.has("CHECK7 builder: draining — not calling (world.sh resume to lift)"), "{tag}");
         assert!(!sink.has("EXPIRED"), "{tag}");
         assert!(w.run.join("world.draining").is_file(), "{tag}: nothing but resume removes a drain");
     }
 }
 
 #[test]
-fn summon_cmd_refuses_without_aeon_and_summons_when_everything_lines_up() {
-    // No `aeon` anywhere on PATH: refused loudly, never hands systemd-run a name it will
+fn call_cmd_refuses_without_dwarf_and_calls_when_everything_lines_up() {
+    // No `dwarf` anywhere on PATH: refused loudly, never hands systemd-run a name it will
     // not find either.
-    let (w, r, sink, clock) = setup("summon-noaeon");
+    let (w, r, sink, clock) = setup("call-nodwarf");
     r.on(|s| if s.prog == "spira-claim" { ok("1") } else { None });
     let rc = run_mode(
         &w,
         &r,
         &sink,
         &clock,
-        Mode::Summon { rune: "builder".into(), pool: None, require_express: false },
+        Mode::Call { rune: "builder".into(), pool: None, require_express: false },
         &[],
         None,
     );
     assert_eq!(rc, 1);
-    assert!(sink.has("CHECK7 builder: aeon not found on PATH — not summoning"));
+    assert!(sink.has("CHECK7 builder: dwarf not found on PATH — not calling"));
     assert_eq!(r.count(|s| s.prog == "systemd-run"), 0);
 
-    // Everything in place: ready, free, `aeon` resolvable — summons, and the aeon binary
+    // Everything in place: ready, free, `dwarf` resolvable — calls, and the dwarf binary
     // plus `--home`/the rune land on the systemd-run argv exactly as lib.sh built them.
-    let (w, r, sink, clock) = setup("summon-ok");
+    let (w, r, sink, clock) = setup("call-ok");
     let bin = w.dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    exe(&bin.join("aeon"));
+    exe(&bin.join("dwarf"));
     r.on(|s| if s.prog == "spira-claim" { ok("2") } else { None });
     r.on(|s| if s.prog == "systemd-run" { ok("") } else { None });
     let rc = run_mode(
@@ -858,23 +858,23 @@ fn summon_cmd_refuses_without_aeon_and_summons_when_everything_lines_up() {
         &r,
         &sink,
         &clock,
-        Mode::Summon { rune: "builder".into(), pool: None, require_express: true },
+        Mode::Call { rune: "builder".into(), pool: None, require_express: true },
         &[("PATH", &format!("{}:/usr/bin:/bin", bin.display()))],
         None,
     );
     assert_eq!(rc, 0);
     let launch = r.find(|s| s.prog == "systemd-run").unwrap();
-    assert!(launch.args.iter().any(|a| a == &bin.join("aeon").to_string_lossy().into_owned()));
+    assert!(launch.args.iter().any(|a| a == &bin.join("dwarf").to_string_lossy().into_owned()));
     assert!(launch.args.contains(&"--home".to_string()));
     assert!(launch.args.contains(&w.home.to_string_lossy().into_owned()));
     assert!(launch.args.contains(&"builder".to_string()));
-    assert!(launch.args.iter().any(|a| a.starts_with("--unit=spira-aeon-builder-")));
+    assert!(launch.args.iter().any(|a| a.starts_with("--unit=spira-dwarf-builder-")));
     assert!(launch.args.contains(&"--setenv=SPIRA_REQUIRE_EXPRESS=1".to_string()));
-    assert!(sink.has("CHECK7 builder: 2 ready, 1 free — summoning, restricted to express"), "{}", sink.text());
+    assert!(sink.has("CHECK7 builder: 2 ready, 1 free — calling, restricted to express"), "{}", sink.text());
 }
 
 // ---------------------------------------------------------------------------------------
-// summon_rune's refusal ladder (the rows test-summon-rune.sh used to prove in a shell).
+// call_rune's refusal ladder (the rows test-call-rune.sh used to prove in a shell).
 // The roster is `builder`, `ops`; each rule binds to a declaration (RUNE_ELASTIC,
 // RUNE_LANE, RUNE_MAX_CONCURRENT), so the same two names play different roles per test.
 
@@ -893,7 +893,7 @@ fn ladder(tag: &str, builder: &str, ops: &str, live: &[(&str, usize)], ready: &[
     std::fs::write(w.home.join("runes/ops.rune"), ops).unwrap();
     let bin = w.dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    exe(&bin.join("aeon"));
+    exe(&bin.join("dwarf"));
     let ready: Vec<(String, i64)> = ready.iter().map(|(f, n)| (f.to_string(), *n)).collect();
     let calls = std::rc::Rc::new(RefCell::new(Vec::new()));
     let calls_c = calls.clone();
@@ -910,11 +910,11 @@ fn ladder(tag: &str, builder: &str, ops: &str, live: &[(&str, usize)], ready: &[
         if !s.args.iter().any(|a| a == "list-units") {
             return None;
         }
-        let glob = s.args.iter().find(|a| a.starts_with("spira-aeon-")).cloned().unwrap_or_default();
+        let glob = s.args.iter().find(|a| a.starts_with("spira-dwarf-")).cloned().unwrap_or_default();
         let mut lines = String::new();
         for (f, n) in &live {
             for i in 1..=*n {
-                let unit = format!("spira-aeon-{f}-{i}.service");
+                let unit = format!("spira-dwarf-{f}-{i}.service");
                 let pat = glob.trim_end_matches('*');
                 if unit.starts_with(pat) {
                     lines.push_str(&format!("{unit} loaded active\n"));
@@ -928,14 +928,14 @@ fn ladder(tag: &str, builder: &str, ops: &str, live: &[(&str, usize)], ready: &[
 }
 
 impl Ladder {
-    fn summon(&self, rune: &str, pool: Option<i64>, extra: &[(&str, &str)]) -> bool {
+    fn call(&self, rune: &str, pool: Option<i64>, extra: &[(&str, &str)]) -> bool {
         let path = format!("{}:/usr/bin:/bin", self.w.dir.join("bin").display());
         let mut all: Vec<(&str, &str)> = vec![("PATH", &path)];
         all.extend_from_slice(extra);
-        let rc = run_mode(&self.w, &self.r, &self.sink, &self.clock, Mode::Summon { rune: rune.into(), pool, require_express: false }, &all, None);
-        let summoned = self.r.find(|s| s.prog == "systemd-run").is_some_and(|s| s.args.last().map(String::as_str) == Some(rune));
-        assert_eq!(rc == 0, summoned, "rc and the launch agree: {}", self.sink.text());
-        summoned
+        let rc = run_mode(&self.w, &self.r, &self.sink, &self.clock, Mode::Call { rune: rune.into(), pool, require_express: false }, &all, None);
+        let called = self.r.find(|s| s.prog == "systemd-run").is_some_and(|s| s.args.last().map(String::as_str) == Some(rune));
+        assert_eq!(rc == 0, called, "rc and the launch agree: {}", self.sink.text());
+        called
     }
 }
 
@@ -946,147 +946,147 @@ const LANE: &str = "RUNE_MAX_CONCURRENT=1\nRUNE_LANE=ops\n";
 
 #[test]
 fn an_elastic_rune_is_held_back_on_the_last_slot_only_while_a_non_elastic_one_has_work() {
-    let ceiling = [("SPIRA_MAX_LIVE_AEONS", "3")];
-    // 2 free slots: summoned although the non-elastic rune is also ready, and the
+    let ceiling = [("SPIRA_MAX_LIVE_DWARVES", "3")];
+    // 2 free slots: called although the non-elastic rune is also ready, and the
     // reservation is never even consulted (one readiness call, for the rune itself).
     let l = ladder("el-free", ELASTIC, SOLO, &[("builder", 1)], &[("ops", 1), ("builder", 1)]);
-    assert!(l.summon("builder", Some(4), &ceiling), "{}", l.sink.text());
+    assert!(l.call("builder", Some(4), &ceiling), "{}", l.sink.text());
     assert_eq!(*l.ready_calls.borrow(), vec!["builder"]);
 
     // 1 slot free and the non-elastic rune has work: refused, naming it, and not as a cap.
     let l = ladder("el-last", ELASTIC, SOLO, &[("builder", 2)], &[("ops", 1), ("builder", 1)]);
-    assert!(!l.summon("builder", Some(4), &ceiling));
+    assert!(!l.call("builder", Some(4), &ceiling));
     assert!(l.sink.has("held back") && l.sink.has("ops has 1 ready"), "{}", l.sink.text());
     assert!(!l.sink.has("at concurrency cap"));
     assert_eq!(*l.ready_calls.borrow(), vec!["ops"], "only the reservation was asked");
 
-    // The same slot, nothing ready elsewhere: summoned.
+    // The same slot, nothing ready elsewhere: called.
     let l = ladder("el-clear", ELASTIC, SOLO, &[("builder", 2)], &[("ops", 0), ("builder", 1)]);
-    assert!(l.summon("builder", Some(4), &ceiling), "{}", l.sink.text());
+    assert!(l.call("builder", Some(4), &ceiling), "{}", l.sink.text());
 
-    // The rule binds to the declaration: the same live state, but the summoned rune is the
+    // The rule binds to the declaration: the same live state, but the called rune is the
     // non-elastic one, is never subject to it.
     let l = ladder("el-solo", ELASTIC, SOLO, &[("builder", 2)], &[("ops", 1), ("builder", 1)]);
-    assert!(l.summon("ops", None, &ceiling), "{}", l.sink.text());
+    assert!(l.call("ops", None, &ceiling), "{}", l.sink.text());
 }
 
 #[test]
 fn a_task_rune_yields_the_last_slot_to_a_ready_lane_unless_the_lane_has_no_room() {
-    let caps = [("SPIRA_MAX_LIVE_AEONS", "4"), ("SPIRA_LANES_MAX_LIVE", "1")];
+    let caps = [("SPIRA_MAX_LIVE_DWARVES", "4"), ("SPIRA_LANES_MAX_LIVE", "1")];
     let l = ladder("ln-free", TASK, LANE, &[("builder", 2)], &[("ops", 1), ("builder", 1)]);
-    assert!(l.summon("builder", None, &caps), "{}", l.sink.text());
+    assert!(l.call("builder", None, &caps), "{}", l.sink.text());
 
     let l = ladder("ln-last", TASK, LANE, &[("builder", 3)], &[("ops", 1), ("builder", 1)]);
-    assert!(!l.summon("builder", None, &caps));
+    assert!(!l.call("builder", None, &caps));
     assert!(l.sink.has("1 fleet slot(s) remaining") && l.sink.has("held back"), "{}", l.sink.text());
     assert!(!l.sink.has("at concurrency cap"));
 
     // The ready lane is at its own cap (one live), the collective lane cap is slack.
     let l = ladder("ln-full", TASK, LANE, &[("builder", 2), ("ops", 1)], &[("ops", 1), ("builder", 1)]);
-    assert!(l.summon("builder", None, &[("SPIRA_MAX_LIVE_AEONS", "4"), ("SPIRA_LANES_MAX_LIVE", "2")]), "{}", l.sink.text());
+    assert!(l.call("builder", None, &[("SPIRA_MAX_LIVE_DWARVES", "4"), ("SPIRA_LANES_MAX_LIVE", "2")]), "{}", l.sink.text());
 
     let l = ladder("ln-idle", TASK, LANE, &[("builder", 3)], &[("ops", 0), ("builder", 1)]);
-    assert!(l.summon("builder", None, &caps), "{}", l.sink.text());
+    assert!(l.call("builder", None, &caps), "{}", l.sink.text());
 }
 
 #[test]
 fn the_lane_reserve_is_tunable_and_needs_no_lane_cap() {
-    let max = [("SPIRA_MAX_LIVE_AEONS", "4")];
+    let max = [("SPIRA_MAX_LIVE_DWARVES", "4")];
     let l = ladder("rs-nocap", TASK, LANE, &[("builder", 3)], &[("ops", 1), ("builder", 1)]);
-    assert!(!l.summon("builder", None, &max));
+    assert!(!l.call("builder", None, &max));
     assert!(l.sink.has("held back"), "{}", l.sink.text());
 
-    let two = [("SPIRA_MAX_LIVE_AEONS", "4"), ("SPIRA_LANES_RESERVE", "2")];
+    let two = [("SPIRA_MAX_LIVE_DWARVES", "4"), ("SPIRA_LANES_RESERVE", "2")];
     let l = ladder("rs-two", TASK, LANE, &[("builder", 2)], &[("ops", 1), ("builder", 1)]);
-    assert!(!l.summon("builder", None, &two));
+    assert!(!l.call("builder", None, &two));
     let l = ladder("rs-two-free", TASK, LANE, &[("builder", 1)], &[("ops", 1), ("builder", 1)]);
-    assert!(l.summon("builder", None, &two), "{}", l.sink.text());
+    assert!(l.call("builder", None, &two), "{}", l.sink.text());
 
-    let off = [("SPIRA_MAX_LIVE_AEONS", "4"), ("SPIRA_LANES_RESERVE", "0")];
+    let off = [("SPIRA_MAX_LIVE_DWARVES", "4"), ("SPIRA_LANES_RESERVE", "0")];
     let l = ladder("rs-off", TASK, LANE, &[("builder", 3)], &[("ops", 1), ("builder", 1)]);
-    assert!(l.summon("builder", None, &off), "{}", l.sink.text());
+    assert!(l.call("builder", None, &off), "{}", l.sink.text());
 
     let l = ladder("rs-idle", TASK, LANE, &[("builder", 3)], &[("ops", 0), ("builder", 1)]);
-    assert!(l.summon("builder", None, &max), "{}", l.sink.text());
+    assert!(l.call("builder", None, &max), "{}", l.sink.text());
 }
 
 #[test]
 fn the_collective_lane_cap_refuses_a_lane_rune_and_never_a_task_rune() {
-    let caps = [("SPIRA_MAX_LIVE_AEONS", "4"), ("SPIRA_LANES_MAX_LIVE", "1")];
+    let caps = [("SPIRA_MAX_LIVE_DWARVES", "4"), ("SPIRA_LANES_MAX_LIVE", "1")];
     let l = ladder("lc-below", TASK, LANE, &[], &[("ops", 1)]);
-    assert!(l.summon("ops", None, &caps), "{}", l.sink.text());
+    assert!(l.call("ops", None, &caps), "{}", l.sink.text());
 
     let l = ladder("lc-at", TASK, LANE, &[("ops", 1)], &[("ops", 1)]);
-    assert!(!l.summon("ops", None, &caps));
+    assert!(!l.call("ops", None, &caps));
     assert!(l.sink.has("1/1 lane slot(s) in use"), "{}", l.sink.text());
 
     let l = ladder("lc-task", TASK, LANE, &[("ops", 1)], &[("builder", 1)]);
-    assert!(l.summon("builder", None, &caps), "{}", l.sink.text());
+    assert!(l.call("builder", None, &caps), "{}", l.sink.text());
 }
 
 #[test]
 fn a_ready_lane_spills_over_a_full_fleet_and_nothing_is_refilled_while_over() {
-    let caps = [("SPIRA_MAX_LIVE_AEONS", "4"), ("SPIRA_LANES_MAX_LIVE", "2")];
+    let caps = [("SPIRA_MAX_LIVE_DWARVES", "4"), ("SPIRA_LANES_MAX_LIVE", "2")];
     let l = ladder("sp-spill", TASK, LANE, &[("builder", 4)], &[("ops", 1), ("builder", 1)]);
-    assert!(l.summon("ops", None, &caps), "{}", l.sink.text());
+    assert!(l.call("ops", None, &caps), "{}", l.sink.text());
     assert!(l.sink.has("may spill over the ceiling"), "{}", l.sink.text());
 
     let l = ladder("sp-over", TASK, LANE, &[("builder", 3), ("ops", 1)], &[("builder", 1)]);
-    assert!(!l.summon("builder", None, &caps));
-    assert!(l.sink.has("4/4 aeon(s) live across the whole fleet"), "{}", l.sink.text());
+    assert!(!l.call("builder", None, &caps));
+    assert!(l.sink.has("4/4 dwarf(s) live across the whole fleet"), "{}", l.sink.text());
 
     let l = ladder("sp-bound", TASK, LANE, &[("builder", 4), ("ops", 1)], &[("ops", 1)]);
-    assert!(!l.summon("ops", None, &[("SPIRA_MAX_LIVE_AEONS", "4"), ("SPIRA_LANES_MAX_LIVE", "1")]), "{}", l.sink.text());
+    assert!(!l.call("ops", None, &[("SPIRA_MAX_LIVE_DWARVES", "4"), ("SPIRA_LANES_MAX_LIVE", "1")]), "{}", l.sink.text());
 
     let l = ladder("sp-nolane", TASK, LANE, &[("builder", 4)], &[("builder", 1), ("ops", 1)]);
-    assert!(!l.summon("builder", None, &caps));
+    assert!(!l.call("builder", None, &caps));
 
     let l = ladder("sp-nocap", TASK, LANE, &[("builder", 4)], &[("ops", 1)]);
-    assert!(!l.summon("ops", None, &[("SPIRA_MAX_LIVE_AEONS", "4")]));
+    assert!(!l.call("ops", None, &[("SPIRA_MAX_LIVE_DWARVES", "4")]));
 }
 
 #[test]
 fn the_fleet_ceiling_refuses_whatever_the_persona_and_names_the_count() {
-    let ceiling = [("SPIRA_MAX_LIVE_AEONS", "3")];
+    let ceiling = [("SPIRA_MAX_LIVE_DWARVES", "3")];
     let l = ladder("fc-below", ELASTIC, SOLO, &[("builder", 2)], &[("ops", 1)]);
-    assert!(l.summon("ops", None, &ceiling), "{}", l.sink.text());
+    assert!(l.call("ops", None, &ceiling), "{}", l.sink.text());
     let l = ladder("fc-at", ELASTIC, SOLO, &[("builder", 3)], &[("ops", 1)]);
-    assert!(!l.summon("ops", None, &ceiling));
-    assert!(l.sink.has("3/3 aeon(s) live across the whole fleet") && l.sink.has("not summoning"), "{}", l.sink.text());
+    assert!(!l.call("ops", None, &ceiling));
+    assert!(l.sink.has("3/3 dwarf(s) live across the whole fleet") && l.sink.has("not calling"), "{}", l.sink.text());
 }
 
 #[test]
-fn a_task_rune_honours_the_pool_and_a_lane_rune_is_summoned_without_one() {
+fn a_task_rune_honours_the_pool_and_a_lane_rune_is_called_without_one() {
     let l = ladder("pool-1", ELASTIC, LANE, &[], &[("builder", 1)]);
-    assert!(l.summon("builder", Some(1), &[]), "{}", l.sink.text());
+    assert!(l.call("builder", Some(1), &[]), "{}", l.sink.text());
     let l = ladder("pool-0", TASK, LANE, &[], &[("builder", 1)]);
-    assert!(!l.summon("builder", Some(0), &[]));
+    assert!(!l.call("builder", Some(0), &[]));
     assert!(l.sink.has("at concurrency cap"), "{}", l.sink.text());
     let l = ladder("pool-elastic-0", ELASTIC, LANE, &[], &[("builder", 1)]);
-    assert!(!l.summon("builder", Some(0), &[]));
+    assert!(!l.call("builder", Some(0), &[]));
     let l = ladder("pool-lane", ELASTIC, LANE, &[], &[("ops", 1)]);
-    assert!(l.summon("ops", None, &[]), "{}", l.sink.text());
+    assert!(l.call("ops", None, &[]), "{}", l.sink.text());
 }
 
 #[test]
 fn an_elastic_rune_takes_the_pool_remainder_whole_and_a_capped_one_nets_out_what_runs() {
     for live in 0..=3usize {
         let l = ladder(&format!("rem-{live}"), ELASTIC, SOLO, &[("builder", live)], &[("builder", 9)]);
-        assert!(l.summon("builder", Some(5), &[]), "have={live} must not reduce a pool=5 remainder: {}", l.sink.text());
+        assert!(l.call("builder", Some(5), &[]), "have={live} must not reduce a pool=5 remainder: {}", l.sink.text());
         assert!(l.sink.has("9 ready, 5 free"), "{}", l.sink.text());
     }
     let l = ladder("cap-1", ELASTIC, SOLO, &[("ops", 1)], &[("ops", 1)]);
-    assert!(!l.summon("ops", Some(10), &[]));
+    assert!(!l.call("ops", Some(10), &[]));
     assert!(l.sink.has("at concurrency cap"), "{}", l.sink.text());
     let l = ladder("cap-0", ELASTIC, SOLO, &[], &[("ops", 1)]);
-    assert!(l.summon("ops", Some(10), &[]), "{}", l.sink.text());
+    assert!(l.call("ops", Some(10), &[]), "{}", l.sink.text());
     assert!(l.sink.has("1 ready, 1 free"), "{}", l.sink.text());
 }
 
 #[test]
-fn a_summon_carries_a_timeout_and_never_a_cpu_quota_or_nice() {
+fn a_call_carries_a_timeout_and_never_a_cpu_quota_or_nice() {
     let l = ladder("quota", ELASTIC, SOLO, &[], &[("builder", 1)]);
-    assert!(l.summon("builder", None, &[("SPIRA_AEON_CPU_QUOTA", "90")]), "{}", l.sink.text());
+    assert!(l.call("builder", None, &[("SPIRA_DWARF_CPU_QUOTA", "90")]), "{}", l.sink.text());
     let launch = l.r.find(|s| s.prog == "systemd-run").unwrap();
     let argv = launch.args.join(" ");
     assert!(argv.contains("TimeoutStartSec="), "{argv}");
@@ -1094,21 +1094,21 @@ fn a_summon_carries_a_timeout_and_never_a_cpu_quota_or_nice() {
 }
 
 #[test]
-fn a_halt_refuses_a_summon_loudly_and_an_old_drain_stamp_still_holds() {
+fn a_halt_refuses_a_call_loudly_and_an_old_drain_stamp_still_holds() {
     let l = ladder("halt-ok", ELASTIC, SOLO, &[], &[("builder", 1)]);
-    assert!(l.summon("builder", None, &[]), "positive control: {}", l.sink.text());
+    assert!(l.call("builder", None, &[]), "positive control: {}", l.sink.text());
     let l = ladder("halt", ELASTIC, SOLO, &[], &[("builder", 1)]);
     std::fs::write(l.w.run.join("world.halted"), "").unwrap();
-    assert!(!l.summon("builder", None, &[]));
-    assert!(l.sink.has("halted — not summoning"), "{}", l.sink.text());
+    assert!(!l.call("builder", None, &[]));
+    assert!(l.sink.has("halted — not calling"), "{}", l.sink.text());
 
     let l = ladder("drain-old", ELASTIC, SOLO, &[], &[("builder", 1)]);
     let stamp = l.w.run.join("world.draining");
     std::fs::write(&stamp, "now\ngated\n").unwrap();
     let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs((NOW - 100_000) as u64);
     std::fs::File::options().write(true).open(&stamp).unwrap().set_modified(at).unwrap();
-    assert!(!l.summon("builder", None, &[]), "{}", l.sink.text());
-    assert!(stamp.is_file() && l.sink.has("draining — not summoning") && !l.sink.has("EXPIRED"), "{}", l.sink.text());
+    assert!(!l.call("builder", None, &[]), "{}", l.sink.text());
+    assert!(stamp.is_file() && l.sink.has("draining — not calling") && !l.sink.has("EXPIRED"), "{}", l.sink.text());
 }
 
 /// sp-hh599, law-a-control-that-cannot-check-must-refuse: `rune_ready`'s own rc contract
@@ -1118,8 +1118,8 @@ fn a_halt_refuses_a_summon_loudly_and_an_old_drain_stamp_still_holds() {
 /// rune in the runes" skip, which is what let this bead's own defect (a home-resolution
 /// refusal sharing rc 2 with "no such file") hide silently for every pass since wave 4.25.
 #[test]
-fn summon_cmd_a_claim_error_is_loud_and_never_reads_as_a_routine_skip() {
-    let (w, r, sink, clock) = setup("summon-claim-error");
+fn call_cmd_a_claim_error_is_loud_and_never_reads_as_a_routine_skip() {
+    let (w, r, sink, clock) = setup("call-claim-error");
     r.on(|s| {
         if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("rune-ready") {
             Some(Out {
@@ -1136,7 +1136,7 @@ fn summon_cmd_a_claim_error_is_loud_and_never_reads_as_a_routine_skip() {
         &r,
         &sink,
         &clock,
-        Mode::Summon { rune: "builder".into(), pool: None, require_express: false },
+        Mode::Call { rune: "builder".into(), pool: None, require_express: false },
         &[],
         None,
     );
@@ -1177,18 +1177,18 @@ fn named_unit_stop_cmd_stops_every_match_and_says_so_when_there_is_none() {
     assert!(sink.has("could not stop spira-acc-r1-2.service"));
 }
 
-/// ck7_summon_pass's own lane rotation, end to end (lib.sh G1's integration half; the
-/// pure rotation arithmetic is `summon::tests::lane_rotate_…`). Two real passes through
+/// ck7_call_pass's own lane rotation, end to end (lib.sh G1's integration half; the
+/// pure rotation arithmetic is `call::tests::lane_rotate_…`). Two real passes through
 /// the SAME flock, with a FakeRunner that actually remembers which lane has a live unit
-/// after it summons one — bash's own version of this row could only hand-simulate that
-/// (a mock summon script cannot write a pidfile its own mock aeon never becomes), so this
+/// after it calls one — bash's own version of this row could only hand-simulate that
+/// (a mock call script cannot write a pidfile its own mock dwarf never becomes), so this
 /// is the more faithful proof: pass 1 takes `builder` (both lanes ready, first in roster
 /// order); pass 2, with no prior rotation state… — the lane the FIRST pass actually filled
 /// now reads as live, so the collective cap (1) holds it off and `ops` draws instead, with
 /// no rotation state needed at all for two lanes. `lane_round_robin` is still written and
 /// read, proven by the file's own content.
 #[test]
-fn ck7_summon_pass_rotates_across_two_real_passes() {
+fn ck7_call_pass_rotates_across_two_real_passes() {
     use std::cell::RefCell;
     use std::rc::Rc;
     let (w, r, sink, clock) = setup("rotate");
@@ -1197,16 +1197,16 @@ fn ck7_summon_pass_rotates_across_two_real_passes() {
     std::fs::write(w.home.join("runes/ops.rune"), "RUNE_LANE=ops\nRUNE_MAX_CONCURRENT=1\n").unwrap();
     let bin = w.dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    exe(&bin.join("aeon"));
+    exe(&bin.join("dwarf"));
     let live: Rc<RefCell<std::collections::HashSet<String>>> = Rc::new(RefCell::new(Default::default()));
     r.on(|s| if s.prog == "spira-claim" { ok("1") } else { None });
     let live_c = live.clone();
     r.on(move |s| {
         if s.args.iter().any(|a| a == "list-units") {
-            let glob = s.args.iter().find(|a| a.starts_with("spira-aeon-")).cloned().unwrap_or_default();
-            let f = glob.trim_start_matches("spira-aeon-").trim_end_matches("-*");
+            let glob = s.args.iter().find(|a| a.starts_with("spira-dwarf-")).cloned().unwrap_or_default();
+            let f = glob.trim_start_matches("spira-dwarf-").trim_end_matches("-*");
             let line = if live_c.borrow().contains(f) {
-                format!("spira-aeon-{f}-1.service loaded active\n")
+                format!("spira-dwarf-{f}-1.service loaded active\n")
             } else {
                 String::new()
             };
@@ -1226,37 +1226,37 @@ fn ck7_summon_pass_rotates_across_two_real_passes() {
     let path = format!("{}:/usr/bin:/bin", bin.display());
     let extra: Vec<(&str, &str)> = vec![
         ("PATH", &path),
-        ("SPIRA_MAX_LIVE_AEONS", "4"),
+        ("SPIRA_MAX_LIVE_DWARVES", "4"),
         ("SPIRA_LANES_MAX_LIVE", "1"),
     ];
 
-    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonPass, &extra, None), 0);
-    assert!(sink.has("ACT summoned a builder lane aeon"), "{}", sink.text());
-    assert!(!sink.has("ACT summoned a ops lane aeon"), "{}", sink.text());
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::CallPass, &extra, None), 0);
+    assert!(sink.has("ACT called a builder lane dwarf"), "{}", sink.text());
+    assert!(!sink.has("ACT called a ops lane dwarf"), "{}", sink.text());
     assert_eq!(std::fs::read_to_string(w.run.join("lane-round-robin")).unwrap(), "builder");
 
-    // Between passes, builder's own aeon finishes and its unit disappears — exactly what
+    // Between passes, builder's own dwarf finishes and its unit disappears — exactly what
     // bash's own version of this row simulated by resetting MOCK_LIVE_LANES to 0 before
     // its second loop. Rotation (not the collective cap, now slack again) decides which
     // lane goes first this time.
     live.borrow_mut().clear();
     let sink2 = FakeSink::default();
-    assert_eq!(run_mode(&w, &r, &sink2, &clock, Mode::SummonPass, &extra, None), 0);
-    assert!(sink2.has("ACT summoned a ops lane aeon"), "{}", sink2.text());
-    assert!(!sink2.has("ACT summoned a builder lane aeon"), "{}", sink2.text());
+    assert_eq!(run_mode(&w, &r, &sink2, &clock, Mode::CallPass, &extra, None), 0);
+    assert!(sink2.has("ACT called a ops lane dwarf"), "{}", sink2.text());
+    assert!(!sink2.has("ACT called a builder lane dwarf"), "{}", sink2.text());
 }
 
 // ---------------------------------------------------------------------------------------
-// express-lane bypass of the summon throttle (sp-yh7yx)
+// express-lane bypass of the call throttle (sp-yh7yx)
 //
 // lib.sh's `express_ready_in_task_pool` (fbddd3e2b) was deleted outright at wave
-// 4.25/sp-obhv6 while `_ck7_summon_body`'s bash original still called it by name — the
+// 4.25/sp-obhv6 while `_ck7_call_body`'s bash original still called it by name — the
 // call failed silently every throttled pass from then on ("command not found" from an
 // undefined bash function, never visible as a diff), so "express ready" read false
-// forever and the bypass never fired again. Wave 4.27/sp-gzmd2 ported `_ck7_summon_body`
+// forever and the bypass never fired again. Wave 4.27/sp-gzmd2 ported `_ck7_call_body`
 // faithfully — meaning it ported that silent `false` too. These four rows are the
 // predicate restored: express ready grants the bypass; no express ready holds the
-// throttle; and the bypass never overrides the gates that sit ABOVE it in `summon_rune`
+// throttle; and the bypass never overrides the gates that sit ABOVE it in `call_rune`
 // (world halted, account capacity) even when it fires.
 
 /// A `spira-claim` stub answering `rune-exclude` (empty — no exclusions in this
@@ -1289,32 +1289,32 @@ fn express_runes(w: &World) {
 }
 
 #[test]
-fn express_ready_in_task_pool_bypasses_the_throttle_and_summons() {
+fn express_ready_in_task_pool_bypasses_the_throttle_and_calls() {
     let (w, r, sink, clock) = setup("express-bypass");
     express_runes(&w);
     let bin = w.dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    exe(&bin.join("aeon"));
+    exe(&bin.join("dwarf"));
     std::fs::write(w.run.join("queue-throttled"), "since=2026-10-01T00:00:00Z depth=20 since_land=60m\n").unwrap();
     stub_express_claim(&r);
     r.on(|s| if s.prog == "systemd-run" { ok("") } else { None });
 
     let path = format!("{}:/usr/bin:/bin", bin.display());
     let extra: Vec<(&str, &str)> = vec![("PATH", &path)];
-    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonPass, &extra, None), 0);
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::CallPass, &extra, None), 0);
     assert!(
         sink.has("CHECK7 pool: throttle active — express bead ready, granting pool=1 (restricted to express)"),
         "{}",
         sink.text()
     );
-    assert!(sink.has("ACT summoned a builder aeon"), "{}", sink.text());
+    assert!(sink.has("ACT called a builder dwarf"), "{}", sink.text());
     let launch = r.find(|s| s.prog == "systemd-run").expect("systemd-run must have been called");
     assert!(
         launch.args.iter().any(|a| a == "--setenv=SPIRA_REQUIRE_EXPRESS=1"),
-        "express grant must restrict the summoned aeon to express: {:?}",
+        "express grant must restrict the called dwarf to express: {:?}",
         launch.args
     );
-    // Exactly one summon: the express grant sets the pool to EXACTLY 1 — a second ready
+    // Exactly one call: the express grant sets the pool to EXACTLY 1 — a second ready
     // task rune (ops has none in this fixture, but the cap matters regardless) must not
     // also draw on it.
     assert_eq!(r.count(|s| s.prog == "systemd-run"), 1);
@@ -1326,7 +1326,7 @@ fn no_express_ready_stays_throttled() {
     express_runes(&w);
     let bin = w.dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    exe(&bin.join("aeon"));
+    exe(&bin.join("dwarf"));
     std::fs::write(w.run.join("queue-throttled"), "since=2026-10-01T00:00:00Z depth=20 since_land=60m\n").unwrap();
     // No bead anywhere carries the express label: every ready-count call answers 0.
     r.on(|s| {
@@ -1344,13 +1344,13 @@ fn no_express_ready_stays_throttled() {
 
     let path = format!("{}:/usr/bin:/bin", bin.display());
     let extra: Vec<(&str, &str)> = vec![("PATH", &path)];
-    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonPass, &extra, None), 0);
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::CallPass, &extra, None), 0);
     assert!(
         sink.has("CHECK7 pool: throttle active (since=2026-10-01T00:00:00Z depth=20 since_land=60m) — task pool held at 0"),
         "{}",
         sink.text()
     );
-    assert!(!sink.has("ACT summoned"), "{}", sink.text());
+    assert!(!sink.has("ACT called"), "{}", sink.text());
     assert_eq!(r.count(|s| s.prog == "systemd-run"), 0, "nothing should launch while held at 0");
 }
 
@@ -1368,7 +1368,7 @@ fn express_ready_in_task_pool_a_claim_error_is_loud_and_never_widens() {
     std::fs::write(w.home.join("runes/builder.rune"), "RUNE_LABELS=\"$SPIRA_PLAN_LABEL\"\nRUNE_MAX_CONCURRENT=4\n").unwrap();
     let bin = w.dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    exe(&bin.join("aeon"));
+    exe(&bin.join("dwarf"));
     std::fs::write(w.run.join("queue-throttled"), "since=2026-10-01T00:00:00Z depth=20 since_land=60m\n").unwrap();
     r.on(|s| {
         if s.prog != "spira-claim" {
@@ -1392,24 +1392,24 @@ fn express_ready_in_task_pool_a_claim_error_is_loud_and_never_widens() {
 
     let path = format!("{}:/usr/bin:/bin", bin.display());
     let extra: Vec<(&str, &str)> = vec![("PATH", &path)];
-    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonPass, &extra, None), 0);
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::CallPass, &extra, None), 0);
     assert!(
         sink.0.borrow().iter().any(|l| l.starts_with("[stderr]") && l.contains("CLAIM-ERROR")),
         "a claim-error must go out LOUDLY, on stderr: {}",
         sink.text()
     );
     assert!(sink.has("SPIRA_PLAN_LABEL"), "{}", sink.text());
-    assert!(!sink.has("ACT summoned"), "a refused predicate must never summon: {}", sink.text());
-    assert_eq!(r.count(|s| s.prog == "systemd-run"), 0, "a refused predicate must never widen into a summon");
+    assert!(!sink.has("ACT called"), "a refused predicate must never call: {}", sink.text());
+    assert_eq!(r.count(|s| s.prog == "systemd-run"), 0, "a refused predicate must never widen into a call");
 }
 
 #[test]
-fn express_ready_but_world_halted_does_not_summon() {
+fn express_ready_but_world_halted_does_not_call() {
     let (w, r, sink, clock) = setup("express-halted");
     express_runes(&w);
     let bin = w.dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    exe(&bin.join("aeon"));
+    exe(&bin.join("dwarf"));
     std::fs::write(w.run.join("queue-throttled"), "since=2026-10-01T00:00:00Z depth=20 since_land=60m\n").unwrap();
     std::fs::write(w.run.join("world.halted"), "halted\n").unwrap();
     stub_express_claim(&r);
@@ -1417,36 +1417,36 @@ fn express_ready_but_world_halted_does_not_summon() {
 
     let path = format!("{}:/usr/bin:/bin", bin.display());
     let extra: Vec<(&str, &str)> = vec![("PATH", &path)];
-    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonPass, &extra, None), 0);
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::CallPass, &extra, None), 0);
     // The bypass still computes and grants the pool slot — exactly what the bash original
-    // did (pool math runs before any per-persona summon_rune call) — but the halted gate,
-    // checked first inside summon_rune, refuses every attempt regardless.
+    // did (pool math runs before any per-persona call_rune call) — but the halted gate,
+    // checked first inside call_rune, refuses every attempt regardless.
     assert!(sink.has("CHECK7 pool: throttle active — express bead ready, granting pool=1"), "{}", sink.text());
-    assert!(sink.has("CHECK7 builder: halted — not summoning"), "{}", sink.text());
-    assert!(!sink.has("ACT summoned"), "{}", sink.text());
+    assert!(sink.has("CHECK7 builder: halted — not calling"), "{}", sink.text());
+    assert!(!sink.has("ACT called"), "{}", sink.text());
     assert_eq!(r.count(|s| s.prog == "systemd-run"), 0, "a halted world must never be bypassed by express");
 }
 
 #[test]
-fn express_ready_but_capacity_unknown_does_not_summon() {
+fn express_ready_but_capacity_unknown_does_not_call() {
     let (w, r, sink, clock) = setup("express-capacity-unknown");
     express_runes(&w);
     let bin = w.dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    exe(&bin.join("aeon"));
+    exe(&bin.join("dwarf"));
     std::fs::write(w.run.join("queue-throttled"), "since=2026-10-01T00:00:00Z depth=20 since_land=60m\n").unwrap();
     // A capacity-pause file that exists but cannot be parsed reads as Unknown
-    // (aeon::capacity::pause_state) — never treated as Open.
+    // (dwarf::capacity::pause_state) — never treated as Open.
     std::fs::write(w.run.join("capacity-pause"), "not-a-number\n").unwrap();
     stub_express_claim(&r);
     r.on(|s| if s.prog == "systemd-run" { ok("") } else { None });
 
     let path = format!("{}:/usr/bin:/bin", bin.display());
     let extra: Vec<(&str, &str)> = vec![("PATH", &path)];
-    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonPass, &extra, None), 0);
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::CallPass, &extra, None), 0);
     assert!(sink.has("CHECK7 pool: throttle active — express bead ready, granting pool=1"), "{}", sink.text());
-    assert!(sink.has("CHECK7 builder: the account is out of capacity for another ?s — not summoning"), "{}", sink.text());
-    assert!(!sink.has("ACT summoned"), "{}", sink.text());
+    assert!(sink.has("CHECK7 builder: the account is out of capacity for another ?s — not calling"), "{}", sink.text());
+    assert!(!sink.has("ACT called"), "{}", sink.text());
     assert_eq!(r.count(|s| s.prog == "systemd-run"), 0, "capacity Unknown must never be bypassed by express");
 }
 
@@ -1460,7 +1460,7 @@ fn on_check2_skips_a_stale_holder_whose_bead_moved_since_the_read() {
     r.on(move |s| {
         if s.prog == "spira-lc" && s.args[0] == "list" {
             return ok(&format!(
-                r#"[{{"bead_id":"sp-b","state":"WORKING","holder":"aeon-1","lease_until":"{lease}","holds":"[]","version":"3"}}]"#
+                r#"[{{"bead_id":"sp-b","state":"WORKING","holder":"dwarf-1","lease_until":"{lease}","holds":"[]","version":"3"}}]"#
             ));
         }
         if s.prog == "spira-lc" && s.args[0] == "show" {
@@ -1480,7 +1480,7 @@ fn check2_stops_a_live_holder_before_reclaiming_and_refuses_when_it_will_not_sto
         let lease = NOW - 20_000;
         r.on(move |s| {
             if s.prog == "spira-lc" && s.args[0] == "list" {
-                return ok(&format!(r#"[{{"bead_id":"sp-b","state":"WORKING","holder":"aeon-1","lease_until":"{lease}","holds":"[]","version":"3"}}]"#));
+                return ok(&format!(r#"[{{"bead_id":"sp-b","state":"WORKING","holder":"dwarf-1","lease_until":"{lease}","holds":"[]","version":"3"}}]"#));
             }
             if s.prog == "spira-lc" && s.args[0] == "show" {
                 return ok(r#"{"bead":{"state":"WORKING","version":"3"}}"#);
@@ -1504,7 +1504,7 @@ fn on_check2_reaps_stale_leases_and_2c_reports_desync() {
     r.on(move |s| {
         if s.prog == "spira-lc" && s.args[0] == "list" {
             return ok(&format!(
-                r#"[{{"bead_id":"sp-b","state":"WORKING","holder":"aeon-1","lease_until":"{lease}","holds":"[]","version":"3"}},
+                r#"[{{"bead_id":"sp-b","state":"WORKING","holder":"dwarf-1","lease_until":"{lease}","holds":"[]","version":"3"}},
                     {{"bead_id":"sp-c","state":"READY","holder":"ghost","holds":"[]","version":"1"}}]"#
             ));
         }
@@ -1571,8 +1571,8 @@ fn on_plan_ready_is_spira_claims_and_in_progress_is_the_machines_working_rows() 
     r.on(move |s| {
         if s.prog == "spira-lc" && s.args[0] == "list" {
             return ok(&format!(
-                r#"[{{"bead_id":"sp-a","state":"WORKING","holder":"aeon-1","lease_until":"{lease}","holds":"[]","version":"2"}},
-                    {{"bead_id":"sp-b","state":"WORKING","holder":"aeon-2","lease_until":"{lease}","holds":"[]","version":"4"}}]"#
+                r#"[{{"bead_id":"sp-a","state":"WORKING","holder":"dwarf-1","lease_until":"{lease}","holds":"[]","version":"2"}},
+                    {{"bead_id":"sp-b","state":"WORKING","holder":"dwarf-2","lease_until":"{lease}","holds":"[]","version":"4"}}]"#
             ));
         }
         if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("ready-count") {
@@ -1796,7 +1796,7 @@ fn roster_warnings_name_each_left_out_persona_once() {
         "p".into(),
     )
     .run();
-    assert!(sink.has("WARN ops.rune is in the runes but not in SPIRA_RUNES — that persona will never be summoned here"));
+    assert!(sink.has("WARN ops.rune is in the runes but not in SPIRA_RUNES — that persona will never be called here"));
     assert!(sink.has("WARN spike.rune is in the runes"));
     assert_eq!(
         std::fs::read_to_string(w.run.join("roster-warn.stamp")).unwrap(),
@@ -1998,12 +1998,12 @@ fn two_releases(tag: &str) -> (testkit::TempDir, String, String) {
 }
 
 #[test]
-fn a_summoner_from_an_old_release_spawns_nothing() {
+fn a_caller_from_an_old_release_spawns_nothing() {
     let (w, r, sink, clock) = setup("skew-refuse");
     let (_t, old, _new) = two_releases("refuse");
-    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonOnly, &[("SPIRA_RELEASE", old.as_str())], None), 0);
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::CallOnly, &[("SPIRA_RELEASE", old.as_str())], None), 0);
     assert!(sink.has("RELEASE SKEW"), "{}", sink.text());
-    assert_eq!(r.count(|s| is_bd(s, "ready")), 0, "a skewed summoner reads nothing and spawns nothing");
+    assert_eq!(r.count(|s| is_bd(s, "ready")), 0, "a skewed caller reads nothing and spawns nothing");
     assert_eq!(r.count(|s| s.args.iter().any(|a| a.starts_with("--property=ExecStopPost"))), 0);
 }
 
@@ -2019,10 +2019,10 @@ fn spawned_units_are_pinned_to_current_not_the_callers_release() {
         w.ctx(&extra, None),
         w.declared(&extra),
         &w.home,
-        Mode::SummonOnly,
+        Mode::CallOnly,
         "host-1-1".into(),
     );
-    let argv = s.summon_argv("builder").join("\n");
+    let argv = s.call_argv("builder").join("\n");
     assert!(argv.contains(&format!("--setenv=SPIRA_RELEASE={new}")), "{argv}");
     assert!(argv.contains(&format!("--setenv=PATH={new}/bin:")), "{argv}");
     assert!(!argv.contains(&old), "no token may name the caller's release: {argv}");
@@ -2107,7 +2107,7 @@ fn on_check2d_an_unresolved_repo_map_hold_stands() {
 }
 
 // ---------------------------------------------------------------------------------------
-// P0 express preempts a running lane aeon; any P0 or rework bead makes lanes yield
+// P0 express preempts a running lane dwarf; any P0 or rework bead makes lanes yield
 
 struct UrgentFleet {
     w: World,
@@ -2125,13 +2125,13 @@ fn urgent_fleet(tag: &str, urgent_row: &str, units: &[&str]) -> UrgentFleet {
     std::fs::write(w.home.join("runes/ops.rune"), "RUNE_LANE=ops\nRUNE_LABELS=spira,incident\nRUNE_MAX_CONCURRENT=2\n").unwrap();
     let bin = w.dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    exe(&bin.join("aeon"));
+    exe(&bin.join("dwarf"));
     let base = std::time::SystemTime::now() - std::time::Duration::from_secs(1000);
     for (i, (lane, bead)) in [("ops", "sp-lo"), ("ops", "sp-lg")].iter().enumerate() {
         if units.iter().filter(|u| u.starts_with(lane)).count() <= i {
             continue;
         }
-        let pf = w.run.join(format!("aeon-{lane}-{bead}.pid"));
+        let pf = w.run.join(format!("dwarf-{lane}-{bead}.pid"));
         std::fs::write(&pf, "1\n").unwrap();
         std::fs::write(pf.with_extension("lease"), "99999999999\n").unwrap();
         std::fs::File::options().write(true).open(&pf).unwrap().set_modified(base + std::time::Duration::from_secs(i as u64 * 100)).unwrap();
@@ -2152,13 +2152,13 @@ fn urgent_fleet(tag: &str, urgent_row: &str, units: &[&str]) -> UrgentFleet {
     let live_c = live.clone();
     r.on(move |s| {
         if s.args.iter().any(|a| a == "list-units") {
-            let glob = s.args.iter().find(|a| a.starts_with("spira-aeon-")).cloned().unwrap_or_default();
-            let prefix = glob.trim_end_matches('*').trim_start_matches("spira-aeon-").to_string();
+            let glob = s.args.iter().find(|a| a.starts_with("spira-dwarf-")).cloned().unwrap_or_default();
+            let prefix = glob.trim_end_matches('*').trim_start_matches("spira-dwarf-").to_string();
             let lines: String = live_c
                 .borrow()
                 .iter()
                 .filter(|u| prefix.is_empty() || u.starts_with(&prefix))
-                .map(|u| format!("spira-aeon-{u}.service loaded active\n"))
+                .map(|u| format!("spira-dwarf-{u}.service loaded active\n"))
                 .collect();
             return ok(&lines);
         }
@@ -2180,8 +2180,8 @@ fn urgent_fleet(tag: &str, urgent_row: &str, units: &[&str]) -> UrgentFleet {
 }
 
 fn run_urgent(f: &UrgentFleet) {
-    let extra: Vec<(&str, &str)> = vec![("PATH", &f.path), ("SPIRA_MAX_LIVE_AEONS", "4"), ("SPIRA_LANES_MAX_LIVE", "2")];
-    assert_eq!(run_mode(&f.w, &f.r, &f.sink, &f.clock, Mode::SummonPass, &extra, None), 0);
+    let extra: Vec<(&str, &str)> = vec![("PATH", &f.path), ("SPIRA_MAX_LIVE_DWARVES", "4"), ("SPIRA_LANES_MAX_LIVE", "2")];
+    assert_eq!(run_mode(&f.w, &f.r, &f.sink, &f.clock, Mode::CallPass, &extra, None), 0);
 }
 
 const FULL: &[&str] = &["builder-1", "builder-2", "ops-3", "ops-4"];
@@ -2192,10 +2192,10 @@ fn a_p0_express_with_a_full_fleet_preempts_the_youngest_lane_and_a_builder_takes
     run_urgent(&f);
     assert_eq!(f.r.count(|s| s.prog == "slay.sh"), 1, "{}", f.sink.text());
     let slay = f.r.find(|s| s.prog == "slay.sh").unwrap();
-    assert_eq!(slay.args[..2], ["--bead".to_string(), "sp-lg".to_string()], "the youngest lane aeon, never a builder");
-    assert!(f.sink.has("ACT preempted a ops lane aeon on sp-lg for P0 express sp-x"), "{}", f.sink.text());
-    assert!(f.sink.has("ACT summoned a builder aeon"), "{}", f.sink.text());
-    assert!(!f.sink.has("summoned a ops lane aeon"), "{}", f.sink.text());
+    assert_eq!(slay.args[..2], ["--bead".to_string(), "sp-lg".to_string()], "the youngest lane dwarf, never a builder");
+    assert!(f.sink.has("ACT preempted a ops lane dwarf on sp-lg for P0 express sp-x"), "{}", f.sink.text());
+    assert!(f.sink.has("ACT called a builder dwarf"), "{}", f.sink.text());
+    assert!(!f.sink.has("called a ops lane dwarf"), "{}", f.sink.text());
     assert!(std::fs::read_to_string(f.w.run.join("lane-preemptions")).unwrap().contains("ops\tsp-lg\tsp-x"));
     assert_eq!(f.live.borrow().iter().filter(|u| u.starts_with("builder")).count(), 2, "builders were not touched");
 }
@@ -2206,7 +2206,7 @@ fn a_p0_that_is_not_express_makes_lanes_yield_and_stops_nothing() {
     run_urgent(&f);
     assert_eq!(f.r.count(|s| s.prog == "slay.sh"), 0, "{}", f.sink.text());
     assert!(f.sink.has("CHECK7 lanes: yielding"), "{}", f.sink.text());
-    assert!(!f.sink.has("lane aeon"), "no lane may be summoned while a P0 waits: {}", f.sink.text());
+    assert!(!f.sink.has("lane dwarf"), "no lane may be called while a P0 waits: {}", f.sink.text());
 }
 
 #[test]
@@ -2214,7 +2214,7 @@ fn a_rework_bead_makes_lanes_yield() {
     let f = urgent_fleet("yield-rework", "sp-w\t2\t1\t0\n", &["builder-1"]);
     run_urgent(&f);
     assert_eq!(f.r.count(|s| s.prog == "slay.sh"), 0);
-    assert!(!f.sink.has("lane aeon"), "{}", f.sink.text());
+    assert!(!f.sink.has("lane dwarf"), "{}", f.sink.text());
 }
 
 #[test]
@@ -2226,9 +2226,9 @@ fn the_urgent_query_names_only_task_pool_runes() {
 }
 
 #[test]
-fn with_nothing_urgent_lanes_are_summoned_as_before() {
+fn with_nothing_urgent_lanes_are_called_as_before() {
     let f = urgent_fleet("no-urgent", "", &["builder-1"]);
     run_urgent(&f);
-    assert!(f.sink.has("lane aeon"), "positive control: {}", f.sink.text());
+    assert!(f.sink.has("lane dwarf"), "positive control: {}", f.sink.text());
     assert_eq!(f.r.count(|s| s.prog == "slay.sh"), 0);
 }

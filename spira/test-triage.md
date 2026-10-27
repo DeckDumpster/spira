@@ -32,8 +32,8 @@ migration bead per family from this table.
 | A | sim worlds | `sim run` | 2 | 259 |
 | B | submit → gate → land → close (landing pass) | landing.sh fixture, testdb, fixture repo | 7 | 403 |
 | C | queue and round: publish, open-batch, transition, land-local, batcher-cut, release | queue fixture repo + forge fake | 11 | 588 |
-| D | aeon teardown and close fences | full-aeon fixture | 8 | 518 |
-| E | aeon claim, resume, worktree and wiki hygiene | testdb + fixture repo | 11 | 561 |
+| D | dwarf teardown and close fences | full-dwarf fixture | 8 | 518 |
+| E | dwarf claim, resume, worktree and wiki hygiene | testdb + fixture repo | 11 | 561 |
 | F | persona brief, prompt layers, model | rune + runes render | 7 | 391 |
 | G | install, uninstall, deploy, units, timers | mock systemctl, bare-host | 10 | 519 |
 | H | watchers and ops detection | testdb | 11 | 622 |
@@ -75,35 +75,35 @@ migration bead per family from this table.
 | test-queue-ops.sh | 55 | queue eject and abandon | sim | Eject is a hand-off (`work`/lifecycle/queue); add a scenario step. |
 | test-land-local-release.sh | 34 | a harness landing under queue.local builds, verifies and activates a release; a failed build leaves current alone | keep | Exercises the real release build/activate on the filesystem; the refusal rows (no corpus) are unit. |
 | test-batch-owner.sh | 96 | owner-file protocol lets an orphan sweep find a container after its owner dies | keep | Needs real podman. Only `test-round-vm-e2e.sh` still references `batch-owner.sh`: the family bead should first ask whether the protocol outlived `testenv-batch.sh`, and delete suite and script if not. |
-| test-cross-repo.sh | 34 | an aeon on a non-home-repo bead cuts its worktree in that repo and commits land there | sim | A scenario with two repos; the actor already has a repo param. |
+| test-cross-repo.sh | 34 | a dwarf on a non-home-repo bead cuts its worktree in that repo and commits land there | sim | A scenario with two repos; the actor already has a repo param. |
 | test-cockpit-funnel.sh | 41 | the DONE → LANDED funnel in the QUEUE section counts done, certify and red from lifecycle rows | unit | A read-model count over rows; test the collector in `cockpit-collect`. |
 
-### D — aeon teardown and close fences
+### D — dwarf teardown and close fences
 
 | suite | wall | property | target | reason |
 | --- | ---: | --- | --- | --- |
-| test-aeon-teardown-e2e.sh | 64 | charge and pre-session teardown rows through a real aeon.sh run | **migrated**: whole-run tests in `aeon/src/tests.rs`; suite deleted | The disposition tables are already Rust tests; what is left is aeon → lifecycle wiring. |
-| test-aeon-teardown-e2e-wired.sh | 88 | decision-blocked, own-closeout and ledger-segment rows | **migrated**: whole-run tests in `aeon/src/tests.rs`; suite deleted | Shard; goes with parent. |
-| test-aeon-teardown-e2e-exit.sh | 81 | yield-headless, exit-code and operator-wait rows | **partly migrated**: yield-headless and exit-code rows moved to `aeon/src/tests.rs`; the operator-wait rows stay (real work broker and mail) | Shard; goes with parent. |
-| test-aeon-lifecycle-cutover.sh | 65 | aeon.sh on the semantic layer against a throwaway Dolt and real bd | sim (not migrated: the sim has no aeon actor, and the property is aeon against real bd) | The semantic layer has a sim; the Dolt-grant half belongs to family I. |
-| test-ops-closing.sh | 92 | close-time fences on an aeon's finished session, through the real aeon with a shim | **migrated**: aeon runs are whole-run tests; the shell keeps only the pure phrase table | Fence = predicate over close evidence (unit) + wiring (scenario step); neither needs 92 s of aeon. |
-| test-thrash-teardown.sh | 45 | a thrash disposition requeues instead of charging an attempt | **partly migrated**: dispositions moved to `aeon/src/tests.rs`; the real-SIGTERM single-teardown case stays (needs a real process group) | Branch in `cleanup()` over a recorded disposition; belongs in the aeon crate's `decide` tests. |
-| test-aeon-gate-unfinished-attempts.sh | 31 | releasing a bead while its gate is still running leaves `attempts_of` unchanged | **migrated**: `aeon/src/tests.rs` plus `spira-claim` events fold; suite deleted | An SQL net-zero rule over events; test the attempts query. |
-| test-slay.sh | 52 | slay stops one aeon cleanly, removes its work, makes the bead say what is true | sim (not migrated: the sim has no aeon actor or process group to slay) | Operator action in a world with a live aeon. |
+| test-dwarf-teardown-e2e.sh | 64 | charge and pre-session teardown rows through a real dwarf.sh run | **migrated**: whole-run tests in `dwarf/src/tests.rs`; suite deleted | The disposition tables are already Rust tests; what is left is dwarf → lifecycle wiring. |
+| test-dwarf-teardown-e2e-wired.sh | 88 | decision-blocked, own-closeout and ledger-segment rows | **migrated**: whole-run tests in `dwarf/src/tests.rs`; suite deleted | Shard; goes with parent. |
+| test-dwarf-teardown-e2e-exit.sh | 81 | yield-headless, exit-code and operator-wait rows | **partly migrated**: yield-headless and exit-code rows moved to `dwarf/src/tests.rs`; the operator-wait rows stay (real work broker and mail) | Shard; goes with parent. |
+| test-dwarf-lifecycle-cutover.sh | 65 | dwarf.sh on the semantic layer against a throwaway Dolt and real bd | sim (not migrated: the sim has no dwarf actor, and the property is dwarf against real bd) | The semantic layer has a sim; the Dolt-grant half belongs to family I. |
+| test-ops-closing.sh | 92 | close-time fences on a dwarf's finished session, through the real dwarf with a shim | **migrated**: dwarf runs are whole-run tests; the shell keeps only the pure phrase table | Fence = predicate over close evidence (unit) + wiring (scenario step); neither needs 92 s of dwarf. |
+| test-thrash-teardown.sh | 45 | a thrash disposition requeues instead of charging an attempt | **partly migrated**: dispositions moved to `dwarf/src/tests.rs`; the real-SIGTERM single-teardown case stays (needs a real process group) | Branch in `cleanup()` over a recorded disposition; belongs in the dwarf crate's `decide` tests. |
+| test-dwarf-gate-unfinished-attempts.sh | 31 | releasing a bead while its gate is still running leaves `attempts_of` unchanged | **migrated**: `dwarf/src/tests.rs` plus `spira-claim` events fold; suite deleted | An SQL net-zero rule over events; test the attempts query. |
+| test-slay.sh | 52 | slay stops one dwarf cleanly, removes its work, makes the bead say what is true | sim (not migrated: the sim has no dwarf actor or process group to slay) | Operator action in a world with a live dwarf. |
 
-### E — aeon claim, resume and hygiene
+### E — dwarf claim, resume and hygiene
 
 | suite | wall | property | target | reason |
 | --- | ---: | --- | --- | --- |
-| test-aeon-resume.sh | 80 | a branch with prior commits renders RESUME_BRIEF; a slay wip salvage renders SLAIN_BRIEF | unit | Text render over inputs. |
-| test-aeon-resume-collision.sh | 40 | a lost resume race falls through to the next resumable candidate, not the general queue head | unit | Candidate selection after a failed claim; pure ordering. |
+| test-dwarf-resume.sh | 80 | a branch with prior commits renders RESUME_BRIEF; a slay wip salvage renders SLAIN_BRIEF | unit | Text render over inputs. |
+| test-dwarf-resume-collision.sh | 40 | a lost resume race falls through to the next resumable candidate, not the general queue head | unit | Candidate selection after a failed claim; pure ordering. |
 | test-epic-claim-order.sh | 74 | claim rank: min(epic, bead) priority, started epic first, resumable before fresh, oldest | unit | A sort key; `epic_rank_rows` already isolates it. Cheapest win in the family. |
-| test-aeon-worktree-collision.sh | 77 | never a second live session in a worktree another bead holds | sim | Two aeons racing is a scenario, and flips in shell. |
-| test-aeon-world-stop.sh | 40 | a world-stop-labelled bead is not run while live aeons exist | unit | A predicate over labels and live count. |
-| test-aeon-prod-dirty.sh | 55 | the prod-dirty guard is bound to the aeon's own worktree, not the shared checkout | unit | Path-scoping predicate; keep one git fixture row. |
-| test-aeon-prod-dirty-rest.sh | 47 | cases 2 and 3 of the above | unit | Shard; goes with parent. |
-| test-aeon-wiki-dirty.sh | 39 | only this session's own still-dirty wiki writes are committed at exit, never `wiki/tasks.md` | unit | Path filter over a transcript. |
-| test-aeon-sweep.sh | 44 | `aeon.sh --sweep` runs the persona without a bead | keep | Launcher wiring with real argv; only a real aeon.sh proves it. Candidate to share the full-aeon fixture with D. |
+| test-dwarf-worktree-collision.sh | 77 | never a second live session in a worktree another bead holds | sim | Two dwarves racing is a scenario, and flips in shell. |
+| test-dwarf-world-stop.sh | 40 | a world-stop-labelled bead is not run while live dwarves exist | unit | A predicate over labels and live count. |
+| test-dwarf-prod-dirty.sh | 55 | the prod-dirty guard is bound to the dwarf's own worktree, not the shared checkout | unit | Path-scoping predicate; keep one git fixture row. |
+| test-dwarf-prod-dirty-rest.sh | 47 | cases 2 and 3 of the above | unit | Shard; goes with parent. |
+| test-dwarf-wiki-dirty.sh | 39 | only this session's own still-dirty wiki writes are committed at exit, never `wiki/tasks.md` | unit | Path filter over a transcript. |
+| test-dwarf-sweep.sh | 44 | `dwarf.sh --sweep` runs the persona without a bead | keep | Launcher wiring with real argv; only a real dwarf.sh proves it. Candidate to share the full-dwarf fixture with D. |
 | test-unclaimable.sh | 30 | ready beads no persona can claim are surfaced; the detector does not report its own reports | unit | Claimers arithmetic plus a cycle guard. |
 | test-unclaimable-worktree.sh | 35 | detection uses production config, not the calling worktree's conf.sh | unit | One resolver call with two configs. |
 
@@ -114,17 +114,17 @@ Migrated (sp-uxdjnk). Wall before is the table's round-VM median; the alone figu
 
 | suite | wall | property | outcome |
 | --- | ---: | --- | --- |
-| test-aeon-runes-overlay.sh, -mech.sh | 60 + 60 | builder brief says how to verify once; overlay beats release text | deleted. Overlay mechanism was already `brief::tests::overlays_whole_section_append_and_absent`, doctor's rows `doctor::tests::runes_overlays_*`; added `brief::tests::the_shipped_builder_brief_has_one_way_to_verify_and_the_work_verbs_to_finish` (golden rows). |
-| test-aeon-prompt-layers.sh, -sticking.sh | 53 + 58 | claude argv from the rune knobs, thrash banner | deleted. Banner and split were `brief::tests`; added `aeon::tests::a_replace_rune_…`, `an_append_rune_…` and `brief::tests::the_shipped_groomer_splits_…`. |
-| test-persona-model.sh | 42 | one resolver for a persona's launch model | deleted. Resolver was `conf::tests::persona_model_reads_…`; added `aeon::tests::the_launch_model_is_the_toml_persona_model_…` and `conf::tests::no_launcher_scrapes_a_model_…` (the source greps). |
-| test-summon-rune.sh | 86 | `summon_rune` refusal ladder and `rune_free` arithmetic | ladder moved to eight `sentinel` tests (`an_elastic_rune_…`, `a_task_rune_yields_…`, `the_collective_lane_cap_…`, `the_fleet_ceiling_…`, `a_task_rune_honours_the_pool_…`, `an_elastic_rune_takes_the_pool_remainder_…`, `a_summon_carries_a_timeout_…`, `a_halt_refuses_…`). Kept: lib.sh `rune_free` (real bash), `aeon --escape` through the world gate, the `world drain` expiry writer. Alone: 312 s before, 133 s after. |
+| test-dwarf-runes-overlay.sh, -mech.sh | 60 + 60 | builder brief says how to verify once; overlay beats release text | deleted. Overlay mechanism was already `brief::tests::overlays_whole_section_append_and_absent`, doctor's rows `doctor::tests::runes_overlays_*`; added `brief::tests::the_shipped_builder_brief_has_one_way_to_verify_and_the_work_verbs_to_finish` (golden rows). |
+| test-dwarf-prompt-layers.sh, -sticking.sh | 53 + 58 | claude argv from the rune knobs, thrash banner | deleted. Banner and split were `brief::tests`; added `dwarf::tests::a_replace_rune_…`, `an_append_rune_…` and `brief::tests::the_shipped_groomer_splits_…`. |
+| test-persona-model.sh | 42 | one resolver for a persona's launch model | deleted. Resolver was `conf::tests::persona_model_reads_…`; added `dwarf::tests::the_launch_model_is_the_toml_persona_model_…` and `conf::tests::no_launcher_scrapes_a_model_…` (the source greps). |
+| test-call-rune.sh | 86 | `call_rune` refusal ladder and `rune_free` arithmetic | ladder moved to eight `sentinel` tests (`an_elastic_rune_…`, `a_task_rune_yields_…`, `the_collective_lane_cap_…`, `the_fleet_ceiling_…`, `a_task_rune_honours_the_pool_…`, `an_elastic_rune_takes_the_pool_remainder_…`, `a_call_carries_a_timeout_…`, `a_halt_refuses_…`). Kept: lib.sh `rune_free` (real bash), `dwarf --escape` through the world gate, the `world drain` expiry writer. Alone: 312 s before, 133 s after. |
 | test-concierge.sh | 32 | Concierge brief composition, resume/headless handling, historic ways in broke | kept. `concierge.sh` is the shell program under test (statute-book brief, tmux, `/proc` holder scan, wake delivery); there is no Rust owner to move it to, and a unit test of a shell function is the same shell test. |
 
 ### G — install, deploy, units
 
 | suite | wall | property | target | reason |
 | --- | ---: | --- | --- | --- |
-| test-install-aeons.sh | 59 | install's live-aeon guard, oneshot drain and end-state check | keep | Real install.sh against a mock systemctl; bare-host. |
+| test-install-dwarves.sh | 59 | install's live-dwarf guard, oneshot drain and end-state check | keep | Real install.sh against a mock systemctl; bare-host. |
 | test-uninstall.sh | 59 | uninstall removes the default tier, is idempotent and instance-aware, reports planted strays | keep | Bare-host, 816 lines of real filesystem effects. |
 | test-deploy.sh | 33 | deploy: fetch, drain, activate, re-render, health check, rollback, dry-run, draft refusal | keep | Real deploy path; wall is 1,792 lines, shard by property. |
 | test-units-lint.sh | 53 | every unit renders with no unresolved placeholder or literal path, and carries no CPUQuota/Nice | unit | A render pass plus text checks; render once in a Rust test. |
@@ -147,7 +147,7 @@ Migrated (sp-uxdjnk). Wall before is the table's round-VM median; the alone figu
 | test-mimir-closed-record.sh | 32 | the closed-record INVALID-CLOSED trigger and allowlist | unit | A trigger over rows. |
 | test-yield.sh | 32 | a gate red lands in the right column; an unreadable record says `?` | unit | Panel column rule. |
 | test-holds.sh | 42 | holds reports open beads whose branch touches a set of paths | unit | Path-overlap set logic. |
-| test-mail-aeon.sh | 36 | amend mails the live aeon; the mailbox is removed on exit | sim | A message hand-off with a lifecycle end. |
+| test-mail-dwarf.sh | 36 | amend mails the live dwarf; the mailbox is removed on exit | sim | A message hand-off with a lifecycle end. |
 | test-verdict-flow.sh | 36 | mail sendmail: bead closing and decision-bead verdict flow back | sim | Hand-off across mail, bead and sentinel. |
 
 ### I — lifecycle store (Dolt)

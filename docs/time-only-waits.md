@@ -22,8 +22,8 @@ that converts it.
 ## Known, not detected
 
 The lint reads sleeps and expiry stamps. Two entries the bead named are waits whose loop shape
-it cannot judge, and were not found as a bounded "wait for live aeons" loop in this tree at the
-time of writing: the rounds-loop / round2 live-aeon waits, and the cert / landing "settle"
+it cannot judge, and were not found as a bounded "wait for live dwarves" loop in this tree at the
+time of writing: the rounds-loop / round2 live-dwarf waits, and the cert / landing "settle"
 waits. They are not on the allow list because the rule does not flag them; a rule that learns to
 read them adds them here with their bead.
 

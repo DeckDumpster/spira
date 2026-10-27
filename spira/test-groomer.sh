@@ -7,7 +7,7 @@
 # WHAT THIS SUITE IS GUARDING
 # ---------------------------
 # groomer provides four hygiene operations (supersede, close, correct-lane, and the
-# composable split/merge that aeons do via bd create + supersede). The central property this
+# composable split/merge that dwarves do via bd create + supersede). The central property this
 # suite enforces is the one the bead makes a hard requirement: groomer REFUSES to close a
 # bead as unwanted, and that refusal is in the code, not a sentence in a brief.
 #

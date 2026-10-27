@@ -193,7 +193,7 @@ All paths under `$SPIRA_RUN` unless absolute. Formats unchanged (§3).
 1. **A LANDED record whose tip is not on the forge is never deleted** (§5; absorbs the
    `landstate-keep-unpublished` override, sp-bauwt).
 2. **Never rebase, reopen or land under a live holder** (`hold-<id>.pid` live, or
-   `aeon-*-<id>.pid` live with `aeon.sh` in its cmdline) — checked before the walk's rebase
+   `dwarf-*-<id>.pid` live with `dwarf.sh` in its cmdline) — checked before the walk's rebase
    and again before each survivor's.
 3. **Only FAIL reopens.** BASE_FAIL/NO_VERDICT never charge; a rebase failure other than
    `conflict` never reopens.
@@ -298,14 +298,14 @@ enum BranchVerdict { Gone, NotClosed, WrongRepo, Superseded, CutoverRound, Eject
 For each branch, in order (`landing.run` repo/branch):
 
 1. Gone since enumeration → one of three lines (tip on base / not on base / unknown); skip.
-2. Not closed → "not landed — its bead is S, held by a live aeon | and no aeon holds it".
+2. Not closed → "not landed — its bead is S, held by a live dwarf | and no dwarf holds it".
 3. Bead's repo path ≠ this path → WrongRepo line. Superseded → line. Labelled
    `SPIRA_CUTOVER_ROUND_LABEL` → line.
 4. landstate `EJECTED` → `land_mark RED <tip> ejected-not-requeued`, `bead_reopen batch-eject`,
    progress "reopened <id> — ejected-not-requeued".
 5. `content_landed(branch, base_fq)` → "<base> already contains every change on <br> —
    nothing to land", `land_mark CONTENT`, drop `.ejected`.
-6. Live holder → "a live aeon still holds <br> — deferring the land".
+6. Live holder → "a live dwarf still holds <br> — deferring the land".
 7. **queued** → §4.2. **push/hold** → §4.3.
 
 ### 4.2 Queue certification (queue, queue.local)
@@ -466,7 +466,7 @@ shelling to the binary.
 ## 7. Cutover
 
 **Not performed** (operator's directive: no bash, unit or workflow edits). Line numbers are
-against this branch after its merge of `concierge/batch-rust` (queue, sentinel, aeon,
+against this branch after its merge of `concierge/batch-rust` (queue, sentinel, dwarf,
 testenv and spira-claim already cut over there). Production's checkout additionally carries
 the `landstate-keep-unpublished` hunk in landing.sh (landing.sh:1834-1839 there), which
 dies with the file. Apply in one landing, in this order. `$SPIRA_LANDING_PASS_BIN` is
@@ -502,11 +502,11 @@ The pr timer is unchanged: `systemd/spira-landing-pass.service:8` keeps
 |---|---|---|---|
 | 8 | `spira/canary.sh:160` | `bash "$SPIRA_HOME/landing.sh" 2>&1 \| sed 's/^/  landing: /' \|\| true` | `"$SPIRA_LANDING_PASS_BIN" land 2>&1 \| sed 's/^/  landing: /' \|\| true` |
 | 9 | `spira/canary.sh:18`, `spira/stage.sh:27-30,148-154` | comments: "canary.sh runs landing.sh directly" | "canary.sh runs `landing-pass land` directly" |
-| 10 | `spira/world.sh:175-176` `live_workers` | `argv_has "$p" "$SPIRA_HOME/gate.sh" "$SPIRA_HOME/landing.sh" "${SPIRA_PROD:-$SPIRA_HOME}/gate.sh" "${SPIRA_PROD:-$SPIRA_HOME}/landing.sh"` | `argv_has "$p" "$SPIRA_HOME/gate.sh" "${SPIRA_PROD:-$SPIRA_HOME}/gate.sh" "$(dirname "${SPIRA_PROD:-$SPIRA_HOME}")/bin/landing-pass" ${SPIRA_LANDING_PASS_BIN:+"$SPIRA_LANDING_PASS_BIN"}` (as the aeon cutover did for `bin/aeon`; note it also matches a 90 s pr pass in flight) |
+| 10 | `spira/world.sh:175-176` `live_workers` | `argv_has "$p" "$SPIRA_HOME/gate.sh" "$SPIRA_HOME/landing.sh" "${SPIRA_PROD:-$SPIRA_HOME}/gate.sh" "${SPIRA_PROD:-$SPIRA_HOME}/landing.sh"` | `argv_has "$p" "$SPIRA_HOME/gate.sh" "${SPIRA_PROD:-$SPIRA_HOME}/gate.sh" "$(dirname "${SPIRA_PROD:-$SPIRA_HOME}")/bin/landing-pass" ${SPIRA_LANDING_PASS_BIN:+"$SPIRA_LANDING_PASS_BIN"}` (as the dwarf cutover did for `bin/dwarf`; note it also matches a 90 s pr pass in flight) |
 | 11 | `spira/world.sh:165,598` | comments naming landing.sh | "landing-pass" |
 | 12 | `spira/runes/czar.rune:90` | `Bash(*landing.sh halt*)` | `Bash(*landing-pass halt*)` |
 | 13 | `spira/runes/czar.md:122` | ``Halt the landing pass with `landing.sh halt` `` | ``Halt the landing pass with `landing-pass halt --reason-file -` `` |
-| 14 | `spira/timeout-lint.sh:41` | `files=("$HERE/landing.sh")   # aeon.sh and sentinel.sh are Rust now; …` | the default file set is now empty: **retire** `timeout-lint.sh` and `test-timeout-lint.sh` (no caller, in no gate string), with their lines `spira-lint/fence-scripts-allow:36,40` and `spira/tier-budget-allowlist:409` |
+| 14 | `spira/timeout-lint.sh:41` | `files=("$HERE/landing.sh")   # dwarf.sh and sentinel.sh are Rust now; …` | the default file set is now empty: **retire** `timeout-lint.sh` and `test-timeout-lint.sh` (no caller, in no gate string), with their lines `spira-lint/fence-scripts-allow:36,40` and `spira/tier-budget-allowlist:409` |
 | 15 | `spira/lc-delivery.sh:4,14,106,115,122,125` | header names landing.sh's push mode; actor string `landing.sh` | keep the file (pr-pass-branch.sh sources it); header "pr-pass-branch.sh (landing-pass's pr helper) and landing-pass's push mode"; actor strings may stay `landing.sh` (lifecycle history actor names) or become `landing-pass` — the actor is a label, nothing matches on it |
 | 16 | `spira/pr-pass-branch.sh:4`, `spira/land-build-ensure.sh:13`, `spira/confine.sh:13,52`, `spira/gate.sh:41,341,415-416,630`, `spira/gate-lib.sh:39,67`, `spira/lib.sh:774,4784,4837,6682,7442,8267,8843,9200-9202`, `spira/hel.sh:232,594`, `spira/watchtower.sh:343,429`, `spira/conf.sh:1104` | comments / `covers:` naming `landing.sh` | name `landing-pass` (comments only). **One is text a human acts on:** `lib.sh:774` `run \`$SPIRA_HOME/landing.sh\` by hand` → `run \`$SPIRA_LANDING_PASS_BIN land\` by hand` |
 | 17 | `spira/config-fence-allow:18` | `landing-pass/src/main.rs` | **delete** (no .rs file in the crate names the config files any more; shrink-only list) |
@@ -626,7 +626,7 @@ build or locate the binary — the testenv container already builds the workspac
   branches one at a time (gate walls 574 s, 704 s, 1732 s, 2574 s) while six freshly
   submitted beads waited for the whole walk. gate.sh already admits every caller through a
   host-wide counting semaphore of `SPIRA_CERTIFY_PAR` slots, so several gate.sh processes
-  from this pass are safe and bounded by the same ceiling the aeons' own gates share.
+  from this pass are safe and bounded by the same ceiling the dwarves' own gates share.
   *Decision:*
   (a) **Where.** Only the queued walk (queue, queue.local) runs gates concurrently.
   push/hold stay serial: a push landing moves the base the next branch is merged onto.
@@ -658,7 +658,7 @@ build or locate the binary — the testenv container already builds the workspac
   (h) **Refresh between completions.** After each decision (at most one re-read per
   completion, never after a cut) the pass re-enumerates `refs/heads/spira/*` and re-reads,
   in one `bd show`, only the ids it has not seen and the ids it skipped as *not closed* or
-  *held by a live aeon*. Newly closed or new branches join the unscreened candidates, which
+  *held by a live dwarf*. Newly closed or new branches join the unscreened candidates, which
   are re-sorted by `certify_order` — so a P0 submitted mid-pass takes the next free slot
   instead of waiting for the next pass. A branch already started or decided is never
   re-added. New branches count toward `branches seen`. A failed re-read changes nothing.
@@ -727,7 +727,7 @@ build or locate the binary — the testenv container already builds the workspac
   `landed`/`landed_sha`, `bead_cited_commit_on_base`, `pr_merged`,
   `conflict_reopen_note`/`other_beads_on_conflicts`, `bead_is_work_type` and
   `bead_close_on_land` move into `src/land_verify.rs`; `content_landed` was already native
-  (`Git::content_landed`). Callers outside this crate (`aeon` for
+  (`Git::content_landed`). Callers outside this crate (`dwarf` for
   `bead_cited_commit_on_base`/`other_beads_on_conflicts`/`bead_is_work_type`, `batcher-cut`
   for `land_subject`) are untouched — each already shells into the bash *name*, which is now
   a one-line shim onto this crate's own binary (`landing-pass land-subject` /

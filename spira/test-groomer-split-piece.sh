@@ -10,11 +10,11 @@
 # reader was retired dead at sp-27hsi — readers resolve the state themselves now).
 # sp-zs04v was split into four children this way and three of them (sp-zs04v.2/.5/.6)
 # inherited branch:spira/sp-zs04v — the PARENT's branch — so all three resolved to the same
-# branch as their parent and, by extension, as each other (law-one-aeon-one-worktree).
+# branch as their parent and, by extension, as each other (law-one-dwarf-one-worktree).
 #
 # THE SAME INHERITANCE HANDS delivers: TO A CHILD TOO. A child that inherits a parent's
 # delivers:beads or delivers:note:/path label claims delivery of evidence it never produced
-# (aeon.sh, sentinel.sh CHECK 5 verify against it) — measured against 18 real children that
+# (dwarf.sh, sentinel.sh CHECK 5 verify against it) — measured against 18 real children that
 # inherited a parent's branch: the same way (sp-om71s).
 #
 # THE PLANTED OFFENDER (law-a-check-that-finds-nothing-must-first-prove-it-could-have-found-

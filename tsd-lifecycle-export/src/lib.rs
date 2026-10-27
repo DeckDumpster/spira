@@ -285,8 +285,8 @@ mod tests {
     #[test]
     fn claim_then_close_maps_ready_to_working_to_dropped() {
         let events = vec![
-            ev("1", "sp-a", "claimed", "aeon-1", None, "2026-09-15T00:00:00Z"),
-            ev("2", "sp-a", "closed", "aeon-1", None, "2026-09-15T00:05:00Z"),
+            ev("1", "sp-a", "claimed", "dwarf-1", None, "2026-09-15T00:00:00Z"),
+            ev("2", "sp-a", "closed", "dwarf-1", None, "2026-09-15T00:05:00Z"),
         ];
         let rows = fold_legacy(&events, "legacy", 1);
         assert_eq!(rows.len(), 2);
@@ -305,7 +305,7 @@ mod tests {
     #[test]
     fn reopened_returns_to_ready() {
         let events = vec![
-            ev("1", "sp-c", "claimed", "aeon-1", None, "2026-09-15T00:00:00Z"),
+            ev("1", "sp-c", "claimed", "dwarf-1", None, "2026-09-15T00:00:00Z"),
             ev("2", "sp-c", "reopened", "harness", None, "2026-09-15T00:05:00Z"),
         ];
         let rows = fold_legacy(&events, "legacy", 1);
@@ -324,9 +324,9 @@ mod tests {
     #[test]
     fn two_beads_interleaved_do_not_share_state() {
         let events = vec![
-            ev("1", "sp-e", "claimed", "aeon-1", None, "2026-09-15T00:00:00Z"),
-            ev("2", "sp-f", "claimed", "aeon-2", None, "2026-09-15T00:00:01Z"),
-            ev("3", "sp-e", "closed", "aeon-1", None, "2026-09-15T00:00:02Z"),
+            ev("1", "sp-e", "claimed", "dwarf-1", None, "2026-09-15T00:00:00Z"),
+            ev("2", "sp-f", "claimed", "dwarf-2", None, "2026-09-15T00:00:01Z"),
+            ev("3", "sp-e", "closed", "dwarf-1", None, "2026-09-15T00:00:02Z"),
         ];
         let rows = fold_legacy(&events, "legacy", 1);
         assert_eq!(rows[1].to_state, "WORKING", "sp-f's own claim must classify sp-f, not sp-e");
@@ -336,8 +336,8 @@ mod tests {
     #[test]
     fn seq_is_assigned_in_order_starting_from_next_seq() {
         let events = vec![
-            ev("1", "sp-g", "claimed", "aeon-1", None, "2026-09-15T00:00:00Z"),
-            ev("2", "sp-g", "closed", "aeon-1", None, "2026-09-15T00:00:01Z"),
+            ev("1", "sp-g", "claimed", "dwarf-1", None, "2026-09-15T00:00:00Z"),
+            ev("2", "sp-g", "closed", "dwarf-1", None, "2026-09-15T00:00:01Z"),
         ];
         let rows = fold_legacy(&events, "legacy", 41);
         assert_eq!(rows[0].seq, 41);
@@ -349,8 +349,8 @@ mod tests {
     #[test]
     fn advancing_past_every_event_leaves_nothing_fresh_on_a_second_call() {
         let events = vec![
-            ev("1", "sp-h", "claimed", "aeon-1", None, "2026-09-15T00:00:00Z"),
-            ev("2", "sp-h", "closed", "aeon-1", None, "2026-09-15T00:00:01Z"),
+            ev("1", "sp-h", "claimed", "dwarf-1", None, "2026-09-15T00:00:00Z"),
+            ev("2", "sp-h", "closed", "dwarf-1", None, "2026-09-15T00:00:01Z"),
         ];
         let cp0 = LegacyCheckpoint::starting_at("2026-09-15T00:00:00Z");
         let (fresh1, cp1) = advance_legacy_checkpoint(&events, &cp0);
@@ -364,8 +364,8 @@ mod tests {
     fn a_tie_at_the_boundary_instant_is_deduped_by_id_not_dropped_wholesale() {
         let cp0 = LegacyCheckpoint::starting_at("2026-09-15T00:00:00Z");
         let first_batch = vec![
-            ev("1", "sp-i", "claimed", "aeon-1", None, "2026-09-15T00:00:05Z"),
-            ev("2", "sp-j", "claimed", "aeon-2", None, "2026-09-15T00:00:05Z"),
+            ev("1", "sp-i", "claimed", "dwarf-1", None, "2026-09-15T00:00:05Z"),
+            ev("2", "sp-j", "claimed", "dwarf-2", None, "2026-09-15T00:00:05Z"),
         ];
         let (fresh1, cp1) = advance_legacy_checkpoint(&first_batch, &cp0);
         assert_eq!(fresh1.len(), 2);
@@ -374,7 +374,7 @@ mod tests {
         let second_batch = vec![
             first_batch[0].clone(),
             first_batch[1].clone(),
-            ev("3", "sp-k", "claimed", "aeon-3", None, "2026-09-15T00:00:05Z"),
+            ev("3", "sp-k", "claimed", "dwarf-3", None, "2026-09-15T00:00:05Z"),
         ];
         let (fresh2, _cp2) = advance_legacy_checkpoint(&second_batch, &cp1);
         assert_eq!(fresh2.len(), 1);
@@ -385,8 +385,8 @@ mod tests {
     fn next_seq_advances_by_exactly_the_number_of_fresh_rows() {
         let cp0 = LegacyCheckpoint::starting_at("2026-09-15T00:00:00Z");
         let events = vec![
-            ev("1", "sp-l", "claimed", "aeon-1", None, "2026-09-15T00:00:05Z"),
-            ev("2", "sp-l", "closed", "aeon-1", None, "2026-09-15T00:00:06Z"),
+            ev("1", "sp-l", "claimed", "dwarf-1", None, "2026-09-15T00:00:05Z"),
+            ev("2", "sp-l", "closed", "dwarf-1", None, "2026-09-15T00:00:06Z"),
         ];
         let (_fresh, cp1) = advance_legacy_checkpoint(&events, &cp0);
         assert_eq!(cp1.next_seq, 3);

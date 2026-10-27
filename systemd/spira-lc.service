@@ -3,7 +3,7 @@
 # real to install and enable, and so the testenv image and acceptance workflow exercise the
 # actual privilege split (design §3.6.4) — a Unix user of its own, so the spira_lc DB
 # credential is unreadable to every other process on the box. Nothing calls this service's
-# socket yet: the aeon-facing semantic layer (a separate bead) is its first real client.
+# socket yet: the dwarf-facing semantic layer (a separate bead) is its first real client.
 Description=spira-lc — the lifecycle machine's system service (bead/delivery/batch state)
 Documentation=file://@SPIRA_HOME@/lifecycle/schema.sql
 After=dolt-beads.service

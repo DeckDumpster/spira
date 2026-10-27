@@ -111,7 +111,7 @@ case "$*" in
     *is-active*)      echo "active" ;;
     *list-unit-files*spira-watch*) true ;;
     *list-units*spira-watch*)      true ;;
-    *list-units*active*spira-aeon*) true ;;
+    *list-units*active*spira-dwarf*) true ;;
     *list-timers*)    true ;;
     *is-enabled*)     echo "enabled" ;;
     *enable*|*restart*|*start*) true ;;

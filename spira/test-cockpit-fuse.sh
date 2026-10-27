@@ -1,31 +1,31 @@
 #!/usr/bin/env bash
 #
-# test-cockpit-fuse.sh — liveness fuse on every working aeon in the ops pane.
+# test-cockpit-fuse.sh — liveness fuse on every working dwarf in the ops pane.
 #
 #   ./test-cockpit-fuse.sh
 #
 # The fuse is a repository signal, not a session signal: it measures how long
-# since the aeon's deliverable (a commit ahead of the base ref, or a file write
-# in the worktree) last moved. Three new keys per aeon:
+# since the dwarf's deliverable (a commit ahead of the base ref, or a file write
+# in the worktree) last moved. Three new keys per dwarf:
 #
-#   SP_AEON<n>_FUSE   minutes since the deliverable moved ("gate" if a gate runs, "?" if unreadable)
-#   SP_AEON<n>_WALL   total wall minutes (same figure as MIN, stored separately for sp-cuvi)
+#   SP_DWARF<n>_FUSE   minutes since the deliverable moved ("gate" if a gate runs, "?" if unreadable)
+#   SP_DWARF<n>_WALL   total wall minutes (same figure as MIN, stored separately for sp-cuvi)
 #
 # A turn boundary is also no longer rendered as "session ended: success" — a
 # result event in trace_tail now reads as "turn N: success" to distinguish a
 # turn boundary from a terminal state.
 #
 # RETIRED (wave 4.34, sp-27d3d): trace_tail was lib.sh; it is ported to
-# aeon::trace::trace_tail, which cockpit-collect now calls in-process (no more
+# dwarf::trace::trace_tail, which cockpit-collect now calls in-process (no more
 # `io::lib_call(..., "trace_tail", ...)` and no more `bash -c '. lib.sh; trace_tail'`
 # embedded seam in sentinel). Part 4's direct bash-sourcing assertion moved to
-# trace_tail_renders_result_as_a_turn_index_not_session_ended (aeon/src/trace.rs). Parts 1-3
+# trace_tail_renders_result_as_a_turn_index_not_session_ended (dwarf/src/trace.rs). Parts 1-3
 # and 5 are unaffected — they drive the real `cockpit-collect probe now` binary and the
 # `health` pane and do not care whether FUSE/trace_tail live in bash or Rust.
 #
 # defect: sp-yhue
 # tier: T2
-# covers: cockpit-collect/src/* aeon/src/trace.rs cockpit/ops/src/health.rs UC-cockpit-observability-15
+# covers: cockpit-collect/src/* dwarf/src/trace.rs cockpit/ops/src/health.rs UC-cockpit-observability-15
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -38,7 +38,7 @@ PIDS=()
 # kill_all: clean up any background processes created during the suite.
 kill_all() { [ "${#PIDS[@]}" -gt 0 ] && kill "${PIDS[@]}" 2>/dev/null; wait 2>/dev/null; }
 
-# field <output> <key> -> the value of SP_AEON0_<KEY> or the bare key
+# field <output> <key> -> the value of SP_DWARF0_<KEY> or the bare key
 field() { sed -n "s/^$2=//p" <<< "$1" | head -1; }
 
 # ---- cockpit now seam: the function the suite tests directly -------------------------
@@ -50,7 +50,7 @@ run_now() {
     # a suite that inherits a real spira.conf would assert against one box. Pass only what
     # now_keys needs (law-gates-run-in-a-clean-environment).
     # BD_TIMEOUT=1: bdjson calls fail fast against a nonexistent database. The default of
-    # 180s per call would stall 3 aeons × 2 calls = 6 minutes of waiting for nothing.
+    # 180s per call would stall 3 dwarves × 2 calls = 6 minutes of waiting for nothing.
     # SPIRA_DB declared via tl_config too (round-3 caveat audit): cockpit-collect resolves
     # it via cfg().
     tl_config SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_DB="$TMP/nodb"
@@ -61,23 +61,23 @@ run_now() {
         cockpit-collect probe now 2>/dev/null
 }
 
-# make_aeon <bead> -> start a fake aeon process and write its pid file.
-# exec -a renames argv[0] so /proc/<pid>/cmdline contains "aeon.sh", exactly as aeon_alive checks.
+# make_dwarf <bead> -> start a fake dwarf process and write its pid file.
+# exec -a renames argv[0] so /proc/<pid>/cmdline contains "dwarf.sh", exactly as dwarf_alive checks.
 # Called without $(...) so the background job is a child of the main script, not a subshell.
 # A bash $(...) subshell waits for ALL its children before exiting — calling this from $()
 # would hang until sleep 9999 dies even though the function would have "returned".
-make_aeon() {
+make_dwarf() {
     local bead="$1"
-    bash -c 'exec -a "aeon.sh" sleep 9999' &
+    bash -c 'exec -a "dwarf.sh" sleep 9999' &
     local pid="$!"
     PIDS+=("$pid")
-    echo "$pid" > "$RUN/aeon-builder-${bead}.pid"
-    printf '%s' "$(( $(date +%s) + 3600 ))" > "$RUN/aeon-builder-${bead}.lease"
+    echo "$pid" > "$RUN/dwarf-builder-${bead}.pid"
+    printf '%s' "$(( $(date +%s) + 3600 ))" > "$RUN/dwarf-builder-${bead}.lease"
 }
 
 # make_gate <bead> -> start a fake gate process and write the gate-run pid file.
 # "gate.sh" in argv[0] is what the gate detection logic checks via /proc cmdline.
-# Called without $(...) — same reason as make_aeon. The caller reads the pid from the file
+# Called without $(...) — same reason as make_dwarf. The caller reads the pid from the file
 # the gate writes rather than capturing it via command substitution.
 make_gate() {
     local bead="$1"
@@ -103,29 +103,29 @@ make_worktree() {
 }
 
 # ---- Part 1: collector emits FUSE and WALL ------------------------------------------
-echo "cockpit now_keys: FUSE and WALL keys are emitted for each working aeon"
+echo "cockpit now_keys: FUSE and WALL keys are emitted for each working dwarf"
 
-# POSITIVE CONTROL FIRST. No aeons → no SP_AEON0_FUSE emitted.
+# POSITIVE CONTROL FIRST. No dwarves → no SP_DWARF0_FUSE emitted.
 out_empty="$(run_now)"
-if grep -q 'SP_AEON0_FUSE' <<< "$out_empty"; then
-    bad "no aeons → no SP_AEON0_FUSE (positive control failed: the key was emitted)"
+if grep -q 'SP_DWARF0_FUSE' <<< "$out_empty"; then
+    bad "no dwarves → no SP_DWARF0_FUSE (positive control failed: the key was emitted)"
 else
-    ok "no aeons → no SP_AEON0_FUSE (positive control)"
+    ok "no dwarves → no SP_DWARF0_FUSE (positive control)"
 fi
 
-# Single aeon with a worktree: the fuse is a number (file was just written by make_worktree).
+# Single dwarf with a worktree: the fuse is a number (file was just written by make_worktree).
 BEAD1="sp-ftest1"
-make_aeon "$BEAD1"
+make_dwarf "$BEAD1"
 make_worktree "$BEAD1"
 out1="$(run_now)"
-fuse1="$(field "$out1" SP_AEON0_FUSE)"
-wall1="$(field "$out1" SP_AEON0_WALL)"
+fuse1="$(field "$out1" SP_DWARF0_FUSE)"
+wall1="$(field "$out1" SP_DWARF0_WALL)"
 case "$fuse1" in
     [0-9]*) ok "a just-written worktree produces a numeric fuse" ;;
     *)      bad "a just-written worktree produces a numeric fuse: got [$fuse1]" ;;
 esac
 case "$wall1" in
-    [0-9]*) ok "WALL is a number (wall minutes since aeon start)" ;;
+    [0-9]*) ok "WALL is a number (wall minutes since dwarf start)" ;;
     *)      bad "WALL is a number: got [$wall1]" ;;
 esac
 # The fuse must be 0 or very small — we just wrote a file.
@@ -136,22 +136,22 @@ echo
 echo "cockpit now_keys: missing worktree renders FUSE=?"
 
 BEAD2="sp-ftest2"
-make_aeon "$BEAD2"
+make_dwarf "$BEAD2"
 # No worktree created for BEAD2.
 out2="$(run_now)"
 # Find which index holds BEAD2.
 fuse2=""
 for idx in 0 1 2; do
-    b="$(field "$out2" "SP_AEON${idx}_BEAD")"
-    [ "$b" = "$BEAD2" ] && fuse2="$(field "$out2" "SP_AEON${idx}_FUSE")" && break
+    b="$(field "$out2" "SP_DWARF${idx}_BEAD")"
+    [ "$b" = "$BEAD2" ] && fuse2="$(field "$out2" "SP_DWARF${idx}_FUSE")" && break
 done
 # THE POSITIVE CONTROL: verify the bead key was found at all. A ? that comes from
 # an absent key looks identical to a ? from a computed read failure — only knowing
 # the key was present distinguishes them (law-absence-needs-a-positive-control).
-if grep -q "SP_AEON.*_BEAD=$BEAD2" <<< "$out2"; then
-    ok "SP_AEON?_BEAD=$BEAD2 was found in output (positive control)"
+if grep -q "SP_DWARF.*_BEAD=$BEAD2" <<< "$out2"; then
+    ok "SP_DWARF?_BEAD=$BEAD2 was found in output (positive control)"
 else
-    bad "SP_AEON?_BEAD=$BEAD2 was not found in output — bead key missing entirely"
+    bad "SP_DWARF?_BEAD=$BEAD2 was not found in output — bead key missing entirely"
 fi
 is "no worktree renders FUSE=?" "?" "$fuse2"
 
@@ -160,7 +160,7 @@ echo
 echo "cockpit now_keys: gate running for this bead yields FUSE=gate"
 
 BEAD3="sp-ftest3"
-make_aeon "$BEAD3"
+make_dwarf "$BEAD3"
 make_worktree "$BEAD3"
 make_gate "$BEAD3"
 GATE3_PID="$(cat "$RUN/gate-run/testname.spira_${BEAD3}/pid")"
@@ -168,14 +168,14 @@ GATE3_PID="$(cat "$RUN/gate-run/testname.spira_${BEAD3}/pid")"
 out3="$(run_now)"
 fuse3=""
 for idx in 0 1 2 3; do
-    b="$(field "$out3" "SP_AEON${idx}_BEAD")"
-    [ "$b" = "$BEAD3" ] && fuse3="$(field "$out3" "SP_AEON${idx}_FUSE")" && break
+    b="$(field "$out3" "SP_DWARF${idx}_BEAD")"
+    [ "$b" = "$BEAD3" ] && fuse3="$(field "$out3" "SP_DWARF${idx}_FUSE")" && break
 done
 # POSITIVE CONTROL: prove the bead is in the output before asserting its fuse.
-if grep -q "SP_AEON.*_BEAD=$BEAD3" <<< "$out3"; then
-    ok "SP_AEON?_BEAD=$BEAD3 found (positive control)"
+if grep -q "SP_DWARF.*_BEAD=$BEAD3" <<< "$out3"; then
+    ok "SP_DWARF?_BEAD=$BEAD3 found (positive control)"
 else
-    bad "SP_AEON?_BEAD=$BEAD3 not found — bead key missing entirely"
+    bad "SP_DWARF?_BEAD=$BEAD3 not found — bead key missing entirely"
 fi
 is "live gate for this bead yields FUSE=gate" "gate" "$fuse3"
 
@@ -186,8 +186,8 @@ kill "$GATE3_PID" 2>/dev/null; wait "$GATE3_PID" 2>/dev/null || true
 out3b="$(run_now)"
 fuse3b=""
 for idx in 0 1 2 3; do
-    b="$(field "$out3b" "SP_AEON${idx}_BEAD")"
-    [ "$b" = "$BEAD3" ] && fuse3b="$(field "$out3b" "SP_AEON${idx}_FUSE")" && break
+    b="$(field "$out3b" "SP_DWARF${idx}_BEAD")"
+    [ "$b" = "$BEAD3" ] && fuse3b="$(field "$out3b" "SP_DWARF${idx}_FUSE")" && break
 done
 case "$fuse3b" in
     [0-9]*) ok "dead gate pid: fuse resumes as a number" ;;
@@ -234,10 +234,10 @@ pane() {
 }
 
 # LEASE COUNTDOWN renders as "Nm" on the bead row (time left in the liveness lease).
-{ printf 'SP_AEON_N=1\nSP_AEON0_NAME=valefor\nSP_AEON0_RUNE=builder\nSP_AEON0_BEAD=sp-fuse\n'
-  printf 'SP_AEON0_MIN=20\nSP_AEON0_TURNS=37\nSP_AEON0_CTX=100000\nSP_AEON0_FILES=3\n'
-  printf 'SP_AEON0_QUIET=60\nSP_AEON0_ACT=Bash test\nSP_AEON0_TITLE=fuse test bead\n'
-  printf 'SP_AEON0_LEASE=10\nSP_NEXT_N=0\nSP_AWAITING_N=0\n'; } | snap
+{ printf 'SP_DWARF_N=1\nSP_DWARF0_NAME=brokkr\nSP_DWARF0_RUNE=builder\nSP_DWARF0_BEAD=sp-fuse\n'
+  printf 'SP_DWARF0_MIN=20\nSP_DWARF0_TURNS=37\nSP_DWARF0_CTX=100000\nSP_DWARF0_FILES=3\n'
+  printf 'SP_DWARF0_QUIET=60\nSP_DWARF0_ACT=Bash test\nSP_DWARF0_TITLE=fuse test bead\n'
+  printf 'SP_DWARF0_LEASE=10\nSP_NEXT_N=0\nSP_AWAITING_N=0\n'; } | snap
 row_num="$(pane 0)"
 if grep -q '10m' <<< "$row_num"; then
     ok "lease countdown renders as '10m'"
@@ -246,10 +246,10 @@ else
 fi
 
 # LOW LEASE (<3m) renders (still as "Nm" — the colour changes, the format does not).
-{ printf 'SP_AEON_N=1\nSP_AEON0_NAME=valefor\nSP_AEON0_RUNE=builder\nSP_AEON0_BEAD=sp-gate\n'
-  printf 'SP_AEON0_MIN=20\nSP_AEON0_TURNS=37\nSP_AEON0_CTX=100000\nSP_AEON0_FILES=3\n'
-  printf 'SP_AEON0_QUIET=60\nSP_AEON0_ACT=Bash test\nSP_AEON0_TITLE=gate test bead\n'
-  printf 'SP_AEON0_LEASE=1\nSP_NEXT_N=0\nSP_AWAITING_N=0\n'; } | snap
+{ printf 'SP_DWARF_N=1\nSP_DWARF0_NAME=brokkr\nSP_DWARF0_RUNE=builder\nSP_DWARF0_BEAD=sp-gate\n'
+  printf 'SP_DWARF0_MIN=20\nSP_DWARF0_TURNS=37\nSP_DWARF0_CTX=100000\nSP_DWARF0_FILES=3\n'
+  printf 'SP_DWARF0_QUIET=60\nSP_DWARF0_ACT=Bash test\nSP_DWARF0_TITLE=gate test bead\n'
+  printf 'SP_DWARF0_LEASE=1\nSP_NEXT_N=0\nSP_AWAITING_N=0\n'; } | snap
 row_gate="$(pane 0)"
 if grep -q '1m' <<< "$row_gate"; then
     ok "low lease renders as '1m'"
@@ -258,9 +258,9 @@ else
 fi
 
 # MISSING LEASE (key absent from snapshot) renders as "?".
-{ printf 'SP_AEON_N=1\nSP_AEON0_NAME=valefor\nSP_AEON0_RUNE=builder\nSP_AEON0_BEAD=sp-miss\n'
-  printf 'SP_AEON0_MIN=20\nSP_AEON0_TURNS=37\nSP_AEON0_CTX=100000\nSP_AEON0_FILES=3\n'
-  printf 'SP_AEON0_QUIET=60\nSP_AEON0_ACT=Bash test\nSP_AEON0_TITLE=missing fuse bead\n'
+{ printf 'SP_DWARF_N=1\nSP_DWARF0_NAME=brokkr\nSP_DWARF0_RUNE=builder\nSP_DWARF0_BEAD=sp-miss\n'
+  printf 'SP_DWARF0_MIN=20\nSP_DWARF0_TURNS=37\nSP_DWARF0_CTX=100000\nSP_DWARF0_FILES=3\n'
+  printf 'SP_DWARF0_QUIET=60\nSP_DWARF0_ACT=Bash test\nSP_DWARF0_TITLE=missing fuse bead\n'
   printf 'SP_NEXT_N=0\nSP_AWAITING_N=0\n'; } | snap
 row_miss="$(pane 0)"
 # POSITIVE CONTROL: the bead row must exist before checking the lease marker.

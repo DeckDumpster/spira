@@ -414,7 +414,7 @@ fn resolve_home() -> Result<PathBuf, String> {
 /// (`spira/conf.d`), read through `spira_config::process::cfg` — the one source of config
 /// (per Ryan 2026-10-05) — never a literal default standing in for an unresolved value.
 /// `BD_TIMEOUT`/`SPIRA_BDJSON_FIXTURE` carry no `spira/conf.d/<KEY>` entry — ad hoc
-/// overrides `cfg` never produces (aeon's own seam doc names the same split), so these two
+/// overrides `cfg` never produces (dwarf's own seam doc names the same split), so these two
 /// are still read straight off the raw environment.
 fn resolve_beads(home: &Path) -> Result<RealBeads, String> {
     let env: BTreeMap<String, String> = std::env::vars().collect();

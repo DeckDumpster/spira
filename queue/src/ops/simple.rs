@@ -689,7 +689,7 @@ pub fn resubmit(
                 .as_deref()
                 .filter(|h| !h.is_empty())
                 .unwrap_or("<unknown>");
-            w.err(format!("queue.sh resubmit: {id} is held by a live aeon ({holder}) — refused, nothing changed"));
+            w.err(format!("queue.sh resubmit: {id} is held by a live dwarf ({holder}) — refused, nothing changed"));
             return FAIL;
         }
         state => {

@@ -20,13 +20,13 @@
 # bash suite. See docs/test-plan/dispatch.toml for the UC-dispatch-13 [use_case.uncovered].
 #
 # THE DEFECT (sp-rune-predicate). sentinel.sh CHECK 7 computed one $ready from the
-# builder's own predicate and gated every persona's summon on it, so ops never woke on its
-# own work. summon_rune now asks rune_ready, which sources the rune file and asks
+# builder's own predicate and gated every persona's call on it, so ops never woke on its
+# own work. call_rune now asks rune_ready, which sources the rune file and asks
 # ready_count through THAT rune's RUNE_LABELS. spira_runes enumerates runes/*.rune
 # rather than returning a literal name, so installing a rune is the whole registration.
 #
 # WHAT THIS SUITE DOES NOT USE. No bd, no systemd, no network for the library-level rows;
-# ready_count and SPIRA_SUMMON are stubs. Section-local env overrides are restored (and
+# ready_count and SPIRA_CALL are stubs. Section-local env overrides are restored (and
 # lib.sh re-sourced) before the next section relies on the real runes again.
 #
 # defect: sp-rune-predicate sp-czsf4 sp-xrkuu
@@ -87,18 +87,18 @@ bead_json() {
 set_store() { printf '[%s]\n' "$1" > "$STORE_FILE"; }
 set_store ""
 
-# Stub aeon_count so no running aeons are reported: rune_free would otherwise see a
-# live slot and return 0, blocking the summon path before ready_count is called.
-aeon_count() { printf '0'; }
+# Stub dwarf_count so no running dwarves are reported: rune_free would otherwise see a
+# live slot and return 0, blocking the call path before ready_count is called.
+dwarf_count() { printf '0'; }
 
-# Stub SPIRA_SUMMON so summon_rune does not attempt to start a systemd unit.
-# It records each call, so a row can tell "summoned" from "nothing ready".
-MOCK_SUMMON="$T/summon"
-SUMMONED="$T/summoned"
-printf '#!/bin/sh\necho summoned >> "%s"\nexit 0\n' "$SUMMONED" > "$MOCK_SUMMON"
-chmod +x "$MOCK_SUMMON"
-summons() { if [ -f "$SUMMONED" ]; then grep -c . "$SUMMONED"; else echo 0; fi; }   # no file: none yet
-export SPIRA_SUMMON="$MOCK_SUMMON"
+# Stub SPIRA_CALL so call_rune does not attempt to start a systemd unit.
+# It records each call, so a row can tell "called" from "nothing ready".
+MOCK_CALL="$T/call"
+CALLED="$T/called"
+printf '#!/bin/sh\necho called >> "%s"\nexit 0\n' "$CALLED" > "$MOCK_CALL"
+chmod +x "$MOCK_CALL"
+calls() { if [ -f "$CALLED" ]; then grep -c . "$CALLED"; else echo 0; fi; }   # no file: none yet
+export SPIRA_CALL="$MOCK_CALL"
 
 # ==========================================================================================
 # spira_runes — discovers every rune in the runes, not just one
@@ -120,23 +120,23 @@ nowant "ops RUNE_LABELS is not the builder's spira,plan" "spira,plan" " $ops_lab
 want "ops RUNE_LABELS contains its own partition"     "incident"   "$ops_labels"
 
 # ==========================================================================================
-# rune_ready / summon_rune — ops uses ITS OWN predicate, not the builder's
+# rune_ready / call_rune — ops uses ITS OWN predicate, not the builder's
 # ==========================================================================================
 builder_labels="$(rune_get builder RUNE_LABELS)"
 INCIDENT_BEAD="$(bead_json sp-fy-inc "$ops_labels")"
 PLAN_BEAD="$(bead_json sp-fy-plan "$builder_labels")"
 
-# POSITIVE CONTROL: ops's own incident bead is in ops's ready set, and summons ops.
-set_store "$INCIDENT_BEAD"; rm -f "$SUMMONED"
+# POSITIVE CONTROL: ops's own incident bead is in ops's ready set, and calls ops.
+set_store "$INCIDENT_BEAD"; rm -f "$CALLED"
 is "ops's ready set holds its own incident bead" "1" "$(rune_ready ops 2>/dev/null)"
-summon_rune ops >/dev/null 2>&1 || true
-is "ops is summoned for its own incident bead" "1" "$(summons)"
+call_rune ops >/dev/null 2>&1 || true
+is "ops is called for its own incident bead" "1" "$(calls)"
 
-set_store "$PLAN_BEAD"; rm -f "$SUMMONED"
+set_store "$PLAN_BEAD"; rm -f "$CALLED"
 is "ops does NOT take the builder's plan bead" "0" "$(rune_ready ops 2>/dev/null)"
-sum_out="$(summon_rune ops 2>&1)" || true
-[ "$(summons)" = 0 ] && ok "and ops is not summoned for it" \
-    || bad "and ops is not summoned for it" "summons=$(summons); summon_rune said: $sum_out"
+sum_out="$(call_rune ops 2>&1)" || true
+[ "$(calls)" = 0 ] && ok "and ops is not called for it" \
+    || bad "and ops is not called for it" "calls=$(calls); call_rune said: $sum_out"
 
 # ==========================================================================================
 # rune_ready — builder uses ITS OWN predicate
@@ -151,48 +151,48 @@ is "builder does NOT take ops's incident bead" "0" "$(rune_ready builder 2>/dev/
 # THE OLD CODE IN THREE LINES:
 #   ready="$(ready_count spira,plan ...)"   # hardcoded builder predicate
 #   if [ "$ready" -gt 0 ]; then             # gates ALL personas, including ops
-#       for f in $RUNES; do summon_rune "$f"; done
+#       for f in $RUNES; do call_rune "$f"; done
 #   fi
 # Over a store holding only ops's incident bead, the builder's predicate reads 0 — and ops
-# must still be summoned on its own predicate.
-set_store "$INCIDENT_BEAD"; rm -f "$SUMMONED"
+# must still be called on its own predicate.
+set_store "$INCIDENT_BEAD"; rm -f "$CALLED"
 plan_ready="$(ready_count "$builder_labels" "")"
 is "old code: plan_ready=0 (no plan work)" "0" "$plan_ready"
-summon_rune ops >/dev/null 2>&1 || true
-is "ops is summoned on its own predicate even when plan_ready=0" "1" "$(summons)"
+call_rune ops >/dev/null 2>&1 || true
+is "ops is called on its own predicate even when plan_ready=0" "1" "$(calls)"
 
 # ==========================================================================================
 # A quota-recording mock: the CPUQuota=70%/90% rows this fixture used to carry moved to
-# test-summon-rune.sh (D2/UC-dispatch-23). The express-grant test below still needs an
+# test-call-rune.sh (D2/UC-dispatch-23). The express-grant test below still needs an
 # argv-capturing mock, so it stays.
 # ==========================================================================================
-ARGS_FILE="$T/summon-args"
-MOCK_QUOTA="$T/summon-quota"
+ARGS_FILE="$T/call-args"
+MOCK_QUOTA="$T/call-quota"
 printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s"\nexit 0\n' "$ARGS_FILE" > "$MOCK_QUOTA"
 chmod +x "$MOCK_QUOTA"
 
 # ==========================================================================================
-# summon_rune — an express grant restricts the claim to express beads
+# call_rune — an express grant restricts the claim to express beads
 # ==========================================================================================
-# summon_rune's third argument is carried to the aeon as SPIRA_REQUIRE_EXPRESS, so the aeon
+# call_rune's third argument is carried to the dwarf as SPIRA_REQUIRE_EXPRESS, so the dwarf
 # started under an express grant cannot claim a non-express bead.
-export SPIRA_SUMMON="$MOCK_QUOTA"
+export SPIRA_CALL="$MOCK_QUOTA"
 
 set_store "$PLAN_BEAD"; rm -f "$ARGS_FILE"
-summon_rune builder 1 >/dev/null 2>&1 || true
+call_rune builder 1 >/dev/null 2>&1 || true
 args="$(cat "$ARGS_FILE" 2>/dev/null)"
 nowant "no express grant: SPIRA_REQUIRE_EXPRESS is absent from args" "SPIRA_REQUIRE_EXPRESS" "$args"
 
-# The express grant counts only beads whose lifecycle row is express (summon.rs: ready-count
+# The express grant counts only beads whose lifecycle row is express (call.rs: ready-count
 # --express), so this store's plan bead is on the mirror's express list.
 set_store "$(bead_json sp-fy-express "$builder_labels")"; rm -f "$ARGS_FILE"
 echo sp-fy-express > "$T/lc/express"
-summon_rune builder 1 express >/dev/null 2>&1 || true
+call_rune builder 1 express >/dev/null 2>&1 || true
 args="$(cat "$ARGS_FILE" 2>/dev/null)"
 want "express grant: SPIRA_REQUIRE_EXPRESS=1 appears in args" \
      "SPIRA_REQUIRE_EXPRESS=1" "$args"
 
-export SPIRA_SUMMON="$MOCK_SUMMON"
+export SPIRA_CALL="$MOCK_CALL"
 
 # ==========================================================================================
 # D5 — spira_lane_runes / spira_task_runes: the roster split (from test-lanes.sh)
@@ -314,7 +314,7 @@ tl_config SPIRA_RUN="$T/run" SPIRA_RUNES_DIR="$HERE/runes"
 . "$HERE/lib.sh" 2>/dev/null
 
 # ==========================================================================================
-# UC-dispatch-08 — every summonable persona resolves to a non-empty predicate at runtime
+# UC-dispatch-08 — every callable persona resolves to a non-empty predicate at runtime
 # (from test-rune-predicates.sh)
 # ==========================================================================================
 # rune_get sources the rune in a subshell with conf.sh in scope, so $SPIRA_PLAN_LABEL
@@ -322,13 +322,13 @@ tl_config SPIRA_RUN="$T/run" SPIRA_RUNES_DIR="$HERE/runes"
 # RUNE_LABELS, which the cockpit renders as ? (correct) but the sentinel would see as a
 # malformed predicate.
 #
-# "SUMMONABLE" EXCLUDES AN OPERATOR PERSONA: the concierge claims nothing and runs for days
+# "CALLABLE" EXCLUDES AN OPERATOR PERSONA: the concierge claims nothing and runs for days
 # as the operator's own session, so a partition would be actively wrong. The exclusion is
-# keyed on RUNE_SUMMON rather than on the name, because a check that recognised
+# keyed on RUNE_CALL rather than on the name, because a check that recognised
 # "concierge" by string would bind the wrong persona the day it is renamed.
 _checked=0
 for f in $(rune_names 2>/dev/null); do
-    if [ "$(rune_get "$f" RUNE_SUMMON auto 2>/dev/null)" != auto ]; then
+    if [ "$(rune_get "$f" RUNE_CALL auto 2>/dev/null)" != auto ]; then
         ok "$f: operator persona, no predicate expected"
         continue
     fi
@@ -343,9 +343,9 @@ done
 
 # AND THE EXCLUSION MUST NOT HAVE EMPTIED THE LOOP (law-absence-needs-a-positive-control).
 if [ "$_checked" -gt 0 ]; then
-    ok "$_checked summonable persona(s) were actually checked"
+    ok "$_checked callable persona(s) were actually checked"
 else
-    bad "the predicate loop checked nothing" "every rune was skipped as operator-summoned"
+    bad "the predicate loop checked nothing" "every rune was skipped as operator-called"
 fi
 
 # ==========================================================================================
@@ -406,7 +406,7 @@ want "spike: and edit"                   "Edit"      "$rune_src"
 # G16 — rune_exclude adds every OTHER persona's rune:<name> label and the queue-wait label
 # ==========================================================================================
 # lib.sh l.988: today rune_exclude is exercised only indirectly, through the detectors that
-# call rune_ready/summon_rune. A direct row proves the exclusion set itself: every OTHER
+# call rune_ready/call_rune. A direct row proves the exclusion set itself: every OTHER
 # persona's rune:<name>, plus $SPIRA_QUEUE_WAIT_LABEL, never the caller's own name.
 export SPIRA_RUNES="builder ops groomer"
 tl_config SPIRA_QUEUE_WAIT_LABEL="g16-queue-wait"

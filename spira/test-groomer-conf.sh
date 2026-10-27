@@ -47,7 +47,7 @@ echo
 echo "groomer.rune declares RUNE_LANE=groomer"
 # ==========================================================================================
 # Groomer is a party persona, not a task rune. It must declare a lane so it draws from its
-# own capacity rather than from SPIRA_MAX_AEONS.
+# own capacity rather than from SPIRA_MAX_DWARVES.
 if [ -f "$HERE/runes/groomer.rune" ]; then
     tl_config SPIRA_DB="$T/db"
     lane_val="$(env -i HOME="$T" PATH="$TOOLS:/usr/bin:/bin" SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" \
@@ -61,7 +61,7 @@ fi
 echo
 echo "groomer.rune declares RUNE_GROOM_ESCALATION_CHECK=1"
 # ==========================================================================================
-# The escalation check in aeon.sh is activated by this key. Without it, a groom pass
+# The escalation check in dwarf.sh is activated by this key. Without it, a groom pass
 # that claims ESCALATED without filing an ask bead is never caught.
 if [ -f "$HERE/runes/groomer.rune" ]; then
     tl_config SPIRA_DB="$T/db"

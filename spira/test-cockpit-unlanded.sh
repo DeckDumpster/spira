@@ -2,7 +2,7 @@
 #
 # test-cockpit-unlanded.sh — finished beads: landed vs. done (SUBMITTED, branch, not landed);
 # the worked/landed row is 24h-scoped; landing detection uses subject forms only
-# (law-aeon-commits-name-their-bead).
+# (law-dwarf-commits-name-their-bead).
 #
 #   ./test-cockpit-unlanded.sh
 #

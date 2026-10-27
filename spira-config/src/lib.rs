@@ -1,7 +1,7 @@
 //! spira-config — the typed schema behind `spira.toml`.
 //!
 //! One document, three kinds of table: `[spira]` (host-wide keys), `[repo.<name>]` (a
-//! checkout the harness may work in) and `[persona.<name>]` (an aeon's rune, cut down to
+//! checkout the harness may work in) and `[persona.<name>]` (a dwarf's rune, cut down to
 //! the fields the harness itself reads rather than a persona's prose). Every struct here
 //! carries `deny_unknown_fields`, so a typo is a hard error instead of a setting nobody is
 //! reading — the same failure mode `spira.conf`'s own allowlist exists to catch, now
@@ -268,7 +268,7 @@ pub fn tail_refusals(tail: &str) -> Vec<String> {
 }
 
 /// [`release_path`] plus the box's own tool-directory tail (`spira.path`: `~/.local/bin` for
-/// `bd`, `dolt`, `gh`, `claude` and `duckdb`, `~/.cargo/bin` for an aeon's `cargo test`),
+/// `bd`, `dolt`, `gh`, `claude` and `duckdb`, `~/.cargo/bin` for a dwarf's `cargo test`),
 /// appended after the system directories — never before them, so a bare Spira tool name still
 /// means only the release's own copy (sp-c7b85, amending sp-31gtu's rendering, which omitted
 /// this tail for every launcher that invokes a Rust binary directly instead of sourcing
@@ -510,9 +510,9 @@ pub struct Lease {
     pub heartbeat_seconds: Option<u32>,
 }
 
-/// `[persona.<name>]` — a rune, cut down to what the harness itself reads to summon and
-/// dispatch it. `model` is the one field with no sensible default: an aeon summoned under
-/// no model is not a cheaper aeon, it is a dead one, so it is required.
+/// `[persona.<name>]` — a rune, cut down to what the harness itself reads to call and
+/// dispatch it. `model` is the one field with no sensible default: a dwarf called under
+/// no model is not a cheaper dwarf, it is a dead one, so it is required.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PersonaSection {
@@ -564,16 +564,16 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     // Spira works the whole backlog continuously; there is no single goal bead (per Ryan,
     // 2026-09-30, sp-2f9sa). The id prefix it used to imply is its own key now: id_prefix.
     RetiredKey { key: "goal", bead: "sp-k6m1m" },
-    RetiredKey { key: "maechen_label", bead: "sp-vt8lbr" },
-    RetiredKey { key: "maechen_landing_interval", bead: "sp-vt8lbr" },
-    RetiredKey { key: "maechen_max_beads", bead: "sp-vt8lbr" },
-    RetiredKey { key: "maechen_max_gap_seconds", bead: "sp-vt8lbr" },
-    RetiredKey { key: "maechen_remedy_label", bead: "sp-vt8lbr" },
-    RetiredKey { key: "auron_restarts", bead: "sp-acp3lx" },
-    RetiredKey { key: "auron_restart_window", bead: "sp-acp3lx" },
-    RetiredKey { key: "chamber", bead: "sp-yyuunv" },
-    RetiredKey { key: "chamber_overlay", bead: "sp-yyuunv" },
-    RetiredKey { key: "fayths", bead: "sp-yyuunv" },
+    RetiredKey { key: "maechen_label", bead: "sp-vt8lbr" }, // ffx-ok
+    RetiredKey { key: "maechen_landing_interval", bead: "sp-vt8lbr" }, // ffx-ok
+    RetiredKey { key: "maechen_max_beads", bead: "sp-vt8lbr" }, // ffx-ok
+    RetiredKey { key: "maechen_max_gap_seconds", bead: "sp-vt8lbr" }, // ffx-ok
+    RetiredKey { key: "maechen_remedy_label", bead: "sp-vt8lbr" }, // ffx-ok
+    RetiredKey { key: "auron_restarts", bead: "sp-acp3lx" }, // ffx-ok
+    RetiredKey { key: "auron_restart_window", bead: "sp-acp3lx" }, // ffx-ok
+    RetiredKey { key: "chamber", bead: "sp-yyuunv" }, // ffx-ok
+    RetiredKey { key: "chamber_overlay", bead: "sp-yyuunv" }, // ffx-ok
+    RetiredKey { key: "fayths", bead: "sp-yyuunv" }, // ffx-ok
     RetiredKey { key: "queue_local_gate", bead: "sp-vsob2" },
     RetiredKey { key: "queue_batch_idle_cut", bead: "sp-vsob2" },
     RetiredKey { key: "cert_idle_skip", bead: "sp-6d9th" },
@@ -584,9 +584,15 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "self_closed", bead: "sp-xsl8i" },
     RetiredKey { key: "wake_watchers", bead: "sp-xsl8i" },
     RetiredKey { key: "reclaim_skip_label", bead: "sp-i2m7y" },
-    // No explicit CPU quotas anywhere (law-isolate-greedy-work-in-vms): the aeon launch and the
+    // No explicit CPU quotas anywhere (law-isolate-greedy-work-in-vms): the dwarf launch and the
     // sentinel's landing dispatch no longer pass CPUQuota, so these keys have no consumer.
-    RetiredKey { key: "aeon_cpu_quota", bead: "sp-b4oct" },
+    RetiredKey { key: "aeon_cpu_quota", bead: "sp-b4oct" }, // ffx-ok
+    RetiredKey { key: "max_aeons", bead: "sp-vti1l1" }, // ffx-ok
+    RetiredKey { key: "max_live_aeons", bead: "sp-vti1l1" }, // ffx-ok
+    RetiredKey { key: "aeon_warm_base", bead: "sp-vti1l1" }, // ffx-ok
+    RetiredKey { key: "aeon_warm_cap_mib", bead: "sp-vti1l1" }, // ffx-ok
+    RetiredKey { key: "summon_jitter", bead: "sp-vti1l1" }, // ffx-ok
+    RetiredKey { key: "summon_lock_wait", bead: "sp-vti1l1" }, // ffx-ok
     RetiredKey { key: "land_cpu_quota", bead: "sp-b4oct" },
     // Every Spira tool is invoked by bare name on the launcher's PATH (sp-gypjk, design
     // runtime-is-a-release): a key naming a tool's path has no consumer. `batcher_bin` is
@@ -690,7 +696,7 @@ pub fn missing_from_retirement(
 }
 
 /// Parses `text` as `spira.toml` and reports the first error at the TOML path it occurred
-/// on (`spira.max_aeons`, `repo.service.mode`, ...) rather than a bare line/column, so a
+/// on (`spira.max_dwarves`, `repo.service.mode`, ...) rather than a bare line/column, so a
 /// hard error names the thing to fix instead of the place the parser gave up. A
 /// [`RETIRED_SPIRA_KEYS`] member under `[spira]` is dropped before deserializing rather than
 /// refused: see [`validate_with_warnings`] for the warning that names it.
@@ -710,8 +716,8 @@ pub fn validate_strict(text: &str) -> Result<(SpiraToml, Vec<String>), String> {
     Ok((doc, warnings))
 }
 
-/// A rostered persona with no `persona.<name>.model` is summoned and dies before its session
-/// starts: refused here, naming the key, rather than at every summon.
+/// A rostered persona with no `persona.<name>.model` is called and dies before its session
+/// starts: refused here, naming the key, rather than at every call.
 fn require_roster_declares_models(root: &toml::Value) -> Result<(), String> {
     let Some(spira) = root.get("spira").and_then(|v| v.as_table()) else { return Ok(()) };
     let roster: Vec<&str> = match spira.get("runes") {
@@ -723,7 +729,7 @@ fn require_roster_declares_models(root: &toml::Value) -> Result<(), String> {
         let model = root.get("persona").and_then(|v| v.get(p)).and_then(|v| v.get("model")).and_then(|v| v.as_str());
         if model.is_none_or(str::is_empty) {
             return Err(format!(
-                "spira.runes rosters {p:?} but persona.{p}.model is not declared — every summon of it would die before its session starts; run `spira-config set persona.{p}.model <model>`"
+                "spira.runes rosters {p:?} but persona.{p}.model is not declared — every call of it would die before its session starts; run `spira-config set persona.{p}.model <model>`"
             ));
         }
     }
@@ -1116,7 +1122,7 @@ fn alias_repo_land(path: &str) -> String {
 
 /// Serializes `doc` and writes it to `path` atomically — [`write_atomic`] plus the one
 /// `toml::to_string_pretty` call every writer outside this crate would otherwise need its
-/// own copy of (sp-6onps: `aeons.sh`, now the `aeons` binary in `spira-world`, is exactly
+/// own copy of (sp-6onps: `dwarves.sh`, now the `dwarves` binary in `spira-world`, is exactly
 /// that caller). Kept here, not duplicated at the call site, so `config-fence`'s "only
 /// spira-config names or parses the config" contract holds without a new allow-list entry.
 pub fn serialize_and_write(path: &std::path::Path, doc: &SpiraToml) -> Result<(), String> {
@@ -1124,7 +1130,7 @@ pub fn serialize_and_write(path: &std::path::Path, doc: &SpiraToml) -> Result<()
     write_atomic(path, &text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// Reads one dotted path out of an already-validated document — `spira.max_aeons`,
+/// Reads one dotted path out of an already-validated document — `spira.max_dwarves`,
 /// `repo.service.mode`, `persona.builder.lease.minutes` — for `spira-config get`.
 pub fn get_path(doc: &SpiraToml, path: &str) -> Option<String> {
     let path = alias_repo_land(path);
@@ -1212,7 +1218,7 @@ pub(crate) fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-/// Sets one dotted path (`spira.prod`, `spira.max_live_aeons`) to a leaf JSON value on `doc`.
+/// Sets one dotted path (`spira.prod`, `spira.max_live_dwarves`) to a leaf JSON value on `doc`.
 /// Shared by `set_path`'s two attempts, below.
 fn set_path_leaf(
     doc: &SpiraToml,
@@ -1311,7 +1317,7 @@ fn diff_apply(
     Ok(())
 }
 
-/// Sets one dotted path (`spira.prod`, `spira.instance`, `spira.max_live_aeons`) to a value
+/// Sets one dotted path (`spira.prod`, `spira.instance`, `spira.max_live_dwarves`) to a value
 /// given as a plain command-line string, for `spira-config set` — the writer `deploy.sh`,
 /// `install.sh` and `conf.sh`'s own `spira_config_set` shell helper use once nothing writes
 /// `spira.conf`'s `KEY=value` lines anymore. Goes through a JSON round-trip rather than a
@@ -1321,7 +1327,7 @@ fn diff_apply(
 ///
 /// TRIES THE VALUE AS A STRING FIRST, because most fields here are paths and names, and a
 /// literal like `"3"` must stay the string `"3"` when the field is one of those — only a
-/// field the schema itself types as a number or bool (`max_live_aeons`, `queue_batch_max`, ...)
+/// field the schema itself types as a number or bool (`max_live_dwarves`, `queue_batch_max`, ...)
 /// ever takes the second attempt, which parses the same text as JSON and retries. Reports the
 /// first (string) attempt's error when both fail, since "expected u32" names the fix; the
 /// generic JSON-parse failure on a bare word does not.
@@ -1342,7 +1348,7 @@ pub fn set_path(doc: &SpiraToml, path: &str, value: &str) -> Result<SpiraToml, S
 }
 
 /// Removes one dotted path's value from `doc`, for `spira-config unset` — the writer side of
-/// retiring a key (`aeons.sh unset`'s fleet ceiling) without leaving an empty string behind.
+/// retiring a key (`dwarves.sh unset`'s fleet ceiling) without leaving an empty string behind.
 /// A JSON null deserializes to `None` for every `Option<T>` field this schema has, and `toml`
 /// omits a `None` field entirely on serialization, so the key simply stops appearing in the
 /// document — never a leftover `key = ""` a reader would have to know means "unset".
@@ -1515,22 +1521,22 @@ mod tests {
 
     #[test]
     fn valid_minimal_document() {
-        let doc = validate("[spira]\nid_prefix = \"sp\"\nmax_aeons = 4\n").expect("valid");
-        assert_eq!(doc.spira.unwrap().max_aeons, Some(4));
+        let doc = validate("[spira]\nid_prefix = \"sp\"\nmax_dwarves = 4\n").expect("valid");
+        assert_eq!(doc.spira.unwrap().max_dwarves, Some(4));
     }
 
     #[test]
     fn unknown_key_names_its_path() {
         let (_, w) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nbogus = 1\n").unwrap();
         assert!(w.iter().any(|m| m.starts_with("spira.bogus") && m.contains("newer release")), "{w:?}");
-        let err = validate("[spira]\nid_prefix = \"sp\"\nmax_aeons = \"four\"\nbogus = 1\n").unwrap_err();
-        assert!(err.starts_with("spira.max_aeons"), "{err}");
+        let err = validate("[spira]\nid_prefix = \"sp\"\nmax_dwarves = \"four\"\nbogus = 1\n").unwrap_err();
+        assert!(err.starts_with("spira.max_dwarves"), "{err}");
     }
 
     #[test]
     fn wrong_type_names_its_path() {
-        let err = validate("[spira]\nid_prefix = \"sp\"\nmax_aeons = \"four\"\n").unwrap_err();
-        assert!(err.starts_with("spira.max_aeons"), "{err}");
+        let err = validate("[spira]\nid_prefix = \"sp\"\nmax_dwarves = \"four\"\n").unwrap_err();
+        assert!(err.starts_with("spira.max_dwarves"), "{err}");
     }
 
     #[test]
@@ -1577,10 +1583,10 @@ mod tests {
 
     #[test]
     fn export_sh_quotes_and_uppercases() {
-        let doc = validate("[spira]\nid_prefix = \"sp\"\nhome_repo = \"a b\"\nmax_aeons = 4\n").unwrap();
+        let doc = validate("[spira]\nid_prefix = \"sp\"\nhome_repo = \"a b\"\nmax_dwarves = 4\n").unwrap();
         let out = export_sh(&doc);
         assert!(out.contains("HOME_REPO='a b'\n"), "{out}");
-        assert!(out.contains("MAX_AEONS='4'\n"), "{out}");
+        assert!(out.contains("MAX_DWARVES='4'\n"), "{out}");
     }
 
     #[test]
@@ -1601,11 +1607,11 @@ mod tests {
 
     #[test]
     fn set_path_replaces_without_disturbing_siblings() {
-        let doc = validate("[spira]\nid_prefix = \"sp\"\nprod = \"/old\"\nmax_aeons = 4\n").unwrap();
+        let doc = validate("[spira]\nid_prefix = \"sp\"\nprod = \"/old\"\nmax_dwarves = 4\n").unwrap();
         let doc = set_path(&doc, "spira.prod", "/new").unwrap();
         let spira = doc.spira.unwrap();
         assert_eq!(spira.prod, Some("/new".to_string()));
-        assert_eq!(spira.max_aeons, Some(4));
+        assert_eq!(spira.max_dwarves, Some(4));
     }
 
     #[test]
@@ -1647,20 +1653,20 @@ mod tests {
         let out = toml::to_string_pretty(&unset_path(&doc, "repo.spira.gate").unwrap()).unwrap();
         assert!(!out.contains("gate"), "{out}");
         assert!(out.contains("path = \"/p\""), "{out}");
-        assert!(unset_path(&doc, "spira.aeon_cpu_quota").is_ok());
+        assert!(unset_path(&doc, "spira.aeon_cpu_quota").is_ok()); // ffx-ok
         // Positive control: an unknown, never-retired key is still refused.
         assert!(unset_path(&doc, "repo.spira.gatee").is_err());
     }
 
     #[test]
     fn retired_cpu_quota_keys_warn_and_are_ignored() {
-        // sp-b4oct: a live spira.toml still carrying the aeon/landing CPU quota validates,
+        // sp-b4oct: a live spira.toml still carrying the dwarf/landing CPU quota validates,
         // with one warning per key naming the retiring bead, and nothing exports them.
         let (doc, warnings) = validate_with_warnings(
             "[spira]\nid_prefix = \"sp\"\naeon_cpu_quota = \"400\"\nland_cpu_quota = \"70\"\n",
         )
         .expect("a retired CPU quota key must not be a hard error");
-        for key in ["aeon_cpu_quota", "land_cpu_quota"] {
+        for key in ["aeon_cpu_quota", "land_cpu_quota"] { // ffx-ok
             assert!(
                 warnings.iter().any(|w| w.contains(key) && w.contains("sp-b4oct")),
                 "no warning for {key}: {warnings:?}"
@@ -1674,8 +1680,8 @@ mod tests {
     fn a_misspelt_key_warns_as_unknown_but_a_bad_known_value_errors() {
         let (_, w) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nqueue_local_gatee = 1\n").unwrap();
         assert!(w.iter().any(|m| m.starts_with("spira.queue_local_gatee") && !m.contains("retired")), "{w:?}");
-        let err = validate("[spira]\nid_prefix = \"sp\"\nqueue_local_gatee = 1\nmax_aeons = true\n").unwrap_err();
-        assert!(err.starts_with("spira.max_aeons"), "{err}");
+        let err = validate("[spira]\nid_prefix = \"sp\"\nqueue_local_gatee = 1\nmax_dwarves = true\n").unwrap_err();
+        assert!(err.starts_with("spira.max_dwarves"), "{err}");
     }
 
     #[test]
@@ -1697,8 +1703,8 @@ mod tests {
 
     #[test]
     fn set_path_coerces_a_numeric_field() {
-        let doc = set_path(&SpiraToml::default(), "spira.max_live_aeons", "3").unwrap();
-        assert_eq!(doc.spira.unwrap().max_live_aeons, Some(3));
+        let doc = set_path(&SpiraToml::default(), "spira.max_live_dwarves", "3").unwrap();
+        assert_eq!(doc.spira.unwrap().max_live_dwarves, Some(3));
     }
 
     #[test]
@@ -1717,14 +1723,14 @@ mod tests {
 
     #[test]
     fn unset_path_removes_the_key_and_keeps_siblings() {
-        let doc = validate("[spira]\nid_prefix = \"sp\"\nmax_live_aeons = 3\nmax_aeons = 4\n").unwrap();
-        let doc = unset_path(&doc, "spira.max_live_aeons").unwrap();
+        let doc = validate("[spira]\nid_prefix = \"sp\"\nmax_live_dwarves = 3\nmax_dwarves = 4\n").unwrap();
+        let doc = unset_path(&doc, "spira.max_live_dwarves").unwrap();
         // omitted entirely from the serialized document, not written as an empty value.
         let out = toml::to_string_pretty(&doc).unwrap();
-        assert!(!out.contains("max_live_aeons"), "{out}");
+        assert!(!out.contains("max_live_dwarves"), "{out}");
         let spira = doc.spira.unwrap();
-        assert_eq!(spira.max_live_aeons, None);
-        assert_eq!(spira.max_aeons, Some(4));
+        assert_eq!(spira.max_live_dwarves, None);
+        assert_eq!(spira.max_dwarves, Some(4));
     }
 
     // Env edits go through `testkit::env`, which serializes every test in this binary.
@@ -1789,16 +1795,16 @@ mod tests {
     fn load_reads_and_validates() {
         let dir = scratch_dir("load-ok");
         let path = dir.join(FILE_NAME);
-        std::fs::write(&path, "[spira]\nid_prefix = \"sp\"\nmax_aeons = 4\n").unwrap();
+        std::fs::write(&path, "[spira]\nid_prefix = \"sp\"\nmax_dwarves = 4\n").unwrap();
         let doc = load(&path).expect("valid document");
-        assert_eq!(doc.spira.unwrap().max_aeons, Some(4));
+        assert_eq!(doc.spira.unwrap().max_dwarves, Some(4));
     }
 
     #[test]
     fn load_names_the_path_on_a_parse_error() {
         let dir = scratch_dir("load-bad");
         let path = dir.join(FILE_NAME);
-        std::fs::write(&path, "[spira]\nid_prefix = \"sp\"\nmax_aeons = true\n").unwrap();
+        std::fs::write(&path, "[spira]\nid_prefix = \"sp\"\nmax_dwarves = true\n").unwrap();
         let err = load(&path).unwrap_err();
         assert!(err.contains(&path.display().to_string()), "{err}");
     }
@@ -1958,7 +1964,7 @@ mod tests {
         for name in ["token", "BROKER_GH_TOKEN", "db_password", "Credential", "some_dsn"] {
             assert!(is_secret_shaped(name), "{name} should be secret-shaped");
         }
-        for name in ["home_repo", "max_aeons", "gate", "path"] {
+        for name in ["home_repo", "max_dwarves", "gate", "path"] {
             assert!(!is_secret_shaped(name), "{name} should not be secret-shaped");
         }
     }

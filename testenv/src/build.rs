@@ -141,7 +141,7 @@ impl Builder for Cargo {
         };
         let warm = warm_target(
             std::env::var_os("CARGO_TARGET_DIR"),
-            spira_config::process::cfg(spira_config::build::AEON_WARM_BASE_ENV)
+            spira_config::process::cfg(spira_config::build::DWARF_WARM_BASE_ENV)
                 .ok()
                 .filter(|v| !v.is_empty())
                 .map(PathBuf::from)
@@ -338,15 +338,15 @@ mod tests {
         let d = testkit::TempDir::new("warm-link");
         let base = d.join("warm-base");
         let slot = base.join("slot.1");
-        std::fs::create_dir_all(slot.join("aeon")).unwrap();
-        std::fs::write(slot.join("aeon").join("tool"), "x").unwrap();
+        std::fs::create_dir_all(slot.join("dwarf")).unwrap();
+        std::fs::write(slot.join("dwarf").join("tool"), "x").unwrap();
         let wt = d.join("wt");
-        std::fs::create_dir_all(wt.join("target").join("aeon")).unwrap();
-        std::fs::write(wt.join("target").join("aeon").join("stale"), "x").unwrap();
-        link_artifacts(&wt, "aeon", &slot).unwrap();
-        link_artifacts(&wt, "aeon", &slot).unwrap();
-        assert!(artifacts_dir(&wt, "aeon").join("tool").is_file());
-        assert!(!artifacts_dir(&wt, "aeon").join("stale").exists());
+        std::fs::create_dir_all(wt.join("target").join("dwarf")).unwrap();
+        std::fs::write(wt.join("target").join("dwarf").join("stale"), "x").unwrap();
+        link_artifacts(&wt, "dwarf", &slot).unwrap();
+        link_artifacts(&wt, "dwarf", &slot).unwrap();
+        assert!(artifacts_dir(&wt, "dwarf").join("tool").is_file());
+        assert!(!artifacts_dir(&wt, "dwarf").join("stale").exists());
     }
 
     #[test]
@@ -354,25 +354,25 @@ mod tests {
         let d = testkit::TempDir::new("dangling-link");
         let wt = d.join("wt");
         std::fs::create_dir_all(wt.join("target")).unwrap();
-        let gone = d.join("slot.1").join("aeon");
-        std::os::unix::fs::symlink(&gone, wt.join("target").join("aeon")).unwrap();
-        assert!(std::fs::create_dir_all(wt.join("target").join("aeon")).is_err());
-        clear_dangling_artifacts(&wt, "aeon").unwrap();
-        std::fs::create_dir_all(wt.join("target").join("aeon")).unwrap();
-        std::fs::write(wt.join("target/aeon/keep"), "x").unwrap();
-        clear_dangling_artifacts(&wt, "aeon").unwrap();
-        assert!(wt.join("target/aeon/keep").is_file());
+        let gone = d.join("slot.1").join("dwarf");
+        std::os::unix::fs::symlink(&gone, wt.join("target").join("dwarf")).unwrap();
+        assert!(std::fs::create_dir_all(wt.join("target").join("dwarf")).is_err());
+        clear_dangling_artifacts(&wt, "dwarf").unwrap();
+        std::fs::create_dir_all(wt.join("target").join("dwarf")).unwrap();
+        std::fs::write(wt.join("target/dwarf/keep"), "x").unwrap();
+        clear_dangling_artifacts(&wt, "dwarf").unwrap();
+        assert!(wt.join("target/dwarf/keep").is_file());
     }
 
     #[test]
     fn profile_directories() {
-        assert_eq!(profile_dir("aeon"), "aeon");
+        assert_eq!(profile_dir("dwarf"), "dwarf");
         assert_eq!(profile_dir("release"), "release");
         assert_eq!(profile_dir("dev"), "debug");
         assert_eq!(profile_dir("test"), "debug");
         assert_eq!(
-            artifacts_dir(Path::new("/wt"), "aeon"),
-            PathBuf::from("/wt/target/aeon")
+            artifacts_dir(Path::new("/wt"), "dwarf"),
+            PathBuf::from("/wt/target/dwarf")
         );
     }
 }

@@ -1,8 +1,8 @@
 [Unit]
-# THE SAME-USER SERVE UNIT (sp-xfqnr). An aeon reaches the lifecycle store only through
+# THE SAME-USER SERVE UNIT (sp-xfqnr). A dwarf reaches the lifecycle store only through
 # `work` -> SPIRA_LC_SOCKET, with no direct fallback by design; on a box without the root
 # installer's --system-user phase (spira-lc.service/.socket, a SYSTEM unit running as its
-# own Unix user) nothing answered that socket, so an aeon could be summoned but never claim
+# own Unix user) nothing answered that socket, so a dwarf could be called but never claim
 # or submit. This unit is that answer for same-user mode: `spira-lc serve` as the operator,
 # on the user manager's runtime directory — %t/spira-lc/sock, i.e. /run/user/<uid>/spira-lc/
 # sock, the path spira_config::resolve::lc_socket_default gives every caller in this mode.

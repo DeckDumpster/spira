@@ -17,7 +17,7 @@
 #     lifecycle path under STAGE_ROOT, so no lifecycle call leaves the stage
 #   - release canary-worker claims through that machine and submits (READY -> SUBMITTED)
 #   - release canary runs end-to-end on a stage: bead filed → sentinel pass (with
-#     fake-summon.sh / release canary-worker) → landing pass → commit on origin/main
+#     fake-call.sh / release canary-worker) → landing pass → commit on origin/main
 #
 # POSITIVE CONTROLS:
 #   - Bead-visible-in-stage-db proves the DB check is asking the right store
@@ -35,7 +35,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 tl_subshell_safe
 
-# The stage finds every compiled binary (sentinel, strand, aeon, landing-pass, spira-config)
+# The stage finds every compiled binary (sentinel, strand, dwarf, landing-pass, spira-config)
 # by bare name on the PATH testlib.sh set for this suite (sp-gypjk) — nothing to pin.
 
 # `release`'s own Config::from_env resolves SPIRA_LC_PASSWORD_FILE via cfg() ambiently —
@@ -94,11 +94,11 @@ printf '\nT1: stage up creates expected structure\n'
 
     exists "canary.rune"         "$SPIRA_HOME/runes/canary.rune"
     exists "repo map"               "$SPIRA_REPO_MAP"
-    isexec "fake-summon.sh"        "$SPIRA_HOME/fake-summon.sh"
+    isexec "fake-call.sh"        "$SPIRA_HOME/fake-call.sh"
     isexec "fake-launch.sh"        "$SPIRA_HOME/fake-launch.sh"
-    # canary-worker.sh is gone: fake-summon.sh execs `release canary-worker` directly —
+    # canary-worker.sh is gone: fake-call.sh execs `release canary-worker` directly —
     # the worker is a subcommand of the same binary, not a per-stage file (sp-jsnbm).
-    want "fake-summon execs release canary-worker" "release canary-worker" "$(cat "$SPIRA_HOME/fake-summon.sh")"
+    want "fake-call execs release canary-worker" "release canary-worker" "$(cat "$SPIRA_HOME/fake-call.sh")"
     exists "lib.sh symlink"        "$SPIRA_HOME/lib.sh"
     # sentinel.sh is gone: the stage runs the sentinel binary (release canary: `sentinel`).
     # landing.sh is gone: release canary runs `landing-pass land` (landing-pass/DESIGN.md §7.2).
@@ -167,7 +167,7 @@ printf '\nT2: stage isolation — all paths under STAGE_ROOT\n'
     tl_config SPIRA_LC_PASSWORD_FILE="${SPIRA_LC_PASSWORD_FILE:-}" SPIRA_BD="${SPIRA_BD:-}" \
         SPIRA_DB="${SPIRA_DB:-}"
 
-    for var in SPIRA_HOME SPIRA_RUN SPIRA_DB SPIRA_REPO SPIRA_SUMMON SPIRA_LAUNCH \
+    for var in SPIRA_HOME SPIRA_RUN SPIRA_DB SPIRA_REPO SPIRA_CALL SPIRA_LAUNCH \
                SPIRA_LC_PASSWORD_FILE SPIRA_LC_DATA_DIR; do
         val="${!var:-}"
         case "$val" in

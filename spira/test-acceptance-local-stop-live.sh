@@ -6,7 +6,7 @@
 # THE INCIDENT THIS REGRESSES (sp-kb0k5). A Concierge subagent wanted to stop a leftover
 # acceptance-local.sh. It read the process's PPid from /proc and killed it. The process was
 # orphaned, so its PPid was the user manager itself; SIGTERM to it activated exit.target and
-# the whole session — every aeon, sentinel, timer — stopped. Reproduced here for real: a
+# the whole session — every dwarf, sentinel, timer — stopped. Reproduced here for real: a
 # transient unit backgrounds a child from a subshell and lets that subshell exit
 # immediately, orphaning the child before this suite calls named_unit_stop. Reparenting
 # changes the child's PPid, never its cgroup, so the unit's own KillMode=control-group still

@@ -463,7 +463,7 @@ fn machine_mode_unreachable_machine_is_cannot_tell() {
     assert!(o.err.contains("the machine must answer"), "{}", o.err);
 }
 
-// ---- stack: the aeon's own claim-time proposal ----------------------------------------
+// ---- stack: the dwarf's own claim-time proposal ----------------------------------------
 
 fn b_stacked_on_a() -> String {
     serde_json::json!([{"id":"B","labels":["repo:spira"],"dependencies":[{"issue_id":"B","depends_on_id":"A","type":"blocks"}]}]).to_string()
@@ -926,7 +926,7 @@ fn rune_ready_cli_a_guarded_or_declared_literal_empty_never_refuses() {
 /// sp-hh599: under `spira-sentinel.service`'s own environment (`SPIRA_RELEASE`/`PATH`,
 /// never `SPIRA_HOME` — wave 4.25, sp-obhv6, stopped `conf.sh` exporting it), this used to
 /// refuse outright with rc 2 — the SAME rc `rune_ready_cli_no_rune_file_is_rc2_stdout_zero`
-/// above uses for "no such rune file", so `sentinel::summon::rune_ready`'s `2 =>
+/// above uses for "no such rune file", so `sentinel::call::rune_ready`'s `2 =>
 /// ReadyAnswer::NoRune` mapping could not tell "SPIRA_HOME is not set" apart from "this
 /// runes genuinely has no builder.rune", and skipped every rune every pass forever,
 /// silently (this bead's own repro).
@@ -1036,7 +1036,7 @@ fn bulk_ready_by_rune_cli_buckets_one_fetch_by_the_runes_roster() {
 fn bulk_ready_by_rune_cli_excludes_exactly_what_rune_ready_excludes() {
     // sp-85p8t: e (open children) and f (addressed to another rune) are never claimable by
     // a builder, so neither count may include them — the bulk count once did, and the
-    // sentinel summoned a builder for them every pass.
+    // sentinel called a builder for them every pass.
     let home = runes_home(&[("builder", "spira,plan", ""), ("ops", "spira,ops-trigger", "")]);
     let runes = runes_path(&home);
     let bd = sh(
@@ -1133,13 +1133,13 @@ fn enforced_counts_refuse_when_the_lifecycle_machine_cannot_answer() {
 // bd's status and assignee are content nobody reads for claimability: the candidate set is
 // the lifecycle machine's READY/REWORK rows. bd below answers its own `list --status open
 // --no-assignee` with W alone (open, unassigned) and holds P in_progress under a dead
-// aeon's name; the machine says the opposite.
+// dwarf's name; the machine says the opposite.
 
 const BD_OPEN_UNASSIGNED: &str = r#"[{"id":"W","status":"open","priority":1,"labels":["plan"]}]"#;
 const BD_BOTH: &str = r#"[{"id":"W","status":"open","priority":1,"issue_type":"task","labels":["plan"]},
-    {"id":"P","status":"in_progress","assignee":"aeon-gone","priority":1,"issue_type":"task","labels":["plan"]}]"#;
+    {"id":"P","status":"in_progress","assignee":"dwarf-gone","priority":1,"issue_type":"task","labels":["plan"]}]"#;
 const LC_W_HELD_P_READY: &str =
-    r#"[{"bead_id":"W","state":"WORKING","holder":"aeon-live","holds":"[]"},{"bead_id":"P","state":"READY","holds":"[]"}]"#;
+    r#"[{"bead_id":"W","state":"WORKING","holder":"dwarf-live","holds":"[]"},{"bead_id":"P","state":"READY","holds":"[]"}]"#;
 
 fn ids_of(json: &str) -> Vec<String> {
     rank::parse_ready(json).unwrap().into_iter().map(|r| r.id).collect()
@@ -1151,7 +1151,7 @@ fn a_bead_bd_shows_in_progress_is_ready_when_its_lifecycle_row_is_ready() {
     assert_eq!((one.code, one.out.as_str()), (0, "1"), "{}", one.err);
     let set = enforced_count(BD_OPEN_UNASSIGNED, LC_W_HELD_P_READY, BD_BOTH, &["rune-ready", "probe", "--json"]);
     assert_eq!(set.code, 0, "{}", set.err);
-    assert_eq!(ids_of(&set.out), vec!["P".to_string()], "the aeon's ready set is the count's own rows");
+    assert_eq!(ids_of(&set.out), vec!["P".to_string()], "the dwarf's ready set is the count's own rows");
     let bulk = enforced_count(BD_OPEN_UNASSIGNED, LC_W_HELD_P_READY, BD_BOTH, &["bulk-ready-by-rune"]);
     assert_eq!(bulk.out, "probe 1\n", "{}", bulk.err);
     let n = enforced_count(BD_OPEN_UNASSIGNED, LC_W_HELD_P_READY, BD_BOTH, &["ready-count", "plan", ""]);
@@ -1160,7 +1160,7 @@ fn a_bead_bd_shows_in_progress_is_ready_when_its_lifecycle_row_is_ready() {
 
 #[test]
 fn a_bead_bd_shows_open_and_unassigned_is_not_ready_while_its_row_is_working() {
-    let lc = r#"[{"bead_id":"W","state":"WORKING","holder":"aeon-live","holds":"[]"},{"bead_id":"P","state":"SUBMITTED","holds":"[]"}]"#;
+    let lc = r#"[{"bead_id":"W","state":"WORKING","holder":"dwarf-live","holds":"[]"},{"bead_id":"P","state":"SUBMITTED","holds":"[]"}]"#;
     for verb in [&["rune-ready", "probe"][..], &["ready-count", "plan", ""][..]] {
         let o = enforced_count(BD_OPEN_UNASSIGNED, lc, BD_BOTH, verb);
         assert_eq!((o.code, o.out.as_str()), (0, "0"), "{verb:?}: {}", o.err);
@@ -1180,12 +1180,12 @@ fn a_held_ready_row_is_not_ready_but_a_wait_hold_is_judged_through_its_blockers(
 //
 // The cockpit's NEXT rows asked bd ready itself; under the machine that set is bd's status
 // and assignee, which nobody claims by any more. `ready-count --json` is the same set the
-// count is, so a display and the summoner cannot disagree.
+// count is, so a display and the caller cannot disagree.
 
 #[test]
 fn ready_count_json_is_the_machine_set_with_titles() {
     let bd_both = r#"[{"id":"W","title":"held","status":"open","priority":1,"issue_type":"task","labels":["plan"]},
-    {"id":"P","title":"take me","status":"in_progress","assignee":"aeon-gone","priority":1,"issue_type":"task","labels":["plan"]}]"#;
+    {"id":"P","title":"take me","status":"in_progress","assignee":"dwarf-gone","priority":1,"issue_type":"task","labels":["plan"]}]"#;
     let set = enforced_count(BD_OPEN_UNASSIGNED, LC_W_HELD_P_READY, bd_both, &["ready-count", "plan", "spira-poison", "--json"]);
     assert_eq!(set.code, 0, "{}", set.err);
     let rows = rank::parse_ready(&set.out).unwrap();
@@ -1320,7 +1320,7 @@ fn ready_count_twice(ttl: &str) -> (Outcome, Outcome) {
     let run_s = run.to_string_lossy().into_owned();
     let bd = sh(&format!("case \"$*\" in *--id*) echo '{BD_BOTH}';; *) echo '{BD_OPEN_UNASSIGNED}';; esac"));
     let one = r#"[{"bead_id":"P","state":"READY","holds":"[]"}]"#;
-    let none = r#"[{"bead_id":"P","state":"WORKING","holder":"aeon-live","holds":"[]"}]"#;
+    let none = r#"[{"bead_id":"P","state":"WORKING","holder":"dwarf-live","holds":"[]"}]"#;
     let mut call = |lc: &str| {
         let path = fake_lc_path(lc);
         run_cfg(

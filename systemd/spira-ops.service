@@ -3,7 +3,7 @@ After=lc-serve.service
 Wants=lc-serve.service
 # The Ops persona's TIMER trigger. The timer path runs a beadless sweep: Ops reads the
 # watchtower snapshot, runs the scans on its menu, and files beads for anything that needs
-# attention. Incident claims arrive from the sentinel, which summons Ops directly when an
+# attention. Incident claims arrive from the sentinel, which calls Ops directly when an
 # incident bead is ready — that path does not run through this service file.
 #
 # The two ExecStartPre lines below (drain the spool, repair the wiring) belong to the
@@ -55,9 +55,9 @@ ExecStartPre=-@SPIRA_PROD@/incident.sh drain
 # The prompt reaches stdin through systemd, not a bash redirect: an ExecStart whose first
 # path is /bin/bash fails doctor's "resolves outside $SPIRA_RELEASES" check, and deploy's
 # pre-health refused every deploy on it (sp-ycxt2). A missing file still fails the unit.
-ExecStart=@SPIRA_PROD_ROOT@/bin/aeon --home @SPIRA_PROD@ ops --sweep --prompt -
+ExecStart=@SPIRA_PROD_ROOT@/bin/dwarf --home @SPIRA_PROD@ ops --sweep --prompt -
 StandardInput=file:@SPIRA_RUN@/ops-sweep-prompt.txt
-# Matches RUNE_TIMEOUT_SECONDS plus room for the sweep to start. An aeon that outlives
+# Matches RUNE_TIMEOUT_SECONDS plus room for the sweep to start. A dwarf that outlives
 # this is killed and the next timer tick starts a fresh pass.
 TimeoutStartSec=2000
 StandardOutput=append:@SPIRA_RUN@/ops.log

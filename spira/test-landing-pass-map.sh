@@ -101,7 +101,7 @@ nowant "configured but empty map: log never claims the map is unconfigured" \
 PROBE_REPO="$TMP/probe-repo"; PROBE_REMOTE="$TMP/probe-remote.git"
 git init -q -b main "$PROBE_REPO"
 git -C "$PROBE_REPO" commit -q --allow-empty -m base
-# A local bare clone stands in for the forge remote (never `git push` from an aeon
+# A local bare clone stands in for the forge remote (never `git push` from a dwarf
 # session — law-tests-run-only-through-testenv's spirit applies to any real push path).
 timeout 5 git clone -q --bare "$PROBE_REPO" "$PROBE_REMOTE"
 git -C "$PROBE_REPO" remote add origin "$PROBE_REMOTE"

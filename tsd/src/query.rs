@@ -165,7 +165,7 @@ pub fn sentinel(src: &Source, now: u64, hours: u64) -> Result<Value, Failure> {
     Ok(json!([{"p50": quantile(&totals, 0.5), "p90": quantile(&totals, 0.9), "passes": totals.len(), "top_phases": if top.is_empty() { Value::Null } else { json!(top) }}]))
 }
 
-/// One bead's timeline, oldest first: stage moves, aeon sessions and gate runs.
+/// One bead's timeline, oldest first: stage moves, dwarf sessions and gate runs.
 pub fn bead(src: &Source, id: &str) -> Result<Value, Failure> {
     let stage = src.rows(STAGE, 0)?;
     let mut moves: Vec<&Value> = applied_beads(&stage).filter(|r| text(r, "key") == Some(id)).collect();
@@ -182,8 +182,8 @@ pub fn bead(src: &Source, id: &str) -> Result<Value, Failure> {
         prev = t;
         out.push((text(r, "ts").unwrap_or("").to_string(), "stage", what, secs));
     }
-    for r in src.rows("aeon-session", 0)?.iter().filter(|r| text(r, "bead") == Some(id)) {
-        out.push((text(r, "ts").unwrap_or("").to_string(), "aeon", format!("{} {}", text(r, "rune").unwrap_or(""), text(r, "status").unwrap_or("")), num(r, "wall_s").map(|w| json!(int(w))).unwrap_or(Value::Null)));
+    for r in src.rows("dwarf-session", 0)?.iter().filter(|r| text(r, "bead") == Some(id)) {
+        out.push((text(r, "ts").unwrap_or("").to_string(), "dwarf", format!("{} {}", text(r, "rune").unwrap_or(""), text(r, "status").unwrap_or("")), num(r, "wall_s").map(|w| json!(int(w))).unwrap_or(Value::Null)));
     }
     if let Some(gates) = optional(src.rows("gate-run", 0))? {
         for r in gates.iter().filter(|r| text(r, "bead") == Some(id)) {
@@ -194,10 +194,10 @@ pub fn bead(src: &Source, id: &str) -> Result<Value, Failure> {
     Ok(Value::Array(out.into_iter().map(|(ts, kind, what, secs)| json!({"ts": ts, "kind": kind, "what": what, "secs": secs})).collect()))
 }
 
-/// Seconds spent in aeon sessions, gate runs and batch rounds, and in empty slots.
+/// Seconds spent in dwarf sessions, gate runs and batch rounds, and in empty slots.
 pub fn time(src: &Source, now: u64, hours: u64) -> Result<Value, Failure> {
     let from = since(now, hours);
-    let aeon = src.rows("aeon-session", from)?;
+    let dwarf = src.rows("dwarf-session", from)?;
     let gate = src.rows("gate-run", from)?;
     let slots = src.rows("slots", 0)?;
     let rounds = optional(src.rows("batch-round", from))?.unwrap_or_default();
@@ -216,7 +216,7 @@ pub fn time(src: &Source, now: u64, hours: u64) -> Result<Value, Failure> {
             empty * dt
         })
         .sum();
-    Ok(json!([{"aeon_s": int(sum(&aeon, "wall_s")), "gate_s": int(sum(&gate, "ran_secs")), "round_s": int(sum(&rounds, "duration_ms") / 1000.0), "idle_slot_s": int(idle)}]))
+    Ok(json!([{"dwarf_s": int(sum(&dwarf, "wall_s")), "gate_s": int(sum(&gate, "ran_secs")), "round_s": int(sum(&rounds, "duration_ms") / 1000.0), "idle_slot_s": int(idle)}]))
 }
 
 /// avg(field) over the window, and how many rows it covers.

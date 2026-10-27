@@ -8,7 +8,7 @@ use axum::Router;
 use spira_otel::metrics::Run;
 use std::sync::Arc;
 
-const PAGES: [&str; 10] = ["shots", "lifecycle", "rounds", "stuck", "beads", "units", "states", "aeons", "ops", "now"];
+const PAGES: [&str; 10] = ["shots", "lifecycle", "rounds", "stuck", "beads", "units", "states", "dwarves", "ops", "now"];
 
 /// A bounded operation label: the first path segment (after `/api/`) when it is a page this server has, else `other`.
 pub fn operation(path: &str) -> &'static str {

@@ -1,0 +1,13 @@
+[Unit]
+Description=Refill a freed dwarf slot on a fast path, between full sentinel passes
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+Unit=spira-call.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=work

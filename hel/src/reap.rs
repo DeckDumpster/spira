@@ -105,33 +105,33 @@ fn pid_alive(pid: &str) -> bool {
 }
 
 /// lib.sh `hold_alive <pidfile>`: 0 if the recorded pid is a live process. Unlike
-/// `aeon_alive` this does NOT check argv, because the holder can be any process — a brain
+/// `dwarf_alive` this does NOT check argv, because the holder can be any process — a brain
 /// session, the concierge, a hand-run tool.
 pub fn hold_alive(pf: &Path) -> bool {
     let Ok(pid) = std::fs::read_to_string(pf) else { return false };
     pid_alive(&pid)
 }
 
-/// The sibling lease of an aeon identity pidfile: the aeon writes a deadline (epoch seconds)
+/// The sibling lease of a dwarf identity pidfile: the dwarf writes a deadline (epoch seconds)
 /// at birth and renews it every beat, and removes it with the pidfile at teardown.
 pub fn lease_file(pidfile: &Path) -> PathBuf {
     pidfile.with_extension("lease")
 }
 
 /// Liveness is the lease and nothing else: the recorded deadline is still ahead of `now`. The
-/// pid is never probed and `/proc` never read, so a recycled pid cannot resurrect a dead aeon
+/// pid is never probed and `/proc` never read, so a recycled pid cannot resurrect a dead dwarf
 /// and a live one is not judged by what its argv looks like.
 pub fn lease_live(pidfile: &Path, now: i64) -> bool {
     std::fs::read_to_string(lease_file(pidfile)).ok().and_then(|t| t.trim().parse::<i64>().ok()).is_some_and(|d| d > now)
 }
 
-pub fn aeon_alive(pf: &Path) -> bool {
+pub fn dwarf_alive(pf: &Path) -> bool {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     lease_live(pf, now)
 }
 
 /// lib.sh `holder_alive <id>`: a live process is working this bead — a hold pidfile (pid
-/// only, the holder can be anything) OR an aeon whose lease is still running. Both satisfy the SAME predicate the reaper reads.
+/// only, the holder can be anything) OR a dwarf whose lease is still running. Both satisfy the SAME predicate the reaper reads.
 pub fn holder_alive(run: &Path, id: &str) -> bool {
     if hold_alive(&run.join(format!("hold-{id}.pid"))) {
         return true;
@@ -140,7 +140,7 @@ pub fn holder_alive(run: &Path, id: &str) -> bool {
     let suffix = format!("-{id}.pid");
     rd.flatten().any(|e| {
         let n = e.file_name().to_string_lossy().into_owned();
-        n.starts_with("aeon-") && n.ends_with(&suffix) && aeon_alive(&e.path())
+        n.starts_with("dwarf-") && n.ends_with(&suffix) && dwarf_alive(&e.path())
     })
 }
 
@@ -533,20 +533,20 @@ pub fn occupants(proc_root: &Path, work: &Path) -> Vec<u32> {
     pids
 }
 
-/// The `spira-aeon-*.service` units the given pids run under, from their cgroups.
-pub fn aeon_units(proc_root: &Path, pids: &[u32]) -> Vec<String> {
+/// The `spira-dwarf-*.service` units the given pids run under, from their cgroups.
+pub fn dwarf_units(proc_root: &Path, pids: &[u32]) -> Vec<String> {
     let mut units: Vec<String> = pids
         .iter()
         .filter_map(|p| std::fs::read_to_string(proc_root.join(p.to_string()).join("cgroup")).ok())
         .flat_map(|t| t.split(|c: char| c == '/' || c.is_whitespace()).map(str::to_string).collect::<Vec<_>>())
-        .filter(|seg| seg.starts_with("spira-aeon-") && seg.ends_with(".service"))
+        .filter(|seg| seg.starts_with("spira-dwarf-") && seg.ends_with(".service"))
         .collect();
     units.sort();
     units.dedup();
     units
 }
 
-/// A lease that lapsed does not mean the aeon exited. Stop the unit of every process still
+/// A lease that lapsed does not mean the dwarf exited. Stop the unit of every process still
 /// working in `work`, then wait for them to leave; `Err` carries the pids that did not.
 pub fn stop_occupants(
     proc_root: &Path,
@@ -559,7 +559,7 @@ pub fn stop_occupants(
     if pids.is_empty() {
         return Ok(());
     }
-    for unit in aeon_units(proc_root, &pids) {
+    for unit in dwarf_units(proc_root, &pids) {
         stop(&unit);
     }
     for _ in 0..tries {
@@ -646,11 +646,11 @@ mod tests {
     }
 
     #[test]
-    fn holder_alive_requires_aeon_argv_for_an_aeon_pidfile() {
+    fn holder_alive_requires_dwarf_argv_for_an_dwarf_pidfile() {
         let run = tempdir();
-        // A live pid whose argv is NOT an aeon must not count — a recycled pid must not
-        // resurrect a dead aeon's claim.
-        std::fs::write(run.join("aeon-builder-sp-a1.pid"), std::process::id().to_string()).unwrap();
+        // A live pid whose argv is NOT a dwarf must not count — a recycled pid must not
+        // resurrect a dead dwarf's claim.
+        std::fs::write(run.join("dwarf-builder-sp-a1.pid"), std::process::id().to_string()).unwrap();
         assert!(!holder_alive(&run, "sp-a1"));
     }
 
@@ -865,14 +865,14 @@ mod tests {
         std::fs::create_dir_all(&work).unwrap();
         std::fs::create_dir_all(proc.join("100")).unwrap();
         std::os::unix::fs::symlink(&work, proc.join("100/cwd")).unwrap();
-        std::fs::write(proc.join("100/cgroup"), "0::/user.slice/user-1000.slice/user@1000.service/app.slice/spira-aeon-shiva-sp-a-1.service\n").unwrap();
+        std::fs::write(proc.join("100/cgroup"), "0::/user.slice/user-1000.slice/user@1000.service/app.slice/spira-dwarf-andvari-sp-a-1.service\n").unwrap();
         std::fs::create_dir_all(proc.join("200")).unwrap();
         std::os::unix::fs::symlink(t.join("elsewhere"), proc.join("200/cwd")).unwrap();
         let mut stopped = Vec::new();
         let p = proc.clone();
         let r = stop_occupants(&proc, &work, &mut |u| { stopped.push(u.to_string()); std::fs::remove_dir_all(p.join("100")).unwrap(); }, 3, &|| {});
         assert_eq!(r, Ok(()));
-        assert_eq!(stopped, vec!["spira-aeon-shiva-sp-a-1.service"]);
+        assert_eq!(stopped, vec!["spira-dwarf-andvari-sp-a-1.service"]);
         assert!(stop_occupants(&proc, &work, &mut |_| panic!("nothing to stop"), 3, &|| {}).is_ok());
     }
 

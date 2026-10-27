@@ -25,12 +25,12 @@
 #
 # Nothing else in the harness can hold that line. The landing worker merges the branch of any
 # closed bead into the base and pushes it, so a spike that committed its experiment beside its
-# write-up would land the experiment, and every downstream check would pass it: the aeon
+# write-up would land the experiment, and every downstream check would pass it: the dwarf
 # committed, the commit names the bead, the gate ran, the branch landed. The refusal has to be
 # here, where the diff against the base is still readable.
 #
 # A FENCE, NOT A WALL. It refuses politely and says exactly which paths offended, so the next
-# aeon on the bead can move them to a branch of their own and finish; and an installation that
+# dwarf on the bead can move them to a branch of their own and finish; and an installation that
 # wants a spike to land more than a document says so in SPIRA_SPIKE_PATHS rather than deleting
 # this. The override is configuration, which is the form a fence's override should take.
 set -uo pipefail
@@ -40,7 +40,7 @@ ID="${1:-}"; BR="${2:-}"; REPO="${3:-}"; BASE="${4:-}"; labels="${5:-}"
     || { printf 'usage: confine.sh <bead-id> <branch> <repo-path> <base-ref> [labels]\n' >&2; exit 2; }
 
 # ---- is this a spike at all? (BEFORE library load) ------------------------------------
-# Asked of the BEAD, never of the branch name. A branch is a string an aeon chose and a
+# Asked of the BEAD, never of the branch name. A branch is a string a dwarf chose and a
 # successor bead may inherit; the label is what the harness dispatched on, so it is the only
 # thing that answers "was this worked by the persona whose deliverable is a document".
 #
@@ -106,7 +106,7 @@ fi
 # ---- is all of it inside the allowed trees? ---------------------------------------------
 # Prefix match on a PATH BOUNDARY, not on a string. `docs/spikes` must admit
 # `docs/spikes/q.md` and the file `docs/spikes` itself, and must not admit
-# `docs/spikes-scratch/poc.rs` — which is exactly the name an aeon would reach for when told
+# `docs/spikes-scratch/poc.rs` — which is exactly the name a dwarf would reach for when told
 # to keep its experiment beside its notes.
 outside=""
 while IFS= read -r f; do
@@ -125,7 +125,7 @@ done <<< "$changed"
 OUTSIDE_LIST="$(printf '%s\n' $outside | sed 's/^/    /')"
 
 # THE REFUSAL NAMES THE PATHS AND THE REMEDY. A note saying "failed confinement" tells its
-# next aeon nothing it can act on, and after three of those the bead poisons and reaches the
+# next dwarf nothing it can act on, and after three of those the bead poisons and reaches the
 # operator with a reason that is not a reason.
 cat <<MSG
 $BR is a spike branch and changes files outside the trees a spike may land.

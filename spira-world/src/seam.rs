@@ -9,10 +9,10 @@
 //! its two chokepoints below are called, never re-implemented:
 //!
 //!   - `spira_lane_runes` + `rune_get`: a `.rune` file is SOURCED as bash to read one
-//!     field (aeons.sh's own `lane_caps`), and a rune file may compute that field from
+//!     field (dwarves.sh's own `lane_caps`), and a rune file may compute that field from
 //!     other shell variables (groomer.rune's `RUNE_LABELS` does exactly this for a
 //!     different field) — a hand-written Rust parser would silently disagree on the one
-//!     rune that does, which is the exact failure `aeons.sh` exists to prevent
+//!     rune that does, which is the exact failure `dwarves.sh` exists to prevent
 //!     (law-bake-rules-into-tools: a program that refuses to be misread).
 //!   - `bdq`/`bdjson`, `salvage`, `spira_destroy_worktree`/`_branch`, `spira_landref`,
 //!     `bead_repo`, `repo_root` (slay.sh steps 0, 4a, 5, 4b, 6): the one
@@ -66,7 +66,7 @@ pub fn run_for(lib_sh: &Path, name: &str, script: &str, envs: &[(&str, &str)], s
     }
 }
 
-/// `aeons.sh status`'s lane report: every lane rune's name and `RUNE_MAX_CONCURRENT`,
+/// `dwarves.sh status`'s lane report: every lane rune's name and `RUNE_MAX_CONCURRENT`,
 /// NUL-separated `name\tmax_concurrent` records — the same two `rune_get` reads
 /// `lane_caps()` made, in one process instead of two lib.sh sourcings.
 pub const LANE_CAPS: &str = r#"
@@ -104,7 +104,7 @@ except Exception:
 
 /// slay.sh steps 4a (release the claim before anything is destroyed), 5 (salvage, park or
 /// delete the work), 4b (the note) and the final `bdjson show` — everything downstream of
-/// "the aeon/hold is stopped" that still has to go through lib.sh's own chokepoints.
+/// "the dwarf/hold is stopped" that still has to go through lib.sh's own chokepoints.
 /// Reads `$SLAY_ID $SLAY_WHY $SLAY_MODE $SLAY_REASON $SLAY_KEEP $SLAY_NAME $SLAY_PID
 /// $SLAY_UNIT $SPIRA_RUN $SPIRA_SUBMITTED_LABEL` from the environment (never interpolated
 /// into this script's text) and prints slay.sh's own narration lines verbatim, ending with
@@ -206,7 +206,7 @@ fi
 if [ -n "$nuked" ]; then bdq label remove "$ID" "branch:$br" >/dev/null 2>&1 || true; fi
 _work_msg="${nuked:-work kept}${saved:+; uncommitted changes salvaged to $saved}"
 [ "$WIP_COMMITTED" = 1 ] && _work_msg="wip committed to $br; branch kept in refs/heads; patch at $saved"
-note="Slain by the operator: $WHY. Aeon ${name:-?}${pid:+ (pid $pid)} stopped${unit:+ via $unit}. ${_work_msg}. No attempt charged."
+note="Slain by the operator: $WHY. Dwarf ${name:-?}${pid:+ (pid $pid)} stopped${unit:+ via $unit}. ${_work_msg}. No attempt charged."
 case "$MODE" in
     close)  spira-lc drop "$ID" "$REASON — $note" slay >/dev/null 2>&1 || true
             bdq note "$ID" "$REASON — $note" >/dev/null 2>&1 || true ;;

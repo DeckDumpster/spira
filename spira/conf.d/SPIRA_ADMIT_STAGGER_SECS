@@ -1,5 +1,5 @@
 TYPE=u64
-GROUP=summon
+GROUP=call
 DOC=SECONDS AFTER ONE COMPILE OR TEST SLOT IS TAKEN BEFORE THE NEXT MAY START WHILE OTHERS ARE HELD
 SCHEMA=Seconds a fresh compile/test admission waits after the previous one began, when slots are already held (0 disables; unset in a bare process: 0).
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

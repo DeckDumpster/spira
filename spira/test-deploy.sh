@@ -8,7 +8,7 @@
 #   1. Self-check: deploy.sh must exist.
 #   2. (a) Basic deploy: latest tag resolves; gh fetches tarball; current points at release.
 #   3. (a) Already-current: refuses (exit 1) if the release is already active.
-#   4. (b) Drain refuses: non-zero drain exit blocks deploy without killing aeons.
+#   4. (b) Drain refuses: non-zero drain exit blocks deploy without killing dwarves.
 #   5. (c) Rollback non-first: failed health check restores the prior release, and the
 #          re-rendered units resolve (not merely the symlink) into its tree.
 #   6. (d) Unit re-render: install.sh is called with SPIRA_PROD=$SPIRA_RELEASES/current/spira,
@@ -19,7 +19,7 @@
 #  10. (h) Draft release refused: latest skips a draft; a named draft is refused.
 #  11. (i) Migration check: mismatch refuses; unreachable triggers dolt start, then proceeds or "cannot read".
 #  12. (j) Bootstrap: deploy from tarball location with no deploy.sh in checkout.
-#  16. (k) --force: slays live aeons (--keep-work --reopen --why "deploy <tag>") and proceeds.
+#  16. (k) --force: slays live dwarves (--keep-work --reopen --why "deploy <tag>") and proceeds.
 #  19. (n) conf ordering: SPIRA_PROD written to conf before release install-tarball restarts services.
 #
 # FAIL-FIRST (law-absence-needs-a-positive-control)
@@ -369,18 +369,18 @@ nowant "already-current: gh not called"    "release download" "$(cat "$CALL_LOG"
 
 # ==========================================================================
 echo
-echo "PROPERTY 4: drain refuses — live aeons are not killed"
+echo "PROPERTY 4: drain refuses — live dwarves are not killed"
 # ==========================================================================
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 mkdir -p "$RELEASES/$PRIOR_RELEASE"
 ln -s "$PRIOR_RELEASE" "$RELEASES/current"
 
-# FAIL-FIRST: verify the SC log detects a stop-aeon call if it happens.
-printf 'SC --user stop spira-aeon-abc-prod.service\n' > "$SC_LOG"
-if grep -q 'stop spira-aeon-' "$SC_LOG"; then
-    ok "fail-first: SC log detects stop-aeon"
+# FAIL-FIRST: verify the SC log detects a stop-dwarf call if it happens.
+printf 'SC --user stop spira-dwarf-abc-prod.service\n' > "$SC_LOG"
+if grep -q 'stop spira-dwarf-' "$SC_LOG"; then
+    ok "fail-first: SC log detects stop-dwarf"
 else
-    bad "fail-first: SC log detects stop-aeon" "grep missed it"
+    bad "fail-first: SC log detects stop-dwarf" "grep missed it"
 fi
 > "$SC_LOG"
 
@@ -388,7 +388,7 @@ _out="$(run_deploy "WORLD_DRAIN_EXIT=1" -- "$NEW_TAG" 2>&1)"
 _rc=$?
 not0    "drain-refuses: exits non-zero"           "$_rc"
 want    "drain-refuses: mentions drain"           "drain" "$_out"
-nowant "drain-refuses: no aeon stopped"          "stop spira-aeon-" "$(cat "$SC_LOG")"
+nowant "drain-refuses: no dwarf stopped"          "stop spira-dwarf-" "$(cat "$SC_LOG")"
 islink  "drain-refuses: current unchanged"        "$RELEASES/current" "$PRIOR_RELEASE"
 
 # ==========================================================================
@@ -686,7 +686,7 @@ _toml_file="$TMP/test-deploy.toml"
 cat > "$_toml_file" <<'EOF'
 [spira]
 id_prefix = "sp"
-max_aeons = 4
+max_dwarves = 4
 EOF
 if ! grep -q '^prod' "$_toml_file" 2>/dev/null; then
     ok "fail-first: fixture toml has no prod key"
@@ -703,7 +703,7 @@ if printf '%s' "$_prod_in_toml" | grep -q "$RELEASES/current/spira"; then
 else
     bad "toml-update: SPIRA_PROD written to spira.toml" "got [$_prod_in_toml]"
 fi
-want "toml-update: sibling key left intact" "max_aeons = 4" "$(cat "$_toml_file")"
+want "toml-update: sibling key left intact" "max_dwarves = 4" "$(cat "$_toml_file")"
 if [ ! -e "$TMP/spira.conf" ] && [ ! -e "$FAKE_REPO/spira.conf" ] && [ ! -e "$HOME/.config/spira/spira.conf" ]; then
     ok "toml-update: no spira.conf created"
 else
@@ -716,7 +716,7 @@ cat > "$_toml_file" <<'EOF'
 [spira]
 id_prefix = "sp"
 prod = "/old/checkout/spira"
-max_aeons = 4
+max_dwarves = 4
 EOF
 _out="$(run_deploy "SPIRA_TOML=$SPIRA_TOML:$_toml_file" -- "$NEW_TAG" 2>&1)"
 _count="$(grep -c '^prod' "$_toml_file" 2>/dev/null || echo 0)"
@@ -724,7 +724,7 @@ _count="$(grep -c '^prod' "$_toml_file" 2>/dev/null || echo 0)"
     && ok "toml-update: only one prod line after update" \
     || bad "toml-update: only one prod line after update" "found $_count"
 nowant "toml-update: old path removed" "/old/checkout" "$(cat "$_toml_file")"
-want   "toml-update: sibling key still intact after replace" "max_aeons = 4" "$(cat "$_toml_file")"
+want   "toml-update: sibling key still intact after replace" "max_dwarves = 4" "$(cat "$_toml_file")"
 
 # ==========================================================================
 echo
@@ -1044,7 +1044,7 @@ islink "bootstrap: current -> $NEW_RELEASE" "$RELEASES/current" "$NEW_RELEASE"
 
 # ==========================================================================
 echo
-echo "PROPERTY 16: --force slays live aeons and proceeds with deploy"
+echo "PROPERTY 16: --force slays live dwarves and proceeds with deploy"
 # ==========================================================================
 FORCE_BEAD="sp-frce1"
 
@@ -1056,8 +1056,8 @@ _rc=$?
 not0    "fail-first: drain refusal blocks without --force"  "$_rc"
 nowant "fail-first: slay not called without --force"       "slay --bead" "$(cat "$SLAY_LOG")"
 
-# Simulate a live aeon: pidfile pointing at the running test shell (process exists in /proc).
-_force_pf="$RUN_DIR/aeon-bahamut-$FORCE_BEAD.pid"
+# Simulate a live dwarf: pidfile pointing at the running test shell (process exists in /proc).
+_force_pf="$RUN_DIR/dwarf-alviss-$FORCE_BEAD.pid"
 printf '%s\n' "$$" > "$_force_pf"
 
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"

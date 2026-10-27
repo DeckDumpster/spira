@@ -1,4 +1,4 @@
-//! Lapsed aeons — killed by the liveness lease since the previous sweep. `aeon.sh` (out of
+//! Lapsed dwarves — killed by the liveness lease since the previous sweep. `dwarf.sh` (out of
 //! this bead's scope) writes one record per lapse under `$SPIRA_RUN/lapsed/`, named
 //! `<bead-id>-<YYYYMMDDTHHMMSSZ>`; this reads every record newer than the marker the
 //! previous sweep left, so each lapse appears in exactly one sweep.
@@ -41,7 +41,7 @@ fn timestamp_suffix(filename: &str) -> Option<&str> {
 /// every record is new). Records are read in filename order, matching `find … | sort`.
 pub fn read(dir: &Path, prev_marker: &str) -> Lapsed {
     if !dir.exists() {
-        // Never recorded — the directory is created by aeon.sh on the first lapse.
+        // Never recorded — the directory is created by dwarf.sh on the first lapse.
         return Lapsed {
             count: Count::Known(0),
             section: "  none since last sweep".to_string(),

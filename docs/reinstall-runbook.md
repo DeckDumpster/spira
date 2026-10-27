@@ -24,7 +24,7 @@ local scratch remote, so a **Not rehearsed** note marks each place a real box di
   `no bd on PATH` otherwise.
 - Egress to the forge host: `spira-install` downloads missing helper tools in phase −1.
 - The agent CLI is installed and logged in. *Not rehearsed:* without it the loop arms and
-  summons nothing, and the Verify bead spends real tokens.
+  calls nothing, and the Verify bead spends real tokens.
 - A checkout of the repository this instance works on, whose remote accepts pushes **without
   a prompt**. Pushes come from systemd user units, which do not see an interactive ssh-agent.
   *Not rehearsed:* acceptance pushes to a local bare repository.
@@ -58,7 +58,7 @@ systemctl --user list-units --state=active --no-legend --plain | grep -E '^(spir
 pgrep -af 'dolt sql-server'; ss -ltn | grep ':3307\b'
 ```
 
-**Success:** the last three commands print nothing. An aeon mid-bead is abandoned.
+**Success:** the last three commands print nothing. A dwarf mid-bead is abandoned.
 **If it fails:** a unit that returns has a `Restart=` policy or a timer: `systemctl --user
 disable --now <unit>`. Stop a stray `dolt sql-server` by name, never by a PID derived from a
 parent PID.
@@ -170,7 +170,7 @@ then hooks. `spira-install` is idempotent: fix the cause and re-run.
 | rc / message | Cause | Do |
 |---|---|---|
 | `1`, `preflight failed` | a `doctor` FAIL | read its FAIL lines; with an operator present a missing `tmux` is a FAIL |
-| `5`, `CONFLICT` | a leftover old unit, a live aeon, a held gate lock, or a Dolt on the port | follow the printed `remedy:`; usually step 2 was incomplete; do not use the override |
+| `5`, `CONFLICT` | a leftover old unit, a live dwarf, a held gate lock, or a Dolt on the port | follow the printed `remedy:`; usually step 2 was incomplete; do not use the override |
 | `2`, `phase config failed` | `SPIRA_TOML` unexported or naming no file | re-export step 5's block |
 | `2`, `REFUSING database … inside a git checkout` | `db` is under a git repo | choose another path, remove `spira.toml`, redo 5a |
 | `2`, `root accepts neither the password` | a Dolt with a hand-set root password survived | wipe its data, or supply `SPIRA_LC_ADMIN_USER`/`SPIRA_LC_ADMIN_PASSWORD` without echoing |
@@ -228,7 +228,7 @@ ID=<the id it printed>
 spira-lc history "$ID"                                   # READY
 spira-claim rune-ready builder --json | grep -c "$ID"   # 1 = claimable
 systemctl --user start spira-sentinel-prod.service
-git -C <home_repo_path> show-ref "refs/heads/spira/$ID"  # the aeon's branch appears
+git -C <home_repo_path> show-ref "refs/heads/spira/$ID"  # the dwarf's branch appears
 spira-lc history "$ID" | tee <work>/proof-history.json
 git -C <home_repo_path> fetch origin; git -C <home_repo_path> log --format='%H %s' "$BASE..<home_repo_base>" | grep "$ID"
 ```
@@ -259,7 +259,7 @@ remove data too. To restore the old instance from the 2c archive:
 rm -rf ~/.config/spira <db> <dolt_data> <run> <releases>
 tar -C / -xzf <work>/old-instance.tar.gz
 systemctl --user daemon-reload
-systemctl --user enable --now $(grep -E '\.(timer|service)$' <work>/old-units.txt | grep -v aeon)
+systemctl --user enable --now $(grep -E '\.(timer|service)$' <work>/old-units.txt | grep -v dwarf)
 ```
 
 Then restore the old profile lines. `uninstall.sh` tolerates missing pieces and exits 0 on a

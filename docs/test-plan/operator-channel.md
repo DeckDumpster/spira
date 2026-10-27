@@ -9,13 +9,13 @@ Scope: everything that carries words between the harness, agents and Ryan. That 
 
 The bd-scanning answer watchers (`answers.py`, `cockpit/answered-since.sh`, `cockpit/unanswered.sh`, `cockpit/watch-answers.sh`) were retired (sp-xsl8i, per Ryan: "all of this should be coming via emails"). Every surface the operator answers from — a mail reply, or the cockpit pane's own close/comment on a decision — now mails the concierge directly (`mail sendmail`, `model.rs close_decision`/`comment`); UC-operator-channel-20..23 are marked `uncovered` for the same reason, not gaps to fill.
 
-Primary files: 31 bash suites, **436 CI suite-seconds** (main-push run 35947142904, all `ok`). Secondary: test-ops-closing.sh (102 s, owned by aeon-execution), test-cockpit-watcher-owner.sh, test-mail-pane.sh, test-unit-restart-limits.sh, test-unmapped-repo-park.sh and the panel `model.rs`/`store.rs`/`main.rs` Rust tests. Their verdicts are noted here only where they overlap this area.
+Primary files: 31 bash suites, **436 CI suite-seconds** (main-push run 35947142904, all `ok`). Secondary: test-ops-closing.sh (102 s, owned by dwarf-execution), test-cockpit-watcher-owner.sh, test-mail-pane.sh, test-unit-restart-limits.sh, test-unmapped-repo-park.sh and the panel `model.rs`/`store.rs`/`main.rs` Rust tests. Their verdicts are noted here only where they overlap this area.
 
 ---
 
 ## 1. Intent (the de facto spec)
 
-The channel gets a message from a harness component or an aeon into a mailbox exactly once. It refuses malformed or content-free messages at send time, using rules held as data in `mail/kinds/*.md`. It also refuses to spam the operator with repeats. When a question is filed it creates a separate decision bead that relates to the cited work, and that bead never blocks the work unless an override says so. The operator's reply closes that decision bead, writes the verdict onto the work bead, and reaches the right reader: the sender's mailbox, or the concierge. The reply is rendered distinctly when Ryan rejects the premise, and it wakes the reader exactly once.
+The channel gets a message from a harness component or a dwarf into a mailbox exactly once. It refuses malformed or content-free messages at send time, using rules held as data in `mail/kinds/*.md`. It also refuses to spam the operator with repeats. When a question is filed it creates a separate decision bead that relates to the cited work, and that bead never blocks the work unless an override says so. The operator's reply closes that decision bead, writes the verdict onto the work bead, and reaches the right reader: the sender's mailbox, or the concierge. The reply is rendered distinctly when Ryan rejects the premise, and it wakes the reader exactly once.
 
 Watchers deliver each event to one reader. They escalate a stale backlog or an unhealthy daemon to Ryan once per condition, not once per pass. They stay quiet during a deliberate halt. They restart themselves when their code goes stale, and they fail loudly rather than pass on bad configuration.
 
@@ -41,8 +41,8 @@ Tier key: T0 static · T1 unit · T2 component · T3 integration · T4 acceptanc
 | UC-operator-channel-08 | `tidy` keeps open-ask mail (label from `SPIRA_ASK_LABEL`), fresh unread mail and `X-Spira-Urgent` mail younger than 7 days, plus only the newest of a repeated subject. It archives read-old and closed-ask mail, refuses and moves nothing when the bead store is unreadable, and moves nothing under `--dry-run`. | correctness, fail-closed | T2 with stubbed `bd list` / cert |
 | UC-operator-channel-09 | Aged unread backlog in a registered mailbox alerts the operator once, clears when drained, and re-arms on recurrence. Fresh mail never alerts. | observability, idempotency, recovery | T2 / cert |
 | UC-operator-channel-10 | The delivery daemon treats a SIGTERM exit (143) as clean, and `world.sh start` revives an enabled-but-inactive `mail-deliver` without restarting an active one. `watchd notify` escalates once when the daemon is down AND concierge mail has aged. | recovery, idempotency | T2 behavioural, systemctl mocked / CI |
-| UC-operator-channel-11 | Aeon mailbox: the PostToolUse hook injects each message into the running session exactly once (new→cur) and stays silent on an empty mailbox or empty `BEAD_ID`. `send aeon:<id>` is refused when that aeon has no mailbox. | correctness, idempotency, fail-closed | T2 (no db) / cert |
-| UC-operator-channel-12 | `bead.sh amend` on an in-progress bead mails its live aeon and sends nothing when no aeon is alive. The aeon's mailbox is removed when the aeon exits. | contract, recovery | T3 / CI |
+| UC-operator-channel-11 | Dwarf mailbox: the PostToolUse hook injects each message into the running session exactly once (new→cur) and stays silent on an empty mailbox or empty `BEAD_ID`. `send dwarf:<id>` is refused when that dwarf has no mailbox. | correctness, idempotency, fail-closed | T2 (no db) / cert |
+| UC-operator-channel-12 | `bead.sh amend` on an in-progress bead mails its live dwarf and sends nothing when no dwarf is alive. The dwarf's mailbox is removed when the dwarf exits. | contract, recovery | T3 / CI |
 | UC-operator-channel-13 | Runes briefs never tell an agent to pass a `send` option that `cmd_send` does not accept. No caller of the retired `cockpit/ask.sh` remains. | contract | T0 / cert |
 
 ### B. Decisions and verdict flow-back (`mail sendmail`, `lib.sh`, `verify-asks.sh`)
@@ -84,7 +84,7 @@ Tier key: T0 static · T1 unit · T2 component · T3 integration · T4 acceptanc
 
 | ID | Requirement | Dimensions | Tier / where |
 |---|---|---|---|
-| UC-operator-channel-39 | A rune with `RUNE_SUMMON=operator` never enters the task pool or the lanes. The shipped concierge is operator-only and the builder stays summonable. | correctness, contract | T1 (fixture runes) / cert |
+| UC-operator-channel-39 | A rune with `RUNE_CALL=operator` never enters the task pool or the lanes. The shipped concierge is operator-only and the builder stays callable. | correctness, contract | T1 (fixture runes) / cert |
 | UC-operator-channel-40 | Concierge resume: the resume id is used only when the recorded cwd matches the brain dir. The SessionStart hook records the session only when `SPIRA_CONCIERGE=1` and refuses a `SPIRA_PROD` symlink that resolves elsewhere. Live-pid detection works. `start` exits 3 (HEADLESS) when a holder is live but tmux is gone. A dangling `--resume` retries fresh and clears the record. | recovery, concurrency, security-fence | T1/T2 in CI; cgroup survival and layout pane T4 / acc (host) |
 | UC-operator-channel-41 | The composed brief has no surviving `{{`, names an executable mail and bead.sh (the harness one when `SPIRA_WIKI` is unset), and carries the statutes. A missing persona brief, or a core set with no recognised slugs, refuses (exit 1). | fail-closed, contract | T1 over a fixture statute set (not the live book) / cert |
 | UC-operator-channel-42 | `render_memories` renders `SPIRA_STATUTE_CORE` in full and every other statute as exactly one slug line. An over-budget core statute falls back to a slug. The index heading names an executable `rule.sh show`. The cache is written on a miss, served on a fresh hit and ignored when stale. | correctness, performance, config-compat | **T1** (slug→body seam) + one real-bd read T2 / cert |
@@ -100,7 +100,7 @@ The "file::case" entries use the mapper's case names. The cost column shows ci_s
 
 | UC | Existing tests | Level & cost now | Verdict |
 |---|---|---|---|
-| 01 | test-mail.sh::send lands in new/, read, list, unread-age; test-mail-kinds.sh::count 0/1/3; test-mail-aeon.sh (send lands) | T2, 5 s + 3 s | **KEEP** in test-mail.sh (Maildir half) |
+| 01 | test-mail.sh::send lands in new/, read, list, unread-age; test-mail-kinds.sh::count 0/1/3; test-mail-dwarf.sh (send lands) | T2, 5 s + 3 s | **KEEP** in test-mail.sh (Maildir half) |
 | 02 | test-mail.sh::missing From/Subject, subject bead id, sparse bead id, bare display name, group syntax, --from fallback | T2 fork-per-case, 5 s | **DEMOTE-TO-T1**: table-driven over `_lint_check` |
 | 03 | test-mail-kinds.sh::unknown kind, template, decision without --default, empty ## Note/## Grounds, urgent, ask-below, custom kind; test-mail.sh::decision/question default, ask-below promise | T2, 3 s + dup in 5 s | **MERGE-INTO test-mail.sh** as rows of the same T1 table (DEMOTE-TO-T1) |
 | 04 | test-mail.sh::lint override; test-mail-kinds.sh::lint override + header | T2, dup | MERGE-INTO test-mail.sh (one row, which also checks the header) |
@@ -110,8 +110,8 @@ The "file::case" entries use the mapper's case names. The cost column shows ci_s
 | 08 | test-mail-tidy.sh::open-ask kept, A..E3, unreadable store, dry-run; ::service/timer/units.sh greps | T3 (embedded Dolt), 9 s | **DEMOTE-TO-T2** with a stub `bd` answering the ask-label list. Unit greps **→ T0 unit lint**. Stop counting setup steps as passes |
 | 09 | test-mail-health.sh (all) | T2, 3 s | KEEP (canonical path for "aged unread"; see cluster D4). Use the standard summary line |
 | 10 | test-mail-deliver.sh::SuccessExitStatus grep, start-branch greps (5), escalation fires/no dup/empty mailbox | T2 + source grep, 3 s | **SOURCE-GREP**: replace the 5 `world.sh start` greps with a behavioural `world.sh start` against the systemctl mock. Keep the notify cases |
-| 11 | test-mail-aeon.sh::SEEN RED (a) hook, SEEN GREEN (e), once not twice, BEAD_ID empty, aeon:<id> live/absent | T3 file, 16 s (hook cases take ms) | **DEMOTE-TO-T2**: split into test-mail-aeon-hook.sh (no testdb) |
-| 12 | test-mail-aeon.sh::SEEN RED (b) amend, SEEN GREEN (c), SEEN RED (d) mailbox gone | T3, remainder of 16 s | KEEP T3. Add a positive control that the mailbox existed during the run (case d) |
+| 11 | test-mail-dwarf.sh::SEEN RED (a) hook, SEEN GREEN (e), once not twice, BEAD_ID empty, dwarf:<id> live/absent | T3 file, 16 s (hook cases take ms) | **DEMOTE-TO-T2**: split into test-mail-dwarf-hook.sh (no testdb) |
+| 12 | test-mail-dwarf.sh::SEEN RED (b) amend, SEEN GREEN (c), SEEN RED (d) mailbox gone | T3, remainder of 16 s | KEEP T3. Add a positive control that the mailbox existed during the run (case d) |
 | 13 | test-brief-mail-options.sh (all); test-migrate-ask.sh::no ask.sh callers, ask.sh deleted | T0, 4 s + 1 s | KEEP both as **T0** in the lint stage. Parse `cmd_send` options once, not once per brief |
 | 14 | test-mail-decision-ask.sh::X-Spira-Bead, 0 blocking deps, override blocks; test-archivist-cited-bead.sh (all 7) | T3, 15 s + 8 s | **DELETE test-archivist-cited-bead.sh** (subset; never runs archivist.sh). Move its "guard logged the refusal" assert into decision-ask |
 | 15 | test-mail-decision-ask.sh::sendmail closes decision bead, unblocks, verdict note; test-mail-sendmail.sh::reply closes tracking bead, accept-default verdict note | T3, 15 s + 20 s (two testdbs) | **MERGE**: test-mail-decision-ask.sh MERGE-INTO test-mail-sendmail.sh → one `test-verdict-flow.sh` on one testdb |
@@ -194,7 +194,7 @@ The "file::case" entries use the mapper's case names. The cost column shows ci_s
 5. **G-05 Real senders pass lint.** test-migrate-ask.sh lints hand-copied bodies, so a regression in a real emitter (`land_escalate`, `skew.sh escalate`, `watchd _wd_ask`, `incident.sh`, `archivist.sh`) goes unseen. A T2 test should invoke each emitter with `mail` pointed at a scratch Maildir and without the lint override.
 6. **G-06 Premise-rejected detection branches.** RETIRED (sp-xsl8i): answers.py and test-answers-premise-rejected.sh are both deleted.
 7. **G-07 `rule.sh retire`, `list` and `show` behaviour.** Only `enact` is tested (test-statute-projection.sh). `list` appears only through the concierge brief, and `retire` is untested, although CLAUDE.md prescribes it for superseded statutes.
-8. **G-08 `render_memories` delivery fence.** CLAUDE.md records that a hand-started session receives no statutes, and `render_memories` is called only from aeon.sh and concierge.sh. No test asserts that each rune-composed entry point includes the `# Memories in force` section.
+8. **G-08 `render_memories` delivery fence.** CLAUDE.md records that a hand-started session receives no statutes, and `render_memories` is called only from dwarf.sh and concierge.sh. No test asserts that each rune-composed entry point includes the `# Memories in force` section.
 9. **G-09 health-ids exit 2.** The "unusable prefix" refusal (watchd:1632) has no case, and the SKIP path of test-watchd-health-ids.sh exits 0, so a missing engine reads as green.
 10. **G-10 `mail-fence.sh`.** RESOLVED: docs/test-plan/safety-fences.md already claims test-mail-fence.sh as one of its primary files (its coverage map row 11 merges it into test-guards.sh, alongside the other bd-*/testenv guards it shares a payload-builder cluster with). It is a write-time fence over `SPIRA_MAIL`, the same shape as the bd-*-guard suites safety-fences owns, not an operator-channel behaviour — this plan does not claim it.
 11. **G-11 Concurrent sends.** `_mail_msgid` is `date +%s.$RANDOM.$$`. Nothing tests two senders in the same second, or concurrent repeat-guard stamps (the guard's check-then-stamp is not atomic).
@@ -205,7 +205,7 @@ The "file::case" entries use the mapper's case names. The cost column shows ci_s
 ## 7. Cost
 
 **Current (primary files, ci_secs from signals.tsv):**
-answers-premise-rejected 18 + answers-silent-seed 5 + archivist-cited-bead 8 + brief-mail-options 4 + concierge 6 + mail-aeon 16 + mail-decision-ask 15 + mail-deliver 3 + mail-health 3 + mail-kinds 3 + mail-repeat 2 + mail-sendmail 20 + mail-tidy 9 + mail 5 + migrate-ask 1 + pr-notify 22 + render-memories 7 + sentinel 5 + skew-escalate 2 + sop-lint 8 + sop 24 + statute-projection 5 + verify-asks 31 + watch-notify 29 + watch-refresh 28 + watch-unit-restart 2 + watchd-halt-health 4 + watchd-health-ids 24 + watchd-prune 22 + watchd-tail 60 + watcher-reopen 45 = **436 s** across 31 files.
+answers-premise-rejected 18 + answers-silent-seed 5 + archivist-cited-bead 8 + brief-mail-options 4 + concierge 6 + mail-dwarf 16 + mail-decision-ask 15 + mail-deliver 3 + mail-health 3 + mail-kinds 3 + mail-repeat 2 + mail-sendmail 20 + mail-tidy 9 + mail 5 + migrate-ask 1 + pr-notify 22 + render-memories 7 + sentinel 5 + skew-escalate 2 + sop-lint 8 + sop 24 + statute-projection 5 + verify-asks 31 + watch-notify 29 + watch-refresh 28 + watch-unit-restart 2 + watchd-halt-health 4 + watchd-health-ids 24 + watchd-prune 22 + watchd-tail 60 + watcher-reopen 45 = **436 s** across 31 files.
 
 **Projected after the verdicts** (22 suites):
 
@@ -214,7 +214,7 @@ answers-premise-rejected 18 + answers-silent-seed 5 + archivist-cited-bead 8 + b
 | test-mail.sh (T1 lint table + T2 Maildir, repeat, routing) | mail 5 + kinds 3 + repeat 2 + migrate-ask 1 = 11 | 5 | lint rows in-process; about 15 Maildir forks remain |
 | test-verdict-flow.sh (one testdb) | decision-ask 15 + sendmail 20 + sentinel 5 + archivist 8 = 48 | 20 | one testdb_up (~5 s) + ~25 bd round-trips |
 | test-answers.sh | premise 18 + silent-seed 5 = 23 | 4 | T1 fixture JSON; 2 short T2 loop runs |
-| test-mail-aeon (hook T2 + lifecycle T3) | 16 | 13 | the aeon.sh run and testdb stay |
+| test-mail-dwarf (hook T2 + lifecycle T3) | 16 | 13 | the dwarf.sh run and testdb stay |
 | test-mail-tidy.sh (stub bd) | 9 | 2 | no testdb |
 | test-mail-deliver.sh / test-mail-health.sh / test-skew-escalate.sh | 3 + 3 + 2 | 3 + 3 + 2 | unchanged |
 | test-brief-mail-options.sh (T0) | 4 | 1 | parse cmd_send once |

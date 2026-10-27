@@ -1,7 +1,7 @@
 //! The environment `mail` reads. Every default here matches conf.sh's own `:
 //! "${VAR:=default}"` so a caller that has not sourced conf.sh (a unit test, a suite
 //! fixture) still gets the same behaviour a real install would after conf.sh ran — the
-//! same contract every other crate in this workspace holds with conf.sh (aeon, landing-pass,
+//! same contract every other crate in this workspace holds with conf.sh (dwarf, landing-pass,
 //! queue read `std::env::var` directly; conf.sh has already exported these into the process
 //! tree by the time a bare-named binary runs).
 

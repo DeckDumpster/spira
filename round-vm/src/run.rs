@@ -3817,7 +3817,7 @@ mod tests {
         let dir = fx.d.path().join("spool");
         let req = dir.join("req");
         fs::create_dir_all(&req).unwrap();
-        fs::write(req.join("j1.req"), "branch=spira/batcher-attr/r-j1\nsuites=test-a.sh\nbuild=aeon\n").unwrap();
+        fs::write(req.join("j1.req"), "branch=spira/batcher-attr/r-j1\nsuites=test-a.sh\nbuild=dwarf\n").unwrap();
         fs::write(req.join("j2.req"), "branch=spira/batcher-attr/r-j2\nsuites=test-a.sh\nbuild=round\n").unwrap();
         fs::write(req.join("j3.req"), "branch=missing\nsuites=test-a.sh\nbuild=artifacts\n").unwrap();
         fs::write(dir.join("close"), "").unwrap();

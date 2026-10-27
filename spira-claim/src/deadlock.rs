@@ -116,12 +116,12 @@ fn one(o: &Opts, w: &mut dyn World, c: &Candidate, out: &mut String) -> Outcome 
 
     // Live work is never touched (same guard `unpoison` uses, DESIGN.md §8.2 precondition 4):
     // a poisoned bead should never be claimed, but this is the one check standing between a
-    // wrong merge-status verdict and a lift under a live aeon.
+    // wrong merge-status verdict and a lift under a live dwarf.
     // The lifecycle row's WORKING holder (bd status is never read, sp-mve9i).
     let held = lc.as_ref().and_then(LcRow::working_holder);
     if let Some(h) = held {
         out.push_str(&format!(
-            "FAIL {}: held by {h} — live work is never touched: let that aeon finish (or stop it: spira/slay.sh --bead {}), then re-run\n",
+            "FAIL {}: held by {h} — live work is never touched: let that dwarf finish (or stop it: spira/slay.sh --bead {}), then re-run\n",
             c.id, c.id
         ));
         return Outcome::Failed;

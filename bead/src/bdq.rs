@@ -232,7 +232,7 @@ pub fn check_destructive(args: &[String], ask_label: &str) -> Option<String> {
 /// A bead's state is its lifecycle row's (sp-6oimlm): bdq refuses every verb that writes bd's
 /// status — `close`, `reopen`, `defer`, `undefer`, and `update` with `--status`/`-s`/`--defer` —
 /// so the store can never move on its own and drift from the row. On 2026-10-07 33 beads sat
-/// deferred in bd while their rows read READY, and every aeon summoned onto one exited in seconds.
+/// deferred in bd while their rows read READY, and every dwarf called onto one exited in seconds.
 /// The exit is the machine's own door; `SPIRA_BDQ_STATE_WRITE=<reason>` overrides, and the
 /// caller logs it.
 pub fn check_state_verb(args: &[String]) -> Option<&'static str> {

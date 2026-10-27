@@ -6,11 +6,11 @@
 # THE DEFECT. cockpit-collect's NEXT query excluded spira-poison, SPIRA_ASK_LABEL and
 # SPIRA_CI_LABEL but not SPIRA_QUEUE_WAIT_LABEL. A bead sp-n9z (content-landed,
 # spira-queue-waiting, landstate=LANDED, no branch) appeared in the NEXT row while
-# every rune excluded it — zero aeons could claim it, the operator read it as a
+# every rune excluded it — zero dwarves could claim it, the operator read it as a
 # stalled loop (sp-rvoun).
 #
 # THE FIX. cockpit-collect's NEXT query adds SPIRA_QUEUE_WAIT_LABEL to --exclude-label,
-# matching what rune_exclude passes to bd ready for each aeon.
+# matching what rune_exclude passes to bd ready for each dwarf.
 #
 # Since sp-7g5q6 the NEXT rows come from `spira-claim ready-count <labels> <excl> --json`:
 # the lifecycle machine's READY rows (the only mode since sp-v62vn retired

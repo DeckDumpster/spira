@@ -17,10 +17,10 @@
 #                            rather than asserted.
 #   sentinel-pre-check7.log  real passes from before CHECK 7 logged its declines. The
 #                            FIRST version of the starvation rule — "the pass logged no
-#                            CHECK7 line, so it never reached the summon check" — fired on
+#                            CHECK7 line, so it never reached the call check" — fired on
 #                            76 consecutive passes here, every one of them healthy: their
 #                            silence was a fact about the sentinel's vocabulary at the
-#                            time, not about its behaviour. The rule now reads `aeons=0`
+#                            time, not about its behaviour. The rule now reads `dwarves=0`
 #                            off the state line instead, and this fixture is what keeps it
 #                            from regressing to an inference about an absent line.
 #
@@ -91,21 +91,21 @@ json.dump(o, sys.stdout)'
 }
 
 # mklog — a synthetic sentinel log, in the format lib.sh's log() actually writes.
-#   mklog <passes> <ready> <aeons> <summoned:0|1> <complete:0|1> <last-pass-ends-at>
+#   mklog <passes> <ready> <dwarves> <called:0|1> <complete:0|1> <last-pass-ends-at>
 mklog() {
-    N="$1" READY="$2" AEONS="$3" SUMM="$4" DONE="$5" END="$6" EXTRA="${7:-}" python3 -c '
+    N="$1" READY="$2" DWARVES="$3" SUMM="$4" DONE="$5" END="$6" EXTRA="${7:-}" python3 -c '
 import datetime, os
 n, end = int(os.environ["N"]), int(os.environ["END"])
 out = []
 for i in range(n):
     t = end - (n - 1 - i) * 120
     ts = datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    out.append("%s spira: state: open=20 plan_ready=%s in_progress=0 aeons=%s runes=[builder ]"
-               % (ts, os.environ["READY"], os.environ["AEONS"]))
+    out.append("%s spira: state: open=20 plan_ready=%s in_progress=0 dwarves=%s runes=[builder ]"
+               % (ts, os.environ["READY"], os.environ["DWARVES"]))
     if os.environ["EXTRA"]:
         out.append("%s spira: %s" % (ts, os.environ["EXTRA"]))
     if os.environ["SUMM"] == "1":
-        out.append("%s spira: CHECK7 builder: %s ready, 1 free \u2014 summoning" % (ts, os.environ["READY"]))
+        out.append("%s spira: CHECK7 builder: %s ready, 1 free \u2014 calling" % (ts, os.environ["READY"]))
     if os.environ["DONE"] == "1":
         out.append("%s spira: pass complete \u2014 0 action(s), 0 progress" % ts)
 print("\n".join(out))'
@@ -166,10 +166,10 @@ check "draining loop does not fire sentinel-stalled" - \
         "{\"world_draining\":true,\"world_drain_at\":$(( NOW - 300 ))}")"
 
 echo
-echo "heimdall-classify — summon starvation:"
+echo "heimdall-classify — call starvation:"
 
 mklog 6 15 0 0 1 $(( NOW - 60 )) > "$TMP/starved.log"
-check "ready work, zero aeons, nothing summoned, 5+ passes" summon-starved \
+check "ready work, zero dwarves, nothing called, 5+ passes" call-starved \
     "$(obs "$TMP/starved.log")"
 
 mklog 4 15 0 0 1 $(( NOW - 60 )) > "$TMP/starved4.log"
@@ -178,22 +178,22 @@ check "four starved passes is not yet sustained" - "$(obs "$TMP/starved4.log")"
 # The deliberate withhold. It is not a stall: it is the account's own five-hour window
 # declining. A watchdog that alerts through a decision the harness made on purpose is pure
 # noise.
-mklog 6 15 0 0 1 $(( NOW - 60 )) "CHECK7 builder: the account is out of capacity for another 900s — not summoning" \
+mklog 6 15 0 0 1 $(( NOW - 60 )) "CHECK7 builder: the account is out of capacity for another 900s — not calling" \
     > "$TMP/cap.log"
 check "an exhausted account is not starvation" - "$(obs "$TMP/cap.log")"
 
-# Aeons running IS the concurrency cap, which is throughput, not starvation.
+# Dwarves running IS the concurrency cap, which is throughput, not starvation.
 mklog 6 15 2 0 1 $(( NOW - 60 )) > "$TMP/busy.log"
-check "aeons at the cap is throughput, not starvation" - "$(obs "$TMP/busy.log")"
+check "dwarves at the cap is throughput, not starvation" - "$(obs "$TMP/busy.log")"
 
 # Starvation over a window that has itself gone stale is not a second alert, it is a
-# false one: nothing summoned in five passes says nothing when no sixth was attempted.
+# false one: nothing called in five passes says nothing when no sixth was attempted.
 mklog 6 15 0 0 1 $(( NOW - 4000 )) > "$TMP/staleStarve.log"
 check "starvation is not reported over a window that has gone stale" sentinel-stalled \
     "$(obs "$TMP/staleStarve.log" '{"sentinel_log_mtime":1799996000}')"
 
 # The pass in flight has not reached CHECK 7 yet. Counting it would read the first twenty
-# seconds of every ordinary pass as a refusal to summon.
+# seconds of every ordinary pass as a refusal to call.
 { mklog 5 15 1 1 1 $(( NOW - 180 )); mklog 1 15 0 0 0 $(( NOW - 20 )); } > "$TMP/inflight.log"
 check "the pass in flight is not counted as a decline" - "$(obs "$TMP/inflight.log")"
 
@@ -227,8 +227,8 @@ print(last)' "$DATA/sentinel-pre-check7.log")"
     NOW=$(( end + 60 ))
     got="$(keys_of "$(obs "$DATA/sentinel-pre-check7.log")")"
     case ",$got," in
-        *,summon-starved,*) bad "the 76-pass false positive stays quiet" \
-            "summon-starved fired over the pre-CHECK7 window; the rule has regressed to inferring from an absent line" ;;
+        *,call-starved,*) bad "the 76-pass false positive stays quiet" \
+            "call-starved fired over the pre-CHECK7 window; the rule has regressed to inferring from an absent line" ;;
         *) ok "the 76-pass false positive stays quiet" ;;
     esac
     NOW=1800000000
@@ -269,7 +269,7 @@ echo "heimdall-classify — the log format it actually reads:"
 # `ready=` was the field name before the plan's count was named apart from every rune's.
 # A tail that still holds those lines must parse, not be silently skipped as unmatched.
 sed 's/plan_ready=/ready=/' "$TMP/starved.log" > "$TMP/oldfmt.log"
-check "the older state-line spelling still parses" summon-starved "$(obs "$TMP/oldfmt.log")"
+check "the older state-line spelling still parses" call-starved "$(obs "$TMP/oldfmt.log")"
 # Lines with no timestamp — a git merge notice, hel.sh's REAPED rows — are skipped.
 { echo "Auto-merging spira/sentinel.sh"; echo "REAPED sp-x  branch and worktree";
   cat "$TMP/healthy.log"; } > "$TMP/noise.log"

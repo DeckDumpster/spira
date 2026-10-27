@@ -1,8 +1,8 @@
 TYPE=string
 GROUP=statute
-DOC=WHICH STATUTES GET FULL TEXT AT SUMMON. render_memories renders these in complete
+DOC=WHICH STATUTES GET FULL TEXT AT CALL. render_memories renders these in complete
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # WHICH STATUTES GET FULL TEXT AT SUMMON. render_memories renders these in complete
+    # WHICH STATUTES GET FULL TEXT AT CALL. render_memories renders these in complete
     # paragraph form; everything else is rendered as a slug-only index line. Seeded from
     # citation frequency in commits and bead text (measured 2026-09-11): those cited most
     # often are the ones a violation costs most to miss. Being wrongly in core costs ~88

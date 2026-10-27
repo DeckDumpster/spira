@@ -346,8 +346,8 @@ fn valid_bead_id(id: &str) -> bool {
 /// Err(exit code); every refusal is printed.
 pub fn transition(w: &World, t: &Transition, suite: &str, base: Option<&str>, change: Option<&str>) -> Result<String, i32> {
     let label = t.state().as_str();
-    if w.s.aeon {
-        w.err(format!("suites {label}: aeons may not write suite-state transitions; submit a branch from an operator or Ops session"));
+    if w.s.dwarf {
+        w.err(format!("suites {label}: dwarves may not write suite-state transitions; submit a branch from an operator or Ops session"));
         return Err(FAIL);
     }
     if suite.is_empty() {

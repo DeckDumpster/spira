@@ -201,7 +201,7 @@ impl T {
             flake_at: 2,
             flake_window: 604_800,
             max_age: 604_800,
-            aeon: false,
+            dwarf: false,
             git_name: "spira".into(),
             git_email: "spira@spira.invalid".into(),
         };
@@ -582,11 +582,11 @@ fn disable_and_activate_rewrite_the_row_and_base_can_be_named() {
 }
 
 #[test]
-fn transitions_refuse_under_an_aeon_before_anything_else() {
-    let mut t = T::new("aeon");
-    t.s.aeon = true;
+fn transitions_refuse_under_an_dwarf_before_anything_else() {
+    let mut t = T::new("dwarf");
+    t.s.dwarf = true;
     assert_eq!(t.run(&["quarantine", "nonexistent-suite.sh", "bead-id", "reason"]), 1);
-    assert_eq!(t.err(), "suites quarantined: aeons may not write suite-state transitions; submit a branch from an operator or Ops session");
+    assert_eq!(t.err(), "suites quarantined: dwarves may not write suite-state transitions; submit a branch from an operator or Ops session");
     assert!(t.queue.submitted.borrow().is_empty());
     assert!(t.change.calls.borrow().is_empty(), "no bead filed or claimed");
     assert_eq!(t.lib.1.get(), 0);

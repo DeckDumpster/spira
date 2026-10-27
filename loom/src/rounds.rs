@@ -488,7 +488,7 @@ mod tests {
 \x20\x20test-acceptance-ci-scratch-queue.sh RED     rc=1 after 0s\n\
 \x20\x20\x20\x20not ok 10 - publish-settle has nothing to publish\n\
 \x20\x20test-closed-strand.sh            ok      9s\n\
-\x20\x20test-aeon-launch-grammar.sh      SKIPPED\n\
+\x20\x20test-dwarf-launch-grammar.sh      SKIPPED\n\
 | Suite | Duration | Verdict | First FAIL line |\n\
 |-------|----------|---------|-----------------|\n\
 | test-acceptance-ci-scratch-queue.sh | 0s (rc=1) | red | not ok 10 - publish-settle has nothing | to publish |\n\
@@ -507,7 +507,7 @@ round-vm: setup 42s, suites 158s\n";
         assert_eq!(p.suites.len(), 4);
         let ok = p.suites.iter().find(|s| s.name == "test-ops-read-model.sh").unwrap();
         assert_eq!((ok.verdict.as_str(), ok.duration_s, ok.first_fail.as_str()), ("ok", Some(22), ""));
-        assert_eq!(p.suites.iter().find(|s| s.name == "test-aeon-launch-grammar.sh").unwrap().verdict, "skipped");
+        assert_eq!(p.suites.iter().find(|s| s.name == "test-dwarf-launch-grammar.sh").unwrap().verdict, "skipped");
         assert_eq!((p.verdict.as_str(), p.ran, p.red, p.skipped), ("red", Some(470), Some(1), Some(9)));
         assert_eq!((p.setup_s, p.suites_s, p.instance_type.as_str()), (Some(42), Some(158), "c7i.8xlarge"));
     }

@@ -120,9 +120,9 @@ fn drain_escalation(d: &SweepData, cfg: &Cfg) {
         return;
     };
     let body = format!(
-        "DRAINING for {mins}m — summons gated since {since}\n\nNew aeons cannot be summoned while world.draining exists. Loop, landing and reaping continue.\n\nLift with: world.sh resume\n"
+        "DRAINING for {mins}m — calls gated since {since}\n\nNew dwarves cannot be called while world.draining exists. Loop, landing and reaping continue.\n\nLift with: world.sh resume\n"
     );
-    let f = Finding::new(&cfg.db, &cfg.home_repo, "DRAINING: world.sh summons gated", &body).priority(1);
+    let f = Finding::new(&cfg.db, &cfg.home_repo, "DRAINING: world.sh calls gated", &body).priority(1);
     incident::alarm(inc, &f);
     log(&format!("watchtower: drain escalation filed ({mins}m >= {}m threshold)", cfg.drain_warn_mins));
 }
@@ -159,7 +159,7 @@ fn unadopted_refs(d: &SweepData, cfg: &Cfg) {
     };
     let names = d.env.raw("SP_UNADOPTED_NAMES").unwrap_or("(unavailable)");
     let body = format!(
-        "Unadopted refs: {n}\n\nA spira/* branch whose suffix resolves to no bead can never be reaped by any rite.\nEach one is a permanent +1 on SP_UNADOPTED until removed by hand.\n\nBranches (spira/ prefix omitted): {names}\nDelete safely: git -C {} branch -D spira/<id> (no bead, no aeon holds it)\n",
+        "Unadopted refs: {n}\n\nA spira/* branch whose suffix resolves to no bead can never be reaped by any rite.\nEach one is a permanent +1 on SP_UNADOPTED until removed by hand.\n\nBranches (spira/ prefix omitted): {names}\nDelete safely: git -C {} branch -D spira/<id> (no bead, no dwarf holds it)\n",
         cfg.spira_run.display()
     );
     let f = Finding::new(&cfg.db, &cfg.home_repo, "HEL: unadopted refs cannot be reaped", &body)
@@ -359,7 +359,7 @@ fn idle_while_ready(d: &SweepData, cfg: &Cfg) {
     };
     for (rune, ready, reason) in &d.idle_while_ready {
         let body = format!(
-            "{rune} has {ready} ready bead(s), but its last {} summons all came back idle.\n\nLast idle reason: {reason}\n\nA rank/lookup failure (epic_parent_lookup/epic_rank_rows in lib.sh) can render exactly this way: an empty ranked list reads as \"nothing ready to claim\" even though bd ready is non-empty. Check the ledger for claim-error lines before assuming the queue really is empty.\n",
+            "{rune} has {ready} ready bead(s), but its last {} calls all came back idle.\n\nLast idle reason: {reason}\n\nA rank/lookup failure (epic_parent_lookup/epic_rank_rows in lib.sh) can render exactly this way: an empty ranked list reads as \"nothing ready to claim\" even though bd ready is non-empty. Check the ledger for claim-error lines before assuming the queue really is empty.\n",
             cfg.idle_while_ready_n
         );
         let f = Finding::new(
@@ -373,7 +373,7 @@ fn idle_while_ready(d: &SweepData, cfg: &Cfg) {
         .cause("idle-while-ready");
         incident::alarm(inc, &f);
         log(&format!(
-            "watchtower: idle-while-ready escalation filed for {rune} (ready={ready}, last {} summons idle)",
+            "watchtower: idle-while-ready escalation filed for {rune} (ready={ready}, last {} calls idle)",
             cfg.idle_while_ready_n
         ));
     }
@@ -644,7 +644,7 @@ mod tests {
         assert!(captured(&d).is_empty(), "below the 15m threshold must not file");
         drain_escalation(&drain(Some(15)), &cfg);
         let c = captured(&d);
-        assert!(c.contains("TITLE=DRAINING: world.sh summons gated"));
+        assert!(c.contains("TITLE=DRAINING: world.sh calls gated"));
         assert!(c.contains("DRAINING for 15m"));
     }
 

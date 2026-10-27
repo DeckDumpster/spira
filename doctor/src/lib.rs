@@ -78,7 +78,7 @@ pub fn run(w: &dyn World) -> i32 {
         Section { title: "time series query layer", lines: check_duckdb(w) },
         Section { title: "compilation cache", lines: check_sccache(w) },
         Section { title: "compilation cache backend", lines: check_sccache_backend(w) },
-        Section { title: "aeon warm slots", lines: check_aeon_warm(w) },
+        Section { title: "dwarf warm slots", lines: check_dwarf_warm(w) },
         Section { title: "round-vm mirror", lines: check_round_vm_mirror(w) },
         Section { title: "events substrate", lines: check_events_probe(w) },
         Section {
@@ -154,7 +154,7 @@ fn conf_display(w: &dyn World) -> String {
 
 pub fn check_release_tools(w: &dyn World) -> Vec<Line> {
     // world.sh is the `world` binary now (sp-6onps) and mail.sh is the `mail` binary now
-    // (sp-ooh1k); deps.toml's release tier already names both (alongside ctrl/aeons/
+    // (sp-ooh1k); deps.toml's release tier already names both (alongside ctrl/dwarves/
     // slay) -- deps_list_release() covers all of them without a hand-written suffix
     // entry. gate.sh is still bash and stays listed by hand.
     let mut tools = w.deps_list_release();
@@ -604,21 +604,21 @@ pub fn check_sccache_backend(w: &dyn World) -> Vec<Line> {
     }
 }
 
-// ============================================================================ aeon warm slots
+// ============================================================================ dwarf warm slots
 
 /// Detects drift, never repairs it: the base is a mount the operator owns, and a base that fell
-/// back to the root disk puts every aeon build's writes on the store's disk.
-pub fn check_aeon_warm(w: &dyn World) -> Vec<Line> {
-    let Some(base) = w.aeon_warm_base() else {
-        return vec![fail("SPIRA_AEON_WARM_BASE is not set", "aeon sessions refuse to start without it; set aeon_warm_base (the config document) to a directory on a tmpfs.")];
+/// back to the root disk puts every dwarf build's writes on the store's disk.
+pub fn check_dwarf_warm(w: &dyn World) -> Vec<Line> {
+    let Some(base) = w.dwarf_warm_base() else {
+        return vec![fail("SPIRA_DWARF_WARM_BASE is not set", "dwarf sessions refuse to start without it; set dwarf_warm_base (the config document) to a directory on a tmpfs.")];
     };
     if !w.on_tmpfs(&base) {
         return vec![warn(
-            format!("aeon warm base {} is not a tmpfs", base.display()),
-            "incremental builds write tens of MB/s there and starve the store's disk. Mount a tmpfs on it (fstab) or point aeon_warm_base at one.",
+            format!("dwarf warm base {} is not a tmpfs", base.display()),
+            "incremental builds write tens of MB/s there and starve the store's disk. Mount a tmpfs on it (fstab) or point dwarf_warm_base at one.",
         )];
     }
-    vec![ok(format!("aeon warm base {} is a tmpfs", base.display()))]
+    vec![ok(format!("dwarf warm base {} is a tmpfs", base.display()))]
 }
 
 // ============================================================================ round-vm mirror
@@ -744,7 +744,7 @@ pub fn check_orphan_units(w: &dyn World) -> Vec<Line> {
 
 // ============================================================================ prod checkout
 
-/// Every installed (non-transient, non-aeon) unit's ExecStart must resolve under
+/// Every installed (non-transient, non-dwarf) unit's ExecStart must resolve under
 /// `$SPIRA_RELEASES`; anywhere else, a merge to the checkout deploys with no gate.
 pub fn check_prod_checkout(w: &dyn World) -> Vec<Line> {
     let rows = match w.systemd_installed_unit_execs() {
@@ -755,7 +755,7 @@ pub fn check_prod_checkout(w: &dyn World) -> Vec<Line> {
     let root = format!("{}/", releases.trim_end_matches('/'));
     let mut out = Vec::new();
     for (unit, state, path) in &rows {
-        if state == "transient" || unit.starts_with("spira-aeon-") || path.is_empty() || path.starts_with(&root) {
+        if state == "transient" || unit.starts_with("spira-dwarf-") || path.is_empty() || path.starts_with(&root) {
             continue;
         }
         out.push(fail(

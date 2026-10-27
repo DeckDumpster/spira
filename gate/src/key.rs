@@ -170,14 +170,14 @@ mod tests {
         let e = render_entry(
             "2026-09-29T00:00:00Z",
             1000,
-            "aeon",
+            "dwarf",
             "spira",
             "spira/sp-a",
             "test-a.sh",
         );
         assert_eq!(
             cache_fresh(&e, "60", 1030),
-            Some(("2026-09-29T00:00:00Z".into(), "aeon".into()))
+            Some(("2026-09-29T00:00:00Z".into(), "dwarf".into()))
         );
     }
 

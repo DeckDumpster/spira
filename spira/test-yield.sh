@@ -47,7 +47,7 @@ YDIR="$TMP/yield"
 # as well if the code had 86400 written in, which is the thing the key exists to stop.
 WINDOW=7200
 
-amend() {                # amend <branch> <file-to-remove> — the fix an aeon would make
+amend() {                # amend <branch> <file-to-remove> — the fix a dwarf would make
     local br="$1" f="$2" w
     w="$TMP/w.fix.$(printf '%s' "$br" | tr / _)"
     git -C "$REPO" worktree add -q "$w" "$br"
@@ -129,7 +129,7 @@ want "the record names the branch" "branch=spira/sp-guilty" "$REC"
 want "the record names the bead"   "bead=sp-guilty"         "$REC"
 want "the record names the suite that refused it" "suite=test-guilty.sh" "$REC"
 
-# GATED TWICE, AS EVERY BEAD IS — once by its aeon and once by the landing pass. Two arrivals
+# GATED TWICE, AS EVERY BEAD IS — once by its dwarf and once by the landing pass. Two arrivals
 # of one fact are one row: counting arrivals would double every red and turn this ratio into
 # a measure of how many times each branch was gated.
 rungate spira/sp-guilty >/dev/null 2>&1
@@ -191,7 +191,7 @@ want "and is attributed to the gate's reason instead" "base-red" "$(f "$R" YIELD
 echo
 echo "somebody says otherwise — a stated verdict overrides an inferred one:"
 # ======================================================================================
-# The DEFECT above was inferred. An aeon that knows the red was the box's fault says so, and
+# The DEFECT above was inferred. A dwarf that knows the red was the box's fault says so, and
 # what it says must win: a mechanism that overwrites a person's answer with its own guess is
 # one nobody uses twice.
 yield classify spira/sp-guilty GATE_FAULT "the suite read the state of the box" >/dev/null 2>&1
@@ -238,7 +238,7 @@ rm -f "$YDIR/repo.spira_sp-ancient.-.branch-red"
 echo
 echo "the cost, as a distribution against concurrency:"
 # ======================================================================================
-# A LANDING GATE NEVER RUNS SOLO. Every aeon runs one before it closes and the landing pass
+# A LANDING GATE NEVER RUNS SOLO. Every dwarf runs one before it closes and the landing pass
 # runs one per branch, so concurrency is the operating condition and not an edge case — and
 # quoting a solo figure is how a gate gets adopted at one cost and turns out to have another
 # (law-fixtures-carry-real-cadence). The fixture is the real meter format, at the real shape:

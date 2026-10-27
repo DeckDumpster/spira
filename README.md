@@ -1,7 +1,7 @@
 # Spira
 
 Spira is an agent harness for software work. You file work items (**beads**) into a store;
-Spira summons AI agent sessions (**aeons**) to do them, each in its own git worktree and
+Spira calls AI agent sessions (**dwarves**) to do them, each in its own git worktree and
 branch; and it lands the results onto a repository's landing ref through gated **rounds** that
 run the full test corpus before anything merges. Every step between "filed" and "released" is
 driven by small timer-activated programs reading and writing explicit state machines, so the
@@ -27,7 +27,7 @@ systemd units (`systemd/*.service|timer`) on one Linux box and backed by a Dolt 
 ## How work flows
 
 ```
- bead ──► aeon ──► gate ──► round ──► landing ──► release
+ bead ──► dwarf ──► gate ──► round ──► landing ──► release
  filed    claims    certifies  merges    fast-forwards   builds, verifies,
  READY    one bead  the tip    a set of  the landing ref  activates the landed
           in its    (tests in  certified                  commit
@@ -36,9 +36,9 @@ systemd units (`systemd/*.service|timer`) on one Linux box and backed by a Dolt 
 ```
 
 1. **File.** A bead is filed by a person, a session, a GitHub issue or a trigger unit.
-2. **Summon and claim.** The sentinel counts ready beads and summons aeons; each aeon claims
+2. **Call and claim.** The sentinel counts ready beads and calls dwarves; each dwarf claims
    exactly one bead (a compare-and-swap, so two cannot win it) and works it on `spira/<id>`.
-3. **Submit and certify.** The aeon runs the tests for what it changed and submits; the gate
+3. **Submit and certify.** The dwarf runs the tests for what it changed and submits; the gate
    certifies the exact commit against the repository's corpus.
 4. **Round and land.** Certified tips are merged together in a round, proven again as a set,
    and landed on the landing ref.
@@ -79,7 +79,7 @@ File your first bead with `bead.sh file "<title>" --for builder --repo <name>`; 
 
 | Read | For |
 |---|---|
-| [docs/concepts.md](docs/concepts.md) | the vocabulary: bead, aeon, persona, lane, round, gate, release, statute |
+| [docs/concepts.md](docs/concepts.md) | the vocabulary: bead, dwarf, persona, lane, round, gate, release, statute |
 | [docs/architecture.md](docs/architecture.md) | components and stores, and a bead from filing to released |
 | [docs/components/](docs/components/README.md) | one page per group of binaries and units |
 | [docs/install.md](docs/install.md) | prerequisites, building, configuration, starting and stopping, health |
@@ -91,7 +91,7 @@ File your first bead with `bead.sh file "<title>" --for builder --repo <name>`; 
 ## Contributing
 
 A change to Spira is work like any other: file a bead against this repository and let a
-builder aeon take it, or work by hand on a branch. Either way, read
+builder dwarf take it, or work by hand on a branch. Either way, read
 [docs/development.md](docs/development.md) first, and `CLAUDE.md` before editing: this
 repository is cloned by people whose infrastructure is not yours, so it ships mechanism (rules,
 guards, the reason a check fails closed) and never inventory (repository names, hosts, people,

@@ -40,7 +40,7 @@ fn drain_section(d: &SweepData) -> String {
         Drain::NotDraining => String::new(),
         Drain::Draining { since, mins } => {
             let mins_disp = mins.map(|m| m.to_string()).unwrap_or_else(|| "?".into());
-            format!("!! DRAINING since {since} ({mins_disp}m)\n   Summons gated; loop, landing and reaping continue. Lift with: world.sh resume\n")
+            format!("!! DRAINING since {since} ({mins_disp}m)\n   Calls gated; loop, landing and reaping continue. Lift with: world.sh resume\n")
         }
     }
 }
@@ -137,7 +137,7 @@ reading `?` is one this pass COULD NOT READ — never treat it as a zero.
   CPU quota throttling                {cpu_throttle_disp}   (share of periods throttled since last pass, per unit; FAULT = over the warn share under load)
   throttle                            {throttle_since}      (stamp: queue-throttled; depth at engage: {throttle_depth})
   draining since (? = cannot read)    {drain_mins}      minutes   (stamp: world.draining)
-  aeons alive                         {aeons_live}      (counted now, not from the snapshot)
+  dwarves alive                         {dwarves_live}      (counted now, not from the snapshot)
   FAILED UNITS                        {sp_failed_units}      {fu_names}   (>{fu_warn_mins}m failing escalates; ? = systemctl unreachable)
   beads in progress                   {sp_inprog}
   ready to claim                      {sp_ready}
@@ -153,10 +153,10 @@ reading `?` is one this pass COULD NOT READ — never treat it as a zero.
 
 {czar_block}
 
-### Lapsed aeons — killed by the liveness lease since the previous sweep
+### Lapsed dwarves — killed by the liveness lease since the previous sweep
 
-  An aeon whose trace was silent for the full lease is killed and its work preserved.
-  Classify each into one of four outcomes (sop-lapsed-aeon-postmortem) — a lapse is
+  A dwarf whose trace was silent for the full lease is killed and its work preserved.
+  Classify each into one of four outcomes (sop-lapsed-dwarf-postmortem) — a lapse is
   never closed as "noted". ? = directory could not be read, not zero lapses.
 
 {lapsed_section}
@@ -177,7 +177,7 @@ before anything else, because each answers a question the numbers above cannot.
 
 ### The shared checkout — are base branches clean?
 
-  An aeon commit on a base branch bypasses the gate and every landing instrument. A checkout
+  A dwarf commit on a base branch bypasses the gate and every landing instrument. A checkout
   ahead of its remote means subsequent worktrees base on a ref nobody else has seen.
 
 {guard_block}
@@ -252,7 +252,7 @@ Run the scans named in the menu above if you have wall time remaining.
         throttle_since = throttle_since_disp,
         throttle_depth = throttle_depth_disp,
         drain_mins = drain_mins_disp,
-        aeons_live = d.aeons_live_disp,
+        dwarves_live = d.dwarves_live_disp,
         sp_failed_units = failed_units_disp(d),
         fu_names = d.failed_unit_names,
         fu_warn_mins = d.failed_units_warn_mins,
@@ -390,7 +390,7 @@ mod tests {
         assert!(out.contains("### The gate"));
         assert!(out.contains("### The workers"));
         assert!(out.contains("### The czar"));
-        assert!(out.contains("### Lapsed aeons"));
+        assert!(out.contains("### Lapsed dwarves"));
         assert!(out.contains("### The graph"));
         assert!(out.contains("### The menu"));
         assert!(out.contains("### The shared checkout"));
@@ -410,9 +410,9 @@ mod tests {
     fn a_slow_probe_is_named_and_breaks_nominal() {
         let mut d = SweepData::fixture_nominal(1_700_000_000);
         assert!(is_nominal(&d, 60) && !render(&d).contains("SLOW PROBES"));
-        d.slow_probes = vec!["aeons alive / ready (bd) (>30s)".to_string()];
+        d.slow_probes = vec!["dwarves alive / ready (bd) (>30s)".to_string()];
         assert!(!is_nominal(&d, 60));
-        assert!(render(&d).contains("SLOW PROBES (rendered `?`, deadline hit): aeons alive / ready (bd) (>30s)"));
+        assert!(render(&d).contains("SLOW PROBES (rendered `?`, deadline hit): dwarves alive / ready (bd) (>30s)"));
     }
 
     fn rendered(pairs: &[(&str, &str)]) -> String {
@@ -503,7 +503,7 @@ mod tests {
         d.drain = Drain::Draining { since: "2026-09-08 20:02:00 UTC".into(), mins: Some(5) };
         let out = render(&d);
         assert!(out.contains("!! DRAINING since 2026-09-08 20:02:00 UTC (5m)"));
-        assert!(out.contains("Summons gated"));
+        assert!(out.contains("Calls gated"));
         assert!(!out.contains("HALTED") && !out.contains("No incidents are filed"));
         assert!(out.contains("draining since (? = cannot read)    5      minutes"));
     }

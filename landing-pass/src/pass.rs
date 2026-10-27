@@ -44,7 +44,7 @@ pub(crate) enum Flow {
 pub(crate) enum Screen<'w> {
     /// Handled (skipped, reopened or recorded) — nothing more this pass.
     Done(Flow),
-    /// Skipped as not closed, or as held by a live aeon: no decision was made, so the
+    /// Skipped as not closed, or as held by a live dwarf: no decision was made, so the
     /// concurrent walk may look at it again when a refresh finds it ready (D14 (h)).
     Retry,
     Queue(&'w BeadRow),
@@ -428,9 +428,9 @@ impl<'a> Pass<'a> {
         if !crate::model::handed_on(st) {
             let shown = if st.is_empty() { "-" } else { st };
             if self.procs.holder_alive(id) {
-                self.log(&format!("CHECK6 {id}: {br} not landed — its bead is {shown}, held by a live aeon"));
+                self.log(&format!("CHECK6 {id}: {br} not landed — its bead is {shown}, held by a live dwarf"));
             } else {
-                self.log(&format!("CHECK6 {id}: {br} not landed — its bead is {shown} and no aeon holds it"));
+                self.log(&format!("CHECK6 {id}: {br} not landed — its bead is {shown} and no dwarf holds it"));
             }
             return Screen::Retry;
         }
@@ -457,7 +457,7 @@ impl<'a> Pass<'a> {
             return Screen::Done(Flow::Next);
         }
         if self.procs.holder_alive(id) {
-            self.log(&format!("CHECK6 {id}: a live aeon still holds {br} — deferring the land"));
+            self.log(&format!("CHECK6 {id}: a live dwarf still holds {br} — deferring the land"));
             return Screen::Retry;
         }
         if repo.mode.queued() {
@@ -576,7 +576,7 @@ impl<'a> Pass<'a> {
                     let scope = self.scope_note(name, br, &g.suite);
                     let scope_part = if scope.is_empty() { String::new() } else { format!("\n{scope}") };
                     let note = format!(
-                        "Reopened by sentinel: branch {br} failed {name}'s certification gate. The branch carries {n} commit(s) from the previous session — the next aeon should resume from the existing work, not restart.\n{scope_part}\n\n{}",
+                        "Reopened by sentinel: branch {br} failed {name}'s certification gate. The branch carries {n} commit(s) from the previous session — the next dwarf should resume from the existing work, not restart.\n{scope_part}\n\n{}",
                         tail_lines(&g.out, 20)
                     );
                     let cause = crate::model::red_cause("cert-gate-red", &reason);
@@ -913,7 +913,7 @@ impl<'a> Pass<'a> {
                 continue;
             }
             if self.procs.holder_alive(id) {
-                self.log(&format!("CHECK6 {id}: an aeon took {br} while this pass ran — leaving its rebase to it"));
+                self.log(&format!("CHECK6 {id}: a dwarf took {br} while this pass ran — leaving its rebase to it"));
                 continue;
             }
             if self.git.content_on_base(&repo.path, br, &w.base_fq) {

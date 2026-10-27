@@ -337,7 +337,7 @@ fn adding_a_release_tier_entry_leaves_the_tag_unchanged() {
     let base = tag_of(&f, &c).unwrap();
     f.file(
         "/h/spira/deps.toml",
-        "[[dep]]\nname = \"bd\"\ntier = \"runtime\"\n\n[[dep]]\nname = \"aeon\"\ntier = \"release\"\n",
+        "[[dep]]\nname = \"bd\"\ntier = \"runtime\"\n\n[[dep]]\nname = \"dwarf\"\ntier = \"release\"\n",
     );
     assert_eq!(tag_of(&f, &c).unwrap(), base, "a release-tier addition");
 }
@@ -348,7 +348,7 @@ fn two_manifests_differing_only_in_release_entries_share_one_tag() {
     harness(&f, "/a");
     f.file(
         "/a/spira/deps.toml",
-        "[[dep]]\nname = \"bd\"\ntier = \"runtime\"\n\n[[dep]]\nname = \"aeon\"\ntier = \"release\"\n",
+        "[[dep]]\nname = \"bd\"\ntier = \"runtime\"\n\n[[dep]]\nname = \"dwarf\"\ntier = \"release\"\n",
     );
     harness(&f, "/b");
     f.file(
@@ -883,14 +883,14 @@ fn up_refuses_to_start_when_the_podman_mode_is_unknown() {
     assert!(f.calls_with("run").is_empty());
 }
 
-/// THE PRODUCTION BUG (sp-e5v53-3, 2026-10-01): a gate tree's `target/{aeon,release,debug,
+/// THE PRODUCTION BUG (sp-e5v53-3, 2026-10-01): a gate tree's `target/{dwarf,release,debug,
 /// gate-tools}` are symlinks to a tmpfs root outside the checkout (gate/src/target.rs,
 /// sp-z61hj). `--checkout /wt` bind-mounts `/wt` at `/workspace`, preserving the symlink as
-/// a symlink — `/workspace/target/aeon`, from inside the container, points to a host path
+/// a symlink — `/workspace/target/dwarf`, from inside the container, points to a host path
 /// that was never mounted there, so a binary built right through it is invisible to `stage`
-/// ("testenv: stage: aeon was not built into /workspace/target/aeon"), even though it
+/// ("testenv: stage: dwarf was not built into /workspace/target/dwarf"), even though it
 /// genuinely was built. Reproduced directly against this repository before this fix: `cargo
-/// build --profile aeon --workspace` in such a tree succeeds, `stage` still faults rc=1.
+/// build --profile dwarf --workspace` in such a tree succeeds, `stage` still faults rc=1.
 ///
 /// Fix: `up` now also mounts whatever `symlinked_targets` names, at the same absolute path,
 /// so the symlink resolves inside the container too.
@@ -1305,12 +1305,12 @@ fn sizes_read_like_df_h() {
 fn symlinked_targets_finds_a_real_symlinked_build_dir_and_collapses_a_shared_root() {
     let d = testkit::TempDir::new("testenv-symlinked-targets");
     let root = d.join("tmpfs-root").join("tree-x");
-    for p in ["aeon", "release", "debug", "gate-tools"] {
+    for p in ["dwarf", "release", "debug", "gate-tools"] {
         std::fs::create_dir_all(root.join(p)).unwrap();
     }
     let target = d.join("checkout").join("target");
     std::fs::create_dir_all(&target).unwrap();
-    for p in ["aeon", "release", "debug", "gate-tools"] {
+    for p in ["dwarf", "release", "debug", "gate-tools"] {
         std::os::unix::fs::symlink(root.join(p), target.join(p)).unwrap();
     }
     // An ordinary, non-symlinked entry alongside them (e.g. ".rustc_info.json" or any real
@@ -1329,7 +1329,7 @@ fn symlinked_targets_finds_a_real_symlinked_build_dir_and_collapses_a_shared_roo
 fn symlinked_targets_is_empty_for_an_ordinary_non_symlinked_target_dir() {
     let d = testkit::TempDir::new("testenv-symlinked-targets-plain");
     let target = d.join("checkout").join("target");
-    std::fs::create_dir_all(target.join("aeon")).unwrap();
+    std::fs::create_dir_all(target.join("dwarf")).unwrap();
     assert_eq!(RealHost.symlinked_targets(&target), Vec::<PathBuf>::new());
 }
 

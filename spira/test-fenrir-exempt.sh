@@ -16,7 +16,7 @@
 # WHY THIS SUITE EXISTS. The watchtower files a sweep on every ten-minute pass. incident.sh
 # dedupes on the external ref and bumps sp-recur-N. N counts intervals in which nobody closed
 # a routine health report, not unremediated failures. At FENRIR_AT=5 the page fires after fifty
-# minutes of quiet — zero defects. Closing the bead re-arms the cycle. $18/day of aeon cost
+# minutes of quiet — zero defects. Closing the bead re-arms the cycle. $18/day of dwarf cost
 # (measured sp-kufh). SPIRA_FENRIR_EXEMPT=1 is the brake: the watchtower sets it so its ref
 # cannot reach the FENRIR escalation.
 #

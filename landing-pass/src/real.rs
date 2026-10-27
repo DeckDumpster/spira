@@ -1298,13 +1298,13 @@ mod holder_alive_tests {
     }
 
     #[test]
-    fn holder_alive_requires_a_running_lease_for_an_aeon_pidfile() {
-        let run = testkit::TempDir::new("landing-pass-holder-alive-aeon");
-        std::fs::write(run.join("aeon-builder-sp-a1.pid"), std::process::id().to_string()).unwrap();
+    fn holder_alive_requires_a_running_lease_for_an_dwarf_pidfile() {
+        let run = testkit::TempDir::new("landing-pass-holder-alive-dwarf");
+        std::fs::write(run.join("dwarf-builder-sp-a1.pid"), std::process::id().to_string()).unwrap();
         let procs = RealProcs { run: run.to_path_buf() };
         assert!(!procs.holder_alive("sp-a1"), "a live pid with no lease must not count");
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-        std::fs::write(run.join("aeon-builder-sp-a1.lease"), (now + 60).to_string()).unwrap();
+        std::fs::write(run.join("dwarf-builder-sp-a1.lease"), (now + 60).to_string()).unwrap();
         assert!(procs.holder_alive("sp-a1"));
     }
 }

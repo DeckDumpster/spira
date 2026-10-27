@@ -45,7 +45,7 @@ fn build_env() -> Env {
     let why_cap: usize = env_or("SOP_WHY_CAP", "400").parse().unwrap_or(400);
     let actor = std::env::var("BEADS_ACTOR")
         .ok()
-        .or_else(|| std::env::var("SPIRA_AEON").ok().map(|a| format!("aeon-{a}")))
+        .or_else(|| std::env::var("SPIRA_DWARF").ok().map(|a| format!("dwarf-{a}")))
         .or_else(|| std::env::var("USER").ok())
         .unwrap_or_else(|| "unknown".to_string());
     // sp-kt4l3: spira/cockpit.sh is retired (-> the cockpit-collect crate); the default

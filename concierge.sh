@@ -24,7 +24,7 @@
 #
 # WHY tmux AND NOT systemd
 # ------------------------
-# Remote Control needs an interactive session with a TTY. Every aeon on this box already
+# Remote Control needs an interactive session with a TTY. Every dwarf on this box already
 # runs this way, and tmux means the operator can attach to the same session locally and see
 # exactly what the phone sees.
 #
@@ -45,20 +45,20 @@
 #
 # WHY IT IS COMPOSED FROM A RUNE
 # -------------------------------
-# It was not, and that was the defect. An aeon is summoned with a brief, a statute book and a
+# It was not, and that was the defect. A dwarf is called with a brief, a statute book and a
 # model resolved from a file somebody maintains; this session got a working directory and the
-# `claude` binary. The operator, 2026-09-12: "when we spin up aeons, they come with a system
+# `claude` binary. The operator, 2026-09-12: "when we spin up dwarves, they come with a system
 # prompt and a set of overlays. you don't. i think that's the defect here."
 #
 # It was not a difference of degree. `render_memories` — the function that renders the `law-`
-# memories in full — is called from `aeon.sh` and from nowhere else, so brain's CLAUDE.md,
+# memories in full — is called from `dwarf.sh` and from nowhere else, so brain's CLAUDE.md,
 # which says the harness "injects a `# Memories in force` section into every agent session at
-# summon", described aeons only. The statute that the harness checkout is production had been
+# call", described dwarves only. The statute that the harness checkout is production had been
 # in force for weeks and had never been delivered to the session that kept violating it.
 #
 # So `runes/concierge.rune` and `runes/concierge.md` now define this session exactly as
-# `builder.rune` defines a Guardian, and what follows renders them. The one property that
-# makes the concierge different is declared in the rune rather than arranged: RUNE_SUMMON is
+# `builder.rune` defines a Warden, and what follows renders them. The one property that
+# makes the concierge different is declared in the rune rather than arranged: RUNE_CALL is
 # `operator`, and `spira_task_runes` / `spira_lane_runes` both refuse to hand it to the
 # sentinel. Nothing but a human starts this.
 set -uo pipefail
@@ -79,7 +79,7 @@ TM="tmux -L $SOCKET"
 
 # compose_brief -> path of the rendered system prompt, or non-zero with a reason on stderr.
 #
-# The same two-part shape aeon.sh uses: the persona's markdown with `{{...}}` placeholders
+# The same two-part shape dwarf.sh uses: the persona's markdown with `{{...}}` placeholders
 # substituted, then the statute book appended whole.
 #
 # THE LAUNCHERS PASS THE CONTENT VIA `--append-system-prompt`, not `--append-system-prompt-file`.
@@ -113,7 +113,7 @@ compose_brief() {
     # PLUS THIS INSTALLATION'S OWN (sp-crr3n): SPIRA_STATUTE_CORE_LOCAL names slugs that never
     # ship with the rune — this operator's own repositories, labels or preferences
     # (law-harness-ships-mechanism-not-inventory) — appended to the persona's core exactly the
-    # way aeon's statutes() does it. A local slug the database lacks is demoted to the index
+    # way dwarf's statutes() does it. A local slug the database lacks is demoted to the index
     # the same as any other unresolved core slug; see the refusal check just below.
     local core_local="${SPIRA_STATUTE_CORE_LOCAL:-}" core_persona core_merged
     core_persona="$(rune_get "$RUNE" RUNE_STATUTE_CORE "")"
@@ -353,7 +353,7 @@ concierge_stray_holders() {
 case "${1:-status}" in
 
 start)
-    # The launcher's release (sp-31gtu): the session's gates, aeons and panes build PATH from
+    # The launcher's release (sp-31gtu): the session's gates, dwarves and panes build PATH from
     # it, so a start without it is refused here rather than failing later, one tool at a time.
     [ -n "${SPIRA_RELEASE:-}" ] || {
         echo "concierge: SPIRA_RELEASE is not set — start it from concierge.service, whose unit sets it" >&2
@@ -454,7 +454,7 @@ start)
 
     # NO --allowedTools. For an interactive session under bypassed permissions that flag can
     # only SUBTRACT, and the persona's remit is unbounded — see concierge.rune, where the
-    # absence is the declaration. Every other persona names its tools because aeon.sh passes
+    # absence is the declaration. Every other persona names its tools because dwarf.sh passes
     # them as an allow list that keeps a worker inside its job.
     #
     # LAUNCHER INSTEAD OF INLINE. The brief's text cannot survive two rounds of shell quoting
@@ -480,12 +480,12 @@ start)
     chmod +x "$LAUNCHER"
     # concierge.service is Type=oneshot/KillMode=control-group: when start exits, systemd
     # kills the whole cgroup — the tmux server with it. A transient unit gives the server
-    # its own cgroup that outlives the oneshot. Same trap and fix as lib.sh (aeon summon).
+    # its own cgroup that outlives the oneshot. Same trap and fix as lib.sh (dwarf call).
     # --remain-after-exit keeps the unit active after tmux new-session daemonizes and exits,
     # preventing the KillMode cleanup until the server itself stops.
     # PATH and HOME are the minimum the launcher needs: PATH to find claude, HOME for config.
     # SPIRA_RELEASE rides with them (sp-31gtu): the Concierge is a launcher too — the gates,
-    # aeons and cockpit it starts build their PATH from it.
+    # dwarves and cockpit it starts build their PATH from it.
     #
     # remain-on-exit ON, chained onto the same tmux invocation rather than set afterwards —
     # a set-option issued after the fact races the client's own exit. Without it, a client

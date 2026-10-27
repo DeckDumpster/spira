@@ -64,10 +64,10 @@ bead = "sp-jsnbm"
 [[use_case]]
 id = "UC-instance-lifecycle-10"
 tier = "T2"
-statement = "`activate.sh` refuses while this instance's aeons are live, naming them and `SPIRA_ACTIVATE_FORCE`, leaving `current` untouched; after the swap it daemon-reloads and restarts only non-aeon units"
+statement = "`activate.sh` refuses while this instance's dwarves are live, naming them and `SPIRA_ACTIVATE_FORCE`, leaving `current` untouched; after the swap it daemon-reloads and restarts only non-dwarf units"
 
 [use_case.uncovered]
-reason = "the behaviour itself is retired, not merely untested: release install-tarball drops the live-aeon guard by design (release/DESIGN.md \"install-tarball: differences from activate\") — under runtime-is-a-release an aeon's worktree is never under spira-releases/, so there is nothing left for an install to disrupt. The daemon-reload-and-restart half is covered (every active spira-*.service restarts, not only non-aeon ones, a named difference in the same section)"
+reason = "the behaviour itself is retired, not merely untested: release install-tarball drops the live-dwarf guard by design (release/DESIGN.md \"install-tarball: differences from activate\") — under runtime-is-a-release a dwarf's worktree is never under spira-releases/, so there is nothing left for an install to disrupt. The daemon-reload-and-restart half is covered (every active spira-*.service restarts, not only non-dwarf ones, a named difference in the same section)"
 date = "2026-09-30"
 bead = "sp-jsnbm"
 
@@ -104,10 +104,10 @@ statement = "a release installed from its tarball runs from a read-only tree: se
 [[use_case]]
 id = "UC-instance-lifecycle-16"
 tier = "T1"
-statement = "root install refuses with exit 5 on each conflict (foreign harness, live `aeon.sh`, gate lock held, instance mismatch, Dolt port serving another data_dir), naming the remedy and `SPIRA_INSTALL_CONFLICT_CONSIDERED`; a clean box passes"
+statement = "root install refuses with exit 5 on each conflict (foreign harness, live `dwarf.sh`, gate lock held, instance mismatch, Dolt port serving another data_dir), naming the remedy and `SPIRA_INSTALL_CONFLICT_CONSIDERED`; a clean box passes"
 
 [use_case.uncovered]
-reason = "test-install-conflicts.sh retired: it sourced root install.sh directly for its five _conflict_* functions, which is gone (sp-31dm0). The five predicates are install::guards::conflict_foreign/conflict_aeon/conflict_lock/conflict_instance_arg/conflict_instance_run/conflict_dolt now, proved by cargo test -p install: guards::tests::conflict_foreign_is_clear_when_no_unit_is_installed_or_it_matches, conflict_aeon_matches_the_full_argv_entry_only, conflict_lock_is_clear_unless_the_gate_tree_lock_is_held, conflict_instance_arg_is_clear_unless_it_disagrees_with_the_existing_config, conflict_instance_run_is_clear_unless_another_instance_shares_the_run_dir, conflict_dolt_is_clear_unless_a_different_data_dir_is_being_served — not by a spira/test-*.sh suite this matrix can see"
+reason = "test-install-conflicts.sh retired: it sourced root install.sh directly for its five _conflict_* functions, which is gone (sp-31dm0). The five predicates are install::guards::conflict_foreign/conflict_dwarf/conflict_lock/conflict_instance_arg/conflict_instance_run/conflict_dolt now, proved by cargo test -p install: guards::tests::conflict_foreign_is_clear_when_no_unit_is_installed_or_it_matches, conflict_dwarf_matches_the_full_argv_entry_only, conflict_lock_is_clear_unless_the_gate_tree_lock_is_held, conflict_instance_arg_is_clear_unless_it_disagrees_with_the_existing_config, conflict_instance_run_is_clear_unless_another_instance_shares_the_run_dir, conflict_dolt_is_clear_unless_a_different_data_dir_is_being_served — not by a spira/test-*.sh suite this matrix can see"
 date = "2026-09-30"
 bead = "sp-31dm0"
 
@@ -149,15 +149,15 @@ bead = "sp-31dm0"
 [[use_case]]
 id = "UC-instance-lifecycle-21"
 tier = "T1"
-statement = "the unit installer refuses while this instance's aeons are live (before daemon-reload), and refuses when any ExecStart target is missing or lacks +x"
+statement = "the unit installer refuses while this instance's dwarves are live (before daemon-reload), and refuses when any ExecStart target is missing or lacks +x"
 
 [[use_case]]
 id = "UC-instance-lifecycle-22"
 tier = "T1"
-statement = "per-unit apply decision table: changed writes/restarts/counts; unchanged does nothing; masked is left and reported; operator-disabled is not re-enabled; ctrl-suspended is not enabled; world-halted enables without `--now`; `spira-aeon-*` is never restarted or enabled"
+statement = "per-unit apply decision table: changed writes/restarts/counts; unchanged does nothing; masked is left and reported; operator-disabled is not re-enabled; ctrl-suspended is not enabled; world-halted enables without `--now`; `spira-dwarf-*` is never restarted or enabled"
 
 [use_case.uncovered]
-reason = "test-install-decide.sh retired: systemd/install.sh's _unit_action is install::decide::decide now (sp-31dm0), proved by cargo test -p install: decide::tests::a_mask_outranks_every_other_signal, suspended_outranks_disabled_and_halted, operator_disabled_outranks_halted, a_halted_world_enables_without_starting, unchanged_and_active_is_skipped, changed_and_active_is_restarted, everything_else_is_enable_now — the full six-input table, not by a spira/test-*.sh suite this matrix can see. The spira-aeon-* clause is structural now: transient aeon units are never in the manifest ENABLE set this decision runs over (install::manifest), so they are unreachable by construction rather than refused by a case in the table"
+reason = "test-install-decide.sh retired: systemd/install.sh's _unit_action is install::decide::decide now (sp-31dm0), proved by cargo test -p install: decide::tests::a_mask_outranks_every_other_signal, suspended_outranks_disabled_and_halted, operator_disabled_outranks_halted, a_halted_world_enables_without_starting, unchanged_and_active_is_skipped, changed_and_active_is_restarted, everything_else_is_enable_now — the full six-input table, not by a spira/test-*.sh suite this matrix can see. The spira-dwarf-* clause is structural now: transient dwarf units are never in the manifest ENABLE set this decision runs over (install::manifest), so they are unreachable by construction rather than refused by a case in the table"
 date = "2026-09-30"
 bead = "sp-31dm0"
 
@@ -279,7 +279,7 @@ bead = "sp-6onps"
 [[use_case]]
 id = "UC-instance-lifecycle-43"
 tier = "T0"
-statement = "`world.sh drain` touches no unit and writes a stamp with a resume hint; `--timeout` exits 1 NOT DRAINED/REMAIN GATED, `--deadline` slays with `--keep-work --reopen`, `resume` clears the stamp, and every aeon door carries both drain and halt gates"
+statement = "`world.sh drain` touches no unit and writes a stamp with a resume hint; `--timeout` exits 1 NOT DRAINED/REMAIN GATED, `--deadline` slays with `--keep-work --reopen`, `resume` clears the stamp, and every dwarf door carries both drain and halt gates"
 
 [[use_case]]
 id = "UC-instance-lifecycle-44"

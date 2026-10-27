@@ -1,4 +1,4 @@
-//! Shells to `bd` for the non-lifecycle half of the aeon semantic layer (design §3.5):
+//! Shells to `bd` for the non-lifecycle half of the dwarf semantic layer (design §3.5):
 //! titles, descriptions, dependencies, notes and filing stay bd's job (§3.3/3.4) — this
 //! module never touches `spira_lifecycle`. `SPIRA_BD`/`SPIRA_DB` are declared config
 //! (spira/conf.d), resolved from `$SPIRA_TOML` (one source of config, per Ryan 2026-10-05) —
@@ -9,7 +9,7 @@ use std::process::Command;
 fn bd_bin() -> Result<String, String> {
     // SPIRA_BD resolves empty when unset (no default in its registry entry); an empty program
     // name fails every call, so the door's store half silently never ran in such a setup
-    // (test-aeon-prod-dirty, sp-swh8b8). Empty means bd on PATH, as every other bd caller reads it.
+    // (test-dwarf-prod-dirty, sp-swh8b8). Empty means bd on PATH, as every other bd caller reads it.
     spira_config::process::cfg("SPIRA_BD").map(|b| if b.trim().is_empty() { "bd".to_string() } else { b })
 }
 
@@ -94,7 +94,7 @@ pub fn show(bead_id: &str) -> Result<String, String> {
 }
 
 /// The bound bead's own `repo:<name>` label, so `file-followup`/`split` never ask the
-/// aeon for a repo it could get wrong — the layer reads it from the bead it was summoned
+/// dwarf for a repo it could get wrong — the layer reads it from the bead it was called
 /// for, the same one every filing must land in.
 pub fn repo_label(bead_id: &str) -> Result<Option<String>, String> {
     let out = run(&["show", bead_id, "--json"])?;

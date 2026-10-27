@@ -1,4 +1,4 @@
-//! A claimable bead no summonable persona can claim: its labels match no rostered persona's
+//! A claimable bead no callable persona can claim: its labels match no rostered persona's
 //! partition, so the pool never counts it and no strand report names it.
 
 use std::collections::HashSet;
@@ -15,7 +15,7 @@ pub struct Persona {
     pub labels: Vec<String>,
     pub exclude: Vec<String>,
     pub rostered: bool,
-    pub summon: String,
+    pub call: String,
     pub lane: String,
 }
 
@@ -30,8 +30,8 @@ impl Persona {
         if !self.rostered {
             return Some("not in spira.runes".into());
         }
-        if self.summon != "auto" {
-            return Some(format!("RUNE_SUMMON={}", self.summon));
+        if self.call != "auto" {
+            return Some(format!("RUNE_CALL={}", self.call));
         }
         if !self.lane.is_empty() && !lanes.contains(&self.lane) {
             return Some(format!("lane {} not in spira.lanes", self.lane));
@@ -89,7 +89,7 @@ pub fn personas(cfg: &Config) -> Result<Vec<Persona>, String> {
             labels: split(rune_get(home, &n, "RUNE_LABELS", "")),
             exclude: split(rune_get(home, &n, "RUNE_EXCLUDE_LABELS", "")),
             rostered: roster.contains(&n),
-            summon: rune_get(home, &n, "RUNE_SUMMON", "auto"),
+            call: rune_get(home, &n, "RUNE_CALL", "auto"),
             lane: rune_get(home, &n, "RUNE_LANE", ""),
             name: n,
         })
@@ -105,7 +105,7 @@ mod tests {
         Store::new(parse_beads(json).unwrap())
     }
     fn persona(name: &str, label: &str, rostered: bool) -> Persona {
-        Persona { name: name.into(), labels: vec![label.into()], exclude: vec![], rostered, summon: "auto".into(), lane: String::new() }
+        Persona { name: name.into(), labels: vec![label.into()], exclude: vec![], rostered, call: "auto".into(), lane: String::new() }
     }
     fn one(id: &str) -> HashSet<String> {
         [id.to_string()].into()
@@ -128,16 +128,16 @@ mod tests {
     }
 
     #[test]
-    fn a_lane_persona_in_an_undeclared_lane_or_a_non_auto_summon_is_named() {
+    fn a_lane_persona_in_an_undeclared_lane_or_a_non_auto_call_is_named() {
         let s = store(r#"[{"id":"sp-a","status":"open","labels":["x"]},{"id":"sp-b","status":"open","labels":["y"]}]"#);
         let mut lane = persona("laned", "x", true);
         lane.lane = "nolane".into();
         let mut manual = persona("manual", "y", true);
-        manual.summon = "manual".into();
+        manual.call = "manual".into();
         let both: HashSet<String> = ["sp-a".to_string(), "sp-b".to_string()].into();
         let r = rows(&both, &s, &[lane, manual], &[], &[]);
         assert!(r[0].detail.contains("lane nolane not in spira.lanes"), "{}", r[0].detail);
-        assert!(r[1].detail.contains("RUNE_SUMMON=manual"), "{}", r[1].detail);
+        assert!(r[1].detail.contains("RUNE_CALL=manual"), "{}", r[1].detail);
     }
 
     #[test]

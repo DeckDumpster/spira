@@ -1,4 +1,4 @@
-//! `--load-fence-check` — a CPU-heavy build (rustc, cargo, a linker, hunk) that no aeon or
+//! `--load-fence-check` — a CPU-heavy build (rustc, cargo, a linker, hunk) that no dwarf or
 //! builder session owns competes with a live round at full priority. This pass lowers every
 //! such process to nice 19 and the idle I/O class wherever it came from, and logs where it
 //! came from (cgroup unit, ancestry) so an ownerless build can be traced afterwards.
@@ -145,7 +145,7 @@ mod tests {
         let r = dir.join("proc");
         fake(&r, 10, "rustc", 0, 5, "/user.slice/session-3.scope");
         fake(&r, 11, "bash", 0, 1, "/user.slice/session-3.scope");
-        fake(&r, 12, "cargo", 19, 1, "/spira.slice/spira-aeon-x.scope");
+        fake(&r, 12, "cargo", 19, 1, "/spira.slice/spira-dwarf-x.scope");
         let c = cfg("rustc cargo");
         let found = scan(&r, &c);
         assert_eq!(found.iter().map(|p| p.pid).collect::<Vec<_>>(), vec![10, 12]);

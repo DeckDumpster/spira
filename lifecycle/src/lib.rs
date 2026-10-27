@@ -47,7 +47,7 @@ pub enum Refusal {
     /// `exit` names the event that does lift it.
     AwaitingReply { event: String, exit: String },
     /// A holder-only event (`renew`) sent by an actor that does not hold the row: a reaped
-    /// aeon's late renewal must never extend the lease its successor now holds.
+    /// dwarf's late renewal must never extend the lease its successor now holds.
     NotHolder { actor: String, holder: Option<String> },
     /// A `manual` hold with no reason, a bare bead id (that is a dependency edge), or a
     /// snooze (that is a `wait` hold). `exit` names the mechanism that does the job.

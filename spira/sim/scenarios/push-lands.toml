@@ -3,7 +3,7 @@ horizon = 900000
 goal = "sp-pl01:LANDED"
 settle = 60000
 repos = ["sim:push"]
-real_actors = ["sentinel-summon", "sentinel-landing"]
+real_actors = ["sentinel-call", "sentinel-landing"]
 
 [[step]]
 at = 0

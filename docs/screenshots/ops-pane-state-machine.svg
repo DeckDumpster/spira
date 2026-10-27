@@ -5,7 +5,7 @@
 <text x="144.4" y="17.0" fill="#d0d0d0" xml:space="preserve">  release </text>
 <text x="228.4" y="17.0" fill="#d0d0d0" font-weight="bold" xml:space="preserve">eb58800e2</text>
 <text x="320.8" y="17.0" fill="#00cd00" xml:space="preserve">world RUNNING</text>
-<text x="430.0" y="17.0" fill="#d0d0d0" xml:space="preserve">  aeons </text>
+<text x="430.0" y="17.0" fill="#d0d0d0" xml:space="preserve">  dwarves </text>
 <text x="497.2" y="17.0" fill="#d0d0d0" font-weight="bold" xml:space="preserve">2/6</text>
 <text x="10.0" y="34.0" fill="#d0d0d0" font-weight="bold" xml:space="preserve">STATE MACHINE</text>
 <text x="144.4" y="34.0" fill="#808080" xml:space="preserve">(counts now · edge rates per hour)</text>
@@ -91,7 +91,7 @@
 <text x="68.8" y="646.0" fill="#808080" xml:space="preserve">WORKING — holder · bead · lease</text>
 <text x="102.4" y="663.0" fill="#d0d0d0" xml:space="preserve"> sp-orphan    P? (no title: not an open bead)                         </text>
 <text x="690.4" y="663.0" fill="#808080" xml:space="preserve">75m · </text>
-<text x="26.8" y="680.0" fill="#00cdcd" xml:space="preserve">guardian </text>
+<text x="26.8" y="680.0" fill="#00cdcd" xml:space="preserve">warden </text>
 <text x="102.4" y="680.0" fill="#d0d0d0" xml:space="preserve"> sp-w1        P? (no title: not an open bead)                         </text>
 <text x="690.4" y="680.0" fill="#808080" xml:space="preserve">20m · lease 15m</text>
 <text x="60.4" y="697.0" fill="#808080" xml:space="preserve">no output yet</text>

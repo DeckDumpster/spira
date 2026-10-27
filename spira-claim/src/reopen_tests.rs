@@ -260,11 +260,11 @@ fn live_a_bead_with_no_row_reopens_and_a_refused_row_fails() {
 }
 
 // ---------------------------------------------------------------------------------------
-// the harness stops the holding aeon before the bead leaves WORKING
+// the harness stops the holding dwarf before the bead leaves WORKING
 
-fn fake_aeon(run: &std::path::Path, bead: &str, lease_until: i64) {
+fn fake_dwarf(run: &std::path::Path, bead: &str, lease_until: i64) {
     std::fs::create_dir_all(run).unwrap();
-    let pf = run.join(format!("aeon-builder-{bead}.pid"));
+    let pf = run.join(format!("dwarf-builder-{bead}.pid"));
     std::fs::write(&pf, "1\n").unwrap();
     std::fs::write(pf.with_extension("lease"), lease_until.to_string()).unwrap();
 }
@@ -273,20 +273,20 @@ fn fake_aeon(run: &std::path::Path, bead: &str, lease_until: i64) {
 fn a_live_holder_gets_a_stop_request_and_is_waited_for() {
     let dir = testkit::TempDir::new("spira-claim-stop-holder");
     let run = dir.join("run");
-    fake_aeon(&run, "sp-a", 10_000);
+    fake_dwarf(&run, "sp-a", 10_000);
     let clock = std::cell::Cell::new(100i64);
     let ticks = std::cell::Cell::new(0);
     let r = stop_holder_in(&run, "sp-a", "local-tier-red", false, 60, &|| clock.get(), &|| {
         clock.set(clock.get() + 1);
         ticks.set(ticks.get() + 1);
-        // the aeon sees the request on its next beat and tears down
-        if run.join("aeon/sp-a.stop").is_file() && ticks.get() == 3 {
-            let _ = std::fs::remove_file(run.join("aeon-builder-sp-a.lease"));
+        // the dwarf sees the request on its next beat and tears down
+        if run.join("dwarf/sp-a.stop").is_file() && ticks.get() == 3 {
+            let _ = std::fs::remove_file(run.join("dwarf-builder-sp-a.lease"));
         }
     });
     assert!(r.is_ok(), "{r:?}");
-    assert!(ticks.get() >= 3, "returned before the aeon exited");
-    let said = std::fs::read_to_string(run.join("aeon/sp-a.stop")).unwrap();
+    assert!(ticks.get() >= 3, "returned before the dwarf exited");
+    let said = std::fs::read_to_string(run.join("dwarf/sp-a.stop")).unwrap();
     assert!(said.contains("local-tier-red"), "{said}");
 }
 
@@ -294,22 +294,22 @@ fn a_live_holder_gets_a_stop_request_and_is_waited_for() {
 fn a_holder_that_will_not_exit_refuses_the_release() {
     let dir = testkit::TempDir::new("spira-claim-stop-stuck");
     let run = dir.join("run");
-    fake_aeon(&run, "sp-a", 1_000_000);
+    fake_dwarf(&run, "sp-a", 1_000_000);
     let clock = std::cell::Cell::new(100i64);
     let r = stop_holder_in(&run, "sp-a", "gate-red", false, 5, &|| clock.get(), &|| clock.set(clock.get() + 1));
     assert!(r.unwrap_err().contains("did not exit"));
 }
 
 #[test]
-fn no_live_holder_and_an_aeons_own_call_wait_for_nothing() {
+fn no_live_holder_and_an_dwarves_own_call_wait_for_nothing() {
     let dir = testkit::TempDir::new("spira-claim-stop-none");
     let run = dir.join("run");
     let never = || panic!("must not wait");
     assert!(stop_holder_in(&run, "sp-a", "x", false, 5, &|| 100, &never).is_ok());
-    fake_aeon(&run, "sp-a", 10_000);
+    fake_dwarf(&run, "sp-a", 10_000);
     assert!(stop_holder_in(&run, "sp-a", "x", true, 5, &|| 100, &never).is_ok());
-    assert!(!run.join("aeon/sp-a.stop").exists(), "an aeon's own hand-back must not stop itself");
-    fake_aeon(&run, "sp-b", 50);
+    assert!(!run.join("dwarf/sp-a.stop").exists(), "a dwarf's own hand-back must not stop itself");
+    fake_dwarf(&run, "sp-b", 50);
     assert!(stop_holder_in(&run, "sp-b", "x", false, 5, &|| 100, &never).is_ok(), "an expired lease is not a live holder");
 }
 
@@ -327,7 +327,7 @@ fn a_refused_stop_leaves_the_bead_working() {
     }
     let mut w = Stuck(Fake::default());
     assert_eq!(run(&opts("sp-a", "local-tier-red"), &mut w), 1);
-    assert!(w.0.calls.borrow().is_empty(), "the row moved with the aeon still running: {:?}", w.0.calls.borrow());
+    assert!(w.0.calls.borrow().is_empty(), "the row moved with the dwarf still running: {:?}", w.0.calls.borrow());
 }
 
 #[test]

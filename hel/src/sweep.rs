@@ -384,7 +384,7 @@ impl<'a> Sweep<'a> {
                 return Err(());
             }
             Sent::Done => {
-                // The aeon's session log is KEPT: CHECK 5 tells an aeon-worked bead from a
+                // The dwarf's session log is KEPT: CHECK 5 tells a dwarf-worked bead from a
                 // hand-closed one by it.
                 self.tally.sent += 1;
                 self.say(&format!("{verb} {id}  {} {br}", c.name));

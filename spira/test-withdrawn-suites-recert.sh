@@ -5,7 +5,7 @@
 # THE DEFECT. Self-certification (queue.sh submit) runs with SPIRA_CERTIFY_SUITES=off —
 # fences only, right for a first submission because the Concierge's full-corpus round
 # catches suite reds. But a bead the batcher withdrew for a reproduced suite red carried
-# no record of which suite, so the aeon's very next resubmission re-ran fences-only and
+# no record of which suite, so the dwarf's very next resubmission re-ran fences-only and
 # rediscovered the same red, over and over, at a full corpus's cost each time.
 #
 # bead_reopen now writes the suites a withdrawal is known to have reddened to
@@ -112,7 +112,7 @@ out="$(submit)"; rc=$?
 want "B: the gate command was told to force test-x.sh" "ejected=test-x.sh" "$(cat "$GATELOG")"
 [ "$rc" -ne 0 ] && ok "B: re-certification RED — the withdrawn suite is caught, not skipped" \
     || bad "B: re-certification RED" "rc=$rc out=$out"
-want "B: failure reported to the aeon" "failed the gate" "$out"
+want "B: failure reported to the dwarf" "failed the gate" "$out"
 nowant "B: the lifecycle row is not certified by the red re-cert" "CERTIFIED" "$(lcfix_state sp-wsx)"
 [ ! -f "$RUN/queue/sp-wsx" ] && ok "B: not admitted to the queue on a red re-cert" \
     || bad "B: not admitted to the queue" "queue record exists"

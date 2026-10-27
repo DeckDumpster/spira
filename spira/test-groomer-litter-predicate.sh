@@ -28,14 +28,14 @@ echo "test-groomer-litter-predicate.sh"
 echo
 echo "positive control — a bead with a real description is NOT litter:"
 # ======================================================================================
-out="$(predicate '{"description":"This bead has a real description.","created_at":"2026-09-10T00:00:00Z","assignee":"aeon-yojimbo"}')"
+out="$(predicate '{"description":"This bead has a real description.","created_at":"2026-09-10T00:00:00Z","assignee":"dwarf-fjalar"}')"
 want "described bead: HAS_CONTENT 1" "HAS_CONTENT 1" "$out"
 
 # ======================================================================================
 echo
 echo "no description at all IS litter:"
 # ======================================================================================
-out="$(predicate '{"created_at":"2026-09-10T00:00:00Z","assignee":"aeon-yojimbo"}')"
+out="$(predicate '{"created_at":"2026-09-10T00:00:00Z","assignee":"dwarf-fjalar"}')"
 want "no description field: HAS_CONTENT 0" "HAS_CONTENT 0" "$out"
 
 # ======================================================================================
@@ -49,9 +49,9 @@ want "whitespace-only description: HAS_CONTENT 0" "HAS_CONTENT 0" "$out"
 echo
 echo "META sanitizes created_at and assignee for the close reason:"
 # ======================================================================================
-out="$(predicate '{"created_at":"2026-09-10T00:00:00Z","assignee":"aeon-yojimbo"}')"
+out="$(predicate '{"created_at":"2026-09-10T00:00:00Z","assignee":"dwarf-fjalar"}')"
 want "META carries the created_at" "created_at: 2026-09-10T00:00:00Z" "$out"
-want "META carries the assignee"   "assignee: aeon-yojimbo"            "$out"
+want "META carries the assignee"   "assignee: dwarf-fjalar"            "$out"
 
 # ======================================================================================
 echo

@@ -481,7 +481,7 @@ fn ask_body(desc: &str) -> String {
 ///
 /// That trailer is a bug report's clothing sewn on by the generator, and it is why the view
 /// reads as one. `ask.sh` no longer writes it onto an insight; this strips it from the ones
-/// already in the database, which cannot be rewritten -- Spira's aeons may not write to the
+/// already in the database, which cannot be rewritten -- Spira's dwarves may not write to the
 /// Gas Town beads databases, and editing a stored record to fix its presentation would be the
 /// wrong repair anyway.
 ///

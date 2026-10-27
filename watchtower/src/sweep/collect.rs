@@ -43,7 +43,7 @@ pub struct SweepData {
 
     pub tmp_pct: String,
     pub disk: disk_mem::DiskMem,
-    pub aeons_live_disp: String,
+    pub dwarves_live_disp: String,
     pub cpu_throttle_breach: bool,
     pub cpu_throttle_disp: String,
     pub failed_units: Option<Vec<String>>,
@@ -108,7 +108,7 @@ impl SweepData {
                 mem_breach: false,
                 mem_disp: "8000MB".to_string(),
             },
-            aeons_live_disp: "1".to_string(),
+            dwarves_live_disp: "1".to_string(),
             cpu_throttle_breach: false,
             cpu_throttle_disp: "baseline".to_string(),
             failed_units: Some(Vec::new()),
@@ -286,13 +286,13 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
         }
     }
 
-    // AEONS ALIVE / IDLE-WHILE-READY -------------------------------------------------------
-    let ledger_path = run.join("aeon-ledger.log");
+    // DWARVES ALIVE / IDLE-WHILE-READY -------------------------------------------------------
+    let ledger_path = run.join("dwarf-ledger.log");
     let probe = seams::pipeline_probe(
         &cfg.lib_sh_dir,
         if ledger_path.is_file() { ledger_path.to_str() } else { None },
     );
-    let aeons_live_disp = match &probe {
+    let dwarves_live_disp = match &probe {
         Some(p) => p.rune_counts.iter().map(|(_, n)| *n as i64).sum::<i64>().to_string(),
         None => "?".to_string(),
     };
@@ -336,7 +336,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
     // CZAR TABLE -----------------------------------------------------------------------------
     let czar_block = czar_block(&env);
 
-    // LAPSED AEONS -----------------------------------------------------------------------------
+    // LAPSED DWARVES -----------------------------------------------------------------------------
     let prev_marker = std::fs::read_to_string(cfg.lapsed_marker()).unwrap_or_default().trim().to_string();
     let lapsed_now = fmt_compact(now);
     let lapsed = lapsed::read(&cfg.lapsed_dir(), &prev_marker);
@@ -375,7 +375,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
         yield_note,
         tmp_pct,
         disk,
-        aeons_live_disp,
+        dwarves_live_disp,
         cpu_throttle_breach,
         cpu_throttle_disp,
         failed_units,
@@ -479,8 +479,8 @@ fn guard_block(cfg: &Cfg) -> String {
     }
 }
 
-/// A rune with ready work whose last N summons ALL came back "idle", no aeon of it is
-/// alive, and no bead entered WORKING/SUBMITTED since the first of those summons. Lifecycle
+/// A rune with ready work whose last N calls ALL came back "idle", no dwarf of it is
+/// alive, and no bead entered WORKING/SUBMITTED since the first of those calls. Lifecycle
 /// rows carry no persona, so any such transition in the window counts as the rune working.
 fn idle_while_ready_hits(
     ledger_path: &std::path::Path,
@@ -554,12 +554,12 @@ mod tests {
     fn czar_block_a_fired_class_carries_who_handled_it_and_leaves_others_untouched() {
         let mut env = Env::new();
         env.set("SP_CZAR_DEADLOCK_FIRED", "2026-09-20T10:00Z");
-        env.set("SP_CZAR_DEADLOCK_BY", "aeon-fake");
+        env.set("SP_CZAR_DEADLOCK_BY", "dwarf-fake");
         env.set("SP_CZAR_DEADLOCK_OUTCOME", "pending");
         let block = czar_block(&env);
 
         let deadlock: Vec<&str> = block.lines().find(|l| l.contains("deadlock")).unwrap().split_whitespace().collect();
-        assert_eq!(deadlock, vec!["deadlock", "2026-09-20T10:00Z", "aeon-fake", "pending"]);
+        assert_eq!(deadlock, vec!["deadlock", "2026-09-20T10:00Z", "dwarf-fake", "pending"]);
 
         let stalled: Vec<&str> = block.lines().find(|l| l.contains("loop-stalled")).unwrap().split_whitespace().collect();
         assert_eq!(stalled, vec!["loop-stalled", "?", "?", "?"]);
@@ -573,7 +573,7 @@ mod tests {
     }
 
     fn ledger(dir: &std::path::Path, lines: &[&str]) -> std::path::PathBuf {
-        let p = dir.join("aeon-ledger.log");
+        let p = dir.join("dwarf-ledger.log");
         std::fs::write(&p, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
         p
     }
@@ -610,7 +610,7 @@ mod tests {
     #[test]
     fn a_drain_stamp_reads_its_first_line_and_its_age_in_whole_minutes() {
         let d = testkit::TempDir::new("wt-drain");
-        match drain_at(&d, "2026-09-08 20:02:00 UTC\nsummons gated.\n", 1230, 1_800_000_000) {
+        match drain_at(&d, "2026-09-08 20:02:00 UTC\ncalls gated.\n", 1230, 1_800_000_000) {
             Drain::Draining { since, mins } => {
                 assert_eq!(since, "2026-09-08 20:02:00 UTC");
                 assert_eq!(mins, Some(20));
@@ -628,7 +628,7 @@ mod tests {
     #[test]
     fn a_malformed_drain_stamp_still_reads_as_draining_never_as_running() {
         let d = testkit::TempDir::new("wt-drain-bad");
-        match drain_at(&d, "not-a-timestamp\nsummons gated.\n", 300, 1_800_000_000) {
+        match drain_at(&d, "not-a-timestamp\ncalls gated.\n", 300, 1_800_000_000) {
             Drain::Draining { since, mins } => {
                 assert_eq!(since, "not-a-timestamp");
                 assert_eq!(mins, Some(5));
@@ -638,7 +638,7 @@ mod tests {
     }
 
     #[test]
-    fn five_idle_summons_with_ready_work_is_a_hit_naming_rune_count_and_reason() {
+    fn five_idle_calls_with_ready_work_is_a_hit_naming_rune_count_and_reason() {
         let d = testkit::TempDir::new("wt-iwr-hit");
         let l = ledger(&d, &[IDLE; 5]);
         let hits = idle_while_ready_hits(&l, &probe(&[("builder", 3)]), 5, &[]);
@@ -653,7 +653,7 @@ mod tests {
     }
 
     #[test]
-    fn a_real_claim_among_the_last_n_summons_is_not_a_hit() {
+    fn a_real_claim_among_the_last_n_calls_is_not_a_hit() {
         let d = testkit::TempDir::new("wt-iwr-mixed");
         let mut lines = vec!["2026-01-01T00:00:01Z awake builder sp-real1"];
         lines.extend([IDLE; 4]);
@@ -662,7 +662,7 @@ mod tests {
     }
 
     #[test]
-    fn too_few_summons_other_runes_and_a_missing_probe_or_ledger_are_no_hit() {
+    fn too_few_calls_other_runes_and_a_missing_probe_or_ledger_are_no_hit() {
         let d = testkit::TempDir::new("wt-iwr-short");
         let mut lines = vec!["2026-01-01T00:00:01Z awake other idle"; 5];
         lines.extend([IDLE; 4]);
@@ -690,7 +690,7 @@ mod tests {
     }
 
     #[test]
-    fn a_live_aeon_of_the_rune_is_not_a_hit() {
+    fn a_live_dwarf_of_the_rune_is_not_a_hit() {
         let d = testkit::TempDir::new("wt-iwr-live");
         let l = ledger(&d, &[IDLE; 5]);
         assert!(idle_while_ready_hits(&l, &live_probe("builder", 1, 1), 5, &[]).is_empty());

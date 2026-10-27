@@ -140,8 +140,8 @@ folded into the validate verdict) and only when non-empty.
 in its `# covers:` line (audited against every `docs/test-plan/*.toml`), so retiring them
 orphans no use case under `plan-matrix`'s rule.
 
-`test-deploy.sh`, `test-deploy-preflight-new-unit.sh`, `test-aeon-runes-overlay.sh`,
-`test-aeon-launch-grammar.sh`, `test-rune.sh`, `test-freshclone.sh`, `test-pr-stall.sh`,
+`test-deploy.sh`, `test-deploy-preflight-new-unit.sh`, `test-dwarf-runes-overlay.sh`,
+`test-dwarf-launch-grammar.sh`, `test-rune.sh`, `test-freshclone.sh`, `test-pr-stall.sh`,
 `test-repo-map.sh`, `test-unit-name.sh`, `test-watchtower-failed-units.sh`,
 `test-bd-lock-retry.sh`, `bd-pin.sh`, `test-overrides.sh` are **kept**, repointed: each
 exercises `doctor` as a fixture dependency for a different subject (deploy's own flow, the

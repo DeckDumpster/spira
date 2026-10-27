@@ -5,7 +5,7 @@
 # (docs/test-plan/instance-lifecycle.md row 24): naming is a pure function of
 # `install.sh --render` and the ENABLE array units.sh computes — neither needs a
 # live install against real systemd, so this suite needs no testenv container.
-# test-install-instance.sh keeps the PRUNE, WATCHER INSTALL and AEON ISOLATION
+# test-install-instance.sh keeps the PRUNE, WATCHER INSTALL and DWARF ISOLATION
 # sections, which do exercise real systemd.
 #
 # tier: T1

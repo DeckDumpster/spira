@@ -653,7 +653,7 @@ mod tests {
     }
 
     fn session(rt: &FakeRuntime) -> Session<'_> {
-        let mut s = Session::new(rt, "i1", "aeon");
+        let mut s = Session::new(rt, "i1", "dwarf");
         s.liveness_sleep = Duration::from_millis(1);
         s
     }

@@ -22,7 +22,7 @@
 #
 # tier: T1
 # covers: spira/runes/czar.rune spira/lib.sh spira/conf.sh spira-claim/* UC-dispatch-09 UC-config-store-preflight-15
-# hermetic-ok: no real database, no systemd; SPIRA_BD and SPIRA_SUMMON are stubs
+# hermetic-ok: no real database, no systemd; SPIRA_BD and SPIRA_CALL are stubs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 

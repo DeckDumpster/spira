@@ -15,8 +15,8 @@ id_prefix = "sp"
 loom_addr = "127.0.0.1:8788"
 loom_budget_ms = 1500
 mail_readers = "concierge=/opt/spira/concierge.sh wake"
-max_aeons = 4
-max_live_aeons = 4
+max_dwarves = 4
+max_live_dwarves = 4
 operator = "the operator"
 operator_actor = "operator"
 path = "/opt/spira/bin"

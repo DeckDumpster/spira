@@ -100,7 +100,7 @@ fn gather_drain(run: &str) -> DrainState {
     DrainState { stamp_mtime: mtime }
 }
 
-/// The WORKING rows of the lifecycle store with their phase: an aeon's presence and place in
+/// The WORKING rows of the lifecycle store with their phase: a dwarf's presence and place in
 /// its run are the machine's read, never a pidfile or a `/proc` entry.
 fn working_rows() -> Option<Vec<(String, String)>> {
     let rows = spira_config::lc_state::list_state_with(&cockpit_ops::db::lc_bin(), "WORKING").ok()?;

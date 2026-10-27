@@ -28,15 +28,15 @@ want "the deadline defaults to five minutes" "SPIRA_MENDER_DEADLINE_SECS:=300" "
 want "the session wall outlasts the deadline" "420" "$(env -u SPIRA_MENDER_DEADLINE_SECS bash -c 'set +u; . "$0"; printf %s "$RUNE_TIMEOUT_SECONDS"' "$RUNE")"
 want "a pinned deadline moves the wall" "620" "$(SPIRA_MENDER_DEADLINE_SECS=500 bash -c 'set +u; . "$0"; printf %s "$RUNE_TIMEOUT_SECONDS"' "$RUNE")"
 
-echo; echo "PARTITION: the summons label alone, never plan work"
+echo; echo "PARTITION: the calls label alone, never plan work"
 want "the predicate reads the mender label" 'SPIRA_MENDER_LABEL' "$(grep '^RUNE_LABELS=' "$RUNE")"
 lack() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 lack "no plan label" 'plan' "$(grep '^RUNE_LABELS=' "$RUNE")"
 
-echo; echo "INTEGRATE: the mender owns the summons kind, the builder cannot claim it"
+echo; echo "INTEGRATE: the mender owns the calls kind, the builder cannot claim it"
 want "the brief carries the integrate remit" "## An integration" "$(grep -o '^## An integration' "$BRIEF")"
 want "the mender may submit a branch" "SUBMITTED" "$(rune_var RUNE_WORKING_EXITS | grep -o SUBMITTED)"
-lack "the integrate summons is not on the plan label" 'integrate' "$(grep '^RUNE_LABELS=' "$HERE/runes/builder.rune")"
+lack "the integrate calls is not on the plan label" 'integrate' "$(grep '^RUNE_LABELS=' "$HERE/runes/builder.rune")"
 
 echo; echo "VERBS: brief, binary and allow table agree"
 USAGE="$(grep -o '^const USAGE: &str = "[^"]*"' "$HARNESS/mender/src/main.rs")"

@@ -109,7 +109,7 @@ pub fn parents(rows: &[ReadyRow]) -> Vec<String> {
     rows.iter().filter_map(|r| r.parent.clone()).filter(|p| !p.is_empty()).collect::<BTreeSet<_>>().into_iter().collect()
 }
 
-/// An epic is started when any child's lifecycle row has left the queue: an aeon holds it
+/// An epic is started when any child's lifecycle row has left the queue: a dwarf holds it
 /// (WORKING) or the builder has handed it on (SUBMITTED onwards, or over) — what bd's
 /// "in progress, closed, or open with the submitted label" meant (epic_parent_lookup's
 /// rule). A child read from its lifecycle row, never bd status (design §3.4, sp-mve9i); a
@@ -183,7 +183,7 @@ pub fn is_container(r: &ReadyRow) -> bool {
     matches!(r.issue_type.as_deref(), Some("epic") | Some("event"))
 }
 
-/// aeon.sh's band lines for the best tier — REWORK beads by bead priority, else the best
+/// dwarf.sh's band lines for the best tier — REWORK beads by bead priority, else the best
 /// (epic priority, epic started, bead priority): `id|branch|repo|eprio|estarted|bprio`,
 /// in input order.
 pub fn top_tier(rows: &[ReadyRow], lookup: &EpicLookup, rework: &BTreeSet<String>) -> Vec<String> {
@@ -368,7 +368,7 @@ pub enum Verdict {
     StackUnchanged,
 }
 
-/// An incident waits for its fix to land: a certified-only fix is not a reason to summon Ops,
+/// An incident waits for its fix to land: a certified-only fix is not a reason to call Ops,
 /// so an incident-labelled candidate never stacks.
 pub fn stack_cap(cand: &ReadyRow, incident_label: &str, stack_max_depth: u32) -> u32 {
     if !incident_label.is_empty() && cand.labels.iter().any(|l| l == incident_label) {

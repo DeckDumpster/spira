@@ -6,7 +6,7 @@
 #
 # One directive per line, so a fence port is a one-line diff:
 #   step <command>          one element of the `&&` chain, in order
-#   bin <VAR> <package>     build <package> from this tree (cargo, aeon profile) before any
+#   bin <VAR> <package>     build <package> from this tree (cargo, dwarf profile) before any
 #                           step, and give the steps $VAR = that binary instead of the
 #                           installed one — so a rule a branch adds to it runs on that branch.
 #                           This is BUILDING a tree under test, so it is passed by explicit

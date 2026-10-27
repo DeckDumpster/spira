@@ -37,7 +37,7 @@ use std::path::{Path, PathBuf};
 
 /// The release directory holding ONLY the binaries a model may run (sp-zf4q3): a sibling of
 /// `bin/`, and the one release directory the model's restricted PATH names
-/// (`aeon::restrict`). `bin/` itself also holds ~40 tools that call `bd` themselves (bdq,
+/// (`dwarf::restrict`). `bin/` itself also holds ~40 tools that call `bd` themselves (bdq,
 /// mail, spira-claim, bead, sentinel, queue, ...), so naming it gave the model a route to
 /// the database. Every entry is a relative symlink `<name> -> ../bin/<name>`, made by the
 /// release builders (`release::build`, `spira/build-tarball.sh`, testenv's stage script)
@@ -47,9 +47,9 @@ pub const MODEL_BIN_DIR: &str = "model-bin";
 /// What `MODEL_BIN_DIR` holds: every binary a model may run, and nothing else.
 pub const MODEL_BINS: &[&str] = &["work", "testenv"];
 
-/// The one exit from the aeon's refusal to start a restricted session in a release with no
+/// The one exit from the dwarf's refusal to start a restricted session in a release with no
 /// `model-bin/`: set it to a directory you have CONSIDERED and that holds only what a model
-/// may run, and the aeon uses that directory as the model's release PATH entry instead.
+/// may run, and the dwarf uses that directory as the model's release PATH entry instead.
 /// It is an explicit act, never a fallback: unset, a missing `model-bin/` refuses.
 pub const MODEL_BIN_OVERRIDE_ENV: &str = "SPIRA_MODEL_BIN_CONSIDERED";
 
@@ -252,15 +252,15 @@ mod tests {
 
     #[test]
     fn own_release_root_climbs_past_an_intermediate_directory() {
-        // A staged testenv/aeon-profile release: target/aeon/<bin>, bin/+spira/ two levels
+        // A staged testenv/dwarf-profile release: target/dwarf/<bin>, bin/+spira/ two levels
         // further up (testenv::fixture::STAGE_SCRIPT's own shape — `bin/` and `spira/`
         // both siblings of the checkout's `target/`, never inside it).
         let t = testkit::TempDir::new("release-env-climb");
-        std::fs::create_dir_all(t.join("target/aeon")).unwrap();
+        std::fs::create_dir_all(t.join("target/dwarf")).unwrap();
         std::fs::create_dir_all(t.join("bin")).unwrap();
         std::fs::create_dir_all(t.join("spira")).unwrap();
         std::fs::write(t.join("spira/conf.sh"), "").unwrap();
-        let exe = t.join("target/aeon/inbox-triage");
+        let exe = t.join("target/dwarf/inbox-triage");
         assert_eq!(own_release_root(&exe), Some(t.path().to_path_buf()));
     }
 

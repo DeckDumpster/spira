@@ -5,9 +5,9 @@
 # THE INCIDENT THIS REGRESSES (sp-kb0k5). A Concierge subagent wanted to stop a leftover
 # acceptance-local.sh. It read the process's PPid from /proc and killed it. The process was
 # orphaned, so its PPid was the user manager itself; SIGTERM to it activated exit.target and
-# the whole session — every aeon, sentinel, timer — stopped.
+# the whole session — every dwarf, sentinel, timer — stopped.
 #
-# WHAT THIS TESTS. The argument shape only — SPIRA_SYSTEMCTL/SPIRA_SUMMON are stubbed, so
+# WHAT THIS TESTS. The argument shape only — SPIRA_SYSTEMCTL/SPIRA_CALL are stubbed, so
 # no real unit is ever created. That the stop is genuinely cgroup-wide (catches a child
 # reparented before the stop runs) is the real dependency, proved for real, only on a host
 # with a systemd --user session: test-acceptance-local-stop-live.sh.
@@ -84,31 +84,31 @@ want "the failure to stop is reported" "could not stop spira-acc-failround-1.ser
 echo
 echo "4. start <round> <tree> [...]: launched under spira-acc-<round>-<ts>, argv forwarded"
 # ===========================================================================
-FAKE_SUMMON="$TMP/fake-summon"
-cat > "$FAKE_SUMMON" <<'EOF'
+FAKE_CALL="$TMP/fake-call"
+cat > "$FAKE_CALL" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$FAKE_SUMMON_LOG"
+printf '%s\n' "$*" >> "$FAKE_CALL_LOG"
 exit 0
 EOF
-chmod +x "$FAKE_SUMMON"
-FAKE_SUMMON_LOG="$TMP/summon.log"; : > "$FAKE_SUMMON_LOG"
+chmod +x "$FAKE_CALL"
+FAKE_CALL_LOG="$TMP/call.log"; : > "$FAKE_CALL_LOG"
 mkdir -p "$TMP/some-tree"
-_start_out="$(FAKE_SUMMON_LOG="$FAKE_SUMMON_LOG" SPIRA_SUMMON="$FAKE_SUMMON" \
+_start_out="$(FAKE_CALL_LOG="$FAKE_CALL_LOG" SPIRA_CALL="$FAKE_CALL" \
     bash "$SCRIPT" start myround "$TMP/some-tree" --predecessor spira-release-spira-x 2>&1)"
 _start_rc=$?
 wantrc "start exits 0 when the launch succeeds" "0" "$_start_rc"
-_summon_argv="$(cat "$FAKE_SUMMON_LOG")"
-want "the unit name follows spira-acc-<round>-<ts>" "--unit=spira-acc-myround-" "$_summon_argv"
+_call_argv="$(cat "$FAKE_CALL_LOG")"
+want "the unit name follows spira-acc-<round>-<ts>" "--unit=spira-acc-myround-" "$_call_argv"
 want "the wrapped command is this script itself, with argv forwarded" \
-    "-- $(command -v acceptance-local.sh) $TMP/some-tree --predecessor spira-release-spira-x" "$_summon_argv"
-want "the unit is handed SPIRA_TOML" "--setenv=SPIRA_TOML=" "$_summon_argv"
-want "the unit is handed SPIRA_RELEASE" "--setenv=SPIRA_RELEASE=" "$_summon_argv"
-: > "$FAKE_SUMMON_LOG"
-FAKE_SUMMON_LOG="$FAKE_SUMMON_LOG" SPIRA_SUMMON="$FAKE_SUMMON" \
+    "-- $(command -v acceptance-local.sh) $TMP/some-tree --predecessor spira-release-spira-x" "$_call_argv"
+want "the unit is handed SPIRA_TOML" "--setenv=SPIRA_TOML=" "$_call_argv"
+want "the unit is handed SPIRA_RELEASE" "--setenv=SPIRA_RELEASE=" "$_call_argv"
+: > "$FAKE_CALL_LOG"
+FAKE_CALL_LOG="$FAKE_CALL_LOG" SPIRA_CALL="$FAKE_CALL" \
     SPIRA_TOML="$TMP/pinned.toml" SPIRA_RELEASE="$TMP/pinned-release" \
     bash "$SCRIPT" start pinround "$TMP/some-tree" >/dev/null 2>&1
-want "the unit carries the caller's SPIRA_TOML value" "--setenv=SPIRA_TOML=$TMP/pinned.toml" "$(cat "$FAKE_SUMMON_LOG")"
-want "the unit carries the caller's SPIRA_RELEASE value" "--setenv=SPIRA_RELEASE=$TMP/pinned-release" "$(cat "$FAKE_SUMMON_LOG")"
+want "the unit carries the caller's SPIRA_TOML value" "--setenv=SPIRA_TOML=$TMP/pinned.toml" "$(cat "$FAKE_CALL_LOG")"
+want "the unit carries the caller's SPIRA_RELEASE value" "--setenv=SPIRA_RELEASE=$TMP/pinned-release" "$(cat "$FAKE_CALL_LOG")"
 want "start reports the unit it launched" "started spira-acc-myround-" "$_start_out"
 want "start tells the operator how to stop it" "stop myround" "$_start_out"
 

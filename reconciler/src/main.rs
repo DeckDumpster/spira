@@ -197,8 +197,8 @@ struct Config {
     cockpit_sessions: Vec<String>,
     cockpit_mail: String,
     dolt_data: String,
-    max_live_aeons: String,
-    max_aeons: String,
+    max_live_dwarves: String,
+    max_dwarves: String,
     disk_floor_pct: u32,
     grace_secs: u64,
     activation_grace_secs: u64,
@@ -255,8 +255,8 @@ impl Config {
             cockpit_sessions: sessions,
             cockpit_mail: cfg("COCKPIT_MAIL")?,
             dolt_data: cfg("SPIRA_DOLT_DATA")?,
-            max_live_aeons: cfg("SPIRA_MAX_LIVE_AEONS")?,
-            max_aeons: cfg("SPIRA_MAX_AEONS")?,
+            max_live_dwarves: cfg("SPIRA_MAX_LIVE_DWARVES")?,
+            max_dwarves: cfg("SPIRA_MAX_DWARVES")?,
             disk_floor_pct: cfg_parse::<u32>("SPIRA_DISK_FLOOR_PCT")?,
             grace_secs: cfg_parse::<u64>("SPIRA_RECONCILER_GRACE_SECS")?,
             activation_grace_secs: cfg_parse::<u64>("SPIRA_MAIN_HEALTH_ACTIVATION_GRACE_SECS")?,
@@ -699,13 +699,13 @@ fn count_of(out: &str) -> i64 {
     out.trim().parse().unwrap_or(0)
 }
 
-/// Observed fleet occupancy from the same tools the sentinel decides summons with: the runes
-/// supplies the partitions, `spira-claim` the claimable work under each, `strand` the aeons live.
+/// Observed fleet occupancy from the same tools the sentinel decides calls with: the runes
+/// supplies the partitions, `spira-claim` the claimable work under each, `strand` the dwarves live.
 fn fleet_readings(cfg: &Config) -> FleetReadings {
     let sc = &cfg.seams.spira_config;
     let words = |out: String| out.split_whitespace().map(String::from).collect::<Vec<_>>();
     let task_runes = words(run_cmd(sc, &["rune", "task"]));
-    let live_of = |rune: &str| count_of(&run_cmd(&cfg.seams.strand, &["aeon-count", rune]));
+    let live_of = |rune: &str| count_of(&run_cmd(&cfg.seams.strand, &["dwarf-count", rune]));
 
     let live_lanes = words(run_cmd(sc, &["rune", "lane"])).iter().filter(|f| !task_runes.contains(f)).map(|f| live_of(f)).sum();
 
@@ -726,8 +726,8 @@ fn fleet_readings(cfg: &Config) -> FleetReadings {
     FleetReadings {
         rows,
         live_lanes,
-        max_live: cfg.max_live_aeons.trim().parse().ok(),
-        pool: cfg.max_aeons.trim().parse().ok(),
+        max_live: cfg.max_live_dwarves.trim().parse().ok(),
+        pool: cfg.max_dwarves.trim().parse().ok(),
     }
 }
 
@@ -735,14 +735,14 @@ fn observe_fleet(cfg: &Config) -> Vec<Check> {
     let FleetReadings { rows, live_lanes, max_live, pool } = fleet_readings(cfg);
 
     // The Composite's FleetSpec.ceiling is the declared desired state; an install that has
-    // not materialised one yet falls back to SPIRA_MAX_LIVE_AEONS.
+    // not materialised one yet falls back to SPIRA_MAX_LIVE_DWARVES.
     let max_live = cfg.desired.fleet.as_ref().map(|f| f.ceiling as i64).or(max_live);
 
     let mut checks = Vec::new();
     let max_live = match max_live {
         Some(m) => m,
         None => {
-            // Neither the Composite nor SPIRA_MAX_LIVE_AEONS declares a ceiling — there is
+            // Neither the Composite nor SPIRA_MAX_LIVE_DWARVES declares a ceiling — there is
             // no ceiling to diff against, so this is not a gap, it is unobservable. Every
             // partition shares the one missing ceiling, so this is one Check, not one per
             // partition (sp-uqmg0): fanning N incident.sh filings out of a single pass can
@@ -761,7 +761,7 @@ fn observe_fleet(cfg: &Config) -> Vec<Check> {
     for (labels, ready, live, is_task) in rows {
         let headroom = (max_live - live_lanes).max(0);
         let desired_live = ready.min(headroom);
-        // SPIRA_MAX_AEONS=0 is an operator pausing the task pool on purpose (aeons.sh
+        // SPIRA_MAX_DWARVES=0 is an operator pausing the task pool on purpose (dwarves.sh
         // pool 0) — a deliberate state, not a fault. A lane partition draws outside the
         // pool, so its own gap still means something.
         let deliberately_paused = is_task && pool == Some(0);
@@ -2326,7 +2326,7 @@ mod tests {
     #[test]
     fn a_fleet_with_no_ceiling_is_one_unobservable_check_however_many_partitions_report() {
         let dir = scratch_dir("fleet-no-ceiling");
-        let cfg = Config { seams: fleet_seams(&dir), max_live_aeons: String::new(), max_aeons: "6".into(), ..test_config() };
+        let cfg = Config { seams: fleet_seams(&dir), max_live_dwarves: String::new(), max_dwarves: "6".into(), ..test_config() };
         let checks = observe_fleet(&cfg);
         assert_eq!(checks.len(), 1, "an undeclared ceiling is one cause, not one per partition");
         assert_eq!(checks[0].key, "fleet");
@@ -2336,7 +2336,7 @@ mod tests {
     #[test]
     fn a_declared_ceiling_bounds_the_desired_live_count_per_partition() {
         let dir = scratch_dir("fleet-ceiling");
-        let cfg = Config { seams: fleet_seams(&dir), max_live_aeons: "3".into(), max_aeons: "6".into(), ..test_config() };
+        let cfg = Config { seams: fleet_seams(&dir), max_live_dwarves: "3".into(), max_dwarves: "6".into(), ..test_config() };
         let checks = observe_fleet(&cfg);
         assert_eq!(checks.len(), 3);
         for c in &checks {
@@ -2351,7 +2351,7 @@ mod tests {
     #[test]
     fn a_paused_task_pool_satisfies_task_partitions_but_not_a_lane() {
         let dir = scratch_dir("fleet-pool-zero");
-        let cfg = Config { seams: fleet_seams(&dir), max_live_aeons: "3".into(), max_aeons: "0".into(), ..test_config() };
+        let cfg = Config { seams: fleet_seams(&dir), max_live_dwarves: "3".into(), max_dwarves: "0".into(), ..test_config() };
         let by_key: std::collections::BTreeMap<String, RawStatus> = observe_fleet(&cfg).into_iter().map(|c| (c.key, c.raw)).collect();
         assert_eq!(by_key["fleet:a"], RawStatus::Satisfied);
         assert_eq!(by_key["fleet:b"], RawStatus::Satisfied);
@@ -2771,8 +2771,8 @@ mod tests {
             cockpit_sessions: vec!["brain".into(), "hunk".into(), "chat".into()],
             cockpit_mail: String::new(),
             dolt_data: String::new(),
-            max_live_aeons: String::new(),
-            max_aeons: String::new(),
+            max_live_dwarves: String::new(),
+            max_dwarves: String::new(),
             disk_floor_pct: 15,
             grace_secs: 300,
             activation_grace_secs: 1800,

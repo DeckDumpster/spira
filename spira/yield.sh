@@ -43,7 +43,7 @@
 #                                flipped with nothing changed, which is a gate fault by
 #                                definition. If the tree CHANGED, somebody fixed something
 #                                and the gate was right to refuse the old one.
-#   somebody saying so           `classify`, which overrides either. This is what the aeon
+#   somebody saying so           `classify`, which overrides either. This is what the dwarf
 #                                whose branch was refused runs when it knows better, and it
 #                                is one command at the moment the knowledge exists.
 #
@@ -137,7 +137,7 @@ get() {
 
 # THE BEAD IS TAKEN FROM THE CALLER WHEN THE CALLER KNOWS IT, and derived from the branch
 # only when it does not. The landing pass is iterating beads and passes SPIRA_GATE_BEAD; an
-# aeon running its own gate through the runner has only the branch, whose last component is
+# dwarf running its own gate through the runner has only the branch, whose last component is
 # the bead id under the derived-name convention (law-branch-affinity-is-recorded). A branch
 # that does not look like one named after a bead records `-` rather than a guess.
 bead_of() {
@@ -186,7 +186,7 @@ cmd_record() {
     f="$YDIR/$(rec_key "$repo" "$br" "$tree" "$reason")"
     now="$(date +%s)"
     if [ -r "$f" ]; then
-        # SEEN AGAIN IS NOT SEEN TWICE. Every bead pays this gate at least twice — the aeon
+        # SEEN AGAIN IS NOT SEEN TWICE. Every bead pays this gate at least twice — the dwarf
         # before it closes and the landing pass before it merges — so counting arrivals would
         # double every red and treble some, and the ratio this whole file exists to report
         # would be a ratio of how many times each branch was gated.
@@ -266,7 +266,7 @@ cmd_classify() {
     for f in "$YDIR"/*; do
         [ -r "$f" ] || continue
         # Addressed by branch OR by the record's own name, because both are things the caller
-        # actually has: an aeon knows its branch and nothing else, while somebody reading
+        # actually has: a dwarf knows its branch and nothing else, while somebody reading
         # `list` has the name in front of them.
         if [ "$(get "$f" branch)" = "$which" ] || [ "$(basename "$f")" = "$which" ]; then
             set_verdict "$f" "$v" "${SPIRA_YIELD_BY:-stated}" "$why"
@@ -280,7 +280,7 @@ cmd_classify() {
 # ---------------------------------------------------------------------------------------
 # THE COST, AS A DISTRIBUTION AGAINST CONCURRENCY.
 #
-# A landing gate never runs solo. Every aeon runs one before it closes and the landing pass
+# A landing gate never runs solo. Every dwarf runs one before it closes and the landing pass
 # runs one per branch it is about to merge, so concurrency is the gate's OPERATING CONDITION
 # and not an edge case (law-fixtures-carry-real-cadence). Quoting a solo figure is how a gate
 # gets adopted at 101s and turns out to cost 329s in the condition it actually runs in, and

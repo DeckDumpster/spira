@@ -101,5 +101,5 @@ printf '\n%d %s, %d already in force, %d failed\n' \
     "$wrote" "$([ "$MODE" = dry ] && echo 'would be written' || echo written)" "$skipped" "$failed"
 [ "$failed" -eq 0 ] || exit 1
 [ "$MODE" = dry ] && exit 0
-[ "$wrote" -gt 0 ] && echo "Live in every agent session at its next summon."
+[ "$wrote" -gt 0 ] && echo "Live in every agent session at its next call."
 exit 0

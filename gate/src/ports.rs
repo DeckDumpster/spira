@@ -138,7 +138,7 @@ pub trait World {
     /// `gate_at`: the tree holds `rev` (proved) → Ok; Err(what went wrong) otherwise.
     fn checkout(&self, repo: &Path, tree: &Path, rev: &str, want: &str) -> Result<(), String>;
     fn remove_worktree(&self, repo: &Path, tree: &Path);
-    /// Install a trial's freshly built tools (sp-g9f3t): copy each `<tree>/target/aeon/<pkg>`
+    /// Install a trial's freshly built tools (sp-g9f3t): copy each `<tree>/target/dwarf/<pkg>`
     /// into `<dir>.tmp`, write `<dir>/TREE` = `tree_id`, rename it to `dir`, and remove every
     /// other entry of `dir`'s parent. Err(why) when any step fails; nothing half-installed
     /// is left at `dir`.
@@ -147,7 +147,7 @@ pub trait World {
     /// `<src>/<pkg>` for the binaries, and the entry marked recently used.
     fn install_tools_from(&self, src: &Path, pkgs: &[String], dir: &Path, tree_id: &str) -> Result<(), String>;
     /// Every source path the last build of `pkgs` in `tree` read, as cargo recorded them:
-    /// the prerequisites of `target/aeon/<pkg>.d` and every `rerun-if-changed` of the
+    /// the prerequisites of `target/dwarf/<pkg>.d` and every `rerun-if-changed` of the
     /// profile's build scripts. Err when a dep-info file is missing or unreadable.
     fn tool_inputs(&self, tree: &Path, pkgs: &[String]) -> Result<Vec<String>, String>;
     /// The entries of the shared tools `store` whose names start with `<base>-`, most

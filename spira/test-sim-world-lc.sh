@@ -106,7 +106,7 @@ claim() {  # claim <world> <bead> — create the row and claim it
     out="$(in_world "$1" spira-lc create-bead "$2" --repo sim 2>&1)"; rc=$?
     wantrc "create-bead $2 in the world" 0 "$rc"; [ "$rc" = 0 ] || printf '# %s\n' "$out"
     out="$(in_world "$1" spira-lc event bead "$2" --expect READY --version 0 --actor sim \
-        --kind '{"Claim":{"holder":"aeon-1","lease_until":4102444800,"persona":"builder"}}' 2>&1)"; rc=$?
+        --kind '{"Claim":{"holder":"dwarf-1","lease_until":4102444800,"persona":"builder"}}' 2>&1)"; rc=$?
     wantrc "Claim $2 in the world" 0 "$rc"; [ "$rc" = 0 ] || printf '# %s\n' "$out"
     is "$2 is WORKING after the claim" "WORKING" "$(state_of "$1" "$2")"
 }

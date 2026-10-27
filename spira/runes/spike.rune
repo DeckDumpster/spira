@@ -1,7 +1,7 @@
 # spike.rune — the Spike persona: researches ONE question to a costed document, and
 # carries no conversation.
 #
-# A rune is a persona DEFINITION; an aeon is one summoned instance of it. Four things: a
+# A rune is a persona DEFINITION; a dwarf is one called instance of it. Four things: a
 # predicate carving its partition out of the graph, the memories it must read, the tools it
 # may use, and what wakes it.
 #
@@ -14,7 +14,7 @@
 # sixteen times a fresh one per turn for identical work. A spike is exactly the shape of work
 # that pushes a session into that band and then makes everything after it pay.
 #
-# A spike aeon starts at the floor, reads what it needs, writes one document, and exits. The
+# A spike dwarf starts at the floor, reads what it needs, writes one document, and exits. The
 # conversation gets the document, not the reading.
 
 RUNE_NAME=spike
@@ -38,7 +38,7 @@ RUNE_MEMORY_PREFIXES="law-"
 # convert and is no longer read at launch.
 RUNE_MODEL=claude-opus-5
 
-# ONE. A spike is not throughput work: its output is a decision, and two aeons answering two
+# ONE. A spike is not throughput work: its output is a decision, and two dwarves answering two
 # questions at once buys nothing that answering them in sequence does not, while competing
 # for the same account capacity as the builders who are actually landing code.
 RUNE_MAX_CONCURRENT=1

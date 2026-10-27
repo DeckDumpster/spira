@@ -20,7 +20,7 @@ queue-watch/src/main.rs
 reconciler/src/main.rs
 spira/acceptance-ci.sh
 spira/acceptance-local.sh
-spira/aeons.sh
+spira/dwarves.sh
 spira/bead.sh
 spira/runes/batcher.rune
 spira/runes/builder.rune
@@ -35,13 +35,13 @@ spira/runes/spike.rune
 spira/configure.sh
 spira/conf.sh
 spira/deploy.sh
-spira/full-aeon-fixture.sh
+spira/full-dwarf-fixture.sh
 spira/gate-check.sh
 spira/gate-run.sh
 spira/gate.sh
 spira/gate-spira.sh
 spira/gate-suites
-spira/hooks/aeon-fence.sh
+spira/hooks/dwarf-fence.sh
 spira/incident.sh
 spira-lc/src/repo_config.rs
 spira/lib.sh
@@ -52,18 +52,18 @@ spira/pr-notify.sh
 spira/publish-backlog.sh
 spira/release.sh
 spira/stage.sh
-spira/test-aeon-base-ref-qualify.sh
-spira/test-aeon-eviction-race.sh
-spira/test-aeon-gate-close-silent.sh
-spira/test-aeon-lifecycle-cutover.sh
-spira/test-aeon-prod-dirty.sh
-spira/test-aeon-resume-collision.sh
-spira/test-aeon-resume.sh
-spira/test-aeon-sweep.sh
-spira/test-aeon-wiki-dirty.sh
-spira/test-aeon-worktree-collision.sh
+spira/test-dwarf-base-ref-qualify.sh
+spira/test-dwarf-eviction-race.sh
+spira/test-dwarf-gate-close-silent.sh
+spira/test-dwarf-lifecycle-cutover.sh
+spira/test-dwarf-prod-dirty.sh
+spira/test-dwarf-resume-collision.sh
+spira/test-dwarf-resume.sh
+spira/test-dwarf-sweep.sh
+spira/test-dwarf-wiki-dirty.sh
+spira/test-dwarf-worktree-collision.sh
 # literal-ok: a file path, not the world-stop literal itself
-spira/test-aeon-world-stop.sh
+spira/test-dwarf-world-stop.sh
 spira/test-heimdall.sh
 spira/test-batcher-cut.sh
 spira/test-bead-contract.sh
@@ -139,7 +139,7 @@ spira/testlib.sh
 spira/test-lifecycle-classify.sh
 spira/test-livelock.sh
 spira/test-mimir-trigger.sh
-spira/test-mail-aeon.sh
+spira/test-mail-dwarf.sh
 spira/test-ops-closing.sh
 spira/test-park-unmapped.sh
 spira/test-pilgrimage.sh
@@ -193,9 +193,9 @@ spira/test-spira-config-only-door.sh
 # unit-test fixture that writes a throwaway spira.toml for spira-config to read. None parses
 # or writes the live config itself; all read it through spira-config. Shrink as each is
 # reworded.
-aeon/src/brief.rs
-aeon/src/conf.rs
-aeon/src/run.rs
+dwarf/src/brief.rs
+dwarf/src/conf.rs
+dwarf/src/run.rs
 round-vm/src/cli.rs
 round-vm/src/config.rs
 sentinel/src/cfg.rs

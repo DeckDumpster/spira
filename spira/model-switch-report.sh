@@ -11,7 +11,7 @@
 # FOUR FIGURES:
 #
 #   1. BEADS LANDED PER WINDOW — the outcome (law-measure-the-outcome). From landing.log.
-#   2. $ PER LANDED BEAD — efficiency; a cheaper aeon that needs three attempts is not cheaper.
+#   2. $ PER LANDED BEAD — efficiency; a cheaper dwarf that needs three attempts is not cheaper.
 #   3. ATTEMPTS PER LANDED BEAD — where a weaker model shows up first (as retries).
 #   4. SOP YIELD FOR OPS — per run: did the Ops SOP application hold? A yield that falls
 #      signals the model change went badly.
@@ -21,7 +21,7 @@
 # per-landed-bead for builders.
 #
 # SOURCES:
-#   $SPIRA_RUN/aeon-ledger.log   — per-session cost (wall_s, cost_usd, etc.)
+#   $SPIRA_RUN/dwarf-ledger.log   — per-session cost (wall_s, cost_usd, etc.)
 #   $SPIRA_RUN/landing.log       — what actually landed (law-closed-is-not-landed)
 #   $SPIRA_RUN/sop/applied.jsonl — SOP application records
 #
@@ -81,7 +81,7 @@ if [ -n "$WINDOW_HOURS" ]; then
     SINCE_EPOCH=$(( UNTIL_EPOCH - WIN_S ))
 fi
 
-LEDGER="${SPIRA_RUN:-}/aeon-ledger.log"
+LEDGER="${SPIRA_RUN:-}/dwarf-ledger.log"
 LANDING="${SPIRA_RUN:-}/landing.log"
 SOP_LEDGER="${SPIRA_SOP_LEDGER:-${SPIRA_RUN:-}/sop/applied.jsonl}"
 
@@ -118,7 +118,7 @@ def fmt_n(v):
     return str(v)
 
 # --------------------------------------------------------------------------
-# Read the aeon ledger — every `done` line within [since, until]
+# Read the dwarf ledger — every `done` line within [since, until]
 # --------------------------------------------------------------------------
 # Each `done` line:
 #   <ts> done <rune> <bead> rc=N status=S [wall_s=N api_s=N turns=N in_tok=N
@@ -132,7 +132,7 @@ DONE_RE = re.compile(
 )
 FIELD_RE = re.compile(r'(\w+)=(\S+)')
 
-aeon_rows = []   # list of dicts: ts, rune, bead, rc, status, wall_s, cost_usd, ...
+dwarf_rows = []   # list of dicts: ts, rune, bead, rc, status, wall_s, cost_usd, ...
 
 try:
     with open(ledger_path, encoding="utf-8", errors="replace") as f:
@@ -150,7 +150,7 @@ try:
                 for k, v in FIELD_RE.findall(fields_str):
                     row[k] = v if v == "?" else (float(v) if "." in v else
                                                   (int(v) if v.lstrip("-").isdigit() else v))
-            aeon_rows.append(row)
+            dwarf_rows.append(row)
 except FileNotFoundError:
     pass
 
@@ -250,7 +250,7 @@ def bead_stats(bead_set, rune_filter=None):
     """Return (costs, attempts) lists for beads in bead_set, one entry per bead."""
     costs = []; attempts = []
     for bead in bead_set:
-        sessions = [r for r in aeon_rows
+        sessions = [r for r in dwarf_rows
                     if r["bead"] == bead
                     and (rune_filter is None or r["rune"] == rune_filter)]
         n = len(sessions)
@@ -317,7 +317,7 @@ except FileNotFoundError:
 
 def ops_sessions_in(start_ep, end_ep):
     """Yield (awake_ts, done_ts, bead) for ops sessions finishing in [start, end)."""
-    done_ops = [r for r in aeon_rows
+    done_ops = [r for r in dwarf_rows
                 if r["rune"] == "ops" and start_ep <= r["ts"] < end_ep]
     awake_idx = 0
     for done in sorted(done_ops, key=lambda r: r["ts"]):
@@ -367,7 +367,7 @@ sop_wit_before, sop_tot_before, held_yes_before, pass_tot_before = \
 # Ops per-run cost — corrected for cadence change
 # --------------------------------------------------------------------------
 def ops_run_costs(start_ep, end_ep):
-    return [cost_of(r) for r in aeon_rows
+    return [cost_of(r) for r in dwarf_rows
             if r["rune"] == "ops"
             and r.get("status") not in ("idle", "capacity", "paused")
             and start_ep <= r["ts"] < end_ep]

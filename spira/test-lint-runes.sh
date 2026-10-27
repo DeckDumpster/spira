@@ -9,7 +9,7 @@
 # checks, same positive controls, run on their own.
 #
 # tier: T0
-# covers: spira/runes/*.md spira/runes/*.rune aeon/src/run.rs aeon/src/brief.rs spira/lib.sh UC-safety-fences-33
+# covers: spira/runes/*.md spira/runes/*.rune dwarf/src/run.rs dwarf/src/brief.rs spira/lib.sh UC-safety-fences-33
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -25,18 +25,18 @@ echo "the persona is installed, and every placeholder in its brief is one its fi
 # anywhere: the brief simply reaches the agent with the literal braces in it, telling it to
 # write to a directory named `{{SPIKE_DIR}}`. Nothing else would notice.
 #
-# EACH BRIEF IS CHECKED AGAINST THE PROGRAM THAT ACTUALLY RENDERS IT, not against aeon.sh.
-# The runes holds briefs for agents that are not aeons and are filled by their own script,
+# EACH BRIEF IS CHECKED AGAINST THE PROGRAM THAT ACTUALLY RENDERS IT, not against dwarf.sh.
+# The runes holds briefs for agents that are not dwarves and are filled by their own script,
 # and a check that assumed one filler failed the moment a second kind of brief was added —
 # reporting ten missing substitutions in a brief that was entirely correct.
 #
-# THE DISCRIMINATOR IS WHO SUMMONS THE PERSONA, not whether a `.rune` sits beside the brief.
+# THE DISCRIMINATOR IS WHO CALLS THE PERSONA, not whether a `.rune` sits beside the brief.
 # It was the latter, and it broke on the concierge: an operator persona has a full rune —
 # model, memories, statute core — and is nevertheless filled by its own launcher, because
-# nothing summons it. Under the old rule its brief was checked against aeon.sh's substitution
+# nothing calls it. Under the old rule its brief was checked against dwarf.sh's substitution
 # list and reported five missing placeholders that concierge.sh fills correctly.
 #
-# So: a rune the sentinel can summon is aeon.sh's; anything else is filled by the script of
+# So: a rune the sentinel can call is dwarf.sh's; anything else is filled by the script of
 # the same name, which may sit beside this suite or at the harness root.
 unfilled() {                    # unfilled <brief> <filler> -> the placeholders it leaves behind
     local f="$1" filler="$2" ph key missing=""
@@ -47,8 +47,8 @@ unfilled() {                    # unfilled <brief> <filler> -> the placeholders 
         # a whole `bd show` and would take a sed script apart on the first slash in it.
         # `grep -F`, because the second form is written with backslash-escaped braces and
         # every regex dialect reads those as something else.
-        # A THIRD FORM for the aeon binary: its token table names each key as a Rust
-        # string, `("KEY", …)` (aeon/src/run.rs, aeon/src/brief.rs).
+        # A THIRD FORM for the dwarf binary: its token table names each key as a Rust
+        # string, `("KEY", …)` (dwarf/src/run.rs, dwarf/src/brief.rs).
         grep -qF "{{$key}}" "$filler" \
           || grep -qF "\\{\\{$key\\}\\}" "$filler" \
           || grep -qF "(\"$key\"" "$filler" \
@@ -61,18 +61,18 @@ unfilled() {                    # unfilled <brief> <filler> -> the placeholders 
 # and a matcher pointed at the wrong file finds nothing too — so it is made to name a planted
 # offender before its silence is worth anything (law-absence-needs-a-positive-control).
 PLANT="$(mktemp -d)"
-# THE AEON'S FILLER is the aeon binary's source (aeon.sh is gone): its token table in run.rs
+# THE DWARF'S FILLER is the dwarf binary's source (dwarf.sh is gone): its token table in run.rs
 # and the block tokens in brief.rs, read as one file.
-AEON_FILLER="$(mktemp)"; trap 'rm -f "$AEON_FILLER"' EXIT
-cat "$HERE/../aeon/src/run.rs" "$HERE/../aeon/src/brief.rs" > "$AEON_FILLER" 2>/dev/null
+DWARF_FILLER="$(mktemp)"; trap 'rm -f "$DWARF_FILLER"' EXIT
+cat "$HERE/../dwarf/src/run.rs" "$HERE/../dwarf/src/brief.rs" > "$DWARF_FILLER" 2>/dev/null
 printf 'write to {{NOWHERE}}, and also {{DB}}\n' > "$PLANT/planted.md"
 want   "the placeholder check can see an unfilled one" "{{NOWHERE}}" \
-       "$(unfilled "$PLANT/planted.md" "$AEON_FILLER")"
+       "$(unfilled "$PLANT/planted.md" "$DWARF_FILLER")"
 nowant "and does not accuse one that is filled"        "{{DB}}" \
-       "$(unfilled "$PLANT/planted.md" "$AEON_FILLER")"
+       "$(unfilled "$PLANT/planted.md" "$DWARF_FILLER")"
 
 # {{DEADLINE}} IS NAMED HERE rather than left to the loop below, because it is the one
-# placeholder that fails silently in both directions. Unfilled, the Ops aeon is told it dies
+# placeholder that fails silently in both directions. Unfilled, the Ops dwarf is told it dies
 # at the literal `{{DEADLINE}}`; dropped from the brief altogether, it is told nothing at all
 # and behaves exactly as it did before there was a deadline to see — four consecutive
 # sessions on one incident, each killed at the wall, no commit and no bead between them. The
@@ -82,21 +82,21 @@ nowant "and does not accuse one that is filled"        "{{DB}}" \
 printf 'this session is killed at {{DEADLINE}}\n' > "$PLANT/deadline.md"
 want "an unfilled {{DEADLINE}} fails this suite" "{{DEADLINE}}" \
      "$(unfilled "$PLANT/deadline.md" "$PLANT/nofiller.sh")"
-is   "and the aeon binary is a filler that fills it" "" \
-     "$(unfilled "$PLANT/deadline.md" "$AEON_FILLER")"
+is   "and the dwarf binary is a filler that fills it" "" \
+     "$(unfilled "$PLANT/deadline.md" "$DWARF_FILLER")"
 rm -rf "$PLANT"
 
 for f in "$HERE"/runes/*.md; do
     n="$(basename "$f" .md)"
-    summon=auto
-    [ -f "$HERE/runes/$n.rune" ] && summon="$(sed -n 's/^RUNE_SUMMON=//p' "$HERE/runes/$n.rune" | tr -d '"' | tail -1)"
-    [ -n "$summon" ] || summon=auto
-    if [ -f "$HERE/runes/$n.rune" ] && [ "$summon" = auto ]; then
-        filler="$AEON_FILLER"
+    call=auto
+    [ -f "$HERE/runes/$n.rune" ] && call="$(sed -n 's/^RUNE_CALL=//p' "$HERE/runes/$n.rune" | tr -d '"' | tail -1)"
+    [ -n "$call" ] || call=auto
+    if [ -f "$HERE/runes/$n.rune" ] && [ "$call" = auto ]; then
+        filler="$DWARF_FILLER"
     elif [ -f "$HERE/$n.sh" ]; then
         filler="$HERE/$n.sh"
     elif [ -f "$HERE/../$n/src/run.rs" ]; then
-        # A brief with no .rune (not dispatched via aeon.sh) and no same-named script:
+        # A brief with no .rune (not dispatched via dwarf.sh) and no same-named script:
         # its own Rust crate rendered the template directly (archivist.md, run.rs's
         # `prompt::substitute` call), same as a rewritten script would have.
         filler="$HERE/../$n/src/run.rs"
@@ -173,12 +173,12 @@ want "and that its context is the bead, not a conversation" "ids rather than bod
 # THE OPS BRIEF'S WALL, asserted here because Ops is the only persona killed on a clock and
 # the brief is the whole of the mechanism: drop these clauses and nothing anywhere fails,
 # while every Ops session goes back to spending its last minute on an investigation it will
-# not get to finish. The deadline itself is rendered by aeon.sh; that it reaches the model as
+# not get to finish. The deadline itself is rendered by dwarf.sh; that it reaches the model as
 # a real time rather than as braces used to be asserted against the actual render in
-# test-aeon-verdict.sh, deleted 2026-09-30 (law-a-test-that-flips-is-deleted, sp-qf1l8) — the
+# test-dwarf-verdict.sh, deleted 2026-09-30 (law-a-test-that-flips-is-deleted, sp-qf1l8) — the
 # placeholder-text check below is now this UC's only coverage until sp-jupa4 re-adds it.
 ops_brief="$(cat "$HERE/runes/ops.md")"
-want "the ops brief tells the aeon when its session is killed" "{{DEADLINE}}" "$ops_brief"
+want "the ops brief tells the dwarf when its session is killed" "{{DEADLINE}}" "$ops_brief"
 want "and makes the wrap-up a hard rule with a number in it" "At 90 seconds left, stop" "$ops_brief"
 want "and says the rule outranks the loop"     "outranks every step below it" "$ops_brief"
 want "and names where a finding goes instead"  "{{INCIDENT}} file"            "$ops_brief"
@@ -208,7 +208,7 @@ echo "a refusal hands the bead back through the one helper that clears the claim
 # A REFUSED SPIKE IS A REOPEN LIKE ANY OTHER, and this is where the rule is enforced for all
 # of them. `bd reopen` leaves the assignee in place; `bd ready --claim` skips an assigned bead
 # while `bd ready` still lists it. So a reopen that forgets to release the claim puts the bead
-# back on the board wearing a dead aeon's name — visible, counted as ready, and claimable by
+# back on the board wearing a dead dwarf's name — visible, counted as ready, and claimable by
 # nobody. That failure is invisible by construction: `bd reopen` exits 0, the bead really does
 # go back to open, and only the claim that never comes says otherwise.
 #
@@ -222,7 +222,7 @@ reopen_sites() {                # every direct `bd … reopen` outside the helpe
     # very comments saying why the rule exists — and a check that goes red for documenting
     # itself gets deleted rather than obeyed.
     #
-    # AND NEITHER ARE QUOTED STRINGS, which is the same mistake one layer in. aeon.sh writes
+    # AND NEITHER ARE QUOTED STRINGS, which is the same mistake one layer in. dwarf.sh writes
     # a NOTE whose text reads "The landing pass will reopen this bead." — prose, inside an
     # argument to `bdq note`, reopening nothing. The comment filter above did not see it
     # because it is not a comment, so this check went red on every push to main from

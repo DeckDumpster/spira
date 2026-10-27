@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-podman-store-shared.sh — podman in an aeon session reaches the same store as the host's:
+# test-podman-store-shared.sh — podman in a dwarf session reaches the same store as the host's:
 #   a volume created through the session's podman is a directory under the store's backing path,
 #   and one created under that path's mount is listed by the session's podman.
 #

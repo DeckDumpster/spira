@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+#
+# test-dwarf-wiki-dirty.sh — wiki_commit_paths selects which of this session's OWN wiki
+#   writes (wiki_write_paths, read from the transcript) a dwarf may commit at exit: only
+#   those still dirty now, and never wiki/tasks.md.
+#
+# THE DEFECT. A dwarf that calls `sop synth` or writes any wiki page and exits without
+# committing leaves brain's shared checkout dirty. The next session to touch brain is
+# refused by brain-guard's harness-checkout-clean arm and ends up committing someone
+# else's work under its own author. The fix: dwarf.sh commits wiki writes at exit,
+# attributed to the dwarf that produced them.
+#
+# SNAPSHOT-DIFF WAS TRIED AND REJECTED (sp-4fl2e): a before/after dirty-snapshot diff
+# cannot tell "this session's own write" from "a concurrent actor's write that landed
+# while this session was live" — both are just "dirty now, clean at the start". Only the
+# transcript (wiki_write_paths) can. wiki_commit_paths is the intersection of what the
+# transcript claims with what is actually dirty now, minus the generated view.
+#
+# RETIRED (wave 4.34, sp-27d3d): wiki_write_paths/wiki_commit_paths were lib.sh; both are
+# ported to dwarf::trace, called in-process from Run::wiki_commit (dwarf/src/verdict.rs). The
+# T1 table that used to call wiki_commit_paths through a bash sourcing shim (the positive
+# control, the pre-existing-dirty-file case, the no-longer-dirty case, wiki/tasks.md alone
+# and mixed, the concurrent-actor case, multiple own writes, and no writes at all) moved to
+# wiki_commit_paths_selects_own_dirty_writes_never_tasks_md (dwarf/src/trace.rs). T3 (below)
+# is unaffected — it drives the real `dwarf` binary end to end and does not care whether the
+# family lives in bash or Rust.
+#
+# defect: sp-4fl2e
+# tier: T2
+# covers: dwarf/src/* UC-dwarf-execution-17
+set -uo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
+
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
+
+echo "test-dwarf-wiki-dirty.sh"
+
+# ===========================================================================================
+echo
+echo "T3: one real dwarf run proves the wiring — commit, author, message"
+# ===========================================================================================
+# testdb-mode: default (embedded).
+unset TESTDB_SHARED TESTDB_NAME TESTDB_DIR TESTDB_BASELINE TESTDB_BIN \
+      TESTDB_MODE TESTDB_STARTED_SERVICE SPIRA_DB
+# shellcheck disable=SC1090
+. "$HERE/testdb.sh"
+testdb_require test-dwarf-wiki-dirty
+trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+testdb_up dwarfwikidirty || { echo "test-dwarf-wiki-dirty: could not build fixture"; exit 1; }
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+
+HARNESS_ORIGIN="$TMP/harness.git"; git init -q --bare -b main "$HARNESS_ORIGIN"
+HARNESS="$TMP/harness"; timeout 5 git clone -q "$HARNESS_ORIGIN" "$HARNESS" 2>/dev/null
+git -C "$HARNESS" config user.email t@t; git -C "$HARNESS" config user.name t
+printf 'harness script v1\n' > "$HARNESS/seed.sh"
+git -C "$HARNESS" add seed.sh
+git -C "$HARNESS" commit -qm "seed harness"
+timeout 5 git -C "$HARNESS" push -q origin main 2>/dev/null
+export SPIRA_REPO="$HARNESS"
+
+ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
+REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
+git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
+printf 'seed\n' > "$REPO/f"
+git -C "$REPO" add f; git -C "$REPO" commit -qm seed
+timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
+
+WIKI_ORIGIN="$TMP/wiki.git"; git init -q --bare -b main "$WIKI_ORIGIN"
+WIKI="$TMP/wiki"; timeout 5 git clone -q "$WIKI_ORIGIN" "$WIKI" 2>/dev/null
+git -C "$WIKI" config user.email t@t; git -C "$WIKI" config user.name t
+mkdir -p "$WIKI/wiki/notes"
+printf 'wiki seed\n' > "$WIKI/wiki/seed.md"
+printf '# tasks\n' > "$WIKI/wiki/tasks.md"
+git -C "$WIKI" add wiki/seed.md wiki/tasks.md
+git -C "$WIKI" commit -qm "seed wiki"
+timeout 5 git -C "$WIKI" push -q origin main 2>/dev/null
+tl_config SPIRA_WIKI="$WIKI"
+
+export SPIRA_HOME="$HARNESS/spira-home"; mkdir -p "$SPIRA_HOME/runes"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/wiki-commit.sh" "$SPIRA_HOME/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
+cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
+# SPIRA_RUNES_DIR is registered and the fixture declares a fixed, nonexistent path — nothing
+# derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
+tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+tl_config SPIRA_RUN="$SPIRA_RUN"
+SPIRA_REPO_MAP="$TMP/repo-map"
+tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
+printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
+cat > "$SPIRA_HOME/runes/builder.rune" <<'RUNE'
+RUNE_NAME=builder
+RUNE_WORKING_EXITS="SUBMITTED ask park hold"
+RUNE_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}"
+RUNE_EXCLUDE_LABELS="spira-poison,needs-operator"
+RUNE_MAX_CONCURRENT=1
+RUNE_HEARTBEAT_SECONDS=600
+RUNE
+printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/runes/builder.md"
+
+BIN="$TMP/bin"; mkdir -p "$BIN"
+tl_config SPIRA_AGENT="$BIN/claude"
+export TMP HARNESS WIKI ORIGIN REPO
+# sp-mve9i: the dwarf reads its bead's state from the lifecycle row, never bd status; the
+# shim's bd close is told to it in lifecycle terms (testlib.sh lc_dwarf_mirror).
+lc_dwarf_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
+# The model session is restricted (sp-v62vn); the shim is a fixture — testlib
+# dwarf_fixture_agent, carrying the wiki path the shim writes into.
+dwarf_fixture_agent "$BIN/claude" WIKI
+command -v dwarf >/dev/null 2>&1 \
+    || { echo "test-dwarf-wiki-dirty: dwarf is not on PATH" >&2; exit 1; }
+cat > "$BIN/claude" <<'SHIM'
+#!/usr/bin/env bash
+cat /dev/stdin > "$TMP/prompt"
+id="$(sed -n 's/^work \(sp-[a-z0-9-]*\) .*/\1/p' "$TMP/prompt" | head -1)"
+printf 'my work\n' >> f
+git add f && git -c user.email=a@a -c user.name=dwarf commit -qm "$id: the work"
+printf '# SOP for %s\n' "$id" > "$WIKI/wiki/notes/sop-$id.md"
+printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Write","input":{"file_path":"%s"}}]}}\n' \
+    "$WIKI/wiki/notes/sop-$id.md"
+bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1
+SHIM
+chmod +x "$BIN/claude"
+
+_lbl="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan},repo:fixture"
+
+testdb_reset
+b1="$(timeout 5 bd -C "$SPIRA_DB" create --title "test: wiki write" --type task -l "$_lbl" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
+[ -n "$b1" ] || { bad "bead created" "(bead-create failed)"; }
+rm -rf "$SPIRA_RUN/worktree"
+dwarf --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
+# The session's bd close reads, in the lifecycle stand-in, as the builder's submit
+# (testlib lc_row_state: the restricted session never reaches sp-qsona's bd conversion).
+is "wiki-write: the session finished its bead (SUBMITTED)" "SUBMITTED" "$(lc_row_state "$b1")"
+is "wiki-write: wiki checkout is clean after exit" "" \
+    "$(git -C "$WIKI" diff --name-only HEAD 2>/dev/null)"
+author="$(git -C "$WIKI" log --format="%ae" -1 -- "wiki/notes/sop-$b1.md" 2>/dev/null)"
+want "wiki-write: wiki commit has dwarf author" "dwarf-" "$author"
+msg="$(git -C "$WIKI" log --format="%s" -1 -- "wiki/notes/sop-$b1.md" 2>/dev/null)"
+want "wiki-write: wiki commit message names the bead" "$b1" "$msg"
+
+tl_summary

@@ -183,7 +183,7 @@ _check_unit_diff() {
         return 0
     fi
     # SPIRA_INSTALL_FORCE is inherited from the environment when set (tests pass it);
-    # --diff exits before the landref and live-aeon checks regardless, so the guard
+    # --diff exits before the landref and live-dwarf checks regardless, so the guard
     # exists only to let a SPIRA_INSTALL_FORCE=1 test call this path without friction.
     _diff_out="$(bash "$installer" "$SPIRA_INSTANCE" --diff 2>/dev/null)" || true
 }

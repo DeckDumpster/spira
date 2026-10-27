@@ -682,7 +682,7 @@ fn gitstore(path: &str) -> Option<PathBuf> {
 }
 
 /// `spira_same_repo <a> <b>` — by object store, never by path string: a worktree and the
-/// checkout it was cut from are one repository under two paths, and every aeon works in a
+/// checkout it was cut from are one repository under two paths, and every dwarf works in a
 /// worktree while the landing gate extracts one, so a string comparison calls the copy in
 /// force "some other repository" and a fence keyed on it fires on every branch.
 pub fn same_repo(a: &str, b: &str) -> bool {

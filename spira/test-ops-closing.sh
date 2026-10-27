@@ -4,13 +4,13 @@
 # detect_invalid_closed share, and the ops.md instruction check.
 #
 # The fence wiring (a submission whose reason admits unfinished work goes back to REWORK, a
-# clean one stands SUBMITTED) and the retired RUNE_SOP_REQUIRED warning are aeon tests
-# (`cargo test -p aeon close_reason retired_sop`).
+# clean one stands SUBMITTED) and the retired RUNE_SOP_REQUIRED warning are dwarf tests
+# (`cargo test -p dwarf close_reason retired_sop`).
 #
 # defect: sp-9pyr
 # tier: T1
-# covers: aeon/src/* sop/src/*.rs strand/src/closereason.rs spira/runes/ops.rune spira/runes/ops.md spira/test-ops-closing.sh
-# covers: aeon/src/* strand/src/closereason.rs spira/runes/ops.rune spira/test-ops-closing.sh UC-aeon-execution-16
+# covers: dwarf/src/* sop/src/*.rs strand/src/closereason.rs spira/runes/ops.rune spira/runes/ops.md spira/test-ops-closing.sh
+# covers: dwarf/src/* strand/src/closereason.rs spira/runes/ops.rune spira/test-ops-closing.sh UC-dwarf-execution-16
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -19,11 +19,11 @@ echo "test-ops-closing.sh"
 
 
 echo
-echo "T1: strand close-reason, unit directly — no aeon run, no bd"
+echo "T1: strand close-reason, unit directly — no dwarf run, no bd"
 # ===========================================================================================
 # THE FENCE AND detect_invalid_closed SHARE strand::closereason so they cannot disagree
 # about which phrase triggers a refusal. Testing it directly, rather than only through a
-# full aeon run per case, is what "already standalone" is for.
+# full dwarf run per case, is what "already standalone" is for.
 crf() {   # crf <reason> -> sets CRF_RC and CRF_OUT (the matched phrase, if any)
     CRF_OUT="$(strand close-reason "$1" 2>/dev/null)"; CRF_RC=$?
 }
@@ -64,7 +64,7 @@ wantrc "matching is case-insensitive" 0 "$CRF_RC"
 
 OPS_MD="$HERE/runes/ops.md"
 if grep -Eq 'commit that page|SOP page is normally' "$OPS_MD"; then _rc=1; else _rc=0; fi
-wantrc "ops.md does not tell the aeon to commit a page the broker wrote" 0 "$_rc"
+wantrc "ops.md does not tell the dwarf to commit a page the broker wrote" 0 "$_rc"
 grep -q "not in your worktree" "$OPS_MD"; wantrc "ops.md says where sop write puts the page" 0 "$?"
 _probe="commit that page"; printf '%s\n' "$_probe" | grep -Eq 'commit that page|SOP page is normally'
 wantrc "the matcher fires on the old instruction" 0 "$?"

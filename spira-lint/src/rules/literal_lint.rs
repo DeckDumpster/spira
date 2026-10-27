@@ -344,7 +344,7 @@ mod tests {
         assert!(names.contains(&"needs-operator".to_string()));
 
         // An exported override must ALSO appear, so a literal like the shipped default is
-        // still refused under an aeon's environment that overrides SPIRA_ASK_LABEL. Passed
+        // still refused under a dwarf's environment that overrides SPIRA_ASK_LABEL. Passed
         // as an explicit extra_env rather than a real env::set_var: the test binary is
         // multi-threaded, and every thread shares (and races on) the real process
         // environment.

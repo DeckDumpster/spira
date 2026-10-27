@@ -3,7 +3,7 @@
 # test-lib-callers-defined.sh — a bash body or seam allowlist that names a lib.sh
 # function must name one lib.sh still defines (law-a-rename-repoints-no-reader).
 #
-# covers: spira/lib.sh aeon/src/seam.rs aeon/src/verdict.rs census/src/real.rs spira/test-lib-callers-defined.sh
+# covers: spira/lib.sh dwarf/src/seam.rs dwarf/src/verdict.rs census/src/real.rs spira/test-lib-callers-defined.sh
 # tier: T2
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -14,9 +14,9 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 defined() { grep -qE "^[[:space:]]*(function[[:space:]]+)?$1[[:space:]]*\(\)" "${@:2}"; }
 
-# allowlist_names <seam.rs> — the names in the seam's `case "$__aeon_fn" in` arm.
+# allowlist_names <seam.rs> — the names in the seam's `case "$__dwarf_fn" in` arm.
 allowlist_names() {
-    awk '/case "\$__aeon_fn" in/{on=1;next} on&&/\) ;;/{print;exit} on{print}' "$1" \
+    awk '/case "\$__dwarf_fn" in/{on=1;next} on&&/\) ;;/{print;exit} on{print}' "$1" \
         | tr '|\\' '\n\n' | sed 's/).*//; s/[[:space:]]//g' | grep -E '^[A-Za-z_][A-Za-z0-9_]*$'
 }
 
@@ -44,7 +44,7 @@ cat > "$TMP/lib.sh" <<'L'
 alive() { :; }
 L
 cat > "$TMP/seam.rs" <<'S'
-case "$__aeon_fn" in
+case "$__dwarf_fn" in
     alive|\
     gone_fn) ;;
     *) exit 97 ;;
@@ -59,9 +59,9 @@ is "planted allowlist offender is found" "gone_fn" "$planted_a"
 planted_c="$(LIB="$TMP/lib.sh" missing "$TMP/real.rs" $(census_bodies "$TMP/real.rs"))"
 is "planted census body offender is found" "vanished" "$planted_c"
 
-real_a="$(allowlist_names "$ROOT/aeon/src/seam.rs")"
-[ -n "$real_a" ] && ok "aeon seam allowlist was read" || bad "aeon seam allowlist was read" "empty"
-is "every aeon seam allowlist name is defined in lib.sh" "" "$(missing "$ROOT/aeon/src/seam.rs" $real_a)"
+real_a="$(allowlist_names "$ROOT/dwarf/src/seam.rs")"
+[ -n "$real_a" ] && ok "dwarf seam allowlist was read" || bad "dwarf seam allowlist was read" "empty"
+is "every dwarf seam allowlist name is defined in lib.sh" "" "$(missing "$ROOT/dwarf/src/seam.rs" $real_a)"
 
 real_c="$(census_bodies "$ROOT/census/src/real.rs")"
 [ -n "$real_c" ] && ok "census bash bodies were read" || bad "census bash bodies were read" "empty"

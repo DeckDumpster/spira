@@ -4,7 +4,7 @@
 # says it again after falling under, and is silent while the base is unset.
 #
 # tier: T1
-# covers: spira/warm-full.sh spira/watchers aeon/src/run.rs spira-config/src/build.rs
+# covers: spira/warm-full.sh spira/watchers dwarf/src/run.rs spira-config/src/build.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -18,7 +18,7 @@ printf '#!/usr/bin/env bash\necho "Use%%"; echo " $(cat %s/pct)%%"\n' "$TMP" > "
 chmod +x "$TMP/stub/df"
 wf() {
     local base="$1"; shift
-    tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_AEON_WARM_BASE="$base"
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_DWARF_WARM_BASE="$base"
     env -i PATH="$TMP/stub:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" bash "$HERE/warm-full.sh" "$@" 2>&1
 }
 
@@ -39,8 +39,8 @@ mkdir -p "$TMP/warm2/slot.1" "$TMP/warm2/slot.2"
 head -c 3145728 /dev/zero > "$TMP/warm2/slot.1/a"
 head -c 3145728 /dev/zero > "$TMP/warm2/slot.2/a"
 exec 8>>"$TMP/warm2/slot.2.lock"; flock -n 8
-wfc() { tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_AEON_WARM_BASE="$TMP/warm2"
-    env -i PATH="$TMP/stub:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" SPIRA_AEON_WARM_CAP_MIB=2 bash "$HERE/warm-full.sh" pass 2>&1; }
+wfc() { tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_DWARF_WARM_BASE="$TMP/warm2"
+    env -i PATH="$TMP/stub:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" SPIRA_DWARF_WARM_CAP_MIB=2 bash "$HERE/warm-full.sh" pass 2>&1; }
 want "a pass reports emptying an idle slot over the cap" "slot.1 emptied" "$(wfc)"
 is "the idle slot is empty after one pass" "0" "$(find "$TMP/warm2/slot.1" -type f | wc -l | tr -d ' ')"
 is "a held slot is left alone" "1" "$(find "$TMP/warm2/slot.2" -type f | wc -l | tr -d ' ')"

@@ -374,7 +374,7 @@ plant() {   # plant <id> [express]
 }
 
 # plant_open <id> [express] — status=open, no spira-submitted: the shape a bead re-marked
-# CERTIFIED right after an eject (sp-pedat) is actually in, still waiting on its aeon.
+# CERTIFIED right after an eject (sp-pedat) is actually in, still waiting on its dwarf.
 plant_open() {
     local id="$1" lbls="\"spira\",\"plan\",\"repo:$REPONAME\""
     [ "${2:-}" = express ] && { mkdir -p "$RUN/lc-express"; : > "$RUN/lc-express/$id"; }
@@ -1048,7 +1048,7 @@ echo
 echo "M. stacked dependents: closure, topological order, every member reaches LANDED:"
 
 # A -> B -> C: a straight chain, each bead's branch built on the previous bead's own tip, the
-# same shape a real stacked worktree gets once bead 3 (aeon base = landing ref + stack) lands.
+# same shape a real stacked worktree gets once bead 3 (dwarf base = landing ref + stack) lands.
 git -C "$LREPO" worktree add -q -b spira/sp-cmaa1 "$RUN/worktree/sp-cmaa1" local/main
 printf 'a\n' > "$RUN/worktree/sp-cmaa1/a.txt"
 git -C "$RUN/worktree/sp-cmaa1" add -A
@@ -1095,13 +1095,13 @@ is     "M: merged in topological order A, B, C" \
        "$(git -C "$LREPO" log --first-parent --format=%s "$head_m" | sed -n 's/^spira: land \(sp-cm[a-z0-9]*\).*/\1/p' | tac)"
 
 # =============================================================================
-# CASE N — batcher parity (sp-7qk8u): a bead back with its aeon after an eject (sp-pedat) is
+# CASE N — batcher parity (sp-7qk8u): a bead back with its dwarf after an eject (sp-pedat) is
 # not a member. Since sp-mve9i that is its lifecycle row — REWORK, not CERTIFIED — and never
 # bd's status or the retired submitted label (design §3.4): the bead is open in bd here, with
 # no submitted label, exactly as before, and it is the row alone that keeps it out.
 # =============================================================================
 echo
-echo "N. batcher parity: a bead whose lifecycle row is REWORK (ejected, back with its aeon) is excluded:"
+echo "N. batcher parity: a bead whose lifecycle row is REWORK (ejected, back with its dwarf) is excluded:"
 # sp-cjjjj (J), sp-cgcc3 (K3) and sp-cgdd4 (K4) all stay CERTIFIED by design in their own
 # cases and their branches persist in $REPO — retire them first so this round is only
 # sp-ciiii, the way case C already retires case G/H's own leftovers (line 548 above).

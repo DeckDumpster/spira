@@ -305,12 +305,12 @@ fn gate_mode_refuses_a_planted_write_around_the_machine() {
     let (code, out, err) = gate(&fixture("gate_bd_write"));
     assert_eq!(code, Some(1), "stdout:\n{out}\nstderr:\n{err}");
     for (line, class) in [
-        ("aeon.sh:5: [direct-write]", "bdq update --status"),
-        ("aeon.sh:7: [wrapper-write]", "release"),
-        ("aeon.sh:7: [wrapper-write]", "bdq reopen"),
-        ("aeon.sh:8: [direct-write]", "bd close"),
-        ("aeon.sh:10: [dynamic-verb]", "cannot be resolved"),
-        ("aeon.sh:11: [lifecycle-read]", "bd show"),
+        ("dwarf.sh:5: [direct-write]", "bdq update --status"),
+        ("dwarf.sh:7: [wrapper-write]", "release"),
+        ("dwarf.sh:7: [wrapper-write]", "bdq reopen"),
+        ("dwarf.sh:8: [direct-write]", "bd close"),
+        ("dwarf.sh:10: [dynamic-verb]", "cannot be resolved"),
+        ("dwarf.sh:11: [lifecycle-read]", "bd show"),
     ] {
         assert!(out.lines().any(|l| l.starts_with(line) && l.contains(class)), "no {line} … {class}:\n{out}");
     }
