@@ -1926,11 +1926,11 @@ fn activating_over_a_config_that_sets_the_sixteen_unread_keys_strips_them_one_re
 
 #[test]
 fn a_renamed_delta_moves_the_persona_table_roster_and_lane_at_activation() {
-    let delta = "[renamed]\n\"persona.maechen\" = \"persona.mimir\"\n";
+    let delta = "[renamed]\n\"persona.maechen\" = \"persona.mimir\"\n"; // ffx-ok
     let w = World::with_git(delta_git(delta));
     file(
         Path::new(&w.cfg.toml_spec().unwrap()),
-        "[spira]\nid_prefix = \"sp\"\nrunes = [\"ops\", \"maechen\"]\nlanes = \"ops maechen czar\"\n\n[persona.maechen]\nmodel = \"m\"\n\n[persona.maechen.lease]\nminutes = 5\n",
+        "[spira]\nid_prefix = \"sp\"\nrunes = [\"ops\", \"maechen\"]\nlanes = \"ops maechen czar\"\n\n[persona.maechen]\nmodel = \"m\"\n\n[persona.maechen.lease]\nminutes = 5\n", // ffx-ok
     );
     build_with_schema(&w, A, &[], &[]);
     build_with_schema(&w, B, &[], &[]);
@@ -1938,7 +1938,7 @@ fn a_renamed_delta_moves_the_persona_table_roster_and_lane_at_activation() {
     activate::activate(&ctx(&w, &sc), A, None).unwrap();
     activate::activate(&ctx(&w, &sc), B, None).unwrap();
     let text = cfg_text(&w);
-    assert!(!text.contains("maechen"), "{text}");
+    assert!(!text.contains("maechen"), "{text}"); // ffx-ok
     assert!(text.contains("[persona.mimir.lease]"), "{text}");
     assert!(text.contains("ops mimir czar"), "{text}");
 }

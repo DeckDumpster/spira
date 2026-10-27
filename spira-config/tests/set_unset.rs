@@ -205,15 +205,15 @@ fn rename_persona_moves_table_roster_and_lane_and_still_validates() {
     let dir = scratch_dir("rename-persona");
     let src = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/complete.toml"))
         .unwrap()
-        .replace("persona.mimir", "persona.maechen")
-        .replace("\"mimir\"", "\"maechen\"")
-        .replace("lanes = \"ops groomer mimir", "lanes = \"ops groomer maechen");
+        .replace("persona.mimir", "persona.maechen") // ffx-ok
+        .replace("\"mimir\"", "\"maechen\"") // ffx-ok
+        .replace("lanes = \"ops groomer mimir", "lanes = \"ops groomer maechen"); // ffx-ok
     let toml = write_tmp(&dir, "spira.toml", &src);
     let f = toml.to_str().unwrap();
     let before = spira_config(&["validate", f]);
     assert!(before.status.success(), "{}", String::from_utf8_lossy(&before.stderr));
 
-    let out = spira_config(&["rename-persona", "maechen", "mimir", f]);
+    let out = spira_config(&["rename-persona", "maechen", "mimir", f]); // ffx-ok
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let text = fs::read_to_string(&toml).unwrap();
     assert!(!text.contains("maechen"), "{text}");

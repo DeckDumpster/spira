@@ -57,7 +57,7 @@
 # in force for weeks and had never been delivered to the session that kept violating it.
 #
 # So `runes/concierge.rune` and `runes/concierge.md` now define this session exactly as
-# `builder.rune` defines a Guardian, and what follows renders them. The one property that
+# `builder.rune` defines a Warden, and what follows renders them. The one property that
 # makes the concierge different is declared in the rune rather than arranged: RUNE_CALL is
 # `operator`, and `spira_task_runes` / `spira_lane_runes` both refuse to hand it to the
 # sentinel. Nothing but a human starts this.
