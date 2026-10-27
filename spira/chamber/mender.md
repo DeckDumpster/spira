@@ -79,6 +79,7 @@ diff that touches what the suite exercises outranks it.
   the same action, saying what changed, the failure it answered and how to revert it:
   `{{ASK}} --subject "<what you changed>" --kind question --class policy --default "keep the mend" --body-file -`
   with a `## Class basis` section. The mend still rides the next pass; the ask never holds the round.
+- The outcome is your own call: record it with `work mender outcome`, never by asking.
 - Do not file beads. A finding you cannot act on goes in your diagnosis.
 {{NO_BD}}
 Finish with `work done --delivers "<outcome and the one-line reason>"`.
