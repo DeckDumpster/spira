@@ -28,6 +28,7 @@ pub struct Delta {
     pub added: BTreeMap<String, Value>,
     pub removed: Vec<String>,
     /// `persona.<old>` → `persona.<new>`: the persona's table, roster entry and lane entry move.
+    /// `spira.<old>` → `spira.<new>`: the operator's value is carried to the new key and the old one dropped.
     pub renamed: BTreeMap<String, String>,
 }
 
@@ -53,12 +54,18 @@ impl Delta {
                 ("renamed", Value::Table(t)) => {
                     for (from, to) in t {
                         let Value::String(to) = to else { return Err("renamed must map key paths to key paths as strings".into()) };
-                        persona_name(&from)?;
-                        persona_name(&to)?;
+                        match (is_spira_key(&from), is_spira_key(&to)) {
+                            (true, true) => {}
+                            (false, false) => {
+                                persona_name(&from)?;
+                                persona_name(&to)?;
+                            }
+                            _ => return Err(format!("{from:?} = {to:?}: a rename is persona.<old> to persona.<new>, or spira.<old> to spira.<new>")),
+                        }
                         d.renamed.insert(from, to);
                     }
                 }
-                (other, _) => return Err(format!("unknown or mistyped entry {other:?}: only `added` (a table of key = value), `removed` (a list of keys) and `renamed` (persona.<old> = \"persona.<new>\") are allowed")),
+                (other, _) => return Err(format!("unknown or mistyped entry {other:?}: only `added` (a table of key = value), `removed` (a list of keys) and `renamed` (persona.<old> = \"persona.<new>\", spira.<old> = \"spira.<new>\") are allowed")),
             }
         }
         spira_config::placeholder_paths(d.added.iter().map(|(k, v)| (k.as_str(), v)))?;
@@ -71,6 +78,22 @@ impl Delta {
             return Err(format!("{k} is both added and removed"));
         }
         Ok(d)
+    }
+
+    /// The delta with each `spira.*` rename resolved against `layers`: a value the operator set
+    /// under the old key becomes the new key's added value and the old key is dropped. A rename
+    /// whose old key is absent changes nothing, so the new key keeps its declared default.
+    pub fn expanded(&self, layers: &[Table]) -> Delta {
+        let mut d = self.clone();
+        for (from, to) in self.renamed.iter().filter(|(f, _)| is_spira_key(f)) {
+            if let Some(v) = layers.iter().rev().find_map(|t| get(t, from)) {
+                d.added.insert(to.clone(), v.clone());
+                if !d.removed.contains(from) {
+                    d.removed.push(from.clone());
+                }
+            }
+        }
+        d
     }
 
     pub fn render(&self) -> String {
@@ -86,6 +109,10 @@ impl Delta {
         }
         toml::to_string_pretty(&Value::Table(top)).unwrap_or_default()
     }
+}
+
+fn is_spira_key(path: &str) -> bool {
+    path.strip_prefix("spira.").is_some_and(|n| !n.is_empty() && !n.contains('.'))
 }
 
 fn persona_name(path: &str) -> Result<&str, String> {
@@ -203,6 +230,7 @@ pub struct Txn {
 /// delta's own dropped keys are removed only when `defer` is off: a process still running the
 /// previous release's code resolves them until it exits.
 fn apply(original: &[Table], delta: &Delta, retired: &[String], defer: bool) -> Result<(Vec<Table>, Vec<Table>, Delta), String> {
+    let delta = &delta.expanded(original);
     let mut pre = original.to_vec();
     let mut undo = Delta::default();
     for (k, v) in &delta.added {
@@ -232,7 +260,7 @@ fn apply(original: &[Table], delta: &Delta, retired: &[String], defer: bool) -> 
             undo.added.insert(k.clone(), v);
         }
     }
-    for (from, to) in &delta.renamed {
+    for (from, to) in delta.renamed.iter().filter(|(f, _)| !is_spira_key(f)) {
         let (old, new) = (persona_name(from)?, persona_name(to)?);
         let mut moved = false;
         for t in post.iter_mut() {
@@ -428,6 +456,7 @@ pub fn prepare(cfg: &Config, rel: &Path, delta: &Delta, defer: bool) -> Result<T
     let (files, modes, original_text, original) = read_layers(&spec)?;
     let retired = if defer { load_retired(&cfg.state_dir()?) } else { Vec::new() };
     let (pre, post, undo) = apply(&original, delta, &retired, defer)?;
+    let delta = &delta.expanded(&original);
     let deferred = if defer { delta.removed.iter().filter(|k| original.iter().any(|t| get(t, k).is_some())).cloned().collect() } else { Vec::new() };
     let txn = Txn { files, modes, original_text, original, pre, post, undo, deferred };
     txn.validate(cfg, rel)?;

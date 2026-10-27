@@ -1944,6 +1944,44 @@ fn a_renamed_delta_moves_the_persona_table_roster_and_lane_at_activation() {
 }
 
 #[test]
+fn a_renamed_config_key_carries_the_operator_value_and_leaves_no_retired_key() {
+    let w = World::with_git(delta_git("[renamed]\n\"spira.max_live_old\" = \"spira.max_live_new\"\n\n[added]\n\"spira.max_live_new\" = 2\n"));
+    file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\nmax_live_old = 7\n");
+    build_with_schema(&w, A, &["max_live_old"], &["max_live_new"]);
+    build_with_schema(&w, B, &["max_live_new"], &[]);
+    build_with_schema(&w, C, &["max_live_new"], &["max_live_old"]);
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, A, None).unwrap();
+    activate::activate(&c, B, None).unwrap();
+    let text = cfg_text(&w);
+    assert!(text.contains("max_live_new = 7"), "the operator's value is carried, not re-defaulted: {text}");
+    activate::activate(&c, C, None).unwrap();
+    let text = cfg_text(&w);
+    assert!(text.contains("max_live_new = 7") && !text.contains("max_live_old"), "{text}");
+    assert!(loads(&w, C));
+}
+
+#[test]
+fn a_renamed_config_key_the_operator_never_set_takes_the_declared_default() {
+    let w = World::with_git(delta_git("[renamed]\n\"spira.max_live_old\" = \"spira.max_live_new\"\n\n[added]\n\"spira.max_live_new\" = 2\n"));
+    file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\n");
+    build_with_schema(&w, A, &[], &["max_live_new"]);
+    build_with_schema(&w, B, &["max_live_new"], &[]);
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, A, None).unwrap();
+    activate::activate(&c, B, None).unwrap();
+    assert!(cfg_text(&w).contains("max_live_new = 2"), "{}", cfg_text(&w));
+}
+
+#[test]
+fn a_rename_mixing_a_persona_and_a_config_key_is_refused() {
+    let e = config_delta::Delta::parse("[renamed]\n\"persona.a\" = \"spira.b\"\n").unwrap_err();
+    assert!(e.contains("a rename is persona"), "{e}");
+}
+
+#[test]
 fn verify_pre_activate_sees_the_config_with_the_delta_applied_and_leaves_the_files_alone() {
     let probe = "#!/bin/sh\nPATH=/usr/bin:/bin\ncat $(echo \"$SPIRA_TOML\" | tr : ' ') | grep -q new_key || { echo 'FAIL units: new_key is not declared' >&2; exit 1; }\nexit 0\n";
     let mut g = delta_git("[added]\n\"spira.new_key\" = 300\n");
