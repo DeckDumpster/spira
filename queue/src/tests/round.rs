@@ -5046,3 +5046,33 @@ fn a_failure_excerpt_of_a_shell_suite_keeps_its_fail_lines() {
         "{x}"
     );
 }
+
+#[test]
+fn a_recorded_mend_moves_the_next_pass_head_to_the_mended_tip() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    declare_own_testenv(&t);
+    t.lc.mend_tips
+        .borrow_mut()
+        .insert("sp-a".into(), "ta2".into());
+    t.git.ancestor("b0", "ta2");
+
+    t.run(&["round", "certify", &batch]);
+    let kv = kv_of(&t, "round");
+    assert!(
+        kv["members"].contains("sp-a:ta2") && !kv["members"].contains("sp-a:ta:"),
+        "{}",
+        kv["members"]
+    );
+    assert!(
+        t.git.calls.borrow().iter().any(|c| c.starts_with("merge ta2")),
+        "the head is rebuilt from the mended tip: {:?}",
+        t.git.calls.borrow()
+    );
+}
