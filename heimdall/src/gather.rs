@@ -1,4 +1,4 @@
-//! File reads and systemctl questions — auron.sh's own "GATHER" section. Every
+//! File reads and systemctl questions — heimdall.sh's own "GATHER" section. Every
 //! value that could not be read is reported AS unreadable rather than as a benign default,
 //! because a probe that fails quietly is indistinguishable from a healthy reading.
 
@@ -40,7 +40,7 @@ pub trait Systemctl: Send + Sync {
     fn is_enabled(&self, unit: &str) -> bool;
     fn is_active(&self, unit: &str) -> bool;
     /// `systemctl --user is-active <unit>`'s own STDOUT text (`active`, `inactive`,
-    /// `failed`, `activating`, …), trimmed — NOT just its exit code. auron.sh captured
+    /// `failed`, `activating`, …), trimmed — NOT just its exit code. heimdall.sh captured
     /// this text directly (`sentinel_timer="$(... is-active ...)"`), so an empty answer
     /// (a stub systemctl, or one that printed nothing) is distinct from a real "inactive".
     fn active_text(&self, unit: &str) -> String;
@@ -127,7 +127,7 @@ pub fn spira_unit(sc: &dyn Systemctl, base: &str, kind: &str, instance: &str) ->
     }
 }
 
-/// `systemctl --user is-active <unit>`'s own text (auron.sh captured stdout, not just the
+/// `systemctl --user is-active <unit>`'s own text (heimdall.sh captured stdout, not just the
 /// exit code), or `"unknown"` when the unit could not be resolved at all, or when
 /// `is-active` printed nothing.
 pub fn sentinel_timer_status(sc: &dyn Systemctl, instance: &str) -> String {
@@ -216,7 +216,7 @@ mod tests {
 
     #[test]
     fn log_tail_reads_only_the_last_n_bytes() {
-        let dir = testkit::TempDir::new("auron-gather");
+        let dir = testkit::TempDir::new("heimdall-gather");
         let p = dir.join("log");
         std::fs::write(&p, "0123456789").unwrap();
         let t = read_log_tail(&p, 4);
@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn log_tail_of_a_short_file_is_the_whole_file() {
-        let dir = testkit::TempDir::new("auron-gather");
+        let dir = testkit::TempDir::new("heimdall-gather");
         let p = dir.join("log");
         std::fs::write(&p, "hi").unwrap();
         let t = read_log_tail(&p, 4);
@@ -249,7 +249,7 @@ mod tests {
 
     #[test]
     fn mirror_configured_and_present() {
-        let dir = testkit::TempDir::new("auron-gather");
+        let dir = testkit::TempDir::new("heimdall-gather");
         let p = dir.join("mirror.jsonl");
         std::fs::write(&p, "{}\n").unwrap();
         let m = check_mirror("dolt", &p);
@@ -258,14 +258,14 @@ mod tests {
 
     #[test]
     fn no_halt_or_drain_files_is_a_clean_world() {
-        let dir = testkit::TempDir::new("auron-gather");
+        let dir = testkit::TempDir::new("heimdall-gather");
         let w = world_state(&dir);
         assert!(!w.halted && !w.draining);
     }
 
     #[test]
     fn a_halted_stamp_is_reported_halted() {
-        let dir = testkit::TempDir::new("auron-gather");
+        let dir = testkit::TempDir::new("heimdall-gather");
         std::fs::write(dir.join("world.halted"), "Mon Sep 29 00:00:00 UTC 2026\n").unwrap();
         let w = world_state(&dir);
         assert!(w.halted);
@@ -273,14 +273,14 @@ mod tests {
 
     #[test]
     fn a_holds_until_resume_stamp_is_draining_at_any_age() {
-        let dir = testkit::TempDir::new("auron-gather-holds");
+        let dir = testkit::TempDir::new("heimdall-gather-holds");
         std::fs::write(dir.join("world.draining"), "now\ngated\nholds until resume\n").unwrap();
         assert!(world_state(&dir).draining);
     }
 
     #[test]
     fn a_legacy_stamp_with_a_past_expires_line_still_holds() {
-        let dir = testkit::TempDir::new("auron-gather");
+        let dir = testkit::TempDir::new("heimdall-gather");
         std::fs::write(dir.join("world.draining"), "now\ngated\nexpires 500\n").unwrap();
         assert!(world_state(&dir).draining);
     }
@@ -352,8 +352,8 @@ mod tests {
 
     #[test]
     fn sentinel_timer_status_unknown_when_resolved_but_is_active_prints_nothing() {
-        // test-auron.sh's own SPIRA_SYSTEMCTL=true fixture: every call succeeds (so
-        // is-enabled resolves the unit) but prints nothing — auron.sh's own
+        // test-heimdall.sh's own SPIRA_SYSTEMCTL=true fixture: every call succeeds (so
+        // is-enabled resolves the unit) but prints nothing — heimdall.sh's own
         // `[ -n "$sentinel_timer" ] || sentinel_timer=unknown` fallback, not "active".
         let sc = FakeSc { enabled: vec!["spira-sentinel-prod.timer"], ..Default::default() };
         assert_eq!(sentinel_timer_status(&sc, "prod"), "unknown");
@@ -361,11 +361,11 @@ mod tests {
 
     #[test]
     fn parse_show_id_nrestarts_pairs_ids_with_counts() {
-        let text = "Id=spira-sentinel.service\nNRestarts=3\n\nId=spira-auron.service\nNRestarts=0\n";
+        let text = "Id=spira-sentinel.service\nNRestarts=3\n\nId=spira-heimdall.service\nNRestarts=0\n";
         let mut out = BTreeMap::new();
         parse_show_id_nrestarts(text, &mut out);
         assert_eq!(out.get("spira-sentinel.service"), Some(&3));
-        assert_eq!(out.get("spira-auron.service"), Some(&0));
+        assert_eq!(out.get("spira-heimdall.service"), Some(&0));
     }
 
 }

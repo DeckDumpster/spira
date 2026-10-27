@@ -326,16 +326,16 @@ pub fn now_keys(cfg: &Cfg) -> Kv {
     }
     push(&mut out, "SP_OPS_AGE", ops_age);
 
-    push(&mut out, "SP_AURON_TIMER", unit_active_key("auron", "timer", &cfg.instance));
-    push(&mut out, "SP_AURON_AGE", age_of(&run.join("auron.status")));
-    let auron_status = run.join("auron.status");
-    if auron_status.is_file() {
-        let (firing, keys) = read_auron_status(&auron_status);
-        push(&mut out, "SP_AURON_FIRING", firing);
-        push(&mut out, "SP_AURON_KEYS", keys);
+    push(&mut out, "SP_HEIMDALL_TIMER", unit_active_key("heimdall", "timer", &cfg.instance));
+    push(&mut out, "SP_HEIMDALL_AGE", age_of(&run.join("heimdall.status")));
+    let heimdall_status = run.join("heimdall.status");
+    if heimdall_status.is_file() {
+        let (firing, keys) = read_heimdall_status(&heimdall_status);
+        push(&mut out, "SP_HEIMDALL_FIRING", firing);
+        push(&mut out, "SP_HEIMDALL_KEYS", keys);
     } else {
-        push(&mut out, "SP_AURON_FIRING", "?");
-        push(&mut out, "SP_AURON_KEYS", "");
+        push(&mut out, "SP_HEIMDALL_FIRING", "?");
+        push(&mut out, "SP_HEIMDALL_KEYS", "");
     }
 
     let rs_out = io::run_tool("release", &["status"], None).unwrap_or_default();
@@ -415,14 +415,14 @@ fn fmt_hm(epoch: i64) -> String {
         .unwrap_or_default()
 }
 
-fn read_auron_status(path: &Path) -> (String, String) {
+fn read_heimdall_status(path: &Path) -> (String, String) {
     let content = std::fs::read_to_string(path).unwrap_or_default();
     let mut firing = "?".to_string();
     let mut keys = String::new();
     for line in content.lines() {
-        if let Some(v) = line.strip_prefix("SP_AURON_FIRING=") {
+        if let Some(v) = line.strip_prefix("SP_HEIMDALL_FIRING=") {
             firing = v.trim_matches('\'').to_string();
-        } else if let Some(v) = line.strip_prefix("SP_AURON_KEYS=") {
+        } else if let Some(v) = line.strip_prefix("SP_HEIMDALL_KEYS=") {
             keys = v.trim_matches('\'').to_string();
         }
     }

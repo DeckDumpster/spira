@@ -1,4 +1,4 @@
-//! `$SPIRA_RUN/auron.state` — TSV, not JSON, because nothing else reads it (auron.sh's own
+//! `$SPIRA_RUN/heimdall.state` — TSV, not JSON, because nothing else reads it (heimdall.sh's own
 //! reasoning, kept): one line per condition, plus `#first_run`, `#probe_id` and `#restart`
 //! header lines.
 //!

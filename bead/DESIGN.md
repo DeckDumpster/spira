@@ -159,7 +159,7 @@ this process's own environment happened to inherit.
   compiled binary, so behaviour is unaffected end to end. Switching this crate's own bridge
   to an in-process call (`bead::bdq::...`, trivial now that both live in the same crate) is
   sp-pwmlj's job (wave 4.15, "collapse the bdq copies onto bead::bdq"), done together with
-  aeon/bd.rs, cockpit-collect's io::bdq, incident/decide.rs's fences, auron's `_auron_bdq`
+  aeon/bd.rs, cockpit-collect's io::bdq, incident/decide.rs's fences, heimdall's `_heimdall_bdq`
   seam and the sop seam — all independent reimplementations or bridges this bead
   deliberately left alone, so sp-w3h16 could land by itself.
 - **`--parent` always adds `--no-inherit-labels`** (unchanged from the bash): the label set
@@ -242,7 +242,7 @@ io.rs`'s own `bdq`/`bdjson`/`json_only` (read-only, same reason), `incident/src/
 pure ports of the three fences (`invalid_repo_label`/`destructive_phrase`/
 `contains_schema_delete` — close in spirit to this bead's own, but a separate, pre-existing
 copy; collapsing it onto `bead::bdq` is the whole point of 4.15, not this bead), and
-`auron/src/seam.rs`'s `_auron_bdq() { bdq "$@"; }`, which already calls the bash `bdq` and so
+`heimdall/src/seam.rs`'s `_heimdall_bdq() { bdq "$@"; }`, which already calls the bash `bdq` and so
 is unaffected either way — it exercises the new shim without any change here. `bead`'s own
 `BDQ_SCRIPT` bridge (`src/main.rs`) is the fifth; see the Decisions note above.
 

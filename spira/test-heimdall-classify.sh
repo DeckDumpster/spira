@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# test-auron-classify.sh — the watchdog's classifier, as the pure function it is.
+# test-heimdall-classify.sh — the watchdog's classifier, as the pure function it is.
 #
-#   ./test-auron-classify.sh
+#   ./test-heimdall-classify.sh
 #
-# THE NEGATIVE CASES CARRY THE WEIGHT HERE, more than in any other suite. Auron's whole
+# THE NEGATIVE CASES CARRY THE WEIGHT HERE, more than in any other suite. Heimdall's whole
 # job is to be believed, and the expensive failure is not a missed stall — the loop is
 # watched by a human too — but a false one, because a watchdog that cries during ordinary
 # operation gets scrolled past, and then the one real alert lands in a pane that has been
@@ -24,11 +24,11 @@
 #                            off the state line instead, and this fixture is what keeps it
 #                            from regressing to an inference about an absent line.
 #
-# This suite needs nothing but the auron binary — `auron classify` is a pure function, and nothing
+# This suite needs nothing but the heimdall binary — `heimdall classify` is a pure function, and nothing
 # here reaches a database or a file outside $TMP. The reconciler (raising, clearing and
-# reopening real beads against it) is test-auron.sh.
+# reopening real beads against it) is test-heimdall.sh.
 # tier: T1
-# covers: auron/src/* spira/testdata/sentinel-healthy.log spira/testdata/sentinel-pre-check7.log UC-ops-detection-remediation-18
+# covers: heimdall/src/* spira/testdata/sentinel-healthy.log spira/testdata/sentinel-pre-check7.log UC-ops-detection-remediation-18
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -40,7 +40,7 @@ NOW=1800000000
 
 keys_of() {   # keys_of <observations-json> -> the firing keys, comma separated, or `-`
     local got
-    got="$(printf '%s' "$1" | auron classify 2>/dev/null \
+    got="$(printf '%s' "$1" | heimdall classify 2>/dev/null \
            | python3 -c '
 import sys, json
 ks = []
@@ -54,7 +54,7 @@ print(",".join(sorted(ks)))')"
 }
 
 evidence_of() {  # evidence_of <observations-json> <key>
-    printf '%s' "$1" | KEY="$2" auron classify 2>/dev/null \
+    printf '%s' "$1" | KEY="$2" heimdall classify 2>/dev/null \
         | KEY="$2" python3 -c '
 import sys, os, json
 for line in sys.stdin:
@@ -78,7 +78,7 @@ obs() {
 import json, os, sys
 logf = os.environ.get("LOGF") or ""
 text = open(logf, errors="replace").read() if logf else ""
-o = {"now": int(os.environ["NOW"]), "auron_first": 0,
+o = {"now": int(os.environ["NOW"]), "heimdall_first": 0,
      "sentinel_log": text, "sentinel_log_readable": True, "sentinel_log_error": "",
      "sentinel_log_mtime": int(os.environ["NOW"]) - 30,
      "sentinel_log_path": "/run/sentinel.log", "sentinel_timer": "active",
@@ -113,7 +113,7 @@ print("\n".join(out))'
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
-echo "auron-classify — the sentinel's pulse:"
+echo "heimdall-classify — the sentinel's pulse:"
 
 mklog 10 5 1 1 1 $(( NOW - 60 )) > "$TMP/healthy.log"
 check "healthy loop fires nothing" - "$(obs "$TMP/healthy.log")"
@@ -135,18 +135,18 @@ case "$ev" in *"is not being run at all"*) ok "a dead timer names itself" ;;
     *) bad "a dead timer names itself" "the evidence does not name the timer" ;; esac
 
 # THE FLOOR, AND EXACTLY WHAT IT IS FOR. A tail holding no completed pass AT ALL is
-# ambiguous — it is either a loop that stopped long ago or a box where Auron came up
-# first — so it is measured from whichever is later, the tail's own start or Auron's first
-# run. A stall Auron can actually SEE the end of is not covered by this and must still
-# fire, however new Auron is; the floor is for the case with no evidence, not for
+# ambiguous — it is either a loop that stopped long ago or a box where Heimdall came up
+# first — so it is measured from whichever is later, the tail's own start or Heimdall's first
+# run. A stall Heimdall can actually SEE the end of is not covered by this and must still
+# fire, however new Heimdall is; the floor is for the case with no evidence, not for
 # suppressing evidence.
 mklog 10 5 0 0 0 $(( NOW - 60 )) > "$TMP/nodone.log"
-check "no completion in the tail, and Auron only just started" - \
-    "$(obs "$TMP/nodone.log" "{\"auron_first\":$(( NOW - 60 ))}")"
-check "no completion in the tail, and Auron has been up all along" sentinel-stalled \
-    "$(obs "$TMP/nodone.log" "{\"auron_first\":$(( NOW - 86400 ))}")"
-check "a stall Auron can see the end of fires however new Auron is" sentinel-stalled \
-    "$(obs "$TMP/dead.log" "{\"auron_first\":$(( NOW - 60 )),\"sentinel_log_mtime\":1799996000}")"
+check "no completion in the tail, and Heimdall only just started" - \
+    "$(obs "$TMP/nodone.log" "{\"heimdall_first\":$(( NOW - 60 ))}")"
+check "no completion in the tail, and Heimdall has been up all along" sentinel-stalled \
+    "$(obs "$TMP/nodone.log" "{\"heimdall_first\":$(( NOW - 86400 ))}")"
+check "a stall Heimdall can see the end of fires however new Heimdall is" sentinel-stalled \
+    "$(obs "$TMP/dead.log" "{\"heimdall_first\":$(( NOW - 60 )),\"sentinel_log_mtime\":1799996000}")"
 
 # AN UNREADABLE LOG IS THE ALERT. "I could not look" and "all clear" must never render as
 # the same pixels (law-absence-needs-a-positive-control).
@@ -154,7 +154,7 @@ check "an unreadable log is itself the alert" sentinel-unobservable \
     "$(obs "" '{"sentinel_log_readable":false,"sentinel_log_error":"no such file"}')"
 
 echo
-echo "auron-classify — deliberate halt or drain suppresses sentinel-stalled:"
+echo "heimdall-classify — deliberate halt or drain suppresses sentinel-stalled:"
 
 # POSITIVE CONTROL: the 'a dead timer is a stalled loop' case above proves this scenario
 # fires without halt/drain flags. These are believed only because that one fired first.
@@ -166,7 +166,7 @@ check "draining loop does not fire sentinel-stalled" - \
         "{\"world_draining\":true,\"world_drain_at\":$(( NOW - 300 ))}")"
 
 echo
-echo "auron-classify — summon starvation:"
+echo "heimdall-classify — summon starvation:"
 
 mklog 6 15 0 0 1 $(( NOW - 60 )) > "$TMP/starved.log"
 check "ready work, zero aeons, nothing summoned, 5+ passes" summon-starved \
@@ -198,7 +198,7 @@ check "starvation is not reported over a window that has gone stale" sentinel-st
 check "the pass in flight is not counted as a decline" - "$(obs "$TMP/inflight.log")"
 
 echo
-echo "auron-classify — replayed over real sentinel passes:"
+echo "heimdall-classify — replayed over real sentinel passes:"
 
 if [ -r "$DATA/sentinel-healthy.log" ]; then
     # `now` is pinned just after the fixture's last line so the window is the real one.
@@ -237,7 +237,7 @@ else
 fi
 
 echo
-echo "auron-classify — the database, the mirror and the reaper:"
+echo "heimdall-classify — the database, the mirror and the reaper:"
 
 check "an unreachable database is an alert" db-unreachable \
     "$(obs "$TMP/healthy.log" '{"db_reachable":false,"db_error":"connection refused"}')"
@@ -253,11 +253,11 @@ check "a mirror older than a day is an alert" mirror-stale \
 
 # The subject is the REAPER, not the ghost. strand.sh reclaims one within a pass, so a
 # ghost still standing half an hour later means the reclaim is not working.
-check "a fresh ghost lease is strand.sh's business, not Auron's" - \
+check "a fresh ghost lease is strand.sh's business, not Heimdall's" - \
     "$(obs "$TMP/healthy.log" '{"strands":{"ghost:sp-a":{"first":1799999000,"acted":0,"escalated":0}}}')"
 check "a ghost lease nobody reclaimed is an alert" lease-unreclaimed \
     "$(obs "$TMP/healthy.log" '{"strands":{"ghost:sp-a":{"first":1799990000,"acted":1,"escalated":1}}}')"
-check "other strand kinds are not Auron's business" - \
+check "other strand kinds are not Heimdall's business" - \
     "$(obs "$TMP/healthy.log" '{"strands":{"waiting:sp-e":{"first":1799000000}}}')"
 
 # Two conditions at once are two alerts, not one merged report.
@@ -265,7 +265,7 @@ check "conditions do not mask each other" db-unreachable,sentinel-stalled \
     "$(obs "$TMP/wedged.log" '{"db_reachable":false,"db_error":"x"}')"
 
 echo
-echo "auron-classify — the log format it actually reads:"
+echo "heimdall-classify — the log format it actually reads:"
 # `ready=` was the field name before the plan's count was named apart from every fayth's.
 # A tail that still holds those lines must parse, not be silently skipped as unmatched.
 sed 's/plan_ready=/ready=/' "$TMP/starved.log" > "$TMP/oldfmt.log"
@@ -276,13 +276,13 @@ check "the older state-line spelling still parses" summon-starved "$(obs "$TMP/o
 check "untimestamped lines are skipped, not misparsed" - "$(obs "$TMP/noise.log")"
 
 echo
-echo "auron-classify — unit restart loops:"
+echo "heimdall-classify — unit restart loops:"
 
 # obs_r <restart-alerts-json> [json-overrides] -> observations with restart_alerts
 obs_r() {
     OVER="${2:-{\}}" NOW="$NOW" RA="$1" python3 -c '
 import json, os, sys
-o = {"now": int(os.environ["NOW"]), "auron_first": int(os.environ["NOW"]),
+o = {"now": int(os.environ["NOW"]), "heimdall_first": int(os.environ["NOW"]),
      "sentinel_log": "", "sentinel_log_readable": True, "sentinel_log_error": "",
      "sentinel_log_mtime": int(os.environ["NOW"]) - 30,
      "sentinel_log_path": "/run/sentinel.log", "sentinel_timer": "active",

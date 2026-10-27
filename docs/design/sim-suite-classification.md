@@ -143,8 +143,8 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | asks | no | - | ? | operator mail channel and ask flow: Maildir and lint behaviour, no loop hand-off |
 | attempts-sql | partly | new:red-gate-holds | 44 | attempt counting SQL over a real events trail |
 | attempts | partly | new:red-gate-holds | 42 | what counts as an attempt; counts need a reopened-by-red bead |
-| auron-classify | no | - | 6 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
-| auron | no | - | 105 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
+| heimdall-classify | no | - | 6 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
+| heimdall | no | - | 105 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | bare-main | no | - | ? | static, configuration or single-tool contract: no hand-off between loop actors |
 | batch-claim-race | replaceable | new:claim-vs-batch | ? | a batch landing racing an aeon's claim: the claim is refused |
 | batch-owner | no | - | 2 | static, configuration or single-tool contract: no hand-off between loop actors |

@@ -147,7 +147,7 @@ and unit that does it.
 Several units exist only to notice the loop failing and turn that into work or mail rather than
 silence: `watchtower` (hands `ops` the pipeline's vital signs), `czar-pass` (30 s queue-stall
 detection with deterministic remedies), `reconciler` (declared structural invariants: remedy or
-escalate), `auron` (escalates a stalled loop and does nothing else), `strand` (stranded-work
+escalate), `heimdall` (escalates a stalled loop and does nothing else), `strand` (stranded-work
 detector), `cert-sweep` (re-certifies the landing ref's tip on a schedule), `refusal-watch`,
 `mend-watch`, and the `spira-lc event-continuity` check. `cockpit-collect` and `cockpit/`
 present the same stores to the operator.

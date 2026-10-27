@@ -1,4 +1,4 @@
-//! auron — the watchdog over the loop. See DESIGN.md.
+//! heimdall — the watchdog over the loop. See DESIGN.md.
 
 pub mod alerts;
 pub mod bdops;

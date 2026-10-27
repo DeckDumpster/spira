@@ -138,7 +138,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
-/// `TZ=<tz> date -d @<epoch> +'%Y-%m-%d %H:%M %Z'`, or `@<epoch>` on failure — auron.sh's
+/// `TZ=<tz> date -d @<epoch> +'%Y-%m-%d %H:%M %Z'`, or `@<epoch>` on failure — heimdall.sh's
 /// `iso()`. Shelled to `date` rather than reimplemented: `SPIRA_TZ` names an IANA zone, and
 /// only the system's own tzdata can resolve one faithfully.
 pub fn iso_display(epoch: i64, tz: &str) -> String {

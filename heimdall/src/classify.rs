@@ -1,4 +1,4 @@
-//! Builds the observation JSON exactly as auron.sh's own heredoc did, classifies it with
+//! Builds the observation JSON exactly as heimdall.sh's own heredoc did, classifies it with
 //! `judge` (the pure function) and parses back the firing records.
 
 use serde::{Deserialize, Serialize};
@@ -36,7 +36,7 @@ pub struct Thresholds {
 #[derive(Debug, Clone, Default)]
 pub struct Observation {
     pub now: i64,
-    pub auron_first: i64,
+    pub heimdall_first: i64,
     pub sentinel_log: String,
     pub sentinel_log_readable: bool,
     pub sentinel_log_error: String,
@@ -48,7 +48,7 @@ pub struct Observation {
     pub db_path: String,
     pub fallback_path: String,
     pub mirror: Mirror,
-    /// Opaque — strand.sh's own episode JSON, passed through verbatim (auron.sh read it
+    /// Opaque — strand.sh's own episode JSON, passed through verbatim (heimdall.sh read it
     /// straight off disk and never inspected its shape).
     pub strands: Value,
     pub restart_alerts: Vec<RestartAlert>,
@@ -63,7 +63,7 @@ impl Observation {
     pub fn to_json(&self) -> Value {
         json!({
             "now": self.now,
-            "auron_first": self.auron_first,
+            "heimdall_first": self.heimdall_first,
             "sentinel_log": self.sentinel_log,
             "sentinel_log_readable": self.sentinel_log_readable,
             "sentinel_log_error": self.sentinel_log_error,
@@ -115,7 +115,7 @@ pub fn run(obs: &Observation) -> Vec<Firing> {
     crate::judge::classify(&obs.to_json()).unwrap_or_default()
 }
 
-/// The `auron classify` entry: one observation object on stdin, one sorted-key JSON alert per
+/// The `heimdall classify` entry: one observation object on stdin, one sorted-key JSON alert per
 /// line on stdout.
 pub fn classify_stdin(input: &str) -> Result<String, String> {
     let o: Value = serde_json::from_str(input).map_err(|e| format!("unreadable observations: {e}"))?;
@@ -149,10 +149,10 @@ mod tests {
 
     #[test]
     fn observation_json_shape_matches_the_classifier_contract() {
-        let obs = Observation { now: 1000, auron_first: 500, thresholds: Thresholds { pass_stale: 600, starve_passes: 5, mirror_stale: 90000, ghost_stale: 1800, restart_threshold: 5, restart_window: 3600 }, ..Default::default() };
+        let obs = Observation { now: 1000, heimdall_first: 500, thresholds: Thresholds { pass_stale: 600, starve_passes: 5, mirror_stale: 90000, ghost_stale: 1800, restart_threshold: 5, restart_window: 3600 }, ..Default::default() };
         let v = obs.to_json();
         assert_eq!(v["now"], 1000);
-        assert_eq!(v["auron_first"], 500);
+        assert_eq!(v["heimdall_first"], 500);
         assert_eq!(v["thresholds"]["pass_stale"], 600);
         assert_eq!(v["mirror"]["configured"], false);
         assert_eq!(v["restart_alerts"], serde_json::json!([]));

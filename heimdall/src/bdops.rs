@@ -1,4 +1,4 @@
-//! The bead-store operations auron needs, above the raw seam: list-by-label, create,
+//! The bead-store operations heimdall needs, above the raw seam: list-by-label, create,
 //! update, close, label add/remove, reopen. A trait so the reconciliation logic
 //! (`alerts.rs`) can be driven by an in-memory fake in tests, exactly aeon's own `Bd` port.
 
@@ -25,7 +25,7 @@ impl BeadRow {
 }
 
 /// Whether a failed call was a timeout (lock contention — "saturated", not "down") or an
-/// ordinary failure. auron.sh's own distinction: exit 124 from `timeout` means another
+/// ordinary failure. heimdall.sh's own distinction: exit 124 from `timeout` means another
 /// dolt process held the lock longer than `BD_TIMEOUT`; anything else means the database
 /// is actually unreachable or the write was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,7 +114,7 @@ impl BdOps for SeamBdOps<'_> {
 
     // Through the lifecycle machine (sp-3fue0j), never a raw bd close.
     fn close(&self, id: &str, reason: &str) -> R<()> {
-        spira_config::lifecycle_row::close(id, reason, "auron", None).map_err(|_| fail_of(1))
+        spira_config::lifecycle_row::close(id, reason, "heimdall", None).map_err(|_| fail_of(1))
     }
 
     fn label_add(&self, id: &str, label: &str) -> R<()> {

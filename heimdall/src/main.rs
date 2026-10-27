@@ -1,20 +1,20 @@
-//! auron — `auron [--home DIR] [--report]` | `auron classify` (observations on stdin). See DESIGN.md and each module's own doc
-//! comment for the design this ports from (spira/auron.sh, retired in the same change).
+//! heimdall — `heimdall [--home DIR] [--report]` | `heimdall classify` (observations on stdin). See DESIGN.md and each module's own doc
+//! comment for the design this ports from (spira/heimdall.sh, retired in the same change).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use auron::alerts::{self, ProbeOutcome};
-use auron::bdops::{BdOps, SeamBdOps};
-use auron::classify::{self, Mirror as ObsMirror, Observation, RestartAlert as ObsRestartAlert, Thresholds};
-use auron::fallback;
-use auron::gather::{self, RealSystemctl, Systemctl};
-use auron::heartbeat::{self, Heartbeat};
-use auron::reconcile::{self, Trigger};
-use auron::seam::BashSeam;
-use auron::state::State;
-use auron::util::{self, Sink, StdSink};
+use heimdall::alerts::{self, ProbeOutcome};
+use heimdall::bdops::{BdOps, SeamBdOps};
+use heimdall::classify::{self, Mirror as ObsMirror, Observation, RestartAlert as ObsRestartAlert, Thresholds};
+use heimdall::fallback;
+use heimdall::gather::{self, RealSystemctl, Systemctl};
+use heimdall::heartbeat::{self, Heartbeat};
+use heimdall::reconcile::{self, Trigger};
+use heimdall::seam::BashSeam;
+use heimdall::state::State;
+use heimdall::util::{self, Sink, StdSink};
 
 fn env_or(env: &BTreeMap<String, String>, key: &str, default: &str) -> String {
     env.get(key).filter(|v| !v.is_empty()).cloned().unwrap_or_else(|| default.to_string())
@@ -49,7 +49,7 @@ static FIRING: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(
 fn classify_main() -> i32 {
     let mut input = String::new();
     if std::io::Read::read_to_string(&mut std::io::stdin(), &mut input).is_err() {
-        eprintln!("auron classify: unreadable observations");
+        eprintln!("heimdall classify: unreadable observations");
         return 2;
     }
     match classify::classify_stdin(&input) {
@@ -58,7 +58,7 @@ fn classify_main() -> i32 {
             0
         }
         Err(e) => {
-            eprintln!("auron classify: {e}");
+            eprintln!("heimdall classify: {e}");
             2
         }
     }
@@ -68,9 +68,9 @@ fn main() {
     if std::env::args().nth(1).as_deref() == Some("classify") {
         std::process::exit(classify_main());
     }
-    let run = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "auron", "pass");
+    let run = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "heimdall", "pass");
     let code = pass();
-    run.end_with(spira_otel::metrics::outcome_of(code), &[spira_otel::metrics::Point::Count { name: "spira_auron_firing_alerts", value: FIRING.load(std::sync::atomic::Ordering::Relaxed) }]);
+    run.end_with(spira_otel::metrics::outcome_of(code), &[spira_otel::metrics::Point::Count { name: "spira_heimdall_firing_alerts", value: FIRING.load(std::sync::atomic::Ordering::Relaxed) }]);
     std::process::exit(code);
 }
 
@@ -87,16 +87,16 @@ fn pass() -> i32 {
 
     let original: BTreeMap<String, String> = std::env::vars().collect();
     let Some(home) = resolve_home(home_flag.as_deref(), &original) else {
-        eprintln!("auron: cannot find the harness's spira/ directory (pass --home, or set SPIRA_HOME/SPIRA_RELEASE)");
+        eprintln!("heimdall: cannot find the harness's spira/ directory (pass --home, or set SPIRA_HOME/SPIRA_RELEASE)");
         return 1;
     };
 
-    // THE DATABASE GETS TEN SECONDS, NOT bdq's usual 180 (auron.sh's own reasoning,
+    // THE DATABASE GETS TEN SECONDS, NOT bdq's usual 180 (heimdall.sh's own reasoning,
     // kept): a bd that has not answered in ten seconds IS "unreachable" as far as a
     // watchdog is concerned. bdq reads BD_TIMEOUT from the seam subprocess's OWN
     // environment (it is a fresh process, not a subshell of this one), so the override
     // is set here rather than relying on it merely being in scope.
-    let bd_timeout = env_n(&original, "SPIRA_AURON_BD_TIMEOUT", 10).max(1);
+    let bd_timeout = env_n(&original, "SPIRA_HEIMDALL_BD_TIMEOUT", 10).max(1);
     let mut seam_env = original.clone();
     seam_env.insert("BD_TIMEOUT".to_string(), bd_timeout.to_string());
     // law-a-binary-resolves-the-config-it-reads (sp-kgzql): `home` is always
@@ -115,7 +115,7 @@ fn pass() -> i32 {
     let repo_path = spira_config::resolve::derive_home_repo(&home, &original);
 
     // Every key below (SPIRA_RUN/SPIRA_DB/SPIRA_EXPORTER/SPIRA_INSTANCE/SPIRA_TZ/
-    // SPIRA_AURON_RESTARTS/SPIRA_AURON_RESTART_WINDOW) is registered in `spira/conf.d` —
+    // SPIRA_HEIMDALL_RESTARTS/SPIRA_HEIMDALL_RESTART_WINDOW) is registered in `spira/conf.d` —
     // the one source of config (per Ryan 2026-10-05), through
     // `spira_config::process::cfg`/`cfg_parse`. No Rust-side literal default stands in for
     // an unresolved value; a key that fails to resolve exits named, exactly as the
@@ -125,7 +125,7 @@ fn pass() -> i32 {
             match spira_config::process::cfg($key) {
                 Ok(v) => v,
                 Err(e) => {
-                    eprintln!("auron: {e}");
+                    eprintln!("heimdall: {e}");
                     return 1;
                 }
             }
@@ -136,7 +136,7 @@ fn pass() -> i32 {
             match spira_config::process::cfg_parse($key) {
                 Ok(v) => v,
                 Err(e) => {
-                    eprintln!("auron: {e}");
+                    eprintln!("heimdall: {e}");
                     return 1;
                 }
             }
@@ -146,7 +146,7 @@ fn pass() -> i32 {
     let now = util::now_epoch();
     let sink = StdSink;
 
-    // ---- config: registered keys through `cfg`/`cfg_parse`; SPIRA_AURON_* (besides the
+    // ---- config: registered keys through `cfg`/`cfg_parse`; SPIRA_HEIMDALL_* (besides the
     // two above) carries no conf.sh key, so it stays an ad hoc raw-environment read -----
     let run_dir = PathBuf::from(cfg_or_die!("SPIRA_RUN"));
     let db = cfg_or_die!("SPIRA_DB");
@@ -160,23 +160,23 @@ fn pass() -> i32 {
     let instance = cfg_or_die!("SPIRA_INSTANCE");
     let tz = cfg_or_die!("SPIRA_TZ");
 
-    let state_path = run_dir.join("auron.state");
-    let status_path = run_dir.join("auron.status");
-    let fallback_path = PathBuf::from(env_or(&original, "SPIRA_AURON_FALLBACK", &run_dir.join("auron.alerts.json").display().to_string()));
-    let sentinel_log_path = PathBuf::from(env_or(&original, "SPIRA_AURON_SENTINEL_LOG", &run_dir.join("sentinel.log").display().to_string()));
-    let strands_path = PathBuf::from(env_or(&original, "SPIRA_AURON_STRANDS", &run_dir.join("strands.json").display().to_string()));
-    let mirror_path = PathBuf::from(env_or(&original, "SPIRA_AURON_MIRROR", &format!("{}/raw/spira-beads/spira.jsonl", if wiki.is_empty() { &repo } else { &wiki })));
-    let tail_bytes = env_n(&original, "SPIRA_AURON_TAIL_BYTES", 262_144).max(0) as u64;
-    let confirm = env_n(&original, "SPIRA_AURON_CONFIRM", 2);
-    let clear_n = env_n(&original, "SPIRA_AURON_CLEAR", 2);
-    let refresh = env_n(&original, "SPIRA_AURON_REFRESH", 3600);
-    let restarts_threshold: i64 = cfg_num_or_die!("SPIRA_AURON_RESTARTS");
-    let restart_window: i64 = cfg_num_or_die!("SPIRA_AURON_RESTART_WINDOW");
+    let state_path = run_dir.join("heimdall.state");
+    let status_path = run_dir.join("heimdall.status");
+    let fallback_path = PathBuf::from(env_or(&original, "SPIRA_HEIMDALL_FALLBACK", &run_dir.join("heimdall.alerts.json").display().to_string()));
+    let sentinel_log_path = PathBuf::from(env_or(&original, "SPIRA_HEIMDALL_SENTINEL_LOG", &run_dir.join("sentinel.log").display().to_string()));
+    let strands_path = PathBuf::from(env_or(&original, "SPIRA_HEIMDALL_STRANDS", &run_dir.join("strands.json").display().to_string()));
+    let mirror_path = PathBuf::from(env_or(&original, "SPIRA_HEIMDALL_MIRROR", &format!("{}/raw/spira-beads/spira.jsonl", if wiki.is_empty() { &repo } else { &wiki })));
+    let tail_bytes = env_n(&original, "SPIRA_HEIMDALL_TAIL_BYTES", 262_144).max(0) as u64;
+    let confirm = env_n(&original, "SPIRA_HEIMDALL_CONFIRM", 2);
+    let clear_n = env_n(&original, "SPIRA_HEIMDALL_CLEAR", 2);
+    let refresh = env_n(&original, "SPIRA_HEIMDALL_REFRESH", 3600);
+    let restarts_threshold: i64 = cfg_num_or_die!("SPIRA_HEIMDALL_RESTARTS");
+    let restart_window: i64 = cfg_num_or_die!("SPIRA_HEIMDALL_RESTART_WINDOW");
     let thresholds = Thresholds {
-        pass_stale: env_n(&original, "SPIRA_AURON_PASS_STALE", 600),
-        starve_passes: env_n(&original, "SPIRA_AURON_STARVE_PASSES", 5),
-        mirror_stale: env_n(&original, "SPIRA_AURON_MIRROR_STALE", 90_000),
-        ghost_stale: env_n(&original, "SPIRA_AURON_GHOST_STALE", 1800),
+        pass_stale: env_n(&original, "SPIRA_HEIMDALL_PASS_STALE", 600),
+        starve_passes: env_n(&original, "SPIRA_HEIMDALL_STARVE_PASSES", 5),
+        mirror_stale: env_n(&original, "SPIRA_HEIMDALL_MIRROR_STALE", 90_000),
+        ghost_stale: env_n(&original, "SPIRA_HEIMDALL_GHOST_STALE", 1800),
         restart_threshold: restarts_threshold,
         restart_window,
     };
@@ -201,7 +201,7 @@ fn pass() -> i32 {
     if !units.is_empty() {
         let current = sc.nrestarts(&units);
         for (unit, cur) in &current {
-            let (base, delta) = auron::restart::update(state.restarts.get(unit), *cur, now, restart_window);
+            let (base, delta) = heimdall::restart::update(state.restarts.get(unit), *cur, now, restart_window);
             state.restarts.insert(unit.clone(), base);
             if delta > restarts_threshold {
                 restart_alerts.push(ObsRestartAlert { unit: unit.clone(), current: *cur, baseline: state.restarts[unit].baseline, delta, window: restart_window });
@@ -209,7 +209,7 @@ fn pass() -> i32 {
         }
     }
 
-    // THE ALERT QUERY IS ALSO THE READ PROBE (auron.sh's own reasoning, kept): asking a
+    // THE ALERT QUERY IS ALSO THE READ PROBE (heimdall.sh's own reasoning, kept): asking a
     // second, separate "is the database readable" question would be a second thing to get
     // out of step with the first.
     let ops = SeamBdOps { seam: &seam };
@@ -217,7 +217,7 @@ fn pass() -> i32 {
     let (db_reachable, db_error, alert_rows) = match ops.list_by_label("alert") {
         Ok(rows) => (true, String::new(), rows),
         Err(f) => {
-            if f == auron::bdops::Failure::Saturated {
+            if f == heimdall::bdops::Failure::Saturated {
                 db_saturated = true;
             }
             (false, "bd list --label alert did not answer".to_string(), Vec::new())
@@ -234,7 +234,7 @@ fn pass() -> i32 {
     // ---- classify ------------------------------------------------------------------------
     let obs = Observation {
         now,
-        auron_first: state.first_run,
+        heimdall_first: state.first_run,
         sentinel_log: log_tail.text,
         sentinel_log_readable: log_tail.readable,
         sentinel_log_error: log_tail.error,
@@ -262,7 +262,7 @@ fn pass() -> i32 {
     if report {
         if firing.is_empty() {
             println!(
-                "auron: nothing firing (sentinel timer {}, db read: {} write: {})",
+                "heimdall: nothing firing (sentinel timer {}, db read: {} write: {})",
                 obs.sentinel_timer,
                 if db_reachable { "ok" } else { "UNREACHABLE" },
                 match probe.write_ok {
@@ -296,14 +296,14 @@ fn pass() -> i32 {
                 let body = alerts::body_of(key, step.counters.first, step.counters.flaps, &evidence_of(key), &tz);
                 match alerts::alert_write(&ops, key, &title, &body, step.counters.flaps, existing) {
                     Ok(id) => {
-                        sink.out(&util::log_line(now, &format!("AURON raised {key} as {id}")));
+                        sink.out(&util::log_line(now, &format!("HEIMDALL raised {key} as {id}")));
                         let mut k = step.on_success(now);
                         k.bead = id;
                         state.keys.insert(key.clone(), k);
                         acted += 1;
                     }
                     Err(_) => {
-                        sink.err(&util::log_line(now, &format!("AURON could not create the alert bead for {key}")));
+                        sink.err(&util::log_line(now, &format!("HEIMDALL could not create the alert bead for {key}")));
                         state.keys.insert(key.clone(), step.on_failure());
                         beads_ok = false;
                     }
@@ -312,7 +312,7 @@ fn pass() -> i32 {
             Trigger::ConfirmClear => match alerts::alert_clear(&ops, existing, step.counters.first, step.counters.flaps, clear_n, &tz) {
                 Ok(()) => {
                     if let Some(row) = existing {
-                        sink.out(&util::log_line(now, &format!("AURON cleared {key} ({})", row.id)));
+                        sink.out(&util::log_line(now, &format!("HEIMDALL cleared {key} ({})", row.id)));
                     }
                     state.keys.insert(key.clone(), step.on_success(now));
                     acted += 1;
@@ -331,7 +331,7 @@ fn pass() -> i32 {
                     let body = alerts::body_of(key, step.counters.first, step.counters.flaps, &evidence_of(key), &tz);
                     match alerts::alert_write(&ops, key, &title, &body, step.counters.flaps, existing) {
                         Ok(id) => {
-                            sink.out(&util::log_line(now, &format!("AURON re-raised {key} on {id}")));
+                            sink.out(&util::log_line(now, &format!("HEIMDALL re-raised {key} on {id}")));
                             let mut k = step.on_success(now);
                             k.bead = id;
                             state.keys.insert(key.clone(), k);
@@ -353,9 +353,9 @@ fn pass() -> i32 {
         match fallback::write(&fallback_path, &doc) {
             Ok(()) => sink.out(&util::log_line(
                 now,
-                &format!("AURON wrote the fallback channel — db_read={} db_write={:?}", if db_reachable { "ok" } else { "DOWN" }, probe.write_ok),
+                &format!("HEIMDALL wrote the fallback channel — db_read={} db_write={:?}", if db_reachable { "ok" } else { "DOWN" }, probe.write_ok),
             )),
-            Err(e) => sink.err(&util::log_line(now, &format!("AURON could not write the fallback channel: {e}"))),
+            Err(e) => sink.err(&util::log_line(now, &format!("HEIMDALL could not write the fallback channel: {e}"))),
         }
     } else {
         fallback::remove(&fallback_path);
@@ -374,7 +374,7 @@ fn pass() -> i32 {
     sink.out(&util::log_line(
         now,
         &format!(
-            "auron: {} firing [{}], {} change(s), db_read={} db_write={}",
+            "heimdall: {} firing [{}], {} change(s), db_read={} db_write={}",
             firing_keys_vec.len(),
             firing_keys_vec.join(","),
             acted,
@@ -391,7 +391,7 @@ mod tests {
 
     #[test]
     fn resolve_home_prefers_the_flag() {
-        let dir = testkit::TempDir::new("auron-main");
+        let dir = testkit::TempDir::new("heimdall-main");
         std::fs::write(dir.join("lib.sh"), "").unwrap();
         let home = resolve_home(Some(dir.to_str().unwrap()), &BTreeMap::new());
         assert_eq!(home, Some(dir.path().to_path_buf()));
@@ -399,7 +399,7 @@ mod tests {
 
     #[test]
     fn resolve_home_falls_back_to_spira_home_env() {
-        let dir = testkit::TempDir::new("auron-main");
+        let dir = testkit::TempDir::new("heimdall-main");
         std::fs::write(dir.join("lib.sh"), "").unwrap();
         let mut env = BTreeMap::new();
         env.insert("SPIRA_HOME".to_string(), dir.display().to_string());
@@ -408,7 +408,7 @@ mod tests {
 
     #[test]
     fn resolve_home_falls_back_to_spira_release_spira() {
-        let dir = testkit::TempDir::new("auron-main");
+        let dir = testkit::TempDir::new("heimdall-main");
         std::fs::create_dir_all(dir.join("spira")).unwrap();
         std::fs::write(dir.join("spira").join("lib.sh"), "").unwrap();
         let mut env = BTreeMap::new();

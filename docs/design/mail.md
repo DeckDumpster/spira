@@ -21,7 +21,7 @@ attention pane.
   changing anything downstream; adding one is a separate decision.
 - A mailbox for an aeon. An aeon is gone by the time an answer arrives; a verdict that gates
   its work reaches it through the bead graph (closing the ask unblocks its dependents).
-  Long-lived actors — the sentinel, Auron, the fayth — may have mailboxes; nothing here may
+  Long-lived actors — the sentinel, Heimdall, the fayth — may have mailboxes; nothing here may
   assume they do not.
 - A compatibility layer for `ask.sh`. It is retired, not wrapped.
 

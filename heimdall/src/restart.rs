@@ -1,4 +1,4 @@
-//! Per-unit restart-count baselines — auron.sh's own arithmetic, as a pure function. A
+//! Per-unit restart-count baselines — heimdall.sh's own arithmetic, as a pure function. A
 //! count that went DOWN (daemon-reload, reinstall) resets the baseline, not an alert. A
 //! window that expired slides the baseline forward so stale data does not keep a unit in
 //! alert forever on one long-ago burst.
@@ -29,7 +29,7 @@ mod tests {
     #[test]
     fn a_unit_seen_for_the_first_time_has_zero_delta() {
         let (base, delta) = update(None, 7, 1000, 3600);
-        assert_eq!(delta, 0, "first-run floor: restarts before Auron ever saw the unit do not count");
+        assert_eq!(delta, 0, "first-run floor: restarts before Heimdall ever saw the unit do not count");
         assert_eq!(base.baseline, 7);
         assert_eq!(base.last, 7);
     }

@@ -1,4 +1,4 @@
-//! The fallback channel — `$SPIRA_RUN/auron.alerts.json`, written if and only if the beads
+//! The fallback channel — `$SPIRA_RUN/heimdall.alerts.json`, written if and only if the beads
 //! path failed, and REMOVED the moment it succeeds again, so the file's mere EXISTENCE is
 //! the statement "beads could not be reached"; there is never a stale second source of
 //! truth standing beside a working first one.
@@ -14,7 +14,7 @@ pub fn build(now: i64, db_reachable: bool, db_write_ok: Option<bool>, firing: &[
         "at": now,
         "db_reachable": db_reachable,
         "db_write_ok": db_write_ok,
-        "why": "beads could not be written; this file is Auron's secondary channel",
+        "why": "beads could not be written; this file is Heimdall's secondary channel",
         "alerts": firing.iter().map(|f| json!({"key": f.key, "title": f.title, "evidence": f.evidence})).collect::<Vec<_>>(),
     })
 }
@@ -52,8 +52,8 @@ mod tests {
 
     #[test]
     fn write_then_remove_round_trips() {
-        let dir = testkit::TempDir::new("auron-fallback");
-        let p = dir.join("auron.alerts.json");
+        let dir = testkit::TempDir::new("heimdall-fallback");
+        let p = dir.join("heimdall.alerts.json");
         write(&p, &build(1, false, Some(false), &[])).unwrap();
         assert!(p.is_file());
         let text = std::fs::read_to_string(&p).unwrap();
@@ -64,8 +64,8 @@ mod tests {
 
     #[test]
     fn write_leaves_no_tmp_file_behind() {
-        let dir = testkit::TempDir::new("auron-fallback");
-        let p = dir.join("auron.alerts.json");
+        let dir = testkit::TempDir::new("heimdall-fallback");
+        let p = dir.join("heimdall.alerts.json");
         write(&p, &build(1, true, Some(true), &[])).unwrap();
         let leftovers: Vec<_> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| n.contains("tmp")).collect();
         assert!(leftovers.is_empty(), "no .tmp.<pid> file should survive a successful write: {leftovers:?}");

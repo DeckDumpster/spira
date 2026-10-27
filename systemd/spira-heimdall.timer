@@ -2,20 +2,20 @@
 Description=Ask every two minutes whether the Spira loop is still moving
 
 [Timer]
-# The sentinel's own cadence, deliberately. Auron's tightest threshold is ten minutes of
+# The sentinel's own cadence, deliberately. Heimdall's tightest threshold is ten minutes of
 # no completed pass, and a condition must hold for two consecutive checks before it fires,
 # so this cadence puts detection at twelve minutes against an episode that last time ran
 # for two and a half hours before a human noticed it by eye. A slower timer would buy
 # nothing: the run costs one bead query.
 #
-# LATER THAN THE SENTINEL AT BOOT. Starting them together would have Auron take its first
+# LATER THAN THE SENTINEL AT BOOT. Starting them together would have Heimdall take its first
 # reading while the sentinel is still on its own OnBootSec delay, and a loop that has not
 # been given a chance to run yet is not a stalled one.
 OnBootSec=420
 OnActiveSec=420
 OnUnitActiveSec=2min
 AccuracySec=30s
-Unit=spira-auron.service
+Unit=spira-heimdall.service
 
 [Install]
 WantedBy=timers.target

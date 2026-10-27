@@ -1,4 +1,4 @@
-//! The heartbeat — `$SPIRA_RUN/auron.status`, written on EVERY run including a failing
+//! The heartbeat — `$SPIRA_RUN/heimdall.status`, written on EVERY run including a failing
 //! one. A watchdog that stops without saying so is indistinguishable from a healthy
 //! system; the ops pane reads this file's age and marks it stale rather than omitting it.
 
@@ -60,7 +60,7 @@ pub struct Heartbeat<'a> {
 impl Heartbeat<'_> {
     pub fn render(&self) -> String {
         format!(
-            "SP_AURON_AT={}\nSP_AURON_FIRING={}\nSP_AURON_KEYS='{}'\nSP_AURON_DB_READ={}\nSP_AURON_DB_WRITE={}\nSP_AURON_DB_SATURATED={}\nSP_AURON_FALLBACK={}\nSP_AURON_ACTED={}\n",
+            "SP_HEIMDALL_AT={}\nSP_HEIMDALL_FIRING={}\nSP_HEIMDALL_KEYS='{}'\nSP_HEIMDALL_DB_READ={}\nSP_HEIMDALL_DB_WRITE={}\nSP_HEIMDALL_DB_SATURATED={}\nSP_HEIMDALL_FALLBACK={}\nSP_HEIMDALL_ACTED={}\n",
             self.at,
             self.firing_keys.len(),
             self.firing_keys.join(","),
@@ -119,28 +119,28 @@ mod tests {
         let keys = vec!["a".to_string(), "b".to_string()];
         let h = Heartbeat { at: 100, firing_keys: &keys, db_read: DbStatus::Ok, db_write: DbStatus::Ok, db_saturated: false, fallback_written: false, acted: 2 };
         let text = h.render();
-        assert!(text.contains("SP_AURON_AT=100"));
-        assert!(text.contains("SP_AURON_FIRING=2"));
-        assert!(text.contains("SP_AURON_KEYS='a,b'"));
-        assert!(text.contains("SP_AURON_DB_READ=ok"));
-        assert!(text.contains("SP_AURON_ACTED=2"));
+        assert!(text.contains("SP_HEIMDALL_AT=100"));
+        assert!(text.contains("SP_HEIMDALL_FIRING=2"));
+        assert!(text.contains("SP_HEIMDALL_KEYS='a,b'"));
+        assert!(text.contains("SP_HEIMDALL_DB_READ=ok"));
+        assert!(text.contains("SP_HEIMDALL_ACTED=2"));
     }
 
     #[test]
     fn render_with_nothing_firing_is_still_written() {
         let h = Heartbeat { at: 1, firing_keys: &[], db_read: DbStatus::Down, db_write: DbStatus::Unknown, db_saturated: false, fallback_written: true, acted: 0 };
         let text = h.render();
-        assert!(text.contains("SP_AURON_FIRING=0"));
-        assert!(text.contains("SP_AURON_KEYS=''"));
-        assert!(text.contains("SP_AURON_DB_WRITE=?"));
-        assert!(text.contains("SP_AURON_FALLBACK=1"));
+        assert!(text.contains("SP_HEIMDALL_FIRING=0"));
+        assert!(text.contains("SP_HEIMDALL_KEYS=''"));
+        assert!(text.contains("SP_HEIMDALL_DB_WRITE=?"));
+        assert!(text.contains("SP_HEIMDALL_FALLBACK=1"));
     }
 
     #[test]
     fn write_then_read_round_trips() {
-        let dir = testkit::TempDir::new("auron-heartbeat");
-        let p = dir.join("auron.status");
-        write(&p, "SP_AURON_AT=1\n").unwrap();
-        assert_eq!(std::fs::read_to_string(&p).unwrap(), "SP_AURON_AT=1\n");
+        let dir = testkit::TempDir::new("heimdall-heartbeat");
+        let p = dir.join("heimdall.status");
+        write(&p, "SP_HEIMDALL_AT=1\n").unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "SP_HEIMDALL_AT=1\n");
     }
 }

@@ -89,12 +89,12 @@ statement = "The Mimir brief encodes the five-step pass, the threshold, the outp
 [[use_case]]
 id = "UC-ops-detection-remediation-18"
 tier = "T1"
-statement = "The Auron classifier: a healthy loop (including a replay of a real log) fires nothing; wedged passes or a dead timer raise `sentinel-stalled` with evidence naming the cause; an unreadable log is `sentinel-unobservable`; halt or drain suppresses the alarm; summon starvation needs sustained passes and excludes governor/capacity withholds and aeons at cap; DB, mirror, ghost-lease and restart-loop alerts are distinct and do not mask each other; the old `ready=` spelling still parses."
+statement = "The Heimdall classifier: a healthy loop (including a replay of a real log) fires nothing; wedged passes or a dead timer raise `sentinel-stalled` with evidence naming the cause; an unreadable log is `sentinel-unobservable`; halt or drain suppresses the alarm; summon starvation needs sustained passes and excludes governor/capacity withholds and aeons at cap; DB, mirror, ghost-lease and restart-loop alerts are distinct and do not mask each other; the old `ready=` spelling still parses."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-19"
 tier = "T2"
-statement = "Auron reconcile: an alert must be seen twice before it raises a bead and clear twice before the bead closes; there is one bead per cause, and a return reopens the same bead with a single `flaps:N` label; an operator-closed alert is never reopened; when the DB is down or write-failing, alerts go to a fallback file and the heartbeat says so; a lock timeout reports `saturated`; extra probe beads are closed, not leaked."
+statement = "Heimdall reconcile: an alert must be seen twice before it raises a bead and clear twice before the bead closes; there is one bead per cause, and a return reopens the same bead with a single `flaps:N` label; an operator-closed alert is never reopened; when the DB is down or write-failing, alerts go to a fallback file and the heartbeat says so; a lock timeout reports `saturated`; extra probe beads are closed, not leaked."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-20"
@@ -215,10 +215,10 @@ bead = "sp-fhzib.4"
 [[use_case]]
 id = "UC-ops-detection-remediation-39"
 tier = "T1"
-statement = "Every existing ALERTS fixture that exercises Auron's bead label shape uses the exact labels `auron.sh` writes after two sightings and a flap (`alert:<key>`, `flaps:<n>`), not a hand-typed approximation — the panel's reader and Auron's writer are checked against each other, not independently."
+statement = "Every existing ALERTS fixture that exercises Heimdall's bead label shape uses the exact labels `heimdall.sh` writes after two sightings and a flap (`alert:<key>`, `flaps:<n>`), not a hand-typed approximation — the panel's reader and Heimdall's writer are checked against each other, not independently."
 
 [use_case.uncovered]
-reason = "gap G14: the panel's ALERTS fixtures hand-type the label set today rather than reusing Auron's real shape; closing it is sp-fhzib.4's scope, reopened separately and not yet landed"
+reason = "gap G14: the panel's ALERTS fixtures hand-type the label set today rather than reusing Heimdall's real shape; closing it is sp-fhzib.4's scope, reopened separately and not yet landed"
 date = "2026-09-26"
 bead = "sp-fhzib.4"
 

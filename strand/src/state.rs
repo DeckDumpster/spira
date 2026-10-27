@@ -160,7 +160,7 @@ mod tests {
         save(&p, &st).unwrap();
         let back = load(&p);
         assert_eq!(back.get("p:ghost:g").unwrap(), &StateEntry { first: 42, acted: 42, escalated: 0 });
-        // The on-disk shape the cockpit and auron read.
+        // The on-disk shape the cockpit and heimdall read.
         let v: serde_json::Value = serde_json::from_str(&fs::read_to_string(&p).unwrap()).unwrap();
         assert_eq!(v["p:ghost:g"]["acted"], 42);
         fs::write(&p, "not json").unwrap();

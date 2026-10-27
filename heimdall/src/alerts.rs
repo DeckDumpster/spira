@@ -1,5 +1,5 @@
 //! Raising, re-raising and clearing one alert bead, and maintaining the write-probe bead
-//! — auron.sh's `body_of`/`alert_write`/`alert_clear` and its write-probe dance, against
+//! — heimdall.sh's `body_of`/`alert_write`/`alert_clear` and its write-probe dance, against
 //! the `BdOps` port so the whole thing is testable with an in-memory fake.
 
 use crate::bdops::{BdOps, BeadRow, Failure};
@@ -13,7 +13,7 @@ use crate::util;
 /// which renders emphasis.
 pub fn body_of(key: &str, first: i64, flaps: i64, evidence: &str, tz: &str) -> String {
     format!(
-        "**Condition:** `{key}`\n**First seen:** {}  ·  **Fired:** {flaps} time(s)\n\n```\n{}\n```\n\nRaised by Auron (bin/auron; replaces spira/auron.sh), which watches the loop and only\nspeaks - it repairs nothing. It closes this itself when the condition passes,\nso nothing is owed. Closing it by hand acknowledges it: Auron will not raise\nit again until the condition has cleared and returned.\n",
+        "**Condition:** `{key}`\n**First seen:** {}  ·  **Fired:** {flaps} time(s)\n\n```\n{}\n```\n\nRaised by Heimdall (bin/heimdall; replaces spira/heimdall.sh), which watches the loop and only\nspeaks - it repairs nothing. It closes this itself when the condition passes,\nso nothing is owed. Closing it by hand acknowledges it: Heimdall will not raise\nit again until the condition has cleared and returned.\n",
         util::iso_display(first, tz),
         evidence.trim(),
     )
@@ -22,13 +22,13 @@ pub fn body_of(key: &str, first: i64, flaps: i64, evidence: &str, tz: &str) -> S
 /// The close reason for a cleared alert.
 pub fn clear_reason(first: i64, flaps: i64, clear_n: i64, tz: &str) -> String {
     format!(
-        "Cleared by Auron: the condition stopped holding for {clear_n} consecutive checks.\nRaised {}, fired {flaps} time(s).\nNothing was repaired by Auron — it only reports. Either the loop recovered on its own\nor something else fixed it.\n",
+        "Cleared by Heimdall: the condition stopped holding for {clear_n} consecutive checks.\nRaised {}, fired {flaps} time(s).\nNothing was repaired by Heimdall — it only reports. Either the loop recovered on its own\nor something else fixed it.\n",
         util::iso_display(first, tz),
     )
 }
 
 /// The reason attached to a duplicate probe bead closed automatically on adoption.
-pub const DUPLICATE_PROBE_REASON: &str = "Duplicate Auron write probe bead closed automatically.\nThe probe is a one-bead invariant; this bead was created during a transient contention\nepisode and superseded by an earlier probe that was re-derived on recovery.\n";
+pub const DUPLICATE_PROBE_REASON: &str = "Duplicate Heimdall write probe bead closed automatically.\nThe probe is a one-bead invariant; this bead was created during a transient contention\nepisode and superseded by an earlier probe that was re-derived on recovery.\n";
 
 /// `alert:<key>` -> the row, from a `list --label alert` query — one bead per cause is the
 /// invariant this enforces, so this must be keyed by the SAME label the writer reads.
@@ -70,7 +70,7 @@ pub fn alert_write(ops: &dyn BdOps, key: &str, title: &str, body: &str, flaps: i
 }
 
 /// Closes the alert bead for `key`. A no-op success if there is no bead to close, or it
-/// is already closed — auron.sh's own `[ -n "$id" ] || return 0` / status guard.
+/// is already closed — heimdall.sh's own `[ -n "$id" ] || return 0` / status guard.
 pub fn alert_clear(ops: &dyn BdOps, existing: Option<&BeadRow>, first: i64, flaps: i64, clear_n: i64, tz: &str) -> Result<(), Failure> {
     let Some(row) = existing else { return Ok(()) };
     if row.closed() {
@@ -89,7 +89,7 @@ pub struct ProbeOutcome {
     pub saturated: bool,
 }
 
-/// Maintains the one-bead write-probe invariant and exercises the write path — auron.sh's
+/// Maintains the one-bead write-probe invariant and exercises the write path — heimdall.sh's
 /// own re-derive / idempotent-backstop / create / update dance, four properties preserved:
 ///   1. a failed re-derive does not create (re-derive failure and empty-re-derive are both
 ///      lock contention; creating unconditionally leaked a P0 bead per episode).
@@ -97,7 +97,7 @@ pub struct ProbeOutcome {
 ///   3. extras are closed on adoption: one probe bead is the invariant.
 ///   4. a timeout is contention, not unavailability.
 ///
-/// auron.sh's own comment names a fifth property — "a create following a failed prior
+/// heimdall.sh's own comment names a fifth property — "a create following a failed prior
 /// update is a recovery, not a healthy write" (`_probe_had`) — but its own guard
 /// (`if [ -z "$PROBE_ID" ]`) means create is only ever reached on a pass where the cached
 /// id was ALREADY empty at the top, which is exactly when `_probe_had` is too: the check
@@ -108,7 +108,7 @@ pub fn maintain_probe(ops: &dyn BdOps, cached_id: &str) -> ProbeOutcome {
     let mut id = cached_id.to_string();
 
     if id.is_empty() {
-        match ops.list_by_label("auron:probe") {
+        match ops.list_by_label("heimdall:probe") {
             Ok(rows) => {
                 if let Some(first) = rows.first() {
                     id = first.id.clone();
@@ -126,7 +126,7 @@ pub fn maintain_probe(ops: &dyn BdOps, cached_id: &str) -> ProbeOutcome {
 
     if id.is_empty() {
         // Idempotent backstop: re-query immediately before creating (property 2).
-        if let Ok(rows) = ops.list_by_label("auron:probe") {
+        if let Ok(rows) = ops.list_by_label("heimdall:probe") {
             if let Some(first) = rows.first() {
                 id = first.id.clone();
                 close_extras(ops, &rows);
@@ -135,7 +135,7 @@ pub fn maintain_probe(ops: &dyn BdOps, cached_id: &str) -> ProbeOutcome {
     }
 
     if id.is_empty() {
-        return match ops.create("Auron write probe", "auron:probe,overseer", "write-path probe — updated on every Auron pass") {
+        return match ops.create("Heimdall write probe", "heimdall:probe,overseer", "write-path probe — updated on every Heimdall pass") {
             Ok(new_id) => ProbeOutcome { id: Some(new_id), write_ok: Some(true), saturated: false },
             Err(f) => ProbeOutcome { id: None, write_ok: Some(false), saturated: f == Failure::Saturated },
         };
@@ -256,7 +256,7 @@ mod tests {
         assert!(b.contains("`sentinel-stalled`"));
         assert!(b.contains("Fired:** 3 time(s)"));
         assert!(b.contains("evidence text"));
-        assert!(!b.contains('_') || b.contains("Raised by Auron"), "no stray markdown emphasis in the trailer");
+        assert!(!b.contains('_') || b.contains("Raised by Heimdall"), "no stray markdown emphasis in the trailer");
     }
 
     #[test]
@@ -354,7 +354,7 @@ mod tests {
     #[test]
     fn probe_with_a_cached_id_just_updates() {
         let f = fake();
-        f.0.lock().unwrap().rows.insert("sp-1".into(), BeadRow { id: "sp-1".into(), status: "open".into(), labels: vec!["auron:probe".into()] });
+        f.0.lock().unwrap().rows.insert("sp-1".into(), BeadRow { id: "sp-1".into(), status: "open".into(), labels: vec!["heimdall:probe".into()] });
         let r = maintain_probe(&f, "sp-1");
         assert_eq!(r.id, Some("sp-1".to_string()));
         assert_eq!(r.write_ok, Some(true));
@@ -363,7 +363,7 @@ mod tests {
     #[test]
     fn probe_rederives_when_the_cache_is_lost() {
         let f = fake();
-        f.0.lock().unwrap().rows.insert("sp-1".into(), BeadRow { id: "sp-1".into(), status: "open".into(), labels: vec!["auron:probe".into()] });
+        f.0.lock().unwrap().rows.insert("sp-1".into(), BeadRow { id: "sp-1".into(), status: "open".into(), labels: vec!["heimdall:probe".into()] });
         let r = maintain_probe(&f, "");
         assert_eq!(r.id, Some("sp-1".to_string()), "adopts the existing probe rather than creating a duplicate");
     }
@@ -391,8 +391,8 @@ mod tests {
         let f = fake();
         {
             let mut s = f.0.lock().unwrap();
-            s.rows.insert("sp-1".into(), BeadRow { id: "sp-1".into(), status: "open".into(), labels: vec!["auron:probe".into()] });
-            s.rows.insert("sp-2".into(), BeadRow { id: "sp-2".into(), status: "open".into(), labels: vec!["auron:probe".into()] });
+            s.rows.insert("sp-1".into(), BeadRow { id: "sp-1".into(), status: "open".into(), labels: vec!["heimdall:probe".into()] });
+            s.rows.insert("sp-2".into(), BeadRow { id: "sp-2".into(), status: "open".into(), labels: vec!["heimdall:probe".into()] });
         }
         let _ = maintain_probe(&f, "");
         let s = f.0.lock().unwrap();
@@ -414,7 +414,7 @@ mod tests {
     #[test]
     fn probe_update_failure_reports_down() {
         let f = fake();
-        f.0.lock().unwrap().rows.insert("sp-1".into(), BeadRow { id: "sp-1".into(), status: "open".into(), labels: vec!["auron:probe".into()] });
+        f.0.lock().unwrap().rows.insert("sp-1".into(), BeadRow { id: "sp-1".into(), status: "open".into(), labels: vec!["heimdall:probe".into()] });
         f.0.lock().unwrap().fail_update = true;
         let r = maintain_probe(&f, "sp-1");
         assert_eq!(r.write_ok, Some(false));

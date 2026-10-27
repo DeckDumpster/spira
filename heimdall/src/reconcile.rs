@@ -1,8 +1,8 @@
-//! The debounce state machine — auron.sh's own reconcile loop, as a pure function of the
+//! The debounce state machine — heimdall.sh's own reconcile loop, as a pure function of the
 //! firing set and the prior state. No bd call, no clock read, no file write: everything
 //! here is `now`, thresholds, and two maps in, one decision per key out.
 //!
-//! Three defences against noise (auron.sh's own ordering, kept): a condition must hold for
+//! Three defences against noise (heimdall.sh's own ordering, kept): a condition must hold for
 //! `confirm` consecutive passes before it fires and clear for `clear` consecutive passes
 //! before it is retracted, so nothing flaps on one sample; a standing alert's evidence is
 //! rewritten at most every `refresh` seconds, not every pass; and one bead per cause
@@ -24,7 +24,7 @@ pub enum Trigger {
     /// `state == firing`, still firing, the refresh interval elapsed: rewrite the evidence
     /// — UNLESS the live bead is closed by hand, in which case the caller only bumps
     /// `refreshed` and never re-opens it (an operator's close is an acknowledgement, not
-    /// a retraction Auron should fight).
+    /// a retraction Heimdall should fight).
     Refresh,
 }
 
@@ -63,7 +63,7 @@ impl Step {
 
     /// The state to persist when the attempted write failed (`beads_ok` goes false; the
     /// caller retries next pass). `ConfirmRaise` rolls back only the flap it tentatively
-    /// added — `first` stays bumped, exactly auron.sh's own asymmetry.
+    /// added — `first` stays bumped, exactly heimdall.sh's own asymmetry.
     pub fn on_failure(&self) -> KeyState {
         let mut k = self.counters.clone();
         if self.trigger == Trigger::ConfirmRaise {
@@ -74,7 +74,7 @@ impl Step {
 
     /// `Refresh` only, when the live bead is closed by hand: no write is even attempted —
     /// bump `refreshed` alone, so a hand-closed alert's evidence does not visibly rot but
-    /// Auron never re-opens what the operator acknowledged.
+    /// Heimdall never re-opens what the operator acknowledged.
     pub fn on_refresh_skip_closed(&self, now: i64) -> KeyState {
         let mut k = self.counters.clone();
         k.refreshed = now;
@@ -83,7 +83,7 @@ impl Step {
 }
 
 /// One step per key in `firing ∪ keys(prior)` — a key neither firing now nor known before
-/// is never mentioned, exactly auron.sh's `all_keys`.
+/// is never mentioned, exactly heimdall.sh's `all_keys`.
 ///
 /// `db_reachable = false` updates `seen`/`unseen` (the one thing bash did before its own
 /// `continue`) and stops there: no trigger, no `first`/`flaps` bump. THE DATABASE IS THE
@@ -182,7 +182,7 @@ mod tests {
         assert_eq!(s.counters.flaps, 5, "tentatively bumped");
         let k = s.on_failure();
         assert_eq!(k.flaps, 4, "rolled back — bash's own asymmetry");
-        assert_eq!(k.first, 100, "NOT rolled back, exactly auron.sh's quirk");
+        assert_eq!(k.first, 100, "NOT rolled back, exactly heimdall.sh's quirk");
         assert_eq!(k.state, "clear", "never transitioned on a failed write");
     }
 

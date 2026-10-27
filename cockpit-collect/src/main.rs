@@ -349,7 +349,7 @@ mod tests {
     /// An empty probe value must round-trip as exactly `KEY=''` (two characters, sourceable
     /// as the empty string) through `once`'s write path — not the doubled `KEY=''\'''\'''`
     /// production's bash collector produced for ten keys (SP_HOTFIX_LINE, SP_HOTFIX_ALERT,
-    /// SP_AURON_KEYS, SP_OVERRIDES_LIST, and the six `*_NAMES` lists) by quoting its own
+    /// SP_HEIMDALL_KEYS, SP_OVERRIDES_LIST, and the six `*_NAMES` lists) by quoting its own
     /// value before the merge/write step quoted the line a second time (the operator,
     /// 2026-09-30, found in production's live cockpit.env). Every probe now emits these
     /// keys raw, same as any other key; this is the ONE quoting layer, at write time.
@@ -358,13 +358,13 @@ mod tests {
         let run = testkit::TempDir::new("cc-empty-quote");
         let kv: probes::Kv = vec![
             ("SP_HOTFIX_LINE".to_string(), String::new()),
-            ("SP_AURON_KEYS".to_string(), String::new()),
+            ("SP_HEIMDALL_KEYS".to_string(), String::new()),
             ("SP_PROTECTED_NAMES".to_string(), String::new()),
             ("SP_AT".to_string(), "123".to_string()),
         ];
         write_snapshot_and_history(&kv, run.path());
         let snap = std::fs::read_to_string(run.path().join("cockpit.env")).unwrap();
-        for k in ["SP_HOTFIX_LINE", "SP_AURON_KEYS", "SP_PROTECTED_NAMES"] {
+        for k in ["SP_HOTFIX_LINE", "SP_HEIMDALL_KEYS", "SP_PROTECTED_NAMES"] {
             let line = snap.lines().find(|l| l.starts_with(&format!("{k}="))).unwrap_or_else(|| panic!("{k} missing from snapshot"));
             assert_eq!(line, format!("{k}=''"), "empty {k} must be exactly '' (2 chars), not doubled");
         }

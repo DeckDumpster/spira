@@ -569,6 +569,8 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "maechen_max_beads", bead: "sp-vt8lbr" },
     RetiredKey { key: "maechen_max_gap_seconds", bead: "sp-vt8lbr" },
     RetiredKey { key: "maechen_remedy_label", bead: "sp-vt8lbr" },
+    RetiredKey { key: "auron_restarts", bead: "sp-acp3lx" },
+    RetiredKey { key: "auron_restart_window", bead: "sp-acp3lx" },
     RetiredKey { key: "queue_local_gate", bead: "sp-vsob2" },
     RetiredKey { key: "queue_batch_idle_cut", bead: "sp-vsob2" },
     RetiredKey { key: "cert_idle_skip", bead: "sp-6d9th" },

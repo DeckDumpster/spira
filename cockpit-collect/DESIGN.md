@@ -103,7 +103,7 @@ no subcommand prefix (a test's mock script, same shape the bash mock scripts alw
 
 ### Formatting fidelity
 
-Ten keys (`SP_HOTFIX_LINE`, `SP_HOTFIX_ALERT`, `SP_OVERRIDES_LIST`, `SP_AURON_KEYS`, and
+Ten keys (`SP_HOTFIX_LINE`, `SP_HOTFIX_ALERT`, `SP_OVERRIDES_LIST`, `SP_HEIMDALL_KEYS`, and
 the six `*_NAMES` space-lists, `SP_PROTECTED_NAMES` included) wrapped their own value in a
 literal single quote in the bash *before* the merge's own `shq()` quoted the line a second
 time — so an empty value round-tripped as the four-character string `''''` rather than the

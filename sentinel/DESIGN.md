@@ -95,10 +95,10 @@ The format is `<YYYY-MM-DDTHH:MM:SSZ> spira: <msg>` (lib.sh `log`), in UTC.
 
 | line | parsed by |
 |---|---|
-| `state: open=<n> plan_ready=<n> in_progress=<n> aeons=<n> fayths=[<f …>]` | strand (`: state: open=` marks a pass start, `probe::PASS_MARKER`), auron/src/judge.rs, cockpit-collect metrics:64,75, chamber/czar.md |
+| `state: open=<n> plan_ready=<n> in_progress=<n> aeons=<n> fayths=[<f …>]` | strand (`: state: open=` marks a pass start, `probe::PASS_MARKER`), heimdall/src/judge.rs, cockpit-collect metrics:64,75, chamber/czar.md |
 | `CHECK7 <fayth>: not evaluated (pass budget exhausted)` (the seam emits it) | strand probe.rs:363, strand.sh:369 |
 | `ACT <msg>` for every act/progress (`summoned a <f> aeon`, `invoked reflection`, `poisoned <id> after <n> attempts`, `reclaimed <n> stale lease(s)`, …) | cockpit-collect metrics:65,69, cockpit.sh:626 |
-| `pass complete — <a> action(s), <p> progress` | auron/src/judge.rs |
+| `pass complete — <a> action(s), <p> progress` | heimdall/src/judge.rs |
 | `summon-only pass complete — <a> action(s)` | nothing outside tests |
 | untimestamped `RECLAIMED`, `SENT`, `HELD`, `KEEP`, `FAILED` lines passed through from strand and sending | cockpit.sh:637, cockpit-collect metrics:236 |
 
@@ -767,7 +767,7 @@ About 30 suites carry `# covers: … spira/sentinel.sh`. That changes to
 - **B8. `FATAL` exit 1 when lib.sh or the probe cannot be found or fails.** The bash script
   could not start without lib.sh either. This names the reason.
 - **B9. A ready read that failed renders `plan_ready=?` in the `state:` line**, never `0`
-  (a failed probe renders `?`). The bash `ready_count` printed `0` on failure. auron-classify
+  (a failed probe renders `?`). The bash `ready_count` printed `0` on failure. heimdall-classify
   and cockpit-metrics match `plan_ready=(\d+)`, so they skip that one pass's line rather than
   read a false zero, and CHECK 3 and CHECK 8 do not fire on it (G3).
 - **B11. The lifecycle machine (§2.9).** An unreachable machine fails the unit instead of

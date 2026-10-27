@@ -1,14 +1,14 @@
 [package]
-name = "auron"
+name = "heimdall"
 version = "1.0.0"
 edition = "2021"
-description = "auron — the watchdog over the loop. Its only power is speech: it reads timestamps and counters, asks the database one question, and raises or clears an alert bead. Replaces spira/auron.sh."
+description = "heimdall — the watchdog over the loop. Its only power is speech: it reads timestamps and counters, asks the database one question, and raises or clears an alert bead. Replaces spira/heimdall.sh."
 
 [lib]
 path = "src/lib.rs"
 
 [[bin]]
-name = "auron"
+name = "heimdall"
 path = "src/main.rs"
 
 [dependencies]

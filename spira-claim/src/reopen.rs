@@ -4,7 +4,7 @@
 //! `_census_deliberate_reopen_causes`/`_census_reopen_admission_exempt` — which row M's
 //! census SQL producers (still bash; a later bead) also read, through the lib.sh shim.
 //! Safety note (c7): this is the most-called mutation in the harness (6 crates, groomer.sh,
-//! auron), and it carries the census admission exemption and the claim release. Any
+//! heimdall), and it carries the census admission exemption and the claim release. Any
 //! divergence between this port and the bash original reopens a bead with the wrong cause,
 //! charges the wrong attempt counter, or leaves a dead aeon's name on a bead nothing will
 //! claim again.

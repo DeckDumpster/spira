@@ -150,7 +150,7 @@ impl View {
 
 /// The labels an alert bead carries, and what each one means.
 ///
-/// The contract is sp-auron's: `issue_type: event`, plus `alert` and `overseer`. Open means
+/// The contract is sp-heimdall's: `issue_type: event`, plus `alert` and `overseer`. Open means
 /// FIRING; closed means the condition cleared and the writer retracted its own statement.
 /// Everything else the tab needs is a label, because a label is what a writer can set and
 /// unset in one `bd update` without rewriting a description it did not compose.
@@ -322,7 +322,7 @@ fn run_as(cmd: &str, args: &[&str], actor: Option<&str>, cfg: &Cfg) -> Result<()
 /// was a Gas Town check — `settings/watch-town.sh` mailed it to the Mayor — and Gas Town was
 /// decommissioned. Spira has no equivalent: `bd list --label alert` returns 0 rows because
 /// the ALERTS tab shipped its reader and no writer (sp-alerts, closed, says so in as many
-/// words), and sp-auron, the designated first writer, watches loop staleness and dead leases
+/// words), and sp-heimdall, the designated first writer, watches loop staleness and dead leases
 /// rather than the bead graph. So forcing here genuinely does drop a signal that used to
 /// exist. It is still the right trade — the alternative was destroying the operator's typed
 /// verdict, every time — but the missing check is sp-hollow, not a fact about this function.

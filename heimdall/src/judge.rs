@@ -1,4 +1,4 @@
-//! Auron's whole judgement, as a pure function of one observation object: no clock, no
+//! Heimdall's whole judgement, as a pure function of one observation object: no clock, no
 //! file, no command, no network. `now` is handed in, the sentinel log arrives as a string
 //! and every threshold is a field, so each rule replays against a captured window.
 //!
@@ -198,11 +198,11 @@ pub fn classify(o: &Value) -> Result<Vec<Firing>, String> {
     if !truthy(obj.get("sentinel_log_readable")) {
         alert(
             "sentinel-unobservable",
-            "Auron cannot read the sentinel log — the loop's liveness is unknown".into(),
+            "Heimdall cannot read the sentinel log — the loop's liveness is unknown".into(),
             format!(
                 "PATH      {}\nREASON    {}\n\n\
                  Nothing below this line was checked. An unreadable log is not a quiet\n\
-                 one: every other reading Auron takes about the loop is derived from it,\n\
+                 one: every other reading Heimdall takes about the loop is derived from it,\n\
                  so a healthy pane here would be a guess wearing a measurement's clothes.",
                 log_path,
                 or_str(obj.get("sentinel_log_error"), "unreadable")
@@ -211,7 +211,7 @@ pub fn classify(o: &Value) -> Result<Vec<Firing>, String> {
     } else {
         let passes = parse_passes(&log_text);
         let done = passes.iter().rev().find(|p| p.complete).map(|p| p.last);
-        let floor = int_of(obj.get("auron_first")).max(passes.first().map_or(0, |p| p.at));
+        let floor = int_of(obj.get("heimdall_first")).max(passes.first().map_or(0, |p| p.at));
         let since = done.unwrap_or(floor);
         let age = now - since;
         if since != 0 && age > pass_stale && !world_halted && !world_draining {
@@ -393,7 +393,7 @@ pub fn classify(o: &Value) -> Result<Vec<Firing>, String> {
                     "UNIT      {unit}\n\
                      RESTARTS  {delta} in this {} window (running total {current}, threshold {restart_threshold})\n\n\
                      A Restart=always unit never reaches 'failed' — incident intake misses it.\n\
-                     This is Auron's notification of an active restart loop.\n\n\
+                     This is Heimdall's notification of an active restart loop.\n\n\
                      Read the unit's own log with: systemctl --user status {unit}\n",
                     fmt_age(window)
                 ),

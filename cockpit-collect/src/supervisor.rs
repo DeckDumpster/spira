@@ -905,7 +905,7 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
     }
 
     /// The real production fixture (the operator, 2026-09-30): `run/cockpit.d/now.env`
-    /// already carried `SP_HOTFIX_ALERT=''`/`SP_AURON_KEYS=''` — quoted, not raw — because
+    /// already carried `SP_HOTFIX_ALERT=''`/`SP_HEIMDALL_KEYS=''` — quoted, not raw — because
     /// a stale pass had copied those lines forward from before the probe-level self-
     /// quoting fix landed (DESIGN.md Decisions). Merge must not re-quote an already-quoted
     /// value: `''\'''\'''` reached `cockpit.env` and the new pane sourced it as a non-empty
@@ -918,12 +918,12 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
         std::fs::create_dir_all(&cfg.frag_dir).unwrap();
         write_atomic(
             &cfg.frag_dir.join("now.env"),
-            "_PROBE_AT=1\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_HOTFIX_ALERT=''\nSP_AURON_KEYS=''\nSP_OVERRIDES_LIST='a b'\n",
+            "_PROBE_AT=1\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_HOTFIX_ALERT=''\nSP_HEIMDALL_KEYS=''\nSP_OVERRIDES_LIST='a b'\n",
         );
         assert!(merge_fragments(&cfg));
         let snap = std::fs::read_to_string(&cfg.snap).unwrap();
         assert!(snap.contains("SP_HOTFIX_ALERT=''\n"), "snap was: {snap}");
-        assert!(snap.contains("SP_AURON_KEYS=''\n"), "snap was: {snap}");
+        assert!(snap.contains("SP_HEIMDALL_KEYS=''\n"), "snap was: {snap}");
         assert!(snap.contains("SP_OVERRIDES_LIST='a b'\n"), "snap was: {snap}");
         assert!(!snap.contains("''''") && !snap.contains("\\'"), "must not be doubled: {snap}");
     }

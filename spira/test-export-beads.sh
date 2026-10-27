@@ -2,7 +2,7 @@
 # test-export-beads.sh — the wiki bead mirror: content joined to lifecycle state, sorted, committed only on change.
 #
 # tier: T1
-# covers: spira/export-beads.sh systemd/spira-export-beads.* install/src/manifest.rs auron/src/*
+# covers: spira/export-beads.sh systemd/spira-export-beads.* install/src/manifest.rs heimdall/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
