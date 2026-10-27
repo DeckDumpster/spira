@@ -166,6 +166,17 @@ pub fn collect_body(args: &[String], read_file: impl Fn(&str) -> Result<String, 
     Ok((out, body))
 }
 
+/// `mender diagnose|outcome` always carry their text on stdin; a lone `-` is dropped, since the
+/// mender tool takes no such argument.
+pub fn collect_mender_body(args: &[String], read_stdin: impl FnOnce() -> Result<String, String>) -> Result<(Vec<String>, Option<String>), String> {
+    if !matches!(args.first().map(String::as_str), Some("diagnose" | "outcome")) {
+        return Ok((args.to_vec(), None));
+    }
+    let rest: Vec<String> = args.iter().filter(|a| a.as_str() != "-").cloned().collect();
+    let body = read_stdin().map_err(|e| format!("work: reading stdin: {e}"))?;
+    Ok((rest, Some(body)))
+}
+
 /// Builds the argv `work.rs` on the server expects: `[bound, verb, ...]`. Evidence the
 /// aeon's own environment must supply (git's HEAD for `submit`, the actor) is threaded in
 /// by the caller, already computed — this function only assembles the wire request, it
@@ -371,6 +382,20 @@ mod tests {
             build_request_with_body("sp-3m1p9", "note", &v(&["-"]), None, "a", Some("prose")).unwrap(),
             v(&["work", "sp-3m1p9", "note", "-", "--stdin", "prose"])
         );
+    }
+
+    #[test]
+    fn mender_diagnose_and_outcome_read_stdin_with_or_without_a_dash() {
+        for args in [v(&["outcome", "/s", "return"]), v(&["outcome", "/s", "return", "-"])] {
+            let (a, b) = collect_mender_body(&args, || Ok("why".to_string())).unwrap();
+            assert_eq!((a.clone(), b.as_deref()), (v(&["outcome", "/s", "return"]), Some("why")));
+            let req = build_request_with_body("-", "mender", &a, None, "mender", b.as_deref()).unwrap();
+            assert_eq!(req, v(&["work", "-", "mender", "outcome", "/s", "return", "--stdin", "why", "--actor", "mender"]));
+        }
+        let (a, b) = collect_mender_body(&v(&["diagnose", "/s"]), || Ok("d".to_string())).unwrap();
+        assert_eq!((a, b.as_deref()), (v(&["diagnose", "/s"]), Some("d")));
+        let (a, b) = collect_mender_body(&v(&["pack", "/s"]), || panic!("stdin not wanted")).unwrap();
+        assert_eq!((a, b), (v(&["pack", "/s"]), None));
     }
 
     #[test]

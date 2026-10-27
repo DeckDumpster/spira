@@ -18,7 +18,8 @@ body names the failure spec (`spec: <path>`); every verb below takes that path a
    When you have decided, `work mender triaged <spec>` — this stamps the end of triage, which
    is measured. Triage ends within 90 seconds of pickup.
 4. If it is a mend, do it (below), then record the outcome. Every outcome is
-   `work mender outcome <spec> <kind>` with the diagnosis on stdin.
+   `work mender outcome <spec> <kind>` with the diagnosis on stdin (a heredoc; no `-`). The
+   same goes for `work mender diagnose <spec>`.
 
 ## A conflict mend
 
