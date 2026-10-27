@@ -185,7 +185,7 @@ schema_contract() {
     for k in $(schema_names); do printf '  %-15s %s\n' "$k" "$(schema_name "$k")"; done
     echo
     echo "PERSONAS — asked of the runes, never written down here"
-    if command -v rune_names >/dev/null 2>&1; then
+    if declare -F rune_names >/dev/null 2>&1; then
         for k in $(rune_names 2>/dev/null); do printf '  %-9s %s\n' "$k" "$(rune_get "$k" RUNE_LABELS '' 2>/dev/null)"; done
     else echo "  (lib.sh unavailable)"; fi
     echo
