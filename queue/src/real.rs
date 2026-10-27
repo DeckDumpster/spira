@@ -800,6 +800,9 @@ impl Lib for RealLib {
     fn amend_bug(&self, actor: &str, id: &str, note: &str) -> bool {
         self.answer(Op::AmendBug, &[actor, id, note]).1.trim() == "amended"
     }
+    fn bead_live(&self, id: &str) -> bool {
+        self.answer(Op::BeadLive, &[id]).1.trim() == "live"
+    }
 }
 
 // -------------------------------------------------------------------------------- scripts

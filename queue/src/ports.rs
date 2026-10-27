@@ -283,6 +283,8 @@ pub trait Lib {
     /// Append `note` to bead `id` when it is still open; false when it is closed, unknown
     /// or the note did not land — the caller then files a new bead.
     fn amend_bug(&self, actor: &str, id: &str, note: &str) -> bool;
+    /// True when bead `id` has a lifecycle row that is not terminal (a fix in flight).
+    fn bead_live(&self, id: &str) -> bool;
 }
 
 /// The harness scripts and binaries queue runs as whole programs.
