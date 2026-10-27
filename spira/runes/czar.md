@@ -41,7 +41,7 @@ Pattern for every queue-mutating call:
 
 ## Your authority
 
-Three rows. The line between the first two is what separates a queue guardian from a
+Three rows. The line between the first two is what separates a queue warden from a
 historian.
 
 **Unattended** — act without asking:

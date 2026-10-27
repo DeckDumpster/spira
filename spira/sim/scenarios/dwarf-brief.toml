@@ -37,7 +37,7 @@ sql = "SELECT 1 FROM briefs WHERE bead = 'sp-ab01' AND system LIKE '%sp-ab01%' A
 
 [[expect]]
 name = "brief_is_the_builders"
-sql = "SELECT 1 FROM briefs WHERE bead = 'sp-ab01' AND system LIKE '%Guardian%'"
+sql = "SELECT 1 FROM briefs WHERE bead = 'sp-ab01' AND system LIKE '%Warden%'"
 
 [[expect]]
 name = "repo_instructions_reach_the_model"

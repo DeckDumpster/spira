@@ -53,7 +53,8 @@ fn exempt(path: &str) -> bool {
         || path.starts_with("raw/spira-beads/")
         || path.starts_with("lifecycle/migrations/")
         || path.ends_with(".tsv")
-        || (path.starts_with("loom/tests/fixtures/") && path.ends_with(".log"))
+        || ((path.starts_with("loom/tests/fixtures/") || path.starts_with("spira/testdata/")) && path.ends_with(".log"))
+        || path == "spira-lint/DESIGN.md"
 }
 
 /// Split a name or line into its words: alphanumeric runs, cut again at `aB` and `ABc` joins.

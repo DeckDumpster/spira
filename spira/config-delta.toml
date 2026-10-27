@@ -161,4 +161,4 @@ removed = ["spira.broker_enable", "spira.express_label", "spira.overlap_defer_la
 "spira.runes" = ["spike", "builder", "groomer", "mimir", "ops", "czar", "warden", "mender"]
 
 [renamed]
-"persona.maechen" = "persona.mimir"
+"persona.maechen" = "persona.mimir" # ffx-ok
