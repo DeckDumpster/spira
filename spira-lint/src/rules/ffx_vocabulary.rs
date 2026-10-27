@@ -133,7 +133,10 @@ impl Rule for FfxVocabulary {
     }
 
     fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
-        let mode = self.mode.clone().map_err(LintError::Refused)?;
+        let mode = match &self.mode {
+            Ok(m) => *m,
+            Err(e) => pending_mode(tree).ok_or_else(|| LintError::Refused(e.clone()))?,
+        };
         let (hits, nfiles) = self.hits(tree)?;
         self.checked.set(Some(nfiles));
         match mode {
@@ -172,6 +175,15 @@ Line 0 is a hit in the path itself."
     }
 }
 
+/// The mode this release's config-delta adds, for a lint run before activation has declared the key.
+fn pending_mode(tree: &Tree) -> Option<Mode> {
+    let delta = tree.text_of("spira/config-delta.toml")?;
+    delta.lines().find_map(|l| {
+        let (k, v) = l.split_once('=')?;
+        (k.trim().trim_matches('"') == "spira.ffx_vocabulary_mode").then(|| Mode::parse(v.trim().trim_matches('"')).ok()).flatten()
+    })
+}
+
 pub fn rules() -> Vec<Box<dyn Rule>> {
     let mode = spira_config::process::cfg(MODE_KEY).and_then(|v| Mode::parse(&v));
     vec![Box::new(FfxVocabulary::with_mode(mode))]
@@ -196,6 +208,17 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
         t.write("data/runs.tsv", "aeon\n");
         t.write("src/clean.txt", "a sin of omission; summonses; Single; AtmoSphere is split\n");
         t
+    }
+
+    #[test]
+    fn undeclared_key_takes_the_value_the_release_delta_adds() {
+        let t = fixture();
+        t.write("spira/config-delta.toml", "[added]\n\"spira.ffx_vocabulary_mode\" = \"enforce\"\n");
+        let tr = tree(&t, &["src/all.txt", "spira/config-delta.toml"]);
+        let r = FfxVocabulary::with_mode(Err("undeclared".into()));
+        assert!(!r.check(&tr).unwrap().is_empty());
+        let bare = tree(&t, &["src/all.txt"]);
+        assert!(r.check(&bare).is_err(), "no delta entry must still refuse");
     }
 
     #[test]
