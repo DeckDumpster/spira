@@ -18,6 +18,7 @@ pub struct Spec {
     pub suite: String,
     pub repo: String,
     pub base: String,
+    /// The suite output text itself, never a path.
     pub output: String,
     /// The tree the pass already built, where the mend's checks run.
     #[serde(default)]

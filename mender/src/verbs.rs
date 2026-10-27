@@ -66,7 +66,7 @@ pub fn design_paths(description: &str) -> Vec<String> {
 
 pub fn pack(w: &dyn World, spec_path: &str) -> Reply {
     let spec = load_spec(w, spec_path)?;
-    let output = w.read(&spec.output)?;
+    let output = spec.output.clone();
     let ms = members(w, &spec)?;
     let covers = suite_covers(w, &spec);
     let hits = signature::scan(&output);
@@ -214,11 +214,10 @@ mod tests {
 
     impl Fake {
         fn new() -> Fake {
-            let spec = r#"{"batch":"r-9","pass":3,"suite":"test-x.sh","repo":"/repo","base":"main","output":"/out",
+            let spec = r#"{"batch":"r-9","pass":3,"suite":"test-x.sh","repo":"/repo","base":"main","output":"ok 1\nfork: retry: Resource temporarily unavailable\n",
                 "members":[{"bead":"sp-a","tip":"aaa"},{"bead":"sp-b","tip":"bbb"}]}"#;
             let mut f = Fake { files: HashMap::new(), git_out: HashMap::new(), lc_answers: HashMap::new(), calls: RefCell::new(vec![]), deadline: Ok(417) };
             f.files.insert("/spec".into(), spec.into());
-            f.files.insert("/out".into(), "ok 1\nfork: retry: Resource temporarily unavailable\n".into());
             f.files.insert("/repo/spira/test-x.sh".into(), "#!/bin/bash\n# covers: spira/*.sh\nset -u\n".into());
             f.git_out.insert("diff --name-only main...aaa".into(), "spira/lib.sh\n".into());
             f.git_out.insert("diff main...aaa".into(), "+changed lib".into());
