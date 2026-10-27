@@ -374,10 +374,15 @@ impl<'a> Sentinel<'a> {
         false
     }
 
-    /// `spira-claim urgent`: the claimable P0 and REWORK beads. `None` when the machine
+    /// `spira-claim urgent <task fayths>`: the P0 and REWORK beads the task pool can claim —
+    /// a bead only a lane can claim must not stop the lanes. `None` when the machine
     /// cannot answer — the caller yields the lanes, never reads that as "nothing urgent".
-    fn urgent_beads(&self) -> Option<Vec<Urgent>> {
-        let o = self.h.run(Spec::args_owned(self.cfg.claim_bin.clone(), vec!["urgent".into()]));
+    fn urgent_beads(&self, task_fayths: &[String]) -> Option<Vec<Urgent>> {
+        if task_fayths.is_empty() {
+            return Some(Vec::new());
+        }
+        let args = std::iter::once("urgent".to_string()).chain(task_fayths.iter().cloned()).collect();
+        let o = self.h.run(Spec::args_owned(self.cfg.claim_bin.clone(), args));
         if o.rc != 0 {
             self.h.log_err(&format!("CHECK7 lanes: CLAIM-ERROR: urgent: {}", o.stderr.trim()));
             return None;
@@ -721,7 +726,7 @@ impl<'a> Sentinel<'a> {
         let mut rotated_lanes = lane_rotate(last.trim(), &lane_fayths);
         self.lanes_yielding.set(false);
         if !lane_fayths.is_empty() {
-            match self.urgent_beads() {
+            match self.urgent_beads(&task_fayths) {
                 Some(u) if u.is_empty() => {}
                 Some(u) => {
                     let ids: Vec<&str> = u.iter().map(|b| b.id.as_str()).collect();

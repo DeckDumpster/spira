@@ -2218,6 +2218,14 @@ fn a_rework_bead_makes_lanes_yield() {
 }
 
 #[test]
+fn the_urgent_query_names_only_task_pool_fayths() {
+    let f = urgent_fleet("urgent-scope", "", &["builder-1"]);
+    run_urgent(&f);
+    let q = f.r.find(|s| s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("urgent")).unwrap();
+    assert_eq!(q.args[1..], ["builder".to_string()], "a lane's partition must not be asked about: {}", f.sink.text());
+}
+
+#[test]
 fn with_nothing_urgent_lanes_are_summoned_as_before() {
     let f = urgent_fleet("no-urgent", "", &["builder-1"]);
     run_urgent(&f);

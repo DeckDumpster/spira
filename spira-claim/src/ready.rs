@@ -210,6 +210,11 @@ pub fn partition<'a>(rows: &'a [ReadyRow], part: &FaythPart, queue_wait: &str) -
         .collect()
 }
 
+/// Whether `row` is claimable under any of `parts`.
+pub fn in_any_partition(row: &ReadyRow, parts: &[FaythPart], queue_wait: &str) -> bool {
+    parts.iter().any(|p| !partition(std::slice::from_ref(row), p, queue_wait).is_empty())
+}
+
 /// `ready-count`'s rows under the machine: bd's label predicate over the claimable set, with
 /// a deferred bead held as `bd ready` holds it.
 pub fn count_matching(rows: &[ReadyRow], inc: &[String], exc: &[String]) -> u64 {
@@ -279,6 +284,17 @@ mod tests {
 
     fn part(name: &str, inc: &[&str], exc: &[&str]) -> FaythPart {
         FaythPart { name: name.into(), inc: inc.iter().map(|s| s.to_string()).collect(), exc: exc.iter().map(|s| s.to_string()).collect() }
+    }
+
+    #[test]
+    fn a_lane_only_bead_is_outside_the_task_pool_partitions() {
+        let task = vec![part("builder", &["spira", "plan"], &["mender-failure"])];
+        let lane_bead = row("m", &["spira", "mender-failure", "integrate"]);
+        let task_bead = row("b", &["spira", "plan"]);
+        assert!(!in_any_partition(&lane_bead, &task, "q"));
+        assert!(in_any_partition(&task_bead, &task, "q"), "positive control");
+        let with_lane = vec![part("mender", &["spira", "mender-failure"], &[])];
+        assert!(in_any_partition(&lane_bead, &with_lane, "q"), "the matcher can see a lane bead");
     }
 
     #[test]
