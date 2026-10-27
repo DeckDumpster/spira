@@ -515,6 +515,11 @@ fn harness_fault_reruns_within_the_budget_then_closes_and_returns_members() {
     assert!(has_call(&t.forge.calls, "pr-close 12"));
     assert!(t.lc.has("abandon-batch spira-1 CI_RUNNING 4 batch closed"));
     assert!(!t.qfile("open").exists());
+    let calls = t.lc.calls.borrow();
+    let abandon = calls.iter().position(|c| c.starts_with("abandon-batch")).unwrap();
+    let last_close = calls.iter().rposition(|c| c == "mending-close-ended").unwrap();
+    assert!(last_close > abandon, "open MENDING rows are ended after the batch is terminal: {calls:?}");
+    drop(calls);
     let mail = t
         .scripts
         .calls

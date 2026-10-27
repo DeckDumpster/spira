@@ -1194,13 +1194,13 @@ fn lc_requeue(w: &World, c: &Ctx, b: &Batch, reason: &str) {
     let Some(id) = b.kv.get("batch_id") else {
         return;
     };
-    super::round::retire_menders(w, c, id, reason);
     let r = crate::ident::bounded_text(reason);
     if let Err((rc, e)) = super::lc_abandon(w, id, "verdict.sh", &r) {
         w.err(format!(
             "verdict: spira-lc abandon-batch refused for {id} (rc={rc}): {e}"
         ));
     }
+    super::round::retire_menders(w, c, id, reason);
 }
 
 /// Close the PR and hand every member back CERTIFIED; the record goes.

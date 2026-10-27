@@ -1207,6 +1207,10 @@ impl Lc for FLc {
             .into_iter()
             .find(|b| b.bead_id == bead)
     }
+    fn mending_close_ended(&self, _: &str) -> Result<(), (i32, String)> {
+        self.calls.borrow_mut().push("mending-close-ended".into());
+        Ok(())
+    }
     fn mending_event(
         &self,
         id: &str,
