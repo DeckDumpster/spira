@@ -197,6 +197,8 @@ case "$1 $2" in
   "list --batches") echo '[]' ;;
   "ops-view ops_dwell_p95") echo '[{"state":"CERTIFIED","p95_s":7200},{"state":"WORKING","p95_s":10800}]' ;;
   "ops-bead sp-2cah6") echo "{\"now\":$now,\"bead\":{\"state\":\"CERTIFIED\",\"holder\":null,\"holds\":\"[]\",\"title\":\"stuck one\"},\"events\":[{\"seq\":1,\"event\":\"Certify\",\"from_state\":\"SUBMITTED\",\"to_state\":\"CERTIFIED\",\"applied\":1,\"actor\":\"gate\",\"at\":$((now-72000))},{\"seq\":2,\"event\":\"Rework\",\"from_state\":\"CERTIFIED\",\"to_state\":\"CERTIFIED\",\"applied\":0,\"refusal\":\"no-edge\",\"actor\":\"x\",\"at\":$((now-60))}]}" ;;
+  "show-ask sp-ask1") echo '{"ask_id":"sp-ask1","state":"OPEN","work_bead":"sp-work1","version":0}' ;;
+  "content show") [ "$3" = sp-ask1 ] && printf '%s\n' '[{"id":"sp-ask1","title":"Ship the <b>widget</b>?","description":"Default: yes\n\n## Class basis\npolicy\n\n## Evidence\nthe numbers","labels":["ask"]}]' || { echo "no such bead" >&2; exit 1; } ;;
   *) echo "no such bead" >&2; exit 1 ;;
 esac
 "#,
@@ -226,6 +228,22 @@ async fn the_stuck_page_leads_with_the_bead_past_its_p95_and_a_row_opens_its_tim
     assert_eq!(get(addr, "/stuck/a%20b").await.0, 400);
     let (status, loc) = get_location(addr, "/stuck/sp-2cah6").await;
     assert_eq!((status, loc.as_str()), (301, "/beads/sp-2cah6"));
+}
+
+#[tokio::test]
+async fn an_ask_with_no_lifecycle_row_opens_on_the_bead_page_with_its_question() {
+    let dir = scratch("ask");
+    let mut c = ops_cfg("");
+    c.lc = fake_lc(&dir.to_path_buf());
+    let addr = spawn(c).await;
+
+    let (status, page) = get(addr, "/beads/sp-ask1").await;
+    assert_eq!(status, 200, "{page}");
+    assert!(page.contains("Ship the &lt;b&gt;widget&lt;/b&gt;?"), "the question, escaped: {page}");
+    assert!(page.contains("Class basis") && page.contains("the numbers"), "{page}");
+    assert!(page.contains("/beads/sp-work1"), "the work bead it holds is linked: {page}");
+    // POSITIVE CONTROL: a bead that is neither a lifecycle row nor an ask is still 404.
+    assert_eq!(get(addr, "/beads/sp-nope1").await.0, 404);
 }
 
 // ── /units ───────────────────────────────────────────────────────────────────

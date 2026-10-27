@@ -463,9 +463,21 @@ async fn stuck_bead_route(State(loom): State<Arc<Loom>>, axum::extract::Path(id)
     let rounds = lifecycle_snapshot(&loom).map(|(s, _)| bead_rounds_html(&s, &id)).unwrap_or_default();
     match lc_json(&loom, &["ops-bead", &id]).await {
         Ok(d) if d.get("events").is_some() => html_response(StatusCode::OK, shell::with_bar(&stuck::render_bead(stuck::num(&d["now"]).unwrap_or_else(now_s), &id, &d, &rounds), &page_bar(&loom))),
-        Ok(_) => html_response(StatusCode::NOT_FOUND, "<!doctype html><p>no such bead</p>".into()),
-        Err(e) if e.contains("exited 1") => html_response(StatusCode::NOT_FOUND, "<!doctype html><p>no such bead</p>".into()),
+        Ok(_) => ask_page_or_missing(&loom, &id).await,
+        Err(e) if e.contains("exited 1") => ask_page_or_missing(&loom, &id).await,
         Err(e) => unavailable("bead timeline", &e),
+    }
+}
+
+async fn ask_page_or_missing(loom: &Loom, id: &str) -> Response {
+    let missing = || html_response(StatusCode::NOT_FOUND, "<!doctype html><p>no such bead</p>".into());
+    match lc_json(loom, &["show-ask", id]).await {
+        Ok(ask) => {
+            let content = lc_json(loom, &["content", "show", id, "--json"]).await.unwrap_or(Value::Null);
+            html_response(StatusCode::OK, shell::with_bar(&stuck::render_ask(now_s(), id, &ask, &content), &page_bar(loom)))
+        }
+        Err(e) if e.contains("exited 1") => missing(),
+        Err(e) => unavailable("ask", &e),
     }
 }
 
