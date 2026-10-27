@@ -4943,7 +4943,10 @@ fn a_mender_summons_carries_a_failure_spec_its_verbs_can_read() {
     assert_eq!(spec["batch"], batch.as_str());
     assert_eq!(spec["pass"], 1);
     assert_eq!(spec["suite"], "test-z.sh");
-    assert_eq!(spec["output"], "assertion Z failed");
+    assert_eq!(
+        spec["output"],
+        format!("{}\nassertion Z failed", crate::ops::round::NO_FAILURE_FOUND)
+    );
     assert!(spec["repo"].as_str().is_some_and(|r| !r.is_empty()), "{spec}");
     let members: Vec<(&str, &str)> = spec["members"]
         .as_array()
@@ -4952,4 +4955,25 @@ fn a_mender_summons_carries_a_failure_spec_its_verbs_can_read() {
         .map(|m| (m["bead"].as_str().unwrap(), m["tip"].as_str().unwrap()))
         .collect();
     assert_eq!(members, [("sp-a", "ta"), ("sp-b", "tb")]);
+}
+
+#[test]
+fn a_failure_excerpt_names_the_failing_test_past_forty_crates_of_doc_tests() {
+    use crate::ops::round::failure_excerpt;
+    let mut o = String::from("     Running unittests src/lib.rs (target/debug/deps/gate-abc)\n\nrunning 2 tests\ntest a ... ok\ntest b ... FAILED\n\nfailures:\n\n---- b stdout ----\nthread 'b' panicked at gate/src/lib.rs:42:9:\nassertion failed: x\n\nfailures:\n    b\n\ntest result: FAILED. 1 passed; 1 failed\n\n");
+    for i in 0..40 {
+        o.push_str(&format!("   Doc-tests crate{i}\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed\n\n"));
+    }
+    o.push_str("error: 1 target failed:\n    `-p gate --lib`\n");
+    let x = failure_excerpt(&o);
+    assert!(x.contains("---- b stdout ----") && x.contains("gate/src/lib.rs:42:9") && x.contains("test result: FAILED"), "{x}");
+    assert!(x.contains("error: 1 target failed"), "{x}");
+    assert!(!x.contains("crate7"), "{x}");
+}
+
+#[test]
+fn a_failure_excerpt_of_a_shell_suite_keeps_its_fail_lines() {
+    use crate::ops::round::failure_excerpt;
+    let x = failure_excerpt("ok one\nFAIL: two\n  expected 1\n  got 2\nok three\nok four\n");
+    assert!(x.starts_with("FAIL: two") && x.contains("got 2") && !x.contains("ok four"), "{x}");
 }
