@@ -975,11 +975,11 @@ pev batch-ended '{"SuitesStarted":{"n":1}}' >/dev/null
 pev batch-ended '{"Failed":{"suite":"test-e.sh","n":1}}' >/dev/null
 ended_rows() { lc mending list --batch "$1" | python3 -c 'import json,sys; print(" ".join(x["state"] + "/" + str(x["triage_ended_at"] is not None) for x in json.load(sys.stdin)))'; }
 is "positive control: a red suite on an open batch is a WAITING row" "WAITING/False" "$(ended_rows batch-ended)"
-is "closing a different batch's rows leaves it alone" "0" "$(lc mending close-ended --actor test)"
+is "closing a different batch's rows leaves it alone" "0" "$(lc mending close-ended --actor concierge)"
 _lc_abandon_batch batch-ended test "fixture close" >/dev/null
 wantrc "the batch is closed" 0 $?
-is "a closed batch's open row is ended with its triage stamped" "1" "$(lc mending close-ended --actor test)"
+is "a closed batch's open row is ended with its triage stamped" "1" "$(lc mending close-ended --actor concierge)"
 is "the row is no longer WAITING" "RETURNED/True" "$(ended_rows batch-ended)"
 is "a live batch's rows are untouched" "1" "$(lc mending list --live | python3 -c 'import json,sys; print(sum(x["batch_id"]=="batch-mend" for x in json.load(sys.stdin)) and 1)')"
-is "ending is idempotent" "0" "$(lc mending close-ended --actor test)"
+is "ending is idempotent" "0" "$(lc mending close-ended --actor concierge)"
 tl_summary
