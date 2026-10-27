@@ -23,10 +23,47 @@ pub fn config_path(file: &str) -> String {
     format!("spira.{}", file.strip_prefix("SPIRA_").unwrap_or(file).to_ascii_lowercase())
 }
 
-/// `(added, removed)` declared by a delta's text.
+/// Word pairs by which a release renamed its vocabulary: a key dropped under the first word
+/// and added under the second is a rename, which carries the operator's value.
+const RENAMES: &[(&str, &str)] = &[("aeons", "dwarves"), ("aeon", "dwarf"), ("summon", "call")]; // ffx-ok
+
+fn renamed_pairs(text: &str) -> Result<Vec<(String, String)>, String> {
+    let v: toml::Value = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
+    Ok(v.get("renamed")
+        .and_then(|r| r.as_table())
+        .map(|t| t.iter().filter_map(|(f, to)| to.as_str().map(|to| (f.clone(), to.to_string()))).collect())
+        .unwrap_or_default())
+}
+
+/// `(added, removed)` declared by a delta's text; a `[renamed]` entry declares its target
+/// added and its source removed.
 pub fn declared(text: &str) -> Result<(BTreeSet<String>, BTreeSet<String>), String> {
     let (added, removed) = spira_config::parse_config_delta(text)?;
-    Ok((added.into_iter().collect(), removed.into_iter().collect()))
+    let (mut added, mut removed): (BTreeSet<String>, BTreeSet<String>) = (added.into_iter().collect(), removed.into_iter().collect());
+    for (from, to) in renamed_pairs(text)? {
+        removed.insert(from);
+        added.insert(to);
+    }
+    Ok((added, removed))
+}
+
+/// `(removed, added)` pairs where the removed key maps to the added key through [`RENAMES`]
+/// yet no `[renamed]` entry carries the value.
+pub fn unrenamed(text: &str) -> Result<Vec<(String, String)>, String> {
+    let (added, removed) = spira_config::parse_config_delta(text)?;
+    let carried: BTreeSet<String> = renamed_pairs(text)?.into_iter().map(|(f, _)| f).collect();
+    let mut out = Vec::new();
+    for r in removed.iter().filter(|r| !carried.contains(*r)) {
+        for (old, new) in RENAMES {
+            if r.contains(old) {
+                let twin = r.replacen(old, new, 1);
+                if added.contains(&twin) {
+                    out.push((r.clone(), twin));
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// `(undeclared additions, undeclared removals)` between two key sets.
@@ -102,6 +139,14 @@ impl Rule for ConfigDelta {
                 message: format!("registry key {k} is removed but {DELTA} does not list it under removed"),
             });
         }
+        for (from, to) in unrenamed(&text).map_err(|e| LintError::Refused(format!("{DELTA} does not parse: {e}")))? {
+            out.push(Finding {
+                rule: NAME,
+                path: DELTA.into(),
+                line: None,
+                message: format!("{from} is removed and {to} added without a [renamed] entry: the operator's value would be re-defaulted, not carried"),
+            });
+        }
         if out.is_empty() {
             self.checked.set(Some(head.len()));
         }
@@ -174,6 +219,26 @@ mod tests {
         assert!(out[0].message.contains("spira.beta"), "{out:?}");
         t.write(DELTA, "removed = [\"spira.beta\"]\n[added]\n\"spira.alpha\" = 1\n");
         assert_eq!(check(&t).0, Ok(vec![]));
+    }
+
+    #[test]
+    fn a_removal_and_addition_that_differ_by_a_rename_word_need_a_renamed_entry() {
+        let t = repo();
+        t.write("spira/conf.d/SPIRA_MAX_DWARVES", "TYPE=string\n");
+        t.remove("spira/conf.d/SPIRA_BETA");
+        t.write("spira/conf.d/SPIRA_MAX_AEONS", "TYPE=string\n"); // ffx-ok
+        t.git(&["add", "."]);
+        t.git(&["commit", "-qm", "base2"]);
+        t.git(&["tag", "-f", "base"]);
+        t.remove("spira/conf.d/SPIRA_MAX_AEONS"); // ffx-ok
+        t.write(DELTA, "removed = [\"spira.max_aeons\"]\n[added]\n\"spira.max_dwarves\" = 4\n"); // ffx-ok
+        t.git(&["add", "-A"]);
+        t.git(&["rm", "-q", "--cached", "-r", "--ignore-unmatch", "spira/conf.d/SPIRA_BETA"]);
+        let out = check(&t).0.unwrap();
+        assert!(out.iter().any(|f| f.message.contains("without a [renamed] entry")), "{out:?}");
+        t.write(DELTA, "[renamed]\n\"spira.max_aeons\" = \"spira.max_dwarves\"\n"); // ffx-ok
+        let out = check(&t).0.unwrap();
+        assert!(!out.iter().any(|f| f.message.contains("max_aeons")), "{out:?}"); // ffx-ok
     }
 
     #[test]

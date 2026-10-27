@@ -182,6 +182,10 @@ removed = ["spira.old_key"]
 "spira.new_key" = 300
 ```
 
+A renamed config key is declared `[renamed]` with `"spira.old" = "spira.new"`, never as removed
+plus added: activation carries the operator's value to the new key and drops the old one, and
+`config-delta` refuses a delta that drops and adds a key pair differing only by a rename word.
+
 `activate` (and `rollback`, from a record it kept) applies it with the flip:
 
 1. Resolve it against the layers `$SPIRA_TOML` names, in memory, and run the **release's own**
