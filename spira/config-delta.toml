@@ -1,8 +1,8 @@
 # Keys this release adds to the one source (release/src/config_delta.rs, sp-pr6jn6), applied at activation.
 removed = ["spira.broker_enable", "spira.express_label", "spira.overlap_defer_label", "spira.round_marker_max_age", "spira.liveness_model", "spira.tier_budget_window", "spira.attribute_maxpar", "spira.batch_bins_ttl", "spira.gate_select_cap", "spira.preflight_suite_max_secs", "spira.queue_repro_ci_maxsec", "spira.queue_repro_ci_pollsec", "spira.queue_stuck_age", "spira.reconciler_label", "spira.round_vm_provider", "spira.suites_budget", "spira.suite_times_log", "spira.tier_allowlist", "spira.tier_area_allowlist", "spira.reviewer_diff_limit", "spira.reviewer_model", "spira.reviewer_timeout", "spira.reviewer_verdicts", "spira.mirror", "spira.qa_depth", "spira.self_test", "spira.prefix_map", "spira.check5_max_resolve", "spira.delivers_check_timeout", "spira.cert_prices", "spira.dolt_maintenance_units", "spira.testdb_data", "spira.testdb_port", "spira.lc_testdb_data", "spira.lc_testdb_port", "spira.release_rust_toolchain", "spira.sift_mend_hold_secs", "spira.maechen_label", "spira.maechen_landing_interval", "spira.maechen_max_beads", "spira.maechen_max_gap_seconds", "spira.maechen_remedy_label", "spira.auron_restarts", "spira.auron_restart_window"]
 [added]
-"spira.heimdall_restarts" = 5
-"spira.heimdall_restart_window" = 3600
+"spira.heimdall_restarts" = "5"
+"spira.heimdall_restart_window" = "3600"
 "spira.gate_deadline" = 300
 "spira.git_lock_stale_secs" = 600
 "spira.stack_shared_files" = "Cargo.lock Cargo.toml spira/config-delta.toml spira/conf.d/ spira-lint/"
