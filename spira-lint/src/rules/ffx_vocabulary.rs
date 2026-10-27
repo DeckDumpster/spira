@@ -8,7 +8,7 @@ use regex::Regex;
 use crate::{Entry, Finding, LintError, Rule, SyncCell, Tree};
 
 pub struct FfxVocabulary {
-    mode: Result<Mode, String>,
+    mode: Option<Result<Mode, String>>,
     checked: SyncCell<Option<usize>>,
     report: Mutex<Option<String>>,
 }
@@ -98,7 +98,7 @@ pub fn terms_in(text: &str) -> Vec<String> {
 
 impl FfxVocabulary {
     pub fn with_mode(mode: Result<Mode, String>) -> FfxVocabulary {
-        FfxVocabulary { mode, checked: SyncCell::new(None), report: Mutex::new(None) }
+        FfxVocabulary { mode: Some(mode), checked: SyncCell::new(None), report: Mutex::new(None) }
     }
 
     fn hits(&self, tree: &Tree) -> Result<(Vec<(String, usize, String)>, usize), LintError> {
@@ -133,7 +133,11 @@ impl Rule for FfxVocabulary {
     }
 
     fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
-        let mode = match &self.mode {
+        let resolved = match &self.mode {
+            Some(m) => m.clone(),
+            None => spira_config::process::cfg(MODE_KEY).and_then(|v| Mode::parse(&v)),
+        };
+        let mode = match &resolved {
             Ok(m) => *m,
             Err(e) => pending_mode(tree).ok_or_else(|| LintError::Refused(e.clone()))?,
         };
@@ -185,8 +189,7 @@ fn pending_mode(tree: &Tree) -> Option<Mode> {
 }
 
 pub fn rules() -> Vec<Box<dyn Rule>> {
-    let mode = spira_config::process::cfg(MODE_KEY).and_then(|v| Mode::parse(&v));
-    vec![Box::new(FfxVocabulary::with_mode(mode))]
+    vec![Box::new(FfxVocabulary { mode: None, checked: SyncCell::new(None), report: Mutex::new(None) })]
 }
 
 #[cfg(test)]
