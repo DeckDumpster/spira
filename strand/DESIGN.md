@@ -59,12 +59,12 @@ state; see §4 R7).
 |---|---|---|
 | the bead store | `$SPIRA_LIST_SNAPSHOT` when readable (sentinel's `bd list --all --limit 0` of this pass), else **one** `bd -C $SPIRA_DB list --all --limit 0 --brief --json` | the WHOLE store, closed beads included. One read per run, not per partition. |
 | the claimable set | per partition `spira-claim ready-count <labels> <exclude> --json` (§9) | the machine's READY/REWORK rows; a refusal is an `Err`, never an empty set |
-| partitions | `SPIRA_LABELS` (+ `SPIRA_EXCLUDE_LABELS`) narrows to one; otherwise the **roster probe** (§2.5) | exclusions: `SPIRA_EXCLUDE_LABELS` overrides all, else the fayth's own, else `spira-poison,<ask>,<ci>` |
+| partitions | `SPIRA_LABELS` (+ `SPIRA_EXCLUDE_LABELS`) narrows to one; otherwise the **roster probe** (§2.5) | exclusions: `SPIRA_EXCLUDE_LABELS` overrides all, else the rune's own, else `spira-poison,<ask>,<ci>` |
 | aeon liveness | `$SPIRA_RUN/hold-<id>.pid` (pid alive) and `$SPIRA_RUN/aeon-*-<id>.pid` (pid alive AND `/proc/<pid>/cmdline` contains `aeon.sh`) | never `pgrep -f` |
-| aeons per partition / fleet | `systemctl --user list-units 'spira-aeon-<fayth>-*' --no-legend` (and `'spira-aeon-*'`) when `SPIRA_SUMMON` is `systemd-run` (default); else live pidfiles | read-only: dead pidfiles are no longer deleted here |
+| aeons per partition / fleet | `systemctl --user list-units 'spira-aeon-<rune>-*' --no-legend` (and `'spira-aeon-*'`) when `SPIRA_SUMMON` is `systemd-run` (default); else live pidfiles | read-only: dead pidfiles are no longer deleted here |
 | capacity pause | first field of `$SPIRA_CAPACITY_PAUSE` (default `$SPIRA_RUN/capacity-pause`), an epoch | read-only: the probe/lift side effects of `capacity_paused` belong to the summon path |
 | admission throttle | `$SPIRA_THROTTLE_STAMP` (default `$SPIRA_RUN/queue-throttled`) | exists+readable+non-empty ⇒ shut (`depth=N` parsed); exists but unreadable/empty ⇒ unreadable; absent ⇒ open |
-| pass truncation | `$SPIRA_RUN/sentinel.log`: after the last `: state: open=` line (the sentinel's pass-start marker), a `CHECK7 <fayth>: not evaluated` for a fayth of the partition | |
+| pass truncation | `$SPIRA_RUN/sentinel.log`: after the last `: state: open=` line (the sentinel's pass-start marker), a `CHECK7 <rune>: not evaluated` for a rune of the partition | |
 | harness pulse (report header) | `systemctl --user is-active <unit>` for `spira-sentinel[-<instance>].timer`; mtime of sentinel.log | `?` unit ⇒ `unknown` |
 | episode state | `$SPIRA_RUN/strands.json` | §3.3 |
 
@@ -101,13 +101,13 @@ last 12 sentinel log lines. No `mail` ⇒ no mail, state still marked (as before
 
 ### 2.5 The roster probe — the one bash seam
 
-A persona's partition is `FAYTH_LABELS`/`FAYTH_EXCLUDE_LABELS` in a `.fayth` file, which
+A persona's partition is `RUNE_LABELS`/`RUNE_EXCLUDE_LABELS` in a `.rune` file, which
 is **bash** that interpolates `conf.sh` variables. `[persona.<name>].labels` in spira-config
 does not carry the scope label or the exclusions (builder's `qa-proposed`; batcher's label
 is `[]` there), so it is not yet an authority. Rather than copy the predicate, `strand`
 asks the one that exists: it runs `bash -s` with a fixed script on **stdin** that sources
-`<SPIRA_HOME>/lib.sh` and prints, one line per partition, `labels<TAB>exclude<TAB>fayths`
-(`fayth_partitions` + `fayths_for_labels`, falling back to `spira_fayths`). No payload
+`<SPIRA_HOME>/lib.sh` and prints, one line per partition, `labels<TAB>exclude<TAB>runes`
+(`rune_partitions` + `runes_for_labels`, falling back to `spira_runes`). No payload
 travels in argv; the lib path travels in the environment (`STRAND_LIB`). Retire this when
 spira-config's persona table carries labels and exclusions (§7).
 

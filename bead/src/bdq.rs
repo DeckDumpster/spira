@@ -392,14 +392,14 @@ pub fn creates_rowless_type(args: &[String]) -> bool {
 
 /// Whether `bdq`'s czar-fence dispatch applies to this call, and the class to pass
 /// `czar-fence.sh` if so. Mirrors the bash's `case "${1:-}" in reopen) ...; update|close)
-/// ...; esac`, gated on `fayth == "czar"` and a non-empty class.
+/// ...; esac`, gated on `rune == "czar"` and a non-empty class.
 pub fn czar_fence_class<'a>(
-    fayth: &str,
+    rune: &str,
     czar_class: &'a str,
     czar_trigger_bead: &str,
     args: &[String],
 ) -> Option<&'a str> {
-    if fayth != "czar" || czar_class.is_empty() {
+    if rune != "czar" || czar_class.is_empty() {
         return None;
     }
     match args.first().map(String::as_str) {

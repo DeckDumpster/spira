@@ -210,18 +210,18 @@ printf '#!/usr/bin/env bash\n[ "$1" = "--list-enable" ] && cat "%s"\n' "$UNITS_L
 chmod +x "$STUB_BIN/units-install"
 
 # FLEET_LINES: "<labels>\t<ready>\t<live>\t<is-task>" per partition (a missing 4th column
-# means task). The chamber, the claimable-work count and the live-aeon count are three tools,
-# so three stubs read this one fixture; a partition's fayth is its labels with commas as "_".
+# means task). The runes, the claimable-work count and the live-aeon count are three tools,
+# so three stubs read this one fixture; a partition's rune is its labels with commas as "_".
 FLEET_LINES="$T/fleet-lines"
 : > "$FLEET_LINES"
 cat > "$STUB_BIN/spira-config" <<'FEOF'
 #!/usr/bin/env bash
-fayth_of() { printf 'p-%s' "${1//,/_}"; }
+rune_of() { printf 'p-%s' "${1//,/_}"; }
 case "$1 $2" in
-    "fayth partitions") awk -F'\t' 'NF>=3{print $1"\t"}' "$FLEET_LINES" ;;
-    "fayth task") awk -F'\t' 'NF>=3 && ($4==""||$4==1){gsub(",","_",$1); printf "p-%s ", $1}' "$FLEET_LINES" ;;
-    "fayth lane") awk -F'\t' 'NF>=3 && $4=="0"{gsub(",","_",$1); printf "p-%s ", $1}' "$FLEET_LINES" ;;
-    "fayth for-labels") fayth_of "$3"; echo ;;
+    "rune partitions") awk -F'\t' 'NF>=3{print $1"\t"}' "$FLEET_LINES" ;;
+    "rune task") awk -F'\t' 'NF>=3 && ($4==""||$4==1){gsub(",","_",$1); printf "p-%s ", $1}' "$FLEET_LINES" ;;
+    "rune lane") awk -F'\t' 'NF>=3 && $4=="0"{gsub(",","_",$1); printf "p-%s ", $1}' "$FLEET_LINES" ;;
+    "rune for-labels") rune_of "$3"; echo ;;
     "repo landref") echo "origin/main" ;;
     *) exit 1 ;;
 esac

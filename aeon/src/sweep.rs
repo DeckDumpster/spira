@@ -17,10 +17,10 @@ fn epoch_now() -> i64 {
 
 impl Run<'_> {
     pub fn sweep(&mut self, prompt: Option<String>) -> i32 {
-        let f = self.fayth.name.clone();
+        let f = self.rune.name.clone();
         let own = self.own_unit.clone();
         let have: i64 = self.sv("aeon_count", &s(&[&f, &own])).text().trim().parse().unwrap_or(0);
-        let max = self.fayth.max_concurrent as i64;
+        let max = self.rune.max_concurrent as i64;
         if have >= max {
             self.log(&format!("{f}: at capacity ({have}/{max}), not sweeping"));
             self.ledger.awake(self.now(), &f, "capacity");
@@ -77,7 +77,7 @@ impl Run<'_> {
         };
         let prompt = match prompt.filter(|p| !p.is_empty()) {
             Some(p) => p,
-            None => std::fs::read_to_string(self.home().join("chamber").join(format!("{f}.md"))).unwrap_or_default().trim_end_matches('\n').to_string(),
+            None => std::fs::read_to_string(self.home().join("runes").join(format!("{f}.md"))).unwrap_or_default().trim_end_matches('\n').to_string(),
         };
         let sys_file = run.join(format!("sweep-{f}-{}.system.md", self.pid));
         let task_file = run.join(format!("sweep-{f}-{}.task.md", self.pid));
@@ -101,7 +101,7 @@ impl Run<'_> {
             log: logf.clone(),
             cwd: std::env::current_dir().unwrap_or_else(|_| run.clone()),
             env: self.d.env.child(),
-            timeout: self.fayth.timeout_seconds,
+            timeout: self.rune.timeout_seconds,
             halted: None,
             warm: None,
         };

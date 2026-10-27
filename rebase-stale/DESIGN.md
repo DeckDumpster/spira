@@ -103,7 +103,7 @@ The holder of `spira/<id>` is read from `git worktree list --porcelain`. Classif
   worktree untouched. Witnesses, any one suffices (fail closed):
   1. `hold-<id>.pid` names a live pid (hold.sh / unhold.sh protocol);
   2. `aeon-*-<id>.pid` names a live pid whose cmdline contains `aeon.sh` (the aeon's unit
-     name `spira-aeon-<fayth>-<epoch>` does not carry the bead, so its pidfile is the
+     name `spira-aeon-<rune>-<epoch>` does not carry the bead, so its pidfile is the
      per-bead witness of "the bead's aeon unit is active");
   3. the bead store says `in_progress` (a lease not released);
   4. the bead store could not be read, proven by a positive control (`bd list --limit 1`

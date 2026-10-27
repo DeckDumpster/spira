@@ -1,6 +1,6 @@
 //! CHECK 7's inputs, and the --summon-only fast path. The summon loop itself (lanes, pool,
 //! fleet ceiling, express grant, elastic reservations) — lib.sh's `ck7_summon_pass`/
-//! `_ck7_summon_body`/`summon_fayth`/`world_gate`/`summon_argv` — is ported in-process here
+//! `_ck7_summon_body`/`summon_rune`/`world_gate`/`summon_argv` — is ported in-process here
 //! (wave 4.27, family G, sp-gzmd2). `summon.lock` is the one thing still shared with `aeon
 //! --escape` (G5; escape.sh before it, retired sp-zpaq0) across the process boundary — a
 //! real OS flock, so two binaries contending for it still serialize correctly.
@@ -33,21 +33,21 @@ struct Urgent {
 }
 
 impl<'a> Sentinel<'a> {
-    /// ready_cache_populate: never hand back an empty-but-existing file, because fayth_ready
+    /// ready_cache_populate: never hand back an empty-but-existing file, because rune_ready
     /// trusts the cache unconditionally once it exists.
     ///
-    /// The counts are spira-claim's own claimability (`bulk-ready-by-fayth`), the rule an
+    /// The counts are spira-claim's own claimability (`bulk-ready-by-rune`), the rule an
     /// aeon's `select --blockers machine` applies — never the `bd ready` set, which counts a
     /// SUBMITTED bead and its dependents. A machine that cannot answer writes no cache, so
-    /// `fayth_ready` asks again and fails closed.
+    /// `rune_ready` asks again and fails closed.
     pub fn export_ready_cache(&self) {
         let bin = self.cfg.claim_bin.clone();
-        let o = self.h.run(Spec::args_owned(bin, vec!["bulk-ready-by-fayth".into()]));
+        let o = self.h.run(Spec::args_owned(bin, vec!["bulk-ready-by-rune".into()]));
         if !o.ok() {
             return;
         }
         let counts = parse_cache(&o.stdout);
-        if counts.is_empty() && !self.ctx.fayths.is_empty() {
+        if counts.is_empty() && !self.ctx.runes.is_empty() {
             return;
         }
         if let Some(p) = self.temp_file("ready-cache", &render_cache(&counts)) {
@@ -59,7 +59,7 @@ impl<'a> Sentinel<'a> {
     /// CHECK 7 — no `bd ready` call (sp-v62vn).
     pub fn summon_only(&self) -> i32 {
         // S1 — the world (halt/drain), checked once here as a fast exit ahead of every
-        // other cost `summon_fayth` would otherwise pay per fayth; each `summon_fayth`
+        // other cost `summon_rune` would otherwise pay per rune; each `summon_rune`
         // call below checks it again on its own (wave 4.27 — `world_gate` is in-process
         // now, so asking twice costs nothing like the bash seam call it replaced did).
         if !self.world_gate("fleet", "summon-only") || !self.skew_gate("summon-only") {
@@ -82,10 +82,10 @@ impl<'a> Sentinel<'a> {
         }
         let live = self.live_total();
         self.log(&format!(
-            "summon-only: live={live} fayths=[{}]",
-            self.cfg.fayths_str
+            "summon-only: live={live} runes=[{}]",
+            self.cfg.runes_str
         ));
-        // The ready set is spira-claim's, inside bulk-ready-by-fayth: the machine's READY rows,
+        // The ready set is spira-claim's, inside bulk-ready-by-rune: the machine's READY rows,
         // never a bd ready query (sp-uqrdn stopped the sentinel's own; sp-v62vn retired
         // spira-claim's). test-summon-fast-path D asserts zero.
         self.export_ready_cache();
@@ -100,9 +100,9 @@ impl<'a> Sentinel<'a> {
     }
 }
 
-/// `summon_fayth`'s one answer per call: whether it summoned, and the ready count this
+/// `summon_rune`'s one answer per call: whether it summoned, and the ready count this
 /// call learned or reused — the caller's own cache for its NEXT call (lib.sh's
-/// `SUMMON_FAYTH_CACHED_READY`, a shell variable surviving across calls in one process;
+/// `SUMMON_RUNE_CACHED_READY`, a shell variable surviving across calls in one process;
 /// here just a value the fill loop threads through itself). `None` means the ready query
 /// itself could not be answered this call — never cached as a zero.
 pub struct Attempt {
@@ -110,13 +110,13 @@ pub struct Attempt {
     pub ready: Option<i64>,
 }
 
-/// `fayth_ready <fayth>`'s three outcomes (spira-claim `fayth-ready`'s own rc contract,
-/// sp-3ntca): a real count (zero included), no such fayth in the chamber, or the query
+/// `rune_ready <rune>`'s three outcomes (spira-claim `rune-ready`'s own rc contract,
+/// sp-3ntca): a real count (zero included), no such rune in the runes, or the query
 /// itself failed (bd unreachable, say) — the last two must refuse the summon WITHOUT
 /// caching a zero, or a transient failure reads as "nothing ready" for the rest of the pass.
 enum ReadyAnswer {
     Count(i64),
-    NoFayth,
+    NoRune,
     Failed(String),
 }
 
@@ -172,7 +172,7 @@ pub fn ck7_fill_cap(fill: i64, pool: Option<i64>, max_live_aeons: i64) -> bool {
 }
 
 /// `command -v <name>` strictly: `None` when nothing executable is found, never a bare-name
-/// fallback — the one caller (`summon_fayth`'s own `aeon` resolution) must refuse rather
+/// fallback — the one caller (`summon_rune`'s own `aeon` resolution) must refuse rather
 /// than hand systemd-run a name it will never find either.
 fn which(name: &str, path: &str) -> Option<String> {
     let p = pass::on_path(name, path);
@@ -180,7 +180,7 @@ fn which(name: &str, path: &str) -> Option<String> {
 }
 
 impl<'a> Sentinel<'a> {
-    /// world_gate <fayth> <log-prefix> -> true if summons are permitted, false if halted or
+    /// world_gate <rune> <log-prefix> -> true if summons are permitted, false if halted or
     /// draining (lib.sh:1102). Both stamps hold until `world.sh start` / `resume`: no clock
     /// lifts either, whatever the stamp's age or contents.
     pub fn world_gate(&self, f: &str, prefix: &str) -> bool {
@@ -195,7 +195,7 @@ impl<'a> Sentinel<'a> {
         true
     }
 
-    /// `sentinel --world-gate <fayth> <prefix>`: lib.sh's `world_gate` shim target, for
+    /// `sentinel --world-gate <rune> <prefix>`: lib.sh's `world_gate` shim target, for
     /// `aeon --escape`'s own seam (`_aeon_world_gate`) and any bash caller that still
     /// sources lib.sh directly.
     pub fn world_gate_cmd(&self, f: &str, prefix: &str) -> i32 {
@@ -237,43 +237,43 @@ impl<'a> Sentinel<'a> {
         pass::pid_count(&self.cfg.run, name) as i64
     }
 
-    /// aeon_count <fayth> [exclude-unit] -> live aeons of one persona (lib.sh:238, already
+    /// aeon_count <rune> [exclude-unit] -> live aeons of one persona (lib.sh:238, already
     /// a shim onto `strand aeon-count`; this is the same question asked in-process by the
-    /// one caller that needs it inside this pass, `fayth_free`).
-    fn aeon_count(&self, fayth: &str, exclude: Option<&str>) -> i64 {
-        self.unit_count(fayth, exclude)
+    /// one caller that needs it inside this pass, `rune_free`).
+    fn aeon_count(&self, rune: &str, exclude: Option<&str>) -> i64 {
+        self.unit_count(rune, exclude)
     }
 
-    /// aeons_live_lanes, restricted to the lane fayths already known to the caller (so it
-    /// is asked once per lane, in the SAME roster the CK7 loop itself computed) — `FAYTH_NAME`
-    /// is resolved per lane fayth, exactly as the bash original, so a lane free to declare a
-    /// different unit/pidfile name than its chamber filename is still counted correctly.
+    /// aeons_live_lanes, restricted to the lane runes already known to the caller (so it
+    /// is asked once per lane, in the SAME roster the CK7 loop itself computed) — `RUNE_NAME`
+    /// is resolved per lane rune, exactly as the bash original, so a lane free to declare a
+    /// different unit/pidfile name than its runes filename is still counted correctly.
     fn lanes_live_total(&self, lanes: &[String]) -> i64 {
         lanes
             .iter()
             .map(|f| {
-                let name = spira_config::chamber::fayth_get(&self.cfg.home, f, "FAYTH_NAME", f);
+                let name = spira_config::runes::rune_get(&self.cfg.home, f, "RUNE_NAME", f);
                 self.unit_count(&name, None)
             })
             .sum()
     }
 
-    /// fayth_free <fayth> [pool-remaining] [exclude-unit] -> how many more of this persona
+    /// rune_free <rune> [pool-remaining] [exclude-unit] -> how many more of this persona
     /// may be summoned right now (lib.sh:1003). THIS STAYS HOST-DRIVEN RATHER THAN A ONE-LINE
     /// SHIM for the same reason lib.sh's own copy stays bash: callers need to drive
     /// `aeon_count`'s answer directly in a fixture without a real process table.
-    fn fayth_free(&self, fayth: &str, pool: Option<i64>, exclude: Option<&str>) -> i64 {
+    fn rune_free(&self, rune: &str, pool: Option<i64>, exclude: Option<&str>) -> i64 {
         let home = &self.cfg.home;
-        let mut max: i64 = spira_config::chamber::fayth_get(home, fayth, "FAYTH_MAX_CONCURRENT", "1")
+        let mut max: i64 = spira_config::runes::rune_get(home, rune, "RUNE_MAX_CONCURRENT", "1")
             .trim()
             .parse()
             .unwrap_or(1);
-        let elastic = spira_config::chamber::fayth_get(home, fayth, "FAYTH_ELASTIC", "0") == "1";
+        let elastic = spira_config::runes::rune_get(home, rune, "RUNE_ELASTIC", "0") == "1";
         let is_remainder = elastic && pool.is_some();
         if is_remainder {
             max = pool.unwrap();
         }
-        let have = self.aeon_count(fayth, exclude);
+        let have = self.aeon_count(rune, exclude);
         let mut free = if is_remainder { max } else { (max - have).max(0) };
         if let Some(p) = pool {
             if p < free {
@@ -283,25 +283,25 @@ impl<'a> Sentinel<'a> {
         free
     }
 
-    /// `spira_task_fayths`/`spira_lane_fayths` (spira-config's own chamber functions),
-    /// applied to THIS pass's already-resolved roster (`ctx.fayth_names()`, which the
-    /// probe built via `spira_fayths()` — already `SPIRA_FAYTHS`-correct and in priority
+    /// `spira_task_runes`/`spira_lane_runes` (spira-config's own runes functions),
+    /// applied to THIS pass's already-resolved roster (`ctx.rune_names()`, which the
+    /// probe built via `spira_runes()` — already `SPIRA_RUNES`-correct and in priority
     /// order) rather than re-deriving the roster a second time: the same three predicates
-    /// (`FAYTH_SUMMON=auto`, not a party member, `FAYTH_LANE` set or not) applied per name
-    /// in roster order produce the identical split, with no need to thread `SPIRA_FAYTHS`
+    /// (`RUNE_SUMMON=auto`, not a party member, `RUNE_LANE` set or not) applied per name
+    /// in roster order produce the identical split, with no need to thread `SPIRA_RUNES`
     /// itself from bash into this process a second way.
-    fn task_and_lane_fayths(&self) -> (Vec<String>, Vec<String>) {
+    fn task_and_lane_runes(&self) -> (Vec<String>, Vec<String>) {
         let home = &self.cfg.home;
         let mut task = Vec::new();
         let mut lane = Vec::new();
-        for f in self.ctx.fayth_names() {
-            if spira_config::chamber::fayth_get(home, &f, "FAYTH_SUMMON", "auto") != "auto" {
+        for f in self.ctx.rune_names() {
+            if spira_config::runes::rune_get(home, &f, "RUNE_SUMMON", "auto") != "auto" {
                 continue;
             }
-            if spira_config::chamber::fayth_get(home, &f, "FAYTH_ROLE", "task") == "party" {
+            if spira_config::runes::rune_get(home, &f, "RUNE_ROLE", "task") == "party" {
                 continue;
             }
-            if spira_config::chamber::fayth_get(home, &f, "FAYTH_LANE", "").is_empty() {
+            if spira_config::runes::rune_get(home, &f, "RUNE_LANE", "").is_empty() {
                 task.push(f);
             } else {
                 lane.push(f);
@@ -310,24 +310,24 @@ impl<'a> Sentinel<'a> {
         (task, lane)
     }
 
-    /// fayth_ready <fayth> -> spira-claim's own answer, in-process via the binary on PATH
-    /// (`_spira_claim fayth-ready`, lib.sh:454 — kept external: spira-claim's own lib.rs
+    /// rune_ready <rune> -> spira-claim's own answer, in-process via the binary on PATH
+    /// (`_spira_claim rune-ready`, lib.sh:454 — kept external: spira-claim's own lib.rs
     /// deliberately exposes no more than `READY_ARGS_BASE` for another crate to link).
-    fn fayth_ready(&self, f: &str) -> ReadyAnswer {
+    fn rune_ready(&self, f: &str) -> ReadyAnswer {
         let bin = self.cfg.claim_bin.clone();
-        let o = self.h.run(Spec::args_owned(bin, vec!["fayth-ready".into(), f.to_string()]));
+        let o = self.h.run(Spec::args_owned(bin, vec!["rune-ready".into(), f.to_string()]));
         match o.rc {
             0 => ReadyAnswer::Count(o.stdout.trim().parse().unwrap_or(0)),
-            2 => ReadyAnswer::NoFayth,
+            2 => ReadyAnswer::NoRune,
             _ => ReadyAnswer::Failed(o.stderr.trim().to_string()),
         }
     }
 
-    /// express_ready_in_task_pool <task-fayths> <express-label> -> true when some task
-    /// fayth has a bead ready under its OWN partition plus the express label (lib.sh's
-    /// `express_ready_in_task_pool`, fbddd3e2b). Composes with `FAYTH_LABELS` rather than
-    /// bypassing them — exactly `ready-count "<FAYTH_LABELS>,<express-label>"
-    /// "<fayth-exclude f FAYTH_EXCLUDE_LABELS>"`, per task fayth, stopping at the first hit.
+    /// express_ready_in_task_pool <task-runes> <express-label> -> true when some task
+    /// rune has a bead ready under its OWN partition plus the express label (lib.sh's
+    /// `express_ready_in_task_pool`, fbddd3e2b). Composes with `RUNE_LABELS` rather than
+    /// bypassing them — exactly `ready-count "<RUNE_LABELS>,<express-label>"
+    /// "<rune-exclude f RUNE_EXCLUDE_LABELS>"`, per task rune, stopping at the first hit.
     ///
     /// DELETED OUTRIGHT, NOT MISSING A CALLER: wave 4.25 (sp-obhv6) deleted this function
     /// as "no live callers" while `_ck7_summon_body` (lib.sh) still called it by name —
@@ -338,18 +338,18 @@ impl<'a> Sentinel<'a> {
     /// restores the actual predicate the bash intended, not the broken state it had drifted
     /// into (sp-yh7yx).
     ///
-    /// A fayth with no `FAYTH_LABELS` is skipped, same as the bash guard
-    /// (`[ -n "${FAYTH_LABELS:-}" ] || exit 1`) — never counted as ready. sp-xsnid: a
-    /// fayth whose predicate would WIDEN (a bare config reference resolved empty) is
+    /// A rune with no `RUNE_LABELS` is skipped, same as the bash guard
+    /// (`[ -n "${RUNE_LABELS:-}" ] || exit 1`) — never counted as ready. sp-xsnid: a
+    /// rune whose predicate would WIDEN (a bare config reference resolved empty) is
     /// skipped the SAME way — never counted as ready — but LOUDLY: this is the same
-    /// shared, fail-closed evaluator `spira-claim`'s own `fayth-ready`/`bulk-ready-by-
-    /// fayth` now go through, so this read-only express-lane check can never disagree
+    /// shared, fail-closed evaluator `spira-claim`'s own `rune-ready`/`bulk-ready-by-
+    /// rune` now go through, so this read-only express-lane check can never disagree
     /// with the pool's own.
-    fn express_ready_in_task_pool(&self, task_fayths: &[String]) -> bool {
+    fn express_ready_in_task_pool(&self, task_runes: &[String]) -> bool {
         let home = &self.cfg.home;
         let bin = self.cfg.claim_bin.clone();
-        for f in task_fayths {
-            let predicate = match spira_config::chamber::fayth_predicate(home, f) {
+        for f in task_runes {
+            let predicate = match spira_config::runes::rune_predicate(home, f) {
                 Ok(p) => p,
                 Err(e) => {
                     self.h.log_err(&format!("CLAIM-ERROR: {e}"));
@@ -361,7 +361,7 @@ impl<'a> Sentinel<'a> {
             }
             let ex = self
                 .h
-                .run(Spec::args_owned(bin.clone(), vec!["fayth-exclude".into(), f.clone(), predicate.exclude_labels]));
+                .run(Spec::args_owned(bin.clone(), vec!["rune-exclude".into(), f.clone(), predicate.exclude_labels]));
             let exclude = ex.stdout.trim().to_string();
             let rc = self
                 .h
@@ -374,14 +374,14 @@ impl<'a> Sentinel<'a> {
         false
     }
 
-    /// `spira-claim urgent <task fayths>`: the P0 and REWORK beads the task pool can claim —
+    /// `spira-claim urgent <task runes>`: the P0 and REWORK beads the task pool can claim —
     /// a bead only a lane can claim must not stop the lanes. `None` when the machine
     /// cannot answer — the caller yields the lanes, never reads that as "nothing urgent".
-    fn urgent_beads(&self, task_fayths: &[String]) -> Option<Vec<Urgent>> {
-        if task_fayths.is_empty() {
+    fn urgent_beads(&self, task_runes: &[String]) -> Option<Vec<Urgent>> {
+        if task_runes.is_empty() {
             return Some(Vec::new());
         }
-        let args = std::iter::once("urgent".to_string()).chain(task_fayths.iter().cloned()).collect();
+        let args = std::iter::once("urgent".to_string()).chain(task_runes.iter().cloned()).collect();
         let o = self.h.run(Spec::args_owned(self.cfg.claim_bin.clone(), args));
         if o.rc != 0 {
             self.h.log_err(&format!("CHECK7 lanes: CLAIM-ERROR: urgent: {}", o.stderr.trim()));
@@ -399,20 +399,20 @@ impl<'a> Sentinel<'a> {
         )
     }
 
-    /// The youngest live lane aeon: (lane fayth, bead). Only lanes are ever candidates.
-    fn youngest_lane_aeon(&self, lane_fayths: &[String]) -> Option<(String, String)> {
+    /// The youngest live lane aeon: (lane rune, bead). Only lanes are ever candidates.
+    fn youngest_lane_aeon(&self, lane_runes: &[String]) -> Option<(String, String)> {
         let mut best: Option<(std::time::SystemTime, String, String)> = None;
         let rd = std::fs::read_dir(&self.cfg.run).ok()?;
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
             let Some(stem) = name.strip_prefix("aeon-").and_then(|n| n.strip_suffix(".pid")) else { continue };
-            let Some(lane) = lane_fayths.iter().find(|l| {
-                let unit = spira_config::chamber::fayth_get(&self.cfg.home, l, "FAYTH_NAME", l);
+            let Some(lane) = lane_runes.iter().find(|l| {
+                let unit = spira_config::runes::rune_get(&self.cfg.home, l, "RUNE_NAME", l);
                 stem.starts_with(&format!("{unit}-"))
             }) else {
                 continue;
             };
-            let unit = spira_config::chamber::fayth_get(&self.cfg.home, lane, "FAYTH_NAME", lane);
+            let unit = spira_config::runes::rune_get(&self.cfg.home, lane, "RUNE_NAME", lane);
             let bead = stem[unit.len() + 1..].to_string();
             if bead.starts_with("sweep-") || !hel::reap::aeon_alive(&e.path()) {
                 continue;
@@ -428,20 +428,20 @@ impl<'a> Sentinel<'a> {
     /// A P0 express bead is waiting and the fleet is full: stop the youngest lane aeon
     /// through slay so a builder can take the slot this pass. Builders and rounds are never
     /// candidates.
-    fn preempt_lane_for(&self, express: &str, task_fayths: &[String], lane_fayths: &[String]) {
+    fn preempt_lane_for(&self, express: &str, task_runes: &[String], lane_runes: &[String]) {
         let Some(max_live) = self.cfg.max_live_aeons else { return };
         let live = self.live_total() as i64;
         if live < max_live {
             return;
         }
-        let ready_builder = task_fayths.iter().any(|f| {
-            matches!(self.fayth_ready(f), ReadyAnswer::Count(n) if n > 0) && self.fayth_free(f, None, None) > 0
+        let ready_builder = task_runes.iter().any(|f| {
+            matches!(self.rune_ready(f), ReadyAnswer::Count(n) if n > 0) && self.rune_free(f, None, None) > 0
         });
         if !ready_builder {
             self.log(&format!("CHECK7 lanes: express {express} waits but no task persona can take a slot — no lane preempted"));
             return;
         }
-        let Some((lane, bead)) = self.youngest_lane_aeon(lane_fayths) else {
+        let Some((lane, bead)) = self.youngest_lane_aeon(lane_runes) else {
             self.log(&format!("CHECK7 lanes: express {express} waits, {live}/{max_live} live, no lane aeon to preempt"));
             return;
         };
@@ -512,10 +512,10 @@ impl<'a> Sentinel<'a> {
         )
     }
 
-    /// summon_argv <fayth> -> the systemd-run property/setenv flags shared by every summon
-    /// path (lib.sh:1150: `summon_fayth`, `aeon --escape`), one argv token per element.
+    /// summon_argv <rune> -> the systemd-run property/setenv flags shared by every summon
+    /// path (lib.sh:1150: `summon_rune`, `aeon --escape`), one argv token per element.
     pub fn summon_argv(&self, f: &str) -> Vec<String> {
-        let timeout = spira_config::chamber::fayth_get(&self.cfg.home, f, "FAYTH_TIMEOUT_SECONDS", "3600");
+        let timeout = spira_config::runes::rune_get(&self.cfg.home, f, "RUNE_TIMEOUT_SECONDS", "3600");
         let release = self.current_release();
         vec![
             format!("--property=TimeoutStartSec={timeout}"),
@@ -531,7 +531,7 @@ impl<'a> Sentinel<'a> {
         ]
     }
 
-    /// `sentinel --summon-argv <fayth>`: lib.sh's `summon_argv` shim target, for `aeon
+    /// `sentinel --summon-argv <rune>`: lib.sh's `summon_argv` shim target, for `aeon
     /// --escape`'s own seam (`_aeon_summon_argv`).
     pub fn summon_argv_cmd(&self, f: &str) -> i32 {
         for line in self.summon_argv(f) {
@@ -540,14 +540,14 @@ impl<'a> Sentinel<'a> {
         0
     }
 
-    /// summon_fayth <fayth> [pool-remaining] [require-label] [reuse-ready] -> lib.sh:1160,
+    /// summon_rune <rune> [pool-remaining] [require-label] [reuse-ready] -> lib.sh:1160,
     /// the whole refusal ladder: world gate, the account's own capacity, the fleet ceiling
     /// (above every per-persona cap and the pool — SPIRA_MAX_LIVE_AEONS unset means no
     /// ceiling, today's behaviour exactly), the elastic last-slot and inverted lane-last-
     /// slot reservations, this persona's own readiness and concurrency cap, then the
     /// summon itself. **Safety-critical** (wave4-decomposition.md (c)8) — every refusal
     /// keeps its own log line, because the pass's stdout IS the sentinel log.
-    pub fn summon_fayth(&self, f: &str, pool: Option<i64>, require_express: bool, reuse_ready: Option<i64>) -> Attempt {
+    pub fn summon_rune(&self, f: &str, pool: Option<i64>, require_express: bool, reuse_ready: Option<i64>) -> Attempt {
         if !self.world_gate(f, "CHECK7") || !self.skew_gate(&format!("CHECK7 {f}")) {
             return Attempt { summoned: false, ready: reuse_ready };
         }
@@ -569,12 +569,12 @@ impl<'a> Sentinel<'a> {
         if let Some(max_live) = self.cfg.max_live_aeons {
             let live_all = self.live_total() as i64;
             let home = &self.cfg.home;
-            let is_lane = !spira_config::chamber::fayth_get(home, f, "FAYTH_LANE", "").is_empty();
+            let is_lane = !spira_config::runes::rune_get(home, f, "RUNE_LANE", "").is_empty();
             if live_all >= max_live {
                 let spill = is_lane
                     && self.cfg.lanes_max_live.is_some_and(|m| {
-                        let (_, lane_fayths) = self.task_and_lane_fayths();
-                        live_all < max_live + m && self.lanes_live_total(&lane_fayths) < m
+                        let (_, lane_runes) = self.task_and_lane_runes();
+                        live_all < max_live + m && self.lanes_live_total(&lane_runes) < m
                     });
                 if !spill {
                     self.log(&format!("CHECK7 {f}: {live_all}/{max_live} aeon(s) live across the whole fleet — not summoning"));
@@ -582,15 +582,15 @@ impl<'a> Sentinel<'a> {
                 }
                 self.log(&format!("CHECK7 {f}: {live_all}/{max_live} aeon(s) live — a lane may spill over the ceiling"));
             }
-            if spira_config::chamber::fayth_get(home, f, "FAYTH_ELASTIC", "0") == "1" {
+            if spira_config::runes::rune_get(home, f, "RUNE_ELASTIC", "0") == "1" {
                 let slots_free = max_live - live_all;
                 if slots_free == 1 {
-                    let (task_fayths, _) = self.task_and_lane_fayths();
-                    for nef in &task_fayths {
-                        if spira_config::chamber::fayth_get(home, nef, "FAYTH_ELASTIC", "0") == "1" {
+                    let (task_runes, _) = self.task_and_lane_runes();
+                    for nef in &task_runes {
+                        if spira_config::runes::rune_get(home, nef, "RUNE_ELASTIC", "0") == "1" {
                             continue;
                         }
-                        if let ReadyAnswer::Count(n) = self.fayth_ready(nef) {
+                        if let ReadyAnswer::Count(n) = self.rune_ready(nef) {
                             if n > 0 {
                                 self.log(&format!("CHECK7 {f}: 1 fleet slot remaining, held back — {nef} has {n} ready bead(s)"));
                                 return Attempt { summoned: false, ready: reuse_ready };
@@ -601,20 +601,20 @@ impl<'a> Sentinel<'a> {
             }
             if is_lane {
                 if let Some(lanes_max) = self.cfg.lanes_max_live {
-                    let (_, lane_fayths) = self.task_and_lane_fayths();
-                    let live_lanes = self.lanes_live_total(&lane_fayths);
+                    let (_, lane_runes) = self.task_and_lane_runes();
+                    let live_lanes = self.lanes_live_total(&lane_runes);
                     if live_lanes >= lanes_max {
                         self.log(&format!("CHECK7 {f}: {live_lanes}/{lanes_max} lane slot(s) in use — not summoning"));
                         return Attempt { summoned: false, ready: reuse_ready };
                     }
                 }
             } else if self.cfg.lanes_reserve > 0 && max_live - live_all <= self.cfg.lanes_reserve && !self.lanes_yielding.get() {
-                let (_, lane_fayths) = self.task_and_lane_fayths();
-                let live_lanes = self.lanes_live_total(&lane_fayths);
+                let (_, lane_runes) = self.task_and_lane_runes();
+                let live_lanes = self.lanes_live_total(&lane_runes);
                 if self.cfg.lanes_max_live.is_none_or(|m| live_lanes < m) {
-                    for lf in &lane_fayths {
-                        if let ReadyAnswer::Count(lf_r) = self.fayth_ready(lf) {
-                            if lf_r > 0 && self.fayth_free(lf, None, None) > 0 {
+                    for lf in &lane_runes {
+                        if let ReadyAnswer::Count(lf_r) = self.rune_ready(lf) {
+                            if lf_r > 0 && self.rune_free(lf, None, None) > 0 {
                                 self.log(&format!("CHECK7 {f}: {} fleet slot(s) remaining, held back — {lf} has {lf_r} ready lane work", max_live - live_all));
                                 return Attempt { summoned: false, ready: reuse_ready };
                             }
@@ -625,16 +625,16 @@ impl<'a> Sentinel<'a> {
         }
         let ready = match reuse_ready {
             Some(r) => r,
-            None => match self.fayth_ready(f) {
-                ReadyAnswer::NoFayth => {
-                    self.log(&format!("CHECK7 {f}: no fayth in the chamber — skipped"));
+            None => match self.rune_ready(f) {
+                ReadyAnswer::NoRune => {
+                    self.log(&format!("CHECK7 {f}: no rune in the runes — skipped"));
                     return Attempt { summoned: false, ready: None };
                 }
                 ReadyAnswer::Failed(msg) => {
                     // law-a-control-that-cannot-check-must-refuse (sp-hh599): an rc that
-                    // means "could not evaluate" must never read like the routine NoFayth
+                    // means "could not evaluate" must never read like the routine NoRune
                     // skip above — LOUD (stderr, not the ordinary pass log), named a
-                    // claim-error, and never "skipped" (this fayth was never actually
+                    // claim-error, and never "skipped" (this rune was never actually
                     // consulted, so there is nothing to call routine).
                     let m = if msg.is_empty() { "bd gave no reason".to_string() } else { msg };
                     self.h.log_err(&format!("CHECK7 {f}: CLAIM-ERROR: {m} — not counted as zero ready, not summoning this pass"));
@@ -647,7 +647,7 @@ impl<'a> Sentinel<'a> {
             self.log(&format!("CHECK7 {f}: nothing ready in its partition"));
             return Attempt { summoned: false, ready: Some(0) };
         }
-        let free = self.fayth_free(f, pool, None);
+        let free = self.rune_free(f, pool, None);
         if free == 0 {
             self.log(&format!("CHECK7 {f}: {ready} ready, at concurrency cap"));
             return Attempt { summoned: false, ready: Some(ready) };
@@ -678,7 +678,7 @@ impl<'a> Sentinel<'a> {
                 .out(Io::Inherit)
                 .err(Io::Null),
         );
-        spira_otel::run::event("summon", &[("fayth", f), ("result", if o.ok() { "ok" } else { "failed" })]);
+        spira_otel::run::event("summon", &[("rune", f), ("result", if o.ok() { "ok" } else { "failed" })]);
         if o.ok() {
             Attempt { summoned: true, ready: Some((ready - 1).max(0)) }
         } else {
@@ -686,13 +686,13 @@ impl<'a> Sentinel<'a> {
         }
     }
 
-    /// `sentinel --summon <fayth> [pool] [require-label]`: lib.sh's `summon_fayth` shim
+    /// `sentinel --summon <rune> [pool] [require-label]`: lib.sh's `summon_rune` shim
     /// target — czar-pass's own summon call (no lib.sh sourcing at all now) and any bash
     /// caller that still sources lib.sh directly. The fourth, `reuse-ready`, argument is
     /// dropped: its only caller was `_ck7_summon_body`'s own fill loop, fully ported below,
     /// and no external caller ever passed it (grepped the whole tree).
     pub fn summon_cmd(&self, f: &str, pool: Option<i64>, require_express: bool) -> i32 {
-        i32::from(!self.summon_fayth(f, pool, require_express, None).summoned)
+        i32::from(!self.summon_rune(f, pool, require_express, None).summoned)
     }
 
     /// _ck7_summon_body -> CHECK 7's lane-then-pool summon loop, unlocked (lib.sh:1314).
@@ -704,35 +704,35 @@ impl<'a> Sentinel<'a> {
     /// (`ck7_summon_pass`, below); the lock itself is proven by `summon::tests::
     /// the_lock_actually_serializes_two_contenders`.
     fn ck7_summon_body(&self) {
-        let (task_fayths, lane_fayths) = self.task_and_lane_fayths();
+        let (task_runes, lane_runes) = self.task_and_lane_runes();
         // task_live is asked only when a pool is configured — exactly `[ -n
         // "${SPIRA_MAX_AEONS:-}" ]`'s own guard, never a cost paid on a host with no pool.
         let mut pool: Option<i64> = None;
         if let Some(max_aeons) = self.cfg.max_aeons {
-            let task_live: i64 = task_fayths.iter().map(|f| self.aeon_count(f, None)).sum();
+            let task_live: i64 = task_runes.iter().map(|f| self.aeon_count(f, None)).sum();
             let p = ck7_pool(Some(max_aeons), task_live).unwrap();
             self.log(&format!(
                 "CHECK7 pool: {max_aeons} slot(s), {task_live} live, {p} free — order: {}",
-                task_fayths.join(" ")
+                task_runes.join(" ")
             ));
             pool = Some(p);
         }
-        if !lane_fayths.is_empty() {
+        if !lane_runes.is_empty() {
             // SPIRA_LANES always resolves now (spira/conf.d/SPIRA_LANES declares the
             // default) — no more Context-side "none" fallback for an unset key.
-            self.log(&format!("CHECK7 lanes ({} declared): {}", self.cfg.lanes_declared, lane_fayths.join(" ")));
+            self.log(&format!("CHECK7 lanes ({} declared): {}", self.cfg.lanes_declared, lane_runes.join(" ")));
         }
         let last = std::fs::read_to_string(&self.cfg.lane_round_robin).unwrap_or_default();
-        let mut rotated_lanes = lane_rotate(last.trim(), &lane_fayths);
+        let mut rotated_lanes = lane_rotate(last.trim(), &lane_runes);
         self.lanes_yielding.set(false);
-        if !lane_fayths.is_empty() {
-            match self.urgent_beads(&task_fayths) {
+        if !lane_runes.is_empty() {
+            match self.urgent_beads(&task_runes) {
                 Some(u) if u.is_empty() => {}
                 Some(u) => {
                     let ids: Vec<&str> = u.iter().map(|b| b.id.as_str()).collect();
                     self.log(&format!("CHECK7 lanes: yielding — urgent bead(s) unclaimed: {}", ids.join(" ")));
                     if let Some(x) = u.iter().find(|b| b.express && b.p0) {
-                        self.preempt_lane_for(&x.id, &task_fayths, &lane_fayths);
+                        self.preempt_lane_for(&x.id, &task_runes, &lane_runes);
                     }
                     rotated_lanes.clear();
                     self.lanes_yielding.set(true);
@@ -750,7 +750,7 @@ impl<'a> Sentinel<'a> {
                 self.log(&format!("CHECK7 {f}: not evaluated (pass budget exhausted)"));
                 continue;
             }
-            if self.summon_fayth(f, None, false, None).summoned {
+            if self.summon_rune(f, None, false, None).summoned {
                 self.act(&format!("summoned a {f} lane aeon"));
                 let _ = std::fs::write(&self.cfg.lane_round_robin, f);
             }
@@ -761,11 +761,11 @@ impl<'a> Sentinel<'a> {
         // bash original still called it, so the bypass silently never fired from then on,
         // and wave 4.27/sp-gzmd2 ported that broken state faithfully). An express grant
         // sets the pool to EXACTLY 1 (`check7_pool_decision`) and restricts the summon to
-        // the express label — every OTHER gate in `summon_fayth` (world halted/draining,
+        // the express label — every OTHER gate in `summon_rune` (world halted/draining,
         // account capacity, the fleet ceiling) still runs on that one slot unchanged.
         let mut require_express = false;
         if ck7_throttled(self.cfg.throttle_stamp.is_file(), &self.cfg.queue_throttle_override) {
-            let express_ready = self.express_ready_in_task_pool(&task_fayths);
+            let express_ready = self.express_ready_in_task_pool(&task_runes);
             pool = Some(check7_pool_decision(true, pool.unwrap_or(0), express_ready));
             let head = std::fs::read_to_string(&self.cfg.throttle_stamp)
                 .ok()
@@ -784,7 +784,7 @@ impl<'a> Sentinel<'a> {
                 ));
             }
         }
-        for f in &task_fayths {
+        for f in &task_runes {
             if self.h.now() - start >= budget {
                 self.log(&format!("CHECK7 {f}: not evaluated (pass budget exhausted)"));
                 continue;
@@ -792,7 +792,7 @@ impl<'a> Sentinel<'a> {
             let mut fill: i64 = 0;
             let mut reuse: Option<i64> = None;
             loop {
-                let attempt = self.summon_fayth(f, pool, require_express, reuse);
+                let attempt = self.summon_rune(f, pool, require_express, reuse);
                 reuse = attempt.ready;
                 if !attempt.summoned {
                     break;
@@ -920,7 +920,7 @@ mod tests {
     // ---- check7_pool_decision, lane_rotate, ck7_pool, ck7_throttled, ck7_fill_cap -------
     // (lib.sh G1-G3; retired outright with `_ck7_summon_body` — these were each their own
     // `libcall`-direct row in test-watchtower-throttle.sh/test-express-lane.sh/
-    // test-summon-fayth.sh; every case below is that same row, ported.)
+    // test-summon-rune.sh; every case below is that same row, ported.)
 
     #[test]
     fn check7_pool_decision_matches_the_throttle_leak_fix() {
@@ -977,7 +977,7 @@ mod tests {
     /// The exact primitive `acquire_summon_lock` uses (`libc::flock(LOCK_EX)` on
     /// `summon.lock`), proven against two REAL OS threads rather than a hand simulation —
     /// bash's own version of this proof (test-summon-fast-path.sh, before wave 4.27)
-    /// stubbed `aeon_count`/`capacity_paused`/`world_gate`/`fayth_ready` by name to show
+    /// stubbed `aeon_count`/`capacity_paused`/`world_gate`/`rune_ready` by name to show
     /// the unlocked body races and the locked wrapper does not; a compiled binary offers
     /// no such override, so the race it demonstrated is structurally impossible now
     /// instead (there is no entry point to `ck7_summon_body` left that does not take this

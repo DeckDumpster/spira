@@ -5,8 +5,8 @@
 #
 #   ./test-cross-repo.sh
 #
-# THE DEFECT THIS PREVENTS. FAYTH_REPO was a constant per fayth, and every fayth in the
-# chamber pointed at the home checkout. So a bead labeled repo:widget had no aeon that
+# THE DEFECT THIS PREVENTS. RUNE_REPO was a constant per rune, and every rune in the
+# runes pointed at the home checkout. So a bead labeled repo:widget had no aeon that
 # could open the file — the workspace was always the home repo, regardless of which
 # repository the bead named. This is the integration test that proves the whole cross-repo
 # flow works: bead -> repo: label -> repo-map -> second repo's worktree -> commit in second
@@ -68,7 +68,7 @@ printf 'second-seed\n' > "$SECOND_REPO/second.txt"
 git -C "$SECOND_REPO" add second.txt; git -C "$SECOND_REPO" commit -qm "second seed"
 timeout 5 git -C "$SECOND_REPO" push -q origin main 2>/dev/null
 
-export SPIRA_HOME="$TMP/harness"; mkdir -p "$SPIRA_HOME/chamber"
+export SPIRA_HOME="$TMP/harness"; mkdir -p "$SPIRA_HOME/runes"
 # conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-aeon-world-stop.sh, ...): aeon's
 # own in-process config registry (spira_config::resolve, aeon::conf::merge_resolved_config)
 # derives conf.d from THIS --home and now REFUSES to start if it is missing (sp-1cdgq) --
@@ -78,9 +78,9 @@ cp -r "$HERE/conf.d" "$SPIRA_HOME/"
 # gains a new sourced dependency. Only production scripts; test-*.sh are excluded.
 find "$HERE" -maxdepth 1 -name '*.sh' ! -name 'test-*.sh' -exec cp {} "$SPIRA_HOME/" \;
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
-# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# SPIRA_RUNES_DIR is registered and the fixture declares a fixed, nonexistent path — nothing
 # derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
-tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
+tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
 
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 tl_config SPIRA_RUN="$SPIRA_RUN"
@@ -96,21 +96,21 @@ tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'home   | %s | push | origin/main | |\n' "$HOME_REPO"   > "$SPIRA_REPO_MAP"
 printf 'second | %s | push | origin/main | |\n' "$SECOND_REPO" >> "$SPIRA_REPO_MAP"
 
-# THE FAYTH: one persona, FAYTH_HEARTBEAT_SECONDS high so the heartbeat never fires during
+# THE RUNE: one persona, RUNE_HEARTBEAT_SECONDS high so the heartbeat never fires during
 # the test run.
-cat > "$SPIRA_HOME/chamber/builder.fayth" <<'FAYTH'
-FAYTH_NAME=builder
-FAYTH_WORKING_EXITS="SUBMITTED ask park hold"
-FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}"
-FAYTH_EXCLUDE_LABELS="spira-poison,needs-operator"
-FAYTH_MAX_CONCURRENT=1
-FAYTH_HEARTBEAT_SECONDS=600
-FAYTH
+cat > "$SPIRA_HOME/runes/builder.rune" <<'RUNE'
+RUNE_NAME=builder
+RUNE_WORKING_EXITS="SUBMITTED ask park hold"
+RUNE_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}"
+RUNE_EXCLUDE_LABELS="spira-poison,needs-operator"
+RUNE_MAX_CONCURRENT=1
+RUNE_HEARTBEAT_SECONDS=600
+RUNE
 # The prompt template only needs enough fields for the shim to extract the bead id and
 # the worktree path. {{REPO}} is the WORKTREE path, not the checkout — the aeon works
 # there. {{BEAD_ID}} is the bead id.
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' \
-    > "$SPIRA_HOME/chamber/builder.md"
+    > "$SPIRA_HOME/runes/builder.md"
 
 # THE SHIM stands in for the model. It extracts the bead id and the worktree path from
 # the prompt, makes a commit in the worktree naming the bead, then closes it.

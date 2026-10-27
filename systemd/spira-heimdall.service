@@ -30,7 +30,7 @@ Type=oneshot
 # noise that hides the one that matters. An ExecCondition that exits non-zero makes
 # systemd SKIP the pass and record success, so the timer sits silent and starts working by
 # itself the moment the file is there. No step for anyone to remember, which is the scar
-# ops.fayth left: it landed complete and never ran.
+# ops.rune left: it landed complete and never ran.
 # @SPIRA_PROD_ROOT@ is the release root; @SPIRA_PROD@ (its spira/ subdir) is --home, the
 # same convention aeon's own launchers use. The ExecCondition guards the same path
 # ExecStart runs; testing a path that differs from ExecStart would make the guard moot.

@@ -109,8 +109,8 @@ fn brief_naming_bd_is_reported() {
 }
 
 #[test]
-fn fayth_naming_bd_is_reported() {
-    let findings = run("fayth_bd", None);
+fn rune_naming_bd_is_reported() {
+    let findings = run("rune_bd", None);
     assert_eq!(classes(&findings), vec!["brief-bd"]);
 }
 
@@ -419,16 +419,16 @@ fn gate_mode_refuses_a_rust_bd_status_read() {
 }
 
 #[test]
-fn the_shipped_chamber_names_bd_nowhere() {
-    let chamber = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../spira/chamber");
+fn the_shipped_runes_names_bd_nowhere() {
+    let runes = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
     let out = Command::new(env!("CARGO_BIN_EXE_lifecycle-guard"))
         .arg("--json")
-        .arg(&chamber)
+        .arg(&runes)
         .output()
         .expect("run lifecycle-guard");
     let findings: Vec<Value> = serde_json::from_slice(&out.stdout).expect("valid JSON findings");
     let bd: Vec<&Value> = findings.iter().filter(|f| f["class"] == "brief-bd").collect();
     assert!(bd.is_empty(), "a persona names bd: {bd:#?}");
-    let personas = std::fs::read_dir(&chamber).unwrap().filter_map(|e| e.ok()).filter(|e| e.path().extension().is_some_and(|x| x == "fayth")).count();
-    assert!(personas >= 8, "the chamber scan saw only {personas} fayth files");
+    let personas = std::fs::read_dir(&runes).unwrap().filter_map(|e| e.ok()).filter(|e| e.path().extension().is_some_and(|x| x == "rune")).count();
+    assert!(personas >= 8, "the runes scan saw only {personas} rune files");
 }

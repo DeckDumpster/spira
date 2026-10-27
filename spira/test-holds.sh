@@ -135,28 +135,28 @@ echo "T3: the caller that makes it fire — a claiming aeon's brief names the ho
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
-export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
+export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/runes"
 cp -r "$HERE/conf.d" "$SPIRA_HOME/"
 find "$HERE" -maxdepth 1 -name '*.sh' ! -name 'test-*.sh' -exec cp {} "$SPIRA_HOME/" \;
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
-# round 2 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — the complete
-# fixture declares its own /fixture/userhome/.../chamber. Declare this suite's real one.
-tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
+# round 2 fix (pattern 6): SPIRA_RUNES_DIR no longer derives from SPIRA_HOME — the complete
+# fixture declares its own /fixture/userhome/.../runes. Declare this suite's real one.
+tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
 # round 2 fix: the complete fixture declares scope_label="spira" as its base value, so
-# builder.fayth's FAYTH_LABELS (resolved against the real config, not this shell's unset
+# builder.rune's RUNE_LABELS (resolved against the real config, not this shell's unset
 # $SPIRA_SCOPE_LABEL) would require a "spira" label the seeded beads never carry — nothing
 # would ever be ready for the claiming aeon below. Declare the empty scope this suite means.
 tl_config SPIRA_SCOPE_LABEL=""
-cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH
-FAYTH_NAME=builder
-FAYTH_WORKING_EXITS="SUBMITTED ask park hold"
-FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
-FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL"
-FAYTH_MAX_CONCURRENT=1
-FAYTH_HEARTBEAT_SECONDS=600
-FAYTH
+cat > "$SPIRA_HOME/runes/builder.rune" <<RUNE
+RUNE_NAME=builder
+RUNE_WORKING_EXITS="SUBMITTED ask park hold"
+RUNE_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
+RUNE_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL"
+RUNE_MAX_CONCURRENT=1
+RUNE_HEARTBEAT_SECONDS=600
+RUNE
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n<!-- task -->\n{{BEAD}}\n{{PARK}}\n' \
-    > "$SPIRA_HOME/chamber/builder.md"
+    > "$SPIRA_HOME/runes/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
 tl_config SPIRA_AGENT="$SPIRA_AGENT"
@@ -173,7 +173,7 @@ chmod +x "$BIN/claude"
 lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
 aeon_fixture_agent "$BIN/claude"
 
-# FAYTH_LABELS reads $SPIRA_PLAN_LABEL/$SPIRA_SCOPE_LABEL, not a literal "plan" — a fixture
+# RUNE_LABELS reads $SPIRA_PLAN_LABEL/$SPIRA_SCOPE_LABEL, not a literal "plan" — a fixture
 # bead must carry whatever this environment actually configured, or "nothing ready to claim"
 # is indistinguishable from the wiring being broken.
 _t5_lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\""

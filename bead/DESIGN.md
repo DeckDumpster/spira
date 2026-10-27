@@ -2,7 +2,7 @@
 
 Replaces the logic of `spira/bead.sh` (497 lines) with one Rust binary, `bead`.
 `spira/bead.sh` stays as the one entry point every caller already names —
-`batcher-cut/src/io.rs`, every aeon/chamber brief that names `bead.sh file`/`bead.sh dep
+`batcher-cut/src/io.rs`, every aeon/runes brief that names `bead.sh file`/`bead.sh dep
 add`, `concierge.sh`'s `bead_tool="bead.sh"`, and the suites — the same shim pattern
 `gate/DESIGN.md` established for `gate.sh`: `exec -a "$0" bead --home "$(dirname "$0")"
 "$@"`. Bead: sp-g9mhe (rewrite wave 5f).
@@ -10,7 +10,7 @@ add`, `concierge.sh`'s `bead_tool="bead.sh"`, and the suites — the same shim p
 ## Intent
 
 `bead.sh file` is the one sanctioned way to create a bead ("never call `bd create`
-directly"): it computes the partition labels from a persona's `.fayth` (so the filing tool
+directly"): it computes the partition labels from a persona's `.rune` (so the filing tool
 and the claim predicate cannot disagree), enforces that a persona may file only against a
 repository whose lanes admit its partition (`law-a-lane-runs-only-where-the-repo-admits-it`),
 and refuses a `--repo` absent from the repo-map before `bd` is ever called. `bead.sh lint`
@@ -52,7 +52,7 @@ inline `python3 -c` scripts):**
 map's format to the crate that owns it):** the map named by `$SPIRA_REPO_MAP` is read with
 `spira_config::convert::repo_sections`, into `spira-config`'s own typed `RepoSection`/`Lane`
 — the same parser `spira-config convert` uses, not a second one written here. A raw
-`FAYTH_LABELS`/lane token is read into `Lane` with one `serde_json` round trip
+`RUNE_LABELS`/lane token is read into `Lane` with one `serde_json` round trip
 (`label_to_lane`/`lane_label`) rather than a hand-kept name table, so the lane vocabulary
 has exactly one spelling in this crate: `spira-config`'s. See "Decisions" for the two named
 differences this introduces against the bash's own `spira_repo_lanes`.
@@ -70,10 +70,10 @@ Rust cutover was "leave lib.sh alone"):**
   unmodified function gets exact parity by construction and zero drift risk. The bridge is
   the ONE subprocess boundary in this crate that crosses into bash logic, and it is named
   here so the eventual `lib.sh` rewrite (group 4) knows exactly what replaces it.
-- `.fayth` files are read the same way `fayth_get` reads them: `bash -c '. "$1" 2>/dev/null;
-  eval "printf %s \"\${$2:-\$3}\""' -- <fayth-file> FAYTH_LABELS ""`. A `.fayth` file is an
+- `.rune` files are read the same way `rune_get` reads them: `bash -c '. "$1" 2>/dev/null;
+  eval "printf %s \"\${$2:-\$3}\""' -- <rune-file> RUNE_LABELS ""`. A `.rune` file is an
   arbitrary shell fragment (the fixtures use `${SPIRA_SCOPE_LABEL:+...}` parameter
-  expansion) — the same shape `aeon/src/seam.rs`'s `BashSeam` already treats as "the chamber
+  expansion) — the same shape `aeon/src/seam.rs`'s `BashSeam` already treats as "the runes
   format is shell, not a value to be reparsed," so this follows that precedent rather than
   writing a second, partial shell-fragment parser.
 - `schema.sh type-of <kind>` / `schema.sh kinds` (kind→bd-type mapping; schema.sh is group 4).
@@ -85,7 +85,7 @@ Rust cutover was "leave lib.sh alone"):**
 
 See the sibling bead report: the bash `bead.sh` and the shimmed `bead` binary run against
 `test-bead-file.sh`, `test-bead-lint.sh`, `test-bead-dep-add.sh`, `test-bead-contract.sh`
-and `test-bead-repo-guard.sh`'s fixtures (repo-map, chamber, stub `bd`), output and exit
+and `test-bead-repo-guard.sh`'s fixtures (repo-map, runes, stub `bd`), output and exit
 code compared line for line. Every one of these suites continues to run unmodified through
 `testenv` — they name `bead.sh` by its unchanged path, and the shim makes that
 transparently the new binary.
@@ -103,11 +103,11 @@ sourcing `conf.sh`.
 **RETIRED (wave 4.9, sp-k80sa):** now that `spira_config::resolve_for_process` exists
 in-process (wave 4.4/4.8), the re-export is gone rather than widened. `SPIRA_HOME` was
 never really a config value — it is the `--home` argument already on this binary's own
-argv, so `chamber_dir`/`fayth_names` read that parameter directly instead of
-`$SPIRA_HOME`. `SPIRA_REPO_MAP` and the three fayth labels are resolved by calling
+argv, so `runes_dir`/`rune_names` read that parameter directly instead of
+`$SPIRA_HOME`. `SPIRA_REPO_MAP` and the three rune labels are resolved by calling
 `spira_config::resolve::resolve_for_process(home, repo, &env)` where they were needed:
-`load_repos` for the repo map, and `fayth_get`'s bash subshell (which sources a `.fayth`
-file whose `FAYTH_LABELS` references the three labels by parameter expansion) gets them
+`load_repos` for the repo map, and `rune_get`'s bash subshell (which sources a `.rune`
+file whose `RUNE_LABELS` references the three labels by parameter expansion) gets them
 injected explicitly via `.env(...)` on that `Command`, rather than depending on whatever
 this process's own environment happened to inherit.
 
@@ -203,7 +203,7 @@ compiled binary needs those five IN ITS OWN ENVIRONMENT. The `bdq`/`_bdq_check_r
 shims in `lib.sh` thread them through explicitly on every call, the same shape
 `_spira_config_repo` already established. Every other value the binary reads — `SPIRA_DB`,
 `SPIRA_BD`, `SPIRA_ASK_LABEL`, `SPIRA_RUN` — is already on `conf.sh`'s own export list, and
-`SPIRA_FAYTH`/`SPIRA_CZAR_CLASS`/`SPIRA_CZAR_TRIGGER_BEAD`/`SPIRA_BDJSON_FIXTURE`/
+`SPIRA_RUNE`/`SPIRA_CZAR_CLASS`/`SPIRA_CZAR_TRIGGER_BEAD`/`SPIRA_BDJSON_FIXTURE`/
 `BD_TIMEOUT`/`SPIRA_BDQ_CONN_RETRIES`/`SOP_APPLIED_TRACE*`/`GH_TIMEOUT`/`SPIRA_GH` are never
 `conf.sh` keys at all (set, if at all, by an already-exported caller environment — an aeon's
 session env, a test fixture's `export`, a systemd unit's `Environment=`), so none of those

@@ -58,7 +58,7 @@ impl Rule for BdStdinLint {
     }
 
     fn applies_to(&self, e: &Entry) -> bool {
-        pathspec_match("spira/*", &e.path) || pathspec_match("chamber/*", &e.path)
+        pathspec_match("spira/*", &e.path) || pathspec_match("runes/*", &e.path)
     }
 
     fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
@@ -98,15 +98,15 @@ mod tests {
     }
 
     #[test]
-    fn both_bad_shapes_are_caught_in_spira_and_chamber() {
+    fn both_bad_shapes_are_caught_in_spira_and_runes() {
         let t = TempDir::new("bds");
         t.write("spira/planted.sh", "#!/usr/bin/env bash\nbd -C /db note sp-abc - <<'NOTE'\nsome text\nNOTE\n");
-        t.write("chamber/planted.md", "bd -C {{DB}} create \"title\" -d - -l plan <<'BODY'\nprose here\nBODY\n");
-        let got = run(&t, &["spira/planted.sh", "chamber/planted.md"]).unwrap();
+        t.write("runes/planted.md", "bd -C {{DB}} create \"title\" -d - -l plan <<'BODY'\nprose here\nBODY\n");
+        let got = run(&t, &["spira/planted.sh", "runes/planted.md"]).unwrap();
         assert_eq!(
             got,
             vec![
-                "bd-stdin-lint: chamber/planted.md:1: bd -C {{DB}} create \"title\" -d - -l plan <<'BODY'".to_string(),
+                "bd-stdin-lint: runes/planted.md:1: bd -C {{DB}} create \"title\" -d - -l plan <<'BODY'".to_string(),
                 "bd-stdin-lint: spira/planted.sh:2: bd -C /db note sp-abc - <<'NOTE'".to_string(),
             ]
         );
@@ -130,7 +130,7 @@ mod tests {
     }
 
     #[test]
-    fn nested_paths_under_spira_and_chamber_are_in_scope() {
+    fn nested_paths_under_spira_and_runes_are_in_scope() {
         let t = TempDir::new("bds-nested");
         t.write("spira/sub/x.sh", "bd -C /db note sp-abc - <<EOF\n");
         assert_eq!(run(&t, &["spira/sub/x.sh"]).unwrap().len(), 1);

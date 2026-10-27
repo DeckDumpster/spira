@@ -42,7 +42,7 @@
 #                       excluded from the round pool, not batched.
 #
 # tier: T2
-# covers: batcher-cut/src/*.rs batcher/src/*.rs queue/src/* spira/conf.sh spira/lib.sh spira/bead.sh spira/chamber/batcher.fayth spira/chamber/batcher.md spira/testlib/lc-fixture.sh UC-landing-merge-queue-48
+# covers: batcher-cut/src/*.rs batcher/src/*.rs queue/src/* spira/conf.sh spira/lib.sh spira/bead.sh spira/runes/batcher.rune spira/runes/batcher.md spira/testlib/lc-fixture.sh UC-landing-merge-queue-48
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # CUT_PART: main runs cases A-F and H, land runs G (land mode) onward; test-batcher-cut-land.sh
@@ -101,14 +101,14 @@ cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/mail"; chmod +x "$SH/mail"
 
-# A REAL COPY OF THE CHAMBER, so bead.sh's own --for batcher can read batcher.fayth the same
+# A REAL COPY OF THE RUNES, so bead.sh's own --for batcher can read batcher.rune the same
 # way it would in production — file_judgement (io.rs) files through bead.sh's contract, never
-# bd create directly, so the fayth's own FAYTH_LABELS is what a fake chamber has to supply.
-mkdir -p "$SH/chamber"
-cp "$HERE/chamber/batcher.fayth" "$SH/chamber/"
-# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
-# point it at this suite's own fixture chamber explicitly.
-tl_config SPIRA_CHAMBER="$SH/chamber"
+# bd create directly, so the rune's own RUNE_LABELS is what a fake runes has to supply.
+mkdir -p "$SH/runes"
+cp "$HERE/runes/batcher.rune" "$SH/runes/"
+# SPIRA_RUNES_DIR no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture runes explicitly.
+tl_config SPIRA_RUNES_DIR="$SH/runes"
 
 cat > "$SH/repo-map" <<RMAP
 $REPONAME | $REPO | queue | origin/main | | |

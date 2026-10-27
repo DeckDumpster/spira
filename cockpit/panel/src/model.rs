@@ -52,7 +52,7 @@
 //! and DECISIONS admits the escalation label OR `overseer`, so without that exclusion every
 //! firing alert would appear in the one list this whole design exists to keep self-clearing
 //! items out of. The label is withheld deliberately — the escalation label is excluded from
-//! every fayth predicate and from the guard that forbids closing through a resolve, so
+//! every rune predicate and from the guard that forbids closing through a resolve, so
 //! carrying it would stop the writer clearing its own alert when the condition passes.
 //!
 //! AND A DISMISSED INSIGHT LEAVES THE PANE, but stays reachable: `d` adds `archived`, `h`

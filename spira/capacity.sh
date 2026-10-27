@@ -139,7 +139,7 @@ reclassify)
             fi
             bdq note "$id" "Attempt $cur withdrawn: its session was refused by the account for want of capacity, not by anything about this work. Evidence: $SPIRA_RUN/$id.log ends in a rejected rate_limit_event." >/dev/null 2>&1
             # A bead poisoned only by that attempt is no longer poisoned. Its hold goes with
-            # it — leaving it would keep the bead out of every fayth's claimable set for a
+            # it — leaving it would keep the bead out of every rune's claimable set for a
             # failure that was withdrawn, which is the whole harm this is undoing.
             if [ "$lifts" = 1 ]; then
                 spira-lc unhold "$id" poison capacity.sh >/dev/null 2>&1

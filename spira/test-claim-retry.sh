@@ -3,7 +3,7 @@
 # test-claim-retry.sh — claim_retry distinguishes a transient bd failure from a real empty
 # result, and retries the former a bounded number of times before trusting it.
 #
-# THE DEFECT (sp-3ntca). Both the claim path (aeon.sh) and the readiness count (fayth_ready,
+# THE DEFECT (sp-3ntca). Both the claim path (aeon.sh) and the readiness count (rune_ready,
 # via ready_count) discarded bd's exit code and stderr — `bdq ... --json 2>/dev/null |
 # json_only | json_count` — so a transient store failure (lock or commit contention, or bd's
 # own circuit breaker) read exactly like a query that ran cleanly and matched nothing. Two

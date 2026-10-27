@@ -93,7 +93,7 @@ fi
 # is the one source, full stop, and a bare SPIRA_CONF with no SPIRA_TOML now just refuses (see
 # BOOTSTRAP below). Three sections tested this retired behavior: a legacy spira.conf converted
 # and read on first source, that a once-written spira.toml then wins unconditionally over a
-# re-edited .conf, and that auto-convert carried the repo-map/every fayth, not just the .conf.
+# re-edited .conf, and that auto-convert carried the repo-map/every rune, not just the .conf.
 # All three are deleted rather than converted — there is no SPIRA_TOML-based equivalent of
 # "convert this legacy file for me on the fly" to redirect them onto. The standalone
 # `spira-config convert` CLI tool itself (a one-time, explicitly-invoked migration, never run
@@ -103,7 +103,7 @@ echo
 echo "convert refuses to replace a larger spira.toml with a smaller one:"
 # ==========================================================================
 # Same defect, isolated to the binary: the exact call the old auto-convert made
-# (--conf only, no --repo-map/--fayth) must now be refused rather than accepted, and the
+# (--conf only, no --repo-map/--rune) must now be refused rather than accepted, and the
 # existing (larger) document must survive untouched.
 SHRINK_DIR="$T/shrink"; mkdir -p "$SHRINK_DIR"
 SHRINK_TOML="$SHRINK_DIR/spira.toml"
@@ -112,8 +112,8 @@ printf 'SPIRA_ID_PREFIX = sp\nSPIRA_PROD = %s\n' "$SHRINK_DIR/prod" > "$SHRINK_C
 
 spira-config convert --conf "$SHRINK_CONF" \
     --repo-map "$CRATE/tests/fixtures/repo-map" \
-    --fayth "$CRATE/tests/fixtures/chamber/builder.fayth" \
-    --fayth "$CRATE/tests/fixtures/chamber/ops.fayth" \
+    --rune "$CRATE/tests/fixtures/runes/builder.rune" \
+    --rune "$CRATE/tests/fixtures/runes/ops.rune" \
     --home "$SHRINK_DIR" --out "$SHRINK_TOML" >/dev/null 2>&1
 before="$(cat "$SHRINK_TOML" 2>/dev/null)"
 want "first (full) conversion has [repo.home]" "[repo.home]" "$before"

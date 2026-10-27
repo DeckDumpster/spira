@@ -63,7 +63,7 @@ pub fn run(w: &dyn World) -> i32 {
         Section { title: "release tools", lines: check_release_tools(w) },
         Section { title: "hotfix", lines: check_hotfix(w) },
         Section { title: "config files", lines: check_config_files(w) },
-        Section { title: "chamber overlays", lines: check_chamber_overlays(w) },
+        Section { title: "runes overlays", lines: check_runes_overlays(w) },
         Section { title: "operator overrides", lines: check_overrides(w) },
         Section { title: "gate compile check", lines: check_gate_compile_check(w) },
         Section {
@@ -273,10 +273,10 @@ pub fn check_config_files(_w: &dyn World) -> Vec<Line> {
     out
 }
 
-// ============================================================================ chamber overlays
+// ============================================================================ runes overlays
 
-pub fn check_chamber_overlays(w: &dyn World) -> Vec<Line> {
-    let dir = w.env("SPIRA_CHAMBER_OVERLAY").unwrap_or_default();
+pub fn check_runes_overlays(w: &dyn World) -> Vec<Line> {
+    let dir = w.env("SPIRA_RUNES_OVERLAY").unwrap_or_default();
     let found = w.find_md_files(Path::new(&dir));
     if found.is_empty() {
         vec![ok(format!("none active (checked {dir})"))]

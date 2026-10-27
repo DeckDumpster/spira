@@ -17,11 +17,11 @@ Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
-# No SPIRA_FAYTHS here on purpose. It used to read `builder ops`, written when the harness
+# No SPIRA_RUNES here on purpose. It used to read `builder ops`, written when the harness
 # default was the literal string `builder` — and a roster pinned in a unit file is how a
-# persona lands complete and never runs, which is what happened to ops.fayth. The chamber is
-# the roster now. Set SPIRA_FAYTHS only to NARROW this host deliberately; the sentinel logs
-# a WARN naming every fayth such a setting leaves out.
+# persona lands complete and never runs, which is what happened to ops.rune. The runes is
+# the roster now. Set SPIRA_RUNES only to NARROW this host deliberately; the sentinel logs
+# a WARN naming every rune such a setting leaves out.
 ExecStart=@SPIRA_PROD_ROOT@/bin/sentinel
 # A pass is deterministic bead and git queries; the inference tier is rate limited to
 # once an hour inside the script and runs detached, so this ceiling never truncates it.

@@ -8,7 +8,7 @@
 //! times in one day, each time blinding queue-watch until the file was restored by hand. A
 //! worktree has no business writing outside itself, however it got `HOME`.
 //!
-//! Pure function, no env reads here (crate convention: `chamber::persona_model_from_doc`,
+//! Pure function, no env reads here (crate convention: `runes::persona_model_from_doc`,
 //! `resolve::resolve`'s `ResolveInput`) — the CLI (`spira-config writeback`, `main.rs`) is
 //! the one place this reads `SPIRA_CONFIG_WRITE`/`SPIRA_HOME`/`SPIRA_PROD`/`SPIRA_REPO`/
 //! `HOME`/`XDG_CONFIG_HOME` from the process environment and builds a [`WritebackInput`].

@@ -2268,7 +2268,7 @@ pub fn tsd_append(env: &Env, family: &str, fields: &[(&str, String)]) {
 
 // ---------------------------------------------------------------------------------------
 // Judgement: file a bead through bead.sh's own contract (never `bd create` directly) so the
-// batcher persona's partition labels come from its fayth, the same way every other filed
+// batcher persona's partition labels come from its rune, the same way every other filed
 // bead in this harness does (sp-47kq1).
 // ---------------------------------------------------------------------------------------
 

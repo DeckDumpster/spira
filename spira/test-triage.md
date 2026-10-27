@@ -34,7 +34,7 @@ migration bead per family from this table.
 | C | queue and round: publish, open-batch, transition, land-local, batcher-cut, release | queue fixture repo + forge fake | 11 | 588 |
 | D | aeon teardown and close fences | full-aeon fixture | 8 | 518 |
 | E | aeon claim, resume, worktree and wiki hygiene | testdb + fixture repo | 11 | 561 |
-| F | persona brief, prompt layers, model | fayth + chamber render | 7 | 391 |
+| F | persona brief, prompt layers, model | rune + runes render | 7 | 391 |
 | G | install, uninstall, deploy, units, timers | mock systemctl, bare-host | 10 | 519 |
 | H | watchers and ops detection | testdb | 11 | 622 |
 | I | lifecycle store (Dolt) | throwaway `dolt sql-server` | 4 | 167 |
@@ -114,10 +114,10 @@ Migrated (sp-uxdjnk). Wall before is the table's round-VM median; the alone figu
 
 | suite | wall | property | outcome |
 | --- | ---: | --- | --- |
-| test-aeon-chamber-overlay.sh, -mech.sh | 60 + 60 | builder brief says how to verify once; overlay beats release text | deleted. Overlay mechanism was already `brief::tests::overlays_whole_section_append_and_absent`, doctor's rows `doctor::tests::chamber_overlays_*`; added `brief::tests::the_shipped_builder_brief_has_one_way_to_verify_and_the_work_verbs_to_finish` (golden rows). |
-| test-aeon-prompt-layers.sh, -sticking.sh | 53 + 58 | claude argv from the fayth knobs, thrash banner | deleted. Banner and split were `brief::tests`; added `aeon::tests::a_replace_fayth_…`, `an_append_fayth_…` and `brief::tests::the_shipped_groomer_splits_…`. |
+| test-aeon-runes-overlay.sh, -mech.sh | 60 + 60 | builder brief says how to verify once; overlay beats release text | deleted. Overlay mechanism was already `brief::tests::overlays_whole_section_append_and_absent`, doctor's rows `doctor::tests::runes_overlays_*`; added `brief::tests::the_shipped_builder_brief_has_one_way_to_verify_and_the_work_verbs_to_finish` (golden rows). |
+| test-aeon-prompt-layers.sh, -sticking.sh | 53 + 58 | claude argv from the rune knobs, thrash banner | deleted. Banner and split were `brief::tests`; added `aeon::tests::a_replace_rune_…`, `an_append_rune_…` and `brief::tests::the_shipped_groomer_splits_…`. |
 | test-persona-model.sh | 42 | one resolver for a persona's launch model | deleted. Resolver was `conf::tests::persona_model_reads_…`; added `aeon::tests::the_launch_model_is_the_toml_persona_model_…` and `conf::tests::no_launcher_scrapes_a_model_…` (the source greps). |
-| test-summon-fayth.sh | 86 | `summon_fayth` refusal ladder and `fayth_free` arithmetic | ladder moved to eight `sentinel` tests (`an_elastic_fayth_…`, `a_task_fayth_yields_…`, `the_collective_lane_cap_…`, `the_fleet_ceiling_…`, `a_task_fayth_honours_the_pool_…`, `an_elastic_fayth_takes_the_pool_remainder_…`, `a_summon_carries_a_timeout_…`, `a_halt_refuses_…`). Kept: lib.sh `fayth_free` (real bash), `aeon --escape` through the world gate, the `world drain` expiry writer. Alone: 312 s before, 133 s after. |
+| test-summon-rune.sh | 86 | `summon_rune` refusal ladder and `rune_free` arithmetic | ladder moved to eight `sentinel` tests (`an_elastic_rune_…`, `a_task_rune_yields_…`, `the_collective_lane_cap_…`, `the_fleet_ceiling_…`, `a_task_rune_honours_the_pool_…`, `an_elastic_rune_takes_the_pool_remainder_…`, `a_summon_carries_a_timeout_…`, `a_halt_refuses_…`). Kept: lib.sh `rune_free` (real bash), `aeon --escape` through the world gate, the `world drain` expiry writer. Alone: 312 s before, 133 s after. |
 | test-concierge.sh | 32 | Concierge brief composition, resume/headless handling, historic ways in broke | kept. `concierge.sh` is the shell program under test (statute-book brief, tmux, `/proc` holder scan, wake delivery); there is no Rust owner to move it to, and a unit test of a shell function is the same shell test. |
 
 ### G — install, deploy, units

@@ -22,9 +22,9 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 
-# round 4 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — without it,
-# bead.sh file --for builder cannot find chamber/builder.fayth ("no such persona: builder").
-tl_config SPIRA_CHAMBER="$HERE/chamber"
+# round 4 fix (pattern 6): SPIRA_RUNES_DIR no longer derives from SPIRA_HOME — without it,
+# bead.sh file --for builder cannot find runes/builder.rune ("no such persona: builder").
+tl_config SPIRA_RUNES_DIR="$HERE/runes"
 
 . "$HERE/conf.sh"
 export PATH="$(dirname "$DOLT_BIN"):$PATH"
@@ -157,7 +157,7 @@ seed_bead "$BID"
 
 work_as() {   # work_as <bead-id> <verb> [args...]
     local bid="$1"; shift
-    SPIRA_WORK_BEAD_ID="$bid" SPIRA_FAYTH="builder" SPIRA_LC_SOCKET="$SOCK" "$WORK_BIN" "$@"
+    SPIRA_WORK_BEAD_ID="$bid" SPIRA_RUNE="builder" SPIRA_LC_SOCKET="$SOCK" "$WORK_BIN" "$@"
 }
 
 # ── show: reads bd content ────────────────────────────────────────────────────────────
@@ -233,8 +233,8 @@ seed_bead "$DID"
 root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='aeon-test', version=1 WHERE bead_id='$DID'" >/dev/null 2>&1
 
 out="$(work_as "$DID" done --delivers "a document at wiki/x" 2>&1)"; rc=$?
-is "builder done: refused (exit 3), its fayth declares no DONE exit" "3" "$rc"
-want "builder done: the refusal names the fayth and its exits" "SUBMITTED ask park hold" "$out"
+is "builder done: refused (exit 3), its rune declares no DONE exit" "3" "$rc"
+want "builder done: the refusal names the rune and its exits" "SUBMITTED ask park hold" "$out"
 root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET persona='spike' WHERE bead_id='$DID'" >/dev/null 2>&1
 out="$(work_as "$DID" done --delivers "a document at wiki/x" 2>&1)"; rc=$?
 is "done: exits 0 (applied)" "0" "$rc"
@@ -243,7 +243,7 @@ want "done: state is DONE" "\"state\":\"DONE\"" "$row"
 want "done: reason carries the delivers evidence" "a document at wiki/x" "$row"
 
 # ── groomer done: Done only on a bead carrying the groom-trigger marker ──────────────
-groom_as() { SPIRA_WORK_BEAD_ID="$1" SPIRA_FAYTH="groomer" SPIRA_LC_SOCKET="$SOCK" "$WORK_BIN" "${@:2}"; }
+groom_as() { SPIRA_WORK_BEAD_ID="$1" SPIRA_RUNE="groomer" SPIRA_LC_SOCKET="$SOCK" "$WORK_BIN" "${@:2}"; }
 GWORK="$(bead.sh file "groomer claimed a work bead" --for builder --repo testrepo --body-file "$TMP/build.md")"
 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" label add "$GWORK" "${SPIRA_GROOMER_LABEL:-groom}" >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
 seed_bead "$GWORK"

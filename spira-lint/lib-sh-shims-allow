@@ -12,7 +12,7 @@
 spira/lib.sh:host_cores
 spira/lib.sh:ready_raw_args
 spira/lib.sh:ready_count
-spira/lib.sh:fayth_free
+spira/lib.sh:rune_free
 
 # --- row I, "aeon half" (wave4-decomposition.md): aeon.sh's own direct seam into the bead
 # --- machine (spira-lc), never routed through a bash subprocess per call because aeon.sh
@@ -44,7 +44,7 @@ spira/lib.sh:_tsd_slots_sample
 # --- to invoke that binary in the first place.
 spira/conf.sh:_spira_conf_gen_ensure
 spira/conf.sh:spira_toml_file
-spira/conf.sh:_spira_fayth_paths
+spira/conf.sh:_spira_rune_paths
 spira/conf.sh:spira_toml_resolve
 spira/conf.sh:spira_toml_write_target
 

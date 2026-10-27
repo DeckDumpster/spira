@@ -1,4 +1,4 @@
-//! `aeon [--home DIR] <fayth> [--dry-run | --sweep [--prompt <text>|-]]` — DESIGN.md §2.1.
+//! `aeon [--home DIR] <rune> [--dry-run | --sweep [--prompt <text>|-]]` — DESIGN.md §2.1.
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -7,7 +7,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use aeon::bd::BdCli;
-use aeon::conf::{self, Conf, Fayth};
+use aeon::conf::{self, Conf, Rune};
 use aeon::ledger::Ledger;
 use aeon::ports::{Env, RealExec, RealGit};
 use aeon::run::{Deps, Mode, Run, State};
@@ -23,20 +23,20 @@ fn fatal(msg: &str) -> ! {
 /// Parsed argv, or the usage error.
 pub struct Cli {
     pub home: Option<String>,
-    pub fayth: String,
+    pub rune: String,
     pub mode: Mode,
     pub prompt_from_stdin: bool,
-    /// `--escape`: direct-summon this fayth, bypassing pool and lane checks (replaces
+    /// `--escape`: direct-summon this rune, bypassing pool and lane checks (replaces
     /// `spira/escape.sh`, sp-zpaq0). Every other field is ignored in this mode except
-    /// `home` and `fayth`.
+    /// `home` and `rune`.
     pub escape: bool,
-    /// `--dry-run` after `--escape <fayth>`: passed through to the summoned aeon, not a
+    /// `--dry-run` after `--escape <rune>`: passed through to the summoned aeon, not a
     /// dry run of the escape decision itself.
     pub escape_dry_run: bool,
 }
 
 pub fn parse(args: &[String]) -> Result<Cli, String> {
-    let usage = "usage: aeon.sh <fayth> [--dry-run | --sweep [--prompt <text>|-]]".to_string();
+    let usage = "usage: aeon.sh <rune> [--dry-run | --sweep [--prompt <text>|-]]".to_string();
     let mut a: Vec<String> = args.to_vec();
     let mut home = None;
     if a.first().map(|s| s.as_str()) == Some("--home") {
@@ -47,12 +47,12 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
         a.drain(..2);
     }
     if a.first().map(|s| s.as_str()) == Some("--escape") {
-        let escape_usage = "usage: aeon --escape <fayth> [--dry-run]".to_string();
-        let fayth = a.get(1).cloned().filter(|f| !f.is_empty()).ok_or(escape_usage)?;
+        let escape_usage = "usage: aeon --escape <rune> [--dry-run]".to_string();
+        let rune = a.get(1).cloned().filter(|f| !f.is_empty()).ok_or(escape_usage)?;
         let escape_dry_run = a.get(2).map(|s| s.as_str()) == Some("--dry-run");
-        return Ok(Cli { home, fayth, mode: Mode::Claim, prompt_from_stdin: false, escape: true, escape_dry_run });
+        return Ok(Cli { home, rune, mode: Mode::Claim, prompt_from_stdin: false, escape: true, escape_dry_run });
     }
-    let fayth = a.first().cloned().filter(|f| !f.is_empty()).ok_or_else(|| usage.clone())?;
+    let rune = a.first().cloned().filter(|f| !f.is_empty()).ok_or_else(|| usage.clone())?;
     let (mut mode, mut stdin) = (Mode::Claim, false);
     match a.get(1).map(|s| s.as_str()) {
         Some("--dry-run") => mode = Mode::DryRun,
@@ -76,13 +76,13 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
         }
         _ => {}
     }
-    Ok(Cli { home, fayth, mode, prompt_from_stdin: stdin, escape: false, escape_dry_run: false })
+    Ok(Cli { home, rune, mode, prompt_from_stdin: stdin, escape: false, escape_dry_run: false })
 }
 
-/// `aeon capacity <verb> ...` (wave 4.26): no fayth, so this resolves config without the
+/// `aeon capacity <verb> ...` (wave 4.26): no rune, so this resolves config without the
 /// bash seam round trip at all — `merge_resolved_config` already runs entirely in-process
 /// (`spira_config::resolve::resolve_for_process`); the bash seam exists only to source a
-/// fayth file and lib.sh's own derived values, neither of which this subcommand needs.
+/// rune file and lib.sh's own derived values, neither of which this subcommand needs.
 fn run_stop(args: &[String]) -> i32 {
     let original: BTreeMap<String, String> = std::env::vars().collect();
     let exe = std::env::current_exe().ok();
@@ -186,49 +186,49 @@ fn main() {
     let Some(home) = conf::resolve_home(cli.home.as_deref(), &original, exe.as_deref()) else {
         fatal("cannot find the harness's spira/ directory (pass --home, or set SPIRA_HOME)")
     };
-    let fayth_file = home.join("chamber").join(format!("{}.fayth", cli.fayth));
-    if !fayth_file.is_file() {
-        fatal(&format!("no such fayth: {}", fayth_file.display()));
+    let rune_file = home.join("runes").join(format!("{}.rune", cli.rune));
+    if !rune_file.is_file() {
+        fatal(&format!("no such rune: {}", rune_file.display()));
     }
-    if let Err(e) = aeon::fayth_keys::check(&fayth_file, &home) {
+    if let Err(e) = aeon::rune_keys::check(&rune_file, &home) {
         fatal(&e);
     }
     let own_unit = original.get("AEON_OWN_UNIT").cloned().unwrap_or_else(own_unit_from_cgroup);
 
     // conf.sh's resolution, once, through the seam.
     let boot_env = Env::new(original.clone(), BTreeMap::new());
-    let boot = BashSeam { lib: home.join("lib.sh"), fayth_file: fayth_file.clone(), fayth: cli.fayth.clone(), env: &boot_env };
+    let boot = BashSeam { lib: home.join("lib.sh"), rune_file: rune_file.clone(), rune: cli.rune.clone(), env: &boot_env };
     let vars: Vec<String> = seam::SNAPSHOT_VARS.iter().map(|s| s.to_string()).collect();
     let raw = aeon::ports::Seam::call(&boot, "_aeon_snapshot", &vars);
     let mut snap = match seam::parse_snapshot(&raw.stdout) {
         Ok(s) => s,
-        Err(e) => fatal(&format!("{}: {e}: {}", cli.fayth, raw.stderr.lines().next().unwrap_or(""))),
+        Err(e) => fatal(&format!("{}: {e}: {}", cli.rune, raw.stderr.lines().next().unwrap_or(""))),
     };
     if let Err(e) = conf::merge_resolved_config(&mut snap, &home, &original) {
-        fatal(&format!("{}: config resolution: {e}", cli.fayth));
+        fatal(&format!("{}: config resolution: {e}", cli.rune));
     }
     conf::merge_capacity_env(&mut snap, &original);
     let env = Env::new(original.clone(), snap.env.clone());
     let conf = Conf::new(&snap, &home);
-    let fayth = Fayth::from_vars(&cli.fayth, &snap.vars);
-    if let Some(w) = conf::retired_sop_required_warning(&snap.vars, &cli.fayth) {
+    let rune = Rune::from_vars(&cli.rune, &snap.vars);
+    if let Some(w) = conf::retired_sop_required_warning(&snap.vars, &cli.rune) {
         eprintln!("{w}");
     }
     let claim_bin = "spira-claim".to_string();
 
-    let seam = BashSeam { lib: home.join("lib.sh"), fayth_file: fayth_file.clone(), fayth: cli.fayth.clone(), env: &env };
+    let seam = BashSeam { lib: home.join("lib.sh"), rune_file: rune_file.clone(), rune: cli.rune.clone(), env: &env };
 
     if cli.escape {
-        // world_gate, fayth_ready and summon_argv carry real side effects (an expired
+        // world_gate, rune_ready and summon_argv carry real side effects (an expired
         // drain is lifted and logged) that must stay lib.sh's, reached through the same
-        // seam summon_fayth uses — not reimplemented in Rust where they could drift
+        // seam summon_rune uses — not reimplemented in Rust where they could drift
         // (escape.rs's own doc, family G). The capacity check is in-process
         // (`capacity::check_and_probe`, wave 4.26) so the probe fires from exactly one
         // place no matter which of this binary's own entry points asks.
         let exec = RealExec { env: &env, timeout: None };
         let sink = StdSink;
         let summon_bin = original.get("SPIRA_SUMMON").cloned().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemd-run".to_string());
-        let rc = aeon::escape::run(&seam, &exec, &env, &sink, &conf, &summon_bin, &home, &cli.fayth, cli.escape_dry_run, util::now_epoch());
+        let rc = aeon::escape::run(&seam, &exec, &env, &sink, &conf, &summon_bin, &home, &cli.rune, cli.escape_dry_run, util::now_epoch());
         { let code = rc; spira_otel::run::finish(code); std::process::exit(code) };
     }
     // SPIRA_BD is registered but carries no conf.d default ("resolves empty unless set via
@@ -261,7 +261,7 @@ fn main() {
         d: Deps { bd: &bd, seam: &seam, git: &git, exec: &exec, launcher: &RealLauncher, sink: &sink, env: &env, clock: &clock, sleep: &|d| std::thread::sleep(d) },
         ledger: Ledger { path: conf.ledger(), dry },
         conf,
-        fayth,
+        rune,
         snap,
         mode: cli.mode,
         pid: std::process::id(),
@@ -271,7 +271,7 @@ fn main() {
         stop,
         hb_shutdown: Arc::new(AtomicBool::new(false)),
         hb_done: Arc::new(AtomicBool::new(false)),
-        fayth_file,
+        rune_file,
         s: State::default(),
     };
     let code = run.main();
@@ -308,7 +308,7 @@ mod tests {
     fn argv_grammar() {
         assert!(parse(&[]).is_err());
         let c = parse(&a(&["builder"])).unwrap();
-        assert_eq!((c.fayth.as_str(), c.mode), ("builder", Mode::Claim));
+        assert_eq!((c.rune.as_str(), c.mode), ("builder", Mode::Claim));
         assert_eq!(parse(&a(&["builder", "--dry-run"])).unwrap().mode, Mode::DryRun);
         let c = parse(&a(&["--home", "/h/spira", "ops", "--sweep", "--prompt", "-"])).unwrap();
         assert_eq!(c.home.as_deref(), Some("/h/spira"));
@@ -322,7 +322,7 @@ mod tests {
     fn escape_grammar() {
         let c = parse(&a(&["--escape", "stretchy"])).unwrap();
         assert!(c.escape);
-        assert_eq!(c.fayth, "stretchy");
+        assert_eq!(c.rune, "stretchy");
         assert!(!c.escape_dry_run);
         let c = parse(&a(&["--escape", "stretchy", "--dry-run"])).unwrap();
         assert!(c.escape_dry_run);

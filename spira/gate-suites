@@ -89,12 +89,12 @@ spira/test-suite-state-fence.sh
 # fence's name.
 spira/test-gate-fences.sh
 
-# CHAMBER INTEGRITY'S OWN T0 STAGE (UC-33). Every {{PLACEHOLDER}} a chamber brief carries
+# RUNES INTEGRITY'S OWN T0 STAGE (UC-33). Every {{PLACEHOLDER}} a runes brief carries
 # is rendered by its filler, every command a brief names exists and is executable, every
-# fayth's brief clauses that have no other home are present, and `bd reopen` is called
+# rune's brief clauses that have no other home are present, and `bd reopen` is called
 # only through `bead_reopen`. Extracted from test-spike.sh, which paid for a Dolt fixture
 # and a bare git remote to run these pure text reads.
-spira/test-lint-chamber.sh
+spira/test-lint-runes.sh
 
 # THE PREFLIGHT CHECKS' OWN POSITIVE CONTROL, including the missing-cmd path (formerly
 # test-gate-missing-cmd.sh, folded in by sp-ajxg3 per docs/test-plan/gate-verdict.md

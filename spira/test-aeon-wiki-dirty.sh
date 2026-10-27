@@ -77,27 +77,27 @@ git -C "$WIKI" commit -qm "seed wiki"
 timeout 5 git -C "$WIKI" push -q origin main 2>/dev/null
 tl_config SPIRA_WIKI="$WIKI"
 
-export SPIRA_HOME="$HARNESS/spira-home"; mkdir -p "$SPIRA_HOME/chamber"
+export SPIRA_HOME="$HARNESS/spira-home"; mkdir -p "$SPIRA_HOME/runes"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/wiki-commit.sh" "$SPIRA_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
-# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# SPIRA_RUNES_DIR is registered and the fixture declares a fixed, nonexistent path — nothing
 # derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
-tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
+tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 tl_config SPIRA_RUN="$SPIRA_RUN"
 SPIRA_REPO_MAP="$TMP/repo-map"
 tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
-cat > "$SPIRA_HOME/chamber/builder.fayth" <<'FAYTH'
-FAYTH_NAME=builder
-FAYTH_WORKING_EXITS="SUBMITTED ask park hold"
-FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}"
-FAYTH_EXCLUDE_LABELS="spira-poison,needs-operator"
-FAYTH_MAX_CONCURRENT=1
-FAYTH_HEARTBEAT_SECONDS=600
-FAYTH
-printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
+cat > "$SPIRA_HOME/runes/builder.rune" <<'RUNE'
+RUNE_NAME=builder
+RUNE_WORKING_EXITS="SUBMITTED ask park hold"
+RUNE_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}"
+RUNE_EXCLUDE_LABELS="spira-poison,needs-operator"
+RUNE_MAX_CONCURRENT=1
+RUNE_HEARTBEAT_SECONDS=600
+RUNE
+printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/runes/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"
 tl_config SPIRA_AGENT="$BIN/claude"

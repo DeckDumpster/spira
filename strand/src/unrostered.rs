@@ -28,10 +28,10 @@ impl Persona {
 
     fn absent_because(&self, lanes: &[String]) -> Option<String> {
         if !self.rostered {
-            return Some("not in spira.fayths".into());
+            return Some("not in spira.runes".into());
         }
         if self.summon != "auto" {
-            return Some(format!("FAYTH_SUMMON={}", self.summon));
+            return Some(format!("RUNE_SUMMON={}", self.summon));
         }
         if !self.lane.is_empty() && !lanes.contains(&self.lane) {
             return Some(format!("lane {} not in spira.lanes", self.lane));
@@ -60,7 +60,7 @@ pub fn rows(claimable: &HashSet<String>, store: &Store, personas: &[Persona], la
             continue;
         }
         let detail = if matching.is_empty() {
-            "READY but no persona in the chamber matches its labels".to_string()
+            "READY but no persona in the runes matches its labels".to_string()
         } else {
             let why: Vec<String> =
                 matching.iter().map(|p| format!("{} ({})", p.name, p.absent_because(lanes).unwrap_or_default())).collect();
@@ -71,26 +71,26 @@ pub fn rows(claimable: &HashSet<String>, store: &Store, personas: &[Persona], la
             id,
             Disposition::Escalate,
             detail,
-            "roster the persona (spira-config set spira.fayths) or relabel the bead".into(),
+            "roster the persona (spira-config set spira.runes) or relabel the bead".into(),
         ));
     }
     out
 }
 
 pub fn personas(cfg: &Config) -> Result<Vec<Persona>, String> {
-    use spira_config::chamber::{fayth_get, fayth_names, spira_fayths};
+    use spira_config::runes::{rune_get, rune_names, spira_runes};
     let home = cfg.home.as_ref().ok_or("neither SPIRA_HOME nor SPIRA_RELEASE is set")?;
     let roster: HashSet<String> =
-        spira_fayths(home, cfg.fayths_override.as_deref()).split_whitespace().map(str::to_string).collect();
+        spira_runes(home, cfg.runes_override.as_deref()).split_whitespace().map(str::to_string).collect();
     let split = |s: String| -> Vec<String> { s.split(',').map(str::trim).filter(|x| !x.is_empty()).map(str::to_string).collect() };
-    Ok(fayth_names(home)
+    Ok(rune_names(home)
         .into_iter()
         .map(|n| Persona {
-            labels: split(fayth_get(home, &n, "FAYTH_LABELS", "")),
-            exclude: split(fayth_get(home, &n, "FAYTH_EXCLUDE_LABELS", "")),
+            labels: split(rune_get(home, &n, "RUNE_LABELS", "")),
+            exclude: split(rune_get(home, &n, "RUNE_EXCLUDE_LABELS", "")),
             rostered: roster.contains(&n),
-            summon: fayth_get(home, &n, "FAYTH_SUMMON", "auto"),
-            lane: fayth_get(home, &n, "FAYTH_LANE", ""),
+            summon: rune_get(home, &n, "RUNE_SUMMON", "auto"),
+            lane: rune_get(home, &n, "RUNE_LANE", ""),
             name: n,
         })
         .collect())
@@ -117,7 +117,7 @@ mod tests {
         let ps = [persona("builder", "plan", true), persona("warden", "warden-sweep", false)];
         let r = rows(&one("sp-a"), &s, &ps, &[], &[]);
         assert_eq!(r.len(), 1);
-        assert!(r[0].detail.contains("warden (not in spira.fayths)"), "{}", r[0].detail);
+        assert!(r[0].detail.contains("warden (not in spira.runes)"), "{}", r[0].detail);
     }
 
     #[test]
@@ -137,7 +137,7 @@ mod tests {
         let both: HashSet<String> = ["sp-a".to_string(), "sp-b".to_string()].into();
         let r = rows(&both, &s, &[lane, manual], &[], &[]);
         assert!(r[0].detail.contains("lane nolane not in spira.lanes"), "{}", r[0].detail);
-        assert!(r[1].detail.contains("FAYTH_SUMMON=manual"), "{}", r[1].detail);
+        assert!(r[1].detail.contains("RUNE_SUMMON=manual"), "{}", r[1].detail);
     }
 
     #[test]
@@ -148,7 +148,7 @@ mod tests {
         );
         let both: HashSet<String> = ["sp-a".to_string(), "sp-b".to_string()].into();
         let r = rows(&both, &s, &[persona("builder", "plan", true)], &[], &[]);
-        assert!(r.iter().any(|x| x.id == "sp-a" && x.detail.contains("no persona in the chamber")));
+        assert!(r.iter().any(|x| x.id == "sp-a" && x.detail.contains("no persona in the runes")));
         assert_eq!(r.len(), 1, "sp-b waits on open sp-a");
     }
 }

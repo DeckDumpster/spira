@@ -1,5 +1,5 @@
 //! `sim-summon`: the world's `SPIRA_SUMMON`, the seam the real sentinel summons an aeon through.
-//! It stands where `systemd-run ... aeon --home H <fayth>` stands: ranks the fayth's claimable
+//! It stands where `systemd-run ... aeon --home H <rune>` stands: ranks the rune's claimable
 //! beads with `spira-claim select`, claims the first one the scenario scripts through the
 //! lifecycle machine (`lc_claim_bead`), gives it a worktree on `spira/<bead>`, and runs the stub
 //! agent there as the claimed holder. A scenario that carries [`REAL_AEON`] runs the real `aeon`
@@ -23,10 +23,10 @@ const AEON_DEADLINE: Duration = Duration::from_secs(300); // batch-job: one real
 pub const CLAIM_ORDER: &str = "claim-order";
 const LC_CLAIM: &str = r#". "$SPIRA_HOME/lib.sh" || exit 2; lc_claim_bead "$1" "$2" "$3" "" 0 0 "$4""#;
 
-/// The fayth a `systemd-run` summon argv names: the argument after the `aeon` binary's path.
-pub fn fayth_of(argv: &[String]) -> Result<&str, String> {
+/// The rune a `systemd-run` summon argv names: the argument after the `aeon` binary's path.
+pub fn rune_of(argv: &[String]) -> Result<&str, String> {
     let at = argv.iter().position(|a| Path::new(a).file_name().is_some_and(|n| n == "aeon")).ok_or("sim-summon: no aeon in the summon argv")?;
-    argv.last().filter(|_| argv.len() > at + 1).map(String::as_str).ok_or_else(|| "sim-summon: the summon argv names no fayth".to_string())
+    argv.last().filter(|_| argv.len() > at + 1).map(String::as_str).ok_or_else(|| "sim-summon: the summon argv names no rune".to_string())
 }
 
 /// Whether the scenario runs the real aeon.
@@ -87,32 +87,32 @@ fn claim_tool(args: &[&str], stdin: &str) -> Result<String, String> {
     }
 }
 
-/// The fayth's claimable beads in the order an aeon would take them.
-fn ranked(fayth: &str, scratch: &Path) -> Result<Vec<String>, String> {
-    let ready = claim_tool(&["fayth-ready", fayth, "--json"], "")?;
+/// The rune's claimable beads in the order an aeon would take them.
+fn ranked(rune: &str, scratch: &Path) -> Result<Vec<String>, String> {
+    let ready = claim_tool(&["rune-ready", rune, "--json"], "")?;
     let epics = scratch.join("epics");
     let resumable = scratch.join("resumable");
     std::fs::write(&epics, claim_tool(&["epics"], &ready)?).map_err(|e| e.to_string())?;
     std::fs::write(&resumable, "").map_err(|e| e.to_string())?;
     let out = claim_tool(
-        &["select", "--fayth", fayth, "--epics", &epics.display().to_string(), "--resumable", &resumable.display().to_string(), "--blockers", "machine"],
+        &["select", "--rune", rune, "--epics", &epics.display().to_string(), "--resumable", &resumable.display().to_string(), "--blockers", "machine"],
         &ready,
     )?;
     Ok(ranked_ids(&out))
 }
 
 /// The lifecycle Claim, by the function an aeon claims with: 0 applied, 3 refused. An applied
-/// claim is appended to the world's `claim-order` as `<bead> <holder> <lease_until> <fayth>`.
-fn claim(world: &Path, id: &str, fayth: &str) -> Result<bool, String> {
+/// claim is appended to the world's `claim-order` as `<bead> <holder> <lease_until> <rune>`.
+fn claim(world: &Path, id: &str, rune: &str) -> Result<bool, String> {
     let lease = spira_config::vtime::now_epoch() + LEASE_SECS;
     let (status, _, _) = run_capture(
-        Command::new("bash").args(["-c", LC_CLAIM, "lc-claim", id, HOLDER, &lease.to_string(), fayth]).envs(spira_config::release_env::child_path_env_for_process()),
+        Command::new("bash").args(["-c", LC_CLAIM, "lc-claim", id, HOLDER, &lease.to_string(), rune]).envs(spira_config::release_env::child_path_env_for_process()),
         CALL_DEADLINE,
     )?;
     match status.code() {
         Some(0) => {
             let mut log = std::fs::OpenOptions::new().create(true).append(true).open(world.join(CLAIM_ORDER)).map_err(|e| e.to_string())?;
-            writeln!(log, "{id} {HOLDER} {lease} {fayth}").map_err(|e| e.to_string())?;
+            writeln!(log, "{id} {HOLDER} {lease} {rune}").map_err(|e| e.to_string())?;
             Ok(true)
         }
         Some(CLAIM_REFUSED) => Ok(false),
@@ -121,7 +121,7 @@ fn claim(world: &Path, id: &str, fayth: &str) -> Result<bool, String> {
 }
 
 /// The home the real aeon is given: a directory of links to every entry of the release's harness
-/// tree, so the aeon's guard against FAYTH keys nothing consumes finds no source workspace above it
+/// tree, so the aeon's guard against RUNE keys nothing consumes finds no source workspace above it
 /// to judge against, as in a fixture home.
 fn aeon_home(world: &Path, harness: &Path) -> Result<std::path::PathBuf, String> {
     let home = world.join(AEON_HOME);
@@ -174,7 +174,7 @@ pub enum Ran {
 
 /// One summon: the stub agent for the first ranked bead the scenario scripts, or with
 /// [`REAL_AEON`] the real aeon.
-pub fn summon(world: &Path, scenario_file: &Path, state: &Path, fayth: &str, argv: &[String]) -> Result<Ran, String> {
+pub fn summon(world: &Path, scenario_file: &Path, state: &Path, rune: &str, argv: &[String]) -> Result<Ran, String> {
     let scenario = std::fs::read_to_string(scenario_file).unwrap_or_default();
     if real_aeon(&scenario) {
         run_aeon(world, argv)?;
@@ -182,8 +182,8 @@ pub fn summon(world: &Path, scenario_file: &Path, state: &Path, fayth: &str, arg
     }
     std::fs::create_dir_all(state).map_err(|e| e.to_string())?;
     let mut won = None;
-    for id in ranked(fayth, state)? {
-        if scripted(&scenario, &id) && claim(world, &id, fayth)? {
+    for id in ranked(rune, state)? {
+        if scripted(&scenario, &id) && claim(world, &id, rune)? {
             won = Some(id);
             break;
         }

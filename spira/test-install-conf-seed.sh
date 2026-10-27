@@ -16,7 +16,7 @@
 #
 # seed_prod_instance itself calls the real spira-config binary directly (get/set/convert)
 # rather than sourcing conf.sh's bash helpers, so this suite only needs a minimal harness
-# directory (repo-map.example, chamber/) for those calls to resolve against.
+# directory (repo-map.example, runes/) for those calls to resolve against.
 #
 #   ./test-install-conf-seed.sh
 #

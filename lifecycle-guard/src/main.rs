@@ -233,7 +233,7 @@ fn classify(
         rust_files.push(path.to_path_buf());
         return;
     }
-    if matches!(path.extension().and_then(|e| e.to_str()), Some("md") | Some("fayth"))
+    if matches!(path.extension().and_then(|e| e.to_str()), Some("md") | Some("rune"))
         && brief::is_persona_path(path)
     {
         brief_files.push(path.to_path_buf());

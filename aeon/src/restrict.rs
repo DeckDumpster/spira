@@ -78,7 +78,7 @@ const UNCONDITIONAL: &[&str] = &["HOME", "SPIRA_LC_SOCKET"];
 /// The allow-listed vars carried through only when set and non-empty, exactly
 /// work-env.sh's `${VAR:+"KEY=$VAR"}` tokens.
 const CONDITIONAL: &[&str] = &[
-    "SPIRA_FAYTH",
+    "SPIRA_RUNE",
     "TERM",
     "LANG",
     "GIT_AUTHOR_NAME",
@@ -321,7 +321,7 @@ mod tests {
     #[test]
     fn conditional_vars_carry_through_when_non_empty() {
         let b = base(&[
-            ("SPIRA_FAYTH", "builder"),
+            ("SPIRA_RUNE", "builder"),
             ("TERM", "xterm"),
             ("LANG", "C.UTF-8"),
             ("GIT_AUTHOR_NAME", "aeon-ifrit"),

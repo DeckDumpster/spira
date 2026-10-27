@@ -33,7 +33,7 @@ echo "test-set-state-writers.sh"
 # "label add" then anything on the same line, then a quote, then the prefix.
 # `.*` is safe here — grep processes line-by-line, so it cannot cross newlines.
 # ---------------------------------------------------------------------------
-DIM_PREFIXES='repo|severity|branch|fayth|lane|gate'
+DIM_PREFIXES='repo|severity|branch|rune|lane|gate'
 LABEL_ADD_DIM_RE="label add.*[\"'](${DIM_PREFIXES}):"
 INC_LABELS_DIM_RE="SPIRA_INCIDENT_LABELS[^=]*=.*,?(${DIM_PREFIXES}):"
 

@@ -102,8 +102,8 @@ git -C "$REPO" worktree add -q "$WT_CHILD" spira/sp-parent
 # rather than assumed (law-a-pattern-match-is-not-an-identity-check).
 bash -c 'exec -a aeon.sh sleep 60' &
 AEON_PID=$!
-echo "$AEON_PID" > "$SPIRA_RUN/aeon-testfayth-sp-child.pid"
-echo "$(( $(date +%s) + 3600 ))" > "$SPIRA_RUN/aeon-testfayth-sp-child.lease"
+echo "$AEON_PID" > "$SPIRA_RUN/aeon-testrune-sp-child.pid"
+echo "$(( $(date +%s) + 3600 ))" > "$SPIRA_RUN/aeon-testrune-sp-child.lease"
 # Positive control: the pidfile really is alive before we rely on it.
 is "planted aeon pid is alive" "0" "$([ -d "/proc/$AEON_PID" ]; echo $?)"
 
@@ -127,7 +127,7 @@ echo "CASE 2 — once the path's own aeon is gone, the same call proceeds"
 kill "$AEON_PID" 2>/dev/null
 wait "$AEON_PID" 2>/dev/null || true
 # A dead aeon's lease stops being renewed and runs out; the fixture ends it outright.
-echo 1 > "$SPIRA_RUN/aeon-testfayth-sp-child.lease"
+echo 1 > "$SPIRA_RUN/aeon-testrune-sp-child.lease"
 
 rc2=0
 spira_destroy_worktree "sp-parent" "$WT_CHILD" "$REPO" "landed in main" 2>/dev/null || rc2=$?

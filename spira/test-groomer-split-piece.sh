@@ -33,7 +33,7 @@
 #
 # defect: sp-gseub
 # tier: T1
-# covers: groomer/src/* spira/lib.sh spira/chamber/groomer.md
+# covers: groomer/src/* spira/lib.sh spira/runes/groomer.md
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -55,10 +55,10 @@ testdb_reset
 
 export SPIRA_CONF="/nonexistent-$$.conf"
 
-mkdir -p "$TMP/chamber"
-printf 'FAYTH_LABELS=spira,plan\n' > "$TMP/chamber/builder.fayth"
-printf 'FAYTH_LABELS=spira,groom\n' > "$TMP/chamber/groomer.fayth"
-export SPIRA_CHAMBER="$TMP/chamber"
+mkdir -p "$TMP/runes"
+printf 'RUNE_LABELS=spira,plan\n' > "$TMP/runes/builder.rune"
+printf 'RUNE_LABELS=spira,groom\n' > "$TMP/runes/groomer.rune"
+export SPIRA_RUNES_DIR="$TMP/runes"
 
 seed() {
     printf '{"id":"%s","title":"%s","status":"open","issue_type":"task","labels":["plan","repo:fixture"],"updated_at":"2026-09-04T00:00:00Z"}\n' \

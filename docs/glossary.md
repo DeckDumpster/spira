@@ -13,14 +13,14 @@
 | **break-glass** | a move the machine allows only with a reason, evidence and the evidence tip |
 | **broker** | `broker token\|read` | `token` mints the GitHub App installation token behind `gh-app.sh`; `read` answers `run-view`, `run-jobs` and `artifact-download` for a mapped repo, without log content. |
 | **certified** | a gate or round passed an exact tip |
-| **chamber** | `spira/chamber/`: persona definitions and briefs |
+| **runes** | `spira/runes/`: persona definitions and briefs |
 | **Concierge** | the operator's long-lived session; claims nothing |
 | **cockpit** | the operator's tmux workspace: session, mail, decisions, ops dashboard |
 | **delivery** | the per-bead sub-machine of `IN_DELIVERY` |
 | **disposition** | how a session was cut short: `lapsed`, `thrash`, `slain` |
 | **escalation model** | the persona's stronger model used after a bead is rejected twice |
 | **express** | the flag that puts a bead ahead of the line |
-| **fayth** | a persona definition (`.fayth` plus `.md` brief) |
+| **rune** | a persona definition (`.rune` plus `.md` brief) |
 | **fence** | a static check that fails the gate on a class of violation |
 | **gate** | per-branch certification, defined by the judged tree's `gate.steps` |
 | **hold** | an orthogonal suspension of a bead: `poison`, `ask`, `wait`, `manual` |
@@ -30,7 +30,7 @@
 | **mender** | persona that triages one failing suite of a round |
 | **operator** | the human who decides escalations |
 | **partition** | the set of beads a persona may claim, as a label predicate |
-| **persona** | a fayth, the role an aeon plays |
+| **persona** | a rune, the role an aeon plays |
 | **plane** | `work`, `observability` or `maintenance`: how `world` groups units |
 | **poison** | the hold on a bead that exhausted its attempts |
 | **release** | an immutable `<releases>/<sha>/` directory; `current` points at the one in force |

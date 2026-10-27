@@ -120,7 +120,7 @@ printf 'test-foo.sh | quarantined | 2026-01-01T00:00:00Z | sp-abc | flaky dns\n'
 # answered from a canned-JSON fixture rather than a live store.
 queue() {
     tl_config SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
+        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$MAP" SPIRA_RUNES=t \
         SPIRA_QUEUE_DIR="$TMP/queue" SPIRA_SUITE_STATE_FILE="spira/suite-state-test"
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_TOML="$SPIRA_TOML" \
@@ -180,7 +180,7 @@ for line in sys.stdin:
 } > "$RUN/cockpit.env"
 
 REAL_BD="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null)"
-tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t SPIRA_BD="${REAL_BD:-bd}"
+tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$MAP" SPIRA_RUNES=t SPIRA_BD="${REAL_BD:-bd}"
 pane="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
@@ -229,7 +229,7 @@ MAP2="$TMP2/repo-map"
 printf '# name | path | land | base | format | gate\nalpha | %s | queue | main | |\n' "$REPO2" > "$MAP2"
 
 tl_config SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
-    SPIRA_RUN="$RUN2" SPIRA_DB="$TMP2/nodb" SPIRA_REPO_MAP="$MAP2" SPIRA_FAYTHS=t \
+    SPIRA_RUN="$RUN2" SPIRA_DB="$TMP2/nodb" SPIRA_REPO_MAP="$MAP2" SPIRA_RUNES=t \
     SPIRA_QUEUE_DIR="$TMP2/queue" SPIRA_SUITE_STATE_FILE="spira/suite-state"
 out2="$(env -i PATH="$BASE_PATH" HOME="$TMP2" LC_ALL=C.UTF-8 \
     SPIRA_TOML="$SPIRA_TOML" \
@@ -260,7 +260,7 @@ for line in sys.stdin:
 '
 } > "$RUN2/cockpit.env"
 
-tl_config SPIRA_RUN="$RUN2" SPIRA_DB="$TMP2/nodb" SPIRA_REPO_MAP="$MAP2" SPIRA_FAYTHS=t SPIRA_BD="${REAL_BD:-bd}"
+tl_config SPIRA_RUN="$RUN2" SPIRA_DB="$TMP2/nodb" SPIRA_REPO_MAP="$MAP2" SPIRA_RUNES=t SPIRA_BD="${REAL_BD:-bd}"
 pane2="$(env -i PATH="$BASE_PATH" HOME="$TMP2" LC_ALL=C.UTF-8 \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$TMP2/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$REPO2" \

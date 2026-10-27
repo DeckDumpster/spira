@@ -6,7 +6,7 @@
 //! would drift" — so it has to be the same query, not a proc scan that happens to agree
 //! most of the time. Ported rather than called through a seam because it is one small,
 //! self-contained branch (a systemctl count) with no
-//! dependency on a `.fayth` file's own bash evaluation.
+//! dependency on a `.rune` file's own bash evaluation.
 
 /// The production branch: how many `spira-aeon-*` units systemd knows about right now.
 /// `unit_count` is injected so a test supplies a fixed list instead of a real systemd.

@@ -3,15 +3,15 @@
 # test-cockpit-unclaimable.sh — SP_NEXT shows the persona that WILL claim a bead,
 #                               not the one the partition query found it under.
 #
-# THE DEFECT. sp-f8vry: a bead carrying fayth:ops on spira,plan labels appears in
+# THE DEFECT. sp-f8vry: a bead carrying rune:ops on spira,plan labels appears in
 # builder's partition query (because builder's labels are a subset of its labels). Before
 # this fix the aggregator stamped it as "_partition=builder" and emitted
 # "SP_NEXT0=P1 builder sp-foo ..." — telling the operator builder would claim it.
-# Builder cannot claim it (fayth:ops excludes builder); ops cannot claim it (no incident
+# Builder cannot claim it (rune:ops excludes builder); ops cannot claim it (no incident
 # label). The bead is unclaimable, but the panel said "builder" for fifteen hours.
 #
 # THE FIX. The aggregator now receives the partition map (label-set → persona name) and
-# checks each bead's fayth: preference at render time. If a preference is present and the
+# checks each bead's rune: preference at render time. If a preference is present and the
 # named persona's labels are not all on the bead, the partition label becomes "unclaimable"
 # rather than the persona that won the label query but cannot actually claim the work.
 #
@@ -19,7 +19,7 @@
 # tier: T1
 # covers: cockpit-collect/src/* sentinel/src/unclaimable.rs UC-dispatch-17 UC-cockpit-observability-17
 # hermetic-ok: mock bd binary, no systemd or database
-# scar: a bead carrying fayth:ops on spira,plan labels appeared in builder's partition query; the panel said "builder" for fifteen hours while the bead was unclaimable by any persona.
+# scar: a bead carrying rune:ops on spira,plan labels appeared in builder's partition query; the panel said "builder" for fifteen hours while the bead was unclaimable by any persona.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -50,16 +50,16 @@ lc_mirror_bd "$LC"
 # same value as the bead fixture labels below.
 run_core() {
     local bd_path="$1"
-    # SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP/SPIRA_FAYTHS/SPIRA_SCOPE_LABEL/SPIRA_ASK_LABEL/
+    # SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP/SPIRA_RUNES/SPIRA_SCOPE_LABEL/SPIRA_ASK_LABEL/
     # SPIRA_CI_LABEL/SPIRA_BD are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
     # CONFIG): declare via tl_config and thread SPIRA_TOML through env -i, which clears it.
-    # round 3 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — without
-    # it, cockpit-collect cannot find chamber/builder.fayth or chamber/ops.fayth to learn
-    # either persona's FAYTH_LABELS, so it can never say who would claim anything.
+    # round 3 fix (pattern 6): SPIRA_RUNES_DIR no longer derives from SPIRA_HOME — without
+    # it, cockpit-collect cannot find runes/builder.rune or runes/ops.rune to learn
+    # either persona's RUNE_LABELS, so it can never say who would claim anything.
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
-        SPIRA_FAYTHS="builder ops" SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
+        SPIRA_RUNES="builder ops" SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci SPIRA_BD="$bd_path" \
-        SPIRA_CHAMBER="$HERE/chamber"
+        SPIRA_RUNES_DIR="$HERE/runes"
     env -i PATH="$LC:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
@@ -84,7 +84,7 @@ EOF
 # ========================================================================================
 echo "case 1 — positive control: a claimable builder bead shows 'builder', not 'unclaimable'"
 # ========================================================================================
-# A bead with {plan, scope} and no fayth: preference appears in builder's partition query
+# A bead with {plan, scope} and no rune: preference appears in builder's partition query
 # and has no narrowing preference. The cockpit must show "builder", not "unclaimable".
 # Without this case, an implementation that always shows "unclaimable" would pass case 2.
 make_bd "$TMP/bd-1" \
@@ -97,15 +97,15 @@ nowant "claimable bead does NOT show unclaimable"      "unclaimable"   "$out"
 
 # ========================================================================================
 echo
-echo "case 2 — fayth:ops on plan labels shows 'unclaimable', not 'builder'"
+echo "case 2 — rune:ops on plan labels shows 'unclaimable', not 'builder'"
 # ========================================================================================
-# The fifteen-hour strand. A bead carrying fayth:ops AND the builder partition labels
+# The fifteen-hour strand. A bead carrying rune:ops AND the builder partition labels
 # appears in builder's partition query because builder's labels are a subset.
 # The cockpit used to stamp it as "builder". This case asserts that the cockpit now shows
-# "unclaimable" instead: builder is excluded by the fayth:ops preference, and ops is
+# "unclaimable" instead: builder is excluded by the rune:ops preference, and ops is
 # excluded by its own partition check (the bead has no incident label).
 make_bd "$TMP/bd-2" \
-    '[{"id":"sp-uc2a","title":"fayth:ops on plan labels","status":"open","issue_type":"task","priority":1,"labels":["fayth:ops","plan","repo:spira","'"${SPIRA_SCOPE_LABEL}"'"]}]'
+    '[{"id":"sp-uc2a","title":"rune:ops on plan labels","status":"open","issue_type":"task","priority":1,"labels":["rune:ops","plan","repo:spira","'"${SPIRA_SCOPE_LABEL}"'"]}]'
 
 out="$(run_core "$TMP/bd-2")"
 want   "unclaimable bead appears in NEXT"             "sp-uc2a"       "$out"
@@ -114,28 +114,28 @@ nowant "unclaimable bead does NOT show builder"       "builder"       "$out"
 
 # ========================================================================================
 echo
-echo "case 3 — fayth:ops on incident labels shows 'ops' (the preference matches)"
+echo "case 3 — rune:ops on incident labels shows 'ops' (the preference matches)"
 # ========================================================================================
-# A bead with fayth:ops AND ops's partition labels (incident, spira) is correctly claimable
+# A bead with rune:ops AND ops's partition labels (incident, spira) is correctly claimable
 # by ops. The cockpit must show "ops", not "unclaimable". The preference matches the
 # persona whose labels are all present on the bead.
 make_bd "$TMP/bd-3" \
-    '[{"id":"sp-uc3a","title":"fayth:ops on incident labels","status":"open","issue_type":"task","priority":1,"labels":["fayth:ops","incident","repo:spira","'"${SPIRA_SCOPE_LABEL}"'"]}]'
+    '[{"id":"sp-uc3a","title":"rune:ops on incident labels","status":"open","issue_type":"task","priority":1,"labels":["rune:ops","incident","repo:spira","'"${SPIRA_SCOPE_LABEL}"'"]}]'
 
 out="$(run_core "$TMP/bd-3")"
-want   "ops-fayth ops-partition bead appears in NEXT"      "sp-uc3a"      "$out"
-want   "ops-fayth ops-partition shows ops"                 "ops"          "$out"
-nowant "ops-fayth ops-partition does NOT show unclaimable" "unclaimable"  "$out"
+want   "ops-rune ops-partition bead appears in NEXT"      "sp-uc3a"      "$out"
+want   "ops-rune ops-partition shows ops"                 "ops"          "$out"
+nowant "ops-rune ops-partition does NOT show unclaimable" "unclaimable"  "$out"
 
 # ========================================================================================
 echo
 echo "case 4 — mixed: claimable and unclaimable beads in the same partition query"
 # ========================================================================================
-# Both beads appear in builder's query (both have spira,plan labels). One has fayth:ops
+# Both beads appear in builder's query (both have spira,plan labels). One has rune:ops
 # and is unclaimable; the other has no preference and is claimable. Asserting that both
 # label strings appear SOMEWHERE in the output cannot tell which id got which label — an
 # implementation that swapped them would still pass. Each id's OWN line is checked instead.
-CASE4_JSON='[{"id":"sp-uc4a","title":"claimable: no pref","status":"open","issue_type":"task","priority":1,"labels":["plan","repo:spira","'"${SPIRA_SCOPE_LABEL}"'"]},{"id":"sp-uc4b","title":"unclaimable: fayth:ops","status":"open","issue_type":"task","priority":1,"labels":["fayth:ops","plan","repo:spira","'"${SPIRA_SCOPE_LABEL}"'"]}]'
+CASE4_JSON='[{"id":"sp-uc4a","title":"claimable: no pref","status":"open","issue_type":"task","priority":1,"labels":["plan","repo:spira","'"${SPIRA_SCOPE_LABEL}"'"]},{"id":"sp-uc4b","title":"unclaimable: rune:ops","status":"open","issue_type":"task","priority":1,"labels":["rune:ops","plan","repo:spira","'"${SPIRA_SCOPE_LABEL}"'"]}]'
 make_bd "$TMP/bd-4" "$CASE4_JSON"
 
 out="$(run_core "$TMP/bd-4")"

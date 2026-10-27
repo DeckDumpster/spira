@@ -1,7 +1,7 @@
 //! Pure logic behind the `bead` binary. Contract: DESIGN.md. Kept separate from `main.rs`
-//! (which does the `bdq`/`.fayth`/`schema.sh`/`mail` subprocess work) so the CLI's own
+//! (which does the `bdq`/`.rune`/`schema.sh`/`mail` subprocess work) so the CLI's own
 //! rules — the lane-admission guard, label composition, the lint judge — are unit-testable
-//! with no database, no chamber and no subprocess.
+//! with no database, no runes and no subprocess.
 //!
 //! `bdq` (the module, not the `bead` binary's own bridge to it) is `bdq` the standalone
 //! binary's own pure logic — see `src/bin/bdq.rs` and `bdq.rs`'s own module doc.
@@ -35,7 +35,7 @@ pub fn repos_by_name(map_text: &str) -> BTreeMap<String, RepoSection> {
     repo_sections(map_text, &mut warnings).unwrap_or_default()
 }
 
-/// A raw `FAYTH_LABELS`/lane token, read into the typed vocabulary — `None` when it names
+/// A raw `RUNE_LABELS`/lane token, read into the typed vocabulary — `None` when it names
 /// no lane at all (an ordinary label like `testscope` or `alpha-work`).
 pub fn label_to_lane(label: &str) -> Option<Lane> {
     serde_json::from_value(serde_json::Value::String(label.to_string())).ok()
@@ -51,12 +51,12 @@ pub fn lane_label(lane: Lane) -> String {
         .unwrap_or_default()
 }
 
-/// The partition a persona's comma-joined `FAYTH_LABELS` carries, per `_bead_file`'s own
+/// The partition a persona's comma-joined `RUNE_LABELS` carries, per `_bead_file`'s own
 /// scan: the LAST label (in order) that matches the lane vocabulary wins — not the first,
 /// matching the bash's un-`break`-ed loop.
-pub fn fayth_partition(fayth_labels: &str) -> Option<Lane> {
+pub fn rune_partition(rune_labels: &str) -> Option<Lane> {
     let mut partition = None;
-    for raw in fayth_labels.split(',') {
+    for raw in rune_labels.split(',') {
         let l = raw.trim();
         if let Some(lane) = label_to_lane(l) {
             partition = Some(lane);
@@ -74,11 +74,11 @@ pub enum LaneCheck {
     Refused(String),
 }
 
-/// `_bead_file`'s lane-admission guard. `repos` is [`repos_by_name`]'s result; `fayth_labels`
-/// is the filing persona's raw `FAYTH_LABELS`. `override_set` is `SPIRA_BEAD_LANE_OVERRIDE`
+/// `_bead_file`'s lane-admission guard. `repos` is [`repos_by_name`]'s result; `rune_labels`
+/// is the filing persona's raw `RUNE_LABELS`. `override_set` is `SPIRA_BEAD_LANE_OVERRIDE`
 /// being non-empty, which admits everything unconditionally.
 pub fn lane_check(
-    fayth_labels: &str,
+    rune_labels: &str,
     repo: &str,
     repos: &BTreeMap<String, RepoSection>,
     override_set: bool,
@@ -86,7 +86,7 @@ pub fn lane_check(
     if override_set {
         return LaneCheck::Admitted;
     }
-    let partition = match fayth_partition(fayth_labels) {
+    let partition = match rune_partition(rune_labels) {
         Some(p) => p,
         None => return LaneCheck::Admitted,
     };
@@ -111,10 +111,10 @@ pub fn lane_check(
 // `--for` (work) and `--kind` (non-work) routes.
 // ---------------------------------------------------------------------------------------
 
-/// The `-l` label list for a `work`-kind filing: the persona's own `FAYTH_LABELS`, plus
+/// The `-l` label list for a `work`-kind filing: the persona's own `RUNE_LABELS`, plus
 /// `repo:<repo>`. Express is lifecycle state, never a label.
-pub fn work_labels(fayth_labels: &str, repo: &str) -> String {
-    format!("{fayth_labels},repo:{repo}")
+pub fn work_labels(rune_labels: &str, repo: &str) -> String {
+    format!("{rune_labels},repo:{repo}")
 }
 
 /// Why `base` cannot be stacked under a new bead of `repo`, or `None` when it can: only a
@@ -274,11 +274,11 @@ pub fn is_builder_bead(labels: &[String], builder_labels: &[String]) -> bool {
     !builder_labels.is_empty() && builder_labels.iter().all(|b| labels.iter().any(|l| l == b))
 }
 
-/// The partition vocabulary `_bead_lint` itself computes from the chamber: every fayth's
-/// `FAYTH_LABELS`, comma-split, trimmed, de-duplicated, excluding the empty string and
-/// (when non-empty) `scope_label`. `personas` is `(name, raw FAYTH_LABELS)` pairs, already
-/// read (via the `.fayth` bridge, in main.rs — this function is the pure part).
-pub fn chamber_partitions(personas: &[(String, String)], scope_label: &str) -> Vec<String> {
+/// The partition vocabulary `_bead_lint` itself computes from the runes: every rune's
+/// `RUNE_LABELS`, comma-split, trimmed, de-duplicated, excluding the empty string and
+/// (when non-empty) `scope_label`. `personas` is `(name, raw RUNE_LABELS)` pairs, already
+/// read (via the `.rune` bridge, in main.rs — this function is the pure part).
+pub fn runes_partitions(personas: &[(String, String)], scope_label: &str) -> Vec<String> {
     let mut seen = Vec::new();
     for (_, raw) in personas {
         for tok in raw.split(',') {
@@ -533,7 +533,7 @@ pub fn epic_blocks_refusal(id: &str, depid: &str) -> String {
 
 // ---------------------------------------------------------------------------------------
 // `contract` — formatting only; the three sections' data comes from main.rs's subprocess
-// calls (`fayth_names`/`fayth_get`, `schema.sh kinds`, `repos_by_name`).
+// calls (`rune_names`/`rune_get`, `schema.sh kinds`, `repos_by_name`).
 // ---------------------------------------------------------------------------------------
 
 /// One `PERSONAS` line: `  {name:<14} {labels-or-"(no labels)"}`.
@@ -666,11 +666,11 @@ mod tests {
     }
 
     #[test]
-    fn fayth_partition_last_match_wins() {
-        assert_eq!(fayth_partition("testscope,plan"), Some(Lane::Plan));
-        assert_eq!(fayth_partition("plan,incident"), Some(Lane::Incident));
-        assert_eq!(fayth_partition("testscope,alpha-work"), None);
-        assert_eq!(fayth_partition(""), None);
+    fn rune_partition_last_match_wins() {
+        assert_eq!(rune_partition("testscope,plan"), Some(Lane::Plan));
+        assert_eq!(rune_partition("plan,incident"), Some(Lane::Incident));
+        assert_eq!(rune_partition("testscope,alpha-work"), None);
+        assert_eq!(rune_partition(""), None);
     }
 
     fn repo_map_fixture() -> BTreeMap<String, RepoSection> {
@@ -815,14 +815,14 @@ mod tests {
     }
 
     #[test]
-    fn chamber_partitions_dedupes_and_excludes_scope() {
+    fn runes_partitions_dedupes_and_excludes_scope() {
         let personas = vec![
             ("alpha".to_string(), "testscope,plan".to_string()),
             ("beta".to_string(), "testscope,incident".to_string()),
             ("gamma".to_string(), "plan".to_string()),
             ("empty".to_string(), "".to_string()),
         ];
-        let got = chamber_partitions(&personas, "testscope");
+        let got = runes_partitions(&personas, "testscope");
         assert_eq!(got, vec!["plan".to_string(), "incident".to_string()]);
     }
 

@@ -131,20 +131,20 @@ want "list after recovery still finds the seeded statute (nothing above wrote th
 echo
 echo "=== concierge.sh: the statute book rendering empty vs. the store being unreachable ==="
 
-FX="$TMP/fx"; mkdir -p "$FX/chamber"
+FX="$TMP/fx"; mkdir -p "$FX/runes"
 # SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
 # <home>/conf.d directly, so this fixture home needs one too (sfail round 2, pattern 1).
 ln -s "$HERE/conf.d" "$FX/conf.d"
-cp "$HERE/chamber/concierge.md" "$FX/chamber/fx.md"
+cp "$HERE/runes/concierge.md" "$FX/runes/fx.md"
 ln -sf "$(command -v mail)" "$FX/mail"   # the real compiled binary, found on the suite's own PATH (mail is gone, sp-ooh1k)
 ln -sf "$HERE/bead.sh" "$FX/bead.sh"
-cat > "$FX/chamber/fx.fayth" <<'EOF'
-FAYTH_NAME=fx
+cat > "$FX/runes/fx.rune" <<'EOF'
+RUNE_NAME=fx
 EOF
 
 run_concierge_brief() {
-    # The complete fixture declares a non-empty SPIRA_CHAMBER; nothing derives it from
-    # SPIRA_HOME any more (sfail round 2, pattern 6) — without this fx.fayth is never found.
+    # The complete fixture declares a non-empty SPIRA_RUNES_DIR; nothing derives it from
+    # SPIRA_HOME any more (sfail round 2, pattern 6) — without this fx.rune is never found.
     # SPIRA_DB via tl_config too (same pattern 3/7 as rule.sh above): concierge.sh sources
     # conf.sh, whose resolve --sh-all would otherwise overwrite the plain env value below.
     # SPIRA_STATUTE_CORE / SPIRA_STATUTE_CORE_LOCAL (one source of config, per Ryan
@@ -154,9 +154,9 @@ run_concierge_brief() {
     # every core slug missing — "demoted to the index" — and refused with rc=1 even against
     # the reachable, non-empty-store positive control. Nothing derives these empty any more,
     # so this suite must say so itself, matching the pre-migration behaviour of an unset env.
-    tl_config SPIRA_MEMORIES_CACHE="" SPIRA_CHAMBER="$FX/chamber" SPIRA_DB="$DB" \
+    tl_config SPIRA_MEMORIES_CACHE="" SPIRA_RUNES_DIR="$FX/runes" SPIRA_DB="$DB" \
         SPIRA_STATUTE_CORE="" SPIRA_STATUTE_CORE_LOCAL="" SPIRA_STATUTE_DIR="${BRIEF_STATUTE_DIR:-$(mktemp -d "$TMP/brief-statutes.XXXXXX")}"
-    SPIRA_HOME="$FX" PATH="$FX:$PATH" CONCIERGE_FAYTH=fx \
+    SPIRA_HOME="$FX" PATH="$FX:$PATH" CONCIERGE_RUNE=fx \
         bash "$CONCIERGE_SH" brief 2>&1
 }
 

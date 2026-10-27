@@ -2,7 +2,7 @@
 //! decision to resume it or fall back cold, the turn boundary a stop waits for, and the
 //! message that tells a resumed model the world was down.
 //!
-//! The facts are `session` (`<uuid> <fayth> <persona hash> <worktree>`) and `checkpointed`
+//! The facts are `session` (`<uuid> <rune> <persona hash> <worktree>`) and `checkpointed`
 //! (`<epoch>`), appended to the lifecycle event log; a checkpoint is pending while the last
 //! `checkpointed` fact is newer than the last `session` fact.
 
@@ -39,23 +39,23 @@ pub fn parse_facts(json: &str) -> Vec<Fact> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionFact {
     pub id: String,
-    pub fayth: String,
+    pub rune: String,
     pub persona: String,
     pub worktree: String,
 }
 
 impl SessionFact {
     pub fn cause(&self) -> String {
-        format!("{} {} {} {}", self.id, self.fayth, self.persona, self.worktree)
+        format!("{} {} {} {}", self.id, self.rune, self.persona, self.worktree)
     }
 
     pub fn parse(cause: &str) -> Option<Self> {
         let mut p = cause.splitn(4, ' ');
-        let (id, fayth, persona) = (p.next()?, p.next()?, p.next()?);
+        let (id, rune, persona) = (p.next()?, p.next()?, p.next()?);
         if !is_uuid(id) {
             return None;
         }
-        Some(Self { id: id.into(), fayth: fayth.into(), persona: persona.into(), worktree: p.next().unwrap_or("").into() })
+        Some(Self { id: id.into(), rune: rune.into(), persona: persona.into(), worktree: p.next().unwrap_or("").into() })
     }
 }
 
@@ -92,7 +92,7 @@ pub enum Plan {
 }
 
 /// What this claim does with a checkpoint left by an earlier stop.
-pub fn plan(facts: &[Fact], fayth: &str, persona: &str, worktree_present: bool, transcript_present: impl Fn(&str) -> bool) -> Plan {
+pub fn plan(facts: &[Fact], rune: &str, persona: &str, worktree_present: bool, transcript_present: impl Fn(&str) -> bool) -> Plan {
     let last = |kind: &str| facts.iter().rposition(|f| f.kind == kind);
     let Some(ck) = last(CHECKPOINTED) else { return Plan::Fresh };
     let ses = last(SESSION);
@@ -104,8 +104,8 @@ pub fn plan(facts: &[Fact], fayth: &str, persona: &str, worktree_present: bool, 
     let Some(session) = ses.and_then(|s| SessionFact::parse(&facts[s].cause)) else {
         return cold("the checkpoint names no recorded session");
     };
-    if session.fayth != fayth {
-        return cold(&format!("the session ran as {} and this is {fayth}", session.fayth));
+    if session.rune != rune {
+        return cold(&format!("the session ran as {} and this is {rune}", session.rune));
     }
     if session.persona != persona {
         return cold("the persona changed since the session was recorded (a new release)");
@@ -194,8 +194,8 @@ mod tests {
 
     const ID: &str = "0b9d6f3a-1c2e-4f5a-8b7c-9d0e1f2a3b4c";
 
-    fn session(fayth: &str, persona: &str) -> Fact {
-        Fact { kind: SESSION.into(), cause: SessionFact { id: ID.into(), fayth: fayth.into(), persona: persona.into(), worktree: "/w/sp-a".into() }.cause() }
+    fn session(rune: &str, persona: &str) -> Fact {
+        Fact { kind: SESSION.into(), cause: SessionFact { id: ID.into(), rune: rune.into(), persona: persona.into(), worktree: "/w/sp-a".into() }.cause() }
     }
 
     fn ck(at: i64) -> Fact {
@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn the_session_fact_round_trips_and_keeps_a_worktree_with_spaces() {
-        let f = SessionFact { id: ID.into(), fayth: "builder".into(), persona: "abc123".into(), worktree: "/a b/c".into() };
+        let f = SessionFact { id: ID.into(), rune: "builder".into(), persona: "abc123".into(), worktree: "/a b/c".into() };
         assert_eq!(SessionFact::parse(&f.cause()), Some(f));
         assert_eq!(SessionFact::parse("not-a-uuid builder x /w"), None);
     }
@@ -223,8 +223,8 @@ mod tests {
         assert!(parse_facts("garbage").is_empty());
     }
 
-    fn decide(facts: &[Fact], fayth: &str, persona: &str, wt: bool, tr: bool) -> Plan {
-        plan(facts, fayth, persona, wt, |_| tr)
+    fn decide(facts: &[Fact], rune: &str, persona: &str, wt: bool, tr: bool) -> Plan {
+        plan(facts, rune, persona, wt, |_| tr)
     }
 
     #[test]
@@ -246,13 +246,13 @@ mod tests {
     #[test]
     fn every_unresumable_session_falls_back_cold_and_says_why() {
         let facts = [session("builder", "p1"), ck(100)];
-        for (fayth, persona, wt, tr, why) in [
+        for (rune, persona, wt, tr, why) in [
             ("ops", "p1", true, true, "ran as builder"),
             ("builder", "p2", true, true, "persona changed"),
             ("builder", "p1", false, true, "worktree"),
             ("builder", "p1", true, false, "transcript"),
         ] {
-            match decide(&facts, fayth, persona, wt, tr) {
+            match decide(&facts, rune, persona, wt, tr) {
                 Plan::Cold { reason } => assert!(reason.contains(why), "{reason}"),
                 other => panic!("{other:?}"),
             }

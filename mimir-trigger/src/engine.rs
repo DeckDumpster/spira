@@ -153,7 +153,7 @@ pub fn invalid_closed_rows(raw: &str) -> Vec<String> {
     rows
 }
 
-/// The partition labels a trigger bead carries, so `mimir.fayth`'s `FAYTH_LABELS`
+/// The partition labels a trigger bead carries, so `mimir.rune`'s `RUNE_LABELS`
 /// predicate — and the dedup query below — never disagree.
 pub fn trigger_labels(scope_label: &str, mimir_label: &str) -> String {
     if scope_label.is_empty() {
@@ -200,7 +200,7 @@ pub fn description(
     invalid_closed_rows_text: Option<&str>,
 ) -> String {
     let mut d = format!(
-        "Scheduled trigger: the Mimir persona will claim this bead, run a retrospective pass over the failure distribution, identify recurring failure classes, and cut at most {max_beads} remedy beads. Trigger: {reason} (lastpass ts={lastpass_ts}, watermark ts={watermark_ts}). See spira/chamber/mimir.md for the pass procedure."
+        "Scheduled trigger: the Mimir persona will claim this bead, run a retrospective pass over the failure distribution, identify recurring failure classes, and cut at most {max_beads} remedy beads. Trigger: {reason} (lastpass ts={lastpass_ts}, watermark ts={watermark_ts}). See spira/runes/mimir.md for the pass procedure."
     );
     if let Some(rows) = invalid_closed_rows_text {
         d.push_str("\n\nClosed-record rows (detect_invalid_closed output):\n");

@@ -2,7 +2,7 @@
 
 Replaces the logic of `rule.sh` (root of the harness, ~220 lines) with one Rust binary,
 `rule`. `rule.sh` stays as the one entry point every caller already names — `concierge.sh`,
-`cockpit/db.sh`'s comment, every chamber brief that tells an agent `rule.sh enact <slug>
+`cockpit/db.sh`'s comment, every runes brief that tells an agent `rule.sh enact <slug>
 "<text>"`, and the suites — the same shim pattern `gate/DESIGN.md` established for `gate.sh`:
 source `conf.sh` for its side effects (env, PATH), then `exec -a "$0" rule --home
 "$(dirname "$0")/spira" "$@"`. Bead: sp-g9mhe (rewrite wave 5f).

@@ -108,8 +108,8 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | acceptance-local | no | - | 1 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | acceptance-prev-tag | no | - | 1 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | aeon-base-ref-qualify | no | - | 4 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-chamber-overlay-mech | no | - | ? | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| aeon-chamber-overlay | no | - | 33 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| aeon-runes-overlay-mech | no | - | ? | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| aeon-runes-overlay | no | - | 33 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
 | aeon-dirty-commit | no | - | 4 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
 | aeon-elastic-concurrency | no | - | 4 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
 | aeon-eviction-race | no | - | 55 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
@@ -185,7 +185,7 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | census | no | - | 64 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | certified-withdraw | replaceable | resubmit-moved-tip | 18 | reopen strips the submitted label; resubmit is the re-entry |
 | certify | replaceable | certify-twice, resubmit-moved-tip | 89 | gated once per tip, re-certified when the tip moves |
-| chamber-repo-labels | no | - | 4 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| runes-repo-labels | no | - | 4 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
 | citations | no | - | 16 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | claim-retry | partly | new:claim-order | 6 | transient bd failure retried; the failure itself is injection, stays bash |
 | close-reason-flags | no | - | 3 | single-tool or static contract: no hand-off between loop actors |
@@ -265,8 +265,8 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | escape-classify | no | - | ? | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | exclude | no | - | 1 | static, configuration or single-tool contract: no hand-off between loop actors |
 | express-lane | partly | new:claim-order | 20 | express label bypasses sentinel admission |
-| fayth-project-instructions | no | - | 5 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
-| fayth | no | - | 3 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| rune-project-instructions | no | - | 5 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| rune | no | - | 3 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
 | first-run | no | - | ? | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | freshclone | no | - | 7 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |
 | gate-admission-suites-only | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
@@ -365,7 +365,7 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | lifecycle-migrate | no | - | ? | lifecycle store, schema and read models against a real Dolt: the store is the sim world's dependency, not its subject |
 | lifecycle-stack-migration | no | - | ? | lifecycle store, schema and read models against a real Dolt: the store is the sim world's dependency, not its subject |
 | limits | no | - | 16 | cockpit/pane rendering and its probes: no loop actor changes state |
-| lint-chamber | no | - | 7 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
+| lint-runes | no | - | 7 | persona, brief or real-aeon session wiring: the stub agent does not run aeon, so the sim cannot see it |
 | livelock | no | - | 71 | ops detector or janitor over its own fixture: fault and anomaly paths the sim excludes (no fault injection) |
 | local-pass | partly | cut-in-bare-env | ? | cut refuses without a recorded local pass; override rows stay bash |
 | loop-readonly | partly | happy-path | 21 | sentinel claims from a read-only release; needs the world to run read-only |
@@ -484,7 +484,7 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | suite-state-fence | no | - | 6 | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | suite-state-rules | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
 | summon-fast-path | partly | happy-path, long-gate-interleaving | ? | a freed slot refills in seconds; needs virtual-time assertion |
-| summon-fayth | no | - | 4 | single-tool or static contract: no hand-off between loop actors |
+| summon-rune | no | - | 4 | single-tool or static contract: no hand-off between loop actors |
 | supersede-duty | replaceable | new:supersede | ? | supersede request adjudicated within one pass against a real spira-lc |
 | superseded | partly | new:supersede | 24 | landing leaves superseded beads alone; hel reaps them |
 | tarball-bins | no | - | 2 | install, activation, unit and packaging contracts: acceptance A–D and the unit lints own them |

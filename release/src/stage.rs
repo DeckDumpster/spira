@@ -1,6 +1,6 @@
 //! `release stage up|down` (DESIGN.md "stage"): stand up / tear down a fully isolated
 //! Spira for testing — its own git repo and bare remote, its own beads database, its own
-//! `SPIRA_RUN`, a minimal chamber, and the synthetic dispatch scripts that replace
+//! `SPIRA_RUN`, a minimal runes, and the synthetic dispatch scripts that replace
 //! `systemd-run` at the two harness seams `sentinel` needs (`SPIRA_SUMMON`, `SPIRA_LAUNCH`).
 //! Nothing inside a stage touches the caller's `SPIRA_DB`, `SPIRA_RUN`, or any real git
 //! repository. Replaces `spira/stage.sh`; `crate::canary` is the caller that most needs it.
@@ -85,11 +85,11 @@ fn lc_content_shim(db: &Path) -> String {
     )
 }
 
-/// `chamber/canary.fayth`'s content. `FAYTH_MAX_CONCURRENT=1` lets sentinel summon exactly
-/// one worker; `FAYTH_LABELS` must include `SPIRA_SCOPE_LABEL` (when non-empty) to pass
-/// `fayth_fenced`.
-pub fn fayth_content() -> &'static str {
-    "FAYTH_NAME=canary\nFAYTH_LABELS=\"${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}\"\nFAYTH_MAX_CONCURRENT=1\nFAYTH_WORKING_EXITS=\"SUBMITTED ask park hold\"\n"
+/// `runes/canary.rune`'s content. `RUNE_MAX_CONCURRENT=1` lets sentinel summon exactly
+/// one worker; `RUNE_LABELS` must include `SPIRA_SCOPE_LABEL` (when non-empty) to pass
+/// `rune_fenced`.
+pub fn rune_content() -> &'static str {
+    "RUNE_NAME=canary\nRUNE_LABELS=\"${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}\"\nRUNE_MAX_CONCURRENT=1\nRUNE_WORKING_EXITS=\"SUBMITTED ask park hold\"\n"
 }
 
 /// The stage's own repo map file's one line (the file `SPIRA_REPO_MAP` names; not literally
@@ -225,7 +225,7 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
 
     // ---- harness directory: SPIRA_HOME = <root>/spira.
     let sh = root.join("spira");
-    fs::create_dir_all(sh.join("chamber")).map_err(|e| format!("cannot create chamber: {e}"))?;
+    fs::create_dir_all(sh.join("runes")).map_err(|e| format!("cannot create runes: {e}"))?;
     for entry in fs::read_dir(&o.harness_spira).map_err(|e| format!("cannot read {}: {e}", o.harness_spira.display()))?.flatten() {
         let p = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
@@ -250,7 +250,7 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
     write_exec(&sh.join("fake-summon.sh"), FAKE_SUMMON)?;
     write_exec(&sh.join("fake-launch.sh"), FAKE_LAUNCH)?;
 
-    fs::write(sh.join("chamber/canary.fayth"), fayth_content()).map_err(|e| format!("cannot write canary.fayth: {e}"))?;
+    fs::write(sh.join("runes/canary.rune"), rune_content()).map_err(|e| format!("cannot write canary.rune: {e}"))?;
     let stage_repomap_path = sh.join(STAGE_REPO_MAP_FILENAME);
     fs::write(&stage_repomap_path, repo_map_line(&repo)).map_err(|e| format!("cannot write the stage's repo map: {e}"))?;
 
@@ -290,7 +290,7 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
         ("SPIRA_BD".to_string(), "bd-embedded".to_string()),
         ("SPIRA_REPO".to_string(), repo.display().to_string()),
         ("SPIRA_REPO_MAP".to_string(), stage_repomap_path.display().to_string()),
-        ("SPIRA_FAYTHS".to_string(), "canary".to_string()),
+        ("SPIRA_RUNES".to_string(), "canary".to_string()),
         ("SPIRA_MAX_AEONS".to_string(), "1".to_string()),
         ("SPIRA_NOTIFY".to_string(), "/bin/true".to_string()),
         ("SPIRA_BATCHER_ENABLE".to_string(), "1".to_string()),
@@ -310,8 +310,8 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
         .filter(|(k, _)| sh.join("conf.d").join(k).is_file())
         .map(|(k, v)| {
             let path = format!("spira.{}", k.trim_start_matches("SPIRA_").to_ascii_lowercase());
-            // A list key is declared as a list (SPIRA_FAYTHS is the one the stage sets).
-            let v = if k == "SPIRA_FAYTHS" { serde_json::json!(v.split_whitespace().collect::<Vec<_>>()).to_string() } else { v.clone() };
+            // A list key is declared as a list (SPIRA_RUNES is the one the stage sets).
+            let v = if k == "SPIRA_RUNES" { serde_json::json!(v.split_whitespace().collect::<Vec<_>>()).to_string() } else { v.clone() };
             (path, v)
         })
         .collect();
@@ -333,12 +333,12 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
 }
 
 /// `release stage down <root>`. Refuses a path that does not look like a stage (no
-/// `spira/chamber/canary.fayth`) — the same safety check `stage.sh down` makes before an
+/// `spira/runes/canary.rune`) — the same safety check `stage.sh down` makes before an
 /// `rm -rf`. Stops the stage's lifecycle server first.
 pub fn down(root: &Path) -> Result<(), String> {
     let canon = fs::canonicalize(root).map_err(|_| format!("down: {} does not exist", root.display()))?;
-    if !canon.join("spira/chamber/canary.fayth").is_file() {
-        return Err(format!("down: {} does not look like a stage (no canary.fayth) — refusing rm -rf", canon.display()));
+    if !canon.join("spira/runes/canary.rune").is_file() {
+        return Err(format!("down: {} does not look like a stage (no canary.rune) — refusing rm -rf", canon.display()));
     }
     crate::stage_lc::stop(&canon);
     fsutil::remove_tree(&canon)

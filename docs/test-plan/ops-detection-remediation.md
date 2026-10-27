@@ -7,7 +7,7 @@ branch became a shared catch-all across five beads and was never merged — see
 differs from its draft.
 
 Subjects: `incident.sh`, `census.sh` (and the `cluster.py`/`cluster_merge.py`/`covers.py` files it
-calls), `mimir-trigger.sh` + `chamber/mimir.md`, `heimdall.sh` + `heimdall classify`,
+calls), `mimir-trigger.sh` + `runes/mimir.md`, `heimdall.sh` + `heimdall classify`,
 `strand.sh` + `strand-classify.py`, `watchtower.sh`, `czar-pass` → `czar-pass/src/main.rs` (on
 the reconciler-engine, sp-pu7v6), `czar-fence.sh`, `groomer`, `groom-trigger.sh`,
 `hold.sh`/`unhold.sh`, `cockpit.sh livelock` + `strand close-reason`, `archivist`.

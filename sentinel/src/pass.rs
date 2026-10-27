@@ -20,13 +20,13 @@ pub enum Mode {
     /// `land_escalate` alone, stdin `<why>\n<evidence>` (sp-31hjr): the real-sender
     /// suites' way to drive the native escalation without a whole pass.
     LandEscalate,
-    /// `summon_fayth` alone (wave 4.27, family G): lib.sh's own shim target, and
+    /// `summon_rune` alone (wave 4.27, family G): lib.sh's own shim target, and
     /// czar-pass's direct call — no lib.sh sourcing at all any more.
-    Summon { fayth: String, pool: Option<i64>, require_express: bool },
+    Summon { rune: String, pool: Option<i64>, require_express: bool },
     /// `summon_argv` alone: `aeon --escape`'s own seam reaches it through lib.sh's shim.
-    SummonArgv { fayth: String },
+    SummonArgv { rune: String },
     /// `world_gate` alone: ditto.
-    WorldGate { fayth: String, prefix: String },
+    WorldGate { rune: String, prefix: String },
     /// `named_unit_stop` alone: `acceptance-local.sh`'s own shim target.
     NamedUnitStop { glob: String },
     /// `ck7_summon_pass` alone, under its own flock — lib.sh's shim target, and the way a
@@ -82,13 +82,13 @@ impl Mode {
         let a0 = args.first().map(String::as_str);
         match a0 {
             Some("--summon") => Mode::Summon {
-                fayth: args.get(1).cloned().unwrap_or_default(),
+                rune: args.get(1).cloned().unwrap_or_default(),
                 pool: args.get(2).filter(|s| !s.is_empty()).and_then(|s| s.parse().ok()),
                 require_express: args.get(3).is_some_and(|s| !s.is_empty()),
             },
-            Some("--summon-argv") => Mode::SummonArgv { fayth: args.get(1).cloned().unwrap_or_default() },
+            Some("--summon-argv") => Mode::SummonArgv { rune: args.get(1).cloned().unwrap_or_default() },
             Some("--world-gate") => Mode::WorldGate {
-                fayth: args.get(1).cloned().unwrap_or_default(),
+                rune: args.get(1).cloned().unwrap_or_default(),
                 prefix: args.get(2).cloned().unwrap_or_default(),
             },
             Some("--named-unit-stop") => Mode::NamedUnitStop { glob: args.get(1).cloned().unwrap_or_default() },
@@ -355,9 +355,9 @@ impl<'a> Sentinel<'a> {
             Mode::SummonOnly => self.summon_only(),
             Mode::OpenChildren { dry } => self.open_children_only(*dry),
             Mode::LandEscalate => self.land_escalate_cmd(),
-            Mode::Summon { fayth, pool, require_express } => self.summon_cmd(fayth, *pool, *require_express),
-            Mode::SummonArgv { fayth } => self.summon_argv_cmd(fayth),
-            Mode::WorldGate { fayth, prefix } => self.world_gate_cmd(fayth, prefix),
+            Mode::Summon { rune, pool, require_express } => self.summon_cmd(rune, *pool, *require_express),
+            Mode::SummonArgv { rune } => self.summon_argv_cmd(rune),
+            Mode::WorldGate { rune, prefix } => self.world_gate_cmd(rune, prefix),
             Mode::NamedUnitStop { glob } => self.named_unit_stop_cmd(glob),
             Mode::SummonPass => self.ck7_summon_pass(),
             Mode::MarkQueueWaiters => {
@@ -462,14 +462,14 @@ impl<'a> Sentinel<'a> {
         let n_open = open_plan.len();
         let live = self.live_total();
         self.log(&format!(
-            "state: open={} plan_ready={} in_progress={} aeons={} fayths=[{}]",
+            "state: open={} plan_ready={} in_progress={} aeons={} runes=[{}]",
             n_open,
             plan_ready
                 .map(|n| n.to_string())
                 .unwrap_or_else(|| "?".into()),
             plan_inprog,
             live,
-            self.cfg.fayths_str
+            self.cfg.runes_str
         ));
         self.roster_warnings();
         if self.mode == Mode::Report {
@@ -623,7 +623,7 @@ impl<'a> Sentinel<'a> {
 
     /// The fleet: `aeon_count` summed over the roster, from one unit listing.
     pub fn live_total(&self) -> usize {
-        let names = self.ctx.fayth_names();
+        let names = self.ctx.rune_names();
         if self.cfg.summon == "systemd-run" {
             let o = self.h.run(
                 Spec::args_owned(
@@ -655,12 +655,12 @@ impl<'a> Sentinel<'a> {
         names.iter().map(|f| pid_count(&self.cfg.run, f)).sum()
     }
 
-    /// roster_warnings: a WARN per chamber persona SPIRA_FAYTHS leaves out, once per change.
+    /// roster_warnings: a WARN per runes persona SPIRA_RUNES leaves out, once per change.
     fn roster_warnings(&self) {
-        let roster = &self.cfg.fayths_str;
+        let roster = &self.cfg.runes_str;
         let excluded: Vec<&String> = self
             .ctx
-            .chamber
+            .all_runes
             .iter()
             .filter(|f| !grep_w(roster, f))
             .collect();
@@ -680,7 +680,7 @@ impl<'a> Sentinel<'a> {
         }
         let _ = std::fs::write(&self.cfg.roster_stamp, &stamp);
         for f in excluded {
-            self.log(&format!("WARN {f}.fayth is in the chamber but not in SPIRA_FAYTHS — that persona will never be summoned here"));
+            self.log(&format!("WARN {f}.rune is in the runes but not in SPIRA_RUNES — that persona will never be summoned here"));
         }
     }
 }
@@ -707,8 +707,8 @@ pub fn grep_w(text: &str, word: &str) -> bool {
 
 /// The pidfile fallback of `aeon_count`: pidfiles whose identity lease is running; dead ones
 /// are removed, as aeon_count does.
-pub fn pid_count(run: &Path, fayth: &str) -> usize {
-    let prefix = format!("aeon-{fayth}-");
+pub fn pid_count(run: &Path, rune: &str) -> usize {
+    let prefix = format!("aeon-{rune}-");
     let Ok(rd) = std::fs::read_dir(run) else {
         return 0;
     };

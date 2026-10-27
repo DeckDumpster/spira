@@ -124,7 +124,7 @@ statement = "`suite-state-fence.sh` refuses a quarantine entry with no bead, a C
 [[use_case]]
 id = "UC-safety-fences-29"
 tier = "T0"
-statement = "no harness script writes a dimension label (repo/severity/branch/fayth/lane/gate) with `bd label add` or embeds one in `SPIRA_INCIDENT_LABELS`; `bd set-state` is the only writer"
+statement = "no harness script writes a dimension label (repo/severity/branch/rune/lane/gate) with `bd label add` or embeds one in `SPIRA_INCIDENT_LABELS`; `bd set-state` is the only writer"
 
 [[use_case]]
 id = "UC-safety-fences-30"
@@ -144,7 +144,7 @@ statement = "spike confinement: `confine.sh` refuses a spike branch touching fil
 [[use_case]]
 id = "UC-safety-fences-33"
 tier = "T0"
-statement = "chamber integrity: every `{{PLACEHOLDER}}` is rendered by its program, every command a brief names exists, every fayth parses, spike/ops brief clauses are present, and `bd reopen` is called only through `bead_reopen`"
+statement = "runes integrity: every `{{PLACEHOLDER}}` is rendered by its program, every command a brief names exists, every rune parses, spike/ops brief clauses are present, and `bd reopen` is called only through `bead_reopen`"
 
 [[use_case]]
 id = "UC-safety-fences-34"

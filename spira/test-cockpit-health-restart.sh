@@ -59,7 +59,7 @@ SESS=$(tmux list-panes -t "$WIN" -F '#{pane_id}')
 # line — the fixture must not depend on whatever environment happened to start the tmux
 # server.
 tl_config SPIRA_RUN="$TMP/.runtime" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
-    SPIRA_FAYTHS=t
+    SPIRA_RUNES=t
 # Every var the health process needs is embedded directly in the pane's command line,
 # including SPIRA_TOML, rather than relying on whatever environment started the tmux server.
 HEALTH_CMD="SPIRA_CONF='$CONF' SPIRA_HOME='$HERE' SPIRA_REPO='$TMP' SPIRA_TOML='$SPIRA_TOML' \

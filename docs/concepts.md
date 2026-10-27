@@ -141,30 +141,30 @@ settles; if the base moves under a green batch it goes to `REBUILDING` and back 
 `CI_RUNNING`. A batch event and the matching exit event on each member's delivery row are
 applied in one transaction.
 
-## Persona, fayth, aeon
+## Persona, rune, aeon
 
-A **fayth** is a persona *definition*: a file `spira/chamber/<name>.fayth` (shell-style
+A **rune** is a persona *definition*: a file `spira/runes/<name>.rune` (shell-style
 `NAME=value` lines parsed in-process by `spira-config`; any other construct is refused). It
-fixes the **partition** of the work graph the persona may claim (`FAYTH_LABELS`, ANDed, minus
-`FAYTH_EXCLUDE_LABELS`), the statutes it must read (`FAYTH_MEMORY_PREFIXES`,
-`FAYTH_STATUTE_CORE`), the tools it may use (`FAYTH_TOOLS`), and how it is woken and bounded
-(`FAYTH_MAX_CONCURRENT`, `FAYTH_LEASE_MINUTES`, `FAYTH_HEARTBEAT_SECONDS`, `FAYTH_LANE`,
-`FAYTH_ELASTIC`). Its **brief**, the instructions the model receives, is the matching
-`spira/chamber/<name>.md`, rendered with `{{TOKEN}}` substitutions. The model, lease, tool list
+fixes the **partition** of the work graph the persona may claim (`RUNE_LABELS`, ANDed, minus
+`RUNE_EXCLUDE_LABELS`), the statutes it must read (`RUNE_MEMORY_PREFIXES`,
+`RUNE_STATUTE_CORE`), the tools it may use (`RUNE_TOOLS`), and how it is woken and bounded
+(`RUNE_MAX_CONCURRENT`, `RUNE_LEASE_MINUTES`, `RUNE_HEARTBEAT_SECONDS`, `RUNE_LANE`,
+`RUNE_ELASTIC`). Its **brief**, the instructions the model receives, is the matching
+`spira/runes/<name>.md`, rendered with `{{TOKEN}}` substitutions. The model, lease, tool list
 and system-prompt mode of a running system come from the `[persona.<name>]` table in
-`spira.toml` (a `model` is required: a persona with no model is refused); the `.fayth` values
+`spira.toml` (a `model` is required: a persona with no model is refused); the `.rune` values
 seed that table when a config is first converted.
 
-An **aeon** is one summoned instance of a persona: a runner process (`aeon <fayth>`) that
+An **aeon** is one summoned instance of a persona: a runner process (`aeon <rune>`) that
 claims one bead, builds its worktree and branch, renders the brief, runs the model session (a
 headless `claude -p` stream), renews its lease while the trace file grows, and accounts for the
-outcome at teardown. It runs as a transient user unit named `spira-aeon-<fayth>-<n>`. Inside
+outcome at teardown. It runs as a transient user unit named `spira-aeon-<rune>-<n>`. Inside
 the session the model has no `bd`, no credentials and no database access: its environment is an
 explicit allow-list, and everything it does to state goes through the `work` client, which
 talks to `spira-lc` over a Unix socket. Each `work` verb is checked against a per-persona allow
 table in the service, so a persona can do only what its role permits.
 
-Shipped personas (`spira/chamber/`):
+Shipped personas (`spira/runes/`):
 
 | Persona | Role |
 |---|---|
@@ -178,14 +178,14 @@ Shipped personas (`spira/chamber/`):
 | `batcher` (the Judge) | Settles a double-red or CI-only red a round could not attribute. |
 | `spike` | Researches one question to a costed feasibility document. |
 | `concierge` | The operator's own long-lived session; claims nothing (see below). |
-| `archivist` | Brief only (`archivist.md`), no `.fayth`: run by the `archivist` binary to rescue a full session's unfinished business before it is cleared. |
+| `archivist` | Brief only (`archivist.md`), no `.rune`: run by the `archivist` binary to rescue a full session's unfinished business before it is cleared. |
 
 ## Lane
 
 "Lane" has two meanings, both in code.
 
-1. **Scheduling lane** (`SPIRA_LANES`, `FAYTH_LANE`). A persona that declares a lane draws
-   capacity from its own `FAYTH_MAX_CONCURRENT` instead of the shared pool
+1. **Scheduling lane** (`SPIRA_LANES`, `RUNE_LANE`). A persona that declares a lane draws
+   capacity from its own `RUNE_MAX_CONCURRENT` instead of the shared pool
    (`SPIRA_MAX_AEONS`), so builders can occupy the whole pool without starving the rest.
 2. **Repository lane** (`lanes` in a repository's registry row): which kinds of bead a
    repository admits (`plan`, `incident`, `groom`, `mimir-sweep`, `spike`, `czar-trigger`).
@@ -252,7 +252,7 @@ A **statute** (`law-<slug>`) is a standing rule, enacted with `rule enact` and k
 beads database as a memory, with a git-backed page regenerated from it. It must name its
 mechanism (`--tool`, `--mechanism`, or `--tool none --reason`); `rule audit` checks that the
 tools statutes name exist in the activated release. Personas receive the statutes selected by
-`FAYTH_MEMORY_PREFIXES`, with `FAYTH_STATUTE_CORE` rendered in full. An **SOP** (`sop-<slug>`)
+`RUNE_MEMORY_PREFIXES`, with `RUNE_STATUTE_CORE` rendered in full. An **SOP** (`sop-<slug>`)
 is a runbook for a recurring incident, written with `sop write`, matched to incidents with
 `sop match`, and read by `ops`. Builders read statutes only.
 

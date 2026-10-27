@@ -347,8 +347,8 @@ for n, (a, b) in enumerate([(2, 8), (3, 27), (1, 9)]):
     ph += [{"ts": iso(500 - n), "pass": f"p{n}", "check": "CHECK1", "secs": a},
            {"ts": iso(500 - n), "pass": f"p{n}", "check": "CHECK2", "secs": b}]
 w("sentinel-phase", ph)
-w("aeon-session", [{"ts": iso(100), "bead": "sp-a", "fayth": "builder", "status": "submitted", "wall_s": 100},
-                   {"ts": iso(90), "bead": "sp-b", "fayth": "builder", "status": "submitted", "wall_s": 50}])
+w("aeon-session", [{"ts": iso(100), "bead": "sp-a", "rune": "builder", "status": "submitted", "wall_s": 100},
+                   {"ts": iso(90), "bead": "sp-b", "rune": "builder", "status": "submitted", "wall_s": 50}])
 w("gate-run", [{"ts": iso(100), "bead": "sp-a", "status": "GREEN", "reason": "x", "ran_secs": 30},
                {"ts": iso(90), "bead": "sp-b", "status": "RED", "reason": "y", "ran_secs": 20}], moved=False)
 w("batch-round", [{"ts": iso(100), "duration_ms": "4000"}], moved=False)
@@ -437,7 +437,7 @@ for b in range(4000):
     for q, (to, dt) in enumerate([("READY", 0), ("WORKING", 300), ("SUBMITTED", 900), ("LANDED", 1500)]):
         st.append({"ts": iso(max(t0 - dt, 1)), "seq": q + 1, "machine": "bead", "key": f"sp-{b}", "from_state": "X", "to_state": to, "applied": True})
 w("bead-stage", st)
-w("aeon-session", [{"ts": iso(random.randint(1, D)), "bead": f"sp-{i % 4000}", "fayth": "builder", "status": "ok", "wall_s": 100} for i in range(6000)])
+w("aeon-session", [{"ts": iso(random.randint(1, D)), "bead": f"sp-{i % 4000}", "rune": "builder", "status": "ok", "wall_s": 100} for i in range(6000)])
 w("gate-run", [{"ts": iso(random.randint(1, D)), "bead": f"sp-{i % 4000}", "status": "GREEN", "ran_secs": 90} for i in range(6000)], moved=False)
 PY
 for fam in bead-stage sentinel-phase aeon-session; do

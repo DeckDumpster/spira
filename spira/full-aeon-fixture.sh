@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# full-aeon-fixture.sh — the one full-aeon skeleton (bare origin, clone, chamber, claude
+# full-aeon-fixture.sh — the one full-aeon skeleton (bare origin, clone, runes, claude
 # shim, bd store) that test-aeon-decision-blocked.sh, test-aeon-operator-wait.sh,
 # test-requeue.sh, test-aeon-ledger.sh, test-aeon-presession-death.sh,
 # test-aeon-yield-headless.sh and test-aeon-exit.sh each built for themselves — 20 suites
@@ -39,7 +39,7 @@ fa_setup() {   # fa_setup <tag> — build the fixture once
     git -C "$FA_REPO" add f; git -C "$FA_REPO" commit -qm seed
     timeout 5 git -C "$FA_REPO" push -q origin main 2>/dev/null
 
-    FA_HOME="$FA_TMP/home"; mkdir -p "$FA_HOME/chamber"
+    FA_HOME="$FA_TMP/home"; mkdir -p "$FA_HOME/runes"
     printf '. "%s/lib.sh"\n' "$HERE" > "$FA_HOME/lib.sh"   # the aeon binary sources <home>/lib.sh; the real one, as aeon.sh did
     # conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-aeon-world-stop.sh, ...): aeon's
     # own in-process config registry derives conf.d from THIS --home and now REFUSES to
@@ -49,7 +49,7 @@ fa_setup() {   # fa_setup <tag> — build the fixture once
     FA_REPO_MAP="$FA_TMP/repo-map"
     export SPIRA_HOME="$FA_HOME"
     # ONE SOURCE OF CONFIG (per Ryan 2026-10-05): these are registered keys (spira/conf.d) —
-    # no process reads them from the environment any more, and SPIRA_CHAMBER no longer
+    # no process reads them from the environment any more, and SPIRA_RUNES_DIR no longer
     # derives from SPIRA_HOME (the complete fixture declares its own path), so this fixture
     # must declare all of them through tl_config, not export. Plain (non-exported) shell
     # copies of SPIRA_RUN/SPIRA_REPO_MAP are kept too — this file's own code still reads
@@ -58,25 +58,25 @@ fa_setup() {   # fa_setup <tag> — build the fixture once
     # SPIRA_ASK_LABEL: the complete fixture declares "needs-ryan"; every caller in this
     # fixture and its suite (the claude shims' own `${SPIRA_ASK_LABEL:-needs-operator}`
     # fallback — never reached anyway, since the model session's restricted env carries no
-    # SPIRA_ASK_LABEL at all — and builder.fayth's FAYTH_EXCLUDE_LABELS below) was written
+    # SPIRA_ASK_LABEL at all — and builder.rune's RUNE_EXCLUDE_LABELS below) was written
     # against "needs-operator". aeon's own ask_label() now resolves the registered key from
     # the one source with no code-level default (per Ryan 2026-10-05), so it would otherwise
     # disagree with every literal here and open_ask_blocker would never match the shim's
     # decision bead. Declare the suite's own value so both sides agree.
     # literal-ok: the fixture declares the ask label its shims and beads agree on
     SPIRA_ASK_LABEL="needs-operator"
-    tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_CHAMBER="$FA_HOME/chamber" \
+    tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_RUNES_DIR="$FA_HOME/runes" \
         SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_KINDS="$HERE/mail/kinds" SPIRA_ASK_LABEL="$SPIRA_ASK_LABEL"
     printf 'fixture | %s | push | origin/main | |\n' "$FA_REPO" > "$SPIRA_REPO_MAP"
-    cat > "$FA_HOME/chamber/builder.fayth" <<FAYTH
-FAYTH_NAME=builder
-FAYTH_WORKING_EXITS="SUBMITTED ask park hold"
-FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
-FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL"
-FAYTH_MAX_CONCURRENT=1
-FAYTH_HEARTBEAT_SECONDS=600
-FAYTH
-    printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$FA_HOME/chamber/builder.md"
+    cat > "$FA_HOME/runes/builder.rune" <<RUNE
+RUNE_NAME=builder
+RUNE_WORKING_EXITS="SUBMITTED ask park hold"
+RUNE_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
+RUNE_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL"
+RUNE_MAX_CONCURRENT=1
+RUNE_HEARTBEAT_SECONDS=600
+RUNE
+    printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$FA_HOME/runes/builder.md"
 
     FA_BIN="$FA_TMP/bin"; mkdir -p "$FA_BIN"
     # sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; a
@@ -105,7 +105,7 @@ fa_seed() {   # fa_seed <id> [updated_at]
         "$id" "$lbl" "$updated" | testdb_seed
 }
 
-fa_run_aeon() {   # fa_run_aeon [fayth] -> prints the aeon binary's rc; output captured to $FA_TMP/out
+fa_run_aeon() {   # fa_run_aeon [rune] -> prints the aeon binary's rc; output captured to $FA_TMP/out
     rm -rf "$SPIRA_RUN/worktree"
     aeon --home "$FA_HOME" "${1:-builder}" > "$FA_TMP/out" 2>&1
     printf '%s' "$?"

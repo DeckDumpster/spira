@@ -699,27 +699,27 @@ fn count_of(out: &str) -> i64 {
     out.trim().parse().unwrap_or(0)
 }
 
-/// Observed fleet occupancy from the same tools the sentinel decides summons with: the chamber
+/// Observed fleet occupancy from the same tools the sentinel decides summons with: the runes
 /// supplies the partitions, `spira-claim` the claimable work under each, `strand` the aeons live.
 fn fleet_readings(cfg: &Config) -> FleetReadings {
     let sc = &cfg.seams.spira_config;
     let words = |out: String| out.split_whitespace().map(String::from).collect::<Vec<_>>();
-    let task_fayths = words(run_cmd(sc, &["fayth", "task"]));
-    let live_of = |fayth: &str| count_of(&run_cmd(&cfg.seams.strand, &["aeon-count", fayth]));
+    let task_runes = words(run_cmd(sc, &["rune", "task"]));
+    let live_of = |rune: &str| count_of(&run_cmd(&cfg.seams.strand, &["aeon-count", rune]));
 
-    let live_lanes = words(run_cmd(sc, &["fayth", "lane"])).iter().filter(|f| !task_fayths.contains(f)).map(|f| live_of(f)).sum();
+    let live_lanes = words(run_cmd(sc, &["rune", "lane"])).iter().filter(|f| !task_runes.contains(f)).map(|f| live_of(f)).sum();
 
     let mut rows = Vec::new();
-    for line in run_cmd(sc, &["fayth", "partitions"]).lines() {
+    for line in run_cmd(sc, &["rune", "partitions"]).lines() {
         let (labels, exclude) = line.split_once('\t').unwrap_or((line, ""));
         if labels.is_empty() {
             continue;
         }
         let ready = count_of(&run_cmd(&cfg.seams.spira_claim, &["ready-count", labels, exclude]));
-        let fayths = run_cmd(sc, &["fayth", "for-labels", labels]);
-        let fayths: Vec<&str> = fayths.split_whitespace().collect();
-        let live = fayths.iter().map(|f| live_of(f)).sum();
-        let is_task = fayths.iter().any(|f| task_fayths.iter().any(|t| t == f));
+        let runes = run_cmd(sc, &["rune", "for-labels", labels]);
+        let runes: Vec<&str> = runes.split_whitespace().collect();
+        let live = runes.iter().map(|f| live_of(f)).sum();
+        let is_task = runes.iter().any(|f| task_runes.iter().any(|t| t == f));
         rows.push((labels.to_string(), ready, live, is_task));
     }
 
@@ -2289,7 +2289,7 @@ mod tests {
         let sc = dir.join("spira-config");
         testkit::write_exe(
             &sc,
-            "#!/bin/sh\ncase \"$1 $2\" in\n  'fayth partitions') printf 'a\\t\\nb\\t\\nc\\t\\n' ;;\n  'fayth task') echo 'p-a p-b' ;;\n  'fayth lane') echo 'p-c' ;;\n  'fayth for-labels') echo \"p-$3\" ;;\nesac\n",
+            "#!/bin/sh\ncase \"$1 $2\" in\n  'rune partitions') printf 'a\\t\\nb\\t\\nc\\t\\n' ;;\n  'rune task') echo 'p-a p-b' ;;\n  'rune lane') echo 'p-c' ;;\n  'rune for-labels') echo \"p-$3\" ;;\nesac\n",
         );
         let claim = dir.join("spira-claim");
         testkit::write_exe(&claim, "#!/bin/sh\necho 5\n");

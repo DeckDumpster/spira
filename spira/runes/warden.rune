@@ -1,0 +1,33 @@
+# warden.rune — the Warden: owns whether landed work is in force, and explains the anomalies
+# no probe could attribute. Woken by a scheduled sweep bead, never by plan work.
+
+RUNE_NAME=warden
+RUNE_DESC="Warden — judges whether landed work is in force and attributes unexplained anomalies"
+
+# The partition is the sweep label alone: a warden that matched the plan label would be a
+# second builder.
+RUNE_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_WARDEN_LABEL"
+RUNE_EXCLUDE_LABELS="$SPIRA_CI_LABEL"
+
+RUNE_MEMORY_PREFIXES="law-"
+# law-a-concierge-duty-is-a-missing-mechanism dropped (sp-crr3n): not shipped in
+# spira/statutes/ — its scar is Ryan's own day-by-day account of hand duties he personally
+# ran, which is inventory, not mechanism (law-harness-ships-mechanism-not-inventory).
+RUNE_STATUTE_CORE="law-landed-is-not-in-force,law-closed-is-not-landed,law-anomalies-are-not-coincidences,law-absence-needs-a-positive-control,law-escalate-decisions-not-problems"
+
+RUNE_MODEL=claude-sonnet-5-5
+RUNE_MAX_CONCURRENT=1
+RUNE_LANE=warden
+
+RUNE_TIMEOUT_SECONDS=1800
+RUNE_LEASE_MINUTES=35
+RUNE_HEARTBEAT_SECONDS=30
+
+# Reads the machine and writes findings into the graph; no Edit or Write, no git writes.
+RUNE_TOOLS="Bash(systemctl status*),Bash(systemctl show*),Bash(systemctl list-*),Bash(systemctl is-*),Bash(*incident.sh*),Bash(*testenv *),Bash(*mail *),Bash(*bead.sh*),Bash(git log*),Bash(git show*),Bash(git status*),Bash(git diff*),Bash(git for-each-ref*),Bash(git rev-parse*),Bash(git -C * log*),Bash(git -C * show*),Bash(git -C * status*),Bash(git -C * diff*),Bash(git -C * for-each-ref*),Bash(git -C * rev-parse*),Bash(cat *),Bash(head *),Bash(tail *),Bash(ls*),Bash(grep *),Bash(awk *),Bash(find *),Bash(wc *),Bash(sort *),Bash(printf *),Bash(echo *),Bash(date*),Read,Glob,Grep,TodoWrite"
+RUNE_PROJECT_INSTRUCTIONS=none
+
+RUNE_SYSTEM_PROMPT=replace
+
+# The states a bead claimed by this rune may leave WORKING for; spira-lc refuses any other.
+RUNE_WORKING_EXITS="DONE ask park hold"

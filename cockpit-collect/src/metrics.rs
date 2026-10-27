@@ -380,10 +380,10 @@ mod tests {
     #[test]
     fn ledger_counts_thrash_without_inflating_worked() {
         let lines = [
-            format!("{} awake fayth sp-aaa worked", ts(-10)),
-            format!("{} done fayth sp-bbb rc=0 status=requeue-thrash", ts(-10)),
-            format!("{} done fayth sp-ccc rc=0 status=requeue-thrash", ts(-10)),
-            format!("{} done fayth sp-eee rc=0 status=requeue-slain", ts(-10)),
+            format!("{} awake rune sp-aaa worked", ts(-10)),
+            format!("{} done rune sp-bbb rc=0 status=requeue-thrash", ts(-10)),
+            format!("{} done rune sp-ccc rc=0 status=requeue-thrash", ts(-10)),
+            format!("{} done rune sp-eee rc=0 status=requeue-slain", ts(-10)),
         ];
         let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
         let k = ledger_metrics(&refs, NOW - 86400);

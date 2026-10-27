@@ -1,7 +1,7 @@
 //! spira-config — the typed schema behind `spira.toml`.
 //!
 //! One document, three kinds of table: `[spira]` (host-wide keys), `[repo.<name>]` (a
-//! checkout the harness may work in) and `[persona.<name>]` (an aeon's fayth, cut down to
+//! checkout the harness may work in) and `[persona.<name>]` (an aeon's rune, cut down to
 //! the fields the harness itself reads rather than a persona's prose). Every struct here
 //! carries `deny_unknown_fields`, so a typo is a hard error instead of a setting nobody is
 //! reading — the same failure mode `spira.conf`'s own allowlist exists to catch, now
@@ -23,14 +23,14 @@ pub mod lc_call;
 pub mod admission;
 pub mod bounded;
 pub mod build;
-pub mod chamber;
+pub mod runes;
 pub mod containment;
 pub mod convert;
 pub mod deps;
 pub mod env_bootstrap;
 pub mod hostaddr;
 pub mod eval;
-pub mod fayth_file;
+pub mod rune_file;
 pub mod init;
 pub mod legacy_map;
 pub mod lc_state;
@@ -83,17 +83,17 @@ pub fn toml_path_at(dir: &Path) -> PathBuf {
 }
 
 /// `spira-config convert --conf <conf> --home <home> --out <out> [--repo-map <repo_map>]
-/// [--fayth <f>]...`, built (not run) — for a writer at a root other than this process's
+/// [--rune <f>]...`, built (not run) — for a writer at a root other than this process's
 /// own (`install`'s cross-checkout instance seed, sp-31dm0), which must not name this
 /// binary's own flags itself (config-fence: only spira-config names `repo-map`).
-pub fn convert_command(conf: &Path, home: &Path, out: &Path, repo_map: Option<&Path>, fayth: &[PathBuf]) -> std::process::Command {
+pub fn convert_command(conf: &Path, home: &Path, out: &Path, repo_map: Option<&Path>, rune: &[PathBuf]) -> std::process::Command {
     let mut cmd = std::process::Command::new(crate::release_env::tool("spira-config"));
     cmd.arg("convert").arg("--conf").arg(conf).arg("--home").arg(home).arg("--out").arg(out);
     if let Some(rm) = repo_map {
         cmd.arg("--repo-map").arg(rm);
     }
-    for f in fayth {
-        cmd.arg("--fayth").arg(f);
+    for f in rune {
+        cmd.arg("--rune").arg(f);
     }
     cmd
 }
@@ -510,7 +510,7 @@ pub struct Lease {
     pub heartbeat_seconds: Option<u32>,
 }
 
-/// `[persona.<name>]` — a fayth, cut down to what the harness itself reads to summon and
+/// `[persona.<name>]` — a rune, cut down to what the harness itself reads to summon and
 /// dispatch it. `model` is the one field with no sensible default: an aeon summoned under
 /// no model is not a cheaper aeon, it is a dead one, so it is required.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -571,6 +571,9 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "maechen_remedy_label", bead: "sp-vt8lbr" },
     RetiredKey { key: "auron_restarts", bead: "sp-acp3lx" },
     RetiredKey { key: "auron_restart_window", bead: "sp-acp3lx" },
+    RetiredKey { key: "chamber", bead: "sp-yyuunv" },
+    RetiredKey { key: "chamber_overlay", bead: "sp-yyuunv" },
+    RetiredKey { key: "fayths", bead: "sp-yyuunv" },
     RetiredKey { key: "queue_local_gate", bead: "sp-vsob2" },
     RetiredKey { key: "queue_batch_idle_cut", bead: "sp-vsob2" },
     RetiredKey { key: "cert_idle_skip", bead: "sp-6d9th" },
@@ -711,7 +714,7 @@ pub fn validate_strict(text: &str) -> Result<(SpiraToml, Vec<String>), String> {
 /// starts: refused here, naming the key, rather than at every summon.
 fn require_roster_declares_models(root: &toml::Value) -> Result<(), String> {
     let Some(spira) = root.get("spira").and_then(|v| v.as_table()) else { return Ok(()) };
-    let roster: Vec<&str> = match spira.get("fayths") {
+    let roster: Vec<&str> = match spira.get("runes") {
         Some(toml::Value::Array(a)) => a.iter().filter_map(|v| v.as_str()).collect(),
         Some(toml::Value::String(s)) => s.split_whitespace().collect(),
         _ => return Ok(()),
@@ -720,7 +723,7 @@ fn require_roster_declares_models(root: &toml::Value) -> Result<(), String> {
         let model = root.get("persona").and_then(|v| v.get(p)).and_then(|v| v.get("model")).and_then(|v| v.as_str());
         if model.is_none_or(str::is_empty) {
             return Err(format!(
-                "spira.fayths rosters {p:?} but persona.{p}.model is not declared — every summon of it would die before its session starts; run `spira-config set persona.{p}.model <model>`"
+                "spira.runes rosters {p:?} but persona.{p}.model is not declared — every summon of it would die before its session starts; run `spira-config set persona.{p}.model <model>`"
             ));
         }
     }
@@ -730,10 +733,10 @@ fn require_roster_declares_models(root: &toml::Value) -> Result<(), String> {
 const TIMER_PARTITION_PERSONAS: &[&str] = &["groomer", "mimir", "czar", "warden", "mender", "pilgrim"];
 
 /// A declared lane, or a timer-filed partition label, whose persona is not in an explicit
-/// `spira.fayths` roster is work nothing can claim: refused, naming both keys.
+/// `spira.runes` roster is work nothing can claim: refused, naming both keys.
 fn require_roster_covers_lanes(root: &toml::Value) -> Result<(), String> {
     let Some(spira) = root.get("spira").and_then(|v| v.as_table()) else { return Ok(()) };
-    let roster: Vec<&str> = match spira.get("fayths") {
+    let roster: Vec<&str> = match spira.get("runes") {
         Some(toml::Value::Array(a)) => a.iter().filter_map(|v| v.as_str()).collect(),
         Some(toml::Value::String(s)) => s.split_whitespace().collect(),
         _ => return Ok(()),
@@ -753,14 +756,14 @@ fn require_roster_covers_lanes(root: &toml::Value) -> Result<(), String> {
     };
     if let Some(l) = lanes.iter().find(|l| !roster.contains(l) && !persona_lane(l)) {
         return Err(format!(
-            "spira.lanes declares {l:?} but spira.fayths does not roster it — nothing can claim that lane's beads; add {l:?} to spira.fayths or drop it from spira.lanes"
+            "spira.lanes declares {l:?} but spira.runes does not roster it — nothing can claim that lane's beads; add {l:?} to spira.runes or drop it from spira.lanes"
         ));
     }
     for p in TIMER_PARTITION_PERSONAS {
         let key = format!("{p}_label");
         if spira.contains_key(&key) && !roster.contains(p) {
             return Err(format!(
-                "spira.{key} is set but spira.fayths does not roster {p:?} — beads filed under that label can never be claimed; add {p:?} to spira.fayths"
+                "spira.{key} is set but spira.runes does not roster {p:?} — beads filed under that label can never be claimed; add {p:?} to spira.runes"
             ));
         }
     }
@@ -985,21 +988,21 @@ fn remove_key(root: &mut toml::Value, path: &str) -> bool {
 }
 
 /// Whether `new` is a SHRINK of `existing` — fewer `[repo.*]` tables, or fewer
-/// `[spira].fayths` entries — the two counts a converted `spira.toml` can lose without any
+/// `[spira].runes` entries — the two counts a converted `spira.toml` can lose without any
 /// parse error to show for it, if it is regenerated from a narrower source (a repo-map
-/// missing rows, a worktree with only some of the real `chamber/*.fayth` files) and written
+/// missing rows, a worktree with only some of the real `runes/*.rune` files) and written
 /// over a fuller document already in force. `Some(reason)` names both counts for the
 /// caller to report; `None` means `new` carries at least as much as `existing` in both
 /// dimensions.
 pub fn shrink_reason(existing: &SpiraToml, new: &SpiraToml) -> Option<String> {
     let existing_repos = existing.repo.len();
     let new_repos = new.repo.len();
-    let existing_fayths = existing.spira.as_ref().and_then(|s| s.fayths.as_ref()).map_or(0, Vec::len);
-    let new_fayths = new.spira.as_ref().and_then(|s| s.fayths.as_ref()).map_or(0, Vec::len);
-    if new_repos < existing_repos || new_fayths < existing_fayths {
+    let existing_runes = existing.spira.as_ref().and_then(|s| s.runes.as_ref()).map_or(0, Vec::len);
+    let new_runes = new.spira.as_ref().and_then(|s| s.runes.as_ref()).map_or(0, Vec::len);
+    if new_repos < existing_repos || new_runes < existing_runes {
         Some(format!(
-            "existing has {existing_repos} [repo.*] table(s) and {existing_fayths} fayth(s); \
-             new document has {new_repos} and {new_fayths}"
+            "existing has {existing_repos} [repo.*] table(s) and {existing_runes} rune(s); \
+             new document has {new_repos} and {new_runes}"
         ))
     } else {
         None

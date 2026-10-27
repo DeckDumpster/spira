@@ -18,7 +18,7 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
-export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_HOME/hooks"
+export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/runes" "$SPIRA_HOME/hooks"
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
 # SPIRA_MAIL is a registered key now: the bash hook below still reads the bare $SPIRA_MAIL
 # export directly (its own doc), but the compiled `mail` binary ("mail aeon: address

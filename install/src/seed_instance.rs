@@ -13,17 +13,17 @@ use std::path::{Path, PathBuf};
 
 /// The write target a writer at `conf`/`toml` should target (conf.sh's own cross-root
 /// helper) — `toml` itself if it exists; else a full `spira-config convert` from `conf`
-/// (plus `repo_map` and every `fayth`) if `conf` exists; else `toml` itself (to be created
+/// (plus `repo_map` and every `rune`) if `conf` exists; else `toml` itself (to be created
 /// fresh by `spira-config set`). `None` only when a required convert fails (already
 /// reported on stderr).
-fn write_target_for(conf: &Path, toml: &Path, home: &Path, repo_map: Option<&Path>, fayth: &[PathBuf]) -> Option<PathBuf> {
+fn write_target_for(conf: &Path, toml: &Path, home: &Path, repo_map: Option<&Path>, rune: &[PathBuf]) -> Option<PathBuf> {
     if toml.is_file() {
         return Some(toml.to_path_buf());
     }
     if !conf.is_file() {
         return Some(toml.to_path_buf());
     }
-    match spira_config::convert_command(conf, home, toml, repo_map, fayth).output() {
+    match spira_config::convert_command(conf, home, toml, repo_map, rune).output() {
         Ok(o) if o.status.success() => Some(toml.to_path_buf()),
         Ok(o) => {
             eprintln!("install: auto-convert to the typed config failed: {}", String::from_utf8_lossy(&o.stderr).trim());
@@ -36,15 +36,15 @@ fn write_target_for(conf: &Path, toml: &Path, home: &Path, repo_map: Option<&Pat
     }
 }
 
-/// `_spira_fayth_paths` (conf.sh): every `*.fayth` under `<home>/chamber` (or
-/// `$SPIRA_CHAMBER`), sorted for a deterministic convert argv.
-fn fayth_paths(home: &Path) -> Result<Vec<PathBuf>, String> {
-    let dir = PathBuf::from(spira_config::resolve::resolve_key(&std::env::vars().collect(), home, "SPIRA_CHAMBER")?);
+/// `_spira_rune_paths` (conf.sh): every `*.rune` under `<home>/runes` (or
+/// `$SPIRA_RUNES_DIR`), sorted for a deterministic convert argv.
+fn rune_paths(home: &Path) -> Result<Vec<PathBuf>, String> {
+    let dir = PathBuf::from(spira_config::resolve::resolve_key(&std::env::vars().collect(), home, "SPIRA_RUNES_DIR")?);
     let mut out = Vec::new();
     if let Ok(rd) = std::fs::read_dir(&dir) {
         for e in rd.flatten() {
             let p = e.path();
-            if p.extension().and_then(|s| s.to_str()) == Some("fayth") && p.is_file() {
+            if p.extension().and_then(|s| s.to_str()) == Some("rune") && p.is_file() {
                 out.push(p);
             }
         }
@@ -61,7 +61,7 @@ pub fn seed_prod_instance(conf: &Path, toml: &Path, instance: &str, home: &Path)
     // No map is discovered or read from the environment (per Ryan 2026-10-05): the repo map is
     // declared in the config file itself (spira.repo_map), which this convert does not invent.
     let rm: Option<PathBuf> = None;
-    let fy = match fayth_paths(home) {
+    let fy = match rune_paths(home) {
         Ok(f) => f,
         Err(e) => {
             eprintln!("install: {e}");

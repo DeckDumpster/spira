@@ -226,7 +226,7 @@ printf 'Install proof. Commit a file named install-proof.txt at the repository r
 bead.sh file "install proof: add install-proof.txt" --for builder --repo <home_repo> --body-file <work>/proof.md
 ID=<the id it printed>
 spira-lc history "$ID"                                   # READY
-spira-claim fayth-ready builder --json | grep -c "$ID"   # 1 = claimable
+spira-claim rune-ready builder --json | grep -c "$ID"   # 1 = claimable
 systemctl --user start spira-sentinel-prod.service
 git -C <home_repo_path> show-ref "refs/heads/spira/$ID"  # the aeon's branch appears
 spira-lc history "$ID" | tee <work>/proof-history.json

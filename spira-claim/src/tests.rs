@@ -52,7 +52,7 @@ fn tmp_exe(content: &str) -> Tmp {
 
 /// This crate's own `spira/` tree — `conf.d` lives here. Every subprocess test's
 /// `SPIRA_HOME` must point somewhere with a `conf.d` beside it (triage guide: "the tree's
-/// spira dir") — a custom chamber fixture ([`chamber_home`]) gets one by symlink.
+/// spira dir") — a custom runes fixture ([`runes_home`]) gets one by symlink.
 const REAL_SPIRA_HOME: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../spira");
 
 /// A complete, throwaway config file (every registered key declared;
@@ -76,7 +76,7 @@ fn run(args: &[&str], stdin: &str) -> Outcome {
 /// [`run`], plus `toml_declare` (registered-key overrides for the subprocess's own
 /// throwaway config file — `SPIRA_BD`, labels, `SPIRA_CLAIM_RETRIES`, … everything
 /// `spira/conf.d` registers; raw env no longer reaches any of these) and `extra_env`
-/// (anything else the subprocess should see: `SPIRA_HOME` for a fayth chamber, `PATH`, the
+/// (anything else the subprocess should see: `SPIRA_HOME` for a rune runes, `PATH`, the
 /// few still-unregistered knobs). `SPIRA_HOME` defaults to [`REAL_SPIRA_HOME`] unless
 /// `extra_env` overrides it. One `testkit::env` call for everything: its lock is not
 /// reentrant, so a caller must never also be holding it.
@@ -255,9 +255,9 @@ fn usage_errors() {
     assert_eq!(run(&["attempts"], "").code, USAGE);
     assert_eq!(run(&["attempts", "a", "b"], "").code, USAGE);
     assert_eq!(run(&["attempts", "a", "--bogus", "1"], "").code, USAGE);
-    assert_eq!(run(&["select"], "[]").code, USAGE, "--fayth is required");
-    assert_eq!(run(&["select", "--fayth", "t", "--count", "--json"], "[]").code, USAGE);
-    assert_eq!(run(&["select", "--fayth", "t", "--blockers", "maybe"], "[]").code, USAGE);
+    assert_eq!(run(&["select"], "[]").code, USAGE, "--rune is required");
+    assert_eq!(run(&["select", "--rune", "t", "--count", "--json"], "[]").code, USAGE);
+    assert_eq!(run(&["select", "--rune", "t", "--blockers", "maybe"], "[]").code, USAGE);
 }
 
 // ---- select --------------------------------------------------------------------------
@@ -276,7 +276,7 @@ fn ready_json() -> String {
 #[test]
 fn select_ranks_epic_first_from_stdin() {
     let lk = tmp(r#"{"prio":{"sp-E":0},"started":["sp-E"]}"#);
-    let o = run(&["select", "--fayth", "t", "--epics", &lk], &ready_json());
+    let o = run(&["select", "--rune", "t", "--epics", &lk], &ready_json());
     assert_eq!(o.code, 0, "{}", o.err);
     let ids: Vec<&str> = o.out.lines().map(|l| l.split('\t').nth(5).unwrap()).collect();
     // epic P0 started: k3 (P1, older), k2 (P1), k1 (P2); then the unaffiliated P0 (unstarted).
@@ -288,21 +288,21 @@ fn select_ranks_epic_first_from_stdin() {
 fn select_resumable_breaks_ties_within_tier() {
     let lk = tmp(r#"{"prio":{"sp-E":0},"started":["sp-E"]}"#);
     let rs = tmp("sp-k2\n");
-    let o = run(&["select", "--fayth", "t", "--epics", &lk, "--resumable", &rs], &ready_json());
+    let o = run(&["select", "--rune", "t", "--epics", &lk, "--resumable", &rs], &ready_json());
     assert_eq!(o.out.lines().next().unwrap().split('\t').nth(5), Some("sp-k2"));
     let rs = tmp("sp-k2,sp-k3");
-    let o = run(&["select", "--fayth", "t", "--epics", &lk, "--resumable", &rs], &ready_json());
+    let o = run(&["select", "--rune", "t", "--epics", &lk, "--resumable", &rs], &ready_json());
     assert_eq!(o.out.lines().next().unwrap().split('\t').nth(5), Some("sp-k3"));
 }
 
 #[test]
 fn select_top_tier_and_count() {
     let lk = tmp(r#"{"prio":{"sp-E":0},"started":["sp-E"]}"#);
-    let o = run(&["select", "--fayth", "t", "--epics", &lk, "--top-tier"], &ready_json());
+    let o = run(&["select", "--rune", "t", "--epics", &lk, "--top-tier"], &ready_json());
     assert_eq!(o.out, "sp-k2||spira|0|0|1\nsp-k3||spira|0|0|1\n");
-    let o = run(&["select", "--fayth", "t", "--count"], &ready_json());
+    let o = run(&["select", "--rune", "t", "--count"], &ready_json());
     assert_eq!(o.out, "4\n", "the epic row is never counted");
-    let o = run(&["select", "--fayth", "t", "--epics", &lk, "--json"], &ready_json());
+    let o = run(&["select", "--rune", "t", "--epics", &lk, "--json"], &ready_json());
     let v: serde_json::Value = serde_json::from_str(&o.out).unwrap();
     assert_eq!(v[0]["id"], "sp-k3");
 }
@@ -310,19 +310,19 @@ fn select_top_tier_and_count() {
 #[test]
 fn select_empty_ready_set_is_empty_not_error() {
     for input in ["", "[]", "null"] {
-        let o = run(&["select", "--fayth", "t", "--epics", &tmp("{}")], input);
+        let o = run(&["select", "--rune", "t", "--epics", &tmp("{}")], input);
         assert_eq!((o.code, o.out.as_str()), (0, ""), "input {input:?}");
     }
     // no parents at all: no lookup is needed, so none is fetched
-    let o = run(&["select", "--fayth", "t"], r#"[{"id":"a","priority":1}]"#);
+    let o = run(&["select", "--rune", "t"], r#"[{"id":"a","priority":1}]"#);
     assert_eq!(o.code, 0, "{}", o.err);
 }
 
 #[test]
 fn select_malformed_ready_set_is_cannot_tell() {
-    let o = run(&["select", "--fayth", "t", "--epics", &tmp("{}")], "not json");
+    let o = run(&["select", "--rune", "t", "--epics", &tmp("{}")], "not json");
     assert_eq!((o.code, o.out.as_str()), (CANNOT_TELL, ""));
-    let o = run(&["select", "--fayth", "t", "--epics", &tmp("{broken")], "[]");
+    let o = run(&["select", "--rune", "t", "--epics", &tmp("{broken")], "[]");
     assert_eq!(o.code, CANNOT_TELL);
 }
 
@@ -339,10 +339,10 @@ fn select_reads_a_ready_set_over_128k_from_stdin_and_file() {
     let big = serde_json::to_string(&rows).unwrap();
     assert!(big.len() > 128 * 1024, "{}", big.len());
     let lk = tmp(r#"{"prio":{},"started":[]}"#);
-    let o = run(&["select", "--fayth", "t", "--epics", &lk], &big);
+    let o = run(&["select", "--rune", "t", "--epics", &lk], &big);
     assert_eq!((o.code, o.out.lines().count()), (0, 2500));
     let f = tmp(&big);
-    let o = run(&["select", "--fayth", "t", "--epics", &lk, "--ready", &f, "--count"], "");
+    let o = run(&["select", "--rune", "t", "--epics", &lk, "--ready", &f, "--count"], "");
     assert_eq!(o.out, "2500\n");
 }
 
@@ -388,7 +388,7 @@ fn machine_fixture() -> (String, Tmp, Tmp) {
 #[test]
 fn machine_mode_count_and_claim_agree_on_the_fixture() {
     let (ready, lc, recs) = machine_fixture();
-    let base = ["select", "--fayth", "t", "--blockers", "machine", "--lifecycle", &lc, "--blocker-records", &recs];
+    let base = ["select", "--rune", "t", "--blockers", "machine", "--lifecycle", &lc, "--blocker-records", &recs];
     let mut ranked_args = base.to_vec();
     let lk = tmp("{}");
     ranked_args.extend(["--epics", lk.as_str()]);
@@ -406,7 +406,7 @@ fn machine_mode_count_and_claim_agree_on_the_fixture() {
 fn machine_mode_stack_max_depth_zero_is_todays_rule() {
     let (ready, lc, recs) = machine_fixture();
     let o = run(
-        &["select", "--fayth", "t", "--blockers", "machine", "--lifecycle", &lc, "--blocker-records", &recs,
+        &["select", "--rune", "t", "--blockers", "machine", "--lifecycle", &lc, "--blocker-records", &recs,
           "--stack-max-depth", "0", "--epics", &tmp("{}")],
         &ready,
     );
@@ -414,7 +414,7 @@ fn machine_mode_stack_max_depth_zero_is_todays_rule() {
     assert_eq!(ids, ["L"]);
     // A ceiling above 4 is clamped to 4, never honoured.
     let o = run(
-        &["select", "--fayth", "t", "--blockers", "machine", "--lifecycle", &lc, "--blocker-records", &recs,
+        &["select", "--rune", "t", "--blockers", "machine", "--lifecycle", &lc, "--blocker-records", &recs,
           "--stack-max-depth", "9", "--count"],
         &ready,
     );
@@ -424,7 +424,7 @@ fn machine_mode_stack_max_depth_zero_is_todays_rule() {
 #[test]
 fn machine_mode_bad_snapshot_is_cannot_tell() {
     let (ready, _, recs) = machine_fixture();
-    let o = run(&["select", "--fayth", "t", "--blockers", "machine", "--lifecycle", &tmp(""), "--blocker-records", &recs], &ready);
+    let o = run(&["select", "--rune", "t", "--blockers", "machine", "--lifecycle", &tmp(""), "--blocker-records", &recs], &ready);
     assert_eq!((o.code, o.out.as_str()), (CANNOT_TELL, ""));
 }
 
@@ -432,7 +432,7 @@ fn machine_mode_bad_snapshot_is_cannot_tell() {
 fn bd_mode_does_not_refilter() {
     // bd ready already applied its blocker rule; nothing is dropped here but epics.
     let (ready, _, _) = machine_fixture();
-    let o = run(&["select", "--fayth", "t", "--count"], &ready);
+    let o = run(&["select", "--rune", "t", "--count"], &ready);
     assert_eq!(o.out, "7\n");
 }
 
@@ -443,7 +443,7 @@ fn bd_mode_is_unchanged_and_the_label_is_not_the_poison() {
     // The poison is the lifecycle hold; bd mode does not refilter (bd ready already
     // applied the predicate's exclusions).
     let ready = serde_json::json!([{"id":"P","priority":0,"labels":["spira-poison"]}]).to_string();
-    assert_eq!(run(&["select", "--fayth", "t", "--count"], &ready).out, "1\n");
+    assert_eq!(run(&["select", "--rune", "t", "--count"], &ready).out, "1\n");
 }
 
 #[test]
@@ -454,7 +454,7 @@ fn machine_mode_unreachable_machine_is_cannot_tell() {
     let no_lc = testkit::TempDir::new("spira-claim-no-lc");
     let path = format!("{}:/usr/bin:/bin", no_lc.path().to_str().unwrap());
     let o = run_cfg(
-        &["select", "--fayth", "t", "--blockers", "machine", "--blocker-records", &recs],
+        &["select", "--rune", "t", "--blockers", "machine", "--blocker-records", &recs],
         &ready,
         &[],
         &[("PATH", Some(path.as_str()))],
@@ -645,7 +645,7 @@ fn unpoison_usage_errors() {
 
 // ---- ready / claim CLI (wave 4.25, sp-obhv6) -------------------------------------------
 //
-// `fayth-ready`/`fayth-exclude`/`bulk-ready-by-fayth`/`claim-retry` read real process
+// `rune-ready`/`rune-exclude`/`bulk-ready-by-rune`/`claim-retry` read real process
 // environment (`SPIRA_HOME`, `SPIRA_BD`, `SPIRA_TOML`, ...) — unlike the rest of this
 // file's tests, which thread every input through a file or a hand-built `Store`. These
 // edit the environment only through `testkit::env`, which serializes them against every
@@ -655,29 +655,29 @@ fn sh(body: &str) -> Tmp {
     tmp_exe(&format!("#!/bin/sh\n{body}\n"))
 }
 
-/// `<home>/chamber/<name>.fayth` per entry, `(name, FAYTH_LABELS, FAYTH_EXCLUDE_LABELS)`.
-/// A test that points `SPIRA_HOME` here (to get this chamber) also hands
+/// `<home>/runes/<name>.rune` per entry, `(name, RUNE_LABELS, RUNE_EXCLUDE_LABELS)`.
+/// A test that points `SPIRA_HOME` here (to get this runes) also hands
 /// `spira_config::process::cfg`'s own home-location the SAME directory — so it needs a
 /// `conf.d` too, or config resolution refuses ("no config registry at …"). Symlinked to
 /// the real tree's, never copied: this fixture is not the one being tested.
-fn chamber_home(fayths: &[(&str, &str, &str)]) -> Tmp {
-    let dir = testkit::TempDir::new("spira-claim-chamber");
-    let chamber: PathBuf = dir.join("chamber");
-    std::fs::create_dir_all(&chamber).unwrap();
-    for (name, labels, exclude) in fayths {
-        std::fs::write(chamber.join(format!("{name}.fayth")), format!("FAYTH_LABELS=\"{labels}\"\nFAYTH_EXCLUDE_LABELS=\"{exclude}\"\n")).unwrap();
+fn runes_home(runes: &[(&str, &str, &str)]) -> Tmp {
+    let dir = testkit::TempDir::new("spira-claim-runes");
+    let rdir: PathBuf = dir.join("runes");
+    std::fs::create_dir_all(&rdir).unwrap();
+    for (name, labels, exclude) in runes {
+        std::fs::write(rdir.join(format!("{name}.rune")), format!("RUNE_LABELS=\"{labels}\"\nRUNE_EXCLUDE_LABELS=\"{exclude}\"\n")).unwrap();
     }
     std::os::unix::fs::symlink(std::path::Path::new(REAL_SPIRA_HOME).join("conf.d"), dir.join("conf.d")).unwrap();
     Tmp { path: dir.to_string_lossy().into_owned(), _dir: dir }
 }
 
-/// `SPIRA_CHAMBER` for a [`chamber_home`] fixture, to `toml_declare` — `spira.chamber`
-/// (the registered key `spira_config::chamber::chamber_dir` actually reads) otherwise
-/// comes from the baseline fixture's own declared value, never the chamber this test
-/// just built (Concierge, 2026-10-05: "spira.chamber comes from the complete fixture …
-/// so 'no fayth in the chamber'").
-fn chamber_path(home: &Tmp) -> String {
-    format!("{}/chamber", home.as_str())
+/// `SPIRA_RUNES_DIR` for a [`runes_home`] fixture, to `toml_declare` — `spira.runes`
+/// (the registered key `spira_config::runes::runes_dir` actually reads) otherwise
+/// comes from the baseline fixture's own declared value, never the runes this test
+/// just built (Concierge, 2026-10-05: "spira.runes comes from the complete fixture …
+/// so 'no rune in the runes'").
+fn runes_path(home: &Tmp) -> String {
+    format!("{}/runes", home.as_str())
 }
 
 #[test]
@@ -764,24 +764,24 @@ fn claim_retry_cli_exhausts_and_reports_one_stderr_line_with_empty_stdout() {
 }
 
 #[test]
-fn fayth_exclude_cli_own_then_shared_then_every_other_fayth() {
-    let home = chamber_home(&[("builder", "spira,plan", ""), ("ops", "spira,ops-trigger", "")]);
-    let chamber = chamber_path(&home);
+fn rune_exclude_cli_own_then_shared_then_every_other_rune() {
+    let home = runes_home(&[("builder", "spira,plan", ""), ("ops", "spira,ops-trigger", "")]);
+    let runes = runes_path(&home);
     // The three shared labels are the baseline fixture's own declared values
     // (spira-queue-waiting/spira-submitted/spira-open-children) — no override needed.
     let o = run_cfg(
-        &["fayth-exclude", "builder", "qa-proposed"],
+        &["rune-exclude", "builder", "qa-proposed"],
         "",
-        &[("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber)],
+        &[("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes)],
         &[("SPIRA_HOME", Some(home.as_str()))],
     );
-    assert_eq!(o.out, "qa-proposed,spira-queue-waiting,spira-open-children,fayth:ops");
+    assert_eq!(o.out, "qa-proposed,spira-queue-waiting,spira-open-children,rune:ops");
     assert_eq!(o.code, 0);
 }
 
 #[test]
-fn fayth_exclude_cli_refuses_rather_than_default_when_config_does_not_resolve() {
-    // THE REGRESSION `fayth_exclude_cli_defaults_to_empty_when_nothing_is_configured` USED
+fn rune_exclude_cli_refuses_rather_than_default_when_config_does_not_resolve() {
+    // THE REGRESSION `rune_exclude_cli_defaults_to_empty_when_nothing_is_configured` USED
     // TO GUARD (found by test-unclaimable.sh going red): lib.sh's `ready_shared_exclude`/
     // `READY_ARGS`/`ready_raw_args` never hardcoded a label default themselves — only
     // conf.sh's derivation did, and a suite that sourced lib.sh alone (most of them) never
@@ -790,11 +790,11 @@ fn fayth_exclude_cli_refuses_rather_than_default_when_config_does_not_resolve() 
     // configured" is no longer expressible as a quiet empty default — the config file not
     // resolving at all is now a refusal that names the problem, not a default of any kind.
     // Concierge decision (2026-10-05, sp-hh599): a config-load failure is an ERROR (rc 1,
-    // `Outcome::error`), never `CANNOT_TELL` (2) — callers read that 2 as "no fayth /
+    // `Outcome::error`), never `CANNOT_TELL` (2) — callers read that 2 as "no rune /
     // nothing there", not "something is broken".
-    let home = chamber_home(&[("builder", "spira,plan", "")]);
+    let home = runes_home(&[("builder", "spira,plan", "")]);
     let o = run_cfg(
-        &["fayth-exclude", "builder", ""],
+        &["rune-exclude", "builder", ""],
         "",
         &[],
         &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_TOML", Some("/no/such/spira-toml-for-this-test"))],
@@ -815,7 +815,7 @@ fn ready_args_cli_raw_carries_no_exclude_label_when_no_loop_label_is_declared_em
 #[test]
 fn shared_exclude_cli_the_two_labels_ready_shared_exclude_carried() {
     // test-dispatch-open-children.sh calls `ready_shared_exclude` directly, not through
-    // `fayth_exclude` — this verb exists only for that caller. The baseline fixture's own
+    // `rune_exclude` — this verb exists only for that caller. The baseline fixture's own
     // declared values (spira-queue-waiting/spira-submitted/spira-open-children) are what
     // conf.sh's derivation would hold once it ran; no override needed.
     let o = run(&["shared-exclude"], "");
@@ -823,7 +823,7 @@ fn shared_exclude_cli_the_two_labels_ready_shared_exclude_carried() {
 }
 
 /// All three shared labels declared empty (a legitimate, resolved "no restriction" — not
-/// "nothing configured", which is a refusal now; see `fayth_exclude_cli_refuses_rather_
+/// "nothing configured", which is a refusal now; see `rune_exclude_cli_refuses_rather_
 /// than_default_when_config_does_not_resolve`) still carries no exclusions.
 #[test]
 fn shared_exclude_cli_empty_when_every_label_is_declared_empty() {
@@ -837,61 +837,61 @@ fn shared_exclude_cli_empty_when_every_label_is_declared_empty() {
 }
 
 #[test]
-fn fayth_ready_cli_no_fayth_file_is_rc2_stdout_zero() {
-    let home = chamber_home(&[]);
-    let chamber = chamber_path(&home);
+fn rune_ready_cli_no_rune_file_is_rc2_stdout_zero() {
+    let home = runes_home(&[]);
+    let runes = runes_path(&home);
     let o = run_cfg(
-        &["fayth-ready", "nosuchpersona"],
+        &["rune-ready", "nosuchpersona"],
         "",
-        &[("SPIRA_CHAMBER", &chamber)],
+        &[("SPIRA_RUNES_DIR", &runes)],
         &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None)],
     );
     assert_eq!((o.code, o.out.as_str()), (2, "0"));
-    assert!(o.err.contains("no fayth in the chamber"), "{}", o.err);
+    assert!(o.err.contains("no rune in the runes"), "{}", o.err);
 }
 
 #[test]
-fn fayth_ready_cli_query_failure_is_rc1_not_rc2_the_sp_3ntca_defect() {
-    let home = chamber_home(&[("probe", "plan", "")]);
-    let chamber = chamber_path(&home);
+fn rune_ready_cli_query_failure_is_rc1_not_rc2_the_sp_3ntca_defect() {
+    let home = runes_home(&[("probe", "plan", "")]);
+    let runes = runes_path(&home);
     let bd = sh("echo 'Error: the database is locked by another dolt process' >&2; exit 1");
     let path = fake_lc_path(&lc_ready(&["a"]));
     let o = run_cfg(
-        &["fayth-ready", "probe"],
+        &["rune-ready", "probe"],
         "",
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber)],
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes)],
         &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path.as_str()))],
     );
-    assert_eq!((o.code, o.out.as_str()), (1, "0"), "the fayth file is right there — this is not the no-fayth code");
+    assert_eq!((o.code, o.out.as_str()), (1, "0"), "the rune file is right there — this is not the no-rune code");
     assert!(o.err.contains("locked by another dolt process"), "{}", o.err);
-    assert!(!o.err.contains("no fayth"), "{}", o.err);
+    assert!(!o.err.contains("no rune"), "{}", o.err);
 }
 
 /// sp-xsnid: under a bare environment (no host config document, no `conf.d` registry —
-/// exactly `fayth_label_overlay`'s own "resolution failure" fallback, which is what a bare
-/// `spira-sentinel.service` leaves `fayth_predicate` holding), a `FAYTH_LABELS` that
+/// exactly `rune_label_overlay`'s own "resolution failure" fallback, which is what a bare
+/// `spira-sentinel.service` leaves `rune_predicate` holding), a `RUNE_LABELS` that
 /// references a config variable BARE (no `${VAR:+...}` guard) must refuse rather than
 /// hand back the empty string `bd --label "" ...` would read as "match everything" — the
 /// exact symptom this bead names: `ops`/`spike`/`builder` all reading `234`, the WHOLE
-/// ready queue. rc 3, never rc 2 ("no fayth") and never rc 0 with a widened count.
+/// ready queue. rc 3, never rc 2 ("no rune") and never rc 0 with a widened count.
 #[test]
-fn fayth_ready_cli_a_bare_reference_that_resolves_empty_refuses_rc3_never_widens() {
-    let home = chamber_home(&[("ops", "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_INCIDENT_LABEL", "spira-poison,$SPIRA_ASK_LABEL")]);
-    let chamber = chamber_path(&home);
+fn rune_ready_cli_a_bare_reference_that_resolves_empty_refuses_rc3_never_widens() {
+    let home = runes_home(&[("ops", "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_INCIDENT_LABEL", "spira-poison,$SPIRA_ASK_LABEL")]);
+    let runes = runes_path(&home);
     let bd = sh("echo 'bd must not be called — a widened query must never reach the store' >&2; exit 1");
     // The references under test resolve EMPTY — not undeclared: declared empty, which
-    // `fayth_label_overlay`'s own `resolve_for_process` accepts (per Ryan 2026-10-05, a
+    // `rune_label_overlay`'s own `resolve_for_process` accepts (per Ryan 2026-10-05, a
     // key's declared "" is itself an answer), so this config file still resolves overall
     // (`store::load_config` needs ask_label/scope_label too) and the refusal comes from
-    // `fayth_predicate`'s bare-reference check alone.
+    // `rune_predicate`'s bare-reference check alone.
     let o = run_cfg(
-        &["fayth-ready", "ops"],
+        &["rune-ready", "ops"],
         "",
         &[
             ("SPIRA_BD", bd.as_str()),
             ("SPIRA_DB", ""),
-            ("SPIRA_FAYTHS", "[]"),
-            ("SPIRA_CHAMBER", &chamber),
+            ("SPIRA_RUNES", "[]"),
+            ("SPIRA_RUNES_DIR", &runes),
             ("SPIRA_INCIDENT_LABEL", ""),
             ("SPIRA_ASK_LABEL", ""),
             ("SPIRA_SCOPE_LABEL", ""),
@@ -900,24 +900,24 @@ fn fayth_ready_cli_a_bare_reference_that_resolves_empty_refuses_rc3_never_widens
     );
     assert_eq!((o.code, o.out.as_str()), (3, "0"), "stderr: {}", o.err);
     assert!(o.err.contains("SPIRA_INCIDENT_LABEL"), "the refusal must name the exact reference: {}", o.err);
-    assert!(!o.err.contains("no fayth in the chamber"), "{}", o.err);
+    assert!(!o.err.contains("no rune in the runes"), "{}", o.err);
 }
 
-/// The guarded `SPIRA_SCOPE_LABEL` reference (every real `FAYTH_LABELS`'s own
+/// The guarded `SPIRA_SCOPE_LABEL` reference (every real `RUNE_LABELS`'s own
 /// `${SPIRA_SCOPE_LABEL:+...}` opening) must never itself trigger a refusal — "no scope
 /// restriction configured" is this harness's own common case. A literal, declared-empty
-/// `FAYTH_LABELS=""` (no `$` at all — `concierge.fayth`'s own shape) must not refuse
+/// `RUNE_LABELS=""` (no `$` at all — `concierge.rune`'s own shape) must not refuse
 /// either; it is a deliberate "no restriction", not a config gap.
 #[test]
-fn fayth_ready_cli_a_guarded_or_declared_literal_empty_never_refuses() {
-    let home = chamber_home(&[("concierge", "", "")]);
-    let chamber = chamber_path(&home);
+fn rune_ready_cli_a_guarded_or_declared_literal_empty_never_refuses() {
+    let home = runes_home(&[("concierge", "", "")]);
+    let runes = runes_path(&home);
     let bd = sh("echo '[]'");
     let path = fake_lc_path("[]");
     let o = run_cfg(
-        &["fayth-ready", "concierge"],
+        &["rune-ready", "concierge"],
         "",
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber)],
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes)],
         &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path.as_str()))],
     );
     assert_eq!((o.code, o.out.as_str()), (0, "0"), "a declared-empty literal predicate must never refuse: {}", o.err);
@@ -925,64 +925,64 @@ fn fayth_ready_cli_a_guarded_or_declared_literal_empty_never_refuses() {
 
 /// sp-hh599: under `spira-sentinel.service`'s own environment (`SPIRA_RELEASE`/`PATH`,
 /// never `SPIRA_HOME` — wave 4.25, sp-obhv6, stopped `conf.sh` exporting it), this used to
-/// refuse outright with rc 2 — the SAME rc `fayth_ready_cli_no_fayth_file_is_rc2_stdout_zero`
-/// above uses for "no such fayth file", so `sentinel::summon::fayth_ready`'s `2 =>
-/// ReadyAnswer::NoFayth` mapping could not tell "SPIRA_HOME is not set" apart from "this
-/// chamber genuinely has no builder.fayth", and skipped every fayth every pass forever,
+/// refuse outright with rc 2 — the SAME rc `rune_ready_cli_no_rune_file_is_rc2_stdout_zero`
+/// above uses for "no such rune file", so `sentinel::summon::rune_ready`'s `2 =>
+/// ReadyAnswer::NoRune` mapping could not tell "SPIRA_HOME is not set" apart from "this
+/// runes genuinely has no builder.rune", and skipped every rune every pass forever,
 /// silently (this bead's own repro).
 ///
 /// Per Ryan 2026-10-05, `dispatch` now loads `Config` (`store::load_config`, every
 /// registered key) BEFORE any verb runs, for every verb but `decide`. With `SPIRA_HOME`
 /// unset, that load fails first (`spira_config::process::cfg`'s own home-location) —
-/// before `cmd_fayth_ready` ever reaches its own `fayth_home()` check — but the
+/// before `cmd_rune_ready` ever reaches its own `rune_home()` check — but the
 /// Concierge's sp-hh599 decision keeps this bead's own contract intact at the dispatch
 /// boundary: a config-load failure is `Outcome::error` (rc 1), never `CANNOT_TELL` (rc 2,
-/// which every caller reads as "no fayth / nothing there"). So rc 1 ("could not
-/// evaluate") and rc 2 ("no fayth in the chamber") stay the two distinct buckets this bead
+/// which every caller reads as "no rune / nothing there"). So rc 1 ("could not
+/// evaluate") and rc 2 ("no rune in the runes") stay the two distinct buckets this bead
 /// named, exactly as before — just reached one layer higher up, at config load rather than
-/// at `fayth_home()` itself.
+/// at `rune_home()` itself.
 #[test]
-fn fayth_ready_cli_unresolvable_home_is_rc1_not_rc2_the_sp_hh599_defect() {
-    let o = run_cfg(&["fayth-ready", "builder"], "", &[], &[("SPIRA_HOME", None)]);
+fn rune_ready_cli_unresolvable_home_is_rc1_not_rc2_the_sp_hh599_defect() {
+    let o = run_cfg(&["rune-ready", "builder"], "", &[], &[("SPIRA_HOME", None)]);
     assert_eq!((o.code, o.out.as_str()), (1, ""), "stderr: {}", o.err);
-    assert!(!o.err.contains("no fayth in the chamber"), "stderr: {}", o.err);
+    assert!(!o.err.contains("no rune in the runes"), "stderr: {}", o.err);
 }
 
 /// The same self-resolution, proven positively rather than by its failure mode: with
 /// `SPIRA_HOME` unset but THIS PROCESS physically sitting inside a release layout
 /// (`<release>/bin/<exe>` beside `<release>/spira/conf.sh`, exactly `own_release_root`'s own
-/// contract — sp-kgzql, reused here rather than invented a fourth way), `fayth_home` must
+/// contract — sp-kgzql, reused here rather than invented a fourth way), `rune_home` must
 /// still answer `<release>/spira`, matching this bead's own manual repro
-/// (`SPIRA_HOME=<rel>/spira` recovers `fayth_ready`). Exercises the pure function directly
-/// (`super::fayth_home`) since faking this process's own `current_exe()` end-to-end would
+/// (`SPIRA_HOME=<rel>/spira` recovers `rune_ready`). Exercises the pure function directly
+/// (`super::rune_home`) since faking this process's own `current_exe()` end-to-end would
 /// need a real exec; `own_release_root`'s own unit tests (spira-config) already cover the
 /// ascending search itself.
 #[test]
-fn fayth_home_pure_function_prefers_the_env_override_and_falls_back_to_the_release_root() {
+fn rune_home_pure_function_prefers_the_env_override_and_falls_back_to_the_release_root() {
     // The override still wins outright — a fixture, or a lib.sh shim that already
     // resolved it, must be able to pin a different tree on purpose.
     let pinned = testkit::env(&[("SPIRA_HOME", Some("/some/pinned/tree"))]);
-    assert_eq!(super::fayth_home().as_deref(), Ok(std::path::Path::new("/some/pinned/tree")));
+    assert_eq!(super::rune_home().as_deref(), Ok(std::path::Path::new("/some/pinned/tree")));
     drop(pinned);
     let _env = testkit::env(&[("SPIRA_HOME", None)]);
-    let err = super::fayth_home().unwrap_err();
+    let err = super::rune_home().unwrap_err();
     assert!(err.contains("cannot resolve SPIRA_HOME"), "{err}");
     assert!(!err.contains("is not set"), "{err}");
 }
 
 #[test]
-fn fayth_ready_cli_real_count_including_zero() {
-    let home = chamber_home(&[("probe", "plan", "")]);
-    let chamber = chamber_path(&home);
+fn rune_ready_cli_real_count_including_zero() {
+    let home = runes_home(&[("probe", "plan", "")]);
+    let runes = runes_path(&home);
     let bd_zero = sh("echo '[]'");
     let path_zero = fake_lc_path("[]");
-    // `machine_claimable` applies `scope_label` before the fayth's own predicate does —
-    // "probe"'s FAYTH_LABELS is bare "plan", so the baseline fixture's "spira" scope
+    // `machine_claimable` applies `scope_label` before the rune's own predicate does —
+    // "probe"'s RUNE_LABELS is bare "plan", so the baseline fixture's "spira" scope
     // would filter out every bead below; this test means unscoped readiness.
     let o = run_cfg(
-        &["fayth-ready", "probe"],
+        &["rune-ready", "probe"],
         "",
-        &[("SPIRA_BD", bd_zero.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber), ("SPIRA_SCOPE_LABEL", "")],
+        &[("SPIRA_BD", bd_zero.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes), ("SPIRA_SCOPE_LABEL", "")],
         &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path_zero.as_str()))],
     );
     assert_eq!((o.code, o.out.as_str(), o.err.as_str()), (0, "0", ""));
@@ -991,70 +991,70 @@ fn fayth_ready_cli_real_count_including_zero() {
     let bd_seven = sh(&format!("echo '{}'", plan_rows(&seven)));
     let path = fake_lc_path(&lc_ready(&seven));
     let o2 = run_cfg(
-        &["fayth-ready", "probe"],
+        &["rune-ready", "probe"],
         "",
-        &[("SPIRA_BD", bd_seven.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber), ("SPIRA_SCOPE_LABEL", "")],
+        &[("SPIRA_BD", bd_seven.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes), ("SPIRA_SCOPE_LABEL", "")],
         &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path.as_str()))],
     );
     assert_eq!((o2.code, o2.out.as_str()), (0, "7"), "{}", o2.err);
 }
 
 #[test]
-fn fayth_ready_cli_cache_fast_path_skips_the_query_entirely() {
-    let home = chamber_home(&[("probe", "plan", "")]);
-    let chamber = chamber_path(&home);
+fn rune_ready_cli_cache_fast_path_skips_the_query_entirely() {
+    let home = runes_home(&[("probe", "plan", "")]);
+    let runes = runes_path(&home);
     let cache = tmp("probe 9\nother 1\n");
     let bd = sh("echo 'bd must not be called' >&2; exit 1");
     let o = run_cfg(
-        &["fayth-ready", "probe"],
+        &["rune-ready", "probe"],
         "",
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber)],
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes)],
         &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", Some(cache.as_str()))],
     );
     assert_eq!((o.code, o.out.as_str(), o.err.as_str()), (0, "9", ""));
 }
 
 #[test]
-fn bulk_ready_by_fayth_cli_buckets_one_fetch_by_the_chamber_roster() {
-    let home = chamber_home(&[("builder", "spira,plan", ""), ("ops", "spira,ops-trigger", "")]);
-    let chamber = chamber_path(&home);
+fn bulk_ready_by_rune_cli_buckets_one_fetch_by_the_runes_roster() {
+    let home = runes_home(&[("builder", "spira,plan", ""), ("ops", "spira,ops-trigger", "")]);
+    let runes = runes_path(&home);
     let bd = sh(
         r#"echo '[{"id":"a","labels":["spira","plan"]},{"id":"b","labels":["spira","ops-trigger"]},{"id":"c","labels":["spira","plan","spira-submitted"]}]'"#,
     );
     let path = fake_lc_path(&lc_ready(&["a", "b", "c"]));
     // SPIRA_SUBMITTED_LABEL is the baseline fixture's own declared value already.
     let o = run_cfg(
-        &["bulk-ready-by-fayth"],
+        &["bulk-ready-by-rune"],
         "",
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber)],
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes)],
         &[("SPIRA_HOME", Some(home.as_str())), ("PATH", Some(path.as_str()))],
     );
     assert_eq!(o.out, "builder 2\nops 1\n", "c is READY in the lifecycle: a stale spira-submitted label must not hide it");
 }
 
 #[test]
-fn bulk_ready_by_fayth_cli_excludes_exactly_what_fayth_ready_excludes() {
-    // sp-85p8t: e (open children) and f (addressed to another fayth) are never claimable by
+fn bulk_ready_by_rune_cli_excludes_exactly_what_rune_ready_excludes() {
+    // sp-85p8t: e (open children) and f (addressed to another rune) are never claimable by
     // a builder, so neither count may include them — the bulk count once did, and the
     // sentinel summoned a builder for them every pass.
-    let home = chamber_home(&[("builder", "spira,plan", ""), ("ops", "spira,ops-trigger", "")]);
-    let chamber = chamber_path(&home);
+    let home = runes_home(&[("builder", "spira,plan", ""), ("ops", "spira,ops-trigger", "")]);
+    let runes = runes_path(&home);
     let bd = sh(
-        r#"echo '[{"id":"a","labels":["spira","plan"]},{"id":"e","labels":["spira","plan","spira-open-children"]},{"id":"f","labels":["spira","plan","fayth:ops"]}]'"#,
+        r#"echo '[{"id":"a","labels":["spira","plan"]},{"id":"e","labels":["spira","plan","spira-open-children"]},{"id":"f","labels":["spira","plan","rune:ops"]}]'"#,
     );
     let path = fake_lc_path(&lc_ready(&["a", "e", "f"]));
     // SPIRA_SUBMITTED_LABEL/SPIRA_OPEN_CHILDREN_LABEL are the baseline fixture's own
     // declared values already.
     let o = run_cfg(
-        &["bulk-ready-by-fayth"],
+        &["bulk-ready-by-rune"],
         "",
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber)],
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes)],
         &[("SPIRA_HOME", Some(home.as_str())), ("PATH", Some(path.as_str())), ("SPIRA_READY_CACHE", None)],
     );
     assert_eq!(o.out, "builder 1\nops 0\n", "{}", o.err);
 }
 
-// ---- fayth-ready / bulk-ready-by-fayth: the machine's ready set --------------------------------
+// ---- rune-ready / bulk-ready-by-rune: the machine's ready set --------------------------------
 
 /// `spira-lc list` rows: each id READY with no holds.
 fn lc_ready(ids: &[&str]) -> String {
@@ -1080,18 +1080,18 @@ fn fake_lc_path(lc: &str) -> Tmp {
 }
 
 fn enforced_count(ready: &str, lc: &str, recs: &str, verb: &[&str]) -> Outcome {
-    let home = chamber_home(&[("probe", "plan", "")]);
-    let chamber = chamber_path(&home);
+    let home = runes_home(&[("probe", "plan", "")]);
+    let runes = runes_path(&home);
     let bd = sh(&format!("case \"$*\" in *--id*) echo '{recs}';; *) echo '{ready}';; esac"));
     let path = fake_lc_path(lc);
-    // `machine_claimable` applies `scope_label` before any fayth predicate or <labels>
+    // `machine_claimable` applies `scope_label` before any rune predicate or <labels>
     // argument does — every fixture bead here carries only "plan", never "spira", so the
     // baseline fixture's own scope would filter them all out; these tests mean unscoped
     // readiness.
     run_cfg(
         verb,
         "",
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber), ("SPIRA_SCOPE_LABEL", "")],
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes), ("SPIRA_SCOPE_LABEL", "")],
         &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path.as_str()))],
     )
 }
@@ -1107,23 +1107,23 @@ const ENFORCE_RECS: &str = r#"[{"id":"S","status":"open","issue_type":"task","la
 #[test]
 fn enforced_counts_exclude_submitted_and_blocked_beads_and_keep_one_ready() {
     let lc = r#"[{"bead_id":"S","state":"SUBMITTED","holds":"[]"},{"bead_id":"D","state":"READY","holds":"[]"},{"bead_id":"R","state":"READY","holds":"[]"}]"#;
-    let one = enforced_count(ENFORCE_READY, lc, ENFORCE_RECS, &["fayth-ready", "probe"]);
+    let one = enforced_count(ENFORCE_READY, lc, ENFORCE_RECS, &["rune-ready", "probe"]);
     assert_eq!((one.code, one.out.as_str()), (0, "1"), "{}", one.err);
-    let bulk = enforced_count(ENFORCE_READY, lc, ENFORCE_RECS, &["bulk-ready-by-fayth"]);
+    let bulk = enforced_count(ENFORCE_READY, lc, ENFORCE_RECS, &["bulk-ready-by-rune"]);
     assert_eq!((bulk.code, bulk.out.as_str()), (0, "probe 1\n"), "{}", bulk.err);
 
     let all_held = r#"[{"bead_id":"S","state":"SUBMITTED","holds":"[]"},{"bead_id":"D","state":"READY","holds":"[]"},{"bead_id":"R","state":"SUBMITTED","holds":"[]"}]"#;
-    let zero = enforced_count(ENFORCE_READY, all_held, ENFORCE_RECS, &["fayth-ready", "probe"]);
+    let zero = enforced_count(ENFORCE_READY, all_held, ENFORCE_RECS, &["rune-ready", "probe"]);
     assert_eq!((zero.code, zero.out.as_str()), (0, "0"), "{}", zero.err);
-    let bulk0 = enforced_count(ENFORCE_READY, all_held, ENFORCE_RECS, &["bulk-ready-by-fayth"]);
+    let bulk0 = enforced_count(ENFORCE_READY, all_held, ENFORCE_RECS, &["bulk-ready-by-rune"]);
     assert_eq!((bulk0.code, bulk0.out.as_str()), (0, "probe 0\n"), "{}", bulk0.err);
 }
 
 #[test]
 fn enforced_counts_refuse_when_the_lifecycle_machine_cannot_answer() {
-    let o = enforced_count(ENFORCE_READY, "not json", ENFORCE_RECS, &["fayth-ready", "probe"]);
+    let o = enforced_count(ENFORCE_READY, "not json", ENFORCE_RECS, &["rune-ready", "probe"]);
     assert_eq!((o.code, o.out.as_str()), (1, "0"), "{}", o.err);
-    let b = enforced_count(ENFORCE_READY, "not json", ENFORCE_RECS, &["bulk-ready-by-fayth"]);
+    let b = enforced_count(ENFORCE_READY, "not json", ENFORCE_RECS, &["bulk-ready-by-rune"]);
     assert_ne!(b.code, 0);
     assert_eq!(b.out, "");
 }
@@ -1147,12 +1147,12 @@ fn ids_of(json: &str) -> Vec<String> {
 
 #[test]
 fn a_bead_bd_shows_in_progress_is_ready_when_its_lifecycle_row_is_ready() {
-    let one = enforced_count(BD_OPEN_UNASSIGNED, LC_W_HELD_P_READY, BD_BOTH, &["fayth-ready", "probe"]);
+    let one = enforced_count(BD_OPEN_UNASSIGNED, LC_W_HELD_P_READY, BD_BOTH, &["rune-ready", "probe"]);
     assert_eq!((one.code, one.out.as_str()), (0, "1"), "{}", one.err);
-    let set = enforced_count(BD_OPEN_UNASSIGNED, LC_W_HELD_P_READY, BD_BOTH, &["fayth-ready", "probe", "--json"]);
+    let set = enforced_count(BD_OPEN_UNASSIGNED, LC_W_HELD_P_READY, BD_BOTH, &["rune-ready", "probe", "--json"]);
     assert_eq!(set.code, 0, "{}", set.err);
     assert_eq!(ids_of(&set.out), vec!["P".to_string()], "the aeon's ready set is the count's own rows");
-    let bulk = enforced_count(BD_OPEN_UNASSIGNED, LC_W_HELD_P_READY, BD_BOTH, &["bulk-ready-by-fayth"]);
+    let bulk = enforced_count(BD_OPEN_UNASSIGNED, LC_W_HELD_P_READY, BD_BOTH, &["bulk-ready-by-rune"]);
     assert_eq!(bulk.out, "probe 1\n", "{}", bulk.err);
     let n = enforced_count(BD_OPEN_UNASSIGNED, LC_W_HELD_P_READY, BD_BOTH, &["ready-count", "plan", ""]);
     assert_eq!((n.code, n.out.as_str()), (0, "1"), "{}", n.err);
@@ -1161,18 +1161,18 @@ fn a_bead_bd_shows_in_progress_is_ready_when_its_lifecycle_row_is_ready() {
 #[test]
 fn a_bead_bd_shows_open_and_unassigned_is_not_ready_while_its_row_is_working() {
     let lc = r#"[{"bead_id":"W","state":"WORKING","holder":"aeon-live","holds":"[]"},{"bead_id":"P","state":"SUBMITTED","holds":"[]"}]"#;
-    for verb in [&["fayth-ready", "probe"][..], &["ready-count", "plan", ""][..]] {
+    for verb in [&["rune-ready", "probe"][..], &["ready-count", "plan", ""][..]] {
         let o = enforced_count(BD_OPEN_UNASSIGNED, lc, BD_BOTH, verb);
         assert_eq!((o.code, o.out.as_str()), (0, "0"), "{verb:?}: {}", o.err);
     }
-    let set = enforced_count(BD_OPEN_UNASSIGNED, lc, BD_BOTH, &["fayth-ready", "probe", "--json"]);
+    let set = enforced_count(BD_OPEN_UNASSIGNED, lc, BD_BOTH, &["rune-ready", "probe", "--json"]);
     assert_eq!((set.code, ids_of(&set.out)), (0, Vec::<String>::new()), "{}", set.err);
 }
 
 #[test]
 fn a_held_ready_row_is_not_ready_but_a_wait_hold_is_judged_through_its_blockers() {
     let lc = r#"[{"bead_id":"W","state":"READY","holds":"[\"poison\"]"},{"bead_id":"P","state":"REWORK","holds":"[\"wait\"]"}]"#;
-    let set = enforced_count(BD_OPEN_UNASSIGNED, lc, BD_BOTH, &["fayth-ready", "probe", "--json"]);
+    let set = enforced_count(BD_OPEN_UNASSIGNED, lc, BD_BOTH, &["rune-ready", "probe", "--json"]);
     assert_eq!(ids_of(&set.out), vec!["P".to_string()], "{}", set.err);
 }
 
@@ -1206,21 +1206,21 @@ fn label_ready_set(extra_toml: &[(&str, &str)], exported: Option<&str>) -> Outco
         r#"[{{"id":"A","priority":1,"issue_type":"task","labels":["plan","{OC_LABEL}"]}},{{"id":"B","priority":1,"issue_type":"task","labels":["plan"]}}]"#
     );
     let lc = r#"[{"bead_id":"A","state":"READY","holds":"[]"},{"bead_id":"B","state":"READY","holds":"[]"}]"#;
-    let home = chamber_home(&[("probe", "plan", "")]);
-    let chamber = chamber_path(&home);
+    let home = runes_home(&[("probe", "plan", "")]);
+    let runes = runes_path(&home);
     let bd = sh(&format!("echo '{rows}'"));
     let path = fake_lc_path(lc);
     let mut declare = vec![
         ("SPIRA_BD", bd.as_str()),
         ("SPIRA_DB", ""),
-        ("SPIRA_FAYTHS", "[]"),
-        ("SPIRA_CHAMBER", chamber.as_str()),
+        ("SPIRA_RUNES", "[]"),
+        ("SPIRA_RUNES_DIR", runes.as_str()),
         ("SPIRA_SCOPE_LABEL", ""),
         ("SPIRA_OPEN_CHILDREN_LABEL", OC_LABEL),
     ];
     declare.extend_from_slice(extra_toml);
     run_cfg(
-        &["fayth-ready", "probe", "--json"],
+        &["rune-ready", "probe", "--json"],
         "",
         &declare,
         &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path.as_str())), ("SPIRA_OPEN_CHILDREN_LABEL", exported)],
@@ -1246,7 +1246,7 @@ fn an_absent_registry_key_is_refused_by_name_never_resolved_to_empty() {
     assert!(kept.len() < text.lines().count(), "the plant must remove the key, or this test proves nothing");
     std::fs::write(toml.as_str(), kept.join("\n")).unwrap();
     let _env = testkit::env(&[("SPIRA_HOME", Some(REAL_SPIRA_HOME)), ("SPIRA_TOML", Some(toml.as_str()))]);
-    let o = exec_spira_claim(&["fayth-ready", "probe"], "");
+    let o = exec_spira_claim(&["rune-ready", "probe"], "");
     assert_ne!(o.code, 0, "{}", o.out);
     assert!(o.err.contains("SPIRA_OPEN_CHILDREN_LABEL"), "the refusal names the key: {}", o.err);
 }
@@ -1294,17 +1294,17 @@ fn express_is_a_bool_flag_and_never_swallows_what_follows() {
 
 #[test]
 fn a_blocker_the_lifecycle_has_landed_costs_no_second_bd_call() {
-    let home = chamber_home(&[("probe", "plan", "")]);
-    let chamber = chamber_path(&home);
+    let home = runes_home(&[("probe", "plan", "")]);
+    let runes = runes_path(&home);
     let calls = testkit::TempDir::new("spira-claim-bd-calls");
     let log = calls.join("calls");
     let bd = sh(&format!("echo x >> '{}'; echo '{ENFORCE_RECS}'", log.display()));
     let lc = r#"[{"bead_id":"S","state":"LANDED","holds":"[]"},{"bead_id":"D","state":"READY","holds":"[]"},{"bead_id":"R","state":"READY","holds":"[]"}]"#;
     let path = fake_lc_path(lc);
     let o = run_cfg(
-        &["bulk-ready-by-fayth"],
+        &["bulk-ready-by-rune"],
         "",
-        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_FAYTHS", "[]"), ("SPIRA_CHAMBER", &chamber), ("SPIRA_SCOPE_LABEL", "")],
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes), ("SPIRA_SCOPE_LABEL", "")],
         &[("SPIRA_HOME", Some(home.as_str())), ("SPIRA_READY_CACHE", None), ("PATH", Some(path.as_str()))],
     );
     assert_eq!((o.code, o.out.as_str()), (0, "probe 2\n"), "{}", o.err);
@@ -1314,8 +1314,8 @@ fn a_blocker_the_lifecycle_has_landed_costs_no_second_bd_call() {
 // ---- ready-count shares one computation per ready_ttl_s (sp-su318h) ----------------------
 
 fn ready_count_twice(ttl: &str) -> (Outcome, Outcome) {
-    let home = chamber_home(&[("probe", "plan", "")]);
-    let chamber = chamber_path(&home);
+    let home = runes_home(&[("probe", "plan", "")]);
+    let runes = runes_path(&home);
     let run = testkit::TempDir::new("spira-claim-ready-run");
     let run_s = run.to_string_lossy().into_owned();
     let bd = sh(&format!("case \"$*\" in *--id*) echo '{BD_BOTH}';; *) echo '{BD_OPEN_UNASSIGNED}';; esac"));
@@ -1329,8 +1329,8 @@ fn ready_count_twice(ttl: &str) -> (Outcome, Outcome) {
             &[
                 ("SPIRA_BD", bd.as_str()),
                 ("SPIRA_DB", ""),
-                ("SPIRA_FAYTHS", "[]"),
-                ("SPIRA_CHAMBER", &chamber),
+                ("SPIRA_RUNES", "[]"),
+                ("SPIRA_RUNES_DIR", &runes),
                 ("SPIRA_SCOPE_LABEL", ""),
                 ("SPIRA_RUN", run_s.as_str()),
                 ("SPIRA_READY_TTL_S", ttl),
@@ -1420,7 +1420,7 @@ fn a_reserved_bead_and_a_claims_stopped_repo_are_skipped_by_select() {
     let dir = testkit::TempDir::new("spira-claim-scoped-stop");
     let run_s = dir.path().to_string_lossy().into_owned();
     let select = |count: bool| {
-        let mut a = vec!["select", "--fayth", "t", "--blockers", "machine", "--lifecycle", lc.as_str(), "--blocker-records", recs.as_str()];
+        let mut a = vec!["select", "--rune", "t", "--blockers", "machine", "--lifecycle", lc.as_str(), "--blocker-records", recs.as_str()];
         let lk = tmp("{}");
         if count {
             a.push("--count");

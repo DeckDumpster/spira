@@ -103,7 +103,7 @@ Each use case is declared once, as the schema in docs/test-plan/README.md requir
 * `UC-landing-merge-queue-52` [T1] — `gate-check` discovers `--branch` once per distinct unbound-gate branch and never calls a bare discover or discovers for push repos. It then runs `gate check`. It reports a gate with no await_id as stuck. It parses ESCALATE lines for any `SPIRA_ID_PREFIX`. Its stderr is silent on a clean pass. *(tier: T1 over a stub bd; dim: corr, ctr, obs; where: cert)*
 * `UC-landing-merge-queue-53` [T2] — bd's own gh:run gates behave as the harness expects: a gated bead leaves `ready`, and resolution is scoped to `metadata.repo`. *(tier: T2 contract; dim: ctr; where: on bd pin change)*
 * `UC-landing-merge-queue-54` [T1] — `forge.sh` maps gh JSON to the line protocol for every verb Spira consumes: check-status (`pending`/`green`/`red`/`harness_fault`/`provision_fault`, `red-suite:`, `head-sha:`), runs-active (`?` never 0), run-metadata (max activity), workflow-rerun (never `--failed`, cancels in-progress), and also pr-mergeability, pr-list-queue, batch-ci-status, queued-since, run-id and pr-number. *(tier: T1, a recorded-fixture contract; dim: ctr, fc; where: cert)*
-* `UC-landing-merge-queue-55` [T1] — The broker refuses verbs outside its policy table, and refuses czar-only verbs from any other fayth, without calling gh. Shadow mode records CZAR-WOULD. Act mode executes and audits. The read verbs shape gh argv exactly. *(tier: T1 via cargo `#[test]`, plus T2 for one bash smoke; dim: fc, ctr; where: cert)*
+* `UC-landing-merge-queue-55` [T1] — The broker refuses verbs outside its policy table, and refuses czar-only verbs from any other rune, without calling gh. Shadow mode records CZAR-WOULD. Act mode executes and audits. The read verbs shape gh argv exactly. *(tier: T1 via cargo `#[test]`, plus T2 for one bash smoke; dim: fc, ctr; where: cert)*
 * `UC-landing-merge-queue-56` [T1] — `pve.sh` refuses to make an HTTP call when credentials or the CA are missing. It always passes `--cacert` and never `--insecure`, and routes each verb to its API path. *(dim: fc; where: cert)*
 * `UC-landing-merge-queue-57` [T2] — When a bead with a GitHub ref lands, its issue is commented (short SHA + link) and closed once, with a marker. An unlanded bead's issue is never closed. Backfill decides landed-ness by ancestry of `spira: land <id>`. The unlanded scan asks once, logs refusals, and marks issues already closed on the forge. *(dim: idem, fc, obs; where: batch)*
 
@@ -412,7 +412,7 @@ sp-wmn0w) — is now structurally true of the current landing path (`queue land-
 Deleted alongside it (both are shrink-only lists of files that exist, so a deleted file's
 line is dead weight): its `spira/config-fence-allow` line and its `spira/tier-budget-
 allowlist` line (T1, 16.0 s). No caller outside the suite corpus referenced it (no systemd
-unit, `.github/workflows`, `spira.toml` gate string, or chamber brief named it; gate.steps
+unit, `.github/workflows`, `spira.toml` gate string, or runes brief named it; gate.steps
 selects suites dynamically by `suite-select`/`covers:`, not by a fixed list).
 
 **sp-5ayw5 (2026-09-27, test-corpus audit):** two true deletion candidates from this area,

@@ -38,14 +38,14 @@ fn live_names(run: &Path) -> Vec<String> {
         .collect()
 }
 
-/// `aeon_name_take <fayth>` — a name not currently held by a live aeon. `fayth` is accepted
+/// `aeon_name_take <rune>` — a name not currently held by a live aeon. `rune` is accepted
 /// (matching lib.sh's signature) but unused: names are global across the fleet, not
 /// per-persona, exactly as the bash original.
 ///
 /// A CURSOR, NOT "first free": picking the first free name meant two consecutive sessions
 /// were both "valefor", hiding the fact that a bead had been dropped with work in flight —
 /// a cursor makes consecutive aeons distinguishable even when nothing else is running.
-pub fn aeon_name_take(run: &Path, _fayth: &str) -> String {
+pub fn aeon_name_take(run: &Path, _rune: &str) -> String {
     let live = live_names(run);
     let cursor_path = run.join(".aeon-name-cursor");
     let last: usize = std::fs::read_to_string(&cursor_path).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0);

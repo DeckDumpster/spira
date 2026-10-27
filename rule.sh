@@ -35,7 +35,7 @@
 #
 # THIS FILE IS NOW A SHIM (sp-g9mhe, rewrite wave 5f): the logic above lives in the Rust
 # `rule` binary (rule/DESIGN.md). This stays the one entry point every caller names —
-# concierge.sh, every chamber brief, the suites — the same shim pattern `gate/DESIGN.md`
+# concierge.sh, every runes brief, the suites — the same shim pattern `gate/DESIGN.md`
 # established for `gate.sh`: source `conf.sh` for its side effects (env, PATH), exactly as
 # the original `rule.sh` did, then hand over to the binary by bare name.
 #
@@ -48,7 +48,7 @@
 # `SPIRA_WIKI` and `SPIRA_WIKI_HOOK` — this line was redundant for those three the moment
 # `conf.sh` became an eval of `spira-config resolve` (wave 4.5). `SPIRA_MEMORIES_CACHE` is
 # the one real holdout: its derived default is deliberately NOT in `EXPORT_KEYS` (the same
-# "read in-process, never exported to a child" category as `SPIRA_REPO_MAP`/`SPIRA_FAYTHS`),
+# "read in-process, never exported to a child" category as `SPIRA_REPO_MAP`/`SPIRA_RUNES`),
 # so the `rule` binary now resolves it itself via `spira_config::resolve::resolve_for_process`
 # (see `memories_cache_path` there) rather than depending on this shim to carry it.
 SPIRA_HOME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/spira" && pwd -P)"

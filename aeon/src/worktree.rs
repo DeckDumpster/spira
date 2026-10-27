@@ -102,7 +102,7 @@ pub struct Ensure<'a> {
     pub root: &'a Path,
     pub base: &'a str,
     pub base_fq: &'a str,
-    pub fayth: &'a str,
+    pub rune: &'a str,
     pub now: i64,
 }
 
@@ -150,7 +150,7 @@ pub fn ensure(e: &Ensure, branch: &mut String, prune: &dyn Fn()) -> Result<Vec<A
         // A mislabeled branch: (bd create --parent copies it to every child), not a resume.
         acts.push(Act::Log(format!(
             "{}: {}: recorded branch {branch} is checked out at {held}, which belongs to {held_id}, not {} — a mislabeled branch:, not a resume; taking a fresh branch instead of dying",
-            e.fayth, e.bead_id, e.bead_id
+            e.rune, e.bead_id, e.bead_id
         )));
         acts.push(Act::Note(format!(
             "Corrected by aeon.sh: this bead's recorded branch: label named {branch}, which belongs to {held_id}, not {}. Reset to spira/{} and started fresh.",
@@ -182,7 +182,7 @@ pub fn ensure(e: &Ensure, branch: &mut String, prune: &dyn Fn()) -> Result<Vec<A
     let _ = e.git.git(&aside, &["checkout", "-q", "--detach"]);
     acts.push(Act::Log(format!(
         "{}: {} — {branch} was checked out at {held} (a previous path); moved aside to {}, cutting {work} fresh",
-        e.fayth,
+        e.rune,
         e.bead_id,
         aside.display()
     )));
@@ -289,12 +289,12 @@ mod tests {
         let work = root.join("sp-a");
         let mut br = "spira/sp-a".to_string();
         let pruned = std::cell::Cell::new(0);
-        let acts = ensure(&Ensure { git: &g, repo: &r, work: &work, bead_id: "sp-a", root: &root, base: "main", base_fq: "main", fayth: "builder", now: 1 }, &mut br, &|| pruned.set(pruned.get() + 1)).unwrap();
+        let acts = ensure(&Ensure { git: &g, repo: &r, work: &work, bead_id: "sp-a", root: &root, base: "main", base_fq: "main", rune: "builder", now: 1 }, &mut br, &|| pruned.set(pruned.get() + 1)).unwrap();
         assert!(acts.is_empty());
         assert!(work.join(".git").exists());
         assert_eq!(pruned.get(), 1, "prune runs before cutting");
         // A second summon with the tree present is a no-op (resume).
-        let acts = ensure(&Ensure { git: &g, repo: &r, work: &work, bead_id: "sp-a", root: &root, base: "main", base_fq: "main", fayth: "builder", now: 1 }, &mut br, &|| pruned.set(pruned.get() + 1)).unwrap();
+        let acts = ensure(&Ensure { git: &g, repo: &r, work: &work, bead_id: "sp-a", root: &root, base: "main", base_fq: "main", rune: "builder", now: 1 }, &mut br, &|| pruned.set(pruned.get() + 1)).unwrap();
         assert!(acts.is_empty());
         assert_eq!(pruned.get(), 1);
     }
@@ -312,10 +312,10 @@ mod tests {
         let root = d.join("run/worktree");
         let a = root.join("sp-cw-a");
         let mut bra = "spira/sp-cw-a".to_string();
-        ensure(&Ensure { git: &g, repo: &r, work: &a, bead_id: "sp-cw-a", root: &root, base: "main", base_fq: "main", fayth: "builder", now: 1 }, &mut bra, &|| {}).unwrap();
+        ensure(&Ensure { git: &g, repo: &r, work: &a, bead_id: "sp-cw-a", root: &root, base: "main", base_fq: "main", rune: "builder", now: 1 }, &mut bra, &|| {}).unwrap();
         let b = root.join("sp-cw-b");
         let mut brb = "spira/sp-cw-a".to_string();
-        let acts = ensure(&Ensure { git: &g, repo: &r, work: &b, bead_id: "sp-cw-b", root: &root, base: "main", base_fq: "main", fayth: "builder", now: 1 }, &mut brb, &|| {}).unwrap();
+        let acts = ensure(&Ensure { git: &g, repo: &r, work: &b, bead_id: "sp-cw-b", root: &root, base: "main", base_fq: "main", rune: "builder", now: 1 }, &mut brb, &|| {}).unwrap();
         assert_eq!(brb, "spira/sp-cw-b");
         assert!(b.join(".git").exists(), "B got its OWN fresh worktree");
         assert!(a.join(".git").exists(), "A's worktree is untouched");
@@ -344,7 +344,7 @@ mod tests {
         let root = d.join("run/worktree");
         let work = root.join("sp-cw-c");
         let mut br = "spira/sp-cw-c".to_string();
-        let acts = ensure(&Ensure { git: &g, repo: &r, work: &work, bead_id: "sp-cw-c", root: &root, base: "main", base_fq: "main", fayth: "builder", now: 1 }, &mut br, &|| {}).unwrap();
+        let acts = ensure(&Ensure { git: &g, repo: &r, work: &work, bead_id: "sp-cw-c", root: &root, base: "main", base_fq: "main", rune: "builder", now: 1 }, &mut br, &|| {}).unwrap();
         assert!(work.join(".git").exists());
         let prior = PathBuf::from(format!("{}.prior", old.display()));
         assert!(prior.is_dir(), "moved aside, not deleted");

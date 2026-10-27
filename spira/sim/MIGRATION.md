@@ -116,7 +116,7 @@ Left, and why:
 | test-landing-modes | its pr and queue sections need a forge that opens PRs and a certify step observed in the pass log (G10); its push section is the positive control that makes their silence mean something |
 | test-land-mode-local | four of five properties are `lib.sh` function checks, not world behaviour; the fifth reads a git-call log |
 | test-landing, test-landing-race, test-landing-base-fail | not G7 alone: G6 verdict kinds and G15 actors |
-| the bead.sh, repo-map, held, cockpit and chamber label suites | they read the registry and the bead CLI, not a running loop; a world adds nothing they lack |
+| the bead.sh, repo-map, held, cockpit and runes label suites | they read the registry and the bead CLI, not a running loop; a world adds nothing they lack |
 
 ## Run-directory tables (gap G14)
 
@@ -191,16 +191,16 @@ event is gone. The real aeon replaces the stub-agent launch in part 2 (below).
 
 | suite | scenario | suite-seconds removed | red on the planted defect |
 |---|---|---|---|
-| test-builder-qa-proposed | `builder-excludes-qa-proposed` | 0 | `qa-proposed` dropped from builder.fayth's exclusions: the proposal is claimed |
+| test-builder-qa-proposed | `builder-excludes-qa-proposed` | 0 | `qa-proposed` dropped from builder.rune's exclusions: the proposal is claimed |
 
 `claim-rank` is new (a bead's priority decides who the sentinel's summon claims first, and the lease is
 the world's clock plus an hour); seen red with `spira-claim`'s rank sort reversed. The sim lane, 16
 suites, ran 235 s.
 
 Left, and why (each needs the real aeon, part 2, or a full sentinel pass rather than `--summon-only`):
-test-summon-fast-path (also unit-tests lib.sh's `aeon_count`/`fayth_free`), test-sentinel-pass and
+test-summon-fast-path (also unit-tests lib.sh's `aeon_count`/`rune_free`), test-sentinel-pass and
 test-dispatch-open-children (full-pass checks and dispatch), test-strand-submitted and
-test-strand-truncated (the strand binary), test-czar-partition (czar-pass), test-warden, test-fayth,
+test-strand-truncated (the strand binary), test-czar-partition (czar-pass), test-warden, test-rune,
 test-lanes (lane concurrency needs live aeon units), and the 30-odd suites that read the aeon's brief.
 
 The sim lane reads `claim-order` for the real sentinel's claim rank and lease; gate-verdict-kinds fails its first gate once so the rework is steered before the next minute's summon.
@@ -219,7 +219,7 @@ A fifth gate-verdict-kinds run under testenv on the tip rebased onto the landing
 
 # Sim D3/G1 part 2: the real aeon runs under the sentinel
 
-A scenario with `real_aeon = true` makes `sim-summon` run the real `aeon --home H <fayth>` the sentinel's
+A scenario with `real_aeon = true` makes `sim-summon` run the real `aeon --home H <rune>` the sentinel's
 summon argv names, with its `--setenv` pairs, instead of the hand-written claim and worktree. The aeon
 ranks, claims, builds its worktree, arms the commit hook, launches `SPIRA_AGENT`, tears down, and runs its
 fast tier. `SPIRA_AGENT` is the world's `bin/sim-aeon-agent`, a launcher that gives the stub agent
@@ -233,7 +233,7 @@ it), `prompt` (stdin), `cwd`, and `env` (the restricted environment as one JSON 
 `invariant` is SQL over it. A stub-mode scenario's rows carry an empty argv and prompt.
 
 World choices the real aeon forced: the aeon's `--home` is a directory of links to the release's harness
-tree (its guard against FAYTH keys nothing consumes judges a source workspace, which a release is not); the
+tree (its guard against RUNE keys nothing consumes judges a source workspace, which a release is not); the
 world's `spira-lint` is inert (the fast tier's tree-wide rules judge crates the sparse checkout does not
 carry), while the commit hook still runs the release's own; the sparse checkout keeps the fence scripts and
 allow list that hook reads; `spira.summon_jitter` is 0 and `spira.aeon_warm_base` is inside the world.
@@ -251,7 +251,7 @@ Left, and why:
 
 | suite | why it stays |
 |---|---|
-| test-fayth-project-instructions | half is static (each fayth file declares its value) and half is the archivist's `--add-dir`, neither a session the aeon runs |
+| test-rune-project-instructions | half is static (each rune file declares its value) and half is the archivist's `--add-dir`, neither a session the aeon runs |
 | test-aeon-lifecycle-cutover | the lifecycle functions called by name (`lc_claim_bead`, `lc_release_bead`) and the stacked-dependents ready set need their own rows and a state the world does not seed |
 | test-aeon-worktree-collision, test-aeon-prod-dirty*, test-aeon-resume*, test-concierge | they hold a worktree or a prior session's state across two aeons, or script the resume brief from a transcript; the world has no second concurrent aeon or seeded resume record |
 | test-aeon-dirty-commit, test-aeon-base-ref-qualify, test-branch-guard | `lib.sh` and hook functions called directly in a scratch repository, not a session |

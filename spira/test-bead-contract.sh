@@ -6,8 +6,8 @@
 # itself and asserts its output.
 #
 # `_bead_contract` (spira/bead.sh) asks three live sources and prints each verbatim:
-# fayth_names + FAYTH_LABELS for PERSONAS, schema.sh kinds for KINDS, SPIRA_REPO_MAP for
-# REPOS. This suite pins a fixture chamber and repo-map (non-default names) so a pass here
+# rune_names + RUNE_LABELS for PERSONAS, schema.sh kinds for KINDS, SPIRA_REPO_MAP for
+# REPOS. This suite pins a fixture runes and repo-map (non-default names) so a pass here
 # is not merely "matches the box's own default output" (per CLAUDE.md's config-fixture rule).
 #
 # sp-g9mhe (bead.sh -> the Rust `bead` binary): the REPOS-absence wording changed from
@@ -21,27 +21,27 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
-mkdir -p "$T/chamber"
+mkdir -p "$T/runes"
 # SPIRA_HOME="$T" below IS the home now (locate_home no longer searches); every binary
 # reads <home>/conf.d, so the stub needs the real registry.
 ln -s "$HERE/conf.d" "$T/conf.d"
 
 # ---------------------------------------------------------------------------
-# FIXTURE CHAMBER. Two personas: one with labels, one deliberately label-less
+# FIXTURE RUNES. Two personas: one with labels, one deliberately label-less
 # (the "(no labels)" fallback in _bead_contract).
 # ---------------------------------------------------------------------------
-cat > "$T/chamber/alpha.fayth" <<'FAYTH'
-FAYTH_LABELS="testscope,alpha-work"
-FAYTH_TOOLS="Bash"
-FAYTH_MODEL=claude-sonnet-5
-FAYTH_MAX_CONCURRENT=1
-FAYTH
-cat > "$T/chamber/beta.fayth" <<'FAYTH'
-FAYTH_LABELS=""
-FAYTH_TOOLS="Bash"
-FAYTH_MODEL=claude-sonnet-5
-FAYTH_MAX_CONCURRENT=1
-FAYTH
+cat > "$T/runes/alpha.rune" <<'RUNE'
+RUNE_LABELS="testscope,alpha-work"
+RUNE_TOOLS="Bash"
+RUNE_MODEL=claude-sonnet-5
+RUNE_MAX_CONCURRENT=1
+RUNE
+cat > "$T/runes/beta.rune" <<'RUNE'
+RUNE_LABELS=""
+RUNE_TOOLS="Bash"
+RUNE_MODEL=claude-sonnet-5
+RUNE_MAX_CONCURRENT=1
+RUNE
 
 # ---------------------------------------------------------------------------
 # FIXTURE REPO-MAP. Non-default names, a comment line and a blank line that
@@ -56,9 +56,9 @@ MAP
 
 TOOLS="$(command -v spira-config)" && TOOLS="$(dirname "$TOOLS")"
 run_contract() {
-    # SPIRA_CHAMBER EXPLICITLY: the complete fixture declares a fixed chamber path of its
+    # SPIRA_RUNES_DIR EXPLICITLY: the complete fixture declares a fixed runes path of its
     # own now, no longer derived from SPIRA_HOME when unset.
-    tl_config SPIRA_REPO_MAP="${1-$T/repo-map}" SPIRA_CHAMBER="$T/chamber"
+    tl_config SPIRA_REPO_MAP="${1-$T/repo-map}" SPIRA_RUNES_DIR="$T/runes"
     env -i HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$T/none.conf" \
         SPIRA_HOME="$T" \

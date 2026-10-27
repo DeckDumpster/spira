@@ -46,9 +46,9 @@ pub struct Config {
     pub work_close_types: String,
     /// `SPIRA_ID_PREFIX` (detect_invalid_closed's tracking-reference regex).
     pub id_prefix: String,
-    /// `SPIRA_FAYTHS` — `aeons_live_lanes`' override onto `spira_lane_fayths`'s own chamber
+    /// `SPIRA_RUNES` — `aeons_live_lanes`' override onto `spira_lane_runes`'s own runes
     /// scan. Read here, once, so that pure probe logic never reads the environment itself.
-    pub fayths_override: Option<String>,
+    pub runes_override: Option<String>,
     /// `SPIRA_LANES` — the declared lane names a lane persona must be listed in to be summoned.
     pub lanes: Vec<String>,
 }
@@ -129,7 +129,7 @@ impl Config {
             groom_ask_label: "groom-asked".into(),
             work_close_types: "task bug feature".into(),
             id_prefix: "sp".into(),
-            fayths_override: None,
+            runes_override: None,
             lanes: Vec::new(),
         }
     }
@@ -226,12 +226,12 @@ impl Config {
             groom_ask_label: cfg("SPIRA_GROOM_ASK_LABEL")?,
             work_close_types: cfg("SPIRA_WORK_CLOSE_TYPES")?,
             id_prefix: cfg("SPIRA_ID_PREFIX")?,
-            fayths_override: nonempty(cfg("SPIRA_FAYTHS")?),
+            runes_override: nonempty(cfg("SPIRA_RUNES")?),
             lanes: cfg("SPIRA_LANES")?.split_whitespace().map(str::to_string).collect(),
         })
     }
 
-    /// The exclusions a partition whose fayth declares none falls back to.
+    /// The exclusions a partition whose rune declares none falls back to.
     pub fn exclude_default(&self) -> String {
         format!("spira-poison,{},{}", self.vocab.ask, self.ci_label)
     }

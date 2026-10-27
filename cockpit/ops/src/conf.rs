@@ -21,7 +21,7 @@ use std::path::PathBuf;
 /// `Command::new()` inherits env into every child this crate spawns, and these are the
 /// per-copy-fact / host-policy keys `cockpit-collect`'s `bootstrap_config` names
 /// (wave4-decomposition.md row (b)).
-const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "SPIRA_REPO_MAP", "SPIRA_FAYTHS", "SPIRA_MAX_AEONS"];
+const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "SPIRA_REPO_MAP", "SPIRA_RUNES", "SPIRA_MAX_AEONS"];
 
 /// `spira_config::resolve()`'s in-process answer, applied to this process's own
 /// environment — the one self-sourcing step every one of `health`/`layout`/`rebuild`

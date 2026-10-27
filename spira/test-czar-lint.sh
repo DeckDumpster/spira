@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
 # test-czar-lint.sh — static text checks for the czar shadow mechanism, split out of
-# test-czar-shadow.sh (UC-safety-fences-31, gap 11): these 11 rows read a fayth, a brief and
+# test-czar-shadow.sh (UC-safety-fences-31, gap 11): these 11 rows read a rune, a brief and
 # conf.sh's own allowlist rather than exercising any behaviour, so they cost nothing and need
 # no fixture. The behavioural rows (shadow refuses, act allows, queue.sh eject wiring, class
 # mapping) stay in test-czar-shadow.sh at T1.
 #
 # tier: T0
-# covers: spira/conf.sh spira/chamber/czar.fayth spira/chamber/czar.md UC-safety-fences-31
+# covers: spira/conf.sh spira/runes/czar.rune spira/runes/czar.md UC-safety-fences-31
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -16,21 +16,21 @@ echo "test-czar-lint.sh"
 
 # ==========================================================================================
 echo
-echo "czar.fayth FAYTH_TOOLS includes czar-fence.sh"
+echo "czar.rune RUNE_TOOLS includes czar-fence.sh"
 # ==========================================================================================
-fayth_file="$HERE/chamber/czar.fayth"
-if [ -f "$fayth_file" ]; then
-    tools_line="$(grep '^FAYTH_TOOLS=' "$fayth_file" 2>/dev/null || true)"
-    want "FAYTH_TOOLS includes czar-fence.sh" "czar-fence.sh" "$tools_line"
+rune_file="$HERE/runes/czar.rune"
+if [ -f "$rune_file" ]; then
+    tools_line="$(grep '^RUNE_TOOLS=' "$rune_file" 2>/dev/null || true)"
+    want "RUNE_TOOLS includes czar-fence.sh" "czar-fence.sh" "$tools_line"
 else
-    bad "czar.fayth not found at $fayth_file" ""
+    bad "czar.rune not found at $rune_file" ""
 fi
 
 # ==========================================================================================
 echo
 echo "czar.md brief mentions CZAR-WOULD note format and czar-fence.sh"
 # ==========================================================================================
-brief_file="$HERE/chamber/czar.md"
+brief_file="$HERE/runes/czar.md"
 if [ -f "$brief_file" ]; then
     content="$(cat "$brief_file" 2>/dev/null)"
     want "czar.md mentions CZAR-WOULD" "CZAR-WOULD" "$content"
@@ -61,8 +61,8 @@ fi
 
 # ==========================================================================================
 echo
-echo "czar.fayth allows the default lint"
+echo "czar.rune allows the default lint"
 # ==========================================================================================
-want "FAYTH_TOOLS includes czar-pass --lint-default" "czar-pass --lint-default" "$(grep '^FAYTH_TOOLS=' "$HERE/chamber/czar.fayth")"
+want "RUNE_TOOLS includes czar-pass --lint-default" "czar-pass --lint-default" "$(grep '^RUNE_TOOLS=' "$HERE/runes/czar.rune")"
 
 tl_summary

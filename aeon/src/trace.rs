@@ -576,11 +576,11 @@ pub fn aeon_lease_minutes(bead: &str, run: &Path, now: i64) -> String {
 
 // ---- the aeon-session tsd row (family AC's aeon half) -------------------------------------
 
-/// `_tsd_aeon_session <bead> <fayth> <rc> <status> <fields>` — appends this session's
+/// `_tsd_aeon_session <bead> <rune> <rc> <status> <fields>` — appends this session's
 /// aeon-session row (run/tsd/), reusing the `SessionFields` `ledger_done` already computed
 /// for its own ledger line rather than re-deriving them from a rendered string. Best-effort,
 /// like every tsd producer: never affects the caller's exit status.
-pub fn tsd_aeon_session(exec: &dyn Exec, run_root: &str, bead: &str, fayth: &str, rc: i32, status: &str, fields: &SessionFields) {
+pub fn tsd_aeon_session(exec: &dyn Exec, run_root: &str, bead: &str, rune: &str, rc: i32, status: &str, fields: &SessionFields) {
     let q = |v: Option<i64>| v.map(|n| n.to_string()).unwrap_or_else(|| "?".to_string());
     let args = vec![
         "--family".to_string(),
@@ -590,7 +590,7 @@ pub fn tsd_aeon_session(exec: &dyn Exec, run_root: &str, bead: &str, fayth: &str
         "--field-str".to_string(),
         format!("bead={bead}"),
         "--field-str".to_string(),
-        format!("fayth={fayth}"),
+        format!("rune={rune}"),
         "--field".to_string(),
         format!("rc={rc}"),
         "--field-str".to_string(),

@@ -1,5 +1,5 @@
 //! `sendmail`: RFC 5322 mail on stdin. Routes the reply to the sender's mailbox (or
-//! `concierge` for a chamber persona, or when there is nobody to route to) and delivers the
+//! `concierge` for a runes persona, or when there is nobody to route to) and delivers the
 //! raw message unchanged. Its bead side effects belong to `reconcile`.
 
 use std::fs;
@@ -75,7 +75,7 @@ pub fn find_message_by_id(mail_root: &Path, msgid: &str) -> Option<PathBuf> {
     None
 }
 
-/// `_reply_mailbox`: the sender's own mailbox, unless the local part names a chamber
+/// `_reply_mailbox`: the sender's own mailbox, unless the local part names a runes
 /// persona (transient — nobody would read it), or no such mailbox exists — either way,
 /// `concierge`.
 pub fn reply_mailbox(from: &str, home: &Path, mail_root: &Path) -> String {
@@ -88,7 +88,7 @@ pub fn reply_mailbox(from: &str, home: &Path, mail_root: &Path) -> String {
         .map(|m| m.as_str().to_string())
         .unwrap_or_default();
 
-    if !localpart.is_empty() && home.join("chamber").join(format!("{localpart}.md")).is_file() {
+    if !localpart.is_empty() && home.join("runes").join(format!("{localpart}.md")).is_file() {
         return "concierge".to_string();
     }
     if !localpart.is_empty() && maildir::mail_dir_exists_dir(mail_root, &localpart) {
@@ -245,7 +245,7 @@ mod tests {
     fn reply_routes_to_the_senders_mailbox_when_one_exists() {
         let d = testkit::TempDir::new("mail-sendmail");
         let home = d.path().join("home");
-        fs::create_dir_all(home.join("chamber")).unwrap();
+        fs::create_dir_all(home.join("runes")).unwrap();
         maildir::mail_ensure(&d.path().join("gate")).unwrap();
         let msgid = send_plain(d.path(), "uc17-orig1", "Gate <gate@spira>", "routing test");
         let out = sendmail(&home, d.path(), false, &reply_raw(Some(&msgid))).unwrap();
@@ -253,11 +253,11 @@ mod tests {
     }
 
     #[test]
-    fn reply_to_a_chamber_persona_routes_to_concierge_even_with_a_same_named_mailbox() {
+    fn reply_to_a_runes_persona_routes_to_concierge_even_with_a_same_named_mailbox() {
         let d = testkit::TempDir::new("mail-sendmail");
         let home = d.path().join("home");
-        fs::create_dir_all(home.join("chamber")).unwrap();
-        fs::write(home.join("chamber/builder.md"), "# builder persona\n").unwrap();
+        fs::create_dir_all(home.join("runes")).unwrap();
+        fs::write(home.join("runes/builder.md"), "# builder persona\n").unwrap();
         maildir::mail_ensure(&d.path().join("builder")).unwrap();
         let msgid = send_plain(d.path(), "uc17-orig2", "Builder <builder@spira>", "routing test");
         let out = sendmail(&home, d.path(), false, &reply_raw(Some(&msgid))).unwrap();
@@ -268,7 +268,7 @@ mod tests {
     fn reply_with_no_sender_mailbox_and_no_persona_routes_to_concierge() {
         let d = testkit::TempDir::new("mail-sendmail");
         let home = d.path().join("home");
-        fs::create_dir_all(home.join("chamber")).unwrap();
+        fs::create_dir_all(home.join("runes")).unwrap();
         let msgid = send_plain(d.path(), "uc17-orig3", "Landing gate <nobox@spira>", "routing test");
         let out = sendmail(&home, d.path(), false, &reply_raw(Some(&msgid))).unwrap();
         assert_eq!(out.dest_mailbox, "concierge");
@@ -278,7 +278,7 @@ mod tests {
     fn reply_with_no_in_reply_to_routes_to_concierge() {
         let d = testkit::TempDir::new("mail-sendmail");
         let home = d.path().join("home");
-        fs::create_dir_all(home.join("chamber")).unwrap();
+        fs::create_dir_all(home.join("runes")).unwrap();
         let out = sendmail(&home, d.path(), false, &reply_raw(None)).unwrap();
         assert_eq!(out.dest_mailbox, "concierge");
     }
@@ -287,7 +287,7 @@ mod tests {
     fn a_reply_marks_the_original_seen_and_replied_in_cur_and_touches_no_bead() {
         let d = testkit::TempDir::new("mail-sendmail");
         let home = d.path().join("home");
-        fs::create_dir_all(home.join("chamber")).unwrap();
+        fs::create_dir_all(home.join("runes")).unwrap();
         let msgid = send_plain(d.path(), "gate", "Gate <gate@spira>", "Enable feature?");
         let raw = format!("From: Operator <operator@spira>\nSubject: Re: Enable feature?\nIn-Reply-To: <{msgid}@spira>\n\nApprove it.\n");
         sendmail(&home, d.path(), false, &raw).unwrap();
@@ -301,7 +301,7 @@ mod tests {
     fn a_reply_to_an_already_seen_original_keeps_it_in_cur_with_s_and_gains_r() {
         let d = testkit::TempDir::new("mail-sendmail");
         let home = d.path().join("home");
-        fs::create_dir_all(home.join("chamber")).unwrap();
+        fs::create_dir_all(home.join("runes")).unwrap();
         let msgid = send_plain(d.path(), "gate", "Gate <gate@spira>", "Enable feature?");
         let gate = d.path().join("gate");
         fs::rename(gate.join("new").join(&msgid), gate.join("cur").join(format!("{msgid}:2,S"))).unwrap();
@@ -315,7 +315,7 @@ mod tests {
     fn a_named_destination_overrides_routing_and_leaves_the_original_unflagged() {
         let d = testkit::TempDir::new("mail-sendmail");
         let home = d.path().join("home");
-        fs::create_dir_all(home.join("chamber")).unwrap();
+        fs::create_dir_all(home.join("runes")).unwrap();
         let msgid = send_plain(d.path(), "gate", "Gate <gate@spira>", "Enable feature?");
         let out = sendmail_to(&home, d.path(), false, &reply_raw(Some(&msgid)), Some("operator")).unwrap();
         assert_eq!(out.dest_mailbox, "operator");
@@ -327,7 +327,7 @@ mod tests {
     fn mute_sendmail_delivers_straight_into_cur_already_seen() {
         let d = testkit::TempDir::new("mail-sendmail");
         let home = d.path().join("home");
-        fs::create_dir_all(home.join("chamber")).unwrap();
+        fs::create_dir_all(home.join("runes")).unwrap();
         let raw = "From: Someone <s@s>\nSubject: raw muted\n\nbody\n";
         let out = sendmail(&home, d.path(), true, raw).unwrap();
         assert_eq!(out.dest_mailbox, "concierge");

@@ -13,7 +13,7 @@
 //! crate that already owns the box's config file (law-config-through-the-cli-only) — never
 //! through conf.sh's bash wrapper. The live-now count and the lane report still need lib.sh (see
 //! `spira_world::fleet` and `spira_world::seam` for why, and why it is one seam, not a
-//! hand-rolled `.fayth` parser).
+//! hand-rolled `.rune` parser).
 
 use std::env;
 use std::path::PathBuf;
@@ -87,8 +87,8 @@ fn cmd_status() -> i32 {
         None => println!("  fleet ceiling     none  (SPIRA_MAX_LIVE_AEONS unset)"),
     }
     match pool {
-        Some(p) => println!("  task pool         {p}   (SPIRA_MAX_AEONS — builders and other task fayths)"),
-        None => println!("  task pool         ?   (SPIRA_MAX_AEONS — builders and other task fayths)"),
+        Some(p) => println!("  task pool         {p}   (SPIRA_MAX_AEONS — builders and other task runes)"),
+        None => println!("  task pool         ?   (SPIRA_MAX_AEONS — builders and other task runes)"),
     }
     println!("  lanes             {lt}   ({ld} — each draws OUTSIDE the pool)");
     let pool_n = pool.unwrap_or(0);

@@ -4,9 +4,9 @@
 #   and its cycle guard stops the detector from reporting its own reports.
 #
 # THE DEFECT (sp-f8vry). detect_unclaimable_ready reads all ready beads without a partition
-# filter, tests each against the full chamber using the same claimers() arithmetic as
+# filter, tests each against the full runes using the same claimers() arithmetic as
 # bead.sh, and emits UNCLAIMABLE for any with an empty intersection. Seven P1 beads carried
-# fayth:ops on spira,plan labels for fifteen hours while the sentinel reported every
+# rune:ops on spira,plan labels for fifteen hours while the sentinel reported every
 # partition empty, truthfully, on every pass.
 #
 # THE CYCLE GUARD. A report about an unclaimable bead is filed into the incident partition;
@@ -47,9 +47,9 @@ ASK=needs-decision
 CI=ci-parked
 GROOM_ASK=parked-for-ryan
 
-# Small chamber: builder (plan), ops (incident), groom (groom), mimir (mimir-sweep) and
-# spike (spike). Mirrors chamber/*.fayth's FAYTH_LABELS/FAYTH_EXCLUDE_LABELS shape without
-# reading the real chamber files, so the fixture cannot drift silently with a chamber edit.
+# Small runes: builder (plan), ops (incident), groom (groom), mimir (mimir-sweep) and
+# spike (spike). Mirrors runes/*.rune's RUNE_LABELS/RUNE_EXCLUDE_LABELS shape without
+# reading the real runes files, so the fixture cannot drift silently with a runes edit.
 EXC="spira-poison,${ASK},${CI}"
 FULL_PARTS="builder|${SCOPE},plan|${EXC}
 ops|${SCOPE},incident|${EXC}
@@ -57,7 +57,7 @@ groom|${SCOPE},groom|${EXC}
 mimir|${SCOPE},mimir-sweep|${EXC}
 spike|${SCOPE},spike|${EXC}
 "
-# Narrowed roster (as SPIRA_FAYTHS="builder spike" would produce): only two personas active.
+# Narrowed roster (as SPIRA_RUNES="builder spike" would produce): only two personas active.
 NARROW_PARTS="builder|${SCOPE},plan|${EXC}
 spike|${SCOPE},spike|${EXC}
 "
@@ -83,11 +83,11 @@ out="$(classify "[$(bead sp-unc1a plan)]")"
 nowant "claimable builder bead is not flagged" "sp-unc1a" "$out"
 
 echo
-echo "case 2 — fayth:ops on scope,plan labels is UNCLAIMABLE (the fifteen-hour strand)"
-out="$(classify "[$(bead sp-unc2a "fayth:ops,plan")]")"
-want "fayth:ops on scope,plan: UNCLAIMABLE line emitted" "UNCLAIMABLE sp-unc2a" "$out"
-want "fayth:ops on scope,plan: names the preference"      "fayth:ops"            "$out"
-want "fayth:ops on scope,plan: names the rejection"       "ops"                  "$out"
+echo "case 2 — rune:ops on scope,plan labels is UNCLAIMABLE (the fifteen-hour strand)"
+out="$(classify "[$(bead sp-unc2a "rune:ops,plan")]")"
+want "rune:ops on scope,plan: UNCLAIMABLE line emitted" "UNCLAIMABLE sp-unc2a" "$out"
+want "rune:ops on scope,plan: names the preference"      "rune:ops"            "$out"
+want "rune:ops on scope,plan: names the rejection"       "ops"                  "$out"
 
 echo
 echo "case 3 — scope with no partition label is UNCLAIMABLE (the sp-bvo7 route)"
@@ -140,9 +140,9 @@ out2="$(classify "[$(bead sp-unc7d "")]")"
 want "otherwise-identical bead without the label is still flagged (positive control)" "UNCLAIMABLE sp-unc7d" "$out2"
 
 echo
-echo "case 10 — parked partition: bead claimable by a parked fayth is silent (not UNCLAIMABLE)"
+echo "case 10 — parked partition: bead claimable by a parked rune is silent (not UNCLAIMABLE)"
 # NARROW_PARTS omits ops/groom/mimir from the active roster; FULL_PARTS is still the
-# chamber, so a bead in ops's or mimir's partition is WAITING, not UNCLAIMABLE.
+# runes, so a bead in ops's or mimir's partition is WAITING, not UNCLAIMABLE.
 out="$(classify "[$(bead sp-unc10a incident), $(bead sp-unc10b mimir-sweep), $(bead sp-unc10c "")]" \
     "$NARROW_PARTS" "$FULL_PARTS")"
 nowant "parked ops bead not reported UNCLAIMABLE"     "sp-unc10a"             "$out"
@@ -162,7 +162,7 @@ want   "bead without a partition still reported (positive control)"          "UN
 # ==============================================================================================
 # T1 — cycle guard: the classifier must not report on its own UNCLAIMABLE reports.
 # ==============================================================================================
-# A minimal one-persona chamber isolates the guard from partition-matching noise: neither the
+# A minimal one-persona runes isolates the guard from partition-matching noise: neither the
 # genuine bead nor its report matches builder's "plan" partition, so both would be UNCLAIMABLE
 # on partition grounds alone — the guard must still suppress the report.
 CYCLE_PARTS="builder|${SCOPE},plan|spira-poison
@@ -202,10 +202,10 @@ testdb_up unclaimable || { echo "test-unclaimable: could not build fixture datab
 
 export SPIRA_HOME="$HERE"
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
-# The complete fixture declares a non-empty SPIRA_CHAMBER; nothing derives it from
+# The complete fixture declares a non-empty SPIRA_RUNES_DIR; nothing derives it from
 # SPIRA_HOME any more (sfail round 2, pattern 6) — detect_unclaimable_ready tests against
-# the real chamber (claimers()), which needs this to find it.
-tl_config SPIRA_CHAMBER="$HERE/chamber"
+# the real runes (claimers()), which needs this to find it.
+tl_config SPIRA_RUNES_DIR="$HERE/runes"
 export SPIRA_CONF="$TMP/no-such.conf"
 acted=0; progressed=0
 act()      { acted=$((acted+1)); }
@@ -232,7 +232,7 @@ want   "real bd: unclaimable bead is flagged" "UNCLAIMABLE sp-real5b" "$real_out
 echo
 echo "case 8 — a P1 incident is filed in the Groomer partition"
 # Only the Groomer can discharge an UNCLAIMABLE finding: add the scope label, correct the
-# fayth:, or close the row. Ops cannot, and must not be the sole recipient.
+# rune:, or close the row. Ops cannot, and must not be the sole recipient.
 INC_LOG8="$TMP/inc8.log"; : > "$INC_LOG8"
 cat > "$TMP/mock-incident8.sh" <<MOCK
 #!/usr/bin/env bash
@@ -241,7 +241,7 @@ MOCK
 chmod +x "$TMP/mock-incident8.sh"
 
 SPIRA_INCIDENT_SH="$TMP/mock-incident8.sh" file_unclaimable_incidents \
-    "UNCLAIMABLE sp-unc8a — fayth:ops narrows to ops, but none can claim it: ops"
+    "UNCLAIMABLE sp-unc8a — rune:ops narrows to ops, but none can claim it: ops"
 inc_out="$(cat "$INC_LOG8")"
 want "incident filed for unclaimable bead"                 "sp-unc8a"                       "$inc_out"
 want "incident title contains UNCLAIMABLE prefix"          "UNCLAIMABLE:"                   "$inc_out"

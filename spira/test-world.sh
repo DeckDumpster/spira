@@ -275,9 +275,9 @@ want "resume on a world that was not draining says so" "not draining" "$out"
 # kept there only.
 
 # ---- THE GATE MUST COVER EVERY DOOR, NOT JUST THE TIDY ONE --------------------------
-# summon_fayth() is called only from sentinel.sh, and that grep is what made the first
+# summon_rune() is called only from sentinel.sh, and that grep is what made the first
 # version of this gate look complete. It was not: spira-ops.service and spira-qa.service
-# ExecStart aeon.sh DIRECTLY, so ops and qa never reach summon_fayth. A qa aeon was summoned
+# ExecStart aeon.sh DIRECTLY, so ops and qa never reach summon_rune. A qa aeon was summoned
 # four minutes into a drain that had reported DRAINED (sp-637b, 2026-09-08).
 #
 # So this asserts on the FILE, not on behaviour: every unit template whose ExecStart is
@@ -295,14 +295,14 @@ if [ -d "$HARNESS/systemd" ]; then
     # lib.sh's own copy is a one-line shim onto it, so the literal check lives in
     # sentinel/src/summon.rs, not in lib.sh's own text any more.
     grep -q 'world.draining' "$HARNESS/sentinel/src/summon.rs" \
-        && ok "summon_fayth also carries it (cheaper: never starts the unit)" \
-        || bad "summon_fayth carries the drain gate" "no world.draining check in sentinel/src/summon.rs"
+        && ok "summon_rune also carries it (cheaper: never starts the unit)" \
+        || bad "summon_rune carries the drain gate" "no world.draining check in sentinel/src/summon.rs"
     grep -q 'world.halted' "$HARNESS/aeon/src/run.rs" \
         && ok "the aeon binary carries the halt gate" \
         || bad "the aeon binary carries the halt gate" "no world.halted check in aeon/src/run.rs"
     grep -q 'world.halted' "$HARNESS/sentinel/src/summon.rs" \
-        && ok "summon_fayth carries the halt gate" \
-        || bad "summon_fayth carries the halt gate" "no world.halted check in sentinel/src/summon.rs"
+        && ok "summon_rune carries the halt gate" \
+        || bad "summon_rune carries the halt gate" "no world.halted check in sentinel/src/summon.rs"
     w="$HARNESS/spira-world/src/bin/world.rs"
     stamp=$(grep -n 'std::fs::write(plane_stamp' "$w" | head -1 | cut -d: -f1)
     slay=$(grep -n 'release_env::tool("slay")' "$w" | head -1 | cut -d: -f1)

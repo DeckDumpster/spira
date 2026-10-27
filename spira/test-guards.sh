@@ -327,9 +327,9 @@ fence_bd() {  # fence_bd <cmd> [ENV..] -> fence stdout with a production SPIRA_D
         SPIRA_AEON=test-aeon SPIRA_DB="$BDCREATE_DB" SPIRA_BD="$STUB_BD" "$@" \
         bash "$FENCE" 2>/dev/null
 }
-out="$(fence_bd "bd -C $BDCREATE_DB create \"test-land-state\" -l \"plan\"" SPIRA_FAYTH=builder)"
+out="$(fence_bd "bd -C $BDCREATE_DB create \"test-land-state\" -l \"plan\"" SPIRA_RUNE=builder)"
 nowant "sp-j7l3q/builder-bd-rules-removed" '"decision":"block"' "$out"
-out="$(fence_bd "bd -C $BDCREATE_DB create \"test-land-state\" -l \"plan,repo:fixture-repo\"" SPIRA_FAYTH=groomer)"
+out="$(fence_bd "bd -C $BDCREATE_DB create \"test-land-state\" -l \"plan,repo:fixture-repo\"" SPIRA_RUNE=groomer)"
 nowant "sp-j7l3q/no-persona-bd-create-rule" '"decision":"block"' "$out"
 
 # ===========================================================================

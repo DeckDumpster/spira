@@ -1,4 +1,4 @@
-//! The `spira.conf` / `repo-map` / `chamber/*.fayth` → `spira.toml` converter.
+//! The `spira.conf` / `repo-map` / `runes/*.rune` → `spira.toml` converter.
 //!
 //! `spira.conf` is explicitly not shell (conf.sh's own header: "IT IS NOT SOURCED"), so its
 //! reader here is a direct port of `spira_conf_read`'s semantics — same trimming, same
@@ -7,7 +7,7 @@
 //! `repo_field` column heuristic, kept identical so a row this converter reads the same way
 //! the shell reader already does.
 //!
-//! `chamber/*.fayth` files ARE shell — sourced, with values built from `${VAR:+text}`
+//! `runes/*.rune` files ARE shell — sourced, with values built from `${VAR:+text}`
 //! parameter expansion referencing `[spira]` keys like `SPIRA_SCOPE_LABEL`. Reimplementing
 //! bash is out of scope; a small, bounded expander for exactly the forms these files use
 //! (`${NAME:+repl}` and bare `$NAME`) is not.
@@ -19,7 +19,7 @@ use crate::{LandMode, Lane, Lease, OnOff, PersonaSection, RepoSection, SpiraSect
 include!(concat!(env!("OUT_DIR"), "/spira_convert.rs"));
 
 /// Everything that came from the inputs but had nowhere to go in the schema: an unknown
-/// `spira.conf` key, a row with an unknown land mode, a fayth field this schema does not
+/// `spira.conf` key, a row with an unknown land mode, a rune field this schema does not
 /// carry. Never fatal — matching `spira_conf_read`'s own "report, don't refuse" — but
 /// returned so a caller can show what a widened schema would still need to capture. An
 /// unrecognized lane token is not among these: see [`convert`]'s `Err`.
@@ -330,7 +330,7 @@ pub fn repo_sections(
     }
 }
 
-/// Expands the small subset of shell parameter expansion the fayth files actually use:
+/// Expands the small subset of shell parameter expansion the rune files actually use:
 /// `${NAME:+repl}` (repl, itself expanded, if NAME is set and non-empty; empty otherwise)
 /// and bare `$NAME`. Not a shell interpreter — anything else passes through unexpanded.
 fn shell_expand(input: &str, vars: &BTreeMap<String, String>) -> String {
@@ -372,7 +372,7 @@ fn shell_expand(input: &str, vars: &BTreeMap<String, String>) -> String {
 }
 
 /// The `SPIRA_*_LABEL` defaults `conf.sh` derives when `[spira]` does not set them —
-/// needed to resolve a fayth's `FAYTH_LABELS` expression even when the schema (deliberately
+/// needed to resolve a rune's `RUNE_LABELS` expression even when the schema (deliberately
 /// narrower than `conf.sh`'s full allowlist) carries only some of the label keys.
 fn label_defaults() -> BTreeMap<String, String> {
     [
@@ -394,7 +394,7 @@ fn label_defaults() -> BTreeMap<String, String> {
     .collect()
 }
 
-/// Parses one `chamber/*.fayth` file's `FAYTH_KEY=value` lines into `[persona.<name>]`.
+/// Parses one `runes/*.rune` file's `RUNE_KEY=value` lines into `[persona.<name>]`.
 /// `spira_vars` is `[spira]`'s own resolved values (e.g. `SPIRA_SCOPE_LABEL`), consulted by
 /// [`shell_expand`] before falling back to [`label_defaults`].
 pub fn persona_section(
@@ -431,7 +431,7 @@ pub fn persona_section(
             continue;
         };
         let key = key.trim();
-        if !key.starts_with("FAYTH_") {
+        if !key.starts_with("RUNE_") {
             continue;
         }
         let mut val = val.trim().to_string();
@@ -440,9 +440,9 @@ pub fn persona_section(
         }
         let val = shell_expand(&val, &vars);
         match key {
-            "FAYTH_NAME" => name = val,
-            "FAYTH_MODEL" => model = val,
-            "FAYTH_TOOLS" => {
+            "RUNE_NAME" => name = val,
+            "RUNE_MODEL" => model = val,
+            "RUNE_TOOLS" => {
                 tools = val
                     .split(',')
                     .map(str::trim)
@@ -450,31 +450,31 @@ pub fn persona_section(
                     .map(str::to_string)
                     .collect()
             }
-            "FAYTH_LABELS" => labels_raw = val,
-            "FAYTH_LANE" => lane = Some(val),
-            "FAYTH_LEASE_MINUTES" => {
+            "RUNE_LABELS" => labels_raw = val,
+            "RUNE_LANE" => lane = Some(val),
+            "RUNE_LEASE_MINUTES" => {
                 lease_minutes = val.parse().ok().or_else(|| {
                     warnings.push(format!(
-                        "fayth: FAYTH_LEASE_MINUTES not an integer: {val:?}"
+                        "rune: RUNE_LEASE_MINUTES not an integer: {val:?}"
                     ));
                     None
                 })
             }
-            "FAYTH_HEARTBEAT_SECONDS" => {
+            "RUNE_HEARTBEAT_SECONDS" => {
                 heartbeat_seconds = val.parse().ok().or_else(|| {
                     warnings.push(format!(
-                        "fayth: FAYTH_HEARTBEAT_SECONDS not an integer: {val:?}"
+                        "rune: RUNE_HEARTBEAT_SECONDS not an integer: {val:?}"
                     ));
                     None
                 })
             }
-            "FAYTH_SYSTEM_PROMPT" => {
+            "RUNE_SYSTEM_PROMPT" => {
                 system_prompt = match val.as_str() {
                     "append" => Some(crate::SystemPromptMode::Append),
                     "replace" => Some(crate::SystemPromptMode::Replace),
                     other => {
                         warnings.push(format!(
-                            "fayth: FAYTH_SYSTEM_PROMPT not append/replace: {other:?}"
+                            "rune: RUNE_SYSTEM_PROMPT not append/replace: {other:?}"
                         ));
                         None
                     }
@@ -521,17 +521,17 @@ pub fn convert(
     conf_text: &str,
     home: &str,
     repo_map_text: &str,
-    fayth_texts: &[(&str, &str)],
+    rune_texts: &[(&str, &str)],
 ) -> Result<(SpiraToml, ConvertWarnings), Vec<String>> {
     let mut warnings = ConvertWarnings::default();
     let raw = read_conf(conf_text, home);
     let spira = spira_section(&raw, &mut warnings)?;
     let repo = repo_sections(repo_map_text, &mut warnings)?;
     let mut persona = BTreeMap::new();
-    for (_path, text) in fayth_texts {
+    for (_path, text) in rune_texts {
         let (name, section) = persona_section(text, &spira, &mut warnings);
         if name.is_empty() {
-            warnings.push("fayth: no FAYTH_NAME, skipped".to_string());
+            warnings.push("rune: no RUNE_NAME, skipped".to_string());
             continue;
         }
         persona.insert(name, section);
@@ -560,12 +560,12 @@ pub enum LegacyOutcome {
 
 /// Upgrade a pre-cutover config directory in place: when `dir` holds `spira.conf` but no
 /// `spira.toml`, write the `spira.toml` that [`convert`] makes from the conf, the `repo-map`
-/// beside it and `fayths`. An existing `spira.toml` is never read or overwritten, so a second
+/// beside it and `runes`. An existing `spira.toml` is never read or overwritten, so a second
 /// run converts nothing.
 pub fn convert_legacy_dir(
     dir: &std::path::Path,
     home: &str,
-    fayths: &[std::path::PathBuf],
+    runes: &[std::path::PathBuf],
 ) -> Result<LegacyOutcome, String> {
     let toml_path = crate::toml_path_at(dir);
     if toml_path.is_file() {
@@ -580,7 +580,7 @@ pub fn convert_legacy_dir(
     let map_path = dir.join("repo-map");
     let repo_map = if map_path.is_file() { read(&map_path)? } else { String::new() };
     let mut texts = Vec::new();
-    for f in fayths {
+    for f in runes {
         texts.push((f.display().to_string(), read(f)?));
     }
     let refs: Vec<(&str, &str)> = texts.iter().map(|(p, t)| (p.as_str(), t.as_str())).collect();

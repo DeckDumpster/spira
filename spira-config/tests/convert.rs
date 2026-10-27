@@ -1,7 +1,7 @@
-//! The converter's golden test: `spira.conf` + `repo-map` + two real `chamber/*.fayth`
+//! The converter's golden test: `spira.conf` + `repo-map` + two real `runes/*.rune`
 //! files in, one exact `spira.toml` out. Fixtures are generic (no real host, path or
 //! person) but structurally the same shape as a real install's files — same quoting, same
-//! `${VAR:+text}` fayth expansions, same gate command with a literal `|` inside it.
+//! `${VAR:+text}` rune expansions, same gate command with a literal `|` inside it.
 
 use std::fs;
 use std::path::Path;
@@ -18,19 +18,19 @@ fn fixture(name: &str) -> String {
 }
 
 #[test]
-fn converts_conf_repo_map_and_fayths() {
+fn converts_conf_repo_map_and_runes() {
     let conf = fixture("spira.conf");
     let repo_map = fixture("repo-map");
-    let builder = fixture("chamber/builder.fayth");
-    let ops = fixture("chamber/ops.fayth");
+    let builder = fixture("runes/builder.rune");
+    let ops = fixture("runes/ops.rune");
 
     let (doc, warnings) = convert(
         &conf,
         "/opt/fixture-home",
         &repo_map,
         &[
-            ("builder.fayth", builder.as_str()),
-            ("ops.fayth", ops.as_str()),
+            ("builder.rune", builder.as_str()),
+            ("ops.rune", ops.as_str()),
         ],
     )
     .expect("fixture repo-map has no unknown lane tokens");
@@ -52,7 +52,7 @@ fn converts_conf_repo_map_and_fayths() {
         Some("/opt/fixture-home/.local/state/spira".to_string())
     );
     assert_eq!(spira.max_aeons, Some(4));
-    assert_eq!(spira.fayths, Some(vec!["builder".to_string(), "ops".to_string()]));
+    assert_eq!(spira.runes, Some(vec!["builder".to_string(), "ops".to_string()]));
     assert_eq!(spira.certify_suites, Some(spira_config::OnOff::Off));
     assert_eq!(
         spira.czar_stage_deadlock,
@@ -89,7 +89,7 @@ fn converts_conf_repo_map_and_fayths() {
         builder.tools,
         vec!["Bash", "Read", "Edit", "Write", "Glob", "Grep", "TodoWrite"]
     );
-    // No SPIRA_SCOPE_LABEL override reaches the fayth expander through the schema's own
+    // No SPIRA_SCOPE_LABEL override reaches the rune expander through the schema's own
     // resolved [spira] section in this call (only conf-derived vars feed it), so the
     // `${SPIRA_SCOPE_LABEL:+...}` guard is empty and only the plan-label default remains.
     assert_eq!(
@@ -236,13 +236,13 @@ fn run_convert(args: &[&str]) -> std::process::Output {
         .expect("spira-config convert runs")
 }
 
-const EXISTING_TWO_REPOS_TWO_FAYTHS: &str = "\
-[spira]\nid_prefix = \"sp\"\nfayths = [\"a\", \"b\"]\n\n\
+const EXISTING_TWO_REPOS_TWO_RUNES: &str = "\
+[spira]\nid_prefix = \"sp\"\nrunes = [\"a\", \"b\"]\n\n\
 [repo.alpha]\npath = \"/tmp/alpha\"\nmode = \"push\"\n\n\
 [repo.beta]\npath = \"/tmp/beta\"\nmode = \"push\"\n";
 
-const EXISTING_ONE_REPO_TWO_FAYTHS: &str = "\
-[spira]\nid_prefix = \"sp\"\nfayths = [\"a\", \"b\"]\n\n\
+const EXISTING_ONE_REPO_TWO_RUNES: &str = "\
+[spira]\nid_prefix = \"sp\"\nrunes = [\"a\", \"b\"]\n\n\
 [repo.alpha]\npath = \"/tmp/alpha\"\nmode = \"push\"\n";
 
 const ONE_ROW_REPO_MAP: &str = "alpha | /tmp/alpha | push | origin/main | | true | plan\n";
@@ -255,8 +255,8 @@ fn convert_over_an_equal_document_still_writes() {
     let dir = scratch_dir("equal");
     let out = dir.join("spira.toml");
     let conf = dir.join("spira.conf");
-    fs::write(&conf, "SPIRA_ID_PREFIX = sp\nSPIRA_FAYTHS = a b\n").unwrap();
-    fs::write(&out, EXISTING_ONE_REPO_TWO_FAYTHS).unwrap();
+    fs::write(&conf, "SPIRA_ID_PREFIX = sp\nSPIRA_RUNES = a b\n").unwrap();
+    fs::write(&out, EXISTING_ONE_REPO_TWO_RUNES).unwrap();
 
     let result = run_convert(&[
         "--conf",
@@ -288,8 +288,8 @@ fn write_tmp(dir: &Path, name: &str, contents: &str) -> std::path::PathBuf {
 fn convert_refuses_to_shrink_repo_tables() {
     let dir = scratch_dir("shrink-repos");
     let out = dir.join("spira.toml");
-    fs::write(&out, EXISTING_TWO_REPOS_TWO_FAYTHS).unwrap();
-    let conf = write_tmp(&dir, "spira.conf", "SPIRA_ID_PREFIX = sp\nSPIRA_FAYTHS = a b\n");
+    fs::write(&out, EXISTING_TWO_REPOS_TWO_RUNES).unwrap();
+    let conf = write_tmp(&dir, "spira.conf", "SPIRA_ID_PREFIX = sp\nSPIRA_RUNES = a b\n");
     let repo_map = write_tmp(&dir, "repo-map", ONE_ROW_REPO_MAP);
 
     let result = run_convert(&[
@@ -307,16 +307,16 @@ fn convert_refuses_to_shrink_repo_tables() {
     assert!(stderr.contains("refuses to shrink"), "{stderr}");
     assert!(stderr.contains('2') && stderr.contains('1'), "{stderr}");
     // The existing document must survive the refused write untouched.
-    assert_eq!(fs::read_to_string(&out).unwrap(), EXISTING_TWO_REPOS_TWO_FAYTHS);
+    assert_eq!(fs::read_to_string(&out).unwrap(), EXISTING_TWO_REPOS_TWO_RUNES);
     fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
-fn convert_refuses_to_shrink_fayths() {
-    let dir = scratch_dir("shrink-fayths");
+fn convert_refuses_to_shrink_runes() {
+    let dir = scratch_dir("shrink-runes");
     let out = dir.join("spira.toml");
-    fs::write(&out, EXISTING_ONE_REPO_TWO_FAYTHS).unwrap();
-    let conf = write_tmp(&dir, "spira.conf", "SPIRA_ID_PREFIX = sp\nSPIRA_FAYTHS = a\n");
+    fs::write(&out, EXISTING_ONE_REPO_TWO_RUNES).unwrap();
+    let conf = write_tmp(&dir, "spira.conf", "SPIRA_ID_PREFIX = sp\nSPIRA_RUNES = a\n");
     let repo_map = write_tmp(&dir, "repo-map", ONE_ROW_REPO_MAP);
 
     let result = run_convert(&[
@@ -334,7 +334,7 @@ fn convert_refuses_to_shrink_fayths() {
     assert!(stderr.contains("refuses to shrink"), "{stderr}");
     assert_eq!(
         fs::read_to_string(&out).unwrap(),
-        EXISTING_ONE_REPO_TWO_FAYTHS
+        EXISTING_ONE_REPO_TWO_RUNES
     );
     fs::remove_dir_all(&dir).ok();
 }
@@ -343,8 +343,8 @@ fn convert_refuses_to_shrink_fayths() {
 fn convert_force_shrink_overrides_the_refusal() {
     let dir = scratch_dir("force-shrink");
     let out = dir.join("spira.toml");
-    fs::write(&out, EXISTING_TWO_REPOS_TWO_FAYTHS).unwrap();
-    let conf = write_tmp(&dir, "spira.conf", "SPIRA_ID_PREFIX = sp\nSPIRA_FAYTHS = a b\n");
+    fs::write(&out, EXISTING_TWO_REPOS_TWO_RUNES).unwrap();
+    let conf = write_tmp(&dir, "spira.conf", "SPIRA_ID_PREFIX = sp\nSPIRA_RUNES = a b\n");
     let repo_map = write_tmp(&dir, "repo-map", ONE_ROW_REPO_MAP);
 
     let result = run_convert(&[
@@ -372,7 +372,7 @@ fn convert_force_shrink_overrides_the_refusal() {
 fn convert_write_is_atomic_no_leftover_temp_file() {
     let dir = scratch_dir("atomic");
     let out = dir.join("spira.toml");
-    let conf = write_tmp(&dir, "spira.conf", "SPIRA_ID_PREFIX = sp\nSPIRA_FAYTHS = a\n");
+    let conf = write_tmp(&dir, "spira.conf", "SPIRA_ID_PREFIX = sp\nSPIRA_RUNES = a\n");
     let repo_map = write_tmp(&dir, "repo-map", ONE_ROW_REPO_MAP);
 
     let result = run_convert(&[
@@ -398,18 +398,18 @@ fn convert_write_is_atomic_no_leftover_temp_file() {
 
 // ----------------------------------------------------------------------------------------
 // conf.sh's persona-only refresh (spira_toml_resolve, sp-zs04v.4) calls convert with just
-// --fayth and --out — no --conf, no --repo-map — to regenerate [persona.*] from the chamber
+// --rune and --out — no --conf, no --repo-map — to regenerate [persona.*] from the runes
 // on top of a spira.toml that already exists. Before this fix that starved convert() of any
 // [spira]/[repo] input, so it built a document from defaults and silently wrote over every
 // configured scalar and repo table the omitted inputs didn't re-supply (shrink_reason only
-// counts [repo.*] tables and the fayths list, so it let the [spira] wipe straight through).
+// counts [repo.*] tables and the runes list, so it let the [spira] wipe straight through).
 // ----------------------------------------------------------------------------------------
 
 const EXISTING_SPIRA_SCALAR_AND_REPO: &str = "\
-[spira]\nid_prefix = \"sp\"\nfayths = [\"builder\"]\nbatch_mem_per_suite_mib = 256\nbd = \"/custom/bd\"\n\n\
+[spira]\nid_prefix = \"sp\"\nrunes = [\"builder\"]\nbatch_mem_per_suite_mib = 256\nbd = \"/custom/bd\"\n\n\
 [repo.alpha]\npath = \"/tmp/alpha\"\nmode = \"push\"\n";
 
-// No [repo.*] table and an empty `fayths` list, so shrink_reason's two counters (the only
+// No [repo.*] table and an empty `runes` list, so shrink_reason's two counters (the only
 // things it compares) read 0-vs-0 either way and cannot catch this one — a scalar-only wipe
 // is invisible to it and must fail SILENTLY (exit 0, wrong content) without this fix, exactly
 // the shape the bead's own regression (test-batch-maxpar, test-bd-resolve, test-conf-toml)
@@ -419,14 +419,14 @@ const EXISTING_SPIRA_SCALAR_ONLY: &str =
     "[spira]\nid_prefix = \"sp\"\nbatch_mem_per_suite_mib = 256\nbd = \"/custom/bd\"\n";
 
 #[test]
-fn fayth_only_convert_preserves_existing_spira_scalars_and_repo_tables() {
-    let dir = scratch_dir("fayth-only-preserve");
+fn rune_only_convert_preserves_existing_spira_scalars_and_repo_tables() {
+    let dir = scratch_dir("rune-only-preserve");
     let out = dir.join("spira.toml");
     fs::write(&out, EXISTING_SPIRA_SCALAR_AND_REPO).unwrap();
-    let fayth = write_tmp(
+    let rune = write_tmp(
         &dir,
-        "builder.fayth",
-        "FAYTH_NAME=builder\nFAYTH_MODEL=opus\n",
+        "builder.rune",
+        "RUNE_NAME=builder\nRUNE_MODEL=opus\n",
     );
 
     // POSITIVE CONTROL: prove the starting document really holds what this test claims is at
@@ -441,8 +441,8 @@ fn fayth_only_convert_preserves_existing_spira_scalars_and_repo_tables() {
     let result = run_convert(&[
         "--home",
         "/opt/fixture-home",
-        "--fayth",
-        fayth.to_str().unwrap(),
+        "--rune",
+        rune.to_str().unwrap(),
         "--out",
         out.to_str().unwrap(),
     ]);
@@ -453,7 +453,7 @@ fn fayth_only_convert_preserves_existing_spira_scalars_and_repo_tables() {
     );
 
     let after = spira_config::validate(&fs::read_to_string(&out).unwrap()).unwrap();
-    let spira = after.spira.expect("[spira] survives a fayth-only refresh");
+    let spira = after.spira.expect("[spira] survives a rune-only refresh");
     assert_eq!(
         spira.batch_mem_per_suite_mib,
         Some(256),
@@ -465,27 +465,27 @@ fn fayth_only_convert_preserves_existing_spira_scalars_and_repo_tables() {
     assert_eq!(
         after.persona.get("builder").map(|p| p.model.as_str()),
         Some("opus"),
-        "the fayth-derived persona table must still be regenerated"
+        "the rune-derived persona table must still be regenerated"
     );
     fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
-fn fayth_only_convert_does_not_silently_wipe_scalar_spira_keys() {
-    let dir = scratch_dir("fayth-only-scalar-only");
+fn rune_only_convert_does_not_silently_wipe_scalar_spira_keys() {
+    let dir = scratch_dir("rune-only-scalar-only");
     let out = dir.join("spira.toml");
     fs::write(&out, EXISTING_SPIRA_SCALAR_ONLY).unwrap();
-    let fayth = write_tmp(
+    let rune = write_tmp(
         &dir,
-        "builder.fayth",
-        "FAYTH_NAME=builder\nFAYTH_MODEL=opus\n",
+        "builder.rune",
+        "RUNE_NAME=builder\nRUNE_MODEL=opus\n",
     );
 
     let result = run_convert(&[
         "--home",
         "/opt/fixture-home",
-        "--fayth",
-        fayth.to_str().unwrap(),
+        "--rune",
+        rune.to_str().unwrap(),
         "--out",
         out.to_str().unwrap(),
     ]);
@@ -496,7 +496,7 @@ fn fayth_only_convert_does_not_silently_wipe_scalar_spira_keys() {
     );
 
     let after = spira_config::validate(&fs::read_to_string(&out).unwrap()).unwrap();
-    let spira = after.spira.expect("[spira] survives a fayth-only refresh");
+    let spira = after.spira.expect("[spira] survives a rune-only refresh");
     assert_eq!(
         spira.batch_mem_per_suite_mib,
         Some(256),

@@ -556,14 +556,14 @@ _rollback() {
 # ALWAYS spira.toml, THROUGH THE ONE HELPER (conf.sh's spira_config_set) — never a hand-rolled
 # writer, and never spira.conf. spira_config_set resolves the toml to write to and, on a box
 # that has only ever known spira.conf (or neither file yet), CREATES it first via a full
-# auto-convert of any existing spira.conf, repo-map and every fayth — so this never
+# auto-convert of any existing spira.conf, repo-map and every rune — so this never
 # regenerates a document holding only the one key just written, the "gutted spira.toml"
 # failure this bead retires.
 _new_prod="$SPIRA_RELEASES/current/spira"
 if [ -z "$(spira_toml_file)" ]; then
-    mapfile -t _fayths < <(_spira_fayth_paths)
-    _fayth_args=(); for _f in "${_fayths[@]}"; do _fayth_args+=(--fayth "$_f"); done
-    _converted="$(spira-config convert-legacy "$SPIRA_CONFIG_HOME" --home "$HOME" ${_fayth_args[@]+"${_fayth_args[@]}"})" \
+    mapfile -t _runes < <(_spira_rune_paths)
+    _rune_args=(); for _f in "${_runes[@]}"; do _rune_args+=(--rune "$_f"); done
+    _converted="$(spira-config convert-legacy "$SPIRA_CONFIG_HOME" --home "$HOME" ${_rune_args[@]+"${_rune_args[@]}"})" \
         || { _rollback "converting the pre-cutover config failed"; }
     if [ -n "$_converted" ]; then
         export SPIRA_TOML="$_converted"

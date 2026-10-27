@@ -83,13 +83,13 @@ run_gate_check() {
     # re-exports every registered key from SPIRA_TOML — overwriting a plain env SPIRA_DB
     # with the complete fixture's bogus default unless it is declared the same way (sfail
     # round 3, pattern 3/7).
-    # SPIRA_CHAMBER is registered too: bead.sh resolves `--for builder`'s persona through
-    # it, and the complete fixture's own non-empty default shadows the real chamber at
+    # SPIRA_RUNES_DIR is registered too: bead.sh resolves `--for builder`'s persona through
+    # it, and the complete fixture's own non-empty default shadows the real runes at
     # $HERE — bead.sh file was refusing "no such persona: builder" silently (gate-check's
     # file_bead discards bead.sh's own stderr/exit code entirely), round 6.
     tl_config SPIRA_RUN="$TMP/run" SPIRA_BD="$SPIRA_BD" SPIRA_DB="$SPIRA_DB" \
         SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_FLAKY_GH_REPO="test-org/test-repo" \
-        SPIRA_CHAMBER="$HERE/chamber"
+        SPIRA_RUNES_DIR="$HERE/runes"
     SPIRA_LC_BIN="$SPIRA_LC_BIN" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         PATH="$TMP/sbin:$PATH" \
         SPIRA_CONF="$TMP/no.conf" \

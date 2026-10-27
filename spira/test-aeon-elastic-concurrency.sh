@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
 #
-# test-aeon-elastic-concurrency.sh — aeon.sh's own concurrency check honours FAYTH_ELASTIC,
-#   using the same fayth_free (lib.sh) the sentinel already calls, so the two cannot drift.
+# test-aeon-elastic-concurrency.sh — aeon.sh's own concurrency check honours RUNE_ELASTIC,
+#   using the same rune_free (lib.sh) the sentinel already calls, so the two cannot drift.
 #
 #   ./test-aeon-elastic-concurrency.sh
 #
 # THE DEFECT (sp-4gxjo). The sentinel summons an elastic persona up to the declared pool
-# (SPIRA_MAX_AEONS) via fayth_free, which honours FAYTH_ELASTIC. aeon.sh's OWN concurrency
+# (SPIRA_MAX_AEONS) via rune_free, which honours RUNE_ELASTIC. aeon.sh's OWN concurrency
 # check — run by the aeon itself right after it wakes, before it claims anything — compared
-# `have` against FAYTH_MAX_CONCURRENT alone and never looked at FAYTH_ELASTIC at all. With a
-# pool of 6 and FAYTH_MAX_CONCURRENT=3 (the fallback for a host with no pool), the sentinel
+# `have` against RUNE_MAX_CONCURRENT alone and never looked at RUNE_ELASTIC at all. With a
+# pool of 6 and RUNE_MAX_CONCURRENT=3 (the fallback for a host with no pool), the sentinel
 # kept summoning past the third builder and every one of them exited immediately logging "at
 # capacity (3/3)" — five wasted summons in eight minutes on 2026-09-24.
 #
 # THE FIX. aeon.sh now computes the same pool-remainder the sentinel computes before calling
-# fayth_free (pool = SPIRA_MAX_AEONS - have, only when FAYTH_ELASTIC=1), then asks fayth_free
-# the same question CHECK 7 already asks. A non-elastic fayth gets no pool argument, so
-# fayth_free falls through to FAYTH_MAX_CONCURRENT exactly as the old inline check did.
+# rune_free (pool = SPIRA_MAX_AEONS - have, only when RUNE_ELASTIC=1), then asks rune_free
+# the same question CHECK 7 already asks. A non-elastic rune gets no pool argument, so
+# rune_free falls through to RUNE_MAX_CONCURRENT exactly as the old inline check did.
 #
-# T1, over the shared function (fayth_free itself is already covered by test-summon-fayth.sh):
+# T1, over the shared function (rune_free itself is already covered by test-summon-rune.sh):
 #   1. elastic, pool=6, 5 live  -> allowed (aeon proceeds past the capacity gate)
 #   2. elastic, pool=6, 6 live  -> refused ("at capacity (6/6)")
 #   3. non-elastic (no pool draw), MAX_CONCURRENT=2: 1 live -> allowed, 2 live -> refused
@@ -28,17 +28,17 @@
 # claim a real bead, a world.halted stamp is armed before each "allowed" run: aeon.sh checks
 # concurrency FIRST and halted SECOND, so an aeon that clears the capacity gate reaches the
 # halted gate immediately afterward and exits there with a distinct, unambiguous log line
-# ("halted — claiming nothing") and a distinct ledger reason ("awake $FAYTH halted"). An aeon
+# ("halted — claiming nothing") and a distinct ledger reason ("awake $RUNE halted"). An aeon
 # that is refused never reaches that line at all — it exits at the capacity gate with "awake
-# $FAYTH capacity". The two ledger reasons cannot be confused for one another.
+# $RUNE capacity". The two ledger reasons cannot be confused for one another.
 #
 # aeon_count IS STUBBED (a fake lib.sh sourced in place of the real one, which itself sources
-# the real lib.sh so fayth_free is exercised unmodified) so the "have" side of the comparison
+# the real lib.sh so rune_free is exercised unmodified) so the "have" side of the comparison
 # is a controlled number rather than a real process count.
 #
 # defect: sp-4gxjo
 # tier: T1
-# covers: aeon/src/* spira/lib.sh spira/chamber/builder.fayth
+# covers: aeon/src/* spira/lib.sh spira/runes/builder.rune
 # hermetic-ok: no database, no systemd; aeon_count is stubbed, SPIRA_AGENT is never reached
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -63,24 +63,24 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 # conf.d from THIS --home, not — the way the bash seam's conf.sh derives it from its own
 # BASH_SOURCE — from wherever lib.sh/conf.sh actually live. A --home with no conf.d resolves
 # the whole generic registry to nothing, so SPIRA_MAX_AEONS=6 (exported below) never reaches
-# aeon.v despite being set in the environment: aeon fell back to FAYTH_MAX_CONCURRENT alone
+# aeon.v despite being set in the environment: aeon fell back to RUNE_MAX_CONCURRENT alone
 # ("at capacity (5/3)" instead of honouring the pool), exactly the defect sp-4gxjo fixed,
 # reintroduced through the config seam instead of the inline check this time (sp-8qm8g).
-export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
+export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/runes"
 cp -r "$HERE/conf.d" "$SPIRA_HOME/"
-# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# SPIRA_RUNES_DIR is registered and the fixture declares a fixed, nonexistent path — nothing
 # derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
-tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
+tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 tl_config SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_CONF="$TMP/no-such.conf"
 tl_config SPIRA_DB="$TMP/no-db"
-# The fence (fayth_fenced, lib.sh) refuses an empty FAYTH_LABELS and, when SPIRA_SCOPE_LABEL
+# The fence (rune_fenced, lib.sh) refuses an empty RUNE_LABELS and, when SPIRA_SCOPE_LABEL
 # is set, requires the label naming this scope. Neither is what this suite is testing, so
 # disable scope restriction the same way an operator would to allow an unrestricted predicate.
 tl_config SPIRA_SCOPE_LABEL=""
 
-# The stub: source the REAL lib.sh (so fayth_free is the genuine article), then override
+# The stub: source the REAL lib.sh (so rune_free is the genuine article), then override
 # aeon_count so "have" is a controlled number rather than a real /proc scan.
 cat > "$SPIRA_HOME/lib.sh" <<STUB
 # shellcheck disable=SC1090
@@ -88,7 +88,7 @@ cat > "$SPIRA_HOME/lib.sh" <<STUB
 aeon_count() { printf '%s' "\${MOCK_AEON_COUNT:-0}"; }
 STUB
 
-run_aeon() {   # run_aeon <fayth> -> stdout+stderr captured
+run_aeon() {   # run_aeon <rune> -> stdout+stderr captured
     aeon --home "$SPIRA_HOME" "$1" 2>&1
 }
 refused() { [[ "$1" == *"at capacity"* ]]; }
@@ -99,12 +99,12 @@ LEDGER="$SPIRA_RUN/aeon-ledger.log"
 echo
 echo "1 — elastic, pool declared (SPIRA_MAX_AEONS=6): 5 live is allowed, 6 live is refused"
 # ======================================================================================
-cat > "$SPIRA_HOME/chamber/builder.fayth" <<'F'
-FAYTH_NAME=builder
-FAYTH_WORKING_EXITS="SUBMITTED ask park hold"
-FAYTH_LABELS="test,plan"
-FAYTH_MAX_CONCURRENT=3
-FAYTH_ELASTIC=1
+cat > "$SPIRA_HOME/runes/builder.rune" <<'F'
+RUNE_NAME=builder
+RUNE_WORKING_EXITS="SUBMITTED ask park hold"
+RUNE_LABELS="test,plan"
+RUNE_MAX_CONCURRENT=3
+RUNE_ELASTIC=1
 F
 tl_config SPIRA_MAX_AEONS=6
 
@@ -147,16 +147,16 @@ fi
 
 # ======================================================================================
 echo
-echo "3 — non-elastic fayth: unaffected by SPIRA_MAX_AEONS, still uses its own cap"
+echo "3 — non-elastic rune: unaffected by SPIRA_MAX_AEONS, still uses its own cap"
 # ======================================================================================
-# Regression check: a fayth that never declared FAYTH_ELASTIC must keep the old behaviour
-# exactly — refused at its own FAYTH_MAX_CONCURRENT regardless of how large the pool is.
-cat > "$SPIRA_HOME/chamber/anchor.fayth" <<'F'
-FAYTH_NAME=anchor
-FAYTH_LABELS="test,incident"
-FAYTH_MAX_CONCURRENT=2
+# Regression check: a rune that never declared RUNE_ELASTIC must keep the old behaviour
+# exactly — refused at its own RUNE_MAX_CONCURRENT regardless of how large the pool is.
+cat > "$SPIRA_HOME/runes/anchor.rune" <<'F'
+RUNE_NAME=anchor
+RUNE_LABELS="test,incident"
+RUNE_MAX_CONCURRENT=2
 F
-# SPIRA_MAX_AEONS stays at 6 (non-default, still set from section 1) — a non-elastic fayth
+# SPIRA_MAX_AEONS stays at 6 (non-default, still set from section 1) — a non-elastic rune
 # must ignore it entirely, so a large pool must not let it exceed its own smaller cap.
 
 : > "$LEDGER"

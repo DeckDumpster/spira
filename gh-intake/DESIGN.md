@@ -59,7 +59,7 @@ refusal, exit 2 — unchanged from the bash.
 | `SPIRA_HOME` | `.` | where `lib.sh` lives, for `repo_root` |
 | `SPIRA_GH_INTAKE_REPO` | *(empty)* | `owner/repo` to ingest in addition to every registered repo with a GitHub remote; empty with none registered is a real no-op, exit 0 |
 | `SPIRA_GH_INTAKE_BEAD_REPO` | `repo`'s basename | the `repo:` label and repo-map lookup |
-| `SPIRA_SCOPE_LABEL` | `spira` | the label a fayth's predicate reads |
+| `SPIRA_SCOPE_LABEL` | `spira` | the label a rune's predicate reads |
 | `SPIRA_PLAN_LABEL` | `plan` | the lane label |
 | `SPIRA_GH_INTAKE_PRIORITY` | `1` | must be `0`-`4`, checked before anything else runs |
 | `SPIRA_GH_INTAKE_API` | `https://api.github.com` | the API base, for a fixture server |
@@ -100,7 +100,7 @@ refusal, exit 2 — unchanged from the bash.
    `operator`, `--kind note`, listing each with a 3-line body preview.
 7. **The post-check** (real run only): re-read the store; any `github:`-prefixed bead now
    missing the scope label is a refusal (exit 1) naming every offending id — filed work that
-   no fayth can claim is treated as not having been filed correctly at all.
+   no rune can claim is treated as not having been filed correctly at all.
 
 ### 3.4 Ports (`ports.rs`)
 

@@ -20,7 +20,7 @@ fn split_labels(s: &str) -> Vec<String> {
 }
 
 pub trait Seam {
-    /// Every persona's claim predicate, read from the chamber; personas with no partition
+    /// Every persona's claim predicate, read from the runes; personas with no partition
     /// (and personas whose predicate refuses to resolve) are omitted.
     fn persona_predicates(&self) -> Vec<PersonaPredicate>;
     /// `bump_poison_cleared <id> <cause>`.
@@ -107,10 +107,10 @@ impl LibSeam {
 impl Seam for LibSeam {
     fn persona_predicates(&self) -> Vec<PersonaPredicate> {
         let home = self.lib_sh.parent().map(Path::to_path_buf).unwrap_or_default();
-        spira_config::chamber::fayth_names(&home)
+        spira_config::runes::rune_names(&home)
             .into_iter()
             .filter_map(|f| {
-                let p = spira_config::chamber::fayth_predicate(&home, &f).ok()?;
+                let p = spira_config::runes::rune_predicate(&home, &f).ok()?;
                 let labels = split_labels(&p.labels);
                 (!labels.is_empty()).then(|| PersonaPredicate { persona: f, labels, exclude: split_labels(&p.exclude_labels) })
             })

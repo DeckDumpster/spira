@@ -8,11 +8,11 @@
 //! group 4: "Ryan's standing instruction during the cutover was 'leave lib.sh alone.'");
 //! its two chokepoints below are called, never re-implemented:
 //!
-//!   - `spira_lane_fayths` + `fayth_get`: a `.fayth` file is SOURCED as bash to read one
-//!     field (aeons.sh's own `lane_caps`), and a fayth file may compute that field from
-//!     other shell variables (groomer.fayth's `FAYTH_LABELS` does exactly this for a
+//!   - `spira_lane_runes` + `rune_get`: a `.rune` file is SOURCED as bash to read one
+//!     field (aeons.sh's own `lane_caps`), and a rune file may compute that field from
+//!     other shell variables (groomer.rune's `RUNE_LABELS` does exactly this for a
 //!     different field) — a hand-written Rust parser would silently disagree on the one
-//!     fayth that does, which is the exact failure `aeons.sh` exists to prevent
+//!     rune that does, which is the exact failure `aeons.sh` exists to prevent
 //!     (law-bake-rules-into-tools: a program that refuses to be misread).
 //!   - `bdq`/`bdjson`, `salvage`, `spira_destroy_worktree`/`_branch`, `spira_landref`,
 //!     `bead_repo`, `repo_root` (slay.sh steps 0, 4a, 5, 4b, 6): the one
@@ -66,12 +66,12 @@ pub fn run_for(lib_sh: &Path, name: &str, script: &str, envs: &[(&str, &str)], s
     }
 }
 
-/// `aeons.sh status`'s lane report: every lane fayth's name and `FAYTH_MAX_CONCURRENT`,
-/// NUL-separated `name\tmax_concurrent` records — the same two `fayth_get` reads
+/// `aeons.sh status`'s lane report: every lane rune's name and `RUNE_MAX_CONCURRENT`,
+/// NUL-separated `name\tmax_concurrent` records — the same two `rune_get` reads
 /// `lane_caps()` made, in one process instead of two lib.sh sourcings.
 pub const LANE_CAPS: &str = r#"
-for f in $(spira_lane_fayths); do
-    printf '%s\t%s\0' "$(fayth_get "$f" FAYTH_NAME "$f")" "$(fayth_get "$f" FAYTH_MAX_CONCURRENT 1)"
+for f in $(spira_lane_runes); do
+    printf '%s\t%s\0' "$(rune_get "$f" RUNE_NAME "$f")" "$(rune_get "$f" RUNE_MAX_CONCURRENT 1)"
 done
 "#;
 
@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn run_against_a_stub_lib_reaches_the_function_with_env_not_argv() {
         let d = testkit::TempDir::new("seam-run");
-        std::fs::write(d.join("lib.sh"), "spira_lane_fayths() { printf 'groomer\\n'; }\nfayth_get() { case \"$2\" in FAYTH_NAME) printf 'groomer';; *) printf '2';; esac; }\n").unwrap();
+        std::fs::write(d.join("lib.sh"), "spira_lane_runes() { printf 'groomer\\n'; }\nrune_get() { case \"$2\" in RUNE_NAME) printf 'groomer';; *) printf '2';; esac; }\n").unwrap();
         let (out, ok) = run(&d.join("lib.sh"), "test-lane-caps", LANE_CAPS, &[], "");
         assert!(ok, "{out}");
         assert_eq!(parse_lane_caps(&out), vec![("groomer".to_string(), 2)]);

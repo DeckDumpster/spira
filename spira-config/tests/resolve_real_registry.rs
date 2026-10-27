@@ -49,12 +49,12 @@ fn every_real_registry_key_resolves_without_error() {
     assert!(unregistered.is_empty(), "resolve() computes keys with no spira/conf.d file: {unregistered:?}");
 
     // The per-copy keys the bead names are resolved in-process (for SPIRA_REPO_MAP, SPIRA_
-    // FAYTHS, SPIRA_MAX_AEONS) or not resolved at all (SPIRA_HOME, SPIRA_REPO) — either way,
+    // RUNES, SPIRA_MAX_AEONS) or not resolved at all (SPIRA_HOME, SPIRA_REPO) — either way,
     // NONE of them appear in the typed export set `resolve --sh` would print.
     let sh_text = resolved.to_sh(spira_config::resolve::EXPORT_KEYS);
     let exported: std::collections::BTreeSet<&str> =
         sh_text.lines().filter_map(|l| l.split('=').next()).collect();
-    for forbidden in ["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_MAP", "SPIRA_FAYTHS", "SPIRA_MAX_AEONS"] {
+    for forbidden in ["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_MAP", "SPIRA_RUNES", "SPIRA_MAX_AEONS"] {
         assert!(!exported.contains(forbidden), "{forbidden} leaked into the typed export set");
     }
     assert!(!resolved.values.keys().any(|k| k == "SPIRA_HOME" || k == "SPIRA_REPO"));

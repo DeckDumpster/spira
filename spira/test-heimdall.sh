@@ -39,7 +39,7 @@ out = []
 for i in range(n):
     t = end - (n - 1 - i) * 120
     ts = datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    out.append("%s spira: state: open=20 plan_ready=%s in_progress=0 aeons=%s fayths=[builder ]"
+    out.append("%s spira: state: open=20 plan_ready=%s in_progress=0 aeons=%s runes=[builder ]"
                % (ts, os.environ["READY"], os.environ["AEONS"]))
     if os.environ["EXTRA"]:
         out.append("%s spira: %s" % (ts, os.environ["EXTRA"]))

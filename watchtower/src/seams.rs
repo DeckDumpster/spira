@@ -19,24 +19,24 @@ pub fn registry(spira_home: &str) -> spira_config::repos::Registry {
 }
 
 pub struct PipelineProbe {
-    /// `(fayth, aeon_count)` for every `spira_fayths` entry — the harness's own primitive
+    /// `(rune, aeon_count)` for every `spira_runes` entry — the harness's own primitive
     /// for "how many aeons are alive", counted from pidfiles/`/proc`, never a `pgrep -f`
     /// substring scan (that failure mode is the whole reason `aeon_count` exists).
-    pub fayth_counts: Vec<(String, u32)>,
-    /// `(fayth, ready)` from `bulk_ready_by_fayth` — one `bd` round trip, only paid when the
+    pub rune_counts: Vec<(String, u32)>,
+    /// `(rune, ready)` from `bulk_ready_by_rune` — one `bd` round trip, only paid when the
     /// ledger file is readable (the common "no aeon has ever summoned here" case skips it).
-    pub ready_by_fayth: Vec<(String, u32)>,
+    pub ready_by_rune: Vec<(String, u32)>,
 }
 
 const PIPELINE_PROBE_SCRIPT: &str = r#"
 set -uo pipefail
 . "$1/lib.sh" >/dev/null 2>&1 || exit 97
-for f in $(spira_fayths 2>/dev/null); do
+for f in $(spira_runes 2>/dev/null); do
     printf 'F\t%s\t%s\n' "$f" "$(aeon_count "$f" 2>/dev/null || echo 0)"
 done
 _ledger="${2:-}"
 if [ -n "$_ledger" ] && [ -r "$_ledger" ]; then
-    r="$(bulk_ready_by_fayth 2>/dev/null)" || r=""
+    r="$(bulk_ready_by_rune 2>/dev/null)" || r=""
     if [ -n "$r" ]; then
         while IFS=' ' read -r f n; do
             [ -n "$f" ] && printf 'R\t%s\t%s\n' "$f" "$n"
@@ -65,8 +65,8 @@ pub fn pipeline_probe(spira_home: &str, ledger_path: Option<&str>) -> Option<Pip
         return None;
     }
     let text = String::from_utf8_lossy(&out.stdout);
-    let mut fayth_counts = Vec::new();
-    let mut ready_by_fayth = Vec::new();
+    let mut rune_counts = Vec::new();
+    let mut ready_by_rune = Vec::new();
     for line in text.lines() {
         let parts: Vec<&str> = line.splitn(3, '\t').collect();
         if parts.len() != 3 {
@@ -74,14 +74,14 @@ pub fn pipeline_probe(spira_home: &str, ledger_path: Option<&str>) -> Option<Pip
         }
         let n: u32 = parts[2].parse().unwrap_or(0);
         match parts[0] {
-            "F" => fayth_counts.push((parts[1].to_string(), n)),
-            "R" => ready_by_fayth.push((parts[1].to_string(), n)),
+            "F" => rune_counts.push((parts[1].to_string(), n)),
+            "R" => ready_by_rune.push((parts[1].to_string(), n)),
             _ => {}
         }
     }
     Some(PipelineProbe {
-        fayth_counts,
-        ready_by_fayth,
+        rune_counts,
+        ready_by_rune,
     })
 }
 
@@ -110,19 +110,19 @@ mod tests {
     }
 
     #[test]
-    fn pipeline_probe_reads_fayth_counts_and_skips_ready_without_a_ledger() {
+    fn pipeline_probe_reads_rune_counts_and_skips_ready_without_a_ledger() {
         let d = testkit::TempDir::new("wt-seams-probe");
         std::fs::write(
             d.join("lib.sh"),
-            "spira_fayths() { printf 'builder\\nops\\n'; }\naeon_count() { [ \"$1\" = builder ] && echo 2 || echo 0; }\nbulk_ready_by_fayth() { echo 'builder 5'; }\n",
+            "spira_runes() { printf 'builder\\nops\\n'; }\naeon_count() { [ \"$1\" = builder ] && echo 2 || echo 0; }\nbulk_ready_by_rune() { echo 'builder 5'; }\n",
         )
         .unwrap();
         let p = pipeline_probe(d.to_str().unwrap(), None).unwrap();
         assert_eq!(
-            p.fayth_counts,
+            p.rune_counts,
             vec![("builder".to_string(), 2), ("ops".to_string(), 0)]
         );
-        assert!(p.ready_by_fayth.is_empty());
+        assert!(p.ready_by_rune.is_empty());
     }
 
     #[test]
@@ -130,12 +130,12 @@ mod tests {
         let d = testkit::TempDir::new("wt-seams-probe-ledger");
         std::fs::write(
             d.join("lib.sh"),
-            "spira_fayths() { printf 'builder\\n'; }\naeon_count() { echo 1; }\nbulk_ready_by_fayth() { echo 'builder 5'; }\n",
+            "spira_runes() { printf 'builder\\n'; }\naeon_count() { echo 1; }\nbulk_ready_by_rune() { echo 'builder 5'; }\n",
         )
         .unwrap();
         let ledger = d.join("aeon-ledger.log");
         std::fs::write(&ledger, "x\n").unwrap();
         let p = pipeline_probe(d.to_str().unwrap(), Some(ledger.to_str().unwrap())).unwrap();
-        assert_eq!(p.ready_by_fayth, vec![("builder".to_string(), 5)]);
+        assert_eq!(p.ready_by_rune, vec![("builder".to_string(), 5)]);
     }
 }

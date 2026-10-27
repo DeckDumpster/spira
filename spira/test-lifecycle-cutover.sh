@@ -765,7 +765,7 @@ blockers_epic_open="$TMP/blockers-epic-open.json"
 cat > "$blockers_epic_open" <<JSON
 [{"id":"sp-epic","status":"open","issue_type":"epic","labels":["repo:spira"]}]
 JSON
-count_open="$("$CLAIM_BIN" select --fayth test --blockers machine \
+count_open="$("$CLAIM_BIN" select --rune test --blockers machine \
     --ready "$ready_epicb" --lifecycle "$lc_epic_snapshot" --blocker-records "$blockers_epic_open" --count)"
 wantrc "spira-claim select runs cleanly with the epic still open" 0 $?
 is "B stays blocked while its epic is open" "0" "$count_open"
@@ -774,7 +774,7 @@ blockers_epic_closed="$TMP/blockers-epic-closed.json"
 cat > "$blockers_epic_closed" <<JSON
 [{"id":"sp-epic","status":"closed","issue_type":"epic","labels":["repo:spira"]}]
 JSON
-count_closed="$("$CLAIM_BIN" select --fayth test --blockers machine \
+count_closed="$("$CLAIM_BIN" select --rune test --blockers machine \
     --ready "$ready_epicb" --lifecycle "$lc_epic_snapshot" --blocker-records "$blockers_epic_closed" --count)"
 wantrc "spira-claim select runs cleanly once the epic closes" 0 $?
 is "B is claimable once the epic closes — the hand-ordered epic edge, unchanged" "1" "$count_closed"

@@ -96,7 +96,7 @@ the bead's brief requires.
 
 ## 4. The 14 checks, in order
 
-`release_tools`, `hotfix`, `config_files`, `chamber_overlays`, `overrides`,
+`release_tools`, `hotfix`, `config_files`, `runes_overlays`, `overrides`,
 `gate_compile_check`, `store`, `duckdb`, `events_probe`, `failed_units`, `orphan_units`
 (same section, "systemd units"), `snapshot_fresh` ("the cockpit"), `operator_channel`,
 `concierge_singleton`. Each is a free function `check_<name>(&dyn World) -> Vec<Line>`,
@@ -140,12 +140,12 @@ folded into the validate verdict) and only when non-empty.
 in its `# covers:` line (audited against every `docs/test-plan/*.toml`), so retiring them
 orphans no use case under `plan-matrix`'s rule.
 
-`test-deploy.sh`, `test-deploy-preflight-new-unit.sh`, `test-aeon-chamber-overlay.sh`,
-`test-aeon-launch-grammar.sh`, `test-fayth.sh`, `test-freshclone.sh`, `test-pr-stall.sh`,
+`test-deploy.sh`, `test-deploy-preflight-new-unit.sh`, `test-aeon-runes-overlay.sh`,
+`test-aeon-launch-grammar.sh`, `test-rune.sh`, `test-freshclone.sh`, `test-pr-stall.sh`,
 `test-repo-map.sh`, `test-unit-name.sh`, `test-watchtower-failed-units.sh`,
 `test-bd-lock-retry.sh`, `bd-pin.sh`, `test-overrides.sh` are **kept**, repointed: each
 exercises `doctor` as a fixture dependency for a different subject (deploy's own flow, the
-chamber overlay mechanism, fayth dispatch, a fresh clone, etc.), not `doctor`'s own decision
+runes overlay mechanism, rune dispatch, a fresh clone, etc.), not `doctor`'s own decision
 logic, so a fake-backed unit test does not replace what they check.
 
 `install.sh` (`doctor.sh` → `doctor`, bare name unchanged in spirit) and `deploy.sh`

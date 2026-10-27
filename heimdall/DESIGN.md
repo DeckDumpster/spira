@@ -37,7 +37,7 @@ the statement "the database could not be reached" — and removed the moment bea
 again, so there is never a second source of truth standing beside a working first one.
 
 **Not `needs-ryan`.** That label means a decision only the operator can make and is
-excluded from every fayth's predicate; an alert is a CONDITION, not a decision.
+excluded from every rune's predicate; an alert is a CONDITION, not a decision.
 
 **The labels are a contract with the attention panel** (`cockpit/panel/src/store.rs`),
 not decoration: `alert` AND `overseer`, `flaps:<n>`, and two labels this program must
@@ -144,8 +144,8 @@ subshell of this one, so a bash variable set here would not reach it.
    wave brief's own rule ("moves into the crate that already owns the area, or a new
    crate only if none fits").
 2. **The lib.sh seam is duplicated, not shared with `aeon`'s.** Both are `bash -c <FIXED
-   NUL-framed script>`, and the shapes rhyme on purpose, but heimdall has no fayth, no
-   `FAYTH_REQUIRE_LABEL` folding, and a three-function allowlist instead of aeon's
+   NUL-framed script>`, and the shapes rhyme on purpose, but heimdall has no rune, no
+   `RUNE_REQUIRE_LABEL` folding, and a three-function allowlist instead of aeon's
    thirty-odd — sharing would mean heimdall depending on aeon's crate for an unrelated
    concern, against this workspace's own convention of small independent crates (each
    port carries its own `util.rs`; `sentinel/src/host.rs` and `aeon/src/util.rs` are not
@@ -172,7 +172,7 @@ subshell of this one, so a bash variable set here would not reach it.
    module**, not inlined in `gather.rs`, because it is the one piece of GATHER with real
    decision logic (baseline reset on a count going down, window-expiry slide) worth
    holding to its own unit tests independent of any systemctl fake.
-7. **No `--sweep`-style mode, no fayth.** Heimdall is not a persona and claims nothing; its
+7. **No `--sweep`-style mode, no rune.** Heimdall is not a persona and claims nothing; its
    CLI is `[--home DIR] [--report]` only, unlike `aeon`'s richer grammar.
 
 ## 4. Parity evidence

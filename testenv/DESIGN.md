@@ -713,7 +713,7 @@ production; `SPIRA_ARTIFACTS` inside a test run). A round that tests its own run
 | `spira-config/examples/spira.toml:23`, repo-map gate strings (`spira/repo-map.example:141,149`, prod `repo.<name>.gate`) | `bash spira/testenv-batch.sh "$SPIRA_GATE_BRANCH"` | `"$(spira_bin testenv)" "$SPIRA_GATE_BRANCH"` (golden/fixture copies under `spira-config/tests/` follow the example) |
 | `spira/conf.sh:459-467` (`spira_bin`) | `dir="${SPIRA_ARTIFACTS:-$SPIRA_REPO/bin}"` | honour SPIRA_ARTIFACTS only when `[ "${SPIRA_ARTIFACTS_ROOT:-}" = "$SPIRA_REPO" ]` or ROOT unset (§5) |
 | `spira/testenv-guard.sh:17`, `spira/testlib.sh:307` | "run via spira/testenv-batch.sh" | "run via testenv" |
-| `spira/chamber/*.fayth` `FAYTH_TOOLS` (`Bash(*testenv-batch.sh*)`) and the statute `law-tests-run-only-through-testenv-batch` | names the script | name the binary (`Bash(*testenv *)`) |
+| `spira/runes/*.rune` `RUNE_TOOLS` (`Bash(*testenv-batch.sh*)`) and the statute `law-tests-run-only-through-testenv-batch` | names the script | name the binary (`Bash(*testenv *)`) |
 | **delete** `spira/testenv-batch.sh`, `spira/cargo-target-bins-prune.sh`, `spira/test-testenv-batch-with-bins.sh`, `spira/test-cargo-target-bins-prune.sh` (if present) | — | replaced by this crate |
 | `spira/binary-path-fence-allow:11,63` | allows `spira/testenv-batch.sh`, `spira/test-testenv-batch.sh` | remove once deleted |
 | suites that source/grep testenv-batch.sh's text (`test-testenv-batch*.sh`, `test-select.sh` E2-E5, `test-testenv-tmux-isolation.sh` C2, `test-gate-workflow.sh`, `test-aeon-fence.sh` E1-E3, `test-testenv-batch-fence.sh`) | assert on the script | rewrite against `cargo test -p testenv` or the binary's behaviour |

@@ -88,27 +88,27 @@ git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" p
 # ---- harness setup --------------------------------------------------------------------
 # SPIRA_HOME is a subdirectory of HARNESS (a git-tracked repo), so conf.sh derives
 # SPIRA_REPO = git root of HARNESS, matching the exported SPIRA_REPO above.
-export SPIRA_HOME="$HARNESS/spira-home"; mkdir -p "$SPIRA_HOME/chamber"
+export SPIRA_HOME="$HARNESS/spira-home"; mkdir -p "$SPIRA_HOME/runes"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$SPIRA_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
-# The complete fixture declares a non-empty SPIRA_CHAMBER ("/fixture/userhome/.../chamber");
+# The complete fixture declares a non-empty SPIRA_RUNES_DIR ("/fixture/userhome/.../runes");
 # nothing derives it from SPIRA_HOME any more (sfail round 2, pattern 6) — without this
-# the aeon never finds this fixture's builder.fayth at all.
-tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
+# the aeon never finds this fixture's builder.rune at all.
+tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
 SPIRA_REPO_MAP="$TMP/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
-# builder.fayth: excludes spira-poison so beads from completed cases are skipped.
-cat > "$SPIRA_HOME/chamber/builder.fayth" <<'FAYTH'
-FAYTH_NAME=builder
-FAYTH_WORKING_EXITS="SUBMITTED ask park hold"
-FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}"
-FAYTH_EXCLUDE_LABELS="spira-poison,needs-operator"
-FAYTH_MAX_CONCURRENT=1
-FAYTH_HEARTBEAT_SECONDS=600
-FAYTH
-printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
+# builder.rune: excludes spira-poison so beads from completed cases are skipped.
+cat > "$SPIRA_HOME/runes/builder.rune" <<'RUNE'
+RUNE_NAME=builder
+RUNE_WORKING_EXITS="SUBMITTED ask park hold"
+RUNE_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}"
+RUNE_EXCLUDE_LABELS="spira-poison,needs-operator"
+RUNE_MAX_CONCURRENT=1
+RUNE_HEARTBEAT_SECONDS=600
+RUNE
+printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/runes/builder.md"
 
 # ---- shim: stands in for claude -------------------------------------------------------
 # conf.sh replaces $PATH entirely, so a PATH shim silently runs the real model.

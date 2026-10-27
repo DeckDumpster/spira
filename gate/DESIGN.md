@@ -741,8 +741,8 @@ same freshly built `spira-lint`, on the same local/main tree, flips between 0 an
 literal-lint findings on file mtimes alone. literal-lint asks `spira/schema.sh` for the
 configured names; schema.sh sources conf.sh, which reads the operator's
 `~/.config/spira/spira.toml` (`ask_label = "needs-ryan"`) when it is newer than the tree's
-`spira/chamber/*.fayth`, and otherwise regenerates a persona-only `spira.toml` into the tree
-and reads that (ask = the default, `needs-operator`). The reused gate tree keeps old fayth
+`spira/runes/*.rune`, and otherwise regenerates a persona-only `spira.toml` into the tree
+and reads that (ask = the default, `needs-operator`). The reused gate tree keeps old rune
 mtimes, and something rewrote the operator's spira.toml at 12:32:08Z, so both trials of the
 next gate read the box's config and flagged every `needs-ryan` fixture literal. The fix is in
 spira-lint (literal-lint pins schema.sh's config inputs, see its DESIGN.md); this section

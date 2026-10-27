@@ -22,7 +22,7 @@
 # against a real store (test-attempts.sh, test-poison.sh).
 #
 # tier: T1
-# covers: groomer/src/* spira/lib.sh spira/conf.sh spira/chamber/groomer.md
+# covers: groomer/src/* spira/lib.sh spira/conf.sh spira/runes/groomer.md
 # defect: sp-iruqq
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

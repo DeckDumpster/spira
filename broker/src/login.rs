@@ -6,7 +6,7 @@ use crate::policy;
 pub const MAX_TTL_SECS: u64 = 3600;
 
 pub struct Request {
-    pub fayth: String,
+    pub rune: String,
     pub bead: String,
     pub account: String,
     pub ttl_secs: u64,
@@ -15,24 +15,24 @@ pub struct Request {
 }
 
 pub fn run() -> Result<String, String> {
-    let fayth = std::env::var("SPIRA_FAYTH").unwrap_or_default();
+    let rune = std::env::var("SPIRA_RUNE").unwrap_or_default();
     let bead = std::env::var("SPIRA_WORK_BEAD_ID").unwrap_or_default();
     let log = log_path()?;
-    let req = match request(&fayth, &bead) {
+    let req = match request(&rune, &bead) {
         Ok(r) => r,
         Err(e) => {
-            append(&log, &line(&fayth, &bead, "", 0, "refused"));
+            append(&log, &line(&rune, &bead, "", 0, "refused"));
             return Err(e);
         }
     };
     let out = mint(&req, ssh);
-    append(&log, &line(&req.fayth, &req.bead, &req.account, req.ttl_secs, if out.is_ok() { "ok" } else { "failed" }));
+    append(&log, &line(&req.rune, &req.bead, &req.account, req.ttl_secs, if out.is_ok() { "ok" } else { "failed" }));
     out
 }
 
-fn request(fayth: &str, bead: &str) -> Result<Request, String> {
-    if !policy::allows_login_code(fayth) {
-        return Err(format!("broker identity-login-code: fayth '{fayth}' is not allowed this verb"));
+fn request(rune: &str, bead: &str) -> Result<Request, String> {
+    if !policy::allows_login_code(rune) {
+        return Err(format!("broker identity-login-code: rune '{rune}' is not allowed this verb"));
     }
     if bead.is_empty() {
         return Err("broker identity-login-code: SPIRA_WORK_BEAD_ID is unset; every use is logged by bead id".to_string());
@@ -56,7 +56,7 @@ fn request(fayth: &str, bead: &str) -> Result<Request, String> {
         return Err(format!("broker identity-login-code: SPIRA_IDENTITY_LOGIN_TTL_SECS must be 1..={MAX_TTL_SECS}, got {ttl_secs}"));
     }
     Ok(Request {
-        fayth: fayth.to_string(),
+        rune: rune.to_string(),
         bead: bead.to_string(),
         account,
         ttl_secs,
@@ -88,12 +88,12 @@ fn ssh(req: &Request) -> Result<String, String> {
     String::from_utf8(out.stdout).map_err(|_| "broker identity-login-code: the product host's reply is not text".to_string())
 }
 
-fn line(fayth: &str, bead: &str, account: &str, ttl_secs: u64, outcome: &str) -> String {
+fn line(rune: &str, bead: &str, account: &str, ttl_secs: u64, outcome: &str) -> String {
     let at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    format!("{at} identity-login-code fayth={fayth} bead={bead} account={account} ttl={ttl_secs} outcome={outcome}")
+    format!("{at} identity-login-code rune={rune} bead={bead} account={account} ttl={ttl_secs} outcome={outcome}")
 }
 
 fn log_path() -> Result<std::path::PathBuf, String> {
@@ -122,7 +122,7 @@ mod tests {
 
     fn req() -> Request {
         Request {
-            fayth: "pilgrim".into(),
+            rune: "pilgrim".into(),
             bead: "sp-abc".into(),
             account: "acct-x".into(),
             ttl_secs: 600,
@@ -136,7 +136,7 @@ mod tests {
         let r = req();
         let code = mint(&r, |_| Ok(format!("{CODE}\n"))).unwrap();
         assert_eq!(code, CODE);
-        let l = line(&r.fayth, &r.bead, &r.account, r.ttl_secs, "ok");
+        let l = line(&r.rune, &r.bead, &r.account, r.ttl_secs, "ok");
         assert!(l.contains("bead=sp-abc") && l.contains("account=acct-x"));
         assert!(!l.contains(CODE));
     }
@@ -163,7 +163,7 @@ mod tests {
     }
 
     #[test]
-    fn every_fayth_but_pilgrim_is_refused_before_config_is_read() {
+    fn every_rune_but_pilgrim_is_refused_before_config_is_read() {
         for f in ["builder", "groomer", "concierge", "czar", "ops", "mender", "batcher", "warden", "spike", "mimir", "archivist", "", "Pilgrim", "pilgrim "] {
             let e = request(f, "sp-abc").err().expect(f);
             assert!(e.contains("not allowed"), "{f}: {e}");

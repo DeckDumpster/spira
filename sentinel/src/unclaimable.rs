@@ -1,7 +1,7 @@
 //! The classifier behind `detect_unclaimable_ready`: the ready set (a `bd --json` payload, list
 //! or single object) in, one `UNCLAIMABLE <id> — <reason>` line per bead no persona can claim.
 //!
-//! `parts` is the active roster, `all_parts` the full chamber, so a bead claimable only by a
+//! `parts` is the active roster, `all_parts` the full runes, so a bead claimable only by a
 //! parked persona reads as waiting rather than unclaimable. Kept a pure function of its inputs
 //! so a fixture table can drive it (`sentinel --classify-unclaimable`).
 
@@ -82,7 +82,7 @@ pub fn classify(beads_json: &str, parts: &str, all_parts: &str, held_ids: &str, 
             continue;
         }
 
-        let pref: BTreeSet<String> = l.iter().filter_map(|x| x.strip_prefix("fayth:").map(str::to_string)).collect();
+        let pref: BTreeSet<String> = l.iter().filter_map(|x| x.strip_prefix("rune:").map(str::to_string)).collect();
         let matches = |inc: &BTreeSet<String>, exc: &BTreeSet<String>| inc.is_subset(&l) && l.is_disjoint(exc);
         if parts.iter().any(|(name, inc, exc)| matches(inc, exc) && (pref.is_empty() || pref.contains(name))) {
             continue;
@@ -99,7 +99,7 @@ pub fn classify(beads_json: &str, parts: &str, all_parts: &str, held_ids: &str, 
             let reasons: Vec<String> = pref
                 .iter()
                 .map(|p| match all_parts.iter().find(|r| &r.0 == p) {
-                    None => format!("{p} (not in chamber)"),
+                    None => format!("{p} (not in runes)"),
                     Some((_, inc, _)) if !inc.is_subset(&l) => {
                         let missing: BTreeSet<String> = inc.difference(&l).cloned().collect();
                         format!("{p} (partition {}, missing {})", py_list(inc), py_list(&missing))
@@ -113,7 +113,7 @@ pub fn classify(beads_json: &str, parts: &str, all_parts: &str, held_ids: &str, 
                 .collect();
             let names = pref.iter().cloned().collect::<Vec<_>>().join(", ");
             out.push(format!(
-                "UNCLAIMABLE {bid} — fayth:{names} narrows to {names}, but none can claim it: {}; fix: drop the fayth: label or add the named persona's partition labels",
+                "UNCLAIMABLE {bid} — rune:{names} narrows to {names}, but none can claim it: {}; fix: drop the rune: label or add the named persona's partition labels",
                 reasons.join("; ")
             ));
         } else {
@@ -147,12 +147,12 @@ mod tests {
     }
 
     #[test]
-    fn missing_scope_and_fayth_preference_and_exemptions() {
+    fn missing_scope_and_rune_preference_and_exemptions() {
         let l = labels();
         let got = classify(r#"{"id":"c","labels":["plan"]}"#, PARTS, PARTS, "", &l);
         assert!(got.starts_with("UNCLAIMABLE c — missing scope label (myscope);"));
-        let got = classify(r#"[{"id":"d","labels":["myscope","plan","fayth:ops"]}]"#, PARTS, PARTS, "", &l);
-        assert!(got.contains("fayth:ops narrows to ops, but none can claim it: ops (partition ['incident', 'myscope'], missing ['incident'])"), "{got}");
+        let got = classify(r#"[{"id":"d","labels":["myscope","plan","rune:ops"]}]"#, PARTS, PARTS, "", &l);
+        assert!(got.contains("rune:ops narrows to ops, but none can claim it: ops (partition ['incident', 'myscope'], missing ['incident'])"), "{got}");
         for (b, held) in [
             (r#"[{"id":"e","issue_type":"epic","labels":["x"]}]"#, ""),
             (r#"[{"id":"f","labels":["x","ci-parked"]}]"#, ""),

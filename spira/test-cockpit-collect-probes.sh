@@ -29,7 +29,7 @@ FRAG_DIR="$TMP/cockpit.d"
 SNAP="$TMP/cockpit.env"
 mkdir -p "$FRAG_DIR"
 BASE_PATH="$PATH"
-tl_config SPIRA_RUN="$TMP" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t SPIRA_COCKPIT="$TMP"
+tl_config SPIRA_RUN="$TMP" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_RUNES=t SPIRA_COCKPIT="$TMP"
 
 # Merge fixture fragments through the real cockpit-collect, not a copy of its logic. The
 # generic ok/never fragment cases live in test-cockpit-tiered-collector.sh (cluster 6,

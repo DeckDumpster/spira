@@ -8,7 +8,7 @@
 pub struct Env {
     pub db: String,
     pub run: String,
-    pub chamber: String,
+    pub runes: String,
     pub token_projects: String,
     pub wiki: Option<String>,
     pub agent: String,
@@ -30,7 +30,7 @@ pub fn resolve() -> Result<Env, String> {
     Ok(Env {
         db: spira_config::process::cfg("SPIRA_DB")?,
         run: spira_config::process::cfg("SPIRA_RUN")?,
-        chamber: spira_config::process::cfg("SPIRA_CHAMBER")?,
+        runes: spira_config::process::cfg("SPIRA_RUNES_DIR")?,
         token_projects: spira_config::process::cfg("SPIRA_TOKEN_PROJECTS")?,
         wiki: if wiki.trim().is_empty() { None } else { Some(wiki) },
         agent: spira_config::process::cfg("SPIRA_AGENT")?,

@@ -135,21 +135,21 @@ pub fn sql_safe(s: &str) -> bool {
 pub struct PartitionSpec {
     pub labels: String,
     pub exclude: String,
-    pub fayths: Vec<String>,
+    pub runes: Vec<String>,
 }
 
 const ROSTER_SCRIPT: &str = r#"set -uo pipefail
 . "$STRAND_LIB" >/dev/null 2>&1 || { echo "cannot source $STRAND_LIB" >&2; exit 3; }
 emit() {
     local l="$1" x="$2" fs
-    fs="$(fayths_for_labels "$l" | tr '\n' ' ')"
-    [ -n "${fs// /}" ] || fs="$(spira_fayths)"
+    fs="$(runes_for_labels "$l" | tr '\n' ' ')"
+    [ -n "${fs// /}" ] || fs="$(spira_runes)"
     printf '%s\t%s\t%s\n' "$l" "$x" "$fs"
 }
 if [ -n "${STRAND_WANT:-}" ]; then
     emit "$STRAND_WANT" ""
 else
-    fayth_partitions | while IFS=$'\t' read -r l x; do
+    rune_partitions | while IFS=$'\t' read -r l x; do
         [ -n "$l" ] || continue
         emit "$l" "$x"
     done
@@ -165,8 +165,8 @@ pub fn parse_roster(text: &str) -> Vec<PartitionSpec> {
                 return None;
             }
             let exclude = f.next().unwrap_or("").trim().to_string();
-            let fayths = f.next().unwrap_or("").split_whitespace().map(str::to_string).collect();
-            Some(PartitionSpec { labels, exclude, fayths })
+            let runes = f.next().unwrap_or("").split_whitespace().map(str::to_string).collect();
+            Some(PartitionSpec { labels, exclude, runes })
         })
         .collect()
 }
@@ -251,17 +251,17 @@ fn unit_count(cfg: &Config, pattern: &str, exclude: Option<&str>) -> u32 {
 /// Live aeons of one persona: the unit list under systemd-run (the pidfile lags the unit),
 /// live pidfiles otherwise. Read-only: a dead pidfile is left for its owner to reap.
 ///
-/// `exclude` is the caller's OWN transient unit (lib.sh `aeon_count <fayth>
+/// `exclude` is the caller's OWN transient unit (lib.sh `aeon_count <rune>
 /// [exclude-unit]`, sp-0hnm6): systemd-run's unit exists before the capacity check ever
-/// runs, so a sweep counting its own fayth was counting itself. Matched only in the
+/// runs, so a sweep counting its own rune was counting itself. Matched only in the
 /// systemd-run branch, exactly as the bash original — the pidfile fallback never sees the
 /// race it guards against (aeon.sh writes its own pidfile only after this check runs).
-pub fn aeon_count(cfg: &Config, fayth: &str, exclude: Option<&str>) -> u32 {
+pub fn aeon_count(cfg: &Config, rune: &str, exclude: Option<&str>) -> u32 {
     if cfg.summon == "systemd-run" {
-        return unit_count(cfg, &format!("spira-aeon-{fayth}-*"), exclude);
+        return unit_count(cfg, &format!("spira-aeon-{rune}-*"), exclude);
     }
     let Some(run_dir) = cfg.run.as_ref() else { return 0 };
-    pidfiles(run_dir, &format!("aeon-{fayth}-"), ".pid").iter().filter(|p| aeon_alive(p)).count() as u32
+    pidfiles(run_dir, &format!("aeon-{rune}-"), ".pid").iter().filter(|p| aeon_alive(p)).count() as u32
 }
 
 /// How many aeons exist right now, across every persona and every lane.
@@ -273,39 +273,39 @@ pub fn aeons_live_total(cfg: &Config) -> u32 {
     pidfiles(run_dir, "aeon-", ".pid").iter().filter(|p| aeon_alive(p)).count() as u32
 }
 
-/// How many lane aeons exist right now, across all lane fayths. `FAYTH_NAME` is resolved
-/// per lane fayth (default: the fayth id itself), exactly as the bash original — a lane
-/// fayth is free to declare a different unit/pidfile name than its chamber filename.
+/// How many lane aeons exist right now, across all lane runes. `RUNE_NAME` is resolved
+/// per lane rune (default: the rune id itself), exactly as the bash original — a lane
+/// rune is free to declare a different unit/pidfile name than its runes filename.
 pub fn aeons_live_lanes(cfg: &Config) -> u32 {
     let Some(home) = cfg.home.as_ref() else { return 0 };
-    let lanes = spira_config::chamber::spira_lane_fayths(home, cfg.fayths_override.as_deref());
+    let lanes = spira_config::runes::spira_lane_runes(home, cfg.runes_override.as_deref());
     lanes
         .split_whitespace()
         .map(|f| {
-            let name = spira_config::chamber::fayth_get(home, f, "FAYTH_NAME", f);
+            let name = spira_config::runes::rune_get(home, f, "RUNE_NAME", f);
             aeon_count(cfg, &name, None)
         })
         .sum()
 }
 
-/// `fayth_free <fayth> [pool-remaining] [exclude-unit]` (lib.sh): how many more of this
-/// persona may be summoned right now. lib.sh's OWN `fayth_free` stays bash — it calls
-/// `aeon_count`/`fayth_get` BY NAME, and several suites (test-summon-fayth.sh,
-/// test-aeon-elastic-concurrency.sh, test-fayth.sh, test-builder-qa-proposed.sh,
+/// `rune_free <rune> [pool-remaining] [exclude-unit]` (lib.sh): how many more of this
+/// persona may be summoned right now. lib.sh's OWN `rune_free` stays bash — it calls
+/// `aeon_count`/`rune_get` BY NAME, and several suites (test-summon-rune.sh,
+/// test-aeon-elastic-concurrency.sh, test-rune.sh, test-builder-qa-proposed.sh,
 /// test-czar-partition.sh, test-dependents.sh) redefine those bash functions to control
-/// `fayth_free`'s inputs without a real process table. Reducing `fayth_free` itself to a
+/// `rune_free`'s inputs without a real process table. Reducing `rune_free` itself to a
 /// one-line shim would move that arithmetic into a separate process where a bash-level
 /// override can no longer reach it (the EXEC-BOUNDARY TRAP) — so this Rust copy exists for
 /// any FUTURE in-process Rust caller, and lib.sh's bash body is deliberately left alone.
-pub fn fayth_free(cfg: &Config, fayth: &str, pool: Option<i64>, exclude: Option<&str>) -> i64 {
+pub fn rune_free(cfg: &Config, rune: &str, pool: Option<i64>, exclude: Option<&str>) -> i64 {
     let Some(home) = cfg.home.as_ref() else { return 0 };
-    let mut max: i64 = spira_config::chamber::fayth_get(home, fayth, "FAYTH_MAX_CONCURRENT", "1").trim().parse().unwrap_or(1);
-    let elastic = spira_config::chamber::fayth_get(home, fayth, "FAYTH_ELASTIC", "0") == "1";
+    let mut max: i64 = spira_config::runes::rune_get(home, rune, "RUNE_MAX_CONCURRENT", "1").trim().parse().unwrap_or(1);
+    let elastic = spira_config::runes::rune_get(home, rune, "RUNE_ELASTIC", "0") == "1";
     let is_remainder = elastic && pool.is_some();
     if is_remainder {
         max = pool.unwrap();
     }
-    let have: i64 = aeon_count(cfg, fayth, exclude).into();
+    let have: i64 = aeon_count(cfg, rune, exclude).into();
     let mut free = if is_remainder { max } else { (max - have).max(0) };
     if let Some(p) = pool {
         if p < free {
@@ -372,12 +372,12 @@ pub fn throttle_line(t: &Throttle) -> String {
 pub const PASS_MARKER: &str = ": state: open=";
 
 /// Did the last sentinel pass skip this partition's personas ("pass budget exhausted")?
-pub fn pass_truncated(log_text: &str, fayths: &[String]) -> bool {
+pub fn pass_truncated(log_text: &str, runes: &[String]) -> bool {
     let lines: Vec<&str> = log_text.lines().collect();
     let Some(start) = lines.iter().rposition(|l| l.contains(PASS_MARKER)) else {
         return false;
     };
-    fayths.iter().any(|f| {
+    runes.iter().any(|f| {
         let needle = format!("CHECK7 {f}: not evaluated");
         lines[start..].iter().any(|l| l.contains(&needle))
     })
@@ -457,7 +457,7 @@ mod tests {
         assert!(holder_alive(&run, "sp-a1"), "the pid is never probed");
     }
 
-    // ---- aeon_count / aeons_live_lanes / fayth_free (wave 4.23, sp-0ffox) ------------------
+    // ---- aeon_count / aeons_live_lanes / rune_free (wave 4.23, sp-0ffox) ------------------
 
     /// `systemctl --user list-units <pattern> --no-legend`, stubbed: echoes `lines`
     /// regardless of its argv, so the test controls the fleet without a real systemd
@@ -495,27 +495,27 @@ mod tests {
     }
 
     #[test]
-    fn aeons_live_lanes_resolves_fayth_name_and_sums_lane_units() {
+    fn aeons_live_lanes_resolves_rune_name_and_sums_lane_units() {
         let t = testkit::TempDir::new("strand-live-lanes");
-        let _env = testkit::env(&[("SPIRA_TOML", None), ("SPIRA_CHAMBER", Some(t.join("chamber").to_str().unwrap()))]);
-        std::fs::create_dir_all(t.join("chamber")).unwrap();
-        // A lane fayth declaring a different unit name than its chamber filename —
-        // aeons_live_lanes must resolve FAYTH_NAME, not use the fayth id verbatim.
-        std::fs::write(t.join("chamber/laner.fayth"), "FAYTH_LANE=incident\nFAYTH_NAME=siren\n").unwrap();
-        std::fs::write(t.join("chamber/builder.fayth"), "").unwrap(); // not a lane — must not be counted
+        let _env = testkit::env(&[("SPIRA_TOML", None), ("SPIRA_RUNES_DIR", Some(t.join("runes").to_str().unwrap()))]);
+        std::fs::create_dir_all(t.join("runes")).unwrap();
+        // A lane rune declaring a different unit name than its runes filename —
+        // aeons_live_lanes must resolve RUNE_NAME, not use the rune id verbatim.
+        std::fs::write(t.join("runes/laner.rune"), "RUNE_LANE=incident\nRUNE_NAME=siren\n").unwrap();
+        std::fs::write(t.join("runes/builder.rune"), "").unwrap(); // not a lane — must not be counted
         let sc = mock_systemctl(&t, &["spira-aeon-siren-1.service loaded active running x"]);
         let cfg = Config { home: Some(t.to_path_buf()), systemctl: sc, ..Config::test_fixture() };
         assert_eq!(aeons_live_lanes(&cfg), 1);
     }
 
     #[test]
-    fn fayth_free_matches_the_bash_originals_arithmetic() {
-        let t = testkit::TempDir::new("strand-fayth-free");
-        let _env = testkit::env(&[("SPIRA_TOML", None), ("SPIRA_CHAMBER", Some(t.join("chamber").to_str().unwrap()))]);
-        std::fs::create_dir_all(t.join("chamber")).unwrap();
-        std::fs::write(t.join("chamber/stretchy.fayth"), "FAYTH_MAX_CONCURRENT=4\nFAYTH_ELASTIC=1\n").unwrap();
-        std::fs::write(t.join("chamber/anchor.fayth"), "FAYTH_MAX_CONCURRENT=10\n").unwrap();
-        std::fs::write(t.join("chamber/laner.fayth"), "FAYTH_MAX_CONCURRENT=1\n").unwrap();
+    fn rune_free_matches_the_bash_originals_arithmetic() {
+        let t = testkit::TempDir::new("strand-rune-free");
+        let _env = testkit::env(&[("SPIRA_TOML", None), ("SPIRA_RUNES_DIR", Some(t.join("runes").to_str().unwrap()))]);
+        std::fs::create_dir_all(t.join("runes")).unwrap();
+        std::fs::write(t.join("runes/stretchy.rune"), "RUNE_MAX_CONCURRENT=4\nRUNE_ELASTIC=1\n").unwrap();
+        std::fs::write(t.join("runes/anchor.rune"), "RUNE_MAX_CONCURRENT=10\n").unwrap();
+        std::fs::write(t.join("runes/laner.rune"), "RUNE_MAX_CONCURRENT=1\n").unwrap();
         let run = t.join("run");
         std::fs::create_dir_all(&run).unwrap();
         // pid fallback, no real aeons: have=0 throughout
@@ -523,12 +523,12 @@ mod tests {
         // elastic: pool remainder whole, never subtracting running twice (have is ignored
         // here since the stub always reports 0 — the G18 regression this guards against is
         // "have" double-counted against a pool that already nets it out).
-        assert_eq!(fayth_free(&cfg, "stretchy", Some(5), None), 5);
-        // no pool: falls back to FAYTH_MAX_CONCURRENT.
-        assert_eq!(fayth_free(&cfg, "stretchy", None, None), 4);
+        assert_eq!(rune_free(&cfg, "stretchy", Some(5), None), 5);
+        // no pool: falls back to RUNE_MAX_CONCURRENT.
+        assert_eq!(rune_free(&cfg, "stretchy", None, None), 4);
         // non-elastic: cap minus running (0), clamped at 0 from below.
-        assert_eq!(fayth_free(&cfg, "anchor", Some(10), None), 10);
-        assert_eq!(fayth_free(&cfg, "laner", None, None), 1);
+        assert_eq!(rune_free(&cfg, "anchor", Some(10), None), 10);
+        assert_eq!(rune_free(&cfg, "laner", None, None), 1);
     }
 
     #[test]
@@ -537,7 +537,7 @@ mod tests {
         assert_eq!(r.len(), 2);
         assert_eq!(r[0].labels, "spira,plan");
         assert_eq!(r[0].exclude, "spira-poison,ask-x");
-        assert_eq!(r[0].fayths, vec!["builder"]);
+        assert_eq!(r[0].runes, vec!["builder"]);
         assert_eq!(r[1].exclude, "");
     }
 

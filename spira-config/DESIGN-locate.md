@@ -125,7 +125,7 @@ that calls `get`/`export`/`validate` already resolves its own path and passes it
 2. **Check `$SPIRA_TOML`'s existence before returning it.** `conf.sh` has always done this;
    `discover()` had not. Fixes `gate::gate_mode`'s crash-on-bad-pin into the fall-to-defaults
    its own comment says it should be.
-3. **The legacy `spira.conf` auto-convert, and the persona/fayth regeneration
+3. **The legacy `spira.conf` auto-convert, and the persona/rune regeneration
    `spira_toml_resolve` layers on top of its own locator, are not ported.** Both are *write*
    behaviour on top of "which file wins" — sp-usxfl already retired every writer that targets
    `spira.conf`, so the auto-convert's only remaining job is a one-time read on a box that has

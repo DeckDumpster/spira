@@ -301,7 +301,7 @@ fn run_stdin_unrecorded(args: &[String], stdin: Option<&str>) -> Result<String, 
 }
 
 /// A harness tool by bare name on the launcher's PATH (sp-gypjk), run under `timeout` with
-/// the caller's persona as `SPIRA_FAYTH` — the czar fence in `queue` and `bdq` reads it, and
+/// the caller's persona as `SPIRA_RUNE` — the czar fence in `queue` and `bdq` reads it, and
 /// the broker's own identity is never the persona that asked. Returns the tool's own exit code
 /// (stdout; stdout plus stderr when it failed).
 pub fn tool(program: &str, args: &[String], stdin: Option<&str>, actor: &str, secs: u64) -> (i32, String) {
@@ -315,7 +315,7 @@ pub fn tool_env(program: &str, args: &[String], stdin: Option<&str>, actor: &str
         Err(e) => return (2, e),
     };
     let mut cmd = Command::new("timeout");
-    cmd.arg(secs.to_string()).arg(&exe).args(args).env("SPIRA_FAYTH", actor);
+    cmd.arg(secs.to_string()).arg(&exe).args(args).env("SPIRA_RUNE", actor);
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -330,7 +330,7 @@ pub fn tool_env_noisy(program: &str, args: &[String], stdin: Option<&str>, actor
         Err(e) => return (2, e),
     };
     let mut cmd = Command::new("timeout");
-    cmd.arg(secs.to_string()).arg(&exe).args(args).env("SPIRA_FAYTH", actor);
+    cmd.arg(secs.to_string()).arg(&exe).args(args).env("SPIRA_RUNE", actor);
     for (k, v) in env {
         cmd.env(k, v);
     }

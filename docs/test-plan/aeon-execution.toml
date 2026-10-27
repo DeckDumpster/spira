@@ -39,7 +39,7 @@ statement = "sweep mode claims nothing, sets no `branch:` label, and refuses whe
 [[use_case]]
 id = "UC-aeon-execution-06"
 tier = "T1"
-statement = "launch argv is a pure function of the fayth's system-prompt, project-instructions and settings knobs"
+statement = "launch argv is a pure function of the rune's system-prompt, project-instructions and settings knobs"
 
 [[use_case]]
 id = "UC-aeon-execution-07"
@@ -49,10 +49,10 @@ statement = "brief rendering leaves no unrendered `{{placeholder}}`; RESUME/SLAI
 [[use_case]]
 id = "UC-aeon-execution-08"
 tier = "T1"
-statement = "the lease renews on trace growth and lapses on silence past `FAYTH_LEASE_SECONDS`, killing `-$$`"
+statement = "the lease renews on trace growth and lapses on silence past `RUNE_LEASE_SECONDS`, killing `-$$`"
 
 [use_case.uncovered]
-reason = "hb_tick, fayth_lease_seconds and hb_wait_outcome (lib.sh) retired dead (sp-j89pd, wave 4.2: zero live callers) — the renew/lapse/thrash decision is aeon::decide::hb_tick, exercised by aeon/src/decide.rs::tests::hb_tick_table (its own comment names the retired test-aeon-lease.sh / test-thrash.sh rows it replaces); test-aeon-lease.sh keeps only its still-live aeon_lease_minutes/fayth_get rows"
+reason = "hb_tick, rune_lease_seconds and hb_wait_outcome (lib.sh) retired dead (sp-j89pd, wave 4.2: zero live callers) — the renew/lapse/thrash decision is aeon::decide::hb_tick, exercised by aeon/src/decide.rs::tests::hb_tick_table (its own comment names the retired test-aeon-lease.sh / test-thrash.sh rows it replaces); test-aeon-lease.sh keeps only its still-live aeon_lease_minutes/rune_get rows"
 date = "2026-09-30"
 bead = "sp-j89pd"
 
@@ -139,7 +139,7 @@ statement = "attempts are counted from the bd events trail only, never from a la
 [[use_case]]
 id = "UC-aeon-execution-20"
 tier = "T2"
-statement = "claim release is compare-and-swap on the claiming actor; naming the fayth leaves it held"
+statement = "claim release is compare-and-swap on the claiming actor; naming the rune leaves it held"
 
 [[use_case]]
 id = "UC-aeon-execution-21"

@@ -19,7 +19,7 @@ after every pass), so they are also standalone binaries, not just a phase of the
 installer.
 
 **Retire rather than port** (law-rust-rewrites-start-from-intent): every function in the five
-scripts was read for a live caller (`git grep`, including systemd unit templates, chamber
+scripts was read for a live caller (`git grep`, including systemd unit templates, runes
 briefs, workflows, other scripts and Rust crates) before being ported. Nothing was found with
 no caller — the five scripts are old enough, and small enough (2,515 lines total), that
 nothing had accreted an orphaned code path. What did accrete, and what this rewrite drops, is

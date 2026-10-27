@@ -1,5 +1,5 @@
-//! escape — direct-summon an aeon for a named fayth, bypassing pool and lane checks
-//! (replaces `spira/escape.sh`, sp-zpaq0). `aeon --escape <fayth> [--dry-run]`.
+//! escape — direct-summon an aeon for a named rune, bypassing pool and lane checks
+//! (replaces `spira/escape.sh`, sp-zpaq0). `aeon --escape <rune> [--dry-run]`.
 //!
 //! WHEN TO USE. The sentinel decides how many aeons may start by comparing live aeon
 //! counts against pool and lane budgets. A bug in that arithmetic — wrong pool
@@ -13,19 +13,19 @@
 //! reachable. Ryan's own case: eight P0s skipped because the bug fixing the ordering
 //! logic was itself subject to the ordering it would fix.
 //!
-//! WHAT THIS DOES NOT BYPASS. The fayth must exist (checked by the caller, the same
-//! `home/chamber/<fayth>.fayth` test every mode uses). Its partition must have ready
-//! work. The account must have API capacity. The bead must not be poisoned. The fayth's
-//! own FAYTH_MAX_CONCURRENT is enforced by the summoned aeon internally. All of that
-//! still applies — `world_gate` and `fayth_ready`/`summon_argv` are reached exactly as
-//! `summon_fayth` reaches them, through lib.sh (§5's seam), because a drain past its TTL
+//! WHAT THIS DOES NOT BYPASS. The rune must exist (checked by the caller, the same
+//! `home/runes/<rune>.rune` test every mode uses). Its partition must have ready
+//! work. The account must have API capacity. The bead must not be poisoned. The rune's
+//! own RUNE_MAX_CONCURRENT is enforced by the summoned aeon internally. All of that
+//! still applies — `world_gate` and `rune_ready`/`summon_argv` are reached exactly as
+//! `summon_rune` reaches them, through lib.sh (§5's seam), because a drain past its TTL
 //! being lifted and logged is family G's (not this bead's) to port. The capacity check is
 //! in-process now (`capacity::check_and_probe`, wave 4.26 — family K's home is this
 //! crate, and aeon is its probe's one owner), so a probe that clears the pause file early
 //! happens exactly once no matter how many of this crate's own entry points ask.
 //!
 //! WHEN NOT TO USE. Normal scheduling is observable, coordinated, and lower-cost. Reserve
-//! this for a scheduler that is demonstrably failing to summon a fayth that has ready work.
+//! this for a scheduler that is demonstrably failing to summon a rune that has ready work.
 //!
 //! RETIRED RATHER THAN PORTED AS A SEPARATE SCRIPT. escape.sh's only job was to gate and
 //! then invoke the `aeon` binary; the binary now does both.
@@ -65,12 +65,12 @@ pub fn find_on_path(path: &str, name: &str, exists: impl Fn(&Path) -> bool) -> O
 }
 
 /// The whole decision, given the already-gathered facts (world_gate's rc, capacity_paused's
-/// rc and its stdout seconds-left, fayth_ready's rc and its stdout count, and whether `aeon`
+/// rc and its stdout seconds-left, rune_ready's rc and its stdout count, and whether `aeon`
 /// resolved on PATH). Pure — no IO, fully covered by unit tests below.
 pub struct Facts {
     pub world_gate_ok: bool,
     pub capacity_left: Option<String>, // Some(seconds) when paused
-    pub ready: Result<i64, ()>,        // Err on a fayth_ready failure (rc != 0)
+    pub ready: Result<i64, ()>,        // Err on a rune_ready failure (rc != 0)
     pub aeon_path: Option<String>,
 }
 
@@ -94,15 +94,15 @@ pub fn decide(f: &Facts) -> Outcome {
     Outcome::Summoned(Vec::new()) // argv filled in by build_argv, kept apart from decide()
 }
 
-/// `systemd-run --user --collect --quiet --unit=spira-aeon-<fayth>-escape-<epoch> <summon
-/// argv...> <aeon-path> --home <home> <fayth> [--dry-run]` — escape.sh:52-58, unchanged.
-pub fn build_argv(fayth: &str, home: &Path, aeon_path: &str, summon_argv: &[String], epoch: i64, dry_run: bool) -> Vec<String> {
-    let mut a = vec!["--user".to_string(), "--collect".to_string(), "--quiet".to_string(), format!("--unit=spira-aeon-{fayth}-escape-{epoch}")];
+/// `systemd-run --user --collect --quiet --unit=spira-aeon-<rune>-escape-<epoch> <summon
+/// argv...> <aeon-path> --home <home> <rune> [--dry-run]` — escape.sh:52-58, unchanged.
+pub fn build_argv(rune: &str, home: &Path, aeon_path: &str, summon_argv: &[String], epoch: i64, dry_run: bool) -> Vec<String> {
+    let mut a = vec!["--user".to_string(), "--collect".to_string(), "--quiet".to_string(), format!("--unit=spira-aeon-{rune}-escape-{epoch}")];
     a.extend(summon_argv.iter().cloned());
     a.push(aeon_path.to_string());
     a.push("--home".to_string());
     a.push(home.display().to_string());
-    a.push(fayth.to_string());
+    a.push(rune.to_string());
     if dry_run {
         a.push("--dry-run".to_string());
     }
@@ -111,7 +111,7 @@ pub fn build_argv(fayth: &str, home: &Path, aeon_path: &str, summon_argv: &[Stri
 
 /// The full orchestration: gathers the facts through the seam, decides, and (unless
 /// merely deciding) spawns `systemd-run`. Returns the process exit code.
-pub fn run(seam: &dyn Seam, exec: &dyn Exec, env: &Env, sink: &dyn Sink, conf: &Conf, summon_bin: &str, home: &Path, fayth: &str, dry_run: bool, now: i64) -> i32 {
+pub fn run(seam: &dyn Seam, exec: &dyn Exec, env: &Env, sink: &dyn Sink, conf: &Conf, summon_bin: &str, home: &Path, rune: &str, dry_run: bool, now: i64) -> i32 {
     let wg = seam.call("_aeon_world_gate", &["escape.sh".to_string()]);
     for l in wg.stderr.lines() {
         sink.out(l);
@@ -128,7 +128,7 @@ pub fn run(seam: &dyn Seam, exec: &dyn Exec, env: &Env, sink: &dyn Sink, conf: &
         crate::capacity::Paused::Paused(n) => Some(n.to_string()),
         crate::capacity::Paused::Unknown => Some("?".to_string()),
     };
-    let fr = seam.call("_aeon_fayth_ready", &[]);
+    let fr = seam.call("_aeon_rune_ready", &[]);
     let path = env.child().get("PATH").cloned().unwrap_or_default();
     let aeon_path = find_on_path(&path, "aeon", |p| is_executable(p));
 
@@ -143,28 +143,28 @@ pub fn run(seam: &dyn Seam, exec: &dyn Exec, env: &Env, sink: &dyn Sink, conf: &
         Outcome::Gated => {
             if facts.world_gate_ok {
                 // world_gate passed; the capacity pause is what gated it — escape.sh's own line.
-                sink.out(&util::log_line(now, &format!("escape.sh {fayth}: account out of capacity for another {}s — not summoning", facts.capacity_left.unwrap_or_default())));
+                sink.out(&util::log_line(now, &format!("escape.sh {rune}: account out of capacity for another {}s — not summoning", facts.capacity_left.unwrap_or_default())));
             }
             1
         }
         Outcome::CannotReadPartition => {
-            sink.err(&util::log_line(now, &format!("FATAL {fayth}: cannot read its partition")));
+            sink.err(&util::log_line(now, &format!("FATAL {rune}: cannot read its partition")));
             1
         }
         Outcome::NothingReady => {
-            sink.out(&util::log_line(now, &format!("escape.sh {fayth}: nothing ready in its partition — nothing to summon")));
+            sink.out(&util::log_line(now, &format!("escape.sh {rune}: nothing ready in its partition — nothing to summon")));
             0
         }
         Outcome::AeonMissing => {
-            sink.err(&util::log_line(now, &format!("FATAL escape.sh {fayth}: aeon is not on PATH")));
+            sink.err(&util::log_line(now, &format!("FATAL escape.sh {rune}: aeon is not on PATH")));
             1
         }
         Outcome::Summoned(_) => {
             let ready = facts.ready.unwrap_or(0);
-            sink.out(&util::log_line(now, &format!("escape.sh {fayth}: {ready} ready — summoning directly (pool and lane checks bypassed)")));
+            sink.out(&util::log_line(now, &format!("escape.sh {rune}: {ready} ready — summoning directly (pool and lane checks bypassed)")));
             let sa = seam.call("_aeon_summon_argv", &[]);
             let summon_argv: Vec<String> = sa.stdout.lines().map(|s| s.to_string()).collect();
-            let argv = build_argv(fayth, home, aeon_path.as_deref().unwrap_or("aeon"), &summon_argv, now, dry_run);
+            let argv = build_argv(rune, home, aeon_path.as_deref().unwrap_or("aeon"), &summon_argv, now, dry_run);
             let o = exec.exec(summon_bin, &argv, None, None);
             o.code
         }
@@ -257,7 +257,7 @@ mod tests {
         fn call(&self, func: &str, _args: &[String]) -> util::Out {
             match func {
                 "_aeon_world_gate" => util::Out { code: self.world_gate_rc, stdout: String::new(), stderr: String::new() },
-                "_aeon_fayth_ready" => util::Out { code: self.ready_rc, stdout: self.ready.clone(), stderr: String::new() },
+                "_aeon_rune_ready" => util::Out { code: self.ready_rc, stdout: self.ready.clone(), stderr: String::new() },
                 "_aeon_summon_argv" => util::Out::ok(self.summon_argv.clone()),
                 other => panic!("unexpected seam call: {other}"),
             }

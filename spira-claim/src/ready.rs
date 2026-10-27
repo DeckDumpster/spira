@@ -1,9 +1,9 @@
-//! `READY_ARGS` / `ready_raw_args` / `ready_shared_exclude` / `fayth_exclude` /
-//! `bulk_ready_by_fayth`'s bucketing (the former ready-bucket script) — lib.sh family F (wave 4
+//! `READY_ARGS` / `ready_raw_args` / `ready_shared_exclude` / `rune_exclude` /
+//! `bulk_ready_by_rune`'s bucketing (the former ready-bucket script) — lib.sh family F (wave 4
 //! decomposition row F, sp-obhv6). Pure argv-building and predicate logic lives here, with
-//! no I/O, so it is unit-testable with no database and no chamber directory. The store
+//! no I/O, so it is unit-testable with no database and no runes directory. The store
 //! reads (the machine's claimable set) are `main.rs::machine_claimable` over `Store`;
-//! the chamber reads (`fayth_get`, `spira_fayths`) are `spira-config`'s own `chamber`
+//! the runes reads (`rune_get`, `spira_runes`) are `spira-config`'s own `runes`
 //! module; the CLI wiring (env, flags, `SPIRA_HOME`) is `main.rs`.
 //!
 //! `claim_retry` and `epic_parent_lookup`/`epic_rank_rows` are not here: `claim_retry` is a
@@ -69,16 +69,16 @@ pub fn ready_args(scope_label: &str, no_loop_label: &str) -> Vec<String> {
     v
 }
 
-/// `ready_shared_exclude`'s labels (lib.sh:652) — never the submitted label: lifecycle state decides SUBMITTED, a stale bd label must not, folded into [`fayth_exclude`] — its
+/// `ready_shared_exclude`'s labels (lib.sh:652) — never the submitted label: lifecycle state decides SUBMITTED, a stale bd label must not, folded into [`rune_exclude`] — its
 /// only caller — rather than kept as a separately shimmed function (zero other callers).
 pub fn shared_exclude(queue_wait: &str, open_children: &str) -> String {
     [queue_wait, open_children].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(",")
 }
 
-/// `fayth_exclude <fayth> [own]` (lib.sh:666): the persona's own exclusions, the shared
-/// exclusion set, then every OTHER persona's `fayth:<name>` claim — in that order, matching
+/// `rune_exclude <rune> [own]` (lib.sh:666): the persona's own exclusions, the shared
+/// exclusion set, then every OTHER persona's `rune:<name>` claim — in that order, matching
 /// the bash's own append sequence (own, then shared, then the roster loop).
-pub fn fayth_exclude(me: &str, own: &str, roster: &[String], shared: &str) -> String {
+pub fn rune_exclude(me: &str, own: &str, roster: &[String], shared: &str) -> String {
     let mut parts: Vec<String> = Vec::new();
     if !own.is_empty() {
         parts.push(own.to_string());
@@ -88,16 +88,16 @@ pub fn fayth_exclude(me: &str, own: &str, roster: &[String], shared: &str) -> St
     }
     for f in roster {
         if f != me {
-            parts.push(format!("fayth:{f}"));
+            parts.push(format!("rune:{f}"));
         }
     }
     parts.join(",")
 }
 
-/// One fayth's `(name, FAYTH_LABELS, FAYTH_EXCLUDE_LABELS)` row for [`bucket`] — a fayth
-/// whose `FAYTH_LABELS` is empty is never added to this list at all (bulk_ready_by_fayth's
+/// One rune's `(name, RUNE_LABELS, RUNE_EXCLUDE_LABELS)` row for [`bucket`] — a rune
+/// whose `RUNE_LABELS` is empty is never added to this list at all (bulk_ready_by_rune's
 /// own `[ -n "$inc" ] || continue`), not merely counted as zero.
-pub struct FaythPart {
+pub struct RunePart {
     pub name: String,
     pub inc: Vec<String>,
     pub exc: Vec<String>,
@@ -109,12 +109,12 @@ pub fn split_csv(s: &str) -> Vec<String> {
 }
 
 /// The former ready-bucket script's predicate, exactly: a bead counts for `(inc, exc)` iff none of its
-/// labels is in `shared`, its `fayth:` preferences (if it carries any) include `name`,
+/// labels is in `shared`, its `rune:` preferences (if it carries any) include `name`,
 /// `inc` is a subset of its labels, and `exc` is disjoint from them.
 ///
-/// DELIBERATELY NOT `fayth_exclude`'s own exclude-label semantics: a bead may carry more
-/// than one `fayth:<name>` preference, and this (membership) lets it count for every one of
-/// them, while `fayth_exclude`'s bd query (OR-matched `--exclude-label`) would exclude it
+/// DELIBERATELY NOT `rune_exclude`'s own exclude-label semantics: a bead may carry more
+/// than one `rune:<name>` preference, and this (membership) lets it count for every one of
+/// them, while `rune_exclude`'s bd query (OR-matched `--exclude-label`) would exclude it
 /// from every partition but the first it names. Both are faithful ports of their own
 /// bash/python originals — this discrepancy predates this port and is not this bead's to
 /// resolve.
@@ -125,7 +125,7 @@ fn bucket_match(labels: &[&str], inc: &[String], exc: &[String], shared: &[&str]
     let mut has_pref = false;
     let mut pref_matches = false;
     for l in labels {
-        if let Some(p) = l.strip_prefix("fayth:") {
+        if let Some(p) = l.strip_prefix("rune:") {
             has_pref = true;
             if p == name {
                 pref_matches = true;
@@ -144,7 +144,7 @@ fn bucket_match(labels: &[&str], inc: &[String], exc: &[String], shared: &[&str]
     true
 }
 
-/// `bulk_ready_by_fayth`'s bucketing (one ready-set fetch, counted per fayth), in the input
+/// `bulk_ready_by_rune`'s bucketing (one ready-set fetch, counted per rune), in the input
 /// `parts` order. `queue_wait` is the shared exclusion; open-children is deliberately not.
 /// RFC3339 `YYYY-MM-DDTHH:MM:SS[.f][Z|±hh:mm]` to epoch seconds; None if unparseable.
 fn rfc3339_epoch(s: &str) -> Option<i64> {
@@ -174,7 +174,7 @@ fn is_deferred(row: &ReadyRow, now: i64) -> bool {
     row.defer_until.as_deref().and_then(rfc3339_epoch).is_some_and(|t| t > now)
 }
 
-pub fn bucket(rows: &[ReadyRow], parts: &[FaythPart], queue_wait: &str) -> Vec<(String, u64)> {
+pub fn bucket(rows: &[ReadyRow], parts: &[RunePart], queue_wait: &str) -> Vec<(String, u64)> {
     let shared: Vec<&str> = [queue_wait].into_iter().filter(|s| !s.is_empty()).collect();
     let mut counts: Vec<(String, u64)> = parts.iter().map(|p| (p.name.clone(), 0)).collect();
     let now = now_epoch();
@@ -183,7 +183,7 @@ pub fn bucket(rows: &[ReadyRow], parts: &[FaythPart], queue_wait: &str) -> Vec<(
             continue;
         }
         let labels: Vec<&str> = row.labels.iter().map(String::as_str).collect();
-        let has_pref = labels.iter().any(|l| l.starts_with("fayth:"));
+        let has_pref = labels.iter().any(|l| l.starts_with("rune:"));
         for (i, p) in parts.iter().enumerate() {
             if bucket_match(&labels, &p.inc, &p.exc, &shared, &p.name) {
                 counts[i].1 += 1;
@@ -196,9 +196,9 @@ pub fn bucket(rows: &[ReadyRow], parts: &[FaythPart], queue_wait: &str) -> Vec<(
     counts
 }
 
-/// One fayth's own rows by [`bucket`]'s predicate: what `fayth-ready` counts is exactly
-/// what `fayth-ready --json` hands an aeon to claim from.
-pub fn partition<'a>(rows: &'a [ReadyRow], part: &FaythPart, queue_wait: &str) -> Vec<&'a ReadyRow> {
+/// One rune's own rows by [`bucket`]'s predicate: what `rune-ready` counts is exactly
+/// what `rune-ready --json` hands an aeon to claim from.
+pub fn partition<'a>(rows: &'a [ReadyRow], part: &RunePart, queue_wait: &str) -> Vec<&'a ReadyRow> {
     let shared: Vec<&str> = [queue_wait].into_iter().filter(|s| !s.is_empty()).collect();
     let now = now_epoch();
     rows.iter()
@@ -211,7 +211,7 @@ pub fn partition<'a>(rows: &'a [ReadyRow], part: &FaythPart, queue_wait: &str) -
 }
 
 /// Whether `row` is claimable under any of `parts`.
-pub fn in_any_partition(row: &ReadyRow, parts: &[FaythPart], queue_wait: &str) -> bool {
+pub fn in_any_partition(row: &ReadyRow, parts: &[RunePart], queue_wait: &str) -> bool {
     parts.iter().any(|p| !partition(std::slice::from_ref(row), p, queue_wait).is_empty())
 }
 
@@ -265,11 +265,11 @@ mod tests {
     }
 
     #[test]
-    fn fayth_exclude_adds_own_then_shared_then_every_other_fayth() {
+    fn rune_exclude_adds_own_then_shared_then_every_other_rune() {
         let roster = vec!["builder".to_string(), "ops".to_string(), "qa".to_string()];
-        assert_eq!(fayth_exclude("builder", "qa-proposed", &roster, "spira-queue-waiting"), "qa-proposed,spira-queue-waiting,fayth:ops,fayth:qa");
-        // G16: never excludes its OWN fayth: label, and composes with no own-exclusion.
-        assert_eq!(fayth_exclude("ops", "", &roster, ""), "fayth:builder,fayth:qa");
+        assert_eq!(rune_exclude("builder", "qa-proposed", &roster, "spira-queue-waiting"), "qa-proposed,spira-queue-waiting,rune:ops,rune:qa");
+        // G16: never excludes its OWN rune: label, and composes with no own-exclusion.
+        assert_eq!(rune_exclude("ops", "", &roster, ""), "rune:builder,rune:qa");
     }
 
     #[test]
@@ -282,8 +282,8 @@ mod tests {
         ReadyRow { id: id.into(), labels: labels.iter().map(|s| s.to_string()).collect(), ..Default::default() }
     }
 
-    fn part(name: &str, inc: &[&str], exc: &[&str]) -> FaythPart {
-        FaythPart { name: name.into(), inc: inc.iter().map(|s| s.to_string()).collect(), exc: exc.iter().map(|s| s.to_string()).collect() }
+    fn part(name: &str, inc: &[&str], exc: &[&str]) -> RunePart {
+        RunePart { name: name.into(), inc: inc.iter().map(|s| s.to_string()).collect(), exc: exc.iter().map(|s| s.to_string()).collect() }
     }
 
     #[test]
@@ -303,7 +303,7 @@ mod tests {
             row("a", &["spira", "plan"]),
             row("b", &["spira", "plan", "spira-queue-waiting"]), // shared-excluded
             row("c", &["spira", "ops-trigger"]),
-            row("d", &["spira", "plan", "fayth:ops"]), // preference names ops only
+            row("d", &["spira", "plan", "rune:ops"]), // preference names ops only
         ];
         let parts = vec![part("builder", &["spira", "plan"], &[]), part("ops", &["spira", "ops-trigger"], &[])];
         let counts = bucket(&rows, &parts, "spira-queue-waiting");
@@ -336,9 +336,9 @@ mod tests {
 
     #[test]
     fn bucket_lets_a_bead_count_for_every_named_preference() {
-        // Two fayth: preferences on one bead count for BOTH buckets — the discrepancy
-        // against fayth_exclude's OR-matched exclude-label this module's doc calls out.
-        let rows = vec![row("a", &["spira", "plan", "fayth:builder", "fayth:ops"])];
+        // Two rune: preferences on one bead count for BOTH buckets — the discrepancy
+        // against rune_exclude's OR-matched exclude-label this module's doc calls out.
+        let rows = vec![row("a", &["spira", "plan", "rune:builder", "rune:ops"])];
         let parts = vec![part("builder", &["spira", "plan"], &[]), part("ops", &["spira", "plan"], &[])];
         let counts = bucket(&rows, &parts, "");
         assert_eq!(counts, vec![("builder".to_string(), 1), ("ops".to_string(), 1)]);
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn bucket_excludes_a_bead_with_no_matching_preference() {
-        let rows = vec![row("a", &["spira", "plan", "fayth:qa"])];
+        let rows = vec![row("a", &["spira", "plan", "rune:qa"])];
         let parts = vec![part("builder", &["spira", "plan"], &[])];
         assert_eq!(bucket(&rows, &parts, ""), vec![("builder".to_string(), 0)]);
     }

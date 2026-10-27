@@ -229,7 +229,7 @@ case "$cmd" in
                 FROM $(_rows $spath ts live ceiling ready) WHERE ts IS NOT NULL
             )
             SELECT
-                (SELECT CAST(COALESCE(sum(wall_s), 0) AS BIGINT) FROM $(_rows $apath ts bead fayth status wall_s)
+                (SELECT CAST(COALESCE(sum(wall_s), 0) AS BIGINT) FROM $(_rows $apath ts bead rune status wall_s)
                     WHERE CAST(ts AS TIMESTAMPTZ) >= now() - INTERVAL '$hours hours') AS aeon_s,
                 (SELECT CAST(COALESCE(sum(ran_secs), 0) AS BIGINT) FROM $(_rows $gpath ts bead status reason ran_secs)
                     WHERE CAST(ts AS TIMESTAMPTZ) >= now() - INTERVAL '$hours hours') AS gate_s,
@@ -262,8 +262,8 @@ case "$cmd" in
         path="$(_check_family "$STAGE_FAMILY")" || exit $?
         extra=""
         [ -f "$(_family_path aeon-session)" ] && extra="$extra
-            UNION ALL SELECT ts, 'aeon', fayth || ' ' || status, CAST(wall_s AS BIGINT)
-            FROM $(_rows $(_family_path aeon-session) ts bead fayth status wall_s) WHERE bead = $(_sqlstr "$id")"
+            UNION ALL SELECT ts, 'aeon', rune || ' ' || status, CAST(wall_s AS BIGINT)
+            FROM $(_rows $(_family_path aeon-session) ts bead rune status wall_s) WHERE bead = $(_sqlstr "$id")"
         [ -f "$(_family_path gate-run)" ] && extra="$extra
             UNION ALL SELECT ts, 'gate', status || ' ' || COALESCE(reason, ''), CAST(ran_secs AS BIGINT)
             FROM $(_rows $(_family_path gate-run) ts bead status reason ran_secs) WHERE bead = $(_sqlstr "$id")"

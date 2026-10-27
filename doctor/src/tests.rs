@@ -406,21 +406,21 @@ fn config_files_passes_when_every_registered_key_resolves() {
     assert_eq!(levels(&out), vec![Level::Ok, Level::Ok, Level::Ok], "{out:?}");
 }
 
-// ============================================================================ chamber overlays
+// ============================================================================ runes overlays
 
 #[test]
-fn chamber_overlays_none_active() {
+fn runes_overlays_none_active() {
     let f = Fake::default();
-    f.set("SPIRA_CHAMBER_OVERLAY", "/overlay");
-    assert_eq!(levels(&check_chamber_overlays(&f)), vec![Level::Ok]);
+    f.set("SPIRA_RUNES_OVERLAY", "/overlay");
+    assert_eq!(levels(&check_runes_overlays(&f)), vec![Level::Ok]);
 }
 
 #[test]
-fn chamber_overlays_active_named() {
+fn runes_overlays_active_named() {
     let f = Fake::default();
-    f.set("SPIRA_CHAMBER_OVERLAY", "/overlay");
+    f.set("SPIRA_RUNES_OVERLAY", "/overlay");
     f.md_files.borrow_mut().insert(PathBuf::from("/overlay"), vec!["builder/note.md".into()]);
-    let out = check_chamber_overlays(&f);
+    let out = check_runes_overlays(&f);
     assert_eq!(out[0].level, Level::Ok);
     assert!(out[0].msg.contains("builder/note.md"));
 }

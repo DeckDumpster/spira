@@ -2,21 +2,21 @@
 #
 # groom-trigger.sh — file a trigger bead for the groomer persona.
 #
-# The groomer persona is a lane fayth: it draws from its own FAYTH_MAX_CONCURRENT
+# The groomer persona is a lane rune: it draws from its own RUNE_MAX_CONCURRENT
 # slot and is woken by trigger beads carrying SPIRA_GROOMER_LABEL. This script
 # files one such bead on a cadence (driven by spira-groom.timer), deduplicating
 # so at most one open trigger exists at a time.
 #
 # DEDUP. An open trigger bead means a groom pass is either waiting to be claimed
 # or actively running. Filing a second one while the first is still open would
-# queue a redundant pass; the groomer's FAYTH_MAX_CONCURRENT=1 makes such a queue
+# queue a redundant pass; the groomer's RUNE_MAX_CONCURRENT=1 makes such a queue
 # permanent — a lane with one slot and two trigger beads means the second trigger
 # waits forever after the first, building an ever-growing backlog of noop passes.
 # One open trigger is the correct steady state; this guard enforces it.
 #
 # SCOPE. The trigger bead carries SPIRA_SCOPE_LABEL + SPIRA_GROOMER_LABEL so the
-# groomer's FAYTH_LABELS predicate selects it. One definition of the label keeps
-# the fayth, the trigger, and the dedup query all consistent — changing the label
+# groomer's RUNE_LABELS predicate selects it. One definition of the label keeps
+# the rune, the trigger, and the dedup query all consistent — changing the label
 # in conf.sh changes all three.
 #
 # EXIT:
@@ -36,7 +36,7 @@ DB="${SPIRA_DB:-.}"
 log() { printf '%s groom-trigger: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 
 # PARTITION LABELS. SPIRA_SCOPE_LABEL defaults to "spira"; empty means no scope
-# restriction. The groomer's FAYTH_LABELS uses the same expansion so the trigger
+# restriction. The groomer's RUNE_LABELS uses the same expansion so the trigger
 # lands in exactly the partition the groomer queries.
 if [ -n "${SPIRA_SCOPE_LABEL:-}" ]; then
     LABELS="${SPIRA_SCOPE_LABEL},${SPIRA_GROOMER_LABEL}"
@@ -132,7 +132,7 @@ fi
 # work done refuses a groomer close on a bead without groom-trigger.
 _gt_repo="$(spira_home_repo 2>/dev/null)" || _gt_repo=""
 _gt_body="$(mktemp)"
-printf '%s\n' "Scheduled trigger: the groomer persona will claim this bead, run a hygiene pass over the open bead graph (splitting unsplittable beads, merging duplicates, closing stale premises, correcting mislabelled lanes), and close this bead when finished. See spira/chamber/groomer.md for the pass procedure." > "$_gt_body"
+printf '%s\n' "Scheduled trigger: the groomer persona will claim this bead, run a hygiene pass over the open bead graph (splitting unsplittable beads, merging duplicates, closing stale premises, correcting mislabelled lanes), and close this bead when finished. See spira/runes/groomer.md for the pass procedure." > "$_gt_body"
 _gt_id="$(SPIRA_DB="$DB" SPIRA_BD="$BD" "${SPIRA_BEAD_BIN:-$HERE/bead.sh}" file \
     "Groomer pass — scheduled graph hygiene" \
     --for groomer --repo "$_gt_repo" --priority 3 --body-file "$_gt_body" | tr -d '[:space:]')"

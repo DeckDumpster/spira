@@ -140,14 +140,14 @@ ledger file shape this crate writes.
 
 ## 6. Callers repointed
 
-- `spira/gate-suites`, `spira/chamber/concierge.md`, `spira/chamber/ops.md`,
-  `spira/chamber/ops.fayth`, `README.md`: every `sop.sh <subcommand>` instruction is now
+- `spira/gate-suites`, `spira/runes/concierge.md`, `spira/runes/ops.md`,
+  `spira/runes/ops.rune`, `README.md`: every `sop.sh <subcommand>` instruction is now
   `sop <subcommand>` — bare name, same as `forge`/`czar-pass`/`gh-intake` before it.
 - `aeon/src/verdict.rs`, `aeon/src/run.rs`, `aeon/src/brief.rs`: the string literal `"sop.sh"`
   (used both as an argv-executable name in `aeon`'s own port checks and in the brief text
   rendered to the Ops persona) becomes `"sop"`.
 - `spira/watchtower.sh`, `spira/incident.sh`, `spira/lib.sh`: comment-only mentions updated
   for accuracy.
-- `spira/test-guards.sh`, `spira/test-aeon-wiki-dirty.sh`, `spira/test-lint-chamber.sh`,
+- `spira/test-guards.sh`, `spira/test-aeon-wiki-dirty.sh`, `spira/test-lint-runes.sh`,
   `spira/test-render-memories.sh`, `spira/test-ops-closing.sh`: repointed to invoke `sop` by
   binary name rather than `$HERE/sop.sh`.

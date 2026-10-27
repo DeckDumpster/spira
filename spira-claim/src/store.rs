@@ -49,7 +49,7 @@ pub struct Config {
     pub scope_label: String,
     /// `spira.no_loop_label` (conf.d/SPIRA_NO_LOOP_LABEL).
     pub no_loop_label: String,
-    /// `spira.queue_wait_label` — one of `fayth_exclude`'s shared exclusions.
+    /// `spira.queue_wait_label` — one of `rune_exclude`'s shared exclusions.
     pub queue_wait_label: String,
     /// `spira.open_children_label` — ditto.
     pub open_children_label: String,
@@ -57,11 +57,11 @@ pub struct Config {
     pub claim_retries: u32,
     /// `spira.claim_retry_delay_s` — `SPIRA_CLAIM_RETRY_DELAY_S`.
     pub claim_retry_delay_s: u32,
-    /// `spira.fayths` (`SPIRA_FAYTHS`, a list) — the roster override `fayth-exclude`/
-    /// `fayth-ready`/`bulk-ready-by-fayth` pass to `spira_config::chamber::spira_fayths`;
+    /// `spira.runes` (`SPIRA_RUNES`, a list) — the roster override `rune-exclude`/
+    /// `rune-ready`/`bulk-ready-by-rune` pass to `spira_config::runes::spira_runes`;
     /// "" means no override (per Ryan 2026-10-05: no direct env read — `roster` used to
-    /// read `SPIRA_FAYTHS` itself).
-    pub fayths: String,
+    /// read `SPIRA_RUNES` itself).
+    pub runes: String,
     /// `SPIRA_INCIDENT_LABEL` — an incident never stacks on a fix that has not landed.
     pub incident_label: String,
     /// `SPIRA_READY_TTL_S` — how long `ready-count` shares one computed ready set; 0 = never.
@@ -86,7 +86,7 @@ pub fn load_config() -> Result<Config, String> {
         open_children_label: spira_config::process::cfg("SPIRA_OPEN_CHILDREN_LABEL")?,
         claim_retries: spira_config::process::cfg_parse("SPIRA_CLAIM_RETRIES")?,
         claim_retry_delay_s: spira_config::process::cfg_parse("SPIRA_CLAIM_RETRY_DELAY_S")?,
-        fayths: spira_config::process::cfg("SPIRA_FAYTHS")?,
+        runes: spira_config::process::cfg("SPIRA_RUNES")?,
         incident_label: spira_config::process::cfg("SPIRA_INCIDENT_LABEL")?,
         ready_ttl_s: spira_config::process::cfg_parse("SPIRA_READY_TTL_S")?,
     })

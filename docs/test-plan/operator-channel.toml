@@ -64,7 +64,7 @@ statement = "bead.sh amend on an in-progress bead mails its live aeon and sends 
 [[use_case]]
 id = "UC-operator-channel-13"
 tier = "T0"
-statement = "Chamber briefs never tell an agent to pass a send option that cmd_send does not accept. No caller of the retired cockpit/ask.sh remains."
+statement = "Runes briefs never tell an agent to pass a send option that cmd_send does not accept. No caller of the retired cockpit/ask.sh remains."
 
 [[use_case]]
 id = "UC-operator-channel-14"
@@ -84,7 +84,7 @@ statement = "The mail client's accept-default key (aerc/accept-default.sh) close
 [[use_case]]
 id = "UC-operator-channel-17"
 tier = "T2"
-statement = "Reply routing: a reply goes to the sender's mailbox when one exists. It goes to concierge when the sender is a chamber persona, when the sender has no mailbox,…"
+statement = "Reply routing: a reply goes to the sender's mailbox when one exists. It goes to concierge when the sender is a runes persona, when the sender has no mailbox,…"
 
 [[use_case]]
 id = "UC-operator-channel-18"
@@ -264,7 +264,7 @@ statement = "pr-notify classifies each PR in a pr-mode repo as GREEN, RED or ski
 [[use_case]]
 id = "UC-operator-channel-39"
 tier = "T1"
-statement = "A fayth with FAYTH_SUMMON=operator never enters the task pool or the lanes. The shipped concierge is operator-only and the builder stays summonable."
+statement = "A rune with RUNE_SUMMON=operator never enters the task pool or the lanes. The shipped concierge is operator-only and the builder stays summonable."
 
 [[use_case]]
 id = "UC-operator-channel-40"

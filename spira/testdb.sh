@@ -2,8 +2,8 @@
 # Sourced, never executed.
 #
 #   . "$HERE/testdb.sh"
-#   testdb_require fayth          # skips the suite, loudly, if no bd engine is usable
-#   testdb_up fayth               # creates the database, exports SPIRA_DB
+#   testdb_require rune          # skips the suite, loudly, if no bd engine is usable
+#   testdb_up rune               # creates the database, exports SPIRA_DB
 #   trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 #   testdb_seed <<'JSONL' ... JSONL
 #   testdb_restate sp-x closed    # one existing row's status (and assignee) re-declared as data

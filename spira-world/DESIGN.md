@@ -67,7 +67,7 @@ crate.
 ## Schema
 
 No new persisted schema — this crate reads and writes the same stamp files (`world.halted`,
-`world.draining`), pidfiles (`aeon-<fayth>-<bead>.pid`, `hold-<bead>.pid`) and control file
+`world.draining`), pidfiles (`aeon-<rune>-<bead>.pid`, `hold-<bead>.pid`) and control file
 (`$SPIRA_CTRL`, via `spira-ctrl`) the bash tools did, byte-for-byte compatible.
 
 ## Decisions
@@ -78,16 +78,16 @@ No new persisted schema — this crate reads and writes the same stamp files (`w
   them would be the exact drift lib.sh's own comment on `aeons_live_total` warns against.
   Both are native Rust now (`proc::live_aeons`, `fleet::live_total_systemd`/`aeon_alive`),
   each with its own unit tests, so there is no shared implementation to drift apart from a
-  hand-written `.fayth` parser. `_start_action`, `_is_essential_timer`, `work_services`'s
+  hand-written `.rune` parser. `_start_action`, `_is_essential_timer`, `work_services`'s
   exclusion and `_status_timer_row` — world.sh's own `WORLD_LIB=1` pure functions — are
   ordinary Rust functions in `sysctl.rs`/`proc.rs` now, tested directly with no process
   spawn, exactly the property `WORLD_LIB=1` existed to give bash.
 
 - **`aeons`'s lane report is the one thing here that still calls into lib.sh, through a
-  seam.** `.fayth` files are *sourced* as bash (`fayth_get`'s own implementation), not
-  parsed as a static format — `groomer.fayth`'s `FAYTH_LABELS` computes its value from
+  seam.** `.rune` files are *sourced* as bash (`rune_get`'s own implementation), not
+  parsed as a static format — `groomer.rune`'s `RUNE_LABELS` computes its value from
   other shell variables, and a hand-written Rust reader would silently disagree on the one
-  fayth that does. `spira_world::seam` follows the exact pattern `sentinel/src/seams.rs`
+  rune that does. `spira_world::seam` follows the exact pattern `sentinel/src/seams.rs`
   already established for this: a fixed script, run via `bash -c`, parameters and results
   never interpolated into the script text (law-payloads-go-on-stdin). This is the only
   lib.sh dependency in `world`/`aeons`/`slay`'s read paths.

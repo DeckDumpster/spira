@@ -121,7 +121,7 @@ def fmt_n(v):
 # Read the aeon ledger — every `done` line within [since, until]
 # --------------------------------------------------------------------------
 # Each `done` line:
-#   <ts> done <fayth> <bead> rc=N status=S [wall_s=N api_s=N turns=N in_tok=N
+#   <ts> done <rune> <bead> rc=N status=S [wall_s=N api_s=N turns=N in_tok=N
 #        cache_read_tok=N out_tok=N think_tok=N cost_usd=N.NNNN]
 # Fields are present only if the session ran far enough to record them.
 # Lines without cost_usd are from before sp-udjt and are kept but with cost=None.
@@ -132,7 +132,7 @@ DONE_RE = re.compile(
 )
 FIELD_RE = re.compile(r'(\w+)=(\S+)')
 
-aeon_rows = []   # list of dicts: ts, fayth, bead, rc, status, wall_s, cost_usd, ...
+aeon_rows = []   # list of dicts: ts, rune, bead, rc, status, wall_s, cost_usd, ...
 
 try:
     with open(ledger_path, encoding="utf-8", errors="replace") as f:
@@ -140,11 +140,11 @@ try:
             m = DONE_RE.match(line.strip())
             if not m:
                 continue
-            ts_str, fayth, bead, rc, status, fields_str = m.groups()
+            ts_str, rune, bead, rc, status, fields_str = m.groups()
             ts = ep(ts_str)
             if ts is None:
                 continue
-            row = {"ts": ts, "ts_str": ts_str, "fayth": fayth, "bead": bead,
+            row = {"ts": ts, "ts_str": ts_str, "rune": rune, "bead": bead,
                    "rc": rc, "status": status}
             if fields_str:
                 for k, v in FIELD_RE.findall(fields_str):
@@ -246,13 +246,13 @@ landed_before = [b for b, t in landed_beads.items()
 # A bead with cost data on NONE of its sessions renders cost=? (cannot say).
 # --------------------------------------------------------------------------
 
-def bead_stats(bead_set, fayth_filter=None):
+def bead_stats(bead_set, rune_filter=None):
     """Return (costs, attempts) lists for beads in bead_set, one entry per bead."""
     costs = []; attempts = []
     for bead in bead_set:
         sessions = [r for r in aeon_rows
                     if r["bead"] == bead
-                    and (fayth_filter is None or r["fayth"] == fayth_filter)]
+                    and (rune_filter is None or r["rune"] == rune_filter)]
         n = len(sessions)
         if n == 0:
             # Bead landed but no ledger entry — pre-telemetry landing
@@ -275,8 +275,8 @@ def median_n(lst):
     m = len(vals) // 2
     return vals[m] if len(vals) % 2 else (vals[m-1] + vals[m]) / 2
 
-costs_after, att_after   = bead_stats(landed_after,  fayth_filter="builder")
-costs_before, att_before = bead_stats(landed_before, fayth_filter="builder")
+costs_after, att_after   = bead_stats(landed_after,  rune_filter="builder")
+costs_before, att_before = bead_stats(landed_before, rune_filter="builder")
 
 # --------------------------------------------------------------------------
 # METRIC 4 — SOP YIELD FOR OPS
@@ -318,7 +318,7 @@ except FileNotFoundError:
 def ops_sessions_in(start_ep, end_ep):
     """Yield (awake_ts, done_ts, bead) for ops sessions finishing in [start, end)."""
     done_ops = [r for r in aeon_rows
-                if r["fayth"] == "ops" and start_ep <= r["ts"] < end_ep]
+                if r["rune"] == "ops" and start_ep <= r["ts"] < end_ep]
     awake_idx = 0
     for done in sorted(done_ops, key=lambda r: r["ts"]):
         bead = done["bead"]
@@ -368,7 +368,7 @@ sop_wit_before, sop_tot_before, held_yes_before, pass_tot_before = \
 # --------------------------------------------------------------------------
 def ops_run_costs(start_ep, end_ep):
     return [cost_of(r) for r in aeon_rows
-            if r["fayth"] == "ops"
+            if r["rune"] == "ops"
             and r.get("status") not in ("idle", "capacity", "paused")
             and start_ep <= r["ts"] < end_ep]
 

@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Fayth {
+pub struct Rune {
     pub name: String,
     pub labels: Vec<String>,
     pub exclude: Vec<String>,
@@ -40,9 +40,9 @@ impl Repo {
 pub struct Context {
     pub env: Vec<(String, String)>,
     pub vars: BTreeMap<String, String>,
-    pub fayths: Vec<Fayth>,
+    pub runes: Vec<Rune>,
     pub partitions: Vec<Partition>,
-    pub chamber: Vec<String>,
+    pub all_runes: Vec<String>,
     pub repos: Vec<Repo>,
 }
 
@@ -71,9 +71,9 @@ impl Context {
                 if !s.contains('=') && !s.contains('\t') {
                     section = match s {
                         "vars" => "vars",
-                        "fayths" => "fayths",
+                        "runes" => "runes",
                         "partitions" => "partitions",
-                        "chamber" => "chamber",
+                        "all_runes" => "all_runes",
                         "repos" => "repos",
                         "end" => {
                             ended = true;
@@ -100,11 +100,11 @@ impl Context {
                         c.vars.insert(k.to_string(), v.to_string());
                     }
                 }
-                "fayths" => {
+                "runes" => {
                     let mut f = rec.splitn(3, '\t');
                     let name = f.next().unwrap_or("").to_string();
                     if !name.is_empty() {
-                        c.fayths.push(Fayth {
+                        c.runes.push(Rune {
                             name,
                             labels: csv(f.next().unwrap_or("")),
                             exclude: csv(f.next().unwrap_or("")),
@@ -121,7 +121,7 @@ impl Context {
                         });
                     }
                 }
-                "chamber" => c.chamber.push(rec.to_string()),
+                "all_runes" => c.all_runes.push(rec.to_string()),
                 "repos" => {
                     let f: Vec<&str> = rec.splitn(4, '\t').collect();
                     let name = f.first().copied().unwrap_or("").to_string();
@@ -156,8 +156,8 @@ impl Context {
         })
     }
 
-    pub fn fayth_names(&self) -> Vec<String> {
-        self.fayths.iter().map(|f| f.name.clone()).collect()
+    pub fn rune_names(&self) -> Vec<String> {
+        self.runes.iter().map(|f| f.name.clone()).collect()
     }
 
     pub fn repo(&self, name: &str) -> Option<&Repo> {
@@ -328,7 +328,7 @@ pub struct Cfg {
     pub hel_bin: String,
     pub incident_sh: PathBuf,
     pub home_repo: String,
-    pub fayths_str: String,
+    pub runes_str: String,
     pub pass_target: i64,
     pub roster_stamp: PathBuf,
     /// The capacity pause file (family K, wave 4.26 — owned by `aeon`; this is a pure
@@ -337,13 +337,13 @@ pub struct Cfg {
     /// `SPIRA_MAX_AEONS`: the task pool's ceiling. `None` (unset/empty) means no pool at
     /// all — every persona's own concurrency cap applies unchanged.
     pub max_aeons: Option<i64>,
-    /// `SPIRA_MAX_LIVE_AEONS`: the whole-fleet ceiling `summon_fayth` enforces above every
+    /// `SPIRA_MAX_LIVE_AEONS`: the whole-fleet ceiling `summon_rune` enforces above every
     /// per-persona cap and above the pool. `None` means no ceiling (today's behaviour).
     /// `ck7_fill_cap`'s own per-persona-per-pass cap defaults this to 4 when unset.
     pub max_live_aeons: Option<i64>,
     /// `SPIRA_LANES_MAX_LIVE`: the collective cap on lane aeons. `None` means no cap.
     pub lanes_max_live: Option<i64>,
-    /// `SPIRA_LANES_RESERVE`: fleet slots a task fayth leaves free while a lane has ready work.
+    /// `SPIRA_LANES_RESERVE`: fleet slots a task rune leaves free while a lane has ready work.
     pub lanes_reserve: i64,
     /// `SPIRA_QUEUE_THROTTLE_OVERRIDE`: "off" pins the task pool unthrottled regardless of
     /// the admission-throttle stamp.
@@ -356,7 +356,7 @@ pub struct Cfg {
     /// `SPIRA_SUMMON_LOCK_WAIT` (default 30s): how long `ck7_summon_pass` waits on
     /// `summon.lock` before giving up this pass to whoever already holds it.
     pub summon_lock_wait: u64,
-    /// `$SPIRA_RUN/lane-round-robin`: the lane fayth summoned last pass.
+    /// `$SPIRA_RUN/lane-round-robin`: the lane rune summoned last pass.
     pub lane_round_robin: PathBuf,
     /// `$SPIRA_RUN/summon.lock`: the one lock every `ck7_summon_pass` caller serializes on.
     pub summon_lock: PathBuf,
@@ -464,7 +464,7 @@ impl Cfg {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("incident.sh")),
             home_repo,
-            fayths_str: c.fayth_names().join(" "),
+            runes_str: c.rune_names().join(" "),
             pass_target: num("SPIRA_SENTINEL_PASS_TARGET_SECS", 60),
             roster_stamp: dir("SPIRA_ROSTER_WARN_STAMP", "roster-warn.stamp"),
             // literal-ok: conf.sh's default before sp-i2m7y retired the key
@@ -511,9 +511,9 @@ pub mod tests {
     pub fn probe_bytes(
         env: &[(&str, &str)],
         vars: &[(&str, &str)],
-        fayths: &[&str],
+        runes: &[&str],
         parts: &[&str],
-        chamber: &[&str],
+        all_runes: &[&str],
         repos: Option<&[&str]>,
     ) -> Vec<u8> {
         let mut s = String::new();
@@ -524,16 +524,16 @@ pub mod tests {
         for (k, v) in vars {
             s.push_str(&format!("{k}={v}\0"));
         }
-        s.push_str("@fayths\0");
-        for f in fayths {
+        s.push_str("@runes\0");
+        for f in runes {
             s.push_str(&format!("{f}\0"));
         }
         s.push_str("@partitions\0");
         for p in parts {
             s.push_str(&format!("{p}\0"));
         }
-        s.push_str("@chamber\0");
-        for c in chamber {
+        s.push_str("@all_runes\0");
+        for c in all_runes {
             s.push_str(&format!("{c}\0"));
         }
         if let Some(r) = repos {
@@ -573,10 +573,10 @@ pub mod tests {
             ]
         );
         assert_eq!(c.get("SPIRA_POISON_ASKED"), Some("/r/pa"));
-        assert_eq!(c.fayths[0].labels, vec!["spira", "plan"]);
-        assert!(c.fayths[1].exclude.is_empty());
+        assert_eq!(c.runes[0].labels, vec!["spira", "plan"]);
+        assert!(c.runes[1].exclude.is_empty());
         assert_eq!(c.partitions.len(), 2);
-        assert_eq!(c.chamber, vec!["builder", "ops", "spike"]);
+        assert_eq!(c.all_runes, vec!["builder", "ops", "spike"]);
         assert_eq!(c.repo("spira").unwrap().base(), Some("origin/main"));
         assert_eq!(c.repo("spira").unwrap().landrefs.len(), 2);
         assert!(c.repo("other").unwrap().forge_queued);

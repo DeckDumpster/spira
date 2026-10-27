@@ -17,7 +17,7 @@
 #
 # defect: sp-mebw
 # tier: T1
-# covers: archivist/src/* spira/conf.sh spira/hooks/session.sh spira/ctx-meter.sh mail/src/* spira/chamber/archivist.md UC-ops-detection-remediation-35
+# covers: archivist/src/* spira/conf.sh spira/hooks/session.sh spira/ctx-meter.sh mail/src/* spira/runes/archivist.md UC-ops-detection-remediation-35
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -39,7 +39,7 @@ EVERY=40
 tl_config SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
     SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
     SPIRA_ARCHIVIST_IDLE="$IDLE" SPIRA_ARCHIVIST_EVERY="$EVERY" \
-    SPIRA_CHAMBER="$T/chamber" SPIRA_ARCHIVIST_TIMEOUT=10 SPIRA_WIKI=
+    SPIRA_RUNES_DIR="$T/runes" SPIRA_ARCHIVIST_TIMEOUT=10 SPIRA_WIKI=
 
 # Build a synthetic transcript with a given number of turns and approximate context.
 mktranscript() {   # mktranscript <path> <turns> <ctx>
@@ -171,9 +171,9 @@ fi
 echo
 echo "a sweep is skipped entirely when capacity is paused"
 # ==========================================================================================
-rm -rf "$T/run" "$T/projects" "$T/home" "$T/chamber"
-mkdir -p "$T/home" "$T/run" "$T/projects/-test-project" "$T/chamber"
-cp "$HERE/chamber/archivist.md" "$T/chamber/" 2>/dev/null || printf 'test prompt {{TRANSCRIPT}}' > "$T/chamber/archivist.md"
+rm -rf "$T/run" "$T/projects" "$T/home" "$T/runes"
+mkdir -p "$T/home" "$T/run" "$T/projects/-test-project" "$T/runes"
+cp "$HERE/runes/archivist.md" "$T/runes/" 2>/dev/null || printf 'test prompt {{TRANSCRIPT}}' > "$T/runes/archivist.md"
 mktranscript "$T/projects/-test-project/sess-cap.jsonl" 60 300000
 # Plant a capacity pause that expires far in the future from the REAL clock. capacity_paused()
 # uses date +%s (the real time, not SPIRA_NOW), so this must be ahead of the actual wall clock.
@@ -274,9 +274,9 @@ echo "a turn=- cursor does not kill the sweep for other sessions (regression: sp
 # Pre-fix: $(( ${turns:-0} - cov )) with cov="-" produced:
 #   archivist.sh: line 352: -: syntax error: operand expected (error token is "-")
 # That error exited the whole sweep, so zero sessions were processed — not just the bad one.
-rm -rf "$T/run" "$T/projects" "$T/home" "$T/chamber"
-mkdir -p "$T/home" "$T/run/archivist" "$T/projects/-test-project" "$T/chamber"
-cp "$HERE/chamber/archivist.md" "$T/chamber/" 2>/dev/null || printf 'test prompt {{TRANSCRIPT}}' > "$T/chamber/archivist.md"
+rm -rf "$T/run" "$T/projects" "$T/home" "$T/runes"
+mkdir -p "$T/home" "$T/run/archivist" "$T/projects/-test-project" "$T/runes"
+cp "$HERE/runes/archivist.md" "$T/runes/" 2>/dev/null || printf 'test prompt {{TRANSCRIPT}}' > "$T/runes/archivist.md"
 # Two good sessions with enough drift to be swept.
 mktranscript "$T/projects/-test-project/sess-ok-a.jsonl" 60 300000
 mktranscript "$T/projects/-test-project/sess-ok-b.jsonl" 70 300000
@@ -320,9 +320,9 @@ echo "an account refusal mid-run is deferred, not failed (defect: sp-d6xfe)"
 # pass — so a session the account merely refused was retired permanently, and the dashboard
 # read "! archive failed" long after capacity returned. The sweep-level capacity gate cannot
 # catch this: it reads the pause before the pass starts, and the window shuts mid-run.
-rm -rf "$T/run" "$T/projects" "$T/home" "$T/chamber"
-mkdir -p "$T/home" "$T/run/archivist" "$T/projects/-test-project" "$T/chamber"
-cp "$HERE/chamber/archivist.md" "$T/chamber/" 2>/dev/null || printf 'test prompt {{TRANSCRIPT}}' > "$T/chamber/archivist.md"
+rm -rf "$T/run" "$T/projects" "$T/home" "$T/runes"
+mkdir -p "$T/home" "$T/run/archivist" "$T/projects/-test-project" "$T/runes"
+cp "$HERE/runes/archivist.md" "$T/runes/" 2>/dev/null || printf 'test prompt {{TRANSCRIPT}}' > "$T/runes/archivist.md"
 # DRIFT DECIDES THE ORDER, so these are deliberately unequal: with both at 50 turns the pass
 # picked whichever the tie-break happened to yield, and the assertions below name a session.
 mktranscript "$T/projects/-test-project/sess-refused.jsonl" 90 300000
@@ -386,9 +386,9 @@ esac
 
 # CONTROL: a genuine failure must still be excluded. Without this the test above passes
 # equally if the retry gate stopped excluding anything at all.
-rm -rf "$T/run" "$T/projects" "$T/home" "$T/chamber"
-mkdir -p "$T/home" "$T/run/archivist" "$T/projects/-test-project" "$T/chamber"
-cp "$HERE/chamber/archivist.md" "$T/chamber/" 2>/dev/null || printf 'test prompt {{TRANSCRIPT}}' > "$T/chamber/archivist.md"
+rm -rf "$T/run" "$T/projects" "$T/home" "$T/runes"
+mkdir -p "$T/home" "$T/run/archivist" "$T/projects/-test-project" "$T/runes"
+cp "$HERE/runes/archivist.md" "$T/runes/" 2>/dev/null || printf 'test prompt {{TRANSCRIPT}}' > "$T/runes/archivist.md"
 mktranscript "$T/projects/-test-project/sess-broke.jsonl" 50 300000
 printf 'state=failed\nat_turn=1\nitems_filed=0\n' > "$T/run/archivist/sess-broke.state"
 out3="$(alist)"
@@ -396,9 +396,9 @@ hasnt "a genuinely failed session is still excluded" "$out3" "archive"
 
 # SPIRA_CLAUDE DEPRECATION ALIAS. Setting only the old name must still run the sweep
 # and must emit exactly one deprecation warning. This is the test for the alias in conf.sh.
-rm -rf "$T/run" "$T/projects" "$T/home" "$T/chamber"
-mkdir -p "$T/home" "$T/run/archivist" "$T/projects/-test-project" "$T/chamber"
-cp "$HERE/chamber/archivist.md" "$T/chamber/" 2>/dev/null || printf 'test prompt {{TRANSCRIPT}}' > "$T/chamber/archivist.md"
+rm -rf "$T/run" "$T/projects" "$T/home" "$T/runes"
+mkdir -p "$T/home" "$T/run/archivist" "$T/projects/-test-project" "$T/runes"
+cp "$HERE/runes/archivist.md" "$T/runes/" 2>/dev/null || printf 'test prompt {{TRANSCRIPT}}' > "$T/runes/archivist.md"
 mktranscript "$T/projects/-test-project/sess-alias.jsonl" 50 300000
 # The base fixture declares spira.agent="claude" (non-empty), so the config layer would
 # otherwise win over the deprecated env alias every time; clear it back to empty so
@@ -418,9 +418,9 @@ echo "a run that exits 124 (timeout) records state=timeout and is re-swept on th
 # The incident: one timed-out run (rc=124) retired a session permanently because the sweep
 # excluded state=failed and any non-zero exit wrote failed. rc=124 must now write timeout
 # instead, which the sweep does not exclude, so the session is picked up again next tick.
-rm -rf "$T/run" "$T/projects" "$T/home" "$T/chamber"
-mkdir -p "$T/home" "$T/run/archivist" "$T/projects/-test-project" "$T/chamber"
-cp "$HERE/chamber/archivist.md" "$T/chamber/" 2>/dev/null || printf 'test prompt {{TRANSCRIPT}}' > "$T/chamber/archivist.md"
+rm -rf "$T/run" "$T/projects" "$T/home" "$T/runes"
+mkdir -p "$T/home" "$T/run/archivist" "$T/projects/-test-project" "$T/runes"
+cp "$HERE/runes/archivist.md" "$T/runes/" 2>/dev/null || printf 'test prompt {{TRANSCRIPT}}' > "$T/runes/archivist.md"
 mktranscript "$T/projects/-test-project/sess-timed.jsonl"  60 300000
 mktranscript "$T/projects/-test-project/sess-after-t.jsonl" 50 300000
 
@@ -451,9 +451,9 @@ esac
 
 # POSITIVE CONTROL: a genuine crash (rc=1) must still write failed and be excluded.
 # Without this, the test above passes even if we stopped excluding everything.
-rm -rf "$T/run" "$T/projects" "$T/home" "$T/chamber"
-mkdir -p "$T/home" "$T/run/archivist" "$T/projects/-test-project" "$T/chamber"
-cp "$HERE/chamber/archivist.md" "$T/chamber/" 2>/dev/null || printf 'test prompt {{TRANSCRIPT}}' > "$T/chamber/archivist.md"
+rm -rf "$T/run" "$T/projects" "$T/home" "$T/runes"
+mkdir -p "$T/home" "$T/run/archivist" "$T/projects/-test-project" "$T/runes"
+cp "$HERE/runes/archivist.md" "$T/runes/" 2>/dev/null || printf 'test prompt {{TRANSCRIPT}}' > "$T/runes/archivist.md"
 mktranscript "$T/projects/-test-project/sess-crash.jsonl" 60 300000
 
 CRASH_CLAUDE="$T/stub-claude-crash"
@@ -478,9 +478,9 @@ hasnt "a failed session is excluded from the next pass" "$clist" "archive"
 echo
 echo "after exhausting the retry budget, a timeout becomes failed"
 # ==========================================================================================
-rm -rf "$T/run" "$T/projects" "$T/home" "$T/chamber"
-mkdir -p "$T/home" "$T/run/archivist" "$T/projects/-test-project" "$T/chamber"
-cp "$HERE/chamber/archivist.md" "$T/chamber/" 2>/dev/null || printf 'test prompt {{TRANSCRIPT}}' > "$T/chamber/archivist.md"
+rm -rf "$T/run" "$T/projects" "$T/home" "$T/runes"
+mkdir -p "$T/home" "$T/run/archivist" "$T/projects/-test-project" "$T/runes"
+cp "$HERE/runes/archivist.md" "$T/runes/" 2>/dev/null || printf 'test prompt {{TRANSCRIPT}}' > "$T/runes/archivist.md"
 mktranscript "$T/projects/-test-project/sess-exhaust.jsonl" 60 300000
 
 # Plant a timeout_count file at budget-1 so the next timeout crosses the threshold.
@@ -608,7 +608,7 @@ echo "brief text: the archivist brief states the ask-rollup rule (sp-z6m7y)"
 # ==========================================================================================
 # The real brief, not a synthetic stand-in — a check against a hand-written excerpt would
 # pass even after the rule was deleted from what an archivist session actually reads.
-briefed="$(cat "$HERE/chamber/archivist.md")"
+briefed="$(cat "$HERE/runes/archivist.md")"
 # sp-st0mm: the archivist has no bd — the relates edge is `work relate`.
 has "the brief tells the archivist to use a relates edge for a rollup" \
     "$briefed" "work relate <rollup> <ask>"

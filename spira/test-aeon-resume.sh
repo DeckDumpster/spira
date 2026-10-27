@@ -74,25 +74,25 @@ git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
-export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
+export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/runes"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$SPIRA_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
 SPIRA_REPO_MAP="$TMP/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
-# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
-# point it at this suite's own fixture chamber explicitly.
-tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
+# SPIRA_RUNES_DIR no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture runes explicitly.
+tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
-cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH
-FAYTH_NAME=builder
-FAYTH_WORKING_EXITS="SUBMITTED ask park hold"
-FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
-FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL"
-FAYTH_MAX_CONCURRENT=1
-FAYTH_HEARTBEAT_SECONDS=600
-FAYTH
-printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
+cat > "$SPIRA_HOME/runes/builder.rune" <<RUNE
+RUNE_NAME=builder
+RUNE_WORKING_EXITS="SUBMITTED ask park hold"
+RUNE_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
+RUNE_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL"
+RUNE_MAX_CONCURRENT=1
+RUNE_HEARTBEAT_SECONDS=600
+RUNE
+printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/runes/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export TMP
 # The model session is restricted (sp-v62vn); the shim is a fixture — testlib aeon_fixture_agent.

@@ -25,7 +25,7 @@
 #
 # archivist's sweep, driven for real over a fabricated transcript that ctx-meter.sh measures
 # for real, with SPIRA_AGENT stubbed to do exactly what the real archivist's own brief
-# (chamber/archivist.md) tells it to: call `archivist mark <session> archiving <n>` as it
+# (runes/archivist.md) tells it to: call `archivist mark <session> archiving <n>` as it
 # files something. A sweep that crosses the top band sends no per-session note of its own — the
 # daily digest is the only path to the operator — so nothing here should ever reach the mailbox.
 #
@@ -203,8 +203,8 @@ echo
 echo "archivist: sweep over the top band sends no per-session note"
 
 ARC_SH=archivist   # invoked by name on the suite's PATH (sp-gypjk)
-mkdir -p "$TMP/arc-chamber" "$TMP/arc-run" "$TMP/arc-projects/-test-project"
-cp "$HERE/chamber/archivist.md" "$TMP/arc-chamber/"
+mkdir -p "$TMP/arc-runes" "$TMP/arc-run" "$TMP/arc-projects/-test-project"
+cp "$HERE/runes/archivist.md" "$TMP/arc-runes/"
 
 # mkarctranscript <path> <turns> <ctx> — same synthetic shape test-archivist uses, so
 # ctx-meter.sh measures a real (if fabricated) transcript rather than a hand-typed SP_CTX_*.
@@ -221,7 +221,7 @@ mkarctranscript() {
 # non-default SPIRA_ARCHIVIST_EVERY=10 below clears the sweep trigger with room to spare.
 mkarctranscript "$TMP/arc-projects/-test-project/sess-realsender.jsonl" 50 1100000
 
-# THE STUB DOES EXACTLY WHAT chamber/archivist.md TELLS A REAL ARCHIVIST TO DO: call
+# THE STUB DOES EXACTLY WHAT runes/archivist.md TELLS A REAL ARCHIVIST TO DO: call
 # `archivist mark <session> archiving <n>` as it files something. That write is what
 # turns items_filed from 0 to 1 — archive() deliberately never parses the model's own prose
 # for a count (see archivist's ITEMS COMES FROM THE STATE FILE comment).
@@ -236,13 +236,13 @@ chmod +x "$STUB_ARC_CLAUDE"
 
 before="$(unread)"
 # SPIRA_RUN/SPIRA_TOKEN_PROJECTS/SPIRA_CTX_WARN/SPIRA_CTX_HIGH/SPIRA_CTX_LIMIT/
-# SPIRA_ARCHIVIST_EVERY/SPIRA_ARCHIVIST_PER_PASS/SPIRA_ARCHIVIST_TIMEOUT/SPIRA_CHAMBER/
+# SPIRA_ARCHIVIST_EVERY/SPIRA_ARCHIVIST_PER_PASS/SPIRA_ARCHIVIST_TIMEOUT/SPIRA_RUNES_DIR/
 # SPIRA_AGENT are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via
 # tl_config, not the env prefix below, which no process reads them from any more.
 tl_config SPIRA_RUN="$TMP/arc-run" SPIRA_TOKEN_PROJECTS="$TMP/arc-projects" \
     SPIRA_CTX_WARN=200000 SPIRA_CTX_HIGH=400000 SPIRA_CTX_LIMIT=1000000 \
     SPIRA_ARCHIVIST_EVERY=10 SPIRA_ARCHIVIST_PER_PASS=1 SPIRA_ARCHIVIST_TIMEOUT=10 \
-    SPIRA_CHAMBER="$TMP/arc-chamber" SPIRA_AGENT="$STUB_ARC_CLAUDE" SPIRA_WIKI=
+    SPIRA_RUNES_DIR="$TMP/arc-runes" SPIRA_AGENT="$STUB_ARC_CLAUDE" SPIRA_WIKI=
 "$ARC_SH" sweep >/dev/null 2>&1
 after="$(unread)"
 

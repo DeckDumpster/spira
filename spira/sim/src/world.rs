@@ -910,7 +910,7 @@ pub fn home_settings(world: &Path, fixture: &str, bd: &Path) -> Vec<(String, Str
     vec![
         ("spira.bd".to_string(), bd.display().to_string()),
         ("spira.prod".to_string(), spira.display().to_string()),
-        ("spira.chamber".to_string(), spira.join("chamber").display().to_string()),
+        ("spira.runes_dir".to_string(), spira.join("runes").display().to_string()),
         ("spira.db".to_string(), bead_db(fixture).display().to_string()),
         ("spira.repo_map".to_string(), world.join(HOME).join(REGISTRY_ROWS).display().to_string()),
         ("spira.home_repo".to_string(), REPO_NAME.to_string()),

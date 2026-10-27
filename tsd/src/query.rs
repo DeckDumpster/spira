@@ -183,7 +183,7 @@ pub fn bead(src: &Source, id: &str) -> Result<Value, Failure> {
         out.push((text(r, "ts").unwrap_or("").to_string(), "stage", what, secs));
     }
     for r in src.rows("aeon-session", 0)?.iter().filter(|r| text(r, "bead") == Some(id)) {
-        out.push((text(r, "ts").unwrap_or("").to_string(), "aeon", format!("{} {}", text(r, "fayth").unwrap_or(""), text(r, "status").unwrap_or("")), num(r, "wall_s").map(|w| json!(int(w))).unwrap_or(Value::Null)));
+        out.push((text(r, "ts").unwrap_or("").to_string(), "aeon", format!("{} {}", text(r, "rune").unwrap_or(""), text(r, "status").unwrap_or("")), num(r, "wall_s").map(|w| json!(int(w))).unwrap_or(Value::Null)));
     }
     if let Some(gates) = optional(src.rows("gate-run", 0))? {
         for r in gates.iter().filter(|r| text(r, "bead") == Some(id)) {

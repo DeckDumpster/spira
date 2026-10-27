@@ -13,7 +13,7 @@
 //! — it never got a branch to land, so the normal close-on-land path never visited it.
 //!
 //! Both are dual-written (bd label AND the spira-lc `wait` hold, sp-ki12s precedent):
-//! `fayth_ready` still reads the label, not the hold, until CHECK 3b's reader cuts over.
+//! `rune_ready` still reads the label, not the hold, until CHECK 3b's reader cuts over.
 
 use std::collections::HashSet;
 

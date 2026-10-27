@@ -37,7 +37,7 @@ times.
 ### What it is deliberately NOT
 
 - **Not the summoner.** Lanes, the pool, the fleet ceiling, the express grant and the
-  elastic reservations are handled by `ck7_summon_pass`, `summon_fayth` and friends in
+  elastic reservations are handled by `ck7_summon_pass`, `summon_rune` and friends in
   lib.sh. That code is shared with `aeon --escape` and the aeon units, so it is reached through
   a seam (§6).
 - **Not the poison arithmetic.** Attempt, requeue and reclaim counts, and the CHECK 4
@@ -95,8 +95,8 @@ The format is `<YYYY-MM-DDTHH:MM:SSZ> spira: <msg>` (lib.sh `log`), in UTC.
 
 | line | parsed by |
 |---|---|
-| `state: open=<n> plan_ready=<n> in_progress=<n> aeons=<n> fayths=[<f …>]` | strand (`: state: open=` marks a pass start, `probe::PASS_MARKER`), heimdall/src/judge.rs, cockpit-collect metrics:64,75, chamber/czar.md |
-| `CHECK7 <fayth>: not evaluated (pass budget exhausted)` (the seam emits it) | strand probe.rs:363, strand.sh:369 |
+| `state: open=<n> plan_ready=<n> in_progress=<n> aeons=<n> runes=[<f …>]` | strand (`: state: open=` marks a pass start, `probe::PASS_MARKER`), heimdall/src/judge.rs, cockpit-collect metrics:64,75, runes/czar.md |
+| `CHECK7 <rune>: not evaluated (pass budget exhausted)` (the seam emits it) | strand probe.rs:363, strand.sh:369 |
 | `ACT <msg>` for every act/progress (`summoned a <f> aeon`, `invoked reflection`, `poisoned <id> after <n> attempts`, `reclaimed <n> stale lease(s)`, …) | cockpit-collect metrics:65,69, cockpit.sh:626 |
 | `pass complete — <a> action(s), <p> progress` | heimdall/src/judge.rs |
 | `summon-only pass complete — <a> action(s)` | nothing outside tests |
@@ -110,7 +110,7 @@ grep them. The exact strings are the ones §4 quotes; `src/tests.rs` pins the pa
 
 | path (under `$SPIRA_RUN`) | r/w | shape | who else |
 |---|---|---|---|
-| `ready-cache.XXXXXX` | w, removed at exit | the cache is `<fayth> <count>` lines | exported as `SPIRA_READY_CACHE` to every child (strand, the seams) |
+| `ready-cache.XXXXXX` | w, removed at exit | the cache is `<rune> <count>` lines | exported as `SPIRA_READY_CACHE` to every child (strand, the seams) |
 | `landing.dispatched` | w once, never overwritten | `<epoch>\n` | cockpit.sh reads landing.* |
 | `landing.status` | r | `SP_LAND_AT= SP_LAND_RC= SP_LAND_BRANCHES= SP_LAND_MOVED=` lines | written by `landing-pass land` |
 | `landing.progress`, `landing.progress.drain.<pid>` | drain-by-rename | one line per movement | written by `landing-pass land`/stage.sh |
@@ -119,7 +119,7 @@ grep them. The exact strings are the ones §4 quotes; `src/tests.rs` pins the pa
 | `poison-lifted/<id>` | r | last line = count lifted at | written by `spira-claim deadlocked` (via `groomer deadlocked`, spira-claim/DESIGN.md §9) |
 | `landstate/<id>` | r | `<STATE> <tip> …` | the landing pass |
 | `<id>.log` | existence (CHECK 5), trace tail (ask) | aeon session log | aeon.sh |
-| `roster-warn` stamp (`$SPIRA_ROSTER_WARN_STAMP`) | r/w | sorted excluded fayths | lib.sh |
+| `roster-warn` stamp (`$SPIRA_ROSTER_WARN_STAMP`) | r/w | sorted excluded runes | lib.sh |
 | `reflect.log` | append (reflect.sh output) | — | — |
 | `summon.lock` | flock (inside the CHECK 7 seam) | — | `aeon --escape` |
 | `.sentinel-tally.<pid>` | w/r/removed around each seam | `act\|progress<TAB>msg` lines (§6) | — |
@@ -188,9 +188,9 @@ environment has no effect.
 (`active` means in flight).
 
 **Aeon count:** `${SPIRA_SYSTEMCTL:-systemctl} --user list-units 'spira-aeon-*' --no-legend`
-when `SPIRA_SUMMON` is `systemd-run` (the default). A unit counts for fayth `f` iff its name
-starts `spira-aeon-<f>-`, which is the same match as the old per-fayth glob, in one call
-instead of one per fayth. Otherwise the fallback is live pidfiles
+when `SPIRA_SUMMON` is `systemd-run` (the default). A unit counts for rune `f` iff its name
+starts `spira-aeon-<f>-`, which is the same match as the old per-rune glob, in one call
+instead of one per rune. Otherwise the fallback is live pidfiles
 `$SPIRA_RUN/aeon-<f>-*.pid`: the pid exists and `/proc/<pid>/cmdline` contains `aeon.sh`.
 Dead ones are deleted, as `aeon_count` does.
 
@@ -233,7 +233,7 @@ names live as plain `Cfg` fields so a unit test can point one at a fixture.
 | `SPIRA_LAUNCH`, `SPIRA_SYSTEMCTL`, `SPIRA_SUMMON` | `systemd-run`, `systemctl`, `systemd-run` | test seams |
 | `SPIRA_SKIP_RECLAIM` | 0 | fixture fast path (skips the DB check, STATE, CHECK 2/2c/3) |
 | `SPIRA_LIFECYCLE_ENFORCE` | — | **retired** (sp-v62vn). Unset or on: nothing (on prints a deprecation warning). Anything else: the sentinel refuses to start, naming the exit (remove it) |
-| `SPIRA_FAYTHS` | the chamber | the roster (lib.sh `spira_fayths`, via the probe) |
+| `SPIRA_RUNES` | the runes | the roster (lib.sh `spira_runes`, via the probe) |
 | `SPIRA_SENTINEL_PASS_TARGET_SECS` | 60 | **new**: the full-pass budget WARN (§5) |
 | `SPIRA_SENTINEL_PASS_BUDGET_SECS` | 90 | CHECK 7's own budget, inside the seam |
 
@@ -344,12 +344,12 @@ struct LcRow { bead_id: String, state: String, holder: Option<String>,
 struct Context {
     env: Vec<(String, String)>,          // exported environment after sourcing lib.sh
     vars: BTreeMap<String, String>,      // fixed list of lib/conf variables (§6)
-    fayths: Vec<Fayth>,                  // spira_fayths order
-    partitions: Vec<Partition>,          // fayth_partitions (deduplicated by labels)
-    chamber: Vec<String>,                // fayth_names (for roster_warnings)
+    runes: Vec<Rune>,                  // spira_runes order
+    partitions: Vec<Partition>,          // rune_partitions (deduplicated by labels)
+    runes: Vec<String>,                // rune_names (for roster_warnings)
     repos: Vec<Repo>,                    // spira_repos with their resolution (CHECK 2d)
 }
-struct Fayth { name: String, labels: Vec<String>, exclude: Vec<String> }
+struct Rune { name: String, labels: Vec<String>, exclude: Vec<String> }
 struct Partition { labels: Vec<String>, exclude: Vec<String> }
 struct Repo { name: String, root: Option<PathBuf>, landrefs: Vec<String> /* [0] = base */,
               queued: bool }
@@ -385,9 +385,9 @@ pass writes them.
 **--summon-only.**
 
 1. S1 (the world gate and capacity, with the same `summon-only: …` lines).
-2. `live` summed over the fayths, logged as `summon-only: live=<n> fayths=[…]`.
-3. The ready cache, from `spira-claim bulk-ready-by-fayth`: the lifecycle machine's
-   READY/REWORK rows, bucketed per fayth. No `bd ready` call at all — neither the
+2. `live` summed over the runes, logged as `summon-only: live=<n> runes=[…]`.
+3. The ready cache, from `spira-claim bulk-ready-by-rune`: the lifecycle machine's
+   READY/REWORK rows, bucketed per rune. No `bd ready` call at all — neither the
    sentinel's nor spira-claim's (sp-v62vn); bd is read only for those beads' content.
 4. S2 (`ck7_summon_pass`).
 5. Log `summon-only pass complete — <a> action(s)` and exit 0.
@@ -417,7 +417,7 @@ pass writes them.
 Under SKIP_RECLAIM all four are 0 and empty.
 
 The pass then logs `state: …` and applies `roster_warnings`, ported: a WARN line per
-chamber fayth left out of SPIRA_FAYTHS, deduplicated by the stamp. `--report` then prints
+runes rune left out of SPIRA_RUNES, deduplicated by the stamp. `--report` then prints
 `\nOpen plan beads:\n` and one `  <id>` line per open plan bead (§9, B3), and exits 0.
 
 **CHECK 1 — completed pilgrimages.** Runs pilgrimage.sh as §2.5.
@@ -614,7 +614,7 @@ counter semantics lib.sh functions had when they ran in-process.
 
 | id | name | script body (after the prelude) | stdin | stdout |
 |---|---|---|---|---|
-| S0 | probe | `env -0`; then the NUL-separated sections `@vars` (fixed list: `SPIRA_POISON_ASKED SPIRA_REQUEUE_ASKED SPIRA_RECLAIM_ASKED SPIRA_POISON_LIFTED SPIRA_ROSTER_WARN_STAMP SPIRA_CAPACITY_PAUSE SPIRA_HOME_REPO_RESOLVED=$(spira_home_repo)`), `@fayths` (`spira_fayths`, each with `FAYTH_LABELS`/`FAYTH_EXCLUDE_LABELS` via `fayth_get`), `@partitions` (`fayth_partitions`), `@chamber` (`fayth_names`), and, when `SENTINEL_PROBE_REPOS=1`, `@repos` (`spira_repos`, each with `repo_root`, `spira_landrefs`, `repo_land_queued`) | — | parsed |
+| S0 | probe | `env -0`; then the NUL-separated sections `@vars` (fixed list: `SPIRA_POISON_ASKED SPIRA_REQUEUE_ASKED SPIRA_RECLAIM_ASKED SPIRA_POISON_LIFTED SPIRA_ROSTER_WARN_STAMP SPIRA_CAPACITY_PAUSE SPIRA_HOME_REPO_RESOLVED=$(spira_home_repo)`), `@runes` (`spira_runes`, each with `RUNE_LABELS`/`RUNE_EXCLUDE_LABELS` via `rune_get`), `@partitions` (`rune_partitions`), `@runes` (`rune_names`), and, when `SENTINEL_PROBE_REPOS=1`, `@repos` (`spira_repos`, each with `repo_root`, `spira_landrefs`, `repo_land_queued`) | — | parsed |
 | S1 | summon-gate | `world_gate fleet summon-only \|\| exit 1; if capacity_paused; then log "summon-only: account out of capacity for another ${SPIRA_CAPACITY_LEFT}s — not summoning"; exit 1; fi` | — | inherited (log) |
 | S2 | ck7 | `ck7_summon_pass` | — | inherited |
 | S3 | ~~land-escalate~~ | **retired (sp-31hjr):** `land_escalate` (and the `ask_already_open` dedupe it leans on) is native Rust now — `dispatch.rs::land_escalate`/`pass.rs::ask_already_open`, called in-process from CHECK 6. `sentinel --land-escalate` (stdin: line 1 = why, rest = evidence) drives it alone for the real-sender suites that used to source lib.sh directly. | — | — |
@@ -674,7 +674,7 @@ Line numbers are against this branch's base, `7ce25b21b`.
 | 5 | `systemd/spira-sentinel.service:6` | `Documentation=file://@SPIRA_HOME@/sentinel.sh` | `Documentation=file://@SPIRA_PROD_ROOT@/sentinel/DESIGN.md` |
 | 6 | `systemd/spira-summon.service:11` | `ExecStart=@SPIRA_PROD@/sentinel.sh --summon-only` | `ExecStart=@SPIRA_PROD_ROOT@/bin/sentinel --summon-only` |
 | 7 | `systemd/spira-summon.service:6` | `Documentation=file://@SPIRA_HOME@/sentinel.sh` | `Documentation=file://@SPIRA_PROD_ROOT@/sentinel/DESIGN.md` |
-| 8 | `spira/lib.sh:2570-2573` (`summon_refill_argv`) | `printf -- '--property=ExecStopPost=%s --user --collect --quiet %s --summon-only' "$bin" "$SPIRA_HOME/sentinel.sh"` | `printf -- '--property=ExecStopPost=%s --user --collect --quiet %s --summon-only' "$bin" "${SPIRA_SENTINEL_BIN:-$(spira_bin sentinel 2>/dev/null)}"`. Not `${…:?}`: that would kill summon_fayth's shell mid-summon. The binary finds its harness from its own path (§2.7), so no `--setenv` is needed. |
+| 8 | `spira/lib.sh:2570-2573` (`summon_refill_argv`) | `printf -- '--property=ExecStopPost=%s --user --collect --quiet %s --summon-only' "$bin" "$SPIRA_HOME/sentinel.sh"` | `printf -- '--property=ExecStopPost=%s --user --collect --quiet %s --summon-only' "$bin" "${SPIRA_SENTINEL_BIN:-$(spira_bin sentinel 2>/dev/null)}"`. Not `${…:?}`: that would kill summon_rune's shell mid-summon. The binary finds its harness from its own path (§2.7), so no `--setenv` is needed. |
 | 9 | `~/.config/systemd/user/spira-sentinel-prod.service.d/skip-check5-until-lifecycle-cutover.conf` | `Environment=SPIRA_SKIP_CLOSED_CHECK=1` | unchanged, but note it **starts taking effect** with this binary (§9, B1). Today CHECK 5 runs in the audit worker regardless: 979 `CHECK5` lines in `run/audit.log`, the last at 03:58Z 2026-09-29. Since sp-jnwbn CHECK 5 is deleted and the drop-in is dead weight; remove it. |
 
 Then `systemd/install.sh` (or `unit-ensure.sh`) re-renders, and `daemon-reload`.
@@ -702,7 +702,7 @@ Then `systemd/install.sh` (or `unit-ensure.sh`) re-renders, and `daemon-reload`.
 | # | file:line | current | replacement |
 |---|---|---|---|
 | 19 | `spira/sentinel.sh` | the component | delete |
-| 20 | (retired ready-bucket script) | — | **keep**: `bulk_ready_by_fayth` still feeds the watchtower crate's `--show`/sweep (idle-while-ready, via `seams::pipeline_probe`, sp-lnmbq). The sentinel buckets the cache in Rust (`summon::bucket`, a port of it). |
+| 20 | (retired ready-bucket script) | — | **keep**: `bulk_ready_by_rune` still feeds the watchtower crate's `--show`/sweep (idle-while-ready, via `seams::pipeline_probe`, sp-lnmbq). The sentinel buckets the cache in Rust (`summon::bucket`, a port of it). |
 
 **Bash tests to repoint or retire.** Each is either repointed at the binary
 (`"$SPIRA_SENTINEL_BIN"` for `bash "$SH/sentinel.sh"`, with a fixture that also puts the
@@ -736,7 +736,7 @@ named unit tests.
 - `test-lanes.sh:39`
 - `test-czar-pass.sh:287`
 - `test-wire-token.sh:35`
-- `test-fayth.sh`
+- `test-rune.sh`
 - `test-event-taxonomy.sh:61`
 - `test-timeout-lint.sh:58`
 

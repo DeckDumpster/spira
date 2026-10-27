@@ -3,7 +3,7 @@
 # warden-trigger.sh — file the scheduled sweep bead that wakes the warden persona.
 # At most one open sweep at a time: a lane with one slot and two sweeps only queues noise.
 #
-# covers: spira/warden-trigger.sh spira/chamber/warden.fayth spira/chamber/warden.md systemd/spira-warden.*
+# covers: spira/warden-trigger.sh spira/runes/warden.rune spira/runes/warden.md systemd/spira-warden.*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib.sh
@@ -62,7 +62,7 @@ file_sweep() {
         --silent \
         --label "$LABELS,delivers:note:${SPIRA_RUN}/warden.log" \
         --priority 3 \
-        --description "Scheduled sweep: the warden persona judges whether landed fixes are in force (filing a follow-up for any that are not) and attributes anomalies no probe could. See spira/chamber/warden.md."
+        --description "Scheduled sweep: the warden persona judges whether landed fixes are in force (filing a follow-up for any that are not) and attributes anomalies no probe could. See spira/runes/warden.md."
 }
 
 id=""

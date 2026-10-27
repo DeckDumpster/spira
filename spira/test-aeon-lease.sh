@@ -5,7 +5,7 @@
 #   (aeon_lease_minutes_table, aeon/src/trace.rs) now drives this suite's six cases (no
 #   lease file, a future deadline, a past deadline, an empty file, a non-numeric file, an
 #   empty bead id) directly against the function rather than through a bash sourcing shim.
-#   fayth_get (below) is unrelated to that family and is unaffected.
+#   rune_get (below) is unrelated to that family and is unaffected.
 #
 #   ./test-aeon-lease.sh
 #
@@ -13,11 +13,11 @@
 # two copies of aeon.sh's heartbeat subshell, one per suite, each re-deriving the same three
 # `if`s the tick actually runs.
 #
-# RETIRED (sp-j89pd, wave 4.2): fayth_lease_seconds, hb_wait_outcome and hb_tick (lib.sh) had
+# RETIRED (sp-j89pd, wave 4.2): rune_lease_seconds, hb_wait_outcome and hb_tick (lib.sh) had
 # zero live callers — the renew/lapse/thrash decision is now aeon::decide::hb_tick
 # (aeon/src/decide.rs), exercised by its own `hb_tick_table` unit test (whose comment names
 # this file and test-thrash.sh as the bash rows it replaces). The trip decision's T1 table
-# is deleted with them; fayth_get below is unaffected and stays.
+# is deleted with them; rune_get below is unaffected and stays.
 # UC-aeon-execution-08's statement (the lease renew/lapse/kill table) has no remaining bash
 # suite and is marked [use_case.uncovered] in docs/test-plan/aeon-execution.toml (see §13
 # there); UC-aeon-execution-09 (the thrash wall) stays covered by test-thrash.sh.
@@ -35,24 +35,24 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 echo
-echo "the shipped chamber fayths declare what the aeon actually enforces"
-# defect: every fayth declared FAYTH_LEASE_MINUTES beside a FAYTH_LEASE_SECONDS=600 that
+echo "the shipped runes runes declare what the aeon actually enforces"
+# defect: every rune declared RUNE_LEASE_MINUTES beside a RUNE_LEASE_SECONDS=600 that
 # silently overrode it — the builder's declared 90-minute lease was a 10-minute lease in
-# effect. Pinned against the real chamber files, not a fixture copy of them.
-tl_config SPIRA_RUN="$TMP/run" SPIRA_CHAMBER="$HERE/chamber"
+# effect. Pinned against the real runes files, not a fixture copy of them.
+tl_config SPIRA_RUN="$TMP/run" SPIRA_RUNES_DIR="$HERE/runes"
 fg() {
     env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" \
         SPIRA_TOML="$SPIRA_TOML" \
-        bash -c '. "$1"/lib.sh; fayth_get "$2" "$3" "$4"' _ "$HERE" "$1" "$2" "$3"
+        bash -c '. "$1"/lib.sh; rune_get "$2" "$3" "$4"' _ "$HERE" "$1" "$2" "$3"
 }
-is "builder.fayth declares a 90-minute lease" "90" "$(fg builder FAYTH_LEASE_MINUTES 10)"
-is "mimir.fayth declares a 70-minute lease" "70" "$(fg mimir FAYTH_LEASE_MINUTES 10)"
-is "spike.fayth declares a 60-minute lease"   "60" "$(fg spike FAYTH_LEASE_MINUTES 10)"
+is "builder.rune declares a 90-minute lease" "90" "$(fg builder RUNE_LEASE_MINUTES 10)"
+is "mimir.rune declares a 70-minute lease" "70" "$(fg mimir RUNE_LEASE_MINUTES 10)"
+is "spike.rune declares a 60-minute lease"   "60" "$(fg spike RUNE_LEASE_MINUTES 10)"
 for fy in builder czar groomer mimir ops spike; do
-    if grep -q '^FAYTH_LEASE_SECONDS=' "$HERE/chamber/$fy.fayth"; then
-        bad "$fy.fayth does not declare the dead FAYTH_LEASE_SECONDS key"
+    if grep -q '^RUNE_LEASE_SECONDS=' "$HERE/runes/$fy.rune"; then
+        bad "$fy.rune does not declare the dead RUNE_LEASE_SECONDS key"
     else
-        ok "$fy.fayth does not declare the dead FAYTH_LEASE_SECONDS key"
+        ok "$fy.rune does not declare the dead RUNE_LEASE_SECONDS key"
     fi
 done
 

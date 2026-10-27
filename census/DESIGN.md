@@ -1,7 +1,7 @@
 # census — Mimir census: failure classes ranked, with open-remedy suppression
 
 Replaces `spira/census.sh` (238 lines). One binary, `census`, the same `[--with-suppressed]`
-flag. Written from the script's intent and its caller (bd sp-yyk47: the Mimir chamber
+flag. Written from the script's intent and its caller (bd sp-yyk47: the Mimir runes
 brief's Step 1). The SQL stays in lib.sh; the classification pipeline is in-process (§2) —
 this crate is the bash orchestration around them, moved to Rust.
 
@@ -136,7 +136,7 @@ orphaned) plus the landed/unknown and landed-clean asymmetry (§3.2), and the
 `--with-suppressed` gate for both the suppression annotations and the trailing
 hand-written/deliberate blocks.
 
-The Mimir chamber brief (`spira/chamber/mimir.md`, `bash "{{SPIRA_HOME}}/census.sh"` →
+The Mimir runes brief (`spira/runes/mimir.md`, `bash "{{SPIRA_HOME}}/census.sh"` →
 `census`) and `spira/mimir-trigger.sh`'s comments naming `census.sh` are repointed in this
 same change; see the bead's report for the full caller list.
 

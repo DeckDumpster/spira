@@ -19,7 +19,7 @@
 # code and {{SPIRA_HOME}} as invoke-only, now opens ops.md before "The loop" ever shows a
 # {{SPIRA_HOME}}-rooted command.
 #
-# This is a static text-order check, not a runtime guard: it reads the chamber persona
+# This is a static text-order check, not a runtime guard: it reads the runes persona
 # template, not a live session (law-a-matcher-reads-code-not-prose still applies — the
 # check is on the file the model is actually handed, not a paraphrase of it).
 #
@@ -27,11 +27,11 @@
 # production-path example must fail (SEEN RED) before the real file's order is trusted.
 #
 # tier: T0
-# covers: spira/chamber/ops.md
+# covers: spira/runes/ops.md
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
-OPS_MD="$HERE/chamber/ops.md"
+OPS_MD="$HERE/runes/ops.md"
 
 [ -f "$OPS_MD" ] || { printf 'FATAL: ops.md not found at %s\n' "$OPS_MD" >&2; exit 1; }
 

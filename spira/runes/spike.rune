@@ -1,0 +1,70 @@
+# spike.rune — the Spike persona: researches ONE question to a costed document, and
+# carries no conversation.
+#
+# A rune is a persona DEFINITION; an aeon is one summoned instance of it. Four things: a
+# predicate carving its partition out of the graph, the memories it must read, the tools it
+# may use, and what wakes it.
+#
+# WHY THIS PERSONA EXISTS AT ALL, given that the builder could do the reading. Feasibility
+# research is the worst possible thing to do inside a long-lived session: it reads heavily,
+# and almost nothing it reads is needed once the question is answered — only the conclusion
+# is. Yet every page fetched stays in context and is re-read on every later turn for the rest
+# of that session. Measured on the box this was written for: more than half of all context
+# spend happened in turns already carrying 600k+ tokens, and a saturated session cost about
+# sixteen times a fresh one per turn for identical work. A spike is exactly the shape of work
+# that pushes a session into that band and then makes everything after it pay.
+#
+# A spike aeon starts at the floor, reads what it needs, writes one document, and exits. The
+# conversation gets the document, not the reading.
+
+RUNE_NAME=spike
+RUNE_DESC="Spike — researches one question to a costed feasibility document"
+
+# The partition. AND-labels, like every other persona: this can only ever see beads
+# deliberately marked as spike work. The label is a configured key rather than a literal
+# because it is read in four places, and a literal in four files is how four programs come to
+# disagree about which beads exist.
+RUNE_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_SPIKE_LABEL"
+RUNE_EXCLUDE_LABELS="$SPIRA_CI_LABEL"
+
+# Statutes only, as the builder reads. A spike executes no runbook.
+RUNE_MEMORY_PREFIXES="law-"
+
+# NO RUNE_REPO. The repository comes from the BEAD, through its `repo:<name>` label, exactly
+# as it does for every other persona — a spike into one repository's problem is written up in
+# that repository, and a spike with no `repo:` label is the home repo.
+# SEED ONLY (sp-zs04v.4): the live value is persona.spike.model in spira.toml,
+# resolved by lib.sh's persona_model — this line only seeds that table on first
+# convert and is no longer read at launch.
+RUNE_MODEL=claude-opus-5
+
+# ONE. A spike is not throughput work: its output is a decision, and two aeons answering two
+# questions at once buys nothing that answering them in sequence does not, while competing
+# for the same account capacity as the builders who are actually landing code.
+RUNE_MAX_CONCURRENT=1
+
+# LONGER THAN THE BUILDER'S HEARTBEAT WINDOW WOULD SUGGEST, and deliberately. Research is
+# bursty: a spike can spend twenty minutes inside one fetch-and-read cycle producing no
+# observable file change, which is precisely the shape the stall detector is built to end.
+# The lease is what a reaper measures against, so it must comfortably exceed a long read.
+RUNE_LEASE_MINUTES=60
+RUNE_HEARTBEAT_SECONDS=30
+
+# THE FULL TOOLSET, INCLUDING Bash AND Edit. The first draft of this persona withheld both so
+# that a spike could not start implementing, and that was wrong in a way worth naming: for
+# most interesting questions the only honest answer to "is this feasible" comes from trying
+# it. A spike that may not build cannot tell "this is hard" from "I could not find out", and
+# would report the second as the first.
+#
+# THE DISCIPLINE IS IN THE DELIVERABLE, NOT IN THE TOOL LIST. A spike is closed by its
+# document, never by its code; a proof of concept is evidence for that document, kept on a
+# branch of its own and named in it. A spike may leave a branch and must not leave a merge:
+# RUNE_WORKING_EXITS gives it DONE and not SUBMITTED, so nothing it builds reaches a queue.
+RUNE_TOOLS="Bash,Read,Edit,Write,Glob,Grep,TodoWrite,WebSearch,WebFetch"
+RUNE_PROJECT_INSTRUCTIONS=repo
+
+# APPEND: the spike writes code proofs-of-concept, so the coding guidance stays.
+RUNE_SYSTEM_PROMPT=append
+
+# The states a bead claimed by this rune may leave WORKING for; spira-lc refuses any other.
+RUNE_WORKING_EXITS="DONE ask park hold"

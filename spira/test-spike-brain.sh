@@ -2,7 +2,7 @@
 # test-spike-brain.sh — brain updates fail loudly, and the spike persona keeps non-schema pages out of wiki/.
 #
 # tier: T1
-# covers: spira/export-beads.sh spira/wiki-commit.sh spira/chamber/spike.md
+# covers: spira/export-beads.sh spira/wiki-commit.sh spira/runes/spike.md
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -47,7 +47,7 @@ r=$(echo page.md | bash "$HERE/wiki-commit.sh" "$WIKI" msg 2>&1); rc=$?
 [ "$rc" -ne 0 ] && ok "wiki-commit exits non-zero on a rejected update" || bad "wiki-commit swallowed the rejection"
 want "wiki-commit names the rejection" "REJECTED" "$r"
 
-SPIKE="$(cat "$HERE/chamber/spike.md")"
+SPIKE="$(cat "$HERE/runes/spike.md")"
 want "spike keeps sources in raw/" "raw/spira-spikes/" "$SPIKE"
 want "spike lints before committing" "frontmatter.py" "$SPIKE"
 case "$SPIKE" in *'.sources/'*) bad "spike still puts sources under wiki/";; *) ok "no sources dir under wiki/";; esac

@@ -743,7 +743,7 @@ purpose = "health's terminal-size probe for its own pane (falls back to $LINES/$
 version_min = ""
 version_probe = "stty --version"
 
-# COMPAT NAMES (sp-6onps-compat, the P0 this closes). The operator surface — chamber
+# COMPAT NAMES (sp-6onps-compat, the P0 this closes). The operator surface — runes
 # briefs, skills, every test suite not yet repointed — still spells several retired bash
 # scripts by their old `.sh` name. Both release-building paths (spira/build-tarball.sh,
 # and release/src/build.rs's `release build`/`release stage`, the path `queue land-local`

@@ -19,7 +19,7 @@ RUN="$TMP/run"; mkdir -p "$RUN"
 LOG="$TMP/lc.log"
 lc_mirror_bd "$TMP/lc"
 tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
-    SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL=spira SPIRA_ASK_LABEL=needs-ryan SPIRA_CHAMBER="$HERE/chamber"
+    SPIRA_RUNES=builder SPIRA_SCOPE_LABEL=spira SPIRA_ASK_LABEL=needs-ryan SPIRA_RUNES_DIR="$HERE/runes"
 
 python3 -I - "$TMP/store.json" <<'PY'
 import json, sys

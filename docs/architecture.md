@@ -9,7 +9,7 @@
                   +---+-----------------------------------------------------------+
                       |
  operator / Concierge |                                       aeon unit (transient)
- (mail, panes) -files-+--> bead.sh / work file               spira-aeon-<fayth>-<n>
+ (mail, panes) -files-+--> bead.sh / work file               spira-aeon-<rune>-<n>
       ^               |        |                             +------------------+
       | escalations   v        v                             | aeon (runner)    |
       |         +-------------------------+  claim / renew   |  claude -p ...   |

@@ -8,7 +8,7 @@
 # THE FAILURE THIS SUITE EXISTS FOR. Beads were poisoned without their work having been tried
 # once. Three separate defects composed into it, and each has a case below:
 #
-#   1. `bd unclaim --if-assignee` was passed the FAYTH's name while the claim records the
+#   1. `bd unclaim --if-assignee` was passed the RUNE's name while the claim records the
 #      AEON's, so the compare-and-swap could never match and a dying aeon never released its
 #      bead.
 #   2. The teardown ran under `set -e`, so that failing unclaim ended the shell inside its own
@@ -226,7 +226,7 @@ lc_holder() { lcfix_sql -q "SELECT IFNULL(holder,'') FROM bead WHERE bead_id='$1
 is "the fixture holds the bead under the aeon's name" "WORKING aeon-cindy" "$(lcfix_state sp-r1) $(lc_holder sp-r1)"
 
 if BEADS_ACTOR=aeon-builder release_own_claim sp-r1; then r=0; else r=1; fi
-is "releasing as the fayth fails"        1                    "$r"
+is "releasing as the rune fails"        1                    "$r"
 is "and leaves the bead held"            "WORKING aeon-cindy" "$(lcfix_state sp-r1) $(lc_holder sp-r1)"
 
 if BEADS_ACTOR=aeon-cindy release_own_claim sp-r1; then r=0; else r=1; fi

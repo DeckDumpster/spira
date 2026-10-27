@@ -1,4 +1,4 @@
-/// Read verbs: synchronous, no fayth restriction.
+/// Read verbs: synchronous, no rune restriction.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ReadVerb {
     RunView,
@@ -18,10 +18,10 @@ impl ReadVerb {
 
 }
 
-/// Fayth x verb for `identity-login-code`: the pilgrim and nobody else; an unknown or empty
-/// fayth is refused.
-pub fn allows_login_code(fayth: &str) -> bool {
-    fayth == "pilgrim"
+/// Rune x verb for `identity-login-code`: the pilgrim and nobody else; an unknown or empty
+/// rune is refused.
+pub fn allows_login_code(rune: &str) -> bool {
+    rune == "pilgrim"
 }
 
 #[cfg(test)]

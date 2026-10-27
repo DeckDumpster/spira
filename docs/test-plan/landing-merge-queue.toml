@@ -329,7 +329,7 @@ bead = "sp-94lbj.2"
 [[use_case]]
 id = "UC-landing-merge-queue-55"
 tier = "T1"
-statement = "The broker refuses verbs outside its policy table, and refuses czar-only verbs from any other fayth, without calling gh. Shadow mode records CZAR-WOULD. Act mode executes and audits. The read verbs shape gh argv exactly."
+statement = "The broker refuses verbs outside its policy table, and refuses czar-only verbs from any other rune, without calling gh. Shadow mode records CZAR-WOULD. Act mode executes and audits. The read verbs shape gh argv exactly."
 
 [[use_case]]
 id = "UC-landing-merge-queue-56"
