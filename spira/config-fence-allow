@@ -29,7 +29,7 @@ spira/chamber/czar.fayth
 spira/chamber/disabled/qa.fayth
 spira/chamber/groomer.fayth
 spira/chamber/groomer.md
-spira/chamber/maechen.fayth
+spira/chamber/mimir.fayth
 spira/chamber/ops.fayth
 spira/chamber/spike.fayth
 spira/configure.sh
@@ -46,7 +46,7 @@ spira/incident.sh
 spira-lc/src/repo_config.rs
 spira/lib.sh
 spira/lib-test-install.sh
-spira/maechen-trigger.sh
+spira/mimir-trigger.sh
 spira/pre-activate.sh
 spira/pr-notify.sh
 spira/publish-backlog.sh
@@ -138,7 +138,7 @@ spira/testlib/gate-fixture.sh
 spira/testlib.sh
 spira/test-lifecycle-classify.sh
 spira/test-livelock.sh
-spira/test-maechen-trigger.sh
+spira/test-mimir-trigger.sh
 spira/test-mail-aeon.sh
 spira/test-ops-closing.sh
 spira/test-park-unmapped.sh

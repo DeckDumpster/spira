@@ -307,7 +307,7 @@ fn s(strs: &[&str]) -> Vec<String> {
 /// `FAYTH_LABELS`, plainly evaluated — delegates to `spira_config::chamber::fayth_get`
 /// (sp-xsnid retired this crate's OWN hand-rolled bash-bridge, which carried an
 /// independently-drifted three-key label overlay — `SPIRA_CZAR_LABEL`/
-/// `SPIRA_GROOMER_LABEL`/`SPIRA_MAECHEN_LABEL` only, never `SPIRA_INCIDENT_LABEL`/
+/// `SPIRA_GROOMER_LABEL`/`SPIRA_MIMIR_LABEL` only, never `SPIRA_INCIDENT_LABEL`/
 /// `SPIRA_SPIKE_LABEL`/`SPIRA_PLAN_LABEL`/`SPIRA_SCOPE_LABEL`/`SPIRA_ASK_LABEL`/
 /// `SPIRA_CI_LABEL` — a SECOND hand-curated list with its own gaps, on top of
 /// `spira-config`'s own five-key one). For REPORTING call sites only (`bead contract`,

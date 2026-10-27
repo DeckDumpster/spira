@@ -56,7 +56,7 @@ reclaim_event() { _bump_write_event "${1:-}" reclaimed "${2:-unrecorded}"; }
 
 CENSUS="$(command -v census)"
 B() { timeout 5 bd -C "$SPIRA_DB" "$@"; }
-REMEDY_LABEL=maechen-remedy
+REMEDY_LABEL=mimir-remedy
 
 # A REMEDY'S STATE IS ITS LIFECYCLE ROW (sp-mve9i, design §3.4): census lists the covers:
 # beads from bd as content and splits them by `spira-lc list`; "LANDED" is asked with
@@ -80,7 +80,7 @@ STUB
 chmod +x "$TMP/spira-lc-stub"
 
 run_census() {
-    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL" \
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_MIMIR_REMEDY_LABEL="$REMEDY_LABEL" \
         SPIRA_RUN="${_CENSUS_RUN:-$TMP/no-run}"
     env SPIRA_LC_BIN="$TMP/spira-lc-stub" \
         SPIRA_CONF="$TMP/no-conf" \
@@ -90,7 +90,7 @@ run_census() {
 
 run_census_repo() {  # run_census_repo <repo-path> [census-args...]
     local _rp="$1"; shift
-    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL"
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_MIMIR_REMEDY_LABEL="$REMEDY_LABEL"
     env SPIRA_LC_BIN="$TMP/spira-lc-stub" \
         SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$HERE" \
@@ -161,7 +161,7 @@ echo "2b. sp-eiatd: queue.sh eject is a deliberate reopen cause — counted, nev
 # ==============================================================================
 # The census aeon's own evidence (sp-eiatd): a correctly-attributed queue.sh eject is the
 # system working (law-a-deliberate-state-is-not-a-fault), not a failure class. Before the
-# fix, sp-reopen-eject competed for the top unsuppressed Maechen slot alongside genuine
+# fix, sp-reopen-eject competed for the top unsuppressed Mimir slot alongside genuine
 # defects. PAIRED WITH A NON-DELIBERATE CAUSE (law-absence-needs-a-positive-control): if
 # this just emptied the ranked list rather than discriminating on cause, gate-red would
 # vanish too — it must not.
@@ -186,7 +186,7 @@ echo
 echo "3. since-filter reaches the real SQL (watermark narrows the query)"
 # ==============================================================================
 # A stale event (before the watermark) and a live one (after) — the since-watermark
-# query must see only the live one, proving SPIRA_RUN/maechen.watermark really reaches
+# query must see only the live one, proving SPIRA_RUN/mimir.watermark really reaches
 # census_event_rows_run_sql's since-clause and not just cluster_merge's ranking
 # (table-tested separately in test-census-pipeline.sh).
 testdb_reset
@@ -200,7 +200,7 @@ bid_live="$(plant_bead "live-watermark-bead")"
 recur_event "$bid_live" live-class
 
 _CENSUS_RUN="$TMP/wm-run"; mkdir -p "$_CENSUS_RUN"
-printf '1500000000\n' > "$_CENSUS_RUN/maechen.watermark"
+printf '1500000000\n' > "$_CENSUS_RUN/mimir.watermark"
 out3="$(run_census)"
 unset _CENSUS_RUN
 want "since-filter: live class counted since the watermark" "1 sp-recur-live-class (1 victims, 1 detections, 1 all-time)" "$out3"
@@ -244,7 +244,7 @@ git init -q "$FIXTURE_REPO" \
 
 
 run_census_fixture() {
-    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL"
+    tl_config SPIRA_DB="$SPIRA_DB" SPIRA_MIMIR_REMEDY_LABEL="$REMEDY_LABEL"
     env SPIRA_LC_BIN="$TMP/spira-lc-stub" \
         SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$HERE" \

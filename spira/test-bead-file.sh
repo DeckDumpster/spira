@@ -34,7 +34,7 @@ ln -s "$HERE/conf.d" "$T/conf.d"
 tl_config SPIRA_CHAMBER="$T/chamber"
 
 # ---------------------------------------------------------------------------
-# FAKE FAYTHS. builder (plan lane), maechen (maechen-sweep lane), empty (no labels).
+# FAKE FAYTHS. builder (plan lane), mimir (mimir-sweep lane), empty (no labels).
 # ---------------------------------------------------------------------------
 cat > "$T/chamber/builder.fayth" <<'FAYTH'
 FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan}"
@@ -42,8 +42,8 @@ FAYTH_TOOLS="Bash,Edit,Write"
 FAYTH_MODEL=claude-sonnet-5
 FAYTH_MAX_CONCURRENT=4
 FAYTH
-cat > "$T/chamber/maechen.fayth" <<'FAYTH'
-FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_MAECHEN_LABEL:-maechen-sweep}"
+cat > "$T/chamber/mimir.fayth" <<'FAYTH'
+FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_MIMIR_LABEL:-mimir-sweep}"
 FAYTH_TOOLS="Bash"
 FAYTH_MODEL=claude-haiku-4-5-20251001
 FAYTH_MAX_CONCURRENT=1
@@ -56,7 +56,7 @@ FAYTH_MAX_CONCURRENT=1
 FAYTH
 
 # ---------------------------------------------------------------------------
-# REPO MAP. testrepo is plan-only (default); dev-repo is develop (no maechen-sweep);
+# REPO MAP. testrepo is plan-only (default); dev-repo is develop (no mimir-sweep);
 # self-repo admits every lane.
 # ---------------------------------------------------------------------------
 mkdir -p "$T/testrepo"
@@ -111,7 +111,7 @@ chmod +x "$STUB_LC"
 TOOLS="$(command -v spira-config)" && TOOLS="$(dirname "$TOOLS")"
 
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/db" SPIRA_REPO_MAP="$T/repo-map" \
-    SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_GROOMER_LABEL="groom" \
+    SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_GROOMER_LABEL="groom" \
     SPIRA_SPIKE_LABEL="spike" SPIRA_CZAR_LABEL="czar-trigger" \
     SPIRA_INCIDENT_LABEL="incident" SPIRA_PLAN_LABEL="plan" \
     SPIRA_SUBMITTED_LABEL="testsubmitted" SPIRA_SCOPE_LABEL="testscope"
@@ -276,20 +276,20 @@ nowant "unmapped repo (event): bd create NOT called" "create"   "$(cat "$BD_LOG"
 # =====================================================================================
 # D1/UC-dispatch-03: lane admission guard
 # =====================================================================================
-out="$(run_bead "maechen sweep pass" --for maechen --repo self-repo)"; rc=$?
+out="$(run_bead "mimir sweep pass" --for mimir --repo self-repo)"; rc=$?
 is   "self-repo: exits 0"          "0"      "$rc"
 want "self-repo: bd create called" "create" "$(cat "$BD_LOG")"
 
 # POSITIVE CONTROL proved above: the check can pass. Now prove it refuses.
-out="$(run_bead "maechen sweep pass" --for maechen --repo dev-repo)"; rc=$?
+out="$(run_bead "mimir sweep pass" --for mimir --repo dev-repo)"; rc=$?
 is     "dev-repo: exits non-zero"             "2"                        "$rc"
 want   "dev-repo: names repo in message"      "dev-repo"                 "$out"
-want   "dev-repo: names lane in message"      "maechen-sweep"            "$out"
+want   "dev-repo: names lane in message"      "mimir-sweep"            "$out"
 want   "dev-repo: names refusing declaration" "admitted lanes"           "$out"
 want   "dev-repo: names override variable"    "SPIRA_BEAD_LANE_OVERRIDE" "$out"
 nowant "dev-repo: bd create NOT called"       "create"                   "$(cat "$BD_LOG")"
 
-out="$(SPIRA_BEAD_LANE_OVERRIDE=1 run_bead "maechen sweep pass" --for maechen --repo dev-repo)"; rc=$?
+out="$(SPIRA_BEAD_LANE_OVERRIDE=1 run_bead "mimir sweep pass" --for mimir --repo dev-repo)"; rc=$?
 is   "override: exits 0"          "0"      "$rc"
 want "override: bd create called" "create" "$(cat "$BD_LOG")"
 

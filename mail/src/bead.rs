@@ -777,7 +777,7 @@ mod after_create_not_discarded {
             ("gh-intake", include_str!("../../gh-intake/src/real.rs")),
             ("groomer", include_str!("../../groomer/src/bd.rs")),
             ("incident", include_str!("../../incident/src/real.rs")),
-            ("maechen-trigger", include_str!("../../maechen-trigger/src/real.rs")),
+            ("mimir-trigger", include_str!("../../mimir-trigger/src/real.rs")),
             ("mail", include_str!("bead.rs")),
             ("bdq", include_str!("../../bead/src/bin/bdq.rs")),
         ];

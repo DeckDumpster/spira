@@ -47,14 +47,14 @@ ASK=needs-decision
 CI=ci-parked
 GROOM_ASK=parked-for-ryan
 
-# Small chamber: builder (plan), ops (incident), groom (groom), maechen (maechen-sweep) and
+# Small chamber: builder (plan), ops (incident), groom (groom), mimir (mimir-sweep) and
 # spike (spike). Mirrors chamber/*.fayth's FAYTH_LABELS/FAYTH_EXCLUDE_LABELS shape without
 # reading the real chamber files, so the fixture cannot drift silently with a chamber edit.
 EXC="spira-poison,${ASK},${CI}"
 FULL_PARTS="builder|${SCOPE},plan|${EXC}
 ops|${SCOPE},incident|${EXC}
 groom|${SCOPE},groom|${EXC}
-maechen|${SCOPE},maechen-sweep|${EXC}
+mimir|${SCOPE},mimir-sweep|${EXC}
 spike|${SCOPE},spike|${EXC}
 "
 # Narrowed roster (as SPIRA_FAYTHS="builder spike" would produce): only two personas active.
@@ -141,12 +141,12 @@ want "otherwise-identical bead without the label is still flagged (positive cont
 
 echo
 echo "case 10 — parked partition: bead claimable by a parked fayth is silent (not UNCLAIMABLE)"
-# NARROW_PARTS omits ops/groom/maechen from the active roster; FULL_PARTS is still the
-# chamber, so a bead in ops's or maechen's partition is WAITING, not UNCLAIMABLE.
-out="$(classify "[$(bead sp-unc10a incident), $(bead sp-unc10b maechen-sweep), $(bead sp-unc10c "")]" \
+# NARROW_PARTS omits ops/groom/mimir from the active roster; FULL_PARTS is still the
+# chamber, so a bead in ops's or mimir's partition is WAITING, not UNCLAIMABLE.
+out="$(classify "[$(bead sp-unc10a incident), $(bead sp-unc10b mimir-sweep), $(bead sp-unc10c "")]" \
     "$NARROW_PARTS" "$FULL_PARTS")"
 nowant "parked ops bead not reported UNCLAIMABLE"     "sp-unc10a"             "$out"
-nowant "parked maechen bead not reported UNCLAIMABLE" "sp-unc10b"             "$out"
+nowant "parked mimir bead not reported UNCLAIMABLE" "sp-unc10b"             "$out"
 want   "truly unclaimable bead still reported"        "UNCLAIMABLE sp-unc10c" "$out"
 
 echo

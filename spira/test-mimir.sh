@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 #
-# test-maechen.sh — maechen.fayth and chamber/maechen.md: the retrospective persona
+# test-mimir.sh — mimir.fayth and chamber/mimir.md: the retrospective persona
 #   and its brief encode the five-step pass, the three-occurrence threshold, the
 #   four-property output bar, and the per-pass output bound.
 #
-#   ./test-maechen.sh
+#   ./test-mimir.sh
 #
 # WHAT THIS SUITE GUARDS
 # ----------------------
-# maechen.fayth must declare a lane so it draws from its own capacity rather than the
+# mimir.fayth must declare a lane so it draws from its own capacity rather than the
 # task pool, and must not set an assignee.
 #
-# maechen.md must explicitly encode all four items the bead requires. The test checks
+# mimir.md must explicitly encode all four items the bead requires. The test checks
 # by grep so it fails if a future edit removes any of the required properties.
 #
-# conf.sh must declare SPIRA_MAECHEN_* keys with correct defaults, and the maechen
+# conf.sh must declare SPIRA_MIMIR_* keys with correct defaults, and the mimir
 # lane must appear in SPIRA_LANES.
 #
 # POSITIVE CONTROL (law-absence-needs-a-positive-control)
@@ -24,7 +24,7 @@
 # four of the other checks; the "positive control" grep is the one that fails.
 #
 # tier: T0
-# covers: spira/chamber/maechen.fayth spira/chamber/maechen.md spira/conf.sh UC-ops-detection-remediation-17
+# covers: spira/chamber/mimir.fayth spira/chamber/mimir.md spira/conf.sh UC-ops-detection-remediation-17
 # hermetic-ok: no database, no systemd; reads files only
 # scar: unrecorded
 set -uo pipefail
@@ -35,8 +35,8 @@ lack() { case "$3" in *"$2"*) bad "$1" "did not want [$2] in output" ;; *) ok "$
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 NONE="$T/no-such.conf"
-FAYTH="$HERE/chamber/maechen.fayth"
-BRIEF="$HERE/chamber/maechen.md"
+FAYTH="$HERE/chamber/mimir.fayth"
+BRIEF="$HERE/chamber/mimir.md"
 
 # SPIRA_CONFIG_DIR: the directory holding spira-config on THIS invocation's own PATH, so
 # the stripped-down PATH built for run_conf below can still find it — conf.sh now refuses
@@ -53,46 +53,46 @@ run_conf() {
         bash -c ". '$HERE/conf.sh' && $1" 2>/dev/null
 }
 
-echo "test-maechen.sh"
+echo "test-mimir.sh"
 
 # ==========================================================================================
 echo
-echo "maechen.fayth — file exists"
+echo "mimir.fayth — file exists"
 # ==========================================================================================
-if [ -f "$FAYTH" ]; then ok "maechen.fayth exists"; else bad "maechen.fayth" "not found at $FAYTH"; fi
+if [ -f "$FAYTH" ]; then ok "mimir.fayth exists"; else bad "mimir.fayth" "not found at $FAYTH"; fi
 
 # ==========================================================================================
 echo
-echo "maechen.md — file exists"
+echo "mimir.md — file exists"
 # ==========================================================================================
-if [ -f "$BRIEF" ]; then ok "maechen.md exists"; else bad "maechen.md" "not found at $BRIEF"; fi
+if [ -f "$BRIEF" ]; then ok "mimir.md exists"; else bad "mimir.md" "not found at $BRIEF"; fi
 
 # ==========================================================================================
 echo
-echo "maechen.fayth — FAYTH_LANE=maechen (draws from own capacity, not the task pool)"
+echo "mimir.fayth — FAYTH_LANE=mimir (draws from own capacity, not the task pool)"
 # ==========================================================================================
 lane="$(run_conf ". '$FAYTH' && printf '%s' \"\${FAYTH_LANE:-}\"")"
-is "FAYTH_LANE=maechen" "maechen" "$lane"
+is "FAYTH_LANE=mimir" "mimir" "$lane"
 
 # ==========================================================================================
 echo
-echo "maechen.fayth — no FAYTH_ASSIGNEE set (partition labels come from predicate only)"
+echo "mimir.fayth — no FAYTH_ASSIGNEE set (partition labels come from predicate only)"
 # ==========================================================================================
 assignee="$(run_conf ". '$FAYTH' && printf '%s' \"\${FAYTH_ASSIGNEE:-UNSET}\"")"
 is "FAYTH_ASSIGNEE is not set" "UNSET" "$assignee"
 
 # ==========================================================================================
 echo
-echo "maechen.fayth — FAYTH_EXCLUDE_LABELS names no hold label (poison/ask are lifecycle holds, sp-psztcc)"
+echo "mimir.fayth — FAYTH_EXCLUDE_LABELS names no hold label (poison/ask are lifecycle holds, sp-psztcc)"
 # ==========================================================================================
 excl="$(run_conf ". '$FAYTH' && printf '%s' \"\${FAYTH_EXCLUDE_LABELS:-}\"")"
 nowant "FAYTH_EXCLUDE_LABELS names no spira-poison" "spira-poison" "$excl"
 
 # ==========================================================================================
 echo
-echo "spira_fayths — maechen appears in the persona roster"
+echo "spira_fayths — mimir appears in the persona roster"
 # ==========================================================================================
-# POSITIVE CONTROL: enumerating chamber/*.fayth discovers maechen automatically; this fails
+# POSITIVE CONTROL: enumerating chamber/*.fayth discovers mimir automatically; this fails
 # if the file is removed or renamed.
 export SPIRA_HOME="$HERE"
 export SPIRA_CONF="$NONE"
@@ -102,45 +102,45 @@ export SPIRA_RUN="$T"
 tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_CHAMBER="$HERE/chamber"
 . "$HERE/lib.sh"
 roster="$(spira_fayths)"
-want "maechen appears in spira_fayths" "maechen" "$roster"
+want "mimir appears in spira_fayths" "mimir" "$roster"
 want "builder also appears (roster is not empty)"  "builder"  "$roster"
 
 # ==========================================================================================
 echo
-echo "conf.sh — SPIRA_MAECHEN_LABEL is in the key list and defaults to maechen-sweep"
+echo "conf.sh — SPIRA_MIMIR_LABEL is in the key list and defaults to mimir-sweep"
 # ==========================================================================================
 keys="$(run_conf 'printf "%s" "$SPIRA_CONF_KEYS"')"
-want "SPIRA_MAECHEN_LABEL is in the key list"           "SPIRA_MAECHEN_LABEL"           "$keys"
-want "SPIRA_MAECHEN_REMEDY_LABEL is in the key list"    "SPIRA_MAECHEN_REMEDY_LABEL"    "$keys"
-want "SPIRA_MAECHEN_LANDING_INTERVAL is in the key list" "SPIRA_MAECHEN_LANDING_INTERVAL" "$keys"
-want "SPIRA_MAECHEN_MAX_GAP_SECONDS is in the key list" "SPIRA_MAECHEN_MAX_GAP_SECONDS" "$keys"
-want "SPIRA_MAECHEN_MAX_BEADS is in the key list"       "SPIRA_MAECHEN_MAX_BEADS"       "$keys"
+want "SPIRA_MIMIR_LABEL is in the key list"           "SPIRA_MIMIR_LABEL"           "$keys"
+want "SPIRA_MIMIR_REMEDY_LABEL is in the key list"    "SPIRA_MIMIR_REMEDY_LABEL"    "$keys"
+want "SPIRA_MIMIR_LANDING_INTERVAL is in the key list" "SPIRA_MIMIR_LANDING_INTERVAL" "$keys"
+want "SPIRA_MIMIR_MAX_GAP_SECONDS is in the key list" "SPIRA_MIMIR_MAX_GAP_SECONDS" "$keys"
+want "SPIRA_MIMIR_MAX_BEADS is in the key list"       "SPIRA_MIMIR_MAX_BEADS"       "$keys"
 
-lbl="$(run_conf 'printf "%s" "$SPIRA_MAECHEN_LABEL"')"
-is "SPIRA_MAECHEN_LABEL defaults to maechen-sweep" "maechen-sweep" "$lbl"
+lbl="$(run_conf 'printf "%s" "$SPIRA_MIMIR_LABEL"')"
+is "SPIRA_MIMIR_LABEL defaults to mimir-sweep" "mimir-sweep" "$lbl"
 
-remedy="$(run_conf 'printf "%s" "$SPIRA_MAECHEN_REMEDY_LABEL"')"
-is "SPIRA_MAECHEN_REMEDY_LABEL defaults to maechen-remedy" "maechen-remedy" "$remedy"
+remedy="$(run_conf 'printf "%s" "$SPIRA_MIMIR_REMEDY_LABEL"')"
+is "SPIRA_MIMIR_REMEDY_LABEL defaults to mimir-remedy" "mimir-remedy" "$remedy"
 
-max_beads="$(run_conf 'printf "%s" "$SPIRA_MAECHEN_MAX_BEADS"')"
-is "SPIRA_MAECHEN_MAX_BEADS defaults to 3" "3" "$max_beads"
+max_beads="$(run_conf 'printf "%s" "$SPIRA_MIMIR_MAX_BEADS"')"
+is "SPIRA_MIMIR_MAX_BEADS defaults to 3" "3" "$max_beads"
 
-gap="$(run_conf 'printf "%s" "$SPIRA_MAECHEN_MAX_GAP_SECONDS"')"
-is "SPIRA_MAECHEN_MAX_GAP_SECONDS defaults to 10800" "10800" "$gap"
+gap="$(run_conf 'printf "%s" "$SPIRA_MIMIR_MAX_GAP_SECONDS"')"
+is "SPIRA_MIMIR_MAX_GAP_SECONDS defaults to 10800" "10800" "$gap"
 
-interval="$(run_conf 'printf "%s" "$SPIRA_MAECHEN_LANDING_INTERVAL"')"
-is "SPIRA_MAECHEN_LANDING_INTERVAL defaults to 25" "25" "$interval"
+interval="$(run_conf 'printf "%s" "$SPIRA_MIMIR_LANDING_INTERVAL"')"
+is "SPIRA_MIMIR_LANDING_INTERVAL defaults to 25" "25" "$interval"
 
 # ==========================================================================================
 echo
-echo "conf.sh — maechen lane is in SPIRA_LANES default"
+echo "conf.sh — mimir lane is in SPIRA_LANES default"
 # ==========================================================================================
 lanes="$(run_conf 'printf "%s" "$SPIRA_LANES"')"
-want "maechen is in SPIRA_LANES" "maechen" "$lanes"
+want "mimir is in SPIRA_LANES" "mimir" "$lanes"
 
 # ==========================================================================================
 echo
-echo "maechen.md — encodes the five-step pass"
+echo "mimir.md — encodes the five-step pass"
 # ==========================================================================================
 brief="$(cat "$BRIEF")"
 want "brief contains Census step"   "Census"   "$brief"
@@ -151,14 +151,14 @@ want "brief contains Record step"   "Record"   "$brief"
 
 # ==========================================================================================
 echo
-echo "maechen.md — encodes the three-causal-event threshold (sp-jcd0e)"
+echo "mimir.md — encodes the three-causal-event threshold (sp-jcd0e)"
 # ==========================================================================================
 want "brief names the three-causal-event threshold" "three or more distinct causal events" "$brief"
 want "brief explains two is a coincidence"        "coincidence"                "$brief"
 
 # ==========================================================================================
 echo
-echo "maechen.md — encodes all four output-bar properties"
+echo "mimir.md — encodes all four output-bar properties"
 # ==========================================================================================
 # Property 1: concrete location
 want "brief names concrete location requirement" "file:line" "$brief"
@@ -176,18 +176,18 @@ want "brief requires occurrence count"        "occurrence count"   "$brief"
 
 # ==========================================================================================
 echo
-echo "maechen.md — encodes the per-pass output bound"
+echo "mimir.md — encodes the per-pass output bound"
 # ==========================================================================================
 want "brief references {{MAX_BEADS}} placeholder" "{{MAX_BEADS}}" "$brief"
 want "brief explains flooding consequence"        "flooded"        "$brief"
 
 # ==========================================================================================
 echo
-echo "maechen.md — no unresolved shell variable references"
+echo "mimir.md — no unresolved shell variable references"
 # ==========================================================================================
 # POSITIVE CONTROL: grep must catch a planted shell variable reference.
 # Asserted in an env where those names are unset — if the brief still expands them,
-# a rendered Maechen prompt will contain unresolved shell variables.
+# a rendered Mimir prompt will contain unresolved shell variables.
 BRIEF_WITH_OFFENDER="$(printf '%s\n$SPIRA_FAKE_VAR extra line' "$brief")"
 if grep -qE '\$(SPIRA_[A-Z_]+|BEAD_ID)' <<< "$BRIEF_WITH_OFFENDER"; then
     ok "no-shell-var check: positive control fires on a planted reference"
@@ -196,23 +196,23 @@ else
 fi
 unresolved="$(grep -nE '\$(SPIRA_[A-Z_]+|BEAD_ID)' "$BRIEF" 2>/dev/null)"
 if [ -z "$unresolved" ]; then
-    ok "maechen.md has no unresolved shell variable references"
+    ok "mimir.md has no unresolved shell variable references"
 else
-    bad "maechen.md has unresolved shell variable references" "$unresolved"
+    bad "mimir.md has unresolved shell variable references" "$unresolved"
 fi
 
 # ==========================================================================================
 echo
-echo "maechen.md — encodes the closing rule (quiet pass is distinguishable)"
+echo "mimir.md — encodes the closing rule (quiet pass is distinguishable)"
 # ==========================================================================================
-want "brief requires recording the pass" "maechen.log"      "$brief"
+want "brief requires recording the pass" "mimir.log"      "$brief"
 want "brief outlaws silence"             "Silence is what"  "$brief"
 
 # ==========================================================================================
 echo
-echo "maechen.md — watermark advance is conditional on census exit code (sp-maechen-watermark-advances-blind)"
+echo "mimir.md — watermark advance is conditional on census exit code (sp-mimir-watermark-advances-blind)"
 # ==========================================================================================
-# The fix for sp-maechen-watermark-advances-blind: Step 5 must not advance the watermark
+# The fix for sp-mimir-watermark-advances-blind: Step 5 must not advance the watermark
 # unconditionally. The brief must capture census_rc in Step 1 and condition the advance on
 # it in Step 5. A pass that follows these instructions literally cannot advance blind.
 #
@@ -227,13 +227,13 @@ want "brief says leave watermark when census fails"          "leave the watermar
 
 # ==========================================================================================
 echo
-echo "maechen.md — all {{SPIRA_HOME}} paths resolve to existing files"
+echo "mimir.md — all {{SPIRA_HOME}} paths resolve to existing files"
 # ==========================================================================================
 # POSITIVE CONTROL: plant a doubled segment (e.g. {{SPIRA_HOME}}/spira/census.sh) and this
 # fails. law-a-rename-repoints-no-reader: a persona edit that renames or moves a helper is
 # caught by the same check without manual update.
 #
-# ZERO MATCHES IS NOW THE EXPECTED STATE, NOT AN ABSENT CONTROL. maechen.md's one
+# ZERO MATCHES IS NOW THE EXPECTED STATE, NOT AN ABSENT CONTROL. mimir.md's one
 # {{SPIRA_HOME}}-prefixed reference (census.sh) was retired to a bare-name PATH lookup —
 # `census --with-suppressed`, the same binary-call idiom skew/doctor use elsewhere — when
 # census moved to Rust (sp-yyk47). A brief with no bash helpers left to reference by path

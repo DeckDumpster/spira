@@ -17,7 +17,7 @@ const MARKER: &str = "literal-ok";
 /// The shipped defaults, used when `spira/schema.sh` cannot be read at all — never empty
 /// (law-absence-needs-a-positive-control: an empty pattern list makes every tree "clean").
 const FALLBACK: &[&str] =
-    &["needs-operator", "needs-ryan", "awaiting-ci", "maechen-sweep", "maechen-remedy", "review-finding", "world-stop"];
+    &["needs-operator", "needs-ryan", "awaiting-ci", "mimir-sweep", "mimir-remedy", "review-finding", "world-stop"];
 
 /// A name specific enough to guard: lowercase, digits and hyphens only, and at least one
 /// hyphen (a compound token) — short single-word names are excluded because they appear

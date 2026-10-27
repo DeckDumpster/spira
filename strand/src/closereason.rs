@@ -4,7 +4,7 @@
 //!
 //! A match inside a quoted span ("…", '…', `…`) or a parenthetical, or on a line that names
 //! one of the mention files, is a mention rather than an admission — for the fence only;
-//! the detector scans raw so every occurrence reaches Maechen
+//! the detector scans raw so every occurrence reaches Mimir
 //! (law-a-pattern-match-is-not-an-identity-check).
 
 use std::sync::OnceLock;

@@ -214,7 +214,7 @@ unilaterally.
   quoting/date/sanitize helper, the `reachable` BFS (seeds, stoppers, suspended partitions,
   scope), `strand_keys`' ghost/other classification, `aeon_alive`'s cmdline match.
 - **Parity**: every rewritten `test-cockpit-*.sh` (and the handful of other suites that
-  called a probe by name — `test-mail-pane.sh`, `test-maechen-closed-record.sh`,
+  called a probe by name — `test-mail-pane.sh`, `test-mimir-closed-record.sh`,
   `test-livelock.sh`, `test-law-synth.sh`, `test-statute-projection.sh`,
   `test-watchtower.sh`, `test-closed-strand.sh`,
   `test-tsd-producers.sh`) is repointed to call the real compiled binary

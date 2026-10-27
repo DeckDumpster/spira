@@ -41,7 +41,7 @@ pub fn label_to_lane(label: &str) -> Option<Lane> {
     serde_json::from_value(serde_json::Value::String(label.to_string())).ok()
 }
 
-/// The configured spelling of a lane (`Lane::MaechenSweep` -> `"maechen-sweep"`) — the
+/// The configured spelling of a lane (`Lane::MimirSweep` -> `"mimir-sweep"`) — the
 /// inverse of [`label_to_lane`], read from the same typed source rather than a literal
 /// copied here (which `literal-lint` refuses outside `schema.sh`/`conf.sh`).
 pub fn lane_label(lane: Lane) -> String {
@@ -586,7 +586,7 @@ mod tests {
     // -- repositories (spira-config's own converter — see DESIGN.md "Decisions") --------
 
     // literal-ok: test fixture mirroring the lane vocabulary's shipped spelling
-    const MAECHEN: &str = "maechen-sweep";
+    const MIMIR: &str = "mimir-sweep";
     // literal-ok: test fixture mirroring schema.sh's shipped default for `no_loop`
     const NO_LOOP: &str = "no-loop";
 
@@ -630,7 +630,7 @@ mod tests {
                 Lane::Incident,
                 Lane::Groom,
                 Lane::Spike,
-                Lane::MaechenSweep,
+                Lane::MimirSweep,
                 Lane::CzarTrigger
             ]
         );
@@ -655,7 +655,7 @@ mod tests {
             ("plan", Lane::Plan),
             ("incident", Lane::Incident),
             ("groom", Lane::Groom),
-            (MAECHEN, Lane::MaechenSweep),
+            (MIMIR, Lane::MimirSweep),
             ("spike", Lane::Spike),
             ("czar-trigger", Lane::CzarTrigger),
         ] {
@@ -682,17 +682,17 @@ mod tests {
     #[test]
     fn lane_check_admits_self_repo_for_any_partition() {
         let repos = repo_map_fixture();
-        let result = lane_check(&format!("testscope,{MAECHEN}"), "self-repo", &repos, false);
+        let result = lane_check(&format!("testscope,{MIMIR}"), "self-repo", &repos, false);
         assert!(matches!(result, LaneCheck::Admitted));
     }
 
     #[test]
-    fn lane_check_refuses_maechen_on_a_develop_repo() {
+    fn lane_check_refuses_mimir_on_a_develop_repo() {
         let repos = repo_map_fixture();
-        match lane_check(&format!("testscope,{MAECHEN}"), "dev-repo", &repos, false) {
+        match lane_check(&format!("testscope,{MIMIR}"), "dev-repo", &repos, false) {
             LaneCheck::Refused(msg) => {
                 assert!(msg.contains("dev-repo"));
-                assert!(msg.contains(MAECHEN));
+                assert!(msg.contains(MIMIR));
                 assert!(msg.contains("admitted lanes"));
                 assert!(msg.contains("SPIRA_BEAD_LANE_OVERRIDE"));
             }
@@ -703,7 +703,7 @@ mod tests {
     #[test]
     fn lane_check_override_admits_everything() {
         let repos = repo_map_fixture();
-        let result = lane_check(&format!("testscope,{MAECHEN}"), "dev-repo", &repos, true);
+        let result = lane_check(&format!("testscope,{MIMIR}"), "dev-repo", &repos, true);
         assert!(matches!(result, LaneCheck::Admitted));
     }
 
@@ -755,7 +755,7 @@ mod tests {
     // -- lint judge -------------------------------------------------------------------------
 
     // literal-ok: test fixture partition vocabulary, mirroring the bash suite's own PART
-    const PART: &str = "plan maechen-sweep spike czar-trigger incident groom";
+    const PART: &str = "plan mimir-sweep spike czar-trigger incident groom";
 
     #[test]
     fn lint_judge_rows_match_the_bash_suite_table() {

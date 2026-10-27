@@ -10,7 +10,7 @@ DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # A new lane is added here and given a name; fayths join it with FAYTH_LANE=<name>.
     # The ops and groomer lanes are declared by default because ops.fayth and groomer.fayth
     # ship using them. The qa lane is declared alongside them because qa.fayth ships using it.
-    # The maechen lane is declared because maechen.fayth ships using it.
+    # The mimir lane is declared because mimir.fayth ships using it.
     # The czar lane is declared because czar.fayth ships using it.
     # A lane fayth still functions if its lane name is absent from this list (the mechanism is
     # FAYTH_LANE set, not membership here), but the declaration makes it visible to operators
@@ -18,5 +18,5 @@ DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # The warden lane is declared because warden.fayth ships using it.
     # The mender lane is declared because mender.fayth ships using it.
     # The pilgrimage lane is declared because pilgrim.fayth ships using it.
-    : "${SPIRA_LANES:=ops groomer qa maechen czar warden mender pilgrimage}"
+    : "${SPIRA_LANES:=ops groomer qa mimir czar warden mender pilgrimage}"
 SPIRA_CONF_DEFAULT_EOF

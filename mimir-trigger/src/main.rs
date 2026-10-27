@@ -1,4 +1,4 @@
-//! `maechen-trigger` — DESIGN.md. Rust port of `spira/maechen-trigger.sh` (sp-0ekp7).
+//! `mimir-trigger` — DESIGN.md. Rust port of `spira/mimir-trigger.sh` (sp-0ekp7).
 
 mod engine;
 mod lanes;
@@ -26,7 +26,7 @@ fn raw_env(key: &str) -> Option<String> {
     env::var(key).ok().filter(|v| !v.is_empty())
 }
 
-/// Set once, at the very top of `main`, from the `--home` argument `maechen-trigger.sh`
+/// Set once, at the very top of `main`, from the `--home` argument `mimir-trigger.sh`
 /// now passes (wave 4.9, sp-k80sa — this replaces the shim's own `export
 /// SPIRA_HOME="$HERE"`). `SPIRA_HOME` is a per-copy fact `spira_config` deliberately never
 /// derives (it is the input that LOCATES config, not a value config produces), so it has to
@@ -35,7 +35,7 @@ fn raw_env(key: &str) -> Option<String> {
 /// own tests, which never call `main` and so never set this.
 static HOME_OVERRIDE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
-/// `--home <path>` from argv, if this invocation carries one. `maechen-trigger.sh` always
+/// `--home <path>` from argv, if this invocation carries one. `mimir-trigger.sh` always
 /// passes it now; a direct invocation (a test, an operator debugging by hand) without the
 /// flag falls back to [`raw_env`] inside [`home_dir`], unchanged from before this bead.
 fn parse_home_flag() -> Option<PathBuf> {
@@ -86,14 +86,14 @@ fn load_cfg() -> Result<Cfg, String> {
             plan: spira_config::process::cfg("SPIRA_PLAN_LABEL")?,
             incident: spira_config::process::cfg("SPIRA_INCIDENT_LABEL")?,
             groomer: spira_config::process::cfg("SPIRA_GROOMER_LABEL")?,
-            maechen: spira_config::process::cfg("SPIRA_MAECHEN_LABEL")?,
+            mimir: spira_config::process::cfg("SPIRA_MIMIR_LABEL")?,
             spike: spira_config::process::cfg("SPIRA_SPIKE_LABEL")?,
             czar: spira_config::process::cfg("SPIRA_CZAR_LABEL")?,
         },
         scope_label: spira_config::process::cfg("SPIRA_SCOPE_LABEL")?,
-        max_gap: spira_config::process::cfg_parse("SPIRA_MAECHEN_MAX_GAP_SECONDS")?,
-        landing_interval: spira_config::process::cfg_parse("SPIRA_MAECHEN_LANDING_INTERVAL")?,
-        max_beads: spira_config::process::cfg_parse("SPIRA_MAECHEN_MAX_BEADS")?,
+        max_gap: spira_config::process::cfg_parse("SPIRA_MIMIR_MAX_GAP_SECONDS")?,
+        landing_interval: spira_config::process::cfg_parse("SPIRA_MIMIR_LANDING_INTERVAL")?,
+        max_beads: spira_config::process::cfg_parse("SPIRA_MIMIR_MAX_BEADS")?,
     })
 }
 
@@ -116,14 +116,14 @@ fn subcommand_args() -> Vec<String> {
 }
 
 fn main() {
-    spira_otel::run::begin("maechen-trigger", spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref());
+    spira_otel::run::begin("mimir-trigger", spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref());
     if let Some(h) = parse_home_flag() {
         let _ = HOME_OVERRIDE.set(h);
     }
     let cfg = match load_cfg() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("maechen-trigger: {e}");
+            eprintln!("mimir-trigger: {e}");
             { let code = 1; spira_otel::run::finish(code); std::process::exit(code) };
         }
     };
@@ -132,7 +132,7 @@ fn main() {
 
     // THE THREE LIB.SH SHIM DOORS (wave 4.35, row V) — none of them touches the sweep's own
     // lock file below; `groom-trigger.sh` calling `lane-admitted` must never contend with, or
-    // wait on, a concurrent Maechen sweep.
+    // wait on, a concurrent Mimir sweep.
     let sub_args = subcommand_args();
     spira_otel::run::operation(match sub_args.first().map(String::as_str) {
         Some(c @ ("repo-lanes" | "lane-admitted" | "open-trigger-count")) => c,
@@ -164,7 +164,7 @@ fn main() {
                     { spira_otel::run::finish(0); return; }
                 }
                 Err(e) => {
-                    eprintln!("maechen-trigger: cannot count open triggers: {e}");
+                    eprintln!("mimir-trigger: cannot count open triggers: {e}");
                     { let code = 1; spira_otel::run::finish(code); std::process::exit(code) };
                 }
             }
@@ -176,7 +176,7 @@ fn main() {
     // tick rather than risking two overlapping list-then-create dedup checks (sp-uq55c,
     // sp-io5e). The lock file is leaked deliberately (never closed): closing it here would
     // release it before the process exits, and the kernel reclaims it at process exit anyway.
-    let lock_path = cfg.spira_run.join("maechen-trigger.lock");
+    let lock_path = cfg.spira_run.join("mimir-trigger.lock");
     match OpenOptions::new().create(true).write(true).open(&lock_path) {
         Ok(lock_file) => {
             if unsafe { flock(lock_file.as_raw_fd(), LOCK_EX | LOCK_NB) } != 0 {
@@ -200,8 +200,8 @@ fn main() {
 /// Returns `false` only on a filing failure (bash exit 1); every other path — dedup skip,
 /// lane skip, no-trigger — is success (bash exit 0).
 fn run(world: &dyn World, cfg: &Cfg) -> bool {
-    let maechen_label = &cfg.labels.maechen;
-    let labels = engine::trigger_labels(&cfg.scope_label, maechen_label);
+    let mimir_label = &cfg.labels.mimir;
+    let labels = engine::trigger_labels(&cfg.scope_label, mimir_label);
 
     // DEDUP — at most one open-or-in-progress trigger bead at a time.
     let open_count = match world.open_trigger_count(&labels) {
@@ -218,9 +218,9 @@ fn run(world: &dyn World, cfg: &Cfg) -> bool {
         return true;
     }
 
-    // LANE CHECK — skip when no repository admits the maechen lane.
-    if !world.lane_admitted(maechen_label) {
-        world.log(&format!("no repository admits lane {maechen_label} — skipping trigger"));
+    // LANE CHECK — skip when no repository admits the mimir lane.
+    if !world.lane_admitted(mimir_label) {
+        world.log(&format!("no repository admits lane {mimir_label} — skipping trigger"));
         return true;
     }
 
@@ -283,15 +283,15 @@ fn run(world: &dyn World, cfg: &Cfg) -> bool {
     let ic_rows_text = if ic_fired { Some(ic_rows.join("\n")) } else { None };
     let description = engine::description(max_beads, &reason_text, lastpass_ts, watermark_ts, ic_rows_text.as_deref());
 
-    let sop_ledger_labels = format!("{labels},delivers:note:{}/maechen.log", cfg.spira_run.display());
-    let title = format!("Maechen pass — {reason_text}");
+    let sop_ledger_labels = format!("{labels},delivers:note:{}/mimir.log", cfg.spira_run.display());
+    let title = format!("Mimir pass — {reason_text}");
     match world.create_bead(&title, &sop_ledger_labels, &description) {
         Ok(()) => {
-            world.log(&format!("Maechen trigger bead filed (labels: {sop_ledger_labels}, reason: {reason_text})"));
+            world.log(&format!("Mimir trigger bead filed (labels: {sop_ledger_labels}, reason: {reason_text})"));
             true
         }
         Err(e) => {
-            world.log(&format!("ERROR: failed to file Maechen trigger bead: {e}"));
+            world.log(&format!("ERROR: failed to file Mimir trigger bead: {e}"));
             false
         }
     }
@@ -330,8 +330,8 @@ mod tests {
     /// SPIRA_HOME/SPIRA_TOML point at a throwaway fixture, never the real box's.
     #[test]
     fn load_cfg_resolves_every_key_through_the_one_door() {
-        let dir = testkit::TempDir::new("maechen-trigger-cfg");
-        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_MAECHEN_MAX_BEADS", "7")]);
+        let dir = testkit::TempDir::new("mimir-trigger-cfg");
+        let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_MIMIR_MAX_BEADS", "7")]);
         // SPIRA_HOME must be the checkout's own spira/ (where conf.d — the key registry —
         // lives), never the throwaway fixture dir.
         let real_home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
@@ -419,7 +419,7 @@ mod tests {
             db: s(),
             bd: s(),
             repo_map: None,
-            labels: LaneLabels { plan: s(), incident: s(), groomer: s(), maechen: s(), spike: s(), czar: s() },
+            labels: LaneLabels { plan: s(), incident: s(), groomer: s(), mimir: s(), spike: s(), czar: s() },
             scope_label: s(),
             max_gap: 1,
             landing_interval: 1,

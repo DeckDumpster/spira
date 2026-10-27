@@ -10,7 +10,7 @@
 # under needs-operator — aeon.sh refuses to work a bead in the wrong repository rather
 # than guess. The loop cannot break from inside: each retrospective pass files the same
 # remedy bead, also parked. Two remedy beads accumulated this way on this install before
-# db-mis landed (sp-maechen-remedy-born-parked).
+# db-mis landed (sp-mimir-remedy-born-parked).
 #
 # FILE INVARIANT: no bare repo: literal appears in spira/chamber/*.md or *.fayth. A bare
 # literal is `repo:WORD` where WORD begins with a letter and contains only letters, digits,

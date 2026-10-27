@@ -54,7 +54,7 @@
 # `exec -a "$0"` keeps this script's path in the process's argv.
 #
 # THE RE-EXPORT THIS COMMENT ONCE DESCRIBED IS RETIRED (wave 4.9, sp-k80sa). This file used
-# to `export SPIRA_HOME SPIRA_REPO_MAP SPIRA_GROOMER_LABEL SPIRA_MAECHEN_LABEL
+# to `export SPIRA_HOME SPIRA_REPO_MAP SPIRA_GROOMER_LABEL SPIRA_MIMIR_LABEL
 # SPIRA_CZAR_LABEL` here, because conf.sh's own `export` list leaves those plain-shell-
 # variable derivations unexported, and only the environment table crosses the `exec`
 # boundary below. The `bead` binary now resolves all five itself: `SPIRA_HOME` is simply

@@ -8,7 +8,7 @@
 //! (`bash -c '. lib.sh; detect_unclaimable_ready'`), never re-derived.
 //!
 //! OUTPUT IS BYTE-COMPATIBLE with the lib.sh functions this replaces: `groomer`,
-//! `maechen-trigger` and `cockpit-collect` parse `LIVELOCK …`/`STATE …`/`INVALID-CLOSED …`/
+//! `mimir-trigger` and `cockpit-collect` parse `LIVELOCK …`/`STATE …`/`INVALID-CLOSED …`/
 //! `UNFILED-FOLLOW …` lines, and lib.sh's own functions become one-line shims onto this
 //! crate's binary (`strand detect-livelocked`, …) so a caller that still sources lib.sh
 //! directly (a test suite, `attempts.sh`) keeps working unchanged.
@@ -352,7 +352,7 @@ fn read_allowlist(cfg: &Config) -> std::collections::HashMap<String, String> {
 
 /// `INVALID-CLOSED` / `UNFILED-FOLLOW` / `ALLOWED-IC` lines over a `bd list --json` payload.
 /// The detector scans the raw reason (`detect_close_reason`) so every occurrence reaches
-/// Maechen; the quote-masked fence belongs to aeon.
+/// Mimir; the quote-masked fence belongs to aeon.
 fn classify_invalid_closed(raw: &str, cfg: &Config) -> String {
     use crate::closereason::{check_unfiled_follow, detect_close_reason};
     let Ok(d) = serde_json::from_str::<serde_json::Value>(raw) else { return String::new() };

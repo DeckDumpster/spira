@@ -1,4 +1,4 @@
-//! `census` — Maechen census: failure classes ranked by frequency, with open-remedy
+//! `census` — Mimir census: failure classes ranked by frequency, with open-remedy
 //! suppression. Replaces `spira/census.sh` (238 lines). See DESIGN.md for the contract;
 //! written from the script's intent (bd sp-yyk47). The SQL itself is unchanged (DESIGN.md §2);
 //! the classification pipeline is [`pipeline`].
@@ -18,7 +18,7 @@ use std::path::PathBuf;
 /// census.sh's case dispatch did. Returns the process exit code.
 pub fn run(w: &dyn World, with_suppressed: bool) -> i32 {
     let run_dir = w.env("SPIRA_RUN").unwrap_or_default();
-    let watermark_file = PathBuf::from(&run_dir).join("maechen.watermark");
+    let watermark_file = PathBuf::from(&run_dir).join("mimir.watermark");
     let watermark_ts = read_watermark(w, &watermark_file);
 
     // CLOCK SKEW GUARD (law-a-control-that-cannot-check-must-refuse).

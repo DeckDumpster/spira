@@ -164,7 +164,7 @@ mod tests {
 
     #[test]
     fn every_fayth_but_pilgrim_is_refused_before_config_is_read() {
-        for f in ["builder", "groomer", "concierge", "czar", "ops", "mender", "batcher", "warden", "spike", "maechen", "archivist", "", "Pilgrim", "pilgrim "] {
+        for f in ["builder", "groomer", "concierge", "czar", "ops", "mender", "batcher", "warden", "spike", "mimir", "archivist", "", "Pilgrim", "pilgrim "] {
             let e = request(f, "sp-abc").err().expect(f);
             assert!(e.contains("not allowed"), "{f}: {e}");
         }

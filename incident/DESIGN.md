@@ -3,7 +3,7 @@
 Rust port of `spira/incident.sh` (sp-0ekp7, rewrite wave 7b, law-new-subsystems-are-rust,
 law-rust-rewrites-start-from-intent). `spira/incident.sh` becomes a thin shim —
 `. lib.sh; exec incident "$@"` — the same pattern `gate.sh`, `czar.sh`, `reconciler.sh` and
-`maechen-trigger.sh` (sp-0ekp7's sibling script) already use for their own Rust replacements.
+`mimir-trigger.sh` (sp-0ekp7's sibling script) already use for their own Rust replacements.
 
 ## Intent
 

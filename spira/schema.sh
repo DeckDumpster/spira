@@ -15,7 +15,7 @@
 # hardcoded "needs-ryan" — and the code default is `needs-operator`, so on a default install
 # the destructive-procedure fence has NO bypass at all and every legitimate halting bead is
 # refused. The same split exists for awaiting-ci (6 files), spike (10), groom (6),
-# maechen-sweep (3). One accessor per name makes that class unwritable, because there is no
+# mimir-sweep (3). One accessor per name makes that class unwritable, because there is no
 # literal left to write.
 #
 # WHAT IS DECLARED HERE vs WHAT IS ASKED
@@ -95,8 +95,8 @@ schema_name() {          # schema_name <key> -> the name; exit 2 on an undeclare
         spike)         printf '%s' "${SPIRA_SPIKE_LABEL:-spike}" ;;
         mender)        printf '%s' "${SPIRA_MENDER_LABEL:-mender-failure}" ;;
         groomer)       printf '%s' "${SPIRA_GROOMER_LABEL:-groom}" ;;
-        maechen)       printf '%s' "${SPIRA_MAECHEN_LABEL:-maechen-sweep}" ;;
-        maechen_remedy) printf '%s' "${SPIRA_MAECHEN_REMEDY_LABEL:-maechen-remedy}" ;;
+        mimir)       printf '%s' "${SPIRA_MIMIR_LABEL:-mimir-sweep}" ;;
+        mimir_remedy) printf '%s' "${SPIRA_MIMIR_REMEDY_LABEL:-mimir-remedy}" ;;
         review)        printf '%s' "${SPIRA_REVIEW_LABEL:-review-finding}" ;;
         world_stop)    printf '%s' "${SPIRA_WORLD_STOP_LABEL:-world-stop}" ;;
         no_loop)       printf '%s' "${SPIRA_NO_LOOP_LABEL:-no-loop}" ;;
@@ -111,7 +111,7 @@ schema_name() {          # schema_name <key> -> the name; exit 2 on an undeclare
             return 2 ;;
     esac
 }
-schema_names() { printf '%s\n' ask ci scope plan incident spike groomer maechen maechen_remedy review world_stop no_loop insight idea; }
+schema_names() { printf '%s\n' ask ci scope plan incident spike groomer mimir mimir_remedy review world_stop no_loop insight idea; }
 
 # schema_default <key> — the declared default value, ignoring env and conf.
 # Used by literal-lint.sh to build its pattern list without the ambient environment
@@ -126,8 +126,8 @@ schema_default() {
         incident)       printf '%s' "incident" ;;
         spike)          printf '%s' "spike" ;;
         groomer)        printf '%s' "groom" ;;
-        maechen)        printf '%s' "maechen-sweep" ;;
-        maechen_remedy) printf '%s' "maechen-remedy" ;;
+        mimir)        printf '%s' "mimir-sweep" ;;
+        mimir_remedy) printf '%s' "mimir-remedy" ;;
         review)         printf '%s' "review-finding" ;;
         world_stop)     printf '%s' "world-stop" ;;
         no_loop)        printf '%s' "no-loop" ;;

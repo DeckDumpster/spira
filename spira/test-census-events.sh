@@ -51,7 +51,7 @@ testdb_up census-events || {
 lcfix_up || bail "lc-fixture: the lifecycle store did not come up"
 lcfix_follow_testdb
 trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-tl_config SPIRA_DB="$TESTDB_DIR" SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy
+tl_config SPIRA_DB="$TESTDB_DIR" SPIRA_MIMIR_REMEDY_LABEL=mimir-remedy
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
@@ -344,7 +344,7 @@ testdb_seed <<'JSONL'
 {"id":"sp-p1","title":"conflict bead 1","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-19T00:00:00Z"}
 {"id":"sp-p2","title":"conflict bead 2","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-19T00:00:00Z"}
 {"id":"sp-p3","title":"conflict bead 3","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-19T00:00:00Z"}
-{"id":"sp-p4","title":"remedy bead","status":"open","issue_type":"task","labels":["spira","maechen-remedy","covers:sp-requeue-merge-conflict"],"updated_at":"2026-09-19T00:00:00Z"}
+{"id":"sp-p4","title":"remedy bead","status":"open","issue_type":"task","labels":["spira","mimir-remedy","covers:sp-requeue-merge-conflict"],"updated_at":"2026-09-19T00:00:00Z"}
 JSONL
 bump_requeue "sp-p1" merge-conflict >/dev/null 2>&1
 bump_requeue "sp-p2" merge-conflict >/dev/null 2>&1
@@ -361,7 +361,7 @@ nowant "sp-reopen-rebase-conflict not emitted unsuppressed" "sp-reopen-rebase-co
 testdb_reset
 testdb_seed <<'JSONL'
 {"id":"sp-q1","title":"conflict bead","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-19T00:00:00Z"}
-{"id":"sp-q2","title":"unrelated remedy","status":"open","issue_type":"task","labels":["spira","maechen-remedy","covers:sp-recur-suite-red"],"updated_at":"2026-09-19T00:00:00Z"}
+{"id":"sp-q2","title":"unrelated remedy","status":"open","issue_type":"task","labels":["spira","mimir-remedy","covers:sp-recur-suite-red"],"updated_at":"2026-09-19T00:00:00Z"}
 JSONL
 bump_requeue "sp-q1" merge-conflict >/dev/null 2>&1
 lc_rows sp-q2:READY
@@ -474,7 +474,7 @@ echo "sp-ytw2h: covers:sp-requeue-eviction-race suppresses sp-reopen-eviction-ra
 testdb_reset
 testdb_seed <<'JSONL'
 {"id":"sp-ev2","title":"eviction bead 2","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-23T00:00:00Z"}
-{"id":"sp-evr","title":"remedy bead","status":"in_progress","issue_type":"task","labels":["spira","maechen-remedy","covers:sp-requeue-eviction-race"],"updated_at":"2026-09-23T00:00:00Z"}
+{"id":"sp-evr","title":"remedy bead","status":"in_progress","issue_type":"task","labels":["spira","mimir-remedy","covers:sp-requeue-eviction-race"],"updated_at":"2026-09-23T00:00:00Z"}
 JSONL
 bead_reopen   "sp-ev2" eviction-race "Eviction race test" >/dev/null 2>&1
 bump_requeue  "sp-ev2" eviction-race >/dev/null 2>&1

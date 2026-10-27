@@ -1,15 +1,15 @@
-# census — Maechen census: failure classes ranked, with open-remedy suppression
+# census — Mimir census: failure classes ranked, with open-remedy suppression
 
 Replaces `spira/census.sh` (238 lines). One binary, `census`, the same `[--with-suppressed]`
-flag. Written from the script's intent and its caller (bd sp-yyk47: the Maechen chamber
+flag. Written from the script's intent and its caller (bd sp-yyk47: the Mimir chamber
 brief's Step 1). The SQL stays in lib.sh; the classification pipeline is in-process (§2) —
 this crate is the bash orchestration around them, moved to Rust.
 
 ## 1. Intent
 
 Rank failure classes (recurred/requeued/reclaimed/reopened events) by how many distinct
-beads produced them since the last Maechen pass's watermark, suppressing a class that
-already has an open or recently-closed remedy bead working it, so Maechen's selection never
+beads produced them since the last Mimir pass's watermark, suppressing a class that
+already has an open or recently-closed remedy bead working it, so Mimir's selection never
 re-files a duplicate. Two properties this bead must not weaken: **fail closed on a clock
 that disagrees with UTC** (a windowed query over a skewed clock silently hides the events
 inside the skew — indistinguishable from a quiet graph) and **never drop a hand-written or
@@ -103,7 +103,7 @@ watermark fallback, the three suppression outcomes, and the `--with-suppressed` 
 
 - **`census` locates `lib.sh` via an explicit `$SPIRA_HOME` first, release-relatively
   otherwise** — the same priority `skew` and `doctor` use (their own DESIGN.md's), for the
-  same reason: a caller that deliberately pins `$SPIRA_HOME` (the maechen pass, a fixture)
+  same reason: a caller that deliberately pins `$SPIRA_HOME` (the mimir pass, a fixture)
   must be honored, not second-guessed by a self-location scheme that always succeeds once
   running from an installed release.
 - **The clock-skew guard's date parsing shells out to `date`**, not a calendar-math crate or
@@ -136,8 +136,8 @@ orphaned) plus the landed/unknown and landed-clean asymmetry (§3.2), and the
 `--with-suppressed` gate for both the suppression annotations and the trailing
 hand-written/deliberate blocks.
 
-The Maechen chamber brief (`spira/chamber/maechen.md`, `bash "{{SPIRA_HOME}}/census.sh"` →
-`census`) and `spira/maechen-trigger.sh`'s comments naming `census.sh` are repointed in this
+The Mimir chamber brief (`spira/chamber/mimir.md`, `bash "{{SPIRA_HOME}}/census.sh"` →
+`census`) and `spira/mimir-trigger.sh`'s comments naming `census.sh` are repointed in this
 same change; see the bead's report for the full caller list.
 
 ## 7. Fail-closed

@@ -29,7 +29,7 @@ use std::process::Command;
 
 /// One `repo-map` column `repo_field` can be asked for. `Lanes` is still read HERE — lane
 /// *expansion* is family V (`spira_repo_lanes`/`_spira_expand_lanes`), owned by
-/// `maechen-trigger`, not this registry — but `spira_repo_lanes` itself still calls
+/// `mimir-trigger`, not this registry — but `spira_repo_lanes` itself still calls
 /// `repo_field "$name" lanes` to get the raw column, and that call is now a shim onto this
 /// enum: dropping the variant would refuse every repo-map row that declares lanes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,7 +166,7 @@ pub fn rows_from_toml(doc: &crate::SpiraToml) -> Vec<Row> {
                     Lane::Incident => "incident",
                     Lane::Groom => "groom",
                     // literal-ok: the repo-map lane token, emitted verbatim
-                    Lane::MaechenSweep => "maechen-sweep",
+                    Lane::MimirSweep => "mimir-sweep",
                     Lane::Spike => "spike",
                     Lane::CzarTrigger => "czar-trigger",
                 })

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # timeout: 150
 #
-# test-maechen-closed-record.sh — the closed-record INVALID-CLOSED trigger and allowlist.
+# test-mimir-closed-record.sh — the closed-record INVALID-CLOSED trigger and allowlist.
 #
-#   ./test-maechen-closed-record.sh
+#   ./test-mimir-closed-record.sh
 #
 # WHAT THIS SUITE GUARDS
 # ----------------------
@@ -11,13 +11,13 @@
 #    $SPIRA_RUN/invalid-closed.allow: allowlisted ids are emitted as ALLOWED-IC
 #    rows (not counted by the pane) instead of INVALID-CLOSED or UNFILED-FOLLOW.
 #
-# 2. maechen-trigger.sh fires a third trigger condition when detect_invalid_closed
+# 2. mimir-trigger.sh fires a third trigger condition when detect_invalid_closed
 #    returns INVALID-CLOSED or UNFILED-FOLLOW rows; ALLOWED-IC rows do not trigger.
 #    The trigger bead carries the rows in its description.
 #
 # 3. End-to-end acceptance: fixture store with three closed beads (admission,
 #    quotation, unfiled-follow). First trigger run files one bead carrying all
-#    three rows. Second run files nothing (dedup). After simulated Maechen pass
+#    three rows. Second run files nothing (dedup). After simulated Mimir pass
 #    (reopen, allowlist, update close_reason), detect_invalid_closed returns
 #    zero counted rows and one allowed line.
 #
@@ -28,17 +28,17 @@
 # is reset between sections.
 #
 # tier: T2
-# covers: spira/maechen-trigger.sh spira/lib.sh cockpit-collect/src/* maechen-trigger/* UC-ops-detection-remediation-30
+# covers: spira/mimir-trigger.sh spira/lib.sh cockpit-collect/src/* mimir-trigger/* UC-ops-detection-remediation-30
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
-testdb_require test-maechen-closed-record
+testdb_require test-mimir-closed-record
 . "$HERE/testlib.sh"
 
-TRIGSH=maechen-trigger.sh   # invoked by name on the suite's PATH (sp-gypjk)
+TRIGSH=mimir-trigger.sh   # invoked by name on the suite's PATH (sp-gypjk)
 # Each trigger invocation below wipes env and rebuilds PATH from scratch for isolation;
-# since sp-0ekp7 moved maechen-trigger.sh's logic into a compiled binary the shim execs,
+# since sp-0ekp7 moved mimir-trigger.sh's logic into a compiled binary the shim execs,
 # that rebuilt PATH must still reach it — appending the ambient $PATH (which, under
 # testenv, is the staged release's bin/) after the deterministic TESTDB_BIN/$HERE prefix
 # does that without changing resolution order for anything the isolated PATH used to cover.
@@ -76,8 +76,8 @@ printf 'testrepo | %s | push | origin/main | | true | self\n' "$TESTREPO" > "$SE
 RUNDIR="$T/run"
 mkdir -p "$RUNDIR"
 ALLOW_FILE="$RUNDIR/invalid-closed.allow"
-WATERMARK_FILE="$RUNDIR/maechen.watermark"
-LASTPASS_FILE="$RUNDIR/maechen.lastpass"
+WATERMARK_FILE="$RUNDIR/mimir.watermark"
+LASTPASS_FILE="$RUNDIR/mimir.lastpass"
 now_ts="$(date +%s)"
 printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
 printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
@@ -86,13 +86,13 @@ printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
 ALLW_SCOPE="sptest-cr-allow"
 
 # Constant across every env -i invocation in this suite; sections below re-declare only
-# what differs (SPIRA_SCOPE_LABEL, SPIRA_MAECHEN_LABEL, SPIRA_BD).
+# what differs (SPIRA_SCOPE_LABEL, SPIRA_MIMIR_LABEL, SPIRA_BD).
 tl_config SPIRA_RUN="$RUNDIR" SPIRA_REPO_MAP="$SELFMAP" \
     SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci SPIRA_SPIKE_LABEL=spike \
     SPIRA_SCOPE_LABEL="$ALLW_SCOPE" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 SPIRA_MAECHEN_LANDING_INTERVAL=999
+    SPIRA_MIMIR_MAX_GAP_SECONDS=999999 SPIRA_MIMIR_LANDING_INTERVAL=999
 
-echo "test-maechen-closed-record.sh"
+echo "test-mimir-closed-record.sh"
 
 # ==========================================================================================
 echo
@@ -100,7 +100,7 @@ echo "TRIGGER: INVALID-CLOSED rows fire the third trigger condition"
 # ==========================================================================================
 # Use a real fixture so the --status closed filter in detect_invalid_closed is exercised
 # (law-prefer-the-real-dependency). A stub bd cannot distinguish list --status queries.
-testdb_up maechen_closed_record_trigger || { bad "trigger fixture: testdb_up failed" ""; }
+testdb_up mimir_closed_record_trigger || { bad "trigger fixture: testdb_up failed" ""; }
 
 TR_SCOPE="sptest-cr-trig"
 TR_MAE="sptest-cr-trig-mae"
@@ -115,7 +115,7 @@ printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
 printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
 
 _tr_bd="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-bd}")"
-tl_config SPIRA_SCOPE_LABEL="$TR_SCOPE" SPIRA_MAECHEN_LABEL="$TR_MAE" SPIRA_BD="$_tr_bd"
+tl_config SPIRA_SCOPE_LABEL="$TR_SCOPE" SPIRA_MIMIR_LABEL="$TR_MAE" SPIRA_BD="$_tr_bd"
 tr_out="$(env -i HOME="$T" \
     PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
@@ -165,7 +165,7 @@ testdb_drop
 echo
 echo "TRIGGER: no fire when all rows are in the allowlist (ALLOWED-IC only)"
 # ==========================================================================================
-testdb_up maechen_closed_record_nofire || { bad "no-fire fixture: testdb_up failed" ""; }
+testdb_up mimir_closed_record_nofire || { bad "no-fire fixture: testdb_up failed" ""; }
 
 ANT_SCOPE="sptest-cr-ant"
 ANT_MAE="sptest-cr-ant-mae"
@@ -180,7 +180,7 @@ printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
 printf 'sp-cr-ant1 quotation: test bead\n' > "$ALLOW_FILE"
 
 _ant_bd="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-bd}")"
-tl_config SPIRA_SCOPE_LABEL="$ANT_SCOPE" SPIRA_MAECHEN_LABEL="$ANT_MAE" SPIRA_BD="$_ant_bd"
+tl_config SPIRA_SCOPE_LABEL="$ANT_SCOPE" SPIRA_MIMIR_LABEL="$ANT_MAE" SPIRA_BD="$_ant_bd"
 ant_out="$(env -i HOME="$T" \
     PATH="${TESTDB_BIN:+$TESTDB_BIN:}$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_CONF="$NONE" \
@@ -212,14 +212,14 @@ echo "END-TO-END: three closed beads, trigger, simulated pass, zero counted rows
 #   C (sp-cr-e2e-c) — UNFILED-FOLLOW: "the real fix" without a tracking reference
 #
 # Sequence:
-#   1. Trigger fires → one maechen bead carrying all three rows
+#   1. Trigger fires → one mimir bead carrying all three rows
 #   2. Second trigger run → dedup (open bead already exists)
-#   3. Simulated Maechen pass:
+#   3. Simulated Mimir pass:
 #       A → reopen (admission)
 #       B → allowlist (quotation)
 #       C → update close_reason to include tracking reference (clears UNFILED-FOLLOW)
 #   4. detect_invalid_closed → 0 counted rows, 1 ALLOWED-IC line
-testdb_up maechen_closed_record_e2e || { bad "e2e fixture: testdb_up failed" ""; }
+testdb_up mimir_closed_record_e2e || { bad "e2e fixture: testdb_up failed" ""; }
 
 E2E_SCOPE="sptest-cr-e2e"
 E2E_MAE="sptest-cr-e2e-mae"
@@ -236,7 +236,7 @@ printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
 printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
 
 _e2e_bd="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null || printf '%s' "${SPIRA_BD:-bd}")"
-tl_config SPIRA_SCOPE_LABEL="$E2E_SCOPE" SPIRA_MAECHEN_LABEL="$E2E_MAE" SPIRA_BD="$_e2e_bd"
+tl_config SPIRA_SCOPE_LABEL="$E2E_SCOPE" SPIRA_MIMIR_LABEL="$E2E_MAE" SPIRA_BD="$_e2e_bd"
 
 # Step 1: trigger files one bead carrying all three rows.
 e2e_trig1="$(env -i HOME="$T" \
@@ -278,7 +278,7 @@ e2e_bead_count="$("$SPIRA_BD" -C "$SPIRA_DB" list \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))' 2>/dev/null || echo 0)"
 is "e2e: second trigger files nothing new" "1" "${e2e_bead_count:-0}"
 
-# Step 3: simulate Maechen pass decisions.
+# Step 3: simulate Mimir pass decisions.
 # A → reopen (admission).
 "$SPIRA_BD" -C "$SPIRA_DB" reopen "sp-cr-e2e-a" 2>/dev/null || true # batch-job: fixture bd call against the suite's throwaway store
 # B → allowlist (quotation).

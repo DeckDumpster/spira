@@ -124,7 +124,7 @@ bead = "sp-pyowh"
 [[use_case]]
 id = "UC-landed-audit-reaping-13"
 tier = "T1"
-statement = "Sweep triggers (maechen, groom) file their beads with `delivers:note:${SPIRA_RUN}/<name>.log`."
+statement = "Sweep triggers (mimir, groom) file their beads with `delivers:note:${SPIRA_RUN}/<name>.log`."
 
 [use_case.uncovered]
 reason = "sp-pyowh's C3 landing reduced CHECK 5 to a single invariant (closed, aeon-worked, no commit/exemption/LANDED-tip evidence -> file an incident); this decision state from the original plan no longer exists in sentinel.sh"

@@ -176,7 +176,7 @@ fn an_empty_lanes_column_admits_every_lane() {
         Lane::Incident,
         Lane::Groom,
         Lane::Spike,
-        Lane::MaechenSweep,
+        Lane::MimirSweep,
         Lane::CzarTrigger,
     ];
     for name in ["blank", "short"] {

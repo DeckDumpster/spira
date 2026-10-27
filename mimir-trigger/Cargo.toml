@@ -1,11 +1,11 @@
 [package]
-name = "maechen-trigger"
+name = "mimir-trigger"
 version = "1.0.0"
 edition = "2021"
-description = "maechen-trigger — evaluate the Maechen trigger conditions (landing volume, time gap, invalid-closed rows) and file a sweep bead when one fires, with idempotent dedup. Rust port of spira/maechen-trigger.sh (sp-0ekp7, wave 7b)."
+description = "mimir-trigger — evaluate the Mimir trigger conditions (landing volume, time gap, invalid-closed rows) and file a sweep bead when one fires, with idempotent dedup. Rust port of spira/mimir-trigger.sh (sp-0ekp7, wave 7b)."
 
 [[bin]]
-name = "maechen-trigger"
+name = "mimir-trigger"
 path = "src/main.rs"
 
 [dependencies]

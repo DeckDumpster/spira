@@ -9,7 +9,7 @@ DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # words; being wrongly out costs an untraced violation. The default is generous.
     # CSV of slug names, without the leading path — e.g. "law-foo,law-bar".
     # THREE SLUGS DROPPED (sp-crr3n), never shipped in spira/statutes/: this default is what
-    # ops, groomer, maechen, batcher and spike (no FAYTH_STATUTE_CORE of their own) fall back
+    # ops, groomer, mimir, batcher and spike (no FAYTH_STATUTE_CORE of their own) fall back
     # to, and a fresh install died pre-session on these ("core statute(s) declared but not
     # found", acceptance phase B). law-fence-loops-on-shared-hardware names this operator's
     # own gt dashboard and pokedumpster by name; law-gate-earns-its-place and

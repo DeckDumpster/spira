@@ -246,7 +246,7 @@ fn unreadable_watermark_warns_and_falls_back() {
     let f = Fake::default();
     f.clean_clock();
     f.set("SPIRA_RUN", "/run");
-    f.files.borrow_mut().insert(PathBuf::from("/run/maechen.watermark"), "not-a-number".into());
+    f.files.borrow_mut().insert(PathBuf::from("/run/mimir.watermark"), "not-a-number".into());
     f.set_events(None, "raw-rows");
     f.set_count("raw-rows", "1 1 2 sp-reclaim\n");
     run(&f, false);
@@ -258,7 +258,7 @@ fn valid_watermark_uses_cluster_merge() {
     let f = Fake::default();
     f.clean_clock();
     f.set("SPIRA_RUN", "/run");
-    f.files.borrow_mut().insert(PathBuf::from("/run/maechen.watermark"), "1700000000".into());
+    f.files.borrow_mut().insert(PathBuf::from("/run/mimir.watermark"), "1700000000".into());
     f.set_events(None, "all-rows");
     f.set_events(Some(1_700_000_000), "since-rows");
     f.set_count("all-rows", "5 5 9 sp-recur-suite-red\n");

@@ -10,7 +10,7 @@
 # hand (actor=overseer, new_value='unjudged-<cause>'). _census_events_sql had no
 # actor predicate, so that hand-written row ranked as a failure class no harness code
 # path could ever stop emitting — sp-requeue-unjudged-branch-collision reached #2 in
-# a real Maechen census with 6 distinct beads. Fixed by an actor predicate
+# a real Mimir census with 6 distinct beads. Fixed by an actor predicate
 # (actor = 'harness' OR actor LIKE 'aeon-%') on the ranked query; excluded rows are
 # listed separately by census_handwritten_run_sql / handwritten.
 #

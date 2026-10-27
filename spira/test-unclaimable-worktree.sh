@@ -131,7 +131,7 @@ run_from_worktree() {
         -u SPIRA_SCOPE_LABEL -u SPIRA_CI_LABEL \
         -u SPIRA_ASK_LABEL -u SPIRA_NO_LOOP_LABEL \
         -u SPIRA_CZAR_LABEL -u SPIRA_GROOMER_LABEL \
-        -u SPIRA_MAECHEN_LABEL -u SPIRA_SPIKE_LABEL \
+        -u SPIRA_MIMIR_LABEL -u SPIRA_SPIKE_LABEL \
         SPIRA_HOME="$FAKE_WT/spira" \
         SPIRA_CONF="$TMP/no-such.conf" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" \

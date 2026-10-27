@@ -32,7 +32,7 @@ ln -s "$HERE/conf.d" "$T/conf.d"
 tl_config SPIRA_RUN="$T/run" SPIRA_DB="$T/no-db"
 # Non-default label values to prove mode expansion reads conf vars, not literals.
 tl_config SPIRA_PLAN_LABEL="plan" SPIRA_INCIDENT_LABEL="incident" SPIRA_GROOMER_LABEL="groom" \
-    SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SPIKE_LABEL="spike" SPIRA_CZAR_LABEL="czar-trigger"
+    SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SPIKE_LABEL="spike" SPIRA_CZAR_LABEL="czar-trigger"
 
 # A throwaway repo-map. SPIRA_REPO_MAP is set per section.
 MAP="$T/repo-map"
@@ -59,7 +59,7 @@ out="$(spira_repo_lanes alpha)"
 want "six-col: plan in result"              "plan"          "$out"
 want "six-col: incident in result"          "incident"      "$out"
 want "six-col: groom in result"             "groom"         "$out"
-want "six-col: maechen-sweep in result"     "maechen-sweep" "$out"
+want "six-col: mimir-sweep in result"     "mimir-sweep" "$out"
 want "six-col: spike in result"             "spike"         "$out"
 want "six-col: czar-trigger in result"      "czar-trigger"  "$out"
 
@@ -85,7 +85,7 @@ want   "develop: contains plan"             "plan"         "$out_d"
 want   "develop: contains incident"         "incident"     "$out_d"
 want   "develop: contains groom"            "groom"        "$out_d"
 want   "develop: contains spike"            "spike"        "$out_d"
-nowant "develop: no maechen-sweep"          "maechen-sweep" "$out_d"
+nowant "develop: no mimir-sweep"          "mimir-sweep" "$out_d"
 nowant "develop: no czar-trigger"           "czar-trigger" "$out_d"
 
 # self -> all six labels
@@ -94,7 +94,7 @@ want   "self: contains plan"                "plan"         "$out_s"
 want   "self: contains incident"            "incident"     "$out_s"
 want   "self: contains groom"              "groom"        "$out_s"
 want   "self: contains spike"              "spike"        "$out_s"
-want   "self: contains maechen-sweep"       "maechen-sweep" "$out_s"
+want   "self: contains mimir-sweep"       "mimir-sweep" "$out_s"
 want   "self: contains czar-trigger"        "czar-trigger" "$out_s"
 
 # gate column is unchanged when lanes is present (positive control that gate still parses).
@@ -158,7 +158,7 @@ out_empty="$(spira_repo_lanes alpha)"
 want "empty lanes field: plan in result"          "plan"          "$out_empty"
 want "empty lanes field: incident in result"      "incident"      "$out_empty"
 want "empty lanes field: groom in result"         "groom"         "$out_empty"
-want "empty lanes field: maechen-sweep in result" "maechen-sweep" "$out_empty"
+want "empty lanes field: mimir-sweep in result" "mimir-sweep" "$out_empty"
 want "empty lanes field: spike in result"         "spike"         "$out_empty"
 want "empty lanes field: czar-trigger in result"  "czar-trigger"  "$out_empty"
 

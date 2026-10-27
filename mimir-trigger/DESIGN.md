@@ -1,13 +1,13 @@
-# maechen-trigger
+# mimir-trigger
 
-Rust port of `spira/maechen-trigger.sh` (sp-0ekp7, rewrite wave 7b, law-new-subsystems-are-rust,
-law-rust-rewrites-start-from-intent). `spira/maechen-trigger.sh` becomes a thin shim —
-`. conf.sh; exec maechen-trigger "$@"` — the same pattern `gate.sh`, `czar.sh` and
+Rust port of `spira/mimir-trigger.sh` (sp-0ekp7, rewrite wave 7b, law-new-subsystems-are-rust,
+law-rust-rewrites-start-from-intent). `spira/mimir-trigger.sh` becomes a thin shim —
+`. conf.sh; exec mimir-trigger "$@"` — the same pattern `gate.sh`, `czar.sh` and
 `reconciler.sh` already use for their own Rust replacements.
 
 ## Intent
 
-Evaluate, on a timer (`spira-maechen.timer`, 10 min), whether the Maechen persona should be
+Evaluate, on a timer (`spira-mimir.timer`, 10 min), whether the Mimir persona should be
 summoned to run a retrospective pass over recent failures. File **at most one** open trigger
 bead at a time; never let a live trigger accumulate a backlog of duplicates.
 
@@ -15,9 +15,9 @@ Three independent conditions, any one of which files (or — since they share on
 would-file) the same single bead:
 
 1. **Landing trigger.** Enough commits naming a bead id have landed on every managed
-   repository's base branch since the watermark (`SPIRA_MAECHEN_LANDING_INTERVAL`, default 25).
-2. **Time trigger.** Too long has elapsed since the last completed Maechen pass
-   (`SPIRA_MAECHEN_MAX_GAP_SECONDS`, default 10800s), independent of landing volume — a
+   repository's base branch since the watermark (`SPIRA_MIMIR_LANDING_INTERVAL`, default 25).
+2. **Time trigger.** Too long has elapsed since the last completed Mimir pass
+   (`SPIRA_MIMIR_MAX_GAP_SECONDS`, default 10800s), independent of landing volume — a
    quiet system still gets periodically reviewed.
 3. **Invalid-closed trigger.** `detect_invalid_closed` (the `lib.sh` seam) found at least one
    `INVALID-CLOSED` or `UNFILED-FOLLOW` row the operator has not already allowlisted.
@@ -25,10 +25,10 @@ would-file) the same single bead:
 ## Contract
 
 ```
-maechen-trigger
-maechen-trigger [--home <spira-dir>] repo-lanes <repo-name>
-maechen-trigger [--home <spira-dir>] lane-admitted <lane>
-maechen-trigger [--home <spira-dir>] open-trigger-count <labels>
+mimir-trigger
+mimir-trigger [--home <spira-dir>] repo-lanes <repo-name>
+mimir-trigger [--home <spira-dir>] lane-admitted <lane>
+mimir-trigger [--home <spira-dir>] open-trigger-count <labels>
 ```
 
 The bare form is the sweep (matches the bash: the script took no arguments). The three
@@ -41,24 +41,24 @@ row and the bad token) on an unknown mode or lane label; `lane-admitted` is exit
 
 Reads its
 configuration from environment (`SPIRA_RUN`, `SPIRA_HOME`, `SPIRA_DB`, `SPIRA_BD`,
-`SPIRA_REPO_MAP`, `SPIRA_SCOPE_LABEL`, `SPIRA_MAECHEN_LABEL`, `SPIRA_MAECHEN_LANDING_INTERVAL`,
-`SPIRA_MAECHEN_MAX_GAP_SECONDS`, `SPIRA_MAECHEN_MAX_BEADS`), exactly as the bash did, so
+`SPIRA_REPO_MAP`, `SPIRA_SCOPE_LABEL`, `SPIRA_MIMIR_LABEL`, `SPIRA_MIMIR_LANDING_INTERVAL`,
+`SPIRA_MIMIR_MAX_GAP_SECONDS`, `SPIRA_MIMIR_MAX_BEADS`), exactly as the bash did, so
 `conf.sh` and the systemd unit need no changes.
 
 Exit code:
 - `0` — a bead was filed, dedup already found one open/in-progress, the lane is unadmitted,
   or no trigger condition fired. All four are "correct, nothing more to do."
 - `1` — `bd create` failed after a trigger fired. The watermark and lastpass files are
-  **never written by this binary** — `lib.sh`'s Maechen pass step 5 owns both, same as today.
+  **never written by this binary** — `lib.sh`'s Mimir pass step 5 owns both, same as today.
 
 Side effects (unchanged from the bash):
-- A non-blocking `flock` on `$SPIRA_RUN/maechen-trigger.lock`; a caller that loses the race
+- A non-blocking `flock` on `$SPIRA_RUN/mimir-trigger.lock`; a caller that loses the race
   skips this tick silently (exit 0) rather than risking two overlapping list-then-create
   dedup checks.
 - One `bd -C $SPIRA_DB create` on a fire, **not** through `bdq` — this preserves an existing
   asymmetry with `incident.sh` (which always uses `bdq`) rather than introducing a behaviour
   change (see Decisions).
-- Log lines to stderr, `<ISO-8601Z> maechen-trigger: <message>`.
+- Log lines to stderr, `<ISO-8601Z> mimir-trigger: <message>`.
 
 ## Schema / architecture
 
@@ -99,7 +99,7 @@ Side effects (unchanged from the bash):
   are now one-line shims onto this binary's `repo-lanes`/`lane-admitted`/`open-trigger-count`
   CLI doors; `_spira_expand_lanes` had no caller outside `spira_repo_lanes` itself and is
   retired rather than given its own door.
-- **`mail.sh`.** Not used by `maechen-trigger.sh` at all (only `incident.sh` sends mail); no
+- **`mail.sh`.** Not used by `mimir-trigger.sh` at all (only `incident.sh` sends mail); no
   change needed here.
 - **`groom-trigger.sh` itself.** Still bash — only the three `lib.sh` functions it calls
   moved; the script's own control flow is untouched and out of this bead's scope.
@@ -109,9 +109,9 @@ Side effects (unchanged from the bash):
 - `engine.rs`'s 21 unit tests include a fixture window of real commit subjects captured
   verbatim from this repository's own `git log --format=%s` history, so the landing-id
   extraction is checked against real data, not only hand-written examples.
-- Black-box parity: `test-maechen-trigger.sh` (T2, stub `bd`, real `git` against throwaway
+- Black-box parity: `test-mimir-trigger.sh` (T2, stub `bd`, real `git` against throwaway
   repos) exercises the CLI contract — trigger conditions, dedup, labels, exit codes — against
-  whichever `maechen-trigger` is first on `PATH`. Run unchanged against the compiled binary
+  whichever `mimir-trigger` is first on `PATH`. Run unchanged against the compiled binary
   through its existing shim, it is this bead's parity evidence: same suite, same fixtures,
   same assertions, old implementation vs new.
 
@@ -127,5 +127,5 @@ Side effects (unchanged from the bash):
   test. Named here as the one deliberate behavioural difference (wave-brief "name any
   intended difference").
 - **No `[[bin]]` split for `groom-trigger.sh`.** Despite sharing two `lib.sh` helpers, it is
-  out of this bead's named scope (`spira/incident.sh spira/maechen-trigger.sh`) and is left
+  out of this bead's named scope (`spira/incident.sh spira/mimir-trigger.sh`) and is left
   as bash.

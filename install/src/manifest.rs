@@ -118,8 +118,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-statute-audit.timer", true));
     m.units.push(t("spira-groom.service", false));
     m.units.push(t("spira-groom.timer", true));
-    m.units.push(t("spira-maechen.service", false));
-    m.units.push(t("spira-maechen.timer", true));
+    m.units.push(t("spira-mimir.service", false));
+    m.units.push(t("spira-mimir.timer", true));
     m.units.push(t("spira-warden.service", false));
     m.units.push(t("spira-warden.timer", true));
     m.units.push(t("spira-nix-gc.service", false));

@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 #
-# test-maechen-trigger.sh — maechen-trigger.sh: dual-trigger conditions, shared
+# test-mimir-trigger.sh — mimir-trigger.sh: dual-trigger conditions, shared
 #   watermark, and idempotent deduplication.
 #
-#   ./test-maechen-trigger.sh
+#   ./test-mimir-trigger.sh
 #
 # WHAT THIS SUITE IS GUARDING
 # ---------------------------
-# maechen-trigger.sh fires a sweep bead when EITHER of two conditions is met:
+# mimir-trigger.sh fires a sweep bead when EITHER of two conditions is met:
 #
 #   1. LANDING TRIGGER: commits naming a bead id on managed repos' base branches
-#      have accumulated to SPIRA_MAECHEN_LANDING_INTERVAL since the watermark.
+#      have accumulated to SPIRA_MIMIR_LANDING_INTERVAL since the watermark.
 #
-#   2. TIME TRIGGER: SPIRA_MAECHEN_MAX_GAP_SECONDS have elapsed since the last
-#      completed pass ($SPIRA_RUN/maechen.lastpass), NOT since the watermark.
+#   2. TIME TRIGGER: SPIRA_MIMIR_MAX_GAP_SECONDS have elapsed since the last
+#      completed pass ($SPIRA_RUN/mimir.lastpass), NOT since the watermark.
 #      The watermark bounds the census query window; the time trigger cadence is
 #      governed by when a pass last ran. When the census substrate is unreadable
 #      every pass holds the watermark, so gating the time trigger on the watermark
@@ -25,10 +25,10 @@
 #   b. Landing trigger fires when the landing count threshold is reached.
 #   c. Dedup: when an open trigger bead exists, no second bead is filed.
 #   d. No trigger: when neither condition is met, no bead is filed.
-#   e. The watermark is NOT advanced by the trigger — the Maechen PASS advances it in
+#   e. The watermark is NOT advanced by the trigger — the Mimir PASS advances it in
 #      Step 5 after running census.sh, so census sees the events that caused the trigger.
 #      (sp-pyzp: advancing in the trigger caused census to miss the trigger's window.)
-#   f. The labels used match SPIRA_SCOPE_LABEL + SPIRA_MAECHEN_LABEL so the fayth
+#   f. The labels used match SPIRA_SCOPE_LABEL + SPIRA_MIMIR_LABEL so the fayth
 #      predicate finds the trigger bead.
 #   g. Both triggers firing at once produce ONE bead, not two (shared watermark).
 #   h. bd create failure is reported and exits 1.
@@ -49,16 +49,16 @@
 # throwaway repos.
 #
 # tier: T2
-# covers: spira/maechen-trigger.sh spira/conf.sh maechen-trigger/* UC-ops-detection-remediation-16
+# covers: spira/mimir-trigger.sh spira/conf.sh mimir-trigger/* UC-ops-detection-remediation-16
 # hermetic-ok: stub bd, real git with throwaway repos
 # scar: unrecorded
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
-TRIGSH=maechen-trigger.sh   # invoked by name on the suite's PATH (sp-gypjk)
+TRIGSH=mimir-trigger.sh   # invoked by name on the suite's PATH (sp-gypjk)
 # Every run_trigger below wipes env and rebuilds PATH for isolation; since sp-0ekp7 moved
-# maechen-trigger.sh's logic into a compiled binary the shim execs, PATH must still reach
+# mimir-trigger.sh's logic into a compiled binary the shim execs, PATH must still reach
 # it — appending the ambient $PATH (the staged release's bin/, under testenv) after the
 # deterministic $HERE prefix does that. Safe with the stub bd: it's referenced by its
 # absolute path via SPIRA_BD, never found through PATH, so this cannot substitute the
@@ -119,7 +119,7 @@ git -C "$TESTREPO" commit --allow-empty -q -m "initial"
 mkdir -p "$TESTREPO/.git/refs/remotes/origin"
 git -C "$TESTREPO" rev-parse HEAD > "$TESTREPO/.git/refs/remotes/origin/main"
 
-# SELFMAP: a repo-map that admits maechen-sweep for the testrepo home repo.
+# SELFMAP: a repo-map that admits mimir-sweep for the testrepo home repo.
 # Required by the lane check added in sp-4k8bf: triggers skip when no repo admits their lane.
 SELFMAP="$T/selfmap"
 printf 'testrepo | %s | push | origin/main | | true | self\n' "$TESTREPO" > "$SELFMAP"
@@ -132,8 +132,8 @@ add_landing() {
 
 RUNDIR="$T/run"
 mkdir -p "$RUNDIR"
-WATERMARK_FILE="$RUNDIR/maechen.watermark"
-LASTPASS_FILE="$RUNDIR/maechen.lastpass"
+WATERMARK_FILE="$RUNDIR/mimir.watermark"
+LASTPASS_FILE="$RUNDIR/mimir.lastpass"
 
 now_ts="$(date +%s)"
 
@@ -156,10 +156,10 @@ run_trigger() {
     : > "$BD_LOG"
     tl_config SPIRA_BD="${SPIRA_BD_OVERRIDE:-$STUB_BD}" SPIRA_DB="$T/fixture.db" \
         SPIRA_RUN="$RUNDIR" SPIRA_REPO_MAP="$SELFMAP" \
-        SPIRA_MAECHEN_LABEL="${SPIRA_MAECHEN_LABEL:-maechen-sweep}" \
+        SPIRA_MIMIR_LABEL="${SPIRA_MIMIR_LABEL:-mimir-sweep}" \
         SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-spira}" \
-        SPIRA_MAECHEN_LANDING_INTERVAL="${SPIRA_MAECHEN_LANDING_INTERVAL:-25}" \
-        SPIRA_MAECHEN_MAX_GAP_SECONDS="${SPIRA_MAECHEN_MAX_GAP_SECONDS:-10800}"
+        SPIRA_MIMIR_LANDING_INTERVAL="${SPIRA_MIMIR_LANDING_INTERVAL:-25}" \
+        SPIRA_MIMIR_MAX_GAP_SECONDS="${SPIRA_MIMIR_MAX_GAP_SECONDS:-10800}"
     env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
         SPIRA_HOME="$HERE" \
         SPIRA_CONF="$NONE" \
@@ -182,8 +182,8 @@ echo "TIME TRIGGER: no-trigger control — lastpass is 'now', gap threshold is l
 printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
 printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
 : > "$BD_LOG"
-SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 \
-SPIRA_MAECHEN_LANDING_INTERVAL=999 \
+SPIRA_MIMIR_MAX_GAP_SECONDS=999999 \
+SPIRA_MIMIR_LANDING_INTERVAL=999 \
     out="$(run_trigger)"; rc=$?
 is   "no-trigger exits 0"        0 "$rc"
 nowant "no create when no trigger" "create" "$(cat "$BD_LOG")"
@@ -191,22 +191,22 @@ want   "no-trigger logs 'no trigger'" "no trigger" "$out"
 
 # ==========================================================================================
 echo
-echo "TIME TRIGGER: fires when SPIRA_MAECHEN_MAX_GAP_SECONDS elapsed since lastpass"
+echo "TIME TRIGGER: fires when SPIRA_MIMIR_MAX_GAP_SECONDS elapsed since lastpass"
 # ==========================================================================================
 # Absent lastpass file → lastpass_ts=0 → elapsed = now (~epoch 1.79B) >> threshold.
 # Watermark is set to 0 but is irrelevant to the time trigger (it bounds census only).
 printf '0\n' > "$WATERMARK_FILE"
 rm -f "$LASTPASS_FILE"
-SPIRA_MAECHEN_MAX_GAP_SECONDS=60 \
-SPIRA_MAECHEN_LANDING_INTERVAL=999 \
+SPIRA_MIMIR_MAX_GAP_SECONDS=60 \
+SPIRA_MIMIR_LANDING_INTERVAL=999 \
     out="$(run_trigger)"; rc=$?
 is   "time trigger exits 0"             0        "$rc"
 want "bd create is called"              "create" "$(cat "$BD_LOG")"
 want "labels include scope label"       "spira"  "$(cat "$BD_LOG")"
-want "labels include maechen-sweep"     "maechen-sweep" "$(cat "$BD_LOG")"
+want "labels include mimir-sweep"     "mimir-sweep" "$(cat "$BD_LOG")"
 want "reason mentions elapsed"          "elapsed" "$out"
 
-# The trigger must NOT advance the watermark — the Maechen pass does that in Step 5,
+# The trigger must NOT advance the watermark — the Mimir pass does that in Step 5,
 # after census.sh runs, so census can see the events that caused the trigger to fire.
 # sp-pyzp: advancing before the bead caused census to read a watermark past the
 # trigger's window and report 0 classes while the window held the offenders.
@@ -217,7 +217,7 @@ is "watermark not advanced by trigger (still 0)" "0" "${new_wm:-0}"
 echo
 echo "TIME TRIGGER: db-l85n fix — held watermark + recent lastpass = no fire"
 # ==========================================================================================
-# ACCEPTANCE CRITERIA (db-l85n): when the census substrate is unreadable, every Maechen
+# ACCEPTANCE CRITERIA (db-l85n): when the census substrate is unreadable, every Mimir
 # pass holds the watermark (db-93g). Before this fix, the time trigger read the watermark
 # and would fire on every subsequent tick because elapsed-since-watermark grew without
 # bound. The fix: time trigger reads lastpass, not watermark.
@@ -227,8 +227,8 @@ echo "TIME TRIGGER: db-l85n fix — held watermark + recent lastpass = no fire"
 printf '0\n' > "$WATERMARK_FILE"
 printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
 : > "$BD_LOG"
-SPIRA_MAECHEN_MAX_GAP_SECONDS=10800 \
-SPIRA_MAECHEN_LANDING_INTERVAL=999 \
+SPIRA_MIMIR_MAX_GAP_SECONDS=10800 \
+SPIRA_MIMIR_LANDING_INTERVAL=999 \
     out="$(run_trigger)"; rc=$?
 is     "held watermark + recent lastpass exits 0"         0 "$rc"
 nowant "held watermark + recent lastpass does not create" "create" "$(cat "$BD_LOG")"
@@ -239,8 +239,8 @@ want   "log mentions 'no trigger'"                        "no trigger" "$out"
 printf '0\n' > "$WATERMARK_FILE"
 printf '0\n' > "$LASTPASS_FILE"
 : > "$BD_LOG"
-SPIRA_MAECHEN_MAX_GAP_SECONDS=10800 \
-SPIRA_MAECHEN_LANDING_INTERVAL=999 \
+SPIRA_MIMIR_MAX_GAP_SECONDS=10800 \
+SPIRA_MIMIR_LANDING_INTERVAL=999 \
     out_pc="$(run_trigger)"; rc_pc=$?
 is   "held watermark + old lastpass exits 0"        0        "$rc_pc"
 want "held watermark + old lastpass fires trigger"  "create" "$(cat "$BD_LOG")"
@@ -255,8 +255,8 @@ echo "LANDING TRIGGER: no-trigger control — no bead-naming commits, high thres
 # lastpass, not watermark; elapsed since lastpass must be below MAX_GAP=999999).
 printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
 printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
-SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 \
-SPIRA_MAECHEN_LANDING_INTERVAL=999 \
+SPIRA_MIMIR_MAX_GAP_SECONDS=999999 \
+SPIRA_MIMIR_LANDING_INTERVAL=999 \
     out="$(run_trigger)"; rc=$?
 is   "landing no-trigger exits 0"         0 "$rc"
 nowant "no create on landing no-trigger"  "create" "$(cat "$BD_LOG")"
@@ -274,8 +274,8 @@ printf '%d\n' "$(( $(date +%s) - 1 ))" > "$WATERMARK_FILE"
 printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
 add_landing "sp-aaa1: first landing"
 add_landing "sp-bbb2: second landing"
-SPIRA_MAECHEN_MAX_GAP_SECONDS=999999 \
-SPIRA_MAECHEN_LANDING_INTERVAL=2 \
+SPIRA_MIMIR_MAX_GAP_SECONDS=999999 \
+SPIRA_MIMIR_LANDING_INTERVAL=2 \
     out="$(run_trigger)"; rc=$?
 is   "landing trigger exits 0"           0        "$rc"
 want "bd create called on landing"       "create" "$(cat "$BD_LOG")"
@@ -304,9 +304,9 @@ printf 'nonmatch | %s | push | origin/main | | true | self\n' "$NONMATCH_REPO" >
 printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
 : > "$BD_LOG"
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
-    SPIRA_REPO_MAP="$NONMATCH_MAP" SPIRA_MAECHEN_LABEL="maechen-sweep" \
-    SPIRA_SCOPE_LABEL="spira" SPIRA_MAECHEN_LANDING_INTERVAL=2 \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999
+    SPIRA_REPO_MAP="$NONMATCH_MAP" SPIRA_MIMIR_LABEL="mimir-sweep" \
+    SPIRA_SCOPE_LABEL="spira" SPIRA_MIMIR_LANDING_INTERVAL=2 \
+    SPIRA_MIMIR_MAX_GAP_SECONDS=9999999999
 out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
@@ -327,12 +327,12 @@ echo "DEDUP: open trigger bead — no second bead is filed"
 # trigger must NOT file another bead. The landing and time thresholds are set low so
 # conditions would otherwise be met; the dedup alone prevents filing.
 printf '0\n' > "$WATERMARK_FILE"
-BD_LIST_OUTPUT='[{"id":"sp-test","title":"Maechen pass"}]'
+BD_LIST_OUTPUT='[{"id":"sp-test","title":"Mimir pass"}]'
 LC_LIST_OUTPUT='[{"bead_id":"sp-test","state":"READY"}]'
-SPIRA_MAECHEN_MAX_GAP_SECONDS=0
-SPIRA_MAECHEN_LANDING_INTERVAL=0
+SPIRA_MIMIR_MAX_GAP_SECONDS=0
+SPIRA_MIMIR_LANDING_INTERVAL=0
 out="$(run_trigger)"; rc=$?
-unset BD_LIST_OUTPUT LC_LIST_OUTPUT SPIRA_MAECHEN_MAX_GAP_SECONDS SPIRA_MAECHEN_LANDING_INTERVAL
+unset BD_LIST_OUTPUT LC_LIST_OUTPUT SPIRA_MIMIR_MAX_GAP_SECONDS SPIRA_MIMIR_LANDING_INTERVAL
 is     "dedup exits 0"               0           "$rc"
 nowant "dedup does not create"       "create"    "$(cat "$BD_LOG")"
 want   "dedup logs skipping"         "skipping"  "$out"
@@ -342,7 +342,7 @@ want   "list IS called for dedup"    "list"      "$(cat "$BD_LOG")"
 echo
 echo "DEDUP: the list query includes in_progress, not just open (sp-mp9s)"
 # ==========================================================================================
-# REGRESSION (sp-mp9s): the guard queried --status open only. Once Maechen claims the
+# REGRESSION (sp-mp9s): the guard queried --status open only. Once Mimir claims the
 # trigger bead its status becomes in_progress, --status open returns [], the guard fires,
 # and a duplicate pass is filed on the next timer tick.
 #
@@ -357,16 +357,16 @@ echo "DEDUP: the list query includes in_progress, not just open (sp-mp9s)"
 want   "dedup list call lists content, no bd status filter" "list --all --label" "$(cat "$BD_LOG")"
 nowant "dedup list call never filters on bd status" "--status" "$(cat "$BD_LOG")"
 printf '0\n' > "$WATERMARK_FILE"
-BD_LIST_OUTPUT='[{"id":"sp-test","title":"Maechen pass"}]'
-SPIRA_MAECHEN_MAX_GAP_SECONDS=0
-SPIRA_MAECHEN_LANDING_INTERVAL=0
+BD_LIST_OUTPUT='[{"id":"sp-test","title":"Mimir pass"}]'
+SPIRA_MIMIR_MAX_GAP_SECONDS=0
+SPIRA_MIMIR_LANDING_INTERVAL=0
 LC_LIST_OUTPUT='[{"bead_id":"sp-test","state":"WORKING"}]'
 out="$(run_trigger)"
 nowant "a claimed (WORKING) trigger bead still blocks a second pass" "create" "$(cat "$BD_LOG")"
 LC_LIST_OUTPUT='[{"bead_id":"sp-test","state":"SUBMITTED"}]'
 out="$(run_trigger)"
 want   "a trigger bead handed on (SUBMITTED) no longer blocks" "create" "$(cat "$BD_LOG")"
-unset BD_LIST_OUTPUT LC_LIST_OUTPUT SPIRA_MAECHEN_MAX_GAP_SECONDS SPIRA_MAECHEN_LANDING_INTERVAL
+unset BD_LIST_OUTPUT LC_LIST_OUTPUT SPIRA_MIMIR_MAX_GAP_SECONDS SPIRA_MIMIR_LANDING_INTERVAL
 
 # ==========================================================================================
 echo
@@ -374,8 +374,8 @@ echo "BOTH TRIGGERS: both conditions met — exactly ONE bead filed"
 # ==========================================================================================
 # Watermark=0, low thresholds for both. Only one bd create call must appear.
 printf '0\n' > "$WATERMARK_FILE"
-SPIRA_MAECHEN_MAX_GAP_SECONDS=0 \
-SPIRA_MAECHEN_LANDING_INTERVAL=1 \
+SPIRA_MIMIR_MAX_GAP_SECONDS=0 \
+SPIRA_MIMIR_LANDING_INTERVAL=1 \
     out="$(run_trigger)"; rc=$?
 is   "both triggers exits 0"           0 "$rc"
 want "bd create called once"           "create" "$(cat "$BD_LOG")"
@@ -389,8 +389,8 @@ echo "ERROR: bd create fails — exit code is 1"
 # ==========================================================================================
 printf '0\n' > "$WATERMARK_FILE"
 tl_config SPIRA_BD="$FAIL_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
-    SPIRA_REPO_MAP="$SELFMAP" SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=0 SPIRA_MAECHEN_LANDING_INTERVAL=999
+    SPIRA_REPO_MAP="$SELFMAP" SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MIMIR_MAX_GAP_SECONDS=0 SPIRA_MIMIR_LANDING_INTERVAL=999
 out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
@@ -405,15 +405,15 @@ want "failure log mentions ERROR"      "ERROR"  "$out"
 
 # ==========================================================================================
 echo
-echo "LABELS: custom SPIRA_SCOPE_LABEL and SPIRA_MAECHEN_LABEL are used"
+echo "LABELS: custom SPIRA_SCOPE_LABEL and SPIRA_MIMIR_LABEL are used"
 # ==========================================================================================
 # Pin to non-defaults (law-gates-run-in-a-clean-environment). A test asserting the
 # default passes even if the code has the literal written in.
 printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
 : > "$BD_LOG"
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
-    SPIRA_REPO_MAP="$SELFMAP" SPIRA_SCOPE_LABEL="myproject" SPIRA_MAECHEN_LABEL="retro" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=0 SPIRA_MAECHEN_LANDING_INTERVAL=999
+    SPIRA_REPO_MAP="$SELFMAP" SPIRA_SCOPE_LABEL="myproject" SPIRA_MIMIR_LABEL="retro" \
+    SPIRA_MIMIR_MAX_GAP_SECONDS=0 SPIRA_MIMIR_LANDING_INTERVAL=999
 out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
@@ -425,12 +425,12 @@ out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
         "$TRIGSH" 2>&1)"; rc=$?
 is   "custom labels exits 0"                       0            "$rc"
 want "custom scope label in create"                "myproject"  "$(cat "$BD_LOG")"
-want "custom maechen label in create"              "retro"      "$(cat "$BD_LOG")"
+want "custom mimir label in create"              "retro"      "$(cat "$BD_LOG")"
 # The --label argument must not include the old defaults when overridden.
 # Extract only the --label value from the create call in this run (log is clean).
 label_arg="$(grep 'create' "$BD_LOG" | grep -oP '(?<=--label )\S+' | head -1 || true)"
 nowant "default scope label not in --label" "spira"         "${label_arg:-}"
-nowant "default maechen label not in --label" "maechen-sweep" "${label_arg:-}"
+nowant "default mimir label not in --label" "mimir-sweep" "${label_arg:-}"
 
 # ==========================================================================================
 echo
@@ -439,8 +439,8 @@ echo "LABELS: empty SPIRA_SCOPE_LABEL — no leading comma"
 printf '%d\n' "$now_ts" > "$WATERMARK_FILE"
 : > "$BD_LOG"
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
-    SPIRA_REPO_MAP="$SELFMAP" SPIRA_SCOPE_LABEL="" SPIRA_MAECHEN_LABEL="maechen-sweep" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=0 SPIRA_MAECHEN_LANDING_INTERVAL=999
+    SPIRA_REPO_MAP="$SELFMAP" SPIRA_SCOPE_LABEL="" SPIRA_MIMIR_LABEL="mimir-sweep" \
+    SPIRA_MIMIR_MAX_GAP_SECONDS=0 SPIRA_MIMIR_LANDING_INTERVAL=999
 out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
@@ -451,8 +451,8 @@ out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
         SPIRA_REPO="$TESTREPO" \
         "$TRIGSH" 2>&1)"; rc=$?
 is     "empty scope exits 0"                0 "$rc"
-nowant "no leading comma in --label"        ",maechen-sweep" "$(grep 'create' "$BD_LOG" || true)"
-want   "maechen label present without scope" "maechen-sweep" "$(cat "$BD_LOG")"
+nowant "no leading comma in --label"        ",mimir-sweep" "$(grep 'create' "$BD_LOG" || true)"
+want   "mimir label present without scope" "mimir-sweep" "$(cat "$BD_LOG")"
 
 # ==========================================================================================
 echo
@@ -500,14 +500,14 @@ mkdir -p "$HOME_B4T/.git/refs/remotes/origin"
 git -C "$HOME_B4T" rev-parse HEAD > "$HOME_B4T/.git/refs/remotes/origin/main"
 
 REPOMAP_B4T="$T/repomap-b4t"
-# home-b4t with self mode so the lane check admits maechen-sweep. no-origin listed before
+# home-b4t with self mode so the lane check admits mimir-sweep. no-origin listed before
 # counted — the ordering that triggered the b4t arithmetic-error defect.
 printf 'home-b4t | %s | push | origin/main | | true | self\nnoremote|%s|\ncounted|%s|\n' \
     "$HOME_B4T" "$NOREMOTE_B4T" "$COUNTED_B4T" > "$REPOMAP_B4T"
 : > "$BD_LOG"
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
-    SPIRA_REPO_MAP="$REPOMAP_B4T" SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2
+    SPIRA_REPO_MAP="$REPOMAP_B4T" SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MIMIR_MAX_GAP_SECONDS=9999999999 SPIRA_MIMIR_LANDING_INTERVAL=2
 out_b4t="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
@@ -577,13 +577,13 @@ mkdir -p "$HOME_3LJK/.git/refs/remotes/origin"
 git -C "$HOME_3LJK" rev-parse HEAD > "$HOME_3LJK/.git/refs/remotes/origin/main"
 
 REPOMAP_3LJK="$T/repomap-3ljk"
-# home-3ljk with self mode so the lane check admits maechen-sweep.
+# home-3ljk with self mode so the lane check admits mimir-sweep.
 printf 'home-3ljk | %s | push | origin/main | | true | self\ngitea-repo|%s|\n' \
     "$HOME_3LJK" "$GITEA_REPO" > "$REPOMAP_3LJK"
 : > "$BD_LOG"
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
-    SPIRA_REPO_MAP="$REPOMAP_3LJK" SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2
+    SPIRA_REPO_MAP="$REPOMAP_3LJK" SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MIMIR_MAX_GAP_SECONDS=9999999999 SPIRA_MIMIR_LANDING_INTERVAL=2
 out_3ljk="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:/usr/lib/git-core:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
@@ -621,8 +621,8 @@ git -C "$LAND_FORM_REPO" rev-parse HEAD > "$LAND_FORM_REPO/.git/refs/remotes/ori
 printf 'land-form | %s | push | origin/main | | true | self\n' "$LAND_FORM_REPO" > "$T/map-land-form"
 : > "$BD_LOG"
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
-    SPIRA_REPO_MAP="$T/map-land-form" SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2
+    SPIRA_REPO_MAP="$T/map-land-form" SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MIMIR_MAX_GAP_SECONDS=9999999999 SPIRA_MIMIR_LANDING_INTERVAL=2
 out_lf="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
@@ -653,8 +653,8 @@ git -C "$MERGE_FORM_REPO" rev-parse HEAD > "$MERGE_FORM_REPO/.git/refs/remotes/o
 printf 'merge-form | %s | push | origin/main | | true | self\n' "$MERGE_FORM_REPO" > "$T/map-merge-form"
 : > "$BD_LOG"
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
-    SPIRA_REPO_MAP="$T/map-merge-form" SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2
+    SPIRA_REPO_MAP="$T/map-merge-form" SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MIMIR_MAX_GAP_SECONDS=9999999999 SPIRA_MIMIR_LANDING_INTERVAL=2
 out_mf="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
@@ -688,8 +688,8 @@ printf 'dedup-form | %s | push | origin/main | | true | self\n' "$DEDUP_FORM_REP
 # Threshold=2: only 1 distinct bead landed — trigger must NOT fire.
 : > "$BD_LOG"
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
-    SPIRA_REPO_MAP="$T/map-dedup-form" SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2
+    SPIRA_REPO_MAP="$T/map-dedup-form" SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MIMIR_MAX_GAP_SECONDS=9999999999 SPIRA_MIMIR_LANDING_INTERVAL=2
 out_dd="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
@@ -704,8 +704,8 @@ git -C "$DEDUP_FORM_REPO" commit --allow-empty -q -m "spira: land sp-fff6"
 git -C "$DEDUP_FORM_REPO" rev-parse HEAD > "$DEDUP_FORM_REPO/.git/refs/remotes/origin/main"
 : > "$BD_LOG"
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
-    SPIRA_REPO_MAP="$T/map-dedup-form" SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2
+    SPIRA_REPO_MAP="$T/map-dedup-form" SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MIMIR_MAX_GAP_SECONDS=9999999999 SPIRA_MIMIR_LANDING_INTERVAL=2
 out_dd2="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
@@ -753,8 +753,8 @@ printf '%d\n' "$now_ts" > "$LASTPASS_FILE"
 : > "$BD_LOG"
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
     SPIRA_HOME_REPO="home-wpjm" SPIRA_REPO_MAP="$REPOMAP_WPJM" \
-    SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=2
+    SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MIMIR_MAX_GAP_SECONDS=9999999999 SPIRA_MIMIR_LANDING_INTERVAL=2
 out_wpjm="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
@@ -773,8 +773,8 @@ printf '%d\n' "$(( $(date +%s) - 1 ))" > "$WATERMARK_FILE"
 : > "$BD_LOG"
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
     SPIRA_HOME_REPO="home-wpjm" SPIRA_REPO_MAP="$REPOMAP_WPJM" \
-    SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=9999999999 SPIRA_MAECHEN_LANDING_INTERVAL=3
+    SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MIMIR_MAX_GAP_SECONDS=9999999999 SPIRA_MIMIR_LANDING_INTERVAL=3
 out_wpjm2="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
@@ -797,7 +797,7 @@ tl_config SPIRA_HOME_REPO=
 
 # ==========================================================================================
 echo
-echo "LANE GUARD: no repository admits maechen-sweep — trigger skips with one log line"
+echo "LANE GUARD: no repository admits mimir-sweep — trigger skips with one log line"
 # ==========================================================================================
 # POSITIVE CONTROL (law-absence-needs-a-positive-control): the next test proves the skip
 # is lifted when a repo does admit the lane; if the trigger always skipped, both tests
@@ -808,8 +808,8 @@ printf 'dev-repo | /tmp/dev | push | origin/main | | | develop\n' >> "$NOLANEMAP
 printf '0\n' > "$WATERMARK_FILE"
 : > "$BD_LOG"
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
-    SPIRA_REPO_MAP="$NOLANEMAP" SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=0 SPIRA_MAECHEN_LANDING_INTERVAL=0
+    SPIRA_REPO_MAP="$NOLANEMAP" SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MIMIR_MAX_GAP_SECONDS=0 SPIRA_MIMIR_LANDING_INTERVAL=0
 out_ng="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
@@ -823,12 +823,12 @@ is     "no-lane map: trigger exits 0"         0 "$rc_ng"
 nowant "no-lane map: no bd create call"       "create" "$(cat "$BD_LOG")"
 want   "no-lane map: logs skipping trigger"   "skipping trigger" "$out_ng"
 
-# POSITIVE CONTROL: testrepo is in SELFMAP with self mode — maechen-sweep is admitted.
+# POSITIVE CONTROL: testrepo is in SELFMAP with self mode — mimir-sweep is admitted.
 printf '0\n' > "$WATERMARK_FILE"
 : > "$BD_LOG"
 tl_config SPIRA_BD="$STUB_BD" SPIRA_DB="$T/fixture.db" SPIRA_RUN="$RUNDIR" \
-    SPIRA_REPO_MAP="$SELFMAP" SPIRA_MAECHEN_LABEL="maechen-sweep" SPIRA_SCOPE_LABEL="spira" \
-    SPIRA_MAECHEN_MAX_GAP_SECONDS=0 SPIRA_MAECHEN_LANDING_INTERVAL=0
+    SPIRA_REPO_MAP="$SELFMAP" SPIRA_MIMIR_LABEL="mimir-sweep" SPIRA_SCOPE_LABEL="spira" \
+    SPIRA_MIMIR_MAX_GAP_SECONDS=0 SPIRA_MIMIR_LANDING_INTERVAL=0
 out_lp="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin:$PATH" \
     SPIRA_HOME="$HERE" \
     SPIRA_LC_BIN="$STUB_LC" \
@@ -847,7 +847,7 @@ echo "CONCURRENCY (gap G10): a second instance declines while the lock is held:"
 # ==========================================================================================
 # Deterministic, not timing-based: the test holds the lock file directly before running
 # the script, so the script's own flock --nonblock is guaranteed to find it taken.
-exec 8>"$RUNDIR/maechen-trigger.lock"
+exec 8>"$RUNDIR/mimir-trigger.lock"
 flock -x 8
 
 BD_LIST_OUTPUT="[]" out_locked="$(run_trigger)"; rc_locked=$?

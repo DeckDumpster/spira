@@ -1084,8 +1084,8 @@ impl<'a> Run<'a> {
             ("NO_BD", brief::no_bd_brief()),
             ("SPIRA_HOME", home.clone()),
             ("RUN", self.run_dir().display().to_string()),
-            ("MAX_BEADS", self.conf.s("SPIRA_MAECHEN_MAX_BEADS")),
-            ("REMEDY_LABEL", self.conf.s("SPIRA_MAECHEN_REMEDY_LABEL")),
+            ("MAX_BEADS", self.conf.s("SPIRA_MIMIR_MAX_BEADS")),
+            ("REMEDY_LABEL", self.conf.s("SPIRA_MIMIR_REMEDY_LABEL")),
             ("SCOPE", if scope.is_empty() { String::new() } else { format!("{scope},") }),
         ];
         // The tool placeholders (ASK, GROOM, INCIDENT, SOP, DEP): `work` verbs, since the

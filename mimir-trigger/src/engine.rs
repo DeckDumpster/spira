@@ -1,4 +1,4 @@
-//! Pure decision logic for the Maechen trigger (DESIGN.md "Contract"). Nothing here touches
+//! Pure decision logic for the Mimir trigger (DESIGN.md "Contract"). Nothing here touches
 //! a filesystem, a clock or a subprocess — every function is a total function of its
 //! arguments, which is what makes it unit-testable without a database or a git checkout.
 
@@ -67,7 +67,7 @@ fn id_prefix_colon(line: &str) -> Option<String> {
 }
 
 /// The bead id a single commit subject names as landed, by the three forms the harness
-/// writes plus the aeon prefix form (maechen-trigger.sh `_count_landings`'s awk program).
+/// writes plus the aeon prefix form (mimir-trigger.sh `_count_landings`'s awk program).
 /// Dispatch is mutually exclusive and ordered exactly as the awk program's pattern blocks:
 /// `spira: land ` first, then any `spira/`, then the bare prefix form.
 pub fn landing_id(line: &str) -> Option<String> {
@@ -153,13 +153,13 @@ pub fn invalid_closed_rows(raw: &str) -> Vec<String> {
     rows
 }
 
-/// The partition labels a trigger bead carries, so `maechen.fayth`'s `FAYTH_LABELS`
+/// The partition labels a trigger bead carries, so `mimir.fayth`'s `FAYTH_LABELS`
 /// predicate — and the dedup query below — never disagree.
-pub fn trigger_labels(scope_label: &str, maechen_label: &str) -> String {
+pub fn trigger_labels(scope_label: &str, mimir_label: &str) -> String {
     if scope_label.is_empty() {
-        maechen_label.to_string()
+        mimir_label.to_string()
     } else {
-        format!("{scope_label},{maechen_label}")
+        format!("{scope_label},{mimir_label}")
     }
 }
 
@@ -200,7 +200,7 @@ pub fn description(
     invalid_closed_rows_text: Option<&str>,
 ) -> String {
     let mut d = format!(
-        "Scheduled trigger: the Maechen persona will claim this bead, run a retrospective pass over the failure distribution, identify recurring failure classes, and cut at most {max_beads} remedy beads. Trigger: {reason} (lastpass ts={lastpass_ts}, watermark ts={watermark_ts}). See spira/chamber/maechen.md for the pass procedure."
+        "Scheduled trigger: the Mimir persona will claim this bead, run a retrospective pass over the failure distribution, identify recurring failure classes, and cut at most {max_beads} remedy beads. Trigger: {reason} (lastpass ts={lastpass_ts}, watermark ts={watermark_ts}). See spira/chamber/mimir.md for the pass procedure."
     );
     if let Some(rows) = invalid_closed_rows_text {
         d.push_str("\n\nClosed-record rows (detect_invalid_closed output):\n");
@@ -346,8 +346,8 @@ spira: land sp-s0e1k
     #[test]
     fn trigger_labels_with_and_without_scope() {
         // literal-ok: test fixture values, not a config default read at runtime.
-        assert_eq!(trigger_labels("", "maechen-sweep"), "maechen-sweep");
-        assert_eq!(trigger_labels("spira", "maechen-sweep"), "spira,maechen-sweep"); // literal-ok: test fixture value, not a config default read at runtime.
+        assert_eq!(trigger_labels("", "mimir-sweep"), "mimir-sweep");
+        assert_eq!(trigger_labels("spira", "mimir-sweep"), "spira,mimir-sweep"); // literal-ok: test fixture value, not a config default read at runtime.
     }
 
     #[test]

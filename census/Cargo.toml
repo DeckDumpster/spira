@@ -2,7 +2,7 @@
 name = "census"
 version = "1.0.0"
 edition = "2021"
-description = "census — Maechen census: failure classes ranked, with open-remedy suppression. Replaces spira/census.sh."
+description = "census — Mimir census: failure classes ranked, with open-remedy suppression. Replaces spira/census.sh."
 
 [lib]
 name = "census"
