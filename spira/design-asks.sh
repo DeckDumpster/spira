@@ -7,7 +7,7 @@
 #   design-asks.sh health                            non-zero when the loop stopped polling or the last pass failed
 #
 # Scans $SPIRA_WIKI/wiki/projects/*/designs/*.md for frontmatter status draft or in-review. A page
-# is covered when an open SPIRA_ASK_LABEL bead, or the mail of a held ask, names its path. Each
+# is covered when an open SPIRA_ASK_LABEL bead, or the mail of a held ask, names its path, slug or an artifact URL from its body. Each
 # uncovered page is told to the Concierge inbox as one line, again every SPIRA_DESIGN_ASKS_REPEAT
 # seconds until an ask exists or the status changes. A pass that cannot read the brain or the
 # store says so and fails health; it never reports "no designs".
@@ -54,6 +54,16 @@ _da_asks_text() {   # every open ask body, then the mail of every held ask; non-
     return 0
 }
 
+_da_asked() {   # _da_asked <file> <rel> <asks-text>: an ask names the design by path, slug or an artifact URL in its body
+    local slug="${2##*/}" url
+    slug="${slug%.md}"
+    [[ "$3" == *"$2"* || "$3" == *"$slug"* ]] && return 0
+    while read -r url; do
+        [[ "$3" == *"$url"* ]] && return 0
+    done < <(grep -oE 'https://claude\.ai/artifact/[A-Za-z0-9_-]+' "$1")
+    return 1
+}
+
 cmd_pass() {
     local now repeat brain f rel status text writer first last prev=""
     now="$(date +%s)"; repeat="${SPIRA_DESIGN_ASKS_REPEAT:-86400}"
@@ -73,7 +83,7 @@ cmd_pass() {
         rel="wiki/projects/${f#"$brain"/}"
         status="$(_da_field "$f" status)"
         case "$status" in draft|in-review) ;; *) continue ;; esac
-        [[ "$text" == *"$rel"* ]] && continue
+        _da_asked "$f" "$rel" "$text" && continue
         first="${since[$rel]:-$now}"; last="${said[$rel]:-0}"
         if [ $(( now - last )) -ge "$repeat" ]; then
             writer="$(_da_field "$f" bead)"
