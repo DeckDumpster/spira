@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 
 use bead::claimdesc;
 use bead::bdq::{
-    check_destructive, check_repo_label, check_schema_delete, creates_beads, creates_closed, id_bearing_args, czar_fence_class, is_create, json_count, json_only,
+    check_destructive, check_repo_label, check_schema_delete, creates_beads, creates_closed, creates_rowless_type, id_bearing_args, czar_fence_class, is_create, json_count, json_only,
     should_retry, retryable, backoff_ms, is_write, WRITER_LOCK_BUSY,
 };
 use spira_config::repos::Registry;
@@ -418,7 +418,7 @@ fn cmd_bdq(args: &[String]) -> i32 {
     let backoff_base: u64 = env_nonempty("SPIRA_BDQ_CONN_BACKOFF_MS").and_then(|s| s.parse().ok()).unwrap_or(1000);
     let t_start = std::time::Instant::now();
 
-    let lc_row = creates_beads(args) && !(is_create(args) && creates_closed(args));
+    let lc_row = creates_beads(args) && !(is_create(args) && (creates_closed(args) || creates_rowless_type(args)));
     let writer_lock = writer_lock_for(args);
     let mut try_n: u32 = 1;
     let (rc, stderr_buf, created_out) = loop {
