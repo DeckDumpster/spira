@@ -250,10 +250,12 @@ fn attention(p: &Page) -> String {
         UnitsState::Held { snap: u, age_s, stale } => {
             let mut bad: Vec<&units::Row> = u.rows.iter().filter(|r| r.kind != "system" && matches!(r.verdict, units::Verdict::Failing | units::Verdict::Late)).collect();
             bad.sort_by(|a, b| (a.verdict as u8, &a.unit).cmp(&(b.verdict as u8, &b.unit)));
-            if !bad.is_empty() || *stale {
+            // An old read alone is not an alarm: it is said only beside a failing or late unit,
+            // where it qualifies the verdict, and in the footer otherwise.
+            if !bad.is_empty() {
                 let mut rows = String::new();
                 if *stale {
-                    rows.push_str(&format!("<div class=\"row red small\">unit history is {} old, refreshing</div>", dur(*age_s)));
+                    rows.push_str(&format!("<div class=\"row small dim\">unit history is {} old, refreshing</div>", dur(*age_s)));
                 }
                 for r in bad {
                     let why = if r.verdict == units::Verdict::Failing { "failing".to_string() } else { format!("late — last success {}", r.last_success.map_or("never".into(), |t| format!("{} ago", dur(u.now - t)))) };
@@ -366,7 +368,9 @@ fn rounds(p: &Page) -> String {
     if !extra.is_empty() {
         b.push_str(&format!("<details class=inner data-k=rounds-more><summary class=\"small dim\">menders · batches · VM pool</summary>{extra}</details>"));
     }
-    format!("<section id=rounds><h2>Rounds · {} live <a class=\"small dim\" href=\"/rounds\">all ›</a></h2>{b}</section>", v.rounds.iter().filter(|r| !r.stale).count())
+    let live = v.rounds.iter().filter(|r| !r.stale).count();
+    let label = if live == 0 && v.round.is_some() { "Rounds · none live · last".to_string() } else { format!("Rounds · {live} live") };
+    format!("<section id=rounds><h2>{label} <a class=\"small dim\" href=\"/rounds\">all ›</a></h2>{b}</section>")
 }
 
 fn in_flight(p: &Page) -> String {
