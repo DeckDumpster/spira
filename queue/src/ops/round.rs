@@ -419,7 +419,7 @@ pub(super) fn summon_mender(
     let results = rounds_dir(c).join(format!("{batch}.results"));
     let output = output
         .map(str::to_string)
-        .or_else(|| suite_output(&results, suite, 0).map(|o| tail(&o, 80)))
+        .or_else(|| suite_output(&results, suite, 0).map(|o| failure_excerpt(&o)))
         .unwrap_or_else(|| "(the suite left no output in the round's results)".into());
     if let Some(cause) = repo_config_refusal(&output) {
         w.out(format!("queue.sh round failed: no mender bead for {suite} in pass {pass} of {batch}: {} was refused for a repo-config reason ({cause}) that no mend can fix", c.r.name));
@@ -1894,6 +1894,74 @@ fn vm_fault_cause(err: &str) -> Option<String> {
         l.starts_with("round-vm: IMAGE-BUILD-FAILED") || l.starts_with("round-vm: cannot")
     })?;
     Some(line.trim().to_string())
+}
+
+const EXCERPT_CAP: usize = 300;
+const SHELL_CONTEXT: usize = 2;
+pub(crate) const NO_FAILURE_FOUND: &str = "(no failure lines matched; the last 80 lines of the output follow)";
+
+/// The failure itself, not the output's tail: cargo's `---- test stdout ----` blocks, failures
+/// list, `test result: FAILED` and `error: N target(s) failed`; or a shell suite's FAIL / not ok
+/// lines with their context. The tail, announced as such, only when nothing matches.
+pub(crate) fn failure_excerpt(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut keep = vec![false; lines.len()];
+    let mut inside = false;
+    let mut running: Option<usize> = None;
+    for (i, l) in lines.iter().enumerate() {
+        let t = l.trim_start();
+        if t.starts_with("Running ") || t.starts_with("Doc-tests ") {
+            running = Some(i);
+        }
+        let block = t.starts_with("---- ") && t.trim_end().ends_with(" ----");
+        if block || (t == "failures:" && !inside) {
+            if !inside {
+                if let Some(r) = running.take() {
+                    keep[r] = true;
+                }
+            }
+            inside = true;
+        }
+        if t.starts_with("test result:") {
+            if t.contains("FAILED") {
+                keep[i] = true;
+            }
+            inside = false;
+        } else if t.starts_with("error: ") && t.contains("failed") && !t.starts_with("error: could not compile") {
+            keep[i] = true;
+        } else if t.starts_with("error: could not compile") && t.contains("test") {
+            keep[i] = true;
+        }
+        if inside {
+            keep[i] = true;
+        }
+    }
+    let cargo = keep.iter().any(|k| *k);
+    if !cargo {
+        for (i, l) in lines.iter().enumerate() {
+            if l.contains("FAIL") || l.trim_start().starts_with("not ok") {
+                for k in keep.iter_mut().take(lines.len().min(i + 1 + SHELL_CONTEXT)).skip(i) {
+                    *k = true;
+                }
+            }
+        }
+    }
+    let picked: Vec<&str> = lines
+        .iter()
+        .zip(&keep)
+        .filter(|(_, k)| **k)
+        .map(|(l, _)| *l)
+        .collect();
+    if picked.is_empty() {
+        return format!("{NO_FAILURE_FOUND}\n{}", tail(text, 80));
+    }
+    if picked.len() > EXCERPT_CAP {
+        return format!(
+            "(failure excerpt cut to its last {EXCERPT_CAP} lines)\n{}",
+            picked[picked.len() - EXCERPT_CAP..].join("\n")
+        );
+    }
+    picked.join("\n")
 }
 
 pub(super) fn tail(text: &str, n: usize) -> String {
