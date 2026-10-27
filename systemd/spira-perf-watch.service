@@ -11,7 +11,7 @@ Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
 CPUQuota=20%
-ExecStart=@SPIRA_PROD_ROOT@/bin/perf-watch --probes @SPIRA_HOME@/perf-probes --record @SPIRA_RUN@/perf-watch.last --health @SPIRA_RUN@/perf-watch.health
+ExecStart=@SPIRA_PROD_ROOT@/bin/perf-watch --probes @SPIRA_HOME@/perf-probes --record @SPIRA_RUN@/perf-watch.last --slow-log @SPIRA_RUN@/perf-slow.log --health @SPIRA_RUN@/perf-watch.health
 TimeoutStartSec=240
 StandardOutput=append:@SPIRA_RUN@/perf-watch.log
 StandardError=append:@SPIRA_RUN@/perf-watch.log

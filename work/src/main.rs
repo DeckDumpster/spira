@@ -85,7 +85,10 @@ fn main() {
     // runs bead.sh; the broker bounds both at 300 s, so this client waits that long and no longer.
     let runs_tool = work::LANE_VERBS.contains(&verb.as_str()) || matches!(verb.as_str(), "file-followup" | "split" | "submit" | "ack");
     let wait = if runs_tool { TOOL_TIMEOUT } else { REPLY_WAIT };
-    match send(&req, wait) {
+    let asked = std::time::Instant::now();
+    let answer = send(&req, wait);
+    spira_otel::run::phase("reply", asked.elapsed().as_millis() as u64);
+    match answer {
         Ok((code, out)) => {
             spira_config::lc_call::print_answer(code, &out);
             { let code = code; spira_otel::run::finish(code); std::process::exit(code) };
