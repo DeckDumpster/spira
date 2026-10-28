@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 pub fn release_root(env_release: Option<&str>, exe: &Path) -> Option<PathBuf> {
     match env_release.map(str::trim).filter(|r| !r.is_empty()) {
         Some(r) => Some(PathBuf::from(r.trim_end_matches('/'))),
-        None => exe.parent().and_then(Path::parent).map(Path::to_path_buf),
+        None => exe.parent().and_then(Path::parent).filter(|r| r.join("bin").is_dir() && r.join("spira").is_dir()).map(Path::to_path_buf),
     }
 }
 
@@ -37,11 +37,12 @@ pub fn join_path(dirs: &[PathBuf]) -> String {
     dirs.iter().map(|d| d.display().to_string()).collect::<Vec<_>>().join(":")
 }
 
-/// The search dirs for this process.
-pub fn process_dirs() -> Vec<PathBuf> {
+/// The search dirs for this process. The box's tool tail (it holds `bd`) is for the reviewer
+/// only: a repository's check rows never see it.
+pub fn process_dirs(with_tail: bool) -> Vec<PathBuf> {
     let exe = std::env::current_exe().unwrap_or_default();
     let release = release_root(std::env::var(spira_config::RELEASE_ENV).ok().as_deref(), &exe);
-    let tail = spira_config::process::cfg("SPIRA_PATH").unwrap_or_default();
+    let tail = if with_tail { spira_config::process::cfg("SPIRA_PATH").unwrap_or_default() } else { String::new() };
     search_dirs(release.as_deref(), &tail, &std::env::var("PATH").unwrap_or_default())
 }
 
@@ -53,7 +54,7 @@ mod tests {
     fn the_release_comes_from_the_environment_before_the_executable() {
         let exe = Path::new("/r/exe-rel/model-bin/work");
         assert_eq!(release_root(Some("/r/env-rel/"), exe), Some(PathBuf::from("/r/env-rel")));
-        assert_eq!(release_root(Some(""), exe), Some(PathBuf::from("/r/exe-rel")));
+        assert_eq!(release_root(Some(""), Path::new("/usr/bin/work")), None);
     }
 
     #[test]

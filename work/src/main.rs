@@ -385,7 +385,7 @@ fn review(args: &[String]) -> i32 {
     };
     let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
     let secs = opts.timeout.as_secs();
-    let agent = work::trusted::resolve(&agent, &work::trusted::process_dirs()).map(|p| p.display().to_string()).unwrap_or(agent);
+    let agent = work::trusted::resolve(&agent, &work::trusted::process_dirs(true)).map(|p| p.display().to_string()).unwrap_or(agent);
     match work::review::run(&agent, &work::review::agent_argv(&model), &work::review::input(&item, &diff), &cwd, opts.timeout) {
         Ok((outcome, transcript)) => {
             let verdict = match &outcome {
@@ -489,7 +489,7 @@ fn checks(args: &[String]) -> i32 {
             continue;
         };
         let secs = row.budget_ms.div_ceil(1000).max(1).to_string();
-        let mut dirs = work::trusted::process_dirs();
+        let mut dirs = work::trusted::process_dirs(false);
         if work::trusted::resolve(prog, &dirs).is_none() {
             if let Some(dir) = build_own_tool(root, prog, &dirs) {
                 dirs.insert(0, dir);
@@ -533,15 +533,24 @@ fn build_own_tool(root: &std::path::Path, prog: &str, dirs: &[std::path::PathBuf
         .env("PATH", work::trusted::join_path(dirs))
         .env("CARGO_TARGET_DIR", &target)
         .current_dir(root)
-        .status()
-        .ok()?;
-    built.success().then(|| target.join("debug"))
+        .status();
+    match built {
+        Ok(st) if st.success() => Some(target.join("debug")),
+        Ok(st) => {
+            eprintln!("work checks: `cargo build -p {prog}` failed ({st}); {prog} cannot run");
+            None
+        }
+        Err(e) => {
+            eprintln!("work checks: cannot run cargo to build {prog}: {e}");
+            None
+        }
+    }
 }
 
 /// Programs `work review` and `work checks` will exec that resolve nowhere, named so a missing
 /// one is seen on turn one. A repository's own crate is built by `work checks`, so it is not one.
 fn unresolved_programs() -> Vec<String> {
-    let dirs = work::trusted::process_dirs();
+    let dirs = work::trusted::process_dirs(true);
     let mut out = Vec::new();
     match spira_config::process::cfg("SPIRA_AGENT") {
         Ok(a) if !a.is_empty() && work::trusted::resolve(&a, &dirs).is_none() => out.push(format!("the reviewer {a:?} (SPIRA_AGENT) does not resolve; `work review` cannot launch it")),

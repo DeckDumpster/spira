@@ -119,6 +119,7 @@ fn the_release_is_found_from_the_executable_when_the_environment_names_none() {
     let rel = testkit::TempDir::new("work-checks-exe-release");
     std::fs::create_dir_all(rel.join("bin")).unwrap();
     std::fs::create_dir_all(rel.join("model-bin")).unwrap();
+    std::fs::create_dir_all(rel.join("spira")).unwrap();
     testkit::write_exe(rel.join("bin/nqmjx7-lint"), "#!/bin/sh\necho lint-ran\n");
     std::fs::copy(env!("CARGO_BIN_EXE_work"), rel.join("model-bin/work")).unwrap();
     let out = Command::new(rel.join("model-bin/work")).arg("checks").current_dir(dir.path()).env_clear().env("PATH", "/usr/bin:/bin").output().unwrap();
