@@ -244,6 +244,7 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-submission-provision.service", false));
     m.units.push(t("spira-submission-provision.timer", true));
     m.units.push(t("spira-metrics-vm.service", true));
+    m.units.push(t("spira-metrics-logs.service", true));
     m.units.push(t("spira-metrics-collector.service", true));
     m.units.push(t("spira-metrics-grafana.service", true));
 

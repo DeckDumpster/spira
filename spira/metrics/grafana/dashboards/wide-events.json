@@ -1,0 +1,129 @@
+{
+  "uid": "spira-wide-events",
+  "title": "Spira wide events",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": false,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "refresh": "1m",
+  "tags": [
+    "spira"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "DS_VL",
+        "type": "datasource",
+        "query": "victoriametrics-logs-datasource",
+        "label": "data source"
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "dispatches per handler",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "${DS_VL}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "${DS_VL}"
+          },
+          "expr": "_msg:\"dispatch\" | stats by (handler) count() dispatches",
+          "queryType": "statsRange",
+          "legendFormat": "{{handler}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "p99 duration by handler",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "${DS_VL}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "${DS_VL}"
+          },
+          "expr": "_msg:\"dispatch\" | stats by (handler) quantile(0.99, duration_ms) p99",
+          "queryType": "statsRange",
+          "legendFormat": "{{handler}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "quarantines",
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "${DS_VL}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "${DS_VL}"
+          },
+          "expr": "_msg:\"quarantine\" | stats by (handler) count() quarantines",
+          "queryType": "statsRange",
+          "legendFormat": "{{handler}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

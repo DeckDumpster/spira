@@ -3,7 +3,7 @@ use install::values::{render_file, HostValues};
 use std::path::{Path, PathBuf};
 
 const IO_FENCED: [&str; 5] = ["spira-tsd-prune.service", "spira-landing-pass.service", "spira-sop-lint.service", "lc-backup.service", "lc-backup-drill.service"];
-const QUOTA_FENCED: [&str; 20] = ["spira-exec-census.service", "spira-idea-prompt.service", "spira-tsd-prune.service", "spira-dolt-boot-check.service", "spira-mail-reconcile.service", "spira-concierge-guard.service", "spira-nix-gc.service", "spira-verify-asks.service", "spira-perf-watch.service", "spira-perf-happy-path.service", "spira-refusal-watch.service", "spira-kit-bump.service", "spira-filings-collect.service", "spira-runtime-watch.service", "spira-sift.service", "spira-reclaim.service", "spira-unit-run-dbus.service", "spira-metrics-vm.service", "spira-metrics-collector.service", "spira-metrics-grafana.service"];
+const QUOTA_FENCED: [&str; 21] = ["spira-exec-census.service", "spira-idea-prompt.service", "spira-tsd-prune.service", "spira-dolt-boot-check.service", "spira-mail-reconcile.service", "spira-concierge-guard.service", "spira-nix-gc.service", "spira-verify-asks.service", "spira-perf-watch.service", "spira-perf-happy-path.service", "spira-refusal-watch.service", "spira-kit-bump.service", "spira-filings-collect.service", "spira-runtime-watch.service", "spira-sift.service", "spira-reclaim.service", "spira-unit-run-dbus.service", "spira-metrics-vm.service", "spira-metrics-logs.service", "spira-metrics-collector.service", "spira-metrics-grafana.service"];
 const FENCE_EXEMPT_OTHER: [&str; 1] = ["dolt-tmp-prune.service"];
 const STORE_LATE: u32 = 60;
 
@@ -130,6 +130,7 @@ fn a_clean_stop_of_the_metrics_store_is_not_a_failure() {
     let ok = |t: &str| t.lines().any(|l| l.trim() == "SuccessExitStatus=2");
     assert!(!ok("[Service]\nRestart=always\n"), "positive control");
     assert!(ok(&raw("spira-metrics-vm.service")));
+    assert!(ok(&raw("spira-metrics-logs.service")));
 }
 
 fn lone_pct(text: &str) -> usize {

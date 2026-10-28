@@ -40,7 +40,20 @@ want "vm retains 30 days" "-retentionPeriod=30d" "$(cat "$T/podman.log")"
 want "vm is published on loopback only" "127.0.0.1:8428:8428" "$(cat "$T/podman.log")"
 want "container cgroup is split under the unit" "--cgroups=split" "$(cat "$T/podman.log")"
 
+run logs SPIRA_METRICS_DATA="$T/data" SPIRA_OTEL_KEEP_DAYS=9
+is "logs starts" 0 "$rc"
+want "logs retention is the configured keep days" "-retentionPeriod=9d" "$(cat "$T/podman.log")"
+nowant "logs retention is not the shipped default" "-retentionPeriod=14d" "$(cat "$T/podman.log")"
+want "logs is published on loopback only" "127.0.0.1:9428:9428" "$(cat "$T/podman.log")"
+for bad_keep in 0 x -3; do
+    run logs SPIRA_METRICS_DATA="$T/data" SPIRA_OTEL_KEEP_DAYS="$bad_keep"
+    is "logs refuses keep days '$bad_keep'" 2 "$rc"
+    is "logs '$bad_keep' starts no container" "" "$(cat "$T/podman.log")"
+done
+nowant "no retention literal in the logs branch" "retentionPeriod=14" "$(cat "$HERE/metrics-stack.sh")"
+
 run collector SPIRA_METRICS_DATA="$T/data"
+want "collector accepts OTLP on loopback only" "127.0.0.1:4318:4318" "$(cat "$T/podman.log")"
 want "collector reads the span directory read-only" "$T/run/otel:/otel:ro" "$(cat "$T/podman.log")"
 
 for bad_addr in "" "0.0.0.0:3000" "[::]:3000" "100.64.0.1" "100.64.0.1:x"; do
@@ -58,7 +71,7 @@ run grafana SPIRA_METRICS_DATA="$T/data" SPIRA_METRICS_GRAFANA_ADDR="100.64.0.1:
 is "admin credential survives a restart" "$cred1" "$(cat "$T/data/grafana.credential")"
 nowant "credential never on the command line" "$cred1" "$(cat "$T/podman.log")"
 
-for u in vm collector grafana; do
+for u in vm logs collector grafana; do
     f="$ROOT/systemd/spira-metrics-$u.service"
     want "$u unit is CPU-fenced" "CPUQuota=" "$(cat "$f")"
     want "$u unit execs the wrapper" "metrics-stack.sh $u" "$(cat "$f")"
@@ -70,6 +83,26 @@ want "collector derives spanmetrics" "spanmetrics" "$col"
 want "collector pushes to VictoriaMetrics" "victoria-metrics:8428/api/v1/write" "$col"
 want "collector keys spans by verb" "rpc.method" "$col"
 want "collector keys spans by caller" "spira.caller" "$col"
+
+want "collector routes logs to VictoriaLogs" "victoria-logs:9428/insert/opentelemetry/v1/logs" "$col"
+want "collector has a logs pipeline" "logs:" "$col"
+run grafana SPIRA_METRICS_DATA="$T/data" SPIRA_METRICS_GRAFANA_ADDR="100.64.0.1:3000"
+want "grafana installs the VictoriaLogs datasource plugin" "GF_INSTALL_PLUGINS=victoriametrics-logs-datasource@" "$(cat "$T/podman.log")"
+vl_ds="$(cat "$HERE/metrics/grafana/provisioning/datasources/victorialogs.yaml")"
+want "VictoriaLogs datasource is provisioned" "type: victoriametrics-logs-datasource" "$vl_ds"
+want "VictoriaLogs datasource points at the store" "url: http://victoria-logs:9428" "$vl_ds"
+
+wide="$HERE/metrics/grafana/dashboards/wide-events.json"
+wexprs="$(python3 -I -c 'import json,sys
+d=json.load(open(sys.argv[1]))
+assert d["uid"]=="spira-wide-events"
+for p in d["panels"]:
+    assert p["datasource"]["uid"]=="${DS_VL}", p["title"]
+    for t in p["targets"]: print(t["expr"])' "$wide" 2>&1)"
+want "wide-event dashboard counts dispatches per handler" "stats by (handler) count()" "$wexprs"
+want "wide-event dashboard graphs p99 duration" "quantile(0.99, duration_ms)" "$wexprs"
+want "wide-event dashboard counts quarantines" '_msg:"quarantine"' "$wexprs"
+nowant "wide-event dashboard queries no PromQL" "rate(" "$wexprs"
 
 dash="$HERE/metrics/grafana/dashboards/bead-store.json"
 is "dashboard is valid JSON" 0 "$(python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$dash" >/dev/null 2>&1; echo $?)"

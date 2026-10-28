@@ -1,8 +1,8 @@
 [Unit]
 Description=OpenTelemetry Collector — span files to spanmetrics
 Documentation=file://@SPIRA_HOME@/metrics-stack.sh
-After=spira-metrics-vm.service
-Wants=spira-metrics-vm.service
+After=spira-metrics-vm.service spira-metrics-logs.service
+Wants=spira-metrics-vm.service spira-metrics-logs.service
 StartLimitIntervalSec=300
 StartLimitBurst=5
 
