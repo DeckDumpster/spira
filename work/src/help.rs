@@ -41,6 +41,7 @@ pub enum R {
     ChecksUsage,
     ChecksGit,
     ChecksConfig,
+    ChecksBuild,
 }
 
 impl R {
@@ -49,7 +50,7 @@ impl R {
         R::SubmitTipArg, R::StatuteUsage, R::StatuteStdin, R::StatuteConfig, R::StatuteConfigUnset, R::StatuteRegistry, R::StatuteReport,
         R::StatuteNoteNotRecorded, R::CratesGit, R::CratesCargo, R::CratesSelect, R::HelpUsage, R::HelpUnknown, R::LawUsage, R::LawNotFound,
         R::ReviewArgs, R::ReviewShow, R::ReviewGit, R::ReviewConfig, R::ReviewAgentUnset, R::ReviewTimedOut, R::ReviewFailed,
-        R::ChecksUsage, R::ChecksGit, R::ChecksConfig,
+        R::ChecksUsage, R::ChecksGit, R::ChecksConfig, R::ChecksBuild,
     ];
 }
 
@@ -247,7 +248,7 @@ pub static ENTRIES: &[Entry] = &[
     Entry {
         verb: "checks",
         group: Group::Verify,
-        does: "Runs each `[[check]]` row the repository declares in `.spira/checks.toml`, each bounded by its budget, and prints `-- <name>: ok` or `FAIL` per row.",
+        does: "Runs each `[[check]]` row the repository declares in `.spira/checks.toml`, each bounded by its budget, and prints `-- <name>: ok` or `FAIL` per row. A row with `build = \"<package>\"` runs the binary built from this worktree; every other program resolves from the release `bin/`.",
         when: "Before you submit, to run the checks the repository itself asks of a finished change. `--list` prints the rows without running them.",
         args: &["[--list]"],
         checks: &["run it inside your worktree", "exits non-zero when any row fails, naming each failed row"],
@@ -255,6 +256,7 @@ pub static ENTRIES: &[Entry] = &[
             Refusal { id: R::ChecksUsage, text: "usage: work checks [--list]", fix: "pass no argument, or `--list`" },
             Refusal { id: R::ChecksGit, text: "not inside a git worktree", fix: "run it from inside your worktree" },
             Refusal { id: R::ChecksConfig, text: "refusing: .spira/checks.toml is unreadable: {err}", fix: "fix the file's TOML; a repository with no checks omits the file" },
+            Refusal { id: R::ChecksBuild, text: "-- <name>: FAIL (cannot build {pkg} from this worktree: {err})", fix: "fix the build; `cargo build -p <pkg>` reproduces it" },
         ],
     },
     Entry {

@@ -25,6 +25,9 @@ pub struct Check {
     pub run: String,
     #[serde(default = "default_stop_budget")]
     pub budget_ms: u64,
+    /// The cargo package of this repository whose same-named binary is the row's program.
+    #[serde(default)]
+    pub build: Option<String>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -101,7 +104,15 @@ pub fn load_checks(root: &Path) -> Result<Vec<Check>, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e.to_string()),
     };
-    spira_config::parse_foreign::<Checks>(&text).map(|c| c.check)
+    let rows = spira_config::parse_foreign::<Checks>(&text).map(|c| c.check)?;
+    for row in &rows {
+        let Some(pkg) = &row.build else { continue };
+        let prog = argv(&row.run, &[]).into_iter().next().unwrap_or_default();
+        if &prog != pkg {
+            return Err(format!("check {:?}: build = {pkg:?} but run starts with {prog:?}; the built binary is {pkg}", row.name));
+        }
+    }
+    Ok(rows)
 }
 
 /// `run` split on whitespace, `{file}` and `{crate}` substituted; no shell is involved.
