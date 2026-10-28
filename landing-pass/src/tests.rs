@@ -789,6 +789,71 @@ fn repeated_no_verdicts_on_one_tip_defer_it_to_the_round() {
     assert!(h.logged("was deferred to round: over-cap"));
 }
 
+fn retip(h: &H, br: &str, tip: &str) {
+    h.git.refs.borrow_mut().retain(|(b, _)| b != br);
+    h.git.add(br, tip);
+}
+
+const DIED: &str = "build:68-129,test:77-215\ngate: VERDICT=NO_VERDICT reason=died branch=b repo=spira suite=- ran=300s\n";
+
+#[test]
+fn a_gate_that_dies_twice_on_one_bead_is_that_beads_red_with_the_gates_output() {
+    let h = H::new(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (75, DIED.into()));
+    h.run();
+    assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 infra"], "one dead gate is still infrastructure");
+    assert!(!h.lib.has("reopen"));
+    retip(&h, "spira/sp-a", "t2");
+    h.run();
+    assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 infra", "sp-a t2 red"]);
+    let reopen = h.lib.find("reopen sp-a cert-gate-red");
+    assert!(reopen.contains("test:77-215"), "the dead gate's own tail: {reopen}");
+    assert!(reopen.contains("could not finish") && reopen.contains("2 times"), "{reopen}");
+}
+
+#[test]
+fn a_dead_gate_between_other_beads_dead_gates_is_not_one_beads_red() {
+    let h = H::new(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    h.closed("sp-b", "t2");
+    for b in ["spira/sp-a", "spira/sp-b"] {
+        h.tools.gates.borrow_mut().insert(b.into(), (75, DIED.into()));
+    }
+    h.run();
+    h.run();
+    assert!(!h.lib.has("reopen"), "an outage kills every gate; no bead is blamed");
+    assert!(h.lc.certified.borrow().iter().all(|c| c.ends_with("infra")));
+}
+
+#[test]
+fn a_dead_gate_with_a_pass_for_another_bead_between_is_that_beads_red() {
+    let h = H::new(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (75, DIED.into()));
+    h.run();
+    h.closed("sp-b", "t2");
+    h.tools.gates.borrow_mut().insert("spira/sp-b".into(), (0, "gate: VERDICT=PASS reason=ok branch=b repo=spira suite=-\n".into()));
+    h.run();
+    retip(&h, "spira/sp-a", "t3");
+    h.run();
+    assert!(h.lc.certified.borrow().iter().any(|c| c == "sp-a t3 red"));
+}
+
+#[test]
+fn a_pass_between_two_dead_gates_makes_the_second_a_first_again() {
+    let h = H::new(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (75, DIED.into()));
+    h.run();
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (0, "gate: VERDICT=PASS reason=ok branch=b repo=spira suite=-\n".into()));
+    h.run();
+    retip(&h, "spira/sp-a", "t2");
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (75, DIED.into()));
+    h.run();
+    assert!(!h.lc.certified.borrow().iter().any(|c| c.ends_with("red")));
+}
+
 #[test]
 fn a_pass_clears_the_branchs_noverdict_counters() {
     let h = H::new(LandMode::Queue);

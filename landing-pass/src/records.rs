@@ -80,6 +80,7 @@ impl Files {
     /// A PASS clears the machinery-fault counters for this branch.
     pub fn clear_noverdict(&self, branch: &str) {
         let _ = fs::remove_file(self.backoff_file(branch));
+        let _ = fs::remove_file(self.dead_file(branch));
         let key = branch_key(branch);
         if let Ok(rd) = fs::read_dir(self.run.join("noverdict")) {
             for e in rd.flatten() {
@@ -141,6 +142,32 @@ impl Files {
         let _ = fs::create_dir_all(self.run.join("gate-infra"));
         let _ = atomic_write(&file, &format!("{tip}\n{n}\n"));
         n
+    }
+
+    fn dead_file(&self, branch: &str) -> PathBuf {
+        self.run.join("gate-dead").join(branch_key(branch))
+    }
+
+    fn dead_last_file(&self) -> PathBuf {
+        self.run.join("gate-dead-last")
+    }
+
+    /// Count a gate that died on `branch`, whatever its tip. A death that follows another
+    /// branch's death with no verdict between is the host's, not the branch's: it restarts at 1.
+    pub fn note_dead(&self, branch: &str) -> u32 {
+        let last = fs::read_to_string(self.dead_last_file()).unwrap_or_default();
+        let prior = fs::read_to_string(self.dead_file(branch)).ok().and_then(|t| t.trim().parse::<u32>().ok()).unwrap_or(0);
+        let n = if matches!(last.trim(), "" | "-") || last.trim() == branch { prior + 1 } else { 1 };
+        let _ = fs::create_dir_all(self.run.join("gate-dead"));
+        let _ = atomic_write(&self.dead_file(branch), &format!("{n}\n"));
+        let _ = atomic_write(&self.dead_last_file(), &format!("{branch}\n"));
+        n
+    }
+
+    /// A gate reached a verdict (pass or red) for some branch: the host is not dead.
+    pub fn note_gate_judged(&self, branch: &str) {
+        let _ = fs::remove_file(self.dead_file(branch));
+        let _ = atomic_write(&self.dead_last_file(), "-\n");
     }
 
     pub fn deferred_to_round(&self, branch: &str, tip: &str) -> bool {
