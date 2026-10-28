@@ -58,7 +58,7 @@ impl Handler for Stepper {
         &["step"]
     }
     fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
-        std::thread::sleep(self.pause);
+        std::thread::sleep(self.pause); // clock-safe: paces a handler so the holder is killed mid-stream
         vec![Command::Emit(EventKind::new("stepped", &ev.kind.body))]
     }
 }
@@ -151,15 +151,15 @@ fn node_child() {
     std::fs::write(format!("{dir}/ready-{name}"), "").unwrap();
     loop {
         x.run_until_idle().unwrap();
-        std::thread::sleep(Duration::from_millis(10));
+        std::thread::sleep(Duration::from_millis(10)); // clock-safe: poll interval of an idle node loop
     }
 }
 
 fn wait_for(what: &str, within: Duration, mut cond: impl FnMut() -> bool) {
     let t = Instant::now();
     while !cond() {
-        assert!(t.elapsed() < within, "timed out waiting for {what}");
-        std::thread::sleep(Duration::from_millis(10));
+        assert!(t.elapsed() < within, "timed out waiting for {what}"); // clock-safe: cap on a wait for a named condition
+        std::thread::sleep(Duration::from_millis(10)); // clock-safe: poll interval of the wait
     }
 }
 
