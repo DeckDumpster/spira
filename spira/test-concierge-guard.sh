@@ -57,13 +57,13 @@ session() {  # session <name>
     printf 'TMUX=%s,4242,0\0TMUX_PANE=%%9\0' "$T/tmux.sock" > "$PROC/100/environ"
 }
 guard() {
-    PATH="$T:$PATH" "$BIN" check --proc-root "$PROC" --state "$ST" --session concierge --waiter inbox-next --waiter "watchd next concierge-inbox" \
+    PATH="$T:$PATH" "$BIN" check --proc-root "$PROC" --state "$ST" --session concierge --waiter "watchd next concierge-inbox" \
         --inbox-text "re-arm now" --mail-after 600 --inbox "$T/inbox.log" --mail "$T/mail" --from "Guard <g@spira>"
 }
 sets() { sed -i "s/^$1=.*/$1=$2/" "$ST"; }
 rows() { wc -l < "$T/inbox.log" | tr -d ' '; }
 
-session concierge; mkproc 101 100 bash -c snapshot; mkproc 102 101 bash /run/concierge-notes/inbox-next.sh
+session concierge; mkproc 101 100 bash -c snapshot; mkproc 102 101 /usr/bin/watchd next concierge-inbox
 guard >/dev/null; guard >/dev/null
 is "a waiter descendant: no inbox row" "2" "$(rows)"
 want "listening is recorded" "listening=yes" "$(cat "$ST")"
@@ -96,7 +96,7 @@ is "no wake for another session" "" "$(cat "$KEYS" 2>/dev/null)"
 want "and no session is recorded" "session=0" "$(cat "$ST")"
 
 echo "=== health ==="
-session concierge; mkproc 101 100 inbox-next.sh; rm -f "$ST"; guard >/dev/null
+session concierge; mkproc 101 100 watchd next concierge-inbox; rm -f "$ST"; guard >/dev/null
 "$BIN" health --state "$ST" --max-age 600 >/dev/null; wantrc "listening and fresh: health passes" 0 "$?"
 sets listening no
 "$BIN" health --state "$ST" --max-age 600 >/dev/null; wantrc "not listening: health fails" 1 "$?"

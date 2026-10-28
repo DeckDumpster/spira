@@ -92,8 +92,8 @@ if [ -n "${SPIRA_CONCIERGE:-}" ]; then
     _cinbox="$SPIRA_CONCIERGE_INBOX"
     _cunread="$(wc -l < "$_cinbox" 2>/dev/null || echo 0)"
     case "$_cunread" in *[!0-9]*|'') _cunread=0 ;; esac
-    printf 'MANDATORY FIRST ACTION: start the Concierge inbox waiter as a background job before anything else — Bash run_in_background, command=%s next concierge-inbox. It exits when an inbox line needs you, printing it; act on it, then run the same command again as a background job so you are never without one. Every watcher and mail event reaches you ONLY through %s (%s lines); nothing types into the pane. Then read recent inbox lines: tail -20 %s\n' \
-        "$(command -v watchd || printf watchd)" "$_cinbox" "$_cunread" "$_cinbox"
+    printf 'MANDATORY FIRST ACTION: start the Concierge inbox waiter as a background job before anything else — Bash run_in_background, command=SPIRA_TOML=%s %s next concierge-inbox. It exits when an inbox line needs you, printing it; act on it, then run the same command again as a background job so you are never without one. Every watcher and mail event reaches you ONLY through %s (%s lines); nothing types into the pane. Then read recent inbox lines: tail -20 %s\n' \
+        "${SPIRA_TOML:-}" "$(command -v watchd || printf watchd)" "$_cinbox" "$_cunread" "$_cinbox"
 fi
 
 WATCHD=watchd

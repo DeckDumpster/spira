@@ -220,7 +220,7 @@ mod tests {
     fn cfg() -> Settings {
         Settings {
             session_name: "concierge".into(),
-            waiters: vec![argv(&["inbox-next"]), argv(&["watchd", "next", "concierge-inbox"])],
+            waiters: vec![argv(&["watchd", "next", "concierge-inbox"])],
             mail_after: 600,
             inbox_text: "row".into(),
         }
@@ -238,7 +238,7 @@ mod tests {
         vec![
             session("concierge"),
             Proc { pid: 11, ppid: 10, argv: argv(&["bash", "-c", "long snapshot"]) },
-            Proc { pid: 12, ppid: 11, argv: argv(&["bash", "/run/concierge-notes/inbox-next.sh"]) },
+            Proc { pid: 12, ppid: 11, argv: argv(&["/usr/bin/watchd", "next", "concierge-inbox"]) },
         ]
     }
 
@@ -260,7 +260,7 @@ mod tests {
 
     #[test]
     fn a_waiter_outside_the_session_does_not_count() {
-        let mut w = world(vec![session("concierge"), Proc { pid: 12, ppid: 1, argv: argv(&["bash", "inbox-next.sh"]) }]);
+        let mut w = world(vec![session("concierge"), Proc { pid: 12, ppid: 1, argv: argv(&["watchd", "next", "concierge-inbox"]) }]);
         let (s, _) = check(&cfg(), &mut w, &State::default(), 1000);
         assert!(!s.listening);
     }

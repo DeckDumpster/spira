@@ -2,8 +2,9 @@
 # concierge-waiter-stop.sh — Stop hook for the Concierge session: refuse idle without a live
 # inbox waiter descended from this session's claude process.
 #
-# The waiter is found by walking /proc from the session pid and comparing argv basenames,
-# never by a pattern over the whole process table: another session's waiter must not count.
+# The one waiter is `watchd next concierge-inbox`, found by walking /proc from the session pid
+# and comparing argv basenames and subcommand, never by a pattern over the whole process table:
+# another session's waiter must not count.
 # Override: SPIRA_CONCIERGE_ALLOW_IDLE=1. Test seam: SPIRA_CONCIERGE_SESSION_PID names the
 # session pid instead of the nearest claude ancestor; SPIRA_PROC_ROOT replaces /proc.
 set -uo pipefail
@@ -12,8 +13,7 @@ set -uo pipefail
 [ "${SPIRA_CONCIERGE:-}" = 1 ] || exit 0
 [ "${SPIRA_CONCIERGE_ALLOW_IDLE:-}" = 1 ] && exit 0
 
-WAITER="${SPIRA_CONCIERGE_WAITER:-${SPIRA_RUN:-}/concierge-notes/inbox-next.sh}"
-WNAME="${WAITER##*/}"
+WAITER="watchd next concierge-inbox"
 PROC="${SPIRA_PROC_ROOT:-/proc}"
 
 ppid_of() { awk '{ sub(/^.*\) /, ""); print $2 }' "$PROC/$1/stat" 2>/dev/null; }
@@ -35,7 +35,10 @@ if [ -n "$session" ]; then
         argv=()
         { while IFS= read -r -d '' a; do argv+=("$a"); done < "$d/cmdline"; } 2>/dev/null
         hit=0
-        for a in "${argv[@]:0:2}"; do [ "${a##*/}" = "$WNAME" ] && hit=1; done
+        for i in 0 1; do
+            [ "${argv[i]:+${argv[i]##*/}}" = watchd ] && [ "${argv[i+1]:-}" = next ] \
+                && [ "${argv[i+2]:-}" = concierge-inbox ] && hit=1
+        done
         [ "$hit" = 1 ] || continue
         p="$pid"; n=0
         while [ -n "$p" ] && [ "$p" -gt 1 ] 2>/dev/null && [ "$n" -lt 64 ]; do
@@ -47,5 +50,5 @@ fi
 
 [ "$alive" = 1 ] && exit 0
 
-reason="No inbox waiter ($WNAME) is running under this session, so a P0 landing in the inbox would go unseen. Re-arm it before idling: run \`$WAITER\` with Bash run_in_background. To idle anyway, set SPIRA_CONCIERGE_ALLOW_IDLE=1."
+reason="No inbox waiter ($WAITER) is running under this session, so a P0 landing in the inbox would go unseen. Re-arm it before idling: run \`$WAITER\` (with SPIRA_TOML set) with Bash run_in_background. To idle anyway, set SPIRA_CONCIERGE_ALLOW_IDLE=1."
 python3 -c 'import json,sys; print(json.dumps({"decision": "block", "reason": sys.argv[1]}))' "$reason"
