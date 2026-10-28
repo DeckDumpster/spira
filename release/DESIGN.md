@@ -37,6 +37,7 @@ release canary-worker                                   the stage's synthetic dw
 release acceptance <tag> --scratch-repo P [...]         release acceptance on a clean machine (DESIGN.md "acceptance")
 release session-hook install|status|uninstall|prune S  the client's SessionStart hook + statusLine (DESIGN.md "session-hook")
 release intake install|status|uninstall                 wire systemd alert units into incident intake (DESIGN.md "intake")
+release round-recert --batch B --repo R                 drive one certification pass of an open round in its own unit (DESIGN.md "round-recert"; also the bare `round-recert` in bin/)
 release vm-repro <bead> [--suites L] [--repo R] [--deadline S]   a member's round-VM build-then-test, on the host (DESIGN.md "vm-repro")
 ```
 
@@ -750,3 +751,25 @@ The batch machine carries the matching states: `GREEN` → `LANDING` (the ref ha
 a deploy fault landing the batch with the fault in its reason. The landing callers still use the
 direct `GREEN` → `LANDED` move; they move over, and the machine moves into the lifecycle store, once the
 write path is measured to have room for it.
+
+### round-recert
+
+`round-recert --batch <id> --repo <repo>` drives one certification pass of an open round, so a
+watcher's `RUN:` can re-certify a round nobody is driving. It is a `[[bin]]` of this crate (a `RUN:`
+program must be a bare name in the release's `bin/`) and also `release round-recert`.
+
+1. `queue round status <repo>` must list `<id>` with a phase that has not ended; otherwise it is
+   refused naming the state (`round r is landed, not open`, or `not open in <repo>` with the open
+   rounds). Nothing is started.
+2. The unit is `round-recert-<id>`. `systemctl --user is-active` says a driver is already running:
+   the unit is reported and nothing starts. Otherwise `systemd-run --user --collect` starts this
+   binary as `--drive` in that unit and the verb exits `0` printing `started <unit>`: the caller's
+   deadline covers starting the pass, not the pass, and a restart of the caller does not end it.
+3. `--drive` certifies with `queue round certify <id> <repo>` and, only on exit `0`, lands with
+   `queue round land <id> <repo>`: the verbs the rounds loop calls, so the archive ref and mail are
+   the landing's own. A held queue lock, an unanswered deadline or an unreachable lifecycle is
+   waited out, not a verdict. It reports landed only when land exits `0` (or `3`, landed with its
+   release not activated) and the round has left `queue round status`; a red or incomplete
+   certify leaves the round open and the unit exits `1`.
+
+The certify lock is the guard against a second certify of the same batch, whoever started it.

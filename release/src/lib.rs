@@ -26,6 +26,7 @@ pub mod systemctl;
 pub mod telemetry;
 pub mod units;
 pub mod verify;
+pub mod round_recert;
 pub mod vm_repro;
 pub mod workspace;
 
