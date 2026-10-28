@@ -183,6 +183,12 @@ impl Harness {
 pub const FIXTURE_FAULT_FILE: &str = "fixture-fault.out";
 
 /// First line `FIXTURE-FAULT: <step> rc=<n>: <message>`, then the step's output tail, as the fixture logged it.
+fn append_fixture_fault(results: &Path, text: &str) {
+    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(results.join(FIXTURE_FAULT_FILE)) {
+        let _ = f.write_all(text.as_bytes());
+    }
+}
+
 pub fn fixture_fault_text(session: &str, message: &str, reason: &str, steps: &str) -> String {
     let head = steps
         .lines()
@@ -727,6 +733,7 @@ impl Phases {
     /// Starts the run's event record and replays the phases closed before it had a place.
     fn attach(&mut self, results: &Path) {
         let log = RunLog::begin(results);
+        let _ = fs::remove_file(results.join(FIXTURE_FAULT_FILE));
         for (n, _) in &self.done {
             note(log.record(RunEvent::Phase { name: (*n).into() }, now_epoch()));
         }
@@ -1628,7 +1635,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
                 sim_log(fault.message());
                 if !matches!(fault, crate::fixture::Fault::Deadline(_)) {
                     let steps = sim_steps.lock().unwrap_or_else(|e| e.into_inner()).join("\n");
-                    let _ = fs::write(results.join(FIXTURE_FAULT_FILE), fixture_fault_text("sim", fault.message(), reason, &steps));
+                    append_fixture_fault(&results, &fixture_fault_text("sim", fault.message(), reason, &steps));
                 }
                 Finish::fault(fault.rc(), reason, 0).in_session("sim")
             })?;
@@ -1705,7 +1712,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         Some(Err(SetupFault { fault, reason })) => {
             deps.log(fault.message());
             let steps = setup_log.lock().unwrap_or_else(|e| e.into_inner()).join("\n");
-            let _ = fs::write(results.join(FIXTURE_FAULT_FILE), fixture_fault_text("main", fault.message(), reason, &steps));
+            append_fixture_fault(&results, &fixture_fault_text("main", fault.message(), reason, &steps));
             return Finish::fault(fault.rc(), reason, 0).in_session("main");
         }
         None => return Finish::fault(2, "container-up", 0),

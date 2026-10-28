@@ -250,6 +250,17 @@ mod tests {
     }
 
     #[test]
+    fn a_verdict_keeps_the_session_that_faulted_through_the_file_and_status() {
+        let d = tmp("session");
+        let log = RunLog::begin(d.path());
+        let v = RunEvent::Verdict { word: "FAULT".into(), reason: "install".into(), session: Some("sim".into()) };
+        log.record(v, 5).unwrap();
+        let run = log.load().unwrap();
+        assert!(matches!(&run.events[0].event, RunEvent::Verdict { session: Some(s), .. } if s == "sim"));
+        assert_eq!(run.status_json()["verdict"]["session"], "sim");
+    }
+
+    #[test]
     fn every_legal_move_applies_and_is_recorded() {
         let d = tmp("legal");
         let log = RunLog::begin(&d);
