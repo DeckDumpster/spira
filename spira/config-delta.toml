@@ -162,6 +162,7 @@ removed = ["spira.broker_enable", "spira.express_label", "spira.overlap_defer_la
 "spira.runtime_heartbeat_url" = ""
 "spira.runtime_heartbeat_secs" = 60
 "spira.runtime_stall_limit" = 2
+"spira.runtime_round_duty_secs" = 15
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok

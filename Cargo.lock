@@ -1953,6 +1953,8 @@ name = "spira-runtime"
 version = "1.0.0"
 dependencies = [
  "runtime",
+ "serde",
+ "serde_json",
  "spira-config",
  "spira-otel",
  "testkit",
