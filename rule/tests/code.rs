@@ -318,10 +318,10 @@ fn a_trailing_citation_stays_out_of_the_shipped_section_and_a_midtext_parenthesi
     let tree = generate(&parts, |slug| match slug {
         "law-one" => Some("Do one. (per the case that produced it: details.)\n".into()),
         "law-two" => Some("Do two (per the spec) always. (sp-abc123: the scar, told at length.)".into()),
-        "law-three" => Some("Do three (per the spec) always.".into()),
+        "law-three" => Some("Do three (per the spec) always. (spa-x: not a bead) (per a ruling) (sp-abc123: the scar)".into()),
         _ => None,
     });
     assert_eq!(tree["1-alpha/1.1-law-one.md"], "# §1.1 law-one\n\nDo one.\n");
     assert_eq!(tree["1-alpha/1.2-law-two.md"], "# §1.2 law-two\n\nDo two (per the spec) always.\n");
-    assert_eq!(tree["2-beta/2.1-law-three.md"], "# §2.1 law-three\n\nDo three (per the spec) always.\n");
+    assert_eq!(tree["2-beta/2.1-law-three.md"], "# §2.1 law-three\n\nDo three (per the spec) always. (spa-x: not a bead)\n");
 }

@@ -100,12 +100,20 @@ pub fn append(parts: &[Part], number: u32, slug: &str) -> Result<Vec<Part>, Stri
 /// (`(sp-...: ...)`) names the case that produced it; the shipped projection carries the rule,
 /// the store and the wiki keep the history.
 fn without_citation(text: &str) -> &str {
-    let flat = text.trim_end();
-    let start = ["(per ", "(sp-"].iter().filter_map(|m| flat.rfind(m)).max();
-    match start {
-        Some(i) if flat.ends_with(')') => flat[..i].trim_end(),
-        _ => text,
+    let mut rest = text.trim_end();
+    while rest.ends_with(')') {
+        let Some(i) = rest.rfind('(').filter(|&i| is_citation(&rest[i..])) else { break };
+        rest = rest[..i].trim_end();
     }
+    if rest.len() == text.trim_end().len() {
+        text
+    } else {
+        rest
+    }
+}
+
+fn is_citation(paren: &str) -> bool {
+    paren.starts_with("(per ") || paren.strip_prefix("(sp-").is_some_and(|r| r.split_once(':').is_some_and(|(id, _)| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric())))
 }
 
 fn first_sentence(text: &str) -> String {
