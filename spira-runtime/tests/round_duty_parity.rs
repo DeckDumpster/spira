@@ -136,7 +136,13 @@ fn old_rows(f: &Fixture, s: &Scenario, ticks: usize) -> Vec<String> {
         .spawn()
         .unwrap();
     if !s.results.is_empty() {
-        std::thread::sleep(std::time::Duration::from_millis(1500)); // clock-safe: paces results after the script's first tick; the script under test runs on the real clock
+        let first_tick = f.p("run/watchd/round-duty.health");
+        let mut waited = 0;
+        while !first_tick.exists() {
+            assert!(waited < 2000, "round-duty.sh never finished its first tick in {}", s.name);
+            std::thread::sleep(std::time::Duration::from_millis(5)); // clock-safe: caps the wait for the script's first-tick health file
+            waited += 1;
+        }
         for r in &s.results {
             f.append_result(r);
         }
