@@ -559,8 +559,7 @@ mod tests {
         let base = d.path();
         fill(&base.join("slot.1/debug/x"), 3072);
         fill(&base.join("slot.2/debug/y"), 3072);
-        std::fs::create_dir_all(base.join("slot.3/debug")).unwrap();
-        std::fs::File::create(base.join("slot.3/debug/z")).unwrap().set_len(512 * 1024).unwrap();
+        fill(&base.join("slot.3/debug/z"), 512);
         let held = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(base.join("slot.2.lock")).unwrap();
         assert_eq!(unsafe { libc::flock(held.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
         let reaped = reap_idle(base, 3, 2, 101);
@@ -570,6 +569,18 @@ mod tests {
         assert!(base.join("slot.3/debug/z").exists(), "under the cap and the disk not full: stays warm");
         let reaped = reap_idle(base, 3, 2, 0);
         assert_eq!(reaped, vec![base.join("slot.3")], "a full disk empties every idle slot that holds anything");
+    }
+
+    #[test]
+    fn size_counts_blocks_so_a_sparse_file_holds_nothing() {
+        let d = testkit::TempDir::new("warm-sparse");
+        let sparse = d.path().join("sparse");
+        std::fs::File::create(&sparse).unwrap().set_len(512 * 1024).unwrap();
+        let dense = d.path().join("dense");
+        fill(&dense, 512);
+        assert_eq!(std::fs::metadata(&sparse).unwrap().len(), 512 * 1024);
+        assert!(size_of(&sparse) < 512 * 1024, "length is not usage: unallocated blocks do not count");
+        assert!(size_of(&dense) >= 512 * 1024, "allocated blocks count");
     }
 
     #[test]
