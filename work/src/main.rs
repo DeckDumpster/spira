@@ -386,7 +386,7 @@ fn review(args: &[String]) -> i32 {
         Ok((outcome, transcript)) => {
             let verdict = match &outcome {
                 work::review::Outcome::Findings(f) => f.as_str(),
-                work::review::Outcome::TimedOut => "",
+                _ => "",
             };
             match cfg("SPIRA_RUN").and_then(|r| work::review::keep(std::path::Path::new(&r), &bound, &transcript, verdict)) {
                 Ok(p) => eprintln!("work review: transcript kept at {}", p.display()),
@@ -400,6 +400,10 @@ fn review(args: &[String]) -> i32 {
                 work::review::Outcome::TimedOut => {
                     eprintln!("{}", refusal(R::ReviewTimedOut, "review", &[("secs", &secs.to_string())]));
                     work::review::TIMED_OUT
+                }
+                work::review::Outcome::Failed(e) => {
+                    eprintln!("{}", refusal(R::ReviewFailed, "review", &[("err", &e)]));
+                    REFUSED
                 }
             }
         }

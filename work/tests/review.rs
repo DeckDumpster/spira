@@ -101,3 +101,14 @@ fn a_review_keeps_its_transcript_and_a_summary_while_the_builder_sees_only_the_v
     review(&d, &repo, &toml, &[]);
     assert!(d.join("run/sp-abc12.review-2.jsonl").exists());
 }
+
+#[test]
+fn a_timed_out_or_failed_review_still_leaves_its_transcript() {
+    let (d, repo, toml) = fixture("work-review-partial", "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Read\",\"input\":{}}]}}'\nsleep 30\n");
+    assert_eq!(review(&d, &repo, &toml, &["--timeout", "1"]).status.code(), Some(124));
+    assert!(std::fs::read_to_string(d.join("run/sp-abc12.review-1.jsonl")).unwrap().contains("Read"));
+    let (d, repo, toml) = fixture("work-review-failed", "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\"}'\nexit 1\n");
+    assert_eq!(review(&d, &repo, &toml, &[]).status.code(), Some(3));
+    let sum = std::fs::read_to_string(d.join("run/review-summary.jsonl")).unwrap();
+    assert!(sum.contains("\"law_calls\":0"), "{sum}");
+}

@@ -68,6 +68,7 @@ pub fn persona_model(persona: &str, spec: &str) -> Result<String, String> {
 pub enum Outcome {
     Findings(String),
     TimedOut,
+    Failed(String),
 }
 
 /// What the reviewer did, read from its stream-json transcript.
@@ -166,7 +167,7 @@ pub fn run(agent: &str, argv: &[String], stdin: &str, cwd: &Path, timeout: Durat
         None => Ok((Outcome::TimedOut, out)),
         Some(st) => match verdict_text(&out).filter(|v| !v.trim().is_empty()) {
             Some(v) if st.success() => Ok((Outcome::Findings(v), out)),
-            _ => Err(format!("the reviewer session failed ({st}): {}", err.trim())),
+            _ => Ok((Outcome::Failed(format!("the reviewer session failed ({st}): {}", err.trim())), out)),
         },
     }
 }
