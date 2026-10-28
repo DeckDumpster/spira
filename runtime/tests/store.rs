@@ -3,8 +3,11 @@
 //! directory; the tests are ignored until the tier supplies it.
 
 use runtime::conformance::*;
-use runtime::store::{DoltCli, StoreJournal};
+use common::DoltCli;
+use runtime::store::StoreJournal;
 use std::sync::Arc;
+
+mod common;
 
 fn rig() -> impl Rig {
     let dir = std::env::var("RUNTIME_STORE_DIR").expect("RUNTIME_STORE_DIR names the throwaway database directory");
