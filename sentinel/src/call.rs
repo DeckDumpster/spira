@@ -760,7 +760,6 @@ impl<'a> Sentinel<'a> {
                             self.preempt_lane_for(&x.id, &task_runes, &lane_runes);
                         }
                         rotated_lanes.clear();
-                        self.lanes_yielding.set(true);
                     } else {
                         self.log(&format!("CHECK7 lanes: rework bead(s) waiting do not hold the lanes: {}", ids(false)));
                     }
