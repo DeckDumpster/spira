@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
 
-use rule::code::{append, drift, generate, parse_toc, render_toc, write_tree};
+use rule::code::{append, drift, generate, generate_with, parse_pointers, parse_toc, record_moves, render_pointers, render_toc, resolve, write_tree, Merged, Miss, Moved, Pointers, Retired};
 
 const TOC: &str = r#"[[part]]
 number = 1
@@ -103,9 +103,95 @@ fn append_refuses_an_unknown_part_and_a_slug_in_another_part() {
 #[test]
 fn a_retired_slug_keeps_its_number() {
     let parts = parse_toc(TOC).unwrap();
-    let tree = generate(&parts, |s| if s == "law-one" { None } else { book(s) });
+    let gone = |s: &str| if s == "law-one" { None } else { book(s) };
+    let tree = generate(&parts, gone);
     assert!(tree["1-alpha/1.1-law-one.md"].contains("[Reserved]"));
     assert!(tree.contains_key("1-alpha/1.2-law-two.md"));
+
+    let p = Pointers { retired: vec![Retired { slug: "law-one".into(), reason: "Superseded by hand.".into(), replaced_by: Some("law-three".into()), on: "2026-10-28".into() }], ..Pointers::default() };
+    let tree = generate_with(&parts, &p, gone);
+    assert_eq!(tree["1-alpha/1.1-law-one.md"], "# §1.1 law-one\n\n[Retired 2026-10-28] Superseded by hand.\n\nReplaced by §2.1 law-three.\n");
+    assert!(!tree["1-alpha/1.1-law-one.md"].contains("[Reserved]"));
+}
+
+#[test]
+fn a_merged_slug_renders_where_it_went() {
+    let parts = parse_toc(TOC).unwrap();
+    let p = Pointers { merged: vec![Merged { from: "law-one".into(), into: "law-three".into(), reason: "Same rule.".into(), on: "2026-10-28".into() }], ..Pointers::default() };
+    let tree = generate_with(&parts, &p, |s| if s == "law-one" { None } else { book(s) });
+    assert_eq!(tree["1-alpha/1.1-law-one.md"], "# §1.1 law-one\n\n[Merged into §2.1 law-three] Same rule.\n");
+}
+
+#[test]
+fn pointers_render_to_themselves_and_refuse_what_they_do_not_know() {
+    let p = Pointers {
+        moved: vec![Moved { section: "1.2".into(), slug: "law-two".into(), on: "2026-10-28".into() }],
+        merged: vec![Merged { from: "law-one".into(), into: "law-two".into(), reason: "Same.".into(), on: "2026-10-28".into() }],
+        retired: vec![Retired { slug: "law-three".into(), reason: "Gone.".into(), replaced_by: None, on: "2026-10-28".into() }],
+    };
+    assert_eq!(parse_pointers(&render_pointers(&p)).unwrap(), p);
+    assert_eq!(render_pointers(&parse_pointers(&render_pointers(&p)).unwrap()), render_pointers(&p));
+    assert!(parse_pointers("version = 2\n").unwrap_err().contains("version"));
+    assert!(parse_pointers("").unwrap_err().contains("version"));
+    assert!(parse_pointers("version = 1\nextra = 1\n").unwrap_err().contains("extra"));
+    assert!(parse_pointers("version = 1\n[[moved]]\nsection = \"1.1\"\nslug = \"a\"\non = \"d\"\nwhy = \"x\"\n").unwrap_err().contains("why"));
+}
+
+fn ptrs(toml_rows: &str) -> Pointers {
+    parse_pointers(&format!("version = 1\n{toml_rows}")).unwrap()
+}
+
+#[test]
+fn a_chain_of_pointers_resolves_one_hop_per_line() {
+    let toc = parse_toc("[[part]]\nnumber = 1\nname = \"A\"\nslug = \"a\"\nscope = \"s\"\nslugs = [\"law-two\"]\n\n[[part]]\nnumber = 2\nname = \"B\"\nslug = \"b\"\nscope = \"s\"\nslugs = [\"law-three\", \"law-one\"]\n").unwrap();
+    let p = ptrs("[[moved]]\nsection = \"1.2\"\nslug = \"law-one\"\non = \"d\"\n[[merged]]\nfrom = \"law-one\"\ninto = \"law-three\"\nreason = \"Same rule.\"\non = \"d\"\n");
+    let r = resolve(&toc, &p, "§1.2").unwrap();
+    assert_eq!(r.hops, ["§1.2 moved: law-one is now §2.2", "law-one merged into law-three (§2.1): Same rule."]);
+    assert_eq!((r.slug.as_str(), r.section.as_str()), ("law-three", "2.1"));
+}
+
+#[test]
+fn a_current_section_wins_over_a_moved_entry_for_the_same_number() {
+    let toc = parse_toc(TOC).unwrap();
+    let p = ptrs("[[moved]]\nsection = \"1.2\"\nslug = \"law-three\"\non = \"d\"\n");
+    let r = resolve(&toc, &p, "1.2").unwrap();
+    assert_eq!((r.slug.as_str(), r.hops.len()), ("law-two", 0));
+}
+
+#[test]
+fn a_cycle_is_refused_by_name_and_an_unknown_is_a_miss() {
+    let toc = parse_toc(TOC).unwrap();
+    let p = ptrs("[[merged]]\nfrom = \"law-one\"\ninto = \"law-two\"\nreason = \"r\"\non = \"d\"\n[[merged]]\nfrom = \"law-two\"\ninto = \"law-one\"\nreason = \"r\"\non = \"d\"\n");
+    match resolve(&toc, &p, "law-one") {
+        Err(Miss::Cycle(c)) => assert!(c.contains("law-one") && c.contains("law-two"), "{c}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(resolve(&toc, &p, "law-nope"), Err(Miss::Unknown));
+    assert_eq!(resolve(&toc, &p, "9.1"), Err(Miss::Unknown));
+}
+
+#[test]
+fn a_retired_slug_with_no_replacement_ends_the_chain_with_its_reason() {
+    let toc = parse_toc(TOC).unwrap();
+    let p = ptrs("[[retired]]\nslug = \"law-three\"\nreason = \"Obsolete.\"\non = \"d\"\n");
+    let r = resolve(&toc, &p, "2.1").unwrap();
+    assert_eq!(r.retired.unwrap().reason, "Obsolete.");
+}
+
+#[test]
+fn a_toc_that_drops_a_numbered_slug_is_refused_by_name() {
+    let old = BTreeMap::from([("law-one".to_string(), "1.1".to_string())]);
+    let toc = parse_toc(&TOC.replace("  \"law-one\",\n", "")).unwrap();
+    assert!(record_moves(&old, &toc, &Pointers::default(), "d").unwrap_err().contains("law-one"));
+}
+
+#[test]
+fn a_move_records_the_old_number_once() {
+    let old = BTreeMap::from([("law-one".to_string(), "1.1".to_string()), ("law-two".to_string(), "1.2".to_string())]);
+    let toc = parse_toc(&TOC.replace("  \"law-two\",\n", "").replace("  \"law-three\",", "  \"law-three\",\n  \"law-two\",")).unwrap();
+    let p = record_moves(&old, &toc, &Pointers::default(), "2026-10-28").unwrap();
+    assert_eq!(p.moved, [Moved { section: "1.2".into(), slug: "law-two".into(), on: "2026-10-28".into() }]);
+    assert_eq!(record_moves(&old, &toc, &p, "later").unwrap(), p);
 }
 
 #[test]
@@ -130,11 +216,23 @@ fn rule_in(repo: &Path, args: &[&str]) -> std::process::Output {
 }
 
 fn rule_from(cwd: &Path, repo: &Path, args: &[&str]) -> std::process::Output {
+    rule_with_book(cwd, repo, args, &[])
+}
+
+fn rule_with_book(cwd: &Path, repo: &Path, args: &[&str], book: &[(&str, &str)]) -> std::process::Output {
     let tmp = testkit::TempDir::new("rule-code-env");
     let db = tmp.join("db");
     std::fs::create_dir_all(db.join(".beads")).unwrap();
     let run = tmp.join("run");
-    let toml = spira_config::process::fixture_toml(&tmp, &[("SPIRA_DB", &db.display().to_string()), ("SPIRA_RUN", &run.display().to_string())]);
+    let statutes = tmp.join("statutes");
+    let mut declare = vec![("SPIRA_DB", db.display().to_string()), ("SPIRA_RUN", run.display().to_string())];
+    if !book.is_empty() {
+        let b = book.iter().map(|(k, v)| (k.to_string(), serde_json::Value::String(v.to_string()))).collect();
+        rule::mirror::sync(&statutes, &b).unwrap();
+        declare.push(("SPIRA_STATUTE_DIR", statutes.display().to_string()));
+    }
+    let declare: Vec<(&str, &str)> = declare.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let toml = spira_config::process::fixture_toml(&tmp, &declare);
     Command::new(env!("CARGO_BIN_EXE_rule"))
         .args(args)
         .current_dir(cwd)
@@ -324,4 +422,107 @@ fn a_trailing_citation_stays_out_of_the_shipped_section_and_a_midtext_parenthesi
     assert_eq!(tree["1-alpha/1.1-law-one.md"], "# §1.1 law-one\n\nDo one.\n");
     assert_eq!(tree["1-alpha/1.2-law-two.md"], "# §1.2 law-two\n\nDo two (per the spec) always.\n");
     assert_eq!(tree["2-beta/2.1-law-three.md"], "# §2.1 law-three\n\nDo three (per the spec) always. (spa-x: not a bead)\n");
+}
+
+const MOVED_TOC: &str = r#"[[part]]
+number = 1
+name = "Alpha"
+slug = "alpha"
+scope = "First scope."
+slugs = [
+  "law-one",
+]
+
+[[part]]
+number = 2
+name = "Beta"
+slug = "beta"
+scope = "Second scope."
+slugs = [
+  "law-three",
+  "law-two",
+]
+"#;
+
+fn texts_dir() -> testkit::TempDir {
+    let d = testkit::TempDir::new("law-texts");
+    for (k, v) in [("law-one", "Do one. Then more."), ("law-two", "Do two."), ("law-three", "Do three. Always.")] {
+        std::fs::write(d.join(format!("{k}.txt")), v).unwrap();
+    }
+    d
+}
+
+#[test]
+fn a_move_made_in_the_toc_leaves_a_pointer_when_code_runs() {
+    let repo = fixture_repo("law-move");
+    let texts = texts_dir();
+    let t = texts.path().display().to_string();
+    assert!(rule_in(&repo, &["code", "--texts", &t]).status.success());
+    std::fs::write(repo.join("law/toc.toml"), MOVED_TOC).unwrap();
+    let check = rule_in(&repo, &["code", "--check", "--texts", &t]);
+    assert!(!check.status.success());
+    assert!(String::from_utf8_lossy(&check.stderr).contains("not yet recorded"), "{}", String::from_utf8_lossy(&check.stderr));
+    let out = rule_in(&repo, &["code", "--texts", &t]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("§1.2 moved: law-two is now §2.2"));
+    let p = parse_pointers(&std::fs::read_to_string(repo.join("law/pointers.toml")).unwrap()).unwrap();
+    assert_eq!((p.moved[0].section.as_str(), p.moved[0].slug.as_str()), ("1.2", "law-two"));
+    assert!(rule_in(&repo, &["code", "--check", "--texts", &t]).status.success(), "pointers.toml must not read as a stray file");
+}
+
+#[test]
+fn code_refuses_a_toc_that_drops_a_numbered_slug() {
+    let repo = fixture_repo("law-drop");
+    let texts = texts_dir();
+    let t = texts.path().display().to_string();
+    assert!(rule_in(&repo, &["code", "--texts", &t]).status.success());
+    std::fs::write(repo.join("law/toc.toml"), TOC.replace("  \"law-one\",\n", "")).unwrap();
+    let out = rule_in(&repo, &["code", "--texts", &t]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("law-one"));
+}
+
+fn committed_with_pointers(tag: &str, pointers: &str) -> testkit::TempDir {
+    let repo = fixture_repo(tag);
+    std::fs::write(repo.join("law/toc.toml"), MOVED_TOC).unwrap();
+    std::fs::write(repo.join("law/pointers.toml"), pointers).unwrap();
+    let git = |args: &[&str]| assert!(Command::new("git").arg("-C").arg(repo.path()).args(args).status().unwrap().success());
+    git(&["add", "-A"]);
+    git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "moved"]);
+    repo
+}
+
+#[test]
+fn show_takes_a_current_or_a_superseded_number() {
+    let repo = committed_with_pointers("law-show", "version = 1\n\n[[moved]]\nsection = \"1.2\"\nslug = \"law-two\"\non = \"2026-10-28\"\n");
+    let book = [("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three.")];
+    for arg in ["1.2", "§1.2"] {
+        let out = rule_with_book(&repo, &repo, &["show", arg], &book);
+        let (o, e) = (String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(out.status.success(), "{arg}: {e}");
+        assert_eq!(o, "§1.2 moved: law-two is now §2.2\nDo two.\n", "{arg}");
+    }
+    let out = rule_with_book(&repo, &repo, &["show", "2.1"], &book);
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "Do three.\n");
+    let out = rule_with_book(&repo, &repo, &["show", "9.1"], &book);
+    assert!(!out.status.success());
+}
+
+#[test]
+fn show_prints_the_record_of_a_retired_slug_the_book_no_longer_holds() {
+    let repo = committed_with_pointers("law-show-retired", "version = 1\n\n[[retired]]\nslug = \"law-three\"\nreason = \"Obsolete.\"\non = \"2026-10-28\"\n");
+    let book = [("law-one", "Do one."), ("law-two", "Do two.")];
+    let out = rule_with_book(&repo, &repo, &["show", "three"], &book);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "[Retired 2026-10-28] Obsolete.\n");
+}
+
+#[test]
+fn retire_without_a_reason_refuses_and_names_the_flag() {
+    let repo = fixture_repo("law-retire-noreason");
+    let out = rule_with_book(&repo, &repo, &["retire", "three"], &[("law-three", "Do three.")]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--reason"));
+    let out = rule_with_book(&repo, &repo, &["retire", "three", "--reason", "x", "--replaced-by", "two", "--merged-into", "two"], &[("law-three", "Do three.")]);
+    assert!(!out.status.success());
 }

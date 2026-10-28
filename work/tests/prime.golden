@@ -107,14 +107,14 @@ Refusals:
     Fix: retry; an unrecorded check does not count
 
 ### work law
-Prints the statute code from the `law/` tree of your worktree: the table of contents, one part, one numbered section, or one statute by slug.
+Prints the statute code from the `law/` tree of your worktree: the table of contents, one part, one numbered section, or one statute by slug. A superseded number, or a merged or retired slug, follows its pointers one printed line per hop to the statute in force.
 Use when: Before a choice the statutes govern, to read the rule itself rather than a summary of it.
 Arguments:
-  [<part> | <part>.<n> | <slug>]   (default: the table of contents)
+  [<part> | <part>.<n> | §<part>.<n> | <slug>]   (default: the table of contents; <n> may be a superseded number)
 Checks:
   - it reads the tracked tree of the worktree it runs in; no store, no socket
 Refusals:
-  - usage: work law [<part> | <part>.<n> | <slug>]
+  - usage: work law [<part> | <part>.<n> | §<part>.<n> | <slug>]
     Fix: pass at most one argument
   - {err}
     Fix: pick a part, section or slug from the table of contents printed with it

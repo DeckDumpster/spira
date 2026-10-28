@@ -28,9 +28,9 @@ rule.sh                                                # every caller, unchanged
 rule [--home <spira-dir>] enact <slug> "<text>" (--tool <cmd> | --mechanism <bead> | --tool none --reason <why>) --part <n> [--dry-run]
 rule code [--check] [--texts <dir>]   # regenerate or check the law/ tree (law/toc.toml + statute texts); enact appends to a Part and stages it
 rule [--home <spira-dir>] audit [--file --for <persona> [--repo <name>] --max N]
-rule [--home <spira-dir>] retire <slug>
+rule [--home <spira-dir>] retire <slug> --reason <why> [--replaced-by <slug> | --merged-into <slug>]
 rule [--home <spira-dir>] list
-rule [--home <spira-dir>] show <slug>
+rule [--home <spira-dir>] show <slug> | <N.M> | <§N.M>
 rule [--home <spira-dir>] render-memories [prefix-csv] [char-budget] [core-csv]
 rule system-prompt-split <sysfile> <taskfile> <statutes> <prompt>
 ```
@@ -118,3 +118,25 @@ call this binary makes, so the two are never observably different.
   rewrite (group 4).
 - **`bd` is called by literal name**, not `$SPIRA_BD`, because that is what `rule.sh` did;
   widening it is a separate, untested change and out of scope for a parity port.
+
+## Pointers: a change to the book leaves one, never a gap
+
+A statute's slug is its identity; its `§Part.Section` is presentation, derived from
+`law/toc.toml`, and may be renumbered by editing the toc and running `rule code`. Whatever
+moved, merged or retired leaves a record in `law/pointers.toml`, an input like `toc.toml`
+(`write_tree` never deletes it; `drift` validates that every slug it names is in the toc).
+It carries `version = 1` and refuses unknown fields. Three entry kinds:
+
+- `[[moved]]` `section`, `slug`, `on` — appended by `rule code` for every slug whose section
+  differs from the generated file names on disk. A toc that drops a slug that held a number
+  is refused by name: it stays in the toc until retired.
+- `[[merged]]` `from`, `into`, `reason`, `on` — written by `retire --merged-into`.
+- `[[retired]]` `slug`, `reason`, optional `replaced_by`, `on` — written by `retire`. The slug
+  keeps its number and renders `[Retired <on>] <reason>` (plus `Replaced by §N.M <slug>.`).
+  `[Reserved]` remains only for a slug with neither record.
+
+`code::resolve` takes `law-x`, `x`, `N.M` or `§N.M` (a current section wins over a moved
+entry), follows moved → merged → retired-with-replacement for as many hops as there are, one
+printed line per hop, and refuses a cycle by naming it. It misses only for what no record ever
+held. `rule show` and `work law` both call it, so a lookup never answers "not found" for
+anything that once existed.

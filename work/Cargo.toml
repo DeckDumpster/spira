@@ -11,6 +11,7 @@ spira-otel = { path = "../spira-otel" }
 habits = { path = "../habits" }
 gate = { path = "../gate" }
 bead = { path = "../bead" }
+rule = { path = "../rule" }
 
 [[bin]]
 name = "work"

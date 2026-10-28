@@ -418,7 +418,7 @@ fn review(args: &[String]) -> i32 {
     }
 }
 
-/// `work law [<part> | <part>.<n> | <slug>]`: reads the tracked `law/` tree of the worktree
+/// `work law [<part> | <part>.<n> | §<part>.<n> | <slug>]`: reads the tracked `law/` tree of the worktree
 /// it runs in; no store, no socket.
 fn law(args: &[String]) -> i32 {
     if args.len() > 1 {
