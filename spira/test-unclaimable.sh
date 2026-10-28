@@ -67,7 +67,7 @@ classify() {
     local beads_json="$1" parts="${2:-$FULL_PARTS}" all_parts="${3:-$FULL_PARTS}"
     PARTS="$parts" ALL_PARTS="$all_parts" HELD_IDS="${HELD_IDS:-}" \
     SPIRA_SCOPE_LABEL="$SCOPE" SPIRA_CI_LABEL="$CI" SPIRA_ASK_LABEL="$ASK" \
-    SPIRA_GROOM_ASK_LABEL="$GROOM_ASK" \
+    SPIRA_GROOM_ASK_LABEL="$GROOM_ASK" SPIRA_HOME="$HERE" \
         sentinel --classify-unclaimable <<< "$beads_json"
 }
 
@@ -94,6 +94,13 @@ echo "case 3 — scope with no partition label is UNCLAIMABLE (the sp-bvo7 route
 out="$(classify "[$(bead sp-unc3a "")]")"
 want "scope no partition: UNCLAIMABLE line emitted" "UNCLAIMABLE sp-unc3a" "$out"
 want "scope no partition: names a partition to add" "plan"                 "$out"
+
+echo
+echo "case 3b — a proposal with only repo: and scope labels is NOT flagged; a work bead with the same labels is"
+prop="$(bead sp-unc3p "" | sed 's/"issue_type":"task"/"issue_type":"proposal"/')"
+out="$(classify "[$prop,$(bead sp-unc3w "")]")"
+nowant "proposal kind has no claiming persona: not flagged" "sp-unc3p" "$out"
+want "work bead missing its partition label is still flagged" "UNCLAIMABLE sp-unc3w" "$out"
 
 echo
 echo "case 4 — idle queue: no beads at all returns no UNCLAIMABLE lines (not a false alarm)"

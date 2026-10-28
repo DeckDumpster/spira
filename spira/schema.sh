@@ -231,9 +231,10 @@ case "${1:-contract}" in
     default)  shift; schema_default "${1:-}" ;;
     type-of)  shift; schema_type_of "${1:-}" ;;
     kinds)    schema_kinds ;;
+    work-types) printf '%s\n' $SCHEMA_WORK_TYPES ;;
     statuses) schema_statuses ;;
     dims)     schema_dims ;;
     names)    schema_names ;;
     custom-types) schema_custom_types ;;
-    *) printf 'usage: schema.sh [contract|check|name <key>|default <key>|type-of <kind>|kinds|statuses|dims|names|custom-types]\n' >&2; exit 2 ;;
+    *) printf 'usage: schema.sh [contract|check|name <key>|default <key>|type-of <kind>|kinds|work-types|statuses|dims|names|custom-types]\n' >&2; exit 2 ;;
 esac
