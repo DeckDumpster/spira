@@ -237,9 +237,7 @@ fn an_enacted_law_commit_is_filed_under_a_bead_and_submitted_to_the_queue() {
     let bin = testkit::TempDir::new("law-submit-bin");
     let calls = bin.join("calls");
     let shim = |name: &str, body: &str| {
-        let p = bin.join(name);
-        std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
-        Command::new("chmod").arg("755").arg(&p).status().unwrap();
+        testkit::write_exe(bin.join(name), &format!("#!/bin/sh\n{body}\n"));
     };
     shim("bead.sh", &format!("echo \"bead $*\" >> {c}\necho '{{\"id\":\"sp-lawfix\"}}'", c = calls.display()));
     shim("queue", &format!("echo \"queue $*\" >> {c}\ngit -C {r} rev-parse --verify -q refs/heads/spira/sp-lawfix >/dev/null", c = calls.display(), r = repo.path().display()));
@@ -259,4 +257,16 @@ fn an_enacted_law_commit_is_filed_under_a_bead_and_submitted_to_the_queue() {
     let log = std::fs::read_to_string(&calls).unwrap();
     assert!(log.contains(&format!("--submitted --tip {tip}")), "{log}");
     assert!(log.contains("queue submit spira/sp-lawfix fixture"), "{log}");
+}
+
+#[test]
+fn a_trailing_citation_stays_out_of_the_shipped_section_and_a_midtext_parenthesis_stays_in() {
+    let parts = parse_toc(TOC).unwrap();
+    let tree = generate(&parts, |slug| match slug {
+        "law-one" => Some("Do one. (per the case that produced it: details.)\n".into()),
+        "law-two" => Some("Do two (per the spec) always.".into()),
+        _ => None,
+    });
+    assert_eq!(tree["1-alpha/1.1-law-one.md"], "# §1.1 law-one\n\nDo one.\n");
+    assert_eq!(tree["1-alpha/1.2-law-two.md"], "# §1.2 law-two\n\nDo two (per the spec) always.\n");
 }

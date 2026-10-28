@@ -96,6 +96,16 @@ pub fn append(parts: &[Part], number: u32, slug: &str) -> Result<Vec<Part>, Stri
     Ok(out)
 }
 
+/// A statute's trailing `(per ...)` citation names the case that produced it; the shipped
+/// projection carries the rule, the store and the wiki keep the history.
+fn without_citation(text: &str) -> &str {
+    let flat = text.trim_end();
+    match flat.rfind("(per ") {
+        Some(i) if flat.ends_with(')') => flat[..i].trim_end(),
+        _ => text,
+    }
+}
+
 fn first_sentence(text: &str) -> String {
     let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
     match flat.find(". ") {
@@ -121,7 +131,10 @@ pub fn generate(parts: &[Part], text_of: impl Fn(&str) -> Option<String>) -> BTr
             let sec = format!("{}.{}", p.number, i + 1);
             let text = text_of(slug);
             let (summary, body) = match &text {
-                Some(t) => (first_sentence(t), t.trim_end_matches('\n').to_string()),
+                Some(t) => {
+                    let t = without_citation(t);
+                    (first_sentence(t), t.trim_end_matches('\n').to_string())
+                }
                 None => ("[Reserved]".to_string(), "[Reserved] — no longer in force.".to_string()),
             };
             idx.push_str(&format!("- §{sec} {slug} — {summary}\n"));
