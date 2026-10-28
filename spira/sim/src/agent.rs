@@ -117,7 +117,12 @@ fn exec(worktree: &Path, bead: &str, step: &Step, ordinal: usize) -> Result<(), 
             git(worktree, &["add", "--", file])?;
             git(worktree, &["commit", "-q", "-m", &format!("{bead}: sim commit {file}")]).map(|_| ())
         }
-        Step::Submit => work(worktree, &["submit"]).map(|_| ()),
+        Step::Submit => {
+            if git(worktree, &["rebase", "-q", "-X", "theirs", crate::world::LANDING_BASE]).is_err() {
+                let _ = git(worktree, &["rebase", "--abort"]);
+            }
+            work(worktree, &["submit"]).map(|_| ())
+        }
         Step::SubmitFromMain => {
             let world = std::env::var(crate::roundvm::WORLD_ENV).ok().filter(|v| !v.is_empty()).ok_or_else(|| format!("{} is not set", crate::roundvm::WORLD_ENV))?;
             work(&Path::new(&world).join("work"), &["submit"]).map(|_| ())
