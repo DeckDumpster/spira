@@ -1,12 +1,22 @@
 extensions:
   file_storage:
     directory: /state
+  file_storage/logs:
+    directory: /state/logs
 
 receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
   otlpjsonfile:
     include: ["/otel/*.jsonl"]
     start_at: end
     storage: file_storage
+  otlpjsonfile/logs:
+    include: ["/otel/*.jsonl"]
+    start_at: end
+    storage: file_storage/logs
 
 connectors:
   spanmetrics:
@@ -25,12 +35,19 @@ exporters:
     resource_to_telemetry_conversion:
       enabled: true
 
+  otlphttp/victorialogs:
+    logs_endpoint: http://victoria-logs:9428/insert/opentelemetry/v1/logs
+    timeout: 30s
+
 service:
-  extensions: [file_storage]
+  extensions: [file_storage, file_storage/logs]
   pipelines:
     traces:
-      receivers: [otlpjsonfile]
+      receivers: [otlpjsonfile, otlp]
       exporters: [spanmetrics]
     metrics:
       receivers: [spanmetrics]
       exporters: [prometheusremotewrite]
+    logs:
+      receivers: [otlpjsonfile/logs, otlp]
+      exporters: [otlphttp/victorialogs]
