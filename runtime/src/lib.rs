@@ -12,6 +12,7 @@ pub mod journal;
 pub mod lease;
 pub mod ports;
 pub mod scheduler;
+pub mod socket;
 pub mod store;
 
 pub use engine::{Engine, Executor, Outcome, PendingEffect};
