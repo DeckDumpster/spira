@@ -573,6 +573,7 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "auron_restart_window", bead: "sp-acp3lx" }, // ffx-ok
     RetiredKey { key: "chamber", bead: "sp-yyuunv" }, // ffx-ok
     RetiredKey { key: "chamber_overlay", bead: "sp-yyuunv" }, // ffx-ok
+    RetiredKey { key: "lanes_reserve", bead: "sp-6evjfc" }, // ffx-ok
     RetiredKey { key: "fayths", bead: "sp-yyuunv" }, // ffx-ok
     RetiredKey { key: "queue_local_gate", bead: "sp-vsob2" },
     RetiredKey { key: "queue_batch_idle_cut", bead: "sp-vsob2" },

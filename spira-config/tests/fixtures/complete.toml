@@ -191,7 +191,6 @@ land_gate_reserve = "2700"
 land_maxsec = "5400"
 lanes = "ops groomer mimir czar warden mender pilgrimage"
 lanes_max_live = 2
-lanes_reserve = 1
 ffx_vocabulary_mode = "enforce"
 lc_live_check_secs = 60
 otel_keep_days = 14
