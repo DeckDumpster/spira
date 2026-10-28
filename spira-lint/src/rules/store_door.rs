@@ -40,8 +40,6 @@ const DOORS: &[(&str, &str)] = &[
     ("rule/src/main.rs", "legacy: statute reads through bd; shrink-only"),
     ("docs/spikes/", "recorded measurement reruns of bd, never run by the loop"),
     ("tsd-lifecycle-export/", "legacy: exports lifecycle rows by dolt CLI; shrink-only"),
-    ("runtime/src/store.rs", "legacy: DoltCli store adapter; shrink-only, leaves with its replacement by spira-lc"),
-    ("runtime/tests/common/mod.rs", "the container tier's dolt sql fixture; production reaches the store through spira-lc"),
 ];
 
 fn door(path: &str) -> bool {
