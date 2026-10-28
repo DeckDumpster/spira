@@ -13,6 +13,11 @@ name = "release"
 path = "src/main.rs"
 test = false
 
+[[bin]]
+name = "round-recert"
+path = "src/bin/round-recert.rs"
+test = false
+
 [dependencies]
 sha2 = "0.10"
 toml = "0.8"

@@ -221,7 +221,7 @@ fn step(program: &Path, args: &[String], cwd: &Path, env: &[(String, String)], l
     Ok(st.code())
 }
 
-fn which(prog: &str, path: &str) -> Option<PathBuf> {
+pub fn which(prog: &str, path: &str) -> Option<PathBuf> {
     path.split(':').filter(|d| !d.is_empty()).map(|d| Path::new(d).join(prog)).find(|p| p.is_file())
 }
 
