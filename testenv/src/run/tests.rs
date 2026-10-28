@@ -1299,7 +1299,7 @@ fn prebuilt_artifacts_are_staged_and_tested_without_cargo() {
         "",
         &w.root,
     );
-    assert_eq!(rc, 0);
+    assert_eq!(rc, 0, "{:?}", w.lines.lock().unwrap());
     assert_eq!(w.last(), "VERDICT GREEN ran=1");
     assert_eq!(
         b.calls.load(Ordering::SeqCst),
@@ -2140,7 +2140,7 @@ fn a_tier_that_names_its_own_image_runs_in_it_and_the_others_keep_the_repo_image
     let rt = runtime();
     let b = FakeBuilder::new(None);
     let rc = w.run(&rt, &b, &["--suites", "rust,fe", "topic"], "", &w.root);
-    assert_eq!(rc, 0);
+    assert_eq!(rc, 0, "{:?}", w.lines.lock().unwrap());
     let calls = rt.once_calls.lock().unwrap();
     let image = |argv0: &str| calls.iter().find(|c| c.argv.last().map(|a| a.contains(argv0)).unwrap_or(false)).map(|c| c.image.clone());
     assert_eq!(image("ci.sh").as_deref(), Some("localhost/rust-ci:1"));
@@ -2167,7 +2167,7 @@ fn a_forge_repo_run_waits_for_a_test_slot_so_local_rounds_never_exceed_the_pool(
     let b = FakeBuilder::new(None);
     let rc = w.run(&rt, &b, &["--suites", "unit", "topic"], "", &w.root);
     freer.join().unwrap();
-    assert_eq!(rc, 0);
+    assert_eq!(rc, 0, "{:?}", w.lines.lock().unwrap());
     assert!(w.has_line(|l| l.contains("batch: waiting for a test slot: 1 of 1 held by blocker")), "{:?}", w.lines.lock().unwrap());
     assert!(w.has_line(|l| l.contains("batch: admitted to test slot 1 after ")));
 }
@@ -2178,7 +2178,7 @@ fn a_forge_repo_runs_its_declared_tier_in_its_own_image() {
     let rt = runtime();
     let b = FakeBuilder::new(None);
     let rc = w.run(&rt, &b, &["--suites", "unit", "topic"], "", &w.root);
-    assert_eq!(rc, 0);
+    assert_eq!(rc, 0, "{:?}", w.lines.lock().unwrap());
     assert_eq!(w.last(), "VERDICT GREEN ran=1");
     let calls = rt.once_calls.lock().unwrap();
     assert_eq!(calls.len(), 1);
