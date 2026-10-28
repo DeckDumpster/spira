@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-const FIELDS: &[&str] = &["MATCH", "SYMPTOM", "CHECK", "METRIC", "FIX", "ESCALATE", "REF"];
+const FIELDS: &[&str] = &["MATCH", "SYMPTOM", "CHECK", "METRIC", "FIX", "ESCALATE", "REF", "RUN", "DEADLINE"];
 
 /// Splits one SOP's text into its named fields. Mirrors the bash's lookahead regex
 /// (`^\s*NAME:\s*(.*?)(?=^\s*(?:MATCH|SYMPTOM|...):|\Z)`) without lookahead, which the
@@ -117,6 +117,8 @@ incident fixed by hand and forgotten does not close."
             ("METRIC", "Metric"),
             ("FIX", "Fix"),
             ("ESCALATE", "Escalate"),
+            ("RUN", "Run"),
+            ("DEADLINE", "Deadline"),
             ("REF", "Reference"),
         ] {
             if let Some(val) = f.get(name) {
@@ -186,6 +188,13 @@ mod tests {
         m.insert("sop-x".to_string(), "SYMPTOM: s\nCHECK: c\nFIX: systemctl restart foo\nsystemctl status foo".to_string());
         let out = render(&m, "2026-09-30");
         assert!(out.contains("```\nsystemctl restart foo\nsystemctl status foo\n```"));
+    }
+
+    #[test]
+    fn run_and_deadline_do_not_bleed_into_fix() {
+        let f = fields("FIX: restart it\nRUN: tool {bead}\nDEADLINE: 30");
+        assert_eq!(f.get("FIX").unwrap(), "restart it");
+        assert_eq!(f.get("RUN").unwrap(), "tool {bead}");
     }
 
     #[test]

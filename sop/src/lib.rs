@@ -3,6 +3,7 @@ pub mod logic;
 pub mod match_sop;
 pub mod ports;
 pub mod real;
+pub mod run_spec;
 pub mod shelf;
 pub mod synth;
 pub mod validate;
