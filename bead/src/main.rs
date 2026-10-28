@@ -1007,6 +1007,15 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
             }
         };
     }
+    if args[0] == "--settle" {
+        return match args.get(1) {
+            Some(id) if args.len() == 2 => amend_settle(home, id),
+            _ => {
+                eprintln!("bead: amend: usage: bead.sh amend --settle <bead-id>");
+                2
+            }
+        };
+    }
     let id = args[0].clone();
     let mut live = false;
     let mut ack_within: Option<String> = None;
@@ -1363,6 +1372,29 @@ fn amend_ack(home: &str, id: &str, aid: &str, answer: amendment::State) -> i32 {
     };
     rc |= bdq_status(home, &s(&["note", id, &format!("Amendment {aid} {verdict}")]));
     bead::claimdesc::mail_to(&rec.amender, "amend <amend@spira>", &format!("Amendment {aid} answered"), &tell);
+    rc
+}
+
+/// A released bead's unanswered amendments are merged into its body, so the next claim sees them.
+fn amend_settle(home: &str, id: &str) -> i32 {
+    let Some(mail) = amend_mail_cfg() else {
+        eprintln!("bead: amend: SPIRA_MAIL is not configured");
+        return 1;
+    };
+    let mut rc = 0;
+    for rec in amendment::unanswered(&mail, id) {
+        if merge_into_body(home, id, &rec.text) != 0 {
+            eprintln!("bead: amend: could not merge {} into {id}; left pending", rec.id);
+            rc = 1;
+            continue;
+        }
+        if let Err(e) = amendment::mark_enforced(&mail, &rec) {
+            eprintln!("bead: amend: {e}");
+            rc = 1;
+            continue;
+        }
+        rc |= bdq_status(home, &s(&["note", id, &format!("Amendment {} merged into the body: its session ended before it was answered", rec.id)]));
+    }
     rc
 }
 
