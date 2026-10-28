@@ -1140,6 +1140,31 @@ pub fn reported_tree(results: &Path) -> Option<String> {
     t.lines().find_map(|l| l.strip_prefix("tree=")).map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
 }
 
+/// How the batch itself ended, from the last `verdict` line of `run.events` (in `dir` or one
+/// subdirectory), with the last phase before it: `"FAULT install (died in phase up)"`.
+pub fn batch_cause(dir: &Path) -> Option<String> {
+    let mut dirs = vec![dir.to_path_buf()];
+    if let Ok(rd) = fs::read_dir(dir) {
+        let mut subs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+        subs.sort();
+        dirs.extend(subs);
+    }
+    let text = dirs.iter().find_map(|d| fs::read_to_string(d.join("run.events")).ok())?;
+    let (mut phase, mut verdict) = (None, None);
+    for f in text.lines().filter_map(|l| l.split_once(' ').map(|(_, r)| r)) {
+        if let Some(p) = f.strip_prefix("phase ") {
+            phase = Some(p.trim().to_string());
+        } else if let Some(v) = f.strip_prefix("verdict ") {
+            verdict = Some(v.trim().to_string());
+        }
+    }
+    let verdict = verdict?;
+    Some(match phase {
+        Some(p) => format!("{verdict} (last phase {p})"),
+        None => verdict,
+    })
+}
+
 /// The executables directly in `dir` (the pulled `round-bins/`).
 fn executables(dir: &Path) -> Vec<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
@@ -1179,13 +1204,16 @@ pub fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
 /// refusal naming both, and no tree at all (the run died first) is a distinct error;
 /// either installs nothing. No executables at all (the batch never
 /// reached its build) is not a refusal.
-pub fn install_bins(pulled: &Path, expected: &str, reported: Option<&str>, target: &Path) -> Result<(), String> {
+pub fn install_bins(pulled: &Path, expected: &str, reported: Option<&str>, batch: Option<&str>, target: &Path) -> Result<(), String> {
     let exes = executables(pulled);
     if exes.is_empty() {
         return Ok(());
     }
     match reported {
-        None => return Err("round-vm run: the VM reported no tested tree (batch did not complete) — nothing installed".into()),
+        None => {
+            let how = batch.map_or(String::new(), |b| format!(": batch verdict {b}"));
+            return Err(format!("round-vm run: the VM reported no tested tree (batch did not complete{how}) — nothing installed"));
+        }
         Some(r) if r != expected => {
             return Err(format!("round-vm run: refusing binaries: tree sha {r} does not match expected {expected} — nothing installed"))
         }
@@ -2128,7 +2156,14 @@ fn after_batch(
     }
     record_coverage(args, &cfg.state_dir, &results_dir, tree_sha, remote_rc == 0);
     let target = args.tree_dir.join("target").join("release");
-    if let Err(e) = install_bins(&bins, tree_sha, reported.as_deref(), &target) {
+    let cause = batch_cause(&results_dir);
+    if reported.is_none() && remote_rc != 0 {
+        if let Some(c) = &cause {
+            eprintln!("round-vm run: the batch ended without a tested tree: {c}");
+            record_incomplete(env, args, &format!("batch verdict {c}"));
+        }
+    }
+    if let Err(e) = install_bins(&bins, tree_sha, reported.as_deref(), cause.as_deref(), &target) {
         eprintln!("{e}");
         own_fault = true;
     }
@@ -2952,12 +2987,24 @@ mod tests {
         let d = TempDir::new();
         let (pulled, target) = (d.path().join("pulled"), d.path().join("wt/target/release"));
         exe(&pulled.join("fakebin"));
-        let e = install_bins(&pulled, "expectedsha", Some("wrongsha"), &target).unwrap_err();
+        let e = install_bins(&pulled, "expectedsha", Some("wrongsha"), None, &target).unwrap_err();
         assert!(e.contains("wrongsha") && e.contains("expectedsha"), "{e}");
         assert!(e.contains("refusing binaries"), "{e}");
-        let none = install_bins(&pulled, "expectedsha", None, &target).unwrap_err();
+        let none = install_bins(&pulled, "expectedsha", None, Some("FAULT install (last phase up)"), &target).unwrap_err();
+        assert!(none.contains("batch verdict FAULT install (last phase up)"), "{none}");
+        let none = install_bins(&pulled, "expectedsha", None, None, &target).unwrap_err();
         assert!(none.contains("reported no tested tree") && !none.contains("refusing") && !none.contains("<none"), "{none}");
         assert!(!target.exists());
+    }
+
+    #[test]
+    fn the_batch_cause_is_its_last_verdict_and_the_phase_it_died_in() {
+        let d = TempDir::new();
+        let sub = d.path().join("key");
+        fs::create_dir_all(&sub).unwrap();
+        assert_eq!(batch_cause(d.path()), None);
+        fs::write(sub.join("run.events"), "1 phase resolve\n2 phase up\n3 verdict FAULT install\n").unwrap();
+        assert_eq!(batch_cause(d.path()).as_deref(), Some("FAULT install (last phase up)"));
     }
 
     #[test]
@@ -2966,10 +3013,10 @@ mod tests {
         let (pulled, target) = (d.path().join("pulled"), d.path().join("wt/target/release"));
         exe(&pulled.join("fakebin"));
         fs::write(pulled.join("not-executable"), "x").unwrap();
-        install_bins(&pulled, "expectedsha", Some("expectedsha"), &target).unwrap();
+        install_bins(&pulled, "expectedsha", Some("expectedsha"), None, &target).unwrap();
         assert!(target.join("fakebin").is_file());
         assert!(!target.join("not-executable").exists());
-        install_bins(&d.path().join("absent"), "expectedsha", None, &target).unwrap();
+        install_bins(&d.path().join("absent"), "expectedsha", None, None, &target).unwrap();
     }
 
     #[test]
