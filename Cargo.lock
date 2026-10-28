@@ -1067,6 +1067,7 @@ dependencies = [
  "opentelemetry",
  "percent-encoding",
  "rand 0.9.5",
+ "serde_json",
  "thiserror",
 ]
 
@@ -1945,6 +1946,18 @@ dependencies = [
  "serde",
  "serde_json",
  "testkit",
+]
+
+[[package]]
+name = "spira-runtime"
+version = "1.0.0"
+dependencies = [
+ "runtime",
+ "spira-config",
+ "spira-otel",
+ "testkit",
+ "tokio",
+ "ureq",
 ]
 
 [[package]]

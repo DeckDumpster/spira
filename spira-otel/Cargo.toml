@@ -6,7 +6,7 @@ description = "spira-otel — one OTLP/JSON span per call, appended as a line to
 
 [dependencies]
 # opentelemetry-proto "trace" pulls opentelemetry_sdk, which locks rand 0.9 (with getrandom 0.3, rand_chacha 0.9, rand_core 0.9) beside the 0.8 line.
-opentelemetry-proto = { version = "0.30", default-features = false, features = ["trace", "metrics", "gen-tonic-messages", "with-serde"] }
+opentelemetry-proto = { version = "0.30", default-features = false, features = ["trace", "metrics", "logs", "gen-tonic-messages", "with-serde"] }
 prost = { version = "0.13", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 libc = "0.2"

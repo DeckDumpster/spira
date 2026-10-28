@@ -49,11 +49,15 @@ pub async fn serve_with(
     let (done_tx, mut done_rx) = mpsc::unbounded_channel::<(String, Outcome)>();
     let mut in_flight: BTreeSet<String> = BTreeSet::new();
     let mut open = true;
+    let mut kick_only = false;
     loop {
         if let Some(k) = &opts.kick {
             k();
         }
-        engine.run_until_idle()?;
+        if !kick_only {
+            engine.run_until_idle()?;
+        }
+        kick_only = false;
         let launch: Vec<PendingEffect> = engine.pending_effects().into_iter().filter(|p| !in_flight.contains(&p.key)).collect();
         for p in launch {
             in_flight.insert(p.key.clone());
@@ -79,7 +83,8 @@ pub async fn serve_with(
             return Ok(());
         }
         let sleep = engine.next_timer_at().map_or(Duration::from_secs(3600), |t| Duration::from_millis(t.saturating_sub(clock.now_ms())));
-        let sleep = opts.max_sleep_ms.map_or(sleep, |m| sleep.min(Duration::from_millis(m)));
+        let capped = opts.max_sleep_ms.map(Duration::from_millis).filter(|m| *m < sleep);
+        let sleep = capped.unwrap_or(sleep);
         tokio::select! {
             s = submissions.recv(), if open => match s {
                 Some(s) => engine.submit(&s.id, &s.stream, s.kind)?,
@@ -89,7 +94,7 @@ pub async fn serve_with(
                 in_flight.remove(&key);
                 engine.complete(&key, outcome)?;
             }
-            _ = tokio::time::sleep(sleep) => {}
+            _ = tokio::time::sleep(sleep) => kick_only = capped.is_some(),
         }
     }
 }
