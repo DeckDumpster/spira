@@ -202,11 +202,11 @@ pub fn git_in(dir: &Path, args: &[&str]) -> Result<String, String> {
 
 /// Regenerates `law/` in a short-lived worktree of `repo`, commits it on a branch of its own and
 /// removes the worktree. The caller's directory and the repo's own checkout are never touched.
-pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, key: &str, toc: &[Part], book: &BTreeMap<String, String>) -> Result<String, String> {
+pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, verb: &str, key: &str, toc: &[Part], book: &BTreeMap<String, String>) -> Result<String, String> {
     std::fs::create_dir_all(wt_root).map_err(|e| format!("rule: {}: {e}", wt_root.display()))?;
     let stamp = format!("{}-{}", SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0), std::process::id());
     let branch = format!("law/{}-{stamp}", key.trim_start_matches("law-"));
-    let wt = wt_root.join(format!("rule-enact-{}-{stamp}", key.trim_start_matches("law-")));
+    let wt = wt_root.join(format!("rule-{verb}-{}-{stamp}", key.trim_start_matches("law-")));
     let wt_s = wt.display().to_string();
     git_in(repo_path, &["worktree", "add", "-q", "-b", &branch, &wt_s, base.unwrap_or("HEAD")])?;
     let done = (|| {
@@ -221,7 +221,7 @@ pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, key: &st
             .spawn()
             .map_err(|e| format!("rule: git commit: {e}"))?;
         if let Some(mut stdin) = child.stdin.take() {
-            let _ = writeln!(stdin, "law: enact {key}");
+            let _ = writeln!(stdin, "law: {verb} {key}");
         }
         let out = child.wait_with_output().map_err(|e| format!("rule: git commit: {e}"))?;
         if out.status.success() {
@@ -232,6 +232,45 @@ pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, key: &st
     })();
     let _ = git_in(repo_path, &["worktree", "remove", "--force", &wt_s]);
     done.map(|()| branch)
+}
+
+/// Files a SUBMITTED bead at the tip of `law_branch`, renames the branch to the bead's own
+/// (`spira/<id>`, the name the queue lands) and submits it. Returns the bead id and the branch.
+pub fn submit_law(repo_path: &Path, repo_name: &str, wt_root: &Path, law_branch: &str, verb: &str, key: &str) -> Result<(String, String), String> {
+    let tip = git_in(repo_path, &["rev-parse", law_branch])?;
+    let title = format!("law: {verb} {key} — land its law/ commit");
+    let body = format!("{law_branch} carries the law/ projection of the statute book after `rule.sh {verb} {key}`. Landing this bead puts that commit on the landing ref.\n");
+    let body_file = wt_root.join(format!("rule-{verb}-{key}.bead.txt"));
+    std::fs::write(&body_file, body).map_err(|e| format!("rule: {}: {e}", body_file.display()))?;
+    let filed = spira_config::bounded::bounded("bead.sh")
+        .args(["file", &title, "--for", "ops", "--repo", repo_name, "--submitted", "--tip", &tip, "--json", "--body-file"])
+        .arg(&body_file)
+        .stdin(Stdio::null())
+        .output();
+    let _ = std::fs::remove_file(&body_file);
+    let filed = filed.map_err(|e| format!("rule: bead.sh: {e}"))?;
+    if !filed.status.success() {
+        return Err(format!("rule: bead.sh file: {}", String::from_utf8_lossy(&filed.stderr).trim()));
+    }
+    let id = filed_id(&String::from_utf8_lossy(&filed.stdout))?;
+    let branch = format!("spira/{id}");
+    git_in(repo_path, &["branch", "-m", law_branch, &branch])?;
+    let submit = spira_config::bounded::bounded("queue").args(["submit", &branch, repo_name]).stdin(Stdio::null()).output().map_err(|e| format!("rule: queue: {e}"))?;
+    if !submit.status.success() {
+        return Err(format!("rule: queue submit {branch} (bead {id}): {}", String::from_utf8_lossy(&submit.stderr).trim()));
+    }
+    Ok((id, branch))
+}
+
+/// The id `bead.sh file --json` printed: the first JSON object (or one-element array) on stdout.
+fn filed_id(out: &str) -> Result<String, String> {
+    let start = out.find(['{', '[']).ok_or_else(|| format!("rule: no JSON in bead.sh file's output: {out:?}"))?;
+    let v: serde_json::Value = serde_json::from_str(out[start..].trim()).map_err(|e| format!("rule: bead.sh file's output is not JSON: {e}"))?;
+    let v = match v {
+        serde_json::Value::Array(a) => a.into_iter().next().ok_or("rule: bead.sh file printed an empty JSON array")?,
+        o => o,
+    };
+    v.get("id").and_then(|i| i.as_str()).map(str::to_string).ok_or_else(|| format!("rule: no id in bead.sh file's output: {out:?}"))
 }
 
 /// Writes `toc` and its generated tree under `law` and stages it.

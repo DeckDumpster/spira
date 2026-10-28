@@ -208,7 +208,7 @@ fn commit_law_adds_the_section_on_its_own_branch_and_leaves_the_checkout_alone()
         .into_iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
-    let branch = rule::code::commit_law(repo.path(), None, wt_root.path(), "law-four", &toc, &book).unwrap();
+    let branch = rule::code::commit_law(repo.path(), None, wt_root.path(), "enact", "law-four", &toc, &book).unwrap();
     let show = |p: &str| Command::new("git").arg("-C").arg(repo.path()).args(["show", &format!("{branch}:{p}")]).output().unwrap();
     let added = show("law/2-beta/2.2-law-four.md");
     assert!(added.status.success() && String::from_utf8_lossy(&added.stdout).contains("Do four."));
@@ -225,7 +225,38 @@ fn commit_law_twice_for_one_slug_in_one_second_gives_two_branches() {
         .into_iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
-    let branches: Vec<String> = (0..5).map(|_| rule::code::commit_law(repo.path(), None, wt_root.path(), "law-four", &toc, &book).unwrap()).collect();
+    let branches: Vec<String> = (0..5).map(|_| rule::code::commit_law(repo.path(), None, wt_root.path(), "enact", "law-four", &toc, &book).unwrap()).collect();
     let distinct: std::collections::BTreeSet<_> = branches.iter().collect();
     assert_eq!(distinct.len(), branches.len(), "{branches:?}");
+}
+
+#[test]
+fn an_enacted_law_commit_is_filed_under_a_bead_and_submitted_to_the_queue() {
+    let repo = fixture_repo("law-submit");
+    let wt_root = testkit::TempDir::new("law-submit-wt");
+    let bin = testkit::TempDir::new("law-submit-bin");
+    let calls = bin.join("calls");
+    let shim = |name: &str, body: &str| {
+        let p = bin.join(name);
+        std::fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
+        Command::new("chmod").arg("755").arg(&p).status().unwrap();
+    };
+    shim("bead.sh", &format!("echo \"bead $*\" >> {c}\necho '{{\"id\":\"sp-lawfix\"}}'", c = calls.display()));
+    shim("queue", &format!("echo \"queue $*\" >> {c}\ngit -C {r} rev-parse --verify -q refs/heads/spira/sp-lawfix >/dev/null", c = calls.display(), r = repo.path().display()));
+    let path = format!("{}:{}", bin.path().display(), std::env::var("PATH").unwrap_or_default());
+    let _env = testkit::env(&[("PATH", Some(path.as_str()))]);
+    let toc = append(&parse_toc(TOC).unwrap(), 2, "law-four").unwrap();
+    let book: BTreeMap<String, String> = [("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three."), ("law-four", "Do four.")]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    let law_branch = rule::code::commit_law(repo.path(), None, wt_root.path(), "enact", "law-four", &toc, &book).unwrap();
+    let tip = rule::code::git_in(repo.path(), &["rev-parse", &law_branch]).unwrap();
+    let (id, branch) = rule::code::submit_law(repo.path(), "fixture", wt_root.path(), &law_branch, "enact", "law-four").unwrap();
+    assert_eq!((id.as_str(), branch.as_str()), ("sp-lawfix", "spira/sp-lawfix"));
+    assert_eq!(rule::code::git_in(repo.path(), &["rev-parse", "spira/sp-lawfix"]).unwrap(), tip, "the bead's branch is not the law commit");
+    assert!(rule::code::git_in(repo.path(), &["rev-parse", "--verify", "-q", &law_branch]).is_err(), "the unreferenced law/ branch was left behind");
+    let log = std::fs::read_to_string(&calls).unwrap();
+    assert!(log.contains(&format!("--submitted --tip {tip}")), "{log}");
+    assert!(log.contains("queue submit spira/sp-lawfix fixture"), "{log}");
 }
