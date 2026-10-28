@@ -15,6 +15,7 @@ mod notify;
 mod ops;
 mod paths;
 mod rows;
+mod sop_run;
 mod tail;
 
 use manifest::Row;

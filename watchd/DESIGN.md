@@ -118,6 +118,23 @@ Unchanged: `<name>.log` (daemon target's stdout, or the `log`-kind target itself
 file decides anything; a pid is recorded inside it for the message only), `<name>.pending`
 (`<line> <epoch>` — the backlog clock), `<name>.restarts`, `<name>.unhealthy`.
 
+## Running a SOP's tool before escalating
+
+`notify` passes each stale row's incident to `sop match` before the row joins an ask (`sop_run.rs`).
+Exactly one match whose SOP declares `RUN:` (grammar and rules: `sop/DESIGN.md`) runs that tool from
+the active release's `bin/` in its own transient unit (`systemd-run --user --wait --pipe`, under
+`timeout` at the SOP's `DEADLINE:`; `SPIRA_SYSTEMD_RUN` overrides the launcher for tests). The
+incident's `bead=`, `batch=` and `repo=` tokens fill the argument fields; a field the incident lacks
+means the tool is not run. `sop applied <slug> --check pass|fail` is recorded against the incident's
+bead, else against a pass id built from the row, and the Concierge gets a `note` (pass) or `alert`
+(fail) carrying the last twelve lines of output. A pass takes the row out of the ask. No match,
+several matches, no `RUN:`, an unusable `RUN:`, a missing tool, a failure or a timeout leave the row in
+the ask, with a `tried before escalating:` line naming the SOP, the tool and the exit code.
+
+The same SOP runs at most twice for one incident key inside `SPIRA_NOTIFY_AGE` seconds
+(`<name>.sop-runs`); the third pass escalates. A passing tool does not mark the events read, so a
+condition that persists is the loop this cap ends.
+
 ## Decisions
 
 Accreted bash workarounds this port drops, because a single native process does not need them
