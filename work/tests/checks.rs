@@ -71,3 +71,18 @@ fn submit_with_passing_checks_proceeds_to_the_socket() {
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     assert!(!text.contains("done checks failed"), "{text}");
 }
+
+#[test]
+fn submit_in_a_repository_declaring_no_checks_is_not_refused_by_them() {
+    let dir = repo(None);
+    let out = Command::new(env!("CARGO_BIN_EXE_work"))
+        .arg("submit")
+        .current_dir(dir.path())
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap())
+        .env("SPIRA_WORK_BEAD_ID", "sp-x1")
+        .output()
+        .unwrap();
+    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(!text.contains("done checks failed") && !text.contains("refused"), "{text}");
+}
