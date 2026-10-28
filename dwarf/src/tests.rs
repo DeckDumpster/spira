@@ -2433,7 +2433,7 @@ fn a_rune_that_builds_still_waits_on_a_held_cold_build_slot() {
             if queued() {
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(50));
+            std::thread::sleep(std::time::Duration::from_millis(50)); // clock-safe: a cap on polling for the waiter's marker file
         }
         let mut holder = holder;
         let _ = holder.kill();
@@ -2443,4 +2443,13 @@ fn a_rune_that_builds_still_waits_on_a_held_cold_build_slot() {
     releaser.join().unwrap();
     assert!(o.log.contains("waiting on cold-build slot"), "{}", o.log);
     assert!(o.slept > 0, "the cold wait sleeps");
+}
+
+#[test]
+fn a_graph_only_rune_needs_no_warm_base() {
+    let f = fx("graph-only-nobase");
+    seed(&f, "sp-nobase");
+    let o = go(&f, "spira,plan", &[("SPIRA_CALL_JITTER", "0"), ("RUNE_GRAPH_ONLY", "1"), (spira_config::build::DWARF_WARM_BASE_ENV, "")], Mode::Claim, BTreeMap::new(), commits_and_closes());
+    assert_eq!(o.seen.len(), 1, "{}", o.log);
+    assert!(!o.log.contains("is not a tmpfs"), "{}", o.log);
 }
