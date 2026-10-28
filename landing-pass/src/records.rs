@@ -148,26 +148,31 @@ impl Files {
         self.run.join("gate-dead").join(branch_key(branch))
     }
 
-    fn dead_last_file(&self) -> PathBuf {
-        self.run.join("gate-dead-last")
+    fn dead_seq_file(&self) -> PathBuf {
+        self.run.join("gate-dead-seq")
     }
 
-    /// Count a gate that died on `branch`, whatever its tip. A death that follows another
-    /// branch's death with no verdict between is the host's, not the branch's: it restarts at 1.
+    /// Count a gate that died on `branch`, whatever its tip. The count holds only while no other
+    /// branch's gate has died since: a death in between makes the fault the host's, so it restarts at 1.
     pub fn note_dead(&self, branch: &str) -> u32 {
-        let last = fs::read_to_string(self.dead_last_file()).unwrap_or_default();
-        let prior = fs::read_to_string(self.dead_file(branch)).ok().and_then(|t| t.trim().parse::<u32>().ok()).unwrap_or(0);
-        let n = if matches!(last.trim(), "" | "-") || last.trim() == branch { prior + 1 } else { 1 };
+        let read = |p: PathBuf| fs::read_to_string(p).unwrap_or_default();
+        let seq = read(self.dead_seq_file()).trim().parse::<u64>().unwrap_or(0);
+        let prior = read(self.dead_file(branch));
+        let mut l = prior.lines();
+        let held = match (l.next().and_then(|n| n.parse::<u32>().ok()), l.next().and_then(|n| n.parse::<u64>().ok())) {
+            (Some(n), Some(at)) if at == seq => n,
+            _ => 0,
+        };
+        let n = held + 1;
         let _ = fs::create_dir_all(self.run.join("gate-dead"));
-        let _ = atomic_write(&self.dead_file(branch), &format!("{n}\n"));
-        let _ = atomic_write(&self.dead_last_file(), &format!("{branch}\n"));
+        let _ = atomic_write(&self.dead_seq_file(), &format!("{}\n", seq + 1));
+        let _ = atomic_write(&self.dead_file(branch), &format!("{n}\n{}\n", seq + 1));
         n
     }
 
-    /// A gate reached a verdict (pass or red) for some branch: the host is not dead.
+    /// A gate reached a verdict for `branch`: its run of dead gates is over.
     pub fn note_gate_judged(&self, branch: &str) {
         let _ = fs::remove_file(self.dead_file(branch));
-        let _ = atomic_write(&self.dead_last_file(), "-\n");
     }
 
     pub fn deferred_to_round(&self, branch: &str, tip: &str) -> bool {

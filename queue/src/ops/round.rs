@@ -2173,7 +2173,6 @@ pub(super) fn certify(
                 "the abandoned pass",
                 pass_verdict_event(w, batch, &left, true),
             );
-            note_pass_end(&c, &pass_members(&c, batch), PassEnd::Faulted);
         }
         let started = start_pass(w, batch, &head, false);
         if let Err((rc, out)) = started {

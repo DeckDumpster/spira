@@ -841,6 +841,25 @@ fn a_dead_gate_with_a_pass_for_another_bead_between_is_that_beads_red() {
 }
 
 #[test]
+fn another_beads_death_voids_the_count_even_after_that_bead_passes() {
+    let h = H::new(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (75, DIED.into()));
+    h.run();
+    h.bead("sp-a", "open", &[]);
+    h.closed("sp-b", "t2");
+    h.tools.gates.borrow_mut().insert("spira/sp-b".into(), (75, DIED.into()));
+    h.run();
+    h.tools.gates.borrow_mut().insert("spira/sp-b".into(), (0, "gate: VERDICT=PASS reason=ok branch=b repo=spira suite=-\n".into()));
+    h.run();
+    h.bead("sp-a", "closed", &[]);
+    retip(&h, "spira/sp-a", "t3");
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (75, DIED.into()));
+    h.run();
+    assert!(!h.lc.certified.borrow().iter().any(|c| c.ends_with("red")), "{:?}", h.lc.certified.borrow());
+}
+
+#[test]
 fn a_pass_between_two_dead_gates_makes_the_second_a_first_again() {
     let h = H::new(LandMode::Queue);
     h.closed("sp-a", "t1");
