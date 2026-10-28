@@ -60,6 +60,11 @@ fn main() {
     };
     let actor = std::env::var("SPIRA_RUNE").or_else(|_| std::env::var("SPIRA_WORK_ACTOR")).unwrap_or_else(|_| "dwarf".to_string());
 
+    if verb == "submit" && checks(&[]) != 0 {
+        eprintln!("work submit: refused: the repository's done checks failed (output above) — fix them, commit, and run `work submit` again; `work checks` runs them alone");
+        { let code = REFUSED; spira_otel::run::finish(code); std::process::exit(code) };
+    }
+
     let tip = if verb == "submit" { read_tip(&bound) } else { None };
 
     let read_stdin = || {
