@@ -1,6 +1,6 @@
 //! The web-native site (brain design `loom-web-native-2026-10-26`, approved 2026-10-26): one
 //! header, each fact once per screen, nothing the lifecycle page showed left without a home.
-//! Served under `/next` beside the old pages until the operator says "switch".
+//! Served at the root since the switch (per Ryan 2026-10-28).
 //!
 //! Everything here is a pure function of the lifecycle view, the in-flight read and the held
 //! units snapshot; the routes do the reading.
@@ -11,7 +11,7 @@ use crate::units;
 use cockpit_ops::health::inflight::Flight;
 use cockpit_ops::lcview::{self, Item, RepoRound, Snapshot, View};
 
-pub const BASE: &str = "/next";
+pub const BASE: &str = "";
 
 /// Every top-level field of `View`, and where the site draws it. The coverage test fails when
 /// `View` grows a field that is not listed here, so nothing the model knows goes undrawn.
@@ -418,6 +418,8 @@ fn below(p: &Page) -> String {
             }
             b.push_str(&fold("units", false, &format!("<span class=\"n red\">{}</span><span class=k>units failing or late</span>", bad.len()), &rows));
         }
+    } else {
+        b.push_str(&plain("<span class=\"n dim\">…</span><span class=k>units</span><span class=\"small dim\">unit history is loading</span>"));
     }
     match &v.decide_error {
         Some(e) => b.push_str(&plain(&format!("<span class=\"n red\">?</span><span class=k>questions for you</span><span class=\"small red\">{}</span>", linked(e)))),
