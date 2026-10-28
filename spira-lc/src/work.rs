@@ -157,12 +157,14 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     if let Some(refusal) = unanswered_amendment_refusal(bead_id) {
         return refusal;
     }
+    let mut stack_tips: Vec<String> = Vec::new();
     if !row.stack.is_empty() {
         let ids: Vec<&String> = row.stack.keys().collect();
         let prereqs = match ids.iter().map(|id| rows::fetch_bead(conn, id)).collect::<Result<Vec<_>, _>>() {
             Ok(rs) => rs.into_iter().flatten().collect::<Vec<_>>(),
             Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
         };
+        stack_tips = prereqs.iter().filter_map(|p| p.tip.clone()).collect();
         if let Some(refusal) = bead::submit_refusal_for_stale_stack(&row, &prereqs) {
             let lifecycle::Refusal::StackStale { prereqs: stale } = &refusal else { unreachable!() };
             return (
@@ -182,6 +184,9 @@ fn cmd_submit(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
                 ejected_reasons(conn, bead_id, &tip).map(|r| format!(": {r}")).unwrap_or_default()
             ),
         );
+    }
+    if let Some(refusal) = branch_refusal(conn, bead_id, &tip, &stack_tips) {
+        return refusal;
     }
     if let Some(refusal) = lint_refusal(conn, bead_id, &tip, &actor) {
         return refusal;
@@ -305,6 +310,43 @@ fn submit_repo(conn: &Conn, bead_id: &str) -> Result<String, (i32, String)> {
         },
         Err(e) => Err((CANNOT_TELL, format!("cannot tell: {e:?}"))),
     }
+}
+
+/// The repository checkout and landing ref the submit's branch rules read; `None` when the
+/// registry names no checkout for the repository (a world or fixture with no content behind it).
+fn branch_refusal(conn: &Conn, bead_id: &str, tip: &str, stack_tips: &[String]) -> Option<(i32, String)> {
+    let repo = submit_repo(conn, bead_id).ok()?;
+    let home = spira_config::resolve::locate_home_for_process().ok()?;
+    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    let reg = spira_config::repos::Registry::from_env(env, std::path::Path::new(&home));
+    let root = reg.root(&repo)?;
+    let landref = spira_config::repos::landref(&reg, &root)?;
+    finishing_refusal(std::path::Path::new(&root), &landref, tip, bead_id, stack_tips).map(|m| (REFUSED, m))
+}
+
+/// Every commit above the landing ref names the bead, and the branch holds the landing ref's tip.
+fn finishing_refusal(root: &std::path::Path, landref: &str, tip: &str, bead_id: &str, stack_tips: &[String]) -> Option<String> {
+    if !crate::git_evidence::is_ancestor(root, landref, tip) {
+        return Some(format!(
+            "refused: {tip} does not contain the landing ref {landref} — run `git rebase {landref}`, resolve any conflict, and run `work submit` again"
+        ));
+    }
+    let mut args = vec!["log".to_string(), "--no-merges".to_string(), "--format=%H%x09%s".to_string(), tip.to_string(), format!("^{landref}")];
+    args.extend(stack_tips.iter().map(|t| format!("^{t}")));
+    let out = spira_config::bounded::bounded("git").arg("-C").arg(root).args(&args).output().ok().filter(|o| o.status.success())?;
+    let unnamed: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.split_once('\t'))
+        .filter(|(sha, _)| !crate::git_evidence::commit_names_bead(root, sha, bead_id))
+        .map(|(sha, subject)| format!("  {} {subject}", &sha[..sha.len().min(12)]))
+        .collect();
+    if unnamed.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "refused: these commits do not name {bead_id}:\n{}\nReword the tip with `git commit --amend -m \"{bead_id}: <subject>\"`, or earlier ones with `git rebase -i {landref}` (mark each `reword`), then run `work submit` again",
+        unnamed.join("\n")
+    ))
 }
 
 /// A tip is submitted only on a recorded pass of its repository's compile-and-lint check; the
@@ -1521,6 +1563,56 @@ mod tests {
     }
 
     use super::*;
+
+    fn git(dir: &std::path::Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]).args(args)
+            .output().unwrap();
+        assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    fn fixture() -> testkit::TempDir {
+        let d = testkit::TempDir::new("submit-finishing");
+        git(d.path(), &["init", "-q", "-b", "land"]);
+        git(d.path(), &["commit", "-q", "--allow-empty", "-m", "base"]);
+        git(d.path(), &["checkout", "-q", "-b", "work"]);
+        d
+    }
+
+    #[test]
+    fn a_commit_missing_the_id_is_refused_naming_that_commit() {
+        let d = fixture();
+        git(d.path(), &["commit", "-q", "--allow-empty", "-m", "sp-x1: good"]);
+        git(d.path(), &["commit", "-q", "--allow-empty", "-m", "forgot the id"]);
+        let bad = git(d.path(), &["rev-parse", "HEAD"]);
+        let tip = bad.clone();
+        let msg = finishing_refusal(d.path(), "land", &tip, "sp-x1", &[]).expect("refused");
+        assert!(msg.contains(&bad[..12]) && msg.contains("forgot the id") && !msg.contains("good"), "{msg}");
+        assert!(msg.contains("git commit --amend") && msg.contains("git rebase -i land"), "{msg}");
+    }
+
+    #[test]
+    fn a_branch_behind_the_landing_ref_is_refused_with_the_rebase_command() {
+        let d = fixture();
+        git(d.path(), &["commit", "-q", "--allow-empty", "-m", "sp-x1: work"]);
+        let tip = git(d.path(), &["rev-parse", "HEAD"]);
+        git(d.path(), &["checkout", "-q", "land"]);
+        git(d.path(), &["commit", "-q", "--allow-empty", "-m", "other landed"]);
+        let msg = finishing_refusal(d.path(), "land", &tip, "sp-x1", &[]).expect("refused");
+        assert!(msg.contains("git rebase land"), "{msg}");
+    }
+
+    #[test]
+    fn a_compliant_branch_and_a_stacked_prerequisite_pass() {
+        let d = fixture();
+        git(d.path(), &["commit", "-q", "--allow-empty", "-m", "sp-pre: prerequisite"]);
+        let pre = git(d.path(), &["rev-parse", "HEAD"]);
+        git(d.path(), &["commit", "-q", "--allow-empty", "-m", "sp-x1: work"]);
+        let tip = git(d.path(), &["rev-parse", "HEAD"]);
+        assert!(finishing_refusal(d.path(), "land", &tip, "sp-x1", &[pre.clone()]).is_none());
+        assert!(finishing_refusal(d.path(), "land", &tip, "sp-x1", &[]).is_some(), "without the stack its prerequisite's commit is unnamed");
+    }
 
     #[test]
     fn done_on_a_dropped_or_done_bead_is_a_no_op_for_every_actor() {
