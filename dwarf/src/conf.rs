@@ -31,6 +31,7 @@ pub struct Rune {
     pub graph_only: bool,
     pub requires_build_spec: bool,
     pub habits: bool,
+    pub static_prompt: bool,
 }
 
 fn get<'a>(m: &'a BTreeMap<String, String>, k: &str) -> Option<&'a str> {
@@ -61,6 +62,7 @@ impl Rune {
             graph_only: get(v, "RUNE_GRAPH_ONLY") == Some("1"),
             requires_build_spec: get(v, "RUNE_REQUIRES_BUILD_SPEC") == Some("1"),
             habits: get(v, "RUNE_HABITS") == Some("1"),
+            static_prompt: get(v, "RUNE_STATIC_PROMPT") == Some("1"),
         }
     }
 

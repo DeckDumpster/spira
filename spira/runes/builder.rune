@@ -1,11 +1,11 @@
-# builder.rune — the Warden: the only persona that writes code.
+# builder.rune — the builder: the only persona that writes code.
 #
 # A rune is a persona DEFINITION; a dwarf is one called instance of it. Everything a
 # persona is amounts to four things: a predicate that carves its partition out of the
 # graph, the statutes it must read, the tools it may use, and what wakes it.
 
 RUNE_NAME=builder
-RUNE_DESC="Warden — the DPS: claims ready Spira plan beads and implements them, scaling to fill the party"
+RUNE_DESC="builder — the DPS: claims ready Spira plan beads and implements them, scaling to fill the party"
 
 # The partition. AND-labels: the scope label (SPIRA_SCOPE_LABEL) plus the partition label.
 # An empty scope label means no scope restriction; the predicate is the partition label alone.
@@ -115,3 +115,7 @@ RUNE_WORKING_EXITS="SUBMITTED ask park hold"
 # The PostToolUse habit hooks (fmt, lint, complexity on the edited lines) and the Stop-time clippy:
 # feedback only, read from the repo's .spira/habits.toml. Builder only; no other persona sets it.
 RUNE_HABITS=1
+
+# The system prompt is runes/builder.md rendered and nothing else: no memories, no statute
+# index, no session blocks. The session's facts arrive in the task prompt.
+RUNE_STATIC_PROMPT=1

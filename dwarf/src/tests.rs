@@ -2372,3 +2372,23 @@ fn a_no_progress_escalation_hold_is_not_asked_of_a_dropped_row() {
     assert!(o.log.contains("routed to the Concierge"), "the site ran: {}", o.log);
     assert_eq!(holds_asked(&o), Vec::<Vec<String>>::new(), "{}", o.log);
 }
+
+#[test]
+fn a_static_prompt_rune_gets_its_rune_as_the_system_prompt_and_a_named_facts_task() {
+    let f = fx("static");
+    let rune = include_str!("../../spira/runes/builder.md");
+    std::fs::write(f.home.join("runes/builder.md"), rune).unwrap();
+    seed(&f, "sp-st");
+    let o = go(&f, "spira,plan", &[("RUNE_STATIC_PROMPT", "1")], Mode::Claim, BTreeMap::new(), commits_and_closes());
+    assert_eq!(o.code, 0, "{}", o.log);
+    let work = f.run.join("worktree/sp-st").display().to_string();
+    let sys = std::fs::read_to_string(f.run.join("sp-st.system.md")).unwrap();
+    let task = std::fs::read_to_string(f.run.join("sp-st.task.md")).unwrap();
+    let want = rune.replace("{{ID}}", "sp-st").replace("{{WORKTREE}}", &work).replace("{{REPO_DIR}}", &f.repo.display().to_string());
+    assert_eq!(sys, want);
+    assert!(!sys.contains("Memories in force") && !sys.contains("Statutes in force"));
+    assert!(task.starts_with("# sp-st: "), "{task}");
+    assert!(task.contains(&format!("worktree {work}, branch spira/sp-st, landing ref ")), "{task}");
+    assert!(!task.contains("## Notes") && !task.contains("## Prior attempt"), "{task}");
+    assert!(!task.contains("You have no `bd`") && !task.contains("LABELS:"), "{task}");
+}
