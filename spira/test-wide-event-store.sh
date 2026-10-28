@@ -40,8 +40,19 @@ path="$(sed -n 's|.*logs_endpoint: http://victoria-logs:9428||p' "$HERE/metrics/
 is "collector exports logs to the VictoriaLogs OTLP path" "/insert/opentelemetry/v1/logs" "$path"
 
 needle="needle-$$-$RANDOM"
-rec='{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"t"}}]},"scopeLogs":[{"logRecords":[{"timeUnixNano":"'"$(date +%s)"'000000000","body":{"stringValue":"dispatch"},"attributes":[{"key":"handler","value":{"stringValue":"h1"}},{"key":"duration_ms","value":{"doubleValue":12.5}},{"key":"zz.arbitrary","value":{"stringValue":"'"$needle"'"}}]}]}]}]}'
-code="$(curl --max-time 5 -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' --data "$rec" "$vl$path")"
+rec() { python3 -I -c 'import struct,sys,time
+def v(n):
+    o = b""
+    while n > 0x7f: o += bytes([n & 0x7f | 0x80]); n >>= 7
+    return o + bytes([n])
+def f(no, b): return v(no << 3 | 2) + v(len(b)) + b
+def kv(k, val): return f(1, k.encode()) + f(2, val)
+def sv(x): return f(1, x.encode())
+lr = v(1 << 3 | 1) + struct.pack("<Q", int(time.time()) * 10**9) + f(5, sv("dispatch"))
+lr += b"".join(f(6, kv(k, val)) for k, val in [("handler", sv("h1")), ("duration_ms", v(4 << 3 | 1) + struct.pack("<d", 12.5)), ("zz.arbitrary", sv(sys.argv[1]))])
+res = f(1, kv("service.name", sv("t")))
+sys.stdout.buffer.write(f(1, f(1, res) + f(2, f(2, lr))))' "$1"; }
+code="$(curl --max-time 5 -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/x-protobuf' --data-binary @- "$vl$path" < <(rec "$needle"))"
 is "victoria-logs accepts an OTLP log record" 200 "$code"
 
 q() { curl --max-time 5 -s "$vl/select/logsql/query" --data-urlencode "query=$1"; }
