@@ -52,6 +52,8 @@ pub struct Finish {
     /// so still green. Renders ` skipped=<n>` on GREEN and RED when > 0; an undeclared skip
     /// is not counted here at all, because it was already reclassified red.
     pub skipped: usize,
+    /// Which container session a setup fault came from (`main` or `sim`).
+    pub session: Option<&'static str>,
 }
 
 impl Finish {
@@ -65,7 +67,11 @@ impl Finish {
             selected_none: false,
             deferred: None,
             skipped: 0,
+            session: None,
         }
+    }
+    fn in_session(self, session: &'static str) -> Self {
+        Finish { session: Some(session), ..self }
     }
     fn green(ran: usize) -> Self {
         Finish {
@@ -77,6 +83,7 @@ impl Finish {
             selected_none: false,
             deferred: None,
             skipped: 0,
+            session: None,
         }
     }
     fn nothing() -> Self {
@@ -89,15 +96,16 @@ impl Finish {
             selected_none: true,
             deferred: None,
             skipped: 0,
+            session: None,
         }
     }
 
     /// The verdict word and, for a fault, its reason: what the run's event record keeps.
-    pub fn verdict_parts(&self) -> (String, String) {
+    pub fn verdict_parts(&self) -> (String, String, Option<String>) {
         match self.rc {
-            0 => ("GREEN".into(), "-".into()),
-            1 => ("RED".into(), "-".into()),
-            _ => ("FAULT".into(), self.reason.unwrap_or("harness").into()),
+            0 => ("GREEN".into(), "-".into(), None),
+            1 => ("RED".into(), "-".into(), None),
+            _ => ("FAULT".into(), self.reason.unwrap_or("harness").into(), self.session.map(String::from)),
         }
     }
 
@@ -125,9 +133,10 @@ impl Finish {
                 self.ran, self.red
             ),
             rc => format!(
-                "VERDICT FAULT rc={rc} ran={} reason={}",
+                "VERDICT FAULT rc={rc} ran={} reason={}{}",
                 self.ran,
-                self.reason.unwrap_or("harness")
+                self.reason.unwrap_or("harness"),
+                self.session.map(|s| format!(" session={s}")).unwrap_or_default()
             ),
         }
     }
@@ -174,13 +183,19 @@ impl Harness {
 pub const FIXTURE_FAULT_FILE: &str = "fixture-fault.out";
 
 /// First line `FIXTURE-FAULT: <step> rc=<n>: <message>`, then the step's output tail, as the fixture logged it.
-pub fn fixture_fault_text(message: &str, reason: &str, steps: &str) -> String {
+fn append_fixture_fault(results: &Path, text: &str) {
+    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(results.join(FIXTURE_FAULT_FILE)) {
+        let _ = f.write_all(text.as_bytes());
+    }
+}
+
+pub fn fixture_fault_text(session: &str, message: &str, reason: &str, steps: &str) -> String {
     let head = steps
         .lines()
         .next()
         .and_then(|l| l.strip_suffix(" output tail:"))
         .unwrap_or(reason);
-    format!("FIXTURE-FAULT: {head}: {message}\n{steps}\n")
+    format!("FIXTURE-FAULT: {head} ({session} session): {message}\n{steps}\n")
 }
 
 pub struct Deps<'a> {
@@ -718,6 +733,7 @@ impl Phases {
     /// Starts the run's event record and replays the phases closed before it had a place.
     fn attach(&mut self, results: &Path) {
         let log = RunLog::begin(results);
+        let _ = fs::remove_file(results.join(FIXTURE_FAULT_FILE));
         for (n, _) in &self.done {
             note(log.record(RunEvent::Phase { name: (*n).into() }, now_epoch()));
         }
@@ -821,8 +837,8 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         fin = Finish::fault(2, "over-cap", fin.ran);
     }
     if let Some(dir) = results.into_inner() {
-        let (word, reason) = fin.verdict_parts();
-        note(RunLog::in_dir(&dir).record(RunEvent::Verdict { word, reason }, now_epoch()));
+        let (word, reason, session) = fin.verdict_parts();
+        note(RunLog::in_dir(&dir).record(RunEvent::Verdict { word, reason, session }, now_epoch()));
     }
     fin
 }
@@ -1597,6 +1613,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     };
     let out_fn = deps.out;
     let sim_log = move |m: &str| out_fn(&format!("{} spira: batch: {m}", iso_utc(now_epoch())));
+    let sim_steps = std::sync::Mutex::new(Vec::<String>::new());
     let bring_sim = |ss: &Session| -> Result<Fixtures, Finish> {
         sim_log(&format!(
             "starting sim-lane container {} (pids {}, memory {}, slots {})",
@@ -1610,10 +1627,17 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             return Err(Finish::fault(f.rc(), "container-up", 0));
         }
         let sim_setup = ss
-            .setup(&runner, !s.skip_install, std::iter::empty(), &|m| sim_log(m))
+            .setup(&runner, !s.skip_install, std::iter::empty(), &|m| {
+                sim_steps.lock().unwrap_or_else(|e| e.into_inner()).push(m.to_string());
+                sim_log(m)
+            })
             .map_err(|SetupFault { fault, reason }| {
                 sim_log(fault.message());
-                Finish::fault(fault.rc(), reason, 0)
+                if !matches!(fault, crate::fixture::Fault::Deadline(_)) {
+                    let steps = sim_steps.lock().unwrap_or_else(|e| e.into_inner()).join("\n");
+                    append_fixture_fault(&results, &fixture_fault_text("sim", fault.message(), reason, &steps));
+                }
+                Finish::fault(fault.rc(), reason, 0).in_session("sim")
             })?;
         Ok(if sim_setup.template.ok() {
             Fixtures::Server
@@ -1688,8 +1712,8 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         Some(Err(SetupFault { fault, reason })) => {
             deps.log(fault.message());
             let steps = setup_log.lock().unwrap_or_else(|e| e.into_inner()).join("\n");
-            let _ = fs::write(results.join(FIXTURE_FAULT_FILE), fixture_fault_text(fault.message(), reason, &steps));
-            return Finish::fault(fault.rc(), reason, 0);
+            append_fixture_fault(&results, &fixture_fault_text("main", fault.message(), reason, &steps));
+            return Finish::fault(fault.rc(), reason, 0).in_session("main");
         }
         None => return Finish::fault(2, "container-up", 0),
     };
@@ -1764,6 +1788,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             deps.log("all suites pre-empted by unmet requirements — nothing to run");
             return Finish {
                 skipped: skipped_count,
+            session: None,
                 ..Finish::green(0)
             };
         }
@@ -1801,6 +1826,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             selected_none: false,
             deferred: None,
             skipped: skipped_count,
+            session: None,
         };
     }
 
@@ -2341,6 +2367,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             selected_none: false,
             deferred: deferred_count,
             skipped: skipped.len(),
+            session: None,
         };
     }
     if s.verdict_ttl > 0 {
