@@ -1,0 +1,27 @@
+[package]
+name = "exec-census"
+version = "1.0.0"
+edition = "2021"
+description = "exec-census — execs per minute by systemd unit, sampled from /proc and pushed over OTLP."
+
+[lib]
+name = "exec_census"
+path = "src/lib.rs"
+
+[[bin]]
+name = "exec-census"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+spira-config = { path = "../spira-config" }
+spira-otel = { path = "../spira-otel" }
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

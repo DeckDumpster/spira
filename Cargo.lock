@@ -372,6 +372,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "exec-census"
+version = "1.0.0"
+dependencies = [
+ "spira-config",
+ "spira-otel",
+ "testkit",
+]
+
+[[package]]
 name = "filings-collect"
 version = "0.1.0"
 dependencies = [
