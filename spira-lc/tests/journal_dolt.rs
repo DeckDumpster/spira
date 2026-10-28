@@ -1,5 +1,5 @@
 //! Every `journal` verb against a real `dolt sql-server`, through `spira-lc serve`'s socket and
-//! the wire `runtime::socket::SocketJournal` speaks. Skips (loudly) where `dolt` is absent.
+//! the wire `runtime::socket::SocketJournal` speaks. Fails where `dolt` is absent: a skip would let an unparseable statement through.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
@@ -69,10 +69,7 @@ impl Fixture {
 }
 
 fn fixture() -> Option<Fixture> {
-    if Command::new("dolt").arg("version").output().is_err() {
-        eprintln!("SKIP: dolt is not available");
-        return None;
-    }
+    assert!(Command::new("dolt").arg("version").output().is_ok(), "dolt must be on PATH: a journal suite that skips cannot catch a statement the server rejects");
     let t = testkit::TempDir::new("journal-dolt");
     let root = t.path().to_path_buf();
     std::fs::write(root.join("empty-pw"), "").unwrap();
