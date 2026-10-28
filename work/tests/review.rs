@@ -112,3 +112,27 @@ fn a_timed_out_or_failed_review_still_leaves_its_transcript() {
     let sum = std::fs::read_to_string(d.join("run/review-summary.jsonl")).unwrap();
     assert!(sum.contains("\"law_calls\":0"), "{sum}");
 }
+
+#[test]
+fn a_bare_reviewer_name_resolves_in_the_release_bin_though_the_path_lacks_it() {
+    let (d, repo, _) = fixture("work-review-bare", FINDER);
+    let rel = d.join("release");
+    std::fs::create_dir_all(rel.join("bin")).unwrap();
+    std::fs::rename(d.join("agent"), rel.join("bin/nqmjx7-claude")).unwrap();
+    let sock = d.join("sock");
+    let toml = spira_config::process::fixture_toml(&d, &[("SPIRA_LC_SOCKET", sock.to_str().unwrap()), ("SPIRA_AGENT", "nqmjx7-claude")]);
+    let o = Command::new(env!("CARGO_BIN_EXE_work"))
+        .arg("review")
+        .current_dir(&repo)
+        .env_clear()
+        .env("HOME", &d)
+        .env("PATH", "/usr/bin:/bin")
+        .env("SPIRA_WORK_BEAD_ID", "sp-abc12")
+        .env("SPIRA_HOME", &d)
+        .env("SPIRA_RELEASE", &rel)
+        .env("SPIRA_TOML", toml)
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(0), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(String::from_utf8_lossy(&o.stdout).contains("src/parser2.rs:1"));
+}

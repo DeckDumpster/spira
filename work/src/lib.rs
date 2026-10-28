@@ -5,6 +5,7 @@
 
 pub mod help;
 pub mod review;
+pub mod trusted;
 use help::{refusal, R};
 
 pub const CANNOT_TELL: i32 = 2;

@@ -38,6 +38,9 @@ fn main() {
     spira_otel::run::operation(if work::VERBS.contains(&verb.as_str()) || work::LOCAL_VERBS.contains(&verb.as_str()) { &verb } else { "unknown" });
     if verb == "prime" {
         print!("{}", work::help::prime());
+        for w in unresolved_programs() {
+            println!("\nwork prime: warning: {w}");
+        }
         { spira_otel::run::finish(0); std::process::exit(0) };
     }
     if verb == "help" {
@@ -382,6 +385,7 @@ fn review(args: &[String]) -> i32 {
     };
     let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
     let secs = opts.timeout.as_secs();
+    let agent = work::trusted::resolve(&agent, &work::trusted::process_dirs(true)).map(|p| p.display().to_string()).unwrap_or(agent);
     match work::review::run(&agent, &work::review::agent_argv(&model), &work::review::input(&item, &diff), &cwd, opts.timeout) {
         Ok((outcome, transcript)) => {
             let verdict = match &outcome {
@@ -485,7 +489,13 @@ fn checks(args: &[String]) -> i32 {
             continue;
         };
         let secs = row.budget_ms.div_ceil(1000).max(1).to_string();
-        let out = spira_config::bounded::bounded_for(prog, &secs).args(rest).current_dir(root).output();
+        let mut dirs = work::trusted::process_dirs(false);
+        if work::trusted::resolve(prog, &dirs).is_none() {
+            if let Some(dir) = build_own_tool(root, prog, &dirs) {
+                dirs.insert(0, dir);
+            }
+        }
+        let out = spira_config::bounded::bounded_for(prog, &secs).args(rest).env("PATH", work::trusted::join_path(&dirs)).current_dir(root).output();
         match out {
             Ok(o) => {
                 print!("{}", String::from_utf8_lossy(&o.stdout));
@@ -509,4 +519,51 @@ fn checks(args: &[String]) -> i32 {
         eprintln!("work checks: failed: {}", failed.join(", "));
         REFUSED
     }
+}
+
+/// A check whose program is a crate of the repository itself and is in no release `bin/`:
+/// build it from the worktree and return the directory holding it.
+fn build_own_tool(root: &std::path::Path, prog: &str, dirs: &[std::path::PathBuf]) -> Option<std::path::PathBuf> {
+    if !root.join(prog).join("Cargo.toml").is_file() {
+        return None;
+    }
+    let target = std::env::var_os("CARGO_TARGET_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| root.join("target"));
+    let built = spira_config::bounded::bounded_for("cargo", "900")
+        .args(["build", "-p", prog])
+        .env("PATH", work::trusted::join_path(dirs))
+        .env("CARGO_TARGET_DIR", &target)
+        .current_dir(root)
+        .status();
+    match built {
+        Ok(st) if st.success() => Some(target.join("debug")),
+        Ok(st) => {
+            eprintln!("work checks: `cargo build -p {prog}` failed ({st}); {prog} cannot run");
+            None
+        }
+        Err(e) => {
+            eprintln!("work checks: cannot run cargo to build {prog}: {e}");
+            None
+        }
+    }
+}
+
+/// Programs `work review` and `work checks` will exec that resolve nowhere, named so a missing
+/// one is seen on turn one. A repository's own crate is built by `work checks`, so it is not one.
+fn unresolved_programs() -> Vec<String> {
+    let dirs = work::trusted::process_dirs(true);
+    let mut out = Vec::new();
+    match spira_config::process::cfg("SPIRA_AGENT") {
+        Ok(a) if !a.is_empty() && work::trusted::resolve(&a, &dirs).is_none() => out.push(format!("the reviewer {a:?} (SPIRA_AGENT) does not resolve; `work review` cannot launch it")),
+        _ => {}
+    }
+    let root = spira_config::bounded::bounded("git").args(["rev-parse", "--show-toplevel"]).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    if let Some(root) = root.as_deref().map(std::path::Path::new) {
+        for row in habits::config::load_checks(root).unwrap_or_default() {
+            let argv = work::done_argv(&row.run);
+            if let Some(prog) = argv.first().filter(|p| work::trusted::resolve(p, &dirs).is_none() && !root.join(p).join("Cargo.toml").is_file()) {
+                out.push(format!("check {:?} runs {prog:?}, which resolves nowhere; `work checks` will fail it", row.name));
+            }
+        }
+    }
+    out
 }
