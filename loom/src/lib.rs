@@ -4,6 +4,7 @@
 
 pub mod dwarves;
 pub mod forge_rounds;
+pub mod next;
 pub mod now;
 pub mod ops;
 pub mod shell;
@@ -256,47 +257,6 @@ fn inflight(loom: &Loom) -> cockpit_ops::health::inflight::Flight {
 /// Older than this, the page says the collector has stopped rather than showing old numbers as live.
 pub(crate) const LIFECYCLE_STALE_S: i64 = 60;
 
-async fn lifecycle_page_route(
-    State(loom): State<Arc<Loom>>,
-    uri: axum::http::Uri,
-) -> Response {
-    let fragment = uri.query().is_some_and(|q| q.split('&').any(|kv| kv == "fragment" || kv.starts_with("fragment=")));
-    let (status, ctype, body) = match lifecycle_snapshot(&loom) {
-        Ok((mut snap, age)) => {
-            // The pass's progress is read fresh on every request, not from the pane's last
-            // snapshot, so the page's test progress is live (per Ryan 2026-10-09).
-            if let Some(p) = std::fs::read(std::path::Path::new(&loom.config().run).join("round-progress.json"))
-                .ok()
-                .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
-                .and_then(|v| cockpit_ops::lcview::PassProgress::from_json(&v))
-            {
-                snap.progress = Some(p);
-                snap.now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(snap.now);
-            }
-            snap.loom_base = Some(String::new());
-            let v = cockpit_ops::lcview::view(&snap);
-            let stale = (age > LIFECYCLE_STALE_S).then_some(age);
-            if fragment {
-                let mut frag: Value = serde_json::from_str(&cockpit_ops::lctui::render_fragment(&v, stale)).unwrap_or_default();
-                let banner = format!("{}{}", inflight(&loom).html(now_s()), frag["banner"].as_str().unwrap_or_default());
-                frag["banner"] = Value::String(banner);
-                (StatusCode::OK, "application/json", frag.to_string())
-            } else {
-                let html = cockpit_ops::lcview::render_html(&v, stale, 5).replacen("<header id=banner>", &format!("<header id=banner>{}", inflight(&loom).html(now_s())), 1);
-                (StatusCode::OK, "text/html; charset=utf-8", shell::wrap_foreign(&html, "lifecycle", &now::bar(Some(&snap), now_s())))
-            }
-        }
-        Err(e) if fragment => (StatusCode::SERVICE_UNAVAILABLE, "application/json", serde_json::json!({ "banner": format!("<div class='line bad'>lifecycle view unavailable: {e}</div>"), "tree": "" }).to_string()),
-        Err(e) => (StatusCode::SERVICE_UNAVAILABLE, "text/html; charset=utf-8", format!("<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=10><p>lifecycle view unavailable: {e}</p>")),
-    };
-    Response::builder()
-        .status(status)
-        .header(header::CONTENT_TYPE, ctype)
-        .header(header::CACHE_CONTROL, "no-store")
-        .body(body.into())
-        .expect("a response with a valid status and headers")
-}
-
 async fn vm_round_route(State(loom): State<Arc<Loom>>, axum::extract::Path(batch): axum::extract::Path<String>) -> Response {
     const TAIL: u64 = 256 * 1024;
     let (snap, _) = match lifecycle_snapshot(&loom) {
@@ -494,16 +454,6 @@ async fn units_api_route(State(loom): State<Arc<Loom>>) -> Response {
         .expect("a response with a valid status and headers")
 }
 
-async fn states_page_route(State(loom): State<Arc<Loom>>) -> Response {
-    match lifecycle_snapshot(&loom) {
-        Ok((snap, _)) => {
-            let view = cockpit_ops::lcview::view(&snap);
-            html_response(StatusCode::OK, shell::with_bar(&states::render_page(&view), &now::bar(Some(&snap), now_s())))
-        }
-        Err(e) => unavailable("states view", &e),
-    }
-}
-
 async fn states_api_route(State(loom): State<Arc<Loom>>) -> Response {
     let (status, body) = match lifecycle_snapshot(&loom) {
         Ok((snap, age)) => (StatusCode::OK, states::api_json(&cockpit_ops::lcview::view(&snap), age).to_string()),
@@ -557,25 +507,6 @@ async fn dwarves_api_route(State(loom): State<Arc<Loom>>) -> Response {
         .header(header::CACHE_CONTROL, "no-store")
         .body(body.into())
         .expect("a response with a valid status and headers")
-}
-
-async fn now_route(State(loom): State<Arc<Loom>>) -> Response {
-    match lifecycle_snapshot(&loom) {
-        Ok((snap, _)) => {
-            let view = cockpit_ops::lcview::view(&snap);
-            let held = loom.units_held();
-            let units = match held.as_deref() {
-                None => now::UnitsState::Pending,
-                Some(u) => {
-                    let age_s = u.taken.elapsed().as_secs() as i64;
-                    now::UnitsState::Held { snap: u, age_s, stale: u.taken.elapsed() >= loom.config().cache }
-                }
-            };
-            let page = now::render_now(&snap, &view, &units);
-            html_response(StatusCode::OK, shell::with_bar(&page, &now::bar(Some(&snap), now_s())))
-        }
-        Err(e) => unavailable("now view", &e),
-    }
 }
 
 async fn round_route(State(loom): State<Arc<Loom>>, axum::extract::Path((repo, batch)): axum::extract::Path<(String, String)>) -> Response {
@@ -758,10 +689,53 @@ async fn shot_route(State(loom): State<Arc<Loom>>, axum::extract::Path((bead, ti
     }
 }
 
+async fn next_route(State(loom): State<Arc<Loom>>, uri: axum::http::Uri) -> Response {
+    let fragment = uri.query().is_some_and(|q| q.split('&').any(|kv| kv == "fragment" || kv.starts_with("fragment=")));
+    let (mut snap, age) = match lifecycle_snapshot(&loom) {
+        Ok(x) => x,
+        Err(e) => return unavailable("overview", &e),
+    };
+    let now = now_s();
+    // The pass file is read fresh, as the old lifecycle page did, so the bar is live; the
+    // overview draws it once, on the round it names.
+    if let Some(p) = std::fs::read(std::path::Path::new(&loom.config().run).join("round-progress.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .and_then(|v| cockpit_ops::lcview::PassProgress::from_json(&v))
+    {
+        snap.progress = Some(p);
+    }
+    snap.loom_base = Some(String::new());
+    let view = cockpit_ops::lcview::view(&snap);
+    let flight = inflight(&loom);
+    let held = loom.units_held();
+    let units = match held.as_deref() {
+        None => now::UnitsState::Pending,
+        Some(u) => now::UnitsState::Held { snap: u, age_s: u.taken.elapsed().as_secs() as i64, stale: u.taken.elapsed() >= loom.config().cache },
+    };
+    let page = next::Page { snap: &snap, view: &view, flight: &flight, units: &units, now, age_s: age };
+    let (ctype, body) = if fragment { ("application/json", next::fragment(&page)) } else { ("text/html; charset=utf-8", next::page(&page)) };
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, ctype)
+        .header(header::CACHE_CONTROL, "no-store")
+        .body(body.into())
+        .expect("a response with a valid status and headers")
+}
+
+async fn to_root() -> axum::response::Redirect {
+    axum::response::Redirect::permanent("/")
+}
+
 pub fn router(loom: Arc<Loom>) -> Router {
     Router::new()
+        // The web-native site is the root (switched per Ryan 2026-10-28, "ship it"); the pages it
+        // replaced and its preview path redirect there so old links keep working.
+        .route("/next", get(to_root))
+        .route("/next/", get(to_root))
+        .route("/lifecycle", get(to_root))
+        .route("/states", get(to_root))
         .route("/shots/{bead}/{tip}/{file}", get(shot_route))
-        .route("/lifecycle", get(lifecycle_page_route))
         .route("/rounds/{batch}", get(vm_round_route))
         .route("/api/lifecycle", get(lifecycle_api_route))
         .route("/stuck", get(stuck_page_route))
@@ -770,7 +744,6 @@ pub fn router(loom: Arc<Loom>) -> Router {
         .route("/beads/{id}", get(stuck_bead_route))
         .route("/units", get(units_page_route))
         .route("/api/units", get(units_api_route))
-        .route("/states", get(states_page_route))
         .route("/api/states", get(states_api_route))
         .route("/rounds", get(rounds_page_route))
         .route("/rounds/spira/{id}", get(round_page_route))
@@ -779,7 +752,7 @@ pub fn router(loom: Arc<Loom>) -> Router {
         .route("/api/ops", get(ops_route))
         .route("/dwarves", get(dwarves_page_route))
         .route("/api/dwarves", get(dwarves_api_route))
-        .route("/", get(now_route))
+        .route("/", get(next_route))
         .route("/rounds/{repo}/{batch}", get(round_route))
         .with_state(loom)
 }

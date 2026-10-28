@@ -1,15 +1,13 @@
-//! The layout every Loom page shares: top bar, seven-section navigation, one stylesheet.
+//! The layout the detail pages share: top bar, the same five sections as the overview, one stylesheet.
 
 use crate::stuck::esc;
 
-pub const SECTIONS: [(&str, &str, &str); 7] = [
-    ("now", "Now", "/"),
+pub const SECTIONS: [(&str, &str, &str); 5] = [
+    ("overview", "Overview", "/"),
     ("dwarves", "Dwarves", "/dwarves"),
     ("rounds", "Rounds", "/rounds"),
     ("stuck", "Stuck", "/stuck"),
     ("units", "Units", "/units"),
-    ("states", "States", "/states"),
-    ("lifecycle", "Lifecycle", "/lifecycle"),
 ];
 
 const BAR_SLOT: &str = "<!--lm-bar-->";

@@ -566,12 +566,10 @@ async fn lifecycle_round_rows_are_links_and_a_vm_round_serves_its_log() {
     std::fs::create_dir_all(run.join("lcview")).expect("lcview dir");
     std::fs::write(run.join("lcview").join("snapshot.json"), serde_json::to_string(&snap).unwrap()).expect("a snapshot");
     let addr = spawn(ops_cfg(run.to_str().unwrap())).await;
-    let (code, body) = get(addr, "/lifecycle?fragment").await;
-    assert_eq!(code, 200, "{body}");
-    let v: Value = serde_json::from_str(&body).expect("fragment json");
-    let html = format!("{}{}", v["banner"], v["tree"]).replace("\\\"", "\"");
-    for href in ["https://forge.test/acme/dumpstar/pull/70", "https://forge.test/acme/dumpstar/actions/runs/9", "/rounds/r-vm"] {
-        assert!(html.contains(&format!("<a href=\"{href}\">")), "{href} in {html}");
+    let (code, html) = get(addr, "/").await;
+    assert_eq!(code, 200, "{html}");
+    for href in ["https://forge.test/acme/dumpstar/pull/70", "https://forge.test/acme/dumpstar/actions/runs/9", "/rounds/spira/r-vm"] {
+        assert!(html.contains(&format!("href=\"{href}\"")), "{href} in {html}");
     }
     let (code, page) = get(addr, "/rounds/r-vm").await;
     assert_eq!(code, 200, "{page}");
@@ -581,11 +579,11 @@ async fn lifecycle_round_rows_are_links_and_a_vm_round_serves_its_log() {
 
 
 #[tokio::test]
-async fn lifecycle_shows_work_in_flight_from_the_collector_snapshot_and_never_idle_when_unread() {
+async fn overview_shows_work_in_flight_from_the_collector_snapshot_and_never_idle_when_unread() {
     let run = ops_run_dir();
     write_snapshot(&run, &cockpit_ops::lcview::Snapshot { now: now_s(), ..Default::default() });
     let addr = spawn(ops_cfg(run.to_str().unwrap())).await;
-    let (_, dark) = get(addr, "/lifecycle").await;
+    let (_, dark) = get(addr, "/").await;
     assert!(dark.contains("?inflight") && !dark.contains("idle"), "{dark}");
     let at = now_s();
     std::fs::write(
@@ -593,18 +591,19 @@ async fn lifecycle_shows_work_in_flight_from_the_collector_snapshot_and_never_id
         format!("SP_AT='{at}'\nSP_INFLIGHT_WORLD='draining'\nSP_INFLIGHT_SEG='\u{2699} 1 dwarf \u{b7} 1 round (412/475) \u{b7} draining'\nSP_INFLIGHT_ROW0='dwarf|sp-1|warden|{at}||'\nSP_INFLIGHT_ROW1='round|spira/b1|certifying|{at}|412|475'\n"),
     )
     .unwrap();
-    let (_, page) = get(addr, "/lifecycle").await;
-    assert!(page.contains("sp-1") && page.contains("spira/b1") && page.contains("412/475") && page.contains("draining"), "{page}");
+    let (_, page) = get(addr, "/").await;
+    // The overview shows each round once, from the rounds model; in-flight round rows stay in the API.
+    assert!(page.contains("href=\"/beads/sp-1\"") && page.contains("draining"), "{page}");
     let (_, api) = get(addr, "/api/lifecycle").await;
     let v: Value = serde_json::from_str(&api).expect("json");
     assert_eq!(v["inflight"]["rows"][1]["total"], 475, "{api}");
-    let (_, frag) = get(addr, "/lifecycle?fragment").await;
-    assert!(frag.contains("412/475"), "{frag}");
+    let (_, frag) = get(addr, "/?fragment").await;
+    assert!(frag.contains("sp-1"), "{frag}");
 }
 
 // ── Now and the shell ────────────────────────────────────────────────────────
 
-const FIVE: [&str; 7] = ["/", "/dwarves", "/rounds", "/stuck", "/units", "/states", "/lifecycle"];
+const FIVE: [&str; 5] = ["/", "/dwarves", "/rounds", "/stuck", "/units"];
 
 fn write_snapshot(run: &std::path::Path, snap: &cockpit_ops::lcview::Snapshot) {
     std::fs::create_dir_all(run.join("lcview")).unwrap();
@@ -632,7 +631,7 @@ fn now_snapshot() -> cockpit_ops::lcview::Snapshot {
 }
 
 #[tokio::test]
-async fn now_shows_the_live_round_the_late_bead_the_failing_unit_and_what_landed() {
+async fn overview_shows_the_live_round_the_late_bead_the_failing_unit_and_what_landed() {
     let fx = units_fixture(&fixture_rows());
     let run = std::path::PathBuf::from(&fx.cfg.run);
     write_snapshot(&run, &now_snapshot());
@@ -647,11 +646,11 @@ async fn now_shows_the_live_round_the_late_bead_the_failing_unit_and_what_landed
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert!(page.contains("href=\"/rounds/dumpstar/b-live1\""), "a card per live round: {page}");
-    assert!(page.contains("href=\"/stuck/sp-late1\"") && page.contains("10.0h in WORKING"), "the bead past p95: {page}");
-    assert!(!page.contains("/stuck/sp-fine1"), "positive control: a bead inside its p95 is not listed");
+    assert!(page.contains("href=\"/beads/sp-late1\"") && page.contains("10.0h in WORKING"), "the bead past p95: {page}");
+    assert!(!page.contains("/beads/sp-fine1"), "positive control: a bead inside its p95 is not listed");
     assert!(page.contains("flaky.service") && page.contains("dead.service"), "failing and stale units: {page}");
-    assert!(page.contains("dwarves 1/4") && page.contains("rel-abc") && page.contains("world RUNNING"), "the top bar: {page}");
-    assert!(page.contains("1 in 24 h") && page.contains("just landed") && !page.contains("sp-done2"), "landed in the last day only: {page}");
+    assert!(page.contains("dwarves 1/4") && page.contains("rel-abc") && page.contains("RUNNING"), "the header: {page}");
+    assert!(page.contains("just landed"), "landed work is reachable from the overview: {page}");
 
     let (code, round) = get(addr, "/rounds/dumpstar/b-live1").await;
     assert_eq!(code, 200, "{round}");
@@ -660,7 +659,7 @@ async fn now_shows_the_live_round_the_late_bead_the_failing_unit_and_what_landed
 }
 
 #[tokio::test]
-async fn now_answers_from_cache_while_a_source_is_slow_and_says_it_is_loading() {
+async fn overview_answers_from_cache_while_a_source_is_slow_and_says_it_is_loading() {
     let fx = units_fixture(&fixture_rows());
     script(&PathBuf::from(&fx.cfg.systemctl), "#!/bin/sh\nsleep 5\n");
     write_snapshot(&PathBuf::from(&fx.cfg.run), &now_snapshot());
@@ -679,10 +678,20 @@ async fn every_page_sits_in_the_shell_and_the_tab_bar_reaches_every_section_on_a
     write_snapshot(&PathBuf::from(&fx.cfg.run), &now_snapshot());
     std::fs::write(PathBuf::from(&fx.cfg.run).join("cockpit.env"), "SP_DWARF_N='0'\n").unwrap();
     let addr = spawn(fx.cfg.clone()).await;
-    for path in FIVE.iter().chain(&["/beads/sp-2cah6", "/rounds/dumpstar/b-live1"]) {
+    // The overview at / is the web-native page with its own header and tab bar.
+    let (code, root) = get(addr, "/").await;
+    assert_eq!(code, 200, "{root}");
+    assert!(root.contains("width=device-width") && root.contains("<nav class=tabs>"), "/: viewport and tabs");
+    for target in FIVE {
+        assert!(root.contains(&format!("<a href=\"{target}\"")), "/: tab {target}");
+    }
+    for old in ["/next", "/next/", "/lifecycle", "/states"] {
+        assert_eq!(get(addr, old).await.0, 308, "{old} redirects to /");
+    }
+    for path in FIVE.iter().skip(1).chain(&["/beads/sp-2cah6", "/rounds/dumpstar/b-live1"]) {
         let (code, page) = get(addr, path).await;
         assert_eq!(code, 200, "{path}");
-        assert!(page.contains("width=device-width") || *path == "/lifecycle", "{path}: viewport");
+        assert!(page.contains("width=device-width"), "{path}: viewport");
         assert!(page.contains("<b>SPIRA</b>") && page.contains("refreshed"), "{path}: top bar");
         for target in FIVE {
             assert!(page.contains(&format!("<a href=\"{target}\"")), "{path}: tab {target}");
@@ -695,7 +704,7 @@ async fn every_page_sits_in_the_shell_and_the_tab_bar_reaches_every_section_on_a
 }
 
 #[tokio::test]
-async fn states_page_and_api_carry_the_counts_the_panes_states_section_shows() {
+async fn overview_and_states_api_carry_the_counts_the_panes_states_section_shows() {
     use cockpit_ops::lcview::*;
     let fx = units_fixture(&fixture_rows());
     let run = std::path::PathBuf::from(&fx.cfg.run);
@@ -728,11 +737,12 @@ async fn states_page_and_api_carry_the_counts_the_panes_states_section_shows() {
     assert_eq!(working["beads"][0]["repo"], "dumpstar");
     assert_eq!(working["beads"][0]["holds"][0], "wait");
 
-    let (code, page) = get(addr, "/states").await;
+    let (code, page) = get(addr, "/").await;
     assert_eq!(code, 200, "{page}");
     assert!(page.contains("href=\"/beads/sp-late1\"") && page.contains("the slow one") && page.contains("width=device-width"), "{page}");
     for st in &view.machine {
-        assert!(page.contains(&format!(">{}</span><span class=n>{}</span>", st.name, st.count)), "{}: {page}", st.name);
+        let c = if st.red { " red" } else { "" };
+        assert!(page.contains(&format!(">{}</span><span class=\"k{c}\">{}</span>", st.count, st.name)), "{}: {page}", st.name);
     }
 }
 
