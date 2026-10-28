@@ -44,7 +44,7 @@ fn fixture(name: &str, plant: bool) -> Fixture {
     fs::create_dir_all(&repo).unwrap();
     fs::create_dir_all(release.join("bin")).unwrap();
     fs::create_dir_all(release.join("spira")).unwrap();
-    testkit::write_exe(&release.join("bin/cargo"), FAKE_CARGO);
+    testkit::write_exe(release.join("bin/cargo"), FAKE_CARGO);
     git(&repo, &["init", "-q", "-b", "main"]);
     fs::write(repo.join("README"), "x").unwrap();
     git(&repo, &["add", "."]);
