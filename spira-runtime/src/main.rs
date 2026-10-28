@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use runtime::host::{serve_with, ServeOpts};
 use runtime::ports::WallClock;
-use runtime::store::{DoltCli, StoreJournal};
+use runtime::socket::SocketJournal;
 use runtime::FileMarker;
 use spira_runtime::{open_engine, sink::OtlpSink, Effects, Settings};
 use tokio::sync::mpsc;
@@ -31,7 +31,7 @@ async fn serve() -> Result<(), String> {
         Arc::new(move || n.kick())
     };
     let sink = Arc::new(OtlpSink(spira_otel::logs::LogSink::new(settings.otel_dir(), "spira-runtime")));
-    let journal = Arc::new(StoreJournal::new(DoltCli { dir: settings.store_dir.clone() }));
+    let journal = Arc::new(SocketJournal::new(settings.lc_socket.clone()));
     let clock = Arc::new(WallClock);
     let mut engine = open_engine(&settings, journal, clock.clone(), Arc::new(FileMarker(settings.marker_path())), sink, kick.clone(), vec![]).map_err(|e| e.to_string())?;
     let (id, stream, kind) = runtime::heartbeat::Heartbeat::boot();

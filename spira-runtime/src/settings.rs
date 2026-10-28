@@ -11,7 +11,7 @@ pub struct Settings {
     pub heartbeat_secs: u64,
     pub stall_limit: u32,
     pub run_dir: PathBuf,
-    pub store_dir: PathBuf,
+    pub lc_socket: PathBuf,
 }
 
 fn num<T: std::str::FromStr + PartialOrd + Default>(key: &str, raw: &str) -> Result<T, String> {
@@ -24,16 +24,16 @@ impl Settings {
     }
 
     pub fn from_lookup(get: &dyn Fn(&str) -> Result<String, String>) -> Result<Settings, String> {
-        let dolt = get("SPIRA_DOLT_DATA")?;
-        if dolt.is_empty() {
-            return Err("SPIRA_DOLT_DATA is empty — the journal has no store to live in".into());
+        let socket = get("SPIRA_LC_SOCKET")?;
+        if socket.is_empty() {
+            return Err("SPIRA_LC_SOCKET is empty — the journal has no door to the store".into());
         }
         Ok(Settings {
             heartbeat_url: get("SPIRA_RUNTIME_HEARTBEAT_URL")?,
             heartbeat_secs: num("SPIRA_RUNTIME_HEARTBEAT_SECS", &get("SPIRA_RUNTIME_HEARTBEAT_SECS")?)?,
             stall_limit: num("SPIRA_RUNTIME_STALL_LIMIT", &get("SPIRA_RUNTIME_STALL_LIMIT")?)?,
             run_dir: PathBuf::from(get("SPIRA_RUN")?),
-            store_dir: PathBuf::from(dolt).join("spira_lifecycle"),
+            lc_socket: PathBuf::from(socket),
         })
     }
 
@@ -52,7 +52,7 @@ impl Settings {
 
     /// FNV-1a over the pinned values, so two records with one hash ran on one configuration.
     pub fn hash(&self) -> String {
-        let text = format!("{}\n{}\n{}\n{}\n{}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.run_dir.display(), self.store_dir.display());
+        let text = format!("{}\n{}\n{}\n{}\n{}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.run_dir.display(), self.lc_socket.display());
         let h = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
         format!("{h:016x}")
     }
@@ -69,7 +69,7 @@ mod tests {
                 "SPIRA_RUNTIME_HEARTBEAT_SECS" => secs,
                 "SPIRA_RUNTIME_STALL_LIMIT" => "3",
                 "SPIRA_RUN" => "/r",
-                "SPIRA_DOLT_DATA" => "/d",
+                "SPIRA_LC_SOCKET" => "/d/sock",
                 _ => return Err(format!("{k} unknown")),
             }
             .to_string())
@@ -80,7 +80,7 @@ mod tests {
     fn every_value_comes_from_the_lookup_and_a_bad_number_is_refused() {
         let s = Settings::from_lookup(&lookup("7")).unwrap();
         assert_eq!((s.heartbeat_secs, s.stall_limit, s.heartbeat_url.as_str()), (7, 3, "http://127.0.0.1:9/ping"));
-        assert_eq!(s.store_dir, PathBuf::from("/d/spira_lifecycle"));
+        assert_eq!(s.lc_socket, PathBuf::from("/d/sock"));
         assert!(Settings::from_lookup(&lookup("0")).unwrap_err().contains("positive"), "zero seconds would spin the schedule");
         assert_ne!(s.hash(), Settings::from_lookup(&lookup("8")).unwrap().hash());
     }

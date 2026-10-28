@@ -24,7 +24,7 @@ fn settings(url: &str, run: &std::path::Path) -> Settings {
             "SPIRA_RUNTIME_HEARTBEAT_SECS" => "1".into(),
             "SPIRA_RUNTIME_STALL_LIMIT" => "2".into(),
             "SPIRA_RUN" => run.display().to_string(),
-            "SPIRA_DOLT_DATA" => "/unused".into(),
+            "SPIRA_LC_SOCKET" => "/unused".into(),
             _ => return Err(k.to_string()),
         })
     };
