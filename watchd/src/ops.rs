@@ -354,22 +354,9 @@ fn is_locked_by_someone(path: &std::path::Path) -> bool {
 }
 
 fn run_with_stdin(program: &str, args: &[&str], stdin_body: &str) -> Result<(), String> {
-    use std::io::Write;
-    let mut child = spira_config::bounded::bounded(program)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    if let Some(mut s) = child.stdin.take() {
-        let _ = s.write_all(stdin_body.as_bytes());
-    }
-    let st = child.wait().map_err(|e| e.to_string())?;
-    if st.success() {
-        Ok(())
-    } else {
-        Err(format!("{program} exited {}", st.code().unwrap_or(-1)))
+    match run_capture(spira_config::bounded::bounded(program).args(args), stdin_body)? {
+        (0, _) => Ok(()),
+        (code, _) => Err(format!("{program} exited {code}")),
     }
 }
 

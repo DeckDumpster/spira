@@ -24,7 +24,7 @@ pub fn incident_fields(payload: &str) -> BTreeMap<String, String> {
     for tok in payload.split_whitespace() {
         let Some((k, v)) = tok.split_once('=') else { continue };
         let v = v.trim_end_matches([',', ';', '.']);
-        let clean = !v.is_empty() && v.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
+        let clean = !v.is_empty() && !v.starts_with(['-', '.']) && v.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
         if clean && run_spec::FIELDS.contains(&k) {
             out.entry(k.to_string()).or_insert_with(|| v.to_string());
         }
@@ -121,6 +121,9 @@ pub fn attempt(ops: &dyn Ops, ctx: &Context, row: &str, key: &str, payload: &str
     let (kind, heading, verdict) = if passed { ("note", "Note", "ran") } else { ("alert", "Alert", "FAILED") };
     let subject = format!("watchd: {slug} {verdict} for {row} ({summary})");
     let mailed = ops.mail_concierge(kind, &subject, &format!("## {heading}\n{body}"));
+    if let (false, Err(e)) = (passed, &mailed) {
+        eprintln!("watchd: could not tell the Concierge {slug} failed: {e}");
+    }
     if !passed {
         return Verdict::Escalate(Some(format!("tried {slug}: `{}` {summary}", command.trim())));
     }
@@ -268,5 +271,6 @@ mod tests {
         assert_eq!(f.get("bead").map(String::as_str), Some("sp-1"));
         assert_eq!(f.get("repo"), None, "a slash is not a clean value");
         assert_eq!(f.len(), 2);
+        assert!(incident_fields("batch=--force repo=-x bead=..").is_empty(), "a value must not read as a flag or a path");
     }
 }
