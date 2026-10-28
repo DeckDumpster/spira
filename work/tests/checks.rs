@@ -192,9 +192,10 @@ fn a_build_row_whose_program_is_not_the_package_is_refused() {
 
 #[test]
 fn prime_does_not_name_a_build_row_as_unresolved() {
-    let f = fixture("[[check]]\nname = \"row\"\nrun = \"x-absent\"\nbuild = \"x-absent\"\n", "exit 0\n");
+    let f = fixture("[[check]]\nname = \"row\"\nrun = \"x-absent\"\nbuild = \"x-absent\"\n\n[[check]]\nname = \"plain\"\nrun = \"x-plain-absent\"\n", "exit 0\n");
     let (_, text) = run_fixture(&f, "prime");
-    assert!(!text.contains("resolves nowhere"), "{text}");
+    assert!(text.contains("\"x-plain-absent\", which resolves nowhere"), "{text}");
+    assert!(!text.contains("\"x-absent\""), "{text}");
 }
 
 #[test]
@@ -204,8 +205,9 @@ fn a_row_without_build_never_builds() {
     std::fs::write(f.dir.join("x-own/Cargo.toml"), "[package]\nname = \"x-own\"\n").unwrap();
     let (_, text) = run_fixture(&f, "prime");
     assert!(text.contains("\"x-own\", which resolves nowhere"), "{text}");
-    let (code, _) = run_fixture(&f, "checks");
-    assert_eq!(code, work::REFUSED);
+    let (code, text) = run_fixture(&f, "checks");
+    assert_eq!(code, work::REFUSED, "{text}");
+    assert!(text.contains("-- own: FAIL"), "{text}");
     assert!(!f.stubs.join("cargo.argv").exists());
 }
 
@@ -215,4 +217,12 @@ fn prime_names_a_reviewer_that_resolves_nowhere() {
     let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_AGENT", "nqmjx7-no-claude")]);
     let out = Command::new(env!("CARGO_BIN_EXE_work")).arg("prime").current_dir(dir.path()).env_clear().env("PATH", "/usr/bin:/bin").env("SPIRA_TOML", toml).env("SPIRA_HOME", dir.path()).output().unwrap();
     assert!(String::from_utf8_lossy(&out.stdout).contains("the reviewer \"nqmjx7-no-claude\""), "{}{}", String::from_utf8_lossy(&out.stdout).lines().last().unwrap_or(""), String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn a_row_without_build_reports_the_release_binary_it_resolved() {
+    let f = fixture("[[check]]\nname = \"x-lint\"\nrun = \"x-lint\"\nbudget_ms = 5000\n", "exit 0\n");
+    let (code, text) = run_fixture(&f, "checks");
+    assert_eq!(code, 0, "{text}");
+    assert!(text.contains("resolved: ") && text.contains("release-lint"), "{text}");
 }
