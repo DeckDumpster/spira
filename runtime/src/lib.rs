@@ -15,7 +15,6 @@ pub mod marker;
 pub mod ports;
 pub mod scheduler;
 pub mod socket;
-pub mod store;
 pub mod wide;
 
 pub use engine::{Engine, Executor, Outcome, PendingEffect};
