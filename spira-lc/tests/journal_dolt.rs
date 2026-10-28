@@ -110,7 +110,7 @@ fn fixture() -> Option<Fixture> {
         let serve_placeholder = Command::new("true").spawn().unwrap();
         let mut f = Fixture { _t: None, _server: Proc(server), _serve: Proc(serve_placeholder), root: root.clone(), socket: socket.clone(), env: base(port) };
         let deadline = Instant::now() + Duration::from_secs(90);
-        while Instant::now() < deadline {
+        while Instant::now() < deadline { // clock-safe: caps the wait for the server to accept a login
             if f._server.0.try_wait().ok().flatten().is_some() {
                 break;
             }
@@ -131,14 +131,14 @@ fn fixture() -> Option<Fixture> {
                     .spawn()
                     .unwrap();
                 f._serve = Proc(serve);
-                while Instant::now() < deadline && !socket.exists() {
-                    std::thread::sleep(Duration::from_millis(100));
+                while Instant::now() < deadline && !socket.exists() { // clock-safe: caps the wait for serve to bind its socket
+                    std::thread::sleep(Duration::from_millis(100)); // clock-safe: poll interval inside that cap
                 }
                 assert!(socket.exists(), "spira-lc serve binds its socket");
                 f._t = Some(t);
                 return Some(f);
             }
-            std::thread::sleep(Duration::from_millis(200));
+            std::thread::sleep(Duration::from_millis(200)); // clock-safe: poll interval inside the readiness cap
         }
     }
     panic!("a fresh dolt server must start with root passwordless (the positive control)");
