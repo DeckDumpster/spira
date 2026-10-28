@@ -1998,6 +1998,8 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         results: results.clone(),
         timeout: (s.suite_timeout > 0).then(|| Duration::from_secs(s.suite_timeout)),
         maxpar: mx.value,
+        pids_budget: schedule::pids_budget(),
+        lane_slots: schedule::LANE_SLOTS,
         exec_fault_threshold: s.exec_fault_threshold,
         quarantined: quarantined.clone(),
         psi_pause: Duration::from_secs(5),
@@ -2022,7 +2024,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     let t_suites = Instant::now();
     let outcome = match (&sim_session, &sim_fixtures) {
         (Some(ss), Some(sf)) => {
-            let sim_cfg = BatchCfg { maxpar: schedule::SIM_SLOTS, ..cfg.clone() };
+            let sim_cfg = batch::sim_cfg(&cfg);
             let (mut main_out, sim_out) = std::thread::scope(|sc| {
                 let sim = sc.spawn(|| batch::run(ss, &sim_cfg, &hooks, sf, &sim_jobs));
                 let main = batch::run(&session, &cfg, &hooks, &fixtures, &jobs);
@@ -2035,6 +2037,13 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
     };
     if let Some(line) = sim_session.as_ref().and_then(|x| x.pids_peak_line()) {
         deps.log(&format!("sim container: {line}"));
+    }
+    if let Some(peak) = sim_session.as_ref().and_then(|x| x.cgroup_peak_mib()) {
+        deps.log(&format!(
+            "sim container: cgroup peak {peak}MiB of {} (slots {})",
+            schedule::SIM_MEMORY,
+            schedule::SIM_SLOTS
+        ));
     }
     if let Some(store) = &resume {
         store.flush();

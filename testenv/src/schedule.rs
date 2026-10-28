@@ -104,7 +104,8 @@ pub const PIDS_LIMIT: u32 = 8192;
 pub const PIDS_HEADROOM_PCT: u32 = 75;
 /// Weight of a suite that declares none.
 pub const DEFAULT_PIDS_WEIGHT: u32 = 16;
-/// Suites of one lane running at once, whatever the pool's slots allow.
+/// Suites of one lane running at once while the lane shares the main container's pool; the
+/// sim container is its own pool and is bounded by [`SIM_SLOTS`].
 pub const LANE_SLOTS: u32 = 2;
 
 pub fn pids_budget() -> u32 {
@@ -118,6 +119,10 @@ pub const SIM_LANE: &str = "sim";
 pub const SIM_PIDS_LIMIT: u32 = 4096;
 pub const SIM_MEMORY: &str = "12g";
 pub const SIM_SLOTS: u32 = 4;
+
+pub fn sim_pids_budget() -> u32 {
+    SIM_PIDS_LIMIT / 100 * PIDS_HEADROOM_PCT
+}
 
 pub fn is_sim(j: &Job) -> bool {
     j.exclusive.is_none() && j.lane.as_deref() == Some(SIM_LANE)
