@@ -999,6 +999,20 @@ fn a_lane_takes_the_only_slot_when_no_task_work_can() {
 }
 
 #[test]
+fn a_lane_takes_the_only_slot_when_task_work_is_pool_exhausted_or_throttled() {
+    let caps = [("SPIRA_MAX_LIVE_DWARVES", "4"), ("SPIRA_LANES_MAX_LIVE", "2")];
+    let l = ladder("os-pool", TASK, LANE, &[("builder", 3)], &[("ops", 1), ("builder", 1)]);
+    let pooled = [caps[0], caps[1], ("SPIRA_MAX_DWARVES", "3")];
+    assert!(l.call("ops", None, &pooled), "{}", l.sink.text());
+    assert!(!l.sink.has("held for task work"), "{}", l.sink.text());
+
+    let l = ladder("os-throttle", TASK, LANE, &[("builder", 3)], &[("ops", 1), ("builder", 1)]);
+    std::fs::write(l.w.run.join("queue-throttled"), "since=2026-10-01T00:00:00Z depth=20 since_land=60m\n").unwrap();
+    assert!(l.call("ops", None, &caps), "{}", l.sink.text());
+    assert!(!l.sink.has("held for task work"), "{}", l.sink.text());
+}
+
+#[test]
 fn a_lane_takes_a_slot_normally_when_two_remain() {
     let caps = [("SPIRA_MAX_LIVE_DWARVES", "4"), ("SPIRA_LANES_MAX_LIVE", "2")];
     let l = ladder("os-two", TASK, LANE, &[("builder", 2)], &[("ops", 1), ("builder", 1)]);
@@ -2297,6 +2311,7 @@ fn the_only_slot_goes_to_task_work_and_the_lane_spills_in_the_same_pass() {
     let spill = at("4/4 dwarf(s) live — a lane may spill over the ceiling");
     let lane = at("ACT called a ops lane dwarf");
     assert!(built < spill && spill < lane, "{log}");
+    assert_eq!(std::fs::read_to_string(f.w.run.join("lane-round-robin")).unwrap_or_default(), "ops", "{log}");
     let launched: Vec<String> = f.r.all().iter().filter(|s| s.prog == "systemd-run").map(|s| s.args.last().cloned().unwrap_or_default()).collect();
     assert_eq!(launched, ["builder", "ops"], "{log}");
 }
