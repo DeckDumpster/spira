@@ -26,6 +26,7 @@ impl Handler for Starter {
 struct Sleepy(u64);
 impl EffectRunner for Sleepy {
     fn run(&self, key: &str, _: &EffectSpec) -> std::result::Result<String, String> {
+        // clock-safe: the effect under test is a blocking runner; the deadline outcome is asserted, not elapsed time
         std::thread::sleep(Duration::from_millis(self.0));
         Ok(key.into())
     }

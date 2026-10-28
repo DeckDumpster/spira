@@ -25,6 +25,7 @@ pub struct DoltCli {
 
 impl DoltCli {
     fn run(&self, sql: &str, json: bool) -> Result<Vec<u8>> {
+        // batch-job: dolt sql in the container tier; bounded by the executor's effect deadline
         let mut cmd = Command::new("dolt");
         cmd.current_dir(&self.dir).arg("sql");
         if json {
