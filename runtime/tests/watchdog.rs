@@ -49,8 +49,8 @@ fn run_until_hung(mut e: Engine, marker_path: &std::path::Path) {
     });
     let end = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while !marker_path.exists() {
-        assert!(std::time::Instant::now() < end, "the handler never started");
-        std::thread::sleep(std::time::Duration::from_millis(2)); // waits-on: the marker file the blocked handler's thread writes
+        assert!(std::time::Instant::now() < end, "the handler never started"); // clock-safe: cap on the wait for the marker file
+        std::thread::sleep(std::time::Duration::from_millis(2)); // clock-safe: polls for the marker file the blocked handler writes
     }
 }
 

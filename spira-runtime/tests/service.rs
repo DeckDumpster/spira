@@ -69,8 +69,8 @@ async fn the_heartbeat_schedule_fires_and_pings_after_the_journal_advances() {
     tx.send(Submit { id: "other".into(), stream: "elsewhere".into(), kind: EventKind::new("anything", "") }).await.unwrap();
     let host = tokio::spawn(serve_with(engine, Arc::new(WallClock), Arc::new(Effects { heartbeat_url: url }), 2, rx, ServeOpts::default()));
     let end = Instant::now() + Duration::from_secs(8);
-    while hits.load(Ordering::SeqCst) == 0 && Instant::now() < end {
-        tokio::time::sleep(Duration::from_millis(50)).await; // waits-on: the heartbeat schedule's first firing, one interval out
+    while hits.load(Ordering::SeqCst) == 0 && Instant::now() < end { // clock-safe: cap on the wait for the first heartbeat ping
+        tokio::time::sleep(Duration::from_millis(50)).await; // clock-safe: polls for the heartbeat ping counter
     }
     assert!(hits.load(Ordering::SeqCst) >= 1, "the stub URL was never pinged");
     drop(tx);
