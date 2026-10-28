@@ -246,12 +246,14 @@ fn result_lines_are_relayed_once_and_a_verdictless_round_is_named() {
 
 #[test]
 fn the_migrated_handlers_launch_no_process() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/watchers");
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files: Vec<_> = fs::read_dir(src.join("watchers")).unwrap().flatten().map(|e| e.path()).collect();
+    files.push(src.join("world.rs"));
     let mut checked = 0;
-    for e in fs::read_dir(&src).unwrap().flatten() {
-        let text = fs::read_to_string(e.path()).unwrap();
+    for path in files {
+        let text = fs::read_to_string(&path).unwrap();
         let code = text.split("#[cfg(test)]").next().unwrap();
-        assert!(!code.contains("Command::new") && !code.contains("std::process"), "{} launches a process", e.path().display());
+        assert!(!code.contains("Command::new") && !code.contains("std::process"), "{} launches a process", path.display());
         checked += 1;
     }
     assert!(checked >= 2, "the scan found no handlers to check");
