@@ -1,5 +1,5 @@
 # bare-unit-name: files that spelled a bare unit literal when the rule landed. Shrink-only.
-auron/src/judge.rs
+heimdall/src/judge.rs
 cockpit-collect/src/main.rs
 cockpit-collect/src/supervisor.rs
 cockpit/ops/src/health/sections.rs

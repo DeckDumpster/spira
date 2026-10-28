@@ -24,13 +24,13 @@ fn binary_neutral(path: &str) -> bool {
     path.ends_with(".sh") || path.ends_with(".md")
 }
 
-/// `artifacts` when every removed member changed only binary-neutral files, else `aeon`.
+/// `artifacts` when every removed member changed only binary-neutral files, else `dwarf`.
 pub fn build_for(removal: &[Id], changed: &BTreeMap<Id, Vec<String>>) -> &'static str {
     let neutral = removal.iter().all(|m| changed.get(m).is_some_and(|ps| ps.iter().all(|p| binary_neutral(p))));
     if neutral {
         "artifacts"
     } else {
-        "aeon"
+        "dwarf"
     }
 }
 
@@ -491,8 +491,8 @@ mod tests {
         changed.insert("a".to_string(), vec!["spira/lib.sh".to_string(), "doc/x.md".to_string()]);
         changed.insert("b".to_string(), vec!["queue/src/lib.rs".to_string()]);
         assert_eq!(build_for(&["a".to_string()], &changed), "artifacts");
-        assert_eq!(build_for(&["a".to_string(), "b".to_string()], &changed), "aeon");
-        assert_eq!(build_for(&["unknown".to_string()], &changed), "aeon", "unknown paths are never neutral");
+        assert_eq!(build_for(&["a".to_string(), "b".to_string()], &changed), "dwarf");
+        assert_eq!(build_for(&["unknown".to_string()], &changed), "dwarf", "unknown paths are never neutral");
     }
 
     /// sp-dp872: two walkthrough rounds ended "round-vm: unexpected exit 101" and the round

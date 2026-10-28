@@ -1,5 +1,5 @@
 //! Renaming a persona across the one source: its `[persona.<old>]` table (lease included) and
-//! its `lane` when that is its own name, and its name in `spira.fayths` and the space-separated `spira.lanes`. `set` and `unset` cannot
+//! its `lane` when that is its own name, and its name in `spira.runes` and the space-separated `spira.lanes`. `set` and `unset` cannot
 //! do this: they edit through the typed schema, which refuses a half-built persona table.
 
 use toml_edit::{value, Array, DocumentMut, Item};
@@ -50,7 +50,7 @@ fn rename_persona_with(text: &str, old: &str, new: &str, strict: bool) -> Result
         _ => {}
     }
     if let Some(spira) = doc.get_mut("spira").and_then(Item::as_table_like_mut) {
-        if let Some(item) = spira.get_mut("fayths") {
+        if let Some(item) = spira.get_mut("runes") {
             if let Some(arr) = item.as_array() {
                 let words = rewrite_words(arr.iter().filter_map(|v| v.as_str().map(String::from)), old, new);
                 let mut out = Array::new();
@@ -75,21 +75,21 @@ fn rename_persona_with(text: &str, old: &str, new: &str, strict: bool) -> Result
 mod tests {
     use super::*;
 
-    const SRC: &str = "[spira]\nfayths = [\"ops\", \"maechen\"]\nlanes = \"ops maechen czar\"\n\n[persona.maechen]\nmodel = \"m\"\n\n[persona.maechen.lease]\nttl = 5\n\n[persona.ops]\nmodel = \"m\"\n";
+    const SRC: &str = "[spira]\nrunes = [\"ops\", \"maechen\"]\nlanes = \"ops maechen czar\"\n\n[persona.maechen]\nmodel = \"m\"\n\n[persona.maechen.lease]\nttl = 5\n\n[persona.ops]\nmodel = \"m\"\n"; // ffx-ok
 
     #[test]
     fn renames_table_lease_roster_and_lanes() {
-        let out = rename_persona_text(SRC, "maechen", "mimir").unwrap();
+        let out = rename_persona_text(SRC, "maechen", "mimir").unwrap(); // ffx-ok
         let v: toml::Value = out.parse().unwrap();
-        assert!(v["persona"].get("maechen").is_none());
+        assert!(v["persona"].get("maechen").is_none()); // ffx-ok
         assert_eq!(v["persona"]["mimir"]["lease"]["ttl"].as_integer(), Some(5));
         assert_eq!(v["spira"]["lanes"].as_str(), Some("ops mimir czar"));
-        assert_eq!(v["spira"]["fayths"][1].as_str(), Some("mimir"));
+        assert_eq!(v["spira"]["runes"][1].as_str(), Some("mimir"));
     }
 
     #[test]
     fn refuses_a_missing_source_and_an_existing_target() {
         assert!(rename_persona_text(SRC, "nope", "x").is_err());
-        assert!(rename_persona_text(SRC, "maechen", "ops").is_err());
+        assert!(rename_persona_text(SRC, "maechen", "ops").is_err()); // ffx-ok
     }
 }

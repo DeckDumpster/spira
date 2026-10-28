@@ -6,21 +6,21 @@
 #   ./test-landing.sh
 #
 # THE CASE THIS IS WRITTEN FOR. A pass reads its branch list once and then runs for minutes,
-# so by the time it reaches the tail of that list the head of it may be gone. The Sending
+# so by the time it reaches the tail of that list the head of it may be gone. The Hel
 # reaps a landed branch on its own timer, and `rebase_branch` against a ref that is no longer
 # there fails with exactly the exit status and exactly the empty conflict list that a real
 # disagreement produces:
 #
 #   21:51:17  landed spira/<id>                      pass A lands it
 #   21:52:13  landing: starting a pass               pass B enumerates, <id> still present
-#   21:52:36  REMOVED branch spira/<id>              the Sending reaps it
+#   21:52:36  REMOVED branch spira/<id>              the Hel reaps it
 #   22:00:51  landed spira/<other>                   pass B is eight minutes into one gate
 #   22:00:55  reopened <id> — does not rebase onto origin/main; conflicts in unknown
 #
 # Nothing recreated that ref and nothing needed to: the branch list was twenty-three seconds
 # older than the reap, refs sort by name, and the branch ahead of it in the list held the
 # pass for eight minutes. "conflicts in unknown" is the tell — a real conflict names files.
-# The cost is a whole session: an aeon is summoned onto a bead whose work is already on the
+# The cost is a whole session: a dwarf is called onto a bead whose work is already on the
 # base, finds nothing to rebase, and learns that.
 #
 # So the property under test is not "the reaped branch is skipped" but the stronger one the
@@ -93,7 +93,7 @@ events() { cat "$RUN/events.log" 2>/dev/null; }
 
 # THE GATE IS ALSO THE REAPER, and that is the whole fixture. A pass holds its branch list
 # across the gate, which is the only long call in it, so a branch removed from inside the
-# stub is removed at precisely the point the Sending removed the real one — after the list
+# stub is removed at precisely the point the Hel removed the real one — after the list
 # was read and before the loop reached the tail of it. Anything staged outside the pass would
 # be testing a list that was stale before it was taken, which is a different bug.
 #
@@ -126,17 +126,17 @@ if [ -s "$w" ] && grep -qx "$1" "$w"; then
     echo "gate: VERDICT=NO_VERDICT reason=stub-busy branch=$1 repo=${2:-?}" >&2
     exit "${SPIRA_GATE_NOVERDICT:?the gate protocol constant is not in the environment}"
 fi
-# AN AEON ARRIVING MID-PASS, on the PASS path only — so it lands in the window between the
+# A DWARF ARRIVING MID-PASS, on the PASS path only — so it lands in the window between the
 # loop walking past an earlier branch and the landing that sweeps it, which is the window the
 # sweep repeats its own liveness check for. Each line is "<bead> <pid>"; the pid belongs to a
-# process the suite started, because aeon_alive reads /proc and will not be fooled by a
+# process the suite started, because dwarf_alive reads /proc and will not be fooled by a
 # pidfile naming something that is not a runner.
 c="$SPIRA_RUN/claim-during-gate"
 if [ -s "$c" ]; then
     while read -r id pid; do
         [ -n "$id" ] || continue
-        printf "%s\\n" "$pid" > "$SPIRA_RUN/aeon-builder-$id.pid"
-        printf '%s' "$(( $(date +%s) + 3600 ))" > "$SPIRA_RUN/aeon-builder-$id.lease"
+        printf "%s\\n" "$pid" > "$SPIRA_RUN/dwarf-builder-$id.pid"
+        printf '%s' "$(( $(date +%s) + 3600 ))" > "$SPIRA_RUN/dwarf-builder-$id.lease"
     done < "$c"
     : > "$c"
 fi
@@ -164,12 +164,12 @@ landing() {
     # repositories the operator has registered and counts THEIR branches, so a suite
     # asserting about one fixture branch would be asserting about a box.
     # AND THE ESCALATION CHANNEL IS PINNED SHUT. Two paths out of this pass reach the
-    # operator — the repeated-NO_VERDICT ask and the intake's Sin escalation — and both
+    # operator — the repeated-NO_VERDICT ask and the intake's Fenrir escalation — and both
     # resolve their command from configuration. Left unpinned a suite inherits whatever this
     # box has installed there and puts a fixture's verdict in a real pane
     # (law-gates-run-in-a-clean-environment).
     # SPIRA_HOME_REPO IS PINNED, AND TO A NON-DEFAULT. conf.sh only derives it when it is
-    # unset, so an aeon session that exports it hands this pass the name of a real repository
+    # unset, so a dwarf session that exports it hands this pass the name of a real repository
     # — and the incident below is labelled `repo:<name>`, so the suite would file a fixture's
     # finding against somebody's actual checkout and then assert against whatever leaked.
     # SPIRA_BD IS PINNED TO THE FIXTURE'S EMBEDDED BINARY. conf.sh resolves it from PATH when
@@ -348,7 +348,7 @@ drop_branch sp-bbb
 cat > "$REMOTE/hooks/pre-receive" <<HOOK
 #!/usr/bin/env bash
 # Reject the first push only, advancing the base and removing the branch — simulating a
-# concurrent commit (genuine race) and the Sending arriving in the one window this arm
+# concurrent commit (genuine race) and the Hel arriving in the one window this arm
 # occupies. The base MUST move so the classification guard introduced by sp-utvi treats
 # this as a real race rather than a non-race push failure (law-a-pattern-match-is-not-
 # an-identity-check). Without a moved base the guard correctly stops before the retry, and

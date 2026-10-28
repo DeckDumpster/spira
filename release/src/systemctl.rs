@@ -227,7 +227,7 @@ impl Systemctl for RealSystemctl {
         let mut names = Vec::new();
         for line in out.lines() {
             let Some(unit) = line.split_whitespace().next() else { continue };
-            // A transient unit (systemd-run, e.g. spira-landing or spira-aeon-*) has no unit
+            // A transient unit (systemd-run, e.g. spira-landing or spira-dwarf-*) has no unit
             // file of its own — restarting it re-execs whatever command line it was launched
             // with, which named files in the release being replaced (sp-hvtdj).
             let ufs = self.run(&["show", unit, "-p", "UnitFileState", "--value"]).unwrap_or_default();

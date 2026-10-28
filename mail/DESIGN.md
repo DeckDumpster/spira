@@ -130,20 +130,20 @@ surface gets an accounting, and none of it turned out to be dead).
   when a subject's own prose happens to name one first (sp-gctip's whole finding).
   `test-mail-bead-render.sh` case 3 tests this exact fallback and expects it to keep working
   for the single-id case, and sp-gctip is a separate, already-owned, in-flight bug bead
-  (owner: aeon-ixion, branch `spira/sp-gctip`, mid-rebase against `lib.sh`) proposing a
+  (owner: dwarf-dvalin, branch `spira/sp-gctip`, mid-rebase against `lib.sh`) proposing a
   specific fix (pass `--bead` from all 8 `lib.sh` helpers; fail closed with no render rather
   than guess). Changing this rewrite's behaviour here would either fight that branch's merge
   or quietly ship a fix nobody reviewed as part of an unrelated bead. Ported byte-for-byte;
   sp-gctip's fix lands on top of this exactly as it would have landed on the bash.
 
 - **`bd` stays a subprocess, not a library call.** No Rust `bd` client exists in this
-  workspace; every other crate (`aeon`, `queue`, `spira-lc`) shells out the same way. The
+  workspace; every other crate (`dwarf`, `queue`, `spira-lc`) shells out the same way. The
   `Bd` trait is the seam that keeps this testable without one.
 
-- **Binary name `mail`, bare, matching `sending`/`queue`/`testenv`.** No `mail`/`mailx` is
+- **Binary name `mail`, bare, matching `hel`/`queue`/`testenv`.** No `mail`/`mailx` is
   present on this host's system directories, so there is no name-clash risk under the
-  release's own shadow-check (`release::clashes`); the workspace convention (`sending.sh` →
-  `sending`, not `spira-sending`) is unambiguous either way.
+  release's own shadow-check (`release::clashes`); the workspace convention (`hel.sh` →
+  `hel`, not `spira-hel`) is unambiguous either way.
 
 - **`mail.sh` ships as a compatibility symlink, deliberately, not just deleted.** Every
   caller this tree can see was repointed to bare `mail`, but three cannot be git-grepped
@@ -153,7 +153,7 @@ surface gets an accounting, and none of it turned out to be dead).
   control) may still say `outgoing = <release>/spira/mail.sh`. `build-tarball.sh` symlinks
   both `bin/mail.sh → mail` and `spira/mail.sh → ../bin/mail` (the latter specifically
   because those callers name `$SPIRA_HOME/mail.sh`, not just whatever `bin/` resolves on
-  PATH) — the same fix sp-6onps used for `world.sh`/`slay.sh`/`aeons.sh`/`ctrl.sh`.
+  PATH) — the same fix sp-6onps used for `world.sh`/`slay.sh`/`dwarves.sh`/`ctrl.sh`.
   **Retire this once the Concierge persona, `escalation-hook.sh` and the operator's own
   `aerc` config are repointed to bare `mail`** — it is a compatibility name, not a second
   permanent spelling.
@@ -166,7 +166,7 @@ surface gets an accounting, and none of it turned out to be dead).
   fingerprint/normalisation and its bounded-wait timeout; bead-block rendering (including
   truncation and the notes/close-reason fallback) and the suit-verdict mapping, both against
   a fake `Bd`; `tidy`'s three keep rules, dedup and fail-closed guards; `sendmail`'s reply
-  routing (sender mailbox / chamber persona / no-route, all → the right destination) and
+  routing (sender mailbox / runes persona / no-route, all → the right destination) and
   tracking-bead close; Maildir mechanics (deliver, mute, flags, msgid uniqueness); the RFC
   822 date formatter against a known timestamp.
 - **Integration** (existing bash suites, repointed to call `mail` by bare name instead of
@@ -177,8 +177,8 @@ surface gets an accounting, and none of it turned out to be dead).
   (moved to `lint.rs`'s unit tests, since it can no longer source `mail.sh` as bash) and the
   suite's `covers:` line updated accordingly. `test-mail-tidy.sh`, `test-mail-bead-render.sh`,
   `test-mail-dismiss-sweep.sh`, `test-mail-health.sh`, `test-mail-pane.sh`,
-  `test-mail-mailbox-arg.sh`, `test-mail-real-senders.sh`, `test-mail-aeon.sh`,
-  `test-mail-aeon-hook.sh`, `test-brief-mail-options.sh`, `test-mail-tidy-units.sh` and
+  `test-mail-mailbox-arg.sh`, `test-mail-real-senders.sh`, `test-mail-dwarf.sh`,
+  `test-mail-dwarf-hook.sh`, `test-brief-mail-options.sh`, `test-mail-tidy-units.sh` and
   `test-cockpit-layout-mail.sh` are repointed, not retired — every one of them exercises real
   subprocess/filesystem behaviour (Maildir side effects, systemd unit rendering, a live
   `bd` fixture) that a unit test does not reach, and none of their use cases has a crate-test

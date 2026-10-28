@@ -1,4 +1,4 @@
-//! `work` — the aeon-facing semantic layer client (design §3.5). Bound to one summoned
+//! `work` — the dwarf-facing semantic layer client (design §3.5). Bound to one called
 //! bead (`SPIRA_WORK_BEAD_ID`), it never takes the bead it acts on as an argument and it
 //! never falls back to a direct database connection — see `work::build_request` for the
 //! request-shaping and `SPIRA_LC_SOCKET` for the only channel this binary knows how to
@@ -8,9 +8,9 @@
 //!
 //! There is no lifecycle switch (DESIGN.md §3, sp-v62vn): every verb goes to the socket.
 //!
-//! Deploys inert: nothing runs an aeon through this yet (the aeon.sh cutover bead,
+//! Deploys inert: nothing runs a dwarf through this yet (the dwarf.sh cutover bead,
 //! sp-xethq, and the restricted unit environment this bead only provides — see
-//! aeon/src/restrict.rs, formerly spira/work-env.sh, retired sp-zpaq0).
+//! dwarf/src/restrict.rs, formerly spira/work-env.sh, retired sp-zpaq0).
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
@@ -52,7 +52,7 @@ fn main() {
             { let code = CANNOT_TELL; spira_otel::run::finish(code); std::process::exit(code) };
         }
     };
-    let actor = std::env::var("SPIRA_FAYTH").or_else(|_| std::env::var("SPIRA_WORK_ACTOR")).unwrap_or_else(|_| "aeon".to_string());
+    let actor = std::env::var("SPIRA_RUNE").or_else(|_| std::env::var("SPIRA_WORK_ACTOR")).unwrap_or_else(|_| "dwarf".to_string());
 
     let tip = if verb == "submit" { read_tip(&bound) } else { None };
 
@@ -60,7 +60,12 @@ fn main() {
         let mut s = String::new();
         std::io::Read::read_to_string(&mut std::io::stdin(), &mut s).map(|_| s).map_err(|e| e.to_string())
     };
-    let (verb_args, body) = match work::collect_body(&verb_args, |p| std::fs::read_to_string(p).map_err(|e| e.to_string()), read_stdin) {
+    let collected = if verb == "mender" {
+        work::collect_mender_body(&verb_args, read_stdin)
+    } else {
+        work::collect_body(&verb_args, |p| std::fs::read_to_string(p).map_err(|e| e.to_string()), read_stdin)
+    };
+    let (verb_args, body) = match collected {
         Ok(r) => r,
         Err(e) => {
             eprintln!("{e}");
@@ -80,7 +85,10 @@ fn main() {
     // runs bead.sh; the broker bounds both at 300 s, so this client waits that long and no longer.
     let runs_tool = work::LANE_VERBS.contains(&verb.as_str()) || matches!(verb.as_str(), "file-followup" | "split" | "submit" | "ack");
     let wait = if runs_tool { TOOL_TIMEOUT } else { REPLY_WAIT };
-    match send(&req, wait) {
+    let asked = std::time::Instant::now();
+    let answer = send(&req, wait);
+    spira_otel::run::phase("reply", asked.elapsed().as_millis() as u64);
+    match answer {
         Ok((code, out)) => {
             spira_config::lc_call::print_answer(code, &out);
             { let code = code; spira_otel::run::finish(code); std::process::exit(code) };
@@ -220,7 +228,7 @@ fn statute_check(args: &[String]) -> i32 {
             return REFUSED;
         }
     };
-    let actor = std::env::var("SPIRA_FAYTH").or_else(|_| std::env::var("SPIRA_WORK_ACTOR")).unwrap_or_else(|_| "aeon".to_string());
+    let actor = std::env::var("SPIRA_RUNE").or_else(|_| std::env::var("SPIRA_WORK_ACTOR")).unwrap_or_else(|_| "dwarf".to_string());
     let req = match work::build_request_with_body(&bound, "note", &["-".to_string()], None, &actor, Some(&note)) {
         Ok(r) => r,
         Err(e) => {

@@ -1,14 +1,14 @@
 //! `release canary` and `release canary-worker` (DESIGN.md "canary"): an end-to-end
 //! pipeline canary on an isolated [`crate::stage`]. Files a synthetic bead, runs the real
-//! `sentinel` (which dispatches the canary worker via `SPIRA_SUMMON`), runs the real
+//! `sentinel` (which dispatches the canary worker via `SPIRA_CALL`), runs the real
 //! landing pass directly, and asserts that a commit naming the bead id appears on
 //! `origin/main` inside a deadline. On failure it files a `spira,incident` bead in the
 //! PRODUCTION database (the caller's own `SPIRA_DB`, saved before the stage's env
 //! replaces it), then exits non-zero. Replaces `spira/canary.sh` and, for the worker,
 //! `spira/canary-worker.sh`.
 //!
-//! THE ONE THING THAT IS FAKE IS THE MODEL. `SPIRA_SUMMON` points to `fake-summon.sh`,
-//! which execs `release canary-worker` instead of `aeon.sh` — a scripted worker that
+//! THE ONE THING THAT IS FAKE IS THE MODEL. `SPIRA_CALL` points to `fake-call.sh`,
+//! which execs `release canary-worker` instead of `dwarf.sh` — a scripted worker that
 //! claims, commits and submits the bead through the stage's own lifecycle machine
 //! (`crate::stage_lc`) without invoking Claude. `SPIRA_LAUNCH` records the
 //! landing dispatch and exits 0; `release canary` drives `landing-pass land` directly so it
@@ -32,10 +32,10 @@ const STAGE_KEYS: &[&str] = &[
     "SPIRA_BD",
     "SPIRA_REPO",
     "SPIRA_REPO_MAP",
-    "SPIRA_FAYTHS",
-    "SPIRA_MAX_AEONS",
+    "SPIRA_RUNES",
+    "SPIRA_MAX_DWARVES",
     "SPIRA_NOTIFY",
-    "SPIRA_SUMMON",
+    "SPIRA_CALL",
     "SPIRA_LAUNCH",
     "PATH",
     "SPIRA_PATH",
@@ -160,7 +160,7 @@ pub fn canary(o: &CanaryOpts) -> Result<CanaryResult, String> {
 
     let (stage_root, env, own_stage) = match &o.external_stage {
         Some(root) => {
-            if !root.join("spira/chamber/canary.fayth").is_file() {
+            if !root.join("spira/runes/canary.rune").is_file() {
                 return Err(format!("--stage {} does not look like a stage", root.display()));
             }
             // Honour the caller's own environment for the rest (mirrors `eval "$(stage.sh
@@ -234,7 +234,7 @@ fn run_canary_in(stage_root: &Path, env: &[(String, String)], prod: &ProdEnv, o:
         return Err(format!("spira-lc create-bead {bead_id} failed ({}): {}", created.status, String::from_utf8_lossy(&created.stderr).trim()));
     }
 
-    // Run the real sentinel (one pass). SPIRA_SUMMON's fake-summon.sh runs `release
+    // Run the real sentinel (one pass). SPIRA_CALL's fake-call.sh runs `release
     // canary-worker` synchronously: it claims the bead through the machine, commits, and
     // submits the branch's tip.
     log("running sentinel (one pass)");
@@ -298,8 +298,8 @@ fn lc_state(env: &[(String, String)], id: &str) -> Option<String> {
     spira_config::lc_state::parse_show(&String::from_utf8_lossy(&out.stdout)).ok()?.map(|r| r.state)
 }
 
-/// `release canary-worker` (was `spira/canary-worker.sh`): the synthetic aeon. Invoked by
-/// `fake-summon.sh`, synchronously, inheriting the full stage env (`SPIRA_HOME`,
+/// `release canary-worker` (was `spira/canary-worker.sh`): the synthetic dwarf. Invoked by
+/// `fake-call.sh`, synchronously, inheriting the full stage env (`SPIRA_HOME`,
 /// `SPIRA_RUN`, `SPIRA_DB`, `SPIRA_REPO`, `SPIRA_LC_*`). Claims the first ready bead in the
 /// canary partition through the stage's lifecycle machine, commits to its branch, pushes, and
 /// submits the branch's tip.
@@ -309,7 +309,7 @@ pub fn canary_worker() -> Result<(), String> {
     let db = std::env::var("SPIRA_DB").ok().filter(|v| !v.is_empty());
     let holder = std::env::var("BEADS_ACTOR").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| CANARY_HOLDER.into());
     let lease_until = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0) + CANARY_LEASE_SECS;
-    // batch-job: the stage's synthetic aeon claiming its bead, bounded by the canary's own --deadline.
+    // batch-job: the stage's synthetic dwarf claiming its bead, bounded by the canary's own --deadline.
     let mut tools = |prog: &str, args: &[String]| -> (i32, String) {
         // batch-job: this runs whatever its caller names, as long as that takes
         match Command::new(prog).args(args).stdin(Stdio::null()).stderr(Stdio::inherit()).output() {
@@ -363,7 +363,7 @@ pub fn canary_worker() -> Result<(), String> {
     set_state.args(["set-state", &id, &format!("branch={branch}")]);
     let _ = set_state.output();
 
-    // Hand the bead on the way an aeon does: the machine's Submit event with the branch's
+    // Hand the bead on the way a dwarf does: the machine's Submit event with the branch's
     // tip (WORKING -> SUBMITTED), never a bd close — bd status is inert for a work bead.
     let tip = spira_config::bounded::bounded("git").current_dir(&repo).args(["rev-parse", "HEAD"]).output().map_err(|e| format!("cannot run git rev-parse: {e}"))?;
     let tip = String::from_utf8_lossy(&tip.stdout).trim().to_string();
@@ -378,22 +378,22 @@ pub fn canary_worker() -> Result<(), String> {
 }
 
 /// `timeout`'s argv for the worker's Submit: `spira-lc work <id> submit --tip <tip> --actor
-/// <holder>`, the verb `work submit` sends for an aeon.
+/// <holder>`, the verb `work submit` sends for a dwarf.
 pub(crate) fn submit_args(id: &str, tip: &str, holder: &str) -> Vec<String> {
     ["5", spira_config::release_env::tool("spira-lc").as_str(), "work", id, "submit", "--tip", tip, "--actor", holder].iter().map(|s| s.to_string()).collect()
 }
 
-/// The stage's one fayth (stage.rs `fayth_content`): the worker's ready set is this fayth's.
-const CANARY_FAYTH: &str = "canary";
+/// The stage's one rune (stage.rs `rune_content`): the worker's ready set is this rune's.
+const CANARY_RUNE: &str = "canary";
 /// The worker's claim holder when the stage sets no `BEADS_ACTOR`.
 const CANARY_HOLDER: &str = "canary-worker";
 const CANARY_LEASE_SECS: u64 = 3600;
-/// lib.sh's `lc_claim_bead`, the aeon's own claim (sp-860zj): the Claim event is the claim.
+/// lib.sh's `lc_claim_bead`, the dwarf's own claim (sp-860zj): the Claim event is the claim.
 const LC_CLAIM: &str = r#". "$SPIRA_HOME/lib.sh" || exit 2; lc_claim_bead "$1" "$2" "$3" "" 0 0 "$4""#;
 
-/// The worker's ready set and claim, through the one ready set an aeon claims from (sp-7g5q6):
-/// `spira-claim fayth-ready canary --json` — the machine's READY/REWORK rows — never a
-/// `bd ready --claim` of its own. Each candidate in order is claimed the way an aeon claims
+/// The worker's ready set and claim, through the one ready set a dwarf claims from (sp-7g5q6):
+/// `spira-claim rune-ready canary --json` — the machine's READY/REWORK rows — never a
+/// `bd ready --claim` of its own. Each candidate in order is claimed the way a dwarf claims
 /// it: the lifecycle Claim event (`lc_claim_bead`; a refusal means another holder won it, so
 /// the next is tried). `Ok(None)` is nothing ready; a ready set that cannot
 /// be read is an `Err`, never "nothing ready".
@@ -407,14 +407,14 @@ pub(crate) fn claim_canary_bead(
     run: &mut Tools,
 ) -> Result<Option<String>, String> {
     let own = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<String>>();
-    let (rc, out) = run("spira-claim", &own(&["fayth-ready", CANARY_FAYTH, "--json"]));
+    let (rc, out) = run("spira-claim", &own(&["rune-ready", CANARY_RUNE, "--json"]));
     if rc != 0 {
-        return Err(format!("spira-claim fayth-ready {CANARY_FAYTH} --json failed (rc={rc})"));
+        return Err(format!("spira-claim rune-ready {CANARY_RUNE} --json failed (rc={rc})"));
     }
-    let rows: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("spira-claim fayth-ready {CANARY_FAYTH}: not JSON: {e}"))?;
+    let rows: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("spira-claim rune-ready {CANARY_RUNE}: not JSON: {e}"))?;
     let ids: Vec<String> = rows.as_array().into_iter().flatten().filter_map(|r| r.get("id").and_then(|i| i.as_str()).map(str::to_string)).collect();
     for id in ids {
-        let rc = run("bash", &own(&["-c", LC_CLAIM, "lc-claim", &id, holder, &lease_until.to_string(), CANARY_FAYTH])).0;
+        let rc = run("bash", &own(&["-c", LC_CLAIM, "lc-claim", &id, holder, &lease_until.to_string(), CANARY_RUNE])).0;
         if rc == 0 {
             return Ok(Some(id));
         }
@@ -454,7 +454,7 @@ mod claim_tests {
         let got = claim_canary_bead("canary-worker", 99, &mut t).unwrap();
         drop(t);
         assert_eq!(got.as_deref(), Some("sp-canary"));
-        assert_eq!(calls[0], "spira-claim fayth-ready canary --json");
+        assert_eq!(calls[0], "spira-claim rune-ready canary --json");
         assert!(calls[1].starts_with("bash -c ") && calls[1].ends_with("lc-claim sp-won-elsewhere canary-worker 99 canary"), "{calls:?}");
         assert!(calls[2].ends_with("lc-claim sp-canary canary-worker 99 canary"), "{calls:?}");
         assert!(!calls.iter().any(|c| c.starts_with("bd ") || c.contains(" ready ") || c.contains("--claim")), "{calls:?}");

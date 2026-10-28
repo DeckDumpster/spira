@@ -71,7 +71,7 @@ fn configured_names_env(schema: &std::path::Path, extra_env: &[(&str, &str)]) ->
 
 /// What `schema.sh` would otherwise read from the box rather than the tree (sp-g9f3t):
 /// conf.sh's config file search (explicit SPIRA_CONF/SPIRA_TOML, else XDG — the operator's
-/// own config file) and the chamber its staleness check compares against it. Pinned to a path
+/// own config file) and the runes its staleness check compares against it. Pinned to a path
 /// that does not exist, so the names are the tree's declarations plus any override the
 /// environment carries — the same on every box, whatever its config file or its mtimes.
 /// (Unpinned, the same tree flipped between 0 and 5 findings on the gate on mtimes alone.)
@@ -80,7 +80,7 @@ fn configured_names_env(schema: &std::path::Path, extra_env: &[(&str, &str)]) ->
 /// exist would make every schema read fail and fall back to the shipped defaults.
 const BOX_CONFIG_PINS: &[(&str, &str)] = &[
     ("SPIRA_CONF", "/nonexistent/spira-lint/conf"),
-    ("SPIRA_CHAMBER", "/nonexistent/spira-lint/chamber"),
+    ("SPIRA_RUNES_DIR", "/nonexistent/spira-lint/runes"),
 ];
 /// The tree's complete fixture, relative to its `spira/schema.sh`.
 const TREE_FIXTURE: &str = "../spira-config/tests/fixtures/complete.toml";
@@ -344,7 +344,7 @@ mod tests {
         assert!(names.contains(&"needs-operator".to_string()));
 
         // An exported override must ALSO appear, so a literal like the shipped default is
-        // still refused under an aeon's environment that overrides SPIRA_ASK_LABEL. Passed
+        // still refused under a dwarf's environment that overrides SPIRA_ASK_LABEL. Passed
         // as an explicit extra_env rather than a real env::set_var: the test binary is
         // multi-threaded, and every thread shares (and races on) the real process
         // environment.

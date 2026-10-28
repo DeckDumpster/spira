@@ -123,7 +123,7 @@ SPIRA_CONFIG_HOME="${SPIRA_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/spira}
 
 # The checkout the harness is installed in. `git -C ... --show-toplevel` rather than
 # "two directories up", because the harness may be installed anywhere, and because a
-# worktree must resolve to ITSELF — an aeon running from a worktree whose helpers resolve
+# worktree must resolve to ITSELF — a dwarf running from a worktree whose helpers resolve
 # to the installed copy on main is a version skew that shows up as nothing at all.
 # WITHOUT GIT'S HOOK ENVIRONMENT: a git hook runs with GIT_DIR exported, and with it set
 # --show-toplevel answers the -C directory itself — <repo>/spira — so a hook sourcing this
@@ -168,12 +168,12 @@ spira_toml_file() {
     printf '%s' "$SPIRA_TOML"
 }
 
-# _spira_fayth_paths -> every "*.fayth" file under the chamber in force, one per line.
-# SPIRA_CHAMBER_OVERLAY only replaces prompt text (aeon.sh's *.md overlay); fayth files
-# themselves are never overlaid, so only SPIRA_CHAMBER (or its default) is read here.
-_spira_fayth_paths() {
-    local dir="${SPIRA_CHAMBER:-$SPIRA_HOME/chamber}" f
-    for f in "$dir"/*.fayth; do
+# _spira_rune_paths -> every "*.rune" file under the runes in force, one per line.
+# SPIRA_RUNES_OVERLAY only replaces prompt text (dwarf.sh's *.md overlay); rune files
+# themselves are never overlaid, so only SPIRA_RUNES_DIR (or its default) is read here.
+_spira_rune_paths() {
+    local dir="${SPIRA_RUNES_DIR:-$SPIRA_HOME/runes}" f
+    for f in "$dir"/*.rune; do
         [ -f "$f" ] && printf '%s\n' "$f"
     done
 }
@@ -199,8 +199,8 @@ _spira_config_write() {
 }
 
 # spira_config_set <SPIRA_KEY> <value> — write one key into THIS process's own config file in
-# force. deploy.sh's SPIRA_PROD writer is the live bash caller (aeons.sh's fleet-ceiling
-# writer used to be the other one; the native `aeons` binary now calls `spira_config::set_path`
+# force. deploy.sh's SPIRA_PROD writer is the live bash caller (dwarves.sh's fleet-ceiling
+# writer used to be the other one; the native `dwarves` binary now calls `spira_config::set_path`
 # directly and never sources conf.sh for this). Both used to hand-edit spira.conf directly,
 # which is exactly the write spira_toml_resolve's auto-convert used to exist to survive. A
 # spira.conf deleted out from under one of those one-key rewrites created a fresh, one-key
@@ -213,7 +213,7 @@ spira_config_set() {
 # spira_config_unset <SPIRA_KEY> — remove one key from THIS process's own config file in
 # force, so it stops appearing rather than being left behind as an empty string. Symmetric
 # with spira_config_set above; kept as the generic primitive even though its own original
-# caller (aeons.sh's `unset` command) has since moved to the native `aeons` binary too.
+# caller (dwarves.sh's `unset` command) has since moved to the native `dwarves` binary too.
 spira_config_unset() {
     _spira_config_write unset "$(spira_toml_write_target)" "$1"
 }
@@ -235,8 +235,8 @@ SPIRA_TOML_FILE="$(spira_toml_file)"
 # (sp-ubcgo, "wave 4.5: conf.sh becomes an eval of resolve").
 #
 # `--sh-all`, NOT `--sh`: this shell SOURCES the result rather than inheriting it across an
-# exec boundary, so every resolved key belongs here — including SPIRA_REPO_MAP, SPIRA_FAYTHS
-# and SPIRA_MAX_AEONS, which `--sh`'s narrower, typed export set deliberately omits because
+# exec boundary, so every resolved key belongs here — including SPIRA_REPO_MAP, SPIRA_RUNES
+# and SPIRA_MAX_DWARVES, which `--sh`'s narrower, typed export set deliberately omits because
 # those three must never reach a CHILD process (see "WHAT IS EXPORTED, AND WHAT MUST NEVER
 # BE" below, which re-exports only that narrower set to this process's own children — the
 # export list itself is unchanged by this bead).
@@ -300,7 +300,7 @@ unset _spira_conf_here _spira_conf_home_env _spira_conf_real_dir
 # once, so re-sourcing does not grow PATH. It then resolves SPIRA_BD from that PATH, unless
 # the environment or spira.toml already gave it one (sp-s2zvn, scar from 2026-09-08: a bare
 # ${SPIRA_BD:-bd} fallback in lib.sh could silently pick a different binary depending on
-# whether the caller was a login shell, a systemd unit or an aeon's confined environment —
+# whether the caller was a login shell, a systemd unit or a dwarf's confined environment —
 # all three disagree about PATH order).
 #
 # PATH, HOME and SPIRA_PATH are passed on THIS ONE CALL'S OWN ENVIRONMENT, not by exporting
@@ -339,8 +339,8 @@ SPIRA_BD="$SPIRA_BD" SPIRA_DB="${SPIRA_DB:-}" SPIRA_RUN="${SPIRA_RUN:-}" \
 # has run. The database was at schema v61, migrated by the accidental v1.2.0/v1.2.1 release,
 # and every bd newer than v1.1.0 refused it outright — a refusal that EXITS 0 with the
 # complaint on stdout, so a caller checking status read success and parsed an error as data.
-# On 2026-09-08 a CGO rebuild of bd landed in ~/.local/bin, fayth_ready returned nothing, the
-# sentinel logged "no fayth in the chamber" for every persona, and Spira summoned nothing for
+# On 2026-09-08 a CGO rebuild of bd landed in ~/.local/bin, rune_ready returned nothing, the
+# sentinel logged "no rune in the runes" for every persona, and Spira called nothing for
 # six minutes while the panes showed 0 ready rather than a fault.
 #
 # The rollback (sp-6ylz, 2026-09-08 18:14) ran and was reverted three minutes later at 18:17:
@@ -356,13 +356,13 @@ SPIRA_BD="$SPIRA_BD" SPIRA_DB="${SPIRA_DB:-}" SPIRA_RUN="${SPIRA_RUN:-}" \
 # --------------------------------------------------------------------------------------
 # WHAT IS EXPORTED, AND WHAT MUST NEVER BE.
 #
-# EXPORTED, because the readers are not all shell: a python one-liner, an aeon's session and
+# EXPORTED, because the readers are not all shell: a python one-liner, a dwarf's session and
 # the Rust attention panel are all children of a process that sourced this file, and the
 # alternative — threading each value through argv at every call site — is where one gets
 # dropped and the tool silently reads a different database.
 #
 # NOT EXPORTED: EVERYTHING DERIVED FROM WHERE THIS FILE SITS. SPIRA_HOME, SPIRA_REPO, the
-# maps, the chamber, the cockpit, the runtime directory. Those differ per COPY of the
+# maps, the runes, the cockpit, the runtime directory. Those differ per COPY of the
 # harness, and anything that sources its own conf.sh must resolve them from its own location.
 # Exporting them cost eleven tests in one go: a fixture library, sourced by a suite for its
 # database helpers, published the live installation's SPIRA_HOME into the environment of the
@@ -374,8 +374,8 @@ SPIRA_BD="$SPIRA_BD" SPIRA_DB="${SPIRA_DB:-}" SPIRA_RUN="${SPIRA_RUN:-}" \
 # `env -i`: configuration reaches the harness's own children and stops at the boundary of
 # anything being judged.
 #
-# SPIRA_FAYTHS and SPIRA_MAX_AEONS are also not exported. They are policy for THIS host, read
-# in-process, and exporting SPIRA_FAYTHS is the scar that statute is named for — it reached a
+# SPIRA_RUNES and SPIRA_MAX_DWARVES are also not exported. They are policy for THIS host, read
+# in-process, and exporting SPIRA_RUNES is the scar that statute is named for — it reached a
 # test suite through systemd and made the suite assert the host's roster instead of the
 # defaults it was written to check.
 

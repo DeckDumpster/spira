@@ -1,7 +1,7 @@
 //! Who holds `spira/<id>`: nobody, a finished session's leftover worktree, or a LIVE holder.
 //!
 //! The defect this module exists for (sp-x1c6k): "checked out in some worktree" was read as
-//! "live", and a finished aeon never removes its own worktree, so every submitted bead read as
+//! "live", and a finished dwarf never removes its own worktree, so every submitted bead read as
 //! busy forever. Liveness is decided by witnesses, never by the registration alone.
 
 use serde::{Deserialize, Serialize};
@@ -37,12 +37,12 @@ pub fn witness(run: &Path, id: &str, seam: &dyn Seam) -> Option<String> {
     if let Some(pid) = live_pid(&run.join(format!("hold-{id}.pid"))) {
         return Some(format!("hold-{id}.pid names live pid {pid}"));
     }
-    // 2. the bead's aeon: aeon-<fayth>-<id>.pid whose identity lease is still running.
+    // 2. the bead's dwarf: dwarf-<rune>-<id>.pid whose identity lease is still running.
     if let Ok(rd) = std::fs::read_dir(run) {
         let suffix = format!("-{id}.pid");
         for e in rd.flatten() {
             let n = e.file_name().to_string_lossy().into_owned();
-            if n.starts_with("aeon-") && n.ends_with(&suffix) && sending::reap::aeon_alive(&e.path()) {
+            if n.starts_with("dwarf-") && n.ends_with(&suffix) && hel::reap::dwarf_alive(&e.path()) {
                 return Some(format!("{n} holds a running identity lease"));
             }
         }

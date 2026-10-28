@@ -164,7 +164,7 @@ pub fn build(cfg: &Config, git: &dyn Git, cargo: &dyn Cargo, o: &BuildOpts) -> R
 
     // MODEL-BIN (sp-zf4q3): the one release directory the model's restricted PATH names —
     // only `work`, linked to ../bin/work — so no tool in bin/ that calls bd is reachable by
-    // name from inside an aeon's session.
+    // name from inside a dwarf's session.
     spira_config::release_env::link_model_bin(&stage).map_err(|e| format!("{sha}: {e}"))?;
 
     let clashes = clashes(&stage, &o.system_dirs);

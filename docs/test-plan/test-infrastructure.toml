@@ -204,7 +204,7 @@ bead = "sp-b99nj"
 [[use_case]]
 id = "UC-test-infrastructure-27"
 tier = "T1"
-statement = "Filing: each red files one bead with ref `suite:<name>`, sin-exempt, labelled plan + `repo:`, at the declared priority, with its output. If there is no output, the body carries a \"no output\" sentinel. A recurring or changed failure stays on one bead and logs a recurrence. Same-cause reds file one cluster bead naming all members, with a stable ref and a suppressed count reported. Fixture-faults file one bead naming all borrowers. Setup-faults name the suite, not the covered file. Timeouts name the limit. Greens and skips file nothing."
+statement = "Filing: each red files one bead with ref `suite:<name>`, fenrir-exempt, labelled plan + `repo:`, at the declared priority, with its output. If there is no output, the body carries a \"no output\" sentinel. A recurring or changed failure stays on one bead and logs a recurrence. Same-cause reds file one cluster bead naming all members, with a stable ref and a suppressed count reported. Fixture-faults file one bead naming all borrowers. Setup-faults name the suite, not the covered file. Timeouts name the limit. Greens and skips file nothing."
 
 [use_case.uncovered]
 reason = "file_red/file_cluster/file_fixture_fault/file_setup_fault lived only in suites.sh's cmd_run, retired with the background suites sweep"

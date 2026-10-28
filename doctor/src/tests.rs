@@ -246,7 +246,7 @@ impl World for Fake {
     fn sccache_dav_addr(&self) -> Option<String> {
         self.sccache_dav_addr.borrow().clone()
     }
-    fn aeon_warm_base(&self) -> Option<PathBuf> {
+    fn dwarf_warm_base(&self) -> Option<PathBuf> {
         self.warm_base.borrow().clone()
     }
     fn on_tmpfs(&self, p: &Path) -> bool {
@@ -406,21 +406,21 @@ fn config_files_passes_when_every_registered_key_resolves() {
     assert_eq!(levels(&out), vec![Level::Ok, Level::Ok, Level::Ok], "{out:?}");
 }
 
-// ============================================================================ chamber overlays
+// ============================================================================ runes overlays
 
 #[test]
-fn chamber_overlays_none_active() {
+fn runes_overlays_none_active() {
     let f = Fake::default();
-    f.set("SPIRA_CHAMBER_OVERLAY", "/overlay");
-    assert_eq!(levels(&check_chamber_overlays(&f)), vec![Level::Ok]);
+    f.set("SPIRA_RUNES_OVERLAY", "/overlay");
+    assert_eq!(levels(&check_runes_overlays(&f)), vec![Level::Ok]);
 }
 
 #[test]
-fn chamber_overlays_active_named() {
+fn runes_overlays_active_named() {
     let f = Fake::default();
-    f.set("SPIRA_CHAMBER_OVERLAY", "/overlay");
+    f.set("SPIRA_RUNES_OVERLAY", "/overlay");
     f.md_files.borrow_mut().insert(PathBuf::from("/overlay"), vec!["builder/note.md".into()]);
-    let out = check_chamber_overlays(&f);
+    let out = check_runes_overlays(&f);
     assert_eq!(out[0].level, Level::Ok);
     assert!(out[0].msg.contains("builder/note.md"));
 }
@@ -663,23 +663,23 @@ fn sccache_present_but_unresponsive_to_help_fails() {
     assert!(lines[0].msg.contains("did not answer --help"), "{:?}", lines[0].msg);
 }
 
-// -------------------------------------------------------- aeon warm slots
+// -------------------------------------------------------- dwarf warm slots
 
 #[test]
 fn warm_base_check_names_an_unset_key_a_base_off_tmpfs_and_a_good_one() {
     let f = Fake::default();
-    let unset = check_aeon_warm(&f);
+    let unset = check_dwarf_warm(&f);
     assert_eq!(levels(&unset), vec![Level::Fail]);
-    assert!(unset[0].msg.contains("SPIRA_AEON_WARM_BASE"), "{:?}", unset[0].msg);
-    assert!(unset[0].detail.as_deref().unwrap_or("").contains("aeon_warm_base"), "{:?}", unset[0].detail);
+    assert!(unset[0].msg.contains("SPIRA_DWARF_WARM_BASE"), "{:?}", unset[0].msg);
+    assert!(unset[0].detail.as_deref().unwrap_or("").contains("dwarf_warm_base"), "{:?}", unset[0].detail);
 
     *f.warm_base.borrow_mut() = Some("/var/warm".into());
-    let off = check_aeon_warm(&f);
+    let off = check_dwarf_warm(&f);
     assert_eq!(levels(&off), vec![Level::Warn], "planted offender: a base on the root disk must be caught");
     assert!(off[0].msg.contains("not a tmpfs"), "{:?}", off[0].msg);
 
     f.tmpfs.borrow_mut().push("/var".into());
-    assert_eq!(levels(&check_aeon_warm(&f)), vec![Level::Ok]);
+    assert_eq!(levels(&check_dwarf_warm(&f)), vec![Level::Ok]);
 }
 
 // -------------------------------------------------------- compilation cache backend (sp-xtdqi)
@@ -839,7 +839,7 @@ fn failed_units_outside_install_fails() {
 fn failed_units_during_install_warns() {
     let f = Fake::default();
     f.set("SPIRA_DOCTOR_INSTALLING", "1");
-    *f.failed_units.borrow_mut() = Ok(vec!["spira-summon-prod.service".into()]);
+    *f.failed_units.borrow_mut() = Ok(vec!["spira-call-prod.service".into()]);
     let out = check_failed_units(&f);
     assert_eq!(out[0].level, Level::Warn);
     assert!(out[0].msg.contains("predates this install"));
@@ -1141,12 +1141,12 @@ fn prod_checkout_each_offender_gets_a_line() {
 }
 
 #[test]
-fn prod_checkout_transient_and_aeon_units_are_not_flagged() {
+fn prod_checkout_transient_and_dwarf_units_are_not_flagged() {
     let f = Fake::default();
     f.set("SPIRA_RELEASES", "/fixture/releases");
     *f.unit_execs.borrow_mut() = Ok(vec![
         exec_row("spira-job.service", "transient", "/co/job"),
-        exec_row("spira-aeon-x.service", "static", "/co/aeon"),
+        exec_row("spira-dwarf-x.service", "static", "/co/dwarf"),
         exec_row("spira-nopath.service", "enabled", ""),
     ]);
     assert_eq!(levels(&check_prod_checkout(&f)), vec![Level::Ok]);

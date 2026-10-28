@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
-# warm-full.sh — says when the aeon warm-slot tmpfs passes 85%, with each slot's size, as a watchd daemon.
+# warm-full.sh — says when the dwarf warm-slot tmpfs passes 85%, with each slot's size, as a watchd daemon.
 #
 #   warm-full.sh pass                              one check
 #   warm-full.sh watch [--interval S] [--ticks N]  loop forever (or N times)
 #   warm-full.sh health                            non-zero when the loop stopped polling
 #
 # The crossing into full is said once; falling back under clears it. Silent while
-# SPIRA_AEON_WARM_BASE is unset or absent. Every pass first empties each slot no session
-# holds that is over SPIRA_AEON_WARM_CAP_MIB, or any idle slot once the tmpfs is past the limit.
+# SPIRA_DWARF_WARM_BASE is unset or absent. Every pass first empties each slot no session
+# holds that is over SPIRA_DWARF_WARM_CAP_MIB, or any idle slot once the tmpfs is past the limit.
 #
 # covers: spira/warm-full.sh spira/watchers
 set -uo pipefail
@@ -26,7 +26,7 @@ _wf_say() {
 }
 
 _wf_reap_idle() {
-    local base="$1" pct="$2" lim="$3" cap="${SPIRA_AEON_WARM_CAP_MIB:-0}" lock slot mib
+    local base="$1" pct="$2" lim="$3" cap="${SPIRA_DWARF_WARM_CAP_MIB:-0}" lock slot mib
     for lock in "$base"/slot.[0-9]*.lock; do
         [ -e "$lock" ] || continue
         slot="${lock%.lock}"
@@ -42,8 +42,20 @@ _wf_reap_idle() {
     done
 }
 
+_wf_holders() {
+    local lock out="" who
+    for lock in "$1"/slot.[0-9]*.lock; do
+        [ -e "$lock" ] || continue
+        (flock -n 9) 9>>"$lock" && continue
+        who="$(tr -dc 'A-Za-z0-9._-' < "$lock" 2>/dev/null)"
+        out="$out $(basename "${lock%.lock}")=${who:-unknown}"
+    done
+    [ -n "$out" ] && printf ' (held by:%s)' "$out"
+    return 0
+}
+
 cmd_pass() {
-    local base="${SPIRA_AEON_WARM_BASE:-}" lim=85 pct sizes
+    local base="${SPIRA_DWARF_WARM_BASE:-}" lim=85 pct sizes
     [ -n "$base" ] && [ -d "$base" ] || return 0
     pct="$(df --output=pcent "$base" 2>/dev/null | tail -n 1 | tr -dc '0-9')"
     [ -n "$pct" ] || return 0
@@ -53,7 +65,7 @@ cmd_pass() {
     if [ "$pct" -lt "$lim" ]; then rm -f "$SAID"; return 0; fi
     [ -e "$SAID" ] && return 0
     sizes="$(du -sm "$base"/slot.[0-9]* 2>/dev/null | awk '{n=$2; sub(".*/","",n); printf "%s=%sMiB ", n, $1}')"
-    _wf_say "aeon warm tmpfs $base is ${pct}% full (limit ${lim}%): ${sizes:-no slots}; the slots a session holds cannot be emptied"
+    _wf_say "dwarf warm tmpfs $base is ${pct}% full (limit ${lim}%): ${sizes:-no slots}; the slots a session holds cannot be emptied$(_wf_holders "$base")"
     mkdir -p "$(dirname "$SAID")" && : > "$SAID"
 }
 

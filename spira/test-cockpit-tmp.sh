@@ -44,7 +44,7 @@ touch "$RUN/.cockpit.99999" "$RUN/.cockpit.orphan"
                       || bad "expected 2 orphaned temps staged, found $(temps)"
 
 tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
-    SPIRA_FAYTHS=t SPIRA_COCKPIT="$TMP"
+    SPIRA_RUNES=t SPIRA_COCKPIT="$TMP"
 env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     cockpit-collect sweep-temps >/dev/null 2>&1

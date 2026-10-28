@@ -5,14 +5,14 @@
 #
 #   ./test-priority-bands.sh
 #
-# The loop takes ready work in priority order and runs one aeon at a time, so the two default
+# The loop takes ready work in priority order and runs one dwarf at a time, so the two default
 # bands decide what is ever reached. Suite reds are the harness reporting on itself; ingested
 # issues are somebody outside saying something is broken for them. When the first band sat at
 # or above the second, three days produced 103 self-maintenance commits against 8 on reported
 # bugs, and 22 reported bugs were ready the whole time and never started.
 #
 # The RELATIONSHIP is what is asserted. Either default can move; what may not happen is the
-# harness's own findings drawing an aeon ahead of a user's.
+# harness's own findings drawing a dwarf ahead of a user's.
 #
 # tier: T1
 # covers: spira/conf.sh testenv/src/suites/ports.rs gh-intake/src/main.rs incident/src/main.rs UC-ops-detection-remediation-36
@@ -50,7 +50,7 @@ if [ "$self_pri" -gt "$user_pri" ]; then
     ok "a suite red does not outrank a reported bug (P$self_pri behind P$user_pri)"
 else
     bad "a suite red does not outrank a reported bug" \
-        "suite reds file at P$self_pri and reported bugs at P$user_pri — self-maintenance draws the aeon first, indefinitely"
+        "suite reds file at P$self_pri and reported bugs at P$user_pri — self-maintenance draws the dwarf first, indefinitely"
 fi
 
 # THE SAME FOR A MACHINE-OBSERVED INCIDENT. This defaulted to P1 inside incident.sh — the

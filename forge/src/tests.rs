@@ -1376,6 +1376,22 @@ fn workflow_rerun_still_serves_a_fault_and_an_unreadable_run() {
     assert!(rerun_called(&unreadable));
 }
 
+#[test]
+fn workflow_rerun_serves_a_suites_job_killed_acquiring_the_image_not_a_failed_suite() {
+    let killed = rerun_gh(
+        "failure",
+        r#"{"jobs":[{"name":"suites","conclusion":"failure","steps":[{"name":"Acquire the test image","conclusion":"failure"},{"name":"Suites","conclusion":"skipped"}]}]}"#,
+    );
+    assert_eq!(workflow_rerun(&killed, repo(), "9").code, 0);
+    assert!(rerun_called(&killed));
+    let real = rerun_gh(
+        "failure",
+        r#"{"jobs":[{"name":"suites","conclusion":"failure","steps":[{"name":"Acquire the test image","conclusion":"success"},{"name":"Suites","conclusion":"failure"}]}]}"#,
+    );
+    assert_eq!(workflow_rerun(&real, repo(), "9").code, 3);
+    assert!(!rerun_called(&real));
+}
+
 // ── stranded-runners ─────────────────────────────────────────────────────────────────────
 
 const NOW: u64 = 1_790_640_000 + 3600;

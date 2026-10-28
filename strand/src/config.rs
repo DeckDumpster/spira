@@ -2,7 +2,7 @@
 //! 2026-10-05): every registered key below goes through `spira_config::process::cfg`/
 //! `cfg_parse`, resolved once per process, no environment override, no Rust-side default
 //! atop a declared value. A handful of fields are NOT registered config at all (test-only
-//! knobs, per-invocation seams like `SPIRA_SYSTEMCTL`/`SPIRA_SUMMON`, or process-identity
+//! knobs, per-invocation seams like `SPIRA_SYSTEMCTL`/`SPIRA_CALL`, or process-identity
 //! like `BEADS_ACTOR`) — those still come from `Source::env`, exactly as before.
 
 use std::path::PathBuf;
@@ -19,9 +19,9 @@ pub struct Config {
     pub ci_label: String,
     pub scope_label: String,
     pub no_loop_label: String,
-    /// `SPIRA_MAX_AEONS` — Some(0) is the operator's deliberate "no aeons" (pool-paused).
-    pub max_aeons: Option<u32>,
-    pub max_live_aeons: u32,
+    /// `SPIRA_MAX_DWARVES` — Some(0) is the operator's deliberate "no dwarves" (pool-paused).
+    pub max_dwarves: Option<u32>,
+    pub max_live_dwarves: u32,
     pub throttle_release_at: String,
     /// The spira-claim program: `spira-claim`, by name on the launcher's PATH (sp-gypjk). A
     /// field only so a unit test can hand in a recorder.
@@ -34,7 +34,7 @@ pub struct Config {
     pub bd_timeout: String,
     pub list_snapshot: Option<PathBuf>,
     pub systemctl: String,
-    pub summon: String,
+    pub call: String,
     pub capacity_pause: Option<PathBuf>,
     pub throttle_stamp: Option<PathBuf>,
     pub beads_actor: String,
@@ -46,15 +46,15 @@ pub struct Config {
     pub work_close_types: String,
     /// `SPIRA_ID_PREFIX` (detect_invalid_closed's tracking-reference regex).
     pub id_prefix: String,
-    /// `SPIRA_FAYTHS` — `aeons_live_lanes`' override onto `spira_lane_fayths`'s own chamber
+    /// `SPIRA_RUNES` — `dwarves_live_lanes`' override onto `spira_lane_runes`'s own runes
     /// scan. Read here, once, so that pure probe logic never reads the environment itself.
-    pub fayths_override: Option<String>,
-    /// `SPIRA_LANES` — the declared lane names a lane persona must be listed in to be summoned.
+    pub runes_override: Option<String>,
+    /// `SPIRA_LANES` — the declared lane names a lane persona must be listed in to be called.
     pub lanes: Vec<String>,
 }
 
 /// The remaining, NOT-registered lookups `resolve` still makes: a test-only knob, a seam
-/// name (`SPIRA_SYSTEMCTL`/`SPIRA_SUMMON`), or process identity (`BEADS_ACTOR`) — none of
+/// name (`SPIRA_SYSTEMCTL`/`SPIRA_CALL`), or process identity (`BEADS_ACTOR`) — none of
 /// these live in `spira/conf.d`, so none of them go through `spira_config::process::cfg`.
 pub trait Source {
     fn env(&self, key: &str) -> Option<String>;
@@ -109,8 +109,8 @@ impl Config {
             scope_label: String::new(),
             // literal-ok: a test fixture declaring its own label values
             no_loop_label: "no-loop".into(),
-            max_aeons: Some(4),
-            max_live_aeons: 0,
+            max_dwarves: Some(4),
+            max_live_dwarves: 0,
             throttle_release_at: "8".into(),
             claim_bin: "spira-claim".into(),
             instance: Some("prod".into()),
@@ -121,7 +121,7 @@ impl Config {
             bd_timeout: "180".into(),
             list_snapshot: None,
             systemctl: "systemctl".into(),
-            summon: "systemd-run".into(),
+            call: "systemd-run".into(),
             capacity_pause: None,
             throttle_stamp: None,
             beads_actor: "harness".into(),
@@ -129,7 +129,7 @@ impl Config {
             groom_ask_label: "groom-asked".into(),
             work_close_types: "task bug feature".into(),
             id_prefix: "sp".into(),
-            fayths_override: None,
+            runes_override: None,
             lanes: Vec::new(),
         }
     }
@@ -162,25 +162,25 @@ impl Config {
         let num_env = |env: &str, def: i64| src.env(env).and_then(|v| v.trim().parse().ok()).unwrap_or(def);
         let str_env = |env: &str, def: &str| src.env(env).filter(|v| !v.is_empty()).unwrap_or_else(|| def.to_string());
 
-        let max_aeons_raw = cfg("SPIRA_MAX_AEONS")?;
-        let max_aeons = if max_aeons_raw.trim().is_empty() {
+        let max_dwarves_raw = cfg("SPIRA_MAX_DWARVES")?;
+        let max_dwarves = if max_dwarves_raw.trim().is_empty() {
             None
         } else {
             Some(
-                max_aeons_raw
+                max_dwarves_raw
                     .trim()
                     .parse::<u32>()
-                    .map_err(|e| format!("SPIRA_MAX_AEONS = {max_aeons_raw:?} in spira.toml does not parse: {e}"))?,
+                    .map_err(|e| format!("SPIRA_MAX_DWARVES = {max_dwarves_raw:?} in spira.toml does not parse: {e}"))?,
             )
         };
-        let max_live_raw = cfg("SPIRA_MAX_LIVE_AEONS")?;
-        let max_live_aeons = if max_live_raw.trim().is_empty() {
+        let max_live_raw = cfg("SPIRA_MAX_LIVE_DWARVES")?;
+        let max_live_dwarves = if max_live_raw.trim().is_empty() {
             0
         } else {
             max_live_raw
                 .trim()
                 .parse::<u32>()
-                .map_err(|e| format!("SPIRA_MAX_LIVE_AEONS = {max_live_raw:?} in spira.toml does not parse: {e}"))?
+                .map_err(|e| format!("SPIRA_MAX_LIVE_DWARVES = {max_live_raw:?} in spira.toml does not parse: {e}"))?
         };
 
         let bd = cfg("SPIRA_BD")?;
@@ -206,8 +206,8 @@ impl Config {
             ci_label: cfg("SPIRA_CI_LABEL")?,
             scope_label: cfg("SPIRA_SCOPE_LABEL")?,
             no_loop_label: cfg("SPIRA_NO_LOOP_LABEL")?,
-            max_aeons,
-            max_live_aeons,
+            max_dwarves,
+            max_live_dwarves,
             throttle_release_at: cfg("SPIRA_QUEUE_THROTTLE_RELEASE_AT")?,
             claim_bin: "spira-claim".into(),
             instance: nonempty(cfg("SPIRA_INSTANCE")?),
@@ -218,7 +218,7 @@ impl Config {
             bd_timeout: str_env("BD_TIMEOUT", "180"),
             list_snapshot: path("SPIRA_LIST_SNAPSHOT"),
             systemctl: str_env("SPIRA_SYSTEMCTL", "systemctl"),
-            summon: str_env("SPIRA_SUMMON", "systemd-run"),
+            call: str_env("SPIRA_CALL", "systemd-run"),
             capacity_pause: path("SPIRA_CAPACITY_PAUSE"),
             throttle_stamp: path("SPIRA_THROTTLE_STAMP"),
             beads_actor: str_env("BEADS_ACTOR", "harness"),
@@ -226,12 +226,12 @@ impl Config {
             groom_ask_label: cfg("SPIRA_GROOM_ASK_LABEL")?,
             work_close_types: cfg("SPIRA_WORK_CLOSE_TYPES")?,
             id_prefix: cfg("SPIRA_ID_PREFIX")?,
-            fayths_override: nonempty(cfg("SPIRA_FAYTHS")?),
+            runes_override: nonempty(cfg("SPIRA_RUNES")?),
             lanes: cfg("SPIRA_LANES")?.split_whitespace().map(str::to_string).collect(),
         })
     }
 
-    /// The exclusions a partition whose fayth declares none falls back to.
+    /// The exclusions a partition whose rune declares none falls back to.
     pub fn exclude_default(&self) -> String {
         format!("spira-poison,{},{}", self.vocab.ask, self.ci_label)
     }
@@ -286,7 +286,7 @@ mod tests {
                 ("SPIRA_DB", "/db"),
                 ("SPIRA_RUN", "/r"),
                 ("SPIRA_BD", "bd"),
-                ("SPIRA_MAX_AEONS", "0"),
+                ("SPIRA_MAX_DWARVES", "0"),
                 ("SPIRA_SCOPE_LABEL", ""),
                 ("SPIRA_QUEUE_THROTTLE_RELEASE_AT", "12"),
             ],
@@ -308,7 +308,7 @@ mod tests {
         assert_eq!(c.vocab.ask, "ask-x");
         assert_eq!(c.run, Some(PathBuf::from("/r")));
         assert_eq!(c.db.as_deref(), Some("/db"));
-        assert_eq!(c.max_aeons, Some(0));
+        assert_eq!(c.max_dwarves, Some(0));
         assert_eq!(c.scope_label, "", "an explicitly empty scope disables it — still Ok, not a refusal");
         assert_eq!(c.throttle_release_at, "12");
         assert_eq!(c.vocab.submitted, "spira-submitted");

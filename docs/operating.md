@@ -20,7 +20,7 @@ bead.sh lint [--all|<id>...]
 tool and the claim predicate cannot disagree. Kinds without a persona (`event`, `escalation`,
 `proposal`, `insight`) are created closed and are deliberately unclaimable. A `--repo` not in
 the registry is refused. A bead whose description carries a `Target:` line closes only with a
-verdict (`work submit --met|--contradicted|--short`). The sentinel summons aeons for ready
+verdict (`work submit --met|--contradicted|--short`). The sentinel calls dwarves for ready
 beads; `sentinel --report` prints the open plan beads without changing anything.
 
 ## Queue modes
@@ -50,7 +50,7 @@ closed bead is not a landed bead.
 
 For queue repositories `batcher rounds-local` (every 30 s) cuts, tests and lands rounds, and
 `queue step --all` (every 2 min) settles open batches. A round that goes red is attributed to a
-member (path-based auto-eject, else a summoned `mender` or `batcher` judgement). Read and drive
+member (path-based auto-eject, else a called `mender` or `batcher` judgement). Read and drive
 rounds with:
 
 Switch a repository's mode with `queue mode-switch <repo> <queue.forge|queue.local>`: it settles
@@ -86,14 +86,14 @@ worktree: merging does not deploy, activation does.
 
 | Question | Look here |
 |---|---|
-| What is in each state, and what is stuck beyond its normal dwell? | Loom (`SPIRA_LOOM_ADDR`): `/`, `/stuck`, `/states`, `/lifecycle`, `/aeons`, `/units`, `/rounds`, `/rounds/<repo>/<batch>` (+ `/log`), `/beads/<id>`; JSON under `/api/` (`stuck states lifecycle aeons units ops rounds/<repo>/<batch>`) |
+| What is in each state, and what is stuck beyond its normal dwell? | Loom (`SPIRA_LOOM_ADDR`): `/`, `/stuck`, `/states`, `/lifecycle`, `/dwarves`, `/units`, `/rounds`, `/rounds/<repo>/<batch>` (+ `/log`), `/beads/<id>`; JSON under `/api/` (`stuck states lifecycle dwarves units ops rounds/<repo>/<batch>`) |
 | Work claimed but nobody is working it | `strand report [--json]`; `strand check --dry-run` (`strand check` is the timer path) |
 | Which failure classes keep recurring | `census [--with-suppressed]` |
 | What the watchers saw | `watchd status`; `watchd peek [name] [--all] [--limit N]`; `watchd tail <name>` (stream from the cursor; one reader per watcher); `watchd next <name> [--timeout SECS]`; `watchd drain [name] [--all]` |
 | Operator-facing questions and alerts | `mail list operator --unread`, `mail read operator [<message>]`, `mail count operator`; asks: `spira-lc list-asks [--state S]`, `spira-lc show-ask <id>` |
 | The cockpit and Concierge | `cockpit.sh` builds or repairs it and attaches; `cockpit.sh status` changes nothing; `cockpit.sh resume` after a planned reboot drain; `concierge.sh status` |
 | A gate | `gate status <bead>` |
-| Hold a bead by hand for non-aeon work | `hold.sh <bead-id> [--pid P \| --release]` |
+| Hold a bead by hand for non-dwarf work | `hold.sh <bead-id> [--pid P \| --release]` |
 | Statutes and runbooks | `rule list`, `rule show <slug>`, `rule enact <slug> "<text>" (--tool <cmd> \| --mechanism <bead> \| --tool none --reason <why>) [--dry-run]`, `rule audit`, `rule retire <slug>`; `sop list`, `sop show <slug>`, `sop write <slug> [-\|<file>]`, `sop match [-\|<file>]`, `sop lint`, `sop retire <slug>` |
 
 Never read state from the files, logs or process lists another component owns; each state has

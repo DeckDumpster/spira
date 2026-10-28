@@ -525,7 +525,7 @@ mod tests {
         let root = testkit::TempDir::new("reap-root");
         for n in [
             "sp-hh599-unit-env-cfg-mail-111-1-5",
-            "sp-hh599-unit-env-summon-svc-222-2-6",
+            "sp-hh599-unit-env-call-svc-222-2-6",
             "sp-hh599-unit-env-cfg-gh-intake-333-3-7",
             "unrelated-444-4-8",
             "sp-hh599-unit-env-nopid",
@@ -540,7 +540,7 @@ mod tests {
         assert_eq!(reap_stale_test_scratch(&root, zero, &alive, &|_| {}), 2);
         assert!(!root.join("sp-hh599-unit-env-cfg-mail-111-1-5").exists());
         assert!(!root.join("sp-hh599-unit-env-cfg-gh-intake-333-3-7").exists());
-        assert!(root.join("sp-hh599-unit-env-summon-svc-222-2-6").exists(), "pid held");
+        assert!(root.join("sp-hh599-unit-env-call-svc-222-2-6").exists(), "pid held");
         assert!(root.join("unrelated-444-4-8").exists());
         assert!(root.join("sp-hh599-unit-env-nopid").exists());
     }

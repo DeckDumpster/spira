@@ -88,6 +88,20 @@ want "a result line is announced" "ROUND RESULT 300: red sp-aaa" "$out"
 want "a verdict-less result is reported as its own condition" "ROUND NO VERDICTS 300" "$out"
 [ "$(printf '%s\n' "$out" | grep -c 'ROUND NO VERDICTS')" = 1 ]; is "only the verdict-less line raises it" "0" "$?"
 
+mkdir -p "$TMP/shim"
+for t in wc tail; do printf '#!/usr/bin/env bash\necho x >> "%s/calls.$(basename "$0")"\nexec %s "$@"\n' "$TMP" "$(command -v $t)" > "$TMP/shim/$t"; chmod +x "$TMP/shim/$t"; done
+scan_calls() {
+    rm -f "$TMP/run/rounds/"* "$TMP/calls."*
+    for i in $(seq 1 "$1"); do echo "green" > "$TMP/run/rounds/s$i.result"; done
+    : > "$TMP/run/rounds/open.result"
+    (sleep 1.5; echo "red sp-aaa" >> "$TMP/run/rounds/open.result") &
+    PATH="$TMP/shim:$PATH" run watch --interval 1 --ticks 4 > "$TMP/scan.out"; wait
+    cat "$TMP"/calls.* 2>/dev/null | wc -l
+}
+few="$(scan_calls 1)"; many="$(scan_calls 1000)"
+is "a tick launches no more wc/tail with 1000 settled results than with 1" "$few" "$many"
+[ "$(grep -c 'ROUND RESULT open: red sp-aaa' "$TMP/scan.out")" = 1 ]; is "a line appended to the open round is emitted exactly once" "0" "$?"
+
 run watch --interval 7 --ticks 1 >/dev/null
 run health >/dev/null; is "health passes after a fresh poll" "0" "$?"
 echo "ok 1 100 7" > "$TMP/run/watchd/round-duty.health"

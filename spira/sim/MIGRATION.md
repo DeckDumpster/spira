@@ -15,10 +15,10 @@ seconds from the bead; `?` is unmeasured.
 | test-certified-withdraw | 18 | reopening a certified, unbatched bead withdraws it from the next cut's draw; recertifying a new tip readmits it; the submitted label is stripped for every cause but the admission-exempt one | `resubmit-moved-tip` (tip move on SUBMITTED) | a reopen step; an expect on the cut's certified list; label state in the view | `reopen-certified`: certify, reopen, assert the cut skips it, resubmit, assert it lands |
 | test-queue-submit | 4 | `queue submit` certifies any branch the batcher can adopt and refuses the rest (non `spira/<id>`, bead-less, `spira-suite-state/*`) before any state is written | `happy-path`, `submit-from-other-cwd` (accepted submit only) | refusals: exit code and "no row written" for each refused shape | `submit-refused`: one step per bad shape, `exit` expected non-zero, invariant that no row appears |
 | test-landing-queue-early | 56 | a green forge verdict is landed at the top of the pass (`queue early:`), a pending one at the end (`queue late:`) | `long-gate-interleaving` (ordering of gate vs. landing) | a forge whose verdict changes mid-pass; the pass log as an event stream | `forge-green-early` and `forge-green-late`: scripted forge verdict flip, expect the landing seq before/after the gate event |
-| test-landing-rebase | 64 | survivors are rebased when the base moves; the loop-defer guard (live aeon holds the bead) defers; the checkout refresh runs unconditionally; the escalate path reopens | `conflicting-siblings` (conflict resolution order) | a withheld branch rebased on a base move; a live-aeon hold; operator-checkout state (skew); the reopen count | `survivor-rebase`, `aeon-holds-bead` (needs an aeon-claim actor), and a skew probe on the checkout |
+| test-landing-rebase | 64 | survivors are rebased when the base moves; the loop-defer guard (live dwarf holds the bead) defers; the checkout refresh runs unconditionally; the escalate path reopens | `conflicting-siblings` (conflict resolution order) | a withheld branch rebased on a base move; a live-dwarf hold; operator-checkout state (skew); the reopen count | `survivor-rebase`, `dwarf-holds-bead` (needs a dwarf-claim actor), and a skew probe on the checkout |
 | test-certify | 89 | one gate per tip; PASS certifies without a local rebase; FAIL reopens and does not certify; NO_VERDICT neither certifies nor reopens; ten branches in one pass cost ten gate runs | `certify-twice` (repeat verdict refused), `resubmit-moved-tip` (re-gate on a moved tip) | gate verdict kinds FAIL and NO_VERDICT; a gate-invocation count; the fan-out of ten | gate-worker modes `fail` and `no-verdict`, an expect on invocations per tip, and a ten-branch scenario (the heaviest world; weigh it against the 89 s) |
 | test-lifecycle-cert | ? | a GatePass whose tip mismatches is refused; moved tip on CERTIFIED returns to SUBMITTED with the gate key cleared; GateRed to REWORK; GateInfra stays SUBMITTED but advances the version; WORKING is auto-submitted before a verdict | `certify-twice`, `landstate-lifecycle-agree` | a tip-mismatched verdict; GateInfra; the row version and gate key in the view | gate-worker mode `infra`, a mismatched-tip step, and `lc_version` / `gate_key` columns in `bead_state` |
-| test-submitted-lands | ? | a bead submitted with `work submit` lands and closes in push mode; a RED gate sends it to REWORK and the next aeon reclaims and resubmits; pr/hold mode closes a bead found landed off-box; a CERTIFIED row is still landed by the same pass | `happy-path` (queue.local only) | the non-queue modes (push, pr, hold); a red then a re-claim by an aeon; an off-box merge; bead close state | a repo-mode parameter in the world and four scenarios (`push-lands`, `red-then-reclaim`, `offbox-merge`, `certified-in-pass`) |
+| test-submitted-lands | ? | a bead submitted with `work submit` lands and closes in push mode; a RED gate sends it to REWORK and the next dwarf reclaims and resubmits; pr/hold mode closes a bead found landed off-box; a CERTIFIED row is still landed by the same pass | `happy-path` (queue.local only) | the non-queue modes (push, pr, hold); a red then a re-claim by a dwarf; an off-box merge; bead close state | a repo-mode parameter in the world and four scenarios (`push-lands`, `red-then-reclaim`, `offbox-merge`, `certified-in-pass`) |
 | test-queue-land-local | ? | a green round fast-forwards the landing ref, marks members LANDED, closes beads citing the commit, archives the head; a non-fast-forward head, a repo not in queue.local mode and a held per-repo lock are refused; `SPIRA_QUEUE_LOCK_HELD=1` skips the wait; a quarantine edit lands as a change bead | `happy-path` (the success path) | refusals and their exit codes; lock contention between two actors; bead close reason; the archive | `land-refused`: non-ff head, wrong mode, held lock, lock-held bypass; assert ref unchanged |
 | test-land-local-release | ? | landing the harness builds, verifies and activates a release from the round's own corpus; no corpus is refused before anything changes; a failed build keeps `current` and the ref; no release in force skips activation; rollback re-activates and resets the ref; skew refresh only checks; an empty commit lands cleanly | `happy-path`, `cut-in-bare-env` (a build that succeeds) | build failure; absent corpus; rollback; skew match and mismatch; the empty-commit landing; the mock systemctl calls | `release-build-fails`, `release-rollback`, `release-skew`, and an empty-commit step (the first needs a failing build step in the cut actor) |
 | test-queue-publish | ? | publish pushes local/main's new commits to one forge branch and opens one PR; green fast-forwards the forge to identical SHAs with no bead close; red files one fix-forward bead without reopening a member; a PR closed unmerged is never green; a diverged forge refuses, alarms the Concierge once, and never blocks a local cut | `publish-then-cut` (green publish) | PR states (open, red, closed unmerged); divergence; the alarm's mail; the fix-forward bead | `publish-red`, `publish-closed`, `publish-diverged`: a forge actor with scripted PR states and a foreign push |
@@ -116,7 +116,7 @@ Left, and why:
 | test-landing-modes | its pr and queue sections need a forge that opens PRs and a certify step observed in the pass log (G10); its push section is the positive control that makes their silence mean something |
 | test-land-mode-local | four of five properties are `lib.sh` function checks, not world behaviour; the fifth reads a git-call log |
 | test-landing, test-landing-race, test-landing-base-fail | not G7 alone: G6 verdict kinds and G15 actors |
-| the bead.sh, repo-map, held, cockpit and chamber label suites | they read the registry and the bead CLI, not a running loop; a world adds nothing they lack |
+| the bead.sh, repo-map, held, cockpit and runes label suites | they read the registry and the bead CLI, not a running loop; a world adds nothing they lack |
 
 ## Run-directory tables (gap G14)
 
@@ -179,31 +179,31 @@ Left, each because it needs more than the mail table, the only gap its row names
 | test-mail, test-mail-mailbox-arg, test-mail-tidy, test-mail-health, test-accept-default-folded, test-mail-real-senders | `mail`'s own CLI contract (flags, lint, tidy ages, folded headers); a sim scenario would only wrap the verb. Candidates for the mail crate's unit tests, not the sim |
 | test-asks, test-verify-asks, test-mail-dismiss-sweep, test-mail-bead-render | the bead store's rows and message bodies (an `ask` bead table), not just the mail table |
 | test-verdict-flow, test-work-container | `work`/`sendmail` replies and decision-bead closing: the mail table needs a body column and an operator actor that answers |
-| test-pilgrimage, test-sin-exempt | a pilgrimage and an incident actor in the world |
+| test-pilgrimage, test-fenrir-exempt | a pilgrimage and an incident actor in the world |
 
-# Sim D3/G1 part 1: the real sentinel summons
+# Sim D3/G1 part 1: the real sentinel calls
 
-The world's `sentinel-summon` actor is `sentinel --summon-only` on `spira-summon.timer`, and the
-world's `SPIRA_SUMMON` is `sim-summon` (`sim` under that name), standing where `systemd-run ... aeon`
+The world's `sentinel-call` actor is `sentinel --call-only` on `spira-call.timer`, and the
+world's `SPIRA_CALL` is `sim-call` (`sim` under that name), standing where `systemd-run ... dwarf`
 stands. Claim ranking is `spira-claim select`, the claim is `lc_claim_bead` under a virtual-time lease,
-and every applied claim is appended to the world's `claim-order`. `sim summon`'s hand-written Claim
-event is gone. The real aeon replaces the stub-agent launch in part 2 (below).
+and every applied claim is appended to the world's `claim-order`. `sim call`'s hand-written Claim
+event is gone. The real dwarf replaces the stub-agent launch in part 2 (below).
 
 | suite | scenario | suite-seconds removed | red on the planted defect |
 |---|---|---|---|
-| test-builder-qa-proposed | `builder-excludes-qa-proposed` | 0 | `qa-proposed` dropped from builder.fayth's exclusions: the proposal is claimed |
+| test-builder-qa-proposed | `builder-excludes-qa-proposed` | 0 | `qa-proposed` dropped from builder.rune's exclusions: the proposal is claimed |
 
-`claim-rank` is new (a bead's priority decides who the sentinel's summon claims first, and the lease is
+`claim-rank` is new (a bead's priority decides who the sentinel's call claims first, and the lease is
 the world's clock plus an hour); seen red with `spira-claim`'s rank sort reversed. The sim lane, 16
 suites, ran 235 s.
 
-Left, and why (each needs the real aeon, part 2, or a full sentinel pass rather than `--summon-only`):
-test-summon-fast-path (also unit-tests lib.sh's `aeon_count`/`fayth_free`), test-sentinel-pass and
+Left, and why (each needs the real dwarf, part 2, or a full sentinel pass rather than `--call-only`):
+test-call-fast-path (also unit-tests lib.sh's `dwarf_count`/`rune_free`), test-sentinel-pass and
 test-dispatch-open-children (full-pass checks and dispatch), test-strand-submitted and
-test-strand-truncated (the strand binary), test-czar-partition (czar-pass), test-warden, test-fayth,
-test-lanes (lane concurrency needs live aeon units), and the 30-odd suites that read the aeon's brief.
+test-strand-truncated (the strand binary), test-czar-partition (czar-pass), test-warden, test-rune,
+test-lanes (lane concurrency needs live dwarf units), and the 30-odd suites that read the dwarf's brief.
 
-The sim lane reads `claim-order` for the real sentinel's claim rank and lease; gate-verdict-kinds fails its first gate once so the rework is steered before the next minute's summon.
+The sim lane reads `claim-order` for the real sentinel's claim rank and lease; gate-verdict-kinds fails its first gate once so the rework is steered before the next minute's call.
 
 Retired bash twins are listed above only once their scenario was seen red on the planted defect; gate-verdict-kinds was re-run green alone under testenv on the tip rebased onto the current landing ref, after the red-tip ejection.
 
@@ -217,32 +217,32 @@ A fourth gate-verdict-kinds run on the same tip was green (55s); the ejection di
 
 A fifth gate-verdict-kinds run under testenv on the tip rebased onto the landing ref was green (62s); sim lane and lint clean for the bead's files.
 
-# Sim D3/G1 part 2: the real aeon runs under the sentinel
+# Sim D3/G1 part 2: the real dwarf runs under the sentinel
 
-A scenario with `real_aeon = true` makes `sim-summon` run the real `aeon --home H <fayth>` the sentinel's
-summon argv names, with its `--setenv` pairs, instead of the hand-written claim and worktree. The aeon
+A scenario with `real_dwarf = true` makes `sim-call` run the real `dwarf --home H <rune>` the sentinel's
+call argv names, with its `--setenv` pairs, instead of the hand-written claim and worktree. The dwarf
 ranks, claims, builds its worktree, arms the commit hook, launches `SPIRA_AGENT`, tears down, and runs its
-fast tier. `SPIRA_AGENT` is the world's `bin/sim-aeon-agent`, a launcher that gives the stub agent
+fast tier. `SPIRA_AGENT` is the world's `bin/sim-dwarf-agent`, a launcher that gives the stub agent
 (`sim-agent`) the scenario and state paths the model's restricted environment drops. A scenario's `claim`
-steps script the stub for the bead the aeon picks, and a `file` step may carry the bead's `body` (a builder
+steps script the stub for the bead the dwarf picks, and a `file` step may carry the bead's `body` (a builder
 refuses a bead with no `## Build`).
 
 The brief the agent received is the `briefs` trace table, one row per session: `bead`, `n` (the bead's
-sessions from 1), `argv` (newline-joined), `system` (the system prompt file, read before the aeon removes
+sessions from 1), `argv` (newline-joined), `system` (the system prompt file, read before the dwarf removes
 it), `prompt` (stdin), `cwd`, and `env` (the restricted environment as one JSON object). An `expect` or an
 `invariant` is SQL over it. A stub-mode scenario's rows carry an empty argv and prompt.
 
-World choices the real aeon forced: the aeon's `--home` is a directory of links to the release's harness
-tree (its guard against FAYTH keys nothing consumes judges a source workspace, which a release is not); the
+World choices the real dwarf forced: the dwarf's `--home` is a directory of links to the release's harness
+tree (its guard against RUNE keys nothing consumes judges a source workspace, which a release is not); the
 world's `spira-lint` is inert (the fast tier's tree-wide rules judge crates the sparse checkout does not
 carry), while the commit hook still runs the release's own; the sparse checkout keeps the fence scripts and
-allow list that hook reads; `spira.summon_jitter` is 0 and `spira.aeon_warm_base` is inside the world.
+allow list that hook reads; `spira.call_jitter` is 0 and `spira.dwarf_warm_base` is inside the world.
 
 | suite | scenario | suite-seconds removed | red on the planted defect |
 |---|---|---|---|
-| test-aeon-slain-attempts | `aeon-slain` | 8 | the slain release without its net-zero requeue event: `slain-gap.sh` exit 9, "has 1 attempt(s) after a slain release" |
+| test-dwarf-slain-attempts | `dwarf-slain` | 8 | the slain release without its net-zero requeue event: `slain-gap.sh` exit 9, "has 1 attempt(s) after a slain release" |
 
-`aeon-brief` pins what the first session was handed (the builder's system prompt names the bead and its
+`dwarf-brief` pins what the first session was handed (the builder's system prompt names the bead and its
 branch, repo project instructions reach the model, the session runs in the bead's worktree under an
 environment bound to the bead and holding no credential). It retires no suite by itself; it was seen red
 with `claude_argv`'s project-instructions condition inverted (`repo_instructions_reach_the_model` unmet).
@@ -251,10 +251,10 @@ Left, and why:
 
 | suite | why it stays |
 |---|---|
-| test-fayth-project-instructions | half is static (each fayth file declares its value) and half is the archivist's `--add-dir`, neither a session the aeon runs |
-| test-aeon-lifecycle-cutover | the lifecycle functions called by name (`lc_claim_bead`, `lc_release_bead`) and the stacked-dependents ready set need their own rows and a state the world does not seed |
-| test-aeon-worktree-collision, test-aeon-prod-dirty*, test-aeon-resume*, test-concierge | they hold a worktree or a prior session's state across two aeons, or script the resume brief from a transcript; the world has no second concurrent aeon or seeded resume record |
-| test-aeon-dirty-commit, test-aeon-base-ref-qualify, test-branch-guard | `lib.sh` and hook functions called directly in a scratch repository, not a session |
+| test-rune-project-instructions | half is static (each rune file declares its value) and half is the archivist's `--add-dir`, neither a session the dwarf runs |
+| test-dwarf-lifecycle-cutover | the lifecycle functions called by name (`lc_claim_bead`, `lc_release_bead`) and the stacked-dependents ready set need their own rows and a state the world does not seed |
+| test-dwarf-worktree-collision, test-dwarf-prod-dirty*, test-dwarf-resume*, test-concierge | they hold a worktree or a prior session's state across two dwarves, or script the resume brief from a transcript; the world has no second concurrent dwarf or seeded resume record |
+| test-dwarf-dirty-commit, test-dwarf-base-ref-qualify, test-branch-guard | `lib.sh` and hook functions called directly in a scratch repository, not a session |
 | test-guards | the PreToolUse fences bind the model's tool calls; a stub agent makes none |
-| test-timeout, test-thrash-teardown, test-aeon-elastic-concurrency | their remaining case is a real signal to a live process group or the aeon's concurrency count, which needs live aeon units (G2) |
-| test-sentinel-pass, test-dispatch-open-children, test-strand-*, test-czar-partition, test-warden, test-lanes | a full sentinel pass, the strand and czar binaries, or lane concurrency, which `--summon-only` does not run |
+| test-timeout, test-thrash-teardown, test-dwarf-elastic-concurrency | their remaining case is a real signal to a live process group or the dwarf's concurrency count, which needs live dwarf units (G2) |
+| test-sentinel-pass, test-dispatch-open-children, test-strand-*, test-czar-partition, test-warden, test-lanes | a full sentinel pass, the strand and czar binaries, or lane concurrency, which `--call-only` does not run |

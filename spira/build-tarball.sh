@@ -280,8 +280,8 @@ _COMPAT_PY
 )
 
     # MODEL-BIN (sp-zf4q3): the one release directory the model's restricted PATH names
-    # (aeon/src/restrict.rs) — only the binaries a model may run, each linked to ../bin/,
-    # so no tool in bin/ that calls bd is reachable by name from inside an aeon's session.
+    # (dwarf/src/restrict.rs) — only the binaries a model may run, each linked to ../bin/,
+    # so no tool in bin/ that calls bd is reachable by name from inside a dwarf's session.
     # The list is spira_config::release_env::MODEL_BINS; keep the two identical.
     for _model_bin in work testenv; do
         [ -f "$stage/bin/$_model_bin" ] || continue

@@ -516,9 +516,18 @@ fn harness_fault_reruns_within_the_budget_then_closes_and_returns_members() {
     assert!(t.lc.has("abandon-batch spira-1 CI_RUNNING 4 batch closed"));
     assert!(!t.qfile("open").exists());
     let calls = t.lc.calls.borrow();
-    let abandon = calls.iter().position(|c| c.starts_with("abandon-batch")).unwrap();
-    let last_close = calls.iter().rposition(|c| c == "mending-close-ended").unwrap();
-    assert!(last_close > abandon, "open MENDING rows are ended after the batch is terminal: {calls:?}");
+    let abandon = calls
+        .iter()
+        .position(|c| c.starts_with("abandon-batch"))
+        .unwrap();
+    let last_close = calls
+        .iter()
+        .rposition(|c| c == "mending-close-ended")
+        .unwrap();
+    assert!(
+        last_close > abandon,
+        "open MENDING rows are ended after the batch is terminal: {calls:?}"
+    );
     drop(calls);
     let mail = t
         .scripts
@@ -772,7 +781,7 @@ fn a_moved_base_that_conflicts_closes_and_requeues() {
 }
 
 #[test]
-fn red_summons_judgement_once_with_the_suites_and_the_run() {
+fn red_calls_judgement_once_with_the_suites_and_the_run() {
     let mut t = T::new(LandMode::Queue);
     batch(&t);
     t.lib.s.batcher_bin = Some(PathBuf::from("batcher"));
@@ -798,14 +807,14 @@ fn red_summons_judgement_once_with_the_suites_and_the_run() {
         "{j}"
     );
     assert!(record(&t).ends_with("judgement=sp-j1\n"));
-    assert!(t.out().contains("verdict spira: PR 12 red (test-b.sh,test-a.sh) — batcher-owned, summoned judgement (sp-j1)"));
+    assert!(t.out().contains("verdict spira: PR 12 red (test-b.sh,test-a.sh) — batcher-owned, called judgement (sp-j1)"));
     // the PR and its members are left exactly as they are
     assert!(
         !has_call(&t.forge.calls, "pr-close")
             && !t.lc.has("abandon-batch")
             && !t.lib.has("bead_reopen")
     );
-    // the next pass does not summon twice
+    // the next pass does not call twice
     t.forge
         .status
         .borrow_mut()
@@ -814,7 +823,7 @@ fn red_summons_judgement_once_with_the_suites_and_the_run() {
     assert_eq!(count(&t.scripts.calls, "judgement-ci"), 1);
     assert!(t
         .out()
-        .contains("verdict spira: PR 12 red — batcher-owned, judgement already summoned (sp-j1)"));
+        .contains("verdict spira: PR 12 red — batcher-owned, judgement already called (sp-j1)"));
 }
 
 #[test]
@@ -841,7 +850,7 @@ fn a_red_batch_bars_every_member_tip_until_an_abandon_or_an_eject_attributes_it(
 }
 
 #[test]
-fn a_red_forge_batch_summons_a_mender_per_red_suite_once() {
+fn a_red_forge_batch_calls_a_mender_per_red_suite_once() {
     let mut t = T::new(LandMode::Queue);
     lc_batch(&t);
     t.lib.s.batcher_bin = Some(PathBuf::from("batcher"));
@@ -1000,7 +1009,7 @@ fn a_hand_cut_batch_red_goes_to_judgement_too() {
     ));
     assert!(
         t.out()
-            .contains("verdict spira: PR 12 red (test-a.sh) — summoned judgement (sp-j2)"),
+            .contains("verdict spira: PR 12 red (test-a.sh) — called judgement (sp-j2)"),
         "{}",
         t.out()
     );
@@ -1314,7 +1323,7 @@ fn a_pytest_failure_with_no_annotations_is_a_test_red_not_a_setup_red() {
         .iter()
         .any(|c| c.starts_with("workflow-rerun")));
     assert!(
-        t.out().contains("summoned judgement (sp-j3)"),
+        t.out().contains("called judgement (sp-j3)"),
         "{}",
         t.out()
     );
@@ -1366,7 +1375,7 @@ fn red_without_suites_or_without_a_batcher_is_not_judged() {
         .push(Some("red\nred-suite: test-a.sh\n".into()));
     assert_eq!(t.run(&["verdict", "spira"]), 1);
     assert!(t.err().contains(
-        "batcher-owned but the batcher is off (SPIRA_BATCHER_ENABLE=0); cannot summon judgement"
+        "batcher-owned but the batcher is off (SPIRA_BATCHER_ENABLE=0); cannot call judgement"
     ));
     let mut t = T::new(LandMode::Queue);
     batch(&t);

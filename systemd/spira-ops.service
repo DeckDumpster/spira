@@ -3,7 +3,7 @@ After=lc-serve.service
 Wants=lc-serve.service
 # The Ops persona's TIMER trigger. The timer path runs a beadless sweep: Ops reads the
 # watchtower snapshot, runs the scans on its menu, and files beads for anything that needs
-# attention. Incident claims arrive from the sentinel, which summons Ops directly when an
+# attention. Incident claims arrive from the sentinel, which calls Ops directly when an
 # incident bead is ready — that path does not run through this service file.
 #
 # The two ExecStartPre lines below (drain the spool, repair the wiring) belong to the
@@ -11,7 +11,7 @@ Wants=lc-serve.service
 # this service is the one thing that runs on every timer tick whether or not there are
 # incidents, making it the cheapest place to do idempotent intake maintenance.
 Description=Spira Ops — sweep the pipeline on a cadence; incidents arrive via the sentinel
-Documentation=file://@SPIRA_HOME@/chamber/ops.fayth
+Documentation=file://@SPIRA_HOME@/runes/ops.rune
 
 [Service]
 # THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built
@@ -24,13 +24,13 @@ Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
 # Inert until the persona exists on main. This unit is installed and enabled by the same
-# change that ADDS ops.fayth, so between arming the timer and the branch landing there is a
+# change that ADDS ops.rune, so between arming the timer and the branch landing there is a
 # window in which ExecStart would fail every five minutes — and a unit that is red for
 # reasons nobody should act on is the noise that hides the one that matters. An
 # ExecCondition that exits non-zero makes systemd SKIP the pass and record success, so the
 # timer sits silent and starts working by itself the moment the file is there. No step for
 # anyone to remember.
-ExecCondition=/usr/bin/test -f @SPIRA_PROD@/chamber/ops.fayth
+ExecCondition=/usr/bin/test -f @SPIRA_PROD@/runes/ops.rune
 # SKIP WHEN NOMINAL. watchtower writes SWEEP:NOMINAL as the first line of the prompt
 # file when every measurable signal is green: no lapses, fresh snapshot, no stuck
 # no-verdict branches, no drain. A model session reading a nominal snapshot costs ~22k
@@ -55,9 +55,9 @@ ExecStartPre=-@SPIRA_PROD@/incident.sh drain
 # The prompt reaches stdin through systemd, not a bash redirect: an ExecStart whose first
 # path is /bin/bash fails doctor's "resolves outside $SPIRA_RELEASES" check, and deploy's
 # pre-health refused every deploy on it (sp-ycxt2). A missing file still fails the unit.
-ExecStart=@SPIRA_PROD_ROOT@/bin/aeon --home @SPIRA_PROD@ ops --sweep --prompt -
+ExecStart=@SPIRA_PROD_ROOT@/bin/dwarf --home @SPIRA_PROD@ ops --sweep --prompt -
 StandardInput=file:@SPIRA_RUN@/ops-sweep-prompt.txt
-# Matches FAYTH_TIMEOUT_SECONDS plus room for the sweep to start. An aeon that outlives
+# Matches RUNE_TIMEOUT_SECONDS plus room for the sweep to start. A dwarf that outlives
 # this is killed and the next timer tick starts a fresh pass.
 TimeoutStartSec=2000
 StandardOutput=append:@SPIRA_RUN@/ops.log

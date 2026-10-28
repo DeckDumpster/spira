@@ -71,11 +71,11 @@ pub enum Throttle {
 #[derive(Debug, Clone)]
 pub struct Facts {
     pub now: i64,
-    /// Live aeons of the personas that work this partition.
+    /// Live dwarves of the personas that work this partition.
     pub live: u32,
-    /// Live aeons across the fleet, and the configured cap (0 = unconfigured).
+    /// Live dwarves across the fleet, and the configured cap (0 = unconfigured).
     pub total_live: u32,
-    pub max_aeons: u32,
+    pub max_dwarves: u32,
     /// Some(detail) while the account is out of capacity.
     pub capacity_paused: Option<String>,
     pub pool_paused: bool,
@@ -91,7 +91,7 @@ impl Default for Facts {
             now: 0,
             live: 0,
             total_live: 0,
-            max_aeons: 0,
+            max_dwarves: 0,
             capacity_paused: None,
             pool_paused: false,
             world: None,
@@ -225,7 +225,7 @@ impl<'a> Partition<'a> {
     }
 
     // -- starved: claimable work and nothing alive serving the partition — unless the
-    // harness is correctly refusing to summon, which is named as such (info).
+    // harness is correctly refusing to call, which is named as such (info).
     fn starved(&self, rows: &mut Vec<Row>) {
         let f = self.facts;
         if self.ready.is_empty() || f.live != 0 {
@@ -240,24 +240,24 @@ impl<'a> Partition<'a> {
                 "world-drained",
                 "-",
                 Disposition::Info,
-                format!("world is {state} by the operator — {n} bead(s) ready and deliberately not being summoned: {head}"),
-                "none — world.sh start resumes summoning".into(),
+                format!("world is {state} by the operator — {n} bead(s) ready and deliberately not being called: {head}"),
+                "none — world.sh start resumes calling".into(),
             )
         } else if let Some(detail) = &f.capacity_paused {
             Row::new(
                 "capacity-paused",
                 "-",
                 Disposition::Info,
-                format!("no aeon summoned: {detail} — {n} bead(s) will be claimed when capacity reopens: {head}"),
-                "none — the sentinel will summon when the account is open again".into(),
+                format!("no dwarf called: {detail} — {n} bead(s) will be claimed when capacity reopens: {head}"),
+                "none — the sentinel will call when the account is open again".into(),
             )
         } else if f.pool_paused {
             Row::new(
                 "pool-paused",
                 "-",
                 Disposition::Info,
-                format!("{n} bead(s) ready but the task pool is set to zero — no aeon can be summoned: {head}"),
-                "none — raise the task pool (aeons.sh pool <n>) when ready to resume".into(),
+                format!("{n} bead(s) ready but the task pool is set to zero — no dwarf can be called: {head}"),
+                "none — raise the task pool (dwarves.sh pool <n>) when ready to resume".into(),
             )
         } else if f.pass_truncated {
             Row::new(
@@ -280,25 +280,25 @@ impl<'a> Partition<'a> {
                 "throttle-unreadable",
                 "-",
                 Disposition::Escalate,
-                format!("{n} bead(s) ready and no live aeon, and the queue throttle state could not be read ({d}) — this detector will not guess whether admission is open or shut"),
+                format!("{n} bead(s) ready and no live dwarf, and the queue throttle state could not be read ({d}) — this detector will not guess whether admission is open or shut"),
                 "check permissions on the queue-throttled stamp file ($SPIRA_RUN/queue-throttled)".into(),
             )
-        } else if f.max_aeons > 0 && f.total_live >= f.max_aeons {
+        } else if f.max_dwarves > 0 && f.total_live >= f.max_dwarves {
             Row::new(
                 "fleet-saturated",
                 "-",
                 Disposition::Info,
                 format!(
-                    "{n} bead(s) ready but all {} aeon slot(s) are held by other partitions ({} live across fleet): {head}",
-                    f.max_aeons, f.total_live
+                    "{n} bead(s) ready but all {} dwarf slot(s) are held by other partitions ({} live across fleet): {head}",
+                    f.max_dwarves, f.total_live
                 ),
                 "none — will be claimed when a slot opens".into(),
             )
         } else {
-            let slot = if f.max_aeons > 0 {
+            let slot = if f.max_dwarves > 0 {
                 format!(
-                    "; 0 of {} aeon slot(s) are serving this partition ({} live across fleet)",
-                    f.max_aeons, f.total_live
+                    "; 0 of {} dwarf slot(s) are serving this partition ({} live across fleet)",
+                    f.max_dwarves, f.total_live
                 )
             } else {
                 String::new()
@@ -307,7 +307,7 @@ impl<'a> Partition<'a> {
                 "starved",
                 "-",
                 Disposition::Escalate,
-                format!("{n} bead(s) ready and no live aeon{slot}: {head}"),
+                format!("{n} bead(s) ready and no live dwarf{slot}: {head}"),
                 "check spira-sentinel.timer and the tail of sentinel.log".into(),
             )
         };
@@ -633,7 +633,7 @@ mod tests {
         p.classify()
     }
     fn run(s: &Store, ready: &[&str]) -> Vec<Row> {
-        // A live aeon, so starved never fires unless a test asks for it.
+        // A live dwarf, so starved never fires unless a test asks for it.
         let f = Facts { live: 1, ..Facts::default() };
         run_with(s, ready, &f)
     }
@@ -944,7 +944,7 @@ mod tests {
         let mut f = Facts::default();
         let rows = run_with(&s, &["r"], &f);
         assert_eq!(kinds(&rows), vec![("starved".into(), "-".into())]);
-        assert_eq!(rows[0].detail, "1 bead(s) ready and no live aeon: r");
+        assert_eq!(rows[0].detail, "1 bead(s) ready and no live dwarf: r");
         f.world = Some("draining");
         let r = run_with(&s, &["r"], &f);
         assert_eq!((r[0].kind.as_str(), r[0].disp), ("world-drained", Disposition::Info));
@@ -966,12 +966,12 @@ mod tests {
         let r = run_with(&s, &["r"], &f);
         assert_eq!((r[0].kind.as_str(), r[0].disp), ("throttle-unreadable", Disposition::Escalate));
         f.throttle = Throttle::Open;
-        f.max_aeons = 2;
+        f.max_dwarves = 2;
         f.total_live = 2;
         assert_eq!(run_with(&s, &["r"], &f)[0].kind, "fleet-saturated");
         f.total_live = 1;
         let r = run_with(&s, &["r"], &f);
-        assert_eq!(r[0].detail, "1 bead(s) ready and no live aeon; 0 of 2 aeon slot(s) are serving this partition (1 live across fleet): r");
+        assert_eq!(r[0].detail, "1 bead(s) ready and no live dwarf; 0 of 2 dwarf slot(s) are serving this partition (1 live across fleet): r");
         f.live = 1;
         assert!(run_with(&s, &["r"], &f).is_empty());
     }

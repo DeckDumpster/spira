@@ -12,7 +12,7 @@ use crate::{allow_lines, pathspec_match, scope, Entry, Finding, LintError, Rule,
 pub struct ConfigFence;
 
 const NAME: &str = "config-fence";
-const SCOPE: &[&str] = &["spira/*.sh", "spira/gate-suites", "spira/chamber/*.fayth", "spira/chamber/*.md", "*.rs"];
+const SCOPE: &[&str] = &["spira/*.sh", "spira/gate-suites", "spira/runes/*.rune", "spira/runes/*.md", "*.rs"];
 /// This rule's own source names the very strings it hunts.
 const OWN_SOURCE: &str = "spira-lint/src/rules/config_fence.rs";
 const CONFIG_VARS: &[&str] = &["SPIRA_TOML", "SPIRA_REPO_MAP"];
@@ -266,16 +266,16 @@ mod tests {
     fn untracked_files_are_scanned_and_scope_is_pathspec() {
         let t = TempDir::new("cf-scope");
         t.write("spira/new.sh", "# repo-map\n");
-        t.write("spira/chamber/x.fayth", "repo-map\n");
+        t.write("spira/runes/x.rune", "repo-map\n");
         t.write("docs/readme.txt", "spira.toml\n");
         t.write("broker/src/deep/x.rs", "// spira.toml\n");
-        let got = run(&t, &["spira/chamber/x.fayth", "docs/readme.txt", "broker/src/deep/x.rs"], &["spira/new.sh"]).unwrap();
+        let got = run(&t, &["spira/runes/x.rune", "docs/readme.txt", "broker/src/deep/x.rs"], &["spira/new.sh"]).unwrap();
         assert_eq!(
             got,
             vec![
                 "config-fence: broker/src/deep/x.rs: name",
-                "config-fence: spira/chamber/x.fayth: name",
                 "config-fence: spira/new.sh: name",
+                "config-fence: spira/runes/x.rune: name",
             ]
         );
     }
@@ -347,7 +347,7 @@ mod tests {
 
     #[test]
     fn prose_gets_no_write_check() {
-        assert!(!scan("spira/chamber/a.md", b"run: printf x > \"$SPIRA_TOML\"\n").write);
+        assert!(!scan("spira/runes/a.md", b"run: printf x > \"$SPIRA_TOML\"\n").write);
     }
 }
 

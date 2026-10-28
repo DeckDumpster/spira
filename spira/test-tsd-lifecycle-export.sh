@@ -88,7 +88,7 @@ bdq sql "DELETE FROM events WHERE issue_id IN ('sp-tle-a','sp-tle-b')" >/dev/nul
 seedt() {   # seedt <id> <event_type> <new_value> <created_at>
     local id="$1" et="$2" nv="$3" ts="$4" uuid
     uuid="$(python3 -c 'import uuid; print(uuid.uuid4())')"
-    bdq sql "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$et', 'aeon-1', '$nv', '$ts')" >/dev/null 2>&1
+    bdq sql "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$et', 'dwarf-1', '$nv', '$ts')" >/dev/null 2>&1
 }
 seedt sp-tle-a claimed ''    '2026-09-16T00:00:01Z'
 seedt sp-tle-a closed  ''    '2026-09-16T00:00:02Z'
@@ -183,7 +183,7 @@ root_lc_sql sql < "$REPO/lifecycle/schema.sql" >"$LTMP/schema.log" 2>&1
 wantrc "spira_lifecycle schema applies cleanly" 0 $?
 
 root_lc_sql --use-db spira_lifecycle sql -q \
-    "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, refusal, evidence, actor, at) VALUES ('bead','sp-tle-c','Claim','READY','READY','WORKING',1,NULL,'{}','aeon-2',1758500000)" \
+    "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, refusal, evidence, actor, at) VALUES ('bead','sp-tle-c','Claim','READY','READY','WORKING',1,NULL,'{}','dwarf-2',1758500000)" \
     >/dev/null 2>&1
 root_lc_sql --use-db spira_lifecycle sql -q \
     "INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, refusal, evidence, actor, at) VALUES ('bead','sp-tle-c','GateRed','SUBMITTED','SUBMITTED','SUBMITTED',0,'ExpectMismatch','{\"reason\":\"flaky\"}','verdict',1758500010)" \

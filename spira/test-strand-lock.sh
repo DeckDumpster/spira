@@ -57,7 +57,7 @@ tl_config SPIRA_RUN="$TMP/run"
 
 # A starved partition — one row in strand-classify.py's output format.
 # kind=starved id=- disp=escalate → hits the escalation path in cmd_check.
-printf 'starved\t-\tescalate\t0 ready beads, 0 live aeons — nothing can move\tfile a needs-ryan ask with the symptoms\n' \
+printf 'starved\t-\tescalate\t0 ready beads, 0 live dwarves — nothing can move\tfile a needs-ryan ask with the symptoms\n' \
     > "$TMP/fixture.tsv"
 
 echo "sentinel ok" > "$TMP/run/sentinel.log"
@@ -69,12 +69,12 @@ COUNT_FILE="$TMP/count"
 echo 0 > "$COUNT_FILE"
 
 # mail stub: records "send" invocations.
-mkdir -p "$TMP/strand-home/chamber"; ln -s "$HERE/conf.d" "$TMP/strand-home/conf.d"   # a SPIRA_HOME carries the registry
-# SPIRA_CHAMBER is registered too: the complete fixture declares a non-empty bogus value,
-# which chamber_dir_with() prefers over deriving <home>/chamber, breaking strand's own
-# fayth-partition roster probe (lib.sh's fayth_partitions -> cmd_fayth) for every SPIRA_HOME
+mkdir -p "$TMP/strand-home/runes"; ln -s "$HERE/conf.d" "$TMP/strand-home/conf.d"   # a SPIRA_HOME carries the registry
+# SPIRA_RUNES_DIR is registered too: the complete fixture declares a non-empty bogus value,
+# which runes_dir_with() prefers over deriving <home>/runes, breaking strand's own
+# rune-partition roster probe (lib.sh's rune_partitions -> cmd_rune) for every SPIRA_HOME
 # below unless cleared to the home actually in use (sfail round 4, pattern 6/7).
-tl_config SPIRA_CHAMBER="$TMP/strand-home/chamber"
+tl_config SPIRA_RUNES_DIR="$TMP/strand-home/runes"
 cat > "$TMP/strand-home/mail" <<STUB
 #!/usr/bin/env bash
 [ "\${1:-}" = send ] || exit 0
@@ -122,7 +122,7 @@ echo 0 > "$COUNT_FILE"
 LOCKED_FIFO="$TMP/locked.fifo"; PROCEED_FIFO="$TMP/proceed.fifo"
 mkfifo "$LOCKED_FIFO" "$PROCEED_FIFO"
 
-BARRIER_HOME="$TMP/strand-home-barrier"; mkdir -p "$BARRIER_HOME/chamber"; ln -s "$HERE/conf.d" "$BARRIER_HOME/conf.d"
+BARRIER_HOME="$TMP/strand-home-barrier"; mkdir -p "$BARRIER_HOME/runes"; ln -s "$HERE/conf.d" "$BARRIER_HOME/conf.d"
 cat > "$BARRIER_HOME/mail" <<STUB
 #!/usr/bin/env bash
 [ "\${1:-}" = send ] || exit 0
@@ -135,14 +135,14 @@ chmod +x "$BARRIER_HOME/mail"
 
 # tl_layer, not tl_config: runner 2 races this runner concurrently on the SAME suite
 # override file (CHECK_ENV's SPIRA_HOME is strand-home, not BARRIER_HOME) — a persisting
-# tl_config here would hand runner 2 this runner's chamber. One-call-only SPIRA_TOML.
+# tl_config here would hand runner 2 this runner's runes. One-call-only SPIRA_TOML.
 # GIT_TERMINAL_PROMPT=0: the new starved-row lane-liveness check (sfail round 5) derives
 # SPIRA_REPO via `git rev-parse --show-toplevel` on every roster probe now — defensive
 # against any git subprocess in that chain blocking on a credential prompt instead of
 # failing fast, which would hang this runner before it ever reaches its mail stub.
 env SPIRA_STRAND_GRACE=0 SPIRA_LABELS=- SPIRA_HOME="$BARRIER_HOME" PATH="$BARRIER_HOME:$PATH" \
     GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true \
-    SPIRA_TOML="$(tl_layer SPIRA_CHAMBER="$BARRIER_HOME/chamber")" \
+    SPIRA_TOML="$(tl_layer SPIRA_RUNES_DIR="$BARRIER_HOME/runes")" \
     strand check --from "$TMP/fixture.tsv" >"$TMP/runner1.log" 2>&1 &
 P1=$!
 
@@ -206,7 +206,7 @@ echo "case 3 — no mail on pool-paused (D8): an info row never reaches mail:"
 # the skip; the classifier-level distinction between them is strand-classify.py's job
 # (test-strand-classify.sh), not this suite's.
 rm -f "$TMP/run/strands.json" "$TMP/run/strands.json.lock"
-printf 'pool-paused\t-\tinfo\t1 bead(s) ready but the task pool is set to zero: sp-example\taeons.sh pool <n>\n' \
+printf 'pool-paused\t-\tinfo\t1 bead(s) ready but the task pool is set to zero: sp-example\tdwarves.sh pool <n>\n' \
     > "$TMP/fixture-info.tsv"
 
 MAIL_SENT="$TMP/mail-sent-info"
@@ -222,12 +222,12 @@ echo "case 4 — full stack: a starved row's evidence carries its own partition'
 # Exercises strand.sh check's own plumbing (classify()'s --from label-prepending, and
 # escalate()'s mail body), not just the classifier in isolation (sp-15u9f).
 rm -f "$TMP/run/strands.json" "$TMP/run/strands.json.lock"
-printf 'starved\t-\tescalate\t1 bead(s) ready and no live aeon; 0 of 3 aeon slot(s) are serving this partition (1 live across fleet): sp-pa1\tcheck sentinel\n' \
+printf 'starved\t-\tescalate\t1 bead(s) ready and no live dwarf; 0 of 3 dwarf slot(s) are serving this partition (1 live across fleet): sp-pa1\tcheck sentinel\n' \
     > "$TMP/fixture-partition.tsv"
 
 ARGS_A="$TMP/mail-args-a"
-mkdir -p "$TMP/home-a/chamber"; ln -s "$HERE/conf.d" "$TMP/home-a/conf.d"
-tl_config SPIRA_CHAMBER="$TMP/home-a/chamber"
+mkdir -p "$TMP/home-a/runes"; ln -s "$HERE/conf.d" "$TMP/home-a/conf.d"
+tl_config SPIRA_RUNES_DIR="$TMP/home-a/runes"
 cat > "$TMP/home-a/mail" <<STUB
 #!/usr/bin/env bash
 [ "\${1:-}" = send ] || exit 0

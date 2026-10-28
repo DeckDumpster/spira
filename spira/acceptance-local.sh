@@ -83,7 +83,7 @@ if [ "${1:-}" = start ]; then
     LOG="$SPIRA_RUN/acceptance-local-$ROUND.log"
     # THE ENVIRONMENT IS EXPLICIT, NOT INHERITED (like every other systemd-run seam here) —
     # pass what a detached run of this script itself reads and nothing else.
-    "${SPIRA_SUMMON:-systemd-run}" --user --collect --quiet --unit="$UNIT" \
+    "${SPIRA_CALL:-systemd-run}" --user --collect --quiet --unit="$UNIT" \
         --property=StandardOutput="append:$LOG" --property=StandardError="append:$LOG" \
         --setenv=PATH="$PATH" --setenv=HOME="$HOME" \
         --setenv=SPIRA_HOME="$SPIRA_HOME" --setenv=SPIRA_RUN="$SPIRA_RUN" \
@@ -393,7 +393,7 @@ done
 }
 
 # THE INSTALLED INSTANCE'S OWN DATABASE, exactly as acceptance-ci.sh passes it: the probe
-# bead must be filed where the installed sentinel and aeons read. `release acceptance`'s own
+# bead must be filed where the installed sentinel and dwarves read. `release acceptance`'s own
 # default (~/spira-acceptance-test-db) is a path no install creates, so the first local run
 # failed at "bead filed" before reaching anything the release does.
 # THE RELEASE RUNNER'S PATH: system directories only, no rustup shim and no host tool — a unit

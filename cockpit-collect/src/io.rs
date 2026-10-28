@@ -12,25 +12,25 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// The keys `resolve()` computes (or this process itself derives) that [`bootstrap_config`]
 /// deliberately never sets into THIS process's own environment, even though the `compgen
 /// -v` dump it replaces used to (wave4-decomposition.md row (b): "Hazard: this exports
-/// SPIRA_HOME, SPIRA_REPO, SPIRA_REPO_MAP and SPIRA_FAYTHS to every child cockpit-collect
+/// SPIRA_HOME, SPIRA_REPO, SPIRA_REPO_MAP and SPIRA_RUNES to every child cockpit-collect
 /// spawns. That is exactly what conf.sh forbids" — conf.sh's own comment: an inherited
 /// SPIRA_HOME/SPIRA_REPO is "the seam every test suite drives a fixture through", and
 /// letting it leak to a child that was just told, by argument, to source a DIFFERENT
 /// lib.sh (`lib_call`'s own `home` parameter) would have that child's nested conf.sh
 /// silently keep the parent's stale value instead of deriving its own from the file it
-/// was just pointed at). [`SPIRA_MAX_AEONS`] joins this set for a narrower reason: it is
+/// was just pointed at). [`SPIRA_MAX_DWARVES`] joins this set for a narrower reason: it is
 /// host policy that must never leak to a child's environment either.
 ///
 /// This set is about the EXPORT side only (this process's own `std::env`, and so every
-/// child it spawns) — it has no bearing on reading a value in-process. `SPIRA_MAX_AEONS`
+/// child it spawns) — it has no bearing on reading a value in-process. `SPIRA_MAX_DWARVES`
 /// and `SPIRA_REPO_MAP` are both ordinary keys in `resolve()`'s own `values` map
 /// (`resolve::set!` writes every key there; only the typed shell/export side omits this
-/// set), so [`max_aeons`] and `repo_label_keys` read them straight through
+/// set), so [`max_dwarves`] and `repo_label_keys` read them straight through
 /// `spira_config::process::cfg`, the one door, like any other registered key.
 ///
 /// Anything this crate still needs from this set for the CHILD-PROCESS registry bridge is
 /// read through [`Boot`]/[`repo_registry`] instead, never `std::env::var`.
-const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "SPIRA_REPO_MAP", "SPIRA_FAYTHS", "SPIRA_MAX_AEONS"];
+const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "SPIRA_REPO_MAP", "SPIRA_RUNES", "SPIRA_MAX_DWARVES"];
 
 /// [`bootstrap_config`]'s own answer, cached in-process (never in `std::env`) for the one
 /// call site that still needs a [`NEVER_EXPORTED`] value for a CHILD process:
@@ -89,7 +89,7 @@ pub fn home_dir() -> PathBuf {
 /// `${VAR:=default}` pattern means a variable this process already set — explicitly, by a
 /// caller or a test — is never overwritten, so this only ever *adds* resolved defaults,
 /// never overrides an explicit value); [`NEVER_EXPORTED`] keys are cached in [`BOOT`]
-/// instead, read back only by [`repo_registry`] and [`max_aeons`]. Best-effort: a missing
+/// instead, read back only by [`repo_registry`] and [`max_dwarves`]. Best-effort: a missing
 /// config document/registry or any other resolution failure leaves the environment
 /// exactly as it was (the same as every `lib_call` already tolerates a bash failure
 /// returning `None`).
@@ -169,11 +169,11 @@ pub fn repo_registry() -> spira_config::repos::Registry {
     }
 }
 
-/// `SPIRA_MAX_AEONS`, the one door: it is an ordinary key in `resolve()`'s own `values`
+/// `SPIRA_MAX_DWARVES`, the one door: it is an ordinary key in `resolve()`'s own `values`
 /// (never exported to a CHILD process — see [`NEVER_EXPORTED`] — but that is a separate
 /// concern from reading it here, in-process).
-pub fn max_aeons() -> String {
-    spira_config::process::cfg("SPIRA_MAX_AEONS").unwrap_or_default()
+pub fn max_dwarves() -> String {
+    spira_config::process::cfg("SPIRA_MAX_DWARVES").unwrap_or_default()
 }
 
 pub fn try_run_dir() -> Result<PathBuf, String> {
@@ -688,8 +688,8 @@ mod tests {
             ("SPIRA_REPO", "/should-never-leak"),
             ("SPIRA_REPO_DERIVED", "/should-never-leak"),
             ("SPIRA_REPO_MAP", "/should-never-leak"),
-            ("SPIRA_FAYTHS", "builder groomer"),
-            ("SPIRA_MAX_AEONS", "12"),
+            ("SPIRA_RUNES", "builder groomer"),
+            ("SPIRA_MAX_DWARVES", "12"),
             ("SPIRA_WIKI", "/var/spira/wiki"),
         ]);
         let got = importable(&r, &BTreeMap::new());
@@ -718,10 +718,10 @@ mod tests {
     // repo_registry_reads_live_env_when_boot_never_ran DELETED (per Ryan 2026-10-05, one
     // source of config): it asserted the registry picks up a SPIRA_REPO_MAP set in the
     // environment, which is exactly what the registry no longer reads.
-    // max_aeons_falls_back_to_live_env_when_boot_never_ran DELETED (per Ryan 2026-10-05, one
-    // source of config): it asserted that a bare `SPIRA_MAX_AEONS` env override reaches
-    // `max_aeons()` without any `SPIRA_TOML` — exactly the behaviour the one-door law
-    // removes. `max_aeons()` is now a one-line call through `spira_config::process::cfg`,
+    // max_dwarves_falls_back_to_live_env_when_boot_never_ran DELETED (per Ryan 2026-10-05, one
+    // source of config): it asserted that a bare `SPIRA_MAX_DWARVES` env override reaches
+    // `max_dwarves()` without any `SPIRA_TOML` — exactly the behaviour the one-door law
+    // removes. `max_dwarves()` is now a one-line call through `spira_config::process::cfg`,
     // whose own resolution/caching is spira-config's tested responsibility; there is no
     // crate-local fallback logic left here to pin with a unit test, and `cfg`'s per-process
     // cache makes a fixture-driven unit test of this one-liner order-dependent rather than

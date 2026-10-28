@@ -86,7 +86,7 @@ pub fn live_hold_from_history(history_json: &str, kind: Kind) -> Result<Option<H
 }
 
 /// Who places the snooze that ends a session which moved nothing.
-const NO_PROGRESS_ACTOR: &str = "aeon";
+const NO_PROGRESS_ACTOR: &str = "dwarf";
 
 /// The claims on a bead that ended in a no-progress snooze since its last Submit or answer,
 /// oldest first. A session the machinery could not judge leaves no snooze, so it is not here.
@@ -319,7 +319,7 @@ impl Env for Live {
                     bead,
                     &format!("NO-PROGRESS BREAKER: {bead} had {n} claims end without progress inside {}m", window_secs / 60),
                     &format!(
-                        "bead     {bead}\n\nEach claim ended without a Submit and nothing it did moved the branch:\n{evidence}\nThe last aeon's final word: {last}\n\nThe lifecycle has stopped re-summoning it. Only your answer lifts the hold: change an input the aeon was blocked on, split or drop the bead.\n"
+                        "bead     {bead}\n\nEach claim ended without a Submit and nothing it did moved the branch:\n{evidence}\nThe last dwarf's final word: {last}\n\nThe lifecycle has stopped re-calling it. Only your answer lifts the hold: change an input the dwarf was blocked on, split or drop the bead.\n"
                     ),
                 )
             }
@@ -369,7 +369,7 @@ mod tests {
     use super::*;
 
     const HISTORY: &str = r#"[
-      {"seq":1,"event":"Claim","applied":1,"actor":"aeon","at":100,"evidence":{"Claim":{}}},
+      {"seq":1,"event":"Claim","applied":1,"actor":"dwarf","at":100,"evidence":{"Claim":{}}},
       {"seq":2,"event":"Hold","applied":1,"actor":"sentinel","at":200,"evidence":{"Hold":{"kind":"Poison","cause":"attempts-exhausted","detail":"3 attempts"}}},
       {"seq":3,"event":"Hold","applied":0,"actor":"x","at":250,"evidence":{"Hold":{"kind":"Operator","cause":"manual-hold"}}},
       {"seq":4,"event":"Hold","applied":1,"actor":"concierge","at":300,"evidence":"{\"Hold\":{\"kind\":\"Operator\",\"cause\":\"manual-hold\",\"detail\":\"until publishing resumes\"}}"}
@@ -463,13 +463,13 @@ mod tests {
         format!(r#"{{"seq":{seq},"event":"{event}","applied":1,"actor":"{actor}","at":{at},"evidence":{{"{event}":{body}}}}}"#)
     }
 
-    /// One claim that ends in the no-progress snooze the aeon places, as sp-6rejya's history recorded them.
+    /// One claim that ends in the no-progress snooze the dwarf places, as sp-6rejya's history recorded them.
     fn no_progress_cycle(events: &mut Vec<String>, at: u64) {
         let n = events.len();
-        events.push(ev(n + 1, "Claim", "aeon", at, "{}"));
-        events.push(ev(n + 2, "Release", "aeon", at + 60, "null"));
+        events.push(ev(n + 1, "Claim", "dwarf", at, "{}"));
+        events.push(ev(n + 2, "Release", "dwarf", at + 60, "null"));
         let hold = format!(r#"{{"kind":"Wait","cause":"unlanded-blocker","detail":"snooze-until:{} no-progress: needs the Concierge"}}"#, at + 1800);
-        events.push(ev(n + 3, "Hold", "aeon", at + 61, &hold));
+        events.push(ev(n + 3, "Hold", "dwarf", at + 61, &hold));
         events.push(ev(n + 4, "Unhold", "reconciler", at + 1900, r#"{"kind":"Wait"}"#));
     }
 
@@ -515,8 +515,8 @@ mod tests {
             no_progress_cycle(&mut events, 1_000_000 + cycle * 2000);
         }
         let n = events.len();
-        events.push(ev(n + 1, "Claim", "aeon", 1_006_000, "{}"));
-        events.push(ev(n + 2, "Release", "aeon", 1_006_060, "null"));
+        events.push(ev(n + 1, "Claim", "dwarf", 1_006_000, "{}"));
+        events.push(ev(n + 2, "Release", "dwarf", 1_006_060, "null"));
         assert!(!trips(&events));
         no_progress_cycle(&mut events, 1_007_000);
         assert!(trips(&events), "positive control: a fourth no-progress exit does trip");
@@ -537,7 +537,7 @@ mod tests {
         for cycle in 0..3u64 {
             no_progress_cycle(&mut events, 1_000_000 + cycle * 2000);
         }
-        events.push(ev(events.len() + 1, "Submit", "aeon", 1_006_000, r#"{"tip":"t"}"#));
+        events.push(ev(events.len() + 1, "Submit", "dwarf", 1_006_000, r#"{"tip":"t"}"#));
         no_progress_cycle(&mut events, 1_007_000);
         assert!(!trips(&events));
     }

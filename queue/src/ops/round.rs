@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::batch::lc_return;
-use super::land::land_local_with;
+use super::land::land_local_deferring;
 use super::stage;
 use super::{
     actor, converge_orphans, czar_ok, idents, landing_log, lc_abandon, lc_cas, lc_eject_member,
@@ -219,7 +219,7 @@ const STALE_TRIES: u32 = 5;
 fn suites_started(w: &World, batch: &str, strict: bool) -> Result<(), (i32, String)> {
     let send = || {
         pass_event(w, batch, |_, n, phase| {
-            (strict || phase == "build")
+            (phase == "build" || (strict && phase != "suites"))
                 .then(|| serde_json::json!({"SuitesStarted": {"n": n}}).to_string())
         })
     };
@@ -324,7 +324,7 @@ fn failed_verb(w: &World, batch: &str, repo: Option<&str>, suite: &str) -> i32 {
         pass_event(w, batch, |_, n, _| {
             Some(serde_json::json!({"Failed": {"suite": suite, "n": n}}).to_string())
         })?;
-        summon_mender(w, c, kv, batch, suite, "", None);
+        call_mender(w, c, kv, batch, suite, "", None);
         Ok(())
     })
 }
@@ -385,7 +385,7 @@ fn raise_unreported_reds(w: &World, c: &Ctx, batch: &str, kv: &Kv, reds: &[Strin
             })
         });
         match sent {
-            Ok(()) => summon_mender(w, c, kv, batch, suite, &attribution, None),
+            Ok(()) => call_mender(w, c, kv, batch, suite, &attribution, None),
             Err((rc, e)) => w.err(format!("queue.sh round certify: WARNING — no mender for {suite} of {batch}: the Failed event was refused (rc={rc}): {e}")),
         }
     }
@@ -394,7 +394,7 @@ fn raise_unreported_reds(w: &World, c: &Ctx, batch: &str, kv: &Kv, reds: &[Strin
 /// File the mender-lane bead for a failure whose MENDING row the event just opened. A marker
 /// per (batch, pass, suite) keeps a repeated report from filing twice; a filing that fails is
 /// said aloud and leaves no marker, so the next report of the same failure files it.
-pub(super) fn summon_mender(
+pub(super) fn call_mender(
     w: &World,
     c: &Ctx,
     kv: &Kv,
@@ -500,7 +500,10 @@ fn mender_marker(dir: &Path, batch: &str, pass: impl std::fmt::Display, suite: &
 }
 
 fn spec_file(dir: &Path, batch: &str, pass: impl std::fmt::Display, suite: &str) -> PathBuf {
-    dir.join(format!("{}.spec-{pass}-{suite}.json", batch.replace('/', "%2F")))
+    dir.join(format!(
+        "{}.spec-{pass}-{suite}.json",
+        batch.replace('/', "%2F")
+    ))
 }
 
 pub(super) fn retire_menders(w: &World, c: &Ctx, batch: &str, why: &str) {
@@ -510,7 +513,9 @@ pub(super) fn retire_menders(w: &World, c: &Ctx, batch: &str, why: &str) {
 
 pub(super) fn sweep_menders(w: &World, c: &Ctx) {
     if let Err((rc, e)) = w.lc.mending_close_ended("concierge") {
-        w.err(format!("queue.sh: WARNING — MENDING rows of closed batches were not ended (rc={rc}): {e}"));
+        w.err(format!(
+            "queue.sh: WARNING — MENDING rows of closed batches were not ended (rc={rc}): {e}"
+        ));
     }
     retire_marked(
         w,
@@ -701,7 +706,7 @@ pub(super) fn raise_forge_reds(w: &World, c: &Ctx, kv: &Kv, suites_csv: &str) {
         }
         let sent = send_failed(w, batch, kv.get("head").unwrap_or(""), suite);
         match sent {
-            Ok(()) => summon_mender(w, c, kv, batch, suite, "", None),
+            Ok(()) => call_mender(w, c, kv, batch, suite, "", None),
             Err((rc, e)) => w.err(format!("verdict {}: WARNING — no mender for {suite} of {batch}: the Failed event was refused (rc={rc}): {e}", c.r.name)),
         }
     }
@@ -1898,7 +1903,8 @@ fn vm_fault_cause(err: &str) -> Option<String> {
 
 const EXCERPT_CAP: usize = 300;
 const SHELL_CONTEXT: usize = 2;
-pub(crate) const NO_FAILURE_FOUND: &str = "(no failure lines matched; the last 80 lines of the output follow)";
+pub(crate) const NO_FAILURE_FOUND: &str =
+    "(no failure lines matched; the last 80 lines of the output follow)";
 
 /// The failure itself, not the output's tail: cargo's `---- test stdout ----` blocks, failures
 /// list, `test result: FAILED` and `error: N target(s) failed`; or a shell suite's FAIL / not ok
@@ -1927,7 +1933,10 @@ pub(crate) fn failure_excerpt(text: &str) -> String {
                 keep[i] = true;
             }
             inside = false;
-        } else if t.starts_with("error: ") && t.contains("failed") && !t.starts_with("error: could not compile") {
+        } else if t.starts_with("error: ")
+            && t.contains("failed")
+            && !t.starts_with("error: could not compile")
+        {
             keep[i] = true;
         } else if t.starts_with("error: could not compile") && t.contains("test") {
             keep[i] = true;
@@ -1940,7 +1949,11 @@ pub(crate) fn failure_excerpt(text: &str) -> String {
     if !cargo {
         for (i, l) in lines.iter().enumerate() {
             if l.contains("FAIL") || l.trim_start().starts_with("not ok") {
-                for k in keep.iter_mut().take(lines.len().min(i + 1 + SHELL_CONTEXT)).skip(i) {
+                for k in keep
+                    .iter_mut()
+                    .take(lines.len().min(i + 1 + SHELL_CONTEXT))
+                    .skip(i)
+                {
                     *k = true;
                 }
             }
@@ -2033,9 +2046,16 @@ pub(super) fn certify(
             }
             head = at.unwrap_or_default();
             set(&mut kv, "head", &head);
-        } else if w.git.rev_parse(&wt, "HEAD").as_deref() != Some(head.as_str()) {
-            w.err(format!("queue.sh {label}: the round worktree {} is not at the round's head {head} — refused", wt.display()));
-            return FAIL;
+        } else {
+            match carry_mends(w, label, &c, &path, &wt, batch, &mut kv) {
+                Ok(Some(h)) => head = h,
+                Ok(None) => {}
+                Err(()) => return FAIL,
+            }
+            if w.git.rev_parse(&wt, "HEAD").as_deref() != Some(head.as_str()) {
+                w.err(format!("queue.sh {label}: the round worktree {} is not at the round's head {head} — refused", wt.display()));
+                return FAIL;
+            }
         }
         // A round the lifecycle already holds GREEN was certified; what is missing (the
         // certificate, after a lost reply) is completed without running the pass again: a
@@ -2350,7 +2370,9 @@ pub(super) fn certify(
         w.err(verdict);
         w.out(format!("red={}", reds.join(",")));
         if reds.iter().any(|r| r == REPO_TESTENV_RED) {
-            let output = rounds_dir(&c).join(format!("{batch}.results")).join(format!("{REPO_TESTENV_RED}.out"));
+            let output = rounds_dir(&c)
+                .join(format!("{batch}.results"))
+                .join(format!("{REPO_TESTENV_RED}.out"));
             w.out(format!("red-output={}", output.display()));
         }
         return FAIL;
@@ -2640,7 +2662,10 @@ fn eject(
     let cause = EjectCause::decide(red, harness_fault, suites);
     if red && suites.split(',').any(|s| s == UNIT_RED) {
         crate::telemetry::sink().push(
-            &[spira_otel::metrics::Point::Count { name: "habit_unit_tests_red_in_round", value: 1 }],
+            &[spira_otel::metrics::Point::Count {
+                name: "habit_unit_tests_red_in_round",
+                value: 1,
+            }],
             &[("repo", c.r.name.as_str()), ("bead", id)],
         );
     }
@@ -2773,6 +2798,53 @@ fn eject(
         return FAIL;
     }
     OK
+}
+
+/// A recorded mend moves a member's tip, not the round's head: before a pass starts, the head is
+/// rebuilt from the base with every member at its mended tip. `Ok(None)` when nothing was mended.
+fn carry_mends(
+    w: &World,
+    label: &str,
+    c: &Ctx,
+    path: &Path,
+    wt: &Path,
+    batch: &str,
+    kv: &mut crate::records::Kv,
+) -> Result<Option<String>, ()> {
+    let members = kv.members();
+    let beads: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
+    let recorded = w.lc.mend_tips(&beads).map_err(|e| {
+        w.err(format!("queue.sh {label}: cannot read the recorded mends: {e}"));
+    })?;
+    let carried: Vec<Member> = members
+        .iter()
+        .map(|m| Member {
+            tip: recorded.get(&m.id).cloned().unwrap_or_else(|| m.tip.clone()),
+            ..m.clone()
+        })
+        .collect();
+    if carried.iter().zip(&members).all(|(a, b)| a.tip == b.tip) {
+        return Ok(None);
+    }
+    let old_head = kv.get("head").unwrap_or("").to_string();
+    let base = kv.get("base").unwrap_or("").to_string();
+    let new_head = assemble(w, c, path, wt, &base, &carried, &old_head).map_err(|why| {
+        w.err(format!("queue.sh {label}: cannot rebuild the round with its mended tips: {why} — refused"));
+    })?;
+    let rebuilt = serde_json::json!({"PassRebuilt": {"head": new_head}}).to_string();
+    warn_unrecorded(
+        w,
+        label,
+        batch,
+        "the rebuilt head",
+        pass_event(w, batch, |s, _, _| (s == "ATTRIBUTING").then_some(rebuilt)),
+    );
+    set(kv, "members", &render_members(&carried));
+    set(kv, "head", &new_head);
+    w.out(format!(
+        "queue.sh {label}: round {batch} rebuilt at {new_head} with its mended tips"
+    ));
+    Ok(Some(new_head))
 }
 
 /// Stops the round's running pass without letting it finish: TERM to the run's handle so
@@ -3108,16 +3180,20 @@ fn land(w: &World, batch: &str, repo: Option<&str>) -> i32 {
         .join("release")
         .is_dir()
         .then_some(wt.as_path());
-    let rc = land_local_with(
+    let (rc, pending) = land_local_deferring(
         w,
         Some(&c.r.name),
         &head,
         &Text::Arg(csv(&members)),
         bins,
         true,
+        true,
     );
     let base = c.r.landref.clone().unwrap_or_default();
     if rc != OK && !w.git.is_ancestor(&path, &head, &base) {
+        if let Some(p) = pending {
+            p.discard();
+        }
         return rc;
     }
 
@@ -3160,6 +3236,11 @@ fn land(w: &World, batch: &str, repo: Option<&str>) -> i32 {
         "queue.sh {label}: round {batch} landed at {head} — {} member(s)",
         members.len()
     ));
+    // Activation is the last step: the new release may retire keys the steps above still need.
+    let rc = match pending.map(|p| p.activate(w)) {
+        Some(super::deploy::Outcome::Fault(_)) => super::DEPLOY_FAULT,
+        _ => rc,
+    };
     if !recorded {
         w.err(format!("queue.sh {label}: round {batch} has NO batch landing record; the release is live — exiting non-zero"));
         return if rc == OK { FAIL } else { rc };

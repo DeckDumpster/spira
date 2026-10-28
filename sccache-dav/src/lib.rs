@@ -13,7 +13,7 @@
 //! crate's hit even though the Cargo.lock, the profile and (now) the toolchain are
 //! identical. One store reachable from both sides makes a round warm from its FIRST build,
 //! not its second (DESIGN-build-cache.md, sp-z61hj, already established this for the host's
-//! own gate/aeon/landing builds; this crate is the same cache extended across the ssh
+//! own gate/dwarf/landing builds; this crate is the same cache extended across the ssh
 //! boundary, nothing new invented).
 //!
 //! WHY WEBDAV AND NOT A FILESYSTEM MOUNT OR REDIS. sccache 0.18.0 ships a WebDAV backend

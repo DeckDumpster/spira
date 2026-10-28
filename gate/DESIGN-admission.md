@@ -2,7 +2,7 @@
 
 The gate has owned host-wide admission since sp-4vq2q: `SPIRA_CERTIFY_PAR` flock slots under
 `$SPIRA_RUN/gate-admission`. This document extends that one pool into **three**, one per heavy
-phase of an aeon's loop, and says how each is sized. The shared code is
+phase of a dwarf's loop, and says how each is sized. The shared code is
 `spira_config::admission` (every heavy tool already depends on `spira-config` for the build
 wrapper, `spira_config::build`); the agent-facing entry is the `spira-admit` binary of the
 same crate. `gate/DESIGN.md` §"Admission" is unchanged except where this document says so.
@@ -18,10 +18,10 @@ together, then tested together, then gated together.
 
 What the operator ordered (Ryan, 2026-09-30):
 
-* *"what you want to avoid is a thundering herd: N aeons doing compiles at the same time,
+* *"what you want to avoid is a thundering herd: N dwarves doing compiles at the same time,
   then tests at the same time, then gates at the same time. throughput is higher if you can
-  have aeons running in each phase."* The answer is **pipeline shaping**: a separate
-  host-wide pool per heavy phase, so at any moment some aeons compile, some test, some gate,
+  have dwarves running in each phase."* The answer is **pipeline shaping**: a separate
+  host-wide pool per heavy phase, so at any moment some dwarves compile, some test, some gate,
   and none of the three peaks stacks on another.
 * *"stagger, don't throttle."* Earlier, per-job limits (cargo `-j`, `batch_maxpar`) were cut to
   survive the peak, and every gate was slowed by it, even a gate running alone. Then
@@ -47,7 +47,7 @@ What the operator ordered (Ryan, 2026-09-30):
 
 | pool | what takes a slot | holder | size key (env / spira.toml) | directory |
 |---|---|---|---|---|
-| **compile** | a cargo build of a workspace: an agent's own `cargo build/test/check/clippy` in its worktree (through the aeon's build wrapper, §3.3); testenv's in-place build | the cargo process (agents) or the testenv process | `SPIRA_COMPILE_PAR` / `compile_par` | `$SPIRA_RUN/compile-admission` |
+| **compile** | a cargo build of a workspace: an agent's own `cargo build/test/check/clippy` in its worktree (through the dwarf's build wrapper, §3.3); testenv's in-place build | the cargo process (agents) or the testenv process | `SPIRA_COMPILE_PAR` / `compile_par` | `$SPIRA_RUN/compile-admission` |
 | **test** | an agent's own `testenv` trial, from container `up` to teardown | the testenv process | `SPIRA_TEST_PAR` / `test_par` | `$SPIRA_RUN/test-admission` |
 | **gate** | a gate trial that runs suites or unit phases (unchanged) | the gate process (flock) | `SPIRA_CERTIFY_PAR` / `certify_par` | `$SPIRA_RUN/gate-admission` |
 
@@ -108,8 +108,8 @@ held only for the scan, never across a wait or a job.
 
 ### 3.3 The compile wrapper (`spira-admit` as `RUSTC_WRAPPER`)
 
-An agent's cargo gets `RUSTC_WRAPPER` from the aeon, which asks `spira_config::build` for it.
-The aeon now asks for **`Wrapper::admitted_env(spira-admit)`**. That sets
+An agent's cargo gets `RUSTC_WRAPPER` from the dwarf, which asks `spira_config::build` for it.
+The dwarf now asks for **`Wrapper::admitted_env(spira-admit)`**. That sets
 `RUSTC_WRAPPER=<abs path of spira-admit>`, sets `SPIRA_ADMIT_INNER=<abs path of sccache>`
 (empty with `SPIRA_BUILD_CACHE=off`), sets `SPIRA_ADMIT_WHO=<bead>`, and keeps
 `SCCACHE_IGNORE_SERVER_IO_ERROR=1`. cargo runs `spira-admit <rustc> <args…>` for every
@@ -129,29 +129,29 @@ The wrapper adds no `CARGO_*` variable, so sccache's keys are unchanged
 compiler's own. The gate and testenv keep the **plain** `Wrapper::env()`, because each of them
 takes its slot in-process.
 
-**Yield to a round's suites.** Before an aeon's compile (step 3) takes its lease, it waits
+**Yield to a round's suites.** Before a dwarf's compile (step 3) takes its lease, it waits
 while `spira-lc list --batches` shows a batch in `CI_RUNNING` with phase `suites`, for at most
 `SPIRA_ADMIT_ROUND_HOLD_SECS` (default 900, the round's own cap; 0 disables). A compile already
 running finishes; the hold says `compile held Ns for round <id> suite phase` every 30 s. A store
 that cannot answer holds nothing. Gate (`TakeNow`), inherited and testenv admissions never yield.
 
-`spira-admit` is absent from the aeon's PATH on an old release. The aeon then hands out the
-plain wrapper and logs `aeon: spira-admit not on PATH — this session's builds are not
+`spira-admit` is absent from the dwarf's PATH on an old release. The dwarf then hands out the
+plain wrapper and logs `dwarf: spira-admit not on PATH — this session's builds are not
 admitted`, the same way it already falls back when sccache is missing. A session is not a
 build, and a scheduling tool never stops the world.
 
-### 3.4 Summon jitter
+### 3.4 Call jitter
 
-Before it starts the model session, the aeon sleeps a uniform random `0..=SPIRA_SUMMON_JITTER`
-seconds (spira.toml `summon_jitter`, default **20**, and `0` disables it). A sentinel pass that
-summons a batch of aeons at the same moment therefore does not start them in lockstep. The
-sleep checks the stop flag every second, so a stopped aeon exits at once. The jitter is
-logged: `aeon: summon jitter 13s`.
+Before it starts the model session, the dwarf sleeps a uniform random `0..=SPIRA_CALL_JITTER`
+seconds (spira.toml `call_jitter`, default **20**, and `0` disables it). A sentinel pass that
+calls a batch of dwarves at the same moment therefore does not start them in lockstep. The
+sleep checks the stop flag every second, so a stopped dwarf exits at once. The jitter is
+logged: `dwarf: call jitter 13s`.
 
 ### 3.4a The cold-build slot
 
 A fourth pool, `cold` (`$SPIRA_RUN/cold-admission`, size 1, `SPIRA_COLD_PAR` overrides), admits one
-cold build host-wide. Before its model session starts, the aeon asks `admission::cold_reason`:
+cold build host-wide. Before its model session starts, the dwarf asks `admission::cold_reason`:
 the title names a toolchain change, the branch diff touches `rust-toolchain(.toml)`, `flake.lock`
 or the top-level `Cargo.lock`, or its build target has no `.rustc_info.json`. A cold session
 takes a cold lease and logs `waiting on cold-build slot (<why>): …` until the holder releases;
@@ -178,13 +178,13 @@ quiet-box replay (§7).
   in the same one-line format (`pid= start= who=<branch> since=`). It is advisory: the flock
   stays the lock.
 * **Config** (typed spira.toml, `[spira]`; all optional). `compile_par` and `test_par` are u32,
-  and unset derives the size from the box (§5). `summon_jitter` is a u64 of seconds, and unset
+  and unset derives the size from the box (§5). `call_jitter` is a u64 of seconds, and unset
   means 20. Each is exported to the shell by `export --sh` as `SPIRA_COMPILE_PAR`,
-  `SPIRA_TEST_PAR` and `SPIRA_SUMMON_JITTER`, and each is registered in `conf.sh`'s key lists.
+  `SPIRA_TEST_PAR` and `SPIRA_CALL_JITTER`, and each is registered in `conf.sh`'s key lists.
 * **Telemetry**: `$SPIRA_RUN/tsd/admission.jsonl`, family `admission`, one row per lease that
   ends. The envelope is `ts`, `host` and `family`, followed by `pool`, `who`, `slot`, `size`, `weight`,
   `waited_secs`, `held_secs` and `end` (`released` or `reclaimed`). From these rows come
-  time-waiting and time-in-phase per aeon and per pool. Pool occupancy at any instant comes
+  time-waiting and time-in-phase per dwarf and per pool. Pool occupancy at any instant comes
   from `spira-admit status`. The gate's own wait was already in gate.log (`waited=`) and in
   the `gate-run` family.
 
@@ -202,8 +202,8 @@ run) and from the PSI of the host.
 
 | phase (one job) | wall | cores avg / peak | anon RAM peak | tmpfs | dolt | disk written |
 |---|---|---|---|---|---|---|
-| compile — agent `cargo build --profile aeon --workspace --all-targets`, deps from sccache, cold target | 38–43 s | 8.1–9.8 / 14 | 2.7 GiB (rustc peak 8) | 0 | 0 | 0.8–1.2 GiB (3.0 GiB target on disk) |
-| compile — agent `cargo test --profile aeon --workspace` after that build | 71 s | 1.0 / 5 | 0.6 GiB | 6 MiB | 0 | host-noisy |
+| compile — agent `cargo build --profile dwarf --workspace --all-targets`, deps from sccache, cold target | 38–43 s | 8.1–9.8 / 14 | 2.7 GiB (rustc peak 8) | 0 | 0 | 0.8–1.2 GiB (3.0 GiB target on disk) |
+| compile — agent `cargo test --profile dwarf --workspace` after that build | 71 s | 1.0 / 5 | 0.6 GiB | 6 MiB | 0 | host-noisy |
 | compile — testenv in-place `cargo build --profile release --workspace` (LTO, cgu=1), cold target | 127–145 s | 7.1 / 33 | **15.3 GiB** (22 rustc alive; above 8 GiB for about 60 s) | 0 | 0 | ≈ 1.1 GiB (host) |
 | test — testenv `up`→teardown, 8 suites at `batch_maxpar` 8 | 78 s (up 3, install 11, testdb 4, suites 55, teardown 5) | 1.2 / 8 | 0.44–0.55 GiB container (testenv: "cgroup peak 536MiB, ~67MiB/slot") | 35 MiB in place; a scratch slot's release target ≈ 3.2 GiB | 7 private sql-servers at peak | 6.3 MiB/s host-wide during the suites; host io full avg10 ≤ 3.8% |
 | gate — a certification trial (gate.log, 2026-09-30, 30 trials) | 200–800 s (median ~400) | its own composition | a gate tree's target on tmpfs ≈ 0.7 GiB, plus a warm testenv slot ≈ 3.2 GiB | ≈ 3.9 GiB | ≤ 8 | — |
@@ -218,7 +218,7 @@ and a single release build's anon peak on the new profile, on a quiet box, and c
 editing the constant. The detection (`-C opt-level=` other than 0) still marks the new profile
 as release-like.
 
-**What binds each phase.** Compile is bound by RAM first and cores second. An aeon-profile
+**What binds each phase.** Compile is bound by RAM first and cores second. A dwarf-profile
 build carries 2.7 GiB of anon and uses about 9 cores. A release (LTO) build carries **15.3
 GiB**, with 22 `rustc` alive for a minute. The jam's "~20 rustc" and its memory full-stall
 were testenv release builds that happened to coincide. Test is not bound by cores, RAM or IO
@@ -231,7 +231,7 @@ Gate is bound by tmpfs and wall time. A gate holds about 3.9 GiB of `/tmp` for a
 overridable by its key:
 
 * `compile_par = min(cores ÷ 10, MemAvailable ÷ 4 GiB)` units. **3** on this box. A unit is
-  one aeon-profile build, about 9 cores and at most 4 GiB. A release build weighs
+  one dwarf-profile build, about 9 cores and at most 4 GiB. A release build weighs
   ⌈15.3 ÷ 4⌉ = **4** units (`WEIGHT_RELEASE`). That is more than this box's whole pool, so a
   release build runs alone. Three debug builds average about 27 of 32 cores and carry about
   8 GiB of anon. Their peaks (3 × 14 cores) oversubscribe the CPU only for seconds, which costs
@@ -264,8 +264,8 @@ them release builds.
 
 * **D1: per-phase pools, not one pool** (operator amendment, 2026-09-30). The bead was first
   written as "one host-wide admission". A single pool admits whatever phase arrives. Fourteen
-  aeons that finish reading their briefs together then compile together, and the pool only
-  decides which N of them do it. Separate pools let a compiling aeon and a testing aeon run
+  dwarves that finish reading their briefs together then compile together, and the pool only
+  decides which N of them do it. Separate pools let a compiling dwarf and a testing dwarf run
   side by side, so each phase's resource (cores, dolt/fsync, tmpfs) is shared by its own jobs
   only.
 * **D2: the compile gate is `RUSTC_WRAPPER`, not a `cargo` shim.** The build wrapper is the
@@ -283,20 +283,20 @@ them release builds.
 * **D4: the gate keeps its flock pool and its bounded wait.** `landing-pass` probes
   `slot.N.lock` before it dispatches a gate (landing-pass/DESIGN.md), and the landing pass's
   run budget assumes `SPIRA_GATE_LOCK_WAIT`. Only the waiting line and the holder sidecar are
-  new. The "never fails for waiting" rule applies to the aeon-side pools. A gate is started by
-  the landing pass, never by an aeon (aeon teardown.rs: self-certifying blocks a session on
+  new. The "never fails for waiting" rule applies to the dwarf-side pools. A gate is started by
+  the landing pass, never by a dwarf (dwarf teardown.rs: self-certifying blocks a session on
   gate admission).
 * **D5: leases, not flocks, for compile and test.** A flock is held by an open fd, and a cargo
   has no fd of ours. A lease names a pid and dies with it. testenv could have held a flock,
-  but one mechanism for both aeon-side pools gives `status` and the telemetry one reader.
+  but one mechanism for both dwarf-side pools gives `status` and the telemetry one reader.
 * **D6: probes are not builds.** Without rule 2 of §3.3, `cargo metadata` would take a
   compile slot, and the gate's own `cargo metadata` composition step would queue behind agent
   builds.
 * **D7: release builds are not admitted.** The landing path no longer compiles (sp-z61hj
   item 4). `release build` is run by hand or by `release.yml`. Admitting it would put the
   landing path behind agent builds for no measured gain.
-* **D8: jitter at the aeon, not in lib.sh.** The summon loop is still bash
-  (`ck7_summon_pass`), and new logic is Rust. The aeon is the first Rust code a summon reaches.
+* **D8: jitter at the dwarf, not in lib.sh.** The call loop is still bash
+  (`ck7_call_pass`), and new logic is Rust. The dwarf is the first Rust code a call reaches.
 * **D10: weights, not a second compile pool.** A release build measured 5.7× a debug build's
   anon RAM. Counted as one slot, three release builds (46 GiB) would pass through a pool sized
   for debug builds. A separate release pool would split one resource, the box's RAM and cores
@@ -344,7 +344,7 @@ them release builds.
   taken keep running at full width. The lease stops new agent builds from starting; it never
   pre-empts one.
 * **Finding, not fixed here.** Under `lifecycle_enforce`, the model's restricted environment
-  (`aeon/src/restrict.rs`) carries neither `RUSTC_WRAPPER` nor cargo on its PATH. An enforced
+  (`dwarf/src/restrict.rs`) carries neither `RUSTC_WRAPPER` nor cargo on its PATH. An enforced
   session therefore gets neither the build cache nor admission. That is the restriction's
   scope, and it is reported to the Concierge.
 
@@ -368,7 +368,7 @@ the pools, all run against real pool directories through the real `try_take` / `
 * visible waits: the waiting line and the admitted line, from testenv, the gate and the
   wrapper;
 * jitter bounds, and the sizes read from typed config (`compile_par`, `test_par`,
-  `summon_jitter`).
+  `call_jitter`).
 
 > **2026-10-01: `gate_occupancy_reads_flocks_and_their_holder_sidecars` deleted and
 > re-added same round** (sp-os3of; `law-a-test-that-flips-is-deleted`). Flipped between the

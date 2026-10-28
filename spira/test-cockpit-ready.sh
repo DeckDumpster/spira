@@ -46,17 +46,17 @@ run_probe() {   # run_probe <SPIRA_BD=path> -> stdout of probe()
     local bd_path="$1"
     rm -rf "$RUN/pane-read"
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
-        SPIRA_FAYTHS=builder SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
-        SPIRA_BD="$bd_path" SPIRA_CHAMBER="$HERE/chamber"
+        SPIRA_RUNES=builder SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
+        SPIRA_BD="$bd_path" SPIRA_RUNES_DIR="$HERE/runes"
     env -i PATH="$PROBE_LC:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_TOML="$SPIRA_TOML" \
         cockpit-collect once 2>/dev/null
 }
 
-# SPIRA_FAYTHS NAMES A PERSONA THAT EXISTS. It used to say `t`, for which there is no
-# chamber/t.fayth — harmless only because the partition map globbed chamber/*.fayth and
-# ignored SPIRA_FAYTHS altogether. Resolving partitions through fayth_get honours it, so an
+# SPIRA_RUNES NAMES A PERSONA THAT EXISTS. It used to say `t`, for which there is no
+# runes/t.rune — harmless only because the partition map globbed runes/*.rune and
+# ignored SPIRA_RUNES altogether. Resolving partitions through rune_get honours it, so an
 # unresolvable persona now yields no partitions, which is a REFUSAL: the probe renders ?
 # rather than 0. That is correct behaviour and it would have made this suite assert the
 # opposite of what it means, so the fixture names a real persona instead.
@@ -79,14 +79,14 @@ chmod +x "$BD_EMPTY"
 
 # ======================================================================================
 # AN UNRESOLVABLE PERSONA IS A REFUSAL, NOT AN EMPTY QUEUE. The partition map is built
-# from fayth_get, which resolves variables the way the summoner does. When SPIRA_FAYTHS
-# names a persona that does not exist, fayth_get finds no file, the map stays empty, and
+# from rune_get, which resolves variables the way the caller does. When SPIRA_RUNES
+# names a persona that does not exist, rune_get finds no file, the map stays empty, and
 # core_detail_keys emits SP_READY=? rather than a zero (law-failed-probe-renders-question).
 
 echo "partition map: an unresolvable persona is a REFUSAL, not an empty queue"
 tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
-    SPIRA_FAYTHS=no-such-persona SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
-    SPIRA_BD="$BD_EMPTY" SPIRA_CHAMBER="$HERE/chamber"
+    SPIRA_RUNES=no-such-persona SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
+    SPIRA_BD="$BD_EMPTY" SPIRA_RUNES_DIR="$HERE/runes"
 rm -rf "$RUN/pane-read"
 _unres_out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
@@ -139,7 +139,7 @@ if [ "$1" = content-rows ]; then
     exec "$(spira-config get spira.bd 2>/dev/null)" list --id "$3" --json
 fi
 [ "$1" = list ] || exit 2
-printf '%s\n' '[{"bead_id":"sp-ck-held","state":"WORKING","holder":"aeon-1","holds":"[]"},{"bead_id":"sp-ck-take","state":"READY","holds":"[]"}]'
+printf '%s\n' '[{"bead_id":"sp-ck-held","state":"WORKING","holder":"dwarf-1","holds":"[]"},{"bead_id":"sp-ck-take","state":"READY","holds":"[]"}]'
 LC
 chmod +x "$LCBIN/spira-lc"
 BD_LC="$TMP/bd-lc"
@@ -153,8 +153,8 @@ esac
 BD
 chmod +x "$BD_LC"
 tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
-    SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL=spira SPIRA_ASK_LABEL=needs-ryan \
-    SPIRA_CI_LABEL=awaiting-ci SPIRA_BD="$BD_LC" SPIRA_CHAMBER="$HERE/chamber"
+    SPIRA_RUNES=builder SPIRA_SCOPE_LABEL=spira SPIRA_ASK_LABEL=needs-ryan \
+    SPIRA_CI_LABEL=awaiting-ci SPIRA_BD="$BD_LC" SPIRA_RUNES_DIR="$HERE/runes"
 lc_out="$(env -i PATH="$LCBIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     SPIRA_TOML="$SPIRA_TOML" \

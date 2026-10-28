@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn rows_come_back_in_the_shape_of_bd_events() {
-        let out = shape(vec![serde_json::json!({"issue_id": "sp-a", "event_type": "claimed", "new_value": "aeon", "actor": "h", "at": "1000000000"})]);
+        let out = shape(vec![serde_json::json!({"issue_id": "sp-a", "event_type": "claimed", "new_value": "dwarf", "actor": "h", "at": "1000000000"})]);
         assert_eq!(out[0]["created_at"], "2001-09-09T01:46:40Z");
         assert_eq!(out[0]["event_type"], "claimed");
     }

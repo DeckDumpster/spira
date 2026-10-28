@@ -163,7 +163,7 @@ cp -a /workspace/concierge.sh /tmp/spira-prod/
 # (below) means units are only enabled, never started, so no-op stubs satisfy install.sh's
 # executable-bit check. NOT PROVEN here: the tree's own build staged as this bin/ (sp-isom7).
 mkdir -p /tmp/spira-prod/bin
-for b in sentinel queue aeon spira-supervise landing-pass reconciler-flow sending; do
+for b in sentinel queue dwarf spira-supervise landing-pass reconciler-flow hel; do
     printf '#!/bin/sh\nexit 0\n' > /tmp/spira-prod/bin/\$b && chmod +x /tmp/spira-prod/bin/\$b
 done
 " >&2
@@ -174,7 +174,7 @@ iszero "stubs created inside container" "$?"
 # PATH, the gate and the watcher manifest to answer. The stubbed names stay stubs.
 _reh_bin="$(dirname "$(command -v spira-install 2>/dev/null)")"
 [ -d "$_reh_bin" ] || bail "spira-install is not on PATH (the tree's build provides it)"
-tar -C "$_reh_bin" --exclude=sentinel --exclude=queue --exclude=aeon --exclude=spira-supervise --exclude=landing-pass --exclude=reconciler-flow --exclude=sending -cf - . > /tmp/spira-reh-bin.tar
+tar -C "$_reh_bin" --exclude=sentinel --exclude=queue --exclude=dwarf --exclude=spira-supervise --exclude=landing-pass --exclude=reconciler-flow --exclude=hel -cf - . > /tmp/spira-reh-bin.tar
 # batch-job: streaming the tree's release bin/ into the rehearsal container
 podman exec -i --user spirauser "$CNAME" tar -C /tmp/spira-prod/bin -xf - < /tmp/spira-reh-bin.tar >&2
 iszero "the tree's release bin/ is staged in the container" "$?"
@@ -203,8 +203,8 @@ echo "configure — non-interactive spira.conf bootstrap:"
     -e "CONFIGURE_RELEASES=/tmp/spira-reh-rel" \
     -e "CONFIGURE_RUN=${SPIRA_RUN_CTR}" \
     -e "CONFIGURE_OPERATED=0" \
-    -e "CONFIGURE_MAX_AEONS=1" \
-    -e "CONFIGURE_MAX_LIVE_AEONS=1" \
+    -e "CONFIGURE_MAX_DWARVES=1" \
+    -e "CONFIGURE_MAX_LIVE_DWARVES=1" \
     -e "CONFIGURE_LOOM_ADDR=127.0.0.1:7300" \
     -e "CONFIGURE_DOLT_DATA=" \
     "$CNAME" bash /workspace/spira/configure.sh >&2
@@ -218,8 +218,8 @@ iszero "configure.sh exits 0" "$?"
     -e "CONFIGURE_PROD=/tmp/spira-reh-rel/current/spira" \
     -e "CONFIGURE_RELEASES=/tmp/spira-reh-rel" \
     -e "CONFIGURE_RUN=${SPIRA_RUN_CTR}" \
-    -e "CONFIGURE_MAX_AEONS=1" \
-    -e "CONFIGURE_MAX_LIVE_AEONS=1" \
+    -e "CONFIGURE_MAX_DWARVES=1" \
+    -e "CONFIGURE_MAX_LIVE_DWARVES=1" \
     -e "CONFIGURE_LOOM_ADDR=127.0.0.1:7300" \
     -e "CONFIGURE_DOLT_DATA=" \
     "$CNAME" bash /tmp/spira-prod/spira/configure.sh >&2
@@ -275,7 +275,7 @@ echo "install — world.halted pre-created; units are enabled but not started:"
 # world.halted in SPIRA_RUN causes install.sh to enable units without starting
 # them and to skip the end-state check (which would fail: bd/dolt are absent).
 # SPIRA_INSTALL_FORCE=1 bypasses the landref check (we are on a worktree branch,
-# not the base branch) and the live-aeons guard.
+# not the base branch) and the live-dwarves guard.
 "${CEXEC[@]}" "$CNAME" bash -c \
     "mkdir -p '${SPIRA_RUN_CTR}' && touch '${SPIRA_RUN_CTR}/world.halted'" >&2
 iszero "world.halted created" "$?"
@@ -344,8 +344,8 @@ want "ready.sh: sentinel timer active" "pass  sentinel timer active" "$ready_out
 want "ready.sh: world not halted"     "pass  world not halted"       "$ready_out"
 want "ready.sh: database readable"    "pass  database readable"      "$ready_out"
 want "ready.sh: loom probe passes"    "loom answers 200"              "$ready_out"
-want "ready.sh: aeon warm base is a writable directory" "pass  aeon warm base" "$ready_out"
-nowant "ready.sh: aeon warm base is not missing" "aeon warm base .* is not a writable directory" "$ready_out"
+want "ready.sh: dwarf warm base is a writable directory" "pass  dwarf warm base" "$ready_out"
+nowant "ready.sh: dwarf warm base is not missing" "dwarf warm base .* is not a writable directory" "$ready_out"
 
 # ===========================================================================
 echo

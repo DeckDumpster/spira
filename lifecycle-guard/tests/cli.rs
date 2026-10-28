@@ -109,8 +109,8 @@ fn brief_naming_bd_is_reported() {
 }
 
 #[test]
-fn fayth_naming_bd_is_reported() {
-    let findings = run("fayth_bd", None);
+fn rune_naming_bd_is_reported() {
+    let findings = run("rune_bd", None);
     assert_eq!(classes(&findings), vec!["brief-bd"]);
 }
 
@@ -176,7 +176,7 @@ fn bd_in_docs_and_disabled_personas_and_rust_comments_is_not_reported() {
     assert!(findings.is_empty(), "{findings:#?}");
 }
 
-const SPIRA_LC_ONLY_CRATES: &[&str] = &["gate", "batcher-cut", "czar-pass", "gh-intake", "auron", "cockpit/ops"];
+const SPIRA_LC_ONLY_CRATES: &[&str] = &["gate", "batcher-cut", "czar-pass", "gh-intake", "heimdall", "cockpit/ops"];
 
 #[test]
 fn spira_lc_only_crates_never_read_the_landstate_ledger() {
@@ -305,12 +305,12 @@ fn gate_mode_refuses_a_planted_write_around_the_machine() {
     let (code, out, err) = gate(&fixture("gate_bd_write"));
     assert_eq!(code, Some(1), "stdout:\n{out}\nstderr:\n{err}");
     for (line, class) in [
-        ("aeon.sh:5: [direct-write]", "bdq update --status"),
-        ("aeon.sh:7: [wrapper-write]", "release"),
-        ("aeon.sh:7: [wrapper-write]", "bdq reopen"),
-        ("aeon.sh:8: [direct-write]", "bd close"),
-        ("aeon.sh:10: [dynamic-verb]", "cannot be resolved"),
-        ("aeon.sh:11: [lifecycle-read]", "bd show"),
+        ("dwarf.sh:5: [direct-write]", "bdq update --status"),
+        ("dwarf.sh:7: [wrapper-write]", "release"),
+        ("dwarf.sh:7: [wrapper-write]", "bdq reopen"),
+        ("dwarf.sh:8: [direct-write]", "bd close"),
+        ("dwarf.sh:10: [dynamic-verb]", "cannot be resolved"),
+        ("dwarf.sh:11: [lifecycle-read]", "bd show"),
     ] {
         assert!(out.lines().any(|l| l.starts_with(line) && l.contains(class)), "no {line} … {class}:\n{out}");
     }
@@ -419,16 +419,16 @@ fn gate_mode_refuses_a_rust_bd_status_read() {
 }
 
 #[test]
-fn the_shipped_chamber_names_bd_nowhere() {
-    let chamber = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../spira/chamber");
+fn the_shipped_runes_names_bd_nowhere() {
+    let runes = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
     let out = Command::new(env!("CARGO_BIN_EXE_lifecycle-guard"))
         .arg("--json")
-        .arg(&chamber)
+        .arg(&runes)
         .output()
         .expect("run lifecycle-guard");
     let findings: Vec<Value> = serde_json::from_slice(&out.stdout).expect("valid JSON findings");
     let bd: Vec<&Value> = findings.iter().filter(|f| f["class"] == "brief-bd").collect();
     assert!(bd.is_empty(), "a persona names bd: {bd:#?}");
-    let personas = std::fs::read_dir(&chamber).unwrap().filter_map(|e| e.ok()).filter(|e| e.path().extension().is_some_and(|x| x == "fayth")).count();
-    assert!(personas >= 8, "the chamber scan saw only {personas} fayth files");
+    let personas = std::fs::read_dir(&runes).unwrap().filter_map(|e| e.ok()).filter(|e| e.path().extension().is_some_and(|x| x == "rune")).count();
+    assert!(personas >= 8, "the runes scan saw only {personas} rune files");
 }

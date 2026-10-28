@@ -507,3 +507,14 @@ mimir_landing_interval
 mimir_max_beads
 mimir_max_gap_seconds
 mimir_remedy_label
+heimdall_restarts
+heimdall_restart_window
+runes
+runes_dir
+runes_overlay
+call_jitter
+call_lock_wait
+dwarf_warm_base
+dwarf_warm_cap_mib
+max_dwarves
+max_live_dwarves

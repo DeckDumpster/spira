@@ -22,7 +22,7 @@ Every reader asks one of five questions. None needs the file format.
 | Q2 | **position** — certified / batched / pr-open / landed / swept | classify, queue eject, waiters (`active_blockers`), batcher-cut |
 | Q3 | **verdict evidence** — WITHDRAWN vs RED vs EJECTED, and its tip | classify (Rework vs Ready), queue abandon (a verdict an abandon never overturns), reopen (withdraw only a still-certified tip) |
 | Q4 | **ejected suites** — the suites a re-certification must force | gate re-entry check |
-| Q5 | **idempotence marker** — eviction already handled | aeon eviction race |
+| Q5 | **idempotence marker** — eviction already handled | dwarf eviction race |
 
 ## 3. Where each fact lives after the cutover
 

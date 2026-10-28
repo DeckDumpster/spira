@@ -174,11 +174,11 @@ fn append_history(run_dir: &std::path::Path) {
     let at = snap.get("SP_AT").cloned().unwrap_or_else(|| io::now().to_string());
     let row = format!(
         "{at},{},{},{},{},{},{},{},{}",
-        get("SP_TOK_WIN"), get("SP_TOK_AEON_WIN"), get("SP_TOK_SESS_WIN"),
-        get("SP_TOK_AEON_TURNS"), get("SP_TOK_SESS_TURNS"),
+        get("SP_TOK_WIN"), get("SP_TOK_DWARF_WIN"), get("SP_TOK_SESS_WIN"),
+        get("SP_TOK_DWARF_TURNS"), get("SP_TOK_SESS_TURNS"),
         get("SP_CTX_NOW"), get("SP_RATELIM_5H"), get("SP_RATELIM_7D"),
     );
-    const HIST_COLS: &str = "ts,tok_win,tok_aeon_win,tok_sess_win,tok_aeon_turns,tok_sess_turns,ctx_now,ratelim_5h,ratelim_7d";
+    const HIST_COLS: &str = "ts,tok_win,tok_dwarf_win,tok_sess_win,tok_dwarf_turns,tok_sess_turns,ctx_now,ratelim_5h,ratelim_7d";
     let hist_path = run_dir.join("cockpit-history.csv");
     let existing = std::fs::read_to_string(&hist_path).ok();
     let needs_header = match &existing {
@@ -262,7 +262,7 @@ fn cmd_probe(name: Option<&str>) -> i32 {
         }
         None => {
             eprintln!(
-                "usage: cockpit-collect probe [now|core|core_detail|unsent|strands|sops|ratelim|reachable|sphere|repo_labels|livelock|dup_refs|statute|drift|mail|czar_triggers|sending|queue|slots|admission|tsd]"
+                "usage: cockpit-collect probe [now|core|core_detail|unsent|strands|sops|ratelim|reachable|well|repo_labels|livelock|dup_refs|statute|drift|mail|czar_triggers|hel|queue|slots|admission|tsd]"
             );
             1
         }
@@ -349,7 +349,7 @@ mod tests {
     /// An empty probe value must round-trip as exactly `KEY=''` (two characters, sourceable
     /// as the empty string) through `once`'s write path — not the doubled `KEY=''\'''\'''`
     /// production's bash collector produced for ten keys (SP_HOTFIX_LINE, SP_HOTFIX_ALERT,
-    /// SP_AURON_KEYS, SP_OVERRIDES_LIST, and the six `*_NAMES` lists) by quoting its own
+    /// SP_HEIMDALL_KEYS, SP_OVERRIDES_LIST, and the six `*_NAMES` lists) by quoting its own
     /// value before the merge/write step quoted the line a second time (the operator,
     /// 2026-09-30, found in production's live cockpit.env). Every probe now emits these
     /// keys raw, same as any other key; this is the ONE quoting layer, at write time.
@@ -358,13 +358,13 @@ mod tests {
         let run = testkit::TempDir::new("cc-empty-quote");
         let kv: probes::Kv = vec![
             ("SP_HOTFIX_LINE".to_string(), String::new()),
-            ("SP_AURON_KEYS".to_string(), String::new()),
+            ("SP_HEIMDALL_KEYS".to_string(), String::new()),
             ("SP_PROTECTED_NAMES".to_string(), String::new()),
             ("SP_AT".to_string(), "123".to_string()),
         ];
         write_snapshot_and_history(&kv, run.path());
         let snap = std::fs::read_to_string(run.path().join("cockpit.env")).unwrap();
-        for k in ["SP_HOTFIX_LINE", "SP_AURON_KEYS", "SP_PROTECTED_NAMES"] {
+        for k in ["SP_HOTFIX_LINE", "SP_HEIMDALL_KEYS", "SP_PROTECTED_NAMES"] {
             let line = snap.lines().find(|l| l.starts_with(&format!("{k}="))).unwrap_or_else(|| panic!("{k} missing from snapshot"));
             assert_eq!(line, format!("{k}=''"), "empty {k} must be exactly '' (2 chars), not doubled");
         }
@@ -385,7 +385,7 @@ mod tests {
 
 fn cmd_metrics(args: &[String]) -> i32 {
     let (Some(sent), Some(ledger)) = (args.first(), args.get(1)) else {
-        eprintln!("usage: cockpit-collect metrics <sentinel.log> <aeon-ledger.log> [hours]");
+        eprintln!("usage: cockpit-collect metrics <sentinel.log> <dwarf-ledger.log> [hours]");
         return 1;
     };
     let hours = match args.get(2).map(|h| h.parse::<f64>()) {

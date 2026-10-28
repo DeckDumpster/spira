@@ -27,7 +27,7 @@ pub const SUSPENDED_UNITS: [(&str, &str); 4] = [
         "renders /workspace/bin/queue-watch, which the container does not have",
     ),
     (
-        "spira-summon",
+        "spira-call",
         "polls bd ready every 15s, which a batch's bd-meter must not count",
     ),
 ];
@@ -112,12 +112,12 @@ set_key() { "$SPIRA_RELEASE/bin/spira-config" set "spira.$1" "$2" "$CONFIGURE_OU
 set_key instance "$CONFIGURE_INSTANCE"
 set_key workspaces "$CONFIGURE_RUN"
 set_key prod "$CONFIGURE_PROD"
-set_key chamber "$CONFIGURE_PROD/chamber"
+set_key runes_dir "$CONFIGURE_PROD/runes"
 set_key ctrl "$CONFIGURE_RUN/control"
 set_key bd "$(command -v bd)"
 set_key run "$CONFIGURE_RUN"
-set_key max_aeons "$CONFIGURE_MAX_AEONS"
-set_key max_live_aeons "$CONFIGURE_MAX_LIVE_AEONS"
+set_key max_dwarves "$CONFIGURE_MAX_DWARVES"
+set_key max_live_dwarves "$CONFIGURE_MAX_LIVE_DWARVES"
 set_key loom_addr "$CONFIGURE_LOOM_ADDR"
 set_key dolt_data "$CONFIGURE_DOLT_DATA"
 set_key sccache_dav_addr ""
@@ -129,7 +129,7 @@ mv "$CONFIGURE_OUT.tmp" "$CONFIGURE_OUT"
 /// the binaries `bin/` must hold. Every top-level entry of the tree is linked in beside `bin/`
 /// (a release is `git archive` of its commit plus `bin/`); `target/` is not part of a release.
 /// A binary the build did not produce is a refusal naming it, never a partial `bin/`.
-/// `model-bin/` (sp-zf4q3), the only release directory an enforced aeon's model may have on
+/// `model-bin/` (sp-zf4q3), the only release directory an enforced dwarf's model may have on
 /// PATH, is made by the tree under test's OWN `spira-config link-model-bin` — the very
 /// `release_env::link_model_bin` that `release build` calls — never by a list compiled into
 /// this script (sp-jq4wq): this script runs from the INSTALLED testenv, which may predate
@@ -501,8 +501,8 @@ impl<'a> Session<'a> {
             kv("CONFIGURE_INSTANCE", &self.instance),
             kv("CONFIGURE_PROD", self.in_release("spira")),
             kv("CONFIGURE_RUN", self.batch_run()),
-            kv("CONFIGURE_MAX_AEONS", "1"),
-            kv("CONFIGURE_MAX_LIVE_AEONS", "1"),
+            kv("CONFIGURE_MAX_DWARVES", "1"),
+            kv("CONFIGURE_MAX_LIVE_DWARVES", "1"),
             kv("CONFIGURE_LOOM_ADDR", "127.0.0.1:7300"),
             kv("CONFIGURE_DOLT_DATA", ""),
         ]);
@@ -1278,7 +1278,7 @@ mod tests {
     }
 
     fn session(rt: &FakeRuntime) -> Session<'_> {
-        let mut s = Session::new(rt, "abc123", "aeon");
+        let mut s = Session::new(rt, "abc123", "dwarf");
         s.liveness_sleep = Duration::from_millis(1);
         s
     }
@@ -1348,7 +1348,7 @@ mod tests {
         );
         assert_eq!(argv[2][5], "spira-cockpit");
         assert_eq!(argv[3][5], "spira-watch-queue-watch");
-        assert_eq!(argv[4][5], "spira-summon");
+        assert_eq!(argv[4][5], "spira-call");
         assert_eq!(
             argv[5],
             vec!["/tmp/spira-release-abc123/bin/units-install", "abc123"]
@@ -1393,12 +1393,12 @@ mod tests {
         assert_eq!(argv[0][..3], ["bash", "-c", STAGE_SCRIPT]);
         assert_eq!(
             argv[0][3..],
-            ["_", "/tmp/spira-release-abc123", "/workspace/target/aeon", "/workspace", "spira-config", "testenv"]
+            ["_", "/tmp/spira-release-abc123", "/workspace/target/dwarf", "/workspace", "spira-config", "testenv"]
         );
         let rt = FakeRuntime::new();
         rt.on(|r| r.argv.get(2).map(String::as_str) == Some(STAGE_SCRIPT), |_| ExecOutcome {
             rc: 1,
-            output: "testenv: stage: testenv was not built into /workspace/target/aeon".into(),
+            output: "testenv: stage: testenv was not built into /workspace/target/dwarf".into(),
         });
         let e = run_setup(&session(&rt), true, &[]).unwrap_err();
         assert_eq!(e.fault.rc(), 3, "a release that cannot be staged is a harness fault");
@@ -1411,7 +1411,7 @@ mod tests {
         // The script itself, run on the host against a scratch tree.
         let d = testkit::TempDir::new("testenv-stage");
         let (w, a, r) = (d.join("w"), d.join("a"), d.join("rel"));
-        for p in [w.join("spira"), w.join("systemd"), w.join("target/aeon"), a.clone()] {
+        for p in [w.join("spira"), w.join("systemd"), w.join("target/dwarf"), a.clone()] {
             std::fs::create_dir_all(&p).unwrap();
         }
         std::fs::write(w.join("spira/conf.sh"), "").unwrap();

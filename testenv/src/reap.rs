@@ -4,13 +4,13 @@
 //! removed by hand the day sp-x9kbg was filed) and nothing reads it again.
 //!
 //! Candidates are `<worktrees>/<bead id>/target` and `<worktrees>/concierge-<bead id>/target`
-//! — the aeon and the Concierge's own worktree conventions. Gate trees and testenv slots are
+//! — the dwarf and the Concierge's own worktree conventions. Gate trees and testenv slots are
 //! owned by the gate and testenv. The gate is per worktree, decided by [`crate::landed`]: a
 //! bead the lifecycle record has LANDED (`spira-lc state`) is reaped — whatever bd's status
 //! says, so a bead that stays open past landing no longer holds the target/ hostage
 //! (sp-x9kbg). A fresh worktree is WORKING on the record, never LANDED, so its tip trivially
 //! equalling the base it was cut from no longer matters (the same bead's second defect —
-//! round 198 reaped two in-progress aeons). Anything [`crate::landed`] cannot tell — the
+//! round 198 reaped two in-progress dwarves). Anything [`crate::landed`] cannot tell — the
 //! record unreachable — is kept (fail closed — never guess that
 //! work is finished), and so is anything a live process still has open ([`crate::busy`]), a
 //! second, structural guard independent of what landed-ness concluded.
@@ -28,7 +28,7 @@ pub fn is_bead_id(name: &str) -> bool {
         && parts.all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
 }
 
-/// The bead id a worktree directory is named after — bare (`sp-x9kbg`, the aeon convention)
+/// The bead id a worktree directory is named after — bare (`sp-x9kbg`, the dwarf convention)
 /// or Concierge-prefixed (`concierge-sp-x9kbg`) — or `None` when the name is neither (a gate
 /// tree, a testenv slot, a round's own scratch dir: none of this crate's business).
 pub fn worktree_id(dirname: &str) -> Option<&str> {
@@ -38,7 +38,7 @@ pub fn worktree_id(dirname: &str) -> Option<&str> {
 
 /// `(bead id, worktree dir, <dir>/target)` for every bead-named worktree under `worktrees`
 /// that holds a `target` (a directory or a link), sorted by id (then by dir, for the rare
-/// case the same bead has both an aeon and a Concierge worktree at once).
+/// case the same bead has both a dwarf and a Concierge worktree at once).
 pub fn candidates(worktrees: &Path) -> Vec<(String, PathBuf, PathBuf)> {
     let mut out: Vec<(String, PathBuf, PathBuf)> = fs::read_dir(worktrees)
         .map(|rd| {
@@ -311,7 +311,7 @@ mod tests {
         Scratch(t, p)
     }
     fn wt(root: &Path, name: &str, bytes: usize) {
-        let d = root.join(name).join("target/aeon");
+        let d = root.join(name).join("target/dwarf");
         fs::create_dir_all(&d).unwrap();
         fs::write(d.join("x"), vec![1u8; bytes]).unwrap();
         fs::write(root.join(name).join("src.rs"), "kept").unwrap();
@@ -366,7 +366,7 @@ mod tests {
         assert!(!s.1.join("sp-done/target").exists() && s.1.join("sp-done/src.rs").is_file(), "only the build output goes");
         assert!(!s.1.join("concierge-sp-stuck/target").exists(), "landed, open bead or not, is still reaped");
         for kept in ["sp-open", "sp-ghost", "round-9"] {
-            assert!(s.1.join(kept).join("target/aeon/x").is_file(), "{kept}");
+            assert!(s.1.join(kept).join("target/dwarf/x").is_file(), "{kept}");
         }
         let line = describe(&r, false);
         assert!(line.contains("kept 1 unlanded") && line.contains("sp-ghost"), "{line}");
@@ -392,7 +392,7 @@ mod tests {
         let r = reap(&s.1, false, &|_, _| Some(false), &never_busy).unwrap();
         assert_eq!(r.removed, Vec::<String>::new());
         assert_eq!(r.kept_unlanded, 1);
-        assert!(s.1.join("sp-busy/target/aeon/x").is_file());
+        assert!(s.1.join("sp-busy/target/dwarf/x").is_file());
     }
 
     #[test]
@@ -402,7 +402,7 @@ mod tests {
         let r = reap(&s.1, false, &|_, _| None, &never_busy).unwrap();
         assert_eq!(r.removed, Vec::<String>::new());
         assert_eq!(r.kept_unknown, vec!["sp-done".to_string()]);
-        assert!(s.1.join("sp-done/target/aeon/x").is_file());
+        assert!(s.1.join("sp-done/target/dwarf/x").is_file());
     }
 
     #[test]
@@ -440,7 +440,7 @@ mod tests {
         wt(&s.1, "sp-done", 10);
         let r = reap(&s.1, true, &|_, _| Some(true), &never_busy).unwrap();
         assert_eq!(r.removed, vec!["sp-done".to_string()]);
-        assert!(s.1.join("sp-done/target/aeon/x").is_file());
+        assert!(s.1.join("sp-done/target/dwarf/x").is_file());
         assert!(describe(&r, true).starts_with("target-reap: would remove 1"));
     }
 
@@ -472,7 +472,7 @@ mod tests {
         let r = reap(&s.1, false, &|_, _| Some(true), &busy).unwrap();
         assert_eq!(r.removed, Vec::<String>::new());
         assert_eq!(r.kept_busy, 1);
-        assert!(s.1.join("sp-inflight/target/aeon/x").is_file(), "a busy worktree's target/ must survive even though it is landed");
+        assert!(s.1.join("sp-inflight/target/dwarf/x").is_file(), "a busy worktree's target/ must survive even though it is landed");
         assert_eq!(busy_dirs.borrow().len(), 1);
     }
 
@@ -496,7 +496,7 @@ mod tests {
         assert_eq!((r.kept_active, r.kept_busy, r.kept_unknown.clone()), (1, 1, vec!["sp-nokey".to_string()]));
         assert!(!s.1.join("sp-idle/target").exists() && s.1.join("sp-idle/src.rs").is_file(), "source stays");
         for kept in ["sp-recent", "sp-busy", "sp-nokey"] {
-            assert!(s.1.join(kept).join("target/aeon/x").is_file(), "{kept}");
+            assert!(s.1.join(kept).join("target/dwarf/x").is_file(), "{kept}");
         }
     }
 

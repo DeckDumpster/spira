@@ -66,7 +66,7 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 # czar-pass is found directly on this suite's PATH (sp-gypjk).
 
 # Minimal test environment — no real database needed: incident is stubbed,
-# summon_fayth silently returns 1 when fayth_ready finds no db (|| true guards it).
+# call_rune silently returns 1 when rune_ready finds no db (|| true guards it).
 export SPIRA_HOME="$HERE"
 SPIRA_RUN="$T/run"
 SPIRA_DB="$T/db"
@@ -107,8 +107,8 @@ chmod +x "$STUB_INC"
 export PATH="$STUB_BIN:$PATH"
 export INC_LOG="$T/incident-calls.log"
 
-# Never actually summon an aeon
-export SPIRA_SUMMON=true
+# Never actually call a dwarf
+export SPIRA_CALL=true
 
 printf 'test-czar-pass.sh\n'
 
@@ -207,15 +207,15 @@ _inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
 want "act: incident filed with cause=deadlock" "cause=deadlock" "$_inc_log"
 
 # ==========================================================================================
-# THE SUMMON FROM HERE ON IS A RECORDING STUB. czar-pass execs the real `sentinel --summon
+# THE CALL FROM HERE ON IS A RECORDING STUB. czar-pass execs the real `sentinel --call
 # czar` on every act-mode fire (sp-gzmd2, so DRAIN/halt gating is the real one); section 7 above
-# keeps that real call. Every later fire only needs to prove the summon was asked for — a real
-# summon is ~6 s on testenv's build, and 14 of them were most of this suite's wall.
-SUMMON_STUB_DIR="$T/summon-stub"; mkdir -p "$SUMMON_STUB_DIR"
-SUMMON_LOG="$T/summon-calls.log"; export SUMMON_LOG
-printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$SUMMON_LOG"\n' > "$SUMMON_STUB_DIR/sentinel"
-chmod +x "$SUMMON_STUB_DIR/sentinel"
-export PATH="$SUMMON_STUB_DIR:$PATH"
+# keeps that real call. Every later fire only needs to prove the call was asked for — a real
+# call is ~6 s on testenv's build, and 14 of them were most of this suite's wall.
+CALL_STUB_DIR="$T/call-stub"; mkdir -p "$CALL_STUB_DIR"
+CALL_LOG="$T/call-calls.log"; export CALL_LOG
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$CALL_LOG"\n' > "$CALL_STUB_DIR/sentinel"
+chmod +x "$CALL_STUB_DIR/sentinel"
+export PATH="$CALL_STUB_DIR:$PATH"
 
 printf '\n%s\n' "8. world halted: pass exits without acting"
 # ==========================================================================================
@@ -426,12 +426,12 @@ FEOF17
 chmod +x "$STUB_FORGE"
 
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$SPIRA_RUN/czar-pass-first."* "$INC_LOG"
-rm -f "$SUMMON_LOG"
+rm -f "$CALL_LOG"
 tl_config SPIRA_CZAR_STAGE_BASE_RED=act
 "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 _inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
-want "base-red: the fire summons the czar (sentinel --summon czar)" "--summon czar" "$(cat "$SUMMON_LOG" 2>/dev/null || true)"
+want "base-red: the fire calls the czar (sentinel --call czar)" "--call czar" "$(cat "$CALL_LOG" 2>/dev/null || true)"
 want "base-red: DETECTED=yes when base's own run is red" "CLASS=base-red DETECTED=yes" "$_log"
 want "base-red: bead filed with cause=base-red" "cause=base-red" "$_inc_log"
 want "base-red: filed at priority 0 (P0)" "priority=0" "$_inc_log"

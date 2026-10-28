@@ -8,7 +8,7 @@
 //! The state predicates below are the bd vocabulary's lifecycle equivalents, named for the
 //! decision rather than the word: bd `closed` on a work bead meant "the builder is done with
 //! it" ([`past_builder`]) or "nothing more will happen to it" ([`is_terminal`]); bd
-//! `in_progress` meant "an aeon holds it" ([`is_working`]); bd `open` meant "claimable"
+//! `in_progress` meant "a dwarf holds it" ([`is_working`]); bd `open` meant "claimable"
 //! ([`is_claimable`]).
 
 use serde_json::Value;
@@ -24,7 +24,7 @@ pub fn snooze_reason(until: i64) -> String {
     format!("{SNOOZE_PREFIX}{until}")
 }
 
-/// The `wait` hold's reason for an aeon checkpointed across a world stop:
+/// The `wait` hold's reason for a dwarf checkpointed across a world stop:
 /// `checkpoint-until:<epoch seconds>`. It keeps the bead unclaimable like a snooze, and
 /// `world start` lifts it; the expiry only bounds a stop that is never followed by a start.
 pub const CHECKPOINT_PREFIX: &str = "checkpoint-until:";
@@ -92,7 +92,7 @@ pub fn past_builder(state: &str) -> bool {
     !state.is_empty() && !matches!(state, "READY" | "WORKING" | "REWORK")
 }
 
-/// An aeon holds the bead: what bd `in_progress` meant.
+/// A dwarf holds the bead: what bd `in_progress` meant.
 pub fn is_working(state: &str) -> bool {
     state == "WORKING"
 }
@@ -145,7 +145,7 @@ fn row_of(r: &Value) -> Row {
         holds: holds(r.get("holds")),
         express: matches!(scalar(r.get("express")).as_deref(), Some("1" | "true")),
         stack: stack(r.get("stack")),
-        phase: scalar(r.get("aeon_phase")).filter(|x| !x.is_empty()),
+        phase: scalar(r.get("dwarf_phase")).filter(|x| !x.is_empty()),
         disposition: scalar(r.get("disposition")).filter(|x| !x.is_empty()),
         disposition_note: scalar(r.get("disposition_note")),
     }
@@ -197,7 +197,7 @@ pub fn list_with(bin: &str) -> Result<Vec<Row>, String> {
 }
 
 /// The rows in one state (`spira-lc list --state <STATE>`): what a reader that wants only
-/// the WORKING aeons asks, instead of every row.
+/// the WORKING dwarves asks, instead of every row.
 pub fn list_state_with(bin: &str, state: &str) -> Result<Vec<Row>, String> {
     match run_within(bin, &["list", "--state", state], 5)? {
         (0, out) => parse_rows(&out),
@@ -278,7 +278,7 @@ mod tests {
     #[test]
     fn list_and_show_parse_holds_either_way() {
         let rows = parse_rows(
-            r#"[{"bead_id":"sp-a","state":"WORKING","holder":"aeon-1","lease_until":"17.0","holds":"[\"wait\"]"},
+            r#"[{"bead_id":"sp-a","state":"WORKING","holder":"dwarf-1","lease_until":"17.0","holds":"[\"wait\"]"},
                 {"bead_id":"sp-b","state":"READY","holder":null,"holds":[]}]"#,
         )
         .unwrap();

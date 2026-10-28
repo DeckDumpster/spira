@@ -1,8 +1,8 @@
 # test-real-clock: files whose tests still sleep or compare the real clock, as `<count> <path>`.
 # SHRINK-ONLY. A count goes down as the test synchronises on a channel, barrier or file;
 # a new use carries `// clock-safe: <why>` instead of a line here.
-1 aeon/src/session.rs
-2 aeon/src/tests.rs
+1 dwarf/src/session.rs
+2 dwarf/src/tests.rs
 2 archivist/src/lock.rs
 1 archivist/src/run.rs
 1 archivist/src/transcripts.rs
@@ -26,7 +26,7 @@
 1 round-vm/src/progress.rs
 5 round-vm/src/run.rs
 1 sentinel/src/open_children.rs
-1 sentinel/src/summon.rs
+1 sentinel/src/call.rs
 3 spira-config/src/admission/tests.rs
 1 spira-config/src/lc_call.rs
 3 spira-config/src/scratch.rs

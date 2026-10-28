@@ -88,7 +88,7 @@ pub fn run(http: &dyn Http, bd: &dyn Bd, repo: &dyn Repo, mail: &dyn Mail, stamp
             None => {
                 return r.die(format!(
                     "repo:{} does not resolve to a checkout through $SPIRA_REPO_MAP.\n       \
-                     Every ingested bead would be parked by aeon.sh on first claim and left for a\n       \
+                     Every ingested bead would be parked by dwarf.sh on first claim and left for a\n       \
                      human. Add {} to that map, or set SPIRA_GH_INTAKE_BEAD_REPO to a\n       \
                      name that resolves.",
                     cfg.bead_repo, cfg.bead_repo
@@ -320,7 +320,7 @@ fn ingest_repo(mut r: Report, http: &dyn Http, bd: &dyn Bd, mail: &dyn Mail, sta
 
     if !cfg.dry_run {
         // The post-check: re-read the store and refuse to finish quietly if a work bead
-        // was filed that carries no scope label (aeon.sh's fayths can never claim it).
+        // was filed that carries no scope label (dwarf.sh's runes can never claim it).
         if let Some(after) = bd.list_all_json() {
             let after_ingested = ingested(&after);
             let left: Vec<&KnownRef> = after_ingested
@@ -329,7 +329,7 @@ fn ingest_repo(mut r: Report, http: &dyn Http, bd: &dyn Bd, mail: &dyn Mail, sta
                 .collect();
             if !left.is_empty() {
                 r.err.push(format!(
-                    "gh-intake: {} work bead(s) carry no {} label and no fayth can claim them:",
+                    "gh-intake: {} work bead(s) carry no {} label and no rune can claim them:",
                     left.len(),
                     cfg.scope
                 ));

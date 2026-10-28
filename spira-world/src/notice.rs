@@ -1,6 +1,6 @@
-//! Deadline notices to live aeons across a `world.sh stop`/`drain`.
+//! Deadline notices to live dwarves across a `world.sh stop`/`drain`.
 //!
-//! The notice rides the same channel `bead.sh amend` uses: a message into the aeon's
+//! The notice rides the same channel `bead.sh amend` uses: a message into the dwarf's
 //! mailbox, which its PostToolUse hook hands to the working session.
 
 use std::collections::BTreeSet;
@@ -58,13 +58,13 @@ impl Notifier {
     }
 }
 
-/// Mails `bead`'s live aeon. False when it has no open mailbox or the send failed.
+/// Mails `bead`'s live dwarf. False when it has no open mailbox or the send failed.
 pub fn send(mail_root: &Path, bead: &str, body: &str) -> bool {
-    if !mail_root.join(format!("aeon-{bead}")).join("new").is_dir() {
+    if !mail_root.join(format!("dwarf-{bead}")).join("new").is_dir() {
         return false;
     }
     let Ok(mut child) = spira_config::bounded::bounded("mail")
-        .args(["send", &format!("aeon-{bead}"), "--from", "world <world@spira>", "--subject", "Deadline: wrap up or checkpoint"])
+        .args(["send", &format!("dwarf-{bead}"), "--from", "world <world@spira>", "--subject", "Deadline: wrap up or checkpoint"])
         .env("SPIRA_MAIL_LINT_CONSIDERED", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
@@ -103,7 +103,7 @@ mod tests {
     }
 
     #[test]
-    fn no_live_aeons_sends_nothing() {
+    fn no_live_dwarves_sends_nothing() {
         assert!(run(1800, &[], &[0, 1500]).is_empty());
     }
 

@@ -160,8 +160,8 @@ touch "$BUDGET"
     printf 'SP_AT=%s\n' "$(date +%s)"
     SPIRA_TOML="$(tl_layer SPIRA_MAIL="$MAIL_DIR")" cockpit-collect probe mail 2>/dev/null
     # Minimal keys for health.sh to not crash
-    printf 'SP_AEONS=0\nSP_SENTINEL_AGE=5\nSP_OPS_AGE=5\nSP_AURON_AGE=5\n'
-    printf 'SP_SENTINEL_TIMER=1\nSP_OPS_TIMER=1\nSP_AURON_TIMER=1\nSP_AURON_FIRING=0\n'
+    printf 'SP_DWARVES=0\nSP_SENTINEL_AGE=5\nSP_OPS_AGE=5\nSP_HEIMDALL_AGE=5\n'
+    printf 'SP_SENTINEL_TIMER=1\nSP_OPS_TIMER=1\nSP_HEIMDALL_TIMER=1\nSP_HEIMDALL_FIRING=0\n'
     printf 'SP_TOK_WIN=0\nSP_TOK_WINDOW_H=5\n'
     printf 'SP_RATELIM_5H_PCT=0\nSP_RATELIM_7D_PCT=0\nSP_RATELIM_5H_MIN=0\nSP_RATELIM_7D_MIN=0\n'
     printf 'SP_RATELIM_5H_ETA=-\nSP_RATELIM_7D_ETA=-\nSP_RATELIM_AGE=0\n'

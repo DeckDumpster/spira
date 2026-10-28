@@ -188,5 +188,5 @@ batch.sh, wave 2b). **Repointed:** `test-queue-publish`, `test-queue-transition`
 `test-config-compat-master-base` (run `queue verdict`), `test-queue-flush` (step's verdict
 seen through the forge), `test-landing-queue-early` (stub renamed), `test-reopen-queue-eject`
 (writer is the lib.sh pair `queue eject --red --suites` calls), `test-lifecycle-cutover`
-(verdict section retired, D3 unit test), `test-guards`/`aeon-fence.sh` (`queue verdict` is
+(verdict section retired, D3 unit test), `test-guards`/`dwarf-fence.sh` (`queue verdict` is
 fenced as a queue verb), `test-git-push-app` (verdict.sh out of the grep list).

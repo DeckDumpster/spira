@@ -192,7 +192,7 @@ nowant "NO_VERDICT: never certified"        "certified spira/sp-cert-noverdict" 
 nowant "NO_VERDICT: lifecycle was not told it passed" " pass " "$(lc_calls sp-cert-noverdict)"
 
 # -----------------------------------------------------------------------------------------
-# A MOVED TIP (the aeon's rework) is gated and certified again.
+# A MOVED TIP (the dwarf's rework) is gated and certified again.
 # -----------------------------------------------------------------------------------------
 seed; branch sp-cert-withdrawn
 landing > /dev/null   # first pass: certify

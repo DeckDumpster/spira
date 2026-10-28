@@ -25,7 +25,7 @@
 #
 # THE STUB AGENT. acceptance-agent.sh replaces claude so no model credential is
 # needed. It commits acceptance-probe-<bead-id>.txt and closes the bead — proving the full
-# sentinel → summon → claim → branch → commit → land path deterministically.
+# sentinel → call → claim → branch → commit → land path deterministically.
 #
 # TARBALL INSTALL. Phase A downloads the candidate tarball from the draft GitHub
 # release created by release.yml and installs via release install-tarball + install --skip-build
@@ -67,7 +67,7 @@ on:
         default: false
 
 concurrency:
-  group: acceptance-${{ inputs.tag || github.ref }}
+  group: acceptance-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 permissions:
@@ -87,6 +87,7 @@ jobs:
     if: github.event_name == 'push'
     outputs:
       already-published: ${{ steps.check.outputs.already-published }}
+      reason: ${{ steps.check.outputs.reason }}
     permissions:
       contents: read
     steps:
@@ -102,7 +103,7 @@ jobs:
             --jq "[.[] | select(.databaseId < ${{ github.run_id }})] | length" 2>/dev/null || echo 0)"
           if [ "${_earlier:-0}" -gt 0 ]; then
             printf 'guard: an earlier acceptance run exists for %s — one run per tag, skipping\n' "$_tag"
-            printf 'already-published=true\n' >> "$GITHUB_OUTPUT"
+            printf 'already-published=true\nreason=earlier-run\n' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           _draft="$(gh release view "$_tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null || echo true)"
@@ -112,6 +113,16 @@ jobs:
           else
             printf 'already-published=false\n' >> "$GITHUB_OUTPUT"
           fi
+
+  # A guard skip for an earlier run is not a pass: nothing was tested.
+  skipped:
+    needs: guard
+    if: needs.guard.outputs.reason == 'earlier-run'
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "::error::acceptance did not run for ${{ github.ref_name }}: an earlier run exists for this tag"
+          exit 1
 
   # ---------------------------------------------------------------------------
   # Create the machine the acceptance run will use.
@@ -271,8 +282,8 @@ jobs:
         # writes the repo-map, calls release acceptance, pushes notes, and writes
         # the step summary. (Its suite, test-acceptance-ci.sh, was deleted as a flip 2026-09-27.)
         env:
-          CONFIGURE_MAX_AEONS: "1"
-          CONFIGURE_MAX_LIVE_AEONS: ""
+          CONFIGURE_MAX_DWARVES: "1"
+          CONFIGURE_MAX_LIVE_DWARVES: ""
           CONFIGURE_DOLT_DATA: ""
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Declared waiver (see TRIGGERS above): acceptance-ci.sh applies this

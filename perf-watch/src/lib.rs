@@ -22,6 +22,10 @@ pub trait Runner {
     fn measured_ms(&self) -> Option<u64> {
         None
     }
+    /// Where the last run says its own time went, as `name=ms,...`.
+    fn phases(&self) -> Option<String> {
+        None
+    }
 }
 
 pub fn parse_probes(text: &str) -> Result<Vec<Probe>, String> {
@@ -77,6 +81,7 @@ pub struct Timing {
     pub name: String,
     pub millis: u64,
     pub error: Option<String>,
+    pub phases: Option<String>,
 }
 
 pub fn time_probes(probes: &[Probe], clock: &dyn Clock, runner: &mut dyn Runner) -> Vec<Timing> {
@@ -86,7 +91,7 @@ pub fn time_probes(probes: &[Probe], clock: &dyn Clock, runner: &mut dyn Runner)
             let t0 = clock.now_ms();
             let r = runner.run(&p.argv);
             let millis = runner.measured_ms().unwrap_or_else(|| clock.now_ms().saturating_sub(t0));
-            Timing { name: p.name.clone(), millis, error: r.err() }
+            Timing { name: p.name.clone(), millis, error: r.err(), phases: runner.phases() }
         })
         .collect()
 }
@@ -103,6 +108,25 @@ pub fn alarms(timings: &[Timing], limit_ms: u64, callers: &[String]) -> Vec<Stri
         .collect()
 }
 
+fn phase_sum(phases: &str) -> u64 {
+    phases.split(',').filter_map(|p| p.split_once('=')?.1.parse::<u64>().ok()).sum()
+}
+
+/// One log row per over-budget probe: `<epoch>\t<probe>\t<ms>\t<phases>\trest=<ms>\t<top callers>`.
+/// `rest` is the time no phase claims: process start, request building, and the wait before the
+/// server saw the request.
+pub fn slow_samples(epoch: u64, timings: &[Timing], limit_ms: u64, callers: &[String]) -> Vec<String> {
+    let top = if callers.is_empty() { "unknown".to_string() } else { callers.join(", ") };
+    timings
+        .iter()
+        .filter(|t| t.error.is_none() && t.millis > limit_ms)
+        .map(|t| {
+            let phases = t.phases.as_deref().unwrap_or("unreported");
+            format!("{epoch}\t{}\t{}\t{phases}\trest={}\t{top}\n", t.name, t.millis, t.millis.saturating_sub(phase_sum(phases)))
+        })
+        .collect()
+}
+
 /// Every alarm line for one pass, and the stats sample to diff the next pass against (`None`
 /// when stats were unreadable, so the older baseline stays).
 pub fn pass(
@@ -112,7 +136,7 @@ pub fn pass(
     prior: &Health,
     clock: &dyn Clock,
     runner: &mut dyn Runner,
-) -> (Vec<Timing>, Vec<String>, Option<BTreeMap<String, u64>>) {
+) -> (Vec<Timing>, Vec<String>, Option<BTreeMap<String, u64>>, Vec<String>) {
     let timings = time_probes(probes, clock, runner);
     let cur = caller_counts(&runner.run(stats_argv).unwrap_or_default());
     let cur = (!cur.is_empty()).then_some(cur);
@@ -121,7 +145,7 @@ pub fn pass(
         _ => vec![],
     };
     let lines = alarms(&timings, limit_ms, &callers);
-    (timings, lines, cur)
+    (timings, lines, cur, callers)
 }
 
 pub struct Settings {
@@ -215,6 +239,7 @@ pub fn append_inbox(path: &str, line: &str) {
 
 pub struct Pass {
     pub lines: Vec<String>,
+    pub slow: Vec<String>,
     pub timings: Vec<Timing>,
     pub health: Health,
 }
@@ -235,7 +260,7 @@ pub fn run_pass(
             return None;
         }
     }
-    let (timings, all, cur) = pass(probes, cfg.budget_ms, stats_argv, prior, clock, runner);
+    let (timings, all, cur, callers) = pass(probes, cfg.budget_ms, stats_argv, prior, clock, runner);
     let mut health = Health { last_pass: Some(now), ..Health::default() };
     match cur {
         Some(c) => (health.sample_at, health.sample) = (Some(now), c),
@@ -253,7 +278,8 @@ pub fn run_pass(
         };
         health.alarms.insert(key, printed);
     }
-    Some(Pass { lines, timings, health })
+    let slow = slow_samples(now, &timings, cfg.budget_ms, &callers);
+    Some(Pass { lines, slow, timings, health })
 }
 
 #[cfg(test)]
@@ -303,7 +329,7 @@ mod tests {
         let clock = Stub { now: Cell::new(0), epoch: Cell::new(60) };
         let mut r = Scripted { clock: &clock, costs: costs.iter().map(|(k, v)| (k.to_string(), *v)).collect(), stats: STATS.into(), asked_stats: false };
         let prior = Health { sample_at: Some(0), ..Health::default() };
-        let (_, lines, _) = pass(&parse_probes(PROBES).unwrap(), limit, &["stats".to_string()], &prior, &clock, &mut r);
+        let (_, lines, _, _) = pass(&parse_probes(PROBES).unwrap(), limit, &["stats".to_string()], &prior, &clock, &mut r);
         (lines, r.asked_stats)
     }
 
@@ -371,6 +397,27 @@ mod tests {
         r.inside = 700;
         let t = time_probes(&probes, &clock, &mut r);
         assert_eq!(alarms(&t, 500, &[]).len(), 1);
+    }
+
+    struct Phased<'a>(&'a Stub);
+    impl Runner for Phased<'_> {
+        fn run(&mut self, _: &[String]) -> Result<String, String> {
+            self.0.now.set(self.0.now.get() + 2100);
+            Ok(String::new())
+        }
+        fn phases(&self) -> Option<String> {
+            Some("reply=40,push=2000".to_string())
+        }
+    }
+
+    #[test]
+    fn an_over_budget_sample_names_where_its_time_went_and_a_quick_one_is_not_logged() {
+        let clock = Stub { now: Cell::new(0), epoch: Cell::new(77) };
+        let probes = parse_probes("list\tlist --live\n").unwrap();
+        let t = time_probes(&probes, &clock, &mut Phased(&clock));
+        let rows = slow_samples(77, &t, 500, &["watcher/list=3.0/min".to_string()]);
+        assert_eq!(rows, vec!["77\tlist\t2100\treply=40,push=2000\trest=60\twatcher/list=3.0/min\n".to_string()]);
+        assert!(slow_samples(77, &t, 2100, &[]).is_empty(), "at the limit is not slow");
     }
 
     #[test]

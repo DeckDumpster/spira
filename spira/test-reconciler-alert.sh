@@ -94,15 +94,15 @@ mailcount() { find "$SPIRA_RUN/mail/$1/new" -type f 2>/dev/null | wc -l | tr -d 
 printf '\n%s\n' "2. a fresh gap past grace wakes the concierge, evidence-carrying"
 # ==========================================================================================
 out="$(reconciler-alert gap --invariant fleet-size --now 1000 --state "$STATE" \
-    --status gap --desired "8 aeons" --observed "3 aeons" --since 940 --is-gap 2>&1)"; rc=$?
+    --status gap --desired "8 dwarves" --observed "3 dwarves" --since 940 --is-gap 2>&1)"; rc=$?
 [ "$rc" -eq 0 ] && ok "gap call exits 0" || bad "gap call exits 0" "rc=$rc: $out"
 want "reports sent to concierge" "sent to concierge" "$out"
 is   "exactly one message reaches concierge" "1" "$(mailcount concierge)"
 msg="$(cat "$(mailfile concierge)" 2>/dev/null)"
 want "message carries X-Spira-Kind: alert" "X-Spira-Kind: alert" "$msg"
 want "evidence names the invariant"        "invariant: fleet-size" "$msg"
-want "evidence names desired"              "desired:   8 aeons" "$msg"
-want "evidence names observed"             "observed:  3 aeons" "$msg"
+want "evidence names desired"              "desired:   8 dwarves" "$msg"
+want "evidence names observed"             "observed:  3 dwarves" "$msg"
 want "evidence names since-when"           "since:     60s ago" "$msg"
 want "evidence says no remedy was tried"   "last remedy tried: none attempted" "$msg"
 is "operator mailbox is empty so far" "0" "$(mailcount operator)"
@@ -111,7 +111,7 @@ is "operator mailbox is empty so far" "0" "$(mailcount operator)"
 printf '\n%s\n' "3. the same unresolved streak does not alert twice (dedup per gap)"
 # ==========================================================================================
 out="$(reconciler-alert gap --invariant fleet-size --now 1060 --state "$STATE" \
-    --status gap --desired "8 aeons" --observed "3 aeons" --since 940 --is-gap 2>&1)"
+    --status gap --desired "8 dwarves" --observed "3 dwarves" --since 940 --is-gap 2>&1)"
 want "reports no alert (deduped)" "no alert" "$out"
 is   "still exactly one message — no repeat" "1" "$(mailcount concierge)"
 
@@ -120,7 +120,7 @@ printf '\n%s\n' "4. once the streak closes, a new streak (new since) alerts agai
 # ==========================================================================================
 reconciler-alert gap --invariant fleet-size --now 1100 --state "$STATE" --status satisfied >/dev/null 2>&1
 out="$(reconciler-alert gap --invariant fleet-size --now 1200 --state "$STATE" \
-    --status gap --desired "8 aeons" --observed "2 aeons" --since 1150 --is-gap 2>&1)"
+    --status gap --desired "8 dwarves" --observed "2 dwarves" --since 1150 --is-gap 2>&1)"
 want "reports sent to concierge again" "sent to concierge" "$out"
 is   "a second message reaches concierge" "2" "$(mailcount concierge)"
 

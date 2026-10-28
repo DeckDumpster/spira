@@ -11,15 +11,15 @@
 # running. The suite guards three properties:
 #
 #   1. When no trigger is open, it files a bead with SPIRA_SCOPE_LABEL and
-#      SPIRA_GROOMER_LABEL (the groomer's FAYTH_LABELS partition).
+#      SPIRA_GROOMER_LABEL (the groomer's RUNE_LABELS partition).
 #
 #   2. When an open trigger already exists, it exits 0 WITHOUT filing another bead
-#      (dedup). A second trigger would queue a redundant pass; with FAYTH_MAX_CONCURRENT=1
+#      (dedup). A second trigger would queue a redundant pass; with RUNE_MAX_CONCURRENT=1
 #      the second trigger would wait forever for the first, growing unboundedly.
 #
-#   3. The labels used are the same ones FAYTH_LABELS expands to, so the trigger
+#   3. The labels used are the same ones RUNE_LABELS expands to, so the trigger
 #      lands in exactly the partition the groomer queries. Tested by asserting both
-#      the filer is invoked --for groomer (bead.sh reads the label set from the fayth).
+#      the filer is invoked --for groomer (bead.sh reads the label set from the rune).
 #
 # POSITIVE CONTROL (law-absence-needs-a-positive-control)
 # -------------------------------------------------------

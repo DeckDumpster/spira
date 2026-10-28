@@ -56,7 +56,7 @@ pub(crate) fn push_or_hold(p: &Pass, w: &Walk, br: &str, id: &str, bead: &BeadRo
                     "bead.reopened",
                     id,
                     &format!("reopened {id} — {br} does not rebase onto {} in {name}", w.base),
-                    &format!("conflicts in {}; the next aeon is handed the rebase", or(&rb.conflicts, "unknown")),
+                    &format!("conflicts in {}; the next dwarf is handed the rebase", or(&rb.conflicts, "unknown")),
                 );
             }
             return Flow::Next;
@@ -107,7 +107,7 @@ pub(crate) fn push_or_hold(p: &Pass, w: &Walk, br: &str, id: &str, bead: &BeadRo
                 }
                 let n = p.count_or_q(path, &format!("{}..{br}", w.base));
                 let note = format!(
-                    "Reopened by sentinel: branch {br} failed {name}'s landing gate. The branch carries {n} commit(s) from the previous session — the next aeon should resume from the existing work, not restart.\n\n{}",
+                    "Reopened by sentinel: branch {br} failed {name}'s landing gate. The branch carries {n} commit(s) from the previous session — the next dwarf should resume from the existing work, not restart.\n\n{}",
                     tail_lines(&g.out, 20)
                 );
                 let cause = crate::model::red_cause("gate-red", &reason);

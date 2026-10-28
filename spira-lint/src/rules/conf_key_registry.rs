@@ -161,8 +161,8 @@ mod tests {
 
     #[test]
     fn known_keys_survive_and_a_planted_unknown_key_is_named() {
-        assert!(round_trip(&keys(&["SPIRA_MAX_AEONS", "SPIRA_CERTIFY_PAR"])).is_empty());
-        let got = round_trip(&keys(&["SPIRA_MAX_AEONS", "SPIRA_TOTALLY_MADE_UP_TEST_KEY"]));
+        assert!(round_trip(&keys(&["SPIRA_MAX_DWARVES", "SPIRA_CERTIFY_PAR"])).is_empty());
+        let got = round_trip(&keys(&["SPIRA_MAX_DWARVES", "SPIRA_TOTALLY_MADE_UP_TEST_KEY"]));
         assert!(!got.is_empty());
         assert!(got.iter().any(|m| m.contains("SPIRA_TOTALLY_MADE_UP_TEST_KEY")), "{got:?}");
     }
@@ -179,8 +179,8 @@ mod tests {
         // call that regenerates and sources it at use time.
         t.write(CONF_SH, "_spira_conf_gen_ensure keys || return 1\n");
         t.write(
-            "spira/conf.d/SPIRA_MAX_AEONS",
-            "TYPE=u32\nGROUP=test\nDOC=test\nDEFAULT<<'EOF'\n    : \"${SPIRA_MAX_AEONS:=7}\"\nEOF\n",
+            "spira/conf.d/SPIRA_MAX_DWARVES",
+            "TYPE=u32\nGROUP=test\nDOC=test\nDEFAULT<<'EOF'\n    : \"${SPIRA_MAX_DWARVES:=7}\"\nEOF\n",
         );
         t.write(
             "spira/conf.d/SPIRA_CERTIFY_PAR",
@@ -197,13 +197,13 @@ mod tests {
         // a guard against a parser silently reading the wrong block, not part of what the
         // registry fallback itself is responsible for; the real registry clears it easily).
         let got = conf_keys_via_registry(t.path()).expect("fallback should resolve the registry, not refuse");
-        assert_eq!(got, keys(&["SPIRA_CERTIFY_PAR", "SPIRA_MAX_AEONS"]));
+        assert_eq!(got, keys(&["SPIRA_CERTIFY_PAR", "SPIRA_MAX_DWARVES"]));
     }
 
     #[test]
     fn a_short_block_is_a_refusal_not_a_pass() {
         let t = crate::testutil::TempDir::new("ckr");
-        t.write(CONF_SH, "SPIRA_CONF_KEYS=\"\nSPIRA_MAX_AEONS\n\"\n");
+        t.write(CONF_SH, "SPIRA_CONF_KEYS=\"\nSPIRA_MAX_DWARVES\n\"\n");
         let tree = Tree::from_paths(t.path(), [CONF_SH], std::iter::empty::<&str>());
         assert!(matches!(ConfKeyRegistry.check(&tree), Err(LintError::BadAllow { .. })));
     }

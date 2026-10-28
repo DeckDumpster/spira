@@ -558,7 +558,7 @@ pub fn land_close_reason(sha: &str) -> String {
 /// and no second ledger: the queue records LANDED on spira-lc (`lc_deliver` / the batch's
 /// `land` cascade), the one record. A bead never marked submitted is left alone; the close
 /// itself is idempotent and refused by spira-lc for a row not in delivery. Best-effort throughout — a failed close is left
-/// submitted for CHECK 5, a missed reap is left for the Sending.
+/// submitted for CHECK 5, a missed reap is left for the Hel.
 pub fn close_on_land(w: &World, submitted_label: &str, id: &str, sha: &str) {
     let Ok(rows) = w.bd.show(&[id.to_string()]) else {
         return;
@@ -594,7 +594,7 @@ pub fn close_on_land(w: &World, submitted_label: &str, id: &str, sha: &str) {
         Ok(true) => w.out(format!("land-close {id}: reaped branch {branch}")),
         Ok(false) => {}
         Err(e) => w.out(format!(
-            "land-close {id}: branch {branch} not reaped: {e} — left for the Sending"
+            "land-close {id}: branch {branch} not reaped: {e} — left for the Hel"
         )),
     }
 }

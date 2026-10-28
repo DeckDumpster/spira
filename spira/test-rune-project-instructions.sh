@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+#
+# test-rune-project-instructions.sh — RUNE_PROJECT_INSTRUCTIONS=none gets
+#   --setting-sources user (the one argv table both the sweep and the bead call site build
+#   through, now dwarf/src/run.rs); archivist gets --add-dir for brain's CLAUDE.md.
+#
+#   ./test-rune-project-instructions.sh
+#
+# WHAT IS TESTED
+# --------------
+# 1. RETIRED (sp-j89pd, wave 4.2): a direct-call row against dwarf_claude_argv (lib.sh,
+#    zero live callers) used to live here under this bead's original defect id. See
+#    the dwarf crate's whole-run tests (a_replace_rune_launches_…, an_append_rune_…) for the same table's
+#    coverage end to end through the real `dwarf` binary.
+# 2. Each production rune declares the right value: ops/mimir/groomer/czar → none,
+#    builder/spike → repo.
+# 3. archivist passes --add-dir <wiki> when SPIRA_WIKI is set.
+#    Positive control: when SPIRA_WIKI is unset, --add-dir is absent.
+#
+# The stub agent writes its argv to a file and exits 0. conf.sh replaces $PATH, so a
+# PATH shim would reach the real model — SPIRA_AGENT is the only safe injection point.
+#
+# defect: sp-1f56o
+# tier: T1
+# covers: dwarf/src/* spira/lib.sh archivist/src/* spira/runes/ops.rune UC-dwarf-execution-06
+#   spira/runes/mimir.rune spira/runes/groomer.rune spira/runes/czar.rune
+#   spira/runes/builder.rune spira/runes/spike.rune
+set -uo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd -P)"
+. "$HERE/testlib.sh"
+
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
+
+SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
+export SPIRA_CONF="$TMP/no-such.conf"
+
+BIN="$TMP/bin"; mkdir -p "$BIN"
+export TMP
+tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_AGENT="$BIN/claude"
+cat > "$BIN/claude" <<'SHIM'
+#!/usr/bin/env bash
+printf '%s\n' "$@" > "$TMP/claude-argv"
+cat /dev/stdin > /dev/null 2>&1
+printf '{"type":"result","subtype":"success","duration_ms":1,"turns":1,"num_turns":1,"total_cost_usd":0}\n'
+exit 0
+SHIM
+chmod +x "$BIN/claude"
+
+echo "test-rune-project-instructions.sh"
+
+# ==========================================================================================
+echo
+echo "production runes declare the correct RUNE_PROJECT_INSTRUCTIONS:"
+# ==========================================================================================
+for f in ops mimir groomer czar; do
+    val="$(grep '^RUNE_PROJECT_INSTRUCTIONS=' "$HERE/runes/$f.rune" 2>/dev/null \
+          | cut -d= -f2 | tr -d '"' | head -1)"
+    is "$f.rune declares none" "none" "$val"
+done
+for f in builder spike; do
+    val="$(grep '^RUNE_PROJECT_INSTRUCTIONS=' "$HERE/runes/$f.rune" 2>/dev/null \
+          | cut -d= -f2 | tr -d '"' | head -1)"
+    is "$f.rune declares repo" "repo" "$val"
+done
+
+# ==========================================================================================
+echo
+echo "POSITIVE CONTROL — archivist adds --add-dir when SPIRA_WIKI is set:"
+# ==========================================================================================
+# Build a minimal transcript with enough data for ctx-meter.sh to parse.
+PROJ_DIR="$TMP/projects/testproj"
+mkdir -p "$PROJ_DIR"
+for i in $(seq 1 60); do
+    printf '{"type":"assistant","message":{"id":"m-%d","usage":{"input_tokens":1000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":10}}}\n' \
+        "$i" >> "$PROJ_DIR/test-session.jsonl"
+done
+
+WIKI_DIR="$TMP/wiki"
+mkdir -p "$WIKI_DIR"
+
+rm -f "$TMP/claude-argv"
+tl_config SPIRA_TOKEN_PROJECTS="$TMP/projects" SPIRA_CTX_WARN=200000 SPIRA_CTX_HIGH=400000 \
+    SPIRA_CTX_LIMIT=1000000 SPIRA_ARCHIVIST_TIMEOUT=10 SPIRA_RUNES_DIR="$HERE/runes" \
+    SPIRA_WIKI="$WIKI_DIR"
+env -i HOME="$TMP/home" PATH="$PATH" \
+    SPIRA_CONF="$TMP/no-such.conf" \
+    SPIRA_HOME="$HERE" \
+    SPIRA_TOML="$SPIRA_TOML" \
+    TMP="$TMP" \
+    archivist now "$PROJ_DIR/test-session.jsonl" 2>/dev/null || true
+argv_arc_wiki="$(cat "$TMP/claude-argv" 2>/dev/null || true)"
+
+want "archivist: --add-dir in argv when SPIRA_WIKI set" "--add-dir"  "$argv_arc_wiki"
+want "archivist: wiki path in argv"                     "$WIKI_DIR"  "$argv_arc_wiki"
+
+# ==========================================================================================
+echo
+echo "archivist WITHOUT SPIRA_WIKI does NOT add --add-dir:"
+# ==========================================================================================
+# SPIRA_WIKI="" EXPLICITLY: the fixture's base layer declares a non-empty wiki path, so
+# merely leaving this key out of the override no longer means "unset" — it would read the
+# fixture's value and add --add-dir anyway. The empty string is the actual value this case
+# needs.
+rm -f "$TMP/claude-argv"
+tl_config SPIRA_TOKEN_PROJECTS="$TMP/projects" SPIRA_CTX_WARN=200000 SPIRA_CTX_HIGH=400000 \
+    SPIRA_CTX_LIMIT=1000000 SPIRA_ARCHIVIST_TIMEOUT=10 SPIRA_RUNES_DIR="$HERE/runes" \
+    SPIRA_WIKI=""
+env -i HOME="$TMP/home" PATH="$PATH" \
+    SPIRA_CONF="$TMP/no-such.conf" \
+    SPIRA_HOME="$HERE" \
+    SPIRA_TOML="$SPIRA_TOML" \
+    TMP="$TMP" \
+    archivist now "$PROJ_DIR/test-session.jsonl" 2>/dev/null || true
+argv_arc_nowiki="$(cat "$TMP/claude-argv" 2>/dev/null || true)"
+
+nowant "archivist: no --add-dir when SPIRA_WIKI unset" "--add-dir" "$argv_arc_nowiki"
+
+tl_summary

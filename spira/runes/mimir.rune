@@ -1,0 +1,80 @@
+# mimir.rune — Mimir: the retrospective persona. Reads the failure distribution,
+# identifies recurring failure classes, and cuts the work to end them — post-landing,
+# incremental, watermarked.
+#
+# A rune is a persona DEFINITION; a dwarf is one called instance of it. Four things:
+# a predicate carving its partition out of the graph, the memories it must read, the tools
+# it may use, and what wakes it.
+
+RUNE_NAME=mimir
+RUNE_DESC="Mimir — the unsent historian: reads the failure distribution, names recurring classes, cuts the work to end them"
+
+# THE PARTITION. Mimir runs in beadless sweep mode, like QA: it is not called by
+# claiming a work bead but by a trigger that fires a sweep. The label is read from
+# SPIRA_MIMIR_LABEL so the operator can rename it without touching this file.
+RUNE_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_MIMIR_LABEL"
+RUNE_EXCLUDE_LABELS="$SPIRA_CI_LABEL"
+
+# Statutes only. Mimir reads failure patterns and writes designs — a runbook shelf
+# for production incidents would push the statutes it actually needs off the context budget.
+RUNE_MEMORY_PREFIXES="law-"
+
+# NO RUNE_REPO. The repository comes from the BEAD — a `repo:<name>` label resolved
+# through repo-map. The sweep bead carries no repo: label, so dwarf.sh falls back to
+# spira_home_repo(), which is the harness's own home checkout. Mimir works on the
+# harness — its failure record is local — so that fallback is correct. Remedy beads that
+# Mimir cuts use `repo:${SPIRA_HOME_REPO}` (from the brief) so the name is derived,
+# not hardcoded, and resolves on any install.
+
+# OPUS 5. The census step is recognition and enumeration, which a small model handles.
+# But diagnosing a mechanism and writing a design is not — it requires understanding
+# causality, forming a hypothesis, running commands to verify it, and converting a
+# finding into a concrete deliverable for a builder. Starting expensive and correct
+# beats cheap and silently useless.
+#
+# VERIFIED, NOT ASSUMED. `claude --model claude-sonnet-5-5 -p ...` answers on this box,
+# exit 0, verified 2026-09-11. qa.rune carries the scar for skipping that check: an
+# id the CLI rejects does not fail loudly, every call dies and the role looks merely
+# quiet, which is the outage shape this harness is worst at noticing. Probe a candidate
+# id before writing it here. Cost basis for revisiting: ~8 passes/day at the 3h ceiling.
+# If census turns out to be most of the tokens, splitting census (small model) from
+# diagnosis (large) is the likely optimisation — item 7's scorecard makes that
+# evidence-based rather than a guess. (Ryan, 2026-09-11: "Start with Opus 5, get that
+# working, then we'll tweak with other models later.")
+# SEED ONLY (sp-zs04v.4): the live value is persona.mimir.model in spira.toml,
+# resolved by lib.sh's persona_model — this line only seeds that table on first
+# convert and is no longer read at launch.
+RUNE_MODEL=claude-sonnet-5-5
+RUNE_MAX_CONCURRENT=1
+
+# THE MIMIR LANE. Mimir draws from its own capacity rather than from SPIRA_MAX_DWARVES,
+# so a fully-occupied builder pool cannot prevent a retrospective pass. The mimir lane
+# is declared in SPIRA_LANES; without that declaration the lane still functions (the
+# mechanism is RUNE_LANE set, not membership in the list), but the declaration makes it
+# visible to operators reading SPIRA_LANES for the list of scheduled partitions.
+RUNE_LANE=mimir
+
+# TIMEOUT AND LEASE. A Mimir pass reads the whole corpus, demonstrates a mechanism,
+# and writes at most SPIRA_MIMIR_MAX_BEADS beads — more than QA's enumeration pass
+# but bounded by the same one-pass constraint. One hour matches QA's ceiling; the 3h
+# trigger gap means a pass that fills its wall cannot start another before that gap
+# expires. The lease extends past the wall so a killed session's bead is reclaimable
+# before the next trigger fires.
+RUNE_TIMEOUT_SECONDS=3600
+RUNE_LEASE_MINUTES=70
+RUNE_HEARTBEAT_SECONDS=30
+
+# READ-AND-FILE TOOLSET. Mimir reads the corpus, runs diagnostic commands, and files
+# beads. It does not write code; it does not edit the harness. A retrospective that lands
+# code also decides whether the fix is worth its runtime — that is the judgement that
+# produced the 17-minute gate. Withholding Edit and Write enforces "Mimir proposes;
+# it does not build."
+RUNE_TOOLS="Bash,Read,Glob,Grep,TodoWrite"
+RUNE_PROJECT_INSTRUCTIONS=none
+
+# REPLACE: Mimir reads and files — never writes code. The default coding guidance
+# competes with the standing constraints.
+RUNE_SYSTEM_PROMPT=replace
+
+# The states a bead claimed by this rune may leave WORKING for; spira-lc refuses any other.
+RUNE_WORKING_EXITS="DONE ask park hold"

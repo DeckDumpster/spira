@@ -74,7 +74,7 @@ mod tests {
     use crate::core::{step, HysteresisState};
 
     fn gap_verdict(now: u64, grace: u64, prev: HysteresisState) -> (Verdict, HysteresisState) {
-        let raw = RawStatus::Gap { desired: "8 aeons".into(), observed: "3 aeons".into(), since_hint: None };
+        let raw = RawStatus::Gap { desired: "8 dwarves".into(), observed: "3 dwarves".into(), since_hint: None };
         step(now, raw, grace, prev)
     }
 
@@ -149,12 +149,12 @@ mod tests {
     fn compose_alert_carries_all_four_fields() {
         let (_, st1) = gap_verdict(0, 0, HysteresisState::default());
         let (v2, _) = gap_verdict(100, 0, st1);
-        let body = compose_alert("fleet-size", 100, &v2, Some("scaled aeons to 8"));
+        let body = compose_alert("fleet-size", 100, &v2, Some("scaled dwarves to 8"));
         assert!(body.contains("invariant: fleet-size"));
-        assert!(body.contains("desired:   8 aeons"));
-        assert!(body.contains("observed:  3 aeons"));
+        assert!(body.contains("desired:   8 dwarves"));
+        assert!(body.contains("observed:  3 dwarves"));
         assert!(body.contains("since:     100s ago"));
-        assert!(body.contains("last remedy tried: scaled aeons to 8"));
+        assert!(body.contains("last remedy tried: scaled dwarves to 8"));
     }
 
     #[test]

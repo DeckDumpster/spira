@@ -517,9 +517,9 @@ async fn units_folds_per_instance_names_into_one_family_row() {
     let mut rows = fixture_rows();
     for i in 0..30 {
         let result = if i == 7 { "exit-code" } else { "success" };
-        rows.push(exec_row(&format!("spira-aeon-builder-17920{i:05}.service"), 40_000 + i * 100, result, 500, "inv-bad"));
+        rows.push(exec_row(&format!("spira-dwarf-builder-17920{i:05}.service"), 40_000 + i * 100, result, 500, "inv-bad"));
     }
-    rows.push(exec_row("spira-aeon-ops-1792000001.service", 3_000, "success", 500, "ops-1"));
+    rows.push(exec_row("spira-dwarf-ops-1792000001.service", 3_000, "success", 500, "ops-1"));
     rows.push(exec_row("libpod-0123456789abcdef.scope", 3_000, "success", 500, "pod-1"));
     rows.push(exec_row("gpg-agent.service", 3_000, "success", 500, "gpg-1"));
     rows.push(exec_row("blockdev@dev-sda.service", 3_000, "success", 500, "bd-1"));
@@ -531,13 +531,13 @@ async fn units_folds_per_instance_names_into_one_family_row() {
     let names: Vec<&str> = v["units"].as_array().unwrap().iter().map(|u| u["unit"].as_str().unwrap()).collect();
     assert!(!names.iter().any(|n| n.contains("17920") || n.contains("0123456789")), "instances are not rows: {names:?}");
 
-    let b = unit(&v, "spira-aeon-builder");
+    let b = unit(&v, "spira-dwarf-builder");
     assert_eq!(b["kind"], "session");
     assert_eq!(b["instances"], 30);
     assert_eq!(b["runs_7d"], 30);
     assert_eq!(b["stale"], false, "a finished session is not a stopped unit");
-    assert!(b["last_failure"]["unit"].as_str().unwrap().starts_with("spira-aeon-builder-17920"), "{b}");
-    assert_eq!(unit(&v, "spira-aeon-ops")["runs_7d"], 1);
+    assert!(b["last_failure"]["unit"].as_str().unwrap().starts_with("spira-dwarf-builder-17920"), "{b}");
+    assert_eq!(unit(&v, "spira-dwarf-ops")["runs_7d"], 1);
     assert_eq!(unit(&v, "libpod")["kind"], "session");
     assert!(!names.contains(&"gpg-agent") && !names.contains(&"blockdev"), "families outside the declared set are not rows: {names:?}");
     assert_eq!(v["foreign_families"], 2);
@@ -590,7 +590,7 @@ async fn lifecycle_shows_work_in_flight_from_the_collector_snapshot_and_never_id
     let at = now_s();
     std::fs::write(
         run.join("cockpit.env"),
-        format!("SP_AT='{at}'\nSP_INFLIGHT_WORLD='draining'\nSP_INFLIGHT_SEG='\u{2699} 1 aeon \u{b7} 1 round (412/475) \u{b7} draining'\nSP_INFLIGHT_ROW0='aeon|sp-1|guardian|{at}||'\nSP_INFLIGHT_ROW1='round|spira/b1|certifying|{at}|412|475'\n"),
+        format!("SP_AT='{at}'\nSP_INFLIGHT_WORLD='draining'\nSP_INFLIGHT_SEG='\u{2699} 1 dwarf \u{b7} 1 round (412/475) \u{b7} draining'\nSP_INFLIGHT_ROW0='dwarf|sp-1|warden|{at}||'\nSP_INFLIGHT_ROW1='round|spira/b1|certifying|{at}|412|475'\n"),
     )
     .unwrap();
     let (_, page) = get(addr, "/lifecycle").await;
@@ -604,7 +604,7 @@ async fn lifecycle_shows_work_in_flight_from_the_collector_snapshot_and_never_id
 
 // ── Now and the shell ────────────────────────────────────────────────────────
 
-const FIVE: [&str; 7] = ["/", "/aeons", "/rounds", "/stuck", "/units", "/states", "/lifecycle"];
+const FIVE: [&str; 7] = ["/", "/dwarves", "/rounds", "/stuck", "/units", "/states", "/lifecycle"];
 
 fn write_snapshot(run: &std::path::Path, snap: &cockpit_ops::lcview::Snapshot) {
     std::fs::create_dir_all(run.join("lcview")).unwrap();
@@ -623,7 +623,7 @@ fn now_snapshot() -> cockpit_ops::lcview::Snapshot {
         DwellRow { bead_id: "sp-late1".into(), state: "WORKING".into(), entered_at: now - 36_000, p95_s: Some(3600) },
         DwellRow { bead_id: "sp-fine1".into(), state: "WORKING".into(), entered_at: now - 60, p95_s: Some(3600) },
     ];
-    s.live = Some(vec![LiveAeon { unit: "spira-aeon-x.service".into(), pid: 7, started: now - 300, phase: "session".into() }]);
+    s.live = Some(vec![LiveDwarf { unit: "spira-dwarf-x.service".into(), pid: 7, started: now - 300, phase: "session".into() }]);
     s.batches = vec![BatchRow {
         id: "b-live1".into(), state: "CI_RUNNING".into(), repo: "dumpstar".into(), pr: 7, members: vec!["sp-m1".into(), "sp-m2".into()], ejected: vec!["sp-m2".into()],
         opened_at: now - 900, last_at: now - 60, run_url: "https://forge.test/run/1".into(), ..Default::default()
@@ -650,7 +650,7 @@ async fn now_shows_the_live_round_the_late_bead_the_failing_unit_and_what_landed
     assert!(page.contains("href=\"/stuck/sp-late1\"") && page.contains("10.0h in WORKING"), "the bead past p95: {page}");
     assert!(!page.contains("/stuck/sp-fine1"), "positive control: a bead inside its p95 is not listed");
     assert!(page.contains("flaky.service") && page.contains("dead.service"), "failing and stale units: {page}");
-    assert!(page.contains("aeons 1/4") && page.contains("rel-abc") && page.contains("world RUNNING"), "the top bar: {page}");
+    assert!(page.contains("dwarves 1/4") && page.contains("rel-abc") && page.contains("world RUNNING"), "the top bar: {page}");
     assert!(page.contains("1 in 24 h") && page.contains("just landed") && !page.contains("sp-done2"), "landed in the last day only: {page}");
 
     let (code, round) = get(addr, "/rounds/dumpstar/b-live1").await;
@@ -677,7 +677,7 @@ async fn every_page_sits_in_the_shell_and_the_tab_bar_reaches_every_section_on_a
     let mut fx = units_fixture(&fixture_rows());
     fx.cfg.lc = fake_lc(&fx.dir.to_path_buf());
     write_snapshot(&PathBuf::from(&fx.cfg.run), &now_snapshot());
-    std::fs::write(PathBuf::from(&fx.cfg.run).join("cockpit.env"), "SP_AEON_N='0'\n").unwrap();
+    std::fs::write(PathBuf::from(&fx.cfg.run).join("cockpit.env"), "SP_DWARF_N='0'\n").unwrap();
     let addr = spawn(fx.cfg.clone()).await;
     for path in FIVE.iter().chain(&["/beads/sp-2cah6", "/rounds/dumpstar/b-live1"]) {
         let (code, page) = get(addr, path).await;
@@ -974,69 +974,69 @@ async fn a_failing_lifecycle_read_serves_the_last_good_rounds_page_marked_stale(
 }
 
 
-const AEON_ENV: &str = "SP_AEON_N='2'
+const DWARF_ENV: &str = "SP_DWARF_N='2'
 SP_SLOTS_LIVE='2'
 SP_SLOTS_CEILING='4'
 SP_SLOTS_FREE='2'
 SP_SLOTS_POOL='4'
-SP_AEON0_NAME='tidus'
-SP_AEON0_FAYTH='guardian'
-SP_AEON0_BEAD='sp-aaa11'
-SP_AEON0_TITLE='first <b>title</b>'
-SP_AEON0_PRI='1'
-SP_AEON0_PARTITION='spira'
-SP_AEON0_MIN='17'
-SP_AEON0_TURNS='33'
-SP_AEON0_CTX='45000'
-SP_AEON0_MODEL='claude-sonnet-5-5'
-SP_AEON0_FAYTH_MODEL='claude-sonnet-5-5'
-SP_AEON0_FILES='3'
-SP_AEON0_QUIET='20'
-SP_AEON0_LEASE='9'
-SP_AEON0_ACT0='read lib.rs'
-SP_AEON0_ACT1='edit lib.rs'
-SP_AEON1_NAME='yuna'
-SP_AEON1_FAYTH='sift'
-SP_AEON1_BEAD='sp-bbb22'
-SP_AEON1_TITLE='second one'
-SP_AEON1_PRI='2'
-SP_AEON1_PARTITION='deckdump'
-SP_AEON1_MIN='4'
-SP_AEON1_TURNS='5'
-SP_AEON1_CTX='9000'
-SP_AEON1_MODEL='claude-opus-5-5'
-SP_AEON1_FAYTH_MODEL='claude-opus-5-5'
-SP_AEON1_FILES='0'
-SP_AEON1_QUIET='700'
-SP_AEON1_LEASE='2'
-SP_AEON1_ACT='running tests'
+SP_DWARF0_NAME='tidus'
+SP_DWARF0_RUNE='warden'
+SP_DWARF0_BEAD='sp-aaa11'
+SP_DWARF0_TITLE='first <b>title</b>'
+SP_DWARF0_PRI='1'
+SP_DWARF0_PARTITION='spira'
+SP_DWARF0_MIN='17'
+SP_DWARF0_TURNS='33'
+SP_DWARF0_CTX='45000'
+SP_DWARF0_MODEL='claude-sonnet-5-5'
+SP_DWARF0_RUNE_MODEL='claude-sonnet-5-5'
+SP_DWARF0_FILES='3'
+SP_DWARF0_QUIET='20'
+SP_DWARF0_LEASE='9'
+SP_DWARF0_ACT0='read lib.rs'
+SP_DWARF0_ACT1='edit lib.rs'
+SP_DWARF1_NAME='yuna'
+SP_DWARF1_RUNE='sift'
+SP_DWARF1_BEAD='sp-bbb22'
+SP_DWARF1_TITLE='second one'
+SP_DWARF1_PRI='2'
+SP_DWARF1_PARTITION='deckdump'
+SP_DWARF1_MIN='4'
+SP_DWARF1_TURNS='5'
+SP_DWARF1_CTX='9000'
+SP_DWARF1_MODEL='claude-opus-5-5'
+SP_DWARF1_RUNE_MODEL='claude-opus-5-5'
+SP_DWARF1_FILES='0'
+SP_DWARF1_QUIET='700'
+SP_DWARF1_LEASE='2'
+SP_DWARF1_ACT='running tests'
 ";
 
 #[tokio::test]
-async fn the_aeons_page_shows_each_live_aeon_as_the_pane_renders_it() {
+async fn the_dwarves_page_shows_each_live_dwarf_as_the_pane_renders_it() {
     use cockpit_ops::health::{model::Snapshot, sections::now_section};
-    let dir = scratch("aeons");
+    let dir = scratch("dwarves");
     let run = ops_run_dir();
-    std::fs::write(run.join("cockpit.env"), AEON_ENV).unwrap();
+    std::fs::write(run.join("cockpit.env"), DWARF_ENV).unwrap();
     let lc = dir.join("spira-lc");
-    script(&lc, "#!/bin/sh\ncase \"$1 $2 $3\" in\n  \"list --state WORKING\") echo '[{\"bead_id\":\"sp-aaa11\",\"state\":\"WORKING\",\"aeon_phase\":\"session\"},{\"bead_id\":\"sp-bbb22\",\"state\":\"WORKING\",\"aeon_phase\":\"testing\"}]' ;;\n  *) exit 1 ;;\nesac\n");
+    script(&lc, "#!/bin/sh\ncase \"$1 $2 $3\" in\n  \"list --state WORKING\") echo '[{\"bead_id\":\"sp-aaa11\",\"state\":\"WORKING\",\"dwarf_phase\":\"session\"},{\"bead_id\":\"sp-bbb22\",\"state\":\"WORKING\",\"dwarf_phase\":\"testing\"}]' ;;\n  *) exit 1 ;;\nesac\n");
     let mut c = ops_cfg(run.to_str().unwrap());
     c.lc = lc.to_string_lossy().into_owned();
     let addr = spawn(c).await;
 
     let working = vec![("sp-aaa11".to_string(), "session".to_string()), ("sp-bbb22".to_string(), "testing".to_string())];
-    let pane = loom::aeons::strip_ansi(&now_section(&Snapshot::parse(AEON_ENV), 200, Some(&working), 2).join("\n"));
+    let pane = loom::dwarves::strip_ansi(&now_section(&Snapshot::parse(DWARF_ENV), 200, Some(&working), 2).join("\n"));
 
-    let (code, page) = get(addr, "/aeons").await;
+    let (code, page) = get(addr, "/dwarves").await;
     assert_eq!(code, 200, "{page}");
     assert!(page.contains("SLOTS   2/4  2 free"), "{page}");
     assert!(page.contains("first &lt;b&gt;title&lt;/b&gt;") && page.contains("<a class=id href=\"/beads/sp-aaa11\">"), "{page}");
     assert!(page.contains("edit lib.rs") && page.contains("running tests"), "{page}");
 
-    let (code, api) = get(addr, "/api/aeons").await;
+    let (code, api) = get(addr, "/api/dwarves").await;
     assert_eq!(code, 200, "{api}");
     let v: Value = serde_json::from_str(&api).expect("json");
-    let list = v["aeons"].as_array().expect("aeons");
+    let list = v["dwarves"].as_array().expect("dwarves");
     assert_eq!(list.len(), 2);
     for (a, bead, phase, min) in [(&list[0], "sp-aaa11", "session", "17"), (&list[1], "sp-bbb22", "testing", "4")] {
         assert_eq!((a["bead"].as_str(), a["phase"].as_str(), a["minutes"].as_str()), (Some(bead), Some(phase), Some(min)));

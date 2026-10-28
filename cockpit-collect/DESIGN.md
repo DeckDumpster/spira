@@ -19,7 +19,7 @@ seam, this suite's own fault-injection tests — that call one probe by name), a
 supervisor has no meaning without the probes it schedules.
 
 **RETIRE rather than port** (the wave's rule): every `lib.sh` function `cockpit.sh` called —
-`bdjson`/`bdq`, `spira_repos`, `repo_root`, `spira_landref`, `fayth_get`, `aeon_alive`,
+`bdjson`/`bdq`, `spira_repos`, `repo_root`, `spira_landref`, `rune_get`, `dwarf_alive`,
 `detect_livelocked`, `queue_sort_rows`, and a dozen more — stays exactly what it was: a
 `lib.sh` function, called the same way (wave 4 proposes `lib.sh` last, and "leave `lib.sh`
 alone" is still the standing instruction). This crate owns the orchestration (which probe
@@ -31,7 +31,7 @@ exactly as `gate-run`'s `Real` already bridges to `repo_root`/`spira_landref` (a
 bead's probes need, rather than growing one bespoke snippet per call site).
 
 Two ports, sp-8nv4wr, formerly Python scripts run as external tools: `metrics.rs`
-(`sending_keys`, wholesale) and `sparklines.rs` (the throughput row inside
+(`hel_keys`, wholesale) and `sparklines.rs` (the throughput row inside
 `core_detail_keys`). Both run in-process and are also reachable as `cockpit-collect metrics`
 and `cockpit-collect sparklines`, which is how the suites drive them.
 
@@ -52,9 +52,9 @@ concurrent — not edited here).
 ### The probe library (`src/probes/`)
 
 One function per `spira/cockpit.sh` `*_keys` function, same name, same subcommand string
-(`now`, `core`, `core_detail`, `slots`, `unsent`, `queue`, `reachable`, `sphere`,
+(`now`, `core`, `core_detail`, `slots`, `unsent`, `queue`, `reachable`, `well`,
 `repo_labels`, `livelock`, `dup_refs`, `strands`, `ratelim`, `sops`, `statute`, `mail`,
-`czar_triggers`, `sending`). Each returns a `Vec<(String, String)>` of unquoted `KEY=value`
+`czar_triggers`, `hel`). Each returns a `Vec<(String, String)>` of unquoted `KEY=value`
 pairs — exactly what `cockpit.sh <subcommand>` printed to stdout. The one layer of shell
 quoting (`shq()` in the bash) happens once, at merge time, not per probe.
 
@@ -103,7 +103,7 @@ no subcommand prefix (a test's mock script, same shape the bash mock scripts alw
 
 ### Formatting fidelity
 
-Ten keys (`SP_HOTFIX_LINE`, `SP_HOTFIX_ALERT`, `SP_OVERRIDES_LIST`, `SP_AURON_KEYS`, and
+Ten keys (`SP_HOTFIX_LINE`, `SP_HOTFIX_ALERT`, `SP_OVERRIDES_LIST`, `SP_HEIMDALL_KEYS`, and
 the six `*_NAMES` space-lists, `SP_PROTECTED_NAMES` included) wrapped their own value in a
 literal single quote in the bash *before* the merge's own `shq()` quoted the line a second
 time — so an empty value round-tripped as the four-character string `''''` rather than the
@@ -186,10 +186,10 @@ probe that has simply never been due).
   check the same properties directly against the real `PROBES` const and the real
   scheduling decision, not an extracted copy of either.
 
-- **A refusal-path double-print in `sphere_keys`/`czar_triggers_keys` is not replicated.**
+- **A refusal-path double-print in `well_keys`/`czar_triggers_keys` is not replicated.**
   The bash's embedded python prints its own `?` fallback keys in its `except` handler and
   then `raise SystemExit`s non-zero, which makes the *shell's* `||` fallback fire too and
-  print the same keys a second time — confirmed by parity testing (`sphere`/`czar_triggers`
+  print the same keys a second time — confirmed by parity testing (`well`/`czar_triggers`
   against the retired bash emit each refusal key twice). Harmless (the merge is first-wins,
   so the duplicate never reaches `cockpit.env`) and clearly accidental, not a behaviour
   worth keeping; this port emits each key once.
@@ -212,7 +212,7 @@ unilaterally.
   error/timeout, first-wins on a key clash), the scheduling decision (`due_probes`, the
   SLOW_CONCURRENT cap enforced cumulatively within one tick), the registry's shape, every
   quoting/date/sanitize helper, the `reachable` BFS (seeds, stoppers, suspended partitions,
-  scope), `strand_keys`' ghost/other classification, `aeon_alive`'s cmdline match.
+  scope), `strand_keys`' ghost/other classification, `dwarf_alive`'s cmdline match.
 - **Parity**: every rewritten `test-cockpit-*.sh` (and the handful of other suites that
   called a probe by name — `test-mail-pane.sh`, `test-mimir-closed-record.sh`,
   `test-livelock.sh`, `test-law-synth.sh`, `test-statute-projection.sh`,

@@ -286,7 +286,7 @@ fn clearing_forced_suites_removes_the_proof_and_the_sidecar_and_is_gated_on_who_
             "forced-suites",
             "sp-a",
             "--clear",
-            "--by=aeon",
+            "--by=dwarf",
             "--reason=x"
         ]),
         1
@@ -334,26 +334,26 @@ fn certified_round() -> (T, String) {
 }
 
 #[test]
-fn land_rides_out_a_store_restart_after_activation_and_records_the_batch() {
+fn land_records_and_closes_mending_before_activating_a_release_that_retires_keys() {
     let (t, batch) = certified_round();
-    t.lc.down_for.set(5);
+    t.lc.retired_keys.set(true);
     assert_eq!(t.run(&["round", "land", &batch]), 0, "{}", t.err());
     assert!(
-        t.lc.has(&format!("land {batch} 4 merged-tb")),
+        t.lc.has(&format!("land {batch} 4 merged-tb")) && t.lc.has("mending-close-ended"),
         "{:?}",
         t.lc.calls.borrow()
     );
-    assert!(!t.err().contains("ALARM"), "{}", t.err());
+    let e = t.err();
+    assert!(!e.contains("ALARM") && !e.contains("not declared"), "{e}");
 }
 
 #[test]
-fn land_with_the_store_down_past_the_deadline_exits_nonzero_naming_the_batch() {
+fn land_with_the_record_refused_exits_nonzero_naming_the_batch() {
     let (t, batch) = certified_round();
-    t.lc.down_for.set(10_000);
+    t.lc.land_refused.set(Some("store unreachable"));
     assert_eq!(t.run(&["round", "land", &batch]), 1, "{}", t.err());
     let e = t.err();
     assert!(e.contains(&batch) && e.contains("ALARM"), "{e}");
-    assert!(!t.lc.has("land "), "{:?}", t.lc.calls.borrow());
     assert_eq!(
         t.landed_ref().as_deref(),
         Some("merged-tb"),
@@ -1878,7 +1878,40 @@ fn suites_started_re_reads_and_survives_repeated_stale_versions() {
             .filter(|c| c.starts_with("event batch") && c.contains("SuitesStarted"))
             .count();
     assert_eq!(shows, 4, "{:?}", t.lc.calls.borrow());
+    *t.lc.batch_view.borrow_mut() = Some(("CI_RUNNING".into(), 9, 1, "build".into()));
     t.lc.stale_batch_events.set(100);
+    assert_ne!(t.run(&["round", "suites-started", &batch]), 0);
+}
+
+#[test]
+fn a_repeated_suites_started_for_one_pass_is_a_no_op_success() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
+    for _ in 0..2 {
+        assert_eq!(t.run(&["round", "suites-started", &batch]), 0, "{}", t.err());
+    }
+    assert_eq!(
+        events_of(&t, &batch),
+        [
+            "{\"PassStarted\":{\"n\":1,\"head\":\"merged-ta\"}}",
+            "{\"SuitesStarted\":{\"n\":1}}",
+        ]
+    );
+}
+
+#[test]
+fn suites_started_outside_the_build_phase_of_a_pass_still_refuses() {
+    let t = round_world();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
+    assert_eq!(t.run(&["round", "suites-started", &batch]), 0, "{}", t.err());
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 9, 1, String::new()));
+    t.lc.batch_event_refused.set(Some("SuitesStarted"));
     assert_ne!(t.run(&["round", "suites-started", &batch]), 0);
 }
 
@@ -3486,7 +3519,7 @@ fn an_unclaimed_ready_bead_is_resubmitted_and_its_branch_set_to_the_tip() {
 }
 
 #[test]
-fn a_bead_a_live_aeon_holds_is_not_resubmitted_and_the_refusal_names_the_holder() {
+fn a_bead_a_live_dwarf_holds_is_not_resubmitted_and_the_refusal_names_the_holder() {
     let t = rework_world(&[]);
     for r in
         t.lc.rows
@@ -3497,7 +3530,7 @@ fn a_bead_a_live_aeon_holds_is_not_resubmitted_and_the_refusal_names_the_holder(
             .filter(|r| r.bead_id == "sp-a")
     {
         r.state = "WORKING".into();
-        r.holder = Some("aeon-7".into());
+        r.holder = Some("dwarf-7".into());
     }
     let tip_arg = format!("--tip={T_FIX}");
     assert_eq!(
@@ -3512,7 +3545,7 @@ fn a_bead_a_live_aeon_holds_is_not_resubmitted_and_the_refusal_names_the_holder(
         ]),
         1
     );
-    assert!(t.err().contains("aeon-7"), "{}", t.err());
+    assert!(t.err().contains("dwarf-7"), "{}", t.err());
     assert!(!t.lc.has("retip"), "{:?}", t.lc.calls.borrow());
 }
 
@@ -3569,7 +3602,7 @@ fn resubmit_refuses_a_stranger_a_short_tip_an_unknown_commit_and_a_non_rework_ro
             "resubmit",
             "sp-a",
             &ok,
-            "--by=aeon-x",
+            "--by=dwarf-x",
             "--reason=r",
             "--evidence=npm test 1/0",
             &ev_tip()
@@ -4052,7 +4085,7 @@ fn rework_returns_an_unbatched_submitted_bead_and_refuses_a_round_member() {
     );
     assert!(!t.lc.has("\"GateRed\""), "{:?}", t.lc.calls.borrow());
 
-    assert_eq!(t.run(&["rework", "sp-c", "--by=aeon-x", "--reason=red"]), 1);
+    assert_eq!(t.run(&["rework", "sp-c", "--by=dwarf-x", "--reason=red"]), 1);
     assert_eq!(
         t.run(&["rework", "sp-c", "--by=concierge"]),
         2,
@@ -4065,7 +4098,7 @@ fn rework_returns_an_unbatched_submitted_bead_and_refuses_a_round_member() {
             "rework",
             "sp-c",
             "--by=concierge",
-            "--reason=red on test-install-aeons"
+            "--reason=red on test-install-dwarves"
         ]),
         0,
         "{}",
@@ -4268,7 +4301,7 @@ fn absolve_refuses_without_evidence_and_with_it_readmits_a_red_tip() {
         t.run(&[
             "absolve",
             "sp-b",
-            "--by=aeon",
+            "--by=dwarf",
             "--reason=infra red",
             "--evidence=e",
             "--evidence-tip=tb"
@@ -4442,9 +4475,15 @@ fn a_repo_that_declares_its_own_testenv_goes_red_and_does_not_land_on_a_failing_
 
     assert_eq!(t.run(&["round", "certify", &batch]), 1);
     assert!(t.out().contains("red=testenv"), "{}", t.out());
-    assert!(t.err().contains("is RED at"), "a red exit says why on stderr: {}", t.err());
     assert!(
-        t.out().lines().any(|l| l.starts_with("red-output=") && l.ends_with("testenv.out")),
+        t.err().contains("is RED at"),
+        "a red exit says why on stderr: {}",
+        t.err()
+    );
+    assert!(
+        t.out()
+            .lines()
+            .any(|l| l.starts_with("red-output=") && l.ends_with("testenv.out")),
         "{}",
         t.out()
     );
@@ -4922,32 +4961,52 @@ fn a_red_that_only_the_combination_produces_files_the_integration_from_the_eject
 }
 
 #[test]
-fn a_mender_summons_carries_a_failure_spec_its_verbs_can_read() {
+fn a_mender_calls_carries_a_failure_spec_its_verbs_can_read() {
     let mut t = round_world();
     *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
-    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]),
+        0,
+        "{}",
+        t.err()
+    );
     let batch = batch_of(&t);
     assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
     let results = t.lib.s.run.join("rounds").join(format!("{batch}.results"));
     std::fs::create_dir_all(&results).unwrap();
     std::fs::write(results.join("test-z.sh.out"), "assertion Z failed\n").unwrap();
-    assert_eq!(t.run(&["round", "failed", &batch, "--suite", "test-z.sh"]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "failed", &batch, "--suite", "test-z.sh"]),
+        0,
+        "{}",
+        t.err()
+    );
 
     let calls = t.lib.calls.borrow();
-    let bug = calls.iter().find(|c| c.starts_with("create_bug")).expect("a mender bead");
+    let bug = calls
+        .iter()
+        .find(|c| c.starts_with("create_bug"))
+        .expect("a mender bead");
     let path = bug
         .lines()
         .find_map(|l| l.strip_prefix("spec: "))
-        .unwrap_or_else(|| panic!("the summons names no spec: {bug}"));
-    let spec: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        .unwrap_or_else(|| panic!("the call names no spec: {bug}"));
+    let spec: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     assert_eq!(spec["batch"], batch.as_str());
     assert_eq!(spec["pass"], 1);
     assert_eq!(spec["suite"], "test-z.sh");
     assert_eq!(
         spec["output"],
-        format!("{}\nassertion Z failed", crate::ops::round::NO_FAILURE_FOUND)
+        format!(
+            "{}\nassertion Z failed",
+            crate::ops::round::NO_FAILURE_FOUND
+        )
     );
-    assert!(spec["repo"].as_str().is_some_and(|r| !r.is_empty()), "{spec}");
+    assert!(
+        spec["repo"].as_str().is_some_and(|r| !r.is_empty()),
+        "{spec}"
+    );
     let members: Vec<(&str, &str)> = spec["members"]
         .as_array()
         .unwrap()
@@ -4962,11 +5021,18 @@ fn a_failure_excerpt_names_the_failing_test_past_forty_crates_of_doc_tests() {
     use crate::ops::round::failure_excerpt;
     let mut o = String::from("     Running unittests src/lib.rs (target/debug/deps/gate-abc)\n\nrunning 2 tests\ntest a ... ok\ntest b ... FAILED\n\nfailures:\n\n---- b stdout ----\nthread 'b' panicked at gate/src/lib.rs:42:9:\nassertion failed: x\n\nfailures:\n    b\n\ntest result: FAILED. 1 passed; 1 failed\n\n");
     for i in 0..40 {
-        o.push_str(&format!("   Doc-tests crate{i}\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed\n\n"));
+        o.push_str(&format!(
+            "   Doc-tests crate{i}\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed\n\n"
+        ));
     }
     o.push_str("error: 1 target failed:\n    `-p gate --lib`\n");
     let x = failure_excerpt(&o);
-    assert!(x.contains("---- b stdout ----") && x.contains("gate/src/lib.rs:42:9") && x.contains("test result: FAILED"), "{x}");
+    assert!(
+        x.contains("---- b stdout ----")
+            && x.contains("gate/src/lib.rs:42:9")
+            && x.contains("test result: FAILED"),
+        "{x}"
+    );
     assert!(x.contains("error: 1 target failed"), "{x}");
     assert!(!x.contains("crate7"), "{x}");
 }
@@ -4975,5 +5041,38 @@ fn a_failure_excerpt_names_the_failing_test_past_forty_crates_of_doc_tests() {
 fn a_failure_excerpt_of_a_shell_suite_keeps_its_fail_lines() {
     use crate::ops::round::failure_excerpt;
     let x = failure_excerpt("ok one\nFAIL: two\n  expected 1\n  got 2\nok three\nok four\n");
-    assert!(x.starts_with("FAIL: two") && x.contains("got 2") && !x.contains("ok four"), "{x}");
+    assert!(
+        x.starts_with("FAIL: two") && x.contains("got 2") && !x.contains("ok four"),
+        "{x}"
+    );
+}
+
+#[test]
+fn a_recorded_mend_moves_the_next_pass_head_to_the_mended_tip() {
+    let t = round_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let batch = batch_of(&t);
+    declare_own_testenv(&t);
+    t.lc.mend_tips
+        .borrow_mut()
+        .insert("sp-a".into(), "ta2".into());
+    t.git.ancestor("b0", "ta2");
+
+    t.run(&["round", "certify", &batch]);
+    let kv = kv_of(&t, "round");
+    assert!(
+        kv["members"].contains("sp-a:ta2") && !kv["members"].contains("sp-a:ta:"),
+        "{}",
+        kv["members"]
+    );
+    assert!(
+        t.git.calls.borrow().iter().any(|c| c.starts_with("merge ta2")),
+        "the head is rebuilt from the mended tip: {:?}",
+        t.git.calls.borrow()
+    );
 }

@@ -189,11 +189,11 @@ pub fn recur_note_body(prev_hash_label: Option<&str>, payload: &[u8], was_closed
     }
 }
 
-/// Whether a filing at recurrence count `n` crosses the Sin threshold and should escalate:
-/// the events query succeeded (not blind), not exempt, at or past `sin_at`, and not
-/// already labelled `sin`.
-pub fn crosses_sin(n: u32, sin_at: u32, sin_exempt: bool, events_unknown: bool, already_sin: bool) -> bool {
-    !events_unknown && !sin_exempt && n >= sin_at && !already_sin
+/// Whether a filing at recurrence count `n` crosses the Fenrir threshold and should escalate:
+/// the events query succeeded (not blind), not exempt, at or past `fenrir_at`, and not
+/// already labelled `fenrir`.
+pub fn crosses_sin(n: u32, fenrir_at: u32, fenrir_exempt: bool, events_unknown: bool, already_fenrir: bool) -> bool {
+    !events_unknown && !fenrir_exempt && n >= fenrir_at && !already_fenrir
 }
 
 /// `spira_home_repo`: `$SPIRA_HOME_REPO`, else the basename of `$SPIRA_REPO` (falling back
@@ -518,12 +518,12 @@ mod tests {
     }
 
     #[test]
-    fn sin_thresholds() {
+    fn fenrir_thresholds() {
         assert!(crosses_sin(5, 5, false, false, false));
         assert!(!crosses_sin(4, 5, false, false, false), "below threshold");
         assert!(!crosses_sin(5, 5, true, false, false), "exempt");
         assert!(!crosses_sin(5, 5, false, true, false), "blind on unknown count");
-        assert!(!crosses_sin(5, 5, false, false, true), "already labelled sin — no second page");
+        assert!(!crosses_sin(5, 5, false, false, true), "already labelled fenrir — no second page");
     }
 
     #[test]

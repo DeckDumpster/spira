@@ -362,8 +362,8 @@ mod tests {
         let tmp = testkit::TempDir::new("perf-watch-members");
         let base = tmp.path().to_path_buf();
         let (release, scratch) = (base.join("release"), base.join("scratch"));
-        let manifest = "[workspace]\nmembers = [\n  \"mail\",\n  \"crates/auron\",\n]\n";
-        for d in ["mail", "crates/auron", "bin"] {
+        let manifest = "[workspace]\nmembers = [\n  \"mail\",\n  \"crates/heimdall\",\n]\n";
+        for d in ["mail", "crates/heimdall", "bin"] {
             std::fs::create_dir_all(release.join(d)).unwrap();
             std::fs::write(release.join(d).join("Cargo.toml"), "x").unwrap();
         }
@@ -380,7 +380,7 @@ mod tests {
             for m in members {
                 assert!(dir.join(&m).is_dir(), "member {m} missing");
             }
-            assert!(dir.join("crates/auron/Cargo.toml").exists());
+            assert!(dir.join("crates/heimdall/Cargo.toml").exists());
             assert!(!dir.join("bin").exists());
         }
     }

@@ -1750,10 +1750,10 @@ fn install_tarball_prunes_the_oldest_timestamp_named_releases_beyond_keep_never_
 // ---------------------------------------------------------------- stage
 
 #[test]
-fn stage_fayth_names_the_canary_persona_with_one_concurrent_slot() {
-    let f = crate::stage::fayth_content();
-    assert!(f.contains("FAYTH_NAME=canary"));
-    assert!(f.contains("FAYTH_MAX_CONCURRENT=1"));
+fn stage_rune_names_the_canary_persona_with_one_concurrent_slot() {
+    let f = crate::stage::rune_content();
+    assert!(f.contains("RUNE_NAME=canary"));
+    assert!(f.contains("RUNE_MAX_CONCURRENT=1"));
     assert!(f.contains("SPIRA_SCOPE_LABEL"));
 }
 
@@ -1926,11 +1926,11 @@ fn activating_over_a_config_that_sets_the_sixteen_unread_keys_strips_them_one_re
 
 #[test]
 fn a_renamed_delta_moves_the_persona_table_roster_and_lane_at_activation() {
-    let delta = "[renamed]\n\"persona.maechen\" = \"persona.mimir\"\n";
+    let delta = "[renamed]\n\"persona.maechen\" = \"persona.mimir\"\n"; // ffx-ok
     let w = World::with_git(delta_git(delta));
     file(
         Path::new(&w.cfg.toml_spec().unwrap()),
-        "[spira]\nid_prefix = \"sp\"\nfayths = [\"ops\", \"maechen\"]\nlanes = \"ops maechen czar\"\n\n[persona.maechen]\nmodel = \"m\"\n\n[persona.maechen.lease]\nminutes = 5\n",
+        "[spira]\nid_prefix = \"sp\"\nrunes = [\"ops\", \"maechen\"]\nlanes = \"ops maechen czar\"\n\n[persona.maechen]\nmodel = \"m\"\n\n[persona.maechen.lease]\nminutes = 5\n", // ffx-ok
     );
     build_with_schema(&w, A, &[], &[]);
     build_with_schema(&w, B, &[], &[]);
@@ -1938,9 +1938,47 @@ fn a_renamed_delta_moves_the_persona_table_roster_and_lane_at_activation() {
     activate::activate(&ctx(&w, &sc), A, None).unwrap();
     activate::activate(&ctx(&w, &sc), B, None).unwrap();
     let text = cfg_text(&w);
-    assert!(!text.contains("maechen"), "{text}");
+    assert!(!text.contains("maechen"), "{text}"); // ffx-ok
     assert!(text.contains("[persona.mimir.lease]"), "{text}");
     assert!(text.contains("ops mimir czar"), "{text}");
+}
+
+#[test]
+fn a_renamed_config_key_carries_the_operator_value_and_leaves_no_retired_key() {
+    let w = World::with_git(delta_git("[renamed]\n\"spira.max_live_old\" = \"spira.max_live_new\"\n\n[added]\n\"spira.max_live_new\" = 2\n"));
+    file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\nmax_live_old = 7\n");
+    build_with_schema(&w, A, &["max_live_old"], &["max_live_new"]);
+    build_with_schema(&w, B, &["max_live_new"], &[]);
+    build_with_schema(&w, C, &["max_live_new"], &["max_live_old"]);
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, A, None).unwrap();
+    activate::activate(&c, B, None).unwrap();
+    let text = cfg_text(&w);
+    assert!(text.contains("max_live_new = 7"), "the operator's value is carried, not re-defaulted: {text}");
+    activate::activate(&c, C, None).unwrap();
+    let text = cfg_text(&w);
+    assert!(text.contains("max_live_new = 7") && !text.contains("max_live_old"), "{text}");
+    assert!(loads(&w, C));
+}
+
+#[test]
+fn a_renamed_config_key_the_operator_never_set_takes_the_declared_default() {
+    let w = World::with_git(delta_git("[renamed]\n\"spira.max_live_old\" = \"spira.max_live_new\"\n\n[added]\n\"spira.max_live_new\" = 2\n"));
+    file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\n");
+    build_with_schema(&w, A, &[], &["max_live_new"]);
+    build_with_schema(&w, B, &["max_live_new"], &[]);
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, A, None).unwrap();
+    activate::activate(&c, B, None).unwrap();
+    assert!(cfg_text(&w).contains("max_live_new = 2"), "{}", cfg_text(&w));
+}
+
+#[test]
+fn a_rename_mixing_a_persona_and_a_config_key_is_refused() {
+    let e = config_delta::Delta::parse("[renamed]\n\"persona.a\" = \"spira.b\"\n").unwrap_err();
+    assert!(e.contains("a rename is persona"), "{e}");
 }
 
 #[test]

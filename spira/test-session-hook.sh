@@ -121,7 +121,7 @@ PY
 # A registered key passed in [env...] (SPIRA_WATCHERS, SPIRA_RUN, SPIRA_VIEW) is declared
 # through tl_config instead — session.sh's conf.sh resolves these from SPIRA_TOML only, never
 # from this process's environment — and dropped from what is forwarded to env -i; everything
-# else (SPIRA_AEON, SPIRA_CONCIERGE, a PATH override) is forwarded exactly as before.
+# else (SPIRA_DWARF, SPIRA_CONCIERGE, a PATH override) is forwarded exactly as before.
 hook() {
     local ev="$1" src="$2"; shift 2
     local extra=() _a
@@ -391,12 +391,12 @@ has "and a timed unit repairs it afterwards" \
     "$(cat "$ROOT/systemd/cockpit-ensure.service")" "release session-hook install"
 
 echo
-echo "an aeon session is told nothing"
-# AN AEON THAT SEES THE HOOK OUTPUT COULD OBEY THE WATCHER TABLE. SPIRA_AEON is exported by
-# aeon.sh into every session it summons and is the definitive marker.
-aout="$(hook SessionStart startup SPIRA_AEON=mindy)"
-is  "an aeon session gets no output at all"     "" "$aout"
-# THE POSITIVE CONTROL: the same fixture without SPIRA_AEON still produces the status table,
+echo "a dwarf session is told nothing"
+# A DWARF THAT SEES THE HOOK OUTPUT COULD OBEY THE WATCHER TABLE. SPIRA_DWARF is exported by
+# dwarf.sh into every session it calls and is the definitive marker.
+aout="$(hook SessionStart startup SPIRA_DWARF=austri)"
+is  "a dwarf session gets no output at all"     "" "$aout"
+# THE POSITIVE CONTROL: the same fixture without SPIRA_DWARF still produces the status table,
 # so the silence above is about the guard and not about the fixture
 # (law-absence-needs-a-positive-control).
 pout="$(hook SessionStart startup)"
@@ -435,10 +435,10 @@ n_out="$(hook SessionStart startup SPIRA_CONCIERGE=1)"
 has "the arm instruction carries the real unread count" "$n_out" "(3 lines)"
 rm -f "$RUN/watchd/concierge-inbox.log"
 
-# AN AEON IS NEVER A CONCIERGE, but the guard ordering matters: SPIRA_AEON must win even if
+# A DWARF IS NEVER A CONCIERGE, but the guard ordering matters: SPIRA_DWARF must win even if
 # SPIRA_CONCIERGE were somehow also set.
-aeon_out="$(hook SessionStart startup SPIRA_AEON=mindy SPIRA_CONCIERGE=1)"
-is "an aeon session gets nothing, even with SPIRA_CONCIERGE set" "" "$aeon_out"
+dwarf_out="$(hook SessionStart startup SPIRA_DWARF=austri SPIRA_CONCIERGE=1)"
+is "a dwarf session gets nothing, even with SPIRA_CONCIERGE set" "" "$dwarf_out"
 
 echo
 tl_summary

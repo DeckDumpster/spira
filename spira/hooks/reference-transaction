@@ -2,7 +2,7 @@
 #
 # reference-transaction — refuse to delete a bead branch outside the chokepoint.
 #
-# THE SCAR. On 2026-09-18 at 02:05 an Ops aeon, working in its own worktree, ran an
+# THE SCAR. On 2026-09-18 at 02:05 an Ops dwarf, working in its own worktree, ran an
 # ad-hoc cleanup that listed every ref under refs/heads/spira/ and asked `bd show`
 # whether each one had a bead. It invoked bd with no -C naming the store, so every
 # lookup failed, every branch read as "unadopted", and it deleted every branch and
@@ -10,16 +10,16 @@
 # work were destroyed before landing. The commits had never been pushed; the objects
 # are gone. It then printed "Remaining unadopted refs: 0" and reported success.
 #
-# WHY A WORKTREE DID NOT CONTAIN IT. Aeons get a worktree per bead, which isolates the
+# WHY A WORKTREE DID NOT CONTAIN IT. Dwarves get a worktree per bead, which isolates the
 # WORKING TREE and nothing else. Every worktree shares one .git — one ref namespace,
-# one object store — so `git branch -D` from inside one aeon's worktree reaches every
-# other aeon's branch. The isolation was apparent, not real.
+# one object store — so `git branch -D` from inside one dwarf's worktree reaches every
+# other dwarf's branch. The isolation was apparent, not real.
 #
 # WHY lib.sh's CHOKEPOINT DID NOT CONTAIN IT. lib.sh states that nothing outside its
 # destruction section may call `git branch -D`, and spira_destroy_branch carries the
 # content-on-base guard (`spira-lc content-landed`) that refuses to delete a branch whose commits are not on the
 # base — the exact guard that would have saved all 24. But that rule was prose. A
-# one-liner walked past it, and because it never reached sending.sh, nothing was
+# one-liner walked past it, and because it never reached hel.sh, nothing was
 # written to reap.log either: the destruction was silent as well as unguarded.
 #
 # WHY HERE. git runs this hook for EVERY ref create, update and delete, in every
@@ -99,9 +99,9 @@ the base:
 
     spira_destroy_branch <id> <branch> <repo> <reason> <actor>     # lib.sh
 
-If you are an aeon: you have a worktree, but NOT your own refs. Every worktree in
+If you are a dwarf: you have a worktree, but NOT your own refs. Every worktree in
 this repository shares one ref namespace, so touching any branch but your own
-reaches every other aeon's work. Operate only on your own bead branch.
+reaches every other dwarf's work. Operate only on your own bead branch.
 
 Override, when the deletion is provably safe and you are the sanctioned path:
 

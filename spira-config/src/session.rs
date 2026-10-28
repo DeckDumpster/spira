@@ -1,4 +1,4 @@
-//! A claim's holder is a session, not a name: `aeon-<name>@<pid>.<starttime>`. Names are
+//! A claim's holder is a session, not a name: `dwarf-<name>@<pid>.<starttime>`. Names are
 //! reused across sessions and personas, so only pid plus starttime tells a dead session
 //! from a live one that happens to carry the same name.
 
@@ -60,26 +60,26 @@ mod tests {
     #[test]
     fn a_holder_round_trips_and_names_its_session() {
         let t = Table(HashMap::from([(7, 99)]));
-        let h = holder_for("aeon-mindy", 7, &t);
-        assert_eq!(h, "aeon-mindy@7.99");
-        assert_eq!(parse(&h), Some(Session { name: "aeon-mindy".into(), pid: 7, start: 99 }));
-        assert_eq!(parse("aeon-mindy"), None);
+        let h = holder_for("dwarf-austri", 7, &t);
+        assert_eq!(h, "dwarf-austri@7.99");
+        assert_eq!(parse(&h), Some(Session { name: "dwarf-austri".into(), pid: 7, start: 99 }));
+        assert_eq!(parse("dwarf-austri"), None);
     }
 
     #[test]
     fn a_dead_session_is_gone_even_when_its_name_is_live_in_another_session() {
         let t = Table(HashMap::from([(8, 120)]));
-        assert!(session_gone("aeon-mindy@7.99", &t), "pid 7 does not exist");
-        assert!(session_gone("aeon-mindy@8.99", &t), "pid 8 was reused: a different starttime");
-        assert!(!session_gone("aeon-mindy@8.120", &t));
-        assert!(!session_gone("aeon-mindy", &t), "a bare name proves nothing");
+        assert!(session_gone("dwarf-austri@7.99", &t), "pid 7 does not exist");
+        assert!(session_gone("dwarf-austri@8.99", &t), "pid 8 was reused: a different starttime");
+        assert!(!session_gone("dwarf-austri@8.120", &t));
+        assert!(!session_gone("dwarf-austri", &t), "a bare name proves nothing");
     }
 
     #[test]
     fn the_same_name_under_another_session_is_another_session() {
-        assert!(same_name_other_session("aeon-mindy@7.99", "aeon-mindy@8.120"));
-        assert!(!same_name_other_session("aeon-mindy@7.99", "aeon-mindy@7.99"));
-        assert!(!same_name_other_session("aeon-cindy@7.99", "aeon-mindy@8.120"));
-        assert!(!same_name_other_session("aeon-mindy", "aeon-mindy@8.120"));
+        assert!(same_name_other_session("dwarf-austri@7.99", "dwarf-austri@8.120"));
+        assert!(!same_name_other_session("dwarf-austri@7.99", "dwarf-austri@7.99"));
+        assert!(!same_name_other_session("dwarf-regin@7.99", "dwarf-austri@8.120"));
+        assert!(!same_name_other_session("dwarf-austri", "dwarf-austri@8.120"));
     }
 }

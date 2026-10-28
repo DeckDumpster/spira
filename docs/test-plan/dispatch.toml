@@ -44,40 +44,40 @@ bead = "sp-8fsql"
 [[use_case]]
 id = "UC-dispatch-07"
 tier = "T1"
-statement = "the roster is discovered from `chamber/*.fayth`; lane xor task xor operator, never two"
+statement = "the roster is discovered from `runes/*.rune`; lane xor task xor operator, never two"
 
 [[use_case]]
 id = "UC-dispatch-08"
 tier = "T1"
-statement = "every auto-summoned predicate is built from `$SPIRA_*_LABEL`, never a literal"
+statement = "every auto-called predicate is built from `$SPIRA_*_LABEL`, never a literal"
 
 [[use_case]]
 id = "UC-dispatch-09"
 tier = "T1"
-statement = "`summon_fayth` asks each persona's own predicate; partitions don't cross-leak"
+statement = "`call_rune` asks each persona's own predicate; partitions don't cross-leak"
 
 [[use_case]]
 id = "UC-dispatch-10"
 tier = "T1"
-statement = "the `summon_fayth` refusal ladder runs in order and logs its real reason"
+statement = "the `call_rune` refusal ladder runs in order and logs its real reason"
 
 [[use_case]]
 id = "UC-dispatch-11"
 tier = "T1"
-statement = "`fayth_free` arithmetic: elastic pool remainder, non-elastic cap-minus-running"
+statement = "`rune_free` arithmetic: elastic pool remainder, non-elastic cap-minus-running"
 
 [[use_case]]
 id = "UC-dispatch-12"
 tier = "T1"
-statement = "a live drain gates every summon; an expired drain is lifted and logged"
+statement = "a live drain gates every call; an expired drain is lifted and logged"
 
 [[use_case]]
 id = "UC-dispatch-13"
 tier = "T1"
-statement = "effective lanes are the intersection of `.spira/modes`, repo-map lanes and `SPIRA_FAYTHS`"
+statement = "effective lanes are the intersection of `.spira/modes`, repo-map lanes and `SPIRA_RUNES`"
 
 [use_case.uncovered]
-reason = "the three-way-intersection-with-named-refusal diagnostic this UC describes was lib.sh's _spira_lane_diag (plus its two helpers _spira_modes_lanes, _spira_fayths_lane_set), re-grepped dead across the whole tree (no Rust seam, no bash caller, only this suite's own direct calls) and retired rather than ported (wave 4.3). The live lane-admission path, mimir-trigger/groom-trigger.sh's spira_lane_admitted, asks a simpler question — is this lane in any repo-map lanes column at all — with no .spira/modes or SPIRA_FAYTHS intersection and no named-refusal diagnostic, and is covered by mimir-trigger's own mocked-port unit tests. No replacement proves the exact behaviour this UC states; file one if the plan still wants the named-refusal diagnostic."
+reason = "the three-way-intersection-with-named-refusal diagnostic this UC describes was lib.sh's _spira_lane_diag (plus its two helpers _spira_modes_lanes, _spira_runes_lane_set), re-grepped dead across the whole tree (no Rust seam, no bash caller, only this suite's own direct calls) and retired rather than ported (wave 4.3). The live lane-admission path, mimir-trigger/groom-trigger.sh's spira_lane_admitted, asks a simpler question — is this lane in any repo-map lanes column at all — with no .spira/modes or SPIRA_RUNES intersection and no named-refusal diagnostic, and is covered by mimir-trigger's own mocked-port unit tests. No replacement proves the exact behaviour this UC states; file one if the plan still wants the named-refusal diagnostic."
 date = "2026-10-01"
 bead = "sp-27hsi"
 
@@ -89,7 +89,7 @@ statement = "CHECK 7 draws lanes round-robin then fills the task pool in roster 
 [[use_case]]
 id = "UC-dispatch-15"
 tier = "T1"
-statement = "`escape.sh` summons directly on ready work, bypassing pool and lane caps"
+statement = "`escape.sh` calls directly on ready work, bypassing pool and lane caps"
 
 [[use_case]]
 id = "UC-dispatch-16"
@@ -97,7 +97,7 @@ tier = "T1"
 statement = "CHECK 7c reports an unclaimable ready bead once, naming the rejection reason"
 
 [use_case.uncovered]
-reason = "the sentinel audit worker (spira-audit) was retired and CHECK 4/rowless/6b/7c/7d with it; their sentinel unit tests (check4_*, rowless_*, sending_7c_7d_*, on_check4_note_*, the tip-moved poison lift, two_beads_touching_one_file_*) were deleted, not ported. A need for any of them is re-added elsewhere only when shown."
+reason = "the sentinel audit worker (spira-audit) was retired and CHECK 4/rowless/6b/7c/7d with it; their sentinel unit tests (check4_*, rowless_*, hel_7c_7d_*, on_check4_note_*, the tip-moved poison lift, two_beads_touching_one_file_*) were deleted, not ported. A need for any of them is re-added elsewhere only when shown."
 date = "2026-10-12"
 bead = "sp-2yclhz"
 
@@ -149,7 +149,7 @@ statement = "an unmapped-repo bead is parked with ask+overseer before its claim 
 [[use_case]]
 id = "UC-dispatch-23"
 tier = "T1"
-statement = "summoning passes no `CPUQuota`/`Nice` (sp-b4oct), and passes `FAYTH_TIMEOUT_SECONDS` and `--setting-sources` correctly"
+statement = "calling passes no `CPUQuota`/`Nice` (sp-b4oct), and passes `RUNE_TIMEOUT_SECONDS` and `--setting-sources` correctly"
 
 [[use_case]]
 id = "UC-dispatch-24"

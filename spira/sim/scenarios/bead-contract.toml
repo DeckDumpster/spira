@@ -41,8 +41,8 @@ command = "bead.sh label remove {bead:target} groom-trigger"
 
 [[step]]
 at = 3000
-name = "refuse_fayth_label"
-command = '''out=$(bead.sh label add {bead:target} fayth:builder 2>&1); [ $? = 1 ] && printf '%s' "$out" | grep -q 'bead.sh file --for' '''
+name = "refuse_rune_label"
+command = '''out=$(bead.sh label add {bead:target} rune:builder 2>&1); [ $? = 1 ] && printf '%s' "$out" | grep -q 'bead.sh file --for' '''
 
 [[step]]
 at = 4000
@@ -96,8 +96,8 @@ name = "label_dropped"
 sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'label_remove' AND e.exit = 0 AND b.title = 'label target' AND NOT list_contains(string_split(b.labels, ','), 'groom-trigger') AND list_contains(string_split(b.labels, ','), 'alpha')"
 
 [[expect]]
-name = "fayth_label_refused_and_unset"
-sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'refuse_fayth_label' AND e.exit = 0 AND b.title = 'label target' AND NOT list_contains(string_split(b.labels, ','), 'fayth:builder')"
+name = "rune_label_refused_and_unset"
+sql = "SELECT 1 FROM bead_state b JOIN events e ON e.seq = b.seq WHERE e.actor = 'refuse_rune_label' AND e.exit = 0 AND b.title = 'label target' AND NOT list_contains(string_split(b.labels, ','), 'rune:builder')"
 
 [[expect]]
 name = "partition_label_refused_and_kept"

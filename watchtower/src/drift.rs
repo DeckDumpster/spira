@@ -1,6 +1,6 @@
 //! `--drift-check` — `drift.sh` finding untracked or modified files in the production
 //! checkout, or installed units and drop-ins this install's manifest does not ship. One
-//! incident per class, deduped by ref, and not sin-exempt: drift that never clears should
+//! incident per class, deduped by ref, and not fenrir-exempt: drift that never clears should
 //! escalate the longer nobody has looked.
 
 use crate::incident::{self, Finding};
@@ -87,7 +87,7 @@ pub fn run(spira_home: &str, repo: &str, db: &str, home_repo: &str, incident_sh:
                 let mut f = Finding::new(db, home_repo, &title, &out)
                     .reference(format!("incident:{cause}"))
                     .cause(cause);
-                f.sin_exempt = false;
+                f.fenrir_exempt = false;
                 incident::alarm(incident_sh, &f);
                 log(&format!("watchtower: drift-check filed {cause} escalation"));
             }

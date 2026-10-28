@@ -71,25 +71,25 @@ impl BeadState {
     }
 }
 
-/// Where a WORKING bead's aeon is in its own run. Forward-only: a phase may be recorded only
+/// Where a WORKING bead's dwarf is in its own run. Forward-only: a phase may be recorded only
 /// once, and only after every earlier one. `Teardown` is last; leaving WORKING clears it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
-pub enum AeonPhase {
+pub enum DwarfPhase {
     Claimed,
     Building,
     Session,
     Teardown,
 }
 
-impl AeonPhase {
-    pub const ALL: [AeonPhase; 4] = [AeonPhase::Claimed, AeonPhase::Building, AeonPhase::Session, AeonPhase::Teardown];
+impl DwarfPhase {
+    pub const ALL: [DwarfPhase; 4] = [DwarfPhase::Claimed, DwarfPhase::Building, DwarfPhase::Session, DwarfPhase::Teardown];
 
     pub fn as_str(self) -> &'static str {
         match self {
-            AeonPhase::Claimed => "claimed",
-            AeonPhase::Building => "building",
-            AeonPhase::Session => "session",
-            AeonPhase::Teardown => "teardown",
+            DwarfPhase::Claimed => "claimed",
+            DwarfPhase::Building => "building",
+            DwarfPhase::Session => "session",
+            DwarfPhase::Teardown => "teardown",
         }
     }
 
@@ -166,7 +166,7 @@ pub struct BeadRow {
     pub tip: Option<String>,
     pub gate_key: Option<String>,
     pub holder: Option<String>,
-    /// The claiming persona (fayth), recorded at `claim`; NULL for a row claimed before it was recorded.
+    /// The claiming persona (rune), recorded at `claim`; NULL for a row claimed before it was recorded.
     #[serde(default)]
     pub persona: Option<String>,
     pub lease_until: Option<i64>,
@@ -186,9 +186,9 @@ pub struct BeadRow {
     /// The one sanctioned way to put a bead ahead of the line; orthogonal to state.
     #[serde(default)]
     pub express: bool,
-    /// The holder's place in its run; set only while WORKING (see [`AeonPhase`]).
+    /// The holder's place in its run; set only while WORKING (see [`DwarfPhase`]).
     #[serde(default)]
-    pub phase: Option<AeonPhase>,
+    pub phase: Option<DwarfPhase>,
     /// How the session was cut short, with the cutter's own words in `disposition_note`;
     /// set only while WORKING.
     #[serde(default)]
@@ -295,12 +295,12 @@ pub enum BeadEventKind {
     Reclassify { state: BeadState, rule: String },
     /// The holder's own lease renewal (sp-2jf0a): a WORKING row's `lease_until` advances to
     /// the given deadline. Only the row's current holder (the event's `actor`) may send it,
-    /// and only forward — a lease never shrinks. A holder that stops renewing (a dead aeon)
+    /// and only forward — a lease never shrinks. A holder that stops renewing (a dead dwarf)
     /// still expires, and the stale-lease reaper's `HolderDead` clears it as before.
     Renew { lease_until: i64 },
-    /// The holder's move to its next [`AeonPhase`]. Holder-only like `Renew`, WORKING only,
+    /// The holder's move to its next [`DwarfPhase`]. Holder-only like `Renew`, WORKING only,
     /// and strictly forward: a repeat or a step back is refused naming the phase.
-    Phase { phase: AeonPhase },
+    Phase { phase: DwarfPhase },
     /// The session was cut short. WORKING only; replaces an earlier disposition only with a
     /// stronger one ([`DispositionStatus`] ranking).
     Disposition { status: DispositionStatus, #[serde(default)] note: String },
@@ -478,7 +478,7 @@ pub fn apply(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
         out.row.since = ev.at;
     }
     if out.applied && out.row.state != row.state {
-        out.row.phase = (out.row.state == BeadState::Working).then_some(AeonPhase::Claimed);
+        out.row.phase = (out.row.state == BeadState::Working).then_some(DwarfPhase::Claimed);
         out.row.disposition = None;
         out.row.disposition_note = None;
         if out.row.state != BeadState::Working {
@@ -926,7 +926,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
         },
 
         BeadState::Submitted => match kind {
-            // The tip invariant, as in CERTIFIED: an aeon that commits again after submitting
+            // The tip invariant, as in CERTIFIED: a dwarf that commits again after submitting
             // resubmits its moved tip, which replaces the pending one (any verdict on the old
             // tip is now TipMismatch); the same tip again is a no-op. Refusing it stranded the
             // bead: certification of the real tip was refused forever (sp-dvyic).
@@ -1205,7 +1205,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
     }
 }
 
-/// A round delivered a bead an aeon holds or has been handed back for rework: the landed
+/// A round delivered a bead a dwarf holds or has been handed back for rework: the landed
 /// content decides, the row closes LANDED and the holder finds a terminal row.
 fn landed_under_holder(row: &BeadRow, merge_sha: &str) -> Outcome<BeadRow> {
     let mut new = row.clone();
@@ -1372,7 +1372,7 @@ fn edge_probes() -> Vec<BeadEventKind> {
         BeadEventKind::BaseWithdrawn { prereq: "sp-prereq".into(), tip: "t1".into() },
         BeadEventKind::PrereqLanded { prereq: "sp-prereq".into() },
         BeadEventKind::Renew { lease_until: 2 },
-        BeadEventKind::Phase { phase: AeonPhase::Building },
+        BeadEventKind::Phase { phase: DwarfPhase::Building },
         BeadEventKind::Disposition { status: DispositionStatus::Slain, note: "n".into() },
         BeadEventKind::Express,
         BeadEventKind::Unexpress,
@@ -1455,7 +1455,7 @@ mod tests {
 
     fn sample_kinds() -> Vec<BeadEventKind> {
         vec![
-            BeadEventKind::Phase { phase: AeonPhase::Session },
+            BeadEventKind::Phase { phase: DwarfPhase::Session },
             BeadEventKind::Disposition { status: DispositionStatus::Lapsed, note: "n".into() },
             BeadEventKind::Express,
             BeadEventKind::Unexpress,
@@ -1625,7 +1625,7 @@ mod tests {
             assert!(!apply(&r, &ev(state, 0, kind())).applied, "{state:?}");
         }
         let mut live = row(BeadState::Working);
-        live.holder = Some("aeon-7".into());
+        live.holder = Some("dwarf-7".into());
         assert!(!apply(&live, &ev(BeadState::Working, 0, kind())).applied, "a live holder is never raced");
 
         let ready = apply(&row(BeadState::Ready), &ev(BeadState::Ready, 0, kind()));
@@ -1777,25 +1777,25 @@ mod tests {
     #[test]
     fn claim_from_ready_enters_working() {
         let r = row(BeadState::Ready);
-        let e = ev(BeadState::Ready, 0, BeadEventKind::Claim { holder: "aeon-1".into(), lease_until: 100, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None });
+        let e = ev(BeadState::Ready, 0, BeadEventKind::Claim { holder: "dwarf-1".into(), lease_until: 100, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None });
         let out = apply(&r, &e);
         assert!(out.applied);
         assert_eq!(out.row.state, BeadState::Working);
-        assert_eq!(out.row.holder.as_deref(), Some("aeon-1"));
+        assert_eq!(out.row.holder.as_deref(), Some("dwarf-1"));
         assert_eq!(out.row.version, 1);
     }
 
     #[test]
     fn a_claim_records_its_persona_beside_the_holder_and_a_legacy_claim_has_none() {
         let claim = |persona: Option<&str>| {
-            let k = BeadEventKind::Claim { holder: "aeon-mindy".into(), lease_until: 100, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: persona.map(String::from) };
+            let k = BeadEventKind::Claim { holder: "dwarf-austri".into(), lease_until: 100, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: persona.map(String::from) };
             apply(&BeadRow::filed("sp-x"), &ev(BeadState::Ready, 0, k)).row
         };
         let (builder, ops) = (claim(Some("builder")), claim(Some("ops")));
-        assert_eq!((builder.holder.as_deref(), builder.persona.as_deref()), (Some("aeon-mindy"), Some("builder")));
-        assert_eq!((ops.holder.as_deref(), ops.persona.as_deref()), (Some("aeon-mindy"), Some("ops")));
+        assert_eq!((builder.holder.as_deref(), builder.persona.as_deref()), (Some("dwarf-austri"), Some("builder")));
+        assert_eq!((ops.holder.as_deref(), ops.persona.as_deref()), (Some("dwarf-austri"), Some("ops")));
         assert_eq!(claim(None).persona, None);
-        let legacy: BeadEventKind = serde_json::from_str(r#"{"Claim":{"holder":"aeon-mindy","lease_until":1}}"#).unwrap();
+        let legacy: BeadEventKind = serde_json::from_str(r#"{"Claim":{"holder":"dwarf-austri","lease_until":1}}"#).unwrap();
         assert!(matches!(legacy, BeadEventKind::Claim { persona: None, .. }));
         let released = apply(&builder, &ev(BeadState::Working, builder.version, BeadEventKind::Release));
         assert!(released.applied && released.row.persona.is_none());
@@ -1805,7 +1805,7 @@ mod tests {
     fn release_and_holder_dead_both_return_to_ready() {
         for kind in [BeadEventKind::Release, BeadEventKind::HolderDead] {
             let mut r = row(BeadState::Working);
-            r.holder = Some("aeon-1".into());
+            r.holder = Some("dwarf-1".into());
             let e = ev(BeadState::Working, 0, kind);
             let out = apply(&r, &e);
             assert!(out.applied);
@@ -1831,7 +1831,7 @@ mod tests {
     #[test]
     fn submit_then_gate_pass_certifies_the_same_tip() {
         let mut r = row(BeadState::Working);
-        r.holder = Some("aeon-1".into());
+        r.holder = Some("dwarf-1".into());
         let out = apply(&r, &ev(BeadState::Working, 0, BeadEventKind::Submit { tip: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into() }));
         assert!(out.applied);
         r = out.row;
@@ -2042,7 +2042,7 @@ mod tests {
     fn in_delivery_is_left_only_by_a_delivery_exit_event() {
         // The three delivery exit events are delivered/returned/requeued. The orthogonal
         // any-non-terminal-state events (content_on_base/supersede/drop) are the design's
-        // own deliberate bypass — e.g. the Sending proving content already landed by a
+        // own deliberate bypass — e.g. the Hel proving content already landed by a
         // squash merge the delivery machine never reconciled — so they are legitimate ways
         // to leave IN_DELIVERY too, just not *delivery* exits. Everything else must leave
         // the row in IN_DELIVERY or be refused outright (property test, design §7).
@@ -2188,8 +2188,8 @@ mod tests {
         let held = |state| {
             let mut r = row(state);
             r.tip = Some("1111111111111111111111111111111111111111".into());
-            r.holder = Some("aeon-x@1.2".into());
-            r.persona = Some("guardian".into());
+            r.holder = Some("dwarf-x@1.2".into());
+            r.persona = Some("warden".into());
             r.lease_until = Some(9_999_999_999);
             r
         };
@@ -2423,7 +2423,7 @@ mod tests {
     // ── stacked dependents (design stacked-dependents-2026-09-28 §1) ──────────────────
 
     fn claim_ev(expect: BeadState, version: Version, stack: Stack, stack_depth: u32, stack_max_depth: u32) -> BeadEvent {
-        ev(expect, version, BeadEventKind::Claim { holder: "aeon-1".into(), lease_until: 100, stack, stack_depth, stack_max_depth, persona: None })
+        ev(expect, version, BeadEventKind::Claim { holder: "dwarf-1".into(), lease_until: 100, stack, stack_depth, stack_max_depth, persona: None })
     }
 
     #[test]
@@ -2760,13 +2760,13 @@ mod tests {
     fn renewal_by_the_holder_keeps_a_long_session_working_with_an_advancing_lease() {
         // A session three leases long, renewed every tick: the row never leaves WORKING,
         // never loses its holder, and lease_until strictly advances each time.
-        let mut r = held("aeon-mindy", 600);
+        let mut r = held("dwarf-austri", 600);
         for tick in 1..=30 {
             let until = 600 + tick * 60;
-            let out = apply(&r, &renew_by("aeon-mindy", &r, until));
+            let out = apply(&r, &renew_by("dwarf-austri", &r, until));
             assert!(out.applied, "tick {tick}: {:?}", out.refusal);
             assert_eq!(out.row.state, BeadState::Working);
-            assert_eq!(out.row.holder.as_deref(), Some("aeon-mindy"));
+            assert_eq!(out.row.holder.as_deref(), Some("dwarf-austri"));
             assert_eq!(out.row.lease_until, Some(until));
             assert_eq!(out.row.version, r.version + 1);
             r = out.row;
@@ -2776,18 +2776,18 @@ mod tests {
 
     #[test]
     fn a_non_holders_renewal_is_refused_and_changes_nothing() {
-        let r = held("aeon-mindy", 600);
-        let out = apply(&r, &renew_by("aeon-other", &r, 9_999));
+        let r = held("dwarf-austri", 600);
+        let out = apply(&r, &renew_by("dwarf-other", &r, 9_999));
         assert!(!out.applied);
         assert_eq!(out.row, r);
-        assert!(matches!(out.refusal, Some(Refusal::NotHolder { ref actor, .. }) if actor == "aeon-other"), "{:?}", out.refusal);
+        assert!(matches!(out.refusal, Some(Refusal::NotHolder { ref actor, .. }) if actor == "dwarf-other"), "{:?}", out.refusal);
     }
 
     #[test]
     fn a_renewal_never_shrinks_the_lease() {
-        let r = held("aeon-mindy", 600);
+        let r = held("dwarf-austri", 600);
         for until in [600, 300] {
-            let out = apply(&r, &renew_by("aeon-mindy", &r, until));
+            let out = apply(&r, &renew_by("dwarf-austri", &r, until));
             assert!(!out.applied, "lease {until} must not replace 600");
             assert_eq!(out.row, r);
         }
@@ -2795,8 +2795,8 @@ mod tests {
 
     #[test]
     fn renewal_is_version_checked_and_working_only() {
-        let r = held("aeon-mindy", 600);
-        let mut stale = renew_by("aeon-mindy", &r, 700);
+        let r = held("dwarf-austri", 600);
+        let mut stale = renew_by("dwarf-austri", &r, 700);
         stale.version = r.version + 1;
         assert!(matches!(apply(&r, &stale).refusal, Some(Refusal::StaleVersion { .. })));
         for &state in &ALL_STATES {
@@ -2804,8 +2804,8 @@ mod tests {
                 continue;
             }
             let mut other = row(state);
-            other.holder = Some("aeon-mindy".into());
-            assert!(!apply(&other, &renew_by("aeon-mindy", &other, 700)).applied, "{state:?} accepted a renewal");
+            other.holder = Some("dwarf-austri".into());
+            assert!(!apply(&other, &renew_by("dwarf-austri", &other, 700)).applied, "{state:?} accepted a renewal");
         }
     }
 
@@ -2813,18 +2813,18 @@ mod tests {
     fn a_dead_holder_that_stops_renewing_is_still_reaped_and_its_late_renewal_refused() {
         // The holder renewed a while, then died: its last lease stands, the reaper's
         // HolderDead returns the row to READY, and a renewal arriving after that is refused.
-        let mut r = held("aeon-mindy", 600);
-        r = apply(&r, &renew_by("aeon-mindy", &r, 660)).row;
+        let mut r = held("dwarf-austri", 600);
+        r = apply(&r, &renew_by("dwarf-austri", &r, 660)).row;
         let reaped = apply(&r, &BeadEvent { actor: "sentinel".into(), ..ev(BeadState::Working, r.version, BeadEventKind::HolderDead) });
         assert!(reaped.applied);
         assert_eq!((reaped.row.state, reaped.row.holder.as_deref(), reaped.row.lease_until), (BeadState::Ready, None, None));
-        let late = apply(&reaped.row, &renew_by("aeon-mindy", &reaped.row, 720));
+        let late = apply(&reaped.row, &renew_by("dwarf-austri", &reaped.row, 720));
         assert!(!late.applied);
         assert_eq!(late.row.state, BeadState::Ready);
         // And once a successor claims it, the dead holder's renewal cannot touch the new lease.
         let mut succ = reaped.row.clone();
-        succ = apply(&succ, &BeadEvent { actor: "aeon-next".into(), ..ev(BeadState::Ready, succ.version, BeadEventKind::Claim { holder: "aeon-next".into(), lease_until: 900, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }) }).row;
-        let out = apply(&succ, &renew_by("aeon-mindy", &succ, 5_000));
+        succ = apply(&succ, &BeadEvent { actor: "dwarf-next".into(), ..ev(BeadState::Ready, succ.version, BeadEventKind::Claim { holder: "dwarf-next".into(), lease_until: 900, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }) }).row;
+        let out = apply(&succ, &renew_by("dwarf-austri", &succ, 5_000));
         assert!(!out.applied);
         assert_eq!(out.row.lease_until, Some(900));
     }
@@ -2841,13 +2841,13 @@ mod tests {
     #[test]
     fn an_unclaim_returns_a_bead_to_the_state_it_was_claimed_from() {
         for kind in [BeadEventKind::HolderDead, BeadEventKind::Release] {
-            let from_rework = rework_claimed("aeon-a");
+            let from_rework = rework_claimed("dwarf-a");
             assert_eq!((from_rework.state, from_rework.claimed_from), (BeadState::Working, Some(BeadState::Rework)));
             let out = apply(&from_rework, &BeadEvent { actor: "sentinel".into(), ..ev(BeadState::Working, from_rework.version, kind.clone()) });
             assert!(out.applied);
             assert_eq!((out.row.state, out.row.claimed_from, out.row.holder), (BeadState::Rework, None, None));
 
-            let from_ready = claimed("aeon-b");
+            let from_ready = claimed("dwarf-b");
             assert_eq!(from_ready.claimed_from, Some(BeadState::Ready));
             let out = apply(&from_ready, &BeadEvent { actor: "sentinel".into(), ..ev(BeadState::Working, from_ready.version, kind) });
             assert_eq!((out.row.state, out.row.claimed_from), (BeadState::Ready, None));
@@ -2856,7 +2856,7 @@ mod tests {
 
     #[test]
     fn a_row_claimed_before_the_field_existed_is_released_to_ready() {
-        let mut r = claimed("aeon-a");
+        let mut r = claimed("dwarf-a");
         r.claimed_from = None;
         let out = apply(&r, &ev(BeadState::Working, r.version, BeadEventKind::Release));
         assert_eq!(out.row.state, BeadState::Ready);
@@ -2864,7 +2864,7 @@ mod tests {
 
     #[test]
     fn leaving_working_by_submit_clears_claimed_from() {
-        let r = rework_claimed("aeon-a");
+        let r = rework_claimed("dwarf-a");
         let out = apply(&r, &ev(BeadState::Working, r.version, BeadEventKind::Submit { tip: "1111111111111111111111111111111111111111".into() }));
         assert_eq!((out.row.state, out.row.claimed_from), (BeadState::Submitted, None));
     }
@@ -2874,52 +2874,52 @@ mod tests {
         apply(&BeadRow::filed("sp-test"), &ev).row
     }
 
-    fn phase_ev(actor: &str, r: &BeadRow, phase: AeonPhase) -> BeadEvent {
+    fn phase_ev(actor: &str, r: &BeadRow, phase: DwarfPhase) -> BeadEvent {
         BeadEvent { actor: actor.into(), ..ev(r.state, r.version, BeadEventKind::Phase { phase }) }
     }
 
     #[test]
     fn a_claim_starts_the_row_in_the_claimed_phase() {
-        let r = claimed("aeon-a");
-        assert_eq!(r.phase, Some(AeonPhase::Claimed));
+        let r = claimed("dwarf-a");
+        assert_eq!(r.phase, Some(DwarfPhase::Claimed));
         assert_eq!(BeadRow::filed("sp-x").phase, None);
     }
 
     #[test]
     fn every_forward_phase_applies_and_is_recorded() {
-        let mut r = claimed("aeon-a");
-        for (i, phase) in AeonPhase::ALL.into_iter().enumerate().skip(1) {
-            let out = apply(&r, &phase_ev("aeon-a", &r, phase));
+        let mut r = claimed("dwarf-a");
+        for (i, phase) in DwarfPhase::ALL.into_iter().enumerate().skip(1) {
+            let out = apply(&r, &phase_ev("dwarf-a", &r, phase));
             assert!(out.applied, "{phase:?}: {:?}", out.refusal);
             assert_eq!(out.row.phase, Some(phase), "the read returns exactly the recorded phase");
             assert_eq!(out.row.version, r.version + 1);
             assert_eq!(out.row.state, BeadState::Working);
-            assert_eq!(AeonPhase::ALL[i], phase);
+            assert_eq!(DwarfPhase::ALL[i], phase);
             r = out.row;
         }
     }
 
     #[test]
     fn only_phases_a_working_row_can_still_reach_exist() {
-        assert_eq!(AeonPhase::ALL.map(AeonPhase::as_str), ["claimed", "building", "session", "teardown"]);
-        assert_eq!(AeonPhase::from_str("fast_tier"), None);
-        assert_eq!(AeonPhase::from_str("submitting"), None);
+        assert_eq!(DwarfPhase::ALL.map(DwarfPhase::as_str), ["claimed", "building", "session", "teardown"]);
+        assert_eq!(DwarfPhase::from_str("fast_tier"), None);
+        assert_eq!(DwarfPhase::from_str("submitting"), None);
     }
 
     #[test]
     fn a_phase_may_skip_ahead() {
-        let r = claimed("aeon-a");
-        let out = apply(&r, &phase_ev("aeon-a", &r, AeonPhase::Teardown));
+        let r = claimed("dwarf-a");
+        let out = apply(&r, &phase_ev("dwarf-a", &r, DwarfPhase::Teardown));
         assert!(out.applied);
-        assert_eq!(out.row.phase, Some(AeonPhase::Teardown));
+        assert_eq!(out.row.phase, Some(DwarfPhase::Teardown));
     }
 
     #[test]
     fn a_repeated_or_backward_phase_is_refused_naming_the_state() {
-        let mut r = claimed("aeon-a");
-        r = apply(&r, &phase_ev("aeon-a", &r, AeonPhase::Session)).row;
-        for phase in [AeonPhase::Session, AeonPhase::Building, AeonPhase::Claimed] {
-            let out = apply(&r, &phase_ev("aeon-a", &r, phase));
+        let mut r = claimed("dwarf-a");
+        r = apply(&r, &phase_ev("dwarf-a", &r, DwarfPhase::Session)).row;
+        for phase in [DwarfPhase::Session, DwarfPhase::Building, DwarfPhase::Claimed] {
+            let out = apply(&r, &phase_ev("dwarf-a", &r, phase));
             assert!(!out.applied);
             assert_eq!(out.row, r);
             match out.refusal {
@@ -2931,8 +2931,8 @@ mod tests {
 
     #[test]
     fn a_phase_from_anyone_but_the_holder_is_refused() {
-        let r = claimed("aeon-a");
-        let out = apply(&r, &phase_ev("aeon-b", &r, AeonPhase::Building));
+        let r = claimed("dwarf-a");
+        let out = apply(&r, &phase_ev("dwarf-b", &r, DwarfPhase::Building));
         assert!(!out.applied);
         assert!(matches!(out.refusal, Some(Refusal::NotHolder { .. })));
     }
@@ -2944,8 +2944,8 @@ mod tests {
                 continue;
             }
             let mut r = row(state);
-            r.holder = Some("aeon-a".into());
-            let out = apply(&r, &phase_ev("aeon-a", &r, AeonPhase::Building));
+            r.holder = Some("dwarf-a".into());
+            let out = apply(&r, &phase_ev("dwarf-a", &r, DwarfPhase::Building));
             assert!(!out.applied, "{state:?}");
             match out.refusal {
                 Some(Refusal::IllegalTransition { state: s, .. }) => assert_eq!(s, state.as_str()),
@@ -2958,8 +2958,8 @@ mod tests {
 
     #[test]
     fn leaving_working_clears_the_phase_and_the_disposition() {
-        let mut r = claimed("aeon-a");
-        r = apply(&r, &phase_ev("aeon-a", &r, AeonPhase::Session)).row;
+        let mut r = claimed("dwarf-a");
+        r = apply(&r, &phase_ev("dwarf-a", &r, DwarfPhase::Session)).row;
         r = apply(&r, &ev(BeadState::Working, r.version, BeadEventKind::Disposition { status: DispositionStatus::Slain, note: "why".into() })).row;
         assert_eq!(r.disposition, Some(DispositionStatus::Slain));
         for kind in [BeadEventKind::Release, BeadEventKind::HolderDead, BeadEventKind::Submit { tip: "1111111111111111111111111111111111111111".into() }] {
@@ -2971,18 +2971,18 @@ mod tests {
 
     #[test]
     fn a_reclaim_starts_a_fresh_phase_and_no_disposition() {
-        let mut r = claimed("aeon-a");
+        let mut r = claimed("dwarf-a");
         r = apply(&r, &ev(BeadState::Working, r.version, BeadEventKind::Disposition { status: DispositionStatus::Lapsed, note: "q".into() })).row;
         r = apply(&r, &ev(BeadState::Working, r.version, BeadEventKind::Release)).row;
-        let out = apply(&r, &BeadEvent { actor: "aeon-b".into(), ..ev(BeadState::Ready, r.version, BeadEventKind::Claim { holder: "aeon-b".into(), lease_until: 900, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }) });
+        let out = apply(&r, &BeadEvent { actor: "dwarf-b".into(), ..ev(BeadState::Ready, r.version, BeadEventKind::Claim { holder: "dwarf-b".into(), lease_until: 900, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }) });
         assert!(out.applied);
-        assert_eq!((out.row.phase, out.row.disposition), (Some(AeonPhase::Claimed), None));
+        assert_eq!((out.row.phase, out.row.disposition), (Some(DwarfPhase::Claimed), None));
     }
 
     #[test]
     fn every_disposition_applies_and_is_recorded_with_its_note() {
         for status in DispositionStatus::ALL {
-            let r = claimed("aeon-a");
+            let r = claimed("dwarf-a");
             let out = apply(&r, &ev(BeadState::Working, r.version, BeadEventKind::Disposition { status, note: "the cutter's words".into() }));
             assert!(out.applied, "{status:?}");
             assert_eq!(out.row.disposition, Some(status));
@@ -2994,7 +2994,7 @@ mod tests {
 
     #[test]
     fn a_weaker_or_repeated_disposition_never_overwrites_a_stronger_one() {
-        let r = claimed("aeon-a");
+        let r = claimed("dwarf-a");
         let slain = apply(&r, &ev(BeadState::Working, r.version, BeadEventKind::Disposition { status: DispositionStatus::Slain, note: "op".into() })).row;
         for status in DispositionStatus::ALL {
             let out = apply(&slain, &ev(BeadState::Working, slain.version, BeadEventKind::Disposition { status, note: "later".into() }));
@@ -3030,15 +3030,15 @@ mod tests {
 
     #[test]
     fn phase_and_disposition_names_round_trip() {
-        for p in AeonPhase::ALL {
-            assert_eq!(AeonPhase::from_str(p.as_str()), Some(p));
+        for p in DwarfPhase::ALL {
+            assert_eq!(DwarfPhase::from_str(p.as_str()), Some(p));
         }
         for d in DispositionStatus::ALL {
             assert_eq!(DispositionStatus::from_str(d.as_str()), Some(d));
         }
-        assert_eq!(AeonPhase::from_str("nope"), None);
+        assert_eq!(DwarfPhase::from_str("nope"), None);
         for unreachable in ["fast_tier", "submitting"] {
-            assert_eq!(AeonPhase::from_str(unreachable), None, "the model's submit leaves WORKING first: {unreachable} cannot be recorded");
+            assert_eq!(DwarfPhase::from_str(unreachable), None, "the model's submit leaves WORKING first: {unreachable} cannot be recorded");
         }
     }
 
@@ -3046,8 +3046,8 @@ mod tests {
     fn a_replay_of_the_log_reproduces_the_phase_and_disposition() {
         let r0 = BeadRow::filed("sp-replay");
         let log = vec![
-            BeadEvent { actor: "aeon-a".into(), ..ev(BeadState::Ready, 0, BeadEventKind::Claim { holder: "aeon-a".into(), lease_until: 9, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }) },
-            BeadEvent { actor: "aeon-a".into(), ..ev(BeadState::Working, 1, BeadEventKind::Phase { phase: AeonPhase::Session }) },
+            BeadEvent { actor: "dwarf-a".into(), ..ev(BeadState::Ready, 0, BeadEventKind::Claim { holder: "dwarf-a".into(), lease_until: 9, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4, persona: None }) },
+            BeadEvent { actor: "dwarf-a".into(), ..ev(BeadState::Working, 1, BeadEventKind::Phase { phase: DwarfPhase::Session }) },
             ev(BeadState::Working, 2, BeadEventKind::Disposition { status: DispositionStatus::Thrash, note: "t".into() }),
         ];
         let mut live = r0;
@@ -3055,7 +3055,7 @@ mod tests {
             live = apply(&live, e).row;
         }
         assert_eq!(crate::replay::fold_bead("sp-replay", &log), live);
-        assert_eq!((live.phase, live.disposition), (Some(AeonPhase::Session), Some(DispositionStatus::Thrash)));
+        assert_eq!((live.phase, live.disposition), (Some(DwarfPhase::Session), Some(DispositionStatus::Thrash)));
     }
     #[test]
     fn submit_of_a_tip_that_is_not_a_full_sha_is_refused_in_every_state() {
@@ -3077,7 +3077,7 @@ mod tests {
     fn delivered_with_a_live_holder_closes_landed_and_leaves_the_holder_a_terminal_row() {
         for from in [BeadState::Working, BeadState::Rework] {
             let mut r = claimed_row(from, "sp-a", "1111111111111111111111111111111111111111");
-            r.holder = Some("aeon-1".into());
+            r.holder = Some("dwarf-1".into());
             let out = apply(&r, &ev(from, r.version, BeadEventKind::Delivered { merge_sha: "m1".into(), proof: "p".into() }));
             assert!(out.applied, "{from:?}: {:?}", out.refusal);
             assert_eq!(out.row.state, BeadState::Landed, "{from:?}");

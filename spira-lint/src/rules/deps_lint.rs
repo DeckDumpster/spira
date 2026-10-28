@@ -22,7 +22,7 @@ pub const SYSTEM_ALLOW: &[&str] = &[
     "dirname", "basename", "ionice", "nice",
     "setsid", "pgrep", "fuser", "script", "systemctl", "systemd-run", "systemd-cat", "stty", "loginctl", "id", "getent", "install",
     "nodejs", // an alternate name for node on some platforms
-    "gate_meter", "yield_note", "fayth_names", // shell functions, not programs
+    "gate_meter", "yield_note", "rune_names", // shell functions, not programs
 ];
 
 /// The declared program names. An unreadable, malformed or empty manifest is a refusal.

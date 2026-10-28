@@ -8,13 +8,13 @@
 # THE FAILURE THIS SUITE EXISTS FOR. Beads were poisoned without their work having been tried
 # once. Three separate defects composed into it, and each has a case below:
 #
-#   1. `bd unclaim --if-assignee` was passed the FAYTH's name while the claim records the
-#      AEON's, so the compare-and-swap could never match and a dying aeon never released its
+#   1. `bd unclaim --if-assignee` was passed the RUNE's name while the claim records the
+#      DWARF's, so the compare-and-swap could never match and a dying dwarf never released its
 #      bead.
 #   2. The teardown ran under `set -e`, so that failing unclaim ended the shell inside its own
 #      EXIT trap — after the counter had been bumped, before anything was logged.
 #   3. strand.sh then reclaimed the ghost and bumped the SAME counter again. One death, two of
-#      the three attempts, and the third summon poisoned the bead.
+#      the three attempts, and the third call poisoned the bead.
 #
 # The counter is now two counters, which is the property under test throughout: poison must
 # measure the work and nothing else. And the charging rule is default-DENY — only an outcome
@@ -28,7 +28,7 @@
 #
 # defect: sp-sc3 sp-qd2ul
 # tier: T2
-# covers: spira/*.sh UC-aeon-execution-20
+# covers: spira/*.sh UC-dwarf-execution-20
 set -uo pipefail
 CLAIM_SEQ=0   # one minute per seeded event, past the double-claim window
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -36,9 +36,9 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 # ======================================================================================
 # session_outcome — what ended this session? RETIRED from lib.sh (wave 4.33, sp-8kqww: zero
-# live callers — aeon was the only caller, and it calls natively now). It is
-# aeon::decide::session_outcome (aeon/src/decide.rs), over an already-extracted trace
-# segment (aeon::ledger::trace_segment); every fixture in this block's old table (empty,
+# live callers — dwarf was the only caller, and it calls natively now). It is
+# dwarf::decide::session_outcome (dwarf/src/decide.rs), over an already-extracted trace
+# segment (dwarf::ledger::trace_segment); every fixture in this block's old table (empty,
 # missing, rate-limited, worked-then-refused, clean, api_error_status:null, killed,
 # truncated, the appended-segments pair) is `decide::tests::session_outcome_table`. The
 # charging rule itself (outcome_charges) was already retired at sp-j89pd (wave 4.2) and is
@@ -60,10 +60,10 @@ tl_config SPIRA_RUN="$TMP/run"
 # has to be. The behaviour it guards is exercised right below it.
 # ======================================================================================
 echo
-echo "aeon teardown:"
+echo "dwarf teardown:"
 
-# RETIRED with aeon.sh: the teardown is the Rust aeon's (no errexit trap exists to disarm);
-# its run-to-the-end behaviour is `cargo test -p aeon tests::*` (e.g. slain_mid_session_is_free_and_exits_143).
+# RETIRED with dwarf.sh: the teardown is the Rust dwarf's (no errexit trap exists to disarm);
+# its run-to-the-end behaviour is `cargo test -p dwarf tests::*` (e.g. slain_mid_session_is_free_and_exits_143).
 
 # The hazard itself, so the assertion above is not a rule nobody can see fire: under `set -e`
 # a failing command inside an EXIT trap ends the shell where it stands, and every later step
@@ -92,7 +92,7 @@ LEDGER" "$(bash "$TMP/guarded.sh" 2>/dev/null)"
 #
 # The ban-on-writing-a-counter-label check (D6) lives once, in test-attempts-sql.sh; what
 # stays here is the other structural property this file is about:
-#   The REQUEUE_CAUSE path in aeon.sh still exits before session_outcome is consulted —
+#   The REQUEUE_CAUSE path in dwarf.sh still exits before session_outcome is consulted —
 #   a reopened bead is not charged an attempt.
 # ======================================================================================
 echo
@@ -100,12 +100,12 @@ echo "counter labels deleted — structural properties:"
 
 # The REQUEUE_CAUSE exemption must still be decided before session_outcome is consulted.
 # A bead that was put back by the harness must not be charged an attempt.
-# RETIRED with aeon.sh: the requeue-before-outcome order is the Rust aeon's disposition
-# table, pinned by `cargo test -p aeon decide::tests::disposition_table`.
+# RETIRED with dwarf.sh: the requeue-before-outcome order is the Rust dwarf's disposition
+# table, pinned by `cargo test -p dwarf decide::tests::disposition_table`.
 
 # BEHAVIOUR, NOT THE QUERY STRING. The original assertion here checked that the SQL
 # contained the word 'status_changed'. It passed while the predicate returned 0 for every
-# bead an aeon had ever worked, because an aeon claim writes event_type='claimed' and only
+# bead a dwarf had ever worked, because a dwarf claim writes event_type='claimed' and only
 # a hand-driven `bd update --status in_progress` writes 'status_changed'. A test that
 # restates the implementation agrees with it about everything, including its mistakes.
 #
@@ -115,7 +115,7 @@ echo "counter labels deleted — structural properties:"
 # attempts_of is now a one-line shim onto `spira-claim attempts`, so there is no SQL
 # source text left in lib.sh to grep for 'claimed'/'status_changed' — the same body-text
 # trap this comment already warns about, now for the shim itself. The NUMBER this section
-# promised to assert instead of the query string is covered behaviourally: an aeon claim
+# promised to assert instead of the query string is covered behaviourally: a dwarf claim
 # (event_type='claimed') by test-attempts-sql.sh's b4 ("three claims, never closed" = 3
 # attempts) and a hand-driven in_progress transition (event_type='status_changed') by its
 # sp-ev2 ("one in_progress transition is one attempt"); both event kinds are matched
@@ -128,8 +128,8 @@ echo "counter labels deleted — structural properties:"
 # the events schema — the same fixture, testing the real store rather than a model of it.
 #
 # The not-judged branch's "records an unjudged requeue event" was a source-order grep of
-# aeon.sh; sp-eq8a4.2.1 moved that cause into aeon_disposition, then sp-j89pd (wave 4.2)
-# moved it again into aeon::decide::disposition (aeon/src/decide.rs), where the
+# dwarf.sh; sp-eq8a4.2.1 moved that cause into dwarf_disposition, then sp-j89pd (wave 4.2)
+# moved it again into dwarf::decide::disposition (dwarf/src/decide.rs), where the
 # unjudged-<cause> rows (gap G15) of its own `disposition_table` unit test assert it.
 
 # ======================================================================================
@@ -209,27 +209,27 @@ is "three events poison" yes "$(poisons sp-c2)"
 echo
 echo "the release (real lifecycle store):"
 
-# THE DISCRIMINATING FACT, seen both ways. The claim records the aeon's own name (BEADS_ACTOR
-# =aeon-<instance>); the teardown, release_own_claim -> `spira-lc unclaim` (sp-hyo5e), must
+# THE DISCRIMINATING FACT, seen both ways. The claim records the dwarf's own name (BEADS_ACTOR
+# =dwarf-<instance>); the teardown, release_own_claim -> `spira-lc unclaim` (sp-hyo5e), must
 # name that same actor or the machine's holder check can never match. The claim is the
 # lifecycle row's — the one claim there is (sp-v62vn: bd's status and assignee are nobody's
 # claim, and unclaim writes nothing there) — so this block stands up a real spira-lc store
-# (testlib/lc-fixture.sh) and seeds the row WORKING under the aeon's name.
+# (testlib/lc-fixture.sh) and seeds the row WORKING under the dwarf's name.
 # shellcheck disable=SC1091
 . "$HERE/testlib/lc-fixture.sh"
 trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 lcfix_up || bail "lc-fixture: the lifecycle store did not come up"
 lcfix_seed sp-r1 WORKING || bail "lc-fixture: could not seed sp-r1"
-lcfix_sql -q "UPDATE bead SET holder='aeon-cindy', lease_until=$(( $(date +%s) + 3600 )) WHERE bead_id='sp-r1'" >/dev/null \
+lcfix_sql -q "UPDATE bead SET holder='dwarf-regin', lease_until=$(( $(date +%s) + 3600 )) WHERE bead_id='sp-r1'" >/dev/null \
     || bail "lc-fixture: could not set sp-r1's holder"
 lc_holder() { lcfix_sql -q "SELECT IFNULL(holder,'') FROM bead WHERE bead_id='$1'" -r csv 2>/dev/null | sed -n 2p; }
-is "the fixture holds the bead under the aeon's name" "WORKING aeon-cindy" "$(lcfix_state sp-r1) $(lc_holder sp-r1)"
+is "the fixture holds the bead under the dwarf's name" "WORKING dwarf-regin" "$(lcfix_state sp-r1) $(lc_holder sp-r1)"
 
-if BEADS_ACTOR=aeon-builder release_own_claim sp-r1; then r=0; else r=1; fi
-is "releasing as the fayth fails"        1                    "$r"
-is "and leaves the bead held"            "WORKING aeon-cindy" "$(lcfix_state sp-r1) $(lc_holder sp-r1)"
+if BEADS_ACTOR=dwarf-builder release_own_claim sp-r1; then r=0; else r=1; fi
+is "releasing as the rune fails"        1                    "$r"
+is "and leaves the bead held"            "WORKING dwarf-regin" "$(lcfix_state sp-r1) $(lc_holder sp-r1)"
 
-if BEADS_ACTOR=aeon-cindy release_own_claim sp-r1; then r=0; else r=1; fi
-is "releasing as the aeon succeeds"      0       "$r"
+if BEADS_ACTOR=dwarf-regin release_own_claim sp-r1; then r=0; else r=1; fi
+is "releasing as the dwarf succeeds"      0       "$r"
 is "and the bead is claimable again"     "READY" "$(lcfix_state sp-r1)"
 tl_summary

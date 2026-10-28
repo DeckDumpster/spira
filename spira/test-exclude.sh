@@ -77,7 +77,7 @@ done
 echo
 echo "clean paths are never flagged, once the positive control above is trusted:"
 # ===========================================================================
-clean="${SIGNATURE}spira/aeon.sh
+clean="${SIGNATURE}spira/dwarf.sh
 spira/docs/readme.md
 spira/sub/dir/notes.md
 spira/a.jsonline.txt"

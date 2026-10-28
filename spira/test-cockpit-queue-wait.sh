@@ -6,11 +6,11 @@
 # THE DEFECT. cockpit-collect's NEXT query excluded spira-poison, SPIRA_ASK_LABEL and
 # SPIRA_CI_LABEL but not SPIRA_QUEUE_WAIT_LABEL. A bead sp-n9z (content-landed,
 # spira-queue-waiting, landstate=LANDED, no branch) appeared in the NEXT row while
-# every fayth excluded it — zero aeons could claim it, the operator read it as a
+# every rune excluded it — zero dwarves could claim it, the operator read it as a
 # stalled loop (sp-rvoun).
 #
 # THE FIX. cockpit-collect's NEXT query adds SPIRA_QUEUE_WAIT_LABEL to --exclude-label,
-# matching what fayth_exclude passes to bd ready for each aeon.
+# matching what rune_exclude passes to bd ready for each dwarf.
 #
 # Since sp-7g5q6 the NEXT rows come from `spira-claim ready-count <labels> <excl> --json`:
 # the lifecycle machine's READY rows (the only mode since sp-v62vn retired
@@ -41,7 +41,7 @@ BASE_PATH="$PATH"
 : "${SPIRA_SCOPE_LABEL:=$(basename "$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || printf '')")}"
 
 # The partition's labels as a JSON list fragment: the scope label (when one resolved) and
-# plan — what the builder fayth's FAYTH_LABELS asks every NEXT row to carry.
+# plan — what the builder rune's RUNE_LABELS asks every NEXT row to carry.
 SCOPE_JSON="${SPIRA_SCOPE_LABEL:+\"$SPIRA_SCOPE_LABEL\",}\"plan\""
 lc_mirror_bd "$TMP/lc"
 
@@ -50,14 +50,14 @@ lc_mirror_bd "$TMP/lc"
 # first on PATH.
 run_core() {
     local bd_path="$1" wait_label="${2:-spira-queue-waiting}"
-    # SPIRA_CHAMBER is registered too: the builder fayth this suite relies on lives in the
-    # real chamber, which chamber_dir_with() no longer derives from SPIRA_HOME once the
+    # SPIRA_RUNES_DIR is registered too: the builder rune this suite relies on lives in the
+    # real runes, which runes_dir_with() no longer derives from SPIRA_HOME once the
     # complete fixture's own non-empty default is in play (sfail round 4, pattern 6/7).
-    tl_config SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=builder \
+    tl_config SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_RUNES=builder \
         SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_QUEUE_WAIT_LABEL="$wait_label" \
-        SPIRA_BD="$bd_path" SPIRA_CHAMBER="$HERE/chamber" SPIRA_DB="$TMP/nodb"
+        SPIRA_BD="$bd_path" SPIRA_RUNES_DIR="$HERE/runes" SPIRA_DB="$TMP/nodb"
     # SPIRA_BD also as a raw env var: the spira-lc stand-in lc_mirror_bd installs reads
     # ${SPIRA_BD:-bd} straight from its own inherited env, never through config, and env -i
     # would otherwise wipe it entirely (sfail round 3, pattern 3/7).

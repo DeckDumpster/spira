@@ -12,7 +12,7 @@
 #
 # The fix is two parts:
 #   sentinel.sh:  log "CHECK7 $f: not evaluated (pass budget exhausted)" when the budget
-#                 runs out before a fayth is evaluated.
+#                 runs out before a rune is evaluated.
 #   strand.sh:    detect that line in the most recent pass and emit 'pass-truncated' (info)
 #                 instead of 'starved' (escalate).
 #
@@ -22,13 +22,13 @@
 # suppression instead of re-proving it per file. This suite keeps the pass-budget coverage
 # that only it has:
 #
-#   2. STRAND.SH DETECTION — sentinel log contains "not evaluated" for a fayth working
+#   2. STRAND.SH DETECTION — sentinel log contains "not evaluated" for a rune working
 #      this partition → strand.sh report emits "pass-truncated", not "starved".
 #
 #   3. NO TRUNCATION IN LOG — sentinel log exists but has no "not evaluated" line →
 #      strand.sh report emits "starved" as before.
 #
-#   4. SENTINEL BUDGET — with SPIRA_SENTINEL_PASS_BUDGET_SECS=0 and two task fayths,
+#   4. SENTINEL BUDGET — with SPIRA_SENTINEL_PASS_BUDGET_SECS=0 and two task runes,
 #      sentinel.sh logs "not evaluated (pass budget exhausted)" for both.
 #
 # defect: sp-ow8n
@@ -53,21 +53,21 @@ echo "test-strand-truncated.sh"
 echo
 echo "case 2 — strand detection: sentinel log 'not evaluated' → pass-truncated:"
 # ======================================================================================
-# Build a stub chamber with a fayth whose partition is "spira,test-plan". The sentinel
-# log records that this fayth was not evaluated. Strand.sh detects it and passes
+# Build a stub runes with a rune whose partition is "spira,test-plan". The sentinel
+# log records that this rune was not evaluated. Strand.sh detects it and passes
 # PASS_TRUNCATED=1 to the classifier.
-mkdir -p "$TMP/stubs/chamber"
+mkdir -p "$TMP/stubs/runes"
 _libs "$TMP/stubs"
-# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
-# point it at this suite's own fixture chamber explicitly.
-tl_config SPIRA_CHAMBER="$TMP/stubs/chamber"
-cat > "$TMP/stubs/chamber/test-watcher.fayth" <<'FAYTH'
-FAYTH_NAME=test-watcher
-FAYTH_LABELS=spira,test-plan
-FAYTH_EXCLUDE_LABELS=spira-poison,needs-operator
-FAYTH_MAX_CONCURRENT=1
-FAYTH_TIMEOUT_SECONDS=3600
-FAYTH
+# SPIRA_RUNES_DIR no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture runes explicitly.
+tl_config SPIRA_RUNES_DIR="$TMP/stubs/runes"
+cat > "$TMP/stubs/runes/test-watcher.rune" <<'RUNE'
+RUNE_NAME=test-watcher
+RUNE_LABELS=spira,test-plan
+RUNE_EXCLUDE_LABELS=spira-poison,needs-operator
+RUNE_MAX_CONCURRENT=1
+RUNE_TIMEOUT_SECONDS=3600
+RUNE
 
 # Mock bd returns the fixture bead for any list query (strand's store read, spira-claim's
 # content read, the lifecycle stand-in's own read). bdq() prepends -C <db> to every call;
@@ -90,7 +90,7 @@ lc_mirror_bd "$TMP/lc"
 # Sentinel log: one completed pass (state: open= line) followed by a "not evaluated"
 # line for test-watcher in that same pass.
 cat > "$TMP/run/sentinel.log" <<'LOG'
-2026-01-01T00:00:00Z spira: state: open=1 plan_ready=1 in_progress=0 aeons=0
+2026-01-01T00:00:00Z spira: state: open=1 plan_ready=1 in_progress=0 dwarves=0
 2026-01-01T00:00:01Z spira: CHECK7 test-watcher: not evaluated (pass budget exhausted)
 LOG
 
@@ -98,7 +98,7 @@ tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd"
 out="$(
     SPIRA_HOME="$TMP/stubs" PATH="$TMP/stubs:$TMP/lc:$PATH" \
     SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd" \
-    SPIRA_SUMMON=stub \
+    SPIRA_CALL=stub \
     SPIRA_LABELS="spira,test-plan" \
         strand report 2>/dev/null
 )"
@@ -111,7 +111,7 @@ echo "case 3 — no truncation in log: strand still reports starved:"
 # ======================================================================================
 # Same setup but sentinel log has no "not evaluated" line for test-watcher.
 cat > "$TMP/run/sentinel.log" <<'LOG'
-2026-01-01T00:00:00Z spira: state: open=1 plan_ready=1 in_progress=0 aeons=0
+2026-01-01T00:00:00Z spira: state: open=1 plan_ready=1 in_progress=0 dwarves=0
 2026-01-01T00:00:01Z spira: CHECK7 test-watcher: nothing ready in its partition
 LOG
 
@@ -119,7 +119,7 @@ tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd"
 out="$(
     SPIRA_HOME="$TMP/stubs" PATH="$TMP/stubs:$TMP/lc:$PATH" \
     SPIRA_DB="$TMP/no-db" SPIRA_BD="$TMP/mock-bd" \
-    SPIRA_SUMMON=stub \
+    SPIRA_CALL=stub \
     SPIRA_LABELS="spira,test-plan" \
         strand report 2>/dev/null
 )"
@@ -128,51 +128,51 @@ nowant "no truncation: pass-truncated not raised" "pass-truncated" "$out"
 
 # ======================================================================================
 echo
-echo "case 4 — sentinel budget: SPIRA_SENTINEL_PASS_BUDGET_SECS=0 logs both fayths as not evaluated:"
+echo "case 4 — sentinel budget: SPIRA_SENTINEL_PASS_BUDGET_SECS=0 logs both runes as not evaluated:"
 # ======================================================================================
-# Sentinel runs with two task fayths and a zero budget. Both fayths should be logged
-# as "not evaluated (pass budget exhausted)" without calling summon_fayth for either.
-mkdir -p "$TMP/stubs2/chamber"
+# Sentinel runs with two task runes and a zero budget. Both runes should be logged
+# as "not evaluated (pass budget exhausted)" without calling call_rune for either.
+mkdir -p "$TMP/stubs2/runes"
 for _f in alpha beta; do
-    cat > "$TMP/stubs2/chamber/$_f.fayth" <<FAYTH2
-FAYTH_NAME=$_f
-FAYTH_LABELS=spira,test-$_f
-FAYTH_EXCLUDE_LABELS=spira-poison,needs-operator
-FAYTH_MAX_CONCURRENT=1
-FAYTH_TIMEOUT_SECONDS=3600
-FAYTH2
+    cat > "$TMP/stubs2/runes/$_f.rune" <<RUNE2
+RUNE_NAME=$_f
+RUNE_LABELS=spira,test-$_f
+RUNE_EXCLUDE_LABELS=spira-poison,needs-operator
+RUNE_MAX_CONCURRENT=1
+RUNE_TIMEOUT_SECONDS=3600
+RUNE2
 done
-# Stubs: pilgrimage, sending, reflect all exit 0 with no output.
-for _s in pilgrimage.sh sending reflect.sh; do
+# Stubs: pilgrimage, hel, reflect all exit 0 with no output.
+for _s in pilgrimage.sh hel reflect.sh; do
     printf '#!/bin/sh\n' > "$TMP/stubs2/$_s"; chmod +x "$TMP/stubs2/$_s"
 done
-# strand ALSO backs lib.sh's aeon_alive/aeon_count/aeons_live_total/aeons_live_lanes shims
-# now (wave 4.23, sp-0ffox) — a bare no-op here would make `$(aeon_count ...)` inside
+# strand ALSO backs lib.sh's dwarf_alive/dwarf_count/dwarves_live_total/dwarves_live_lanes shims
+# now (wave 4.23, sp-0ffox) — a bare no-op here would make `$(dwarf_count ...)` inside
 # lib.sh's pass-start summary print nothing, not "0", and blow up the arithmetic that adds
-# it (this case has two task fayths, alpha and beta, so that summary line IS computed).
+# it (this case has two task runes, alpha and beta, so that summary line IS computed).
 # A plain no-op is still correct for strand's OWN verbs (report/check/throttle-state).
 cat > "$TMP/stubs2/strand" <<'STRANDSTUB'
 #!/bin/sh
 case "$1" in
-    aeon-alive) exit 1 ;;
-    aeon-count|aeons-live-total|aeons-live-lanes) printf '0' ;;
+    dwarf-alive) exit 1 ;;
+    dwarf-count|dwarves-live-total|dwarves-live-lanes) printf '0' ;;
 esac
 STRANDSTUB
 chmod +x "$TMP/stubs2/strand"
 _libs "$TMP/stubs2"
 # systemctl stub: says unit is inactive so the landing dispatch path runs cleanly.
 printf '#!/bin/sh\necho inactive\n' > "$TMP/stubs2/mock-systemctl"; chmod +x "$TMP/stubs2/mock-systemctl"
-# launch/summon/notify stubs.
-for _s in mock-launch mock-summon mock-notify; do
+# launch/call/notify stubs.
+for _s in mock-launch mock-call mock-notify; do
     printf '#!/bin/sh\nexit 0\n' > "$TMP/stubs2/$_s"; chmod +x "$TMP/stubs2/$_s"
 done
 touch "$TMP/stubs2/repo-map"
 
 _run2="$TMP/run2"; mkdir -p "$_run2"
-# SPIRA_CHAMBER no longer derives from SPIRA_HOME (the fixture declares its own path) —
-# point it at this suite's own fixture chamber explicitly.
-tl_config SPIRA_RUN="$_run2" SPIRA_DB="$TMP/no-db" SPIRA_FAYTHS="alpha beta" \
-    SPIRA_NOTIFY="$TMP/stubs2/mock-notify" SPIRA_CHAMBER="$TMP/stubs2/chamber" \
+# SPIRA_RUNES_DIR no longer derives from SPIRA_HOME (the fixture declares its own path) —
+# point it at this suite's own fixture runes explicitly.
+tl_config SPIRA_RUN="$_run2" SPIRA_DB="$TMP/no-db" SPIRA_RUNES="alpha beta" \
+    SPIRA_NOTIFY="$TMP/stubs2/mock-notify" SPIRA_RUNES_DIR="$TMP/stubs2/runes" \
     SPIRA_BD="$TMP/mock-bd"
 out="$(env -i \
     PATH="$PATH" HOME="$HOME" \
@@ -183,12 +183,12 @@ out="$(env -i \
     SPIRA_LAND_STALE=999999 \
     SPIRA_SYSTEMCTL="$TMP/stubs2/mock-systemctl" \
     SPIRA_LAUNCH="$TMP/stubs2/mock-launch" \
-    SPIRA_SUMMON="$TMP/stubs2/mock-summon" \
+    SPIRA_CALL="$TMP/stubs2/mock-call" \
     PATH="$TMP/stubs2:$PATH" \
         sentinel 2>&1)"
 
 want   "alpha logged as not evaluated" "CHECK7 alpha: not evaluated (pass budget exhausted)" "$out"
 want   "beta logged as not evaluated"  "CHECK7 beta: not evaluated (pass budget exhausted)"  "$out"
-nowant "alpha NOT logged as summoned"  "summoned a alpha"                                    "$out"
-nowant "beta NOT logged as summoned"   "summoned a beta"                                     "$out"
+nowant "alpha NOT logged as called"  "called a alpha"                                    "$out"
+nowant "beta NOT logged as called"   "called a beta"                                     "$out"
 tl_summary

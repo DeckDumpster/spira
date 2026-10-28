@@ -851,12 +851,12 @@ fn every_early_exit_says_why() {
     h.closed("sp-content", "t6");
     h.git.content.borrow_mut().insert("spira/sp-content".into());
     h.run();
-    assert!(h.logged("CHECK6 sp-open: spira/sp-open not landed — its bead is WORKING, held by a live aeon"));
-    assert!(h.logged("CHECK6 sp-idle: spira/sp-idle not landed — its bead is READY and no aeon holds it"));
+    assert!(h.logged("CHECK6 sp-open: spira/sp-open not landed — its bead is WORKING, held by a live dwarf"));
+    assert!(h.logged("CHECK6 sp-idle: spira/sp-idle not landed — its bead is READY and no dwarf holds it"));
     assert!(h.logged("CHECK6 sp-other: spira/sp-other is in spira but the bead names repo:elsewhere — not landing it here"));
     assert!(h.logged("CHECK6 sp-sup: spira/sp-sup is superseded"));
     assert!(h.logged("CHECK6 sp-cut: spira/sp-cut is labelled cutover-round — leaving it for the cutover round"));
-    assert!(h.logged("CHECK6 sp-held: a live aeon still holds spira/sp-held — deferring the land"));
+    assert!(h.logged("CHECK6 sp-held: a live dwarf still holds spira/sp-held — deferring the land"));
     assert!(h.logged("origin/main already contains every change on spira/sp-content — nothing to land"));
     assert!(!h.s.run.join("landstate").exists(), "the pass recreated the retired landstate ledger (sp-2c1n0)");
     assert!(h.tools.gate_calls.borrow().is_empty());
@@ -1986,7 +1986,7 @@ fn on_push_mode_lands_a_lifecycle_certified_bead_without_a_close() {
     h.bead("sp-a", "CERTIFIED", &[]);
     h.git.add("spira/sp-a", "t1");
     h.run();
-    assert!(!h.logged("CHECK6 sp-a: spira/sp-a not landed — its bead is CERTIFIED and no aeon holds it"));
+    assert!(!h.logged("CHECK6 sp-a: spira/sp-a not landed — its bead is CERTIFIED and no dwarf holds it"));
     assert!(h.lib.has("deliver_delivered sp-a head1"), "{:?}", h.lib.calls.borrow());
 }
 

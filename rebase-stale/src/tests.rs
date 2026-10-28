@@ -84,7 +84,7 @@ impl Fx {
         self.run.join("worktree").join(id)
     }
 
-    /// Cuts spira/<id> in a worktree named after the bead (the shape an aeon leaves) and
+    /// Cuts spira/<id> in a worktree named after the bead (the shape a dwarf leaves) and
     /// commits `edit` there. The worktree is kept iff `keep`.
     fn branch(&self, id: &str, keep: bool, edit: impl Fn(&Path)) -> String {
         let w = self.wt(id);
@@ -282,7 +282,7 @@ fn append(p: PathBuf, s: &str) {
 }
 
 #[test]
-fn stale_only_by_appended_key_history_rebases_mechanically_with_no_aeon() {
+fn stale_only_by_appended_key_history_rebases_mechanically_with_no_dwarf() {
     let fx = Fx::new("keyhist");
     let kh = "spira-config/schema/spira-key-history.txt";
     fx.branch("sp-kh", false, |w| append(w.join(kh), "c-from-branch\n"));
@@ -307,7 +307,7 @@ fn stale_only_by_appended_key_history_rebases_mechanically_with_no_aeon() {
         submits[0].ends_with(&fx.tip("sp-kh")),
         "the gate saw the rebased tip"
     );
-    assert!(seam.calls("reopen").is_empty(), "no aeon");
+    assert!(seam.calls("reopen").is_empty(), "no dwarf");
     assert!(seam.calls("note sp-kh")[0].contains("(mechanical)"));
     assert!(
         fx.log()
@@ -503,21 +503,21 @@ fn a_live_holder_blocks_hold_pidfile() {
 }
 
 #[test]
-fn a_running_lease_blocks_the_aeon_pidfile() {
-    let (fx, old) = live_holder_fixture("live-aeon", "sp-la");
-    write(&fx.run.join("aeon-builder-sp-la.pid"), "999999999\n");
-    write(&fx.run.join("aeon-builder-sp-la.lease"), &epoch_plus(600));
+fn a_running_lease_blocks_the_dwarf_pidfile() {
+    let (fx, old) = live_holder_fixture("live-dwarf", "sp-la");
+    write(&fx.run.join("dwarf-builder-sp-la.pid"), "999999999\n");
+    write(&fx.run.join("dwarf-builder-sp-la.lease"), &epoch_plus(600));
     assert_busy(&fx, &fx.seam(), "sp-la", &old, "running identity lease");
 }
 
 #[test]
-fn an_aeon_pidfile_without_a_running_lease_is_not_a_holder() {
-    let fx = Fx::new("dead-aeon");
+fn an_dwarf_pidfile_without_a_running_lease_is_not_a_holder() {
+    let fx = Fx::new("dead-dwarf");
     fx.branch("sp-da", true, |w| write(&w.join("x.txt"), "x\n"));
     fx.advance_main(|r| write(&r.join("m.txt"), "m\n"));
-    write(&fx.run.join("aeon-builder-sp-da.pid"), &format!("{}\n", std::process::id()));
+    write(&fx.run.join("dwarf-builder-sp-da.pid"), &format!("{}\n", std::process::id()));
     assert_eq!(run(&fx, &fx.seam(), "sp-da").exit, Exit::Ok, "a live pid with no lease");
-    write(&fx.run.join("aeon-builder-sp-da.lease"), &epoch_plus(-5));
+    write(&fx.run.join("dwarf-builder-sp-da.lease"), &epoch_plus(-5));
     assert_eq!(run(&fx, &fx.seam(), "sp-da").exit, Exit::Ok, "an expired lease");
 }
 

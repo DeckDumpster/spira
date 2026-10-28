@@ -230,7 +230,7 @@ _un_removed=0
 _un_removed_names=()   # for sweep exclusion
 
 # ---------------------------------------------------------------------------
-# 0. STOP LIVE TRANSIENT UNITS. spira-landing and spira-aeon-* are systemd-run
+# 0. STOP LIVE TRANSIENT UNITS. spira-landing and spira-dwarf-* are systemd-run
 #    transients, never in owned.sh's manifest, so the installed-unit pass below
 #    never touches one still running from an in-flight sentinel/landing pass.
 #    Left running, the next activate.sh's restart step can revive it under a
@@ -247,7 +247,7 @@ _un_removed_names=()   # for sweep exclusion
 _un_stop_transients() {
     local _un_transient _un_tline _un_tu
     _un_transient="$("${SPIRA_SYSTEMCTL:-systemctl}" --user list-units --state=active,activating,deactivating,reloading \
-        --no-legend --plain 'spira-landing*' 'spira-aeon-*' 2>/dev/null || true)"
+        --no-legend --plain 'spira-landing*' 'spira-dwarf-*' 2>/dev/null || true)"
     [ -n "$_un_transient" ] || return 0
     printf '\nStopping live transient units...\n'
     while IFS= read -r _un_tline; do

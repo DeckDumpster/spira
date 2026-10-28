@@ -115,14 +115,14 @@ pub fn repeat_check(
 }
 
 /// One ask per (work bead, exact question), whoever sends it and wherever it routes: a
-/// re-ask of a key seen inside `window_s` is refused, so a re-summoned aeon cannot mail the
+/// re-ask of a key seen inside `window_s` is refused, so a re-called dwarf cannot mail the
 /// same question twice. Same lock/stamp protocol as [`repeat_check`].
 pub fn ask_key_check(run_dir: &Path, work_bead: &str, subject: &str, window_s: u64, lock_timeout_ms: u64, considered: Option<&str>) -> Result<RepeatCheck, String> {
     if considered.is_some() {
         return Ok(RepeatCheck { fp: String::new(), stamp_dir: stamp_dir(run_dir), lock: None });
     }
     let fp = fingerprint("ask", &format!("{work_bead}\u{1f}{}", subject.trim()), "key");
-    guard(run_dir, fp, "an aeon", &format!("the ask on {work_bead}"), window_s, lock_timeout_ms)
+    guard(run_dir, fp, "a dwarf", &format!("the ask on {work_bead}"), window_s, lock_timeout_ms)
 }
 
 fn guard(run_dir: &Path, fp: String, caller: &str, mailbox: &str, window_s: u64, lock_timeout_ms: u64) -> Result<RepeatCheck, String> {

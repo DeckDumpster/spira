@@ -14,7 +14,7 @@
 # Called automatically from gate.sh before the flock, and safe to invoke by hand to clean
 # up worktrees accumulated before gate.sh grew its own cleanup trap.
 #
-# ONLY TARGETS .gate.<repo-basename> WORKTREES. Other registrations — aeon worktrees, the
+# ONLY TARGETS .gate.<repo-basename> WORKTREES. Other registrations — dwarf worktrees, the
 # main checkout, session scratchpads — are left alone. Non-gate orphans accumulated before
 # this script existed must be removed by hand.
 

@@ -22,7 +22,7 @@ pub fn run(d: &SweepData, cfg: &Cfg) {
     failed_units_escalation(d, cfg);
     drain_escalation(d, cfg);
     drain_check(d);
-    sending_oldest_unsent(d, cfg);
+    hel_oldest_unsent(d, cfg);
     unadopted_refs(d, cfg);
     hotfix(d, cfg);
     batched_stranded(d, cfg);
@@ -120,14 +120,14 @@ fn drain_escalation(d: &SweepData, cfg: &Cfg) {
         return;
     };
     let body = format!(
-        "DRAINING for {mins}m — summons gated since {since}\n\nNew aeons cannot be summoned while world.draining exists. Loop, landing and reaping continue.\n\nLift with: world.sh resume\n"
+        "DRAINING for {mins}m — calls gated since {since}\n\nNew dwarves cannot be called while world.draining exists. Loop, landing and reaping continue.\n\nLift with: world.sh resume\n"
     );
-    let f = Finding::new(&cfg.db, &cfg.home_repo, "DRAINING: world.sh summons gated", &body).priority(1);
+    let f = Finding::new(&cfg.db, &cfg.home_repo, "DRAINING: world.sh calls gated", &body).priority(1);
     incident::alarm(inc, &f);
     log(&format!("watchtower: drain escalation filed ({mins}m >= {}m threshold)", cfg.drain_warn_mins));
 }
 
-fn sending_oldest_unsent(d: &SweepData, cfg: &Cfg) {
+fn hel_oldest_unsent(d: &SweepData, cfg: &Cfg) {
     let Some(oldest) = num(d.env.g("SP_UNSENT_OLDEST_H")) else { return };
     if oldest < cfg.unsent_warn_h {
         return;
@@ -137,12 +137,12 @@ fn sending_oldest_unsent(d: &SweepData, cfg: &Cfg) {
         return;
     };
     let body = format!(
-        "Oldest unsent branch: {oldest}h — threshold is {}h\n\nA branch this old without a landing means the Sending rite has not run or cannot delete it.\nBranches owned by live in_progress beads are work in flight; confirm the branch has no holder before acting.\n\nCheck the sending binary (`sending --dry-run`) and the rite logs. Reap manually if the owning bead is already closed.\n",
+        "Oldest unsent branch: {oldest}h — threshold is {}h\n\nA branch this old without a landing means the Hel rite has not run or cannot delete it.\nBranches owned by live in_progress beads are work in flight; confirm the branch has no holder before acting.\n\nCheck the hel binary (`hel --dry-run`) and the rite logs. Reap manually if the owning bead is already closed.\n",
         cfg.unsent_warn_h
     );
-    let f = Finding::new(&cfg.db, &cfg.home_repo, "SENDING: oldest unsent branch above threshold", &body)
+    let f = Finding::new(&cfg.db, &cfg.home_repo, "HEL: oldest unsent branch above threshold", &body)
         .priority(1)
-        .reference("incident:sending-oldest-unsent")
+        .reference("incident:hel-oldest-unsent")
         .cause("oldest-unsent");
     incident::alarm(inc, &f);
     log(&format!("watchtower: sending escalation filed (oldest unsent {oldest}h >= {}h threshold)", cfg.unsent_warn_h));
@@ -159,12 +159,12 @@ fn unadopted_refs(d: &SweepData, cfg: &Cfg) {
     };
     let names = d.env.raw("SP_UNADOPTED_NAMES").unwrap_or("(unavailable)");
     let body = format!(
-        "Unadopted refs: {n}\n\nA spira/* branch whose suffix resolves to no bead can never be reaped by any rite.\nEach one is a permanent +1 on SP_UNADOPTED until removed by hand.\n\nBranches (spira/ prefix omitted): {names}\nDelete safely: git -C {} branch -D spira/<id> (no bead, no aeon holds it)\n",
+        "Unadopted refs: {n}\n\nA spira/* branch whose suffix resolves to no bead can never be reaped by any rite.\nEach one is a permanent +1 on SP_UNADOPTED until removed by hand.\n\nBranches (spira/ prefix omitted): {names}\nDelete safely: git -C {} branch -D spira/<id> (no bead, no dwarf holds it)\n",
         cfg.spira_run.display()
     );
-    let f = Finding::new(&cfg.db, &cfg.home_repo, "SENDING: unadopted refs cannot be reaped", &body)
+    let f = Finding::new(&cfg.db, &cfg.home_repo, "HEL: unadopted refs cannot be reaped", &body)
         .priority(2)
-        .reference("incident:sending-unadopted-refs")
+        .reference("incident:hel-unadopted-refs")
         .cause("unadopted-refs")
         .delivers_action();
     incident::alarm(inc, &f);
@@ -220,11 +220,11 @@ fn batched_stranded(d: &SweepData, cfg: &Cfg) {
     };
     let names = d.env.raw("SP_BATCHED_STRANDED_NAMES").unwrap_or("(unavailable)");
     let body = format!(
-        "Stranded IN_DELIVERY branches: {n}\n\nThe branch(es) below are IN_DELIVERY on the lifecycle record but their ID is absent from every open batch members= line. The Sending refuses to reap in-delivery branches, so these are permanently stuck until the record is corrected.\n\nBranch IDs (spira/ prefix omitted): {names}\n\nCheck: for each id, `spira-lc state <id>` (IN_DELIVERY) and confirm the id does not appear in $SPIRA_QUEUE_DIR/*/open members= lines.\nFix: settle or abandon the batch the row names on the lifecycle record (`spira-lc show <id>`). If the tip moved, escalate — the branch has diverged from what was batched.\n"
+        "Stranded IN_DELIVERY branches: {n}\n\nThe branch(es) below are IN_DELIVERY on the lifecycle record but their ID is absent from every open batch members= line. The Hel refuses to reap in-delivery branches, so these are permanently stuck until the record is corrected.\n\nBranch IDs (spira/ prefix omitted): {names}\n\nCheck: for each id, `spira-lc state <id>` (IN_DELIVERY) and confirm the id does not appear in $SPIRA_QUEUE_DIR/*/open members= lines.\nFix: settle or abandon the batch the row names on the lifecycle record (`spira-lc show <id>`). If the tip moved, escalate — the branch has diverged from what was batched.\n"
     );
-    let f = Finding::new(&cfg.db, &cfg.home_repo, "SENDING: BATCHED branch absent from open batch", &body)
+    let f = Finding::new(&cfg.db, &cfg.home_repo, "HEL: BATCHED branch absent from open batch", &body)
         .priority(1)
-        .reference("incident:sending-batched-stranded")
+        .reference("incident:hel-batched-stranded")
         .cause("batched-stranded");
     let outcome = match incident::alarm_outcome(inc, &f) {
         incident::AlarmOutcome::Noted => "noted in the Concierge inbox",
@@ -265,12 +265,12 @@ fn closed_stranded(d: &SweepData, cfg: &Cfg) {
         return;
     };
     let body = format!(
-        "Closed-bead branches not reaped: oldest {oldest}h (threshold {}h)\n\nThese branches belong to CLOSED beads but the Sending has kept them every pass because none of its reap rules matched. Each pass makes a GitHub API call per branch and logs a KEEP line.\n\nRun: sending --dry-run  to see each branch and the rule it failed.\n\nCommon causes:\n  - work landed via a batch PR whose commit names the bead (check: git log --grep=<id> origin/main)\n  - a superseded bead with an empty branch (check n>0 guard)\n  - a non-code deliverable bead with no delivers: label\n\nReap by hand if confirmed safe: spira_destroy_branch / spira_destroy_worktree via `sending <bead-id>` (one bead).\n",
+        "Closed-bead branches not reaped: oldest {oldest}h (threshold {}h)\n\nThese branches belong to CLOSED beads but the Hel has kept them every pass because none of its reap rules matched. Each pass makes a GitHub API call per branch and logs a KEEP line.\n\nRun: hel --dry-run  to see each branch and the rule it failed.\n\nCommon causes:\n  - work landed via a batch PR whose commit names the bead (check: git log --grep=<id> origin/main)\n  - a superseded bead with an empty branch (check n>0 guard)\n  - a non-code deliverable bead with no delivers: label\n\nReap by hand if confirmed safe: spira_destroy_branch / spira_destroy_worktree via `hel <bead-id>` (one bead).\n",
         cfg.closed_stranded_warn_h
     );
-    let f = Finding::new(&cfg.db, &cfg.home_repo, "SENDING: closed-bead branch not reaped above threshold", &body)
+    let f = Finding::new(&cfg.db, &cfg.home_repo, "HEL: closed-bead branch not reaped above threshold", &body)
         .priority(2)
-        .reference("incident:sending-closed-stranded")
+        .reference("incident:hel-closed-stranded")
         .cause("closed-stranded")
         .delivers_action();
     incident::alarm(inc, &f);
@@ -357,23 +357,23 @@ fn idle_while_ready(d: &SweepData, cfg: &Cfg) {
         log(&format!("watchtower: {} is missing — idle-while-ready escalation not filed", cfg.incident_sh));
         return;
     };
-    for (fayth, ready, reason) in &d.idle_while_ready {
+    for (rune, ready, reason) in &d.idle_while_ready {
         let body = format!(
-            "{fayth} has {ready} ready bead(s), but its last {} summons all came back idle.\n\nLast idle reason: {reason}\n\nA rank/lookup failure (epic_parent_lookup/epic_rank_rows in lib.sh) can render exactly this way: an empty ranked list reads as \"nothing ready to claim\" even though bd ready is non-empty. Check the ledger for claim-error lines before assuming the queue really is empty.\n",
+            "{rune} has {ready} ready bead(s), but its last {} calls all came back idle.\n\nLast idle reason: {reason}\n\nA rank/lookup failure (epic_parent_lookup/epic_rank_rows in lib.sh) can render exactly this way: an empty ranked list reads as \"nothing ready to claim\" even though bd ready is non-empty. Check the ledger for claim-error lines before assuming the queue really is empty.\n",
             cfg.idle_while_ready_n
         );
         let f = Finding::new(
             &cfg.db,
             &cfg.home_repo,
-            &format!("IDLE-WHILE-READY: {fayth} has ready work but keeps reporting idle"),
+            &format!("IDLE-WHILE-READY: {rune} has ready work but keeps reporting idle"),
             &body,
         )
         .priority(1)
-        .reference(format!("incident:idle-while-ready:{fayth}"))
+        .reference(format!("incident:idle-while-ready:{rune}"))
         .cause("idle-while-ready");
         incident::alarm(inc, &f);
         log(&format!(
-            "watchtower: idle-while-ready escalation filed for {fayth} (ready={ready}, last {} summons idle)",
+            "watchtower: idle-while-ready escalation filed for {rune} (ready={ready}, last {} calls idle)",
             cfg.idle_while_ready_n
         ));
     }
@@ -411,7 +411,7 @@ mod tests {
         std::fs::write(
             &inc,
             format!(
-                "#!/usr/bin/env bash\n{{ echo \"REF=$SPIRA_INCIDENT_REF\"; echo \"TITLE=$2\"; echo \"SIN=$SPIRA_SIN_EXEMPT\"; cat; echo '---'; }} >> {}\n",
+                "#!/usr/bin/env bash\n{{ echo \"REF=$SPIRA_INCIDENT_REF\"; echo \"TITLE=$2\"; echo \"FENRIR=$SPIRA_FENRIR_EXEMPT\"; cat; echo '---'; }} >> {}\n",
                 capture.display()
             ),
         )
@@ -525,21 +525,21 @@ mod tests {
     }
 
     #[test]
-    fn sending_oldest_unsent_fires_at_and_above_the_threshold_not_below() {
+    fn hel_oldest_unsent_fires_at_and_above_the_threshold_not_below() {
         let d = testkit::TempDir::new("wt-escalate-unsent");
         let inc = fake_incident(&d);
         let cfg = cfg_with(&d, inc);
 
         let mut data = SweepData::fixture_nominal(1_700_000_000);
         data.env.set("SP_UNSENT_OLDEST_H", "23");
-        sending_oldest_unsent(&data, &cfg);
+        hel_oldest_unsent(&data, &cfg);
         assert!(!d.join("captured.txt").exists(), "below threshold must not file");
 
         let mut data2 = SweepData::fixture_nominal(1_700_000_000);
         data2.env.set("SP_UNSENT_OLDEST_H", "24");
-        sending_oldest_unsent(&data2, &cfg);
+        hel_oldest_unsent(&data2, &cfg);
         let captured = std::fs::read_to_string(d.join("captured.txt")).unwrap();
-        assert!(captured.contains("REF=incident:sending-oldest-unsent"));
+        assert!(captured.contains("REF=incident:hel-oldest-unsent"));
     }
 
     #[test]
@@ -548,7 +548,7 @@ mod tests {
         let inc = fake_incident(&d);
         let cfg = cfg_with(&d, inc);
         let data = SweepData::fixture_nominal(1_700_000_000); // SP_UNSENT_OLDEST_H unset -> "?"
-        sending_oldest_unsent(&data, &cfg);
+        hel_oldest_unsent(&data, &cfg);
         assert!(!d.join("captured.txt").exists());
     }
 
@@ -562,7 +562,7 @@ mod tests {
         data.env.set("SP_UNADOPTED_NAMES", "sp-stray");
         unadopted_refs(&data, &cfg);
         let captured = std::fs::read_to_string(d.join("captured.txt")).unwrap();
-        assert!(captured.contains("REF=incident:sending-unadopted-refs"));
+        assert!(captured.contains("REF=incident:hel-unadopted-refs"));
         assert!(captured.contains("sp-stray"));
     }
 
@@ -644,7 +644,7 @@ mod tests {
         assert!(captured(&d).is_empty(), "below the 15m threshold must not file");
         drain_escalation(&drain(Some(15)), &cfg);
         let c = captured(&d);
-        assert!(c.contains("TITLE=DRAINING: world.sh summons gated"));
+        assert!(c.contains("TITLE=DRAINING: world.sh calls gated"));
         assert!(c.contains("DRAINING for 15m"));
     }
 
@@ -656,7 +656,7 @@ mod tests {
         drain_escalation(&drain(Some(0)), &cfg);
         let c = captured(&d);
         assert!(c.contains("TITLE=DRAINING:"));
-        assert!(c.contains("SIN=1"), "the drain escalation must not itself become a Sin");
+        assert!(c.contains("FENRIR=1"), "the drain escalation must not itself become a Fenrir");
     }
 
     #[test]
@@ -683,7 +683,7 @@ mod tests {
     #[test]
     fn batched_stranded_fires_on_a_positive_count_and_names_the_branches() {
         let c = file_one("wt-esc-bs", batched_stranded, &[("SP_BATCHED_STRANDED", "1"), ("SP_BATCHED_STRANDED_NAMES", "sp-stuck")]);
-        assert!(c.contains("TITLE=SENDING: BATCHED branch absent from open batch"));
+        assert!(c.contains("TITLE=HEL: BATCHED branch absent from open batch"));
         assert!(c.contains("sp-stuck"));
     }
 
@@ -736,7 +736,7 @@ mod tests {
         cfg.unsent_warn_h = 0;
         let mut data = SweepData::fixture_nominal(1_700_000_000);
         data.env.set("SP_UNSENT_OLDEST_H", "?");
-        sending_oldest_unsent(&data, &cfg);
+        hel_oldest_unsent(&data, &cfg);
         assert!(captured(&d).is_empty());
     }
 
@@ -745,10 +745,10 @@ mod tests {
     #[test]
     fn each_escalations_dedupe_reference_is_stable_across_different_measurements() {
         let cases: [(&str, fn(&SweepData, &Cfg), &str, [&str; 2], &str); 5] = [
-            ("wt-ref-bs", batched_stranded, "SP_BATCHED_STRANDED", ["1", "2"], "incident:sending-batched-stranded"),
+            ("wt-ref-bs", batched_stranded, "SP_BATCHED_STRANDED", ["1", "2"], "incident:hel-batched-stranded"),
             ("wt-ref-bl", batched_too_long, "SP_BATCHED_TOO_LONG", ["1", "4"], "incident:queue-batched-too-long"),
-            ("wt-ref-un", unadopted_refs, "SP_UNADOPTED", ["3", "5"], "incident:sending-unadopted-refs"),
-            ("wt-ref-ou", sending_oldest_unsent, "SP_UNSENT_OLDEST_H", ["30", "31"], "incident:sending-oldest-unsent"),
+            ("wt-ref-un", unadopted_refs, "SP_UNADOPTED", ["3", "5"], "incident:hel-unadopted-refs"),
+            ("wt-ref-ou", hel_oldest_unsent, "SP_UNSENT_OLDEST_H", ["30", "31"], "incident:hel-oldest-unsent"),
             ("wt-ref-dd", dedup_meter, "SP_DUP_REFS", ["2", "4"], "incident:dedup-meter-nonzero"),
         ];
         for (tag, f, key, values, want) in cases {

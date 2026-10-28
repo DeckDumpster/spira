@@ -2,26 +2,26 @@
 After=lc-serve.service
 Wants=lc-serve.service
 # The Groomer persona's TIMER trigger. The timer path files a trigger bead carrying
-# SPIRA_GROOMER_LABEL; the sentinel detects the bead and summons a groomer aeon to
+# SPIRA_GROOMER_LABEL; the sentinel detects the bead and calls a groomer dwarf to
 # claim it. This service does not run the groomer — it only ensures the trigger bead
 # exists so the sentinel has something to wake on.
 #
-# SEPARATION OF CONCERNS. The trigger bead is why the sentinel summons the groomer
-# rather than a timer summoning it directly (as ops and qa do with --sweep mode).
+# SEPARATION OF CONCERNS. The trigger bead is why the sentinel calls the groomer
+# rather than a timer calling it directly (as ops and qa do with --sweep mode).
 # The groomer works by reading the whole open-bead graph and acting on it; a trigger
 # bead gives the operator visibility into when a pass is queued, in progress, or done.
-# A --sweep mode aeon leaves no bead record — a beadless groomer is invisible.
+# A --sweep mode dwarf leaves no bead record — a beadless groomer is invisible.
 #
 # DEDUP IS IN THE SCRIPT. groom-trigger.sh checks for an existing open trigger before
 # filing; the timer fires every six hours but only one trigger bead exists at a time.
 #
-# ExecCondition makes the unit inert until groomer.fayth lands on main. Between arming
+# ExecCondition makes the unit inert until groomer.rune lands on main. Between arming
 # the timer and the branch landing there is a window in which ExecStart would fail
 # every six hours; an ExecCondition that exits non-zero makes systemd SKIP the pass
 # and record success, so the timer sits silent and starts working the moment the file
 # is present. No step for anyone to remember.
 Description=Spira Groomer trigger — file a trigger bead for the scheduled hygiene pass
-Documentation=file://@SPIRA_HOME@/chamber/groomer.fayth
+Documentation=file://@SPIRA_HOME@/runes/groomer.rune
 
 [Service]
 # THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built
@@ -33,7 +33,7 @@ Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
-ExecCondition=/usr/bin/test -f @SPIRA_PROD@/chamber/groomer.fayth
+ExecCondition=/usr/bin/test -f @SPIRA_PROD@/runes/groomer.rune
 ExecStart=@SPIRA_PROD@/groom-trigger.sh
 # The trigger script files one bead and exits; sixty seconds is generous.
 TimeoutStartSec=60

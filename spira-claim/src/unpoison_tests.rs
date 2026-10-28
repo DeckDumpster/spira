@@ -206,7 +206,7 @@ fn floor_is_written_before_the_hold_is_released() {
 #[test]
 fn on_bd_in_progress_is_not_a_holder() {
     let mut f = Fake::new()
-        .bead("pz3", "in_progress", Some("aeon-test"), &["spira-poison"])
+        .bead("pz3", "in_progress", Some("dwarf-test"), &["spira-poison"])
         .claims("pz3", 3)
         .lc("pz3", BeadState::Ready, &[HoldKind::Poison], None);
     let (code, out) = run(&opts(&["pz3"]), &mut f);
@@ -221,11 +221,11 @@ fn refuse_when_held_names_the_exit() {
     let mut f = Fake::new()
         .bead("pz3", "open", None, &["spira-poison"])
         .claims("pz3", 3)
-        .lc("pz3", BeadState::Working, &[HoldKind::Poison], Some("aeon-test"));
+        .lc("pz3", BeadState::Working, &[HoldKind::Poison], Some("dwarf-test"));
     let (code, out) = run(&opts(&["pz3"]), &mut f);
     assert_eq!(code, EXIT_FAILED);
-    assert!(out.contains("FAIL pz3: held by aeon-test (lifecycle WORKING)"), "{out}");
-    assert!(out.contains("let that aeon finish"), "{out}");
+    assert!(out.contains("FAIL pz3: held by dwarf-test (lifecycle WORKING)"), "{out}");
+    assert!(out.contains("let that dwarf finish"), "{out}");
     assert!(out.contains("slay.sh --bead pz3"), "the refusal names the exit: {out}");
     assert_eq!(f.writes(), 0, "{:?}", f.trail);
     assert!(f.lc["pz3"].poisoned());
@@ -236,10 +236,10 @@ fn refuse_when_lifecycle_holder() {
     let mut f = Fake::new()
         .bead("sp-w", "open", None, &[])
         .claims("sp-w", 3)
-        .lc("sp-w", BeadState::Working, &[HoldKind::Poison], Some("aeon-kimahri"));
+        .lc("sp-w", BeadState::Working, &[HoldKind::Poison], Some("dwarf-kimahri"));
     let (code, out) = run(&opts(&["sp-w"]), &mut f);
     assert_eq!(code, EXIT_FAILED);
-    assert!(out.contains("held by aeon-kimahri (lifecycle WORKING)"), "{out}");
+    assert!(out.contains("held by dwarf-kimahri (lifecycle WORKING)"), "{out}");
     assert_eq!(f.writes(), 0);
 }
 
@@ -331,7 +331,7 @@ fn verify_fails_when_hold_remains() {
 
 #[test]
 fn verify_fails_when_count_does_not_drop() {
-    // A claim stamped after the floor (a racing aeon) keeps the count; 3 of them re-poison.
+    // A claim stamped after the floor (a racing dwarf) keeps the count; 3 of them re-poison.
     let mut f = poisoned_a();
     for i in 0..3 {
         f.events.push(EventRow::new("sp-a", "claimed", "", &format!("2026-09-28T13:0{i}:00Z")));
@@ -368,7 +368,7 @@ fn credit_written_before_floor_and_not_counted() {
     assert!(f.notes[0].1.contains("(groomer;"), "{:?}", f.notes);
 
     // A refused bead gets no credit written.
-    let mut f = Fake::new().bead("pz3", "in_progress", Some("aeon-test"), &[]).claims("pz3", 3).lc("pz3", BeadState::Working, &[], Some("aeon-test"));
+    let mut f = Fake::new().bead("pz3", "in_progress", Some("dwarf-test"), &[]).claims("pz3", 3).lc("pz3", BeadState::Working, &[], Some("dwarf-test"));
     let (_, _) = run(&o_with_credit(&["pz3"]), &mut f);
     assert_eq!(f.writes(), 0);
 }
@@ -381,7 +381,7 @@ fn o_with_credit(b: &[&str]) -> Opts {
 
 #[test]
 fn several_beads_one_failure_fails_the_run() {
-    let mut f = poisoned_a().bead("pz3", "in_progress", Some("aeon-test"), &[]).claims("pz3", 3).lc("pz3", BeadState::Working, &[], Some("aeon-test"));
+    let mut f = poisoned_a().bead("pz3", "in_progress", Some("dwarf-test"), &[]).claims("pz3", 3).lc("pz3", BeadState::Working, &[], Some("dwarf-test"));
     let (code, out) = run(&opts(&["sp-a", "pz3"]), &mut f);
     assert_eq!(code, EXIT_FAILED);
     assert!(out.contains("OK   sp-a:") && out.contains("FAIL pz3:"), "{out}");
@@ -422,15 +422,15 @@ fn fmt_utc(epoch: i64) -> String {
 
 #[test]
 fn parse_store_outputs() {
-    let b = parse_bead("warning: something\n[{\"id\":\"sp-a\",\"status\":\"in_progress\",\"assignee\":\"aeon-x\",\"labels\":[\"spira\",\"spira-poison\"]}]").unwrap().unwrap();
-    assert_eq!((b.status.as_str(), b.assignee.as_deref(), b.labels.len()), ("in_progress", Some("aeon-x"), 2));
+    let b = parse_bead("warning: something\n[{\"id\":\"sp-a\",\"status\":\"in_progress\",\"assignee\":\"dwarf-x\",\"labels\":[\"spira\",\"spira-poison\"]}]").unwrap().unwrap();
+    assert_eq!((b.status.as_str(), b.assignee.as_deref(), b.labels.len()), ("in_progress", Some("dwarf-x"), 2));
     assert_eq!(parse_bead("{\"error\": \"no issues found matching the provided IDs\", \"schema_version\": 1}").unwrap(), None);
     assert_eq!(parse_bead("[]").unwrap(), None);
     assert!(parse_bead("garbage").is_err());
 
     // dolt string-encodes every column, holds is JSON text
-    let r = parse_lc_show(r#"{"bead":{"bead_id":"sp-a","state":"WORKING","holder":"aeon-x","holds":"[\"poison\"]","version":"12"},"delivery":null}"#).unwrap();
-    assert_eq!((r.state, r.version, r.poisoned(), r.holder.as_deref()), (BeadState::Working, 12, true, Some("aeon-x")));
+    let r = parse_lc_show(r#"{"bead":{"bead_id":"sp-a","state":"WORKING","holder":"dwarf-x","holds":"[\"poison\"]","version":"12"},"delivery":null}"#).unwrap();
+    assert_eq!((r.state, r.version, r.poisoned(), r.holder.as_deref()), (BeadState::Working, 12, true, Some("dwarf-x")));
     let r = parse_lc_show(r#"{"bead":{"state":"READY","holds":[],"version":3,"holder":null}}"#).unwrap();
     assert!(!r.poisoned() && r.holder.is_none());
     let r = parse_lc_show(r#"{"bead":{"state":"READY","holds":"","version":"0","holder":""}}"#).unwrap();

@@ -32,7 +32,7 @@
 #
 # defect: sp-ki12s, sp-mys5p
 # tier: T1
-# covers: lifecycle/src/bead.rs spira-lc/src/** spira-lc/src/callers.rs aeon/src/* spira/lib.sh spira/hold.sh spira/unhold.sh groomer/src/* spira-lc/* lifecycle/*
+# covers: lifecycle/src/bead.rs spira-lc/src/** spira-lc/src/callers.rs dwarf/src/* spira/lib.sh spira/hold.sh spira/unhold.sh groomer/src/* spira-lc/* lifecycle/*
 # timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

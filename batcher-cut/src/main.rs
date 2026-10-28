@@ -26,7 +26,7 @@
 //!
 //! NOT COVERED (left to later beads): a main-red trigger has no producer wired here yet
 //! (always false); test_ahead_of_code (E) is not re-run here — the pure core exposes it, and
-//! it is the summoned batcher persona (sp-47kq1, see summon_judgement below) that reads a
+//! it is the called batcher persona (sp-47kq1, see call_judgement below) that reads a
 //! double-red's own failing assertions and applies it, by judgement rather than blind
 //! reproduction.
 
@@ -326,7 +326,7 @@ fn handle_base_conflicts(
             // quoted. The batcher never reopens or marks RED on its own (batcher-parity).
             io::conflict_streak_clear(env_, &m.id);
             // Exit 1 (a real conflict) or 2 (red at the new tip): rebase-stale reopened the
-            // bead and returned it to an aeon, so its certification goes too (sp-mve9i).
+            // bead and returned it to a dwarf, so its certification goes too (sp-mve9i).
             if matches!(io::rebase_stale(env_, &repo.name, &m.id), 1 | 2) {
                 io::lc_withdraw(env_, &m.id);
             }
@@ -1782,7 +1782,7 @@ mod base_conflict_handling {
         assert_eq!(calls.trim(), "rebase sp-c spira", "only the true base conflict reaches the rebase path, and nothing else is written: {calls}");
     }
 
-    /// sp-mve9i: when the rebase path returns the member to an aeon (exit 1, a real conflict;
+    /// sp-mve9i: when the rebase path returns the member to a dwarf (exit 1, a real conflict;
     /// exit 2, red at the new tip) it reopened the bead, and the pool is the machine's
     /// CERTIFIED rows alone — so the batcher takes the member out of CERTIFIED there too, or
     /// the next round batches the very tip that cannot rebase. Exit 3 (not attempted) leaves
@@ -1855,7 +1855,7 @@ mod base_conflict_handling {
     }
     #[test]
 
-    fn a_member_the_rebase_path_returns_to_an_aeon_leaves_certified_on_the_machine() {
+    fn a_member_the_rebase_path_returns_to_an_dwarf_leaves_certified_on_the_machine() {
         for (rc, withdrawn) in [(1, true), (2, true), (3, false)] {
             let d = testkit::TempDir::new(&format!("batcher-cut-hbc-lc{rc}"));
             let [base, _a, _b, c, _root] = fixture(&d);

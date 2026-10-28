@@ -153,25 +153,87 @@ pub fn land_local_with(
     worktree: Option<&Path>,
     lock_held: bool,
 ) -> i32 {
+    land_local_deferring(w, repo, head_arg, members, worktree, lock_held, false).0
+}
+
+/// A release verified and ready to activate, held back by a landing that has later steps.
+pub struct PendingActivation {
+    plan: super::deploy::Plan,
+    sha: String,
+    head: String,
+    base: String,
+    marker: PathBuf,
+    pin: Option<PathBuf>,
+}
+
+impl PendingActivation {
+    /// Give the release up unactivated, releasing its pin.
+    pub fn discard(self) {
+        if let Some(pin) = &self.pin {
+            let _ = fs::remove_file(pin);
+        }
+    }
+
+    /// Switch the running system onto the release. A landing's last step: the new release may
+    /// retire keys the running release's tools require, so nothing after it can rely on them.
+    pub fn activate(self, w: &World) -> super::deploy::Outcome {
+        let outcome = match super::deploy::activate(w, &self.plan, &self.sha) {
+            Ok(()) => super::deploy::Outcome::Activated(self.sha.clone()),
+            Err(why) => super::deploy::Outcome::Fault(why),
+        };
+        match &outcome {
+            super::deploy::Outcome::Activated(sha) => {
+                let _ = fs::remove_file(&self.marker);
+                w.out(format!("queue.sh land-local: activated release {sha}"));
+            }
+            super::deploy::Outcome::Fault(why) => {
+                w.err(format!(
+                    "LAND DEPLOY FAILED for {}: {why} — current is untouched (still {}); {} is at {} and the landing stays recorded",
+                    self.head,
+                    super::deploy::current_name(&self.plan.releases),
+                    self.base,
+                    self.head
+                ));
+                let _ = write_atomic(&self.marker, &format!("{} {why}\n", self.head));
+            }
+        }
+        if let Some(pin) = &self.pin {
+            let _ = fs::remove_file(pin);
+        }
+        outcome
+    }
+}
+
+/// `land_local_with`, returning the activation instead of running it when `defer` is set.
+pub fn land_local_deferring(
+    w: &World,
+    repo: Option<&str>,
+    head_arg: &str,
+    members: &Text,
+    worktree: Option<&Path>,
+    lock_held: bool,
+    defer: bool,
+) -> (i32, Option<PendingActivation>) {
+    let rc = |r: i32| (r, None);
     if !czar_ok(w) {
-        return FAIL;
+        return rc(FAIL);
     }
     let members_text = match read_text(w, members) {
         Ok(t) => t,
         Err(e) => {
             w.err(format!("queue.sh land-local: cannot read the members: {e}"));
-            return USAGE;
+            return rc(USAGE);
         }
     };
     if members_text.trim().is_empty() {
         w.err("queue.sh land-local: --members is required");
-        return USAGE;
+        return rc(USAGE);
     }
     let Ok(c) = resolve(w, "land-local", repo) else {
-        return FAIL;
+        return rc(FAIL);
     };
     let Ok(path) = repo_path(w, "land-local", &c) else {
-        return FAIL;
+        return rc(FAIL);
     };
     let name = c.r.name.clone();
     if c.r.mode != LandMode::QueueLocal {
@@ -179,30 +241,30 @@ pub fn land_local_with(
             "queue.sh land-local: repo is not in queue.local mode (mode={})",
             c.r.mode.as_str()
         ));
-        return FAIL;
+        return rc(FAIL);
     }
     let Some(base) = c.r.landref.clone() else {
         w.err(format!(
             "queue.sh land-local: cannot resolve landing ref for {name}"
         ));
-        return FAIL;
+        return rc(FAIL);
     };
     // queue.local's base is a LOCAL branch that happens to contain a slash (local/main).
     if c.r.ref_remote(&base).is_some() {
         w.err(format!("queue.sh land-local: {name} resolves to a remote-tracking ref ({base}) — not a queue.local base"));
-        return FAIL;
+        return rc(FAIL);
     }
     if idents(w, "land-local", &[("head", head_arg), ("base", &base)]).is_err() {
-        return FAIL;
+        return rc(FAIL);
     }
     let Some(head) = w.git.rev_parse(&path, head_arg) else {
         w.err("queue.sh land-local: cannot resolve head");
-        return FAIL;
+        return rc(FAIL);
     };
     if let Some(wt) = worktree {
         if let Err(e) = crate::ident::check_path("worktree", &wt.display().to_string()) {
             w.err(format!("queue.sh land-local: {e} — refused"));
-            return FAIL;
+            return rc(FAIL);
         }
     }
     let ms = land_members(&members_text, &head);
@@ -214,7 +276,7 @@ pub fn land_local_with(
         )
         .is_err()
         {
-            return FAIL;
+            return rc(FAIL);
         }
     }
     let _g = if lock_held {
@@ -222,15 +284,15 @@ pub fn land_local_with(
     } else {
         match take_lock(w, "land-local", &c, "") {
             Ok(g) => g,
-            Err(rc) => return rc,
+            Err(r) => return rc(r),
         }
     };
     if require_lc(w, "land-local").is_err() {
-        return FAIL;
+        return rc(FAIL);
     }
     let Some(base_sha) = w.git.rev_parse(&path, &base) else {
         w.err(format!("queue.sh land-local: cannot resolve {base}"));
-        return FAIL;
+        return rc(FAIL);
     };
 
     // Row 4: alarm (never refuse) on a foreign forge divergence, against the CACHED
@@ -248,7 +310,7 @@ pub fn land_local_with(
 
     if !w.git.is_ancestor(&path, &base_sha, &head) {
         w.err(format!("queue.sh land-local: {head} does not fast-forward from {base} ({base_sha}) — refused, nothing changed"));
-        return FAIL;
+        return rc(FAIL);
     }
 
     // Only a certified tree lands (§8 D12): a round GREEN for exactly this
@@ -264,14 +326,14 @@ pub fn land_local_with(
                 Ok(bg) => Some(bg),
                 Err(why) => {
                     w.err(format!("queue.sh land-local: {refusal}; SPIRA_LAND_UNGATED is set but {why}; refused, nothing changed"));
-                    return FAIL;
+                    return rc(FAIL);
                 }
             },
             None => {
                 w.err(format!(
                     "queue.sh land-local: {refusal}; refused, nothing changed"
                 ));
-                return FAIL;
+                return rc(FAIL);
             }
         },
     };
@@ -286,7 +348,7 @@ pub fn land_local_with(
                 w.err(format!(
                     "queue.sh land-local: {why}; refused, nothing changed"
                 ));
-                return FAIL;
+                return rc(FAIL);
             }
         },
         None => None,
@@ -307,7 +369,7 @@ pub fn land_local_with(
                 w.err(format!(
                     "queue.sh land-local: {why}; refused, nothing changed"
                 ));
-                return FAIL;
+                return rc(FAIL);
             }
         }
     } else {
@@ -328,7 +390,7 @@ pub fn land_local_with(
                     let _ = fs::remove_file(pin);
                 }
                 w.err(format!("queue.sh land-local: release {head} failed to build or verify: {why}; refused, {base} left at {base_sha}"));
-                return FAIL;
+                return rc(FAIL);
             }
         },
         None => None,
@@ -340,7 +402,7 @@ pub fn land_local_with(
         w.err(format!(
             "queue.sh land-local: {base} moved concurrently — refused, nothing changed"
         ));
-        return FAIL;
+        return rc(FAIL);
     }
     if let Some(BreakGlass {
         reason,
@@ -383,31 +445,33 @@ pub fn land_local_with(
     }
     // The landing is recorded; now publish its release (§8 D13). A fault never reverts the
     // ref or the records: it leaves `current` where it was and makes the exit non-zero.
-    let outcome = plan.as_ref().zip(verified.as_deref()).map(|(p, sha)| {
-        match super::deploy::activate(w, p, sha) {
-            Ok(()) => super::deploy::Outcome::Activated(sha.to_string()),
-            Err(why) => super::deploy::Outcome::Fault(why),
+    let pending = plan
+        .as_ref()
+        .zip(verified.as_deref())
+        .map(|(p, sha)| PendingActivation {
+            plan: p.clone(),
+            sha: sha.to_string(),
+            head: head.clone(),
+            base: base.clone(),
+            marker: c.queue_file("deploy-fault"),
+            pin: pin.clone(),
+        });
+    let (pending, outcome) = if defer {
+        (pending, None)
+    } else {
+        (None, pending.map(|p| p.activate(w)))
+    };
+    if pending.is_none() {
+        if let Some(pin) = &pin {
+            let _ = fs::remove_file(pin);
         }
-    });
-    if let Some(pin) = &pin {
-        let _ = fs::remove_file(pin);
     }
-    let fault_marker = c.queue_file("deploy-fault");
-    let deploy_note = match (&outcome, &plan) {
-        (Some(super::deploy::Outcome::Activated(sha)), _) => {
-            let _ = fs::remove_file(&fault_marker);
-            w.out(format!("queue.sh land-local: activated release {sha}"));
-            format!(" Release {sha} activated.")
-        }
-        (Some(super::deploy::Outcome::Fault(why)), Some(p)) => {
-            w.err(format!(
-                "LAND DEPLOY FAILED for {head}: {why} — current is untouched (still {}); {base} is at {head} and the landing stays recorded",
-                super::deploy::current_name(&p.releases)
-            ));
-            let _ = write_atomic(&fault_marker, &format!("{head} {why}\n"));
+    let deploy_note = match &outcome {
+        Some(super::deploy::Outcome::Activated(sha)) => format!(" Release {sha} activated."),
+        Some(super::deploy::Outcome::Fault(why)) => {
             format!(" DEPLOY FAULT: {head} landed but its release was not activated: {why}.")
         }
-        _ => String::new(),
+        None => String::new(),
     };
     let listed = ms.iter().map(Member::render).collect::<Vec<_>>().join(",");
     w.lib.notify(
@@ -433,12 +497,12 @@ pub fn land_local_with(
         w.err(format!("queue.sh land-local: could not start the rebase of the waiting beads; run `queue.sh rebase-waiting {name}`"));
     }
     if matches!(outcome, Some(super::deploy::Outcome::Fault(_))) {
-        return super::DEPLOY_FAULT;
+        return (super::DEPLOY_FAULT, None);
     }
     if lc_faults > 0 {
-        return FAIL;
+        return (FAIL, pending);
     }
-    OK
+    (OK, pending)
 }
 
 /// A landed member's walk on spira-lc: Deliver (CERTIFIED -> IN_DELIVERY) then Delivered

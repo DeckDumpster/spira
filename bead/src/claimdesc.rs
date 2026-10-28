@@ -1,6 +1,6 @@
 //! An edit to a claimed bead's description is invisible to the builder working it — it reads the
 //! bead once, at claim. `bdq update` refuses a title/description edit on a live claim unless
-//! `--force-claimed "<reason>"` acknowledges it; the aeon compares `claim_desc_hash` against the
+//! `--force-claimed "<reason>"` acknowledges it; the dwarf compares `claim_desc_hash` against the
 //! description at close and reopens a close where they differ.
 
 use std::io::Write;
@@ -66,7 +66,7 @@ pub fn parse_update_args(args: &[String]) -> UpdateArgs {
     UpdateArgs { passthrough, force, touches_description, id }
 }
 
-/// A bead an aeon holds: the lifecycle row WORKING, with a holder and a lease that has not
+/// A bead a dwarf holds: the lifecycle row WORKING, with a holder and a lease that has not
 /// provably lapsed (sp-mve9i: the claim is the machine's row, never bd's `in_progress` and
 /// `assignee`). A row with no lease counts as live: refusing wrongly costs a flag, missing an
 /// edit costs a wasted session.
@@ -143,13 +143,13 @@ pub fn parse_iso(s: &str) -> Option<i64> {
     Some(epoch - off)
 }
 
-/// Mails the aeon actually working `id`, if one is alive and its mailbox is open.
+/// Mails the dwarf actually working `id`, if one is alive and its mailbox is open.
 ///
 /// `run`/`mail` are `SPIRA_RUN`/`SPIRA_MAIL` (both registered config keys) — this is pure
 /// logic, so it takes them as arguments rather than reading config itself (per Ryan
 /// 2026-10-05: one source of config); callers resolve them through
 /// `spira_config::process::cfg` at their own top level.
-pub fn notify_live_aeon(id: &str, message: &str, run: &str, mail: &str) {
+pub fn notify_live_dwarf(id: &str, message: &str, run: &str, mail: &str) {
     if id.is_empty() || message.is_empty() || run.is_empty() {
         return;
     }
@@ -158,27 +158,27 @@ pub fn notify_live_aeon(id: &str, message: &str, run: &str, mail: &str) {
     let mut candidates: Vec<String> = entries
         .filter_map(|e| e.ok())
         .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|n| n.starts_with("aeon-") && n.ends_with(&suffix))
+        .filter(|n| n.starts_with("dwarf-") && n.ends_with(&suffix))
         .collect();
     candidates.sort();
     for name in candidates {
-        if !aeon_alive(&format!("{run}/{name}")) {
+        if !dwarf_alive(&format!("{run}/{name}")) {
             continue;
         }
-        if !Path::new(&format!("{mail}/aeon-{id}/new")).is_dir() {
+        if !Path::new(&format!("{mail}/dwarf-{id}/new")).is_dir() {
             break;
         }
-        mail_send(&format!("aeon-{id}"), message);
+        mail_send(&format!("dwarf-{id}"), message);
         break;
     }
 }
 
-pub fn aeon_alive(pidfile: &str) -> bool {
-    strand::probe::aeon_alive(Path::new(pidfile))
+pub fn dwarf_alive(pidfile: &str) -> bool {
+    strand::probe::dwarf_alive(Path::new(pidfile))
 }
 
-fn mail_send(aeon_id: &str, body: &str) {
-    mail_to(aeon_id, "amend <amend@spira>", "Update while you work", body);
+fn mail_send(dwarf_id: &str, body: &str) {
+    mail_to(dwarf_id, "amend <amend@spira>", "Update while you work", body);
 }
 
 /// Best-effort mail; a mailbox that will not take it loses the message, never the caller.
@@ -199,9 +199,9 @@ pub fn mail_to(mailbox: &str, from: &str, subject: &str, body: &str) {
     let _ = child.wait();
 }
 
-/// Whether an aeon is alive on `id` with an open mailbox: the only holder a live amendment can bind.
-pub fn live_aeon(id: &str, run: &str, mail: &str) -> bool {
-    if id.is_empty() || run.is_empty() || !Path::new(&format!("{mail}/aeon-{id}/new")).is_dir() {
+/// Whether a dwarf is alive on `id` with an open mailbox: the only holder a live amendment can bind.
+pub fn live_dwarf(id: &str, run: &str, mail: &str) -> bool {
+    if id.is_empty() || run.is_empty() || !Path::new(&format!("{mail}/dwarf-{id}/new")).is_dir() {
         return false;
     }
     let suffix = format!("-{id}.pid");
@@ -209,8 +209,8 @@ pub fn live_aeon(id: &str, run: &str, mail: &str) -> bool {
     entries
         .filter_map(|e| e.ok())
         .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|n| n.starts_with("aeon-") && n.ends_with(&suffix))
-        .any(|n| aeon_alive(&format!("{run}/{n}")))
+        .filter(|n| n.starts_with("dwarf-") && n.ends_with(&suffix))
+        .any(|n| dwarf_alive(&format!("{run}/{n}")))
 }
 
 #[cfg(test)]
@@ -264,12 +264,12 @@ mod tests {
             express: false,
             ..Default::default()
         };
-        let live = live_claim(Some(&row("WORKING", "aeon-x", Some(now + 3600))), now).unwrap();
-        assert_eq!((live.assignee.as_str(), live.lease.as_str()), ("aeon-x", "2026-10-02T13:00:00Z"));
-        assert!(live_claim(Some(&row("WORKING", "aeon-x", Some(now - 3600))), now).is_none());
-        assert!(live_claim(Some(&row("READY", "aeon-x", Some(now + 3600))), now).is_none());
+        let live = live_claim(Some(&row("WORKING", "dwarf-x", Some(now + 3600))), now).unwrap();
+        assert_eq!((live.assignee.as_str(), live.lease.as_str()), ("dwarf-x", "2026-10-02T13:00:00Z"));
+        assert!(live_claim(Some(&row("WORKING", "dwarf-x", Some(now - 3600))), now).is_none());
+        assert!(live_claim(Some(&row("READY", "dwarf-x", Some(now + 3600))), now).is_none());
         assert!(live_claim(Some(&row("WORKING", "", Some(now + 3600))), now).is_none());
-        assert_eq!(live_claim(Some(&row("WORKING", "aeon-x", None)), now).unwrap().lease, "unknown");
+        assert_eq!(live_claim(Some(&row("WORKING", "dwarf-x", None)), now).unwrap().lease, "unknown");
         assert!(live_claim(None, now).is_none());
     }
 

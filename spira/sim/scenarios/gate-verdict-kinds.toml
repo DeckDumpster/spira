@@ -1,7 +1,7 @@
 epoch = 1800000000
 horizon = 3000000
 goal = "sp-gv03:LANDED"
-real_actors = ["sentinel-summon", "sentinel-landing", "sift"]
+real_actors = ["sentinel-call", "sentinel-landing", "sift"]
 
 [[actor]]
 name = "gate-worker"
@@ -42,7 +42,7 @@ file = "sp-gv03"
 [[step]]
 at = 0
 claim = "sp-gv01"
-script = ["commit out/gv01.txt", "submit", "summon", "commit out/gv01b.txt", "submit"]
+script = ["commit out/gv01.txt", "submit", "call", "commit out/gv01b.txt", "submit"]
 
 [[step]]
 at = 0

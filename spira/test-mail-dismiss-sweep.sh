@@ -42,7 +42,7 @@ export SPIRA_CONF=""
 export SPIRA_HOME="$TMP/home"
 SPIRA_RUN="$TMP/run"
 SPIRA_OPERATOR_ACTOR="ryan-op"                         # non-default: catches a hardcoded "operator"
-mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_RUN"
+mkdir -p "$SPIRA_HOME/runes" "$SPIRA_RUN"
 # SPIRA_CONCIERGE_INBOX EXPLICITLY: mail_readers still names inbox-append.sh for the
 # concierge mailbox (SPIRA_MAIL_READERS="" does not appear to suppress it), and that script
 # resolves SPIRA_CONCIERGE_INBOX from config — the complete fixture's own value is a fixed,

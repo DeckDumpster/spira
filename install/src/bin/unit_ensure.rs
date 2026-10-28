@@ -1,5 +1,5 @@
 //! `unit-ensure` — the non-disruptive unit installer (`systemd/unit-ensure.sh`, in Rust).
-//! Safe while aeons are active: installs new/changed unit files and daemon-reloads, but
+//! Safe while dwarves are active: installs new/changed unit files and daemon-reloads, but
 //! never restarts a running service. `landing-pass` runs this after every pass.
 //!
 //! usage: unit-ensure [--diff] [--retire]

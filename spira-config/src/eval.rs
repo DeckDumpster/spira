@@ -289,8 +289,8 @@ mod tests {
     #[test]
     fn braced_variable_with_literal_suffix() {
         assert_eq!(
-            eval_expr("${SPIRA_HOME}/chamber", &known(&[("SPIRA_HOME", "/h")])).unwrap(),
-            "/h/chamber"
+            eval_expr("${SPIRA_HOME}/runes", &known(&[("SPIRA_HOME", "/h")])).unwrap(),
+            "/h/runes"
         );
     }
 

@@ -7,7 +7,7 @@
 #
 # WHAT THIS SUITE IS FOR
 # -----------------------
-# docs/test-plan/cockpit-observability.md section 5 demotes dup-refs, repo-labels, sphere
+# docs/test-plan/cockpit-observability.md section 5 demotes dup-refs, repo-labels, well
 # and sop off a real testdb_up store and onto SPIRA_BDJSON_FIXTURE (bead/tests/fixtures/bdsim.rs's pure
 # list/show/memories functions). That is safe only if bdsim's filtering — label AND
 # matching, the default exclude-closed, --all, and the query shapes bd reads for `ready` and
@@ -44,15 +44,15 @@ RUN="$TMP/run"; mkdir -p "$RUN"
 lc_mirror_bd "$TMP/lc"
 run_probe() {    # run_probe <subcommand> [env KEY=val ...]
     local sub="$1"; shift
-    # SPIRA_CHAMBER: the complete fixture declares a /fixture/userhome path that does not exist
-    # here, which now wins over chamber_dir's own home-derived fallback (spira-config's
-    # chamber.rs resolves it from the one source, never a derived default) — fayth_get then
-    # finds no builder.fayth there and silently returns "" for FAYTH_LABELS, so the SP_READY
+    # SPIRA_RUNES_DIR: the complete fixture declares a /fixture/userhome path that does not exist
+    # here, which now wins over runes_dir's own home-derived fallback (spira-config's
+    # runes.rs resolves it from the one source, never a derived default) — rune_get then
+    # finds no builder.rune there and silently returns "" for RUNE_LABELS, so the SP_READY
     # partition map stays empty and every ready count renders "?". Point it at the real
-    # chamber this suite's own SPIRA_HOME ($HERE) carries (one source of config, per Ryan
+    # runes this suite's own SPIRA_HOME ($HERE) carries (one source of config, per Ryan
     # 2026-10-05).
-    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=builder \
-        SPIRA_CHAMBER="$HERE/chamber" \
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_RUNES=builder \
+        SPIRA_RUNES_DIR="$HERE/runes" \
         SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_BD="${SPIRA_BD:-bd-embedded}"
     # Any caller override: a registered key (spira/conf.d) goes to tl_config, same as the
@@ -107,15 +107,15 @@ is "real bd: default list excludes the closed bead" "1" "$(field "$out" SP_REPO_
 
 # ======================================================================================
 echo
-echo "list --all --label <single> (sphere_keys' poison shape):"
+echo "list --all --label <single> (well_keys' poison shape):"
 # ======================================================================================
 testdb_reset
 testdb_seed <<JSONL
 {"id":"sp-cbsph1","title":"poisoned, incident-only","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","incident","spira-poison"],"updated_at":"2026-09-08T00:00:00Z"}
 {"id":"sp-cbsph2","title":"poisoned but closed","status":"closed","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","incident","spira-poison"],"updated_at":"2026-09-08T00:00:00Z"}
 JSONL
-out="$(run_probe sphere)"
-is "real bd: --all sees the poison label past sphere-grid scoping, excludes closed" \
+out="$(run_probe well)"
+is "real bd: --all sees the poison label past well-grid scoping, excludes closed" \
    "1" "$(field "$out" SP_POISON)"
 
 # ======================================================================================

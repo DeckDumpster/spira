@@ -1,12 +1,12 @@
 TYPE=string
 GROUP=submitted
-DOC=LABEL MARKING A WORK BEAD SUBMITTED BUT NOT YET LANDED. aeon.sh writes it, at session
+DOC=LABEL MARKING A WORK BEAD SUBMITTED BUT NOT YET LANDED. dwarf.sh writes it, at session
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # LABEL MARKING A WORK BEAD SUBMITTED BUT NOT YET LANDED. aeon.sh writes it, at session
+    # LABEL MARKING A WORK BEAD SUBMITTED BUT NOT YET LANDED. dwarf.sh writes it, at session
     # teardown, converting a builder's own close of a bead whose type is in
     # SPIRA_WORK_CLOSE_TYPES back to open instead of leaving it closed; the landing (the queue's
     # own close, or `spira-lc close-on-land`) closes the bead for real, citing the merge commit, once its batch lands.
-    # Carried in fayth_exclude so a submitted bead is not reclaimed while it is mid-flight
+    # Carried in rune_exclude so a submitted bead is not reclaimed while it is mid-flight
     # through certification.
     : "${SPIRA_SUBMITTED_LABEL:=spira-submitted}"
 SPIRA_CONF_DEFAULT_EOF

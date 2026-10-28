@@ -362,7 +362,7 @@ impl<'a> Sentinel<'a> {
 
     /// Stop whatever still works in the bead's worktree before the bead goes back to READY.
     fn stop_holder(&self, id: &str) -> bool {
-        self.h.run(Spec::args_owned(self.cfg.sending_bin.clone(), vec!["stop-holder".into(), id.to_string()]).err(Io::Null)).ok()
+        self.h.run(Spec::args_owned(self.cfg.hel_bin.clone(), vec!["stop-holder".into(), id.to_string()]).err(Io::Null)).ok()
     }
 
     /// One attempt-history fact appended to the lifecycle event log, best-effort.
@@ -522,8 +522,8 @@ mod tests {
             lease_until: Some(9_000),
             ..Default::default()
         };
-        let rows = vec![row("orphan", "aeon-mindy@7.99"), row("running", "aeon-mindy@8.120")];
-        let gone = |h: &str| h == "aeon-mindy@7.99";
+        let rows = vec![row("orphan", "dwarf-austri@7.99"), row("running", "dwarf-austri@8.120")];
+        let gone = |h: &str| h == "dwarf-austri@7.99";
         assert_eq!(stale_leases(&rows, 1000, 500, |_| true, gone), vec![("orphan".to_string(), -8000)]);
     }
 

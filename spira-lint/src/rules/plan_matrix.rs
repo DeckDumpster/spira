@@ -194,6 +194,11 @@ impl Rule for PlanMatrix {
             .map(|m| format!("{m} — add the use case to docs/test-plan/<area>.toml, or name a declared one"))
             .collect();
         cur.extend(rust_here);
+        for s in &mut prev {
+            for c in &mut s.covers {
+                *c = crate::rules::ffx_vocabulary::renamed(c);
+            }
+        }
         let orphans = orphan_violations(&cats, &prev, &cur);
         let gaps = coverage_gaps(&cats, &cur)
             .into_iter()

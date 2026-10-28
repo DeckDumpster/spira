@@ -10,7 +10,7 @@
 #
 #   SP_SELF_REPEATING_N    count of ACT texts repeating in consecutive passes right now
 #   SP_SELF_REPEATING{i}   formatted: "act text × N passes (Dm)"
-#   SP_SELF_STILLBORN_W    aeons born but not awake within the window (died-at-birth count)
+#   SP_SELF_STILLBORN_W    dwarves born but not awake within the window (died-at-birth count)
 #   SP_SELF_STILLBORN_LAST "Nm ago" for the last such event
 #   SP_SELF_STARVED_W      stalled passes within the window
 #   SP_SELF_STARVED_LAST   "Nm ago" for the last one
@@ -26,7 +26,7 @@
 #      (no REPEATING output from cockpit-collect metrics; SP_SELF_REPEATING_N=0)
 #   2. A fixture with three consecutive "handled 1 stranded item(s)" in the last ten
 #      minutes renders SP_SELF_REPEATING_N=1 and one formatted REPEATING string
-#   3. A ledger with one stillborn aeon in-window renders SP_SELF_STILLBORN_W=1
+#   3. A ledger with one stillborn dwarf in-window renders SP_SELF_STILLBORN_W=1
 #      and a ledger with one out-of-window renders SP_SELF_STILLBORN_W=0
 #
 # EVERY CHECK HAS A POSITIVE CONTROL. A suite that only tests "nothing found" is
@@ -41,7 +41,7 @@
 # covers: cockpit-collect/src/metrics.rs cockpit/ops/src/health.rs UC-cockpit-observability-16
 
 # covers: cockpit-collect/src/metrics.rs cockpit/ops/src/health.rs
-# scar: the SELF metrics (repeating aeons, stillborn starts, starved passes) were absent; current session anomalies were invisible on the health pane.
+# scar: the SELF metrics (repeating dwarves, stillborn starts, starved passes) were absent; current session anomalies were invisible on the health pane.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -159,7 +159,7 @@ echo "ACCEPTANCE 3: stillborn in-window renders alert; out-of-window does not"
 
 # A 'born' with no 'awake' within the window is stillborn. Positive control first.
 LEDGER_BORN_IN="
-${TS_10M} born aeon-builder-sp-foo pid=1234
+${TS_10M} born dwarf-builder-sp-foo pid=1234
 "
 out_lb="$(run_metrics "" "$LEDGER_BORN_IN")"
 is "stillborn in-window: SP_SELF_STILLBORN_W is 1" "SP_SELF_STILLBORN_W=1" \
@@ -169,8 +169,8 @@ want "stillborn in-window: LAST is set to a time" "ago" \
 
 # An 'awake' that follows 'born' means it did NOT die at birth — should not count.
 LEDGER_BORN_AWAKE="
-${TS_10M} born aeon-builder-sp-foo pid=1234
-${TS_10M} awake aeon-builder-sp-foo work
+${TS_10M} born dwarf-builder-sp-foo pid=1234
+${TS_10M} awake dwarf-builder-sp-foo work
 "
 out_live="$(run_metrics "" "$LEDGER_BORN_AWAKE")"
 is "born+awake: SP_SELF_STILLBORN_W is 0" "SP_SELF_STILLBORN_W=0" \
@@ -178,7 +178,7 @@ is "born+awake: SP_SELF_STILLBORN_W is 0" "SP_SELF_STILLBORN_W=0" \
 
 # Out-of-window: the 'born' happened 6h ago, outside the 90-min window.
 LEDGER_BORN_OUT="
-${TS_6H} born aeon-builder-sp-bar pid=5678
+${TS_6H} born dwarf-builder-sp-bar pid=5678
 "
 out_out="$(run_metrics "" "$LEDGER_BORN_OUT")"
 is "stillborn out-of-window: SP_SELF_STILLBORN_W is 0" "SP_SELF_STILLBORN_W=0" \
@@ -200,7 +200,7 @@ BASE_PATH="$PATH"
 COCKPIT_DIR="$(dirname "$HEALTH")"
 
 run_health() {   # run_health: sources cockpit.env and renders once at 80 cols
-    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t
+    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" SPIRA_RUNES=t
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 TERM=dumb \
         SPIRA_TOML="$SPIRA_TOML" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \

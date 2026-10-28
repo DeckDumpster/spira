@@ -66,7 +66,7 @@ pub fn design_paths(description: &str) -> Vec<String> {
 
 pub fn pack(w: &dyn World, spec_path: &str) -> Reply {
     let spec = load_spec(w, spec_path)?;
-    let output = w.read(&spec.output)?;
+    let output = spec.output.clone();
     let ms = members(w, &spec)?;
     let covers = suite_covers(w, &spec);
     let hits = signature::scan(&output);
@@ -195,7 +195,107 @@ pub fn finish(w: &dyn World, spec_path: &str, kind: &str, diagnosis: &str, check
         event(w, &spec, serde_json::json!({"TriageEnded": {"at": 0}}))?;
     }
     event(w, &spec, serde_json::json!({"Diagnosis": {"text": text}}))?;
-    event(w, &spec, outcome::terminal_event(kind, &text))
+    match kind {
+        Kind::Mended => mend(w, &spec, checks.unwrap_or("")),
+        _ => event(w, &spec, outcome::terminal_event(kind, &text)),
+    }
+}
+
+const FENCE_LIST: &str = "spira/mend-fences";
+const SUITE_GLOB: &str = "**/test-*.sh";
+
+fn numstat(w: &dyn World, repo: &str, from: &str, to: &str) -> Result<Vec<(String, u32, u32)>, String> {
+    let out = w.git(repo, &["diff", "--numstat", "--no-renames", from, to])?;
+    Ok(out
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.splitn(3, '\t');
+            let (add, del, path) = (f.next()?, f.next()?, f.next()?);
+            Some((path.to_string(), add.parse().unwrap_or(0), del.parse().unwrap_or(0)))
+        })
+        .collect())
+}
+
+fn crate_dir(w: &dyn World, repo: &str, rev: &str, file: &str) -> Option<String> {
+    let mut dir = file.rsplit_once('/')?.0;
+    loop {
+        if w.git(repo, &["cat-file", "-e", &format!("{rev}:{dir}/Cargo.toml")]).is_ok() {
+            return Some(dir.to_string());
+        }
+        dir = dir.rsplit_once('/')?.0;
+    }
+}
+
+fn suites_naming(w: &dyn World, repo: &str, rev: &str, file: &str) -> Vec<String> {
+    let name = file.rsplit('/').next().unwrap_or(file);
+    let glob = format!(":(glob){SUITE_GLOB}");
+    let prefix = format!("{rev}:");
+    w.git(repo, &["grep", "-l", "-F", "-e", name, rev, "--", &glob])
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|l| l.strip_prefix(&prefix).map(String::from))
+        .collect()
+}
+
+/// Takes each member's branch head as its mended tip and hands the machine the facts to
+/// assess; the machine, not the mender, decides whether the mend is taken.
+fn mend(w: &dyn World, spec: &Spec, checks: &str) -> Reply {
+    let beads: Vec<&str> = spec.members.iter().map(|m| m.bead.as_str()).collect();
+    let recorded: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(&lc_ok(w, &["mending", "tips", "--beads", &beads.join(",")])?).map_err(|e| format!("spira-lc mending tips: {e}"))?;
+    let mut moves = Vec::new();
+    let mut changes: std::collections::BTreeMap<String, (u32, u32)> = Default::default();
+    let mut required: Vec<String> = Vec::new();
+    for m in &spec.members {
+        let current = recorded.get(&m.bead).and_then(|t| t.as_str()).unwrap_or(&m.tip).to_string();
+        let branch = format!("refs/heads/spira/{}", m.bead);
+        let tip = w.git(&spec.repo, &["rev-parse", "--verify", &format!("{branch}^{{commit}}")])?.trim().to_string();
+        if tip == current {
+            continue;
+        }
+        if w.git(&spec.repo, &["merge-base", "--is-ancestor", &current, &tip]).is_err() {
+            return Err(format!("mended: {branch} at {tip} is not built on {current}, the tip this round last saw; rebuild the fix on it"));
+        }
+        let stat = numstat(w, &spec.repo, &current, &tip)?;
+        let paths: Vec<String> = stat.iter().map(|(p, _, _)| p.clone()).collect();
+        for (p, a, d) in stat {
+            let e = changes.entry(p).or_default();
+            e.0 += a;
+            e.1 += d;
+        }
+        required.extend(lifecycle::mending::required_checks(&paths, |p| crate_dir(w, &spec.repo, &tip, p), |p| suites_naming(w, &spec.repo, &tip, p)));
+        moves.push(format!("{}:{current}:{tip}", m.bead));
+    }
+    if moves.is_empty() {
+        return Err("mended: no member branch has moved since the round last saw it; push the fix to the member's branch first".into());
+    }
+    required.sort();
+    required.dedup();
+    let mut member_files = Vec::new();
+    for m in &spec.members {
+        member_files.extend(numstat(w, &spec.repo, &spec.base, &m.tip)?.into_iter().map(|(p, _, _)| p));
+    }
+    let fences: Vec<String> = w
+        .git(&spec.repo, &["show", &format!("{}:{FENCE_LIST}", spec.base)])
+        .map_err(|e| format!("{FENCE_LIST} is not at the round's base, so a mend cannot be assessed: {e}"))?
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(String::from)
+        .collect();
+    let facts = lifecycle::mending::MendFacts {
+        changes: changes.into_iter().map(|(path, (added, deleted))| lifecycle::mending::FileChange { path, added, deleted }).collect(),
+        member_files,
+        required_checks: required,
+        checked: checks.split(|c: char| c == ',' || c.is_whitespace()).filter(|c| c.starts_with("crate:") || c.starts_with("suite:")).map(String::from).collect(),
+        ask: None,
+    };
+    let (members, facts, fences) = (moves.join(","), serde_json::to_string(&facts).map_err(|e| e.to_string())?, serde_json::to_string(&fences).map_err(|e| e.to_string())?);
+    let t = target(spec);
+    let mut args = vec!["mending", "mend"];
+    args.extend(t.iter().map(String::as_str));
+    args.extend(["--members", &members, "--facts", &facts, "--fences", &fences, "--actor", ACTOR]);
+    lc_ok(w, &args)
 }
 
 #[cfg(test)]
@@ -214,11 +314,10 @@ mod tests {
 
     impl Fake {
         fn new() -> Fake {
-            let spec = r#"{"batch":"r-9","pass":3,"suite":"test-x.sh","repo":"/repo","base":"main","output":"/out",
+            let spec = r#"{"batch":"r-9","pass":3,"suite":"test-x.sh","repo":"/repo","base":"main","output":"ok 1\nfork: retry: Resource temporarily unavailable\n",
                 "members":[{"bead":"sp-a","tip":"aaa"},{"bead":"sp-b","tip":"bbb"}]}"#;
             let mut f = Fake { files: HashMap::new(), git_out: HashMap::new(), lc_answers: HashMap::new(), calls: RefCell::new(vec![]), deadline: Ok(417) };
             f.files.insert("/spec".into(), spec.into());
-            f.files.insert("/out".into(), "ok 1\nfork: retry: Resource temporarily unavailable\n".into());
             f.files.insert("/repo/spira/test-x.sh".into(), "#!/bin/bash\n# covers: spira/*.sh\nset -u\n".into());
             f.git_out.insert("diff --name-only main...aaa".into(), "spira/lib.sh\n".into());
             f.git_out.insert("diff main...aaa".into(), "+changed lib".into());
@@ -301,6 +400,40 @@ mod tests {
         assert_eq!(calls.len(), 3);
         assert!(calls[0].contains("TriageEnded") && calls[1].contains("Diagnosis") && calls[2].contains("\"Return\""), "{calls:?}");
         assert!(calls.iter().all(|c| c.contains("--pass 3 --suite test-x.sh") && c.ends_with("--actor mender")));
+    }
+
+    fn mend_world() -> Fake {
+        let mut w = Fake::new();
+        w.lc_answers.insert("mending tips --beads sp-a,sp-b".into(), (0, "{}".into()));
+        w.git_out.insert("rev-parse --verify refs/heads/spira/sp-a^{commit}".into(), "a2\n".into());
+        w.git_out.insert("rev-parse --verify refs/heads/spira/sp-b^{commit}".into(), "bbb\n".into());
+        w.git_out.insert("merge-base --is-ancestor aaa a2".into(), String::new());
+        w.git_out.insert("diff --numstat --no-renames aaa a2".into(), "3\t1\tmender/src/x.rs\n".into());
+        w.git_out.insert("diff --numstat --no-renames main aaa".into(), "1\t0\tmender/src/x.rs\n".into());
+        w.git_out.insert("diff --numstat --no-renames main bbb".into(), "1\t0\tdocs/a.md\n".into());
+        w.git_out.insert("cat-file -e a2:mender/Cargo.toml".into(), String::new());
+        w.git_out.insert("show main:spira/mend-fences".into(), "# fences\nspira/gate-suites\n".into());
+        w
+    }
+
+    #[test]
+    fn a_mended_outcome_goes_through_mending_mend_with_the_branch_head_as_the_tip() {
+        let w = mend_world();
+        finish(&w, "/spec", "mended", "fixed", Some("crate:mender")).unwrap();
+        let calls = w.lc_calls();
+        assert!(!calls.iter().any(|c| c.contains("Mended")), "{calls:?}");
+        let mend = calls.iter().find(|c| c.starts_with("lc mending mend ")).expect("mending mend was called");
+        assert!(mend.starts_with("lc mending mend r-9 --pass 3 --suite test-x.sh --members sp-a:aaa:a2 --facts "), "{mend}");
+        assert!(mend.contains(r#""required_checks":["crate:mender"]"#) && mend.contains(r#""checked":["crate:mender"]"#), "{mend}");
+        assert!(mend.contains(r#"--fences ["spira/gate-suites"] --actor mender"#), "{mend}");
+    }
+
+    #[test]
+    fn a_mended_outcome_with_no_moved_branch_sends_no_mend() {
+        let mut w = mend_world();
+        w.git_out.insert("rev-parse --verify refs/heads/spira/sp-a^{commit}".into(), "aaa".into());
+        assert!(finish(&w, "/spec", "mended", "fixed", Some("crate:mender")).unwrap_err().contains("no member branch has moved"));
+        assert!(!w.lc_calls().iter().any(|c| c.starts_with("lc mending mend ")));
     }
 
     #[test]

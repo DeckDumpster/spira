@@ -85,7 +85,7 @@ pub fn unknown_class_refusal(class: &str) -> Option<String> {
     Some(format!("unknown --class '{class}'; the escalation classes are: {}", class_names()))
 }
 
-/// Why an aeon's decision ask for the operator does not qualify, or None if it does.
+/// Why a dwarf's decision ask for the operator does not qualify, or None if it does.
 /// A class is supported only when declared, one of `ESCALATION_CLASSES`, and argued in a
 /// non-empty `## Class basis` section (law-escalate-decisions-not-problems).
 pub fn class_refusal(class: &str, default: &str, body: &str) -> Option<String> {
@@ -208,11 +208,11 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String, deliver:
         m => format!("route: {m}"),
     });
 
-    if let Some(bid) = mailbox.strip_prefix("aeon:") {
+    if let Some(bid) = mailbox.strip_prefix("dwarf:") {
         let bid = bid.to_string();
-        mailbox = format!("aeon-{bid}");
+        mailbox = format!("dwarf-{bid}");
         if !env.mail_root.join(&mailbox).join("new").is_dir() {
-            return Err(format!("aeon:{bid}: no live mailbox — bead is not claimed by a live aeon"));
+            return Err(format!("dwarf:{bid}: no live mailbox — bead is not claimed by a live dwarf"));
         }
     }
 

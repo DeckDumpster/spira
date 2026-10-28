@@ -42,16 +42,16 @@ run_lint() {              # run_lint <args...> -> sets LINT_OUT and LINT_RC from
     # so the partition check would require a bare "spira" label none of this suite's
     # fixture beads carry (they use "repo:spira", a different label). Declare the empty
     # scope this suite has always meant.
-    # round 4 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME even when
+    # round 4 fix (pattern 6): SPIRA_RUNES_DIR no longer derives from SPIRA_HOME even when
     # SPIRA_HOME is the real repo — without it, bead lint's partition check cannot read
-    # chamber/*.fayth at all, so it never recognises a valid partition label.
+    # runes/*.rune at all, so it never recognises a valid partition label.
     # The incident-edge check (bead/src/main.rs::cfg_label) reads SPIRA_INCIDENT_LABEL, not
     # SPIRA_ALARM_LABEL — that name was never a real key, even before the migration; pin it
     # to a non-default so this proves the check reads the configured key, not a literal
     # "incident".
     tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
         SPIRA_NO_LOOP_LABEL="no-loop" SPIRA_ASK_LABEL="needs-op-test" SPIRA_SCOPE_LABEL="" \
-        SPIRA_CHAMBER="$HERE/chamber" SPIRA_INCIDENT_LABEL="incident-test"
+        SPIRA_RUNES_DIR="$HERE/runes" SPIRA_INCIDENT_LABEL="incident-test"
     LINT_OUT="$(SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" \
         bead.sh lint "$@" 2>&1)"
@@ -190,7 +190,7 @@ echo "T5b: filing a remedy under an incident adds the blocks edge in the same st
 printf 'harness | /tmp/harness | push | origin/main | | true | plan\n' > "$TMP/repos.tbl"
 file_under() {            # file_under <parent> -> FILE_OUT (new id), FILE_RC
     tl_config SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-        SPIRA_CHAMBER="$HERE/chamber" SPIRA_INCIDENT_LABEL="incident-test" \
+        SPIRA_RUNES_DIR="$HERE/runes" SPIRA_INCIDENT_LABEL="incident-test" \
         SPIRA_REPO_MAP="$TMP/repos.tbl"
     printf 'Remedy.\n\n## Build\n\nThe fix, in spira/x.\n' > "$TMP/remedy.md"
     FILE_OUT="$(SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" SPIRA_BEAD_LANE_OVERRIDE=1 \

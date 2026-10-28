@@ -1,5 +1,5 @@
 //! `--release-skew-check` — live `spira-*` units spread over more than one release for
-//! longer than an aeon's lifetime means something old is still spawning successors.
+//! longer than a dwarf's lifetime means something old is still spawning successors.
 
 use crate::incident::{self, Finding};
 use crate::log::log;
@@ -11,10 +11,10 @@ pub struct Cfg {
     pub max_secs: i64,
 }
 
-const AEON_UNIT_PREFIX: &str = "spira-aeon-";
+const DWARF_UNIT_PREFIX: &str = "spira-dwarf-";
 
-/// An aeon that started before `activated` and is within `max_secs` of its start finishes on
-/// the release it was summoned from by design; it is not skew.
+/// A dwarf that started before `activated` and is within `max_secs` of its start finishes on
+/// the release it was called from by design; it is not skew.
 pub struct Grace {
     pub activated: Option<i64>,
     pub now: i64,
@@ -24,7 +24,7 @@ pub struct Grace {
 impl Grace {
     fn excuses(&self, id: &str, started: Option<i64>) -> bool {
         match (self.activated, started) {
-            (Some(act), Some(st)) => id.starts_with(AEON_UNIT_PREFIX) && st < act && self.now - st <= self.max_secs,
+            (Some(act), Some(st)) => id.starts_with(DWARF_UNIT_PREFIX) && st < act && self.now - st <= self.max_secs,
             _ => false,
         }
     }
@@ -135,7 +135,7 @@ mod tests {
 
     const NO_GRACE: Grace = Grace { activated: None, now: 0, max_secs: 0 };
 
-    const SHOW: &str = "Id=spira-aeon-builder-1.service\nEnvironment=SPIRA_RELEASE=/r/aaa PATH=/r/aaa/bin\n\nId=spira-aeon-ops-2.service\nEnvironment=\"SPIRA_RELEASE=/r/bbb\" PATH=/x\n\nId=spira-aeon-ops-3.service\nEnvironment=SPIRA_RELEASE=/r/bbb\n\nId=spira-x.service\nEnvironment=\n";
+    const SHOW: &str = "Id=spira-dwarf-builder-1.service\nEnvironment=SPIRA_RELEASE=/r/aaa PATH=/r/aaa/bin\n\nId=spira-dwarf-ops-2.service\nEnvironment=\"SPIRA_RELEASE=/r/bbb\" PATH=/x\n\nId=spira-dwarf-ops-3.service\nEnvironment=SPIRA_RELEASE=/r/bbb\n\nId=spira-x.service\nEnvironment=\n";
 
     #[test]
     fn counts_live_units_by_release_and_ignores_units_without_one() {
@@ -184,26 +184,26 @@ mod tests {
     }
 
     #[test]
-    fn an_aeon_started_before_the_activation_is_not_skew() {
-        let show = unit("spira-aeon-a-1.service", "A", 900) + &unit("spira-watchd.service", "B", 1000);
+    fn an_dwarf_started_before_the_activation_is_not_skew() {
+        let show = unit("spira-dwarf-a-1.service", "A", 900) + &unit("spira-watchd.service", "B", 1000);
         assert_eq!(releases_of(&show), 1);
     }
 
     #[test]
-    fn an_aeon_started_after_the_activation_is_skew() {
-        let show = unit("spira-aeon-a-1.service", "A", 1100) + &unit("spira-watchd.service", "B", 1000);
+    fn an_dwarf_started_after_the_activation_is_skew() {
+        let show = unit("spira-dwarf-a-1.service", "A", 1100) + &unit("spira-watchd.service", "B", 1000);
         assert_eq!(releases_of(&show), 2);
     }
 
     #[test]
     fn a_long_lived_unit_on_the_old_release_is_skew_whenever_it_started() {
-        let show = unit("spira-watchd.service", "A", 900) + &unit("spira-aeon-a-1.service", "B", 1200);
+        let show = unit("spira-watchd.service", "A", 900) + &unit("spira-dwarf-a-1.service", "B", 1200);
         assert_eq!(releases_of(&show), 2);
     }
 
     #[test]
-    fn an_aeon_past_its_deadline_is_skew() {
-        let show = unit("spira-aeon-a-1.service", "A", 900) + &unit("spira-watchd.service", "B", 1000);
+    fn an_dwarf_past_its_deadline_is_skew() {
+        let show = unit("spira-dwarf-a-1.service", "A", 900) + &unit("spira-watchd.service", "B", 1000);
         let grace = Grace { activated: Some(1000), now: 900 + 3601, max_secs: 3600 };
         assert_eq!(count_by_release(&show, |_| None, &grace).len(), 2);
     }

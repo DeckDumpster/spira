@@ -1,5 +1,5 @@
 //! Pure logic for the `work` client: which bead a raw argv is allowed to name, and how a
-//! verb typed by the aeon becomes the richer argv spira-lc's `work` dispatch expects. No
+//! verb typed by the dwarf becomes the richer argv spira-lc's `work` dispatch expects. No
 //! I/O here — `main.rs` is the only thing that touches git, the environment or a socket —
 //! so every rule below is covered without a fixture.
 
@@ -46,7 +46,7 @@ mod bead_id_tests {
 /// the model hands us. `superseded-by`'s first argument is the sole, deliberate exception
 /// — it names a *different* bead by design (the successor), never the bead acted upon.
 /// The flags of a target-bead verdict whose value names the follow-on bead or escalation the
-/// aeon filed: another bead by design, validated by the broker.
+/// dwarf filed: another bead by design, validated by the broker.
 const TARGET_EXIT_FLAGS: &[&str] = &["--follow-on", "--escalation"];
 
 pub fn foreign_bead_reference<'a>(verb: &str, bound: &str, args: &'a [String]) -> Option<&'a str> {
@@ -64,7 +64,7 @@ pub fn foreign_bead_reference<'a>(verb: &str, bound: &str, args: &'a [String]) -
     None
 }
 
-/// The verbs bound to the summoned bead: they act on it and nothing else.
+/// The verbs bound to the called bead: they act on it and nothing else.
 pub const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ack"];
 
 /// The verbs that name their own target (sp-st0mm): reads of other beads, a lane persona's
@@ -73,13 +73,13 @@ pub const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", 
 /// this client's — a client-side check is one the caller could skip.
 pub const LANE_VERBS: &[&str] = &[
     "ask", "read", "list", "search", "note-on", "label-add", "label-remove", "dep-add", "relate", "reopen", "close-other", "close-ask", "file", "groom", "incident",
-    "sop", "census", "queue", "landing-pass", "strand", "fence", "sending", "mender",
+    "sop", "census", "queue", "landing-pass", "strand", "fence", "hel", "mender",
 ];
 
 pub const VERBS: &[&str] = &[
     "show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ack", "ask", "read", "list", "search", "note-on", "label-add",
     "label-remove", "dep-add", "relate", "reopen", "close-other", "close-ask", "file", "groom", "incident", "sop", "census", "queue", "landing-pass", "strand",
-    "fence", "sending", "mender",
+    "fence", "hel", "mender",
 ];
 
 /// Verbs answered in this process, never sent to the socket.
@@ -166,8 +166,19 @@ pub fn collect_body(args: &[String], read_file: impl Fn(&str) -> Result<String, 
     Ok((out, body))
 }
 
+/// `mender diagnose|outcome` always carry their text on stdin; a lone `-` is dropped, since the
+/// mender tool takes no such argument.
+pub fn collect_mender_body(args: &[String], read_stdin: impl FnOnce() -> Result<String, String>) -> Result<(Vec<String>, Option<String>), String> {
+    if !matches!(args.first().map(String::as_str), Some("diagnose" | "outcome")) {
+        return Ok((args.to_vec(), None));
+    }
+    let rest: Vec<String> = args.iter().filter(|a| a.as_str() != "-").cloned().collect();
+    let body = read_stdin().map_err(|e| format!("work: reading stdin: {e}"))?;
+    Ok((rest, Some(body)))
+}
+
 /// Builds the argv `work.rs` on the server expects: `[bound, verb, ...]`. Evidence the
-/// aeon's own environment must supply (git's HEAD for `submit`, the actor) is threaded in
+/// dwarf's own environment must supply (git's HEAD for `submit`, the actor) is threaded in
 /// by the caller, already computed — this function only assembles the wire request, it
 /// never reaches out for anything itself.
 pub fn build_request(bound: &str, verb: &str, verb_args: &[String], tip: Option<&str>, actor: &str) -> Result<Vec<String>, String> {
@@ -220,8 +231,8 @@ pub fn build_request_with_body(bound: &str, verb: &str, verb_args: &[String], ti
             req.extend(["--tip".to_string(), tip.to_string(), "--actor".to_string(), actor.to_string()]);
         }
         "file-followup" | "split" => {
-            // The aeon supplies only the title (design §3.5's surface has no --for): the
-            // layer files as the same persona the aeon itself is running as, the same
+            // The dwarf supplies only the title (design §3.5's surface has no --for): the
+            // layer files as the same persona the dwarf itself is running as, the same
             // identity --actor already carries.
             req.extend(verb_args.iter().cloned());
             req.extend(["--for".to_string(), actor.to_string()]);
@@ -371,6 +382,20 @@ mod tests {
             build_request_with_body("sp-3m1p9", "note", &v(&["-"]), None, "a", Some("prose")).unwrap(),
             v(&["work", "sp-3m1p9", "note", "-", "--stdin", "prose"])
         );
+    }
+
+    #[test]
+    fn mender_diagnose_and_outcome_read_stdin_with_or_without_a_dash() {
+        for args in [v(&["outcome", "/s", "return"]), v(&["outcome", "/s", "return", "-"])] {
+            let (a, b) = collect_mender_body(&args, || Ok("why".to_string())).unwrap();
+            assert_eq!((a.clone(), b.as_deref()), (v(&["outcome", "/s", "return"]), Some("why")));
+            let req = build_request_with_body("-", "mender", &a, None, "mender", b.as_deref()).unwrap();
+            assert_eq!(req, v(&["work", "-", "mender", "outcome", "/s", "return", "--stdin", "why", "--actor", "mender"]));
+        }
+        let (a, b) = collect_mender_body(&v(&["diagnose", "/s"]), || Ok("d".to_string())).unwrap();
+        assert_eq!((a, b.as_deref()), (v(&["diagnose", "/s"]), Some("d")));
+        let (a, b) = collect_mender_body(&v(&["pack", "/s"]), || panic!("stdin not wanted")).unwrap();
+        assert_eq!((a, b), (v(&["pack", "/s"]), None));
     }
 
     #[test]

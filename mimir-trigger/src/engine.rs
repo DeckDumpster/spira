@@ -40,7 +40,7 @@ fn first_bead_id(s: &str) -> Option<String> {
 }
 
 /// `[a-z0-9]+-[a-z0-9]+` matched from position 0 of `line`, immediately followed by `:`
-/// (the aeon commit-prefix form `<id>: ...`), or `None`.
+/// (the dwarf commit-prefix form `<id>: ...`), or `None`.
 fn id_prefix_colon(line: &str) -> Option<String> {
     let b = line.as_bytes();
     let n = b.len();
@@ -67,7 +67,7 @@ fn id_prefix_colon(line: &str) -> Option<String> {
 }
 
 /// The bead id a single commit subject names as landed, by the three forms the harness
-/// writes plus the aeon prefix form (mimir-trigger.sh `_count_landings`'s awk program).
+/// writes plus the dwarf prefix form (mimir-trigger.sh `_count_landings`'s awk program).
 /// Dispatch is mutually exclusive and ordered exactly as the awk program's pattern blocks:
 /// `spira: land ` first, then any `spira/`, then the bare prefix form.
 pub fn landing_id(line: &str) -> Option<String> {
@@ -153,7 +153,7 @@ pub fn invalid_closed_rows(raw: &str) -> Vec<String> {
     rows
 }
 
-/// The partition labels a trigger bead carries, so `mimir.fayth`'s `FAYTH_LABELS`
+/// The partition labels a trigger bead carries, so `mimir.rune`'s `RUNE_LABELS`
 /// predicate — and the dedup query below — never disagree.
 pub fn trigger_labels(scope_label: &str, mimir_label: &str) -> String {
     if scope_label.is_empty() {
@@ -200,7 +200,7 @@ pub fn description(
     invalid_closed_rows_text: Option<&str>,
 ) -> String {
     let mut d = format!(
-        "Scheduled trigger: the Mimir persona will claim this bead, run a retrospective pass over the failure distribution, identify recurring failure classes, and cut at most {max_beads} remedy beads. Trigger: {reason} (lastpass ts={lastpass_ts}, watermark ts={watermark_ts}). See spira/chamber/mimir.md for the pass procedure."
+        "Scheduled trigger: the Mimir persona will claim this bead, run a retrospective pass over the failure distribution, identify recurring failure classes, and cut at most {max_beads} remedy beads. Trigger: {reason} (lastpass ts={lastpass_ts}, watermark ts={watermark_ts}). See spira/runes/mimir.md for the pass procedure."
     );
     if let Some(rows) = invalid_closed_rows_text {
         d.push_str("\n\nClosed-record rows (detect_invalid_closed output):\n");
@@ -235,7 +235,7 @@ mod tests {
     }
 
     #[test]
-    fn landing_id_aeon_prefix_form() {
+    fn landing_id_dwarf_prefix_form() {
         assert_eq!(
             landing_id("sp-htrqk: retire test-batch-red-main.sh — subject covered by queue crate unit tests"),
             Some("sp-htrqk".to_string())
@@ -277,7 +277,7 @@ sp-herv0: delete flipping suite test-watch-notify.sh
 spira: land sp-k6m1m
 sp-k6m1m: merge local/main
 sp-k6m1m: merge local/main
-sp-k6m1m: test-sending's stub store answers the list positive control
+sp-k6m1m: test-hel's stub store answers the list positive control
 spira: land sp-z61hj
 sp-k6m1m: stub stores answer the list positive control; boundary README regenerated
 sp-z61hj: merge local/main (sp-htrqk)

@@ -135,7 +135,7 @@ impl<'a> PrPass<'a> {
                 continue;
             }
             if bead.superseded {
-                self.log(&format!("landing-pass {name}: {id} is superseded — leaving it for the Sending to reap"));
+                self.log(&format!("landing-pass {name}: {id} is superseded — leaving it for the Hel to reap"));
                 continue;
             }
             if self.git.content_on_base(&r.path, br, &base_fq) {
@@ -150,7 +150,7 @@ impl<'a> PrPass<'a> {
                 continue;
             }
             if self.procs.holder_alive(id) {
-                self.log(&format!("landing-pass {name}: a live aeon still holds {br} — deferring"));
+                self.log(&format!("landing-pass {name}: a live dwarf still holds {br} — deferring"));
                 continue;
             }
             // 0 opened/refreshed; 7 merged, delivered; 8 closed unmerged, returned.

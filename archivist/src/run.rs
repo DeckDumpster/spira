@@ -154,7 +154,7 @@ pub fn archive(seam: &dyn Seam, cfg: &Env, arc: &Path, sid: &str, tp: &Path, at:
     let mut tc: u32 = std::fs::read_to_string(&tc_file).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
     let effective_timeout = cfg.timeout * (tc as u64 + 1);
 
-    let prompt_file = Path::new(&cfg.chamber).join("archivist.md");
+    let prompt_file = Path::new(&cfg.runes).join("archivist.md");
     let Ok(template) = std::fs::read_to_string(&prompt_file) else {
         log(&format!("archivist: no prompt at {}", prompt_file.display()));
         return 1;
@@ -546,7 +546,7 @@ mod tests {
         Env {
             db: ".".to_string(),
             run: "/tmp".to_string(),
-            chamber: String::new(),
+            runes: String::new(),
             token_projects: String::new(),
             wiki: None,
             agent: "claude".to_string(),
@@ -655,10 +655,10 @@ mod tests {
     #[test]
     fn a_failed_run_keeps_its_ledger_and_the_next_prompt_lists_it() {
         let dir = testkit::TempDir::new("archivist-run");
-        let chamber = testkit::TempDir::new("archivist-chamber");
-        std::fs::write(chamber.join("archivist.md"), "task {{FILED}}").unwrap();
+        let runes = testkit::TempDir::new("archivist-runes");
+        std::fs::write(runes.join("archivist.md"), "task {{FILED}}").unwrap();
         let mut c = cfg();
-        c.chamber = chamber.path().to_string_lossy().into_owned();
+        c.runes = runes.path().to_string_lossy().into_owned();
         c.run = dir.path().to_string_lossy().into_owned();
         claim(&dir, "sess-1", "t3-5:a").unwrap();
         let seam = FakeSeam::new();
@@ -719,10 +719,10 @@ mod tests {
     #[test]
     fn archive_refuses_a_second_concurrent_run_of_the_same_session() {
         let dir = testkit::TempDir::new("archivist-run");
-        let chamber = testkit::TempDir::new("archivist-chamber");
-        std::fs::write(chamber.join("archivist.md"), "prompt {{SESSION}}").unwrap();
+        let runes = testkit::TempDir::new("archivist-runes");
+        std::fs::write(runes.join("archivist.md"), "prompt {{SESSION}}").unwrap();
         let mut c = cfg();
-        c.chamber = chamber.path().to_string_lossy().into_owned();
+        c.runes = runes.path().to_string_lossy().into_owned();
         c.run = dir.path().to_string_lossy().into_owned();
         let seam = FakeSeam::new();
 
@@ -737,10 +737,10 @@ mod tests {
     #[test]
     fn archive_writes_safe_state_and_advances_the_cursor_on_success() {
         let dir = testkit::TempDir::new("archivist-run");
-        let chamber = testkit::TempDir::new("archivist-chamber");
-        std::fs::write(chamber.join("archivist.md"), "system\n<!-- task -->\ntask for {{SESSION}}").unwrap();
+        let runes = testkit::TempDir::new("archivist-runes");
+        std::fs::write(runes.join("archivist.md"), "system\n<!-- task -->\ntask for {{SESSION}}").unwrap();
         let mut c = cfg();
-        c.chamber = chamber.path().to_string_lossy().into_owned();
+        c.runes = runes.path().to_string_lossy().into_owned();
         c.run = dir.path().to_string_lossy().into_owned();
         let seam = FakeSeam::new();
         *seam.agent_rc.borrow_mut() = 0;
@@ -755,14 +755,14 @@ mod tests {
 
     fn brain_run(rc: i32, break_remote: bool) -> (i32, testkit::TempDir, PathBuf, testkit::TempDir) {
         let dir = testkit::TempDir::new("archivist-run");
-        let chamber = testkit::TempDir::new("archivist-chamber");
-        std::fs::write(chamber.join("archivist.md"), "system\n<!-- task -->\ntask").unwrap();
+        let runes = testkit::TempDir::new("archivist-runes");
+        std::fs::write(runes.join("archivist.md"), "system\n<!-- task -->\ntask").unwrap();
         let (root, brain) = brain::tests::fixture();
         if break_remote {
             brain::tests::sh(&brain, &["remote", "set-url", "origin", "/nonexistent/remote.git"]);
         }
         let mut c = cfg();
-        c.chamber = chamber.path().to_string_lossy().into_owned();
+        c.runes = runes.path().to_string_lossy().into_owned();
         c.run = dir.path().to_string_lossy().into_owned();
         c.wiki = Some(brain.to_string_lossy().into_owned());
         let seam = FakeSeam::new();
@@ -807,10 +807,10 @@ mod tests {
     #[test]
     fn archive_on_timeout_retries_until_the_budget_then_fails() {
         let dir = testkit::TempDir::new("archivist-run");
-        let chamber = testkit::TempDir::new("archivist-chamber");
-        std::fs::write(chamber.join("archivist.md"), "task").unwrap();
+        let runes = testkit::TempDir::new("archivist-runes");
+        std::fs::write(runes.join("archivist.md"), "task").unwrap();
         let mut c = cfg();
-        c.chamber = chamber.path().to_string_lossy().into_owned();
+        c.runes = runes.path().to_string_lossy().into_owned();
         c.run = dir.path().to_string_lossy().into_owned();
         c.timeout_retries = 2;
         let seam = FakeSeam::new();
@@ -828,10 +828,10 @@ mod tests {
     #[test]
     fn archive_on_capacity_refusal_pauses_and_returns_the_capacity_code() {
         let dir = testkit::TempDir::new("archivist-run");
-        let chamber = testkit::TempDir::new("archivist-chamber");
-        std::fs::write(chamber.join("archivist.md"), "task").unwrap();
+        let runes = testkit::TempDir::new("archivist-runes");
+        std::fs::write(runes.join("archivist.md"), "task").unwrap();
         let mut c = cfg();
-        c.chamber = chamber.path().to_string_lossy().into_owned();
+        c.runes = runes.path().to_string_lossy().into_owned();
         c.run = dir.path().to_string_lossy().into_owned();
         let seam = FakeSeam::new();
         *seam.agent_rc.borrow_mut() = 1;
@@ -850,11 +850,11 @@ mod tests {
         std::fs::create_dir_all(projects.join("p")).unwrap();
         std::fs::write(projects.join("p").join("sess-a.jsonl"), "x").unwrap();
         std::fs::write(projects.join("p").join("sess-b.jsonl"), "x").unwrap();
-        let chamber = testkit::TempDir::new("archivist-chamber");
-        std::fs::write(chamber.join("archivist.md"), "task").unwrap();
+        let runes = testkit::TempDir::new("archivist-runes");
+        std::fs::write(runes.join("archivist.md"), "task").unwrap();
 
         let mut c = cfg();
-        c.chamber = chamber.path().to_string_lossy().into_owned();
+        c.runes = runes.path().to_string_lossy().into_owned();
         c.run = dir.path().to_string_lossy().into_owned();
         c.token_projects = projects.path().to_string_lossy().into_owned();
         c.per_pass = 1;

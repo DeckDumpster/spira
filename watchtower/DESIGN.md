@@ -19,7 +19,7 @@ queue — so the numbers that matter are the depth of that queue, how long its o
 has waited, and how long it has been since anything came out of the far end.
 
 **It does not decide** (the operator's call, 2026-09-07, over a threshold-driven detector).
-This program gathers and hands over; an Ops aeon reads the snapshot and decides what is
+This program gathers and hands over; an Ops dwarf reads the snapshot and decides what is
 wrong and what beads to cut. Thresholds anticipate only the outage already had — every
 stall so far has been a shape nobody had a number for.
 
@@ -145,7 +145,7 @@ Unchanged field list and heredoc layout from the bash (see `render::render` doc 
 the full field-by-field source map). Writes `$SPIRA_WATCH_PROMPT_FILE` (default
 `$SPIRA_RUN/ops-sweep-prompt.txt`) atomically, advances `$SPIRA_RUN/lapsed.swept` only on a
 successful write, and (default mode only, non-halted, non-nominal) files the same nine
-threshold escalations the bash filed: drain, sending-oldest-unsent, unadopted-refs, hotfix,
+threshold escalations the bash filed: drain, hel-oldest-unsent, unadopted-refs, hotfix,
 batched-stranded, batched-too-long, closed-stranded, dedup-meter, idle-while-ready — then
 runs `cockpit/moot-sweep.sh --apply`.
 
@@ -163,7 +163,7 @@ runs `cockpit/moot-sweep.sh --apply`.
   via a literal `"${SPIRA_HOME}/world.sh"`, genuinely `SPIRA_HOME`-driven, not `$0`-relative.
   Conflating the two was a real bug (sp-lnmbq): a caller that points `SPIRA_HOME` at a
   fixture directory holding data files but no lib.sh (test-watchtower.sh's idle-while-ready
-  section, which overrides `SPIRA_HOME` so `bulk_ready_by_fayth`'s chamber lookup reads its
+  section, which overrides `SPIRA_HOME` so `bulk_ready_by_rune`'s runes lookup reads its
   fixture, while still expecting the real lib.sh code to run) made every lib.sh-sourcing
   seam fail closed with no error. `SPIRA_HOME` still reaches lib.sh's own functions
   correctly either way — it is inherited in the seam's subprocess environment, never
@@ -193,5 +193,5 @@ fake systemctl).
 - **Not the collector.** `collect.sh`/`cockpit.sh` write `cockpit.env`; this only reads it.
 - **Not the yield meter.** `yield.sh` computes `YIELD_*`; this shells to it exactly as the
   bash did (out of scope this bead).
-- **Not incident.sh's dedup.** That logic (lookback window, `SPIRA_SIN_EXEMPT`) lives in
+- **Not incident.sh's dedup.** That logic (lookback window, `SPIRA_FENRIR_EXEMPT`) lives in
   incident.sh; this crate only calls it with the same `SPIRA_INCIDENT_*` env the bash used.

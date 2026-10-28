@@ -3,9 +3,9 @@ After=lc-serve.service
 Wants=lc-serve.service
 # The Mimir persona's TIMER trigger. The timer path evaluates two trigger conditions
 # — a landing count and a time gap — against a shared watermark, then files a sweep
-# bead carrying SPIRA_MIMIR_LABEL. The sentinel detects the bead and summons a
-# Mimir aeon to claim it. This service evaluates the trigger; it does not run the
-# aeon.
+# bead carrying SPIRA_MIMIR_LABEL. The sentinel detects the bead and calls a
+# Mimir dwarf to claim it. This service evaluates the trigger; it does not run the
+# dwarf.
 #
 # TWO CONDITIONS, ONE BEAD. mimir-trigger.sh checks both the landing count
 # (SPIRA_MIMIR_LANDING_INTERVAL, default 25) and the time gap
@@ -17,12 +17,12 @@ Wants=lc-serve.service
 # status is never consulted; a closed bead whose commit is not on the base inflates no
 # counter.
 #
-# ExecCondition makes the unit inert until mimir.fayth lands on main. Between arming
+# ExecCondition makes the unit inert until mimir.rune lands on main. Between arming
 # the timer and the branch landing there is a window in which ExecStart would fail on
 # every tick; ExecCondition that exits non-zero makes systemd SKIP the pass and record
 # success, so the timer sits silent and starts working the moment the file is present.
 Description=Spira Mimir trigger — evaluate landing/gap conditions and file a sweep bead
-Documentation=file://@SPIRA_HOME@/chamber/mimir.fayth
+Documentation=file://@SPIRA_HOME@/runes/mimir.rune
 
 [Service]
 # THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built
@@ -34,7 +34,7 @@ Environment=SPIRA_TOML=@SPIRA_TOML@
 Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
-ExecCondition=/usr/bin/test -f @SPIRA_PROD@/chamber/mimir.fayth
+ExecCondition=/usr/bin/test -f @SPIRA_PROD@/runes/mimir.rune
 ExecStart=@SPIRA_PROD@/mimir-trigger.sh
 # The trigger script queries bd and counts git commits; 120 seconds is generous.
 TimeoutStartSec=120

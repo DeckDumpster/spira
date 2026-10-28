@@ -1,5 +1,5 @@
 //! rebase-stale — rebases a submitted branch that went stale against its land ref
-//! mechanically, so a bead reaches an aeon only for a real content conflict or a red gate.
+//! mechanically, so a bead reaches a dwarf only for a real content conflict or a red gate.
 //! See DESIGN.md for the contract this implements.
 
 pub mod telemetry;

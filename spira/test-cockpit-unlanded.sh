@@ -2,7 +2,7 @@
 #
 # test-cockpit-unlanded.sh — finished beads: landed vs. done (SUBMITTED, branch, not landed);
 # the worked/landed row is 24h-scoped; landing detection uses subject forms only
-# (law-aeon-commits-name-their-bead).
+# (law-dwarf-commits-name-their-bead).
 #
 #   ./test-cockpit-unlanded.sh
 #
@@ -179,11 +179,11 @@ JSON
 # classification too), with bd reads answered from a canned-JSON fixture rather than a
 # live store.
 unlanded() {    # unlanded <fixture-file>
-    # SPIRA_HOME_REPO/SPIRA_SCOPE_LABEL/SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP/SPIRA_FAYTHS are
+    # SPIRA_HOME_REPO/SPIRA_SCOPE_LABEL/SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP/SPIRA_RUNES are
     # registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config
     # and thread SPIRA_TOML through env -i, which clears it.
     tl_config SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" SPIRA_RUN="$RUN" \
-        SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t
+        SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$MAP" SPIRA_RUNES=t
     env -i SPIRA_PANE_READ_TTL=0 SPIRA_HISTORY_READ_TTL=0 PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$ALPHA" \
@@ -237,11 +237,11 @@ for line in sys.stdin:
 } > "$RUN/cockpit.env"
 
 REAL_BD="$(command -v "${SPIRA_BD:-bd}" 2>/dev/null)"
-# SPIRA_RUN/SPIRA_DB/SPIRA_BD/SPIRA_REPO_MAP/SPIRA_FAYTHS are registered keys (per Ryan
+# SPIRA_RUN/SPIRA_DB/SPIRA_BD/SPIRA_REPO_MAP/SPIRA_RUNES are registered keys (per Ryan
 # 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config and thread SPIRA_TOML through
 # env -i, which clears it.
 tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_BD="${REAL_BD:-bd}" \
-    SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t
+    SPIRA_REPO_MAP="$MAP" SPIRA_RUNES=t
 pane="$(env -i SPIRA_PANE_READ_TTL=0 SPIRA_HISTORY_READ_TTL=0 PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$ALPHA" \
     SPIRA_TOML="$SPIRA_TOML" \

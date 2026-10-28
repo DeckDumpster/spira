@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 
 use bead::claimdesc;
 use bead::bdq::{
-    check_destructive, check_repo_label, check_schema_delete, creates_beads, creates_closed, id_bearing_args, czar_fence_class, is_create, json_count, json_only,
+    check_destructive, check_repo_label, check_schema_delete, creates_beads, creates_closed, creates_rowless_type, id_bearing_args, czar_fence_class, is_create, json_count, json_only,
     should_retry, retryable, backoff_ms, is_write, WRITER_LOCK_BUSY,
 };
 use spira_config::repos::Registry;
@@ -309,14 +309,14 @@ fn cmd_bdq(args: &[String]) -> i32 {
         }
     }
 
-    // The czar fence: a live SPIRA_FAYTH=czar session with a class mutating the queue
+    // The czar fence: a live SPIRA_RUNE=czar session with a class mutating the queue
     // (reopen always; update/close unless it is the trigger bead itself) must pass
     // czar-fence.sh first. czar-fence.sh's own exit code is NOT propagated — bdq always
     // normalizes a refusal here to 1, matching the bash's bare `|| return 1`.
-    let fayth = env_or("SPIRA_FAYTH", "");
+    let rune = env_or("SPIRA_RUNE", "");
     let czar_class = env_or("SPIRA_CZAR_CLASS", "");
     let czar_trigger = env_or("SPIRA_CZAR_TRIGGER_BEAD", "");
-    if let Some(class) = czar_fence_class(&fayth, &czar_class, &czar_trigger, args) {
+    if let Some(class) = czar_fence_class(&rune, &czar_class, &czar_trigger, args) {
         let ok = Command::new("czar-fence.sh").arg(class).status().map(|s| s.success()).unwrap_or(false);
         if !ok {
             return 1;
@@ -418,7 +418,7 @@ fn cmd_bdq(args: &[String]) -> i32 {
     let backoff_base: u64 = env_nonempty("SPIRA_BDQ_CONN_BACKOFF_MS").and_then(|s| s.parse().ok()).unwrap_or(1000);
     let t_start = std::time::Instant::now();
 
-    let lc_row = creates_beads(args) && !(is_create(args) && creates_closed(args));
+    let lc_row = creates_beads(args) && !(is_create(args) && (creates_closed(args) || creates_rowless_type(args)));
     let writer_lock = writer_lock_for(args);
     let mut try_n: u32 = 1;
     let (rc, stderr_buf, created_out) = loop {
@@ -524,8 +524,8 @@ fn acknowledge_forced_edit(timeout_s: &str, bd_bin: &str, db: &str, id: &str, cl
     // Best-effort notification: by this point `cfg` has already resolved successfully at
     // least once in this process (SPIRA_DB/SPIRA_BD above), so these two cannot newly
     // fail; `unwrap_or_default` only ever matters if SPIRA_RUN/SPIRA_MAIL themselves
-    // resolve empty, which `notify_live_aeon` already treats as "nothing to notify".
+    // resolve empty, which `notify_live_dwarf` already treats as "nothing to notify".
     let run = spira_config::process::cfg("SPIRA_RUN").unwrap_or_default();
     let mail = spira_config::process::cfg("SPIRA_MAIL").unwrap_or_default();
-    claimdesc::notify_live_aeon(id, &claimdesc::holder_message(&actor, reason), &run, &mail);
+    claimdesc::notify_live_dwarf(id, &claimdesc::holder_message(&actor, reason), &run, &mail);
 }

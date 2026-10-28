@@ -148,9 +148,9 @@ want "0003's guarded UPDATE is read as applied, not re-run" "0003-terminal-holde
 echo
 echo "0003 pending with only the service user: guarded DML on a table it writes is applied by it (sp-p1z81)"
 holders() { root_sql --use-db spira_lifecycle sql -q "SELECT bead_id, COALESCE(holder, 'none') AS h FROM bead WHERE bead_id = 'fx-terminal'" -r csv 2>/dev/null; }
-root_sql --use-db spira_lifecycle sql -q "INSERT INTO bead (bead_id, state, holder, lease_until, holds, version, updated_at) VALUES ('fx-terminal', 'LANDED', 'aeon-fixture', 123, '[]', 1, 1)" >/dev/null 2>&1 \
+root_sql --use-db spira_lifecycle sql -q "INSERT INTO bead (bead_id, state, holder, lease_until, holds, version, updated_at) VALUES ('fx-terminal', 'LANDED', 'dwarf-fixture', 123, '[]', 1, 1)" >/dev/null 2>&1 \
     || bail "could not seed a terminal row that still has a holder"
-want "positive control: the terminal row still carries a holder" "fx-terminal,aeon-fixture" "$(holders)"
+want "positive control: the terminal row still carries a holder" "fx-terminal,dwarf-fixture" "$(holders)"
 out="$(no_admin spira-lc admin-migrate --if-enforced "$SHIPPED" 2>&1)"; rc=$?
 wantrc "admin-migrate with no admin credential succeeds" 0 $rc
 want "0003 applied as the service user" "0003-terminal-holder.sql: applied as the lifecycle service user" "$out"

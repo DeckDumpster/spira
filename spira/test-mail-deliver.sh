@@ -192,7 +192,7 @@ BASE_ENV=(
 # path ("/fixture/userhome/.../spira-releases/current/spira/mail/kinds") that conf.sh no longer
 # derives from SPIRA_HOME; watchd's escalation sends "--kind question", and `mail send`
 # refuses any kind it cannot find a <kind>.md file for in SPIRA_MAIL_KINDS. Declare this
-# suite's own real checkout, the same pattern test-mail-aeon.sh uses for SPIRA_CHAMBER.
+# suite's own real checkout, the same pattern test-mail-dwarf.sh uses for SPIRA_RUNES_DIR.
 tl_config SPIRA_RUN="$RUN" SPIRA_INSTANCE=test SPIRA_WATCHERS="$MAN" SPIRA_MAIL="$MAIL" \
     SPIRA_NOTIFY_AGE=0 SPIRA_ACTIONABLE=WAKEME SPIRA_MAIL_REPEAT_WINDOW=0 SPIRA_MAIL_MUTE=0 \
     SPIRA_MAIL_KINDS="$HERE/mail/kinds"

@@ -248,45 +248,68 @@ impl<'a> RealLib<'a> {
     /// (sp-gypjk: by bare name), so an escalation that silently drops a message would show
     /// up here, not three times over.
     fn send_mail(&self, to: &str, from: &str, subject: &str, kind: &str, default: Option<&str>, bead: &str, body: &str) -> bool {
-        let mut c = command("mail");
-        c.arg("send").arg(to).arg("--from").arg(from).arg("--subject").arg(subject).arg("--kind").arg(kind);
-        if let Some(d) = default {
-            c.arg("--default").arg(d);
+        match mail_send("mail", to, from, subject, kind, default, bead, body) {
+            Ok(()) => true,
+            Err(why) => {
+                self.seam.out.progress(&format!("mail send {to} refused: {why}"));
+                false
+            }
         }
-        if !bead.is_empty() {
-            c.arg("--bead").arg(bead);
-        }
-        c.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
-        let Ok(mut child) = c.spawn() else { return false };
-        if let Some(mut si) = child.stdin.take() {
-            let _ = si.write_all(body.as_bytes());
-        }
-        child.wait().map(|s| s.success()).unwrap_or(false)
     }
 
     /// lib.sh `spira_ask_machinery` — a per-branch machinery-fault ask, deduped on
     /// "<branch> cannot be judged".
     #[allow(clippy::too_many_arguments)]
-    fn ask_machinery(&self, id: &str, branch: &str, repo: &str, outcome: &str, reason: &str, n: u32, out: &str) -> bool {
+    fn ask_machinery(&self, id: &str, branch: &str, repo: &str, outcome: &str, reason: &str, n: u32, out: &str) -> Result<(), String> {
         if self.ask_already_open(&crate::ask::machinery_subject(branch)) {
-            return true;
+            return Ok(());
         }
         let ev = crate::util::tail_lines(out, 20);
         let (subj, dflt, body) = crate::ask::machinery_mail(id, branch, repo, outcome, reason, n, &ev);
-        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), id, &body)
+        mail_send("mail", "operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), id, &body)
     }
 
     /// lib.sh `spira_ask_machinery_class` — one ask per (repo, reason) class, naming every
     /// branch it touched, deduped on "<repo> cannot be judged: <outcome> (<reason>)".
-    fn ask_machinery_class(&self, repo: &str, reason: &str, branches: &str, outcome: &str, n: u32, out: &str) -> bool {
+    fn ask_machinery_class(&self, repo: &str, reason: &str, branches: &str, outcome: &str, n: u32, out: &str) -> Result<(), String> {
         if self.ask_already_open(&crate::ask::machinery_class_subject(repo, outcome, reason)) {
-            return true;
+            return Ok(());
         }
         let ev = crate::util::tail_lines(out, 20);
         let lead_bead = branches.split(',').next().unwrap_or("").rsplit('/').next().unwrap_or("");
         let (subj, dflt, body) = crate::ask::machinery_class_mail(repo, reason, branches, outcome, n, &ev);
-        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), lead_bead, &body)
+        mail_send("mail", "operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), lead_bead, &body)
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn mail_send(program: &str, to: &str, from: &str, subject: &str, kind: &str, default: Option<&str>, bead: &str, body: &str) -> Result<(), String> {
+    let mut c = command(program);
+    c.arg("send").arg(to).arg("--from").arg(from).arg("--subject").arg(subject).arg("--kind").arg(kind);
+    if let Some(d) = default {
+        c.arg("--default").arg(d);
+    }
+    if !bead.is_empty() {
+        c.arg("--bead").arg(bead);
+    }
+    c.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped());
+    let mut child = c.spawn().map_err(|e| format!("cannot run {program}: {e}"))?;
+    if let Some(mut si) = child.stdin.take() {
+        let _ = si.write_all(body.as_bytes());
+    }
+    let o = child.wait_with_output().map_err(|e| format!("wait on {program}: {e}"))?;
+    if o.status.success() {
+        return Ok(());
+    }
+    let err = String::from_utf8_lossy(&o.stderr);
+    let err = err.trim().replace('\n', " | ");
+    Err(format!("exit {} — {}", o.status.code().map_or("signal".into(), |c| c.to_string()), if err.is_empty() { "no stderr" } else { &err }))
+}
+
+fn class_window_closed(anchor: &Path, window: i64, now: u64) -> bool {
+    let Ok(md) = std::fs::metadata(anchor) else { return false };
+    let mtime = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
+    now.saturating_sub(mtime) as i64 >= window
 }
 
 impl<'a> Lib for RealLib<'a> {
@@ -312,13 +335,16 @@ impl<'a> Lib for RealLib<'a> {
             let file = dir.join(&key);
             let asked = dir.join(format!("{key}.asked"));
             let branches_file = dir.join(format!("{key}.branches"));
-            if let Ok(md) = std::fs::metadata(&asked) {
-                let age = unix_now().saturating_sub(md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0));
-                if age as i64 >= self.s.noverdict_class_window {
-                    let _ = std::fs::remove_file(&file);
-                    let _ = std::fs::remove_file(&asked);
-                    let _ = std::fs::remove_file(&branches_file);
+            let since = dir.join(format!("{key}.since"));
+            let refused = dir.join(format!("{key}.refused"));
+            let anchor = if asked.exists() { &asked } else { &since };
+            if class_window_closed(anchor, self.s.noverdict_class_window, unix_now()) {
+                for f in [&file, &asked, &branches_file, &since, &refused] {
+                    let _ = std::fs::remove_file(f);
                 }
+            }
+            if !since.exists() {
+                let _ = std::fs::write(&since, "");
             }
             let n = std::fs::read_to_string(&file).ok().and_then(|s| s.trim().parse::<u64>().ok()).unwrap_or(0) + 1;
             let _ = crate::util::atomic_write(&file, &n.to_string());
@@ -337,11 +363,17 @@ impl<'a> Lib for RealLib<'a> {
                     .collect::<Vec<_>>()
                     .join(",");
                 let branches = if branches_csv.is_empty() { branch } else { &branches_csv };
-                if self.ask_machinery_class(repo, reason, branches, outcome, n as u32, out) {
-                    let _ = std::fs::write(&asked, "");
-                    self.seam.out.progress(&format!("escalated {repo} — {outcome} x{n} in a day ({reason}) across {branches}"));
-                } else {
-                    self.seam.out.progress(&format!("escalation refused, will retry — {repo} {outcome} x{n} in a day ({reason}) across {branches}"));
+                match self.ask_machinery_class(repo, reason, branches, outcome, n as u32, out) {
+                    Ok(()) => {
+                        let _ = std::fs::write(&asked, "");
+                        let _ = std::fs::remove_file(&refused);
+                        self.seam.out.progress(&format!("escalated {repo} — {outcome} x{n} in a day ({reason}) across {branches}"));
+                    }
+                    Err(why) if !refused.exists() => {
+                        let _ = std::fs::write(&refused, "");
+                        self.seam.out.progress(&format!("escalation refused, will retry — {repo} {outcome} x{n} in a day ({reason}) across {branches}: {why}"));
+                    }
+                    Err(_) => {}
                 }
             }
             return;
@@ -353,11 +385,12 @@ impl<'a> Lib for RealLib<'a> {
         let n = std::fs::read_to_string(&file).ok().and_then(|s| s.trim().parse::<u64>().ok()).unwrap_or(0) + 1;
         let _ = crate::util::atomic_write(&file, &n.to_string());
         if n >= max && !asked.exists() {
-            if self.ask_machinery(id, branch, repo, outcome, reason, n as u32, out) {
-                let _ = std::fs::write(&asked, "");
-                self.seam.out.progress(&format!("escalated {id} — {outcome} x{n} on {branch}"));
-            } else {
-                self.seam.out.progress(&format!("escalation refused, will retry — {id} {outcome} x{n} on {branch}"));
+            match self.ask_machinery(id, branch, repo, outcome, reason, n as u32, out) {
+                Ok(()) => {
+                    let _ = std::fs::write(&asked, "");
+                    self.seam.out.progress(&format!("escalated {id} — {outcome} x{n} on {branch}"));
+                }
+                Err(why) => self.seam.out.progress(&format!("escalation refused, will retry — {id} {outcome} x{n} on {branch}: {why}")),
             }
         }
     }
@@ -1230,12 +1263,12 @@ pub fn pid_alive(pid: &str) -> bool {
 }
 
 impl Procs for RealProcs {
-    /// A thin wrapper onto `sending::reap::holder_alive` — the destruction chokepoint's own
+    /// A thin wrapper onto `hel::reap::holder_alive` — the destruction chokepoint's own
     /// canonical implementation (sp-9envm) — rather than this crate's own copy (wave 4.23,
-    /// sp-0ffox: "holder_alive is reached through sending's library"). ONE holder-liveness
+    /// sp-0ffox: "holder_alive is reached through hel's library"). ONE holder-liveness
     /// predicate in the whole tree, not landing-pass's own second one.
     fn holder_alive(&self, id: &str) -> bool {
-        sending::reap::holder_alive(&self.run, id)
+        hel::reap::holder_alive(&self.run, id)
     }
 }
 
@@ -1254,7 +1287,7 @@ impl Clock for RealClock {
 mod holder_alive_tests {
     use super::*;
 
-    // The liveness predicates live in sending::reap; this confirms RealProcs reaches them.
+    // The liveness predicates live in hel::reap; this confirms RealProcs reaches them.
     #[test]
     fn holder_alive_checks_the_hold_pidfile_by_pid_only() {
         let run = testkit::TempDir::new("landing-pass-holder-alive");
@@ -1265,13 +1298,13 @@ mod holder_alive_tests {
     }
 
     #[test]
-    fn holder_alive_requires_a_running_lease_for_an_aeon_pidfile() {
-        let run = testkit::TempDir::new("landing-pass-holder-alive-aeon");
-        std::fs::write(run.join("aeon-builder-sp-a1.pid"), std::process::id().to_string()).unwrap();
+    fn holder_alive_requires_a_running_lease_for_an_dwarf_pidfile() {
+        let run = testkit::TempDir::new("landing-pass-holder-alive-dwarf");
+        std::fs::write(run.join("dwarf-builder-sp-a1.pid"), std::process::id().to_string()).unwrap();
         let procs = RealProcs { run: run.to_path_buf() };
         assert!(!procs.holder_alive("sp-a1"), "a live pid with no lease must not count");
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-        std::fs::write(run.join("aeon-builder-sp-a1.lease"), (now + 60).to_string()).unwrap();
+        std::fs::write(run.join("dwarf-builder-sp-a1.lease"), (now + 60).to_string()).unwrap();
         assert!(procs.holder_alive("sp-a1"));
     }
 }
@@ -1352,5 +1385,43 @@ mod vtime_tests {
     fn real_clock_honours_spira_now() {
         let got = spira_config::vtime::with_now_for_test(1_900_000_000, || RealClock.now());
         assert_eq!(got, 1_900_000_000);
+    }
+}
+
+#[cfg(test)]
+mod mail_refusal_tests {
+    use super::*;
+
+    fn stub(dir: &Path, script: &str) -> String {
+        let f = dir.join("mail-stub");
+        testkit::write_exe(&f, script);
+        f.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn a_refused_send_carries_its_exit_and_stderr() {
+        let d = crate::testutil::tmpdir("mail");
+        let prog = stub(&d, "#!/bin/sh\ncat >/dev/null\necho 'no such recipient' >&2\nexit 7\n");
+        let why = mail_send(&prog, "operator", "gate", "s", "question", Some("d"), "sp-x", "body").unwrap_err();
+        assert!(why.contains("exit 7") && why.contains("no such recipient"), "{why}");
+    }
+
+    #[test]
+    fn an_accepted_send_is_ok() {
+        let d = crate::testutil::tmpdir("mail");
+        let prog = stub(&d, "#!/bin/sh\ncat >/dev/null\nexit 0\n");
+        assert!(mail_send(&prog, "operator", "gate", "s", "question", None, "", "b").is_ok());
+        assert!(mail_send("/nonexistent/mail", "o", "g", "s", "q", None, "", "b").is_err());
+    }
+
+    #[test]
+    fn the_class_window_runs_from_the_anchor_file() {
+        let d = crate::testutil::tmpdir("mail");
+        let f = d.join("since");
+        assert!(!class_window_closed(&f, 0, u64::MAX));
+        std::fs::write(&f, "").unwrap();
+        let mtime = std::fs::metadata(&f).unwrap().modified().unwrap().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        assert!(!class_window_closed(&f, 3600, mtime + 10));
+        assert!(class_window_closed(&f, 3600, mtime + 3600));
     }
 }

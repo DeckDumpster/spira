@@ -81,7 +81,7 @@ Each arrives with its own bead, as `docs/test-plan/<area>.md` (prose) plus
 
 - dispatch
 - cockpit-observability
-- aeon-execution
+- dwarf-execution
 - operator-channel
 - safety-fences
 - instance-lifecycle

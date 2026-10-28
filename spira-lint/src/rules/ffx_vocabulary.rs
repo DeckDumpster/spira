@@ -16,6 +16,8 @@ pub struct FfxVocabulary {
 const NAME: &str = "ffx-vocabulary";
 const MODE_KEY: &str = "SPIRA_FFX_VOCABULARY_MODE";
 const SELF_PATH: &str = "spira-lint/src/rules/ffx_vocabulary.rs";
+const KEY_HISTORY_PATH: &str = "spira-config/schema/spira-key-history.txt";
+const LINE_MARKER: &str = "ffx-ok";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -44,8 +46,21 @@ const TERMS: &[&str] = &[
 /// Case-sensitive: "Sin" is the villain, "sin" is English.
 const CASED: &[&str] = &["Sin"];
 
+/// A base-side name as the rename cutover now spells it, so a name carried across the
+/// cutover is the same entry, not a new one.
+pub fn renamed(s: &str) -> String {
+    s.replace("aeons", "dwarves").replace("aeon", "dwarf")
+}
+
 fn exempt(path: &str) -> bool {
-    path == SELF_PATH || path.starts_with("docs/spikes/") || path.starts_with("raw/spira-beads/") || path.ends_with(".tsv")
+    path == SELF_PATH
+        || path == KEY_HISTORY_PATH
+        || path.starts_with("docs/spikes/")
+        || path.starts_with("raw/spira-beads/")
+        || path.starts_with("lifecycle/migrations/")
+        || path.ends_with(".tsv")
+        || ((path.starts_with("loom/tests/fixtures/") || path.starts_with("spira/testdata/")) && path.ends_with(".log"))
+        || path == "spira-lint/DESIGN.md"
 }
 
 /// Split a name or line into its words: alphanumeric runs, cut again at `aB` and `ABc` joins.
@@ -114,6 +129,9 @@ impl FfxVocabulary {
             }
             let text = String::from_utf8_lossy(src);
             for (i, line) in text.lines().enumerate() {
+                if line.contains(LINE_MARKER) {
+                    continue;
+                }
                 for t in terms_in(line) {
                     hits.push((e.path.clone(), i + 1, t));
                 }

@@ -14,28 +14,28 @@
 # after 121s") on every release from the one that shipped sp-qsona.
 #
 # CASES (law-absence-needs-a-positive-control), against a real lifecycle record (below):
-#   1. END TO END, push mode: the real aeon runs a model stand-in that commits and finishes
+#   1. END TO END, push mode: the real dwarf runs a model stand-in that commits and finishes
 #      with `work submit` -> the row is SUBMITTED at the branch tip; the real landing pass
 #      gates it (the gate's GatePass: CERTIFIED), lands it on origin/main, push-delivered
 #      moves the row to LANDED and close-on-land closes the bead in bd.
 #   2. A submitted bead whose gate is RED goes back to the builders: the gate's GateRed
-#      moves the row to REWORK and nothing lands — and the next aeon really claims it again
+#      moves the row to REWORK and nothing lands — and the next dwarf really claims it again
 #      and re-submits. A red that left it unclaimable would strand it: open, excluded from
 #      every claim, never landed.
-#   3. pr/hold mode: the merge happens off-box, and the Sending is the first to see the work
+#   3. pr/hold mode: the merge happens off-box, and the Hel is the first to see the work
 #      on the base. A SUBMITTED bead whose branch is found landed there is closed.
 #   4. push mode: a bead whose lifecycle row the push gate moved from
 #      SUBMITTED to CERTIFIED is still landed by that same pass, and ends LANDED.
 #
 # sp-v62vn (lifecycle_enforce=off retired) changed what cases 1-3 are told in: the model
-# no longer `bd close`s and the aeon no longer converts that close into open +
+# no longer `bd close`s and the dwarf no longer converts that close into open +
 # spira-submitted, so the assertions that read the spira-submitted label (1, 2, the setup
 # of 3) now read the lifecycle row it stood for; case 2's "reopened <id>" line is replaced
 # by REWORK plus a real re-claim (see case 2's note).
 #
 # defect: sp-qsona (acceptance phase A stage 5)
 # tier: T3
-# covers: landing-pass/* sending/src/* spira/lib.sh aeon/src/* work/* spira-lc/*
+# covers: landing-pass/* hel/src/* spira/lib.sh dwarf/src/* work/* spira-lc/*
 # hermetic-ok: uses fixture databases (bd, and a private dolt sql-server for spira_lifecycle) and local git repos, no systemd or gh
 # timeout: 240
 set -uo pipefail
@@ -44,11 +44,11 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 # THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
 # pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
 #
-# THE LIFECYCLE SERVICE IS REAL (sp-v62vn retired lifecycle_enforce=off). The aeon always
+# THE LIFECYCLE SERVICE IS REAL (sp-v62vn retired lifecycle_enforce=off). The dwarf always
 # runs the model restricted, and a model finishes only through the work broker: `work
 # submit` -> `spira-lc serve` -> the bead machine. So this suite stands up a throwaway
 # spira_lifecycle database (testlib/lc-fixture.sh) behind the tree's own `spira-lc serve`,
-# and every actor — the aeon's claim, the model's submit, the gate stub's verdict, the
+# and every actor — the dwarf's claim, the model's submit, the gate stub's verdict, the
 # landing pass's delivery, close-on-land — reads and writes real lifecycle rows. bd holds
 # the bead's content only; no assertion here reads bd status as the bead's state, except
 # the close that close-on-land still writes to bd when the work lands.
@@ -81,10 +81,10 @@ git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" p
 timeout 5 git -C "$REPO" fetch -q origin
 git -C "$REPO" remote set-head origin main 2>/dev/null || true
 
-export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
-tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
-# conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-aeon-world-stop.sh, ...): aeon's
-# own in-process config registry (spira_config::resolve, aeon::conf::merge_resolved_config)
+export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/runes"
+tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
+# conf.d IS COPIED IN (matching test-dwarf-sweep.sh, test-dwarf-world-stop.sh, ...): dwarf's
+# own in-process config registry (spira_config::resolve, dwarf::conf::merge_resolved_config)
 # derives conf.d from THIS --home and now REFUSES to start if it is missing (sp-1cdgq) --
 # a --home with no conf.d used to resolve silently to nothing instead of refusing.
 cp -r "$HERE/conf.d" "$SPIRA_HOME/"
@@ -117,32 +117,32 @@ gate_pass
 # The fixture home (and its stubs) is the harness in force: bare names resolve here first.
 export PATH="$SPIRA_HOME:$PATH"
 
-cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH
-FAYTH_NAME=builder
-FAYTH_WORKING_EXITS="SUBMITTED ask park hold"
-FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
-FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL"
-FAYTH_MAX_CONCURRENT=1
-FAYTH_HEARTBEAT_SECONDS=600
-FAYTH
-printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
+cat > "$SPIRA_HOME/runes/builder.rune" <<RUNE
+RUNE_NAME=builder
+RUNE_WORKING_EXITS="SUBMITTED ask park hold"
+RUNE_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
+RUNE_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL"
+RUNE_MAX_CONCURRENT=1
+RUNE_HEARTBEAT_SECONDS=600
+RUNE
+printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/runes/builder.md"
 
 # THE SHIM IS THE SESSION: commit, then finish with `work submit`, the builder's {{FINISH}}
-# brief and the only exit a model has (sp-v62vn: the aeon always runs it restricted — no
+# brief and the only exit a model has (sp-v62vn: the dwarf always runs it restricted — no
 # bd, no SPIRA_DB, no TMP; PATH is model-bin/ and the system dirs). It used to `bd close`
-# and rely on the aeon converting that close into open + spira-submitted; there is no such
+# and rely on the dwarf converting that close into open + spira-submitted; there is no such
 # conversion any more. conf.sh replaces PATH, so the model is injected through SPIRA_AGENT,
 # and $TMP is baked in because the restricted environment does not carry it. The fixture
 # ids are sp-sl1..sp-sl4, not sp-sl-1: `work` refuses a binding that is not sp-<alnum>.
 BIN="$TMP/bin"; mkdir -p "$BIN"; tl_config SPIRA_AGENT="$BIN/claude"
-command -v aeon >/dev/null 2>&1 \
-    || { echo "test-submitted-lands: aeon is not on PATH" >&2; exit 1; }
+command -v dwarf >/dev/null 2>&1 \
+    || { echo "test-submitted-lands: dwarf is not on PATH" >&2; exit 1; }
 cat > "$BIN/claude" <<SHIM
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
 id="\$(sed -n 's/^work \\(sp-[a-z0-9-]*\\) .*/\\1/p' "$TMP/prompt" | head -1)"
 printf '%s\\n' "\$id" >> "\$id.txt"
-git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "\$id: the work"
+git add -A && git -c user.email=a@a -c user.name=dwarf commit -qm "\$id: the work"
 work submit > "$TMP/submit.out" 2>&1
 printf '%s' "\$?" > "$TMP/submit.rc"
 printf '{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":3}\\n'
@@ -162,12 +162,12 @@ seed() {   # seed <id> [lifecycle-state] [tip] — the bd content row plus its l
         "$1" "$_lbl" | testdb_seed
     lcfix_seed "$1" "${2:-READY}" "${3:-}" || bail "could not seed $1's lifecycle row"
 }
-# A submit that did not apply says why, as TAP comments: the broker's answer, then the aeon's.
-run_aeon() {
+# A submit that did not apply says why, as TAP comments: the broker's answer, then the dwarf's.
+run_dwarf() {
     rm -rf "$SPIRA_RUN/worktree" "$TMP/submit.rc" "$TMP/submit.out"
-    aeon --home "$SPIRA_HOME" builder > "$TMP/aeon.out" 2>&1
+    dwarf --home "$SPIRA_HOME" builder > "$TMP/dwarf.out" 2>&1
     [ "$(cat "$TMP/submit.rc" 2>/dev/null)" = 0 ] && return 0
-    { cat "$TMP/submit.out" 2>/dev/null; tail -n 15 "$TMP/aeon.out"; } | sed 's/^/# /'
+    { cat "$TMP/submit.out" 2>/dev/null; tail -n 15 "$TMP/dwarf.out"; } | sed 's/^/# /'
 }
 tl_config SPIRA_BATCHER_ENABLE=1 SPIRA_HOME_REPO=fixture SPIRA_ID_PREFIX=sp SPIRA_GH="$SPIRA_HOME/gh"
 landing() {
@@ -175,9 +175,9 @@ landing() {
     SPIRA_REPO="$REPO" \
         landing-pass land 2>&1
 }
-sending() {
+hel() {
     SPIRA_REPO="$REPO" \
-        command sending --all 2>&1
+        command hel --all 2>&1
 }
 on_base() { timeout 5 git -C "$REPO" fetch -q origin 2>/dev/null; git -C "$REPO" log --format=%s origin/main 2>/dev/null; }
 branch_tip() { git -C "$REPO" rev-parse "spira/$1" 2>/dev/null; }
@@ -187,9 +187,9 @@ echo
 echo "1. END TO END, push mode — work submit -> SUBMITTED -> CERTIFIED -> LANDED -> closed:"
 # ======================================================================================
 testdb_reset; seed sp-sl1
-run_aeon
+run_dwarf
 is   "the model's work submit was applied by the broker"             0 "$(cat "$TMP/submit.rc" 2>/dev/null || echo missing)"
-is   "after the aeon: the lifecycle row is SUBMITTED"                SUBMITTED "$(lcfix_state sp-sl1)"
+is   "after the dwarf: the lifecycle row is SUBMITTED"                SUBMITTED "$(lcfix_state sp-sl1)"
 is   "at the branch tip the model committed"                         "$(branch_tip sp-sl1)" "$(lcfix_tip sp-sl1)"
 is   "bd's status was never touched (no close to convert)"           open "$(field sp-sl1 status)"
 nowant "and nothing is on the base yet"                              "sp-sl1" "$(on_base)"
@@ -208,7 +208,7 @@ echo
 echo "2. a submitted bead whose gate is RED goes back to the builders — claimable again:"
 # ======================================================================================
 testdb_reset; seed sp-sl2
-run_aeon
+run_dwarf
 is   "setup: submitted" SUBMITTED "$(lcfix_state sp-sl2)"
 gate_fail
 out="$(landing)"
@@ -217,19 +217,19 @@ is     "the red gate moves the row to REWORK, which the ready set claims" REWORK
 nowant "the red branch is not landed"                                     "landed spira/sp-sl2" "$out"
 nowant "and nothing of it reaches the base"                               "sp-sl2" "$(on_base)"
 is     "the bead is open"                                                 open "$(field sp-sl2 status)"
-# CLAIMABLE AGAIN, proven by claiming it: a REWORK row an aeon could not take would strand
+# CLAIMABLE AGAIN, proven by claiming it: a REWORK row a dwarf could not take would strand
 # the bead — open, excluded from every claim, never landed.
-run_aeon
-is   "the next aeon claims it again and its submit applies"               0 "$(cat "$TMP/submit.rc" 2>/dev/null || echo missing)"
+run_dwarf
+is   "the next dwarf claims it again and its submit applies"               0 "$(cat "$TMP/submit.rc" 2>/dev/null || echo missing)"
 is   "the row is SUBMITTED once more"                                     SUBMITTED "$(lcfix_state sp-sl2)"
 is   "at the new tip"                                                     "$(branch_tip sp-sl2)" "$(lcfix_tip sp-sl2)"
 
 # ======================================================================================
 echo
-echo "3. pr/hold mode — a submitted bead whose branch the Sending finds on the base closes:"
+echo "3. pr/hold mode — a submitted bead whose branch the Hel finds on the base closes:"
 # ======================================================================================
 # The forge (or a human) merged the branch; nothing on this box landed it. Simulated with a
-# merge made directly on origin/main, then the Sending sweep.
+# merge made directly on origin/main, then the Hel sweep.
 testdb_reset
 git -C "$REPO" branch -q -f spira/sp-sl3 origin/main
 git -C "$REPO" worktree add -q "$TMP/wt3" spira/sp-sl3
@@ -242,8 +242,8 @@ git -C "$REPO" merge -q --no-ff -m "Merge pull request #3 from spira/sp-sl3" spi
 timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 timeout 5 git -C "$REPO" fetch -q origin
 is   "setup: open and SUBMITTED before the sweep" "open SUBMITTED" "$(field sp-sl3 status) $(lcfix_state sp-sl3)"
-out="$(sending)"
-want "the Sending sends the landed branch"             "sp-sl3" "$out"
+out="$(hel)"
+want "the Hel sends the landed branch"             "sp-sl3" "$out"
 is   "and closes the submitted bead"                   closed "$(field sp-sl3 status)"
 want "with the landed outcome"                         "OUTCOME: landed" "$(field sp-sl3 close_reason)"
 

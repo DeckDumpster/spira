@@ -1,0 +1,37 @@
+# mender.rune — the Mender: called per failing suite of a round pass, decides what the
+# failure is and, when it is a member's code, fixes it on the member's branch while the pass
+# keeps running.
+
+RUNE_NAME=mender
+RUNE_DESC="Mender — judges one failing suite of a round pass and mends the member at fault, inside a machine-enforced deadline"
+
+# The partition is the calls label alone: a mender that matched the plan label would be a
+# second builder. One bead per failure, filed when the pass reports it red.
+RUNE_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_MENDER_LABEL"
+RUNE_EXCLUDE_LABELS="$SPIRA_CI_LABEL"
+
+RUNE_MEMORY_PREFIXES="law-"
+RUNE_STATUTE_CORE="law-escalate-decisions-not-problems,law-tests-run-only-through-testenv"
+
+# SEED ONLY: the live value is persona.mender.model, resolved by lib.sh's persona_model. Opus: a wrong attribution ejects a member or ships a wrong fix.
+RUNE_MODEL=claude-opus-5-5
+
+# Its own lane, outside the builder pool. The ceiling is SPIRA_MENDER_MAX, not this line:
+# lane admission reads the config key so one number sizes the lane.
+RUNE_LANE=mender
+RUNE_MAX_CONCURRENT="${SPIRA_MENDER_MAX:-8}"
+
+# The deadline is the machine's (SPIRA_MENDER_DEADLINE_SECS from pickup); the session wall
+# only has to outlast it so the machine, not a timeout, ends a mend.
+RUNE_TIMEOUT_SECONDS=$(( ${SPIRA_MENDER_DEADLINE_SECS:-300} + 120 ))
+RUNE_LEASE_MINUTES=10
+RUNE_HEARTBEAT_SECONDS=15
+
+RUNE_TOOLS="Bash,Read,Edit,Write,Glob,Grep,TodoWrite"
+RUNE_PROJECT_INSTRUCTIONS=repo
+
+# APPEND: the mender writes code on a member's branch.
+RUNE_SYSTEM_PROMPT=append
+
+# The states a bead claimed by this rune may leave WORKING for; spira-lc refuses any other.
+RUNE_WORKING_EXITS="DONE SUBMITTED ask park hold"

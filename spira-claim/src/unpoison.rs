@@ -42,7 +42,7 @@ pub struct LcRow {
 }
 
 impl LcRow {
-    /// The aeon holding a WORKING row, as the refusal names it.
+    /// The dwarf holding a WORKING row, as the refusal names it.
     pub fn working_holder(&self) -> Option<String> {
         let h = self.holder.as_deref().filter(|h| !h.trim().is_empty())?;
         (self.state == BeadState::Working).then(|| format!("{h} (lifecycle WORKING)"))
@@ -178,7 +178,7 @@ fn one(o: &Opts, t: Thresholds, w: &mut dyn World, id: &str, out: &mut String) -
         return fail(
             out,
             format!(
-                "held by {h} — live work is never touched: let that aeon finish (or stop it: slay.sh --bead {id}), then re-run"
+                "held by {h} — live work is never touched: let that dwarf finish (or stop it: slay.sh --bead {id}), then re-run"
             ),
         );
     }
@@ -232,7 +232,7 @@ fn one(o: &Opts, t: Thresholds, w: &mut dyn World, id: &str, out: &mut String) -
     if labelled {
         let _ = w.remove_label(id, POISON_LABEL);
     }
-    // 4. Why — the next aeon reads this.
+    // 4. Why — the next dwarf reads this.
     let note = format!(
         "Poison cleared by spira-claim unpoison ({}; attempts were {}): {}",
         o.actor, before.attempts, o.cause
@@ -613,25 +613,25 @@ impl crate::reopen::World for Live {
 
 pub fn live_stop_holder(run: &std::path::Path, id: &str, why: &str) -> Result<(), String> {
     let epoch = || std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-    let own_aeon = std::env::var("SPIRA_AEON").is_ok_and(|v| !v.is_empty());
+    let own_dwarf = std::env::var("SPIRA_DWARF").is_ok_and(|v| !v.is_empty());
     crate::reopen::stop_holder_in(
         run,
         id,
         why,
-        own_aeon,
+        own_dwarf,
         crate::reopen::STOP_WAIT_S,
         &epoch,
         &|| std::thread::sleep(std::time::Duration::from_millis(500)),
     )?;
-    if own_aeon {
+    if own_dwarf {
         return Ok(());
     }
     let systemctl = std::env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemctl".into());
     let mut stop = |unit: &str| {
-        // batch-job: a unit stop lasts as long as the aeon takes to exit
+        // batch-job: a unit stop lasts as long as the dwarf takes to exit
         let _ = std::process::Command::new(&systemctl).args(["--user", "stop", unit]).status();
     };
-    sending::reap::stop_occupants(std::path::Path::new("/proc"), &run.join("worktree").join(id), &mut stop, 20, &|| {
+    hel::reap::stop_occupants(std::path::Path::new("/proc"), &run.join("worktree").join(id), &mut stop, 20, &|| {
         // waits-on: worktree occupants exiting; cap 20 polls
         std::thread::sleep(std::time::Duration::from_millis(500))
     })

@@ -87,7 +87,7 @@ when no bead is named; the latest run replaces the last).
 | `queue submit` (`queue/src/real.rs`) | `bash gate.sh <br> <repo>`, `SPIRA_GATE_BEAD`, `SPIRA_GATE_SUITES` | exit status, output |
 | `rebase-stale` | through `queue submit` | green or not |
 | `batch.sh _pf_gate` | `bash gate.sh`, `SPIRA_GATE_BEAD=batch-*` | exit status |
-| `gate-run.sh` (the aeon's self-certification; `aeon` reads `gate-run.sh --status`) | `bash gate.sh <br> <repo>` | exit status, output file |
+| `gate-run.sh` (the dwarf's self-certification; `dwarf` reads `gate-run.sh --status`) | `bash gate.sh <br> <repo>` | exit status, output file |
 | suites (`testlib/gate-fixture.sh` and the gate suites that copy `spira/`) | `gate.sh`, with the fixture's `gate` first on PATH | output |
 
 ### Environment it reads
@@ -383,7 +383,7 @@ spira-config set repo.spira.gate_mode suites <spira.toml>   # off (or: unset rep
 | `unit`, any **script** touched | `suites(script)` | the same |
 | `unit`, `SPIRA_GATE_ALL=1` | `suites(gate-all)` | the same — the caller asked for the corpus |
 | `unit`, the touched set or the graph unreadable | `suites(no-diff)` / `suites(no-metadata)` | the same — no guessing a cheaper gate |
-| `unit`, crates (± docs, config, suites) | `unit` | the gate string with **suites off** and **without the build fence** (below), then on the host: `cargo build --profile aeon -j J --all-targets -p …` (build) and `cargo test --profile aeon -j J -p … -- --test-threads=J` (test) |
+| `unit`, crates (± docs, config, suites) | `unit` | the gate string with **suites off** and **without the build fence** (below), then on the host: `cargo build --profile dwarf -j J --all-targets -p …` (build) and `cargo test --profile dwarf -j J -p … -- --test-threads=J` (test) |
 | `unit`, nothing buildable | `fences` | the gate string with **suites off** |
 
 "Suites off" is the gate command's environment: `SPIRA_GATE_SUITES=off` and
@@ -619,10 +619,10 @@ land with is what its gate runs.
   (BASE_FAIL `base-gate-definition` when the landing ref already names a file it lacks). A
   column keeps today's check against the base (NO_VERDICT `cmd-missing-file`).
 * **Tools from the tree.** Each `bin <VAR> <package>` is built before any step, in a `tools`
-  phase (`cargo build --profile aeon -j <jobs> -p <package>…`, then `[ -x
-  target/aeon/<package> ]`), and the steps get `<VAR>=<gate tree>/target/gate-tools/<tree id>/<package>` (the
+  phase (`cargo build --profile dwarf -j <jobs> -p <package>…`, then `[ -x
+  target/dwarf/<package> ]`), and the steps get `<VAR>=<gate tree>/target/gate-tools/<tree id>/<package>` (the
   build's output, copied into a directory keyed by the tree it was built from — see "Tools
-  keyed by the tree they were built from") in place of the installed value. The aeon profile is the unit phases' profile, so a unit
+  keyed by the tree they were built from") in place of the installed value. The dwarf profile is the unit phases' profile, so a unit
   composition's build reuses it. The spira repository declares `bin SPIRA_LINT_BIN
   spira-lint`. A tools phase that fails is a red like any other and is attributed by the base
   trial.
@@ -666,7 +666,7 @@ land with is what its gate runs.
 
 A trial's tools must provably be the tree under test's own. Both trials build in the one gate
 tree (the base trial checks the landing ref out over the branch trial's merge), into the one
-`target/`, and the steps read `target/aeon/<package>` — a path that names no tree. Whether the
+`target/`, and the steps read `target/dwarf/<package>` — a path that names no tree. Whether the
 binary there was built from the base or is the branch's, left behind, rests on cargo's mtime
 fingerprints and nothing the gate can show. On 2026-09-30 two base trials judged local/main
 red with `base-tools:0` and the question "which spira-lint did the base run?" had no answer
@@ -682,8 +682,8 @@ gate that cannot answer the question cannot rule it out either.)
   branch trial; for the base trial, no base trial (BaseUntestable, NO_VERDICT). Never a guess.
 * **Tools live in a directory keyed by that tree id:** `<gate tree>/target/gate-tools/<tree
   id>/<package>`, with `TREE` holding the id. The steps get `<VAR>=` that path — never
-  `target/aeon/<package>`. After a build, the gate (Rust, `World::install_tools`) copies each
-  `target/aeon/<package>` into `<dir>.tmp`, writes `TREE`, renames it into place, and removes
+  `target/dwarf/<package>`. After a build, the gate (Rust, `World::install_tools`) copies each
+  `target/dwarf/<package>` into `<dir>.tmp`, writes `TREE`, renames it into place, and removes
   every other keyed directory beside it (the gate tree is locked for the whole trial, so no
   other gate reads them).
 * **Reuse only for the same tree.** A keyed directory whose `TREE` equals the id and that holds
@@ -700,7 +700,7 @@ gate that cannot answer the question cannot rule it out either.)
 the tree. `toolkey.rs` adds a shared store, `<run>/gate-tools/<repo>/<base>-<h>`:
 
 * **Base key** (known before any build, read from tree `<want>`'s objects): the recipe (the
-  `bin` packages, the aeon profile words), the object ids of the root build inputs
+  `bin` packages, the dwarf profile words), the object ids of the root build inputs
   (`Cargo.toml`, `Cargo.lock`, `rust-toolchain(.toml)`, `.cargo`), and the git tree id of each
   workspace package in the normal+build dependency closure of the `bin` packages (cargo
   metadata; dev dependencies are not in a binary).
@@ -741,8 +741,8 @@ same freshly built `spira-lint`, on the same local/main tree, flips between 0 an
 literal-lint findings on file mtimes alone. literal-lint asks `spira/schema.sh` for the
 configured names; schema.sh sources conf.sh, which reads the operator's
 `~/.config/spira/spira.toml` (`ask_label = "needs-ryan"`) when it is newer than the tree's
-`spira/chamber/*.fayth`, and otherwise regenerates a persona-only `spira.toml` into the tree
-and reads that (ask = the default, `needs-operator`). The reused gate tree keeps old fayth
+`spira/runes/*.rune`, and otherwise regenerates a persona-only `spira.toml` into the tree
+and reads that (ask = the default, `needs-operator`). The reused gate tree keeps old rune
 mtimes, and something rewrote the operator's spira.toml at 12:32:08Z, so both trials of the
 next gate read the box's config and flagged every `needs-ryan` fixture literal. The fix is in
 spira-lint (literal-lint pins schema.sh's config inputs, see its DESIGN.md); this section
@@ -899,10 +899,10 @@ Full contract: `spira-config/DESIGN-build-cache.md`. In the gate:
   preparation below applies to the same trials. `SPIRA_BUILD_CACHE=off` is
   honoured and printed.
 * **The tools phase and the unit phases are one-shot**: `--config
-  profile.aeon.incremental=false` (never `CARGO_INCREMENTAL`, which sccache hashes into every
-  key and so would split the cache from an aeon's interactive builds).
+  profile.dwarf.incremental=false` (never `CARGO_INCREMENTAL`, which sccache hashes into every
+  key and so would split the cache from a dwarf's interactive builds).
 * **The gate tree builds on tmpfs** (`src/target.rs`, `World::target_on_tmpfs`): after the
-  checkout, `target/{aeon,release,debug,gate-tools}` are links into
+  checkout, `target/{dwarf,release,debug,gate-tools}` are links into
   `$SPIRA_GATE_TARGET_ROOT` (default `/tmp/spira-gate-target-<run hash>`); orphaned
   directories are removed, the least recently used unlocked ones evicted over
   `SPIRA_GATE_TARGET_CAP_MIB`, and short of room (`_MIN_FREE_MIB`, `_MIN_MEM_MIB`) is
@@ -913,8 +913,8 @@ Full contract: `spira-config/DESIGN-build-cache.md`. In the gate:
   `No space left on device` / `Disk quota exceeded` (branch or base trial) is
   `scratch-short` too, never a red.
 * **No on-disk warm target (concierge/gate-overcap, 2026-10-14; retires sp-nv7btk's slots).**
-  sp-nv7btk linked `target/aeon` to a per-admission-slot directory on the disk,
-  `<run>/gate-warm/slot.N/aeon`, so a unit build would "recompile only what the branch
+  sp-nv7btk linked `target/dwarf` to a per-admission-slot directory on the disk,
+  `<run>/gate-warm/slot.N/dwarf`, so a unit build would "recompile only what the branch
   changed". It never did: the slot's path was fixed but the gate tree's path changes with
   every branch, and every source file of a fresh gate tree is newer than the slot's outputs,
   so cargo found no workspace crate fresh. Every trial still rebuilt the whole workspace and

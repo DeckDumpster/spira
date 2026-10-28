@@ -194,8 +194,8 @@
   },
   {
    "id": "ex-0102",
-   "title": "Ready work and free capacity, but nothing summoned for 6 passes",
-   "description": "**What is true:** the ready queue reports 4 beads, 3 of 4 worker slots are free, and nothing has been summoned across the last 6 passes.\n\n**Evidence**\n```\nready       4\ncapacity    3/4 free\nsummoned    0 across 6 passes\n```",
+   "title": "Ready work and free capacity, but nothing called for 6 passes",
+   "description": "**What is true:** the ready queue reports 4 beads, 3 of 4 worker slots are free, and nothing has been called across the last 6 passes.\n\n**Evidence**\n```\nready       4\ncapacity    3/4 free\ncalled    0 across 6 passes\n```",
    "issue_type": "event",
    "status": "open",
    "created_at": "2026-01-09T11:20:00Z",

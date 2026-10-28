@@ -8,7 +8,7 @@ Description=File a groomer trigger bead every six hours
 # beads and spends model capacity on confirmation rather than discovery. Six hours
 # matches the QA cadence, which faces the same growth rate from a different angle.
 #
-# THIS FILE IS THE ONLY PLACE THE CADENCE IS WRITTEN. groomer.fayth's comment
+# THIS FILE IS THE ONLY PLACE THE CADENCE IS WRITTEN. groomer.rune's comment
 # references it; nothing reads a SPIRA_GROOM_EVERY key, because none exists.
 OnBootSec=15min
 OnActiveSec=15min

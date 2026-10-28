@@ -59,7 +59,7 @@ refusal, exit 2 — unchanged from the bash.
 | `SPIRA_HOME` | `.` | where `lib.sh` lives, for `repo_root` |
 | `SPIRA_GH_INTAKE_REPO` | *(empty)* | `owner/repo` to ingest in addition to every registered repo with a GitHub remote; empty with none registered is a real no-op, exit 0 |
 | `SPIRA_GH_INTAKE_BEAD_REPO` | `repo`'s basename | the `repo:` label and repo-map lookup |
-| `SPIRA_SCOPE_LABEL` | `spira` | the label a fayth's predicate reads |
+| `SPIRA_SCOPE_LABEL` | `spira` | the label a rune's predicate reads |
 | `SPIRA_PLAN_LABEL` | `plan` | the lane label |
 | `SPIRA_GH_INTAKE_PRIORITY` | `1` | must be `0`-`4`, checked before anything else runs |
 | `SPIRA_GH_INTAKE_API` | `https://api.github.com` | the API base, for a fixture server |
@@ -100,7 +100,7 @@ refusal, exit 2 — unchanged from the bash.
    `operator`, `--kind note`, listing each with a 3-line body preview.
 7. **The post-check** (real run only): re-read the store; any `github:`-prefixed bead now
    missing the scope label is a refusal (exit 1) naming every offending id — filed work that
-   no fayth can claim is treated as not having been filed correctly at all.
+   no rune can claim is treated as not having been filed correctly at all.
 
 ### 3.4 Ports (`ports.rs`)
 
@@ -145,11 +145,11 @@ covers the closeout half's own 20.
 
 - `systemd/spira-gh-intake.service`: `ExecStart=@SPIRA_PROD@/gh-intake.sh` →
   `ExecStart=@SPIRA_PROD_ROOT@/bin/gh-intake` (sp-gypjk's own convention — the same one
-  `sentinel`/`queue`/`aeon`/... already use). `gh-intake` is a workspace `[[bin]]` target,
+  `sentinel`/`queue`/`dwarf`/... already use). `gh-intake` is a workspace `[[bin]]` target,
   so `build-tarball.sh --workspace`/`--bin-dir` ships it with no new flag.
 - `spira/lib-test-install.sh`'s `INSTALL_FIXTURE_UNIT_BINS` gained `gh-intake` so the
   install-fixture suites stage a stub at `bin/gh-intake` the same way they already do for
-  `sentinel`/`queue`/`aeon`.
+  `sentinel`/`queue`/`dwarf`.
 - `spira/test-gh-intake.sh` is rewritten as a thin T1 wiring smoke test of the real binary
   (§5 lists what it and the cargo suite each cover) rather than sourcing the deleted
   script's functions under `GH_INTAKE_LIB=1`.
@@ -217,7 +217,7 @@ are the same algorithm. Unifying them would be a behaviour change this bead does
 sp-31hjr gave sentinel (`pass.rs`) and landing-pass (`real.rs`'s `RealBeads::ask_open`)
 each their own native copy rather than a shared library dependency between binaries; this
 crate's `closeout.rs` copy is the third, following the same precedent (see also
-`sending`'s/`cockpit-collect`'s/`sentinel`'s own separate copies of the subject-grep
+`hel`'s/`cockpit-collect`'s/`sentinel`'s own separate copies of the subject-grep
 "landed" shape). lib.sh's bash copy retires outright with this bead — no caller is left
 anywhere in the tree.
 

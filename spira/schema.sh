@@ -23,7 +23,7 @@
 # Declared here: the KINDS, the custom STATUSES, and the state DIMENSIONS. These are our
 # model; nothing else in the world knows them, so this file is their source.
 #
-# Asked, never written down: personas and their partitions (the .fayth files), the repository
+# Asked, never written down: personas and their partitions (the .rune files), the repository
 # map, and the type/status vocabularies the bd binary will actually accept. `bead.sh contract`
 # already works this way and the reason generalises — a list written down is a list that goes
 # stale silently, which is how world.sh came to miss nine timers.
@@ -74,7 +74,7 @@ SCHEMA_STATUSES="approved premise_rejected retired archived"
 # the source of truth with the label as a lookup cache.
 #
 # A dimension with no enumerable value set declares `*`.
-SCHEMA_DIMS="repo:* severity:* branch:* fayth:* lane:* gate:none,awaiting,red,green"
+SCHEMA_DIMS="repo:* severity:* branch:* rune:* lane:* gate:none,awaiting,red,green"
 
 # NAMES — every configurable label name, with its accessor. The value comes from conf.sh so
 # an operator's override is honoured; the DEFAULT lives here and nowhere else.
@@ -87,7 +87,7 @@ schema_name() {          # schema_name <key> -> the name; exit 2 on an undeclare
         # THE TWO CORE PARTITION LABELS — one per persona that works the plan. Declared here
         # so a caller that needs to say "plan bead" or "incident bead" reads the configured
         # value through a validated name rather than through a literal it has to remember and
-        # keep consistent with the fayth file. An undeclared key returns 2 (below); if a
+        # keep consistent with the rune file. An undeclared key returns 2 (below); if a
         # caller asks for a name not on this list, the error is immediate rather than a silent
         # empty query that returns [] from bd and reads as "no work".
         plan)          printf '%s' "${SPIRA_PLAN_LABEL:-plan}" ;;
@@ -184,9 +184,9 @@ schema_contract() {
     echo "NAMES — one accessor each; the literal appears in no other file"
     for k in $(schema_names); do printf '  %-15s %s\n' "$k" "$(schema_name "$k")"; done
     echo
-    echo "PERSONAS — asked of the chamber, never written down here"
-    if command -v fayth_names >/dev/null 2>&1; then
-        for k in $(fayth_names 2>/dev/null); do printf '  %-9s %s\n' "$k" "$(fayth_get "$k" FAYTH_LABELS '' 2>/dev/null)"; done
+    echo "PERSONAS — asked of the runes, never written down here"
+    if declare -F rune_names >/dev/null 2>&1; then
+        for k in $(rune_names 2>/dev/null); do printf '  %-9s %s\n' "$k" "$(rune_get "$k" RUNE_LABELS '' 2>/dev/null)"; done
     else echo "  (lib.sh unavailable)"; fi
     echo
     echo "STORE — what bd actually carries right now"

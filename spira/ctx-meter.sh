@@ -103,7 +103,7 @@ tp = ""
 # The status-line hook runs ctx-meter.sh on every assistant message AND on a timer, so it
 # writes a pointer file carrying the transcript it resolved. env mode reads that pointer
 # instead of guessing, and falls back to `-` when the pointer is older than the session-idle
-# threshold. The alternative — newest-mtime across all projects — reports an aeon's worktree
+# threshold. The alternative — newest-mtime across all projects — reports a dwarf's worktree
 # transcript every time one is running, which is most of the time.
 ptr_path = os.path.join(state_dir, "ctx-operator.ptr")
 ptr_age = -1   # -1 = no pointer; published as SP_CTX_AGE so the pane says how fresh it is
@@ -116,7 +116,7 @@ if mode == "env":
     else:
         # READ THE OPERATOR POINTER. The status-line hook persists the operator's transcript
         # path on every run; env mode reads that rather than scanning all projects, because
-        # the newest transcript on the box is almost always an aeon's.
+        # the newest transcript on the box is almost always a dwarf's.
         try:
             with open(ptr_path) as fh:
                 ptr = dict(l.rstrip("\n").split("=", 1) for l in fh if "=" in l)

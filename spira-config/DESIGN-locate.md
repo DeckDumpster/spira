@@ -25,14 +25,14 @@ touched by this change (no code path here writes anything).
 
 `spira-config` already has a Rust-side locator, `discover()` (`lib.rs`, landed by sp-cx0mj on
 2026-09-28, "spira-config is the only door onto spira.toml" for **Rust** readers — gate, queue,
-queue-watch, rebase-stale, release, round-vm, spira-claim, spira-world's `aeons`, strand, and
+queue-watch, rebase-stale, release, round-vm, spira-claim, spira-world's `dwarves`, strand, and
 both of testenv's call sites). The next day, sp-9hwim rewrote `conf.sh`'s bash locator to stop
 offering `$SPIRA_REPO/spira.toml` as a candidate at all ("design runtime-is-a-release #5: nothing
 reads or writes the checkout at runtime") — and never touched `discover()`. The two Rust and
 bash locators have disagreed since 2026-09-29 22:52: eleven Rust binaries still read a
 `spira.toml` beside `$SPIRA_REPO` if one happens to be there (a worktree, a fixture checkout),
 while every bash script no longer will. A box where `$SPIRA_REPO` is set and has its own stray
-`spira.toml` — any aeon worktree, any gate tree — is exactly the shape that produces it.
+`spira.toml` — any dwarf worktree, any gate tree — is exactly the shape that produces it.
 
 `discover()` also returns the `$SPIRA_TOML`-pinned path **unconditionally**, even when that file
 does not exist, where `conf.sh`'s `spira_toml_file` checks `-f` first and returns empty (no
@@ -89,7 +89,7 @@ pub fn locate(explicit: Option<PathBuf>) -> LocateOutcome
 unchanged) and becomes `locate(explicit).found()` — `Found` only; `NotFound` and `LegacyOnly`
 both collapse to `None`, which is exactly how every existing caller already treats absence
 (`gate::gate_mode`, `queue`, `queue-watch`, `rebase-stale`, `release`, `round-vm`,
-`spira-claim::store`, `spira-world::aeons`, `strand::config`, `testenv` ×2 — audited below).
+`spira-claim::store`, `spira-world::dwarves`, `strand::config`, `testenv` ×2 — audited below).
 
 ### 2.3 CLI (`main.rs`)
 
@@ -118,14 +118,14 @@ that calls `get`/`export`/`validate` already resolves its own path and passes it
 
 1. **Drop the `$SPIRA_REPO` tier from `discover()`.** Matches `conf.sh` as landed by sp-9hwim.
    Audited every one of its eleven callers (gate, queue, queue-watch, rebase-stale, release,
-   round-vm, spira-claim, spira-world's `aeons`, strand, testenv ×2): none has a test that
+   round-vm, spira-claim, spira-world's `dwarves`, strand, testenv ×2): none has a test that
    plants a `spira.toml` under `$SPIRA_REPO` expecting `discover` to find it there (the one test
    that did, in `spira-config` itself, is rewritten below, not ported). `cargo test` across all
    eleven crates after the change is this bead's parity proof for Rust readers.
 2. **Check `$SPIRA_TOML`'s existence before returning it.** `conf.sh` has always done this;
    `discover()` had not. Fixes `gate::gate_mode`'s crash-on-bad-pin into the fall-to-defaults
    its own comment says it should be.
-3. **The legacy `spira.conf` auto-convert, and the persona/fayth regeneration
+3. **The legacy `spira.conf` auto-convert, and the persona/rune regeneration
    `spira_toml_resolve` layers on top of its own locator, are not ported.** Both are *write*
    behaviour on top of "which file wins" — sp-usxfl already retired every writer that targets
    `spira.conf`, so the auto-convert's only remaining job is a one-time read on a box that has

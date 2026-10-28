@@ -13,13 +13,13 @@
 #
 # CATEGORIES TESTED
 #
-#   unclaimable          fayth:ops on spira,plan labels — builder excluded by preference,
+#   unclaimable          rune:ops on spira,plan labels — builder excluded by preference,
 #                        ops excluded by its own partition. Fifteen-hour strand, 2026-09-09.
 #
 #   ask-no-overseer      SPIRA_ASK_LABEL without overseer: invisible to the decisions pane
-#                        and excluded from every fayth predicate.
+#                        and excluded from every rune predicate.
 #
-#   unmapped-repo        repo:bogus not in the repo-map; aeon.sh refuses at claim time.
+#   unmapped-repo        repo:bogus not in the repo-map; dwarf.sh refuses at claim time.
 #
 #   ci-stuck             awaiting-ci on a push-mode repo; no run will ever report.
 #
@@ -37,7 +37,7 @@
 # with the database built once.
 #
 # tier: T2
-# covers: spira/lib.sh cockpit-collect/src/* strand/src/closereason.rs spira/chamber/builder.fayth spira/chamber/ops.fayth UC-ops-detection-remediation-29
+# covers: spira/lib.sh cockpit-collect/src/* strand/src/closereason.rs spira/runes/builder.rune spira/runes/ops.rune UC-ops-detection-remediation-29
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -59,12 +59,12 @@ RUN="$TMP/run"; mkdir -p "$RUN"
 
 # run_ll: run detect_livelocked through the cockpit seam.
 run_ll() {    # run_ll [KEY=val ...]  — extra args override env vars
-    # The complete fixture declares a non-empty SPIRA_CHAMBER; nothing derives it from
+    # The complete fixture declares a non-empty SPIRA_RUNES_DIR; nothing derives it from
     # SPIRA_HOME any more (sfail round 2, pattern 6) — the unclaimable/ask-no-overseer
-    # categories read the real chamber (builder.fayth/ops.fayth), which needs this.
+    # categories read the real runes (builder.rune/ops.rune), which needs this.
     tl_config SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_RUN="$RUN" SPIRA_REPO_MAP="$MAP" \
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci SPIRA_SPIKE_LABEL=spike \
-        SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" SPIRA_CHAMBER="$HERE/chamber"
+        SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" SPIRA_RUNES_DIR="$HERE/runes"
     env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_DB="$SPIRA_DB" \
@@ -94,7 +94,7 @@ echo "ONE SEED, every category's positive and negative control side by side:"
 testdb_reset
 testdb_seed <<JSONL
 {"id":"sp-ll-good","title":"claimable builder bead","status":"open","issue_type":"task","labels":["plan","repo:pushrepo","${SPIRA_SCOPE_LABEL}"]}
-{"id":"sp-ll-unc","title":"unclaimable fayth:ops on plan","status":"open","issue_type":"task","labels":["fayth:ops","plan","repo:pushrepo","${SPIRA_SCOPE_LABEL}"]}
+{"id":"sp-ll-unc","title":"unclaimable rune:ops on plan","status":"open","issue_type":"task","labels":["rune:ops","plan","repo:pushrepo","${SPIRA_SCOPE_LABEL}"]}
 {"id":"sp-ll-nr","title":"needs-ryan no overseer","status":"open","issue_type":"task","labels":["needs-ryan","${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"]}
 {"id":"sp-ll-nrok","title":"needs-ryan with overseer","status":"open","issue_type":"task","labels":["needs-ryan","overseer","${SPIRA_SCOPE_LABEL}","plan","repo:pushrepo"]}
 {"id":"sp-ll-unmap","title":"unmapped repo label","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan","repo:bogusrepo"]}
@@ -112,8 +112,8 @@ out="$(run_ll)"
 echo "  — claimable bead is never flagged:"
 nowant "claimable bead not in livelock output" "sp-ll-good" "$out"
 
-echo "  — unclaimable: fayth:ops on spira,plan labels:"
-# builder matches spira,plan but is excluded by fayth:ops; ops is excluded by its own
+echo "  — unclaimable: rune:ops on spira,plan labels:"
+# builder matches spira,plan but is excluded by rune:ops; ops is excluded by its own
 # partition (spira,incident). This is the fifteen-hour strand of 2026-09-09.
 want "unclaimable: LIVELOCK row present" "LIVELOCK sp-ll-unc" "$out"
 want "unclaimable: category named"      "unclaimable"        "$out"

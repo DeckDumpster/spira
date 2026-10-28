@@ -167,7 +167,7 @@ pub fn run(now: i64, bd_bin: &str, db: &str, home_repo: &str, incident_sh: &str,
         match finding {
             Outcome::Unclaimed { id, external_ref } => {
                 let body = format!(
-                    "Czar-trigger bead {id} (class: {external_ref}) has been open for more than {} minutes without being claimed or closed.\n\nThe czar's summoning budget is 5 minutes. If the czar lane is not running, check: SPIRA_FAYTHS, SPIRA_LANES, and the spira-aeon-czar unit.\n\nBead: {id}\nClass: {external_ref}\n",
+                    "Czar-trigger bead {id} (class: {external_ref}) has been open for more than {} minutes without being claimed or closed.\n\nThe czar's calling budget is 5 minutes. If the czar lane is not running, check: SPIRA_RUNES, SPIRA_LANES, and the spira-dwarf-czar unit.\n\nBead: {id}\nClass: {external_ref}\n",
                     cfg.unclaimed_mins
                 );
                 let f = Finding::new(

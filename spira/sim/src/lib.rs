@@ -7,7 +7,7 @@ pub mod probe;
 pub mod proctrace;
 pub mod roundvm;
 pub mod runstate;
-pub mod summon;
+pub mod call;
 pub mod trace;
 pub mod verbs;
 pub mod world;

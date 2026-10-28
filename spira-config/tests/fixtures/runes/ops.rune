@@ -1,0 +1,128 @@
+# ops.rune — the Ops persona: receives production events, works out what is wrong, and
+# files it. It is the only persona whose work arrives from outside the plan.
+#
+# IT DOES NOT REPAIR (per the operator, 2026-09-18). Ops used to match a runbook and
+# execute it. That ended when an Ops dwarf, told it must produce a fix, deleted every
+# branch in the repository and destroyed 24 beads of unlanded work (sp-q27cp). Its
+# output now is a diagnosis in the graph: a bead a builder can pick up, gated and
+# reviewed like any other change. What it may still do by hand is read.
+#
+# A rune is a persona DEFINITION; a dwarf is one called instance of it. Four things:
+# a predicate carving its partition out of the graph, the memories it must read, the tools
+# it may use, and what wakes it.
+
+RUNE_NAME=ops
+RUNE_DESC="Ops — the diagnostician: claims incidents and sweeps, works out what is wrong, and files it"
+
+# The partition. Incidents are filed by incident.sh from a systemd OnFailure, never by
+# hand and never by the plan, so this can only ever see production events. The escalation
+# label is excluded for the same reason it is everywhere: an escalation must never be dispatched as
+# if it were work.
+#
+# SPIRA_INCIDENT_LABEL, not the literal "incident". The same reason builder uses
+# SPIRA_PLAN_LABEL: a literal cannot be changed at runtime and cannot be validated at write
+# time, while a configured variable keeps the rune, the sentinel and every reader in
+# agreement on which label means "production event for ops" (law-schema-over-code).
+RUNE_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_INCIDENT_LABEL"
+RUNE_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"
+
+# BOTH BOOKS. Statutes are how to behave; SOPs are how to fix — and Ops is the only
+# persona that needs the second. The builder reads `law-` alone, which is what keeps a
+# growing shelf of runbooks out of the context of every agent that will never execute one.
+RUNE_MEMORY_PREFIXES="law-,sop-"
+
+# Ops may write an SOP whenever it learns something, and should; no close is undone for
+# lack of one. Nothing in the dwarf binary requires a runbook any more.
+
+# NO RUNE_REPO. The repository comes from the BEAD — a `repo:<name>` label resolved
+# through .claude/spira/repo-map — because a repository pinned per persona is a
+# persona that can only ever work one of them, and every rune here named the same
+# one. A bead with no `repo:` label is the home repo, which is what Spira's own plan
+# beads are.
+# HAIKU (per the operator, 2026-09-08). Ops recognises a known failure off the shelf and
+# writes down what it found — recognition and description, which is the shape the small
+# model is for. It no longer executes the runbook it matched; see the header. It is also the persona that runs most often: it wakes on every sweep whether or not
+# anything is wrong, and one such no-op sweep was measured at 1.8M cache-read tokens and
+# $2.23 to conclude the pipeline was fine. The account's five-hour window is Spira's real
+# throughput ceiling, so a persistent role spending it on routine confirmation takes capacity
+# from the builders (law-alerts-must-be-actionable, in its cost form).
+#
+# THE TRADE IS REAL AND ACCEPTED. The subtlest Ops session so far — the one that worked out
+# that a sweep's recurrence count measures ten-minute intervals rather than failed fixes —
+# was diagnosis, not procedure, and is the kind of pass this may do less well. That is why
+# an Ops session that learns something should leave an SOP behind, so what a cheaper model
+# works out once is on the shelf for every session after it.
+#
+# VERIFIED, NOT ASSUMED: `claude --model claude-haiku-4-5-20251001 -p ...` answers on this
+# box, and the DATED id is the one that answers — the catalog at CLI 2.1.263 rejects
+# claude-haiku-5 and claude-haiku-4-6 outright. An id the CLI rejects does not fail loudly:
+# every call dies and the role looks merely quiet, which is the shape of outage this
+# harness is worst at noticing. Probe a candidate id before writing it here.
+RUNE_MODEL=claude-haiku-4-5-20251001
+RUNE_MAX_CONCURRENT=1
+
+# THE OPS LANE — the declared configuration for what RUNE_ROLE=party expressed implicitly.
+# Ops is in the ops lane, which means it draws from its own RUNE_MAX_CONCURRENT rather
+# than from SPIRA_MAX_DWARVES. The builder pool can be 100% occupied and Ops still has room,
+# because a lane rune is never competing for the pool's slots.
+#
+# This is the shippe example of a priority lane: a persona that must be reachable even when
+# the rest of the party is fully engaged. The ops lane is declared in SPIRA_LANES (default:
+# "ops"), and a user who wants ops-level scheduling for their own persona names their lane
+# there and sets RUNE_LANE=<name> in their rune file — without editing this one.
+#
+# WHY RUNE_ROLE=party IS GONE. The old property was a binary: party-or-task. A lane is a
+# named partition that any number of runes can join, with configurable semantics. The
+# mechanism is the same — not drawn from SPIRA_MAX_DWARVES — but the declaration is now
+# something an operator can read, set, and reason about rather than an opaque per-rune flag.
+RUNE_LANE=ops
+
+# BOUNDED BY THE SWEEP INTERVAL, which is the number that actually constrains this persona.
+# A sweep arrives every `OnUnitActiveSec` in systemd/spira-watchtower.timer — THIRTY MINUTES,
+# and that timer is the only place the cadence is written; there is no SPIRA_WATCH_EVERY key
+# to read. An Ops session that can run for an hour, which is what the default
+# TIMEOUT_SECONDS of 3600 allows, would still be working one snapshot while the next arrived
+# behind it. Observed at six minutes and climbing on the first live sweep. Sessions must not
+# outlive the cadence that produces their work.
+#
+# EIGHT MINUTES, HARD. systemd kills the unit at TIMEOUT_SECONDS, so this is a wall rather
+# than a request.
+#
+# IT IS NOT RAISED TO MATCH THE WIDER INTERVAL, and that is the decision rather than an
+# oversight. A longer wall would only buy longer sessions, and a longer session is more spend
+# on the same routine confirmation — the opposite of why the cadence widened. The invariant
+# the pair has to satisfy is that a session ends before the next sweep arrives, and eight
+# under thirty satisfies it with room that ten never gave it.
+#
+# THE BOUND IS A FEATURE, not a compromise. An Ops dwarf that cannot finish must write what it
+# found into the graph as beads and let the next sweep continue — which is what we want it
+# doing anyway. Findings held in a session that gets killed are lost; findings cut into beads
+# survive and are what the next dwarf starts from.
+#
+# THE LEASE MATCHES THE WALL, so a killed session's bead is reclaimable promptly rather than
+# sitting held while the next sweep waits on work nobody is doing.
+RUNE_TIMEOUT_SECONDS=480
+RUNE_LEASE_MINUTES=10
+RUNE_HEARTBEAT_SECONDS=30
+RUNE_LEASE_SECONDS=600
+
+# DIAGNOSE AND FILE — Ops does not repair (per the operator, 2026-09-18).
+#
+# Edit and Write are gone. Ops reads the machine, works out what is wrong, and puts
+# that into the graph as a bead for a builder to work. It does not change the
+# repository, and it has no business touching a branch, a worktree or a ref: it holds
+# a worktree per bead, but a worktree isolates the WORKING TREE and nothing else —
+# every worktree in this repository shares one ref namespace and one object store, so
+# a single `git branch -D` from inside one reaches every other dwarf's unlanded work.
+# That is how 24 beads were destroyed (sp-q27cp), and the reference-transaction hook
+# now refuses it whoever runs it.
+#
+# Bash is restricted to a diagnostic allowlist (sp-39pqw): reads the machine and
+# records findings in the graph. Not in the list: rm, git write operations, systemd
+# mutations. The ref guard (sp-q27cp) remains the floor for git refs.
+RUNE_TOOLS="Bash(systemctl status*),Bash(systemctl show*),Bash(systemctl list-*),Bash(systemctl is-*),Bash(systemctl cat*),Bash(journalctl*),Bash(ls*),Bash(cat *),Bash(head *),Bash(tail *),Bash(grep *),Bash(awk *),Bash(find *),Bash(wc *),Bash(sort *),Bash(uniq *),Bash(sed *),Bash(python3 *),Bash(echo *),Bash(printf *),Bash(date*),Bash(basename *),Bash(dirname *),Bash(bd *),Bash(git log*),Bash(git show*),Bash(git status*),Bash(git diff*),Bash(git fetch*),Bash(git for-each-ref*),Bash(git rev-parse*),Bash(git -C * log*),Bash(git -C * show*),Bash(git -C * status*),Bash(git -C * diff*),Bash(git -C * fetch*),Bash(git -C * for-each-ref*),Bash(git -C * rev-parse*),Bash(*sop*),Bash(*incident.sh*),Bash(*mail *),Bash(*testenv *),Read,Glob,Grep,TodoWrite"
+RUNE_PROJECT_INSTRUCTIONS=none
+
+# REPLACE: Ops reads, diagnoses, and files — never writes code. The default coding
+# guidance adds noise and competes with the standing constraints.
+RUNE_SYSTEM_PROMPT=replace

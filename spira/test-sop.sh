@@ -21,11 +21,11 @@
 #      inside a worktree of `SPIRA_WIKI` lands the page in the WORKTREE, never the shared
 #      checkout every other worktree hangs off (the exact defect the bash's own header
 #      warned about).
-#   4. the chamber briefs and `aeon`'s rendered "Runbooks on the shelf" hint both name a
+#   4. the runes briefs and `dwarf`'s rendered "Runbooks on the shelf" hint both name a
 #      bare `sop`, not a deleted `sop.sh` path.
 #
 # tier: T1
-# covers: sop/src/*.rs spira/chamber/ops.md spira/chamber/ops.fayth spira/chamber/concierge.md
+# covers: sop/src/*.rs spira/runes/ops.md spira/runes/ops.rune spira/runes/concierge.md
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -184,11 +184,11 @@ want "the failure names the git step" "failed" "$out"
 rm -f "$T/wiki-remote.git/hooks/pre-receive"
 
 echo
-echo "8. the chamber briefs and aeon's rendered hint name a bare sop, not a deleted sop.sh"
-if grep -rqE '(^|[^.])\bsop\.sh\b' "$HERE/chamber/ops.md" "$HERE/chamber/ops.fayth" "$HERE/chamber/concierge.md" 2>/dev/null; then
-    bad "no chamber brief names sop.sh" "$(grep -rnE '(^|[^.])\bsop\.sh\b' "$HERE/chamber/ops.md" "$HERE/chamber/ops.fayth" "$HERE/chamber/concierge.md" 2>/dev/null)"
+echo "8. the runes briefs and dwarf's rendered hint name a bare sop, not a deleted sop.sh"
+if grep -rqE '(^|[^.])\bsop\.sh\b' "$HERE/runes/ops.md" "$HERE/runes/ops.rune" "$HERE/runes/concierge.md" 2>/dev/null; then
+    bad "no runes brief names sop.sh" "$(grep -rnE '(^|[^.])\bsop\.sh\b' "$HERE/runes/ops.md" "$HERE/runes/ops.rune" "$HERE/runes/concierge.md" 2>/dev/null)"
 else
-    ok "no chamber brief names sop.sh"
+    ok "no runes brief names sop.sh"
 fi
 if [ -f "$HERE/sop.sh" ]; then
     bad "sop.sh is deleted" "still present at $HERE/sop.sh"

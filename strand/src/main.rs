@@ -12,8 +12,8 @@
 //! functions call, plus the direct target for any other caller (`bead`, `cockpit-collect`
 //! use this crate in-process instead):
 //!
-//!   strand aeon-alive <pidfile>            strand aeons-live-total
-//!   strand aeon-count <fayth> [exclude]     strand aeons-live-lanes
+//!   strand dwarf-alive <pidfile>            strand dwarves-live-total
+//!   strand dwarf-count <rune> [exclude]     strand dwarves-live-lanes
 //!
 //! lib.sh family T-b (wave 4.29, sp-8ofmt) — the stranded-work detectors its now-shimmed
 //! functions call, plus the direct target for `groomer`/`mimir-trigger`/`cockpit-collect`
@@ -32,7 +32,7 @@ strand check             the timer path: act where the fix is mechanical, escala
 strand check --dry-run   classify and print, change nothing
 strand check --from <f>  classify a saved TSV instead of the live graph
 strand throttle-state    print \"open|shut|unreadable<TAB>detail\" — what classify_one
-                         reads before calling withheld aeons a strand
+                         reads before calling withheld dwarves a strand
 ";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -103,46 +103,46 @@ fn cfg_or_die() -> config::Config {
     }
 }
 
-/// `aeon_alive <pidfile>` (lib.sh, wave 4.23 sp-0ffox): the one canonical implementation —
+/// `dwarf_alive <pidfile>` (lib.sh, wave 4.23 sp-0ffox): the one canonical implementation —
 /// `bead` and `cockpit-collect` call this crate in-process instead of keeping their own
 /// copy; lib.sh's bash callers (`hold.sh`) get a one-line shim onto this verb.
-fn cmd_aeon_alive(args: Vec<String>) -> i32 {
+fn cmd_dwarf_alive(args: Vec<String>) -> i32 {
     if args.len() != 1 {
-        return die("aeon-alive <pidfile>");
+        return die("dwarf-alive <pidfile>");
     }
-    i32::from(!probe::aeon_alive(std::path::Path::new(&args[0])))
+    i32::from(!probe::dwarf_alive(std::path::Path::new(&args[0])))
 }
 
-/// `aeon_count <fayth> [exclude-unit]` (lib.sh): live aeons of one persona. `exclude-unit`
+/// `dwarf_count <rune> [exclude-unit]` (lib.sh): live dwarves of one persona. `exclude-unit`
 /// is the caller's own transient unit (sp-0hnm6's fix), matched only in the systemd-run
 /// branch, exactly as the bash original.
-fn cmd_aeon_count(args: Vec<String>) -> i32 {
+fn cmd_dwarf_count(args: Vec<String>) -> i32 {
     if args.is_empty() || args.len() > 2 {
-        return die("aeon-count <fayth> [exclude-unit]");
+        return die("dwarf-count <rune> [exclude-unit]");
     }
     let cfg = cfg_or_die();
     let exclude = args.get(1).filter(|s| !s.is_empty()).map(String::as_str);
-    print!("{}", probe::aeon_count(&cfg, &args[0], exclude));
+    print!("{}", probe::dwarf_count(&cfg, &args[0], exclude));
     0
 }
 
-/// `aeons_live_total` (lib.sh): every aeon, across every persona and lane.
-fn cmd_aeons_live_total(args: Vec<String>) -> i32 {
+/// `dwarves_live_total` (lib.sh): every dwarf, across every persona and lane.
+fn cmd_dwarves_live_total(args: Vec<String>) -> i32 {
     if !args.is_empty() {
-        return die("aeons-live-total");
+        return die("dwarves-live-total");
     }
     let cfg = cfg_or_die();
-    print!("{}", probe::aeons_live_total(&cfg));
+    print!("{}", probe::dwarves_live_total(&cfg));
     0
 }
 
-/// `aeons_live_lanes` (lib.sh): every lane aeon, across all lane fayths.
-fn cmd_aeons_live_lanes(args: Vec<String>) -> i32 {
+/// `dwarves_live_lanes` (lib.sh): every lane dwarf, across all lane runes.
+fn cmd_dwarves_live_lanes(args: Vec<String>) -> i32 {
     if !args.is_empty() {
-        return die("aeons-live-lanes");
+        return die("dwarves-live-lanes");
     }
     let cfg = cfg_or_die();
-    print!("{}", probe::aeons_live_lanes(&cfg));
+    print!("{}", probe::dwarves_live_lanes(&cfg));
     0
 }
 
@@ -242,10 +242,10 @@ fn main() {
     if let Some(verb) = argv.first().cloned() {
         let mut rest = || argv.split_off(1);
         let rc = match verb.as_str() {
-            "aeon-alive" => Some(cmd_aeon_alive(rest())),
-            "aeon-count" => Some(cmd_aeon_count(rest())),
-            "aeons-live-total" => Some(cmd_aeons_live_total(rest())),
-            "aeons-live-lanes" => Some(cmd_aeons_live_lanes(rest())),
+            "dwarf-alive" => Some(cmd_dwarf_alive(rest())),
+            "dwarf-count" => Some(cmd_dwarf_count(rest())),
+            "dwarves-live-total" => Some(cmd_dwarves_live_total(rest())),
+            "dwarves-live-lanes" => Some(cmd_dwarves_live_lanes(rest())),
             "detect-livelocked" => Some(cmd_detect_livelocked(rest())),
             "detect-incident-needs-builder" => Some(cmd_detect_incident_needs_builder(rest())),
             "detect-invalid-closed" => Some(cmd_detect_invalid_closed(rest())),

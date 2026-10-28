@@ -15,7 +15,7 @@
 # plants both shapes.
 #
 # ALSO ABSORBED (coverage row 12 / cluster 4, formerly test-cockpit-unadopted-queue.sh): an
-# aeon following sop-unadopted-refs-stale-db once deleted spira/queue/<stamp> while its CI was
+# dwarf following sop-unadopted-refs-stale-db once deleted spira/queue/<stamp> while its CI was
 # running. The probe counted the branch as SP_UNADOPTED (no bead resolves for a queue suffix),
 # the watchtower filed an incident, and the SOP said to delete it. The local deletion did no
 # damage only because origin kept the ref. (sp-ctag9) The reapable set is defined positively:
@@ -183,7 +183,7 @@ unsent() {    # unsent <fixture-file>
     # SPIRA_QUEUE_BATCH_WAIT: the complete fixture's own default is 31536000s (a year), not
     # the 1800s this suite's BATCHED-too-long section assumes — declare the real value.
     tl_config SPIRA_HOME_REPO=alpha SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t SPIRA_QUEUE_DIR="$RUN/queue" \
+        SPIRA_REPO_MAP="$MAP" SPIRA_RUNES=t SPIRA_QUEUE_DIR="$RUN/queue" \
         SPIRA_QUEUE_BATCH_WAIT=1800
     env -i SPIRA_PANE_READ_TTL=0 SPIRA_HISTORY_READ_TTL=0 PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_TOML="$SPIRA_TOML" \
@@ -227,7 +227,7 @@ nowant "SP_UNADOPTED_NAMES excludes orphan work" "tmp-stray" "$(val SP_UNADOPTED
 # ======================================================================================
 # sp-ghi5q: spira/round-NN has no bead and its commits are (by design) not yet on base
 # while a round is in flight — the same shape as tmp-stray above, so a name-blind probe
-# folds it into SP_ORPHAN_WORK, permanently, every round. sending.sh:377 already excludes
+# folds it into SP_ORPHAN_WORK, permanently, every round. hel.sh:377 already excludes
 # round-* branches for exactly this reason; cockpit-collect's classifier did not.
 git -C "$ALPHA" checkout -q -b spira/round-81
 git -C "$ALPHA" commit --allow-empty -m "round 81 in flight" -q

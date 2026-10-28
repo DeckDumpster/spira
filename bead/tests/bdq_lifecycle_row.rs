@@ -83,6 +83,13 @@ fn a_bead_created_closed_gets_no_row() {
 }
 
 #[test]
+fn a_no_row_type_create_gets_no_row() {
+    let r = bdq("echo sp-probe", "exit 0", &["create", "Heimdall write probe", "--type", "event", "--labels", "heimdall:probe,overseer", "--silent"]);
+    assert_eq!(r.code, 0, "{}", r.stderr);
+    assert_eq!(r.lc_calls, "", "a probe is not work: no claimable row");
+}
+
+#[test]
 fn json_create_output_is_read() {
     let r = bdq("echo '{\"id\":\"sp-js\"}'", "exit 0", &["create", "a plain title", "--json"]);
     assert_eq!(r.lc_calls, "create-bead sp-js\n");
@@ -94,9 +101,9 @@ fn json_create_output_is_read() {
 #[test]
 fn a_description_edit_is_refused_by_the_lifecycle_claim_not_bd_status() {
     let bd = "case \"$3\" in show) echo '[{\"id\":\"sp-c\",\"status\":\"open\",\"assignee\":\"\"}]';; *) exit 0;; esac";
-    let lc = "echo '{\"bead\":{\"bead_id\":\"sp-c\",\"state\":\"WORKING\",\"holder\":\"aeon-7\",\"lease_until\":\"4102444800\",\"holds\":[]},\"delivery\":null}'";
+    let lc = "echo '{\"bead\":{\"bead_id\":\"sp-c\",\"state\":\"WORKING\",\"holder\":\"dwarf-7\",\"lease_until\":\"4102444800\",\"holds\":[]},\"delivery\":null}'";
     let r = bdq(bd, lc, &["update", "sp-c", "--description", "new words"]);
     assert_eq!(r.code, 1, "stdout={} stderr={}", r.stdout, r.stderr);
-    assert!(r.stderr.contains("claimed by aeon-7"), "{}", r.stderr);
+    assert!(r.stderr.contains("claimed by dwarf-7"), "{}", r.stderr);
     assert!(r.lc_calls.contains("show sp-c"), "{}", r.lc_calls);
 }

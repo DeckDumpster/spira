@@ -15,7 +15,7 @@ test = false
 
 [dependencies]
 spira-config = { path = "../spira-config" }
-aeon = { path = "../aeon" }
+dwarf = { path = "../dwarf" }
 serde_json = "1"
 
 [dev-dependencies]

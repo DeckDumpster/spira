@@ -1,0 +1,14 @@
+[package]
+name = "runtime"
+version = "0.1.0"
+edition = "2021"
+description = "runtime — the event/handler contract, the Journal trait, the scheduler, the in-process executor and the conformance suite every executor passes."
+
+[dependencies]
+lifecycle = { path = "../lifecycle" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

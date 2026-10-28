@@ -161,8 +161,8 @@ pub trait Tools {
 }
 
 pub trait Procs {
-    /// lib.sh `holder_alive`: a live hold pidfile, or a live aeon pidfile whose process is
-    /// the aeon binary (or the retired aeon.sh).
+    /// lib.sh `holder_alive`: a live hold pidfile, or a live dwarf pidfile whose process is
+    /// the dwarf binary (or the retired dwarf.sh).
     fn holder_alive(&self, id: &str) -> bool;
 }
 

@@ -34,8 +34,8 @@ pub const HOME_REPO_ROW: &[(&str, &str, &str)] = &[
     ("home_repo_base", "the ref its work lands on", "origin/main"),
 ];
 
-/// Where a fresh install's aeon warm slots live when the operator names no other base.
-pub const DEFAULT_AEON_WARM_BASE: &str = "/var/tmp/spira-aeon-warm";
+/// Where a fresh install's dwarf warm slots live when the operator names no other base.
+pub const DEFAULT_DWARF_WARM_BASE: &str = "/var/tmp/spira-dwarf-warm";
 
 /// What [`ensure`] did.
 #[derive(Debug, PartialEq, Eq)]
@@ -119,9 +119,9 @@ pub fn render(answers: &BTreeMap<String, String>, out: &Path, reg: &Registry<'_>
     if a.get("lc_password_file").is_none_or(|v| v.is_empty()) {
         a.insert("lc_password_file".into(), crate::resolve::lc_credential_default(reg.env));
     }
-    // Aeon sessions refuse to start with no warm base: written once here, never defaulted at runtime.
-    if a.get("aeon_warm_base").is_none_or(|v| v.is_empty()) {
-        a.insert("aeon_warm_base".into(), DEFAULT_AEON_WARM_BASE.into());
+    // Dwarf sessions refuse to start with no warm base: written once here, never defaulted at runtime.
+    if a.get("dwarf_warm_base").is_none_or(|v| v.is_empty()) {
+        a.insert("dwarf_warm_base".into(), DEFAULT_DWARF_WARM_BASE.into());
     }
     // The bd every process runs: found once, here, on this box's PATH (what conf.sh's
     // env-bootstrap derived on every source); nothing derives it after the cutover. Not found
@@ -182,26 +182,26 @@ pub fn render(answers: &BTreeMap<String, String>, out: &Path, reg: &Registry<'_>
             Err(e) => unset.push(format!("{path} = {v:?} ({e})")),
         }
     }
-    // The personas: one [persona.<name>] per `*.fayth` the release ships beside its registry
-    // (spira/chamber), read the way convert reads them, against the [spira] just written.
-    let chamber = reg.conf_d.parent().unwrap_or(Path::new("/")).join("chamber");
-    let mut fayths: Vec<PathBuf> = std::fs::read_dir(&chamber)
-        .map_err(|e| format!("no personas: {}: {e}", chamber.display()))?
+    // The personas: one [persona.<name>] per `*.rune` the release ships beside its registry
+    // (spira/runes), read the way convert reads them, against the [spira] just written.
+    let runes_dir = reg.conf_d.parent().unwrap_or(Path::new("/")).join("runes");
+    let mut runes: Vec<PathBuf> = std::fs::read_dir(&runes_dir)
+        .map_err(|e| format!("no personas: {}: {e}", runes_dir.display()))?
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "fayth"))
+        .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "rune"))
         .collect();
-    fayths.sort();
-    if fayths.is_empty() {
-        return Err(format!("no personas: no *.fayth under {}", chamber.display()));
+    runes.sort();
+    if runes.is_empty() {
+        return Err(format!("no personas: no *.rune under {}", runes_dir.display()));
     }
     let spira_section = doc.spira.clone().unwrap_or_default();
     let mut warnings = crate::convert::ConvertWarnings::default();
-    for f in &fayths {
+    for f in &runes {
         let text = std::fs::read_to_string(f).map_err(|e| format!("{}: {e}", f.display()))?;
         let (name, section) = crate::convert::persona_section(&text, &spira_section, &mut warnings);
         if name.is_empty() {
-            return Err(format!("{}: no FAYTH_NAME", f.display()));
+            return Err(format!("{}: no RUNE_NAME", f.display()));
         }
         doc.persona.insert(name, section);
     }
@@ -383,38 +383,38 @@ mod tests {
     }
 
     #[test]
-    fn a_fresh_config_carries_the_aeon_warm_base_and_an_answer_wins() {
+    fn a_fresh_config_carries_the_dwarf_warm_base_and_an_answer_wins() {
         let d = testkit::TempDir::new("spira-config-init-warm");
         let base_of = |answers| {
             let text = render(&answers, &d.path().join("spira.toml"), &reg()).unwrap();
-            crate::get_path(&crate::validate(&text).unwrap(), "spira.aeon_warm_base").unwrap_or_default()
+            crate::get_path(&crate::validate(&text).unwrap(), "spira.dwarf_warm_base").unwrap_or_default()
         };
-        assert_eq!(base_of(full()), DEFAULT_AEON_WARM_BASE);
+        assert_eq!(base_of(full()), DEFAULT_DWARF_WARM_BASE);
         let mut own = full();
-        own.insert("aeon_warm_base".into(), "/b/warm".into());
+        own.insert("dwarf_warm_base".into(), "/b/warm".into());
         assert_eq!(base_of(own), "/b/warm");
     }
 
     #[test]
     fn a_typed_key_with_no_registered_default_must_be_answered() {
         // The shipped registry gives every typed key a default; a registry that does not
-        // (here, summon_lock_wait's default removed) must be answered, never invented.
+        // (here, call_lock_wait's default removed) must be answered, never invented.
         let d = testkit::TempDir::new("spira-config-init-nodefault");
         let conf_d = d.path().join("spira/conf.d");
         std::fs::create_dir_all(&conf_d).unwrap();
-        std::os::unix::fs::symlink(reg().conf_d.parent().unwrap().join("chamber"), d.path().join("spira/chamber")).unwrap();
+        std::os::unix::fs::symlink(reg().conf_d.parent().unwrap().join("runes"), d.path().join("spira/runes")).unwrap();
         for e in std::fs::read_dir(reg().conf_d).unwrap().flatten() {
             let mut t = std::fs::read_to_string(e.path()).unwrap();
-            if e.file_name() == "SPIRA_SUMMON_LOCK_WAIT" {
+            if e.file_name() == "SPIRA_CALL_LOCK_WAIT" {
                 t = t.lines().filter(|l| !l.contains(":=")).map(|l| format!("{l}\n")).collect();
             }
             std::fs::write(conf_d.join(e.file_name()), t).unwrap();
         }
         let r = Registry { conf_d: &conf_d, env: reg().env };
         let e = render(&full(), &d.path().join("spira.toml"), &r).unwrap_err();
-        assert!(e.contains("summon_lock_wait") && !e.contains("certify_par"), "{e}");
+        assert!(e.contains("call_lock_wait") && !e.contains("certify_par"), "{e}");
         let mut a = full();
-        a.insert("summon_lock_wait".into(), "30".into());
+        a.insert("call_lock_wait".into(), "30".into());
         render(&a, &d.path().join("spira.toml"), &r).unwrap();
     }
 
@@ -491,7 +491,7 @@ mod tests {
         std::fs::write(&out, "[spira]\nid_prefix = \"zz\"\n").unwrap();
         assert_eq!(ensure(&out, full(), None, &reg()).unwrap(), Outcome::Existing(out.clone()));
         assert_eq!(std::fs::read_to_string(&out).unwrap(), "[spira]\nid_prefix = \"zz\"\n");
-        std::fs::write(&out, "[spira]\nmax_aeons = true\n").unwrap();
+        std::fs::write(&out, "[spira]\nmax_dwarves = true\n").unwrap();
         assert!(ensure(&out, full(), None, &reg()).is_err());
     }
 

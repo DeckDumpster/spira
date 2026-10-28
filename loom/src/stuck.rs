@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn the_timeline_shows_refusals_in_red_and_an_expired_lease() {
-        let d = json!({"bead": {"state": "WORKING", "holder": "aeon-1", "lease_until": NOW - 600, "holds": "[]", "title": "x", "gate_key": "waits on sp-abcd12"},
+        let d = json!({"bead": {"state": "WORKING", "holder": "dwarf-1", "lease_until": NOW - 600, "holds": "[]", "title": "x", "gate_key": "waits on sp-abcd12"},
             "events": [{"seq": 1, "event": "Claim", "from_state": "READY", "to_state": "WORKING", "applied": 1, "actor": "a", "at": NOW - 900},
                        {"seq": 2, "event": "Certify", "from_state": "WORKING", "to_state": "WORKING", "applied": 0, "refusal": "wrong-state", "actor": "b", "at": NOW - 60}]});
         let html = render_bead(NOW, "sp-self9", &d, "");

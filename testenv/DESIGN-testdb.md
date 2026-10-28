@@ -186,7 +186,7 @@ which `_testdb_testenv` already prefers. Three suites that test the embedded pat
 is written and read through the embedded library) unset `SPIRA_TESTDB_MODE`.
 
 **Measured (testenv, maxpar 8, same host, 2026-09-29).** The six bd-heavy suites (certify,
-auron, landing-red-recurring, closed-strand, bead-dep-add, cockpit-funnel), three runs of
+heimdall, landing-red-recurring, closed-strand, bead-dep-add, cockpit-funnel), three runs of
 `local/main` against three of this branch: bd calls 516 → 346; bd wait 138–182 s → 74–81 s;
 per call 267–352 ms → 213–235 ms; share of suite wall 52–61 % → 35–41 %. The 146 suites that
 use testdb: 6,761 → 5,251 calls, 1,996 s → 1,107 s of bd, share 41.6 % → 24.2 %, batch wall

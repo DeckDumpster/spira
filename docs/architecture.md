@@ -4,14 +4,14 @@
 
 ```
                   +------------------- systemd (user + system) -------------------+
-                  |  timers: sentinel, summon, sift, rounds(-forge), gate-worker,   |
-                  |  landing-pass, verdict, czar-pass, watchtower, skew, sending... |
+                  |  timers: sentinel, call, sift, rounds(-forge), gate-worker,   |
+                  |  landing-pass, verdict, czar-pass, watchtower, skew, hel... |
                   +---+-----------------------------------------------------------+
                       |
- operator / Concierge |                                       aeon unit (transient)
- (mail, panes) -files-+--> bead.sh / work file               spira-aeon-<fayth>-<n>
+ operator / Concierge |                                       dwarf unit (transient)
+ (mail, panes) -files-+--> bead.sh / work file               spira-dwarf-<rune>-<n>
       ^               |        |                             +------------------+
-      | escalations   v        v                             | aeon (runner)    |
+      | escalations   v        v                             | dwarf (runner)    |
       |         +-------------------------+  claim / renew   |  claude -p ...   |
       +-- mail -|  spira-lc (lifecycle    |<-----------------|  model session   |
                 |  service, Unix socket)  |  work <verb>     |  `work` client   |
@@ -28,7 +28,7 @@
                             ^                            |  landing ref, spira/<id>  |
  sentinel, spira-claim, sift|                            |  branches, round branches |
  batcher, landing-pass,     +-- read/write via --------- +-------------+-------------+
- queue, sending, strand ...    spira-lc / bd                           |
+ queue, hel, strand ...    spira-lc / bd                           |
                                                                        v
  run/ ($SPIRA_RUN)                                          <releases>/<sha>/
    verdicts/trees/<repo>/<tree>  tree certificates          <releases>/current -> <sha>
@@ -42,7 +42,7 @@
 | Beads database | Dolt server (`dolt-beads.service`), `$SPIRA_DB` | bead content, labels, deps, comments, statute and SOP memories | `bd` (through `bead`, `rule`, `sop`) |
 | `spira_lifecycle` | same Dolt server | `bead`, `delivery`, `batch`, `batch_member`, `ask`, `mending`, `mend`, append-only `event`, `bead_dep` | **only** `spira-lc` (a distinct database user holds the grants; the event table is insert/select only) |
 | `run/` state | `$SPIRA_RUN` | tree certificates, open-round records, gate queue and locks, time-series rows, spans, watcher logs, pass state | the binaries that own each file |
-| Git repositories | the registry's paths | branches `spira/<id>`, round branches, the landing ref, `refs/archive/rounds/<n>` | aeons (their branches), `batcher` / `queue` (rounds, landing) |
+| Git repositories | the registry's paths | branches `spira/<id>`, round branches, the landing ref, `refs/archive/rounds/<n>` | dwarves (their branches), `batcher` / `queue` (rounds, landing) |
 | Releases | `$SPIRA_RELEASES` | immutable releases and the `current` link | `release` |
 
 `spira-lc` serves the machines over a Unix socket (`SPIRA_LC_SOCKET`). On a multi-user install
@@ -62,21 +62,21 @@ and unit that does it.
    `spira-mimir`, `watchtower`, `incident`). `bead` also writes its lifecycle row in `READY`.
    A label places it in a persona's partition (the plan label, for builders).
 
-2. **Sentinel and summon.** `spira-sentinel.timer` (every 2 min) runs `sentinel`;
-   `spira-summon.timer` (every minute) runs `sentinel --summon-only`. The pass counts ready
-   beads per partition and summons aeons: lane personas against their own caps, then task
-   personas from the shared `SPIRA_MAX_AEONS` pool, builders last as the elastic persona. The
+2. **Sentinel and call.** `spira-sentinel.timer` (every 2 min) runs `sentinel`;
+   `spira-call.timer` (every minute) runs `sentinel --call-only`. The pass counts ready
+   beads per partition and calls dwarves: lane personas against their own caps, then task
+   personas from the shared `SPIRA_MAX_DWARVES` pool, builders last as the elastic persona. The
    same pass reaps `WORKING` rows whose lease expired (`HolderDead`), applies the poison hold
    when attempts are exhausted, holds blocked beads on `wait`, and dispatches the landing
    worker (step 7).
 
-3. **Claim.** The summoned `aeon` asks `spira-claim select` for the top-ranked claimable bead
+3. **Claim.** The called `dwarf` asks `spira-claim select` for the top-ranked claimable bead
    (`READY`/`REWORK`, no hold but `wait`, in its partition, blockers satisfied; epics first,
-   express beads ahead) and sends `Claim` to `spira-lc`. The compare-and-swap means two aeons
+   express beads ahead) and sends `Claim` to `spira-lc`. The compare-and-swap means two dwarves
    cannot win the same bead. The claim records holder, persona, lease and, for a bead built on
    unlanded prerequisites, the stack of their certified tips.
 
-4. **Aeon session.** `aeon` creates the worktree and branch `spira/<id>`, renders the persona
+4. **Dwarf session.** `dwarf` creates the worktree and branch `spira/<id>`, renders the persona
    brief (`<name>.md` plus statutes), and launches the model with the restricted environment.
    It reports `Phase`, renews the lease while the trace grows, and ends the session with the
    work preserved if the lease lapses. The model commits to its branch and runs tests only
@@ -86,9 +86,9 @@ and unit that does it.
    `refs/heads/spira/<id>` (never from an argument); `spira-lc` refuses if the tip is one a
    round ejected as red, if the stack is stale, or if a lint rule or the declared proof tier
    fails; otherwise `Submit` moves the row to `SUBMITTED`. Alternatives: `work done` closes a
-   bead with nothing to land; `work blocked` holds it and files an ask. At exit the aeon's
+   bead with nothing to land; `work blocked` holds it and files an ask. At exit the dwarf's
    teardown decides whether the attempt is charged, and the unit's stop hook runs
-   `sentinel --summon-only` to refill the slot.
+   `sentinel --call-only` to refill the slot.
 
 6. **Screen.** `spira-sift.timer` (every minute) runs `batcher sifts`, which screens each queue
    repository's proto-round (all `SUBMITTED` and `CERTIFIED` rows). A pass is recorded as
@@ -128,7 +128,7 @@ and unit that does it.
     `Deliver`, then `Delivered` → `LANDED`. A later fault never undoes the landing; a failed
     `Delivered` is reported and the ref stays. Waiting beads are rebased onto the new base.
 
-12. **Cleanup.** `sending` deletes the branch and worktree of every bead whose work has landed,
+12. **Cleanup.** `hel` deletes the branch and worktree of every bead whose work has landed,
     and nothing else; the sentinel runs it each pass, `spira-straggler-sweep` covers queue
     repositories hourly, and `spira-worktree-reaper` removes stale worktrees. Content found
     already on the base is closed by `ContentOnBase`.
@@ -147,7 +147,7 @@ and unit that does it.
 Several units exist only to notice the loop failing and turn that into work or mail rather than
 silence: `watchtower` (hands `ops` the pipeline's vital signs), `czar-pass` (30 s queue-stall
 detection with deterministic remedies), `reconciler` (declared structural invariants: remedy or
-escalate), `auron` (escalates a stalled loop and does nothing else), `strand` (stranded-work
+escalate), `heimdall` (escalates a stalled loop and does nothing else), `strand` (stranded-work
 detector), `cert-sweep` (re-certifies the landing ref's tip on a schedule), `refusal-watch`,
 `mend-watch`, and the `spira-lc event-continuity` check. `cockpit-collect` and `cockpit/`
 present the same stores to the operator.

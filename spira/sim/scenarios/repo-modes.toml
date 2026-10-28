@@ -3,7 +3,7 @@ horizon = 900000
 goal = "sp-rm01:LANDED"
 settle = 400000
 repos = ["docs:push:master", "held:hold", "forged:queue.forge", "reviewed:pr", "queued:queue", "local:queue.local:master"]
-real_actors = ["sentinel-summon", "sentinel-landing"]
+real_actors = ["sentinel-call", "sentinel-landing"]
 
 # One repository per land mode beside the world's own, two of them with a master trunk. A branch
 # of the push repository lands on its master; a branch of the hold repository is left for a human.

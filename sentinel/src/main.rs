@@ -2,8 +2,8 @@
 //!
 //!   sentinel                 one full pass                     (spira-sentinel.service)
 //!   sentinel --report        print the open plan beads, change nothing
-//!   sentinel --summon-only   CHECK 7 alone                     (spira-summon.service, and
-//!                            every aeon unit's ExecStopPost)
+//!   sentinel --call-only   CHECK 7 alone                     (spira-call.service, and
+//!                            every dwarf unit's ExecStopPost)
 //!   sentinel --open-children [--dry-run]
 //!                            CHECK 3c alone over a fresh snapshot (suites; a read-only
 //!                            production probe with --dry-run)
@@ -34,7 +34,7 @@ mod red_trackers;
 mod pass;
 mod seams;
 mod store;
-mod summon;
+mod call;
 mod temps;
 mod unclaimable;
 mod waiters;
@@ -112,14 +112,14 @@ fn merge_resolved_config(ctx: &mut Context, home: &Path) -> Result<(), String> {
     // SPIRA_HOME/SPIRA_REPO are deliberately NEVER in resolve()'s own output (per-copy
     // facts — see spira_config::resolve::ResolveInput's doc), but the OLD compgen dump did
     // carry them (conf.sh sets both, unexported, in that bash process) and `Cfg::raw`
-    // (cfg.rs) reads both back out of `ctx.vars` to pass on, verbatim, to every aeon
-    // sentinel summons (dispatch.rs's own `setenv`) — an empty `--setenv=SPIRA_HOME=` would
-    // leave a summoned aeon unable to resolve its own harness. Insert them explicitly
+    // (cfg.rs) reads both back out of `ctx.vars` to pass on, verbatim, to every dwarf
+    // sentinel calls (dispatch.rs's own `setenv`) — an empty `--setenv=SPIRA_HOME=` would
+    // leave a called dwarf unable to resolve its own harness. Insert them explicitly
     // before anything resolve() itself produces.
     ctx.vars.entry("SPIRA_HOME".into()).or_insert_with(|| home.to_string_lossy().into_owned());
     ctx.vars.entry("SPIRA_REPO".into()).or_insert_with(|| repo.to_string_lossy().into_owned());
     let resolved = spira_config::resolve::resolve_for_process(home, &repo, &env_map)
-        .map_err(|e| format!("cannot resolve config, refusing to summon on defaults: {e}"))?;
+        .map_err(|e| format!("cannot resolve config, refusing to call on defaults: {e}"))?;
     for (k, v) in resolved.values {
         ctx.vars.entry(k).or_insert(v);
     }

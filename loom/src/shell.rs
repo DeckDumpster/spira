@@ -4,7 +4,7 @@ use crate::stuck::esc;
 
 pub const SECTIONS: [(&str, &str, &str); 7] = [
     ("now", "Now", "/"),
-    ("aeons", "Aeons", "/aeons"),
+    ("dwarves", "Dwarves", "/dwarves"),
     ("rounds", "Rounds", "/rounds"),
     ("stuck", "Stuck", "/stuck"),
     ("units", "Units", "/units"),
@@ -44,7 +44,7 @@ const NAV_CSS: &str = ".lm-top{position:sticky;top:0;z-index:5;display:flex;flex
 pub struct Bar {
     pub release: String,
     pub world: String,
-    pub aeons: Option<(usize, usize)>,
+    pub dwarves: Option<(usize, usize)>,
     pub age_s: Option<i64>,
 }
 
@@ -59,14 +59,14 @@ pub fn tabs(active: &str) -> String {
 
 pub fn bar_html(b: &Bar) -> String {
     let dash = |s: &str| if s.is_empty() { "?".to_string() } else { esc(s) };
-    let aeons = b.aeons.map_or("?".to_string(), |(n, cap)| format!("{n}/{cap}"));
+    let dwarves = b.dwarves.map_or("?".to_string(), |(n, cap)| format!("{n}/{cap}"));
     let age = match b.age_s {
         Some(a) if a > crate::LIFECYCLE_STALE_S => format!("<span class=lm-bad>stale {}</span>", crate::stuck::dur(a)),
         Some(a) => format!("{} ago", crate::stuck::dur(a)),
         None => "<span class=lm-bad>no snapshot</span>".to_string(),
     };
     format!(
-        "<div class=lm-top><b>SPIRA</b><span>{}</span><span>world {}</span><span>aeons {aeons}</span><span class=lm-dim>refreshed {age}</span></div>",
+        "<div class=lm-top><b>SPIRA</b><span>{}</span><span>world {}</span><span>dwarves {dwarves}</span><span class=lm-dim>refreshed {age}</span></div>",
         dash(&b.release),
         dash(&b.world),
     )
@@ -112,9 +112,9 @@ mod tests {
     #[test]
     fn the_bar_names_what_it_does_not_know_and_flags_an_old_snapshot() {
         let blank = bar_html(&Bar::default());
-        assert!(blank.contains("no snapshot") && blank.contains("aeons ?"), "{blank}");
-        let old = bar_html(&Bar { release: "abc".into(), world: "RUNNING".into(), aeons: Some((2, 4)), age_s: Some(600) });
-        assert!(old.contains("stale 10m") && old.contains("aeons 2/4") && old.contains("abc"), "{old}");
+        assert!(blank.contains("no snapshot") && blank.contains("dwarves ?"), "{blank}");
+        let old = bar_html(&Bar { release: "abc".into(), world: "RUNNING".into(), dwarves: Some((2, 4)), age_s: Some(600) });
+        assert!(old.contains("stale 10m") && old.contains("dwarves 2/4") && old.contains("abc"), "{old}");
     }
 
     #[test]

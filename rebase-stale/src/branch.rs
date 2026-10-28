@@ -1,10 +1,10 @@
 //! Family Y (wave 4.21, sp-07jcz): `format_rebased`, `rebase_branch`, `recut_onto` —
 //! lib.sh's generic "move a submitted branch forward" helpers, called on every landing
-//! pass by aeon, landing-pass and queue. Ported byte-for-byte from lib.sh (`spira/lib.sh`
+//! pass by dwarf, landing-pass and queue. Ported byte-for-byte from lib.sh (`spira/lib.sh`
 //! around line 5617-5880); the three `REBASE_*`/two `RECUT_*` bash globals become the typed
 //! [`RebaseResult`] / [`RecutResult`] returned here. lib.sh's own copies become one-line
 //! shims to this crate's `rebase-stale` binary (`rebase-branch`, `recut-onto` subcommands),
-//! so the bash-seam callers (aeon, landing-pass, queue) do not change at all.
+//! so the bash-seam callers (dwarf, landing-pass, queue) do not change at all.
 //!
 //! Distinct from this crate's own `engine`/`holder`/`resolve` (the sp-x1c6k mechanical
 //! "stale branch" tool, a different program with its own scratch tree
@@ -12,7 +12,7 @@
 //! `.rebase.<repo-basename>`, because a leftover tree from before this port must still be
 //! found at the same path.
 //!
-//! Any worktree pruning or pre-destruction salvage in this path goes through `sending`'s
+//! Any worktree pruning or pre-destruction salvage in this path goes through `hel`'s
 //! destruction chokepoint (wave 4.20, sp-9envm) in-process — never a raw `git worktree
 //! remove` or `git branch -D` (there is none of either here: `rebase_branch` only adds a
 //! scratch worktree and moves a branch ref by ordinary update, and the one leftover
@@ -28,7 +28,7 @@ pub struct BranchConfig {
     /// `$SPIRA_RUN` — the scratch tree lives at `<run>/worktree/.rebase.<repo-basename>`.
     pub run: PathBuf,
     /// `$SPIRA_REAPLOG` (or `<run>/reap.log`) — the chokepoint's own log, named here because
-    /// `sending::reap::{prune_worktrees,salvage}` take it as an explicit argument.
+    /// `hel::reap::{prune_worktrees,salvage}` take it as an explicit argument.
     pub reaplog: PathBuf,
     pub git_name: String,
     pub git_email: String,
@@ -104,12 +104,12 @@ fn ensure_scratch(cfg: &BranchConfig, repo_git: &Git, repo: &Path, scratch: &Pat
     if let Some(d) = scratch.parent() {
         let _ = std::fs::create_dir_all(d);
     }
-    let _ = sending::reap::prune_worktrees(&cfg.reaplog, repo);
+    let _ = hel::reap::prune_worktrees(&cfg.reaplog, repo);
     repo_git.ok(["worktree", "add", "-q", "--detach", &scratch.display().to_string(), onto])
 }
 
 /// lib.sh `rebase_branch <branch> <onto> <repo> <name>`. The caller must already have
-/// established that no live aeon holds `br` (lib.sh's own precondition; unchanged — this
+/// established that no live dwarf holds `br` (lib.sh's own precondition; unchanged — this
 /// port adds no liveness check of its own, exactly as the bash did not).
 pub fn rebase_branch(cfg: &BranchConfig, repo: &Path, br: &str, onto: &str, name: &str, format_cmd: &str) -> RebaseResult {
     let repo_git = Git::new(repo, &cfg.git_name, &cfg.git_email);
@@ -152,7 +152,7 @@ pub fn rebase_branch(cfg: &BranchConfig, repo: &Path, br: &str, onto: &str, name
         let id = br.rsplit('/').next().unwrap_or(br);
         // Salvage's own result is not checked — matches the bash, which piped it to
         // `/dev/null` with no `||` chain and proceeded to the hard reset regardless.
-        let _ = sending::reap::salvage(&cfg.run, &cfg.reaplog, &format!("{id}-prerebase"), &wt);
+        let _ = hel::reap::salvage(&cfg.run, &cfg.reaplog, &format!("{id}-prerebase"), &wt);
         let _ = wt_git.ok(["reset", "-q", "--hard", "HEAD"]);
     }
 

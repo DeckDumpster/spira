@@ -6,13 +6,13 @@
 #   ./test-cockpit-repo-labels.sh
 #
 # THE FAILURE THIS SUITE EXISTS FOR (sp-sqlk). Hand-filed beads occasionally carry
-# `repo:spira-harness` (the PATH) instead of `repo:spira` (the label). Each costs an aeon
+# `repo:spira-harness` (the PATH) instead of `repo:spira` (the label). Each costs a dwarf
 # start and a bogus needs-ryan. A shim on bd binds every session for a check that costs one
 # graph read; watchtower reads the graph on a timer already. The vital signs added here are
 # the right rung.
 #
 # BOTH CATEGORIES ARE COUNTED SEPARATELY. An unmapped label (`repo:bogus`) and no label at
-# all fail closed identically — both park the aeon at unmapped-repo — but the counts are
+# all fail closed identically — both park the dwarf at unmapped-repo — but the counts are
 # kept separate so the sweep can say whether the root cause is a mis-set label or a missing
 # one.
 #
@@ -45,12 +45,12 @@ printf 'validrepo | /opt/valid | push | origin/main | | \n' > "$MAP"
 RUN="$TMP/run"; mkdir -p "$RUN"
 run_repo_labels() {    # run_repo_labels <fixture-file> [KEY=val ...]
     local fixture="$1"; shift
-    # SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP/SPIRA_FAYTHS/SPIRA_ASK_LABEL are registered keys
+    # SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP/SPIRA_RUNES/SPIRA_ASK_LABEL are registered keys
     # (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config, re-declaring the
     # baseline every call so a later call with no override goes back to it; any extra
     # KEY=val in "$@" is itself a registered-key override here, so it goes to tl_config too.
     tl_config SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$MAP" \
-        SPIRA_FAYTHS=t SPIRA_ASK_LABEL=needs-ryan
+        SPIRA_RUNES=t SPIRA_ASK_LABEL=needs-ryan
     [ "$#" -gt 0 ] && tl_config "$@"
     env -i SPIRA_PANE_READ_TTL=0 SPIRA_HISTORY_READ_TTL=0 PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \

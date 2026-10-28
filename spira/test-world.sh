@@ -7,9 +7,9 @@
 # WHAT THIS SUITE COVERS
 # ----------------------
 # 2026-09-07: world.sh stop printed STOPPED while spira-landing.service was still running.
-# The check did not catch it because world.sh's own status reported timers and live aeons,
+# The check did not catch it because world.sh's own status reported timers and live dwarves,
 # and spira-landing is neither — it is a transient systemd unit that executes the same
-# gate.sh passes an aeon does, supervised outside the timer loop.
+# gate.sh passes a dwarf does, supervised outside the timer loop.
 #
 # PROPERTIES KEPT HERE, each a pair (law-absence-needs-a-positive-control). The service and
 # timer FILTERS themselves (work_services, _is_ci_watcher, _status_timer_row, _start_action)
@@ -63,7 +63,7 @@ WORLD_BIN="$(command -v world || true)"
 cp "$WORLD_BIN" "$SH/world.sh"; chmod +x "$SH/world.sh"
 cp "$HERE/conf.sh" "$SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
-# slay.sh is called by `stop` for live aeons; stub it so no real aeons are touched.
+# slay.sh is called by `stop` for live dwarves; stub it so no real dwarves are touched.
 printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/slay"; chmod +x "$SH/slay"
 
 # The systemctl stub. It records every call; what it answers depends on the service asked for.
@@ -111,7 +111,7 @@ list-unit-files)
         IFS=, read -ra _ats <<< "${ACTIVE_TIMERS:-}"
         for _at in "${_ats[@]}"; do printf '%s enabled\n' "$_at"; done ;;
     *)
-        for _b in spira-sentinel.timer spira-summon.timer spira-ops.timer spira-watchtower.timer spira-archivist.timer spira-archive.timer spira-skew.timer; do
+        for _b in spira-sentinel.timer spira-call.timer spira-ops.timer spira-watchtower.timer spira-archivist.timer spira-archive.timer spira-skew.timer; do
             [ "$svc" = "$_b" ] && printf '%s enabled\n' "$_b"
         done
         IFS=, read -ra _ats <<< "${ACTIVE_TIMERS:-}"
@@ -119,7 +119,7 @@ list-unit-files)
     esac
     exit 0 ;;
 cat)
-    for _b in spira-sentinel.timer spira-summon.timer spira-ops.timer spira-watchtower.timer spira-archivist.timer spira-archive.timer spira-skew.timer; do
+    for _b in spira-sentinel.timer spira-call.timer spira-ops.timer spira-watchtower.timer spira-archivist.timer spira-archive.timer spira-skew.timer; do
         [ "$svc" = "$_b" ] && exit 0
     done
     IFS=, read -ra _ats <<< "${ACTIVE_TIMERS:-}"
@@ -229,7 +229,7 @@ is "and is 0 after the process exits" "0" "${wcount:-?}"
 
 # ---- DRAIN / RESUME -----------------------------------------------------------------
 # The property that matters is what drain does NOT do. The first implementation stopped
-# spira-sentinel.timer to halt summons, which also halted LANDING — landing is a leg of the
+# spira-sentinel.timer to halt calls, which also halted LANDING — landing is a leg of the
 # sentinel pass, not a timer — and three finished branches sat unlanded (2026-09-08). So the
 # assertion is negative and deliberate: drain must touch no unit at all.
 
@@ -250,7 +250,7 @@ out="$(world status)"
 want "status reports DRAINING while the stamp exists" "DRAINING" "$out"
 
 out="$(world resume)"
-want "resume reports it" "summons resumed" "$out"
+want "resume reports it" "calls resumed" "$out"
 [ -f "$RUN/world.draining" ] && bad "resume removes the stamp" "stamp still present" \
                              || ok "resume removes the stamp"
 
@@ -270,45 +270,45 @@ world resume >/dev/null
 out="$(world resume)"
 want "resume on a world that was not draining says so" "not draining" "$out"
 
-# drain --timeout 0 with a live aeon (NOT DRAINED / REMAIN GATED / exit 1) is a near-verbatim
+# drain --timeout 0 with a live dwarf (NOT DRAINED / REMAIN GATED / exit 1) is a near-verbatim
 # duplicate of test-world-drain-deadline.sh case 3 (cluster 4, docs/test-plan/instance-lifecycle.md):
 # kept there only.
 
 # ---- THE GATE MUST COVER EVERY DOOR, NOT JUST THE TIDY ONE --------------------------
-# summon_fayth() is called only from sentinel.sh, and that grep is what made the first
+# call_rune() is called only from sentinel.sh, and that grep is what made the first
 # version of this gate look complete. It was not: spira-ops.service and spira-qa.service
-# ExecStart aeon.sh DIRECTLY, so ops and qa never reach summon_fayth. A qa aeon was summoned
+# ExecStart dwarf.sh DIRECTLY, so ops and qa never reach call_rune. A qa dwarf was called
 # four minutes into a drain that had reported DRAINED (sp-637b, 2026-09-08).
 #
 # So this asserts on the FILE, not on behaviour: every unit template whose ExecStart is
-# aeon.sh is a door, and aeon.sh itself must carry the gate. A new ops-shaped persona added
+# dwarf.sh is a door, and dwarf.sh itself must carry the gate. A new ops-shaped persona added
 # later fails here rather than in production.
 HARNESS="$(cd "$HERE/.." && pwd)"
 if [ -d "$HARNESS/systemd" ]; then
-    doors="$(grep -lE 'ExecStart=.*(aeon\.sh|/bin/aeon )' "$HARNESS/systemd"/*.service 2>/dev/null | wc -l)"
-    [ "${doors:-0}" -ge 1 ] && ok "units that ExecStart the aeon directly exist ($doors) — the gate must cover them" \
+    doors="$(grep -lE 'ExecStart=.*(dwarf\.sh|/bin/dwarf )' "$HARNESS/systemd"/*.service 2>/dev/null | wc -l)"
+    [ "${doors:-0}" -ge 1 ] && ok "units that ExecStart the dwarf directly exist ($doors) — the gate must cover them" \
                             || bad "direct-ExecStart doors" "expected at least one, found ${doors:-0}"
-    grep -q 'world.draining' "$HARNESS/aeon/src/run.rs" \
-        && ok "the aeon binary itself carries the drain gate" \
-        || bad "the aeon binary carries the drain gate" "no world.draining check in aeon/src/run.rs"
+    grep -q 'world.draining' "$HARNESS/dwarf/src/run.rs" \
+        && ok "the dwarf binary itself carries the drain gate" \
+        || bad "the dwarf binary carries the drain gate" "no world.draining check in dwarf/src/run.rs"
     # world_gate is in-process in the sentinel crate now (wave 4.27, family G, sp-gzmd2);
     # lib.sh's own copy is a one-line shim onto it, so the literal check lives in
-    # sentinel/src/summon.rs, not in lib.sh's own text any more.
-    grep -q 'world.draining' "$HARNESS/sentinel/src/summon.rs" \
-        && ok "summon_fayth also carries it (cheaper: never starts the unit)" \
-        || bad "summon_fayth carries the drain gate" "no world.draining check in sentinel/src/summon.rs"
-    grep -q 'world.halted' "$HARNESS/aeon/src/run.rs" \
-        && ok "the aeon binary carries the halt gate" \
-        || bad "the aeon binary carries the halt gate" "no world.halted check in aeon/src/run.rs"
-    grep -q 'world.halted' "$HARNESS/sentinel/src/summon.rs" \
-        && ok "summon_fayth carries the halt gate" \
-        || bad "summon_fayth carries the halt gate" "no world.halted check in sentinel/src/summon.rs"
+    # sentinel/src/call.rs, not in lib.sh's own text any more.
+    grep -q 'world.draining' "$HARNESS/sentinel/src/call.rs" \
+        && ok "call_rune also carries it (cheaper: never starts the unit)" \
+        || bad "call_rune carries the drain gate" "no world.draining check in sentinel/src/call.rs"
+    grep -q 'world.halted' "$HARNESS/dwarf/src/run.rs" \
+        && ok "the dwarf binary carries the halt gate" \
+        || bad "the dwarf binary carries the halt gate" "no world.halted check in dwarf/src/run.rs"
+    grep -q 'world.halted' "$HARNESS/sentinel/src/call.rs" \
+        && ok "call_rune carries the halt gate" \
+        || bad "call_rune carries the halt gate" "no world.halted check in sentinel/src/call.rs"
     w="$HARNESS/spira-world/src/bin/world.rs"
     stamp=$(grep -n 'std::fs::write(plane_stamp' "$w" | head -1 | cut -d: -f1)
     slay=$(grep -n 'release_env::tool("slay")' "$w" | head -1 | cut -d: -f1)
     stop=$(grep -n 'sysctl::run_ok(&\["stop", t\])' "$w" | head -1 | cut -d: -f1)
     [ -n "$stamp" ] && [ -n "$slay" ] && [ -n "$stop" ] && [ "$stamp" -lt "$stop" ] && [ "$stamp" -lt "$slay" ] \
-        && ok "stop writes the halt stamp before stopping timers or slaying aeons" \
+        && ok "stop writes the halt stamp before stopping timers or slaying dwarves" \
         || bad "stop stamps before it stops" "stamp line=$stamp stop line=$stop slay line=$slay in world.rs"
 fi
 

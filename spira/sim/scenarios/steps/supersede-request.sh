@@ -10,5 +10,5 @@ fi
 [ -z "$(spira-lc holds "$bead" 2>/dev/null)" ] || exit 0
 ver=$(spira-lc show "$bead" | python3 -c 'import json,sys; print(json.load(sys.stdin)["bead"]["version"])') || { echo "supersede-request: no version for $bead" >&2; exit 9; }
 echo "supersede-request: $bead at version $ver" >&2
-spira-lc event bead "$bead" --expect READY --version "$ver" --actor aeon \
+spira-lc event bead "$bead" --expect READY --version "$ver" --actor dwarf \
     --kind "{\"Hold\":{\"kind\":\"Manual\",\"cause\":\"supersede-request\",\"detail\":\"$succ\"}}" >/dev/null || { echo "supersede-request: the hold on $bead was refused" >&2; exit 9; }

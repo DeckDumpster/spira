@@ -34,7 +34,7 @@ impl Rig {
     fn state(&self) -> PathBuf {
         self.t.join("state")
     }
-    fn summon(&self, script: &str, bead: &str) -> Result<(), String> {
+    fn call(&self, script: &str, bead: &str) -> Result<(), String> {
         play(script, &self.state(), bead, &self.wt())
     }
     fn work_calls(&self) -> Vec<String> {
@@ -56,7 +56,7 @@ fn exists(p: &Path) -> bool {
 #[test]
 fn commit_lands_a_file_named_for_the_bead() {
     let r = Rig::new();
-    r.summon("sp-a commit out/a.txt\n", "sp-a").unwrap();
+    r.call("sp-a commit out/a.txt\n", "sp-a").unwrap();
     assert!(exists(&r.wt().join("out/a.txt")));
     assert_eq!(r.subjects()[0], "sp-a: sim commit out/a.txt");
     assert!(r.work_calls().is_empty());
@@ -65,28 +65,28 @@ fn commit_lands_a_file_named_for_the_bead() {
 #[test]
 fn submit_calls_work_submit_once_after_the_commit() {
     let r = Rig::new();
-    r.summon("sp-a commit a.txt\nsp-a submit\n", "sp-a").unwrap();
+    r.call("sp-a commit a.txt\nsp-a submit\n", "sp-a").unwrap();
     assert_eq!(r.work_calls(), vec!["submit"]);
     assert_eq!(r.subjects().len(), 2);
 }
 
 #[test]
-fn commit_after_submit_is_a_second_summon_with_a_second_commit() {
+fn commit_after_submit_is_a_second_call_with_a_second_commit() {
     let r = Rig::new();
-    let s = "sp-a commit a.txt\nsp-a submit\nsp-a summon\nsp-a commit a.txt\n";
-    r.summon(s, "sp-a").unwrap();
+    let s = "sp-a commit a.txt\nsp-a submit\nsp-a call\nsp-a commit a.txt\n";
+    r.call(s, "sp-a").unwrap();
     assert_eq!(r.subjects().len(), 2);
-    r.summon(s, "sp-a").unwrap();
+    r.call(s, "sp-a").unwrap();
     assert_eq!(r.subjects().len(), 3);
     assert_eq!(r.work_calls(), vec!["submit"]);
     assert_eq!(std::fs::read_to_string(r.wt().join("a.txt")).unwrap().lines().count(), 2);
-    assert!(r.summon(s, "sp-a").unwrap_err().contains("summon 3"));
+    assert!(r.call(s, "sp-a").unwrap_err().contains("call 3"));
 }
 
 #[test]
-fn commit_after_submit_within_one_summon_follows_the_submit() {
+fn commit_after_submit_within_one_call_follows_the_submit() {
     let r = Rig::new();
-    r.summon("sp-a submit\nsp-a commit late.txt\n", "sp-a").unwrap();
+    r.call("sp-a submit\nsp-a commit late.txt\n", "sp-a").unwrap();
     assert_eq!(r.work_calls(), vec!["submit"]);
     assert_eq!(r.subjects()[0], "sp-a: sim commit late.txt");
 }
@@ -94,7 +94,7 @@ fn commit_after_submit_within_one_summon_follows_the_submit() {
 #[test]
 fn no_progress_changes_nothing() {
     let r = Rig::new();
-    r.summon("sp-a no-progress\n", "sp-a").unwrap();
+    r.call("sp-a no-progress\n", "sp-a").unwrap();
     assert_eq!(r.subjects(), vec!["seed"]);
     assert!(r.work_calls().is_empty());
 }
@@ -102,7 +102,7 @@ fn no_progress_changes_nothing() {
 #[test]
 fn ask_files_work_blocked_with_its_default() {
     let r = Rig::new();
-    r.summon("sp-a ask which table? | the first\n", "sp-a").unwrap();
+    r.call("sp-a ask which table? | the first\n", "sp-a").unwrap();
     assert_eq!(r.work_calls(), vec!["blocked which table? --default the first"]);
     assert_eq!(r.subjects(), vec!["seed"]);
 }
@@ -110,14 +110,14 @@ fn ask_files_work_blocked_with_its_default() {
 #[test]
 fn another_beads_lines_are_not_played() {
     let r = Rig::new();
-    r.summon("sp-b commit b.txt\nsp-a no-progress\n", "sp-a").unwrap();
+    r.call("sp-b commit b.txt\nsp-a no-progress\n", "sp-a").unwrap();
     assert_eq!(r.subjects(), vec!["seed"]);
 }
 
 #[test]
 fn a_bead_with_no_script_or_a_bad_step_fails_closed() {
     let r = Rig::new();
-    assert!(r.summon("sp-b submit\n", "sp-a").unwrap_err().contains("no steps"));
+    assert!(r.call("sp-b submit\n", "sp-a").unwrap_err().contains("no steps"));
     assert!(parse("sp-a frobnicate\n", "sp-a").is_err());
     assert!(parse("sp-a ask no default\n", "sp-a").is_err());
     assert!(parse("sp-a commit\n", "sp-a").is_err());
@@ -127,7 +127,7 @@ fn a_bead_with_no_script_or_a_bad_step_fails_closed() {
 #[test]
 fn submit_from_main_runs_work_submit_in_the_worlds_primary_checkout() {
     let r = Rig::new();
-    r.summon("sp-a commit a.txt\nsp-a submit-from-main\nsp-a submit\n", "sp-a").unwrap();
+    r.call("sp-a commit a.txt\nsp-a submit-from-main\nsp-a submit\n", "sp-a").unwrap();
     assert_eq!(r.work_calls(), vec!["submit", "submit"]);
     let cwds = r.work_cwds();
     assert!(cwds[0].ends_with("/world/work"), "{cwds:?}");
@@ -138,7 +138,7 @@ fn submit_from_main_runs_work_submit_in_the_worlds_primary_checkout() {
 #[test]
 fn drop_removes_a_committed_file_in_a_commit_of_its_own() {
     let r = Rig::new();
-    r.summon("sp-a commit a.txt\nsp-a drop a.txt\n", "sp-a").unwrap();
+    r.call("sp-a commit a.txt\nsp-a drop a.txt\n", "sp-a").unwrap();
     assert!(!exists(&r.wt().join("a.txt")));
     assert_eq!(r.subjects()[0], "sp-a: sim drop a.txt");
     assert_eq!(r.subjects().len(), 3);
@@ -147,7 +147,7 @@ fn drop_removes_a_committed_file_in_a_commit_of_its_own() {
 
 #[test]
 fn a_slain_step_parses_with_no_argument_and_is_refused_with_one() {
-    assert_eq!(parse("sp-a slain\nsp-a summon\nsp-a submit\n", "sp-a").unwrap(), vec![vec![Step::Slain], vec![Step::Submit]]);
+    assert_eq!(parse("sp-a slain\nsp-a call\nsp-a submit\n", "sp-a").unwrap(), vec![vec![Step::Slain], vec![Step::Submit]]);
     assert!(parse("sp-a slain now\n", "sp-a").is_err());
 }
 

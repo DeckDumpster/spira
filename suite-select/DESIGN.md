@@ -218,7 +218,7 @@ the cgroup-aware core count (the width), `SPIRA_RUN` (timings), `SPIRA_BATCH_SUI
 * **Paths are not word-split.** The bash split changed-file lists on whitespace, so a path
   with a space was two paths; a rename (`R100\told\tnew`) became both paths, which is kept.
 * **Specificity counts the declared tokens.** `gate-budget-select.sh` counted `# covers:`
-  tokens with an unquoted `for _t in $cov`, so a glob token (`aeon/src/*`) was expanded
+  tokens with an unquoted `for _t in $cov`, so a glob token (`dwarf/src/*`) was expanded
   against the gate tree and counted once per matching file: a suite's rank depended on how
   many files its directory held. Parity on the real tree found it (commit 9a16d5dde: the
   bash kept 29 suites, this keeps 36 at the same 300 s budget); with `set -f` added to the

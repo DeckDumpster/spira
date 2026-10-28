@@ -1,8 +1,8 @@
 TYPE=string
 GROUP=gate
-DOC=NO CPU QUOTA FOR AEONS OR THE LANDING UNIT: SPIRA_AEON_CPU_QUOTA and SPIRA_LAND_CPU_QUOTA
+DOC=NO CPU QUOTA FOR DWARVES OR THE LANDING UNIT: SPIRA_DWARF_CPU_QUOTA and SPIRA_LAND_CPU_QUOTA
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # NO CPU QUOTA FOR AEONS OR THE LANDING UNIT: SPIRA_AEON_CPU_QUOTA and SPIRA_LAND_CPU_QUOTA
+    # NO CPU QUOTA FOR DWARVES OR THE LANDING UNIT: SPIRA_DWARF_CPU_QUOTA and SPIRA_LAND_CPU_QUOTA
     # are retired (sp-b4oct, law-isolate-greedy-work-in-vms); the OS schedules them.
     # THE GATE'S TIME BUDGET, in seconds. gate-touched.sh trims coverage-based suite
     # selection to fit inside it (gate-budget-select.sh), most-specific-first, and the

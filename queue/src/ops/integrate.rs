@@ -1,6 +1,6 @@
-//! Members that collide with each other are integrated by one aeon holding every involved
+//! Members that collide with each other are integrated by one dwarf holding every involved
 //! bead's context, not skipped or ejected one at a time. The integration is filed for the mender
-//! (its summons kind `integrate`), never the builder lane; the members it names are carried by it: no round admits them
+//! (its calls kind `integrate`), never the builder lane; the members it names are carried by it: no round admits them
 //! while it is open, and they land by their `spira: land <id>` lines when its tip does.
 
 use std::collections::BTreeSet;
@@ -210,7 +210,7 @@ pub(super) fn file(
         return None;
     }
     w.out(format!(
-        "queue.sh {label}: integration {id} filed for {list} — one aeon integrates them; no round admits them meanwhile"
+        "queue.sh {label}: integration {id} filed for {list} — one dwarf integrates them; no round admits them meanwhile"
     ));
     Some(id)
 }

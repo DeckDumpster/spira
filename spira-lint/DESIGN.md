@@ -103,7 +103,7 @@ by hand. `spira-config`, the crate and its CLI, is the only thing that may find,
 write either. A second reader or writer is a second schema that drifts.
 
 **Scope.** Tracked and untracked-not-ignored files matching the git pathspecs
-`spira/*.sh`, `spira/gate-suites`, `spira/chamber/*.fayth`, `spira/chamber/*.md` or `*.rs`
+`spira/*.sh`, `spira/gate-suites`, `spira/runes/*.rune`, `spira/runes/*.md` or `*.rs`
 (`*` crosses `/`, as git's default pathspec does), minus anything under `spira-config/`.
 
 **Violations**, reported as one finding per file whose message lists the kinds
@@ -137,7 +137,7 @@ pub struct ConfigAllow(BTreeSet<String>);   // entry == Finding.path
 - `write` in shell was a line regex. It caught `> "$SPIRA_TOML_TMP"` (a different variable,
   since `SPIRA_(TOML|REPO_MAP)` was a prefix) and missed `mv "$tmp" "$SPIRA_TOML"` and
   `tee "$SPIRA_TOML"`. It now matches the construct and the exact variable. The write
-  checks also no longer run on prose (`.md`, `.fayth`) or on `gate-suites`, which contain
+  checks also no longer run on prose (`.md`, `.rune`) or on `gate-suites`, which contain
   no shell. A persona that tells an agent to write the config names it, and `name` catches
   that.
 
@@ -191,8 +191,8 @@ anywhere a test module's own `mod name;` loads transitively.
   empty string, `PathBuf::new()`) is an absence, never a guessed path.
 
   The key decides which literal defaults count: [`CONFIG_IDENTITY_KEYS`] (`SPIRA_RUN`,
-  `SPIRA_HOME`, `SPIRA_REPO`, `SPIRA_INSTANCE`, `SPIRA_CHAMBER`, `SPIRA_CHAMBER_OVERLAY`,
-  `SPIRA_FAYTHS`, `SPIRA_DB`, `SPIRA_WORKSPACES`, `SPIRA_REPO_MAP`, `SPIRA_TOML`,
+  `SPIRA_HOME`, `SPIRA_REPO`, `SPIRA_INSTANCE`, `SPIRA_RUNES_DIR`, `SPIRA_RUNES_OVERLAY`,
+  `SPIRA_RUNES`, `SPIRA_DB`, `SPIRA_WORKSPACES`, `SPIRA_REPO_MAP`, `SPIRA_TOML`,
   `SPIRA_CONF`, `SPIRA_HOME_REPO` — "where/who/which copy") trip it on ANY literal default;
   every other `SPIRA_*` key trips it only when the default is PATH-SHAPED (contains `/`).
   A key outside that list with a short, non-path default (`SPIRA_SYSTEMCTL` defaulting to
@@ -210,7 +210,7 @@ anywhere a test module's own `mod name;` loads transitively.
 empty at birth: the rule's own first run over the whole tree found 24 pre-existing sites
 outside the eight binaries sp-ivfu3 itself fixed (`broker`, `census`, `cockpit-collect`,
 `cockpit/ops`, `doctor`, `gate-run`, `gh-intake`, `groomer`, `install`, `loom`, `queue`,
-`reconciler-alert`, `rule`, `sending`, `skew`, `spira-lc`, `spira-world/src/bin/slay.rs`,
+`reconciler-alert`, `rule`, `hel`, `skew`, `spira-lc`, `spira-world/src/bin/slay.rs`,
 `tsd-lifecycle-export`, `watchd`, `work`) — each the same shape, each its own follow-on fix
 in the crate it lives in, listed in the allow file rather than bundled into this bead.
 
@@ -665,14 +665,14 @@ Ported from `spira/bd-stdin-lint.sh` (sp-pppt0; defect sp-j5z3), which is delete
 discard the heredoc body that follows it — six beads shipped with a dash where their body or
 notes should be. The stdin forms (`--stdin`, `--body-file -`) are the fix.
 
-**Scope.** Every file under `spira/` or `chamber/` (git's default pathspec `*`, crossing
+**Scope.** Every file under `spira/` or `runes/` (git's default pathspec `*`, crossing
 `/`), one pass per file over both shapes together (never two passes for the same file).
 
 **Violation.** A live (non-comment) line matching either shape:
 `bd … note … <space>-<space><<` or `bd … create … (-d<space>-|-d-|--description<space>-)`
 followed by `<`, end of line, or a non-`-` character. One finding per line.
 
-**Refuses** (exit 3): no `spira/` or `chamber/` files in scope. **Positive control:**
+**Refuses** (exit 3): no `spira/` or `runes/` files in scope. **Positive control:**
 `fence: bd-stdin-lint checked <n> files`.
 
 ## Rule `cockpit-no-bd`
@@ -732,22 +732,22 @@ record, and never by matching `gate.sh` in a process listing.
 **Refuses** (exit 3): no file in scope. **Positive control:** `fence: gate-state-readers checked
 <n> files`.
 
-## Rule `aeon-state-readers`
+## Rule `dwarf-state-readers`
 
-**Intent.** An aeon's phase and how its session was cut short are fields of its WORKING row,
+**Intent.** A dwarf's phase and how its session was cut short are fields of its WORKING row,
 read through spira-lc. Nothing writes or reads the retired `.lapsed`, `.thrash` and `.slain`
 marker files, and the operator-facing health and panel readers read no pidfile, lease file,
 ledger or `/proc` entry.
 
-**Scope.** `.rs` and `.sh` files under `cockpit/`, `cockpit-collect/`, `watchtower/`, `aeon/`,
+**Scope.** `.rs` and `.sh` files under `cockpit/`, `cockpit-collect/`, `watchtower/`, `dwarf/`,
 `spira-world/` and `spira/*.sh` for the marker names; `cockpit/ops/src/health*` and
 `cockpit/panel/` for the pid, lease, ledger and `/proc` reads. Suites, `tests.rs`, `tests/` and
 everything after a `#[cfg(test)]` line are out of scope.
 
 **Violation.** A live line naming a marker file in a string (`<id>.slain`, `"…thrash"`), or in a
-reader, `/proc`, `procfs::`, a `.pid` or `.lease` name, or `aeon-ledger`.
+reader, `/proc`, `procfs::`, a `.pid` or `.lease` name, or `dwarf-ledger`.
 
-**Refuses** (exit 3): no file in scope. **Positive control:** `fence: aeon-state-readers
+**Refuses** (exit 3): no file in scope. **Positive control:** `fence: dwarf-state-readers
 checked <n> files`; its unit tests plant a read of each kind and require a finding for it.
 
 ## Rule `release-state-readers`
@@ -980,13 +980,13 @@ empty list, which would make every tree "clean" (law-absence-needs-a-positive-co
 
 **The box's config file is not an input (sp-g9f3t).** `schema.sh` sources conf.sh, whose
 config search reads the operator's own `spira.toml` (explicit `SPIRA_CONF`/`SPIRA_TOML`, else
-XDG) — but only when that file is newer than the tree's `spira/chamber/*.fayth`; otherwise it
+XDG) — but only when that file is newer than the tree's `spira/runes/*.rune`; otherwise it
 regenerates a persona-only `spira.toml` into the tree and reads that. On the gate the same
 local/main tree and the same binary flipped between 0 and 5 findings on mtimes alone (the
 operator's `ask_label = "needs-ryan"` was read or not), and two base trials were judged red
 on it. Every `schema.sh` call therefore runs with `SPIRA_CONF`, `SPIRA_TOML` and
-`SPIRA_CHAMBER` pinned to paths that do not exist: the names are the tree's own declarations
-plus any override the process environment carries (`SPIRA_ASK_LABEL` exported by an aeon
+`SPIRA_RUNES_DIR` pinned to paths that do not exist: the names are the tree's own declarations
+plus any override the process environment carries (`SPIRA_ASK_LABEL` exported by a dwarf
 still counts), identical on every box. A label an operator sets only in a config file is not
 guarded by this fence; a tree's verdict cannot depend on one box's file.
 
@@ -1017,11 +1017,11 @@ motivated the lint sailed through reporting "clean". Reading the declaration at 
 
 Ported from `spira/scratch-fence.sh` (deleted).
 
-**Intent.** Aeon working notes committed to the harness root ship to every consumer and widen
+**Intent.** Dwarf working notes committed to the harness root ship to every consumer and widen
 the suite-selection fallback (a file no suite declares runs the full corpus) on every branch
 that follows them — ten accumulated before this fence existed.
 
-**Scope.** Tracked, root-level (no `/` in the path) files matching `sp-*` (an aeon working note
+**Scope.** Tracked, root-level (no `/` in the path) files matching `sp-*` (a dwarf working note
 named after a bead) or `*.fixed` (a hand-patched artefact). Untracked files are not scanned —
 the bash original read `git ls-files` with no `--others`.
 
@@ -1129,7 +1129,7 @@ candidates. A candidate names a script two ways:
 A resolved path missing from the tree is a finding, **unless** the same file creates that
 exact basename itself: a redirect (`>`, `>>`, `>|`, `<>`, `&>`, `&>>`) onto it, or it is an
 argument to `cp`/`install`/`ln`/`tee`/`write_exe` — `test-world-drain-deadline.sh`'s
-`printf … > "$SH/aeon.sh"` before `bash "$SH/aeon.sh"`, and every `test-world-*.sh`'s
+`printf … > "$SH/dwarf.sh"` before `bash "$SH/dwarf.sh"`, and every `test-world-*.sh`'s
 `cp "$WORLD_BIN" "$SH/world.sh"`, are exempt this way, deliberately: `SH` there is pointed
 at a sandbox, and the suite's whole point is to exercise the real binary under that name.
 
@@ -1168,7 +1168,7 @@ one occurrence; a listed path with no findings left is itself a finding, so the 
 exact). Seeded at authorship with exactly one entry, `spira-world/src/bin/world.rs`: this
 rule's own first run against the real tree caught `world stop`/`drain --deadline` still
 spawning the retired `spira/slay.sh` (`Command::new("slay.sh")`, sp-6onps repointed
-`world.sh`/`aeons.sh`/`ctrl.sh` but missed this one) — genuine, but not a trivial fix here:
+`world.sh`/`dwarves.sh`/`ctrl.sh` but missed this one) — genuine, but not a trivial fix here:
 a dozen suites stub a fake `$SH/slay.sh` on PATH to intercept the call, so repointing the
 binary needs every one of those renamed in the same change. Left listed, named, and
 reported rather than folded into this delivery; the allow file's own comment carries the
@@ -1410,11 +1410,11 @@ the migration's progress meter and, once switched to `enforce`, the fence that s
 words returning. The mapping is the replacing design's, not repeated here.
 
 **Scope.** Every walked path and every text file's contents, minus `docs/spikes/`, `raw/spira-beads/`
-(the bead mirror), `*.tsv` corpora and this rule's own source. A file holding a NUL byte is
+(the bead mirror), `lifecycle/migrations/`, the config key history, `*.tsv` corpora, this rule's own source and any line carrying `ffx-ok` (a retired name kept on purpose, such as a retired config key). A file holding a NUL byte is
 matched by path only. Commit history is not walked.
 
 **Matching.** A name or line is split into words at every non-alphanumeric and at camelCase
-joins (`AeonState`, `SPIRA_MAX_AEONS` and `aeon-fence.sh` each yield the term). A word is a
+joins (`AeonState`, `SPIRA_MAX_AEONS` and `aeon-fence.sh` each yield the term). A word is a <!-- ffx-ok -->
 hit when its lowercase form is one of the terms in the rule's table — the identity names,
 the ordinary-English words the vocabulary retired, with their plural or inflected forms. Two
 deliberate edges:
@@ -1429,11 +1429,11 @@ deliberate edges:
 `sending` alone is ordinary English and is not a hit.
 
 **Mode.** The config key `ffx_vocabulary_mode` (`SPIRA_FFX_VOCABULARY_MODE`), shipped as
-`report`, anything but `report` or `enforce` being a refusal (exit 3).
+`enforce`, anything but `report` or `enforce` being a refusal (exit 3).
 
 - `report` prints every hit to stdout as `ffx-vocabulary: <path>:<line>:<term>` (line 0 is a hit in
   the path itself), then a `count <term> <n>` line per term and a closing `remaining <n> hit(s)`
   line, and exits 0. Each gate round's lint step logs it.
 - `enforce` reports each hit as an ordinary finding, so the run exits 1.
 
-**No allow list.** The migration is the allow list; nothing is excepted but the history paths above.
+**No allow list.** The migration is the allow list; nothing is excepted but the history paths and `ffx-ok` lines above.

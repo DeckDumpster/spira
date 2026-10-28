@@ -266,7 +266,7 @@ mod tests {
     #[test]
     fn parse_two_apostrophes_roundtrips() {
         // Python encode("''") = "''\\'''\\'''" (10 chars: ' ' \ ' ' ' \ ' ' ')
-        // This is the live SP_AURON_KEYS value from the cockpit.env on this box.
+        // This is the live SP_HEIMDALL_KEYS value from the cockpit.env on this box.
         let encoded = "''\\'''\\'''";
         assert_eq!(
             parse_shell_value(encoded),

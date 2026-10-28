@@ -12,11 +12,11 @@
 #
 # THE RESTRICTED-ENVIRONMENT ISOLATION (no `bd` on PATH, no DB credential reachable) USED
 # TO BE TESTED HERE, against the standalone `spira/work-env.sh` wrapper. That script is
-# retired (sp-zpaq0, rewrite wave 5): its only caller was aeon.sh/aeon itself
+# retired (sp-zpaq0, rewrite wave 5): its only caller was dwarf.sh/dwarf itself
 # (work/DESIGN.md §2), so there is no standalone binary left to invoke. The property moved
-# with the mechanism — `aeon/src/restrict.rs`'s own unit tests (`cargo test -p aeon`) hold
+# with the mechanism — `dwarf/src/restrict.rs`'s own unit tests (`cargo test -p dwarf`) hold
 # the allow-list to account (bd/SPIRA_DB never leak, the bound bead id always does), and
-# test-aeon-lifecycle-cutover.sh still proves it end to end against a real spira-lc.
+# test-dwarf-lifecycle-cutover.sh still proves it end to end against a real spira-lc.
 #
 # tier: T1
 # covers: work/* spira-lc/src/work.rs spira-lc/src/bd.rs spira/conf.sh
@@ -66,7 +66,7 @@ out="$(env -i PATH="/usr/bin:/bin" SPIRA_WORK_BEAD_ID="sp-bound1" SPIRA_TOML="$S
 is "unknown verb: refused (exit 3)" "3" "$rc"
 
 # The restricted-environment isolation this section used to assert against the standalone
-# work-env.sh wrapper moved with the mechanism to aeon/src/restrict.rs (sp-zpaq0) — see
+# work-env.sh wrapper moved with the mechanism to dwarf/src/restrict.rs (sp-zpaq0) — see
 # this file's header comment. Its own unit tests hold the allow-list to account; nothing
 # stands alone here to invoke any more.
 

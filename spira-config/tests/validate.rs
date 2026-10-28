@@ -101,7 +101,7 @@ mod spira_section {
 
     #[test]
     fn valid() {
-        validate("[spira]\nid_prefix = \"sp\"\nhome_repo = \"home\"\nmax_aeons = 4\n").expect("valid");
+        validate("[spira]\nid_prefix = \"sp\"\nhome_repo = \"home\"\nmax_dwarves = 4\n").expect("valid");
     }
 
     #[test]
@@ -112,8 +112,8 @@ mod spira_section {
 
     #[test]
     fn wrong_type() {
-        let err = validate("[spira]\nid_prefix = \"sp\"\nmax_aeons = true\n").unwrap_err();
-        assert!(err.starts_with("spira.max_aeons"), "{err}");
+        let err = validate("[spira]\nid_prefix = \"sp\"\nmax_dwarves = true\n").unwrap_err();
+        assert!(err.starts_with("spira.max_dwarves"), "{err}");
     }
 
     #[test]
@@ -261,12 +261,12 @@ mod retired_keys {
     #[test]
     fn dropping_a_key_without_retiring_it_fails_the_suite() {
         let history: BTreeSet<String> =
-            ["home_repo", "max_aeons", "never_retired_by_anything"]
+            ["home_repo", "max_dwarves", "never_retired_by_anything"]
                 .iter()
                 .map(|s| s.to_string())
                 .collect();
         let active: BTreeSet<String> =
-            ["home_repo", "max_aeons"].iter().map(|s| s.to_string()).collect();
+            ["home_repo", "max_dwarves"].iter().map(|s| s.to_string()).collect();
         let missing = missing_from_retirement(&history, &active);
         assert_eq!(missing, vec!["never_retired_by_anything".to_string()]);
     }
@@ -408,7 +408,7 @@ fn the_cli_accepts_a_key_a_newer_release_wrote_with_a_warning() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "{err}");
     assert!(err.contains("warning") && err.contains("admit_stagger_secs_from_the_future") && err.contains("newer release"), "{err}");
-    std::fs::write(&f, "[spira]\nid_prefix = \"sp\"\nadmit_stagger_secs_from_the_future = 3\nmax_aeons = true\n").unwrap();
+    std::fs::write(&f, "[spira]\nid_prefix = \"sp\"\nadmit_stagger_secs_from_the_future = 3\nmax_dwarves = true\n").unwrap();
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_spira-config")).arg("validate").arg(&f).output().unwrap();
     assert!(!out.status.success(), "a malformed known value must still refuse");
 }
@@ -417,7 +417,7 @@ const MODELS: &str = "[persona.ops]\nmodel = \"claude-x\"\n[persona.warden]\nmod
 
 #[test]
 fn strict_validation_refuses_a_rostered_persona_with_no_declared_model() {
-    let roster = "[spira]\nid_prefix = \"sp\"\nfayths = [\"ops\", \"warden\"]\n[persona.ops]\nmodel = \"claude-x\"\n";
+    let roster = "[spira]\nid_prefix = \"sp\"\nrunes = [\"ops\", \"warden\"]\n[persona.ops]\nmodel = \"claude-x\"\n";
     let err = spira_config::validate_strict(roster).unwrap_err();
     assert!(err.contains("persona.warden.model"), "{err}");
     spira_config::validate_strict(&format!("{roster}[persona.warden]\nmodel = \"claude-x\"\n")).expect("every rostered persona declares a model");
@@ -426,20 +426,20 @@ fn strict_validation_refuses_a_rostered_persona_with_no_declared_model() {
 #[test]
 fn strict_validation_refuses_a_declared_lane_the_roster_omits() {
     let base = "[spira]\nid_prefix = \"sp\"\nlanes = \"ops warden\"\n";
-    let omits = format!("{base}fayths = [\"ops\", \"builder\"]\n");
+    let omits = format!("{base}runes = [\"ops\", \"builder\"]\n");
     let err = spira_config::validate_strict(&omits).unwrap_err();
-    assert!(err.contains("spira.lanes") && err.contains("spira.fayths") && err.contains("warden"), "{err}");
-    let covers = format!("{base}fayths = [\"ops\", \"warden\"]\n{MODELS}");
+    assert!(err.contains("spira.lanes") && err.contains("spira.runes") && err.contains("warden"), "{err}");
+    let covers = format!("{base}runes = [\"ops\", \"warden\"]\n{MODELS}");
     spira_config::validate_strict(&covers).expect("a roster naming every lane passes");
-    spira_config::validate_strict(base).expect("no explicit roster means every chamber fayth");
+    spira_config::validate_strict(base).expect("no explicit roster means every runes rune");
 }
 
 #[test]
 fn strict_validation_refuses_a_timer_partition_label_whose_persona_is_unrostered() {
-    let omits = "[spira]\nid_prefix = \"sp\"\nwarden_label = \"warden-sweep\"\nfayths = [\"ops\"]\n";
+    let omits = "[spira]\nid_prefix = \"sp\"\nwarden_label = \"warden-sweep\"\nrunes = [\"ops\"]\n";
     let err = spira_config::validate_strict(omits).unwrap_err();
-    assert!(err.contains("spira.warden_label") && err.contains("spira.fayths"), "{err}");
-    let ok = format!("[spira]\nid_prefix = \"sp\"\nwarden_label = \"warden-sweep\"\nfayths = [\"ops\", \"warden\"]\n{MODELS}");
+    assert!(err.contains("spira.warden_label") && err.contains("spira.runes"), "{err}");
+    let ok = format!("[spira]\nid_prefix = \"sp\"\nwarden_label = \"warden-sweep\"\nrunes = [\"ops\", \"warden\"]\n{MODELS}");
     spira_config::validate_strict(&ok).expect("rostered");
 }
 

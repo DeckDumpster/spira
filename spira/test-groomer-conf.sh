@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 #
-# test-groomer-conf.sh — groomer's conf keys and fayth declarations, static (UC-32).
+# test-groomer-conf.sh — groomer's conf keys and rune declarations, static (UC-32).
 #
 #   ./test-groomer-conf.sh
 #
 # Split out of test-groomer.sh (a T1 behavioural suite) because these checks exercise no
-# code path — they read conf.sh and chamber/groomer.fayth and assert on the values, which
+# code path — they read conf.sh and runes/groomer.rune and assert on the values, which
 # is a T0 lint concern, not a unit test.
 #
 # tier: T0
-# covers: spira/conf.sh spira/chamber/groomer.fayth
+# covers: spira/conf.sh spira/runes/groomer.rune
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -44,32 +44,32 @@ want "groomer lane is in SPIRA_LANES default" "groomer" "$lanes"
 
 # ==========================================================================================
 echo
-echo "groomer.fayth declares FAYTH_LANE=groomer"
+echo "groomer.rune declares RUNE_LANE=groomer"
 # ==========================================================================================
-# Groomer is a party persona, not a task fayth. It must declare a lane so it draws from its
-# own capacity rather than from SPIRA_MAX_AEONS.
-if [ -f "$HERE/chamber/groomer.fayth" ]; then
+# Groomer is a party persona, not a task rune. It must declare a lane so it draws from its
+# own capacity rather than from SPIRA_MAX_DWARVES.
+if [ -f "$HERE/runes/groomer.rune" ]; then
     tl_config SPIRA_DB="$T/db"
     lane_val="$(env -i HOME="$T" PATH="$TOOLS:/usr/bin:/bin" SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" \
-        bash -c '. "'"$HERE"'/conf.sh" && . "'"$HERE"'/chamber/groomer.fayth" && printf "%s" "${FAYTH_LANE:-}"' 2>/dev/null)"
-    is   "groomer.fayth FAYTH_LANE=groomer" "groomer" "$lane_val"
+        bash -c '. "'"$HERE"'/conf.sh" && . "'"$HERE"'/runes/groomer.rune" && printf "%s" "${RUNE_LANE:-}"' 2>/dev/null)"
+    is   "groomer.rune RUNE_LANE=groomer" "groomer" "$lane_val"
 else
-    bad  "groomer.fayth" "not found at $HERE/chamber/groomer.fayth"
+    bad  "groomer.rune" "not found at $HERE/runes/groomer.rune"
 fi
 
 # ==========================================================================================
 echo
-echo "groomer.fayth declares FAYTH_GROOM_ESCALATION_CHECK=1"
+echo "groomer.rune declares RUNE_GROOM_ESCALATION_CHECK=1"
 # ==========================================================================================
-# The escalation check in aeon.sh is activated by this key. Without it, a groom pass
+# The escalation check in dwarf.sh is activated by this key. Without it, a groom pass
 # that claims ESCALATED without filing an ask bead is never caught.
-if [ -f "$HERE/chamber/groomer.fayth" ]; then
+if [ -f "$HERE/runes/groomer.rune" ]; then
     tl_config SPIRA_DB="$T/db"
     gesc_val="$(env -i HOME="$T" PATH="$TOOLS:/usr/bin:/bin" SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" \
-        bash -c '. "'"$HERE"'/conf.sh" && . "'"$HERE"'/chamber/groomer.fayth" && printf "%s" "${FAYTH_GROOM_ESCALATION_CHECK:-}"' 2>/dev/null)"
-    is   "groomer.fayth FAYTH_GROOM_ESCALATION_CHECK=1" "1" "$gesc_val"
+        bash -c '. "'"$HERE"'/conf.sh" && . "'"$HERE"'/runes/groomer.rune" && printf "%s" "${RUNE_GROOM_ESCALATION_CHECK:-}"' 2>/dev/null)"
+    is   "groomer.rune RUNE_GROOM_ESCALATION_CHECK=1" "1" "$gesc_val"
 else
-    bad  "groomer.fayth" "not found at $HERE/chamber/groomer.fayth"
+    bad  "groomer.rune" "not found at $HERE/runes/groomer.rune"
 fi
 
 echo

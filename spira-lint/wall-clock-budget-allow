@@ -1,6 +1,6 @@
 # wall-clock-budget: suites and tests that still assert a duration against a constant. Shrink-only:
 # a line leaves when its file asserts counts instead; nothing is ever added.
-aeon/src/session.rs
+dwarf/src/session.rs
 cert-sweep/tests/pass.rs
 landing-pass/src/tests.rs
 mail/src/repeat.rs

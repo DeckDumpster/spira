@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 #
-# worktree-hooks.sh install <worktree> — arm every git hook inside one aeon's worktree.
+# worktree-hooks.sh install <worktree> — arm every git hook inside one dwarf's worktree.
 #
 # WHY THIS EXISTS AS ITS OWN SCRIPT. core.hooksPath names ONE directory, and a
-# per-worktree setting OVERRIDES the repo-level one. aeon.sh needed a per-worktree
+# per-worktree setting OVERRIDES the repo-level one. dwarf.sh needed a per-worktree
 # pre-commit (the dirty-files guard, which is specific to one session's snapshot), so it
 # pointed the worktree at a directory containing that hook and nothing else -- silently
 # disarming every other hook in the repository for that worktree.
 #
-# THE SCAR. On 2026-09-18 an Ops aeon deleted 24 peers' unlanded branches from inside its
+# THE SCAR. On 2026-09-18 an Ops dwarf deleted 24 peers' unlanded branches from inside its
 # own worktree. A reference-transaction hook was written to refuse exactly that, armed at
 # the repo level, verified by a live probe, and reported as protecting the repository. It
-# was absent from every aeon worktree -- the only place the deletion has ever happened --
+# was absent from every dwarf worktree -- the only place the deletion has ever happened --
 # because of the override above. The probe passed because it was run in the main checkout,
-# which is the one place an aeon never works (sp-urifb,
+# which is the one place a dwarf never works (sp-urifb,
 # law-guard-proved-where-the-offender-runs).
 #
 # COMPOSED FROM THE CANONICAL SET, NEVER A LIST. Every hook is copied out of
@@ -21,8 +21,8 @@
 # remembering this file exists. A list is how the next hook gets forgotten the same way
 # the last one was.
 #
-# SEPARATE FROM aeon.sh SO IT CAN BE TESTED. Asserting this property through aeon.sh would
-# mean summoning an aeon; test-ref-guard.sh calls this directly instead.
+# SEPARATE FROM dwarf.sh SO IT CAN BE TESTED. Asserting this property through dwarf.sh would
+# mean calling a dwarf; test-ref-guard.sh calls this directly instead.
 #
 # Usage:
 #   worktree-hooks.sh install <worktree-path>
@@ -53,7 +53,7 @@ dest="$gitdir/hooks"
 mkdir -p "$dest" || exit 1
 
 # THE CANONICAL HOOKS FIRST. Files ending in .sh are helpers that live beside the hooks
-# (aeon-fence.sh, session.sh) and are not hooks themselves -- git would ignore them anyway,
+# (dwarf-fence.sh, session.sh) and are not hooks themselves -- git would ignore them anyway,
 # but copying them would imply they are armed here, which they are not.
 copied=""
 for h in "$src"/*; do
@@ -69,8 +69,8 @@ for h in "$src"/*; do
 done
 
 # PRE-COMMIT IS COMPOSED, NOT REPLACED. The worktree needs BOTH the canonical fences
-# (beads data, aeon identity on the base branch) and this session's dirty-files guard.
-# Replacing one with the other is what the old code did, so an aeon worktree was also
+# (beads data, dwarf identity on the base branch) and this session's dirty-files guard.
+# Replacing one with the other is what the old code did, so a dwarf worktree was also
 # running without exclude.sh's and branch-guard.sh's checks.
 #
 # The canonical hook is invoked BY ITS REAL PATH rather than copied, because it resolves
@@ -88,7 +88,7 @@ if [ -L "$releases_dir/current" ] && [ "$(cd "$releases_dir/current" 2>/dev/null
     hooks_ref="$releases_dir/current/$(basename "$home_real")/hooks"
 fi
 # pre-commit-guard.sh by its path beside the hooks too, never by bare name: the model's
-# restricted PATH omits the release's spira/ (aeon/src/restrict.rs), so
+# restricted PATH omits the release's spira/ (dwarf/src/restrict.rs), so
 # a bare `exec pre-commit-guard.sh` was "not found" and refused every commit (sp-djgb4).
 # Beside the hooks first, then PATH (a home whose hooks dir has no sibling guard refused
 # every commit after sp-djgb4 — sp-f96ah), else refuse naming it.

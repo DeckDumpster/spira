@@ -6,7 +6,7 @@
 #   2. spira-lint, the cheap deterministic rules — scratch-fence, tmp-leak, chmod-exec-leak,
 #      env-set-var-leak, fence-scripts, config-fence: the refusal surfaces in the session
 #      that wrote the defect, not at certification
-#   3. branch-guard.sh staged   — refuses aeon-identity commits on the base branch
+#   3. branch-guard.sh staged   — refuses dwarf-identity commits on the base branch
 #
 # Armed by `exclude.sh install`, which sets core.hooksPath to this directory. That is why
 # the hook is TRACKED rather than copied into .git/hooks: .git/hooks is not cloned, so a
@@ -20,14 +20,14 @@
 #
 # scratch-fence moved to spira-lint (sp-ekkak). Every tool here — exclude.sh, spira-lint,
 # branch-guard.sh — is invoked by bare name on the PATH the launcher set (sp-gypjk): the
-# worktree creator points core.hooksPath at the release's spira/hooks and the aeon's
+# worktree creator points core.hooksPath at the release's spira/hooks and the dwarf's
 # environment carries the release PATH, so the hook and the tools it runs are the
 # release's. A tool missing from PATH refuses the commit, naming it; it never silently
 # skips the check.
 set -uo pipefail
 # THE TOOLS BESIDE THIS HOOK FIRST (sp-tf7nt). core.hooksPath points at a release's
 # spira/hooks, so <release>/spira and <release>/bin are this hook's own release. Under
-# an aeon the model's PATH is restricted (aeon/src/restrict.rs: /usr/bin, /bin,
+# a dwarf the model's PATH is restricted (dwarf/src/restrict.rs: /usr/bin, /bin,
 # the release's bin/) and omits spira/, so a bare-name lookup alone refused every commit on
 # a fresh install; production only passed because the agent's shell inherited a profile
 # PATH. Still the release's tools, still refusing when one is missing.

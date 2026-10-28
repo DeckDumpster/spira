@@ -7,11 +7,11 @@
 #
 # THE ORIGINAL DEFECT (sp-qc4kn): spira-lc content-landed's is-ancestor check came before the
 # ahead>0 guard, so it returned 0 for empty branches (ahead=0, is-ancestor), causing
-# the Sending to reap them and the bead to cycle without an attempt being charged.
+# the Hel to reap them and the bead to cycle without an attempt being charged.
 #
 # REVISED BEHAVIOR (sp-bf31a): ancestor branches are landed by definition — moving the
 # is-ancestor check before the ahead=0 guard makes spira-lc content-landed return 0 for all
-# ancestor branches, including empty ones. The Sending reaps them; CHECK 5 reopens the
+# ancestor branches, including empty ones. The Hel reaps them; CHECK 5 reopens the
 # bead when no commit on the base names it (the normal reopening path). This is correct:
 # a closed bead with an empty branch never had work done, so it should be reopened.
 #
@@ -22,10 +22,10 @@
 #   3. SQUASH-MERGED    — a branch whose content reached the base as a squash commit
 #      still returns 0 from spira-lc content-landed (commits ahead, merge-tree same).
 #
-# sending.sh's OWN use of spira-lc content-landed — reaping an ahead=0 ancestor branch exactly as
-# it reaps a genuine content-landed one — is test-sending.sh's sp-cl0 row now (sp-rg46a);
-# this file no longer builds a sending.sh fixture just to re-confirm the same spira-lc content-landed
-# answer sending.sh reads.
+# hel.sh's OWN use of spira-lc content-landed — reaping an ahead=0 ancestor branch exactly as
+# it reaps a genuine content-landed one — is test-hel.sh's sp-cl0 row now (sp-rg46a);
+# this file no longer builds a hel.sh fixture just to re-confirm the same spira-lc content-landed
+# answer hel.sh reads.
 #
 # tier: T2
 # covers: spira/lib.sh

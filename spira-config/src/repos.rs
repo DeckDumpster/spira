@@ -682,7 +682,7 @@ fn gitstore(path: &str) -> Option<PathBuf> {
 }
 
 /// `spira_same_repo <a> <b>` — by object store, never by path string: a worktree and the
-/// checkout it was cut from are one repository under two paths, and every aeon works in a
+/// checkout it was cut from are one repository under two paths, and every dwarf works in a
 /// worktree while the landing gate extracts one, so a string comparison calls the copy in
 /// force "some other repository" and a fence keyed on it fires on every branch.
 pub fn same_repo(a: &str, b: &str) -> bool {
@@ -716,7 +716,7 @@ pub fn same_repo(a: &str, b: &str) -> bool {
 /// landing record pruned next, reading "no branch" from a registry that could not look.
 /// Recomputing it fresh, always, from THIS process's own `home` is the same
 /// law-a-binary-resolves-the-config-it-reads fix sp-hh599 made for spira-claim's own
-/// `fayth_home`: a derived fact is resolved in-process, never trusted from the
+/// `rune_home`: a derived fact is resolved in-process, never trusted from the
 /// environment. When `home` genuinely matches what forwarded it (the ordinary case: a
 /// unit's own worker, not a dispatcher's borrowed context), the freshly-derived value
 /// equals the forwarded one and nothing changes.

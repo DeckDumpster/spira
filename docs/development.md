@@ -6,9 +6,9 @@
 |---|---|
 | `Cargo.toml` | one workspace of about eighty member crates, each a binary and/or library; most carry a `DESIGN.md` stating their contract |
 | `spira-config`, `lifecycle`, `spira-lc`, `beads-store` | config, the lifecycle machines and their service, the bead-store seam |
-| `sentinel`, `aeon`, `landing-pass`, `queue`, `batcher-cut`, `gate*`, `testenv`, `release`, `install` | the loop: dispatch, aeon runner, landing, rounds, gate, test runner, releases, installer |
+| `sentinel`, `dwarf`, `landing-pass`, `queue`, `batcher-cut`, `gate*`, `testenv`, `release`, `install` | the loop: dispatch, dwarf runner, landing, rounds, gate, test runner, releases, installer |
 | `loom`, `cockpit/`, `cockpit-collect`, `watchd`, `mail`, `doctor`, `census`, `strand` | read surfaces and operator tools |
-| `spira/` | shell not yet ported, `conf.sh` / `lib.sh`, the registry (`conf.d/`, `conf.toml.d/`), personas (`chamber/`), hooks (`hooks/`), `deps.toml`, `watchers`, and every suite (`test-*.sh`) |
+| `spira/` | shell not yet ported, `conf.sh` / `lib.sh`, the registry (`conf.d/`, `conf.toml.d/`), personas (`runes/`), hooks (`hooks/`), `deps.toml`, `watchers`, and every suite (`test-*.sh`) |
 | `systemd/` | unit templates (`@PLACEHOLDER@` substitution; `.service` + `.timer` pairs) |
 | `docs/test-plan/*.toml` | the use-case catalogue suites declare coverage against |
 | `gate.steps` | this repository's certification gate |
@@ -26,7 +26,7 @@ Generic mechanism. A colleague clones this and it carries none of the operator's
 
 | path | what it is |
 |---|---|
-| `spira/` | the harness proper — aeon runner, sentinel and its checks, gate, sending, strand, the chamber and its fayth format, lib.sh, and the test suites that hold them |
+| `spira/` | the harness proper — dwarf runner, sentinel and its checks, gate, hel, strand, the runes and its rune format, lib.sh, and the test suites that hold them |
 | `spira/boundary` | this manifest — it describes the harness, so it travels with it |
 | `spira/boundary.sh` | renders this manifest into every document that publishes it; the wiki-side target is configured and skipped when unset, per rule 2 |
 | `spira/conf.sh` | the one configuration surface: the loader, the key allowlist, the derived defaults, and `spira_require`, which names a missing program instead of dying as a shell error |
@@ -35,7 +35,7 @@ Generic mechanism. A colleague clones this and it carries none of the operator's
 | `spira-lint/src/rules/inventory.rs` | the fence that keeps one operator's infrastructure out of a repository meant to be cloned — repository names, hosts, paths, people, dates. It scans comments, which is where all of it was. |
 | `spira/inventory-deny` | the tokens that fence refuses beyond the structural ones. Ships EMPTY: a list of somebody else's names is itself the inventory |
 | `spira/actors.example` | commit author to harness, for authors the commit graph cannot vote on. Its rows are one installation's roster |
-| `auron/` | the watchdog over the loop (Rust) — reads timestamps and counters, raises or clears an alert bead. Its only power is speech: it repairs nothing, restarts nothing and summons nothing |
+| `heimdall/` | the watchdog over the loop (Rust) — reads timestamps and counters, raises or clears an alert bead. Its only power is speech: it repairs nothing, restarts nothing and calls nothing |
 | `skew/` | is the activated release the latest published (Rust) — the hourly check that the installed release matches the most recent release tag; also the landing gate's fence against work landing in a copy nothing executes |
 | `doctor/` | read-only preflight (Rust) — every missing program, unreadable database, unmapped repository and unbuilt panel, named in one pass |
 | `census/` | the Mimir census (Rust) — failure classes ranked by frequency from the events table, with open-remedy suppression |
@@ -107,7 +107,7 @@ make dist      # build + spira/build-tarball.sh build --workspace .
 ```
 
 Profiles (`Cargo.toml`): `release` (opt-level 2, no LTO, stripped; what a release ships),
-`aeon` (inherits `dev`, incremental; what aeon worktrees and the gate build, with the fence
+`dwarf` (inherits `dev`, incremental; what dwarf worktrees and the gate build, with the fence
 tools such as `spira-lint` and `lifecycle-guard` optimised within it), and `unittest`
 (workspace members unoptimised, dependencies as release builds them; the round's unit-test
 build). `testenv --profile <p>` selects one; `--with-bins` means `release`. The toolchain is
@@ -155,7 +155,7 @@ branch's diff.
 ## How a change lands
 
 A change to Spira is work like any other. File a bead for the harness repository
-(`bead.sh file "<title>" --for builder --repo <name>`); a builder aeon claims it in a worktree
+(`bead.sh file "<title>" --for builder --repo <name>`); a builder dwarf claims it in a worktree
 on `spira/<id>`, implements it, runs only the touched crates' unit tests, and calls
 `work submit`. The commit subject names the bead id. The sentinel, screen, gate and round carry
 it from there ([architecture](architecture.md)), and a release is built, verified and activated from the landed
@@ -164,9 +164,9 @@ commit. For a repository in `pr` mode, open the pull request instead.
 When working by hand, arm the tracked hooks once with `bash spira/exclude.sh install [root]`
 (writes the `.gitignore` stanza and points `core.hooksPath` at `spira/hooks`). The pre-commit
 hook runs `exclude.sh staged` (refuses beads data), the cheap lint rules, and
-`branch-guard.sh staged` (refuses aeon-identity commits on the base); a `reference-transaction`
-hook refuses deleting a bead branch outside the destruction chokepoint; `aeon-fence.sh` is the
-PreToolUse hook that blocks queue-operating and credential-touching commands inside aeon
+`branch-guard.sh staged` (refuses dwarf-identity commits on the base); a `reference-transaction`
+hook refuses deleting a bead branch outside the destruction chokepoint; `dwarf-fence.sh` is the
+PreToolUse hook that blocks queue-operating and credential-touching commands inside dwarf
 sessions.
 
 ## Fences and conventions
@@ -187,11 +187,11 @@ shrink-only allow ledgers live beside them. By theme:
   environment fallback or a literal (`config-env-read`, `config-literal-fallback`,
   `conf-key-registry`); a new key needs its schema field, fixture entry, history line and a
   release delta entry (`config-delta`, `config-fixture`).
-- *One door per state:* an aeon's phase, a gate's status, a pool, a release's state, a round's
+- *One door per state:* a dwarf's phase, a gate's status, a pool, a release's state, a round's
   record, a sift verdict, a testenv result and liveness are read through their owning command
   (`spira-lc`, `gate status`, `round-vm status --json`, `release status --json`,
   `queue round status`, `sift status --json`, `testenv status --json`, `watchd status`), never
-  from their files, logs or process lists; nothing reads the journal (`aeon-state-readers`,
+  from their files, logs or process lists; nothing reads the journal (`dwarf-state-readers`,
   `gate-state-readers`, `pool-state-readers`, `release-state-readers`, `round-record-readers`,
   `sift-state-readers`, `testenv-result-readers`, `liveness-readers`, `journal-reads`).
 - *Hygiene:* no installation inventory in tracked files (`inventory`, deny list

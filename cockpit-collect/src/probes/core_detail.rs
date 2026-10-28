@@ -15,12 +15,12 @@ pub fn core_detail_keys(cfg: &Cfg) -> Kv {
     let home = io::home_dir();
     let run = io::run_dir();
 
-    // ---- partition map: label-set -> persona name, from the chamber -------------------
+    // ---- partition map: label-set -> persona name, from the runes -------------------
     let mut part_map: HashMap<String, String> = HashMap::new();
-    if let Some(fayths) = io::lib_call(&home, "spira_fayths", &[]) {
-        for f in fayths.split_whitespace() {
-            let fname = io::lib_call(&home, "fayth_get", &[f, "FAYTH_NAME", f]).unwrap_or_else(|| f.to_string());
-            let flabels = io::lib_call(&home, "fayth_get", &[f, "FAYTH_LABELS"]).unwrap_or_default();
+    if let Some(runes) = io::lib_call(&home, "spira_runes", &[]) {
+        for f in runes.split_whitespace() {
+            let fname = io::lib_call(&home, "rune_get", &[f, "RUNE_NAME", f]).unwrap_or_else(|| f.to_string());
+            let flabels = io::lib_call(&home, "rune_get", &[f, "RUNE_LABELS"]).unwrap_or_default();
             if !fname.is_empty() && !flabels.is_empty() {
                 part_map.insert(flabels, fname);
             }
@@ -97,7 +97,7 @@ fn next_section(out: &mut Kv, part_map: &HashMap<String, String>, cfg: &Cfg) {
 
     for (n, i) in rows.iter().take(5).enumerate() {
         let labels: HashSet<&str> = i.get("labels").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-        let pref: HashSet<&str> = labels.iter().filter_map(|l| l.strip_prefix("fayth:")).collect();
+        let pref: HashSet<&str> = labels.iter().filter_map(|l| l.strip_prefix("rune:")).collect();
         let part = if !pref.is_empty() {
             part_map
                 .iter()
@@ -164,8 +164,8 @@ fn recent_section(out: &mut Kv, run: &std::path::Path) {
         candidates.extend(reclaimed.into_iter().skip(n.saturating_sub(40)));
     }
 
-    // Source C: aeon-ledger.log claims/endings.
-    if let Ok(content) = std::fs::read_to_string(run.join("aeon-ledger.log")) {
+    // Source C: dwarf-ledger.log claims/endings.
+    if let Ok(content) = std::fs::read_to_string(run.join("dwarf-ledger.log")) {
         let mut ledger_rows: Vec<String> = Vec::new();
         for line in content.lines() {
             let f: Vec<&str> = line.split_whitespace().collect();
@@ -175,7 +175,7 @@ fn recent_section(out: &mut Kv, run: &std::path::Path) {
             if f[1] == "awake" && f[3].starts_with("sp-") {
                 ledger_rows.push(format!("{} {} claimed {}", f[0], f[2], f[3]));
             } else if f[1] == "done" && f[3].starts_with("sp-") {
-                // The aeon ledger's own `status=` word (decide::ledger_word), shown as text.
+                // The dwarf ledger's own `status=` word (decide::ledger_word), shown as text.
                 let mut word = "ended".to_string();
                 for tok in &f[4..] {
                     if let Some(v) = tok.strip_prefix("status=") {
@@ -460,10 +460,10 @@ fn throughput_section(out: &mut Kv, run: &std::path::Path, cfg: &Cfg) {
 }
 
 const TOKEN_KEYS: &[&str] = &[
-    "SP_TOK_WINDOW_H", "SP_TOK_AEON_WIN", "SP_TOK_ARC_WIN", "SP_TOK_SESS_WIN", "SP_TOK_WIN",
-    "SP_TOK_AEON_TURNS", "SP_TOK_ARC_TURNS", "SP_TOK_SESS_TURNS", "SP_TOK_AEON_CTX",
-    "SP_TOK_ARC_CTX", "SP_TOK_SESS_CTX", "SP_TOK_AEON_OUT", "SP_TOK_ARC_OUT", "SP_TOK_SESS_OUT",
-    "SP_TOK_AEON_RECENT", "SP_TOK_ARC_RECENT", "SP_TOK_SESS_RECENT",
+    "SP_TOK_WINDOW_H", "SP_TOK_DWARF_WIN", "SP_TOK_ARC_WIN", "SP_TOK_SESS_WIN", "SP_TOK_WIN",
+    "SP_TOK_DWARF_TURNS", "SP_TOK_ARC_TURNS", "SP_TOK_SESS_TURNS", "SP_TOK_DWARF_CTX",
+    "SP_TOK_ARC_CTX", "SP_TOK_SESS_CTX", "SP_TOK_DWARF_OUT", "SP_TOK_ARC_OUT", "SP_TOK_SESS_OUT",
+    "SP_TOK_DWARF_RECENT", "SP_TOK_ARC_RECENT", "SP_TOK_SESS_RECENT",
 ];
 
 fn tokens_section(out: &mut Kv) {

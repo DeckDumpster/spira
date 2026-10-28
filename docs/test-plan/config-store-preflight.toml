@@ -79,7 +79,7 @@ statement = "repo: labels resolve to a repo-map row, and bdq create with an unre
 [[use_case]]
 id = "UC-config-store-preflight-14"
 tier = "T0"
-statement = "no shipped chamber persona carries a literal repository name; the fence over shipped text is the gate's own invocation"
+statement = "no shipped runes persona carries a literal repository name; the fence over shipped text is the gate's own invocation"
 
 [[use_case]]
 id = "UC-config-store-preflight-15"
@@ -94,7 +94,7 @@ statement = "a non-prod instance refuses repositories outside its workspace or w
 [[use_case]]
 id = "UC-config-store-preflight-17"
 tier = "T1"
-statement = "a roster WARN for a fayth with no repository is reported once and does not repeat"
+statement = "a roster WARN for a rune with no repository is reported once and does not repeat"
 
 [use_case.uncovered]
 reason = "test-roster-warn.sh no longer exists"

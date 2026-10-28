@@ -481,7 +481,7 @@ fn ask_body(desc: &str) -> String {
 ///
 /// That trailer is a bug report's clothing sewn on by the generator, and it is why the view
 /// reads as one. `ask.sh` no longer writes it onto an insight; this strips it from the ones
-/// already in the database, which cannot be rewritten -- Spira's aeons may not write to the
+/// already in the database, which cannot be rewritten -- Spira's dwarves may not write to the
 /// Gas Town beads databases, and editing a stored record to fix its presentation would be the
 /// wrong repair anyway.
 ///
@@ -1462,24 +1462,24 @@ mod tests {
 
     /// GAP G14 (ops-detection-remediation): every other alert fixture in this file hand-types
     /// `["alert", "overseer"]` or a plain `flaps:<n>` — never the class-scoped `alert:<key>`
-    /// label auron actually writes alongside it (the auron crate's own test, formerly
-    /// test-auron.sh's assertion, the
+    /// label heimdall actually writes alongside it (the heimdall crate's own test, formerly
+    /// test-heimdall.sh's assertion, the
     /// writer's half of this contract: `"event|alert,alert:sentinel-stalled,flaps:1,overseer"`).
     /// So nothing on this side had ever read a bead carrying both labels together — the two
     /// halves of the contract were asserted independently and never against each other. This
-    /// is the reader's half: the exact label set Auron raises a bead with, after two confirmed
+    /// is the reader's half: the exact label set Heimdall raises a bead with, after two confirmed
     /// sightings and one flap, must be an ALERTS item whose flap count reads back correctly.
     #[test]
-    fn an_auron_shaped_alert_is_recognized_with_its_flap_count() {
+    fn an_heimdall_shaped_alert_is_recognized_with_its_flap_count() {
         let a = bead(
-            "sp-auron1",
+            "sp-heimdall1",
             "open",
             "2026-09-05T10:00:00Z",
             &["alert", "alert:sentinel-stalled", "flaps:2", "overseer"],
         );
         let s = snap(vec![a]);
         let got = view_items(&s, View::Alerts, false, NOW, &Cfg::default()).unwrap();
-        assert_eq!(ids(Ok(got.clone())), ["sp-auron1"]);
+        assert_eq!(ids(Ok(got.clone())), ["sp-heimdall1"]);
         assert_eq!(crate::model::flaps(&got[0]), 2);
         assert!(!crate::model::acked(&got[0]));
     }

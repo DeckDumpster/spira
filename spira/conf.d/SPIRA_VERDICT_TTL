@@ -9,7 +9,7 @@ DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # toolchain the command ran under, what was installed beside it, what the network
     # answered. Those drift while the key stands still, which makes a verdict a claim about a
     # moment as well as about a tree. A day bounds that drift and still spans the whole of a
-    # branch's life from an aeon's own gate to its landing, which is the reuse worth having.
+    # branch's life from a dwarf's own gate to its landing, which is the reuse worth having.
     #
     # 0 disables reuse entirely: every entry reads as expired and every gate runs its suites.
     : "${SPIRA_VERDICT_TTL:=86400}"

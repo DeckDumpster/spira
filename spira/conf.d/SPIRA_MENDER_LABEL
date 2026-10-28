@@ -1,9 +1,9 @@
 TYPE=string
 GROUP=mender
-DOC=THE MENDER PARTITION LABEL — the label on the per-failure bead that summons a mender.
+DOC=THE MENDER PARTITION LABEL — the label on the per-failure bead that calls a mender.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # THE MENDER PARTITION LABEL — the label on the per-failure bead that summons a mender.
-    # Read by mender.fayth's predicate and by whatever files the summons, so the two agree
+    # THE MENDER PARTITION LABEL — the label on the per-failure bead that calls a mender.
+    # Read by mender.rune's predicate and by whatever files the calls, so the two agree
     # (law-schema-over-code). Disjoint from the plan label: a mender must never claim plan work.
     : "${SPIRA_MENDER_LABEL:=mender-failure}"
 SPIRA_CONF_DEFAULT_EOF

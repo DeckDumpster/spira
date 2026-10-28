@@ -156,7 +156,7 @@ fn mirror_book(book: &BTreeMap<String, serde_json::Value>) -> Result<(), String>
 /// resolved once per process (wave 4.9, sp-k80sa). `rule.sh` used to `export` this across the
 /// `exec` boundary because its derived default (`$SPIRA_RUN/memories-cache.json`) is
 /// deliberately not in `spira_config::resolve::EXPORT_KEYS` — the same "read in-process,
-/// never exported to a child" category `SPIRA_REPO_MAP`/`SPIRA_FAYTHS` carry — so a caller
+/// never exported to a child" category `SPIRA_REPO_MAP`/`SPIRA_RUNES` carry — so a caller
 /// that no longer re-exports it must resolve it itself instead.
 fn memories_cache_path() -> Option<String> {
     spira_config::process::cfg("SPIRA_MEMORIES_CACHE").ok().filter(|p| !p.is_empty())
@@ -385,7 +385,7 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
             after.insert(key.clone(), serde_json::Value::String(text.clone()));
             after
         },
-        "Statute is live in every agent session at its next summon.",
+        "Statute is live in every agent session at its next call.",
     )
 }
 

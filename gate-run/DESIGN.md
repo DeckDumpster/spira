@@ -11,7 +11,7 @@ Bead: sp-ubw2o (epic sp-8m1at, wave 1 of the Rust rewrite order — gate and fen
 ## Intent
 
 An agent's Bash tool moves a long foreground command to the background at a fixed ceiling.
-The gate outgrew that ceiling before the Rust cutover: an aeon session ended its turn to
+The gate outgrew that ceiling before the Rust cutover: a dwarf session ended its turn to
 wait for the gate, ending its turn ended the session, and the bead was released
 `in_progress` **with an attempt charged** for a race it did not lose (sp-k7klr). `gate-run`
 exists so no single call can outlive that ceiling: it runs the gate detached, records its
@@ -19,10 +19,10 @@ verdict to a state directory, and every call answers from a **bounded slice** of
 so a caller always holds either a real verdict or the plain fact that there isn't one yet,
 never a guess.
 
-**Today's actual callers only ever ask `--status`** (`aeon::teardown::gate_status`,
-`landing-pass::real::gate_status`) — `aeon.sh` and `landing.sh`, the bash callers that used
-to start a self-certifying wait, are both already retired, and neither `aeon` nor
-`landing-pass` (Rust) starts a self-cert wait: `aeon` defers certification to the landing
+**Today's actual callers only ever ask `--status`** (`dwarf::teardown::gate_status`,
+`landing-pass::real::gate_status`) — `dwarf.sh` and `landing.sh`, the bash callers that used
+to start a self-certifying wait, are both already retired, and neither `dwarf` nor
+`landing-pass` (Rust) starts a self-cert wait: `dwarf` defers certification to the landing
 pass, and `landing-pass` gates through its own admission pool by calling `gate.sh`
 directly (never through `gate-run.sh`). The wait/`--exec` machinery is kept — nothing
 observed asked for it to be retired, and a hand operator (or a future automated caller)
@@ -31,9 +31,9 @@ crate's *unit* tests are what now prove it, not a live bash suite (see "Test str
 
 Both call sites still name the path `<home>/gate-run.sh`, not `SPIRA_GATE_RUN_BIN`, and
 invoke it directly rather than through `bash` (the file is executable with its own
-shebang — the same convention `aeon` already uses for `world.sh`). An earlier version of
+shebang — the same convention `dwarf` already uses for `world.sh`). An earlier version of
 this bead had both callers prefer `SPIRA_GATE_RUN_BIN` first; that broke
-`test-aeon-gate-close-silent.sh`, which plants its own stub script at exactly this path to
+`test-dwarf-gate-close-silent.sh`, which plants its own stub script at exactly this path to
 script `gate_status`'s return value, because the env-resolved binary silently won out over
 the stub. Naming the path is also simply what the bash always did — no caller here ever
 read an env var to find `gate-run.sh`, and there is no reason for that to start now.
@@ -59,7 +59,7 @@ Exit codes, and they are the interface (identical to the bash's):
 | 5 | the run started and then died before recording a verdict |
 
 **Every message keeps its bash prefix and shape.** `landing-pass::order::prior_pass_suites`
-greps `"gate-run: gate PASS covered suites: "` out of `--status`'s stdout on a `0`; `aeon`
+greps `"gate-run: gate PASS covered suites: "` out of `--status`'s stdout on a `0`; `dwarf`
 folds the whole stdout+stderr text into a bead note verbatim. Parity is proven by matching
 these strings byte for byte (see "Test strategy"), not just the exit code.
 
@@ -70,7 +70,7 @@ One directory per `(repo-name, branch)`, slug-named the same way:
 
 | file | written by | read by |
 |---|---|---|
-| `pid` | `--exec`, first line of its life | `alive()`, `aeon::trace::aeon_fuse_minutes` (sp-27d3d, wave 4.34 — was `lib.sh::aeon_fuse_minutes`), `cockpit.sh` |
+| `pid` | `--exec`, first line of its life | `alive()`, `dwarf::trace::dwarf_fuse_minutes` (sp-27d3d, wave 4.34 — was `lib.sh::dwarf_fuse_minutes`), `cockpit.sh` |
 | `started` | `--exec`, right after `pid` | `elapsed()`, the same two readers |
 | `out` | `--exec`, gate.sh's combined stdout+stderr | `report()`, the same two readers (mtime) |
 | `suites` | `--exec`, last, only on a fresh PASS | `report()` on a `0` |
@@ -139,7 +139,7 @@ implements it. `main.rs` is the thinnest possible glue: parse the mode, build `R
   already-`/dev/null` descriptor, discarding both. The comment above it ("prints … the 20-line
   tail") and the header's own "IT FAILS CLOSED" framing make the intent unambiguous: a died run
   should hand back enough of its output to say why. This crate prints that tail to stderr
-  (`engine::died_tail`); nothing downstream parses stderr on this path (`aeon`'s note-building
+  (`engine::died_tail`); nothing downstream parses stderr on this path (`dwarf`'s note-building
   captures combined output; `landing-pass` never reads a `5`), so restoring it changes nothing
   any caller depends on and only adds information a died run previously swallowed silently.
 * Nothing else observed in the bash's behavior looked accidental; every other exit code,
@@ -154,7 +154,7 @@ implements it. `main.rs` is the thinnest possible glue: parse the mode, build `R
 * **Unit (`cargo test -p gate-run`):** slug folding; key formatting and staleness
   comparison; every exit-code branch of `report()`/`--status` driven by a fake filesystem
   and a fake `/proc` (no real process, no real gate); message text asserted verbatim
-  against the strings `order.rs`/`aeon` depend on.
+  against the strings `order.rs`/`dwarf` depend on.
 * **Integration, still under `cargo test`:** a real detached run against a `gate.sh` stub
   (a shell script standing in for the gate) in a `testkit::TempDir`, proving the `pid`
   file appears before the run can be observed as dead, `rc` is written last (by rename),

@@ -66,20 +66,20 @@ base_snap_to() {
         printf 'SP_PASS_SECS=12\n'
         printf 'SP_SENTINEL_TIMER=1\nSP_SENTINEL_AGE=30\n'
         printf 'SP_OPS_TIMER=1\nSP_OPS_AGE=30\n'
-        printf 'SP_AURON_TIMER=1\nSP_AURON_AGE=30\nSP_AURON_FIRING=0\nSP_AURON_KEYS=\n'
-        printf 'SP_AEON_N=0\n'
+        printf 'SP_HEIMDALL_TIMER=1\nSP_HEIMDALL_AGE=30\nSP_HEIMDALL_FIRING=0\nSP_HEIMDALL_KEYS=\n'
+        printf 'SP_DWARF_N=0\n'
         printf 'SP_GATE_N=0\nSP_GATE_LIVE=0\n'
         printf 'SP_CAPACITY_PAUSED=0\nSP_CAPACITY_LEFT=0\nSP_CAPACITY_AT=\nSP_CAPACITY_WHY=\n'
-        printf 'SP_TOK_WINDOW_H=5\nSP_TOK_WIN=100000\nSP_TOK_AEON_WIN=80000\nSP_TOK_SESS_WIN=20000\n'
-        printf 'SP_TOK_AEON_TURNS=5\nSP_TOK_SESS_TURNS=3\nSP_TOK_AEON_CTX=50000\nSP_TOK_SESS_CTX=30000\n'
-        printf 'SP_TOK_AEON_OUT=3000\nSP_TOK_SESS_OUT=1000\nSP_TOK_AEON_RECENT=10000\nSP_TOK_SESS_RECENT=5000\n'
+        printf 'SP_TOK_WINDOW_H=5\nSP_TOK_WIN=100000\nSP_TOK_DWARF_WIN=80000\nSP_TOK_SESS_WIN=20000\n'
+        printf 'SP_TOK_DWARF_TURNS=5\nSP_TOK_SESS_TURNS=3\nSP_TOK_DWARF_CTX=50000\nSP_TOK_SESS_CTX=30000\n'
+        printf 'SP_TOK_DWARF_OUT=3000\nSP_TOK_SESS_OUT=1000\nSP_TOK_DWARF_RECENT=10000\nSP_TOK_SESS_RECENT=5000\n'
         printf 'SP_CTX_NOW=50000\nSP_CTX_TURNS=10\nSP_CTX_NEXT=ok\nSP_CTX_HEADROOM=150000\n'
         printf 'SP_CTX_GROWTH=5000\nSP_CTX_TURNS_LEFT=30\nSP_CTX_AGE=60\nSP_CTX_ARCHIVIST=none\n'
         printf 'SP_CTX_ARCHIVIST_BEHIND=0\nSP_CTX_ARCHIVIST_FILED=0\nSP_CTX_SCAN_BYTES=0\n'
         printf 'SP_RATELIM_5H_PCT=20\nSP_RATELIM_7D_PCT=10\nSP_RATELIM_5H_MIN=240\nSP_RATELIM_7D_MIN=2000\n'
         printf 'SP_LIMIT_5H_PCT=20\nSP_LIMIT_5H_ETA=\nSP_LIMIT_7D_PCT=10\nSP_LIMIT_7D_ETA=\nSP_LIMIT_AGE=60\n'
         printf 'SP_PASSES=5\nSP_ACTS=3\nSP_FALSE_ACTS=0\nSP_FALSE_PER_PASS=0\nSP_SINCE_JUDGEMENT=10\n'
-        printf 'SP_AEON_BORN=1\nSP_AEON_LIVED=1\nSP_AEON_STILLBORN=0\nSP_AEON_WORKED=1\nSP_AEON_THRASH=0\n'
+        printf 'SP_DWARF_BORN=1\nSP_DWARF_LIVED=1\nSP_DWARF_STILLBORN=0\nSP_DWARF_WORKED=1\nSP_DWARF_THRASH=0\n'
         printf 'SP_SELF_REPEATING_N=0\nSP_SELF_STILLBORN_W=0\nSP_SELF_STILLBORN_LAST=\n'
         printf 'SP_SELF_STARVED_W=0\nSP_SELF_STARVED_LAST=\n'
         # Variable sections — omit the key under test.
@@ -169,7 +169,7 @@ printf "SP_SELF_STARVED_W='2'\nSP_SELF_STARVED_LAST='7m ago'\n" >> "$FIXDIR/self
 # through.
 {
     printf 'SP_AT=%d\n' "$(date +%s)"
-    printf 'SP_AEON_N=0\nSP_NEXT_N=0\nSP_INFLOW_N=0\nSP_INFLOW_WIN=60\nSP_INFLOW_DEFECT=0\nSP_INFLOW_KINDS=-\n'
+    printf 'SP_DWARF_N=0\nSP_NEXT_N=0\nSP_INFLOW_N=0\nSP_INFLOW_WIN=60\nSP_INFLOW_DEFECT=0\nSP_INFLOW_KINDS=-\n'
     printf 'SP_AWAITING_N=0\nSP_WAITING=0\n'
     printf 'SP_UNSENT=0\nSP_BRANCH_DONE=0\nSP_UNSENT_OLDEST_H=0\nSP_UNADOPTED=0\nSP_ORPHAN_WORK=0\n'
     printf 'SP_CLOSED_24H=0\nSP_OPENED_24H=0\nSP_BEADS_LANDED_24H=0\n'
@@ -179,7 +179,7 @@ printf "SP_SELF_STARVED_W='2'\nSP_SELF_STARVED_LAST='7m ago'\n" >> "$FIXDIR/self
     printf 'SP_QUEUE_DEPTH=?\nSP_QUEUE_EJECTED=0\nSP_QUEUE_RED=0\n'
     printf 'SP_QUEUE_BATCH_PR=0\nSP_QUEUE_BATCH_N=0\nSP_QUEUE_NEXT_N=0\nSP_QUEUE_NEXT_MAX=8\nSP_QUEUE_QUARANTINE_N=0\n'
     printf 'SP_SENTINEL_TIMER=1\nSP_SENTINEL_AGE=30\nSP_OPS_TIMER=1\nSP_OPS_AGE=30\n'
-    printf 'SP_AURON_TIMER=1\nSP_AURON_AGE=30\nSP_AURON_FIRING=0\nSP_AURON_KEYS=\n'
+    printf 'SP_HEIMDALL_TIMER=1\nSP_HEIMDALL_AGE=30\nSP_HEIMDALL_FIRING=0\nSP_HEIMDALL_KEYS=\n'
     printf 'SP_GATE_N=0\nSP_GATE_LIVE=0\nSP_CAPACITY_PAUSED=0\n'
 } | snap_to e2e
 
@@ -467,10 +467,10 @@ else
 fi
 
 # ---- SP_NEXT_N: core_detail_keys, bd exits non-zero ----------------------------------
-# Without fayth files, _PART_MAP is empty → sentinel → SP_NEXT_N=? ("unreadable chamber").
+# Without rune files, _PART_MAP is empty → sentinel → SP_NEXT_N=? ("unreadable runes").
 # That is the correct refused-probe behaviour for this field.
 echo
-echo "SP_NEXT_N — core_detail_keys (no chamber / bd exits non-zero)"
+echo "SP_NEXT_N — core_detail_keys (no runes / bd exits non-zero)"
 out_next="$(run_probe core_detail bd-fail)"
 if grep -q '^SP_NEXT_N=?' <<< "$out_next"; then
     ok "SP_NEXT_N: probe failure renders SP_NEXT_N=?"

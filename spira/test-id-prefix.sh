@@ -42,7 +42,7 @@ git -C "$TMP_REPO" add f.txt
 git -C "$TMP_REPO" commit -q -m "tt-abc123: fix the thing"
 BASE="$(git -C "$TMP_REPO" rev-parse HEAD)"
 
-# Branch from before that commit — represents the aeon's working branch.
+# Branch from before that commit — represents the dwarf's working branch.
 git -C "$TMP_REPO" checkout -q -b "spira/tt-own" HEAD~1
 echo "c" > "$TMP_REPO/f.txt"
 git -C "$TMP_REPO" add f.txt

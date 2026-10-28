@@ -22,7 +22,7 @@
 # 8. --purge-database (G1): removes the beads database and its Dolt data only when the
 #    operator types back the fake bd backend's bead count; a wrong count leaves it
 #    intact with a non-zero exit; plain --purge never touches it.
-# 9. TRANSIENT UNITS (sp-hvtdj): a live spira-landing / spira-aeon-* systemd-run
+# 9. TRANSIENT UNITS (sp-hvtdj): a live spira-landing / spira-dwarf-* systemd-run
 #    transient — never in owned.sh's manifest — is stopped, not just reported.
 #
 # FAIL-FIRST: tested against the state BEFORE uninstall.sh existed to confirm
@@ -122,7 +122,7 @@ cat > "$MOCK_BIN/systemctl" <<'MOCK'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${MOCK_LOG}"
 case "$*" in
-    *"spira-landing*"*"spira-aeon-*"*)
+    *"spira-landing*"*"spira-dwarf-*"*)
         # A worker whose main process exited but whose cgroup still holds a child is
         # "deactivating": listed only to a sweep that asks for that state (sp-kuwp6s).
         if [ -n "${MOCK_DEACTIVATING:-}" ]; then
@@ -412,8 +412,8 @@ rm -f "$STRAY_UNIT"
 
 # ==========================================================================
 echo
-echo "TRANSIENT UNITS (sp-hvtdj) — a live spira-landing/spira-aeon-* transient is stopped:"
-# spira-landing and spira-aeon-* are systemd-run transients: never in owned.sh's manifest,
+echo "TRANSIENT UNITS (sp-hvtdj) — a live spira-landing/spira-dwarf-* transient is stopped:"
+# spira-landing and spira-dwarf-* are systemd-run transients: never in owned.sh's manifest,
 # so the installed-unit stop/disable pass never sees them. Left running, the next
 # activate.sh's restart step can revive one under a release it was never launched against.
 # ==========================================================================
@@ -428,15 +428,15 @@ nowant "transient: positive control — nothing stopped when none are active" \
     "stopping spira-landing" "$none_out"
 
 MOCK_TRANSIENT_UNITS="spira-landing.service loaded active running Landing pass
-spira-aeon-abc123-test.service loaded active running Aeon abc123"
+spira-dwarf-abc123-test.service loaded active running Dwarf abc123"
 trans_out="$(un)"
 trans_rc=$?
 iszero "transient: uninstall exits 0 with a live transient unit" "$trans_rc"
 want   "transient: reports stopping the landing transient"       "stopping spira-landing.service" "$trans_out"
-want   "transient: reports stopping the aeon transient"          "stopping spira-aeon-abc123-test.service" "$trans_out"
+want   "transient: reports stopping the dwarf transient"          "stopping spira-dwarf-abc123-test.service" "$trans_out"
 want   "transient: systemctl stop was actually called on it"     "stop spira-landing.service" "$(cat "$MOCK_LOG")"
-want   "transient: systemctl stop was actually called on the aeon one" \
-    "stop spira-aeon-abc123-test.service" "$(cat "$MOCK_LOG")"
+want   "transient: systemctl stop was actually called on the dwarf one" \
+    "stop spira-dwarf-abc123-test.service" "$(cat "$MOCK_LOG")"
 # Stopped transients were never installed files, so the sweep must not report them
 # as strays — they are accounted for, not merely tolerated.
 nowant "transient: not reported as a stray (it was handled, not missed)" \

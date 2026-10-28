@@ -61,7 +61,7 @@ mod tests {
             &["comments", "add", "sp-a", "text"],
             &["gate", "list", "--json"],
             &["update", "sp-a", "--add-label", "x", "--remove-label", "y"],
-            &["state", "sp-a", "fayth"],
+            &["state", "sp-a", "rune"],
             &["memories", "--json"],
         ] {
             assert!(check(&v(ok)).is_ok(), "{ok:?}");

@@ -79,12 +79,12 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
 
     m.units.push(t("spira-sentinel.service", false));
     m.units.push(t("spira-sentinel.timer", true));
-    m.units.push(t("spira-summon.service", false));
-    m.units.push(t("spira-summon.timer", true));
+    m.units.push(t("spira-call.service", false));
+    m.units.push(t("spira-call.timer", true));
     m.units.push(t("spira-ops.service", false));
     m.units.push(t("spira-ops.timer", true));
-    m.units.push(t("spira-auron.service", false));
-    m.units.push(t("spira-auron.timer", true));
+    m.units.push(t("spira-heimdall.service", false));
+    m.units.push(t("spira-heimdall.timer", true));
     m.units.push(t("spira-watchtower.service", false));
     m.units.push(t("spira-watchtower.timer", true));
     m.units.push(t("spira-skew.service", false));
@@ -166,6 +166,7 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-perf-watch.timer", true));
     m.units.push(t("spira-perf-happy-path.service", false));
     m.units.push(t("spira-perf-happy-path.timer", true));
+    m.units.push(t("spira-exec-census.service", true));
     m.units.push(t("spira-reclaim.service", false));
     m.units.push(t("spira-reclaim.timer", true));
     m.units.push(t("spira-refusal-watch.service", false));
@@ -185,7 +186,7 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     // never by the per-instance flow this manifest drives.
     m.optional.push("spira-lc.service".into());
 
-    // lc-serve.service (sp-xfqnr): the SAME-USER answer to the socket an aeon's `work`
+    // lc-serve.service (sp-xfqnr): the SAME-USER answer to the socket a dwarf's `work`
     // reaches spira-lc through — `spira-lc serve` as the operator on %t/spira-lc/sock, the
     // path spira_config::resolve::lc_socket_default gives every caller in this mode. In
     // system mode spira-lc.socket already answers /run/spira-lc/sock as its own Unix user,
@@ -509,7 +510,7 @@ mod tests {
             assert!(root.join(f).is_file(), "{f} is in the manifest but not on disk");
         }
         let svc = std::fs::read_to_string(root.join("spira-worktree-reaper.service")).unwrap();
-        assert!(svc.contains("sending reap-stale"));
+        assert!(svc.contains("hel reap-stale"));
     }
 
     #[test]
@@ -517,7 +518,7 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("systemd");
         let svc = std::fs::read_to_string(root.join("spira-straggler-sweep.service")).unwrap();
         let exec = svc.lines().find(|l| l.starts_with("ExecStart=")).unwrap();
-        assert!(exec.contains("sending --budget-secs"));
+        assert!(exec.contains("hel --budget-secs"));
         assert!(!exec.contains("--queue-only") && !exec.contains("--skip-queue"), "{exec}");
     }
 

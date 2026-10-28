@@ -12,8 +12,8 @@
 #                      machine; install.sh refuses to write units whose ExecStart
 #                      target is absent, so an unset SPIRA_PROD stops installation.
 #
-#   SPIRA_MAX_AEONS /  a guess about the operator's own cores and account limits.
-#   SPIRA_MAX_LIVE_AEONS   Default (4 / empty) is wrong for a single-core box or
+#   SPIRA_MAX_DWARVES /  a guess about the operator's own cores and account limits.
+#   SPIRA_MAX_LIVE_DWARVES   Default (4 / empty) is wrong for a single-core box or
 #                      a constrained API account and right for a sixteen-core one.
 #
 #   SPIRA_LOOM_ADDR    Loopback by design; Loom has no authentication in front of
@@ -26,15 +26,15 @@
 #                      only if you run the Dolt server yourself.
 #
 # USAGE
-#   configure.sh [--out PATH] [--prod PATH] [--max-aeons N]
-#                [--max-live-aeons N|""] [--loom-addr ADDR]
+#   configure.sh [--out PATH] [--prod PATH] [--max-dwarves N]
+#                [--max-live-dwarves N|""] [--loom-addr ADDR]
 #                [--dolt-data PATH|""]
 #
 # NON-INTERACTIVE — every prompt has an env-var path:
 #   CONFIGURE_OUT             output file (default: ${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.toml)
 #   CONFIGURE_PROD            SPIRA_PROD
-#   CONFIGURE_MAX_AEONS       SPIRA_MAX_AEONS
-#   CONFIGURE_MAX_LIVE_AEONS  SPIRA_MAX_LIVE_AEONS (empty string = the registered default)
+#   CONFIGURE_MAX_DWARVES       SPIRA_MAX_DWARVES
+#   CONFIGURE_MAX_LIVE_DWARVES  SPIRA_MAX_LIVE_DWARVES (empty string = the registered default)
 #   CONFIGURE_LOOM_ADDR       SPIRA_LOOM_ADDR
 #   CONFIGURE_DOLT_DATA       SPIRA_DOLT_DATA (empty string = do not manage the server)
 #
@@ -63,14 +63,14 @@ _out="${CONFIGURE_OUT:-}"
 
 # Trap-key "given" flags — set if the var was exported by the caller.
 _prod_given=;      [ -n "${CONFIGURE_PROD+x}"            ] && _prod_given=1
-_maxaeons_given=;  [ -n "${CONFIGURE_MAX_AEONS+x}"       ] && _maxaeons_given=1
-_maxlive_given=;   [ -n "${CONFIGURE_MAX_LIVE_AEONS+x}"  ] && _maxlive_given=1
+_maxdwarves_given=;  [ -n "${CONFIGURE_MAX_DWARVES+x}"       ] && _maxdwarves_given=1
+_maxlive_given=;   [ -n "${CONFIGURE_MAX_LIVE_DWARVES+x}"  ] && _maxlive_given=1
 _loom_given=;      [ -n "${CONFIGURE_LOOM_ADDR+x}"       ] && _loom_given=1
 _dolt_given=;      [ -n "${CONFIGURE_DOLT_DATA+x}"       ] && _dolt_given=1
 
 _prod="${CONFIGURE_PROD:-}"
-_maxaeons="${CONFIGURE_MAX_AEONS:-}"
-_maxlive="${CONFIGURE_MAX_LIVE_AEONS:-}"
+_maxdwarves="${CONFIGURE_MAX_DWARVES:-}"
+_maxlive="${CONFIGURE_MAX_LIVE_DWARVES:-}"
 _loom="${CONFIGURE_LOOM_ADDR:-}"
 _dolt="${CONFIGURE_DOLT_DATA:-}"
 
@@ -78,8 +78,8 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --out)              _out="$2";      shift 2 ;;
         --prod)             _prod="$2";    _prod_given=1;     shift 2 ;;
-        --max-aeons)        _maxaeons="$2"; _maxaeons_given=1; shift 2 ;;
-        --max-live-aeons)   _maxlive="$2"; _maxlive_given=1;  shift 2 ;;
+        --max-dwarves)        _maxdwarves="$2"; _maxdwarves_given=1; shift 2 ;;
+        --max-live-dwarves)   _maxlive="$2"; _maxlive_given=1;  shift 2 ;;
         --loom-addr)        _loom="$2";    _loom_given=1;     shift 2 ;;
         --dolt-data)        _dolt="$2";    _dolt_given=1;     shift 2 ;;
         *) printf 'configure: unknown argument: %s\n' "$1" >&2; exit 1 ;;
@@ -108,8 +108,8 @@ _data="${XDG_DATA_HOME:-$HOME/.local/share}/spira"
 _releases="${CONFIGURE_RELEASES:-$_data/releases}"
 declare -A _defaults=(
     [SPIRA_PROD]="$_releases/current"
-    [SPIRA_MAX_AEONS]=4
-    [SPIRA_MAX_LIVE_AEONS]=
+    [SPIRA_MAX_DWARVES]=4
+    [SPIRA_MAX_LIVE_DWARVES]=
     [SPIRA_LOOM_ADDR]=127.0.0.1:8788
     [SPIRA_DOLT_DATA]="$_data/dolt"
 )
@@ -143,20 +143,20 @@ if [ -z "$_prod_given" ]; then
         SPIRA_PROD "$(_def SPIRA_PROD)")"
 fi
 
-if [ -z "$_maxaeons_given" ]; then
-    _maxaeons="$(_ask \
-        "SPIRA_MAX_AEONS — maximum aeons that may run at once (the task-pool ceiling).
+if [ -z "$_maxdwarves_given" ]; then
+    _maxdwarves="$(_ask \
+        "SPIRA_MAX_DWARVES — maximum dwarves that may run at once (the task-pool ceiling).
   Four is the shipped default. Raise it on a many-core box; lower it on a
   single-core one or a constrained API account." \
-        SPIRA_MAX_AEONS "$(_def SPIRA_MAX_AEONS)")"
+        SPIRA_MAX_DWARVES "$(_def SPIRA_MAX_DWARVES)")"
 fi
 
 if [ -z "$_maxlive_given" ]; then
     _maxlive="$(_ask \
-        "SPIRA_MAX_LIVE_AEONS — whole-fleet ceiling (pool + lane fayths combined).
+        "SPIRA_MAX_LIVE_DWARVES — whole-fleet ceiling (pool + lane runes combined).
   Empty takes the registered default. Set it when your API account
   limits how many parallel sessions you can run across ALL personas." \
-        SPIRA_MAX_LIVE_AEONS "$(_def SPIRA_MAX_LIVE_AEONS)")"
+        SPIRA_MAX_LIVE_DWARVES "$(_def SPIRA_MAX_LIVE_DWARVES)")"
 fi
 
 if [ -z "$_loom_given" ]; then
@@ -192,10 +192,10 @@ _init_args=(
     --releases "$_releases"
     --dolt_data "${_dolt:-$_data/dolt}"
     --prod "$_prod"
-    --max_aeons "${_maxaeons:-4}"
+    --max_dwarves "${_maxdwarves:-4}"
     --loom_addr "${_loom:-127.0.0.1:8788}"
 )
-[ -n "$_maxlive" ] && _init_args+=(--max_live_aeons "$_maxlive")
+[ -n "$_maxlive" ] && _init_args+=(--max_live_dwarves "$_maxlive")
 [ -n "${CONFIGURE_OPERATED:-}" ] && _init_args+=(--operated "$CONFIGURE_OPERATED")
 mkdir -p "$(dirname "$_out")"
 SPIRA_HOME="$HERE" spira-config init "${_init_args[@]}" >/dev/null </dev/null \

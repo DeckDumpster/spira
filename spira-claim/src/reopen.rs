@@ -4,9 +4,9 @@
 //! `_census_deliberate_reopen_causes`/`_census_reopen_admission_exempt` — which row M's
 //! census SQL producers (still bash; a later bead) also read, through the lib.sh shim.
 //! Safety note (c7): this is the most-called mutation in the harness (6 crates, groomer.sh,
-//! auron), and it carries the census admission exemption and the claim release. Any
+//! heimdall), and it carries the census admission exemption and the claim release. Any
 //! divergence between this port and the bash original reopens a bead with the wrong cause,
-//! charges the wrong attempt counter, or leaves a dead aeon's name on a bead nothing will
+//! charges the wrong attempt counter, or leaves a dead dwarf's name on a bead nothing will
 //! claim again.
 //!
 //! The flow is written against [`World`], the same shape `unpoison` uses: every bd,
@@ -24,7 +24,7 @@
 // =========================================================================================
 
 /// `_census_deliberate_reopen_causes`'s declared list, in bash's own print order: `work-
-/// close-converted` is exempt (aeon.sh's teardown carrying a session's own finished work
+/// close-converted` is exempt (dwarf.sh's teardown carrying a session's own finished work
 /// bead forward to the landing pass — bookkeeping, not rework, so the CERTIFIED lifecycle
 /// row and the submitted label it arrived with must survive); `eject` is deliberate for census
 /// (withdrawing a CERTIFIED-but-unbatched bead is the system working) but NOT exempt — it
@@ -72,7 +72,7 @@ pub trait World {
     /// event its state implies and the bead is claimable again. A bead with no row has no
     /// state to diverge and is `Ok`; a terminal row is refused.
     fn lc_reopen(&mut self, id: &str, cause: &str) -> Result<(), String>;
-    /// Stop the live aeon holding `id` and wait for it to exit; `Err` when it is still
+    /// Stop the live dwarf holding `id` and wait for it to exit; `Err` when it is still
     /// running, in which case the bead must not leave WORKING.
     fn stop_holder(&mut self, id: &str, cause: &str) -> Result<(), String>;
     /// `_bump_write_event "$id" reopen "$cause"` — ALWAYS treated as succeeded. The bash
@@ -114,7 +114,7 @@ pub fn run(o: &Opts, w: &mut dyn World) -> i32 {
     }
 
     // A deliberate conversion is the holder's own hand-off; every other reopen is the
-    // harness acting on a bead whose aeon may still be editing its worktree.
+    // harness acting on a bead whose dwarf may still be editing its worktree.
     if !exempt && w.stop_holder(&o.id, &o.cause).is_err() {
         return 1;
     }
@@ -143,33 +143,33 @@ pub const RED_CAUSE: &str = "eject-red";
 /// How long a harness release waits for the holder to exit after asking it to stop.
 pub const STOP_WAIT_S: u64 = 120;
 
-/// Ask the aeon whose lease is running on `id` to stop (the `aeon stop` request file its
-/// heartbeat reads) and wait until that lease is gone. `Ok` when no aeon holds the bead, or
-/// when the caller is itself an aeon (`SPIRA_AEON` set): an aeon's own hand-back never waits
+/// Ask the dwarf whose lease is running on `id` to stop (the `dwarf stop` request file its
+/// heartbeat reads) and wait until that lease is gone. `Ok` when no dwarf holds the bead, or
+/// when the caller is itself a dwarf (`SPIRA_DWARF` set): a dwarf's own hand-back never waits
 /// on itself.
 pub fn stop_holder_in(
     run: &std::path::Path,
     id: &str,
     why: &str,
-    own_aeon: bool,
+    own_dwarf: bool,
     wait_s: u64,
     now: &dyn Fn() -> i64,
     sleep: &dyn Fn(),
 ) -> Result<(), String> {
-    if own_aeon {
+    if own_dwarf {
         return Ok(());
     }
     let suffix = format!("-{id}.pid");
     let live = || -> Option<std::path::PathBuf> {
         std::fs::read_dir(run).ok()?.flatten().map(|e| e.path()).find(|p| {
-            p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("aeon-") && n.ends_with(&suffix))
-                && sending::reap::lease_live(p, now())
+            p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("dwarf-") && n.ends_with(&suffix))
+                && hel::reap::lease_live(p, now())
         })
     };
     if live().is_none() {
         return Ok(());
     }
-    let req = run.join("aeon").join(format!("{id}.stop"));
+    let req = run.join("dwarf").join(format!("{id}.stop"));
     if let Some(d) = req.parent() {
         let _ = std::fs::create_dir_all(d);
     }
@@ -177,7 +177,7 @@ pub fn stop_holder_in(
     let deadline = now() + wait_s as i64;
     while live().is_some() {
         if now() >= deadline {
-            return Err(format!("the aeon on {id} did not exit within {wait_s}s of the stop request"));
+            return Err(format!("the dwarf on {id} did not exit within {wait_s}s of the stop request"));
         }
         sleep();
     }

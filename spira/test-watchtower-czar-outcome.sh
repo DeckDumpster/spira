@@ -30,7 +30,7 @@ echo "test-watchtower-czar-outcome.sh"
 
 testdb_require test-watchtower-czar-outcome
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
-testdb_up aeonspiaqct \
+testdb_up dwarvespiaqct \
     || { echo "test-watchtower-czar-outcome: could not build fixture database"; exit 1; }
 
 NOW="$(date +%s)"

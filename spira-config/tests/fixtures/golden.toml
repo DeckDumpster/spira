@@ -9,18 +9,14 @@ ci_label = "fixture-ci-label"
 czar_stage_deadlock = "shadow"
 db = "/opt/fixture-home/.local/share/spira/db"
 dolt_data = "/srv/beads"
-fayths = [
-    "builder",
-    "ops",
-]
 gh_intake_repo = "example-org/example-repo"
 home_repo = "home"
 id_prefix = "sp"
 loom_addr = "127.0.0.1:8788"
 loom_budget_ms = 1500
 mail_readers = "concierge=/opt/spira/concierge.sh wake"
-max_aeons = 4
-max_live_aeons = 4
+max_dwarves = 4
+max_live_dwarves = 4
 operator = "the operator"
 operator_actor = "operator"
 path = "/opt/spira/bin"
@@ -30,6 +26,10 @@ queue_batch_wait = 1200
 queue_ci_maxsec = 21600
 queue_throttle_release_at = 12
 run = "/opt/fixture-home/.local/state/spira"
+runes = [
+    "builder",
+    "ops",
+]
 scope_label = "myproject"
 tz = "America/Los_Angeles"
 view = "/opt/spira/bin/view-follower"

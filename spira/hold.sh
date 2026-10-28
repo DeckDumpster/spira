@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# hold.sh — claim a bead for a non-aeon actor and keep it held.
+# hold.sh — claim a bead for a non-dwarf actor and keep it held.
 #
 #   hold.sh <bead-id>              claim and hold with this shell's pid
 #   hold.sh <bead-id> --pid <P>    hold with pid P instead of $$
 #   hold.sh <bead-id> --release    release a held bead (equivalent to unhold.sh)
 #
 # WHY THIS EXISTS. The reaper checks holder_alive, which looks for a pidfile named
-# aeon-<fayth>-<id>.pid with a process whose argv contains aeon.sh. A non-aeon session
+# dwarf-<rune>-<id>.pid with a process whose argv contains dwarf.sh. A non-dwarf session
 # (brain, concierge, a hand-run tool) passes neither test: no pidfile exists and no argv
 # matches, so strand.sh reclaims the bead within seconds of the next pass. On 2026-09-07
 # this cost sp-7pi eight attempts, none of which was a fact about the work.
@@ -15,7 +15,7 @@
 # hold.sh writes hold-<id>.pid, which holder_alive checks by pid only (no argv test),
 # and starts a background heartbeat that keeps the lease alive. unhold.sh (or --release)
 # tears both down. A dead holder's pid vanishes from /proc and the bead is freed on the
-# next sweep — the same liveness contract as an aeon, without requiring aeon.sh in argv.
+# next sweep — the same liveness contract as a dwarf, without requiring dwarf.sh in argv.
 #
 # DO NOT USE THIS TO BYPASS THE LOOP. This is for work the operator ordered done by hand
 # — a landing that the loop cannot perform, a fix applied at the keyboard. If the loop
@@ -50,11 +50,11 @@ if [ "$MODE" = release ]; then
     exec unhold.sh "$ID"
 fi
 
-# Refuse if an aeon already holds it — the hold is for NON-aeon work.
-for apf in "$SPIRA_RUN"/aeon-*-"$ID".pid; do
+# Refuse if a dwarf already holds it — the hold is for NON-dwarf work.
+for apf in "$SPIRA_RUN"/dwarf-*-"$ID".pid; do
     [ -e "$apf" ] || continue
-    if aeon_alive "$apf"; then
-        echo "hold.sh: $ID is held by a live aeon — slay it first or let it finish" >&2
+    if dwarf_alive "$apf"; then
+        echo "hold.sh: $ID is held by a live dwarf — slay it first or let it finish" >&2
         exit 1
     fi
 done
@@ -78,8 +78,8 @@ spira-lc hold "$ID" manual "manual hold via hold.sh (pid $HOLD_PID)" "hold-$ID" 
 echo "$HOLD_PID" > "$PIDFILE"
 
 # Start a background heartbeat so the lease does not expire under sentinel CHECK 2.
-# Simpler than an aeon's: no stall detection, because the holder is a human at the
-# keyboard. Beats every 120s (matching aeon.sh's default). Exits when the pidfile is
+# Simpler than a dwarf's: no stall detection, because the holder is a human at the
+# keyboard. Beats every 120s (matching dwarf.sh's default). Exits when the pidfile is
 # removed (unhold.sh) or the holder pid dies.
 #
 # Redirected to /dev/null: the heartbeat inherits this script's file descriptors, and a

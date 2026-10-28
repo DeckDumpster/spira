@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# test-cross-repo.sh — an aeon working a bead for a non-home repo cuts its worktree in
+# test-cross-repo.sh — a dwarf working a bead for a non-home repo cuts its worktree in
 #   the right checkout, and commits land in that repo's history, not the home repo's.
 #
 #   ./test-cross-repo.sh
 #
-# THE DEFECT THIS PREVENTS. FAYTH_REPO was a constant per fayth, and every fayth in the
-# chamber pointed at the home checkout. So a bead labeled repo:widget had no aeon that
+# THE DEFECT THIS PREVENTS. RUNE_REPO was a constant per rune, and every rune in the
+# runes pointed at the home checkout. So a bead labeled repo:widget had no dwarf that
 # could open the file — the workspace was always the home repo, regardless of which
 # repository the bead named. This is the integration test that proves the whole cross-repo
 # flow works: bead -> repo: label -> repo-map -> second repo's worktree -> commit in second
@@ -22,7 +22,7 @@
 #      worktree of second, not a worktree of home. A cross-repo path that shared home's
 #      object store would silently put work on a branch that could never land in second.
 #
-#   3. The aeon log records the correct repo name. The log is what the operator reads when
+#   3. The dwarf log records the correct repo name. The log is what the operator reads when
 #      diagnosing a stalled bead, so an incorrect record there misleads the diagnosis.
 #
 # TWO REPOS, because the property this test exists to prove is about the DIFFERENCE between
@@ -34,7 +34,7 @@
 #
 # defect: sp-cross-repo
 # tier: T2
-# covers: aeon/src/* spira/lib.sh
+# covers: dwarf/src/* spira/lib.sh
 # hermetic-ok: uses a fixture database, local git repos only, no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -48,9 +48,9 @@ trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up crossrepo || { echo "test-cross-repo: could not build a fixture database"; exit 1; }
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
-# sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; the
-# shim's bd close is told to it in lifecycle terms (testlib.sh lc_aeon_mirror).
-lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
+# sp-mve9i: the dwarf reads its bead's state from the lifecycle row, never bd status; the
+# shim's bd close is told to it in lifecycle terms (testlib.sh lc_dwarf_mirror).
+lc_dwarf_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
 
 # TWO REPOS: the home repo the harness is installed in, and the "second" repo that the
 # bead's repo: label names. A bead for "second" must never touch the home repo.
@@ -68,9 +68,9 @@ printf 'second-seed\n' > "$SECOND_REPO/second.txt"
 git -C "$SECOND_REPO" add second.txt; git -C "$SECOND_REPO" commit -qm "second seed"
 timeout 5 git -C "$SECOND_REPO" push -q origin main 2>/dev/null
 
-export SPIRA_HOME="$TMP/harness"; mkdir -p "$SPIRA_HOME/chamber"
-# conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-aeon-world-stop.sh, ...): aeon's
-# own in-process config registry (spira_config::resolve, aeon::conf::merge_resolved_config)
+export SPIRA_HOME="$TMP/harness"; mkdir -p "$SPIRA_HOME/runes"
+# conf.d IS COPIED IN (matching test-dwarf-sweep.sh, test-dwarf-world-stop.sh, ...): dwarf's
+# own in-process config registry (spira_config::resolve, dwarf::conf::merge_resolved_config)
 # derives conf.d from THIS --home and now REFUSES to start if it is missing (sp-1cdgq) --
 # a --home with no conf.d used to resolve silently to nothing instead of refusing.
 cp -r "$HERE/conf.d" "$SPIRA_HOME/"
@@ -78,9 +78,9 @@ cp -r "$HERE/conf.d" "$SPIRA_HOME/"
 # gains a new sourced dependency. Only production scripts; test-*.sh are excluded.
 find "$HERE" -maxdepth 1 -name '*.sh' ! -name 'test-*.sh' -exec cp {} "$SPIRA_HOME/" \;
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
-# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# SPIRA_RUNES_DIR is registered and the fixture declares a fixed, nonexistent path — nothing
 # derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
-tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
+tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
 
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 tl_config SPIRA_RUN="$SPIRA_RUN"
@@ -96,26 +96,26 @@ tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
 printf 'home   | %s | push | origin/main | |\n' "$HOME_REPO"   > "$SPIRA_REPO_MAP"
 printf 'second | %s | push | origin/main | |\n' "$SECOND_REPO" >> "$SPIRA_REPO_MAP"
 
-# THE FAYTH: one persona, FAYTH_HEARTBEAT_SECONDS high so the heartbeat never fires during
+# THE RUNE: one persona, RUNE_HEARTBEAT_SECONDS high so the heartbeat never fires during
 # the test run.
-cat > "$SPIRA_HOME/chamber/builder.fayth" <<'FAYTH'
-FAYTH_NAME=builder
-FAYTH_WORKING_EXITS="SUBMITTED ask park hold"
-FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}"
-FAYTH_EXCLUDE_LABELS="spira-poison,needs-operator"
-FAYTH_MAX_CONCURRENT=1
-FAYTH_HEARTBEAT_SECONDS=600
-FAYTH
+cat > "$SPIRA_HOME/runes/builder.rune" <<'RUNE'
+RUNE_NAME=builder
+RUNE_WORKING_EXITS="SUBMITTED ask park hold"
+RUNE_LABELS="${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL}"
+RUNE_EXCLUDE_LABELS="spira-poison,needs-operator"
+RUNE_MAX_CONCURRENT=1
+RUNE_HEARTBEAT_SECONDS=600
+RUNE
 # The prompt template only needs enough fields for the shim to extract the bead id and
-# the worktree path. {{REPO}} is the WORKTREE path, not the checkout — the aeon works
+# the worktree path. {{REPO}} is the WORKTREE path, not the checkout — the dwarf works
 # there. {{BEAD_ID}} is the bead id.
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' \
-    > "$SPIRA_HOME/chamber/builder.md"
+    > "$SPIRA_HOME/runes/builder.md"
 
 # THE SHIM stands in for the model. It extracts the bead id and the worktree path from
 # the prompt, makes a commit in the worktree naming the bead, then closes it.
 #
-# SPIRA_AGENT IS THE INJECTION POINT: the aeon (the tree's own build, on this suite's PATH)
+# SPIRA_AGENT IS THE INJECTION POINT: the dwarf (the tree's own build, on this suite's PATH)
 # runs the shim below as its agent, so the real model can never run.
 BIN="$TMP/bin"; mkdir -p "$BIN"
 tl_config SPIRA_AGENT="$BIN/claude"
@@ -131,17 +131,17 @@ if [ -z "$id" ] || [ -z "$wt" ]; then
     printf '{"type":"result","subtype":"success","is_error":false,"result":"shim: could not parse prompt","num_turns":1}\n'
     exit 0
 fi
-# Commit naming the bead in the worktree the aeon prepared.
+# Commit naming the bead in the worktree the dwarf prepared.
 printf '%s cross-repo work\n' "$id" >> "$wt/cross-repo.txt"
 git -C "$wt" add cross-repo.txt
-git -C "$wt" -c user.email=a@a -c user.name=aeon commit -qm "$id sp-cross-repo — work in second repo"
+git -C "$wt" -c user.email=a@a -c user.name=dwarf commit -qm "$id sp-cross-repo — work in second repo"
 # Close the bead.
 bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1
 printf '{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":3}\n'
 SHIM
 chmod +x "$BIN/claude"
-# The model session is restricted (sp-v62vn); the shim is a fixture — testlib aeon_fixture_agent.
-aeon_fixture_agent "$BIN/claude"
+# The model session is restricted (sp-v62vn); the shim is a fixture — testlib dwarf_fixture_agent.
+dwarf_fixture_agent "$BIN/claude"
 
 # SPIRA_HOME_REPO names the home repo in the map. Without it, lib.sh derives the home from
 # the basename of SPIRA_REPO, and that must match a key in the repo-map.
@@ -150,9 +150,9 @@ tl_config SPIRA_HOME_REPO="$SPIRA_HOME_REPO" SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LAB
 
 B() { timeout 5 bd -C "$SPIRA_DB" "$@"; }
 
-run_aeon() { rm -rf "$SPIRA_RUN/worktree"; \
+run_dwarf() { rm -rf "$SPIRA_RUN/worktree"; \
     SPIRA_REPO="$HOME_REPO" \
-    aeon --home "$SPIRA_HOME" builder > "$TMP/aeon.out" 2>&1; }
+    dwarf --home "$SPIRA_HOME" builder > "$TMP/dwarf.out" 2>&1; }
 
 seed() {
     testdb_reset
@@ -163,7 +163,7 @@ echo "test-cross-repo.sh"
 
 # ======================================================================================
 echo
-echo "POSITIVE CONTROL: cross-repo aeon commits in the second repo, not the home repo:"
+echo "POSITIVE CONTROL: cross-repo dwarf commits in the second repo, not the home repo:"
 # ======================================================================================
 seed
 BID="$(B list --status open --label "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan},repo:second" --json 2>/dev/null \
@@ -171,7 +171,7 @@ BID="$(B list --status open --label "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}
 
 [ -n "$BID" ] || { bad "fixture: could not create bead"; printf '\n  %d passed, %d failed\n' "$_TL_PASS" "$_TL_FAIL"; exit 1; }
 
-run_aeon
+run_dwarf
 
 # The shim closes the bead in bd; the lifecycle stand-in reads that close as the builder's
 # submit (sp-v62vn: every session is restricted, so the teardown's old conversion to
@@ -193,7 +193,7 @@ nowant "home repo has no commit naming the bead" "$BID" "$home_log"
 echo
 echo "the branch lives in the second repo, not the home repo:"
 # ======================================================================================
-# After the aeon runs, spira/$BID is a branch in the second repo. The worktree path
+# After the dwarf runs, spira/$BID is a branch in the second repo. The worktree path
 # (under SPIRA_RUN) may have been pruned, but the branch ref remains in the checkout
 # that owns its object store — that is what "worktree of second" means.
 second_has_branch=no; git -C "$SECOND_REPO" show-ref --verify -q "refs/heads/spira/$BID" 2>/dev/null && second_has_branch=yes
@@ -203,14 +203,14 @@ is "home repo does not own the spira branch" no "$home_has_branch"
 
 # ======================================================================================
 echo
-echo "the aeon log records the correct repo name:"
+echo "the dwarf log records the correct repo name:"
 # ======================================================================================
-# The aeon's log() function writes to stdout (not to the LOGF bead-log which only holds
-# the model output). The stdout was captured to $TMP/aeon.out by run_aeon above.
-aeon_out="$(cat "$TMP/aeon.out" 2>/dev/null)"
-want "log says works repo:second" "repo:second" "$aeon_out"
-want "log shows the second repo path" "$SECOND_REPO" "$aeon_out"
-nowant "log does not say it used the home repo" "works repo:home" "$aeon_out"
+# The dwarf's log() function writes to stdout (not to the LOGF bead-log which only holds
+# the model output). The stdout was captured to $TMP/dwarf.out by run_dwarf above.
+dwarf_out="$(cat "$TMP/dwarf.out" 2>/dev/null)"
+want "log says works repo:second" "repo:second" "$dwarf_out"
+want "log shows the second repo path" "$SECOND_REPO" "$dwarf_out"
+nowant "log does not say it used the home repo" "works repo:home" "$dwarf_out"
 
 echo
 tl_summary

@@ -19,21 +19,21 @@ use spira_config::lc_state;
 // ---------------------------------------------------------------------------------------
 // CHECK 7c — unclaimable ready beads.
 
-/// A small bash seam, owned by this module alone (never touches `seams.rs`): every chamber
-/// member's `FAYTH_LABELS`/`FAYTH_EXCLUDE_LABELS`, not just the active roster the context
-/// probe (S0) already carries in `ctx.fayths`. `fayth_names`/`fayth_get` are themselves
-/// one-line shims onto `spira-config fayth names|get` now (sp-r5zd2); this still goes
-/// through lib.sh rather than calling that binary directly so a chamber with its own
-/// FAYTH_LABELS override hook (none exist today, but lib.sh is the contract) keeps working.
-const ALL_FAYTHS: &str = r#"set -uo pipefail
+/// A small bash seam, owned by this module alone (never touches `seams.rs`): every runes
+/// member's `RUNE_LABELS`/`RUNE_EXCLUDE_LABELS`, not just the active roster the context
+/// probe (S0) already carries in `ctx.runes`. `rune_names`/`rune_get` are themselves
+/// one-line shims onto `spira-config rune names|get` now (sp-r5zd2); this still goes
+/// through lib.sh rather than calling that binary directly so a runes with its own
+/// RUNE_LABELS override hook (none exist today, but lib.sh is the contract) keeps working.
+const ALL_RUNES: &str = r#"set -uo pipefail
 . "$SENTINEL_LIB" >&2 || exit 97
-for _f in $(fayth_names); do
-    printf '%s\t%s\t%s\0' "$_f" "$(fayth_get "$_f" FAYTH_LABELS)" "$(fayth_get "$_f" FAYTH_EXCLUDE_LABELS)"
+for _f in $(rune_names); do
+    printf '%s\t%s\t%s\0' "$_f" "$(rune_get "$_f" RUNE_LABELS)" "$(rune_get "$_f" RUNE_EXCLUDE_LABELS)"
 done
 "#;
 
-/// `PARTS`/`ALL_PARTS`'s shared line shape: `<name>|<labels-csv>|<exclude-csv>\n`. A fayth
-/// with no labels at all (a manual-summon persona) is skipped — lib.sh's own `[ -n "$inc" ]`
+/// `PARTS`/`ALL_PARTS`'s shared line shape: `<name>|<labels-csv>|<exclude-csv>\n`. A rune
+/// with no labels at all (a manual-call persona) is skipped — lib.sh's own `[ -n "$inc" ]`
 /// guard.
 fn parts_line(name: &str, labels: &str, exclude: &str) -> Option<String> {
     if labels.is_empty() {
@@ -44,22 +44,22 @@ fn parts_line(name: &str, labels: &str, exclude: &str) -> Option<String> {
 }
 
 impl<'a> Sentinel<'a> {
-    /// `PARTS`: the active roster (`ctx.fayths`, already in hand from the probe — no extra
+    /// `PARTS`: the active roster (`ctx.runes`, already in hand from the probe — no extra
     /// call).
     fn active_parts_str(&self) -> String {
         self.ctx
-            .fayths
+            .runes
             .iter()
             .filter_map(|f| parts_line(&f.name, &f.labels.join(","), &f.exclude.join(",")))
             .collect()
     }
 
-    /// `ALL_PARTS`: the full chamber, including fayths the active roster parks.
+    /// `ALL_PARTS`: the full runes, including runes the active roster parks.
     fn all_parts_str(&self) -> String {
         let o = self.h.run(
             Spec::args_owned(
                 "bash".to_string(),
-                vec!["-c".into(), ALL_FAYTHS.into(), "sentinel-all-fayths".into()],
+                vec!["-c".into(), ALL_RUNES.into(), "sentinel-all-runes".into()],
             )
             .env("SENTINEL_LIB", self.lib.to_string_lossy().into_owned())
             .out(Io::Capture)
@@ -153,7 +153,7 @@ impl<'a> Sentinel<'a> {
                     vec![
                         inc.clone(),
                         "file".into(),
-                        format!("UNCLAIMABLE: {bid} — fix the fayth: or partition label"),
+                        format!("UNCLAIMABLE: {bid} — fix the rune: or partition label"),
                         "-".into(),
                     ],
                 )
@@ -344,7 +344,7 @@ impl<'a> Sentinel<'a> {
 
     pub(crate) fn holder_alive(&self, id: &str) -> bool {
         self.h
-            .run(Spec::args_owned(self.cfg.sending_bin.clone(), vec!["holder-alive".into(), id.to_string()]).err(Io::Null))
+            .run(Spec::args_owned(self.cfg.hel_bin.clone(), vec!["holder-alive".into(), id.to_string()]).err(Io::Null))
             .ok()
     }
 
@@ -352,7 +352,7 @@ impl<'a> Sentinel<'a> {
         self.h
             .run(
                 Spec::args_owned(
-                    self.cfg.sending_bin.clone(),
+                    self.cfg.hel_bin.clone(),
                     vec!["destroy-worktree".into(), id.into(), path.into(), repo_root.into(), why.into()],
                 )
                 .err(Io::Null),
@@ -460,7 +460,7 @@ impl<'a> Sentinel<'a> {
                 &format!("branch {} squatted by {}'s worktree at {}", c.branch, c.holder_id, c.holder_path),
             );
             let note = format!(
-                "Parked by detect_branch_collisions: recorded branch {} is checked out in {}'s worktree at {}, not this bead's own canonical path. Every summon reaches aeon.sh's law-one-aeon-one-worktree refusal (or a no-op self-correct, when this bead's own default branch is the squatted one) before a session can start, and nothing about the input changes on retry. Held with an ask (and labelled overseer) so dispatch stops spending a claim here — free {} or correct the branch: label, then withdraw the ask (spira-lc withdraw-ask {}).",
+                "Parked by detect_branch_collisions: recorded branch {} is checked out in {}'s worktree at {}, not this bead's own canonical path. Every call reaches dwarf.sh's law-one-dwarf-one-worktree refusal (or a no-op self-correct, when this bead's own default branch is the squatted one) before a session can start, and nothing about the input changes on retry. Held with an ask (and labelled overseer) so dispatch stops spending a claim here — free {} or correct the branch: label, then withdraw the ask (spira-lc withdraw-ask {}).",
                 c.branch, c.holder_id, c.holder_path, c.holder_path, c.id
             );
             self.bd().quiet(self.h, &["note", &c.id, "--stdin"], Some(&note));
@@ -539,8 +539,8 @@ mod tests {
     }
 
     #[test]
-    fn parts_line_skips_a_fayth_with_no_labels() {
+    fn parts_line_skips_a_rune_with_no_labels() {
         assert_eq!(parts_line("builder", "spira,plan", "spira-poison"), Some("builder|spira,plan|spira-poison\n".to_string()));
-        assert_eq!(parts_line("human", "", ""), None, "a manual-summon persona contributes no partition");
+        assert_eq!(parts_line("human", "", ""), None, "a manual-call persona contributes no partition");
     }
 }

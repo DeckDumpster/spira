@@ -11,7 +11,7 @@ use crate::quoting::epoch_to_age;
 use serde_json::Value;
 use std::collections::HashSet;
 
-// The one definition of "a bead an aeon can take" lives in `spira-claim`: the express-lane
+// The one definition of "a bead a dwarf can take" lives in `spira-claim`: the express-lane
 // count below asks its `ready-count` rather than keeping a bd ready query of its own.
 
 /// The DONE → LANDED funnel keys over the CERTIFIED, SUBMITTED and REWORK rows; `None` (a

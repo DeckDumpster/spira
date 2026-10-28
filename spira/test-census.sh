@@ -134,10 +134,10 @@ want "bump_recur: 1 causal event (a burst), 2 victims, 4 detections" "1 sp-recur
 want "bump_requeue: 1 causal event, 1 victim, 1 detection"  "1 sp-requeue-quota-exceeded (1 victims, 1" "$out1"
 want "bump_reclaim: 1 causal event, 1 victim, 1 detection"  "1 sp-reclaim (1 victims, 1"          "$out1"
 
-# UC-ops-detection-remediation-07's Sin-escalation recurrence counter is now
+# UC-ops-detection-remediation-07's Fenrir-escalation recurrence counter is now
 # incident::ports::recurs_of (Rust, cargo test -p incident) rather than a lib.sh
 # accessor — the decision itself (threshold, exempt refs, DRAINING) is table-tested
-# against a stub bd in test-sin-exempt.sh. What stays here is proof that census.sh
+# against a stub bd in test-fenrir-exempt.sh. What stays here is proof that census.sh
 # itself counts the real 'recurred' events bid_a's three calls above just wrote,
 # which the assertions above already establish.
 
@@ -159,7 +159,7 @@ want "census reports sp-reopen-gate-red from the real reopen row" "1 sp-reopen-g
 echo
 echo "2b. sp-eiatd: queue.sh eject is a deliberate reopen cause — counted, never ranked"
 # ==============================================================================
-# The census aeon's own evidence (sp-eiatd): a correctly-attributed queue.sh eject is the
+# The census dwarf's own evidence (sp-eiatd): a correctly-attributed queue.sh eject is the
 # system working (law-a-deliberate-state-is-not-a-fault), not a failure class. Before the
 # fix, sp-reopen-eject competed for the top unsuppressed Mimir slot alongside genuine
 # defects. PAIRED WITH A NON-DELIBERATE CAUSE (law-absence-needs-a-positive-control): if

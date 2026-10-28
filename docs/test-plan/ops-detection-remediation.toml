@@ -34,7 +34,7 @@ statement = "Recurrence notes grow by no more than ~120 B per unchanged payload,
 [[use_case]]
 id = "UC-ops-detection-remediation-07"
 tier = "T1"
-statement = "At `SPIRA_SIN_AT` recurrences exactly one Sin ask is mailed and the `sin` label is added; an exempt ref (`SPIRA_SIN_EXEMPT=1`) still advances its counter but never gets the label or the page; watchtower's DRAINING escalation files as exempt."
+statement = "At `SPIRA_FENRIR_AT` recurrences exactly one Fenrir ask is mailed and the `fenrir` label is added; an exempt ref (`SPIRA_FENRIR_EXEMPT=1`) still advances its counter but never gets the label or the page; watchtower's DRAINING escalation files as exempt."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-08"
@@ -89,17 +89,17 @@ statement = "The Mimir brief encodes the five-step pass, the threshold, the outp
 [[use_case]]
 id = "UC-ops-detection-remediation-18"
 tier = "T1"
-statement = "The Auron classifier: a healthy loop (including a replay of a real log) fires nothing; wedged passes or a dead timer raise `sentinel-stalled` with evidence naming the cause; an unreadable log is `sentinel-unobservable`; halt or drain suppresses the alarm; summon starvation needs sustained passes and excludes governor/capacity withholds and aeons at cap; DB, mirror, ghost-lease and restart-loop alerts are distinct and do not mask each other; the old `ready=` spelling still parses."
+statement = "The Heimdall classifier: a healthy loop (including a replay of a real log) fires nothing; wedged passes or a dead timer raise `sentinel-stalled` with evidence naming the cause; an unreadable log is `sentinel-unobservable`; halt or drain suppresses the alarm; call starvation needs sustained passes and excludes governor/capacity withholds and dwarves at cap; DB, mirror, ghost-lease and restart-loop alerts are distinct and do not mask each other; the old `ready=` spelling still parses."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-19"
 tier = "T2"
-statement = "Auron reconcile: an alert must be seen twice before it raises a bead and clear twice before the bead closes; there is one bead per cause, and a return reopens the same bead with a single `flaps:N` label; an operator-closed alert is never reopened; when the DB is down or write-failing, alerts go to a fallback file and the heartbeat says so; a lock timeout reports `saturated`; extra probe beads are closed, not leaked."
+statement = "Heimdall reconcile: an alert must be seen twice before it raises a bead and clear twice before the bead closes; there is one bead per cause, and a return reopens the same bead with a single `flaps:N` label; an operator-closed alert is never reopened; when the DB is down or write-failing, alerts go to a fallback file and the heartbeat says so; a lock timeout reports `saturated`; extra probe beads are closed, not leaked."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-20"
 tier = "T1"
-statement = "The strand classifier: ready work with no live aeon is `starved`; capacity-paused, pool-paused, fleet-saturated and pass-truncated each replace `starved` with an info row; a deferred bead with a live blocker or an ask label is exempt, otherwise `deferred-unescalated`; an expired lease with a live holder pidfile is not a ghost; starved rows cite only their own partition's beads and state slots."
+statement = "The strand classifier: ready work with no live dwarf is `starved`; capacity-paused, pool-paused, fleet-saturated and pass-truncated each replace `starved` with an info row; a deferred bead with a live blocker or an ask label is exempt, otherwise `deferred-unescalated`; an expired lease with a live holder pidfile is not a ghost; starved rows cite only their own partition's beads and state slots."
 
 [use_case.uncovered]
 reason = "the classifier is Rust (strand::classify) with its cases in cargo tests; the strand binary has no bash seam that feeds it a bead graph, only the already-classified tsv path"
@@ -114,7 +114,7 @@ statement = "`strand.sh check` mails exactly one escalation per episode even und
 [[use_case]]
 id = "UC-ops-detection-remediation-22"
 tier = "T2"
-statement = "`strand.sh report` detects an exhausted sentinel pass budget (\"CHECK7 <fayth>: not evaluated\" in the latest pass) and reports pass-truncated, marking every fayth not evaluated and summoning none."
+statement = "`strand.sh report` detects an exhausted sentinel pass budget (\"CHECK7 <rune>: not evaluated\" in the latest pass) and reports pass-truncated, marking every rune not evaluated and calling none."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-23"
@@ -139,7 +139,7 @@ statement = "Watchtower snapshot fields render real values, with `?` for a missi
 [[use_case]]
 id = "UC-ops-detection-remediation-27"
 tier = "T1"
-statement = "The watchtower sweep files each Sending, DEDUP, drain and PR-stall escalation above its threshold (never on `0` or `?`) with a stable ref, writes `SWEEP:NOMINAL` only when all green, does nothing when halted (draining still writes the prompt), advances the lapse marker only on a real write, and runs no suites."
+statement = "The watchtower sweep files each Hel, DEDUP, drain and PR-stall escalation above its threshold (never on `0` or `?`) with a stable ref, writes `SWEEP:NOMINAL` only when all green, does nothing when halted (draining still writes the prompt), advances the lapse marker only on a real write, and runs no suites."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-28"
@@ -190,12 +190,12 @@ statement = "The archivist sweep archives sessions with drift at or above `EVERY
 [[use_case]]
 id = "UC-ops-detection-remediation-36"
 tier = "T0"
-statement = "Detector and trigger conf keys are allowlisted with documented defaults; priority bands put incidents and suite-reds below user-reported bugs; the `SENT` wire token agrees between `sending.sh`, `sentinel.sh` and `cockpit-metrics.py`."
+statement = "Detector and trigger conf keys are allowlisted with documented defaults; priority bands put incidents and suite-reds below user-reported bugs; the `SENT` wire token agrees between `hel.sh`, `sentinel.sh` and `cockpit-metrics.py`."
 
 [[use_case]]
 id = "UC-ops-detection-remediation-37"
 tier = "T1"
-statement = "aeon.sh's lapse-record write and the watchtower lapse reader agree on format: a real writer-produced record parses correctly, the same seam `land_mark` already gives landstate."
+statement = "dwarf.sh's lapse-record write and the watchtower lapse reader agree on format: a real writer-produced record parses correctly, the same seam `land_mark` already gives landstate."
 
 [use_case.uncovered]
 reason = "write_lapse_record() extraction and the writer-into-reader test are sp-fhzib.4's scope (gap G8), reopened separately and not yet landed"
@@ -215,10 +215,10 @@ bead = "sp-fhzib.4"
 [[use_case]]
 id = "UC-ops-detection-remediation-39"
 tier = "T1"
-statement = "Every existing ALERTS fixture that exercises Auron's bead label shape uses the exact labels `auron.sh` writes after two sightings and a flap (`alert:<key>`, `flaps:<n>`), not a hand-typed approximation — the panel's reader and Auron's writer are checked against each other, not independently."
+statement = "Every existing ALERTS fixture that exercises Heimdall's bead label shape uses the exact labels `heimdall.sh` writes after two sightings and a flap (`alert:<key>`, `flaps:<n>`), not a hand-typed approximation — the panel's reader and Heimdall's writer are checked against each other, not independently."
 
 [use_case.uncovered]
-reason = "gap G14: the panel's ALERTS fixtures hand-type the label set today rather than reusing Auron's real shape; closing it is sp-fhzib.4's scope, reopened separately and not yet landed"
+reason = "gap G14: the panel's ALERTS fixtures hand-type the label set today rather than reusing Heimdall's real shape; closing it is sp-fhzib.4's scope, reopened separately and not yet landed"
 date = "2026-09-26"
 bead = "sp-fhzib.4"
 

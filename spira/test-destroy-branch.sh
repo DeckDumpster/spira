@@ -65,7 +65,7 @@ sp-db3	open
 SEAM
 
 # THE LIFECYCLE STATE IS SEEDED, NOT SWITCHED OFF (sp-v62vn: the machine is the only mode).
-# sending reads each bead's claim from its lifecycle row (`spira-lc show`) and its queue
+# hel reads each bead's claim from its lifecycle row (`spira-lc show`) and its queue
 # state (`spira-lc state`); this stand-in answers both from one file per bead under
 # $LCSTATE, holding the bead's state, and hands every other verb (content-landed, the
 # fence's own diff check) to the tree's real spira-lc. A bead with no file has no row.
@@ -122,7 +122,7 @@ echo "positive control (caller bypass):"
 make_branch sp-db1
 if branch_exists spira/sp-db1; then ok "branch exists before destroy"; else bad "branch exists before destroy" "branch was not created"; fi
 
-spira_destroy_branch sp-db1 spira/sp-db1 "$REPO" "test: caller bypass" sending >/dev/null 2>&1
+spira_destroy_branch sp-db1 spira/sp-db1 "$REPO" "test: caller bypass" hel >/dev/null 2>&1
 rc=$?
 is "caller-bypass destroy exits 0" 0 "$rc"
 if branch_exists spira/sp-db1; then

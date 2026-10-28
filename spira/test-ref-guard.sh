@@ -6,7 +6,7 @@
 # scratch-fence rule, branch-guard.sh staged) followed by pre-commit-guard.sh, and each stage is seen to refuse,
 # in that order, through the installed hook.
 #
-# WHAT THIS IS FOR. On 2026-09-18 an Ops aeon deleted 24 peers' unlanded branches from
+# WHAT THIS IS FOR. On 2026-09-18 an Ops dwarf deleted 24 peers' unlanded branches from
 # inside its own worktree, because a worktree shares one ref namespace with every other
 # worktree and lib.sh's "nothing outside this section may call git branch -D" was prose
 # rather than a program (sp-q27cp). The hook is the program. This suite is what keeps it
@@ -17,9 +17,9 @@
 # fleet. Cases 2, 4 and 5 are what tell the two apart
 # (law-absence-needs-a-positive-control).
 #
-# CASES 10-14 close gap 3 (docs/test-plan/safety-fences.md): aeon.sh swallows a failed
+# CASES 10-14 close gap 3 (docs/test-plan/safety-fences.md): dwarf.sh swallows a failed
 # `worktree-hooks.sh install` (`>/dev/null 2>&1 || true`), so a broken install leaves an
-# aeon worktree with no ref guard and no pre-commit fences, silently. Case 9 alone (the
+# dwarf worktree with no ref guard and no pre-commit fences, silently. Case 9 alone (the
 # hook file exists and is executable) cannot tell a working composition from an empty
 # shell script with the same permissions — these cases run real commits through it.
 #
@@ -73,7 +73,7 @@ git branch -D feature/unrelated >/dev/null 2>&1
 is "delete outside the spira namespace is untouched" "no" "$(alive feature/unrelated)"
 
 # 5. NO OVERREACH, the common path. Creating a branch and committing on it are ref
-#    writes too, and blocking those would stop every aeon from working at all.
+#    writes too, and blocking those would stop every dwarf from working at all.
 git checkout -q -b spira/sp-mine 2>/dev/null
 echo work > work.txt
 git add work.txt >/dev/null 2>&1
@@ -98,13 +98,13 @@ is "hook drains large committed-phase stdin without SIGPIPE" "0" "$?"
 
 # 7. THE CASE THE FIRST SIX COULD NOT SEE. Every case above runs in a repository with one
 #    hooks directory, so they cannot tell "the hook is armed everywhere" from "the hook is
-#    armed in the one place this test looks". aeon.sh gives each worktree its OWN
+#    armed in the one place this test looks". dwarf.sh gives each worktree its OWN
 #    core.hooksPath, and a per-worktree setting OVERRIDES the repo-level one — so the guard
-#    was absent from every aeon worktree while all six cases above passed. A worktree is
+#    was absent from every dwarf worktree while all six cases above passed. A worktree is
 #    the only place the deletion this hook exists for has ever happened (sp-urifb,
 #    law-guard-proved-where-the-offender-runs).
 #
-#    SEEN TO FAIL: with worktree-hooks.sh reduced to what aeon.sh used to do — copying
+#    SEEN TO FAIL: with worktree-hooks.sh reduced to what dwarf.sh used to do — copying
 #    pre-commit alone into the worktree hooks dir — this case deletes the branch and fails.
 git worktree add -q "$TR/wt" -b spira/sp-wt 2>/dev/null
 SPIRA_HOME="$HERE" worktree-hooks.sh install "$TR/wt" >/dev/null 2>&1
@@ -115,12 +115,12 @@ is "unsanctioned delete from INSIDE a worktree is refused" \
    "yes" "$(git -C "$TR/wt" show-ref --verify -q refs/heads/spira/sp-wt-victim && echo yes || echo no)"
 
 # 8. POSITIVE CONTROL for case 7, for the same reason case 2 exists: a worktree whose
-#    hooks directory refused everything would pass case 7 and break every aeon's own reap.
+#    hooks directory refused everything would pass case 7 and break every dwarf's own reap.
 SPIRA_REF_SANCTIONED=1 git -C "$TR/wt" branch -D spira/sp-wt-victim >/dev/null 2>&1
 is "sanctioned delete from inside a worktree succeeds" \
    "no" "$(git -C "$TR/wt" show-ref --verify -q refs/heads/spira/sp-wt-victim && echo yes || echo no)"
 
-# 9. THE OTHER HOOK MUST SURVIVE THE COMPOSITION. aeon.sh needs a per-worktree pre-commit
+# 9. THE OTHER HOOK MUST SURVIVE THE COMPOSITION. dwarf.sh needs a per-worktree pre-commit
 #    (this session's dirty-files guard) and used to install it by REPLACING the directory,
 #    which dropped the canonical pre-commit's own fences too. Both must be present.
 WGD="$(git -C "$TR/wt" rev-parse --path-format=absolute --git-dir)"
@@ -173,10 +173,10 @@ echo
 echo "CASE 12: branch-guard.sh staged, through the installed worktree hook, refuses a SPIRA_WORK mismatch:"
 printf 'more\n' >> "$TR/wt/seed.txt"
 git -C "$TR/wt" add seed.txt >/dev/null 2>&1
-out="$(GIT_AUTHOR_NAME=aeon-t GIT_AUTHOR_EMAIL=aeon-t@spira.local \
-       GIT_COMMITTER_NAME=aeon-t GIT_COMMITTER_EMAIL=aeon-t@spira.local \
+out="$(GIT_AUTHOR_NAME=dwarf-t GIT_AUTHOR_EMAIL=dwarf-t@spira.local \
+       GIT_COMMITTER_NAME=dwarf-t GIT_COMMITTER_EMAIL=dwarf-t@spira.local \
        SPIRA_WORK="$TR/somewhere-else" \
-       commit_in_wt 'sp-test: aeon commits from the wrong assigned worktree')"; rc=$?
+       commit_in_wt 'sp-test: dwarf commits from the wrong assigned worktree')"; rc=$?
 is   "case 12: commit is refused" "1" "$rc"
 want "case 12: refusal names branch-guard.sh" "branch-guard.sh" "$out"
 git -C "$TR/wt" restore --staged seed.txt >/dev/null 2>&1
@@ -184,7 +184,7 @@ git -C "$TR/wt" checkout -q -- seed.txt
 
 echo
 echo "CASE 13: the canonical fences run BEFORE pre-commit-guard.sh — an offender both would refuse is stopped by the earlier one, so pre-commit-guard.sh never runs:"
-# Write a pre-session dirty snapshot naming the sp-* path (exactly as aeon.sh does), so
+# Write a pre-session dirty snapshot naming the sp-* path (exactly as dwarf.sh does), so
 # pre-commit-guard.sh WOULD ALSO refuse this path if it ever got to run.
 printf 'sp-both-guards.md\n' > "$WGD/spira-dirty-before"
 printf 'planted before the session\n' > "$TR/wt/sp-both-guards.md"

@@ -26,7 +26,7 @@ const ALLOW_FILE: &str = "spira-lint/config-literal-fallback-allow";
 /// `SPIRA_*` keys that name "where/who/which copy" — a bare, unresolved value here is
 /// always wrong (never merely a command name on `$PATH`, which the generic `/`-shaped
 /// check below already catches for everything else): the run directory, the checkout, the
-/// instance, the chamber/fayth roster, the data store, the workspace root, the repo map,
+/// instance, the runes/rune roster, the data store, the workspace root, the repo map,
 /// and the config document's own location. A key NOT in this list (`SPIRA_SYSTEMCTL`,
 /// `SPIRA_BD`, `SPIRA_GH`, `SPIRA_INCIDENT_SH`, `SPIRA_FORGE`, ...) is a PROGRAM NAME this
 /// process shells out to, resolved via `$PATH` at exec time exactly like a bare `bash`/
@@ -39,9 +39,9 @@ const CONFIG_IDENTITY_KEYS: &[&str] = &[
     "SPIRA_HOME",
     "SPIRA_REPO",
     "SPIRA_INSTANCE",
-    "SPIRA_CHAMBER",
-    "SPIRA_CHAMBER_OVERLAY",
-    "SPIRA_FAYTHS",
+    "SPIRA_RUNES_DIR",
+    "SPIRA_RUNES_OVERLAY",
+    "SPIRA_RUNES",
     "SPIRA_DB",
     "SPIRA_WORKSPACES",
     "SPIRA_REPO_MAP",

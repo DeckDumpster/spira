@@ -2,7 +2,7 @@
 //! message, open a tracking decision bead for a question/decision send, close the tracking
 //! bead (and note the work it cites) on `sendmail`, and the two bead-store queries `tidy`
 //! and `sweep-dismissed` make. One seam (`Bd`) so every one of these is a unit test against
-//! a fake, never a real store (matching aeon's/queue's own ports/real split).
+//! a fake, never a real store (matching dwarf's/queue's own ports/real split).
 
 use std::io::Write;
 use std::process::Stdio;
@@ -47,7 +47,7 @@ pub trait Bd {
 ///
 /// `conn_retries` (>= 1) retries a call whose stderr names a dropped pooled connection —
 /// `bead::bdq::should_retry`'s own rule, the one every other `bd` caller in this workspace
-/// (aeon, cockpit-collect, incident, sentinel) already applies. A store freshly started by
+/// (dwarf, cockpit-collect, incident, sentinel) already applies. A store freshly started by
 /// install (dolt-beads.service listening, but the pool's first connection already stale) is
 /// not "unreachable" — it is the one failure mode retrying past is sound for; every other
 /// failure (a real auth/schema/network refusal) still surfaces on the first try, unretried.
@@ -708,7 +708,7 @@ mod tests {
     // A store install just started (dolt-beads.service listening, but the first pooled
     // connection already gone stale) fails `bd`'s first call with "invalid connection" on
     // stderr — not a genuinely unreachable store, the one case every other `bd` caller in
-    // this workspace (aeon::bd::BdCli, cockpit-collect, incident, sentinel) already retries
+    // this workspace (dwarf::bd::BdCli, cockpit-collect, incident, sentinel) already retries
     // past via `bead::bdq::should_retry`. Before this fix, mail's own `BdCli` had no retry
     // at all, so `open_ask_ids` surfaced that single transient hiccup as "bead store query
     // failed — refusing to move any mail" on a store that was, in truth, healthy.

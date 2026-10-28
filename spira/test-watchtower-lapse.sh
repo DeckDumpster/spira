@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 #
-# test-watchtower-lapse.sh — the lapsed-aeon section of the pipeline snapshot.
+# test-watchtower-lapse.sh — the lapsed-dwarf section of the pipeline snapshot.
 #
 #   ./test-watchtower-lapse.sh
 #
 # WHAT THIS SUITE IS FOR
 # ----------------------
-# sp-a8zy introduced the liveness lease: an aeon whose trace is silent for the full
+# sp-a8zy introduced the liveness lease: a dwarf whose trace is silent for the full
 # lease duration is killed, its work preserved, and a record written under
 # $SPIRA_RUN/lapsed/. sp-4ihk plumbs those records into the watchtower snapshot so
 # Ops sees them on the next sweep and can classify each into one of four outcomes
-# (sop-lapsed-aeon-postmortem). A section that renders empty on a failed read is the
+# (sop-lapsed-dwarf-postmortem). A section that renders empty on a failed read is the
 # failure this whole panel is built against — `?`, never silence.
 #
 # THE POSITIVE CONTROL IS THE ENTIRE FIRST BLOCK. Before asserting that no records
@@ -26,7 +26,7 @@
 # the marker; only a successful prompt-file write does.
 #
 # tier: T1
-# covers: watchtower/src/* spira/lib.sh aeon/src/* UC-ops-detection-remediation-37
+# covers: watchtower/src/* spira/lib.sh dwarf/src/* UC-ops-detection-remediation-37
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -81,7 +81,7 @@ wt_file() {  # wt_file [VAR=val ...] -> $TMP/ops-prompt written
 fresh() { rm -rf "$TMP/run"; mkdir -p "$TMP/run/landstate"; }
 
 # Plant a lapse record whose filename timestamp is $1 (YYYYMMDDTHHmmSSZ format)
-# and whose bead id is $2. Written in the same format aeon.sh uses. The marker-filtering
+# and whose bead id is $2. Written in the same format dwarf.sh uses. The marker-filtering
 # tests below need specific, controllable, out-of-order timestamps that the real writer
 # (which always stamps "now") cannot produce, so this hand-written fixture stays for those.
 plant_lapse() {
@@ -137,7 +137,7 @@ fresh
 plant_lapse 20260912T000000Z sp-test1
 snap="$(wt)"
 want "a planted lapse appears in the snapshot"        "sp-test1"              "$snap"
-want "and the section heading is present"             "Lapsed aeons"          "$snap"
+want "and the section heading is present"             "Lapsed dwarves"          "$snap"
 want "and the record's quiet field is present"        "quiet"                 "$snap"
 want "and the record's last-action field is present"  "writing output file"   "$snap"
 want "and the bead id appears in the record"          "bead: sp-test1"        "$snap"
@@ -152,7 +152,7 @@ fresh
 # No $TMP/run/lapsed directory at all.
 snap="$(wt)"
 want "no directory renders 'none since last sweep'" "none since last sweep" "$snap"
-nowant "no directory does not render ?"             "?"                     "$(printf '%s\n' "$snap" | grep -i 'lapsed aeons' -A3 || true)"
+nowant "no directory does not render ?"             "?"                     "$(printf '%s\n' "$snap" | grep -i 'lapsed dwarves' -A3 || true)"
 
 # ======================================================================================
 echo
@@ -179,7 +179,7 @@ printf '20260912T110000Z\n' > "$TMP/run/lapsed.swept"
 snap="$(wt)"
 want   "a record newer than the marker appears"      "sp-new"    "$snap"
 nowant "a record at or before the marker is filtered" "sp-old"   "$snap"
-want   "and the section heading is still present"    "Lapsed aeons" "$snap"
+want   "and the section heading is still present"    "Lapsed dwarves" "$snap"
 
 # ======================================================================================
 echo
@@ -219,7 +219,7 @@ echo "an unreadable directory renders ? rather than none:"
 fresh
 touch "$TMP/run/not-a-dir"
 snap="$(SPIRA_LAPSED_DIR_OVERRIDE="$TMP/run/not-a-dir" wt)"
-lapsed_lines="$(printf '%s\n' "$snap" | grep -A5 'Lapsed aeons' || true)"
+lapsed_lines="$(printf '%s\n' "$snap" | grep -A5 'Lapsed dwarves' || true)"
 want "an unreadable directory renders ?" "?" "$lapsed_lines"
 nowant "and does not claim none since"   "none since last sweep" "$lapsed_lines"
 
@@ -251,9 +251,9 @@ snap="$(wt)"
 nowant "after the marker advances, the old record is not shown" "sp-y" "$snap"
 want   "and the section renders none since last sweep"   "none since last sweep" "$snap"
 
-# D12: the "every section present alongside Lapsed aeons" loop that used to live here
+# D12: the "every section present alongside Lapsed dwarves" loop that used to live here
 # merged into test-watchtower.sh's own whole-snapshot render test (the two differed only
-# in 'The graph' vs 'Lapsed aeons' — one snapshot now plants both fixtures and checks all
+# in 'The graph' vs 'Lapsed dwarves' — one snapshot now plants both fixtures and checks all
 # seven sections in one pass).
 
 # ======================================================================================

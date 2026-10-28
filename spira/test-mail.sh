@@ -120,10 +120,10 @@ out="$(echo "body" | run send lint-mailfrom-env --subject "Hello" 2>&1)"; rc=$?
 [ "$rc" != 0 ] && ok "SEEN RED: missing --from with no SPIRA_MAIL_FROM is refused" \
                 || bad "SEEN RED: missing --from with no SPIRA_MAIL_FROM is refused" "exit 0"
 
-out="$(echo "body" | SPIRA_MAIL_FROM="Aeon <aeon@spira>" run send lint-mailfrom-env --subject "Hello" 2>&1)"; rc=$?
+out="$(echo "body" | SPIRA_MAIL_FROM="Dwarf <dwarf@spira>" run send lint-mailfrom-env --subject "Hello" 2>&1)"; rc=$?
 is "SEEN GREEN: omitted --from with SPIRA_MAIL_FROM is accepted" 0 "$rc"
 msg="$(cat "$SPIRA_MAIL/lint-mailfrom-env/new"/* 2>/dev/null)"
-want "SEEN GREEN: From header carries SPIRA_MAIL_FROM value" "Aeon <aeon@spira>" "$msg"
+want "SEEN GREEN: From header carries SPIRA_MAIL_FROM value" "Dwarf <dwarf@spira>" "$msg"
 
 echo
 echo "lint override end to end: header recorded on the delivered message"
@@ -165,15 +165,15 @@ echo
 echo "UC-17: reply routing"
 
 export SPIRA_HOME="$TMP/uc17-home"
-mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_MAIL/concierge/new" "$SPIRA_MAIL/concierge/tmp" "$SPIRA_MAIL/concierge/cur"
+mkdir -p "$SPIRA_HOME/runes" "$SPIRA_MAIL/concierge/new" "$SPIRA_MAIL/concierge/tmp" "$SPIRA_MAIL/concierge/cur"
 # sp-ivfu3: mail now resolves spira.run in-process through spira_config, which needs a
 # real conf.d registry under SPIRA_HOME to resolve ANY key (including the ones this UC
 # never pins, SPIRA_LOOM_BUDGET_MS included) — law-a-binary-resolves-the-config-it-reads;
 # a fixture SPIRA_HOME that runs a binary needs conf.d, the same way $HERE already is one.
 ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
-# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# SPIRA_RUNES_DIR is registered and the fixture declares a fixed, nonexistent path — nothing
 # derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
-tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
+tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
 
 send_plain() {   # send_plain <mailbox> <from> <subject> -> bare Message-ID on stdout
     local mailbox="$1" from="$2" subject="$3" newest
@@ -201,9 +201,9 @@ reply_uc17 "$MSGID_G" | run sendmail >/dev/null 2>&1
 is "reply routed to sender's mailbox (gate)" "1" "$(ls "$SPIRA_MAIL/gate/new" 2>/dev/null | wc -l | tr -d ' ')"
 
 echo
-echo "reply to a chamber persona routes to concierge, even if a same-named mailbox exists"
+echo "reply to a runes persona routes to concierge, even if a same-named mailbox exists"
 
-printf '# builder persona\n' > "$SPIRA_HOME/chamber/builder.md"
+printf '# builder persona\n' > "$SPIRA_HOME/runes/builder.md"
 mkdir -p "$SPIRA_MAIL/builder/new" "$SPIRA_MAIL/builder/tmp" "$SPIRA_MAIL/builder/cur"
 MSGID_B="$(send_plain uc17-orig2 "Builder <builder@spira>" "routing test")"
 builder_before="$(ls "$SPIRA_MAIL/builder/new" 2>/dev/null | wc -l | tr -d ' ')"
@@ -479,7 +479,7 @@ is "SPIRA_MAIL_MUTE=1 sendmail: recorded in cur/ instead" "$((conc_cur_before + 
 tl_config SPIRA_MAIL_MUTE=0
 
 echo
-echo "escalation class: an aeon's operator ask must declare one (law-escalate-decisions-not-problems)"
+echo "escalation class: a dwarf's operator ask must declare one (law-escalate-decisions-not-problems)"
 CLS_BODY="$(printf '## Question\nwhich shape?\n\n## Default\nthe crate\n\n## Class basis\nneeds a credential\n')"
 CLS_NOBASIS="$(printf '## Question\nwhich shape?\n\n## Default\nthe crate\n')"
 cls_send() { # <subject> <class-args...> ; body on $CLS_STDIN
@@ -504,10 +504,10 @@ out="$(cls_send "Which verb layout should gate-worker take" )"
 want "no class: routed to the concierge" "routed to the concierge" "$out"
 is "no class: operator inbox unchanged" "$op_before" "$(ls "$SPIRA_MAIL/operator/new" 2>/dev/null | wc -l | tr -d ' ')"
 CLS_STDIN="$CLS_NOBASIS"
-out="$(cls_send "Grant the aeon a deploy credential" --class permissions)"
+out="$(cls_send "Grant the dwarf a deploy credential" --class permissions)"
 want "class without a basis section: routed to the concierge" "routed to the concierge" "$out"
 CLS_STDIN="$CLS_BODY"
-out="$(cls_send "Grant the aeon a deploy credential" --class permissions)"; rc=$?
+out="$(cls_send "Grant the dwarf a deploy credential" --class permissions)"; rc=$?
 is "permissions ask exits 0" 0 "$rc"
 is "permissions ask reaches the operator" "$((op_before + 1))" "$(ls "$SPIRA_MAIL/operator/new" | wc -l | tr -d ' ')"
 is "permissions ask is not routed to the concierge" "$((conc_before + 2))" "$(ls "$SPIRA_MAIL/concierge/new" | wc -l | tr -d ' ')"

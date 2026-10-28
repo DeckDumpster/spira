@@ -223,9 +223,9 @@ pub trait Lib {
     fn bead_close(&self, id: &str, reason: &str) -> bool;
     /// A plain close (not `--landing`) of a bead that is not in delivery; Err carries the refusal.
     fn bead_retire(&self, id: &str, reason: &str) -> Result<(), String>;
-    /// `sending reap-landed-branch <id> <branch> <root> <why>` for the repository the
+    /// `hel reap-landed-branch <id> <branch> <root> <why>` for the repository the
     /// `repo:` label names. Ok(false): that repository or branch is not here, nothing to
-    /// reap; Err: the Sending refused or failed (it remains the backstop).
+    /// reap; Err: the Hel refused or failed (it remains the backstop).
     fn reap_landed_branch(
         &self,
         id: &str,
@@ -283,6 +283,8 @@ pub trait Lib {
     /// Append `note` to bead `id` when it is still open; false when it is closed, unknown
     /// or the note did not land — the caller then files a new bead.
     fn amend_bug(&self, actor: &str, id: &str, note: &str) -> bool;
+    /// True when bead `id` has a lifecycle row that is not terminal (a fix in flight).
+    fn bead_live(&self, id: &str) -> bool;
 }
 
 /// The harness scripts and binaries queue runs as whole programs.

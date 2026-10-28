@@ -48,7 +48,7 @@ state; see §4 R7).
 |---|---|---|
 | `spira/sentinel.sh:317` (CHECK 2b) | `"$SPIRA_HOME/strand.sh" check 2>&1` | stdout lines starting `RECLAIMED`, `RECOMPUTED`, `STRANDED`; exit status ignored |
 | `spira/cockpit.sh:2427` `strand_keys` | reads `$SPIRA_RUN/strands.json` | keys `<partition>:<kind>:<id>` split with `rsplit(":", 2)`; values carry `escalated` |
-| `auron/src/main.rs` (formerly `spira/auron.sh:108,518`, retired sp-zpaq0) | reads `$SPIRA_RUN/strands.json` (or `SPIRA_AURON_STRANDS`) | a JSON object |
+| `heimdall/src/main.rs` (formerly `spira/heimdall.sh:108,518`, retired sp-zpaq0) | reads `$SPIRA_RUN/strands.json` (or `SPIRA_HEIMDALL_STRANDS`) | a JSON object |
 | `cockpit/health.sh` | `SP_STRAND_GHOST`, `SP_STRANDS` from cockpit.sh | kind `ghost` spelled as before |
 | operator / concierge / runbooks | `strand.sh report [--json]` | the text and JSON shapes in §3.4 |
 | bash suites `test-strand-lock.sh`, `test-strand-reclaim-n.sh`, `test-sentinel-store-reads.sh` (case 7), `test-unit-name.sh`, `test-closed-strand.sh` | run `strand.sh` | see §7 |
@@ -59,12 +59,12 @@ state; see §4 R7).
 |---|---|---|
 | the bead store | `$SPIRA_LIST_SNAPSHOT` when readable (sentinel's `bd list --all --limit 0` of this pass), else **one** `bd -C $SPIRA_DB list --all --limit 0 --brief --json` | the WHOLE store, closed beads included. One read per run, not per partition. |
 | the claimable set | per partition `spira-claim ready-count <labels> <exclude> --json` (§9) | the machine's READY/REWORK rows; a refusal is an `Err`, never an empty set |
-| partitions | `SPIRA_LABELS` (+ `SPIRA_EXCLUDE_LABELS`) narrows to one; otherwise the **roster probe** (§2.5) | exclusions: `SPIRA_EXCLUDE_LABELS` overrides all, else the fayth's own, else `spira-poison,<ask>,<ci>` |
-| aeon liveness | `$SPIRA_RUN/hold-<id>.pid` (pid alive) and `$SPIRA_RUN/aeon-*-<id>.pid` (pid alive AND `/proc/<pid>/cmdline` contains `aeon.sh`) | never `pgrep -f` |
-| aeons per partition / fleet | `systemctl --user list-units 'spira-aeon-<fayth>-*' --no-legend` (and `'spira-aeon-*'`) when `SPIRA_SUMMON` is `systemd-run` (default); else live pidfiles | read-only: dead pidfiles are no longer deleted here |
-| capacity pause | first field of `$SPIRA_CAPACITY_PAUSE` (default `$SPIRA_RUN/capacity-pause`), an epoch | read-only: the probe/lift side effects of `capacity_paused` belong to the summon path |
+| partitions | `SPIRA_LABELS` (+ `SPIRA_EXCLUDE_LABELS`) narrows to one; otherwise the **roster probe** (§2.5) | exclusions: `SPIRA_EXCLUDE_LABELS` overrides all, else the rune's own, else `spira-poison,<ask>,<ci>` |
+| dwarf liveness | `$SPIRA_RUN/hold-<id>.pid` (pid alive) and `$SPIRA_RUN/dwarf-*-<id>.pid` (pid alive AND `/proc/<pid>/cmdline` contains `dwarf.sh`) | never `pgrep -f` |
+| dwarves per partition / fleet | `systemctl --user list-units 'spira-dwarf-<rune>-*' --no-legend` (and `'spira-dwarf-*'`) when `SPIRA_CALL` is `systemd-run` (default); else live pidfiles | read-only: dead pidfiles are no longer deleted here |
+| capacity pause | first field of `$SPIRA_CAPACITY_PAUSE` (default `$SPIRA_RUN/capacity-pause`), an epoch | read-only: the probe/lift side effects of `capacity_paused` belong to the call path |
 | admission throttle | `$SPIRA_THROTTLE_STAMP` (default `$SPIRA_RUN/queue-throttled`) | exists+readable+non-empty ⇒ shut (`depth=N` parsed); exists but unreadable/empty ⇒ unreadable; absent ⇒ open |
-| pass truncation | `$SPIRA_RUN/sentinel.log`: after the last `: state: open=` line (the sentinel's pass-start marker), a `CHECK7 <fayth>: not evaluated` for a fayth of the partition | |
+| pass truncation | `$SPIRA_RUN/sentinel.log`: after the last `: state: open=` line (the sentinel's pass-start marker), a `CHECK7 <rune>: not evaluated` for a rune of the partition | |
 | harness pulse (report header) | `systemctl --user is-active <unit>` for `spira-sentinel[-<instance>].timer`; mtime of sentinel.log | `?` unit ⇒ `unknown` |
 | episode state | `$SPIRA_RUN/strands.json` | §3.3 |
 
@@ -95,19 +95,19 @@ Mechanical fixes, unchanged in effect:
 Escalation: `$SPIRA_HOME/mail send operator --from 'Strand check <strand@spira>'
 --subject <title> --kind question --default <action>`, body on **stdin**; titles exactly as
 before (`Spira: <id> is stranded (<kind>)`, `Spira: the [<part>] queue is stranded
-(<kind>)`, `Spira: <id> keeps losing its aeon — the host, not the bead`). The body is the
+(<kind>)`, `Spira: <id> keeps losing its dwarf — the host, not the bead`). The body is the
 bead context (`bd show <id> --json`, rendered as before) + `WHY THIS IS ESCALATED` + the
 last 12 sentinel log lines. No `mail` ⇒ no mail, state still marked (as before).
 
 ### 2.5 The roster probe — the one bash seam
 
-A persona's partition is `FAYTH_LABELS`/`FAYTH_EXCLUDE_LABELS` in a `.fayth` file, which
+A persona's partition is `RUNE_LABELS`/`RUNE_EXCLUDE_LABELS` in a `.rune` file, which
 is **bash** that interpolates `conf.sh` variables. `[persona.<name>].labels` in spira-config
 does not carry the scope label or the exclusions (builder's `qa-proposed`; batcher's label
 is `[]` there), so it is not yet an authority. Rather than copy the predicate, `strand`
 asks the one that exists: it runs `bash -s` with a fixed script on **stdin** that sources
-`<SPIRA_HOME>/lib.sh` and prints, one line per partition, `labels<TAB>exclude<TAB>fayths`
-(`fayth_partitions` + `fayths_for_labels`, falling back to `spira_fayths`). No payload
+`<SPIRA_HOME>/lib.sh` and prints, one line per partition, `labels<TAB>exclude<TAB>runes`
+(`rune_partitions` + `runes_for_labels`, falling back to `spira_runes`). No payload
 travels in argv; the lib path travels in the environment (`STRAND_LIB`). Retire this when
 spira-config's persona table carries labels and exclusions (§7).
 
@@ -130,13 +130,13 @@ the `conf.sh` default. strand never parses `spira.toml` itself.
 | submitted label | `SPIRA_SUBMITTED_LABEL` | `submitted_label` | `spira-submitted` |
 | queue-wait label | `SPIRA_QUEUE_WAIT_LABEL` | `queue_wait_label` | `spira-queue-waiting` |
 | open-children label | `SPIRA_OPEN_CHILDREN_LABEL` | `open_children_label` | `spira-open-children` |
-| pool | `SPIRA_MAX_AEONS` | `max_aeons` | unset (explicit 0 ⇒ pool-paused) |
-| fleet cap | `SPIRA_MAX_LIVE_AEONS` | `max_live_aeons` | 0 (unconfigured) |
+| pool | `SPIRA_MAX_DWARVES` | `max_dwarves` | unset (explicit 0 ⇒ pool-paused) |
+| fleet cap | `SPIRA_MAX_LIVE_DWARVES` | `max_live_dwarves` | 0 (unconfigured) |
 | throttle release | `SPIRA_QUEUE_THROTTLE_RELEASE_AT` | `queue_throttle_release_at` | 8 |
 | instance | `SPIRA_INSTANCE` | `instance` | `prod` |
 | grace windows | `SPIRA_STRAND_GRACE` (900), `SPIRA_EVENT_COOLDOWN` (3600), `BD_TIMEOUT` (180) | — | as shown |
 | snapshots | `SPIRA_LIST_SNAPSHOT` | — | none |
-| test seams | `SPIRA_SYSTEMCTL`, `SPIRA_SUMMON`, `SPIRA_CAPACITY_PAUSE`, `SPIRA_THROTTLE_STAMP`, `SPIRA_NOW` | — | |
+| test seams | `SPIRA_SYSTEMCTL`, `SPIRA_CALL`, `SPIRA_CAPACITY_PAUSE`, `SPIRA_THROTTLE_STAMP`, `SPIRA_NOW` | — | |
 
 ## 3. Schema
 
@@ -228,7 +228,7 @@ Rules:
   unstarted dependent.** Unstarted = open child, not moving, parked, poisoned or delegated.
   A blocker absent from the store still counts (named `(not in the store)`).
 - **R4 — a `blocks` edge onto an epic is intentional sequencing.** In bd's data model an
-  epic is a container, never a unit of work an aeon claims; the only reason to make a bead
+  epic is a container, never a unit of work a dwarf claims; the only reason to make a bead
   block on one is "start after that whole epic". (bd forbids a parent from blocking its own
   child, so the target is never the dependent's own epic.) Such edges produce an `info` row
   `sequenced`, never an escalation. The target epic's own stalls are reported on the target,
@@ -288,10 +288,10 @@ throttle-state parsing; `--from` parsing.
 | 7 | `spira/test-sentinel-store-reads.sh:255,266` (case 7) | `bash "$HERE/strand.sh" report` counting bd calls | point at the binary; 7b holds (0 bd calls with both snapshots); 7a's positive control still holds (1 `bd list` + 1 `bd ready` per partition) |
 | 8 | `spira/test-unit-name.sh:49,88–91` | awk-extracts `harness_state` from strand.sh | drop the strand.sh case; `probe::spira_unit`/`harness_state` carry it (a unit test there needs a stub systemctl) |
 | 9 | `spira/test-closed-strand.sh:46` | `stub strand.sh 'exit 0'` | stub the binary via `SPIRA_STRAND_BIN` |
-| 10 | `spira/auron.sh:92` (comment) | names strand-classify.py | **MOOT.** auron.sh is retired (sp-zpaq0); the comment does not exist to reword |
+| 10 | `spira/heimdall.sh:92` (comment) | names strand-classify.py | **MOOT.** heimdall.sh is retired (sp-zpaq0); the comment does not exist to reword |
 | 11 | later | roster probe (§2.5) | retire when `[persona.<name>]` carries labels and exclusions |
 
-This branch also carries `a21b071a1` (an aeon's earlier bash fix of the same defect in
+This branch also carries `a21b071a1` (a dwarf's earlier bash fix of the same defect in
 strand.sh/strand-classify.py/test-strand-classify.sh). It is superseded by this crate and
 dies with row 4; the operator may keep it as the interim fix until the cutover lands.
 
@@ -305,7 +305,7 @@ escalation — is deleted.
 
 - **spira-lc:** never run by strand (sp-7g5q6).
 - **A partition's ready set:** `spira-claim ready-count <labels> <exclude> --json` — the
-  machine's READY/REWORK rows, the set the summoner counts and an aeon claims from; a
+  machine's READY/REWORK rows, the set the caller counts and a dwarf claims from; a
   refusal is an `Err`, never an empty set.
 - **A dead holder:** not strand's. bd's in_progress and lease are written by no claim; a
   WORKING row whose lease expired past its grace and is not wait-held is CHECK 2's

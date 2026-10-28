@@ -1,6 +1,6 @@
 {
   "uid": "spira-runs",
-  "title": "Spira runs: aeons, claims and personas",
+  "title": "Spira runs: dwarves, claims and personas",
   "schemaVersion": 39,
   "version": 1,
   "editable": false,
@@ -196,7 +196,7 @@
     {
       "id": 5,
       "type": "timeseries",
-      "title": "summons by fayth and result",
+      "title": "calls by rune and result",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
@@ -217,8 +217,8 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "sum by (fayth, result) (increase(spira_component_events{component=~\"aeon|sentinel\",kind=\"summon\"}[$__rate_interval]))",
-          "legendFormat": "{{fayth}} {{result}}",
+          "expr": "sum by (rune, result) (increase(spira_component_events{component=~\"dwarf|sentinel\",kind=\"call\"}[$__rate_interval]))",
+          "legendFormat": "{{rune}} {{result}}",
           "refId": "A"
         }
       ]
@@ -247,7 +247,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "sum by (model, rework) (increase(spira_component_events{component=\"aeon\",kind=\"attempt\"}[$__rate_interval]))",
+          "expr": "sum by (model, rework) (increase(spira_component_events{component=\"dwarf\",kind=\"attempt\"}[$__rate_interval]))",
           "legendFormat": "{{model}} {{rework}}",
           "refId": "A"
         }
@@ -277,8 +277,8 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "sum by (kind, fayth) (increase(spira_component_events{component=\"aeon\",kind=~\"escalated|held\"}[$__rate_interval]))",
-          "legendFormat": "{{kind}} {{fayth}}",
+          "expr": "sum by (kind, rune) (increase(spira_component_events{component=\"dwarf\",kind=~\"escalated|held\"}[$__rate_interval]))",
+          "legendFormat": "{{kind}} {{rune}}",
           "refId": "A"
         }
       ]

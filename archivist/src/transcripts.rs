@@ -3,7 +3,7 @@
 //!
 //!   too old     nothing here matters once nobody is still in the conversation; a
 //!               transcript untouched for longer than the idle window is history.
-//!   the harness's own   an aeon's unfinished business is its BEAD, not a transcript —
+//!   the harness's own   a dwarf's unfinished business is its BEAD, not a transcript —
 //!               archiving one files a second, worse copy of work the graph already
 //!               tracks. The archivist's own session (it runs with its cwd inside
 //!               `$SPIRA_RUN` for exactly this reason) is excluded the same way.

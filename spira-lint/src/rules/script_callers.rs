@@ -74,7 +74,7 @@ fn bare_token_re() -> &'static Regex {
 /// `sp-yv4b3`'s shape (`unwrap_or_else(|| PathBuf::from("forge.sh"))`) and the production
 /// fleet-control defect this rule's own run turned up (`Command::new("slay.sh")`) are both
 /// this shape; a log message naming the old script for an operator's benefit
-/// (`"escape.sh {fayth}: …"`) and a `queue.sh …` usage string are not, and a literal-text
+/// (`"escape.sh {rune}: …"`) and a `queue.sh …` usage string are not, and a literal-text
 /// scan with no such anchor flagged both — over a thousand hits, nearly all of them this.
 fn literal_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -504,11 +504,11 @@ mod tests {
     #[test]
     fn a_suite_that_writes_the_script_itself_is_exempt() {
         // test-world-drain-deadline.sh's real shape: SH repointed at a sandbox, the suite
-        // prints the fake aeon.sh into it itself, then runs it.
+        // prints the fake dwarf.sh into it itself, then runs it.
         let t = TempDir::new("sc-creates");
         t.write(
             "spira/test-sandboxed.sh",
-            "#!/usr/bin/env bash\nSH=\"$TMP/spira\"\nprintf '#!/bin/sh\\nsleep 1\\n' > \"$SH/aeon.sh\"\nbash \"$SH/aeon.sh\" &\n",
+            "#!/usr/bin/env bash\nSH=\"$TMP/spira\"\nprintf '#!/bin/sh\\nsleep 1\\n' > \"$SH/dwarf.sh\"\nbash \"$SH/dwarf.sh\" &\n",
         );
         assert!(run(&t, &["spira/test-sandboxed.sh"]).unwrap().is_empty());
     }
@@ -596,10 +596,10 @@ mod tests {
         // naming the script's pre-rewrite name for an operator's benefit, not a path.
         let t = TempDir::new("sc-rust-log");
         t.write(
-            "aeon/src/escape.rs",
-            "fn f(fayth: &str) -> String { format!(\"escape.sh {fayth}: nothing ready\") }\nconst USAGE: &str = \"usage: queue.sh submit\";\n",
+            "dwarf/src/escape.rs",
+            "fn f(rune: &str) -> String { format!(\"escape.sh {rune}: nothing ready\") }\nconst USAGE: &str = \"usage: queue.sh submit\";\n",
         );
-        assert!(run(&t, &["aeon/src/escape.rs"]).unwrap().is_empty());
+        assert!(run(&t, &["dwarf/src/escape.rs"]).unwrap().is_empty());
     }
 
     #[test]

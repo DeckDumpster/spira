@@ -8,7 +8,7 @@
 # come out the other way, judged by `spira-claim decide` — the function CHECK 4 itself calls.
 #
 # tier: T2
-# covers: spira-claim/* spira-lc/* lifecycle/* UC-aeon-execution-21
+# covers: spira-claim/* spira-lc/* lifecycle/* UC-dwarf-execution-21
 # timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -108,7 +108,7 @@ testdb_reset
 testdb_seed <<JSONL
 {"id":"pz1","title":"poisoned by three failed claims","status":"open","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-01T00:00:00Z"}
 {"id":"pz2","title":"control: label-only clear","status":"open","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-01T00:00:00Z"}
-{"id":"pz3","title":"held by a live aeon","status":"in_progress","assignee":"aeon-test","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-01T00:00:00Z"}
+{"id":"pz3","title":"held by a live dwarf","status":"in_progress","assignee":"dwarf-test","issue_type":"task","labels":["spira","plan","spira-poison"],"updated_at":"2026-09-01T00:00:00Z"}
 {"id":"pz4","title":"healthy","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-01T00:00:00Z"}
 {"id":"pzask","title":"Spira bead pz1 — 3 in_progress transition(s) without landing (3 attempts) — change the approach or drop it?","status":"open","issue_type":"decision","labels":["$SPIRA_ASK_LABEL","overseer"],"updated_at":"2026-09-01T00:00:00Z"}
 JSONL
@@ -117,7 +117,7 @@ for id in pz1 pz2 pz3; do
 done
 lc_seed_working_poisoned pz1
 # pz3 is held: the claim is the row's WORKING holder, never bd's in_progress (sp-mve9i).
-lc_seed_working_poisoned pz3 aeon-test
+lc_seed_working_poisoned pz3 dwarf-test
 
 echo
 echo "CONTROL — removing only the label leaves CHECK 4 about to re-poison:"
@@ -147,8 +147,8 @@ echo
 echo "refusals:"
 out="$("$UNPOISON" unpoison --bead pz1 2>&1)"; is "no --cause is a usage error" "1" "$?"
 out="$("$UNPOISON" unpoison --bead pz3 --cause x 2>&1)"; rc=$?
-is   "a bead a live aeon holds is refused" "3" "$rc"
-want "and says who holds it" "held by aeon-test" "$out"
+is   "a bead a live dwarf holds is refused" "3" "$rc"
+want "and says who holds it" "held by dwarf-test" "$out"
 want "and leaves its poison" "spira-poison" "$(labels_of pz3)"
 want "and leaves its lifecycle poison hold too, against a real spira-lc" "poison" "$(spira-lc holds pz3)"
 out="$("$UNPOISON" unpoison --bead pz4 --cause x 2>&1)"; rc=$?

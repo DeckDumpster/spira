@@ -15,7 +15,7 @@ use std::process::{Command, Stdio};
 use serde_json::Value;
 
 /// Every subprocess here runs under `timeout` (call-deadline). A close or reap cut short is
-/// the same miss as one that failed: CHECK 5 and the Sending's sweep stay the backstops.
+/// the same miss as one that failed: CHECK 5 and the Hel's sweep stay the backstops.
 const CALL_SECS: &str = "5";
 
 /// The bd content close-on-land reads: the labels naming the bead's repo and branch.
@@ -82,7 +82,7 @@ fn branch_exists(root: &str, branch: &str) -> bool {
 
 fn reap(id: &str, branch: &str, root: &str, why: &str) -> Result<(), String> {
     let mut c = Command::new("timeout");
-    c.args([CALL_SECS, "sending", "reap-landed-branch"]);
+    c.args([CALL_SECS, "hel", "reap-landed-branch"]);
     if let Ok(f) = std::env::var("SPIRA_STATUS_FILE") {
         c.arg("--status-from").arg(f);
     }
@@ -144,7 +144,7 @@ pub fn run(args: &[String], state: &mut dyn FnMut(&str) -> Option<String>, recor
     }
     match reap(id, branch, &root, &format!("landed at {shown}")) {
         Ok(()) => println!("land-close {id}: reaped branch {branch}"),
-        Err(e) => println!("land-close {id}: branch {branch} not reaped: {e} — left for the Sending"),
+        Err(e) => println!("land-close {id}: branch {branch} not reaped: {e} — left for the Hel"),
     }
     0
 }

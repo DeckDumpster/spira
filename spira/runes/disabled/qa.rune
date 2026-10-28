@@ -1,0 +1,77 @@
+# qa.rune — the QA persona: sweeps the scar record, proposes test beads for unguarded
+# defects, and records what it looked at whether or not it finds anything.
+#
+# A rune is a persona DEFINITION; a dwarf is one called instance of it. Four things:
+# a predicate carving its partition out of the graph, the memories it must read, the tools
+# it may use, and what wakes it.
+
+RUNE_NAME=qa
+RUNE_DESC="QA — sweeps the scar record and proposes test beads for unguarded defects"
+
+# The fence. The fence check in dwarf.sh requires RUNE_LABELS to contain SPIRA_SCOPE_LABEL
+# (when non-empty) before both sweep and claim modes; it runs before the sweep branch and
+# cannot be skipped. QA runs in beadless sweep mode (dwarf.sh --sweep) on every timer tick —
+# it does not claim qa-sweep beads. The 'qa-sweep' suffix is kept so that a manually-filed
+# sweep bead is still claimable if one is ever created by hand.
+RUNE_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}qa-sweep"
+RUNE_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"
+
+# Statutes only. QA is recognition and enumeration: it proposes, it does not build, and a
+# shelf of runbooks for production incidents would push the statutes it actually needs off
+# the context budget.
+RUNE_MEMORY_PREFIXES="law-"
+
+# NO RUNE_REPO. The repository comes from the BEAD — a `repo:<name>` label resolved
+# through repo-map. The sweep bead carries no repo: label, so dwarf.sh falls back to
+# spira_home_repo(), which is the harness's own home checkout.
+
+# HAIKU. QA is recognition and enumeration rather than construction — it reads a small,
+# well-defined scar record, classifies each entry, and proposes a bead. This is exactly the
+# shape the small model handles well: pattern-matching over a structured set, not creative
+# synthesis. It is also the persona that runs most often after Ops, so its model is the
+# throughput dial the operator turns when the five-hour window fills with confirmations
+# rather than findings.
+#
+# VERIFIED, NOT ASSUMED. `claude --model claude-haiku-4-5-20251001 -p ...` answers on this
+# box. The dated id is the one that answers — the catalog at CLI 2.1.263 rejects
+# claude-haiku-5 and claude-haiku-4-6 outright. An id the CLI rejects does not fail loudly:
+# every call dies and the role looks merely quiet, which is the shape of outage this
+# harness is worst at noticing. Probe a candidate id before writing it here.
+RUNE_MODEL=claude-haiku-4-5-20251001
+RUNE_MAX_CONCURRENT=1
+
+# THE QA LANE — QA must never compete with builders for the dwarf pool. A sweep that is
+# waiting on a pool slot already occupied by builders misses exactly the defects that
+# escaped during a busy sprint. RUNE_LANE=qa places it in a named partition whose capacity
+# is its own RUNE_MAX_CONCURRENT, never drawn from SPIRA_MAX_DWARVES.
+#
+# The qa lane is declared in SPIRA_LANES (default: "ops qa"), and a user who wants
+# QA-level scheduling for their own persona names their lane there and sets RUNE_LANE=qa
+# in their rune file — without editing this one.
+RUNE_LANE=qa
+
+# BOUNDED BY THE SWEEP INTERVAL. The timer (spira-qa.timer) fires every six hours. A QA
+# session that outlives its cadence accumulates a backlog of unread snapshots, and since
+# QA is recognition over a small set — not a long build — eight minutes of reading is
+# already a generous budget. The wall enforces the exit before the next sweep arrives.
+#
+# RUNE_TIMEOUT_SECONDS is the hard wall: systemd kills the unit at this number. The lease
+# and heartbeat are set to survive one heartbeat gap plus the claim; a session killed at the
+# wall must expire its lease promptly so the next sweep can start clean.
+#
+# ONE HOUR, HARD. The scar record for `scars` depth is small (closed bug beads + incidents);
+# `modules` adds a ranking query; `wide` adds a structural pass. One hour is the ceiling
+# that keeps six-hour sweeps from overlapping. The lease matches so a killed session's bead
+# is reclaimable before the next sweep fires.
+RUNE_TIMEOUT_SECONDS=3600
+RUNE_LEASE_MINUTES=70
+RUNE_HEARTBEAT_SECONDS=120
+
+# READ-ONLY TOOLSET. QA reads the scar record, queries the database, and files beads. It
+# does not write code; it does not edit tests. Those are builder tasks the bead it files
+# will carry. Withholding Edit and Write is the mechanism that enforces "QA proposes; it
+# does not land tests itself" — the judgement that produced the 17-minute gate.
+RUNE_TOOLS="Bash,Read,Glob,Grep,TodoWrite"
+
+# The states a bead claimed by this rune may leave WORKING for; spira-lc refuses any other.
+RUNE_WORKING_EXITS="SUBMITTED ask park hold"

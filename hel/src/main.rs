@@ -1,0 +1,401 @@
+//! hel — the Hel (DESIGN.md). Delete the branch and the worktree of every bead whose
+//! work has landed, and nothing else.
+//!
+//!   hel --all               one pass over every repository (no arguments: usage, exit 2)
+//!   hel --dry-run           print each branch's disposition, change nothing
+//!   hel <bead-id|branch>    send exactly one bead's branch and worktree
+//!   hel --status-from <f>   read `id<TAB>status` from a file instead of bd (tests)
+//!   hel --skip-queue        every repository EXCEPT queue/queue.local ones (the sentinel)
+//!   hel --queue-only        ONLY queue/queue.local repositories (the straggler sweep)
+//!   hel --budget-secs <n>   stop after n seconds, exit 0, leave the rest for the next pass
+//!   hel --no-fetch          judge against the base refs as they stand
+//!
+//! Exit 0 when nothing failed, 1 when a deletion failed, 2 on a usage or context error.
+//!
+//! The destruction chokepoint itself (sp-9envm) is also reachable directly — the verbs
+//! lib.sh's now-shimmed functions call, and the ones other bash callers (`held.sh`) use by
+//! bare name instead of bypassing the chokepoint:
+//!
+//!   hel reap-terminal [--dry-run]   remove terminal beads' worktrees and aged scratch
+//!   hel destroy-worktree    [--status-from <f>] <id> <path> <repo> <why>
+//!   hel destroy-branch      [--status-from <f>] [--base <ref>] <id> <branch> <repo> <why> [<caller>]
+//!   hel reap-landed-branch  [--status-from <f>] <id> <branch> <repo> <why> [<caller>]
+//!   hel prune               <repo>
+//!   hel reap-stale          [--dry-run] [--idle-hours <n>]
+//!   hel salvage             <id> <worktree-path>
+//!   hel witness             [--status-from <f>] <id>
+//!
+//! and the smaller plumbing the shims need. None of these touch bd, so none of them need
+//! lib.sh's context at all — they read `$SPIRA_RUN`/`$SPIRA_REAPLOG` straight from the
+//! environment, exactly as the bash functions they replace did:
+//!
+//!   hel hold-alive <pidfile>          hel holder-alive <id>
+//!   hel stop-holder <id>
+//!   hel worktree-of <branch> [<repo>] hel caller
+//!   hel reaplog <verb> <id> [<detail>]
+//!
+//! Every subcommand above exits 0 on success, 1 on refusal/failure, 2 on a usage error —
+//! except `reap-landed-branch`, which uses 2 for "certified-queued" (the one 3-way split
+//! its own bash original made), printing the answer text `spira_destroy_branch`'s and
+//! `spira_reap_landed_branch`'s shims capture into `$SPIRA_DESTROY_ERR`/`$SPIRA_REAP_ERR`.
+
+use std::path::{Path, PathBuf};
+
+use hel::ports::World;
+use hel::real::{self, Real};
+use hel::sweep::Sweep;
+use hel::{locate_home, parse, reap, terminal};
+
+/// Pulls a leading `--status-from <f>` / `--base <r>` pair out of `args`, wherever it
+/// appears, leaving the rest in order — the chokepoint subcommands accept these mixed in
+/// with their positionals so a shim can build its argv with `${X:+--flag "$X"}`.
+fn take_flag(args: &mut Vec<String>, flag: &str) -> Option<String> {
+    let i = args.iter().position(|a| a == flag)?;
+    if i + 1 >= args.len() {
+        return None;
+    }
+    args.remove(i);
+    Some(args.remove(i))
+}
+
+fn die(msg: &str) -> ExitCodeLike {
+    eprintln!("hel: {msg}");
+    2
+}
+
+fn fail(msg: &str) -> ExitCodeLike {
+    eprintln!("hel: {msg}");
+    1
+}
+
+type ExitCodeLike = i32;
+
+/// Builds the `Real` world the chokepoint subcommands that touch bd need (destroy-worktree,
+/// destroy-branch, witness): the same lib.sh-locating, context-reading path the sweep uses.
+/// `Real::minimal` — no context seam call, so a chokepoint subcommand given a repo PATH
+/// directly never depends on the repo-NAME registry resolving (the full sweep's own
+/// `Real::new` is a different, stricter, path — see its own doc comment).
+fn real_world(status: Option<String>) -> Result<Real, String> {
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(spira_config::release_env::tool("hel")));
+    let home = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe).ok_or("cannot find lib.sh (set SPIRA_HOME)")?;
+    Ok(Real::minimal(home, real::run_dir()?, status))
+}
+
+fn cmd_destroy_worktree(mut args: Vec<String>) -> ExitCodeLike {
+    let status = take_flag(&mut args, "--status-from");
+    if args.len() != 4 {
+        return die("destroy-worktree [--status-from <f>] <id> <path> <repo> <why>");
+    }
+    let w = match real_world(status) {
+        Ok(w) => w,
+        Err(e) => return die(&e),
+    };
+    let ok = w.destroy_worktree(&args[0], Path::new(&args[1]), Path::new(&args[2]), &args[3]);
+    i32::from(!ok)
+}
+
+fn cmd_destroy_branch(mut args: Vec<String>) -> ExitCodeLike {
+    let status = take_flag(&mut args, "--status-from");
+    let explicit_base = take_flag(&mut args, "--base");
+    if args.len() != 4 && args.len() != 5 {
+        return die("destroy-branch [--status-from <f>] [--base <ref>] <id> <branch> <repo> <why> [<caller>]");
+    }
+    let w = match real_world(status) {
+        Ok(w) => w,
+        Err(e) => return die(&e),
+    };
+    let caller = args.get(4).map(String::as_str).unwrap_or("");
+    let repo = Path::new(&args[2]);
+    // `--base` overrides for a caller that already resolved it; otherwise resolve it the
+    // same way the retired bash body did (`spira_landref "$repo"`, through the unchanged
+    // family-W seam) — an unresolvable base is not an error here, it is the same "skip the
+    // fence rather than refuse" the bash `&&` chain fell through to.
+    let resolved = explicit_base.or_else(|| w.base(repo).map(|b| b.landref));
+    match w.destroy_branch(&args[0], &args[1], repo, &args[3], caller, resolved.as_deref()) {
+        Ok(()) => 0,
+        // The message goes to stdout, unadorned, for `spira_destroy_branch`'s shim to
+        // capture into `$SPIRA_DESTROY_ERR` exactly as the retired bash set that variable —
+        // `"certified-queued"` included, since that exact string is the signal
+        // `spira_reap_landed_branch`'s own (now also shimmed) caller branches on.
+        Err(e) => {
+            let msg = match e {
+                reap::DestroyBranchErr::CertifiedQueued => "certified-queued".to_string(),
+                reap::DestroyBranchErr::Refused(m) | reap::DestroyBranchErr::Failed(m) => m,
+            };
+            print!("{msg}");
+            1
+        }
+    }
+}
+
+/// `reap-terminal [--dry-run]`: the worktree directory's reaper (terminal.rs). It refuses,
+/// deleting nothing, when the lifecycle machine does not answer with at least one row.
+fn cmd_reap_terminal(mut args: Vec<String>) -> ExitCodeLike {
+    let dry = match args.as_slice() {
+        [] => false,
+        [f] if f == "--dry-run" => true,
+        _ => return die("reap-terminal [--dry-run]"),
+    };
+    args.clear();
+    let max_age_hours = match spira_config::process::cfg_parse::<u64>("SPIRA_SCRATCH_MAX_AGE_HOURS") {
+        Ok(h) => h,
+        Err(e) => return die(&e),
+    };
+    // batch-job: a unit with TimeoutStartSec=900 may outwait a loaded store; 5 s failed it intermittently.
+    let rows = match spira_config::lc_state::list_within(&spira_config::lifecycle_row::lc_bin(), 120) {
+        Ok(r) if !r.is_empty() => r,
+        Ok(_) => return die("reap-terminal: the lifecycle machine listed no beads — refusing to judge against nothing"),
+        Err(e) => return die(&format!("reap-terminal: cannot read the lifecycle machine: {e}")),
+    };
+    let states = rows.into_iter().map(|r| (r.bead_id, r.state)).collect();
+    let w = match real_world(None) {
+        Ok(w) => w,
+        Err(e) => return die(&e),
+    };
+    terminal::run(&w, &states, std::time::Duration::from_secs(max_age_hours * 3600), dry)
+}
+
+fn cmd_prune(args: Vec<String>) -> ExitCodeLike {
+    if args.len() != 1 {
+        return die("prune <repo>");
+    }
+    let run = match real::run_dir() {
+        Ok(r) => r,
+        Err(e) => return fail(&e),
+    };
+    let reaplog_path = real::reaplog_path_in(&run);
+    i32::from(!reap::prune_worktrees(&reaplog_path, Path::new(&args[0])))
+}
+
+fn cmd_reap_stale(mut args: Vec<String>) -> ExitCodeLike {
+    let dry = match args.iter().position(|a| a == "--dry-run") {
+        Some(i) => {
+            args.remove(i);
+            true
+        }
+        None => false,
+    };
+    let idle_secs = match take_flag(&mut args, "--idle-hours") {
+        None => hel::stale::DEFAULT_IDLE_SECS,
+        Some(h) => match h.parse::<u64>() {
+            Ok(h) => h * 3600,
+            Err(_) => return die("reap-stale [--dry-run] [--idle-hours <n>]"),
+        },
+    };
+    if !args.is_empty() {
+        return die("reap-stale [--dry-run] [--idle-hours <n>]");
+    }
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(spira_config::release_env::tool("hel")));
+    let Some(home) = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe) else {
+        return die("cannot find lib.sh (set SPIRA_HOME)");
+    };
+    let (w, repos) = match Real::new(home, None) {
+        Ok(x) => x,
+        Err(e) => return die(&format!("cannot read the harness context: {e}")),
+    };
+    let t = hel::stale::run(&w, &repos, hel::stale::Opts { dry, idle_secs });
+    println!("reap-stale: {} {}, {} kept, {} failed", t.removed, if dry { "would be removed" } else { "removed" }, t.kept, t.failed);
+    i32::from(t.failed > 0)
+}
+
+fn cmd_salvage(args: Vec<String>) -> ExitCodeLike {
+    if args.len() != 2 {
+        return die("salvage <id> <worktree-path>");
+    }
+    let run = match real::run_dir() {
+        Ok(r) => r,
+        Err(e) => return fail(&e),
+    };
+    let reaplog_path = real::reaplog_path_in(&run);
+    i32::from(reap::salvage(&run, &reaplog_path, &args[0], Path::new(&args[1])).is_err())
+}
+
+fn cmd_hold_alive(args: Vec<String>) -> ExitCodeLike {
+    if args.len() != 1 {
+        return die("hold-alive <pidfile>");
+    }
+    i32::from(!reap::hold_alive(Path::new(&args[0])))
+}
+
+fn cmd_holder_alive(args: Vec<String>) -> ExitCodeLike {
+    if args.len() != 1 {
+        return die("holder-alive <id>");
+    }
+    let run = match real::run_dir() {
+        Ok(r) => r,
+        Err(e) => return fail(&e),
+    };
+    i32::from(!reap::holder_alive(&run, &args[0]))
+}
+
+fn cmd_stop_holder(args: Vec<String>) -> ExitCodeLike {
+    if args.len() != 1 {
+        return die("stop-holder <id>");
+    }
+    let run = match real::run_dir() {
+        Ok(r) => r,
+        Err(e) => return fail(&e),
+    };
+    let systemctl = std::env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemctl".into());
+    let work = run.join("worktree").join(&args[0]);
+    let mut stop = |unit: &str| {
+        // batch-job: a unit stop lasts as long as the dwarf takes to exit
+        let _ = std::process::Command::new(&systemctl).args(["--user", "stop", unit]).status();
+    };
+    match reap::stop_occupants(Path::new("/proc"), &work, &mut stop, 20, &|| std::thread::sleep(std::time::Duration::from_millis(500)) /* waits-on: worktree occupants exiting; cap 20 polls */) {
+        Ok(()) => 0,
+        Err(pids) => fail(&format!("{} still has live process(es) {pids:?} in its worktree after the unit stop", args[0])),
+    }
+}
+
+fn cmd_worktree_of(args: Vec<String>) -> ExitCodeLike {
+    if args.is_empty() || args.len() > 2 {
+        return die("worktree-of <branch> [<repo>]");
+    }
+    let repo = args.get(1).cloned().unwrap_or_else(|| ".".to_string());
+    if let Some(p) = reap::worktree_of(Path::new(&repo), &args[0]) {
+        println!("{}", p.display());
+    }
+    0
+}
+
+fn cmd_caller(args: Vec<String>) -> ExitCodeLike {
+    if !args.is_empty() {
+        return die("caller");
+    }
+    println!("{}", reap::spira_caller());
+    0
+}
+
+fn cmd_reaplog(args: Vec<String>) -> ExitCodeLike {
+    if args.len() != 2 && args.len() != 3 {
+        return die("reaplog <verb> <id> [<detail>]");
+    }
+    let run = match real::run_dir() {
+        Ok(r) => r,
+        Err(e) => return fail(&e),
+    };
+    let reaplog_path = real::reaplog_path_in(&run);
+    reap::reaplog(&reaplog_path, &args[0], &args[1], args.get(2).map(String::as_str).unwrap_or(""));
+    0
+}
+
+/// `spira_holder_witnesses`'s own shim target: prints the reason on exit 0 (somebody may be
+/// home), prints nothing on exit 1 (nobody is).
+fn cmd_witness(mut args: Vec<String>) -> ExitCodeLike {
+    let status = take_flag(&mut args, "--status-from");
+    if args.len() != 1 {
+        return die("witness [--status-from <f>] <id>");
+    }
+    let w = match real_world(status) {
+        Ok(w) => w,
+        Err(e) => return die(&e),
+    };
+    match reap::holder_witnesses(&w.run(), &args[0], &w) {
+        Some(why) => {
+            print!("{why}");
+            0
+        }
+        None => 1,
+    }
+}
+
+/// `spira_reap_landed_branch`'s own shim target. Resolves base/remote itself (through
+/// `World::base`, in-process via `spira_config::repos` since sp-o88bx, "wave 4.12")
+/// exactly as the bash original re-derived them, so `spira-lc close-on-land`, the
+/// production hot path for every landing, keeps working unchanged. The
+/// push-delete's own diagnostic line goes to STDERR, not
+/// stdout: stdout here is the shim's captured answer (`$SPIRA_REAP_ERR`), and mixing a log
+/// line into it would both corrupt that answer and swallow the line (never printed at all).
+fn cmd_reap_landed_branch(mut args: Vec<String>) -> ExitCodeLike {
+    let status = take_flag(&mut args, "--status-from");
+    if args.len() != 4 && args.len() != 5 {
+        return die("reap-landed-branch [--status-from <f>] <id> <branch> <repo> <why> [<caller>]");
+    }
+    let w = match real_world(status) {
+        Ok(w) => w,
+        Err(e) => return die(&e),
+    };
+    let repo = Path::new(&args[2]);
+    let caller = args.get(4).map(String::as_str).unwrap_or("");
+    let base_info = w.base(repo);
+    let base_ref = base_info.as_ref().map(|b| b.landref.as_str());
+    let remote = base_info.as_ref().and_then(|b| b.remote.as_deref());
+    let (run, reaplog_path) = (w.run(), w.reaplog_path());
+    let log = |m: &str| eprintln!("{} spira: {m}", reap::utc_now());
+    let label_remove = |id: &str, label: &str| w.label_remove(id, label);
+    match reap::reap_landed_branch(&run, &reaplog_path, &args[0], &args[1], repo, &args[3], caller, base_ref, remote, &w, &log, &label_remove) {
+        reap::ReapOutcome::Done => 0,
+        reap::ReapOutcome::Queued => {
+            print!("certified-queued");
+            2
+        }
+        reap::ReapOutcome::Failed(m) => {
+            print!("{m}");
+            1
+        }
+    }
+}
+
+fn dispatch() -> i32 {
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(verb) = args.first().cloned() {
+        let mut rest = || args.split_off(1);
+        let rc = match verb.as_str() {
+            "destroy-worktree" => Some(cmd_destroy_worktree(rest())),
+            "destroy-branch" => Some(cmd_destroy_branch(rest())),
+            "reap-landed-branch" => Some(cmd_reap_landed_branch(rest())),
+            "reap-terminal" => Some(cmd_reap_terminal(rest())),
+            "prune" => Some(cmd_prune(rest())),
+            "reap-stale" => Some(cmd_reap_stale(rest())),
+            "salvage" => Some(cmd_salvage(rest())),
+            "witness" => Some(cmd_witness(rest())),
+            "hold-alive" => Some(cmd_hold_alive(rest())),
+            "holder-alive" => Some(cmd_holder_alive(rest())),
+            "stop-holder" => Some(cmd_stop_holder(rest())),
+            "worktree-of" => Some(cmd_worktree_of(rest())),
+            "caller" => Some(cmd_caller(rest())),
+            "reaplog" => Some(cmd_reaplog(rest())),
+            _ => None,
+        };
+        if let Some(rc) = rc {
+            return rc;
+        }
+    }
+
+    if args.is_empty() {
+        eprintln!("usage: hel <verb> | hel [--dry-run] [--no-fetch] [--skip-queue|--queue-only] [--budget-secs <n>] [<bead-id|branch>]");
+        eprintln!("       verbs: reap-terminal destroy-worktree destroy-branch reap-landed-branch prune salvage witness");
+        return 2;
+    }
+    let (opts, status) = match parse(&args) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("hel: {e}");
+            return 2;
+        }
+    };
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from(spira_config::release_env::tool("hel")));
+    let Some(home) = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe) else {
+        eprintln!("hel: cannot find lib.sh (set SPIRA_HOME)");
+        return 2;
+    };
+    let (w, repos) = match Real::new(home, status) {
+        Ok(x) => x,
+        Err(e) => {
+            // FAIL CLOSED: a sweep that cannot read which repositories exist deletes nothing
+            // and says so, rather than reporting a clean pass over none of them.
+            eprintln!("hel: cannot read the harness context: {e}");
+            return 2;
+        }
+    };
+    let label = w.submitted_label.clone();
+    let mut s = Sweep { w: &w, opts, submitted_label: label, tally: Default::default(), deadline: None, truncated: false };
+    s.run(&repos)
+}
+
+fn main() {
+    let first = std::env::args().nth(1);
+    let code = hel::telemetry::run(&hel::telemetry::sink(), first.as_deref(), dispatch);
+    std::process::exit(code);
+}

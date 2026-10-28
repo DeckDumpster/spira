@@ -232,7 +232,7 @@ pub fn check_destructive(args: &[String], ask_label: &str) -> Option<String> {
 /// A bead's state is its lifecycle row's (sp-6oimlm): bdq refuses every verb that writes bd's
 /// status — `close`, `reopen`, `defer`, `undefer`, and `update` with `--status`/`-s`/`--defer` —
 /// so the store can never move on its own and drift from the row. On 2026-10-07 33 beads sat
-/// deferred in bd while their rows read READY, and every aeon summoned onto one exited in seconds.
+/// deferred in bd while their rows read READY, and every dwarf called onto one exited in seconds.
 /// The exit is the machine's own door; `SPIRA_BDQ_STATE_WRITE=<reason>` overrides, and the
 /// caller logs it.
 pub fn check_state_verb(args: &[String]) -> Option<&'static str> {
@@ -373,6 +373,17 @@ pub fn creates_closed(args: &[String]) -> bool {
     value.is_some_and(|v| is_closed(Kind::Insight, v))
 }
 
+/// A bead created with a `--type` that never carries a lifecycle row (`nonwork::NO_ROW_TYPES`):
+/// an alert or write probe is an `event`, and a row would make it claimable and strand-visible.
+pub fn creates_rowless_type(args: &[String]) -> bool {
+    let ty = args
+        .windows(2)
+        .find(|w| w[0] == "--type" || w[0] == "-t")
+        .map(|w| w[1].as_str())
+        .or_else(|| args.iter().find_map(|a| a.strip_prefix("--type=")));
+    !spira_config::nonwork::is_work_type(ty)
+}
+
 // =========================================================================================
 // The czar fence's dispatch decision (the fence itself is `czar-fence.sh`, a subprocess —
 // see `src/bin/bdq.rs`). Pure: "should the caller shell out to czar-fence.sh at all, and
@@ -381,14 +392,14 @@ pub fn creates_closed(args: &[String]) -> bool {
 
 /// Whether `bdq`'s czar-fence dispatch applies to this call, and the class to pass
 /// `czar-fence.sh` if so. Mirrors the bash's `case "${1:-}" in reopen) ...; update|close)
-/// ...; esac`, gated on `fayth == "czar"` and a non-empty class.
+/// ...; esac`, gated on `rune == "czar"` and a non-empty class.
 pub fn czar_fence_class<'a>(
-    fayth: &str,
+    rune: &str,
     czar_class: &'a str,
     czar_trigger_bead: &str,
     args: &[String],
 ) -> Option<&'a str> {
-    if fayth != "czar" || czar_class.is_empty() {
+    if rune != "czar" || czar_class.is_empty() {
         return None;
     }
     match args.first().map(String::as_str) {
@@ -648,6 +659,17 @@ mod tests {
     }
 
     // -- is_create ----------------------------------------------------------------------------
+
+    #[test]
+    fn a_no_row_type_create_leaves_no_lifecycle_row() {
+        for ty in ["event", "epic", "decision", "gate"] {
+            assert!(creates_rowless_type(&s(&["create", "t", "--type", ty])), "{ty}");
+        }
+        assert!(creates_rowless_type(&s(&["create", "t", "--type=event"])));
+        assert!(creates_rowless_type(&s(&["create", "t", "-t", "event"])));
+        assert!(!creates_rowless_type(&s(&["create", "t", "--type", "task"])));
+        assert!(!creates_rowless_type(&s(&["create", "event"])));
+    }
 
     #[test]
     fn creates_closed_reads_the_status_flag() {

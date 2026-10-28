@@ -17,7 +17,7 @@
 #     lifecycle path under STAGE_ROOT, so no lifecycle call leaves the stage
 #   - release canary-worker claims through that machine and submits (READY -> SUBMITTED)
 #   - release canary runs end-to-end on a stage: bead filed → sentinel pass (with
-#     fake-summon.sh / release canary-worker) → landing pass → commit on origin/main
+#     fake-call.sh / release canary-worker) → landing pass → commit on origin/main
 #
 # POSITIVE CONTROLS:
 #   - Bead-visible-in-stage-db proves the DB check is asking the right store
@@ -35,7 +35,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 tl_subshell_safe
 
-# The stage finds every compiled binary (sentinel, strand, aeon, landing-pass, spira-config)
+# The stage finds every compiled binary (sentinel, strand, dwarf, landing-pass, spira-config)
 # by bare name on the PATH testlib.sh set for this suite (sp-gypjk) — nothing to pin.
 
 # `release`'s own Config::from_env resolves SPIRA_LC_PASSWORD_FILE via cfg() ambiently —
@@ -44,12 +44,12 @@ tl_subshell_safe
 # root schema-apply step then tries to read and fails. This suite never declared its own
 # (sfail round 3, pattern 7); stage's throwaway dolt server takes no password, so empty.
 tl_config SPIRA_LC_PASSWORD_FILE=""
-# SPIRA_CHAMBER is registered too: chamber_dir_with() prefers a non-empty resolved config
-# value over deriving <home>/chamber, and the complete fixture declares one
-# (.../spira-releases/current/spira/chamber) that `release stage up`'s own eval never
-# overrides for its dynamic STAGE_ROOT. Cleared so chamber resolution falls through to
+# SPIRA_RUNES_DIR is registered too: runes_dir_with() prefers a non-empty resolved config
+# value over deriving <home>/runes, and the complete fixture declares one
+# (.../spira-releases/current/spira/runes) that `release stage up`'s own eval never
+# overrides for its dynamic STAGE_ROOT. Cleared so runes resolution falls through to
 # whatever SPIRA_HOME the stage sets (sfail round 4, same shape as pattern 6/7).
-tl_config SPIRA_CHAMBER=""
+tl_config SPIRA_RUNES_DIR=""
 
 isnt()   { [ "$2" != "$3" ] && ok "$1" || bad "$1" "did not want [$2] got [$3]"; }
 exists() { [ -e "$2" ] && ok "$1" || bad "$1" "expected file/dir: $2"; }
@@ -85,20 +85,20 @@ printf '\nT1: stage up creates expected structure\n'
     # SPIRA_BD is registered too (spira-claim resolves it via cfg(), round 6): `release
     # canary-worker`/`release canary` spawn spira-claim as a child that inherits the
     # process's own SPIRA_TOML, not the eval'd plain SPIRA_BD above — sync it the same way.
-    # SPIRA_DB too (round 6): spira-claim's own fayth_ready resolves it via cfg(), same gap.
+    # SPIRA_DB too (round 6): spira-claim's own rune_ready resolves it via cfg(), same gap.
     tl_config SPIRA_LC_PASSWORD_FILE="${SPIRA_LC_PASSWORD_FILE:-}" SPIRA_BD="${SPIRA_BD:-}" \
         SPIRA_DB="${SPIRA_DB:-}"
 
     [ -n "${STAGE_ROOT:-}" ] && ok "STAGE_ROOT is set" || bad "STAGE_ROOT is set" "empty"
     [ -d "${STAGE_ROOT:-/nonexistent}" ] && ok "STAGE_ROOT is a directory" || bad "STAGE_ROOT is a directory" "$STAGE_ROOT"
 
-    exists "canary.fayth"         "$SPIRA_HOME/chamber/canary.fayth"
+    exists "canary.rune"         "$SPIRA_HOME/runes/canary.rune"
     exists "repo map"               "$SPIRA_REPO_MAP"
-    isexec "fake-summon.sh"        "$SPIRA_HOME/fake-summon.sh"
+    isexec "fake-call.sh"        "$SPIRA_HOME/fake-call.sh"
     isexec "fake-launch.sh"        "$SPIRA_HOME/fake-launch.sh"
-    # canary-worker.sh is gone: fake-summon.sh execs `release canary-worker` directly —
+    # canary-worker.sh is gone: fake-call.sh execs `release canary-worker` directly —
     # the worker is a subcommand of the same binary, not a per-stage file (sp-jsnbm).
-    want "fake-summon execs release canary-worker" "release canary-worker" "$(cat "$SPIRA_HOME/fake-summon.sh")"
+    want "fake-call execs release canary-worker" "release canary-worker" "$(cat "$SPIRA_HOME/fake-call.sh")"
     exists "lib.sh symlink"        "$SPIRA_HOME/lib.sh"
     # sentinel.sh is gone: the stage runs the sentinel binary (release canary: `sentinel`).
     # landing.sh is gone: release canary runs `landing-pass land` (landing-pass/DESIGN.md §7.2).
@@ -117,8 +117,8 @@ printf '\nT1: stage up creates expected structure\n'
     is "spira-lc list answers from the stage's machine" "0" "$lc_rc"
     is "the stage's machine starts empty" "[]" "$(tr -d '[:space:]' <<< "$lc_list")"
 
-    # SPIRA_FAYTHS must be exactly "canary"
-    is "SPIRA_FAYTHS=canary" "canary" "$SPIRA_FAYTHS"
+    # SPIRA_RUNES must be exactly "canary"
+    is "SPIRA_RUNES=canary" "canary" "$SPIRA_RUNES"
 
     # bd shim must be bd-embedded
     is "SPIRA_BD=bd-embedded" "bd-embedded" "$SPIRA_BD"
@@ -163,11 +163,11 @@ printf '\nT2: stage isolation — all paths under STAGE_ROOT\n'
     # SPIRA_BD is registered too (spira-claim resolves it via cfg(), round 6): `release
     # canary-worker`/`release canary` spawn spira-claim as a child that inherits the
     # process's own SPIRA_TOML, not the eval'd plain SPIRA_BD above — sync it the same way.
-    # SPIRA_DB too (round 6): spira-claim's own fayth_ready resolves it via cfg(), same gap.
+    # SPIRA_DB too (round 6): spira-claim's own rune_ready resolves it via cfg(), same gap.
     tl_config SPIRA_LC_PASSWORD_FILE="${SPIRA_LC_PASSWORD_FILE:-}" SPIRA_BD="${SPIRA_BD:-}" \
         SPIRA_DB="${SPIRA_DB:-}"
 
-    for var in SPIRA_HOME SPIRA_RUN SPIRA_DB SPIRA_REPO SPIRA_SUMMON SPIRA_LAUNCH \
+    for var in SPIRA_HOME SPIRA_RUN SPIRA_DB SPIRA_REPO SPIRA_CALL SPIRA_LAUNCH \
                SPIRA_LC_PASSWORD_FILE SPIRA_LC_DATA_DIR; do
         val="${!var:-}"
         case "$val" in
@@ -207,7 +207,7 @@ printf '\nT3: stage db is usable\n'
     # SPIRA_BD is registered too (spira-claim resolves it via cfg(), round 6): `release
     # canary-worker`/`release canary` spawn spira-claim as a child that inherits the
     # process's own SPIRA_TOML, not the eval'd plain SPIRA_BD above — sync it the same way.
-    # SPIRA_DB too (round 6): spira-claim's own fayth_ready resolves it via cfg(), same gap.
+    # SPIRA_DB too (round 6): spira-claim's own rune_ready resolves it via cfg(), same gap.
     tl_config SPIRA_LC_PASSWORD_FILE="${SPIRA_LC_PASSWORD_FILE:-}" SPIRA_BD="${SPIRA_BD:-}" \
         SPIRA_DB="${SPIRA_DB:-}"
 
@@ -262,7 +262,7 @@ printf '\nT5: stage down refuses a non-stage path\n'
     trap 'rm -rf "$tmp"' EXIT
     err="$(release stage down "$tmp" 2>&1)" && rc=0 || rc=$?
     isnt "down of non-stage exits non-zero" "0" "$rc"
-    want "down of non-stage prints refusal" "canary.fayth" "$err"
+    want "down of non-stage prints refusal" "canary.rune" "$err"
     rm -rf "$tmp"
 )
 
@@ -286,7 +286,7 @@ printf '\nT6: canary-worker claims through the lifecycle machine and submits\n'
     # SPIRA_BD is registered too (spira-claim resolves it via cfg(), round 6): `release
     # canary-worker`/`release canary` spawn spira-claim as a child that inherits the
     # process's own SPIRA_TOML, not the eval'd plain SPIRA_BD above — sync it the same way.
-    # SPIRA_DB too (round 6): spira-claim's own fayth_ready resolves it via cfg(), same gap.
+    # SPIRA_DB too (round 6): spira-claim's own rune_ready resolves it via cfg(), same gap.
     tl_config SPIRA_LC_PASSWORD_FILE="${SPIRA_LC_PASSWORD_FILE:-}" SPIRA_BD="${SPIRA_BD:-}" \
         SPIRA_DB="${SPIRA_DB:-}"
 

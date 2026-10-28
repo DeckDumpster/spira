@@ -13,7 +13,7 @@ AGENT=acceptance-agent.sh   # the SUT, by name on the suite's PATH (sp-gypjk)
 echo "test-acceptance-agent.sh"
 
 echo
-echo "1. acceptance-agent.sh drives the deterministic aeon path"
+echo "1. acceptance-agent.sh drives the deterministic dwarf path"
 # THE STUB MUST COMMIT FOR EVERY BEAD, NOT ONCE PER SCRATCH REPO. It wrote the same empty
 # acceptance-probe.txt every time; phase A committed it to the scratch repo's main, so the
 # phase-D bead (same repo, surviving state) found "nothing to commit", closed with no
@@ -56,7 +56,7 @@ printf '#!/usr/bin/env bash\nexit 3\n' > "$_ag_tmp/model-bin/work"
 git -C "$_ag_tmp/repo" checkout -q -b spira/sp-agt3
 _ag_run sp-agt3; _ag_rc=$?
 is   "a refused work submit fails the session" 1 "$_ag_rc"
-# A SWEEP SESSION HAS NO BEAD. Ops and the other sweep personas summon the agent with no
+# A SWEEP SESSION HAS NO BEAD. Ops and the other sweep personas call the agent with no
 # BEAD_ID; the stub exited 1 ("BEAD_ID not set"), spira-ops was left FAILED, and every later
 # deploy's pre-health check refused on it (local phases B and D, 2026-09-26). A sweep has
 # nothing to commit or close: the stub reports a finished turn and exits 0.

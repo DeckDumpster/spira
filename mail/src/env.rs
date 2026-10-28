@@ -1,7 +1,7 @@
 //! The environment `mail` reads. Every default here matches conf.sh's own `:
 //! "${VAR:=default}"` so a caller that has not sourced conf.sh (a unit test, a suite
 //! fixture) still gets the same behaviour a real install would after conf.sh ran — the
-//! same contract every other crate in this workspace holds with conf.sh (aeon, landing-pass,
+//! same contract every other crate in this workspace holds with conf.sh (dwarf, landing-pass,
 //! queue read `std::env::var` directly; conf.sh has already exported these into the process
 //! tree by the time a bare-named binary runs).
 
@@ -97,7 +97,7 @@ impl Env {
 }
 
 /// `SPIRA_HOME`, else the first directory holding `lib.sh` among the release and cargo
-/// layouts around this executable (same pattern as `sending::locate_home`, `queue`'s
+/// layouts around this executable (same pattern as `hel::locate_home`, `queue`'s
 /// `harness_home` — every crate re-derives this itself; conf.sh deliberately never exports
 /// `SPIRA_HOME` to child processes, "and that is a fence", so a caller that sources conf.sh
 /// without also exporting it — every `env -i` test fixture, and any real caller that never
@@ -105,7 +105,7 @@ impl Env {
 /// itself, which derives `SPIRA_HOME` from *mail.sh's own* `BASH_SOURCE`, not from the
 /// environment. A compiled binary has no `BASH_SOURCE`; deriving from `current_exe()`'s own
 /// location is the equivalent). Sp-ooh1k's own regression: `SPIRA_MAIL_KINDS` (and the
-/// chamber-persona check in `sendmail::reply_mailbox`) silently resolved relative to `.`
+/// runes-persona check in `sendmail::reply_mailbox`) silently resolved relative to `.`
 /// instead, so `--kind question`/`event`/etc. refused as "unknown kind" the moment a caller
 /// did not also happen to export `SPIRA_HOME` — found by `test-pr-notify.sh`'s `env -i`
 /// fixture, the one case that does not.

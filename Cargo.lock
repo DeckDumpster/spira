@@ -3,23 +3,6 @@
 version = 4
 
 [[package]]
-name = "aeon"
-version = "1.0.0"
-dependencies = [
- "bead",
- "libc",
- "regex",
- "serde",
- "serde_json",
- "sha2",
- "signal-hook",
- "spira-config",
- "spira-otel",
- "strand",
- "testkit",
-]
-
-[[package]]
 name = "aho-corasick"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -38,7 +21,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 name = "archivist"
 version = "1.0.0"
 dependencies = [
- "aeon",
+ "dwarf",
  "libc",
  "serde",
  "serde_json",
@@ -63,18 +46,6 @@ name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
-
-[[package]]
-name = "auron"
-version = "1.0.0"
-dependencies = [
- "regex",
- "serde",
- "serde_json",
- "spira-config",
- "spira-otel",
- "testkit",
-]
 
 [[package]]
 name = "autocfg"
@@ -222,7 +193,7 @@ dependencies = [
 name = "census"
 version = "1.0.0"
 dependencies = [
- "aeon",
+ "dwarf",
  "serde_json",
  "spira-config",
  "testkit",
@@ -249,8 +220,8 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 name = "cockpit-collect"
 version = "1.0.0"
 dependencies = [
- "aeon",
  "bead",
+ "dwarf",
  "serde_json",
  "spira-config",
  "spira-otel",
@@ -264,9 +235,9 @@ version = "1.0.0"
 dependencies = [
  "bead",
  "crossterm",
+ "hel",
  "libc",
  "regex",
- "sending",
  "serde",
  "serde_json",
  "spira-config",
@@ -356,6 +327,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "dwarf"
+version = "1.0.0"
+dependencies = [
+ "bead",
+ "libc",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "signal-hook",
+ "spira-config",
+ "spira-otel",
+ "strand",
+ "testkit",
+]
+
+[[package]]
 name = "dyn-clone"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -381,6 +369,15 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "exec-census"
+version = "1.0.0"
+dependencies = [
+ "spira-config",
+ "spira-otel",
+ "testkit",
 ]
 
 [[package]]
@@ -618,6 +615,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 
 [[package]]
+name = "heimdall"
+version = "1.0.0"
+dependencies = [
+ "regex",
+ "serde",
+ "serde_json",
+ "spira-config",
+ "spira-otel",
+ "testkit",
+]
+
+[[package]]
+name = "hel"
+version = "1.0.0"
+dependencies = [
+ "serde_json",
+ "spira-config",
+ "spira-otel",
+ "testkit",
+]
+
+[[package]]
 name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -826,9 +845,9 @@ dependencies = [
 name = "landing-pass"
 version = "2.0.0"
 dependencies = [
+ "hel",
  "libc",
  "regex",
- "sending",
  "serde",
  "serde_json",
  "spira-config",
@@ -946,6 +965,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 name = "mender"
 version = "1.0.0"
 dependencies = [
+ "lifecycle",
  "serde",
  "serde_json",
  "spira-config",
@@ -1096,6 +1116,7 @@ version = "1.0.0"
 dependencies = [
  "serde_json",
  "spira-config",
+ "spira-otel",
  "testkit",
 ]
 
@@ -1320,8 +1341,8 @@ dependencies = [
 name = "rebase-stale"
 version = "0.1.0"
 dependencies = [
+ "hel",
  "libc",
- "sending",
  "serde",
  "serde_json",
  "spira-config",
@@ -1493,6 +1514,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "runtime"
+version = "0.1.0"
+dependencies = [
+ "lifecycle",
+ "serde",
+ "serde_json",
+ "testkit",
+ "tokio",
+]
+
+[[package]]
 name = "runtime-watch"
 version = "0.1.0"
 dependencies = [
@@ -1617,22 +1649,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
-name = "sending"
-version = "1.0.0"
-dependencies = [
- "serde_json",
- "spira-config",
- "spira-otel",
- "testkit",
-]
-
-[[package]]
 name = "sentinel"
 version = "1.0.0"
 dependencies = [
- "aeon",
+ "dwarf",
+ "hel",
  "libc",
- "sending",
  "serde",
  "serde_json",
  "sha2",
@@ -1833,8 +1855,8 @@ name = "spira-claim"
 version = "1.0.0"
 dependencies = [
  "bead",
+ "hel",
  "lifecycle",
- "sending",
  "serde",
  "serde_json",
  "spira-config",
@@ -1964,7 +1986,7 @@ dependencies = [
 name = "spira-world"
 version = "1.0.0"
 dependencies = [
- "sending",
+ "hel",
  "serde_json",
  "spira-config",
  "spira-ctrl",
@@ -1986,9 +2008,9 @@ dependencies = [
 name = "strand"
 version = "1.0.0"
 dependencies = [
+ "hel",
  "libc",
  "regex",
- "sending",
  "serde",
  "serde_json",
  "spira-config",

@@ -3,12 +3,12 @@
 # test-unclaimable-worktree.sh — detect_unclaimable_ready uses production config, not the
 #                                calling worktree's conf.sh
 #
-# THE DEFECT (sp-b0j0s / sp-recur-unclaimable). detect_unclaimable_ready derived fayth
+# THE DEFECT (sp-b0j0s / sp-recur-unclaimable). detect_unclaimable_ready derived rune
 # label requirements from whatever checkout sourced lib.sh, while filing incidents into the
-# shared production database. An aeon working on conf.sh — renaming SPIRA_PLAN_LABEL's
+# shared production database. A dwarf working on conf.sh — renaming SPIRA_PLAN_LABEL's
 # default from "plan" to "partition:plan" — caused the detector to flag 24 beads as
 # UNCLAIMABLE (against the production checkout's 1) because no bead carried the new label.
-# 40 P1 incidents were filed in ~2 minutes; ops aeons "fixed" 40 correct beads by adding
+# 40 P1 incidents were filed in ~2 minutes; ops dwarves "fixed" 40 correct beads by adding
 # a label no production code reads.
 #
 # THE FIX. detect_unclaimable_ready checks whether it was called from a non-main worktree
@@ -71,7 +71,7 @@ cp -r "$HERE" "$PROD_ROOT/spira"
 git -C "$PROD_ROOT" add spira
 git -C "$PROD_ROOT" commit -qm "seed"
 git -C "$PROD_ROOT" worktree add --detach "$FAKE_WT" HEAD 2>/dev/null
-# Patch the worktree's conf.sh to simulate an aeon branch that renamed the partition labels.
+# Patch the worktree's conf.sh to simulate a dwarf branch that renamed the partition labels.
 sed -i \
     -e 's/: "${SPIRA_PLAN_LABEL:=plan}"/: "${SPIRA_PLAN_LABEL:=partition:plan}"/' \
     -e 's/: "${SPIRA_INCIDENT_LABEL:=incident}"/: "${SPIRA_INCIDENT_LABEL:=partition:incident}"/' \
@@ -118,10 +118,10 @@ echo "test-unclaimable-worktree.sh"
 # Only SPIRA_DB is fixed here (tl_config, so sentinel queries the actual fixture database);
 # the worktree-divergence simulation this suite's "case 1/2/3" rest on is flagged in the
 # batch report rather than redesigned.
-# SPIRA_FAYTHS/SPIRA_CHAMBER undeclared resolve to the complete fixture's own nonexistent
-# chamber path — sentinel then has no fayth partition to match beads' labels against, so
+# SPIRA_RUNES/SPIRA_RUNES_DIR undeclared resolve to the complete fixture's own nonexistent
+# runes path — sentinel then has no rune partition to match beads' labels against, so
 # nothing is ever "unclaimable" (same cause as test-cockpit-reachable.sh's orphan case).
-tl_config SPIRA_DB="$SPIRA_DB" SPIRA_FAYTHS=builder SPIRA_CHAMBER="$HERE/chamber"
+tl_config SPIRA_DB="$SPIRA_DB" SPIRA_RUNES=builder SPIRA_RUNES_DIR="$HERE/runes"
 run_from_worktree() {
     # SPIRA_HOME IS THE HOME now (locate_home no longer searches) — sentinel refuses/hangs
     # with none at all, so it is pointed at the worktree's own copy (which carries conf.d,

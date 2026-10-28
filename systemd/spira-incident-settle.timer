@@ -2,7 +2,7 @@
 Description=Settle incidents whose fix has landed every five minutes
 
 [Timer]
-# Short, so a landed fix is settled before the sentinel next summons Ops onto the incident.
+# Short, so a landed fix is settled before the sentinel next calls Ops onto the incident.
 OnBootSec=3min
 OnActiveSec=3min
 OnUnitActiveSec=5min

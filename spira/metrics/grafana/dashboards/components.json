@@ -311,7 +311,7 @@
     {
       "id": 9,
       "type": "timeseries",
-      "title": "auron alerts firing",
+      "title": "heimdall alerts firing",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
@@ -334,7 +334,7 @@
             "type": "prometheus",
             "uid": "${DS_VM}"
           },
-          "expr": "max_over_time(spira_auron_firing_alerts[$__interval])",
+          "expr": "max_over_time(spira_heimdall_firing_alerts[$__interval])",
           "legendFormat": "firing",
           "refId": "A"
         }

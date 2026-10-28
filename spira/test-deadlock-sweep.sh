@@ -7,8 +7,8 @@
 # record standing as history. Replaces spira/attempts.sh's `deadlocked` verb, deleted at
 # sp-rfodk when attempts.sh moved into spira-claim.
 #
-# Split out of test-requeue.sh (sp-g44ke, docs/test-plan/aeon-execution.md D15, UC-24): no
-# aeon.sh run is needed here — the "deadlock" is a branch that already merges cleanly, built
+# Split out of test-requeue.sh (sp-g44ke, docs/test-plan/dwarf-execution.md D15, UC-24): no
+# dwarf.sh run is needed here — the "deadlock" is a branch that already merges cleanly, built
 # with one real commit on a throwaway origin, never a live session.
 #
 # THE HOLD, NOT THE LABEL (sp-i2m7y): `spira-claim deadlocked` reads a real spira-lc hold,
@@ -26,7 +26,7 @@
 # binary and the real spira-claim binary — not a model of either.
 #
 # tier: T2
-# covers: groomer/src/deadlocked.rs spira/lib.sh spira-claim/* UC-aeon-execution-24
+# covers: groomer/src/deadlocked.rs spira/lib.sh spira-claim/* UC-dwarf-execution-24
 set -uo pipefail
 CLAIM_SEQ=0   # one minute per seeded event, past the double-claim window
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -107,30 +107,30 @@ git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
 printf 'seed\n' > "$REPO/f"
 git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 
-export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
+export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/runes"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_REPO_MAP="$TMP/repo-map"
 tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP"
-# round 2 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — the complete
-# fixture declares its own /fixture/userhome/.../chamber. Declare this suite's real one.
-tl_config SPIRA_CHAMBER="$SPIRA_HOME/chamber"
+# round 2 fix (pattern 6): SPIRA_RUNES_DIR no longer derives from SPIRA_HOME — the complete
+# fixture declares its own /fixture/userhome/.../runes. Declare this suite's real one.
+tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 # round 2 fix: the complete fixture declares scope_label="spira" as its base value, so
-# builder.fayth's FAYTH_LABELS (resolved against the real config, not this shell's unset
+# builder.rune's RUNE_LABELS (resolved against the real config, not this shell's unset
 # $SPIRA_SCOPE_LABEL) would require a "spira" label the seeded beads never carry — nothing
 # would ever be ready. Declare the empty scope this suite has always meant.
 tl_config SPIRA_SCOPE_LABEL=""
-# attempts.sh's candidates() reads fayth_partitions from the chamber (lib.sh) — the same
-# partition builder.fayth declares, so this tool and the summoner cannot disagree about
+# attempts.sh's candidates() reads rune_partitions from the runes (lib.sh) — the same
+# partition builder.rune declares, so this tool and the caller cannot disagree about
 # which beads are "ours" (attempts.sh's own header comment).
-cat > "$SPIRA_HOME/chamber/builder.fayth" <<FAYTH
-FAYTH_NAME=builder
-FAYTH_WORKING_EXITS="SUBMITTED ask park hold"
-FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
-FAYTH_EXCLUDE_LABELS="spira-poison,${SPIRA_ASK_LABEL:-needs-operator}"
-FAYTH_MAX_CONCURRENT=1
-FAYTH_HEARTBEAT_SECONDS=600
-FAYTH
+cat > "$SPIRA_HOME/runes/builder.rune" <<RUNE
+RUNE_NAME=builder
+RUNE_WORKING_EXITS="SUBMITTED ask park hold"
+RUNE_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
+RUNE_EXCLUDE_LABELS="spira-poison,${SPIRA_ASK_LABEL:-needs-operator}"
+RUNE_MAX_CONCURRENT=1
+RUNE_HEARTBEAT_SECONDS=600
+RUNE
 
 seed() {   # seed <id>
     local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\""
@@ -169,10 +169,10 @@ for b in sp-rq-s sp-rq-k; do
     mkpoison "$b"
 done
 sweep() {
-    # SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP/SPIRA_FAYTHS are registered keys (per Ryan
+    # SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP/SPIRA_RUNES are registered keys (per Ryan
     # 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config, not the env prefix below,
     # which no process reads them from any more.
-    tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_FAYTHS=builder
+    tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_RUNES=builder
     SPIRA_HOME="$SPIRA_HOME" SPIRA_REPO="$REPO" \
           groomer deadlocked "$@" 2>&1; }
 out="$(sweep)"

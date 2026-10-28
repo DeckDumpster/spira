@@ -19,7 +19,7 @@ libc = "0.2"
 regex = "1"
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
-sending = { path = "../sending" }
+hel = { path = "../hel" }
 tsd = { path = "../tsd" }
 
 [dev-dependencies]

@@ -15,7 +15,7 @@
 #   5. Neither --root nor SPIRA_RUN set is refused with a clear message.
 #   9. testenv-batch.sh's suite-times hook (_append_suite_times) appends a suite-timing row —
 #      the sole producer since the git-notes ledger and suite-times.sh were retired.
-#  12. the moved families (bead-stage, sentinel-phase, aeon-session) live in the metrics store,
+#  12. the moved families (bead-stage, sentinel-phase, dwarf-session) live in the metrics store,
 #      not in files: tsd-write pushes them, tsd-query.sh answers from the store with known
 #      values, and refuses by name when the store is stopped, empty or unconfigured.
 #  10. tsd-query.sh: baseline (avg), rate (count/hours), dwell (quantile), and by-group
@@ -347,16 +347,16 @@ for n, (a, b) in enumerate([(2, 8), (3, 27), (1, 9)]):
     ph += [{"ts": iso(500 - n), "pass": f"p{n}", "check": "CHECK1", "secs": a},
            {"ts": iso(500 - n), "pass": f"p{n}", "check": "CHECK2", "secs": b}]
 w("sentinel-phase", ph)
-w("aeon-session", [{"ts": iso(100), "bead": "sp-a", "fayth": "builder", "status": "submitted", "wall_s": 100},
-                   {"ts": iso(90), "bead": "sp-b", "fayth": "builder", "status": "submitted", "wall_s": 50}])
+w("dwarf-session", [{"ts": iso(100), "bead": "sp-a", "rune": "builder", "status": "submitted", "wall_s": 100},
+                   {"ts": iso(90), "bead": "sp-b", "rune": "builder", "status": "submitted", "wall_s": 50}])
 w("gate-run", [{"ts": iso(100), "bead": "sp-a", "status": "GREEN", "reason": "x", "ran_secs": 30},
                {"ts": iso(90), "bead": "sp-b", "status": "RED", "reason": "y", "ran_secs": 20}], moved=False)
 w("batch-round", [{"ts": iso(100), "duration_ms": "4000"}], moved=False)
 PY
-for fam in bead-stage sentinel-phase aeon-session; do
+for fam in bead-stage sentinel-phase dwarf-session; do
     "$TSD_BIN" --family "$fam" --root "$RUN12" --rows-from "$T/rows12/$fam.jsonl" || bad "could not store the $fam fixture"
 done
-for fam in bead-stage sentinel-phase aeon-session; do
+for fam in bead-stage sentinel-phase dwarf-session; do
     [ -e "$RUN12/tsd/$fam.jsonl" ] && bad "$fam: a file was written beside the store" || ok "$fam: no file written beside the store"
 done
 
@@ -383,7 +383,7 @@ else
 fi
 
 out="$(qout12 time)"
-is "time: aeon seconds"  "150"  "$(printf '%s' "$out" | jget12 'r[0]["aeon_s"]')"
+is "time: dwarf seconds"  "150"  "$(printf '%s' "$out" | jget12 'r[0]["dwarf_s"]')"
 is "time: gate seconds"  "50"   "$(printf '%s' "$out" | jget12 'r[0]["gate_s"]')"
 is "time: round seconds" "4"    "$(printf '%s' "$out" | jget12 'r[0]["round_s"]')"
 is "time: empty-slot seconds" "1380" "$(printf '%s' "$out" | jget12 'r[0]["idle_slot_s"]')"
@@ -397,7 +397,7 @@ out="$(qout12 bead sp-c)"
 is "bead: six stage rows, oldest first" "WORKING" "$(printf '%s' "$out" | jget12 'r[0]["what"].split(" -> ")[1]')"
 is "bead: the rework reason is on the timeline" "1" "$(printf '%s' "$out" | jget12 'sum(1 for x in r if "(gate-red)" in x["what"])')"
 out="$(qout12 bead sp-a)"
-is "bead: aeon session joins the timeline" "1" "$(printf '%s' "$out" | jget12 'sum(1 for x in r if x["kind"]=="aeon")')"
+is "bead: dwarf session joins the timeline" "1" "$(printf '%s' "$out" | jget12 'sum(1 for x in r if x["kind"]=="dwarf")')"
 out="$(qout12 bead 'x; drop')"; rc=$?
 [ "$rc" -ne 0 ] && ok "bead: bad id refused" || bad "bead: bad id accepted"
 
@@ -437,10 +437,10 @@ for b in range(4000):
     for q, (to, dt) in enumerate([("READY", 0), ("WORKING", 300), ("SUBMITTED", 900), ("LANDED", 1500)]):
         st.append({"ts": iso(max(t0 - dt, 1)), "seq": q + 1, "machine": "bead", "key": f"sp-{b}", "from_state": "X", "to_state": to, "applied": True})
 w("bead-stage", st)
-w("aeon-session", [{"ts": iso(random.randint(1, D)), "bead": f"sp-{i % 4000}", "fayth": "builder", "status": "ok", "wall_s": 100} for i in range(6000)])
+w("dwarf-session", [{"ts": iso(random.randint(1, D)), "bead": f"sp-{i % 4000}", "rune": "builder", "status": "ok", "wall_s": 100} for i in range(6000)])
 w("gate-run", [{"ts": iso(random.randint(1, D)), "bead": f"sp-{i % 4000}", "status": "GREEN", "ran_secs": 90} for i in range(6000)], moved=False)
 PY
-for fam in bead-stage sentinel-phase aeon-session; do
+for fam in bead-stage sentinel-phase dwarf-session; do
     SPIRA_METRICS_ENDPOINT="$STORE13" "$TSD_BIN" --family "$fam" --root "$RUN13" --rows-from "$T/rows13/$fam.jsonl" || bad "could not store the 30-day $fam fixture"
 done
 for q in where rework slots time sentinel "bead sp-7"; do

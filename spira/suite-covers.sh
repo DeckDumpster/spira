@@ -49,7 +49,7 @@ suite_requires_of() {  # suite_requires_of <file-path> -> space-separated requir
 
 # suite_in_container — true only with STRUCTURAL evidence of running inside a container:
 # podman writes /run/.containerenv (docker, /.dockerenv) and an unprivileged user cannot
-# create either on the host. SPIRA_IN_TESTENV alone is NOT evidence: on 2026-09-25 the aeon
+# create either on the host. SPIRA_IN_TESTENV alone is NOT evidence: on 2026-09-25 the dwarf
 # writing this very guard set SPIRA_IN_TESTENV=1 by hand on the host and stopped the live
 # bead database with an install suite. A variable is forgeable by exactly the actor the
 # guard exists to bind (law-guard-binds-the-caller).

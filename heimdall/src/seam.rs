@@ -1,0 +1,136 @@
+//! The lib.sh seam, for exactly the two functions heimdall needs that still carry real
+//! graph semantics: `bdq` (the guarded `bd` wrapper — repo-label and destructive-vocabulary
+//! refusals, the connection retry, `SPIRA_BDJSON_FIXTURE`) and `bead_reopen` (the
+//! claim and submitted-label interaction a bare `bd reopen` does not have).
+//! Reimplementing either in Rust would mean keeping a second copy of `bdq`'s guards and
+//! `bead_reopen`'s rules in step with lib.sh by hand; this is the same design
+//! dwarf's own seam uses for the same reason (dwarf/src/seam.rs).
+//!
+//! Unlike dwarf's seam, this one does not source a rune file or set `RUNE` — heimdall has
+//! no rune of its own. `bash -c <FIXED>` with every datum NUL-framed on stdin, same as
+//! dwarf's, for the same reason: a bead body can be arbitrarily long and an argv has a
+//! kernel ceiling (law-payloads-go-on-stdin).
+//!
+//! NOT COLLAPSED onto a direct `bdq`-binary call (sp-pwmlj, wave 4.15 — considered and
+//! rejected, not overlooked). `_heimdall_bdq` has no Rust-side logic of its own to retire: it
+//! sources `lib.sh`, whose own `bdq`/`_bdq_check_*`/`json_only` are already one-line shims
+//! onto `bead::bdq` (sp-w3h16, wave 4.14), so every call through this seam already reaches
+//! the one real implementation — this file is in sp-pwmlj's scope as a bridge to verify,
+//! not a copy to fix.
+//!
+//! The hard blocker this used to have is gone: `main.rs` no longer needs this seam to
+//! resolve configuration at all (sp-mz7dn, wave 4.8, landed the same day as this bead —
+//! `_heimdall_snapshot` is retired outright, replaced by `spira_config::resolve_for_process`
+//! in-process, which this seam's own `FIXED` script no longer even lists in its allowlist).
+//! That resolution already carries everything `bead::bdq`'s create-time fences would need
+//! in-process (the repository map's fields, `SPIRA_ASK_LABEL`, `SPIRA_DB`). What is left on
+//! this seam is narrower than before: only `_heimdall_bdq` (the actual `bd` mutation —
+//! `bdops::create`/`update`/`close`/`label_*`) and `_heimdall_bead_reopen` (not yet ported,
+//! its rules live in `lib.sh` only). Switching `bdops::create` et al. onto
+//! a direct `bdq`-binary call fed from `main.rs`'s already-resolved config is now a small,
+//! well-scoped follow-on rather than the exec-boundary hazard it would have been before
+//! sp-mz7dn — left to its own bead (`law-decompose-by-deliverable`) rather than folded into
+//! this one, since it touches `bdops.rs`'s construction, not just this seam.
+
+use std::path::PathBuf;
+
+use crate::util::{self, Out, Spec};
+
+pub const FIXED: &str = r#"set -uo pipefail
+IFS= read -r -d '' __heimdall_lib || exit 96
+IFS= read -r -d '' __heimdall_fn || exit 96
+__heimdall_args=()
+while IFS= read -r -d '' __heimdall_a; do __heimdall_args+=("$__heimdall_a"); done
+case "$__heimdall_fn" in
+    _heimdall_bdq|_heimdall_bead_reopen) ;;
+    *) printf 'heimdall seam: %s is not on the allowlist\n' "$__heimdall_fn" >&2; exit 97 ;;
+esac
+. "$__heimdall_lib" || exit 98
+_heimdall_bdq() { bdq "$@"; }
+_heimdall_bead_reopen() { bead_reopen "$@"; }
+"$__heimdall_fn" "${__heimdall_args[@]}"
+"#;
+
+pub fn frame(lib: &str, func: &str, args: &[String]) -> Vec<u8> {
+    let mut b = Vec::new();
+    for r in [lib, func].into_iter().chain(args.iter().map(|s| s.as_str())) {
+        b.extend_from_slice(r.as_bytes());
+        b.push(0);
+    }
+    b
+}
+
+/// One lib.sh function through the fixed seam script.
+pub trait Seam: Send + Sync {
+    fn call(&self, func: &str, args: &[String]) -> Out;
+}
+
+pub struct BashSeam<'a> {
+    pub lib: PathBuf,
+    pub env: &'a std::collections::BTreeMap<String, String>,
+}
+
+impl Seam for BashSeam<'_> {
+    fn call(&self, func: &str, args: &[String]) -> Out {
+        let data = frame(&self.lib.display().to_string(), func, args);
+        util::run(Spec { prog: "bash", args: vec!["-c".into(), FIXED.into()], env: Some(self.env), cwd: None, stdin: Some(data), timeout: None })
+    }
+}
+
+/// `bdq <args...>` through the seam.
+pub fn bdq(seam: &dyn Seam, args: &[&str]) -> Out {
+    seam.call("_heimdall_bdq", &args.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+}
+
+/// `bdq <args...> --json`, stderr dropped, stdout passed through `json_only`.
+pub fn bdjson(seam: &dyn Seam, args: &[&str]) -> String {
+    let mut a: Vec<&str> = args.to_vec();
+    a.push("--json");
+    util::json_only(&bdq(seam, &a).stdout)
+}
+
+/// `bead_reopen <id> <cause> [note] [suites]` through the seam.
+pub fn bead_reopen(seam: &dyn Seam, id: &str, cause: &str, note: &str) -> Out {
+    seam.call("_heimdall_bead_reopen", &[id.to_string(), cause.to_string(), note.to_string()])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn frame_is_nul_separated_records() {
+        let f = frame("/l", "fn", &["a b".into(), "".into()]);
+        assert_eq!(f, b"/l\0fn\0a b\0\0");
+    }
+
+    /// The fixed script against a stand-in lib.sh: the allowlist refuses an unlisted
+    /// function, and a listed one's args arrive intact (spaces, empty).
+    #[test]
+    fn fixed_script_sources_lib_and_refuses_off_allowlist() {
+        let dir = testkit::TempDir::new("heimdall-seam");
+        let lib = dir.join("lib.sh");
+        let mut f = std::fs::File::create(&lib).unwrap();
+        writeln!(f, "bdq() {{ printf '%s|' \"$@\"; }}\nbead_reopen() {{ printf 'reopened:%s:%s' \"$1\" \"$2\"; }}").unwrap();
+        let mut env = std::collections::BTreeMap::new();
+        env.insert("PATH".to_string(), std::env::var("PATH").unwrap_or_default());
+        let seam = BashSeam { lib: lib.clone(), env: &env };
+        let o = bdq(&seam, &["list", "a b", ""]);
+        assert_eq!(o.stdout, "list|a b||");
+        let o = seam.call("rm_rf_everything", &[]);
+        assert_eq!(o.code, 97);
+        let o = bead_reopen(&seam, "sp-x", "alert-recur", "the condition returned");
+        assert_eq!(o.stdout, "reopened:sp-x:alert-recur");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Wave 4.8 retired `_heimdall_snapshot`/`snapshot()`: it had exactly one caller
+    /// (main.rs), and that caller's need — conf.sh's resolution — moved to
+    /// `spira_config::resolve_for_process` in-process. The allowlist must refuse it
+    /// rather than silently accept a name nothing defines any more.
+    #[test]
+    fn snapshot_is_off_the_allowlist() {
+        assert!(!FIXED.contains("_heimdall_snapshot"));
+    }
+}

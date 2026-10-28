@@ -47,7 +47,7 @@ fn next_streak_first_ever_is_one() {
 
 #[test]
 fn next_streak_unknown_tip_never_streaks() {
-    // "?" means "tip unknown" (the aeon could not read it) — never treated as a repeat,
+    // "?" means "tip unknown" (the dwarf could not read it) — never treated as a repeat,
     // even against a previous "?" (which would otherwise look like a matching pair).
     assert_eq!(next_streak("?", 3, "?"), 1);
     assert_eq!(next_streak("abc", 3, ""), 1);

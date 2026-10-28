@@ -1,4 +1,4 @@
-//! The SENDING / SELF / aeon-ledger keys: two log files in, flat `KEY=value` pairs out. Pure
+//! The HEL / SELF / dwarf-ledger keys: two log files in, flat `KEY=value` pairs out. Pure
 //! over its inputs so fixtures can drive it; a source that cannot be read renders `?` for the
 //! keys that depend on it, never 0.
 
@@ -47,8 +47,8 @@ fn not_an_event(text: &str) -> bool {
     if text == "invoked reflection" {
         return true;
     }
-    text.strip_prefix("summoned a ")
-        .and_then(|r| r.strip_suffix(" aeon"))
+    text.strip_prefix("called a ")
+        .and_then(|r| r.strip_suffix(" dwarf"))
         .is_some_and(|w| !w.is_empty() && !w.contains(char::is_whitespace))
 }
 
@@ -161,18 +161,18 @@ pub fn ledger_metrics(lines: &[&str], since: i64) -> Keys {
         }
     }
     [
-        ("SP_AEON_BORN", born),
-        ("SP_AEON_LIVED", lived),
-        ("SP_AEON_STILLBORN", (born - lived).max(0)),
-        ("SP_AEON_WORKED", worked),
-        ("SP_AEON_THRASH", thrash),
+        ("SP_DWARF_BORN", born),
+        ("SP_DWARF_LIVED", lived),
+        ("SP_DWARF_STILLBORN", (born - lived).max(0)),
+        ("SP_DWARF_WORKED", worked),
+        ("SP_DWARF_THRASH", thrash),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect()
 }
 
-pub fn sending_metrics(lines: &[&str], since: i64, now: i64) -> Keys {
+pub fn hel_metrics(lines: &[&str], since: i64, now: i64) -> Keys {
     let (mut sent, mut failed, mut held, mut kept) = (BTreeSet::new(), BTreeSet::new(), BTreeSet::new(), BTreeSet::new());
     let mut failed_last: Option<i64> = None;
     let mut cur: Option<i64> = None;
@@ -291,8 +291,8 @@ fn ago(latest: Option<i64>, now: i64) -> String {
 const SENTINEL_KEYS: &[&str] = &[
     "SP_PASSES", "SP_ACTS", "SP_FALSE_ACTS", "SP_FALSE_PER_PASS", "SP_SINCE_JUDGEMENT", "SP_STARVED_PASSES",
 ];
-const LEDGER_KEYS: &[&str] = &["SP_AEON_BORN", "SP_AEON_LIVED", "SP_AEON_STILLBORN", "SP_AEON_WORKED", "SP_AEON_THRASH"];
-const SENDING_KEYS: &[&str] = &["SP_SENT", "SP_SENT_HELD", "SP_SENT_KEPT", "SP_SENT_FAILED", "SP_SENT_FAILED_AGE_M"];
+const LEDGER_KEYS: &[&str] = &["SP_DWARF_BORN", "SP_DWARF_LIVED", "SP_DWARF_STILLBORN", "SP_DWARF_WORKED", "SP_DWARF_THRASH"];
+const HEL_KEYS: &[&str] = &["SP_SENT", "SP_SENT_HELD", "SP_SENT_KEPT", "SP_SENT_FAILED", "SP_SENT_FAILED_AGE_M"];
 const SELF_KEYS: &[&str] = &[
     "SP_SELF_REPEATING_N", "SP_SELF_STILLBORN_W", "SP_SELF_STILLBORN_LAST", "SP_SELF_STARVED_W", "SP_SELF_STARVED_LAST",
 ];
@@ -322,7 +322,7 @@ pub fn collect(sentinel_log: &str, ledger_log: &str, hours: f64, self_window_min
     let mut out = Keys::new();
     out.extend(sent.as_deref().map_or_else(|| unknown(SENTINEL_KEYS), |l| sentinel_metrics(l, since)));
     out.extend(led.as_deref().map_or_else(|| unknown(LEDGER_KEYS), |l| ledger_metrics(l, since)));
-    out.extend(sent.as_deref().map_or_else(|| unknown(SENDING_KEYS), |l| sending_metrics(l, since, now)));
+    out.extend(sent.as_deref().map_or_else(|| unknown(HEL_KEYS), |l| hel_metrics(l, since, now)));
     out.extend(match (sent.as_deref(), led.as_deref(), self_window_min) {
         (Some(s), Some(l), Some(w)) => self_metrics(s, l, now - (w * 60.0) as i64, now),
         _ => unknown(SELF_KEYS),
@@ -362,8 +362,8 @@ mod tests {
     }
 
     #[test]
-    fn sending_counts_distinct_branches_and_attributes_by_preceding_timestamp() {
-        let state = format!("{} spira: state: open=0 plan_ready=0 in_progress=0 aeons=0", ts(-300));
+    fn hel_counts_distinct_branches_and_attributes_by_preceding_timestamp() {
+        let state = format!("{} spira: state: open=0 plan_ready=0 in_progress=0 dwarves=0", ts(-300));
         let lines = [
             "SENT before-any-timestamp x",
             &state,
@@ -371,7 +371,7 @@ mod tests {
             "SENT sp-test1  again",
             "FAILED sp-f x",
         ];
-        let k = sending_metrics(&lines, NOW - 86400, NOW);
+        let k = hel_metrics(&lines, NOW - 86400, NOW);
         assert_eq!(k["SP_SENT"], "1");
         assert_eq!(k["SP_SENT_FAILED"], "1");
         assert_eq!(k["SP_SENT_FAILED_AGE_M"], "5");
@@ -380,16 +380,16 @@ mod tests {
     #[test]
     fn ledger_counts_thrash_without_inflating_worked() {
         let lines = [
-            format!("{} awake fayth sp-aaa worked", ts(-10)),
-            format!("{} done fayth sp-bbb rc=0 status=requeue-thrash", ts(-10)),
-            format!("{} done fayth sp-ccc rc=0 status=requeue-thrash", ts(-10)),
-            format!("{} done fayth sp-eee rc=0 status=requeue-slain", ts(-10)),
+            format!("{} awake rune sp-aaa worked", ts(-10)),
+            format!("{} done rune sp-bbb rc=0 status=requeue-thrash", ts(-10)),
+            format!("{} done rune sp-ccc rc=0 status=requeue-thrash", ts(-10)),
+            format!("{} done rune sp-eee rc=0 status=requeue-slain", ts(-10)),
         ];
         let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
         let k = ledger_metrics(&refs, NOW - 86400);
-        assert_eq!(k["SP_AEON_THRASH"], "2");
-        assert_eq!(k["SP_AEON_WORKED"], "1");
-        assert_eq!(ledger_metrics(&[], NOW - 86400)["SP_AEON_THRASH"], "0");
+        assert_eq!(k["SP_DWARF_THRASH"], "2");
+        assert_eq!(k["SP_DWARF_WORKED"], "1");
+        assert_eq!(ledger_metrics(&[], NOW - 86400)["SP_DWARF_THRASH"], "0");
     }
 
     #[test]
@@ -416,7 +416,7 @@ mod tests {
 
     #[test]
     fn starved_reads_old_prefixed_state_lines() {
-        assert!(starved("t spira: state: open=2 plan_ready=0 in_progress=0 aeons=0"));
+        assert!(starved("t spira: state: open=2 plan_ready=0 in_progress=0 dwarves=0"));
         assert!(starved("t spira: state: x=1 open=2 plan_ready=0 in_progress=0"));
         assert!(!starved("t spira: state: open=2 plan_ready=1 in_progress=0"));
     }

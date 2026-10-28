@@ -28,7 +28,7 @@
 #   e. The watermark is NOT advanced by the trigger — the Mimir PASS advances it in
 #      Step 5 after running census.sh, so census sees the events that caused the trigger.
 #      (sp-pyzp: advancing in the trigger caused census to miss the trigger's window.)
-#   f. The labels used match SPIRA_SCOPE_LABEL + SPIRA_MIMIR_LABEL so the fayth
+#   f. The labels used match SPIRA_SCOPE_LABEL + SPIRA_MIMIR_LABEL so the rune
 #      predicate finds the trigger bead.
 #   g. Both triggers firing at once produce ONE bead, not two (shared watermark).
 #   h. bd create failure is reported and exits 1.

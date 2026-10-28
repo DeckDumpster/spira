@@ -5,7 +5,7 @@
 //! release root never resolved, so a child it shelled into had no `spira-config` on PATH)
 //! and sp-ivfu3 (`SPIRA_RUN`/`SPIRA_INSTANCE` read as a bare, wrongly-defaulted env var)
 //! would both have caught, and the one this bead's own bug — `spira-claim` refusing
-//! outright because `spira-sentinel.service`/`spira-summon.service` carry `SPIRA_RELEASE`/
+//! outright because `spira-sentinel.service`/`spira-call.service` carry `SPIRA_RELEASE`/
 //! `PATH` and nothing else — slipped through for exactly the same reason: nothing exec'd
 //! these binaries under their REAL rendered environment before now.
 //!
@@ -24,8 +24,8 @@
 //!     back to pure derived defaults scoped entirely inside this fixture `HOME`.
 //!   - The fixture release's `spira/` is symlinked to this checkout's own (same trick
 //!     `release/tests/session_hook_minimal_env.rs` already uses): the REAL `conf.sh`/
-//!     `lib.sh`/`conf.d`/chamber, unmodified — `builder.fayth` genuinely exists, which is
-//!     the whole point (this bead's bug is "a real fayth file, incorrectly reported
+//!     `lib.sh`/`conf.d`/runes, unmodified — `builder.rune` genuinely exists, which is
+//!     the whole point (this bead's bug is "a real rune file, incorrectly reported
 //!     absent").
 //!   - `bd` is a STUB in the fixture's own `bin/` (first on the rendered PATH, so it wins
 //!     over anything on this box's real PATH): unconditionally answers one ready bead,
@@ -35,17 +35,17 @@
 //!     (`spira_config::env_bootstrap::check_bd_schema`'s own early return) — so the stub
 //!     need not emulate that query at all.
 //!   - `systemd-run` is a STUB that only records its own invocation and exits 0 — "stub
-//!     the actual systemd-run", exactly as this bead's own part 3 asks. Nothing summons a
-//!     real aeon, and `aeon` itself is deliberately ABSENT from the fixture, so even the
-//!     stub is never reached unless `aeon` is also staged (the `--summon` case below adds
-//!     it on purpose, to prove the summon step is reached; the generic table cases do not,
-//!     since reaching "aeon not found on PATH" is itself already proof of getting past
-//!     config/no-fayth resolution).
+//!     the actual systemd-run", exactly as this bead's own part 3 asks. Nothing calls a
+//!     real dwarf, and `dwarf` itself is deliberately ABSENT from the fixture, so even the
+//!     stub is never reached unless `dwarf` is also staged (the `--call` case below adds
+//!     it on purpose, to prove the call step is reached; the generic table cases do not,
+//!     since reaching "dwarf not found on PATH" is itself already proof of getting past
+//!     config/no-rune resolution).
 //!   - `landing-pass --pass` is NEVER EXECUTED here: it rebases branches and pushes/opens
 //!     pull requests for real (its own unit file's comment says so outright), so there is
 //!     no safe fixture to run it against. It is covered the cheap, safe way instead — by
 //!     asserting its REAL rendered template already supplies `SPIRA_HOME=` explicitly
-//!     (unlike sentinel/summon/watchd, this unit was never part of this bead's bug, and
+//!     (unlike sentinel/call/watchd, this unit was never part of this bead's bug, and
 //!     this assertion is the regression guard that keeps it that way).
 
 use std::collections::BTreeMap;
@@ -56,12 +56,12 @@ fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("release/ has a parent").to_path_buf()
 }
 
-/// The REAL `SPIRA_SCOPE_LABEL` this checkout's own fayth labels resolve to, computed the
+/// The REAL `SPIRA_SCOPE_LABEL` this checkout's own rune labels resolve to, computed the
 /// same way `FIXTURE_BD_SCRIPT`'s own `scope=` line does: the basename of the parent of
 /// `git rev-parse --git-common-dir` — the MAIN repository's directory name, which in a
 /// worktree checkout (as this one is) is NOT this directory's own name. `complete.toml`'s
 /// fixture placeholder (`spira.scope_label = "spira"`) is wrong for a worktree whose main
-/// repo is named anything else, so every real `.fayth`'s `FAYTH_LABELS` (which all
+/// repo is named anything else, so every real `.rune`'s `RUNE_LABELS` (which all
 /// reference `$SPIRA_SCOPE_LABEL`) filtered out this fixture's own planted beads entirely —
 /// `in_scope`/`labels_match` (spira-claim/src/ready.rs) require an EXACT label match, not a
 /// substring, so a wrong scope label is indistinguishable from "nothing ready". Declared in
@@ -126,8 +126,8 @@ fn write_script(path: &Path, body: &str) {
 
 /// One fixture release root: `<root>/bin/{sentinel,spira-claim,spira-config,watchd,bd,
 /// systemd-run}`, `<root>/spira` symlinked to this checkout's own real `spira/`
-/// (`conf.sh`/`lib.sh`/`conf.d`/chamber unmodified — the real `builder.fayth` is the point).
-/// `aeon` is staged only when `with_aeon` is true (see this file's own top doc).
+/// (`conf.sh`/`lib.sh`/`conf.d`/runes unmodified — the real `builder.rune` is the point).
+/// `dwarf` is staged only when `with_dwarf` is true (see this file's own top doc).
 struct Fixture {
     root: PathBuf,
     home: PathBuf,
@@ -142,17 +142,17 @@ struct Fixture {
     _dir: testkit::TempDir,
 }
 
-fn build_fixture(tag: &str, with_aeon: bool) -> Fixture {
+fn build_fixture(tag: &str, with_dwarf: bool) -> Fixture {
     // bd: the label-aware store, whose plan beads are ready for a builder — the bd schema
     // preflight inside conf.sh never reaches this stub at all (see this file's top doc); the
-    // only real consumer is spira-claim's own `ready_count`/`fayth-ready`.
-    build_fixture_with_bd(tag, with_aeon, FIXTURE_BD_SCRIPT)
+    // only real consumer is spira-claim's own `ready_count`/`rune-ready`.
+    build_fixture_with_bd(tag, with_dwarf, FIXTURE_BD_SCRIPT)
 }
 
 /// [`build_fixture`], with the `bd` stub's own script body overridable — sp-xsnid's own
 /// label-aware stub (see `fixture_bd_counts_by_label`, below) needs to answer a DIFFERENT
 /// count per `--label` query rather than one fixed bead for everything.
-fn build_fixture_with_bd(tag: &str, with_aeon: bool, bd_body: &str) -> Fixture {
+fn build_fixture_with_bd(tag: &str, with_dwarf: bool, bd_body: &str) -> Fixture {
     let t = testkit::TempDir::new(&format!("sp-hh599-unit-env-{tag}"));
     let root = t.join("release");
     let home = t.join("home");
@@ -176,27 +176,27 @@ fn build_fixture_with_bd(tag: &str, with_aeon: bool, bd_body: &str) -> Fixture {
         &root.join("bin/systemd-run"),
         &format!("echo \"$@\" >> {} ; exit 0", shell_quote(&systemd_run_log.to_string_lossy())),
     );
-    if with_aeon {
-        write_script(&root.join("bin/aeon"), "exit 0");
+    if with_dwarf {
+        write_script(&root.join("bin/dwarf"), "exit 0");
     }
     // `run` and `db` match what `run_unit`'s own rendered `host` map hands these same units
     // as `SPIRA_RUN`/`SPIRA_DB` — so a binary reading them through `cfg` (sentinel,
     // spira-claim, watchd) agrees with what the unit's own `Environment=` lines say.
     //
-    // `chamber`/`chamber_overlay` are NOT derived from `$SPIRA_HOME` by `spira_config`'s own
-    // resolve() any more — SPIRA_CHAMBER has no procedural step there (unlike
+    // `runes`/`runes_overlay` are NOT derived from `$SPIRA_HOME` by `spira_config`'s own
+    // resolve() any more — SPIRA_RUNES_DIR has no procedural step there (unlike
     // SPIRA_RELEASES/SPIRA_RUN/SPIRA_INSTANCE), so it is resolved generically, straight from
     // whatever the config file declares. The complete fixture `fixture_toml` writes declares a
-    // fixed placeholder (`/fixture/userhome/spira/spira-releases/<sha>/spira/chamber`) that does
+    // fixed placeholder (`/fixture/userhome/spira/spira-releases/<sha>/spira/runes`) that does
     // not exist on disk — without this override, spira-claim/sentinel read THAT path and see
-    // "no fayth in the chamber" for every real fayth, never this fixture's own `root/spira/
-    // chamber` (the real chamber, symlinked in above, or `build_fixture_with_planted_fayth`'s
-    // own planted one). `chamber_overlay` is pointed at a directory that does not exist,
+    // "no rune in the runes" for every real rune, never this fixture's own `root/spira/
+    // runes` (the real runes, symlinked in above, or `build_fixture_with_planted_rune`'s
+    // own planted one). `runes_overlay` is pointed at a directory that does not exist,
     // matching an operator who configured none.
     let run_s = home.join(".local/share/spira/run").display().to_string();
     let db_s = home.join(".local/share/spira/db").display().to_string();
-    let chamber_s = root.join("spira/chamber").display().to_string();
-    let overlay_s = home.join("chamber-overlay-unset").display().to_string();
+    let runes_s = root.join("spira/runes").display().to_string();
+    let overlay_s = home.join("runes-overlay-unset").display().to_string();
     // SPIRA_BD has no registry default (resolves empty unless set) — `complete.toml`'s own
     // fixture placeholder (`/fixture/userhome/.local/bin/bd`) does not exist on this machine, so
     // spira-claim's `bd list` call failed with "No such file or directory" until this named
@@ -204,7 +204,7 @@ fn build_fixture_with_bd(tag: &str, with_aeon: bool, bd_body: &str) -> Fixture {
     let bd_s = root.join("bin/bd").display().to_string();
     // SPIRA_SCOPE_LABEL: see `real_scope_label`'s own doc — `complete.toml`'s "spira"
     // placeholder does not match this (worktree) checkout's real git-common-dir basename,
-    // so every real fayth's partition filter (`in_scope`/`labels_match`, exact-match on
+    // so every real rune's partition filter (`in_scope`/`labels_match`, exact-match on
     // labels) silently excluded every one of this fixture's planted beads.
     let scope_s = real_scope_label();
     let toml = spira_config::process::fixture_toml(
@@ -213,8 +213,8 @@ fn build_fixture_with_bd(tag: &str, with_aeon: bool, bd_body: &str) -> Fixture {
             ("SPIRA_RUN", &run_s),
             ("SPIRA_DB", &db_s),
             ("SPIRA_INSTANCE", "prod"),
-            ("SPIRA_CHAMBER", &chamber_s),
-            ("SPIRA_CHAMBER_OVERLAY", &overlay_s),
+            ("SPIRA_RUNES_DIR", &runes_s),
+            ("SPIRA_RUNES_OVERLAY", &overlay_s),
             ("SPIRA_BD", &bd_s),
             ("SPIRA_SCOPE_LABEL", &scope_s),
         ],
@@ -225,13 +225,13 @@ fn build_fixture_with_bd(tag: &str, with_aeon: bool, bd_body: &str) -> Fixture {
 /// A `bd` stub that answers a DIFFERENT, deterministic ready count depending on which
 /// substring its own `--label` argument carries — standing in for a real store whose
 /// beads are labelled so `builder`/`ops`/`spike` genuinely differ (sp-xsnid: the bug this
-/// guards is every fayth reading the SAME count, the whole queue, because every label
+/// guards is every rune reading the SAME count, the whole queue, because every label
 /// resolved empty — a stub that answers the FIXED single-bead way `build_fixture` uses
 /// cannot tell "correct and distinct" apart from "still widened", since both would NOT be
 /// `234` for just one case; this one makes the counts distinguishable so comparing them
-/// against each fayth's own, by-hand-resolved expectation is a real assertion, not a
+/// against each rune's own, by-hand-resolved expectation is a real assertion, not a
 /// coincidence). A query whose `--label` carries none of the three substrings — every
-/// OTHER real persona's own label, and the no-partition fayths — answers 0, same as a
+/// OTHER real persona's own label, and the no-partition runes — answers 0, same as a
 /// predicate with nothing to match.
 const FIXTURE_BD_SCRIPT: &str = r#"
 prev=""
@@ -294,20 +294,20 @@ printf ']\n'
 "#;
 
 /// The expected ready count [`FIXTURE_BD_SCRIPT`] answers for a persona's OWN real
-/// `FAYTH_LABELS` — the "fully resolved config" ground truth this test compares the
+/// `RUNE_LABELS` — the "fully resolved config" ground truth this test compares the
 /// rendered-unit-env run against: `builder` (`$SPIRA_PLAN_LABEL` = `plan`) draws 7,
 /// `ops` (`$SPIRA_INCIDENT_LABEL` = `incident`) draws 5, `spike` (`$SPIRA_SPIKE_LABEL` =
 /// `spike`) draws 3, `concierge` (no partition) draws every ready bead, and every other real
-/// chamber persona — none of whose own labels
+/// runes persona — none of whose own labels
 /// mention any of those three substrings — draws 0.
-fn expected_fixture_count(fayth: &str) -> u64 {
-    match fayth {
+fn expected_fixture_count(rune: &str) -> u64 {
+    match rune {
         "builder" => 7,
         "ops" => 5,
         "spike" => 3,
-        // `concierge.fayth` declares `FAYTH_LABELS=""` — no partition at all, so its predicate
+        // `concierge.rune` declares `RUNE_LABELS=""` — no partition at all, so its predicate
         // (bd's or the machine's) matches every ready bead: all fifteen rows. A declared-empty
-        // literal never refuses (spira-claim's own `fayth_ready_cli_a_guarded_or_declared_
+        // literal never refuses (spira-claim's own `rune_ready_cli_a_guarded_or_declared_
         // literal_empty_never_refuses`); it is not the bare-reference widen this test guards.
         "concierge" => 15,
         _ => 0,
@@ -405,21 +405,21 @@ fn assert_past_resolution(template: &str, output: &str) {
 /// handed `SPIRA_HOME` by the unit itself — `spira-sentinel.service`'s `ExecStart=sentinel`
 /// (the plain full-pass entry point is deliberately NOT exercised here: it fans out into
 /// strand/CHECK4/5/6/8, each needing its own binary on PATH, which is a much bigger fixture
-/// for no more coverage of THIS bug than `--summon-only` already gives) is covered by the
-/// dedicated `sentinel_summon_only_reaches_a_real_fayth_ready_query` test below instead, so
-/// this table carries `spira-summon.service` and the watchd units.
+/// for no more coverage of THIS bug than `--call-only` already gives) is covered by the
+/// dedicated `sentinel_call_only_reaches_a_real_rune_ready_query` test below instead, so
+/// this table carries `spira-call.service` and the watchd units.
 #[test]
-fn spira_summon_service_gets_past_config_resolution_with_no_spira_home_set() {
-    let fx = build_fixture("summon-svc", false);
-    let (code, out) = run_unit(&fx, "spira-summon.service", &[], &[]);
-    assert_past_resolution("spira-summon.service", &out);
+fn spira_call_service_gets_past_config_resolution_with_no_spira_home_set() {
+    let fx = build_fixture("call-svc", false);
+    let (code, out) = run_unit(&fx, "spira-call.service", &[], &[]);
+    assert_past_resolution("spira-call.service", &out);
     // Positive proof, not just absence of the refusal: CHECK7 actually reached
-    // `builder`'s real fayth and read ITS OWN SPIRA_READY_CACHE-free count
-    // (sp-hh599: before this bead, this line would instead be "no fayth in the chamber —
-    // skipped" for every single fayth, every single pass).
-    assert!(out.contains("CHECK7 builder:"), "summon-only never reached CHECK7 builder at all:\n{out}");
-    assert!(!out.contains("no fayth in the chamber"), "builder.fayth genuinely exists in the real chamber:\n{out}");
-    let _ = code; // summon-only's own rc is incidental to this assertion
+    // `builder`'s real rune and read ITS OWN SPIRA_READY_CACHE-free count
+    // (sp-hh599: before this bead, this line would instead be "no rune in the runes —
+    // skipped" for every single rune, every single pass).
+    assert!(out.contains("CHECK7 builder:"), "call-only never reached CHECK7 builder at all:\n{out}");
+    assert!(!out.contains("no rune in the runes"), "builder.rune genuinely exists in the real runes:\n{out}");
+    let _ = code; // call-only's own rc is incidental to this assertion
 }
 
 #[test]
@@ -441,30 +441,30 @@ fn spira_watch_at_service_gets_past_config_resolution_with_no_spira_home_set() {
     assert_past_resolution("spira-watch@.service", &out);
 }
 
-/// This bead's own named repro, directly: `sentinel --summon builder 1` under
-/// `spira-summon.service`'s rendered environment, against a fixture whose `bd` answers one
-/// ready bead for `builder`'s real fayth — reaches the summon step (attempts to resolve
-/// `aeon`), rather than skipping the fayth as absent. `aeon` is staged too, specifically so
-/// the attempt clears that hurdle and reaches the actual summon call — the real
+/// This bead's own named repro, directly: `sentinel --call builder 1` under
+/// `spira-call.service`'s rendered environment, against a fixture whose `bd` answers one
+/// ready bead for `builder`'s real rune — reaches the call step (attempts to resolve
+/// `dwarf`), rather than skipping the rune as absent. `dwarf` is staged too, specifically so
+/// the attempt clears that hurdle and reaches the actual call call — the real
 /// `systemd-run` is stubbed, never invoked for real (this bead's own part 3: "stub the
 /// actual systemd-run").
 #[test]
-fn sentinel_summon_cmd_reaches_the_summon_step_against_a_fixture_with_a_ready_bead() {
-    let fx = build_fixture("summon-cmd", true);
+fn sentinel_call_cmd_reaches_the_call_step_against_a_fixture_with_a_ready_bead() {
+    let fx = build_fixture("call-cmd", true);
     let bin_dir = fx.root.join("bin");
-    let (code, out) = run_unit(&fx, "spira-summon.service", &["sentinel", "--summon", "builder", "1"], &[]);
-    assert_past_resolution("spira-summon.service (--summon builder 1)", &out);
-    assert!(!out.contains("no fayth in the chamber"), "{out}");
-    // Reached the summon step: either it actually summoned (systemd-run stub invoked —
+    let (code, out) = run_unit(&fx, "spira-call.service", &["sentinel", "--call", "builder", "1"], &[]);
+    assert_past_resolution("spira-call.service (--call builder 1)", &out);
+    assert!(!out.contains("no rune in the runes"), "{out}");
+    // Reached the call step: either it actually called (systemd-run stub invoked —
     // the log this fixture's stub writes is non-empty) or it logged the one OTHER reason
-    // a real pass would still not summon (concurrency, pool) — anything but the old
-    // "no fayth" short-circuit. The aeon stub above guarantees `aeon` resolves, so the
-    // "aeon not found" refusal this crate's own unit tests exercise separately cannot fire
+    // a real pass would still not call (concurrency, pool) — anything but the old
+    // "no rune" short-circuit. The dwarf stub above guarantees `dwarf` resolves, so the
+    // "dwarf not found" refusal this crate's own unit tests exercise separately cannot fire
     // here.
     let invoked_systemd_run = std::fs::read_to_string(&fx.systemd_run_log).unwrap_or_default();
     assert!(
-        out.contains("CHECK7 builder:") && (out.contains("summoning") || !invoked_systemd_run.trim().is_empty()),
-        "summon_cmd did not visibly reach its own summon decision for builder:\n{out}\nsystemd-run log: {invoked_systemd_run:?}"
+        out.contains("CHECK7 builder:") && (out.contains("calling") || !invoked_systemd_run.trim().is_empty()),
+        "call_cmd did not visibly reach its own call decision for builder:\n{out}\nsystemd-run log: {invoked_systemd_run:?}"
     );
     let _ = (code, bin_dir);
 }
@@ -500,16 +500,16 @@ fn spira_landing_pass_service_already_carries_spira_home_explicitly_and_is_never
 // bare config reference resolved empty.
 // =========================================================================================
 
-/// Every REAL `.fayth` basename under this checkout's own chamber — never a fixture list
-/// that could drift from the real one, since the whole point is proving the real chamber's
+/// Every REAL `.rune` basename under this checkout's own runes — never a fixture list
+/// that could drift from the real one, since the whole point is proving the real runes's
 /// own personas behave correctly under the real rendered unit env.
-fn real_chamber_fayths() -> Vec<String> {
-    let mut names: Vec<String> = std::fs::read_dir(workspace_root().join("spira/chamber"))
-        .expect("read the real chamber")
+fn real_runes_runes() -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(workspace_root().join("spira/runes"))
+        .expect("read the real runes")
         .filter_map(|e| e.ok())
         .filter_map(|e| {
             let p = e.path();
-            (p.extension().and_then(|x| x.to_str()) == Some("fayth"))
+            (p.extension().and_then(|x| x.to_str()) == Some("rune"))
                 .then(|| p.file_stem().and_then(|s| s.to_str()).map(str::to_string))
                 .flatten()
         })
@@ -518,8 +518,8 @@ fn real_chamber_fayths() -> Vec<String> {
     names
 }
 
-/// sp-xsnid's own repro, generalized: `spira-claim fayth-ready <fayth>` under
-/// `spira-summon.service`'s rendered environment (no `SPIRA_HOME`, no label exported —
+/// sp-xsnid's own repro, generalized: `spira-claim rune-ready <rune>` under
+/// `spira-call.service`'s rendered environment (no `SPIRA_HOME`, no label exported —
 /// exactly `spira-sentinel-prod.service`'s own shape) must answer EXACTLY the count a
 /// fully resolved config would — [`expected_fixture_count`], computed from each real
 /// persona's OWN known label variable (`builder`→`SPIRA_PLAN_LABEL`, `ops`→
@@ -527,21 +527,21 @@ fn real_chamber_fayths() -> Vec<String> {
 /// label-aware store — never the bug's own symptom, every persona reading the SAME,
 /// WRONG, whole-queue count.
 #[test]
-fn every_real_fayth_ready_count_matches_the_fully_resolved_config_under_the_rendered_unit_env() {
+fn every_real_rune_ready_count_matches_the_fully_resolved_config_under_the_rendered_unit_env() {
     let fx = build_fixture_with_bd("predicate-parity", false, FIXTURE_BD_SCRIPT);
     let mut seen_distinct_values = std::collections::HashSet::new();
-    for fayth in real_chamber_fayths() {
-        let (code, out) = run_unit(&fx, "spira-summon.service", &["spira-claim", "fayth-ready", &fayth], &[]);
-        assert_past_resolution(&format!("fayth-ready {fayth}"), &out);
-        let want = expected_fixture_count(&fayth);
+    for rune in real_runes_runes() {
+        let (code, out) = run_unit(&fx, "spira-call.service", &["spira-claim", "rune-ready", &rune], &[]);
+        assert_past_resolution(&format!("rune-ready {rune}"), &out);
+        let want = expected_fixture_count(&rune);
         assert_eq!(
             (code, out.as_str()),
             (0, want.to_string().as_str()),
-            "{fayth}: rc/count must match the fully resolved config exactly, not widen to the whole ready queue"
+            "{rune}: rc/count must match the fully resolved config exactly, not widen to the whole ready queue"
         );
         seen_distinct_values.insert(want);
     }
-    // The bug this guards made EVERY fayth read the SAME number (the whole queue). A
+    // The bug this guards made EVERY rune read the SAME number (the whole queue). A
     // fixture where the expected counts are not all identical is what makes the equality
     // assertions above actually discriminate that from "coincidentally still correct".
     assert!(seen_distinct_values.len() > 1, "the fixture must give distinct expected counts, or a widen-to-everything bug would pass unnoticed");
@@ -549,11 +549,11 @@ fn every_real_fayth_ready_count_matches_the_fully_resolved_config_under_the_rend
 
 /// [`build_fixture_with_bd`], but `spira/` is a REAL directory holding a symlink to every
 /// real top-level entry (never a single symlink to the whole tree, which would make
-/// `chamber/` itself a symlink — this checkout's own real chamber, which this test must
-/// never write into) and `chamber/` is itself a real directory of symlinks to every real
-/// `.fayth`/`.md` file PLUS one PLANTED extra, so the planted-refusal test below needs no
-/// real chamber mutation.
-fn build_fixture_with_planted_fayth(tag: &str, planted_name: &str, planted_body: &str) -> Fixture {
+/// `runes/` itself a symlink — this checkout's own real runes, which this test must
+/// never write into) and `runes/` is itself a real directory of symlinks to every real
+/// `.rune`/`.md` file PLUS one PLANTED extra, so the planted-refusal test below needs no
+/// real runes mutation.
+fn build_fixture_with_planted_rune(tag: &str, planted_name: &str, planted_body: &str) -> Fixture {
     let fx = build_fixture_with_bd(tag, false, FIXTURE_BD_SCRIPT);
     let real_spira = workspace_root().join("spira");
     let spira_link = fx.root.join("spira");
@@ -561,37 +561,37 @@ fn build_fixture_with_planted_fayth(tag: &str, planted_name: &str, planted_body:
     std::fs::create_dir_all(&spira_link).unwrap();
     for entry in std::fs::read_dir(&real_spira).unwrap().filter_map(|e| e.ok()) {
         let name = entry.file_name();
-        if name.to_str() == Some("chamber") {
+        if name.to_str() == Some("runes") {
             continue;
         }
         std::os::unix::fs::symlink(entry.path(), spira_link.join(&name)).unwrap();
     }
-    let chamber_link = spira_link.join("chamber");
-    std::fs::create_dir_all(&chamber_link).unwrap();
-    for entry in std::fs::read_dir(real_spira.join("chamber")).unwrap().filter_map(|e| e.ok()) {
-        std::os::unix::fs::symlink(entry.path(), chamber_link.join(entry.file_name())).unwrap();
+    let runes_link = spira_link.join("runes");
+    std::fs::create_dir_all(&runes_link).unwrap();
+    for entry in std::fs::read_dir(real_spira.join("runes")).unwrap().filter_map(|e| e.ok()) {
+        std::os::unix::fs::symlink(entry.path(), runes_link.join(entry.file_name())).unwrap();
     }
-    std::fs::write(chamber_link.join(format!("{planted_name}.fayth")), planted_body).unwrap();
+    std::fs::write(runes_link.join(format!("{planted_name}.rune")), planted_body).unwrap();
     fx
 }
 
-/// The other half of sp-xsnid's part 3: a PLANTED fayth whose `FAYTH_LABELS` references a
+/// The other half of sp-xsnid's part 3: a PLANTED rune whose `RUNE_LABELS` references a
 /// config variable that has no `conf.d` default AT ALL (so "fully resolved config" still
 /// leaves it unresolved — a genuine config gap, not this bead's own narrow-overlay bug)
 /// must REFUSE under the rendered unit env, never answer a count at all — rc 3, the one
-/// `sentinel::summon::fayth_ready` maps to a LOUD `CLAIM-ERROR`, never rc 2 ("no fayth")
+/// `sentinel::call::rune_ready` maps to a LOUD `CLAIM-ERROR`, never rc 2 ("no rune")
 /// and never a silent widen.
 #[test]
 fn a_planted_unresolvable_predicate_refuses_under_the_rendered_unit_env() {
-    let fx = build_fixture_with_planted_fayth(
+    let fx = build_fixture_with_planted_rune(
         "planted-refusal",
         "spxsnidplanted",
-        "FAYTH_NAME=spxsnidplanted\nFAYTH_LABELS=\"$SPIRA_SPXSNID_PLANTED_LABEL\"\nFAYTH_EXCLUDE_LABELS=\"spira-poison\"\n",
+        "RUNE_NAME=spxsnidplanted\nRUNE_LABELS=\"$SPIRA_SPXSNID_PLANTED_LABEL\"\nRUNE_EXCLUDE_LABELS=\"spira-poison\"\n",
     );
-    let (code, out) = run_unit(&fx, "spira-summon.service", &["spira-claim", "fayth-ready", "spxsnidplanted"], &[]);
-    assert_eq!(code, 3, "a planted unresolvable reference must refuse (rc 3), not widen or read as no-fayth:\n{out}");
+    let (code, out) = run_unit(&fx, "spira-call.service", &["spira-claim", "rune-ready", "spxsnidplanted"], &[]);
+    assert_eq!(code, 3, "a planted unresolvable reference must refuse (rc 3), not widen or read as no-rune:\n{out}");
     assert!(out.contains("SPIRA_SPXSNID_PLANTED_LABEL"), "the refusal must name the exact unresolved reference:\n{out}");
-    assert!(!out.contains("no fayth in the chamber"), "{out}");
+    assert!(!out.contains("no rune in the runes"), "{out}");
 }
 
 // =========================================================================================

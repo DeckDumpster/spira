@@ -5,7 +5,7 @@
 #
 #   ./test-attempts-sql.sh
 #
-# MERGED (sp-eq8a4.2.4, duplicate clusters D1/D5/D6, UC-aeon-execution-19): test-attempts.sh's
+# MERGED (sp-eq8a4.2.4, duplicate clusters D1/D5/D6, UC-dwarf-execution-19): test-attempts.sh's
 # dolt fixture (b1..b8, the _attempts_sql_query builder), test-check4-events.sh (events-trail
 # counting, no counter labels), test-check4-batch.sh (dispatchable_open's shape and
 # check4_bulk_data agreeing with the per-bead functions), test-timeout.sh's
@@ -30,7 +30,7 @@
 #
 # tier: T2
 # defect: sp-lzt sp-f1m7f sp-6bop sp-qd2ul
-# covers: spira/lib.sh UC-aeon-execution-19
+# covers: spira/lib.sh UC-dwarf-execution-19
 # timeout: 90
 set -uo pipefail
 CLAIM_SEQ=0   # one minute per seeded event, past the double-claim window

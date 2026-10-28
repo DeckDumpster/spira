@@ -3,17 +3,17 @@
 # test-czar-shadow.sh — czar shadow mode: per-class stage key and fence
 #
 # THE DEFECT THIS GUARDS. Without a shadow/act stage the czar is all-or-nothing:
-# enabling a class requires adding it to SPIRA_FAYTHS, at which point it immediately
+# enabling a class requires adding it to SPIRA_RUNES, at which point it immediately
 # acts on every trigger it sees. A shadow stage lets the operator watch what the czar
 # WOULD do without it touching the queue (law-hand-over-in-four-stages, stage 2).
 #
 # WHAT THIS SUITE CHECKS.
 #   1. czar-fence.sh exits 1 (shadow) when SPIRA_CZAR_STAGE_<CLASS> is unset — default.
 #   2. czar-fence.sh exits 0 (act) when set to act.
-#   3. queue.sh eject is refused when SPIRA_FAYTH=czar and SPIRA_CZAR_CLASS is set and the
+#   3. queue.sh eject is refused when SPIRA_RUNE=czar and SPIRA_CZAR_CLASS is set and the
 #      class is in shadow; act mode and non-czar callers are unaffected.
 #   4. All 7 class names map to the correct env var suffix (hyphens → underscores).
-#   5. czar.fayth FAYTH_TOOLS includes czar-fence.sh.
+#   5. czar.rune RUNE_TOOLS includes czar-fence.sh.
 #   6. czar.md brief mentions CZAR-WOULD note format and czar-fence.sh.
 #   7. All 7 SPIRA_CZAR_STAGE_* keys are in the SPIRA_CONF_KEYS allowlist.
 #
@@ -22,13 +22,13 @@
 # act-mode acceptance. A fence that silently allows both modes is indistinguishable
 # from a fence that is absent.
 #
-# The 11 static conf/fayth/brief grep rows this suite used to carry (czar.fayth names
+# The 11 static conf/rune/brief grep rows this suite used to carry (czar.rune names
 # czar-fence.sh, czar.md names CZAR-WOULD/shadow/czar-fence.sh, and all 7 stage keys are in
 # conf.sh's allowlist) moved to test-czar-lint.sh (T0) — they read text, not behaviour, and
 # gap 11 of docs/test-plan/safety-fences.md is the citation for the move.
 #
 # tier: T1
-# covers: spira/czar-fence.sh queue/src/* spira/lib.sh aeon/src/* watchtower/src/* UC-safety-fences-31
+# covers: spira/czar-fence.sh queue/src/* spira/lib.sh dwarf/src/* watchtower/src/* UC-safety-fences-31
 # hermetic-ok: no database, no systemd; queue.sh fence fires before any db access
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -71,7 +71,7 @@ TQ="$(mktemp -d)"; mkdir -p "$TQ/run"
 
 # SEEN RED: czar in shadow — queue.sh eject refused with czar-fence message.
 tl_config SPIRA_RUN="$TQ/run" SPIRA_DB="$TQ/nodb"
-out="$(SPIRA_FAYTH=czar SPIRA_CZAR_CLASS=deadlock \
+out="$(SPIRA_RUNE=czar SPIRA_CZAR_CLASS=deadlock \
        SPIRA_CONF=/nonexistent \
        SPIRA_HOME="$HERE" queue eject sp-fake 2>&1 || true)"
 [[ "$out" == *"czar-fence"* && "$out" == *"shadow"* ]] \
@@ -86,7 +86,7 @@ out="$(SPIRA_FAYTH=czar SPIRA_CZAR_CLASS=deadlock \
 # queue's own config resolution never forwards to this child; the plain env must carry it
 # too (one source of config, per Ryan 2026-10-05).
 tl_config SPIRA_RUN="$TQ/run" SPIRA_DB="$TQ/nodb" SPIRA_CZAR_STAGE_DEADLOCK=act
-out2="$(SPIRA_FAYTH=czar SPIRA_CZAR_CLASS=deadlock SPIRA_CZAR_STAGE_DEADLOCK=act \
+out2="$(SPIRA_RUNE=czar SPIRA_CZAR_CLASS=deadlock SPIRA_CZAR_STAGE_DEADLOCK=act \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$HERE" queue eject sp-fake 2>&1 || true)"
 [[ "$out2" != *"czar-fence"*shadow* ]] \

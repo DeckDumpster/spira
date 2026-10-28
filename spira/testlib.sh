@@ -73,7 +73,7 @@
 # instinct holds: a helper that can fail for a reason OTHER than the assertion itself
 # (a missing binary, a broken pipe) must not be indistinguishable from the assertion
 # failing. [[ ]] has no such failure mode.
-# Every suite's binaries find lib.sh through SPIRA_HOME first. Without it, slay/sending/
+# Every suite's binaries find lib.sh through SPIRA_HOME first. Without it, slay/hel/
 # spira-world walk up from their own resolved exe — which the gate builds outside the tree
 # (a tmpfs target), so the walk finds nothing and every destroy/slay answers 2. A suite that
 # sets its own SPIRA_HOME keeps it; production units always set it (sp-wiqcq is the binaries'
@@ -100,22 +100,22 @@ _TL_LAST_US="${EPOCHREALTIME/./}"
 _TL_SUITE="$(basename "${BASH_SOURCE[1]:-${0:-suite}}")"
 _TL_JSONL="${SPIRA_TESTLIB_JSONL:-}"
 
-# NO SUMMON JITTER IN SUITES (sp-1cdgq). aeon sleeps a random 0..SPIRA_SUMMON_JITTER seconds
-# (default 20) before its session starts, so a batch summoned together does not start in
+# NO CALL JITTER IN SUITES (sp-1cdgq). dwarf sleeps a random 0..SPIRA_CALL_JITTER seconds
+# (default 20) before its session starts, so a batch called together does not start in
 # lockstep. A suite driving the real binary paid that per launch, and one whose deadline was
 # shorter than the jitter flipped about half the time (test-thrash-teardown). A suite that tests
 # the jitter itself sets its own value after sourcing this.
-export SPIRA_SUMMON_JITTER="${SPIRA_SUMMON_JITTER:-0}"
+export SPIRA_CALL_JITTER="${SPIRA_CALL_JITTER:-0}"
 # THE SUITE'S PATH IS THE LAUNCHER'S (sp-isom7). testenv stages the tree under test as a
 # release and sets every suite's PATH outright from it ($SPIRA_RELEASE/bin, then
 # $SPIRA_RELEASE/spira), so a suite resolves tools by bare name exactly as production does.
 # This library never touches PATH — which is also why `suite-select` below (wave 4.36,
 # sp-bobsp: suite-covers.sh retired onto `suite-select header ...`) resolves by bare name
 # rather than a path built from this file's own location.
-# THE STAGED RELEASE CARRIES model-bin/ (sp-jq4wq). An enforced aeon refuses to start the
+# THE STAGED RELEASE CARRIES model-bin/ (sp-jq4wq). An enforced dwarf refuses to start the
 # model in a release with no executable model-bin/work (sp-zf4q3). testenv's stage script is
 # compiled into the INSTALLED testenv, and one older than sp-zf4q3 stages no model-bin/, so
-# every aeon session in a suite was refused. The tree's own spira-config makes it with the
+# every dwarf session in a suite was refused. The tree's own spira-config makes it with the
 # release builder's helper, idempotent and safe for a batch's suites to race; only a testenv
 # staged release (/tmp/spira-release-*) is ever touched, and only when model-bin/ is absent.
 case "${SPIRA_RELEASE:-}" in
@@ -758,20 +758,20 @@ tl_summary() {
     [ "$_TL_FAIL" -eq 0 ]
 }
 
-# aeon_fixture_agent <shim> — point SPIRA_AGENT at <shim> through a wrapper that gives the
+# dwarf_fixture_agent <shim> — point SPIRA_AGENT at <shim> through a wrapper that gives the
 # fixture back the environment it is written against. Since sp-v62vn every model session
-# runs restricted (aeon/src/restrict.rs: HOME, SPIRA_RUN and a PATH of /usr/bin:/bin plus the
+# runs restricted (dwarf/src/restrict.rs: HOME, SPIRA_RUN and a PATH of /usr/bin:/bin plus the
 # release's model-bin — no TMP, no SPIRA_DB, no bd), so a legacy shim that records its
 # prompt under $TMP and tells its story with `bd close` silently did nothing. The shim is a
 # FIXTURE standing in for the model, not the model: it may reach the suite's bd store,
-# because the lifecycle stand-in (lc_aeon_mirror) reads that close as the session's
+# because the lifecycle stand-in (lc_dwarf_mirror) reads that close as the session's
 # `work submit`. TMP, SPIRA_DB, SPIRA_BD and PATH are captured when this is called — call it
 # once the suite's PATH and database are set. The restricted environment itself is
-# asserted where it is the subject (test-aeon-lifecycle-cutover.sh, aeon's restrict tests).
+# asserted where it is the subject (test-dwarf-lifecycle-cutover.sh, dwarf's restrict tests).
 # Any further variable names after the shim are captured the same way, for a shim that
 # reads more of the suite's world (a wiki path, a groom log).
-aeon_fixture_agent() {
-    local shim="${1:?aeon_fixture_agent needs the shim path}" outer="${1}.fixture-env" k
+dwarf_fixture_agent() {
+    local shim="${1:?dwarf_fixture_agent needs the shim path}" outer="${1}.fixture-env" k
     shift
     {
         printf '#!/usr/bin/env bash\n'
@@ -785,7 +785,7 @@ aeon_fixture_agent() {
     tl_config SPIRA_AGENT="$outer"   # every binary: the one source
 }
 
-# lc_row_state <id> — the STATE the lifecycle machine on PATH (lc_aeon_mirror, for the aeon
+# lc_row_state <id> — the STATE the lifecycle machine on PATH (lc_dwarf_mirror, for the dwarf
 # suites) answers for <id>, "" when it has no row. Since sp-v62vn every model session is
 # restricted, so the teardown's old conversion of a builder's bd close into open +
 # spira-submitted (sp-qsona) never runs: "the session finished its bead" is this row reading
@@ -829,11 +829,11 @@ STUB
     chmod +x "$dir/spira-lc"
 }
 
-# lc_aeon_mirror <dir> — a spira-lc, installed by name into <dir> (put <dir> first on the
-# aeon's PATH), for the legacy aeon suites whose model shim closes its bead in bd. The aeon
+# lc_dwarf_mirror <dir> — a spira-lc, installed by name into <dir> (put <dir> first on the
+# dwarf's PATH), for the legacy dwarf suites whose model shim closes its bead in bd. The dwarf
 # reads a bead's state from its lifecycle row, never bd status (sp-mve9i), and since sp-v62vn
 # (no off mode) it also CLAIMS through the machine: its ready set is `spira-lc list` (through
-# spira-claim fayth-ready --json) and its claim is a Claim event. So the fixture's bd story is
+# spira-claim rune-ready --json) and its claim is a Claim event. So the fixture's bd story is
 # told to it in lifecycle terms, a row per non-epic bd bead:
 #   $SPIRA_RUN/lc-row/<id> ("<STATE> [reason] [tip]"), when the suite wrote one;
 #   else bd closed (the builder's close is its submit) → SUBMITTED;
@@ -846,14 +846,14 @@ STUB
 # `unclaim <id> <actor>` (spira-lc's own rule: a WORKING row is released only by its holder,
 # else exit 1; any other state is already released, 0), and
 # `event bead <id> ... --actor A --kind K`: Claim applies only to a READY/REWORK row (else
-# exit 3, refused — a bead another aeon holds is never taken over) and records the holder
+# exit 3, refused — a bead another dwarf holds is never taken over) and records the holder
 # (and appends "<id> <actor>" to $SPIRA_RUN/lc-claims.log, so a suite can ask who claimed);
 # Release/HolderDead drop that claim; `phase` is accepted, `disposition <id> <status> <note>`
 # is recorded in $SPIRA_RUN/lc-disposition/<id> and shown on the WORKING row until the next Claim; Submit writes lc-row SUBMITTED; any other kind (Renew,
 # Hold, ...) applies without changing the row. Every other verb goes to the real spira-lc
 # further down PATH, exactly as before the stub.
-lc_aeon_mirror() {
-    local dir="${1:?lc_aeon_mirror needs a directory}"
+lc_dwarf_mirror() {
+    local dir="${1:?lc_dwarf_mirror needs a directory}"
     mkdir -p "$dir"
     { printf '#!/usr/bin/env bash\n%s\n' "$_LC_FACTS_BODY"; cat <<'STUB'
 case "${1:-}" in
@@ -1001,7 +1001,7 @@ lc_socket_mirror() {
     mkdir -p "$dir"
     export SPIRA_LC_SOCKET="$dir/lc.sock"
     # round 3 fix (pattern 3/7): SPIRA_LC_SOCKET is a registered key — the plain export
-    # above is for this function's own shell use; a real binary (sending, queue, ...)
+    # above is for this function's own shell use; a real binary (hel, queue, ...)
     # only finds this mock's socket through SPIRA_TOML now, or it falls to the complete
     # fixture's placeholder /run/user/.../spira-lc/sock and reports "did not answer".
     tl_config SPIRA_LC_SOCKET="$SPIRA_LC_SOCKET"

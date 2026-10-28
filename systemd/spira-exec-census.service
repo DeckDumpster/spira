@@ -1,0 +1,23 @@
+[Unit]
+Description=Spira exec-census — harness launches per minute by systemd unit, pushed over OTLP
+Documentation=file://@SPIRA_HOME@/metrics-stack.sh
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=simple
+CPUQuota=10%
+ExecStart=@SPIRA_PROD_ROOT@/bin/exec-census
+Restart=always
+RestartSec=30
+StandardOutput=append:@SPIRA_RUN@/exec-census.log
+StandardError=append:@SPIRA_RUN@/exec-census.log
+
+[X-Spira]
+Plane=observability
+
+[Install]
+WantedBy=default.target

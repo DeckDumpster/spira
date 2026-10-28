@@ -56,13 +56,13 @@ br() {   # br <repo> <branch> <path> — a branch touching exactly one path
 
 # home — the harness's OWN repository, with the signature at the root.
 git init -q -b main "$WS/home"
-sig "$WS/home"; printf 'x\n' > "$WS/home/aeon.sh"
+sig "$WS/home"; printf 'x\n' > "$WS/home/dwarf.sh"
 commit "$WS/home" base
 
 # guest — an ordinary repository that has quietly grown a SECOND copy of the harness in a
 # subdirectory, alongside other files. This is the case the fence exists to catch.
 git init -q -b main "$WS/guest"
-sig "$WS/guest/.tools/spira"; printf 'x\n' > "$WS/guest/.tools/spira/aeon.sh"
+sig "$WS/guest/.tools/spira"; printf 'x\n' > "$WS/guest/.tools/spira/dwarf.sh"
 mkdir -p "$WS/guest/src"; printf 'fn main() {}\n' > "$WS/guest/src/main.rs"
 commit "$WS/guest" base
 
@@ -108,21 +108,21 @@ spira_same_repo "$WS/home" "$WS/guest" \
 # =======================================================================================
 echo
 echo "foreign — refusal:"
-br guest touches-harness .tools/spira/aeon.sh
+br guest touches-harness .tools/spira/dwarf.sh
 out="$("$SKEW" foreign "$WS/guest" main touches-harness 2>&1)"; rc=$?
 is   "a branch changing a vendored harness is refused"           1 "$rc"
-want "the refusal names the offending path"                      ".tools/spira/aeon.sh" "$out"
+want "the refusal names the offending path"                      ".tools/spira/dwarf.sh" "$out"
 want "the refusal says where the work belongs"                   "repo:home" "$out"
 want "the refusal names its own override"                        "SPIRA_ALLOW_FOREIGN_HARNESS" "$out"
 
 # A mixed branch (harness + non-harness files): only the harness path appears.
 git -C "$WS/guest" checkout -q -b touches-both main 2>/dev/null
 mkdir -p "$WS/guest/src"; printf 'changed\n' >> "$WS/guest/src/lib.rs"
-printf 'changed\n' >> "$WS/guest/.tools/spira/aeon.sh"; commit "$WS/guest" both
+printf 'changed\n' >> "$WS/guest/.tools/spira/dwarf.sh"; commit "$WS/guest" both
 git -C "$WS/guest" checkout -q main
 out="$("$SKEW" foreign "$WS/guest" main touches-both 2>/dev/null)"; rc=$?
 is     "a mixed branch is refused"                               1 "$rc"
-want   "it names the harness path"                               ".tools/spira/aeon.sh" "$out"
+want   "it names the harness path"                               ".tools/spira/dwarf.sh" "$out"
 nowant "it does not name the repository's own source file"       "src/lib.rs" "$out"
 
 # =======================================================================================

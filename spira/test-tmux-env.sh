@@ -9,7 +9,7 @@
 # operator's client then silently stops writing a transcript. This suite plants that state on a
 # scratch socket and asserts a pane sees it, BEFORE asserting that the scrub takes it away.
 #
-# defect: sp-51j9b (the cockpit server forked by an archivist aeon on 2026-09-09)
+# defect: sp-51j9b (the cockpit server forked by an archivist dwarf on 2026-09-09)
 # tier: T1
 # covers: cockpit/tmux-env.sh UC-cockpit-observability-47
 set -uo pipefail
@@ -46,7 +46,7 @@ out="$(bash "$TOOL" scrub -L "$SOCK" 2>&1)"; rc=$?
 
 # ---- POSITIVE CONTROL: a pane inherits the marker ---------------------------------------
 # The server is forked by this `new-session`, so it captures the environment set here — the
-# same way rebuild.sh running inside an aeon captured the aeon's.
+# same way rebuild.sh running inside a dwarf captured the dwarf's.
 CLAUDE_CODE_CHILD_SESSION=1 \
 CLAUDE_CODE_SESSION_ID=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee \
 CLAUDECODE=1 \

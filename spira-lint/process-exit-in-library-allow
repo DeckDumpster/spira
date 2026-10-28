@@ -3,8 +3,8 @@
 #
 # SHRINK-ONLY. A line leaves when its file returns a Result to main instead; nothing is
 # ever added for a NEW exit.
-aeon/src/conf.rs
-aeon/src/main.rs
+dwarf/src/conf.rs
+dwarf/src/main.rs
 archivist/src/main.rs
 census/src/main.rs
 cockpit-collect/src/probes/mod.rs

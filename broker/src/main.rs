@@ -10,7 +10,7 @@ use spira_otel::exit::ExitCode;
 /// `SPIRA_*` values a bash process this binary spawns must never see pre-set — the same
 /// per-copy-fact / host-policy keys `cockpit-collect`'s `bootstrap_config` names
 /// (wave4-decomposition.md row (b)).
-const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "SPIRA_REPO_MAP", "SPIRA_FAYTHS", "SPIRA_MAX_AEONS"];
+const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "SPIRA_REPO_MAP", "SPIRA_RUNES", "SPIRA_MAX_DWARVES"];
 
 /// Wave 4.8 ("retire conf re-import seams in Rust"): every `std::env::var(...)` read across
 /// this crate's submodules (read.rs, repo_map.rs, token.rs) used to
@@ -113,7 +113,7 @@ mod tests {
         let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira");
         let _g = testkit::env(&[
             ("SPIRA_BD", None),
-            ("SPIRA_MAX_AEONS", None),
+            ("SPIRA_MAX_DWARVES", None),
             ("SPIRA_TOML", toml.to_str()),
             ("SPIRA_HOME", home.to_str()),
         ]);
@@ -121,10 +121,10 @@ mod tests {
         let result = merge_resolved_env();
 
         let got_bd = std::env::var("SPIRA_BD").ok();
-        let got_max_aeons = std::env::var_os("SPIRA_MAX_AEONS");
+        let got_max_dwarves = std::env::var_os("SPIRA_MAX_DWARVES");
 
         result.expect("merge_resolved_env resolves given a complete config file and a real registry");
         assert_eq!(got_bd, Some("bd-fixture".to_string()), "a declared config value must reach the real environment");
-        assert_eq!(got_max_aeons, None, "SPIRA_MAX_AEONS must never leak into this process's own environment");
+        assert_eq!(got_max_dwarves, None, "SPIRA_MAX_DWARVES must never leak into this process's own environment");
     }
 }

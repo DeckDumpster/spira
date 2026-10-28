@@ -1,7 +1,0 @@
-TYPE=u32
-GROUP=summon
-DOC=SPIRA_SUMMON_LOCK_WAIT — Seconds a summon waits for the summon lock before giving up this pass.
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # Registered default (sp-kuwp6s, per Ryan 2026-10-07): Seconds a summon waits for the summon lock before giving up this pass.
-    : "${SPIRA_SUMMON_LOCK_WAIT:=30}"
-SPIRA_CONF_DEFAULT_EOF

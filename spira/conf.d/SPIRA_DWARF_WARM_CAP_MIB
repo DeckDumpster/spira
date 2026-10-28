@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=dwarf
+DOC=MiB one dwarf warm slot may hold. Over it, the next session to take the slot starts it empty, and a running session has its incremental trees (then everything) removed. Sized so slots times cap fits the warm tmpfs.
+SCHEMA=MiB one dwarf warm slot may hold; enforced at session start and while the session runs (unset: 6144).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_DWARF_WARM_CAP_MIB:=6144}"
+SPIRA_CONF_DEFAULT_EOF

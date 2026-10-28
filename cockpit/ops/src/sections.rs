@@ -89,7 +89,7 @@ mod tests {
         v.drift = vec!["sp-d".into()];
         v.epics = vec![crate::lcview::EpicRow { repo: "r".into(), epic: "e".into(), landed: 1, ..Default::default() }];
         v.now_items = vec![item()];
-        v.inflight = Inflight { seg: "\u{2699} 1 aeon".into(), rows: vec!["aeon|sp-1|guardian|900||".into()] };
+        v.inflight = Inflight { seg: "\u{2699} 1 dwarf".into(), rows: vec!["dwarf|sp-1|warden|900||".into()] };
         v.machine = vec![crate::lcview::SmState { name: "READY".into(), ..Default::default() }];
         v.blocked = vec![item()];
         v.refused = vec![SmRefusal { what: "w".into(), n: 1, ..Default::default() }];
@@ -160,7 +160,7 @@ mod tests {
     fn work_in_flight_is_drawn_on_both_surfaces_and_unread_is_not_idle() {
         let v = full_view(true);
         let lines: Vec<String> = layout(&v, &Ui::default(), 200, 10_000).lines.iter().map(|l| crate::lctui::strip_for_test(l)).collect();
-        assert!(lines.iter().any(|l| l.contains("IN FLIGHT") && l.contains("1 aeon")), "{lines:#?}");
+        assert!(lines.iter().any(|l| l.contains("IN FLIGHT") && l.contains("1 dwarf")), "{lines:#?}");
         assert!(render_fragment(&v, None).contains("sp-1"));
         let unread = View { now: 1000, ..Default::default() };
         let lines: Vec<String> = layout(&unread, &Ui::default(), 200, 10_000).lines.iter().map(|l| crate::lctui::strip_for_test(l)).collect();

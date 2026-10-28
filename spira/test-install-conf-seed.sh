@@ -16,7 +16,7 @@
 #
 # seed_prod_instance itself calls the real spira-config binary directly (get/set/convert)
 # rather than sourcing conf.sh's bash helpers, so this suite only needs a minimal harness
-# directory (repo-map.example, chamber/) for those calls to resolve against.
+# directory (repo-map.example, runes/) for those calls to resolve against.
 #
 #   ./test-install-conf-seed.sh
 #
@@ -116,7 +116,7 @@ INST3="test$$-b"
 cat > "$TOML3" <<'EOF'
 [spira]
 id_prefix = "sp"
-max_aeons = 4
+max_dwarves = 4
 EOF
 
 # FAIL-FIRST: the fixture toml has no instance key yet.
@@ -127,7 +127,7 @@ else
 fi
 
 seed "$CONF3" "$TOML3" "$INST3" >/dev/null
-want "preserved: sibling key survives" "max_aeons = 4" "$(cat "$TOML3")"
+want "preserved: sibling key survives" "max_dwarves = 4" "$(cat "$TOML3")"
 got3="$(spira-config get spira.instance "$TOML3" 2>/dev/null)"
 is "preserved: instance recorded alongside it" "$INST3" "$got3"
 

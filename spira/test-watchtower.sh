@@ -32,7 +32,7 @@
 #
 # defect: sp-86q8
 # tier: T1
-# covers: landing-pass/src/* cockpit-collect/src/* spira/lib.sh aeon/src/* watchtower/src/* UC-ops-detection-remediation-26 UC-ops-detection-remediation-27
+# covers: landing-pass/src/* cockpit-collect/src/* spira/lib.sh dwarf/src/* watchtower/src/* UC-ops-detection-remediation-26 UC-ops-detection-remediation-27
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -191,14 +191,14 @@ echo "the snapshot still renders as a whole:"
 # `set -u` failure would truncate silently — leaving a `sed` that matches nothing and a
 # handful of assertions that never ran. Plants both a landed record and a lapse record so
 # this one snapshot exercises every section — D12: this used to be two near-identical loops,
-# here and in test-watchtower-lapse.sh, differing only in 'The graph' vs 'Lapsed aeons'.
+# here and in test-watchtower-lapse.sh, differing only in 'The graph' vs 'Lapsed dwarves'.
 fresh
 lc_bead LANDED sp-whole cafe5 "$(( NOW - 600 ))"
 if [ "$(type -t write_lapse_record 2>/dev/null)" = function ]; then
     SPIRA_RUN="$TMP/run" write_lapse_record sp-whole-lapsed 600 "writing output file" cafe5 >/dev/null
 fi
 snap="$(wt)"
-for section in 'The far end' 'The Sending' 'The workers' 'The graph' 'Lapsed aeons' 'The menu' 'Can this snapshot be believed'; do
+for section in 'The far end' 'The Hel' 'The workers' 'The graph' 'Lapsed dwarves' 'The menu' 'Can this snapshot be believed'; do
     want "the snapshot still carries: $section" "$section" "$snap"
 done
 want "and still warns that ? is not a zero" "never treat it as a zero" "$snap"
@@ -293,7 +293,7 @@ echo "a draining world still files the sweep:"
 # ======================================================================================
 # Unlike a halt, a drain leaves the loop and landing running, so the sweep is needed.
 fresh
-printf '2026-09-08 20:02:00 UTC\nsummons gated.\n' > "$TMP/run/world.draining"
+printf '2026-09-08 20:02:00 UTC\ncalls gated.\n' > "$TMP/run/world.draining"
 wt_file
 is "a draining world still writes the prompt file" "1" \
    "$([ -f "$TMP/ops-prompt" ] && echo 1 || echo 0)"
@@ -322,13 +322,13 @@ wt_file_multi() {   # wt_file_multi [VAR=val ...] -> appends incident subjects t
         SPIRA_INCIDENT_SH="$mock" \
         "$@" watchtower 2>/dev/null
 }
-# wt_sinexempt_multi: like wt_file_multi but captures SPIRA_SIN_EXEMPT (UC-ops-detection-
-# remediation-07) alongside the subject, one "<subject>|<SPIRA_SIN_EXEMPT>" line per
-# incident.sh call — proving the DRAINING escalation cannot itself become a Sin, not just
-# that incident.sh's own exemption plumbing works (that half is test-sin-exempt.sh's job).
+# wt_sinexempt_multi: like wt_file_multi but captures SPIRA_FENRIR_EXEMPT (UC-ops-detection-
+# remediation-07) alongside the subject, one "<subject>|<SPIRA_FENRIR_EXEMPT>" line per
+# incident.sh call — proving the DRAINING escalation cannot itself become a Fenrir, not just
+# that incident.sh's own exemption plumbing works (that half is test-fenrir-exempt.sh's job).
 wt_sinexempt_multi() {   # wt_sinexempt_multi [VAR=val ...] -> appends to $TMP/inc-sinexempt
     local mock="$TMP/mock-inc-sinexempt.sh"
-    printf '#!/usr/bin/env bash\nprintf "%%s|%%s\n" "$2" "${SPIRA_SIN_EXEMPT:-}" >> "%s"\ncat > /dev/null\n' \
+    printf '#!/usr/bin/env bash\nprintf "%%s|%%s\n" "$2" "${SPIRA_FENRIR_EXEMPT:-}" >> "%s"\ncat > /dev/null\n' \
         "$TMP/inc-sinexempt" > "$mock"
     chmod +x "$mock"
     tl_config SPIRA_RUN="$TMP/run"
@@ -341,38 +341,38 @@ wt_sinexempt_multi() {   # wt_sinexempt_multi [VAR=val ...] -> appends to $TMP/i
         "$@" watchtower 2>/dev/null
 }
 # The threshold logic is escalate::tests; what only this seam proves is that the compiled
-# binary carries SPIRA_SIN_EXEMPT through to incident.sh, so the escalation cannot itself
-# become a Sin.
+# binary carries SPIRA_FENRIR_EXEMPT through to incident.sh, so the escalation cannot itself
+# become a Fenrir.
 fresh
-printf '2026-09-08 20:02:00 UTC\nsummons gated.\n' > "$TMP/run/world.draining"
+printf '2026-09-08 20:02:00 UTC\ncalls gated.\n' > "$TMP/run/world.draining"
 touch -d "@$(( NOW - 1200 ))" "$TMP/run/world.draining" 2>/dev/null || true
 rm -f "$TMP/inc-sinexempt" "$TMP/ops-prompt"
 wt_sinexempt_multi SPIRA_DRAIN_WARN_MINS=15
-want "the drain escalation sets SPIRA_SIN_EXEMPT=1" "DRAINING: world.sh summons gated|1" \
+want "the drain escalation sets SPIRA_FENRIR_EXEMPT=1" "DRAINING: world.sh calls gated|1" \
      "$(cat "$TMP/inc-sinexempt" 2>/dev/null || echo "")"
 
 # ======================================================================================
 echo
-echo "idle-while-ready escalation (sp-o4trx): a fayth with ready work whose last N"
-echo "summons ALL ledgered idle is a claim-error masquerading as an empty queue:"
+echo "idle-while-ready escalation (sp-o4trx): a rune with ready work whose last N"
+echo "calls ALL ledgered idle is a claim-error masquerading as an empty queue:"
 # ======================================================================================
-# A FIXTURE CHAMBER, NOT THE REAL ONE. bulk_ready_by_fayth reads FAYTH_LABELS from
-# $SPIRA_HOME/chamber/<fayth>.fayth; a minimal
-# fixture pins FAYTH_LABELS to a literal (never the shipped default) and avoids this
-# suite depending on the real builder.fayth's own label composition.
-IWR_HOME="$TMP/iwr-home"; mkdir -p "$IWR_HOME/chamber"
-# SPIRA_CHAMBER EXPLICITLY: the complete fixture declares a fixed chamber path of its own
+# A FIXTURE RUNES, NOT THE REAL ONE. bulk_ready_by_rune reads RUNE_LABELS from
+# $SPIRA_HOME/runes/<rune>.rune; a minimal
+# fixture pins RUNE_LABELS to a literal (never the shipped default) and avoids this
+# suite depending on the real builder.rune's own label composition.
+IWR_HOME="$TMP/iwr-home"; mkdir -p "$IWR_HOME/runes"
+# SPIRA_RUNES_DIR EXPLICITLY: the complete fixture declares a fixed runes path of its own
 # now, no longer derived from SPIRA_HOME when unset.
-tl_config SPIRA_FAYTHS=builder SPIRA_CHAMBER="$IWR_HOME/chamber"
-cat > "$IWR_HOME/chamber/builder.fayth" <<'FAYTH'
-FAYTH_NAME=builder
-FAYTH_WORKING_EXITS="SUBMITTED ask park hold"
-FAYTH_LABELS=plan
-FAYTH_EXCLUDE_LABELS=""
-FAYTH
-# READY WORK IS spira-claim's ANSWER (sp-860zj: bulk-ready-by-fayth asks the lifecycle for READY
+tl_config SPIRA_RUNES=builder SPIRA_RUNES_DIR="$IWR_HOME/runes"
+cat > "$IWR_HOME/runes/builder.rune" <<'RUNE'
+RUNE_NAME=builder
+RUNE_WORKING_EXITS="SUBMITTED ask park hold"
+RUNE_LABELS=plan
+RUNE_EXCLUDE_LABELS=""
+RUNE
+# READY WORK IS spira-claim's ANSWER (sp-860zj: bulk-ready-by-rune asks the lifecycle for READY
 # rows and bd for their labels; the old SPIRA_READY_SNAPSHOT is read by nothing). Readiness itself
-# is spira-claim's subject, tested there; here a stub first on PATH answers bulk-ready-by-fayth
+# is spira-claim's subject, tested there; here a stub first on PATH answers bulk-ready-by-rune
 # from a fixture file and hands every other verb to the real spira-claim. The watchtower's probe
 # sources $SPIRA_HOME/lib.sh, so the fixture home gets the real one.
 printf '. "%s/lib.sh"\n' "$HERE" > "$IWR_HOME/lib.sh"
@@ -381,7 +381,7 @@ IWR_BIN="$TMP/iwr-bin"; mkdir -p "$IWR_BIN"
 _iwr_real_claim="$(command -v spira-claim)"
 cat > "$IWR_BIN/spira-claim" <<STUB
 #!/usr/bin/env bash
-[ "\${1:-}" = bulk-ready-by-fayth ] && { cat "\$IWR_READY" 2>/dev/null; exit 0; }
+[ "\${1:-}" = bulk-ready-by-rune ] && { cat "\$IWR_READY" 2>/dev/null; exit 0; }
 exec "$_iwr_real_claim" "\$@"
 STUB
 chmod +x "$IWR_BIN/spira-claim"
@@ -390,18 +390,18 @@ printf 'builder 1\n' > "$iwr_ready_nonempty"
 iwr_ready_empty="$TMP/iwr-ready-empty.txt"
 : > "$iwr_ready_empty"
 
-# Five idle summons of a fayth that has ready work is the escalation; the other cases are
+# Five idle calls of a rune that has ready work is the escalation; the other cases are
 # collect::tests.
 fresh
-: > "$TMP/run/aeon-ledger.log"
+: > "$TMP/run/dwarf-ledger.log"
 for i in 1 2 3 4 5; do
-    printf '2026-01-01T00:00:%02dZ awake builder idle\n' "$i" >> "$TMP/run/aeon-ledger.log"
+    printf '2026-01-01T00:00:%02dZ awake builder idle\n' "$i" >> "$TMP/run/dwarf-ledger.log"
 done
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
 wt_file_multi SPIRA_HOME="$IWR_HOME" PATH="$IWR_BIN:$PATH" IWR_READY="$iwr_ready_nonempty"
 subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
 want "5 idles + ready work fires the idle-while-ready escalation" "IDLE-WHILE-READY:" "$subjects"
-want "it names the fayth" "builder" "$subjects"
+want "it names the rune" "builder" "$subjects"
 
 echo
 tl_summary

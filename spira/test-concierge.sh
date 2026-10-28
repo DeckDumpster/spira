@@ -10,16 +10,16 @@
 # section used to skip outright when the live statute book was empty, so a container run
 # and a full run reported the same green for a different number of assertions. It now
 # drives compose_brief through the SPIRA_MEMORIES_CMD seam against a fixture persona and a
-# fixture chamber, always: the mechanism under test (no leftover {{, an executable mail
+# fixture runes, always: the mechanism under test (no leftover {{, an executable mail
 # and bead.sh, the statute book present, a typo'd core set refusing rather than composing
 # silently) does not depend on what is currently enacted in the real book.
 #
 # defect: sp-u4x sp-epe0m
-# covers: spira/lib.sh concierge.sh spira/chamber/concierge.fayth spira/chamber/concierge.md UC-operator-channel-40 UC-operator-channel-41
-# hermetic-ok: fixture chamber and a private tmux socket; no systemd and no database
+# covers: spira/lib.sh concierge.sh spira/runes/concierge.rune spira/runes/concierge.md UC-operator-channel-40 UC-operator-channel-41
+# hermetic-ok: fixture runes and a private tmux socket; no systemd and no database
 # requires: claude
 # host-reason: concierge.sh refuses to run any subcommand without claude and tmux on PATH (spira_require); the `here` section also needs a real tmux binary and skips on its own if one is not on PATH
-# scar: the concierge persona lacked FAYTH_SUMMON=operator and could be claimed by the sentinel as an ordinary worker.
+# scar: the concierge persona lacked RUNE_CALL=operator and could be claimed by the sentinel as an ordinary worker.
 # tier: T2
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -40,7 +40,7 @@ echo "the escalation list — three classes, not the old five (sp-3dggv)"
 # "anything that will page him" and "a product decision about what a feature IS or what a
 # number MEANS" — prose the operator's verdict retired. Pin the persona text to the amended
 # law-escalate-decisions-not-problems statute so the two cannot drift apart silently.
-CM="$(cat "$HERE/chamber/concierge.md")"
+CM="$(cat "$HERE/runes/concierge.md")"
 want   "names PERMISSIONS"                                          "PERMISSIONS" "$CM"
 want   "names POLICY"                                                "POLICY"      "$CM"
 want   "names DESTRUCTIVE"                                           "DESTRUCTIVE" "$CM"
@@ -67,23 +67,23 @@ else
 fi
 
 echo
-echo "the brief — composed against a fixture chamber and a fixture statute cache"
+echo "the brief — composed against a fixture runes and a fixture statute cache"
 
-# A FIXTURE PERSONA, NOT THE SHIPPED ONE — editing chamber/concierge.fayth to drive this
+# A FIXTURE PERSONA, NOT THE SHIPPED ONE — editing runes/concierge.rune to drive this
 # would leave the suite one failed assertion away from having corrupted the thing it tests.
 # mail and bead.sh are SYMLINKED IN rather than reimplemented, so "names an executable
-# tool" is checking the real tools under a fixture chamber, not a fixture's stand-ins.
-FX="$TMP/fx"; mkdir -p "$FX/chamber"
+# tool" is checking the real tools under a fixture runes, not a fixture's stand-ins.
+FX="$TMP/fx"; mkdir -p "$FX/runes"
 # round 2 fix: SPIRA_HOME IS the home now (locate_home no longer searches) and every
 # binary reads <home>/conf.d to resolve its config schema at all — give this stub
-# chamber the real registry.
+# runes the real registry.
 ln -s "$HERE/conf.d" "$FX/conf.d"
-cp "$HERE/chamber/concierge.md" "$FX/chamber/fx.md"
+cp "$HERE/runes/concierge.md" "$FX/runes/fx.md"
 ln -sf "$(command -v mail)" "$FX/mail"   # the real compiled binary, found on the suite's own PATH (mail is gone, sp-ooh1k)
 ln -sf "$HERE/bead.sh" "$FX/bead.sh"
-cat > "$FX/chamber/fx.fayth" <<'EOF'
-FAYTH_NAME=fx
-FAYTH_STATUTE_CORE="law-rm-alpha"
+cat > "$FX/runes/fx.rune" <<'EOF'
+RUNE_NAME=fx
+RUNE_STATUTE_CORE="law-rm-alpha"
 EOF
 
 FIX_JSON='{"law-rm-alpha":"Alpha fixture statute body.","law-rm-beta":"Beta fixture statute body."}'
@@ -92,14 +92,14 @@ fixture_cmd() { printf 'printf %s' "$(printf '%q' "$FIX_JSON")"; }
 brief_fx() { # brief_fx [persona] -> compose the brief for a fixture persona
     # SPIRA_MEMORIES_CACHE is a registered key (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
     # declare via tl_config, not the env prefix below, which no process reads it from any more.
-    # round 2 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME either.
+    # round 2 fix (pattern 6): SPIRA_RUNES_DIR no longer derives from SPIRA_HOME either.
     # SPIRA_RUN is the same story (pattern 2): it no longer derives from SPIRA_HOME=$FX —
     # it is a flat declared value in the complete fixture (/fixture/userhome/spira/run), a path
     # this suite's own fixture tree neither owns nor can write to. concierge.sh writes the
     # rendered brief at $SPIRA_RUN/concierge-brief.md with no fallback, so give it this
     # suite's own run dir.
-    tl_config SPIRA_MEMORIES_CACHE="" SPIRA_CHAMBER="$FX/chamber" SPIRA_RUN="$FX/run"
-    SPIRA_HOME="$FX" CONCIERGE_FAYTH="${1:-fx}" \
+    tl_config SPIRA_MEMORIES_CACHE="" SPIRA_RUNES_DIR="$FX/runes" SPIRA_RUN="$FX/run"
+    SPIRA_HOME="$FX" CONCIERGE_RUNE="${1:-fx}" \
         SPIRA_MEMORIES_CMD="$(fixture_cmd)" bash "$HARNESS/concierge.sh" brief
 }
 
@@ -147,12 +147,12 @@ want "and says which file was missing"    "no-such-persona.md" "$out"
 # without a word, so a mistyped or retired slug costs that statute its full text and says
 # nothing at all. The brief still looks complete — right size, every placeholder filled, the
 # law apparently present — which is why this needs an assertion rather than a reader.
-cat > "$FX/chamber/typo.md" <<EOF
-$(cat "$HERE/chamber/concierge.md")
+cat > "$FX/runes/typo.md" <<EOF
+$(cat "$HERE/runes/concierge.md")
 EOF
-cat > "$FX/chamber/typo.fayth" <<'EOF'
-FAYTH_NAME=typo
-FAYTH_STATUTE_CORE="law-slug-that-does-not-exist"
+cat > "$FX/runes/typo.rune" <<'EOF'
+RUNE_NAME=typo
+RUNE_STATUTE_CORE="law-slug-that-does-not-exist"
 EOF
 out="$(brief_fx typo 2>&1)"; rc=$?
 is   "an all-typo core set exits non-zero"  1 "$rc"
@@ -246,10 +246,10 @@ HERE_SOCK="test-here-conv-$$"
 tmux -L "$HERE_SOCK" kill-server 2>/dev/null || true
 
 # POSITIVE CONTROL: with no session, here calls start → compose_brief → fails (no brief for
-# a fixture persona with no chamber here). The failure names the missing brief, confirming
+# a fixture persona with no runes here). The failure names the missing brief, confirming
 # the code path reaches start.
 #
-# SPIRA_HOME MUST EXIST, even with no chamber under it: conf.sh derives SPIRA_REPO from
+# SPIRA_HOME MUST EXIST, even with no runes under it: conf.sh derives SPIRA_REPO from
 # SPIRA_HOME when `git -C` finds no checkout there, by `cd`-ing to its parent (sp-eekjm/
 # sp-ubcgo's `spira-config resolve --sh-all` now hard-refuses with no SPIRA_REPO at all,
 # where the bash-only conf.sh used to tolerate it) — and `cd nonexistent/..` fails, same as
@@ -257,13 +257,13 @@ tmux -L "$HERE_SOCK" kill-server 2>/dev/null || true
 # before compose_brief ever ran, surfacing as "spira_require: command not found" instead of
 # this test's own "no brief at" (sp-wm2a3). The sibling fixture below (CONV_EMPTY) already
 # gets this right via `mktemp -d`.
-mkdir -p "$TMP/empty-chamber"
-ln -s "$HERE/conf.d" "$TMP/empty-chamber/conf.d"
+mkdir -p "$TMP/empty-runes"
+ln -s "$HERE/conf.d" "$TMP/empty-runes/conf.d"
 # SPIRA_RUN/SPIRA_WIKI are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
 # declare via tl_config, not the env prefixes below, which no process reads them from any
 # more. Same values for both calls, so one declaration covers them.
 tl_config SPIRA_RUN="$TMP" SPIRA_WIKI="$TMP/fakebrain"
-here_nostart="$(SPIRA_HOME="$TMP/empty-chamber" CONCIERGE_FAYTH=concierge \
+here_nostart="$(SPIRA_HOME="$TMP/empty-runes" CONCIERGE_RUNE=concierge \
     SPIRA_CONF="$TMP/no.conf" \
     CONCIERGE_SOCKET="$HERE_SOCK" CONCIERGE_SESSION="$HERE_SOCK" \
     bash "$HARNESS/concierge.sh" here 2>&1)" || true
@@ -280,26 +280,26 @@ nowant "here does not compose brief when session exists (no second client)" \
 tmux -L "$HERE_SOCK" kill-server 2>/dev/null || true
 
 echo
-echo "start — the launcher's --model comes from persona.<fayth>.model, not FAYTH_MODEL"
+echo "start — the launcher's --model comes from persona.<rune>.model, not RUNE_MODEL"
 
 # THE PROPERTY UNDER TEST (sp-zs04v.4). concierge.sh's MODEL resolution used to read
-# FAYTH_MODEL through fayth_get; it now calls persona_model, which reads
-# persona.<fayth>.model out of spira.toml first. A fixture persona whose fayth still
-# declares its own (now unused) FAYTH_MODEL proves spira.toml wins over a real
+# RUNE_MODEL through rune_get; it now calls persona_model, which reads
+# persona.<rune>.model out of spira.toml first. A fixture persona whose rune still
+# declares its own (now unused) RUNE_MODEL proves spira.toml wins over a real
 # declaration, not merely over an absent one.
 if ! systemctl --user status >/dev/null 2>&1 || ! command -v systemd-run >/dev/null 2>&1; then
     printf '  skip  (no systemd user session — launcher model test requires it)\n'
 else
-    MT_TMP="$TMP/model-test"; mkdir -p "$MT_TMP/chamber"
+    MT_TMP="$TMP/model-test"; mkdir -p "$MT_TMP/runes"
     ln -s "$HERE/conf.d" "$MT_TMP/conf.d"
-    cp "$HARNESS/spira/chamber/concierge.md" "$MT_TMP/chamber/modeltest.md"
-    sed -e 's|^FAYTH_NAME=.*|FAYTH_NAME=modeltest|' \
-        -e 's|^FAYTH_MODEL=.*|FAYTH_MODEL=fayth-declared-should-not-be-used|' \
-        -e 's|^FAYTH_STATUTE_CORE=.*|FAYTH_STATUTE_CORE="law-rm-alpha"|' \
-        "$HARNESS/spira/chamber/concierge.fayth" > "$MT_TMP/chamber/modeltest.fayth"
+    cp "$HARNESS/spira/runes/concierge.md" "$MT_TMP/runes/modeltest.md"
+    sed -e 's|^RUNE_NAME=.*|RUNE_NAME=modeltest|' \
+        -e 's|^RUNE_MODEL=.*|RUNE_MODEL=rune-declared-should-not-be-used|' \
+        -e 's|^RUNE_STATUTE_CORE=.*|RUNE_STATUTE_CORE="law-rm-alpha"|' \
+        "$HARNESS/spira/runes/concierge.rune" > "$MT_TMP/runes/modeltest.rune"
 
     MT_TOML="$MT_TMP/spira.toml"
-    # SPIRA_RUN/SPIRA_WIKI/SPIRA_REPO_MAP/SPIRA_CHAMBER/SPIRA_MEMORIES_CACHE/
+    # SPIRA_RUN/SPIRA_WIKI/SPIRA_REPO_MAP/SPIRA_RUNES_DIR/SPIRA_MEMORIES_CACHE/
     # SPIRA_CLIENT_SETTINGS are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG).
     # This case's own subject IS config loading (persona.model out of spira.toml), so per
     # that rule it keeps its own file — written here, not via tl_config — layered under the
@@ -309,14 +309,14 @@ else
     # session-hook install falls through to the complete fixture's own literal
     # /fixture/userhome/.claude/settings.json and refuses (permission denied) instead of
     # writing under this case's own $MT_TMP.
-    # chamber = "$MT_TMP/chamber", not chamber-empty: spira-config's chamber_dir() (the
-    # fayth_get/persona_model path) now prefers the cfg()-resolved SPIRA_CHAMBER over
-    # <home>/chamber unconditionally (one source of config) — pointing it at the empty dir
-    # made fayth_get read nothing and silently return "" for FAYTH_STATUTE_CORE (every core
+    # runes = "$MT_TMP/runes", not runes-empty: spira-config's runes_dir() (the
+    # rune_get/persona_model path) now prefers the cfg()-resolved SPIRA_RUNES_DIR over
+    # <home>/runes unconditionally (one source of config) — pointing it at the empty dir
+    # made rune_get read nothing and silently return "" for RUNE_STATUTE_CORE (every core
     # slug demoted, "no statute rendered in full"). The old worry this dodged —
-    # spira_toml_resolve's auto-convert-from-fayth re-seeding this toml from modeltest.fayth's
-    # FAYTH_MODEL — is retired along with every other derivation (conf.sh: "the write
-    # spira_toml_resolve's auto-convert USED TO EXIST to survive"); nothing reads a fayth to
+    # spira_toml_resolve's auto-convert-from-rune re-seeding this toml from modeltest.rune's
+    # RUNE_MODEL — is retired along with every other derivation (conf.sh: "the write
+    # spira_toml_resolve's auto-convert USED TO EXIST to survive"); nothing reads a rune to
     # produce a spira.toml any more, so there is nothing left to defeat.
     cat > "$MT_TOML" <<EOF
 [persona.modeltest]
@@ -326,18 +326,18 @@ model = "concierge-toml-model"
 run = "$MT_TMP/run"
 wiki = "$MT_TMP"
 repo_map = "/nonexistent"
-chamber = "$MT_TMP/chamber"
+runes_dir = "$MT_TMP/runes"
 memories_cache = ""
 client_settings = "$MT_TMP/settings.json"
 EOF
 
     SOCK_MT="test-concierge-model-$$"
     tmux -L "$SOCK_MT" kill-server 2>/dev/null || true
-    # SPIRA_CHAMBER points at an EMPTY dir, not $MT_TMP/chamber: spira_toml_resolve's
-    # auto-convert-from-fayth watches SPIRA_CHAMBER for a fayth newer than the cached
-    # toml and would otherwise re-seed $MT_TOML from modeltest.fayth's own FAYTH_MODEL,
-    # defeating the property under test. compose_brief/fayth_get still find
-    # modeltest.{md,fayth} through SPIRA_HOME directly, which this does not affect.
+    # SPIRA_RUNES_DIR points at an EMPTY dir, not $MT_TMP/runes: spira_toml_resolve's
+    # auto-convert-from-rune watches SPIRA_RUNES_DIR for a rune newer than the cached
+    # toml and would otherwise re-seed $MT_TOML from modeltest.rune's own RUNE_MODEL,
+    # defeating the property under test. compose_brief/rune_get still find
+    # modeltest.{md,rune} through SPIRA_HOME directly, which this does not affect.
     # THE STATUTE BOOK COMES FROM THE SAME FIXTURE SEAM brief_fx uses (SPIRA_MEMORIES_CMD).
     # Without it compose_brief reads the box's real statute database, so this case passed
     # only on a host that had one and refused ("cannot reach the statute book database")
@@ -347,7 +347,7 @@ EOF
     # the suite's own release and the PATH the suite's launcher built from it.
     ENVARGS=(SPIRA_RELEASE="$SPIRA_RELEASE" PATH="$PATH" SPIRA_HOME="$MT_TMP" \
         SPIRA_CONF=/nonexistent \
-        SPIRA_TOML="${SPIRA_TOML%%:*}:$MT_TOML" CONCIERGE_FAYTH=modeltest \
+        SPIRA_TOML="${SPIRA_TOML%%:*}:$MT_TOML" CONCIERGE_RUNE=modeltest \
         CONCIERGE_SOCKET="$SOCK_MT" CONCIERGE_SESSION="$SOCK_MT" \
         SPIRA_MEMORIES_CMD="$(fixture_cmd)")
     env "${ENVARGS[@]}" \
@@ -358,8 +358,8 @@ EOF
     if [ -f "$MT_TMP/run/concierge-launch.sh" ]; then
         lnch_mt="$(cat "$MT_TMP/run/concierge-launch.sh")"
         want   "launcher's --model came from persona.modeltest.model" "concierge-toml-model" "$lnch_mt"
-        nowant "launcher did not use the fayth's own FAYTH_MODEL" \
-            "fayth-declared-should-not-be-used" "$lnch_mt"
+        nowant "launcher did not use the rune's own RUNE_MODEL" \
+            "rune-declared-should-not-be-used" "$lnch_mt"
     else
         bad "launcher's --model came from persona.modeltest.model" \
             "start did not write launcher: $(tail -5 "$MT_TMP/start.err" 2>/dev/null)"
@@ -502,7 +502,7 @@ nowant "no claude stub was launched"                         "STUB_CLAUDE_RAN" "
 nowant "it does not advise an attach that cannot work"       "attach:  tmux"   "$conv_out"
 
 # POSITIVE CONTROL FOR THE GUARD ITSELF: without a live pid the convergence check is skipped
-# and start proceeds to compose_brief. Pointed at an empty chamber, compose_brief fails with
+# and start proceeds to compose_brief. Pointed at an empty runes, compose_brief fails with
 # "no brief at..." — proving this is a fallthrough and not a second accidental short-circuit.
 CONV_EMPTY="$(mktemp -d)"
 ln -s "$HERE/conf.d" "$CONV_EMPTY/conf.d"

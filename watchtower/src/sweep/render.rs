@@ -40,7 +40,7 @@ fn drain_section(d: &SweepData) -> String {
         Drain::NotDraining => String::new(),
         Drain::Draining { since, mins } => {
             let mins_disp = mins.map(|m| m.to_string()).unwrap_or_else(|| "?".into());
-            format!("!! DRAINING since {since} ({mins_disp}m)\n   Summons gated; loop, landing and reaping continue. Lift with: world.sh resume\n")
+            format!("!! DRAINING since {since} ({mins_disp}m)\n   Calls gated; loop, landing and reaping continue. Lift with: world.sh resume\n")
         }
     }
 }
@@ -97,10 +97,10 @@ reading `?` is one this pass COULD NOT READ — never treat it as a zero.
   {gate_wait_label:<36}{gate_wait_disp}   {oldest_br}
   worst no-verdict streak             {nv_worst}       {nv_worst_key}
 
-### The Sending — are finished branches leaving?
+### The Hel — are finished branches leaving?
 
   SP_UNSENT is the total; the two rows below break it into work in flight (open bead,
-  may still land) vs stranded (closed bead, sending.sh has not reaped it yet).
+  may still land) vs stranded (closed bead, hel.sh has not reaped it yet).
   A no-bead branch splits into two kinds: one whose commits are already on the base
   (SP_UNADOPTED — safe to delete) and one whose commits are absent (SP_ORPHAN_WORK —
   unlanded work; deletion would destroy commits). Only SP_UNADOPTED triggers the reap
@@ -137,7 +137,7 @@ reading `?` is one this pass COULD NOT READ — never treat it as a zero.
   CPU quota throttling                {cpu_throttle_disp}   (share of periods throttled since last pass, per unit; FAULT = over the warn share under load)
   throttle                            {throttle_since}      (stamp: queue-throttled; depth at engage: {throttle_depth})
   draining since (? = cannot read)    {drain_mins}      minutes   (stamp: world.draining)
-  aeons alive                         {aeons_live}      (counted now, not from the snapshot)
+  dwarves alive                         {dwarves_live}      (counted now, not from the snapshot)
   FAILED UNITS                        {sp_failed_units}      {fu_names}   (>{fu_warn_mins}m failing escalates; ? = systemctl unreachable)
   beads in progress                   {sp_inprog}
   ready to claim                      {sp_ready}
@@ -153,10 +153,10 @@ reading `?` is one this pass COULD NOT READ — never treat it as a zero.
 
 {czar_block}
 
-### Lapsed aeons — killed by the liveness lease since the previous sweep
+### Lapsed dwarves — killed by the liveness lease since the previous sweep
 
-  An aeon whose trace was silent for the full lease is killed and its work preserved.
-  Classify each into one of four outcomes (sop-lapsed-aeon-postmortem) — a lapse is
+  A dwarf whose trace was silent for the full lease is killed and its work preserved.
+  Classify each into one of four outcomes (sop-lapsed-dwarf-postmortem) — a lapse is
   never closed as "noted". ? = directory could not be read, not zero lapses.
 
 {lapsed_section}
@@ -177,7 +177,7 @@ before anything else, because each answers a question the numbers above cannot.
 
 ### The shared checkout — are base branches clean?
 
-  An aeon commit on a base branch bypasses the gate and every landing instrument. A checkout
+  A dwarf commit on a base branch bypasses the gate and every landing instrument. A checkout
   ahead of its remote means subsequent worktrees base on a ref nobody else has seen.
 
 {guard_block}
@@ -252,7 +252,7 @@ Run the scans named in the menu above if you have wall time remaining.
         throttle_since = throttle_since_disp,
         throttle_depth = throttle_depth_disp,
         drain_mins = drain_mins_disp,
-        aeons_live = d.aeons_live_disp,
+        dwarves_live = d.dwarves_live_disp,
         sp_failed_units = failed_units_disp(d),
         fu_names = d.failed_unit_names,
         fu_warn_mins = d.failed_units_warn_mins,
@@ -386,11 +386,11 @@ mod tests {
         assert!(out.contains("!! HALTED since 2026-09-30T00:00:00Z"));
         assert!(out.contains("why: maintenance"));
         assert!(out.contains("### The far end"));
-        assert!(out.contains("### The Sending"));
+        assert!(out.contains("### The Hel"));
         assert!(out.contains("### The gate"));
         assert!(out.contains("### The workers"));
         assert!(out.contains("### The czar"));
-        assert!(out.contains("### Lapsed aeons"));
+        assert!(out.contains("### Lapsed dwarves"));
         assert!(out.contains("### The graph"));
         assert!(out.contains("### The menu"));
         assert!(out.contains("### The shared checkout"));
@@ -410,9 +410,9 @@ mod tests {
     fn a_slow_probe_is_named_and_breaks_nominal() {
         let mut d = SweepData::fixture_nominal(1_700_000_000);
         assert!(is_nominal(&d, 60) && !render(&d).contains("SLOW PROBES"));
-        d.slow_probes = vec!["aeons alive / ready (bd) (>30s)".to_string()];
+        d.slow_probes = vec!["dwarves alive / ready (bd) (>30s)".to_string()];
         assert!(!is_nominal(&d, 60));
-        assert!(render(&d).contains("SLOW PROBES (rendered `?`, deadline hit): aeons alive / ready (bd) (>30s)"));
+        assert!(render(&d).contains("SLOW PROBES (rendered `?`, deadline hit): dwarves alive / ready (bd) (>30s)"));
     }
 
     fn rendered(pairs: &[(&str, &str)]) -> String {
@@ -423,7 +423,7 @@ mod tests {
         render(&d)
     }
 
-    const SENDING: [(&str, &str); 6] = [
+    const HEL: [(&str, &str); 6] = [
         ("SP_UNSENT", "SP_UNSENT"),
         ("SP_UNSENT_OLDEST_H", "oldest in-flight (hours)"),
         ("SP_BATCHED_STRANDED", "BATCHED with no open batch"),
@@ -432,7 +432,7 @@ mod tests {
         ("SP_SENT_FAILED", "fiends (FAILED deletes, came back)"),
     ];
 
-    fn sending_row(out: &str, label: &str) -> String {
+    fn hel_row(out: &str, label: &str) -> String {
         out.lines()
             .find(|l| l.trim_start().starts_with(label))
             .map(|l| l.trim_start()[label.len()..].trim().to_string())
@@ -440,34 +440,34 @@ mod tests {
     }
 
     #[test]
-    fn each_sending_field_renders_the_value_its_key_holds() {
-        let pairs: Vec<(&str, &str)> = SENDING.iter().map(|(k, _)| (*k, "7")).collect();
+    fn each_hel_field_renders_the_value_its_key_holds() {
+        let pairs: Vec<(&str, &str)> = HEL.iter().map(|(k, _)| (*k, "7")).collect();
         let out = rendered(&pairs);
-        for (key, label) in SENDING {
+        for (key, label) in HEL {
             if key == "SP_UNSENT" {
-                assert_eq!(sending_row(&out, "unsent branches (total)"), "7");
+                assert_eq!(hel_row(&out, "unsent branches (total)"), "7");
             } else {
-                assert_eq!(sending_row(&out, label), "7", "{key}");
+                assert_eq!(hel_row(&out, label), "7", "{key}");
             }
         }
     }
 
     #[test]
-    fn each_sending_field_with_no_key_renders_a_question_mark() {
+    fn each_hel_field_with_no_key_renders_a_question_mark() {
         let out = rendered(&[]);
-        assert_eq!(sending_row(&out, "unsent branches (total)"), "?");
-        for (_, label) in &SENDING[1..] {
-            assert_eq!(sending_row(&out, label), "?", "{label}");
+        assert_eq!(hel_row(&out, "unsent branches (total)"), "?");
+        for (_, label) in &HEL[1..] {
+            assert_eq!(hel_row(&out, label), "?", "{label}");
         }
     }
 
     #[test]
-    fn a_zero_in_a_sending_field_renders_as_zero_never_a_question_mark() {
-        let pairs: Vec<(&str, &str)> = SENDING.iter().map(|(k, _)| (*k, "0")).collect();
+    fn a_zero_in_a_hel_field_renders_as_zero_never_a_question_mark() {
+        let pairs: Vec<(&str, &str)> = HEL.iter().map(|(k, _)| (*k, "0")).collect();
         let out = rendered(&pairs);
-        assert_eq!(sending_row(&out, "unsent branches (total)"), "0");
-        for (_, label) in &SENDING[1..] {
-            assert_eq!(sending_row(&out, label), "0", "{label}");
+        assert_eq!(hel_row(&out, "unsent branches (total)"), "0");
+        for (_, label) in &HEL[1..] {
+            assert_eq!(hel_row(&out, label), "0", "{label}");
         }
     }
 
@@ -503,7 +503,7 @@ mod tests {
         d.drain = Drain::Draining { since: "2026-09-08 20:02:00 UTC".into(), mins: Some(5) };
         let out = render(&d);
         assert!(out.contains("!! DRAINING since 2026-09-08 20:02:00 UTC (5m)"));
-        assert!(out.contains("Summons gated"));
+        assert!(out.contains("Calls gated"));
         assert!(!out.contains("HALTED") && !out.contains("No incidents are filed"));
         assert!(out.contains("draining since (? = cannot read)    5      minutes"));
     }

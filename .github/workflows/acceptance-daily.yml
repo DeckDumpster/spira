@@ -155,8 +155,8 @@ jobs:
 
       - name: Run acceptance (phase A)
         env:
-          CONFIGURE_MAX_AEONS: "1"
-          CONFIGURE_MAX_LIVE_AEONS: ""
+          CONFIGURE_MAX_DWARVES: "1"
+          CONFIGURE_MAX_LIVE_DWARVES: ""
           CONFIGURE_DOLT_DATA: ""
         run: |
           set -uo pipefail

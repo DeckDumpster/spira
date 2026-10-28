@@ -3,11 +3,11 @@
 # test-claim-retry.sh — claim_retry distinguishes a transient bd failure from a real empty
 # result, and retries the former a bounded number of times before trusting it.
 #
-# THE DEFECT (sp-3ntca). Both the claim path (aeon.sh) and the readiness count (fayth_ready,
+# THE DEFECT (sp-3ntca). Both the claim path (dwarf.sh) and the readiness count (rune_ready,
 # via ready_count) discarded bd's exit code and stderr — `bdq ... --json 2>/dev/null |
 # json_only | json_count` — so a transient store failure (lock or commit contention, or bd's
 # own circuit breaker) read exactly like a query that ran cleanly and matched nothing. Two
-# aeons summoned seconds apart raced the same store; one won, and the other's claim errored
+# dwarves called seconds apart raced the same store; one won, and the other's claim errored
 # and was reported "nothing ready to claim" with ~90 beads actually ready.
 #
 # WHAT THIS SUITE DOES NOT USE. No real bd, no testdb: the defect is entirely about how a bd
@@ -17,7 +17,7 @@
 #
 # defect: sp-3ntca
 # tier: T1
-# covers: spira/lib.sh aeon/src/* spira-claim/*
+# covers: spira/lib.sh dwarf/src/* spira-claim/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 

@@ -2,7 +2,7 @@
 //! 3 not attempted. See DESIGN.md.
 //!
 //! Also reachable directly (wave 4.21, sp-07jcz) — lib.sh's `rebase_branch`/`recut_onto`
-//! shims call these, so aeon/landing-pass/queue's existing bash-seam calls keep working
+//! shims call these, so dwarf/landing-pass/queue's existing bash-seam calls keep working
 //! unchanged:
 //!
 //!   rebase-stale rebase-branch <branch> <onto> <repo> <name> [<format-cmd>]

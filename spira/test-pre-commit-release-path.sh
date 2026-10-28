@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
 # test-pre-commit-release-path.sh — the pre-commit hook finds the tools of the release it
-# sits in, even under the aeon's restricted PATH (/usr/bin:/bin:<release>/bin),
+# sits in, even under the dwarf's restricted PATH (/usr/bin:/bin:<release>/bin),
 # which omits <release>/spira (sp-tf7nt).
 #
-# covers: spira/hooks/pre-commit spira/worktree-hooks.sh aeon/src/restrict.rs
+# covers: spira/hooks/pre-commit spira/worktree-hooks.sh dwarf/src/restrict.rs
 # tier: T1
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -61,7 +61,7 @@ commit c.txt; rc=$?
 is   "a missing tool refuses the commit" 1 "$rc"
 want "and names it" "branch-guard.sh is not on PATH" "$(cat "$TMP/out")"
 
-# THE COMPOSED WORKTREE HOOK (sp-djgb4). An aeon worktree's pre-commit is written by
+# THE COMPOSED WORKTREE HOOK (sp-djgb4). A dwarf worktree's pre-commit is written by
 # worktree-hooks.sh: the canonical hook, then pre-commit-guard.sh — which must be found the
 # same way, beside the hooks, not by bare name on the restricted PATH.
 stub "$REL/spira" exclude.sh 0

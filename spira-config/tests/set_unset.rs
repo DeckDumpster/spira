@@ -63,11 +63,11 @@ fn set_gate_string_with_quotes_dollar_and_newlines_round_trips() {
 #[test]
 fn set_refuses_an_invalid_value_and_leaves_the_file_unchanged() {
     let dir = scratch_dir("invalid-refused");
-    let before = "[spira]\nmax_aeons = 4\n";
+    let before = "[spira]\nmax_dwarves = 4\n";
     let toml = write_tmp(&dir, "spira.toml", before);
 
-    // max_aeons is a number; a non-numeric string can never coerce to one.
-    let result = spira_config(&["set", "spira.max_aeons", "not-a-number", toml.to_str().unwrap()]);
+    // max_dwarves is a number; a non-numeric string can never coerce to one.
+    let result = spira_config(&["set", "spira.max_dwarves", "not-a-number", toml.to_str().unwrap()]);
     assert!(!result.status.success(), "expected set to refuse an invalid value");
 
     let after = fs::read_to_string(&toml).unwrap();
@@ -81,11 +81,11 @@ fn set_refuses_an_invalid_value_and_leaves_the_file_unchanged() {
 #[test]
 fn set_accepts_a_valid_value_for_the_same_field() {
     let dir = scratch_dir("invalid-refused-control");
-    let toml = write_tmp(&dir, "spira.toml", "[spira]\nmax_aeons = 4\n");
+    let toml = write_tmp(&dir, "spira.toml", "[spira]\nmax_dwarves = 4\n");
 
-    let result = spira_config(&["set", "spira.max_aeons", "5", toml.to_str().unwrap()]);
+    let result = spira_config(&["set", "spira.max_dwarves", "5", toml.to_str().unwrap()]);
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
-    let got = spira_config(&["get", "spira.max_aeons", toml.to_str().unwrap()]);
+    let got = spira_config(&["get", "spira.max_dwarves", toml.to_str().unwrap()]);
     assert_eq!(String::from_utf8_lossy(&got.stdout).trim(), "5");
 
 }
@@ -95,7 +95,7 @@ fn set_accepts_a_valid_value_for_the_same_field() {
 #[test]
 fn unset_of_an_unknown_field_is_refused_and_leaves_the_file_unchanged() {
     let dir = scratch_dir("unset-invalid");
-    let before = "[spira]\nmax_aeons = 4\n";
+    let before = "[spira]\nmax_dwarves = 4\n";
     let toml = write_tmp(&dir, "spira.toml", before);
 
     let result = spira_config(&["unset", "spira.not_a_real_field", toml.to_str().unwrap()]);
@@ -107,10 +107,10 @@ fn unset_of_an_unknown_field_is_refused_and_leaves_the_file_unchanged() {
 #[test]
 fn set_over_an_existing_file_leaves_a_timestamped_backup_of_the_old_contents() {
     let dir = scratch_dir("backup");
-    let before = "[spira]\nmax_aeons = 4\n";
+    let before = "[spira]\nmax_dwarves = 4\n";
     let toml = write_tmp(&dir, "spira.toml", before);
 
-    let result = spira_config(&["set", "spira.max_aeons", "9", toml.to_str().unwrap()]);
+    let result = spira_config(&["set", "spira.max_dwarves", "9", toml.to_str().unwrap()]);
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
 
     let backups = backups_in(&dir);
@@ -126,7 +126,7 @@ fn set_on_a_fresh_file_leaves_no_backup() {
     let dir = scratch_dir("no-backup-fresh");
     let toml = dir.join("spira.toml");
 
-    let result = spira_config(&["set", "spira.max_aeons", "3", toml.to_str().unwrap()]);
+    let result = spira_config(&["set", "spira.max_dwarves", "3", toml.to_str().unwrap()]);
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     assert!(backups_in(&dir).is_empty());
 
@@ -205,23 +205,23 @@ fn rename_persona_moves_table_roster_and_lane_and_still_validates() {
     let dir = scratch_dir("rename-persona");
     let src = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/complete.toml"))
         .unwrap()
-        .replace("persona.mimir", "persona.maechen")
-        .replace("\"mimir\"", "\"maechen\"")
-        .replace("lanes = \"ops groomer mimir", "lanes = \"ops groomer maechen");
+        .replace("persona.mimir", "persona.maechen") // ffx-ok
+        .replace("\"mimir\"", "\"maechen\"") // ffx-ok
+        .replace("lanes = \"ops groomer mimir", "lanes = \"ops groomer maechen"); // ffx-ok
     let toml = write_tmp(&dir, "spira.toml", &src);
     let f = toml.to_str().unwrap();
     let before = spira_config(&["validate", f]);
     assert!(before.status.success(), "{}", String::from_utf8_lossy(&before.stderr));
 
-    let out = spira_config(&["rename-persona", "maechen", "mimir", f]);
+    let out = spira_config(&["rename-persona", "maechen", "mimir", f]); // ffx-ok
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let text = fs::read_to_string(&toml).unwrap();
-    assert!(!text.contains("maechen"), "{text}");
+    assert!(!text.contains("maechen"), "{text}"); // ffx-ok
     assert!(text.contains("[persona.mimir.lease]"));
     assert_eq!(String::from_utf8_lossy(&spira_config(&["get", "spira.lanes", f]).stdout).trim(), "ops groomer mimir czar warden mender pilgrimage");
     assert!(spira_config(&["validate", f]).status.success());
     assert_eq!(backups_in(&dir).len(), 1);
 
-    let again = spira_config(&["rename-persona", "maechen", "mimir", f]);
+    let again = spira_config(&["rename-persona", "maechen", "mimir", f]); // ffx-ok
     assert!(!again.status.success());
 }

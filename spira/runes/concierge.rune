@@ -1,0 +1,151 @@
+# concierge.rune — the Concierge persona: the operator's own session, and the phone's way
+# in. It is the only persona in this runes that NOTHING may call except a human.
+#
+# A rune is a persona DEFINITION; a dwarf is one called instance of it. The other five
+# define a worker: a predicate carving a partition out of the graph, the memories it must
+# read, the tools it may use, and what wakes it. This one defines an OPERATOR, and three of
+# those four still apply — the memories, the tools, and the brief. Only the partition does
+# not, because the concierge claims nothing.
+#
+# WHY IT IS A PERSONA AT ALL, rather than a shell script that runs `claude`
+# ------------------------------------------------------------------------
+# It was the latter, and the difference was the defect. A dwarf is called with its brief,
+# its statute book and its model resolved from a file somebody maintains; the operator's own
+# session got a working directory and nothing else. The operator, 2026-09-12: "when we spin
+# up dwarves, they come with a system prompt and a set of overlays. you don't. i think that's
+# the defect here."
+#
+# It was not a matter of degree. `render_memories` — the function that renders `law-`
+# memories in full at call — is called from `dwarf.sh` and from nowhere else, so the claim
+# in brain's CLAUDE.md that the harness "injects a `# Memories in force` section into every
+# agent session at call" was true of dwarves and false of every session the operator sat in
+# front of. The statute that the harness checkout is production had been in force for weeks
+# and had never once been delivered to the session that kept violating it (sp-u4x).
+#
+# So the concierge is composed the way a dwarf is, out of this file, by concierge.sh.
+
+RUNE_NAME=concierge
+RUNE_DESC="Concierge — the operator's session: unbounded remit, reachable from the phone, claims nothing"
+
+# NOTHING CALLS THIS. Not the sentinel's pool, not a lane, not the watchtower. `auto` is
+# the default and every other persona takes it; `operator` means a human starts it, which
+# in practice means `concierge.sh start` or the operator's own terminal.
+#
+# DECLARED RATHER THAN ARRANGED. Every other property that would keep this out of the pool
+# does so as a SIDE EFFECT — no RUNE_LABELS, no RUNE_LANE — and a side effect is exactly
+# what somebody changes while meaning something else.
+RUNE_CALL=operator
+
+# NO PARTITION, AND THE ABSENCE IS THE POINT. The concierge reaches Spira through beads it
+# FILES, never through beads it claims: it is not a second control plane, and a bead it held
+# would be a bead no dwarf could work while it sat in a session that runs for days.
+#
+# rune_partitions and the cockpit's partition map both skip a rune with no RUNE_LABELS,
+# so leaving these empty is what keeps the concierge out of every predicate, every readiness
+# count and every `unclaimable` verdict. rune_exclude still reserves `rune:concierge`
+# against the other personas, which is correct and inert: nothing writes that label.
+RUNE_LABELS=""
+RUNE_EXCLUDE_LABELS=""
+
+# THE STATUTE BOOK, IN FULL, AT START. This is the line the whole file exists for. `law-`
+# only: SOPs are how to fix a production event and Ops is the persona that executes one, so
+# a growing shelf of runbooks does not get charged to a session that will never run a
+# runbook — the same split builder.rune makes, for the same reason.
+RUNE_MEMORY_PREFIXES="law-"
+
+# AND THE ONES IT NEEDS IN FULL, which is a different list from every worker's.
+#
+# render_memories renders a CORE SET in complete text and the remaining ~115 statutes as an
+# index of slugs to be read on request. That split is a context budget and it is correct; what
+# was wrong is that the shipped core is builder-shaped — testing, gates, landing, guards — so
+# an operator session read none of the statutes that actually bind it. `law-the-harness-
+# checkout-is-production` was outside the core set for the whole of the day the operator's own
+# session violated it thirty-nine turns running (sp-u4x): even delivered, it would have arrived
+# as a slug.
+#
+# These are the ones whose violation by THIS role is expensive, in the order they bite:
+# where work goes, how a decision reaches him, what "done" means, and which trees are live.
+#
+# SIX SLUGS DROPPED HERE (sp-crr3n): not shipped in spira/statutes/ because each is inventory,
+# not mechanism — law-harness-ships-mechanism-not-inventory. law-filed-bead-queued-xor-escalated
+# and law-no-filing-only-escalation name this operator's own needs-ryan/overseer labels and his
+# historical bead counts; law-decisions-surface-immediately and law-commit-to-a-recommendation
+# name Ryan by name as the decision recipient; law-prod-is-a-different-checkout names this
+# operator's own repositories and deploy paths (pokebot, pokedumpster, deckdumpster, household,
+# Gas Town); law-git-dash-c-not-cd's scar names those same repositories by name. A colleague's
+# install would refuse to start on these the way builder's did on sp-6ka75.
+RUNE_STATUTE_CORE="law-escalate-decisions-not-problems,law-escalations-carry-their-evidence,law-answers-need-a-delivery-path,law-decompose-by-deliverable,law-file-it-and-let-the-loop-fix-it,law-closed-is-not-landed,law-the-harness-checkout-is-production,law-production-is-not-a-working-tree,law-commit-only-paths-you-changed,law-absence-needs-a-positive-control,law-alerts-must-be-actionable,law-detection-outranks-rejection,law-guard-binds-the-caller,law-harness-ships-mechanism-not-inventory"
+
+# OPUS, AND THE REMIT IS WHY. "Its remit is unbounded" (per the operator, 2026-08-30): this
+# is the session that works a design out, reads across seven repositories, decides what to
+# escalate and what to decompose, and answers a question typed with one thumb. That is the
+# judgement end of the work, not the procedure end — the opposite of the Ops trade, where a
+# cheap model matching a runbook off a shelf is exactly right.
+#
+# IT IS ALSO THE EXPENSIVE CHOICE, AND KNOWINGLY. The account's five-hour window is Spira's
+# real throughput ceiling and the concierge shares it with the operator's keyboard session,
+# so a heavy concierge pass takes capacity from the builders. The brief tells the session to
+# spend accordingly; the model is not where that economy is made, because a cheaper session
+# that reaches the wrong conclusion about what to escalate costs far more than the tokens.
+# SEED ONLY (sp-zs04v.4): the live value is persona.concierge.model in spira.toml,
+# resolved by lib.sh's persona_model — this line only seeds that table on first
+# convert and is no longer read at launch.
+RUNE_MODEL=claude-opus-5-5
+
+# NO RUNE_TOOLS, AND THAT IS THE DECLARATION RATHER THAN AN OMISSION. Every other persona
+# names its tools because `dwarf.sh` passes them to `--allowedTools`, which is an ALLOW LIST:
+# naming tools is how a worker is kept inside its job. The concierge runs interactively under
+# bypassed permissions, where the same flag can only ever SUBTRACT from what the operator can
+# reach — so a list here could not widen the remit and could only narrow it by accident, on
+# the day somebody adds a tool to the client and forgets this file.
+#
+# "Its remit is unbounded" (per the operator, 2026-08-30) is therefore expressed by the
+# absence, and concierge.sh passes no --allowedTools at all. A maintained inventory that can
+# only ever fall behind is the shape of the defect, not the guard against it.
+
+# NO DEADLINE, NO LEASE, NO HEARTBEAT, NO CONCURRENCY CEILING — and every one of those
+# absences is deliberate rather than unset.
+#
+# A dwarf is bounded because it holds a bead: the wall is what returns the work to the queue
+# when a session stops moving. The concierge holds nothing, so there is nothing to return,
+# and a wall would only end a conversation the operator is in the middle of. It runs until it
+# is stopped.
+#
+# RUNE_MAX_CONCURRENT IS 1 AND THAT ONE IS NOT ENFORCED HERE — concierge.sh refuses to start
+# a second tmux session of the same name, which is the mechanism. It is written down because
+# "one session, not a repo-by-repo list" is a design decision worth reading, not an accident
+# of how the launcher happens to work.
+
+# HANDLING "DISPATCH <workflow> ON <branch>" MAIL QUESTIONS
+# -----------------------------------------------------------------------
+# When a builder's close is undone by dwarf.sh's close-time workflow-run fence because its
+# branch touches a workflow file and no valid run URL is in the close reason, it mails the
+# operator asking for a dispatch. The subject is "dispatch <workflow-file> on <branch>".
+#
+# Three steps, in order:
+#
+# 1. PUSH THE BRANCH. The dwarf's branch must be on the forge before gh workflow run resolves
+#    it. Dwarf branches are not pushed until certification, so the concierge pushes first.
+#    A rebased branch needs --force-with-lease:
+#
+#      git push origin <branch>:<branch> --force-with-lease
+#
+# 2. DISPATCH THE WORKFLOW. Use gh workflow run targeting the branch pushed in step 1:
+#
+#      gh workflow run <workflow-file> --ref <branch> [--field key=value ...]
+#
+#    Wait for the run to start (gh run list --branch <branch> --workflow <file> --limit 1),
+#    then record the run URL from the output.
+#
+# 3. REPLY WITH THE URL. Reply to the question mail with the full actions/runs/<id> URL.
+#    The builder includes it in the close reason and re-attempts the close.
+#
+# If the branch was not found on the forge after step 1, verify the push succeeded before
+# dispatching — a missing ref causes gh workflow run to fail silently against main.
+#
+# A run that fails at the changed step is still valid evidence; the fence does not require
+# the run to be green, only that the step was reached.
+RUNE_MAX_CONCURRENT=1
+
+# The states a bead claimed by this rune may leave WORKING for; spira-lc refuses any other.
+RUNE_WORKING_EXITS="SUBMITTED DONE ask park hold"

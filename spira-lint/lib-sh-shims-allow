@@ -12,12 +12,12 @@
 spira/lib.sh:host_cores
 spira/lib.sh:ready_raw_args
 spira/lib.sh:ready_count
-spira/lib.sh:fayth_free
+spira/lib.sh:rune_free
 
-# --- row I, "aeon half" (wave4-decomposition.md): aeon.sh's own direct seam into the bead
-# --- machine (spira-lc), never routed through a bash subprocess per call because aeon.sh
+# --- row I, "dwarf half" (wave4-decomposition.md): dwarf.sh's own direct seam into the bead
+# --- machine (spira-lc), never routed through a bash subprocess per call because dwarf.sh
 # --- IS the trusted driver the design (§3.1.1, §3.5) names. Blocked on groups 5-7 the same
-# --- way as the rest of this list below — aeon.sh's own launch path is not a wave-4 crate.
+# --- way as the rest of this list below — dwarf.sh's own launch path is not a wave-4 crate.
 spira/lib.sh:lc_bead_row
 spira/lib.sh:lc_event_bead
 spira/lib.sh:lc_claim_bead
@@ -44,7 +44,7 @@ spira/lib.sh:_tsd_slots_sample
 # --- to invoke that binary in the first place.
 spira/conf.sh:_spira_conf_gen_ensure
 spira/conf.sh:spira_toml_file
-spira/conf.sh:_spira_fayth_paths
+spira/conf.sh:_spira_rune_paths
 spira/conf.sh:spira_toml_resolve
 spira/conf.sh:spira_toml_write_target
 

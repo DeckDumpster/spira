@@ -13,7 +13,7 @@
 //!   world.sh status
 //!
 //! SCOPED PAUSES are recorded state (`spira_config::scoped_stop`), never halts: one repo's
-//! claims, rounds or publish lane, or named beads no aeon may claim. Running work is never
+//! claims, rounds or publish lane, or named beads no dwarf may claim. Running work is never
 //! touched, and every reader treats a stop as deliberate.
 //!
 //! PLANES. Every unit declares `Plane=work|observability|maintenance` in its own
@@ -31,10 +31,10 @@
 //! A ROUND ON THE ROUND VM IS NAMED, NEVER SILENTLY INTERRUPTED (sp-2bkpn). `status` and
 //! `stop` both read `round-vm status`; `stop` prints what it finds before doing anything
 //! else, and `--round-drain` waits (up to `--round-drain-timeout`, default 1800s) for it to
-//! clear first — the same shape `drain` already gives live aeons. See `spira_world::round`
+//! clear first — the same shape `drain` already gives live dwarves. See `spira_world::round`
 //! for exactly what this can and cannot see.
 //!
-//! AEONS ARE STOPPED THROUGH slay, never killed directly — a bare kill leaves the bead
+//! DWARVES ARE STOPPED THROUGH slay, never killed directly — a bare kill leaves the bead
 //! held until its lease expires and charges the attempt anyway, which is how a halt for an
 //! unrelated reason walks a bead toward poison. Spawned by its real binary name, `slay`,
 //! not the `slay.sh` compat alias — this is harness-to-harness, not an operator typing a
@@ -219,7 +219,7 @@ fn work_services(planes: &BTreeSet<Plane>) -> Vec<String> {
         .collect()
 }
 
-fn aeon_pidfiles() -> Vec<PathBuf> {
+fn dwarf_pidfiles() -> Vec<PathBuf> {
     let run = run_or_die();
     let Ok(rd) = std::fs::read_dir(&run) else { return Vec::new() };
     let mut v: Vec<PathBuf> = rd
@@ -228,7 +228,7 @@ fn aeon_pidfiles() -> Vec<PathBuf> {
         .filter(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
-                .map(|n| n.starts_with("aeon-") && n.ends_with(".pid"))
+                .map(|n| n.starts_with("dwarf-") && n.ends_with(".pid"))
                 .unwrap_or(false)
         })
         .collect();
@@ -236,20 +236,20 @@ fn aeon_pidfiles() -> Vec<PathBuf> {
     v
 }
 
-fn aeon_lease_running(pf: &std::path::Path) -> bool {
-    sending::reap::aeon_alive(pf)
+fn dwarf_lease_running(pf: &std::path::Path) -> bool {
+    hel::reap::dwarf_alive(pf)
 }
 
-fn live_aeon_pidfiles() -> Vec<PathBuf> {
-    aeon_pidfiles().into_iter().filter(|p| aeon_lease_running(p)).collect()
+fn live_dwarf_pidfiles() -> Vec<PathBuf> {
+    dwarf_pidfiles().into_iter().filter(|p| dwarf_lease_running(p)).collect()
 }
 
-/// `aeon-<fayth>-<bead>.pid` -> `<bead>` (drop the `aeon-` prefix, then everything up to
+/// `dwarf-<rune>-<bead>.pid` -> `<bead>` (drop the `dwarf-` prefix, then everything up to
 /// and including the first remaining `-`), matching world.sh's own
-/// `bead="${bead#aeon-}"; bead="${bead#*-}"`.
+/// `bead="${bead#dwarf-}"; bead="${bead#*-}"`.
 fn bead_of_pidfile(path: &std::path::Path) -> String {
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-    let rest = stem.strip_prefix("aeon-").unwrap_or(stem);
+    let rest = stem.strip_prefix("dwarf-").unwrap_or(stem);
     match rest.split_once('-') {
         Some((_, bead)) => bead.to_string(),
         None => String::new(),
@@ -262,9 +262,9 @@ fn mail_root_or_die() -> PathBuf {
 
 fn live_beads() -> Vec<String> {
     let mut v = Vec::new();
-    for pf in aeon_pidfiles() {
+    for pf in dwarf_pidfiles() {
         let bead = bead_of_pidfile(&pf);
-        if !bead.is_empty() && aeon_lease_running(&pf) {
+        if !bead.is_empty() && dwarf_lease_running(&pf) {
             v.push(bead);
         }
     }
@@ -280,7 +280,7 @@ fn deadline_utc(secs_from_now: u64) -> String {
         .unwrap_or_default()
 }
 
-fn notify_aeons(notifier: &mut spira_world::notice::Notifier, what: &str, elapsed: u64, limit: u64, live: &[String]) {
+fn notify_dwarves(notifier: &mut spira_world::notice::Notifier, what: &str, elapsed: u64, limit: u64, live: &[String]) {
     let mail = mail_root_or_die();
     notifier.tick(elapsed, limit, live, |bead, stage, remaining| {
         let body = spira_world::notice::message(stage, what, remaining, &deadline_utc(remaining));
@@ -333,7 +333,7 @@ fn cmd_stop(args: &[String]) -> i32 {
     // sp-2bkpn: a halt used to interrupt an in-flight Concierge round on the round VM
     // (batcher-cut, round-vm run) without ever knowing one existed. Name it before doing
     // anything else, and — with --round-drain — wait for it to clear first, the same shape
-    // `drain` already gives live aeons.
+    // `drain` already gives live dwarves.
     if let Some(desc) = spira_world::round::read().filter(|_| halts_work).and_then(|s| spira_world::round::in_flight_description(&s)) {
         eprintln!("spira: {desc}");
         if round_drain {
@@ -366,7 +366,7 @@ fn cmd_stop(args: &[String]) -> i32 {
         }
         return 1;
     }
-    // Stamp before stopping anything: an aeon exiting under the slay summons its successor
+    // Stamp before stopping anything: a dwarf exiting under the slay calls its successor
     // from ExecStopPost, and only a stamp already in place gates that.
     let run = run_or_die();
     let _ = std::fs::create_dir_all(&run);
@@ -382,7 +382,7 @@ fn cmd_stop(args: &[String]) -> i32 {
             if live.is_empty() {
                 break;
             }
-            notify_aeons(&mut notifier, "stopping", elapsed, grace, &live);
+            notify_dwarves(&mut notifier, "stopping", elapsed, grace, &live);
             if elapsed >= grace {
                 println!("spira: grace of {grace}s elapsed — slaying what remains");
                 break;
@@ -434,9 +434,9 @@ fn cmd_stop(args: &[String]) -> i32 {
 
     if halts_work {
         let mut n = 0u32;
-        for pf in aeon_pidfiles() {
+        for pf in dwarf_pidfiles() {
             let pid = std::fs::read_to_string(&pf).unwrap_or_default().trim().to_string();
-            if !aeon_lease_running(&pf) {
+            if !dwarf_lease_running(&pf) {
                 let _ = std::fs::remove_file(&pf);
                 continue;
             }
@@ -458,12 +458,12 @@ fn cmd_stop(args: &[String]) -> i32 {
         }
 
         let mut stray = 0u32;
-        for pf in live_aeon_pidfiles() {
+        for pf in live_dwarf_pidfiles() {
             let bead = bead_of_pidfile(&pf);
             println!("  WARNING: {bead} — its identity lease is still running; slay did not stop it; run: slay.sh --bead {bead}");
             stray += 1;
         }
-        let units = sysctl::live_aeon_units();
+        let units = sysctl::live_dwarf_units();
         if stray == 0 && !units.is_empty() {
             for u in &units {
                 println!("  WARNING: {u} is live under systemd — not stopped; inspect: systemctl --user status {u}");
@@ -471,7 +471,7 @@ fn cmd_stop(args: &[String]) -> i32 {
             stray = units.len() as u32;
         }
         if n == 0 && stray == 0 {
-            println!("  no live aeons");
+            println!("  no live dwarves");
         }
     }
 
@@ -685,7 +685,7 @@ fn cmd_drain(args: &[String]) -> i32 {
     let _ = std::fs::write(
         drain_stamp_or_die(),
         format!(
-            "{}\nsummons gated in summon_fayth; loop and landing still running. Lift with: {exe} resume\n{}\n{}",
+            "{}\ncalls gated in call_rune; loop and landing still running. Lift with: {exe} resume\n{}\n{}",
             Command::new("date").arg("+%Y-%m-%d %H:%M:%S %Z").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default(),
             spira_world::DRAIN_HOLDS_UNTIL_RESUME,
             drain.render()
@@ -695,14 +695,14 @@ fn cmd_drain(args: &[String]) -> i32 {
         let marker = spira_world::reboot_marker().unwrap_or_else(|e| die(&e));
         let _ = std::fs::write(&marker, format!("{}\nplanned reboot; lift with: cockpit.sh resume\n", now_iso()));
     }
-    println!("spira: draining — no new aeons; loop, landing and reaping continue");
+    println!("spira: draining — no new dwarves; loop, landing and reaping continue");
 
     let limit = if dslay { dtimeout } else { dfor };
     let mut notifier = spira_world::notice::Notifier::default();
     let mut waited: u64 = 0;
     let captured = live_beads();
     if !captured.is_empty() {
-        println!("spira: waiting for {} aeon(s): {}", captured.len(), captured.join(" "));
+        println!("spira: waiting for {} dwarf(s): {}", captured.len(), captured.join(" "));
     }
     let mut ended: BTreeSet<String> = BTreeSet::new();
     loop {
@@ -713,8 +713,8 @@ fn cmd_drain(args: &[String]) -> i32 {
             }
         }
         let n = if captured.is_empty() {
-            let procs = live_aeon_pidfiles().len() as u64;
-            procs.max(sysctl::live_aeon_units().len() as u64)
+            let procs = live_dwarf_pidfiles().len() as u64;
+            procs.max(sysctl::live_dwarf_units().len() as u64)
         } else {
             captured.iter().filter(|b| now_live.contains(b)).count() as u64
         };
@@ -722,13 +722,13 @@ fn cmd_drain(args: &[String]) -> i32 {
             break;
         }
         let pending: Vec<String> = captured.iter().filter(|b| now_live.contains(b)).cloned().collect();
-        notify_aeons(&mut notifier, "draining", waited, limit, &pending);
+        notify_dwarves(&mut notifier, "draining", waited, limit, &pending);
         if waited >= dtimeout {
             if dslay {
-                eprintln!("spira: drain deadline reached — slaying {n} aeon(s)");
-                for pf in aeon_pidfiles() {
+                eprintln!("spira: drain deadline reached — slaying {n} dwarf(s)");
+                for pf in dwarf_pidfiles() {
                     let pid = std::fs::read_to_string(&pf).unwrap_or_default().trim().to_string();
-                    if !aeon_lease_running(&pf) {
+                    if !dwarf_lease_running(&pf) {
                         let _ = std::fs::remove_file(&pf);
                         continue;
                     }
@@ -746,23 +746,23 @@ fn cmd_drain(args: &[String]) -> i32 {
                         eprintln!("    slay.sh could not stop {bead} — left running");
                     }
                 }
-                println!("spira: DRAINED — aeons slain at deadline. Summons remain gated.");
+                println!("spira: DRAINED — dwarves slain at deadline. Calls remain gated.");
                 println!("spira: resume with: {exe} resume");
                 return 0;
             }
-            eprintln!("spira: NOT DRAINED — {n} aeon(s) still live after {dtimeout}s: {}", pending.join(" "));
-            eprintln!("spira: summons REMAIN GATED. Lift with: {exe} resume");
+            eprintln!("spira: NOT DRAINED — {n} dwarf(s) still live after {dtimeout}s: {}", pending.join(" "));
+            eprintln!("spira: calls REMAIN GATED. Lift with: {exe} resume");
             drain_check_and_page();
             return 1;
         }
         if waited % 60 == 0 && waited > 0 {
-            println!("  {n} aeon(s) still working ({waited}s elapsed)");
+            println!("  {n} dwarf(s) still working ({waited}s elapsed)");
         }
         std::thread::sleep(std::time::Duration::from_secs(10));
         waited += 10;
     }
 
-    println!("spira: DRAINED — no aeon running, summons gated");
+    println!("spira: DRAINED — no dwarf running, calls gated");
     println!("spira: resume with: {exe} resume");
     0
 }
@@ -821,7 +821,7 @@ fn cmd_resume() -> i32 {
     let _ = std::fs::remove_file(spira_world::drain::paged_marker(&drain_stamp_or_die()));
     if drain_stamp_or_die().is_file() {
         let _ = std::fs::remove_file(drain_stamp_or_die());
-        println!("spira: summons resumed");
+        println!("spira: calls resumed");
     } else {
         println!("spira: was not draining — nothing to resume");
     }
@@ -877,7 +877,7 @@ fn cmd_pause(args: &[String]) -> i32 {
                     eprintln!("spira: world pause: {e}");
                     return 64;
                 }
-                println!("spira: reserved {id}: no aeon will claim it; lift with: world.sh unpause --reserve {id}");
+                println!("spira: reserved {id}: no dwarf will claim it; lift with: world.sh unpause --reserve {id}");
             }
             0
         }
@@ -1044,9 +1044,9 @@ fn cmd_status() -> i32 {
     let wcount = spira_world::proc::live_workers(std::path::Path::new("/proc"), &worker_refs).len();
     println!("  {:<26} {}", "live workers (/proc)", wcount);
 
-    let a = live_aeon_pidfiles().len();
-    let a = a.max(sysctl::live_aeon_units().len());
-    println!("  live aeons: {a}");
+    let a = live_dwarf_pidfiles().len();
+    let a = a.max(sysctl::live_dwarf_units().len());
+    println!("  live dwarves: {a}");
 
     // sp-2bkpn: name an in-flight round so a halt is never the first anyone hears of it.
     match spira_world::round::read() {

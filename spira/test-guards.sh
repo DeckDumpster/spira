@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# test-guards.sh — the two live PreToolUse guards, table-style: hooks/aeon-fence.sh and
+# test-guards.sh — the two live PreToolUse guards, table-style: hooks/dwarf-fence.sh and
 # bd-close-unacked-guard.sh (+ its PostToolUse pair bd-unacked-comment-deliver.sh).
 #
-# Merges test-aeon-fence.sh, test-aeon-fence-bd-create.sh and test-bd-close-unacked-guard.sh
+# Merges test-dwarf-fence.sh, test-dwarf-fence-bd-create.sh and test-bd-close-unacked-guard.sh
 # (sp-qsr44, D1/D2). UC-06..13's original guards (bd-delivers-label, bd-remember,
 # bd-update-inflight, focus-close, null-close-reason, mail-fence, testenv-batch-fence,
 # schema-migration-guard) were retired by sp-fjsxb and are not re-created here.
@@ -14,26 +14,26 @@
 #
 # defect: sp-kz8ob sp-mvg44
 # tier: T1
-# covers: spira/hooks/aeon-fence.sh spira/bd-close-unacked-guard.sh spira/bd-unacked-comment-deliver.sh aeon/src/* testenv/src/suites/* UC-safety-fences-01 UC-safety-fences-02 UC-safety-fences-03 UC-safety-fences-04 UC-safety-fences-05 UC-safety-fences-15
+# covers: spira/hooks/dwarf-fence.sh spira/bd-close-unacked-guard.sh spira/bd-unacked-comment-deliver.sh dwarf/src/* testenv/src/suites/* UC-safety-fences-01 UC-safety-fences-02 UC-safety-fences-03 UC-safety-fences-04 UC-safety-fences-05 UC-safety-fences-15
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 echo "test-guards.sh"
 
-FENCE="$HERE/hooks/aeon-fence.sh"
+FENCE="$HERE/hooks/dwarf-fence.sh"
 BDCLOSE_GUARD="$HERE/bd-close-unacked-guard.sh"
 BDCLOSE_DELIVER="$HERE/bd-unacked-comment-deliver.sh"
-[ -x "$FENCE" ]          || bail "hooks/aeon-fence.sh missing or not executable"
+[ -x "$FENCE" ]          || bail "hooks/dwarf-fence.sh missing or not executable"
 [ -x "$BDCLOSE_GUARD" ]  || bail "bd-close-unacked-guard.sh missing or not executable"
 [ -x "$BDCLOSE_DELIVER" ] || bail "bd-unacked-comment-deliver.sh missing or not executable"
 
-# UC-safety-fences-16 RETIRED (sp-j89pd, wave 4.2): aeon_settings (lib.sh) had zero live
-# callers — aeon::run::aeon_settings is the Rust port, a pure function with a fixed
+# UC-safety-fences-16 RETIRED (sp-j89pd, wave 4.2): dwarf_settings (lib.sh) had zero live
+# callers — dwarf::run::dwarf_settings is the Rust port, a pure function with a fixed
 # two-entry PreToolUse allow-list and no python3 subprocess at all, so the python3-failure
 # fallback Gap 2 used to test here is not merely covered elsewhere, it is structurally gone.
-# test-aeon-settings-guard-allowlist.sh (gap 1, sp-fjsxb) is retired with it. Both are now
-# aeon::run::tests::settings_json_matches_python_dumps; see docs/test-plan/safety-fences.md
+# test-dwarf-settings-guard-allowlist.sh (gap 1, sp-fjsxb) is retired with it. Both are now
+# dwarf::run::tests::settings_json_matches_python_dumps; see docs/test-plan/safety-fences.md
 # and the [use_case.uncovered] marker on UC-safety-fences-16.
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -124,7 +124,7 @@ mkfix() {  # mkfix <bid> <started_at> <notes> <comments-json>
 bdclose_run() {
     local bid="$1" cmd="$2"; shift 2
     bash_payload "$cmd" | env -i PATH="$PATH" HOME="$TMP" \
-        SPIRA_AEON=1 BEAD_ID="$bid" BEADS_ACTOR="$ACTOR" \
+        SPIRA_DWARF=1 BEAD_ID="$bid" BEADS_ACTOR="$ACTOR" \
         SPIRA_DB="$BDCLOSE_DB" SPIRA_BD="$STUB_BD" STUB_FIXDIR="$FIXDIR" \
         "$@" bash "$BDCLOSE_GUARD" 2>&1
 }
@@ -138,45 +138,45 @@ deliver_run() {  # deliver_run <bid> <run-tmp> -> stdout
 
 # ===========================================================================
 echo
-echo "UC-safety-fences-01 — aeon session: queue- and landing-operating commands refused:"
+echo "UC-safety-fences-01 — dwarf session: queue- and landing-operating commands refused:"
 # ===========================================================================
-pc="$(fence_run "bash spira/landing.sh spira" SPIRA_AEON=test-aeon)"
+pc="$(fence_run "bash spira/landing.sh spira" SPIRA_DWARF=test-dwarf)"
 want "UC-safety-fences-01/positive-control-landing-sh-blocked" '"decision":"block"' "$pc"
 
-out="$(fence_run "bash spira/landing.sh spira" SPIRA_AEON=test-aeon)"
+out="$(fence_run "bash spira/landing.sh spira" SPIRA_DWARF=test-dwarf)"
 want "UC-safety-fences-01/landing-sh-blocked"      '"decision":"block"' "$out"
 want "UC-safety-fences-01/reason-names-sp-kz8ob"   "sp-kz8ob"           "$out"
 
-out="$(fence_run "git push origin main" SPIRA_AEON=test-aeon)"
+out="$(fence_run "git push origin main" SPIRA_DWARF=test-dwarf)"
 want "UC-safety-fences-01/git-push-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "gh pr create --title x" SPIRA_AEON=test-aeon)"
+out="$(fence_run "gh pr create --title x" SPIRA_DWARF=test-dwarf)"
 want "UC-safety-fences-01/gh-pr-create-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "/opt/spira/bin/queue flush spira" SPIRA_AEON=test-aeon)"
+out="$(fence_run "/opt/spira/bin/queue flush spira" SPIRA_DWARF=test-dwarf)"
 want "UC-safety-fences-01/queue-flush-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "/opt/spira/bin/queue stats" SPIRA_AEON=test-aeon)"
+out="$(fence_run "/opt/spira/bin/queue stats" SPIRA_DWARF=test-dwarf)"
 nowant "UC-safety-fences-01/queue-stats-allowed" '"decision":"block"' "$out"
 
-out="$(fence_run "/opt/spira/bin/queue churn --since 14d" SPIRA_AEON=test-aeon)"
+out="$(fence_run "/opt/spira/bin/queue churn --since 14d" SPIRA_DWARF=test-dwarf)"
 nowant "UC-safety-fences-01/queue-churn-allowed" '"decision":"block"' "$out"
 
-out="$(fence_run "queue verdict spira" SPIRA_AEON=test-aeon)"
+out="$(fence_run "queue verdict spira" SPIRA_DWARF=test-dwarf)"
 want "UC-safety-fences-01/queue-verdict-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "/opt/spira/bin/testenv --suites test-verdict.sh spira/sp-x" SPIRA_AEON=test-aeon)"
+out="$(fence_run "/opt/spira/bin/testenv --suites test-verdict.sh spira/sp-x" SPIRA_DWARF=test-dwarf)"
 nowant "UC-safety-fences-01/blocked-name-as-suite-arg-allowed" '"decision":"block"' "$out"
 
-out="$(fence_run "git add spira/landing.sh" SPIRA_AEON=test-aeon)"
+out="$(fence_run "git add spira/landing.sh" SPIRA_DWARF=test-dwarf)"
 nowant "UC-safety-fences-01/blocked-name-as-git-file-arg-allowed" '"decision":"block"' "$out"
 
-out="$(fence_run "git add spira/landing.sh && bash spira/landing.sh push" SPIRA_AEON=test-aeon)"
+out="$(fence_run "git add spira/landing.sh && bash spira/landing.sh push" SPIRA_DWARF=test-dwarf)"
 want "UC-safety-fences-01/compound-git-add-then-invocation-blocked" '"decision":"block"' "$out"
 
 # ===========================================================================
 echo
-echo "sp-4o925 — aeon session: Bash run_in_background refused structurally, not charged after the fact:"
+echo "sp-4o925 — dwarf session: Bash run_in_background refused structurally, not charged after the fact:"
 # ===========================================================================
 fence_rib() {  # fence_rib <cmd> <0|1> [ENV..] -> fence stdout for a Bash call with run_in_background set
     local cmd="$1" rib="$2"; shift 2
@@ -192,65 +192,65 @@ fence_rib_rc() {  # fence_rib_rc <cmd> <0|1> [ENV..] -> the fence process's own 
     printf '%s' "$?"
 }
 
-pc="$(fence_rib "/opt/spira/bin/testenv --suites test-verdict.sh spira/sp-x" 1 SPIRA_AEON=test-aeon)"
+pc="$(fence_rib "/opt/spira/bin/testenv --suites test-verdict.sh spira/sp-x" 1 SPIRA_DWARF=test-dwarf)"
 want "sp-4o925/positive-control-run-in-background-blocked" '"decision":"block"' "$pc"
 
-out="$(fence_rib "/opt/spira/bin/testenv --suites test-verdict.sh spira/sp-x" 1 SPIRA_AEON=test-aeon)"
+out="$(fence_rib "/opt/spira/bin/testenv --suites test-verdict.sh spira/sp-x" 1 SPIRA_DWARF=test-dwarf)"
 want "sp-4o925/run-in-background-blocked"        '"decision":"block"' "$out"
 want "sp-4o925/reason-names-sp-4o925"            "sp-4o925"           "$out"
 want "sp-4o925/reason-says-run-in-foreground"    "foreground"         "$out"
 
-rc="$(fence_rib_rc "/opt/spira/bin/testenv --suites test-verdict.sh spira/sp-x" 1 SPIRA_AEON=test-aeon)"
+rc="$(fence_rib_rc "/opt/spira/bin/testenv --suites test-verdict.sh spira/sp-x" 1 SPIRA_DWARF=test-dwarf)"
 is "sp-4o925/blocked-protocol-still-exits-0" 0 "$rc"
 
-out="$(fence_rib "echo ordinary foreground command" 0 SPIRA_AEON=test-aeon)"
+out="$(fence_rib "echo ordinary foreground command" 0 SPIRA_DWARF=test-dwarf)"
 nowant "sp-4o925/run-in-background-false-allowed" '"decision":"block"' "$out"
 
-out="$(fence_run "echo ordinary foreground command" SPIRA_AEON=test-aeon)"
+out="$(fence_run "echo ordinary foreground command" SPIRA_DWARF=test-dwarf)"
 nowant "sp-4o925/run-in-background-absent-allowed" '"decision":"block"' "$out"
 
 out="$(fence_rib "/opt/spira/bin/testenv --suites test-verdict.sh spira/sp-x" 1)"
-nowant "sp-4o925/no-SPIRA_AEON-run-in-background-allowed" '"decision":"block"' "$out"
+nowant "sp-4o925/no-SPIRA_DWARF-run-in-background-allowed" '"decision":"block"' "$out"
 
-out="$(fence_rib "/opt/spira/bin/testenv --suites test-verdict.sh spira/sp-x" 1 SPIRA_AEON=test-aeon SPIRA_AEON_OVERRIDE=1)"
+out="$(fence_rib "/opt/spira/bin/testenv --suites test-verdict.sh spira/sp-x" 1 SPIRA_DWARF=test-dwarf SPIRA_DWARF_OVERRIDE=1)"
 nowant "sp-4o925/override-bypasses-run-in-background-block" '"decision":"block"' "$out"
 
 # ===========================================================================
 echo
-echo "UC-safety-fences-02 — aeon session: writes under \$SPIRA_PROD / \$SPIRA_RUN/queue refused:"
+echo "UC-safety-fences-02 — dwarf session: writes under \$SPIRA_PROD / \$SPIRA_RUN/queue refused:"
 # ===========================================================================
-out="$(fence_run "printf x > ${FAKE_RUN}/queue/x" SPIRA_AEON=test-aeon)"
+out="$(fence_run "printf x > ${FAKE_RUN}/queue/x" SPIRA_DWARF=test-dwarf)"
 want "UC-safety-fences-02/write-to-queue-blocked" '"decision":"block"' "$out"
 
 # sp-j7l3q: the lifecycle cutover deletes the landstate ledger (sp-2c1n0); its write fence went with it.
-out="$(fence_run "printf x > ${FAKE_RUN}/landstate/x" SPIRA_AEON=test-aeon)"
+out="$(fence_run "printf x > ${FAKE_RUN}/landstate/x" SPIRA_DWARF=test-dwarf)"
 nowant "sp-j7l3q/landstate-no-longer-fenced" '"decision":"block"' "$out"
 
-out="$(fence_run "echo x > ${FAKE_PROD}/f" SPIRA_AEON=test-aeon)"
+out="$(fence_run "echo x > ${FAKE_PROD}/f" SPIRA_DWARF=test-dwarf)"
 want "UC-safety-fences-02/redirect-write-to-prod-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "rm -rf ${FAKE_PROD}/releases" SPIRA_AEON=test-aeon)"
+out="$(fence_run "rm -rf ${FAKE_PROD}/releases" SPIRA_DWARF=test-dwarf)"
 want "UC-safety-fences-02/rm-prod-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "mv ${FAKE_PROD}/aeon.sh /tmp/x" SPIRA_AEON=test-aeon)"
+out="$(fence_run "mv ${FAKE_PROD}/dwarf.sh /tmp/x" SPIRA_DWARF=test-dwarf)"
 want "UC-safety-fences-02/mv-prod-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "echo x | tee ${FAKE_PROD}/aeon.sh" SPIRA_AEON=test-aeon)"
+out="$(fence_run "echo x | tee ${FAKE_PROD}/dwarf.sh" SPIRA_DWARF=test-dwarf)"
 want "UC-safety-fences-02/tee-prod-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "sed -i s/a/b/ ${FAKE_PROD}/aeon.sh" SPIRA_AEON=test-aeon)"
+out="$(fence_run "sed -i s/a/b/ ${FAKE_PROD}/dwarf.sh" SPIRA_DWARF=test-dwarf)"
 want "UC-safety-fences-02/sed-i-prod-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "git -C ${FAKE_PROD} commit -m x" SPIRA_AEON=test-aeon)"
+out="$(fence_run "git -C ${FAKE_PROD} commit -m x" SPIRA_DWARF=test-dwarf)"
 want "UC-safety-fences-02/git-C-prod-commit-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "git -C ${FAKE_PROD} reset --hard" SPIRA_AEON=test-aeon)"
+out="$(fence_run "git -C ${FAKE_PROD} reset --hard" SPIRA_DWARF=test-dwarf)"
 want "UC-safety-fences-02/git-C-prod-reset-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "bash \"${FAKE_PROD}/spira/census\" --with-suppressed" SPIRA_AEON=test-aeon)"
+out="$(fence_run "bash \"${FAKE_PROD}/spira/census\" --with-suppressed" SPIRA_DWARF=test-dwarf)"
 nowant "UC-safety-fences-02/exec-from-prod-allowed" '"decision":"block"' "$out"
 
-out="$(fence_run "cat ${FAKE_PROD}/spira/census" SPIRA_AEON=test-aeon)"
+out="$(fence_run "cat ${FAKE_PROD}/spira/census" SPIRA_DWARF=test-dwarf)"
 nowant "UC-safety-fences-02/cat-read-from-prod-allowed" '"decision":"block"' "$out"
 
 for _cmd in \
@@ -259,63 +259,63 @@ for _cmd in \
     "${FAKE_PROD}/mail send operator --from Ops --subject q --kind question --default x" \
     "${FAKE_PROD}/../bin/testenv suites status" \
     "${FAKE_PROD}/../bin/groomer deadlocked"; do
-    out="$(fence_run "$_cmd" SPIRA_AEON=test-aeon)"
+    out="$(fence_run "$_cmd" SPIRA_DWARF=test-dwarf)"
     nowant "UC-safety-fences-02/rendered-brief-cmd-allowed-${_cmd##*/}" '"decision":"block"' "$out"
 done
 
-out="$(fence_run "bash ${FAKE_PROD}/census --with-suppressed" SPIRA_AEON=test-aeon)"
+out="$(fence_run "bash ${FAKE_PROD}/census --with-suppressed" SPIRA_DWARF=test-dwarf)"
 nowant "UC-safety-fences-02/census-allowed" '"decision":"block"' "$out"
 
 _dflag="--description"
 _bd_cmd="$(printf "bd -C /db create title %s - <<'DESC'\nbash \"%s/census\" and /verdict.sh are mentioned\nDESC" "$_dflag" "${FAKE_PROD}")"
-out="$(fence_run "$_bd_cmd" SPIRA_AEON=test-aeon)"
+out="$(fence_run "$_bd_cmd" SPIRA_DWARF=test-dwarf)"
 nowant "UC-safety-fences-02/prod-path-in-heredoc-allowed" '"decision":"block"' "$out"
 
-out="$(fence_run "arm in aeon.sh see ${FAKE_PROD}/aeon.sh" SPIRA_AEON=test-aeon)"
+out="$(fence_run "arm in dwarf.sh see ${FAKE_PROD}/dwarf.sh" SPIRA_DWARF=test-dwarf)"
 nowant "UC-safety-fences-02/prose-arm-in-not-mistaken-for-rm" '"decision":"block"' "$out"
 
-out="$(fence_run "See ${FAKE_PROD}/aeon.sh tee operation" SPIRA_AEON=test-aeon)"
+out="$(fence_run "See ${FAKE_PROD}/dwarf.sh tee operation" SPIRA_DWARF=test-dwarf)"
 nowant "UC-safety-fences-02/prose-tee-not-mistaken-for-tee" '"decision":"block"' "$out"
 
 # ===========================================================================
 echo
 echo "sp-ozym9 — \$SPIRA_RUN/queue: write shapes refused, reads and prose allowed:"
 # ===========================================================================
-out="$(fence_run "rm ${FAKE_RUN}/queue/x" SPIRA_AEON=test-aeon)"
+out="$(fence_run "rm ${FAKE_RUN}/queue/x" SPIRA_DWARF=test-dwarf)"
 want "sp-ozym9/rm-queue-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "mv a ${FAKE_RUN}/queue/b" SPIRA_AEON=test-aeon)"
+out="$(fence_run "mv a ${FAKE_RUN}/queue/b" SPIRA_DWARF=test-dwarf)"
 want "sp-ozym9/mv-queue-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "echo x | tee ${FAKE_RUN}/queue/x" SPIRA_AEON=test-aeon)"
+out="$(fence_run "echo x | tee ${FAKE_RUN}/queue/x" SPIRA_DWARF=test-dwarf)"
 want "sp-ozym9/tee-queue-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "sed -i s/a/b/ ${FAKE_RUN}/queue/x" SPIRA_AEON=test-aeon)"
+out="$(fence_run "sed -i s/a/b/ ${FAKE_RUN}/queue/x" SPIRA_DWARF=test-dwarf)"
 want "sp-ozym9/sed-i-queue-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "cat ${FAKE_RUN}/queue/sp-7youp" SPIRA_AEON=test-aeon)"
+out="$(fence_run "cat ${FAKE_RUN}/queue/sp-7youp" SPIRA_DWARF=test-dwarf)"
 nowant "sp-ozym9/cat-queue-allowed" '"decision":"block"' "$out"
 
-out="$(fence_run "ls ${FAKE_RUN}/queue | wc -l" SPIRA_AEON=test-aeon)"
+out="$(fence_run "ls ${FAKE_RUN}/queue | wc -l" SPIRA_DWARF=test-dwarf)"
 nowant "sp-ozym9/ls-queue-allowed" '"decision":"block"' "$out"
 
-out="$(fence_run "grep -l '^LANDED' ${FAKE_RUN}/queue/*" SPIRA_AEON=test-aeon)"
+out="$(fence_run "grep -l '^LANDED' ${FAKE_RUN}/queue/*" SPIRA_DWARF=test-dwarf)"
 nowant "sp-ozym9/grep-queue-allowed" '"decision":"block"' "$out"
 
 _ldflag="--description"
 _ld_cmd="$(printf "bd -C /db create title %s - <<'DESC'\nsee %s/queue/sp-7youp for evidence\nDESC" "$_ldflag" "${FAKE_RUN}")"
-out="$(fence_run "$_ld_cmd" SPIRA_AEON=test-aeon)"
+out="$(fence_run "$_ld_cmd" SPIRA_DWARF=test-dwarf)"
 nowant "sp-ozym9/queue-path-in-heredoc-allowed" '"decision":"block"' "$out"
 
-out="$(fence_run "echo '${FAKE_RUN}/queue/x needs no write'" SPIRA_AEON=test-aeon)"
+out="$(fence_run "echo '${FAKE_RUN}/queue/x needs no write'" SPIRA_DWARF=test-dwarf)"
 nowant "sp-ozym9/queue-path-in-single-quoted-prose-allowed" '"decision":"block"' "$out"
 
-out="$(fence_run "rm ${FAKE_RUN}/queue/x" SPIRA_AEON=test-aeon SPIRA_AEON_OVERRIDE=1)"
+out="$(fence_run "rm ${FAKE_RUN}/queue/x" SPIRA_DWARF=test-dwarf SPIRA_DWARF_OVERRIDE=1)"
 nowant "sp-ozym9/override-bypasses-queue-write-block" '"decision":"block"' "$out"
 
 # ===========================================================================
 echo
-echo "UC-safety-fences-03 — aeon session: no bd create rule — no aeon persona has bd (sp-j7l3q):"
+echo "UC-safety-fences-03 — dwarf session: no bd create rule — no dwarf persona has bd (sp-j7l3q):"
 # ===========================================================================
 # Ryan 2026-10-05: the model's PATH holds only `work` (sp-zf4q3) and every persona's bead
 # operations are `work` verbs (sp-st0mm); the fence's old test-data / unmapped-repo /
@@ -324,12 +324,12 @@ BDCREATE_DB="$TMP/prod-db"
 fence_bd() {  # fence_bd <cmd> [ENV..] -> fence stdout with a production SPIRA_DB in scope
     local cmd="$1"; shift
     bash_payload "$cmd" | env -i PATH="$PATH" HOME="$TMP" \
-        SPIRA_AEON=test-aeon SPIRA_DB="$BDCREATE_DB" SPIRA_BD="$STUB_BD" "$@" \
+        SPIRA_DWARF=test-dwarf SPIRA_DB="$BDCREATE_DB" SPIRA_BD="$STUB_BD" "$@" \
         bash "$FENCE" 2>/dev/null
 }
-out="$(fence_bd "bd -C $BDCREATE_DB create \"test-land-state\" -l \"plan\"" SPIRA_FAYTH=builder)"
+out="$(fence_bd "bd -C $BDCREATE_DB create \"test-land-state\" -l \"plan\"" SPIRA_RUNE=builder)"
 nowant "sp-j7l3q/builder-bd-rules-removed" '"decision":"block"' "$out"
-out="$(fence_bd "bd -C $BDCREATE_DB create \"test-land-state\" -l \"plan,repo:fixture-repo\"" SPIRA_FAYTH=groomer)"
+out="$(fence_bd "bd -C $BDCREATE_DB create \"test-land-state\" -l \"plan,repo:fixture-repo\"" SPIRA_RUNE=groomer)"
 nowant "sp-j7l3q/no-persona-bd-create-rule" '"decision":"block"' "$out"
 
 # ===========================================================================
@@ -410,24 +410,24 @@ echo "UC-safety-fences-15 — shared PreToolUse pass-through block (D1), applied
 FENCE_REP_CMD="bash spira/landing.sh spira"
 
 out="$(fence_run "$FENCE_REP_CMD")"
-nowant "UC-safety-fences-15/fence-no-SPIRA_AEON-allows" '"decision":"block"' "$out"
+nowant "UC-safety-fences-15/fence-no-SPIRA_DWARF-allows" '"decision":"block"' "$out"
 
-out="$(fence_run_tool Read /etc/hostname SPIRA_AEON=test-aeon)"
+out="$(fence_run_tool Read /etc/hostname SPIRA_DWARF=test-dwarf)"
 nowant "UC-safety-fences-15/fence-non-Bash-tool-allows" '"decision":"block"' "$out"
 
-out="$(fence_run "echo '$FENCE_REP_CMD'" SPIRA_AEON=test-aeon)"
+out="$(fence_run "echo '$FENCE_REP_CMD'" SPIRA_DWARF=test-dwarf)"
 nowant "UC-safety-fences-15/fence-single-quoted-prose-allows" '"decision":"block"' "$out"
 
 # The verb is a %s argument so this fixture is not itself a bare-dash bd create in source
 # (spira-lint's bd-stdin-lint rule lints every script for one).
 heredoc_cmd="$(printf "bd -C /db %s title --description - <<'DESC'\n%s\nDESC" create "$FENCE_REP_CMD")"
-out="$(fence_run "$heredoc_cmd" SPIRA_AEON=test-aeon)"
+out="$(fence_run "$heredoc_cmd" SPIRA_DWARF=test-dwarf)"
 nowant "UC-safety-fences-15/fence-heredoc-prose-allows" '"decision":"block"' "$out"
 
-# aeon-fence.sh has exactly one override — SPIRA_AEON_OVERRIDE, read from the hook's own
+# dwarf-fence.sh has exactly one override — SPIRA_DWARF_OVERRIDE, read from the hook's own
 # process env, never parsed out of the command text — so there is no separate "inline"
 # variant for this guard, unlike the two below.
-out="$(fence_run "$FENCE_REP_CMD" SPIRA_AEON=test-aeon SPIRA_AEON_OVERRIDE=1)"
+out="$(fence_run "$FENCE_REP_CMD" SPIRA_DWARF=test-dwarf SPIRA_DWARF_OVERRIDE=1)"
 nowant "UC-safety-fences-15/fence-override-allows" '"decision":"block"' "$out"
 
 BDCLOSE_REP="$(close_cmd_for bc1)"
@@ -435,10 +435,10 @@ BDCLOSE_REP="$(close_cmd_for bc1)"
 out=$(printf '%s' "$(bash_payload "$BDCLOSE_REP")" | env -i PATH="$PATH" HOME="$TMP" \
     BEAD_ID="bc1" BEADS_ACTOR="$ACTOR" SPIRA_DB="$BDCLOSE_DB" SPIRA_BD="$STUB_BD" STUB_FIXDIR="$FIXDIR" \
     bash "$BDCLOSE_GUARD" 2>&1); rc=$?
-is "UC-safety-fences-15/bdclose-no-SPIRA_AEON-allows" 0 "$rc"
+is "UC-safety-fences-15/bdclose-no-SPIRA_DWARF-allows" 0 "$rc"
 
 out=$(printf '{"tool_name":"Read","tool_input":{"file_path":"/tmp/x"}}' | env -i PATH="$PATH" HOME="$TMP" \
-    SPIRA_AEON=1 BEAD_ID="bc1" BEADS_ACTOR="$ACTOR" SPIRA_DB="$BDCLOSE_DB" SPIRA_BD="$STUB_BD" STUB_FIXDIR="$FIXDIR" \
+    SPIRA_DWARF=1 BEAD_ID="bc1" BEADS_ACTOR="$ACTOR" SPIRA_DB="$BDCLOSE_DB" SPIRA_BD="$STUB_BD" STUB_FIXDIR="$FIXDIR" \
     bash "$BDCLOSE_GUARD" 2>&1); rc=$?
 is "UC-safety-fences-15/bdclose-non-Bash-tool-allows" 0 "$rc"
 
@@ -467,78 +467,78 @@ is "UC-safety-fences-15/bdclose-heredoc-prose-currently-blocks-sp-fel4v" 2 "$BDC
 
 # ===========================================================================
 echo
-echo "Gap 6 — aeon-fence.sh now covers Write/Edit against \$SPIRA_PROD, not just Bash:"
+echo "Gap 6 — dwarf-fence.sh now covers Write/Edit against \$SPIRA_PROD, not just Bash:"
 # ===========================================================================
-out="$(fence_run_tool Write "$FAKE_PROD/aeon.sh" SPIRA_AEON=test-aeon)"
+out="$(fence_run_tool Write "$FAKE_PROD/dwarf.sh" SPIRA_DWARF=test-dwarf)"
 want "gap6/write-into-prod-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run_tool Edit "$FAKE_PROD/aeon.sh" SPIRA_AEON=test-aeon)"
+out="$(fence_run_tool Edit "$FAKE_PROD/dwarf.sh" SPIRA_DWARF=test-dwarf)"
 want "gap6/edit-into-prod-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run_tool Write "$TMP/outside/notes.md" SPIRA_AEON=test-aeon)"
+out="$(fence_run_tool Write "$TMP/outside/notes.md" SPIRA_DWARF=test-dwarf)"
 nowant "gap6/write-outside-prod-allowed" '"decision":"block"' "$out"
 
-out="$(fence_run_tool Write "$FAKE_PROD/aeon.sh" SPIRA_AEON=test-aeon SPIRA_AEON_OVERRIDE=1)"
+out="$(fence_run_tool Write "$FAKE_PROD/dwarf.sh" SPIRA_DWARF=test-dwarf SPIRA_DWARF_OVERRIDE=1)"
 nowant "gap6/override-bypasses-write-block" '"decision":"block"' "$out"
 
 # ===========================================================================
 echo
-echo "sp-iks0y — aeon session: writes to the operator's live \$HOME/.config/spira refused:"
+echo "sp-iks0y — dwarf session: writes to the operator's live \$HOME/.config/spira refused:"
 # ===========================================================================
-out="$(fence_run_tool Edit "$FAKE_CONFIG/repo-map" SPIRA_AEON=test-aeon)"
+out="$(fence_run_tool Edit "$FAKE_CONFIG/repo-map" SPIRA_DWARF=test-dwarf)"
 want "sp-iks0y/edit-repo-map-blocked"    '"decision":"block"' "$out"
 want "sp-iks0y/reason-names-sp-iks0y"    "sp-iks0y"           "$out"
 
-out="$(fence_run_tool Write "$FAKE_CONFIG/repo-map" SPIRA_AEON=test-aeon)"
+out="$(fence_run_tool Write "$FAKE_CONFIG/repo-map" SPIRA_DWARF=test-dwarf)"
 want "sp-iks0y/write-repo-map-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run_tool Write "$TMP/outside/notes.md" SPIRA_AEON=test-aeon)"
+out="$(fence_run_tool Write "$TMP/outside/notes.md" SPIRA_DWARF=test-dwarf)"
 nowant "sp-iks0y/write-outside-config-allowed" '"decision":"block"' "$out"
 
-out="$(fence_run_tool Edit "$FAKE_RUN/worktree/sp-x/notes.md" SPIRA_AEON=test-aeon)"
+out="$(fence_run_tool Edit "$FAKE_RUN/worktree/sp-x/notes.md" SPIRA_DWARF=test-dwarf)"
 nowant "sp-iks0y/edit-inside-worktree-allowed" '"decision":"block"' "$out"
 
-out="$(fence_run_tool Edit "$FAKE_CONFIG/repo-map" SPIRA_AEON=test-aeon SPIRA_AEON_OVERRIDE=1)"
+out="$(fence_run_tool Edit "$FAKE_CONFIG/repo-map" SPIRA_DWARF=test-dwarf SPIRA_DWARF_OVERRIDE=1)"
 nowant "sp-iks0y/override-bypasses-config-write-block" '"decision":"block"' "$out"
 
-out="$(fence_run "echo x > ${FAKE_CONFIG}/repo-map" SPIRA_AEON=test-aeon)"
+out="$(fence_run "echo x > ${FAKE_CONFIG}/repo-map" SPIRA_DWARF=test-dwarf)"
 want "sp-iks0y/bash-redirect-into-config-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "printf x >> ${FAKE_CONFIG}/repo-map" SPIRA_AEON=test-aeon)"
+out="$(fence_run "printf x >> ${FAKE_CONFIG}/repo-map" SPIRA_DWARF=test-dwarf)"
 want "sp-iks0y/bash-append-into-config-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "rm ${FAKE_CONFIG}/repo-map" SPIRA_AEON=test-aeon)"
+out="$(fence_run "rm ${FAKE_CONFIG}/repo-map" SPIRA_DWARF=test-dwarf)"
 want "sp-iks0y/bash-rm-config-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "sed -i s/a/b/ ${FAKE_CONFIG}/repo-map" SPIRA_AEON=test-aeon)"
+out="$(fence_run "sed -i s/a/b/ ${FAKE_CONFIG}/repo-map" SPIRA_DWARF=test-dwarf)"
 want "sp-iks0y/bash-sed-i-config-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "echo x | tee ${FAKE_CONFIG}/repo-map" SPIRA_AEON=test-aeon)"
+out="$(fence_run "echo x | tee ${FAKE_CONFIG}/repo-map" SPIRA_DWARF=test-dwarf)"
 want "sp-iks0y/bash-tee-config-blocked" '"decision":"block"' "$out"
 
-out="$(fence_run "cat ${FAKE_CONFIG}/repo-map" SPIRA_AEON=test-aeon)"
+out="$(fence_run "cat ${FAKE_CONFIG}/repo-map" SPIRA_DWARF=test-dwarf)"
 nowant "sp-iks0y/bash-cat-config-allowed" '"decision":"block"' "$out"
 
-out="$(fence_run "rm ${FAKE_CONFIG}/repo-map" SPIRA_AEON=test-aeon SPIRA_AEON_OVERRIDE=1)"
+out="$(fence_run "rm ${FAKE_CONFIG}/repo-map" SPIRA_DWARF=test-dwarf SPIRA_DWARF_OVERRIDE=1)"
 nowant "sp-iks0y/override-bypasses-bash-config-block" '"decision":"block"' "$out"
 
 # ===========================================================================
 echo
 echo "Gap 7 — malformed/empty PreToolUse payload: fail-open, decided and pinned per guard:"
 # ===========================================================================
-out="$(fence_run_raw 'not json at all' SPIRA_AEON=test-aeon)"
+out="$(fence_run_raw 'not json at all' SPIRA_DWARF=test-dwarf)"
 nowant "gap7/fence-malformed-payload-fails-open" '"decision":"block"' "$out"
 
-out="$(fence_run_raw '' SPIRA_AEON=test-aeon)"
+out="$(fence_run_raw '' SPIRA_DWARF=test-dwarf)"
 nowant "gap7/fence-empty-payload-fails-open" '"decision":"block"' "$out"
 
 out=$(printf 'not json at all' | env -i PATH="$PATH" HOME="$TMP" \
-    SPIRA_AEON=1 BEAD_ID="bc1" BEADS_ACTOR="$ACTOR" SPIRA_DB="$BDCLOSE_DB" SPIRA_BD="$STUB_BD" STUB_FIXDIR="$FIXDIR" \
+    SPIRA_DWARF=1 BEAD_ID="bc1" BEADS_ACTOR="$ACTOR" SPIRA_DB="$BDCLOSE_DB" SPIRA_BD="$STUB_BD" STUB_FIXDIR="$FIXDIR" \
     bash "$BDCLOSE_GUARD" 2>&1); rc=$?
 is "gap7/bdclose-malformed-payload-fails-open" 0 "$rc"
 
 out=$(printf '' | env -i PATH="$PATH" HOME="$TMP" \
-    SPIRA_AEON=1 BEAD_ID="bc1" BEADS_ACTOR="$ACTOR" SPIRA_DB="$BDCLOSE_DB" SPIRA_BD="$STUB_BD" STUB_FIXDIR="$FIXDIR" \
+    SPIRA_DWARF=1 BEAD_ID="bc1" BEADS_ACTOR="$ACTOR" SPIRA_DB="$BDCLOSE_DB" SPIRA_BD="$STUB_BD" STUB_FIXDIR="$FIXDIR" \
     bash "$BDCLOSE_GUARD" 2>&1); rc=$?
 is "gap7/bdclose-empty-payload-fails-open" 0 "$rc"
 
@@ -546,7 +546,7 @@ is "gap7/bdclose-empty-payload-fails-open" 0 "$rc"
 echo
 echo "Gap 8 — two refusal protocols, asserted structurally (not just substring text):"
 # ===========================================================================
-rc="$(fence_rc "$FENCE_REP_CMD" SPIRA_AEON=test-aeon)"
+rc="$(fence_rc "$FENCE_REP_CMD" SPIRA_DWARF=test-dwarf)"
 is "gap8/fence-protocol-always-exits-0-even-when-blocking" 0 "$rc"
 
 out="$(bdclose_run bc1 "$(close_cmd_for bc1)")"
@@ -556,18 +556,18 @@ nowant "gap8/bdclose-protocol-does-not-emit-decision-json"    '"decision":"block
 
 # ===========================================================================
 echo
-echo "testenv suites quarantine refuses from an aeon session (not a UC in the catalogue; ported as-is):"
+echo "testenv suites quarantine refuses from a dwarf session (not a UC in the catalogue; ported as-is):"
 # ===========================================================================
 command -v testenv >/dev/null 2>&1 || bad "suites-quarantine/testenv-on-path" "testenv is not on PATH"
-out_c0="$(SPIRA_AEON="" SPIRA_CONF=/nonexistent SPIRA_RUN="$FAKE_RUN" SPIRA_TESTENV_HARNESS="$HERE/.." \
+out_c0="$(SPIRA_DWARF="" SPIRA_CONF=/nonexistent SPIRA_RUN="$FAKE_RUN" SPIRA_TESTENV_HARNESS="$HERE/.." \
     testenv suites quarantine nonexistent-suite.sh bead-id "reason" 2>&1 || true)"
-nowant "suites-quarantine/silent-without-SPIRA_AEON" "aeons may not" "$out_c0"
+nowant "suites-quarantine/silent-without-SPIRA_DWARF" "dwarves may not" "$out_c0"
 
-out_c1="$(SPIRA_AEON=test-aeon SPIRA_CONF=/nonexistent SPIRA_RUN="$FAKE_RUN" SPIRA_TESTENV_HARNESS="$HERE/.." \
+out_c1="$(SPIRA_DWARF=test-dwarf SPIRA_CONF=/nonexistent SPIRA_RUN="$FAKE_RUN" SPIRA_TESTENV_HARNESS="$HERE/.." \
     testenv suites quarantine nonexistent-suite.sh bead-id "reason" 2>&1)"
 rc_c1=$?
-is   "suites-quarantine/exits-nonzero-in-aeon-session" 1               "$rc_c1"
-want "suites-quarantine/names-aeons-may-not"           "aeons may not" "$out_c1"
+is   "suites-quarantine/exits-nonzero-in-dwarf-session" 1               "$rc_c1"
+want "suites-quarantine/names-dwarves-may-not"           "dwarves may not" "$out_c1"
 want "suites-quarantine/names-operator-or-Ops"          "operator"      "$out_c1"
 
 tl_summary

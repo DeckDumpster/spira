@@ -253,7 +253,7 @@ mod tests {
     impl Fx {
         fn new() -> Fx {
             let d = testkit::TempDir::new("mail-reconcile");
-            fs::create_dir_all(d.path().join("home/chamber")).unwrap();
+            fs::create_dir_all(d.path().join("home/runes")).unwrap();
             Fx { d }
         }
         fn home(&self) -> PathBuf {

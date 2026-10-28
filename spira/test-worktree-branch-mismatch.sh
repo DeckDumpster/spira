@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 #
 # test-worktree-branch-mismatch.sh — spira_destroy_worktree refuses when the WORKTREE'S
-# OWN directory names a bead with a live aeon, even though the caller derived a different,
+# OWN directory names a bead with a live dwarf, even though the caller derived a different,
 # unheld id from whatever branch happens to be checked out there.
 #
 #   ./test-worktree-branch-mismatch.sh
 #
 # THE BUG (sp-87csm). A worktree path is keyed on the bead (its directory name), but a
 # child bead created sharing its parent's branch label leaves a worktree directory named
-# for the child while the branch checked out inside it names the parent. sending.sh's
+# for the child while the branch checked out inside it names the parent. hel.sh's
 # landing sweep parses the id from the LANDED BRANCH, not from the path, and asked
-# spira_holder_witnesses only about that branch's bead. Once the parent bead had no aeon
+# spira_holder_witnesses only about that branch's bead. Once the parent bead had no dwarf
 # left (it was already closed), the witness said "nobody home" and the child's own worktree
 # — live, mid-session, holding uncommitted work — was salvaged and removed out from under
 # it. Confirmed against the production reap log: sp-eq8a4 (parent, closed) reaped
@@ -21,9 +21,9 @@
 # from the worktree path itself (basename), refusing if either name is held.
 #
 # THE PROPERTIES UNDER TEST.
-#   1. POSITIVE CONTROL: the mismatch is refused while the path's own bead has a live aeon,
+#   1. POSITIVE CONTROL: the mismatch is refused while the path's own bead has a live dwarf,
 #      even though the caller's (branch-derived) id has none.
-#   2. Once that aeon is gone, the same call proceeds — the fix must not become a permanent
+#   2. Once that dwarf is gone, the same call proceeds — the fix must not become a permanent
 #      refusal once nobody is actually home.
 #   3. THE ORDINARY CASE (id == path's own name, as every non-buggy caller already passes)
 #      is unaffected: a clean, unheld worktree is still removed.
@@ -33,15 +33,15 @@
 #
 # defect: sp-87csm
 # tier: T1
-# covers: spira/lib.sh sending/src/*
+# covers: spira/lib.sh hel/src/*
 # scar: a bead's own worktree, checked out on a branch inherited from its parent, was
-#   destroyed the moment the parent's branch landed and the parent's own aeon had already
+#   destroyed the moment the parent's branch landed and the parent's own dwarf had already
 #   gone, because the liveness check asked only about the branch's bead, never the path's.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
-T="$(mktemp -d)"; trap 'rm -rf "$T"; [ -n "${AEON_PID:-}" ] && kill "$AEON_PID" 2>/dev/null; true' EXIT INT TERM
+T="$(mktemp -d)"; trap 'rm -rf "$T"; [ -n "${DWARF_PID:-}" ] && kill "$DWARF_PID" 2>/dev/null; true' EXIT INT TERM
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 export SPIRA_RUN="$T/run"; mkdir -p "$SPIRA_RUN/worktree"
@@ -69,7 +69,7 @@ spira_status_seam "$STATUS_FILE"
 # sp-mve9i: the claim witness reads the lifecycle row (`spira-lc show`), never bd status, and
 # a machine that does not answer is "somebody may be home". This suite has no lifecycle store,
 # so a stand-in answers its three beads: the closed ones handed on (SUBMITTED), the child
-# READY — nobody holds any of them by the machine's word; only the planted aeon does.
+# READY — nobody holds any of them by the machine's word; only the planted dwarf does.
 mkdir -p "$T/lc"
 cat > "$T/lc/spira-lc" <<'STUB'
 #!/usr/bin/env bash
@@ -94,18 +94,18 @@ git -C "$REPO" branch spira/sp-parent main
 WT_CHILD="$SPIRA_RUN/worktree/sp-child"
 git -C "$REPO" worktree add -q "$WT_CHILD" spira/sp-parent
 
-# The parent (the caller's id, taken from the landed branch) has no aeon and reads closed
+# The parent (the caller's id, taken from the landed branch) has no dwarf and reads closed
 # (status seam, above) — the witness that used to be the whole answer.
 #
-# A live "aeon" holding the CHILD — the worktree's own directory name — via a pidfile whose
-# cmdline genuinely contains aeon.sh, so aeon_alive's argv check is exercised for real
+# A live "dwarf" holding the CHILD — the worktree's own directory name — via a pidfile whose
+# cmdline genuinely contains dwarf.sh, so dwarf_alive's argv check is exercised for real
 # rather than assumed (law-a-pattern-match-is-not-an-identity-check).
-bash -c 'exec -a aeon.sh sleep 60' &
-AEON_PID=$!
-echo "$AEON_PID" > "$SPIRA_RUN/aeon-testfayth-sp-child.pid"
-echo "$(( $(date +%s) + 3600 ))" > "$SPIRA_RUN/aeon-testfayth-sp-child.lease"
+bash -c 'exec -a dwarf.sh sleep 60' &
+DWARF_PID=$!
+echo "$DWARF_PID" > "$SPIRA_RUN/dwarf-testrune-sp-child.pid"
+echo "$(( $(date +%s) + 3600 ))" > "$SPIRA_RUN/dwarf-testrune-sp-child.lease"
 # Positive control: the pidfile really is alive before we rely on it.
-is "planted aeon pid is alive" "0" "$([ -d "/proc/$AEON_PID" ]; echo $?)"
+is "planted dwarf pid is alive" "0" "$([ -d "/proc/$DWARF_PID" ]; echo $?)"
 
 rc1=0
 spira_destroy_worktree "sp-parent" "$WT_CHILD" "$REPO" "landed in main" 2>/dev/null || rc1=$?
@@ -122,12 +122,12 @@ log_entry="$(grep 'sp-parent' "$SPIRA_REAPLOG" 2>/dev/null | grep REFUSED | grep
 echo
 
 # ======================================================================================
-echo "CASE 2 — once the path's own aeon is gone, the same call proceeds"
+echo "CASE 2 — once the path's own dwarf is gone, the same call proceeds"
 # ======================================================================================
-kill "$AEON_PID" 2>/dev/null
-wait "$AEON_PID" 2>/dev/null || true
-# A dead aeon's lease stops being renewed and runs out; the fixture ends it outright.
-echo 1 > "$SPIRA_RUN/aeon-testfayth-sp-child.lease"
+kill "$DWARF_PID" 2>/dev/null
+wait "$DWARF_PID" 2>/dev/null || true
+# A dead dwarf's lease stops being renewed and runs out; the fixture ends it outright.
+echo 1 > "$SPIRA_RUN/dwarf-testrune-sp-child.lease"
 
 rc2=0
 spira_destroy_worktree "sp-parent" "$WT_CHILD" "$REPO" "landed in main" 2>/dev/null || rc2=$?

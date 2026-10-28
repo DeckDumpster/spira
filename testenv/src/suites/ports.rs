@@ -11,7 +11,7 @@ use spira_config::process::{cfg, cfg_parse};
 
 /// Resolved settings (DESIGN-suites.md §2.5): registered keys (`spira/conf.d`) through
 /// `spira_config::process::cfg`/`cfg_parse` — the one source of config; a handful of
-/// non-registered names (SPIRA_AEON) still read the environment directly via `Source`.
+/// non-registered names (SPIRA_DWARF) still read the environment directly via `Source`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
     /// The harness root (suites.sh's `$HERE/..`).
@@ -27,8 +27,8 @@ pub struct Settings {
     pub flake_at: u64,
     pub flake_window: u64,
     pub max_age: u64,
-    /// SPIRA_AEON is non-empty: transitions are refused.
-    pub aeon: bool,
+    /// SPIRA_DWARF is non-empty: transitions are refused.
+    pub dwarf: bool,
     pub git_name: String,
     pub git_email: String,
 }
@@ -58,7 +58,7 @@ impl Settings {
             flake_at: cfg_parse("SPIRA_FLAKE_QUARANTINE_AT")?,
             flake_window: cfg_parse("SPIRA_FLAKE_WINDOW")?,
             max_age: cfg_parse("SPIRA_QUARANTINE_MAX_AGE")?,
-            aeon: src.get("SPIRA_AEON").is_some(),
+            dwarf: src.get("SPIRA_DWARF").is_some(),
             git_name: cfg("SPIRA_GIT_NAME")?,
             git_email: cfg("SPIRA_GIT_EMAIL")?,
             root: root.to_path_buf(),
@@ -216,7 +216,7 @@ mod tests {
     /// goes through `cfg`/`cfg_parse`, which resolve once per process from spira-config's own
     /// cache — not something a unit test can drive per-case. That default/parse behavior is
     /// spira-config's to test; what stays testable here is the pure validation below and the
-    /// one remaining non-registered field, `aeon`.
+    /// one remaining non-registered field, `dwarf`.
     #[test]
     fn priority_above_four_is_refused_by_name() {
         assert_eq!(validate_priority(0), Ok(0));
@@ -225,12 +225,12 @@ mod tests {
     }
 
     #[test]
-    fn aeon_is_whether_spira_aeon_is_set_at_all() {
-        let env: BTreeMap<&str, &str> = [("SPIRA_AEON", "sp-1")].into();
+    fn dwarf_is_whether_spira_dwarf_is_set_at_all() {
+        let env: BTreeMap<&str, &str> = [("SPIRA_DWARF", "sp-1")].into();
         let f = |k: &str| env.get(k).map(|v| v.to_string());
-        assert!(Source { env: &f }.get("SPIRA_AEON").is_some());
+        assert!(Source { env: &f }.get("SPIRA_DWARF").is_some());
 
         let none = |_: &str| None;
-        assert!(Source { env: &none }.get("SPIRA_AEON").is_none());
+        assert!(Source { env: &none }.get("SPIRA_DWARF").is_none());
     }
 }

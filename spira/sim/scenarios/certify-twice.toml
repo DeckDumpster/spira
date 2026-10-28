@@ -1,7 +1,7 @@
 epoch = 1800000000
 horizon = 2400000
 goal = "sp-ct01:LANDED"
-real_actors = ["sentinel-summon", "sentinel-landing", "sift"]
+real_actors = ["sentinel-call", "sentinel-landing", "sift"]
 
 [[actor]]
 name = "gate-worker"

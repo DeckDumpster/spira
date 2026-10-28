@@ -1,4 +1,4 @@
-//! Checkpoint holds across a `world.sh stop`: an aeon slain by the stop leaves its bead under
+//! Checkpoint holds across a `world.sh stop`: a dwarf slain by the stop leaves its bead under
 //! a `wait` hold with a `checkpoint-until:` reason, and `world.sh start` lifts them.
 
 use serde_json::Value;

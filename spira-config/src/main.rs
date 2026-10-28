@@ -14,7 +14,7 @@
 //!                                       SPIRA_REPO come from this process's own environment)
 //!   spira-config resolve --sh-all [file]  the same resolution, but EVERY resolved key —
 //!                                       conf.sh's own `eval` target (sp-ubcgo), which needs
-//!                                       SPIRA_REPO_MAP/SPIRA_FAYTHS/SPIRA_MAX_AEONS and every
+//!                                       SPIRA_REPO_MAP/SPIRA_RUNES/SPIRA_MAX_DWARVES and every
 //!                                       other registry key too, not only the typed export set
 //!   ... --conf-d DIR                    read the registry from DIR instead of
 //!                                       SPIRA_HOME/conf.d — conf.sh's own fix for its
@@ -30,10 +30,10 @@
 //!                                       SPIRA_CONF_FILE; exit 1 means the caller must
 //!                                       `exit 1` outright, never just `return`
 //!   spira-config convert-legacy DIR   DIR/spira.conf + repo-map -> DIR/spira.toml, only if absent
-//!   spira-config convert ...            spira.conf + repo-map + *.fayth -> spira.toml
+//!   spira-config convert ...            spira.conf + repo-map + *.rune -> spira.toml
 //!   spira-config set <path> <v> <file>  write one value into <file> in place
 //!   spira-config unset <path> <file>    remove one value from <file> in place
-//!   spira-config rename-persona <old> <new> <file>  move [persona.<old>] and its fayths/lanes entries
+//!   spira-config rename-persona <old> <new> <file>  move [persona.<old>] and its runes/lanes entries
 //!   spira-config writeback <candidate>  the write target any REGENERATING caller resolves
 //!                                       through first (wave 4.7, sp-ksrss) — `candidate`
 //!                                       unchanged on the installed release or
@@ -46,7 +46,7 @@
 //!   spira-config schema                 the JSON Schema spira.toml is validated against
 //!   spira-config path-tail              the box's `spira.path` tail, or a refusal naming why
 //!   spira-config migrate <file>         one-time: a pre-k6m1m goal implies id_prefix (sp-oppza)
-//!   spira-config fayth ...              the chamber registry (wave 4.22, sp-r5zd2) — names,
+//!   spira-config rune ...              the runes registry (wave 4.22, sp-r5zd2) — names,
 //!                                       get, roster, task, lane, partitions, for-labels, model
 //!   spira-config unit <base> [kind]      `spira_unit` (wave 4.10, sp-wqj3o): the unit name
 //!                                       this installation has loaded, or '?' when neither
@@ -83,7 +83,7 @@ fn env_nonempty(key: &str) -> Option<String> {
     env::var(key).ok().filter(|v| !v.is_empty())
 }
 
-use spira_config::chamber;
+use spira_config::runes;
 use spira_config::{edit_text, is_retired_path, remove_retired_text};
 use spira_config::locate::locate;
 use spira_config::repos::{Column, Registry};
@@ -273,8 +273,8 @@ fn cmd_link_model_bin(release: &str) -> ExitCode {
 /// `$SPIRA_TOML`/`$SPIRA_CONF` pin here means "no config file", not a search failure).
 ///
 /// `all`: false prints only [`EXPORT_KEYS`] (the set any caller may safely re-export to a
-/// child process); true prints every resolved key, `SPIRA_REPO_MAP`/`SPIRA_FAYTHS`/
-/// `SPIRA_MAX_AEONS` included — `conf.sh` is sourced, not exec'd, so reading those in-process
+/// child process); true prints every resolved key, `SPIRA_REPO_MAP`/`SPIRA_RUNES`/
+/// `SPIRA_MAX_DWARVES` included — `conf.sh` is sourced, not exec'd, so reading those in-process
 /// here is the same thing bash's own `spira_conf_defaults` always did; `conf.sh` decides
 /// separately, in bash, which names to then `export` to ITS children.
 ///
@@ -934,7 +934,7 @@ fn cmd_schema() -> ExitCode {
 
 /// Reads and validates `file` for `set`/`unset`, or starts from an empty document when it
 /// does not exist yet — the file argument is required for both, unlike `validate`/`get`/
-/// `export`, because their callers (`deploy.sh`, `install.sh`, `aeons.sh`) already know
+/// `export`, because their callers (`deploy.sh`, `install.sh`, `dwarves.sh`) already know
 /// exactly which file is in force and mutate it in place.
 fn read_doc_or_default(file: &str) -> Result<SpiraToml, String> {
     if !Path::new(file).exists() {
@@ -1095,7 +1095,7 @@ fn cmd_writeback(candidate: &str) -> ExitCode {
 fn cmd_convert(args: &[String]) -> ExitCode {
     let mut conf_path = None;
     let mut repo_map_path = None;
-    let mut fayth_paths: Vec<String> = Vec::new();
+    let mut rune_paths: Vec<String> = Vec::new();
     let mut out_path = None;
     let mut home = env::var("HOME").unwrap_or_default();
     let mut force_shrink = false;
@@ -1111,9 +1111,9 @@ fn cmd_convert(args: &[String]) -> ExitCode {
                 repo_map_path = args.get(i + 1).cloned();
                 i += 2;
             }
-            "--fayth" => {
+            "--rune" => {
                 if let Some(p) = args.get(i + 1) {
-                    fayth_paths.push(p.clone());
+                    rune_paths.push(p.clone());
                 }
                 i += 2;
             }
@@ -1155,22 +1155,22 @@ fn cmd_convert(args: &[String]) -> ExitCode {
         }
     };
 
-    let mut fayth_texts: Vec<(String, String)> = Vec::new();
-    for p in &fayth_paths {
+    let mut rune_texts: Vec<(String, String)> = Vec::new();
+    for p in &rune_paths {
         match fs::read_to_string(p) {
-            Ok(t) => fayth_texts.push((p.clone(), t)),
+            Ok(t) => rune_texts.push((p.clone(), t)),
             Err(e) => {
                 eprintln!("spira-config convert: {p}: {e}");
                 return ExitCode::FAILURE;
             }
         }
     }
-    let fayth_refs: Vec<(&str, &str)> = fayth_texts
+    let rune_refs: Vec<(&str, &str)> = rune_texts
         .iter()
         .map(|(p, t)| (p.as_str(), t.as_str()))
         .collect();
 
-    let (mut doc, warnings) = match convert::convert(&conf_text, &home, &repo_map_text, &fayth_refs)
+    let (mut doc, warnings) = match convert::convert(&conf_text, &home, &repo_map_text, &rune_refs)
     {
         Ok(r) => r,
         Err(errors) => {
@@ -1184,11 +1184,11 @@ fn cmd_convert(args: &[String]) -> ExitCode {
         eprintln!("spira-config convert: {w}");
     }
     // A CALLER THAT OMITS --conf ENTIRELY IS ASKING FOR A NARROWER REFRESH (conf.sh's
-    // persona-only regenerate passes just --fayth), not "this box has no [spira]/[repo]
+    // persona-only regenerate passes just --rune), not "this box has no [spira]/[repo]
     // config" — read_conf against empty text returns only defaults, and writing that over an
     // --out file with real content would silently erase every scalar spira.toml key the
     // omitted input didn't re-supply (shrink_reason only counts [repo.*] tables and the
-    // fayths list, so a scalar wipe like this passes it unnoticed). Fall back to whatever the
+    // runes list, so a scalar wipe like this passes it unnoticed). Fall back to whatever the
     // target already holds for [spira]/[repo] when there is no --conf to derive them from.
     //
     // ONLY WHEN --conf ITSELF IS ABSENT, not merely --repo-map: a caller that passes --conf
@@ -1239,12 +1239,12 @@ fn cmd_convert(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// `convert-legacy <dir> [--home DIR] [--fayth F]...` — prints the `spira.toml` now in force in
+/// `convert-legacy <dir> [--home DIR] [--rune F]...` — prints the `spira.toml` now in force in
 /// `<dir>` (converting a pre-cutover `spira.conf` + `repo-map` first if that is all it holds),
 /// or nothing when the directory holds neither.
 fn cmd_convert_legacy(args: &[String]) -> ExitCode {
     let mut dir = None;
-    let mut fayths = Vec::new();
+    let mut runes = Vec::new();
     let mut home = env::var("HOME").unwrap_or_default();
     let mut i = 0;
     while i < args.len() {
@@ -1255,9 +1255,9 @@ fn cmd_convert_legacy(args: &[String]) -> ExitCode {
                 }
                 i += 2;
             }
-            "--fayth" => {
+            "--rune" => {
                 if let Some(p) = args.get(i + 1) {
-                    fayths.push(PathBuf::from(p));
+                    runes.push(PathBuf::from(p));
                 }
                 i += 2;
             }
@@ -1272,10 +1272,10 @@ fn cmd_convert_legacy(args: &[String]) -> ExitCode {
         }
     }
     let Some(dir) = dir else {
-        eprintln!("usage: spira-config convert-legacy <config-dir> [--home DIR] [--fayth F]...");
+        eprintln!("usage: spira-config convert-legacy <config-dir> [--home DIR] [--rune F]...");
         return ExitCode::FAILURE;
     };
-    match convert::convert_legacy_dir(&dir, &home, &fayths) {
+    match convert::convert_legacy_dir(&dir, &home, &runes) {
         Ok(convert::LegacyOutcome::Present(p)) => {
             println!("{}", p.display());
             ExitCode::SUCCESS
@@ -1295,109 +1295,109 @@ fn cmd_convert_legacy(args: &[String]) -> ExitCode {
     }
 }
 
-/// `$SPIRA_HOME`, or the refusal every `fayth` subcommand prints and fails on — the chamber
-/// lives at `<home>/chamber`, and every lib.sh caller this binary now backs already has
+/// `$SPIRA_HOME`, or the refusal every `rune` subcommand prints and fails on — the runes
+/// lives at `<home>/runes`, and every lib.sh caller this binary now backs already has
 /// `SPIRA_HOME` set by the time it calls one of these (conf.sh resolves it before lib.sh is
 /// sourced), so an unset value here means something upstream broke, not "use a guess".
-fn fayth_home() -> Result<PathBuf, String> {
+fn rune_home() -> Result<PathBuf, String> {
     match env::var("SPIRA_HOME") {
         Ok(h) if !h.is_empty() => Ok(PathBuf::from(h)),
         _ => Err("SPIRA_HOME is not set".to_string()),
     }
 }
 
-/// `fayth ...` — the chamber registry (wave 4.22, sp-r5zd2): `spira-config fayth <verb>`
-/// backs lib.sh's own `fayth_names`/`spira_fayths`/`spira_task_fayths`/`spira_lane_fayths`/
-/// `fayth_get`/`fayth_partitions`/`fayths_for_labels`/`persona_model`, each now a one-line
+/// `rune ...` — the runes registry (wave 4.22, sp-r5zd2): `spira-config rune <verb>`
+/// backs lib.sh's own `rune_names`/`spira_runes`/`spira_task_runes`/`spira_lane_runes`/
+/// `rune_get`/`rune_partitions`/`runes_for_labels`/`persona_model`, each now a one-line
 /// shim onto one of these verbs.
-fn cmd_fayth(args: &[String]) -> ExitCode {
-    let home = match fayth_home() {
+fn cmd_rune(args: &[String]) -> ExitCode {
+    let home = match rune_home() {
         Ok(h) => h,
         Err(e) => {
-            eprintln!("spira-config fayth: {e}");
+            eprintln!("spira-config rune: {e}");
             return ExitCode::FAILURE;
         }
     };
-    // The roster is the declared one (spira.fayths), never an environment override.
-    let roster = match spira_config::process::cfg("SPIRA_FAYTHS") {
+    // The roster is the declared one (spira.runes), never an environment override.
+    let roster = match spira_config::process::cfg("SPIRA_RUNES") {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("spira-config fayth: {e}");
+            eprintln!("spira-config rune: {e}");
             return ExitCode::FAILURE;
         }
     };
     let roster_override = Some(roster.as_str());
     match args.first().map(String::as_str) {
         Some("names") => {
-            for n in chamber::fayth_names(&home) {
+            for n in runes::rune_names(&home) {
                 println!("{n}");
             }
             ExitCode::SUCCESS
         }
         Some("get") => match (args.get(1), args.get(2)) {
-            (Some(fayth), Some(var)) => {
+            (Some(rune), Some(var)) => {
                 let def = args.get(3).map(String::as_str).unwrap_or("");
-                print!("{}", chamber::fayth_get(&home, fayth, var, def));
+                print!("{}", runes::rune_get(&home, rune, var, def));
                 ExitCode::SUCCESS
             }
             _ => {
-                eprintln!("usage: spira-config fayth get <fayth> <var> [default]");
+                eprintln!("usage: spira-config rune get <rune> <var> [default]");
                 ExitCode::FAILURE
             }
         },
         Some("roster") => {
-            print!("{}", chamber::spira_fayths(&home, roster_override));
+            print!("{}", runes::spira_runes(&home, roster_override));
             ExitCode::SUCCESS
         }
         Some("task") => {
-            print!("{}", chamber::spira_task_fayths(&home, roster_override));
+            print!("{}", runes::spira_task_runes(&home, roster_override));
             ExitCode::SUCCESS
         }
         Some("lane") => {
-            print!("{}", chamber::spira_lane_fayths(&home, roster_override));
+            print!("{}", runes::spira_lane_runes(&home, roster_override));
             ExitCode::SUCCESS
         }
         Some("partitions") => {
-            for (labels, exclude) in chamber::fayth_partitions(&home, roster_override) {
+            for (labels, exclude) in runes::rune_partitions(&home, roster_override) {
                 println!("{labels}\t{exclude}");
             }
             ExitCode::SUCCESS
         }
         Some("for-labels") => match args.get(1) {
             Some(labels) => {
-                for f in chamber::fayths_for_labels(&home, labels) {
+                for f in runes::runes_for_labels(&home, labels) {
                     println!("{f}");
                 }
                 ExitCode::SUCCESS
             }
             None => {
-                eprintln!("usage: spira-config fayth for-labels <labels>");
+                eprintln!("usage: spira-config rune for-labels <labels>");
                 ExitCode::FAILURE
             }
         },
         Some("model") => match args.get(1) {
-            Some(fayth) => {
+            Some(rune) => {
                 let def = args.get(2).map(String::as_str);
-                print!("{}", chamber::persona_model(fayth, def));
+                print!("{}", runes::persona_model(rune, def));
                 ExitCode::SUCCESS
             }
             None => {
-                eprintln!("usage: spira-config fayth model <fayth> [default]");
+                eprintln!("usage: spira-config rune model <rune> [default]");
                 ExitCode::FAILURE
             }
         },
         _ => {
             eprintln!(
-                "usage: spira-config fayth <names|get|roster|task|lane|partitions|for-labels|model> ...\n\
+                "usage: spira-config rune <names|get|roster|task|lane|partitions|for-labels|model> ...\n\
                  \n\
-                 \x20 names                           every persona in the chamber, one per line\n\
-                 \x20 get <fayth> <var> [default]      one field of a fayth\n\
-                 \x20 roster                           spira_fayths: the active roster, in priority order\n\
-                 \x20 task                             spira_task_fayths: the pool's summon set\n\
-                 \x20 lane                              spira_lane_fayths: the declared lane fayths\n\
-                 \x20 partitions                       fayth_partitions: labels\\texclude-labels, one per line\n\
-                 \x20 for-labels <labels>              fayths_for_labels: personas whose partition IS <labels>\n\
-                 \x20 model <fayth> [default]          persona_model: the model this persona launches under"
+                 \x20 names                           every persona in the runes, one per line\n\
+                 \x20 get <rune> <var> [default]      one field of a rune\n\
+                 \x20 roster                           spira_runes: the active roster, in priority order\n\
+                 \x20 task                             spira_task_runes: the pool's call set\n\
+                 \x20 lane                              spira_lane_runes: the declared lane runes\n\
+                 \x20 partitions                       rune_partitions: labels\\texclude-labels, one per line\n\
+                 \x20 for-labels <labels>              runes_for_labels: personas whose partition IS <labels>\n\
+                 \x20 model <rune> [default]          persona_model: the model this persona launches under"
             );
             ExitCode::FAILURE
         }
@@ -1607,7 +1607,7 @@ fn dispatch(args: &[String]) -> ExitCode {
         Some("init") => cmd_init(&args[1..]),
         Some("schema") => cmd_schema(),
         Some("path-tail") => cmd_path_tail(),
-        Some("fayth") => cmd_fayth(&args[1..]),
+        Some("rune") => cmd_rune(&args[1..]),
         Some("unit") => cmd_unit(&args[1..]),
         Some("deps") => cmd_deps(&args[1..]),
         Some("convert-legacy") => cmd_convert_legacy(&args[1..]),
@@ -1622,7 +1622,7 @@ fn dispatch(args: &[String]) -> ExitCode {
         _ => {
             eprintln!(
                 "usage: spira-config <validate|get|export|locate|resolve|env-bootstrap|check-bd|\n\
-                 \x20       convert|set|unset|writeback|schema|path-tail|fayth|unit|deps|\n\
+                 \x20       convert|set|unset|writeback|schema|path-tail|rune|unit|deps|\n\
                  \x20       convert-legacy|migrate|repo> ...\n\
                  \n\
                  \x20 init [--out F] [--answers F] [--<key> VALUE]...\n\
@@ -1633,16 +1633,16 @@ fn dispatch(args: &[String]) -> ExitCode {
                  \x20 resolve --sh|--sh-all [--conf-d DIR] [file]\n\
                  \x20 env-bootstrap --sh\n\
                  \x20 check-bd\n\
-                 \x20 convert --conf F --repo-map F [--fayth F]... [--home DIR] [--out F]\n\
+                 \x20 convert --conf F --repo-map F [--rune F]... [--home DIR] [--out F]\n\
                  \x20         [--force-shrink]\n\
-                 \x20 convert-legacy <config-dir> [--home DIR] [--fayth F]...\n\
+                 \x20 convert-legacy <config-dir> [--home DIR] [--rune F]...\n\
                  \x20 set <dotted.path> <value> <file>\n\
                  \x20 unset <dotted.path> <file>\n\
                  \x20 writeback <candidate>\n\
                  \x20 link-model-bin <release>\n\
                  \x20 schema\n\
                  \x20 path-tail\n\
-                 \x20 fayth <names|get|roster|task|lane|partitions|for-labels|model> ...\n\
+                 \x20 rune <names|get|roster|task|lane|partitions|for-labels|model> ...\n\
                  \x20 unit <base> [service|timer]\n\
                  \x20 unit --watch <name>\n\
                  \x20 deps <list [tier]|tier <bin>|purpose <bin>|absent <bin>|require <bin>...>\n\

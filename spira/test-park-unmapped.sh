@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
 #
 # test-park-unmapped.sh — park_unmapped (lib.sh) labels a bead ask+overseer, notes why, and
-#   releases the aeon's own claim, in that order, when aeon.sh's repo-map resolution fails
+#   releases the dwarf's own claim, in that order, when dwarf.sh's repo-map resolution fails
 #   (dispatch test plan G13; the real replacement for the deleted test-unmapped-repo-park.sh,
-#   which exercised only bd's own --exclude-label and never aeon.sh).
+#   which exercised only bd's own --exclude-label and never dwarf.sh).
 #
 #   ./test-park-unmapped.sh
 #
 # THE ORDER MATTERS. Labels must land before the claim is released: the moment
 # release_own_claim hands the lifecycle row back (`spira-lc unclaim`, sp-hyo5e; under
-# sp-v62vn the only release there is), the bead is READY and the next summon can offer it —
-# and if the ask/overseer labels are not on it yet, a second aeon claims the same
+# sp-v62vn the only release there is), the bead is READY and the next call can offer it —
+# and if the ask/overseer labels are not on it yet, a second dwarf claims the same
 # unmapped-repo bead in the gap. A stubbed bd and a stubbed spira-lc record argv into ONE
 # log in call order, so this suite can assert on it directly, never on wall-clock timing.
 #
 # defect: sp-4l0d, sp-nlhy, sp-foi7
 # tier: T1
-# covers: spira/lib.sh aeon/src/* UC-dispatch-22
+# covers: spira/lib.sh dwarf/src/* UC-dispatch-22
 # hermetic-ok: no database, no systemd, no network
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -67,7 +67,7 @@ export CALLS
 # which no process reads them from any more.
 tl_config SPIRA_BD=bd SPIRA_DB=fixture SPIRA_ASK_LABEL=needs-fixture-operator \
     SPIRA_REPO_MAP="$TMP/fixture-repo-map"
-export PATH="$TMP/bin:$PATH" BEADS_ACTOR=aeon-tester
+export PATH="$TMP/bin:$PATH" BEADS_ACTOR=dwarf-tester
 park_unmapped sp-typo1 typo-repo
 n_calls="$(grep -c . "$CALLS" || true)"
 [ "${n_calls:-0}" -gt 0 ] && ok "positive control: bd was called at all ($n_calls call(s))" \
@@ -81,10 +81,10 @@ case "$calls" in *"label add sp-typo1 $SPIRA_ASK_LABEL"*) bad "no ask label ($SP
 has "overseer label is applied"               "label add sp-typo1 overseer"        "$calls"
 has "a note is left on the bead"              "note sp-typo1"                      "$calls"
 has "the ask hold is put on the lifecycle row"  "spira-lc hold sp-typo1 ask"        "$calls"
-# Through spira-lc unclaim (sp-hyo5e): the machine releases the row only if this aeon still
-# holds it — under the aeon's own name, never the fayth's. bd is not written (sp-v62vn).
-has "the claim is released (spira-lc unclaim under the aeon's name)" \
-    "spira-lc unclaim sp-typo1 aeon-tester" "$calls"
+# Through spira-lc unclaim (sp-hyo5e): the machine releases the row only if this dwarf still
+# holds it — under the dwarf's own name, never the rune's. bd is not written (sp-v62vn).
+has "the claim is released (spira-lc unclaim under the dwarf's name)" \
+    "spira-lc unclaim sp-typo1 dwarf-tester" "$calls"
 
 overseer_line="$(grep -n "label add sp-typo1 overseer" "$CALLS" | head -1 | cut -d: -f1)"
 note_line="$(grep -n "note sp-typo1" "$CALLS" | head -1 | cut -d: -f1)"
@@ -106,13 +106,13 @@ has "note names the offending repo" "repo:typo-repo" "$note_call"
 has "note says how to lift the hold" "spira-lc withdraw-ask sp-typo1" "$note_call"
 
 echo
-echo "case 3 — no BEADS_ACTOR (no live aeon identity): the bead is still labeled, but the release itself fails safely:"
+echo "case 3 — no BEADS_ACTOR (no live dwarf identity): the bead is still labeled, but the release itself fails safely:"
 # ======================================================================================
 # release_own_claim refuses to act without an actor identity — the same fence every other
-# release site shares. park_unmapped must still apply the labels: an aeon that somehow lost
+# release site shares. park_unmapped must still apply the labels: a dwarf that somehow lost
 # its own identity mid-session should not also lose the parking protection.
 : > "$CALLS"
-unset BEADS_ACTOR SPIRA_AEON
+unset BEADS_ACTOR SPIRA_DWARF
 park_unmapped sp-typo2 other-repo
 calls2="$(cat "$CALLS")"
 has  "the ask hold is still put without an actor identity" "spira-lc hold sp-typo2 ask" "$calls2"
@@ -127,7 +127,7 @@ tl_summary
 echo
 echo "case 4 — a terminal bead is not held or noted; only the claim is released:"
 # ======================================================================================
-export BEADS_ACTOR=aeon-tester
+export BEADS_ACTOR=dwarf-tester
 for st in LANDED SUPERSEDED DROPPED DONE; do
     : > "$CALLS"
     FAKE_STATE=$st park_unmapped sp-term1 gone-repo
@@ -135,7 +135,7 @@ for st in LANDED SUPERSEDED DROPPED DONE; do
     if [[ "$c" == *"spira-lc hold"* || "$c" == *"note sp-term1"* || "$c" == *"label add"* ]]; then
         bad "$st: no hold, note or label" "$c"
     else ok "$st: no hold, note or label"; fi
-    has "$st: claim still released" "spira-lc unclaim sp-term1 aeon-tester" "$c"
+    has "$st: claim still released" "spira-lc unclaim sp-term1 dwarf-tester" "$c"
 done
 : > "$CALLS"
 FAKE_STATE=READY park_unmapped sp-live1 gone-repo
@@ -145,4 +145,4 @@ has "READY bead is still held" "spira-lc hold sp-live1 ask" "$(cat "$CALLS")"
 FAKE_STATE=UNREADABLE park_unmapped sp-unread1 gone-repo
 c="$(cat "$CALLS")"
 if [[ "$c" == *"spira-lc hold"* ]]; then bad "unreadable row: no hold sent" "$c"; else ok "unreadable row: no hold sent"; fi
-has "unreadable row: claim still released" "spira-lc unclaim sp-unread1 aeon-tester" "$c"
+has "unreadable row: claim still released" "spira-lc unclaim sp-unread1 dwarf-tester" "$c"

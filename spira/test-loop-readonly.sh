@@ -5,7 +5,7 @@
 # --------------
 # After release install-tarball (sp-jsnbm; was activate.sh) applies chmod -R a-w,
 # sentinel.sh runs from the read-only tree, sources lib.sh and conf.sh from it, reaches
-# the dispatch path, and a stub SPIRA_SUMMON claims the ready bead.  A permission-denied
+# the dispatch path, and a stub SPIRA_CALL claims the ready bead.  A permission-denied
 # error from the release directory would kill the sentinel before it reached that path.
 #
 # POSITIVE CONTROL: before chmod -R a-w, a write to the release dir succeeds —
@@ -49,13 +49,13 @@ SPIRA_RUN_DIR="$SCRATCH/run"
 mkdir -p "$RELEASES" "$SPIRA_RUN_DIR"
 
 # ---------------------------------------------------------------------------
-# STUB systemctl: no live aeons, no active landing unit
+# STUB systemctl: no live dwarves, no active landing unit
 # ---------------------------------------------------------------------------
 MOCK_SC="$SCRATCH/mock-sc"
 cat > "$MOCK_SC" <<'EOF'
 #!/usr/bin/env bash
 case "$*" in
-    *spira-aeon-*) ;;
+    *spira-dwarf-*) ;;
     *list-units*)  ;;
     *is-active*)   printf 'inactive\n'; exit 3 ;;
 esac
@@ -132,17 +132,17 @@ want "fixture: sp-lr-work is ready" "sp-lr-work" "$_ready"
 echo ""
 echo "phase 3: the sentinel binary from read-only release claims the bead"
 # ===========================================================================
-# SPIRA_SUMMON stub: records the call and claims the ready bead.
-SUMMON_LOG="$SCRATCH/summon.log"
-STUB_SUMMON="$SCRATCH/summon.sh"
-cat > "$STUB_SUMMON" <<STUB
+# SPIRA_CALL stub: records the call and claims the ready bead.
+CALL_LOG="$SCRATCH/call.log"
+STUB_CALL="$SCRATCH/call.sh"
+cat > "$STUB_CALL" <<STUB
 #!/usr/bin/env bash
-printf 'SUMMONED\n' >> "${SUMMON_LOG}"
-BEADS_ACTOR=aeon-test-loop-readonly \
+printf 'CALLED\n' >> "${CALL_LOG}"
+BEADS_ACTOR=dwarf-test-loop-readonly \
     "\${SPIRA_BD:-bd}" -C "\${SPIRA_DB}" \
     ready --claim --label plan >/dev/null 2>&1 || true
 STUB
-chmod +x "$STUB_SUMMON"
+chmod +x "$STUB_CALL"
 
 # The lifecycle machine is the only ready set (sp-v62vn): a spira-lc stub whose `list`
 # seeds sp-lr-work READY, so the sentinel's fill reads the machine as production does.
@@ -164,7 +164,7 @@ printf '#!/bin/sh\nexit 0\n' > "$STUB_LAUNCH"; chmod +x "$STUB_LAUNCH"
 STUB_NOTIFY="$SCRATCH/notify.sh"
 printf '#!/bin/sh\nexit 0\n' > "$STUB_NOTIFY"; chmod +x "$STUB_NOTIFY"
 
-# Minimal git repo so sending.sh and landing find a real remote with no
+# Minimal git repo so hel.sh and landing find a real remote with no
 # unlanded branches.
 GIT_REMOTE="$SCRATCH/remote.git"
 GIT_REPO="$SCRATCH/repo"
@@ -176,17 +176,17 @@ git -C "$GIT_REPO" remote add origin "$GIT_REMOTE"
 timeout 5 git -C "$GIT_REPO" push -q origin main
 timeout 5 git -C "$GIT_REPO" fetch -q origin
 
-# SPIRA_CHAMBER is registered and the fixture declares a fixed, nonexistent path — nothing
+# SPIRA_RUNES_DIR is registered and the fixture declares a fixed, nonexistent path — nothing
 # derives it from SPIRA_HOME any more (sfail round 2, pattern 6); the release tarball's real
-# chamber/ is what sentinel must be pointed at explicitly.
+# runes/ is what sentinel must be pointed at explicitly.
 tl_config SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_BD="${SPIRA_BD:-$(command -v bd)}" SPIRA_FAYTHS=builder SPIRA_MAX_AEONS=1 \
-    SPIRA_NOTIFY="$STUB_NOTIFY" SPIRA_CHAMBER="$CURRENT/spira/chamber"
+    SPIRA_BD="${SPIRA_BD:-$(command -v bd)}" SPIRA_RUNES=builder SPIRA_MAX_DWARVES=1 \
+    SPIRA_NOTIFY="$STUB_NOTIFY" SPIRA_RUNES_DIR="$CURRENT/spira/runes"
 SENTINEL_OUT="$(
     SPIRA_HOME="$CURRENT/spira" \
     SPIRA_REPO="$GIT_REPO" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_SUMMON="$STUB_SUMMON" \
+    SPIRA_CALL="$STUB_CALL" \
     SPIRA_LAUNCH="$STUB_LAUNCH" \
     SPIRA_SYSTEMCTL="$MOCK_SC" \
     SPIRA_SKIP_RECLAIM=1 \
@@ -199,11 +199,11 @@ iszero "sentinel exits 0 from read-only release" "$SENTINEL_RC"
 nowant "no permission denied from release dir" "Permission denied" "$SENTINEL_OUT"
 nowant "no read-only filesystem error"         "Read-only file system" "$SENTINEL_OUT"
 
-_summon_calls=0
-[ -f "$SUMMON_LOG" ] && _summon_calls="$(wc -l < "$SUMMON_LOG" | tr -d ' ')"
-[ "${_summon_calls:-0}" -ge 1 ] \
-    && ok "SPIRA_SUMMON called — sentinel reached dispatch from read-only release" \
-    || bad "SPIRA_SUMMON not called" \
+_call_calls=0
+[ -f "$CALL_LOG" ] && _call_calls="$(wc -l < "$CALL_LOG" | tr -d ' ')"
+[ "${_call_calls:-0}" -ge 1 ] \
+    && ok "SPIRA_CALL called — sentinel reached dispatch from read-only release" \
+    || bad "SPIRA_CALL not called" \
            "sentinel did not reach dispatch; log tail: $(printf '%s' "$SENTINEL_OUT" | tail -5)"
 
 _bead_status="$(

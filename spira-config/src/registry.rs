@@ -90,7 +90,7 @@ include!(concat!(env!("OUT_DIR"), "/embedded_conf_d.rs"));
 /// by a test fixture's `--home` that simply forgot to copy `conf.d` in, twice
 /// (sp-8qm8g, then sp-1cdgq itself): the whole generic registry pass silently resolved to
 /// nothing, with no error anywhere, and a config knob the fixture's own `export` believed it
-/// had set (`SPIRA_MAX_AEONS`, `SPIRA_SUMMON_JITTER`) never reached `Conf`. Production always
+/// had set (`SPIRA_MAX_DWARVES`, `SPIRA_CALL_JITTER`) never reached `Conf`. Production always
 /// ships `conf.d` beside the release's binaries, so this changes nothing real — it only turns
 /// a silently-degraded test fixture into a named failure the first time it is run, which is
 /// the whole point. An EXISTING-but-empty directory is still not an error (conf-gen.sh itself

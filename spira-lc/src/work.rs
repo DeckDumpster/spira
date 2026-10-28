@@ -1,7 +1,7 @@
-//! The aeon semantic layer (design §3.5): show/note/submit/done/blocked/file-followup/
+//! The dwarf semantic layer (design §3.5): show/note/submit/done/blocked/file-followup/
 //! split/superseded-by, dispatched from the same socket and `Conn` as show/list/history/
 //! event. This dispatch is itself generic — it acts on whatever bead id its first
-//! argument names, like every other spira-lc verb — because binding to one summoned bead
+//! argument names, like every other spira-lc verb — because binding to one called bead
 //! is the `work` client crate's job (a separate, thinner binary that never links a direct
 //! DB connection at all), not this service's. See main.rs's `dispatch` for the socket path
 //! this shares with `show`/`list`/`history`/`event`.
@@ -227,7 +227,7 @@ const ROUND_PROVEN: &[&str] = &["unit-tests"];
 const PROOF_BUDGET_SECS: u64 = 270;
 
 /// A bead whose ejection named failing checks is submitted only when each has a passing run
-/// recorded at `tip`. The broker runs the missing ones itself (the aeon has no testenv), records
+/// recorded at `tip`. The broker runs the missing ones itself (the dwarf has no testenv), records
 /// the exit code and the check's own summary line, and refuses naming whatever is still unproven.
 fn proof_refusal(run: &std::path::Path, bead_id: &str, tip: &str, owed: &[String], budget: u64, runner: &dyn Fn(&str, u64) -> (i32, String)) -> Option<(i32, String)> {
     use spira_config::proof;
@@ -359,8 +359,8 @@ fn ejected_reasons(conn: &Conn, bead_id: &str, tip: &str) -> Option<String> {
     found.first()?.get("reason")?.as_str().map(str::to_string)
 }
 
-/// A mender's summons the queue already dropped ends without an event the machine would refuse.
-fn mender_summons_closed(conn: &Conn, bead_id: &str, actor: &str, verb: &str) -> Option<(i32, String)> {
+/// A mender's calls the queue already dropped ends without an event the machine would refuse.
+fn mender_calls_closed(conn: &Conn, bead_id: &str, actor: &str, verb: &str) -> Option<(i32, String)> {
     if actor != "mender" {
         return None;
     }
@@ -370,19 +370,19 @@ fn mender_summons_closed(conn: &Conn, bead_id: &str, actor: &str, verb: &str) ->
     }
 }
 
-/// The failure a mender summons names in its body (`Batch:`, `Pass:`, `Suite:` lines).
-fn summons_failure(text: &str) -> Option<(String, u32, String)> {
+/// The failure a mender calls names in its body (`Batch:`, `Pass:`, `Suite:` lines).
+fn calls_failure(text: &str) -> Option<(String, u32, String)> {
     let field = |k: &str| text.lines().find_map(|l| l.trim().strip_prefix(k).map(|v| v.trim().to_string()));
     Some((field("Batch: ")?, field("Pass: ")?.parse().ok()?, field("Suite: ")?))
 }
 
-/// A mender's summons does not close DONE while the failure it was filed for is still unsettled:
+/// A mender's calls does not close DONE while the failure it was filed for is still unsettled:
 /// the round would sit in attributing with nothing to move it.
 fn unrecorded_outcome_refusal(conn: &Conn, bead_id: &str, actor: &str, verb: &str) -> Option<(i32, String)> {
     if actor != "mender" {
         return None;
     }
-    let (batch, pass, suite) = summons_failure(&crate::bd::show(bead_id).ok()?)?;
+    let (batch, pass, suite) = calls_failure(&crate::bd::show(bead_id).ok()?)?;
     let row = crate::mending::fetch(conn, &batch, pass, &suite).ok()??;
     if row.state.is_terminal() {
         return None;
@@ -390,7 +390,7 @@ fn unrecorded_outcome_refusal(conn: &Conn, bead_id: &str, actor: &str, verb: &st
     Some((
         REFUSED,
         format!(
-            "refused: work {verb} would close {bead_id} while {batch} pass {pass} {suite} is still {} — record it with `work mender outcome <spec> <mended|environment|flaky|return|unsure>`; if the summons names no spec, say so with `work blocked`",
+            "refused: work {verb} would close {bead_id} while {batch} pass {pass} {suite} is still {} — record it with `work mender outcome <spec> <mended|environment|flaky|return|unsure>`; if the calls names no spec, say so with `work blocked`",
             row.state.as_str()
         ),
     ))
@@ -411,7 +411,7 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
         Ok(a) => a,
         Err(e) => return e,
     };
-    if let Some(quiet) = mender_summons_closed(conn, bead_id, &actor, "done") {
+    if let Some(quiet) = mender_calls_closed(conn, bead_id, &actor, "done") {
         return quiet;
     }
     if let Some(refusal) = unrecorded_outcome_refusal(conn, bead_id, &actor, "done") {
@@ -469,37 +469,37 @@ fn cmd_done(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     apply_bead_event(conn, bead_id, &actor, BeadEventKind::Done { delivers })
 }
 
-/// A bead leaves WORKING only by an exit its claiming fayth declares (`FAYTH_WORKING_EXITS`);
-/// the refusal names the fayth, the attempted state and the exits it may take.
+/// A bead leaves WORKING only by an exit its claiming rune declares (`RUNE_WORKING_EXITS`);
+/// the refusal names the rune, the attempted state and the exits it may take.
 fn working_exit_refusal(verb: &str, exit: &str, row: &bead::BeadRow, actor: &str) -> Option<(i32, String)> {
     if row.state != bead::BeadState::Working {
         return None;
     }
     match spira_config::resolve::locate_home_for_process() {
-        Ok(home) => working_exit_refusal_in(&spira_config::chamber::chamber_dir(std::path::Path::new(&home)), verb, exit, row, actor),
+        Ok(home) => working_exit_refusal_in(&spira_config::runes::runes_dir(std::path::Path::new(&home)), verb, exit, row, actor),
         Err(e) => Some((CANNOT_TELL, format!("cannot tell: {e}"))),
     }
 }
 
-fn working_exit_refusal_in(chamber: &std::path::Path, verb: &str, exit: &str, row: &bead::BeadRow, actor: &str) -> Option<(i32, String)> {
+fn working_exit_refusal_in(runes: &std::path::Path, verb: &str, exit: &str, row: &bead::BeadRow, actor: &str) -> Option<(i32, String)> {
     if row.state != bead::BeadState::Working {
         return None;
     }
-    let fayth = row.persona.clone().unwrap_or_else(|| actor.to_string());
-    let exits = match spira_config::chamber::working_exits_in(chamber, &fayth) {
+    let rune = row.persona.clone().unwrap_or_else(|| actor.to_string());
+    let exits = match spira_config::runes::working_exits_in(runes, &rune) {
         Ok(e) => e,
         Err(e) => return Some((REFUSED, format!("refused: work {verb}: {e}"))),
     };
-    working_exit_check(verb, exit, &fayth, &exits)
+    working_exit_check(verb, exit, &rune, &exits)
 }
 
-fn working_exit_check(verb: &str, exit: &str, fayth: &str, exits: &[String]) -> Option<(i32, String)> {
+fn working_exit_check(verb: &str, exit: &str, rune: &str, exits: &[String]) -> Option<(i32, String)> {
     if exits.iter().any(|e| e == exit) {
         return None;
     }
     Some((
         REFUSED,
-        format!("refused: work {verb}: fayth {fayth} may not leave WORKING for {exit}; its exits are {}", exits.join(" ")),
+        format!("refused: work {verb}: rune {rune} may not leave WORKING for {exit}; its exits are {}", exits.join(" ")),
     ))
 }
 
@@ -567,17 +567,24 @@ fn release_untriggered_groom(bead_id: &str, actor: &str, conn: &Conn) -> (i32, S
     }
 }
 
+fn not_a_question(text: &str) -> Option<String> {
+    (text.trim().is_empty() || text.starts_with("--")).then(|| format!("{text:?} is not a question"))
+}
+
 fn cmd_blocked(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     let actor = match require_actor(args) {
         Ok(a) => a,
         Err(e) => return e,
     };
-    if let Some(quiet) = mender_summons_closed(conn, bead_id, &actor, "blocked") {
+    if let Some(quiet) = mender_calls_closed(conn, bead_id, &actor, "blocked") {
         return quiet;
     }
     let Some(question) = args.first() else {
         return (CANNOT_TELL, "work blocked: missing \"<question>\"".into());
     };
+    if let Some(e) = not_a_question(question) {
+        return (CANNOT_TELL, format!("work blocked: {e}; usage: work blocked \"<the question>\" --default \"<what you would do>\""));
+    }
     let Some(default) = flag(args, "--default") else {
         return (CANNOT_TELL, "work blocked: --default <default> is required".into());
     };
@@ -656,7 +663,7 @@ fn cmd_superseded_by(bead_id: &str, args: &[String], conn: &Conn) -> (i32, Strin
     };
     // Not lifecycle::bead::BeadEventKind::Supersede: that is the authoritative, terminal
     // transition, reserved for the groomer or operator's own confirmation (design §3.5 —
-    // "a supersede request, confirmed by the groomer or operator"). The aeon's own request
+    // "a supersede request, confirmed by the groomer or operator"). The dwarf's own request
     // is a hold plus an ask; nothing here moves the bead to SUPERSEDED.
     let (code, out) = apply_bead_event(
         conn,
@@ -681,23 +688,23 @@ fn cmd_superseded_by(bead_id: &str, args: &[String], conn: &Conn) -> (i32, Strin
 
 // ---- the lane verbs and the persona gate (sp-st0mm) --------------------------------------
 //
-// Operator order 2026-10-05: no aeon model runs `bd`. Everything a persona legitimately does
-// to the graph — including to beads OTHER than the one it was summoned for (a groomer closes
+// Operator order 2026-10-05: no dwarf model runs `bd`. Everything a persona legitimately does
+// to the graph — including to beads OTHER than the one it was called for (a groomer closes
 // duplicates, ops adds a dependency, czar ejects a member) — is a named verb here, and this
 // broker is the only thing that calls bd or a bd-calling tool on its behalf. Each verb is one
 // narrow operation with its arguments validated; there is deliberately no "run this bd
 // command" passthrough, because that would re-open exactly the hole this closes.
 //
 // Who may run what is ONE table, [`ALLOW`]. The caller's persona is the `--actor` the `work`
-// client appends from its own environment (`SPIRA_FAYTH`, else `SPIRA_WORK_ACTOR`); the
+// client appends from its own environment (`SPIRA_RUNE`, else `SPIRA_WORK_ACTOR`); the
 // client refuses a user-typed `--actor`; serve binds it to the peer's uid ([`bind_peer`]) for
 // every uid listed in `<socket>.personas`, since the environment is the caller's to set.
 
-/// Every verb that is not bound to the summoned bead. The bound verbs above act on the
+/// Every verb that is not bound to the called bead. The bound verbs above act on the
 /// bead the client is bound to; these name their target (or none) themselves.
 pub const LANE_VERBS: &[&str] = &[
     "ask", "read", "list", "search", "note-on", "label-add", "label-remove", "dep-add", "relate", "reopen", "close-other", "close-ask", "file", "groom", "incident",
-    "sop", "census", "queue", "landing-pass", "strand", "fence", "sending", "mender",
+    "sop", "census", "queue", "landing-pass", "strand", "fence", "hel", "mender",
 ];
 
 const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ack"];
@@ -713,7 +720,7 @@ const TOOLS: &[(&str, &str)] = &[
     ("queue", "queue"),
     ("landing-pass", "landing-pass"),
     ("strand", "strand"),
-    ("sending", "sending"),
+    ("hel", "hel"),
     ("mender", "mender"),
 ];
 
@@ -738,7 +745,7 @@ const ANY: &[&str] = &["*"];
 /// operation absent from this table is refused for everyone. A tool verb's operation is
 /// `"<verb> <sub>"`.
 pub const ALLOW: &[(&str, &[&str])] = &[
-    // Bound to the summoned bead: every persona acts on its own bead.
+    // Bound to the called bead: every persona acts on its own bead.
     ("show", ANY),
     ("note", ANY),
     ("submit", ANY),
@@ -792,7 +799,7 @@ pub const ALLOW: &[(&str, &[&str])] = &[
     ("strand report", &["czar", "groomer"]),
     ("strand detect-livelocked", &["groomer"]),
     ("fence", &["czar"]),
-    ("sending --dry-run", &["ops", "czar"]),
+    ("hel --dry-run", &["ops", "czar"]),
     ("mender start", &["mender"]),
     ("mender pack", &["mender"]),
     ("mender diff", &["mender"]),
@@ -920,13 +927,13 @@ pub enum Step {
     Tool { program: &'static str, args: Vec<String>, stdin: Option<String> },
     CreateRow,
     /// `Hold { Ask, OperatorQuestion }` on `bead`: the bead waits on the operator's answer
-    /// (only a `Reply` or `AskWithdrawn` lifts it), and aeon's teardown reads the hold to
+    /// (only a `Reply` or `AskWithdrawn` lifts it), and dwarf's teardown reads the hold to
     /// release the session operator-wait, uncharged (sp-v62vn follow-up: it replaced the
     /// `<bead>.operator-wait` marker `mail` wrote, which a restricted model cannot run).
     AskHold { bead: String, question: String },
     /// `mail send operator ...` for `work ask`, run with `BEAD_ID=<classify_as>`: mail's
     /// escalation-class check (`mail::cmds::class_refusal`) engages only when BEAD_ID is set —
-    /// the old direct-mail path had it from the aeon's own environment, the broker's process
+    /// the old direct-mail path had it from the dwarf's own environment, the broker's process
     /// does not — so without it an unclassed question went straight to the operator. With it,
     /// an ask lacking a PERMISSIONS/POLICY/DESTRUCTIVE `--class` and a `## Class basis` is
     /// routed to the concierge mailbox (law-escalate-decisions-not-problems).
@@ -999,10 +1006,10 @@ pub fn display_name(actor: &str) -> String {
 const POISON_LABEL: &str = "spira-poison";
 
 /// What a lane verb does, decided from its arguments alone — no I/O, so every rule below is
-/// covered without a fixture. `bound` is the client's summoned bead (`-` when unbound).
+/// covered without a fixture. `bound` is the client's called bead (`-` when unbound).
 pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, String)> {
     let a = &call.args;
-    let actor = call.actor.as_deref().unwrap_or("aeon");
+    let actor = call.actor.as_deref().unwrap_or("dwarf");
     let bd = |args: Vec<String>| Step::Bd { args, stdin: None };
     match verb {
         "read" => {
@@ -1171,8 +1178,8 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
             let (Some(subject), Some(kind), Some(default)) = (get(&f, "--subject"), get(&f, "--kind"), get(&f, "--default")) else {
                 return Err(usage(verb, "--subject, --kind and --default are all required (an ask without a default is incomplete)"));
             };
-            if subject.trim().is_empty() || subject.starts_with("--") {
-                return Err(usage(verb, &format!("--subject {subject:?} is not a question; usage: work ask --subject \"<the question>\" --kind question --default \"<what you would do>\"")));
+            if let Some(e) = not_a_question(subject) {
+                return Err(usage(verb, &format!("{e}; usage: work ask --subject \"<the question>\" --kind question --default \"<what you would do>\"")));
             }
             if !MAIL_KINDS.contains(&kind) {
                 return Err(usage(verb, &format!("--kind {kind:?} (want one of {})", MAIL_KINDS.join(", "))));
@@ -1206,7 +1213,7 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
                 args.extend([s("--class"), c.to_string()]);
             }
             let own = cited.as_deref() == Some(bound) && is_bead_id(bound);
-            // mail reads BEAD_ID only as "an aeon is asking"; a caller bound to nothing and
+            // mail reads BEAD_ID only as "a dwarf is asking"; a caller bound to nothing and
             // citing nothing is still a persona asking, so it is classified too.
             let classify_as = cited.clone().unwrap_or_else(|| bound.to_string());
             if let Some(b) = cited {
@@ -1233,7 +1240,7 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
             if tool == "census" && !(a.is_empty() || a == &[s("--with-suppressed")]) {
                 return Err(usage(tool, "takes only --with-suppressed"));
             }
-            if tool == "sending" && !matches!(a.iter().map(String::as_str).collect::<Vec<_>>().as_slice(), ["--dry-run"] | ["--dry-run", "--no-fetch"]) {
+            if tool == "hel" && !matches!(a.iter().map(String::as_str).collect::<Vec<_>>().as_slice(), ["--dry-run"] | ["--dry-run", "--no-fetch"]) {
                 return Err(usage(tool, "takes only --dry-run [--no-fetch]"));
             }
             if tool == "groom" && a.first().map(String::as_str) == Some("split-piece") {
@@ -1420,7 +1427,7 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
         Ok(p) => p,
         Err(e) => return e,
     };
-    let actor = call.actor.as_deref().unwrap_or("aeon");
+    let actor = call.actor.as_deref().unwrap_or("dwarf");
     let mut out = String::new();
     for step in steps {
         let (code, text) = match step {
@@ -1473,10 +1480,10 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
 #[cfg(test)]
 mod tests {
     #[test]
-    fn a_summons_body_names_its_failure() {
+    fn a_calls_body_names_its_failure() {
         let body = "  spec: /x/y.json\n  Batch: r-1\n  Pass: 2\n  Suite: test-a.sh\n";
-        assert_eq!(super::summons_failure(body), Some(("r-1".into(), 2, "test-a.sh".into())));
-        assert_eq!(super::summons_failure("an integrate summons"), None);
+        assert_eq!(super::calls_failure(body), Some(("r-1".into(), 2, "test-a.sh".into())));
+        assert_eq!(super::calls_failure("an integrate calls"), None);
     }
 
     #[test]
@@ -1522,7 +1529,7 @@ mod tests {
     }
 
     #[test]
-    fn a_working_exit_the_fayth_does_not_declare_is_refused_by_name() {
+    fn a_working_exit_the_rune_does_not_declare_is_refused_by_name() {
         let exits = v(&["DONE", "ask", "park", "hold"]);
         let (code, msg) = working_exit_check("submit", "SUBMITTED", "spike", &exits).unwrap();
         assert_eq!(code, REFUSED);
@@ -1539,9 +1546,9 @@ mod tests {
     }
 
     #[test]
-    fn the_shipped_fayths_send_a_spike_to_done_and_a_builder_to_submitted() {
-        let chamber = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/chamber");
-        let go = |persona: &str, verb: &str, exit: &str| working_exit_refusal_in(&chamber, verb, exit, &working_row(persona), persona);
+    fn the_shipped_runes_send_a_spike_to_done_and_a_builder_to_submitted() {
+        let runes = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+        let go = |persona: &str, verb: &str, exit: &str| working_exit_refusal_in(&runes, verb, exit, &working_row(persona), persona);
         let (code, msg) = go("spike", "submit", "SUBMITTED").unwrap();
         assert_eq!(code, REFUSED);
         assert!(msg.contains("spike") && msg.contains("SUBMITTED") && msg.contains("DONE ask park hold"), "{msg}");
@@ -1550,7 +1557,7 @@ mod tests {
         assert!(go("builder", "done", "DONE").is_some());
         let mut submitted = working_row("spike");
         submitted.state = bead::BeadState::Submitted;
-        assert!(working_exit_refusal_in(&chamber, "submit", "SUBMITTED", &submitted, "spike").is_none());
+        assert!(working_exit_refusal_in(&runes, "submit", "SUBMITTED", &submitted, "spike").is_none());
     }
 
     fn v(xs: &[&str]) -> Vec<String> {
@@ -1559,7 +1566,7 @@ mod tests {
 
     #[test]
     fn a_uid_bound_to_a_persona_cannot_present_as_another() {
-        let map = parse_persona_uids("# aeons\n1001 builder\n1002 czar  # the czar\nbad line here\n");
+        let map = parse_persona_uids("# dwarves\n1001 builder\n1002 czar  # the czar\nbad line here\n");
         assert_eq!(map, vec![(1001, "builder".to_string()), (1002, "czar".to_string())]);
         let forged = v(&["work", "sp-1", "queue", "eject", "sp-2", "--actor", "czar"]);
         let (code, msg) = bind_peer(&forged, Some(1001), &map).unwrap_err();
@@ -1707,15 +1714,15 @@ mod tests {
     }
 
     #[test]
-    fn sending_is_a_read_only_dry_run_for_ops_alone() {
-        let ok = |xs: &[&str], who: &str| plan("sending", "-", &call(xs, who));
-        assert_eq!(ok(&["--dry-run"], "ops").unwrap(), vec![tool("sending", &["--dry-run"])]);
+    fn hel_is_a_read_only_dry_run_for_ops_alone() {
+        let ok = |xs: &[&str], who: &str| plan("hel", "-", &call(xs, who));
+        assert_eq!(ok(&["--dry-run"], "ops").unwrap(), vec![tool("hel", &["--dry-run"])]);
         assert!(ok(&["--dry-run", "--no-fetch"], "ops").is_ok());
         for bad in [&["--all"][..], &[][..], &["sp-x1"][..], &["--dry-run", "--all"][..], &["reap-stale"][..]] {
             assert!(ok(bad, "ops").is_err(), "{bad:?}");
         }
-        assert_eq!(gate("sending", &v(&["--dry-run", "--actor", "builder"])).unwrap_err().0, REFUSED);
-        assert!(gate("sending", &v(&["--dry-run", "--actor", "ops"])).is_ok());
+        assert_eq!(gate("hel", &v(&["--dry-run", "--actor", "builder"])).unwrap_err().0, REFUSED);
+        assert!(gate("hel", &v(&["--dry-run", "--actor", "ops"])).is_ok());
     }
 
     #[test]
@@ -1932,6 +1939,14 @@ mod tests {
     }
 
     #[test]
+    fn a_question_that_is_empty_or_a_flag_name_is_not_a_question() {
+        for q in ["--default", "--default x", "", "  "] {
+            assert!(not_a_question(q).is_some(), "{q:?}");
+        }
+        assert!(not_a_question("May I?").is_none());
+    }
+
+    #[test]
     fn ask_builds_the_mail_with_the_persona_as_sender() {
         let p = plan("ask", "sp-me1", &call(&["--subject", "Close sp-a1?", "--kind", "question", "--default", "yes"], "groomer")).unwrap();
         let Step::Ask { args, stdin, classify_as } = &p[0] else { panic!() };
@@ -1946,7 +1961,7 @@ mod tests {
     }
 
     /// sp-v62vn follow-up: a restricted model asks through `work ask`; a question from a
-    /// bound session also places the `ask` hold on the bound bead's row — the record aeon's
+    /// bound session also places the `ask` hold on the bound bead's row — the record dwarf's
     /// teardown reads to release the session operator-wait (the marker mail wrote is gone).
     #[test]
     fn a_bound_question_holds_the_bound_bead_after_the_mail() {
@@ -1967,7 +1982,7 @@ mod tests {
     }
 
     /// sp-v62vn follow-up: the broker's `mail` ran without BEAD_ID, which mail reads as "not
-    /// an aeon", so its escalation-class check never ran and an unclassed question went
+    /// a dwarf", so its escalation-class check never ran and an unclassed question went
     /// straight to the operator. Every ask step now carries the id mail classifies by —
     /// bound, citing another bead, or bound to nothing at all.
     #[test]

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# test-work-container.sh — the aeon semantic layer end to end: a real spira_lifecycle
+# test-work-container.sh — the dwarf semantic layer end to end: a real spira_lifecycle
 # (its own throwaway dolt sql-server), a real bd (testdb.sh), and real mail, driven
-# through the built `work` client over `spira-lc serve`'s socket exactly as an aeon's
+# through the built `work` client over `spira-lc serve`'s socket exactly as a dwarf's
 # restricted environment would reach it.
 #
 # WHAT THIS PROVES (acceptance criteria): each verb emits exactly the documented event or
@@ -22,9 +22,9 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 
-# round 4 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — without it,
-# bead.sh file --for builder cannot find chamber/builder.fayth ("no such persona: builder").
-tl_config SPIRA_CHAMBER="$HERE/chamber"
+# round 4 fix (pattern 6): SPIRA_RUNES_DIR no longer derives from SPIRA_HOME — without it,
+# bead.sh file --for builder cannot find runes/builder.rune ("no such persona: builder").
+tl_config SPIRA_RUNES_DIR="$HERE/runes"
 
 . "$HERE/conf.sh"
 export PATH="$(dirname "$DOLT_BIN"):$PATH"
@@ -151,19 +151,19 @@ export SPIRA_LC_SOCKET="$SOCK"
 tl_config SPIRA_LC_SOCKET="$SOCK"
 
 # ── one real bd bead, filed through bead.sh's own contract, and its lifecycle twin ───
-BID="$(bead.sh file "aeon semantic layer container-tier fixture" --for builder --repo testrepo --body-file "$TMP/build.md" 2>"$TMP/file.err")"
+BID="$(bead.sh file "dwarf semantic layer container-tier fixture" --for builder --repo testrepo --body-file "$TMP/build.md" 2>"$TMP/file.err")"
 [ -n "$BID" ] || bail "bead.sh file did not return an id: $(cat "$TMP/file.err")"
 seed_bead "$BID"
 
 work_as() {   # work_as <bead-id> <verb> [args...]
     local bid="$1"; shift
-    SPIRA_WORK_BEAD_ID="$bid" SPIRA_FAYTH="builder" SPIRA_LC_SOCKET="$SOCK" "$WORK_BIN" "$@"
+    SPIRA_WORK_BEAD_ID="$bid" SPIRA_RUNE="builder" SPIRA_LC_SOCKET="$SOCK" "$WORK_BIN" "$@"
 }
 
 # ── show: reads bd content ────────────────────────────────────────────────────────────
 out="$(work_as "$BID" show 2>&1)"; rc=$?
 is   "show: exits 0"                 "0"                                              "$rc"
-want "show: bd's own title is in it" "aeon semantic layer container-tier fixture"     "$out"
+want "show: bd's own title is in it" "dwarf semantic layer container-tier fixture"     "$out"
 
 # ── note: a plain bd note, no lifecycle event ────────────────────────────────────────
 before_events="$(root_sql --use-db spira_lifecycle sql -q "SELECT COUNT(*) AS n FROM event WHERE lc_key='$BID'" -r json 2>&1)"
@@ -176,22 +176,22 @@ is "note: emits no lifecycle event (bd, non-lifecycle, per design §3.5)" "$befo
 
 # submit is legal only from WORKING (lifecycle/src/bead.rs) — seed_bead leaves BID at
 # READY, same as every other fixture bead here; move it to WORKING first.
-root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='aeon-test', version=1 WHERE bead_id='$BID'" >/dev/null 2>&1
+root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='dwarf-test', version=1 WHERE bead_id='$BID'" >/dev/null 2>&1
 
 # ── submit: bead Submit(tip), tip read from the worktree, never taken as an argument ──
 # A throwaway repo, never $REPO: $REPO here is testenv-batch.sh's own bind-mounted worktree,
 # whose .git gitlink points at a commondir that exists on the host, not inside this
 # container, so `git rev-parse HEAD` against it fails closed with no tip at all.
-AEON_WT="$TMP/aeon-worktree"
-mkdir -p "$AEON_WT"
-git -C "$AEON_WT" init -q
-git -C "$AEON_WT" -c user.email=aeon@spira.local -c user.name=aeon commit -q --allow-empty -m "fixture commit"
-real_tip="$(git -C "$AEON_WT" rev-parse HEAD)"
-out="$(cd "$AEON_WT" && work_as "$BID" submit 2>&1)"; rc=$?
+DWARF_WT="$TMP/dwarf-worktree"
+mkdir -p "$DWARF_WT"
+git -C "$DWARF_WT" init -q
+git -C "$DWARF_WT" -c user.email=dwarf@spira.local -c user.name=dwarf commit -q --allow-empty -m "fixture commit"
+real_tip="$(git -C "$DWARF_WT" rev-parse HEAD)"
+out="$(cd "$DWARF_WT" && work_as "$BID" submit 2>&1)"; rc=$?
 is "submit: exits 0 (applied)" "0" "$rc"
 row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state, tip FROM bead WHERE bead_id='$BID'" -r json 2>&1)"
 want "submit: state is SUBMITTED" "SUBMITTED" "$row"
-want "submit: tip is the worktree's real HEAD, not something the aeon could type" "$real_tip" "$row"
+want "submit: tip is the worktree's real HEAD, not something the dwarf could type" "$real_tip" "$row"
 
 # ── stacked dependents: base_withdrawn leaves WORKING in place and tells its holder;
 # submit is refused until the stack is current (design stacked-dependents-2026-09-28 §1,
@@ -201,10 +201,10 @@ PREREQ="prereq-fixture"
 seed_bead "$PREREQ"
 root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='CERTIFIED', tip='newtip', version=1 WHERE bead_id='$PREREQ'" >/dev/null 2>&1
 
-STK="$(bead.sh file "aeon semantic layer: stacked-base fixture" --for builder --repo testrepo --body-file "$TMP/build.md")"
+STK="$(bead.sh file "dwarf semantic layer: stacked-base fixture" --for builder --repo testrepo --body-file "$TMP/build.md")"
 seed_bead "$STK"
 root_sql --use-db spira_lifecycle sql -q \
-    "UPDATE bead SET state='WORKING', holder='aeon-stacked', version=1, stack=JSON_OBJECT('$PREREQ','oldtip') WHERE bead_id='$STK'" >/dev/null 2>&1
+    "UPDATE bead SET state='WORKING', holder='dwarf-stacked', version=1, stack=JSON_OBJECT('$PREREQ','oldtip') WHERE bead_id='$STK'" >/dev/null 2>&1
 
 before_note="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$STK" 2>&1)" # batch-job: fixture bd call against the suite's throwaway store
 out="$("$LC_BIN" event bead "$STK" --expect WORKING --version 1 --actor test --kind "{\"BaseWithdrawn\":{\"prereq\":\"$PREREQ\",\"tip\":\"oldtip\"}}" 2>&1)"; rc=$?
@@ -215,26 +215,26 @@ want "base_withdrawn: the reason names the withdrawn prerequisite and tip" "base
 after_note="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$STK" 2>&1)" # batch-job: fixture bd call against the suite's throwaway store
 [ "$after_note" != "$before_note" ] && ok "base_withdrawn: the WORKING holder is told (a note landed on the bead)" \
     || bad "base_withdrawn: the WORKING holder is told (a note landed on the bead)" "bd show did not change"
-want "base_withdrawn: the note names the holder" "aeon-stacked" "$after_note"
+want "base_withdrawn: the note names the holder" "dwarf-stacked" "$after_note"
 
-out="$(cd "$AEON_WT" && work_as "$STK" submit 2>&1)"; rc=$?
+out="$(cd "$DWARF_WT" && work_as "$STK" submit 2>&1)"; rc=$?
 is "submit while the stack still names a withdrawn tip: refused (exit 3)" "3" "$rc"
-want "submit refusal: tells the aeon to rebase onto the current stack" "rebase" "$out"
+want "submit refusal: tells the dwarf to rebase onto the current stack" "rebase" "$out"
 
-# once the stack is current again (the aeon rebased and the claim's stack now names the
+# once the stack is current again (the dwarf rebased and the claim's stack now names the
 # prerequisite's real tip), submit succeeds exactly as it does for an unstacked bead.
 root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET stack=JSON_OBJECT('$PREREQ','newtip') WHERE bead_id='$STK'" >/dev/null 2>&1
-out="$(cd "$AEON_WT" && work_as "$STK" submit 2>&1)"; rc=$?
+out="$(cd "$DWARF_WT" && work_as "$STK" submit 2>&1)"; rc=$?
 is "submit once the stack matches the prerequisite's current tip: applied (exit 0)" "0" "$rc"
 
 # ── done needs WORKING, not SUBMITTED — reset via a fresh bead for the rest ──────────
-DID="$(bead.sh file "aeon semantic layer: done/blocked/split fixture" --for builder --repo testrepo --body-file "$TMP/build.md")"
+DID="$(bead.sh file "dwarf semantic layer: done/blocked/split fixture" --for builder --repo testrepo --body-file "$TMP/build.md")"
 seed_bead "$DID"
-root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='aeon-test', version=1 WHERE bead_id='$DID'" >/dev/null 2>&1
+root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='dwarf-test', version=1 WHERE bead_id='$DID'" >/dev/null 2>&1
 
 out="$(work_as "$DID" done --delivers "a document at wiki/x" 2>&1)"; rc=$?
-is "builder done: refused (exit 3), its fayth declares no DONE exit" "3" "$rc"
-want "builder done: the refusal names the fayth and its exits" "SUBMITTED ask park hold" "$out"
+is "builder done: refused (exit 3), its rune declares no DONE exit" "3" "$rc"
+want "builder done: the refusal names the rune and its exits" "SUBMITTED ask park hold" "$out"
 root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET persona='spike' WHERE bead_id='$DID'" >/dev/null 2>&1
 out="$(work_as "$DID" done --delivers "a document at wiki/x" 2>&1)"; rc=$?
 is "done: exits 0 (applied)" "0" "$rc"
@@ -243,11 +243,11 @@ want "done: state is DONE" "\"state\":\"DONE\"" "$row"
 want "done: reason carries the delivers evidence" "a document at wiki/x" "$row"
 
 # ── groomer done: Done only on a bead carrying the groom-trigger marker ──────────────
-groom_as() { SPIRA_WORK_BEAD_ID="$1" SPIRA_FAYTH="groomer" SPIRA_LC_SOCKET="$SOCK" "$WORK_BIN" "${@:2}"; }
+groom_as() { SPIRA_WORK_BEAD_ID="$1" SPIRA_RUNE="groomer" SPIRA_LC_SOCKET="$SOCK" "$WORK_BIN" "${@:2}"; }
 GWORK="$(bead.sh file "groomer claimed a work bead" --for builder --repo testrepo --body-file "$TMP/build.md")"
 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" label add "$GWORK" "${SPIRA_GROOMER_LABEL:-groom}" >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
 seed_bead "$GWORK"
-root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='aeon-groomer', version=1 WHERE bead_id='$GWORK'" >/dev/null 2>&1
+root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='dwarf-groomer', version=1 WHERE bead_id='$GWORK'" >/dev/null 2>&1
 out="$(groom_as "$GWORK" done --delivers "note:groom.log" 2>&1)"; rc=$?
 is "groomer done on an unmarked work bead: refused (exit 3)" "3" "$rc"
 row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='$GWORK'" -r json 2>&1)"
@@ -258,7 +258,7 @@ want "groomer done on an unmarked work bead: the refusal says why" "not a groom 
 GTRIG="$(bead.sh file "groomer trigger fixture" --for builder --repo testrepo --body-file "$TMP/build.md")"
 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" label add "$GTRIG" groom-trigger >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
 seed_bead "$GTRIG"
-root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='aeon-groomer', version=1 WHERE bead_id='$GTRIG'" >/dev/null 2>&1
+root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='dwarf-groomer', version=1 WHERE bead_id='$GTRIG'" >/dev/null 2>&1
 out="$(groom_as "$GTRIG" done --delivers "note:groom.log" 2>&1)"; rc=$?
 is "POSITIVE CONTROL: groomer done on a marked trigger: exits 0" "0" "$rc"
 row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='$GTRIG'" -r json 2>&1)"
@@ -269,7 +269,7 @@ RTL="$(. "$SPIRA_HOME/conf.sh" >/dev/null 2>&1; printf '%s' "${SPIRA_RED_TRACKER
 RT="$(bead.sh file "publish PR 1 red for testrepo" --for builder --repo testrepo --body-file "$TMP/build.md")"
 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" label add "$RT" "$RTL" >/dev/null 2>&1 # batch-job: fixture bd call against the suite's throwaway store
 seed_bead "$RT"
-root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='aeon-test', version=1 WHERE bead_id='$RT'" >/dev/null 2>&1
+root_sql --use-db spira_lifecycle sql -q "UPDATE bead SET state='WORKING', holder='dwarf-test', version=1 WHERE bead_id='$RT'" >/dev/null 2>&1
 out="$(work_as "$RT" done --delivers "no code change" 2>&1)"; rc=$?
 is "red-tracker done: refused (exit 3)" "3" "$rc"
 row="$(root_sql --use-db spira_lifecycle sql -q "SELECT state FROM bead WHERE bead_id='$RT'" -r json 2>&1)"
@@ -277,7 +277,7 @@ want "red-tracker done: still WORKING" "\"state\":\"WORKING\"" "$row"
 want "red-tracker done: the refusal names the exits" "its exits are SUBMITTED ask park hold" "$out"
 
 # ── blocked: a hold, plus an ask filed for the operator ──────────────────────────────
-BLID="$(bead.sh file "aeon semantic layer: blocked fixture" --for builder --repo testrepo --body-file "$TMP/build.md")"
+BLID="$(bead.sh file "dwarf semantic layer: blocked fixture" --for builder --repo testrepo --body-file "$TMP/build.md")"
 seed_bead "$BLID"
 before_unread="$(ls "$SPIRA_MAIL/operator/new" "$SPIRA_MAIL/concierge/new" 2>/dev/null | grep -c .)"
 out="$(work_as "$BLID" blocked "which persona owns this?" --default "builder" 2>&1)"; rc=$?
@@ -318,7 +318,7 @@ out="$(work_as "$BID" split "a split piece filed by the container-tier suite" --
 is "split: exits 0" "0" "$rc"
 
 # ── superseded-by: a hold plus a confirmation ask, never bd supersede directly ───────
-SBID="$(bead.sh file "aeon semantic layer: superseded-by fixture" --for builder --repo testrepo --body-file "$TMP/build.md")"
+SBID="$(bead.sh file "dwarf semantic layer: superseded-by fixture" --for builder --repo testrepo --body-file "$TMP/build.md")"
 seed_bead "$SBID"
 out="$(work_as "$SBID" superseded-by "$BID" 2>&1)"; rc=$?
 is "superseded-by: exits 0" "0" "$rc"

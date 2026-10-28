@@ -16,6 +16,7 @@ test = false
 [dependencies]
 serde_json = "1"
 spira-config = { path = "../spira-config" }
+spira-otel = { path = "../spira-otel" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }

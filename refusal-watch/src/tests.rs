@@ -42,18 +42,18 @@ fn run(
 #[test]
 fn a_planted_class_over_baseline_is_filed_naming_caller_examples_and_times() {
     let (o, filed) = run(
-        &[row("aeon:sp-x", "Submit", 9), row("quiet", "Claim", 2)],
+        &[row("dwarf:sp-x", "Submit", 9), row("quiet", "Claim", 2)],
         BTreeMap::new(),
         &cfg(),
     );
     assert_eq!(filed.len(), 1, "{filed:?}");
     let (title, body) = &filed[0];
     assert!(
-        title.contains("Submit") && title.contains("aeon:sp-x"),
+        title.contains("Submit") && title.contains("dwarf:sp-x"),
         "{title}"
     );
     assert!(
-        body.contains("Caller: aeon:sp-x") && body.contains("- sp-a at 2026-10-09T"),
+        body.contains("Caller: dwarf:sp-x") && body.contains("- sp-a at 2026-10-09T"),
         "{body}"
     );
     assert_eq!(o.filed.len(), 1);

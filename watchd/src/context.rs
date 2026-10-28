@@ -200,7 +200,7 @@ impl Context {
 ///
 /// NOT A FIXED PARENT COUNT either (a second scar this same walk fixed): a release runs
 /// this binary from `<release>/bin/watchd`, one level below `spira/`'s sibling; a testenv
-/// or aeon-profile build tree runs it from `<checkout>/target/aeon/watchd`, TWO levels
+/// or dwarf-profile build tree runs it from `<checkout>/target/dwarf/watchd`, TWO levels
 /// below. Fixing the depth to the release's shape made the conf.sh seam fail closed
 /// ("conf.sh could not be sourced") on every other build layout.
 pub fn home_dir() -> PathBuf {
@@ -244,11 +244,11 @@ mod tests {
     }
 
     #[test]
-    fn a_testenv_aeon_profile_build_finds_spira_two_levels_above_target_aeon() {
-        // <checkout>/target/aeon/watchd; spira/ is beside the checkout root, not beside
-        // target/aeon/ — the exact shape that broke the fixed-parent-count version inside
+    fn a_testenv_dwarf_profile_build_finds_spira_two_levels_above_target_dwarf() {
+        // <checkout>/target/dwarf/watchd; spira/ is beside the checkout root, not beside
+        // target/dwarf/ — the exact shape that broke the fixed-parent-count version inside
         // a testenv container (this crate's own scar).
-        let exe = Path::new("/workspace/target/aeon/watchd");
+        let exe = Path::new("/workspace/target/dwarf/watchd");
         let exists = has(&["/workspace/spira"]);
         assert_eq!(find_spira_dir(exe, exists), Some(PathBuf::from("/workspace/spira")));
     }

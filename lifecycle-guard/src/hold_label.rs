@@ -4,7 +4,7 @@
 //! among them, sat invisible to every builder because each still carried `needs-ryan` after its
 //! ask was withdrawn. Two shapes are a finding:
 //!
-//! 1. **predicate** — a fayth's `FAYTH_EXCLUDE_LABELS` naming `spira-poison` or
+//! 1. **predicate** — a rune's `RUNE_EXCLUDE_LABELS` naming `spira-poison` or
 //!    `$SPIRA_ASK_LABEL`: claimability read off a label instead of the row.
 //! 2. **write** — code adding either label: Rust handing bd `"label", "add", …, "spira-poison"`
 //!    (or the ask label through a variable named `ask`), shell `label add … spira-poison` /
@@ -29,7 +29,7 @@ struct Res {
 fn res() -> &'static Res {
     static R: OnceLock<Res> = OnceLock::new();
     R.get_or_init(|| Res {
-        predicate: Regex::new(r#"^\s*FAYTH_EXCLUDE_LABELS=.*(spira-poison|\$\{?SPIRA_ASK_LABEL)"#).unwrap(),
+        predicate: Regex::new(r#"^\s*RUNE_EXCLUDE_LABELS=.*(spira-poison|\$\{?SPIRA_ASK_LABEL)"#).unwrap(),
         rust_add: Regex::new(r#""label"\s*,\s*"add"\s*,[^\]]*(?:"spira-poison"|&\s*ask\b|&\s*self\.cfg\.ask\b|ask_label\(\))"#).unwrap(),
         sh_add: Regex::new(r#"\blabel\s+add\s+\S+\s+["']?(?:spira-poison|\$\{?SPIRA_ASK_LABEL)"#).unwrap(),
     })
@@ -49,7 +49,7 @@ fn finding(rel: &str, line: usize, shape: &str, detail: &str) -> Finding {
 pub fn scan_text(rel: &str, text: &str) -> Vec<Finding> {
     let r = res();
     let mut out = Vec::new();
-    let is_fayth = rel.ends_with(".fayth");
+    let is_rune = rel.ends_with(".rune");
     let is_rust = rel.ends_with(".rs");
     for (idx, line) in text.lines().enumerate() {
         if is_rust && line.trim_start().starts_with("#[cfg(test)]") {
@@ -59,11 +59,11 @@ pub fn scan_text(rel: &str, text: &str) -> Vec<Finding> {
         if code.starts_with('#') && !is_rust || code.starts_with("//") {
             continue;
         }
-        if is_fayth && r.predicate.is_match(line) {
-            out.push(finding(rel, idx + 1, "predicate", "a fayth excludes by a hold label; poison and ask are lifecycle holds the claim already refuses — drop the label from FAYTH_EXCLUDE_LABELS"));
+        if is_rune && r.predicate.is_match(line) {
+            out.push(finding(rel, idx + 1, "predicate", "a rune excludes by a hold label; poison and ask are lifecycle holds the claim already refuses — drop the label from RUNE_EXCLUDE_LABELS"));
         } else if is_rust && r.rust_add.is_match(line) {
             out.push(finding(rel, idx + 1, "write", "a hold written as a bd label; hold it on the row (spira-lc hold <id> poison|ask) and write no label"));
-        } else if !is_rust && !is_fayth && r.sh_add.is_match(line) {
+        } else if !is_rust && !is_rune && r.sh_add.is_match(line) {
             out.push(finding(rel, idx + 1, "write", "a hold written as a bd label; hold it on the row (spira-lc hold <id> poison|ask) and write no label"));
         }
     }
@@ -96,19 +96,19 @@ mod tests {
 
     #[test]
     fn every_hold_label_shape_is_found() {
-        assert_eq!(lines("spira/chamber/builder.fayth", "FAYTH_EXCLUDE_LABELS=\"spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL\"\n"), vec![1]);
-        assert_eq!(lines("spira/chamber/ops.fayth", "FAYTH_EXCLUDE_LABELS=\"$SPIRA_ASK_LABEL\"\n"), vec![1]);
+        assert_eq!(lines("spira/runes/builder.rune", "RUNE_EXCLUDE_LABELS=\"spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL\"\n"), vec![1]);
+        assert_eq!(lines("spira/runes/ops.rune", "RUNE_EXCLUDE_LABELS=\"$SPIRA_ASK_LABEL\"\n"), vec![1]);
         let rs = "fn a() { let _ = self.d.bd.bd(&s(&[\"label\", \"add\", &id, \"spira-poison\"])); }\nfn b() { let _ = self.d.bd.bd(&s(&[\"label\", \"add\", &id, &ask])); }\nfn c() { self.bd().quiet(self.h, &[\"label\", \"add\", &c.id, &self.cfg.ask], None); }\n";
-        assert_eq!(lines("aeon/src/run.rs", rs), vec![1, 2, 3]);
+        assert_eq!(lines("dwarf/src/run.rs", rs), vec![1, 2, 3]);
         let sh = "park() {\n    bdq label add \"$id\" \"$SPIRA_ASK_LABEL\" >/dev/null\n    bdq label add \"$id\" spira-poison\n}\n";
         assert_eq!(lines("spira/lib.sh", sh), vec![2, 3]);
     }
 
     #[test]
     fn the_non_hold_labels_comments_and_tests_are_not_findings() {
-        assert!(lines("spira/chamber/builder.fayth", "FAYTH_EXCLUDE_LABELS=\"$SPIRA_CI_LABEL,qa-proposed\"\n# FAYTH_EXCLUDE_LABELS=\"spira-poison\"\n").is_empty());
+        assert!(lines("spira/runes/builder.rune", "RUNE_EXCLUDE_LABELS=\"$SPIRA_CI_LABEL,qa-proposed\"\n# RUNE_EXCLUDE_LABELS=\"spira-poison\"\n").is_empty());
         let rs = "fn a() { bd(&[\"label\", \"add\", &id, \"overseer\"]); }\n// bd(&[\"label\", \"add\", &id, \"spira-poison\"])\n#[cfg(test)]\nmod tests {\n    fn t() { bd(&[\"label\", \"add\", \"sp-1\", \"spira-poison\"]); }\n}\n";
-        assert!(lines("aeon/src/run.rs", rs).is_empty());
+        assert!(lines("dwarf/src/run.rs", rs).is_empty());
         assert!(lines("spira/lib.sh", "bdq label add \"$id\" overseer\n# bdq label add \"$id\" spira-poison\n").is_empty());
     }
 }

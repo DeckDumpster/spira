@@ -323,7 +323,7 @@ fn infer(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str) {
                 .env("SPIRA_INCIDENT_TYPE", "task")
                 .env("SPIRA_INCIDENT_PRIORITY", "1")
                 .env("SPIRA_INCIDENT_ACTOR", "czar-pass")
-                .env("SPIRA_SIN_EXEMPT", "1")
+                .env("SPIRA_FENRIR_EXEMPT", "1")
                 .env("SPIRA_INCIDENT_REPO", "spira")
                 .env("SPIRA_INCIDENT_REF", format!("incident:queue-{}", ref_))
                 .env("SPIRA_INCIDENT_CAUSE", class)
@@ -338,10 +338,10 @@ fn infer(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str) {
                 let _ = child.wait();
             }
             log_print(&format!(
-                "czar pass: {} → inference (filed, summoning czar)",
+                "czar pass: {} → inference (filed, calling czar)",
                 class
             ));
-            summon_fayth_czar(cfg);
+            call_rune_czar(cfg);
         }
     }
 }
@@ -370,7 +370,7 @@ fn infer_urgent(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str, r
                 .env("SPIRA_INCIDENT_PRIORITY", "0")
                 .env("SPIRA_INCIDENT_EXPRESS", "1")
                 .env("SPIRA_INCIDENT_ACTOR", "czar-pass")
-                .env("SPIRA_SIN_EXEMPT", "1")
+                .env("SPIRA_FENRIR_EXEMPT", "1")
                 .env("SPIRA_INCIDENT_REPO", repo)
                 .env("SPIRA_INCIDENT_REF", format!("incident:base-red:{}", ref_))
                 .env("SPIRA_INCIDENT_CAUSE", class)
@@ -385,10 +385,10 @@ fn infer_urgent(cfg: &Config, class: &str, ref_: &str, subj: &str, body: &str, r
                 let _ = child.wait();
             }
             log_print(&format!(
-                "czar pass: {} → inference (filed, summoning czar)",
+                "czar pass: {} → inference (filed, calling czar)",
                 class
             ));
-            summon_fayth_czar(cfg);
+            call_rune_czar(cfg);
         }
     }
 }
@@ -403,15 +403,15 @@ fn det_action(cfg: &Config, class: &str, desc: &str, action: impl FnOnce()) {
     }
 }
 
-/// `sentinel --summon czar` directly — no lib.sh sourcing at all (wave 4.27, family G,
-/// sp-gzmd2: `summon_fayth` moved in-process into the sentinel crate). The own
-/// `world.halted` pre-check this used to need is gone too: `sentinel --summon` runs the
+/// `sentinel --call czar` directly — no lib.sh sourcing at all (wave 4.27, family G,
+/// sp-gzmd2: `call_rune` moved in-process into the sentinel crate). The own
+/// `world.halted` pre-check this used to need is gone too: `sentinel --call` runs the
 /// SAME `world_gate` sentinel's own pass does, which also catches a live DRAIN this
 /// hand-rolled check never did.
-fn summon_fayth_czar(cfg: &Config) {
+fn call_rune_czar(cfg: &Config) {
     // batch-job: this runs whatever its caller names, as long as that takes
     let _ = Command::new(&cfg.seams.sentinel)
-        .arg("--summon")
+        .arg("--call")
         .arg("czar")
         .stderr(Stdio::null())
         .status();

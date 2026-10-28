@@ -12,10 +12,10 @@
 # database at all, now that the per-case arithmetic those passes used to be the ONLY
 # coverage for has its own T1 tables:
 #   - the fill loop's pool math and per-persona cap  -> ck7_pool/ck7_fill_cap (G2, G3),
-#     tested directly in sentinel's own summon::tests (wave 4.27, sp-gzmd2 — ported from
+#     tested directly in sentinel's own call::tests (wave 4.27, sp-gzmd2 — ported from
 #     bash, where test-watchtower-throttle.sh used to call them)
 #   - lane rotation order                            -> lane_rotate (G1),
-#     tested directly in sentinel's own summon::tests, ditto
+#     tested directly in sentinel's own call::tests, ditto
 #   - CHECK 8's firing predicate                      -> sentinel's judge::tests::judgement_table
 #     (G15; check8_should_judge/test-check8-progressed.sh retired at sp-8itaf, zero live callers)
 #
@@ -28,7 +28,7 @@
 # tier: T3
 # covers: sentinel/src/* spira/lib.sh UC-dispatch-14 UC-dispatch-19
 # hermetic-ok: uses a fixture database; systemd/gh/network reached through
-#   SPIRA_LAUNCH, SPIRA_SUMMON and SPIRA_SYSTEMCTL seams pointed at stubs
+#   SPIRA_LAUNCH, SPIRA_CALL and SPIRA_SYSTEMCTL seams pointed at stubs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -58,16 +58,16 @@ chmod +x "$STUBS/spira-lc"
 for _s in pilgrimage.sh reflect.sh; do
     printf '#!/bin/sh\n' > "$STUBS/$_s"; chmod +x "$STUBS/$_s"
 done
-# strand ALSO backs lib.sh's aeon_alive/aeon_count/aeons_live_total/aeons_live_lanes shims
-# now (wave 4.23, sp-0ffox) — a bare no-op here would make `$(aeon_count ...)` inside
+# strand ALSO backs lib.sh's dwarf_alive/dwarf_count/dwarves_live_total/dwarves_live_lanes shims
+# now (wave 4.23, sp-0ffox) — a bare no-op here would make `$(dwarf_count ...)` inside
 # lib.sh's pass-start summary print nothing, not "0", and blow up the arithmetic that adds
 # it. A plain no-op is still correct for strand's OWN verbs (report/check/throttle-state),
 # which is all this suite needs from it.
 cat > "$STUBS/strand" <<'STRANDSTUB'
 #!/bin/sh
 case "$1" in
-    aeon-alive) exit 1 ;;
-    aeon-count|aeons-live-total|aeons-live-lanes) printf '0' ;;
+    dwarf-alive) exit 1 ;;
+    dwarf-count|dwarves-live-total|dwarves-live-lanes) printf '0' ;;
 esac
 STRANDSTUB
 chmod +x "$STUBS/strand"
@@ -81,11 +81,11 @@ LAUNCH_ARGV="$TMP/launch-argv"
 # mock-launch stands in for systemd-run: it records every dispatch's own argv.
 printf '#!/bin/sh\necho "$@" >> "%s"\nexit 0\n' "$LAUNCH_ARGV" > "$STUBS/mock-launch"; chmod +x "$STUBS/mock-launch"
 printf '#!/bin/sh\nexit 0\n'         > "$STUBS/mock-notify";    chmod +x "$STUBS/mock-notify"
-touch "$STUBS/repo-map"   # empty: no repos, Sending finds nothing to walk
-# THE REAL CHAMBER, symlinked once up front: `ln -sf` onto a directory that already
+touch "$STUBS/repo-map"   # empty: no repos, Hel finds nothing to walk
+# THE REAL RUNES, symlinked once up front: `ln -sf` onto a directory that already
 # exists creates the link INSIDE it instead of replacing it, so this must run before
-# anything else ever creates $STUBS/chamber as a plain directory.
-ln -s "$HERE/chamber" "$STUBS/chamber"
+# anything else ever creates $STUBS/runes as a plain directory.
+ln -s "$HERE/runes" "$STUBS/runes"
 
 echo "test-sentinel-pass.sh"
 
@@ -99,7 +99,7 @@ FAILING_BD="$TMP/failing-bd"
 printf '#!/bin/sh\nexit 1\n' > "$FAILING_BD"; chmod +x "$FAILING_BD"
 _run_unreadable="$TMP/run-unreadable"; mkdir -p "$_run_unreadable"
 tl_config SPIRA_RUN="$_run_unreadable" SPIRA_DB="$TMP/irrelevant-db" SPIRA_BD="$FAILING_BD" \
-    SPIRA_FAYTHS="" SPIRA_NOTIFY="$STUBS/mock-notify" SPIRA_CHAMBER="$STUBS/chamber"
+    SPIRA_RUNES="" SPIRA_NOTIFY="$STUBS/mock-notify" SPIRA_RUNES_DIR="$STUBS/runes"
 out_unreadable="$(env -i \
     PATH="$STUBS:$PATH" HOME="$HOME" \
     SPIRA_HOME="$STUBS" \
@@ -132,12 +132,12 @@ testdb_seed <<'JSONL'
 {"id":"sp-b5","title":"bead 5","status":"open","issue_type":"task","labels":["plan"]}
 JSONL
 
-SUMMON_LOG="$TMP/summon.log"
-SENDING_LOG="$TMP/sending.log"
-printf '#!/bin/sh\necho "called $*" >> "%s"\n' "$SENDING_LOG" > "$STUBS/sending"
-chmod +x "$STUBS/sending"
-# mock-summon records each summon so the fill assertion can count them.
-printf '#!/bin/sh\necho summoned >> "$SUMMON_LOG"\n' > "$STUBS/mock-summon"; chmod +x "$STUBS/mock-summon"
+CALL_LOG="$TMP/call.log"
+HEL_LOG="$TMP/hel.log"
+printf '#!/bin/sh\necho "called $*" >> "%s"\n' "$HEL_LOG" > "$STUBS/hel"
+chmod +x "$STUBS/hel"
+# mock-call records each call so the fill assertion can count them.
+printf '#!/bin/sh\necho called >> "$CALL_LOG"\n' > "$STUBS/mock-call"; chmod +x "$STUBS/mock-call"
 
 # run_pass <run-dir> [script-arg] [KEY=VAL ...] → combined stdout+stderr of one sentinel
 # pass. SPIRA_RUN is the caller-supplied dir (allows pre-populating and reusing stamp
@@ -148,8 +148,8 @@ run_pass() {
     mkdir -p "$run"
     local -a sarg=(); [ -n "$arg" ] && sarg=("$arg")
     tl_config SPIRA_RUN="$run" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" SPIRA_PATH="$SPIRA_PATH" \
-        SPIRA_NOTIFY="$STUBS/mock-notify" SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL= \
-        SPIRA_MAX_AEONS=3 SPIRA_CHAMBER="$STUBS/chamber"
+        SPIRA_NOTIFY="$STUBS/mock-notify" SPIRA_RUNES=builder SPIRA_SCOPE_LABEL= \
+        SPIRA_MAX_DWARVES=3 SPIRA_RUNES_DIR="$STUBS/runes"
     env -i \
         PATH="$STUBS:$PATH" HOME="$TMP/home" \
         SPIRA_HOME="$STUBS" \
@@ -158,24 +158,24 @@ run_pass() {
         SPIRA_LAND_STALE=999999 \
             SPIRA_SYSTEMCTL="$STUBS/mock-systemctl" \
         SPIRA_LAUNCH="$STUBS/mock-launch" \
-        SPIRA_SUMMON="$STUBS/mock-summon" \
-        SUMMON_LOG="$SUMMON_LOG" \
-        SENDING_LOG="$SENDING_LOG" \
+        SPIRA_CALL="$STUBS/mock-call" \
+        CALL_LOG="$CALL_LOG" \
+        HEL_LOG="$HEL_LOG" \
         "$@" \
         sentinel "${sarg[@]}" 2>&1
 }
 
 mkdir -p "$TMP/home"
 _run="$TMP/run-pass"
-rm -f "$SUMMON_LOG" "$SENDING_LOG" "$LAUNCH_ARGV"
+rm -f "$CALL_LOG" "$HEL_LOG" "$LAUNCH_ARGV"
 pass1_out="$(run_pass "$_run" "")"
-is   "pass 1 fill: pool=3 + 5 ready beads -> 3 summons" \
-     "3" "$(grep -c . "$SUMMON_LOG" 2>/dev/null || echo 0)"
+is   "pass 1 fill: pool=3 + 5 ready beads -> 3 calls" \
+     "3" "$(grep -c . "$CALL_LOG" 2>/dev/null || echo 0)"
 want "pass 1 order: CHECK7 line appears in log" "CHECK7" "$pass1_out"
 lack "pass 1: does NOT report DATABASE UNREADABLE (positive control: DB is readable)" \
      "DATABASE UNREADABLE" "$pass1_out"
-is   "pass 1: sending is not called by the sentinel" \
-     "0" "$(grep -c . "$SENDING_LOG" 2>/dev/null || echo 0)"
+is   "pass 1: hel is not called by the sentinel" \
+     "0" "$(grep -c . "$HEL_LOG" 2>/dev/null || echo 0)"
 nowant "pass 1: no audit worker is dispatched" \
      "spira-audit" "$(cat "$LAUNCH_ARGV" 2>/dev/null)"
 
@@ -191,7 +191,7 @@ nowant "land dispatch carries no CPUQuota"  "CPUQuota" "$_land_argv"
 nowant "land dispatch carries no Nice"      "Nice="    "$_land_argv"
 
 # The retired knob is inert: setting it in the environment adds no quota.
-rm -f "$LAUNCH_ARGV" "$SUMMON_LOG" "$SENDING_LOG"
+rm -f "$LAUNCH_ARGV" "$CALL_LOG" "$HEL_LOG"
 out_customquota="$(run_pass "$_run" "" SPIRA_LAND_CPU_QUOTA=55)"
 _land_argv="$(grep -- '--unit=spira-landing' "$LAUNCH_ARGV" 2>/dev/null)"
 want   "retired SPIRA_LAND_CPU_QUOTA: the land dispatch still happens" \

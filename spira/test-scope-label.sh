@@ -14,14 +14,14 @@
 # half of item 2 — "spira,plan is NOT the predicate under a custom key" — distinguishes
 # a working implementation from a no-op.
 #
-# RETIRED (sp-j89pd, wave 4.2): fayth_fenced (lib.sh) had zero live callers — it is now
-# aeon::conf::fayth_fenced (aeon/src/conf.rs) and release::stage (release/src/stage.rs).
+# RETIRED (sp-j89pd, wave 4.2): rune_fenced (lib.sh) had zero live callers — it is now
+# dwarf::conf::rune_fenced (dwarf/src/conf.rs) and release::stage (release/src/stage.rs).
 # Its "scope label present/absent/empty" table, item 4 of this suite, is deleted with it.
 #
 # defect: law-scope-is-a-runtime-key (sp-9xsjm), sp-4mpy6
 # tier: T1
-# covers: spira/conf.sh spira/lib.sh spira/chamber/*.fayth
-# hermetic-ok: no database, no systemd; fayth_get is tested from lib.sh
+# covers: spira/conf.sh spira/lib.sh spira/runes/*.rune
+# hermetic-ok: no database, no systemd; rune_get is tested from lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -31,19 +31,19 @@ lack() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 mkdir -p "$T/run"
 
-# fayth_get_with_scope <scope_label> <fayth> <var>
-# Evaluate one fayth variable under a specific SPIRA_SCOPE_LABEL, in a subprocess so
+# rune_get_with_scope <scope_label> <rune> <var>
+# Evaluate one rune variable under a specific SPIRA_SCOPE_LABEL, in a subprocess so
 # the calling shell's exports are unaffected. SPIRA_RUN/SPIRA_SCOPE_LABEL are registered
 # keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG): declare via tl_config, not the env
 # prefix below, which no process reads them from any more.
-fayth_get_with_scope() {
-    local scope="$1" fayth="$2" var="$3"
-    # round 3 fix (pattern 6): SPIRA_CHAMBER no longer derives from SPIRA_HOME — without
-    # it, fayth_get cannot find chamber/builder.fayth or chamber/ops.fayth at all.
-    tl_config SPIRA_RUN="$T/run" SPIRA_SCOPE_LABEL="$scope" SPIRA_CHAMBER="$HERE/chamber"
+rune_get_with_scope() {
+    local scope="$1" rune="$2" var="$3"
+    # round 3 fix (pattern 6): SPIRA_RUNES_DIR no longer derives from SPIRA_HOME — without
+    # it, rune_get cannot find runes/builder.rune or runes/ops.rune at all.
+    tl_config SPIRA_RUN="$T/run" SPIRA_SCOPE_LABEL="$scope" SPIRA_RUNES_DIR="$HERE/runes"
     SPIRA_HOME="$HERE" SPIRA_CONF="$T/no-such.conf" \
-        bash -c '. "$SPIRA_HOME/lib.sh" 2>/dev/null; fayth_get "$1" "$2"' \
-             _ "$fayth" "$var" 2>/dev/null
+        bash -c '. "$SPIRA_HOME/lib.sh" 2>/dev/null; rune_get "$1" "$2"' \
+             _ "$rune" "$var" 2>/dev/null
 }
 
 # conf_scope_with_home() and the "default — SPIRA_SCOPE_LABEL derives from SPIRA_HOME_REPO"
@@ -58,8 +58,8 @@ echo "test-scope-label.sh"
 echo
 echo "default (SPIRA_SCOPE_LABEL=spira) — builder predicate is spira,plan"
 # ==========================================================================================
-got="$(fayth_get_with_scope "spira" builder FAYTH_LABELS)"
-is "builder FAYTH_LABELS with scope=spira is spira,plan" "spira,plan" "$got"
+got="$(rune_get_with_scope "spira" builder RUNE_LABELS)"
+is "builder RUNE_LABELS with scope=spira is spira,plan" "spira,plan" "$got"
 
 # ==========================================================================================
 echo
@@ -67,26 +67,26 @@ echo "custom scope (SPIRA_SCOPE_LABEL=other) — builder sees other,plan, NOT sp
 # ==========================================================================================
 # THE DISCRIMINATING TEST. A predicate that ignores SPIRA_SCOPE_LABEL entirely would produce
 # "spira,plan" for both the default and this case. This assertion fails for that no-op.
-got="$(fayth_get_with_scope "other" builder FAYTH_LABELS)"
-is   "builder FAYTH_LABELS with scope=other is other,plan" "other,plan" "$got"
-lack "builder FAYTH_LABELS with scope=other does NOT contain spira,plan" "spira,plan" "$got"
+got="$(rune_get_with_scope "other" builder RUNE_LABELS)"
+is   "builder RUNE_LABELS with scope=other is other,plan" "other,plan" "$got"
+lack "builder RUNE_LABELS with scope=other does NOT contain spira,plan" "spira,plan" "$got"
 
 # Same check for ops (uses a different partition label).
-got="$(fayth_get_with_scope "other" ops FAYTH_LABELS)"
-is   "ops FAYTH_LABELS with scope=other is other,incident" "other,incident" "$got"
+got="$(rune_get_with_scope "other" ops RUNE_LABELS)"
+is   "ops RUNE_LABELS with scope=other is other,incident" "other,incident" "$got"
 
 # ==========================================================================================
 echo
 echo "empty scope (SPIRA_SCOPE_LABEL=) — builder predicate is plan alone, no leading comma"
 # ==========================================================================================
 # A leading comma is an empty label and would match nothing, looking like "no work ready".
-got="$(fayth_get_with_scope "" builder FAYTH_LABELS)"
-is   "builder FAYTH_LABELS with scope= is just plan"   "plan" "$got"
-lack "builder FAYTH_LABELS with scope= has no comma"   ","    "$got"
-lack "builder FAYTH_LABELS with scope= has no spira"   "spira" "$got"
+got="$(rune_get_with_scope "" builder RUNE_LABELS)"
+is   "builder RUNE_LABELS with scope= is just plan"   "plan" "$got"
+lack "builder RUNE_LABELS with scope= has no comma"   ","    "$got"
+lack "builder RUNE_LABELS with scope= has no spira"   "spira" "$got"
 
-got="$(fayth_get_with_scope "" ops FAYTH_LABELS)"
-is   "ops FAYTH_LABELS with scope= is just incident" "incident" "$got"
+got="$(rune_get_with_scope "" ops RUNE_LABELS)"
+is   "ops RUNE_LABELS with scope= is just incident" "incident" "$got"
 
 echo
 tl_summary

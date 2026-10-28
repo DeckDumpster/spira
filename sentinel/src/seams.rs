@@ -48,23 +48,23 @@ env -0
 printf '@vars\0'
 printf 'SPIRA_HOME_REPO_RESOLVED=%s\0' "$(spira_home_repo)"
 printf 'SPIRA_TOML_FILE=%s\0' "${SPIRA_TOML_FILE:-}"
-printf '@fayths\0'
-for _f in $(spira_fayths); do
-    printf '%s\t%s\t%s\0' "$_f" "$(fayth_get "$_f" FAYTH_LABELS)" "$(fayth_get "$_f" FAYTH_EXCLUDE_LABELS)"
+printf '@runes\0'
+for _f in $(spira_runes); do
+    printf '%s\t%s\t%s\0' "$_f" "$(rune_get "$_f" RUNE_LABELS)" "$(rune_get "$_f" RUNE_EXCLUDE_LABELS)"
 done
 printf '@partitions\0'
-while IFS= read -r _l; do [ -n "$_l" ] && printf '%s\0' "$_l"; done < <(fayth_partitions)
-printf '@chamber\0'
-while IFS= read -r _l; do [ -n "$_l" ] && printf '%s\0' "$_l"; done < <(fayth_names)
+while IFS= read -r _l; do [ -n "$_l" ] && printf '%s\0' "$_l"; done < <(rune_partitions)
+printf '@all_runes\0'
+while IFS= read -r _l; do [ -n "$_l" ] && printf '%s\0' "$_l"; done < <(rune_names)
 printf '@end\0'
 "#;
 
 /// S1/S2 RETIRED (wave 4.27, family G, sp-gzmd2): the world gate and CHECK 7's whole
-/// summon loop (`world_gate`, `ck7_summon_pass`, `summon_fayth`, `summon_argv`) now run
-/// in-process — `pass::Sentinel::world_gate`/`ck7_summon_pass` in `summon.rs`, under a
-/// real OS flock on `summon.lock` rather than a bash seam under one. lib.sh's own copies
-/// are one-line shims onto `sentinel --world-gate`/`--summon`/`--summon-argv`/
-/// `--named-unit-stop`, kept only for `aeon --escape`'s seam and `acceptance-local.sh`.
+/// call loop (`world_gate`, `ck7_call_pass`, `call_rune`, `call_argv`) now run
+/// in-process — `pass::Sentinel::world_gate`/`ck7_call_pass` in `call.rs`, under a
+/// real OS flock on `call.lock` rather than a bash seam under one. lib.sh's own copies
+/// are one-line shims onto `sentinel --world-gate`/`--call`/`--call-argv`/
+/// `--named-unit-stop`, kept only for `dwarf --escape`'s seam and `acceptance-local.sh`.
 
 // S4 (CHECK 3b: mark_queue_waiters/close_landed_queue_waiters) and S7–S10 (CHECK 7c/7d's
 // detectors) are retired (wave 4.28, sp-fbqsv): native now, in waiters.rs and detect.rs.
@@ -102,7 +102,7 @@ mod tests {
         let d = testkit::TempDir::new("sentinel-probe");
         std::fs::write(
             d.join("lib.sh"),
-            "SPIRA_REPO=/the/repo\nSPIRA_GH=/the/gh-app.sh\nspira_home_repo() { echo spira; }\nspira_fayths() { :; }\nfayth_partitions() { :; }\nfayth_names() { :; }\n",
+            "SPIRA_REPO=/the/repo\nSPIRA_GH=/the/gh-app.sh\nspira_home_repo() { echo spira; }\nspira_runes() { :; }\nrune_partitions() { :; }\nrune_names() { :; }\n",
         )
         .unwrap();
         let o = std::process::Command::new("bash")

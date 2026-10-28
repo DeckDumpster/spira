@@ -315,7 +315,7 @@ echo "though conf.sh's OWN resolution leaves it genuinely unexported, as product
 # accidentally keeps SPIRA_REPO_MAP exported the whole time and never exercises the hazard.
 #
 # This section instead sets NO SPIRA_REPO_MAP literal in env -i at all — only SPIRA_HOME (as
-# every real caller does: a systemd unit, an aeon session, always exports it) — so conf.sh
+# every real caller does: a systemd unit, a dwarf session, always exports it) — so conf.sh
 # resolves the map itself, through `spira-config resolve`'s own typed export set, which
 # assigns SPIRA_REPO_MAP with a PLAIN statement (confirmed: `declare -p SPIRA_REPO_MAP` after
 # sourcing shows `declare --`, no `-x`). That is the genuine hazard: a value lib.sh's own

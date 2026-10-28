@@ -1,6 +1,6 @@
 //! Host-wide admission per heavy phase — pipeline shaping (sp-f4ig1; design:
 //! `gate/DESIGN-admission.md`). Three pools — compile, test, gate — each sized from the
-//! measured cost of its phase, so N aeons are spread across the phases instead of peaking in
+//! measured cost of its phase, so N dwarves are spread across the phases instead of peaking in
 //! each one together. A slot is admission, never a limit: an admitted job runs at full
 //! width (law-reduce-the-count-never-throttle-the-job).
 //!
@@ -19,15 +19,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 /// value): nothing under it takes a slot of its own. The gate sets it on every command it
 /// runs; testenv on its build.
 pub const INHERIT_ENV: &str = "SPIRA_ADMISSION";
-/// The label a lease carries (`who=`): the aeon's bead.
+/// The label a lease carries (`who=`): the dwarf's bead.
 pub const WHO_ENV: &str = "SPIRA_ADMIT_WHO";
 /// The compiler the `spira-admit` RUSTC_WRAPPER execs after admission (sccache's absolute
 /// path; empty: rustc itself).
 pub const INNER_ENV: &str = "SPIRA_ADMIT_INNER";
 /// The binary: RUSTC_WRAPPER mode, `status`, `run`.
 pub const BIN: &str = "spira-admit";
-/// The summon jitter's key (seconds; 0 disables).
-pub const JITTER_ENV: &str = "SPIRA_SUMMON_JITTER";
+/// The call jitter's key (seconds; 0 disables).
+pub const JITTER_ENV: &str = "SPIRA_CALL_JITTER";
 /// The jitter when the key is unset.
 pub const JITTER_DEFAULT: u64 = 20;
 /// The telemetry family: `<run>/tsd/admission.jsonl`.
@@ -39,7 +39,7 @@ pub const STALL_DEFAULT_MINS: u64 = 30;
 /// Seconds a fresh compile or test admission waits after the pool's previous one began, while
 /// other leases are held (0 or unset: no stagger). Admission only; an admitted job is unlimited.
 pub const STAGGER_ENV: &str = "SPIRA_ADMIT_STAGGER_SECS";
-/// Longest an aeon's compile yields to a round's suite phase (0 disables the yield).
+/// Longest a dwarf's compile yields to a round's suite phase (0 disables the yield).
 pub const ROUND_HOLD_ENV: &str = "SPIRA_ADMIT_ROUND_HOLD_SECS";
 pub const ROUND_HOLD_DEFAULT: u64 = 900;
 /// Seconds between looks at the round's phase while a compile yields.
@@ -128,7 +128,7 @@ pub fn derive(pool: Pool, h: Host) -> u64 {
         return COLD_PAR;
     }
     let (per_core, per_mib) = match pool {
-        // One aeon-profile workspace build: ~9 cores average (14 peak), 2.7 GiB anon; a
+        // One dwarf-profile workspace build: ~9 cores average (14 peak), 2.7 GiB anon; a
         // release (LTO) build heavier. 10 cores and 4 GiB a slot.
         Pool::Compile => (10, 4096),
         // One testenv trial: eight private dolt sql-servers, fsync IO and a tmpfs slot; few
@@ -200,7 +200,7 @@ pub struct Lease {
 }
 
 /// A compile job's weight in units of the compile pool (DESIGN-admission.md §5). A unit is
-/// what one aeon-profile workspace build costs (≈2.7 GiB anon, ≈9 cores); a release build
+/// what one dwarf-profile workspace build costs (≈2.7 GiB anon, ≈9 cores); a release build
 /// (LTO, codegen-units=1) peaked at 15.3 GiB anon with 22 rustc alive, 145 s — ⌈15.3 ÷ 4⌉ = 4
 /// units. A job heavier than the whole pool runs alone. Measured on the fat-LTO profile that
 /// sp-zqo8s replaced (DESIGN-admission.md §5): a safe starting value, re-derived after rollout.
@@ -1055,8 +1055,8 @@ pub fn gate_holder_line(pid: u32, start: u64, who: &str, since: u64) -> String {
     Lease { slot: 0, pid, start, who: who.to_string(), since, waited: 0, last: since, weight: 1 }.render()
 }
 
-/// A uniform jitter in `0..=max` seconds from `seed` (the aeon's pid and clock), so a batch
-/// of aeons summoned together never starts in lockstep (DESIGN-admission.md §3.4).
+/// A uniform jitter in `0..=max` seconds from `seed` (the dwarf's pid and clock), so a batch
+/// of dwarves called together never starts in lockstep (DESIGN-admission.md §3.4).
 pub fn jitter(max: u64, seed: u64) -> u64 {
     if max == 0 {
         return 0;
@@ -1123,7 +1123,7 @@ pub fn round_hold_cap() -> u64 {
     std::env::var(ROUND_HOLD_ENV).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(ROUND_HOLD_DEFAULT)
 }
 
-/// Hold an aeon's compile while `probe` names a round in its suite phase, for at most `cap`
+/// Hold a dwarf's compile while `probe` names a round in its suite phase, for at most `cap`
 /// seconds. Returns the seconds held. Gates and testenv never call this.
 pub fn yield_to_round(cap: u64, probe: &dyn Fn() -> Option<String>, now: &dyn Fn() -> u64, sleep: &dyn Fn(Duration), say: &mut dyn FnMut(&str)) -> u64 {
     if cap == 0 {

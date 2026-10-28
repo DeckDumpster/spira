@@ -18,13 +18,13 @@ immutable `event` table, which is the truth the rows are folded from.
 | State | Meaning |
 |---|---|
 | `READY` | Filed and waiting for a claim. A bead starts here. |
-| `WORKING` | An aeon holds it under a lease. |
-| `SUBMITTED` | The aeon handed in a branch tip; not yet certified. |
+| `WORKING` | A dwarf holds it under a lease. |
+| `SUBMITTED` | The dwarf handed in a branch tip; not yet certified. |
 | `CERTIFIED` | A gate or round passed that exact tip. |
 | `IN_DELIVERY` | Cut into a round (or a PR or push, in other land modes) and on its way to the landing ref. |
 | `REWORK` | Sent back (red gate, ejected from a round, withdrawn base). Claimable again. |
 | `LANDED` | Terminal. The work is on the landing ref. |
-| `DONE` | Terminal. Closed with no branch to land (an aeon's `work done`, e.g. research or filing work). |
+| `DONE` | Terminal. Closed with no branch to land (a dwarf's `work done`, e.g. research or filing work). |
 | `DROPPED` | Terminal. Closed without landing: no branch was ever committed, or the work was declared unwanted. |
 | `SUPERSEDED` | Terminal. Replaced by another bead (also used for an identical patch). |
 | `OPEN` | A container (an epic). Never claimable and never `READY`; closed by bd, not by this machine. |
@@ -41,11 +41,11 @@ normally sends the event.
 
 | From | Event | To | Normally sent by |
 |---|---|---|---|
-| `READY` | `Claim` | `WORKING` (records holder, persona, lease, stack) | `aeon` |
-| `REWORK` | `Claim` | `WORKING`; refused if the proposed stack equals the stack the red work was built on | `aeon` |
+| `READY` | `Claim` | `WORKING` (records holder, persona, lease, stack) | `dwarf` |
+| `REWORK` | `Claim` | `WORKING`; refused if the proposed stack equals the stack the red work was built on | `dwarf` |
 | `WORKING` | `Submit {tip}` | `SUBMITTED` | `work submit` (tip read from branch `spira/<id>`) |
 | `WORKING`, `READY` | `Done` | `DONE` | `work done`; filing and grooming paths |
-| `WORKING` | `Release` / `HolderDead` | `READY`, or `REWORK` if the claim was taken from `REWORK` | `sentinel` (lease expired), `aeon` teardown |
+| `WORKING` | `Release` / `HolderDead` | `READY`, or `REWORK` if the claim was taken from `REWORK` | `sentinel` (lease expired), `dwarf` teardown |
 | `WORKING` | `Renew`, `Phase`, `Disposition` | `WORKING` | the holder only for `Renew`/`Phase` (phases `claimed`, `building`, `session`, `teardown`, forward only); teardown and watchdogs for `Disposition` (`lapsed` < `thrash` < `slain`; a weaker word never overwrites a stronger) |
 | `SUBMITTED` | `GatePass {tip, gate_key}` | `CERTIFIED` | `landing-pass` / `gate-worker` (per-branch gate); `batcher` (round) |
 | `SUBMITTED`, `CERTIFIED` | `GateRed {tip, reason}` | `REWORK` | gate, `sift`, round ejection |
@@ -56,7 +56,7 @@ normally sends the event.
 | `IN_DELIVERY` | `Requeued {tip}` | `SUBMITTED`, `CERTIFIED` (if certified at that tip), or `REWORK` (if the tip was ejected red) | `queue`, `spira-claim` |
 | `SUBMITTED`, `CERTIFIED` | `Restack {tip, stack}` | `SUBMITTED` (certification and screen verdict dropped) | stacked-dependent cascade |
 | `SUBMITTED`, `CERTIFIED` | `Sifted {tip}` | same state; records the tip the screen passed | `sift` |
-| any non-terminal | `ContentOnBase {proof}` | `LANDED` (the content is already on the landing ref) | `sending`, content reconciliation |
+| any non-terminal | `ContentOnBase {proof}` | `LANDED` (the content is already on the landing ref) | `hel`, content reconciliation |
 | any non-terminal | `Supersede {by}` | `SUPERSEDED` | `groomer`, `sift` |
 | any non-terminal | `Drop {reason}` | `DROPPED` (`closed-no-branch` or `unwanted`) | `groomer`, the operator |
 | any non-terminal | `Hold`, `Unhold` | same state; adds or removes a hold | see Holds |
@@ -75,9 +75,9 @@ Rules the machine enforces itself:
   to `SUBMITTED`.
 - **A red tip cannot be resubmitted.** After a gate or round ejects a tip as red (any reason
   except `no-rebase` and `timeout`, which say nothing about the tree), `Submit` and `Deliver`
-  of that same tip are refused; the aeon must change the tree.
+  of that same tip are refused; the dwarf must change the tree.
 - **Holder-only events.** `Renew` and `Phase` from anyone but the current holder are refused,
-  so a reaped aeon's late renewal cannot extend its successor's lease.
+  so a reaped dwarf's late renewal cannot extend its successor's lease.
 - **Stacks.** A `Claim` records the certified tips of the bead's unlanded prerequisites
   (`stack`, with `stack_depth`); a depth over the configured cap is refused, and a `Submit`
   while a prerequisite tip has been withdrawn is refused.
@@ -98,7 +98,7 @@ carries a set of them, and the claim selector (`spira-claim`) offers only `READY
 | Hold | Placed for | Lifted by |
 |---|---|---|
 | `poison` | the bead failed enough attempts that retrying stops | a rule-bound unpoison (`groomer` / `spira-claim`), or the operator |
-| `ask` | an aeon asked the operator a question | only a `Reply` event carrying the reply's message id, or an ask withdrawal. A close, drop, supersede or `Unhold` on an asking row is refused: an escalation closes on the reply, never on marker text |
+| `ask` | a dwarf asked the operator a question | only a `Reply` event carrying the reply's message id, or an ask withdrawal. A close, drop, supersede or `Unhold` on an asking row is refused: an escalation closes on the reply, never on marker text |
 | `wait` | blocked on an unlanded dependency, a timed snooze (`snooze-until:<epoch>`), or a withdrawn base | the graph (when the blocker lands) or the clock |
 | `manual` | a person's hold; it must carry a reason saying who lifts it and how. A bare bead id (that is a dependency edge) or a snooze (that is a `wait`) is refused | whoever the reason names |
 
@@ -141,30 +141,30 @@ settles; if the base moves under a green batch it goes to `REBUILDING` and back 
 `CI_RUNNING`. A batch event and the matching exit event on each member's delivery row are
 applied in one transaction.
 
-## Persona, fayth, aeon
+## Persona, rune, dwarf
 
-A **fayth** is a persona *definition*: a file `spira/chamber/<name>.fayth` (shell-style
+A **rune** is a persona *definition*: a file `spira/runes/<name>.rune` (shell-style
 `NAME=value` lines parsed in-process by `spira-config`; any other construct is refused). It
-fixes the **partition** of the work graph the persona may claim (`FAYTH_LABELS`, ANDed, minus
-`FAYTH_EXCLUDE_LABELS`), the statutes it must read (`FAYTH_MEMORY_PREFIXES`,
-`FAYTH_STATUTE_CORE`), the tools it may use (`FAYTH_TOOLS`), and how it is woken and bounded
-(`FAYTH_MAX_CONCURRENT`, `FAYTH_LEASE_MINUTES`, `FAYTH_HEARTBEAT_SECONDS`, `FAYTH_LANE`,
-`FAYTH_ELASTIC`). Its **brief**, the instructions the model receives, is the matching
-`spira/chamber/<name>.md`, rendered with `{{TOKEN}}` substitutions. The model, lease, tool list
+fixes the **partition** of the work graph the persona may claim (`RUNE_LABELS`, ANDed, minus
+`RUNE_EXCLUDE_LABELS`), the statutes it must read (`RUNE_MEMORY_PREFIXES`,
+`RUNE_STATUTE_CORE`), the tools it may use (`RUNE_TOOLS`), and how it is woken and bounded
+(`RUNE_MAX_CONCURRENT`, `RUNE_LEASE_MINUTES`, `RUNE_HEARTBEAT_SECONDS`, `RUNE_LANE`,
+`RUNE_ELASTIC`). Its **brief**, the instructions the model receives, is the matching
+`spira/runes/<name>.md`, rendered with `{{TOKEN}}` substitutions. The model, lease, tool list
 and system-prompt mode of a running system come from the `[persona.<name>]` table in
-`spira.toml` (a `model` is required: a persona with no model is refused); the `.fayth` values
+`spira.toml` (a `model` is required: a persona with no model is refused); the `.rune` values
 seed that table when a config is first converted.
 
-An **aeon** is one summoned instance of a persona: a runner process (`aeon <fayth>`) that
+A **dwarf** is one called instance of a persona: a runner process (`dwarf <rune>`) that
 claims one bead, builds its worktree and branch, renders the brief, runs the model session (a
 headless `claude -p` stream), renews its lease while the trace file grows, and accounts for the
-outcome at teardown. It runs as a transient user unit named `spira-aeon-<fayth>-<n>`. Inside
+outcome at teardown. It runs as a transient user unit named `spira-dwarf-<rune>-<n>`. Inside
 the session the model has no `bd`, no credentials and no database access: its environment is an
 explicit allow-list, and everything it does to state goes through the `work` client, which
 talks to `spira-lc` over a Unix socket. Each `work` verb is checked against a per-persona allow
 table in the service, so a persona can do only what its role permits.
 
-Shipped personas (`spira/chamber/`):
+Shipped personas (`spira/runes/`):
 
 | Persona | Role |
 |---|---|
@@ -178,15 +178,15 @@ Shipped personas (`spira/chamber/`):
 | `batcher` (the Judge) | Settles a double-red or CI-only red a round could not attribute. |
 | `spike` | Researches one question to a costed feasibility document. |
 | `concierge` | The operator's own long-lived session; claims nothing (see below). |
-| `archivist` | Brief only (`archivist.md`), no `.fayth`: run by the `archivist` binary to rescue a full session's unfinished business before it is cleared. |
+| `archivist` | Brief only (`archivist.md`), no `.rune`: run by the `archivist` binary to rescue a full session's unfinished business before it is cleared. |
 
 ## Lane
 
 "Lane" has two meanings, both in code.
 
-1. **Scheduling lane** (`SPIRA_LANES`, `FAYTH_LANE`). A persona that declares a lane draws
-   capacity from its own `FAYTH_MAX_CONCURRENT` instead of the shared pool
-   (`SPIRA_MAX_AEONS`), so builders can occupy the whole pool without starving the rest.
+1. **Scheduling lane** (`SPIRA_LANES`, `RUNE_LANE`). A persona that declares a lane draws
+   capacity from its own `RUNE_MAX_CONCURRENT` instead of the shared pool
+   (`SPIRA_MAX_DWARVES`), so builders can occupy the whole pool without starving the rest.
 2. **Repository lane** (`lanes` in a repository's registry row): which kinds of bead a
    repository admits (`plan`, `incident`, `groom`, `mimir-sweep`, `spike`, `czar-trigger`).
 
@@ -233,8 +233,8 @@ The walk-through in [architecture](architecture.md) follows `queue.local`, the h
   mender first.
 - **Sentinel** (`sentinel`). The loop's heartbeat. One pass every two minutes reconciles the
   graph toward its desired state: reaps dead holders, applies poison, frees stale blocks,
-  dispatches the landing worker, sweeps landed branches, and summons aeons. A fast path
-  (`sentinel --summon-only`, every minute and after every aeon unit) refills a freed slot
+  dispatches the landing worker, sweeps landed branches, and calls dwarves. A fast path
+  (`sentinel --call-only`, every minute and after every dwarf unit) refills a freed slot
   without a full pass.
 
 ## Release
@@ -252,7 +252,7 @@ A **statute** (`law-<slug>`) is a standing rule, enacted with `rule enact` and k
 beads database as a memory, with a git-backed page regenerated from it. It must name its
 mechanism (`--tool`, `--mechanism`, or `--tool none --reason`); `rule audit` checks that the
 tools statutes name exist in the activated release. Personas receive the statutes selected by
-`FAYTH_MEMORY_PREFIXES`, with `FAYTH_STATUTE_CORE` rendered in full. An **SOP** (`sop-<slug>`)
+`RUNE_MEMORY_PREFIXES`, with `RUNE_STATUTE_CORE` rendered in full. An **SOP** (`sop-<slug>`)
 is a runbook for a recurring incident, written with `sop write`, matched to incidents with
 `sop match`, and read by `ops`. Builders read statutes only.
 
@@ -264,7 +264,7 @@ whether it goes to the operator or first to the Concierge.
 
 The **Concierge** is the operator's long-lived session (`concierge.sh start`, kept up by
 `concierge.timer`; `concierge-guard` mails the operator if its inbox waiter lapses). It is not
-summoned for a bead and claims none. Its brief tells it to reach Spira by *filing* beads, not
-by claiming them or running aeons itself. It also holds the break-glass powers: an ungated
+called for a bead and claims none. Its brief tells it to reach Spira by *filing* beads, not
+by claiming them or running dwarves itself. It also holds the break-glass powers: an ungated
 landing requires `SPIRA_LAND_UNGATED_BY` to name the Concierge or the operator, plus evidence
 in the head's own history.

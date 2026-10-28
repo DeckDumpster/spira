@@ -23,10 +23,10 @@ pub enum Step {
     Ask { question: String, default: String },
 }
 
-/// One bead's script: a list of summons, each an ordered list of steps.
-/// Lines are `<bead> <verb> [args]`; `<bead> summon` starts the next summon.
+/// One bead's script: a list of calls, each an ordered list of steps.
+/// Lines are `<bead> <verb> [args]`; `<bead> call` starts the next call.
 pub fn parse(text: &str, bead: &str) -> Result<Vec<Vec<Step>>, String> {
-    let mut summons: Vec<Vec<Step>> = vec![vec![]];
+    let mut calls: Vec<Vec<Step>> = vec![vec![]];
     for (n, line) in text.lines().enumerate() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -40,8 +40,8 @@ pub fn parse(text: &str, bead: &str) -> Result<Vec<Vec<Step>>, String> {
         let at = |m: &str| format!("scenario line {}: {m}", n + 1);
         let step = match (verb, rest) {
             ("repo", r) if !r.is_empty() => continue,
-            ("summon", "") => {
-                summons.push(vec![]);
+            ("call", "") => {
+                calls.push(vec![]);
                 continue;
             }
             ("commit", f) if !f.is_empty() => Step::Commit(f.to_string()),
@@ -56,18 +56,18 @@ pub fn parse(text: &str, bead: &str) -> Result<Vec<Vec<Step>>, String> {
             },
             _ => return Err(at(&format!("unknown or malformed step `{verb} {rest}`"))),
         };
-        summons.last_mut().ok_or("no summon")?.push(step);
+        calls.last_mut().ok_or("no call")?.push(step);
     }
-    if summons.iter().all(Vec::is_empty) {
+    if calls.iter().all(Vec::is_empty) {
         return Err(format!("scenario has no steps for {bead}"));
     }
-    Ok(summons)
+    Ok(calls)
 }
 
-/// Which summon of this bead this is, counted in `state` so it survives the process.
-fn next_summon(state: &Path, bead: &str) -> Result<usize, String> {
+/// Which call of this bead this is, counted in `state` so it survives the process.
+fn next_call(state: &Path, bead: &str) -> Result<usize, String> {
     std::fs::create_dir_all(state).map_err(|e| e.to_string())?;
-    let f = state.join(format!("{bead}.summons"));
+    let f = state.join(format!("{bead}.calls"));
     let n = match std::fs::read_to_string(&f) {
         Ok(s) => s.trim().parse::<usize>().map_err(|e| format!("{}: {e}", f.display()))?,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
@@ -132,11 +132,11 @@ fn exec(worktree: &Path, bead: &str, step: &Step, ordinal: usize) -> Result<(), 
     }
 }
 
-/// Play this summon of `bead` against `worktree`. A summon past the end of the script is an error.
+/// Play this call of `bead` against `worktree`. A call past the end of the script is an error.
 pub fn play(scenario: &str, state: &Path, bead: &str, worktree: &Path) -> Result<(), String> {
-    let summons = parse(scenario, bead)?;
-    let n = next_summon(state, bead)?;
-    let steps = summons.get(n).ok_or_else(|| format!("{bead}: summon {} but the scenario scripts {}", n + 1, summons.len()))?;
+    let calls = parse(scenario, bead)?;
+    let n = next_call(state, bead)?;
+    let steps = calls.get(n).ok_or_else(|| format!("{bead}: call {} but the scenario scripts {}", n + 1, calls.len()))?;
     for (i, step) in steps.iter().enumerate() {
         exec(worktree, bead, step, i)?;
     }
@@ -145,12 +145,12 @@ pub fn play(scenario: &str, state: &Path, bead: &str, worktree: &Path) -> Result
 
 pub const RESULT: &str = r#"{"type":"result","subtype":"success","is_error":false,"duration_ms":100,"num_turns":1,"total_cost_usd":0}"#;
 
-/// The `--system-prompt-file` the session was launched with, read now: the aeon removes it at teardown.
+/// The `--system-prompt-file` the session was launched with, read now: the dwarf removes it at teardown.
 fn system_prompt(argv: &[String]) -> String {
     argv.iter().position(|a| a == "--system-prompt-file" || a == "--append-system-prompt-file").and_then(|i| argv.get(i + 1)).and_then(|f| std::fs::read_to_string(f).ok()).unwrap_or_default()
 }
 
-/// One row of the `briefs` trace table: what the aeon handed the agent for `bead` — its argv, the
+/// One row of the `briefs` trace table: what the dwarf handed the agent for `bead` — its argv, the
 /// system prompt file, the prompt on stdin, the cwd and the restricted environment. `n` counts this
 /// bead's sessions from 1.
 pub fn brief_row(state: &Path, bead: &str, argv: &[String], prompt: &str, cwd: &Path, env: &[(String, String)]) -> Result<serde_json::Value, String> {

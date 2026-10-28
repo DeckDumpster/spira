@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# test-hold.sh — hold.sh and unhold.sh let a non-aeon actor hold a bead
+# test-hold.sh — hold.sh and unhold.sh let a non-dwarf actor hold a bead
 # so the reaper does not reclaim it.
 #
 #   ./test-hold.sh
 #
-# THE PROPERTY UNDER TEST. A non-aeon session (brain, concierge, a hand-run
+# THE PROPERTY UNDER TEST. A non-dwarf session (brain, concierge, a hand-run
 # tool) must be able to hold a bead for the duration of a piece of hand-work,
 # and holder_alive must say so — otherwise strand.sh reclaims it mid-landing
 # and charges an attempt that is not a fact about the work (sp-oz0b, sp-7pi).
