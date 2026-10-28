@@ -7,6 +7,7 @@ const T_ROUND: &str = "3333333333333333333333333333333333333333";
 
 fn round_world() -> T {
     let t = T::new(LandMode::QueueLocal);
+    t.env.resolved.borrow_mut().insert("SPIRA_PLAN_LABEL".into(), "plan-fixture".into());
     t.git.set("refs/heads/local/main", "b0");
     t.git.set("refs/remotes/origin/main", "f0");
     for (id, tip) in [("sp-a", "ta"), ("sp-b", "tb"), ("sp-c", "tc")] {
@@ -4800,9 +4801,9 @@ fn open_files_one_integration_with_both_members_context_instead_of_skipping_one(
     let b = &bugs[0];
     let labels = b.lines().next().unwrap().split(' ').nth(3).unwrap();
     assert!(
-        labels.split(',').any(|l| l == "mender-failure")
+        labels.split(',').any(|l| l == "plan-fixture")
             && labels.split(',').any(|l| l == "integrate")
-            && !labels.split(',').any(|l| l == "plan"),
+            && !labels.split(',').any(|l| l == "mender-failure"),
         "{labels}"
     );
     assert!(

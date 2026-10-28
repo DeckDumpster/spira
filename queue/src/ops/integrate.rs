@@ -190,10 +190,13 @@ pub(super) fn file(
         .filter(|l| !l.is_empty())
         .map(|l| format!("{l},"))
         .unwrap_or_default();
-    let labels = format!(
-        "{scope}{},{KIND_LABEL},repo:{}",
-        c.s.verdict.mender_label, c.r.name
-    );
+    let Some(plan) = w.env.config("SPIRA_PLAN_LABEL").ok().filter(|l| !l.is_empty()) else {
+        w.err(format!(
+            "queue.sh {label}: WARNING — the integration bead for {list} was not filed: SPIRA_PLAN_LABEL is unset, so no builder could claim it; the collision stays on today's path"
+        ));
+        return None;
+    };
+    let labels = format!("{scope}{plan},{KIND_LABEL},repo:{}", c.r.name);
     let Some(id) = w.lib.create_bug(&actor(w), &title, "1", &labels, &body) else {
         w.err(format!(
             "queue.sh {label}: WARNING — the integration bead for {list} could not be filed; the collision stays on today's path"
