@@ -24,23 +24,40 @@ pub struct Submit {
     pub kind: EventKind,
 }
 
+#[derive(Default)]
+pub struct ServeOpts {
+    /// Called at the top of every loop turn, on the loop's own thread.
+    pub kick: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// The longest the loop sleeps between turns, so a kick is never later than this.
+    pub max_sleep_ms: Option<u64>,
+}
+
 /// Runs until `submissions` closes and no effect is in flight.
-pub async fn serve(
+pub async fn serve(engine: Engine, clock: Arc<dyn Clock>, runner: Arc<dyn EffectRunner>, pool: usize, submissions: mpsc::Receiver<Submit>) -> Result<()> {
+    serve_with(engine, clock, runner, pool, submissions, ServeOpts::default()).await
+}
+
+pub async fn serve_with(
     mut engine: Engine,
     clock: Arc<dyn Clock>,
     runner: Arc<dyn EffectRunner>,
     pool: usize,
     mut submissions: mpsc::Receiver<Submit>,
+    opts: ServeOpts,
 ) -> Result<()> {
     let permits = Arc::new(Semaphore::new(pool.max(1)));
     let (done_tx, mut done_rx) = mpsc::unbounded_channel::<(String, Outcome)>();
     let mut in_flight: BTreeSet<String> = BTreeSet::new();
     let mut open = true;
     loop {
+        if let Some(k) = &opts.kick {
+            k();
+        }
         engine.run_until_idle()?;
         let launch: Vec<PendingEffect> = engine.pending_effects().into_iter().filter(|p| !in_flight.contains(&p.key)).collect();
         for p in launch {
             in_flight.insert(p.key.clone());
+            engine.note_attempt(&p.key);
             let (permits, runner, tx) = (permits.clone(), runner.clone(), done_tx.clone());
             let left = Duration::from_millis(p.deadline_at.saturating_sub(clock.now_ms()));
             tokio::spawn(async move {
@@ -62,6 +79,7 @@ pub async fn serve(
             return Ok(());
         }
         let sleep = engine.next_timer_at().map_or(Duration::from_secs(3600), |t| Duration::from_millis(t.saturating_sub(clock.now_ms())));
+        let sleep = opts.max_sleep_ms.map_or(sleep, |m| sleep.min(Duration::from_millis(m)));
         tokio::select! {
             s = submissions.recv(), if open => match s {
                 Some(s) => engine.submit(&s.id, &s.stream, s.kind)?,
