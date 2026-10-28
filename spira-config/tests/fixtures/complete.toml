@@ -74,6 +74,7 @@ runtime_heartbeat_secs = 60
 runtime_heartbeat_url = ""
 runtime_stall_limit = 2
 runtime_round_duty_secs = 15
+runtime_inbox_keeper_secs = 60
 runes_overlay = "/fixture/userhome/.config/spira/runes"
 check5_max_file = "5"
 ci_label = "awaiting-ci"

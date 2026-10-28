@@ -161,6 +161,7 @@ fn new_rows(f: &Fixture, s: &Scenario, ticks: usize) -> Vec<String> {
         repo_map: f.p("rows"),
         home_repo: "spira".into(),
         inbox: f.p("new-inbox"),
+        proc_dir: PathBuf::from("/proc"),
         lc_socket: if s.status_fails { f.p("no-such.sock") } else { f.serve_lc() },
     };
     let fx = Effects { world, ..Effects::default() };

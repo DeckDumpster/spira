@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use spira_config::process::cfg;
 
+use crate::watchers::inbox_keeper::InboxKeeper;
 use crate::watchers::round_duty::RoundDuty;
 use crate::world::World;
 
@@ -16,6 +17,7 @@ pub struct Settings {
     pub run_dir: PathBuf,
     pub lc_socket: PathBuf,
     pub round_duty: RoundDuty,
+    pub inbox_keeper: InboxKeeper,
     pub world: World,
 }
 
@@ -68,7 +70,13 @@ impl Settings {
         if home_repo.is_empty() {
             return Err("SPIRA_HOME_REPO is empty — round-duty cannot tell which repo's rounds are its own".into());
         }
+        let inbox_keeper = InboxKeeper {
+            interval_ms: secs("SPIRA_RUNTIME_INBOX_KEEPER_SECS")? * 1000,
+            stall_secs: secs("SPIRA_CONCIERGE_INBOX_STALL")?,
+            backoff_secs: secs("SPIRA_CONCIERGE_INBOX_BACKOFF")?,
+        };
         let world = World {
+            proc_dir: PathBuf::from("/proc"),
             queue_dir: PathBuf::from(get("SPIRA_QUEUE_DIR")?),
             repo_map: PathBuf::from(get("SPIRA_REPO_MAP")?),
             home_repo,
@@ -78,6 +86,7 @@ impl Settings {
         };
         Ok(Settings {
             round_duty,
+            inbox_keeper,
             world,
             heartbeat_url: get("SPIRA_RUNTIME_HEARTBEAT_URL")?,
             heartbeat_secs: num("SPIRA_RUNTIME_HEARTBEAT_SECS", &get("SPIRA_RUNTIME_HEARTBEAT_SECS")?)?,
@@ -102,7 +111,7 @@ impl Settings {
 
     /// FNV-1a over the pinned values, so two records with one hash ran on one configuration.
     pub fn hash(&self) -> String {
-        let text = format!("{}\n{}\n{}\n{}\n{}\n{:?}\n{:?}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.world);
+        let text = format!("{}\n{}\n{}\n{}\n{}\n{:?}\n{:?}\n{:?}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.world);
         let h = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
         format!("{h:016x}")
     }
@@ -120,7 +129,7 @@ mod tests {
                 "SPIRA_RUNTIME_STALL_LIMIT" => "3",
                 "SPIRA_RUN" => "/r",
                 "SPIRA_LC_SOCKET" => "/d/sock",
-                "SPIRA_RUNTIME_ROUND_DUTY_SECS" | "SPIRA_ROUND_MIN" | "SPIRA_ROUND_MAX_OPEN" | "SPIRA_ROUND_DUE_REMIND" | "SPIRA_ROUND_IDLE_CUT" => "5",
+                "SPIRA_RUNTIME_INBOX_KEEPER_SECS" | "SPIRA_CONCIERGE_INBOX_STALL" | "SPIRA_CONCIERGE_INBOX_BACKOFF" | "SPIRA_RUNTIME_ROUND_DUTY_SECS" | "SPIRA_ROUND_MIN" | "SPIRA_ROUND_MAX_OPEN" | "SPIRA_ROUND_DUE_REMIND" | "SPIRA_ROUND_IDLE_CUT" => "5",
                 "SPIRA_QUEUE_DIR" | "SPIRA_REPO_MAP" | "SPIRA_CONCIERGE_INBOX" => "/q",
                 "SPIRA_HOME_REPO" => "spira",
                 _ => return Err(format!("{k} unknown")),

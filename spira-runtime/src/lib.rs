@@ -4,6 +4,7 @@
 pub mod notify;
 pub mod settings;
 pub mod sink;
+pub mod wake;
 pub mod watchers;
 pub mod world;
 
@@ -18,7 +19,7 @@ pub use settings::Settings;
 
 /// Every workflow the service hosts. The heartbeat is registered here and nowhere else.
 pub fn registrations(s: &Settings) -> Vec<Registration> {
-    vec![Heartbeat { interval_ms: s.heartbeat_secs * 1000, ping_deadline_ms: s.ping_deadline_ms() }.registration(), s.round_duty.clone().registration()]
+    vec![Heartbeat { interval_ms: s.heartbeat_secs * 1000, ping_deadline_ms: s.ping_deadline_ms() }.registration(), s.round_duty.clone().registration(), s.inbox_keeper.clone().registration()]
 }
 
 pub fn open_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runtime::ports::Clock>, marker: Arc<dyn Marker>, sink: Arc<dyn WideSink>, kick: Arc<dyn Fn() + Send + Sync>, extra: Vec<Registration>) -> runtime::Result<Engine> {
@@ -48,6 +49,8 @@ impl EffectRunner for Effects {
                 Ok(format!("status {}", r.status()))
             }
             watchers::round_duty::OBSERVE => self.world.round_snapshot(&spec.input),
+            watchers::inbox_keeper::OBSERVE => self.world.keeper_snapshot(),
+            watchers::CONCIERGE_WAKE => self.world.home_path().and_then(|home| wake::concierge_wake(&home.join("concierge.sh"), &spec.input)),
             watchers::INBOX_APPEND => self.world.inbox_append(&spec.input),
             other => Err(format!("no runner for effect {other}")),
         }

@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds between spira-runtime inbox-keeper observations of the triage monitor and the inbox.
+SCHEMA=Seconds between spira-runtime inbox-keeper observations (unit: seconds; integer; default 60). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_INBOX_KEEPER_SECS:=60}"
+SPIRA_CONF_DEFAULT_EOF
