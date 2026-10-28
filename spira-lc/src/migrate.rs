@@ -1008,6 +1008,9 @@ mod tests {
         st.tables.insert("ask".into());
         st.tables.insert("mending".into());
         st.tables.insert("mend".into());
+        for t in ["runtime_event", "runtime_applied", "runtime_cursor", "runtime_schedule", "runtime_poison"] {
+            st.tables.insert(t.into());
+        }
         st.users.insert("spira_lc".into());
         st.users.insert("spira_lc_ro".into());
         st.indexes.insert("bead_dep_target_idx".into());

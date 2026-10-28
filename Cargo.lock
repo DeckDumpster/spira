@@ -1505,6 +1505,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "runtime"
+version = "0.1.0"
+dependencies = [
+ "lifecycle",
+ "serde",
+ "serde_json",
+ "testkit",
+ "tokio",
+]
+
+[[package]]
 name = "runtime-watch"
 version = "0.1.0"
 dependencies = [
