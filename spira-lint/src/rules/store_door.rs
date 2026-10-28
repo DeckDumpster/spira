@@ -141,6 +141,10 @@ A reasoned exception carries STORE_DOOR_CONSIDERED=\"<why>\" on the line."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![Box::new(StoreDoor)]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,8 +199,4 @@ mod tests {
         t.write("README.md", "bd\n");
         assert!(run(&t, &["README.md"]).is_err());
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![Box::new(StoreDoor)]
 }

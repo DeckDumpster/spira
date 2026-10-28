@@ -2671,6 +2671,7 @@ version = "1.0.0"
 dependencies = [
  "bead",
  "gate",
+ "habits",
  "serde_json",
  "spira-config",
  "spira-otel",

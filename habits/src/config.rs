@@ -11,6 +11,22 @@ pub struct Config {
     pub stop: Vec<Stop>,
 }
 
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct Checks {
+    #[serde(default)]
+    pub check: Vec<Check>,
+}
+
+#[derive(Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct Check {
+    pub name: String,
+    pub run: String,
+    #[serde(default = "default_stop_budget")]
+    pub budget_ms: u64,
+}
+
 #[derive(Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct Habit {
@@ -76,6 +92,16 @@ pub fn load(root: &Path) -> Result<Option<Config>, String> {
         Err(e) => return Err(e.to_string()),
     };
     spira_config::parse_foreign(&text).map(Some)
+}
+
+pub fn load_checks(root: &Path) -> Result<Vec<Check>, String> {
+    let path = root.join(".spira").join("checks.toml");
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.to_string()),
+    };
+    spira_config::parse_foreign::<Checks>(&text).map(|c| c.check)
 }
 
 /// `run` split on whitespace, `{file}` and `{crate}` substituted; no shell is involved.

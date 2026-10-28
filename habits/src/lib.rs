@@ -2,7 +2,7 @@
 //! `.spira/habits.toml` checks and answers with the findings on the lines the edit touched.
 //! Feedback only: every failure path returns `None` and the binary exits 0.
 
-mod config;
+pub mod config;
 mod diff;
 mod exec;
 pub mod glob;

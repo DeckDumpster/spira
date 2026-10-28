@@ -24,6 +24,11 @@ pub fn looks_like_bead_id(s: &str) -> bool {
         && parts.all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
 }
 
+/// A `[[check]]` row's command, run from the worktree root with no shell.
+pub fn done_argv(run: &str) -> Vec<String> {
+    habits::config::argv(run, &[])
+}
+
 #[cfg(test)]
 mod bead_id_tests {
     use super::looks_like_bead_id;
@@ -83,7 +88,7 @@ pub const VERBS: &[&str] = &[
 ];
 
 /// Verbs answered in this process, never sent to the socket.
-pub const LOCAL_VERBS: &[&str] = &["crates", "statute-check", "law"];
+pub const LOCAL_VERBS: &[&str] = &["crates", "statute-check", "law", "checks"];
 
 /// The `-p` selection for a branch's diff: every workspace member it touches plus its direct
 /// dependents — the gate's own selection (`gate::compose`), never `--workspace`. A

@@ -41,6 +41,9 @@ fn main() {
     if verb == "law" {
         { let code = law(&verb_args); spira_otel::run::finish(code); std::process::exit(code) };
     }
+    if verb == "checks" {
+        { let code = checks(&verb_args); spira_otel::run::finish(code); std::process::exit(code) };
+    }
     if work::LOCAL_VERBS.contains(&verb.as_str()) {
         { let code = crates(&verb_args); spira_otel::run::finish(code); std::process::exit(code) };
     }
@@ -310,5 +313,75 @@ fn law(args: &[String]) -> i32 {
             print!("{list}");
             REFUSED
         }
+    }
+}
+
+/// `work checks [--list]`: the repository's `[[check]]` rows from `.spira/checks.toml`, run in
+/// order from the worktree root. Every row runs; the exit is non-zero if any failed.
+fn checks(args: &[String]) -> i32 {
+    let list_only = match args {
+        [] => false,
+        [a] if a == "--list" => true,
+        _ => {
+            eprintln!("usage: work checks [--list]");
+            return REFUSED;
+        }
+    };
+    let root = match spira_config::bounded::bounded("git").args(["rev-parse", "--show-toplevel"]).output() {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        _ => {
+            eprintln!("work checks: not inside a git worktree");
+            return REFUSED;
+        }
+    };
+    let root = std::path::Path::new(&root);
+    let rows = match habits::config::load_checks(root) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("work checks: refusing: .spira/checks.toml is unreadable: {e}");
+            return REFUSED;
+        }
+    };
+    if rows.is_empty() {
+        println!("work checks: this repository declares no [[check]] rows");
+        return 0;
+    }
+    let mut failed = Vec::new();
+    for row in &rows {
+        if list_only {
+            println!("{}: {} (budget {} ms)", row.name, row.run, row.budget_ms);
+            continue;
+        }
+        println!("== {}: {}", row.name, row.run);
+        let argv = work::done_argv(&row.run);
+        let Some((prog, rest)) = argv.split_first() else {
+            println!("-- {}: FAIL (empty run)", row.name);
+            failed.push(row.name.clone());
+            continue;
+        };
+        let secs = row.budget_ms.div_ceil(1000).max(1).to_string();
+        let out = spira_config::bounded::bounded_for(prog, &secs).args(rest).current_dir(root).output();
+        match out {
+            Ok(o) => {
+                print!("{}", String::from_utf8_lossy(&o.stdout));
+                eprint!("{}", String::from_utf8_lossy(&o.stderr));
+                if o.status.success() {
+                    println!("-- {}: ok", row.name);
+                } else {
+                    println!("-- {}: FAIL ({})", row.name, o.status);
+                    failed.push(row.name.clone());
+                }
+            }
+            Err(e) => {
+                println!("-- {}: FAIL (could not run: {e})", row.name);
+                failed.push(row.name.clone());
+            }
+        }
+    }
+    if failed.is_empty() {
+        0
+    } else {
+        eprintln!("work checks: failed: {}", failed.join(", "));
+        REFUSED
     }
 }
