@@ -593,4 +593,16 @@ mod tests {
         rows[0].kind = Kind::Daemon;
         assert!(cmd_page(&rows, &Fake::default(), &c, "rounds-loop", UNDRIVEN, &fields).is_err());
     }
+
+    #[test]
+    fn the_third_page_of_one_incident_inside_the_window_reaches_the_inbox_instead_of_running_the_tool_again() {
+        let d = TempDir::new("watchd-page");
+        let (c, rows, fields) = page_fixture(&d);
+        let ops = Fake { sops: vec![("sop-undriven".into(), UNDRIVEN_SOP.into())], ..Fake::default() };
+        for _ in 0..3 {
+            cmd_page(&rows, &ops, &c, "rounds-loop", UNDRIVEN, &fields).unwrap();
+        }
+        assert_eq!(ops.tool_calls.borrow().len(), 2);
+        assert!(ops.inbox.borrow()[0].contains("already ran 2 times"), "{:?}", ops.inbox.borrow());
+    }
 }
