@@ -116,6 +116,7 @@ impl FfxVocabulary {
         FfxVocabulary { mode: Some(mode), checked: SyncCell::new(None), report: Mutex::new(None) }
     }
 
+    #[allow(clippy::type_complexity)]
     fn hits(&self, tree: &Tree) -> Result<(Vec<(String, usize, String)>, usize), LintError> {
         let files = crate::scope(tree, self)?;
         let mut hits = Vec::new();

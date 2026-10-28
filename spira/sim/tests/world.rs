@@ -140,7 +140,7 @@ fn a_serve_that_never_answers_fails_up_and_is_stopped() {
 #[test]
 fn a_world_whose_socket_cannot_be_bound_is_refused_before_anything() {
     let t = testkit::TempDir::new("simw");
-    let dir = t.join(&"w".repeat(120));
+    let dir = t.join("w".repeat(120));
     let fake = Fake::default();
     let e = up(fixture_repo().path(), &dir, "HEAD", &clean, &fake).unwrap_err();
     assert!(e.contains("unix socket limit"), "{e}");

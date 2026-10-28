@@ -91,14 +91,13 @@ fn main() {
     match answer {
         Ok((code, out)) => {
             spira_config::lc_call::print_answer(code, &out);
-            { let code = code; spira_otel::run::finish(code); std::process::exit(code) };
+            { spira_otel::run::finish(code); std::process::exit(code) };
         }
         Err(e) => {
             eprintln!("cannot tell: {e}");
             { let code = CANNOT_TELL; spira_otel::run::finish(code); std::process::exit(code) };
         }
     }
-    spira_otel::run::finish(0);
 }
 
 /// `submit` never takes a tip argument (design §3.5): it is read here, the only place this

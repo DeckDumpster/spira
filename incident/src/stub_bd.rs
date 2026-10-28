@@ -42,6 +42,7 @@ fn bead_entry<'a>(state: &'a mut Value, id: &str, default: Value) -> &'a mut Val
 }
 
 fn list(state: &Value, argv: &[String]) -> String {
+    #[allow(clippy::type_complexity)]
     let (mut statuses, mut label, mut closed_after, mut ids): (Vec<&str>, Option<&str>, Option<&str>, Option<BTreeSet<&str>>) =
         (Vec::new(), None, None, None);
     let mut i = 1;

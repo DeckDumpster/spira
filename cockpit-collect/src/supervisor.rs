@@ -281,11 +281,10 @@ pub fn sweep_probe_tmps(frag_dir: &Path) -> usize {
         for e in entries.flatten() {
             let name = e.file_name();
             let name = name.to_string_lossy();
-            if name.starts_with('.') {
-                if std::fs::remove_file(e.path()).is_ok() {
+            if name.starts_with('.')
+                && std::fs::remove_file(e.path()).is_ok() {
                     n += 1;
                 }
-            }
         }
     }
     n
@@ -517,7 +516,10 @@ pub fn run_loop(cfg: &Config, log: impl Fn(&str)) -> i32 {
                 }
                 Ok(None) => {
                     if PROBES.iter().find(|p| p.name == *name).map(|p| p.interval_s).unwrap_or(0) >= 600 {
+                        #[allow(unused_assignments)]
+                    {
                         slow_running += 1;
+                    }
                     }
                 }
                 Err(e) => {
@@ -535,9 +537,6 @@ pub fn run_loop(cfg: &Config, log: impl Fn(&str)) -> i32 {
             if let Ok(child) = supervised_run_command(cfg, p).spawn() {
                 running.insert(p.name, child);
                 last_started.insert(p.name, now);
-                if p.interval_s >= 600 {
-                    slow_running += 1;
-                }
             } else {
                 log(&format!("collect: probe {}: failed to spawn {:?}", p.name, cfg.self_exe));
             }
@@ -757,7 +756,7 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
                 running.insert(p.name, child);
                 last_started.insert(p.name, now);
             }
-            for (_, child) in running.iter_mut() {
+            for child in running.values_mut() {
                 child.wait().expect("wait for fake self_exe");
             }
             running.clear();

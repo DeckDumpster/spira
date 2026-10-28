@@ -89,7 +89,7 @@ pub const ERROR: u8 = 3;
 pub const SIGNAL: u8 = 4;
 
 fn align(buf: &mut Vec<u8>, n: usize) {
-    while buf.len() % n != 0 {
+    while !buf.len().is_multiple_of(n) {
         buf.push(0);
     }
 }

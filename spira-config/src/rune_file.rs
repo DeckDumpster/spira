@@ -159,7 +159,7 @@ pub fn parse(file: &str, text: &str, env: &dyn Fn(&str) -> Option<String>) -> Re
         i += 1;
         let val = {
             let ctx = Ctx { vars: &vars, env };
-            word(&c, &mut i, Mode::Bare, &ctx).map_err(&fail)?
+            word(&c, &mut i, Mode::Bare, &ctx).map_err(fail)?
         };
         let rest: String = c[i..].iter().collect();
         let rest = rest.trim();

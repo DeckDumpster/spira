@@ -261,7 +261,7 @@ pub fn session_outcome(segment: Option<&str>) -> &'static str {
         return "refused";
     }
     let acted = seg.lines().any(|l| l.contains("\"type\":\"tool_use\""));
-    let last = seg.lines().filter(|l| l.contains("\"type\":\"result\"")).last();
+    let last = seg.lines().rfind(|l| l.contains("\"type\":\"result\""));
     match last {
         None => {
             if acted {

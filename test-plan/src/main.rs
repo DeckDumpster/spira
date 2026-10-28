@@ -643,10 +643,7 @@ fn cmd_coverage_report(rest: &[String]) -> ExitCode {
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
-    let op = match args.first().map(String::as_str) {
-        Some(o @ ("catalogue-ids" | "validate" | "orphans" | "gaps" | "launcher-gaps" | "launcher-sites" | "matrix" | "render" | "write-matrix" | "coverage-report" | "schema")) => o,
-        _ => "other",
-    };
+    let op = args.first().map(String::as_str).unwrap_or("other");
     let meter = spira_otel::metrics::Run::begin(spira_config::process::cfg("SPIRA_METRICS_ENDPOINT").ok().as_deref(), "test-plan", op);
     let code = match args.first().map(String::as_str) {
         Some("catalogue-ids") => cmd_catalogue_ids(&args[1..]),

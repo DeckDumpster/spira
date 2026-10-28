@@ -211,6 +211,10 @@ function the script calls, and give SPIRA_TOML / SPIRA_RELEASES the default the 
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![Box::new(FreshHostEntry)]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -286,8 +290,4 @@ mod tests {
         let src = "# spira-config set; spira_unit; $SPIRA_TOML\n. \"$H/conf.sh\"\ngit status\n";
         assert!(run(&[("spira/ready.sh", src)]).is_empty());
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![Box::new(FreshHostEntry)]
 }

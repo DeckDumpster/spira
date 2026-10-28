@@ -1416,7 +1416,7 @@ mod tests {
         }
         std::fs::write(w.join("spira/conf.sh"), "").unwrap();
         for b in ["testenv", "spira-lint"] {
-            testkit::write_exe(&a.join(b), "#!/bin/sh\n");
+            testkit::write_exe(a.join(b), "#!/bin/sh\n");
         }
         let run = |bins: &[&str]| {
             std::process::Command::new("bash")
@@ -1450,10 +1450,10 @@ mod tests {
         for p in [w.join("spira"), a.clone()] {
             std::fs::create_dir_all(&p).unwrap();
         }
-        testkit::write_exe(&a.join("work"), "#!/bin/sh\n");
+        testkit::write_exe(a.join("work"), "#!/bin/sh\n");
         let calls = d.join("calls");
         let stage = |spira_config: &str| {
-            testkit::write_exe(&a.join("spira-config"), spira_config);
+            testkit::write_exe(a.join("spira-config"), spira_config);
             std::process::Command::new("bash")
                 .args(["-c", STAGE_SCRIPT, "_"])
                 .arg(&r)

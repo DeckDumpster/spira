@@ -41,14 +41,14 @@ fn shipped_schema_matches_the_types() {
 fn applying_the_default_document_bootstraps_a_fresh_install() {
     let text = fs::read_to_string(manifest_path("examples/default.toml")).unwrap();
     let fragment = parse_fragment(&text).unwrap();
-    let composite = compose(&[fragment.clone()]).unwrap();
+    let composite = compose(std::slice::from_ref(&fragment)).unwrap();
 
     let dir = tempdir();
     let store = FsStore::new(&dir);
     assert!(store.latest().unwrap().is_none(), "a fresh install has no prior version");
 
     let outcome = store
-        .write_version(&composite, &[fragment.producer.clone()], &now_rfc3339())
+        .write_version(&composite, std::slice::from_ref(&fragment.producer), &now_rfc3339())
         .unwrap();
     assert_eq!(outcome, MaterializeOutcome::NewVersion { version: 1 });
 

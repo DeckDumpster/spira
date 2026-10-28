@@ -97,8 +97,8 @@ pub fn decide_report(snap: &Snapshot) -> Verdict {
     }
 }
 
-/// The 20-line tail printed to stderr alongside a `Died` verdict (the bash's `tail -20 "$OUT"
-/// >&2`), kept separate from `decide_report` because it is diagnostic output, not part of the
+/// The 20-line tail printed to stderr alongside a `Died` verdict (the bash's `tail -20 "$OUT" >&2`),
+/// kept separate from `decide_report` because it is diagnostic output, not part of the
 /// verdict the exit code stands for.
 pub fn died_tail(snap: &Snapshot) -> String {
     tail_n(&snap.out_full, 20)

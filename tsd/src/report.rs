@@ -284,6 +284,7 @@ mod tests {
     use super::*;
     use crate::pass::{PassRecord, Place};
 
+    #[allow(clippy::too_many_arguments)]
     fn rec(repo: &str, batch: &str, pass: &str, members: &[&str], it: &str, wait: u64, boot: u64, build: u64, suites: u64, cause: Cause) -> PassRecord {
         PassRecord {
             repo: repo.into(),

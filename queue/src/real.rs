@@ -2570,7 +2570,7 @@ esac
         let mail_log = run.join("mail-args");
         let bindir = crate::testutil::tmpdir("notify-bin");
         testkit::write_exe(
-            &bindir.join("mail"),
+            bindir.join("mail"),
             &format!(
                 "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\n",
                 mail_log.display()
@@ -2750,7 +2750,7 @@ esac
     fn pf_gate_returns_gates_output_and_rc_and_enforces_its_own_wall() {
         let _serial = crate::testutil::serial();
         let bindir = crate::testutil::tmpdir("pfgate-bin");
-        testkit::write_exe(&bindir.join("gate.sh"), "#!/bin/sh\nprintf 'gate ran for %s/%s bead=%s\\n' \"$1\" \"$2\" \"$SPIRA_GATE_BEAD\"\nexit 3\n");
+        testkit::write_exe(bindir.join("gate.sh"), "#!/bin/sh\nprintf 'gate ran for %s/%s bead=%s\\n' \"$1\" \"$2\" \"$SPIRA_GATE_BEAD\"\nexit 3\n");
         let old_path = std::env::var_os("PATH").unwrap_or_default();
         let mut p = std::ffi::OsString::from(bindir.path());
         p.push(":");
@@ -2773,7 +2773,7 @@ esac
         let mark = crate::testutil::tmpdir("pfgate-mark");
         let grandchild_pid = mark.join("grandchild-pid");
         testkit::write_exe(
-            &bindir.join("gate.sh"),
+            bindir.join("gate.sh"),
             &format!(
                 "#!/bin/sh\nsleep 30 & echo $! > {}\nsleep 30\n",
                 grandchild_pid.display()

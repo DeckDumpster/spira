@@ -61,9 +61,7 @@ pub fn scan_text(rel: &str, text: &str) -> Vec<Finding> {
         }
         if is_rune && r.predicate.is_match(line) {
             out.push(finding(rel, idx + 1, "predicate", "a rune excludes by a hold label; poison and ask are lifecycle holds the claim already refuses — drop the label from RUNE_EXCLUDE_LABELS"));
-        } else if is_rust && r.rust_add.is_match(line) {
-            out.push(finding(rel, idx + 1, "write", "a hold written as a bd label; hold it on the row (spira-lc hold <id> poison|ask) and write no label"));
-        } else if !is_rust && !is_rune && r.sh_add.is_match(line) {
+        } else if (is_rust && r.rust_add.is_match(line)) || (!is_rust && !is_rune && r.sh_add.is_match(line)) {
             out.push(finding(rel, idx + 1, "write", "a hold written as a bd label; hold it on the row (spira-lc hold <id> poison|ask) and write no label"));
         }
     }

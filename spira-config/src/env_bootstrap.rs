@@ -483,7 +483,8 @@ mod tests {
         const MISMATCH: &str = "database is at v99\nbinary knows up to v53\n";
         const LOCKED: &str = "database is locked by another dolt process\n";
         // (name, rc, output, doctor, ok, refuse, first-message needle)
-        let rows: &[(&str, i32, &str, bool, bool, bool, Option<&str>)] = &[
+        type Row<'a> = (&'a str, i32, &'a str, bool, bool, bool, Option<&'a str>);
+        let rows: &[Row<'_>] = &[
             ("clean exit", 0, "Schema already at v61\n", false, true, false, None),
             ("clean exit under doctor", 0, "", true, true, false, None),
             ("exit 0 with mismatch text is still ok", 0, MISMATCH, false, true, false, None),

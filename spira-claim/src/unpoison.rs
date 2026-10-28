@@ -468,16 +468,6 @@ fn first_line(r: &store::Ran) -> String {
     l.chars().take(200).collect()
 }
 
-fn uuid4() -> Result<String, String> {
-    let u = std::fs::read_to_string("/proc/sys/kernel/random/uuid").map_err(|e| format!("uuid: {e}"))?;
-    let u = u.trim().to_string();
-    if u.len() == 36 && u.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
-        Ok(u)
-    } else {
-        Err("uuid: unexpected shape".into())
-    }
-}
-
 impl World for Live {
     fn bead(&mut self, id: &str) -> Result<Option<BeadRecord>, String> {
         let r = self.bd(&["show", id, "--json"], None)?;

@@ -96,6 +96,10 @@ input line is empty."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![Box::new(ConciergeSendKeysFence)]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,8 +130,4 @@ mod tests {
     fn the_guard_is_in_scope_so_a_send_keys_there_is_caught() {
         assert_eq!(scan("concierge-guard/src/main.rs", b"Command::new(\"tmux\").arg(\"send-keys\");\n").len(), 1);
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![Box::new(ConciergeSendKeysFence)]
 }

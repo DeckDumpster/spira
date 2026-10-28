@@ -279,6 +279,7 @@ fn apply(original: &[Table], delta: &Delta, retired: &[String], defer: bool) -> 
     Ok((pre, post, undo))
 }
 
+#[allow(clippy::type_complexity)]
 fn read_layers(spec: &str) -> Result<(Vec<PathBuf>, Vec<u32>, Vec<String>, Vec<Table>), String> {
     let files: Vec<PathBuf> = spec.split(':').filter(|p| !p.is_empty()).map(PathBuf::from).collect();
     if files.is_empty() {
@@ -402,15 +403,12 @@ pub fn complete(original: &[Table], rel: &Path, active: Option<&Path>, delta: Op
             unset.push(format!("{} (config key {path}): {}", k.name, k.doc));
             continue;
         }
-        match literal_default(&k) {
-            Ok(v) => {
-                d.added.insert(path, v);
-            }
-            // No literal default, or one computed on the box: the key is optional and its code
+        if let Ok(v) = literal_default(&k) {
+            d.added.insert(path, v);
+        }
+        //             // No literal default, or one computed on the box: the key is optional and its code
             // supplies the value (hotfix_alert_hours defaults to 4 in code). Refusing it blocked
             // every round VM, which has no active release (r-auto-107 and r-auto-110, 2026-10-10).
-            Err(_) => {}
-        }
     }
     if !unset.is_empty() {
         return Err(format!(

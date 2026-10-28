@@ -141,7 +141,7 @@ pub fn invalid_closed_rows(raw: &str) -> Vec<String> {
         if !matched {
             continue;
         }
-        let rest = line.splitn(2, ' ').nth(1).unwrap_or("");
+        let rest = line.split_once(' ').map_or("", |x| x.1);
         let bid = rest.split_whitespace().next().unwrap_or("");
         if bid.is_empty() {
             continue;

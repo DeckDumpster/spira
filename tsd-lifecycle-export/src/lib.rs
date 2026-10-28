@@ -103,9 +103,7 @@ pub fn fold_legacy(
     let mut facts_by_bead: BTreeMap<String, BeadFacts> = BTreeMap::new();
     let mut state_by_bead: BTreeMap<String, BeadState> = BTreeMap::new();
     let mut rows = Vec::with_capacity(events.len());
-    let mut seq = next_seq;
-
-    for ev in events.iter() {
+    for (seq, ev) in (next_seq..).zip(events.iter()) {
         let facts = facts_by_bead.entry(ev.issue_id.clone()).or_insert_with(default_facts);
         apply_legacy_event(facts, ev);
         let outcome = classify::classify(facts);
@@ -129,7 +127,6 @@ pub fn fold_legacy(
             source: source.to_string(),
         });
         state_by_bead.insert(ev.issue_id.clone(), outcome.state);
-        seq += 1;
     }
     rows
 }

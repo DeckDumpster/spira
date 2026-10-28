@@ -385,7 +385,7 @@ mod tests {
         let cert = reserve_class(&d, "c1", Class::Certify, 600, 0, Duration::ZERO, &free).unwrap();
         let dd = d.to_path_buf();
         let h = std::thread::spawn(move || {
-            reserve_class(&dd, "round", Class::Landing, 600, 0, Duration::from_secs(20), &|| Some(1000u64)).map(|g| g)
+            reserve_class(&dd, "round", Class::Landing, 600, 0, Duration::from_secs(20), &|| Some(1000u64))
         });
         let t = std::time::Instant::now();
         while !landing_waiting(&d) {

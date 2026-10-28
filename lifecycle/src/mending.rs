@@ -248,7 +248,7 @@ pub fn escalations(facts: &MendFacts, fences: &[String]) -> Vec<String> {
         } else if is_test_path(&c.path) && c.deleted > 0 {
             out.push(format!("{} changes a test's expectation ({} lines removed)", c.path, c.deleted));
         }
-        if !facts.member_files.iter().any(|f| *f == c.path) {
+        if !facts.member_files.contains(&c.path) {
             out.push(format!("{} is outside every member's diff", c.path));
         }
     }

@@ -275,7 +275,7 @@ fn main() {
         s: State::default(),
     };
     let code = run.main();
-    { let code = code; spira_otel::run::finish(code); std::process::exit(code) };
+    { spira_otel::run::finish(code); std::process::exit(code) };
 }
 
 /// The bounded operation label of an argv: a subcommand, `escape`, or the run mode.

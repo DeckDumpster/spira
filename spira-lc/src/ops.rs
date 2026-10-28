@@ -576,7 +576,7 @@ mod tests {
     }
 
     fn production_sized_bead(i: usize) -> Value {
-        let live = i % 50 == 0;
+        let live = i.is_multiple_of(50);
         let mut o = serde_json::Map::new();
         for (k, v) in [
             ("bead_id", format!("sp-{i:06}")),

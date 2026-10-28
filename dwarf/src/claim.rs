@@ -59,7 +59,7 @@ impl Selector<'_> {
         self.scratch.join(format!(".{stem}.{}", self.pid))
     }
 
-    fn select_args<'b>(&self, base: &[&'b str]) -> Vec<String> {
+    fn select_args(&self, base: &[&str]) -> Vec<String> {
         // The ready set is the machine's: `select` judges blockers by its rows too
         // (`--blockers machine`), the rule the ready set was built with (sp-s9675.2).
         let mut a = crate::ports::s(base);
@@ -202,6 +202,7 @@ mod tests {
     use std::sync::Mutex;
 
     struct FakeExec {
+        #[allow(clippy::type_complexity)]
         calls: Mutex<Vec<(String, Vec<String>, Option<String>)>>,
         epics: Out,
         tier: Out,

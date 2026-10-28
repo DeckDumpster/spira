@@ -360,8 +360,8 @@ pub fn run_mode<'a>(
         mode,
         "host-1-1".into(),
     );
-    let rc = s.run();
-    rc
+    
+    s.run()
 }
 
 fn setup(tag: &str) -> (World, FakeRunner, FakeSink, FakeClock) {
@@ -2090,7 +2090,7 @@ fn on_check2d_a_repo_map_hold_is_withdrawn_when_the_map_resolves_and_starvation_
     assert!(sink.has("CHECK2d STARVED: 3 of 4 READY beads are held"), "{}", sink.text());
     let ev = r.find(|s| seam_name(s).as_deref() == Some("sentinel-event")).expect("a starvation event");
     let stdin = String::from_utf8(ev.stdin.unwrap()).unwrap();
-    assert!(stdin.starts_with("queue.starved\0-\03 of 4 READY beads are held"), "{stdin}");
+    assert!(stdin.starts_with("queue.starved\0-\x003 of 4 READY beads are held"), "{stdin}");
 }
 
 #[test]

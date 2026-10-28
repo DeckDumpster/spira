@@ -706,7 +706,7 @@ impl<'a> Run<'a> {
                         self.bump_requeue("stack-conflict");
                         for prereq in [&conflict.a, &conflict.b] {
                             if let Some(tip) = self.s.stack.get(prereq) {
-                                spira_config::stack_conflict::record(&self.run_dir(), prereq, tip);
+                                spira_config::stack_conflict::record(self.run_dir(), prereq, tip);
                                 bd::note(
                                     self.d.bd,
                                     prereq,
@@ -1314,7 +1314,7 @@ impl<'a> Run<'a> {
             // sp-zf4q3: the model's PATH names the release's model-bin/ (only `work`), never
             // the bin/ that holds `work` beside ~40 tools that call bd. Fail-closed.
             let path = child.get("PATH").cloned().unwrap_or_default();
-            let model_bin = match restrict::model_bin_dir(&child, &path, |p| is_executable(p)) {
+            let model_bin = match restrict::model_bin_dir(&child, &path, is_executable) {
                 Ok(d) => d,
                 Err(e) => return Err(Abort::Die(format!("work-env: {e}"))),
             };

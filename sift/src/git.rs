@@ -14,7 +14,9 @@ pub struct GitProbe {
     pub identity_projects: String,
     pub base_ref: String,
     pub work: PathBuf,
+    #[allow(clippy::type_complexity)]
     pub state: Box<dyn Fn(&str) -> Result<String, String>>,
+    #[allow(clippy::type_complexity)]
     pub shown: Box<dyn Fn(&str) -> Result<String, String>>,
 }
 

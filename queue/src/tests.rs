@@ -36,6 +36,7 @@ struct FGit {
     rebase_fail: RefCell<BTreeMap<String, Vec<String>>>,
     branches: RefCell<Vec<(String, String)>>,
     /// `numstat` answers by (a, b); a pair not listed has no changes.
+    #[allow(clippy::type_complexity)]
     stats: RefCell<BTreeMap<(String, String), Vec<(String, u32, u32)>>>,
     /// "rev:path" -> contents, for `path_exists` and `file_at`.
     files: RefCell<BTreeMap<String, String>>,
@@ -2596,7 +2597,7 @@ fn a_lock_held_past_the_deadline_refuses_naming_its_recorded_holder() {
     };
     let start = t.clock.now();
     assert_eq!(t.run(&["eject", "sp-a"]), 1);
-    let want = format!("verb=round certify");
+    let want = "verb=round certify".to_string();
     assert!(
         t.err().contains(&want) && t.err().contains("pid="),
         "{}",
@@ -3754,13 +3755,7 @@ fn land_local_publishes_the_rounds_tested_build_as_a_release_and_activates_it() 
     assert!(!t.err().contains("LAND DEPLOY FAILED"));
 }
 
-#[test]
-fn land_drain_wait_is_explicit_and_below_the_round_cap() {
-    assert!(
-        crate::ops::deploy::LAND_DRAIN_WAIT_SECS > 0
-            && crate::ops::deploy::LAND_DRAIN_WAIT_SECS < 15 * 60
-    );
-}
+const _: () = assert!(crate::ops::deploy::LAND_DRAIN_WAIT_SECS > 0 && crate::ops::deploy::LAND_DRAIN_WAIT_SECS < 15 * 60);
 
 #[test]
 fn land_local_falls_back_to_paths_release_when_the_bin_dir_has_none_and_says_so() {

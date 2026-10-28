@@ -108,7 +108,7 @@ pub fn prior_pass_suites(status_text: &str) -> String {
     status_text
         .split('\n')
         .filter_map(|l| l.strip_prefix("gate-run: gate PASS covered suites: "))
-        .last()
+        .next_back()
         .unwrap_or("")
         .to_string()
 }

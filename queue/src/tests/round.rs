@@ -4962,7 +4962,7 @@ fn a_red_that_only_the_combination_produces_files_the_integration_from_the_eject
 
 #[test]
 fn a_mender_calls_carries_a_failure_spec_its_verbs_can_read() {
-    let mut t = round_world();
+    let t = round_world();
     *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
     assert_eq!(
         t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb"]),

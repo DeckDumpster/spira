@@ -88,7 +88,7 @@ extern "C" fn on_signal(sig: libc::c_int) {
 pub fn install_handlers() {
     unsafe {
         for s in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
-            libc::signal(s, on_signal as usize as libc::sighandler_t);
+            libc::signal(s, on_signal as *const () as usize as libc::sighandler_t);
         }
     }
 }

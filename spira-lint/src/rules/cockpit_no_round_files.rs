@@ -73,6 +73,12 @@ pass (number, phase, reds) from the batch row through spira-lc; add the field th
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(CockpitNoRoundFiles::default()),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,10 +113,4 @@ mod tests {
         t.write("spira/y.sh", "round-progress\n");
         assert!(run(&t, &["spira/y.sh"]).is_err());
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(CockpitNoRoundFiles::default()),
-    ]
 }

@@ -166,7 +166,7 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
     send_with(bd, env, args, body, &deliver_to_maildir)
 }
 
-pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String, deliver: DeliverFn) -> Result<SendOutcome, String> {
+pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, mut body: String, deliver: DeliverFn) -> Result<SendOutcome, String> {
     let mut mailbox = args.mailbox.to_string();
     maildir::mailbox_valid(&mailbox)?;
     let mut steps = vec![format!("mailbox {mailbox}: valid")];
@@ -185,7 +185,6 @@ pub fn send_with(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String, deliver:
         }
     }
 
-    let mut body = body;
     let mut rerouted = false;
     if mailbox == "operator" && !args.digest && env.operator_considered.is_none() {
         if let Some(why) = operator_refusal(args.kind, args.default, args.class, &body, args.requested_by) {

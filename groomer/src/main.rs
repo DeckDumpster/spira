@@ -86,7 +86,7 @@ fn main() {
                 Ok(out) => print!("{out}"),
                 Err((code, msg)) => {
                     eprintln!("groomer: {msg}");
-                    { let code = code; spira_otel::run::finish(code); std::process::exit(code) };
+                    { spira_otel::run::finish(code); std::process::exit(code) };
                 }
             }
         }
@@ -133,7 +133,7 @@ fn main() {
             let opts = unpoison::parse(id, flags.values.get("--cause").map(String::as_str), flags.values.get("--evidence").map(String::as_str)).unwrap_or_else(|e| die(&e));
             let (code, out) = unpoison::run("spira-claim", &opts);
             print!("{out}");
-            { let code = code; spira_otel::run::finish(code); std::process::exit(code) };
+            { spira_otel::run::finish(code); std::process::exit(code) };
         }
         "triage-poison" => {
             let Some((id, tail)) = rest.split_first() else {
@@ -150,7 +150,7 @@ fn main() {
                 Ok(out) => print!("{out}"),
                 Err((code, msg)) => {
                     eprintln!("groomer: {msg}");
-                    { let code = code; spira_otel::run::finish(code); std::process::exit(code) };
+                    { spira_otel::run::finish(code); std::process::exit(code) };
                 }
             }
         }
@@ -168,12 +168,12 @@ fn main() {
             let seam = LibSeam::new(home.join("lib.sh"));
             let (code, out) = deadlocked::run(&seam, &bd.db, apply, "spira-claim");
             print!("{out}");
-            { let code = code; spira_otel::run::finish(code); std::process::exit(code) };
+            { spira_otel::run::finish(code); std::process::exit(code) };
         }
         "unwanted" => match cmds::unwanted() {
             Err((code, msg)) => {
                 eprintln!("{msg}");
-                { let code = code; spira_otel::run::finish(code); std::process::exit(code) };
+                { spira_otel::run::finish(code); std::process::exit(code) };
             }
             Ok(_) => unreachable!("unwanted always refuses"),
         },

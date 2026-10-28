@@ -109,6 +109,12 @@ spira-lint/chmod-exec-leak-allow, which only shrinks."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(ChmodExecLeak),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,10 +200,4 @@ mod tests {
         t.write("a.sh", "x\n");
         assert_eq!(run(&t, &["a.sh", "testkit/src/lib.rs"]), Err(LintError::EmptyScope));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(ChmodExecLeak),
-    ]
 }

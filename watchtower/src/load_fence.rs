@@ -58,7 +58,7 @@ pub fn scan(proc_root: &Path, cfg: &Cfg) -> Vec<Proc> {
         .filter_map(|e| {
             let pid = e.file_name().to_string_lossy().parse::<u32>().ok()?;
             let p = read_proc(&e.path(), pid)?;
-            cfg.comms.iter().any(|c| *c == p.comm).then_some(p)
+            cfg.comms.contains(&p.comm).then_some(p)
         })
         .collect();
     v.sort_by_key(|p| p.pid);

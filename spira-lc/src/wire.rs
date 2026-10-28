@@ -49,11 +49,7 @@ fn io_failure(what: &str, e: std::io::Error) -> ScriptFailure {
 }
 
 impl Wire {
-    pub fn connect(host: &str, port: u16, user: &str, password: &str, database: Option<&str>) -> Result<Self, ScriptFailure> {
-        Self::connect_with(host, port, user, password, database, IO_TIMEOUT)
-    }
-
-    /// [`Wire::connect`] with an explicit socket limit — only the admin batch verbs use one
+    /// Connect with an explicit socket limit — only the admin batch verbs use one
     /// other than [`IO_TIMEOUT`] (see `db::ADMIN_IO_TIMEOUT`).
     pub fn connect_with(host: &str, port: u16, user: &str, password: &str, database: Option<&str>, io: Duration) -> Result<Self, ScriptFailure> {
         let addr = (host, port)

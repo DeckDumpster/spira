@@ -129,6 +129,7 @@ pub fn slow_samples(epoch: u64, timings: &[Timing], limit_ms: u64, callers: &[St
 
 /// Every alarm line for one pass, and the stats sample to diff the next pass against (`None`
 /// when stats were unreadable, so the older baseline stays).
+#[allow(clippy::type_complexity)]
 pub fn pass(
     probes: &[Probe],
     limit_ms: u64,
@@ -347,7 +348,7 @@ mod tests {
         let dir = testkit::TempDir::new("perf-inbox");
         let inbox = dir.path().join("inbox");
         let mut health = Health::default();
-        let mut pass_at = |epoch: u64, health: &mut Health| {
+        let pass_at = |epoch: u64, health: &mut Health| {
             clock.epoch.set(epoch);
             let mut r = Scripted { clock: &clock, costs: [("list".to_string(), 730), ("show".to_string(), 1), ("gone".to_string(), 0)].into(), stats: STATS.into(), asked_stats: false };
             let out = run_pass(&cfg, &probes, &["stats".to_string()], health, &clock, &mut r).unwrap();

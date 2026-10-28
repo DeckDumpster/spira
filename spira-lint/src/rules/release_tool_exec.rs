@@ -140,6 +140,12 @@ fn tool_names(tree: &Tree) -> BTreeSet<String> {
     names
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(ReleaseToolExec),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,10 +187,4 @@ mod tests {
         assert_eq!(got.len(), 1, "{got:?}");
         assert!(got[0].contains("lists b/src/lib.rs"));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(ReleaseToolExec),
-    ]
 }

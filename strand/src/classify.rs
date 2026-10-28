@@ -648,7 +648,7 @@ mod tests {
         let pl = plan_with(&["spira-open-children"]);
         let s = store(vec![
             bead("p", "open", &pl, None, &[]),
-            bead("k", "open", &PLAN, Some("p"), &[]),
+            bead("k", "open", PLAN, Some("p"), &[]),
         ]);
         let f = Facts { live: 1, ..Facts::default() };
         let stacked: HashMap<String, Vec<String>> = [("k".to_string(), vec!["p".to_string()])].into();

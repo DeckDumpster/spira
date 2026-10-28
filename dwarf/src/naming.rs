@@ -73,7 +73,7 @@ pub fn dwarf_named(pidfile: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::process::CommandExt;
+    
 
     fn fresh(name: &str) -> testkit::TempDir {
         testkit::TempDir::new(&format!("dwarf-naming-{name}"))

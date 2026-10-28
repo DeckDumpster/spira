@@ -6,7 +6,7 @@
 use loom::{router, Config, Loom};
 use serde_json::Value;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -77,7 +77,7 @@ async fn the_retired_list_view_is_gone_and_no_loom_route_reads_bd_listings() {
     let dir = scratch("retired");
     let counter = dir.join("calls");
     std::fs::write(&counter, b"").expect("an empty counter");
-    let real = fake_lc(&dir.to_path_buf());
+    let real = fake_lc(&dir);
     let shim = dir.join("shim-lc");
     script(&shim, &format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\nexec {} \"$@\"\n", counter.display(), real));
     let mut c = ops_cfg("");
@@ -185,7 +185,7 @@ async fn ops_reports_halted_only_from_the_stamp_not_the_snapshot() {
 }
 
 /// A fake `spira-lc` answering the three reads the stuck page makes, from canned JSON.
-fn fake_lc(dir: &PathBuf) -> String {
+fn fake_lc(dir: &Path) -> String {
     let bin = dir.join("spira-lc");
     script(
         &bin,
@@ -210,7 +210,7 @@ esac
 async fn the_stuck_page_leads_with_the_bead_past_its_p95_and_a_row_opens_its_timeline() {
     let dir = scratch("stuck");
     let mut c = ops_cfg("");
-    c.lc = fake_lc(&dir.to_path_buf());
+    c.lc = fake_lc(&dir);
     let addr = spawn(c).await;
 
     let (status, page) = get(addr, "/stuck").await;
@@ -234,7 +234,7 @@ async fn the_stuck_page_leads_with_the_bead_past_its_p95_and_a_row_opens_its_tim
 async fn an_ask_with_no_lifecycle_row_opens_on_the_bead_page_with_its_question() {
     let dir = scratch("ask");
     let mut c = ops_cfg("");
-    c.lc = fake_lc(&dir.to_path_buf());
+    c.lc = fake_lc(&dir);
     let addr = spawn(c).await;
 
     let (status, page) = get(addr, "/beads/sp-ask1").await;
@@ -674,7 +674,7 @@ async fn overview_answers_from_cache_while_a_source_is_slow_and_says_it_is_loadi
 #[tokio::test]
 async fn every_page_sits_in_the_shell_and_the_tab_bar_reaches_every_section_on_a_phone() {
     let mut fx = units_fixture(&fixture_rows());
-    fx.cfg.lc = fake_lc(&fx.dir.to_path_buf());
+    fx.cfg.lc = fake_lc(&fx.dir);
     write_snapshot(&PathBuf::from(&fx.cfg.run), &now_snapshot());
     std::fs::write(PathBuf::from(&fx.cfg.run).join("cockpit.env"), "SP_DWARF_N='0'\n").unwrap();
     let addr = spawn(fx.cfg.clone()).await;
@@ -752,7 +752,7 @@ static BROKER: std::sync::OnceLock<(PathBuf, PathBuf)> = std::sync::OnceLock::ne
 /// `run-jobs` responses by run id and logging every call.
 fn fake_broker() -> &'static (PathBuf, PathBuf) {
     BROKER.get_or_init(|| {
-        let dir = PathBuf::from(testkit::TempDir::new("loom-broker").to_path_buf());
+        let dir = testkit::TempDir::new("loom-broker").to_path_buf();
         std::fs::create_dir_all(&dir).expect("a broker dir");
         let (bin, log) = (dir.join("broker"), dir.join("calls.log"));
         let red = r#"{"run":{"id":9001,"url":"https://github.com/o/dumpstar/actions/runs/9001","status":"completed","conclusion":"failure","head_sha":"e6e8c19"},"jobs":[{"name":"lint","conclusion":"success","status":"completed","url":"https://github.com/o/dumpstar/actions/runs/9001/job/1","failed_step":null,"error_lines":[]},{"name":"gate","conclusion":"failure","status":"completed","url":"https://github.com/o/dumpstar/actions/runs/9001/job/2","failed_step":"svelte-check","error_lines":["Error: Type 'string' is not assignable to type 'number'. (ts)","svelte-check found 1 error"]}]}"#;
@@ -762,7 +762,7 @@ fn fake_broker() -> &'static (PathBuf, PathBuf) {
     })
 }
 
-fn batch_files(run: &PathBuf, repo: &str, pr: &str, id: &str, ci: &str, run_id: &str, step: &str) {
+fn batch_files(run: &Path, repo: &str, pr: &str, id: &str, ci: &str, run_id: &str, step: &str) {
     let d = run.join("queue").join(repo);
     std::fs::create_dir_all(&d).expect("a repo queue dir");
     std::fs::write(d.join("open"), format!("pr={pr}\nhead=h\nbase=b\nmembers=sp-aaa:1111111111111 sp-bbb:2222222222222\nopened={}\nbranch=spira/queue/{id}\nbatch_id=spira/queue/{id}\n", now_s() - 600)).expect("open");
@@ -772,7 +772,7 @@ fn batch_files(run: &PathBuf, repo: &str, pr: &str, id: &str, ci: &str, run_id: 
 
 async fn forge_loom() -> (SocketAddr, testkit::TempDir) {
     let run = ops_run_dir();
-    let p = PathBuf::from(run.to_path_buf());
+    let p = run.to_path_buf();
     batch_files(&p, "dumpstar", "66", "20261015T000000Z", "red", "9001", "gate / svelte-check");
     batch_files(&p, "deckdumpster", "619", "20261015T010000Z", "green", "9002", "");
     batch_files(&p, "pokedumpster", "7", "20261015T020000Z", "pending", "666", "gate / deploy");
@@ -844,7 +844,7 @@ async fn a_failing_broker_says_ci_detail_is_unavailable_and_still_serves_the_mem
 #[tokio::test]
 async fn a_cold_batch_page_answers_inside_the_budget_while_a_slow_broker_fetches_behind_it() {
     let run = ops_run_dir();
-    let p = PathBuf::from(run.to_path_buf());
+    let p = run.to_path_buf();
     batch_files(&p, "dumpstar", "66", "20261015T000000Z", "red", "9001", "gate / svelte-check");
     let slow = p.join("slow-broker");
     script(&slow, "#!/bin/sh\nsleep 2\ncat <<'EOF'\n{\"run\":{\"id\":9001,\"url\":\"https://github.com/o/dumpstar/actions/runs/9001\",\"status\":\"completed\",\"conclusion\":\"failure\"},\"jobs\":[]}\nEOF\n");
@@ -876,7 +876,7 @@ fn batch_json(id: &str, state: &str, pr: i64, last_verdict: Option<&str>, passes
     )
 }
 
-fn rounds_lc(dir: &PathBuf, red: &str, live: &str, forge: &str) -> String {
+fn rounds_lc(dir: &Path, red: &str, live: &str, forge: &str) -> String {
     let bin = dir.join("spira-lc");
     script(
         &bin,
@@ -903,7 +903,7 @@ async fn rounds_fixture() -> (SocketAddr, testkit::TempDir) {
     let live = batch_json("r-auto-200", "CI_RUNNING", 0, None, "[{\"n\":1,\"head\":\"h3\",\"started_at\":10}]");
     let forge = batch_json("pr-77", "CI_RUNNING", 77, None, "[]");
     let mut c = ops_cfg(&run.to_string_lossy());
-    c.lc = rounds_lc(&dir.to_path_buf(), &red, &live, &forge);
+    c.lc = rounds_lc(&dir, &red, &live, &forge);
     (spawn(c).await, dir)
 }
 

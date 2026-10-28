@@ -546,12 +546,10 @@ mod tests {
         // Exercised through classify-only inputs would need /proc; this checks the pure
         // substring/window logic indirectly isn't possible without a real pid, so this test
         // instead pins the tmux-attach window-matching rule directly.
-        let argv = vec![
-            "tmux".to_string(),
+        let argv = ["tmux".to_string(),
             "-L".to_string(),
             "concierge".to_string(),
-            "attach".to_string(),
-        ];
+            "attach".to_string()];
         let joined = argv.join("\u{0}");
         assert!(!joined.contains("--append-system-prompt"));
         let mut found = false;

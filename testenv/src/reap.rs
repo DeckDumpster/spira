@@ -133,7 +133,7 @@ pub fn idle_age_secs(dir: &Path) -> Option<u64> {
             }
             let Ok(md) = fs::symlink_metadata(e.path()) else { continue };
             if let Ok(m) = md.modified() {
-                if acc.map_or(true, |a| m > a) {
+                if acc.is_none_or(|a| m > a) {
                     *acc = Some(m);
                 }
             }
@@ -304,6 +304,7 @@ pub fn describe(r: &Reaped, dry_run: bool) -> String {
 mod tests {
     use super::*;
 
+    #[allow(dead_code)]
     struct Scratch(testkit::TempDir, PathBuf);
     fn scratch(tag: &str) -> Scratch {
         let t = testkit::TempDir::new(&format!("target-reap-{tag}"));

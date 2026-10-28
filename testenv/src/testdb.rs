@@ -138,7 +138,7 @@ pub fn point_beads_at(beads: &Path, port: u16) -> io::Result<()> {
 pub fn cmdline_is_server(cmdline: &[u8], config: &Path) -> bool {
     let args: Vec<&[u8]> = cmdline.split(|b| *b == 0).collect();
     let want = config.as_os_str().as_encoded_bytes();
-    args.iter().any(|a| *a == b"sql-server") && args.iter().any(|a| *a == want)
+    args.iter().any(|a| *a == b"sql-server") && args.contains(&want)
 }
 
 /// `State:` from /proc/<pid>/status text; `Z`/`X` read as dead.

@@ -156,6 +156,7 @@ fn run_bd(cmd: &mut Command, what: &str) -> Result<String, String> {
     }
 }
 
+#[allow(clippy::type_complexity)]
 pub fn read_beads(env: &Env, ids: &BTreeSet<String>, express: &BTreeSet<String>) -> Result<(BTreeMap<String, Bead>, BTreeMap<String, String>), String> {
     let mut beads = BTreeMap::new();
     let mut repos = BTreeMap::new();

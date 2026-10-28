@@ -101,6 +101,12 @@ first on PATH, SPIRA_RELEASE set). spira-lint/release-spawn-env-allow only shrin
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(ReleaseSpawnEnv),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,10 +141,4 @@ mod tests {
         assert_eq!(got.len(), 1);
         assert!(got[0].contains("lists b/src/main.rs"));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(ReleaseSpawnEnv),
-    ]
 }

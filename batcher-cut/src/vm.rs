@@ -10,7 +10,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration};
 
 use batcher::attrib::{Job, JobResult};
 use batcher::core::{Id, Member, MergeResult};
@@ -583,7 +582,7 @@ mod vtime_tests {
 
     #[test]
     fn epoch_honours_spira_now() {
-        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || epoch());
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, epoch);
         assert_eq!(got, 1_900_000_000);
     }
 }

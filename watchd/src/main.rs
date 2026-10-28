@@ -276,8 +276,8 @@ fn parse_reader_args(args: &[String], peek_forced: bool) -> Result<ReaderArgs, (
             }
             s if s.starts_with('-') => return Err((format!("unknown option '{s}'"), 2)),
             s => {
-                if name.is_some() {
-                    return Err((format!("one watcher at a time, got '{}' and '{s}'", name.unwrap()), 2));
+                if let Some(prev) = &name {
+                    return Err((format!("one watcher at a time, got '{prev}' and '{s}'"), 2));
                 }
                 name = Some(s.to_string());
             }

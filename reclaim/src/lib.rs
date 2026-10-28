@@ -124,7 +124,7 @@ pub fn judge(c: &Path, now: u64, idle_secs: u64, held: &[PathBuf], lease_dir: Op
 /// Reclaimable candidates, oldest first.
 pub fn plan(patterns: &[String], now: u64, idle_secs: u64, held: &[PathBuf], lease_dir: Option<&Path>) -> Vec<Candidate> {
     let mut v: Vec<Candidate> = patterns.iter().flat_map(|p| glob(p)).filter(|p| p.is_dir()).map(|p| judge(&p, now, idle_secs, held, lease_dir)).collect();
-    v.sort_by(|a, b| b.age.cmp(&a.age));
+    v.sort_by_key(|c| std::cmp::Reverse(c.age));
     v
 }
 

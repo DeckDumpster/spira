@@ -72,6 +72,12 @@ the commit. Use wiki-commit.sh — it stages each file explicitly."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(WikiAddFence),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,10 +121,4 @@ mod tests {
         let clean = scan(b"#!/usr/bin/env bash\n# do not use git -C \"$SPIRA_WIKI\" add -A (it sweeps unrelated work)\nprintf '%s\\n' \"$SPIRA_WIKI\"\n");
         assert!(clean.is_empty());
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(WikiAddFence),
-    ]
 }

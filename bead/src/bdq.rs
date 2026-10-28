@@ -170,7 +170,7 @@ pub fn check_repo_label(args: &[String], registry: &Registry) -> Option<String> 
     if labels.is_empty() {
         return None;
     }
-    let Some(repo_val) = repo_label_value(&labels) else { return None };
+    let repo_val = repo_label_value(&labels)?;
     let mut names = registry.names();
     if repo_label_allowed(repo_val, registry.home_repo(), &names) {
         return None;

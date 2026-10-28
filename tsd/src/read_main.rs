@@ -43,7 +43,7 @@ fn ident<'a>(v: Option<&'a String>, what: &str) -> Result<&'a str, Failure> {
     if ok { Ok(v) } else { Err(bad(what, v)) }
 }
 
-fn family<'a>(v: Option<&'a String>) -> Result<&'a str, Failure> {
+fn family(v: Option<&String>) -> Result<&str, Failure> {
     let v = v.ok_or_else(usage)?;
     if tsd::valid_family(v) { Ok(v) } else { Err(bad("family", v)) }
 }

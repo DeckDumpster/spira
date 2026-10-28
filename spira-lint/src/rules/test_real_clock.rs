@@ -150,6 +150,10 @@ the line `// clock-safe: <why>`. spira-lint/test-real-clock-allow only shrinks."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![Box::new(TestRealClock)]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,8 +210,4 @@ mod tests {
         t.write("a.txt", "x\n");
         assert_eq!(run(&t, &["a.txt"]), Err(LintError::EmptyScope));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![Box::new(TestRealClock)]
 }

@@ -261,7 +261,7 @@ pub fn fold(bead: &str, rows: &[EventRow]) -> Ledger {
     // A no-verdict run exempts the open attempt; the close that later ends the same
     // session must not then forgive an earlier, real failure.
     let mut spent_by_no_verdict = false;
-    for (t, k) in evs.iter().filter(|(t, _)| floor.as_ref().map_or(true, |f| t > f)) {
+    for (t, k) in evs.iter().filter(|(t, _)| floor.as_ref().is_none_or(|f| t > f)) {
         match k {
             EventKind::Claim => {
                 if let (Some(at), Some(now)) = (open.as_deref().and_then(epoch_s), epoch_s(t)) {
@@ -393,7 +393,7 @@ mod tests {
     fn legacy_sql(rows: &[EventRow]) -> u32 {
         let floor = rows.iter().filter(|r| r.event_type == "poison.cleared").map(|r| norm_ts(&r.created_at)).max();
         let after: Vec<&EventRow> =
-            rows.iter().filter(|r| floor.as_ref().map_or(true, |f| &norm_ts(&r.created_at) > f)).collect();
+            rows.iter().filter(|r| floor.as_ref().is_none_or(|f| &norm_ts(&r.created_at) > f)).collect();
         let v = |r: &EventRow| r.new_value.clone().unwrap_or_default();
         let claims = after
             .iter()

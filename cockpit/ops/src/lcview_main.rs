@@ -636,7 +636,7 @@ fn main() {
                 snap.failures = failures;
                 publish(&snap);
                 let frame = render(&view(&snap), width());
-                print!("\x1b[H\x1b[2J{}\n", frame.join("\n"));
+                println!("\x1b[H\x1b[2J{}", frame.join("\n"));
                 std::thread::sleep(Duration::from_secs(secs));
             }
         }

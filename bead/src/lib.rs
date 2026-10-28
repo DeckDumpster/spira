@@ -761,6 +761,7 @@ mod tests {
     fn lint_judge_rows_match_the_bash_suite_table() {
         let add_one = format!("no partition label; add one or mark {NO_LOOP}");
         let with_no_loop = format!("repo:spira {NO_LOOP}");
+        #[allow(clippy::type_complexity)]
         let rows: Vec<(&str, &str, &str, &str, u32, Vec<&str>)> = vec![
             ("repo:spira plan", "open", "task", PART, 0, vec![]),
             ("plan", "open", "task", PART, 1, vec!["no repo: label"]),

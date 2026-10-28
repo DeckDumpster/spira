@@ -61,10 +61,6 @@ fn a_pool_of_one_cuts_at_once() {
     assert_eq!(should_cut(&t), Some(TriggerReason::PoolFull(1)));
 }
 
-fn ids(v: &[Member]) -> Vec<&str> {
-    v.iter().map(|m| m.id.as_str()).collect()
-}
-
 #[test]
 fn no_shared_epic_is_a_catch_all_of_the_whole_pool() {
     let pool = vec![m("sp-a", 2, false, 0), m("sp-b.1", 2, false, 1), m("sp-c.1", 2, false, 2)];

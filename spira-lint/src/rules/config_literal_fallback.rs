@@ -96,7 +96,7 @@ fn skip_ws(code: &[u8], mut i: usize) -> usize {
 
 /// One `.method(...)` read at `i` (which must sit on the `.`): the method's name, and the
 /// index just past its argument list's close.
-fn read_method<'a>(code: &'a [u8], i: usize) -> Option<(&'a [u8], usize)> {
+fn read_method(code: &[u8], i: usize) -> Option<(&[u8], usize)> {
     if code.get(i) != Some(&b'.') {
         return None;
     }
@@ -290,6 +290,12 @@ spira-lint/config-literal-fallback-allow only shrinks."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(ConfigLiteralFallback),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -427,10 +433,4 @@ mod tests {
         let t = TempDir::new("clf-empty");
         assert_eq!(run(&t, &["README"]), Err(LintError::EmptyScope));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(ConfigLiteralFallback),
-    ]
 }

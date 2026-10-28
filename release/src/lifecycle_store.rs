@@ -188,6 +188,7 @@ pub fn ensure_admin(
     let dir = PrivateDir::new(tmp_parent, "adm")?;
     let probe = dir.write("probe.sql", "SELECT 1;\n")?;
     let probe_args = vec!["admin-apply-ddl".to_string(), probe.to_string_lossy().to_string()];
+    #[allow(clippy::type_complexity)]
     let try_as = |pw: &str, run: &mut dyn FnMut(&[String], &[(String, String)]) -> (i32, String), file: &str, sql: &[String]| -> Result<bool, String> {
         let admin = Admin { user: "root".into(), password: pw.to_string(), host: host.clone(), port };
         let pw_file = dir.write(file, pw)?;

@@ -1168,7 +1168,7 @@ mod tests {
     fn a_stale_newest_image_is_reported_and_a_matching_one_clears() {
         let old = Image { id: "ami-old".into(), recipe_sha: "aaa".into(), created: "2026-10-18".into() };
         let new = Image { id: "ami-new".into(), recipe_sha: "bbb".into(), created: "2026-10-21".into() };
-        let stale = ami_staleness(&[old.clone()], "bbb").unwrap();
+        let stale = ami_staleness(std::slice::from_ref(&old), "bbb").unwrap();
         assert!(stale.contains("round AMI stale for recipe bbb") && stale.contains("aaa"), "{stale}");
         assert_eq!(ami_staleness(&[old, new], "bbb"), None);
         assert!(ami_staleness(&[], "bbb").unwrap().contains("no image"));
@@ -1230,7 +1230,7 @@ mod tests {
         let all = FakeEc2::default();
         all.refuse_type("c7i.8xlarge");
         all.refuse_type("c7i.4xlarge");
-        let e = provision(&Ec2::new(all.clone(), &c).unwrap(), &spec(), &mut |_| {}).err().expect("refused");
+        let e = provision(&Ec2::new(all.clone(), &c).unwrap(), &spec(), &mut |_| {}).expect_err("refused");
         assert!(all.launched_types().is_empty() && format!("{e:?}").contains("c7i.4xlarge"), "{e:?}");
     }
 
@@ -1248,13 +1248,13 @@ mod tests {
         let all = FakeEc2::default();
         all.vanish_type("c7i.8xlarge", "Server.InsufficientInstanceCapacity");
         all.vanish_type("c7i.4xlarge", "Server.InsufficientInstanceCapacity");
-        let e = provision(&Ec2::new(all, &c).unwrap(), &spec(), &mut |_| {}).err().expect("refused");
+        let e = provision(&Ec2::new(all, &c).unwrap(), &spec(), &mut |_| {}).expect_err("refused");
         let e = format!("{e:?}");
         assert!(e.contains("InsufficientInstanceCapacity") && e.contains("i-0001") && e.contains("c7i.4xlarge"), "{e}");
 
         let other = FakeEc2::default();
         other.vanish_type("c7i.8xlarge", "Client.InternalError");
-        let e = provision(&Ec2::new(other.clone(), &c).unwrap(), &spec(), &mut |_| {}).err().expect("refused");
+        let e = provision(&Ec2::new(other.clone(), &c).unwrap(), &spec(), &mut |_| {}).expect_err("refused");
         assert!(format!("{e:?}").contains("Client.InternalError") && other.launched_types() == ["c7i.8xlarge"], "{e:?}");
     }
 

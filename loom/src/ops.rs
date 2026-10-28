@@ -152,22 +152,18 @@ async fn check_sentinel(instance: &str, systemctl: &str) -> Option<bool> {
     ];
     let mut found_inactive = false;
     for name in &names {
-        match Command::new("timeout").arg("5").arg(systemctl)
+        if let Ok(out) = Command::new("timeout").arg("5").arg(systemctl)
             .args(["--user", "is-active", name])
             .output()
-            .await
-        {
-            Ok(out) => {
-                let state = String::from_utf8_lossy(&out.stdout);
-                let state = state.trim();
-                if state == "active" {
-                    return Some(true);
-                }
-                if !state.is_empty() {
-                    found_inactive = true;
-                }
+            .await {
+            let state = String::from_utf8_lossy(&out.stdout);
+            let state = state.trim();
+            if state == "active" {
+                return Some(true);
             }
-            Err(_) => {}
+            if !state.is_empty() {
+                found_inactive = true;
+            }
         }
     }
     if found_inactive {
@@ -293,7 +289,7 @@ mod tests {
         assert_eq!(data.get("SP_READY"), Some(&"3".to_string()));
         // POSITIVE CONTROL: SP_OPEN was found, so the parser ran.
         assert!(
-            data.get("OTHER").is_none(),
+            !data.contains_key("OTHER"),
             "non-SP_ key must not appear in data map"
         );
     }

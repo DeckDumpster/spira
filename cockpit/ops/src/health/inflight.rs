@@ -10,7 +10,7 @@ const MAX_SHOWN: usize = 6;
 const BAR_CELLS: usize = 10;
 
 fn bar(done: u64, total: u64) -> String {
-    let filled = if total == 0 { 0 } else { ((done.min(total) * BAR_CELLS as u64) / total) as usize };
+    let filled = ((done.min(total) * BAR_CELLS as u64).checked_div(total).unwrap_or(0)) as usize;
     format!("{}{}", "\u{2588}".repeat(filled), "\u{2591}".repeat(BAR_CELLS - filled))
 }
 

@@ -101,6 +101,12 @@ genuine reasons: concurrency across processes, or server-only SQL."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(TestdbModeLint::default()),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,10 +178,4 @@ mod tests {
         t.write("spira/lib.sh", "echo\n");
         assert_eq!(run(&t, &["spira/lib.sh"]), Err(LintError::EmptyScope));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(TestdbModeLint::default()),
-    ]
 }

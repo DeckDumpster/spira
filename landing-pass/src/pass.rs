@@ -836,6 +836,7 @@ impl<'a> Pass<'a> {
     }
 
     /// File the base's own red through incident.sh (deduped on repository + suite).
+    #[allow(clippy::too_many_arguments)]
     fn base_incident(&self, name: &str, suite: &str, reason: &str, br: &str, base: &str, sha: &str, out: &str) {
         if !crate::util::runnable(&self.s.incident) {
             self.log(&format!("CHECK6 {name}: no intake at {} — the base's own red reaches nobody", self.s.incident.display()));

@@ -330,6 +330,7 @@ pub trait Scripts {
     /// `handle` is where the run's pid is written while it runs: the one thing `round preempt`
     /// addresses. The pid is the `timeout` wrapper, so a TERM reaches round-vm through it.
     /// `ami` is the image id the pass launches instead of the newest matching the release (`SPIRA_ROUND_VM_EC2_AMI`).
+    #[allow(clippy::too_many_arguments)]
     fn round_vm(
         &self,
         tree: &Path,

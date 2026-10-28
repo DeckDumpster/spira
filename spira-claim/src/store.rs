@@ -40,6 +40,7 @@ pub struct Config {
     /// as this field's own pre-cfg() emptiness check; never a substituted default.
     pub db: Option<String>,
     pub stack_max_depth: u32,
+    #[allow(dead_code)]
     pub submitted_label: String,
     /// `spira.run` — the runtime directory (`unpoison`: ask history, audit log).
     pub run: String,

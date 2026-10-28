@@ -595,12 +595,12 @@ fn pass_verdict(
         .collect();
     if verdict == "incomplete" && why.trim().is_empty() {
         w.err(
-            "queue.sh round pass-verdict: --reason is required for an incomplete pass".to_string(),
+            "queue.sh round pass-verdict: --reason is required for an incomplete pass",
         );
         return USAGE;
     }
     if verdict == "red" && red.is_empty() {
-        w.err("queue.sh round pass-verdict: --red-suites is required for a red pass".to_string());
+        w.err("queue.sh round pass-verdict: --red-suites is required for a red pass");
         return USAGE;
     }
     if red
@@ -1833,7 +1833,7 @@ fn candidate_image(
             }
             Some(AmiBuild::NotStarted) if !dispatched => {
                 if !w.lib.push(
-                    &path.to_path_buf(),
+                    path,
                     &remote,
                     &format!("{head}:refs/heads/{branch}"),
                 ) {
@@ -1866,7 +1866,7 @@ fn candidate_image(
     };
     if !matches!(verdict, Image::Unjudged(_)) {
         let _ = w.lib.push(
-            &path.to_path_buf(),
+            path,
             &remote,
             &format!(":refs/heads/{branch}"),
         );
@@ -1933,12 +1933,9 @@ pub(crate) fn failure_excerpt(text: &str) -> String {
                 keep[i] = true;
             }
             inside = false;
-        } else if t.starts_with("error: ")
-            && t.contains("failed")
-            && !t.starts_with("error: could not compile")
+        } else if (t.starts_with("error: ") && t.contains("failed") && !t.starts_with("error: could not compile"))
+            || (t.starts_with("error: could not compile") && t.contains("test"))
         {
-            keep[i] = true;
-        } else if t.starts_with("error: could not compile") && t.contains("test") {
             keep[i] = true;
         }
         if inside {

@@ -157,7 +157,7 @@ exit "$rc"
     /// ran. Controlled by `RULE_RC` / `RULE_ERR`. `SPIRA_RULE` is not a registered config key
     /// (`model::rule_sh` reads it straight from the environment, by design), so this still
     /// mutates env rather than going through `Cfg`.
-    pub fn rule(mut self) -> Self {
+    pub fn rule(self) -> Self {
         let script = self.dir.join("rule.sh");
         // testkit::write_exe, never fs::write + set_mode/set_permissions (sp-os3of).
         testkit::write_exe(

@@ -200,7 +200,7 @@ mod tests {
         let job_env = BARE.replace("    steps:", "    env:\n      SPIRA_TOML: /x\n    steps:");
         let wf_env = format!("env:\n  SPIRA_TOML: /x\n{BARE}");
         let earlier = BARE.replace("      - name: stage", "      - name: cfg\n        run: printf 'SPIRA_TOML=/x\\n' >> \"$GITHUB_ENV\"\n      - name: stage");
-        let later = BARE.replace("      - name: stage", "      - name: stage").to_string()
+        let later = BARE.to_string()
             + "      - name: cfg\n        run: printf 'SPIRA_TOML=/x\\n' >> \"$GITHUB_ENV\"\n";
         for ok in [&step_env, &job_env, &wf_env, &earlier] {
             assert!(judge("w.yml", ok, &bins()).is_empty(), "{ok}");

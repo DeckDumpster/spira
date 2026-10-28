@@ -221,7 +221,7 @@ impl Files {
             }
             let Ok(mt) = md.modified() else { continue };
             let mtime = mt.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(now);
-            let age_min_ceil = (now.saturating_sub(mtime) + 59) / 60;
+            let age_min_ceil = now.saturating_sub(mtime).div_ceil(60);
             if age_min_ceil > mins {
                 let _ = fs::remove_file(e.path());
             }

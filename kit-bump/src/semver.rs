@@ -44,7 +44,7 @@ fn comparator(c: &str, v: Version) -> Option<bool> {
         ">=" => v >= low,
         "<" => v < low,
         "<=" => v < next_of_given,
-        "~" => v >= low && v < if mi.is_some() { (ma, mi.unwrap() + 1, 0) } else { (ma + 1, 0, 0) },
+        "~" => v >= low && v < if let Some(mi) = mi { (ma, mi + 1, 0) } else { (ma + 1, 0, 0) },
         _ => {
             let up = match (ma, mi, pa) {
                 (m, _, _) if m > 0 => (m + 1, 0, 0),

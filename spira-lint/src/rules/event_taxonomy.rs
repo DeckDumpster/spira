@@ -136,6 +136,12 @@ declare it in spira-lint/event-kinds (lowercase dotted, <= 32 chars)."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(EventTaxonomy),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,10 +242,4 @@ mod tests {
         t.write(KINDS_FILE, "");
         assert!(matches!(run(&t, vec!["spira/x.sh".into()], &[]), Err(LintError::BadAllow { .. })));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(EventTaxonomy),
-    ]
 }

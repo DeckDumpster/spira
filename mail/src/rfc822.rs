@@ -21,7 +21,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 }
 
 fn weekday_index(days_since_epoch: i64) -> usize {
-    (((days_since_epoch % 7) + 7) % 7 + 4) as usize % 7
+    (days_since_epoch.rem_euclid(7) + 4) as usize % 7
 }
 
 /// Renders a Unix timestamp (seconds since epoch, UTC) as an RFC 5322 `Date:` value.

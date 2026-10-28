@@ -746,6 +746,7 @@ fn install_fault_outcome(repo: &Repo, ops: &mut LiveOps, members: &[Member], fau
 /// queue.local's terminal step: `terminal_ready` gates the round on the every-member-named,
 /// bins-present contract before anything changes, then the round's own `queue round certify`
 /// and `queue round land` do the rest. Never rebuilds binaries (law-deploy-the-tested-artifacts).
+#[allow(clippy::too_many_arguments)]
 fn finish_local_round(
     env_: &Env,
     repo: &Repo,
@@ -1895,7 +1896,7 @@ mod vtime_tests {
 
     #[test]
     fn now_honours_spira_now() {
-        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || now());
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, now);
         assert_eq!(got, 1_900_000_000);
     }
 }

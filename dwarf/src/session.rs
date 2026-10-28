@@ -121,7 +121,7 @@ impl Launcher for RealLauncher {
                 if warm_checked.elapsed() >= w.every {
                     warm_checked = Instant::now();
                     if spira_config::build::enforce_cap(&w.dir, w.cap_mib) {
-                        let mut say = |m: String| {
+                        let say = |m: String| {
                             if let Ok(mut f) = OpenOptions::new().append(true).open(&spec.log) {
                                 use std::io::Write;
                                 let _ = writeln!(f, "{m}");

@@ -96,7 +96,7 @@ pub fn read_all(queue: &Path) -> Vec<Batch> {
             .iter()
             .filter_map(|p| from_record(&repo, "closed", &kv(p)))
             .collect();
-        closed.sort_by(|a, b| b.opened.cmp(&a.opened));
+        closed.sort_by_key(|r| std::cmp::Reverse(r.opened));
         out.extend(closed);
     }
     out

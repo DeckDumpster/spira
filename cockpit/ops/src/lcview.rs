@@ -894,7 +894,7 @@ fn state_machine(s: &Snapshot, on_base: &dyn Fn(&str) -> bool) -> Vec<SmState> {
         if matches!(name, "READY" | "REWORK") {
             // Every bead in exactly one bucket, so the parts sum to the count, and "claimable"
             // is the claim tool's own set, the same NEXT reads (per Ryan 2026-10-09).
-            let is_ask = |id: &str| !s.ask_label.is_empty() && s.meta.get(id).is_some_and(|m| m.labels.iter().any(|l| *l == s.ask_label));
+            let is_ask = |id: &str| !s.ask_label.is_empty() && s.meta.get(id).is_some_and(|m| m.labels.contains(&s.ask_label));
             let (mut claimable, mut ask, mut blocked, mut held, mut poison, mut landed, mut unclaimable) = (0, 0, 0, 0, 0, 0, 0);
             let mut blockers: BTreeMap<String, usize> = BTreeMap::new();
             for r in &rows {
@@ -911,7 +911,7 @@ fn state_machine(s: &Snapshot, on_base: &dyn Fn(&str) -> bool) -> Vec<SmState> {
                     held += 1;
                 } else if on_base(&r.id) {
                     landed += 1;
-                } else if s.claimable.as_ref().is_some_and(|ids| ids.iter().any(|i| *i == r.id)) {
+                } else if s.claimable.as_ref().is_some_and(|ids| ids.contains(&r.id)) {
                     claimable += 1;
                 } else {
                     unclaimable += 1;
@@ -949,7 +949,7 @@ fn state_machine(s: &Snapshot, on_base: &dyn Fn(&str) -> bool) -> Vec<SmState> {
             }
         }
         if PLACED.contains(&name) {
-            parts.extend(placement_parts(s, &rows.iter().copied().collect::<Vec<_>>()));
+            parts.extend(placement_parts(s, &rows.to_vec()));
         }
         if name == "IN_DELIVERY" {
             red |= rows.iter().any(|r| !in_batch.contains(r.id.as_str()));
@@ -1386,7 +1386,7 @@ pub fn view(s: &Snapshot) -> View {
     v.rework_items = rw.iter().map(|r| item(r, r.updated_at, r.reason.clone().unwrap_or_default())).collect();
 
     let blocked_row = |r: &Row| r.blocker.as_deref().is_some_and(|b| !b.is_empty());
-    let is_ask = |id: &str| !s.ask_label.is_empty() && s.meta.get(id).is_some_and(|m| m.labels.iter().any(|l| *l == s.ask_label));
+    let is_ask = |id: &str| !s.ask_label.is_empty() && s.meta.get(id).is_some_and(|m| m.labels.contains(&s.ask_label));
     let mut asks: Vec<&AskRow> = s.asks.iter().collect();
     asks.sort_by(|a, b| a.opened_at.cmp(&b.opened_at).then_with(|| a.id.cmp(&b.id)));
     v.decide = asks
@@ -1407,7 +1407,7 @@ pub fn view(s: &Snapshot) -> View {
         .filter(|r| match &s.claimable {
             // Drift (its commit already on the base) is never NEXT, even if the claim tool,
             // which cannot see the base, would take it; it shows under DRIFT instead.
-            Some(ids) => ids.iter().any(|i| *i == r.id) && !is_ask(&r.id) && !s.on_base.contains_key(&r.id),
+            Some(ids) => ids.contains(&r.id) && !is_ask(&r.id) && !s.on_base.contains_key(&r.id),
             None => false,
         })
         .collect();
@@ -1645,10 +1645,6 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
 }
 
 // ───────────────────────────── phone renderer (served by loom)
-
-fn esc(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
-}
 
 /// The phone page (`/lifecycle`): the pane's own tree, rendered by `lctui::render_page`, so the
 /// two cannot drift. Kept under this name because loom calls it.

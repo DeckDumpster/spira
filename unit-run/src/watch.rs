@@ -197,6 +197,7 @@ impl Tracker {
     }
 }
 
+#[allow(clippy::type_complexity)]
 fn properties_changed(m: &Msg) -> Option<(&str, String, Vec<(String, Val)>)> {
     if m.kind != SIGNAL || m.member.as_deref() != Some("PropertiesChanged") {
         return None;

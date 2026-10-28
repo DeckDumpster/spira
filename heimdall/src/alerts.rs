@@ -181,7 +181,7 @@ mod tests {
             if let Some(f) = s.fail_list {
                 return Err(f);
             }
-            Ok(s.rows.values().filter(|r| r.labels.iter().any(|l| l == label || l.starts_with(&format!("{label}")))).cloned().collect())
+            Ok(s.rows.values().filter(|r| r.labels.iter().any(|l| l == label || l.starts_with(label))).cloned().collect())
         }
         fn create(&self, title: &str, labels: &str, body: &str) -> Result<String, Failure> {
             let mut s = self.0.lock().unwrap();

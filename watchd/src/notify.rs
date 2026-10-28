@@ -360,7 +360,7 @@ mod tests {
         let lf = paths::logfile(&c.run, "pool", Kind::Daemon, "pool.sh").unwrap();
         std::fs::create_dir_all(lf.parent().unwrap()).unwrap();
         std::fs::write(&lf, "[2026-09-30T00:00:00Z] pool: FAIL suite x\n").unwrap();
-        let out = cmd_notify(&rows, &{ let mut f = Fake::default(); f.refuse_asks = true; f }, &c).unwrap();
+        let out = cmd_notify(&rows, &Fake { refuse_asks: true, ..Fake::default() }, &c).unwrap();
         assert_eq!(out.code, 1, "{}", out.report);
         assert!(!paths::watchd_dir(&c.run).join("notify.escalated").exists());
     }

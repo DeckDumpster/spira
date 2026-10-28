@@ -376,12 +376,6 @@ impl PveEnv {
 mod tests {
     use super::*;
     use crate::testutil::TempDir;
-    use std::sync::Mutex;
-
-    /// Serializes tests below that mutate the real process environment (there is no
-    /// crate-wide env-mutation lock elsewhere in round-vm to reuse — none of its other tests
-    /// touch real env vars, since they already passed values straight to pure logic).
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn no_vmid_or_range_is_read_from_config() {

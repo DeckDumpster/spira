@@ -71,7 +71,7 @@ mod tests {
     #[test]
     fn a_ci_named_template_never_holds_a_provision() {
         let t = VmInfo { name: "ci-runner-template-resealed".into(), status: "stopped".into(), lock: None, registered: false, template: true };
-        assert_eq!(decide(&[t.clone()], 0), Yield::Proceed);
+        assert_eq!(decide(std::slice::from_ref(&t), 0), Yield::Proceed);
         let live = VmInfo { template: false, ..t };
         assert_eq!(decide(&[live], 0), Yield::Hold, "positive control: a stopped, unregistered ci VM still holds");
     }

@@ -940,7 +940,7 @@ fn run_main() -> ExitCode {
             .args([FIRST_RUN_SECS, spira_config::release_env::tool("bd").as_str(), "-C", &db, "list", "--limit", "0", "--json"])
             .output()
             .ok()
-            .and_then(|o| o.status.success().then(|| o.stdout))
+            .and_then(|o| o.status.success().then_some(o.stdout))
             .and_then(|out| serde_json::from_slice::<serde_json::Value>(&out).ok())
             .and_then(|v| v.as_array().map(|a| a.len().to_string()))
             .unwrap_or_else(|| "?".to_string());
@@ -1018,7 +1018,7 @@ fn run_main() -> ExitCode {
                 let _ = spira_config::bounded::bounded("git").args(["-C", &db, "config", "beads.role", "maintainer"]).status();
             } else {
                 // cwd == SPIRA_DB, not -C: see bd_output's doc comment above for why.
-                if bd_init_bounded().current_dir(&db).args(["init", "--prefix", &id_prefix]).status().map(|s| s.success()).unwrap_or(false) != true {
+                if !bd_init_bounded().current_dir(&db).args(["init", "--prefix", &id_prefix]).status().map(|s| s.success()).unwrap_or(false) {
                     eprintln!("install: phase database failed — bd init failed");
                     return ExitCode::from(2);
                 }

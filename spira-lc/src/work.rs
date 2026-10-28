@@ -509,7 +509,7 @@ fn red_tracker_done_refusal(bead_id: &str) -> Option<(i32, String)> {
         Err(e) => return Some((CANNOT_TELL, format!("cannot tell: {e}"))),
     };
     match crate::bd::labels(bead_id) {
-        Ok(labels) if !label.is_empty() && labels.iter().any(|l| *l == label) => Some((
+        Ok(labels) if !label.is_empty() && labels.contains(&label) => Some((
             REFUSED,
             format!(
                 "refused: work done: {bead_id} is a {label} bead and DONE would read as a handled red with no fix landed. \
@@ -638,7 +638,7 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, St
     let body = split_reserved(args).stdin;
     let parent = if after_landing { None } else { Some(bead_id) };
     match crate::bd::file_child(title, &persona, &repo, parent, body.as_deref()) {
-        Ok(new_id) => match crate::cutover::cmd_create_bead(&[new_id.clone()], conn) {
+        Ok(new_id) => match crate::cutover::cmd_create_bead(std::slice::from_ref(&new_id), conn) {
             (0, _) if after_landing => match crate::bd::add_blocker(&new_id, bead_id) {
                 Ok(()) => (0, new_id),
                 Err(e) => (CANNOT_TELL, format!("{new_id} was filed but could not be made to wait on {bead_id} (do not file it again; add the dependency): {e}")),
@@ -962,6 +962,7 @@ fn bead_arg(verb: &str, args: &[String], i: usize, what: &str) -> Result<String,
 
 /// `--flag value` pairs and bare switches from `args[from..]`, every token checked against
 /// `values`/`switches`; anything else is refused rather than forwarded.
+#[allow(clippy::type_complexity)]
 fn parse_flags(verb: &str, args: &[String], from: usize, values: &[&str], switches: &[&str]) -> Result<Vec<(String, Option<String>)>, (i32, String)> {
     let mut out = Vec::new();
     let mut i = from;
@@ -1460,7 +1461,7 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
             }
             Step::CreateRow => {
                 let new_id = out.trim().to_string();
-                match crate::cutover::cmd_create_bead(&[new_id.clone()], conn) {
+                match crate::cutover::cmd_create_bead(std::slice::from_ref(&new_id), conn) {
                     (0, _) => (0, String::new()),
                     (_, e) => (
                         CANNOT_TELL,

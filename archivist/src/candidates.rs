@@ -34,7 +34,7 @@ pub fn would_archive(drift: i64, every: u64, prev_state: Option<&str>) -> bool {
 /// most-drifted session first. Stable: ties keep discovery order, matching Python's
 /// documented stable `sorted(..., reverse=True)`.
 pub fn sort_by_drift_desc(candidates: &mut [Candidate]) {
-    candidates.sort_by(|a, b| b.drift.cmp(&a.drift));
+    candidates.sort_by_key(|e| std::cmp::Reverse(e.drift));
 }
 
 #[cfg(test)]

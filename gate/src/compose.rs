@@ -277,6 +277,7 @@ pub fn parse_metadata(json: &str) -> Result<Vec<Member>, String> {
         .and_then(|p| p.as_array())
         .ok_or("cargo metadata: no packages")?;
     // (name, absolute dir)
+    #[allow(clippy::type_complexity)]
     let mut raw: Vec<(String, String, Vec<(String, bool)>)> = Vec::new();
     for p in pkgs {
         let id = p.get("id").and_then(|x| x.as_str()).unwrap_or("");

@@ -370,7 +370,7 @@ impl Registry {
     /// (the `$(...)` capture is unchecked), so a missing map behaves exactly like an unmapped
     /// name rather than an error.
     pub fn land(&self, name: &str) -> String {
-        let m = self.map_present.then(|| field(&self.rows, name, Column::Land)).unwrap_or_default();
+        let m = if self.map_present { field(&self.rows, name, Column::Land) } else { Default::default() };
         match m.as_str() {
             "" => "push".to_string(),
             "queue.forge" => "queue".to_string(),

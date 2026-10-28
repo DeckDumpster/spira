@@ -111,6 +111,10 @@ a journal only to assert on a fixture they wrote. spira-lint/journal-readers-all
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![Box::new(JournalReads)]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,8 +181,4 @@ mod tests {
         t.write("a.md", "x\n");
         assert_eq!(run(&t, &["a.md"]), Err(LintError::EmptyScope));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![Box::new(JournalReads)]
 }

@@ -77,8 +77,8 @@ fn parse_args(argv: &[String]) -> Args {
     while i < argv.len() {
         match argv[i].as_str() {
             "--bead" => {
-                if id.is_some() {
-                    usage_err(&format!("--bead given twice ({}, {})", id.unwrap(), argv.get(i + 1).cloned().unwrap_or_default()));
+                if let Some(prev) = &id {
+                    usage_err(&format!("--bead given twice ({prev}, {})", argv.get(i + 1).cloned().unwrap_or_default()));
                 }
                 let Some(v) = argv.get(i + 1) else { usage_err("--bead needs a bead id") };
                 id = Some(v.clone());

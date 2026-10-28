@@ -969,6 +969,7 @@ mod tests {
 
     #[derive(Default)]
     struct FakeMail {
+        #[allow(clippy::type_complexity)]
         sent: RefCell<Vec<(String, String, String, String, String)>>, // from, subject, default, bead_id, body
         fail: RefCell<Option<String>>,
     }
@@ -1268,8 +1269,7 @@ mod tests {
         seed_closed_github(&bd, vec![serde_json::json!({"id":"sp-scan2","status":"closed","external_ref":"github:fixture/testrepo#92","labels":[],"closed_at":"2026-09-05T00:00:00Z"})]);
         let (gh, git, repo) = (FakeGh::default(), FakeGit::default(), FakeRepo::default());
         let mail = FakeMail::default();
-        let mut lc = FakeLc::default();
-        lc.down = true;
+        let lc = FakeLc { down: true, ..FakeLc::default() };
         let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
         let log = gh_unlanded_scan(&d, &ctx(&run), 2_000_000_000);
         assert!(log.iter().any(|l| l.contains("lifecycle machine unreachable")), "{log:?}");

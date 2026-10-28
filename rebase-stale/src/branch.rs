@@ -156,23 +156,23 @@ pub fn rebase_branch(cfg: &BranchConfig, repo: &Path, br: &str, onto: &str, name
         let _ = wt_git.ok(["reset", "-q", "--hard", "HEAD"]);
     }
 
-    let result;
+    
     let rebase_run = wt_git.run(["rebase", "-q", onto]);
-    if !rebase_run.ok {
+    let result = if !rebase_run.ok {
         let conflicts = wt_git.unmerged_paths().join(" ");
         let _ = wt_git.ok(["rebase", "--abort"]);
-        result = if !conflicts.is_empty() {
+        if !conflicts.is_empty() {
             RebaseResult { ok: false, failure: Some(RebaseFailure::Conflict), conflicts, refused_reason: String::new() }
         } else {
             let reason = rebase_run.stderr.lines().next().unwrap_or("").to_string();
             RebaseResult { ok: false, failure: Some(RebaseFailure::RebaseRefused), conflicts: String::new(), refused_reason: reason }
-        };
+        }
     } else {
         // THE REBASE ACTUALLY REPLAYED COMMITS — format_rebased only runs on this path,
         // never on the already-an-ancestor no-op (which returned above) or on a failure.
         format_rebased(cfg, br, onto, &wt_git, name, format_cmd);
-        result = RebaseResult::ok();
-    }
+        RebaseResult::ok()
+    };
 
     // Let go of the branch: a scratch tree still holding it would refuse a later
     // `git branch -D` the way holding it in any worktree does.
@@ -352,7 +352,7 @@ mod tests {
                 git_email: "t@t".into(),
                 format_timeout: Duration::from_secs(5),
             };
-            Fx { root: root, repo, cfg }
+            Fx { root, repo, cfg }
         }
 
         /// Cuts `spira/<id>` from main's current tip and commits `edit` on it, without

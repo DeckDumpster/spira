@@ -425,8 +425,7 @@ impl OtlpSink {
                 conn.set_read_timeout(Some(std::time::Duration::from_secs(2))).ok();
                 let mut buf = Vec::new();
                 let mut chunk = [0u8; 4096];
-                loop {
-                    let Ok(n) = conn.read(&mut chunk) else { break };
+                while let Ok(n) = conn.read(&mut chunk) {
                     if n == 0 {
                         break;
                     }

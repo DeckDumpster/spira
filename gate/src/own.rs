@@ -49,12 +49,12 @@ mod tests {
 
     #[test]
     fn a_tree_with_only_a_declaration_judges_itself() {
-        assert!(declares_own_testenv(&*tree(&[DECL])));
+        assert!(declares_own_testenv(&tree(&[DECL])));
     }
 
     #[test]
     fn the_harness_image_makes_it_the_harness() {
-        assert!(!declares_own_testenv(&*tree(&[DECL, HARNESS_IMAGE, "x"])));
+        assert!(!declares_own_testenv(&tree(&[DECL, HARNESS_IMAGE, "x"])));
     }
 
     #[test]
@@ -69,6 +69,6 @@ mod tests {
 
     #[test]
     fn an_undeclared_tree_is_not_its_own() {
-        assert!(!declares_own_testenv(&*tree(&["a", "b"])));
+        assert!(!declares_own_testenv(&tree(&["a", "b"])));
     }
 }

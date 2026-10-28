@@ -113,6 +113,10 @@ impl Rule for ConfigFixture {
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![Box::new(ConfigFixture::default())]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -193,8 +197,4 @@ mod tests {
         e.git(&["commit", "-qm", "x"]);
         assert!(matches!(check(&e).0, Err(LintError::Refused(_))));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![Box::new(ConfigFixture::default())]
 }

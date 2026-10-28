@@ -269,6 +269,7 @@ impl Conn {
 
     fn with_write_wire<T>(&self, f: impl FnOnce(&mut Wire) -> Result<T, String>) -> Result<T, String> {
         let mut guard = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        #[allow(clippy::manual_filter)]
         let reusable = guard.take().and_then(|mut w| if w.idle_too_long() && !w.ping() { None } else { Some(w) });
         let mut wire = match reusable.map(Ok).unwrap_or_else(|| self.connect(Some(&self.database))) {
             Ok(w) => w,
@@ -395,6 +396,7 @@ impl Conn {
             }
         };
         let session_started = Instant::now();
+        #[allow(clippy::manual_filter)]
         let reusable = guard.take().and_then(|mut w| if w.idle_too_long() && !w.ping() { None } else { Some(w) });
         let mut wire = match reusable.map(Ok).unwrap_or_else(|| self.connect(Some(&self.database))) {
             Ok(w) => w,
@@ -462,6 +464,7 @@ impl Conn {
     /// Times only the statements: the wait for the session lock is queueing, not a slow query.
     fn run_locked(&self, guard: &mut MutexGuard<'_, Option<Wire>>, script: &str, touch: Option<&crate::live::Touch>) -> Result<Vec<Vec<Value>>, ScriptFailure> {
         let session_started = std::time::Instant::now();
+        #[allow(clippy::manual_filter)]
         let reusable = guard.take().and_then(|mut w| if w.idle_too_long() && !w.ping() { None } else { Some(w) });
         let wire = reusable.map(Ok).unwrap_or_else(|| self.connect(Some(&self.database)));
         crate::slow::record(session_started.elapsed(), "CONNECT");

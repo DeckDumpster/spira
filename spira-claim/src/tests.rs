@@ -1321,7 +1321,7 @@ fn ready_count_twice(ttl: &str) -> (Outcome, Outcome) {
     let bd = sh(&format!("case \"$*\" in *--id*) echo '{BD_BOTH}';; *) echo '{BD_OPEN_UNASSIGNED}';; esac"));
     let one = r#"[{"bead_id":"P","state":"READY","holds":"[]"}]"#;
     let none = r#"[{"bead_id":"P","state":"WORKING","holder":"dwarf-live","holds":"[]"}]"#;
-    let mut call = |lc: &str| {
+    let call = |lc: &str| {
         let path = fake_lc_path(lc);
         run_cfg(
             &["ready-count", "plan", ""],

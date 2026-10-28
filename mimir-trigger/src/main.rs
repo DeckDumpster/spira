@@ -177,7 +177,7 @@ fn main() {
     // sp-io5e). The lock file is leaked deliberately (never closed): closing it here would
     // release it before the process exits, and the kernel reclaims it at process exit anyway.
     let lock_path = cfg.spira_run.join("mimir-trigger.lock");
-    match OpenOptions::new().create(true).write(true).open(&lock_path) {
+    match OpenOptions::new().create(true).truncate(false).write(true).open(&lock_path) {
         Ok(lock_file) => {
             if unsafe { flock(lock_file.as_raw_fd(), LOCK_EX | LOCK_NB) } != 0 {
                 world.log("another instance holds the lock — skipping to avoid a duplicate trigger");
@@ -409,6 +409,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     #[test]
     fn run_refuses_to_file_when_the_open_trigger_count_cannot_be_read() {
         let mut w = FakeWorld::default();
@@ -461,6 +462,7 @@ mod tests {
         assert_eq!(count_landings(&w, "/repo/nope", 0), 0);
     }
 
+    #[allow(clippy::field_reassign_with_default)]
     #[test]
     fn run_end_to_end_fires_the_landing_trigger_for_a_non_origin_satellite_repo() {
         // The full repository-map → count_landings → threshold path, with a satellite repo

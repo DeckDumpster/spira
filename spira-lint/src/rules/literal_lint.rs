@@ -224,6 +224,12 @@ the one above it."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(LiteralLint),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -388,10 +394,4 @@ mod tests {
         let (names, _) = configured_names_env(&schema, &[("HOME", home), ("SPIRA_ASK_LABEL", "needs-env")]);
         assert!(names.contains(&"needs-env".to_string()), "{names:?}");
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(LiteralLint),
-    ]
 }

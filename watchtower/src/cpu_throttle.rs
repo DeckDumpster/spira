@@ -10,6 +10,7 @@ use std::path::Path;
 
 pub struct Cfg {
     pub units: Vec<String>,
+    #[allow(dead_code)]
     pub warn_pct: i64,
     pub min_periods: i64,
     pub cgroup_root: String,

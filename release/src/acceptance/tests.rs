@@ -226,7 +226,7 @@ impl Fake {
         }
         fs::write(d.join("spira/conf.sh"), "").unwrap();
         if !self.no_cutover_script {
-            testkit::write_exe(&d.join("spira/cutover-deploy.sh"), "#!/bin/sh\n");
+            testkit::write_exe(d.join("spira/cutover-deploy.sh"), "#!/bin/sh\n");
         }
         let cur = self.releases.join("current");
         let _ = fs::remove_file(&cur);

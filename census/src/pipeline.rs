@@ -149,7 +149,7 @@ fn beads(json: &str) -> Vec<Value> {
     }
 }
 
-fn covered<'a>(bead: &'a Value) -> impl Iterator<Item = &'a str> {
+fn covered(bead: &Value) -> impl Iterator<Item = &str> {
     bead.get("labels").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).filter_map(|l| l.strip_prefix("covers:"))
 }
 

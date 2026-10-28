@@ -2339,7 +2339,7 @@ fn warm_conf_gen_runs_the_worktrees_generator_and_faults_when_it_fails() {
     assert!(d.join("spira/conf.d.keys.generated.sh").exists());
     std::fs::write(d.join("spira/conf-gen.sh"), "exit 7\n").unwrap();
     let fin = warm_conf_gen(&d).expect("a failing generator is a harness fault");
-    assert_eq!(fin.reason.as_deref(), Some("conf-gen"));
+    assert_eq!(fin.reason, Some("conf-gen"));
 }
 
 #[test]

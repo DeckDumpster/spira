@@ -24,7 +24,7 @@ fn bead_id(s: &str) -> bool {
     let (head, tail) = rest.split_once('.').map_or((rest, None), |(h, t)| (h, Some(t)));
     !head.is_empty()
         && head.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
-        && tail.map_or(true, |t| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit()))
+        && tail.is_none_or(|t| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit()))
 }
 
 fn has_dependency(manifest: &toml::Table, name: &str) -> bool {
@@ -125,6 +125,10 @@ impl Rule for OtelBinaries {
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![Box::new(OtelBinaries)]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,8 +213,4 @@ mod tests {
         assert!(bead_id("sp-vpfp3i") && bead_id("sp-vpfp3i.2"));
         assert!(!bead_id("") && !bead_id("sp-") && !bead_id("vpfp3i") && !bead_id("sp-a.b"));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![Box::new(OtelBinaries)]
 }

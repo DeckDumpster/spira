@@ -647,9 +647,7 @@ pub fn render_memories(mem_json: &str, prefixes: &str, budget: usize, core_csv: 
             ),
             (
                 "sop-",
-                format!(
-                    "## Runbooks on the shelf — full text on request\n\nThese bind exactly as the statutes above do. Read the full runbook —\nCHECK, FIX, ESCALATE — with:\n\n    sop show <slug-without-sop-prefix>\n"
-                ),
+                "## Runbooks on the shelf — full text on request\n\nThese bind exactly as the statutes above do. Read the full runbook —\nCHECK, FIX, ESCALATE — with:\n\n    sop show <slug-without-sop-prefix>\n".to_string(),
             ),
         ];
         for (ns, header) in namespaces {
@@ -693,7 +691,7 @@ mod tests {
         let mut uses = 0;
         for e in std::fs::read_dir(&dir).unwrap() {
             let p = e.unwrap().path();
-            if p.extension().map_or(true, |x| x != "md") || p.file_name().unwrap() == "concierge.md" {
+            if p.extension().is_none_or(|x| x != "md") || p.file_name().unwrap() == "concierge.md" {
                 continue;
             }
             let text = std::fs::read_to_string(&p).unwrap();

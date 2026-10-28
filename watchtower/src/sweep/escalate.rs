@@ -55,7 +55,7 @@ fn tracked_by_open_bead(cfg: &Cfg, unit: &str) -> bool {
         },
         _ => return true,
     };
-    crate::conditions::unfinished(&cfg.lc_bin, ids).map_or(true, |live| !live.is_empty())
+    crate::conditions::unfinished(&cfg.lc_bin, ids).is_none_or(|live| !live.is_empty())
 }
 
 fn failed_units_escalation(d: &SweepData, cfg: &Cfg) {
@@ -743,6 +743,7 @@ mod tests {
     /// Every dedupe key is a string literal fixed in the source: running an escalation
     /// twice over different measurements must name the same reference both times.
     #[test]
+    #[allow(clippy::type_complexity)]
     fn each_escalations_dedupe_reference_is_stable_across_different_measurements() {
         let cases: [(&str, fn(&SweepData, &Cfg), &str, [&str; 2], &str); 5] = [
             ("wt-ref-bs", batched_stranded, "SP_BATCHED_STRANDED", ["1", "2"], "incident:hel-batched-stranded"),

@@ -168,7 +168,7 @@ pub fn instrument_with(sink: &MetricsSink, component: &str, operation: &str, ext
 }
 
 fn kv(k: &str, v: &str) -> KeyValue {
-    KeyValue { key: k.into(), value: Some(AnyValue { value: Some(Value::StringValue(v.into())) }), ..Default::default() }
+    KeyValue { key: k.into(), value: Some(AnyValue { value: Some(Value::StringValue(v.into())) }) }
 }
 
 fn post(addr: &str, body: &[u8], deadline: Duration) -> std::io::Result<()> {

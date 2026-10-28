@@ -100,6 +100,12 @@ pid, lease or log file is a second record that disagrees with the row. Add the f
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(DwarfStateReaders::default()),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,10 +157,4 @@ mod tests {
         t.write("round-vm/y.rs", "\"x.slain\"\n");
         assert!(run(&t, &["round-vm/y.rs"]).is_err());
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(DwarfStateReaders::default()),
-    ]
 }

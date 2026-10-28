@@ -66,8 +66,7 @@ pub(crate) fn resolve(cmd: &Command) -> (Vec<&Word>, Vec<&Word>) {
     let (env, argv) = cmd.split_env();
     let mut env: Vec<&Word> = env.iter().collect();
     let mut argv: Vec<&Word> = argv.iter().collect();
-    loop {
-        let Some(head) = argv.first() else { break };
+    while let Some(head) = argv.first() {
         match head.unquoted().as_str() {
             "env" => {
                 let mut i = 1;
@@ -191,6 +190,12 @@ MAX_ARG_STRLEN (128 KiB) silently: the exec dies, the caller reads empty output,
 reads as \"nothing to do\" (law-payloads-go-on-stdin). Pass it on stdin, or write it to a \
 temp file and pass the PATH. A genuine exception belongs in spira/payload-argv-lint-allow."
     }
+}
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(PayloadArgv),
+    ]
 }
 
 #[cfg(test)]
@@ -318,10 +323,4 @@ report() {
         let empty = Tree::from_paths(t.path(), ["other/c.sh"], Vec::<String>::new());
         assert_eq!(PayloadArgv.check(&empty), Err(LintError::EmptyScope));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(PayloadArgv),
-    ]
 }

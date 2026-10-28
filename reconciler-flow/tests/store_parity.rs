@@ -21,6 +21,7 @@ impl Lcg {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn row(ts: u64, seq: u64, machine: &str, key: &str, from: &str, to: &str, applied: bool, reason: Option<&str>) -> Value {
     let mut v = json!({"ts": tsd::iso_utc(ts), "host": "h", "family": "bead-stage", "seq": seq, "machine": machine, "key": key, "from_state": from, "to_state": to, "applied": applied});
     if let Some(r) = reason {

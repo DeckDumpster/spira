@@ -871,9 +871,10 @@ fn failure_excerpt(log: &str) -> Vec<String> {
     }
     let mut budget = EXCERPT_CONTEXT_BUDGET;
     for &i in &matches {
-        for j in i.saturating_sub(EXCERPT_CONTEXT)..(i + EXCERPT_CONTEXT + 1).min(lines.len()) {
-            if !keep[j] && budget > 0 {
-                keep[j] = true;
+        let (lo, hi) = (i.saturating_sub(EXCERPT_CONTEXT), (i + EXCERPT_CONTEXT + 1).min(lines.len()));
+        for flag in &mut keep[lo..hi] {
+            if !*flag && budget > 0 {
+                *flag = true;
                 budget -= 1;
             }
         }

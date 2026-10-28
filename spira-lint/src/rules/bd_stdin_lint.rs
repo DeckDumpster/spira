@@ -87,6 +87,12 @@ forms instead: bd note <id> --stdin <<'EOF'  /  bd create <title> --body-file - 
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(BdStdinLint::default()),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,10 +155,4 @@ mod tests {
         empty.write("README.md", "x\n");
         assert_eq!(run(&empty, &["README.md"]), Err(LintError::EmptyScope));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(BdStdinLint::default()),
-    ]
 }

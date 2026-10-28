@@ -1588,7 +1588,7 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
     let keep = AtomicBool::new(false);
     let code = on_vm(env, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, &round_ref, progress, results_dir, &keep);
     if keep.load(Ordering::SeqCst) {
-        let pulled = fs::read_dir(&args.results_dir.clone().unwrap_or_else(|| cfg.run_dir.join("batch-results"))).map(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "result")).count()).unwrap_or(0);
+        let pulled = fs::read_dir(args.results_dir.clone().unwrap_or_else(|| cfg.run_dir.join("batch-results"))).map(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "result")).count()).unwrap_or(0);
         eprintln!("round-vm run: INCOMPLETE: {pulled} results pulled; results not fully pulled; keeping VM {} at {} for a re-pull (release it with `round-vm release {}`)", vm.handle, vm.addr, vm.handle);
         if let Err(e) = env.pool.hold(&vm.handle) {
             eprintln!("round-vm run: warning: could not hold {}: {e}", vm.handle);
@@ -1740,7 +1740,7 @@ fn on_vm_run(
             let batch = sc.spawn(|| env.remote.run_batch(&vm.addr, &job));
             let mut last: Option<Instant> = None;
             while !batch.is_finished() {
-                if last.map_or(true, |l| l.elapsed() >= cfg.stream_every) {
+                if last.is_none_or(|l| l.elapsed() >= cfg.stream_every) {
                     stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir, resume.as_deref());
                     progress.update(&results_dir);
                     record_boundary(env, args, &mut progress, &mut refused);
@@ -1800,7 +1800,7 @@ fn on_vm_run(
         let batch = sc.spawn(|| env.remote.run_batch(&vm.addr, &job));
         let mut last: Option<Instant> = None;
         while !batch.is_finished() {
-            if last.map_or(true, |l| l.elapsed() >= cfg.stream_every) {
+            if last.is_none_or(|l| l.elapsed() >= cfg.stream_every) {
                 stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir, resume.as_deref());
                 progress.update(&results_dir);
                 record_boundary(env, args, &mut progress, &mut refused);
@@ -2009,6 +2009,7 @@ fn record_coverage(args: &RunArgs, state_dir: &Path, results_dir: &Path, round: 
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn after_batch(
     env: &RunEnv,
     args: &RunArgs,
@@ -2792,7 +2793,7 @@ mod tests {
             let bin = home.join(".cargo/bin");
             fs::create_dir_all(&bin).unwrap();
             let rustup = "#!/bin/sh\ncase \"${0##*/}\" in\n  rustup) echo \"$@\" > \"$HOME/rustup.args\" ;;\n  rustc) echo \"rustc via proxy pin=${RUSTUP_TOOLCHAIN:-none}\" ;;\nesac\n";
-            testkit::write_exe(&bin.join("rustup"), rustup);
+            testkit::write_exe(bin.join("rustup"), rustup);
             let image = home.join("image-rustc");
             testkit::write_exe(&image, "#!/bin/sh\necho rustc 1.99.1 direct\n");
             symlink(&image, bin.join("rustc")).unwrap();
@@ -2874,7 +2875,6 @@ mod tests {
     /// clone or the disk state a real round would leave behind.
     #[test]
     fn remote_script_fails_fast_and_named_with_no_cargo_on_path() {
-        use std::process::Command;
         // REMOTE_SCRIPT resets PATH to fixed system directories; where one of them carries a
         // cargo (a round VM does), "no cargo on PATH" cannot be arranged here: nothing to judge.
         if ["/usr/local/bin", "/usr/local/sbin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"]
@@ -3052,7 +3052,8 @@ mod tests {
         let (src, kept) = (d.path().join("src"), d.path().join("kept"));
         fs::create_dir_all(&src).unwrap();
         let commit = |m: &str| {
-            for a in [&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", m][..]] {
+            {
+                let a = &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", m][..];
                 assert!(std::process::Command::new("git").arg("-C").arg(&src).args(a).status().unwrap().success());
             }
         };
@@ -3263,7 +3264,7 @@ mod tests {
         fn pull(&self, _: &str, remote_path: &str, local: &Path) -> Result<(), String> {
             if remote_path == REMOTE_RESULTS {
                 self.result_pulls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                let failing = self.fail_result_pulls.fetch_update(std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst, |n| n.checked_sub(1)).is_ok();
+                let failing = self.fail_result_pulls.try_update(std::sync::atomic::Ordering::SeqCst, std::sync::atomic::Ordering::SeqCst, |n| n.checked_sub(1)).is_ok();
                 if failing {
                     return Err("rsync exited 255".into());
                 }
@@ -3633,7 +3634,7 @@ mod tests {
             m = d.path().join("mark").display(),
             f = d.path().join("fired").display(),
         );
-        let o = std::process::Command::new("bash").arg("-c").arg(script).output().unwrap();
+        let _o = std::process::Command::new("bash").arg("-c").arg(script).output().unwrap();
         let fired = d.path().join("fired");
         (fired.exists(), fs::read_to_string(fired).unwrap_or_default())
     }

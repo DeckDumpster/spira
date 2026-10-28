@@ -107,10 +107,6 @@ fn parse_widths(v: &str) -> Option<Vec<u32>> {
     w.filter(|w| !w.is_empty())
 }
 
-fn flag_value(args: &[String], name: &str) -> Option<String> {
-    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
-}
-
 /// `resolve` maps a repository name to its checkout and landing base.
 pub fn main(
     args: &[String],

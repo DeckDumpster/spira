@@ -88,7 +88,7 @@ pub fn scan(src: &[u8], in_test: &dyn Fn(usize) -> bool) -> Vec<(usize, String)>
     let is_hash = |name: &[u8], at: usize| {
         let scope = enclosing(&spans, at).map(|s| (s.start, s.end));
         decls.iter().any(|(pos, n)| {
-            n.as_slice() == name && enclosing(&spans, *pos).map(|s| (s.start, s.end)).map_or(true, |d| Some(d) == scope)
+            n.as_slice() == name && enclosing(&spans, *pos).map(|s| (s.start, s.end)).is_none_or(|d| Some(d) == scope)
         })
     };
     let fn_sorts = |at: usize| {
@@ -226,6 +226,12 @@ regenerate with `spira-lint --only hash-iter-output --emit-allow`."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(HashIterOutput),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,10 +321,4 @@ mod tests {
         t.write(ALLOW_FILE, "1 a/src/lib.rs\n");
         assert!(run(&t, &["a/src/lib.rs"])[0].contains("remove the line"));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(HashIterOutput),
-    ]
 }

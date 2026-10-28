@@ -63,6 +63,7 @@ fn spill_listen() -> Vec<String> {
 /// The EC2 provider and the spill rule, when `SPIRA_ROUND_VM_SPILL=ec2`. A provider that
 /// cannot start says what is missing and the pool stays local: a half-configured spill must
 /// not take the local rounds down with it.
+#[allow(clippy::type_complexity)]
 fn spill_wiring(cfg: &Config) -> Result<(Option<std::sync::Arc<dyn crate::provider::Provider>>, Option<SpillPlan>), String> {
     let mode = crate::config::declared("SPIRA_ROUND_VM_SPILL");
     if !matches!(mode.as_deref(), Some("ec2" | "ec2-always" | "ec2-only")) {
@@ -96,6 +97,14 @@ fn spill_wiring(cfg: &Config) -> Result<(Option<std::sync::Arc<dyn crate::provid
 
 fn keeps_local_pool_cold() -> bool {
     matches!(crate::config::declared("SPIRA_ROUND_VM_SPILL").as_deref(), Some("ec2-always" | "ec2-only"))
+}
+
+fn status_after_reap(factory: &dyn Fn() -> Result<Attempt, String>, pool: &Pool, rest: &[String]) -> Result<String, String> {
+    if let Ok(attempt) = factory() {
+        pool.reap_dead_holders(&attempt);
+        pool.reap_unheld(&attempt);
+    }
+    if rest.is_empty() { pool.status() } else { pool.status_json().map(|j| format!("{j}\n")) }
 }
 
 fn drain_pass(pool: &Pool, factory: &dyn Fn() -> Result<Attempt, String>) -> Result<usize, String> {
@@ -482,13 +491,7 @@ pub fn main_with(args: Vec<String>) -> i32 {
                 1
             }
         },
-        "status" => match {
-            if let Ok(attempt) = factory() {
-                pool.reap_dead_holders(&attempt);
-                pool.reap_unheld(&attempt);
-            }
-            if rest.is_empty() { pool.status() } else { pool.status_json().map(|j| format!("{j}\n")) }
-        } {
+        "status" => match status_after_reap(&factory, &pool, &rest) {
             Ok(s) => {
                 print!("{s}");
                 0
@@ -560,7 +563,7 @@ pub fn main_with(args: Vec<String>) -> i32 {
 /// image, and after a build records the template, repoints `pve.env` at it and recycles the warm
 /// pool, so no person types a VMID.
 fn template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool, pool: &Pool) -> i32 {
-    use crate::template::{repoint, Record};
+    use crate::template::Record;
     use crate::run::Host;
     let host = GitHost { state_dir: cfg.state_dir.clone(), mirror_port: cfg.mirror_port, listen: cfg.host_addr.clone().unwrap_or_default(), also_listen: spill_listen() };
     if !host.is_checkout(&a.tree_dir) {

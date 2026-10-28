@@ -111,7 +111,7 @@ pub fn load_manifest(path: &Path) -> Manifest {
 /// `spira_deps_list [tier]` — every declared name, optionally filtered to one tier.
 pub fn list(deps: &[Dep], tier: Option<&str>) -> Vec<String> {
     deps.iter()
-        .filter(|d| tier.map_or(true, |t| d.tier == t))
+        .filter(|d| tier.is_none_or(|t| d.tier == t))
         .map(|d| d.name.clone())
         .collect()
 }

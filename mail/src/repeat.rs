@@ -129,7 +129,7 @@ fn guard(run_dir: &Path, fp: String, caller: &str, mailbox: &str, window_s: u64,
     let dir = stamp_dir(run_dir);
     std::fs::create_dir_all(&dir).map_err(|e| format!("mail: repeat guard: cannot create {}: {e}", dir.display()))?;
     let lock_path = dir.join(format!("{fp}.lock"));
-    let lock_file = OpenOptions::new().create(true).write(true).open(&lock_path).map_err(|_| {
+    let lock_file = OpenOptions::new().create(true).truncate(false).write(true).open(&lock_path).map_err(|_| {
         format!("mail: repeat guard: cannot open lock for {mailbox}")
     })?;
 

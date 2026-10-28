@@ -60,6 +60,7 @@ pub struct Env {
     pub home: PathBuf,
     pub run: PathBuf,
     pub queue_dir: PathBuf,
+    #[allow(dead_code)]
     pub bd: String,
     /// `SPIRA_FORGE` — the forge seam `find_repo` hands to `Repo.forge` (bare name on the
     /// launcher's PATH, sp-gypjk; resolved once, here, not re-read per repo).
@@ -92,6 +93,7 @@ pub struct Env {
     pub lc_timeout: u64,
     /// `${SPIRA_VERDICTS:-$SPIRA_RUN/verdicts}` — where the round's tree certificate goes
     /// (gate::cert, queue/DESIGN.md §8 D12), resolved exactly as the gate resolves it.
+    #[allow(dead_code)]
     pub verdicts: PathBuf,
     /// How many times `round_land` tries while another queue operation holds the repo's lock.
     pub land_lock_attempts: u32,
@@ -1322,7 +1324,7 @@ pub fn locate(results_dir: &Path, suite: &str, ext: &str) -> Option<PathBuf> {
             continue;
         }
         let mtime = fs::metadata(&cand).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
-        if best.as_ref().map_or(true, |(t, _)| mtime > *t) {
+        if best.as_ref().is_none_or(|(t, _)| mtime > *t) {
             best = Some((mtime, cand));
         }
     }
@@ -2322,14 +2324,6 @@ fn bead_id(out: &str) -> Result<String, String> {
         o => o,
     };
     v.get("id").and_then(|i| i.as_str()).map(str::to_string).ok_or_else(|| format!("bead.sh file: no id in output: {out}"))
-}
-
-/// Whether `id` is still open; a bead that cannot be read counts as closed, so a fresh one is filed.
-pub fn bead_open(env: &Env, id: &str) -> bool {
-    bd_show(env, &[id.to_string()])
-        .ok()
-        .and_then(|v| v.as_array().and_then(|a| a.first().cloned()))
-        .is_some_and(|b| !spira_config::nonwork::row_closed(spira_config::nonwork::Kind::Hold, &b))
 }
 
 /// File the follow-up bead for a deleted flip and return its id.
@@ -3385,7 +3379,7 @@ mod land_exit_tests {
         let mut e = lifecycle_tests_env(d);
         let n = d.join("n");
         testkit::write_exe(
-            &d.join("queue"),
+            d.join("queue"),
             &format!(
                 "#!/bin/sh\ncat >/dev/null\nc=$(cat '{n}' 2>/dev/null || echo 0)\nc=$((c+1)); echo $c > '{n}'\nif [ $c -le {busy_first} ]; then echo 'queue.sh round land: another queue operation holds the lock for spira' >&2; exit 1; fi\n[ -n '{then_msg}' ] && echo '{then_msg}' >&2\nexit {then_exit}\n",
                 n = n.display()
@@ -3401,7 +3395,7 @@ mod land_exit_tests {
 
     fn echo_queue(d: &Path, script: &str) -> Env {
         let mut e = lifecycle_tests_env(d);
-        testkit::write_exe(&d.join("queue"), &format!("#!/bin/sh\n{script}\n"));
+        testkit::write_exe(d.join("queue"), &format!("#!/bin/sh\n{script}\n"));
         e.queue_bin = d.join("queue");
         e
     }
@@ -3431,7 +3425,7 @@ mod land_exit_tests {
         let d = testkit::TempDir::new("batcher-cut-stage");
         let e = echo_queue(&d, "cat >/dev/null; echo \"$@\" > '/dev/null'; echo batch=r2; echo not-this >&2");
         let m = Member { id: "sp-a".into(), tip: "t1".into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default(), blocked_by: Vec::new() };
-        let bg = round_stage_spawn(&e, &repo_at(&d), &d.join("wt"), &[m.clone()]).unwrap();
+        let bg = round_stage_spawn(&e, &repo_at(&d), &d.join("wt"), std::slice::from_ref(&m)).unwrap();
         assert_eq!(round_stage_done(&repo_at(&d), bg), Some("r2".into()));
         let e = echo_queue(&d, "cat >/dev/null; echo batch=r2; exit 1");
         let bg = round_stage_spawn(&e, &repo_at(&d), &d.join("wt"), &[m]).unwrap();
@@ -3514,7 +3508,7 @@ mod land_exit_tests {
     fn argv_stub(d: &Path, out: &str) -> Env {
         let mut e = lifecycle_tests_env(d);
         testkit::write_exe(
-            &d.join("queue"),
+            d.join("queue"),
             &format!("#!/bin/sh\necho \"$@\" >> '{log}'\ncat >> '{log}.in'\nprintf '%s\\n' '{out}'\n", log = d.join("argv").display()),
         );
         e.queue_bin = d.join("queue");

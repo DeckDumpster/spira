@@ -256,7 +256,7 @@ pub fn self_metrics(sent: &[&str], ledger_lines: &[&str], self_since: i64, now: 
             }
         }
     }
-    repeating.sort_by(|a, b| b.0.cmp(&a.0));
+    repeating.sort_by_key(|e| std::cmp::Reverse(e.0));
     out.insert("SP_SELF_REPEATING_N".into(), repeating.len().to_string());
     for (i, (run, dur, text)) in repeating.iter().enumerate() {
         out.insert(format!("SP_SELF_REPEATING{i}"), format!("{text} \u{d7} {run} passes ({dur}m)"));

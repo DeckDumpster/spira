@@ -51,7 +51,7 @@ pub fn render(stdin: &str, landing_log: &str, now: i64) -> Option<String> {
         *kinds.entry(field(r, "issue_type").unwrap_or("task")).or_default() += 1;
     }
     let mut kinds: Vec<_> = kinds.into_iter().collect();
-    kinds.sort_by(|a, b| b.1.cmp(&a.1));
+    kinds.sort_by_key(|e| std::cmp::Reverse(e.1));
     let kinds_s = kinds.iter().take(4).map(|(k, v)| format!("{k} {v}")).collect::<Vec<_>>().join(", ");
 
     let mut out = format!("SP_CLOSED_24H={}\nSP_OPENED_24H={opened}\n", closed.len());

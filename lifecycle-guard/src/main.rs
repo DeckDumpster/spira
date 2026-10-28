@@ -194,6 +194,7 @@ fn pruned(rel: &Path, gate: bool) -> bool {
     gate && comps.len() >= 2 && last == "fixtures" && comps[comps.len() - 2] == "tests"
 }
 
+#[allow(clippy::type_complexity)]
 fn discover(root: &Path, gate: bool) -> Result<(Vec<PathBuf>, Vec<PathBuf>, Vec<PathBuf>), String> {
     let mut shell_files = Vec::new();
     let mut brief_files = Vec::new();

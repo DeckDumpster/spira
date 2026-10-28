@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -20,7 +20,7 @@ fn main() -> ExitCode {
     spira_otel::oneshot::finish(fit(&gate, &land, &out))
 }
 
-fn fit(gate: &PathBuf, land: &PathBuf, out: &PathBuf) -> ExitCode {
+fn fit(gate: &Path, land: &Path, out: &Path) -> ExitCode {
     match sim::fit::fit_files(gate, land).and_then(|d| sim::fit::render(&d)) {
         Ok(text) => match std::fs::write(out, text) {
             Ok(()) => ExitCode::SUCCESS,

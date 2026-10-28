@@ -65,7 +65,7 @@ pub fn cached_suites(entry: &str) -> String {
     entry
         .lines()
         .filter_map(|l| l.strip_prefix("suites="))
-        .last()
+        .next_back()
         .filter(|s| !s.is_empty())
         .unwrap_or("-")
         .to_string()

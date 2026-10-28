@@ -190,7 +190,7 @@ impl T {
         // A literal, not `Settings::load`: every field here is a registered config key now
         // resolved through `spira_config::process::cfg`, which this test cannot drive
         // per-case (it is a per-process cache, not something an empty env fakes out).
-        let mut s = Settings {
+        let s = Settings {
             root: dir.join("root"),
             suite_dir: dir.join("root/spira"),
             state: dir.join("state"),

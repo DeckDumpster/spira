@@ -110,6 +110,12 @@ Never scan processes or read a dwarf pidfile."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(LivenessReaders::default()),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,10 +160,4 @@ mod tests {
         t.write("spira/y.sh", "pgrep x\n");
         assert!(run(&t, &["spira/y.sh"]).is_err());
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(LivenessReaders::default()),
-    ]
 }

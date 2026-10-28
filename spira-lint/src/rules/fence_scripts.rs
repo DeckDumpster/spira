@@ -83,6 +83,12 @@ spira-lint/fence-scripts-allow only shrinks: remove a line when its fence is por
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(FenceScripts),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,10 +131,4 @@ mod tests {
             vec!["fence-scripts: spira-lint/fence-scripts-allow:1: lists spira/gone-fence.sh, which no longer exists — remove the line (the list only shrinks)"]
         );
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(FenceScripts),
-    ]
 }

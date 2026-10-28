@@ -137,7 +137,7 @@ pub fn status(w: &World) -> i32 {
         if now.saturating_sub(r.at) > w.s.stale {
             stale += 1;
         }
-        if oldest.as_ref().map_or(true, |(at, _)| r.at < *at) {
+        if oldest.as_ref().is_none_or(|(at, _)| r.at < *at) {
             oldest = Some((r.at, s.clone()));
         }
     }

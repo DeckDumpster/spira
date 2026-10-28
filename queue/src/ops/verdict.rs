@@ -196,7 +196,6 @@ fn test_red_csv(out: &str) -> String {
             tier = Some(t.trim().replace(char::is_whitespace, "-")).filter(|t| !t.is_empty());
         } else if l.contains(" failed")
             && l.trim_start_matches('=')
-                .trim_start()
                 .split_whitespace()
                 .next()
                 .is_some_and(|n| n.parse::<u32>().is_ok())

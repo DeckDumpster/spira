@@ -76,7 +76,7 @@ pub fn diff_changes(g: &dyn Git, repo: &Path, base: &str, head: &str) -> Result<
     let mut changes = select::parse_name_status(&g.diff_name_status(repo, base, head)?);
     let modes = select::parse_mode_changes(&g.diff_raw(repo, base, head)?);
     for c in changes.iter_mut() {
-        c.mode_changed = modes.iter().any(|m| *m == c.path);
+        c.mode_changed = modes.contains(&c.path);
     }
     Ok(changes)
 }
