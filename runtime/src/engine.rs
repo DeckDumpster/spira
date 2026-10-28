@@ -5,13 +5,16 @@
 use std::collections::BTreeMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
 use crate::event::*;
 use crate::journal::{Journal, Offset, Poison, ScheduleRow};
+use crate::marker::{Mark, Marker, NullMarker};
 use crate::ports::Clock;
 use crate::scheduler::Scheduler;
+use crate::wide::{rss_kb, Fields, NullSink, Value, Wide, WideSink};
 use crate::{Result, RuntimeError};
 
 const BATCH: usize = 256;
@@ -48,6 +51,7 @@ pub struct PendingEffect {
     pub stream: StreamKey,
     pub spec: EffectSpec,
     pub deadline_at: u64,
+    pub requested_at: u64,
     pub correlation: CorrelationId,
 }
 
@@ -73,6 +77,14 @@ pub struct Engine {
     projection: Projection,
     scheduler: Scheduler,
     pending: BTreeMap<String, PendingEffect>,
+    sink: Arc<dyn WideSink>,
+    marker: Arc<dyn Marker>,
+    kick: Option<Arc<dyn Fn() + Send + Sync>>,
+    stall_limit: u32,
+    suspects: BTreeMap<(EventId, String), u32>,
+    attempts: BTreeMap<String, u32>,
+    baseline: Vec<(String, Value)>,
+    started: Instant,
 }
 
 fn mix(seed: u64, parts: &[&str]) -> u64 {
@@ -104,6 +116,14 @@ impl Engine {
             projection: Projection::default(),
             scheduler: Scheduler::new(seed),
             pending: BTreeMap::new(),
+            sink: Arc::new(NullSink),
+            marker: Arc::new(NullMarker),
+            kick: None,
+            stall_limit: 2,
+            suspects: BTreeMap::new(),
+            attempts: BTreeMap::new(),
+            baseline: vec![],
+            started: Instant::now(),
         };
         let cursor = e.journal.cursor()?;
         let mut from = 0;
@@ -124,12 +144,88 @@ impl Engine {
         Ok(e)
     }
 
+    pub fn with_sink(mut self, sink: Arc<dyn WideSink>) -> Self {
+        self.sink = sink;
+        self
+    }
+
+    /// Fields every wide event carries (runtime version, config hash, ...).
+    pub fn with_baseline(mut self, fields: Vec<(String, Value)>) -> Self {
+        self.baseline = fields;
+        self
+    }
+
+    /// Called by the dispatch loop between handler calls, never from another thread.
+    pub fn with_kick(mut self, kick: Arc<dyn Fn() + Send + Sync>) -> Self {
+        self.kick = Some(kick);
+        self
+    }
+
+    /// Restarts a handler call may stall through before its stream is quarantined.
+    pub fn with_stall_limit(mut self, limit: u32) -> Self {
+        self.stall_limit = limit;
+        self
+    }
+
+    /// Adopts the marker. One left by a previous run is a call that never returned: it counts
+    /// as a stall of that (event, handler) and is reported as a restart.
+    pub fn with_marker(mut self, marker: Arc<dyn Marker>) -> Result<Self> {
+        self.marker = marker;
+        if let Some(m) = self.marker.take()? {
+            let stalls = m.stalls + 1;
+            self.suspects.insert((m.event.clone(), m.handler.clone()), stalls);
+            let w = self.unit("watchdog.restart", None, None);
+            w.set("event.id", m.event.0.as_str());
+            w.set("event.stream", m.stream.0.as_str());
+            w.set("handler", m.handler.as_str());
+            w.set("stall.count", stalls);
+            w.set("outcome", "restarted");
+            self.finish(&w);
+        }
+        Ok(self)
+    }
+
+    /// The executor started the runner for effect `key`.
+    pub fn note_attempt(&mut self, key: &str) {
+        *self.attempts.entry(key.into()).or_insert(0) += 1;
+    }
+
+    fn unit(&self, unit: &str, ev: Option<&Event>, offset: Option<(Offset, Offset)>) -> Wide {
+        let w = Wide::default();
+        w.set("unit", unit);
+        for (k, v) in &self.baseline {
+            w.set(k, v.clone());
+        }
+        w.set("process.rss_kb", rss_kb());
+        w.set("process.uptime_ms", self.started.elapsed().as_millis() as u64);
+        if let Some(e) = ev {
+            w.set("event.id", e.id.0.as_str());
+            w.set("event.stream", e.stream.0.as_str());
+            w.set("event.kind", e.kind.tag.as_str());
+            w.set("event.at", e.at);
+            if let Some(c) = &e.cause {
+                w.set("event.cause", c.0.as_str());
+            }
+            w.set("correlation.id", e.correlation.0.as_str());
+        }
+        if let Some((off, last)) = offset {
+            w.set("journal.offset", off);
+            w.set("journal.lag", last - off);
+        }
+        w
+    }
+
+    fn finish(&self, w: &Wide) {
+        let fields: Fields = w.take();
+        self.sink.emit(&fields);
+    }
+
     fn track_effect(&mut self, ev: &Event) -> Result<()> {
         if ev.kind.tag == EFFECT_REQUESTED {
             let b: RequestBody = serde_json::from_str(&ev.kind.body).map_err(|e| RuntimeError::new(format!("bad effect request {}: {e}", ev.id.0)))?;
             self.pending.insert(
                 ev.id.0.clone(),
-                PendingEffect { key: ev.id.0.clone(), stream: ev.stream.clone(), spec: b.spec, deadline_at: b.deadline_at, correlation: ev.correlation.clone() },
+                PendingEffect { key: ev.id.0.clone(), stream: ev.stream.clone(), spec: b.spec, deadline_at: b.deadline_at, requested_at: ev.at, correlation: ev.correlation.clone() },
             );
         } else if matches!(ev.kind.tag.as_str(), EFFECT_SUCCEEDED | EFFECT_FAILED | EFFECT_TIMED_OUT) {
             if let Some(c) = &ev.cause {
@@ -184,7 +280,7 @@ impl Engine {
         Ok(())
     }
 
-    fn dispatch(&mut self, ev: &Event) -> Result<()> {
+    fn dispatch(&mut self, ev: &Event, at: (Offset, Offset)) -> Result<()> {
         self.projection.push(ev);
         if self.journal.poisoned(&ev.stream)?.is_some() {
             return Ok(());
@@ -194,20 +290,61 @@ impl Engine {
             if !self.regs[i].handler.interests().contains(&ev.kind.tag.as_str()) || self.journal.applied(&name, &ev.id)? {
                 continue;
             }
-            let ctx = Ctx::new(ev.at, mix(self.seed, &[&ev.id.0, &name]));
+            let key = (ev.id.clone(), name.clone());
+            let stalls = self.suspects.get(&key).copied().unwrap_or(0);
+            let wide = self.unit("dispatch", Some(ev), Some(at));
+            wide.set("handler", name.as_str());
+            if stalls >= self.stall_limit {
+                let message = format!("stalled {stalls} times in {name}");
+                self.quarantine(ev, &name, &message)?;
+                wide.set("stall.count", stalls);
+                wide.set("outcome", "quarantined");
+                self.finish(&wide);
+                return Ok(());
+            }
+            if stalls > 0 {
+                wide.set("stall.count", stalls);
+            }
+            self.marker.set(&Mark { event: ev.id.clone(), handler: name.clone(), stream: ev.stream.clone(), stalls })?;
+            let ctx = Ctx::with(ev.at, mix(self.seed, &[&ev.id.0, &name]), at.0, wide.clone());
+            let began = Instant::now();
             let handler = &self.regs[i].handler;
             let view = &self.projection;
-            match catch_unwind(AssertUnwindSafe(|| handler.handle(&ctx, view, ev))) {
+            let called = catch_unwind(AssertUnwindSafe(|| handler.handle(&ctx, view, ev)));
+            self.marker.clear()?;
+            wide.set("duration_us", began.elapsed().as_micros() as u64);
+            match called {
                 Ok(cmds) => {
-                    self.apply(cmds, ev, &name)?;
-                    self.journal.mark_applied(&name, &ev.id)?;
+                    let count = |f: fn(&Command) -> bool| cmds.iter().filter(|c| f(c)).count();
+                    wide.set("commands.emit", count(|c| matches!(c, Command::Emit(_))));
+                    wide.set("commands.effect", count(|c| matches!(c, Command::Effect(_))));
+                    wide.set("commands.schedule", count(|c| matches!(c, Command::Schedule { .. })));
+                    let done = self.apply(cmds, ev, &name).and_then(|()| self.journal.mark_applied(&name, &ev.id));
+                    wide.set("outcome", if done.is_ok() { "ok" } else { "error" });
+                    self.finish(&wide);
+                    done?;
+                    self.suspects.remove(&key);
                 }
                 Err(p) => {
-                    self.journal.poison(&Poison { stream: ev.stream.clone(), event: ev.id.clone(), handler: name, message: panic_message(&*p) })?;
+                    let message = panic_message(&*p);
+                    wide.set("outcome", "panic");
+                    wide.set("panic.message", message.as_str());
+                    self.finish(&wide);
+                    self.quarantine(ev, &name, &message)?;
                     return Ok(());
                 }
             }
         }
+        Ok(())
+    }
+
+    fn quarantine(&self, ev: &Event, handler: &str, message: &str) -> Result<()> {
+        self.journal.poison(&Poison { stream: ev.stream.clone(), event: ev.id.clone(), handler: handler.into(), message: message.into() })?;
+        let w = self.unit("quarantine", Some(ev), None);
+        w.set("handler", handler);
+        w.set("quarantine.reason", message);
+        w.set("outcome", "quarantined");
+        self.finish(&w);
         Ok(())
     }
 
@@ -220,10 +357,14 @@ impl Engine {
             if batch.is_empty() {
                 return Ok(n);
             }
+            let last = batch.last().map_or(0, |(o, _)| *o);
             for (off, ev) in batch {
-                self.dispatch(&ev)?;
+                self.dispatch(&ev, (off, last))?;
                 self.journal.set_cursor(off + 1)?;
                 n += 1;
+                if let Some(k) = &self.kick {
+                    k();
+                }
             }
         }
     }
@@ -296,6 +437,14 @@ impl Executor for Engine {
         };
         self.journal.append(&ev)?;
         self.pending.remove(key);
+        let w = self.unit("effect", Some(&ev), None);
+        w.set("effect.kind", p.spec.name.as_str());
+        w.set("effect.idempotency_key", key);
+        w.set("effect.deadline_at", p.deadline_at);
+        w.set("effect.outcome", ev.kind.tag.trim_start_matches("effect."));
+        w.set("effect.attempt", self.attempts.remove(key).unwrap_or(1));
+        w.set("duration_ms", ev.at.saturating_sub(p.requested_at));
+        self.finish(&w);
         Ok(true)
     }
 }

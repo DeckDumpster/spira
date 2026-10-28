@@ -1,0 +1,26 @@
+[Unit]
+Description=Spira runtime — the long-running host of the loop's workflows (heartbeat, wide events, stall quarantine)
+After=lc-serve.socket
+Wants=lc-serve.socket
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_TOML=@SPIRA_TOML@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:@SPIRA_ENV_PATH@:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+# Type=notify, and the dispatch loop itself sends WATCHDOG=1: a hung handler stops the kicks
+# and systemd restarts the service; the in-flight marker then quarantines a call that stalls twice.
+Type=notify
+ExecStart=@SPIRA_PROD_ROOT@/bin/spira-runtime serve
+Restart=always
+RestartSec=5
+WatchdogSec=30
+StandardOutput=append:@SPIRA_RUN@/spira-runtime.log
+StandardError=append:@SPIRA_RUN@/spira-runtime.log
+
+[X-Spira]
+Plane=observability
+
+[Install]
+WantedBy=default.target

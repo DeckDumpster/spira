@@ -565,15 +565,19 @@ pub struct NotActiveSplit {
     pub fatal: Vec<String>,
 }
 
-pub fn split_not_active(not_active: &[String], in_testenv: bool) -> NotActiveSplit {
+pub fn split_not_active(not_active: &[String], in_testenv: bool, instance: &str) -> NotActiveSplit {
     if !in_testenv {
         return NotActiveSplit { warn_only: Vec::new(), fatal: not_active.to_vec() };
     }
     // lc-serve.service serves the lifecycle store, which a test fixture's install never builds
     // (that is spira-install's phase 4.5, against a real Dolt server): in a fixture it cannot
-    // reach active either, and is named, never silently dropped (sp-xfqnr).
-    let (watchers, other): (Vec<String>, Vec<String>) =
-        not_active.iter().cloned().partition(|u| u.starts_with("spira-watch-") || u == "lc-serve.service" || u == "lc-serve.socket");
+    // reach active either, and is named, never silently dropped (sp-xfqnr). spira-runtime opens
+    // its journal on that store at start, so it shares the exemption.
+    let runtime = crate::manifest::inst_name("spira-runtime.service", instance);
+    let (watchers, other): (Vec<String>, Vec<String>) = not_active
+        .iter()
+        .cloned()
+        .partition(|u| u.starts_with("spira-watch-") || u == "lc-serve.service" || u == "lc-serve.socket" || *u == runtime);
     NotActiveSplit { warn_only: watchers, fatal: other }
 }
 
@@ -586,12 +590,23 @@ mod lc_serve_split_tests {
     #[test]
     fn lc_serve_not_active_is_warn_only_in_a_fixture_and_fatal_outside() {
         let na = vec!["lc-serve.service".to_string(), "spira-sentinel-prod.service".to_string()];
-        let f = split_not_active(&na, true);
+        let f = split_not_active(&na, true, "571fae10b413");
         assert_eq!(f.warn_only, vec!["lc-serve.service".to_string()]);
         assert_eq!(f.fatal, vec!["spira-sentinel-prod.service".to_string()]);
-        let p = split_not_active(&na, false);
+        let p = split_not_active(&na, false, "571fae10b413");
         assert!(p.warn_only.is_empty());
         assert_eq!(p.fatal.len(), 2);
+    }
+
+    #[test]
+    fn spira_runtime_instance_is_warn_only_in_a_fixture_but_its_neighbours_are_not() {
+        let na = vec!["spira-runtime-571fae10b413.service".to_string(), "spira-runtime-watch-571fae10b413.service".to_string(), "spira-runtime-e48b6112ddef-sim.service".to_string()];
+        let f = split_not_active(&na, true, "571fae10b413");
+        assert_eq!(f.warn_only, vec![na[0].clone()]);
+        assert_eq!(f.fatal, vec![na[1].clone(), na[2].clone()]);
+        let sim = split_not_active(&na, true, "e48b6112ddef-sim");
+        assert_eq!(sim.warn_only, vec![na[2].clone()]);
+        assert_eq!(split_not_active(&na, false, "571fae10b413").fatal.len(), 3);
     }
 }
 
@@ -948,7 +963,7 @@ mod tests {
             "spira-watch-inbox-keeper-abc123.service".to_string(),
             "spira-watch-publish-backlog-abc123.service".to_string(),
         ];
-        let split = split_not_active(&not_active, true);
+        let split = split_not_active(&not_active, true, "t");
         assert_eq!(split.warn_only, not_active, "named — never silently dropped");
         assert!(split.fatal.is_empty(), "no non-watcher unit, so nothing faults the run");
     }
@@ -959,7 +974,7 @@ mod tests {
             "spira-watch-pr-notify-abc123.service".to_string(),
             "spira-sentinel-abc123.service".to_string(),
         ];
-        let split = split_not_active(&not_active, true);
+        let split = split_not_active(&not_active, true, "t");
         assert_eq!(split.warn_only, vec!["spira-watch-pr-notify-abc123.service".to_string()]);
         assert_eq!(split.fatal, vec!["spira-sentinel-abc123.service".to_string()]);
     }
@@ -967,14 +982,14 @@ mod tests {
     #[test]
     fn outside_a_test_fixture_a_watcher_not_active_still_faults_as_it_always_did() {
         let not_active = vec!["spira-watch-pr-notify-prod.service".to_string()];
-        let split = split_not_active(&not_active, false);
+        let split = split_not_active(&not_active, false, "t");
         assert!(split.warn_only.is_empty(), "production's own strictness is unchanged");
         assert_eq!(split.fatal, not_active);
     }
 
     #[test]
     fn with_nothing_not_active_both_lists_are_empty() {
-        let split = split_not_active(&[], true);
+        let split = split_not_active(&[], true, "t");
         assert!(split.warn_only.is_empty() && split.fatal.is_empty());
     }
 }

@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Watchdog restarts one handler call may cause before spira-runtime quarantines its stream.
+SCHEMA=Number of times one handler call may stall (the watchdog restarts the service inside it) before its stream is quarantined instead of dispatched again (unit: restarts; integer; default 2).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_STALL_LIMIT:=2}"
+SPIRA_CONF_DEFAULT_EOF

@@ -518,3 +518,6 @@ dwarf_warm_base
 dwarf_warm_cap_mib
 max_dwarves
 max_live_dwarves
+runtime_heartbeat_url
+runtime_heartbeat_secs
+runtime_stall_limit

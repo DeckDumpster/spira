@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ports::Rng;
 use crate::ports::SeededRng;
+use crate::wide::Wide;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct EventId(pub String);
@@ -62,12 +63,28 @@ pub enum Command {
 /// (event, handler) pair so a redelivery or a replay sees the same values.
 pub struct Ctx {
     now: u64,
+    offset: u64,
     rng: std::cell::RefCell<SeededRng>,
+    wide: Wide,
 }
 
 impl Ctx {
     pub fn new(now: u64, seed: u64) -> Self {
-        Ctx { now, rng: std::cell::RefCell::new(SeededRng::new(seed)) }
+        Self::with(now, seed, 0, Wide::default())
+    }
+
+    pub fn with(now: u64, seed: u64, offset: u64, wide: Wide) -> Self {
+        Ctx { now, offset, rng: std::cell::RefCell::new(SeededRng::new(seed)), wide }
+    }
+
+    /// The journal offset of the event being handled.
+    pub fn offset(&self) -> u64 {
+        self.offset
+    }
+
+    /// The wide event of this unit of work: add a field with `set`, nothing else.
+    pub fn event(&self) -> &Wide {
+        &self.wide
     }
 
     pub fn now(&self) -> u64 {

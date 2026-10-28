@@ -15,6 +15,7 @@ members = [
     "queue-watch",
     "perf-watch",
     "exec-census",
+    "spira-runtime",
     "concierge-guard",
     "tsd",
     "cert-sweep",

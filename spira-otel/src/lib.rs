@@ -4,6 +4,7 @@
 //! caller beyond one short append: an error is counted and dropped.
 
 pub mod fixture;
+pub mod logs;
 pub mod metrics;
 pub mod oneshot;
 pub mod query;
@@ -136,7 +137,7 @@ impl Sink {
     }
 }
 
-fn kv_str(k: &str, v: &str) -> KeyValue {
+pub(crate) fn kv_str(k: &str, v: &str) -> KeyValue {
     KeyValue { key: k.into(), value: Some(AnyValue { value: Some(Value::StringValue(v.into())) }) }
 }
 
@@ -162,7 +163,7 @@ fn ids(n: usize) -> Vec<u8> {
     out
 }
 
-fn append_locked(f: &mut File, line: &[u8]) -> std::io::Result<()> {
+pub(crate) fn append_locked(f: &mut File, line: &[u8]) -> std::io::Result<()> {
     // SAFETY: the descriptor is open for the lifetime of `f`; the lock drops with the file.
     if unsafe { flock(f.as_raw_fd(), LOCK_EX) } != 0 {
         return Err(std::io::Error::last_os_error());

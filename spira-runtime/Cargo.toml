@@ -1,0 +1,30 @@
+[package]
+name = "spira-runtime"
+version = "1.0.0"
+edition = "2021"
+description = "spira-runtime — the long-running service that hosts the loop's workflows: pinned config, wide events as OTLP logs, a heartbeat schedule, a loop-kicked systemd watchdog and stall quarantine."
+
+[lib]
+name = "spira_runtime"
+path = "src/lib.rs"
+
+[[bin]]
+name = "spira-runtime"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+runtime = { path = "../runtime" }
+spira-config = { path = "../spira-config" }
+spira-otel = { path = "../spira-otel" }
+tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
+ureq = { version = "2", default-features = false, features = ["tls"] }
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

@@ -159,6 +159,9 @@ removed = ["spira.broker_enable", "spira.express_label", "spira.overlap_defer_la
 "spira.max_dwarves" = 4
 "spira.max_live_dwarves" = 2
 "spira.runes" = ["spike", "builder", "groomer", "mimir", "ops", "czar", "warden", "mender"]
+"spira.runtime_heartbeat_url" = ""
+"spira.runtime_heartbeat_secs" = 60
+"spira.runtime_stall_limit" = 2
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok

@@ -6,18 +6,23 @@ pub mod bridge;
 pub mod conformance;
 pub mod engine;
 pub mod event;
+pub mod heartbeat;
 pub mod host;
 pub mod file_journal;
 pub mod journal;
 pub mod lease;
+pub mod marker;
 pub mod ports;
 pub mod scheduler;
 pub mod socket;
 pub mod store;
+pub mod wide;
 
 pub use engine::{Engine, Executor, Outcome, PendingEffect};
 pub use event::*;
 pub use journal::{FaultyJournal, Journal, Lease, LeaseTable, MemJournal, Offset, Poison, ScheduleRow};
+pub use marker::{FileMarker, Mark, Marker, MemMarker, NullMarker};
+pub use wide::{Fields, MemSink, NullSink, Value, Wide, WideSink};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeError(pub String);

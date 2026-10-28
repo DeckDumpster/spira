@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=runtime
+DOC=URL spira-runtime pings, after the journal has advanced, to tell an off-box dead-man switch it is alive; empty sends no ping.
+SCHEMA=URL the spira-runtime heartbeat requests (HTTP GET) once per heartbeat interval when the journal has advanced since the last beat. Empty disables the ping; the schedule still fires.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_HEARTBEAT_URL:=}"
+SPIRA_CONF_DEFAULT_EOF
