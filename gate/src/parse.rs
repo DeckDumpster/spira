@@ -183,6 +183,7 @@ pub fn suites_step_ran(out: &str) -> bool {
         l.starts_with("VERDICT GREEN")
             || l.starts_with("VERDICT RED")
             || l.starts_with("VERDICT FAULT")
+            || l.starts_with("VERDICT EMPTY")
     }) || !red_suites(out).is_empty()
         || !ran_suites(out).is_empty()
 }
