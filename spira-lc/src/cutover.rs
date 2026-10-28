@@ -125,6 +125,17 @@ pub fn cmd_create_bead(args: &[String], conn: &Conn) -> (i32, String) {
     }
 }
 
+/// `delete-bead-row <bead-id>` — the store half of `drop-row`, which has already checked the kind.
+pub fn cmd_delete_bead_row(args: &[String], conn: &Conn) -> (i32, String) {
+    let Some(id) = args.first().filter(|id| is_row_key(id)) else {
+        return (CANNOT_TELL, "delete-bead-row: takes <bead-id>".into());
+    };
+    match conn.run_plain_touching(&format!("DELETE FROM bead WHERE bead_id = {};\n", q(id)), crate::live::Touch::Keys(vec![id.clone()])) {
+        Ok(()) => (0, String::new()),
+        Err(e) => cannot_tell(e),
+    }
+}
+
 /// `show-batch <batch-id>` -> `{"batch_id","state","version",...}`, or exit 1 with `{}` when
 /// absent. A caller driving `abandon-batch`/`eject-member`/`settle` needs the batch's
 /// *current* state and version to build its `--expect`/`--version` pair — those are set by

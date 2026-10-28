@@ -1177,10 +1177,13 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
             .filter(|a| !a.is_empty())
             .or_else(|| std::env::var("USER").ok().filter(|a| !a.is_empty()))
             .unwrap_or_else(|| "unknown".to_string());
+        let has_row = bead::carries_lifecycle_row(&out);
         let upd = bdq_status(home, &s(&["update", &id, "-p", &new.to_string()]));
         rc |= upd;
         if upd == 0 {
-            mirror_to_lifecycle(&id, None, new, None);
+            if has_row {
+                mirror_to_lifecycle(&id, None, new, None);
+            }
             let text = bead::priority_note(&actor, Some(old), new, note.as_deref());
             rc |= bdq_status(home, &s(&["note", &id, &text]));
             changed.push_str(&text);
