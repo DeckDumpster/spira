@@ -11,19 +11,19 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
 printf 'test-wide-event-store.sh\n'
 
-timeout 5 podman info >/dev/null 2>&1 || skip "podman unavailable"
+timeout 120 podman info >/dev/null 2>&1 || skip "podman unavailable" # batch-job: container call, hang guard only
 . "$HERE/metrics/stack.env"
 
 T="$(mktemp -d)"; id="wes$$"
-cleanup() { timeout 5 podman rm -f "$id-vl" "$id-oc" >/dev/null 2>&1; timeout 5 podman network rm -f "$id" >/dev/null 2>&1; rm -rf "$T"; }
+cleanup() { timeout 120 podman rm -f "$id-vl" "$id-oc" >/dev/null 2>&1; timeout 120 podman network rm -f "$id" >/dev/null 2>&1; rm -rf "$T"; } # batch-job: container call, hang guard only
 trap cleanup EXIT INT TERM
 mkdir -p "$T/otel" "$T/state/logs"
-timeout 5 podman network create "$id" >/dev/null || { bad "network create"; tl_summary; exit 1; }
+timeout 120 podman network create "$id" >/dev/null || { bad "network create"; tl_summary; exit 1; } # batch-job: container call, hang guard only
 
 # the collector resolves the store by its production name
-podman run -d --rm --name "$id-vl" --network "$id" --network-alias victoria-logs -p 127.0.0.1::9428 "$VL_IMAGE" -retentionPeriod=3d >/dev/null # batch-job: first run may pull the image
-podman run -d --rm --name "$id-oc" --network "$id" -p 127.0.0.1::4318 --user 0:0 -v "$HERE/metrics/collector.yaml:/etc/otelcol/config.yaml:ro" -v "$T/otel:/otel:ro" -v "$T/state:/state" "$COLLECTOR_IMAGE" --config=/etc/otelcol/config.yaml >/dev/null # batch-job: first run may pull the image
-port() { timeout 5 podman port "$1" "$2" | head -1 | sed 's/.*://'; }
+timeout 120 podman run -d --rm --name "$id-vl" --network "$id" --network-alias victoria-logs -p 127.0.0.1::9428 "$VL_IMAGE" -retentionPeriod=3d >/dev/null # batch-job: container call, hang guard only
+timeout 120 podman run -d --rm --name "$id-oc" --network "$id" -p 127.0.0.1::4318 --user 0:0 -v "$HERE/metrics/collector.yaml:/etc/otelcol/config.yaml:ro" -v "$T/otel:/otel:ro" -v "$T/state:/state" "$COLLECTOR_IMAGE" --config=/etc/otelcol/config.yaml >/dev/null # batch-job: container call, hang guard only
+port() { timeout 120 podman port "$1" "$2" | head -1 | sed 's/.*://'; } # batch-job: container call, hang guard only
 vl="http://127.0.0.1:$(port "$id-vl" 9428)"; oc="http://127.0.0.1:$(port "$id-oc" 4318)"
 
 needle="needle-$$-$RANDOM"
