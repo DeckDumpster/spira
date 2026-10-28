@@ -20,8 +20,8 @@ pub const VIEW_HOMES: &[(&str, &str)] = &[
     ("release", "header"),
     ("world", "header"),
     ("world_running", "header"),
-    ("working", "aeons heading (working beads)"),
-    ("ceiling", "header and aeons heading"),
+    ("working", "dwarves heading (working beads)"),
+    ("ceiling", "header and dwarves heading"),
     ("errors", "more › sources failing"),
     ("gather_ms", "header (age, gather ms) and the More list (clock)"),
     ("failures", "header chip"),
@@ -33,20 +33,20 @@ pub const VIEW_HOMES: &[(&str, &str)] = &[
     ("dropped_24h", "states › flow"),
     ("superseded_24h", "states › flow"),
     ("landed_total", "states › flow"),
-    ("more › holds", "more › holds"),
+    ("holds", "more › holds"),
     ("base", "more › drift"),
     ("drift", "more › drift"),
-    ("now_items", "aeons"),
+    ("now_items", "dwarves"),
     ("pipe", "states › flow"),
     ("rework_items", "states › flow"),
     ("next_count", "states › flow"),
     ("next_unknown", "states › flow"),
     ("next", "states › flow"),
-    ("more › blocked", "more › blocked"),
-    ("more › recent", "more › recent"),
+    ("blocked", "more › blocked"),
+    ("recent", "more › recent"),
     ("machine", "states"),
     ("terminal", "states › flow"),
-    ("more › refused", "more › refused"),
+    ("refused", "more › refused"),
     ("batch", "rounds › batches"),
     ("round", "rounds (when no repo round is live)"),
     ("rounds", "rounds"),
@@ -56,7 +56,7 @@ pub const VIEW_HOMES: &[(&str, &str)] = &[
     ("decide", "more › questions for you"),
     ("decide_error", "more › questions for you"),
     ("menders", "rounds › menders"),
-    ("more › epics", "more › epics"),
+    ("epics", "more › epics"),
     ("inflight", "rounds › in flight"),
 ];
 
@@ -159,7 +159,7 @@ pub fn world_chip(v: &View) -> String {
     format!("<span class=\"chip {class}\" title=\"{}\">● {label}</span>", esc(&v.world))
 }
 
-/// One line: world, release, aeons, data age, and the pane's own diagnostics in grey. Red chips
+/// One line: world, release, dwarves, data age, and the pane's own diagnostics in grey. Red chips
 /// appear only when something is wrong.
 pub fn header(p: &Page) -> String {
     let v = p.view;
@@ -171,11 +171,11 @@ pub fn header(p: &Page) -> String {
         chips.push_str(&format!("<span class=\"chip bad\">{} source failure{}</span>", v.failures, if v.failures == 1 { "" } else { "s" }));
     }
     format!(
-        "<header class=top id=head>{}<span class=dim title=\"{}\">{}</span><span>aeons {}/{}</span><span class=dim>{} · {} ms</span>{chips}</header>",
+        "<header class=top id=head>{}<span class=dim title=\"{}\">{}</span><span>dwarves {}/{}</span><span class=dim>{} · {} ms</span>{chips}</header>",
         world_chip(v),
         esc(&v.release),
         esc(short(&v.release)),
-        crate::now::aeons(p.snap),
+        crate::now::dwarves(p.snap),
         v.ceiling,
         if p.age_s <= 1 { "now".to_string() } else { format!("{} ago", dur(p.age_s)) },
         v.gather_ms,
@@ -193,7 +193,7 @@ fn item_row(i: &Item) -> String {
         meta.push("<span class=amber>REWORK</span>".into());
     }
     if !i.claim.is_empty() {
-        meta.push(if i.claim.starts_with('#') { format!("<span class=green>{}</span>", esc(&i.claim)) } else { format!("<span class=amber>{}</span>", esc(&i.claim)) });
+        meta.push(if i.claim.starts_with('#') { format!("<span class=green>{}</span>", linked(&i.claim)) } else { format!("<span class=amber>{}</span>", linked(&i.claim)) });
     }
     if !i.holds.is_empty() {
         meta.push(format!("<span class=red>held {}</span>", esc(&i.holds.join(","))));
@@ -204,9 +204,9 @@ fn item_row(i: &Item) -> String {
         String::new()
     } else {
         let level = match i.out_level.as_str() { "bad" => "red", "warn" => "amber", _ => "dim" };
-        format!("<details class=t><summary class=\"small {level}\">output · {} ›</summary><pre>{}</pre></details>", esc(&i.out_age), esc(&i.out.join("\n")))
+        format!("<details class=t><summary class=\"small {level}\">output · {} ›</summary><pre>{}</pre></details>", esc(&i.out_age), linked(&i.out.join("\n")))
     };
-    format!("<div class=row>{}<span class=\"small dim\">{}</span><span class=t>{}</span>{note}{why}{out}</div>", bead(&i.id), meta.join(" · "), esc(&i.title))
+    format!("<div class=row>{}<span class=\"small dim\">{}</span><span class=t>{}</span>{note}{why}{out}</div>", bead(&i.id), meta.join(" · "), linked(&i.title))
 }
 
 fn items(list: &[Item]) -> String {
@@ -217,9 +217,10 @@ fn items(list: &[Item]) -> String {
 /// moves; tapping a line opens its edges and beads. Red states say so on the line itself.
 fn pipeline(p: &Page) -> String {
     let v = p.view;
-    let mut b = String::from("<h2>States <span class=dim>count · moves per hour</span></h2>");
+    let mut b = String::from("<h2>States <span class=dim>count · moves in/out per hour</span></h2>");
     for s in &v.machine {
         let out: i64 = s.edges.iter().map(|e| e.rate_1h).sum();
+        let inn: i64 = v.machine.iter().flat_map(|m| m.edges.iter()).filter(|e| e.to == s.name).map(|e| e.rate_1h).sum();
         let refused: i64 = s.edges.iter().flat_map(|e| e.events.iter()).map(|(_, n, _)| *n).sum();
         let summary = format!(
             "<span class=\"n{c}\">{count}</span><span class=\"k{c}\">{name}</span><span class=\"small dim\">{detail}{out}{refused}</span>{dot}",
@@ -227,7 +228,7 @@ fn pipeline(p: &Page) -> String {
             count = s.count,
             name = esc(&s.name),
             detail = esc(&s.detail),
-            out = if out > 0 { format!(" · {out}/h out") } else { String::new() },
+            out = format!(" · {inn}/h in · {out}/h out"),
             refused = if refused > 0 { format!(" · <span class=red>{refused} refused</span>") } else { String::new() },
             dot = if s.red { " <span class=red>●</span>" } else { "" },
         );
@@ -235,7 +236,7 @@ fn pipeline(p: &Page) -> String {
             .edges
             .iter()
             .map(|e| {
-                let refusals: String = e.events.iter().filter(|(_, n, _)| *n > 0).map(|(ev, n, why)| format!(" <span class=red>{ev} refused {n}/h — {}</span>", esc(why))).collect();
+                let refusals: String = e.events.iter().filter(|(_, n, _)| *n > 0).map(|(ev, n, why)| format!(" <span class=red>{ev} refused {n}/h — {}</span>", linked(why))).collect();
                 format!("<div class=\"row small\"><span>{}{}</span><span class=dim>{}/h</span>{refusals}</div>", esc(&e.event), if e.to.is_empty() { String::new() } else { format!(" ▸ {}", esc(&e.to)) }, e.rate_1h)
             })
             .collect();
@@ -312,7 +313,7 @@ fn round_line(r: &RepoRound, prog: Option<&lcview::PassProgress>, now: i64, only
         body.extend(r.members.iter().map(|m| format!("<div class=row>{}</div>", bead(m))));
     }
     for m in &r.round.members {
-        body.push_str(&format!("<div class=row>{}<span class=\"small dim\">{} {}{}</span><span class=t>{}</span></div>", bead(&m.id), esc(&m.prio), esc(&m.repo), if m.ejects > 0 { format!(" · <span class=amber>ejected {}× before</span>", m.ejects) } else { String::new() }, esc(&m.title)));
+        body.push_str(&format!("<div class=row>{}<span class=\"small dim\">{} {}{}</span><span class=t>{}</span></div>", bead(&m.id), esc(&m.prio), esc(&m.repo), if m.ejects > 0 { format!(" · <span class=amber>ejected {}× before</span>", m.ejects) } else { String::new() }, linked(&m.title)));
     }
     if !r.round.ejected.is_empty() {
         body.push_str(&format!("<div class=\"row small red\">ejected this round: {}</div>", r.round.ejected.iter().map(|e| bead(e)).collect::<Vec<_>>().join(" ")));
@@ -337,7 +338,7 @@ fn rounds(p: &Page) -> String {
                 "last-round",
                 false,
                 &format!("<span class=\"small dim\">last</span><span class=id>{}</span><span class=small>{}</span><span class=\"small dim\">{} · {} pass{}</span>", esc(&r.name), esc(&r.state), esc(&r.age), r.passes, if r.passes == 1 { "" } else { "es" }),
-                &r.members.iter().map(|m| format!("<div class=row>{}<span class=t>{}</span></div>", bead(&m.id), esc(&m.title))).collect::<String>(),
+                &r.members.iter().map(|m| format!("<div class=row>{}<span class=t>{}</span></div>", bead(&m.id), linked(&m.title))).collect::<String>(),
             )),
             None => b.push_str(&plain("<span class=\"small dim\">no round or batch is running</span>")),
         }
@@ -361,14 +362,16 @@ fn rounds(p: &Page) -> String {
     b
 }
 
-fn aeons(p: &Page) -> String {
+fn dwarves(p: &Page) -> String {
     let v = p.view;
-    let mut b = format!("<h2>Aeons <span class=dim>{} of {} · {} working bead{} · <a href=\"/aeons\">detail ›</a></span></h2>", crate::now::aeons(p.snap), v.ceiling, v.working, if v.working == 1 { "" } else { "s" });
+    let mut b = format!("<h2>Dwarves <span class=dim>{} of {} · {} working bead{} · <a href=\"/dwarves\">detail ›</a></span></h2>", crate::now::dwarves(p.snap), v.ceiling, v.working, if v.working == 1 { "" } else { "s" });
     if v.now_items.is_empty() {
-        b.push_str(&plain("<span class=\"small dim\">no aeon is live</span>"));
+        b.push_str(&plain("<span class=\"small dim\">no dwarf is live</span>"));
     }
     for i in &v.now_items {
-        let summary = format!("<span class=s>{}</span>{}<span class=s>{}</span><span class=t>{}</span>", esc(&i.persona), bead(&i.id), esc(&i.age), esc(&i.title));
+        let name = i.who.split('@').next().unwrap_or_default();
+        let id = if i.id == "?" { "<span class=dim>?</span>".to_string() } else { bead(&i.id) };
+        let summary = format!("<span class=s><b>{}</b> {}</span>{id}<span class=s>{}</span><span class=t>{}</span>", esc(name), esc(&i.persona), esc(&i.age), linked(&i.title));
         b.push_str(&fold(&format!("a-{}", i.id), false, &summary, &item_row(i)));
     }
     b
@@ -381,7 +384,7 @@ fn below(p: &Page) -> String {
     let mut b = String::from("<h2>More</h2>");
     // Things that are wrong come first among these lines and are red on the line.
     if !v.errors.is_empty() {
-        b.push_str(&fold("errors", true, &format!("<span class=\"n red\">{}</span><span class=\"k red\">sources failing</span>", v.errors.len()), &v.errors.iter().map(|e| format!("<div class=\"row small red\">{}</div>", esc(e))).collect::<String>()));
+        b.push_str(&fold("errors", true, &format!("<span class=\"n red\">{}</span><span class=\"k red\">sources failing</span>", v.errors.len()), &v.errors.iter().map(|e| format!("<div class=\"row small red\">{}</div>", linked(e))).collect::<String>()));
     }
     if !p.flight.readable || p.flight.unread() {
         b.push_str(&plain(&format!("<span class=\"k red\">in flight unreadable</span><span class=\"small red\">{}</span>", esc(&p.flight.segment))));
@@ -396,7 +399,7 @@ fn below(p: &Page) -> String {
             .iter()
             .map(|(_, d)| {
                 let title = p.snap.meta.get(&d.bead_id).map(|m| m.title.as_str()).unwrap_or_default();
-                format!("<div class=row>{}<span class=\"badge red\">{} in {} · p95 {}</span><span class=t>{}</span></div>", bead(&d.bead_id), dur(p.now - d.entered_at), esc(&d.state), dur(d.p95_s.unwrap_or(0)), esc(title))
+                format!("<div class=row>{}<span class=\"badge red\">{} in {} · p95 {}</span><span class=t>{}</span></div>", bead(&d.bead_id), dur(p.now - d.entered_at), esc(&d.state), dur(d.p95_s.unwrap_or(0)), linked(title))
             })
             .collect();
         b.push_str(&fold("p95", false, &format!("<span class=\"n red\">{}</span><span class=k>past p95</span><a class=\"small dim\" href=\"/stuck\">stuck ›</a>", past.len()), &rows));
@@ -417,7 +420,7 @@ fn below(p: &Page) -> String {
         }
     }
     match &v.decide_error {
-        Some(e) => b.push_str(&plain(&format!("<span class=\"n red\">?</span><span class=k>questions for you</span><span class=\"small red\">{}</span>", esc(e)))),
+        Some(e) => b.push_str(&plain(&format!("<span class=\"n red\">?</span><span class=k>questions for you</span><span class=\"small red\">{}</span>", linked(e)))),
         None => b.push_str(&fold("asks", false, &format!("<span class=n>{}</span><span class=k>questions for you</span><span class=\"small dim\">answer in chat or mail</span>", v.decide.len()), &items(&v.decide))),
     }
     let epics: String = v
@@ -443,10 +446,10 @@ fn below(p: &Page) -> String {
 }
 
 pub fn main_html(p: &Page) -> String {
-    format!("{}{}{}{}", pipeline(p), rounds(p), aeons(p), below(p))
+    format!("{}{}{}{}", pipeline(p), rounds(p), dwarves(p), below(p))
 }
 
-pub const TABS: [(&str, &str); 5] = [("overview", "Overview"), ("rounds", "Rounds"), ("aeons", "Aeons"), ("stuck", "Stuck"), ("units", "Units")];
+pub const TABS: [(&str, &str); 5] = [("overview", "Overview"), ("rounds", "Rounds"), ("dwarves", "Dwarves"), ("stuck", "Stuck"), ("units", "Units")];
 
 fn tabs(active: &str) -> String {
     let href = |k: &str| if k == "overview" { format!("{BASE}/") } else { format!("/{k}") };
@@ -500,7 +503,7 @@ mod tests {
         let html = page_for(&snap, "SP_AT='995'\nSP_INFLIGHT_SEG='⚙ idle'\nSP_INFLIGHT_WORLD='running'\n");
         assert_eq!(html.matches("<header").count(), 1, "{html}");
         let head = &html[html.find("<header").unwrap()..html.find("</header>").unwrap()];
-        assert!(head.contains("049592e") && head.contains("aeons 0/4") && !head.contains("prog"), "{head}");
+        assert!(head.contains("049592e") && head.contains("dwarves 0/4") && !head.contains("prog"), "{head}");
     }
 
     #[test]
