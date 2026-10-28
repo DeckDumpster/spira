@@ -26,6 +26,7 @@ pub fn render_cache(counts: &[(String, usize)]) -> String {
     })
 }
 
+/// One row of `spira-claim urgent`: a P0 or REWORK bead. Only `p0` or `express` hold the lanes.
 struct Urgent {
     id: String,
     p0: bool,
@@ -375,7 +376,8 @@ impl<'a> Sentinel<'a> {
     }
 
     /// `spira-claim urgent <task runes>`: the P0 and REWORK beads the task pool can claim —
-    /// a bead only a lane can claim must not stop the lanes. `None` when the machine
+    /// a bead only a lane can claim must not stop the lanes. The lanes yield only to the
+    /// P0 or express rows; REWORK below P0 waits without holding them. `None` when the machine
     /// cannot answer — the caller yields the lanes, never reads that as "nothing urgent".
     fn urgent_beads(&self, task_runes: &[String]) -> Option<Vec<Urgent>> {
         if task_runes.is_empty() {
@@ -729,13 +731,19 @@ impl<'a> Sentinel<'a> {
             match self.urgent_beads(&task_runes) {
                 Some(u) if u.is_empty() => {}
                 Some(u) => {
-                    let ids: Vec<&str> = u.iter().map(|b| b.id.as_str()).collect();
-                    self.log(&format!("CHECK7 lanes: yielding — urgent bead(s) unclaimed: {}", ids.join(" ")));
-                    if let Some(x) = u.iter().find(|b| b.express && b.p0) {
-                        self.preempt_lane_for(&x.id, &task_runes, &lane_runes);
+                    let ids = |blocking: bool| -> String {
+                        u.iter().filter(|b| (b.p0 || b.express) == blocking).map(|b| b.id.as_str()).collect::<Vec<_>>().join(" ")
+                    };
+                    if u.iter().any(|b| b.p0 || b.express) {
+                        self.log(&format!("CHECK7 lanes: yielding — urgent bead(s) unclaimed: {}", ids(true)));
+                        if let Some(x) = u.iter().find(|b| b.express && b.p0) {
+                            self.preempt_lane_for(&x.id, &task_runes, &lane_runes);
+                        }
+                        rotated_lanes.clear();
+                        self.lanes_yielding.set(true);
+                    } else {
+                        self.log(&format!("CHECK7 lanes: rework bead(s) waiting do not hold the lanes: {}", ids(false)));
                     }
-                    rotated_lanes.clear();
-                    self.lanes_yielding.set(true);
                 }
                 None => {
                     rotated_lanes.clear();
