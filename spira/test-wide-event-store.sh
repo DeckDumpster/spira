@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
-# test-wide-event-store.sh — a log record sent to the collector with an arbitrary attribute is
-# queryable in VictoriaLogs by that attribute, and the wide-event dashboard's queries parse.
-# Runs the real images under podman on a throwaway network; skips where podman cannot.
+# test-wide-event-store.sh — a log record carrying an arbitrary attribute, sent in the OTLP form the
+# collector's VictoriaLogs exporter emits, is queryable in VictoriaLogs by that attribute, and the
+# wide-event dashboard's queries parse. Runs the official release binary at the version pinned in
+# stack.env; needs no container runtime.
 #
 # tier: T1
 # covers: spira/metrics/** spira/metrics-stack.sh systemd/spira-metrics-*.service
@@ -10,34 +11,42 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
 printf 'test-wide-event-store.sh\n'
-
-timeout 120 podman info >/dev/null 2>&1 || skip "podman unavailable" # batch-job: container call, hang guard only
 . "$HERE/metrics/stack.env"
 
-T="$(mktemp -d)"; id="wes$$"
-cleanup() { timeout 120 podman rm -f "$id-vl" "$id-oc" >/dev/null 2>&1; timeout 120 podman network rm -f "$id" >/dev/null 2>&1; rm -rf "$T"; } # batch-job: container call, hang guard only
-trap cleanup EXIT INT TERM
-mkdir -p "$T/otel" "$T/state/logs"
-timeout 120 podman network create "$id" >/dev/null || { bad "network create"; tl_summary; exit 1; } # batch-job: container call, hang guard only
+ver="${VL_IMAGE##*:}"
+case "$(uname -m)" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; *) bad "no VictoriaLogs release for $(uname -m)"; tl_summary; exit 1 ;; esac
+cache="${XDG_CACHE_HOME:-$HOME/.cache}/spira-test-victoria-logs/$ver"
+bin="$cache/victoria-logs-prod"
+if [ ! -x "$bin" ]; then
+    mkdir -p "$cache" || { bad "cache dir"; tl_summary; exit 1; }
+    url="https://github.com/VictoriaMetrics/VictoriaLogs/releases/download/$ver/victoria-logs-linux-$arch-$ver.tar.gz"
+    curl -fsSL --retry 3 --connect-timeout 10 --max-time 120 -o "$cache/dl.tgz" "$url" && timeout 60 tar -xzf "$cache/dl.tgz" -C "$cache" victoria-logs-prod # batch-job: one-time fetch of the pinned release, bounded by curl --max-time
+    rm -f "$cache/dl.tgz"
+    [ -x "$bin" ] || { bad "cannot fetch $url"; tl_summary; exit 1; }
+fi
 
-# the collector resolves the store by its production name
-timeout 120 podman run -d --rm --name "$id-vl" --network "$id" --network-alias victoria-logs -p 127.0.0.1::9428 "$VL_IMAGE" -retentionPeriod=3d >/dev/null # batch-job: container call, hang guard only
-timeout 120 podman run -d --rm --name "$id-oc" --network "$id" -p 127.0.0.1::4318 --user 0:0 -v "$HERE/metrics/collector.yaml:/etc/otelcol/config.yaml:ro" -v "$T/otel:/otel:ro" -v "$T/state:/state" "$COLLECTOR_IMAGE" --config=/etc/otelcol/config.yaml >/dev/null # batch-job: container call, hang guard only
-port() { timeout 120 podman port "$1" "$2" | head -1 | sed 's/.*://'; } # batch-job: container call, hang guard only
-vl="http://127.0.0.1:$(port "$id-vl" 9428)"; oc="http://127.0.0.1:$(port "$id-oc" 4318)"
+T="$(mktemp -d)"
+port="$(python3 -I -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')"
+"$bin" -storageDataPath="$T/data" -retentionPeriod=3d -httpListenAddr="127.0.0.1:$port" >"$T/vl.log" 2>&1 &
+vlpid=$!
+trap 'kill "$vlpid" 2>/dev/null; wait "$vlpid" 2>/dev/null; rm -rf "$T"' EXIT INT TERM
+vl="http://127.0.0.1:$port"
+
+up=""
+for _ in $(seq 1 30); do [ "$(curl --max-time 5 -s "$vl/health")" = OK ] && { up=1; break; }; sleep 1; done
+is "victoria-logs starts" 1 "$up"
+
+path="$(sed -n 's|.*logs_endpoint: http://victoria-logs:9428||p' "$HERE/metrics/collector.yaml")"
+is "collector exports logs to the VictoriaLogs OTLP path" "/insert/opentelemetry/v1/logs" "$path"
 
 needle="needle-$$-$RANDOM"
 rec='{"resourceLogs":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"t"}}]},"scopeLogs":[{"logRecords":[{"timeUnixNano":"'"$(date +%s)"'000000000","body":{"stringValue":"dispatch"},"attributes":[{"key":"handler","value":{"stringValue":"h1"}},{"key":"duration_ms","value":{"doubleValue":12.5}},{"key":"zz.arbitrary","value":{"stringValue":"'"$needle"'"}}]}]}]}]}'
-sent=""
-for _ in $(seq 1 30); do
-    [ "$(curl --max-time 5 -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' --data "$rec" "$oc/v1/logs")" = 200 ] && { sent=1; break; }
-    sleep 1
-done
-is "collector accepts an OTLP log record" 1 "$sent"
+code="$(curl --max-time 5 -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' --data "$rec" "$vl$path")"
+is "victoria-logs accepts an OTLP log record" 200 "$code"
 
 q() { curl --max-time 5 -s "$vl/select/logsql/query" --data-urlencode "query=$1"; }
 got=""
-for _ in $(seq 1 30); do got="$(q "zz.arbitrary:$needle")"; [ -n "$got" ] && break; sleep 1; done
+for _ in $(seq 1 30); do curl --max-time 5 -s -o /dev/null "$vl/internal/force_flush"; got="$(q "zz.arbitrary:$needle")"; [ -n "$got" ] && break; sleep 1; done
 want "record is queryable by its arbitrary attribute" "\"zz.arbitrary\":\"$needle\"" "$got"
 is "positive control: a value never sent finds nothing" "" "$(q 'zz.arbitrary:never-sent-value')"
 
