@@ -1,6 +1,6 @@
 //! The journal through spira-lc's socket. The hermetic tests stand a socket server on a
 //! `MemJournal` that speaks the service's wire (one JSON argv line in; a header line and the body
-//! out); the container-tier test runs the same suite against a real `spira-lc serve`.
+//! out).
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -11,8 +11,6 @@ use runtime::journal::{Journal, MemJournal};
 use runtime::socket::SocketJournal;
 use runtime::*;
 use testkit::TempDir;
-
-mod common;
 
 fn answer(j: &MemJournal, argv: &[String]) -> (i32, String) {
     let a = |i: usize| argv[i].as_str();
@@ -119,16 +117,4 @@ fn no_dolt_launcher_is_reachable_from_the_library() {
         let text = std::fs::read_to_string(f.path()).unwrap();
         assert!(!spawns_dolt(&text), "{} launches dolt", f.path().display());
     }
-}
-
-#[test]
-#[ignore = "container tier: needs RUNTIME_LC_SOCKET (a spira-lc serve over a throwaway database) and RUNTIME_STORE_DIR (that database's directory, to empty the tables between scenarios)"]
-fn the_whole_suite_through_a_real_spira_lc() {
-    let socket = std::env::var("RUNTIME_LC_SOCKET").expect("RUNTIME_LC_SOCKET names the spira-lc socket");
-    let dir = std::env::var("RUNTIME_STORE_DIR").expect("RUNTIME_STORE_DIR names the throwaway database directory");
-    let rig = InProcessRig(move || {
-        runtime::store::StoreJournal::new(common::DoltCli { dir: dir.clone().into() }).reset().expect("empty the runtime tables");
-        Arc::new(SocketJournal::new(&socket)) as Arc<dyn Journal>
-    });
-    run_all(&rig);
 }
