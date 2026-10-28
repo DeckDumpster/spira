@@ -104,6 +104,29 @@ json_field() {   # json_field <field> reads a flat JSON object on stdin
 ask_row() { root_sql --use-db spira_lifecycle sql -q "SELECT state, work_bead, closed_by, quote, channel, version FROM ask WHERE ask_id='$1'" -r json 2>/dev/null; }
 bead_rows() { root_sql --use-db spira_lifecycle sql -q "SELECT COUNT(*) AS n FROM bead WHERE bead_id='$1'" -r json 2>/dev/null; }
 
+# The content store, as a stub: `close` marks an id closed; `list --id` reports each id by that mark.
+cat > "$TMP/bd" <<'STUBEOF'
+#!/usr/bin/env bash
+args=" $* "
+if [ "$1" = "-C" ]; then shift 2; fi
+case "$1" in
+    close) echo "$2" >> "$TMP_BD_CLOSED" ;;
+    list)
+        ids="$(sed -E 's/.* --id ([^ ]+) .*/\1/' <<<"$args")"
+        out=""
+        for i in ${ids//,/ }; do
+            st=open; grep -qx "$i" "$TMP_BD_CLOSED" 2>/dev/null && st=closed
+            case "$args" in *"--status closed"*) [ "$st" = closed ] || continue ;; esac
+            out="$out${out:+,}{\"id\":\"$i\",\"status\":\"$st\"}"
+        done
+        echo "[$out]" ;;
+esac
+STUBEOF
+chmod +x "$TMP/bd"
+export TMP_BD_CLOSED="$TMP/bd-closed"
+tl_config SPIRA_BD="$TMP/bd"
+bd_closed() { grep -qx "$1" "$TMP_BD_CLOSED" 2>/dev/null && echo closed || echo open; }
+
 # ── an ask is its own row and never a bead row ────────────────────────────────────────────
 seed_bead sp-w-1 WORKING
 spira-lc hold sp-w-1 ask "waiting on the operator" test-suite
@@ -142,6 +165,7 @@ want "state ANSWERED" '"state":"ANSWERED"' "$row"
 want "who answered" '"closed_by":"operator"' "$row"
 want "his quoted words" '"quote":"yes, ship it"' "$row"
 want "the channel" '"channel":"pane"' "$row"
+is "the answered ask's bead is closed in the content store" closed "$(bd_closed sp-ask-1)"
 is "the work bead's ask hold is lifted" "" "$(spira-lc holds sp-w-1)"
 is "the work bead keeps its state" WORKING "$(spira-lc state sp-w-1)"
 spira-lc close-ask sp-ask-1 --exit withdrawn --quote "again" --actor claude >/dev/null 2>&1
@@ -173,5 +197,21 @@ spira-lc close-ask sp-ask-3 --exit default --quote "ran the default" --actor ope
 wantrc "a dismissal closes the ask" 0 $?
 want "DEFAULT_TAKEN" '"state":"DEFAULT_TAKEN"' "$(ask_row sp-ask-3)"
 is "...and lifts the hold" "" "$(spira-lc holds sp-w-3)"
+
+# ── reconcile: a closed ask whose bead is still open is closed; the rest is untouched ─────
+spira-lc create-ask sp-ask-5
+root_sql --use-db spira_lifecycle sql -q "UPDATE ask SET state='ANSWERED', version=1 WHERE ask_id='sp-ask-5'" >/dev/null 2>&1
+is "SEEN RED: an ANSWERED ask's bead is still open" open "$(bd_closed sp-ask-5)"
+out="$(spira-lc reconcile-asks)"
+want "a dry run names the bead it would close" "would close sp-ask-5" "$out"
+nowant "...and does not name an already-closed one" "sp-ask-1" "$out"
+is "...and closes nothing" open "$(bd_closed sp-ask-5)"
+spira-lc reconcile-asks --apply >/dev/null
+wantrc "reconcile-asks --apply succeeds" 0 $?
+is "reconcile closes the stranded bead" closed "$(bd_closed sp-ask-5)"
+is "...and closes each bead once" 1 "$(grep -cx sp-ask-5 "$TMP_BD_CLOSED")"
+spira-lc create-ask sp-ask-6
+spira-lc reconcile-asks --apply >/dev/null
+is "an OPEN ask's bead is left alone" open "$(bd_closed sp-ask-6)"
 
 tl_summary

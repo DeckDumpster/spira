@@ -8,7 +8,7 @@ use lifecycle::bead::BeadEventKind;
 use lifecycle::reason::DropReason;
 use serde_json::Value;
 
-use crate::callers::Machine;
+use crate::callers::{Bd, Machine};
 use crate::cutover::{flag, is_row_key, q};
 use crate::db::{self, Conn, EventRecord};
 use crate::rows;
@@ -81,6 +81,10 @@ pub fn cmd_list_asks(args: &[String], conn: &Conn) -> (i32, String) {
 /// answer through a `Reply` carrying the ask id, any other exit through `AskWithdrawn`; a
 /// work bead with no such hold is nothing to lift.
 pub fn cmd_close_ask(args: &[String], conn: &Conn) -> (i32, String) {
+    close_ask(args, conn, &mut crate::bd::LiveBd)
+}
+
+fn close_ask(args: &[String], conn: &Conn, bd: &mut dyn Bd) -> (i32, String) {
     let Some(id) = args.first() else {
         return (CANNOT_TELL, "close-ask: missing <ask-id>".into());
     };
@@ -111,6 +115,11 @@ pub fn cmd_close_ask(args: &[String], conn: &Conn) -> (i32, String) {
         if let Err(e) = conn.insert_refusal_event(&rec) {
             return cannot(e);
         }
+        if row.state.is_terminal() {
+            if let Err(e) = bd.close(id, &bead_reason(&row.state, &row.quote)) {
+                return (CANNOT_TELL, format!("close-ask: {id} is already closed but its bead is not: {}", e.trim()));
+            }
+        }
         return (REFUSED, format!("refused: {:?}", outcome.refusal));
     }
     match conn.cas_update_and_log("ask", "ask_id", id, row.version, &rows::ask_set_clause(&outcome.row), &rec, outcome.row.state.as_str()) {
@@ -118,13 +127,59 @@ pub fn cmd_close_ask(args: &[String], conn: &Conn) -> (i32, String) {
         Ok(false) => return (REFUSED, "refused: lost the race to another writer".into()),
         Err(e) => return cannot(e),
     }
+    let lifted = lift_work_hold(args, conn, id, &row, &outcome.row, &actor);
+    match bd.close(id, &bead_reason(&outcome.row.state, &outcome.row.quote)) {
+        Ok(()) => lifted,
+        Err(e) => (CANNOT_TELL, format!("close-ask: {id} is closed but its bead is not: {}", e.trim())),
+    }
+}
+
+fn bead_reason(state: &AskState, quote: &Option<String>) -> String {
+    format!("ask {}: {}", state.as_str().to_lowercase(), quote.as_deref().unwrap_or(""))
+}
+
+fn lift_work_hold(args: &[String], conn: &Conn, id: &str, row: &AskRow, closed: &AskRow, actor: &str) -> (i32, String) {
     let Some(work) = row.work_bead.as_deref() else { return (0, String::new()) };
-    let lift = if outcome.row.state == AskState::Answered { BeadEventKind::Reply { message_id: flag(args, "--message-id").filter(|m| !m.is_empty()).unwrap_or_else(|| id.clone()) } } else { BeadEventKind::AskWithdrawn };
-    match crate::apply_bead_event(conn, work, &actor, lift) {
+    let lift = if closed.state == AskState::Answered { BeadEventKind::Reply { message_id: flag(args, "--message-id").filter(|m| !m.is_empty()).unwrap_or_else(|| id.to_string()) } } else { BeadEventKind::AskWithdrawn };
+    match crate::apply_bead_event(conn, work, actor, lift) {
         (0, _) | (REFUSED, _) => (0, String::new()),
         (rc, out) if rc == CANNOT_TELL && out.contains("no bead row") => (0, String::new()),
         (rc, out) => (rc, format!("close-ask: {id} is closed but the ask hold on {work} was not lifted: {out}")),
     }
+}
+
+/// `reconcile-asks [--apply]`: every closed ask whose bead the content store still holds open
+/// has that bead closed; nothing else is touched.
+pub fn cmd_reconcile_asks(args: &[String], conn: &Conn, bd: &mut dyn Bd) -> (i32, String) {
+    let apply = args.iter().any(|a| a == "--apply");
+    let rows = match conn.query("SELECT ask_id, state, quote FROM ask WHERE state <> 'OPEN' ORDER BY ask_id") {
+        Ok(r) => r,
+        Err(e) => return cannot(e),
+    };
+    let ids: Vec<String> = rows.iter().filter_map(|r| r.get("ask_id").and_then(Value::as_str).map(str::to_string)).collect();
+    let open = match bd.open_among(&ids) {
+        Ok(o) => o,
+        Err(e) => return (CANNOT_TELL, format!("reconcile-asks: the content store is unreadable: {}", e.trim())),
+    };
+    let (mut lines, mut code) = (Vec::new(), 0);
+    for r in rows.iter().filter(|r| r.get("ask_id").and_then(Value::as_str).is_some_and(|i| open.iter().any(|o| o == i))) {
+        let text = |k: &str| r.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+        let id = text("ask_id");
+        if !apply {
+            lines.push(format!("would close {id}"));
+            continue;
+        }
+        let state = AskState::from_str(&text("state")).unwrap_or(AskState::Answered);
+        match bd.close(&id, &bead_reason(&state, &Some(text("quote")))) {
+            Ok(()) => lines.push(format!("closed {id}")),
+            Err(e) => {
+                lines.push(format!("FAILED {id}: {}", e.trim()));
+                code = CANNOT_TELL;
+            }
+        }
+    }
+    lines.push(format!("reconcile-asks: {} closed asks with an open bead{}", lines.len(), if apply { "" } else { " (dry run; --apply to write)" }));
+    (code, lines.join("\n"))
 }
 
 /// The open ask beads in the store: `(ask id, work beads its labels name)`.

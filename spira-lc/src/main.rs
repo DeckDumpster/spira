@@ -269,6 +269,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("show-ask") => ask::cmd_show_ask(&args[1..], conn),
         Some("list-asks") => ask::cmd_list_asks(&args[1..], conn),
         Some("close-ask") => ask::cmd_close_ask(&args[1..], conn),
+        Some("reconcile-asks") => ask::cmd_reconcile_asks(&args[1..], conn, &mut bd::LiveBd),
         Some("cut") => cutover::cmd_cut(&args[1..], conn),
         // batcher-cut's own pipelining onto an already-OPEN batch (sp-o7nbr.4): the same
         // MemberAdded/Deliver/Cut cascade `cut` performs, minus the batch row's own INSERT.
