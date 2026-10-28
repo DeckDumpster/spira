@@ -629,8 +629,11 @@ anyone who sees a member red only on the VM and needs to know whether the build 
 2. `cargo build --profile release --workspace --config profile.release.incremental=false` in it,
    with the compile pool (`spira-admit`) and the shared cache wired as a dwarf's cargo gets them;
    a missing piece is said at the top of `build.log` and the build goes on.
-3. The tree's own `testenv --mode parallel --artifacts <tree>/target/release [--suites L]
-   --deadline 600 spira/<bead> <repo>`; no `--suites` leaves testenv to select from the diff.
+3. The tree's own `testenv --mode parallel --artifacts <tree>/target/release --suites L
+   --deadline 600 spira/<bead> <repo>`. `L` is `--suites`, topped up so it holds a sim-lane suite
+   (its install runs in a second container, which a run without one never exercises) and a suite
+   not on `spira/skip-allowlist.tsv` (those skip in the container); each addition is printed.
+   With no `--suites`, `L` is just those two. A tree with no `spira/test-*.sh` is left to testenv.
 4. Prints testenv's `VERDICT` line and keeps `build.log` and `testenv.log` in `$SPIRA_RUN/vm-repro/<bead>/`.
 5. Removes the worktree on every exit, and one left by a killed run before it starts.
 

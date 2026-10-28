@@ -13,6 +13,7 @@ pub const DEFAULT_DEADLINE_SECS: u64 = 600;
 pub const EXIT_RED: u8 = 1;
 pub const EXIT_FAULT: u8 = 3;
 
+#[derive(Clone)]
 pub struct Opts {
     pub bead: String,
     pub suites: Option<String>,
@@ -44,7 +45,53 @@ pub fn valid_bead(bead: &str) -> bool {
 
 /// The build the VM script runs, argv after `cargo`.
 pub fn build_args() -> Vec<String> {
-    ["build", "--profile", "release", "--workspace", "--config", "profile.release.incremental=false"].map(String::from).to_vec()
+    let mut a: Vec<String> = ["build", "--profile", "release", "--workspace"].map(String::from).to_vec();
+    a.extend(spira_config::build::one_shot("release"));
+    a
+}
+
+/// The suites a repro runs. The sim lane's suites install in a second container, so a run with
+/// none of them misses that install; a run of only allowlisted suites proves nothing, since those
+/// skip in the container. A tree with no suite scripts (its tiers are declared elsewhere) is
+/// left to testenv. Returns the list to pass, `None` leaving testenv to select, and what was added.
+pub fn suites_for(tree: &Path, given: Option<&str>) -> (Option<String>, Vec<String>) {
+    let mut found: Vec<String> = fs::read_dir(tree.join("spira"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| n.starts_with("test-") && n.ends_with(".sh"))
+        .collect();
+    found.sort();
+    if found.is_empty() {
+        return (given.map(String::from), Vec::new());
+    }
+    let allow: Vec<String> = fs::read_to_string(tree.join("spira/skip-allowlist.tsv"))
+        .unwrap_or_default()
+        .lines()
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(|l| l.split('\t').next().map(String::from))
+        .collect();
+    let sim = |n: &str| is_sim_lane(&tree.join("spira").join(n));
+    let mut list: Vec<String> = given.map(|g| g.split(',').filter(|x| !x.is_empty()).map(String::from).collect()).unwrap_or_default();
+    let mut added = Vec::new();
+    if !list.iter().any(|n| sim(n)) {
+        if let Some(n) = found.iter().find(|n| sim(n)) {
+            added.push(format!("added {n}: the sim lane installs in a second container"));
+            list.push(n.clone());
+        }
+    }
+    if !list.iter().any(|n| !allow.contains(n) && !sim(n)) {
+        if let Some(n) = found.iter().find(|n| !allow.contains(n) && !sim(n)) {
+            added.push(format!("added {n}: a suite not on the skip allowlist runs in the container"));
+            list.push(n.clone());
+        }
+    }
+    (Some(list.join(",")), added)
+}
+
+fn is_sim_lane(script: &Path) -> bool {
+    fs::read_to_string(script).unwrap_or_default().lines().take_while(|l| !l.starts_with("set ")).any(|l| l.trim_end() == "# lane: sim" || l.starts_with("# lane: sim "))
 }
 
 /// The suite run, argv after `testenv`.
@@ -208,9 +255,14 @@ pub fn run(o: &Opts, ambient: &dyn Fn(&str) -> Option<String>) -> Result<Verdict
         return Ok(Verdict { line: format!("VERDICT FAULT reason=build rc={}", rc.map_or("signal".to_string(), |c| c.to_string())), code: EXIT_FAULT });
     }
 
+    let (suites, added) = suites_for(&tree.dir, o.suites.as_deref());
+    for a in &added {
+        println!("vm-repro: {a}");
+    }
+    let o = &Opts { suites, ..o.clone() };
     let testenv = tree.dir.join("target/release/testenv");
     let test_log = logs.join("testenv.log");
-    let rc = step(&testenv, &testenv_args(o, &tree.dir), &tree.dir, &env, &test_log, &[])?;
+    let rc = step(&testenv, &testenv_args(o, &tree.dir), &tree.dir, &env, &test_log, &added)?;
     let text = fs::read_to_string(&test_log).unwrap_or_default();
     Ok(verdict_of(rc, &text))
 }
@@ -291,7 +343,9 @@ mod tests {
 
     #[test]
     fn the_build_is_the_vm_scripts_build() {
-        assert_eq!(build_args().join(" "), "build --profile release --workspace --config profile.release.incremental=false");
+        let vm = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../round-vm/src/run.rs")).unwrap();
+        let line = format!("cargo build -q {}", build_args().split_first().map(|(_, rest)| rest.join(" ")).unwrap());
+        assert!(vm.contains(&line), "round-vm no longer builds with: {line}");
     }
 
     #[test]
@@ -335,5 +389,63 @@ mod tests {
     fn a_bead_id_cannot_climb_out_of_the_run_directory() {
         assert!(valid_bead("sp-5vww8l") && valid_bead("sp-1.2"));
         assert!(!valid_bead("../x") && !valid_bead("") && !valid_bead("-rf") && !valid_bead("a/b"));
+    }
+
+    fn tree(files: &[(&str, &str)]) -> testkit::TempDir {
+        let t = testkit::TempDir::new("vm-repro-suites");
+        for (n, b) in files {
+            fs::create_dir_all(t.path().join(n).parent().unwrap()).unwrap();
+            fs::write(t.path().join(n), b).unwrap();
+        }
+        t
+    }
+
+    #[test]
+    fn a_given_list_is_topped_up_with_a_sim_suite_and_one_off_the_allowlist() {
+        let t = tree(&[("spira/test-a.sh", ""), ("spira/test-b.sh", "# lane: sim\nset -u\n"), ("spira/test-c.sh", ""), ("spira/skip-allowlist.tsv", "# x\ntest-a.sh\tr\tw\n")]);
+        assert_eq!(suites_for(t.path(), Some("test-a.sh")).0.as_deref(), Some("test-a.sh,test-b.sh,test-c.sh"));
+        assert_eq!(suites_for(t.path(), None).0.as_deref(), Some("test-b.sh,test-c.sh"));
+        assert!(suites_for(t.path(), Some("test-b.sh,test-c.sh")).1.is_empty());
+    }
+
+    #[test]
+    fn a_lane_header_after_the_script_starts_is_not_a_lane() {
+        let t = tree(&[("spira/test-a.sh", "set -u\n# lane: sim\n"), ("spira/test-b.sh", "")]);
+        assert_eq!(suites_for(t.path(), None).0.as_deref(), Some("test-a.sh"));
+    }
+
+    #[test]
+    fn a_tree_without_suite_scripts_is_left_to_testenv() {
+        let t = tree(&[("README", "")]);
+        assert_eq!(suites_for(t.path(), None), (None, vec![]));
+        assert_eq!(suites_for(t.path(), Some("tier")).0.as_deref(), Some("tier"));
+    }
+
+    #[test]
+    fn the_build_goes_through_the_compile_pool_and_the_cache_when_both_are_on_the_path() {
+        let bin = testkit::TempDir::new("vm-repro-bin");
+        testkit::write_exe(bin.path().join("sccache"), "#!/bin/sh\n");
+        testkit::write_exe(bin.path().join("spira-admit"), "#!/bin/sh\n");
+        let path = bin.path().display().to_string();
+        let mut notes = Vec::new();
+        let env = cache_env(&path, &opts(), &mut notes);
+        let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        assert_eq!(get("RUSTC_WRAPPER"), Some(format!("{path}/spira-admit")));
+        assert_eq!(get(spira_config::admission::INNER_ENV), Some(format!("{path}/sccache")));
+        assert_eq!(get(spira_config::admission::WHO_ENV).as_deref(), Some("vm-repro-sp-x"));
+        assert_eq!(get("SPIRA_RUN").as_deref(), Some("/run"));
+    }
+
+    #[test]
+    fn a_missing_pool_or_cache_is_said_and_never_stops_the_build() {
+        let bin = testkit::TempDir::new("vm-repro-bin");
+        let mut notes = Vec::new();
+        assert!(cache_env(&bin.path().display().to_string(), &opts(), &mut notes).is_empty());
+        assert!(notes[0].contains("UNCACHED"), "{notes:?}");
+        testkit::write_exe(bin.path().join("sccache"), "#!/bin/sh\n");
+        let mut notes = Vec::new();
+        let env = cache_env(&bin.path().display().to_string(), &opts(), &mut notes);
+        assert!(notes.iter().any(|n| n.contains("not admitted")), "{notes:?}");
+        assert!(env.iter().any(|(k, _)| k == "RUSTC_WRAPPER"));
     }
 }

@@ -8,6 +8,7 @@ use std::process::{Command, Output};
 
 const FAKE_CARGO: &str = r#"#!/bin/sh
 echo "cargo $*"
+if [ -e PLANT_BUILD_FAILURE ]; then echo "error[E0425]: cannot find value"; exit 101; fi
 echo "RUSTC_WRAPPER=$RUSTC_WRAPPER SPIRA_RELEASE=$SPIRA_RELEASE SPIRA_TOML=$SPIRA_TOML"
 mkdir -p target/release
 cat > target/release/testenv <<'T'
@@ -17,6 +18,10 @@ if [ -e PLANT_INSTALL_FAILURE ]; then
     echo "install: unit spira-fixture.service failed to start"
     echo "VERDICT FAULT rc=2 reason=install"
     exit 2
+fi
+if [ -e PLANT_RED ]; then
+    echo "VERDICT RED rc=1 red=test-one.sh"
+    exit 1
 fi
 echo "VERDICT GREEN rc=0"
 T
@@ -37,7 +42,7 @@ struct Fixture {
     toml: String,
 }
 
-fn fixture(name: &str, plant: bool) -> Fixture {
+fn fixture(name: &str, files: &[(&str, &str)]) -> Fixture {
     let tmp = testkit::TempDir::new(&format!("vm-repro-{name}"));
     let root = tmp.path().to_path_buf();
     let (repo, release, run) = (root.join("repo"), root.join("release"), root.join("run"));
@@ -50,8 +55,9 @@ fn fixture(name: &str, plant: bool) -> Fixture {
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-q", "-m", "base"]);
     git(&repo, &["checkout", "-q", "-b", "spira/sp-fix"]);
-    if plant {
-        fs::write(repo.join("PLANT_INSTALL_FAILURE"), "x").unwrap();
+    for (n, body) in files {
+        fs::create_dir_all(repo.join(n).parent().unwrap()).unwrap();
+        fs::write(repo.join(n), body).unwrap();
     }
     fs::write(repo.join("member"), "y").unwrap();
     git(&repo, &["add", "."]);
@@ -88,7 +94,7 @@ fn text(o: &Output) -> String {
 
 #[test]
 fn a_member_branch_builds_runs_its_suite_and_prints_green() {
-    let f = fixture("green", false);
+    let f = fixture("green", &[]);
     let o = vm_repro(&f, &["--suites", "test-one.sh"]);
     let out = text(&o);
     assert_eq!(o.status.code(), Some(0), "{out}");
@@ -109,7 +115,7 @@ fn a_member_branch_builds_runs_its_suite_and_prints_green() {
 
 #[test]
 fn a_planted_install_failure_prints_fault_and_keeps_the_install_output() {
-    let f = fixture("fault", true);
+    let f = fixture("fault", &[("PLANT_INSTALL_FAILURE", "")]);
     let o = vm_repro(&f, &[]);
     let out = text(&o);
     assert_eq!(o.status.code(), Some(3), "{out}");
@@ -121,7 +127,7 @@ fn a_planted_install_failure_prints_fault_and_keeps_the_install_output() {
 
 #[test]
 fn a_branch_that_does_not_exist_is_refused_before_anything_is_built() {
-    let f = fixture("nobranch", false);
+    let f = fixture("nobranch", &[]);
     let o = Command::new(env!("CARGO_BIN_EXE_release"))
         .env_clear()
         .env("HOME", &f.root)
@@ -135,4 +141,55 @@ fn a_branch_that_does_not_exist_is_refused_before_anything_is_built() {
     assert_eq!(o.status.code(), Some(1), "{}", text(&o));
     assert!(text(&o).contains("spira/sp-missing"), "{}", text(&o));
     assert!(!f.run.join("worktree").exists());
+}
+
+#[test]
+fn a_failing_build_is_a_fault_with_its_errors_kept_and_the_worktree_removed() {
+    let f = fixture("build", &[("PLANT_BUILD_FAILURE", "")]);
+    let o = vm_repro(&f, &[]);
+    assert_eq!(o.status.code(), Some(3), "{}", text(&o));
+    assert!(text(&o).contains("VERDICT FAULT reason=build rc=101"), "{}", text(&o));
+    assert!(fs::read_to_string(f.run.join("vm-repro/sp-fix/build.log")).unwrap().contains("error[E0425]"));
+    assert!(!f.run.join("worktree/vm-repro-sp-fix").exists());
+    assert!(!f.run.join("vm-repro/sp-fix/testenv.log").exists());
+}
+
+#[test]
+fn a_red_suite_exits_one_and_still_removes_the_worktree() {
+    let f = fixture("red", &[("PLANT_RED", "")]);
+    let o = vm_repro(&f, &["--suites", "test-one.sh"]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(text(&o).contains("VERDICT RED"), "{}", text(&o));
+    assert!(!f.run.join("worktree/vm-repro-sp-fix").exists());
+}
+
+#[test]
+fn a_worktree_left_by_a_killed_run_is_replaced() {
+    let f = fixture("stale", &[]);
+    let stale = f.run.join("worktree/vm-repro-sp-fix");
+    fs::create_dir_all(f.run.join("worktree")).unwrap();
+    git(&f.repo, &["worktree", "add", "--detach", stale.to_str().unwrap(), "main"]);
+    fs::write(stale.join("leftover"), "x").unwrap();
+    let o = vm_repro(&f, &["--suites", "test-one.sh"]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    assert!(!stale.exists());
+}
+
+#[test]
+fn the_suites_cover_the_sim_lane_and_a_suite_off_the_skip_allowlist() {
+    let f = fixture(
+        "lanes",
+        &[
+            ("spira/test-a-skips.sh", "#!/bin/bash\nset -uo pipefail\n"),
+            ("spira/test-b-sim.sh", "#!/bin/bash\n# lane: sim\nset -uo pipefail\n"),
+            ("spira/test-c-plain.sh", "#!/bin/bash\nset -uo pipefail\n"),
+            ("spira/skip-allowlist.tsv", "# comment\ntest-a-skips.sh\tskip:x\twhy\n"),
+        ],
+    );
+    let o = vm_repro(&f, &["--suites", "test-a-skips.sh"]);
+    let out = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{out}");
+    assert!(out.contains("added test-b-sim.sh") && out.contains("added test-c-plain.sh"), "{out}");
+    let t = fs::read_to_string(f.run.join("vm-repro/sp-fix/testenv.log")).unwrap();
+    assert!(t.contains("--suites test-a-skips.sh,test-b-sim.sh,test-c-plain.sh --deadline"), "{t}");
 }
