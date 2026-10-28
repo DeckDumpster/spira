@@ -187,9 +187,14 @@ is   "escalation: exits 0"           "0"                    "$rc"
 want "escalation: --type escalation" "--type escalation"    "$(cat "$BD_LOG")"
 want "escalation: scope label"       "testscope"            "$(cat "$BD_LOG")"
 
-out="$(run_bead "an idea" --kind proposal)"; rc=$?
+out="$(run_bead "an idea" --kind proposal --part 2)"; rc=$?
 is   "proposal: exits 0"         "0"                "$rc"
 want "proposal: --type proposal" "--type proposal"  "$(cat "$BD_LOG")"
+want "proposal: part label"      "part:2"           "$(cat "$BD_LOG")"
+: > "$BD_LOG"
+out="$(run_bead "an idea" --kind proposal 2>&1)"; rc=$?
+is     "proposal without --part: refused" "2"       "$rc"
+nowant "proposal without --part: no bd"   "create"  "$(cat "$BD_LOG")"
 
 out="$(run_bead "park this" --kind idea --repo testrepo)"; rc=$?
 is     "idea: exits 0"                    "0"                "$rc"
