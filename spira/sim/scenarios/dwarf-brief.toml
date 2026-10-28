@@ -33,11 +33,11 @@ sql = "SELECT 1 FROM briefs WHERE bead = 'sp-ab01' AND n = 1"
 
 [[expect]]
 name = "brief_names_bead_and_branch"
-sql = "SELECT 1 FROM briefs WHERE bead = 'sp-ab01' AND system LIKE '%sp-ab01%' AND system LIKE '%spira/sp-ab01%'"
+sql = "SELECT 1 FROM briefs WHERE bead = 'sp-ab01' AND system LIKE '%sp-ab01%' AND prompt LIKE '%branch spira/sp-ab01,%'"
 
 [[expect]]
 name = "brief_is_the_builders"
-sql = "SELECT 1 FROM briefs WHERE bead = 'sp-ab01' AND system LIKE '%Warden%'"
+sql = "SELECT 1 FROM briefs WHERE bead = 'sp-ab01' AND system LIKE 'You are a builder:%'"
 
 [[expect]]
 name = "repo_instructions_reach_the_model"
