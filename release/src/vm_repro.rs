@@ -291,11 +291,7 @@ fn resolve(args: &[String]) -> Result<Opts, (u8, String)> {
         None => std::env::current_exe().ok().and_then(|e| e.canonicalize().ok()).and_then(|e| e.parent()?.parent().map(Path::to_path_buf)).ok_or_else(|| fail("cannot find the release this binary runs from".into()))?,
     };
     let home = std::env::var("HOME").ok().filter(|h| !h.is_empty()).map(PathBuf::from).ok_or_else(|| fail("HOME is not set".into()))?;
-    let toml = match std::env::var("SPIRA_TOML").ok().filter(|t| !t.is_empty()) {
-        Some(t) => t,
-        None => spira_config::discover(None).map(|p| p.display().to_string()).ok_or_else(|| fail("no config: SPIRA_TOML is not set and none is installed at the default location".into()))?,
-    };
-    std::env::set_var("SPIRA_TOML", &toml);
+    let toml = spira_config::process::spec().map_err(fail)?;
     std::env::set_var(spira_config::RELEASE_ENV, &release);
     let cfg = spira_config::process::cfg;
     let run = PathBuf::from(cfg("SPIRA_RUN").map_err(fail)?);
