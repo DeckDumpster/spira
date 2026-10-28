@@ -105,7 +105,8 @@ pub struct Launch<'a> {
 }
 
 fn active(sys: &dyn Sys, unit: &str) -> bool {
-    sys.exec("systemctl", &["--user".into(), "is-active".into(), "--quiet".into(), unit.into()], 20).code == Some(0)
+    let o = sys.exec("systemctl", &["--user".into(), "is-active".into(), unit.into()], 20);
+    matches!(o.text.lines().next().map(str::trim), Some("active" | "activating" | "reloading"))
 }
 
 /// Refuses a round that is not open; finds a running driver or starts one.
@@ -157,7 +158,8 @@ pub fn drive(sys: &dyn Sys, batch: &str, repo: &str) -> u8 {
     let cert = queue(sys, &["certify", batch, repo], CERTIFY_DEADLINE_SECS);
     println!("{}", tail(&cert.text, 4));
     if cert.code != Some(0) {
-        println!("round-recert: {batch} is not green (certify rc={}) — round left open", cert.code.map_or("signal".into(), |c| c.to_string()));
+        let how = if cert.text.contains("red-output=") { "RED" } else { "incomplete, no red named" };
+        println!("round-recert: {batch} is not green: {how} (certify rc={}) — round left open", cert.code.map_or("signal".into(), |c| c.to_string()));
         return 1;
     }
     let land = queue(sys, &["land", batch, repo], LAND_DEADLINE_SECS);
@@ -179,13 +181,9 @@ struct Real {
     path: String,
 }
 
-fn which(prog: &str, path: &str) -> Option<PathBuf> {
-    path.split(':').filter(|d| !d.is_empty()).map(|d| Path::new(d).join(prog)).find(|p| p.is_file())
-}
-
 impl Sys for Real {
     fn exec(&self, program: &str, args: &[String], deadline_secs: u64) -> Out {
-        let Some(bin) = which(program, &self.path) else {
+        let Some(bin) = crate::vm_repro::which(program, &self.path) else {
             return Out { code: None, text: format!("{program} is not on the launcher's PATH ({})\n", self.path) };
         };
         let run = spira_config::bounded::bounded_for(bin, &deadline_secs.to_string()).args(args).env_clear().envs(self.env.iter().cloned()).stdin(Stdio::null()).output();

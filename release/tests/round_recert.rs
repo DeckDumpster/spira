@@ -17,17 +17,20 @@ status)
         echo "round=none"; echo "repo=$3"
     fi ;;
 certify)
-    if [ -e $S/red ]; then echo "queue.sh round certify: round $3 is RED"; exit 1; fi
+    if [ -e $S/red ]; then echo "red-output=/x/red.out"; exit 1; fi
+    if [ -e $S/incomplete ]; then echo "NO RESULT"; exit 75; fi
     echo "queue.sh round certify: round $3 is GREEN at abc123"; echo green > $S/phase ;;
 land)
     [ "$(cat $S/phase)" = green ] || { echo "not green"; exit 1; }
+    [ -e $S/land-3 ] && { rm -f $S/open; exit 3; }
+    [ -e $S/land-stays ] && { echo "queue.sh round land: $3 landed"; exit 0; }
     rm -f $S/open; echo "queue.sh round land: $3 landed" ;;
 *) exit 64 ;;
 esac
 "#;
 
-const SYSTEMD_RUN: &str = "#!/bin/sh\necho \"$*\" >> @S@/runs\nfor a in \"$@\"; do case \"$a\" in --unit=*) touch @S@/active-${a#--unit=};; esac; done\n";
-const SYSTEMCTL: &str = "#!/bin/sh\nfor a in \"$@\"; do u=$a; done\n[ -e @S@/active-$u ]\n";
+const SYSTEMD_RUN: &str = "#!/bin/sh\necho \"$*\" >> @S@/runs\nfor a in \"$@\"; do case \"$a\" in --unit=*) echo active > @S@/active-${a#--unit=};; esac; done\n";
+const SYSTEMCTL: &str = "#!/bin/sh\nfor a in \"$@\"; do u=$a; done\nif [ -e @S@/active-$u ]; then cat @S@/active-$u; else echo inactive; exit 3; fi\n";
 
 struct Fixture {
     _tmp: testkit::TempDir,
@@ -61,7 +64,7 @@ fn fixture(name: &str, phase: Option<&str>) -> Fixture {
 fn recert(f: &Fixture, args: &[&str]) -> Output {
     let home = f.root.join("home");
     fs::create_dir_all(&home).unwrap();
-    Command::new(f.release.join("bin/round-recert")).env_clear().env("HOME", &home).env("SPIRA_TOML", &f.toml).args(args).output().unwrap()
+    testkit::retry_busy(|| Command::new(f.release.join("bin/round-recert")).env_clear().env("HOME", &home).env("SPIRA_TOML", &f.toml).args(args).output()).unwrap()
 }
 
 fn text(o: &Output) -> String {
@@ -128,7 +131,7 @@ fn a_driven_round_that_certifies_red_is_left_open_and_never_lands() {
     fs::write(f.state.join("red"), "").unwrap();
     let o = recert(&f, &["--drive", "--batch", "r-1", "--repo", "spira"]);
     assert_eq!(o.status.code(), Some(1), "{}", text(&o));
-    assert!(text(&o).contains("round left open"), "{}", text(&o));
+    assert!(text(&o).contains("is not green: RED") && text(&o).contains("round left open"), "{}", text(&o));
     assert!(lines(&f, "calls").iter().all(|l| !l.contains(" land ")));
     assert!(f.state.join("open").exists());
 }
@@ -141,4 +144,44 @@ fn arguments_that_are_not_plain_names_are_refused_before_anything_runs() {
         assert_eq!(o.status.code(), Some(2), "{args:?}: {}", text(&o));
     }
     assert!(lines(&f, "calls").is_empty() && lines(&f, "runs").is_empty());
+}
+
+#[test]
+fn a_pass_that_ends_incomplete_with_no_red_says_so_and_never_lands() {
+    let f = fixture("incomplete", Some("certifying"));
+    fs::write(f.state.join("incomplete"), "").unwrap();
+    let o = recert(&f, &["--drive", "--batch", "r-1", "--repo", "spira"]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(text(&o).contains("incomplete, no red named (certify rc=75)"), "{}", text(&o));
+    assert!(lines(&f, "calls").iter().all(|l| !l.contains(" land ")));
+}
+
+#[test]
+fn a_land_that_exits_zero_with_the_round_still_open_is_not_reported_landed() {
+    let f = fixture("stays", Some("certifying"));
+    fs::write(f.state.join("land-stays"), "").unwrap();
+    let o = recert(&f, &["--drive", "--batch", "r-1", "--repo", "spira"]);
+    assert_eq!(o.status.code(), Some(1), "{}", text(&o));
+    assert!(text(&o).contains("LAND FAILED") && text(&o).contains("still open"), "{}", text(&o));
+}
+
+#[test]
+fn a_land_whose_release_was_not_activated_is_reported_landed_with_that_said() {
+    let f = fixture("deploy", Some("certifying"));
+    fs::write(f.state.join("land-3"), "").unwrap();
+    let o = recert(&f, &["--drive", "--batch", "r-1", "--repo", "spira"]);
+    assert_eq!(o.status.code(), Some(0), "{}", text(&o));
+    assert!(text(&o).contains("landed at abc123 but its release was not activated"), "{}", text(&o));
+}
+
+#[test]
+fn a_unit_that_has_finished_is_not_a_driver_so_the_next_call_starts_a_new_one() {
+    let f = fixture("finished", Some("certifying"));
+    assert!(text(&recert(&f, &["--batch", "r-1", "--repo", "spira"])).contains("started"));
+    fs::remove_file(f.state.join("active-round-recert-r-1")).unwrap();
+    assert!(text(&recert(&f, &["--batch", "r-1", "--repo", "spira"])).contains("started"));
+    assert_eq!(lines(&f, "runs").len(), 2);
+    fs::write(f.state.join("active-round-recert-r-1"), "activating\n").unwrap();
+    assert!(text(&recert(&f, &["--batch", "r-1", "--repo", "spira"])).contains("already running"));
+    assert_eq!(lines(&f, "runs").len(), 2);
 }

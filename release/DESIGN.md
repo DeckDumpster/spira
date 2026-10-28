@@ -772,4 +772,4 @@ program must be a bare name in the release's `bin/`) and also `release round-rec
    release not activated) and the round has left `queue round status`; a red or incomplete
    certify leaves the round open and the unit exits `1`.
 
-The certify lock is the guard against a second certify of the same batch, whoever started it.
+It does not clear the rounds loop's pause after a landing; that stays the loop's own. The certify lock is the guard against a second certify of the same batch, whoever started it.
