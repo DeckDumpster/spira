@@ -47,7 +47,7 @@ mkdir -p "$LAW_FIX/law" && git -C "$LAW_FIX" init -q
 printf '[[part]]\nnumber = 1\nname = "Fixture"\nslug = "fixture"\nscope = "Fixture Part."\nslugs = []\n' > "$LAW_FIX/law/toc.toml"
 git -C "$LAW_FIX" add -A && git -C "$LAW_FIX" -c user.name=t -c user.email=t@t commit -q -m fixture
 # enact commits law/ to the repo SPIRA_REPO names, in a worktree under SPIRA_RUN.
-rule_sh() { [ "$1" = enact ] && set -- "$@" --part 1; (cd "$LAW_FIX" && SPIRA_REPO="$LAW_FIX" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t bash "$RULE_SH" "$@"); }
+rule_sh() { [ "$1" = enact ] && set -- "$@" --part 1; (cd "$LAW_FIX" && SPIRA_REPO="$LAW_FIX" SPIRA_RUN="$TMP/run" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t bash "$RULE_SH" "$@"); }
 
 echo "=== rule.sh: synth failure propagation ==="
 
