@@ -999,6 +999,12 @@ fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, regist
     .map_err(ResolveError::Registry)?;
     set!("SPIRA_REPO_MAP", repo_map.clone());
 
+    // 31. SPIRA_RUNES_DIR: empty or undeclared is the release's own runes, so every reader agrees.
+    let runes_dir = seed("SPIRA_RUNES_DIR", env, &toml_map)
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| crate::eval::spira_join(&home_str, "runes"));
+    set!("SPIRA_RUNES_DIR", runes_dir);
+
     // The generic registry pass: every remaining `spira/conf.d/<KEY>` not already resolved
     // above, in topological order.
     let order = registry::topo_order(registry).map_err(ResolveError::Registry)?;
@@ -1053,6 +1059,22 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("SPIRA_RUN") && msg.contains("spira.run"), "{msg}");
         assert!(!msg.contains("/from/the/environment"), "the environment must not be read: {msg}");
+    }
+
+    #[test]
+    fn an_empty_runes_dir_resolves_to_the_homes_runes_and_reaches_sh_all() {
+        let ws = testkit::TempDir::new("spira-config-resolve-runes-dir");
+        let (home, repo) = fixture_home_repo(&ws);
+        let e = env(&[("HOME", "/h")]);
+        let doc = crate::fixture_doc(&env(&[("SPIRA_RUNES_DIR", "")]));
+        let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&doc), conf_d: &home.join("conf.d") }).unwrap();
+        let want = format!("{}/runes", home.display());
+        assert_eq!(r.get("SPIRA_RUNES_DIR"), want);
+        assert!(r.to_sh_all().contains(&format!("SPIRA_RUNES_DIR='{want}'")), "{}", r.to_sh_all());
+
+        let declared = crate::fixture_doc(&env(&[("SPIRA_RUNES_DIR", "/elsewhere/runes")]));
+        let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&declared), conf_d: &home.join("conf.d") }).unwrap();
+        assert_eq!(r.get("SPIRA_RUNES_DIR"), "/elsewhere/runes");
     }
 
     fn fixture_home_repo(workspaces: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
