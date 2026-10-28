@@ -1,6 +1,5 @@
 [Unit]
 Description=Spira runtime — the long-running host of the loop's workflows (heartbeat, wide events, stall quarantine)
-Documentation=file://@SPIRA_HOME@/metrics-stack.sh
 After=lc-serve.socket
 Wants=lc-serve.socket
 StartLimitIntervalSec=300
