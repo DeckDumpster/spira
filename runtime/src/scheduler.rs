@@ -22,10 +22,16 @@ impl Scheduler {
 
     /// A row id already inserted is ignored: a replay re-issues the same `Schedule`.
     pub fn insert(&mut self, row: ScheduleRow) {
+        let tie = self.rng.next_u64();
+        self.insert_with_tie(row, tie);
+    }
+
+    /// For a caller that owns the one PRNG every decision draws from, so a tie is a draw in
+    /// that stream. A duplicate id draws nothing from the scheduler's own.
+    pub fn insert_with_tie(&mut self, row: ScheduleRow, tie: u64) {
         if !self.seen.insert(row.id.clone()) {
             return;
         }
-        let tie = self.rng.next_u64();
         self.heap.push(Reverse((row.at, tie, row.id.clone())));
         self.rows.insert(row.id.clone(), row);
     }
@@ -40,6 +46,12 @@ impl Scheduler {
 
     pub fn is_empty(&self) -> bool {
         self.heap.is_empty()
+    }
+
+    /// The earliest row whatever the clock says: a virtual-time loop jumps to it.
+    pub fn pop_next(&mut self) -> Option<ScheduleRow> {
+        let Reverse((_, _, id)) = self.heap.pop()?;
+        self.rows.remove(&id)
     }
 
     pub fn pop_due(&mut self, clock: &dyn Clock) -> Vec<ScheduleRow> {
@@ -91,6 +103,16 @@ mod tests {
         assert_eq!(a[0], "early");
         assert_eq!(a, order(1));
         assert!((2..40).any(|s| order(s) != a), "ties must depend on the seed");
+    }
+
+    #[test]
+    fn pop_next_ignores_the_clock_and_an_explicit_tie_orders_equal_times() {
+        let mut s = Scheduler::new(1);
+        s.insert_with_tie(row("late", 90), 0);
+        s.insert_with_tie(row("b", 10), 7);
+        s.insert_with_tie(row("a", 10), 3);
+        let ids: Vec<_> = std::iter::from_fn(|| s.pop_next()).map(|r| r.id).collect();
+        assert_eq!(ids, ["a", "b", "late"]);
     }
 
     #[test]
