@@ -83,6 +83,8 @@ pub struct State {
     /// The claude session id this run launched or resumed (empty before launch).
     pub session_id: String,
     pub session_rc: i32,
+    /// The launcher call's own wall time; `None` when no session launched.
+    pub session_wall_s: Option<i64>,
     /// The verdict's `committed`; false until the verdict block ran.
     pub committed: bool,
     /// The branch's tip (full hash), read right before the session starts (sp-1zxru-2).
@@ -222,7 +224,8 @@ impl<'a> Run<'a> {
 
     /// `ledger_done <rc> <status>`: the line, then tsd and the rapid-recur check.
     pub fn ledger_done(&self, rc: i32, status: &str) {
-        let fields = ledger::session_result_fields(self.s.logf.as_deref(), &self.conf.trace_mark());
+        let mut fields = ledger::session_result_fields(self.s.logf.as_deref(), &self.conf.trace_mark());
+        fields.fill_wall(self.s.session_wall_s);
         self.ledger.done(self.now(), self.f(), &self.s.bead, rc, status, &fields);
         trace::tsd_dwarf_session(self.d.exec, &self.run_dir().display().to_string(), &self.s.bead, self.f(), rc, status, &fields);
         self.rapid_recur_check();
@@ -1321,7 +1324,9 @@ impl<'a> Run<'a> {
             (agent, argv, restrict::restricted_env(&bead, &child, &model_bin))
         };
         let spec = SessionSpec { prog, args, stdin_file: task_file, log: logf, cwd: work.to_path_buf(), env: spec_env, timeout: self.rune.timeout_seconds, halted: Some(self.run_dir().join("world.halted")), warm: warm_slot };
+        let launched = self.now();
         let rc = self.d.launcher.run(&spec, &self.stop);
+        self.s.session_wall_s = Some((self.now() - launched).max(0));
         // Interrupted: bash's trap ran before `SESSION_RC=$rc`, so SESSION_RC stays 0.
         self.check_stop()?;
         self.s.session_rc = rc;

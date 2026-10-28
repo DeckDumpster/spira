@@ -437,6 +437,26 @@ pub fn rapid_recur_streak(lines: &[&str]) -> i64 {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn deadline_kills_with_harness_wall_do_not_streak() {
+        let line = |f: &crate::ledger::SessionFields| format!("2026-10-28T10:49:05Z done mender sp-x rc=124 status=in_progress {}", f.render());
+        let lines = |wall: Option<i64>| {
+            let mut f = crate::ledger::SessionFields::default();
+            f.fill_wall(wall);
+            let l = line(&f);
+            vec![l.clone(), l.clone(), l]
+        };
+        let killed = lines(Some(430));
+        let refs: Vec<&str> = killed.iter().map(String::as_str).collect();
+        assert_eq!(rapid_recur_streak(&refs), 0, "three seven-minute deadline kills are not a setup loop");
+        let setup = lines(None);
+        let refs: Vec<&str> = setup.iter().map(String::as_str).collect();
+        assert_eq!(rapid_recur_streak(&refs), 3, "a session that never launched still streaks");
+        let mut f = crate::ledger::SessionFields { wall_s: Some(2), ..Default::default() };
+        f.fill_wall(Some(430));
+        assert_eq!(f.wall_s, Some(2), "a reported wall time is never overwritten");
+    }
+
+    #[test]
     fn a_restricted_submission_is_judged_by_the_close_guards() {
         let row = |st: &str| spira_config::lc_state::Row { bead_id: "sp-x".into(), state: st.into(), ..Default::default() };
         // Every session is restricted: its hand-on is SUBMITTED, never a bd close.
