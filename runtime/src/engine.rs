@@ -139,6 +139,10 @@ impl Engine {
         Ok(())
     }
 
+    pub fn into_registrations(self) -> Vec<Registration> {
+        self.regs
+    }
+
     pub fn projection(&self) -> &Projection {
         &self.projection
     }
