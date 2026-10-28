@@ -208,12 +208,31 @@ fn commit_law_adds_the_section_on_its_own_branch_and_leaves_the_checkout_alone()
         .into_iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
-    let branch = rule::code::commit_law(repo.path(), None, wt_root.path(), "law-four", &toc, &book).unwrap();
+    let branch = rule::code::commit_law(repo.path(), None, wt_root.path(), "enact", "law-four", &toc, &book).unwrap();
     let show = |p: &str| Command::new("git").arg("-C").arg(repo.path()).args(["show", &format!("{branch}:{p}")]).output().unwrap();
     let added = show("law/2-beta/2.2-law-four.md");
     assert!(added.status.success() && String::from_utf8_lossy(&added.stdout).contains("Do four."));
     assert!(!repo.join("law/2-beta").exists(), "the checkout's own tree was written to");
     assert!(std::fs::read_dir(wt_root.path()).unwrap().next().is_none(), "the worktree was left behind");
+}
+
+fn book_of(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+    pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+}
+
+/// `bead.sh` files `sp-lawN` (N counts calls) and `queue submit` lands the branch by
+/// fast-forwarding the repo's checked-out branch to it, standing in for a round.
+fn queue_shims(repo: &Path) -> (testkit::TempDir, String) {
+    let bin = testkit::TempDir::new("law-submit-bin");
+    let (calls, count) = (bin.join("calls"), bin.join("count"));
+    testkit::write_exe(bin.join("bead.sh"), &format!("#!/bin/sh\necho \"bead $*\" >> {c}\necho x >> {n}\necho \"{{\\\"id\\\":\\\"sp-law$(wc -l < {n} | tr -d ' ')\\\"}}\"\n", c = calls.display(), n = count.display()));
+    testkit::write_exe(bin.join("queue"), &format!("#!/bin/sh\necho \"queue $*\" >> {c}\ngit -C {r} merge -q --ff-only \"$2\"\n", c = calls.display(), r = repo.display()));
+    let path = format!("{}:{}", bin.path().display(), std::env::var("PATH").unwrap_or_default());
+    (bin, path)
+}
+
+fn land(repo: &Path, wt_root: &Path, verb: &str, key: &str, toc: &[rule::code::Part], book: &BTreeMap<String, String>) -> Result<(String, String), String> {
+    rule::code::land_law(&rule::code::LawRepo { path: repo, base: None, name: "fixture" }, wt_root, verb, key, toc, book)
 }
 
 #[test]
@@ -225,7 +244,84 @@ fn commit_law_twice_for_one_slug_in_one_second_gives_two_branches() {
         .into_iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
-    let branches: Vec<String> = (0..5).map(|_| rule::code::commit_law(repo.path(), None, wt_root.path(), "law-four", &toc, &book).unwrap()).collect();
+    let branches: Vec<String> = (0..5).map(|_| rule::code::commit_law(repo.path(), None, wt_root.path(), "enact", "law-four", &toc, &book).unwrap()).collect();
     let distinct: std::collections::BTreeSet<_> = branches.iter().collect();
     assert_eq!(distinct.len(), branches.len(), "{branches:?}");
+}
+
+#[test]
+fn an_enacted_law_commit_is_filed_under_a_bead_and_a_round_lands_it_on_the_land_ref() {
+    let repo = fixture_repo("law-submit");
+    let wt_root = testkit::TempDir::new("law-submit-wt");
+    let (bin, path) = queue_shims(repo.path());
+    let _env = testkit::env(&[("PATH", Some(path.as_str()))]);
+    let toc = append(&parse_toc(TOC).unwrap(), 2, "law-four").unwrap();
+    let book = book_of(&[("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three."), ("law-four", "Do four.")]);
+    let (id, branch) = land(repo.path(), wt_root.path(), "enact", "law-four", &toc, &book).unwrap();
+    assert_eq!((id.as_str(), branch.as_str()), ("sp-law1", "spira/sp-law1"));
+    let landed = rule::code::git_in(repo.path(), &["show", "HEAD:law/2-beta/2.2-law-four.md"]).unwrap();
+    assert!(landed.contains("Do four."), "{landed}");
+    let tip = rule::code::git_in(repo.path(), &["rev-parse", "HEAD"]).unwrap();
+    let log = std::fs::read_to_string(bin.join("calls")).unwrap();
+    assert!(log.contains(&format!("--submitted --tip {tip}")), "{log}");
+    assert!(log.contains("queue submit spira/sp-law1 fixture"), "{log}");
+    let leftover = rule::code::git_in(repo.path(), &["for-each-ref", "--format=%(refname)", "refs/heads/law"]).unwrap();
+    assert!(leftover.is_empty(), "a law/ branch no bead references was left behind: {leftover}");
+}
+
+#[test]
+fn a_retire_commit_is_submitted_the_same_way_and_reserves_the_number() {
+    let repo = fixture_repo("law-retire");
+    let wt_root = testkit::TempDir::new("law-retire-wt");
+    let (_bin, path) = queue_shims(repo.path());
+    let _env = testkit::env(&[("PATH", Some(path.as_str()))]);
+    let toc = parse_toc(TOC).unwrap();
+    let book = book_of(&[("law-one", "Do one."), ("law-three", "Do three.")]);
+    land(repo.path(), wt_root.path(), "retire", "law-two", &toc, &book).unwrap();
+    let landed = rule::code::git_in(repo.path(), &["show", "HEAD:law/1-alpha/1.2-law-two.md"]).unwrap();
+    assert!(landed.contains("[Reserved]"), "{landed}");
+}
+
+#[test]
+fn a_failing_queue_submit_names_the_bead_and_the_branch() {
+    let repo = fixture_repo("law-submit-fail");
+    let wt_root = testkit::TempDir::new("law-submit-fail-wt");
+    let (bin, path) = queue_shims(repo.path());
+    testkit::write_exe(bin.join("queue"), "#!/bin/sh\necho gate red >&2\nexit 1\n");
+    let _env = testkit::env(&[("PATH", Some(path.as_str()))]);
+    let toc = append(&parse_toc(TOC).unwrap(), 2, "law-four").unwrap();
+    let err = land(repo.path(), wt_root.path(), "enact", "law-four", &toc, &book_of(&[("law-four", "Do four.")])).unwrap_err();
+    assert!(err.contains("sp-law1") && err.contains("gate red"), "{err}");
+}
+
+#[test]
+fn a_second_enact_made_before_the_first_lands_takes_the_next_number() {
+    let repo = fixture_repo("law-in-flight");
+    let wt_root = testkit::TempDir::new("law-in-flight-wt");
+    let (bin, path) = queue_shims(repo.path());
+    testkit::write_exe(bin.join("queue"), "#!/bin/sh\nexit 0\n");
+    let _env = testkit::env(&[("PATH", Some(path.as_str()))]);
+    let book = book_of(&[("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three."), ("law-four", "Do four."), ("law-five", "Do five.")]);
+    let first = append(&parse_toc(TOC).unwrap(), 2, "law-four").unwrap();
+    land(repo.path(), wt_root.path(), "enact", "law-four", &first, &book).unwrap();
+    let seen = rule::code::with_in_flight(repo.path(), None, parse_toc(TOC).unwrap());
+    let second = append(&seen, 2, "law-five").unwrap();
+    assert_eq!(second[1].slugs, ["law-three", "law-four", "law-five"]);
+    let (_, branch) = land(repo.path(), wt_root.path(), "enact", "law-five", &second, &book).unwrap();
+    let five = rule::code::git_in(repo.path(), &["show", &format!("{branch}:law/2-beta/2.3-law-five.md")]).unwrap();
+    assert!(five.contains("Do five."), "{five}");
+}
+
+#[test]
+fn a_trailing_citation_stays_out_of_the_shipped_section_and_a_midtext_parenthesis_stays_in() {
+    let parts = parse_toc(TOC).unwrap();
+    let tree = generate(&parts, |slug| match slug {
+        "law-one" => Some("Do one. (per the case that produced it: details.)\n".into()),
+        "law-two" => Some("Do two (per the spec) always. (sp-abc123.1: the scar, told at length.)".into()),
+        "law-three" => Some("Do three (per the spec) always. (spa-x: not a bead) (per a ruling) (sp-abc123: the scar)".into()),
+        _ => None,
+    });
+    assert_eq!(tree["1-alpha/1.1-law-one.md"], "# §1.1 law-one\n\nDo one.\n");
+    assert_eq!(tree["1-alpha/1.2-law-two.md"], "# §1.2 law-two\n\nDo two (per the spec) always.\n");
+    assert_eq!(tree["2-beta/2.1-law-three.md"], "# §2.1 law-three\n\nDo three (per the spec) always. (spa-x: not a bead)\n");
 }

@@ -96,6 +96,26 @@ pub fn append(parts: &[Part], number: u32, slug: &str) -> Result<Vec<Part>, Stri
     Ok(out)
 }
 
+/// A statute's trailing parenthetical citing the operator (`(per ...)`) or a bead
+/// (`(sp-...: ...)`) names the case that produced it; the shipped projection carries the rule,
+/// the store and the wiki keep the history.
+fn without_citation(text: &str) -> &str {
+    let mut rest = text.trim_end();
+    while rest.ends_with(')') {
+        let Some(i) = rest.rfind('(').filter(|&i| is_citation(&rest[i..])) else { break };
+        rest = rest[..i].trim_end();
+    }
+    if rest.len() == text.trim_end().len() {
+        text
+    } else {
+        rest
+    }
+}
+
+fn is_citation(paren: &str) -> bool {
+    paren.starts_with("(per ") || paren.strip_prefix("(sp-").is_some_and(|r| r.split_once(':').is_some_and(|(id, _)| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')))
+}
+
 fn first_sentence(text: &str) -> String {
     let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
     match flat.find(". ") {
@@ -121,7 +141,10 @@ pub fn generate(parts: &[Part], text_of: impl Fn(&str) -> Option<String>) -> BTr
             let sec = format!("{}.{}", p.number, i + 1);
             let text = text_of(slug);
             let (summary, body) = match &text {
-                Some(t) => (first_sentence(t), t.trim_end_matches('\n').to_string()),
+                Some(t) => {
+                    let t = without_citation(t);
+                    (first_sentence(t), t.trim_end_matches('\n').to_string())
+                }
                 None => ("[Reserved]".to_string(), "[Reserved] — no longer in force.".to_string()),
             };
             idx.push_str(&format!("- §{sec} {slug} — {summary}\n"));
@@ -202,11 +225,11 @@ pub fn git_in(dir: &Path, args: &[&str]) -> Result<String, String> {
 
 /// Regenerates `law/` in a short-lived worktree of `repo`, commits it on a branch of its own and
 /// removes the worktree. The caller's directory and the repo's own checkout are never touched.
-pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, key: &str, toc: &[Part], book: &BTreeMap<String, String>) -> Result<String, String> {
+pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, verb: &str, key: &str, toc: &[Part], book: &BTreeMap<String, String>) -> Result<String, String> {
     std::fs::create_dir_all(wt_root).map_err(|e| format!("rule: {}: {e}", wt_root.display()))?;
     let stamp = format!("{}-{}", SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0), std::process::id());
     let branch = format!("law/{}-{stamp}", key.trim_start_matches("law-"));
-    let wt = wt_root.join(format!("rule-enact-{}-{stamp}", key.trim_start_matches("law-")));
+    let wt = wt_root.join(format!("rule-{verb}-{}-{stamp}", key.trim_start_matches("law-")));
     let wt_s = wt.display().to_string();
     git_in(repo_path, &["worktree", "add", "-q", "-b", &branch, &wt_s, base.unwrap_or("HEAD")])?;
     let done = (|| {
@@ -221,7 +244,7 @@ pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, key: &st
             .spawn()
             .map_err(|e| format!("rule: git commit: {e}"))?;
         if let Some(mut stdin) = child.stdin.take() {
-            let _ = writeln!(stdin, "law: enact {key}");
+            let _ = writeln!(stdin, "law: {verb} {key}");
         }
         let out = child.wait_with_output().map_err(|e| format!("rule: git commit: {e}"))?;
         if out.status.success() {
@@ -232,6 +255,86 @@ pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, key: &st
     })();
     let _ = git_in(repo_path, &["worktree", "remove", "--force", &wt_s]);
     done.map(|()| branch)
+}
+
+/// The home repository: its checkout, the ref `law/` is cut from, and its name in the repo map.
+pub struct LawRepo<'a> {
+    pub path: &'a Path,
+    pub base: Option<&'a str>,
+    pub name: &'a str,
+}
+
+/// Commits the `law/` projection on a branch of its own and hands it to the queue under a
+/// bead, so the next round lands it. Returns the bead id and the branch the queue holds.
+pub fn land_law(repo: &LawRepo, wt_root: &Path, verb: &str, key: &str, toc: &[Part], book: &BTreeMap<String, String>) -> Result<(String, String), String> {
+    let (repo_path, repo_name) = (repo.path, repo.name);
+    let law_branch = commit_law(repo_path, repo.base, wt_root, verb, key, toc, book)?;
+    submit_law(repo_path, repo_name, wt_root, &law_branch, verb, key).map_err(|e| format!("{e}\nrule: the law/ commit is on branch {law_branch}"))
+}
+
+/// `toc` plus every slug that a branch not yet on `base` has filed in a Part (a `law/` branch,
+/// or the `spira/<bead>` branch one was submitted as), so two enacts made before either lands
+/// take different section numbers.
+pub fn with_in_flight(repo_path: &Path, base: Option<&str>, toc: Vec<Part>) -> Vec<Part> {
+    let base = base.unwrap_or("HEAD");
+    let Ok(refs) = git_in(repo_path, &["for-each-ref", "--format=%(refname)", &format!("--no-merged={base}"), "refs/heads/law", "refs/heads/spira"]) else {
+        return toc;
+    };
+    let mut merged = toc;
+    for r in refs.lines() {
+        let Ok(text) = git_in(repo_path, &["show", &format!("{r}:law/toc.toml")]) else { continue };
+        let Ok(theirs) = parse_toc(&text) else { continue };
+        for p in &theirs {
+            for slug in &p.slugs {
+                if !merged.iter().any(|m| m.slugs.contains(slug)) {
+                    if let Some(home) = merged.iter_mut().find(|m| m.number == p.number) {
+                        home.slugs.push(slug.clone());
+                    }
+                }
+            }
+        }
+    }
+    merged
+}
+
+/// Files a SUBMITTED bead at the tip of `law_branch`, renames the branch to the bead's own
+/// (`spira/<id>`, the name the queue lands) and submits it. Returns the bead id and the branch.
+pub fn submit_law(repo_path: &Path, repo_name: &str, wt_root: &Path, law_branch: &str, verb: &str, key: &str) -> Result<(String, String), String> {
+    let tip = git_in(repo_path, &["rev-parse", law_branch])?;
+    let title = format!("law: {verb} {key} — land its law/ commit");
+    let body = format!("{law_branch} carries the law/ projection of the statute book after `rule.sh {verb} {key}`. Landing this bead puts that commit on the landing ref.\n");
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let body_file = wt_root.join(format!("rule-{verb}-{key}-{}-{stamp}.bead.txt", std::process::id()));
+    std::fs::write(&body_file, body).map_err(|e| format!("rule: {}: {e}", body_file.display()))?;
+    let filed = spira_config::bounded::bounded("bead.sh")
+        .args(["file", &title, "--for", "ops", "--repo", repo_name, "--submitted", "--tip", &tip, "--json", "--body-file"])
+        .arg(&body_file)
+        .stdin(Stdio::null())
+        .output();
+    let _ = std::fs::remove_file(&body_file);
+    let filed = filed.map_err(|e| format!("rule: bead.sh: {e}"))?;
+    if !filed.status.success() {
+        return Err(format!("rule: bead.sh file: {}", String::from_utf8_lossy(&filed.stderr).trim()));
+    }
+    let id = filed_id(&String::from_utf8_lossy(&filed.stdout))?;
+    let branch = format!("spira/{id}");
+    git_in(repo_path, &["branch", "-m", law_branch, &branch])?;
+    let submit = spira_config::bounded::bounded("queue").args(["submit", &branch, repo_name]).stdin(Stdio::null()).output().map_err(|e| format!("rule: queue: {e}"))?;
+    if !submit.status.success() {
+        return Err(format!("rule: queue submit {branch} (bead {id}): {}", String::from_utf8_lossy(&submit.stderr).trim()));
+    }
+    Ok((id, branch))
+}
+
+/// The id `bead.sh file --json` printed: the first JSON object (or one-element array) on stdout.
+fn filed_id(out: &str) -> Result<String, String> {
+    let start = out.find(['{', '[']).ok_or_else(|| format!("rule: no JSON in bead.sh file's output: {out:?}"))?;
+    let v: serde_json::Value = serde_json::from_str(out[start..].trim()).map_err(|e| format!("rule: bead.sh file's output is not JSON: {e}"))?;
+    let v = match v {
+        serde_json::Value::Array(a) => a.into_iter().next().ok_or("rule: bead.sh file printed an empty JSON array")?,
+        o => o,
+    };
+    v.get("id").and_then(|i| i.as_str()).map(str::to_string).ok_or_else(|| format!("rule: no id in bead.sh file's output: {out:?}"))
 }
 
 /// Writes `toc` and its generated tree under `law` and stages it.

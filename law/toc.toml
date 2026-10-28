@@ -5,4 +5,7 @@ slug = "general"
 scope = "Placeholder Part until the table of contents is approved."
 slugs = [
   "law-absence-needs-a-positive-control",
+  "law-a-watcher-runs-the-sop-before-it-pages",
+  "law-a-failure-that-will-not-reproduce-is-a-fidelity-gap",
+  "law-p0-express-preempts-lanes",
 ]
