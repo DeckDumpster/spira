@@ -7,14 +7,16 @@ pub mod conformance;
 pub mod engine;
 pub mod event;
 pub mod host;
+pub mod file_journal;
 pub mod journal;
+pub mod lease;
 pub mod ports;
 pub mod scheduler;
 pub mod store;
 
 pub use engine::{Engine, Executor, Outcome, PendingEffect};
 pub use event::*;
-pub use journal::{FaultyJournal, Journal, MemJournal, Offset, Poison, ScheduleRow};
+pub use journal::{FaultyJournal, Journal, Lease, LeaseTable, MemJournal, Offset, Poison, ScheduleRow};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeError(pub String);

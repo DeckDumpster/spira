@@ -28,6 +28,50 @@ pub struct Poison {
     pub message: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Lease {
+    pub stream: StreamKey,
+    pub holder: String,
+    pub epoch: u64,
+    pub expires_at: u64,
+}
+
+pub const LEASE_LOST: &str = "lease lost";
+
+/// The lease a caller would hold after asking for `stream`: its own renewed, a free or expired
+/// one taken at the next epoch, or nothing when a live holder has it. A released lease keeps
+/// its epoch (holder empty, expired) so the next holder still fences the last.
+pub fn grant(cur: Option<&Lease>, stream: &StreamKey, holder: &str, ttl_ms: u64, now: u64) -> Option<Lease> {
+    let expires_at = now.saturating_add(ttl_ms);
+    let lease = |epoch| Some(Lease { stream: stream.clone(), holder: holder.into(), epoch, expires_at });
+    match cur {
+        None => lease(1),
+        Some(c) if c.holder == holder => lease(c.epoch),
+        Some(c) if c.expires_at <= now => lease(c.epoch + 1),
+        Some(_) => None,
+    }
+}
+
+pub fn fence(cur: Option<&Lease>, stream: &StreamKey, holder: &str, epoch: u64) -> Result<()> {
+    match cur {
+        Some(c) if c.holder == holder && c.epoch == epoch => Ok(()),
+        _ => Err(RuntimeError::new(format!("{LEASE_LOST}: {}", stream.0))),
+    }
+}
+
+pub fn release(cur: Option<&Lease>, holder: &str) -> Option<Lease> {
+    cur.filter(|c| c.holder == holder).map(|c| Lease { holder: String::new(), expires_at: 0, ..c.clone() })
+}
+
+/// Stream ownership. `append_fenced` is the one write that checks the lease and appends in a
+/// single step, so a holder that was stolen from cannot land an event after the steal.
+pub trait LeaseTable: Send + Sync {
+    fn acquire(&self, stream: &StreamKey, holder: &str, ttl_ms: u64, now: u64) -> Result<Option<Lease>>;
+    fn release(&self, stream: &StreamKey, holder: &str) -> Result<()>;
+    fn current(&self, stream: &StreamKey) -> Result<Option<Lease>>;
+    fn append_fenced(&self, ev: &Event, holder: &str, epoch: u64) -> Result<Offset>;
+}
+
 /// Every method is idempotent on its key: `append` on an id already present returns the
 /// existing offset, so a replayed handler writes nothing twice.
 pub trait Journal: Send + Sync {
@@ -42,6 +86,10 @@ pub trait Journal: Send + Sync {
     fn mark_fired(&self, row_id: &str) -> Result<()>;
     fn poison(&self, p: &Poison) -> Result<()>;
     fn poisoned(&self, stream: &StreamKey) -> Result<Option<Poison>>;
+    /// `None` when the journal cannot arbitrate stream ownership between processes.
+    fn leases(&self) -> Option<&dyn LeaseTable> {
+        None
+    }
 }
 
 #[derive(Default)]
@@ -52,6 +100,19 @@ struct Mem {
     cursor: Offset,
     schedules: BTreeMap<String, (ScheduleRow, bool)>,
     poison: BTreeMap<StreamKey, Poison>,
+    leases: BTreeMap<StreamKey, Lease>,
+}
+
+impl Mem {
+    fn append(&mut self, ev: &Event) -> Offset {
+        if let Some(o) = self.by_id.get(&ev.id) {
+            return *o;
+        }
+        let o = self.events.len() as Offset;
+        self.events.push(ev.clone());
+        self.by_id.insert(ev.id.clone(), o);
+        o
+    }
 }
 
 #[derive(Default)]
@@ -69,14 +130,7 @@ impl MemJournal {
 
 impl Journal for MemJournal {
     fn append(&self, ev: &Event) -> Result<Offset> {
-        let mut m = self.lock();
-        if let Some(o) = m.by_id.get(&ev.id) {
-            return Ok(*o);
-        }
-        let o = m.events.len() as Offset;
-        m.events.push(ev.clone());
-        m.by_id.insert(ev.id.clone(), o);
-        Ok(o)
+        Ok(self.lock().append(ev))
     }
 
     fn read_from(&self, from: Offset, limit: usize) -> Result<Vec<(Offset, Event)>> {
@@ -131,6 +185,39 @@ impl Journal for MemJournal {
 
     fn poisoned(&self, stream: &StreamKey) -> Result<Option<Poison>> {
         Ok(self.lock().poison.get(stream).cloned())
+    }
+
+    fn leases(&self) -> Option<&dyn LeaseTable> {
+        Some(self)
+    }
+}
+
+impl LeaseTable for MemJournal {
+    fn acquire(&self, stream: &StreamKey, holder: &str, ttl_ms: u64, now: u64) -> Result<Option<Lease>> {
+        let mut m = self.lock();
+        let g = grant(m.leases.get(stream), stream, holder, ttl_ms, now);
+        if let Some(l) = &g {
+            m.leases.insert(stream.clone(), l.clone());
+        }
+        Ok(g)
+    }
+
+    fn release(&self, stream: &StreamKey, holder: &str) -> Result<()> {
+        let mut m = self.lock();
+        if let Some(l) = release(m.leases.get(stream), holder) {
+            m.leases.insert(stream.clone(), l);
+        }
+        Ok(())
+    }
+
+    fn current(&self, stream: &StreamKey) -> Result<Option<Lease>> {
+        Ok(self.lock().leases.get(stream).cloned())
+    }
+
+    fn append_fenced(&self, ev: &Event, holder: &str, epoch: u64) -> Result<Offset> {
+        let mut m = self.lock();
+        fence(m.leases.get(&ev.stream), &ev.stream, holder, epoch)?;
+        Ok(m.append(ev))
     }
 }
 
@@ -198,5 +285,30 @@ impl Journal for FaultyJournal {
     }
     fn poisoned(&self, stream: &StreamKey) -> Result<Option<Poison>> {
         self.inner.poisoned(stream)
+    }
+    fn leases(&self) -> Option<&dyn LeaseTable> {
+        self.inner.leases().map(|_| self as &dyn LeaseTable)
+    }
+}
+
+impl FaultyJournal {
+    fn table(&self) -> Result<&dyn LeaseTable> {
+        self.inner.leases().ok_or_else(|| RuntimeError::new("journal has no leases"))
+    }
+}
+
+impl LeaseTable for FaultyJournal {
+    fn acquire(&self, stream: &StreamKey, holder: &str, ttl_ms: u64, now: u64) -> Result<Option<Lease>> {
+        self.table()?.acquire(stream, holder, ttl_ms, now)
+    }
+    fn release(&self, stream: &StreamKey, holder: &str) -> Result<()> {
+        self.table()?.release(stream, holder)
+    }
+    fn current(&self, stream: &StreamKey) -> Result<Option<Lease>> {
+        self.table()?.current(stream)
+    }
+    fn append_fenced(&self, ev: &Event, holder: &str, epoch: u64) -> Result<Offset> {
+        self.gate("append")?;
+        self.table()?.append_fenced(ev, holder, epoch)
     }
 }
