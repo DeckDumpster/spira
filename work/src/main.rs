@@ -364,7 +364,7 @@ fn review(args: &[String]) -> i32 {
     };
     let cfg = |k: &str| spira_config::process::cfg(k);
     let persona = std::env::var("SPIRA_RUNE").ok().filter(|r| !r.is_empty()).unwrap_or_else(|| "builder".to_string());
-    let (agent, model) = match (cfg("SPIRA_AGENT"), std::env::var("SPIRA_TOML").map_err(|_| "SPIRA_TOML is not set".to_string()).and_then(|t| work::review::persona_model(&persona, &t))) {
+    let (agent, model) = match (cfg("SPIRA_AGENT"), spira_config::process::spec().and_then(|t| work::review::persona_model(&persona, &t))) {
         (Ok(a), Ok(m)) if !a.is_empty() => (a, m),
         (Err(e), _) | (_, Err(e)) => {
             eprintln!("{}", refusal(R::ReviewConfig, "review", &[("err", &e)]));
