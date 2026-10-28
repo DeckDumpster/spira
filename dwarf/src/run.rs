@@ -937,7 +937,11 @@ impl<'a> Run<'a> {
         self.check_stop()?;
 
         // ---- the brief ----
-        self.write_prompt(&work, fixture_ms, &resume, &slain, &rebase_text, &dirty)?;
+        if self.rune.static_prompt {
+            self.write_static_prompt(&work, &n_prior, &prior_log, &rebase_text)?;
+        } else {
+            self.write_prompt(&work, fixture_ms, &resume, &slain, &rebase_text, &dirty)?;
+        }
 
         // ---- the groom log, before ----
         self.s.session_epoch = self.now();
@@ -998,6 +1002,46 @@ impl<'a> Run<'a> {
             self.log(&format!("{}: {} has no shared test fixture — its suites will each build their own: {why}", self.f(), self.s.bead));
         }
         ms
+    }
+
+    fn write_static_prompt(&mut self, work: &Path, n_prior: &str, prior_log: &str, rebase: &str) -> Result<(), Abort> {
+        let bead = self.s.bead.clone();
+        let wdisp = work.display().to_string();
+        let runes_file = self.home().join("runes").join(format!("{}.md", self.f()));
+        let template = std::fs::read_to_string(&runes_file).map_err(|e| Abort::Die(format!("{}: cannot read {}: {e}", self.f(), runes_file.display())))?;
+        let sys = brief::static_system(&template, &bead, &wdisp, &self.s.repo.display().to_string());
+
+        let shown: serde_json::Value = serde_json::from_str(&bd::json(self.d.bd, &["show", &bead])).unwrap_or_default();
+        let row = if shown.is_array() { shown[0].clone() } else { shown };
+        let field = |k: &str| row.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let max = self.conf.i("SPIRA_BRIEF_NOTES_MAX_CHARS").max(0) as usize;
+        let notes = brief::tail_notes(field("notes").trim(), max);
+
+        let mut prior = String::new();
+        if !matches!(n_prior, "" | "0" | "?") {
+            prior = format!("`{}` carries {n_prior} commit(s) from a previous session:\n\n```\n{}\n```\n", self.s.branch, prior_log.trim_end());
+            prior.push_str(self.s.rejection_brief.trim());
+            if !rebase.is_empty() {
+                prior.push_str(&format!("\nIt does not rebase onto `{}`; conflicts in: {}.", self.s.base, if self.s.rebase_conflicts.is_empty() { "unknown" } else { &self.s.rebase_conflicts }));
+            }
+        }
+        let deadline_at = self.rune.timeout_seconds.map(|t| self.t0 + t as i64);
+        let deadline = brief::deadline_brief(deadline_at, self.now(), deadline_at.and_then(util::local_hms_zone));
+        let task = brief::static_task(&brief::TaskFacts {
+            id: &bead,
+            title: &field("title"),
+            repo: &self.s.repo_name,
+            worktree: &wdisp,
+            branch: &self.s.branch,
+            landing_ref: &self.s.base,
+            deadline: &deadline,
+            description: &field("description"),
+            notes: &notes,
+            prior: &prior,
+        });
+        let _ = std::fs::write(self.run_dir().join(format!("{bead}.system.md")), sys);
+        let _ = std::fs::write(self.run_dir().join(format!("{bead}.task.md")), task);
+        Ok(())
     }
 
     fn write_prompt(&mut self, work: &Path, fixture_ms: u64, resume: &str, slain: &str, rebase: &str, dirty: &[String]) -> Result<(), Abort> {

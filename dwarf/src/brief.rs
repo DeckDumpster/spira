@@ -419,6 +419,48 @@ does not rebase cleanly is reopened by the harness, which costs a whole second s
     )
 }
 
+/// The builder's whole system prompt: its rune with the three session substitutions and nothing else.
+pub fn static_system(template: &str, id: &str, worktree: &str, repo_dir: &str) -> String {
+    template.replace("{{ID}}", id).replace("{{WORKTREE}}", worktree).replace("{{REPO_DIR}}", repo_dir)
+}
+
+/// The named facts a static-prompt session is told, and only these.
+pub struct TaskFacts<'a> {
+    pub id: &'a str,
+    pub title: &'a str,
+    pub repo: &'a str,
+    pub worktree: &'a str,
+    pub branch: &'a str,
+    pub landing_ref: &'a str,
+    pub deadline: &'a str,
+    pub description: &'a str,
+    pub notes: &'a str,
+    pub prior: &'a str,
+}
+
+pub fn static_task(f: &TaskFacts) -> String {
+    let mut s = format!(
+        "# {}: {}\n\nRepository {}, worktree {}, branch {}, landing ref {}.\nDeadline {}\n\n{}\n",
+        f.id, f.title, f.repo, f.worktree, f.branch, f.landing_ref, f.deadline, f.description.trim_end_matches('\n')
+    );
+    for (heading, body) in [("Notes", f.notes), ("Prior attempt", f.prior)] {
+        if !body.trim().is_empty() {
+            s.push_str(&format!("\n## {heading}\n{}\n", body.trim_end_matches('\n')));
+        }
+    }
+    s
+}
+
+/// The newest `max_chars` characters of the bead's notes.
+pub fn tail_notes(notes: &str, max_chars: usize) -> String {
+    let chars: Vec<char> = notes.chars().collect();
+    if chars.len() <= max_chars {
+        return notes.to_string();
+    }
+    let tail: String = chars[chars.len() - max_chars..].iter().collect();
+    format!("[earlier notes omitted]\n{tail}")
+}
+
 /// The bead's last fast-tier red, as the first section of the brief; empty when there is none.
 pub fn fast_tier_red_brief(digest: &str) -> String {
     let d = digest.trim();
@@ -701,41 +743,50 @@ mod tests {
         assert!(uses >= 7, "positive control: the persona prompts carry {{{{NO_BD}}}} ({uses})");
     }
 
-    // The shipped builder runes renders both tokens, and leaves no relative runner path.
-    #[test]
-    fn builder_runes_renders_runner_and_followup() {
-        let runes = include_str!("../../spira/runes/builder.md");
-        {
-            let t = Tokens {
-                single: vec![
-                    ("TESTENV", TESTENV.into()),
-                    ("FOLLOWUP", followup_brief("sp-a")),
-                    ("BRANCH", "spira/sp-a".into()),
-                    ("REPO_NAME", "spira".into()),
-                    ("SPIRA_HOME", "/srv/h/spira".into()),
-                ],
-                ..Default::default()
-            };
-            let p = render_prompt(runes, &t, None);
-            // The only runner line is the reproduce-one-named-suite form; a no-`--suites`
-            // pre-close run duplicates the gate's work outside its admission (sp-4vq2q follow-up).
-            assert!(p.contains("    testenv --suites <suite> spira/sp-a spira\n"), "{p}");
-            assert!(!p.contains("    testenv spira/sp-a spira\n"), "{p}");
-            assert!(runner_lines(&p, "    testenv ")
-                .iter()
-                .all(|l| l.contains(" --suites <suite> ") || l.starts_with("    testenv ui ")));
-            assert!(p.contains("    testenv ui <repo-path> [spec...]\n"), "{p}");
-            assert!(p.contains("do not run the suites"));
-            assert!(!p.contains("exactly the selection"));
-            assert!(!p.contains("{{TESTENV}}") && !p.contains("{{FOLLOWUP}}"));
-            assert!(!p.contains("/../bin/testenv"));
-            assert!(!p.contains("--suites test-"));
-            assert!(!p.contains("bead.sh file"));
-            assert!(p.contains("work file-followup"));
-            if std::env::var_os("DWARF_PRINT_BRIEF").is_some() {
-                println!("{p}");
-            }
+    const BUILDER_TASK_GOLDEN: &str = include_str!("../tests/fixtures/builder-task.md");
+
+    fn facts<'a>(notes: &'a str, prior: &'a str) -> TaskFacts<'a> {
+        TaskFacts {
+            id: "sp-a",
+            title: "Do the thing",
+            repo: "spira",
+            worktree: "/w/sp-a",
+            branch: "spira/sp-a",
+            landing_ref: "local/main",
+            deadline: "**This session has no wall-clock deadline.**",
+            description: "## Outcome\n\nIt works.\n",
+            notes,
+            prior,
         }
+    }
+
+    #[test]
+    fn the_builder_system_prompt_is_its_rune_with_three_substitutions() {
+        let rune = include_str!("../../spira/runes/builder.md");
+        let sys = static_system(rune, "sp-a", "/w/sp-a", "/r");
+        assert_eq!(sys, rune.replace("{{ID}}", "sp-a").replace("{{WORKTREE}}", "/w/sp-a"));
+        assert!(!sys.contains("{{") && sys.contains("`/w/sp-a`") && sys.contains("work item `sp-a`"));
+        assert!(sys.starts_with("You are a builder:") && !sys.contains("Warden"));
+        assert!(rune.contains("{{ID}}"), "positive control: the template carries its tokens");
+    }
+
+    #[test]
+    fn the_builder_task_prompt_matches_its_golden_fixture() {
+        let t = static_task(&facts("first\nsecond", "`spira/sp-a` carries 1 commit(s):\n\n```\n  abc1234 sp-a: x\n```"));
+        assert_eq!(t, BUILDER_TASK_GOLDEN);
+    }
+
+    #[test]
+    fn the_builder_task_prompt_omits_empty_notes_and_prior_sections() {
+        let t = static_task(&facts("", " \n"));
+        assert!(!t.contains("## Notes") && !t.contains("## Prior attempt"), "{t}");
+        assert!(static_task(&facts("n", "")).contains("## Notes\nn\n") && !static_task(&facts("n", "")).contains("Prior attempt"));
+    }
+
+    #[test]
+    fn tail_notes_keeps_the_newest() {
+        assert_eq!(tail_notes("abc", 10), "abc");
+        assert_eq!(tail_notes("abcdef", 2), "[earlier notes omitted]\nef");
     }
 
     fn runner_lines<'a>(p: &'a str, runner: &str) -> Vec<&'a str> {
@@ -887,23 +938,6 @@ mod tests {
         let p = render_prompt("id {{BEAD_ID}} db {{DB}}\n{{BEAD}}\n{{PARK}}\n{{FIXTURE}}{{FIXTURE}}\n{{DEADLINE}}{{FINISH}}{{UNKNOWN}}", &t, None);
         // BEAD first, so a {{PARK}} inside the bead body is the first occurrence (as before).
         assert_eq!(p, "id sp-a db /d&b|x\\y\nbody with PARK! & more\n{{PARK}}\nFX{{FIXTURE}}\nDLFIN{{UNKNOWN}}");
-    }
-
-    #[test]
-    fn the_shipped_builder_brief_has_one_way_to_verify_and_the_work_verbs_to_finish() {
-        let runes = include_str!("../../spira/runes/builder.md");
-        let t = Tokens {
-            single: vec![("TESTENV", TESTENV.into()), ("FOLLOWUP", followup_brief("sp-a")), ("BRANCH", "spira/sp-a".into()), ("REPO_NAME", "spira".into())],
-            finish: finish_brief("sp-a"),
-            ..Default::default()
-        };
-        let (sys, task) = split("LAW", &render_prompt(runes, &t, None));
-        let both = format!("{sys}{task}");
-        assert!(both.contains("DO NOT run the full landing") && both.contains("testenv"), "{both}");
-        assert!(!both.contains("gate-run.sh") && !both.contains("{{GATE}}"), "{both}");
-        assert!(both.contains("You have no `bd`") && both.contains("work submit"), "{both}");
-        assert!(!both.contains("bd -C"), "{both}");
-        assert!("x gate-run.sh y".contains("gate-run.sh"), "the matcher can see its offender");
     }
 
     #[test]
