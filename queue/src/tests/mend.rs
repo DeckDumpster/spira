@@ -327,6 +327,15 @@ fn the_other_outcomes_are_one_event_each_and_return_needs_its_diagnosis() {
 }
 
 #[test]
+fn await_ask_sends_the_ask_the_failure_waits_on_and_needs_one() {
+    let (t, batch) = mend_world();
+    assert_eq!(t.run(&["round", "await-ask", &batch, "test-a.sh"]), 2);
+    assert_eq!(t.run(&["round", "await-ask", &batch, "test-a.sh", "--ask", "ask-9"]), 0, "{}", t.err());
+    let events = mending_events(&t).join("\n");
+    assert!(events.contains("test-a.sh {\"Await\":{\"ask\":\"ask-9\"}}"), "{events}");
+}
+
+#[test]
 fn every_entry_of_the_shipped_fence_list_names_something_that_exists() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let list = fs::read_to_string(root.join("spira/mend-fences")).unwrap();

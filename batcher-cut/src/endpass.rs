@@ -14,14 +14,17 @@ pub struct Row {
     pub state: String,
     pub deadline: Option<i64>,
     pub diagnosis: String,
+    /// The mend waits on an open ask; no deadline binds the wait while this holds.
+    pub ask_open: bool,
 }
 
 pub trait Menders {
     fn now(&self) -> i64;
     fn sleep(&mut self, secs: i64);
     fn rows(&mut self) -> Result<Vec<Row>, String>;
-    /// Applies the machine's expiry to every overdue MENDING row.
-    fn sweep(&mut self) -> Result<(), String>;
+    /// Applies the machine's expiry to every overdue MENDING row, and gives a row whose awaited
+    /// ask has closed a fresh `deadline_s` to record its mend.
+    fn sweep(&mut self, deadline_s: i64) -> Result<(), String>;
 }
 
 pub fn parse_rows(json: &str, batch_pass: u32) -> Result<Vec<Row>, String> {
@@ -34,6 +37,7 @@ pub fn parse_rows(json: &str, batch_pass: u32) -> Result<Vec<Row>, String> {
                 state: r.get("state")?.as_str()?.to_string(),
                 deadline: r.get("deadline").and_then(Value::as_i64),
                 diagnosis: r.get("diagnosis").and_then(Value::as_str).unwrap_or("").to_string(),
+                ask_open: r.get("ask_open").and_then(Value::as_bool).unwrap_or(false),
             })
         })
         .collect())
@@ -67,8 +71,15 @@ pub fn wait<M: Menders>(m: &mut M, deadline_s: i64) -> Result<Vec<Failure>, Stri
     let mut ceiling = cap(&rows, m.now(), deadline_s);
     while rows.iter().any(live) {
         let now = m.now();
+        if rows.iter().any(|r| live(r) && r.ask_open) {
+            m.sleep(POLL_SECS);
+            m.sweep(deadline_s)?;
+            rows = m.rows()?;
+            ceiling = ceiling.max(m.now() + deadline_s);
+            continue;
+        }
         if now >= ceiling {
-            m.sweep()?;
+            m.sweep(deadline_s)?;
             rows = m.rows()?;
             break;
         }
@@ -101,8 +112,8 @@ impl Menders for LcMenders<'_> {
     fn rows(&mut self) -> Result<Vec<Row>, String> {
         parse_rows(&crate::io::lcq(self.env, &["mending", "list", "--batch", self.batch])?, self.pass)
     }
-    fn sweep(&mut self) -> Result<(), String> {
-        crate::io::lcq(self.env, &["mending", "sweep", "--actor", "batcher"]).map(|_| ())
+    fn sweep(&mut self, deadline_s: i64) -> Result<(), String> {
+        crate::io::lcq(self.env, &["mending", "sweep", "--actor", "batcher", "--deadline-secs", &deadline_s.to_string()]).map(|_| ())
     }
 }
 
@@ -118,7 +129,7 @@ mod tests {
         stuck: bool,
     }
     fn row(suite: &str, state: &str, deadline: Option<i64>) -> Row {
-        Row { suite: suite.into(), state: state.into(), deadline, diagnosis: "d".into() }
+        Row { suite: suite.into(), state: state.into(), deadline, diagnosis: "d".into(), ask_open: false }
     }
     impl Menders for Fake {
         fn now(&self) -> i64 {
@@ -132,7 +143,7 @@ mod tests {
             let t = self.t;
             Ok(self.script.iter().rev().find(|(at, _)| *at <= t).map(|(_, r)| r.clone()).unwrap_or_default())
         }
-        fn sweep(&mut self) -> Result<(), String> {
+        fn sweep(&mut self, _deadline_s: i64) -> Result<(), String> {
             self.swept += 1;
             if !self.stuck {
                 for (_, rows) in self.script.iter_mut() {
@@ -204,9 +215,19 @@ mod tests {
     }
 
     #[test]
+    fn a_mend_waiting_on_an_open_ask_is_not_returned_at_its_deadline() {
+        let waiting = Row { ask_open: true, ..row("a", "MENDING", Some(1300)) };
+        let mut f = fake(vec![(0, vec![waiting]), (2000, vec![row("a", "MENDED", Some(2300))])]);
+        f.stuck = true;
+        let out = wait(&mut f, 300).unwrap();
+        assert!(f.t >= 2000, "returned at {}", f.t);
+        assert_eq!(out[0].outcome, Outcome::Mended);
+    }
+
+    #[test]
     fn the_listing_is_filtered_to_the_pass() {
         let json = r#"[{"pass":1,"suite":"a","state":"MENDED","deadline":5,"diagnosis":null},{"pass":2,"suite":"b","state":"MENDING","deadline":9,"diagnosis":"x"}]"#;
-        assert_eq!(parse_rows(json, 2).unwrap(), [Row { suite: "b".into(), state: "MENDING".into(), deadline: Some(9), diagnosis: "x".into() }]);
+        assert_eq!(parse_rows(json, 2).unwrap(), [Row { suite: "b".into(), state: "MENDING".into(), deadline: Some(9), diagnosis: "x".into(), ask_open: false }]);
         assert!(parse_rows("nope", 1).is_err());
     }
 }

@@ -1610,7 +1610,7 @@ mod tests {
         let pre = git(d.path(), &["rev-parse", "HEAD"]);
         git(d.path(), &["commit", "-q", "--allow-empty", "-m", "sp-x1: work"]);
         let tip = git(d.path(), &["rev-parse", "HEAD"]);
-        assert!(finishing_refusal(d.path(), "land", &tip, "sp-x1", &[pre.clone()]).is_none());
+        assert!(finishing_refusal(d.path(), "land", &tip, "sp-x1", std::slice::from_ref(&pre)).is_none());
         assert!(finishing_refusal(d.path(), "land", &tip, "sp-x1", &[]).is_some(), "without the stack its prerequisite's commit is unnamed");
     }
 

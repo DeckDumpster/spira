@@ -58,6 +58,9 @@ pub struct MendingRow {
     pub deadline: Option<i64>,
     pub triage_ended_at: Option<i64>,
     pub diagnosis: Option<String>,
+    /// The open ask a mend waits on; while set no deadline can return the failure.
+    #[serde(default)]
+    pub awaiting_ask: Option<String>,
     pub version: Version,
 }
 
@@ -73,6 +76,7 @@ impl MendingRow {
             deadline: None,
             triage_ended_at: None,
             diagnosis: None,
+            awaiting_ask: None,
             version: 0,
         }
     }
@@ -83,7 +87,7 @@ impl MendingRow {
 
     /// Only a MENDING row carries a deadline that can be overdue; WAITING has none.
     pub fn overdue(&self, now: i64) -> bool {
-        self.state == MendingState::Mending && self.deadline.is_some_and(|d| now >= d)
+        self.state == MendingState::Mending && self.awaiting_ask.is_none() && self.deadline.is_some_and(|d| now >= d)
     }
 }
 
@@ -105,6 +109,11 @@ pub enum MendingEventKind {
     Unsure { at: i64 },
     /// The mender's own return, carrying its diagnosis.
     Return { at: i64, diagnosis: String },
+    /// While MENDING: the mend waits on `ask`; the deadline stops binding until `Resume`.
+    Await { ask: String },
+    /// The machine's own, once the awaited ask is closed: a fresh deadline of `at + deadline_s`
+    /// to record the mend the answer allowed; with none recorded the failure expires.
+    Resume { at: i64, deadline_s: u64 },
     /// MENDING -> RETURNED once `at` has reached the deadline, with the diagnosis so far.
     Expire { at: i64 },
 }
@@ -142,7 +151,7 @@ pub fn apply(row: &MendingRow, ev: &MendingEvent) -> Outcome<MendingRow> {
     let kind = &ev.kind;
     let mut new = row.clone();
     new.version += 1;
-    let past_deadline = |at: i64| row.deadline.filter(|&d| at >= d);
+    let past_deadline = |at: i64| row.deadline.filter(|&d| at >= d && row.awaiting_ask.is_none());
     let settle = |mut new: MendingRow, state: MendingState, at: i64| match past_deadline(at) {
         Some(deadline) => Outcome::refuse(row.clone(), Refusal::DeadlinePassed { deadline, at }),
         None => {
@@ -181,6 +190,15 @@ pub fn apply(row: &MendingRow, ev: &MendingEvent) -> Outcome<MendingRow> {
                 Outcome::applied(new)
             }
         },
+        (MendingState::Mending, MendingEventKind::Await { ask }) if row.awaiting_ask.is_none() && !ask.is_empty() => {
+            new.awaiting_ask = Some(ask.clone());
+            Outcome::applied(new)
+        }
+        (MendingState::Mending, MendingEventKind::Resume { at, deadline_s }) if row.awaiting_ask.is_some() => {
+            new.awaiting_ask = None;
+            new.deadline = Some(at.saturating_add(i64::try_from(*deadline_s).unwrap_or(i64::MAX)));
+            Outcome::applied(new)
+        }
         (MendingState::Mending, MendingEventKind::Diagnosis { text }) => {
             new.diagnosis = Some(text.clone());
             Outcome::applied(new)
@@ -310,6 +328,23 @@ mod tests {
         assert!(!out.applied);
         assert_eq!(out.row, *r);
         out.refusal.unwrap()
+    }
+
+    #[test]
+    fn a_mend_awaiting_its_ask_outlives_the_deadline_and_resumes_with_a_fresh_one() {
+        let r = step(&picked(1000), MendingEventKind::Await { ask: "a-1".into() });
+        assert!(!r.overdue(5000));
+        assert!(matches!(refusal(&r, MendingEventKind::Expire { at: 5000 }), Refusal::IllegalTransition { .. }));
+        let r = step(&r, MendingEventKind::Resume { at: 5000, deadline_s: 300 });
+        assert_eq!((r.awaiting_ask.as_deref(), r.deadline), (None, Some(5300)));
+        assert_eq!(step(&r, MendingEventKind::Mended { at: 5100 }).state, MendingState::Mended);
+        assert_eq!(step(&r, MendingEventKind::Expire { at: 5300 }).state, MendingState::Returned);
+    }
+
+    #[test]
+    fn a_mend_settles_past_the_deadline_while_its_ask_is_open() {
+        let r = step(&picked(1000), MendingEventKind::Await { ask: "a-1".into() });
+        assert_eq!(step(&r, MendingEventKind::Mended { at: 9999 }).state, MendingState::Mended);
     }
 
     #[test]
