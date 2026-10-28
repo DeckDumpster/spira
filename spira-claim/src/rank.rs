@@ -338,14 +338,20 @@ pub fn index_rows(rows: Vec<ReadyRow>) -> HashMap<String, ReadyRow> {
 /// The `blocks` targets of a candidate. A `blocks` edge onto the candidate's own parent is read as
 /// parent-child: a container closes only when its children do, so it could never clear.
 pub fn blockers(r: &ReadyRow) -> Vec<String> {
+    let split_parent = r.parent.iter().filter(|_| r.labels.iter().any(|l| l == SPLIT_LABEL)).cloned();
+    split_parent.chain(declared_blockers(r)).collect()
+}
+
+fn declared_blockers(r: &ReadyRow) -> impl Iterator<Item = String> + '_ {
     r.dependencies
         .iter()
         .filter(|d| d.dep_type.as_deref() == Some("blocks"))
         .filter(|d| d.issue_id.as_deref().is_none_or(|i| i == r.id))
         .filter_map(|d| d.depends_on_id.clone())
         .filter(|b| r.parent.as_deref() != Some(b.as_str()))
-        .collect()
 }
+
+use spira_config::nonwork::SPLIT_LABEL;
 
 pub fn all_blockers(rows: &[ReadyRow]) -> Vec<String> {
     rows.iter().flat_map(blockers).collect::<BTreeSet<_>>().into_iter().collect()
@@ -927,6 +933,20 @@ mod tests {
             let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("A", st, &[], 0)].into();
             assert_eq!(claimable(&blocked_on("B", "A"), &lc, &open, 4), Verdict::Claimable { depth: 0 }, "{st:?}");
         }
+    }
+
+    #[test]
+    fn a_split_child_waits_for_its_parent_and_a_followup_does_not() {
+        let (_, parent) = bdrec("P", "open", "task", "r");
+        let mut split = row("P.1", 2, Some("P"), "t");
+        split.labels = vec!["repo:r".into(), SPLIT_LABEL.into()];
+        let follow = row("P.2", 2, Some("P"), "t");
+        let bd: HashMap<_, _> = [("P".to_string(), parent)].into();
+        let mut lc: HashMap<_, _> = [lcrow("P", BeadState::Rework, &[], 0), lcrow("P.1", BeadState::Ready, &[], 0), lcrow("P.2", BeadState::Ready, &[], 0)].into();
+        assert_eq!(claimable(&split, &lc, &bd, 0), Verdict::Blocked("P".into()));
+        assert_eq!(claimable(&follow, &lc, &bd, 0), Verdict::Claimable { depth: 0 });
+        lc.get_mut("P").unwrap().state = BeadState::Landed;
+        assert_eq!(claimable(&split, &lc, &bd, 0), Verdict::Claimable { depth: 0 });
     }
 
     #[test]

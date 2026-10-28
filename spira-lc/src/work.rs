@@ -643,6 +643,10 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, St
                 Ok(()) => (0, new_id),
                 Err(e) => (CANNOT_TELL, format!("{new_id} was filed but could not be made to wait on {bead_id} (do not file it again; add the dependency): {e}")),
             },
+            (0, _) if verb == "split" => match crate::bd::label_add(&new_id, spira_config::nonwork::SPLIT_LABEL) {
+                Ok(()) => (0, new_id),
+                Err(e) => (CANNOT_TELL, format!("{new_id} was filed but could not be marked a split child, so it would be claimable before {bead_id} lands (do not file it again; add the label {}): {e}", spira_config::nonwork::SPLIT_LABEL)),
+            },
             (0, _) => (0, new_id),
             (_, e) => (
                 CANNOT_TELL,
