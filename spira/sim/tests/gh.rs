@@ -250,7 +250,7 @@ fn run_cut_assert(w: &W, sha: &str) -> Res {
     let mut c = Command::new("bash");
     c.arg("-c").arg(cut_step(sha)).current_dir(&w.repo).env_clear();
     c.env("PATH", format!("{}:{}:{}", w.dir.join("bin").display(), shim.display(), std::env::var("PATH").unwrap()));
-    c.env("SIM_GH_DIR", w.dir.join("gh")).env("GITHUB_REPOSITORY", "owner/repo").env("HOME", &w._t.path());
+    c.env("SIM_GH_DIR", w.dir.join("gh")).env("GITHUB_REPOSITORY", "owner/repo").env("HOME", w._t.path());
     let o = c.output().unwrap();
     Res { code: o.status.code().unwrap(), out: String::from_utf8(o.stdout).unwrap(), err: String::from_utf8(o.stderr).unwrap() }
 }

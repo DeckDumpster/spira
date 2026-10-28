@@ -582,7 +582,7 @@ pub fn try_take_staggered(
         return Ok((Take::Inherited { slot: l.slot, pid: l.pid }, ended));
     }
     let used: u64 = live.iter().map(|l| l.weight.max(1)).sum();
-    let first = waiters.first().map_or(true, |w| w.pid == me.pid);
+    let first = waiters.first().is_none_or(|w| w.pid == me.pid);
     let fits = used == 0 || used + me.weight.max(1) <= size.max(1);
     if first && fits && !staggered(&dir, used > 0, now, stagger) {
         let _ = write_atomic(&dir.join("last-start"), &format!("{now}\n"));
@@ -954,7 +954,7 @@ impl Drop for Hold {
 
 /// Say the waiting line now: the first time, then every [`SAY_EVERY`] seconds.
 fn due(said_at: Option<u64>, now: u64) -> bool {
-    said_at.map_or(true, |t| now.saturating_sub(t) >= SAY_EVERY)
+    said_at.is_none_or(|t| now.saturating_sub(t) >= SAY_EVERY)
 }
 
 /// One pool's occupancy, for `spira-admit status`.
@@ -1132,8 +1132,7 @@ pub fn yield_to_round(cap: u64, probe: &dyn Fn() -> Option<String>, now: &dyn Fn
     let t0 = now();
     let mut said_at: Option<u64> = None;
     let mut last = String::new();
-    loop {
-        let Some(round) = probe() else { break };
+    while let Some(round) = probe() {
         let t = now();
         let held = t.saturating_sub(t0);
         if held >= cap {

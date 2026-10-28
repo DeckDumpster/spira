@@ -73,6 +73,12 @@ disagree with it. Ask `queue round status`, or add the field to that verb."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(RoundRecordReaders::default()),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,10 +112,4 @@ mod tests {
         t.write("queue/src/r.rs", "x\n");
         assert!(run(&t, &["queue/src/r.rs"]).is_err());
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(RoundRecordReaders::default()),
-    ]
 }

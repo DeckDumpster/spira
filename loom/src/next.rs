@@ -141,7 +141,7 @@ fn plain(summary: &str) -> String {
 }
 
 fn progress_bar(done: u64, total: u64, red: bool) -> String {
-    let pct = if total == 0 { 0 } else { (done.min(total) * 100) / total };
+    let pct = (done.min(total) * 100).checked_div(total).unwrap_or(0);
     format!("<span class=bar><i{} style=\"width:{pct}%\"></i></span> <span class=small>{done}/{total}</span>", if red { " class=red" } else { "" })
 }
 
@@ -222,14 +222,16 @@ fn pipeline(p: &Page) -> String {
         let out: i64 = s.edges.iter().map(|e| e.rate_1h).sum();
         let inn: i64 = v.machine.iter().flat_map(|m| m.edges.iter()).filter(|e| e.to == s.name).map(|e| e.rate_1h).sum();
         let refused: i64 = s.edges.iter().flat_map(|e| e.events.iter()).map(|(_, n, _)| *n).sum();
+        let out_chip = format!(" · {inn}/h in · {out}/h out");
+        let refused_chip = if refused > 0 { format!(" · <span class=red>{refused} refused</span>") } else { String::new() };
         let summary = format!(
             "<span class=\"n{c}\">{count}</span><span class=\"k{c}\">{name}</span><span class=\"small dim\">{detail}{out}{refused}</span>{dot}",
             c = if s.red { " red" } else { "" },
             count = s.count,
             name = esc(&s.name),
             detail = esc(&s.detail),
-            out = format!(" · {inn}/h in · {out}/h out"),
-            refused = if refused > 0 { format!(" · <span class=red>{refused} refused</span>") } else { String::new() },
+            out = out_chip,
+            refused = refused_chip,
             dot = if s.red { " <span class=red>●</span>" } else { "" },
         );
         let edges: String = s

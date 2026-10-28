@@ -227,6 +227,12 @@ impl Rule for PlanMatrix {
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(PlanMatrix::default()),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,10 +378,4 @@ mod tests {
         assert_eq!(tier_of("set -u\n# tier: T2\n"), None);
         assert_eq!(tier_of("#tier:T1\n"), Some("T1".into()));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(PlanMatrix::default()),
-    ]
 }

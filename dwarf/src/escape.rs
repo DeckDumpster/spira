@@ -111,6 +111,7 @@ pub fn build_argv(rune: &str, home: &Path, dwarf_path: &str, call_argv: &[String
 
 /// The full orchestration: gathers the facts through the seam, decides, and (unless
 /// merely deciding) spawns `systemd-run`. Returns the process exit code.
+#[allow(clippy::too_many_arguments)]
 pub fn run(seam: &dyn Seam, exec: &dyn Exec, env: &Env, sink: &dyn Sink, conf: &Conf, call_bin: &str, home: &Path, rune: &str, dry_run: bool, now: i64) -> i32 {
     let wg = seam.call("_dwarf_world_gate", &["escape.sh".to_string()]);
     for l in wg.stderr.lines() {
@@ -130,7 +131,7 @@ pub fn run(seam: &dyn Seam, exec: &dyn Exec, env: &Env, sink: &dyn Sink, conf: &
     };
     let fr = seam.call("_dwarf_rune_ready", &[]);
     let path = env.child().get("PATH").cloned().unwrap_or_default();
-    let dwarf_path = find_on_path(&path, "dwarf", |p| is_executable(p));
+    let dwarf_path = find_on_path(&path, "dwarf", is_executable);
 
     let facts = Facts {
         world_gate_ok: wg.code == 0,

@@ -148,6 +148,12 @@ drop it when the file it named is gone."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(CoversEntries),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,10 +218,4 @@ mod tests {
         t.write("spira/test-a.sh", "echo\n");
         assert_eq!(run(&t, &["spira/test-a.sh"]), Err(LintError::EmptyScope));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(CoversEntries),
-    ]
 }

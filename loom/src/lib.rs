@@ -161,7 +161,7 @@ impl Loom {
     /// shows what it has (marked stale) and starts at most one refresh behind it.
     pub fn units_held(self: &Arc<Self>) -> Option<Arc<units::Snapshot>> {
         let held = self.units_cell.try_lock().ok().and_then(|h| h.clone());
-        if held.as_ref().map_or(true, |s| s.taken.elapsed() >= self.cfg.cache) && !self.units_refreshing.swap(true, Ordering::AcqRel) {
+        if held.as_ref().is_none_or(|s| s.taken.elapsed() >= self.cfg.cache) && !self.units_refreshing.swap(true, Ordering::AcqRel) {
             let me = self.clone();
             tokio::spawn(async move {
                 me.units_snapshot().await;

@@ -275,8 +275,8 @@ fn check_not_latest_and_manifest_mismatch_both_fire() {
     *f.home_repo.borrow_mut() = "home".into();
     f.tags.borrow_mut().insert("/repo".into(), vec!["spira-release-spira-20260101T000000Z".into(), "spira-0.1.104".into()]);
     // release_tag resolves to spira-release-spira-20260101T000000Z (not latest), whose tag commit differs from MANIFEST.
-    f.rev_parse.borrow_mut().insert(format!("/repo|spira-release-spira-20260101T000000Z^{{commit}}"), "b".repeat(40));
-    f.rev_parse.borrow_mut().insert(format!("/repo|spira-0.1.104^{{commit}}"), "c".repeat(40));
+    f.rev_parse.borrow_mut().insert("/repo|spira-release-spira-20260101T000000Z^{commit}".to_string(), "b".repeat(40));
+    f.rev_parse.borrow_mut().insert("/repo|spira-0.1.104^{commit}".to_string(), "c".repeat(40));
     f.files.borrow_mut().insert(PathBuf::from("/releases/.tags/rel-2"), "spira-release-spira-20260101T000000Z".into());
 
     let rc = check(&f, false);

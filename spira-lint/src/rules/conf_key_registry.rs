@@ -144,6 +144,12 @@ dropped silently on the way to the typed config. Add the field there in the same
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(ConfKeyRegistry),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,10 +213,4 @@ mod tests {
         let tree = Tree::from_paths(t.path(), [CONF_SH], std::iter::empty::<&str>());
         assert!(matches!(ConfKeyRegistry.check(&tree), Err(LintError::BadAllow { .. })));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(ConfKeyRegistry),
-    ]
 }

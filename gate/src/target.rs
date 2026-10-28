@@ -426,6 +426,7 @@ mod tests {
         assert_eq!(composition(Path::new("/tmp/x/.gate.harness.spira-sp-abc")), "gate.harness");
     }
 
+    #[allow(dead_code)]
     struct Scratch(testkit::TempDir, PathBuf);
     impl Scratch {
         fn new(tag: &str) -> Scratch {

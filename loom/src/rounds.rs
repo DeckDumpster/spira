@@ -166,7 +166,7 @@ pub fn pass_logs(run: &str, batch: &str, heads: &[String], own: &str) -> Vec<Pat
             }
             let stem = path.file_stem()?.to_str()?.to_string();
             let recert = format!("cert-auto-{batch}");
-            let hit = heads.iter().any(|h| *h == stem)
+            let hit = heads.contains(&stem)
                 || stem == batch
                 || stem == squashed
                 || stem.strip_prefix("cert-").is_some_and(|r| r == squashed || r == batch)

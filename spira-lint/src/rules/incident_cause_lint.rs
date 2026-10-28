@@ -109,6 +109,12 @@ census taxonomy can tell causes apart instead of collapsing into \"unrecorded\".
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(IncidentCauseLint::default()),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,10 +189,4 @@ mod tests {
         assert_eq!(r.check(&tree), Ok(vec![]));
         assert_eq!(r.checked(), Some((1, "files".to_string())));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(IncidentCauseLint::default()),
-    ]
 }

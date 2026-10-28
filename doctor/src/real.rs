@@ -24,7 +24,7 @@ impl Real {
     /// environment once.
     pub fn try_new() -> Result<Real, String> {
         let home = Self::resolve_home()?;
-        if std::env::var_os("SPIRA_HOME").map_or(true, |v| v.is_empty()) {
+        if std::env::var_os("SPIRA_HOME").is_none_or(|v| v.is_empty()) {
             std::env::set_var("SPIRA_HOME", &home);
         }
         let mut env = Self::capture_env(&home);
@@ -599,7 +599,7 @@ pub(crate) fn daemon_base_path(argv: &[String], port: u16) -> Option<String> {
         return None;
     }
     let want = format!("--port={port}");
-    if !argv.iter().any(|a| *a == want) {
+    if !argv.contains(&want) {
         return None;
     }
     argv.iter().find_map(|a| a.strip_prefix("--base-path=")).map(String::from)

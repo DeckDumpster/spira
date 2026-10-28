@@ -137,6 +137,12 @@ whatever server the caller's environment already points at."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(TmuxScopeFence),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,10 +197,4 @@ mod tests {
         assert!(hits.is_empty());
     }
 
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(TmuxScopeFence),
-    ]
 }

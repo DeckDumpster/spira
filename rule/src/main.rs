@@ -254,6 +254,7 @@ fn commit_common_law(home: &str, verb: &str, key: &str) -> CommitOutcome {
 
 /// The tail of every `enact`/`retire`: regenerate the page and commit it. A failed
 /// regeneration rolls the book back to `prior`, so the write and the page succeed or fail as one.
+#[allow(clippy::too_many_arguments)]
 fn finish_write(
     db: &str,
     home: &str,

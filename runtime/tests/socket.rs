@@ -49,7 +49,7 @@ fn serve(listener: UnixListener, j: Arc<MemJournal>) {
 
 fn spawn_service(dir: &TempDir) -> String {
     static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let path = dir.join(&format!("lc-{}.sock", N.fetch_add(1, std::sync::atomic::Ordering::SeqCst))).to_str().unwrap().to_string();
+    let path = dir.join(format!("lc-{}.sock", N.fetch_add(1, std::sync::atomic::Ordering::SeqCst))).to_str().unwrap().to_string();
     let listener = UnixListener::bind(&path).unwrap();
     std::thread::spawn(move || serve(listener, MemJournal::new()));
     path

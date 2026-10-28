@@ -34,7 +34,7 @@ fn is_verb(tok: &str) -> bool {
 fn is_script(tok: &str) -> bool {
     tok.ends_with(".sh")
         && tok.len() > 3
-        && !tok.contains(|c: char| matches!(c, '<' | '>' | '*' | '{' | '}' | '$' | '|'))
+        && !tok.contains(['<', '>', '*', '{', '}', '$', '|'])
 }
 
 fn base(tool: &str) -> &str {

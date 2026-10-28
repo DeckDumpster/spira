@@ -127,6 +127,12 @@ system utility goes in deps-lint's SYSTEM_ALLOW instead."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(DepsLint),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,10 +203,4 @@ mod tests {
         t.write(MANIFEST, "[[dep]\n");
         assert!(matches!(run(&t, &[MANIFEST, "spira/y.sh"]), Err(LintError::BadAllow { .. })));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(DepsLint),
-    ]
 }

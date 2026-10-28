@@ -65,6 +65,7 @@ impl Event {
         }
     }
 
+    #[allow(clippy::wrong_self_convention)]
     fn from_state(&self) -> Option<State> {
         match self {
             Event::Opened => None,

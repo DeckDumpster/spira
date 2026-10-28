@@ -24,6 +24,7 @@ pub struct TidyReport {
     pub kept: usize,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn tidy(
     bd: &dyn Bd,
     db_configured: bool,
@@ -61,7 +62,7 @@ pub fn tidy(
     }
     // `sort -rn` on "<mtime>\t<path>" lines: newest first. Rust's sort_by is stable, so
     // same-mtime files keep the new/-then-cur, filename-sorted order collected above.
-    files.sort_by(|a, b| b.0.cmp(&a.0));
+    files.sort_by_key(|f| std::cmp::Reverse(f.0));
 
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
     let bead_re = bead_id_regex(id_prefix);

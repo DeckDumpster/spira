@@ -627,7 +627,7 @@ pub fn queue_section(snap: &Snapshot, cols: i64) -> Vec<String> {
             out.push("        ".to_string());
         }
     }
-    fn append(out: &mut Vec<String>, s: &str) {
+    fn append(out: &mut [String], s: &str) {
         if let Some(last) = out.last_mut() {
             last.push_str(s);
         }
@@ -698,14 +698,12 @@ pub fn queue_section(snap: &Snapshot, cols: i64) -> Vec<String> {
             hdr(&mut hdr_done, &mut out);
             append(&mut out, &format!("{B}{nn} certified{RST}"));
         }
-        let mut shown = 0i64;
-        for i in 0..MAX_SECTION_ROWS {
+        for (shown, i) in (0..MAX_SECTION_ROWS).enumerate() {
             let Some(raw) = snap.get(&format!("SP_QUEUE_NEXT{i}")).filter(|s| !s.is_empty()) else { break };
-            if nm != "0" && shown == nm.parse().unwrap_or(-1) {
+            if nm != "0" && shown as i64 == nm.parse().unwrap_or(-1) {
                 out.push(format!("        {DIM}\u{b7} \u{b7} \u{b7}{RST}"));
             }
             out.push(queue_row(cols, raw));
-            shown += 1;
         }
     }
     if !hdr_done {
@@ -859,7 +857,7 @@ pub fn ci_section(snap: &Snapshot, cols: i64) -> Vec<String> {
          " {DIM}CI{RST}     {B}{}{RST} bead(s) waiting on a run   {DIM}oldest{RST} {} {ci_col}{}{RST}{stuck_txt}",
         n_raw.unwrap(),
         snap.get("SP_AWAITING_OLDEST").unwrap_or("?"),
-        age_disp.is_empty().then(|| "?".to_string()).unwrap_or_else(|| age_disp.to_string()),
+        if age_disp.is_empty() { "?".to_string() } else { age_disp.to_string() },
     )];
     for i in 0..MAX_SECTION_ROWS {
         let Some(row) = snap.get(&format!("SP_AWAITING{i}")).filter(|s| !s.is_empty()) else { break };
@@ -909,8 +907,6 @@ pub fn standing_lines(snap: &Snapshot, cols: i64) -> Vec<String> {
     };
     out.push(format!(" {DIM}ATTN{RST}   {DIM}waiting on you{RST} {B}{}{RST}", snap.q("SP_WAITING")));
 
-    let age_col_unused = ();
-    let _ = age_col_unused;
     let unadopted = snap.get("SP_UNADOPTED").unwrap_or("0");
     let unadopt_seg = if unadopted != "0" {
         format!(" \u{b7} {WARN}{unadopted} unadopted{RST}")
@@ -929,7 +925,6 @@ pub fn standing_lines(snap: &Snapshot, cols: i64) -> Vec<String> {
         snap.get("SP_BRANCH_DONE").unwrap_or("?"),
         snap.q("SP_UNSENT_OLDEST_H"),
     ));
-    let age_col = age_col; // silence unused-assign warnings across branches
     let _ = age_col;
     let fiend_age_sfx = if fail != "0" {
         match snap.get("SP_SENT_FAILED_AGE_M") {

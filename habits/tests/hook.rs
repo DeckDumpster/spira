@@ -59,7 +59,7 @@ struct Repo {
 }
 
 fn git(dir: &Path, args: &[&str]) {
-    let mut child = Command::new("git")
+    let child = Command::new("git")
         .arg("-C")
         .arg(dir)
         .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"])

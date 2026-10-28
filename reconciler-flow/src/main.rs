@@ -203,7 +203,7 @@ fn maybe_alert(cfg: &Config, alerted: &mut AlertedSinceMap, key: &str, verdict: 
     if let Err(e) = mail::note_concierge(&cfg.mail_bin, &subject, &body) {
         eprintln!("reconciler-flow: {key}: concierge alert failed: {e}");
     } else {
-        log_print(&cfg, &format!("reconciler-flow: {key} → gap, alerted concierge"));
+        log_print(cfg, &format!("reconciler-flow: {key} → gap, alerted concierge"));
     }
 }
 
@@ -243,6 +243,7 @@ fn run_pass() -> Result<(), String> {
 
     let lock_file = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .write(true)
         .open(&cfg.lock_path)
         .map_err(|e| format!("open lock {}: {e}", cfg.lock_path.display()))?;

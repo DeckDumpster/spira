@@ -336,216 +336,6 @@ pub fn cockpit_window_targets(
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn classify_argv_matches_health_by_script_suffix_never_substring() {
-        assert_eq!(classify_argv("bash", "/opt/spira/cockpit/health.sh", None), Some(Role::Health));
-        // The lifecycle lens is the ops pane now (sp-lpw5ol).
-        assert_eq!(classify_argv("/opt/bin/lc-view", "loop", None), Some(Role::Health));
-        assert_eq!(classify_argv("lc-view", "", None), Some(Role::Health));
-        // A system prompt that merely mentions the path as argv text (not argv[0]/[1] of a
-        // shell) must not classify — callers only ever pass exe/script, not the whole line,
-        // which is what makes this safe: "argv position, never substring".
-        assert_eq!(classify_argv("claude", "", None), None);
-    }
-
-    #[test]
-    fn classify_argv_matches_mail_by_basename_only() {
-        assert_eq!(classify_argv("/usr/bin/aerc", "", Some("aerc")), Some(Role::Mail));
-        assert_eq!(classify_argv("/usr/bin/aerclike", "", Some("aerc")), None);
-    }
-
-    #[test]
-    fn classify_argv_neither() {
-        assert_eq!(classify_argv("zsh", "", Some("aerc")), None);
-    }
-
-    #[test]
-    fn stale_clients_filters_by_idle_secs() {
-        let lines = "/dev/pts/0 1000\n/dev/pts/1 500\n";
-        let now = 1000 + 21600 + 1;
-        let out = stale_clients(lines, now, 21600);
-        assert_eq!(out.len(), 2);
-        assert_eq!(out[0].0, "/dev/pts/0");
-    }
-
-    #[test]
-    fn stale_clients_disabled_at_zero() {
-        assert!(stale_clients("/dev/pts/0 0\n", 100_000, 0).is_empty());
-    }
-
-    #[test]
-    fn stale_clients_ignores_malformed_lines() {
-        assert!(stale_clients("garbage\n\n", 100_000, 10).is_empty());
-    }
-
-    #[test]
-    fn cockpit_window_targets_dedups_by_window_id() {
-        let panes = "@1|cockpit:2|health\n@1|cockpit:2|mail\n";
-        let wins = "@1|brain:0|1\n@2|hunk:0|1\n";
-        let out = cockpit_window_targets(panes, wins);
-        assert_eq!(out, vec!["cockpit:2".to_string(), "hunk:0".to_string()]);
-    }
-
-    fn conf_with(release: &str, repo: &str) -> Conf {
-        Conf {
-            spira_release: release.into(),
-            cock: PathBuf::new(),
-            run: PathBuf::new(),
-            cwd: String::new(),
-            right_pct: 33,
-            bottom_pct: 28,
-            mail_cmd: None,
-            heal_cooldown_secs: 60,
-            idle_secs: 0,
-            mouse_on: true,
-            clipboard_on: false,
-            spira_repo: repo.into(),
-            spira_conf: None,
-        }
-    }
-
-    #[test]
-    fn ensure_on_a_headless_install_is_a_one_line_noop() {
-        let dir = testkit::TempDir::new("sp-sesur6-headless");
-        let run = dir.join("run");
-        std::fs::create_dir_all(&run).unwrap();
-        let mut conf = conf_with("", "");
-        conf.run = run.clone();
-        let present = dir.join("tmux-present");
-        testkit::write_exe(&present, "#!/bin/sh\nexit 0\n");
-        assert!(Tmux::with_bin(present.to_string_lossy().to_string()).installed());
-        let absent = dir.join("no-such-tmux");
-        let layout = Layout { tmux: Tmux::with_bin(absent.to_string_lossy().to_string()), conf };
-        let me = std::env::current_exe().unwrap();
-        assert_eq!(layout.ensure(&me, &me), Ok(String::new()));
-        let log = std::fs::read_to_string(run.join("cockpit-heal.log")).unwrap();
-        assert!(log.contains("headless"), "{log}");
-        assert!(!log.contains("No such file"), "{log}");
-    }
-
-    #[test]
-    fn ensure_runs_the_releases_rebuild_when_path_lacks_the_release_bin() {
-        let dir = testkit::TempDir::new("sp-qmi9da-rebuild");
-        let run = dir.join("run");
-        let rel = dir.join("rel");
-        std::fs::create_dir_all(&run).unwrap();
-        std::fs::create_dir_all(rel.join("bin")).unwrap();
-        testkit::write_exe(&rel.join("bin/rebuild"), "#!/bin/sh\necho rebuilt-from-release\n");
-        let tmux = dir.join("tmux");
-        testkit::write_exe(&tmux, "#!/bin/sh\nexit 0\n");
-        let mut conf = conf_with(&rel.display().to_string(), "");
-        conf.run = run.clone();
-        let layout = Layout { tmux: Tmux::with_bin(tmux.to_string_lossy().to_string()), conf };
-        let me = std::env::current_exe().unwrap();
-        assert_eq!(layout.ensure(&me, &me), Ok(String::new()));
-        let log = std::fs::read_to_string(run.join("cockpit-heal.log")).unwrap();
-        assert!(log.contains("rebuilt-from-release"), "{log}");
-        assert!(!log.contains("No such file"), "{log}");
-    }
-
-    #[test]
-    fn concierge_script_resolves_in_the_release_with_repo_unset() {
-        let dir = testkit::TempDir::new("sp-9hn7po-rel");
-        testkit::write_exe(&dir.join("concierge.sh"), "#!/bin/sh\n");
-        let rel = dir.display().to_string();
-        let got = conf_with(&rel, "").concierge_script().unwrap();
-        assert_eq!(got, format!("{rel}/concierge.sh"));
-    }
-
-    #[test]
-    fn concierge_script_with_neither_set_names_both() {
-        let e = conf_with("", "").concierge_script().unwrap_err();
-        assert!(e.contains("SPIRA_RELEASE") && e.contains("SPIRA_REPO"), "{e}");
-    }
-
-    #[test]
-    fn concierge_script_missing_file_names_the_path_tried() {
-        let e = conf_with("/nonexistent-rel", "").concierge_script().unwrap_err();
-        assert!(e.contains("/nonexistent-rel/concierge.sh"), "{e}");
-    }
-
-    #[test]
-    fn rel_prefix_carries_release_and_conf() {
-        let c = Conf {
-            spira_release: "/rel".into(),
-            cock: PathBuf::new(),
-            run: PathBuf::new(),
-            cwd: String::new(),
-            right_pct: 33,
-            bottom_pct: 28,
-            mail_cmd: None,
-            heal_cooldown_secs: 60,
-            idle_secs: 21600,
-            mouse_on: true,
-            clipboard_on: true,
-            spira_repo: String::new(),
-            spira_conf: Some("/etc/spira-custom.conf".into()),
-        };
-        let p = c.rel_prefix();
-        assert!(p.contains("SPIRA_CONF='/etc/spira-custom.conf'"));
-        assert!(p.contains("SPIRA_RELEASE='/rel'"));
-        assert!(p.contains("PATH='/rel/bin:/rel/spira:/usr/local/bin:/usr/bin:/bin'"));
-    }
-
-    #[test]
-    fn apply_mouse_mode_binds_drag_without_alternate_on() {
-        use std::process::Command;
-        if Command::new("tmux").arg("-V").output().is_err() {
-            return;
-        }
-        let dir = testkit::TempDir::new("sp-ihxxy-drag");
-        let sock = format!("sp-ihxxy-{}", std::process::id());
-        let wrap = dir.join("tmux-scratch");
-testkit::write_exe(
-            &wrap,
-            &format!("#!/bin/sh\nTMUX_TMPDIR='{}' exec tmux -L {sock} \"$@\"\n", dir.display()),
-        );
-        let tmux = Tmux::with_bin(wrap.to_string_lossy().to_string());
-        assert!(tmux.run_ok(&["new-session", "-d", "-s", "x"]));
-        let conf = Conf {
-            spira_release: String::new(),
-            cock: PathBuf::new(),
-            run: PathBuf::new(),
-            cwd: String::new(),
-            right_pct: 33,
-            bottom_pct: 28,
-            mail_cmd: None,
-            heal_cooldown_secs: 60,
-            idle_secs: 0,
-            mouse_on: true,
-            clipboard_on: false,
-            spira_repo: String::new(),
-            spira_conf: None,
-        };
-        // The binding apply_mouse_mode replaces is INSTALLED here, never read from this tmux's
-        // own defaults: tmux 3.3 ships it, but newer tmux (the EC2 round image's) already
-        // dropped alternate_on, which failed this control on a host whose tmux is newer.
-        assert!(tmux.run_ok(&[
-            "bind-key",
-            "-T",
-            "root",
-            "MouseDrag1Pane",
-            "if-shell",
-            "-F",
-            "#{||:#{pane_in_mode},#{mouse_any_flag},#{alternate_on}}",
-            "send-keys -M",
-            "copy-mode -M",
-        ]));
-        let before = tmux.stdout(&["list-keys", "-T", "root", "MouseDrag1Pane"]).unwrap_or_default();
-        assert!(before.contains("alternate_on"), "control: the installed binding must test alternate_on: {before}");
-        Layout { tmux, conf }.apply_mouse_mode();
-        let t = Tmux::with_bin(wrap.to_string_lossy().to_string());
-        let after = t.stdout(&["list-keys", "-T", "root", "MouseDrag1Pane"]).unwrap_or_default();
-        t.run_ok(&["kill-server"]);
-        assert!(after.contains("mouse_any_flag"), "{after}");
-        assert!(!after.contains("alternate_on"), "{after}");
-    }
-}
-
 /// Wall-clock seconds since the Unix epoch, saturating to 0 on a clock error — used only
 /// for idle-client detection and heal cooldown timing, neither of which is safety-critical
 /// enough to justify a panic on an unreadable clock.
@@ -622,12 +412,9 @@ impl Layout {
     /// The session pane: the first untagged pane, preferring this process's own pane if it
     /// is one of them (an agent running `up` from inside the cockpit is the normal case).
     fn session_pane(&self, window: &str) -> Option<String> {
-        let Some(out) = self
+        let out = self
             .tmux
-            .run(&["list-panes", "-t", window, "-F", "#{@cockpit} #{pane_id}"])
-        else {
-            return None;
-        };
+            .run(&["list-panes", "-t", window, "-F", "#{@cockpit} #{pane_id}"])?;
         let untagged: Vec<String> = out
             .lines()
             .filter_map(|l| {
@@ -1224,4 +1011,214 @@ fn chrono_like_timestamp() -> String {
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_argv_matches_health_by_script_suffix_never_substring() {
+        assert_eq!(classify_argv("bash", "/opt/spira/cockpit/health.sh", None), Some(Role::Health));
+        // The lifecycle lens is the ops pane now (sp-lpw5ol).
+        assert_eq!(classify_argv("/opt/bin/lc-view", "loop", None), Some(Role::Health));
+        assert_eq!(classify_argv("lc-view", "", None), Some(Role::Health));
+        // A system prompt that merely mentions the path as argv text (not argv[0]/[1] of a
+        // shell) must not classify — callers only ever pass exe/script, not the whole line,
+        // which is what makes this safe: "argv position, never substring".
+        assert_eq!(classify_argv("claude", "", None), None);
+    }
+
+    #[test]
+    fn classify_argv_matches_mail_by_basename_only() {
+        assert_eq!(classify_argv("/usr/bin/aerc", "", Some("aerc")), Some(Role::Mail));
+        assert_eq!(classify_argv("/usr/bin/aerclike", "", Some("aerc")), None);
+    }
+
+    #[test]
+    fn classify_argv_neither() {
+        assert_eq!(classify_argv("zsh", "", Some("aerc")), None);
+    }
+
+    #[test]
+    fn stale_clients_filters_by_idle_secs() {
+        let lines = "/dev/pts/0 1000\n/dev/pts/1 500\n";
+        let now = 1000 + 21600 + 1;
+        let out = stale_clients(lines, now, 21600);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].0, "/dev/pts/0");
+    }
+
+    #[test]
+    fn stale_clients_disabled_at_zero() {
+        assert!(stale_clients("/dev/pts/0 0\n", 100_000, 0).is_empty());
+    }
+
+    #[test]
+    fn stale_clients_ignores_malformed_lines() {
+        assert!(stale_clients("garbage\n\n", 100_000, 10).is_empty());
+    }
+
+    #[test]
+    fn cockpit_window_targets_dedups_by_window_id() {
+        let panes = "@1|cockpit:2|health\n@1|cockpit:2|mail\n";
+        let wins = "@1|brain:0|1\n@2|hunk:0|1\n";
+        let out = cockpit_window_targets(panes, wins);
+        assert_eq!(out, vec!["cockpit:2".to_string(), "hunk:0".to_string()]);
+    }
+
+    fn conf_with(release: &str, repo: &str) -> Conf {
+        Conf {
+            spira_release: release.into(),
+            cock: PathBuf::new(),
+            run: PathBuf::new(),
+            cwd: String::new(),
+            right_pct: 33,
+            bottom_pct: 28,
+            mail_cmd: None,
+            heal_cooldown_secs: 60,
+            idle_secs: 0,
+            mouse_on: true,
+            clipboard_on: false,
+            spira_repo: repo.into(),
+            spira_conf: None,
+        }
+    }
+
+    #[test]
+    fn ensure_on_a_headless_install_is_a_one_line_noop() {
+        let dir = testkit::TempDir::new("sp-sesur6-headless");
+        let run = dir.join("run");
+        std::fs::create_dir_all(&run).unwrap();
+        let mut conf = conf_with("", "");
+        conf.run = run.clone();
+        let present = dir.join("tmux-present");
+        testkit::write_exe(&present, "#!/bin/sh\nexit 0\n");
+        assert!(Tmux::with_bin(present.to_string_lossy().to_string()).installed());
+        let absent = dir.join("no-such-tmux");
+        let layout = Layout { tmux: Tmux::with_bin(absent.to_string_lossy().to_string()), conf };
+        let me = std::env::current_exe().unwrap();
+        assert_eq!(layout.ensure(&me, &me), Ok(String::new()));
+        let log = std::fs::read_to_string(run.join("cockpit-heal.log")).unwrap();
+        assert!(log.contains("headless"), "{log}");
+        assert!(!log.contains("No such file"), "{log}");
+    }
+
+    #[test]
+    fn ensure_runs_the_releases_rebuild_when_path_lacks_the_release_bin() {
+        let dir = testkit::TempDir::new("sp-qmi9da-rebuild");
+        let run = dir.join("run");
+        let rel = dir.join("rel");
+        std::fs::create_dir_all(&run).unwrap();
+        std::fs::create_dir_all(rel.join("bin")).unwrap();
+        testkit::write_exe(rel.join("bin/rebuild"), "#!/bin/sh\necho rebuilt-from-release\n");
+        let tmux = dir.join("tmux");
+        testkit::write_exe(&tmux, "#!/bin/sh\nexit 0\n");
+        let mut conf = conf_with(&rel.display().to_string(), "");
+        conf.run = run.clone();
+        let layout = Layout { tmux: Tmux::with_bin(tmux.to_string_lossy().to_string()), conf };
+        let me = std::env::current_exe().unwrap();
+        assert_eq!(layout.ensure(&me, &me), Ok(String::new()));
+        let log = std::fs::read_to_string(run.join("cockpit-heal.log")).unwrap();
+        assert!(log.contains("rebuilt-from-release"), "{log}");
+        assert!(!log.contains("No such file"), "{log}");
+    }
+
+    #[test]
+    fn concierge_script_resolves_in_the_release_with_repo_unset() {
+        let dir = testkit::TempDir::new("sp-9hn7po-rel");
+        testkit::write_exe(dir.join("concierge.sh"), "#!/bin/sh\n");
+        let rel = dir.display().to_string();
+        let got = conf_with(&rel, "").concierge_script().unwrap();
+        assert_eq!(got, format!("{rel}/concierge.sh"));
+    }
+
+    #[test]
+    fn concierge_script_with_neither_set_names_both() {
+        let e = conf_with("", "").concierge_script().unwrap_err();
+        assert!(e.contains("SPIRA_RELEASE") && e.contains("SPIRA_REPO"), "{e}");
+    }
+
+    #[test]
+    fn concierge_script_missing_file_names_the_path_tried() {
+        let e = conf_with("/nonexistent-rel", "").concierge_script().unwrap_err();
+        assert!(e.contains("/nonexistent-rel/concierge.sh"), "{e}");
+    }
+
+    #[test]
+    fn rel_prefix_carries_release_and_conf() {
+        let c = Conf {
+            spira_release: "/rel".into(),
+            cock: PathBuf::new(),
+            run: PathBuf::new(),
+            cwd: String::new(),
+            right_pct: 33,
+            bottom_pct: 28,
+            mail_cmd: None,
+            heal_cooldown_secs: 60,
+            idle_secs: 21600,
+            mouse_on: true,
+            clipboard_on: true,
+            spira_repo: String::new(),
+            spira_conf: Some("/etc/spira-custom.conf".into()),
+        };
+        let p = c.rel_prefix();
+        assert!(p.contains("SPIRA_CONF='/etc/spira-custom.conf'"));
+        assert!(p.contains("SPIRA_RELEASE='/rel'"));
+        assert!(p.contains("PATH='/rel/bin:/rel/spira:/usr/local/bin:/usr/bin:/bin'"));
+    }
+
+    #[test]
+    fn apply_mouse_mode_binds_drag_without_alternate_on() {
+        use std::process::Command;
+        if Command::new("tmux").arg("-V").output().is_err() {
+            return;
+        }
+        let dir = testkit::TempDir::new("sp-ihxxy-drag");
+        let sock = format!("sp-ihxxy-{}", std::process::id());
+        let wrap = dir.join("tmux-scratch");
+testkit::write_exe(
+            &wrap,
+            &format!("#!/bin/sh\nTMUX_TMPDIR='{}' exec tmux -L {sock} \"$@\"\n", dir.display()),
+        );
+        let tmux = Tmux::with_bin(wrap.to_string_lossy().to_string());
+        assert!(tmux.run_ok(&["new-session", "-d", "-s", "x"]));
+        let conf = Conf {
+            spira_release: String::new(),
+            cock: PathBuf::new(),
+            run: PathBuf::new(),
+            cwd: String::new(),
+            right_pct: 33,
+            bottom_pct: 28,
+            mail_cmd: None,
+            heal_cooldown_secs: 60,
+            idle_secs: 0,
+            mouse_on: true,
+            clipboard_on: false,
+            spira_repo: String::new(),
+            spira_conf: None,
+        };
+        // The binding apply_mouse_mode replaces is INSTALLED here, never read from this tmux's
+        // own defaults: tmux 3.3 ships it, but newer tmux (the EC2 round image's) already
+        // dropped alternate_on, which failed this control on a host whose tmux is newer.
+        assert!(tmux.run_ok(&[
+            "bind-key",
+            "-T",
+            "root",
+            "MouseDrag1Pane",
+            "if-shell",
+            "-F",
+            "#{||:#{pane_in_mode},#{mouse_any_flag},#{alternate_on}}",
+            "send-keys -M",
+            "copy-mode -M",
+        ]));
+        let before = tmux.stdout(&["list-keys", "-T", "root", "MouseDrag1Pane"]).unwrap_or_default();
+        assert!(before.contains("alternate_on"), "control: the installed binding must test alternate_on: {before}");
+        Layout { tmux, conf }.apply_mouse_mode();
+        let t = Tmux::with_bin(wrap.to_string_lossy().to_string());
+        let after = t.stdout(&["list-keys", "-T", "root", "MouseDrag1Pane"]).unwrap_or_default();
+        t.run_ok(&["kill-server"]);
+        assert!(after.contains("mouse_any_flag"), "{after}");
+        assert!(!after.contains("alternate_on"), "{after}");
+    }
 }

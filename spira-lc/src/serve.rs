@@ -280,6 +280,7 @@ fn serve_one(stream: UnixStream, conn: &Arc<Conn>, spans: Option<&spira_otel::Si
     record_span(spans, &verb, &caller, line.len(), out.len(), code, started, SystemTime::now(), waited);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn record_span(spans: Option<&spira_otel::Sink>, verb: &str, caller: &str, request_size: usize, response_size: usize, code: i32, start: SystemTime, end: SystemTime, queue_wait: Duration) {
     if let Some(sink) = spans {
         sink.emit(&spira_otel::Call {
@@ -356,6 +357,13 @@ pub(crate) fn peer_uid(stream: &UnixStream) -> Option<u32> {
 
 fn peer_pid(stream: &UnixStream) -> Option<i32> {
     peer_cred(stream).map(|c| c.pid)
+}
+
+fn write_response(mut stream: &UnixStream, exit_code: i32, stdout: &str) -> std::io::Result<()> {
+    let mut buf = Vec::with_capacity(stdout.len() + 48);
+    writeln!(buf, "{}", serde_json::json!({"exit_code": exit_code, "len": stdout.len()}))?;
+    buf.extend_from_slice(stdout.as_bytes());
+    stream.write_all(&buf)
 }
 
 #[cfg(test)]
@@ -462,11 +470,4 @@ mod tests {
         let me = std::fs::metadata("/proc/self").unwrap();
         assert_eq!(super::peer_uid(&a), Some(std::os::unix::fs::MetadataExt::uid(&me)));
     }
-}
-
-fn write_response(mut stream: &UnixStream, exit_code: i32, stdout: &str) -> std::io::Result<()> {
-    let mut buf = Vec::with_capacity(stdout.len() + 48);
-    writeln!(buf, "{}", serde_json::json!({"exit_code": exit_code, "len": stdout.len()}))?;
-    buf.extend_from_slice(stdout.as_bytes());
-    stream.write_all(&buf)
 }

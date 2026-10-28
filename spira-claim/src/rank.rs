@@ -144,6 +144,7 @@ impl Ranked {
             (1, self.epic_priority, self.express, self.epic_started, self.bead_priority)
         }
     }
+    #[allow(clippy::type_complexity)]
     fn key(&self) -> ((u8, i64, u8, u8, i64), u8, &str, &str, &str) {
         (self.tier(), self.resumable, &self.age, &self.id, &self.epic_id)
     }
@@ -340,7 +341,7 @@ pub fn blockers(r: &ReadyRow) -> Vec<String> {
     r.dependencies
         .iter()
         .filter(|d| d.dep_type.as_deref() == Some("blocks"))
-        .filter(|d| d.issue_id.as_deref().map_or(true, |i| i == r.id))
+        .filter(|d| d.issue_id.as_deref().is_none_or(|i| i == r.id))
         .filter_map(|d| d.depends_on_id.clone())
         .filter(|b| r.parent.as_deref() != Some(b.as_str()))
         .collect()

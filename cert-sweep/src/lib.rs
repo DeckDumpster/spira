@@ -81,7 +81,7 @@ pub fn parse_testenv_stdout(text: &str) -> Vec<Outcome> {
             .split_whitespace()
             .filter_map(|w| w.strip_suffix('s'))
             .filter_map(|n| n.parse().ok())
-            .last();
+            .next_back();
         out.push(Outcome { suite: suite.to_string(), verdict, secs });
     }
     out
@@ -282,7 +282,7 @@ pub fn live_leases(status_json: &str, alive: &dyn Fn(&str) -> bool) -> Result<Ve
     let leases = v.get("leases").and_then(Value::as_array).ok_or("round-vm status: no leases field")?;
     Ok(leases
         .iter()
-        .filter(|l| l.get("owner").and_then(Value::as_str).map_or(true, alive))
+        .filter(|l| l.get("owner").and_then(Value::as_str).is_none_or(alive))
         .map(|l| l.get("vm").and_then(Value::as_str).unwrap_or("?").to_string())
         .collect())
 }

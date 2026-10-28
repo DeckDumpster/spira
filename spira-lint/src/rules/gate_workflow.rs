@@ -544,6 +544,12 @@ comments say why each one is load-bearing."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(GateWorkflow),
+    ]
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -690,10 +696,4 @@ mod tests {
             vec!["pve-ca-cert"]
         );
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(GateWorkflow),
-    ]
 }

@@ -50,7 +50,7 @@ pub fn certified(
     repo: &str,
     s: &crate::ports::Settings,
     head: &str,
-    head_arg: &str,
+    _head_arg: &str,
 ) -> Result<(), String> {
     let Some(tree) = w.git.rev_parse(path, &format!("{head}^{{tree}}")) else {
         return Err(format!(

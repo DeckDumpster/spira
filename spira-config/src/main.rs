@@ -639,7 +639,7 @@ fn cmd_repo_add(args: &[String]) -> ExitCode {
             if did.is_empty() {
                 println!("repo add: {name} already registered, nothing changed");
             }
-            cmd_repo_check(&repo_registry(), &[name.clone()])
+            cmd_repo_check(&repo_registry(), std::slice::from_ref(name))
         }
         Err(e) => {
             eprintln!("{e}");
@@ -929,22 +929,6 @@ fn cmd_schema() -> ExitCode {
             eprintln!("spira-config: {e}");
             ExitCode::FAILURE
         }
-    }
-}
-
-/// Reads and validates `file` for `set`/`unset`, or starts from an empty document when it
-/// does not exist yet — the file argument is required for both, unlike `validate`/`get`/
-/// `export`, because their callers (`deploy.sh`, `install.sh`, `dwarves.sh`) already know
-/// exactly which file is in force and mutate it in place.
-fn read_doc_or_default(file: &str) -> Result<SpiraToml, String> {
-    if !Path::new(file).exists() {
-        return Ok(SpiraToml::default());
-    }
-    let text = fs::read_to_string(file).map_err(|e| format!("{file}: {e}"))?;
-    if text.trim().is_empty() {
-        Ok(SpiraToml::default())
-    } else {
-        validate(&text)
     }
 }
 

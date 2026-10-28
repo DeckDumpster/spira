@@ -80,7 +80,7 @@ impl Rule for ConfigEnvRead {
             }
             let mut parts = t.splitn(2, char::is_whitespace);
             let path = parts.next().unwrap_or_default().to_string();
-            if parts.next().map_or(true, |r| r.trim().is_empty()) {
+            if parts.next().is_none_or(|r| r.trim().is_empty()) {
                 out.push(Finding {
                     rule: NAME,
                     path: EXCEPTIONS.to_string(),
@@ -135,6 +135,12 @@ impl Rule for ConfigEnvRead {
 a read that cannot (bootstrap, a hermetic stage that must not see config) is listed in \
 spira-lint/config-env-read-exceptions with its reason. The table only shrinks."
     }
+}
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(ConfigEnvRead),
+    ]
 }
 
 #[cfg(test)]
@@ -199,10 +205,4 @@ mod tests {
         t.write("a/src/main.rs", "fn f() {}\n");
         assert!(run(&t, &["a/src/main.rs"]).is_err());
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(ConfigEnvRead),
-    ]
 }

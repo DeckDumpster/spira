@@ -62,6 +62,7 @@ fn sanitize_key(kind: &str, target: &str) -> String {
 /// Returns `Err(())` for exactly the two cases the bash `return 1`s on: an empty `kind` or
 /// `title`, or a `run_dir/events` it cannot create. Every later failure (the log append)
 /// is swallowed, as the bash's own `|| true` swallows it — `Ok(())` either way.
+#[allow(clippy::result_unit_err, clippy::too_many_arguments)]
 pub fn emit(run_dir: &Path, cooldown: i64, now: i64, kind: &str, target: &str, title: &str, detail: &str) -> Result<(), ()> {
     if kind.is_empty() || title.is_empty() {
         return Err(());

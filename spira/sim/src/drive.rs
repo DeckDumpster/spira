@@ -518,7 +518,7 @@ impl ProcessExec {
 impl Exec for ProcessExec {
     fn run(&mut self, command: &str, now_ms: u64) -> Result<i32, String> {
         let started = std::time::Instant::now();
-        let trace = std::env::var_os(crate::proctrace::TRACE_ENV).is_some().then(|| (self.world.as_path(), command));
+        let trace = std::env::var_os(crate::proctrace::TRACE_ENV).is_some().then_some((self.world.as_path(), command));
         let (status, out, err) = crate::world::run_capture_traced(&mut self.command(command, now_ms)?, COMMAND_DEADLINE, trace)?;
         self.log(command, now_ms, &format!("{status} in {}ms", started.elapsed().as_millis()), &out, &err);
         // conf.env freezes the config; a step that changes it sends later commands back through conf.sh
@@ -550,7 +550,7 @@ pub fn profile_line(world: &Path) -> String {
     let mut timed_cmds: Vec<(u64, String)> = Vec::new();
     for l in std::fs::read_to_string(world.join(EXEC_LOG)).unwrap_or_default().lines() {
         let timed = l.contains("(probe): in ") || l.contains(": exit status: ");
-        let Some(ms) = Some(l).filter(|_| timed).and_then(|l| l.rsplit_once(" in ")).and_then(|(_, t)| t.strip_suffix("ms")).and_then(|t| t.parse::<u64>().ok()) else { continue };
+        let Some(ms) = timed.then_some(l).and_then(|l| l.rsplit_once(" in ")).and_then(|(_, t)| t.strip_suffix("ms")).and_then(|t| t.parse::<u64>().ok()) else { continue };
         if l.contains("(probe): in ") {
             probes += 1;
             probe_ms += ms;
@@ -560,7 +560,7 @@ pub fn profile_line(world: &Path) -> String {
             timed_cmds.push((ms, l.chars().take(70).collect()));
         }
     }
-    timed_cmds.sort_by(|a, b| b.0.cmp(&a.0));
+    timed_cmds.sort_by_key(|c| std::cmp::Reverse(c.0));
     let slowest: Vec<String> = timed_cmds.iter().take(4).map(|(ms, c)| format!("{ms}ms {c}")).collect();
     format!("{} cpu={}ms commands={cmds}/{cmd_ms}ms probes={probes}/{probe_ms}ms slowest: {}", phases.join(" "), children_cpu_ms(), slowest.join(" | "))
 }

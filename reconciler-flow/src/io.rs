@@ -107,11 +107,11 @@ fn applied(row: &Value) -> bool {
     tsd::query::flag(row, "applied")
 }
 
-fn machine<'a>(row: &'a Value) -> &'a str {
+fn machine(row: &Value) -> &str {
     tsd::query::text(row, "machine").unwrap_or("")
 }
 
-fn to_state<'a>(row: &'a Value) -> &'a str {
+fn to_state(row: &Value) -> &str {
     tsd::query::text(row, "to_state").unwrap_or("")
 }
 
@@ -145,7 +145,7 @@ pub fn velocity_metrics(rows: &[Value], now: u64, window_hours: f64, baseline_ho
 }
 
 /// Each applied row's previous state and the seconds since it, per `part` of the rows ordered by seq.
-fn transitions<'a>(rows: &'a [Value], part: impl Fn(&Value) -> String, keep: impl Fn(&Value) -> bool) -> Vec<(&'a Value, Option<(&'a str, f64)>)> {
+fn transitions(rows: &[Value], part: impl Fn(&Value) -> String, keep: impl Fn(&Value) -> bool) -> Vec<(&Value, Option<(&str, f64)>)> {
     let mut by: std::collections::BTreeMap<String, Vec<&Value>> = Default::default();
     for r in rows.iter().filter(|r| applied(r) && keep(r)) {
         by.entry(part(r)).or_default().push(r);

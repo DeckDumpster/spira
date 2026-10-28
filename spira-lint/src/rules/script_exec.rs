@@ -58,6 +58,12 @@ in its first 10 lines instead; the header is the declaration, so no list can dri
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(ScriptExec),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,10 +109,4 @@ mod tests {
         let t = TempDir::new("sx-empty");
         assert_eq!(run(&t, &["spira/test-a.sh", "spira/sub/b.sh"]), Err(LintError::EmptyScope));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(ScriptExec),
-    ]
 }

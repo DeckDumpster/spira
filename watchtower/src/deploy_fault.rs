@@ -22,7 +22,7 @@ pub fn parse(marker: &str) -> Option<(&str, &str)> {
 }
 
 pub fn retry_due(last: Option<i64>, now: i64, retry_secs: i64) -> bool {
-    last.map_or(true, |t| now - t >= retry_secs)
+    last.is_none_or(|t| now - t >= retry_secs)
 }
 
 fn retry_build(cfg: &Cfg, head: &str) -> String {
@@ -67,7 +67,7 @@ pub fn run(now: i64, queue_dir: &Path, run_dir: &Path, db: &str, home_repo: &str
         );
         let f = Finding::new(db, home_repo, &format!("LAND DEPLOY FAULT: {head} landed but was not released"), &body)
             .priority(1)
-            .reference(&format!("incident:deploy-fault:{name}:{head}"))
+            .reference(format!("incident:deploy-fault:{name}:{head}"))
             .cause("deploy-fault");
         if incident::is_usable(incident_sh) {
             incident::alarm(incident_sh, &f);

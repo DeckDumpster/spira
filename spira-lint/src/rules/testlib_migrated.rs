@@ -95,6 +95,12 @@ from the runner's counting. spira-lint/testlib-migrated-allow only shrinks."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(TestlibMigrated),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,10 +160,4 @@ mod tests {
         t.write("spira/lib.sh", "ok() { :; }\n");
         assert_eq!(run(&t, &["spira/sub/test-x.sh", "spira/lib.sh"]), Err(LintError::EmptyScope));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(TestlibMigrated),
-    ]
 }

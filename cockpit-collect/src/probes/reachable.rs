@@ -160,7 +160,7 @@ pub fn reachable_keys(cfg: &Cfg) -> Kv {
     }
 
     let beads = beads_of(&rows, &lc);
-    let (reach, total) = reachable_bfs(&beads, &ask, &scope, &suspended, &live);
+    let (reach, total) = reachable_bfs(&beads, &ask, scope, &suspended, &live);
     push(&mut out, "SP_REACHABLE", reach.to_string());
     push(&mut out, "SP_STRANDED", (total - reach).to_string());
     out

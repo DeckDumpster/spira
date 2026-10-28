@@ -54,11 +54,7 @@ pub struct Report {
 
 impl Report {
     fn pct(&self, t: u64) -> u64 {
-        if self.total == 0 {
-            0
-        } else {
-            t * 100 / self.total
-        }
+        (t * 100).checked_div(self.total).unwrap_or(0)
     }
 
     pub fn competing(&self) -> u64 {

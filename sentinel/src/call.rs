@@ -231,7 +231,7 @@ impl<'a> Sentinel<'a> {
                 .lines()
                 .filter_map(|l| l.split_whitespace().next())
                 .filter(|u| u.starts_with(&prefix))
-                .filter(|u| exclude.map_or(true, |ex| *u != ex))
+                .filter(|u| exclude != Some(*u))
                 .count() as i64;
         }
         pass::pid_count(&self.cfg.run, name) as i64
@@ -823,6 +823,7 @@ impl<'a> Sentinel<'a> {
         let _ = std::fs::create_dir_all(&self.cfg.run);
         let f = std::fs::OpenOptions::new()
             .create(true)
+            .truncate(false)
             .write(true)
             .open(&self.cfg.call_lock)
             .ok()?;
@@ -969,7 +970,7 @@ mod tests {
     #[test]
     fn which_refuses_a_bare_name_not_on_path() {
         let d = testkit::TempDir::new("sentinel-which");
-        testkit::write_exe(&d.join("dwarf"), "#!/bin/sh\n");
+        testkit::write_exe(d.join("dwarf"), "#!/bin/sh\n");
         assert_eq!(which("dwarf", &d.to_string_lossy()), Some(d.join("dwarf").to_string_lossy().into_owned()));
         assert_eq!(which("no-such-binary-anywhere", &d.to_string_lossy()), None);
     }
@@ -997,7 +998,7 @@ mod tests {
                 let order = order.clone();
                 let barrier = barrier.clone();
                 std::thread::spawn(move || {
-                    let f = std::fs::OpenOptions::new().create(true).write(true).open(&lockfile).unwrap();
+                    let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(&lockfile).unwrap();
                     barrier.wait(); // both threads reach the lock attempt together
                     // SAFETY: flock on a descriptor this thread owns exclusively.
                     assert_eq!(unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) }, 0);

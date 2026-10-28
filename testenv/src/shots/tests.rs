@@ -1,7 +1,6 @@
 use super::*;
 
 const TIP: &str = "0123456789abcdef0123456789abcdef01234567";
-const DECL: &str = "image = \"i\"\n[shots]\nargv = [\"serve\"]\n[tier.t]\nargv = [\"x\"]\n";
 const PNG: &[u8] = b"\x89PNG not compared";
 
 fn dir(n: &str) -> testkit::TempDir {

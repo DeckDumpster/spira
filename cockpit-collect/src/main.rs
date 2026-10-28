@@ -229,11 +229,10 @@ fn sweep_stale_snapshot_tmps(run_dir: &std::path::Path) {
         for e in entries.flatten() {
             let name = e.file_name();
             let name = name.to_string_lossy();
-            if name.starts_with(".cockpit.") {
-                if std::fs::remove_file(e.path()).is_ok() {
+            if name.starts_with(".cockpit.")
+                && std::fs::remove_file(e.path()).is_ok() {
                     n += 1;
                 }
-            }
         }
     }
     if n > 0 {

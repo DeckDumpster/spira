@@ -45,7 +45,7 @@ pub fn install_signal_handlers() {
     // SAFETY: the handler only stores to an atomic, which is async-signal-safe.
     unsafe {
         for s in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
-            libc::signal(s, on_signal as usize);
+            libc::signal(s, on_signal as *const () as usize);
         }
     }
 }

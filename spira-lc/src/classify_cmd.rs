@@ -285,7 +285,7 @@ fn classify_one(
     repo: Option<&str>,
 ) {
     t.beads += 1;
-    if t.beads % PROGRESS_EVERY == 0 {
+    if t.beads.is_multiple_of(PROGRESS_EVERY) {
         let secs = t.started.map_or(0.001, |s| s.elapsed().as_secs_f64()).max(0.001);
         eprintln!(
             "classify: {} beads seen, {} classified, {} skipped, {:.1} beads/s",

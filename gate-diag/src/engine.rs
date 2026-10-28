@@ -122,6 +122,7 @@ pub fn annotation_text(fail: &str) -> String {
 
 /// The GitHub Actions per-suite block: a collapsible `::group::`, the output (or `(no
 /// output)`), and one `::error` annotation naming the suite's own file path.
+#[allow(clippy::too_many_arguments)]
 pub fn render_gha_block(suite: &str, verdict: &str, rc: &str, secs: &str, raw_out: &str, lines: &[String], tail: &str, tail_n: usize, annotation: &str) -> String {
     let mut o = format!("::group::{suite}  {verdict}  rc={rc}  {secs}s\n");
     if raw_out.trim().is_empty() {
@@ -144,6 +145,7 @@ pub fn render_gha_block(suite: &str, verdict: &str, rc: &str, secs: &str, raw_ou
 }
 
 /// The plain-terminal per-suite block (no GitHub Actions in force).
+#[allow(clippy::too_many_arguments)]
 pub fn render_plain_block(suite: &str, verdict: &str, rc: &str, secs: &str, raw_out: &str, lines: &[String], tail: &str, tail_n: usize) -> String {
     let mut o = format!("\n=== {suite}  {verdict}  rc={rc}  {secs}s ===\n");
     if raw_out.trim().is_empty() {

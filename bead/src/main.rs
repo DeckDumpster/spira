@@ -149,6 +149,7 @@ fn is_incident(home: &str, id: &str) -> bool {
 /// `bdq_status` for a create: stdout is passed through unchanged, and when `incident` is
 /// set that incident is wired to block on the new bead in the same step
 /// (law-a-bug-with-a-fix-in-flight-depends-on-it). Failing to wire it fails the filing.
+#[allow(clippy::too_many_arguments)]
 fn bdq_create(home: &str, args: &[String], incident: Option<&str>, stack_after: Option<&str>, mirror: Option<(&str, i64)>, express: bool, submitted_tip: Option<&str>, repo: Option<&str>) -> i32 {
     if incident.is_none() && stack_after.is_none() && mirror.is_none() && !express {
         return bdq_status(home, args);

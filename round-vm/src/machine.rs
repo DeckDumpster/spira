@@ -236,8 +236,7 @@ mod tests {
 
     #[test]
     fn untracked_holdings_are_adopted_once() {
-        let mut s = PoolState::default();
-        s.ready = Some(crate::schema::Vm { handle: "5".into(), addr: "a".into() });
+        let mut s = PoolState { ready: Some(crate::schema::Vm { handle: "5".into(), addr: "a".into() }), ..PoolState::default() };
         s.doomed.push("6".into());
         s.adopt_untracked();
         s.adopt_untracked();

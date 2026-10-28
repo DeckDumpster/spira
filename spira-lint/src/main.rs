@@ -118,6 +118,7 @@ fn real_main() -> ExitCode {
         }
     };
     if emit_allow {
+        #[allow(clippy::type_complexity)]
         let (name, render): (&str, fn(&Tree) -> Result<String, spira_lint::LintError>) = match only.as_deref() {
             Some("call-deadline") => ("call-deadline", spira_lint::rules::call_deadline::render_allow),
             Some("hash-iter-output") => ("hash-iter-output", spira_lint::rules::hash_iter_output::render_allow),

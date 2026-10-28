@@ -221,7 +221,7 @@ fn live_reopen_writes_sidecar_reopens_strips_label_releases_notes() {
     assert!(!dir.join("run/landstate").exists(), "reopen recreated the retired landstate ledger");
 
     let bd_log = std::fs::read_to_string(dir.join("bd.log")).unwrap();
-    let bd_argv: Vec<&str> = bd_log.lines().filter(|l| l.starts_with("ARGV")).collect();
+    let _bd_argv: Vec<&str> = bd_log.lines().filter(|l| l.starts_with("ARGV")).collect();
     // The reopen is the machine's alone: no bd reopen, no label edit, no bd assign (the bead's
     // state and its holder are the lifecycle row's), and the reopen cause is a lifecycle fact.
     // bd sees only the note.

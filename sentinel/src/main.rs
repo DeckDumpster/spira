@@ -233,5 +233,5 @@ fn main() {
     );
     let code = s.run();
     temps::cleanup();
-    { let code = code; spira_otel::run::finish(code); std::process::exit(code) };
+    { spira_otel::run::finish(code); std::process::exit(code) };
 }

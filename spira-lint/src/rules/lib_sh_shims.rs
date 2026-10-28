@@ -355,6 +355,12 @@ the remaining-bash-inventory, or conf.sh's own bootstrap paradox)."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(LibShShims),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -457,10 +463,4 @@ mod tests {
         t.write("spira/other.sh", "content_on_base_check() {\n    git a\n    git b\n}\n");
         assert_eq!(run(&t, &["spira/sub/lib.sh", "spira/other.sh"]), Err(LintError::EmptyScope));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(LibShShims),
-    ]
 }

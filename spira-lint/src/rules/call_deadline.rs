@@ -595,6 +595,13 @@ guard of 120 s and mark it `# batch-job: <why>`; no assertion may depend on how 
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(CallDeadline),
+        Box::new(ShortPodmanTimeout),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -755,11 +762,4 @@ mod tests {
         t.write("a.txt", "x\n");
         assert_eq!(run(&t, &["a.txt"]), Err(LintError::EmptyScope));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(CallDeadline),
-        Box::new(ShortPodmanTimeout),
-    ]
 }

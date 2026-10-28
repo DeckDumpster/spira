@@ -117,6 +117,10 @@ toolchain that is the build tool of the same service."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![Box::new(OneRuntime)]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,8 +194,4 @@ mod tests {
         let tree = Tree::from_git(t.path()).unwrap();
         assert!(matches!(OneRuntime.check(&tree), Err(LintError::BadAllow { .. })));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![Box::new(OneRuntime)]
 }

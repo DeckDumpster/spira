@@ -32,7 +32,7 @@ pub fn blocks_of(bead: &serde_json::Value) -> Vec<String> {
         .map(|a| {
             a.iter()
                 .filter(|d| d.get("dep_type").or_else(|| d.get("type")).and_then(|t| t.as_str()) == Some("blocks"))
-                .filter(|d| d.get("issue_id").and_then(|i| i.as_str()).map_or(true, |i| i == id))
+                .filter(|d| d.get("issue_id").and_then(|i| i.as_str()).is_none_or(|i| i == id))
                 .filter_map(|d| d.get("depends_on_id").and_then(|i| i.as_str()).map(str::to_string))
                 .collect()
         })

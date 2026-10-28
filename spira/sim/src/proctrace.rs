@@ -154,6 +154,6 @@ pub fn summarize(trace: &str) -> String {
         .iter()
         .map(|(n, (count, life, own, unseen))| (own + unseen, format!("{count:>5} procs {life:>8} ms alive {own:>7} ms cpu {unseen:>7} ms cpu in children too short to see: {n}")))
         .collect();
-    lines.sort_by(|a, b| b.0.cmp(&a.0));
+    lines.sort_by_key(|l| std::cmp::Reverse(l.0));
     lines.into_iter().map(|(_, l)| l + "\n").collect()
 }

@@ -204,6 +204,12 @@ spira/config-fence-allow — shrink-only: nothing is added for a newly written f
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(ConfigFence),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,10 +355,4 @@ mod tests {
     fn prose_gets_no_write_check() {
         assert!(!scan("spira/runes/a.md", b"run: printf x > \"$SPIRA_TOML\"\n").write);
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(ConfigFence),
-    ]
 }

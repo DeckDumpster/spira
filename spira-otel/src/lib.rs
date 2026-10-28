@@ -109,7 +109,7 @@ impl Sink {
             kv_int("spira.queue_wait_us", c.queue_wait.as_micros() as u64),
         ];
         if failed {
-            attributes.push(KeyValue { key: "spira.exit_code".into(), value: Some(AnyValue { value: Some(Value::IntValue(i64::from(c.exit_code))) }), ..Default::default() });
+            attributes.push(KeyValue { key: "spira.exit_code".into(), value: Some(AnyValue { value: Some(Value::IntValue(i64::from(c.exit_code))) }) });
         }
         let span = Span {
             trace_id: ids(16),
@@ -137,11 +137,11 @@ impl Sink {
 }
 
 fn kv_str(k: &str, v: &str) -> KeyValue {
-    KeyValue { key: k.into(), value: Some(AnyValue { value: Some(Value::StringValue(v.into())) }), ..Default::default() }
+    KeyValue { key: k.into(), value: Some(AnyValue { value: Some(Value::StringValue(v.into())) }) }
 }
 
 fn kv_int(k: &str, v: u64) -> KeyValue {
-    KeyValue { key: k.into(), value: Some(AnyValue { value: Some(Value::IntValue(v as i64)) }), ..Default::default() }
+    KeyValue { key: k.into(), value: Some(AnyValue { value: Some(Value::IntValue(v as i64)) }) }
 }
 
 /// `n` unique non-zero bytes: time, pid and a counter, mixed — not random, but never repeated.
@@ -271,7 +271,7 @@ mod tests {
         }
         fs::write(dir.join("other.2023-11-01.jsonl"), "x\n").unwrap();
         let sink = Sink::new(dir.path(), "spira-lc", 3);
-        let before = UNIX_EPOCH + Duration::from_secs(1_700_006_399 + 86_400 * 0);
+        let before = UNIX_EPOCH + Duration::from_secs(1_700_006_399);
         let midnight = UNIX_EPOCH + Duration::from_secs(1_700_006_400);
         assert_eq!(utc_date(before), "2023-11-14");
         assert_eq!(utc_date(midnight), "2023-11-15", "1_700_006_400 is 2023-11-15T00:00:00Z");

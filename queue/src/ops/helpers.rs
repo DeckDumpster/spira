@@ -439,6 +439,57 @@ pub(crate) fn push_command(repo: &Path, args: &[String], app_configured: bool) -
     c
 }
 
+/// The close reason a landed member's bead carries (law-closed-is-not-landed).
+pub fn land_close_reason(sha: &str) -> String {
+    let shown = if sha.is_empty() { "unknown" } else { sha };
+    format!("OUTCOME: landed\nClosed by the landing pass: work landed at {shown} (law-closed-is-not-landed).\n")
+}
+
+/// Close a landed member's bead and reap its branch, in-process — no landing-pass oracle
+/// and no second ledger: the queue records LANDED on spira-lc (`lc_deliver` / the batch's
+/// `land` cascade), the one record. A bead never marked submitted is left alone; the close
+/// itself is idempotent and refused by spira-lc for a row not in delivery. Best-effort throughout — a failed close is left
+/// submitted for CHECK 5, a missed reap is left for the Hel.
+pub fn close_on_land(w: &World, submitted_label: &str, id: &str, sha: &str) {
+    let Ok(rows) = w.bd.show(&[id.to_string()]) else {
+        return;
+    };
+    let Some(row) = rows.iter().find(|r| r.id == id) else {
+        return;
+    };
+    if !row.labels.iter().any(|l| l == submitted_label) {
+        return;
+    }
+    let shown = if sha.is_empty() { "unknown" } else { sha };
+    if !w.lib.bead_close(id, &land_close_reason(sha)) {
+        w.out(format!(
+            "land-close {id}: bd close failed — left submitted (LANDED is on the lifecycle record)"
+        ));
+        return;
+    }
+    w.out(format!(
+        "land-close {id}: closed at {shown} (submitted -> landed)"
+    ));
+    let label = |p: &str| {
+        row.labels
+            .iter()
+            .find_map(|l| l.strip_prefix(p).map(str::to_string))
+    };
+    let (Some(repo), Some(branch)) = (label("repo:"), label("branch:")) else {
+        return;
+    };
+    match w
+        .lib
+        .reap_landed_branch(id, &repo, &branch, &format!("landed at {shown}"))
+    {
+        Ok(true) => w.out(format!("land-close {id}: reaped branch {branch}")),
+        Ok(false) => {}
+        Err(e) => w.out(format!(
+            "land-close {id}: branch {branch} not reaped: {e} — left for the Hel"
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -545,56 +596,5 @@ mod tests {
             tip: "deadbeef".into(),
         };
         assert_eq!(render_row(&r), "0 000000002 1 0000000042 sp-a deadbeef");
-    }
-}
-
-/// The close reason a landed member's bead carries (law-closed-is-not-landed).
-pub fn land_close_reason(sha: &str) -> String {
-    let shown = if sha.is_empty() { "unknown" } else { sha };
-    format!("OUTCOME: landed\nClosed by the landing pass: work landed at {shown} (law-closed-is-not-landed).\n")
-}
-
-/// Close a landed member's bead and reap its branch, in-process — no landing-pass oracle
-/// and no second ledger: the queue records LANDED on spira-lc (`lc_deliver` / the batch's
-/// `land` cascade), the one record. A bead never marked submitted is left alone; the close
-/// itself is idempotent and refused by spira-lc for a row not in delivery. Best-effort throughout — a failed close is left
-/// submitted for CHECK 5, a missed reap is left for the Hel.
-pub fn close_on_land(w: &World, submitted_label: &str, id: &str, sha: &str) {
-    let Ok(rows) = w.bd.show(&[id.to_string()]) else {
-        return;
-    };
-    let Some(row) = rows.iter().find(|r| r.id == id) else {
-        return;
-    };
-    if !row.labels.iter().any(|l| l == submitted_label) {
-        return;
-    }
-    let shown = if sha.is_empty() { "unknown" } else { sha };
-    if !w.lib.bead_close(id, &land_close_reason(sha)) {
-        w.out(format!(
-            "land-close {id}: bd close failed — left submitted (LANDED is on the lifecycle record)"
-        ));
-        return;
-    }
-    w.out(format!(
-        "land-close {id}: closed at {shown} (submitted -> landed)"
-    ));
-    let label = |p: &str| {
-        row.labels
-            .iter()
-            .find_map(|l| l.strip_prefix(p).map(str::to_string))
-    };
-    let (Some(repo), Some(branch)) = (label("repo:"), label("branch:")) else {
-        return;
-    };
-    match w
-        .lib
-        .reap_landed_branch(id, &repo, &branch, &format!("landed at {shown}"))
-    {
-        Ok(true) => w.out(format!("land-close {id}: reaped branch {branch}")),
-        Ok(false) => {}
-        Err(e) => w.out(format!(
-            "land-close {id}: branch {branch} not reaped: {e} — left for the Hel"
-        )),
     }
 }

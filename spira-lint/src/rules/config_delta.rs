@@ -162,6 +162,12 @@ impl Rule for ConfigDelta {
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(ConfigDelta::default()),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,10 +265,4 @@ mod tests {
         let tree = Tree::from_git(t.path()).unwrap();
         assert!(matches!(ConfigDelta::default().check(&tree), Err(LintError::Refused(_))));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(ConfigDelta::default()),
-    ]
 }

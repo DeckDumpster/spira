@@ -8,7 +8,7 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     match run() {
-        Ok(failed) if failed == 0 => ExitCode::SUCCESS,
+        Ok(0) => ExitCode::SUCCESS,
         Ok(_) => ExitCode::from(1),
         Err(e) => {
             eprintln!("tsd-prune: {e}");

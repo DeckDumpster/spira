@@ -71,11 +71,11 @@ fn run(args: &[String]) -> Result<(), String> {
             let [dir] = pos.as_slice() else { return Err(USAGE.to_string()) };
             let repos = repos.iter().map(|r| world::RepoSpec::parse(r)).collect::<Result<Vec<_>, _>>()?;
             let tree = set.get("--tree").map_or("HEAD", String::as_str);
-            world::up_repos(&cwd, &PathBuf::from(dir), tree, &env, &ProcessSteps::default(), &repos, &|_| Ok(()))
+            world::up_repos(&cwd, &PathBuf::from(dir), tree, &env, &ProcessSteps, &repos, &|_| Ok(()))
         }
         ["world", "seed"] => world::ensure_seed(&cwd, "HEAD").map(|_| ()),
         ["world", "seed", "--tree", rev] => world::ensure_seed(&cwd, rev).map(|_| ()),
-        ["world", "down", dir] => world::down(&PathBuf::from(dir), &ProcessSteps::default()),
+        ["world", "down", dir] => world::down(&PathBuf::from(dir), &ProcessSteps),
         _ => Err(USAGE.to_string()),
     }
 }
@@ -181,6 +181,7 @@ fn flags(args: &[String], known: &[&str], bare: &[&str]) -> Result<(Vec<String>,
 }
 
 /// [`flags`], and each flag in `repeated` may be given any number of times (its values, in order).
+#[allow(clippy::type_complexity)]
 fn flags_repeated(args: &[String], known: &[&str], bare: &[&str], repeated: &[&str]) -> Result<(Vec<String>, std::collections::BTreeMap<String, String>, Vec<String>), String> {
     let (mut rest, mut many) = (Vec::new(), Vec::new());
     let mut it = args.iter();
@@ -226,7 +227,7 @@ fn run_main(cwd: &std::path::Path, args: &[String], env: &dyn Fn(&str) -> Option
         None => {
             let d = std::env::temp_dir().join(format!("sim-run-{}-{seed}", std::process::id()));
             let t = std::time::Instant::now();
-            world::up_repos(cwd, &d, "HEAD", env, &ProcessSteps::default(), &repos, &|w| spira_sim::drive::resolve_conf(w, sc.epoch))?;
+            world::up_repos(cwd, &d, "HEAD", env, &ProcessSteps, &repos, &|w| spira_sim::drive::resolve_conf(w, sc.epoch))?;
             world::mark(&d, "up", t);
             (d, true)
         }
@@ -248,7 +249,7 @@ fn run_main(cwd: &std::path::Path, args: &[String], env: &dyn Fn(&str) -> Option
     if owned && outcome.is_ok() && !set.contains_key("--keep") {
         let profile = spira_sim::drive::profile_line(&dir);
         let t = std::time::Instant::now();
-        world::down(&dir, &ProcessSteps::default())?;
+        world::down(&dir, &ProcessSteps)?;
         eprintln!("sim: profile {profile} down={}ms", t.elapsed().as_millis());
     } else {
         if outcome.is_ok() {

@@ -120,9 +120,7 @@ mod tests {
 
     #[test]
     fn round_trips_a_full_key_line() {
-        let mut s = State::default();
-        s.first_run = 1000;
-        s.probe_id = "sp-probe1".to_string();
+        let mut s = State { first_run: 1000, probe_id: "sp-probe1".to_string(), ..State::default() };
         s.keys.insert("sentinel-stalled".to_string(), KeyState { state: "firing".to_string(), seen: 2, unseen: 0, since: 1200, first: 1100, flaps: 3, bead: "sp-alert1".to_string(), refreshed: 1200 });
         let rendered = s.render();
         let back = State::parse(&rendered);

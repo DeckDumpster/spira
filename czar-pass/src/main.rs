@@ -505,14 +505,6 @@ fn read_branch(open_path: &Path) -> Option<String> {
     None
 }
 
-fn file_mtime(path: &Path) -> Option<u64> {
-    fs::metadata(path)
-        .ok()
-        .and_then(|m| m.modified().ok())
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
-}
-
 // A failed forge call and "nothing going on" must stay distinguishable (sp-pu7v6): a
 // spawn failure, a non-zero exit or invalid UTF-8 all report Err, so a caller can report
 // its invariant unobservable instead of silently reading the failure as "satisfied".
@@ -576,6 +568,7 @@ fn run_pass() -> Result<(), String> {
     // Flock — non-blocking: if another pass is running, skip.
     let lock_file = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .write(true)
         .open(&cfg.lock_path)
         .map_err(|e| format!("open lock {}: {}", cfg.lock_path.display(), e))?;
@@ -849,9 +842,7 @@ fn detect_loop_stalled(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static
         fs::read_to_string(&cfg.qc_log)
             .ok()
             .and_then(|c| {
-                c.lines()
-                    .filter(|l| l.contains("landing: pass complete"))
-                    .last()
+                c.lines().rfind(|l| l.contains("landing: pass complete"))
                     .and_then(|l| l.get(..20))
                     .map(|s| s.to_string())
             })
@@ -1432,6 +1423,15 @@ fn detect_pool_idle(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static st
         }
     }
     (rollup(&verdicts), remedy, tier)
+}
+
+#[cfg(test)]
+fn file_mtime(path: &Path) -> Option<u64> {
+    fs::metadata(path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
 }
 
 #[cfg(test)]

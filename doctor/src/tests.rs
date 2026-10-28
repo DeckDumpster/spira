@@ -40,6 +40,7 @@ pub struct Fake {
     pub counter: RefCell<String>,
     pub failed_units: RefCell<Result<Vec<String>, String>>,
     pub watchd: RefCell<Result<String, String>>,
+    #[allow(clippy::type_complexity)]
     pub unit_execs: RefCell<Result<Vec<(String, String, String)>, String>>,
     pub enabled_units: RefCell<Result<Vec<String>, String>>,
     pub spira_unit: RefCell<String>,

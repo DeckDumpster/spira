@@ -586,7 +586,7 @@ fn member_added_steps(
             old_version: bead_row.version,
             set_clause: rows::bead_set_clause(&bead_outcome.row),
             applied_to_state: bead_outcome.row.state.as_str().to_string(),
-            event: EventRecord::of_apply("bead", &id, "Deliver", bead_row.state.as_str(), bead_row.state.as_str(), None, serde_json::to_value(&deliver_ev.kind).unwrap_or_default(), actor, at),
+            event: EventRecord::of_apply("bead", id, "Deliver", bead_row.state.as_str(), bead_row.state.as_str(), None, serde_json::to_value(&deliver_ev.kind).unwrap_or_default(), actor, at),
         });
 
         let (queued, requeue_step) = match delivery_row {
@@ -677,7 +677,7 @@ pub fn cmd_land(args: &[String], conn: &Conn) -> (i32, String) {
     let outcome = batch::apply(&batch_row, &ff_ev);
     let evidence = serde_json::to_value(&ff_ev.kind).unwrap_or_default();
     if !outcome.applied {
-        let rec = EventRecord::of_apply("batch", &batch_id, "FastForward", &expect, batch_row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), evidence, &actor, at);
+        let rec = EventRecord::of_apply("batch", batch_id, "FastForward", &expect, batch_row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), evidence, &actor, at);
         return match conn.insert_refusal_event(&rec) {
             Ok(()) => (REFUSED, format!("refused: {:?}", outcome.refusal)),
             Err(e) => cannot_tell(e),
@@ -696,7 +696,7 @@ pub fn cmd_land(args: &[String], conn: &Conn) -> (i32, String) {
         old_version: version,
         set_clause: rows::batch_set_clause(&outcome.row),
         applied_to_state: outcome.row.state.as_str().to_string(),
-        event: EventRecord::of_apply("batch", &batch_id, "FastForward", &expect, batch_row.state.as_str(), None, evidence, &actor, at),
+        event: EventRecord::of_apply("batch", batch_id, "FastForward", &expect, batch_row.state.as_str(), None, evidence, &actor, at),
     }];
 
     for (id, tip) in &members {
@@ -809,7 +809,7 @@ pub fn cmd_settle(args: &[String], conn: &Conn) -> (i32, String) {
     let settle_ev = batch::BatchEvent { expect: expect_state, version, kind: batch::BatchEventKind::Settle, actor: actor.clone() };
     let outcome = batch::apply(&batch_row, &settle_ev);
     if !outcome.applied {
-        let rec = EventRecord::of_apply("batch", &batch_id, "Settle", &expect, batch_row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), serde_json::Value::String("Settle".into()), &actor, at);
+        let rec = EventRecord::of_apply("batch", batch_id, "Settle", &expect, batch_row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), serde_json::Value::String("Settle".into()), &actor, at);
         return match conn.insert_refusal_event(&rec) {
             Ok(()) => (REFUSED, format!("refused: {:?}", outcome.refusal)),
             Err(e) => cannot_tell(e),
@@ -823,7 +823,7 @@ pub fn cmd_settle(args: &[String], conn: &Conn) -> (i32, String) {
         old_version: version,
         set_clause: rows::batch_set_clause(&outcome.row),
         applied_to_state: outcome.row.state.as_str().to_string(),
-        event: EventRecord::of_apply("batch", &batch_id, "Settle", &expect, batch_row.state.as_str(), None, serde_json::Value::String("Settle".into()), &actor, at),
+        event: EventRecord::of_apply("batch", batch_id, "Settle", &expect, batch_row.state.as_str(), None, serde_json::Value::String("Settle".into()), &actor, at),
     }];
 
     // Closure (design stacked-dependents-2026-09-28 §3): ejecting a member ejects every
@@ -938,7 +938,7 @@ pub fn cmd_abandon_batch(args: &[String], conn: &Conn) -> (i32, String) {
     let outcome = batch::apply(&batch_row, &ev);
     let evidence = serde_json::to_value(&ev.kind).unwrap_or_default();
     if !outcome.applied {
-        let rec = EventRecord::of_apply("batch", &batch_id, "Abandon", &expect, batch_row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), evidence, &actor, at);
+        let rec = EventRecord::of_apply("batch", batch_id, "Abandon", &expect, batch_row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), evidence, &actor, at);
         return match conn.insert_refusal_event(&rec) {
             Ok(()) => (REFUSED, format!("refused: {:?}", outcome.refusal)),
             Err(e) => cannot_tell(e),
@@ -957,7 +957,7 @@ pub fn cmd_abandon_batch(args: &[String], conn: &Conn) -> (i32, String) {
         old_version: version,
         set_clause: rows::batch_set_clause(&outcome.row),
         applied_to_state: outcome.row.state.as_str().to_string(),
-        event: EventRecord::of_apply("batch", &batch_id, "Abandon", &expect, batch_row.state.as_str(), None, evidence, &actor, at),
+        event: EventRecord::of_apply("batch", batch_id, "Abandon", &expect, batch_row.state.as_str(), None, evidence, &actor, at),
     }];
 
     for (id, tip) in &members {
@@ -1240,7 +1240,7 @@ pub fn cmd_eject_member(args: &[String], conn: &Conn) -> (i32, String) {
     let outcome = batch::apply(&batch_row, &ev);
     let evidence = serde_json::to_value(&ev.kind).unwrap_or_default();
     if !outcome.applied {
-        let rec = EventRecord::of_apply("batch", &batch_id, "Eject", &expect, batch_row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), evidence, &actor, at);
+        let rec = EventRecord::of_apply("batch", batch_id, "Eject", &expect, batch_row.state.as_str(), outcome.refusal.as_ref().map(refusal_name), evidence, &actor, at);
         return match conn.insert_refusal_event(&rec) {
             Ok(()) => (REFUSED, format!("refused: {:?}", outcome.refusal)),
             Err(e) => cannot_tell(e),
@@ -1254,7 +1254,7 @@ pub fn cmd_eject_member(args: &[String], conn: &Conn) -> (i32, String) {
         old_version: version,
         set_clause: rows::batch_set_clause(&outcome.row),
         applied_to_state: outcome.row.state.as_str().to_string(),
-        event: EventRecord::of_apply("batch", &batch_id, "Eject", &expect, batch_row.state.as_str(), None, evidence, &actor, at),
+        event: EventRecord::of_apply("batch", batch_id, "Eject", &expect, batch_row.state.as_str(), None, evidence, &actor, at),
     }];
 
     if let Err(e) = add_exit_steps(conn, &mut steps, &bead_id, delivery::DeliveryEventKind::Requeued { tip }, &actor, at) {
@@ -1623,7 +1623,7 @@ fn add_exit_steps(
     at: i64,
 ) -> Result<(), DbError> {
     let bead_kind = match &kind {
-        delivery::DeliveryEventKind::Returned { reason } => bead::BeadEventKind::Returned { reason: reason.clone() },
+        delivery::DeliveryEventKind::Returned { reason } => bead::BeadEventKind::Returned { reason: *reason },
         delivery::DeliveryEventKind::Requeued { tip } => bead::BeadEventKind::Requeued { tip: tip.clone() },
         delivery::DeliveryEventKind::Delivered { .. }
         | delivery::DeliveryEventKind::Cut { .. }

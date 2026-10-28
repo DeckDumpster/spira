@@ -59,13 +59,12 @@ while IFS= read -r _l; do [ -n "$_l" ] && printf '%s\0' "$_l"; done < <(rune_nam
 printf '@end\0'
 "#;
 
-/// S1/S2 RETIRED (wave 4.27, family G, sp-gzmd2): the world gate and CHECK 7's whole
-/// call loop (`world_gate`, `ck7_call_pass`, `call_rune`, `call_argv`) now run
-/// in-process — `pass::Sentinel::world_gate`/`ck7_call_pass` in `call.rs`, under a
-/// real OS flock on `call.lock` rather than a bash seam under one. lib.sh's own copies
-/// are one-line shims onto `sentinel --world-gate`/`--call`/`--call-argv`/
-/// `--named-unit-stop`, kept only for `dwarf --escape`'s seam and `acceptance-local.sh`.
-
+// S1/S2 RETIRED (wave 4.27, family G, sp-gzmd2): the world gate and CHECK 7's whole
+// call loop (`world_gate`, `ck7_call_pass`, `call_rune`, `call_argv`) now run
+// in-process — `pass::Sentinel::world_gate`/`ck7_call_pass` in `call.rs`, under a
+// real OS flock on `call.lock` rather than a bash seam under one. lib.sh's own copies
+// are one-line shims onto `sentinel --world-gate`/`--call`/`--call-argv`/
+// `--named-unit-stop`, kept only for `dwarf --escape`'s seam and `acceptance-local.sh`.
 // S4 (CHECK 3b: mark_queue_waiters/close_landed_queue_waiters) and S7–S10 (CHECK 7c/7d's
 // detectors) are retired (wave 4.28, sp-fbqsv): native now, in waiters.rs and detect.rs.
 
@@ -80,7 +79,8 @@ mod tests {
     /// G9: no seam interpolates a Rust value; every one is a constant with the prelude.
     #[test]
     fn seams_are_constants_with_the_prelude() {
-        for body in [EVENT] {
+        {
+            let body = EVENT;
             let s = script(body);
             assert!(
                 s.starts_with("set -uo pipefail\n. \"$SENTINEL_LIB\" >/dev/null 2>&1 || exit 97")

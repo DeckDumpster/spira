@@ -25,7 +25,7 @@ pub fn commit_names_bead(repo: &Path, sha: &str, bead_id: &str) -> bool {
     while let Some(at) = message[from..].find(bead_id) {
         let start = from + at;
         let rest = &message[start + bead_id.len()..];
-        let before_ok = message[..start].chars().next_back().map_or(true, |c| !(c.is_ascii_alphanumeric() || c == '-'));
+        let before_ok = message[..start].chars().next_back().is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '-'));
         let mut after = rest.chars();
         let after_ok = match after.next() {
             None => true,

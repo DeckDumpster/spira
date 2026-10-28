@@ -80,6 +80,12 @@ landed work as ready. Read state with spira-lc (state, list, holds) and everythi
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(CockpitNoBd::default()),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,10 +121,4 @@ mod tests {
         t.write("spira/y.sh", "bd list\n");
         assert!(run(&t, &["spira/y.sh"]).is_err());
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(CockpitNoBd::default()),
-    ]
 }

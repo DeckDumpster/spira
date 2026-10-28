@@ -781,8 +781,7 @@ pub(crate) mod tests {
     fn a_page_from_the_menders_stops_the_round() {
         use batcher::mender::Next;
         let mut f = Fake::new(breaks("m1", "test-01.sh"));
-        let mut ops = Ops::default();
-        ops.menders = vec![Next::Stop { page: "box".into() }];
+        let mut ops = Ops { menders: vec![Next::Stop { page: "box".into() }], ..Ops::default() };
         let end = attribute_round(&mut f, &mut ops, &corpus(10), three(), Budget { slots: 5, maxpar: 2 }).unwrap();
         assert_eq!(end, RoundEnd::Blocked("box".into()));
         assert!(ops.ejected.is_empty());

@@ -31,7 +31,6 @@ impl Host for Fake {
             ["tailscale", "ip", "-4"] if self.tailscale_up => Ok("100.64.0.9\n".into()),
             ["tailscale", "status", "--json"] if self.tailscale_up => Ok(STATUS_JSON.into()),
             ["tailscale", ..] => Err("tailscale is not running".into()),
-            ["tailscale", "cert"] => unreachable!(),
             ["ip", ..] => Ok(IP_ADDR.into()),
             ["sudo", "-n", "ufw", "status"] => self.ufw_status.clone(),
             ["spira-config", "set", ..] | ["systemctl", ..] | ["sudo", "-n", "ufw", "allow", ..] => Ok(String::new()),

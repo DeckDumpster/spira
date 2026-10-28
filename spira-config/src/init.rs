@@ -15,6 +15,8 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+type Ask<'a> = dyn FnMut(&str, &str, &str) -> Option<String> + 'a;
+
 /// The inputs every fresh install must name: `(key, what it is)`.
 pub const REQUIRED: &[(&str, &str)] = &[
     ("instance", "the name of this installation (prod for the only one on a box)"),
@@ -233,7 +235,7 @@ fn home_row(a: &BTreeMap<String, String>) -> Option<String> {
 pub fn ensure(
     out: &Path,
     mut answers: BTreeMap<String, String>,
-    ask: Option<&mut dyn FnMut(&str, &str, &str) -> Option<String>>,
+    ask: Option<&mut Ask<'_>>,
     reg: &Registry<'_>,
 ) -> Result<Outcome, String> {
     // A layered spec (base:override) is a config already in force when every layer is there;
@@ -327,7 +329,7 @@ pub fn ensure_from_cli(out: Option<PathBuf>, answers_file: Option<&Path>, flags:
         let v = line.trim();
         Some(if v.is_empty() { default.to_string() } else { v.to_string() })
     };
-    let ask: Option<&mut dyn FnMut(&str, &str, &str) -> Option<String>> = if std::io::stdin().is_terminal() { Some(&mut prompt) } else { None };
+    let ask: Option<&mut Ask<'_>> = if std::io::stdin().is_terminal() { Some(&mut prompt) } else { None };
     ensure(&out, answers, ask, &reg)
 }
 
@@ -422,7 +424,7 @@ mod tests {
     fn bd_is_pinned_from_path_or_refused_by_name() {
         let d = testkit::TempDir::new("spira-config-init-bd");
         std::fs::create_dir_all(d.path().join("bin")).unwrap();
-        testkit::write_exe(&d.path().join("bin/bd"), "#!/bin/sh\n");
+        testkit::write_exe(d.path().join("bin/bd"), "#!/bin/sh\n");
         let mut a = full();
         a.remove("bd");
         let env: BTreeMap<String, String> = [("HOME".to_string(), "/b/home".to_string()), ("PATH".to_string(), d.path().join("bin").display().to_string())].into_iter().collect();

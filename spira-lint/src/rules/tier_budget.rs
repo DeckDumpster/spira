@@ -200,6 +200,14 @@ impl Rule for Areas {
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(Ledger::suites()),
+        Box::new(Ledger::areas()),
+        Box::new(Areas::default()),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,12 +309,4 @@ mod tests {
         assert_eq!(area_of("UC-alpha-123"), None);
         assert_eq!(area_of("spira/x.sh"), None);
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(Ledger::suites()),
-        Box::new(Ledger::areas()),
-        Box::new(Areas::default()),
-    ]
 }

@@ -62,7 +62,7 @@ pub fn ratelim_keys() -> Kv {
             .collect(),
         Err(_) => return all_question_marks(),
     };
-    logs.sort_by(|a, b| b.1.cmp(&a.1));
+    logs.sort_by_key(|e| std::cmp::Reverse(e.1));
 
     let mut five_h: Option<Value> = None;
     let mut seven_d: Option<Value> = None;

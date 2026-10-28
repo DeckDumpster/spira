@@ -1408,6 +1408,31 @@ pub fn set_paths_in_file(file: &std::path::Path, pairs: &[(&str, &str)]) -> Resu
     write_atomic(file, &out).map_err(|e| format!("{}: {e}", file.display()))
 }
 
+/// The complete fixture `spira.toml` (`tests/fixtures/complete.toml`: every key declared, with
+/// fixture paths) — what a test resolves against now that nothing is defaulted. `SPIRA_<KEY>`
+/// pairs in `declare` are written as `spira.<key>`, the only place a value can come from.
+#[cfg(test)]
+pub(crate) fn fixture_doc(declare: &std::collections::BTreeMap<String, String>) -> SpiraToml {
+    let mut d = validate(include_str!("../tests/fixtures/complete.toml")).expect("the complete fixture validates");
+    for (k, v) in declare {
+        if let Some(rest) = k.strip_prefix("SPIRA_") {
+            if let Ok(n) = set_path(&d, &format!("spira.{}", rest.to_ascii_lowercase()), v) {
+                d = n;
+            }
+        }
+    }
+    d
+}
+
+/// [`fixture_doc`] written to `<dir>/spira.toml`, its path returned: for a test that resolves
+/// through a process-level entry point, which reads only the file `SPIRA_TOML` names.
+#[cfg(test)]
+pub(crate) fn fixture_toml_file(dir: &std::path::Path, declare: &std::collections::BTreeMap<String, String>) -> PathBuf {
+    let p = dir.join(FILE_NAME);
+    serialize_and_write(&p, &fixture_doc(declare)).expect("the fixture writes");
+    p
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -2027,29 +2052,4 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&backup).unwrap(), "before");
         std::fs::remove_dir_all(&dir).ok();
     }
-}
-
-/// The complete fixture `spira.toml` (`tests/fixtures/complete.toml`: every key declared, with
-/// fixture paths) — what a test resolves against now that nothing is defaulted. `SPIRA_<KEY>`
-/// pairs in `declare` are written as `spira.<key>`, the only place a value can come from.
-#[cfg(test)]
-pub(crate) fn fixture_doc(declare: &std::collections::BTreeMap<String, String>) -> SpiraToml {
-    let mut d = validate(include_str!("../tests/fixtures/complete.toml")).expect("the complete fixture validates");
-    for (k, v) in declare {
-        if let Some(rest) = k.strip_prefix("SPIRA_") {
-            if let Ok(n) = set_path(&d, &format!("spira.{}", rest.to_ascii_lowercase()), v) {
-                d = n;
-            }
-        }
-    }
-    d
-}
-
-/// [`fixture_doc`] written to `<dir>/spira.toml`, its path returned: for a test that resolves
-/// through a process-level entry point, which reads only the file `SPIRA_TOML` names.
-#[cfg(test)]
-pub(crate) fn fixture_toml_file(dir: &std::path::Path, declare: &std::collections::BTreeMap<String, String>) -> PathBuf {
-    let p = dir.join(FILE_NAME);
-    serialize_and_write(&p, &fixture_doc(declare)).expect("the fixture writes");
-    p
 }

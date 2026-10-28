@@ -16,6 +16,7 @@ use crate::records::{self, one_line, write_atomic, Kv};
 /// A hand eject's walk on spira-lc: Deliver first when the row is still CERTIFIED or SUBMITTED (a requeue of a member delivered from SUBMITTED lands there; Returned is
 /// legal only from IN_DELIVERY), then Returned{batch-ejected} -> REWORK; a row already in REWORK is the target state, not a refusal. The refusal is
 /// reported here and handed back: an eject that leaves the row where it was must exit non-zero.
+#[allow(clippy::result_unit_err)]
 pub fn lc_return(w: &World, id: &str, red: bool) -> Result<(), ()> {
     let fail = |why: String| {
         w.err(format!(
@@ -492,7 +493,7 @@ fn abandon_locked(
                 w.out(format!(
                     "queue.sh {label}: {batch_id} abandoned on spira-lc"
                 ));
-                super::round::retire_menders(w, &c, &batch_id, &r);
+                super::round::retire_menders(w, c, &batch_id, &r);
             }
             Err((rc, out)) => w.err(format!(
                 "queue.sh {label}: spira-lc abandon-batch refused for {batch_id} (rc={rc}): {out}"
@@ -533,7 +534,7 @@ fn abandon_locked(
     // The archive keeps who and why, in the file itself.
     let mut archived = kv.clone();
     archived.push("reason", &reason_clean);
-    archived.push("actor", &actor);
+    archived.push("actor", actor);
     if write_atomic(&open, &archived.render()).is_err() || fs::rename(&open, &archive).is_err() {
         w.err(format!("queue.sh {label}: failed to archive open record"));
         return FAIL;

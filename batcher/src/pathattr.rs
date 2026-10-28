@@ -49,13 +49,13 @@ fn trim_token(raw: &str) -> Option<String> {
             break;
         }
     }
-    let t = t.trim_end_matches(|c| c == '.' || c == ':').trim_start_matches('.').trim_start_matches('/');
+    let t = t.trim_end_matches(['.', ':']).trim_start_matches('.').trim_start_matches('/');
     let t = t.trim_start_matches("./");
     if t.is_empty() {
         return None;
     }
     let base = t.rsplit('/').next().unwrap_or(t);
-    let ext_ok = base.rsplit_once('.').map_or(false, |(stem, ext)| {
+    let ext_ok = base.rsplit_once('.').is_some_and(|(stem, ext)| {
         !stem.is_empty() && (2..=10).contains(&ext.len()) && ext.starts_with(|c: char| c.is_ascii_alphabetic()) && ext.chars().all(|c| c.is_ascii_alphanumeric())
     });
     if !ext_ok && !t.contains('/') {

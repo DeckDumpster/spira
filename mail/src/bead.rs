@@ -160,7 +160,7 @@ fn render_from_json(json_text: &str) -> Option<String> {
     if reason.is_empty() {
         let notes = d.get("notes");
         let last: Option<String> = match notes {
-            Some(Value::String(s)) => s.lines().filter(|l| !l.trim().is_empty()).last().map(str::to_string),
+            Some(Value::String(s)) => s.lines().rfind(|l| !l.trim().is_empty()).map(str::to_string),
             Some(Value::Array(arr)) => arr
                 .iter()
                 .filter_map(|n| match n {
@@ -168,7 +168,7 @@ fn render_from_json(json_text: &str) -> Option<String> {
                     Value::String(s) => Some(s.clone()),
                     other => Some(other.to_string()),
                 })
-                .last(),
+                .next_back(),
             _ => None,
         };
         if let Some(l) = last {

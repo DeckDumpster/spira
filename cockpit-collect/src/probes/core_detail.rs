@@ -299,7 +299,7 @@ fn inflow_from_rows(rows: &[Value], cut: i64) -> Inflow {
         .filter(|i| i.get("issue_type").and_then(Value::as_str).unwrap_or("task") != "event")
         .filter_map(|i| Some((i.get("created_at").and_then(Value::as_str).and_then(parse_iso8601)?, i)))
         .collect();
-    aged.sort_by(|a, b| b.0.cmp(&a.0));
+    aged.sort_by_key(|e| std::cmp::Reverse(e.0));
     let mut kinds: HashMap<String, usize> = HashMap::new();
     let (mut n, mut defect) = (0, 0);
     for (_, i) in aged.iter().filter(|(t, _)| *t >= cut) {
@@ -499,11 +499,9 @@ mod tests {
 
     #[test]
     fn inflow_defect_counts_bugs_and_incidents() {
-        let rows = vec![
-            serde_json::json!({"id":"sp-1","issue_type":"bug","created_at":"2026-09-30T00:00:00Z","labels":[]}),
+        let rows = [serde_json::json!({"id":"sp-1","issue_type":"bug","created_at":"2026-09-30T00:00:00Z","labels":[]}),
             serde_json::json!({"id":"sp-2","issue_type":"task","created_at":"2026-09-30T00:00:00Z","labels":["incident"]}),
-            serde_json::json!({"id":"sp-3","issue_type":"task","created_at":"2026-09-30T00:00:00Z","labels":[]}),
-        ];
+            serde_json::json!({"id":"sp-3","issue_type":"task","created_at":"2026-09-30T00:00:00Z","labels":[]})];
         let aged: Vec<(i64, String, &Value)> = rows.iter().map(|r| (0i64, r["issue_type"].as_str().unwrap().to_string(), r)).collect();
         let mut defect = 0;
         for (_, kind, i) in &aged {

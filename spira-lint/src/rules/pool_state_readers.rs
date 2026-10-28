@@ -74,6 +74,12 @@ doomed VMs, the template and ages from `round-vm status --json`; add the field t
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(PoolStateReaders::default()),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,10 +114,4 @@ mod tests {
         t.write("spira/y.sh", "pool.json\n");
         assert!(run(&t, &["spira/y.sh"]).is_err());
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(PoolStateReaders::default()),
-    ]
 }

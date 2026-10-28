@@ -134,12 +134,12 @@ fn parse_iso8601(s: &str) -> Option<u64> {
     let h:   u64 = tp.next()?.parse().ok()?;
     let min: u64 = tp.next()?.parse().ok()?;
     let sec: u64 = tp.next()?.trim_end_matches(|c: char| !c.is_ascii_digit()).parse().ok()?;
-    let is_leap = |yr: u64| (yr % 4 == 0 && yr % 100 != 0) || (yr % 400 == 0);
+    let is_leap = |yr: u64| (yr.is_multiple_of(4) && !yr.is_multiple_of(100)) || yr.is_multiple_of(400);
     let mut days: u64 = 0;
     for yr in 1970..y { days += if is_leap(yr) { 366 } else { 365 }; }
     let month_days: [u64; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-    for mi in 0..(m as usize - 1) {
-        days += month_days[mi];
+    for (mi, md) in month_days.iter().enumerate().take(m as usize - 1) {
+        days += md;
         if mi == 1 && is_leap(y) { days += 1; }
     }
     days += d - 1;
@@ -187,7 +187,7 @@ fn mint_fresh(creds: &AppCreds) -> Result<(String, u64), String> {
         .map_err(|e| format!("response parse: {e}: {}", body.chars().take(200).collect::<String>()))?;
 
     let token = v["token"].as_str()
-        .ok_or_else(|| format!("no token field in response"))?
+        .ok_or_else(|| "no token field in response".to_string())?
         .to_string();
 
     let expires_at = v["expires_at"].as_str()

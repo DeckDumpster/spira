@@ -221,7 +221,7 @@ fn paint(last_frame: &mut String) {
     for (i, l) in lines.iter().enumerate() {
         let _ = write!(out, "{l}\x1b[K");
         if i + 1 < n {
-            let _ = write!(out, "\n");
+            let _ = writeln!(out);
         }
     }
     let _ = write!(out, "\x1b[J\x1b[?2026l");
@@ -303,7 +303,7 @@ fn main() {
             let tick: u64 = env_nonempty("SPIRA_HEALTH_TICK").and_then(|s| s.parse().ok()).unwrap_or(2);
             let mut last_frame = String::new();
             let cleanup = || {
-                print!("\x1b[?25h\x1b[?7h\x1b[?2026l\n");
+                println!("\x1b[?25h\x1b[?7h\x1b[?2026l");
                 let _ = std::io::stdout().flush();
             };
             ctrlc_like_setup(cleanup);
@@ -350,7 +350,7 @@ fn ctrlc_like_setup(cleanup: impl Fn() + Send + 'static) {
         CLEANUP = Some(Box::new(cleanup));
         extern "C" fn handler(_sig: i32) {
             unsafe {
-                if let Some(f) = CLEANUP.as_ref() {
+                if let Some(f) = (*std::ptr::addr_of!(CLEANUP)).as_ref() {
                     f();
                 }
             }

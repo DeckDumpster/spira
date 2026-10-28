@@ -838,7 +838,7 @@ fn decline_streak_bump(w: &dyn World, repo: &Path, what: &str) {
     let key = decline_key(repo);
     let n = w.stamp_read(&key).and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(0) + 1;
     w.stamp_write(&key, &n.to_string());
-    if n == DECLINE_ALARM_AFTER || (n > DECLINE_ALARM_AFTER && (n - DECLINE_ALARM_AFTER) % DECLINE_REALARM_EVERY == 0) {
+    if n == DECLINE_ALARM_AFTER || (n > DECLINE_ALARM_AFTER && (n - DECLINE_ALARM_AFTER).is_multiple_of(DECLINE_REALARM_EVERY)) {
         let lock = stale_lock_note(w, repo);
         w.run_log_append(
             REFRESH_ALARM_LOG,

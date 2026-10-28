@@ -2177,7 +2177,7 @@ three")]);
             assert!(strip_len(l) <= 107, "row wider than the pane: {}", strip_len(l));
         }
         // The caret block must appear somewhere in the input rows.
-        let has_caret = rows.iter().any(|l| text(&[l.clone()]).first().map(|t| t.contains('█')).unwrap_or(false));
+        let has_caret = rows.iter().any(|l| text(std::slice::from_ref(l)).first().map(|t| t.contains('█')).unwrap_or(false));
         assert!(has_caret, "the caret must survive in a long buffer");
     }
 

@@ -662,7 +662,7 @@ fn round_pass_running(w: &World, c: &Ctx) -> bool {
         .filter_map(|(_, kv)| kv.get("batch_id"))
         .any(|batch| {
             w.lc.batch_state(batch)
-                .map_or(true, |(s, _)| s == "CI_RUNNING")
+                .is_none_or(|(s, _)| s == "CI_RUNNING")
         })
 }
 

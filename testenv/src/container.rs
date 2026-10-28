@@ -375,15 +375,11 @@ impl Driver<'_> {
         let step =
             Regex::new(r"^(\[[0-9]+/[0-9]+\] )?STEP [0-9]+/[0-9]+:.*").expect("static regex");
         let stage = log
-            .lines()
-            .filter(|l| step.is_match(l))
-            .last()
+            .lines().rfind(|l| step.is_match(l))
             .map(|l| l.chars().take(100).collect::<String>())
             .unwrap_or_else(|| "(no build output yet)".into());
         let last = log
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .last()
+            .lines().rfind(|l| !l.trim().is_empty())
             .map(|l| l.chars().take(160).collect::<String>());
         let dir = self.conf.spira_dir().unwrap_or_default();
         self.err(&format!(

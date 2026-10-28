@@ -84,6 +84,7 @@ fn rune_label_overlay(home: &Path) -> BTreeMap<String, String> {
     memo(&OVERLAY, home, &env, || rune_label_overlay_uncached(home, &env))
 }
 
+type GotMap = std::sync::Mutex<std::collections::HashMap<(PathBuf, Option<std::time::SystemTime>, String, String, BTreeMap<String, String>), String>>;
 type MemoMap<V> = std::sync::Mutex<std::collections::HashMap<(PathBuf, BTreeMap<String, String>), V>>;
 static OVERLAY: std::sync::OnceLock<MemoMap<BTreeMap<String, String>>> = std::sync::OnceLock::new();
 static RUNES: std::sync::OnceLock<MemoMap<PathBuf>> = std::sync::OnceLock::new();
@@ -165,7 +166,7 @@ pub fn rune_get(home: &Path, rune: &str, var: &str, default: &str) -> String {
     // ONE read per (file as it stands, var, default, overlay) per process: a call asked the
     // same few fields of the same six runes ~200 times. The file's mtime is in the key, so an
     // edited rune is read again.
-    static GOT: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<(PathBuf, Option<std::time::SystemTime>, String, String, BTreeMap<String, String>), String>>> = std::sync::OnceLock::new();
+    static GOT: std::sync::OnceLock<GotMap> = std::sync::OnceLock::new();
     let overlay = rune_label_overlay(home);
     let mtime = std::fs::metadata(&f).and_then(|m| m.modified()).ok();
     let key = (f.clone(), mtime, var.to_string(), default.to_string(), overlay.clone());

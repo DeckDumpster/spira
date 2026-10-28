@@ -463,6 +463,7 @@ fn suspension_of(ctrl: &spira_ctrl::CtrlData, instance: &str, unit: &str) -> Opt
 }
 
 #[derive(Debug, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 enum Due {
     NotDue,
     Until(String),
@@ -948,7 +949,7 @@ fn observe_release(cfg: &Config) -> Check {
 
 /// Free percentage from `df -kP <path>` output: the last row's total and available columns.
 fn parse_df_free_pct(out: &str) -> Option<i64> {
-    let row = out.lines().filter(|l| !l.trim().is_empty()).last()?;
+    let row = out.lines().rfind(|l| !l.trim().is_empty())?;
     let cols: Vec<&str> = row.split_whitespace().collect();
     let total: i64 = cols.get(1)?.parse().ok()?;
     let avail: i64 = cols.get(3)?.parse().ok()?;
@@ -1801,6 +1802,7 @@ fn run_pass() -> Result<(), String> {
 
     let lock_file = fs::OpenOptions::new()
         .create(true)
+        .truncate(false)
         .write(true)
         .open(&cfg.lock_path)
         .map_err(|e| format!("open lock {}: {}", cfg.lock_path.display(), e))?;
@@ -2094,7 +2096,7 @@ mod tests {
         Remedy::Command { program: "touch".into(), args: vec![path.to_string_lossy().to_string()] }
     }
 
-    fn effect_cfg(dir: &Path, mail: &Path) -> Config {
+    fn effect_cfg(_dir: &Path, mail: &Path) -> Config {
         Config {
             grace_secs: 0,
             store: fixture_store(),

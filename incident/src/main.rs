@@ -269,7 +269,7 @@ fn with_incident_lock<R>(lock_path: &std::path::Path, wait_s: u64, f: impl FnOnc
     if let Some(parent) = lock_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let file = std::fs::OpenOptions::new().create(true).write(true).open(lock_path).ok()?;
+    let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(lock_path).ok()?;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(wait_s);
     loop {
         if unsafe { flock(file.as_raw_fd(), LOCK_EX | LOCK_NB) } == 0 {
@@ -622,7 +622,7 @@ fn main() -> ExitCode {
     spira_config::release_env::ensure_release_path();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let env_cfg = Env::load();
-    if env_cfg.db.is_none() && !matches!(args.first().map(String::as_str), None) {
+    if env_cfg.db.is_none() && !args.first().map(String::as_str).is_none() {
         // `list` handles its own missing-DB message via require_db for parity with the
         // bash's per-subcommand behaviour; every other subcommand refuses up front.
     }

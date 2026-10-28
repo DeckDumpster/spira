@@ -695,8 +695,8 @@ pub fn grep_w(text: &str, word: &str) -> bool {
     while let Some(i) = text[from..].find(word) {
         let s = from + i;
         let e = s + word.len();
-        let before = text[..s].chars().next_back().map_or(true, |c| !is_w(c));
-        let after = text[e..].chars().next().map_or(true, |c| !is_w(c));
+        let before = text[..s].chars().next_back().is_none_or(|c| !is_w(c));
+        let after = text[e..].chars().next().is_none_or(|c| !is_w(c));
         if before && after {
             return true;
         }

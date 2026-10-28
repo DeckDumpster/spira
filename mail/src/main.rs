@@ -329,7 +329,7 @@ fn run_tidy(args: &[String]) -> ExitCode {
         return fail(format!("tidy: {e}"));
     }
     if env.ask_label.is_empty() {
-        return fail("tidy: ask label does not resolve — refusing to guess one".to_string());
+        return fail("tidy: ask label does not resolve — refusing to guess one");
     }
     let bd = bd_cli(&env);
     let db_configured = !env.db.is_empty();

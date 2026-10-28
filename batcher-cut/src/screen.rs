@@ -13,6 +13,7 @@ use crate::io::{self, Env, OpenBatch, Repo};
 
 struct Live<'a> {
     env: &'a Env,
+    #[allow(dead_code)]
     repo: &'a Repo,
     sifted: BTreeMap<String, String>,
 }

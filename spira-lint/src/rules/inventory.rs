@@ -127,6 +127,12 @@ spira/inventory-deny as an extended regex, or exempted structurally if the patte
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(Inventory),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,10 +253,4 @@ mod tests {
         t.git(&["add", "."]);
         assert!(matches!(run(&t), Err(LintError::BadAllow { .. })));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(Inventory),
-    ]
 }

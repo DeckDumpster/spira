@@ -327,6 +327,23 @@ impl reap::ClaimProbe for Real {
     }
 }
 
+const REAPLOG_NAME: &str = "reap.log";
+
+/// `$SPIRA_REAPLOG`, else `reap.log` under `run`.
+pub fn reaplog_path_in(run: &Path) -> PathBuf {
+    match std::env::var("SPIRA_REAPLOG") {
+        Ok(rl) if !rl.is_empty() => PathBuf::from(rl),
+        _ => run.join(REAPLOG_NAME),
+    }
+}
+
+/// `SPIRA_RUN`, a registered config key (spira/conf.d) — the one source of config, through
+/// `spira_config::process::cfg`; an error, named, when it cannot resolve. An empty run
+/// directory would put the reap log at the filesystem root.
+pub fn run_dir() -> Result<PathBuf, String> {
+    spira_config::process::cfg("SPIRA_RUN").map(PathBuf::from).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -372,20 +389,3 @@ mod tests {
         assert_eq!(r.base(dir.path()), None);
     }
 }
-
-/// `SPIRA_RUN`, a registered config key (spira/conf.d) — the one source of config, through
-/// `spira_config::process::cfg`; an error, named, when it cannot resolve. An empty run
-/// directory would put the reap log at the filesystem root.
-pub fn run_dir() -> Result<PathBuf, String> {
-    spira_config::process::cfg("SPIRA_RUN").map(PathBuf::from).map_err(|e| e.to_string())
-}
-
-/// `$SPIRA_REAPLOG`, else `reap.log` under `run`.
-pub fn reaplog_path_in(run: &Path) -> PathBuf {
-    match std::env::var("SPIRA_REAPLOG") {
-        Ok(rl) if !rl.is_empty() => PathBuf::from(rl),
-        _ => run.join(REAPLOG_NAME),
-    }
-}
-
-const REAPLOG_NAME: &str = "reap.log";

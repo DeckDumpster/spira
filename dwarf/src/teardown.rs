@@ -109,7 +109,7 @@ impl Run<'_> {
     /// blocker's marker keeps the bead unclaimable until the blocker's tip moves or it lands,
     /// and the cause is one the attempt census does not charge.
     fn wait_for_blocker(&self, prereq: &str, tip: &str, red: &crate::fast_tier::Red) {
-        spira_config::stack_conflict::record(&self.run_dir(), prereq, tip);
+        spira_config::stack_conflict::record(self.run_dir(), prereq, tip);
         let digest = crate::fast_tier::digest(&red.text);
         self.bead_reopen(
             crate::fast_tier::BLOCKER_CONFLICT_CAUSE,

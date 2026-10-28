@@ -98,34 +98,6 @@ fn snapshot_age_secs(snap: &PathBuf) -> Option<u64> {
     SystemTime::now().duration_since(mtime).ok().map(|d| d.as_secs())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// A scratch dir (hold it: dropping it removes everything in it) and a file path in it
-    /// that does not exist yet.
-    fn scratch_path(name: &str) -> (testkit::TempDir, PathBuf) {
-        let d = testkit::TempDir::new(&format!("supervise-test-{name}"));
-        let p = d.join("snapshot");
-        (d, p)
-    }
-
-    #[test]
-    fn missing_snapshot_has_no_age() {
-        let (_d, p) = scratch_path("missing");
-        assert_eq!(snapshot_age_secs(&p), None);
-    }
-
-    #[test]
-    fn freshly_written_snapshot_is_a_few_seconds_old_at_most() {
-        let (_d, p) = scratch_path("fresh");
-        fs::write(&p, "x").unwrap();
-        let age = snapshot_age_secs(&p).expect("freshly written file must have an age");
-        assert!(age < 5, "age was {age}s");
-        let _ = fs::remove_file(&p);
-    }
-}
-
 fn supervise() -> u8 {
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
@@ -176,7 +148,7 @@ fn supervise() -> u8 {
     let mut child = match Command::new(&args[1]).args(&args[2..]).spawn() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("spira-supervise: spawn {}: {}", &args[1], e);
+            eprintln!("spira-supervise: spawn {}: {}", args[1], e);
             return 1;
         }
     };
@@ -234,4 +206,32 @@ fn main() -> ExitCode {
     let code = supervise();
     spira_otel::run::finish(i32::from(code));
     ExitCode::from(code)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A scratch dir (hold it: dropping it removes everything in it) and a file path in it
+    /// that does not exist yet.
+    fn scratch_path(name: &str) -> (testkit::TempDir, PathBuf) {
+        let d = testkit::TempDir::new(&format!("supervise-test-{name}"));
+        let p = d.join("snapshot");
+        (d, p)
+    }
+
+    #[test]
+    fn missing_snapshot_has_no_age() {
+        let (_d, p) = scratch_path("missing");
+        assert_eq!(snapshot_age_secs(&p), None);
+    }
+
+    #[test]
+    fn freshly_written_snapshot_is_a_few_seconds_old_at_most() {
+        let (_d, p) = scratch_path("fresh");
+        fs::write(&p, "x").unwrap();
+        let age = snapshot_age_secs(&p).expect("freshly written file must have an age");
+        assert!(age < 5, "age was {age}s");
+        let _ = fs::remove_file(&p);
+    }
 }

@@ -338,7 +338,7 @@ impl Live {
     /// abandoned on a deadline can still commit on the server, so a reload before then can
     /// read the row as it was and keep it that way.
     pub fn settled(&self, settle: std::time::Duration) -> bool {
-        self.unloaded_at.lock().unwrap_or_else(|e| e.into_inner()).map_or(true, |t| t.elapsed() >= settle)
+        self.unloaded_at.lock().unwrap_or_else(|e| e.into_inner()).is_none_or(|t| t.elapsed() >= settle)
     }
 
     pub fn replace(&self, sets: Sets) -> Result<usize, String> {
@@ -602,7 +602,7 @@ mod tests {
         assert_eq!(ids(&rows), ["sp-a", "sp-b", "sp-d"], "terminal rows are in memory but not in --live");
         assert_eq!(rows[1]["blocked_by"], serde_json::json!(["sp-a"]));
         assert_eq!(rows[2]["blocked_by"], serde_json::json!([]), "a landed prerequisite blocks nothing");
-        assert_eq!(rows[0].as_object().unwrap().keys().last().unwrap(), "blocked_by");
+        assert_eq!(rows[0].as_object().unwrap().keys().next_back().unwrap(), "blocked_by");
     }
 
     #[test]
@@ -898,7 +898,7 @@ mod tests {
         let rows = live.list_all(&f).unwrap();
         assert_eq!(ids(&rows), ["sp-a"]);
         assert_eq!((rows[0]["repo"].clone(), rows[0]["sifted_tip"].clone()), ("spira".into(), "abc".into()));
-        assert_eq!(rows[0].as_object().unwrap().keys().last().unwrap(), "blocked_by");
+        assert_eq!(rows[0].as_object().unwrap().keys().next_back().unwrap(), "blocked_by");
     }
 
     #[test]

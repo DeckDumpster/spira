@@ -888,11 +888,10 @@ fn find_landstate_reads(node: Node, source: &[u8], rel_path: &str, out: &mut Vec
                     }
                 }
             }
-            "for_statement" => {
-                if for_value_mentions_landstate_glob(child, source) {
+            "for_statement"
+                if for_value_mentions_landstate_glob(child, source) => {
                     push_landstate_path(out, rel_path, child.start_position().row + 1, "glob");
                 }
-            }
             _ => {}
         }
         find_landstate_reads(child, source, rel_path, out);

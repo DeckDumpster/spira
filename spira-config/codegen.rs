@@ -121,21 +121,21 @@ pub fn section_rs(keys: &[Key]) -> String {
 
 pub fn convert_rs(keys: &[Key]) -> String {
     let mut o = String::from(
-        "pub(crate) fn apply_spira_key(\n    s: &mut SpiraSection,\n    key: &str,\n    val: &String,\n    warnings: &mut ConvertWarnings,\n) -> bool {\n    match key {\n",
+        "pub(crate) fn apply_spira_key(\n    s: &mut SpiraSection,\n    key: &str,\n    val: &str,\n    warnings: &mut ConvertWarnings,\n) -> bool {\n    match key {\n",
     );
     for k in keys {
         let (key, f) = (&k.key, &k.field);
         let arm = match k.ty.as_str() {
-            "string" => format!("s.{f} = Some(val.clone())"),
+            "string" => format!("s.{f} = Some(val.to_string())"),
             "u32" => format!("s.{f} = parse_u32(warnings, {f:?}, val)"),
             "u64" => format!("s.{f} = parse_u64(warnings, {f:?}, val)"),
             "bool" => format!("s.{f} = parse_bool01(warnings, {f:?}, val)"),
             "list" => format!("s.{f} = Some(val.split_whitespace().map(str::to_string).collect())"),
             "onoff" => format!(
-                "s.{f} = match val.as_str() {{\n            \"on\" => Some(OnOff::On),\n            \"off\" => Some(OnOff::Off),\n            other => {{\n                warnings.push(format!(\"spira.{f}: not on/off: {{other:?}}\"));\n                None\n            }}\n        }}"
+                "s.{f} = match val {{\n            \"on\" => Some(OnOff::On),\n            \"off\" => Some(OnOff::Off),\n            other => {{\n                warnings.push(format!(\"spira.{f}: not on/off: {{other:?}}\"));\n                None\n            }}\n        }}"
             ),
             "czar_stage" => format!(
-                "s.{f} = match val.as_str() {{\n            \"shadow\" => Some(crate::CzarStage::Shadow),\n            \"act\" => Some(crate::CzarStage::Act),\n            other => {{\n                warnings.push(format!(\"spira.{f}: not shadow/act: {{other:?}}\"));\n                None\n            }}\n        }}"
+                "s.{f} = match val {{\n            \"shadow\" => Some(crate::CzarStage::Shadow),\n            \"act\" => Some(crate::CzarStage::Act),\n            other => {{\n                warnings.push(format!(\"spira.{f}: not shadow/act: {{other:?}}\"));\n                None\n            }}\n        }}"
             ),
             _ => unreachable!("load() refuses unknown TYPE"),
         };

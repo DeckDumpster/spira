@@ -141,6 +141,12 @@ not yet converted are listed in spira-lint/process-exit-in-library-allow, which 
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(ProcessExitInLibrary),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,10 +191,4 @@ mod tests {
         t.write("a.sh", "x\n");
         assert_eq!(run(&t, &["a.sh"]), Err(LintError::EmptyScope));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(ProcessExitInLibrary),
-    ]
 }

@@ -354,7 +354,7 @@ mod tests {
         std::fs::write(release.join("spira/sim/b.toml"), "y").unwrap();
         checkout(&release, &scratch).unwrap();
         assert_ne!(git(&dir, &["rev-parse", "HEAD"]).unwrap(), first);
-        assert_eq!(checkout(&base.join("nope"), &scratch).is_err(), true);
+        assert!(checkout(&base.join("nope"), &scratch).is_err());
     }
 
     #[test]

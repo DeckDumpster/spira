@@ -206,7 +206,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn empty_message_is_refused_and_leaves_every_mailbox_untouched() {
         let d = testkit::TempDir::new("mail-sendmail");
         let root = d.path().join("mail");

@@ -275,6 +275,10 @@ thing you could observe. spira-lint/time-only-wait-allow only shrinks and names 
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![Box::new(TimeOnlyWait)]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,8 +353,4 @@ mod tests {
         t.write("a.txt", "x\n");
         assert_eq!(run(&t, &["a.txt"]), Err(LintError::EmptyScope));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![Box::new(TimeOnlyWait)]
 }

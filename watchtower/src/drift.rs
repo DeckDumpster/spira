@@ -98,7 +98,7 @@ pub fn run(spira_home: &str, repo: &str, db: &str, home_repo: &str, incident_sh:
                     let body = format!("drift.sh {what} exited without a verdict {n} consecutive runs; the {what} half of watchtower --drift-check is not checking anything.");
                     let f = Finding::new(db, home_repo, &title, &body)
                         .reference(format!("incident:drift-unreadable-{what}"))
-                        .cause(&format!("drift-unreadable-{what}"));
+                        .cause(format!("drift-unreadable-{what}"));
                     incident::alarm(incident_sh, &f);
                     log(&format!("watchtower: drift-check filed {what} unreadable escalation"));
                 }

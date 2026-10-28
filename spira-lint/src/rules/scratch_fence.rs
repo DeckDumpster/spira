@@ -69,6 +69,12 @@ named override, valid only for the commit that removes existing offenders."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(ScratchFence),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,10 +139,4 @@ mod tests {
         assert!(!is_offender("spira/sp-abc.md"));
         assert!(!is_offender("helper.sh"));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(ScratchFence),
-    ]
 }

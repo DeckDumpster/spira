@@ -504,7 +504,7 @@ impl<'w, W: World> Trial<'w, W> {
                     }
                 }
                 // Visible, never silent (sp-f4ig1): who holds the pool, first and every 60s.
-                if said.map_or(true, |t| w.now().saturating_sub(t) >= 60) {
+                if said.is_none_or(|t| w.now().saturating_sub(t) >= 60) {
                     w.eprint(&format!("gate: {}", w.admission_wait_line(&self.s.run, par)));
                     said = Some(w.now());
                 }

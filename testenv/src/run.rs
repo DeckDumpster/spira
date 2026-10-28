@@ -27,6 +27,7 @@ use crate::warm;
 use crate::worktree;
 use spira_config::SpiraToml;
 
+#[cfg(test)]
 pub(crate) type RunConfig = SpiraToml;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
@@ -105,9 +106,7 @@ impl Finish {
             .deferred
             .map(|(d, secs)| format!(" deferred={d} (deadline {secs}s)"))
             .unwrap_or_default();
-        let skipped = (self.skipped > 0)
-            .then(|| format!(" skipped={}", self.skipped))
-            .unwrap_or_default();
+        let skipped = if self.skipped > 0 { format!(" skipped={}", self.skipped) } else { Default::default() };
         match self.rc {
             0 => {
                 let mut s = format!("VERDICT GREEN ran={}", self.ran);

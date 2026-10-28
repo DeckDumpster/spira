@@ -1228,7 +1228,7 @@ mod vtime_tests {
 
     #[test]
     fn now_epoch_honours_spira_now() {
-        let got = spira_config::vtime::with_now_for_test(1_900_000_000, || now_epoch());
+        let got = spira_config::vtime::with_now_for_test(1_900_000_000, now_epoch);
         assert_eq!(got, 1_900_000_000);
     }
 }

@@ -342,7 +342,7 @@ fn cmd_stop(args: &[String]) -> i32 {
                 round_drain_timeout,
                 // batch-job: poll interval of the round drain wait
                 std::time::Duration::from_secs(10),
-                |d| std::thread::sleep(d),
+                std::thread::sleep,
                 std::time::Instant::now,
                 spira_world::round::read,
             );
@@ -755,7 +755,7 @@ fn cmd_drain(args: &[String]) -> i32 {
             drain_check_and_page();
             return 1;
         }
-        if waited % 60 == 0 && waited > 0 {
+        if waited.is_multiple_of(60) && waited > 0 {
             println!("  {n} dwarf(s) still working ({waited}s elapsed)");
         }
         std::thread::sleep(std::time::Duration::from_secs(10));

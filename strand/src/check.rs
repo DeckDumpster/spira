@@ -333,12 +333,9 @@ pub fn check(cfg: &Config, c: Classified, dry: bool) -> i32 {
                 ));
             }
             Step::Act => {
-                match r.row.kind.as_str() {
-                    "stale-blocked" => {
-                        let _ = probe::bd(cfg, &["recompute-blocked"], None);
-                        println!("RECOMPUTED is_blocked — {} stuck with every blocker closed", r.row.id);
-                    }
-                    _ => {}
+                if r.row.kind.as_str() == "stale-blocked" {
+                    let _ = probe::bd(cfg, &["recompute-blocked"], None);
+                    println!("RECOMPUTED is_blocked — {} stuck with every blocker closed", r.row.id);
                 }
                 mark(&state_path, &mut keep, &r.part, &r.row, Mark::Acted);
                 handled += 1;

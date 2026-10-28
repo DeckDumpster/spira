@@ -247,6 +247,7 @@ impl<'a> RealLib<'a> {
     /// `body` on stdin. Every escalation path below goes through this one subprocess call
     /// (sp-gypjk: by bare name), so an escalation that silently drops a message would show
     /// up here, not three times over.
+    #[allow(clippy::too_many_arguments)]
     fn send_mail(&self, to: &str, from: &str, subject: &str, kind: &str, default: Option<&str>, bead: &str, body: &str) -> bool {
         match mail_send("mail", to, from, subject, kind, default, bead, body) {
             Ok(()) => true,

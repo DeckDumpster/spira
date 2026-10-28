@@ -1,3 +1,4 @@
+#![allow(clippy::type_complexity)]
 //! Whole-run tests: the contract of DESIGN.md §2 driven through `Run::main` with fakes for
 //! bd, the lib.sh seam, other programs and the model session; git is real (a temp repo),
 //! because the worktree contract is about git's own refusals.
@@ -545,7 +546,7 @@ fn seed(f: &Fx, id: &str) {
 }
 
 fn ledger_lines(o: &Outcome) -> Vec<String> {
-    o.ledger.lines().map(|l| l.splitn(2, ' ').nth(1).unwrap_or("").to_string()).collect()
+    o.ledger.lines().map(|l| l.split_once(' ').map(|x| x.1).unwrap_or("").to_string()).collect()
 }
 
 // ---- declines -------------------------------------------------------------------------
@@ -1035,7 +1036,7 @@ fn happy_path_submits_through_the_machine() {
     assert!(spec.env.get("BEADS_ACTOR").is_some_and(|a| spira_config::session::parse(a).is_some_and(|s| s.name == "dwarf-eitri")), "{:?}", spec.env.get("BEADS_ACTOR"));
     assert_eq!(spec.env.get("BEAD_ID").map(|s| s.as_str()), Some("sp-h"));
     assert_eq!(spec.env.get("SPIRA_WORK_BEAD_ID").map(|s| s.as_str()), Some("sp-h"), "the model runs bound to this bead");
-    assert!(spec.env.get("GH_TOKEN").is_none(), "no credential-shaped var leaked to the model");
+    assert!(!spec.env.contains_key("GH_TOKEN"), "no credential-shaped var leaked to the model");
     let a = spec.args.join(" ");
     assert!(a.starts_with("-p --output-format stream-json --verbose --include-partial-messages --system-prompt-snapshot on --append-system-prompt-file "));
     assert!(a.contains("--model claude-sonnet-5-5 --allowedTools Bash,Read,Edit,Write,Glob,Grep --dangerously-skip-permissions --settings {"));
@@ -1687,7 +1688,7 @@ fn a_session_shares_one_terraform_provider_cache_under_run() {
     let want = f.run.join("tf-plugin-cache");
     assert_eq!(got, want.display().to_string());
     assert!(want.is_dir(), "terraform refuses a cache directory that does not exist");
-    assert!(o.seen[0].env.get("TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE").is_none(), "lock files stay authoritative");
+    assert!(!o.seen[0].env.contains_key("TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE"), "lock files stay authoritative");
 }
 
 #[test]

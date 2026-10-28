@@ -36,6 +36,7 @@ pub fn real_dwarf(scenario: &str) -> bool {
 
 /// The `systemd-run` argv as the command it launches: the `--setenv=K=V` pairs, and the program
 /// and arguments from the `dwarf` binary on.
+#[allow(clippy::type_complexity)]
 pub fn dwarf_command(argv: &[String]) -> Result<(Vec<(String, String)>, Vec<String>), String> {
     let at = argv.iter().position(|a| Path::new(a).file_name().is_some_and(|n| n == "dwarf")).ok_or("sim-call: no dwarf in the call argv")?;
     let env = argv[..at].iter().filter_map(|a| a.strip_prefix("--setenv=")).filter_map(|kv| kv.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect();

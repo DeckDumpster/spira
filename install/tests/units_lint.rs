@@ -65,7 +65,7 @@ fn strays(n: &str, text: &str) -> Vec<String> {
     let sys = ["/usr/", "/bin/", "/etc/", "/dev/", "/proc/", "/sys/", "/var/", "/run/", "/lib/", "/opt/", "/sbin/"];
     let mut out = Vec::new();
     for l in text.lines().filter(|l| ["Exec", "Environment", "ReadWritePaths", "WorkingDirectory"].iter().any(|p| l.starts_with(p))) {
-        for tok in l.split(|c: char| c == ' ' || c == '=' || c == ':' || c == '"').filter(|t| t.starts_with('/') && t.len() > 1) {
+        for tok in l.split([' ', '=', ':', '"']).filter(|t| t.starts_with('/') && t.len() > 1) {
             let ok = ["/rel/", "/cfg/"].iter().any(|r| tok.starts_with(r)) || sys.iter().any(|s| tok.starts_with(s)) || ["/tmp", "/rel", "/bin"].contains(&tok);
             if !ok {
                 out.push(format!("{n}: {tok}"));

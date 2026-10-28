@@ -1259,8 +1259,7 @@ fn reconcile_content_reads_no_bd_and_cannot_tell_when_the_store_is_down() {
     let mut f = Fake::default();
     f.bead("sp-done", BeadState::Done);
     f.content.insert("sp-done".into(), "open".into());
-    let mut b = FakeBd::default();
-    b.down = true;
+    let mut b = FakeBd { down: true, ..FakeBd::default() };
     let ans = reconcile_content(&v(&[]), &mut f, &mut b);
     assert_eq!(ans.code, APPLIED, "a down bd must not matter to a read: {}", ans.stderr);
     assert!(ans.stdout.contains("would close sp-done"), "{}", ans.stdout);

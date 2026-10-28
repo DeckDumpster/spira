@@ -450,6 +450,7 @@ fn overrides_summary() -> (usize, usize, String) {
     (n, failed, list.join(","))
 }
 
+#[allow(clippy::type_complexity)]
 pub(super) fn gate_run_scan(run: &Path) -> (Vec<(String, String, String, String)>, usize, usize) {
     let dir = run.join("gate-run");
     let mut rows = Vec::new();
@@ -854,7 +855,7 @@ pub fn dup_refs_keys() -> Kv {
     let mut dup: Vec<(String, Vec<String>)> = by_ref.into_iter().filter(|(_, ids)| ids.len() > 1).collect();
     push(&mut out, "SP_DUP_REFS", dup.len().to_string());
     push(&mut out, "SP_DUP_BEADS", dup.iter().map(|(_, ids)| ids.len() - 1).sum::<usize>().to_string());
-    dup.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    dup.sort_by_key(|e| std::cmp::Reverse(e.1.len()));
     let rows: Vec<_> = dup.into_iter().take(5).collect();
     for (n, (ref_, ids)) in rows.iter().enumerate() {
         let line = format!("{ref_} +{} {}", ids.len() - 1, ids.iter().take(5).cloned().collect::<Vec<_>>().join(" "));
@@ -1293,7 +1294,7 @@ pub fn mail_keys(cfg: &Cfg) -> Kv {
     }
     push(&mut out, "SP_MAIL_UNREAD", unread.to_string());
     push(&mut out, "SP_MAIL_OLDEST_AGE", oldest_t.map(|t| (now - t).to_string()).unwrap_or_else(|| "-".to_string()));
-    rows.sort_by(|a, b| b.0.cmp(&a.0));
+    rows.sort_by_key(|e| std::cmp::Reverse(e.0));
     for (i, (mtime, state, subj)) in rows.iter().take(5).enumerate() {
         push(&mut out, &format!("SP_MAIL{i}"), format!("'{}|{}|{}'", now - mtime, state, subj));
     }
@@ -1389,7 +1390,7 @@ pub fn ask_hold_count(lc: &HashMap<String, lc::Row>) -> usize {
 /// (spira_config::nonwork). Any other item with no row is not counted: the machine cannot
 /// tell its state, and a rowless bead can never be claimed (CHECK-ROWLESS reports it).
 pub fn well_counts(work: &[&Value], lc: &HashMap<String, lc::Row>) -> (usize, usize, usize) {
-    let has = |i: &Value, lab: &str| {
+    let _has = |i: &Value, lab: &str| {
         i.get("labels")
             .and_then(Value::as_array)
             .map(|a| a.iter().any(|l| l.as_str() == Some(lab)))

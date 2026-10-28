@@ -118,6 +118,12 @@ impl Rule for LockfileLint {
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(LockfileLint::default()),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,10 +210,4 @@ mod tests {
         assert_eq!(version_tuple("1.2.3-rc.1"), None);
         assert!(version_tuple("1.10.0") > version_tuple("1.9.9"));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(LockfileLint::default()),
-    ]
 }

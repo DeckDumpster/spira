@@ -100,6 +100,12 @@ directory on drop, panics included. spira-lint/tmp-leak-allow only shrinks."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(TmpLeak),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,10 +210,4 @@ pub fn after() -> std::path::PathBuf {{ {CALL} }}\n"
         t.write("a.sh", "x\n");
         assert_eq!(run(&t, &["a.sh", "testkit/src/lib.rs"]), Err(LintError::EmptyScope));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(TmpLeak),
-    ]
 }

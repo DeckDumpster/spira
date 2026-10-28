@@ -212,15 +212,14 @@ fn creates(cmds: &[Command], basename: &str, assigns: &BTreeMap<String, String>)
     let names_it = |w: &Word| named_basename(w, assigns) == basename;
     for cmd in cmds {
         for r in &cmd.redirects {
-            if matches!(r.op.as_str(), ">" | ">>" | ">|" | "<>" | "&>" | "&>>") {
-                if r.target.as_ref().is_some_and(names_it) {
+            if matches!(r.op.as_str(), ">" | ">>" | ">|" | "<>" | "&>" | "&>>")
+                && r.target.as_ref().is_some_and(names_it) {
                     return true;
                 }
-            }
         }
         let (_, argv) = cmd.split_env();
         let Some(head) = argv.first() else { continue };
-        if CREATORS.contains(&basename_of(head).as_str()) && argv[1..].iter().any(|w| names_it(w)) {
+        if CREATORS.contains(&basename_of(head).as_str()) && argv[1..].iter().any(&names_it) {
             return true;
         }
     }
@@ -466,6 +465,13 @@ for a file this change itself breaks."
     }
 }
 
+
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(ScriptCallers::default()),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -681,11 +687,4 @@ mod tests {
             vec!["script-callers: spira-lint/script-callers-allow: lists spira/test-planted.sh, which no longer needs an exception — remove the line (the list only shrinks)"]
         );
     }
-}
-
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(ScriptCallers::default()),
-    ]
 }

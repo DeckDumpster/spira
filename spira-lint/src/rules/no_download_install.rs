@@ -134,6 +134,10 @@ downloaded to a file and verified with sha256sum -c before it runs."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![Box::new(NoDownloadInstall)]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,8 +212,4 @@ curl -fsS -o /tmp/out.json https://x.invalid/data\njq . /tmp/out.json\n",
         t.write("a.rs", "x\n");
         assert_eq!(run(&t, &["a.rs"]), Err(LintError::EmptyScope));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![Box::new(NoDownloadInstall)]
 }

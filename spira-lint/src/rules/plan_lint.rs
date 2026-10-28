@@ -152,6 +152,12 @@ spira-lint/plan-lint-allow grandfathers today's offenders in and only shrinks."
     }
 }
 
+pub fn rules() -> Vec<Box<dyn crate::Rule>> {
+    vec![
+        Box::new(PlanLint::default()),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,10 +258,4 @@ mod tests {
         assert_eq!(r.check(&tree), Ok(vec![]));
         assert_eq!(r.checked(), Some((1, "suites".to_string())));
     }
-}
-
-pub fn rules() -> Vec<Box<dyn crate::Rule>> {
-    vec![
-        Box::new(PlanLint::default()),
-    ]
 }

@@ -148,6 +148,7 @@ fn lineage_brief(seam: &dyn Seam, sid: &str, tp: &str) -> String {
 /// One archive run, mirroring `archivist.sh archive()`. `wait`: the archivist-wide lock
 /// blocks rather than skips (the manual `now` path; an operator told "busy" would just
 /// run it again in a loop).
+#[allow(clippy::too_many_arguments)]
 pub fn archive(seam: &dyn Seam, cfg: &Env, arc: &Path, sid: &str, tp: &Path, at: u64, ctx: &str, why: &str, wait: bool) -> i32 {
     let from = numeric_logged(covered_raw(arc, sid).as_deref(), &format!("session {sid} prior cursor"));
     let tc_file = arc.join(format!("{sid}.timeout_count"));

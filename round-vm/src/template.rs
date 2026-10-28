@@ -297,6 +297,7 @@ pub struct Built {
 
 /// Clone (linked) → boot → key → unpack → build the image → shut down → convert → verify.
 /// Any failure after the clone destroys the VM, fenced on the name this run gave it.
+#[allow(clippy::too_many_arguments)]
 pub fn build(
     p: &dyn Provider,
     g: &dyn Guest,
@@ -331,6 +332,7 @@ pub fn build(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn prepare_vm(
     p: &dyn Provider,
     g: &dyn Guest,

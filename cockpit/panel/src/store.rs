@@ -220,7 +220,6 @@ fn run(cmd: &str, args: &[&str], cfg: &Cfg) -> Result<String, String> {
                 .lines()
                 .next()
                 .unwrap_or("failed")
-                .to_string()
         )),
         Ok(o) => Ok(String::from_utf8_lossy(&o.stdout).to_string()),
     }
