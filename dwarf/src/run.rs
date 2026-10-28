@@ -1310,7 +1310,10 @@ impl<'a> Run<'a> {
             self.log(&format!("{}: warm base {} is not a tmpfs — builds write to its disk", self.f(), warm_base.display()));
         }
         let mut warm_slot = None;
-        let _warm = match spira_config::build::acquire_warm(&warm_base, spira_config::build::DWARF_WARM_SLOTS) {
+        let _warm = if self.rune.graph_only {
+            self.log(&format!("{}: graph-only rune — no warm target or cold-build slot", self.f()));
+            None
+        } else { match spira_config::build::acquire_warm(&warm_base, spira_config::build::DWARF_WARM_SLOTS) {
             Some((dir, mut lock)) => {
                 spira_config::build::note_holder(&mut lock, &bead);
                 if spira_config::build::reap_for_build(&dir, cap_mib) {
@@ -1331,8 +1334,8 @@ impl<'a> Run<'a> {
                 self.log(&format!("{}: every warm target slot is busy — this session builds in its worktree", self.f()));
                 None
             }
-        };
-        let _cold = self.cold_slot(work, warm_slot.as_ref().map(|w| w.dir.as_path()))?;
+        } };
+        let _cold = if self.rune.graph_only { None } else { self.cold_slot(work, warm_slot.as_ref().map(|w| w.dir.as_path()))? };
         // THE CALL JITTER (sp-f4ig1 §3.4): dwarves a pass called together start apart.
         let max = self.conf.i(spira_config::admission::JITTER_ENV).max(0) as u64;
         let seed = ((std::process::id() as u64) << 32)

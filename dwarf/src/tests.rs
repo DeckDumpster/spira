@@ -2392,3 +2392,55 @@ fn a_static_prompt_rune_gets_its_rune_as_the_system_prompt_and_a_named_facts_tas
     assert!(!task.contains("## Notes") && !task.contains("## Prior attempt"), "{task}");
     assert!(!task.contains("You have no `bd`") && !task.contains("LABELS:"), "{task}");
 }
+
+/// A live process holding the Cold pool's only slot under `f.run`, until the returned child is killed.
+fn hold_the_cold_slot(f: &Fx) -> (std::process::Child, impl Sized) {
+    use spira_config::admission as adm;
+    let guard = testkit::env(&[(adm::Pool::Cold.size_env(), Some("1"))]);
+    let child = std::process::Command::new("sleep").arg("60").spawn().unwrap();
+    let start = adm::Procs::start_of(&adm::RealProcs, child.id()).expect("the holder is alive");
+    let me = adm::Holder { pid: child.id(), start, who: "sp-builder".into(), weight: 1 };
+    let (take, _) = adm::try_take(&f.run, adm::Pool::Cold, 1, &me, 0, adm::now_epoch(), &adm::RealProcs).unwrap();
+    assert!(matches!(take, adm::Take::Admitted { .. }));
+    (child, guard)
+}
+
+#[test]
+fn a_graph_only_rune_starts_without_a_warm_or_cold_build_slot() {
+    let f = fx("graph-only");
+    seed(&f, "sp-graph");
+    let (mut holder, _size) = hold_the_cold_slot(&f);
+    let o = go(&f, "spira,plan", &[("SPIRA_CALL_JITTER", "0"), ("RUNE_GRAPH_ONLY", "1")], Mode::Claim, BTreeMap::new(), commits_and_closes());
+    let _ = holder.kill();
+    let _ = holder.wait();
+    assert_eq!(o.seen.len(), 1, "the session reaches the launcher: {}", o.log);
+    assert!(o.seen[0].warm.is_none());
+    assert_eq!(o.slept, 0, "nothing waited");
+    assert!(!o.log.contains("waiting on cold-build slot"), "{}", o.log);
+    assert!(!o.log.contains("cold build ("), "{}", o.log);
+    assert!(o.log.contains("graph-only rune — no warm target or cold-build slot"), "{}", o.log);
+}
+
+#[test]
+fn a_rune_that_builds_still_waits_on_a_held_cold_build_slot() {
+    let f = fx("graph-only-control");
+    seed(&f, "sp-build");
+    let (holder, _size) = hold_the_cold_slot(&f);
+    let waiters = f.run.join("cold-admission");
+    let releaser = std::thread::spawn(move || {
+        let queued = || std::fs::read_dir(&waiters).map(|d| d.flatten().any(|e| e.file_name().to_string_lossy().starts_with("wait."))).unwrap_or(false);
+        for _ in 0..600 {
+            if queued() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        let mut holder = holder;
+        let _ = holder.kill();
+        let _ = holder.wait();
+    });
+    let o = go(&f, "spira,plan", &[("SPIRA_CALL_JITTER", "0")], Mode::Claim, BTreeMap::new(), commits_and_closes());
+    releaser.join().unwrap();
+    assert!(o.log.contains("waiting on cold-build slot"), "{}", o.log);
+    assert!(o.slept > 0, "the cold wait sleeps");
+}

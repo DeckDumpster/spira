@@ -21,7 +21,8 @@ RUNE_EXCLUDE_LABELS="$SPIRA_CI_LABEL"
 # label at all (sp-yyzm3: filed by `overseer`, no such label, stranded in spira-submitted
 # forever because a graph edit never produces the commit that label waits for). dwarf.sh's
 # teardown reads this flag to skip that conversion for the whole persona, not bead by bead
-# (sp-wnsks).
+# (sp-wnsks). The flag also exempts the rune from the warm-target and cold-build slots:
+# it never compiles, so it must not queue behind a builder's cold compile.
 RUNE_GRAPH_ONLY=1
 
 # Statutes only. The groomer executes no runbook.
