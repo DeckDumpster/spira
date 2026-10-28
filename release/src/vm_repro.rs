@@ -7,7 +7,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-pub const USAGE: &str = "usage: release vm-repro <bead-id> [--suites a.sh,b.sh] [--repo R] [--deadline SECS] [--release DIR]";
+pub const USAGE: &str = "usage: release vm-repro <bead-id> [--suites a.sh,b.sh] [--repo R] [--deadline SECS] [--was VERDICT[:STEP]] [--release DIR]";
 
 pub const DEFAULT_DEADLINE_SECS: u64 = 600;
 pub const EXIT_RED: u8 = 1;
@@ -25,6 +25,7 @@ pub struct Opts {
     pub path_tail: String,
     pub dav_addr: String,
     pub deadline: u64,
+    pub was: Option<String>,
 }
 
 pub fn branch(bead: &str) -> String {
@@ -161,6 +162,7 @@ pub fn cache_env(path: &str, o: &Opts, notes: &mut Vec<String>) -> Vec<(String, 
 pub struct Verdict {
     pub line: String,
     pub code: u8,
+    pub report: Vec<String>,
 }
 
 /// The `VERDICT` line testenv ended its log with, else one made from its exit code.
@@ -180,7 +182,7 @@ pub fn verdict_of(rc: Option<i32>, log: &str) -> Verdict {
     };
     // A GREEN line over a failing exit, or the reverse, is the runner contradicting itself.
     let code = if line.starts_with("VERDICT GREEN") && code != 0 || !line.starts_with("VERDICT GREEN") && code == 0 { EXIT_FAULT } else { code };
-    Verdict { line, code }
+    Verdict { line, code, report: Vec::new() }
 }
 
 struct Tree<'a> {
@@ -252,7 +254,9 @@ pub fn run(o: &Opts, ambient: &dyn Fn(&str) -> Option<String>) -> Result<Verdict
     let build_log = logs.join("build.log");
     let rc = step(&cargo, &build_args(), &tree.dir, &build_env, &build_log, &notes)?;
     if rc != Some(0) {
-        return Ok(Verdict { line: format!("VERDICT FAULT reason=build rc={}", rc.map_or("signal".to_string(), |c| c.to_string())), code: EXIT_FAULT });
+        let line = format!("VERDICT FAULT reason=build rc={}", rc.map_or("signal".to_string(), |c| c.to_string()));
+        let report = outcome(&line, "", &[], o.was.as_deref());
+        return Ok(Verdict { line, code: EXIT_FAULT, report });
     }
 
     let (suites, added) = suites_for(&tree.dir, o.suites.as_deref());
@@ -264,12 +268,51 @@ pub fn run(o: &Opts, ambient: &dyn Fn(&str) -> Option<String>) -> Result<Verdict
     let test_log = logs.join("testenv.log");
     let rc = step(&testenv, &testenv_args(o, &tree.dir), &tree.dir, &env, &test_log, &added)?;
     let text = fs::read_to_string(&test_log).unwrap_or_default();
-    Ok(verdict_of(rc, &text))
+    let sim: Vec<String> = fs::read_dir(tree.dir.join("spira")).into_iter().flatten().flatten().filter_map(|e| e.file_name().into_string().ok()).filter(|n| is_sim_lane(&tree.dir.join("spira").join(n))).collect();
+    let mut v = verdict_of(rc, &text);
+    v.report = outcome(&v.line, &text, &sim, o.was.as_deref());
+    Ok(v)
+}
+
+/// The lines closing a repro: which lanes and how many suites executed, then one of
+/// `REPRODUCED`, `NOT REPRODUCED` or `NOTHING TESTED`. Only the second makes "the environment
+/// differs" a hypothesis. With no `was`, any failure counts as the failure being reproduced.
+pub fn outcome(line: &str, log: &str, sim: &[String], was: Option<&str>) -> Vec<String> {
+    let executed: Vec<&str> = log
+        .lines()
+        .filter_map(|l| {
+            let mut w = l.split_whitespace();
+            let (name, status) = (w.next()?, w.next()?);
+            (name.starts_with("test-") && name.ends_with(".sh") && !matches!(status, "SKIPPED" | "DISABLED") && !status.starts_with("SKIP-REQ")).then_some(name)
+        })
+        .collect();
+    let in_sim = executed.iter().filter(|n| sim.iter().any(|s| s == *n)).count();
+    let lanes = match (executed.len() - in_sim, in_sim) {
+        (0, 0) => "none".to_string(),
+        (c, 0) => format!("container({c})"),
+        (0, m) => format!("sim({m})"),
+        (c, m) => format!("container({c}) sim({m})"),
+    };
+    let mut out = vec![format!("vm-repro: executed {} suite(s), lanes: {lanes}", executed.len())];
+    let failed = !line.starts_with("VERDICT GREEN");
+    let same = |w: &str| {
+        let (word, step) = w.split_once(':').unwrap_or((w, ""));
+        line.starts_with(&format!("VERDICT {word}")) && (step.is_empty() || line.contains(&format!("reason={step}")) || line.contains(&format!("red={step}")))
+    };
+    out.push(
+        match (failed, executed.is_empty(), was) {
+            (true, _, Some(w)) if !same(w) => format!("NOT REPRODUCED: ran the same selection and got {line}, not {w}"),
+            (true, _, _) => "REPRODUCED".to_string(),
+            (false, true, _) => "NOTHING TESTED: every suite skipped".to_string(),
+            (false, false, _) => "NOT REPRODUCED: ran the same selection and passed".to_string(),
+        },
+    );
+    out
 }
 
 fn resolve(args: &[String]) -> Result<Opts, (u8, String)> {
     let usage = |m: &str| (2u8, format!("{m}\n{USAGE}"));
-    let (mut bead, mut suites, mut repo, mut release, mut deadline) = (None, None, None, None, DEFAULT_DEADLINE_SECS);
+    let (mut bead, mut suites, mut repo, mut release, mut deadline, mut was) = (None, None, None, None, DEFAULT_DEADLINE_SECS, None);
     let mut it = args.iter();
     while let Some(x) = it.next() {
         let mut val = |n: &str| it.next().cloned().ok_or_else(|| usage(&format!("{n} needs a value")));
@@ -277,6 +320,7 @@ fn resolve(args: &[String]) -> Result<Opts, (u8, String)> {
             "--suites" => suites = Some(val(x)?),
             "--repo" => repo = Some(PathBuf::from(val(x)?)),
             "--release" => release = Some(PathBuf::from(val(x)?)),
+            "--was" => was = Some(val(x)?),
             "--deadline" => deadline = val(x)?.parse().ok().filter(|d| *d > 0).ok_or_else(|| usage("--deadline needs whole seconds above 0"))?,
             "-h" | "--help" => return Err((2, USAGE.to_string())),
             f if f.starts_with('-') => return Err(usage(&format!("unknown flag {f}"))),
@@ -303,7 +347,7 @@ fn resolve(args: &[String]) -> Result<Opts, (u8, String)> {
         .map(|r| crate::repo::resolve(Some(&r), &env).unwrap_or(r))
         .or_else(|| crate::repo::resolve(None, &env))
         .ok_or_else(|| fail("no repository: pass --repo".into()))?;
-    Ok(Opts { bead, suites, repo, run, release, home, toml, path_tail: cfg("SPIRA_PATH").map_err(fail)?, dav_addr: cfg("SPIRA_SCCACHE_DAV_ADDR").map_err(fail)?, deadline })
+    Ok(Opts { bead, suites, repo, run, release, home, toml, path_tail: cfg("SPIRA_PATH").map_err(fail)?, dav_addr: cfg("SPIRA_SCCACHE_DAV_ADDR").map_err(fail)?, deadline, was })
 }
 
 /// The subcommand: prints the verdict and returns its exit code.
@@ -319,6 +363,9 @@ pub fn main(args: &[String]) -> u8 {
     match run(&o, &ambient) {
         Ok(v) => {
             println!("{}", v.line);
+            for r in &v.report {
+                println!("{r}");
+            }
             println!("vm-repro: logs in {}", log_dir(&o.run, &o.bead).display());
             v.code
         }
@@ -334,7 +381,7 @@ mod tests {
     use super::*;
 
     fn opts() -> Opts {
-        Opts { bead: "sp-x".into(), suites: None, repo: "/r".into(), run: "/run".into(), release: "/rel/abc".into(), home: "/h".into(), toml: "/t.toml".into(), path_tail: String::new(), dav_addr: String::new(), deadline: 600 }
+        Opts { bead: "sp-x".into(), suites: None, repo: "/r".into(), run: "/run".into(), release: "/rel/abc".into(), home: "/h".into(), toml: "/t.toml".into(), path_tail: String::new(), dav_addr: String::new(), deadline: 600, was: None }
     }
 
     #[test]
@@ -379,6 +426,30 @@ mod tests {
     fn a_green_line_over_a_failing_exit_is_a_fault() {
         assert_eq!(verdict_of(Some(1), "VERDICT GREEN\n").code, EXIT_FAULT);
         assert_eq!(verdict_of(Some(0), "no verdict line but rc 0 and a fault line\nVERDICT FAULT\n").code, EXIT_FAULT);
+    }
+
+    const LOG: &str = "  test-a.sh                        ok      3s\n  test-b.sh                        SKIPPED\n  test-s.sh                        ok      4s\n";
+
+    #[test]
+    fn a_pass_of_the_same_selection_is_not_reproduced_and_says_which_lanes_ran() {
+        let r = outcome("VERDICT GREEN ran=2", LOG, &["test-s.sh".to_string()], None);
+        assert_eq!(r, ["vm-repro: executed 2 suite(s), lanes: container(1) sim(1)", "NOT REPRODUCED: ran the same selection and passed"]);
+    }
+
+    #[test]
+    fn a_run_where_every_suite_skipped_tested_nothing() {
+        let r = outcome("VERDICT GREEN ran=0", "  test-b.sh   SKIPPED\n  test-c.sh   SKIP-REQ requires:jq\n", &[], None);
+        assert_eq!(r[0], "vm-repro: executed 0 suite(s), lanes: none");
+        assert!(r[1].starts_with("NOTHING TESTED"), "{r:?}");
+    }
+
+    #[test]
+    fn a_failure_matching_the_named_verdict_and_step_is_reproduced_and_another_is_not() {
+        let line = "VERDICT FAULT rc=2 ran=1 reason=install";
+        assert_eq!(outcome(line, LOG, &[], Some("FAULT:install"))[1], "REPRODUCED");
+        assert_eq!(outcome(line, LOG, &[], None)[1], "REPRODUCED");
+        assert!(outcome(line, LOG, &[], Some("RED"))[1].starts_with("NOT REPRODUCED"));
+        assert!(outcome(line, LOG, &[], Some("FAULT:build"))[1].starts_with("NOT REPRODUCED"));
     }
 
     #[test]

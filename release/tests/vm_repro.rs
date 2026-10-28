@@ -23,6 +23,7 @@ if [ -e PLANT_RED ]; then
     echo "VERDICT RED rc=1 red=test-one.sh"
     exit 1
 fi
+echo "  test-one.sh                      ok      1s"
 echo "VERDICT GREEN rc=0"
 T
 chmod +x target/release/testenv
@@ -99,6 +100,7 @@ fn a_member_branch_builds_runs_its_suite_and_prints_green() {
     let out = text(&o);
     assert_eq!(o.status.code(), Some(0), "{out}");
     assert!(out.contains("VERDICT GREEN"), "{out}");
+    assert!(out.contains("executed 1 suite(s), lanes: container(1)") && out.contains("NOT REPRODUCED"), "{out}");
     let logs = f.run.join("vm-repro/sp-fix");
     let build = fs::read_to_string(logs.join("build.log")).unwrap();
     assert!(build.contains("cargo build --profile release --workspace --config profile.release.incremental=false"), "{build}");
@@ -120,6 +122,7 @@ fn a_planted_install_failure_prints_fault_and_keeps_the_install_output() {
     let out = text(&o);
     assert_eq!(o.status.code(), Some(3), "{out}");
     assert!(out.contains("VERDICT FAULT"), "{out}");
+    assert!(out.lines().any(|l| l == "REPRODUCED"), "{out}");
     let t = fs::read_to_string(f.run.join("vm-repro/sp-fix/testenv.log")).unwrap();
     assert!(t.contains("install: unit spira-fixture.service failed to start"), "{t}");
     assert!(!t.contains("--suites"), "no --suites unless given: {t}");
