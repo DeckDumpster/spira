@@ -16,6 +16,15 @@ pub fn total_lines(path: &Path) -> u64 {
     bytes.iter().filter(|&&b| b == b'\n').count() as u64
 }
 
+pub fn append_line(path: &Path, line: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let mut f = fs::OpenOptions::new().create(true).append(true).open(path)?;
+    f.write_all(format!("{line}\n").as_bytes())
+}
+
 pub fn read_pos(cursor_file: &Path, total: u64) -> u64 {
     let raw = fs::read_to_string(cursor_file).ok().and_then(|s| cursor::parse_cursor(&s));
     cursor::clamp_pos(raw, total)

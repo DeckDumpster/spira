@@ -61,6 +61,9 @@ pub trait Ops {
 
     /// `mail send concierge --kind <kind>`.
     fn mail_concierge(&self, kind: &str, subject: &str, body: &str) -> Result<(), String>;
+
+    /// `inbox-append.sh <text>`: one event line in the Concierge inbox, with its urgent push.
+    fn inbox_append(&self, text: &str) -> Result<(), String>;
 }
 
 /// What an application is recorded against: the incident's bead if it names one, else a
@@ -314,6 +317,16 @@ impl Ops for Real {
     fn mail_concierge(&self, kind: &str, subject: &str, body: &str) -> Result<(), String> {
         run_with_stdin("mail", &["send", "concierge", "--from", "Watchd <watchd@spira>", "--subject", subject, "--kind", kind], body)
     }
+
+    fn inbox_append(&self, text: &str) -> Result<(), String> {
+        let out = spira_config::bounded::bounded("inbox-append.sh")
+            .arg(text)
+            .envs(spira_config::release_env::child_path_env_for_process())
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("cannot run inbox-append.sh: {e}"))?;
+        if out.status.success() { Ok(()) } else { Err(format!("inbox-append.sh exited {}", out.status.code().unwrap_or(-1))) }
+    }
 }
 
 /// Runs `cmd` with `stdin_body` on stdin; returns its exit code and stdout+stderr together.
@@ -384,6 +397,7 @@ pub mod fake {
         pub tool_calls: RefCell<Vec<(String, Vec<String>, u64)>>,
         pub applied: RefCell<Vec<(String, String, String)>>,
         pub concierge_mail: RefCell<Vec<(String, String, String)>>,
+        pub inbox: RefCell<Vec<String>>,
     }
 
     #[derive(Clone)]
@@ -461,6 +475,10 @@ pub mod fake {
         }
         fn mail_concierge(&self, kind: &str, subject: &str, body: &str) -> Result<(), String> {
             self.concierge_mail.borrow_mut().push((kind.into(), subject.into(), body.into()));
+            Ok(())
+        }
+        fn inbox_append(&self, text: &str) -> Result<(), String> {
+            self.inbox.borrow_mut().push(text.into());
             Ok(())
         }
     }
