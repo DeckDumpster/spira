@@ -33,10 +33,9 @@ want "the predicate reads the mender label" 'SPIRA_MENDER_LABEL' "$(grep '^RUNE_
 lack() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1" "did not want [$2] in [$3]"; }
 lack "no plan label" 'plan' "$(grep '^RUNE_LABELS=' "$RUNE")"
 
-echo; echo "INTEGRATE: the mender owns the calls kind, the builder cannot claim it"
-want "the brief carries the integrate remit" "## An integration" "$(grep -o '^## An integration' "$BRIEF")"
+echo; echo "INTEGRATE: a builder owns the kind, the 300 s mender lane cannot build it"
+lack "the brief carries no integrate remit" "## An integration" "$(grep -o '^## An integration' "$BRIEF")"
 want "the mender may submit a branch" "SUBMITTED" "$(rune_var RUNE_WORKING_EXITS | grep -o SUBMITTED)"
-lack "the integrate calls is not on the plan label" 'integrate' "$(grep '^RUNE_LABELS=' "$HERE/runes/builder.rune")"
 
 echo; echo "VERBS: brief, binary and allow table agree"
 USAGE="$(grep -o '^const USAGE: &str = "[^"]*"' "$HARNESS/mender/src/main.rs")"
