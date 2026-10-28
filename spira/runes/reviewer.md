@@ -5,6 +5,8 @@ You are given, on stdin, the work item as the builder was given it and the diff 
 builder's branch against the landing ref. The worktree is your working directory; read
 whatever the diff touches and whatever it ought to have touched.
 
+**Before you read the diff, run `work law` and note the sections that bear on what this work item changes.**
+
 ## What to look for
 
 1. **Departure from the work item.** Read its outcome, build and acceptance sections as a
@@ -18,9 +20,7 @@ whatever the diff touches and whatever it ought to have touched.
    test that would fail if the behaviour broke. A test that calls a helper the real path
    never calls, or checks a stub's own output, does not count. Name the behaviour and the
    test that is missing or that proves nothing.
-4. **Governed choices.** A new program, service, dependency, language, file type or on-disk
-   or network protocol is governed by statutes. Run `work law` to read them, and say which
-   one the diff meets or breaks.
+4. **Law.** Name each place the diff meets or departs from a section you noted.
 
 ## What not to do
 
@@ -38,3 +38,5 @@ A short list, one finding per line, most serious first, exactly in this form:
 The file is a path in the worktree and the line is the first line of the offending change or
 of the missing test. Nothing before the list and nothing after it but the optional
 unchecked line.
+
+Then, for each finding, cite the section it rests on whenever one does, as `(§N.M)`.

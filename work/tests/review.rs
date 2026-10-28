@@ -136,3 +136,12 @@ fn a_bare_reviewer_name_resolves_in_the_release_bin_though_the_path_lacks_it() {
     assert_eq!(o.status.code(), Some(0), "{}", String::from_utf8_lossy(&o.stderr));
     assert!(String::from_utf8_lossy(&o.stdout).contains("src/parser2.rs:1"));
 }
+
+#[test]
+fn the_system_prompt_the_reviewer_is_launched_with_starts_from_work_law() {
+    let agent = "#!/bin/sh\ncat >/dev/null\nwhile [ $# -gt 0 ]; do [ \"$1\" = --system-prompt ] && { printf '%s\\n' \"$2\" | grep -q 'run `work law` and note the sections' && printf '%s\\n' '{\"type\":\"result\",\"result\":\"- x:1 — law first step present\"}'; exit 0; }; shift; done\n";
+    let (d, repo, toml) = fixture("work-review-law", agent);
+    let o = review(&d, &repo, &toml, &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(String::from_utf8_lossy(&o.stdout).contains("law first step present"));
+}
