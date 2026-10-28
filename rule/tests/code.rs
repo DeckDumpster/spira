@@ -317,7 +317,7 @@ fn a_trailing_citation_stays_out_of_the_shipped_section_and_a_midtext_parenthesi
     let parts = parse_toc(TOC).unwrap();
     let tree = generate(&parts, |slug| match slug {
         "law-one" => Some("Do one. (per the case that produced it: details.)\n".into()),
-        "law-two" => Some("Do two (per the spec) always. (sp-abc123: the scar, told at length.)".into()),
+        "law-two" => Some("Do two (per the spec) always. (sp-abc123.1: the scar, told at length.)".into()),
         "law-three" => Some("Do three (per the spec) always. (spa-x: not a bead) (per a ruling) (sp-abc123: the scar)".into()),
         _ => None,
     });

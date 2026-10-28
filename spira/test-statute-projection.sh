@@ -110,6 +110,8 @@ nowant "non-executable hook: does NOT print 'Statute is live'" "Statute is live"
 out_pair=$(run_enact "$GOOD_HOOK" "sp-p0xyt-pair-canary" "Positive pair for missing/non-exec tests."); rc_pair=$?
 is   "positive pair: good hook after bad cases still exits 0" "0" "$rc_pair"
 want "positive pair: prints 'Statute is live'"                "Statute is live" "$out_pair"
+is   "positive pair: the law/ commit reached the fixture's landing checkout" "1" \
+    "$(git -C "$LAW_FIX" ls-files 'law/*law-sp-p0xyt-pair-canary.md' | wc -l | tr -d ' ')"
 
 echo
 echo "=== rule.sh: commits wiki/notes/common-law.md itself (sp-4fl2e) ==="
@@ -165,6 +167,8 @@ if [ $rc_cl_retire -eq 0 ]; then
 else
     bad "commit: retire exits 0" "rc=$rc_cl_retire output=$out_cl_retire"
 fi
+is "commit: retire's law/ commit reached the fixture's landing checkout" "0" \
+    "$(git -C "$LAW_FIX" ls-files 'law/*law-sp-4fl2e-commit-test.md' | wc -l | tr -d ' ')"
 is "commit: retire leaves wiki checkout clean" "" \
     "$(git -C "$WIKI_CL" status --short --untracked-files=all 2>/dev/null)"
 is "commit: retire commit message names the statute" "law: retire law-sp-4fl2e-commit-test" \
