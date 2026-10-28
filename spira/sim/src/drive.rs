@@ -673,6 +673,8 @@ fn event_row(kind: &EventKind, coalesced: bool) -> (&'static str, Option<String>
         EventKind::Complete(a) => ("complete", Some(a.clone())),
         EventKind::Step(s) => ("step", Some(s.clone())),
         EventKind::Fault => ("fault", None),
+        EventKind::Submit(_) => ("submit", None),
+        EventKind::Tick => ("tick", None),
     }
 }
 
