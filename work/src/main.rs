@@ -489,13 +489,28 @@ fn checks(args: &[String]) -> i32 {
             continue;
         };
         let secs = row.budget_ms.div_ceil(1000).max(1).to_string();
-        let mut dirs = work::trusted::process_dirs(false);
-        if work::trusted::resolve(prog, &dirs).is_none() {
-            if let Some(dir) = build_own_tool(root, prog, &dirs) {
-                dirs.insert(0, dir);
+        let dirs = work::trusted::process_dirs(false);
+        let exe = match &row.build {
+            Some(pkg) => match build_from_worktree(root, pkg, &dirs, row.budget_ms) {
+                Ok(path) => {
+                    println!("built from worktree: {}", path.display());
+                    path
+                }
+                Err(e) => {
+                    println!("-- {}: FAIL (cannot build {pkg} from this worktree: {e})", row.name);
+                    failed.push(row.name.clone());
+                    continue;
+                }
+            },
+            None => {
+                let found = work::trusted::resolve(prog, &dirs);
+                if let Some(p) = &found {
+                    println!("resolved: {}", p.display());
+                }
+                found.unwrap_or_else(|| std::path::PathBuf::from(prog))
             }
-        }
-        let out = spira_config::bounded::bounded_for(prog, &secs).args(rest).env("PATH", work::trusted::join_path(&dirs)).current_dir(root).output();
+        };
+        let out = spira_config::bounded::bounded_for(&exe, &secs).args(rest).env("PATH", work::trusted::join_path(&dirs)).current_dir(root).output();
         match out {
             Ok(o) => {
                 print!("{}", String::from_utf8_lossy(&o.stdout));
@@ -521,34 +536,28 @@ fn checks(args: &[String]) -> i32 {
     }
 }
 
-/// A check whose program is a crate of the repository itself and is in no release `bin/`:
-/// build it from the worktree and return the directory holding it.
-fn build_own_tool(root: &std::path::Path, prog: &str, dirs: &[std::path::PathBuf]) -> Option<std::path::PathBuf> {
-    if !root.join(prog).join("Cargo.toml").is_file() {
-        return None;
-    }
+/// Build `package` from the worktree and return its binary. Inherits `RUSTC_WRAPPER`, the
+/// `SPIRA_ADMIT_*` and `SCCACHE_*` vars and `CARGO_TARGET_DIR`, so the build is admitted and warm.
+fn build_from_worktree(root: &std::path::Path, package: &str, dirs: &[std::path::PathBuf], budget_ms: u64) -> Result<std::path::PathBuf, String> {
     let target = std::env::var_os("CARGO_TARGET_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| root.join("target"));
-    let built = spira_config::bounded::bounded_for("cargo", "900")
-        .args(["build", "-p", prog])
+    let secs = budget_ms.div_ceil(1000).max(900).to_string();
+    let built = spira_config::bounded::bounded_for("cargo", &secs)
+        .args(["build", "-p", package, "--bin", package])
         .env("PATH", work::trusted::join_path(dirs))
         .env("CARGO_TARGET_DIR", &target)
         .current_dir(root)
-        .status();
-    match built {
-        Ok(st) if st.success() => Some(target.join("debug")),
-        Ok(st) => {
-            eprintln!("work checks: `cargo build -p {prog}` failed ({st}); {prog} cannot run");
-            None
-        }
-        Err(e) => {
-            eprintln!("work checks: cannot run cargo to build {prog}: {e}");
-            None
-        }
+        .output()
+        .map_err(|e| format!("cannot run cargo: {e}"))?;
+    if !built.status.success() {
+        let err = String::from_utf8_lossy(&built.stderr);
+        return Err(format!("`cargo build -p {package}` failed ({}): {}", built.status, err.trim()));
     }
+    let path = target.join("debug").join(package);
+    work::trusted::resolve(&path.to_string_lossy(), &[]).ok_or_else(|| format!("{} is not an executable after the build", path.display()))
 }
 
 /// Programs `work review` and `work checks` will exec that resolve nowhere, named so a missing
-/// one is seen on turn one. A repository's own crate is built by `work checks`, so it is not one.
+/// one is seen on turn one. A row that declares `build` is built by `work checks`, so it is not one.
 fn unresolved_programs() -> Vec<String> {
     let dirs = work::trusted::process_dirs(true);
     let mut out = Vec::new();
@@ -558,9 +567,9 @@ fn unresolved_programs() -> Vec<String> {
     }
     let root = spira_config::bounded::bounded("git").args(["rev-parse", "--show-toplevel"]).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
     if let Some(root) = root.as_deref().map(std::path::Path::new) {
-        for row in habits::config::load_checks(root).unwrap_or_default() {
+        for row in habits::config::load_checks(root).unwrap_or_default().into_iter().filter(|r| r.build.is_none()) {
             let argv = work::done_argv(&row.run);
-            if let Some(prog) = argv.first().filter(|p| work::trusted::resolve(p, &dirs).is_none() && !root.join(p).join("Cargo.toml").is_file()) {
+            if let Some(prog) = argv.first().filter(|p| work::trusted::resolve(p, &dirs).is_none()) {
                 out.push(format!("check {:?} runs {prog:?}, which resolves nowhere; `work checks` will fail it", row.name));
             }
         }

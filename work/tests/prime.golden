@@ -138,7 +138,7 @@ Refusals:
     Fix: the diff could not be mapped to crates; test the crate you edited by name with `cargo test -p <crate>`
 
 ### work checks
-Runs each `[[check]]` row the repository declares in `.spira/checks.toml`, each bounded by its budget, and prints `-- <name>: ok` or `FAIL` per row.
+Runs each `[[check]]` row the repository declares in `.spira/checks.toml`, each bounded by its budget, and prints `-- <name>: ok` or `FAIL` per row. A row with `build = "<package>"` runs the binary built from this worktree; every other program resolves from the release `bin/`.
 Use when: Before you submit, to run the checks the repository itself asks of a finished change. `--list` prints the rows without running them.
 Arguments:
   [--list]
@@ -152,6 +152,8 @@ Refusals:
     Fix: run it from inside your worktree
   - refusing: .spira/checks.toml is unreadable: {err}
     Fix: fix the file's TOML; a repository with no checks omits the file
+  - -- <name>: FAIL (cannot build {pkg} from this worktree: {err})
+    Fix: fix the build; `cargo build -p <pkg>` reproduces it
 
 ## 6. Review
 ### work review

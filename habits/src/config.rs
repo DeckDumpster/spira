@@ -25,6 +25,9 @@ pub struct Check {
     pub run: String,
     #[serde(default = "default_stop_budget")]
     pub budget_ms: u64,
+    /// The cargo package of this repository whose same-named binary is the row's program.
+    #[serde(default)]
+    pub build: Option<String>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -101,7 +104,15 @@ pub fn load_checks(root: &Path) -> Result<Vec<Check>, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e.to_string()),
     };
-    spira_config::parse_foreign::<Checks>(&text).map(|c| c.check)
+    let rows = spira_config::parse_foreign::<Checks>(&text).map(|c| c.check)?;
+    for row in &rows {
+        let Some(pkg) = &row.build else { continue };
+        let prog = argv(&row.run, &[]).into_iter().next().unwrap_or_default();
+        if &prog != pkg {
+            return Err(format!("check {:?}: build = {pkg:?} but run starts with {prog:?}; the built binary is {pkg}", row.name));
+        }
+    }
+    Ok(rows)
 }
 
 /// `run` split on whitespace, `{file}` and `{crate}` substituted; no shell is involved.
@@ -109,4 +120,24 @@ pub fn argv(run: &str, subst: &[(&str, &str)]) -> Vec<String> {
     run.split_whitespace()
         .map(|tok| subst.iter().fold(tok.to_string(), |t, (k, v)| t.replace(&format!("{{{k}}}"), v)))
         .collect()
+}
+
+#[cfg(test)]
+mod build_row_tests {
+    use super::load_checks;
+
+    fn load(toml: &str) -> Result<Vec<super::Check>, String> {
+        let dir = testkit::TempDir::new("habits-build-row");
+        std::fs::create_dir_all(dir.join(".spira")).unwrap();
+        std::fs::write(dir.join(".spira/checks.toml"), toml).unwrap();
+        load_checks(dir.path())
+    }
+
+    #[test]
+    fn a_build_row_must_run_the_package_it_builds() {
+        let rows = load("[[check]]\nname = \"a\"\nrun = \"x-lint --diff y\"\nbuild = \"x-lint\"\n").unwrap();
+        assert_eq!(rows[0].build.as_deref(), Some("x-lint"));
+        let err = load("[[check]]\nname = \"a\"\nrun = \"other\"\nbuild = \"x-lint\"\n").err().unwrap();
+        assert!(err.contains("\"a\"") && err.contains("\"other\"") && err.contains("\"x-lint\""), "{err}");
+    }
 }
