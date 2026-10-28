@@ -83,7 +83,7 @@ pub const VERBS: &[&str] = &[
 ];
 
 /// Verbs answered in this process, never sent to the socket.
-pub const LOCAL_VERBS: &[&str] = &["crates", "statute-check"];
+pub const LOCAL_VERBS: &[&str] = &["crates", "statute-check", "law"];
 
 /// The `-p` selection for a branch's diff: every workspace member it touches plus its direct
 /// dependents — the gate's own selection (`gate::compose`), never `--workspace`. A
@@ -452,5 +452,88 @@ mod tests {
     fn a_workspace_input_names_every_member_with_p() {
         let sel = crates_selection(&raw(&["Cargo.lock"]), META).unwrap();
         assert_eq!(crates_words(&sel), "-p a -p b -p c");
+    }
+}
+
+/// What `work law [<part> | <part>.<n> | <slug>]` prints, read from the tracked `law/` tree
+/// under `root`. `Err` carries the Part list when nothing matches.
+pub fn law_view(root: &std::path::Path, arg: Option<&str>) -> Result<String, (String, String)> {
+    let law = root.join("law");
+    let index = std::fs::read_to_string(law.join("index.md")).map_err(|e| (format!("{}: {e}", law.join("index.md").display()), String::new()))?;
+    let Some(arg) = arg else { return Ok(index) };
+    let miss = || (format!("no Part or section '{arg}'; the Parts are:"), index.clone());
+    let entries = |dir: &std::path::Path| -> Vec<(String, std::path::PathBuf)> {
+        let mut v: Vec<_> = std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| (e.file_name().to_string_lossy().into_owned(), e.path())).collect();
+        v.sort();
+        v
+    };
+    let key_of = |name: &str| name.split_once('-').map(|(k, _)| k.to_string());
+    let part_dir = |n: &str| entries(&law).into_iter().find(|(name, p)| p.is_dir() && key_of(name).as_deref() == Some(n));
+    let read = |p: &std::path::Path| std::fs::read_to_string(p).map_err(|e| (format!("{}: {e}", p.display()), String::new()));
+    if arg.chars().all(|c| c.is_ascii_digit()) && !arg.is_empty() {
+        let (_, dir) = part_dir(arg).ok_or_else(miss)?;
+        return read(&dir.join("index.md"));
+    }
+    if let Some((part, n)) = arg.split_once('.') {
+        if !part.is_empty() && !n.is_empty() && arg.chars().all(|c| c.is_ascii_digit() || c == '.') {
+            let (_, dir) = part_dir(part).ok_or_else(miss)?;
+            let (_, file) = entries(&dir).into_iter().find(|(name, _)| key_of(name).as_deref() == Some(arg)).ok_or_else(miss)?;
+            return read(&file);
+        }
+    }
+    let want = format!("law-{}.md", arg.strip_prefix("law-").unwrap_or(arg));
+    for (_, dir) in entries(&law).into_iter().filter(|(_, p)| p.is_dir()) {
+        if let Some((_, file)) = entries(&dir).into_iter().find(|(name, _)| name.split_once('-').is_some_and(|(_, rest)| rest == want)) {
+            return read(&file);
+        }
+    }
+    Err(miss())
+}
+
+#[cfg(test)]
+mod law_tests {
+    use super::law_view;
+
+    fn fixture() -> testkit::TempDir {
+        let d = testkit::TempDir::new("work-law");
+        let w = |p: &str, t: &str| {
+            let path = d.join("law").join(p);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, t).unwrap();
+        };
+        w("index.md", "TOP\n");
+        w("1-alpha/index.md", "P1\n");
+        w("1-alpha/1.1-law-one.md", "S11\n");
+        w("2-beta/index.md", "P2\n");
+        w("2-beta/2.1-law-three.md", "S21\n");
+        w("2-beta/2.10-law-ten.md", "S210\n");
+        d
+    }
+
+    #[test]
+    fn it_prints_the_index_a_part_and_a_section() {
+        let d = fixture();
+        assert_eq!(law_view(&d, None).unwrap(), "TOP\n");
+        assert_eq!(law_view(&d, Some("2")).unwrap(), "P2\n");
+        assert_eq!(law_view(&d, Some("2.1")).unwrap(), "S21\n");
+        assert_eq!(law_view(&d, Some("2.10")).unwrap(), "S210\n");
+        assert_eq!(law_view(&d, Some("law-one")).unwrap(), "S11\n");
+        assert_eq!(law_view(&d, Some("three")).unwrap(), "S21\n");
+    }
+
+    #[test]
+    fn an_unknown_target_returns_the_part_list() {
+        let d = fixture();
+        for bad in ["3", "2.2", "9.1", "law-nope", "1.1.1"] {
+            let (msg, list) = law_view(&d, Some(bad)).unwrap_err();
+            assert!(msg.contains(bad), "{msg}");
+            assert_eq!(list, "TOP\n", "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_missing_tree_is_an_error_not_an_empty_list() {
+        let d = testkit::TempDir::new("work-law-none");
+        assert!(law_view(&d, None).unwrap_err().1.is_empty());
     }
 }

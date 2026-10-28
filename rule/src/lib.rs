@@ -3,6 +3,7 @@
 //! filesystem and no subprocess.
 
 pub mod audit;
+pub mod code;
 pub mod memories;
 
 use std::collections::BTreeMap;
@@ -54,6 +55,7 @@ pub struct EnactArgs {
     pub dry_run: bool,
     pub text: String,
     pub tool: ToolDecl,
+    pub part: Option<u32>,
 }
 
 /// What performs the statute: a tool that exists now, a bead building it, or nothing because
@@ -89,6 +91,7 @@ pub enum EnactError {
 pub fn parse_enact_args(rest: &[String]) -> Result<EnactArgs, EnactError> {
     let mut dry_run = false;
     let mut text: Option<String> = None;
+    let mut part: Option<u32> = None;
     let (mut tool, mut mechanism, mut reason): (Option<String>, Option<String>, Option<String>) =
         (None, None, None);
     let mut it = rest.iter();
@@ -105,11 +108,18 @@ pub fn parse_enact_args(rest: &[String]) -> Result<EnactArgs, EnactError> {
             if slot.replace(v.clone()).is_some() {
                 return Err(EnactError::Message(format!("rule: enact: {arg} given twice")));
             }
+        } else if arg == "--part" {
+            let Some(v) = it.next().and_then(|v| v.parse::<u32>().ok()).filter(|n| *n > 0) else {
+                return Err(EnactError::Message("rule: enact: --part needs a Part number".to_string()));
+            };
+            if part.replace(v).is_some() {
+                return Err(EnactError::Message("rule: enact: --part given twice".to_string()));
+            }
         } else if arg == "--dry-run" {
             dry_run = true;
         } else if arg.starts_with('-') {
             return Err(EnactError::Message(format!(
-                "rule: enact does not take '{arg}' — usage: rule.sh enact <slug> \"<text>\" --tool <cmd>|--mechanism <bead>|--tool none --reason <why> [--dry-run]"
+                "rule: enact does not take '{arg}' — usage: rule.sh enact <slug> \"<text>\" --tool <cmd>|--mechanism <bead>|--tool none --reason <why> [--part <n>] [--dry-run]"
             )));
         } else if text.is_some() {
             return Err(EnactError::Message(format!(
@@ -138,7 +148,7 @@ pub fn parse_enact_args(rest: &[String]) -> Result<EnactArgs, EnactError> {
     if reason.is_some() && !matches!(tool, ToolDecl::None(_)) {
         return refuse("rule: --reason belongs to --tool none");
     }
-    Ok(EnactArgs { dry_run, text, tool })
+    Ok(EnactArgs { dry_run, text, tool, part })
 }
 
 /// The three-line refusal for a statute over the word budget (unchanged text from `rule.sh`).
@@ -150,7 +160,7 @@ pub fn word_limit_refusal(words: usize) -> String {
 
 /// `rule.sh`'s own doc-comment usage block (`sed -n '3,10p' "$0" | sed 's/^# \{0,1\}//'`),
 /// pinned verbatim since this binary has no bash header comment of its own to read.
-pub const USAGE: &str = "rule.sh — enact, amend, or retire a statute in one command.\n\n  rule.sh enact <slug> \"<statute text>\" (--tool <cmd> | --mechanism <bead> | --tool none --reason <why>) [--dry-run]\n                                           write it, then synthesise it into the wiki\n  rule.sh audit [--file --for <persona> --repo <name> --max N]\n                                           check every statute's named tools exist in the release\n  rule.sh retire <slug>                    remove it\n  rule.sh list                             what is in force\n  rule.sh show <slug>                      one statute's full text\n\n`<slug>` is written without the `law-` prefix; it is added for you.";
+pub const USAGE: &str = "rule.sh — enact, amend, or retire a statute in one command.\n\n  rule.sh enact <slug> \"<statute text>\" (--tool <cmd> | --mechanism <bead> | --tool none --reason <why>) --part <n> [--dry-run]\n                                           write it, then synthesise it into the wiki\n  rule.sh code [--check] [--texts <dir>]   regenerate (or check) the law/ tree from law/toc.toml\n  rule.sh audit [--file --for <persona> --repo <name> --max N]\n                                           check every statute's named tools exist in the release\n  rule.sh retire <slug>                    remove it\n  rule.sh list                             what is in force\n  rule.sh show <slug>                      one statute's full text\n\n`<slug>` is written without the `law-` prefix; it is added for you.";
 
 /// One `list` line: `  {key:<44} {words:>3}w  {first 64 chars of the first sentence}`.
 pub fn list_line(key: &str, text: &str) -> String {
@@ -328,6 +338,7 @@ mod tests {
                 dry_run: false,
                 text: "some text".to_string(),
                 tool: ToolDecl::Tool("queue open-batch".to_string()),
+                part: None,
             }
         );
     }

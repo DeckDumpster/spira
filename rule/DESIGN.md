@@ -25,7 +25,8 @@ bash still printed the success banner).
 
 ```
 rule.sh                                                # every caller, unchanged — concierge.sh, the suites
-rule [--home <spira-dir>] enact <slug> "<text>" (--tool <cmd> | --mechanism <bead> | --tool none --reason <why>) [--dry-run]
+rule [--home <spira-dir>] enact <slug> "<text>" (--tool <cmd> | --mechanism <bead> | --tool none --reason <why>) --part <n> [--dry-run]
+rule code [--check] [--texts <dir>]   # regenerate or check the law/ tree (law/toc.toml + statute texts); enact appends to a Part and stages it
 rule [--home <spira-dir>] audit [--file --for <persona> [--repo <name>] --max N]
 rule [--home <spira-dir>] retire <slug>
 rule [--home <spira-dir>] list

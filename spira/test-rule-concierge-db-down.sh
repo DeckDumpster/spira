@@ -74,7 +74,10 @@ tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_BD="$SPIRA_BD" SPIRA_DB="$DB"
 bd -C "$DB" remember --key law-dbdown-seed "Seed statute so the reachable case is not itself empty." >/dev/null 2>&1 \
     || bail "could not seed the fixture"
 
-run_rule() { SPIRA_DB="$DB" bash "$RULE_SH" "$@" 2>&1; }
+LAW_FIX="$(mktemp -d)"
+git -C "$LAW_FIX" init -q && mkdir "$LAW_FIX/law"
+printf '[[part]]\nnumber = 1\nname = "Fixture"\nslug = "fixture"\nscope = "Fixture Part."\nslugs = []\n' > "$LAW_FIX/law/toc.toml"
+run_rule() { [ "$1" = enact ] && set -- "$@" --part 1; (cd "$LAW_FIX" && SPIRA_DB="$DB" bash "$RULE_SH" "$@" 2>&1); }
 
 echo "=== rule.sh: against the reachable store (also primes the schema-stamp cache) ==="
 

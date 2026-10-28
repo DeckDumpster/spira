@@ -193,7 +193,10 @@ echo
 echo "=== G-07: rule.sh list, show and retire ==="
 # ==========================================================================
 
-run_rule() { tl_config SPIRA_STATUTE_DIR="$STATUTE_DIR" SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$GOOD_HOOK"; bash "$RULE_SH" "$@" 2>&1; }
+LAW_FIX="$(mktemp -d)"
+git -C "$LAW_FIX" init -q && mkdir "$LAW_FIX/law"
+printf '[[part]]\nnumber = 1\nname = "Fixture"\nslug = "fixture"\nscope = "Fixture Part."\nslugs = []\n' > "$LAW_FIX/law/toc.toml"
+run_rule() { tl_config SPIRA_STATUTE_DIR="$STATUTE_DIR" SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$GOOD_HOOK"; [ "$1" = enact ] && set -- "$@" --part 1; (cd "$LAW_FIX" && bash "$RULE_SH" "$@" 2>&1); }
 
 want "list names an enacted statute"     "law-sp-p0xyt-test-canary" "$(run_rule list)"
 want "and reports a statute count"       "statutes in force"        "$(run_rule list)"

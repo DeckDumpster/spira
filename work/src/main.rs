@@ -38,6 +38,9 @@ fn main() {
     if verb == "statute-check" {
         { let code = statute_check(&verb_args); spira_otel::run::finish(code); std::process::exit(code) };
     }
+    if verb == "law" {
+        { let code = law(&verb_args); spira_otel::run::finish(code); std::process::exit(code) };
+    }
     if work::LOCAL_VERBS.contains(&verb.as_str()) {
         { let code = crates(&verb_args); spira_otel::run::finish(code); std::process::exit(code) };
     }
@@ -279,6 +282,33 @@ fn crates(args: &[String]) -> i32 {
         }
         Err(e) => {
             eprintln!("work crates: {e}");
+            REFUSED
+        }
+    }
+}
+
+/// `work law [<part> | <part>.<n> | <slug>]`: reads the tracked `law/` tree of the worktree
+/// it runs in; no store, no socket.
+fn law(args: &[String]) -> i32 {
+    if args.len() > 1 {
+        eprintln!("usage: work law [<part> | <part>.<n> | <slug>]");
+        return REFUSED;
+    }
+    let root = spira_config::bounded::bounded("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|| ".".to_string());
+    match work::law_view(std::path::Path::new(&root), args.first().map(String::as_str)) {
+        Ok(text) => {
+            print!("{text}");
+            0
+        }
+        Err((msg, list)) => {
+            eprintln!("work law: {msg}");
+            print!("{list}");
             REFUSED
         }
     }
