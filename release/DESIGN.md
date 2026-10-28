@@ -37,6 +37,7 @@ release canary-worker                                   the stage's synthetic dw
 release acceptance <tag> --scratch-repo P [...]         release acceptance on a clean machine (DESIGN.md "acceptance")
 release session-hook install|status|uninstall|prune S  the client's SessionStart hook + statusLine (DESIGN.md "session-hook")
 release intake install|status|uninstall                 wire systemd alert units into incident intake (DESIGN.md "intake")
+release vm-repro <bead> [--suites L] [--repo R] [--deadline S]   a member's round-VM build-then-test, on the host (DESIGN.md "vm-repro")
 ```
 
 Every subcommand also takes `--releases D` (else `$SPIRA_RELEASES`, else `spira.releases`,
@@ -617,6 +618,29 @@ verify step alone — `activate`/`rollback`/`install-tarball` never call it.
 (`config::unit_dir_from_env`, the same fallback chain `Config::resolve` uses for its own
 `unit_dir` field, pulled out to a standalone function precisely so `intake` is never coupled to
 the releases directory resolving, which it has nothing to do with).
+
+### vm-repro
+
+`release vm-repro <bead>` is the round VM's own sequence for one member, run on the host, for
+anyone who sees a member red only on the VM and needs to know whether the build path is why.
+
+1. Resolves `spira/<bead>` in `--repo` (the branch is always named: a bare `HEAD` is the
+   harness's own) and adds a detached worktree of that tip at `$SPIRA_RUN/worktree/vm-repro-<bead>`.
+2. `cargo build --profile release --workspace --config profile.release.incremental=false` in it,
+   with the compile pool (`spira-admit`) and the shared cache wired as a dwarf's cargo gets them;
+   a missing piece is said at the top of `build.log` and the build goes on.
+3. The tree's own `testenv --mode parallel --artifacts <tree>/target/release [--suites L]
+   --deadline 600 spira/<bead> <repo>`; no `--suites` leaves testenv to select from the diff.
+4. Prints testenv's `VERDICT` line and keeps `build.log` and `testenv.log` in `$SPIRA_RUN/vm-repro/<bead>/`.
+5. Removes the worktree on every exit, and one left by a killed run before it starts.
+
+Exit `0` GREEN, `1` RED, `3` FAULT (a failed build is `VERDICT FAULT reason=build`), `2` usage.
+A GREEN line over a failing exit, or the reverse, is a FAULT.
+
+It runs with no inherited environment: `PATH` (the release's directories, then `spira.path`,
+the pinned tool environment and `~/.cargo/bin`), `SPIRA_RELEASE` (the release this binary runs
+from, or `--release`) and `SPIRA_TOML` (as set, else the default location) are its own;
+only `HOME` is required of the caller.
 
 ## Layout
 
