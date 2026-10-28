@@ -7,7 +7,7 @@ use crate::phase::{RunEvent, RunLog};
 use crate::fixture::{is_user_account_fault, Fixtures, Liveness, Session};
 use crate::record::{self, Mode, Producer, ResultRecord, Status};
 use crate::runtime::cancelled;
-use crate::schedule::{pids_budget, Admission, Job, LANE_SLOTS};
+use crate::schedule::{Admission, Job};
 use crate::skipgate::{self, SkipGate};
 use crate::tap;
 use std::collections::{BTreeMap, BTreeSet};
@@ -30,6 +30,10 @@ pub struct BatchCfg {
     pub timeout: Option<Duration>,
     /// 0 = unlimited (parallel only).
     pub maxpar: u32,
+    /// Process-weight budget the running suites' `# pids:` declarations may fill.
+    pub pids_budget: u32,
+    /// Suites of one lane running at once; 0 = no per-lane cap.
+    pub lane_slots: u32,
     pub exec_fault_threshold: usize,
     pub quarantined: BTreeSet<String>,
     pub psi_pause: Duration,
@@ -44,6 +48,17 @@ pub struct BatchCfg {
     /// their own environment (sp-gjx1b).
     pub embedded_only: BTreeSet<String>,
     pub resume: Option<crate::resume::Store>,
+}
+
+/// The sim container is its own pool: `SIM_SLOTS` bounds the lane and its own pids budget
+/// applies, so the per-lane cap of the shared pool is off.
+pub fn sim_cfg(main: &BatchCfg) -> BatchCfg {
+    BatchCfg {
+        maxpar: crate::schedule::SIM_SLOTS,
+        pids_budget: crate::schedule::sim_pids_budget(),
+        lane_slots: 0,
+        ..main.clone()
+    }
 }
 
 /// Side effects the executor reports through, so tests can observe them.
@@ -461,7 +476,7 @@ fn run_serial(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
 
 fn run_parallel(sh: &Shared, jobs: &[Job], outcome: &mut BatchOutcome) {
     let (tx, rx) = mpsc::channel::<(u32, Option<String>)>();
-    let mut adm = Admission::new(sh.cfg.maxpar, pids_budget(), LANE_SLOTS);
+    let mut adm = Admission::new(sh.cfg.maxpar, sh.cfg.pids_budget, sh.cfg.lane_slots);
     let mut last_alive: Option<Instant> = None;
     std::thread::scope(|scope| {
         let wait_one = |adm: &mut Admission| {
@@ -607,6 +622,8 @@ mod tests {
             results: results.to_path_buf(),
             timeout: None,
             maxpar,
+            pids_budget: crate::schedule::pids_budget(),
+            lane_slots: crate::schedule::LANE_SLOTS,
             exec_fault_threshold: 5,
             quarantined: BTreeSet::new(),
             psi_pause: Duration::from_millis(1),
@@ -878,6 +895,82 @@ mod tests {
         assert_eq!(out.records.len(), 8);
         assert!(peak.load(Ordering::SeqCst) <= 2);
         assert!(peak.load(Ordering::SeqCst) >= 1);
+    }
+
+    /// Peak concurrency of `names` under `c`. Each suite holds until `target` are running, so
+    /// the peak is the admitted width rather than a race against a sleep.
+    fn peak_with(c: &BatchCfg, names: &[String], target: usize) -> usize {
+        let rt = FakeRuntime::new();
+        let gate = Arc::new((Mutex::new(0usize), std::sync::Condvar::new()));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let (g2, p2) = (gate.clone(), peak.clone());
+        rt.on(
+            |r| r.argv.get(1).is_some_and(|a| a.starts_with("/workspace/spira/test-")),
+            move |_| {
+                let (m, cv) = &*g2;
+                let mut live = m.lock().unwrap();
+                *live += 1;
+                p2.fetch_max(*live, Ordering::SeqCst);
+                cv.notify_all();
+                // clock-safe: caps the wait for `target` suites to be running at once
+                let (mut live, _) = cv
+                    .wait_timeout_while(live, Duration::from_secs(2), |l| *l < target)
+                    .unwrap();
+                *live -= 1;
+                cv.notify_all();
+                ExecOutcome { rc: 0, output: "ok\n".into() }
+            },
+        );
+        let s = session(&rt);
+        let js: Vec<Job> = names
+            .iter()
+            .map(|n| {
+                let mut j = Job::new(n, None);
+                if n.contains("sim") {
+                    j.lane = Some("sim".into());
+                    j.weight = 400;
+                }
+                j
+            })
+            .collect();
+        let out = with_hooks(|h, _| run(&s, c, h, &Fixtures::PerSuite, &js));
+        assert_eq!(out.records.len(), names.len());
+        peak.load(Ordering::SeqCst)
+    }
+
+    #[test]
+    fn sim_container_runs_its_lane_at_sim_slots() {
+        let dir = tmpdir("simwidth");
+        let main = cfg(Mode::Parallel, &dir, 8);
+        let names: Vec<String> = (0..8).map(|i| format!("test-sim-{i}.sh")).collect();
+        assert_eq!(
+            peak_with(&sim_cfg(&main), &names, crate::schedule::SIM_SLOTS as usize),
+            crate::schedule::SIM_SLOTS as usize
+        );
+    }
+
+    #[test]
+    fn the_sim_container_is_admitted_against_its_own_pids_budget() {
+        assert_eq!(crate::schedule::sim_pids_budget(), 3000);
+        let dir = tmpdir("simpids");
+        let sims: Vec<String> = (0..4).map(|i| format!("test-sim-{i}.sh")).collect();
+        let mut main = cfg(Mode::Parallel, &dir, 8);
+        main.lane_slots = 0;
+        assert_eq!(peak_with(&main, &sims, 4), 4);
+        let mut sim = sim_cfg(&main);
+        sim.pids_budget = 1200;
+        assert_eq!(peak_with(&sim, &sims, 3), 3);
+    }
+
+    #[test]
+    fn main_pool_caps_a_lane_and_leaves_the_rest_of_the_pool_free() {
+        let dir = tmpdir("lanecap");
+        let main = cfg(Mode::Parallel, &dir, 8);
+        let sims: Vec<String> = (0..6).map(|i| format!("test-sim-{i}.sh")).collect();
+        assert_eq!(peak_with(&main, &sims, crate::schedule::LANE_SLOTS as usize), crate::schedule::LANE_SLOTS as usize);
+        let mut mixed = sims.clone();
+        mixed.extend((0..4).map(|i| format!("test-plain-{i}.sh")));
+        assert_eq!(peak_with(&main, &mixed, 6), 6);
     }
 
     #[test]
