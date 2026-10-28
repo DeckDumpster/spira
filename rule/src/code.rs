@@ -204,7 +204,7 @@ pub fn git_in(dir: &Path, args: &[&str]) -> Result<String, String> {
 /// removes the worktree. The caller's directory and the repo's own checkout are never touched.
 pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, key: &str, toc: &[Part], book: &BTreeMap<String, String>) -> Result<String, String> {
     std::fs::create_dir_all(wt_root).map_err(|e| format!("rule: {}: {e}", wt_root.display()))?;
-    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let branch = format!("law/{}-{stamp}", key.trim_start_matches("law-"));
     let wt = wt_root.join(format!("rule-enact-{}-{stamp}", key.trim_start_matches("law-")));
     let wt_s = wt.display().to_string();

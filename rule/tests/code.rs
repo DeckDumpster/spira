@@ -215,3 +215,17 @@ fn commit_law_adds_the_section_on_its_own_branch_and_leaves_the_checkout_alone()
     assert!(!repo.join("law/2-beta").exists(), "the checkout's own tree was written to");
     assert!(std::fs::read_dir(wt_root.path()).unwrap().next().is_none(), "the worktree was left behind");
 }
+
+#[test]
+fn commit_law_twice_for_one_slug_in_one_second_gives_two_branches() {
+    let repo = fixture_repo("law-commit-twice");
+    let wt_root = testkit::TempDir::new("law-commit-twice-wt");
+    let toc = append(&parse_toc(TOC).unwrap(), 2, "law-four").unwrap();
+    let book: BTreeMap<String, String> = [("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three."), ("law-four", "Do four.")]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    let first = rule::code::commit_law(repo.path(), None, wt_root.path(), "law-four", &toc, &book).unwrap();
+    let second = rule::code::commit_law(repo.path(), None, wt_root.path(), "law-four", &toc, &book).unwrap();
+    assert_ne!(first, second);
+}
