@@ -85,14 +85,14 @@ mkdir -p "$TMP/other" && ( cd "$TMP/other" && mkdir spira_lifecycle snap && cd s
     && tar -C "$TMP/other/snap" -czf "$TMP/other.tar.gz" . )
 out="$(lcb drill "$TMP/other.tar.gz")"; rc=$?; wantrc "drill red on another store's snapshot" 1 $rc; want "drill names the head mismatch" "stamped head" "$out"
 
-echo; echo "drill — defers while a round is open or the store is over budget, then runs:"
-echo open > "$TMP/round"; out="$(lcb drill)"; rc=$?; wantrc "drill never runs while a round is open" 1 $rc; want "the deferral names the round" "DEFERRED" "$out"; want "the deferral names why" "round state is 'open'" "$out"
-: > "$TMP/round"; out="$(lcb drill)"; rc=$?; wantrc "an unknown round state defers" 1 $rc
-echo none > "$TMP/round"; out="$(BUDGET=1 lcb drill)"; rc=$?; wantrc "drill defers when the store is over budget" 1 $rc; want "the deferral names the budget" "over the 1ms budget" "$out"
+echo; echo "drill — runs with a round open, defers only when the store is over budget:"
+echo open > "$TMP/round"; out="$(lcb drill)"; rc=$?; wantrc "drill runs while a round is open" 0 $rc; want "it restores and records ok" "drill ok" "$out"
+want "the verdict file records ok" "drill ok" "$(cat "$RUN/lc-backup/spira_lifecycle/drill.verdict")"
+: > "$TMP/round"; lcb drill >/dev/null; wantrc "an unknown round state does not defer" 0 $?
+echo open > "$TMP/round"; out="$(lcb drill "$TMP/other.tar.gz")"; rc=$?; wantrc "positive control: a mismatch is still red with a round open" 1 $rc; want "the mismatch is named" "stamped head" "$out"
+echo open > "$TMP/round"; out="$(BUDGET=1 lcb drill)"; rc=$?; wantrc "drill defers when the store is over budget" 1 $rc; want "the deferral names the budget" "over the 1ms budget" "$out"
 [ -z "$(ls "$TMP/drill-scratch" 2>/dev/null)" ] && ok "a deferred drill restored nothing" || bad "a deferred drill restored nothing"
-echo open > "$TMP/round"; ( sleep 3; echo none > "$TMP/round" ) &
-out="$(WAIT=60 lcb drill)"; rc=$?; wantrc "drill runs once the round closes" 0 $rc; want "it deferred first" "deferring" "$out"; want "then restored" "drill ok" "$out"
-wait; echo none > "$TMP/round"
+echo none > "$TMP/round"
 echo; echo "drill overlapping a run — verifies the previous tarball or defers, never fails:"
 mkdir -p "$TMP/slow"; real_tar="$(command -v tar)"
 printf '#!/bin/sh\n%s "$@"; rc=$?\ncase "$*" in *-caf*) sleep 25 ;; esac\nexit $rc\n' "$real_tar" > "$TMP/slow/tar"; chmod +x "$TMP/slow/tar"
