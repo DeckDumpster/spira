@@ -88,7 +88,7 @@ impl LogSink {
             observed_time_unix_nano: t,
             severity_number: SeverityNumber::Info as i32,
             body: Some(any(Value::StringValue(body.into()))),
-            attributes: attrs.iter().map(|(k, v)| KeyValue { key: k.clone(), value: Some(any(v.value())), ..Default::default() }).collect(),
+            attributes: attrs.iter().map(|(k, v)| KeyValue { key: k.clone(), value: Some(any(v.value())) }).collect(),
             ..Default::default()
         };
         ExportLogsServiceRequest {
