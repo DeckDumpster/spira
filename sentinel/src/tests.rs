@@ -2107,7 +2107,7 @@ fn on_check2d_an_unresolved_repo_map_hold_stands() {
 }
 
 // ---------------------------------------------------------------------------------------
-// P0 express preempts a running lane dwarf; any P0 or rework bead makes lanes yield
+// P0 express preempts a running lane dwarf; only a P0 or express bead makes lanes yield
 
 struct UrgentFleet {
     w: World,
@@ -2174,13 +2174,26 @@ fn urgent_fleet(tag: &str, urgent_row: &str, units: &[&str]) -> UrgentFleet {
         }
         None
     });
-    r.on(|s| if s.prog == "systemd-run" { ok("") } else { None });
+    let live_c = live.clone();
+    r.on(move |s| {
+        if s.prog == "systemd-run" {
+            if let Some(u) = s.args.iter().find_map(|a| a.strip_prefix("--unit=spira-dwarf-")) {
+                live_c.borrow_mut().push(u.to_string());
+            }
+            return ok("");
+        }
+        None
+    });
     let path = format!("{}:/usr/bin:/bin", bin.display());
     UrgentFleet { w, r, sink, clock, live, path }
 }
 
 fn run_urgent(f: &UrgentFleet) {
-    let extra: Vec<(&str, &str)> = vec![("PATH", &f.path), ("SPIRA_MAX_LIVE_DWARVES", "4"), ("SPIRA_LANES_MAX_LIVE", "2")];
+    run_urgent_with_lane_bound(f, "2");
+}
+
+fn run_urgent_with_lane_bound(f: &UrgentFleet, lanes_max_live: &str) {
+    let extra: Vec<(&str, &str)> = vec![("PATH", &f.path), ("SPIRA_MAX_LIVE_DWARVES", "4"), ("SPIRA_LANES_MAX_LIVE", lanes_max_live)];
     assert_eq!(run_mode(&f.w, &f.r, &f.sink, &f.clock, Mode::CallPass, &extra, None), 0);
 }
 
@@ -2197,7 +2210,8 @@ fn a_p0_express_with_a_full_fleet_preempts_the_youngest_lane_and_a_builder_takes
     assert!(f.sink.has("ACT called a builder dwarf"), "{}", f.sink.text());
     assert!(!f.sink.has("called a ops lane dwarf"), "{}", f.sink.text());
     assert!(std::fs::read_to_string(f.w.run.join("lane-preemptions")).unwrap().contains("ops\tsp-lg\tsp-x"));
-    assert_eq!(f.live.borrow().iter().filter(|u| u.starts_with("builder")).count(), 2, "builders were not touched");
+    let live = f.live.borrow();
+    assert!(live.iter().any(|u| u == "builder-1") && live.iter().any(|u| u == "builder-2"), "builders were not touched: {live:?}");
 }
 
 #[test]
@@ -2210,11 +2224,54 @@ fn a_p0_that_is_not_express_makes_lanes_yield_and_stops_nothing() {
 }
 
 #[test]
-fn a_rework_bead_makes_lanes_yield() {
-    let f = urgent_fleet("yield-rework", "sp-w\t2\t1\t0\n", &["builder-1"]);
+fn a_rework_bead_below_p0_does_not_hold_the_lanes() {
+    let f = urgent_fleet("rework-below-p0", "sp-5vww8l\t2\t1\t0\n", &["builder-1", "builder-2", "builder-3"]);
     run_urgent(&f);
-    assert_eq!(f.r.count(|s| s.prog == "slay.sh"), 0);
+    assert!(!f.sink.has("CHECK7 lanes: yielding"), "{}", f.sink.text());
+    assert!(f.sink.has("rework bead(s) waiting do not hold the lanes: sp-5vww8l"), "{}", f.sink.text());
+    assert!(f.sink.has("ACT called a ops lane dwarf"), "{}", f.sink.text());
+    assert_eq!(f.r.count(|s| s.prog == "slay.sh"), 0, "{}", f.sink.text());
+    assert!(!f.sink.has("called a builder dwarf"), "the lane's unit fills the fleet: {}", f.sink.text());
+}
+
+#[test]
+fn a_lane_spills_over_a_full_fleet_while_a_rework_bead_waits() {
+    let f = urgent_fleet("rework-spill", "sp-w\t2\t1\t0\n", &["builder-1", "builder-2", "builder-3", "builder-4"]);
+    run_urgent(&f);
+    assert!(f.sink.has("4/4 dwarf(s) live — a lane may spill over the ceiling"), "{}", f.sink.text());
+    assert!(f.sink.has("ACT called a ops lane dwarf"), "{}", f.sink.text());
+    assert!(!f.sink.has("called a builder dwarf"), "{}", f.sink.text());
+    assert_eq!(f.r.count(|s| s.prog == "slay.sh"), 0, "{}", f.sink.text());
+}
+
+#[test]
+fn an_express_rework_bead_below_p0_still_holds_the_lanes_without_preempting() {
+    let f = urgent_fleet("rework-express", "sp-e\t2\t1\t1\n", &["builder-1"]);
+    run_urgent(&f);
+    assert!(f.sink.has("CHECK7 lanes: yielding"), "{}", f.sink.text());
     assert!(!f.sink.has("lane dwarf"), "{}", f.sink.text());
+    assert_eq!(f.r.count(|s| s.prog == "slay.sh"), 0, "{}", f.sink.text());
+}
+
+#[test]
+fn a_yielding_line_names_only_the_blocking_beads_when_a_rework_bead_also_waits() {
+    let f = urgent_fleet("rework-mixed", "sp-a\t0\t0\t0\nsp-b\t2\t1\t0\n", &["builder-1"]);
+    run_urgent(&f);
+    assert!(f.sink.has("urgent bead(s) unclaimed: sp-a\n") || f.sink.text().contains("unclaimed: sp-a\n"), "{}", f.sink.text());
+    assert!(!f.sink.text().contains("sp-b"), "{}", f.sink.text());
+}
+
+#[test]
+fn a_finishing_dwarf_is_not_replaced_while_the_fleet_is_over_the_ceiling() {
+    let f = urgent_fleet("over-5", "", &["builder-1", "builder-2", "builder-3", "builder-4", "ops-3"]);
+    run_urgent_with_lane_bound(&f, "1");
+    assert!(!f.sink.has("called a builder dwarf"), "{}", f.sink.text());
+    assert!(f.sink.has("CHECK7 builder: 5/4 dwarf(s) live across the whole fleet — not calling"), "{}", f.sink.text());
+
+    let f = urgent_fleet("over-4", "", &["builder-1", "builder-2", "builder-3", "ops-3"]);
+    run_urgent_with_lane_bound(&f, "1");
+    assert!(!f.sink.has("called a builder dwarf"), "{}", f.sink.text());
+    assert!(f.sink.has("4/4 dwarf(s) live across the whole fleet — not calling"), "{}", f.sink.text());
 }
 
 #[test]
