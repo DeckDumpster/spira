@@ -136,7 +136,7 @@ fn old_rows(f: &Fixture, s: &Scenario, ticks: usize) -> Vec<String> {
         .spawn()
         .unwrap();
     if !s.results.is_empty() {
-        std::thread::sleep(std::time::Duration::from_millis(1500));
+        std::thread::sleep(std::time::Duration::from_millis(1500)); // clock-safe: paces results after the script's first tick; the script under test runs on the real clock
         for r in &s.results {
             f.append_result(r);
         }
