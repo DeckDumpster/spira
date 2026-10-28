@@ -47,6 +47,14 @@ LAW_FIX="$TMP/law-fix"
 mkdir -p "$LAW_FIX/law" && git -C "$LAW_FIX" init -q
 printf '[[part]]\nnumber = 1\nname = "Fixture"\nslug = "fixture"\nscope = "Fixture Part."\nslugs = []\n' > "$LAW_FIX/law/toc.toml"
 git -C "$LAW_FIX" add -A && git -C "$LAW_FIX" -c user.name=t -c user.email=t@t commit -q -m fixture
+# enact and retire file a bead for the law/ commit and submit it; these stand in for the store
+# and a round, landing the branch by fast-forwarding the fixture's checkout.
+SHIM_BIN="$TMP/shim-bin"
+mkdir -p "$SHIM_BIN"
+printf '#!/bin/sh\necho x >> "%s/filed"\necho "{\\"id\\":\\"sp-fix$(wc -l < "%s/filed" | tr -d " ")\\"}"\n' "$TMP" "$TMP" > "$SHIM_BIN/bead.sh"
+printf '#!/bin/sh\n[ "$1" = submit ] || exit 2\ngit -C "%s" merge -q --ff-only "$2"\n' "$LAW_FIX" > "$SHIM_BIN/queue"
+chmod +x "$SHIM_BIN/bead.sh" "$SHIM_BIN/queue"
+PATH="$SHIM_BIN:$PATH"; export PATH
 # enact commits law/ to the repo SPIRA_REPO names, in a worktree under SPIRA_RUN.
 rule_sh() { [ "$1" = enact ] && set -- "$@" --part 1; (cd "$LAW_FIX" && SPIRA_REPO="$LAW_FIX" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t bash "$RULE_SH" "$@"); }
 
