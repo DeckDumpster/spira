@@ -422,7 +422,7 @@ fn run_main() -> ExitCode {
         let start = std::time::Instant::now();
         let in_testenv = nonempty_env("SPIRA_IN_TESTENV").is_some();
         let mut not_active: Vec<String> = candidates.iter().filter(|u| !systemctl.is_active(u)).cloned().collect();
-        while !install_units::split_not_active(&not_active, in_testenv).fatal.is_empty() && start.elapsed().as_secs() < max_wait {
+        while !install_units::split_not_active(&not_active, in_testenv, &instance).fatal.is_empty() && start.elapsed().as_secs() < max_wait {
             std::thread::sleep(std::time::Duration::from_secs(1));
             not_active = candidates.iter().filter(|u| !systemctl.is_active(u)).cloned().collect();
         }
@@ -435,7 +435,7 @@ fn run_main() -> ExitCode {
             // fine, so it is named — "exactly why not", never silently dropped — but does
             // not fault a run that tests no watcher. Outside a test fixture this still
             // faults: a watcher that cannot start in production is still worth knowing.
-            let split = install_units::split_not_active(&not_active, in_testenv);
+            let split = install_units::split_not_active(&not_active, in_testenv, &instance);
             if !split.warn_only.is_empty() {
                 eprintln!(
                     "\ninstall: {} watcher unit(s) did not reach active inside this test \
