@@ -897,18 +897,27 @@ mod tests {
         assert!(peak.load(Ordering::SeqCst) >= 1);
     }
 
-    fn peak_with(c: &BatchCfg, dir: &Path, names: &[String]) -> usize {
+    /// Peak concurrency of `names` under `c`. Each suite holds until `target` are running, so
+    /// the peak is the admitted width rather than a race against a sleep.
+    fn peak_with(c: &BatchCfg, names: &[String], target: usize) -> usize {
         let rt = FakeRuntime::new();
-        let live = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new((Mutex::new(0usize), std::sync::Condvar::new()));
         let peak = Arc::new(AtomicUsize::new(0));
-        let (l2, p2) = (live.clone(), peak.clone());
+        let (g2, p2) = (gate.clone(), peak.clone());
         rt.on(
             |r| r.argv.get(1).is_some_and(|a| a.starts_with("/workspace/spira/test-")),
             move |_| {
-                let now = l2.fetch_add(1, Ordering::SeqCst) + 1;
-                p2.fetch_max(now, Ordering::SeqCst);
-                std::thread::sleep(Duration::from_millis(60));
-                l2.fetch_sub(1, Ordering::SeqCst);
+                let (m, cv) = &*g2;
+                let mut live = m.lock().unwrap();
+                *live += 1;
+                p2.fetch_max(*live, Ordering::SeqCst);
+                cv.notify_all();
+                // clock-safe: caps the wait for `target` suites to be running at once
+                let (mut live, _) = cv
+                    .wait_timeout_while(live, Duration::from_secs(2), |l| *l < target)
+                    .unwrap();
+                *live -= 1;
+                cv.notify_all();
                 ExecOutcome { rc: 0, output: "ok\n".into() }
             },
         );
@@ -924,7 +933,6 @@ mod tests {
                 j
             })
             .collect();
-        let _ = dir;
         let out = with_hooks(|h, _| run(&s, c, h, &Fixtures::PerSuite, &js));
         assert_eq!(out.records.len(), names.len());
         peak.load(Ordering::SeqCst)
@@ -936,9 +944,22 @@ mod tests {
         let main = cfg(Mode::Parallel, &dir, 8);
         let names: Vec<String> = (0..8).map(|i| format!("test-sim-{i}.sh")).collect();
         assert_eq!(
-            peak_with(&sim_cfg(&main), &dir, &names),
+            peak_with(&sim_cfg(&main), &names, crate::schedule::SIM_SLOTS as usize),
             crate::schedule::SIM_SLOTS as usize
         );
+    }
+
+    #[test]
+    fn the_sim_container_is_admitted_against_its_own_pids_budget() {
+        assert_eq!(crate::schedule::sim_pids_budget(), 3000);
+        let dir = tmpdir("simpids");
+        let sims: Vec<String> = (0..4).map(|i| format!("test-sim-{i}.sh")).collect();
+        let mut main = cfg(Mode::Parallel, &dir, 8);
+        main.lane_slots = 0;
+        assert_eq!(peak_with(&main, &sims, 4), 4);
+        let mut sim = sim_cfg(&main);
+        sim.pids_budget = 1200;
+        assert_eq!(peak_with(&sim, &sims, 3), 3);
     }
 
     #[test]
@@ -946,10 +967,10 @@ mod tests {
         let dir = tmpdir("lanecap");
         let main = cfg(Mode::Parallel, &dir, 8);
         let sims: Vec<String> = (0..6).map(|i| format!("test-sim-{i}.sh")).collect();
-        assert_eq!(peak_with(&main, &dir, &sims), crate::schedule::LANE_SLOTS as usize);
+        assert_eq!(peak_with(&main, &sims, crate::schedule::LANE_SLOTS as usize), crate::schedule::LANE_SLOTS as usize);
         let mut mixed = sims.clone();
         mixed.extend((0..4).map(|i| format!("test-plain-{i}.sh")));
-        assert!(peak_with(&main, &dir, &mixed) > crate::schedule::LANE_SLOTS as usize);
+        assert_eq!(peak_with(&main, &mixed, 6), 6);
     }
 
     #[test]
