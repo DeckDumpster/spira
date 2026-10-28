@@ -9,6 +9,17 @@ pub struct Config {
     pub habit: Vec<Habit>,
     #[serde(default)]
     pub stop: Vec<Stop>,
+    #[serde(default)]
+    pub done: Vec<Done>,
+}
+
+#[derive(Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct Done {
+    pub name: String,
+    pub run: String,
+    #[serde(default = "default_stop_budget")]
+    pub budget_ms: u64,
 }
 
 #[derive(Deserialize, Clone)]
