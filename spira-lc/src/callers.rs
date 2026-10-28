@@ -1123,6 +1123,28 @@ pub fn drop_bead(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answe
     close(&close_args, m, bd, &mut |_| Err("no reason file".into()))
 }
 
+/// `drop-row <bead-id>` — remove the lifecycle row of a bead whose kind has none (an ask, event or
+/// proposal) without touching the content bead. Refuses a work bead: its row is its state.
+pub fn drop_row(args: &[String], m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
+    let [id] = args else { return usage("drop-row <bead-id>") };
+    let refused = |why: String| Answer { code: REFUSED, stderr: format!("spira-lc drop-row: {id}: {why} — nothing removed\n"), ..Default::default() };
+    match show(m, id) {
+        Err(NO_ROW) => return Answer { stdout: format!("drop-row: {id} has no lifecycle row\n"), code: APPLIED, ..Default::default() },
+        Err(rc) => return Answer { code: rc, stderr: format!("spira-lc drop-row: {id}: the lifecycle row is unreadable — nothing removed\n"), ..Default::default() },
+        Ok(_) => {}
+    }
+    match bd.issue_type(id) {
+        Ok(t) if spira_config::nonwork::is_work_type(Some(&t)) => return refused(format!("is a {t} bead, a work kind whose row is its state")),
+        Ok(_) => {}
+        Err(e) => return Answer { code: CANNOT_TELL, stderr: format!("spira-lc drop-row: {id}: its kind is unreadable — nothing removed: {}\n", e.trim()), ..Default::default() },
+    }
+    let (rc, out) = m.call(&["delete-bead-row".into(), id.clone()]);
+    if rc != 0 {
+        return Answer { code: CANNOT_TELL, stderr: format!("spira-lc drop-row: {id}: the row delete failed: {}\n", out.trim()), ..Default::default() };
+    }
+    Answer { code: APPLIED, stdout: format!("drop-row: {id} lifecycle row removed\n"), ..Default::default() }
+}
+
 /// `reopen <id> [cause] [actor]` — the one door for handing a bead back (sp-swh8b8), the mirror of
 /// [`close`]: the row records the transition its state implies FIRST (see the caller verb's
 /// table), and only then is the store reopened, so bd never says open while the row says done.

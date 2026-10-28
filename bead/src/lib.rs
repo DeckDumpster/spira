@@ -398,6 +398,21 @@ pub fn parse_priority(json: &str) -> Option<i64> {
     obj.get("priority").and_then(|p| p.as_i64())
 }
 
+/// The `issue_type` field of one `bd show --json` payload (object or one-element array).
+pub fn parse_issue_type(json: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    let obj = match &v {
+        serde_json::Value::Array(a) => a.first()?,
+        other => other,
+    };
+    obj.get("issue_type").and_then(|p| p.as_str()).map(str::to_string)
+}
+
+/// Whether a priority change on this bead is mirrored to a lifecycle row: only a work kind has one.
+pub fn carries_lifecycle_row(show_json: &str) -> bool {
+    spira_config::nonwork::is_work_type(parse_issue_type(show_json).as_deref())
+}
+
 /// The `description` field of one `bd show --json` payload (object or one-element array).
 pub fn parse_description(json: &str) -> Option<String> {
     let v: serde_json::Value = serde_json::from_str(json).ok()?;
@@ -846,6 +861,12 @@ mod tests {
         assert_eq!(parse_priority(r#"[{"priority":2}]"#), Some(2));
         assert_eq!(parse_priority(r#"{"priority":0}"#), Some(0));
         assert_eq!(parse_priority("{}"), None);
+        assert_eq!(parse_issue_type(r#"[{"issue_type":"decision"}]"#).as_deref(), Some("decision"));
+        assert_eq!(parse_issue_type("{}"), None);
+        for ty in ["decision", "event", "proposal"] {
+            assert!(!carries_lifecycle_row(&format!(r#"[{{"issue_type":"{ty}"}}]"#)), "{ty}");
+        }
+        assert!(carries_lifecycle_row(r#"[{"issue_type":"task"}]"#));
         assert_eq!(parse_priority_arg("P1"), Some(1));
         assert_eq!(parse_priority_arg("4"), Some(4));
         assert_eq!(parse_priority_arg("5"), None);

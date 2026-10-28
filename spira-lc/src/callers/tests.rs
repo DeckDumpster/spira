@@ -35,6 +35,7 @@ struct Fake {
     seq: u64,
     changed: Vec<String>,
     content_reads: usize,
+    deleted: Vec<String>,
 }
 
 fn opt(v: &Option<String>) -> Value {
@@ -84,6 +85,11 @@ impl Machine for Fake {
                     (0, json!({"bead": Self::row_json(r), "delivery": d}).to_string())
                 }
             },
+            "delete-bead-row" => {
+                self.deleted.push(args[1].clone());
+                self.beads.remove(&args[1]);
+                (0, String::new())
+            }
             "event-seq" => {
                 let since: u64 = flag(args, "--since").and_then(|s| s.parse().ok()).unwrap_or(0);
                 let keys: Vec<&String> = if since >= self.seq { Vec::new() } else { self.changed.iter().collect() };
@@ -1806,4 +1812,29 @@ fn free_text_in_the_actor_slot_is_refused_not_sent() {
     assert_eq!(a.code, REFUSED);
     assert!(a.stderr.contains("actor"), "{}", a.stderr);
     assert_eq!(go(&mut f, "holds", &["sp-q"]).stdout, "ask", "nothing was sent");
+}
+
+// ---- drop-row --------------------------------------------------------------------------
+
+#[test]
+fn drop_row_removes_a_no_row_kinds_row_and_closes_nothing() {
+    let mut f = Fake::default();
+    f.bead("sp-ask", BeadState::Ready);
+    let mut bd = FakeBd::default();
+    bd.rows.insert("sp-ask".into(), ("decision".into(), None));
+    let a = drop_row(&v(&["sp-ask"]), &mut f, &mut bd);
+    assert_eq!(a.code, APPLIED, "{}", a.stderr);
+    assert_eq!(f.deleted, vec!["sp-ask".to_string()]);
+    assert!(bd.closed.is_empty(), "the content bead stays open");
+}
+
+#[test]
+fn drop_row_refuses_a_work_bead() {
+    let mut f = Fake::default();
+    f.bead("sp-w", BeadState::Ready);
+    let mut bd = FakeBd::default();
+    bd.rows.insert("sp-w".into(), ("task".into(), None));
+    let a = drop_row(&v(&["sp-w"]), &mut f, &mut bd);
+    assert_eq!(a.code, REFUSED, "{}", a.stderr);
+    assert!(f.deleted.is_empty());
 }
