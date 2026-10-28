@@ -4,7 +4,7 @@
 
 use serde_json::{json, Value};
 
-use crate::db::Conn;
+use crate::db::{Conn, DbError};
 use crate::rows::escape;
 
 const CANNOT_TELL: i32 = 2;
@@ -100,16 +100,31 @@ fn row_of(r: &Value) -> Value {
     json!({ "id": cell(r, "row_id"), "at": num(r, "at"), "stream": cell(r, "stream"), "kind": kind_of(r), "cause": cell(r, "cause"), "correlation": cell(r, "correlation") })
 }
 
-fn write(conn: &Conn, sql: &str) -> Result<(), String> {
-    conn.append_event(sql).map_err(|e| format!("{e:?}"))
+const CLIP: usize = 240;
+
+fn clip(sql: &str) -> String {
+    match sql.char_indices().nth(CLIP) {
+        Some((i, _)) => format!("{}…", &sql[..i]),
+        None => sql.to_string(),
+    }
 }
 
-fn read(conn: &Conn, sql: &str) -> Result<Vec<Value>, String> {
-    conn.query(sql).map_err(|e| format!("{e:?}"))
+fn failed(op: &str, sql: &str, e: DbError) -> String {
+    let DbError::CannotTell(m) = e;
+    format!("journal {op}: {m} — statement: {}", clip(sql))
+}
+
+fn write(conn: &Conn, op: &str, sql: &str) -> Result<(), String> {
+    conn.append_event(sql).map_err(|e| failed(op, sql, e))
+}
+
+fn read(conn: &Conn, op: &str, sql: &str) -> Result<Vec<Value>, String> {
+    conn.query(sql).map_err(|e| failed(op, sql, e))
 }
 
 fn run(args: &[String], conn: &Conn) -> Result<String, String> {
     let op = args.first().map(String::as_str).unwrap_or("");
+    let (read, write) = (|c: &Conn, s: &str| read(c, op, s), |c: &Conn, s: &str| write(c, op, s));
     let a = |i: usize| args.get(i);
     match op {
         "append" => {
@@ -137,12 +152,12 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
             Ok(if rows.is_empty() { "0" } else { "1" }.into())
         }
         "cursor" => {
-            let rows = read(conn, "SELECT next FROM runtime_cursor WHERE id = 1")?;
+            let rows = read(conn, "SELECT `next` FROM runtime_cursor WHERE id = 1")?;
             Ok(rows.first().map_or(0, |r| num(r, "next").as_u64().unwrap_or(0)).to_string())
         }
         "set-cursor" => {
             let next = arg_u64(a(1), "cursor")?;
-            write(conn, &format!("INSERT INTO runtime_cursor (id, next) VALUES (1, {next}) ON DUPLICATE KEY UPDATE next = {next}"))?;
+            write(conn, &format!("INSERT INTO runtime_cursor (id, `next`) VALUES (1, {next}) ON DUPLICATE KEY UPDATE `next` = {next}"))?;
             Ok(String::new())
         }
         "schedule" => {
@@ -229,5 +244,20 @@ mod tests {
         assert_eq!(go(&["bogus"]).0, REFUSED);
         assert_eq!(go(&["read", "x", "1"]).0, REFUSED);
         assert_eq!(go(&["cursor"]).0, CANNOT_TELL);
+    }
+
+    #[test]
+    fn a_long_statement_is_clipped_to_the_limit_and_an_ellipsis() {
+        let sql = append_sql(&json!({"id": "e", "stream": "s", "kind": {"tag": "t", "body": "x".repeat(10_000)}, "at": 1, "cause": null, "correlation": "c"})).unwrap();
+        assert!(sql.len() > 10_000);
+        assert_eq!(clip(&sql).chars().count(), CLIP + 1);
+        assert_eq!(clip("short"), "short");
+    }
+
+    #[test]
+    fn a_failed_call_names_its_verb() {
+        let (code, body) = dispatch(&["cursor".to_string()], &Conn::unreachable());
+        assert_eq!(code, CANNOT_TELL);
+        assert!(body.starts_with("cannot tell: journal cursor:") && !body.contains("CannotTell("), "{body}");
     }
 }
