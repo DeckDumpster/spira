@@ -78,6 +78,14 @@ fn q(v: Option<i64>) -> String {
 }
 
 impl SessionFields {
+    /// A session killed before it wrote its result reports no wall time; the harness's own
+    /// measure stands in, so a deadline kill never reads as a short call.
+    pub fn fill_wall(&mut self, harness_wall_s: Option<i64>) {
+        if self.wall_s.is_none() {
+            self.wall_s = harness_wall_s;
+        }
+    }
+
     pub fn render(&self) -> String {
         format!(
             "wall_s={} api_s={} turns={} in_tok={} cache_read_tok={} out_tok={} think_tok={} cost_usd={}",
