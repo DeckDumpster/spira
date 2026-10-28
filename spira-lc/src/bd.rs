@@ -251,6 +251,14 @@ pub fn add_blocker(id: &str, depends_on: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub fn label_add(id: &str, label: &str) -> Result<(), String> {
+    let out = spira_config::bounded::bounded("bead.sh").args(["label", "add", id, label]).output().map_err(|e| format!("running bead.sh: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)));
+    }
+    Ok(())
+}
+
 /// `mail send operator` — an ask carrying the channel back (design §3.5's `work
 /// blocked`, and the supersede-by confirmation request). `--bead` ties the tracking
 /// decision bead mail files to the one this layer is bound to.
