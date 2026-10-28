@@ -99,7 +99,9 @@ and unit that does it.
    sentinel) queues each done branch for `gate-worker` (`spira-gate-worker.timer`, every 30 s),
    which runs up to `certify_par` gates at once under host admission control and files each
    verdict. `landing-pass` applies it: `PASS` → `GatePass` (`CERTIFIED`), `FAIL` → `GateRed`
-   (`REWORK`, charged), `NO_VERDICT` → `GateInfra`, `BASE_FAIL` → one incident per repository.
+   (`REWORK`, charged), `NO_VERDICT` → `GateInfra`, `BASE_FAIL` → one incident per repository. A gate that dies twice
+   running on one branch, with no other branch's gate dying between, is that branch's `GateRed`
+   (`REWORK`) carrying the dead gate's output tail.
    A round does not require a gate verdict: its full corpus is the stronger trial.
 
 8. **Cut.** `spira-rounds.timer` (every 30 s) runs `batcher rounds-local`, cutting one
@@ -113,7 +115,9 @@ and unit that does it.
    (`round-vm`, a pooled warm VM; `spira-round-vm-drain.timer` releases an idle one). Each pass
    is recorded on the batch row. A red is attributed first by path (reds intersected with each
    member's diff), then by a mender, then by the batcher judge. Members at fault are ejected
-   (`Returned` → `REWORK`, with quoted evidence) and the rest re-run. A green writes a round
+   (`Returned` → `REWORK`, with quoted evidence) and the rest re-run. A member aboard two consecutive passes that ended without a verdict (no
+   passes without it faulting) is ejected the same way, with the fault text, rather than
+   re-certified a third time. A green writes a round
    certificate for the exact tree under `verdicts/trees/<repo>/<tree>`.
 
 10. **Settle.** `spira-verdict.timer` (every 2 min) runs `queue step --all`, which settles open

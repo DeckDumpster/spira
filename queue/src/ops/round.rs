@@ -1974,6 +1974,91 @@ pub(crate) fn failure_excerpt(text: &str) -> String {
     picked.join("\n")
 }
 
+/// Consecutive passes ending without a verdict, with a member in common, that make the member the
+/// cause.
+const FAULTED_PASSES_RED: usize = 2;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PassEnd {
+    Faulted,
+    Judged,
+    Ejected,
+}
+
+impl PassEnd {
+    fn word(self) -> &'static str {
+        match self {
+            PassEnd::Faulted => "fault",
+            PassEnd::Judged => "judged",
+            PassEnd::Ejected => "ejected",
+        }
+    }
+}
+
+fn ledger_of(c: &Ctx) -> PathBuf {
+    rounds_dir(c).join(format!("pass-ledger-{}", c.r.name))
+}
+
+fn note_pass_end(c: &Ctx, ids: &[String], end: PassEnd) {
+    use std::io::Write;
+    if ids.is_empty() {
+        return;
+    }
+    let _ = fs::create_dir_all(rounds_dir(c));
+    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(ledger_of(c)) {
+        let _ = writeln!(f, "{} {}", end.word(), ids.join(","));
+    }
+}
+
+/// Passes in a row, newest first, that ended without a verdict with `id` aboard. A pass that
+/// reached a verdict without `id` proves the machinery works and is skipped; a faulted pass
+/// without it makes the fault the host's, so the run stops there.
+fn faulted_run(c: &Ctx, id: &str) -> usize {
+    let text = fs::read_to_string(ledger_of(c)).unwrap_or_default();
+    let mut n = 0;
+    for line in text.lines().rev() {
+        let (end, ids) = line.split_once(' ').unwrap_or((line, ""));
+        let aboard = ids.split(',').any(|m| m == id);
+        match (aboard, end) {
+            (true, "fault") => n += 1,
+            (true, _) => break,
+            (false, "fault") => break,
+            (false, _) => {}
+        }
+    }
+    n
+}
+
+fn pass_members(c: &Ctx, batch: &str) -> Vec<String> {
+    record_of(c, batch).map(|(_, kv)| kv.members().into_iter().map(|m| m.id).collect()).unwrap_or_default()
+}
+
+/// The pass of `batch` ended without a verdict: remember it, and eject each member that has now
+/// been aboard for [`FAULTED_PASSES_RED`] such passes. When every member of a multi-member pass
+/// qualifies, nothing separates them from the host, so none is ejected. Returns [`FAULT`] either way.
+fn faulted_pass(w: &World, label: &str, c: &Ctx, batch: &str, why: &str) -> i32 {
+    let ids = pass_members(c, batch);
+    note_pass_end(c, &ids, PassEnd::Faulted);
+    let suspects: Vec<(&String, usize)> =
+        ids.iter().map(|id| (id, faulted_run(c, id))).filter(|(_, n)| *n >= FAULTED_PASSES_RED).collect();
+    if suspects.len() == ids.len() && ids.len() > 1 {
+        return FAULT;
+    }
+    for (id, n) in suspects {
+        let reason = format!(
+            "{id} was aboard {n} consecutive passes of {} that ended without a verdict, and no pass without it faulted: the member is the cause, not the infrastructure.\nThe latest pass: {why}",
+            c.r.name
+        );
+        let rc = eject(w, batch, id, Some(&c.r.name), &Text::Arg(reason), UNIT_RED, true, false, true, "");
+        if rc == OK {
+            note_pass_end(c, std::slice::from_ref(id), PassEnd::Ejected);
+        } else {
+            w.err(format!("queue.sh {label}: could not eject {id}, {n} faulted passes running (rc={rc})"));
+        }
+    }
+    FAULT
+}
+
 pub(super) fn tail(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
     lines[lines.len().saturating_sub(n)..].join("\n")
@@ -2088,6 +2173,7 @@ pub(super) fn certify(
                 "the abandoned pass",
                 pass_verdict_event(w, batch, &left, true),
             );
+            note_pass_end(&c, &pass_members(&c, batch), PassEnd::Faulted);
         }
         let started = start_pass(w, batch, &head, false);
         if let Err((rc, out)) = started {
@@ -2125,7 +2211,7 @@ pub(super) fn certify(
                 pass_verdict_event(w, batch, &Verdict::Incomplete(&bounded_text(&why)), false),
             );
             w.err(format!("queue.sh {label}: {why}; the round is not judged"));
-            return FAULT;
+            return faulted_pass(w, label, &c, batch, &why);
         };
         let began = w.clock.now();
         let out = w.scripts.repo_round_vm(
@@ -2169,11 +2255,9 @@ pub(super) fn certify(
                 "the incomplete pass",
                 pass_verdict_event(w, batch, &Verdict::Incomplete(&bounded_text(&why)), false),
             );
-            w.err(format!(
-                "queue.sh {label}: {why}; the round is not judged\n{}",
-                tail(&format!("{}{}", out.out, out.err), 40)
-            ));
-            return FAULT;
+            let shown = tail(&format!("{}{}", out.out, out.err), 40);
+            w.err(format!("queue.sh {label}: {why}; the round is not judged\n{shown}"));
+            return faulted_pass(w, label, &c, batch, &format!("{why}\n{shown}"));
         }
     } else if attest.is_none() {
         let results = rounds_dir(&c).join(format!("{batch}.results"));
@@ -2287,11 +2371,9 @@ pub(super) fn certify(
                 "the incomplete pass",
                 pass_verdict_event(w, batch, &Verdict::Incomplete(&bounded_text(&why)), false),
             );
-            w.err(format!(
-                "queue.sh {label}: {why}; the round is not judged\n{}",
-                tail(&out.err, 20)
-            ));
-            return FAULT;
+            let shown = tail(&out.err, 20);
+            w.err(format!("queue.sh {label}: {why}; the round is not judged\n{shown}"));
+            return faulted_pass(w, label, &c, batch, &format!("{why}\n{shown}"));
         }
         reds.extend(
             found
@@ -2347,6 +2429,7 @@ pub(super) fn certify(
             let _ = save(w, label, &c, &kv);
             return FAULT;
         }
+        note_pass_end(&c, &pass_members(&c, batch), PassEnd::Judged);
         set(&mut kv, "red", &reds.join(","));
         if save(w, label, &c, &kv).is_err() {
             return FAIL;
@@ -2388,6 +2471,7 @@ pub(super) fn certify(
         w.err(format!("queue.sh {label}: spira-lc refused the GREEN for {batch} (rc={rc}): {out} — the round certificate for {head} is kept; certify again to finish without re-running"));
         return FAIL;
     }
+    note_pass_end(&c, &pass_members(&c, batch), PassEnd::Judged);
     set(&mut kv, "ran", &ran.to_string());
     if save(w, label, &c, &kv).is_err() {
         return FAIL;
