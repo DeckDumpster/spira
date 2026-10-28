@@ -222,6 +222,7 @@ impl World {
         suite("test-d.sh", "");
         suite("test-q.sh", "");
         suite("test-x.sh", "# exclusive: builds the world\n");
+        suite("test-s.sh", "# lane: sim\n");
         // For the skip contract (DESIGN.md §3.7): e/f are never declared, g is.
         suite("test-e.sh", "# requires: reallymissing\n");
         suite("test-f.sh", "");
@@ -917,7 +918,7 @@ fn an_install_failure_is_rc_3_and_still_tears_down() {
         w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root),
         3
     );
-    assert_eq!(w.last(), "VERDICT FAULT rc=3 ran=0 reason=install");
+    assert_eq!(w.last(), "VERDICT FAULT rc=3 ran=0 reason=install session=main");
     assert_eq!(rt.testenv_calls.lock().unwrap().last().unwrap()[0], "down");
 }
 
@@ -940,8 +941,30 @@ fn an_install_failure_leaves_the_failing_step_in_the_results() {
         .filter_map(|d| fs::read_to_string(d.path().join(FIXTURE_FAULT_FILE)).ok())
         .collect();
     assert_eq!(found.len(), 1, "{found:?}");
-    assert!(found[0].starts_with("FIXTURE-FAULT: install rc=1: install failed"), "{}", found[0]);
+    assert!(found[0].starts_with("FIXTURE-FAULT: install rc=1 (main session): install failed"), "{}", found[0]);
     assert!(found[0].contains("units-install: no such unit"), "{}", found[0]);
+}
+
+#[test]
+fn a_sim_session_install_failure_leaves_its_step_and_names_the_session() {
+    let w = World::new("sim-install-evidence");
+    let rt = runtime();
+    rt.on(
+        |r| r.container.ends_with("-sim") && r.argv.first().is_some_and(|a| a.ends_with("/bin/units-install")),
+        |_| ExecOutcome {
+            rc: 1,
+            output: "units-install: sim world has no unit\n".into(),
+        },
+    );
+    let b = FakeBuilder::new(None);
+    assert_eq!(w.run(&rt, &b, &["--suites", "test-a.sh,test-s.sh", "topic"], "", &w.root), 3);
+    assert_eq!(w.last(), "VERDICT FAULT rc=3 ran=0 reason=install session=sim");
+    let res = w.results_dir();
+    let fault = fs::read_to_string(res.join(FIXTURE_FAULT_FILE)).expect("the sim fault leaves its file");
+    assert!(fault.starts_with("FIXTURE-FAULT: install rc=1 (sim session): install failed"), "{fault}");
+    assert!(fault.contains("units-install: sim world has no unit"), "{fault}");
+    let events = fs::read_to_string(res.join("run.events")).unwrap();
+    assert!(events.lines().any(|l| l.contains(" verdict FAULT install sim")), "{events}");
 }
 
 #[test]
@@ -1032,6 +1055,7 @@ fn verdict_lines() {
             selected_none: false,
             deferred: None,
             skipped: 0,
+            session: None,
         }
         .verdict_line(),
         "VERDICT RED ran=5 red=2"
@@ -1054,6 +1078,7 @@ fn verdict_lines() {
             selected_none: false,
             deferred: Some((3, 60)),
             skipped: 0,
+            session: None,
         }
         .verdict_line(),
         "VERDICT RED ran=2 red=1 deferred=3 (deadline 60s)"
@@ -1076,6 +1101,7 @@ fn verdict_lines() {
             selected_none: false,
             deferred: None,
             skipped: 3,
+            session: None,
         }
         .verdict_line(),
         "VERDICT RED ran=5 red=2 skipped=3"

@@ -16,7 +16,7 @@ pub const EVENTS_FILE: &str = "run.events";
 pub enum RunEvent {
     Phase { name: String },
     Suite { name: String, status: String },
-    Verdict { word: String, reason: String },
+    Verdict { word: String, reason: String, session: Option<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,7 +96,7 @@ impl Run {
     pub fn status_json(&self) -> Value {
         let suites: Value = self.suites().into_iter().map(|(k, v)| (k, Value::String(v))).collect::<serde_json::Map<_, _>>().into();
         let verdict = self.events.iter().rev().find_map(|r| match &r.event {
-            RunEvent::Verdict { word, reason } => Some(json!({"word": word, "reason": reason, "at": r.at})),
+            RunEvent::Verdict { word, reason, session } => Some(json!({"word": word, "reason": reason, "session": session, "at": r.at})),
             _ => None,
         });
         let phases: Vec<Value> = self
@@ -134,7 +134,10 @@ fn render(r: &Recorded) -> String {
     match &r.event {
         RunEvent::Phase { name } => format!("{} phase {}", r.at, clean(name)),
         RunEvent::Suite { name, status } => format!("{} suite {} {}", r.at, clean(name), clean(status)),
-        RunEvent::Verdict { word, reason } => format!("{} verdict {} {}", r.at, clean(word), clean(reason)),
+        RunEvent::Verdict { word, reason, session } => {
+            let tail = session.as_deref().map(|s| format!(" {}", clean(s))).unwrap_or_default();
+            format!("{} verdict {} {}{tail}", r.at, clean(word), clean(reason))
+        }
     }
 }
 
@@ -144,7 +147,7 @@ fn parse_line(line: &str) -> Option<Recorded> {
     let event = match (*f.get(1)?, f.get(2), f.get(3)) {
         ("phase", Some(n), _) => RunEvent::Phase { name: n.to_string() },
         ("suite", Some(n), Some(s)) => RunEvent::Suite { name: n.to_string(), status: s.to_string() },
-        ("verdict", Some(w), r) => RunEvent::Verdict { word: w.to_string(), reason: r.map_or("-", |v| v).to_string() },
+        ("verdict", Some(w), r) => RunEvent::Verdict { word: w.to_string(), reason: r.map_or("-", |v| v).to_string(), session: f.get(4).map(|v| v.to_string()) },
         _ => return None,
     };
     Some(Recorded { event, at })
@@ -240,7 +243,7 @@ mod tests {
         RunEvent::Suite { name: n.into(), status: s.into() }
     }
     fn verdict(w: &str) -> RunEvent {
-        RunEvent::Verdict { word: w.into(), reason: "-".into() }
+        RunEvent::Verdict { word: w.into(), reason: "-".into(), session: None }
     }
     fn tmp(tag: &str) -> testkit::TempDir {
         testkit::TempDir::new(tag)
