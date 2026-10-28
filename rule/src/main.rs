@@ -10,6 +10,7 @@ use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rule::{
+    code,
     audit::{audit, finding_title}, find_duplicate, is_in_force, list_body, parse_enact_args, slugify, word_count, word_limit_refusal,
     CommitOutcome, EnactError, ToolDecl, USAGE,
 };
@@ -51,7 +52,7 @@ fn main() {
     // the one source of config, never a process-environment read.
     spira_otel::oneshot::begin(spira_config::process::metrics_endpoint().as_deref(), "spira-rule", &cmd);
     let needs_db = matches!(cmd.as_str(), "enact" | "retire" | "audit");
-    let reads_book = matches!(cmd.as_str(), "list" | "show");
+    let reads_book = matches!(cmd.as_str(), "list" | "show") || (cmd == "code" && !rest.iter().any(|a| a == "--texts"));
     let db = if needs_db {
         match spira_config::process::cfg("SPIRA_DB") {
             Ok(v) => v,
@@ -76,6 +77,7 @@ fn main() {
         "list" => cmd_list(&db),
         "show" => cmd_show(&db, &rest),
         "audit" => cmd_audit(&db, &home, &rest),
+        "code" => cmd_code(&db, &rest),
         "render-memories" => cmd_render_memories(&home, &rest),
         "system-prompt-split" => cmd_system_prompt_split(&rest),
         _ => {
@@ -301,14 +303,42 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
         return 1;
     }
     let key = slugify(&rest[0]);
-    let (dry_run, text, tool) = match parse_enact_args(&rest[1..]) {
-        Ok(a) => (a.dry_run, a.text, a.tool),
+    let (dry_run, text, tool, part) = match parse_enact_args(&rest[1..]) {
+        Ok(a) => (a.dry_run, a.text, a.tool, a.part),
         Err(EnactError::Usage) => {
             println!("{USAGE}");
             return 1;
         }
         Err(EnactError::Message(m)) => {
             eprintln!("{m}");
+            return 1;
+        }
+    };
+
+    let law = match law_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    let toc = match read_toc(&law) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    let Some(part) = part else {
+        eprintln!("rule: refusing — a statute is enacted into a Part of the code. Pass --part <n>; the Parts are:");
+        eprint!("{}", code::parts_list(&toc));
+        return 1;
+    };
+    let toc_after = match code::append(&toc, part, &key) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("rule: refusing — {e}. The Parts are:");
+            eprint!("{}", code::parts_list(&toc));
             return 1;
         }
     };
@@ -374,20 +404,118 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
     println!("enacted {key} ({words} words)");
     println!("{}", tool_line(&tool));
 
-    finish_write(
-        db,
-        home,
-        &hook,
-        "enact",
-        &key,
-        &before,
-        &{
-            let mut after = before.clone();
-            after.insert(key.clone(), serde_json::Value::String(text.clone()));
-            after
+    let mut after = before.clone();
+    after.insert(key.clone(), serde_json::Value::String(text.clone()));
+    let rc = finish_write(db, home, &hook, "enact", &key, &before, &after, "Statute is live in every agent session at its next call.");
+    if rc != 0 {
+        return rc;
+    }
+    match write_law(&law, &toc_after, &after) {
+        Ok(()) => {
+            let n = toc_after.iter().find(|p| p.number == part).and_then(|p| p.slugs.iter().position(|s| *s == key)).map_or(0, |i| i + 1);
+            println!("law/: {key} is §{part}.{n}; tree regenerated and staged.");
+            0
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            eprintln!("rule: {key} IS in force but law/ was not updated — fix the cause and run `rule.sh code`.");
+            1
+        }
+    }
+}
+
+fn law_dir() -> Result<std::path::PathBuf, String> {
+    let out = spira_config::bounded::bounded("git").args(["rev-parse", "--show-toplevel"]).output().map_err(|e| format!("rule: git: {e}"))?;
+    if !out.status.success() {
+        return Err("rule: not inside a git checkout — law/ is a tracked tree, run this from your worktree".to_string());
+    }
+    Ok(Path::new(String::from_utf8_lossy(&out.stdout).trim()).join("law"))
+}
+
+fn read_toc(law: &Path) -> Result<Vec<code::Part>, String> {
+    let text = std::fs::read_to_string(law.join("toc.toml")).map_err(|e| format!("rule: {}: {e}", law.join("toc.toml").display()))?;
+    code::parse_toc(&text).map_err(|e| format!("rule: {e}"))
+}
+
+fn book_texts(book: &BTreeMap<String, serde_json::Value>) -> impl Fn(&str) -> Option<String> + '_ {
+    move |slug| book.get(slug).and_then(|v| v.as_str()).map(str::to_string)
+}
+
+/// Writes `toc` and its generated tree under `law` and stages it.
+fn write_law(law: &Path, toc: &[code::Part], book: &BTreeMap<String, serde_json::Value>) -> Result<(), String> {
+    let files = code::generate(toc, book_texts(book));
+    code::write_tree(law, &code::render_toc(toc), &files).map_err(|e| format!("rule: writing {}: {e}", law.display()))?;
+    let root = law.parent().unwrap_or(law);
+    let add = spira_config::bounded::bounded("git").arg("-C").arg(root).args(["add", "-A", "--", "law"]).output();
+    match add {
+        Ok(o) if o.status.success() => {}
+        _ => return Err("rule: git add law failed".to_string()),
+    }
+    Ok(())
+}
+
+fn cmd_code(db: &str, rest: &[String]) -> i32 {
+    let (mut check, mut texts) = (false, None);
+    let mut it = rest.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--check" => check = true,
+            "--texts" => texts = it.next().cloned(),
+            _ => {
+                println!("{USAGE}");
+                return 1;
+            }
+        }
+    }
+    let law = match law_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    let toc = match read_toc(&law) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    let book = match &texts {
+        Some(dir) => {
+            let mut m = BTreeMap::new();
+            if let Ok(rd) = std::fs::read_dir(dir) {
+                for e in rd.flatten() {
+                    let p = e.path();
+                    if let (Some(stem), Ok(t)) = (p.file_stem().and_then(|s| s.to_str()), std::fs::read_to_string(&p)) {
+                        m.insert(stem.to_string(), serde_json::Value::String(t));
+                    }
+                }
+            }
+            m
+        }
+        None => match read_book(db) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("{e}");
+                return 1;
+            }
         },
-        "Statute is live in every agent session at its next call.",
-    )
+    };
+    if check {
+        let drift = code::drift(&law, &code::generate(&toc, book_texts(&book)));
+        for d in &drift {
+            eprintln!("law/{d}");
+        }
+        return if drift.is_empty() { 0 } else { 1 };
+    }
+    match write_law(&law, &toc, &book) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("{e}");
+            1
+        }
+    }
 }
 
 fn tool_line(tool: &ToolDecl) -> String {
@@ -538,20 +666,31 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
     println!("forgot {key}");
     rm_memories_cache();
 
-    finish_write(
+    let mut after = memories.clone();
+    after.remove(&key);
+    let rc = finish_write(
         db,
         home,
         &hook,
         "retire",
         &key,
         &memories,
-        &{
-            let mut after = memories.clone();
-            after.remove(&key);
-            after
-        },
+        &after,
         "Retired. Do not leave a retired statute standing with a correction attached —\nthat is the same defect as a correction banner on a stale page.",
-    )
+    );
+    if rc != 0 {
+        return rc;
+    }
+    let Ok(law) = law_dir() else { return 0 };
+    let Ok(toc) = read_toc(&law) else { return 0 };
+    match write_law(&law, &toc, &after) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("{e}");
+            eprintln!("rule: {key} is retired but law/ was not updated — run `rule.sh code`.");
+            1
+        }
+    }
 }
 
 fn cmd_list(db: &str) -> i32 {

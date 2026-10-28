@@ -1,0 +1,8 @@
+[[part]]
+number = 1
+name = "General"
+slug = "general"
+scope = "Placeholder Part until the table of contents is approved."
+slugs = [
+  "law-absence-needs-a-positive-control",
+]
