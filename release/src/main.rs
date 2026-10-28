@@ -34,6 +34,7 @@ const USAGE: &str = "usage:
   release acceptance <tag> --scratch-repo <path> [...]   (release acceptance --help)
   release session-hook install|status|uninstall|prune <substring>
   release intake install|status|uninstall
+  release vm-repro <bead-id> [--suites a.sh,b.sh] [--repo R] [--deadline SECS]   (the round VM's build-then-test for one member, on the host)
 every subcommand also takes --releases D and --run D";
 
 struct Args {
@@ -607,6 +608,9 @@ fn run_main(argv: &[String]) -> ExitCode {
     // config document to resolve — it never reaches the shared parser or Config.
     if argv.first().map(String::as_str) == Some("acceptance") {
         return ExitCode::from(release::acceptance::main(&argv[1..]));
+    }
+    if argv.first().map(String::as_str) == Some("vm-repro") {
+        return ExitCode::from(release::vm_repro::main(&argv[1..]));
     }
     match run(argv) {
         Ok(()) => ExitCode::SUCCESS,

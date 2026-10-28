@@ -26,6 +26,7 @@ pub mod systemctl;
 pub mod telemetry;
 pub mod units;
 pub mod verify;
+pub mod vm_repro;
 pub mod workspace;
 
 /// The directories every launcher's PATH ends with (DESIGN.md "Name clashes"). A release
