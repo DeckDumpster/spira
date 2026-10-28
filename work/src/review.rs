@@ -81,7 +81,7 @@ pub struct Summary {
 
 /// The reviewer's final text: the `result` event of a stream-json transcript.
 pub fn verdict_text(transcript: &str) -> Option<String> {
-    transcript.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()).filter(|v| v["type"] == "result").filter_map(|v| v["result"].as_str().map(str::to_string)).last()
+    transcript.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()).filter(|v| v["type"] == "result").filter_map(|v| v["result"].as_str().map(str::to_string)).next_back()
 }
 
 /// `work law <arg>` when a Bash command is a `work law` call; the arg is empty for the table of contents.
