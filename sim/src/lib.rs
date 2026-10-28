@@ -1,12 +1,18 @@
-//! Single-threaded event loop over virtual time. Every decision between actor runs
+//! Virtual-time simulation on the runtime scheduler. Every decision between actor runs
 //! (tie order, run durations, jitter) comes from one seeded PRNG.
 
 pub mod actors;
 pub mod fit;
 pub mod units;
 
-use std::cmp::Reverse;
-use std::collections::{BTreeMap, BinaryHeap};
+use runtime::ports::{Clock, VirtualClock};
+use runtime::scheduler::Scheduler;
+use runtime::{
+    CorrelationId, Engine, EventKind as RtKind, Executor, MemJournal, Outcome as WfOutcome, Projection,
+    Registration, ScheduleRow, StreamKey,
+};
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 pub fn actor_command(prog: &str, now: u64) -> std::process::Command {
     let mut cmd = std::process::Command::new(prog);
@@ -58,6 +64,34 @@ pub enum EventKind {
     Complete(String),
     Step(String),
     Fault,
+    Submit(String),
+    Tick,
+}
+
+impl EventKind {
+    fn encode(&self) -> RtKind {
+        match self {
+            EventKind::Due(n) => RtKind::new("due", n),
+            EventKind::Complete(n) => RtKind::new("complete", n),
+            EventKind::Step(n) => RtKind::new("step", n),
+            EventKind::Fault => RtKind::new("fault", ""),
+            EventKind::Submit(p) => RtKind::new("submit", p),
+            EventKind::Tick => RtKind::new("tick", ""),
+        }
+    }
+
+    fn decode(k: &RtKind) -> Self {
+        let b = k.body.clone();
+        match k.tag.as_str() {
+            "due" => EventKind::Due(b),
+            "complete" => EventKind::Complete(b),
+            "step" => EventKind::Step(b),
+            "fault" => EventKind::Fault,
+            "submit" => EventKind::Submit(b),
+            "tick" => EventKind::Tick,
+            t => panic!("unknown sim event {t}"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,13 +119,16 @@ struct Actor {
     pending: Vec<(String, String)>,
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
-struct Queued {
-    time: u64,
-    tie: u64,
-    seq: u64,
-    kind: EventKind,
+struct Workflows {
+    clock: VirtualClock,
+    engine: Option<Engine>,
+    regs: Vec<Registration>,
+    launched: BTreeMap<String, String>,
+    ticks: BTreeSet<u64>,
 }
+
+const SEP: char = '\u{1f}';
+const SIM_STREAM: &str = "sim";
 
 pub struct Sim {
     pub seed: u64,
@@ -99,10 +136,11 @@ pub struct Sim {
     pub world: World,
     pub trace: Vec<Traced>,
     pub rng: Rng,
-    queue: BinaryHeap<Reverse<Queued>>,
+    sched: Scheduler,
     seq: u64,
     actors: BTreeMap<String, Actor>,
     scenarios: BTreeMap<String, ScenarioFn>,
+    wf: Workflows,
 }
 
 impl Sim {
@@ -115,10 +153,17 @@ impl Sim {
             world: World::new(),
             trace: Vec::new(),
             rng: Rng::new(seed),
-            queue: BinaryHeap::new(),
+            sched: Scheduler::new(seed),
             seq: 0,
             actors: BTreeMap::new(),
             scenarios: BTreeMap::new(),
+            wf: Workflows {
+                clock: VirtualClock::new(0),
+                engine: None,
+                regs: Vec::new(),
+                launched: BTreeMap::new(),
+                ticks: BTreeSet::new(),
+            },
         }
     }
 
@@ -129,6 +174,21 @@ impl Sim {
 
     pub fn add_scenario(&mut self, name: &str, f: ScenarioFn) {
         self.scenarios.insert(name.to_string(), f);
+    }
+
+    /// A handler-based workflow runs in-process on the same virtual clock; only the effects it
+    /// requests launch anything, and only as the process actor of the effect's name.
+    pub fn add_workflow(&mut self, reg: Registration) {
+        assert!(self.wf.engine.is_none(), "workflow added after the first submission");
+        self.wf.regs.push(reg);
+    }
+
+    pub fn submit(&mut self, at: u64, id: &str, stream: &str, tag: &str, body: &str) {
+        self.schedule(at, EventKind::Submit([id, stream, tag, body].join(&SEP.to_string())));
+    }
+
+    pub fn workflow_projection(&self) -> Option<&Projection> {
+        self.wf.engine.as_ref().map(Engine::projection)
     }
 
     pub fn is_running(&self, actor: &str) -> bool {
@@ -145,8 +205,15 @@ impl Sim {
         assert!(at >= self.now, "event scheduled in the past");
         let tie = self.rng.next_u64();
         self.seq += 1;
-        let seq = self.seq;
-        self.queue.push(Reverse(Queued { time: at, tie, seq, kind }));
+        let row = ScheduleRow {
+            id: format!("{:020}", self.seq),
+            at,
+            stream: StreamKey(SIM_STREAM.into()),
+            kind: kind.encode(),
+            cause: None,
+            correlation: CorrelationId(SIM_STREAM.into()),
+        };
+        self.sched.insert_with_tie(row, tie);
     }
 
     pub fn schedule_due(&mut self, at: u64, actor: &str) {
@@ -158,18 +225,20 @@ impl Sim {
     }
 
     pub fn next_time(&self) -> Option<u64> {
-        self.queue.peek().map(|Reverse(q)| q.time)
+        self.sched.next_at()
     }
 
     /// Runs the next event; false when the queue is empty. Virtual time jumps
     /// straight to the event, so empty time costs nothing.
     pub fn step(&mut self) -> bool {
-        let Some(Reverse(ev)) = self.queue.pop() else {
+        let Some(row) = self.sched.pop_next() else {
             return false;
         };
-        self.now = ev.time;
+        let kind = EventKind::decode(&row.kind);
+        self.now = row.at;
+        self.wf.clock.advance_to(self.now);
         let mut coalesced = false;
-        match &ev.kind {
+        match &kind {
             EventKind::Due(name) => coalesced = self.due(name),
             EventKind::Complete(name) => self.complete(name),
             EventKind::Step(name) => {
@@ -181,8 +250,13 @@ impl Sim {
                 self.scenarios.insert(name.clone(), f);
             }
             EventKind::Fault => {}
+            EventKind::Submit(p) => self.workflow_submit(p),
+            EventKind::Tick => {}
         }
-        self.trace.push(Traced { time: ev.time, kind: ev.kind, coalesced });
+        if matches!(kind, EventKind::Submit(_) | EventKind::Tick | EventKind::Complete(_)) {
+            self.pump_workflows();
+        }
+        self.trace.push(Traced { time: row.at, kind, coalesced });
         true
     }
 
@@ -191,7 +265,7 @@ impl Sim {
     }
 
     pub fn run_until(&mut self, limit: u64) {
-        while self.queue.peek().is_some_and(|Reverse(q)| q.time <= limit) {
+        while self.sched.next_at().is_some_and(|t| t <= limit) {
             self.step();
         }
     }
@@ -220,6 +294,49 @@ impl Sim {
         let actor = self.actors.get_mut(name).expect("completing unknown actor");
         actor.running = false;
         self.world.extend(std::mem::take(&mut actor.pending));
+        let keys: Vec<String> = self.wf.launched.iter().filter(|(_, a)| a.as_str() == name).map(|(k, _)| k.clone()).collect();
+        for k in keys {
+            self.wf.launched.remove(&k);
+            if let Some(e) = self.wf.engine.as_mut() {
+                e.complete(&k, WfOutcome::Succeeded(String::new())).expect("workflow journal");
+            }
+        }
+    }
+
+    fn engine(&mut self) -> &mut Engine {
+        if self.wf.engine.is_none() {
+            let regs = std::mem::take(&mut self.wf.regs);
+            let clock: Arc<dyn Clock> = Arc::new(self.wf.clock.clone());
+            self.wf.engine = Some(Engine::open(MemJournal::new(), clock, regs, self.seed).expect("workflow journal"));
+        }
+        self.wf.engine.as_mut().expect("engine just opened")
+    }
+
+    fn workflow_submit(&mut self, payload: &str) {
+        let p: Vec<&str> = payload.splitn(4, SEP).collect();
+        self.engine().submit(p[0], p[1], RtKind::new(p[2], p[3])).expect("workflow journal");
+    }
+
+    fn pump_workflows(&mut self) {
+        let Some(e) = self.wf.engine.as_mut() else { return };
+        e.run_until_idle().expect("workflow journal");
+        let fresh: Vec<_> = e
+            .pending_effects()
+            .into_iter()
+            .filter(|p| !self.wf.launched.contains_key(&p.key) && self.actors.contains_key(&p.spec.name))
+            .map(|p| (p.key, p.spec.name))
+            .collect();
+        let next = e.next_timer_at();
+        for (key, actor) in fresh {
+            self.wf.launched.insert(key, actor.clone());
+            self.schedule_due(self.now, &actor);
+        }
+        if let Some(t) = next {
+            let t = t.max(self.now);
+            if self.wf.ticks.insert(t) {
+                self.schedule(t, EventKind::Tick);
+            }
+        }
     }
 
     pub fn trace_signature(&self) -> Vec<(u64, EventKind, bool)> {

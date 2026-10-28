@@ -18,6 +18,7 @@ spira-otel = { path = "../spira-otel" }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 spira-config = { path = "../spira-config" }
+runtime = { path = "../runtime" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
