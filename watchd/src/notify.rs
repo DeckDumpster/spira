@@ -14,6 +14,7 @@ use crate::iso8601;
 use crate::manifest::{Kind, Row};
 use crate::ops::Ops;
 use crate::paths;
+use crate::sop_run::{self, Verdict};
 
 /// How many actionable lines of one watcher go into an ask — the evidence is read in a
 /// pane, so a three-hundred-line backlog would bury the decision it is evidence for.
@@ -23,7 +24,7 @@ const NOTIFY_MAX: usize = 12;
 /// dedupe stamps (`_wd_ask`'s `cksum`, which is not reproduced bit-for-bit here because
 /// nothing outside this binary ever reads the stamp file's content; only its own next run
 /// does, so any stable hash of the same key values is equivalent).
-fn fingerprint(s: &str) -> String {
+pub fn fingerprint(s: &str) -> String {
     let mut h: u64 = 0xcbf29ce484222325;
     for b in s.as_bytes() {
         h ^= *b as u64;
@@ -132,9 +133,15 @@ pub fn cmd_notify(rows: &[Row], ops: &dyn Ops, ctx: &Context) -> Result<NotifyOu
             continue;
         }
 
-        stale += 1;
         let k = shown.len();
-        key.push_str(&format!("{}|{}|{}\n", r.name, apos, chunk.get(first_idx).cloned().unwrap_or_default()));
+        let row_key = format!("{}|{}|{}\n", r.name, apos, chunk.get(first_idx).cloned().unwrap_or_default());
+        let payload = shown.iter().map(|l| l.as_str()).collect::<Vec<_>>().join("\n");
+        let tried = match sop_run::attempt(ops, ctx, &r.name, &row_key, &payload) {
+            Verdict::Handled => continue,
+            Verdict::Escalate(note) => note,
+        };
+        stale += 1;
+        key.push_str(&row_key);
         report.push('\n');
         report.push_str(&format!("{} — {k} actionable event(s) with no reader, the oldest for {}\n", r.name, crate::cursor::format_age(age)));
         report.push_str(&format!("  {}\n", lf.display()));
@@ -145,6 +152,9 @@ pub fn cmd_notify(rows: &[Row], ops: &dyn Ops, ctx: &Context) -> Result<NotifyOu
         }
         if k > NOTIFY_MAX {
             report.push_str(&format!("    ... and {} more — all of them: watchd drain {}\n", k - NOTIFY_MAX, r.name));
+        }
+        if let Some(t) = tried {
+            report.push_str(&format!("  tried before escalating: {t}\n"));
         }
     }
 
@@ -231,9 +241,14 @@ fn notify_health(rows: &[Row], ops: &dyn Ops, ctx: &Context) -> Result<NotifyOut
             continue;
         }
 
-        stale += 1;
         let lf = paths::logfile(&ctx.run, &r.name, r.kind, &r.target);
         let last = lf.as_deref().and_then(fs_ops::last_line).unwrap_or_else(|| "(nothing)".to_string());
+        let payload = format!("{} — DEGRADED: {hwhy}\nunit {unit} is {state}\nlast line written: {last}", r.name);
+        let tried = match sop_run::attempt(ops, ctx, &r.name, &format!("{}|{}\n", r.name, hwhy), &payload) {
+            Verdict::Handled => continue,
+            Verdict::Escalate(note) => note,
+        };
+        stale += 1;
         let lock_line = if state != "active" { ops.orphan_lock(&r.target) } else { None };
 
         key.push_str(&format!("{}|{}\n", r.name, hwhy));
@@ -246,6 +261,9 @@ fn notify_health(rows: &[Row], ops: &dyn Ops, ctx: &Context) -> Result<NotifyOut
         report.push_str(&format!("  last line written: {last}\n"));
         if let Some(lf) = &lf {
             report.push_str(&format!("  {}\n", lf.display()));
+        }
+        if let Some(t) = tried {
+            report.push_str(&format!("  tried before escalating: {t}\n"));
         }
     }
 
@@ -414,5 +432,73 @@ mod tests {
         assert!(wd.join("notify.escalated").exists() && wd.join("notify-health.escalated").exists());
         cmd_notify(&rows, &ops, &c).unwrap();
         assert_eq!(ops.asks.borrow().len(), 2, "a pass at the same instant asks nothing new");
+    }
+
+    fn stale_pool(d: &TempDir) -> (Context, Vec<Row>) {
+        let mut c = ctx(d.path().to_str().unwrap());
+        c.notify_age = "60".into();
+        c.now = iso8601::parse_utc("2026-09-30T01:00:00Z").unwrap();
+        let rows = vec![row("pool", Kind::Daemon, "pool.sh", "")];
+        let lf = paths::logfile(&c.run, "pool", Kind::Daemon, "pool.sh").unwrap();
+        std::fs::create_dir_all(lf.parent().unwrap()).unwrap();
+        std::fs::write(&lf, "[2026-09-30T00:00:00Z] pool: FAIL round batch=b42 ended with no verdict\n").unwrap();
+        (c, rows)
+    }
+
+    fn recert_sop() -> Vec<(String, String)> {
+        vec![("sop-recert".into(), "MATCH: FAIL round\nSYMPTOM: s\nCHECK: c\nFIX: f\nRUN: recert --batch {batch}\nDEADLINE: 60".into())]
+    }
+
+    #[test]
+    fn a_stale_row_matching_a_runnable_sop_runs_the_tool_and_tells_the_concierge_instead_of_asking() {
+        let d = TempDir::new("watchd-notify");
+        let (c, rows) = stale_pool(&d);
+        let ops = Fake { sops: recert_sop(), tool_result: Some(crate::ops::fake::ToolRunFake::Exit(0, "recertified b42\n".into())), ..Fake::default() };
+        let out = cmd_notify(&rows, &ops, &c).unwrap();
+        assert_eq!(out.code, 0, "{}", out.report);
+        assert_eq!(ops.asks.borrow().len(), 0);
+        assert_eq!(ops.tool_calls.borrow().len(), 1);
+        assert_eq!(ops.applied.borrow()[0].0, "sop-recert");
+        assert!(ops.concierge_mail.borrow()[0].2.contains("recertified b42"));
+    }
+
+    #[test]
+    fn a_failing_tool_still_escalates_and_the_ask_names_the_sop_and_its_exit_code() {
+        let d = TempDir::new("watchd-notify");
+        let (c, rows) = stale_pool(&d);
+        let ops = Fake { sops: recert_sop(), tool_result: Some(crate::ops::fake::ToolRunFake::Exit(7, String::new())), ..Fake::default() };
+        let out = cmd_notify(&rows, &ops, &c).unwrap();
+        assert_eq!(out.code, 1, "{}", out.report);
+        let asks = ops.asks.borrow();
+        assert_eq!(asks.len(), 1);
+        assert!(asks[0].3.contains("sop-recert") && asks[0].3.contains("exit code 7"), "{}", asks[0].3);
+    }
+
+    #[test]
+    fn the_third_pass_over_one_standing_incident_escalates_instead_of_running_a_third_time() {
+        let d = TempDir::new("watchd-notify");
+        let (c, rows) = stale_pool(&d);
+        let ops = Fake { sops: recert_sop(), ..Fake::default() };
+        for _ in 0..2 {
+            assert_eq!(cmd_notify(&rows, &ops, &c).unwrap().code, 0);
+        }
+        assert_eq!(cmd_notify(&rows, &ops, &c).unwrap().code, 1);
+        assert_eq!(ops.tool_calls.borrow().len(), 2);
+        assert_eq!(ops.asks.borrow().len(), 1);
+    }
+
+    #[test]
+    fn a_dead_watcher_matching_a_runnable_sop_runs_the_tool_instead_of_asking() {
+        let d = TempDir::new("watchd-notify");
+        let mut c = ctx(d.path().to_str().unwrap());
+        let rows = vec![row("pool", Kind::Daemon, "pool.sh", "")];
+        let mut ops = Fake { sops: vec![("sop-dead".into(), "MATCH: no writer\nSYMPTOM: s\nCHECK: c\nFIX: f\nRUN: revive\nDEADLINE: 30".into())], ..Fake::default() };
+        ops.shown.insert(paths::watch_unit_name("pool", "prod"), ("failed".into(), "3".into()));
+        cmd_notify(&rows, &ops, &c).unwrap();
+        c.now += 3600;
+        let out = cmd_notify(&rows, &ops, &c).unwrap();
+        assert_eq!(out.code, 0, "{}", out.report);
+        assert_eq!(ops.asks.borrow().len(), 0);
+        assert_eq!(ops.tool_calls.borrow()[0].0, "revive");
     }
 }

@@ -46,6 +46,9 @@ subcommand (e.g. SP_UNADOPTED unsent); got: {spec}"
             )));
         }
     }
+    if let Err(why) = crate::run_spec::parse(text) {
+        out.push(Violation(why));
+    }
     let words = text.split_whitespace().count();
     if words > word_cap {
         out.push(Violation(format!("{words} words, cap is {word_cap}")));
@@ -138,6 +141,16 @@ mod tests {
             let v = msgs(validate(bad, 250));
             assert!(v.iter().any(|m| m.contains("METRIC must be KEY SUBCMD")), "{bad:?} -> {v:?}");
         }
+    }
+
+    #[test]
+    fn run_rules_are_enforced_by_the_write_validator() {
+        let ok = "MATCH: x\nSYMPTOM: s\nCHECK: c\nFIX: f\nRUN: tool {bead}\nDEADLINE: 30\n";
+        assert!(validate(ok, 250).is_empty());
+        let outside = ok.replace("RUN: tool", "RUN: /usr/bin/tool");
+        assert!(msgs(validate(&outside, 250)).iter().any(|m| m.contains("bare program")));
+        let no_deadline = ok.replace("DEADLINE: 30\n", "");
+        assert!(msgs(validate(&no_deadline, 250)).iter().any(|m| m.contains("DEADLINE")));
     }
 
     #[test]

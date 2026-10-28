@@ -8,6 +8,7 @@ description = "watchd — the watcher manifest, and the face over the logs and c
 inbox-rules = { path = "../inbox-rules" }
 libc = "0.2"
 regex = "1"
+sop = { path = "../sop" }
 spira-config = { path = "../spira-config" }
 
 [profile.release]

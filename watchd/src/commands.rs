@@ -489,7 +489,7 @@ pub fn cmd_prune(rows: &[Row], ops: &dyn Ops, ctx: &Context, unit_dir: &std::pat
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
-            let owner = ["tail.lock", "cursor", "pending"].iter().find_map(|suf| name.strip_suffix(&format!(".{suf}")));
+            let owner = ["tail.lock", "cursor", "pending", "sop-runs"].iter().find_map(|suf| name.strip_suffix(&format!(".{suf}")));
             let Some(owner) = owner else { continue };
             if known.contains(owner) {
                 continue;
@@ -682,7 +682,7 @@ mod tests {
         let c = ctx(d.path().to_str().unwrap());
         let dir = c.watchd_dir();
         std::fs::create_dir_all(&dir).unwrap();
-        for suf in ["tail.lock", "cursor", "pending"] {
+        for suf in ["tail.lock", "cursor", "pending", "sop-runs"] {
             std::fs::write(dir.join(format!("gone.{suf}")), "x").unwrap();
         }
         std::fs::write(dir.join("gone.log"), "history\n").unwrap();
@@ -700,6 +700,7 @@ mod tests {
         assert!(!dir.join("gone.cursor").exists());
         assert!(!dir.join("gone.tail.lock").exists());
         assert!(!dir.join("gone.pending").exists());
+        assert!(!dir.join("gone.sop-runs").exists());
         assert!(dir.join("gone.log").exists(), "the log is evidence and must survive prune");
         assert!(dir.join("kept.cursor").exists());
         assert_eq!(*ops.disabled.borrow(), vec!["spira-watch-gone-prod.service".to_string()]);

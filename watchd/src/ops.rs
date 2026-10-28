@@ -45,16 +45,59 @@ pub trait Ops {
     /// directly, instead of going through this trait, disabled and deleted ten live
     /// production watcher units).
     fn disable_now(&self, unit: &str);
+
+    /// `sop match`: the slug of every SOP whose `MATCH:` fires on the payload.
+    fn sop_match(&self, payload: &str) -> Result<Vec<String>, String>;
+
+    /// `sop show <slug>`: the SOP's full text.
+    fn sop_show(&self, slug: &str) -> Result<String, String>;
+
+    /// Run `program` (a bare name, resolved only in the active release's `bin/`) in its own
+    /// systemd unit, killed at `deadline_secs`.
+    fn run_tool(&self, program: &str, args: &[String], deadline_secs: u64) -> ToolRun;
+
+    /// `sop applied <slug> --bead|--pass <target> --check <check> --held unknown`.
+    fn sop_applied(&self, slug: &str, target: &Target, check: &str, why: &str) -> Result<(), String>;
+
+    /// `mail send concierge --kind <kind>`.
+    fn mail_concierge(&self, kind: &str, subject: &str, body: &str) -> Result<(), String>;
+}
+
+/// What an application is recorded against: the incident's bead if it names one, else a
+/// pass id built from the watcher row.
+pub enum Target {
+    Bead(String),
+    Pass(String),
+}
+
+pub enum ToolRun {
+    Exited { code: i32, output: String },
+    TimedOut { output: String },
+    /// Never started: not in the release's `bin/`, or the unit could not be launched.
+    Unavailable(String),
 }
 
 pub struct Real {
     pub systemctl: String,
+    pub systemd_run: String,
 }
 
 impl Real {
     pub fn new(systemctl: String) -> Real {
-        Real { systemctl }
+        Real { systemctl, systemd_run: std::env::var("SPIRA_SYSTEMD_RUN").unwrap_or_else(|_| "systemd-run".to_string()) }
     }
+}
+
+/// `<release>/bin/<program>` for the active release (`$SPIRA_RELEASE`, else this exe's own
+/// root) — never `PATH`, so a SOP can only name what the release ships.
+fn release_bin_tool(program: &str) -> Option<std::path::PathBuf> {
+    let release = std::env::var("SPIRA_RELEASE")
+        .ok()
+        .filter(|r| !r.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(spira_config::release_env::own_release_root_for_process)?;
+    let p = release.join("bin").join(program);
+    p.is_file().then_some(p)
 }
 
 fn systemctl_cmd(systemctl: &str) -> Command {
@@ -222,6 +265,74 @@ impl Ops for Real {
     fn disable_now(&self, unit: &str) {
         let _ = systemctl_cmd(&self.systemctl).args(["disable", "--now", unit]).stdin(Stdio::null()).status();
     }
+
+    fn sop_match(&self, payload: &str) -> Result<Vec<String>, String> {
+        let out = run_capture(spira_config::bounded::bounded_for("sop", "30").arg("match").arg("-"), payload)?;
+        if out.0 != 0 {
+            return Err(format!("sop match exited {}: {}", out.0, out.1.trim()));
+        }
+        Ok(out.1.lines().filter_map(|l| l.split('\t').next()).filter(|k| !k.is_empty()).map(str::to_string).collect())
+    }
+
+    fn sop_show(&self, slug: &str) -> Result<String, String> {
+        let out = run_capture(spira_config::bounded::bounded_for("sop", "30").arg("show").arg(slug), "")?;
+        if out.0 != 0 {
+            return Err(format!("sop show {slug} exited {}: {}", out.0, out.1.trim()));
+        }
+        Ok(out.1)
+    }
+
+    fn run_tool(&self, program: &str, args: &[String], deadline_secs: u64) -> ToolRun {
+        let Some(path) = release_bin_tool(program) else {
+            return ToolRun::Unavailable(format!("{program} is not in the active release's bin/"));
+        };
+        let mut cmd = Command::new(&self.systemd_run);
+        cmd.args(["--user", "--collect", "--wait", "--pipe", "--quiet", "--"])
+            .args(["timeout", "--kill-after=5", &deadline_secs.to_string()])
+            .arg(&path)
+            .args(args);
+        match run_capture(&mut cmd, "") {
+            Err(e) => ToolRun::Unavailable(e),
+            Ok((124, output)) => ToolRun::TimedOut { output },
+            Ok((code, output)) => ToolRun::Exited { code, output },
+        }
+    }
+
+    fn sop_applied(&self, slug: &str, target: &Target, check: &str, why: &str) -> Result<(), String> {
+        let (flag, id) = match target {
+            Target::Bead(id) => ("--bead", id),
+            Target::Pass(id) => ("--pass", id),
+        };
+        let mut cmd = spira_config::bounded::bounded_for("sop", "60");
+        cmd.args(["applied", slug, flag, id, "--check", check, "--held", "unknown", "--why", "-"]);
+        match run_capture(&mut cmd, why)? {
+            (0, _) => Ok(()),
+            (code, out) => Err(format!("sop applied exited {code}: {}", out.trim())),
+        }
+    }
+
+    fn mail_concierge(&self, kind: &str, subject: &str, body: &str) -> Result<(), String> {
+        run_with_stdin("mail", &["send", "concierge", "--from", "Watchd <watchd@spira>", "--subject", subject, "--kind", kind], body)
+    }
+}
+
+/// Runs `cmd` with `stdin_body` on stdin; returns its exit code and stdout+stderr together.
+/// `Err` only when the process could not be started or waited on.
+fn run_capture(cmd: &mut Command, stdin_body: &str) -> Result<(i32, String), String> {
+    use std::io::Write;
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    if let Some(mut s) = child.stdin.take() {
+        let _ = s.write_all(stdin_body.as_bytes());
+    }
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&out.stderr));
+    Ok((out.status.code().unwrap_or(-1), text))
 }
 
 fn cmdline_has_arg(pid: i32, target: &str) -> bool {
@@ -243,22 +354,9 @@ fn is_locked_by_someone(path: &std::path::Path) -> bool {
 }
 
 fn run_with_stdin(program: &str, args: &[&str], stdin_body: &str) -> Result<(), String> {
-    use std::io::Write;
-    let mut child = spira_config::bounded::bounded(program)
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    if let Some(mut s) = child.stdin.take() {
-        let _ = s.write_all(stdin_body.as_bytes());
-    }
-    let st = child.wait().map_err(|e| e.to_string())?;
-    if st.success() {
-        Ok(())
-    } else {
-        Err(format!("{program} exited {}", st.code().unwrap_or(-1)))
+    match run_capture(spira_config::bounded::bounded(program).args(args), stdin_body)? {
+        (0, _) => Ok(()),
+        (code, _) => Err(format!("{program} exited {code}")),
     }
 }
 
@@ -280,6 +378,19 @@ pub mod fake {
         pub mail_health_rc: i32,
         pub watch_units: Vec<String>,
         pub disabled: RefCell<Vec<String>>,
+        /// (slug, full text): `sop_match` fires on a slug whose text's `MATCH:` regex hits.
+        pub sops: Vec<(String, String)>,
+        pub tool_result: Option<ToolRunFake>,
+        pub tool_calls: RefCell<Vec<(String, Vec<String>, u64)>>,
+        pub applied: RefCell<Vec<(String, String, String)>>,
+        pub concierge_mail: RefCell<Vec<(String, String, String)>>,
+    }
+
+    #[derive(Clone)]
+    pub enum ToolRunFake {
+        Exit(i32, String),
+        Timeout(String),
+        Unavailable(String),
     }
 
     impl Ops for Fake {
@@ -318,6 +429,40 @@ pub mod fake {
         fn disable_now(&self, unit: &str) {
             self.disabled.borrow_mut().push(unit.to_string());
         }
+        fn sop_match(&self, payload: &str) -> Result<Vec<String>, String> {
+            Ok(self
+                .sops
+                .iter()
+                .filter(|(_, text)| {
+                    sop::validate::match_line(text)
+                        .and_then(|p| regex::Regex::new(&p).ok())
+                        .is_some_and(|re| re.is_match(payload))
+                })
+                .map(|(k, _)| k.clone())
+                .collect())
+        }
+        fn sop_show(&self, slug: &str) -> Result<String, String> {
+            self.sops.iter().find(|(k, _)| k == slug).map(|(_, t)| t.clone()).ok_or_else(|| "no such SOP".to_string())
+        }
+        fn run_tool(&self, program: &str, args: &[String], deadline_secs: u64) -> ToolRun {
+            self.tool_calls.borrow_mut().push((program.to_string(), args.to_vec(), deadline_secs));
+            match self.tool_result.clone().unwrap_or(ToolRunFake::Exit(0, String::new())) {
+                ToolRunFake::Exit(code, output) => ToolRun::Exited { code, output },
+                ToolRunFake::Timeout(output) => ToolRun::TimedOut { output },
+                ToolRunFake::Unavailable(why) => ToolRun::Unavailable(why),
+            }
+        }
+        fn sop_applied(&self, slug: &str, target: &Target, check: &str, _why: &str) -> Result<(), String> {
+            let id = match target {
+                Target::Bead(i) | Target::Pass(i) => i.clone(),
+            };
+            self.applied.borrow_mut().push((slug.to_string(), id, check.to_string()));
+            Ok(())
+        }
+        fn mail_concierge(&self, kind: &str, subject: &str, body: &str) -> Result<(), String> {
+            self.concierge_mail.borrow_mut().push((kind.into(), subject.into(), body.into()));
+            Ok(())
+        }
     }
 
     #[test]
@@ -325,5 +470,54 @@ pub mod fake {
         let f = Fake::default();
         f.restart(&["a".into(), "b".into()]).unwrap();
         assert_eq!(f.restarted.borrow().len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod real_tests {
+    use super::*;
+    use testkit::TempDir;
+
+    fn script(path: &std::path::Path, body: &str) {
+        testkit::write_exe(path, &format!("#!/bin/sh\n{body}\n"));
+    }
+
+    /// A release with `bin/stub`, and a `systemd-run` that drops its options and runs the rest.
+    fn fixture(d: &TempDir, stub_body: &str) -> Real {
+        std::fs::create_dir_all(d.join("rel/bin")).unwrap();
+        script(&d.join("rel/bin/stub"), stub_body);
+        script(&d.join("systemd-run"), "while [ \"$1\" != -- ]; do shift; done; shift; exec \"$@\"");
+        Real { systemctl: "systemctl".into(), systemd_run: d.join("systemd-run").display().to_string() }
+    }
+
+    #[test]
+    fn a_tool_in_the_release_bin_runs_and_returns_its_output_and_exit_code() {
+        let d = TempDir::new("watchd-real");
+        let real = fixture(&d, "echo \"got $1\"; exit 3");
+        let _env = testkit::env(&[("SPIRA_RELEASE", Some(d.join("rel").to_str().unwrap()))]);
+        match real.run_tool("stub", &["b9".to_string()], 10) {
+            ToolRun::Exited { code, output } => {
+                assert_eq!(code, 3);
+                assert!(output.contains("got b9"), "{output}");
+            }
+            _ => panic!("expected the tool to run"),
+        }
+    }
+
+    #[test]
+    fn a_tool_past_its_deadline_is_reported_as_timed_out() {
+        let d = TempDir::new("watchd-real");
+        let real = fixture(&d, "sleep 30");
+        let _env = testkit::env(&[("SPIRA_RELEASE", Some(d.join("rel").to_str().unwrap()))]);
+        assert!(matches!(real.run_tool("stub", &[], 1), ToolRun::TimedOut { .. }));
+    }
+
+    #[test]
+    fn a_program_not_in_the_release_bin_never_starts() {
+        let d = TempDir::new("watchd-real");
+        let real = fixture(&d, "echo hi");
+        let _env = testkit::env(&[("SPIRA_RELEASE", Some(d.join("rel").to_str().unwrap()))]);
+        assert!(matches!(real.run_tool("sh", &[], 10), ToolRun::Unavailable(_)));
+        assert!(matches!(real.run_tool("../systemd-run", &[], 10), ToolRun::Unavailable(_)));
     }
 }

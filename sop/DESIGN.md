@@ -12,7 +12,7 @@ Statutes are how to behave; SOPs are how to fix. Both live in the same mechanism
 remember`/`bd recall`, split by key prefix (`law-`/`sop-`) — so Ops reads runbooks exactly
 the way every agent already reads statutes, rather than through a second knowledge channel.
 An SOP is four required-or-optional fields (`SYMPTOM`, `CHECK`, `FIX` required; `MATCH`,
-`METRIC`, `ESCALATE`, `REF` optional), never prose, because prose cannot be matched to an
+`METRIC`, `ESCALATE`, `REF`, `RUN` + `DEADLINE` optional), never prose, because prose cannot be matched to an
 incident by a program and cannot be executed without being re-read. `applied` is the closing
 half: a session that matched a runbook and ignored it must leave a different trace than one
 that executed it faithfully, so every application is recorded twice — a ledger line (for
@@ -151,3 +151,13 @@ ledger file shape this crate writes.
 - `spira/test-guards.sh`, `spira/test-dwarf-wiki-dirty.sh`, `spira/test-lint-runes.sh`,
   `spira/test-render-memories.sh`, `spira/test-ops-closing.sh`: repointed to invoke `sop` by
   binary name rather than `$HERE/sop.sh`.
+
+## RUN: the tool a watcher may run
+
+`RUN: <program> [args]` with `DEADLINE: <seconds>` (1 to 900) lets `watchd` run the SOP's
+fix without a session. The program is a bare name that `watchd` resolves only in the active
+release's `bin/`; arguments are split on whitespace, never shell, and may carry `{bead}`,
+`{batch}` and `{repo}`, filled from the incident. `validate` (so `write` and `lint`) refuses a
+path, a shell character, an unknown field, a missing or out-of-range deadline, and a `RUN`
+without a `MATCH:` line (a key-token match is too weak to run a tool on). The grammar lives in
+`run_spec.rs`; `watchd` calls the same parser.

@@ -2488,6 +2488,7 @@ dependencies = [
  "libc",
  "regex",
  "serde_json",
+ "sop",
  "spira-config",
  "testkit",
 ]
