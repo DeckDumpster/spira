@@ -1437,3 +1437,14 @@ deliberate edges:
 - `enforce` reports each hit as an ordinary finding, so the run exits 1.
 
 **No allow list.** The migration is the allow list; nothing is excepted but the history paths and `ffx-ok` lines above.
+
+## Rule `store-door`
+
+Only the store's door invokes dolt or bd: Rust `Command::new`/`bounded` of `dolt` or `bd`
+(bare or a path ending in either), a shell command word `dolt`/`bd`/`$DOLT`/`$BD`, and a
+MySQL connection (`mysql://`, a MySQL crate, a `mysql` command). The allow-list is the
+`DOORS` table in `store_door.rs`, each entry with its reason; `legacy:` entries are
+shrink-only. `STORE_DOOR_CONSIDERED="<why>"` on the line passes it and logs `store-door:
+considered <path>:<line>: <why>` to stderr.
+
+**Refuses** (exit 3): no `.rs`/`.sh` file in scope.
