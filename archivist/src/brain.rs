@@ -195,7 +195,7 @@ fn commit_paths_with(g: &Git, dir: &Path, paths: &[String], subject: &str) -> Re
         let _ = run_git(g, dir, &reset, None);
         return Err(e);
     }
-    run_git(g, dir, &["pull", "--rebase"], None)?;
+    run_git(g, dir, &["pull", "--rebase", "--autostash"], None)?;
     run_git(g, dir, &["push"], None)?;
     if refused.is_empty() { Ok(paths.len()) } else { Err(refusal(&refused)) }
 }
@@ -282,12 +282,22 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_dirty_tracked_file_in_the_tree_does_not_stop_the_pages_being_pushed() {
+        let (_root, brain) = fixture();
+        std::fs::write(brain.join("wiki/notes/seed.md"), "edited by someone else\n").unwrap();
+        std::fs::write(brain.join("wiki/notes/mine.md"), "mine\n").unwrap();
+        commit_paths(&brain, &["wiki/notes/mine.md".to_string()], "archivist: 1 page(s)\n").unwrap();
+        assert_eq!(porcelain(&brain), " M wiki/notes/seed.md\n");
+        assert_eq!(git(&brain, &["rev-parse", "origin/main"], None).unwrap(), git(&brain, &["rev-parse", "HEAD"], None).unwrap());
+    }
+
+    #[test]
     fn a_failed_push_is_an_error_not_a_silent_success() {
         let (_root, brain) = fixture();
         sh(&brain, &["remote", "set-url", "origin", "/nonexistent/remote.git"]);
         std::fs::write(brain.join("wiki/notes/a.md"), "a\n").unwrap();
         let err = commit_paths(&brain, &["wiki/notes/a.md".to_string()], "archivist: x\n").unwrap_err();
-        assert!(err.contains("git pull --rebase failed") || err.contains("git push failed"), "{err}");
+        assert!(err.contains("git pull --rebase --autostash failed") || err.contains("git push failed"), "{err}");
     }
 
     fn stub_git(root: &Path) -> (String, std::path::PathBuf) {
