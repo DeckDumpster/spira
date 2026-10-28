@@ -183,6 +183,36 @@ pub fn cmd_notify(rows: &[Row], ops: &dyn Ops, ctx: &Context) -> Result<NotifyOu
     Ok(NotifyOutcome { report, code: if found { 1 } else { 0 } })
 }
 
+/// An event that must reach the Concierge now: logged on the row, offered to a matching SOP's
+/// tool, and put in the inbox only when no tool handled it. The row's cursor moves past the line
+/// only once that is settled, so a page that died half-way is still unread for `notify`.
+pub fn cmd_page(rows: &[Row], ops: &dyn Ops, ctx: &Context, name: &str, text: &str, fields: &[String]) -> Result<(), String> {
+    let row = rows.iter().find(|r| r.name == name && r.kind == Kind::Log).ok_or_else(|| format!("watchd page: no log row named {name}"))?;
+    let lf = paths::logfile(&ctx.run, &row.name, row.kind, &row.target).ok_or_else(|| format!("watchd page: {name} has no log"))?;
+    let incident = fields.join(" ");
+    let payload = format!("{text}\nincident: {incident}");
+    let key = format!("{name}|{incident}");
+
+    let cursor = paths::cursorfile(&ctx.run, name);
+    let before = fs_ops::total_lines(&lf);
+    let caught_up = fs_ops::read_pos(&cursor, before) == before;
+    let line = format!("[{}] {text} | {incident}", iso8601::format_utc(ctx.now));
+    fs_ops::append_line(&lf, &line).map_err(|e| format!("watchd page: cannot write {}: {e}", lf.display()))?;
+
+    if let Verdict::Escalate(note) = sop_run::attempt(ops, ctx, name, &key, &payload) {
+        let tag = format!("[watch:{name}] {text}");
+        let inbox_line = match note {
+            Some(n) => format!("{tag} (tried before escalating: {n})"),
+            None => tag,
+        };
+        ops.inbox_append(&inbox_line).map_err(|e| format!("watchd page: the inbox refused the page, left unread on {name}: {e}"))?;
+    }
+    if caught_up {
+        fs_ops::write_pos(&cursor, before + 1).map_err(|e| format!("watchd page: cannot move {name}'s cursor: {e}"))?;
+    }
+    Ok(())
+}
+
 fn notify_health(rows: &[Row], ops: &dyn Ops, ctx: &Context) -> Result<NotifyOutcome, String> {
     let now = ctx.now;
     let halted = world_halted(&ctx.run);
@@ -500,5 +530,79 @@ mod tests {
         assert_eq!(out.code, 0, "{}", out.report);
         assert_eq!(ops.asks.borrow().len(), 0);
         assert_eq!(ops.tool_calls.borrow()[0].0, "revive");
+    }
+
+    const UNDRIVEN: &str = "ROUND OPEN r-auto-7 with no driver — finish, eject or abandon it";
+    const UNDRIVEN_FIELDS: [&str; 6] = ["batch=r-auto-7", "repo=alpha", "members=sp-a,sp-b", "phase=open", "verdict=none", "red=none"];
+
+    fn page_fixture(d: &TempDir) -> (Context, Vec<Row>, Vec<String>) {
+        let log = d.join("rounds-loop.log");
+        let rows = vec![row("rounds-loop", Kind::Log, &log.display().to_string(), "")];
+        (ctx(d.path().to_str().unwrap()), rows, UNDRIVEN_FIELDS.iter().map(|f| f.to_string()).collect())
+    }
+
+    const UNDRIVEN_SOP: &str = "MATCH: ROUND OPEN .* with no driver\nSYMPTOM: s\nCHECK: c\nFIX: f\nRUN: finish-round --batch {batch} --repo {repo}\nDEADLINE: 60";
+
+    #[test]
+    fn a_page_a_sop_tool_handles_runs_the_tool_with_the_incident_fields_and_stays_out_of_the_inbox() {
+        let d = TempDir::new("watchd-page");
+        let (c, rows, fields) = page_fixture(&d);
+        let ops = Fake { sops: vec![("sop-undriven".into(), UNDRIVEN_SOP.into())], ..Fake::default() };
+        cmd_page(&rows, &ops, &c, "rounds-loop", UNDRIVEN, &fields).unwrap();
+        assert_eq!(*ops.tool_calls.borrow(), vec![("finish-round".to_string(), vec!["--batch".into(), "r-auto-7".into(), "--repo".into(), "alpha".into()], 60)]);
+        assert_eq!(ops.applied.borrow()[0].0, "sop-undriven");
+        assert!(ops.inbox.borrow().is_empty(), "{:?}", ops.inbox.borrow());
+        let log = std::fs::read_to_string(d.join("rounds-loop.log")).unwrap();
+        assert!(log.contains(UNDRIVEN) && log.contains("members=sp-a,sp-b"), "{log}");
+    }
+
+    #[test]
+    fn a_page_no_sop_matches_reaches_the_inbox_with_the_text_a_person_reads_unchanged() {
+        let d = TempDir::new("watchd-page");
+        let (c, rows, fields) = page_fixture(&d);
+        let ops = Fake::default();
+        cmd_page(&rows, &ops, &c, "rounds-loop", UNDRIVEN, &fields).unwrap();
+        assert_eq!(*ops.inbox.borrow(), vec![format!("[watch:rounds-loop] {UNDRIVEN}")]);
+        assert!(ops.tool_calls.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_page_whose_tool_failed_reaches_the_inbox_naming_what_was_tried() {
+        let d = TempDir::new("watchd-page");
+        let (c, rows, fields) = page_fixture(&d);
+        let ops = Fake { sops: vec![("sop-undriven".into(), UNDRIVEN_SOP.into())], tool_result: Some(crate::ops::fake::ToolRunFake::Exit(2, "no\n".into())), ..Fake::default() };
+        cmd_page(&rows, &ops, &c, "rounds-loop", UNDRIVEN, &fields).unwrap();
+        let inbox = ops.inbox.borrow();
+        assert!(inbox[0].starts_with(&format!("[watch:rounds-loop] {UNDRIVEN} (tried before escalating:")) && inbox[0].contains("exit code 2"), "{inbox:?}");
+    }
+
+    #[test]
+    fn a_delivered_page_is_not_left_unread_for_notify_to_escalate_again() {
+        let d = TempDir::new("watchd-page");
+        let (c, rows, fields) = page_fixture(&d);
+        cmd_page(&rows, &Fake::default(), &c, "rounds-loop", UNDRIVEN, &fields).unwrap();
+        let lf = d.join("rounds-loop.log");
+        assert_eq!(fs_ops::read_pos(&paths::cursorfile(&c.run, "rounds-loop"), fs_ops::total_lines(&lf)), 1);
+    }
+
+    #[test]
+    fn a_page_for_an_unknown_or_non_log_row_is_refused() {
+        let d = TempDir::new("watchd-page");
+        let (c, mut rows, fields) = page_fixture(&d);
+        assert!(cmd_page(&rows, &Fake::default(), &c, "nope", UNDRIVEN, &fields).is_err());
+        rows[0].kind = Kind::Daemon;
+        assert!(cmd_page(&rows, &Fake::default(), &c, "rounds-loop", UNDRIVEN, &fields).is_err());
+    }
+
+    #[test]
+    fn the_third_page_of_one_incident_inside_the_window_reaches_the_inbox_instead_of_running_the_tool_again() {
+        let d = TempDir::new("watchd-page");
+        let (c, rows, fields) = page_fixture(&d);
+        let ops = Fake { sops: vec![("sop-undriven".into(), UNDRIVEN_SOP.into())], ..Fake::default() };
+        for _ in 0..3 {
+            cmd_page(&rows, &ops, &c, "rounds-loop", UNDRIVEN, &fields).unwrap();
+        }
+        assert_eq!(ops.tool_calls.borrow().len(), 2);
+        assert!(ops.inbox.borrow()[0].contains("already ran 2 times"), "{:?}", ops.inbox.borrow());
     }
 }

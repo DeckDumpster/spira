@@ -131,6 +131,12 @@ bead, else against a pass id built from the row, and the Concierge gets a `note`
 several matches, no `RUN:`, an unusable `RUN:`, a missing tool, a failure or a timeout leave the row in
 the ask, with a `tried before escalating:` line naming the SOP, the tool and the exit code.
 
+`watchd page <row> <text> [key=value ...]` is the same step for an event that must reach the Concierge
+now rather than after `SPIRA_NOTIFY_AGE`: the line is logged on the row, offered to a matching SOP as
+`<text>` plus an `incident:` line of the fields, and put in the inbox as `[watch:<row>] <text>` only when
+no tool handled it. The row's cursor moves past it only when the row was caught up, so a page that died
+before delivery is still unread for `notify`.
+
 The same SOP runs at most twice for one incident key inside `SPIRA_NOTIFY_AGE` seconds
 (`<name>.sop-runs`); the third pass escalates. A passing tool does not mark the events read, so a
 condition that persists is the loop this cap ends.

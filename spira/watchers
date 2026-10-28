@@ -230,3 +230,9 @@ design-asks|daemon|@SPIRA_HOME@/design-asks.sh watch --interval 600|@SPIRA_HOME@
 # when the same repo has declined three passes running (naming the dirty tracked files and any stale
 # index.lock) and again every 180 passes while it persists. A quiet log means refreshes are landing.
 skew-refresh|log|@SPIRA_RUN@/skew-refresh.log
+
+# ROUNDS-LOOP is where the round supervisor's pages are recorded. Nothing writes the Concierge inbox
+# for it directly: it calls `watchd page rounds-loop <text> batch=.. repo=.. members=.. phase=..
+# verdict=.. red=..`, which offers the incident to a matching SOP's tool first and puts the page in the
+# inbox only when none handled it.
+rounds-loop|log|@SPIRA_RUN@/rounds-loop.log

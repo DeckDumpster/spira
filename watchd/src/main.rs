@@ -22,7 +22,7 @@ use manifest::Row;
 use ops::Real;
 
 fn usage() -> &'static str {
-    "usage: watchd manifest|units|keys|exec <name>|status|drain [name] [--all]|peek [name] [--all] [--limit N]|tail <name> [--all] [--takeover] [--from-start]|next <name> [--timeout SECS]|tailers|restart [name]|notify|prune|health-ids <file>|health-view <program> <session>"
+    "usage: watchd manifest|units|keys|exec <name>|status|drain [name] [--all]|peek [name] [--all] [--limit N]|tail <name> [--all] [--takeover] [--from-start]|next <name> [--timeout SECS]|tailers|restart [name]|notify|page <row> <text> [key=value ...]|prune|health-ids <file>|health-view <program> <session>"
 }
 
 fn load_context() -> context::Context {
@@ -204,6 +204,22 @@ fn main() {
                     print!("{}", out.report);
                     out.code
                 }
+                Err(e) => {
+                    eprintln!("{e}");
+                    3
+                }
+            }
+        }
+        "page" => {
+            let [row, text, fields @ ..] = rest else {
+                eprintln!("usage: watchd page <row> <text> [key=value ...]");
+                std::process::exit(2);
+            };
+            let ctx = load_context();
+            let real = Real::new(ctx.systemctl.clone());
+            let rows = need_rows(&ctx);
+            match notify::cmd_page(&rows, &real, &ctx, row, text, fields) {
+                Ok(()) => 0,
                 Err(e) => {
                     eprintln!("{e}");
                     3
