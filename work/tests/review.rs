@@ -40,7 +40,7 @@ fn fixture(tag: &str, agent_body: &str) -> (testkit::TempDir, std::path::PathBuf
     let sock = d.join("sock");
     socket_answering(&sock, "Add the widget parser.\n");
     std::fs::create_dir_all(d.join("conf.d")).unwrap();
-    let toml = spira_config::process::fixture_toml(&d, &[("SPIRA_LC_SOCKET", sock.to_str().unwrap()), ("SPIRA_AGENT", agent.to_str().unwrap())]);
+    let toml = spira_config::process::fixture_toml(&d, &[("SPIRA_LC_SOCKET", sock.to_str().unwrap()), ("SPIRA_AGENT", agent.to_str().unwrap()), ("SPIRA_RUN", d.join("run").to_str().unwrap())]);
     (d, repo, toml)
 }
 
@@ -59,7 +59,9 @@ fn review(d: &Path, repo: &Path, toml: &Path, args: &[&str]) -> std::process::Ou
         .unwrap()
 }
 
-const FINDER: &str = "#!/bin/sh\ninput=$(cat)\necho \"$input\" | grep -q 'Add the widget parser' || { echo 'no work item' >&2; exit 1; }\necho \"$*\" | grep -q 'claude-sonnet-5-5' || { echo 'wrong model' >&2; exit 1; }\nnew=$(echo \"$input\" | sed -n 's|^+++ b/\\(.*\\)|\\1|p')\nif [ -f src/parser.rs ]; then echo \"- $new:1 — duplicates the existing module src/parser.rs; extend it instead\"; fi\n";
+const FINDER: &str = "#!/bin/sh\ninput=$(cat)\necho \"$input\" | grep -q 'Add the widget parser' || { echo 'no work item' >&2; exit 1; }\necho \"$*\" | grep -q 'claude-sonnet-5-5' || { echo 'wrong model' >&2; exit 1; }\nnew=$(echo \"$input\" | sed -n 's|^+++ b/\\(.*\\)|\\1|p')\nif [ -f src/parser.rs ]; then printf '{\"type\":\"result\",\"result\":\"- %s:1 — duplicates the existing module src/parser.rs; extend it instead\"}\\n' \"$new\"; fi\n";
+
+const LAW_CALLER: &str = "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{\"command\":\"work law 2.1\"}}]}}'\nprintf '%s\\n' '{\"type\":\"result\",\"result\":\"- a.rs:1 — fix it\"}'\n";
 
 #[test]
 fn a_second_implementation_of_an_existing_module_names_the_existing_one() {
@@ -84,4 +86,29 @@ fn help_is_answered_without_a_binding_or_a_socket() {
     let o = Command::new(env!("CARGO_BIN_EXE_work")).args(["review", "--help"]).current_dir(&repo).env_clear().env("SPIRA_TOML", &toml).env("HOME", &d).output().unwrap();
     assert_eq!(o.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&o.stdout).contains("work review"));
+}
+
+#[test]
+fn a_review_keeps_its_transcript_and_a_summary_while_the_builder_sees_only_the_verdict() {
+    let (d, repo, toml) = fixture("work-review-keep", LAW_CALLER);
+    let o = review(&d, &repo, &toml, &[]);
+    assert_eq!(o.status.code(), Some(0), "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(String::from_utf8_lossy(&o.stdout).trim(), "- a.rs:1 — fix it");
+    let t = std::fs::read_to_string(d.join("run/sp-abc12.review-1.jsonl")).unwrap();
+    assert!(t.contains("work law 2.1"), "{t}");
+    let sum: serde_json::Value = serde_json::from_str(std::fs::read_to_string(d.join("run/review-summary.jsonl")).unwrap().lines().next().unwrap()).unwrap();
+    assert_eq!((sum["work"].as_str(), sum["law_calls"].as_u64(), sum["law_args"][0].as_str(), sum["tool_calls"]["Bash"].as_u64(), sum["findings"].as_u64()), (Some("sp-abc12"), Some(1), Some("2.1"), Some(1), Some(1)));
+    review(&d, &repo, &toml, &[]);
+    assert!(d.join("run/sp-abc12.review-2.jsonl").exists());
+}
+
+#[test]
+fn a_timed_out_or_failed_review_still_leaves_its_transcript() {
+    let (d, repo, toml) = fixture("work-review-partial", "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Read\",\"input\":{}}]}}'\nsleep 30\n");
+    assert_eq!(review(&d, &repo, &toml, &["--timeout", "1"]).status.code(), Some(124));
+    assert!(std::fs::read_to_string(d.join("run/sp-abc12.review-1.jsonl")).unwrap().contains("Read"));
+    let (d, repo, toml) = fixture("work-review-failed", "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\"}'\nexit 1\n");
+    assert_eq!(review(&d, &repo, &toml, &[]).status.code(), Some(3));
+    let sum = std::fs::read_to_string(d.join("run/review-summary.jsonl")).unwrap();
+    assert!(sum.contains("\"law_calls\":0"), "{sum}");
 }

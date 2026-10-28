@@ -383,13 +383,29 @@ fn review(args: &[String]) -> i32 {
     let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
     let secs = opts.timeout.as_secs();
     match work::review::run(&agent, &work::review::agent_argv(&model), &work::review::input(&item, &diff), &cwd, opts.timeout) {
-        Ok(work::review::Outcome::Findings(f)) => {
-            println!("{}", f.trim_end());
-            0
-        }
-        Ok(work::review::Outcome::TimedOut) => {
-            eprintln!("{}", refusal(R::ReviewTimedOut, "review", &[("secs", &secs.to_string())]));
-            work::review::TIMED_OUT
+        Ok((outcome, transcript)) => {
+            let verdict = match &outcome {
+                work::review::Outcome::Findings(f) => f.as_str(),
+                _ => "",
+            };
+            match cfg("SPIRA_RUN").and_then(|r| work::review::keep(std::path::Path::new(&r), &bound, &transcript, verdict)) {
+                Ok(p) => eprintln!("work review: transcript kept at {}", p.display()),
+                Err(e) => eprintln!("work review: {e}"),
+            }
+            match outcome {
+                work::review::Outcome::Findings(f) => {
+                    println!("{}", f.trim_end());
+                    0
+                }
+                work::review::Outcome::TimedOut => {
+                    eprintln!("{}", refusal(R::ReviewTimedOut, "review", &[("secs", &secs.to_string())]));
+                    work::review::TIMED_OUT
+                }
+                work::review::Outcome::Failed(e) => {
+                    eprintln!("{}", refusal(R::ReviewFailed, "review", &[("err", &e)]));
+                    REFUSED
+                }
+            }
         }
         Err(e) => {
             eprintln!("{}", refusal(R::ReviewFailed, "review", &[("err", &e)]));
