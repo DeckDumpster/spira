@@ -56,7 +56,7 @@ fn main() {
         },
         _ => {
             eprintln!(
-                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh pilgrimage <design-file> --repo <name> --after <build-id>... [--priority N]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F --replace | --append-body F] [--express]\n       bead.sh amend <id> --live --note \"<text>\" | --append-body F [--ack-within <dur>]\n       bead.sh amend <id> --ack <amend-id> --accept | --decline \"<why>\"\n       bead.sh amend --enforce <amend-id>\n       bead.sh label add|remove <id> <label>\n       bead.sh drop <id> --reason <text>\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh ideas [--json]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
+                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--part N (proposal)] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh pilgrimage <design-file> --repo <name> --after <build-id>... [--priority N]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F --replace | --append-body F] [--express]\n       bead.sh amend <id> --live --note \"<text>\" | --append-body F [--ack-within <dur>]\n       bead.sh amend <id> --ack <amend-id> --accept | --decline \"<why>\"\n       bead.sh amend --enforce <amend-id>\n       bead.sh label add|remove <id> <label>\n       bead.sh drop <id> --reason <text>\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh dep remove <id> <depends-on-id>\n       bead.sh lint [--all|<id>...]\n       bead.sh ideas [--json]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
             );
             2
         }
@@ -560,6 +560,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
     let mut parent: Option<String> = None;
     let mut target: Option<String> = None;
     let mut stack_after: Option<String> = None;
+    let mut part: Option<String> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -567,6 +568,10 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             "--target" => {
                 i += 1;
                 target = args.get(i).cloned();
+            }
+            "--part" => {
+                i += 1;
+                part = args.get(i).cloned();
             }
             "--stack-after" => {
                 i += 1;
@@ -703,6 +708,21 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
     let kind = kind.unwrap_or_else(|| spira_config::release_env::tool("work"));
     if kind == "gate" {
         eprintln!("bead: kind=gate is a bd-internal type; use bd gate directly");
+        return 2;
+    }
+
+    let mut proposal_part: Option<u32> = None;
+    if kind == "proposal" {
+        match part.as_deref().map(str::parse::<u32>) {
+            Some(Ok(n)) if n > 0 => proposal_part = Some(n),
+            _ => {
+                eprintln!("bead: refusing: a law proposal is filed into a Part of the code. Pass --part <n>; the Parts are:");
+                eprint!("{}", law_contents(home));
+                return 2;
+            }
+        }
+    } else if part.is_some() {
+        eprintln!("bead: --part applies only to --kind proposal");
         return 2;
     }
 
@@ -844,7 +864,10 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         } else {
             None
         };
-        let labels = non_work_labels(&scope_label, insight_label.as_deref(), repo.as_deref());
+        let mut labels = non_work_labels(&scope_label, insight_label.as_deref(), repo.as_deref());
+        if let Some(n) = proposal_part {
+            labels.push_str(&format!(",part:{n}"));
+        }
 
         let mut bd_args = s(&["create"]);
         bd_args.push(title);
@@ -884,6 +907,13 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         }
         rc
     }
+}
+
+/// `work law`'s table of contents, read from the home repository's tracked `law/` tree.
+fn law_contents(home: &str) -> String {
+    let reg = spira_config::repos::Registry::from_env_checkout(env::vars().collect(), Path::new(home));
+    let path = reg.root("").map(|r| Path::new(&r).join("law/index.md"));
+    path.and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_else(|| "(law/index.md not found — run `work law`)\n".to_string())
 }
 
 /// Files the design's pilgrimage bead for the pilgrim, blocked by every build bead named with `--after`.

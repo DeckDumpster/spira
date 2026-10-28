@@ -852,6 +852,11 @@ pub fn is_ask_law(item: &Item) -> bool {
     item.labels.iter().any(|l| l == "ask-law")
 }
 
+/// The Part a law proposal was filed with (`part:<n>`), or `None` — and then `rule.sh` refuses.
+fn proposal_part(item: &Item) -> Option<String> {
+    item.labels.iter().find_map(|l| l.strip_prefix("part:")).map(str::to_string)
+}
+
 /// Enact a law proposal: run `rule.sh enact`, then close the bead with evidence.
 ///
 /// The slug and statute text are taken from the item's title (`<slug>: <statute>`) when
@@ -870,7 +875,12 @@ pub fn enact_law(item: &Item, input: &str, cfg: &Cfg) -> Result<(), String> {
     };
     let (slug, text) = parse_enact(raw)?;
     let rule = rule_sh()?;
-    run_verbose(&rule, &["enact", &slug, &text, "--tool", "none", "--reason", PANEL_NO_TOOL], cfg)?;
+    let part = proposal_part(item);
+    let mut args = vec!["enact", &slug, &text, "--tool", "none", "--reason", PANEL_NO_TOOL];
+    if let Some(n) = part.as_deref() {
+        args.extend(["--part", n]);
+    }
+    run_verbose(&rule, &args, cfg)?;
     // Close the bead now that the statute is in force.
     let evidence = format!("enacted law-{} from panel", slug.trim_start_matches("law-"));
     close_decision(&cfg.db, item, &evidence, cfg)
@@ -1442,6 +1452,23 @@ mod tests {
         want(&e, "refused: over 130 words");
         let log = stub.argv_log();
         assert!(!log.contains("update"), "must not label on a failed enact: {log:?}");
+    }
+
+    #[test]
+    fn a_law_proposal_enacts_into_the_part_it_carries() {
+        let stub = crate::test_support::StubBd::new().rule().db("/fake/db");
+        let item = law_item(&["ask-law", "part:3"]);
+        let r = enact_law(&item, "", &stub.cfg());
+        assert!(r.is_ok(), "{r:?}");
+        want(&stub.argv_log(), "--part 3");
+    }
+
+    #[test]
+    fn a_law_proposal_without_a_part_passes_none_so_rule_refuses_it() {
+        let stub = crate::test_support::StubBd::new().rule().db("/fake/db");
+        let item = law_item(&["ask-law"]);
+        let _ = enact_law(&item, "", &stub.cfg());
+        assert!(!stub.argv_log().contains("--part"), "{:?}", stub.argv_log());
     }
 
     fn want(haystack: &str, needle: &str) {

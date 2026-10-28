@@ -120,18 +120,26 @@ fn fixture_repo(tag: &str) -> testkit::TempDir {
     git(&["init", "-q"]);
     std::fs::create_dir_all(dir.join("law")).unwrap();
     std::fs::write(dir.join("law/toc.toml"), TOC).unwrap();
+    git(&["add", "-A"]);
+    git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "fixture"]);
     dir
 }
 
 fn rule_in(repo: &Path, args: &[&str]) -> std::process::Output {
+    rule_from(repo, repo, args)
+}
+
+fn rule_from(cwd: &Path, repo: &Path, args: &[&str]) -> std::process::Output {
     let tmp = testkit::TempDir::new("rule-code-env");
     let db = tmp.join("db");
     std::fs::create_dir_all(db.join(".beads")).unwrap();
-    let toml = spira_config::process::fixture_toml(&tmp, &[("SPIRA_DB", &db.display().to_string())]);
+    let run = tmp.join("run");
+    let toml = spira_config::process::fixture_toml(&tmp, &[("SPIRA_DB", &db.display().to_string()), ("SPIRA_RUN", &run.display().to_string())]);
     Command::new(env!("CARGO_BIN_EXE_rule"))
         .args(args)
-        .current_dir(repo)
+        .current_dir(cwd)
         .env_clear()
+        .env("SPIRA_REPO", repo)
         .env("PATH", "/usr/bin:/bin")
         .env("HOME", tmp.path())
         .env("SPIRA_TOML", &toml)
@@ -176,4 +184,34 @@ fn the_committed_tree_is_what_toc_toml_generates() {
     let text = |slug: &str| std::fs::read_to_string(seeds.join(format!("{slug}.txt"))).ok();
     let drift = drift(&root.join("law"), &generate(&toc, text));
     assert!(drift.is_empty(), "law/ differs from law/toc.toml — run `rule.sh code`: {drift:?}");
+}
+
+#[test]
+fn enact_finds_the_repo_itself_and_leaves_the_callers_directory_alone() {
+    let repo = fixture_repo("law-enact-away");
+    let away = testkit::TempDir::new("law-enact-cwd");
+    let out = rule_from(&away, &repo, &["enact", "newone", "Do four.", "--tool", "none", "--reason", "test", "--part", "2", "--dry-run"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!err.contains("not inside a git checkout"), "{err}");
+    assert!(std::fs::read_dir(away.path()).unwrap().next().is_none(), "the caller's directory was written to");
+    let out = rule_from(&away, &repo, &["enact", "newone", "Do four.", "--tool", "none", "--reason", "test"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("2 — Beta: Second scope."));
+}
+
+#[test]
+fn commit_law_adds_the_section_on_its_own_branch_and_leaves_the_checkout_alone() {
+    let repo = fixture_repo("law-commit-branch");
+    let wt_root = testkit::TempDir::new("law-commit-wt");
+    let toc = append(&parse_toc(TOC).unwrap(), 2, "law-four").unwrap();
+    let book: BTreeMap<String, String> = [("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three."), ("law-four", "Do four.")]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    let branch = rule::code::commit_law(repo.path(), None, wt_root.path(), "law-four", &toc, &book).unwrap();
+    let show = |p: &str| Command::new("git").arg("-C").arg(repo.path()).args(["show", &format!("{branch}:{p}")]).output().unwrap();
+    let added = show("law/2-beta/2.2-law-four.md");
+    assert!(added.status.success() && String::from_utf8_lossy(&added.stdout).contains("Do four."));
+    assert!(!repo.join("law/2-beta").exists(), "the checkout's own tree was written to");
+    assert!(std::fs::read_dir(wt_root.path()).unwrap().next().is_none(), "the worktree was left behind");
 }
