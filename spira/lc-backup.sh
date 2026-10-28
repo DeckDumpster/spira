@@ -268,9 +268,7 @@ _lcb_drill_db_locked() {
 
 # Prints why the drill must not start now; prints nothing when it may. An unanswered probe defers.
 _lcb_drill_busy() {
-    local round t0 ms db
-    round="$(queue round status 2>/dev/null | sed -n 's/^round=//p' | head -n1)"
-    [ "$round" = none ] || { echo "round state is '${round:-unknown}', not none"; return; }
+    local t0 ms db
     db="$(_lcb_dbs | head -1)"
     t0="$(date +%s%N)"
     _lcb_sql "$db" -q "SELECT 1" >/dev/null 2>&1 || { echo "live store did not answer a probe"; return; }
