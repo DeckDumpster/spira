@@ -33,6 +33,9 @@ pub const OVERRIDE_KEY: &str = "SPIRA_CHECK5_MAX_FILE";
 /// The note line that records an upgrade waiver on the cut it was given for.
 pub const WAIVER_LINE: &str = "upgrade phases waived by operator";
 
+/// Recorded after WAIVER_LINE when the waiver came from the standing ruling, not a per-run input.
+pub const STANDING_WAIVER_LINE: &str = "upgrade phases waived by standing ruling";
+
 /// What the caller asked for (the command line), before anything is resolved.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Args {
@@ -45,6 +48,9 @@ pub struct Args {
     /// The commit an operator declared a waiver for (WAIVE_UPGRADE_COMMIT). Lets a cut waive
     /// again after a waived predecessor, but only when it names this cut's own commit.
     pub declared_waiver: Option<String>,
+    /// The standing no-backward-compatibility ruling is in force: it declares the waiver for every
+    /// cut, so a waived predecessor does not refuse this one.
+    pub standing_waiver: bool,
     pub bd_db: Option<PathBuf>,
     pub agent: Option<String>,
     pub tarball: Option<PathBuf>,
@@ -87,6 +93,7 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--record" => a.record = true,
             "--file-defects" => a.file_defects = true,
             "--waive-upgrade" => a.waive_upgrade = true,
+            "--standing-waiver" => a.standing_waiver = true,
             "--declared-waiver" => a.declared_waiver = Some(val()?).filter(|s| !s.is_empty()),
             "-h" | "--help" => return Err(String::new()),
             f if f.starts_with('-') => return Err(format!("unknown option: {f}")),
@@ -498,6 +505,7 @@ pub struct Note<'a> {
     pub tarball: Option<(&'a str, &'a str)>,
     pub prev_tag: Option<&'a str>,
     pub waived: bool,
+    pub standing: bool,
 }
 
 impl Note<'_> {
@@ -511,6 +519,9 @@ impl Note<'_> {
         }
         if self.waived {
             s.push_str(&format!("\n{WAIVER_LINE}"));
+            if self.standing {
+                s.push_str(&format!("\n{STANDING_WAIVER_LINE}"));
+            }
         }
         s
     }

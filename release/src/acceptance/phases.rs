@@ -578,13 +578,17 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
             // commit (law-waive-upgrade-once-when-the-fix-cannot-reach-the-predecessor, amended
             // "keep waiving until you get a release"): the predecessor can still be one whose own
             // install cannot pass the upgrade phases. Anything else is refused as before.
-            let declared = r.o.a.declared_waiver.clone().unwrap_or_default();
-            let commit = tag_commit(h, r.o.notes_repo.as_deref(), &tag);
-            if declared.is_empty() || commit.as_deref() != Some(declared.as_str()) {
-                eprintln!("release acceptance: refusing {tag}: {w} carries an upgrade waiver, so this cut must run phases B/C/D (--prev-tag, no --waive-upgrade), unless a waiver is declared for this cut's exact commit (--declared-waiver <sha>)");
-                return 2;
+            if r.o.a.standing_waiver {
+                println!("release acceptance: {w} was a waived cut; the standing ruling declares the waiver for this cut too");
+            } else {
+                let declared = r.o.a.declared_waiver.clone().unwrap_or_default();
+                let commit = tag_commit(h, r.o.notes_repo.as_deref(), &tag);
+                if declared.is_empty() || commit.as_deref() != Some(declared.as_str()) {
+                    eprintln!("release acceptance: refusing {tag}: {w} carries an upgrade waiver, so this cut must run phases B/C/D (--prev-tag, no --waive-upgrade), unless the standing ruling is in force (--standing-waiver) or a waiver is declared for this cut's exact commit (--declared-waiver <sha>)");
+                    return 2;
+                }
+                println!("release acceptance: {w} was a waived cut; honouring the repeat waiver declared for {declared}");
             }
-            println!("release acceptance: {w} was a waived cut; honouring the repeat waiver declared for {declared}");
         }
     }
 
@@ -792,7 +796,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
 
     if r.o.a.record {
         let name = tarball.as_ref().and_then(|t| t.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "unknown".into());
-        let note = Note { verdict, date: &date, tag: &tag, pass: r.pass, fail: r.fail, tarball: sha.as_deref().map(|s| (s, name.as_str())), prev_tag: prev.as_deref(), waived: r.o.a.waive_upgrade }.text();
+        let note = Note { verdict, date: &date, tag: &tag, pass: r.pass, fail: r.fail, tarball: sha.as_deref().map(|s| (s, name.as_str())), prev_tag: prev.as_deref(), waived: r.o.a.waive_upgrade, standing: r.o.a.standing_waiver }.text();
         let repo = r.o.notes_repo.clone().unwrap_or_default();
         let c = Cmd::new("git").args(["-C", &repo.display().to_string(), "notes", "--ref=acceptance", "add", "-f", "-m", &note, &format!("refs/tags/{tag}")]);
         if h.run(&c).rc == 0 {

@@ -14,7 +14,11 @@ WF="$HERE/../.github/workflows/acceptance.yml"
 
 echo "test-acceptance-waiver.sh"
 
-[ -x "$SCRIPT" ] || { bad "self-check: acceptance-waiver.sh exists and is executable" "missing"; tl_summary; exit 1; }
+[ -x "$SCRIPT" ] || { bad "self-check: acceptance-waiver.sh exists and is executable" "missing"; grep -q -- '--standing-waiver' "$WF" \
+    && ok "acceptance.yml hands the standing ruling to release acceptance" \
+    || bad "acceptance.yml hands the standing ruling to release acceptance" "flag not found"
+
+tl_summary; exit 1; }
 
 check() { # name expected args...
     local name="$1" want="$2"; shift 2
@@ -41,5 +45,9 @@ grep -q 'vars.ACCEPTANCE_WAIVE_UPGRADE' "$WF" \
 grep -q 'one run per tag' "$WF" \
     && ok "acceptance.yml guard skips a duplicate run for the tag" \
     || bad "acceptance.yml guard skips a duplicate run for the tag" "guard not found"
+
+grep -q -- '--standing-waiver' "$WF" \
+    && ok "acceptance.yml hands the standing ruling to release acceptance" \
+    || bad "acceptance.yml hands the standing ruling to release acceptance" "flag not found"
 
 tl_summary

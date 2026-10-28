@@ -4,6 +4,7 @@
 #
 # Usage: acceptance-ci.sh <tag> [--prev-tag <t>] [--bd-db <path>]
 #                                [--agent <path>] [--record] [--waive-upgrade]
+#                                [--standing-waiver]
 #                                [--tarball <path>]
 #
 # --tarball tests a tarball built from a checkout instead of a published release: <tag> is then
@@ -29,6 +30,7 @@ _bd_db="$HOME/.local/share/spira/db"
 _agent=""
 _do_record=0
 _waive_upgrade=0
+_standing_waiver=0
 _tarball=""
 
 while [ $# -gt 0 ]; do
@@ -41,6 +43,7 @@ while [ $# -gt 0 ]; do
         --agent=*)    _agent="${1#--agent=}"; shift ;;
         --record)     _do_record=1; shift ;;
         --waive-upgrade) _waive_upgrade=1; shift ;;
+        --standing-waiver) _standing_waiver=1; shift ;;
         --tarball)    _tarball="${2:-}"; shift 2 ;;
         --tarball=*)  _tarball="${1#--tarball=}"; shift ;;
         -*)           printf 'acceptance-ci: unknown option: %s\n' "$1" >&2; exit 2 ;;
@@ -121,6 +124,7 @@ _run_args=("$_tag" --scratch-repo "$HOME/scratch-repo" --bd-db "$_bd_db" --notes
 [ -n "$_tarball" ]      && _run_args+=(--tarball "$_tarball")
 [ -n "$_prev_tag" ]     && _run_args+=(--prev-tag "$_prev_tag")
 [ "$_waive_upgrade" -eq 1 ] && _run_args+=(--waive-upgrade)
+[ "$_standing_waiver" -eq 1 ] && _run_args+=(--standing-waiver)
 [ -n "${_declared_waiver:-}" ] && _run_args+=(--declared-waiver "$_declared_waiver")
 
 printf -- '--- runner env ---\n'
