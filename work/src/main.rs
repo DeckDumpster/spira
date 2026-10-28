@@ -316,7 +316,7 @@ fn law(args: &[String]) -> i32 {
     }
 }
 
-/// `work checks [--list]`: the repository's `[[done]]` rows from `.spira/habits.toml`, run in
+/// `work checks [--list]`: the repository's `[[check]]` rows from `.spira/checks.toml`, run in
 /// order from the worktree root. Every row runs; the exit is non-zero if any failed.
 fn checks(args: &[String]) -> i32 {
     let list_only = match args {
@@ -335,16 +335,15 @@ fn checks(args: &[String]) -> i32 {
         }
     };
     let root = std::path::Path::new(&root);
-    let cfg = match habits::config::load(root) {
-        Ok(c) => c,
+    let rows = match habits::config::load_checks(root) {
+        Ok(r) => r,
         Err(e) => {
-            eprintln!("work checks: refusing: .spira/habits.toml is unreadable: {e}");
+            eprintln!("work checks: refusing: .spira/checks.toml is unreadable: {e}");
             return REFUSED;
         }
     };
-    let rows = cfg.map(|c| c.done).unwrap_or_default();
     if rows.is_empty() {
-        println!("work checks: this repository declares no [[done]] checks");
+        println!("work checks: this repository declares no [[check]] rows");
         return 0;
     }
     let mut failed = Vec::new();

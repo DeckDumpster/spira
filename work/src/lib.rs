@@ -24,7 +24,7 @@ pub fn looks_like_bead_id(s: &str) -> bool {
         && parts.all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
 }
 
-/// A `[[done]]` row's command, run from the worktree root with no shell.
+/// A `[[check]]` row's command, run from the worktree root with no shell.
 pub fn done_argv(run: &str) -> Vec<String> {
     habits::config::argv(run, &[])
 }

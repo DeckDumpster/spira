@@ -1,0 +1,9 @@
+[[check]]
+name = "clippy"
+run = "cargo clippy --workspace --all-targets -- -D warnings"
+budget_ms = 900000
+
+[[check]]
+name = "spira-lint"
+run = "spira-lint"
+budget_ms = 300000
