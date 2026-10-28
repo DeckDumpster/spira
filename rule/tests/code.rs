@@ -225,7 +225,7 @@ fn commit_law_twice_for_one_slug_in_one_second_gives_two_branches() {
         .into_iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
-    let first = rule::code::commit_law(repo.path(), None, wt_root.path(), "law-four", &toc, &book).unwrap();
-    let second = rule::code::commit_law(repo.path(), None, wt_root.path(), "law-four", &toc, &book).unwrap();
-    assert_ne!(first, second);
+    let branches: Vec<String> = (0..5).map(|_| rule::code::commit_law(repo.path(), None, wt_root.path(), "law-four", &toc, &book).unwrap()).collect();
+    let distinct: std::collections::BTreeSet<_> = branches.iter().collect();
+    assert_eq!(distinct.len(), branches.len(), "{branches:?}");
 }
