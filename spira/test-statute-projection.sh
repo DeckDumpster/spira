@@ -167,8 +167,8 @@ if [ $rc_cl_retire -eq 0 ]; then
 else
     bad "commit: retire exits 0" "rc=$rc_cl_retire output=$out_cl_retire"
 fi
-is "commit: retire's law/ commit reached the fixture's landing checkout" "0" \
-    "$(git -C "$LAW_FIX" ls-files 'law/*law-sp-4fl2e-commit-test.md' | wc -l | tr -d ' ')"
+want "commit: retire's law/ commit reached the fixture's landing checkout" "[Reserved]" \
+    "$(cat "$LAW_FIX"/law/*/*law-sp-4fl2e-commit-test.md 2>/dev/null)"
 is "commit: retire leaves wiki checkout clean" "" \
     "$(git -C "$WIKI_CL" status --short --untracked-files=all 2>/dev/null)"
 is "commit: retire commit message names the statute" "law: retire law-sp-4fl2e-commit-test" \

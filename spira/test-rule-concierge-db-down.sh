@@ -80,7 +80,7 @@ printf '[[part]]\nnumber = 1\nname = "Fixture"\nslug = "fixture"\nscope = "Fixtu
 git -C "$LAW_FIX" add -A && git -C "$LAW_FIX" -c user.name=t -c user.email=t@t commit -q -m fixture
 # enact files a bead for its law/ commit and queue-submits it; these stand in for the store and a round.
 SHIM_BIN="$(mktemp -d)"
-printf '#!/bin/sh\necho "{\\"id\\":\\"sp-fix\\"}"\n' > "$SHIM_BIN/bead.sh"
+printf '#!/bin/sh\necho x >> "%s/filed"\necho "{\\"id\\":\\"sp-fix$(wc -l < "%s/filed" | tr -d " ")\\"}"\n' "$SHIM_BIN" "$SHIM_BIN" > "$SHIM_BIN/bead.sh"
 printf '#!/bin/sh\n[ "$1" = submit ] || exit 2\ngit -C "%s" merge -q --ff-only "$2"\n' "$LAW_FIX" > "$SHIM_BIN/queue"
 chmod +x "$SHIM_BIN/bead.sh" "$SHIM_BIN/queue"
 PATH="$SHIM_BIN:$PATH"; export PATH
