@@ -424,13 +424,10 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
     }
 }
 
-/// Commits the `law/` projection on a branch of its own and hands it to the queue under a
-/// bead, so the next round lands it. Returns the branch and the bead id.
 fn land_law(home: &str, repo: &(String, Option<String>), verb: &str, key: &str, toc: &[code::Part], book: &BTreeMap<String, String>) -> Result<(String, String), String> {
     let wt_root = spira_config::process::cfg("SPIRA_RUN").map(|r| Path::new(&r).join("worktree"))?;
-    let law_branch = code::commit_law(Path::new(&repo.0), repo.1.as_deref(), &wt_root, verb, key, toc, book)?;
     let reg = spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), Path::new(home));
-    let (id, branch) = code::submit_law(Path::new(&repo.0), reg.home_repo(), &wt_root, &law_branch, verb, key).map_err(|e| format!("{e}\nrule: the law/ commit is on branch {law_branch}"))?;
+    let (id, branch) = code::land_law(&code::LawRepo { path: Path::new(&repo.0), base: repo.1.as_deref(), name: reg.home_repo() }, &wt_root, verb, key, toc, book)?;
     Ok((branch, id))
 }
 
@@ -466,10 +463,8 @@ fn read_toc_at(repo: &(String, Option<String>)) -> Result<Vec<code::Part>, Strin
         }
         None => std::fs::read_to_string(Path::new(root).join("law/toc.toml")).map_err(|e| format!("rule: {root}/law/toc.toml: {e}"))?,
     };
-    code::parse_toc(&text).map_err(|e| format!("rule: {e}"))
+    code::parse_toc(&text).map(|t| code::with_in_flight(Path::new(root), base.as_deref(), t)).map_err(|e| format!("rule: {e}"))
 }
-
-
 
 fn read_toc(law: &Path) -> Result<Vec<code::Part>, String> {
     let text = std::fs::read_to_string(law.join("toc.toml")).map_err(|e| format!("rule: {}: {e}", law.join("toc.toml").display()))?;
@@ -712,8 +707,14 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
     if rc != 0 {
         return rc;
     }
-    let Ok(repo) = locate_repo(home) else { return 0 };
-    let Ok(toc) = read_toc_at(&repo) else { return 0 };
+    let (repo, toc) = match locate_repo(home).and_then(|r| read_toc_at(&r).map(|t| (r, t))) {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("{e}");
+            eprintln!("rule: {key} is retired but law/ was not submitted — run `rule.sh code`.");
+            return 1;
+        }
+    };
     match land_law(home, &repo, "retire", &key, &toc, &strings(&after)) {
         Ok((branch, bead)) => {
             println!("law/: {key} reserved; committed on {branch}, submitted under {bead}.");

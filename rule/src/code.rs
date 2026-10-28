@@ -96,11 +96,13 @@ pub fn append(parts: &[Part], number: u32, slug: &str) -> Result<Vec<Part>, Stri
     Ok(out)
 }
 
-/// A statute's trailing `(per ...)` citation names the case that produced it; the shipped
-/// projection carries the rule, the store and the wiki keep the history.
+/// A statute's trailing parenthetical citing the operator (`(per ...)`) or a bead
+/// (`(sp-...: ...)`) names the case that produced it; the shipped projection carries the rule,
+/// the store and the wiki keep the history.
 fn without_citation(text: &str) -> &str {
     let flat = text.trim_end();
-    match flat.rfind("(per ") {
+    let start = ["(per ", "(sp-"].iter().filter_map(|m| flat.rfind(m)).max();
+    match start {
         Some(i) if flat.ends_with(')') => flat[..i].trim_end(),
         _ => text,
     }
@@ -247,13 +249,54 @@ pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, verb: &s
     done.map(|()| branch)
 }
 
+/// The home repository: its checkout, the ref `law/` is cut from, and its name in the repo map.
+pub struct LawRepo<'a> {
+    pub path: &'a Path,
+    pub base: Option<&'a str>,
+    pub name: &'a str,
+}
+
+/// Commits the `law/` projection on a branch of its own and hands it to the queue under a
+/// bead, so the next round lands it. Returns the bead id and the branch the queue holds.
+pub fn land_law(repo: &LawRepo, wt_root: &Path, verb: &str, key: &str, toc: &[Part], book: &BTreeMap<String, String>) -> Result<(String, String), String> {
+    let (repo_path, repo_name) = (repo.path, repo.name);
+    let law_branch = commit_law(repo_path, repo.base, wt_root, verb, key, toc, book)?;
+    submit_law(repo_path, repo_name, wt_root, &law_branch, verb, key).map_err(|e| format!("{e}\nrule: the law/ commit is on branch {law_branch}"))
+}
+
+/// `toc` plus every slug that a branch not yet on `base` has filed in a Part (a `law/` branch,
+/// or the `spira/<bead>` branch one was submitted as), so two enacts made before either lands
+/// take different section numbers.
+pub fn with_in_flight(repo_path: &Path, base: Option<&str>, toc: Vec<Part>) -> Vec<Part> {
+    let base = base.unwrap_or("HEAD");
+    let Ok(refs) = git_in(repo_path, &["for-each-ref", "--format=%(refname)", &format!("--no-merged={base}"), "refs/heads/law", "refs/heads/spira"]) else {
+        return toc;
+    };
+    let mut merged = toc;
+    for r in refs.lines() {
+        let Ok(text) = git_in(repo_path, &["show", &format!("{r}:law/toc.toml")]) else { continue };
+        let Ok(theirs) = parse_toc(&text) else { continue };
+        for p in &theirs {
+            for slug in &p.slugs {
+                if !merged.iter().any(|m| m.slugs.contains(slug)) {
+                    if let Some(home) = merged.iter_mut().find(|m| m.number == p.number) {
+                        home.slugs.push(slug.clone());
+                    }
+                }
+            }
+        }
+    }
+    merged
+}
+
 /// Files a SUBMITTED bead at the tip of `law_branch`, renames the branch to the bead's own
 /// (`spira/<id>`, the name the queue lands) and submits it. Returns the bead id and the branch.
 pub fn submit_law(repo_path: &Path, repo_name: &str, wt_root: &Path, law_branch: &str, verb: &str, key: &str) -> Result<(String, String), String> {
     let tip = git_in(repo_path, &["rev-parse", law_branch])?;
     let title = format!("law: {verb} {key} — land its law/ commit");
     let body = format!("{law_branch} carries the law/ projection of the statute book after `rule.sh {verb} {key}`. Landing this bead puts that commit on the landing ref.\n");
-    let body_file = wt_root.join(format!("rule-{verb}-{key}.bead.txt"));
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let body_file = wt_root.join(format!("rule-{verb}-{key}-{}-{stamp}.bead.txt", std::process::id()));
     std::fs::write(&body_file, body).map_err(|e| format!("rule: {}: {e}", body_file.display()))?;
     let filed = spira_config::bounded::bounded("bead.sh")
         .args(["file", &title, "--for", "ops", "--repo", repo_name, "--submitted", "--tip", &tip, "--json", "--body-file"])
