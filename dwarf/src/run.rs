@@ -1300,39 +1300,45 @@ impl<'a> Run<'a> {
         // THE WARM TARGET: the session builds into its slot's directory, kept between sessions
         // and worktrees (cargo's fingerprints cover the different checkout), so a second session
         // on a bead recompiles only what changed. The slot's lock is held until this returns.
-        let warm_base = self.conf.s(spira_config::build::DWARF_WARM_BASE_ENV);
-        if warm_base.is_empty() {
-            return Err(Abort::Harness(format!("{} is not set — the dwarf warm slots have no home; set dwarf_warm_base in the config document", spira_config::build::DWARF_WARM_BASE_ENV)));
-        }
-        let warm_base = PathBuf::from(warm_base);
-        let cap_mib = self.conf.i(spira_config::build::DWARF_WARM_CAP_ENV).max(1) as u64;
-        if !spira_config::build::on_tmpfs(&warm_base) {
-            self.log(&format!("{}: warm base {} is not a tmpfs — builds write to its disk", self.f(), warm_base.display()));
-        }
+        let graph_only = self.rune.graph_only;
         let mut warm_slot = None;
-        let _warm = match spira_config::build::acquire_warm(&warm_base, spira_config::build::DWARF_WARM_SLOTS) {
-            Some((dir, mut lock)) => {
-                spira_config::build::note_holder(&mut lock, &bead);
-                if spira_config::build::reap_for_build(&dir, cap_mib) {
-                    self.log(&format!("{}: warm target {} held over half of {cap_mib} MiB — started empty", self.f(), dir.display()));
-                }
-                for idle in spira_config::build::reap_idle(&warm_base, spira_config::build::DWARF_WARM_SLOTS, cap_mib, spira_config::build::DWARF_WARM_FULL_PCT) {
-                    self.log(&format!("{}: idle warm target {} emptied (over {cap_mib} MiB or the tmpfs is past {}%)", self.f(), idle.display(), spira_config::build::DWARF_WARM_FULL_PCT));
-                }
-                let spill = work.join("target");
-                if spira_config::build::spill_if_full(&dir, &spill, spira_config::build::DWARF_WARM_FULL_PCT) {
-                    self.log(&format!("{}: warm tmpfs is past {}% — this session builds in {}", self.f(), spira_config::build::DWARF_WARM_FULL_PCT, spill.display()));
-                }
-                env.set("CARGO_TARGET_DIR", &dir.display().to_string());
-                warm_slot = Some(crate::session::WarmSlot { dir: dir.clone(), cap_mib, every: crate::session::WARM_CHECK_EVERY, spill });
-                Some(lock)
+        let _warm = if graph_only {
+            self.log(&format!("{}: graph-only rune — no warm target or cold-build slot", self.f()));
+            None
+        } else {
+            let warm_base = self.conf.s(spira_config::build::DWARF_WARM_BASE_ENV);
+            if warm_base.is_empty() {
+                return Err(Abort::Harness(format!("{} is not set — the dwarf warm slots have no home; set dwarf_warm_base in the config document", spira_config::build::DWARF_WARM_BASE_ENV)));
             }
-            None => {
-                self.log(&format!("{}: every warm target slot is busy — this session builds in its worktree", self.f()));
-                None
+            let warm_base = PathBuf::from(warm_base);
+            let cap_mib = self.conf.i(spira_config::build::DWARF_WARM_CAP_ENV).max(1) as u64;
+            if !spira_config::build::on_tmpfs(&warm_base) {
+                self.log(&format!("{}: warm base {} is not a tmpfs — builds write to its disk", self.f(), warm_base.display()));
+            }
+            match spira_config::build::acquire_warm(&warm_base, spira_config::build::DWARF_WARM_SLOTS) {
+                Some((dir, mut lock)) => {
+                    spira_config::build::note_holder(&mut lock, &bead);
+                    if spira_config::build::reap_for_build(&dir, cap_mib) {
+                        self.log(&format!("{}: warm target {} held over half of {cap_mib} MiB — started empty", self.f(), dir.display()));
+                    }
+                    for idle in spira_config::build::reap_idle(&warm_base, spira_config::build::DWARF_WARM_SLOTS, cap_mib, spira_config::build::DWARF_WARM_FULL_PCT) {
+                        self.log(&format!("{}: idle warm target {} emptied (over {cap_mib} MiB or the tmpfs is past {}%)", self.f(), idle.display(), spira_config::build::DWARF_WARM_FULL_PCT));
+                    }
+                    let spill = work.join("target");
+                    if spira_config::build::spill_if_full(&dir, &spill, spira_config::build::DWARF_WARM_FULL_PCT) {
+                        self.log(&format!("{}: warm tmpfs is past {}% — this session builds in {}", self.f(), spira_config::build::DWARF_WARM_FULL_PCT, spill.display()));
+                    }
+                    env.set("CARGO_TARGET_DIR", &dir.display().to_string());
+                    warm_slot = Some(crate::session::WarmSlot { dir: dir.clone(), cap_mib, every: crate::session::WARM_CHECK_EVERY, spill });
+                    Some(lock)
+                }
+                None => {
+                    self.log(&format!("{}: every warm target slot is busy — this session builds in its worktree", self.f()));
+                    None
+                }
             }
         };
-        let _cold = self.cold_slot(work, warm_slot.as_ref().map(|w| w.dir.as_path()))?;
+        let _cold = if graph_only { None } else { self.cold_slot(work, warm_slot.as_ref().map(|w| w.dir.as_path()))? };
         // THE CALL JITTER (sp-f4ig1 §3.4): dwarves a pass called together start apart.
         let max = self.conf.i(spira_config::admission::JITTER_ENV).max(0) as u64;
         let seed = ((std::process::id() as u64) << 32)
