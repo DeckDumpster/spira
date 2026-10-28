@@ -64,7 +64,7 @@ impl Fixture {
             fs::write(f.p("run/scoped-stops/repo-spira.json"), "{\n  \"repo\": \"spira\",\n  \"lanes\": [\n    \"rounds\"\n  ]\n}").unwrap();
         }
         let stub = |name: &str, body: String| {
-            testkit::write_exe(&f.p("bin").join(name), &body);
+            testkit::write_exe(f.p("bin").join(name), &body);
         };
         stub("spira-lc", format!("#!/usr/bin/env bash\n[ \"$1 $2 $3 $4\" = \"list --state CERTIFIED --repo\" ] && cat {}/certified.\"$5\"\nexit 0\n", f.dir.path().display()));
         let fail = if s.status_fails { "echo boom >&2; exit 1" } else { "" };
