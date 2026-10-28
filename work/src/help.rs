@@ -38,6 +38,9 @@ pub enum R {
     ReviewAgentUnset,
     ReviewTimedOut,
     ReviewFailed,
+    ChecksUsage,
+    ChecksGit,
+    ChecksConfig,
 }
 
 impl R {
@@ -46,6 +49,7 @@ impl R {
         R::SubmitTipArg, R::StatuteUsage, R::StatuteStdin, R::StatuteConfig, R::StatuteConfigUnset, R::StatuteRegistry, R::StatuteReport,
         R::StatuteNoteNotRecorded, R::CratesGit, R::CratesCargo, R::CratesSelect, R::HelpUsage, R::HelpUnknown, R::LawUsage, R::LawNotFound,
         R::ReviewArgs, R::ReviewShow, R::ReviewGit, R::ReviewConfig, R::ReviewAgentUnset, R::ReviewTimedOut, R::ReviewFailed,
+        R::ChecksUsage, R::ChecksGit, R::ChecksConfig,
     ];
 }
 
@@ -238,6 +242,19 @@ pub static ENTRIES: &[Entry] = &[
             Refusal { id: R::CratesGit, text: "git diff {base}...HEAD failed", fix: "check the base ref exists (`local/main` by default) and that you are in your worktree" },
             Refusal { id: R::CratesCargo, text: "cargo metadata failed", fix: "run it from inside the workspace" },
             Refusal { id: R::CratesSelect, text: "{err}", fix: "the diff could not be mapped to crates; test the crate you edited by name with `cargo test -p <crate>`" },
+        ],
+    },
+    Entry {
+        verb: "checks",
+        group: Group::Verify,
+        does: "Runs each `[[check]]` row the repository declares in `.spira/checks.toml`, each bounded by its budget, and prints `-- <name>: ok` or `FAIL` per row.",
+        when: "Before you submit, to run the checks the repository itself asks of a finished change. `--list` prints the rows without running them.",
+        args: &["[--list]"],
+        checks: &["run it inside your worktree", "exits non-zero when any row fails, naming each failed row"],
+        refusals: &[
+            Refusal { id: R::ChecksUsage, text: "usage: work checks [--list]", fix: "pass no argument, or `--list`" },
+            Refusal { id: R::ChecksGit, text: "not inside a git worktree", fix: "run it from inside your worktree" },
+            Refusal { id: R::ChecksConfig, text: "refusing: .spira/checks.toml is unreadable: {err}", fix: "fix the file's TOML; a repository with no checks omits the file" },
         ],
     },
     Entry {

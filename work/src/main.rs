@@ -427,14 +427,14 @@ fn checks(args: &[String]) -> i32 {
         [] => false,
         [a] if a == "--list" => true,
         _ => {
-            eprintln!("usage: work checks [--list]");
+            eprintln!("{}", refusal(R::ChecksUsage, "checks", &[]));
             return REFUSED;
         }
     };
     let root = match spira_config::bounded::bounded("git").args(["rev-parse", "--show-toplevel"]).output() {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         _ => {
-            eprintln!("work checks: not inside a git worktree");
+            eprintln!("{}", refusal(R::ChecksGit, "checks", &[]));
             return REFUSED;
         }
     };
@@ -442,7 +442,7 @@ fn checks(args: &[String]) -> i32 {
     let rows = match habits::config::load_checks(root) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("work checks: refusing: .spira/checks.toml is unreadable: {e}");
+            eprintln!("{}", refusal(R::ChecksConfig, "checks", &[("err", &e.to_string())]));
             return REFUSED;
         }
     };

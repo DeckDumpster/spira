@@ -137,6 +137,22 @@ Refusals:
   - {err}
     Fix: the diff could not be mapped to crates; test the crate you edited by name with `cargo test -p <crate>`
 
+### work checks
+Runs each `[[check]]` row the repository declares in `.spira/checks.toml`, each bounded by its budget, and prints `-- <name>: ok` or `FAIL` per row.
+Use when: Before you submit, to run the checks the repository itself asks of a finished change. `--list` prints the rows without running them.
+Arguments:
+  [--list]
+Checks:
+  - run it inside your worktree
+  - exits non-zero when any row fails, naming each failed row
+Refusals:
+  - usage: work checks [--list]
+    Fix: pass no argument, or `--list`
+  - not inside a git worktree
+    Fix: run it from inside your worktree
+  - refusing: .spira/checks.toml is unreadable: {err}
+    Fix: fix the file's TOML; a repository with no checks omits the file
+
 ## 6. Review
 ### work review
 Launches one read-only reviewer session over your bead's text and your branch's diff, and prints its findings, one `- file:line — what to change` per line. It changes nothing.
