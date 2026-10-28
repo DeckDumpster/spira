@@ -67,3 +67,16 @@ GRANT SELECT ON spira_lifecycle.ops_dwell TO 'spira_lc_ro'@'%';
 -- The bead-content store, read-only: `spira-lc admin-migrate` grants spira_lc SELECT on the
 -- content database's issues, labels and dependencies, by the name the store declares
 -- (migrate.rs CONTENT_TABLES). It cannot be written here: the name is configuration.
+
+-- The runtime's journal: runtime_event is append-only like `event`; the rest is the
+-- executor's bookkeeping.
+GRANT SELECT, INSERT ON spira_lifecycle.runtime_event TO 'spira_lc'@'%';
+GRANT SELECT, INSERT ON spira_lifecycle.runtime_applied TO 'spira_lc'@'%';
+GRANT SELECT, INSERT, UPDATE ON spira_lifecycle.runtime_cursor TO 'spira_lc'@'%';
+GRANT SELECT, INSERT, UPDATE ON spira_lifecycle.runtime_schedule TO 'spira_lc'@'%';
+GRANT SELECT, INSERT ON spira_lifecycle.runtime_poison TO 'spira_lc'@'%';
+GRANT SELECT ON spira_lifecycle.runtime_event TO 'spira_lc_ro'@'%';
+GRANT SELECT ON spira_lifecycle.runtime_applied TO 'spira_lc_ro'@'%';
+GRANT SELECT ON spira_lifecycle.runtime_cursor TO 'spira_lc_ro'@'%';
+GRANT SELECT ON spira_lifecycle.runtime_schedule TO 'spira_lc_ro'@'%';
+GRANT SELECT ON spira_lifecycle.runtime_poison TO 'spira_lc_ro'@'%';

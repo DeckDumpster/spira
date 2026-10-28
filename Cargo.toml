@@ -87,6 +87,7 @@ members = [
     "spira-submission",
     "store-persist",
     "unit-run",
+    "runtime",
 ]
 resolver = "2"
 
