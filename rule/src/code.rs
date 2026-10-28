@@ -2,7 +2,10 @@
 //! numbered sections. A section's number is its position in its Part's list and never changes.
 
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::path::Path;
+use std::process::Stdio;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Part {
@@ -184,6 +187,62 @@ pub fn write_tree(dir: &Path, toc: &str, expected: &BTreeMap<String, String>) ->
         let path = dir.join(f);
         std::fs::create_dir_all(path.parent().unwrap_or(dir))?;
         std::fs::write(path, body)?;
+    }
+    Ok(())
+}
+
+pub fn git_in(dir: &Path, args: &[&str]) -> Result<String, String> {
+    let out = spira_config::bounded::bounded("git").arg("-C").arg(dir).args(args).output().map_err(|e| format!("rule: git: {e}"))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    } else {
+        Err(format!("rule: git {}: {}", args.join(" "), String::from_utf8_lossy(&out.stderr).trim()))
+    }
+}
+
+/// Regenerates `law/` in a short-lived worktree of `repo`, commits it on a branch of its own and
+/// removes the worktree. The caller's directory and the repo's own checkout are never touched.
+pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, key: &str, toc: &[Part], book: &BTreeMap<String, String>) -> Result<String, String> {
+    std::fs::create_dir_all(wt_root).map_err(|e| format!("rule: {}: {e}", wt_root.display()))?;
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let branch = format!("law/{}-{stamp}", key.trim_start_matches("law-"));
+    let wt = wt_root.join(format!("rule-enact-{}-{stamp}", key.trim_start_matches("law-")));
+    let wt_s = wt.display().to_string();
+    git_in(repo_path, &["worktree", "add", "-q", "-b", &branch, &wt_s, base.unwrap_or("HEAD")])?;
+    let done = (|| {
+        write_law(&wt.join("law"), toc, book)?;
+        let mut child = spira_config::bounded::bounded("git")
+            .arg("-C")
+            .arg(&wt)
+            .args(["commit", "-q", "-F", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("rule: git commit: {e}"))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = writeln!(stdin, "law: enact {key}");
+        }
+        let out = child.wait_with_output().map_err(|e| format!("rule: git commit: {e}"))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(format!("rule: git commit: {}", String::from_utf8_lossy(&out.stderr).trim()))
+        }
+    })();
+    let _ = git_in(repo_path, &["worktree", "remove", "--force", &wt_s]);
+    done.map(|()| branch)
+}
+
+/// Writes `toc` and its generated tree under `law` and stages it.
+pub fn write_law(law: &Path, toc: &[Part], book: &BTreeMap<String, String>) -> Result<(), String> {
+    let files = generate(toc, |slug| book.get(slug).cloned());
+    write_tree(law, &render_toc(toc), &files).map_err(|e| format!("rule: writing {}: {e}", law.display()))?;
+    let root = law.parent().unwrap_or(law);
+    let add = spira_config::bounded::bounded("git").arg("-C").arg(root).args(["add", "-A", "--", "law"]).output();
+    match add {
+        Ok(o) if o.status.success() => {}
+        _ => return Err("rule: git add law failed".to_string()),
     }
     Ok(())
 }

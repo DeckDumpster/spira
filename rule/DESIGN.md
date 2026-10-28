@@ -35,6 +35,8 @@ rule [--home <spira-dir>] render-memories [prefix-csv] [char-budget] [core-csv]
 rule system-prompt-split <sysfile> <taskfile> <statutes> <prompt>
 ```
 
+`enact` finds the home repository through the repo map, never the caller's directory: it cuts a short-lived worktree under `$SPIRA_RUN/worktree/` from the repo's land ref, regenerates `law/`, commits on a branch `law/<slug>-<epoch>` and removes the worktree. It does not submit that branch.
+
 `<slug>` is written without the `law-` prefix; it is added for you (stripped once if
 already present, so `rule enact law-foo ...` and `rule enact foo ...` enact the same key).
 

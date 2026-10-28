@@ -315,14 +315,14 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
         }
     };
 
-    let law = match law_dir() {
-        Ok(d) => d,
+    let repo = match locate_repo(home) {
+        Ok(r) => r,
         Err(e) => {
             eprintln!("{e}");
             return 1;
         }
     };
-    let toc = match read_toc(&law) {
+    let toc = match read_toc_at(&repo) {
         Ok(t) => t,
         Err(e) => {
             eprintln!("{e}");
@@ -410,15 +410,16 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
     if rc != 0 {
         return rc;
     }
-    match write_law(&law, &toc_after, &after) {
-        Ok(()) => {
+    let run = spira_config::process::cfg("SPIRA_RUN").map(|r| Path::new(&r).join("worktree"));
+    match run.and_then(|wt_root| code::commit_law(Path::new(&repo.0), repo.1.as_deref(), &wt_root, &key, &toc_after, &strings(&after))) {
+        Ok(branch) => {
             let n = toc_after.iter().find(|p| p.number == part).and_then(|p| p.slugs.iter().position(|s| *s == key)).map_or(0, |i| i + 1);
-            println!("law/: {key} is §{part}.{n}; tree regenerated and staged.");
+            println!("law/: {key} is §{part}.{n}; committed on branch {branch}.");
             0
         }
         Err(e) => {
             eprintln!("{e}");
-            eprintln!("rule: {key} IS in force but law/ was not updated — fix the cause and run `rule.sh code`.");
+            eprintln!("rule: {key} IS in force but law/ was not committed — fix the cause and run `rule.sh code` from a worktree.");
             1
         }
     }
@@ -432,27 +433,48 @@ fn law_dir() -> Result<std::path::PathBuf, String> {
     Ok(Path::new(String::from_utf8_lossy(&out.stdout).trim()).join("law"))
 }
 
+/// The home repository's checkout and the ref its `law/` is cut from — found through the
+/// repo map, never through the caller's working directory.
+fn locate_repo(home: &str) -> Result<(String, Option<String>), String> {
+    let reg = spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), Path::new(home));
+    let root = reg.root("").ok_or("rule: the repo map has no path for the home repository — refusing")?;
+    if !Path::new(&root).join(".git").exists() {
+        return Err(format!("rule: {root} is not a git checkout — refusing"));
+    }
+    let base = spira_config::repos::landref(&reg, &root);
+    Ok((root, base))
+}
+
+fn read_toc_at(repo: &(String, Option<String>)) -> Result<Vec<code::Part>, String> {
+    let (root, base) = repo;
+    let text = match base {
+        Some(b) => {
+            let out = spira_config::bounded::bounded("git").arg("-C").arg(root).arg("show").arg(format!("{b}:law/toc.toml")).output().map_err(|e| format!("rule: git: {e}"))?;
+            if !out.status.success() {
+                return Err(format!("rule: {b}:law/toc.toml: {}", String::from_utf8_lossy(&out.stderr).trim()));
+            }
+            String::from_utf8_lossy(&out.stdout).into_owned()
+        }
+        None => std::fs::read_to_string(Path::new(root).join("law/toc.toml")).map_err(|e| format!("rule: {root}/law/toc.toml: {e}"))?,
+    };
+    code::parse_toc(&text).map_err(|e| format!("rule: {e}"))
+}
+
+
+
 fn read_toc(law: &Path) -> Result<Vec<code::Part>, String> {
     let text = std::fs::read_to_string(law.join("toc.toml")).map_err(|e| format!("rule: {}: {e}", law.join("toc.toml").display()))?;
     code::parse_toc(&text).map_err(|e| format!("rule: {e}"))
+}
+
+fn strings(book: &BTreeMap<String, serde_json::Value>) -> BTreeMap<String, String> {
+    book.iter().filter_map(|(k, v)| v.as_str().map(|t| (k.clone(), t.to_string()))).collect()
 }
 
 fn book_texts(book: &BTreeMap<String, serde_json::Value>) -> impl Fn(&str) -> Option<String> + '_ {
     move |slug| book.get(slug).and_then(|v| v.as_str()).map(str::to_string)
 }
 
-/// Writes `toc` and its generated tree under `law` and stages it.
-fn write_law(law: &Path, toc: &[code::Part], book: &BTreeMap<String, serde_json::Value>) -> Result<(), String> {
-    let files = code::generate(toc, book_texts(book));
-    code::write_tree(law, &code::render_toc(toc), &files).map_err(|e| format!("rule: writing {}: {e}", law.display()))?;
-    let root = law.parent().unwrap_or(law);
-    let add = spira_config::bounded::bounded("git").arg("-C").arg(root).args(["add", "-A", "--", "law"]).output();
-    match add {
-        Ok(o) if o.status.success() => {}
-        _ => return Err("rule: git add law failed".to_string()),
-    }
-    Ok(())
-}
 
 fn cmd_code(db: &str, rest: &[String]) -> i32 {
     let (mut check, mut texts) = (false, None);
@@ -509,7 +531,7 @@ fn cmd_code(db: &str, rest: &[String]) -> i32 {
         }
         return if drift.is_empty() { 0 } else { 1 };
     }
-    match write_law(&law, &toc, &book) {
+    match code::write_law(&law, &toc, &strings(&book)) {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("{e}");
@@ -683,7 +705,7 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
     }
     let Ok(law) = law_dir() else { return 0 };
     let Ok(toc) = read_toc(&law) else { return 0 };
-    match write_law(&law, &toc, &after) {
+    match code::write_law(&law, &toc, &strings(&after)) {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("{e}");
