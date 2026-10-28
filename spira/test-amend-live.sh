@@ -124,4 +124,17 @@ wantrc "no text" "2" "$RC"
 run_bead sp-aml-b --ack-within 5m --note x
 wantrc "--ack-within without --live" "2" "$RC"
 
+echo
+echo "T7: --settle merges what a released bead left unanswered, and --enforce still finds the record"
+record am-dd sp-aml-b pending 9000 "left unanswered at release"
+run_bead --settle sp-aml-b
+wantrc "settle ok" "0" "$RC"
+want "text merged into the body" "left unanswered at release" "$(desc_of sp-aml-b)"
+want "recorded as enforced" '"state":"enforced"' "$(cat "$MAIL/dwarf-sp-aml-b/amend/am-dd.json")"
+nowant "no longer blocks" "block" "$(hook sp-aml-b '{"tool_name":"Bash","tool_input":{"command":"ls"}}')"
+record am-ee sp-aml-b pending 9000 "kept after the mailbox is reaped"
+rm -rf "$MAIL/dwarf-sp-aml-b/new"
+NOW=9001 run_bead --enforce am-ee
+wantrc "enforce finds it with the mailbox reaped" "0" "$RC"
+
 tl_summary

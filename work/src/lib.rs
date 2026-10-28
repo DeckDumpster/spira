@@ -241,7 +241,7 @@ pub fn build_request_with_body(bound: &str, verb: &str, verb_args: &[String], ti
             }
             req.extend(["--actor".to_string(), actor.to_string()]);
         }
-        "done" | "blocked" | "superseded-by" => {
+        "done" | "blocked" | "superseded-by" | "ack" => {
             req.extend(verb_args.iter().cloned());
             req.extend(["--actor".to_string(), actor.to_string()]);
         }
@@ -323,6 +323,14 @@ mod tests {
     #[test]
     fn build_request_never_lets_submit_take_a_tip_argument() {
         assert!(build_request("sp-3m1p9", "submit", &["--tip".into(), "usersupplied".into()], Some("real"), "a").is_err());
+    }
+
+    #[test]
+    fn build_request_ack_carries_the_answer_and_the_actor() {
+        assert_eq!(
+            build_request("sp-3m1p9", "ack", &["am-fc37e168a5".into(), "--accept".into()], None, "warden").unwrap(),
+            vec!["work", "sp-3m1p9", "ack", "am-fc37e168a5", "--accept", "--actor", "warden"]
+        );
     }
 
     #[test]
