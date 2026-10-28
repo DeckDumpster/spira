@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
 
-use rule::code::{append, drift, generate, generate_with, parse_pointers, parse_toc, record_moves, render_pointers, render_toc, resolve, write_tree, Merged, Miss, Moved, Pointers, Retired};
+use rule::code::{append, drift, generate, parse_pointers, parse_toc, record_moves, render_pointers, render_toc, resolve, write_tree, Merged, Miss, Moved, Pointers, Retired};
 
 const TOC: &str = r#"[[part]]
 number = 1
@@ -38,7 +38,7 @@ fn book(slug: &str) -> Option<String> {
 #[test]
 fn three_statutes_in_two_parts_generate_the_expected_tree() {
     let parts = parse_toc(TOC).unwrap();
-    let tree = generate(&parts, book);
+    let tree = generate(&parts, &Pointers::default(), book);
     let want: BTreeMap<&str, &str> = BTreeMap::from([
         ("index.md", "# Statute code\n\n- Part 1 — Alpha — First scope.\n- Part 2 — Beta — Second scope.\n"),
         ("1-alpha/index.md", "# Part 1 — Alpha\n\nFirst scope.\n\n- §1.1 law-one — Do one.\n- §1.2 law-two — Do two.\n"),
@@ -59,7 +59,7 @@ fn toc_renders_to_itself() {
 #[test]
 fn a_hand_edit_or_a_stray_file_is_drift() {
     let parts = parse_toc(TOC).unwrap();
-    let tree = generate(&parts, book);
+    let tree = generate(&parts, &Pointers::default(), book);
     let dir = testkit::TempDir::new("law-drift");
     write_tree(&dir, TOC, &tree).unwrap();
     assert!(drift(&dir, &tree).is_empty());
@@ -80,10 +80,10 @@ fn a_hand_edit_or_a_stray_file_is_drift() {
 #[test]
 fn append_adds_at_the_end_and_moves_nothing() {
     let parts = parse_toc(TOC).unwrap();
-    let before = generate(&parts, book);
+    let before = generate(&parts, &Pointers::default(), book);
     let after = append(&parts, 1, "law-four").unwrap();
     assert_eq!(after[0].slugs, ["law-one", "law-two", "law-four"]);
-    let grown = generate(&after, |s| book(s).or(Some("Four.".into())));
+    let grown = generate(&after, &Pointers::default(), |s| book(s).or(Some("Four.".into())));
     for (path, body) in &before {
         if path != "index.md" && !path.ends_with("/index.md") {
             assert_eq!(grown.get(path), Some(body), "{path} moved");
@@ -104,12 +104,12 @@ fn append_refuses_an_unknown_part_and_a_slug_in_another_part() {
 fn a_retired_slug_keeps_its_number() {
     let parts = parse_toc(TOC).unwrap();
     let gone = |s: &str| if s == "law-one" { None } else { book(s) };
-    let tree = generate(&parts, gone);
+    let tree = generate(&parts, &Pointers::default(), gone);
     assert!(tree["1-alpha/1.1-law-one.md"].contains("[Reserved]"));
     assert!(tree.contains_key("1-alpha/1.2-law-two.md"));
 
     let p = Pointers { retired: vec![Retired { slug: "law-one".into(), reason: "Superseded by hand.".into(), replaced_by: Some("law-three".into()), on: "2026-10-28".into() }], ..Pointers::default() };
-    let tree = generate_with(&parts, &p, gone);
+    let tree = generate(&parts, &p, gone);
     assert_eq!(tree["1-alpha/1.1-law-one.md"], "# §1.1 law-one\n\n[Retired 2026-10-28] Superseded by hand.\n\nReplaced by §2.1 law-three.\n");
     assert!(!tree["1-alpha/1.1-law-one.md"].contains("[Reserved]"));
 }
@@ -118,7 +118,7 @@ fn a_retired_slug_keeps_its_number() {
 fn a_merged_slug_renders_where_it_went() {
     let parts = parse_toc(TOC).unwrap();
     let p = Pointers { merged: vec![Merged { from: "law-one".into(), into: "law-three".into(), reason: "Same rule.".into(), on: "2026-10-28".into() }], ..Pointers::default() };
-    let tree = generate_with(&parts, &p, |s| if s == "law-one" { None } else { book(s) });
+    let tree = generate(&parts, &p, |s| if s == "law-one" { None } else { book(s) });
     assert_eq!(tree["1-alpha/1.1-law-one.md"], "# §1.1 law-one\n\n[Merged into §2.1 law-three] Same rule.\n");
 }
 
@@ -280,7 +280,7 @@ fn the_committed_tree_is_what_toc_toml_generates() {
     let toc = parse_toc(&std::fs::read_to_string(root.join("law/toc.toml")).unwrap()).unwrap();
     let seeds = root.join("spira/statutes");
     let text = |slug: &str| std::fs::read_to_string(seeds.join(format!("{slug}.txt"))).ok();
-    let drift = drift(&root.join("law"), &generate(&toc, text));
+    let drift = drift(&root.join("law"), &generate(&toc, &Pointers::default(), text));
     assert!(drift.is_empty(), "law/ differs from law/toc.toml — run `rule.sh code`: {drift:?}");
 }
 
@@ -306,7 +306,7 @@ fn commit_law_adds_the_section_on_its_own_branch_and_leaves_the_checkout_alone()
         .into_iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
-    let branch = rule::code::commit_law(repo.path(), None, wt_root.path(), "enact", "law-four", &toc, &book).unwrap();
+    let branch = rule::code::commit_law(repo.path(), None, wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &book).unwrap();
     let show = |p: &str| Command::new("git").arg("-C").arg(repo.path()).args(["show", &format!("{branch}:{p}")]).output().unwrap();
     let added = show("law/2-beta/2.2-law-four.md");
     assert!(added.status.success() && String::from_utf8_lossy(&added.stdout).contains("Do four."));
@@ -330,7 +330,11 @@ fn queue_shims(repo: &Path) -> (testkit::TempDir, String) {
 }
 
 fn land(repo: &Path, wt_root: &Path, verb: &str, key: &str, toc: &[rule::code::Part], book: &BTreeMap<String, String>) -> Result<(String, String), String> {
-    rule::code::land_law(&rule::code::LawRepo { path: repo, base: None, name: "fixture" }, wt_root, verb, key, toc, book)
+    land_with(repo, wt_root, verb, key, toc, &Pointers::default(), book)
+}
+
+fn land_with(repo: &Path, wt_root: &Path, verb: &str, key: &str, toc: &[rule::code::Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> Result<(String, String), String> {
+    rule::code::land_law(&rule::code::LawRepo { path: repo, base: None, name: "fixture" }, wt_root, verb, key, toc, pointers, book)
 }
 
 #[test]
@@ -342,7 +346,7 @@ fn commit_law_twice_for_one_slug_in_one_second_gives_two_branches() {
         .into_iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
-    let branches: Vec<String> = (0..5).map(|_| rule::code::commit_law(repo.path(), None, wt_root.path(), "enact", "law-four", &toc, &book).unwrap()).collect();
+    let branches: Vec<String> = (0..5).map(|_| rule::code::commit_law(repo.path(), None, wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &book).unwrap()).collect();
     let distinct: std::collections::BTreeSet<_> = branches.iter().collect();
     assert_eq!(distinct.len(), branches.len(), "{branches:?}");
 }
@@ -365,6 +369,23 @@ fn an_enacted_law_commit_is_filed_under_a_bead_and_a_round_lands_it_on_the_land_
     assert!(log.contains("queue submit spira/sp-law1 fixture"), "{log}");
     let leftover = rule::code::git_in(repo.path(), &["for-each-ref", "--format=%(refname)", "refs/heads/law"]).unwrap();
     assert!(leftover.is_empty(), "a law/ branch no bead references was left behind: {leftover}");
+}
+
+#[test]
+fn a_retirement_with_a_pointer_lands_the_record_and_keeps_the_slug_in_the_toc() {
+    let repo = fixture_repo("law-retire-ptr");
+    let wt_root = testkit::TempDir::new("law-retire-ptr-wt");
+    let (_bin, path) = queue_shims(repo.path());
+    let _env = testkit::env(&[("PATH", Some(path.as_str()))]);
+    let toc = parse_toc(TOC).unwrap();
+    let book = book_of(&[("law-one", "Do one."), ("law-three", "Do three.")]);
+    let p = Pointers { retired: vec![Retired { slug: "law-two".into(), reason: "Obsolete.".into(), replaced_by: Some("law-one".into()), on: "2026-10-28".into() }], ..Pointers::default() };
+    land_with(repo.path(), wt_root.path(), "retire", "law-two", &toc, &p, &book).unwrap();
+    let git = |a: &[&str]| rule::code::git_in(repo.path(), a).unwrap();
+    assert_eq!(parse_pointers(&git(&["show", "HEAD:law/pointers.toml"])).unwrap(), p);
+    assert_eq!(git(&["show", "HEAD:law/toc.toml"]) + "\n", TOC);
+    assert_eq!(git(&["show", "HEAD:law/1-alpha/1.2-law-two.md"]), "# §1.2 law-two\n\n[Retired 2026-10-28] Obsolete.\n\nReplaced by §1.1 law-one.");
+    assert!(git(&["log", "-1", "--format=%s", "HEAD"]).contains("law: retire law-two"));
 }
 
 #[test]
@@ -413,7 +434,7 @@ fn a_second_enact_made_before_the_first_lands_takes_the_next_number() {
 #[test]
 fn a_trailing_citation_stays_out_of_the_shipped_section_and_a_midtext_parenthesis_stays_in() {
     let parts = parse_toc(TOC).unwrap();
-    let tree = generate(&parts, |slug| match slug {
+    let tree = generate(&parts, &Pointers::default(), |slug| match slug {
         "law-one" => Some("Do one. (per the case that produced it: details.)\n".into()),
         "law-two" => Some("Do two (per the spec) always. (sp-abc123.1: the scar, told at length.)".into()),
         "law-three" => Some("Do three (per the spec) always. (spa-x: not a bead) (per a ruling) (sp-abc123: the scar)".into()),

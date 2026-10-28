@@ -261,7 +261,7 @@ impl std::fmt::Display for Miss {
     }
 }
 
-fn is_section(s: &str) -> bool {
+pub fn is_section(s: &str) -> bool {
     s.split_once('.').is_some_and(|(a, b)| [a, b].iter().all(|x| !x.is_empty() && x.chars().all(|c| c.is_ascii_digit())))
 }
 
@@ -370,14 +370,10 @@ pub fn part_dir(p: &Part) -> String {
     format!("{}-{}", p.number, p.slug)
 }
 
-pub fn generate(parts: &[Part], text_of: impl Fn(&str) -> Option<String>) -> BTreeMap<String, String> {
-    generate_with(parts, &Pointers::default(), text_of)
-}
-
 /// Every file of the tree, keyed by path relative to `law/`. `toc.toml` and `pointers.toml` are
 /// inputs, not output. A slug the book no longer holds renders its pointer record, or as a
 /// reserved section when it has none.
-pub fn generate_with(parts: &[Part], pointers: &Pointers, text_of: impl Fn(&str) -> Option<String>) -> BTreeMap<String, String> {
+pub fn generate(parts: &[Part], pointers: &Pointers, text_of: impl Fn(&str) -> Option<String>) -> BTreeMap<String, String> {
     let mut files = BTreeMap::new();
     let mut top = String::from("# Statute code\n\n");
     for p in parts {
@@ -480,13 +476,8 @@ pub fn git_in(dir: &Path, args: &[&str]) -> Result<String, String> {
 
 /// Regenerates `law/` in a short-lived worktree of `repo`, commits it on a branch of its own and
 /// removes the worktree. The caller's directory and the repo's own checkout are never touched.
-pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, verb: &str, key: &str, toc: &[Part], book: &BTreeMap<String, String>) -> Result<String, String> {
-    commit_law_with(repo_path, base, wt_root, verb, key, toc, &Pointers::default(), book)
-}
-
-/// [`commit_law`] with the pointer record the tree is generated with.
 #[allow(clippy::too_many_arguments)]
-pub fn commit_law_with(repo_path: &Path, base: Option<&str>, wt_root: &Path, verb: &str, key: &str, toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> Result<String, String> {
+pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, verb: &str, key: &str, toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> Result<String, String> {
     std::fs::create_dir_all(wt_root).map_err(|e| format!("rule: {}: {e}", wt_root.display()))?;
     let stamp = format!("{}-{}", SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0), std::process::id());
     let branch = format!("law/{}-{stamp}", key.trim_start_matches("law-"));
@@ -527,14 +518,9 @@ pub struct LawRepo<'a> {
 
 /// Commits the `law/` projection on a branch of its own and hands it to the queue under a
 /// bead, so the next round lands it. Returns the bead id and the branch the queue holds.
-pub fn land_law(repo: &LawRepo, wt_root: &Path, verb: &str, key: &str, toc: &[Part], book: &BTreeMap<String, String>) -> Result<(String, String), String> {
-    land_law_with(repo, wt_root, verb, key, toc, &Pointers::default(), book)
-}
-
-/// [`land_law`] with the pointer record the tree is generated with.
-pub fn land_law_with(repo: &LawRepo, wt_root: &Path, verb: &str, key: &str, toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> Result<(String, String), String> {
+pub fn land_law(repo: &LawRepo, wt_root: &Path, verb: &str, key: &str, toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> Result<(String, String), String> {
     let (repo_path, repo_name) = (repo.path, repo.name);
-    let law_branch = commit_law_with(repo_path, repo.base, wt_root, verb, key, toc, pointers, book)?;
+    let law_branch = commit_law(repo_path, repo.base, wt_root, verb, key, toc, pointers, book)?;
     submit_law(repo_path, repo_name, wt_root, &law_branch, verb, key).map_err(|e| format!("{e}\nrule: the law/ commit is on branch {law_branch}"))
 }
 
@@ -557,6 +543,36 @@ pub fn with_in_flight(repo_path: &Path, base: Option<&str>, toc: Vec<Part>) -> V
                         home.slugs.push(slug.clone());
                     }
                 }
+            }
+        }
+    }
+    merged
+}
+
+/// `pointers` plus every record a branch not yet on `base` has filed, so two retirements made
+/// before either lands do not overwrite each other's pointer.
+pub fn with_in_flight_pointers(repo_path: &Path, base: Option<&str>, pointers: Pointers) -> Pointers {
+    let base = base.unwrap_or("HEAD");
+    let Ok(refs) = git_in(repo_path, &["for-each-ref", "--format=%(refname)", &format!("--no-merged={base}"), "refs/heads/law", "refs/heads/spira"]) else {
+        return pointers;
+    };
+    let mut merged = pointers;
+    for r in refs.lines() {
+        let Ok(text) = git_in(repo_path, &["show", &format!("{r}:law/{POINTERS_FILE}")]) else { continue };
+        let Ok(theirs) = parse_pointers(&text) else { continue };
+        for m in theirs.moved {
+            if !merged.moved.contains(&m) {
+                merged.moved.push(m);
+            }
+        }
+        for m in theirs.merged {
+            if !merged.merged.contains(&m) {
+                merged.merged.push(m);
+            }
+        }
+        for m in theirs.retired {
+            if !merged.retired.contains(&m) {
+                merged.retired.push(m);
             }
         }
     }
@@ -605,7 +621,7 @@ fn filed_id(out: &str) -> Result<String, String> {
 
 /// Writes `toc`, `pointers` and the generated tree under `law` and stages it.
 pub fn write_law(law: &Path, toc: &[Part], pointers: &Pointers, book: &BTreeMap<String, String>) -> Result<(), String> {
-    let files = generate_with(toc, pointers, |slug| book.get(slug).cloned());
+    let files = generate(toc, pointers, |slug| book.get(slug).cloned());
     write_tree(law, &render_toc(toc), &files).map_err(|e| format!("rule: writing {}: {e}", law.display()))?;
     std::fs::write(law.join(POINTERS_FILE), render_pointers(pointers)).map_err(|e| format!("rule: writing {}: {e}", law.display()))?;
     let root = law.parent().unwrap_or(law);

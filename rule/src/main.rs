@@ -410,7 +410,7 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
     if rc != 0 {
         return rc;
     }
-    let pointers = match read_pointers_at(&repo) {
+    let pointers = match read_pointers_for_write(&repo) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");
@@ -435,7 +435,7 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
 fn land_law(home: &str, repo: &(String, Option<String>), verb: &str, key: &str, toc: &[code::Part], pointers: &code::Pointers, book: &BTreeMap<String, String>) -> Result<(String, String), String> {
     let wt_root = spira_config::process::cfg("SPIRA_RUN").map(|r| Path::new(&r).join("worktree"))?;
     let reg = spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), Path::new(home));
-    let (id, branch) = code::land_law_with(&code::LawRepo { path: Path::new(&repo.0), base: repo.1.as_deref(), name: reg.home_repo() }, &wt_root, verb, key, toc, pointers, book)?;
+    let (id, branch) = code::land_law(&code::LawRepo { path: Path::new(&repo.0), base: repo.1.as_deref(), name: reg.home_repo() }, &wt_root, verb, key, toc, pointers, book)?;
     Ok((branch, id))
 }
 
@@ -512,6 +512,10 @@ fn read_pointers_at(repo: &(String, Option<String>)) -> Result<code::Pointers, S
     }
 }
 
+fn read_pointers_for_write(repo: &(String, Option<String>)) -> Result<code::Pointers, String> {
+    read_pointers_at(repo).map(|p| code::with_in_flight_pointers(Path::new(&repo.0), repo.1.as_deref(), p))
+}
+
 fn read_toc(law: &Path) -> Result<Vec<code::Part>, String> {
     let text = std::fs::read_to_string(law.join("toc.toml")).map_err(|e| format!("rule: {}: {e}", law.join("toc.toml").display()))?;
     code::parse_toc(&text).map_err(|e| format!("rule: {e}"))
@@ -585,7 +589,7 @@ fn cmd_code(db: &str, rest: &[String]) -> i32 {
     let old = on_disk.unwrap_or_default();
     let new_moves = &pointers.moved[old.moved.len()..];
     if check {
-        let mut drift = code::drift(&law, &code::generate_with(&toc, &pointers, book_texts(&book)));
+        let mut drift = code::drift(&law, &code::generate(&toc, &pointers, book_texts(&book)));
         drift.extend(code::check_pointers(&toc, &pointers));
         drift.extend(new_moves.iter().map(|m| format!("{}: §{} moved to {}, not yet recorded", code::POINTERS_FILE, m.section, code::section_of(&toc, &m.slug).unwrap_or_default())));
         for d in &drift {
@@ -800,7 +804,7 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
             return 1;
         }
     };
-    let (toc, mut pointers) = match read_toc_at(&repo).and_then(|t| read_pointers_at(&repo).map(|p| (t, p))) {
+    let (toc, mut pointers) = match read_toc_at(&repo).and_then(|t| read_pointers_for_write(&repo).map(|p| (t, p))) {
         Ok(tp) => tp,
         Err(e) => {
             eprintln!("{e}");
@@ -884,7 +888,7 @@ fn cmd_show(db: &str, home: &str, rest: &[String]) -> i32 {
         }
     };
     let numbered = rest[0].strip_prefix('§').unwrap_or(&rest[0]);
-    let is_number = numbered.split_once('.').is_some_and(|(a, b)| [a, b].iter().all(|x| !x.is_empty() && x.chars().all(|c| c.is_ascii_digit())));
+    let is_number = code::is_section(numbered);
     if !is_number {
         if let Some(text) = book.get(&key).and_then(|v| v.as_str()) {
             println!("{}", text.trim_end_matches('\n'));

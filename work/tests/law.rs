@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use rule::code::{parse_pointers, parse_toc, render_pointers, write_tree, generate_with, Pointers};
+use rule::code::{parse_pointers, parse_toc, render_pointers, write_tree, generate, Pointers};
 
 const TOC: &str = "[[part]]\nnumber = 1\nname = \"Alpha\"\nslug = \"alpha\"\nscope = \"First.\"\nslugs = [\"law-one\"]\n\n[[part]]\nnumber = 2\nname = \"Beta\"\nslug = \"beta\"\nscope = \"Second.\"\nslugs = [\"law-three\", \"law-two\"]\n";
 
@@ -21,7 +21,7 @@ fn worktree(pointers: &str) -> testkit::TempDir {
     Command::new("git").arg("-C").arg(dir.path()).args(["init", "-q"]).status().unwrap();
     let toc = parse_toc(TOC).unwrap();
     let p: Pointers = parse_pointers(pointers).unwrap();
-    let tree = generate_with(&toc, &p, text);
+    let tree = generate(&toc, &p, text);
     write_tree(&dir.join("law"), TOC, &tree).unwrap();
     std::fs::write(dir.join("law/pointers.toml"), render_pointers(&p)).unwrap();
     dir
