@@ -13,6 +13,14 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+/// Dead gates on one branch, with no gate dying elsewhere between, that make the branch the cause.
+const DEAD_GATES_RED: u32 = 2;
+
+/// A NO_VERDICT that names no host-side cause: the gate ran the branch and never finished.
+fn is_dead_gate_reason(reason: &str) -> bool {
+    matches!(reason, "died" | "timeout" | "unspecified")
+}
+
 pub struct Pass<'a> {
     pub s: &'a Settings,
     pub repos: &'a [RepoRow],
@@ -538,11 +546,18 @@ impl<'a> Pass<'a> {
             self.log(&format!("CHECK6 {id}: certification gate {} on {br} in {name} ({reason})", g.outcome.word()));
             let moved = matches!(g.outcome, GateOutcome::Fail | GateOutcome::NoVerdict)
                 && self.git.rev_parse(&repo.path, br).unwrap_or_default() != tip;
+            let dead_run = (g.outcome == GateOutcome::NoVerdict && !moved && is_dead_gate_reason(&reason))
+                .then(|| self.files.note_dead(br))
+                .filter(|n| *n >= DEAD_GATES_RED);
+            if g.outcome == GateOutcome::Fail {
+                self.files.note_gate_judged(br);
+            }
             if moved {
                 self.log(&format!("CHECK6 {id}: {br} moved during the gate — verdict on {tip} not recorded"));
             } else {
                 match g.outcome {
                     GateOutcome::Fail => drop(self.lc_certify(id, &tip, "red", &reason)),
+                    GateOutcome::NoVerdict if dead_run.is_some() => drop(self.lc_certify(id, &tip, "red", "timeout")),
                     GateOutcome::NoVerdict => drop(self.lc_certify(id, &tip, "infra", "")),
                     _ => {}
                 }
@@ -556,7 +571,7 @@ impl<'a> Pass<'a> {
                     self.files.defer_to_round(br, &tip);
                     self.log(&format!("CHECK6 {id}: {br} at {tip} deferred to round: over-cap"));
                 }
-                GateOutcome::NoVerdict => {
+                GateOutcome::NoVerdict if dead_run.is_none() => {
                     if matches!(reason.as_str(), "scratch-short" | "died") {
                         self.files.back_off(br, &tip, self.clock.now());
                     }
@@ -575,8 +590,12 @@ impl<'a> Pass<'a> {
                     let n = self.count_or_q(&repo.path, &format!("{}..{br}", w.base));
                     let scope = self.scope_note(name, br, &g.suite);
                     let scope_part = if scope.is_empty() { String::new() } else { format!("\n{scope}") };
+                    let why = match dead_run {
+                        Some(k) => format!("{name}'s certification gate could not finish this branch: it died {k} times running ({reason}) while no other branch's gate did, so the branch is the cause. Look at the phase and test the tail below was in."),
+                        None => format!("branch {br} failed {name}'s certification gate."),
+                    };
                     let note = format!(
-                        "Reopened by sentinel: branch {br} failed {name}'s certification gate. The branch carries {n} commit(s) from the previous session — the next dwarf should resume from the existing work, not restart.\n{scope_part}\n\n{}",
+                        "Reopened by sentinel: {why} The branch carries {n} commit(s) from the previous session — the next dwarf should resume from the existing work, not restart.\n{scope_part}\n\n{}",
                         tail_lines(&g.out, 20)
                     );
                     let cause = crate::model::red_cause("cert-gate-red", &reason);
@@ -600,6 +619,7 @@ impl<'a> Pass<'a> {
             self.log(&format!("CHECK6 {id}: certification PASS on {br} in {name} — this tree had already passed"));
         }
         self.files.clear_noverdict(br);
+        self.files.note_gate_judged(br);
         let (closed, st) = self.handed_on_now(id);
         if !closed {
             self.log(&format!("CHECK6 {id}: bead is now {st} (was closed at scan time) — not certifying {br}"));

@@ -1448,6 +1448,7 @@ fn certify_faults_on_an_unreadable_or_missing_suite_verdict() {
             t.err()
         );
         assert!(!certified_tree_exists(&t) && round_phase(&t) == "ATTRIBUTING");
+        forget_pass_ledger(&t);
     }
     *t.scripts.round_vm_results.borrow_mut() =
         vec![ok("test-a.sh"), ("test-b.sh".into(), "skip".into())];
@@ -5076,4 +5077,70 @@ fn a_recorded_mend_moves_the_next_pass_head_to_the_mended_tip() {
         "the head is rebuilt from the mended tip: {:?}",
         t.git.calls.borrow()
     );
+}
+
+fn forget_pass_ledger(t: &T) {
+    for e in fs::read_dir(t.s().run.join("rounds")).unwrap().flatten() {
+        if e.file_name().to_string_lossy().starts_with("pass-ledger-") {
+            fs::remove_file(e.path()).unwrap();
+        }
+    }
+}
+
+const INSTALL_FAULT: &str = "FIXTURE-FAULT: install rc=7: install failed — harness fault\ninstall rc=7 output tail:\nunits-install: no such unit\n";
+
+fn fault_next_pass(t: &T) {
+    *t.scripts.round_vm.borrow_mut() = RunOut {
+        rc: 3,
+        out: String::new(),
+        err: String::new(),
+    };
+    *t.scripts.round_vm_files.borrow_mut() = vec![("fixture-fault.out".into(), INSTALL_FAULT.into())];
+}
+
+#[test]
+fn a_member_in_two_consecutive_faulted_passes_is_ejected_with_the_fault_text() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    fault_next_pass(&t);
+
+    assert_eq!(t.run(&["round", "certify", &batch]), 4);
+    assert!(!t.lib.has("bead_reopen sp-a"), "one faulted pass still leaves the member in");
+
+    assert_eq!(t.run(&["round", "certify", &batch]), 4);
+    assert!(t.lib.has("bead_reopen sp-a eject-red"), "{:?}", t.lib.calls.borrow());
+    let comment = t.lib.calls.borrow().iter().find(|c| c.starts_with("comment sp-a")).cloned().unwrap_or_default();
+    assert!(
+        comment.contains("units-install: no such unit") && comment.contains("2 consecutive passes"),
+        "{comment}"
+    );
+    assert!(kv_of(&t, "round").get("members").is_none_or(|m| !m.contains("sp-a")));
+}
+
+#[test]
+fn a_green_pass_between_two_faults_makes_the_second_a_first_again() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    fault_next_pass(&t);
+    assert_eq!(t.run(&["round", "certify", &batch]), 4);
+
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 0, out: String::new(), err: String::new() };
+    *t.scripts.round_vm_files.borrow_mut() = vec![];
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    assert!(!t.lib.has("bead_reopen sp-a"));
+}
+
+#[test]
+fn faulted_passes_with_the_same_members_aboard_blame_none_of_them() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    fault_next_pass(&t);
+    for _ in 0..3 {
+        assert_eq!(t.run(&["round", "certify", &batch]), 4);
+    }
+    assert!(!t.lib.has("bead_reopen"), "{:?}", t.lib.calls.borrow());
 }
