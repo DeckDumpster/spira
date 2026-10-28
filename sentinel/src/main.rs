@@ -174,6 +174,7 @@ fn classify_unclaimable_main() -> i32 {
         ci: env("SPIRA_CI_LABEL", "awaiting-ci"), // literal-ok: fallback when conf.sh is not sourced
         ask: env("SPIRA_ASK_LABEL", "needs-operator"), // literal-ok: fallback when conf.sh is not sourced
         groom_ask: env("SPIRA_GROOM_ASK_LABEL", "groom-asked"),
+        work_types: unclaimable::schema_work_types(std::path::Path::new(&env("SPIRA_HOME", ""))),
     };
     let mut beads = String::new();
     if std::io::stdin().read_to_string(&mut beads).is_err() {

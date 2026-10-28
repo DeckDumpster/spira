@@ -118,7 +118,7 @@ impl<'a> Sentinel<'a> {
         let (Ok(ci), Ok(groom_ask)) = (spira_config::process::cfg("SPIRA_CI_LABEL"), spira_config::process::cfg("SPIRA_GROOM_ASK_LABEL")) else {
             return String::new();
         };
-        let labels = crate::unclaimable::Labels { scope: self.cfg.scope.clone(), ci, ask: self.cfg.ask.clone(), groom_ask };
+        let labels = crate::unclaimable::Labels { scope: self.cfg.scope.clone(), ci, ask: self.cfg.ask.clone(), groom_ask, work_types: crate::unclaimable::schema_work_types(&self.cfg.home) };
         crate::unclaimable::classify(&ready_raw, &parts, &all_parts, &held.join(","), &labels)
     }
 

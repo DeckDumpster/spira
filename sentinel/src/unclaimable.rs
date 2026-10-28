@@ -14,6 +14,17 @@ pub struct Labels {
     pub ci: String,
     pub ask: String,
     pub groom_ask: String,
+    pub work_types: Vec<String>,
+}
+
+pub fn schema_work_types(home: &std::path::Path) -> Vec<String> {
+    spira_config::bounded::bounded(home.join("schema.sh"))
+        .arg("work-types")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().map(str::to_string).collect())
+        .unwrap_or_default()
 }
 
 type Parts = Vec<(String, BTreeSet<String>, BTreeSet<String>)>;
@@ -63,6 +74,9 @@ pub fn classify(beads_json: &str, parts: &str, all_parts: &str, held_ids: &str, 
         let bid = bead.get("id").and_then(Value::as_str).unwrap_or("?");
         let kind = bead.get("issue_type").and_then(Value::as_str).unwrap_or("");
         if matches!(kind, "decision" | "event" | "epic") || l.contains(&labels.ask) {
+            continue;
+        }
+        if !kind.is_empty() && !labels.work_types.is_empty() && !labels.work_types.iter().any(|t| t == kind) {
             continue;
         }
         if held.contains(bid) || l.contains(&labels.groom_ask) {
@@ -135,7 +149,7 @@ mod tests {
     use super::*;
 
     fn labels() -> Labels {
-        Labels { scope: "myscope".into(), ci: "ci-parked".into(), ask: "needs-decision".into(), groom_ask: "parked".into() }
+        Labels { scope: "myscope".into(), ci: "ci-parked".into(), ask: "needs-decision".into(), groom_ask: "parked".into(), work_types: vec!["task".into(), "epic".into()] }
     }
     const PARTS: &str = "builder|myscope,plan|spira-poison\nops|myscope,incident|spira-poison\n";
 
@@ -161,6 +175,13 @@ mod tests {
         ] {
             assert_eq!(classify(b, PARTS, PARTS, held, &l), "", "{b}");
         }
+    }
+
+    #[test]
+    fn a_kind_with_no_claiming_persona_is_silent_and_a_work_bead_is_not() {
+        let b = r#"[{"id":"p","issue_type":"proposal","labels":["myscope"]},{"id":"w","issue_type":"task","labels":["myscope"]}]"#;
+        let got = classify(b, PARTS, PARTS, "", &labels());
+        assert!(got.contains("UNCLAIMABLE w —") && !got.contains("UNCLAIMABLE p —"), "{got}");
     }
 
     #[test]
