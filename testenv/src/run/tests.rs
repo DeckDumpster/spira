@@ -522,14 +522,14 @@ fn an_undeclared_skip_req_is_red_not_green() {
 }
 
 #[test]
-fn a_declared_skip_req_stays_green() {
+fn a_declared_skip_req_alone_is_empty_not_green() {
     let w = World::new("skipreq-declared");
     let rt = runtime();
     let b = FakeBuilder::new(None);
     // test-c.sh requires "nothere", declared in the fixture's skip-allowlist.tsv.
     let rc = w.run(&rt, &b, &["--suites", "test-c.sh", "topic"], "", &w.root);
-    assert_eq!(rc, 0);
-    assert_eq!(w.last(), "VERDICT GREEN ran=0 skipped=1");
+    assert_eq!(rc, 5);
+    assert!(w.last().starts_with("VERDICT EMPTY rc=5 ran=0 skipped=1"), "{}", w.last());
     assert!(w.has_line(|l| l.starts_with("  test-c.sh") && l.contains("SKIP-REQ requires:nothere")));
 }
 
@@ -586,14 +586,29 @@ fn a_suite_that_turns_from_green_to_an_undeclared_skip_is_no_longer_green() {
 }
 
 #[test]
-fn a_declared_skip_stays_green_and_is_named_in_the_skipped_count() {
+fn a_skip_beside_an_executed_pass_is_still_green_and_ran_counts_only_the_pass() {
+    let w = World::new("skip-beside-pass");
+    let rt = runtime();
+    rt.suite("test-g.sh", 77, "1..0 # SKIP widget missing (declared)\n");
+    rt.suite("test-a.sh", 0, "1..1\nok 1 - a\n");
+    let b = FakeBuilder::new(None);
+    let rc = w.run(&rt, &b, &["--suites", "test-g.sh,test-a.sh", "topic"], "", &w.root);
+    assert_eq!(rc, 0);
+    assert_eq!(w.last(), "VERDICT GREEN ran=1 skipped=1");
+}
+
+#[test]
+fn a_run_whose_every_suite_was_skipped_is_empty_and_non_zero() {
     let w = World::new("skip-declared");
     let rt = runtime();
     rt.suite("test-g.sh", 77, "1..0 # SKIP widget missing (declared)\n");
     let b = FakeBuilder::new(None);
     let rc = w.run(&rt, &b, &["--suites", "test-g.sh", "topic"], "", &w.root);
-    assert_eq!(rc, 0);
-    assert_eq!(w.last(), "VERDICT GREEN ran=1 skipped=1");
+    assert_eq!(rc, 5);
+    assert_eq!(
+        w.last(),
+        "VERDICT EMPTY rc=5 ran=0 skipped=1 — all 1 selected suites skipped, nothing was tested"
+    );
     assert!(w.has_line(|l| l.starts_with("  test-g.sh") && l.trim().ends_with("SKIPPED")));
     assert!(w.has_line(|l| l.contains("1 suite(s) skipped (declared") && l.contains("test-g.sh")));
 }

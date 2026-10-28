@@ -36,6 +36,9 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
+/// Exit code of a run whose every selected suite was skipped: not green, not a harness fault.
+pub const RC_EMPTY: i32 = 5;
+
 /// How a run ended; rendered as the last stdout line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finish {
@@ -86,6 +89,9 @@ impl Finish {
             session: None,
         }
     }
+    fn empty(skipped: usize) -> Self {
+        Finish { rc: RC_EMPTY, skipped, ..Finish::green(0) }
+    }
     fn nothing() -> Self {
         Finish {
             rc: 0,
@@ -105,6 +111,7 @@ impl Finish {
         match self.rc {
             0 => ("GREEN".into(), "-".into(), None),
             1 => ("RED".into(), "-".into(), None),
+            RC_EMPTY => ("EMPTY".into(), "-".into(), None),
             _ => ("FAULT".into(), self.reason.unwrap_or("harness").into(), self.session.map(String::from)),
         }
     }
@@ -131,6 +138,10 @@ impl Finish {
             1 => format!(
                 "VERDICT RED ran={} red={}{deferred}{skipped}",
                 self.ran, self.red
+            ),
+            RC_EMPTY => format!(
+                "VERDICT EMPTY rc={RC_EMPTY} ran={} skipped={} — all {} selected suites skipped, nothing was tested",
+                self.ran, self.skipped, self.skipped
             ),
             rc => format!(
                 "VERDICT FAULT rc={rc} ran={} reason={}{}",
@@ -1786,11 +1797,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         drop(guard);
         if reds.is_empty() {
             deps.log("all suites pre-empted by unmet requirements — nothing to run");
-            return Finish {
-                skipped: skipped_count,
-            session: None,
-                ..Finish::green(0)
-            };
+            return Finish::empty(skipped_count);
         }
         deps.log(&format!(
             "{} suite(s) red (undeclared skip/skip-req) — no suite was runnable",
@@ -2070,7 +2077,10 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         (deps.out)(&suite_line(n, &rec));
         records.insert(n.clone(), rec);
     }
-    let ran = records.values().filter(|r| r.status.executed()).count();
+    let ran = records
+        .values()
+        .filter(|r| r.status.executed() && !matches!(r.status, Status::Skip | Status::SkipReq))
+        .count();
 
     // ---- metadata, timings ---------------------------------------------------------
     write_meta(
@@ -2334,6 +2344,10 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             skipped.len(),
             skipped.join(" ")
         ));
+    }
+    if ran == 0 && reds.is_empty() && !skipped.is_empty() {
+        deps.log(&format!("all {} selected suite(s) skipped — nothing was tested", skipped.len()));
+        return Finish::empty(skipped.len());
     }
     let run_env = [("SPIRA_RUN", s.run.display().to_string())];
     let results_s = results.display().to_string();

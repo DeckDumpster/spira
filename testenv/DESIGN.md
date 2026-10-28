@@ -617,6 +617,9 @@ into a fresh `cargo-target-bins/<tree>` on every new tree (95-116 s, sp-zv7j4).
 * **D5 — an empty selection says `VERDICT GREEN ran=0 selected=0`.** It is exit 0 by
   contract (the gate passes when nothing is affected). A caller that needs ran>0, as
   round.sh does, still has `ran=`.
+  A selection that was non-empty but wholly skipped is the opposite case: `VERDICT EMPTY rc=5
+  ran=0 skipped=<n>`, exit 5 — nothing was tested, so it is never green. `ran=` counts only
+  suites that executed and were not skipped.
 * **D6 — scratch slots are warm and bounded.** 4 by default; overflow is a cold throwaway
   worktree, never a wait.
 * **D7 — `--deadline S` is a hard cut of the suite phase, and a cut is not a verdict.**

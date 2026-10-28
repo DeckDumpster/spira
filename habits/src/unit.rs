@@ -33,7 +33,7 @@ pub fn parse(out: &str) -> Verdict {
     let verdict = out.lines().rev().find_map(|l| l.strip_prefix("VERDICT "));
     match verdict {
         Some(v) if v.starts_with("GREEN") => return Verdict::Green,
-        Some(v) if v.starts_with("FAULT") => return Verdict::Fault(v.to_string()),
+        Some(v) if v.starts_with("FAULT") || v.starts_with("EMPTY") => return Verdict::Fault(v.to_string()),
         Some(v) if v.starts_with("RED") => {}
         _ => return Verdict::Fault("no testenv verdict".into()),
     }
@@ -126,6 +126,7 @@ mod tests {
     fn green_fault_and_a_missing_verdict_are_told_apart() {
         assert_eq!(parse("VERDICT GREEN ran=1"), Verdict::Green);
         assert!(matches!(parse("VERDICT FAULT rc=2 ran=0 reason=usage"), Verdict::Fault(_)));
+        assert!(matches!(parse("VERDICT EMPTY rc=5 ran=0 skipped=1 — all 1 selected suites skipped"), Verdict::Fault(w) if w.starts_with("EMPTY")));
         assert!(matches!(parse("test x ... FAILED\n"), Verdict::Fault(_)));
     }
 }

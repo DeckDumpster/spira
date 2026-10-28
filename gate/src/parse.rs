@@ -183,6 +183,7 @@ pub fn suites_step_ran(out: &str) -> bool {
         l.starts_with("VERDICT GREEN")
             || l.starts_with("VERDICT RED")
             || l.starts_with("VERDICT FAULT")
+            || l.starts_with("VERDICT EMPTY")
     }) || !red_suites(out).is_empty()
         || !ran_suites(out).is_empty()
 }
@@ -384,6 +385,7 @@ mod tests {
     fn verdict_ran_reads_the_runners_count() {
         assert_eq!(verdict_ran("  a.sh ok\nVERDICT GREEN ran=66 skipped=2"), Some(66));
         assert_eq!(verdict_ran("VERDICT RED ran=3 red=1"), Some(3));
+        assert!(suites_step_ran("VERDICT EMPTY rc=5 ran=0 skipped=2 — all 2 selected suites skipped"));
         assert_eq!(verdict_ran("a.sh ok\nran=5 but no verdict"), None);
     }
 
