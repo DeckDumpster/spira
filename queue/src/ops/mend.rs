@@ -1,4 +1,4 @@
-//! `queue round mended|return|environment|flaky|unsure|triage-ended <batch> <failure>`: a
+//! `queue round mended|return|environment|flaky|unsure|triage-ended|await-ask <batch> <failure>`: a
 //! mender's outcome for one failed suite. The verbs only record; the batcher decides the next
 //! pass from the recorded outcomes. Everything that bounds a mender (deadline, caps, the
 //! escalation check, one writer per branch) is enforced by spira-lc, not here.
@@ -86,6 +86,16 @@ pub fn run(
             send(serde_json::json!({"TriageEnded": {"at": now()}})),
             "triage ended",
         ),
+        "await-ask" => {
+            let Some(a) = ask else {
+                w.err(format!("queue.sh {label}: --ask <id> is required: the open ask the mend waits on"));
+                return USAGE;
+            };
+            if idents(w, &label, &[("ask id", a)]).is_err() {
+                return FAIL;
+            }
+            report(send(serde_json::json!({"Await": {"ask": a}})), "awaiting its ask")
+        }
         "return" => {
             if diagnosis.is_empty() {
                 w.err(format!(

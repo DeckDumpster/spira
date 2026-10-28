@@ -11,7 +11,7 @@ use crate::db::{CascadeStep, Conn, DbError, EventRecord};
 use crate::rows::escape;
 use crate::{flag, CANNOT_TELL, REFUSED};
 
-const COLUMNS: &str = "batch_id, pass, suite, state, picked_at, deadline, triage_ended_at, diagnosis, version";
+const COLUMNS: &str = "batch_id, pass, suite, state, picked_at, deadline, triage_ended_at, diagnosis, awaiting_ask, version";
 
 fn cell(row: &Value, col: &str) -> Option<String> {
     match row.get(col) {
@@ -36,6 +36,7 @@ fn from_json(row: &Value) -> Result<MendingRow, DbError> {
         deadline: num(row, "deadline"),
         triage_ended_at: num(row, "triage_ended_at"),
         diagnosis: cell(row, "diagnosis"),
+        awaiting_ask: cell(row, "awaiting_ask"),
         version: num(row, "version").unwrap_or(0) as u64,
     })
 }
@@ -59,12 +60,13 @@ fn opt_num(v: Option<i64>) -> String {
 
 fn set_clause(r: &MendingRow) -> String {
     format!(
-        "state = '{}', picked_at = {}, deadline = {}, triage_ended_at = {}, diagnosis = {}, version = {}",
+        "state = '{}', picked_at = {}, deadline = {}, triage_ended_at = {}, diagnosis = {}, awaiting_ask = {}, version = {}",
         r.state.as_str(),
         opt_num(r.picked_at),
         opt_num(r.deadline),
         opt_num(r.triage_ended_at),
         opt_str(&r.diagnosis),
+        opt_str(&r.awaiting_ask),
         r.version
     )
 }
@@ -98,7 +100,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("close-ended") => close_ended(&args[1..], conn),
         Some("mend") => mend(&args[1..], conn),
         Some("tips") => tips(&args[1..], conn),
-        _ => Err((CANNOT_TELL, "usage: spira-lc mending pickup <batch> --pass N --suite S --deadline-secs D --actor A | event <batch> --pass N --suite S --kind <json> --actor A | mend <batch> --pass N --suite S --members bead:from:to,... --facts <json> --fences <json> --actor A | tips --beads a,b | sweep --actor A | close-ended --actor A [--batch B] | list [--batch B] [--live]".to_string())),
+        _ => Err((CANNOT_TELL, "usage: spira-lc mending pickup <batch> --pass N --suite S --deadline-secs D --actor A | event <batch> --pass N --suite S --kind <json> --actor A | mend <batch> --pass N --suite S --members bead:from:to,... --facts <json> --fences <json> --actor A | tips --beads a,b | sweep --actor A [--deadline-secs D] | close-ended --actor A [--batch B] | list [--batch B] [--live]".to_string())),
     };
     match result {
         Ok(out) => (0, out),
@@ -140,8 +142,8 @@ fn event(args: &[String], conn: &Conn) -> Reply {
         }
     }
     let kind: MendingEventKind = serde_json::from_value(kind).map_err(|e| (CANNOT_TELL, format!("mending event: --kind did not parse: {e}")))?;
-    if matches!(kind, MendingEventKind::Pickup { .. } | MendingEventKind::Expire { .. }) {
-        return Err((REFUSED, "mending event: pickup and expire are the machine's own, not a mender's".into()));
+    if matches!(kind, MendingEventKind::Pickup { .. } | MendingEventKind::Expire { .. } | MendingEventKind::Resume { .. }) {
+        return Err((REFUSED, "mending event: pickup, resume and expire are the machine's own, not a mender's".into()));
     }
     if matches!(kind, MendingEventKind::Mended { .. }) {
         return Err((REFUSED, "mending event: a mend goes through `mending mend`, which assesses the tip".into()));
@@ -177,13 +179,34 @@ fn apply(conn: &Conn, row: &MendingRow, kind: MendingEventKind, actor: &str) -> 
 
 fn sweep(args: &[String], conn: &Conn) -> Reply {
     let actor = flag(args, "--actor").ok_or((CANNOT_TELL, "mending sweep: --actor is required".to_string()))?;
+    if let Some(deadline_s) = flag(args, "--deadline-secs").and_then(|d| d.parse::<u64>().ok()) {
+        resume_answered(conn, deadline_s, &actor).map_err(cannot)?;
+    }
     Ok(expire_overdue(conn, &actor).map_err(cannot)?.to_string())
+}
+
+fn ask_open(conn: &Conn, ask: &str) -> Result<bool, DbError> {
+    Ok(crate::rows::fetch_ask(conn, ask)?.is_some_and(|a| !a.state.is_terminal()))
+}
+
+/// Gives every MENDING row whose awaited ask has closed a fresh deadline to record its mend.
+pub fn resume_answered(conn: &Conn, deadline_s: u64, actor: &str) -> Result<usize, DbError> {
+    let rows = conn.query(&format!("SELECT {COLUMNS} FROM mending WHERE state = 'MENDING' AND awaiting_ask IS NOT NULL"))?;
+    let mut resumed = 0;
+    for row in rows.iter().map(from_json) {
+        let row = row?;
+        let Some(ask) = row.awaiting_ask.clone() else { continue };
+        if !ask_open(conn, &ask)? && apply(conn, &row, MendingEventKind::Resume { at: crate::db::now_epoch(), deadline_s }, actor).is_ok() {
+            resumed += 1;
+        }
+    }
+    Ok(resumed)
 }
 
 /// Applies `Expire` to every MENDING row whose deadline has passed; returns how many applied.
 pub fn expire_overdue(conn: &Conn, actor: &str) -> Result<usize, DbError> {
     let now = crate::db::now_epoch();
-    let rows = conn.query(&format!("SELECT {COLUMNS} FROM mending WHERE state = 'MENDING' AND deadline <= {now}"))?;
+    let rows = conn.query(&format!("SELECT {COLUMNS} FROM mending WHERE state = 'MENDING' AND awaiting_ask IS NULL AND deadline <= {now}"))?;
     let mut applied = 0;
     for row in rows.iter().map(from_json) {
         let row = row?;
@@ -236,6 +259,11 @@ fn list(args: &[String], conn: &Conn) -> Reply {
             let mut v = serde_json::to_value(&m).unwrap_or(Value::Null);
             v["state"] = Value::from(m.state.as_str());
             v["failed_at"] = num(r, "failed_at").map_or(Value::Null, Value::from);
+            let waiting = match &m.awaiting_ask {
+                Some(a) => ask_open(conn, a).map_err(cannot)?,
+                None => false,
+            };
+            v["ask_open"] = Value::from(waiting);
             Ok(v)
         })
         .collect::<Result<_, (i32, String)>>()?;

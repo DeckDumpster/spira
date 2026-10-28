@@ -1008,6 +1008,7 @@ mod tests {
         st.tables.insert("ask".into());
         st.tables.insert("mending".into());
         st.tables.insert("mend".into());
+        st.columns.insert(("mending".into(), "awaiting_ask".into()));
         for t in ["runtime_event", "runtime_applied", "runtime_cursor", "runtime_schedule", "runtime_poison"] {
             st.tables.insert(t.into());
         }

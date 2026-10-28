@@ -62,7 +62,7 @@ pub fn with_retries<T, E>(attempts: u32, pause: std::time::Duration, mut read: i
 
 pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
     let now = now_epoch();
-    let overdue_sql = format!("SELECT batch_id, pass, suite, deadline FROM mending WHERE state = 'MENDING' AND deadline <= {now} ORDER BY deadline");
+    let overdue_sql = format!("SELECT batch_id, pass, suite, deadline FROM mending WHERE state = 'MENDING' AND awaiting_ask IS NULL AND deadline <= {now} ORDER BY deadline");
     let mends_sql = format!("SELECT bead_id AS bead, COUNT(*) AS n FROM mend WHERE at >= {} GROUP BY bead_id", now - DAY_S);
     let overdue = with_retries(READ_ATTEMPTS, READ_PAUSE, || conn.query(&overdue_sql));
     let mends = with_retries(READ_ATTEMPTS, READ_PAUSE, || conn.query(&mends_sql));
