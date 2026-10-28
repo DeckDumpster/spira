@@ -3,6 +3,10 @@
 //! I/O here — `main.rs` is the only thing that touches git, the environment or a socket —
 //! so every rule below is covered without a fixture.
 
+pub mod help;
+pub mod review;
+use help::{refusal, R};
+
 pub const CANNOT_TELL: i32 = 2;
 pub const REFUSED: i32 = 3;
 
@@ -88,7 +92,9 @@ pub const VERBS: &[&str] = &[
 ];
 
 /// Verbs answered in this process, never sent to the socket.
-pub const LOCAL_VERBS: &[&str] = &["crates", "statute-check", "law", "checks"];
+pub const LOCAL_VERBS: &[&str] = &[
+    "crates", "statute-check", "review", "law", "checks", "prime", "help",
+];
 
 /// The `-p` selection for a branch's diff: every workspace member it touches plus its direct
 /// dependents — the gate's own selection (`gate::compose`), never `--workspace`. A
@@ -148,9 +154,9 @@ pub fn collect_body(args: &[String], read_file: impl Fn(&str) -> Result<String, 
         if FILE_FLAGS.contains(&a.as_str()) {
             if let Some(path) = args.get(i + 1).filter(|p| p.as_str() != "-") {
                 if body.is_some() || want_stdin {
-                    return Err(format!("work: more than one body in one request ({a} {path})"));
+                    return Err(refusal(R::TwoBodies, "", &[("detail", &format!(" ({a} {path})"))]));
                 }
-                body = Some(read_file(path).map_err(|e| format!("work: reading {path}: {e}"))?);
+                body = Some(read_file(path).map_err(|e| refusal(R::BodyRead, "", &[("err", &format!("reading {path}: {e}"))]))?);
                 out.extend([a.clone(), "-".to_string()]);
                 i += 2;
                 continue;
@@ -158,7 +164,7 @@ pub fn collect_body(args: &[String], read_file: impl Fn(&str) -> Result<String, 
         }
         if a == "-" {
             if body.is_some() || want_stdin {
-                return Err("work: more than one body in one request".to_string());
+                return Err(refusal(R::TwoBodies, "", &[("detail", "")]));
             }
             want_stdin = true;
         }
@@ -166,7 +172,7 @@ pub fn collect_body(args: &[String], read_file: impl Fn(&str) -> Result<String, 
         i += 1;
     }
     if want_stdin {
-        body = Some(read_stdin().map_err(|e| format!("work: reading stdin: {e}"))?);
+        body = Some(read_stdin().map_err(|e| refusal(R::BodyRead, "", &[("err", &format!("reading stdin: {e}"))]))?);
     }
     Ok((out, body))
 }
@@ -178,7 +184,7 @@ pub fn collect_mender_body(args: &[String], read_stdin: impl FnOnce() -> Result<
         return Ok((args.to_vec(), None));
     }
     let rest: Vec<String> = args.iter().filter(|a| a.as_str() != "-").cloned().collect();
-    let body = read_stdin().map_err(|e| format!("work: reading stdin: {e}"))?;
+    let body = read_stdin().map_err(|e| refusal(R::BodyRead, "", &[("err", &format!("reading stdin: {e}"))]))?;
     Ok((rest, Some(body)))
 }
 
@@ -194,13 +200,13 @@ pub fn build_request(bound: &str, verb: &str, verb_args: &[String], tip: Option<
 /// just before the client's own `--actor`.
 pub fn build_request_with_body(bound: &str, verb: &str, verb_args: &[String], tip: Option<&str>, actor: &str, body: Option<&str>) -> Result<Vec<String>, String> {
     if !VERBS.contains(&verb) {
-        return Err(format!("work: unknown verb {verb:?} (want {})", VERBS.join(", ")));
+        return Err(refusal(R::UnknownVerb, "", &[("verb", verb), ("want", &VERBS.join(", "))]));
     }
     if let Some(r) = verb_args.iter().find(|a| RESERVED.contains(&a.as_str())) {
-        return Err(format!("work {verb}: {r} is the client's to send, never the caller's; refused"));
+        return Err(refusal(R::ReservedFlag, verb, &[("flag", r)]));
     }
     if matches!(verb, "file-followup" | "split") && verb_args.iter().any(|a| a == "--for") {
-        return Err(format!("work {verb}: --for is the client's to send (it files as your own persona); refused"));
+        return Err(refusal(R::ForFlag, verb, &[]));
     }
     if LANE_VERBS.contains(&verb) {
         let mut req = vec!["work".to_string(), bound.to_string(), verb.to_string()];
@@ -212,10 +218,10 @@ pub fn build_request_with_body(bound: &str, verb: &str, verb_args: &[String], ti
         return Ok(req);
     }
     if !looks_like_bead_id(bound) {
-        return Err(format!("work {verb}: this environment is not bound to a bead (SPIRA_WORK_BEAD_ID), and {verb} acts on the bound bead; refused"));
+        return Err(refusal(R::NotBound, verb, &[]));
     }
     if let Some(foreign) = foreign_bead_reference(verb, bound, verb_args) {
-        return Err(format!("work: {foreign} is not the bound bead ({bound}); refused"));
+        return Err(refusal(R::ForeignBead, verb, &[("foreign", foreign), ("bound", bound)]));
     }
 
     let mut req = vec!["work".to_string(), bound.to_string(), verb.to_string()];
@@ -228,9 +234,9 @@ pub fn build_request_with_body(bound: &str, verb: &str, verb_args: &[String], ti
             }
         }
         "submit" => {
-            let Some(tip) = tip else { return Err("work submit: no tip could be read from the worktree".to_string()) };
+            let Some(tip) = tip else { return Err(refusal(R::SubmitNoTip, "submit", &[])) };
             if let Some(t) = verb_args.iter().find(|a| matches!(a.as_str(), "--tip")) {
-                return Err(format!("work submit: {t} is read from the worktree, never taken from the caller; refused"));
+                return Err(refusal(R::SubmitTipArg, "submit", &[("flag", t)]));
             }
             req.extend(verb_args.iter().cloned());
             req.extend(["--tip".to_string(), tip.to_string(), "--actor".to_string(), actor.to_string()]);

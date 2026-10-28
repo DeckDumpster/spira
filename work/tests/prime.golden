@@ -1,0 +1,441 @@
+# work — the builder's manual
+
+Every verb below is run as `work <verb>`. Generated from the verb definitions; it cannot drift from them.
+
+## 1. Reading the work item
+### work show
+Prints your bead: description, labels, notes, children.
+Use when: First, and again after any amendment or reopen.
+Checks:
+  - the bead is the bound one
+
+### work prime
+Prints this whole manual, generated from the code.
+Use when: Before you begin.
+
+### work help
+Prints one verb's entry: what it does, its arguments, what it checks, and each refusal with its fix.
+Use when: A verb refused you, or you are about to use one for the first time.
+Arguments:
+  <verb>
+Checks:
+  - the verb is one `work` serves
+Refusals:
+  - usage: work help <verb>
+    Fix: name one verb; `work prime` lists them all
+  - no verb {verb:?}
+    Fix: run `work prime` for the verbs
+
+## 2. Asking, noting, and being blocked
+### work note
+Leaves a plain note on your bead. No lifecycle effect.
+Use when: You want evidence or a decision recorded where the next reader will see it.
+Arguments:
+  <text> | -   (text on stdin)
+Checks:
+  - the bead is the bound one
+
+### work blocked
+Holds your bead and files the ask in one step.
+Use when: Only the operator can answer, and you cannot finish without it.
+Arguments:
+  "<the question>"
+  --default "<what you would do by default>"
+Checks:
+  - the bead is the bound one
+  - a default is given
+
+### work ack
+Records your answer to a live amendment of the bead.
+Use when: `work show` lists an amendment awaiting your answer.
+Arguments:
+  <amendment-id>
+  --accept | --decline (with a reason)
+Checks:
+  - the amendment belongs to your bead
+
+## 3. Follow-ups and splits
+### work file-followup
+Files a bead for work that follows from yours, parented to it.
+Use when: You found work you must not do now. A builder child needs a body with a `## Build` section naming the artifact and where.
+Arguments:
+  "<title>"
+  --repo <name>   (required: where the child's work lives)
+  --body-file -   (body on stdin)
+Checks:
+  - the parent is your bead
+  - the child never carries your `branch:` label
+Refusals:
+  - --for is the client's to send (it files as your own persona)
+    Fix: drop --for
+
+### work split
+Files a bead for a piece of your own bead's scope, parented to it.
+Use when: Part of this bead's scope is better landed on its own.
+Arguments:
+  "<title>"
+  --repo <name>   (required)
+  --body-file -
+Checks:
+  - the parent is your bead
+  - the child never carries your `branch:` label
+
+## 4. The law
+### work statute-check
+Checks a plan against the statutes before a governed decision and records the plan and the slugs on the bead.
+Use when: Before you add a program, service, daemon or unit; a language or file type; a dependency; or a protocol. A plan that adds none records nothing.
+Arguments:
+  "<one-paragraph plan>" | -   (plan on stdin)
+Checks:
+  - the registry and the statute mirror are configured and readable
+  - every statute returned has its full text
+  - the note is recorded before the text is printed
+Refusals:
+  - usage: work statute-check "<one-paragraph plan>" | work statute-check - < plan
+    Fix: pass exactly one argument: the plan, or `-` with the plan on stdin
+  - reading stdin: {err}
+    Fix: pass the plan as an argument instead
+  - refusing: {err}
+    Fix: the statute settings are missing from your environment; report it in a note and exit non-zero
+  - refusing: SPIRA_STATUTE_GUARDS and SPIRA_STATUTE_DIR must both be set; an unconfigured check is not a pass
+    Fix: do not proceed as if checked; report the missing settings in a note and exit non-zero
+  - refusing: cannot read the statute registry {path}: {err}
+    Fix: the check cannot run; report it in a note and exit non-zero rather than proceeding unchecked
+  - refusing: {err}
+    Fix: a returned statute has no text in the mirror; report it in a note, the check is incomplete
+  - the note was not recorded on the bead (exit {code}): {err}
+    Fix: retry; an unrecorded check does not count
+
+### work law
+Prints the statute code from the `law/` tree of your worktree: the table of contents, one part, one numbered section, or one statute by slug.
+Use when: Before a choice the statutes govern, to read the rule itself rather than a summary of it.
+Arguments:
+  [<part> | <part>.<n> | <slug>]   (default: the table of contents)
+Checks:
+  - it reads the tracked tree of the worktree it runs in; no store, no socket
+Refusals:
+  - usage: work law [<part> | <part>.<n> | <slug>]
+    Fix: pass at most one argument
+  - {err}
+    Fix: pick a part, section or slug from the table of contents printed with it
+
+## 5. Verifying
+Run suites only through testenv; `testenv --help` is its manual.
+
+### work crates
+Prints the `-p` words for your diff: touched crates plus their direct dependents.
+Use when: Before `cargo test`/`build`/`check`: `cargo test $(work crates)`. Empty output means nothing buildable changed. Never use `--workspace`.
+Arguments:
+  [<base>]   (default local/main)
+Checks:
+  - run it inside your worktree, where git and cargo can see the diff
+Refusals:
+  - git diff {base}...HEAD failed
+    Fix: check the base ref exists (`local/main` by default) and that you are in your worktree
+  - cargo metadata failed
+    Fix: run it from inside the workspace
+  - {err}
+    Fix: the diff could not be mapped to crates; test the crate you edited by name with `cargo test -p <crate>`
+
+### work checks
+Runs each `[[check]]` row the repository declares in `.spira/checks.toml`, each bounded by its budget, and prints `-- <name>: ok` or `FAIL` per row.
+Use when: Before you submit, to run the checks the repository itself asks of a finished change. `--list` prints the rows without running them.
+Arguments:
+  [--list]
+Checks:
+  - run it inside your worktree
+  - exits non-zero when any row fails, naming each failed row
+Refusals:
+  - usage: work checks [--list]
+    Fix: pass no argument, or `--list`
+  - not inside a git worktree
+    Fix: run it from inside your worktree
+  - refusing: .spira/checks.toml is unreadable: {err}
+    Fix: fix the file's TOML; a repository with no checks omits the file
+
+## 6. Review
+### work review
+Launches one read-only reviewer session over your bead's text and your branch's diff, and prints its findings, one `- file:line — what to change` per line. It changes nothing.
+Use when: Before you submit. Answer each finding in your submission.
+Arguments:
+  [--timeout SECONDS]   (default 600)
+  [--base REF]   (default local/main)
+Checks:
+  - the bead's text is read through `work show`
+  - the reviewer runs with your persona's configured model
+  - a reviewer that outlives the timeout is stopped; exit 124
+Refusals:
+  - {err}
+    Fix: `work review [--timeout SECONDS] [--base REF]`; the timeout is a whole number of seconds, at least 1
+  - work show refused (exit {code}): {err}
+    Fix: run it from your bead's own session; `work show` must answer first
+  - git diff {base}...HEAD failed
+    Fix: check the base ref exists (`local/main` by default) and that you are in your worktree
+  - refusing: {err}
+    Fix: the reviewer's settings are missing from your environment; report it in a note and submit without a review
+  - refusing: SPIRA_AGENT is not set
+    Fix: the reviewer cannot be launched; report it in a note and submit without a review
+  - timed out after {secs}s; the reviewer was stopped and no findings were returned
+    Fix: retry with a longer `--timeout`, or submit and say no review was returned
+  - {err}
+    Fix: the reviewer session failed; retry once, then submit and say no review was returned
+
+## 7. Submitting
+### work submit
+Moves your bead to SUBMITTED; the landing pass certifies and lands it.
+Use when: The work is committed on your branch, its commit subject names your bead, and you rebased onto local/main. Do not run the full gate first.
+Arguments:
+  --met "<measured value and where>" | --contradicted "<evidence>" | --short "<value>" with --follow-on <id> or --escalation <id>   (only when the description carries a `Target:` line)
+Checks:
+  - the tip is read from your branch, never taken from you
+  - a bead with a `Target:` line is submitted with a verdict; a submission without one is refused by the broker
+  - a --short verdict names a follow-on or escalation you filed
+Refusals:
+  - no tip could be read from the worktree
+    Fix: run it from your worktree after committing; your branch is spira/<bead>
+  - {flag} is read from the worktree, never taken from the caller
+    Fix: drop {flag}; commit and run `work submit` bare
+
+### work done
+Closes a bead whose deliverable is not code on this branch (child beads, a document, mail).
+Use when: You produced something other than a commit.
+Arguments:
+  --delivers "<what you produced, or where it lives>"
+  verdict flags as for submit
+Checks:
+  - the bead is the bound one
+  - a bead with a `Target:` line carries a verdict
+
+### work superseded-by
+Requests that your bead be retired because another bead already landed its work. Holds it; does not close it.
+Use when: You verified the successor's commit is on local/main (`git log local/main | grep <id>`).
+Arguments:
+  <successor-id>
+Checks:
+  - the successor is the only other bead you may name
+
+## 8. Other verbs (reach depends on your persona)
+The broker refuses a verb your persona's allow row does not name; that refusal is its own text.
+
+### work read
+Prints another bead.
+Use when: You need a bead your own names (a dependency, a parent).
+Arguments:
+  <bead-id>
+Checks:
+  - the broker's allow row for your persona names this verb
+
+### work list
+Lists beads matching a filter.
+Use when: You need to find work by state or label.
+Arguments:
+  filter flags as the persona allows
+Checks:
+  - the broker's allow row for your persona names this verb
+
+### work search
+Searches beads by text.
+Use when: You are looking for a bead whose id you do not have.
+Arguments:
+  <text>
+Checks:
+  - the broker's allow row for your persona names this verb
+
+### work ask
+Posts an ask to the operator's mailbox.
+Use when: A decision outside your bead needs a human; always give a default and a class basis.
+Arguments:
+  --subject <q>
+  --kind question
+  --class <permissions|policy|destructive|design>
+  --default <what you would do>
+  --body-file -
+Checks:
+  - the broker's allow row for your persona names this verb
+
+### work note-on
+Leaves a note on another bead.
+Use when: A lane persona annotates work it does not own.
+Arguments:
+  <bead-id>
+  <text>
+Checks:
+  - the broker's allow row for your persona names this verb
+
+### work label-add
+Adds a label to a bead.
+Use when: A lane persona classifies work.
+Arguments:
+  <bead-id>
+  <label>
+Checks:
+  - the broker's allow row for your persona names this verb
+
+### work label-remove
+Removes a label from a bead.
+Use when: A lane persona reclassifies work.
+Arguments:
+  <bead-id>
+  <label>
+Checks:
+  - the broker's allow row for your persona names this verb
+
+### work dep-add
+Adds a dependency between beads.
+Use when: A lane persona records a real blocking edge.
+Arguments:
+  <bead-id>
+  <depends-on-id>
+Checks:
+  - the broker's allow row for your persona names this verb
+
+### work relate
+Relates two beads without blocking.
+Use when: A lane persona links related work.
+Arguments:
+  <bead-id>
+  <other-id>
+Checks:
+  - the broker's allow row for your persona names this verb
+
+### work reopen
+Reopens a bead.
+Use when: A lane persona returns work to the queue.
+Arguments:
+  <bead-id>
+Checks:
+  - the broker's allow row for your persona names this verb
+
+### work close-other
+Closes another bead with a reason.
+Use when: A lane persona retires work.
+Arguments:
+  <bead-id>
+  <reason>
+Checks:
+  - the broker's allow row for your persona names this verb
+
+### work close-ask
+Closes an ask in the operator mailbox.
+Use when: The decision that settled it is known.
+Arguments:
+  <ask-id>
+  <what decided it>
+Checks:
+  - the broker's allow row for your persona names this verb
+
+### work file
+Files a bead outside any parent.
+Use when: A lane persona with a remit to file.
+Arguments:
+  <title>
+  --kind <kind>
+  --body-file -
+Checks:
+  - the broker's allow row for your persona names this verb
+
+### work groom
+Runs the groomer.
+Use when: Grooming persona only.
+Arguments:
+  <sub>
+Checks:
+  - the broker's allow row for your persona names this verb
+
+### work incident
+Runs the incident tool.
+Use when: Operations persona only.
+Arguments:
+  <sub>
+Checks:
+  - the broker's allow row for your persona names this verb
+
+### work sop
+Reads or writes standing procedures.
+Use when: Operations persona only.
+Arguments:
+  <sub>
+Checks:
+  - the broker's allow row for your persona names this verb
+
+### work census
+Runs the census.
+Use when: Operations persona only.
+Checks:
+  - the broker's allow row for your persona names this verb
+
+### work queue
+Runs queue steps.
+Use when: Queue persona only.
+Arguments:
+  <sub>
+Checks:
+  - the broker's allow row for your persona names this verb
+
+### work landing-pass
+Runs the landing pass.
+Use when: Landing persona only.
+Arguments:
+  <sub>
+Checks:
+  - the broker's allow row for your persona names this verb
+
+### work strand
+Runs the stranded-work tool.
+Use when: Operations persona only.
+Arguments:
+  <sub>
+Checks:
+  - the broker's allow row for your persona names this verb
+
+### work fence
+Runs the fence tool.
+Use when: Operations persona only.
+Arguments:
+  <sub>
+Checks:
+  - the broker's allow row for your persona names this verb
+
+### work hel
+Runs the hel tool.
+Use when: Operations persona only.
+Arguments:
+  <sub>
+Checks:
+  - the broker's allow row for your persona names this verb
+
+### work mender
+Runs the mender tool.
+Use when: Mender persona only.
+Arguments:
+  diagnose|outcome <path> ... (text on stdin)
+Checks:
+  - the broker's allow row for your persona names this verb
+
+## Rules every verb shares
+### work (any verb)
+Rules every verb shares.
+Use when: Always.
+Checks:
+  - the verb is one `work` serves
+  - no argument is `--actor` or `--stdin`: the client sends those itself
+  - a bound verb runs only inside a bead's environment and names no bead but the bound one
+  - at most one body (`--body-file`, `--reason-file`, `--why`, or a lone `-`) per request
+  - the socket answers; a verb that cannot reach it exits 2 ("cannot tell"), which is safe to retry
+Refusals:
+  - unknown verb {verb:?} (want {want})
+    Fix: use one of the verbs listed; `work prime` shows them all
+  - {flag} is the client's to send, never the caller's
+    Fix: drop {flag}; the client supplies your persona and the request body itself
+  - this environment is not bound to a bead (SPIRA_WORK_BEAD_ID), and {verb} acts on the bound bead
+    Fix: run it from a bead's own session, or use a verb that names its target
+  - {foreign} is not the bound bead ({bound})
+    Fix: name only your own bead; `superseded-by` and the `--follow-on`/`--escalation` values of submit and done are the only places another bead belongs
+  - more than one body in one request{detail}
+    Fix: put one body on stdin or in one file; fold the rest into it
+  - {err}
+    Fix: check the path you passed to the body flag, or pipe the text on stdin
+  - cannot tell: SPIRA_WORK_BEAD_ID is not set — this environment is not bound to a bead
+    Fix: run inside the bead's session; exit 2 means nothing was done and a retry is safe
+  - cannot tell: {err}
+    Fix: nothing was recorded; retry. If it persists, leave a note with the evidence and exit non-zero

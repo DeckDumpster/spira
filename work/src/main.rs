@@ -12,6 +12,7 @@
 //! sp-xethq, and the restricted unit environment this bead only provides — see
 //! dwarf/src/restrict.rs, formerly spira/work-env.sh, retired sp-zpaq0).
 
+use work::help::{refusal, R};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::process::Command;
@@ -35,8 +36,34 @@ fn main() {
     };
     let verb_args = args[1..].to_vec();
     spira_otel::run::operation(if work::VERBS.contains(&verb.as_str()) || work::LOCAL_VERBS.contains(&verb.as_str()) { &verb } else { "unknown" });
+    if verb == "prime" {
+        print!("{}", work::help::prime());
+        { spira_otel::run::finish(0); std::process::exit(0) };
+    }
+    if verb == "help" {
+        let code = match verb_args.as_slice() {
+            [v] => match work::help::help(v) {
+                Ok(t) => {
+                    print!("{t}");
+                    0
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    REFUSED
+                }
+            },
+            _ => {
+                eprintln!("{}", work::help::refusal(R::HelpUsage, "help", &[]));
+                REFUSED
+            }
+        };
+        { spira_otel::run::finish(code); std::process::exit(code) };
+    }
     if verb == "statute-check" {
         { let code = statute_check(&verb_args); spira_otel::run::finish(code); std::process::exit(code) };
+    }
+    if verb == "review" {
+        { let code = review(&verb_args); spira_otel::run::finish(code); std::process::exit(code) };
     }
     if verb == "law" {
         { let code = law(&verb_args); spira_otel::run::finish(code); std::process::exit(code) };
@@ -54,7 +81,7 @@ fn main() {
         Ok(b) if !b.is_empty() => b,
         _ if !work::needs_binding(&verb) => "-".to_string(),
         _ => {
-            eprintln!("cannot tell: SPIRA_WORK_BEAD_ID is not set — this environment is not bound to a bead");
+            eprintln!("{}", refusal(R::NoBinding, "", &[]));
             { let code = CANNOT_TELL; spira_otel::run::finish(code); std::process::exit(code) };
         }
     };
@@ -100,7 +127,7 @@ fn main() {
             { spira_otel::run::finish(code); std::process::exit(code) };
         }
         Err(e) => {
-            eprintln!("cannot tell: {e}");
+            eprintln!("{}", refusal(R::SocketUnreachable, "", &[("err", &e)]));
             { let code = CANNOT_TELL; spira_otel::run::finish(code); std::process::exit(code) };
         }
     }
@@ -184,21 +211,21 @@ fn statute_check(args: &[String]) -> i32 {
         [a] if a == "-" => {
             let mut s = String::new();
             if let Err(e) = std::io::stdin().read_to_string(&mut s) {
-                eprintln!("work statute-check: reading stdin: {e}");
+                eprintln!("{}", refusal(R::StatuteStdin, "statute-check", &[("err", &e.to_string())]));
                 return REFUSED;
             }
             s
         }
         [a] => a.clone(),
         _ => {
-            eprintln!("usage: work statute-check \"<one-paragraph plan>\" | work statute-check - < plan");
+            eprintln!("{}", refusal(R::StatuteUsage, "statute-check", &[]));
             return REFUSED;
         }
     };
     let bound = match std::env::var("SPIRA_WORK_BEAD_ID") {
         Ok(b) if !b.is_empty() => b,
         _ => {
-            eprintln!("cannot tell: SPIRA_WORK_BEAD_ID is not set — this environment is not bound to a bead");
+            eprintln!("{}", refusal(R::NoBinding, "", &[]));
             return CANNOT_TELL;
         }
     };
@@ -206,18 +233,18 @@ fn statute_check(args: &[String]) -> i32 {
     let (guards, dir) = match (cfg("SPIRA_STATUTE_GUARDS"), cfg("SPIRA_STATUTE_DIR")) {
         (Ok(g), Ok(d)) if !g.is_empty() && !d.is_empty() => (g, d),
         (Err(e), _) | (_, Err(e)) => {
-            eprintln!("work statute-check: refusing: {e}");
+            eprintln!("{}", refusal(R::StatuteConfig, "statute-check", &[("err", &e)]));
             return REFUSED;
         }
         _ => {
-            eprintln!("work statute-check: refusing: SPIRA_STATUTE_GUARDS and SPIRA_STATUTE_DIR must both be set; an unconfigured check is not a pass");
+            eprintln!("{}", refusal(R::StatuteConfigUnset, "statute-check", &[]));
             return REFUSED;
         }
     };
     let registry = match std::fs::read_to_string(&guards) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("work statute-check: refusing: cannot read the statute registry {guards}: {e}");
+            eprintln!("{}", refusal(R::StatuteRegistry, "statute-check", &[("path", &guards), ("err", &e.to_string())]));
             return REFUSED;
         }
     };
@@ -229,7 +256,7 @@ fn statute_check(args: &[String]) -> i32 {
         }
         Ok(Some(r)) => r,
         Err(e) => {
-            eprintln!("work statute-check: refusing: {e}");
+            eprintln!("{}", refusal(R::StatuteReport, "statute-check", &[("err", &e)]));
             return REFUSED;
         }
     };
@@ -244,11 +271,11 @@ fn statute_check(args: &[String]) -> i32 {
     match send(&req, REPLY_WAIT) {
         Ok((0, _)) => {}
         Ok((code, o)) => {
-            eprintln!("work statute-check: the note was not recorded on the bead (exit {code}): {}", o.trim());
+            eprintln!("{}", refusal(R::StatuteNoteNotRecorded, "statute-check", &[("code", &code.to_string()), ("err", o.trim())]));
             return code;
         }
         Err(e) => {
-            eprintln!("cannot tell: {e}");
+            eprintln!("{}", refusal(R::SocketUnreachable, "", &[("err", &e)]));
             return CANNOT_TELL;
         }
     }
@@ -266,14 +293,14 @@ fn crates(args: &[String]) -> i32 {
     let diff = match run(&["git", "diff", "--raw", "-z", "--no-renames", &format!("{base}...HEAD")]) {
         Ok(o) if o.status.success() => o.stdout,
         _ => {
-            eprintln!("work crates: git diff {base}...HEAD failed");
+            eprintln!("{}", refusal(R::CratesGit, "crates", &[("base", base)]));
             return REFUSED;
         }
     };
     let meta = match run(&["cargo", "metadata", "--format-version", "1", "--no-deps"]) {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
         _ => {
-            eprintln!("work crates: cargo metadata failed");
+            eprintln!("{}", refusal(R::CratesCargo, "crates", &[]));
             return REFUSED;
         }
     };
@@ -283,7 +310,84 @@ fn crates(args: &[String]) -> i32 {
             0
         }
         Err(e) => {
-            eprintln!("work crates: {e}");
+            eprintln!("{}", refusal(R::CratesSelect, "crates", &[("err", &e)]));
+            REFUSED
+        }
+    }
+}
+
+/// `work review`: the bound bead's text and the branch diff, read by one reviewer session.
+fn review(args: &[String]) -> i32 {
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("{}", work::review::HELP);
+        return 0;
+    }
+    let opts = match work::review::parse_args(args) {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("{}", refusal(R::ReviewArgs, "review", &[("err", &e)]));
+            return REFUSED;
+        }
+    };
+    let bound = match std::env::var("SPIRA_WORK_BEAD_ID") {
+        Ok(b) if !b.is_empty() => b,
+        _ => {
+            eprintln!("{}", refusal(R::NoBinding, "", &[]));
+            return CANNOT_TELL;
+        }
+    };
+    let actor = std::env::var("SPIRA_RUNE").or_else(|_| std::env::var("SPIRA_WORK_ACTOR")).unwrap_or_else(|_| "dwarf".to_string());
+    let req = match work::build_request_with_body(&bound, "show", &[], None, &actor, None) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{e}");
+            return REFUSED;
+        }
+    };
+    let item = match send(&req, REPLY_WAIT) {
+        Ok((0, o)) => o,
+        Ok((code, o)) => {
+            eprintln!("{}", refusal(R::ReviewShow, "review", &[("code", &code.to_string()), ("err", o.trim())]));
+            return code;
+        }
+        Err(e) => {
+            eprintln!("{}", refusal(R::SocketUnreachable, "", &[("err", &e)]));
+            return CANNOT_TELL;
+        }
+    };
+    let diff = match spira_config::bounded::bounded("git").args(["diff", &format!("{}...HEAD", opts.base)]).output() {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+        _ => {
+            eprintln!("{}", refusal(R::ReviewGit, "review", &[("base", &opts.base)]));
+            return REFUSED;
+        }
+    };
+    let cfg = |k: &str| spira_config::process::cfg(k);
+    let persona = std::env::var("SPIRA_RUNE").ok().filter(|r| !r.is_empty()).unwrap_or_else(|| "builder".to_string());
+    let (agent, model) = match (cfg("SPIRA_AGENT"), spira_config::process::spec().and_then(|t| work::review::persona_model(&persona, &t))) {
+        (Ok(a), Ok(m)) if !a.is_empty() => (a, m),
+        (Err(e), _) | (_, Err(e)) => {
+            eprintln!("{}", refusal(R::ReviewConfig, "review", &[("err", &e)]));
+            return REFUSED;
+        }
+        _ => {
+            eprintln!("{}", refusal(R::ReviewAgentUnset, "review", &[]));
+            return REFUSED;
+        }
+    };
+    let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
+    let secs = opts.timeout.as_secs();
+    match work::review::run(&agent, &work::review::agent_argv(&model), &work::review::input(&item, &diff), &cwd, opts.timeout) {
+        Ok(work::review::Outcome::Findings(f)) => {
+            println!("{}", f.trim_end());
+            0
+        }
+        Ok(work::review::Outcome::TimedOut) => {
+            eprintln!("{}", refusal(R::ReviewTimedOut, "review", &[("secs", &secs.to_string())]));
+            work::review::TIMED_OUT
+        }
+        Err(e) => {
+            eprintln!("{}", refusal(R::ReviewFailed, "review", &[("err", &e)]));
             REFUSED
         }
     }
@@ -293,7 +397,7 @@ fn crates(args: &[String]) -> i32 {
 /// it runs in; no store, no socket.
 fn law(args: &[String]) -> i32 {
     if args.len() > 1 {
-        eprintln!("usage: work law [<part> | <part>.<n> | <slug>]");
+        eprintln!("{}", refusal(R::LawUsage, "law", &[]));
         return REFUSED;
     }
     let root = spira_config::bounded::bounded("git")
@@ -309,7 +413,7 @@ fn law(args: &[String]) -> i32 {
             0
         }
         Err((msg, list)) => {
-            eprintln!("work law: {msg}");
+            eprintln!("{}", refusal(R::LawNotFound, "law", &[("err", &msg)]));
             print!("{list}");
             REFUSED
         }
@@ -323,14 +427,14 @@ fn checks(args: &[String]) -> i32 {
         [] => false,
         [a] if a == "--list" => true,
         _ => {
-            eprintln!("usage: work checks [--list]");
+            eprintln!("{}", refusal(R::ChecksUsage, "checks", &[]));
             return REFUSED;
         }
     };
     let root = match spira_config::bounded::bounded("git").args(["rev-parse", "--show-toplevel"]).output() {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         _ => {
-            eprintln!("work checks: not inside a git worktree");
+            eprintln!("{}", refusal(R::ChecksGit, "checks", &[]));
             return REFUSED;
         }
     };
@@ -338,7 +442,7 @@ fn checks(args: &[String]) -> i32 {
     let rows = match habits::config::load_checks(root) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("work checks: refusing: .spira/checks.toml is unreadable: {e}");
+            eprintln!("{}", refusal(R::ChecksConfig, "checks", &[("err", &e.to_string())]));
             return REFUSED;
         }
     };

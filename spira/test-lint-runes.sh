@@ -104,6 +104,10 @@ for f in "$HERE"/runes/*.md; do
         filler="$HERE/../$n.sh"
     fi
     if [ ! -f "$filler" ]; then
+        if ! grep -q '{{[A-Z_]*}}' "$f"; then
+            ok "$n.md has no placeholders, so it needs no filler"
+            continue
+        fi
         bad "every placeholder in $n.md is substituted" "no filler: $(basename "$filler") does not exist"
         continue
     fi
