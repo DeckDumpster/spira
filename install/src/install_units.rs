@@ -571,9 +571,13 @@ pub fn split_not_active(not_active: &[String], in_testenv: bool) -> NotActiveSpl
     }
     // lc-serve.service serves the lifecycle store, which a test fixture's install never builds
     // (that is spira-install's phase 4.5, against a real Dolt server): in a fixture it cannot
-    // reach active either, and is named, never silently dropped (sp-xfqnr).
-    let (watchers, other): (Vec<String>, Vec<String>) =
-        not_active.iter().cloned().partition(|u| u.starts_with("spira-watch-") || u == "lc-serve.service" || u == "lc-serve.socket");
+    // reach active either, and is named, never silently dropped (sp-xfqnr). spira-runtime opens
+    // its journal on that store at start, so it shares the exemption.
+    let is_runtime = |u: &str| u.strip_prefix("spira-runtime-").and_then(|r| r.strip_suffix(".service")).is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()));
+    let (watchers, other): (Vec<String>, Vec<String>) = not_active
+        .iter()
+        .cloned()
+        .partition(|u| u.starts_with("spira-watch-") || u == "lc-serve.service" || u == "lc-serve.socket" || is_runtime(u));
     NotActiveSplit { warn_only: watchers, fatal: other }
 }
 
@@ -592,6 +596,15 @@ mod lc_serve_split_tests {
         let p = split_not_active(&na, false);
         assert!(p.warn_only.is_empty());
         assert_eq!(p.fatal.len(), 2);
+    }
+
+    #[test]
+    fn spira_runtime_instance_is_warn_only_in_a_fixture_but_its_neighbours_are_not() {
+        let na = vec!["spira-runtime-675497707264.service".to_string(), "spira-runtime-watch-675497707264.service".to_string()];
+        let f = split_not_active(&na, true);
+        assert_eq!(f.warn_only, vec![na[0].clone()]);
+        assert_eq!(f.fatal, vec![na[1].clone()]);
+        assert_eq!(split_not_active(&na, false).fatal.len(), 2);
     }
 }
 
