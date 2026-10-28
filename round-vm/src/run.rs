@@ -726,6 +726,9 @@ echo "round-vm: setup ${setup_secs}s, suites ${suites_secs}s" >&2
 if [ "$setup_secs" -gt "$setup_alarm" ]; then
     echo "round-vm: SETUP-SLOW: setup took ${setup_secs}s, over the ${setup_alarm}s limit — something is being built or fetched that the template should hold" >&2
 fi
+if find "$HOME/round-work/.runtime/spira/batch-results" -name run.events -exec grep -l ' verdict FAULT' {} + >/dev/null 2>&1; then
+    { systemctl list-units --all --no-pager; systemctl --user list-units --all --no-pager; systemctl --failed --no-pager; } > ~/round-fault-units.txt 2>&1 || true
+fi
 mkdir -p ~/round-bins
 find target/release -maxdepth 1 -type f -executable -exec cp {} ~/round-bins/ \; 2>/dev/null
 if [ -n "$over_cap" ]; then exit 124; fi
@@ -743,6 +746,12 @@ pub const REMOTE_BINS: &str = "round-bins/";
 pub const FIXTURE_FAULT_FILE: &str = "fixture-fault.out";
 
 pub const REMOTE_SETUP_LOG: &str = "round-setup.log";
+
+/// The unit states the VM script snapshots when the batch ends in a FAULT.
+pub const REMOTE_FAULT_UNITS: &str = "round-fault-units.txt";
+
+/// What a faulted batch leaves in the results directory: the VM's setup log and unit states.
+pub const BATCH_FAULT_FILE: &str = "batch-fault.log";
 
 const SETUP_LOG_TAIL: usize = 60;
 
@@ -768,6 +777,20 @@ fn show_setup_log(remote: &dyn Remote, cfg: &Config, addr: &str, scratch: &Path)
         eprintln!("round-vm run: no round-bins came back and the VM's setup log could not be pulled");
     }
     let _ = fs::remove_dir_all(scratch);
+}
+
+/// Writes the VM's whole setup log (where testenv logs the failing install step's command and
+/// stderr) and its unit-state snapshot to `results_dir`/[`BATCH_FAULT_FILE`]; returns the path.
+fn keep_fault_evidence(remote: &dyn Remote, cfg: &Config, addr: &str, scratch: &Path, results_dir: &Path) -> Option<PathBuf> {
+    let mut body = String::new();
+    for (name, title) in [(REMOTE_SETUP_LOG, "the VM's setup log"), (REMOTE_FAULT_UNITS, "unit states at the fault")] {
+        let _ = fs::remove_dir_all(scratch);
+        let got = pull_retry(remote, cfg, addr, name, scratch).then(|| fs::read_to_string(scratch.join(name)).ok()).flatten();
+        body.push_str(&format!("==== {title} ({name}) ====\n{}\n", got.as_deref().unwrap_or("(could not be pulled)")));
+    }
+    let _ = fs::remove_dir_all(scratch);
+    let path = results_dir.join(BATCH_FAULT_FILE);
+    fs::create_dir_all(results_dir).and_then(|_| fs::write(&path, body)).map(|_| path).ok()
 }
 
 /// The Proxmox template's cache home is `SPIRA_ROUND_VM_CACHE_HOME`; an EC2 image records its
@@ -2157,6 +2180,12 @@ fn after_batch(
     record_coverage(args, &cfg.state_dir, &results_dir, tree_sha, remote_rc == 0);
     let target = args.tree_dir.join("target").join("release");
     let cause = batch_cause(&results_dir);
+    if cause.as_deref().is_some_and(|c| c.starts_with("FAULT")) {
+        match keep_fault_evidence(remote, cfg, &vm.addr, &scratch("fault-evidence"), &results_dir) {
+            Some(p) => eprintln!("round-vm run: the batch faulted; the VM's setup log and unit states are in {}", p.display()),
+            None => eprintln!("round-vm run: the batch faulted and its evidence could not be written to {}", results_dir.display()),
+        }
+    }
     if reported.is_none() && remote_rc != 0 {
         if let Some(c) = &cause {
             eprintln!("round-vm run: the batch ended without a tested tree: {c}");
@@ -3469,6 +3498,28 @@ mod tests {
 
     fn batch_args(fx: &Fixture, batch: &str) -> RunArgs {
         RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh,test-b.sh".into()), round_batch: Some(batch.into()), round_repo: Some("sp".into()), ..tree(fx) }
+    }
+
+    #[test]
+    fn a_batch_that_faults_in_install_returns_its_setup_log_and_unit_states() {
+        let fx = fixture();
+        let mut remote = FakeRemote { rc: Ok(3), ..FakeRemote::green() };
+        remote.files.insert("round-work/.runtime/spira/batch-results/", vec![("KEY/run.events", "1 phase up\n2 verdict FAULT install\n"), ("KEY/test-a.sh.result", "skip 0 0 - p e 0\n")]);
+        remote.files.insert(REMOTE_SETUP_LOG, vec![(REMOTE_SETUP_LOG, "install rc=1 output tail:\nunits-install: Failed to connect to bus: no medium found\n")]);
+        remote.files.insert(REMOTE_FAULT_UNITS, vec![(REMOTE_FAULT_UNITS, "spira-x.service loaded failed failed\n")]);
+        let a = batch_args(&fx, "b-fault");
+        go(&fx, &remote, &a);
+        let kept = fs::read_to_string(a.results_dir.as_ref().unwrap().join(BATCH_FAULT_FILE)).unwrap();
+        assert!(kept.contains("Failed to connect to bus: no medium found"), "{kept}");
+        assert!(kept.contains("spira-x.service loaded failed failed"), "{kept}");
+    }
+
+    #[test]
+    fn a_batch_that_did_not_fault_leaves_no_fault_file() {
+        let fx = fixture();
+        let a = batch_args(&fx, "b-ok");
+        go(&fx, &FakeRemote::green(), &a);
+        assert!(!a.results_dir.as_ref().unwrap().join(BATCH_FAULT_FILE).exists());
     }
 
     #[test]
