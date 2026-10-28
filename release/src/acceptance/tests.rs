@@ -94,9 +94,9 @@ fn json_line_escapes_and_orders_fields() {
 
 #[test]
 fn note_carries_tarball_upgrade_path_and_waiver() {
-    let n = Note { verdict: "PASS", date: "D", tag: "t", pass: 3, fail: 0, tarball: Some(("abc", "spira-1.tar.gz")), prev_tag: Some("p"), waived: false };
+    let n = Note { verdict: "PASS", date: "D", tag: "t", pass: 3, fail: 0, tarball: Some(("abc", "spira-1.tar.gz")), prev_tag: Some("p"), waived: false, standing: false };
     assert_eq!(n.text(), "PASS\nD t  3 passed, 0 failed\nsha256:abc tarball:spira-1.tar.gz\naged-install from=p: PASS");
-    let n = Note { verdict: "FAIL", date: "D", tag: "t", pass: 1, fail: 2, tarball: None, prev_tag: None, waived: true };
+    let n = Note { verdict: "FAIL", date: "D", tag: "t", pass: 1, fail: 2, tarball: None, prev_tag: None, waived: true, standing: false };
     assert_eq!(n.text(), "FAIL\nD t  1 passed, 2 failed\nupgrade phases waived by operator");
 }
 
@@ -937,6 +937,27 @@ fn a_repeat_waiver_is_honoured_only_when_declared_for_this_cuts_exact_commit() {
     f.tag_commit = "";
     assert_eq!(phases::run(&f, b.opts(&["--waive-upgrade", "--declared-waiver", sha])), 2, "tag commit unresolvable: refuse");
     assert!(!f.log.borrow().iter().any(|c| c.args.first().map(String::as_str) == Some("install-tarball")), "refused before any phase");
+}
+
+#[test]
+fn the_standing_ruling_stands_in_for_a_declared_waiver_on_every_chained_cut() {
+    let b = Box_::new();
+    let cut = "spira-release-spira-20260930T000000Z";
+    let prior = "spira-release-spira-20260901T000000Z";
+
+    let mut f = b.fake();
+    f.tag_notes = vec![(cut, ""), (prior, WAIVED_NOTE)];
+    f.tag_commit = "";
+    assert_eq!(phases::run(&f, with_prev(&b, &["--waive-upgrade", "--standing-waiver", "--record"])), 0, "standing ruling: {:?}", b.fails());
+    let log = f.log.borrow();
+    let c = log.iter().find(|c| c.args.contains(&"notes".to_string()) && c.args.contains(&"-m".to_string())).unwrap();
+    let note = c.args[c.args.iter().position(|a| a == "-m").unwrap() + 1].clone();
+    assert!(note.contains("upgrade phases waived by standing ruling"), "{note}");
+    assert!(note.lines().any(|l| l == WAIVER_LINE), "a standing waiver is still a waiver to the next cut: {note}");
+
+    let mut f = b.fake();
+    f.tag_notes = vec![(cut, ""), (prior, WAIVED_NOTE)];
+    assert_eq!(phases::run(&f, b.opts(&["--waive-upgrade"])), 2, "no ruling, no declaration: refuse");
 }
 
 #[test]

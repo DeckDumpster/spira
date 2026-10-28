@@ -307,6 +307,7 @@ jobs:
             # derivation entirely so no prev-tag is passed at all, and release acceptance
             # prints its existing "skip phase B+C / phase D" lines.
             _args+=(--waive-upgrade)
+            [ "$GITHUB_EVENT_NAME" = "push" ] && [ "${STANDING_WAIVER:-}" = "standing" ] && _args+=(--standing-waiver)
           else
             # When triggered by a tag push the prev-tag input is unavailable; derive
             # the newest PUBLISHED predecessor so upgrade/rollback phases test a tag
