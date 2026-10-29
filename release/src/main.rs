@@ -523,7 +523,12 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
             if a.bin_dir.is_some() && a.target_dir.is_some() {
                 return Err(usage("--bin-dir and --target-dir exclude each other (--bin-dir runs no cargo)".into()));
             }
-            let o = BuildOpts { repo: &r, commit: &rest[0], target_dir: a.target_dir.clone(), system_dirs: system_dirs(), bin_dir: a.bin_dir.clone() };
+            let dav = release::artifacts::configured_dav();
+            let artifacts = match (&dav, a.bin_dir.is_some()) {
+                (Some(d), false) => release::artifacts::local_toolchain().ok().map(|toolchain| release::build::ArtifactStore { dav: d, toolchain }),
+                _ => None,
+            };
+            let o = BuildOpts { repo: &r, commit: &rest[0], target_dir: a.target_dir.clone(), system_dirs: system_dirs(), bin_dir: a.bin_dir.clone(), artifacts };
             let b = build::build(&cfg, &RealGit, &RealCargo, &o).map_err(fail)?;
             record(&cfg, &b.sha, ReleaseState::Cut, "built").map_err(fail)?;
             println!("{}", b.sha);

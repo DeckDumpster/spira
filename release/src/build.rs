@@ -1,5 +1,6 @@
 //! `release build <commit>` (DESIGN.md "build").
 
+use crate::artifacts::{self, Dav, Fetched};
 use crate::config::Config;
 use crate::fsutil;
 use crate::git::Git;
@@ -62,6 +63,15 @@ pub struct BuildOpts<'a> {
     /// commit) instead of running cargo (law-deploy-the-tested-artifacts). The caller vouches
     /// that it holds `<commit>`'s build; the same every-declared-binary rule applies.
     pub bin_dir: Option<PathBuf>,
+    /// The shared artifact store: a cargo build is first looked up by the tree's identity and,
+    /// when it does run, stored (DESIGN.md "artifacts"). `None` builds as before.
+    pub artifacts: Option<ArtifactStore<'a>>,
+}
+
+pub struct ArtifactStore<'a> {
+    pub dav: &'a dyn Dav,
+    /// [`artifacts::toolchain_id`] of the compiler a build here would use.
+    pub toolchain: String,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -122,18 +132,58 @@ pub fn build(cfg: &Config, git: &dyn Git, cargo: &dyn Cargo, o: &BuildOpts) -> R
             (d.clone(), Cleanup(None))
         }
         None => {
-            let (target, guard) = match (&o.target_dir, &cfg.run) {
-                (Some(t), _) => (t.clone(), Cleanup(None)),
-                (None, Some(run)) => (run.join("release").join("target"), Cleanup(None)),
-                (None, None) => {
-                    let t = cfg.releases.join(format!(".target-{pid}"));
-                    (t.clone(), Cleanup(Some(t)))
-                }
+            let key = match &o.artifacts {
+                Some(a) => Some((artifacts::key(&git.tree(o.repo, &sha)?, &a.toolchain), a)),
+                None => None,
             };
-            fs::create_dir_all(&target).map_err(|e| format!("cannot create {}: {e}", target.display()))?;
-            eprintln!("release: building {sha} (target {})", target.display());
-            cargo.build(&stage, &target)?;
-            (target.join("release"), guard)
+            let fetched = match &key {
+                Some((k, a)) => {
+                    let scratch = artifacts::scratch_dir(&cfg.releases, "fetch")?;
+                    let into = scratch.join("bin");
+                    match artifacts::fetch(a.dav, k, &into, &scratch) {
+                        Fetched::Hit => {
+                            eprintln!("release: artifacts: hit {k} — {sha} takes its binaries from the store (no cargo build)");
+                            Some((into, Cleanup(Some(scratch))))
+                        }
+                        Fetched::Miss(why) => {
+                            eprintln!("release: artifacts: miss {k} ({why})");
+                            let _ = fsutil::remove_tree(&scratch);
+                            None
+                        }
+                    }
+                }
+                None => None,
+            };
+            match fetched {
+                Some(hit) => hit,
+                None => {
+                    let (target, guard) = match (&o.target_dir, &cfg.run) {
+                        (Some(t), _) => (t.clone(), Cleanup(None)),
+                        (None, Some(run)) => (run.join("release").join("target"), Cleanup(None)),
+                        (None, None) => {
+                            let t = cfg.releases.join(format!(".target-{pid}"));
+                            (t.clone(), Cleanup(Some(t)))
+                        }
+                    };
+                    fs::create_dir_all(&target).map_err(|e| format!("cannot create {}: {e}", target.display()))?;
+                    eprintln!("release: building {sha} (target {})", target.display());
+                    cargo.build(&stage, &target)?;
+                    let out = target.join("release");
+                    if let Some((k, a)) = &key {
+                        let tree = git.tree(o.repo, &sha)?;
+                        let stored = artifacts::scratch_dir(&cfg.releases, "put").and_then(|s| {
+                            let r = artifacts::publish(a.dav, k, &tree, &a.toolchain, &out, &s);
+                            let _ = fsutil::remove_tree(&s);
+                            r
+                        });
+                        match stored {
+                            Ok(()) => eprintln!("release: artifacts: stored {k}"),
+                            Err(e) => eprintln!("release: artifacts: not stored ({e})"),
+                        }
+                    }
+                    (out, guard)
+                }
+            }
         }
     };
 

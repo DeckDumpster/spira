@@ -7,6 +7,8 @@ use std::process::{Command, Stdio};
 pub trait Git {
     /// `<rev>` in `repo` as a full sha.
     fn resolve(&self, repo: &Path, rev: &str) -> Result<String, String>;
+    /// The tree id of commit `sha`.
+    fn tree(&self, repo: &Path, sha: &str) -> Result<String, String>;
     /// Extract the tree of `sha` into the existing, empty directory `into`.
     fn archive(&self, repo: &Path, sha: &str, into: &Path) -> Result<(), String>;
     /// Whether `ancestor` is an ancestor of (or equal to) `of`.
@@ -29,6 +31,21 @@ impl Git for RealGit {
             return Err(format!("{rev} is not a commit in {}", repo.display()));
         }
         Ok(sha)
+    }
+
+    fn tree(&self, repo: &Path, sha: &str) -> Result<String, String> {
+        let out = spira_config::bounded::bounded("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["rev-parse", "--verify", "--quiet"])
+            .arg(format!("{sha}^{{tree}}"))
+            .output()
+            .map_err(|e| format!("cannot run git: {e}"))?;
+        let tree = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !out.status.success() || tree.is_empty() {
+            return Err(format!("{sha} has no tree in {}", repo.display()));
+        }
+        Ok(tree)
     }
 
     fn archive(&self, repo: &Path, sha: &str, into: &Path) -> Result<(), String> {
