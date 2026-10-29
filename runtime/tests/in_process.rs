@@ -31,19 +31,27 @@ mod conformance {
 }
 
 mod ids {
-    use runtime::heartbeat::Heartbeat;
     use runtime::ports::VirtualClock;
     use runtime::*;
     use std::sync::Arc;
+
+    struct Beat;
+    impl Handler for Beat {
+        fn interests(&self) -> &[EventKindTag] {
+            &["heartbeat"]
+        }
+        fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+            vec![Command::Schedule { at: ev.at + 60_000, kind: EventKind::new("heartbeat", "") }]
+        }
+    }
 
     #[test]
     fn forty_heartbeats_keep_every_id_within_the_column_and_keep_firing() {
         let journal = MemJournal::new();
         let clock = VirtualClock::new(1_000);
-        let regs = vec![Heartbeat { interval_ms: 60_000, ping_deadline_ms: 1_000 }.registration()];
+        let regs = vec![Registration::new("heartbeat", Beat)];
         let mut e = Engine::open(journal.clone(), Arc::new(clock.clone()), regs, 0).unwrap();
-        let (id, stream, kind) = Heartbeat::boot();
-        e.submit(id, stream, kind).unwrap();
+        e.submit("heartbeat/boot", "runtime.heartbeat", EventKind::new("heartbeat", "0")).unwrap();
         for _ in 0..40 {
             e.run_until_idle().unwrap();
             clock.advance(60_000);

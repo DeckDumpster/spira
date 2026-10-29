@@ -2,7 +2,7 @@
 //! dispatch, then advance the cursor. Every id it writes is derived from the event that
 //! caused it, so a replay after a crash at any point appends nothing twice.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 use std::time::Instant;
@@ -19,6 +19,9 @@ use crate::wide::{rss_kb, Fields, NullSink, Value, Wide, WideSink};
 use crate::{Result, RuntimeError};
 
 const BATCH: usize = 256;
+
+/// A stream's poison state is asked again after this long, or when the journal brings events.
+const POISON_RECHECK_MS: u64 = 300_000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -92,6 +95,13 @@ pub struct Engine {
     appended: bool,
     poison_seen: BTreeMap<StreamKey, bool>,
     loaded: BTreeSet<StreamKey>,
+    local: VecDeque<Event>,
+    timers: BTreeMap<String, ScheduleRow>,
+    memory_only: BTreeSet<String>,
+    local_seq: u64,
+    foreign_poll_ms: u64,
+    next_read_at: u64,
+    poison_cleared_at: u64,
 }
 
 fn mix(seed: u64, parts: &[&str]) -> u64 {
@@ -138,6 +148,13 @@ impl Engine {
             appended: false,
             poison_seen: BTreeMap::new(),
             loaded: BTreeSet::new(),
+            local: VecDeque::new(),
+            timers: BTreeMap::new(),
+            memory_only: BTreeSet::new(),
+            local_seq: 0,
+            foreign_poll_ms: 0,
+            next_read_at: 0,
+            poison_cleared_at: 0,
         };
         let cursor = e.journal.cursor()?;
         e.cursor = cursor;
@@ -180,6 +197,13 @@ impl Engine {
     }
 
     /// Restarts a handler call may stall through before its stream is quarantined.
+    /// Read the journal for events other writers appended at most this often, when this engine
+    /// appended nothing since the last read. 0, the default, reads on every pump.
+    pub fn with_foreign_poll(mut self, ms: u64) -> Self {
+        self.foreign_poll_ms = ms;
+        self
+    }
+
     pub fn with_stall_limit(mut self, limit: u32) -> Self {
         self.stall_limit = limit;
         self
@@ -263,10 +287,25 @@ impl Engine {
 
     pub fn next_timer_at(&self) -> Option<u64> {
         let deadline = self.pending.values().map(|p| p.deadline_at).min();
-        match (self.scheduler.next_at(), deadline) {
+        let timer = self.timers.values().map(|r| r.at).min();
+        match (self.scheduler.next_at().into_iter().chain(timer).min(), deadline) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         }
+    }
+
+    fn local_event(&mut self, stream: &StreamKey, kind: EventKind, at: u64, cause: Option<&Event>) -> Event {
+        self.local_seq += 1;
+        let id = EventId(derive_id(format!("local/{}/{}/{at}/{}", stream.0, kind.tag, self.local_seq)));
+        let correlation = cause.map_or_else(|| CorrelationId(id.0.clone()), |c| c.correlation.clone());
+        Event { id, stream: stream.clone(), kind, at, cause: cause.map(|c| c.id.clone()), correlation }
+    }
+
+    /// Hand `kind` to the handlers of `stream` now, without journaling it: the way a process
+    /// re-arms its memory-only timers each time it starts.
+    pub fn start(&mut self, stream: &str, kind: EventKind) {
+        let ev = self.local_event(&StreamKey(stream.into()), kind, self.clock.now_ms(), None);
+        self.local.push_back(ev);
     }
 
     fn append_derived(&mut self, id: String, stream: &StreamKey, kind: EventKind, cause: &Event, at: u64) -> Result<Event> {
@@ -294,17 +333,35 @@ impl Engine {
                     self.journal.schedule(&row)?;
                     self.scheduler.insert(row);
                 }
+                Command::Note(kind) => {
+                    let note = self.local_event(&ev.stream, kind, ev.at, Some(ev));
+                    self.local.push_back(note);
+                }
+                Command::Probe(spec) => {
+                    let deadline_at = ev.at.saturating_add(spec.deadline_ms);
+                    let body = serde_json::to_string(&RequestBody { spec, deadline_at }).map_err(|e| RuntimeError::new(e.to_string()))?;
+                    let req = self.local_event(&ev.stream, EventKind::new(EFFECT_REQUESTED, &body), ev.at, Some(ev));
+                    self.projection.push(&req);
+                    self.memory_only.insert(req.id.0.clone());
+                    self.track_effect(&req)?;
+                }
+                Command::Timer { at, kind } => {
+                    let id = format!("{}/{}", ev.stream.0, kind.tag);
+                    self.timers.insert(id.clone(), ScheduleRow { id, at, stream: ev.stream.clone(), kind, cause: Some(ev.id.clone()), correlation: ev.correlation.clone() });
+                }
             }
         }
         Ok(())
     }
 
-    fn dispatch(&mut self, ev: &Event, at: (Offset, Offset)) -> Result<()> {
-        if !self.loaded.contains(&ev.stream) {
-            for (_, past) in self.journal.read_stream(&ev.stream, at.0)? {
-                self.projection.push(&past);
+    fn dispatch(&mut self, ev: &Event, at: Option<(Offset, Offset)>) -> Result<()> {
+        if let Some(at) = at {
+            if !self.loaded.contains(&ev.stream) {
+                for (_, past) in self.journal.read_stream(&ev.stream, at.0)? {
+                    self.projection.push(&past);
+                }
+                self.loaded.insert(ev.stream.clone());
             }
-            self.loaded.insert(ev.stream.clone());
         }
         self.projection.push(ev);
         if self.is_poisoned(&ev.stream)? {
@@ -312,12 +369,12 @@ impl Engine {
         }
         for i in 0..self.regs.len() {
             let name = self.regs[i].name.clone();
-            if !self.regs[i].handler.interests().contains(&ev.kind.tag.as_str()) || (at.0 < self.check_applied_below && self.journal.applied(&name, &ev.id)?) {
+            if !self.regs[i].handler.interests().contains(&ev.kind.tag.as_str()) || (at.is_some_and(|(off, _)| off < self.check_applied_below) && self.journal.applied(&name, &ev.id)?) {
                 continue;
             }
             let key = (ev.id.clone(), name.clone());
             let stalls = self.suspects.get(&key).copied().unwrap_or(0);
-            let wide = self.unit("dispatch", Some(ev), Some(at));
+            let wide = self.unit("dispatch", Some(ev), at);
             wide.set("handler", name.as_str());
             if stalls >= self.stall_limit {
                 let message = format!("stalled {stalls} times in {name}");
@@ -332,7 +389,7 @@ impl Engine {
             }
             self.marker.set(&Mark { event: ev.id.clone(), handler: name.clone(), stream: ev.stream.clone(), stalls })?;
             self.busy.enter();
-            let ctx = Ctx::with(ev.at, mix(self.seed, &[&ev.id.0, &name]), at.0, wide.clone());
+            let ctx = Ctx::with(ev.at, mix(self.seed, &[&ev.id.0, &name]), at.map_or(0, |(off, _)| off), wide.clone());
             let began = Instant::now();
             let handler = &self.regs[i].handler;
             let view = &self.projection;
@@ -346,7 +403,7 @@ impl Engine {
                     wide.set("commands.emit", count(|c| matches!(c, Command::Emit(_))));
                     wide.set("commands.effect", count(|c| matches!(c, Command::Effect(_))));
                     wide.set("commands.schedule", count(|c| matches!(c, Command::Schedule { .. })));
-                    let done = self.apply(cmds, ev, &name).and_then(|()| self.journal.mark_applied(&name, &ev.id));
+                    let done = self.apply(cmds, ev, &name).and_then(|()| if at.is_some() { self.journal.mark_applied(&name, &ev.id) } else { Ok(()) });
                     if matches!(&done, Err(e) if e.is_refused()) {
                         let message = done.unwrap_err().0;
                         wide.set("outcome", "refused");
@@ -396,12 +453,41 @@ impl Engine {
     /// once at open and written once per pump: a crash in between replays events whose
     /// `applied` mark makes the replay a no-op.
     pub fn pump(&mut self) -> Result<usize> {
-        self.poison_seen.clear();
         let mut n = 0;
-        let run = self.pump_batches(&mut n);
+        let run = self.pump_all(&mut n);
         let saved = self.save_cursor();
         run.and(saved)?;
         Ok(n)
+    }
+
+    fn pump_all(&mut self, n: &mut usize) -> Result<()> {
+        loop {
+            let now = self.clock.now_ms();
+            if self.appended || now >= self.next_read_at {
+                let before = *n;
+                self.pump_batches(n)?;
+                if *n > before || now.saturating_sub(self.poison_cleared_at) >= POISON_RECHECK_MS {
+                    self.poison_seen.clear();
+                    self.poison_cleared_at = now;
+                }
+                self.appended = false;
+                self.next_read_at = now.saturating_add(self.foreign_poll_ms);
+            }
+            if self.local.is_empty() {
+                return Ok(());
+            }
+            self.appended = false;
+            while let Some(ev) = self.local.pop_front() {
+                if let Err(e) = self.dispatch(&ev, None) {
+                    self.local.push_front(ev);
+                    return Err(e);
+                }
+                *n += 1;
+            }
+            if !self.appended {
+                return Ok(());
+            }
+        }
     }
 
     fn pump_batches(&mut self, n: &mut usize) -> Result<()> {
@@ -414,7 +500,7 @@ impl Engine {
             let last = batch.last().map_or(0, |(o, _)| *o);
             self.appended = false;
             for (off, ev) in batch {
-                if let Err(e) = self.dispatch(&ev, (off, last)) {
+                if let Err(e) = self.dispatch(&ev, Some((off, last))) {
                     self.check_applied_below = self.check_applied_below.max(last + 1);
                     return Err(e);
                 }
@@ -458,6 +544,15 @@ impl Engine {
             n += 1;
         }
         let now = self.clock.now_ms();
+        let mut due: Vec<_> = self.timers.values().filter(|r| r.at <= now).map(|r| (r.at, r.id.clone())).collect();
+        due.sort();
+        for (_, id) in due {
+            if let Some(row) = self.timers.remove(&id) {
+                let ev = Event { cause: row.cause.clone(), correlation: row.correlation.clone(), ..self.local_event(&row.stream, row.kind.clone(), row.at, None) };
+                self.local.push_back(ev);
+                n += 1;
+            }
+        }
         let mut late: Vec<_> = self.pending.values().filter(|p| p.deadline_at <= now).map(|p| (p.deadline_at, p.key.clone())).collect();
         late.sort();
         for (_, key) in late {
@@ -508,8 +603,12 @@ impl Executor for Engine {
             cause: Some(EventId(key.into())),
             correlation: p.correlation.clone(),
         };
-        self.journal.append(&ev)?;
-        self.appended = true;
+        if self.memory_only.remove(key) {
+            self.local.push_back(ev.clone());
+        } else {
+            self.journal.append(&ev)?;
+            self.appended = true;
+        }
         self.pending.remove(key);
         let w = self.unit("effect", Some(&ev), None);
         w.set("effect.kind", p.spec.name.as_str());

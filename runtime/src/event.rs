@@ -76,10 +76,17 @@ pub struct EffectSpec {
     pub deadline_ms: u64,
 }
 
+/// `Emit`, `Effect` and `Schedule` are journaled and survive a restart. `Note`, `Probe` and
+/// `Timer` live in the engine's memory only: a restart forgets them, so they are for work the
+/// next poll repeats anyway, and a handler that must not lose a fact emits it.
 pub enum Command {
     Emit(EventKind),
     Effect(EffectSpec),
     Schedule { at: u64, kind: EventKind },
+    Note(EventKind),
+    Probe(EffectSpec),
+    /// One pending timer per (stream, tag): arming it again replaces the one waiting.
+    Timer { at: u64, kind: EventKind },
 }
 
 /// What a handler may read besides the event: time and randomness, both pinned to the
@@ -133,6 +140,10 @@ impl Projection {
 
     pub fn events(&self, stream: &StreamKey) -> &[Event] {
         self.streams.get(stream).map_or(&[], |v| v.as_slice())
+    }
+
+    pub fn total(&self) -> usize {
+        self.streams.values().map(Vec::len).sum()
     }
 
     pub fn count(&self, stream: &StreamKey, tag: &str) -> usize {

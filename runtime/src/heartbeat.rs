@@ -1,5 +1,5 @@
-//! The heartbeat workflow: an in-process Schedule that asks for one ping effect each time it
-//! fires, but only when the journal has advanced past the events the heartbeat itself wrote.
+//! The heartbeat workflow: a memory-only timer that asks for one ping effect each time it
+//! fires, but only when the engine has seen events past the ones the heartbeat itself wrote.
 
 use crate::event::*;
 
@@ -18,7 +18,7 @@ impl Heartbeat {
         Registration::new(NAME, self)
     }
 
-    /// The first beat; appending it again is a no-op.
+    /// The first beat, handed to `Engine::start` each time the process starts.
     pub fn boot() -> (&'static str, &'static str, EventKind) {
         ("heartbeat/boot", STREAM, EventKind::new(HEARTBEAT, "0"))
     }
@@ -31,16 +31,16 @@ impl Handler for Heartbeat {
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
         let own = view.events(&ev.stream).len() as u64;
-        let foreign = (ctx.offset() + 1).saturating_sub(own);
+        let foreign = (view.total() as u64).saturating_sub(own);
         let seen: u64 = ev.kind.body.parse().unwrap_or(0);
         let advanced = foreign > seen;
         ctx.event().set("heartbeat.foreign_events", foreign);
         ctx.event().set("heartbeat.advanced", advanced);
         let mut cmds = vec![];
         if advanced {
-            cmds.push(Command::Effect(EffectSpec { name: PING.into(), input: foreign.to_string(), deadline_ms: self.ping_deadline_ms }));
+            cmds.push(Command::Probe(EffectSpec { name: PING.into(), input: foreign.to_string(), deadline_ms: self.ping_deadline_ms }));
         }
-        cmds.push(Command::Schedule { at: ev.at + self.interval_ms, kind: EventKind::new(HEARTBEAT, &foreign.max(seen).to_string()) });
+        cmds.push(Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(HEARTBEAT, &foreign.max(seen).to_string()) });
         cmds
     }
 }

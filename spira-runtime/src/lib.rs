@@ -18,6 +18,10 @@ use runtime::{Engine, EffectSpec, Journal, Marker, Registration, Value, WideSink
 
 pub use settings::Settings;
 
+/// No registration here consumes events other writers append, so the journal is read for them
+/// this often rather than on every wake.
+const FOREIGN_POLL_MS: u64 = 30_000;
+
 /// Every workflow the service hosts. The heartbeat is registered here and nowhere else.
 pub fn registrations(s: &Settings) -> Vec<Registration> {
     vec![Heartbeat { interval_ms: s.heartbeat_secs * 1000, ping_deadline_ms: s.ping_deadline_ms() }.registration(), s.round_duty.clone().registration(), s.inbox_keeper.clone().registration(), s.pr_notify.clone().registration(), s.asks.clone().registration()]
@@ -29,6 +33,7 @@ pub fn open_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runti
     Engine::open(journal, clock, regs, 0)?
         .with_sink(sink)
         .with_baseline(vec![("runtime.version".into(), Value::from(env!("CARGO_PKG_VERSION"))), ("config.hash".into(), Value::from(s.hash()))])
+        .with_foreign_poll(FOREIGN_POLL_MS)
         .with_stall_limit(s.stall_limit)
         .with_marker(marker)
 }
