@@ -348,7 +348,7 @@ fi
 # executables are stored once, under tree + toolchain + profile, on the store the sccache above
 # already uses. A hit needs the manifest, written last, to meet the tarball's and every member's
 # checksum; anything else is a miss and the build runs as it always did.
-art_base="http://${host_addr}:9431/artifacts"
+art_base="$SCCACHE_WEBDAV_ENDPOINT/artifacts"
 art_get() { curl -sS --max-time 600 -o "$2" -w '%{http_code}' "$art_base/$1" 2>/dev/null || true; }
 art_put() { curl -sS -f --max-time 600 -o /dev/null -T "$2" "$art_base/$1"; }
 art_key() { printf '%s %s release-workspace\n' "$1" "$2" | sha256sum | cut -d' ' -f1; }

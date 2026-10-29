@@ -2680,6 +2680,7 @@ fn a_manifest_checksum_for_a_member_that_differs_is_a_miss() {
 fn the_manifest_round_trips_and_the_key_names_tree_and_toolchain() {
     let m = artifacts::Manifest { key: "k".into(), tree: "t".into(), toolchain: TC.into(), tarball_sha256: "s".into(), tarball_bytes: 7, files: vec![("a".into(), "h1".into()), ("b".into(), "h2".into())] };
     assert_eq!(artifacts::Manifest::parse(&m.render()).unwrap(), m);
+    assert_eq!(artifacts::key("t1", "deadbeef 1.99.0"), "55ff5d54bdd1a52763970e49c935c72df12820f8369f1e5d6ca4f4b1c2f56561", "the round VM's bash computes this same value");
     assert_ne!(artifacts::key("t1", TC), artifacts::key("t2", TC));
     assert_ne!(artifacts::key("t1", TC), artifacts::key("t1", "1.100.0 def"));
     assert_eq!(artifacts::toolchain_id("rustc 1.99.0 (abc 2026)\nbinary: rustc\ncommit-hash: deadbeef\nrelease: 1.99.0\nhost: x\n"), "deadbeef 1.99.0");
