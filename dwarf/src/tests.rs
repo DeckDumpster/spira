@@ -716,6 +716,18 @@ fn a_candidate_spira_claim_stack_calls_blocked_is_never_claimed_and_the_next_is(
 }
 
 #[test]
+fn a_too_deep_stack_answer_still_goes_to_the_machine_for_the_refusal_of_record() {
+    let f = fx("enf-stack-toodeep");
+    seed(&f, "sp-deep");
+    f.w.lock().unwrap().stack_answer = Some(r#"{"claimable":false,"reason":"TooDeep","stack":{},"stack_depth":5,"stack_max_depth":4}"#.into());
+    let mut a = BTreeMap::new();
+    a.insert("lc_claim_bead", Out::fail(3, ""));
+    let o = go(&f, "spira,plan", &[], Mode::Claim, a, no_session());
+    let w = o.w.lock().unwrap();
+    assert!(w.seam_calls.iter().any(|c| c.0 == "lc_claim_bead" && c.1[0] == "sp-deep"), "{}", o.log);
+}
+
+#[test]
 fn a_refused_lifecycle_claim_is_another_dwarves_bead_and_is_left_alone() {
     let f = fx("enf-refused");
     seed(&f, "sp-z");

@@ -335,8 +335,8 @@ pub fn index_rows(rows: Vec<ReadyRow>) -> HashMap<String, ReadyRow> {
     rows.into_iter().map(|r| (r.id.clone(), r)).collect()
 }
 
-/// The `blocks` targets of a candidate. A `blocks` edge onto the candidate's own parent is read as
-/// parent-child: a container closes only when its children do, so it could never clear.
+/// What a candidate may wait on: its parent, then its `blocks` targets. A `blocks` edge onto the
+/// candidate's own parent is read as parent-child, not a second blocker.
 pub fn blockers(r: &ReadyRow) -> Vec<String> {
     let parent = r.parent.iter().filter(|p| !p.is_empty() && **p != r.id).cloned();
     parent.chain(declared_blockers(r)).collect()
@@ -979,6 +979,12 @@ mod tests {
         assert_eq!(claimable(&split, &lc, &bd, 0), Verdict::Blocked("P".into()));
         lc.get_mut("P").unwrap().tip = Some("abc".into());
         assert_eq!(claimable(&follow, &lc, &bd, 0), Verdict::Blocked("P".into()));
+    }
+
+    #[test]
+    fn only_parented_rows_add_a_parent_to_the_blockers_to_fetch() {
+        assert!(all_blockers(&[row("A", 1, None, "t"), row("B", 1, None, "t")]).is_empty());
+        assert_eq!(all_blockers(&[row("A", 1, None, "t"), row("B", 1, Some("P"), "t")]), ["P"]);
     }
 
     #[test]
