@@ -837,7 +837,7 @@ impl Git for RealGit {
             return false;
         }
         let mut c = git(repo);
-        c.args(["merge-tree", "--write-tree", base, branch]);
+        c.args(["-c", &format!("attr.tree={base}"), "merge-tree", "--write-tree", base, branch]);
         let Some(merged) = git_out(c) else { return false };
         let merged = merged.lines().next().unwrap_or("").to_string();
         if merged.is_empty() {

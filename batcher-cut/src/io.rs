@@ -877,7 +877,7 @@ pub fn conflict_files(dir: &Path, side: &str, tip: &str) -> Option<Vec<String>> 
     let o = spira_config::bounded::bounded("git")
         .arg("-C")
         .arg(dir)
-        .args(["merge-tree", "--write-tree", "--name-only", "--no-messages", side, tip])
+        .args(["-c", &format!("attr.tree={side}"), "merge-tree", "--write-tree", "--name-only", "--no-messages", side, tip])
         .output()
         .ok()?;
     let out = String::from_utf8_lossy(&o.stdout).to_string();
@@ -3610,6 +3610,37 @@ mod wait_lock_tests {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
+
+    fn union_repo(tag: &str) -> testkit::TempDir {
+        let d = testkit::TempDir::new(tag);
+        let p = d.path();
+        let g = |args: &[&str]| {
+            let o = std::process::Command::new("git").arg("-C").arg(p).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
+            assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        };
+        let commit = |file: &str, body: &str| {
+            std::fs::write(p.join(file), body).unwrap();
+            g(&["add", "-A"]);
+            g(&["commit", "-q", "-m", "c"]);
+        };
+        g(&["init", "-q", "-b", "stale"]);
+        commit("keep", "x\n");
+        g(&["checkout", "-q", "-b", "main"]);
+        commit(".gitattributes", "f merge=union\n");
+        commit("f", "base\n");
+        g(&["checkout", "-q", "-b", "b", "main"]);
+        commit("f", "base\nfrom b\n");
+        g(&["checkout", "-q", "main"]);
+        commit("f", "base\nfrom a\n");
+        g(&["checkout", "-q", "stale"]);
+        d
+    }
+
+    #[test]
+    fn conflict_files_honours_the_base_refs_union_attributes_not_the_checkouts() {
+        let d = union_repo("batcher-cut-union");
+        assert_eq!(conflict_files(d.path(), "main", "b"), None);
+    }
 
     fn git(dir: &Path, args: &[&str]) -> String {
         let o = Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();

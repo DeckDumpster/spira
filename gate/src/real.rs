@@ -401,6 +401,8 @@ impl World for Real {
         let o = self
             .git(repo)
             .args([
+                "-c",
+                &format!("attr.tree={base}"),
                 "merge-tree",
                 "--write-tree",
                 "--name-only",
@@ -1143,6 +1145,38 @@ pub fn utc_of(t: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    fn union_repo(tag: &str) -> testkit::TempDir {
+        let d = testkit::TempDir::new(tag);
+        let p = d.path();
+        let g = |args: &[&str]| {
+            let o = std::process::Command::new("git").arg("-C").arg(p).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
+            assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        };
+        let commit = |file: &str, body: &str| {
+            std::fs::write(p.join(file), body).unwrap();
+            g(&["add", "-A"]);
+            g(&["commit", "-q", "-m", "c"]);
+        };
+        g(&["init", "-q", "-b", "stale"]);
+        commit("keep", "x\n");
+        g(&["checkout", "-q", "-b", "main"]);
+        commit(".gitattributes", "f merge=union\n");
+        commit("f", "base\n");
+        g(&["checkout", "-q", "-b", "b", "main"]);
+        commit("f", "base\nfrom b\n");
+        g(&["checkout", "-q", "main"]);
+        commit("f", "base\nfrom a\n");
+        g(&["checkout", "-q", "stale"]);
+        d
+    }
+
+    #[test]
+    fn merge_tree_honours_the_base_refs_union_attributes_not_the_checkouts() {
+        use crate::ports::World;
+        let d = union_repo("gate-union");
+        assert!(matches!(super::Real::new(std::path::PathBuf::new()).merge_tree(d.path(), "main", "b"), crate::ports::Merge::Clean(_)));
+    }
     #[test]
     fn install_tools_copies_stamps_and_clears_every_other_tree() {
         use std::fs;
