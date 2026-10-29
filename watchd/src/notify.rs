@@ -505,6 +505,22 @@ mod tests {
     }
 
     #[test]
+    fn a_failing_tool_on_a_stale_row_is_reported_with_one_tried_prefix_and_a_lone_runbook_with_none() {
+        let d = TempDir::new("watchd-notify");
+        let (c, rows) = stale_pool(&d);
+        let ops = Fake { sops: recert_sop(), tool_result: Some(crate::ops::fake::ToolRunFake::Exit(7, String::new())), ..Fake::default() };
+        let out = cmd_notify(&rows, &ops, &c).unwrap();
+        assert!(out.report.contains("  tried before escalating: ") && !out.report.contains("tried before escalating: tried"), "{}", out.report);
+
+        let d = TempDir::new("watchd-notify");
+        let (c, rows) = stale_pool(&d);
+        let plain = recert_sop().into_iter().map(|(k, t)| (k, t.lines().filter(|l| !l.starts_with("RUN") && !l.starts_with("DEADLINE")).collect::<Vec<_>>().join("\n"))).collect();
+        let ops = Fake { sops: plain, ..Fake::default() };
+        let out = cmd_notify(&rows, &ops, &c).unwrap();
+        assert!(out.report.contains("  runbooks that matched: sop-recert") && !out.report.contains("tried"), "{}", out.report);
+    }
+
+    #[test]
     fn the_third_pass_over_one_standing_incident_escalates_instead_of_running_a_third_time() {
         let d = TempDir::new("watchd-notify");
         let (c, rows) = stale_pool(&d);
