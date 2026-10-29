@@ -276,12 +276,19 @@ _lcb_drill_busy() {
     [ "$ms" -le "$SPIRA_LC_BACKUP_DRILL_BUDGET_MS" ] || echo "live store probe took ${ms}ms, over the ${SPIRA_LC_BACKUP_DRILL_BUDGET_MS}ms budget"
 }
 
+_lcb_record_deferral() {
+    local line db; line="$(cat)"; echo "$line"
+    for db in $(_lcb_dbs); do
+        mkdir -p "$(dirname "$(_lcb_verdict "$db")")" && printf '%s\n' "$line" > "$(_lcb_verdict "$db")"
+    done
+}
+
 _lcb_drill_wait_quiet() {
     local deadline why
     deadline=$(( $(date +%s) + SPIRA_LC_BACKUP_DRILL_WAIT_SECS ))
     while why="$(_lcb_drill_busy)"; [ -n "$why" ]; do
         if [ "$(date +%s)" -ge "$deadline" ]; then
-            echo "lc-backup: drill: DEFERRED past ${SPIRA_LC_BACKUP_DRILL_WAIT_SECS}s, never ran — $why"
+            echo "lc-backup: drill: DEFERRED past ${SPIRA_LC_BACKUP_DRILL_WAIT_SECS}s, never ran — $why" | _lcb_record_deferral >&2
             return 75
         fi
         echo "lc-backup: drill: deferring — $why"
