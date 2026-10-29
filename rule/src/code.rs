@@ -589,7 +589,7 @@ pub fn submit_law(repo_path: &Path, repo_name: &str, wt_root: &Path, law_branch:
     let body_file = wt_root.join(format!("rule-{verb}-{key}-{}-{stamp}.bead.txt", std::process::id()));
     std::fs::write(&body_file, body).map_err(|e| format!("rule: {}: {e}", body_file.display()))?;
     let filed = spira_config::bounded::bounded("bead.sh")
-        .args(["file", &title, "--for", "ops", "--repo", repo_name, "--submitted", "--tip", &tip, "--json", "--body-file"])
+        .args(["file", &title, "--for", "builder", "--repo", repo_name, "--submitted", "--tip", &tip, "--json", "--body-file"])
         .arg(&body_file)
         .stdin(Stdio::null())
         .output();

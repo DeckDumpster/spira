@@ -329,6 +329,55 @@ fn queue_shims(repo: &Path) -> (testkit::TempDir, String) {
     (bin, path)
 }
 
+/// A `bead.sh` that refuses a persona whose partition the repo's map row does not admit,
+/// in the real refusal's words. The lanes come from a lane-table row, the partition from the
+/// shipped rune's own `RUNE_LABELS`.
+fn admitting_bead_sh(bin: &Path, map: &Path, runes: &Path) {
+    let script = format!(
+        r#"#!/bin/bash
+persona=; repo=
+while [ $# -gt 0 ]; do case "$1" in --for) persona=$2; shift;; --repo) repo=$2; shift;; esac; shift; done
+SPIRA_PLAN_LABEL=plan SPIRA_INCIDENT_LABEL=incident
+. {runes}/$persona.rune >/dev/null 2>&1
+lanes=$(awk -F'|' -v r="$repo" '{{n=$1; gsub(/ /,"",n); if (n==r) {{l=$NF; gsub(/ /,"",l); print l}}}}' {map} | tr , ' ')
+for l in $lanes; do [ "$l" = "$RUNE_LABELS" ] && {{ echo x >> {map}.n; echo "{{\"id\":\"sp-law$(wc -l < {map}.n | tr -d ' ')\"}}"; exit 0; }}; done
+echo "bead: repo:$repo does not admit lane $RUNE_LABELS — refused by its admitted lanes ($lanes)" >&2
+exit 1
+"#,
+        runes = runes.display(),
+        map = map.display()
+    );
+    testkit::write_exe(bin.join("bead.sh"), &script);
+}
+
+fn admitted_lanes_of(map: &Path, repo: &str) -> Vec<String> {
+    let text = std::fs::read_to_string(map).unwrap();
+    let row = text.lines().find(|l| l.split('|').next().map(str::trim) == Some(repo)).unwrap();
+    row.rsplit('|').next().unwrap().trim().split(',').map(str::to_string).collect()
+}
+
+#[test]
+fn a_law_commit_is_filed_in_a_lane_the_repo_admits_and_is_submitted() {
+    let runes = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+    let repo = fixture_repo("law-lane");
+    let wt_root = testkit::TempDir::new("law-lane-wt");
+    let (bin, path) = queue_shims(repo.path());
+    let map = bin.join("lane-table");
+    std::fs::write(&map, "fixture | /srv/fixture | push | origin/main | | | plan,groom,spike\n").unwrap();
+    assert!(!admitted_lanes_of(&map, "fixture").contains(&"incident".to_string()), "the fixture must leave incident unadmitted");
+    admitting_bead_sh(bin.path(), &map, &runes);
+    let _env = testkit::env(&[("PATH", Some(path.as_str()))]);
+    let toc = append(&parse_toc(TOC).unwrap(), 2, "law-four").unwrap();
+    let book = book_of(&[("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three."), ("law-four", "Do four.")]);
+    let (id, branch) = land(repo.path(), wt_root.path(), "enact", "law-four", &toc, &book).unwrap();
+    assert_eq!((id.as_str(), branch.as_str()), ("sp-law1", "spira/sp-law1"));
+    let toc = parse_toc(TOC).unwrap();
+    let book = book_of(&[("law-one", "Do one."), ("law-three", "Do three.")]);
+    land(repo.path(), wt_root.path(), "retire", "law-two", &toc, &book).unwrap();
+    let log = std::fs::read_to_string(bin.join("calls")).unwrap();
+    assert_eq!(log.matches("queue submit").count(), 2, "{log}");
+}
+
 fn land(repo: &Path, wt_root: &Path, verb: &str, key: &str, toc: &[rule::code::Part], book: &BTreeMap<String, String>) -> Result<(String, String), String> {
     land_with(repo, wt_root, verb, key, toc, &Pointers::default(), book)
 }
