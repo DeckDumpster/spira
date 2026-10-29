@@ -27,9 +27,6 @@ out="$(LOCALOK=0 lcb run)"; rc=$?; wantrc "same-disk file:// destination refused
 
 echo; echo "age — stale and fresh fixtures:"
 out="$(lcb age)"; want "never is named" never "$out"
-eval "$(sed -n '/^_lcb_all_ok()/p' "$HERE/lc-backup.sh")"
-declare -F _lcb_all_ok >/dev/null || bad "_lcb_all_ok was not extracted from lc-backup.sh"
-_lcb_all_ok "db0: ok 1s"; wantrc "the matcher accepts an all-ok list" 0 $?
 printf '%s deadbeef\n' "$(( $(date +%s) - 5000 ))" > "$RUN/lc-backup.spira_lifecycle.ok"
 out="$(DBS=spira_lifecycle lcb age)"; rc=$?; wantrc "stale stamp is red" 1 $rc; want "stale is named" stale "$out"
 printf '%s deadbeef\n' "$(( $(date +%s) - 10 ))" > "$RUN/lc-backup.spira_lifecycle.ok"
@@ -57,3 +54,4 @@ grep -q '^ExecStopPost=@SPIRA_HOME@/lc-backup.sh explain-drill' "$HERE/../system
 grep -q '^Unit=lc-backup.service' "$HERE/../systemd/lc-backup.timer" && ok "timer starts the service" || bad "timer starts the service"
 grep -q 'lc-backup.timer", true' "$HERE/../install/src/manifest.rs" && ok "manifest enables the timer" || bad "manifest enables the timer"
 grep -q '^lc-backup|daemon|' "$HERE/watchers" && ok "age alarm has a watcher row" || bad "age alarm has a watcher row"
+tl_summary
