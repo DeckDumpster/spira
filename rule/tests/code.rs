@@ -336,6 +336,7 @@ fn admitting_bead_sh(bin: &Path, map: &Path, runes: &Path) {
     let script = format!(
         r#"#!/bin/bash
 persona=; repo=
+echo "bead $*" >> {calls}
 while [ $# -gt 0 ]; do case "$1" in --for) persona=$2; shift;; --repo) repo=$2; shift;; esac; shift; done
 SPIRA_PLAN_LABEL=plan SPIRA_INCIDENT_LABEL=incident
 . {runes}/$persona.rune >/dev/null 2>&1
@@ -345,6 +346,7 @@ echo "bead: repo:$repo does not admit lane $RUNE_LABELS — refused by its admit
 exit 1
 "#,
         runes = runes.display(),
+        calls = bin.join("calls").display(),
         map = map.display()
     );
     testkit::write_exe(bin.join("bead.sh"), &script);
