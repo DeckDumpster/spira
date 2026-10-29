@@ -179,12 +179,7 @@ fn detail_lines(rec: &ResultRecord, output: &str) -> Vec<String> {
     if rec.status != Status::Red && rec.status != Status::QuarantinedRed {
         return Vec::new();
     }
-    tap::parse(output)
-        .not_ok
-        .into_iter()
-        .take(10)
-        .map(|l| format!("      {l}"))
-        .collect()
+    output.lines().map(|l| format!("      {l}")).collect()
 }
 
 struct Shared<'a> {
@@ -707,6 +702,12 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|l| l.trim() == "not ok 1 - b broke"));
+            assert!(seen
+                .lines
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|l| l.trim() == "FAIL b"));
             o
         });
         assert!(!out.harness_fault());
