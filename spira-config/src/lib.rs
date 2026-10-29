@@ -1069,6 +1069,7 @@ fn validate_value(mut root: toml::Value, reg: &registry::Registry) -> Result<(Sp
             }
         }
     }
+    let mut unknown_values = BTreeMap::new();
     if let Some(spira) = root.get_mut("spira").and_then(|v| v.as_table_mut()) {
         let fields: Vec<String> = spira.keys().cloned().collect();
         for field in fields {
@@ -1079,7 +1080,13 @@ fn validate_value(mut root: toml::Value, reg: &registry::Registry) -> Result<(Sp
             };
             let v = &spira[&field];
             if let Some(e) = type_error(&rk.ty, v) {
-                return Err(format!("spira.{field}: {e}"));
+                let Some(value) = unknown_variant(&e) else { return Err(format!("spira.{field}: {e}")) };
+                spira.remove(&field);
+                warnings.push(format!(
+                    "spira.{field}: unknown value {value:?} (written by a newer release?); ignored until a reader needs it"
+                ));
+                unknown_values.insert(format!("spira.{field}"), value);
+                continue;
             }
             if let (Some(n), Some(max)) = (v.as_integer(), rk.max) {
                 if n as f64 > max {
@@ -1088,7 +1095,6 @@ fn validate_value(mut root: toml::Value, reg: &registry::Registry) -> Result<(Sp
             }
         }
     }
-    let mut unknown_values = BTreeMap::new();
     let mut doc = loop {
         let attempt: Result<SpiraToml, _> = serde_path_to_error::deserialize(root.clone());
         let e = match attempt {

@@ -142,7 +142,7 @@ mod spira_section {
             ("max_dwarves = 4294967296", "spira.max_dwarves"),
             ("runes = 3", "spira.runes"),
             ("runes = [1]", "spira.runes"),
-            ("czar_stage_deadlock = \"always\"", "spira.czar_stage_deadlock"),
+            ("czar_stage_deadlock = 3", "spira.czar_stage_deadlock"),
         ] {
             let err = validate(&format!("[spira]\nid_prefix = \"sp\"\n{line}\n")).unwrap_err();
             assert!(err.starts_with(field), "{line}: {err}");
