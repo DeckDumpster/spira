@@ -223,12 +223,12 @@ pub static ENTRIES: &[Entry] = &[
     Entry {
         verb: "law",
         group: Group::Law,
-        does: "Prints the statute code from the `law/` tree of your worktree: the table of contents, one part, one numbered section, or one statute by slug.",
+        does: "Prints the statute code from the `law/` tree of your worktree: the table of contents, one part, one numbered section, or one statute by slug. A superseded number, or a merged or retired slug, follows its pointers one printed line per hop to the statute in force.",
         when: "Before a choice the statutes govern, to read the rule itself rather than a summary of it.",
-        args: &["[<part> | <part>.<n> | <slug>]   (default: the table of contents)"],
+        args: &["[<part> | <part>.<n> | §<part>.<n> | <slug>]   (default: the table of contents; <n> may be a superseded number)"],
         checks: &["it reads the tracked tree of the worktree it runs in; no store, no socket"],
         refusals: &[
-            Refusal { id: R::LawUsage, text: "usage: work law [<part> | <part>.<n> | <slug>]", fix: "pass at most one argument" },
+            Refusal { id: R::LawUsage, text: "usage: work law [<part> | <part>.<n> | §<part>.<n> | <slug>]", fix: "pass at most one argument" },
             Refusal { id: R::LawNotFound, text: "{err}", fix: "pick a part, section or slug from the table of contents printed with it" },
         ],
     },

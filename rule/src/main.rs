@@ -75,7 +75,7 @@ fn main() {
         "enact" => cmd_enact(&db, &home, &rest),
         "retire" => cmd_retire(&db, &home, &rest),
         "list" => cmd_list(&db),
-        "show" => cmd_show(&db, &rest),
+        "show" => cmd_show(&db, &home, &rest),
         "audit" => cmd_audit(&db, &home, &rest),
         "code" => cmd_code(&db, &rest),
         "render-memories" => cmd_render_memories(&home, &rest),
@@ -410,7 +410,15 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
     if rc != 0 {
         return rc;
     }
-    match land_law(home, &repo, "enact", &key, &toc_after, &strings(&after)) {
+    let pointers = match read_pointers_for_write(&repo) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{e}");
+            eprintln!("rule: {key} IS in force but law/ was not submitted — fix the cause and run `rule.sh code` from a worktree.");
+            return 1;
+        }
+    };
+    match land_law(home, &repo, "enact", &key, &toc_after, &pointers, &strings(&after)) {
         Ok((branch, bead)) => {
             let n = toc_after.iter().find(|p| p.number == part).and_then(|p| p.slugs.iter().position(|s| *s == key)).map_or(0, |i| i + 1);
             println!("law/: {key} is §{part}.{n}; committed on {branch}, submitted under {bead}.");
@@ -424,10 +432,10 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
     }
 }
 
-fn land_law(home: &str, repo: &(String, Option<String>), verb: &str, key: &str, toc: &[code::Part], book: &BTreeMap<String, String>) -> Result<(String, String), String> {
+fn land_law(home: &str, repo: &(String, Option<String>), verb: &str, key: &str, toc: &[code::Part], pointers: &code::Pointers, book: &BTreeMap<String, String>) -> Result<(String, String), String> {
     let wt_root = spira_config::process::cfg("SPIRA_RUN").map(|r| Path::new(&r).join("worktree"))?;
     let reg = spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), Path::new(home));
-    let (id, branch) = code::land_law(&code::LawRepo { path: Path::new(&repo.0), base: repo.1.as_deref(), name: reg.home_repo() }, &wt_root, verb, key, toc, book)?;
+    let (id, branch) = code::land_law(&code::LawRepo { path: Path::new(&repo.0), base: repo.1.as_deref(), name: reg.home_repo() }, &wt_root, verb, key, toc, pointers, book)?;
     Ok((branch, id))
 }
 
@@ -464,6 +472,48 @@ fn read_toc_at(repo: &(String, Option<String>)) -> Result<Vec<code::Part>, Strin
         None => std::fs::read_to_string(Path::new(root).join("law/toc.toml")).map_err(|e| format!("rule: {root}/law/toc.toml: {e}"))?,
     };
     code::parse_toc(&text).map(|t| code::with_in_flight(Path::new(root), base.as_deref(), t)).map_err(|e| format!("rule: {e}"))
+}
+
+fn today() -> String {
+    spira_config::bounded::bounded("date")
+        .arg("+%Y-%m-%d")
+        .stdin(Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map_or_else(String::new, |o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
+fn read_pointers(law: &Path) -> Result<code::Pointers, String> {
+    match std::fs::read_to_string(law.join(code::POINTERS_FILE)) {
+        Ok(t) => code::parse_pointers(&t).map_err(|e| format!("rule: {e}")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(code::Pointers::default()),
+        Err(e) => Err(format!("rule: {}: {e}", law.join(code::POINTERS_FILE).display())),
+    }
+}
+
+/// `law/<file>` at the land ref of the home repository (its checkout when there is none);
+/// `None` when the ref has no such file.
+fn read_law_file_at(repo: &(String, Option<String>), file: &str) -> Result<Option<String>, String> {
+    let (root, base) = repo;
+    match base {
+        Some(b) => {
+            let out = spira_config::bounded::bounded("git").arg("-C").arg(root).arg("show").arg(format!("{b}:law/{file}")).output().map_err(|e| format!("rule: git: {e}"))?;
+            Ok(out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned()))
+        }
+        None => Ok(std::fs::read_to_string(Path::new(root).join("law").join(file)).ok()),
+    }
+}
+
+fn read_pointers_at(repo: &(String, Option<String>)) -> Result<code::Pointers, String> {
+    match read_law_file_at(repo, code::POINTERS_FILE)? {
+        Some(t) => code::parse_pointers(&t).map_err(|e| format!("rule: {e}")),
+        None => Ok(code::Pointers::default()),
+    }
+}
+
+fn read_pointers_for_write(repo: &(String, Option<String>)) -> Result<code::Pointers, String> {
+    read_pointers_at(repo).map(|p| code::with_in_flight_pointers(Path::new(&repo.0), repo.1.as_deref(), p))
 }
 
 fn read_toc(law: &Path) -> Result<Vec<code::Part>, String> {
@@ -528,14 +578,36 @@ fn cmd_code(db: &str, rest: &[String]) -> i32 {
             }
         },
     };
+    let on_disk = read_pointers(&law);
+    let pointers = match on_disk.as_ref().map_err(String::clone).and_then(|p| code::record_moves(&code::numbers_on_disk(&law), &toc, p, &today())) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{}", e.trim_start_matches("rule: "));
+            return 1;
+        }
+    };
+    let old = on_disk.unwrap_or_default();
+    let new_moves = &pointers.moved[old.moved.len()..];
     if check {
-        let drift = code::drift(&law, &code::generate(&toc, book_texts(&book)));
+        let mut drift = code::drift(&law, &code::generate(&toc, &pointers, book_texts(&book)));
+        drift.extend(code::check_pointers(&toc, &pointers));
+        drift.extend(new_moves.iter().map(|m| format!("{}: §{} moved to {}, not yet recorded", code::POINTERS_FILE, m.section, code::section_of(&toc, &m.slug).unwrap_or_default())));
         for d in &drift {
             eprintln!("law/{d}");
         }
         return if drift.is_empty() { 0 } else { 1 };
     }
-    match code::write_law(&law, &toc, &strings(&book)) {
+    let bad = code::check_pointers(&toc, &pointers);
+    if !bad.is_empty() {
+        for b in &bad {
+            eprintln!("law/{b}");
+        }
+        return 1;
+    }
+    for m in new_moves {
+        println!("§{} moved: {} is now §{}", m.section, m.slug, code::section_of(&toc, &m.slug).unwrap_or_default());
+    }
+    match code::write_law(&law, &toc, &pointers, &strings(&book)) {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("{e}");
@@ -660,12 +732,48 @@ fn cmd_audit(db: &str, home: &str, rest: &[String]) -> i32 {
     0
 }
 
+struct RetireArgs {
+    key: String,
+    reason: String,
+    replaced_by: Option<String>,
+    merged_into: Option<String>,
+}
+
+fn parse_retire_args(rest: &[String]) -> Result<RetireArgs, String> {
+    let (mut key, mut reason, mut replaced_by, mut merged_into) = (None, None, None, None);
+    let mut it = rest.iter();
+    while let Some(a) = it.next() {
+        let mut value = |flag: &str| it.next().cloned().ok_or_else(|| format!("rule: {flag} needs a value"));
+        match a.as_str() {
+            "--reason" => reason = Some(value("--reason")?),
+            "--replaced-by" => replaced_by = Some(slugify(&value("--replaced-by")?)),
+            "--merged-into" => merged_into = Some(slugify(&value("--merged-into")?)),
+            f if f.starts_with("--") => return Err(format!("rule: unknown flag {f}")),
+            _ if key.is_none() => key = Some(slugify(a)),
+            _ => return Err("rule: retire takes one slug".to_string()),
+        }
+    }
+    let key = key.ok_or("rule: retire needs a slug")?;
+    let reason = reason.filter(|r| !r.trim().is_empty()).ok_or("rule: refusing — a retirement leaves a pointer, and a pointer needs its reason. Pass --reason <why>.")?;
+    if replaced_by.is_some() && merged_into.is_some() {
+        return Err("rule: pass --replaced-by or --merged-into, not both".to_string());
+    }
+    Ok(RetireArgs { key, reason, replaced_by, merged_into })
+}
+
 fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
-    if rest.len() != 1 {
+    if rest.is_empty() {
         println!("{USAGE}");
         return 1;
     }
-    let key = slugify(&rest[0]);
+    let RetireArgs { key, reason, replaced_by, merged_into } = match parse_retire_args(rest) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("{e}");
+            eprintln!("usage: rule.sh retire <slug> --reason <why> [--replaced-by <slug> | --merged-into <slug>]");
+            return 1;
+        }
+    };
 
     let memories = match memories_json(db) {
         Ok(m) => m,
@@ -678,11 +786,44 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
         eprintln!("rule: no statute '{key}' in the statute book at {db}");
         return 1;
     }
+    for successor in replaced_by.iter().chain(&merged_into) {
+        if *successor == key || !memories.contains_key(successor) {
+            eprintln!("rule: refusing — {successor} is not a statute in force, so it cannot stand in for {key}");
+            return 1;
+        }
+    }
 
     let hook = match resolve_hook(home) {
         Ok(h) => h,
         Err(e) => return refuse_hook(&e),
     };
+    let repo = match locate_repo(home) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    let (toc, mut pointers) = match read_toc_at(&repo).and_then(|t| read_pointers_for_write(&repo).map(|p| (t, p))) {
+        Ok(tp) => tp,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    if code::section_of(&toc, &key).is_none() {
+        eprintln!("rule: refusing — {key} holds no section in law/toc.toml, so no pointer can be left for it. Enact it into a Part first.");
+        return 1;
+    }
+    let on = today();
+    match merged_into {
+        Some(into) => pointers.merged.push(code::Merged { from: key.clone(), into, reason, on }),
+        None => pointers.retired.push(code::Retired { slug: key.clone(), reason, replaced_by, on }),
+    }
+    if let Err(e) = code::resolve(&toc, &pointers, &key) {
+        eprintln!("rule: refusing — {e}");
+        return 1;
+    }
 
     let (code, _, stderr) = run_bd(db, &["forget", &key]);
     if code != 0 {
@@ -707,17 +848,9 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
     if rc != 0 {
         return rc;
     }
-    let (repo, toc) = match locate_repo(home).and_then(|r| read_toc_at(&r).map(|t| (r, t))) {
-        Ok(rt) => rt,
-        Err(e) => {
-            eprintln!("{e}");
-            eprintln!("rule: {key} is retired but law/ was not submitted — run `rule.sh code`.");
-            return 1;
-        }
-    };
-    match land_law(home, &repo, "retire", &key, &toc, &strings(&after)) {
+    match land_law(home, &repo, "retire", &key, &toc, &pointers, &strings(&after)) {
         Ok((branch, bead)) => {
-            println!("law/: {key} reserved; committed on {branch}, submitted under {bead}.");
+            println!("law/: {key} keeps its number, marked retired; committed on {branch}, submitted under {bead}.");
             0
         }
         Err(e) => {
@@ -741,26 +874,55 @@ fn cmd_list(db: &str) -> i32 {
     }
 }
 
-fn cmd_show(db: &str, rest: &[String]) -> i32 {
+fn cmd_show(db: &str, home: &str, rest: &[String]) -> i32 {
     if rest.len() != 1 {
         println!("{USAGE}");
         return 1;
     }
     let key = slugify(&rest[0]);
-    match read_book(db) {
-        Ok(book) => match book.get(&key).and_then(|v| v.as_str()) {
-            Some(text) => {
-                println!("{}", text.trim_end_matches('\n'));
-                0
-            }
-            None => {
-                eprintln!("rule: no statute '{key}'");
-                eprintln!("rule: `rule.sh list` shows what is in force");
-                1
-            }
-        },
+    let book = match read_book(db) {
+        Ok(b) => b,
         Err(e) => {
             eprintln!("{e}");
+            return 1;
+        }
+    };
+    let numbered = rest[0].strip_prefix('§').unwrap_or(&rest[0]);
+    let is_number = code::is_section(numbered);
+    if !is_number {
+        if let Some(text) = book.get(&key).and_then(|v| v.as_str()) {
+            println!("{}", text.trim_end_matches('\n'));
+            return 0;
+        }
+    }
+    let arg = if is_number { numbered } else { key.as_str() };
+    let looked = locate_repo(home).and_then(|repo| {
+        let toc = code::parse_toc(&read_law_file_at(&repo, "toc.toml")?.unwrap_or_default()).map_err(|e| format!("rule: {e}"))?;
+        Ok((toc, read_pointers_at(&repo)?))
+    });
+    let resolved = looked.map(|(toc, pointers)| (code::resolve(&toc, &pointers, arg), toc));
+    match resolved {
+        Ok((Ok(r), toc)) => {
+            for h in &r.hops {
+                println!("{h}");
+            }
+            match (&r.retired, book.get(&r.slug).and_then(|v| v.as_str())) {
+                (Some(ret), _) => println!("{}", code::retired_body(ret, &toc)),
+                (None, Some(text)) => println!("{}", text.trim_end_matches('\n')),
+                (None, None) => {
+                    eprintln!("rule: {} (§{}) is in the code but not in force", r.slug, r.section);
+                    return 1;
+                }
+            }
+            0
+        }
+        Ok((Err(code::Miss::Cycle(c)), _)) => {
+            eprintln!("rule: pointers form a cycle: {c}");
+            1
+        }
+        Ok((Err(code::Miss::Unknown), _)) | Err(_) => {
+            eprintln!("rule: no statute '{}'", if is_number { numbered } else { &key });
+            eprintln!("rule: `rule.sh list` shows what is in force");
             1
         }
     }

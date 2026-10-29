@@ -467,7 +467,7 @@ mod tests {
     }
 }
 
-/// What `work law [<part> | <part>.<n> | <slug>]` prints, read from the tracked `law/` tree
+/// What `work law [<part> | <part>.<n> | §<part>.<n> | <slug>]` prints, read from the tracked `law/` tree
 /// under `root`. `Err` carries the Part list when nothing matches.
 pub fn law_view(root: &std::path::Path, arg: Option<&str>) -> Result<String, (String, String)> {
     let law = root.join("law");
@@ -486,6 +486,25 @@ pub fn law_view(root: &std::path::Path, arg: Option<&str>) -> Result<String, (St
         let (_, dir) = part_dir(arg).ok_or_else(miss)?;
         return read(&dir.join("index.md"));
     }
+    let by_slug = |slug: &str| {
+        let want = format!("{slug}.md");
+        entries(&law).into_iter().filter(|(_, p)| p.is_dir()).find_map(|(_, dir)| entries(&dir).into_iter().find(|(name, _)| name.split_once('-').is_some_and(|(_, rest)| rest == want)).map(|(_, f)| f))
+    };
+    if let Some(toc) = std::fs::read_to_string(law.join("toc.toml")).ok().and_then(|t| rule::code::parse_toc(&t).ok()) {
+        let pointers = match std::fs::read_to_string(law.join("pointers.toml")) {
+            Ok(t) => rule::code::parse_pointers(&t).map_err(|e| (e, String::new()))?,
+            Err(_) => rule::code::Pointers::default(),
+        };
+        return match rule::code::resolve(&toc, &pointers, arg) {
+            Ok(r) => {
+                let file = by_slug(&r.slug).ok_or_else(miss)?;
+                let body = read(&file)?;
+                Ok(r.hops.iter().fold(String::new(), |acc, h| acc + h + "\n") + &if r.hops.is_empty() { body } else { format!("\n{body}") })
+            }
+            Err(rule::code::Miss::Cycle(c)) => Err((format!("pointers form a cycle: {c}"), String::new())),
+            Err(rule::code::Miss::Unknown) => Err(miss()),
+        };
+    }
     if let Some((part, n)) = arg.split_once('.') {
         if !part.is_empty() && !n.is_empty() && arg.chars().all(|c| c.is_ascii_digit() || c == '.') {
             let (_, dir) = part_dir(part).ok_or_else(miss)?;
@@ -493,13 +512,7 @@ pub fn law_view(root: &std::path::Path, arg: Option<&str>) -> Result<String, (St
             return read(&file);
         }
     }
-    let want = format!("law-{}.md", arg.strip_prefix("law-").unwrap_or(arg));
-    for (_, dir) in entries(&law).into_iter().filter(|(_, p)| p.is_dir()) {
-        if let Some((_, file)) = entries(&dir).into_iter().find(|(name, _)| name.split_once('-').is_some_and(|(_, rest)| rest == want)) {
-            return read(&file);
-        }
-    }
-    Err(miss())
+    by_slug(&format!("law-{}", arg.strip_prefix("law-").unwrap_or(arg))).ok_or_else(miss).and_then(|f| read(&f))
 }
 
 #[cfg(test)]

@@ -2688,6 +2688,7 @@ dependencies = [
  "bead",
  "gate",
  "habits",
+ "rule",
  "serde_json",
  "spira-config",
  "spira-otel",

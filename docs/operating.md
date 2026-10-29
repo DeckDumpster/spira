@@ -94,7 +94,7 @@ worktree: merging does not deploy, activation does.
 | The cockpit and Concierge | `cockpit.sh` builds or repairs it and attaches; `cockpit.sh status` changes nothing; `cockpit.sh resume` after a planned reboot drain; `concierge.sh status` |
 | A gate | `gate status <bead>` |
 | Hold a bead by hand for non-dwarf work | `hold.sh <bead-id> [--pid P \| --release]` |
-| Statutes and runbooks | `rule list`, `rule show <slug>`, `rule enact <slug> "<text>" (--tool <cmd> \| --mechanism <bead> \| --tool none --reason <why>) --part <n> [--dry-run]`, `rule code [--check]`, `rule audit`, `rule retire <slug>`; `sop list`, `sop show <slug>`, `sop write <slug> [-\|<file>]`, `sop match [-\|<file>]`, `sop lint`, `sop retire <slug>` |
+| Statutes and runbooks | `rule list`, `rule show <slug>`, `rule enact <slug> "<text>" (--tool <cmd> \| --mechanism <bead> \| --tool none --reason <why>) --part <n> [--dry-run]`, `rule code [--check]`, `rule audit`, `rule retire <slug> --reason <why> [--replaced-by <slug> \| --merged-into <slug>]`; `sop list`, `sop show <slug>`, `sop write <slug> [-\|<file>]`, `sop match [-\|<file>]`, `sop lint`, `sop retire <slug>` |
 
 Never read state from the files, logs or process lists another component owns; each state has
 one owning command (see the lint rules in [development](development.md)).

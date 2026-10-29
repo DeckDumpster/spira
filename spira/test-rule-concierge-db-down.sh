@@ -120,7 +120,7 @@ else bad "show against an unreachable store exits non-zero" "got rc=0"; fi
 want   "show names the database path"                              "$DB"        "$out_show_down"
 nowant "show does NOT report 'no statute' for an unreachable store" "no statute" "$out_show_down"
 
-out_retire_down=$(run_rule retire dbdown-seed); rc_retire_down=$?
+out_retire_down=$(run_rule retire dbdown-seed --reason fixture); rc_retire_down=$?
 if [ "$rc_retire_down" -ne 0 ]; then ok "retire against an unreachable store exits non-zero"
 else bad "retire against an unreachable store exits non-zero" "got rc=0"; fi
 want   "retire names the database path"                "$DB"       "$out_retire_down"
@@ -224,7 +224,7 @@ served_cfg
 out_enact2=$(run_rule enact dbdown-served --tool none --reason fixture "Amended text, served after enact."); rc_enact2=$?
 is   "re-enact exits 0" "0" "$rc_enact2"
 want "show returns the new text" "Amended text, served after enact." "$(run_rule show dbdown-served)"
-run_rule retire dbdown-served >/dev/null
+run_rule retire dbdown-served --reason fixture >/dev/null
 is   "retire removes the file" "1" "$([ -f "$MIRROR/law-dbdown-served.txt" ]; echo $?)"
 
 tl_summary
