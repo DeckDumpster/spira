@@ -729,3 +729,19 @@ fn commit_law_cuts_from_the_landing_ref_not_the_checkouts_head_and_reports_git_s
     let touched = rule::code::git_in(repo.path(), &["show", "--name-only", "--format=", &branch]).unwrap();
     assert!(touched.contains("law/toc.toml"), "{touched}");
 }
+
+#[test]
+fn commit_law_with_no_base_resolves_the_landing_ref_and_refuses_when_none_resolves() {
+    let repo = fixture_repo("law-commit-nobase");
+    let wt_root = testkit::TempDir::new("law-commit-nobase-wt");
+    let toc = append(&parse_toc(TOC).unwrap(), 2, "law-four").unwrap();
+    let book = book_of(&[("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three."), ("law-four", "Do four.")]);
+    let branch = rule::code::commit_law(repo.path(), None, wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &book).unwrap();
+    let parent = rule::code::git_in(repo.path(), &["rev-parse", &format!("{branch}~1")]).unwrap();
+    assert_eq!(parent, rule::code::git_in(repo.path(), &["rev-parse", "HEAD"]).unwrap());
+
+    let bare = testkit::TempDir::new("law-commit-nobase-empty");
+    assert!(Command::new("git").arg("-C").arg(bare.path()).args(["init", "-q"]).status().unwrap().success());
+    let err = rule::code::commit_law(bare.path(), None, wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &book).unwrap_err();
+    assert!(err.contains("no landing ref resolves"), "{err}");
+}
