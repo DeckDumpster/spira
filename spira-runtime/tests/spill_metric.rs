@@ -30,7 +30,7 @@ fn a_spill_record_pushes_its_total_labelled_by_what_and_other_records_push_nothi
 }
 
 #[test]
-fn an_unset_endpoint_pushes_nothing_and_the_record_is_still_logged() {
+fn a_spill_record_is_still_logged_when_no_endpoint_is_set() {
     let d = testkit::TempDir::new("spill-metric-off");
     let sink = OtlpSink::with_metrics(LogSink::new(d.path(), "spira-runtime"), 8, MetricsSink::for_component(None, "spira-runtime"));
     sink.emit(&record("offload.spill", "turn", 1));

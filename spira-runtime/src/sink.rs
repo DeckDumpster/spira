@@ -4,6 +4,7 @@ use runtime::{Fields, Value, WideSink};
 use spira_otel::logs::{Attr, LogQueue, LogSink};
 use spira_otel::metrics::{MetricsSink, Point};
 
+/// A gauge of a monotonic total: the store drops sums, so the alarm reads the latest value.
 pub const SPILLED_TOTAL: &str = "spira_runtime_offload_spilled_total";
 const SPILL_UNIT: &str = "offload.spill";
 

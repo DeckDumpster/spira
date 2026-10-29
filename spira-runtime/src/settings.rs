@@ -163,6 +163,8 @@ mod tests {
         assert_eq!((s.heartbeat_secs, s.stall_limit, s.heartbeat_url.as_str()), (7, 3, "http://127.0.0.1:9/ping"));
         assert_eq!(s.lc_socket, PathBuf::from("/d/sock"));
         assert_eq!(s.metrics_endpoint.as_deref(), Some("127.0.0.1:9"));
+        let unset = |k: &str| if k == "SPIRA_METRICS_ENDPOINT" { Ok("  ".to_string()) } else { lookup("7")(k) };
+        assert_eq!(Settings::from_lookup(&unset).unwrap().metrics_endpoint, None, "a blank endpoint disables the push");
         assert!(Settings::from_lookup(&lookup("0")).unwrap_err().contains("positive"), "zero seconds would spin the schedule");
         assert_ne!(s.hash(), Settings::from_lookup(&lookup("8")).unwrap().hash());
     }
