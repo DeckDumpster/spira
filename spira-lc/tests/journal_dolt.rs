@@ -219,39 +219,47 @@ fn the_truncation_migration_marks_only_a_255_char_event_applied_and_is_idempoten
     assert_eq!(f.ok(&["applied", "heartbeat", "normal"]), "0");
 }
 
-const CONTINUITY_SCAN: &str = "SELECT seq, machine, lc_key, event, from_state, to_state FROM event WHERE applied = 1 AND seq > 0 ORDER BY seq";
+const CONTINUITY_SCAN: &str = "SELECT seq, machine, lc_key, event, from_state, to_state FROM event WHERE applied = 1 AND seq > 150000 ORDER BY seq";
+const SEEKS_APPLIED_SEQ: &str = "index: [event.applied,event.seq]";
 
 #[test]
 fn the_continuity_scan_seeks_the_applied_seq_index_over_200k_events() {
     let Some(f) = fixture() else { return };
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../lifecycle");
-    let schema = std::fs::read_to_string(dir.join("schema.sql")).unwrap();
-    let event_ddl = schema.split("CREATE TABLE IF NOT EXISTS event (").nth(1).unwrap().split(");").next().unwrap();
-    let seed = format!(
-        "USE spira_lifecycle;\nCREATE TABLE event ({event_ddl});\nCREATE INDEX event_since_idx ON event (machine, applied, lc_key, to_state, at);\n\
+    let schema = dir.join("schema.sql");
+    let seed = "USE spira_lifecycle;\n\
          INSERT INTO event (machine, lc_key, event, expect, from_state, to_state, applied, evidence, actor, at) \
          WITH RECURSIVE r (i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM r WHERE i < 399), c (j) AS (SELECT 0 UNION ALL SELECT j + 1 FROM c WHERE j < 499) \
-         SELECT 'bead', CONCAT('b', (i * 500 + j) % 5000), 'e', 'x', 'A', 'B', (i * 500 + j) % 10 = 0, '{{}}', 'a', i * 500 + j FROM r CROSS JOIN c;\n"
-    );
-    let (code, out) = f.sql_as_root(&seed);
+         SELECT 'bead', CONCAT('b', (i * 500 + j) % 5000), 'e', 'x', 'A', 'B', (i * 500 + j) % 10 = 0, '{}', 'a', i * 500 + j FROM r CROSS JOIN c;\n";
+    let schema_sql = format!("USE spira_lifecycle;\n{}\nDROP INDEX event_applied_seq_idx ON event;\n", std::fs::read_to_string(schema).unwrap());
+    let (code, out) = f.sql_as_root(&schema_sql);
+    assert_eq!(code, 0, "schema.sql applies: {out}");
+    let (code, out) = f.sql_as_root(seed);
     assert_eq!(code, 0, "seeding 200k events: {out}");
 
     let port = f.env.iter().find(|(k, _)| k == "SPIRA_LC_PORT").unwrap().1.clone();
-    let explain = |f: &Fixture| {
+    let dolt = |q: &str| {
         // batch-job: one read against the test's private server.
-        let o = Command::new("dolt").args(["--host", "127.0.0.1", "--port", &port, "--user", "root", "--password", "", "--no-tls", "--use-db", "spira_lifecycle", "sql", "-q", &format!("EXPLAIN FORMAT=TREE {CONTINUITY_SCAN}")]).current_dir(&f.root).output().expect("dolt sql-client runs");
-        format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))
+        let o = Command::new("dolt").args(["--host", "127.0.0.1", "--port", &port, "--user", "root", "--password", "", "--no-tls", "--use-db", "spira_lifecycle", "sql", "-r", "csv", "-q", q]).current_dir(&f.root).output().expect("dolt runs");
+        assert!(o.status.success(), "{q}: {}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).into_owned()
     };
-    let before = explain(&f);
-    assert!(before.contains("IndexedTableAccess(event)") && !before.contains("index: [event.applied,event.seq]"), "positive control: no index yet: {before}");
+    let plan = || dolt(&format!("EXPLAIN FORMAT=TREE {CONTINUITY_SCAN}"));
+    let before = plan();
+    assert!(before.contains("IndexedTableAccess(event)") && !before.contains(SEEKS_APPLIED_SEQ), "positive control: on main the scan reads the primary key and filters: {before}");
 
-    let migration = std::fs::read_to_string(dir.join("migrations/0033-event-applied-seq-idx.sql")).unwrap();
-    assert_eq!(f.sql_as_root(&format!("USE spira_lifecycle;\n{migration}")).0, 0);
-    let after = explain(&f);
-    assert!(after.contains("index: [event.applied,event.seq]"), "{after}");
+    let migration = dir.join("migrations/0033-event-applied-seq-idx.sql");
+    let empty_pw = f.root.join("empty-pw");
+    let admin = [("SPIRA_LC_USER", "root"), ("SPIRA_LC_PASSWORD_FILE", ""), ("SPIRA_LC_PASSWORD", ""), ("SPIRA_LC_DB", "spira_lifecycle"), ("SPIRA_LC_ADMIN_USER", "root"), ("SPIRA_LC_ADMIN_PASSWORD_FILE", empty_pw.to_str().unwrap())];
+    let (code, out) = f.lc(&["admin-migrate", migration.to_str().unwrap()], &admin);
+    assert_eq!(code, 0, "{out}");
+    let after = plan();
+    assert!(after.contains(SEEKS_APPLIED_SEQ) && after.contains("{[1, 1], (150000, ∞)}"), "the scan seeks (applied, seq) from the cursor: {after}");
+    let (code, out) = f.lc(&["admin-migrate", migration.to_str().unwrap()], &admin);
+    assert_eq!(code, 0, "a second application is a no-op: {out}");
 
     let t = Instant::now();
-    let (code, out) = f.sql_as_root(&format!("USE spira_lifecycle;\n{CONTINUITY_SCAN};\n"));
-    assert_eq!(code, 0, "{out}");
-    assert!(t.elapsed() < Duration::from_secs(1), "continuity scan took {:?}", t.elapsed());
+    let rows = dolt(CONTINUITY_SCAN);
+    eprintln!("continuity scan over 200k events: {:?}", t.elapsed());
+    assert_eq!(rows.lines().count(), 1 + 5000, "the 10% applied events past the cursor, plus the header");
 }
