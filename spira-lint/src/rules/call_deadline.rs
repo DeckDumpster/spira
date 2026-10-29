@@ -47,12 +47,12 @@ fn over(secs: f64) -> String {
     format!("call timeout of {secs}s is above the {CAP_SECS}s cap")
 }
 
-/// `Some(true)` per line that carries a `batch-job:` marker in a comment.
-fn marked_lines(src: &[u8], comment: impl Fn(usize) -> bool) -> Vec<bool> {
+/// Per line, whether a comment on it matches `marker`.
+pub(crate) fn marked_lines(src: &[u8], marker: &Regex, comment: impl Fn(usize) -> bool) -> Vec<bool> {
     let mut out = vec![false];
     let mut buf: Vec<u8> = Vec::new();
     let flush = |buf: &mut Vec<u8>, out: &mut Vec<bool>| {
-        *out.last_mut().unwrap() = marker_re().is_match(buf);
+        *out.last_mut().unwrap() = marker.is_match(buf);
         buf.clear();
     };
     for (i, &b) in src.iter().enumerate() {
@@ -68,7 +68,7 @@ fn marked_lines(src: &[u8], comment: impl Fn(usize) -> bool) -> Vec<bool> {
 }
 
 /// Whether `line` (1-based) is marked: on it, or in the comment/attribute block directly above.
-fn is_marked(lines: &[&[u8]], marked: &[bool], line: usize, skip: impl Fn(&[u8]) -> bool) -> bool {
+pub(crate) fn is_marked(lines: &[&[u8]], marked: &[bool], line: usize, skip: impl Fn(&[u8]) -> bool) -> bool {
     if marked.get(line - 1).copied().unwrap_or(false) {
         return true;
     }
@@ -86,7 +86,7 @@ fn is_marked(lines: &[&[u8]], marked: &[bool], line: usize, skip: impl Fn(&[u8])
     false
 }
 
-fn trimmed(b: &[u8]) -> &[u8] {
+pub(crate) fn trimmed(b: &[u8]) -> &[u8] {
     let s = b.iter().position(|c| !c.is_ascii_whitespace()).unwrap_or(b.len());
     &b[s..]
 }
@@ -173,7 +173,7 @@ pub fn scan_rust(src: &[u8], in_test: &dyn Fn(usize) -> bool) -> Vec<Hit> {
     let kept = cl.without_comments();
     let spans = fn_spans(&code);
     let lines: Vec<&[u8]> = src.split(|b| *b == b'\n').collect();
-    let marked = marked_lines(src, |i| cl.class[i] == Class::Comment);
+    let marked = marked_lines(src, marker_re(), |i| cl.class[i] == Class::Comment);
     let skip_above = |t: &[u8]| {
         let t = trimmed(t);
         t.starts_with(b"//") || t.starts_with(b"/*") || t.starts_with(b"*") || re(&ATTR, r"^#!?\[").is_match(t)
