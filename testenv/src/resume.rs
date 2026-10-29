@@ -281,6 +281,16 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_dir_backend_that_cannot_create_its_root_records_nothing() {
+        let d = testkit::TempDir::new("resume-unwritable");
+        let blocker = d.path().join("blocker");
+        fs::write(&blocker, "a file where a directory must go").unwrap();
+        let backend = DirBackend { root: blocker.join("store") };
+        backend.put("r/t/e/s", "body");
+        assert!(!blocker.join("store").exists());
+    }
+
     /// A backend over a fresh scratch space; `spec` is what a caller would configure.
     struct Shipped {
         _d: testkit::TempDir,
