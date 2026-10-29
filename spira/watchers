@@ -103,11 +103,7 @@ pr-notify|daemon|pr-notify.sh watch --interval 90|pr-notify.sh health
 # mailbox, so it is not asked here too.
 mail-deliver|extern|mail-deliver|spira-mail-deliver.sh health
 
-# INBOX-KEEPER is the only path that may type into the concierge pane, and only a re-arm
-# line when no inbox-triage Monitor has read SPIRA_CONCIERGE_INBOX for a while with
-# events waiting (a /clear or compaction killed it). Everything else reaches the concierge
-# through that durable inbox, never a keystroke. See inbox-keeper.sh.
-inbox-keeper|daemon|inbox-keeper.sh
+# INBOX-KEEPER has no row: spira-runtime hosts it as the inbox-keeper handler (spira-runtime/src/watchers).
 
 # PUBLISH-BACKLOG is a daemon: it scans every repo-map row on a cadence and, for the ones in
 # queue.local mode, mails the concierge when local/main's unpublished commits cross

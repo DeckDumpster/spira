@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-concierge-inbox.sh — the durable inbox that replaced keystroke wakes into the
-#   concierge pane: inbox-append.sh, inbox-triage, the inbox-keeper watchd row, and
+#   concierge pane: inbox-append.sh, inbox-triage, the inbox-keeper handler's retired watchd row, and
 #   SPIRA_MAIL_READERS defaulting the concierge mailbox to it.
 #
 # WHAT THIS REPLACED. Every watcher and mail-deliver used to wake the concierge with a
@@ -56,9 +56,7 @@ overridden="$(bash -c '. "'"$HERE"'/conf.sh"; printf %s "$SPIRA_MAIL_READERS"')"
 is   "an explicit SPIRA_MAIL_READERS is never overwritten" "concierge=echo wake" "$overridden"
 
 echo
-echo "the inbox-keeper watchd row — a harness watchd row, not an operator overlay file"
-want "spira/watchers carries an inbox-keeper daemon row" \
-    "inbox-keeper|daemon|inbox-keeper.sh" "$(cat "$HERE/watchers")"
+echo "the inbox-keeper is hosted by spira-runtime, not a watchd row"
 MAN="$TMP/elsewhere/manifest-check"
 # SPIRA_WATCHERS is registered too and resolves from the complete fixture's own bogus
 # default when undeclared (sfail round 3, pattern 7) — watchd never derives it from
@@ -67,7 +65,8 @@ tl_config SPIRA_WATCHERS="$HERE/watchers" SPIRA_WATCHERS_OVERLAY="$TMP/elsewhere
 watchd manifest \
     > "$MAN" 2>"$TMP/elsewhere/manifest.err"; rc=$?
 is   "the shipped manifest, alone, still parses" "0" "$rc"
-want "and names inbox-keeper as a daemon row" "inbox-keeper|daemon" "$(cat "$MAN")"
+case "$(cat "$MAN")" in *inbox-keeper*) bad=1 ;; *) bad=0 ;; esac
+is   "and the manifest names no inbox-keeper row" "0" "$bad"
 
 echo
 echo "inbox-triage — drops its own known noise, dedups, passes the rest"

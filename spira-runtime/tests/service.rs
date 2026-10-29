@@ -25,7 +25,7 @@ fn settings(url: &str, run: &std::path::Path) -> Settings {
             "SPIRA_RUNTIME_STALL_LIMIT" => "2".into(),
             "SPIRA_RUN" => run.display().to_string(),
             "SPIRA_LC_SOCKET" => "/unused".into(),
-            "SPIRA_RUNTIME_ROUND_DUTY_SECS" | "SPIRA_ROUND_MIN" | "SPIRA_ROUND_MAX_OPEN" | "SPIRA_ROUND_DUE_REMIND" | "SPIRA_ROUND_IDLE_CUT" => "5".into(),
+            "SPIRA_RUNTIME_INBOX_KEEPER_SECS" | "SPIRA_CONCIERGE_INBOX_STALL" | "SPIRA_CONCIERGE_INBOX_BACKOFF" | "SPIRA_RUNTIME_ROUND_DUTY_SECS" | "SPIRA_ROUND_MIN" | "SPIRA_ROUND_MAX_OPEN" | "SPIRA_ROUND_DUE_REMIND" | "SPIRA_ROUND_IDLE_CUT" => "5".into(),
             "SPIRA_QUEUE_DIR" | "SPIRA_REPO_MAP" | "SPIRA_CONCIERGE_INBOX" => "/unused".into(),
             "SPIRA_HOME_REPO" => "spira".into(),
             _ => return Err(k.to_string()),
@@ -55,7 +55,7 @@ fn stub_endpoint() -> (String, Arc<AtomicUsize>) {
 fn the_heartbeat_registration_is_part_of_the_service() {
     let d = testkit::TempDir::new("svc-reg");
     let names: Vec<_> = registrations(&settings("", d.path())).into_iter().map(|r| r.name).collect();
-    assert_eq!(names, [NAME, "round-duty"], "removing a registration removes its schedule");
+    assert_eq!(names, [NAME, "round-duty", "inbox-keeper"], "removing a registration removes its schedule");
 }
 
 #[tokio::test]

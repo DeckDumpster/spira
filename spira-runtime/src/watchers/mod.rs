@@ -2,9 +2,11 @@
 //! here is pure: what the world looks like arrives as the outcome of an observe effect, and
 //! what it has to say leaves as an `inbox.append` effect.
 
+pub mod inbox_keeper;
 pub mod round_duty;
 
 pub const INBOX_APPEND: &str = "inbox.append";
+pub const CONCIERGE_WAKE: &str = "concierge.wake";
 
 /// `YYYY-MM-DDTHH:MM:SSZ` for a UTC epoch-seconds value.
 pub fn iso8601(secs: u64) -> String {

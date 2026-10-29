@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use runtime::socket::lc_call;
 use serde_json::Value;
 
+use crate::watchers::inbox_keeper;
 use crate::watchers::round_duty::{RoundState, Snapshot};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -19,6 +20,7 @@ pub struct World {
     pub home_repo: String,
     pub inbox: PathBuf,
     pub lc_socket: PathBuf,
+    pub proc_dir: PathBuf,
 }
 
 struct MapRow {
@@ -49,6 +51,12 @@ fn kv_get(text: &str, key: &str) -> Option<String> {
 impl World {
     fn lc(&self, argv: &[&str]) -> Option<String> {
         lc_call(&self.lc_socket, argv).ok()
+    }
+
+    /// The home repo's checkout, from the repo map.
+    pub fn home_path(&self) -> Result<PathBuf, String> {
+        let text = fs::read_to_string(&self.repo_map).map_err(|e| format!("{}: {e}", self.repo_map.display()))?;
+        map_rows(&text).into_iter().find(|r| r.name == self.home_repo).map(|r| PathBuf::from(r.path)).ok_or_else(|| format!("repo map has no row for {}", self.home_repo))
     }
 
     /// Unheld certified beads of one repo; `None` when the lifecycle did not answer.
@@ -130,6 +138,16 @@ impl World {
             fresh,
         };
         serde_json::to_string(&snap).map_err(|e| e.to_string())
+    }
+
+    /// Whether any process's command line names inbox-triage, and when the inbox last changed.
+    pub fn keeper_snapshot(&self) -> Result<String, String> {
+        let alive = fs::read_dir(&self.proc_dir).map_err(|e| format!("{}: {e}", self.proc_dir.display()))?.flatten().any(|e| {
+            e.file_name().to_str().is_some_and(|n| n.bytes().next().is_some_and(|b| b.is_ascii_digit()))
+                && fs::read(e.path().join("cmdline")).is_ok_and(|raw| String::from_utf8_lossy(&raw).replace('\0', " ").contains("inbox-triage"))
+        });
+        let inbox_mtime = fs::metadata(&self.inbox).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
+        serde_json::to_string(&inbox_keeper::Snapshot { triage_alive: alive, inbox_mtime }).map_err(|e| e.to_string())
     }
 
     pub fn inbox_append(&self, line: &str) -> Result<String, String> {
