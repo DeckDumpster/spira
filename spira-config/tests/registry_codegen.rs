@@ -120,7 +120,7 @@ fn a_key_added_to_the_registry_reaches_conf_sh_and_the_loaded_registry_without_a
 fn an_unknown_type_in_the_registry_is_refused() {
     let (tmp, _) = fixture_registry("SPIRA_FIXTURE_BAD_TYPE", "float");
     fs::create_dir_all(tmp.path().join("conf.toml.d")).unwrap();
-    let err = Registry::load(tmp.path()).err().expect("refused");
+    let err = Registry::load(tmp.path()).expect_err("refused");
     assert!(err.contains("SPIRA_FIXTURE_BAD_TYPE"), "{err}");
 }
 
