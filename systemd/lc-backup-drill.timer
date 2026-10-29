@@ -1,8 +1,9 @@
 [Unit]
-Description=Prove the off-box backups restore, once a day
+Description=Prove the off-box backups restore, twice a day, the second slot re-arming a drill that deferred
 
 [Timer]
 OnCalendar=*-*-* 04:50:00
+OnCalendar=*-*-* 16:50:00
 Persistent=true
 AccuracySec=5min
 RandomizedDelaySec=300
