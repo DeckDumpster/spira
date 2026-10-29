@@ -469,6 +469,11 @@ impl RepoSection {
 ///   only Rust crates (plus docs, config, suites) runs the fences with suites off, then
 ///   `cargo test -p` for each touched crate and its reverse dependents on the host; one
 ///   that touches nothing buildable runs the fences only.
+/// * `fences`: the fences and the build fence (`cargo check` of the merged tree) only — the
+///   gate string without its suites step, the `bin` tools those fences read and nothing else;
+///   no unit test phase, no suites, no re-entry suites. The full-suite VM round is the test
+///   gate (approved 2026-10-28, while the gate's 300 s cap starved the certified pool).
+///   `SPIRA_GATE_ALL=1` still runs the gate string whole.
 ///
 /// One command reverts it: `spira-config set repo.<name>.gate_mode suites <file>`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -477,6 +482,7 @@ pub enum GateMode {
     Unit,
     #[default]
     Suites,
+    Fences,
 }
 
 impl GateMode {
@@ -484,6 +490,7 @@ impl GateMode {
         match self {
             GateMode::Unit => "unit",
             GateMode::Suites => "suites",
+            GateMode::Fences => "fences",
         }
     }
 }
@@ -1863,8 +1870,8 @@ mod tests {
     }
 
     #[test]
-    fn gate_mode_reads_both_values() {
-        for (v, want) in [("unit", GateMode::Unit), ("suites", GateMode::Suites)] {
+    fn gate_mode_reads_every_value() {
+        for (v, want) in [("unit", GateMode::Unit), ("suites", GateMode::Suites), ("fences", GateMode::Fences)] {
             let doc = validate(&format!("{REPO_R}gate_mode = \"{v}\"\n")).unwrap();
             assert_eq!(repo_gate_mode(&doc, "r"), want);
             assert_eq!(want.as_str(), v);
@@ -1874,7 +1881,7 @@ mod tests {
 
     #[test]
     fn gate_mode_refuses_anything_else() {
-        for bad in ["\"Unit\"", "\"fast\"", "\"\"", "true", "1"] {
+        for bad in ["\"Unit\"", "\"fast\"", "\"Fences\"", "\"fence\"", "\"\"", "true", "1"] {
             let err = validate(&format!("{REPO_R}gate_mode = {bad}\n")).unwrap_err();
             assert!(err.contains("repo.r.gate_mode"), "{bad}: {err}");
         }
@@ -1892,6 +1899,9 @@ mod tests {
         assert_eq!(repo_gate_mode(&off, "r"), GateMode::Suites);
         let gone = unset_path(&on, "repo.r.gate_mode").unwrap();
         assert_eq!(repo_gate_mode(&gone, "r"), GateMode::Suites);
+        let fences = set_path(&doc, "repo.r.gate_mode", "fences").unwrap();
+        assert_eq!(repo_gate_mode(&fences, "r"), GateMode::Fences);
+        assert!(toml::to_string_pretty(&fences).unwrap().contains("gate_mode = \"fences\""));
     }
 
     // ---- sp-oppza: migrate_goal_to_id_prefix — the automatic one-time upgrade migration ----

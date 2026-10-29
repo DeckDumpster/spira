@@ -406,11 +406,24 @@ impl<'w, W: World> Trial<'w, W> {
             }
         };
         self.s.gate_mode = mode.as_str().into();
+        // FENCES MODE (gate_mode = fences): the definition loses its suites step and every
+        // `bin` only that step read, so the key, the tools phase, the trial and the fence
+        // check all see the string that runs. SPIRA_GATE_ALL=1 still runs it whole.
+        let fences_only = compose::fences_only(mode, &Forces { gate_all: ctx.var("SPIRA_GATE_ALL") == "1" });
+        let (cmd, tree_def) = match (fences_only, tree_def) {
+            (false, d) => (cmd, d),
+            (true, Some(d)) => {
+                let f = d.fences_only();
+                (f.command(), Some(f))
+            }
+            (true, None) => (compose::without_suites(&cmd), None),
+        };
         // A unit-mode PASS is not a suites-mode PASS: the mode is part of what was judged.
         // Suites mode hashes the command alone, so today's keys are unchanged.
         let cmd_text = tree_def.as_ref().map(def::Def::key_text).unwrap_or_else(|| cmd.clone());
         let key_cmd = match mode {
             GateMode::Unit => format!("{cmd_text}\n# gate_mode=unit"),
+            GateMode::Fences => format!("{cmd_text}\n# gate_mode=fences"),
             GateMode::Suites => cmd_text,
         };
 
@@ -418,7 +431,8 @@ impl<'w, W: World> Trial<'w, W> {
         let suites_mode = ctx.var("SPIRA_GATE_SUITES").to_string();
         // A bead's certification never runs suites-blind: with suites off it still runs the
         // budgeted suites covering what the bead touched, whatever the composition.
-        let covered = suites_mode == "off" && !self.s.bead.is_empty();
+        // Fences mode runs no suites at all, a certification's covering ones included.
+        let covered = suites_mode == "off" && !self.s.bead.is_empty() && !fences_only;
         let key_suites = if covered { "off+covered" } else { &suites_mode };
         let verdict_dir = self.s.verdict_dir.clone();
         if let Some(h) = w.harness_hash() {
@@ -628,6 +642,15 @@ impl<'w, W: World> Trial<'w, W> {
                 named.push(' ');
                 named.push_str(&s);
             }
+        }
+        // Fences mode runs no re-entry suites: the full-suite round the bead rides runs the
+        // whole corpus, the named suites with it.
+        if fences_only && !named.trim().is_empty() {
+            w.eprint(&format!(
+                "gate: re-entry: gate_mode=fences runs no suites — the full-suite round proves the named ones: {}",
+                named.split_whitespace().collect::<Vec<_>>().join(" ")
+            ));
+            named.clear();
         }
         let mut re = compose::reentry(&named, |s| {
             w.exists(&tree.join("spira").join(s)) && w.ls_tree_has(&repo, &rev, &format!("spira/{s}"))
@@ -950,8 +973,14 @@ impl<'w, W: World> Trial<'w, W> {
         // THE BASE TRIAL RUNS THE BASE'S OWN DEFINITION (sp-quu2w): the landing ref's
         // gate.steps, or its column when it never adopted one. A base definition that does
         // not read leaves the base untested — whose fault the red is stays unestablished.
+        // Under fences mode the base runs the same mode: its definition without its suites step.
         let base_gate = match &base_def {
+            Ok(Resolved::Tree(d)) if fences_only => {
+                let f = d.fences_only();
+                Some((f.command(), Some(f)))
+            }
             Ok(Resolved::Tree(d)) => Some((d.command(), Some(d.clone()))),
+            Ok(Resolved::Column(c)) if fences_only => Some((compose::without_suites(c), None)),
             Ok(Resolved::Column(c)) => Some((c.clone(), None)),
             Ok(Resolved::Refused { .. }) => None,
             Err(e) => {
@@ -1329,6 +1358,13 @@ impl<'w, W: World> Trial<'w, W> {
         if mode == GateMode::Suites {
             return Composition::Suites { why: "mode".into() };
         }
+        let forces = Forces {
+            gate_all: ctx.var("SPIRA_GATE_ALL") == "1",
+        };
+        // Fences mode reads neither the touched set nor the workspace graph.
+        if compose::fences_only(mode, &forces) {
+            return Composition::Fences;
+        }
         let changed = match self.w.diff_raw(repo, base, rev) {
             Ok(c) => c,
             Err(e) => {
@@ -1339,9 +1375,6 @@ impl<'w, W: World> Trial<'w, W> {
                     why: "no-diff".into(),
                 };
             }
-        };
-        let forces = Forces {
-            gate_all: ctx.var("SPIRA_GATE_ALL") == "1",
         };
         let members = self.members(ctx, tree);
         if let Err(e) = &members {
@@ -1933,7 +1966,7 @@ pub fn describe(c: &Composition) -> String {
             "gate: composition=suites ({why}) — the repository's gate string, whole"
         ),
         Composition::Fences => {
-            "gate: composition=fences — nothing buildable touched; fences only, suites off".into()
+            "gate: composition=fences — the fences and the build fence, suites off (nothing buildable touched, or gate_mode=fences)".into()
         }
         Composition::Unit { touched, crates } => format!(
             "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for: {} (touched: {})",
