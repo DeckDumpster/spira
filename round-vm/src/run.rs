@@ -1166,13 +1166,7 @@ pub fn reported_tree(results: &Path) -> Option<String> {
 /// How the batch itself ended, from the last `verdict` line of `run.events` (in `dir` or one
 /// subdirectory), with the last phase before it: `"FAULT install (died in phase up)"`.
 pub fn batch_cause(dir: &Path) -> Option<String> {
-    let mut dirs = vec![dir.to_path_buf()];
-    if let Ok(rd) = fs::read_dir(dir) {
-        let mut subs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
-        subs.sort();
-        dirs.extend(subs);
-    }
-    let text = dirs.iter().find_map(|d| fs::read_to_string(d.join("run.events")).ok())?;
+    let text = result_dirs(dir).iter().find_map(|d| fs::read_to_string(d.join("run.events")).ok())?;
     let (mut phase, mut verdict) = (None, None);
     for f in text.lines().filter_map(|l| l.split_once(' ').map(|(_, r)| r)) {
         if let Some(p) = f.strip_prefix("phase ") {
