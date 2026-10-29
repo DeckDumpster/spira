@@ -393,6 +393,10 @@ fn the_law_bead_body_passes_the_filing_validator_the_builder_persona_applies() {
     let book = book_of(&[("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three."), ("law-four", "Do four.")]);
     let (id, branch) = land(repo.path(), wt_root.path(), "enact", "law-four", &toc, &book).unwrap();
     assert_eq!((id.as_str(), branch.as_str()), ("sp-law1", "spira/sp-law1"));
+    let runes = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+    let log = std::fs::read_to_string(bin.join("calls")).unwrap();
+    let persona = log.split("--for ").nth(1).and_then(|r| r.split_whitespace().next()).unwrap();
+    assert_eq!(spira_config::runes::rune_get(&runes, persona, "RUNE_REQUIRES_BUILD_SPEC", ""), "1", "{persona} takes no build-spec contract, so this test would prove nothing");
     let body = std::fs::read_to_string(bin.join("body.1")).unwrap();
     assert!(bead::has_build_spec(&body), "{body}");
     assert!(body.contains("## Outcome") && body.contains("## Acceptance"), "{body}");
