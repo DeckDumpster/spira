@@ -253,11 +253,48 @@ jobs:
           key: cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-
 
+      # The artifact store is reached only when the repository variable ARTIFACT_STORE_URL
+      # names it and answers from this runner; otherwise this job builds exactly as before.
+      # round-vm/artifact-store.sh is the protocol the round VM runs too (release DESIGN.md
+      # "artifacts"): a hit needs the manifest to meet the tarball and every member's checksum.
+      - name: Fetch the tree's stored build
+        id: stored
+        env:
+          ARTIFACT_STORE_URL: ${{ vars.ARTIFACT_STORE_URL }}
+        run: |
+          printf 'hit=false\n' >> "$GITHUB_OUTPUT"
+          if [ -z "$ARTIFACT_STORE_URL" ]; then
+            printf 'artifacts: skipped (ARTIFACT_STORE_URL is not set); building\n'; exit 0
+          fi
+          _code="$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' "${ARTIFACT_STORE_URL%/}/artifacts/" || true)"
+          if [ "$_code" = 000 ] || [ -z "$_code" ]; then
+            printf 'artifacts: skipped (the store at ARTIFACT_STORE_URL does not answer from this runner); building\n'; exit 0
+          fi
+          art_base="${ARTIFACT_STORE_URL%/}/artifacts"
+          . round-vm/artifact-store.sh
+          _tc="$(rustc -vV | sed -n 's/^\(release\|commit-hash\): //p' | paste -sd' ')"
+          _tree="$(git rev-parse 'HEAD^{tree}')"
+          _id="$(art_key "$_tree" "$_tc")"
+          printf 'tree=%s\nid=%s\ntoolchain=%s\nreachable=true\n' "$_tree" "$_id" "$_tc" >> "$GITHUB_OUTPUT"
+          if art_fetch "$_id" bin; then
+            printf 'hit=true\n' >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build
+        if: steps.stored.outputs.hit != 'true'
         run: |
           make build
           mkdir -p bin
           find target/release -maxdepth 1 -type f -executable | xargs -I{} cp {} bin/
+
+      - name: Store the build for later passes
+        if: steps.stored.outputs.hit != 'true' && steps.stored.outputs.reachable == 'true'
+        env:
+          ARTIFACT_STORE_URL: ${{ vars.ARTIFACT_STORE_URL }}
+        run: |
+          art_base="${ARTIFACT_STORE_URL%/}/artifacts"
+          . round-vm/artifact-store.sh
+          art_store "${{ steps.stored.outputs.id }}" "${{ steps.stored.outputs.tree }}" "${{ steps.stored.outputs.toolchain }}" bin || true
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4
