@@ -84,6 +84,22 @@ out="$(run_step "$FETCH" "http://127.0.0.1:$DEAD")"
 want "a store that does not answer is skipped and says so" "does not answer from this runner" "$out"
 nowant "an unreachable store is not marked reachable" "reachable=true" "$(cat "$W/out")"
 
+REFUSE="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')"
+python3 - "$REFUSE" <<'PY' &
+import http.server, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_GET(self):
+        self.send_response(401); self.send_header("Content-Length", "0"); self.end_headers()
+http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+PY
+SRV2=$!
+trap 'kill $SRV $SRV2 2>/dev/null; rm -rf "$W"' EXIT
+for _ in $(seq 50); do (exec 3<>"/dev/tcp/127.0.0.1/$REFUSE") 2>/dev/null && break; sleep 0.1; done
+out="$(run_step "$FETCH" "http://127.0.0.1:$REFUSE")"
+want "a store that refuses the runner is skipped with its status" "status 401" "$out"
+nowant "a refusing store is not marked reachable" "reachable=true" "$(cat "$W/out")"
+
 out="$(run_step "$FETCH" "$URL")"
 want "an empty store is a miss" "artifacts: miss" "$out"
 want "an empty store is reachable, so the build is stored" "reachable=true" "$(cat "$W/out")"
@@ -112,5 +128,11 @@ rm -rf "$W/repo/bin"
 out="$(run_step "$FETCH" "$URL")"
 want "another tree is a miss" "artifacts: miss" "$out"
 nowant "another tree does not take the first tree's build" "hit=true" "$(cat "$W/out")"
+
+GATE="$(cat "$ROOT/.github/workflows/gate.yml")"
+want "the build runs only when no stored build was found" "if: steps.stored.outputs.hit != 'true'
+        run: |
+          make build" "$GATE"
+want "a build is stored only when the store was reachable and missed" "if: steps.stored.outputs.hit != 'true' && steps.stored.outputs.reachable == 'true'" "$GATE"
 
 tl_summary

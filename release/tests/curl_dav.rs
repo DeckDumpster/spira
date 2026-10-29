@@ -49,6 +49,19 @@ fn a_refusing_or_unreachable_store_is_an_error_never_a_miss() {
     fs::write(&src, "x").unwrap();
     assert!(d.put_from("artifacts/k/MANIFEST", &src).is_err(), "a refused PUT is not stored");
 
+    let sick = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let sick_addr = sick.local_addr().unwrap();
+    std::thread::spawn(move || {
+        use std::io::{Read, Write};
+        for mut c in sick.incoming().flatten() {
+            let mut buf = [0u8; 4096];
+            let _ = c.read(&mut buf);
+            let _ = c.write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        }
+    });
+    let e = dav(sick_addr).get_to("artifacts/k/MANIFEST", &dest).unwrap_err();
+    assert!(e.contains("500"), "a failing store is an error, not a miss: {e}");
+
     let gone = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
     assert!(dav(gone).get_to("artifacts/k/MANIFEST", &dest).is_err(), "connection refused is an error");
 }

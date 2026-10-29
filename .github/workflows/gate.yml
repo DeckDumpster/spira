@@ -267,9 +267,11 @@ jobs:
             printf 'artifacts: skipped (ARTIFACT_STORE_URL is not set); building\n'; exit 0
           fi
           _code="$(curl -s --max-time 10 -o /dev/null -w '%{http_code}' "${ARTIFACT_STORE_URL%/}/artifacts/" || true)"
-          if [ "$_code" = 000 ] || [ -z "$_code" ]; then
-            printf 'artifacts: skipped (the store at ARTIFACT_STORE_URL does not answer from this runner); building\n'; exit 0
-          fi
+          case "$_code" in
+            2??|3??|404) ;;
+            *)
+              printf 'artifacts: skipped (the store at ARTIFACT_STORE_URL does not answer from this runner: status %s); building\n' "${_code:-none}"; exit 0 ;;
+          esac
           art_base="${ARTIFACT_STORE_URL%/}/artifacts"
           . round-vm/artifact-store.sh
           _tc="$(rustc -vV | sed -n 's/^\(release\|commit-hash\): //p' | paste -sd' ')"
