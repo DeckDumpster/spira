@@ -16,7 +16,7 @@ pub struct World {
     pub run_dir: PathBuf,
     pub queue_dir: PathBuf,
     pub repo_map: PathBuf,
-    pub home_repo: PathBuf,
+    pub home_repo: String,
     pub inbox: PathBuf,
     pub lc_socket: PathBuf,
 }
@@ -61,7 +61,7 @@ impl World {
     /// The rounds the lifecycle still holds open for the home repo, from the queue's records.
     fn open_rounds(&self) -> Option<u64> {
         let rows = fs::read_to_string(&self.repo_map).ok().map(|t| map_rows(&t))?;
-        let home = rows.iter().find(|r| Path::new(&r.path) == self.home_repo)?;
+        let home = rows.iter().find(|r| r.name == self.home_repo)?;
         let dir = self.queue_dir.join(&home.name);
         let mut live = 0;
         let entries = match fs::read_dir(&dir) {

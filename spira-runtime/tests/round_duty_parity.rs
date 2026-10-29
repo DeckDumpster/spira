@@ -159,7 +159,7 @@ fn new_rows(f: &Fixture, s: &Scenario, ticks: usize) -> Vec<String> {
         run_dir: f.p("run"),
         queue_dir: f.p("run/queue"),
         repo_map: f.p("rows"),
-        home_repo: f.p("repo"),
+        home_repo: "spira".into(),
         inbox: f.p("new-inbox"),
         lc_socket: if s.status_fails { f.p("no-such.sock") } else { f.serve_lc() },
     };
