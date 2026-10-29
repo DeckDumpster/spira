@@ -428,7 +428,7 @@ pub fn persona_section(
 ) -> (String, PersonaSection) {
     let mut vars = label_defaults();
     for key in ["SPIRA_SCOPE_LABEL", "SPIRA_ASK_LABEL", "SPIRA_CI_LABEL"] {
-        if let Some(v) = spira.get_str(key).ok().flatten() {
+        if let Some(v) = crate::said(spira.get_str(key)) {
             vars.insert(key.to_string(), v);
         }
     }

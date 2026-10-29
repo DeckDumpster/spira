@@ -373,7 +373,7 @@ impl World for Real {
     fn certify_par_live(&self) -> Option<u64> {
         let p = spira_config::discover(None)?;
         let doc = spira_config::load(&p).ok()?;
-        doc.spira.as_ref()?.get_u32("SPIRA_CERTIFY_PAR").ok().flatten().map(u64::from)
+        spira_config::said(doc.spira.as_ref()?.get_u32("SPIRA_CERTIFY_PAR")).map(u64::from)
     }
     fn cargo_metadata(&self, tree: &Path, path: &str, home: &str) -> Result<String, String> {
         // batch-job: cargo runs for as long as its work does

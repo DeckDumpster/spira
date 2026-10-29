@@ -204,7 +204,7 @@ fn toml_only(env_key: &str) -> Option<String> {
     spira_config::discover(None)
         .and_then(|p| spira_config::load(&p).ok())
         .and_then(|doc| doc.spira)
-        .and_then(|s| s.get_str(env_key).ok().flatten())
+        .and_then(|s| spira_config::said(s.get_str(env_key)))
         .filter(|v| !v.trim().is_empty())
 }
 

@@ -101,6 +101,19 @@ pub fn complete_fixture_text() -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
+/// A release directory for a test: `<dir>/release/spira` linking this harness tree's
+/// `conf.toml.d`, and its `conf.d` when `with_conf_d`. Point `SPIRA_RELEASE` at the returned path.
+pub fn fixture_release(dir: &std::path::Path, with_conf_d: bool) -> std::path::PathBuf {
+    let tree = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+    let release = dir.join("release");
+    std::fs::create_dir_all(release.join("spira")).expect("the fixture release is created");
+    let dirs: &[&str] = if with_conf_d { &["conf.d", "conf.toml.d"] } else { &["conf.toml.d"] };
+    for d in dirs {
+        std::os::unix::fs::symlink(tree.join(d), release.join("spira").join(d)).expect("the registry is linked");
+    }
+    release
+}
+
 /// A complete `spira.toml` for TESTS in any crate: every key declared (`spira/testlib/complete.toml`), with `declare`'s `SPIRA_<KEY>` pairs written as
 /// `spira.<key>`. Written to `<dir>/spira.toml`; point `SPIRA_TOML` at the returned path.
 pub fn fixture_toml(dir: &std::path::Path, declare: &[(&str, &str)]) -> std::path::PathBuf {

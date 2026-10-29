@@ -445,6 +445,15 @@ impl SpiraSection {
     }
 }
 
+/// A getter's answer for a reader that carries on without the key: a refusal is said on stderr,
+/// never read as the key being unset.
+pub fn said<T>(answer: Result<Option<T>, String>) -> Option<T> {
+    answer.unwrap_or_else(|e| {
+        eprintln!("spira-config: {e}");
+        None
+    })
+}
+
 /// Why `v` is not a `ty`, in serde's words; `None` when it is one.
 fn type_error(ty: &str, v: &toml::Value) -> Option<String> {
     let got = match v {
@@ -1179,7 +1188,7 @@ fn remove_key(root: &mut toml::Value, path: &str) -> bool {
 pub fn shrink_reason(existing: &SpiraToml, new: &SpiraToml) -> Option<String> {
     let existing_repos = existing.repo.len();
     let new_repos = new.repo.len();
-    let runes = |d: &SpiraToml| d.spira.as_ref().and_then(|s| s.get_list("SPIRA_RUNES").ok().flatten()).map_or(0, |r| r.len());
+    let runes = |d: &SpiraToml| d.spira.as_ref().and_then(|s| crate::said(s.get_list("SPIRA_RUNES"))).map_or(0, |r| r.len());
     let (existing_runes, new_runes) = (runes(existing), runes(new));
     if new_repos < existing_repos || new_runes < existing_runes {
         Some(format!(

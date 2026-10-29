@@ -131,7 +131,7 @@ pub fn build_manifest(instance: &str, dolt_data_set: bool, dolt_durable_set: boo
 
 fn configured_path() -> String {
     let doc = spira_config::discover(None).and_then(|p| spira_config::load(&p).ok());
-    doc.and_then(|d| d.spira).and_then(|s| s.get_str("SPIRA_PATH").ok().flatten()).unwrap_or_default()
+    doc.and_then(|d| d.spira).and_then(|s| spira_config::said(s.get_str("SPIRA_PATH"))).unwrap_or_default()
 }
 
 /// Where the installed unit directory and the release's own PATH tail live — resolved once,
