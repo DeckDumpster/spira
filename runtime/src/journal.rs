@@ -5,10 +5,16 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
 
-use crate::event::{Event, EventId, EventKind, StreamKey};
+use crate::event::{Event, EventId, EventKind, StreamKey, EFFECT_FAILED, EFFECT_REQUESTED, EFFECT_SUCCEEDED, EFFECT_TIMED_OUT};
 use crate::{Result, RuntimeError};
 
 pub type Offset = u64;
+
+const SCAN: usize = 1000;
+
+pub fn is_outcome(tag: &str) -> bool {
+    matches!(tag, EFFECT_SUCCEEDED | EFFECT_FAILED | EFFECT_TIMED_OUT)
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScheduleRow {
@@ -80,6 +86,40 @@ pub trait Journal: Send + Sync {
     fn applied(&self, handler: &str, id: &EventId) -> Result<bool>;
     fn mark_applied(&self, handler: &str, id: &EventId) -> Result<()>;
     fn cursor(&self) -> Result<Offset>;
+    /// Events of `stream` at offsets below `below`, in order. The default scans the journal; a
+    /// store with an index on the stream answers without reading the rest.
+    fn read_stream(&self, stream: &StreamKey, below: Offset) -> Result<Vec<(Offset, Event)>> {
+        let mut out = vec![];
+        let mut from = 0;
+        while from < below {
+            let batch = self.read_from(from, SCAN)?;
+            let Some((last, _)) = batch.last() else { break };
+            from = last + 1;
+            out.extend(batch.into_iter().filter(|(o, e)| *o < below && &e.stream == stream));
+        }
+        Ok(out)
+    }
+    /// Every `effect.requested` event no outcome event names as its cause. The default scans the
+    /// journal; a store that tracks open requests answers in their number, not the journal's.
+    fn unresolved_effects(&self) -> Result<Vec<(Offset, Event)>> {
+        let mut open = BTreeMap::new();
+        let mut from = 0;
+        loop {
+            let batch = self.read_from(from, SCAN)?;
+            let Some((last, _)) = batch.last() else { break };
+            from = last + 1;
+            for (o, e) in batch {
+                if e.kind.tag == EFFECT_REQUESTED {
+                    open.insert(e.id.clone(), (o, e));
+                } else if is_outcome(&e.kind.tag) {
+                    if let Some(c) = &e.cause {
+                        open.remove(c);
+                    }
+                }
+            }
+        }
+        Ok(open.into_values().collect())
+    }
     fn set_cursor(&self, next: Offset) -> Result<()>;
     fn schedule(&self, row: &ScheduleRow) -> Result<()>;
     fn pending_schedules(&self) -> Result<Vec<ScheduleRow>>;
@@ -96,6 +136,8 @@ pub trait Journal: Send + Sync {
 struct Mem {
     events: Vec<Event>,
     by_id: BTreeMap<EventId, Offset>,
+    by_stream: BTreeMap<StreamKey, Vec<Offset>>,
+    open_effects: BTreeSet<Offset>,
     applied: BTreeSet<(String, EventId)>,
     cursor: Offset,
     schedules: BTreeMap<String, (ScheduleRow, bool)>,
@@ -111,6 +153,14 @@ impl Mem {
         let o = self.events.len() as Offset;
         self.events.push(ev.clone());
         self.by_id.insert(ev.id.clone(), o);
+        self.by_stream.entry(ev.stream.clone()).or_default().push(o);
+        if ev.kind.tag == EFFECT_REQUESTED {
+            self.open_effects.insert(o);
+        } else if is_outcome(&ev.kind.tag) {
+            if let Some(req) = ev.cause.as_ref().and_then(|c| self.by_id.get(c)) {
+                self.open_effects.remove(req);
+            }
+        }
         o
     }
 }
@@ -142,6 +192,17 @@ impl Journal for MemJournal {
             .take(limit)
             .map(|(i, e)| (i as Offset, e.clone()))
             .collect())
+    }
+
+    fn read_stream(&self, stream: &StreamKey, below: Offset) -> Result<Vec<(Offset, Event)>> {
+        let m = self.lock();
+        let offsets = m.by_stream.get(stream).map_or(&[][..], |v| v.as_slice());
+        Ok(offsets.iter().take_while(|o| **o < below).map(|o| (*o, m.events[*o as usize].clone())).collect())
+    }
+
+    fn unresolved_effects(&self) -> Result<Vec<(Offset, Event)>> {
+        let m = self.lock();
+        Ok(m.open_effects.iter().map(|o| (*o, m.events[*o as usize].clone())).collect())
     }
 
     fn applied(&self, handler: &str, id: &EventId) -> Result<bool> {

@@ -187,6 +187,9 @@ CREATE TABLE IF NOT EXISTS runtime_event (
     correlation VARCHAR(255) NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS runtime_event_stream_idx ON runtime_event (stream, seq);
+CREATE INDEX IF NOT EXISTS runtime_event_cause_idx ON runtime_event (cause, kind_tag);
+
 CREATE TABLE IF NOT EXISTS runtime_applied (
     handler  VARCHAR(128) NOT NULL,
     event_id VARCHAR(255) NOT NULL,
