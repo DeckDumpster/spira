@@ -20,6 +20,7 @@ const KEYS_ALLOWED: &[&str] = &["concierge.sh", "cockpit/", "spira-lint/src/rule
 const WAKE_ALLOWED: &[&str] = &[
     "concierge.sh",
     "spira/inbox-keeper.sh",
+    "spira-runtime/src/wake.rs",
     "spira/inbox-append.sh",
     "spira/spira-mail-deliver.sh",
     "spira/conf.sh",
@@ -35,7 +36,7 @@ fn keys_re() -> &'static Regex {
 
 fn wake_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r#"(concierge\.sh|\$CONCIERGE|\$\{CONCIERGE\})["' ]+wake\b"#).expect("static regex"))
+    RE.get_or_init(|| Regex::new(r#"(concierge\.sh|\$CONCIERGE|\$\{CONCIERGE\})["' ]+wake\b|\.arg\("wake"\)"#).expect("static regex"))
 }
 
 fn is_comment_line(line: &[u8]) -> bool {
@@ -117,6 +118,13 @@ mod tests {
         let rogue = b"#!/usr/bin/env bash\nconcierge.sh wake \"hi\"\n\"$CONCIERGE\" wake x\n";
         assert_eq!(scan("spira/rogue.sh", rogue).len(), 2);
         assert!(scan("spira/inbox-keeper.sh", rogue).is_empty());
+    }
+
+    #[test]
+    fn a_rust_wake_call_is_flagged_outside_the_runtime_wake_module() {
+        let rogue = b"Command::new(c).arg(\"wake\").arg(line);\n";
+        assert_eq!(scan("spira-runtime/src/other.rs", rogue).len(), 1);
+        assert!(scan("spira-runtime/src/wake.rs", rogue).is_empty());
     }
 
     #[test]
