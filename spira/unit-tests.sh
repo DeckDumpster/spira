@@ -13,8 +13,9 @@ while IFS= read -r c; do [ -n "$c" ] && words+=(-p "$c"); done < "$LIST"
 jobs="$(nproc 2>/dev/null || echo 2)"
 cd "$ROOT" || exit 2
 BINS="$ROOT/target/unit-tests.bins"
+[ -f "$BINS" ] || { echo "unit-tests: $BINS missing — run through testenv --suites unit-tests" >&2; exit 2; }
 bins=()
-[ -f "$BINS" ] && while IFS= read -r c; do [ -n "$c" ] && bins+=(-p "$c"); done < "$BINS"
+while IFS= read -r c; do [ -n "$c" ] && bins+=(-p "$c"); done < "$BINS"
 if [ "${#bins[@]}" -gt 0 ]; then
   cargo build "${bins[@]}" --bins -j "$jobs" || exit 1
 fi
