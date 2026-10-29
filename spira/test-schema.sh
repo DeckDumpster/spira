@@ -85,4 +85,57 @@ done
 printf '  note — %s harness file(s) still carry a declared literal (sp-4wd wires the gate lint)\n' "$lits"
 
 echo
+echo "a slow or failing store is cannot-tell, never MISSING"
+shimdir="$(mktemp -d)"; trap 'rm -rf "$shimdir"' EXIT
+mkdir -p "$shimdir/db"
+types="$(schema.sh custom-types | paste -sd, -)"; sts="$(schema.sh statuses | paste -sd, -)"
+cat >"$shimdir/bd" <<SHIM
+#!/usr/bin/env bash
+: >"$shimdir/shim-ran"
+args="\$*"
+case "\$args" in
+    *"config get types.custom"*) [ -n "\${SHIM_SLOW_TYPES:-}" ] && sleep "\$SHIM_SLOW_TYPES"; echo "$types" ;;
+    *"config get status.custom"*) echo "$sts" ;;
+    *" sql "*) [ -n "\${SHIM_SQL_ERR:-}" ] && { echo "\$SHIM_SQL_ERR" >&2; exit 1; }
+               printf '+-------+\n| count |\n%s\n' "\${SHIM_COUNT:-1}" ;;
+esac
+SHIM
+chmod +x "$shimdir/bd"
+sc() { PATH="$shimdir:$PATH" SPIRA_DB="$shimdir/db" "$@" 2>&1; }
+dl="$(schema.sh probe-deadline)"
+
+out="$(sc bash "$HERE/schema.sh" check)"; rc=$?
+[ -e "$shimdir/shim-ran" ] && ok "the shim is the bd schema.sh resolves" || bad "shim resolution" "shim never ran"
+is "healthy store exits 0" 0 "$rc"
+want "healthy store matches" "store matches the declaration" "$out"
+
+out="$(SHIM_SLOW_TYPES=$((dl+1)) sc bash "$HERE/schema.sh" check)"; rc=$?
+is "slow probe exits 3" 3 "$rc"
+want "slow probe names the timeout" "cannot tell: types.custom timed out after ${dl}s" "$out"
+nowant "slow probe claims no MISSING" "MISSING custom type" "$out"
+
+out="$(SHIM_SQL_ERR='Error: connection refused' sc bash "$HERE/schema.sh" check)"; rc=$?
+is "erroring probe exits 3" 3 "$rc"
+want "erroring probe carries bd's error" "cannot tell: _is_work probe: Error: connection refused" "$out"
+nowant "erroring probe claims no MISSING" "MISSING generated column" "$out"
+
+out="$(SHIM_COUNT=0 sc bash "$HERE/schema.sh" check)"; rc=$?
+is "honest absence exits 1" 1 "$rc"
+want "honest absence is MISSING" "MISSING generated column: _is_work" "$out"
+
+out="$(SHIM_SLOW_TYPES=$((dl+1)) SHIM_COUNT=0 sc bash "$HERE/schema.sh" check)"; rc=$?
+is "drift plus cannot-tell exits 1" 1 "$rc"
+want "drift is printed" "MISSING generated column: _is_work" "$out"
+want "cannot-tell is printed" "cannot tell: types.custom timed out" "$out"
+
+out="$(SHIM_SLOW_TYPES=$((dl+1)) sc bash "$HERE/schema.sh" contract)"
+want "contract STORE shows cannot-tell" "custom types:    schema: cannot tell: types.custom timed out" "$out"
+
+echo
+echo "schema-apply.sh reports applied-not-verified for a cannot-tell"
+out="$(SHIM_SLOW_TYPES=$((dl+1)) sc bash "$HERE/schema-apply.sh")"; rc=$?
+is "apply exits 4" 4 "$rc"
+want "apply says applied, NOT verified" "applied, NOT verified" "$out"
+
+echo
 tl_summary
