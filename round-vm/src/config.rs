@@ -35,6 +35,13 @@ pub struct Config {
     /// `spira/conf.d`), so it does not go through `cfg`/`cfg_parse`; see
     /// `cache_home_from_env_or_toml`.
     pub cache_home: Option<String>,
+    /// `s3://<bucket>/<prefix>` every round VM records passed suites to (`round_vm_resume_url`).
+    /// Unset: a round has no resume, and says so.
+    pub resume_url: Option<String>,
+    /// Host directory holding the AWS `credentials` (and optionally `config`) file scoped to
+    /// the resume prefix alone (`round_vm_resume_credentials`); pushed to a Proxmox VM. An EC2
+    /// VM reads the prefix with its instance profile and takes none.
+    pub resume_credentials: Option<PathBuf>,
     /// SPIRA_TESTENV_REGISTRY, forwarded to the VM so a changed image tag costs one pull
     /// there instead of a full rebuild.
     pub testenv_registry: Option<String>,
@@ -83,6 +90,8 @@ pub(crate) struct Fields {
     pub host_pubkey: String,
     pub host_addr: Option<String>,
     pub cache_home: Option<String>,
+    pub resume_url: Option<String>,
+    pub resume_credentials: Option<String>,
     pub testenv_registry: Option<String>,
     pub vcpus: u32,
     pub mem_mib: u64,
@@ -182,7 +191,12 @@ fn str_env(key: &str, default: &str) -> String {
 /// `spira/conf.d` alone), so it is read here exactly as before this migration: the
 /// environment first, then `spira.toml`'s `[spira]` table, never a bare ambient `CARGO_HOME`.
 fn cache_home_from_env_or_toml() -> Option<String> {
-    if let Ok(v) = std::env::var("SPIRA_ROUND_VM_CACHE_HOME") {
+    toml_only("SPIRA_ROUND_VM_CACHE_HOME", |s| s.round_vm_cache_home)
+}
+
+/// A TOML-only key: the environment first, then `spira.toml`'s `[spira]` table; empty is unset.
+fn toml_only(env_key: &str, field: impl FnOnce(spira_config::SpiraSection) -> Option<String>) -> Option<String> {
+    if let Ok(v) = std::env::var(env_key) {
         if !v.trim().is_empty() {
             return Some(v);
         }
@@ -190,7 +204,7 @@ fn cache_home_from_env_or_toml() -> Option<String> {
     spira_config::discover(None)
         .and_then(|p| spira_config::load(&p).ok())
         .and_then(|doc| doc.spira)
-        .and_then(|s| s.round_vm_cache_home)
+        .and_then(field)
         .filter(|v| !v.trim().is_empty())
 }
 
@@ -233,6 +247,8 @@ impl Config {
             // straight from the environment; defaults unchanged by this migration.
             spira_home: std::env::var("SPIRA_HOME").ok().filter(|v| !v.trim().is_empty()),
             cache_home: cache_home_from_env_or_toml(),
+            resume_url: toml_only("SPIRA_ROUND_VM_RESUME_URL", |s| s.round_vm_resume_url),
+            resume_credentials: toml_only("SPIRA_ROUND_VM_RESUME_CREDENTIALS", |s| s.round_vm_resume_credentials),
             setup_alarm_secs: num_env("SPIRA_ROUND_VM_SETUP_ALARM_SECS", 180)?,
             acquire_deadline_secs: num_env("SPIRA_ROUND_VM_ACQUIRE_DEADLINE", 3600)?,
             mailbox: str_env("SPIRA_ROUND_VM_MAIL_MAILBOX", "operator"),
@@ -264,6 +280,8 @@ impl Config {
             host_pubkey: PathBuf::from(f.host_pubkey),
             host_addr: f.host_addr,
             cache_home: f.cache_home,
+            resume_url: f.resume_url,
+            resume_credentials: f.resume_credentials.map(PathBuf::from),
             testenv_registry: f.testenv_registry,
             setup_alarm_secs: f.setup_alarm_secs,
             vcpus: f.vcpus,
@@ -396,6 +414,8 @@ mod tests {
             host_pubkey: "/r/round-vm/host_key.pub".into(),
             host_addr: None,
             cache_home: None,
+            resume_url: None,
+            resume_credentials: None,
             testenv_registry: None,
             vcpus: 16,
             mem_mib: 0,

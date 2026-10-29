@@ -121,6 +121,9 @@ pub struct BatchJob {
     /// everyone who clones it). Empty: the VM's image records its own (EC2).
     pub cache_home: Option<String>,
     pub testenv_registry: Option<String>,
+    /// `s3://<bucket>/<prefix>` the VM records each passed suite to (`SPIRA_TESTENV_RESUME`); a
+    /// dead VM loses nothing, and the next pass for the tree reads the same prefix.
+    pub resume_url: Option<String>,
     /// Seconds of setup (script start to the suites launching) beyond which the run reports SETUP-SLOW.
     pub setup_alarm_secs: u64,
     /// The cap clock: first suite to the bare lane's end. Past it the VM kills the lane and exits 124.
@@ -215,7 +218,7 @@ printf '%s %s %s - - - %s\n' "$status" 1 "$(( $(date +%s) - t0 ))" "$rc" > "$res
 /// into `~/round-bins/` so the host pulls the binaries and not cargo's target directory.
 pub const REMOTE_SCRIPT: &str = concat!(r#"set -euo pipefail
 host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8" cap="$9" post_guard="${10}" lint="${11}" build_image="${12}" round_ref="${13}" round_sha="${14}"
-testenv_limits="${16:-}"
+testenv_limits="${16:-}" resume_url="${17:-}"
 [ -n "$testenv_limits" ] || { echo "round-vm: the host sent no testenv limits; a round never takes them from the tree's test fixture" >&2; exit 2; }
 t_start=$(date +%s)
 export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -486,8 +489,28 @@ else
 fi
 setup_secs=$(( $(date +%s) - t_start - unit_build_secs ))
 if [ -n "$registry" ]; then export SPIRA_TESTENV_REGISTRY="$registry"; fi
-mkdir -p "$HOME/round-resume"
-export SPIRA_TESTENV_RESUME="dir:$HOME/round-resume"
+# Each passed suite is recorded to the resume prefix as it passes, so a VM that dies loses none.
+# A prefix the VM cannot write is named here, once, with the cause: a round that records nothing
+# otherwise looks the same as one that recorded everything until its re-run skips nothing.
+if [ -z "$resume_url" ]; then
+    echo "round-vm: RESUME-OFF: no resume prefix is configured (round_vm_resume_url); a re-run of this tree runs every suite" >&2
+else
+    if [ -d "$HOME/round-resume-aws" ]; then
+        export AWS_SHARED_CREDENTIALS_FILE="$HOME/round-resume-aws/credentials"
+        [ ! -f "$HOME/round-resume-aws/config" ] || export AWS_CONFIG_FILE="$HOME/round-resume-aws/config"
+    fi
+    resume_probe() {
+        local obj="${resume_url%/}/.probe" cp="aws s3 cp --only-show-errors --cli-connect-timeout 5 --cli-read-timeout 15"
+        printf probe | $cp - "$obj" || return 1
+        [ "$($cp "$obj" -)" = probe ] || { echo "the probe object was written but does not read back" >&2; return 1; }
+    }
+    if probe_err="$(resume_probe 2>&1)"; then
+        export SPIRA_TESTENV_RESUME="$resume_url"
+        echo "round-vm: RESUME: recording passed suites to $resume_url" >&2
+    else
+        echo "round-vm: RESUME-FAILED: the resume prefix $resume_url cannot be written from this VM, so a re-run of this tree skips nothing: ${probe_err//$'\n'/ }" >&2
+    fi
+fi
 sig_out="$HOME/round-work/.runtime/spira/tsd/vm-signals.jsonl"
 mkdir -p "$(dirname "$sig_out")"
 cpu_now() { awk '/^cpu /{t=0; for(i=2;i<=9;i++) t+=$i; print t, $6, $9}' /proc/stat; }
@@ -825,6 +848,7 @@ pub fn remote_command(job: &BatchJob) -> String {
     args.push(job.round_sha.clone());
     args.push(job.ci_entry.clone().unwrap_or_default());
     args.push(job.testenv_limits.clone());
+    args.push(job.resume_url.clone().unwrap_or_default());
     let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
     format!("bash -s -- {}", quoted.join(" "))
 }
@@ -1810,10 +1834,12 @@ fn on_vm_run(
         round_ref: round_ref.to_string(),
         round_sha: commit_sha.to_string(),
         ci_entry: args.ci_entry.clone(),
+        resume_url: args.ci_entry.is_none().then(|| cfg.resume_url.clone()).flatten(),
     };
-    let resume = args.ci_entry.is_none().then(|| resume_dir(cfg, tree_sha));
-    if let Some(dir) = &resume {
-        push_resume(env.remote, &vm.addr, dir);
+    if let (Some(dir), None) = (&cfg.resume_credentials, &args.ci_entry) {
+        if job.resume_url.is_some() && !crate::ec2::is_ec2_handle(&vm.handle) {
+            push_resume_credentials(env.remote, &vm.addr, dir);
+        }
     }
     let t0 = Instant::now();
     let stream_scratch = cfg.state_dir.join(format!(".pulled-stream.{}", std::process::id()));
@@ -1824,7 +1850,7 @@ fn on_vm_run(
             let mut last: Option<Instant> = None;
             while !batch.is_finished() {
                 if last.is_none_or(|l| l.elapsed() >= cfg.stream_every) {
-                    stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir, resume.as_deref());
+                    stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir);
                     progress.update(&results_dir);
                     record_boundary(env, args, &mut progress, &mut refused);
                     last = Some(Instant::now());
@@ -1843,7 +1869,7 @@ fn on_vm_run(
             Ok(255) => {
                 eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
                 progress.marks().lose("ssh dropped");
-                keep_after_lost_ssh(env, vm, &results_dir, resume.as_deref(), keep);
+                keep_after_lost_ssh(env, vm, &results_dir, keep);
                 record_incomplete(env, args, "the batch's ssh dropped");
                 progress.finish(&results_dir, 2);
                 return 2;
@@ -1889,7 +1915,7 @@ fn on_vm_run(
         let mut last: Option<Instant> = None;
         while !batch.is_finished() {
             if last.is_none_or(|l| l.elapsed() >= cfg.stream_every) {
-                stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir, resume.as_deref());
+                stream_pull(env.remote, &vm.addr, &stream_scratch, &results_dir);
                 progress.update(&results_dir);
                 record_boundary(env, args, &mut progress, &mut refused);
                 last = Some(Instant::now());
@@ -1906,7 +1932,7 @@ fn on_vm_run(
             Ok(Ok(255)) => {
                 eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
                 progress.marks().lose("ssh dropped");
-                keep_after_lost_ssh(env, vm, &results_dir, resume.as_deref(), keep);
+                keep_after_lost_ssh(env, vm, &results_dir, keep);
                 record_incomplete(env, args, "the batch's ssh dropped");
                 (2, false)
             }
@@ -1955,10 +1981,7 @@ fn lose_vm(env: &RunEnv, args: &RunArgs, progress: &mut crate::progress::Progres
 
 /// One streaming pass: every verdict the VM has so far lands in `results_dir`, so a run cut
 /// before its final pull keeps them.
-fn stream_pull(remote: &dyn Remote, addr: &str, scratch: &Path, results_dir: &Path, resume: Option<&Path>) {
-    if let Some(dir) = resume {
-        pull_resume(remote, addr, dir);
-    }
+fn stream_pull(remote: &dyn Remote, addr: &str, scratch: &Path, results_dir: &Path) {
     if remote.pull(addr, REMOTE_RESULTS, scratch).is_ok() {
         if let Err(e) = stream_into(scratch, results_dir) {
             eprintln!("round-vm run: streaming results: {e}");
@@ -2025,12 +2048,9 @@ fn keep_vm(env: &RunEnv, vm: &Vm, keep: &AtomicBool) {
 }
 
 /// The batch's ssh dropped, so what the VM holds is unknown: take what it has and keep the VM.
-fn keep_after_lost_ssh(env: &RunEnv, vm: &Vm, results_dir: &Path, resume: Option<&Path>, keep: &AtomicBool) {
+fn keep_after_lost_ssh(env: &RunEnv, vm: &Vm, results_dir: &Path, keep: &AtomicBool) {
     keep_vm(env, vm, keep);
     let _pin = env.pool.pin_pull(&vm.handle);
-    if let Some(dir) = resume {
-        pull_resume(env.remote, &vm.addr, dir);
-    }
     let scratch = env.cfg.state_dir.join(format!(".pulled-lost.{}", std::process::id()));
     let _ = fs::remove_dir_all(&scratch);
     if pull_retry(env.remote, env.cfg, &vm.addr, REMOTE_RESULTS, &scratch) {
@@ -2041,25 +2061,18 @@ fn keep_after_lost_ssh(env: &RunEnv, vm: &Vm, results_dir: &Path, resume: Option
         eprintln!("round-vm run: INCOMPLETE: the batch's ssh dropped and the results pull failed");
     }
     let _ = fs::remove_dir_all(&scratch);
-    if let Some(dir) = resume {
-        let tree = dir.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
-        report_resume(dir, &tree, passed_suites(results_leaf(results_dir).as_deref()));
-    }
     keep_runner_output(env.remote, env.cfg, &vm.addr, &env.cfg.state_dir.join(format!(".pulled-runner.{}", std::process::id())), results_dir);
 }
 
 /// A run cut by a signal still holds the verdicts its VM produced: pulls them into
 /// `results_dir` (results already there are kept) before the VM is released. Bounded by
 /// `within`, because the caller's kill-after is seconds away. Returns how many were new, or `None` when the pull itself failed or timed out.
-pub fn salvage_results(remote: &dyn Remote, addr: &str, results_dir: &Path, scratch: &Path, within: Duration, resume: Option<&Path>) -> Option<usize> {
+pub fn salvage_results(remote: &dyn Remote, addr: &str, results_dir: &Path, scratch: &Path, within: Duration) -> Option<usize> {
     let pulled = std::thread::scope(|sc| {
         let (tx, rx) = std::sync::mpsc::channel();
         sc.spawn(move || {
             let _ = fs::remove_dir_all(scratch);
             let ok = remote.pull(addr, REMOTE_RESULTS, scratch).is_ok();
-            if let Some(dir) = resume {
-                pull_resume(remote, addr, dir);
-            }
             let _ = tx.send(ok);
         });
         rx.recv_timeout(within).unwrap_or(false)
@@ -2072,57 +2085,15 @@ pub fn salvage_results(remote: &dyn Remote, addr: &str, results_dir: &Path, scra
 /// Where the VM's runner writes its time-series rows.
 const TSD_DIR: &str = "round-work/.runtime/spira/tsd/";
 
-/// The VM's testenv resume store (`SPIRA_TESTENV_RESUME=dir:$HOME/round-resume`), carried to a
-/// re-acquired VM so a round whose spot VM was reclaimed skips the suites the first one passed.
-pub const REMOTE_RESUME: &str = "round-resume/";
+/// The scoped credentials the VM reads the resume prefix with, pushed beside the round and
+/// never passed on a command line.
+pub const REMOTE_RESUME_CREDENTIALS: &str = "round-resume-aws/";
 
-/// The host's copy of a tree's resume store.
-pub fn resume_dir(cfg: &Config, tree_sha: &str) -> PathBuf {
-    cfg.state_dir.join("resume").join(tree_sha)
-}
-
-fn push_resume(remote: &dyn Remote, addr: &str, dir: &Path) {
-    let held = fs::read_dir(dir).is_ok_and(|mut d| d.next().is_some());
-    if !held {
-        return;
+fn push_resume_credentials(remote: &dyn Remote, addr: &str, dir: &Path) {
+    match remote.push(addr, dir, REMOTE_RESUME_CREDENTIALS) {
+        Ok(()) => eprintln!("round-vm run: RESUME: credentials delivered to {addr}"),
+        Err(e) => eprintln!("round-vm run: RESUME-FAILED: credentials for the resume prefix could not be delivered to {addr}: {e}"),
     }
-    match remote.push(addr, dir, REMOTE_RESUME) {
-        Ok(()) => eprintln!("round-vm run: RESUME: pushed {} to {addr}", dir.display()),
-        Err(e) => eprintln!("round-vm run: RESUME: push to {addr} failed, the VM runs everything: {e}"),
-    }
-}
-
-/// A failed pull costs only the skips; the round's verdict never depends on it.
-fn pull_resume(remote: &dyn Remote, addr: &str, dir: &Path) {
-    if remote.pull(addr, REMOTE_RESUME, dir).is_err() {
-        let _ = fs::remove_dir(dir);
-    }
-}
-
-fn count_files(dir: &Path) -> usize {
-    let Ok(rd) = fs::read_dir(dir) else { return 0 };
-    rd.flatten().map(|e| if e.path().is_dir() { count_files(&e.path()) } else { 1 }).sum()
-}
-
-/// Says what the host holds for the tree after a pull; an empty store beside passing suites is the
-/// condition a resume that records nothing leaves, so it is said loudly.
-fn report_resume(dir: &Path, tree_sha: &str, passed: usize) -> bool {
-    let n = count_files(dir);
-    eprintln!("round-vm run: RESUME: holding {n} record(s) for {tree_sha}");
-    if n == 0 && passed > 0 {
-        eprintln!("round-vm run: RESUME: WARNING: {passed} suite(s) passed but the VM's resume store holds no record; a re-run of this tree skips nothing (see {RUNNER_OUT_FILE})");
-    }
-    n == 0 && passed > 0
-}
-
-fn passed_suites(leaf: Option<&Path>) -> usize {
-    let Some(leaf) = leaf else { return 0 };
-    let Ok(rd) = fs::read_dir(leaf) else { return 0 };
-    rd.flatten()
-        .filter(|e| e.path().extension().is_some_and(|x| x == "result"))
-        .filter_map(|e| fs::read_to_string(e.path()).ok())
-        .filter(|t| t.split_whitespace().next() == Some("ok"))
-        .count()
 }
 
 /// The whole stdout and stderr of the VM's testenv run, kept with the round's results.
@@ -2194,15 +2165,6 @@ fn after_batch(
     }
     let _pin = env.pool.pin_pull(&vm.handle);
     let remote = env.remote;
-    let held_resume = (args.ci_entry.is_none() && remote_rc != 0).then(|| resume_dir(cfg, tree_sha));
-    if args.ci_entry.is_none() {
-        match &held_resume {
-            Some(dir) => pull_resume(remote, &vm.addr, dir),
-            None => {
-                let _ = fs::remove_dir_all(resume_dir(cfg, tree_sha));
-            }
-        }
-    }
     let timed = |what: &str, remote_path: &str, local: &Path| {
         let t0 = std::time::Instant::now();
         let ok = pull_retry(remote, cfg, &vm.addr, remote_path, local);
@@ -2217,9 +2179,6 @@ fn after_batch(
         (results_ok, tsd_pull.join().unwrap_or(false))
     });
     let leaf = results_leaf(&pulled);
-    if let Some(dir) = &held_resume {
-        report_resume(dir, tree_sha, passed_suites(leaf.as_deref()));
-    }
     if args.ci_entry.is_none() {
         keep_runner_output(remote, cfg, &vm.addr, &scratch("runner"), &results_dir);
     }
@@ -3108,6 +3067,7 @@ mod tests {
             maxpar: 16,
             toolchain: Some("1.82.0".into()),
             cache_home: Some("/opt/spira/cargo".into()),
+            resume_url: None,
             testenv_registry: Some("registry.example/spira".into()),
             setup_alarm_secs: 45,
             cap_secs: 900,
@@ -3119,7 +3079,7 @@ mod tests {
             round_sha: "abc".into(),
             ci_entry: Some("deploy/ci.sh all".into()),
         });
-        assert_eq!(cmd, "bash -s -- '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n'");
+        assert_eq!(cmd, "bash -s -- '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' ''");
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -3131,26 +3091,71 @@ mod tests {
         assert!(REMOTE_SCRIPT.contains("[ -n \"$testenv_limits\" ] ||"), "no limits sent is a refusal");
     }
 
-    #[test]
-    fn remote_script_exports_the_resume_dir_before_testenv_runs() {
-        let export = REMOTE_SCRIPT.find(r#"export SPIRA_TESTENV_RESUME="dir:$HOME/round-resume""#).expect("exports the resume dir");
-        let corpus = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
-        assert!(export < corpus);
-        assert_eq!(REMOTE_RESUME, "round-resume/");
+    fn resume_block() -> String {
+        let a = REMOTE_SCRIPT.find("if [ -z \"$resume_url\" ]; then").expect("the resume block");
+        let b = a + REMOTE_SCRIPT[a..].find("\nfi\nsig_out=").expect("the block ends before the signal sampler") + 3;
+        REMOTE_SCRIPT[a..b].to_string()
+    }
+
+    /// Runs the script's own resume block with a stub `aws` that exits `aws_rc`.
+    fn run_resume_block(url: &str, creds: bool, aws_rc: i32) -> (String, String) {
+        let tmp = testkit::TempDir::new("resume-block");
+        let home = tmp.path().join("home");
+        fs::create_dir_all(&home).unwrap();
+        if creds {
+            fs::create_dir_all(home.join("round-resume-aws")).unwrap();
+            fs::write(home.join("round-resume-aws/credentials"), "[default]\n").unwrap();
+        }
+        let bin = tmp.path().join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let stub = bin.join("aws");
+        testkit::write_exe(&stub, &format!("#!/bin/bash\necho \"CREDS=${{AWS_SHARED_CREDENTIALS_FILE:-}}\" > \"$HOME/aws-saw\"\n[ {aws_rc} -eq 0 ] || {{ echo 'AccessDenied: no write to the prefix' >&2; exit {aws_rc}; }}\nif [ \"$8\" = - ]; then cat > \"$HOME/obj\"; else cat \"$HOME/obj\"; fi\n"));
+        let script = format!("resume_url={}\n{}\necho \"RESUME=${{SPIRA_TESTENV_RESUME:-unset}}\"", shell_quote(url), resume_block());
+        let out = std::process::Command::new("bash")
+            .args(["-c", &script])
+            .env_clear()
+            .env("HOME", &home)
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .output()
+            .unwrap();
+        let log = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        let saw = fs::read_to_string(home.join("aws-saw")).unwrap_or_default();
+        (log, saw)
     }
 
     #[test]
-    fn push_resume_sends_only_a_held_dir() {
-        let d = testkit::TempDir::new("rvm-resume");
+    fn a_vm_with_a_writable_resume_prefix_records_to_it_with_the_pushed_credentials() {
+        let (log, saw) = run_resume_block("s3://bkt/pre", true, 0);
+        assert!(log.contains("RESUME=s3://bkt/pre"), "{log}");
+        assert!(saw.contains("round-resume-aws/credentials"), "the aws call reads the pushed credentials: {saw}");
+    }
+
+    #[test]
+    fn a_resume_prefix_the_vm_cannot_write_is_a_named_failure_not_a_silent_empty_store() {
+        let (log, _) = run_resume_block("s3://bkt/pre", true, 1);
+        assert!(log.contains("RESUME-FAILED") && log.contains("s3://bkt/pre") && log.contains("AccessDenied"), "{log}");
+        assert!(log.contains("RESUME=unset"), "a store that cannot be written is not exported: {log}");
+    }
+
+    #[test]
+    fn no_configured_resume_prefix_is_said_not_skipped() {
+        let (log, _) = run_resume_block("", false, 0);
+        assert!(log.contains("RESUME-OFF") && log.contains("RESUME=unset"), "{log}");
+    }
+
+    #[test]
+    fn resume_credentials_reach_only_a_proxmox_vm_and_never_the_command_line() {
+        let job = BatchJob {
+            host_addr: "h".into(), mirror_port: 1, suites: None, maxpar: 1, toolchain: None, cache_home: None,
+            testenv_registry: None, resume_url: Some("s3://bkt/pre".into()), setup_alarm_secs: 1, cap_secs: 1,
+            testenv_limits: "x".into(), post_guard_secs: 1, lint: false, build_image: false,
+            round_ref: "r".into(), round_sha: "s".into(), ci_entry: None,
+        };
+        assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre'"));
+        assert!(!REMOTE_SCRIPT.contains("AWS_SECRET_ACCESS_KEY"), "the script never carries a key");
         let remote = FakeRemote::green();
-        let held = d.path().join("held");
-        push_resume(&remote, "10.0.0.2", &held);
-        fs::create_dir_all(&held).unwrap();
-        push_resume(&remote, "10.0.0.2", &held);
-        assert!(remote.pushes.lock().unwrap().is_empty());
-        fs::write(held.join("k"), "x").unwrap();
-        push_resume(&remote, "10.0.0.2", &held);
-        assert_eq!(*remote.pushes.lock().unwrap(), vec![(held, REMOTE_RESUME.to_string())]);
+        push_resume_credentials(&remote, "10.0.0.2", Path::new("/creds"));
+        assert_eq!(*remote.pushes.lock().unwrap(), vec![(PathBuf::from("/creds"), REMOTE_RESUME_CREDENTIALS.to_string())]);
     }
 
     #[test]
@@ -3521,7 +3526,6 @@ mod tests {
             ]);
             files.insert("round-work/.runtime/spira/tsd/", vec![("suite.jsonl", "{\"suite\":\"a\"}\n")]);
             files.insert(REMOTE_BINS, vec![("batcher", "bin")]);
-            files.insert(REMOTE_RESUME, vec![("spira/treesha/env/test-a.sh", "resume-record\n")]);
             files.insert(REMOTE_RUNNER_OUT, vec![(REMOTE_RUNNER_OUT, "batch: resumed: test-a.sh passed in run/attempt local\n")]);
             files.insert("attr-results/j1/", vec![("K2/test-a.sh.result", "ok 1 2 - p e 0\n")]);
             files.insert("attr-results/j2/", vec![("K3/test-a.sh.result", "red 1 2 fp p e 1\n"), ("K3/batch.meta", "tree=t2\n")]);
@@ -3631,6 +3635,8 @@ mod tests {
             host_pubkey: format!("{}.pub", key.to_string_lossy()),
             host_addr: Some("192.168.1.10".to_string()),
             cache_home: Some("/opt/spira/cargo".to_string()),
+            resume_url: None,
+            resume_credentials: None,
             testenv_registry: None,
             vcpus: 16,
             mem_mib: 0,
@@ -4007,33 +4013,6 @@ mod tests {
     }
 
     #[test]
-    fn a_signalled_run_carries_the_vms_resume_records_home() {
-        let fx = fixture();
-        let remote = FakeRemote::green();
-        let resume = fx.cfg.state_dir.join("resume").join("treesha");
-        let scratch = fx.cfg.state_dir.join(".salvage-resume");
-        salvage_results(&remote, "addr", &fx.cfg.run_dir.join("salvaged"), &scratch, Duration::from_secs(5), Some(&resume));
-        assert_eq!(count_files(&resume), 1, "the record a signalled run's VM held is on the host");
-    }
-
-    #[test]
-    fn an_empty_resume_store_beside_passing_suites_is_warned_about() {
-        let d = TempDir::new();
-        let leaf = d.path().join("leaf");
-        fs::create_dir_all(&leaf).unwrap();
-        fs::write(leaf.join("a.sh.result"), "ok 1 3 - p e 0\n").unwrap();
-        fs::write(leaf.join("b.sh.result"), "red 1 3 - p e 1\n").unwrap();
-        let passed = passed_suites(Some(&leaf));
-        assert_eq!(passed, 1);
-        let store = d.path().join("store");
-        assert!(report_resume(&store, "tree", passed), "no record, one pass: warned");
-        fs::create_dir_all(store.join("r/t/e")).unwrap();
-        fs::write(store.join("r/t/e/a.sh"), "x").unwrap();
-        assert!(!report_resume(&store, "tree", passed), "a held record: no warning");
-        assert!(!report_resume(&d.path().join("none"), "tree", 0), "nothing passed: no warning");
-    }
-
-    #[test]
     fn the_vms_runner_output_is_kept_with_the_results() {
         let fx = fixture();
         let remote = FakeRemote::green();
@@ -4049,13 +4028,13 @@ mod tests {
         let remote = FakeRemote::green();
         let dest = fx.cfg.run_dir.join("salvaged");
         let scratch = fx.cfg.state_dir.join(".salvage-test");
-        let n = salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5), None);
+        let n = salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5));
         assert_eq!(n, Some(2));
         assert!(dest.join("test-a.sh.result").is_file());
         assert!(!scratch.exists(), "scratch is removed");
         let mut none = FakeRemote::green();
         none.files.clear();
-        assert_eq!(salvage_results(&none, "addr", &dest, &scratch, Duration::from_secs(5), None), None, "an unreachable VM salvages nothing and says the pull failed");
+        assert_eq!(salvage_results(&none, "addr", &dest, &scratch, Duration::from_secs(5)), None, "an unreachable VM salvages nothing and says the pull failed");
     }
 
     #[test]
@@ -4311,8 +4290,8 @@ mod tests {
         remote.fail_result_pulls.store(1, std::sync::atomic::Ordering::SeqCst);
         let dest = fx.cfg.run_dir.join("salvaged");
         let scratch = fx.cfg.state_dir.join(".salvage-fail");
-        assert_eq!(salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5), None), None);
-        assert_eq!(salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5), None), Some(2), "the re-pull recovers every result");
+        assert_eq!(salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5)), None);
+        assert_eq!(salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5)), Some(2), "the re-pull recovers every result");
     }
 
     #[test]
