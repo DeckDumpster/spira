@@ -404,7 +404,6 @@ mod tests {
         assert!(d.join("dwarf/sp-a.lease").is_file());
     }
 
-    // test-thrash-teardown.sh: turns advance, the deliverable does not → thrash.
     // Waiting on a harness-owned slot renews however long the trace is still; the quiet clock
     // restarts when the wait ends.
     #[test]
@@ -426,6 +425,7 @@ mod tests {
         assert_eq!(b2.dispositions.lock().unwrap()[0].0, "lapsed");
     }
 
+    // test-thrash-teardown.sh: turns advance, the deliverable does not → thrash.
     #[test]
     fn growing_trace_with_a_stale_fuse_thrashes() {
         let d = tmp("thrash");
@@ -474,6 +474,20 @@ mod tests {
         assert_eq!(stop.signalled(), Some(libc::SIGTERM));
         assert!(!crate::stop::requested(&d, "sp-a"), "the request is consumed");
         assert!(b.logs.lock().unwrap()[0].contains("stop requested"));
+        assert_eq!(b.dispositions.lock().unwrap().clone(), vec![("slain".to_string(), "why".to_string())]);
+    }
+
+    #[test]
+    fn a_stop_request_during_a_harness_wait_still_ends_the_session() {
+        let d = tmp("stopwait");
+        let hb = Heartbeat { bead: "sp-a".into(), rune: "builder".into(), run: d.to_path_buf(), lease_s: 600, every: Duration::from_millis(1), wall_min: 10_000 };
+        std::fs::create_dir_all(d.join("dwarf")).unwrap();
+        std::fs::write(crate::stop::request_file(&d, "sp-a"), "why\n").unwrap();
+        let b = FakeBeat { mtimes: Mutex::new(vec![5]), fuse: "?".into(), ..Default::default() };
+        let stop = Stop::default();
+        let _wait = stop.harness_waiting(1);
+        assert_eq!(hb.run(&b, &stop, &AtomicBool::new(false)), None);
+        assert_eq!(stop.signalled(), Some(libc::SIGTERM));
         assert_eq!(b.dispositions.lock().unwrap().clone(), vec![("slain".to_string(), "why".to_string())]);
     }
 

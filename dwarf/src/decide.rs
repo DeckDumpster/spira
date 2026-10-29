@@ -33,6 +33,7 @@ pub enum HbTick {
 
 /// Trace growth renews unconditionally; only a still trace can lapse; only a trace that
 /// neither grew nor lapsed can thrash. A harness wait renews ahead of both. A fuse that is not a plain integer never trips.
+#[allow(clippy::too_many_arguments)]
 pub fn hb_tick(prev_mtime: i64, cur_mtime: i64, now: i64, deadline: i64, waiting: bool, fuse: &str, wall_min: i64, session_start: i64) -> HbTick {
     if waiting || cur_mtime != prev_mtime {
         return HbTick::Renew;
