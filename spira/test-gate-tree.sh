@@ -163,8 +163,23 @@ GATELOG1B="$TMP/gate1b.log"
 # 2026-10-05). Set once, sequentially, before the two concurrent calls below (never from
 # inside a parallel rungate: tl_config writes the one shared override file).
 tl_config SPIRA_GATE_LOCK_WAIT=10
-( rungate "spira/sp-t1" SPIRA_GATE_LOG="$GATELOG1B" > "$TMP/g1b1.out" 2>&1; echo $? > "$TMP/g1b1.rc" ) &
-( rungate "spira/sp-t1" SPIRA_GATE_LOG="$GATELOG1B" > "$TMP/g1b2.out" 2>&1; echo $? > "$TMP/g1b2.rc" ) &
+# The lock is held here until the kernel shows a gate blocked on it (a "->" line in
+# /proc/locks), so a gate has waited by construction, however slowly either one starts.
+LOCK1B="$RUN/worktree/.gate.$(basename "$REPO").$T1_KEY.lock"
+: > "$LOCK1B"
+LOCK1B_INO="$(stat -c %i "$LOCK1B")"
+exec 8>"$LOCK1B"
+flock -x 8
+( exec 8>&-; rungate "spira/sp-t1" SPIRA_GATE_LOG="$GATELOG1B" > "$TMP/g1b1.out" 2>&1; echo $? > "$TMP/g1b1.rc" ) &
+( exec 8>&-; rungate "spira/sp-t1" SPIRA_GATE_LOG="$GATELOG1B" > "$TMP/g1b2.out" 2>&1; echo $? > "$TMP/g1b2.rc" ) &
+for _ in $(seq 1 600); do
+    grep -q -- "-> FLOCK .*:$LOCK1B_INO " /proc/locks && break
+    sleep 0.05
+done
+grep -q -- "-> FLOCK .*:$LOCK1B_INO " /proc/locks \
+    && ok "a gate was blocked on the held tree lock" \
+    || bad "a gate was blocked on the held tree lock" "no waiter on inode $LOCK1B_INO in /proc/locks"
+exec 8>&-
 wait
 
 if label_self_overlaps "spira/sp-t1" "$EVENTS"; then
