@@ -1189,6 +1189,9 @@ fn alias_repo_land(path: &str) -> String {
 /// that caller). Kept here, not duplicated at the call site, so `config-fence`'s "only
 /// spira-config names or parses the config" contract holds without a new allow-list entry.
 pub fn serialize_and_write(path: &std::path::Path, doc: &SpiraToml) -> Result<(), String> {
+    if let Some((k, v)) = doc.unknown_values.iter().next() {
+        return Err(format!("{}: refusing to rewrite a file holding {k} = {v:?}, a value this release does not know; edit it with set_paths_in_file", path.display()));
+    }
     let text = toml::to_string_pretty(doc).map_err(|e| format!("{}: {e}", path.display()))?;
     write_atomic(path, &text).map_err(|e| format!("{}: {e}", path.display()))
 }
@@ -1777,6 +1780,18 @@ mod tests {
         assert_eq!(repo_gate_mode(&doc, "other").unwrap(), GateMode::Suites);
         let err = validate("[repo.r]\npath = \"/p\"\nmode = \"teleport\"\n").unwrap_err();
         assert!(err.contains("repo.r.mode") && err.contains("teleport"), "{err}");
+    }
+
+    #[test]
+    fn a_rewrite_never_drops_a_value_this_release_does_not_know() {
+        let text = format!("{REPO_R}gate_mode = \"some-future-mode\"\n");
+        let doc = validate(&text).unwrap();
+        let edited = edit_text(&text, &doc, &set_path(&doc, "repo.r.format", "x").unwrap()).unwrap();
+        assert!(edited.contains("some-future-mode") && edited.contains("format"), "{edited}");
+        let dir = testkit::TempDir::new("unknown-value");
+        let p = dir.path().join("spira.toml");
+        let err = serialize_and_write(&p, &doc).unwrap_err();
+        assert!(err.contains("repo.r.gate_mode") && !p.exists(), "{err}");
     }
 
     #[test]
