@@ -9,13 +9,24 @@ use runtime::FileMarker;
 use spira_runtime::{open_engine, sink::OtlpSink, Effects, Settings};
 use tokio::sync::mpsc;
 
-const USAGE: &str = "usage: spira-runtime serve";
+const USAGE: &str = "usage: spira-runtime serve|check-config";
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    if std::env::args().nth(1).as_deref() != Some("serve") || std::env::args().count() != 2 {
+    let verb = std::env::args().nth(1);
+    if std::env::args().count() != 2 || !matches!(verb.as_deref(), Some("serve" | "check-config")) {
         eprintln!("{USAGE}");
         std::process::exit(2);
+    }
+    if verb.as_deref() == Some("check-config") {
+        match Settings::load() {
+            Ok(s) => println!("ok {}", s.hash()),
+            Err(e) => {
+                eprintln!("spira-runtime: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
     }
     if let Err(e) = serve().await {
         eprintln!("spira-runtime: {e}");

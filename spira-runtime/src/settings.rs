@@ -24,11 +24,33 @@ fn num<T: std::str::FromStr + PartialOrd + Default>(key: &str, raw: &str) -> Res
 }
 
 impl Settings {
+    /// Every key `from_lookup` reads; each must be registered in spira/conf.d.
+    pub const KEYS: &'static [&'static str] = &[
+        "SPIRA_LC_SOCKET",
+        "SPIRA_RUN",
+        "SPIRA_RUNTIME_ROUND_DUTY_SECS",
+        "SPIRA_ROUND_MIN",
+        "SPIRA_ROUND_MAX_OPEN",
+        "SPIRA_ROUND_DUE_REMIND",
+        "SPIRA_ROUND_IDLE_CUT",
+        "SPIRA_QUEUE_DIR",
+        "SPIRA_REPO_MAP",
+        "SPIRA_HOME_REPO",
+        "SPIRA_CONCIERGE_INBOX",
+        "SPIRA_RUNTIME_HEARTBEAT_URL",
+        "SPIRA_RUNTIME_HEARTBEAT_SECS",
+        "SPIRA_RUNTIME_STALL_LIMIT",
+    ];
+
     pub fn load() -> Result<Settings, String> {
         Self::from_lookup(&cfg)
     }
 
     pub fn from_lookup(get: &dyn Fn(&str) -> Result<String, String>) -> Result<Settings, String> {
+        let unresolved: Vec<&str> = Self::KEYS.iter().copied().filter(|k| get(k).is_err()).collect();
+        if !unresolved.is_empty() {
+            return Err(format!("unregistered or unresolved config keys: {} — refusing", unresolved.join(", ")));
+        }
         let socket = get("SPIRA_LC_SOCKET")?;
         if socket.is_empty() {
             return Err("SPIRA_LC_SOCKET is empty — the journal has no door to the store".into());
@@ -42,10 +64,14 @@ impl Settings {
             remind_secs: secs("SPIRA_ROUND_DUE_REMIND")?,
             idle_cut_secs: secs("SPIRA_ROUND_IDLE_CUT")?,
         };
+        let home_repo = get("SPIRA_HOME_REPO")?;
+        if home_repo.is_empty() {
+            return Err("SPIRA_HOME_REPO is empty — round-duty cannot tell which repo's rounds are its own".into());
+        }
         let world = World {
             queue_dir: PathBuf::from(get("SPIRA_QUEUE_DIR")?),
             repo_map: PathBuf::from(get("SPIRA_REPO_MAP")?),
-            home_repo: PathBuf::from(get("SPIRA_REPO")?),
+            home_repo,
             inbox: PathBuf::from(get("SPIRA_CONCIERGE_INBOX")?),
             lc_socket: PathBuf::from(&socket),
             run_dir: run_dir.clone(),
@@ -95,11 +121,27 @@ mod tests {
                 "SPIRA_RUN" => "/r",
                 "SPIRA_LC_SOCKET" => "/d/sock",
                 "SPIRA_RUNTIME_ROUND_DUTY_SECS" | "SPIRA_ROUND_MIN" | "SPIRA_ROUND_MAX_OPEN" | "SPIRA_ROUND_DUE_REMIND" | "SPIRA_ROUND_IDLE_CUT" => "5",
-                "SPIRA_QUEUE_DIR" | "SPIRA_REPO_MAP" | "SPIRA_REPO" | "SPIRA_CONCIERGE_INBOX" => "/q",
+                "SPIRA_QUEUE_DIR" | "SPIRA_REPO_MAP" | "SPIRA_CONCIERGE_INBOX" => "/q",
+                "SPIRA_HOME_REPO" => "spira",
                 _ => return Err(format!("{k} unknown")),
             }
             .to_string())
         }
+    }
+
+    #[test]
+    fn every_key_read_is_registered_in_conf_d() {
+        let conf_d = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d");
+        let missing: Vec<&str> = Settings::KEYS.iter().copied().filter(|k| !conf_d.join(k).is_file()).collect();
+        assert!(missing.is_empty(), "keys the runtime reads but spira/conf.d does not register: {missing:?}");
+    }
+
+    #[test]
+    fn every_unresolved_key_is_named_at_once() {
+        let base = lookup("7");
+        let refusing = move |k: &str| if k == "SPIRA_HOME_REPO" || k == "SPIRA_QUEUE_DIR" { Err(format!("{k} refused")) } else { base(k) };
+        let e = Settings::from_lookup(&refusing).unwrap_err();
+        assert!(e.contains("SPIRA_HOME_REPO") && e.contains("SPIRA_QUEUE_DIR"), "{e}");
     }
 
     #[test]
