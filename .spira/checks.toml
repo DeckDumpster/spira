@@ -6,4 +6,5 @@ budget_ms = 900000
 [[check]]
 name = "spira-lint"
 run = "spira-lint --diff refs/heads/local/main"
+build = "spira-lint"
 budget_ms = 300000
