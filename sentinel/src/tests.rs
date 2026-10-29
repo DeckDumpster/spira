@@ -56,6 +56,9 @@ impl FakeRunner {
     pub fn lines(&self) -> Vec<String> {
         self.calls.borrow().iter().map(|s| s.line()).collect()
     }
+    pub fn all(&self) -> Vec<Spec> {
+        self.calls.borrow().clone()
+    }
     pub fn count(&self, pred: impl Fn(&Spec) -> bool) -> usize {
         self.calls.borrow().iter().filter(|s| pred(s)).count()
     }
@@ -192,7 +195,6 @@ impl World {
             ("SPIRA_MAX_DWARVES", ""),
             ("SPIRA_MAX_LIVE_DWARVES", ""),
             ("SPIRA_LANES_MAX_LIVE", ""),
-            ("SPIRA_LANES_RESERVE", "1"),
             ("SPIRA_QUEUE_THROTTLE_OVERRIDE", ""),
             ("SPIRA_CALL_LOCK_WAIT", "30"),
             ("SPIRA_LANES", "ops groomer qa mimir czar warden"),
@@ -235,7 +237,6 @@ impl World {
             max_dwarves: opt("SPIRA_MAX_DWARVES"),
             max_live_dwarves: opt("SPIRA_MAX_LIVE_DWARVES"),
             lanes_max_live: opt("SPIRA_LANES_MAX_LIVE"),
-            lanes_reserve: get("SPIRA_LANES_RESERVE").parse().unwrap_or(1),
             queue_throttle_override: get("SPIRA_QUEUE_THROTTLE_OVERRIDE"),
             call_lock_wait: get("SPIRA_CALL_LOCK_WAIT").parse().unwrap_or(30),
             lanes: get("SPIRA_LANES"),
@@ -971,43 +972,52 @@ fn an_elastic_rune_is_held_back_on_the_last_slot_only_while_a_non_elastic_one_ha
 }
 
 #[test]
-fn a_task_rune_yields_the_last_slot_to_a_ready_lane_unless_the_lane_has_no_room() {
-    let caps = [("SPIRA_MAX_LIVE_DWARVES", "4"), ("SPIRA_LANES_MAX_LIVE", "1")];
-    let l = ladder("ln-free", TASK, LANE, &[("builder", 2)], &[("ops", 1), ("builder", 1)]);
-    assert!(l.call("builder", None, &caps), "{}", l.sink.text());
-
-    let l = ladder("ln-last", TASK, LANE, &[("builder", 3)], &[("ops", 1), ("builder", 1)]);
-    assert!(!l.call("builder", None, &caps));
-    assert!(l.sink.has("1 fleet slot(s) remaining") && l.sink.has("held back"), "{}", l.sink.text());
-    assert!(!l.sink.has("at concurrency cap"));
-
-    // The ready lane is at its own cap (one live), the collective lane cap is slack.
-    let l = ladder("ln-full", TASK, LANE, &[("builder", 2), ("ops", 1)], &[("ops", 1), ("builder", 1)]);
-    assert!(l.call("builder", None, &[("SPIRA_MAX_LIVE_DWARVES", "4"), ("SPIRA_LANES_MAX_LIVE", "2")]), "{}", l.sink.text());
-
-    let l = ladder("ln-idle", TASK, LANE, &[("builder", 3)], &[("ops", 0), ("builder", 1)]);
-    assert!(l.call("builder", None, &caps), "{}", l.sink.text());
+fn a_direct_lane_call_does_not_take_the_only_slot() {
+    let caps = [("SPIRA_MAX_LIVE_DWARVES", "4"), ("SPIRA_LANES_MAX_LIVE", "2")];
+    let l = ladder("os-direct", TASK, LANE, &[("builder", 3)], &[("ops", 1), ("builder", 1)]);
+    assert!(!l.call("ops", None, &caps), "{}", l.sink.text());
+    assert!(l.sink.has("held for task work"), "{}", l.sink.text());
 }
 
 #[test]
-fn the_lane_reserve_is_tunable_and_needs_no_lane_cap() {
-    let max = [("SPIRA_MAX_LIVE_DWARVES", "4")];
-    let l = ladder("rs-nocap", TASK, LANE, &[("builder", 3)], &[("ops", 1), ("builder", 1)]);
-    assert!(!l.call("builder", None, &max));
-    assert!(l.sink.has("held back"), "{}", l.sink.text());
+fn a_task_rune_is_never_held_below_the_ceiling_for_a_lane() {
+    let l = ladder("os-task", TASK, LANE, &[("builder", 3)], &[("ops", 1), ("builder", 1)]);
+    assert!(l.call("builder", None, &[("SPIRA_MAX_LIVE_DWARVES", "4")]), "{}", l.sink.text());
+    assert!(!l.sink.has("held back"), "{}", l.sink.text());
+}
 
-    let two = [("SPIRA_MAX_LIVE_DWARVES", "4"), ("SPIRA_LANES_RESERVE", "2")];
-    let l = ladder("rs-two", TASK, LANE, &[("builder", 2)], &[("ops", 1), ("builder", 1)]);
-    assert!(!l.call("builder", None, &two));
-    let l = ladder("rs-two-free", TASK, LANE, &[("builder", 1)], &[("ops", 1), ("builder", 1)]);
-    assert!(l.call("builder", None, &two), "{}", l.sink.text());
+#[test]
+fn a_lane_takes_the_only_slot_when_no_task_work_can() {
+    let caps = [("SPIRA_MAX_LIVE_DWARVES", "4"), ("SPIRA_LANES_MAX_LIVE", "2")];
+    let l = ladder("os-idle", TASK, LANE, &[("builder", 3)], &[("ops", 1), ("builder", 0)]);
+    assert!(l.call("ops", None, &caps), "{}", l.sink.text());
+    assert!(!l.sink.has("held for task work"), "{}", l.sink.text());
 
-    let off = [("SPIRA_MAX_LIVE_DWARVES", "4"), ("SPIRA_LANES_RESERVE", "0")];
-    let l = ladder("rs-off", TASK, LANE, &[("builder", 3)], &[("ops", 1), ("builder", 1)]);
-    assert!(l.call("builder", None, &off), "{}", l.sink.text());
+    let l = ladder("os-capped", SOLO, LANE, &[("builder", 1), ("other", 2)], &[("ops", 1), ("builder", 1)]);
+    assert!(l.call("ops", None, &caps), "{}", l.sink.text());
+    assert!(!l.sink.has("held for task work"), "{}", l.sink.text());
+}
 
-    let l = ladder("rs-idle", TASK, LANE, &[("builder", 3)], &[("ops", 0), ("builder", 1)]);
-    assert!(l.call("builder", None, &max), "{}", l.sink.text());
+#[test]
+fn a_lane_takes_the_only_slot_when_task_work_is_pool_exhausted_or_throttled() {
+    let caps = [("SPIRA_MAX_LIVE_DWARVES", "4"), ("SPIRA_LANES_MAX_LIVE", "2")];
+    let l = ladder("os-pool", TASK, LANE, &[("builder", 3)], &[("ops", 1), ("builder", 1)]);
+    let pooled = [caps[0], caps[1], ("SPIRA_MAX_DWARVES", "3")];
+    assert!(l.call("ops", None, &pooled), "{}", l.sink.text());
+    assert!(!l.sink.has("held for task work"), "{}", l.sink.text());
+
+    let l = ladder("os-throttle", TASK, LANE, &[("builder", 3)], &[("ops", 1), ("builder", 1)]);
+    std::fs::write(l.w.run.join("queue-throttled"), "since=2026-10-01T00:00:00Z depth=20 since_land=60m\n").unwrap();
+    assert!(l.call("ops", None, &caps), "{}", l.sink.text());
+    assert!(!l.sink.has("held for task work"), "{}", l.sink.text());
+}
+
+#[test]
+fn a_lane_takes_a_slot_normally_when_two_remain() {
+    let caps = [("SPIRA_MAX_LIVE_DWARVES", "4"), ("SPIRA_LANES_MAX_LIVE", "2")];
+    let l = ladder("os-two", TASK, LANE, &[("builder", 2)], &[("ops", 1), ("builder", 1)]);
+    assert!(l.call("ops", None, &caps), "{}", l.sink.text());
+    assert!(!l.sink.has("held"), "{}", l.sink.text());
 }
 
 #[test]
@@ -2231,7 +2241,7 @@ fn a_rework_bead_below_p0_does_not_hold_the_lanes() {
     assert!(f.sink.has("rework bead(s) waiting do not hold the lanes: sp-5vww8l"), "{}", f.sink.text());
     assert!(f.sink.has("ACT called a ops lane dwarf"), "{}", f.sink.text());
     assert_eq!(f.r.count(|s| s.prog == "slay.sh"), 0, "{}", f.sink.text());
-    assert!(!f.sink.has("called a builder dwarf"), "the lane's unit fills the fleet: {}", f.sink.text());
+    assert!(f.sink.has("ACT called a builder dwarf"), "the only slot goes to task work: {}", f.sink.text());
 }
 
 #[test]
@@ -2288,4 +2298,20 @@ fn with_nothing_urgent_lanes_are_called_as_before() {
     run_urgent(&f);
     assert!(f.sink.has("lane dwarf"), "positive control: {}", f.sink.text());
     assert_eq!(f.r.count(|s| s.prog == "slay.sh"), 0);
+}
+
+#[test]
+fn the_only_slot_goes_to_task_work_and_the_lane_spills_in_the_same_pass() {
+    let f = urgent_fleet("only-slot", "", &["builder-1", "builder-2", "builder-3"]);
+    run_urgent(&f);
+    let log = f.sink.text();
+    assert!(log.contains("CHECK7 ops: 1 fleet slot remaining, held for task work — builder has 1 ready"), "{log}");
+    let at = |needle: &str| log.find(needle).unwrap_or_else(|| panic!("missing {needle}: {log}"));
+    let built = at("ACT called a builder dwarf");
+    let spill = at("4/4 dwarf(s) live — a lane may spill over the ceiling");
+    let lane = at("ACT called a ops lane dwarf");
+    assert!(built < spill && spill < lane, "{log}");
+    assert_eq!(std::fs::read_to_string(f.w.run.join("lane-round-robin")).unwrap_or_default(), "ops", "{log}");
+    let launched: Vec<String> = f.r.all().iter().filter(|s| s.prog == "systemd-run").map(|s| s.args.last().cloned().unwrap_or_default()).collect();
+    assert_eq!(launched, ["builder", "ops"], "{log}");
 }

@@ -253,6 +253,13 @@ mod retired_keys {
     }
 
     #[test]
+    fn lanes_reserve_is_a_retired_key() {
+        let (_, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nlanes_reserve = 1\n")
+            .expect("a retired key must validate, not error");
+        assert!(warnings.iter().any(|w| w.contains("lanes_reserve")), "got {warnings:?}");
+    }
+
+    #[test]
     fn a_misspelt_key_warns_and_is_ignored() {
         let (_, w) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nqueue_batch_idle_cutt = 1\n").unwrap();
         assert!(w.iter().any(|m| m.starts_with("spira.queue_batch_idle_cutt")), "{w:?}");

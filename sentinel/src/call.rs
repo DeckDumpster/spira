@@ -542,11 +542,36 @@ impl<'a> Sentinel<'a> {
         0
     }
 
+    /// The first task rune (roster order) that could take a lone remaining fleet slot now.
+    fn task_can_take_slot(&self, task_runes: &[String]) -> Option<(String, i64)> {
+        let task_live: i64 = match self.cfg.max_dwarves {
+            Some(_) => task_runes.iter().map(|f| self.dwarf_count(f, None)).sum(),
+            None => 0,
+        };
+        let throttled = ck7_throttled(self.cfg.throttle_stamp.is_file(), &self.cfg.queue_throttle_override);
+        for t in task_runes {
+            let ReadyAnswer::Count(n) = self.rune_ready(t) else { continue };
+            if n <= 0 || self.rune_free(t, None, None) <= 0 {
+                continue;
+            }
+            if let Some(max_dwarves) = self.cfg.max_dwarves {
+                if ck7_pool(Some(max_dwarves), task_live) == Some(0) {
+                    continue;
+                }
+            }
+            if throttled && !self.express_ready_in_task_pool(task_runes) {
+                continue;
+            }
+            return Some((t.clone(), n));
+        }
+        None
+    }
+
     /// call_rune <rune> [pool-remaining] [require-label] [reuse-ready] -> lib.sh:1160,
     /// the whole refusal ladder: world gate, the account's own capacity, the fleet ceiling
     /// (above every per-persona cap and the pool — SPIRA_MAX_LIVE_DWARVES unset means no
-    /// ceiling, today's behaviour exactly), the elastic last-slot and inverted lane-last-
-    /// slot reservations, this persona's own readiness and concurrency cap, then the
+    /// ceiling, today's behaviour exactly), the elastic last-slot and the lane only-slot
+    /// holds, this persona's own readiness and concurrency cap, then the
     /// call itself. **Safety-critical** (wave4-decomposition.md (c)8) — every refusal
     /// keeps its own log line, because the pass's stdout IS the sentinel log.
     pub fn call_rune(&self, f: &str, pool: Option<i64>, require_express: bool, reuse_ready: Option<i64>) -> Attempt {
@@ -610,17 +635,12 @@ impl<'a> Sentinel<'a> {
                         return Attempt { called: false, ready: reuse_ready };
                     }
                 }
-            } else if self.cfg.lanes_reserve > 0 && max_live - live_all <= self.cfg.lanes_reserve && !self.lanes_yielding.get() {
-                let (_, lane_runes) = self.task_and_lane_runes();
-                let live_lanes = self.lanes_live_total(&lane_runes);
-                if self.cfg.lanes_max_live.is_none_or(|m| live_lanes < m) {
-                    for lf in &lane_runes {
-                        if let ReadyAnswer::Count(lf_r) = self.rune_ready(lf) {
-                            if lf_r > 0 && self.rune_free(lf, None, None) > 0 {
-                                self.log(&format!("CHECK7 {f}: {} fleet slot(s) remaining, held back — {lf} has {lf_r} ready lane work", max_live - live_all));
-                                return Attempt { called: false, ready: reuse_ready };
-                            }
-                        }
+                if max_live - live_all == 1 {
+                    let (task_runes, _) = self.task_and_lane_runes();
+                    if let Some((t, n)) = self.task_can_take_slot(&task_runes) {
+                        self.log(&format!("CHECK7 {f}: 1 fleet slot remaining, held for task work — {t} has {n} ready; the lane spills once the fleet is full"));
+                        self.only_slot_held.borrow_mut().push(f.to_string());
+                        return Attempt { called: false, ready: reuse_ready };
                     }
                 }
             }
@@ -726,7 +746,7 @@ impl<'a> Sentinel<'a> {
         }
         let last = std::fs::read_to_string(&self.cfg.lane_round_robin).unwrap_or_default();
         let mut rotated_lanes = lane_rotate(last.trim(), &lane_runes);
-        self.lanes_yielding.set(false);
+        self.only_slot_held.borrow_mut().clear();
         if !lane_runes.is_empty() {
             match self.urgent_beads(&task_runes) {
                 Some(u) if u.is_empty() => {}
@@ -740,14 +760,12 @@ impl<'a> Sentinel<'a> {
                             self.preempt_lane_for(&x.id, &task_runes, &lane_runes);
                         }
                         rotated_lanes.clear();
-                        self.lanes_yielding.set(true);
                     } else {
                         self.log(&format!("CHECK7 lanes: rework bead(s) waiting do not hold the lanes: {}", ids(false)));
                     }
                 }
                 None => {
                     rotated_lanes.clear();
-                    self.lanes_yielding.set(true);
                 }
             }
         }
@@ -816,6 +834,17 @@ impl<'a> Sentinel<'a> {
                 if self.h.now() - start >= budget {
                     break;
                 }
+            }
+        }
+        let held: Vec<String> = self.only_slot_held.borrow_mut().drain(..).collect();
+        for f in &held {
+            if self.h.now() - start >= budget {
+                self.log(&format!("CHECK7 {f}: not evaluated (pass budget exhausted)"));
+                continue;
+            }
+            if self.call_rune(f, None, false, None).called {
+                self.act(&format!("called a {f} lane dwarf"));
+                let _ = std::fs::write(&self.cfg.lane_round_robin, f);
             }
         }
     }
