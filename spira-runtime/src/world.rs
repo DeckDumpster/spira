@@ -25,7 +25,6 @@ pub struct World {
 
 struct MapRow {
     name: String,
-    path: String,
     land: String,
 }
 
@@ -34,7 +33,7 @@ fn map_rows(text: &str) -> Vec<MapRow> {
         .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
         .filter_map(|l| {
             let f: Vec<&str> = l.split('|').map(str::trim).collect();
-            (f.len() >= 3 && !f[0].is_empty()).then(|| MapRow { name: f[0].into(), path: f[1].into(), land: f[2].into() })
+            (f.len() >= 3 && !f[0].is_empty()).then(|| MapRow { name: f[0].into(), land: f[2].into() })
         })
         .collect()
 }
