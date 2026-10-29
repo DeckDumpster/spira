@@ -224,7 +224,7 @@ impl LeaseTable for MemJournal {
 /// A journal that refuses one named operation once, to stand in for a crash at that point.
 pub struct FaultyJournal {
     inner: Arc<dyn Journal>,
-    fail: Mutex<Option<&'static str>>,
+    fail: Mutex<Option<(&'static str, bool)>>,
 }
 
 impl FaultyJournal {
@@ -234,14 +234,20 @@ impl FaultyJournal {
 
     /// The next call of `op` (a `Journal` method name) fails, once.
     pub fn fail_next(&self, op: &'static str) {
-        *self.fail.lock().unwrap_or_else(|e| e.into_inner()) = Some(op);
+        *self.fail.lock().unwrap_or_else(|e| e.into_inner()) = Some((op, false));
+    }
+
+    /// The next call of `op` is refused, once: the journal looked and said no.
+    pub fn refuse_next(&self, op: &'static str) {
+        *self.fail.lock().unwrap_or_else(|e| e.into_inner()) = Some((op, true));
     }
 
     fn gate(&self, op: &'static str) -> Result<()> {
         let mut f = self.fail.lock().unwrap_or_else(|e| e.into_inner());
-        if *f == Some(op) {
+        if let Some((want, refused)) = f.filter(|(want, _)| *want == op) {
             *f = None;
-            return Err(RuntimeError::new(format!("injected fault in {op}")));
+            let m = format!("injected fault in {want}");
+            return Err(if refused { RuntimeError::refused(format!("journal: {m}")) } else { RuntimeError::new(m) });
         }
         Ok(())
     }

@@ -66,4 +66,34 @@ mod ids {
         assert_eq!(d, derive_id(long));
         assert_ne!(d, derive_id("é".repeat(301)), "the hash covers the whole id");
     }
+
+    struct Echo;
+    impl Handler for Echo {
+        fn interests(&self) -> &[EventKindTag] {
+            &["echo"]
+        }
+        fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
+            vec![Command::Emit(EventKind::new("echoed", ""))]
+        }
+    }
+
+    #[test]
+    fn a_refused_command_quarantines_its_stream_and_a_fault_is_still_fatal() {
+        let run = |refuse: bool| {
+            let inner = MemJournal::new();
+            let faulty = FaultyJournal::new(inner.clone());
+            let sink = MemSink::new();
+            let mut e = Engine::open(faulty.clone(), Arc::new(VirtualClock::new(1)), vec![Registration::new("echo", Echo)], 0).unwrap().with_sink(sink.clone());
+            e.submit("e1", "s", EventKind::new("echo", "")).unwrap();
+            if refuse { faulty.refuse_next("append") } else { faulty.fail_next("append") }
+            (e.run_until_idle(), inner, sink)
+        };
+        let (r, inner, sink) = run(true);
+        r.unwrap();
+        assert!(inner.poisoned(&StreamKey("s".into())).unwrap().is_some(), "the stream is quarantined");
+        assert_eq!(inner.cursor().unwrap(), 1, "the cursor advanced past the refused event");
+        assert!(sink.records().iter().any(|r| r.get("outcome") == Some(&Value::from("refused"))), "the dispatch wide event says refused");
+        let (r, inner, _) = run(false);
+        assert!(r.is_err() && inner.poisoned(&StreamKey("s".into())).unwrap().is_none(), "a fault propagates and quarantines nothing");
+    }
 }
