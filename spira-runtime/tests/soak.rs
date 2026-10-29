@@ -21,6 +21,8 @@ const RO: &str = "soakRoSecretW2m8ZcY";
 const WATCHDOG_USEC: u64 = 3_000_000;
 const SOAK: Duration = Duration::from_secs(25);
 const FORBIDDEN: &[&str] = &["journal:", "cannot tell", "refusing"];
+const OPEN: &str = "r-auto-691-1029T031850";
+const ABANDONED: &str = "r-auto-690-1029T020000";
 
 struct Proc(Child);
 impl Drop for Proc {
@@ -53,7 +55,7 @@ struct Store {
 /// The lifecycle store as production has it: install's steps (release::lifecycle_store::steps —
 /// schema, migrations, grants.sql with both credentials substituted, migrations again for the
 /// content grants) applied as root, then `spira-lc serve` with the `spira_lc` credential.
-fn store(root: &Path, toml: &Path, socket: &Path) -> Store {
+fn store(root: &Path, toml: &Path, socket: &Path, seed: &str) -> Store {
     assert!(Command::new("dolt").arg("version").output().is_ok(), "dolt must be on PATH: a soak that skips proves nothing");
     let bin = spira_lc_bin();
     let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
@@ -118,7 +120,9 @@ fn store(root: &Path, toml: &Path, socket: &Path) -> Store {
         let lifecycle = Path::new(env!("CARGO_MANIFEST_DIR")).join("../lifecycle");
         let grants = root.join("grants.sql");
         fs::write(&grants, fs::read_to_string(lifecycle.join("grants.sql")).unwrap().replace("@SPIRA_LC_PASSWORD@", RW).replace("@SPIRA_LC_RO_PASSWORD@", RO)).unwrap();
-        for (verb, path) in [("admin-apply-ddl", lifecycle.join("schema.sql")), ("admin-migrate", lifecycle.join("migrations")), ("admin-apply-ddl", grants), ("admin-migrate", lifecycle.join("migrations"))] {
+        let rows = root.join("seed.sql");
+        fs::write(&rows, seed).unwrap();
+        for (verb, path) in [("admin-apply-ddl", lifecycle.join("schema.sql")), ("admin-migrate", lifecycle.join("migrations")), ("admin-apply-ddl", grants), ("admin-migrate", lifecycle.join("migrations")), ("admin-apply-ddl", rows)] {
             let (rc, out) = lc(&[verb.into(), path.display().to_string()], &admin);
             assert_eq!(rc, 0, "the lifecycle store does not build the way install builds it: {verb} {}: {out}", path.display());
         }
@@ -203,7 +207,13 @@ fn spira_runtime_serves_for_twenty_beats_against_the_production_store() {
         fs::create_dir_all(root.join(d)).unwrap();
     }
     fs::write(root.join("rows"), format!("spira | {} | queue.local | local/main | |\n", root.join("repo").display())).unwrap();
-    fs::write(run.join("queue/spira/round"), "batch_id=r-soak-1\nopened=0\n").unwrap();
+    fs::write(
+        run.join("queue/spira/round"),
+        format!("batch_id={OPEN}\nrepo=spira\nhead=d7a5c242e3e62aa1dc1ffe5af88125e4635eb8e4\nbase=ffacdee2ae397f1918922f8eea231bb5ddf8b4aa\nmembers=sp-soak.1:a57ca1ca8b41391f1b932ab705362d43084c1a49\nworktree={}\nactor=ryan\nopened=1793243936\n", root.join("repo").display()),
+    )
+    .unwrap();
+    fs::write(run.join("queue/spira/round.r-auto-690-1029T020000"), format!("batch_id={ABANDONED}\nrepo=spira\nopened=1793240000\n")).unwrap();
+    fs::write(run.join("queue/spira/round-seq"), "874\n").unwrap();
     fs::write(run.join("rounds/300.result"), "").unwrap();
     let cred = root.join("spira-lc.credential");
     fs::write(&cred, RW).unwrap();
@@ -226,7 +236,10 @@ fn spira_runtime_serves_for_twenty_beats_against_the_production_store() {
     let env = spira_config::process::fixture_metrics_env(&root, "", &declare);
     let toml = PathBuf::from(&env.iter().find(|(k, _)| *k == "SPIRA_TOML").unwrap().1);
     let started = Instant::now();
-    let store = store(&root, &toml, &socket);
+    let seed = format!(
+        "USE spira_lifecycle;\nINSERT INTO batch (batch_id, repo, state, head, base, pass, phase, version, opened_at) VALUES ('{OPEN}', 'spira', 'CI_RUNNING', 'd7a5c242e3e62aa1dc1ffe5af88125e4635eb8e4', 'ffacdee2ae397f1918922f8eea231bb5ddf8b4aa', 1, 'suites', 3, 1793243936), ('{ABANDONED}', 'spira', 'ABANDONED', NULL, NULL, 1, NULL, 4, 1793240000);\n"
+    );
+    let store = store(&root, &toml, &socket, &seed);
     let setup = started.elapsed();
 
     let notify = root.join("notify.sock");
@@ -310,4 +323,7 @@ fn spira_runtime_serves_for_twenty_beats_against_the_production_store() {
     assert!(bad.is_empty(), "{}", diag(&format!("the runtime reported faults: {bad:?}")));
     let said = fs::read_to_string(&inbox).unwrap_or_default();
     assert!(said.contains("ROUND RESULT 300: red sp-soak"), "{}", diag("round-duty never relayed the result line to the inbox"));
+    assert!(!said.contains("ROUND STATE UNKNOWN"), "{}", diag("round-duty called an open round's state unknown"));
+    let observed: Vec<Value> = events.iter().filter(|e| e["stream"] == "watch.round-duty" && e["kind"]["tag"] == "effect.succeeded").filter_map(|e| e["kind"]["body"].as_str().and_then(|b| serde_json::from_str(b).ok())).collect();
+    assert!(!observed.is_empty() && observed.iter().all(|s| s["state"] == "open" && s["open"] == 1), "{}", diag(&format!("the open round (and not the abandoned one) is what round-duty sees: {observed:?}")));
 }
