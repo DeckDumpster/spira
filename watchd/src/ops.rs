@@ -289,11 +289,12 @@ impl Ops for Real {
         let Some(path) = release_bin_tool(program) else {
             return ToolRun::Unavailable(format!("{program} is not in the active release's bin/"));
         };
-        let Some(pin) = spira_config::locate::pin_for_child() else {
-            return ToolRun::Unavailable(format!("the config pin (SPIRA_TOML) is not set in watchd's environment; {program} would run without config"));
+        let spec = match spira_config::process::spec() {
+            Ok(spec) => spec,
+            Err(e) => return ToolRun::Unavailable(format!("{e}; {program} would run without config")),
         };
         let mut cmd = Command::new(&self.systemd_run);
-        cmd.args(["--user", "--collect", "--wait", "--pipe", "--quiet"]).arg(format!("--setenv={}={}", pin.0, pin.1));
+        cmd.args(["--user", "--collect", "--wait", "--pipe", "--quiet"]).arg(format!("--setenv=SPIRA_TOML={spec}"));
         for (k, v) in spira_config::release_env::child_path_env_for_process() {
             cmd.arg(format!("--setenv={k}={v}"));
         }
