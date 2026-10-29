@@ -619,3 +619,59 @@ fn retire_without_a_reason_refuses_and_names_the_flag() {
     let out = rule_with_book(&repo, &repo, &["retire", "three", "--reason", "x", "--replaced-by", "two", "--merged-into", "two"], &[("law-three", "Do three.")]);
     assert!(!out.status.success());
 }
+
+fn enact_dry(repo: &Path, slug: &str, text: &str, extra: &[&str]) -> std::process::Output {
+    let mut a = vec!["enact", slug, text, "--tool", "none", "--reason", "t", "--part", "2"];
+    a.extend_from_slice(extra);
+    rule_in(repo, &a)
+}
+
+#[test]
+fn enact_dry_run_refuses_retired_vocabulary_and_names_each_term() {
+    let repo = fixture_repo("law-vocab-dry");
+    let out = enact_dry(&repo, "newone", "No lane aeon is summoned.", &["--dry-run"]); // ffx-ok
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert!(err.contains("\"aeon\" → \"dwarf\"") && err.contains("\"summoned\" → \"called\""), "{err}"); // ffx-ok
+    assert!(err.contains("ffx-ok"), "{err}");
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("DRY RUN"));
+}
+
+#[test]
+fn enact_refuses_retired_vocabulary_before_any_write() {
+    let repo = fixture_repo("law-vocab-wet");
+    let out = enact_dry(&repo, "newone", "No lane aeon is summoned.", &[]); // ffx-ok
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(err.contains("\"aeon\" → \"dwarf\"") && err.contains("nothing written"), "{err}"); // ffx-ok
+    assert!(!err.contains("failed to write"), "{err}");
+}
+
+#[test]
+fn enact_refuses_a_retired_term_in_the_slug() {
+    let repo = fixture_repo("law-vocab-slug");
+    let out = enact_dry(&repo, "aeon-rule", "Do four.", &["--dry-run"]); // ffx-ok
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert!(err.contains("\"aeon\" → \"dwarf\""), "{err}"); // ffx-ok
+}
+
+#[test]
+fn enact_names_cased_and_phrase_terms_once() {
+    let repo = fixture_repo("law-vocab-cased");
+    let out = enact_dry(&repo, "newone", "Sin escalates. sin is English.", &["--dry-run"]); // ffx-ok
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(err.matches("\"Sin\" → \"Fenrir\"").count(), 1, "{err}"); // ffx-ok
+    let out = enact_dry(&repo, "newone", "Do the Sending now.", &["--dry-run"]); // ffx-ok
+    assert!(String::from_utf8_lossy(&out.stderr).contains("\"the Sending\" → \"Hel\"")); // ffx-ok
+}
+
+#[test]
+fn ffx_ok_passes_only_in_the_first_sentence() {
+    let repo = fixture_repo("law-vocab-marker");
+    let out = enact_dry(&repo, "newone", "Quote aeon here ffx-ok. Then more.", &["--dry-run"]); // ffx-ok
+    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("DRY RUN"));
+    let out = enact_dry(&repo, "newone", "Quote aeon here. Then more ffx-ok.", &["--dry-run"]); // ffx-ok
+    assert_eq!(out.status.code(), Some(1));
+}

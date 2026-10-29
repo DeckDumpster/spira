@@ -1439,7 +1439,7 @@ remainder in it.
 
 **Intent.** The Final Fantasy X working vocabulary is being replaced term by term; this rule is
 the migration's progress meter and, once switched to `enforce`, the fence that stops the old
-words returning. The mapping is the replacing design's, not repeated here.
+words returning. The table holds each term's replacement; `rule enact` refuses statute text against it (rule/DESIGN.md).
 
 **Scope.** Every walked path and every text file's contents, minus `docs/spikes/`, `raw/spira-beads/`
 (the bead mirror), `lifecycle/migrations/`, the config key history, `*.tsv` corpora, this rule's own source and any line carrying `ffx-ok` (a retired name kept on purpose, such as a retired config key). A file holding a NUL byte is

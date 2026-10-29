@@ -1510,6 +1510,7 @@ version = "0.1.0"
 dependencies = [
  "serde_json",
  "spira-config",
+ "spira-lint",
  "spira-otel",
  "testkit",
  "toml",
