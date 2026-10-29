@@ -14,6 +14,7 @@ pub struct Settings {
     pub heartbeat_url: String,
     pub heartbeat_secs: u64,
     pub stall_limit: u32,
+    pub metrics_endpoint: Option<String>,
     pub run_dir: PathBuf,
     pub lc_socket: PathBuf,
     pub round_duty: RoundDuty,
@@ -42,6 +43,7 @@ impl Settings {
         "SPIRA_RUNTIME_HEARTBEAT_URL",
         "SPIRA_RUNTIME_HEARTBEAT_SECS",
         "SPIRA_RUNTIME_STALL_LIMIT",
+        "SPIRA_METRICS_ENDPOINT",
     ];
 
     pub fn load() -> Result<Settings, String> {
@@ -91,6 +93,7 @@ impl Settings {
             heartbeat_url: get("SPIRA_RUNTIME_HEARTBEAT_URL")?,
             heartbeat_secs: num("SPIRA_RUNTIME_HEARTBEAT_SECS", &get("SPIRA_RUNTIME_HEARTBEAT_SECS")?)?,
             stall_limit: num("SPIRA_RUNTIME_STALL_LIMIT", &get("SPIRA_RUNTIME_STALL_LIMIT")?)?,
+            metrics_endpoint: Some(get("SPIRA_METRICS_ENDPOINT")?).filter(|e| !e.trim().is_empty()),
             run_dir,
             lc_socket: PathBuf::from(socket),
         })
@@ -111,7 +114,7 @@ impl Settings {
 
     /// FNV-1a over the pinned values, so two records with one hash ran on one configuration.
     pub fn hash(&self) -> String {
-        let text = format!("{}\n{}\n{}\n{}\n{}\n{:?}\n{:?}\n{:?}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.world);
+        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.world);
         let h = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
         format!("{h:016x}")
     }
@@ -127,6 +130,7 @@ mod tests {
                 "SPIRA_RUNTIME_HEARTBEAT_URL" => "http://127.0.0.1:9/ping",
                 "SPIRA_RUNTIME_HEARTBEAT_SECS" => secs,
                 "SPIRA_RUNTIME_STALL_LIMIT" => "3",
+                "SPIRA_METRICS_ENDPOINT" => "127.0.0.1:9",
                 "SPIRA_RUN" => "/r",
                 "SPIRA_LC_SOCKET" => "/d/sock",
                 "SPIRA_RUNTIME_INBOX_KEEPER_SECS" | "SPIRA_CONCIERGE_INBOX_STALL" | "SPIRA_CONCIERGE_INBOX_BACKOFF" | "SPIRA_RUNTIME_ROUND_DUTY_SECS" | "SPIRA_ROUND_MIN" | "SPIRA_ROUND_MAX_OPEN" | "SPIRA_ROUND_DUE_REMIND" | "SPIRA_ROUND_IDLE_CUT" => "5",
@@ -158,6 +162,9 @@ mod tests {
         let s = Settings::from_lookup(&lookup("7")).unwrap();
         assert_eq!((s.heartbeat_secs, s.stall_limit, s.heartbeat_url.as_str()), (7, 3, "http://127.0.0.1:9/ping"));
         assert_eq!(s.lc_socket, PathBuf::from("/d/sock"));
+        assert_eq!(s.metrics_endpoint.as_deref(), Some("127.0.0.1:9"));
+        let unset = |k: &str| if k == "SPIRA_METRICS_ENDPOINT" { Ok("  ".to_string()) } else { lookup("7")(k) };
+        assert_eq!(Settings::from_lookup(&unset).unwrap().metrics_endpoint, None, "a blank endpoint disables the push");
         assert!(Settings::from_lookup(&lookup("0")).unwrap_err().contains("positive"), "zero seconds would spin the schedule");
         assert_ne!(s.hash(), Settings::from_lookup(&lookup("8")).unwrap().hash());
     }

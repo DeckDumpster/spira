@@ -75,12 +75,18 @@ impl LogSink {
 
     /// Moves the writes to one thread behind a queue of `cap` records.
     pub fn queue(self, cap: usize) -> LogQueue {
+        self.queue_then(cap, |_, _| {})
+    }
+
+    /// As `queue`, and `then` runs on the writer thread after each record is written.
+    pub fn queue_then(self, cap: usize, then: impl Fn(&str, &[(String, Attr)]) + Send + 'static) -> LogQueue {
         let (tx, rx) = sync_channel::<(String, Vec<(String, Attr)>)>(cap);
         let spawned = std::thread::Builder::new().name("otel-log-writer".into()).spawn(move || {
             while let Ok((body, mut attrs)) = rx.recv() {
                 let lost = queue_dropped() + dropped();
                 attrs.push(("telemetry.dropped".into(), Attr::Int(i64::try_from(lost).unwrap_or(i64::MAX))));
                 self.emit(&body, &attrs);
+                then(&body, &attrs);
             }
         });
         if spawned.is_err() {

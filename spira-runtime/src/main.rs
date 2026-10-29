@@ -59,7 +59,8 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String
         Arc::new(move || n.kick())
     };
     let max_sleep = notifier.max_sleep();
-    let sink = Arc::new(OtlpSink::new(spira_otel::logs::LogSink::new(settings.otel_dir(), "spira-runtime"), LOG_QUEUE));
+    let metrics = spira_otel::metrics::MetricsSink::for_component(settings.metrics_endpoint.as_deref(), "spira-runtime");
+    let sink = Arc::new(OtlpSink::with_metrics(spira_otel::logs::LogSink::new(settings.otel_dir(), "spira-runtime"), LOG_QUEUE, metrics));
     let journal = Arc::new(SocketJournal::new(settings.lc_socket.clone()));
     let clock = Arc::new(WallClock);
     let boot = {

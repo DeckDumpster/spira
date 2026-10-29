@@ -2,12 +2,32 @@
 
 use runtime::{Fields, Value, WideSink};
 use spira_otel::logs::{Attr, LogQueue, LogSink};
+use spira_otel::metrics::{MetricsSink, Point};
+
+/// A gauge of a monotonic total: the store drops sums, so the alarm reads the latest value.
+pub const SPILLED_TOTAL: &str = "spira_runtime_offload_spilled_total";
+const SPILL_UNIT: &str = "offload.spill";
 
 pub struct OtlpSink(LogQueue);
 
 impl OtlpSink {
     pub fn new(sink: LogSink, cap: usize) -> OtlpSink {
         OtlpSink(sink.queue(cap))
+    }
+
+    /// Each offload spill record also pushes its running total as a metric, from the writer thread.
+    pub fn with_metrics(sink: LogSink, cap: usize, metrics: MetricsSink) -> OtlpSink {
+        OtlpSink(sink.queue_then(cap, move |body, attrs| push_spill(&metrics, body, attrs)))
+    }
+}
+
+fn push_spill(metrics: &MetricsSink, body: &str, attrs: &[(String, Attr)]) {
+    if body != SPILL_UNIT {
+        return;
+    }
+    let find = |key: &str| attrs.iter().find(|(k, _)| k == key).map(|(_, v)| v);
+    if let (Some(Attr::Str(what)), Some(Attr::Int(total))) = (find("what"), find("offload.spilled_total")) {
+        metrics.push(&[Point::Gauge { name: SPILLED_TOTAL, value: *total as f64 }], &[("what", what)]);
     }
 }
 
