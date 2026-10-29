@@ -584,7 +584,11 @@ pub fn with_in_flight_pointers(repo_path: &Path, base: Option<&str>, pointers: P
 pub fn submit_law(repo_path: &Path, repo_name: &str, wt_root: &Path, law_branch: &str, verb: &str, key: &str) -> Result<(String, String), String> {
     let tip = git_in(repo_path, &["rev-parse", law_branch])?;
     let title = format!("law: {verb} {key} — land its law/ commit");
-    let body = format!("{law_branch} carries the law/ projection of the statute book after `rule.sh {verb} {key}`. Landing this bead puts that commit on the landing ref.\n");
+    let body = format!(
+        "## Outcome\n\nThe law/ projection of the statute book after `rule.sh {verb} {key}` is on the landing ref.\n\n\
+         ## Build\n\nThe commit at the tip of branch `{law_branch}` (`{tip}`), which rewrites the files under law/ (toc.toml, the section files and the pointers file). Nothing else changes: submit that branch as it stands.\n\n\
+         ## Acceptance\n\n- The commit lands on the landing ref.\n- `rule.sh code --check` is clean afterwards.\n"
+    );
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let body_file = wt_root.join(format!("rule-{verb}-{key}-{}-{stamp}.bead.txt", std::process::id()));
     std::fs::write(&body_file, body).map_err(|e| format!("rule: {}: {e}", body_file.display()))?;
