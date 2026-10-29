@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: .gitattributes spira-config/schema/spira-key-history.txt spira/config-delta.toml
+# covers: .gitattributes spira/conf.key-history spira/config-delta.toml
 #
 # Two branches that each append a config key to the append-only key history and to the config
 # delta must merge without a conflict; the repository's .gitattributes is what makes that so.
@@ -9,7 +9,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
 echo "test-key-history-merge.sh"
 
-H=spira-config/schema/spira-key-history.txt
+H=spira/conf.key-history
 t="$(mktemp -d)"
 g() { git -C "$t" -c user.email=t@t -c user.name=t -c merge.conflictstyle=merge "$@"; }
 git init -q -b main "$t"

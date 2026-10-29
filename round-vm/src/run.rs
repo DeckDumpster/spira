@@ -444,7 +444,7 @@ home_repo = "$HOME/round-work"
 batch_maxpar = $maxpar
 $testenv_limits
 ROUNDCFG
-export SPIRA_TOML="$HOME/round-work/spira-config/tests/fixtures/complete.toml:$HOME/round-config.toml"
+export SPIRA_TOML="$HOME/round-work/spira/testlib/complete.toml:$HOME/round-config.toml"
 SPIRA_TOML="$(target/release/release config-stage "$HOME/round-work")" || { echo "round-vm: cannot apply the head's config delta" >&2; exit 2; }
 export SPIRA_TOML
 release_red() {
@@ -2487,7 +2487,7 @@ mod tests {
 
     #[test]
     fn the_heads_config_delta_is_staged_before_the_release_build_reads_config() {
-        let export = REMOTE_SCRIPT.find("export SPIRA_TOML=\"$HOME/round-work/spira-config/tests/fixtures/complete.toml:").unwrap();
+        let export = REMOTE_SCRIPT.find("export SPIRA_TOML=\"$HOME/round-work/spira/testlib/complete.toml:").unwrap();
         let stage = REMOTE_SCRIPT.find("release config-stage \"$HOME/round-work\"").expect("the delta must be applied");
         let build = REMOTE_SCRIPT.find("release build").unwrap();
         assert!(export < stage && stage < build);

@@ -50,7 +50,7 @@ want "the lane is declared" "pilgrimage" "$(cat "$HERE/conf.d/SPIRA_LANES")"
 
 echo; echo "MODEL: Opus, in the rune and in the live-config fixture"
 is "rune model" "claude-opus-5-5" "$(rune_get pilgrim RUNE_MODEL)"
-want "persona entry agrees" 'model = "claude-opus-5-5"' "$(sed -n '/^\[persona.pilgrim\]/,/^$/p' "$HERE/../spira-config/tests/fixtures/complete.toml")"
+want "persona entry agrees" 'model = "claude-opus-5-5"' "$(sed -n '/^\[persona.pilgrim\]/,/^$/p' "$HERE/../spira/testlib/complete.toml")"
 
 echo; echo "BRIEF: walks and files, never fixes, never the operator's tenant"
 for s in "Wait for the deploy" "Sign in" "Do the user path" "File each defect" "Release what the walk created" "Exit"; do

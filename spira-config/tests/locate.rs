@@ -30,6 +30,7 @@ fn write_legacy_conf(dir: &Path, rel: &str) -> std::path::PathBuf {
 fn run(args: &[&str], env: &[(&str, &str)]) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_spira-config"));
     cmd.env_clear();
+    cmd.env("SPIRA_HOME", Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira"));
     for (k, v) in env {
         cmd.env(k, v);
     }

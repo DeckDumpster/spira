@@ -154,7 +154,7 @@ rebase stage `:2` ("ours") is the onto side (land ref plus already-replayed comm
 
 | kind | paths | rule |
 |---|---|---|
-| `LineSetUnion` | `.gitignore`, `spira-config/schema/spira-key-history.txt` | append-only: stage 2 lines in order, then stage-3 lines not already present (non-blank). Either stage missing (modify/delete) → not mechanical. |
+| `LineSetUnion` | `.gitignore`, `spira/conf.key-history` | append-only: stage 2 lines in order, then stage-3 lines not already present (non-blank). Either stage missing (modify/delete) → not mechanical. |
 | `KeyListUnion` | `spira/conf.sh` | each conflict region must be pure `SPIRA_*`/`COCKPIT_*` key lists on both sides; union ours then theirs' new keys appended to ours' last line; result must pass `bash -n`. |
 | `Regenerate` | `spira-config/schema/spira.schema.json` → stdout of `cargo run -q --bin spira-config -- schema`; `Cargo.lock` → stage 2 then `cargo metadata --format-version 1 --offline` (then online) which adds only missing entries | derived files are regenerated, never merged; run after all other paths are resolved. `cargo generate-lockfile` is deliberately **not** used: it re-resolves every dependency. |
 | `CommentUnion` | any other path whose comment syntax is known | every line of every region on both sides must be a comment or blank under that file's syntax; union ours then theirs' lines not already present. |

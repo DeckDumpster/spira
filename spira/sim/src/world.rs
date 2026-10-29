@@ -60,7 +60,7 @@ const LC_STOP_DEADLINE: Duration = Duration::from_secs(5); // batch-job: serve e
 /// (spira-config/src/process.rs), so the world's config starts from the complete fixture and
 /// overrides each locator a world must own. Its `lc_socket` is empty (direct mode) and
 /// is always overwritten below.
-const CONFIG_BASE: &str = include_str!("../../../spira-config/tests/fixtures/complete.toml");
+const CONFIG_BASE: &str = include_str!("../../../spira/testlib/complete.toml");
 
 /// One repository of a world: `<name>:<mode>[:<trunk>]`. The world's own repository (`sim`) is
 /// always present, `queue.local` unless named; any other name is a repository of its own,

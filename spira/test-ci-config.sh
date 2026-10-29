@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: spira/ci-config.sh spira-config/tests/fixtures/complete.toml
+# covers: spira/ci-config.sh spira/testlib/complete.toml
 #
 # ci-config.sh layers a writable run dir and the testenv registry over the complete fixture.
 set -uo pipefail
@@ -11,7 +11,7 @@ W="$(mktemp -d)"
 trap 'rm -rf "$W"' EXIT
 CK="$(cd "$HERE/.." && pwd -P)"
 
-grep -q '^run = "/fixture/userhome/spira/run"$' "$CK/spira-config/tests/fixtures/complete.toml" \
+grep -q '^run = "/fixture/userhome/spira/run"$' "$CK/spira/testlib/complete.toml" \
     && ok "positive control: the fixture run dir is an unwritable fixture path" \
     || bad "positive control: the fixture run dir is an unwritable fixture path"
 

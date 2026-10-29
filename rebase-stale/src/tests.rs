@@ -66,7 +66,7 @@ impl Fx {
         std::fs::create_dir_all(&repo).unwrap();
         git(&repo, &["init", "-q", "-b", "main"]);
         write(
-            &repo.join("spira-config/schema/spira-key-history.txt"),
+            &repo.join("spira/conf.key-history"),
             "a\nb\n",
         );
         write(&repo.join("f.txt"), "line1\n");
@@ -284,7 +284,7 @@ fn append(p: PathBuf, s: &str) {
 #[test]
 fn stale_only_by_appended_key_history_rebases_mechanically_with_no_dwarf() {
     let fx = Fx::new("keyhist");
-    let kh = "spira-config/schema/spira-key-history.txt";
+    let kh = "spira/conf.key-history";
     fx.branch("sp-kh", false, |w| append(w.join(kh), "c-from-branch\n"));
     fx.advance_main(|r| append(r.join(kh), "c-from-main\n"));
     let before = fx.registrations();
@@ -363,7 +363,7 @@ fn real_same_line_conflict_is_returned_with_the_hunk_quoted() {
 #[test]
 fn a_mixed_stop_resolves_nothing_and_quotes_only_the_real_conflict() {
     let fx = Fx::new("mixed");
-    let kh = "spira-config/schema/spira-key-history.txt";
+    let kh = "spira/conf.key-history";
     let old = fx.branch("sp-mx", false, |w| {
         append(w.join(kh), "k-branch\n");
         write(&w.join("f.txt"), "branch\n");

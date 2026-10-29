@@ -41,6 +41,7 @@ fn a_release_home_resolves_the_mapped_checkouts_land_ref() {
     let release = t.join("release/spira");
     std::fs::create_dir_all(&release).unwrap();
     std::os::unix::fs::symlink(Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d"), release.join("conf.d")).unwrap();
+    std::os::unix::fs::symlink(Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.toml.d"), release.join("conf.toml.d")).unwrap();
     let toml = spira_config::process::fixture_toml(
         t.path(),
         &[("SPIRA_REPO_MAP", &map.display().to_string()), ("SPIRA_HOME_REPO", "sim")],

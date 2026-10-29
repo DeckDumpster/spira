@@ -83,7 +83,7 @@ const BOX_CONFIG_PINS: &[(&str, &str)] = &[
     ("SPIRA_RUNES_DIR", "/nonexistent/spira-lint/runes"),
 ];
 /// The tree's complete fixture, relative to its `spira/schema.sh`.
-const TREE_FIXTURE: &str = "../spira-config/tests/fixtures/complete.toml";
+const TREE_FIXTURE: &str = "../spira/testlib/complete.toml";
 
 fn run_schema(schema: &std::path::Path, args: &[&str], extra_env: &[(&str, &str)]) -> Option<String> {
     // batch-job: this runs whatever its caller names, as long as that takes

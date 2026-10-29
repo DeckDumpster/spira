@@ -66,7 +66,7 @@ fn fixture(name: &str, files: &[(&str, &str)]) -> Fixture {
     git(&repo, &["checkout", "-q", "main"]);
     let over = root.join("over.toml");
     fs::write(&over, format!("[spira]\nrun = \"{}\"\npath = \"\"\n", run.display())).unwrap();
-    let complete = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira-config/tests/fixtures/complete.toml");
+    let complete = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/testlib/complete.toml");
     let toml = format!("{}:{}", complete.display(), over.display());
     Fixture { _tmp: tmp, root, repo, release, run, toml }
 }

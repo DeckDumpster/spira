@@ -208,7 +208,7 @@ pub const DOCTOR_CHECK_SPIRA_CONFIG: &str = "testenv/.doctor-check-spira-config"
 /// (conf.sh refuses without one), staged from the repository's own fixture at
 /// [`DOCTOR_CHECK_FIXTURE`]. The build context is `spira/`, which holds neither.
 pub const DOCTOR_CHECK_TOML: &str = "testenv/.doctor-check.toml";
-const DOCTOR_CHECK_FIXTURE: &str = "spira-config/tests/fixtures/complete.toml";
+const DOCTOR_CHECK_FIXTURE: &str = "spira/testlib/complete.toml";
 
 /// The build closure's share of deps.toml: `<name> <tier>\n` for every entry whose tier
 /// doctor-check.sh checks, sorted by name so the text is independent of the manifest's own

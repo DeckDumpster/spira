@@ -1,0 +1,2 @@
+[env]
+SPIRA_HOME = { value = "spira", relative = true }

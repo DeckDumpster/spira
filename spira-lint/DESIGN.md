@@ -949,8 +949,8 @@ per key, path `spira/config-delta.toml`.
 ## Rule `config-fixture`
 
 **Intent.** A registry key added under `spira/conf.d` or `spira/conf.toml.d` must also be a
-key of `[spira]` in `spira-config/tests/fixtures/complete.toml` and a line of
-`spira-config/schema/spira-key-history.txt`; without them every config-reading test in a
+key of `[spira]` in `spira/testlib/complete.toml` and a line of
+`spira/conf.key-history`; without them every config-reading test in a
 round refuses the config as not declared, and the pass is lost. (`config-delta` covers
 `spira/config-delta.toml`.) One finding per key and file, naming both.
 

@@ -226,7 +226,7 @@ fn cmd_path_tail() -> ExitCode {
     let tail = match env::var("SPIRA_PATH") {
         Ok(v) if !v.trim().is_empty() => v,
         _ => match discover(None).map(|p| load(&p)).transpose() {
-            Ok(doc) => doc.and_then(|d| d.spira).and_then(|s| s.path).unwrap_or_default(),
+            Ok(doc) => doc.and_then(|d| d.spira).and_then(|s| s.get_str("SPIRA_PATH").ok().flatten()).unwrap_or_default(),
             Err(e) => {
                 eprintln!("spira-config path-tail: {e}");
                 return ExitCode::FAILURE;
@@ -920,7 +920,7 @@ fn cmd_repo(args: &[String]) -> ExitCode {
 }
 
 fn cmd_schema() -> ExitCode {
-    match serde_json::to_string_pretty(&json_schema()) {
+    match json_schema().and_then(|s| serde_json::to_string_pretty(&s).map_err(|e| e.to_string())) {
         Ok(s) => {
             println!("{s}");
             ExitCode::SUCCESS

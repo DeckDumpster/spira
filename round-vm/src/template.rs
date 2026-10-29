@@ -590,7 +590,7 @@ mod tests {
 
     #[test]
     fn the_script_names_the_one_config_source_before_testenv_runs() {
-        let toml = TEMPLATE_SCRIPT.find("export SPIRA_TOML=\"$work/spira-config/tests/fixtures/complete.toml:$work/template-config.toml\"").expect("testenv refuses without SPIRA_TOML");
+        let toml = TEMPLATE_SCRIPT.find("export SPIRA_TOML=\"$work/spira/testlib/complete.toml:$work/template-config.toml\"").expect("testenv refuses without SPIRA_TOML");
         assert!(toml < TEMPLATE_SCRIPT.find("-p testenv -- container image").unwrap());
         assert!(TEMPLATE_SCRIPT.find("cat > \"$work/template-config.toml\"").unwrap() < toml);
     }

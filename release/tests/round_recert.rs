@@ -56,7 +56,7 @@ fn fixture(name: &str, phase: Option<&str>) -> Fixture {
     }
     let over = root.join("over.toml");
     fs::write(&over, "[spira]\npath = \"\"\n").unwrap();
-    let complete = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira-config/tests/fixtures/complete.toml");
+    let complete = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/testlib/complete.toml");
     let toml = format!("{}:{}", complete.display(), over.display());
     Fixture { _tmp: tmp, root, state, release, toml }
 }

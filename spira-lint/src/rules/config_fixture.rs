@@ -7,8 +7,8 @@ use crate::SyncCell as Cell;
 use crate::{Entry, Finding, LintError, Rule, Tree};
 
 const NAME: &str = "config-fixture";
-const FIXTURE: &str = "spira-config/tests/fixtures/complete.toml";
-const HISTORY: &str = "spira-config/schema/spira-key-history.txt";
+const FIXTURE: &str = "spira/testlib/complete.toml";
+const HISTORY: &str = "spira/conf.key-history";
 const DIRS: [&str; 2] = ["spira/conf.d", "spira/conf.toml.d"];
 
 #[derive(Default)]
@@ -109,7 +109,7 @@ impl Rule for ConfigFixture {
     }
 
     fn hint(&self) -> &'static str {
-        "a registry key added under spira/conf.d must also be declared under [spira] in spira-config/tests/fixtures/complete.toml and listed in spira-config/schema/spira-key-history.txt; without them every config-reading test in the round refuses the config as not declared"
+        "a registry key added under spira/conf.d must also be declared under [spira] in spira/testlib/complete.toml and listed in spira/conf.key-history; without them every config-reading test in the round refuses the config as not declared"
     }
 }
 

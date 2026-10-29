@@ -203,8 +203,7 @@ fn set_leaves_every_other_line_byte_identical() {
 #[test]
 fn rename_persona_moves_table_roster_and_lane_and_still_validates() {
     let dir = scratch_dir("rename-persona");
-    let src = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/complete.toml"))
-        .unwrap()
+    let src = spira_config::process::complete_fixture_text()
         .replace("persona.mimir", "persona.maechen") // ffx-ok
         .replace("\"mimir\"", "\"maechen\"") // ffx-ok
         .replace("lanes = \"ops groomer mimir", "lanes = \"ops groomer maechen"); // ffx-ok

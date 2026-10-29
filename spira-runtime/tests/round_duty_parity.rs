@@ -130,7 +130,7 @@ fn old_rows(f: &Fixture, s: &Scenario, ticks: usize) -> Vec<String> {
         .env_clear()
         .env("PATH", path)
         .env("HOME", f.dir.path())
-        .env("SPIRA_TOML", format!("{}:{}", Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira-config/tests/fixtures/complete.toml").display(), f.p("layer.toml").display()))
+        .env("SPIRA_TOML", format!("{}:{}", Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/testlib/complete.toml").display(), f.p("layer.toml").display()))
         .env("SPIRA_REPO", f.p("repo"))
         .stdout(std::process::Stdio::null())
         .spawn()

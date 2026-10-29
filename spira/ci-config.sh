@@ -4,7 +4,7 @@
 # keys it leaves empty filled in. Never exported job-wide: suites build their own config.
 set -euo pipefail
 checkout="${1:?usage: ci-config.sh <checkout>}"
-fixture="$checkout/spira-config/tests/fixtures/complete.toml"
+fixture="$checkout/spira/testlib/complete.toml"
 layered="${RUNNER_TEMP:?}/ci-config.toml"
 owner="$(printf '%s' "${GITHUB_REPOSITORY:?}" | cut -d/ -f1 | tr '[:upper:]' '[:lower:]')"
 

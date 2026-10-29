@@ -180,7 +180,7 @@ fn load_layered(spec: &str) -> Result<(SpiraToml, Vec<String>), String> {
     if !any {
         return Err("no config file named".to_string());
     }
-    validate_value(toml::Value::Table(merged)).map_err(|e| format!("{spec}: {e}"))
+    validate_value(toml::Value::Table(merged), registry::for_process()?).map_err(|e| format!("{spec}: {e}"))
 }
 
 /// `over`'s keys into `base`: a nested table merges, anything else replaces.
@@ -389,17 +389,102 @@ pub enum CzarStage {
     Act,
 }
 
-/// One key of the config key registry (`spira/conf.d`, `spira/conf.toml.d`), as generated
-/// into [`SPIRA_KEYS`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SpiraKey {
-    pub key: &'static str,
-    pub field: &'static str,
-    pub ty: &'static str,
-    pub toml_only: bool,
+/// `[spira]` — host-wide keys, by their `spira.toml` spelling (`field`). Which keys exist, and
+/// of what type, is the registry's to say ([`registry::Registry`]); [`validate`] checks the table
+/// against it and drops what it does not know. Every key is optional but `id_prefix` (see
+/// [`require_id_prefix`]); conf.sh derives each default.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SpiraSection(pub BTreeMap<String, toml::Value>);
+
+impl JsonSchema for SpiraSection {
+    fn schema_name() -> String {
+        "SpiraSection".into()
+    }
+    fn json_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        schemars::schema::SchemaObject { instance_type: Some(schemars::schema::InstanceType::Object.into()), ..Default::default() }.into()
+    }
 }
 
-include!(concat!(env!("OUT_DIR"), "/spira_section.rs"));
+impl SpiraSection {
+    fn value(&self, key: &str, want: &[&str]) -> Result<Option<&toml::Value>, String> {
+        let reg = registry::for_process()?;
+        let rk = reg.get(key).ok_or_else(|| format!("{key} is not a registered config key — refusing"))?;
+        if !want.contains(&rk.ty.as_str()) {
+            return Err(format!("{key} is TYPE={}, not {}", rk.ty, want.join("/")));
+        }
+        Ok(self.0.get(&rk.field))
+    }
+
+    pub fn get_str(&self, key: &str) -> Result<Option<String>, String> {
+        Ok(self.value(key, &["string", "onoff", "czar_stage"])?.and_then(|v| v.as_str()).map(str::to_string))
+    }
+
+    pub fn get_u32(&self, key: &str) -> Result<Option<u32>, String> {
+        Ok(self.value(key, &["u32"])?.and_then(|v| v.as_integer()).and_then(|n| u32::try_from(n).ok()))
+    }
+
+    pub fn get_u64(&self, key: &str) -> Result<Option<u64>, String> {
+        Ok(self.value(key, &["u64", "u32"])?.and_then(|v| v.as_integer()).and_then(|n| u64::try_from(n).ok()))
+    }
+
+    pub fn get_bool(&self, key: &str) -> Result<Option<bool>, String> {
+        Ok(self.value(key, &["bool"])?.and_then(|v| v.as_bool()))
+    }
+
+    pub fn get_list(&self, key: &str) -> Result<Option<Vec<String>>, String> {
+        Ok(self
+            .value(key, &["list"])?
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()))
+    }
+
+    /// Whether any key is set at all, an empty list not counting.
+    fn sets_anything(&self) -> bool {
+        self.0.values().any(|v| !matches!(v, toml::Value::Array(a) if a.is_empty()))
+    }
+}
+
+/// Why `v` is not a `ty`, in serde's words; `None` when it is one.
+fn type_error(ty: &str, v: &toml::Value) -> Option<String> {
+    let got = match v {
+        toml::Value::String(s) => format!("string {s:?}"),
+        toml::Value::Integer(n) => format!("integer `{n}`"),
+        toml::Value::Float(n) => format!("floating point `{n}`"),
+        toml::Value::Boolean(b) => format!("boolean `{b}`"),
+        toml::Value::Datetime(d) => format!("datetime `{d}`"),
+        toml::Value::Array(_) => "sequence".into(),
+        toml::Value::Table(_) => "map".into(),
+    };
+    let invalid_type = |expected: &str| Some(format!("invalid type: {got}, expected {expected}"));
+    let one_of = |words: &[&str]| match v.as_str() {
+        Some(s) if words.contains(&s) => None,
+        Some(s) => Some(format!(
+            "unknown variant `{s}`, expected {}",
+            words.iter().map(|w| format!("`{w}`")).collect::<Vec<_>>().join(" or ")
+        )),
+        None => invalid_type(&format!("one of {}", words.join(", "))),
+    };
+    match ty {
+        "string" => v.as_str().map_or_else(|| invalid_type("a string"), |_| None),
+        "bool" => v.as_bool().map_or_else(|| invalid_type("a boolean"), |_| None),
+        "u32" | "u64" => match v.as_integer() {
+            None => invalid_type(ty),
+            Some(n) if (ty == "u32" && u32::try_from(n).is_err()) || n < 0 => {
+                Some(format!("invalid value: integer `{n}`, expected {ty}"))
+            }
+            Some(_) => None,
+        },
+        "list" => match v.as_array() {
+            Some(a) if a.iter().all(toml::Value::is_str) => None,
+            Some(_) => invalid_type("a list of strings"),
+            None => invalid_type("a sequence"),
+        },
+        "onoff" => one_of(&["on", "off"]),
+        "czar_stage" => one_of(&["shadow", "act"]),
+        _ => Some(format!("registry TYPE {ty:?} is not understood")),
+    }
+}
 
 /// How a landed branch reaches its base — see `repo-map.example`'s own `land` column.
 /// `Queue` and `QueueForge` are the same mode under two spellings — `queue` is the alias a
@@ -548,18 +633,43 @@ pub struct PersonaSection {
     pub escalation_model: Option<String>,
 }
 
-/// The JSON Schema for [`SpiraToml`], generated from the same types `validate` deserializes
-/// into, so the schema and the actual hard errors can never name different fields. A key's
-/// `MAX=` in the registry is patched in after generation: schemars 0.8 has no derive spelling
-/// for a range, and a `schema_with` override would lose the derive's `Option` handling.
-pub fn json_schema() -> schemars::schema::RootSchema {
+/// The JSON Schema for [`SpiraToml`] against this process's registry ([`json_schema_with`]).
+pub fn json_schema() -> Result<schemars::schema::RootSchema, String> {
+    Ok(json_schema_with(registry::for_process()?))
+}
+
+/// The JSON Schema for [`SpiraToml`]. `SpiraSection` has one property per registry key: its TYPE,
+/// its `SCHEMA=` as the description, its `MAX=` as `maximum`.
+pub fn json_schema_with(reg: &registry::Registry) -> schemars::schema::RootSchema {
+    use schemars::schema::{InstanceType, Metadata, Schema, SchemaObject, SingleOrVec};
     let mut root = schemars::schema_for!(SpiraToml);
-    if let Some(schemars::schema::Schema::Object(spira_section)) = root.definitions.get_mut("SpiraSection") {
-        for (field, max) in SPIRA_FIELD_MAX {
-            if let Some(schemars::schema::Schema::Object(prop)) = spira_section.object().properties.get_mut(*field) {
-                prop.number().maximum = Some(*max);
-            }
+    let Some(Schema::Object(section)) = root.definitions.get_mut("SpiraSection") else { return root };
+    let mut keys: Vec<&registry::RegistryKey> = reg.keys.values().collect();
+    keys.sort_by(|a, b| a.field.cmp(&b.field));
+    for k in keys {
+        let strings = || SchemaObject { instance_type: Some(InstanceType::String.into()), ..Default::default() };
+        let mut prop = match k.ty.as_str() {
+            "u32" | "u64" => SchemaObject { instance_type: Some(InstanceType::Integer.into()), ..Default::default() },
+            "bool" => SchemaObject { instance_type: Some(InstanceType::Boolean.into()), ..Default::default() },
+            "list" => SchemaObject {
+                instance_type: Some(InstanceType::Array.into()),
+                array: Some(Box::new(schemars::schema::ArrayValidation {
+                    items: Some(SingleOrVec::Single(Box::new(strings().into()))),
+                    ..Default::default()
+                })),
+                ..Default::default()
+            },
+            "onoff" => SchemaObject { enum_values: Some(vec!["on".into(), "off".into()]), ..strings() },
+            "czar_stage" => SchemaObject { enum_values: Some(vec!["shadow".into(), "act".into()]), ..strings() },
+            _ => strings(),
+        };
+        if let Some(d) = &k.schema_doc {
+            prop.metadata = Some(Box::new(Metadata { description: Some(d.clone()), ..Default::default() }));
         }
+        if let Some(m) = k.max {
+            prop.number().maximum = Some(m);
+        }
+        section.object().properties.insert(k.field.clone(), prop.into());
     }
     root
 }
@@ -722,6 +832,12 @@ pub fn validate(text: &str) -> Result<SpiraToml, String> {
     validate_with_warnings(text).map(|(doc, _)| doc)
 }
 
+/// [`validate_with_warnings`] against a registry the caller already holds.
+pub fn validate_with(text: &str, reg: &registry::Registry) -> Result<(SpiraToml, Vec<String>), String> {
+    let root: toml::Value = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
+    validate_value(root, reg)
+}
+
 /// [`validate_with_warnings`] plus [`require_id_prefix`] — the check `spira-config validate`
 /// runs (doctor, pre-activate): the document is well-formed AND names this installation's
 /// id prefix.
@@ -865,15 +981,6 @@ pub fn migrate_goal_to_id_prefix_in_file(file: &std::path::Path) -> Result<Optio
     }
 }
 
-/// Whether `[spira]` sets any key at all. An empty table — the shape `convert` writes when
-/// it regenerates only `[persona.*]` — says nothing about the host, so it needs no prefix.
-fn spira_sets_anything(s: &SpiraSection) -> bool {
-    match toml::Value::try_from(s) {
-        Ok(toml::Value::Table(t)) => t.values().any(|v| !matches!(v, toml::Value::Array(a) if a.is_empty())),
-        _ => true,
-    }
-}
-
 /// THE ID PREFIX FAILS CLOSED (sp-k6m1m). A `[spira]` table that sets anything must name
 /// `id_prefix`, and it must be a usable prefix. It used to be derived in conf.sh from the
 /// goal epic's id (`${SPIRA_GOAL%%-*}`); with the goal retired nothing derives it. A
@@ -886,12 +993,12 @@ fn spira_sets_anything(s: &SpiraSection) -> bool {
 /// defaults for every key, which is a far wider failure than the one key being absent.
 pub fn require_id_prefix(doc: &SpiraToml) -> Result<(), String> {
     let Some(s) = doc.spira.as_ref() else { return Ok(()) };
-    match s.id_prefix.as_deref() {
+    match s.get_str("SPIRA_ID_PREFIX")?.as_deref() {
         Some(p) if valid_id_prefix(p) => Ok(()),
         Some(p) => Err(format!(
             "spira.id_prefix: {p:?} is not a bead id prefix (letters, digits and _ only, no hyphen)"
         )),
-        None if !spira_sets_anything(s) => Ok(()),
+        None if !s.sets_anything() => Ok(()),
         None => Err(
             "spira.id_prefix: required — the prefix of this installation's own bead ids, without \
              the hyphen (e.g. \"sp\"); it is no longer derived from the retired goal key (sp-k6m1m)"
@@ -910,13 +1017,12 @@ pub fn require_id_prefix(doc: &SpiraToml) -> Result<(), String> {
 /// A `[spira]` key's registry `MAX=` is enforced here too: this function deserializes the
 /// TOML directly and never runs the shipped schema against the document.
 pub fn validate_with_warnings(text: &str) -> Result<(SpiraToml, Vec<String>), String> {
-    let root: toml::Value = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
-    validate_value(root)
+    validate_with(text, registry::for_process()?)
 }
 
 /// The checks and the typed deserialize, on an already-parsed document — one parse per layer,
 /// never a text round trip after a merge.
-fn validate_value(mut root: toml::Value) -> Result<(SpiraToml, Vec<String>), String> {
+fn validate_value(mut root: toml::Value, reg: &registry::Registry) -> Result<(SpiraToml, Vec<String>), String> {
     let mut warnings = Vec::new();
     if let Some(spira) = root.get_mut("spira").and_then(|v| v.as_table_mut()) {
         // BEFORE the generic strip: a batcher_bin that is not the batcher switched the cuts
@@ -957,10 +1063,20 @@ fn validate_value(mut root: toml::Value) -> Result<(SpiraToml, Vec<String>), Str
             }
         }
     }
-    if let Some(spira) = root.get("spira").and_then(|v| v.as_table()) {
-        for (field, max) in SPIRA_FIELD_MAX {
-            if let Some(n) = spira.get(*field).and_then(|v| v.as_integer()) {
-                if n as f64 > *max {
+    if let Some(spira) = root.get_mut("spira").and_then(|v| v.as_table_mut()) {
+        let fields: Vec<String> = spira.keys().cloned().collect();
+        for field in fields {
+            let Some(rk) = reg.by_field(&field) else {
+                spira.remove(&field);
+                warnings.push(format!("spira.{field} is not known to this release (written by a newer release?) and ignored"));
+                continue;
+            };
+            let v = &spira[&field];
+            if let Some(e) = type_error(&rk.ty, v) {
+                return Err(format!("spira.{field}: {e}"));
+            }
+            if let (Some(n), Some(max)) = (v.as_integer(), rk.max) {
+                if n as f64 > max {
                     return Err(format!("spira.{field}: {n} exceeds hard ceiling {max}"));
                 }
             }
@@ -1066,8 +1182,8 @@ fn remove_key(root: &mut toml::Value, path: &str) -> bool {
 pub fn shrink_reason(existing: &SpiraToml, new: &SpiraToml) -> Option<String> {
     let existing_repos = existing.repo.len();
     let new_repos = new.repo.len();
-    let existing_runes = existing.spira.as_ref().and_then(|s| s.runes.as_ref()).map_or(0, Vec::len);
-    let new_runes = new.spira.as_ref().and_then(|s| s.runes.as_ref()).map_or(0, Vec::len);
+    let runes = |d: &SpiraToml| d.spira.as_ref().and_then(|s| s.get_list("SPIRA_RUNES").ok().flatten()).map_or(0, |r| r.len());
+    let (existing_runes, new_runes) = (runes(existing), runes(new));
     if new_repos < existing_repos || new_runes < existing_runes {
         Some(format!(
             "existing has {existing_repos} [repo.*] table(s) and {existing_runes} rune(s); \
@@ -1232,34 +1348,25 @@ pub fn spira_value_map(doc: &SpiraToml, include_secrets: bool) -> BTreeMap<Strin
     let Some(spira) = &doc.spira else {
         return out;
     };
-    let value = serde_json::to_value(spira).unwrap_or(serde_json::Value::Null);
-    let serde_json::Value::Object(map) = value else {
-        return out;
-    };
-    for (key, val) in map {
-        if !include_secrets && is_secret_shaped(&key) {
+    for (key, val) in &spira.0 {
+        if !include_secrets && is_secret_shaped(key) {
             continue;
         }
         let shell_val = match val {
-            serde_json::Value::Null => continue,
-            serde_json::Value::String(s) => s,
-            serde_json::Value::Bool(b) => b.to_string(),
-            serde_json::Value::Number(n) => n.to_string(),
-            serde_json::Value::Array(items) => {
+            toml::Value::String(s) => s.clone(),
+            toml::Value::Boolean(b) => b.to_string(),
+            toml::Value::Integer(n) => n.to_string(),
+            toml::Value::Array(items) => {
                 if items.is_empty() && !include_secrets {
                     continue;
                 }
                 items
                     .iter()
-                    .map(|v| {
-                        v.as_str()
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| v.to_string())
-                    })
+                    .map(|v| v.as_str().map(|s| s.to_string()).unwrap_or_else(|| v.to_string()))
                     .collect::<Vec<_>>()
                     .join(" ")
             }
-            serde_json::Value::Object(_) => continue,
+            _ => continue,
         };
         out.insert(key.to_uppercase(), shell_val);
     }
@@ -1297,6 +1404,25 @@ fn set_path_leaf(
         return Err("set: empty path".to_string());
     };
     let mut json = serde_json::to_value(doc).map_err(|e| e.to_string())?;
+    if let ["spira", field] = segs.as_slice() {
+        let reg = registry::for_process()?;
+        let rk = reg.by_field(field).ok_or_else(|| format!("spira.{field}: unknown field `{field}`"))?;
+        let table = json.as_object_mut().expect("a document is an object").entry("spira").or_insert_with(|| serde_json::Value::Object(Default::default()));
+        if table.is_null() {
+            *table = serde_json::Value::Object(Default::default());
+        }
+        let table = table.as_object_mut().ok_or_else(|| "spira: not a table".to_string())?;
+        if leaf_value.is_null() {
+            table.remove(*field);
+        } else {
+            let v: toml::Value = serde_json::from_value(leaf_value.clone()).map_err(|e| format!("spira.{field}: {e}"))?;
+            if let Some(e) = type_error(&rk.ty, &v) {
+                return Err(format!("spira.{field}: {e}"));
+            }
+            table.insert(field.to_string(), leaf_value);
+        }
+        return serde_json::from_value(json).map_err(|e| e.to_string());
+    }
     let mut cur = &mut json;
     for seg in parents {
         if !cur.is_object() {
@@ -1474,12 +1600,12 @@ pub fn set_paths_in_file(file: &std::path::Path, pairs: &[(&str, &str)]) -> Resu
     write_atomic(file, &out).map_err(|e| format!("{}: {e}", file.display()))
 }
 
-/// The complete fixture `spira.toml` (`tests/fixtures/complete.toml`: every key declared, with
+/// The complete fixture `spira.toml` (`spira/testlib/complete.toml`: every key declared, with
 /// fixture paths) — what a test resolves against now that nothing is defaulted. `SPIRA_<KEY>`
 /// pairs in `declare` are written as `spira.<key>`, the only place a value can come from.
 #[cfg(test)]
 pub(crate) fn fixture_doc(declare: &std::collections::BTreeMap<String, String>) -> SpiraToml {
-    let mut d = validate(include_str!("../tests/fixtures/complete.toml")).expect("the complete fixture validates");
+    let mut d = validate(&process::complete_fixture_text()).expect("the complete fixture validates");
     for (k, v) in declare {
         if let Some(rest) = k.strip_prefix("SPIRA_") {
             if let Ok(n) = set_path(&d, &format!("spira.{}", rest.to_ascii_lowercase()), v) {
@@ -1613,7 +1739,7 @@ mod tests {
     #[test]
     fn valid_minimal_document() {
         let doc = validate("[spira]\nid_prefix = \"sp\"\nmax_dwarves = 4\n").expect("valid");
-        assert_eq!(doc.spira.unwrap().max_dwarves, Some(4));
+        assert_eq!(doc.spira.unwrap().get_u32("SPIRA_MAX_DWARVES").unwrap(), Some(4));
     }
 
     #[test]
@@ -1661,7 +1787,7 @@ mod tests {
     #[test]
     fn the_inline_comment_scar_is_harmless_quoted() {
         let doc = validate("[spira]\nid_prefix = \"sp\"\ndb = \"/home/x\" # a trailing comment\n").expect("valid");
-        assert_eq!(doc.spira.unwrap().db, Some("/home/x".to_string()));
+        assert_eq!(doc.spira.unwrap().get_str("SPIRA_DB").unwrap(), Some("/home/x".to_string()));
     }
 
     #[test]
@@ -1693,7 +1819,7 @@ mod tests {
     #[test]
     fn set_path_on_empty_document_creates_the_table() {
         let doc = set_path(&SpiraToml::default(), "spira.prod", "/srv/x").unwrap();
-        assert_eq!(doc.spira.unwrap().prod, Some("/srv/x".to_string()));
+        assert_eq!(doc.spira.unwrap().get_str("SPIRA_PROD").unwrap(), Some("/srv/x".to_string()));
     }
 
     #[test]
@@ -1701,8 +1827,8 @@ mod tests {
         let doc = validate("[spira]\nid_prefix = \"sp\"\nprod = \"/old\"\nmax_dwarves = 4\n").unwrap();
         let doc = set_path(&doc, "spira.prod", "/new").unwrap();
         let spira = doc.spira.unwrap();
-        assert_eq!(spira.prod, Some("/new".to_string()));
-        assert_eq!(spira.max_dwarves, Some(4));
+        assert_eq!(spira.get_str("SPIRA_PROD").unwrap(), Some("/new".to_string()));
+        assert_eq!(spira.get_u32("SPIRA_MAX_DWARVES").unwrap(), Some(4));
     }
 
     #[test]
@@ -1822,13 +1948,13 @@ mod tests {
     #[test]
     fn set_path_coerces_a_numeric_field() {
         let doc = set_path(&SpiraToml::default(), "spira.max_live_dwarves", "3").unwrap();
-        assert_eq!(doc.spira.unwrap().max_live_dwarves, Some(3));
+        assert_eq!(doc.spira.unwrap().get_u32("SPIRA_MAX_LIVE_DWARVES").unwrap(), Some(3));
     }
 
     #[test]
     fn set_path_coerces_a_bool_field() {
         let doc = set_path(&SpiraToml::default(), "spira.mail_mute", "true").unwrap();
-        assert_eq!(doc.spira.unwrap().mail_mute, Some(true));
+        assert_eq!(doc.spira.unwrap().get_bool("SPIRA_MAIL_MUTE").unwrap(), Some(true));
     }
 
     #[test]
@@ -1836,7 +1962,7 @@ mod tests {
         // `instance` is a string field; a value that happens to parse as JSON must not be
         // coerced away from the string the schema actually wants.
         let doc = set_path(&SpiraToml::default(), "spira.instance", "123").unwrap();
-        assert_eq!(doc.spira.unwrap().instance, Some("123".to_string()));
+        assert_eq!(doc.spira.unwrap().get_str("SPIRA_INSTANCE").unwrap(), Some("123".to_string()));
     }
 
     #[test]
@@ -1847,8 +1973,8 @@ mod tests {
         let out = toml::to_string_pretty(&doc).unwrap();
         assert!(!out.contains("max_live_dwarves"), "{out}");
         let spira = doc.spira.unwrap();
-        assert_eq!(spira.max_live_dwarves, None);
-        assert_eq!(spira.max_dwarves, Some(4));
+        assert_eq!(spira.get_u32("SPIRA_MAX_LIVE_DWARVES").unwrap(), None);
+        assert_eq!(spira.get_u32("SPIRA_MAX_DWARVES").unwrap(), Some(4));
     }
 
     // Env edits go through `testkit::env`, which serializes every test in this binary.
@@ -1915,7 +2041,7 @@ mod tests {
         let path = dir.join(FILE_NAME);
         std::fs::write(&path, "[spira]\nid_prefix = \"sp\"\nmax_dwarves = 4\n").unwrap();
         let doc = load(&path).expect("valid document");
-        assert_eq!(doc.spira.unwrap().max_dwarves, Some(4));
+        assert_eq!(doc.spira.unwrap().get_u32("SPIRA_MAX_DWARVES").unwrap(), Some(4));
     }
 
     #[test]
@@ -2013,8 +2139,8 @@ mod tests {
         assert!(msg.contains("sp-k6m1m") && msg.contains("sp-oppza"), "{msg}");
         let (doc, _) = validate_strict(&out).expect("the migrated document passes the same check doctor/pre-activate run");
         let s = doc.spira.unwrap();
-        assert_eq!(s.id_prefix.as_deref(), Some("sp"));
-        assert_eq!(s.db.as_deref(), Some("/db"), "the rest of [spira] survives");
+        assert_eq!(s.get_str("SPIRA_ID_PREFIX").unwrap().as_deref(), Some("sp"));
+        assert_eq!(s.get_str("SPIRA_DB").unwrap().as_deref(), Some("/db"), "the rest of [spira] survives");
         assert!(!out.contains("goal"), "{out}");
     }
 

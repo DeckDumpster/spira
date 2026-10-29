@@ -261,7 +261,7 @@ fn harness(f: &Fake, root: &str) {
     // sp-xjnzl: every ordinary build_image call needs a spira-config to stage for
     // doctor-check; tests of that staging itself (a_cold_build_*) set it up by hand instead.
     f.with_spira_config_buildable(root);
-    f.file(&format!("{root}/spira-config/tests/fixtures/complete.toml"), "[spira]\n");
+    f.file(&format!("{root}/spira/testlib/complete.toml"), "[spira]\n");
     f.file(&format!("{root}/rust-toolchain.toml"), "[toolchain]\nchannel = \"7.6.5\"\n");
 }
 
@@ -668,7 +668,7 @@ fn a_cold_build_stages_its_sibling_spira_config_and_removes_it_either_way() {
         *f.copies.borrow(),
         vec![
             (PathBuf::from("/build/target/release/testenv").parent().unwrap().join("spira-config"), dest.clone()),
-            (PathBuf::from("/h/spira-config/tests/fixtures/complete.toml"), PathBuf::from("/t/ctx/testenv/.doctor-check.toml")),
+            (PathBuf::from("/h/spira/testlib/complete.toml"), PathBuf::from("/t/ctx/testenv/.doctor-check.toml")),
         ]
     );
     assert!(!f.is_file(&dest), "left behind in the checkout after a green build");

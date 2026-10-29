@@ -25,7 +25,7 @@ fn t0_shipped_example_validates() {
 fn stack_max_depths_schema_ceiling_is_four() {
     // Hard ceiling per Ryan 2026-09-28 ("4 is a good place to start, no higher") — raising
     // it is a schema/design change, not a config edit.
-    let schema = serde_json::to_value(json_schema()).expect("schema serializes");
+    let schema = serde_json::to_value(json_schema().unwrap()).expect("schema serializes");
     let field = &schema["definitions"]["SpiraSection"]["properties"]["stack_max_depth"];
     assert_eq!(field["maximum"], serde_json::json!(4.0), "{field}");
 }
@@ -65,7 +65,7 @@ fn collect_property_names(schema: &serde_json::Value, out: &mut BTreeSet<String>
 
 #[test]
 fn schema_refuses_new_secret_shaped_field_names() {
-    let schema = serde_json::to_value(json_schema()).expect("schema serializes");
+    let schema = serde_json::to_value(json_schema().unwrap()).expect("schema serializes");
     let mut names = BTreeSet::new();
     collect_property_names(&schema, &mut names);
     assert!(names.len() > 20, "sanity: expected many property names, got {}", names.len());
@@ -146,7 +146,7 @@ mod spira_section {
         validate(text).expect("a reader still loads it");
         // Positive control: the same table with the prefix passes strict validation.
         let (doc, _) = spira_config::validate_strict("[spira]\nhome_repo = \"home\"\nid_prefix = \"sp\"\n").expect("valid");
-        assert_eq!(doc.spira.unwrap().id_prefix.as_deref(), Some("sp"));
+        assert_eq!(doc.spira.unwrap().get_str("SPIRA_ID_PREFIX").unwrap().as_deref(), Some("sp"));
         spira_config::validate_strict("[spira]\n").expect("an empty table configures nothing");
         spira_config::validate_strict("[repo.a]\npath = \"/a\"\nmode = \"push\"\n").expect("no [spira] at all");
     }
@@ -177,7 +177,7 @@ mod spira_section {
         let fixed = spira_config::set_path(&doc, "spira.id_prefix", "sp").unwrap();
         let out = toml::to_string_pretty(&fixed).unwrap();
         let (back, _) = spira_config::validate_strict(&out).expect("repaired");
-        assert_eq!(back.spira.unwrap().db.as_deref(), Some("/db"), "the rest of [spira] survives");
+        assert_eq!(back.spira.unwrap().get_str("SPIRA_DB").unwrap().as_deref(), Some("/db"), "the rest of [spira] survives");
         assert!(!out.contains("goal"), "and the retired key is gone from the rewrite: {out}");
     }
 
@@ -187,21 +187,21 @@ mod spira_section {
         // would still pass if the code had the default hard-coded instead of actually
         // reading the key.
         let doc = validate("[spira]\nid_prefix = \"sp\"\nstack_max_depth = 2\n").expect("valid");
-        assert_eq!(doc.spira.unwrap().stack_max_depth, Some(2));
+        assert_eq!(doc.spira.unwrap().get_u32("SPIRA_STACK_MAX_DEPTH").unwrap(), Some(2));
     }
 
     #[test]
     fn stack_max_depth_zero_is_valid() {
         // stacked-dependents-2026-09-28 §1: 0 reproduces today's no-stacking behaviour.
         let doc = validate("[spira]\nid_prefix = \"sp\"\nstack_max_depth = 0\n").expect("valid");
-        assert_eq!(doc.spira.unwrap().stack_max_depth, Some(0));
+        assert_eq!(doc.spira.unwrap().get_u32("SPIRA_STACK_MAX_DEPTH").unwrap(), Some(0));
     }
 
     #[test]
     fn mail_mute_true_is_valid() {
         // sp-9hwim: the typed replacement for the mail-mute file-existence override.
         let doc = validate("[spira]\nid_prefix = \"sp\"\nmail_mute = true\n").expect("valid");
-        assert_eq!(doc.spira.unwrap().mail_mute, Some(true));
+        assert_eq!(doc.spira.unwrap().get_bool("SPIRA_MAIL_MUTE").unwrap(), Some(true));
     }
 
     #[test]
@@ -222,7 +222,7 @@ mod spira_section {
     #[test]
     fn stack_max_depth_at_the_hard_ceiling_is_valid() {
         let doc = validate("[spira]\nid_prefix = \"sp\"\nstack_max_depth = 4\n").expect("valid");
-        assert_eq!(doc.spira.unwrap().stack_max_depth, Some(4));
+        assert_eq!(doc.spira.unwrap().get_u32("SPIRA_STACK_MAX_DEPTH").unwrap(), Some(4));
     }
 }
 
@@ -283,15 +283,15 @@ mod retired_keys {
 
     #[test]
     fn the_schemas_current_field_set_matches_its_checked_in_history() {
-        let history_text = fs::read_to_string(manifest_path("schema/spira-key-history.txt"))
-            .expect("schema/spira-key-history.txt exists");
+        let history_text = fs::read_to_string(manifest_path("../spira/conf.key-history"))
+            .expect("spira/conf.key-history exists");
         let history: BTreeSet<String> = history_text
             .lines()
             .map(str::to_string)
             .filter(|l| !l.is_empty())
             .collect();
 
-        let schema = serde_json::to_value(json_schema()).expect("schema serializes");
+        let schema = serde_json::to_value(json_schema().unwrap()).expect("schema serializes");
         let active: BTreeSet<String> = schema["definitions"]["SpiraSection"]["properties"]
             .as_object()
             .expect("SpiraSection has properties")
@@ -309,7 +309,7 @@ mod retired_keys {
         let unrecorded: Vec<_> = active.difference(&history).cloned().collect();
         assert!(
             unrecorded.is_empty(),
-            "active key(s) missing from schema/spira-key-history.txt: {unrecorded:?}"
+            "active key(s) missing from spira/conf.key-history: {unrecorded:?} — append each as a line"
         );
     }
 }
@@ -399,14 +399,14 @@ mod persona_section {
 #[test]
 fn a_non_batcher_batcher_bin_is_read_as_batcher_enable_0() {
     let (doc, w) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nbatcher_bin = \"/bin/true\"\nlc_bin = \"/x/spira-lc\"\n").unwrap();
-    assert_eq!(doc.spira.as_ref().unwrap().batcher_enable.as_deref(), Some("0"));
+    assert_eq!(doc.spira.as_ref().unwrap().get_str("SPIRA_BATCHER_ENABLE").unwrap().as_deref(), Some("0"));
     assert!(w.iter().any(|m| m.contains("batcher_enable = \"0\"")), "{w:?}");
     assert!(w.iter().any(|m| m.starts_with("lc_bin is retired (sp-gypjk)")), "{w:?}");
     // The batcher itself is not an off switch, and an explicit batcher_enable wins.
     let (doc, _) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nbatcher_bin = \"/r/bin/batcher\"\n").unwrap();
-    assert_eq!(doc.spira.as_ref().unwrap().batcher_enable, None);
+    assert_eq!(doc.spira.as_ref().unwrap().get_str("SPIRA_BATCHER_ENABLE").unwrap(), None);
     let (doc, _) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\nbatcher_bin = \"/bin/true\"\nbatcher_enable = \"1\"\n").unwrap();
-    assert_eq!(doc.spira.as_ref().unwrap().batcher_enable.as_deref(), Some("1"));
+    assert_eq!(doc.spira.as_ref().unwrap().get_str("SPIRA_BATCHER_ENABLE").unwrap().as_deref(), Some("1"));
 }
 
 #[test]
@@ -464,5 +464,5 @@ fn a_config_delta_naming_one_key_twice_is_refused_naming_the_key() {
 
 #[test]
 fn the_complete_fixture_roster_covers_its_lanes_and_timer_labels() {
-    spira_config::validate_strict(include_str!("fixtures/complete.toml")).expect("a roster that omits a lane's persona strands that lane's beads");
+    spira_config::validate_strict(&spira_config::process::complete_fixture_text()).expect("a roster that omits a lane's persona strands that lane's beads");
 }
