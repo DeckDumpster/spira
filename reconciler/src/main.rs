@@ -2702,6 +2702,23 @@ mod tests {
     }
 
     #[test]
+    fn a_guard_that_dies_on_a_signal_or_exits_oddly_is_unobservable_with_its_output_in_the_log_and_uncached() {
+        for (name, body, says) in [("odd", "echo oddout; exit 3", "exit 3"), ("sig", "echo sigout; kill -9 $$", "exit 137")] {
+            let (dir, map) = main_health_repo(&format!("main-health-{}", name));
+            let cfg = main_health_cfg(&dir, map, stub(&dir, "green", "exit 0"), stub(&dir, name, body), 15);
+            let by_key = main_health_by_key(&cfg);
+            let RawStatus::Unobservable { reason } = &by_key["main-health:lifecycle-guard"] else {
+                panic!("{:?}", by_key["main-health:lifecycle-guard"]);
+            };
+            let log = dir.join("main-health-lifecycle-guard.log");
+            assert!(reason.contains(says) || reason.contains("signal"), "{}", reason);
+            assert!(reason.contains(&log.display().to_string()), "{}", reason);
+            assert!(fs::read_to_string(&log).unwrap().contains(&format!("{}out", &name[..3])));
+            assert!(!fs::read_to_string(dir.join("main-health-verdicts.json")).unwrap().contains("lifecycle-guard"));
+        }
+    }
+
+    #[test]
     fn a_fence_already_judged_for_the_sha_is_not_run_again_while_another_is_unobservable() {
         let (dir, map) = main_health_repo("main-health-reuse");
         let first = main_health_cfg(&dir, map.clone(), stub(&dir, "green", "exit 0"), stub(&dir, "hang", "sleep 6"), 1);
