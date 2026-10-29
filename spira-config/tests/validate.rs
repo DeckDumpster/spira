@@ -126,6 +126,30 @@ mod spira_section {
     }
 
     #[test]
+    fn a_getter_answers_by_registry_name_and_refuses_an_unregistered_or_mistyped_one() {
+        let doc = validate("[spira]\nid_prefix = \"sp\"\nmax_dwarves = 4\n").unwrap();
+        let s = doc.spira.unwrap();
+        assert_eq!(s.get_u32("SPIRA_MAX_DWARVES"), Ok(Some(4)));
+        assert_eq!(s.get_u32("SPIRA_MAX_LIVE_DWARVES"), Ok(None));
+        assert!(s.get_u32("SPIRA_NOT_A_KEY").unwrap_err().contains("not a registered config key"));
+        assert!(s.get_str("SPIRA_MAX_DWARVES").unwrap_err().contains("TYPE=u32"));
+    }
+
+    #[test]
+    fn negative_oversized_list_and_enum_values_are_refused_naming_the_field() {
+        for (line, field) in [
+            ("max_dwarves = -1", "spira.max_dwarves"),
+            ("max_dwarves = 4294967296", "spira.max_dwarves"),
+            ("runes = 3", "spira.runes"),
+            ("runes = [1]", "spira.runes"),
+            ("czar_stage_deadlock = \"always\"", "spira.czar_stage_deadlock"),
+        ] {
+            let err = validate(&format!("[spira]\nid_prefix = \"sp\"\n{line}\n")).unwrap_err();
+            assert!(err.starts_with(field), "{line}: {err}");
+        }
+    }
+
+    #[test]
     fn an_empty_table_needs_no_field() {
         // An empty [spira] table configures nothing, matching a clean clone that overrides
         // nothing — so not even id_prefix is required of it.

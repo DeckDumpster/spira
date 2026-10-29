@@ -181,7 +181,7 @@ _tl_declare() {
                     *) echo "tl_config: $k is a bool, not '$v'" >&2; return 1 ;;
                 esac ;;
         esac
-        spira-config set "$d" "$v" "$file" >/dev/null \
+        SPIRA_HOME="$_TL_HERE" spira-config set "$d" "$v" "$file" >/dev/null \
             || { echo "tl_config: cannot declare $k" >&2; return 1; }
     done
 }
