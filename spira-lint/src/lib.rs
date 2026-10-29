@@ -357,6 +357,19 @@ pub trait Rule: Send + Sync {
     }
 }
 
+/// Where the registered config keys live: one file per key.
+pub(crate) const CONF_D: &str = "spira/conf.d/";
+
+/// The keys registered in `spira/conf.d/`, from the walk.
+pub(crate) fn registered_keys(tree: &Tree) -> std::collections::BTreeSet<String> {
+    tree.entries
+        .iter()
+        .filter_map(|e| e.path.strip_prefix(CONF_D))
+        .filter(|k| !k.contains('/') && !k.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 /// The files `rule` applies to, refusing an empty scope.
 pub fn scope<'t>(tree: &'t Tree, rule: &dyn Rule) -> Result<Vec<&'t Entry>, LintError> {
     let s: Vec<&Entry> = tree.entries.iter().filter(|e| rule.applies_to(e)).collect();
@@ -686,7 +699,7 @@ mod tests {
         t.write("spira-lint/testlib-migrated-allow", "");
         t.git(&["add", "."]);
         let tree = Tree::from_git(t.path()).unwrap();
-        let contract = ["cockpit-no-bd", "cockpit-no-round-files", "pool-state-readers", "liveness-readers", "gate-state-readers", "dwarf-state-readers", "release-state-readers", "sift-state-readers", "testenv-result-readers", "event-taxonomy", "gate-workflow", "conf-key-registry", "lib-sh-shims", "tmp-leak", "py-fstring-compat", "release-spawn-env", "config-literal-fallback", "config-env-read", "chmod-exec-leak", "no-download-install", "env-set-var-leak", "call-deadline", "hash-iter-output", "process-exit-in-library", "plan-matrix", "plan-lint", "lockfile-lint", "config-delta", "config-fixture", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas", "workflow-config", "fresh-host-entry", "otel-binaries", "journal-reads", "release-tool-exec", "bare-unit-name", "test-real-clock", "ffx-vocabulary"];
+        let contract = ["cockpit-no-bd", "cockpit-no-round-files", "pool-state-readers", "liveness-readers", "gate-state-readers", "dwarf-state-readers", "release-state-readers", "sift-state-readers", "testenv-result-readers", "event-taxonomy", "gate-workflow", "conf-key-registry", "lib-sh-shims", "tmp-leak", "py-fstring-compat", "release-spawn-env", "config-literal-fallback", "config-env-read", "config-key-registered", "chmod-exec-leak", "no-download-install", "env-set-var-leak", "call-deadline", "hash-iter-output", "process-exit-in-library", "plan-matrix", "plan-lint", "lockfile-lint", "config-delta", "config-fixture", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas", "workflow-config", "fresh-host-entry", "otel-binaries", "journal-reads", "release-tool-exec", "bare-unit-name", "test-real-clock", "ffx-vocabulary"];
         let mut rules = all_rules();
         rules.retain(|r| !contract.contains(&r.name()));
         let mut lines = Vec::new();
