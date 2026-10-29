@@ -1048,7 +1048,7 @@ mod tests {
         for c in ["bead_id", "state", "ci"] {
             st.columns.insert(("delivery".into(), c.into()));
         }
-        for i in ["event_since_idx", "bead_state_since_idx", "batch_state_idx", "event_history_idx", "event_at_idx", "idx_batch_opened"] {
+        for i in ["event_since_idx", "bead_state_since_idx", "batch_state_idx", "event_history_idx", "event_at_idx", "event_applied_seq_idx", "idx_batch_opened"] {
             st.indexes.insert(i.into());
         }
         for v in ["ops_live", "ops_round", "ops_recent", "ops_edges", "ops_dwell_p95", "ops_dwell"] {
