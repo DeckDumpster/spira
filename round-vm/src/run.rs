@@ -592,6 +592,7 @@ if [ -n "$lint" ] && { [ "${lint_rc:-0}" -ne 0 ] || [ -n "$fence_fail" ]; }; the
     done
     echo "$(date +%s) verdict RED lint-or-fence" >> "$early/run.events"
     echo "round-vm: LINT/FENCE RED before the suites: no unit test or suite was run" >&2
+    kill "$sampler_pid" 2>/dev/null
     exit 1
 fi
 # THE WORKSPACE'S OWN UNIT TESTS, once per round (per Ryan 2026-10-05: no suite invokes cargo).
@@ -3121,6 +3122,13 @@ mod tests {
         let log = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
         let saw = fs::read_to_string(home.join("aws-saw")).unwrap_or_default();
         (log, saw)
+    }
+
+    #[test]
+    fn an_early_lint_red_exit_stops_the_sampler_that_holds_the_ssh_channel_open() {
+        let red = REMOTE_SCRIPT.find("LINT/FENCE RED before the suites").expect("the early exit");
+        let exit = red + REMOTE_SCRIPT[red..].find("exit 1").unwrap();
+        assert!(REMOTE_SCRIPT[red..exit].contains("kill \"$sampler_pid\""), "a live background sampler keeps ssh waiting after the script exits");
     }
 
     #[test]
