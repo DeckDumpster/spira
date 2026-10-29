@@ -230,3 +230,22 @@ fn a_missing_brain_is_a_failure_said_once() {
 fn a_world_with_no_designs_says_nothing() {
     assert!(same_rows("quiet", |_| {}).is_empty());
 }
+
+#[test]
+fn only_the_git_log_fallback_for_a_writer_diverges_from_the_script() {
+    let prep = |f: &Fixture| {
+        f.design("nowriter", "status: draft\n", "");
+        let git = |args: &[&str]| assert!(Command::new("git").args(["-C", f.p("brain").to_str().unwrap()]).args(args).env_clear().env("GIT_AUTHOR_NAME", "a").env("GIT_AUTHOR_EMAIL", "a@a").env("GIT_COMMITTER_NAME", "a").env("GIT_COMMITTER_EMAIL", "a@a").env("PATH", "/usr/bin:/bin").status().unwrap().success());
+        git(&["init", "-q"]);
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "draft the nowriter design"]);
+    };
+    let f = Fixture::build("gitwriter");
+    prep(&f);
+    let old = old_rows(&f, 1);
+    let g = Fixture::build("gitwriter");
+    prep(&g);
+    let new = new_rows(&g, 1);
+    assert!(old[0].contains("(written by draft the nowriter design)"), "{old:?}");
+    assert!(new[0].contains("(written by unknown)"), "no door to git: {new:?}");
+}
