@@ -168,12 +168,7 @@ else
     want "and adds the generated column"    "_is_work"              "$o1"
     want "and adds the priority constraint" "spira_priority_range"  "$o1"
 
-    # NOW the store is correct, so the checker must say so. This is the assertion that used
-    # to be made against the operator's own database.
-    schema.sh check >/dev/null 2>&1 \
-        && ok "schema.sh check passes against the store apply just built" \
-        || bad "schema.sh check" "reported drift on a store schema-apply.sh had just applied"
-
+    # schema-apply.sh ends in schema.sh check, so "apply succeeds" is what proves the checker passes.
     o2="$(schema-apply.sh 2>&1)"
     want "second run reports types already exact"    "already exact"   "$o2"
     want "second run reports _is_work already there" "already present" "$o2"
