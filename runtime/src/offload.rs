@@ -120,11 +120,9 @@ impl Pool {
             Ok(()) => Ok(Offloaded { what, rx }),
             Err(e) => {
                 self.queued.fetch_sub(1, Ordering::SeqCst);
-                if matches!(e, TrySendError::Disconnected(_)) {
-                    return Err(Spill { what, depth: self.cap, cap: self.cap });
-                }
                 *SPILLED.lock().unwrap_or_else(|e| e.into_inner()).entry(what).or_insert(0) += 1;
-                Err(Spill { what, depth: depth.min(self.cap), cap: self.cap })
+                let depth = if matches!(e, TrySendError::Disconnected(_)) { self.cap } else { depth.min(self.cap) };
+                Err(Spill { what, depth, cap: self.cap })
             }
         }
     }
