@@ -408,12 +408,18 @@ impl<'w, W: World> Trial<'w, W> {
         self.s.gate_mode = mode.as_str().into();
         // FENCES MODE (gate_mode = fences): the definition loses its suites step and every
         // `bin` only that step read, so the key, the tools phase, the trial and the fence
-        // check all see the string that runs. SPIRA_GATE_ALL=1 still runs it whole.
+        // check all see the string that runs. SPIRA_GATE_ALL=1 still runs it whole. The
+        // re-entry suites still run (sp-p3srm), so a branch that may have any — the round
+        // named suites against its bead, or it changes a suite — keeps the bin the re-entry
+        // phase reads (the tree's own suite runner).
         let fences_only = compose::fences_only(mode, &Forces { gate_all: ctx.var("SPIRA_GATE_ALL") == "1" });
+        let may_reenter = !ejected.trim().is_empty()
+            || files.lines().any(|p| p.trim().strip_prefix("spira/").is_some_and(compose::is_suite_name));
+        let reentry_reads = if may_reenter { vec![compose::reentry_command(&[])] } else { Vec::new() };
         let (cmd, tree_def) = match (fences_only, tree_def) {
             (false, d) => (cmd, d),
             (true, Some(d)) => {
-                let f = d.fences_only();
+                let f = d.fences_only(&reentry_reads);
                 (f.command(), Some(f))
             }
             (true, None) => (compose::without_suites(&cmd), None),
@@ -642,15 +648,6 @@ impl<'w, W: World> Trial<'w, W> {
                 named.push(' ');
                 named.push_str(&s);
             }
-        }
-        // Fences mode runs no re-entry suites: the full-suite round the bead rides runs the
-        // whole corpus, the named suites with it.
-        if fences_only && !named.trim().is_empty() {
-            w.eprint(&format!(
-                "gate: re-entry: gate_mode=fences runs no suites — the full-suite round proves the named ones: {}",
-                named.split_whitespace().collect::<Vec<_>>().join(" ")
-            ));
-            named.clear();
         }
         let mut re = compose::reentry(&named, |s| {
             w.exists(&tree.join("spira").join(s)) && w.ls_tree_has(&repo, &rev, &format!("spira/{s}"))
@@ -976,7 +973,7 @@ impl<'w, W: World> Trial<'w, W> {
         // Under fences mode the base runs the same mode: its definition without its suites step.
         let base_gate = match &base_def {
             Ok(Resolved::Tree(d)) if fences_only => {
-                let f = d.fences_only();
+                let f = d.fences_only(&reentry_reads);
                 Some((f.command(), Some(f)))
             }
             Ok(Resolved::Tree(d)) => Some((d.command(), Some(d.clone()))),

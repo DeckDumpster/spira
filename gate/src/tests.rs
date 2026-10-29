@@ -4135,7 +4135,7 @@ fn fences_mode_runs_the_fence_tools_the_fences_and_the_build_fence_and_no_test_o
     assert!(cmds[0].contains("-p spira-lint") && cmds[0].contains("-p lifecycle-guard"), "{}", cmds[0]);
     assert!(!cmds[0].contains("suite-select") && !cmds[0].contains("testenv"), "{}", cmds[0]);
     // The fences: the checked-in definition without its suites step, the build fence kept.
-    let want = crate::def::parse(&checked_in_steps()).unwrap().fences_only().command();
+    let want = crate::def::parse(&checked_in_steps()).unwrap().fences_only(&[]).command();
     assert_eq!(cmds[1], want);
     assert!(cmds[1].contains("bash spira/build-fence.sh"), "{}", cmds[1]);
     assert!(cmds[1].contains("\"$SPIRA_LINT_BIN\"") && cmds[1].contains("\"$SPIRA_GUARD_BIN\""), "{}", cmds[1]);
@@ -4157,7 +4157,7 @@ fn fences_mode_a_planted_fence_violation_still_fails_the_gate_and_the_base_runs_
     assert_eq!(f.run(), FAIL, "{}", f.stderr());
     assert!(f.verdict_line().contains("reason=branch-red"), "{}", f.verdict_line());
     let runs = gate_runs(&f);
-    let want = crate::def::parse(&checked_in_steps()).unwrap().fences_only().command();
+    let want = crate::def::parse(&checked_in_steps()).unwrap().fences_only(&[]).command();
     assert_eq!(runs, [want.clone(), want], "the base trial composes fences mode too");
     assert!(!f.cmds.borrow().iter().any(|c| c.starts_with("cargo test")));
 }
@@ -4178,12 +4178,38 @@ fn fences_mode_a_unit_test_failure_on_the_branch_does_not_fail_it() {
 }
 
 #[test]
-fn fences_mode_runs_no_re_entry_suites_and_names_them_for_the_round() {
-    let f = returned(fences_fake(&["gate/src/x.rs"]), "test-b.sh");
+fn fences_mode_a_re_entering_bead_runs_exactly_its_named_suites_and_a_fresh_one_none() {
+    // sp-p3srm holds in fences mode: the round's named suites, and the suites the branch
+    // changed, run against the tree — through the tree's own suite runner, which the tools
+    // phase then builds.
+    let f = returned(fences_fake(&["gate/src/x.rs", "spira/test-c.sh"]), "test-b.sh");
+    *f.diff.borrow_mut() = Ok("gate/src/x.rs\nspira/test-c.sh".into());
+    f.files.borrow_mut().insert(PathBuf::from(format!("{GATE_TREE}/spira/test-c.sh")), "#!".into());
     assert_eq!(f.run(), PASS, "{}", f.stderr());
-    assert!(!f.cmds.borrow().iter().any(|c| c.contains("--suites")), "{:?}", f.cmds.borrow());
-    assert!(f.stderr().contains("gate_mode=fences runs no suites — the full-suite round proves the named ones: test-b.sh"), "{}", f.stderr());
-    assert!(!meter(&f).contains("reentry"), "{}", meter(&f));
+    let cmds = f.cmds.borrow().clone();
+    assert_eq!(cmds.len(), 3, "tools, fences, re-entry: {cmds:?}");
+    assert!(cmds[0].contains("-p testenv") && !cmds[0].contains("suite-select"), "{}", cmds[0]);
+    assert!(!cmds[1].contains("--suites") && !cmds[1].contains("SPIRA_SELECT_BIN"), "{}", cmds[1]);
+    assert!(cmds[2].contains("--suites test-b.sh,test-c.sh \"$SPIRA_GATE_BRANCH\""), "{}", cmds[2]);
+    assert!(f.env_of(2, "SPIRA_TESTENV_BIN").ends_with("/testenv"), "the tree's own runner");
+    assert!(!cmds.iter().any(|c| c.starts_with("cargo test")), "{cmds:?}");
+    assert!(meter(&f).contains("compose=fences+reentry phases=tools:7,fences:7,reentry:7"), "{}", meter(&f));
+    assert!(f.stderr().contains("gate PASS covered suites: test-b.sh,test-c.sh"), "{}", f.stderr());
+
+    // A named suite red again fails the bead before it rides a round.
+    let r = returned(fences_fake(&["gate/src/x.rs"]), "test-b.sh");
+    r.reentry_runs.borrow_mut().insert(MERGE_SHA.into(), (1, "  test-b.sh   RED     rc=1 after 4s\nVERDICT RED ran=1 red=1".into()));
+    assert_eq!(r.run(), FAIL, "{}", r.stderr());
+    assert!(r.verdict_line().contains("suite=test-b.sh"), "{}", r.verdict_line());
+
+    // A fresh bead (nothing named, no suite changed): no suite of any kind, no runner built.
+    let fresh = fences_fake(&["gate/src/x.rs"]);
+    *fresh.diff.borrow_mut() = Ok("gate/src/x.rs".into());
+    assert_eq!(fresh.run(), PASS, "{}", fresh.stderr());
+    let cmds = fresh.cmds.borrow().clone();
+    assert_eq!(cmds.len(), 2, "{cmds:?}");
+    assert!(!cmds.iter().any(|c| c.contains("--suites") || c.contains("-p testenv")), "{cmds:?}");
+    assert!(!meter(&fresh).contains("reentry"), "{}", meter(&fresh));
 }
 
 #[test]

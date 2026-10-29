@@ -1029,7 +1029,7 @@ mod tests {
         let d = crate::def::parse(&std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate.steps")).unwrap()).unwrap();
         let got = without_suites(&d.command());
-        assert_eq!(got, d.fences_only().command());
+        assert_eq!(got, d.fences_only(&[]).command());
         assert!(got.contains(BUILD_FENCE_STEP), "{got}");
         assert!(!got.contains("SPIRA_SELECT_BIN") && !got.contains("SPIRA_TESTENV_BIN"), "{got}");
         assert_eq!(chain_steps(&got).unwrap().len(), d.steps.len() - 1, "exactly one step dropped");

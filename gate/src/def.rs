@@ -124,16 +124,18 @@ impl Def {
     }
 
     /// The definition `gate_mode = fences` runs: the steps without the suites step
-    /// ([`crate::compose::is_suites_step`]), and only the `bin`s a remaining step reads
-    /// (`$VAR` or `${VAR`), so the tools phase builds what the fences need — not the suite
-    /// selector or the suite runner. A definition left with no step runs `true`.
-    pub fn fences_only(&self) -> Def {
+    /// ([`crate::compose::is_suites_step`]), and only the `bin`s a remaining step or one of
+    /// `also` (the commands the trial runs beside the string: the re-entry phase) reads
+    /// (`$VAR` or `${VAR`), so the tools phase builds what runs — not the suite selector, and
+    /// the suite runner only when re-entry suites may run. A definition left with no step runs
+    /// `true`.
+    pub fn fences_only(&self, also: &[String]) -> Def {
         let mut steps: Vec<String> =
             self.steps.iter().filter(|s| !crate::compose::is_suites_step(s)).cloned().collect();
         if steps.is_empty() {
             steps.push("true".into());
         }
-        let reads = |v: &str| steps.iter().any(|s| s.contains(&format!("${v}")) || s.contains(&format!("${{{v}")));
+        let reads = |v: &str| steps.iter().chain(also).any(|s| s.contains(&format!("${v}")) || s.contains(&format!("${{{v}")));
         let bins = self.bins.iter().filter(|b| reads(&b.var)).cloned().collect();
         Def { bins, steps }
     }
@@ -239,10 +241,14 @@ mod tests {
     #[test]
     fn fences_only_keeps_the_fences_and_only_the_bins_they_read() {
         let d = parse("bin SPIRA_LINT_BIN spira-lint\nbin SPIRA_GUARD_BIN lifecycle-guard\nbin SPIRA_SELECT_BIN suite-select\nbin SPIRA_TESTENV_BIN testenv\nstep \"$SPIRA_LINT_BIN\"\nstep \"${SPIRA_GUARD_BIN}\" --gate .\nstep bash spira/build-fence.sh\nstep { \"$SPIRA_SELECT_BIN\" gate x && \"$SPIRA_TESTENV_BIN\" --suites y; }\n").unwrap();
-        let f = d.fences_only();
+        let f = d.fences_only(&[]);
         assert_eq!(f.packages(), ["spira-lint", "lifecycle-guard"]);
+        // The re-entry phase reads the suite runner: kept when re-entry suites may run.
+        let r = d.fences_only(&[crate::compose::reentry_command(&[])]);
+        assert_eq!(r.packages(), ["spira-lint", "lifecycle-guard", "testenv"]);
+        assert_eq!(r.command(), f.command());
         assert_eq!(f.command(), "\"$SPIRA_LINT_BIN\" && \"${SPIRA_GUARD_BIN}\" --gate . && bash spira/build-fence.sh");
-        let only = parse("bin SPIRA_SELECT_BIN suite-select\nstep { \"$SPIRA_SELECT_BIN\" gate; }\n").unwrap().fences_only();
+        let only = parse("bin SPIRA_SELECT_BIN suite-select\nstep { \"$SPIRA_SELECT_BIN\" gate; }\n").unwrap().fences_only(&[]);
         assert_eq!((only.command(), only.bins.len()), ("true".to_string(), 0));
     }
 

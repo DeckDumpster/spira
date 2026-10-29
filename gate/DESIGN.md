@@ -365,20 +365,26 @@ the certified pool — about half of unit-mode gates killed at the cap at
 `tools:94,fences:9,build:124,test:57`, rounds carrying 1–2 beads — `gate_mode = "fences"`
 certifies on **the fences and the build fence only** (approved by Ryan 2026-10-28).
 
-**Contract.** Under `fences` (and no `SPIRA_GATE_ALL=1`, `compose::fences_only`):
+**Contract.** Under `fences` (and no `SPIRA_GATE_ALL=1`, `compose::fences_only`), the trial is
+tools + fences (with the build fence) + the re-entry suites when the bead has any:
 
 * every trial composes `fences`, whatever the branch touches (a script, a crate, a workspace
   input alike); neither the touched set nor the workspace graph is read to decide it;
 * the definition runs without its suites step (`Def::fences_only`: every step
   `compose::is_suites_step` names — the one reading `$SPIRA_SELECT_BIN`/`$SPIRA_TESTENV_BIN` —
-  is dropped, and every `bin` no remaining step reads goes with it), so the **tools** phase
-  builds only the fences' binaries (spira-lint, lifecycle-guard), and the **fences** phase runs
+  is dropped, and every `bin` neither a remaining step nor the re-entry phase reads goes with
+  it), so the **tools** phase builds only the fences' binaries (spira-lint, lifecycle-guard;
+  plus the tree's testenv when re-entry suites may run), and the **fences** phase runs
   the rest of the `&&` chain, `spira/build-fence.sh` (`cargo check --workspace --locked` of the
   merged tree) included. A repository on a column string loses its suites elements the same
   way (`compose::without_suites`) when the string is a plain `&&` chain of steps;
-* no unit build or test phase, no suites — `SPIRA_GATE_COVERED` stays empty for a bead's
-  certification — and no re-entry suites: the round's ejected suites and the suites the branch
-  touched are named on stderr as the round's to prove;
+* no unit build or test phase and no selected suites — `SPIRA_GATE_COVERED` stays empty for a
+  bead's certification;
+* **the re-entry suites still run** ("The re-entry check", sp-p3srm): the suites the round
+  named when it returned the bead, plus the suites the branch itself changed, by name, after
+  the fences. They exist only for a bead re-entering after a round red and are targeted;
+  skipping them would let a still-red bead burn a whole round, the cost this mode exists to
+  cut (Concierge decision, 2026-10-28). A fresh bead runs no suite at all;
 * the base trial composes the same: the landing ref's own definition, without its suites step;
 * the key carries `\n# gate_mode=fences`, so a fences PASS never answers for a unit or suites
   trial.
@@ -417,7 +423,8 @@ A fence red is still a `branch-red`; a unit test the branch breaks is the round'
 | `unit`, the touched set or the graph unreadable | `suites(no-diff)` / `suites(no-metadata)` | the same — no guessing a cheaper gate |
 | `unit`, crates (± docs, config, suites) | `unit` | the gate string with **suites off** and **without the build fence** (below), then on the host: `cargo build --profile dwarf -j J --all-targets -p …` (build) and `cargo test --profile dwarf -j J -p … -- --test-threads=J` (test) |
 | `unit`, nothing buildable | `fences` | the gate string with **suites off** |
-| `fences` (any branch) | `fences` | the gate string **without its suites step** ("Fences mode") |
+| `fences`, a fresh bead | `fences` | the gate string **without its suites step** ("Fences mode") |
+| `fences`, a re-entering bead (named suites) or a changed suite | `fences+reentry` | the same, then the re-entry phase: exactly those suites |
 | `fences`, `SPIRA_GATE_ALL=1` | `suites(gate-all)` | the gate string, whole |
 
 "Suites off" is the gate command's environment: `SPIRA_GATE_SUITES=off` and
