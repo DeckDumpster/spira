@@ -2069,9 +2069,6 @@ fn pass_members(c: &Ctx, batch: &str) -> Vec<String> {
     record_of(c, batch).map(|(_, kv)| kv.members().into_iter().map(|m| m.id).collect()).unwrap_or_default()
 }
 
-/// The pass of `batch` ended without a verdict: remember it, and eject each member that has now
-/// been aboard for [`FAULTED_PASSES_RED`] such passes. When every member of a multi-member pass
-/// qualifies, nothing separates them from the host, so none is ejected. Returns [`FAULT`] either way.
 fn lost_vm_pass(w: &World, label: &str, batch: &str, err: &str) -> i32 {
     let why = "vm-lost: the round VM died under the pass";
     warn_unrecorded(w, label, batch, "the incomplete pass", pass_verdict_event(w, batch, &Verdict::Incomplete(why), false));
@@ -2079,6 +2076,9 @@ fn lost_vm_pass(w: &World, label: &str, batch: &str, err: &str) -> i32 {
     VM_LOST
 }
 
+/// The pass of `batch` ended without a verdict: remember it, and eject each member that has now
+/// been aboard for [`FAULTED_PASSES_RED`] such passes. When every member of a multi-member pass
+/// qualifies, nothing separates them from the host, so none is ejected. Returns [`FAULT`] either way.
 fn faulted_pass(w: &World, label: &str, c: &Ctx, batch: &str, why: &str) -> i32 {
     let ids = pass_members(c, batch);
     note_pass_end(c, &ids, PassEnd::Faulted);
