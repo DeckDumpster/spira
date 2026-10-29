@@ -775,3 +775,19 @@ program must be a bare name in the release's `bin/`) and also `release round-rec
    certify leaves the round open and the unit exits `1`.
 
 It does not clear the rounds loop's pause after a landing; that stays the loop's own. The certify lock is the guard against a second certify of the same batch, whoever started it.
+
+## artifacts
+
+The round artifact store (`src/artifacts.rs`): one tree's release executables, built once and
+fetched by every later consumer instead of rebuilt. Stored on the box's shared WebDAV store
+(sccache-dav) as `artifacts/<key>/bin.tar` and, written last, `artifacts/<key>/MANIFEST`.
+
+`key = sha256("<tree id> <toolchain> release-workspace\n")`, where the toolchain is `rustc -vV`'s
+commit-hash and release. The manifest carries the tarball's size and sha256 and every member's
+sha256. An artifact is used only on an exact key match and only when the manifest is present and
+every checksum is met; a missing, partial or damaged one is a miss and the build runs as before.
+
+`release build` without `--bin-dir`, when a store is configured, fetches by the commit's tree
+(`release: artifacts: hit <key>`) and otherwise builds and stores. The round VM runs the same
+protocol from bash before its own cargo build (round-vm DESIGN.md); the key vector is pinned in
+both test suites. Retention is the store's (sccache-dav DESIGN.md "Artifact retention").

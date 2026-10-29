@@ -3,6 +3,7 @@
 //! host's systemd or runs cargo: `FakeGit`, `FakeCargo` and `FakeSystemctl` stand in.
 
 use crate::activate::{self, Ctx};
+use crate::artifacts;
 use crate::build::{self, BuildOpts, Cargo};
 use crate::config::{Config, Env, Flags, Registered};
 use crate::config_delta;
@@ -87,6 +88,9 @@ impl Git for FakeGit {
         } else {
             Err(format!("{rev} is not a commit"))
         }
+    }
+    fn tree(&self, _repo: &Path, sha: &str) -> Result<String, String> {
+        Ok(format!("tree-of-{sha}"))
     }
     fn archive(&self, _repo: &Path, sha: &str, into: &Path) -> Result<(), String> {
         let members = match (self.validator, self.unit_ensure) {
@@ -188,7 +192,7 @@ impl World {
         self.build_with(sha, &FakeCargo { bins: vec!["tool"], bodies: vec![] }, vec![])
     }
     fn build_with(&self, sha: &str, cargo: &FakeCargo, system_dirs: Vec<PathBuf>) -> Result<build::Built, String> {
-        let o = BuildOpts { repo: self.sb.p(), commit: sha, target_dir: Some(self.sb.p().join("target")), system_dirs, bin_dir: None };
+        let o = BuildOpts { repo: self.sb.p(), commit: sha, target_dir: Some(self.sb.p().join("target")), system_dirs, bin_dir: None, artifacts: None };
         build::build(&self.cfg, &self.git, cargo, &o)
     }
     fn rel(&self, sha: &str) -> PathBuf {
@@ -469,7 +473,7 @@ fn build_with_a_bin_dir_ships_those_binaries_without_cargo_and_still_refuses_a_p
     let tested = w.sb.p().join("round/target/release");
     exe(&tested.join("tool"), "#!/bin/sh\n# the round's tested build\n");
     exe(&tested.join("stray"), "#!/bin/sh\n");
-    let o = BuildOpts { repo: w.sb.p(), commit: A, target_dir: None, system_dirs: vec![], bin_dir: Some(tested.clone()) };
+    let o = BuildOpts { repo: w.sb.p(), commit: A, target_dir: None, system_dirs: vec![], bin_dir: Some(tested.clone()), artifacts: None };
     let b = build::build(&w.cfg, &w.git, &NoCargo, &o).unwrap();
     assert!(b.fresh);
     assert_eq!(fs::read_to_string(w.rel(A).join("bin/tool")).unwrap(), "#!/bin/sh\n# the round's tested build\n");
@@ -479,7 +483,7 @@ fn build_with_a_bin_dir_ships_those_binaries_without_cargo_and_still_refuses_a_p
     let w = World::new();
     let empty = w.sb.p().join("empty");
     fs::create_dir_all(&empty).unwrap();
-    let o = BuildOpts { repo: w.sb.p(), commit: A, target_dir: None, system_dirs: vec![], bin_dir: Some(empty) };
+    let o = BuildOpts { repo: w.sb.p(), commit: A, target_dir: None, system_dirs: vec![], bin_dir: Some(empty), artifacts: None };
     let e = build::build(&w.cfg, &w.git, &NoCargo, &o).unwrap_err();
     assert!(e.contains("declares tool but the build"), "{e}");
     assert!(!w.rel(A).exists());
@@ -501,7 +505,7 @@ fn build_with_a_bin_dir_also_carries_every_declared_compat_name() {
     });
     let tested = w.sb.p().join("round/target/release");
     exe(&tested.join("tool"), "#!/bin/sh\n# the round's tested build\n");
-    let o = BuildOpts { repo: w.sb.p(), commit: A, target_dir: None, system_dirs: vec![], bin_dir: Some(tested) };
+    let o = BuildOpts { repo: w.sb.p(), commit: A, target_dir: None, system_dirs: vec![], bin_dir: Some(tested), artifacts: None };
     build::build(&w.cfg, &w.git, &NoCargo, &o).unwrap();
 
     // bin/tool.sh resolves to the real binary — a bare-name PATH lookup for either name
@@ -2570,4 +2574,114 @@ fn a_delta_naming_a_placeholder_path_is_refused_and_the_shipped_one_is_clean() {
     let shipped = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../", "spira/config-delta.toml")).unwrap();
     let d = config_delta::Delta::parse(&shipped).unwrap();
     assert!(!d.added.contains_key("spira.lc_snapshot"), "the snapshot path derives from the install's run dir");
+}
+
+/// The store's wire, on a local directory.
+struct DirDav(PathBuf);
+impl artifacts::Dav for DirDav {
+    fn get_to(&self, path: &str, dest: &Path) -> Result<bool, String> {
+        match fs::copy(self.0.join(path), dest) {
+            Ok(_) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+    fn put_from(&self, path: &str, src: &Path) -> Result<(), String> {
+        let to = self.0.join(path);
+        fs::create_dir_all(to.parent().unwrap()).map_err(|e| e.to_string())?;
+        fs::copy(src, to).map(|_| ()).map_err(|e| e.to_string())
+    }
+}
+
+fn stored_build(w: &World, dav: &DirDav, sha: &str, cargo: &dyn Cargo, toolchain: &str) -> Result<build::Built, String> {
+    let o = BuildOpts { repo: w.sb.p(), commit: sha, target_dir: Some(w.sb.p().join("target")), system_dirs: vec![], bin_dir: None, artifacts: Some(build::ArtifactStore { dav, toolchain: toolchain.into() }) };
+    build::build(&w.cfg, &w.git, cargo, &o)
+}
+
+const TC: &str = "1.99.0 abc";
+
+#[test]
+fn a_tree_built_once_is_fetched_by_the_next_build_without_cargo() {
+    let w = World::new();
+    let dav = DirDav(w.sb.p().join("store"));
+    stored_build(&w, &dav, A, &FakeCargo { bins: vec!["tool"], bodies: vec![("tool", "#!/bin/sh\n# built once\n".into())] }, TC).unwrap();
+    let w2 = World::new();
+    let b = stored_build(&w2, &dav, A, &NoCargo, TC).unwrap();
+    assert_eq!(fs::read_to_string(w2.rel(&b.sha).join("bin/tool")).unwrap(), "#!/bin/sh\n# built once\n");
+    assert_eq!(fs::read_dir(&w2.cfg.releases).unwrap().flatten().filter(|e| e.file_name().to_string_lossy().starts_with(".artifacts-")).count(), 0, "no scratch is left behind");
+}
+
+#[test]
+fn a_different_tree_or_toolchain_misses_and_builds() {
+    let w = World::new();
+    let dav = DirDav(w.sb.p().join("store"));
+    stored_build(&w, &dav, A, &FakeCargo { bins: vec!["tool"], bodies: vec![("tool", "#!/bin/sh\n# tree A\n".into())] }, TC).unwrap();
+    let other_tree = stored_build(&w, &dav, B, &FakeCargo { bins: vec!["tool"], bodies: vec![("tool", "#!/bin/sh\n# tree B\n".into())] }, TC).unwrap();
+    assert_eq!(fs::read_to_string(w.rel(&other_tree.sha).join("bin/tool")).unwrap(), "#!/bin/sh\n# tree B\n");
+    let w2 = World::new();
+    let other_tc = stored_build(&w2, &dav, A, &FakeCargo { bins: vec!["tool"], bodies: vec![("tool", "#!/bin/sh\n# newer rustc\n".into())] }, "1.100.0 def").unwrap();
+    assert_eq!(fs::read_to_string(w2.rel(&other_tc.sha).join("bin/tool")).unwrap(), "#!/bin/sh\n# newer rustc\n");
+}
+
+fn corrupt_then_rebuild(damage: impl Fn(&Path)) {
+    let w = World::new();
+    let dav = DirDav(w.sb.p().join("store"));
+    stored_build(&w, &dav, A, &FakeCargo { bins: vec!["tool"], bodies: vec![("tool", "#!/bin/sh\n# first\n".into())] }, TC).unwrap();
+    let key = artifacts::key(&format!("tree-of-{A}"), TC);
+    damage(&dav.0.join("artifacts").join(key));
+    let w2 = World::new();
+    let b = stored_build(&w2, &dav, A, &FakeCargo { bins: vec!["tool"], bodies: vec![("tool", "#!/bin/sh\n# rebuilt\n".into())] }, TC).unwrap();
+    assert_eq!(fs::read_to_string(w2.rel(&b.sha).join("bin/tool")).unwrap(), "#!/bin/sh\n# rebuilt\n", "a damaged artifact is never used");
+}
+
+#[test]
+fn a_tarball_that_does_not_meet_its_manifest_checksum_is_never_used() {
+    corrupt_then_rebuild(|d| {
+        let t = d.join(artifacts::TARBALL);
+        if t.exists() {
+            let mut b = fs::read(&t).unwrap();
+            let n = b.len() / 2;
+            b[n] ^= 0xff;
+            fs::write(&t, b).unwrap();
+        }
+    });
+}
+
+#[test]
+fn a_truncated_upload_is_never_used() {
+    corrupt_then_rebuild(|d| {
+        let t = d.join(artifacts::TARBALL);
+        if t.exists() {
+            let b = fs::read(&t).unwrap();
+            fs::write(&t, &b[..b.len() / 2]).unwrap();
+        }
+    });
+}
+
+#[test]
+fn a_tarball_with_no_manifest_is_a_miss() {
+    corrupt_then_rebuild(|d| {
+        let _ = fs::remove_file(d.join(artifacts::MANIFEST));
+    });
+}
+
+#[test]
+fn a_manifest_checksum_for_a_member_that_differs_is_a_miss() {
+    corrupt_then_rebuild(|d| {
+        let m = d.join(artifacts::MANIFEST);
+        if let Ok(t) = fs::read_to_string(&m) {
+            let bad = t.lines().map(|l| if l.starts_with("file ") { format!("file {} tool", "0".repeat(64)) } else { l.to_string() }).collect::<Vec<_>>().join("\n");
+            fs::write(&m, bad + "\n").unwrap();
+        }
+    });
+}
+
+#[test]
+fn the_manifest_round_trips_and_the_key_names_tree_and_toolchain() {
+    let m = artifacts::Manifest { key: "k".into(), tree: "t".into(), toolchain: TC.into(), tarball_sha256: "s".into(), tarball_bytes: 7, files: vec![("a".into(), "h1".into()), ("b".into(), "h2".into())] };
+    assert_eq!(artifacts::Manifest::parse(&m.render()).unwrap(), m);
+    assert_eq!(artifacts::key("t1", "deadbeef 1.99.0"), "55ff5d54bdd1a52763970e49c935c72df12820f8369f1e5d6ca4f4b1c2f56561", "the round VM's bash computes this same value");
+    assert_ne!(artifacts::key("t1", TC), artifacts::key("t2", TC));
+    assert_ne!(artifacts::key("t1", TC), artifacts::key("t1", "1.100.0 def"));
+    assert_eq!(artifacts::toolchain_id("rustc 1.99.0 (abc 2026)\nbinary: rustc\ncommit-hash: deadbeef\nrelease: 1.99.0\nhost: x\n"), "deadbeef 1.99.0");
 }

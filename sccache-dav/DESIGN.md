@@ -128,3 +128,11 @@ real Proxmox: that is `round-vm`'s own test suite and the proof run in the bead.
 least recently used files until the store is under the cap; a GET refreshes the entry's mtime,
 which is the recency it orders by. In-flight PUT tmp files and directories are left alone. A
 missing or zero cap refuses to start.
+
+## Artifact retention
+
+The same store also holds the round artifacts (`artifacts/<key>/`, release DESIGN.md
+"artifacts"). Every sweep removes an `artifacts/<key>/` directory whose newest file is older
+than `SPIRA_SCCACHE_DAV_ARTIFACT_DAYS` (a GET refreshes what it reads); a zero refuses to
+start. The size cap above applies to them as well. `SPIRA_BATCH_ARTIFACT_DAYS` is the CI
+workflow's upload retention, a different thing.
