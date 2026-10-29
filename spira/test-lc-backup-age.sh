@@ -23,6 +23,8 @@ declare -F _lcb_all_ok >/dev/null || bail "_lcb_all_ok was not extracted from lc
 _lcb_all_ok "db0: ok 1s"; wantrc "an all-ok list is accepted" 0 $?
 lines="$(yes 'db0: never' | head -20000)"
 _lcb_all_ok "$lines"; wantrc "a 20000-line status whose first line is never is not all-ok" 1 $?
+_lcb_piped_all_ok() { ! printf '%s\n' "$1" | grep -qv '^[^ ]*: ok '; }
+_lcb_piped_all_ok "$lines"; wantrc "control: the piped form reads the same 20000 lines as all-ok, so the input can expose a race" 0 $?
 
 echo; echo "age — a never-backed-up database listed first:"
 printf '%s deadbeef\n' "$(( $(date +%s) - 10 ))" > "$RUN/lc-backup.fresh.ok"
