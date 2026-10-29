@@ -104,14 +104,14 @@ pub fn append_sql(ev: &Value) -> Result<String, String> {
     let kind = ev.get("kind").ok_or("journal: event has no kind")?;
     check_widths("append", "event_id", ev)?;
     Ok(format!(
-        "INSERT INTO runtime_event (event_id, stream, kind_tag, kind_body, at, cause, correlation) VALUES ({}, {}, {}, {}, {}, {}, {}) ON DUPLICATE KEY UPDATE event_id = event_id",
-        lit(field(ev, "id")?),
+        "INSERT INTO runtime_event (event_id, stream, kind_tag, kind_body, at, cause, correlation) SELECT {id}, {}, {}, {}, {}, {}, {} FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM runtime_event WHERE event_id = {id})",
         lit(field(ev, "stream")?),
         lit(field(kind, "tag")?),
         lit(field(kind, "body")?),
         number(ev, "at")?,
         opt_lit(ev, "cause"),
         lit(field(ev, "correlation")?),
+        id = lit(field(ev, "id")?),
     ))
 }
 
@@ -208,7 +208,8 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
             if op == "mark-applied" {
                 check_text("mark-applied", "handler", handler, HANDLER_MAX)?;
                 check_text("mark-applied", "event_id", id, ID_MAX)?;
-                write(conn, &format!("INSERT INTO runtime_applied (handler, event_id) VALUES ({}, {}) ON DUPLICATE KEY UPDATE handler = handler", lit(handler), lit(id)), None)?;
+                let (h, i) = (lit(handler), lit(id));
+                write(conn, &format!("INSERT INTO runtime_applied (handler, event_id) SELECT {h}, {i} FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM runtime_applied WHERE handler = {h} AND event_id = {i})"), None)?;
                 return Ok(String::new());
             }
             let rows = read(conn, &format!("SELECT 1 AS hit FROM runtime_applied WHERE handler = {} AND event_id = {}", lit(handler), lit(id)))?;
@@ -252,11 +253,11 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
             write(
                 conn,
                 &format!(
-                    "INSERT INTO runtime_poison (stream, event_id, handler, message) VALUES ({}, {}, {}, {}) ON DUPLICATE KEY UPDATE stream = stream",
-                    lit(stream),
+                    "INSERT INTO runtime_poison (stream, event_id, handler, message) SELECT {s}, {}, {}, {} FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM runtime_poison WHERE stream = {s})",
                     lit(event),
                     lit(handler),
-                    lit(field(&p, "message")?)
+                    lit(field(&p, "message")?),
+                    s = lit(stream),
                 ),
                 None,
             )?;
@@ -324,7 +325,21 @@ mod tests {
     #[test]
     fn no_write_swallows_a_conflict_but_ignore() {
         let sql = append_sql(&ev()).unwrap();
-        assert!(!sql.contains("IGNORE") && sql.ends_with("ON DUPLICATE KEY UPDATE event_id = event_id"), "{sql}");
+        assert!(!sql.contains("IGNORE") && sql.contains("WHERE NOT EXISTS (SELECT 1 FROM runtime_event WHERE event_id = "), "{sql}");
+    }
+
+    /// runtime_event, runtime_applied and runtime_poison are append-only for spira_lc
+    /// (lifecycle/grants.sql: SELECT, INSERT): a dedupe that needs UPDATE is "command denied"
+    /// in production (sp-6gsvrm, 2026-10-29) though a root-run test passes.
+    #[test]
+    fn appends_to_append_only_tables_need_no_update_grant() {
+        let sql = append_sql(&ev()).unwrap();
+        assert!(!sql.to_uppercase().contains("UPDATE"), "{sql}");
+        let src = include_str!("journal.rs");
+        for table in ["runtime_event", "runtime_applied", "runtime_poison"] {
+            let bad = src.lines().filter(|l| l.contains(&format!("INSERT INTO {table}")) && l.contains("DUPLICATE KEY")).count();
+            assert_eq!(bad, 0, "{table} is granted SELECT, INSERT only; ON DUPLICATE KEY UPDATE is denied");
+        }
     }
 
     #[test]
