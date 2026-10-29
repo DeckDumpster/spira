@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 pub const USAGE: &str = "usage: release vm-repro <bead-id> [--suites a.sh,b.sh] [--repo R] [--deadline SECS] [--was VERDICT[:STEP]] [--release DIR]";
 
 pub const DEFAULT_DEADLINE_SECS: u64 = 600;
-const ROUND_WINDOW_SECS: &str = "1209600";
+const ROUND_WINDOW_DAYS: u64 = 14;
 pub const EXIT_RED: u8 = 1;
 pub const EXIT_FAULT: u8 = 3;
 
@@ -121,7 +121,7 @@ pub fn round_red(lc: &Path, env: &[(String, String)], bead: &str) -> Result<Vec<
     let out = Command::new("timeout")
         .arg("30")
         .arg(lc)
-        .args(["list", "--batches", "--window", ROUND_WINDOW_SECS])
+        .args(["list", "--batches", "--window", &(ROUND_WINDOW_DAYS * 86400).to_string()])
         .env_clear()
         .envs(env.iter().cloned())
         .stdin(Stdio::null())
@@ -302,6 +302,10 @@ pub fn run(o: &Opts, ambient: &dyn Fn(&str) -> Option<String>) -> Result<Verdict
         Vec::new()
     } else {
         match round_red(&PathBuf::from(spira_config::release_env::tool("spira-lc")), &env, &o.bead) {
+            Ok(r) if r.is_empty() => {
+                added.push(format!("no red suites recorded for {} in the last {ROUND_WINDOW_DAYS} days; using the default selection", o.bead));
+                r
+            }
             Ok(r) => r,
             Err(e) => {
                 added.push(format!("could not read the round's red suites ({e}); using the default selection"));
