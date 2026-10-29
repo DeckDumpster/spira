@@ -45,6 +45,8 @@ CRATE="$HERE/../spira-config"
 HARNESS="$T/harness"
 mkdir -p "$HARNESS/spira"
 ln -s "$HERE/conf.sh" "$HARNESS/spira/conf.sh"
+ln -s "$HERE/conf.d" "$HARNESS/spira/conf.d"
+ln -s "$HERE/conf.toml.d" "$HARNESS/spira/conf.toml.d"
 printf '# empty\n' > "$HARNESS/spira/repo-map.example"
 printf '# empty\n' > "$HARNESS/spira/watchers"
 
