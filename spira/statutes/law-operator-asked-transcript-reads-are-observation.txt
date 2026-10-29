@@ -1,0 +1,1 @@
+The Concierge may read any live dwarf's session transcript read-only, asked or not: it is observation, like a status check. The read never alters, nudges or acts on the dwarf's branch, claim or worktree, and never prints secrets that appear in it. Scar: status-only reads hid why sp-a7p19c's builder could not submit (per Ryan 2026-10-28).

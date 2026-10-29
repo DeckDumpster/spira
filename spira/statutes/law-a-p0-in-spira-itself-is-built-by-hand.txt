@@ -1,0 +1,1 @@
+A P0 defect in Spira's own machinery is built by the Concierge by hand and joins the very next round, cut at once with whatever is certified: it never waits for a batch to fill, and it never lands alone while certified work waits behind it. Scars: sp-3fue0j (batching too slow); solo P0 rounds stalled three certified beads behind the loop (per Ryan 2026-10-28).
