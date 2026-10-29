@@ -232,9 +232,13 @@ pub fn sweep(now: u64, env: &mut dyn Env, state: &mut SweepState, shadow: bool, 
             _ => None,
         };
         let tripped = match hold.kind {
-            Kind::Wait => match env.exits(&hold.bead) {
-                Ok(exits) => breaker.and_then(|b| b.tripped(&exits).map(|t| (t, b.window_secs()))),
-                Err(e) => {
+            Kind::Wait => match (breaker, env.exits(&hold.bead)) {
+                (None, _) => {
+                    report.skipped.push(format!("{key}: no-progress breaker unconfigured, wait not lifted"));
+                    continue;
+                }
+                (Some(b), Ok(exits)) => b.tripped(&exits).map(|t| (t, b.window_secs())),
+                (Some(_), Err(e)) => {
                     report.skipped.push(format!("{key}: history unreadable: {e}"));
                     continue;
                 }

@@ -265,11 +265,12 @@ fn an_untripped_wait_is_lifted_as_before() {
 }
 
 #[test]
-fn an_unconfigured_breaker_does_not_stop_an_expired_wait_being_lifted() {
+fn an_unconfigured_breaker_refuses_to_lift_a_wait_but_still_sweeps_other_holds() {
     let mut env = Fake::new(vec![
         named("w-due", hold(Kind::Wait, Some(0), Some(&format!("snooze-until:{}", NOW - 1)))),
-        named("w-early", hold(Kind::Wait, Some(0), Some(&format!("snooze-until:{}", NOW + 60)))),
+        named("a-silent", hold(Kind::Ask, Some(NOW - 4 * 24 * H), Some("q"))),
     ]);
     let report = sweep(NOW, &mut env, &mut SweepState::default(), false, None).unwrap();
-    assert_eq!(env.acts, vec![("w-due".to_string(), "lift-wait")], "{report:?}");
+    assert_eq!(env.acts, vec![("a-silent".to_string(), "raise-ask")], "{report:?}");
+    assert!(report.skipped.iter().any(|n| n.contains("w-due") && n.contains("unconfigured")), "{report:?}");
 }
