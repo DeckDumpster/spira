@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -24,9 +24,16 @@ pub struct Stop {
     pub sig: AtomicI32,
     /// The running session's process group (0: none running).
     pub pgid: AtomicI32,
+    /// Epoch at which a wait on a harness-owned slot began (0: not waiting).
+    pub harness_wait: AtomicI64,
 }
 
 impl Stop {
+    /// Marks a harness wait until the guard drops, on every return path.
+    pub fn harness_waiting(&self, since: i64) -> HarnessWait<'_> {
+        self.harness_wait.store(since.max(1), Ordering::SeqCst);
+        HarnessWait(self)
+    }
     pub fn trip(&self, sig: i32) {
         let _ = self.sig.compare_exchange(0, sig, Ordering::SeqCst, Ordering::SeqCst);
         self.kill_session();
@@ -49,6 +56,14 @@ impl Stop {
             0 => None,
             s => Some(s),
         }
+    }
+}
+
+pub struct HarnessWait<'a>(&'a Stop);
+
+impl Drop for HarnessWait<'_> {
+    fn drop(&mut self) {
+        self.0.harness_wait.store(0, Ordering::SeqCst);
     }
 }
 
@@ -272,7 +287,7 @@ impl Heartbeat {
                 stop.trip(libc::SIGTERM);
                 return None;
             }
-            match hb_tick(prev, cur, now, deadline, if fuse.is_empty() { "?" } else { &fuse }, self.wall_min, session_start) {
+            match hb_tick(prev, cur, now, deadline, stop.harness_wait.load(Ordering::SeqCst) != 0, if fuse.is_empty() { "?" } else { &fuse }, self.wall_min, session_start) {
                 HbTick::Renew => {
                     prev = cur;
                     deadline = now + self.lease_s;
@@ -390,6 +405,27 @@ mod tests {
     }
 
     // test-thrash-teardown.sh: turns advance, the deliverable does not → thrash.
+    // Waiting on a harness-owned slot renews however long the trace is still; the quiet clock
+    // restarts when the wait ends.
+    #[test]
+    fn a_harness_wait_longer_than_the_lease_never_lapses_and_the_clock_restarts_after() {
+        let d = tmp("hwait");
+        let hb = Heartbeat { bead: "sp-a".into(), rune: "builder".into(), run: d.to_path_buf(), lease_s: 120, every: Duration::from_millis(1), wall_min: 10_000 };
+        let b = FakeBeat { mtimes: Mutex::new(vec![5]), fuse: "0".into(), stop_after: 6, ..Default::default() };
+        let stop = Stop::default();
+        let wait = stop.harness_waiting(1);
+        assert_eq!(hb.run(&b, &stop, &AtomicBool::new(false)), None, "ended by the renewal count, not a lapse");
+        assert_eq!(b.renewals.lock().unwrap().len(), 6, "six beats = 360s of still trace against a 120s lease");
+        assert!(b.dispositions.lock().unwrap().is_empty());
+        assert!(!b.logs.lock().unwrap().iter().any(|l| l.contains("lease lapsed")));
+        assert_eq!(stop.signalled(), None);
+        drop(wait);
+        assert_eq!(stop.harness_wait.load(Ordering::SeqCst), 0);
+        let b2 = FakeBeat { now: Mutex::new(*b.now.lock().unwrap()), mtimes: Mutex::new(vec![5]), fuse: "0".into(), ..Default::default() };
+        assert_eq!(hb.run(&b2, &stop, &AtomicBool::new(false)), Some(HbTick::Lapse), "a still trace lapses as before once the wait is over");
+        assert_eq!(b2.dispositions.lock().unwrap()[0].0, "lapsed");
+    }
+
     #[test]
     fn growing_trace_with_a_stale_fuse_thrashes() {
         let d = tmp("thrash");

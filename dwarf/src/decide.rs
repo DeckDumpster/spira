@@ -32,9 +32,9 @@ pub enum HbTick {
 }
 
 /// Trace growth renews unconditionally; only a still trace can lapse; only a trace that
-/// neither grew nor lapsed can thrash. A fuse that is not a plain integer never trips.
-pub fn hb_tick(prev_mtime: i64, cur_mtime: i64, now: i64, deadline: i64, fuse: &str, wall_min: i64, session_start: i64) -> HbTick {
-    if cur_mtime != prev_mtime {
+/// neither grew nor lapsed can thrash. A harness wait renews ahead of both. A fuse that is not a plain integer never trips.
+pub fn hb_tick(prev_mtime: i64, cur_mtime: i64, now: i64, deadline: i64, waiting: bool, fuse: &str, wall_min: i64, session_start: i64) -> HbTick {
+    if waiting || cur_mtime != prev_mtime {
         return HbTick::Renew;
     }
     if now >= deadline {
@@ -482,20 +482,21 @@ mod tests {
     #[test]
     fn hb_tick_table() {
         let t0 = 1_000_000;
-        assert_eq!(hb_tick(1, 2, t0, t0 + 600, "0", 20, t0), HbTick::Renew);
-        assert_eq!(hb_tick(1, 2, t0 + 700, t0, "99", 20, t0 - 9999), HbTick::Renew, "grew, deadline past, fuse past wall → still renew");
-        assert_eq!(hb_tick(1, 1, t0, t0 + 10, "0", 20, t0), HbTick::Ok);
-        assert_eq!(hb_tick(1, 1, t0 + 10, t0 + 10, "0", 20, t0), HbTick::Lapse, "now at the deadline");
-        assert_eq!(hb_tick(1, 1, t0 + 11, t0 + 10, "0", 20, t0), HbTick::Lapse);
-        assert_eq!(hb_tick(1, 1, t0, t0 - 1, "99", 20, t0 - 9999), HbTick::Lapse, "lapse wins over thrash");
+        assert_eq!(hb_tick(1, 2, t0, t0 + 600, false, "0", 20, t0), HbTick::Renew);
+        assert_eq!(hb_tick(1, 2, t0 + 700, t0, false, "99", 20, t0 - 9999), HbTick::Renew, "grew, deadline past, fuse past wall → still renew");
+        assert_eq!(hb_tick(1, 1, t0, t0 + 10, false, "0", 20, t0), HbTick::Ok);
+        assert_eq!(hb_tick(1, 1, t0 + 700, t0 + 10, true, "99", 20, t0 - 9999), HbTick::Renew, "waiting on a harness slot: past the deadline, still trace → renew");
+        assert_eq!(hb_tick(1, 1, t0 + 10, t0 + 10, false, "0", 20, t0), HbTick::Lapse, "now at the deadline");
+        assert_eq!(hb_tick(1, 1, t0 + 11, t0 + 10, false, "0", 20, t0), HbTick::Lapse);
+        assert_eq!(hb_tick(1, 1, t0, t0 - 1, false, "99", 20, t0 - 9999), HbTick::Lapse, "lapse wins over thrash");
         let start = t0 - 20 * 60;
-        assert_eq!(hb_tick(1, 1, t0, t0 + 600, "20", 20, start), HbTick::Thrash);
-        assert_eq!(hb_tick(1, 1, t0, t0 + 600, "20", 20, t0 - 19 * 60), HbTick::Ok, "session just under the wall");
-        assert_eq!(hb_tick(1, 1, t0, t0 + 600, "5", 20, t0 - 30 * 60), HbTick::Ok, "fuse below the wall");
-        assert_eq!(hb_tick(1, 1, t0, t0 + 600, "?", 20, t0 - 30 * 60), HbTick::Ok, "probe failed never trips");
-        assert_eq!(hb_tick(1, 1, t0, t0 + 600, "gate", 20, t0 - 30 * 60), HbTick::Ok);
-        assert_eq!(hb_tick(1, 1, t0, t0 + 600, "43", 20, t0), HbTick::Ok, "old fuse, fresh session");
-        assert_eq!(hb_tick(1, 1, t0, t0 + 600, "43", 20, t0 - 21 * 60), HbTick::Thrash);
+        assert_eq!(hb_tick(1, 1, t0, t0 + 600, false, "20", 20, start), HbTick::Thrash);
+        assert_eq!(hb_tick(1, 1, t0, t0 + 600, false, "20", 20, t0 - 19 * 60), HbTick::Ok, "session just under the wall");
+        assert_eq!(hb_tick(1, 1, t0, t0 + 600, false, "5", 20, t0 - 30 * 60), HbTick::Ok, "fuse below the wall");
+        assert_eq!(hb_tick(1, 1, t0, t0 + 600, false, "?", 20, t0 - 30 * 60), HbTick::Ok, "probe failed never trips");
+        assert_eq!(hb_tick(1, 1, t0, t0 + 600, false, "gate", 20, t0 - 30 * 60), HbTick::Ok);
+        assert_eq!(hb_tick(1, 1, t0, t0 + 600, false, "43", 20, t0), HbTick::Ok, "old fuse, fresh session");
+        assert_eq!(hb_tick(1, 1, t0, t0 + 600, false, "43", 20, t0 - 21 * 60), HbTick::Thrash);
     }
 
     fn base() -> DispositionIn {

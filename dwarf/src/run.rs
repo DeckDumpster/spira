@@ -1412,7 +1412,9 @@ impl<'a> Run<'a> {
             self.log(&format!("{f}: waiting on cold-build slot ({why}): {l}"));
         };
         let stop = &self.stop;
+        let wait = stop.harness_waiting(util::now_epoch());
         let guard = adm::acquire_unless(&q, &seams, &mut say, &|| stop.signalled().is_some());
+        drop(wait);
         let Some(guard) = guard else {
             self.check_stop()?;
             return Ok(None);
