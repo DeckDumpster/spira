@@ -381,7 +381,7 @@ echo "cross-repo dedup — same ref, different repo: labels resolve to ONE incid
 # the caller declared.
 #
 # POSITIVE CONTROL: one filing with repo:brain creates a bead. A second filing of the same
-# title with repo:fixture-repo must find that bead and record a recurrence.
+# title with repo:fixture-repo must find that bead and leave exactly one open bead.
 _cross_title="cross repo dedup test"
 _cross_ref="incident:cross-repo-dedup-test"
 _cross_env() {
