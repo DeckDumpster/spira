@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=reconciler
+DOC=SPIRA_MAIN_HEALTH_FENCE_DEADLINE_SECS — seconds one main-health fence over a whole checkout of the landing ref may run before it is killed.
+SCHEMA=Batch-job hang guard for one main-health fence run over a whole checkout of the landing ref, not the 5 s call deadline (unit: seconds; integer; default 120). Fences run one after another, so two at this deadline plus the worktree add must stay under spira-reconciler.service TimeoutStartSec=300. Parsed as an integer by the reconciler, so it must not be empty.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_MAIN_HEALTH_FENCE_DEADLINE_SECS:=120}"
+SPIRA_CONF_DEFAULT_EOF

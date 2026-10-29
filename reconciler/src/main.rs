@@ -202,6 +202,7 @@ struct Config {
     disk_floor_pct: u32,
     grace_secs: u64,
     activation_grace_secs: u64,
+    fence_deadline_secs: u64,
     preflight_wall_secs: u64,
     now_secs: u64,
     now_iso: String,
@@ -260,6 +261,7 @@ impl Config {
             disk_floor_pct: cfg_parse::<u32>("SPIRA_DISK_FLOOR_PCT")?,
             grace_secs: cfg_parse::<u64>("SPIRA_RECONCILER_GRACE_SECS")?,
             activation_grace_secs: cfg_parse::<u64>("SPIRA_MAIN_HEALTH_ACTIVATION_GRACE_SECS")?,
+            fence_deadline_secs: cfg_parse::<u64>("SPIRA_MAIN_HEALTH_FENCE_DEADLINE_SECS")?,
             preflight_wall_secs: cfg_parse::<u64>("SPIRA_PREFLIGHT_WALL_SECS")?,
             now_secs: clock::now_secs(&seams.date),
             now_iso: clock::now_iso(&seams.date),
@@ -1533,28 +1535,49 @@ fn observe_main_health(cfg: &Config) -> Vec<Check> {
     }
     let mut checks: Vec<Check> = pending_check.into_iter().collect();
     for fence in base_fences(cfg, &tree_str, &sha).into_iter().filter(judged) {
-        // batch-job: a fence over a whole checkout of the landing ref runs as long as the lint does
-        let out = spira_config::bounded::bounded(&fence.program)
+        if let Some(raw) = cached(&cache, fence.class) {
+            checks.push(Check { key: format!("main-health:{}", fence.class), raw, remedy: Remedy::Escalate });
+            continue;
+        }
+        let started = std::time::Instant::now();
+        // batch-job: a fence over a whole checkout runs to SPIRA_MAIN_HEALTH_FENCE_DEADLINE_SECS (a hang guard), not the 5 s call deadline
+        let out = spira_config::bounded::bounded_for(&fence.program, &cfg.fence_deadline_secs.to_string())
             .args(&fence.args)
             .current_dir(&tree)
             .stdin(Stdio::null())
             .output();
+        let elapsed = started.elapsed().as_secs_f64();
         let log = paths::main_health_log(&cfg.spira_run, fence.class);
         let raw = match &out {
             Err(e) => RawStatus::Unobservable { reason: format!("{}: {}", fence.program, e) },
             Ok(o) if o.status.success() => RawStatus::Satisfied,
-            Ok(o) if o.status.code() == Some(1) => {
+            Ok(o) => {
                 let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
                 let _ = fs::write(&log, text);
-                RawStatus::Gap {
-                    desired: format!("{} passes on {}", fence.class, MAIN_REF),
-                    observed: format!("{} red at {} (output in {})", fence.class, sha, log.display()),
-                    since_hint: None,
+                match o.status.code() {
+                    Some(1) => RawStatus::Gap {
+                        desired: format!("{} passes on {}", fence.class, MAIN_REF),
+                        observed: format!("{} red at {} (output in {})", fence.class, sha, log.display()),
+                        since_hint: None,
+                    },
+                    Some(124) => RawStatus::Unobservable {
+                        reason: format!(
+                            "{} timed out on {}: killed at the {}s deadline (SPIRA_MAIN_HEALTH_FENCE_DEADLINE_SECS) after {:.1}s; output in {}",
+                            fence.class, sha, cfg.fence_deadline_secs, elapsed, log.display()
+                        ),
+                    },
+                    code => RawStatus::Unobservable {
+                        reason: format!(
+                            "{} {} on {} after {:.1}s; output in {}",
+                            fence.class,
+                            code.map_or("killed by a signal".to_string(), |c| format!("exit {}", c)),
+                            sha,
+                            elapsed,
+                            log.display()
+                        ),
+                    },
                 }
             }
-            Ok(o) => RawStatus::Unobservable {
-                reason: format!("{} exit {} on {}", fence.program, o.status.code().unwrap_or(-1), sha),
-            },
         };
         match &raw {
             RawStatus::Satisfied => {
@@ -2610,9 +2633,8 @@ mod tests {
         assert!(suspension_of(&d, "prod", "spira-other-prod.timer").is_none());
     }
 
-    #[test]
-    fn a_red_base_fence_is_a_gap_whose_output_lands_in_a_file_and_a_green_one_is_satisfied() {
-        let dir = scratch_dir("main-health");
+    fn main_health_repo(name: &str) -> (testkit::TempDir, std::path::PathBuf) {
+        let dir = scratch_dir(name);
         let repo = dir.join("repo");
         let git = |args: &[&str]| {
             let st = std::process::Command::new("git").arg("-C").arg(&repo).args(args).output().unwrap();
@@ -2626,22 +2648,102 @@ mod tests {
         git(&["update-ref", "refs/heads/local/main", "HEAD"]);
         let map = dir.join("repos");
         fs::write(&map, format!("spira|{}\n", repo.display())).unwrap();
-        let red = dir.join("red");
-        testkit::write_exe(&red, "#!/usr/bin/env bash\necho planted violation\nexit 1\n");
-        let green = dir.join("green");
-        testkit::write_exe(&green, "#!/usr/bin/env bash\nexit 0\n");
+        (dir, map)
+    }
+
+    fn stub(dir: &std::path::Path, name: &str, body: &str) -> String {
+        let p = dir.join(name);
+        testkit::write_exe(&p, &format!("#!/usr/bin/env bash\n{}\n", body));
+        p.to_string_lossy().to_string()
+    }
+
+    fn main_health_cfg(dir: &std::path::Path, map: std::path::PathBuf, lint: String, guard: String, deadline: u64) -> Config {
+        Config {
+            spira_run: dir.to_path_buf(),
+            repo_map: Some(map),
+            fence_deadline_secs: deadline,
+            seams: Seams { lint, guard, ..Seams::production() },
+            ..test_config()
+        }
+    }
+
+    fn main_health_by_key(cfg: &Config) -> std::collections::BTreeMap<String, RawStatus> {
+        observe_main_health(cfg).into_iter().map(|c| (c.key, c.raw)).collect()
+    }
+
+    #[test]
+    fn a_slow_guard_within_the_fence_deadline_is_satisfied_and_cached() {
+        let (dir, map) = main_health_repo("main-health-slow");
+        let cfg = main_health_cfg(&dir, map, stub(&dir, "green", "exit 0"), stub(&dir, "slow", "sleep 7; exit 0"), 15);
+        let by_key = main_health_by_key(&cfg);
+        assert_eq!(by_key["main-health:lifecycle-guard"], RawStatus::Satisfied);
+        let cache = fs::read_to_string(dir.join("main-health-verdicts.json")).unwrap();
+        assert!(cache.contains("lifecycle-guard"), "{}", cache);
+    }
+
+    #[test]
+    fn a_guard_killed_at_the_fence_deadline_is_unobservable_naming_the_deadline_the_elapsed_time_and_the_log() {
+        let (dir, map) = main_health_repo("main-health-hang");
+        let cfg = main_health_cfg(&dir, map, stub(&dir, "green", "exit 0"), stub(&dir, "hang", "echo partial; sleep 6; exit 0"), 2);
+        let by_key = main_health_by_key(&cfg);
+        let RawStatus::Unobservable { reason } = &by_key["main-health:lifecycle-guard"] else {
+            panic!("{:?}", by_key["main-health:lifecycle-guard"]);
+        };
+        assert!(reason.contains("2s"), "{}", reason);
+        assert!(reason.contains("SPIRA_MAIN_HEALTH_FENCE_DEADLINE_SECS"), "{}", reason);
+        let log = dir.join("main-health-lifecycle-guard.log");
+        assert!(reason.contains(&log.display().to_string()), "{}", reason);
+        let after = reason.split("after ").nth(1).expect("an elapsed figure");
+        let elapsed: f64 = after.split('s').next().unwrap().parse().expect("elapsed parses");
+        assert!(elapsed >= 2.0, "{}", reason);
+        assert!(fs::read_to_string(&log).unwrap().contains("partial"));
+        let cache = fs::read_to_string(dir.join("main-health-verdicts.json")).unwrap();
+        assert!(!cache.contains("lifecycle-guard"), "{}", cache);
+    }
+
+    #[test]
+    fn a_guard_that_dies_on_a_signal_or_exits_oddly_is_unobservable_with_its_output_in_the_log_and_uncached() {
+        for (name, body, says) in [("odd", "echo oddout; exit 3", "exit 3"), ("sig", "echo sigout; kill -9 $$", "exit 137")] {
+            let (dir, map) = main_health_repo(&format!("main-health-{}", name));
+            let cfg = main_health_cfg(&dir, map, stub(&dir, "green", "exit 0"), stub(&dir, name, body), 15);
+            let by_key = main_health_by_key(&cfg);
+            let RawStatus::Unobservable { reason } = &by_key["main-health:lifecycle-guard"] else {
+                panic!("{:?}", by_key["main-health:lifecycle-guard"]);
+            };
+            let log = dir.join("main-health-lifecycle-guard.log");
+            assert!(reason.contains(says) || reason.contains("signal"), "{}", reason);
+            assert!(reason.contains(&log.display().to_string()), "{}", reason);
+            assert!(fs::read_to_string(&log).unwrap().contains(&format!("{}out", &name[..3])));
+            assert!(!fs::read_to_string(dir.join("main-health-verdicts.json")).unwrap().contains("lifecycle-guard"));
+        }
+    }
+
+    #[test]
+    fn a_fence_already_judged_for_the_sha_is_not_run_again_while_another_is_unobservable() {
+        let (dir, map) = main_health_repo("main-health-reuse");
+        let first = main_health_cfg(&dir, map.clone(), stub(&dir, "green", "exit 0"), stub(&dir, "hang", "sleep 6"), 1);
+        assert_eq!(main_health_by_key(&first)["main-health:lint"], RawStatus::Satisfied);
+        let ran = dir.join("ran");
+        let tripwire = stub(&dir, "tripwire", &format!("touch {}; exit 0", ran.display()));
+        let second = main_health_cfg(&dir, map, tripwire, stub(&dir, "green2", "exit 0"), 15);
+        let by_key = main_health_by_key(&second);
+        assert!(!ran.exists(), "lint was judged for this sha and must not run again");
+        assert_eq!(by_key["main-health:lint"], RawStatus::Satisfied);
+        assert_eq!(by_key["main-health:lifecycle-guard"], RawStatus::Satisfied);
+    }
+
+    #[test]
+    fn a_red_base_fence_is_a_gap_whose_output_lands_in_a_file_and_a_green_one_is_satisfied() {
+        let (dir, map) = main_health_repo("main-health");
+        let red = stub(&dir, "red", "echo planted violation\nexit 1");
+        let green = stub(&dir, "green", "exit 0");
         let cfg = Config {
             spira_run: dir.to_path_buf(),
             repo_map: Some(map),
-            seams: Seams {
-                lint: green.to_string_lossy().to_string(),
-                guard: red.to_string_lossy().to_string(),
-                ..Seams::production()
-            },
+            seams: Seams { lint: green, guard: red, ..Seams::production() },
             ..test_config()
         };
-        let by_key: std::collections::BTreeMap<String, RawStatus> =
-            observe_main_health(&cfg).into_iter().map(|c| (c.key, c.raw)).collect();
+        let by_key = main_health_by_key(&cfg);
         assert_eq!(by_key["main-health:lint"], RawStatus::Satisfied);
         assert!(matches!(&by_key["main-health:lifecycle-guard"], RawStatus::Gap { observed, .. } if observed.contains("main-health-lifecycle-guard.log")));
         assert!(fs::read_to_string(dir.join("main-health-lifecycle-guard.log")).unwrap().contains("planted violation"));
@@ -2778,6 +2880,7 @@ mod tests {
             disk_floor_pct: 15,
             grace_secs: 300,
             activation_grace_secs: 1800,
+            fence_deadline_secs: 120,
             preflight_wall_secs: 240,
             now_secs: 0,
             now_iso: "2026-09-25T00:00:00Z".into(),

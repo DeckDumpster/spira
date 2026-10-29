@@ -298,6 +298,7 @@ reap_idle_secs = 21600
 reconciler_effect_passes = "2"
 reconciler_grace_secs = "300"
 main_health_activation_grace_secs = "1800"
+main_health_fence_deadline_secs = "120"
 reconciler_shadow_kinds = ""
 read_watch_budget_ms = 500
 read_watch_interval = 300
