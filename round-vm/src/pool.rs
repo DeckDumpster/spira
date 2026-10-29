@@ -1236,6 +1236,7 @@ mod tests {
             spawner: &sp,
         };
         let (first, _) = pl.acquire(&deps, None).unwrap();
+        pl.release(&first.handle, ProcId::current(), &f).unwrap();
         pl.provision_background(&f).unwrap();
         let ready = read_state(&pl.state_file())
             .unwrap()
@@ -1246,7 +1247,11 @@ mod tests {
         let (second, mode) = pl.acquire(&deps, None).unwrap();
         assert_eq!(mode, AcquireMode::Warm);
         assert_eq!(second, ready);
-        assert_eq!(sp.count(), 2, "one background provision per acquire");
+        assert_eq!(
+            sp.count(),
+            0,
+            "no warm spare is started beside a leased local VM"
+        );
         assert_eq!(
             fp.count("clone"),
             2,
@@ -1270,7 +1275,8 @@ mod tests {
             alarm: &alarm,
             spawner: &sp,
         };
-        pl.acquire(&deps, None).unwrap();
+        let (first, _) = pl.acquire(&deps, None).unwrap();
+        pl.release(&first.handle, ProcId::current(), &f).unwrap();
         pl.provision_background(&f).unwrap();
         let ready = read_state(&pl.state_file()).unwrap().ready.unwrap();
         fp.kill(&ready.handle);
@@ -1630,16 +1636,18 @@ mod tests {
 
         // Success ends the outage; the next one alarms anew.
         fp.heal();
-        pl.acquire(
-            &Deps {
-                factory: &g,
-                alarm: &alarm,
-                spawner: &sp,
-            },
-            None,
-        )
-        .unwrap();
+        let (healed, _) = pl
+            .acquire(
+                &Deps {
+                    factory: &g,
+                    alarm: &alarm,
+                    spawner: &sp,
+                },
+                None,
+            )
+            .unwrap();
         assert!(pl.status().unwrap().contains("outage: none"));
+        pl.release(&healed.handle, ProcId::current(), &g).unwrap();
         fp.fail(Step::Clone);
         pl.with_state(|s| s.provisioning = None).unwrap();
         pl.acquire(
@@ -1920,8 +1928,16 @@ mod tests {
         };
         let (first, _) = pl.acquire(&deps, Some(ProcId::current())).unwrap();
         pl.with_state(|s| s.provisioning = None).unwrap();
-        let (second, _) = pl.acquire(&deps, Some(ProcId::current())).unwrap();
-        assert_ne!(first.handle, second.handle);
+        let pl = Pool {
+            acquire_deadline: Duration::from_millis(200),
+            ..pl
+        };
+        let err = pl.acquire(&deps, Some(ProcId::current())).unwrap_err();
+        assert!(
+            err.contains("deadline"),
+            "with no EC2 a second acquire waits for the one local VM: {err}"
+        );
+        assert_eq!(fp.count("clone"), 1, "no second local VM was provisioned");
         assert!(fp.name(&first.handle).is_some());
         assert_eq!(fp.count("stop"), 0);
     }
@@ -1957,7 +1973,25 @@ mod tests {
         let me = ProcId::current();
         let (mine, _) = pl.acquire(&deps, Some(me)).unwrap();
         pl.with_state(|s| s.provisioning = None).unwrap();
-        let (theirs, _) = pl.acquire(&deps, None).unwrap();
+        let theirs = Vm {
+            handle: "888".into(),
+            addr: "10.0.0.88".into(),
+        };
+        fp.plant("888", "round-888");
+        pl.with_state(|s| {
+            s.leases.push(Lease {
+                vm: theirs.clone(),
+                owner: None,
+                since: 0,
+                holder: None,
+                held: false,
+                kept_at: 0,
+                pulling: None,
+                run: None,
+                pulled: false,
+            })
+        })
+        .unwrap();
         fp.plant("777", "round-777");
         pl.with_state(|s| {
             s.provisioning = Some(Provisioning {
@@ -2266,7 +2300,8 @@ mod tests {
             alarm: &alarm,
             spawner: &sp,
         };
-        pl.acquire(&deps, None).unwrap();
+        let (first, _) = pl.acquire(&deps, None).unwrap();
+        pl.release(&first.handle, ProcId::current(), &f).unwrap();
         pl.provision_background(&f).unwrap();
         let ready = pl.with_state(|s| s.ready.clone()).unwrap().unwrap();
         assert_eq!(
