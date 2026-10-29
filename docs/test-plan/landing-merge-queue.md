@@ -25,7 +25,7 @@ It reopens a bead only for a failure it can attribute to that branch: a gate fai
 - **harness or provision fault:** it reruns the workflow, within a retry budget
 - **red:** it replays the red suites per member to eject only the guilty member, and halves the batch when no single member is guilty
 
-All of this depends on the forge adapters (`forge.sh`, the broker, `pve.sh`). They must report `?` and never 0 when they cannot read an answer. They must also turn gh JSON into the one-line protocol exactly.
+All of this depends on the forge adapters (`forge.sh`, the broker). They must report `?` and never 0 when they cannot read an answer. They must also turn gh JSON into the one-line protocol exactly.
 
 ## 2. Use cases
 
@@ -104,7 +104,6 @@ Each use case is declared once, as the schema in docs/test-plan/README.md requir
 * `UC-landing-merge-queue-53` [T2] — bd's own gh:run gates behave as the harness expects: a gated bead leaves `ready`, and resolution is scoped to `metadata.repo`. *(tier: T2 contract; dim: ctr; where: on bd pin change)*
 * `UC-landing-merge-queue-54` [T1] — `forge.sh` maps gh JSON to the line protocol for every verb Spira consumes: check-status (`pending`/`green`/`red`/`harness_fault`/`provision_fault`, `red-suite:`, `head-sha:`), runs-active (`?` never 0), run-metadata (max activity), workflow-rerun (never `--failed`, cancels in-progress), and also pr-mergeability, pr-list-queue, batch-ci-status, queued-since, run-id and pr-number. *(tier: T1, a recorded-fixture contract; dim: ctr, fc; where: cert)*
 * `UC-landing-merge-queue-55` [T1] — The broker refuses verbs outside its policy table, and refuses czar-only verbs from any other rune, without calling gh. Shadow mode records CZAR-WOULD. Act mode executes and audits. The read verbs shape gh argv exactly. *(tier: T1 via cargo `#[test]`, plus T2 for one bash smoke; dim: fc, ctr; where: cert)*
-* `UC-landing-merge-queue-56` [T1] — `pve.sh` refuses to make an HTTP call when credentials or the CA are missing. It always passes `--cacert` and never `--insecure`, and routes each verb to its API path. *(dim: fc; where: cert)*
 * `UC-landing-merge-queue-57` [T2] — When a bead with a GitHub ref lands, its issue is commented (short SHA + link) and closed once, with a marker. An unlanded bead's issue is never closed. Backfill decides landed-ness by ancestry of `spira: land <id>`. The unlanded scan asks once, logs refusals, and marks issues already closed on the forge. *(dim: idem, fc, obs; where: batch)*
 
 ---
@@ -170,7 +169,6 @@ The **ci_secs** column is per file, from signals.tsv. Where one file covers seve
 | 53 | test-gh-run-gate::parts 1–2, 4 | integration / (7) | KEEP as a bd contract test, run on bd pin change; part 4 → T0 |
 | 54 | test-forge-check-status; test-forge-run-metadata; test-forge-runs-active | component / 5, 5, 4 | MERGE into one `test-forge-contract.sh` over recorded JSON (no git init; add env -i to runs-active); extend it to the untested verbs (gap G1) |
 | 55 | test-broker::(all); broker crate has no tests | component / 12 | DEMOTE-TO-T1 via cargo `#[test]` (policy table, intent serde, argv); keep one bash smoke; DELETE the "FAILS OPEN" tautology; SOURCE-GREP the conf/build greps → T0 allowlist lint |
-| 56 | test-pve::(all) | unit / 3 | KEEP; fix the vacuous control; assert the clone poll |
 | 57 | test-gh-issue-closeout::(all 12) | integration (server Dolt) / 33 | KEEP; switch to embedded testdb; stop copying all of spira/*.sh; fix case 4 (it passes on both branches) |
 
 ## 4. Duplicate clusters

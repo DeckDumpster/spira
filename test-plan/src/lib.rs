@@ -29,7 +29,9 @@ pub const MATRIX_API_VERSION: &str = "test-plan-matrix/v1";
 /// The cheapest tier that would catch a regression in a use case's behaviour —
 /// `docs/test-plan/README.md`'s own table. Spelled as the exact uppercase token every
 /// suite header and catalogue line already uses, so no rename table can drift from it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 pub enum Tier {
     T0,
     T1,
@@ -245,7 +247,10 @@ fn all_uc_ids(catalogues: &[LoadedCatalogue]) -> BTreeSet<&str> {
 
 /// A suite's `# covers:` naming a UC id no catalogue declares — the id was mistyped, or the
 /// catalogue entry was deleted out from under a live suite.
-pub fn unknown_uc_violations(catalogues: &[LoadedCatalogue], suites: &[SuiteCoverage]) -> Vec<String> {
+pub fn unknown_uc_violations(
+    catalogues: &[LoadedCatalogue],
+    suites: &[SuiteCoverage],
+) -> Vec<String> {
     let known = all_uc_ids(catalogues);
     let mut out = Vec::new();
     for s in suites {
@@ -275,9 +280,16 @@ pub fn orphan_violations(
         .filter_map(|uc| uc.uncovered.as_ref().map(|u| (uc.id.as_str(), u)))
         .collect();
 
+    // A use case the current catalogue no longer declares was deleted with its cover: the
+    // deletion is the plan change, not an orphan.
+    let declared_now: BTreeSet<&str> = catalogues
+        .iter()
+        .flat_map(|lc| lc.catalogue.use_case.iter())
+        .map(|uc| uc.id.as_str())
+        .collect();
     let mut out = Vec::new();
     for id in covered_prev.difference(&covered_cur) {
-        if !uncovered_now.contains_key(id) {
+        if declared_now.contains(id) && !uncovered_now.contains_key(id) {
             out.push(format!(
                 "{id}: lost its last covering suite with no [use_case.uncovered] marker and no new cover in this commit"
             ));
@@ -290,7 +302,10 @@ pub fn orphan_violations(
 pub fn coverage_gaps(catalogues: &[LoadedCatalogue], suites: &[SuiteCoverage]) -> Vec<String> {
     let covered: BTreeSet<&str> = suites.iter().flat_map(|s| s.uc_ids()).collect();
     let mut out = Vec::new();
-    for uc in catalogues.iter().flat_map(|lc| lc.catalogue.use_case.iter()) {
+    for uc in catalogues
+        .iter()
+        .flat_map(|lc| lc.catalogue.use_case.iter())
+    {
         if !matches!(uc.tier, Tier::T0 | Tier::T1 | Tier::T2 | Tier::T3) {
             continue;
         }
@@ -311,7 +326,10 @@ pub fn coverage_gaps(catalogues: &[LoadedCatalogue], suites: &[SuiteCoverage]) -
 pub fn launcher_gaps(catalogues: &[LoadedCatalogue], suites: &[SuiteCoverage]) -> Vec<String> {
     let covered: BTreeSet<&str> = suites.iter().flat_map(|s| s.uc_ids()).collect();
     let mut out = Vec::new();
-    for uc in catalogues.iter().flat_map(|lc| lc.catalogue.use_case.iter()) {
+    for uc in catalogues
+        .iter()
+        .flat_map(|lc| lc.catalogue.use_case.iter())
+    {
         let Some(l) = &uc.launcher else { continue };
         if !covered.contains(uc.id.as_str()) {
             out.push(format!(
@@ -330,11 +348,17 @@ pub fn launcher_gaps(catalogues: &[LoadedCatalogue], suites: &[SuiteCoverage]) -
 /// launcher was moved or rewritten and the catalogue still names the old one.
 pub fn launcher_site_violations(catalogues: &[LoadedCatalogue], root: &Path) -> Vec<String> {
     let mut out = Vec::new();
-    for uc in catalogues.iter().flat_map(|lc| lc.catalogue.use_case.iter()) {
+    for uc in catalogues
+        .iter()
+        .flat_map(|lc| lc.catalogue.use_case.iter())
+    {
         let Some(l) = &uc.launcher else { continue };
         match std::fs::read_to_string(root.join(&l.site)) {
             Ok(t) if t.contains(&l.needle) => {}
-            Ok(_) => out.push(format!("{}: launcher site {} no longer contains {:?}", uc.id, l.site, l.needle)),
+            Ok(_) => out.push(format!(
+                "{}: launcher site {} no longer contains {:?}",
+                uc.id, l.site, l.needle
+            )),
             Err(e) => out.push(format!("{}: launcher site {}: {e}", uc.id, l.site)),
         }
     }
@@ -499,7 +523,11 @@ pub fn render_markdown(doc: &MatrixDoc) -> String {
                     .collect::<Vec<_>>()
                     .join("<br>")
             };
-            let gap = if uc.launcher.is_some() { "**LAUNCHER GAP**" } else { "**GAP**" };
+            let gap = if uc.launcher.is_some() {
+                "**LAUNCHER GAP**"
+            } else {
+                "**GAP**"
+            };
             let status = match &uc.uncovered {
                 Some(u) if uc.launcher.is_some() && uc.covering_suites.is_empty() => {
                     format!("{gap} — uncovered: {} ({}, {})", u.reason, u.date, u.bead)
@@ -544,7 +572,11 @@ mod tests {
     const LAUNCHER_CAT: &str = "api_version = \"test-plan/v1\"\narea = \"ops\"\n\n[[use_case]]\nid = \"UC-ops-01\"\ntier = \"T2\"\nstatement = \"starts\"\nlauncher = { site = \"a/b.rs\", needle = \"statusLine\" }\n\n[use_case.uncovered]\nreason = \"r\"\ndate = \"2026-10-06\"\nbead = \"sp-x\"\n";
 
     fn suite(covers: &[&str]) -> SuiteCoverage {
-        SuiteCoverage { path: "spira/test-a.sh".into(), tier: Some("T2".into()), covers: covers.iter().map(|c| c.to_string()).collect() }
+        SuiteCoverage {
+            path: "spira/test-a.sh".into(),
+            tier: Some("T2".into()),
+            covers: covers.iter().map(|c| c.to_string()).collect(),
+        }
     }
 
     #[test]
@@ -563,7 +595,10 @@ mod tests {
         let cats = [lc("ops", LAUNCHER_CAT)];
         let gaps = launcher_gaps(&cats, &[suite(&["spira/x.sh"])]);
         assert_eq!(gaps.len(), 1, "{gaps:?}");
-        assert!(gaps[0].contains("UC-ops-01") && gaps[0].contains("a/b.rs"), "{gaps:?}");
+        assert!(
+            gaps[0].contains("UC-ops-01") && gaps[0].contains("a/b.rs"),
+            "{gaps:?}"
+        );
         assert!(launcher_gaps(&cats, &[suite(&["UC-ops-01"])]).is_empty());
         let md = render_markdown(&build_matrix(&cats, &[], &BTreeMap::new()));
         assert!(md.contains("**LAUNCHER GAP**"), "{md}");
@@ -595,10 +630,9 @@ mod tests {
 
     #[test]
     fn unknown_field_names_its_path() {
-        let err = parse_catalogue(
-            "api_version = \"test-plan/v1\"\narea = \"dispatch\"\nbogus = 1\n",
-        )
-        .unwrap_err();
+        let err =
+            parse_catalogue("api_version = \"test-plan/v1\"\narea = \"dispatch\"\nbogus = 1\n")
+                .unwrap_err();
         assert!(err.starts_with("bogus"), "{err}");
     }
 
