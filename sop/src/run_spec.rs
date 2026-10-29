@@ -41,6 +41,11 @@ fn arg_faults(arg: &str) -> Option<String> {
     None
 }
 
+/// An unusable `RUN:` still counts: it must reach the caller so its fault gets named.
+pub fn declares_run(text: &str) -> bool {
+    !matches!(parse(text), Ok(None))
+}
+
 /// `Ok(None)` when the SOP declares no `RUN:`; `Err` names the first rule it breaks.
 pub fn parse(text: &str) -> Result<Option<RunSpec>, String> {
     let Some(line) = field_value(text, "RUN") else {

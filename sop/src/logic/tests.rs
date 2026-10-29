@@ -172,6 +172,17 @@ fn match_refuses_on_an_unreadable_shelf() {
     assert!(r.out.is_empty());
 }
 
+#[test]
+fn match_reports_whether_a_sop_declares_run_in_column_four() {
+    let bd = FakeBd::default();
+    bd.seed("sop-runs", "MATCH: FAIL\nSYMPTOM: sym-a\nCHECK: c\nFIX: f\nRUN: recert --batch {batch}\nDEADLINE: 60");
+    bd.seed("sop-plain", "MATCH: FAIL\nSYMPTOM: sym-b\nCHECK: c\nFIX: f");
+    let r = match_cmd(&bd, "FAIL here");
+    let cols = |key: &str| r.out.iter().find(|l| l.starts_with(key)).unwrap().split('\t').map(str::to_string).collect::<Vec<_>>();
+    assert_eq!((cols("sop-runs")[3].as_str(), cols("sop-runs")[4].as_str()), ("run", "sym-a"));
+    assert_eq!((cols("sop-plain")[3].as_str(), cols("sop-plain")[4].as_str()), ("-", "sym-b"));
+}
+
 // ───────────────────────────── applied ─────────────────────────────
 
 fn applied_args<'a>(key: &'a str, bead: Option<&'a str>, check: &'a str, held: &'a str) -> AppliedArgs<'a> {

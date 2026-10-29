@@ -160,4 +160,5 @@ release's `bin/`; arguments are split on whitespace, never shell, and may carry 
 `{batch}` and `{repo}`, filled from the incident. `validate` (so `write` and `lint`) refuses a
 path, a shell character, an unknown field, a missing or out-of-range deadline, and a `RUN`
 without a `MATCH:` line (a key-token match is too weak to run a tool on). The grammar lives in
-`run_spec.rs`; `watchd` calls the same parser.
+`run_spec.rs`; `watchd` calls the same parser. `match` reports RUN presence in column 4
+(`run` or `-`), so a caller can tell runnable matches from runbooks without a `show` each.

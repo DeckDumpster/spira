@@ -3,7 +3,7 @@
 //! line saying what was tried.
 
 use crate::context::Context;
-use crate::ops::{Ops, Target, ToolRun};
+use crate::ops::{Ops, SopMatch, Target, ToolRun};
 use crate::paths;
 use sop::run_spec::{self, RunSpec};
 use std::collections::BTreeMap;
@@ -60,18 +60,29 @@ fn record_run(ctx: &Context, row: &str, mut live: Vec<String>, slug: &str, key: 
     let _ = std::fs::write(runs_file(ctx, row), live.join("\n") + "\n");
 }
 
-fn runnable(ops: &dyn Ops, payload: &str) -> Result<(String, RunSpec), Verdict> {
-    let slugs = ops.sop_match(payload).map_err(|e| Verdict::Escalate(Some(format!("sop match could not decide: {e}"))))?;
-    let slug = match slugs.as_slice() {
-        [] => return Err(Verdict::Escalate(None)),
-        [one] => one.clone(),
-        many => return Err(Verdict::Escalate(Some(format!("several SOPs match ({}); none was run", many.join(", "))))),
+fn tried(note: String, runbooks: &[String]) -> Verdict {
+    let pointers = if runbooks.is_empty() { String::new() } else { format!("; runbooks that matched: {}", runbooks.join(", ")) };
+    Verdict::Escalate(Some(format!("tried before escalating: {note}{pointers}")))
+}
+
+fn runnable(ops: &dyn Ops, payload: &str) -> Result<(String, RunSpec, Vec<String>), Verdict> {
+    let matches = ops.sop_match(payload).map_err(|e| tried(format!("sop match could not decide: {e}"), &[]))?;
+    let (runs, books): (Vec<SopMatch>, Vec<SopMatch>) = matches.into_iter().partition(|m| m.runs);
+    let runbooks: Vec<String> = books.into_iter().map(|m| m.slug).collect();
+    let slug = match runs.as_slice() {
+        [] if runbooks.is_empty() => return Err(Verdict::Escalate(None)),
+        [] => return Err(Verdict::Escalate(Some(format!("runbooks that matched: {}", runbooks.join(", "))))),
+        [one] => one.slug.clone(),
+        many => {
+            let names: Vec<&str> = many.iter().map(|m| m.slug.as_str()).collect();
+            return Err(tried(format!("several SOPs with a RUN: match ({}); none was run", names.join(", ")), &runbooks));
+        }
     };
-    let text = ops.sop_show(&slug).map_err(|e| Verdict::Escalate(Some(format!("{slug} matched but could not be read: {e}"))))?;
+    let text = ops.sop_show(&slug).map_err(|e| tried(format!("{slug} matched but could not be read: {e}"), &runbooks))?;
     match run_spec::parse(&text) {
-        Ok(Some(spec)) => Ok((slug, spec)),
-        Ok(None) => Err(Verdict::Escalate(Some(format!("{slug} matched but declares no RUN:")))),
-        Err(e) => Err(Verdict::Escalate(Some(format!("{slug} matched but its RUN: is unusable: {e}")))),
+        Ok(Some(spec)) => Ok((slug, spec, runbooks)),
+        Ok(None) => Err(tried(format!("{slug} matched but declares no RUN:"), &runbooks)),
+        Err(e) => Err(tried(format!("{slug} matched but its RUN: is unusable: {e}"), &runbooks)),
     }
 }
 
@@ -79,29 +90,29 @@ fn runnable(ops: &dyn Ops, payload: &str) -> Result<(String, RunSpec), Verdict> 
 pub fn attempt(ops: &dyn Ops, ctx: &Context, row: &str, key: &str, payload: &str) -> Verdict {
     let window = match ctx.notify_age() {
         Ok(w) => w,
-        Err(e) => return Verdict::Escalate(Some(e)),
+        Err(e) => return tried(e, &[]),
     };
-    let (slug, spec) = match runnable(ops, payload) {
+    let (slug, spec, runbooks) = match runnable(ops, payload) {
         Ok(found) => found,
         Err(v) => return v,
     };
     let fields = incident_fields(payload);
     let argv = match spec.argv(&fields) {
         Ok(a) => a,
-        Err(e) => return Verdict::Escalate(Some(format!("{slug} matched but {}: {e}", spec.program))),
+        Err(e) => return tried(format!("{slug} matched but {}: {e}", spec.program), &runbooks),
     };
     let ikey = crate::notify::fingerprint(key);
     let (ran, live) = runs_in_window(ctx, row, &slug, &ikey, window);
     if ran >= MAX_RUNS {
-        return Verdict::Escalate(Some(format!(
+        return tried(format!(
             "{slug} ({}) already ran {ran} times for this incident within {window}s; not running it again",
             spec.program
-        )));
+        ), &runbooks);
     }
     record_run(ctx, row, live, &slug, &ikey);
 
     let (passed, summary, output) = match ops.run_tool(&spec.program, &argv, spec.deadline_secs) {
-        ToolRun::Unavailable(why) => return Verdict::Escalate(Some(format!("{slug} names {}, which could not run: {why}", spec.program))),
+        ToolRun::Unavailable(why) => return tried(format!("{slug} names {}, which could not run: {why}", spec.program), &runbooks),
         ToolRun::Exited { code: 0, output } => (true, "exit 0".to_string(), output),
         ToolRun::Exited { code, output } => (false, format!("exit code {code}"), output),
         ToolRun::TimedOut { output } => (false, format!("timed out after {}s", spec.deadline_secs), output),
@@ -125,11 +136,11 @@ pub fn attempt(ops: &dyn Ops, ctx: &Context, row: &str, key: &str, payload: &str
         eprintln!("watchd: could not tell the Concierge {slug} failed: {e}");
     }
     if !passed {
-        return Verdict::Escalate(Some(format!("tried {slug}: `{}` {summary}", command.trim())));
+        return tried(format!("{slug}: `{}` {summary}", command.trim()), &runbooks);
     }
     match mailed {
         Ok(()) => Verdict::Handled,
-        Err(e) => Verdict::Escalate(Some(format!("tried {slug}: `{}` passed but the Concierge could not be told: {e}", command.trim()))),
+        Err(e) => tried(format!("{slug}: `{}` passed but the Concierge could not be told: {e}", command.trim()), &runbooks),
     }
 }
 
@@ -167,6 +178,8 @@ mod tests {
     fn fake(result: ToolRunFake) -> Fake {
         Fake { sops: vec![("sop-recert".into(), SOP.into())], tool_result: Some(result), ..Fake::default() }
     }
+
+    const PLAIN: &str = "MATCH: FAIL\nSYMPTOM: s\nCHECK: c\nFIX: f";
 
     const PAYLOAD: &str = "FAIL round batch=b42 ended with no verdict";
 
@@ -235,16 +248,31 @@ mod tests {
         let mut ops = fake(ToolRunFake::Exit(0, String::new()));
         ops.sops.push(("sop-other".into(), "MATCH: FAIL\nSYMPTOM: s\nCHECK: c\nFIX: f\nRUN: x\nDEADLINE: 5".into()));
         let Verdict::Escalate(Some(n)) = attempt(&ops, &c, "r", "k", PAYLOAD) else { panic!() };
-        assert!(n.contains("several SOPs") && n.contains("sop-other"), "{n}");
-
-        let ops = Fake { sops: vec![("sop-plain".into(), "MATCH: FAIL\nSYMPTOM: s\nCHECK: c\nFIX: f".into())], ..Fake::default() };
+        assert!(n.contains("several SOPs with a RUN: match (sop-recert, sop-other)"), "{n}");
+        ops.sops.push(("sop-third".into(), PLAIN.into()));
         let Verdict::Escalate(Some(n)) = attempt(&ops, &c, "r", "k", PAYLOAD) else { panic!() };
-        assert!(n.contains("declares no RUN"), "{n}");
+        assert!(n.contains("none was run; runbooks that matched: sop-third"), "{n}");
+        assert!(ops.tool_calls.borrow().is_empty());
+
+        let ops = Fake { sops: vec![("sop-plain".into(), PLAIN.into())], ..Fake::default() };
+        let Verdict::Escalate(Some(n)) = attempt(&ops, &c, "r", "k", PAYLOAD) else { panic!() };
+        assert!(n.contains("runbooks that matched: sop-plain") && !n.contains("tried"), "{n}");
 
         let ops = fake(ToolRunFake::Exit(0, String::new()));
         let Verdict::Escalate(Some(n)) = attempt(&ops, &c, "r", "k", "FAIL round without the field") else { panic!() };
         assert!(n.contains("batch"), "{n}");
         assert!(ops.tool_calls.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_runbook_with_no_run_does_not_block_the_one_runnable_match() {
+        let d = TempDir::new("watchd-sop");
+        let mut ops = fake(ToolRunFake::Exit(0, String::new()));
+        ops.sops.push(("sop-stale-worktree-ref-cleanup".into(), PLAIN.into()));
+        let v = attempt(&ops, &ctx(d.path().to_str().unwrap()), "rounds", "k", PAYLOAD);
+        assert!(matches!(v, Verdict::Handled));
+        assert_eq!(*ops.tool_calls.borrow(), vec![("recert".to_string(), vec!["--batch".to_string(), "b42".to_string()], 60)]);
+        assert_eq!(ops.concierge_mail.borrow().len(), 1);
     }
 
     #[test]

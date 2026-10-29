@@ -119,7 +119,8 @@ pub fn match_cmd(bd: &dyn Bd, payload: &str) -> Report {
     };
     let map = shelf::parse_or_empty(&raw);
     for hit in crate::match_sop::score(&map, payload) {
-        r.say(format!("{}\t{}\t{}\t{}", hit.key, hit.how, hit.score, hit.symptom));
+        let runs = if map.get(&hit.key).is_some_and(|v| crate::run_spec::declares_run(v)) { "run" } else { "-" };
+        r.say(format!("{}\t{}\t{}\t{}\t{}", hit.key, hit.how, hit.score, runs, hit.symptom));
     }
     r
 }
