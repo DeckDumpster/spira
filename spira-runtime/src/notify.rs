@@ -96,6 +96,18 @@ mod tests {
     }
 
     #[test]
+    fn a_full_socket_drops_the_kick_and_counts_it_without_blocking() {
+        let d = testkit::TempDir::new("notify-full");
+        let path = d.path().join("n.sock");
+        let _unread = UnixDatagram::bind(&path).unwrap();
+        let n = Notifier::new(path.to_str(), Some(3)).unwrap();
+        for _ in 0..20_000 {
+            n.kick();
+        }
+        assert!(n.kicks_dropped() > 0);
+    }
+
+    #[test]
     fn no_socket_means_no_send_and_no_watchdog_means_no_kick() {
         let n = Notifier::new(None, None).unwrap();
         n.ready();

@@ -91,15 +91,13 @@ impl Pool {
         let queued = Arc::new(AtomicUsize::new(0));
         for i in 0..workers.max(1) {
             let (rx, queued) = (rx.clone(), queued.clone());
-            let spawned = std::thread::Builder::new().name(format!("offload-{i}")).spawn(move || loop {
+            std::thread::Builder::new().name(format!("offload-{i}")).spawn(move || loop {
                 let job = rx.lock().unwrap_or_else(|e| e.into_inner()).recv();
                 let Ok(job) = job else { return };
                 queued.fetch_sub(1, Ordering::SeqCst);
                 job();
-            });
-            if let Err(e) = spawned {
-                eprintln!("runtime: cannot start offload worker {i}: {e}");
-            }
+            })
+            .expect("an offload worker thread starts");
         }
         Arc::new(Pool { tx, queued, cap })
     }
