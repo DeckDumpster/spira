@@ -181,7 +181,7 @@ async fn serve_over(d: &testkit::TempDir, journal: Arc<dyn Journal>, sink: Arc<M
     armed();
     let (tx, rx) = mpsc::channel(4);
     std::mem::forget(tx);
-    tokio::spawn(serve_with(engine, Arc::new(WallClock), Arc::new(Effects { heartbeat_url: String::new() }), 2, rx, ServeOpts::default()))
+    tokio::spawn(serve_with(engine, Arc::new(WallClock), Arc::new(Effects::default()), 2, rx, ServeOpts::default()))
 }
 
 #[tokio::test]
