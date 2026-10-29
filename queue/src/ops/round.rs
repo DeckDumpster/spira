@@ -1583,7 +1583,7 @@ fn batch_over_cap(results: &Path, rc: i32, err: &str) -> bool {
         .and_then(|t| {
             t.lines()
                 .filter_map(|l| l.split_once(' ').and_then(|(_, r)| r.strip_prefix("verdict ")))
-                .last()
+                .next_back()
                 .map(|v| v.trim().to_string())
         });
     verdict.as_deref() == Some("FAULT over-cap") || (matches!(rc, 124 | 137) && err.contains("OVER-CAP"))
@@ -2206,7 +2206,7 @@ fn certify_pass(
         let wt = worktree_of(&kv);
         let mut head = kv.get("head").unwrap_or("").to_string();
         if let Some(a) = attest {
-            let at = w.git.rev_parse(&path, a);
+            let at = w.git.rev_parse(path, a);
             let at_wt = w.git.rev_parse(&wt, "HEAD");
             if at.is_none() || at != at_wt {
                 w.err(format!("queue.sh {label}: --attest {a} is not the round worktree's head ({}) — refused", at_wt.unwrap_or_else(|| "<none>".into())));
@@ -2215,7 +2215,7 @@ fn certify_pass(
             head = at.unwrap_or_default();
             set(&mut kv, "head", &head);
         } else if let Some(r) = rehead {
-            let at = w.git.rev_parse(&path, r);
+            let at = w.git.rev_parse(path, r);
             let at_wt = w.git.rev_parse(&wt, "HEAD");
             if at.is_none() || at != at_wt {
                 w.err(format!("queue.sh {label}: --rehead {r} is not the round worktree's head ({}) — refused", at_wt.unwrap_or_else(|| "<none>".into())));
@@ -2224,7 +2224,7 @@ fn certify_pass(
             head = at.unwrap_or_default();
             set(&mut kv, "head", &head);
         } else {
-            match carry_mends(w, label, &c, &path, &wt, batch, &mut kv) {
+            match carry_mends(w, label, c, path, &wt, batch, &mut kv) {
                 Ok(Some(h)) => head = h,
                 Ok(None) => {}
                 Err(()) => return FAIL,
@@ -2238,15 +2238,15 @@ fn certify_pass(
         // certificate, after a lost reply) is completed without running the pass again: a
         // verified result is never redone (law-a-lost-verified-result-is-data-loss; r-auto-22).
         if phase_of(w, batch) == "green" {
-            if save(w, label, &c, &kv).is_err() {
+            if save(w, label, c, &kv).is_err() {
                 return FAIL;
             }
             let ran = kv.get("ran").and_then(|r| r.parse().ok()).unwrap_or(0);
             return finish_green(
                 w,
                 label,
-                &c,
-                &path,
+                c,
+                path,
                 batch,
                 &head,
                 &who,
@@ -2255,7 +2255,7 @@ fn certify_pass(
             );
         }
         let run_id = format!("{batch}-{}", w.clock.now());
-        let live = fs::read_to_string(handle_of(&c, batch))
+        let live = fs::read_to_string(handle_of(c, batch))
             .ok()
             .and_then(|t| t.trim().parse::<u32>().ok())
             .is_some_and(|p| w.scripts.pass_alive(p));
@@ -2276,12 +2276,12 @@ fn certify_pass(
             ));
             return FAIL;
         }
-        let _ = fs::remove_file(preempt_marker(&c, batch));
+        let _ = fs::remove_file(preempt_marker(c, batch));
         kv.remove("red");
-        if save(w, label, &c, &kv).is_err() {
+        if save(w, label, c, &kv).is_err() {
             return FAIL;
         }
-        mark_running(&c, batch);
+        mark_running(c, batch);
         (head, wt, run_id)
     };
 
@@ -2292,7 +2292,7 @@ fn certify_pass(
         build_s: 0,
     };
     if attest.is_none() && gate::own::declares_own_testenv(&wt) {
-        let results = rounds_dir(&c).join(format!("{batch}.results"));
+        let results = rounds_dir(c).join(format!("{batch}.results"));
         let _ = fs::remove_dir_all(&results);
         let _ = fs::create_dir_all(&results);
         let Some(entry) = gate::own::ci_entry(&wt) else {
@@ -2305,7 +2305,7 @@ fn certify_pass(
                 pass_verdict_event(w, batch, &Verdict::Incomplete(&bounded_text(&why)), false),
             );
             w.err(format!("queue.sh {label}: {why}; the round is not judged"));
-            return faulted_pass(w, label, &c, batch, &why);
+            return faulted_pass(w, label, c, batch, &why);
         };
         let began = w.clock.now();
         let out = w.scripts.repo_round_vm(
@@ -2314,10 +2314,10 @@ fn certify_pass(
             &entry,
             (batch, &c.r.name),
             c.s.round_wall_secs,
-            &handle_of(&c, batch),
+            &handle_of(c, batch),
         );
-        let _ = fs::remove_file(handle_of(&c, batch));
-        if preempt_marker(&c, batch).exists() {
+        let _ = fs::remove_file(handle_of(c, batch));
+        if preempt_marker(c, batch).exists() {
             w.out(format!("queue.sh {label}: round {batch} was preempted; its pass is recorded by `round preempt`"));
             return PREEMPTED;
         }
@@ -2351,18 +2351,18 @@ fn certify_pass(
             );
             let shown = tail(&format!("{}{}", out.out, out.err), 40);
             w.err(format!("queue.sh {label}: {why}; the round is not judged\n{shown}"));
-            return faulted_pass(w, label, &c, batch, &format!("{why}\n{shown}"));
+            return faulted_pass(w, label, c, batch, &format!("{why}\n{shown}"));
         }
     } else if attest.is_none() {
-        let results = rounds_dir(&c).join(format!("{batch}.results"));
+        let results = rounds_dir(c).join(format!("{batch}.results"));
         let _ = fs::remove_dir_all(&results);
         let Some(base) = c.r.landref.clone() else {
             w.err(format!("queue.sh {label}: cannot resolve the landing ref of {} — the round's lint has nothing to judge against", c.r.name));
             return FAIL;
         };
         let began = w.clock.now();
-        let _ = fs::create_dir_all(rounds_dir(&c));
-        let image = candidate_image(w, label, &c, &path, &wt, &head, batch);
+        let _ = fs::create_dir_all(rounds_dir(c));
+        let image = candidate_image(w, label, c, path, &wt, &head, batch);
         let image_id = match &image {
             Image::Candidate(id) => Some(id.clone()),
             _ => None,
@@ -2374,7 +2374,7 @@ fn certify_pass(
                 &base,
                 (batch, &c.r.name),
                 c.s.round_wall_secs,
-                &handle_of(&c, batch),
+                &handle_of(c, batch),
                 image_id.as_deref(),
             )
         };
@@ -2394,16 +2394,16 @@ fn certify_pass(
         let mut ami = AmiWait::default();
         while image_id.is_none()
             && stale_ami_cause(&out).is_some()
-            && !preempt_marker(&c, batch).exists()
-            && ami.step(w, label, &c)
+            && !preempt_marker(c, batch).exists()
+            && ami.step(w, label, c)
         {
             out = run_vm();
         }
-        let template_vm = fs::read_to_string(handle_of(&c, batch))
+        let template_vm = fs::read_to_string(handle_of(c, batch))
             .map(|h| h.trim().to_string())
             .unwrap_or_default();
-        let _ = fs::remove_file(handle_of(&c, batch));
-        if preempt_marker(&c, batch).exists() {
+        let _ = fs::remove_file(handle_of(c, batch));
+        if preempt_marker(c, batch).exists() {
             w.out(format!("queue.sh {label}: round {batch} was preempted; its pass is recorded by `round preempt`"));
             return PREEMPTED;
         }
@@ -2488,7 +2488,7 @@ fn certify_pass(
             );
             let shown = tail(&out.err, 20);
             w.err(format!("queue.sh {label}: {why}; the round is not judged\n{shown}"));
-            return faulted_pass(w, label, &c, batch, &format!("{why}\n{shown}"));
+            return faulted_pass(w, label, c, batch, &format!("{why}\n{shown}"));
         }
         reds.extend(
             found
@@ -2531,7 +2531,7 @@ fn certify_pass(
         return FAIL;
     }
     if !reds.is_empty() {
-        raise_unreported_reds(w, &c, batch, &kv, &reds);
+        raise_unreported_reds(w, c, batch, &kv, &reds);
         let recorded = (if reds != [BUILD_RED] {
             suites_started(w, batch, false)
         } else {
@@ -2541,20 +2541,20 @@ fn certify_pass(
         if let Err((rc, e)) = recorded {
             w.err(format!("queue.sh {label}: REFUSED — the red pass of round {batch} was not recorded on spira-lc (rc={rc}): {e}"));
             set_phase(w, &mut kv, "fault");
-            let _ = save(w, label, &c, &kv);
+            let _ = save(w, label, c, &kv);
             return FAULT;
         }
-        note_pass_end(&c, &pass_members(&c, batch), PassEnd::Judged);
+        note_pass_end(c, &pass_members(c, batch), PassEnd::Judged);
         kv.remove("over-cap");
         set(&mut kv, "red", &reds.join(","));
-        if save(w, label, &c, &kv).is_err() {
+        if save(w, label, c, &kv).is_err() {
             return FAIL;
         }
-        mark_running(&c, batch);
+        mark_running(c, batch);
         stage::discard_behind(
             w,
-            &c,
-            &path,
+            c,
+            path,
             batch,
             &format!("round {batch} went red: {}", reds.join(",")),
         );
@@ -2566,7 +2566,7 @@ fn certify_pass(
         w.err(verdict);
         w.out(format!("red={}", reds.join(",")));
         if reds.iter().any(|r| r == REPO_TESTENV_RED) {
-            let output = rounds_dir(&c)
+            let output = rounds_dir(c)
                 .join(format!("{batch}.results"))
                 .join(format!("{REPO_TESTENV_RED}.out"));
             w.out(format!("red-output={}", output.display()));
@@ -2576,7 +2576,7 @@ fn certify_pass(
 
     // The pass is the evidence: its certificate is written before the lifecycle is asked, so no
     // lost or refused reply can discard what the corpus proved.
-    if let Err(rc) = write_round_certificate(w, label, &c, &path, batch, &head, &who) {
+    if let Err(rc) = write_round_certificate(w, label, c, path, batch, &head, &who) {
         return rc;
     }
     let greened = suites_started(w, batch, false)
@@ -2587,18 +2587,18 @@ fn certify_pass(
         w.err(format!("queue.sh {label}: spira-lc refused the GREEN for {batch} (rc={rc}): {out} — the round certificate for {head} is kept; certify again to finish without re-running"));
         return FAIL;
     }
-    note_pass_end(&c, &pass_members(&c, batch), PassEnd::Judged);
+    note_pass_end(c, &pass_members(c, batch), PassEnd::Judged);
     kv.remove("over-cap");
     set(&mut kv, "ran", &ran.to_string());
-    if save(w, label, &c, &kv).is_err() {
+    if save(w, label, c, &kv).is_err() {
         return FAIL;
     }
     let wall = timings.suites_s + timings.build_s;
     finish_green(
         w,
         label,
-        &c,
-        &path,
+        c,
+        path,
         batch,
         &head,
         &who,
