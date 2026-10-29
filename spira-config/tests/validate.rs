@@ -117,8 +117,11 @@ mod spira_section {
     }
 
     #[test]
-    fn bad_enum() {
-        let err = validate("[spira]\nid_prefix = \"sp\"\ncertify_suites = \"maybe\"\n").unwrap_err();
+    fn an_unknown_enum_value_is_dropped_with_a_warning_and_a_mistyped_one_errors() {
+        let (doc, w) = spira_config::validate_with_warnings("[spira]\nid_prefix = \"sp\"\ncertify_suites = \"maybe\"\n").unwrap();
+        assert!(w.iter().any(|m| m.starts_with("spira.certify_suites") && m.contains("maybe")), "{w:?}");
+        assert_eq!(doc.unknown_values["spira.certify_suites"], "maybe");
+        let err = validate("[spira]\nid_prefix = \"sp\"\ncertify_suites = 3\n").unwrap_err();
         assert!(err.starts_with("spira.certify_suites"), "{err}");
     }
 
@@ -380,8 +383,8 @@ mod persona_section {
         let err = validate(
             "[persona.builder]\nmodel = \"claude-sonnet-5\"\nsystem_prompt = \"overwrite\"\n",
         )
-        .unwrap_err();
-        assert!(err.starts_with("persona.builder.system_prompt"), "{err}");
+        .unwrap();
+        assert_eq!(err.unknown_values["persona.builder.system_prompt"], "overwrite");
     }
 
     #[test]
