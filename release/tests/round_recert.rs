@@ -85,7 +85,7 @@ fn an_open_round_with_no_driver_gets_one_unit_and_a_second_call_starts_nothing()
     assert_eq!(runs.len(), 1, "{runs:?}");
     assert!(runs[0].contains("--unit=round-recert-r-1") && runs[0].contains("--collect") && runs[0].contains("--user"), "{runs:?}");
     assert!(runs[0].contains("--setenv=SPIRA_TOML=") && runs[0].contains("over.toml"), "{runs:?}");
-    assert!(runs[0].ends_with("--drive --batch r-1 --repo spira"), "{runs:?}");
+    assert!(runs[0].ends_with("round-recert --drive --batch r-1 --repo spira"), "{runs:?}");
     assert!(runs[0].contains(&format!("{}/bin/round-recert", f.release.canonicalize().unwrap().display())), "{runs:?}");
 
     let second = recert(&f, &["--batch", "r-1", "--repo", "spira"]);
@@ -184,4 +184,28 @@ fn a_unit_that_has_finished_is_not_a_driver_so_the_next_call_starts_a_new_one() 
     fs::write(f.state.join("active-round-recert-r-1"), "activating\n").unwrap();
     assert!(text(&recert(&f, &["--batch", "r-1", "--repo", "spira"])).contains("already running"));
     assert_eq!(lines(&f, "runs").len(), 2);
+}
+
+#[test]
+fn the_argv_the_unit_is_started_with_reaches_the_drive_mode_of_the_real_release_binary() {
+    let f = fixture("argv", Some("certifying"));
+    fs::copy(env!("CARGO_BIN_EXE_release"), f.release.join("bin/release")).unwrap();
+    recert(&f, &["--batch", "r-1", "--repo", "spira"]);
+    let run = lines(&f, "runs").remove(0);
+    let argv: Vec<&str> = run.split(' ').skip_while(|a| !a.ends_with("/bin/round-recert")).skip(1).collect();
+    assert_eq!(argv.first(), Some(&"round-recert"), "{run}");
+    let home = f.root.join("home");
+    let o = testkit::retry_busy(|| Command::new(f.release.join("bin/release")).env_clear().env("HOME", &home).env("SPIRA_TOML", &f.toml).args(&argv).output()).unwrap();
+    assert!(!text(&o).contains("unknown flag --drive"), "{}", text(&o));
+    assert!(text(&o).contains("round-recert: driving r-1"), "{}", text(&o));
+}
+
+#[test]
+fn a_unit_started_from_the_bare_round_recert_binary_drives_with_the_argv_it_was_given() {
+    let f = fixture("bare", Some("certifying"));
+    recert(&f, &["--batch", "r-1", "--repo", "spira"]);
+    let run = lines(&f, "runs").remove(0);
+    let argv: Vec<&str> = run.split(' ').skip_while(|a| !a.ends_with("/bin/round-recert")).skip(1).collect();
+    let o = recert(&f, &argv);
+    assert!(text(&o).contains("round-recert: driving r-1"), "{}", text(&o));
 }

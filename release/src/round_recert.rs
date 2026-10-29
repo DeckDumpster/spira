@@ -123,6 +123,7 @@ pub fn start(sys: &dyn Sys, l: &Launch, batch: &str, repo: &str) -> Result<Start
         "--quiet".into(),
         format!("--setenv=SPIRA_TOML={}", l.toml),
         l.exe.display().to_string(),
+        "round-recert".into(),
         "--drive".into(),
         "--batch".into(),
         batch.into(),
@@ -327,6 +328,29 @@ mod tests {
         let red = Fake { answers: RefCell::new(vec![out(Some(1), "round is RED")]), slept: RefCell::new(vec![]) };
         assert_eq!(queue(&red, &["certify", "r", "spira"], 1).code, Some(1));
         assert!(red.slept.borrow().is_empty());
+    }
+
+    struct Recorder(RefCell<Vec<(String, Vec<String>)>>);
+
+    impl Sys for Recorder {
+        fn exec(&self, prog: &str, args: &[String], _: u64) -> Out {
+            self.0.borrow_mut().push((prog.to_string(), args.to_vec()));
+            match prog {
+                "systemctl" => Out { code: Some(3), text: "inactive".into() },
+                _ => Out { code: Some(0), text: "batch_id=b\nphase=opened\n".into() },
+            }
+        }
+        fn sleep(&self, _: u64) {}
+    }
+
+    #[test]
+    fn the_unit_runs_the_round_recert_subcommand_of_the_release_binary() {
+        let rec = Recorder(RefCell::new(vec![]));
+        let l = Launch { exe: Path::new("/rel/bin/release"), toml: "t.toml" };
+        assert!(matches!(start(&rec, &l, "b", "r"), Ok(Started::Started(_))));
+        let calls = rec.0.borrow();
+        let run = calls.iter().find(|(p, _)| p == "systemd-run").expect("systemd-run was called");
+        assert!(run.1.join(" ").ends_with("/rel/bin/release round-recert --drive --batch b --repo r"), "{:?}", run.1);
     }
 
     #[test]
