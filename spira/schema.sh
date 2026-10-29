@@ -176,20 +176,17 @@ _probe() {
     local label="$1" err rc line; shift
     err="$(mktemp)"
     _PROBE_OUT="$(timeout "$SCHEMA_PROBE_DEADLINE" bd -C "$SPIRA_DB" "$@" 2>"$err")"; rc=$?
-    if [ "$rc" = 0 ]; then rm -f "$err"; return 0; fi
-    if [ "$rc" = 124 ]; then
-        _PROBE_MSG="cannot tell: $label timed out after ${SCHEMA_PROBE_DEADLINE}s"
-    else
-        line="$(grep -m1 '[^[:space:]]' "$err")"
-        _PROBE_MSG="cannot tell: $label: ${line:-exit $rc with no output}"
-    fi
-    rm -f "$err"
+    line="$(grep -m1 '[^[:space:]]' "$err")"; rm -f "$err"
+    [ "$rc" = 0 ] && return 0
+    if [ "$rc" = 124 ]; then _cannot "$label timed out after ${SCHEMA_PROBE_DEADLINE}s"
+    else _cannot "$label: ${line:-exit $rc with no output}"; fi
+}
+_cannot() {
+    _PROBE_MSG="cannot tell: $1"
     _SCHEMA_CANNOT="${_SCHEMA_CANNOT}${_SCHEMA_CANNOT:+
 }$_PROBE_MSG"
     return 1
 }
-_cannot() { _PROBE_MSG="cannot tell: $1"; _SCHEMA_CANNOT="${_SCHEMA_CANNOT}${_SCHEMA_CANNOT:+
-}$_PROBE_MSG"; return 1; }
 
 # <label> <sql> — sets _SCALAR.
 _sql_scalar() {

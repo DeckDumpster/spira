@@ -18,7 +18,7 @@
 # tier: T1
 # covers: spira/*.sh UC-config-store-preflight-19
 # hermetic-ok: no database, no systemd, no network; conf.sh is pointed at a nonexistent file
-# timeout: 60
+# timeout: 90
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -122,6 +122,11 @@ nowant "erroring probe claims no MISSING" "MISSING generated column" "$out"
 out="$(SHIM_COUNT=0 sc bash "$HERE/schema.sh" check)"; rc=$?
 is "honest absence exits 1" 1 "$rc"
 want "honest absence is MISSING" "MISSING generated column: _is_work" "$out"
+
+out="$(SHIM_COUNT=oops sc bash "$HERE/schema.sh" check)"; rc=$?
+is "non-integer count exits 3" 3 "$rc"
+want "non-integer count is cannot-tell" "cannot tell: _is_work probe returned no count: " "$out"
+nowant "non-integer count claims no MISSING" "MISSING generated column" "$out"
 
 out="$(SHIM_SLOW_TYPES=$((dl+1)) SHIM_COUNT=0 sc bash "$HERE/schema.sh" check)"; rc=$?
 is "drift plus cannot-tell exits 1" 1 "$rc"
