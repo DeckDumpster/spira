@@ -14,25 +14,11 @@ use runtime::ports::WallClock;
 use runtime::*;
 use spira_runtime::notify::Notifier;
 use spira_runtime::sink::OtlpSink;
-use spira_runtime::{open_engine, registrations, Effects, Settings};
+use spira_runtime::{open_engine, registrations, Effects};
 use tokio::sync::mpsc;
 
-fn settings(url: &str, run: &std::path::Path) -> Settings {
-    let get = |k: &str| -> std::result::Result<String, String> {
-        Ok(match k {
-            "SPIRA_RUNTIME_HEARTBEAT_URL" => url.to_string(),
-            "SPIRA_RUNTIME_HEARTBEAT_SECS" => "1".into(),
-            "SPIRA_RUNTIME_STALL_LIMIT" => "2".into(),
-            "SPIRA_RUN" => run.display().to_string(),
-            "SPIRA_LC_SOCKET" => "/unused".into(),
-            "SPIRA_RUNTIME_INBOX_KEEPER_SECS" | "SPIRA_CONCIERGE_INBOX_STALL" | "SPIRA_CONCIERGE_INBOX_BACKOFF" | "SPIRA_RUNTIME_ROUND_DUTY_SECS" | "SPIRA_ROUND_MIN" | "SPIRA_ROUND_MAX_OPEN" | "SPIRA_ROUND_DUE_REMIND" | "SPIRA_ROUND_IDLE_CUT" => "5".into(),
-            "SPIRA_QUEUE_DIR" | "SPIRA_REPO_MAP" | "SPIRA_CONCIERGE_INBOX" => "/unused".into(),
-            "SPIRA_HOME_REPO" => "spira".into(),
-            _ => return Err(k.to_string()),
-        })
-    };
-    Settings::from_lookup(&get).unwrap()
-}
+mod common;
+use common::settings;
 
 fn stub_endpoint() -> (String, Arc<AtomicUsize>) {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -64,8 +50,8 @@ async fn the_heartbeat_schedule_fires_and_pings_after_the_journal_advances() {
     let (url, hits) = stub_endpoint();
     let s = settings(&url, d.path());
     let journal: Arc<dyn Journal> = MemJournal::new();
-    let sink = Arc::new(OtlpSink(spira_otel::logs::LogSink::new(s.otel_dir(), "spira-runtime")));
-    let mut engine = open_engine(&s, journal.clone(), Arc::new(WallClock), Arc::new(NullMarker), sink, Arc::new(|| {}), vec![]).unwrap();
+    let sink = Arc::new(OtlpSink::new(spira_otel::logs::LogSink::new(s.otel_dir(), "spira-runtime"), 256));
+    let mut engine = open_engine(&s, journal.clone(), Arc::new(WallClock), Arc::new(NullMarker), sink, vec![]).unwrap();
     let (id, stream, kind) = Heartbeat::boot();
     engine.submit(id, stream, kind).unwrap();
     let (tx, rx) = mpsc::channel(4);
@@ -77,6 +63,10 @@ async fn the_heartbeat_schedule_fires_and_pings_after_the_journal_advances() {
     }
     assert!(hits.load(Ordering::SeqCst) >= 1, "the stub URL was never pinged");
     drop(tx);
+    let wrote = Instant::now() + Duration::from_secs(5);
+    while !spira_otel::logs::read_all(&s.otel_dir(), "spira-runtime").iter().any(|r| r.iter().any(|(n, _)| n == "effect.kind")) && Instant::now() < wrote { // clock-safe: cap on the wait for the log writer thread
+        tokio::time::sleep(Duration::from_millis(50)).await; // clock-safe: polls the collector file the writer thread fills
+    }
     host.abort();
     let recs = spira_otel::logs::read_all(&s.otel_dir(), "spira-runtime");
     let has = |k: &str, v: &str| recs.iter().any(|r| r.iter().any(|(n, val)| n == k && val["stringValue"] == v));
@@ -97,8 +87,8 @@ impl Handler for Hang {
     }
 }
 
-#[test]
-fn a_hung_loop_stops_kicking_the_watchdog() {
+#[tokio::test]
+async fn a_hung_loop_stops_kicking_the_watchdog() {
     let d = testkit::TempDir::new("svc-wd");
     let sock = d.path().join("notify.sock");
     let rx = UnixDatagram::bind(&sock).unwrap();
@@ -108,17 +98,26 @@ fn a_hung_loop_stops_kicking_the_watchdog() {
         let n = n.clone();
         Arc::new(move || n.kick())
     };
-    let mut e = open_engine(&s, MemJournal::new(), Arc::new(WallClock), Arc::new(NullMarker), Arc::new(NullSink), kick, vec![Registration::new("hang", Hang)]).unwrap();
+    let mut e = open_engine(&s, MemJournal::new(), Arc::new(WallClock), Arc::new(NullMarker), Arc::new(NullSink), vec![Registration::new("hang", Hang)]).unwrap();
     e.submit("ok1", "a", EventKind::new("anything", "")).unwrap();
     e.submit("h1", "b", EventKind::new("hang", "")).unwrap();
-    std::thread::spawn(move || {
-        let _ = e.run_until_idle();
-    });
-    rx.set_read_timeout(Some(Duration::from_millis(800))).unwrap();
-    let mut buf = [0u8; 16];
-    let n1 = rx.recv(&mut buf).expect("the loop kicked before it hung");
-    assert_eq!(&buf[..n1], b"WATCHDOG=1");
-    assert!(rx.recv(&mut buf).is_err(), "no kick comes from a loop stuck in a handler");
+    let (tx, srx) = mpsc::channel(1);
+    std::mem::forget(tx);
+    let opts = ServeOpts { kick: Some(kick), max_sleep_ms: n.max_sleep().map(|m| m.as_millis() as u64), ..ServeOpts::default() };
+    let host = tokio::spawn(serve_with(e, Arc::new(WallClock), Arc::new(Effects::default()), 2, srx, opts));
+    tokio::task::spawn_blocking(move || {
+        rx.set_read_timeout(Some(Duration::from_millis(400))).unwrap();
+        let mut buf = [0u8; 16];
+        let n1 = rx.recv(&mut buf).expect("the loop kicked before it hung");
+        assert_eq!(&buf[..n1], b"WATCHDOG=1");
+        std::thread::sleep(Duration::from_millis(400)); // clock-safe: lets the parked handler pass max_sleep
+        while rx.recv(&mut buf).is_ok() {}
+        rx.set_read_timeout(Some(Duration::from_millis(800))).unwrap();
+        assert!(rx.recv(&mut buf).is_err(), "no kick comes while a handler is parked");
+    })
+    .await
+    .unwrap();
+    host.abort();
 }
 
 /// A journal that refuses, as the store does, any append whose id starts with `bad`.
@@ -176,7 +175,7 @@ fn due_row(id: &str) -> ScheduleRow {
 
 async fn serve_over(d: &testkit::TempDir, journal: Arc<dyn Journal>, sink: Arc<MemSink>, armed: impl FnOnce()) -> tokio::task::JoinHandle<runtime::Result<()>> {
     let s = settings("", d.path());
-    let mut engine = open_engine(&s, journal, Arc::new(WallClock), Arc::new(NullMarker), sink, Arc::new(|| {}), vec![]).unwrap();
+    let mut engine = open_engine(&s, journal, Arc::new(WallClock), Arc::new(NullMarker), sink, vec![]).unwrap();
     let (id, stream, kind) = Heartbeat::boot();
     engine.submit(id, stream, kind).unwrap();
     armed();

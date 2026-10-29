@@ -139,3 +139,24 @@ fn exit_3_is_a_refusal_and_any_other_failure_is_a_fault() {
     let fault = runtime::socket::lc_call(&path, &["journal", "x"]).unwrap_err();
     assert!(!fault.is_refused() && fault.0 == "exit 2", "{fault:?}");
 }
+
+#[test]
+fn a_connect_to_a_socket_nobody_accepts_gives_up_within_the_deadline() {
+    let d = TempDir::new("lc-backlog");
+    let path = d.join("lc.sock");
+    let _listener = UnixListener::bind(&path).unwrap();
+    let mut held = vec![];
+    loop {
+        let s = socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None).unwrap();
+        s.set_nonblocking(true).unwrap();
+        if s.connect(&socket2::SockAddr::unix(&path).unwrap()).is_err() {
+            break;
+        }
+        held.push(s);
+        assert!(held.len() < 10_000, "the backlog never filled");
+    }
+    let began = std::time::Instant::now();
+    let e = runtime::socket::lc_call(&path, &["journal", "cursor"]).unwrap_err();
+    assert!(e.0.contains("not answering"), "{e}");
+    assert!(began.elapsed() < std::time::Duration::from_secs(6), "{:?}", began.elapsed());
+}

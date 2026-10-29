@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::event::*;
 use crate::journal::{Journal, Offset, Poison, ScheduleRow};
 use crate::marker::{Mark, Marker, NullMarker};
+use crate::offload::Busy;
 use crate::ports::Clock;
 use crate::scheduler::Scheduler;
 use crate::wide::{rss_kb, Fields, NullSink, Value, Wide, WideSink};
@@ -79,7 +80,7 @@ pub struct Engine {
     pending: BTreeMap<String, PendingEffect>,
     sink: Arc<dyn WideSink>,
     marker: Arc<dyn Marker>,
-    kick: Option<Arc<dyn Fn() + Send + Sync>>,
+    busy: Arc<Busy>,
     stall_limit: u32,
     suspects: BTreeMap<(EventId, String), u32>,
     attempts: BTreeMap<String, u32>,
@@ -123,7 +124,7 @@ impl Engine {
             pending: BTreeMap::new(),
             sink: Arc::new(NullSink),
             marker: Arc::new(NullMarker),
-            kick: None,
+            busy: Arc::new(Busy::default()),
             stall_limit: 2,
             suspects: BTreeMap::new(),
             attempts: BTreeMap::new(),
@@ -168,9 +169,13 @@ impl Engine {
         self
     }
 
-    /// Called by the dispatch loop between handler calls, never from another thread.
-    pub fn with_kick(mut self, kick: Arc<dyn Fn() + Send + Sync>) -> Self {
-        self.kick = Some(kick);
+    /// The probe the host reads to tell a parked handler from a turn waiting on I/O.
+    pub fn busy(&self) -> Arc<Busy> {
+        self.busy.clone()
+    }
+
+    pub fn with_busy(mut self, busy: Arc<Busy>) -> Self {
+        self.busy = busy;
         self
     }
 
@@ -320,11 +325,13 @@ impl Engine {
                 wide.set("stall.count", stalls);
             }
             self.marker.set(&Mark { event: ev.id.clone(), handler: name.clone(), stream: ev.stream.clone(), stalls })?;
+            self.busy.enter();
             let ctx = Ctx::with(ev.at, mix(self.seed, &[&ev.id.0, &name]), at.0, wide.clone());
             let began = Instant::now();
             let handler = &self.regs[i].handler;
             let view = &self.projection;
             let called = catch_unwind(AssertUnwindSafe(|| handler.handle(&ctx, view, ev)));
+            self.busy.exit();
             self.marker.clear()?;
             wide.set("duration_us", began.elapsed().as_micros() as u64);
             match called {
@@ -407,9 +414,6 @@ impl Engine {
                 }
                 self.cursor = off + 1;
                 *n += 1;
-                if let Some(k) = &self.kick {
-                    k();
-                }
             }
             if !full && !self.appended {
                 return Ok(());
@@ -441,7 +445,6 @@ impl Engine {
                 Ok(_) => self.appended = true,
                 Err(e) if e.is_refused() => {
                     self.quarantine(&ev, "scheduler", &e.0)?;
-                    eprintln!("runtime: schedule row {} quarantined, the journal refused its event: {}", row.id, e.0);
                 }
                 Err(e) => return Err(e),
             }

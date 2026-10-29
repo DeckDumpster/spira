@@ -8,6 +8,7 @@ description = "runtime — the event/handler contract, the Journal trait, the sc
 lifecycle = { path = "../lifecycle" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+socket2 = "0.6"
 tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
 
 [dev-dependencies]
