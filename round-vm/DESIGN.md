@@ -114,7 +114,9 @@ A `run` with `--round-batch` appends exactly one row to `$SPIRA_RUN/tsd/cert-pas
 it ends: repo, batch, pass (the batch's current pass), members, instance type, vcpus,
 where (`ec2`|`proxmox`), capacity wait (the lease), boot, build and suites seconds, verdict and a
 cause from the closed set `green, red-attributed, over-cap, vm-lost, infra, contention-flake`
-(exit 0, 1, 124, ssh lost or unreachable, else). A record that cannot be written ends a judged
+(exit 0, 1, 124, ssh lost or unreachable, else). Exit 124 also covers a testenv batch verdict
+`FAULT over-cap` (its own suite cap, VM-side exit 2): `run` prints one `OVER-CAP:` line naming the
+unreached suites and exits 124, whatever the remote exit was. A record that cannot be written ends a judged
 pass as exit 2 and records the batch's pass incomplete. A lane that is not `round-vm` writes the
 same row with `tsd-write pass --repo R --batch B --pass N --where W --cause C [...]`. A queue.forge batch's
 judged CI run (`queue verdict`: green, red or harness fault) writes the same row itself, once per run,
