@@ -23,12 +23,27 @@ pub use journal::{FaultyJournal, Journal, Lease, LeaseTable, MemJournal, Offset,
 pub use marker::{FileMarker, Mark, Marker, MemMarker, NullMarker};
 pub use wide::{Fields, MemSink, NullSink, Value, Wide, WideSink};
 
+/// `Refused` is deterministic (the journal looked and said no); `Fault` may clear on restart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Class {
+    Fault,
+    Refused,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuntimeError(pub String);
+pub struct RuntimeError(pub String, pub Class);
 
 impl RuntimeError {
     pub fn new(m: impl Into<String>) -> Self {
-        RuntimeError(m.into())
+        RuntimeError(m.into(), Class::Fault)
+    }
+
+    pub fn refused(m: impl Into<String>) -> Self {
+        RuntimeError(m.into(), Class::Refused)
+    }
+
+    pub fn is_refused(&self) -> bool {
+        self.1 == Class::Refused
     }
 }
 

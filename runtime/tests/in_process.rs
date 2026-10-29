@@ -29,3 +29,41 @@ mod conformance {
         schedule_rows_survive_restart_and_fire_once
     );
 }
+
+mod ids {
+    use runtime::heartbeat::Heartbeat;
+    use runtime::ports::VirtualClock;
+    use runtime::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn forty_heartbeats_keep_every_id_within_the_column_and_keep_firing() {
+        let journal = MemJournal::new();
+        let clock = VirtualClock::new(1_000);
+        let regs = vec![Heartbeat { interval_ms: 60_000, ping_deadline_ms: 1_000 }.registration()];
+        let mut e = Engine::open(journal.clone(), Arc::new(clock.clone()), regs, 0).unwrap();
+        let (id, stream, kind) = Heartbeat::boot();
+        e.submit(id, stream, kind).unwrap();
+        for _ in 0..40 {
+            e.run_until_idle().unwrap();
+            clock.advance(60_000);
+        }
+        let events = journal.read_from(0, 1000).unwrap();
+        let beats = events.iter().filter(|(_, ev)| ev.kind.tag == "heartbeat").count();
+        assert!(beats >= 40, "the beats keep firing: {beats}");
+        assert!(events.iter().all(|(_, ev)| ev.id.0.chars().count() <= EVENT_ID_MAX && ev.cause.as_ref().is_none_or(|c| c.0.chars().count() <= EVENT_ID_MAX)));
+        assert!(journal.pending_schedules().unwrap().iter().all(|r| r.id.chars().count() <= EVENT_ID_MAX));
+    }
+
+    #[test]
+    fn an_id_that_fits_is_unchanged_and_a_longer_one_is_fixed_width_and_stable() {
+        assert_eq!(derive_id("sched/heartbeat/boot/heartbeat/0".into()), "sched/heartbeat/boot/heartbeat/0");
+        let exact = "a".repeat(EVENT_ID_MAX);
+        assert_eq!(derive_id(exact.clone()), exact);
+        let long = "é".repeat(300);
+        let d = derive_id(long.clone());
+        assert_eq!(d.chars().count(), EVENT_ID_MAX - 1, "never the width the store truncates to");
+        assert_eq!(d, derive_id(long));
+        assert_ne!(d, derive_id("é".repeat(301)), "the hash covers the whole id");
+    }
+}

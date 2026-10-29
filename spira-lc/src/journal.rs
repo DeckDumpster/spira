@@ -25,6 +25,58 @@ fn number(v: &Value, k: &str) -> Result<u64, String> {
     v.get(k).and_then(Value::as_u64).ok_or_else(|| format!("journal: missing number {k}"))
 }
 
+/// Widths of the text columns, mirroring migrations/0030-runtime-journal.sql.
+const ID_MAX: usize = 255;
+const STREAM_MAX: usize = 128;
+const TAG_MAX: usize = 64;
+const HANDLER_MAX: usize = 128;
+
+fn text(v: &Value, k: &str) -> String {
+    v.get(k).and_then(Value::as_str).unwrap_or("").to_string()
+}
+
+fn chars(s: &str) -> usize {
+    s.chars().count()
+}
+
+/// The fields that name an event or row, so a message about it cannot lose them to a clip.
+fn describe(v: &Value) -> String {
+    let (id, stream, tag) = (text(v, "id"), text(v, "stream"), text(v.get("kind").unwrap_or(&Value::Null), "tag"));
+    let (cause, corr) = (text(v, "cause"), text(v, "correlation"));
+    format!(
+        "id={id} stream={stream} kind={tag} lengths={{id:{},stream:{},tag:{},cause:{},correlation:{}}}",
+        chars(&id),
+        chars(&stream),
+        chars(&tag),
+        chars(&cause),
+        chars(&corr)
+    )
+}
+
+fn check_widths(what: &str, id_column: &str, v: &Value) -> Result<(), String> {
+    let kind = v.get("kind").unwrap_or(&Value::Null);
+    let fields = [
+        (id_column, text(v, "id"), ID_MAX),
+        ("stream", text(v, "stream"), STREAM_MAX),
+        ("kind_tag", text(kind, "tag"), TAG_MAX),
+        ("cause", text(v, "cause"), ID_MAX),
+        ("correlation", text(v, "correlation"), ID_MAX),
+    ];
+    for (name, value, max) in fields {
+        if chars(&value) > max {
+            return Err(format!("journal: {what} refused: {name} is {} chars (max {max}); {}", chars(&value), describe(v)));
+        }
+    }
+    Ok(())
+}
+
+fn check_text(what: &str, name: &str, value: &str, max: usize) -> Result<(), String> {
+    match chars(value) {
+        n if n > max => Err(format!("journal: {what} refused: {name} is {n} chars (max {max}); {name}={value}")),
+        _ => Ok(()),
+    }
+}
+
 fn opt_lit(v: &Value, k: &str) -> String {
     v.get(k).and_then(Value::as_str).map_or("NULL".into(), lit)
 }
@@ -50,8 +102,9 @@ fn text_arg<'a>(arg: Option<&'a String>, what: &str) -> Result<&'a str, String> 
 
 pub fn append_sql(ev: &Value) -> Result<String, String> {
     let kind = ev.get("kind").ok_or("journal: event has no kind")?;
+    check_widths("append", "event_id", ev)?;
     Ok(format!(
-        "INSERT IGNORE INTO runtime_event (event_id, stream, kind_tag, kind_body, at, cause, correlation) VALUES ({}, {}, {}, {}, {}, {}, {})",
+        "INSERT INTO runtime_event (event_id, stream, kind_tag, kind_body, at, cause, correlation) VALUES ({}, {}, {}, {}, {}, {}, {}) ON DUPLICATE KEY UPDATE event_id = event_id",
         lit(field(ev, "id")?),
         lit(field(ev, "stream")?),
         lit(field(kind, "tag")?),
@@ -64,8 +117,9 @@ pub fn append_sql(ev: &Value) -> Result<String, String> {
 
 pub fn schedule_sql(row: &Value) -> Result<String, String> {
     let kind = row.get("kind").ok_or("journal: row has no kind")?;
+    check_widths("schedule", "row_id", row)?;
     Ok(format!(
-        "INSERT IGNORE INTO runtime_schedule (row_id, at, stream, kind_tag, kind_body, cause, correlation, fired) VALUES ({}, {}, {}, {}, {}, {}, {}, 0)",
+        "INSERT INTO runtime_schedule (row_id, at, stream, kind_tag, kind_body, cause, correlation, fired) VALUES ({}, {}, {}, {}, {}, {}, {}, 0) ON DUPLICATE KEY UPDATE row_id = row_id",
         lit(field(row, "id")?),
         number(row, "at")?,
         lit(field(row, "stream")?),
@@ -109,30 +163,37 @@ fn clip(sql: &str) -> String {
     }
 }
 
-fn failed(op: &str, sql: &str, e: DbError) -> String {
+fn failed(op: &str, sql: &str, subject: Option<&Value>, e: DbError) -> String {
     let DbError::CannotTell(m) = e;
-    format!("journal {op}: {m} — statement: {}", clip(sql))
+    let who = subject.map_or(String::new(), |v| format!(" [{}]", describe(v)));
+    format!("journal {op}: {m}{who} — statement: {}", clip(sql))
 }
 
-fn write(conn: &Conn, op: &str, sql: &str) -> Result<(), String> {
-    conn.append_event(sql).map_err(|e| failed(op, sql, e))
+fn write(conn: &Conn, op: &str, sql: &str, subject: Option<&Value>) -> Result<(), String> {
+    conn.append_event(sql).map_err(|e| failed(op, sql, subject, e))
 }
 
 fn read(conn: &Conn, op: &str, sql: &str) -> Result<Vec<Value>, String> {
-    conn.query(sql).map_err(|e| failed(op, sql, e))
+    conn.query(sql).map_err(|e| failed(op, sql, None, e))
 }
 
 fn run(args: &[String], conn: &Conn) -> Result<String, String> {
     let op = args.first().map(String::as_str).unwrap_or("");
-    let (read, write) = (|c: &Conn, s: &str| read(c, op, s), |c: &Conn, s: &str| write(c, op, s));
+    let (read, write) = (|c: &Conn, s: &str| read(c, op, s), |c: &Conn, s: &str, who: Option<&Value>| write(c, op, s, who));
     let a = |i: usize| args.get(i);
     match op {
         "append" => {
             let ev = parse(a(1), "event")?;
             let id = field(&ev, "id")?.to_string();
-            write(conn, &append_sql(&ev)?)?;
+            write(conn, &append_sql(&ev)?, Some(&ev))?;
             let rows = read(conn, &format!("SELECT seq FROM runtime_event WHERE event_id = {}", lit(&id)))?;
-            rows.first().map(|r| num(r, "seq").to_string()).ok_or_else(|| "journal: appended event not found".into())
+            match rows.first() {
+                Some(r) => Ok(num(r, "seq").to_string()),
+                None => {
+                    let warnings = read(conn, &format!("SELECT seq FROM runtime_event WHERE event_id = {}; SHOW WARNINGS", lit(&id))).map_or_else(|e| e, |w| Value::Array(w).to_string());
+                    Err(format!("journal: appended event not found; {}; warnings={warnings}", describe(&ev)))
+                }
+            }
         }
         "read" => {
             let (from, limit) = (arg_u64(a(1), "from")?, arg_u64(a(2), "limit")?.min(READ_MAX));
@@ -145,7 +206,9 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
         "applied" | "mark-applied" => {
             let (handler, id) = (text_arg(a(1), "handler")?, text_arg(a(2), "event id")?);
             if op == "mark-applied" {
-                write(conn, &format!("INSERT IGNORE INTO runtime_applied (handler, event_id) VALUES ({}, {})", lit(handler), lit(id)))?;
+                check_text("mark-applied", "handler", handler, HANDLER_MAX)?;
+                check_text("mark-applied", "event_id", id, ID_MAX)?;
+                write(conn, &format!("INSERT INTO runtime_applied (handler, event_id) VALUES ({}, {}) ON DUPLICATE KEY UPDATE handler = handler", lit(handler), lit(id)), None)?;
                 return Ok(String::new());
             }
             let rows = read(conn, &format!("SELECT 1 AS hit FROM runtime_applied WHERE handler = {} AND event_id = {}", lit(handler), lit(id)))?;
@@ -157,11 +220,12 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
         }
         "set-cursor" => {
             let next = arg_u64(a(1), "cursor")?;
-            write(conn, &format!("INSERT INTO runtime_cursor (id, `next`) VALUES (1, {next}) ON DUPLICATE KEY UPDATE `next` = {next}"))?;
+            write(conn, &format!("INSERT INTO runtime_cursor (id, `next`) VALUES (1, {next}) ON DUPLICATE KEY UPDATE `next` = {next}"), None)?;
             Ok(String::new())
         }
         "schedule" => {
-            write(conn, &schedule_sql(&parse(a(1), "schedule row")?)?)?;
+            let row = parse(a(1), "schedule row")?;
+            write(conn, &schedule_sql(&row)?, Some(&row))?;
             Ok(String::new())
         }
         "due" => {
@@ -176,20 +240,25 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
             Ok(Value::Array(rows.iter().map(row_of).collect()).to_string())
         }
         "mark-fired" => {
-            write(conn, &format!("UPDATE runtime_schedule SET fired = 1 WHERE row_id = {}", lit(text_arg(a(1), "row id")?)))?;
+            write(conn, &format!("UPDATE runtime_schedule SET fired = 1 WHERE row_id = {}", lit(text_arg(a(1), "row id")?)), None)?;
             Ok(String::new())
         }
         "poison" => {
             let p = parse(a(1), "poison")?;
+            let (stream, event, handler) = (field(&p, "stream")?, field(&p, "event")?, field(&p, "handler")?);
+            check_text("poison", "stream", stream, STREAM_MAX)?;
+            check_text("poison", "event_id", event, ID_MAX)?;
+            check_text("poison", "handler", handler, HANDLER_MAX)?;
             write(
                 conn,
                 &format!(
-                    "INSERT IGNORE INTO runtime_poison (stream, event_id, handler, message) VALUES ({}, {}, {}, {})",
-                    lit(field(&p, "stream")?),
-                    lit(field(&p, "event")?),
-                    lit(field(&p, "handler")?),
+                    "INSERT INTO runtime_poison (stream, event_id, handler, message) VALUES ({}, {}, {}, {}) ON DUPLICATE KEY UPDATE stream = stream",
+                    lit(stream),
+                    lit(event),
+                    lit(handler),
                     lit(field(&p, "message")?)
                 ),
+                None,
             )?;
             Ok(String::new())
         }
@@ -235,6 +304,27 @@ mod tests {
     fn a_nul_in_a_payload_is_refused_before_any_sql() {
         assert!(parse(Some(&"{\"a\":\"\0\"}".to_string()), "event").unwrap_err().contains("NUL"));
         assert!(text_arg(Some(&String::new()), "handler").is_err());
+    }
+
+    #[test]
+    fn an_over_length_id_is_refused_naming_the_event_its_fields_and_their_lengths() {
+        let id = "i".repeat(266);
+        let e = append_sql(&json!({"id": id, "stream": "runtime.heartbeat", "kind": {"tag": "heartbeat", "body": ""}, "at": 1, "cause": null, "correlation": "c"})).unwrap_err();
+        assert!(e.starts_with("journal: append refused: event_id is 266 chars (max 255);") && e.contains(&id) && e.contains("stream=runtime.heartbeat") && e.contains("kind=heartbeat") && e.contains("id:266,stream:17,tag:9"), "{e}");
+        let r = schedule_sql(&json!({"id": "r".repeat(260), "at": 1, "stream": "s", "kind": {"tag": "t", "body": ""}, "cause": null, "correlation": "c"})).unwrap_err();
+        assert!(r.contains("row_id is 260 chars (max 255)"), "{r}");
+        for (k, v) in [("stream", "s".repeat(129)), ("correlation", "c".repeat(256)), ("cause", "x".repeat(256))] {
+            let mut ev = ev();
+            ev[k] = json!(v);
+            assert!(append_sql(&ev).unwrap_err().contains(&format!("{k} is")), "{k}");
+        }
+        assert!(append_sql(&json!({"id": "i".repeat(255), "stream": "s".repeat(128), "kind": {"tag": "t".repeat(64), "body": ""}, "at": 1, "cause": null, "correlation": "c"})).is_ok(), "the limits themselves are accepted");
+    }
+
+    #[test]
+    fn no_write_swallows_a_conflict_but_ignore() {
+        let sql = append_sql(&ev()).unwrap();
+        assert!(!sql.contains("IGNORE") && sql.ends_with("ON DUPLICATE KEY UPDATE event_id = event_id"), "{sql}");
     }
 
     #[test]

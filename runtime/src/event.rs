@@ -15,6 +15,29 @@ pub struct StreamKey(pub String);
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct CorrelationId(pub String);
 
+/// The widest id the journal stores (`runtime_event.event_id`).
+pub const EVENT_ID_MAX: usize = 255;
+
+/// One short of the column, so no derived id is exactly `EVENT_ID_MAX` chars: that width
+/// marks a row the store truncated (migrations/0032).
+const KEPT: usize = EVENT_ID_MAX - 18;
+
+/// FNV-1a over `plain`, the digest `derive_id` appends.
+pub fn fnv1a(plain: &str) -> u64 {
+    plain.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3))
+}
+
+/// The id scheme's definition: an id that fits is itself, a longer one is its first 237
+/// chars, `#`, and 16 hex digits of the hash of the whole, so a chain of derivations stays
+/// fixed-width and an id already written derives to itself.
+pub fn derive_id(plain: String) -> String {
+    if plain.chars().count() <= EVENT_ID_MAX {
+        return plain;
+    }
+    let head: String = plain.chars().take(KEPT).collect();
+    format!("{head}#{:016x}", fnv1a(&plain))
+}
+
 pub type EventKindTag = &'static str;
 
 pub const EFFECT_REQUESTED: EventKindTag = "effect.requested";

@@ -10,6 +10,9 @@ use crate::event::*;
 use crate::journal::{Journal, Offset, Poison, ScheduleRow};
 use crate::{Result, RuntimeError};
 
+/// spira-lc's exit code for a request the journal looked at and refused.
+const REFUSED: i64 = 3;
+
 /// law-calls-have-deadlines: the service stops at 3 s, a client waits 5 s.
 const DEADLINE: Duration = Duration::from_secs(5);
 
@@ -56,10 +59,11 @@ pub fn lc_call(path: &std::path::Path, argv: &[&str]) -> Result<String> {
     let mut body = vec![0u8; len as usize];
     reader.read_exact(&mut body).map_err(|_| lost("truncated reply"))?;
     let body = String::from_utf8(body).map_err(|_| lost("non-utf8 reply"))?;
-    if code != 0 {
-        return Err(RuntimeError::new(body));
+    match code {
+        0 => Ok(body),
+        REFUSED => Err(RuntimeError::refused(body)),
+        _ => Err(RuntimeError::new(body)),
     }
-    Ok(body)
 }
 
 fn enc<T: serde::Serialize>(v: &T) -> Result<String> {
