@@ -196,7 +196,6 @@ impl Engine {
         self
     }
 
-    /// Restarts a handler call may stall through before its stream is quarantined.
     /// Read the journal for events other writers appended at most this often, when this engine
     /// appended nothing since the last read. 0, the default, reads on every pump.
     pub fn with_foreign_poll(mut self, ms: u64) -> Self {
@@ -204,6 +203,7 @@ impl Engine {
         self
     }
 
+    /// Restarts a handler call may stall through before its stream is quarantined.
     pub fn with_stall_limit(mut self, limit: u32) -> Self {
         self.stall_limit = limit;
         self
