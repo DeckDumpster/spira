@@ -338,8 +338,19 @@ pub fn index_rows(rows: Vec<ReadyRow>) -> HashMap<String, ReadyRow> {
 /// The `blocks` targets of a candidate. A `blocks` edge onto the candidate's own parent is read as
 /// parent-child: a container closes only when its children do, so it could never clear.
 pub fn blockers(r: &ReadyRow) -> Vec<String> {
-    let split_parent = r.parent.iter().filter(|_| r.labels.iter().any(|l| l == SPLIT_LABEL)).cloned();
-    split_parent.chain(declared_blockers(r)).collect()
+    let parent = r.parent.iter().filter(|p| !p.is_empty() && **p != r.id).cloned();
+    parent.chain(declared_blockers(r)).collect()
+}
+
+/// A parent that does not hold its child back: a container or rowless bead, or a coordination
+/// bead (READY, no tip) that itself waits on its children (sentinel open_children).
+fn parent_exempt(cand: &ReadyRow, parent: &str, lc: &HashMap<String, LifecycleRow>) -> bool {
+    match lc.get(parent) {
+        None => true,
+        Some(row) => {
+            row.state == BeadState::Ready && row.tip.is_none() && !cand.labels.iter().any(|l| l == SPLIT_LABEL)
+        }
+    }
 }
 
 fn declared_blockers(r: &ReadyRow) -> impl Iterator<Item = String> + '_ {
@@ -424,6 +435,9 @@ pub fn stack_plan(
     let mut stacked_max: Option<u32> = None;
     for bid in blockers(cand) {
         let rec = bd.get(&bid);
+        if cand.parent.as_deref() == Some(bid.as_str()) && parent_exempt(cand, &bid, lc) {
+            continue;
+        }
         let ok = match lc.get(&bid) {
             None => rec.is_some_and(rowless_blocker_done),
             Some(row) => {
@@ -936,7 +950,7 @@ mod tests {
     }
 
     #[test]
-    fn a_split_child_waits_for_its_parent_and_a_followup_does_not() {
+    fn a_split_child_and_a_followup_both_wait_for_an_unlanded_parent() {
         let (_, parent) = bdrec("P", "open", "task", "r");
         let mut split = row("P.1", 2, Some("P"), "t");
         split.labels = vec!["repo:r".into(), SPLIT_LABEL.into()];
@@ -944,9 +958,42 @@ mod tests {
         let bd: HashMap<_, _> = [("P".to_string(), parent)].into();
         let mut lc: HashMap<_, _> = [lcrow("P", BeadState::Rework, &[], 0), lcrow("P.1", BeadState::Ready, &[], 0), lcrow("P.2", BeadState::Ready, &[], 0)].into();
         assert_eq!(claimable(&split, &lc, &bd, 0), Verdict::Blocked("P".into()));
+        assert_eq!(claimable(&follow, &lc, &bd, 0), Verdict::Blocked("P".into()));
+        for st in [BeadState::Landed, BeadState::Done, BeadState::Superseded, BeadState::Dropped] {
+            lc.get_mut("P").unwrap().state = st;
+            assert_eq!(claimable(&split, &lc, &bd, 0), Verdict::Claimable { depth: 0 }, "{st:?}");
+            assert_eq!(claimable(&follow, &lc, &bd, 0), Verdict::Claimable { depth: 0 }, "{st:?}");
+        }
+    }
+
+    #[test]
+    fn a_tipless_ready_parent_is_a_coordination_bead_for_a_followup_but_not_a_split_child() {
+        let (_, parent) = bdrec("P", "open", "task", "r");
+        let mut split = row("P.1", 2, Some("P"), "t");
+        split.labels = vec!["repo:r".into(), SPLIT_LABEL.into()];
+        let follow = row("P.2", 2, Some("P"), "t");
+        let bd: HashMap<_, _> = [("P".to_string(), parent)].into();
+        let mut lc: HashMap<_, _> = [lcrow("P", BeadState::Ready, &[], 0), lcrow("P.1", BeadState::Ready, &[], 0), lcrow("P.2", BeadState::Ready, &[], 0)].into();
+        lc.get_mut("P").unwrap().tip = None;
         assert_eq!(claimable(&follow, &lc, &bd, 0), Verdict::Claimable { depth: 0 });
-        lc.get_mut("P").unwrap().state = BeadState::Landed;
-        assert_eq!(claimable(&split, &lc, &bd, 0), Verdict::Claimable { depth: 0 });
+        assert_eq!(claimable(&split, &lc, &bd, 0), Verdict::Blocked("P".into()));
+        lc.get_mut("P").unwrap().tip = Some("abc".into());
+        assert_eq!(claimable(&follow, &lc, &bd, 0), Verdict::Blocked("P".into()));
+    }
+
+    #[test]
+    fn a_child_of_an_open_epic_is_claimable_without_a_blocks_edge() {
+        let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0)].into();
+        let open: HashMap<_, _> = [bdrec("E", "open", "epic", "spira")].into();
+        assert_eq!(claimable(&row("B", 1, Some("E"), "t"), &lc, &open, 4), Verdict::Claimable { depth: 0 });
+    }
+
+    #[test]
+    fn a_child_of_a_certified_parent_in_its_repo_stacks_on_it() {
+        let bd: HashMap<_, _> = [bdrec("P", "open", "task", "spira")].into();
+        let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("P", BeadState::Certified, &[], 0)].into();
+        assert_eq!(claimable(&row("B", 1, Some("P"), "t"), &lc, &bd, 4), Verdict::Claimable { depth: 1 });
+        assert_eq!(claimable(&row("B", 1, Some("P"), "t"), &lc, &bd, 0), Verdict::Blocked("P".into()));
     }
 
     #[test]

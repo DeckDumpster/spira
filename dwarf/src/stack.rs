@@ -11,6 +11,7 @@ use crate::ports::Git;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Proposal {
     pub claimable: bool,
+    pub reason: Option<String>,
     pub stack: BTreeMap<String, String>,
     pub stack_depth: u32,
     pub stack_max_depth: u32,
@@ -30,7 +31,8 @@ pub fn parse_proposal(text: &str) -> Option<Proposal> {
         .unwrap_or_default();
     let stack_depth = v.get("stack_depth").and_then(|n| n.as_u64()).unwrap_or(0) as u32;
     let stack_max_depth = v.get("stack_max_depth").and_then(|n| n.as_u64()).unwrap_or(0) as u32;
-    Some(Proposal { claimable, stack, stack_depth, stack_max_depth })
+    let reason = v.get("reason").and_then(|r| r.as_str()).map(str::to_string);
+    Some(Proposal { claimable, reason, stack, stack_depth, stack_max_depth })
 }
 
 /// The two prerequisites (or "the landing ref" for the first merge in the chain) whose

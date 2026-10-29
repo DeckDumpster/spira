@@ -523,6 +523,10 @@ impl<'a> Run<'a> {
         let mut stacks = std::collections::BTreeMap::new();
         let (won, logs, unreachable) = claim::lc_claim_loop(ids, resumable, tier, who, |id| {
             let p = self.stack_proposal(id, who);
+            if let Some(reason) = p.reason.as_deref().filter(|r| !p.claimable && r.starts_with("Blocked")) {
+                self.log(&format!("{who}: {id} refused by spira-claim stack ({reason}), trying the next ranked candidate"));
+                return claim::LC_REFUSED;
+            }
             let rc = self.sdo(
                 "lc_claim_bead",
                 &s(&[id, &holder, &until, &stack::stack_json(&p.stack), &p.stack_depth.to_string(), &p.stack_max_depth.to_string(), &self.rune.name]),
