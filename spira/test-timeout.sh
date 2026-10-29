@@ -60,6 +60,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT; trap 'exit 143' INT TERM
 # (inherited here — this is the main suite shell, not under env -i), so SPIRA_RUN is
 # declared through tl_config rather than export.
 tl_config SPIRA_RUN="$TMP/run"
+ln -s "$HERE/conf.d" "$TMP/conf.d"; ln -s "$HERE/conf.toml.d" "$TMP/conf.toml.d"
 export SPIRA_HOME="$TMP" SPIRA_CONF="$TMP/no-such.conf"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"

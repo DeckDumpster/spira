@@ -37,6 +37,7 @@ lack() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1: did not want [$2] in [$3]";
 printf 'test-tsd.sh\n'
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
+ln -s "$HERE/conf.d" "$T/conf.d"; ln -s "$HERE/conf.toml.d" "$T/conf.toml.d"
 
 # ── tsd-write (law-absence-needs-a-positive-control: no binary, no suite) ──────────────────
 # tsd-write is the tree's own build, on the suite's PATH (sp-gypjk) — never built here.

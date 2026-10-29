@@ -20,6 +20,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 echo "test-tokens.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
+ln -s "$HERE/conf.d" "$TMP/conf.d"; ln -s "$HERE/conf.toml.d" "$TMP/conf.toml.d"
 RUN="$TMP/run"
 PROJ="$TMP/projects"
 mkdir -p "$RUN" "$PROJ"

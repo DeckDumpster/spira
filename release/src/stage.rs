@@ -229,7 +229,7 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
     for entry in fs::read_dir(&o.harness_spira).map_err(|e| format!("cannot read {}: {e}", o.harness_spira.display()))?.flatten() {
         let p = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-        if p.is_dir() && name == "conf.d" {
+        if p.is_dir() && (name == "conf.d" || name == "conf.toml.d") {
             let link = sh.join(&name);
             let _ = fs::remove_file(&link);
             std::os::unix::fs::symlink(&p, &link).map_err(|e| format!("cannot symlink {name}: {e}"))?;

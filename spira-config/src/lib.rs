@@ -674,19 +674,17 @@ pub fn json_schema_with(reg: &registry::Registry) -> schemars::schema::RootSchem
     root
 }
 
-/// A `[spira]` key dropped from `SpiraSection` whose presence in a live config must not
-/// break loading it. `validate` accepts these fields with a warning instead of the hard
-/// "unknown field" error a genuine typo gets.
+/// A `[spira]` key dropped from the registry whose presence in a live config must not
+/// break loading it. `validate` accepts these fields with a warning.
 pub struct RetiredKey {
     pub key: &'static str,
     pub bead: &'static str,
 }
 
-/// Removing a field from `SpiraSection` requires adding it here, or
-/// `retiring_a_key_requires_updating_the_history` (tests/validate.rs) fails: it diffs the
-/// schema's current field set against `schema/spira-key-history.txt`, the all-time set, and
-/// a key present in history but neither active nor listed here is reported as silently
-/// dropped.
+/// Removing a key from the registry requires adding it here, or the history test
+/// (tests/validate.rs) fails: it diffs the schema's field set against `spira/conf.key-history`,
+/// the all-time set, and a key present in history but neither active nor listed here is
+/// reported as silently dropped.
 pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     // Spira works the whole backlog continuously; there is no single goal bead (per Ryan,
     // 2026-09-30, sp-2f9sa). The id prefix it used to imply is its own key now: id_prefix.
@@ -1009,13 +1007,12 @@ pub fn require_id_prefix(doc: &SpiraToml) -> Result<(), String> {
 
 /// Like [`validate`], but returns one warning per [`RETIRED_SPIRA_KEYS`] member found under
 /// `[spira]` — naming the key and the bead that retired it — instead of silently dropping
-/// them. A key `SPIRA_CONF_KEYS`/`SpiraSection` never accepted still hard-errors: only
-/// listed retirements are stripped before the deserialize that would otherwise refuse them.
-/// A key this release does not know at all (a newer release wrote it) is warned and ignored,
-/// so a predecessor can read its successor's config; a malformed value of a known key still errors.
+/// them. A key this release does not know at all (a newer release wrote it) is warned and
+/// ignored, so a predecessor can read its successor's config; a malformed value of a known key
+/// still errors.
 ///
-/// A `[spira]` key's registry `MAX=` is enforced here too: this function deserializes the
-/// TOML directly and never runs the shipped schema against the document.
+/// A `[spira]` key's registry `MAX=` is enforced here too: the shipped schema is never run
+/// against the document.
 pub fn validate_with_warnings(text: &str) -> Result<(SpiraToml, Vec<String>), String> {
     validate_with(text, registry::for_process()?)
 }

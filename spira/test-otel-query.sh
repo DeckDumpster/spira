@@ -13,6 +13,7 @@ printf 'test-otel-query.sh\n'
 command -v duckdb >/dev/null 2>&1 || skip "duckdb is not on PATH"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
+ln -s "$HERE/conf.d" "$T/conf.d"; ln -s "$HERE/conf.toml.d" "$T/conf.toml.d"
 
 span() { # service verb caller start_s latency_ms response_bytes code
     printf '{"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"%s"}}]},"scopeSpans":[{"scope":{"name":"spira-otel"},"spans":[{"name":"%s","startTimeUnixNano":"%s","endTimeUnixNano":"%s","attributes":[{"key":"rpc.method","value":{"stringValue":"%s"}},{"key":"spira.caller","value":{"stringValue":"%s"}},{"key":"rpc.request.size","value":{"intValue":"10"}},{"key":"rpc.response.size","value":{"intValue":"%s"}}],"status":{"message":"","code":%s}}]}]}]}\n' \
