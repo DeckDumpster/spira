@@ -644,7 +644,7 @@ fn enact_refuses_retired_vocabulary_before_any_write() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(1));
     assert!(err.contains("\"aeon\" → \"dwarf\"") && err.contains("nothing written"), "{err}"); // ffx-ok
-    assert!(!err.contains("failed to write"), "{err}");
+    assert!(!err.contains("failed to write") && !err.contains("could not run bd"), "{err}");
 }
 
 #[test]
@@ -674,4 +674,13 @@ fn ffx_ok_passes_only_in_the_first_sentence() {
     assert!(String::from_utf8_lossy(&out.stdout).contains("DRY RUN"));
     let out = enact_dry(&repo, "newone", "Quote aeon here. Then more ffx-ok.", &["--dry-run"]); // ffx-ok
     assert_eq!(out.status.code(), Some(1));
+}
+
+#[test]
+fn enact_checks_every_line_and_the_sending_keys_phrase() {
+    let repo = fixture_repo("law-vocab-lines");
+    let out = enact_dry(&repo, "newone", "Fine first line ffx-ok.\nBut run sending_keys here.", &["--dry-run"]); // ffx-ok
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert!(err.contains("\"sending_keys\" → \"hel_keys\""), "{err}"); // ffx-ok
 }

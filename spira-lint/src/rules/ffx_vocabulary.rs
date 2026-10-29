@@ -303,7 +303,7 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
     #[test]
     fn replacement_answers_every_term() {
         for t in terms_in(ALL) {
-            assert_ne!(replacement(&t), "", "{t}");
+            assert_eq!(replacement(&t) == NO_REPLACEMENT, t == "magus", "{t}");
         }
         assert_eq!(replacement("aeon"), "dwarf");
         assert_eq!(replacement("Sin"), "Fenrir");
