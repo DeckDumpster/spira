@@ -21,11 +21,13 @@ lcb() {
 out="$(lcb drill)"; rc=$?
 wantrc "a drill deferred past its cap exits 0, not a unit failure" 0 $rc
 want "the deferral is reported" "DEFERRED past 0s, never ran" "$out"
-v="$RUN/lc-backup/d0/drill.verdict"
-[ -s "$v" ]; wantrc "the deferral is recorded as the drill verdict" 0 $?
+mkdir -p "$RUN/lc-backup/d0"; echo "lc-backup: drill ok — d0: 3 table(s) identical at abc" > "$RUN/lc-backup/d0/drill.verdict"
+out="$(lcb drill)"
+v="$RUN/lc-backup/d0/drill.deferred"
+[ -s "$v" ]; wantrc "the deferral is recorded" 0 $?
 want "the verdict says deferred" "DEFERRED" "$(cat "$v" 2>/dev/null)"
 
-SERVICE_RESULT=success bash "$HERE/lc-backup.sh" explain-drill >/dev/null 2>&1; wantrc "a deferred drill is not reported as a failed one" 0 $?
+want "the last proven restore is not overwritten by the deferral" "drill ok" "$(cat "$RUN/lc-backup/d0/drill.verdict")"
 
 timer="$HERE/../systemd/lc-backup-drill.timer"
 [ "$(grep -c '^OnCalendar=' "$timer")" -ge 2 ]; wantrc "the timer has a second slot that re-arms a deferred drill" 0 $?

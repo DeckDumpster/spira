@@ -279,7 +279,7 @@ _lcb_drill_busy() {
 _lcb_record_deferral() {
     local line db; line="$(cat)"; echo "$line"
     for db in $(_lcb_dbs); do
-        mkdir -p "$(dirname "$(_lcb_verdict "$db")")" && printf '%s\n' "$line" > "$(_lcb_verdict "$db")"
+        mkdir -p "$(dirname "$(_lcb_verdict "$db")")" && printf '%s\n' "$line" > "$(dirname "$(_lcb_verdict "$db")")/drill.deferred"
     done
 }
 
