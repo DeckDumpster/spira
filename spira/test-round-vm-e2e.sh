@@ -136,6 +136,7 @@ cat > "$TMP/fake-aws" <<'FAKEAWS'
 shift 2
 while [ "${1#--}" != "$1" ]; do case "$1" in --only-show-errors) shift;; *) shift 2;; esac; done
 echo "${AWS_SHARED_CREDENTIALS_FILE:-none}" >> "$HOME/aws-creds-seen"
+if [ "$2" = - ]; then exec cat "$HOME/fake-s3/${1#s3://}"; fi
 dst="$HOME/fake-s3/${2#s3://}"
 mkdir -p "$(dirname "$dst")"
 cat > "$dst"
