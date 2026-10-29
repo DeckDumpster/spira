@@ -6,6 +6,9 @@
 #   schema-apply.sh            apply; safe to re-run
 #   schema-apply.sh --dry-run  say what would change, change nothing
 #
+# Exit: 0 applied and verified, 1 statements failed or the store drifted, 3 embedded mode (nothing
+# applied), 4 applied but schema.sh check could not tell.
+#
 # WHY ONE HOME
 # ------------
 # Three of these live below bd, in Dolt, and that is deliberate (law-schema-over-code): an
@@ -133,4 +136,10 @@ if [ -n "$_FAILED" ]; then
     exit 1
 fi
 say "applied. verifying with schema.sh check"
-schema.sh check
+schema.sh check; _check_rc=$?
+case "$_check_rc" in
+    0) exit 0 ;;
+    3) say "applied, NOT verified — schema.sh check could not tell (above); this is not drift"
+       exit 4 ;;
+    *) exit "$_check_rc" ;;
+esac

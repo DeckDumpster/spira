@@ -163,8 +163,11 @@ else
     # must report that it ADDED things. Without it, the idempotence assertions below would
     # pass just as well against an apply that had quietly become a no-op on every store.
     o1="$(schema-apply.sh 2>&1)"; rc1=$?
-    [ "$rc1" = 0 ] && ok "apply succeeds on a bare store" \
-                   || bad "apply succeeds on a bare store" "exited $rc1: $o1"
+    case "$rc1" in
+        0) ok "apply succeeds on a bare store" ;;
+        4) bad "apply succeeds on a bare store" "could not tell, not drift: $o1" ;;
+        *) bad "apply succeeds on a bare store" "exited $rc1: $o1" ;;
+    esac
     want "and adds the generated column"    "_is_work"              "$o1"
     want "and adds the priority constraint" "spira_priority_range"  "$o1"
 

@@ -4,7 +4,7 @@
 # label, status or type literal.
 #
 #   schema.sh contract              the model, declared beside what the store actually reports
-#   schema.sh check                 exit non-zero when the store has drifted from the declaration
+#   schema.sh check                 0 matches, 1 drift, 3 cannot tell (a probe timed out or errored)
 #   schema.sh name <key>            one name, resolved; fails closed on an undeclared key
 #   schema.sh kinds|statuses|dims   the declared vocabularies, one per line
 #
@@ -164,9 +164,45 @@ schema_custom_types() {
 # is, so routing through it needs no path of our own — and a path of our own is one
 # operator's box baked into a repository meant to be cloned, which inventory.sh refuses and
 # test-conf.sh fails the gate on.
-_sql_scalar()     { timeout 5 bd -C "$SPIRA_DB" sql "$1" 2>/dev/null | sed -n '3p' | tr -d ' '; }
-_store_types()    { timeout 5 bd -C "$SPIRA_DB" config get types.custom 2>/dev/null | tail -1 | tr ',' '\n' | tr -d ' ' | grep -v '^$'; }
-_store_statuses() { timeout 5 bd -C "$SPIRA_DB" config get status.custom 2>/dev/null | tail -1 | tr ',' '\n' | tr -d ' ' | grep -v '^$'; }
+# Every probe is bounded by the one harness call deadline (law-calls-have-deadlines,
+# spira-config/src/bounded.rs CALL_TIMEOUT_SECS). `schema.sh probe-deadline` prints it.
+SCHEMA_PROBE_DEADLINE=5
+_SCHEMA_CANNOT=""
+
+# _probe <label> <bd args...> — sets _PROBE_OUT on success. A timeout or an error is
+# "cannot tell", never an empty answer a caller could read as absence
+# (law-a-failure-carries-its-own-explanation).
+_probe() {
+    local label="$1" err rc line; shift
+    err="$(mktemp)"
+    _PROBE_OUT="$(timeout "$SCHEMA_PROBE_DEADLINE" bd -C "$SPIRA_DB" "$@" 2>"$err")"; rc=$?
+    line="$(grep -m1 '[^[:space:]]' "$err")"; rm -f "$err"
+    [ "$rc" = 0 ] && return 0
+    if [ "$rc" = 124 ]; then _cannot "$label timed out after ${SCHEMA_PROBE_DEADLINE}s"
+    else _cannot "$label: ${line:-exit $rc with no output}"; fi
+}
+_cannot() {
+    _PROBE_MSG="cannot tell: $1"
+    _SCHEMA_CANNOT="${_SCHEMA_CANNOT}${_SCHEMA_CANNOT:+
+}$_PROBE_MSG"
+    return 1
+}
+
+# <label> <sql> — sets _SCALAR.
+_sql_scalar() {
+    local n
+    _probe "$1" sql "$2" || return 1
+    n="$(printf '%s\n' "$_PROBE_OUT" | sed -n '3p' | tr -d ' ')"
+    case "$n" in ''|*[!0-9]*)
+        _cannot "$1 returned no count: $(printf '%s\n' "$_PROBE_OUT" | grep -m1 '[^[:space:]]')"; return 1 ;;
+    esac
+    _SCALAR="$n"
+}
+# <label> <config key> — sets _STORE_LIST, one name per line.
+_store_list() {
+    _probe "$1" config get "$2" || return 1
+    _STORE_LIST="$(printf '%s\n' "$_PROBE_OUT" | tail -1 | tr ',' '\n' | tr -d ' ' | grep -v '^$' || true)"
+}
 
 schema_contract() {
     echo "KINDS — declared here; a kind is what a record IS and never changes"
@@ -190,8 +226,10 @@ schema_contract() {
     else echo "  (lib.sh unavailable)"; fi
     echo
     echo "STORE — what bd actually carries right now"
-    printf '  custom types:    %s\n' "$(_store_types | tr '\n' ' ')"
-    printf '  custom statuses: %s\n' "$(_store_statuses | tr '\n' ' ')"
+    if _store_list types.custom types.custom; then printf '  custom types:    %s\n' "$(printf '%s' "$_STORE_LIST" | tr '\n' ' ')"
+    else printf '  custom types:    schema: %s\n' "$_PROBE_MSG"; fi
+    if _store_list status.custom status.custom; then printf '  custom statuses: %s\n' "$(printf '%s' "$_STORE_LIST" | tr '\n' ' ')"
+    else printf '  custom statuses: schema: %s\n' "$_PROBE_MSG"; fi
 }
 
 # check — DECLARED vs REPORTED, with an exit code. This is the drift detector for everything
@@ -199,34 +237,47 @@ schema_contract() {
 # disappeared is worse than one never added, because every tool above it stopped guarding
 # what it no longer does.
 schema_check() {
-    local rc=0 want have x
-    want="$(schema_custom_types)"; have="$(_store_types)"
-    for x in $want; do
-        printf '%s\n' "$have" | grep -qx "$x" || { printf 'schema: MISSING custom type: %s\n' "$x" >&2; rc=1; }
-    done
-    for x in $have; do
-        printf '%s\n' "$want" | grep -qx "$x" || { printf 'schema: UNDECLARED custom type still registered: %s\n' "$x" >&2; rc=1; }
-    done
-    want="$(schema_statuses)"; have="$(_store_statuses)"
-    for x in $want; do
-        printf '%s\n' "$have" | grep -qx "$x" || { printf 'schema: MISSING custom status: %s\n' "$x" >&2; rc=1; }
-    done
+    local drift=0 want have x q
+    _SCHEMA_CANNOT=""
+    want="$(schema_custom_types)"
+    if _store_list types.custom types.custom; then
+        have="$_STORE_LIST"
+        for x in $want; do
+            printf '%s\n' "$have" | grep -qx "$x" || { printf 'schema: MISSING custom type: %s\n' "$x" >&2; drift=1; }
+        done
+        for x in $have; do
+            printf '%s\n' "$want" | grep -qx "$x" || { printf 'schema: UNDECLARED custom type still registered: %s\n' "$x" >&2; drift=1; }
+        done
+    fi
+    want="$(schema_statuses)"
+    if _store_list status.custom status.custom; then
+        have="$_STORE_LIST"
+        for x in $want; do
+            printf '%s\n' "$have" | grep -qx "$x" || { printf 'schema: MISSING custom status: %s\n' "$x" >&2; drift=1; }
+        done
+    fi
     # THE SUBSTRATE HALF. These live in Dolt, below bd, and a bd upgrade can carry a table
     # rewrite that does not bring them across. A constraint that silently disappeared is
     # worse than one never added, because every tool above it stopped guarding what it no
     # longer does — so its absence must be an ERROR here, not an omission.
-    local q
     q="select count(*) from information_schema.columns where table_name='issues' and column_name='_is_work';"
-    [ "$(_sql_scalar "$q")" = "1" ] || { printf 'schema: MISSING generated column: _is_work\n' >&2; rc=1; }
+    if _sql_scalar "_is_work probe" "$q"; then
+        [ "$_SCALAR" = "1" ] || { printf 'schema: MISSING generated column: _is_work\n' >&2; drift=1; }
+    fi
     q="select count(*) from information_schema.table_constraints where table_name='issues' and constraint_type='CHECK' and constraint_name='spira_priority_range';"
-    [ "$(_sql_scalar "$q")" = "1" ] || { printf 'schema: MISSING constraint: spira_priority_range\n' >&2; rc=1; }
-    [ "$rc" = 0 ] && echo "schema: store matches the declaration"
-    return "$rc"
+    if _sql_scalar "spira_priority_range probe" "$q"; then
+        [ "$_SCALAR" = "1" ] || { printf 'schema: MISSING constraint: spira_priority_range\n' >&2; drift=1; }
+    fi
+    [ -n "$_SCHEMA_CANNOT" ] && printf '%s\n' "$_SCHEMA_CANNOT" | sed 's/^/schema: /' >&2
+    [ "$drift" = 1 ] && return 1
+    [ -n "$_SCHEMA_CANNOT" ] && return 3
+    echo "schema: store matches the declaration"
 }
 
 case "${1:-contract}" in
     contract) schema_contract ;;
     check)    schema_check ;;
+    probe-deadline) printf '%s\n' "$SCHEMA_PROBE_DEADLINE" ;;
     name)     shift; schema_name "${1:-}" ;;
     default)  shift; schema_default "${1:-}" ;;
     type-of)  shift; schema_type_of "${1:-}" ;;
@@ -236,5 +287,5 @@ case "${1:-contract}" in
     dims)     schema_dims ;;
     names)    schema_names ;;
     custom-types) schema_custom_types ;;
-    *) printf 'usage: schema.sh [contract|check|name <key>|default <key>|type-of <kind>|kinds|work-types|statuses|dims|names|custom-types]\n' >&2; exit 2 ;;
+    *) printf 'usage: schema.sh [contract|check|probe-deadline|name <key>|default <key>|type-of <kind>|kinds|work-types|statuses|dims|names|custom-types]\n' >&2; exit 2 ;;
 esac
