@@ -8,4 +8,9 @@ slugs = [
   "law-a-watcher-runs-the-sop-before-it-pages",
   "law-a-failure-that-will-not-reproduce-is-a-fidelity-gap",
   "law-p0-express-preempts-lanes",
+  "law-a-test-that-flips-is-deleted",
+  "law-an-event-loop-never-blocks",
+  "law-a-reconciler-redrives-it-does-not-alarm",
+  "law-a-p0-in-spira-itself-is-built-by-hand",
+  "law-operator-asked-transcript-reads-are-observation",
 ]
