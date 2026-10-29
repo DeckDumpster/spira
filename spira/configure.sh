@@ -49,6 +49,8 @@
 #   CONFIGURE_OPERATED (0 = nobody reads escalations: doctor warns rather than fails).
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+# spira-config reads the key registry of the release this script ships in.
+export SPIRA_HOME="$HERE"
 
 # configure runs before install puts the release's bin/ on PATH: find spira-config in this tree's own release.
 if ! command -v spira-config >/dev/null 2>&1 && [ -x "$HERE/../bin/spira-config" ]; then
@@ -198,7 +200,7 @@ _init_args=(
 [ -n "$_maxlive" ] && _init_args+=(--max_live_dwarves "$_maxlive")
 [ -n "${CONFIGURE_OPERATED:-}" ] && _init_args+=(--operated "$CONFIGURE_OPERATED")
 mkdir -p "$(dirname "$_out")"
-SPIRA_HOME="$HERE" spira-config init "${_init_args[@]}" >/dev/null </dev/null \
+spira-config init "${_init_args[@]}" >/dev/null </dev/null \
     || { rm -f "$_out"; printf 'configure: ERROR: could not write %s\n' "$_out" >&2; exit 1; }
 [ -n "$_dolt" ] || spira-config set spira.dolt_data "" "$_out" >/dev/null \
     || { rm -f "$_out"; printf 'configure: ERROR: could not write dolt_data\n' >&2; exit 1; }
