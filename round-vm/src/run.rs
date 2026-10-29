@@ -2738,6 +2738,43 @@ mod tests {
         assert!(REMOTE_SCRIPT[fetch..build].contains("\nelse\n"), "cargo runs only in the miss branch");
     }
 
+    fn build_section() -> String {
+        let a = REMOTE_SCRIPT.find("art_tree=").unwrap();
+        let end = REMOTE_SCRIPT.find("echo \"round-vm: built the round in").unwrap();
+        let line_end = end + REMOTE_SCRIPT[end..].find('\n').unwrap();
+        REMOTE_SCRIPT[a..line_end].to_string()
+    }
+
+    #[test]
+    fn the_build_section_runs_cargo_once_per_tree_and_a_fake_cargo_that_fails_on_a_hit_is_never_run() {
+        let tmp = testkit::TempDir::new("art-e2e");
+        let bin = tmp.path().join("fakebin");
+        std::fs::create_dir_all(&bin).unwrap();
+        testkit::write_exe(bin.join("rustc"), "#!/bin/sh\nprintf 'rustc 1.99.0\\nrelease: 1.99.0\\ncommit-hash: deadbeef\\n'\n");
+        testkit::write_exe(bin.join("cargo"), &format!(
+            "#!/bin/sh\n[ ! -e {d}/hit-expected ] || {{ echo 'cargo ran on a hit' >&2; exit 99; }}\necho run >> {d}/cargo-runs\nmkdir -p {d}/round-work/target/release\n\
+             printf '#!/bin/sh\\necho one\\n' > {d}/round-work/target/release/one && chmod +x {d}/round-work/target/release/one\n", d = tmp.path().display()));
+        let body = format!(
+            "export PATH={bin}:$PATH SCCACHE_ERROR_LOG=/dev/null sccache_mode=test\n\
+             mkdir round-work && git -C round-work init -q && echo a > round-work/f && git -C round-work add f && git -C round-work commit -qm a\n\
+             section() {{\n{section}\n}}\n\
+             section; echo first=$?\n\
+             rm -rf round-work/target; touch hit-expected\n\
+             section; echo second=$?; round-work/target/release/one\n\
+             rm hit-expected; echo b > round-work/f && git -C round-work commit -qam b\n\
+             section; echo third=$?\n\
+             wc -l < cargo-runs",
+            bin = bin.display(), section = build_section());
+        let (ok, text) = art_sh(tmp.path(), &body);
+        assert!(ok, "{text}");
+        assert!(text.contains("first=0") && text.contains("second=0") && text.contains("third=0"), "{text}");
+        assert_eq!(text.matches("artifacts: stored").count(), 2, "{text}");
+        assert_eq!(text.matches("artifacts: hit").count(), 1, "{text}");
+        assert!(text.contains("used the stored build of this tree; cargo did not run"), "{text}");
+        assert!(!text.contains("cargo ran on a hit"), "{text}");
+        assert!(text.lines().any(|l| l.trim() == "2"), "cargo ran for the two trees, not the hit: {text}");
+    }
+
     fn start_sccache_fn() -> String {
         let a = REMOTE_SCRIPT.find("start_sccache() {").unwrap();
         let b = a + REMOTE_SCRIPT[a..].find("\n}\n").unwrap() + 3;
