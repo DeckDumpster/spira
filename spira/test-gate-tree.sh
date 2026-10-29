@@ -169,6 +169,7 @@ tl_config SPIRA_GATE_LOCK_WAIT=10
 # construction, however slowly either one starts.
 ARRIVALS="$TMP/sweep-arrivals"; : > "$ARRIVALS"
 printf '#!/bin/bash\necho "$$" >> %s\n' "$ARRIVALS" > "$SH/gate-sweep.sh"
+chmod 755 "$SH/gate-sweep.sh"
 LOCK1B="$RUN/worktree/.gate.$(basename "$REPO").$T1_KEY.lock"
 exec 8>"$LOCK1B"
 flock -x 8
