@@ -124,7 +124,7 @@ fn real_main() -> ExitCode {
             Some("hash-iter-output") => ("hash-iter-output", spira_lint::rules::hash_iter_output::render_allow),
             Some("config-key-registered") => ("config-key-registered", spira_lint::rules::config_key_registered::render_allow),
             Some("loop-blocking") => {
-                print!("{}", spira_lint::rules::loop_blocking::render_allow(&tree, "sp-vvow3v"));
+                print!("{}", spira_lint::rules::loop_blocking::render_allow(&tree, "sp-<bead>"));
                 return ExitCode::SUCCESS;
             }
             _ => {

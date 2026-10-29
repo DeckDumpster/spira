@@ -47,7 +47,7 @@ fn over(secs: f64) -> String {
     format!("call timeout of {secs}s is above the {CAP_SECS}s cap")
 }
 
-/// `Some(true)` per line that carries a `batch-job:` marker in a comment.
+/// Per line, whether a comment on it matches `marker`.
 pub(crate) fn marked_lines(src: &[u8], marker: &Regex, comment: impl Fn(usize) -> bool) -> Vec<bool> {
     let mut out = vec![false];
     let mut buf: Vec<u8> = Vec::new();

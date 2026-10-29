@@ -371,11 +371,32 @@ mod tests {
 
     #[test]
     fn the_real_handler_with_a_plant_is_caught() {
-        let real = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira-runtime/src/watchers/round_duty.rs"));
-        let Ok(real) = real else { return };
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../spira-runtime/src/watchers/round_duty.rs");
+        let real = std::fs::read_to_string(path).unwrap();
         assert!(run(&[(HANDLER, &real)], None).is_empty());
-        let planted = real.replacen("fn handle", "fn handle_x() { let _ = std::fs::read(\"/etc/hostname\"); }\nfn handle", 1);
+        let head = "fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {\n";
+        assert!(real.contains(head));
+        let planted = real.replacen(head, &format!("{head}        let _ = std::fs::read(\"/etc/hostname\");\n"), 1);
         assert_eq!(run(&[(HANDLER, &planted)], None).len(), 1);
+    }
+
+    #[test]
+    fn port_calls_are_judged_in_loop_modules_and_not_in_handlers() {
+        let calls = "fn go(engine: &mut E) {\n    engine.pump();\n    engine.tick();\n    engine.submit(a);\n    engine.complete(k, o);\n    let e = Engine::open(p);\n    let e = open_engine(s);\n    e.with_marker(m);\n    Settings::load();\n    Executor::submit(&mut e, a);\n}\n";
+        assert_eq!(run(&[("spira-runtime/src/notify.rs", calls)], None).len(), 9);
+        assert!(run(&[("runtime/src/heartbeat.rs", calls)], None).is_empty());
+    }
+
+    #[test]
+    fn the_known_main_offenders_are_flagged_at_their_lines() {
+        let host = "async fn serve_with(mut engine: Engine) {\n    engine.run_until_idle()?;\n    tokio::task::spawn_blocking(move || r.run());\n    engine.submit(a)?;\n    engine.complete(k, o)?;\n}\n";
+        let main = "use std::process;\nasync fn serve() {\n    let s = Settings::load()?;\n    let e = open_engine(&s)?;\n}\n";
+        let notify = "fn send(&self) {\n    let _ = self.sock.send_to_addr(b, d);\n    let l = self.last.lock().unwrap();\n}\n";
+        let got = run(&[("runtime/src/host.rs", host), ("spira-runtime/src/main.rs", main), ("spira-runtime/src/notify.rs", notify)], None);
+        for want in ["host.rs:2", "host.rs:3", "host.rs:4", "host.rs:5", "main.rs:3", "main.rs:4", "notify.rs:2", "notify.rs:3"] {
+            assert!(got.iter().any(|g| g.contains(want)), "{want} in {got:?}");
+        }
+        assert_eq!(got.len(), 8, "a `use` line is no call: {got:?}");
     }
 
     #[test]
