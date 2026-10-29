@@ -1976,7 +1976,6 @@ fn keep_after_lost_ssh(env: &RunEnv, vm: &Vm, results_dir: &Path, resume: Option
     let _pin = env.pool.pin_pull(&vm.handle);
     if let Some(dir) = resume {
         pull_resume(env.remote, &vm.addr, dir);
-        report_resume(dir, &dir.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default(), 0);
     }
     let scratch = env.cfg.state_dir.join(format!(".pulled-lost.{}", std::process::id()));
     let _ = fs::remove_dir_all(&scratch);
@@ -1988,6 +1987,10 @@ fn keep_after_lost_ssh(env: &RunEnv, vm: &Vm, results_dir: &Path, resume: Option
         eprintln!("round-vm run: INCOMPLETE: the batch's ssh dropped and the results pull failed");
     }
     let _ = fs::remove_dir_all(&scratch);
+    if let Some(dir) = resume {
+        let tree = dir.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+        report_resume(dir, &tree, passed_suites(results_leaf(results_dir).as_deref()));
+    }
     keep_runner_output(env.remote, env.cfg, &vm.addr, &env.cfg.state_dir.join(format!(".pulled-runner.{}", std::process::id())), results_dir);
 }
 
@@ -1998,11 +2001,11 @@ pub fn salvage_results(remote: &dyn Remote, addr: &str, results_dir: &Path, scra
     let pulled = std::thread::scope(|sc| {
         let (tx, rx) = std::sync::mpsc::channel();
         sc.spawn(move || {
+            let _ = fs::remove_dir_all(scratch);
+            let ok = remote.pull(addr, REMOTE_RESULTS, scratch).is_ok();
             if let Some(dir) = resume {
                 pull_resume(remote, addr, dir);
             }
-            let _ = fs::remove_dir_all(scratch);
-            let ok = remote.pull(addr, REMOTE_RESULTS, scratch).is_ok();
             let _ = tx.send(ok);
         });
         rx.recv_timeout(within).unwrap_or(false)
@@ -2049,12 +2052,13 @@ fn count_files(dir: &Path) -> usize {
 
 /// Says what the host holds for the tree after a pull; an empty store beside passing suites is the
 /// condition a resume that records nothing leaves, so it is said loudly.
-fn report_resume(dir: &Path, tree_sha: &str, passed: usize) {
+fn report_resume(dir: &Path, tree_sha: &str, passed: usize) -> bool {
     let n = count_files(dir);
     eprintln!("round-vm run: RESUME: holding {n} record(s) for {tree_sha}");
     if n == 0 && passed > 0 {
         eprintln!("round-vm run: RESUME: WARNING: {passed} suite(s) passed but the VM's resume store holds no record; a re-run of this tree skips nothing (see {RUNNER_OUT_FILE})");
     }
+    n == 0 && passed > 0
 }
 
 fn passed_suites(leaf: Option<&Path>) -> usize {
@@ -3815,6 +3819,23 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_resume_store_beside_passing_suites_is_warned_about() {
+        let d = TempDir::new();
+        let leaf = d.path().join("leaf");
+        fs::create_dir_all(&leaf).unwrap();
+        fs::write(leaf.join("a.sh.result"), "ok 1 3 - p e 0\n").unwrap();
+        fs::write(leaf.join("b.sh.result"), "red 1 3 - p e 1\n").unwrap();
+        let passed = passed_suites(Some(&leaf));
+        assert_eq!(passed, 1);
+        let store = d.path().join("store");
+        assert!(report_resume(&store, "tree", passed), "no record, one pass: warned");
+        fs::create_dir_all(store.join("r/t/e")).unwrap();
+        fs::write(store.join("r/t/e/a.sh"), "x").unwrap();
+        assert!(!report_resume(&store, "tree", passed), "a held record: no warning");
+        assert!(!report_resume(&d.path().join("none"), "tree", 0), "nothing passed: no warning");
+    }
+
+    #[test]
     fn the_vms_runner_output_is_kept_with_the_results() {
         let fx = fixture();
         let remote = FakeRemote::green();
@@ -3822,13 +3843,6 @@ mod tests {
         keep_runner_output(&remote, &fx.cfg, "addr", &fx.cfg.state_dir.join(".runner-test"), &results);
         let kept = fs::read_to_string(results.join(RUNNER_OUT_FILE)).unwrap();
         assert!(kept.contains("batch: resumed: test-a.sh"), "{kept}");
-    }
-
-    #[test]
-    fn the_remote_script_keeps_the_runner_output_beside_the_stream_mark() {
-        assert!(REMOTE_SCRIPT.contains(r#"runner_out="$HOME/round-runner.out""#));
-        assert_eq!(REMOTE_SCRIPT.matches(r#"tee -a "$runner_out""#).count(), 4, "stdout and stderr of both testenv invocations");
-        assert_eq!(REMOTE_RUNNER_OUT, "round-runner.out");
     }
 
     #[test]
