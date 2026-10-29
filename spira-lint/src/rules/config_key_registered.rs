@@ -371,4 +371,22 @@ mod tests {
         t.write(ALLOW, &text);
         assert!(ConfigKeyRegistered::new().check(&tree).unwrap().is_empty());
     }
+
+    #[test]
+    fn a_cfg_parse_literal_split_across_lines_is_caught_at_its_own_line() {
+        let t = fixture("");
+        t.write(
+            "reconciler/src/main.rs",
+            "fn f() {\n    let b = cfg_parse::<u32>(\"SPIRA_NO_SUCH_KEY\")\n        .and_then(|c| Ok((c, cfg_parse::<u32>(\"SPIRA_NO_SUCH_TOO\")?)));\n}\n",
+        );
+        let got = run_with(&t, &[REG, ALLOW, "reconciler/src/main.rs"]).unwrap();
+        assert!(got.iter().any(|f| f.contains("main.rs:2: SPIRA_NO_SUCH_KEY")), "{got:?}");
+        assert!(got.iter().any(|f| f.contains("main.rs:3: SPIRA_NO_SUCH_TOO")), "{got:?}");
+    }
+
+    #[test]
+    fn the_shipped_seed_lists_no_reconciler_read() {
+        let seed = include_str!("../../config-key-registered-allow");
+        assert!(!seed.lines().any(|l| !l.starts_with('#') && l.contains(" reconciler/")), "a reconciler read is config, not environment");
+    }
 }
