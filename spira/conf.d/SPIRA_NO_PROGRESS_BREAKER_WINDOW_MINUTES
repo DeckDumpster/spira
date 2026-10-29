@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=reconciler
+DOC=SPIRA_NO_PROGRESS_BREAKER_WINDOW_MINUTES — no explicit default; the reconciler's no-progress breaker is off until spira.toml sets it.
+SCHEMA=Rolling window, in minutes, over which no-progress claim ends are counted by the no-progress breaker. No default: unset refuses.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO DEFAULT. This key carries no `:=`/`=` statement anywhere in
+    # spira_conf_defaults() today; it resolves to an empty string unless the
+    # environment or spira.toml sets it. Registered here only so the allowlist is
+    # generated from one source — conf-gen.sh contributes the name, nothing else.
+SPIRA_CONF_DEFAULT_EOF
