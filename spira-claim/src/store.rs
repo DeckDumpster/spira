@@ -65,6 +65,8 @@ pub struct Config {
     pub runes: String,
     /// `SPIRA_INCIDENT_LABEL` — an incident never stacks on a fix that has not landed.
     pub incident_label: String,
+    /// `SPIRA_QUEUE_DIR` — where each repo's `integrations` record lives; a member it names is not claimable.
+    pub queue_dir: String,
     /// `SPIRA_READY_TTL_S` — how long `ready-count` shares one computed ready set; 0 = never.
     pub ready_ttl_s: u32,
 }
@@ -89,6 +91,7 @@ pub fn load_config() -> Result<Config, String> {
         claim_retry_delay_s: spira_config::process::cfg_parse("SPIRA_CLAIM_RETRY_DELAY_S")?,
         runes: spira_config::process::cfg("SPIRA_RUNES")?,
         incident_label: spira_config::process::cfg("SPIRA_INCIDENT_LABEL")?,
+        queue_dir: spira_config::process::cfg("SPIRA_QUEUE_DIR")?,
         ready_ttl_s: spira_config::process::cfg_parse("SPIRA_READY_TTL_S")?,
     })
 }

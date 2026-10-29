@@ -403,6 +403,37 @@ fn machine_mode_count_and_claim_agree_on_the_fixture() {
 }
 
 #[test]
+fn machine_mode_offers_an_open_integration_not_its_members() {
+    let ready = serde_json::json!([
+        {"id":"I","priority":1,"labels":["repo:spira"]},
+        {"id":"A","priority":1,"labels":["repo:spira"]},
+        {"id":"B","priority":1,"labels":["repo:spira"]},
+        {"id":"C","priority":1,"labels":["repo:spira"]}
+    ]).to_string();
+    let lc = tmp(&serde_json::json!([
+        {"bead_id":"I","state":"READY","holds":"[]"},
+        {"bead_id":"A","state":"REWORK","holds":"[]"},
+        {"bead_id":"B","state":"REWORK","holds":"[]"},
+        {"bead_id":"C","state":"REWORK","holds":"[]"}
+    ]).to_string());
+    let recs = tmp("[]");
+    let queue = testkit::TempDir::new("spira-claim-queue");
+    std::fs::create_dir_all(queue.path().join("spira")).unwrap();
+    std::fs::write(queue.path().join("spira/integrations"), "I A B\n").unwrap();
+    let q = queue.path().to_string_lossy().into_owned();
+    let o = run_cfg(
+        &["select", "--rune", "t", "--blockers", "machine", "--lifecycle", &lc, "--blocker-records", &recs, "--epics", &tmp("{}")],
+        &ready,
+        &[("SPIRA_QUEUE_DIR", q.as_str())],
+        &[],
+    );
+    assert_eq!(o.code, 0, "{}", o.err);
+    let mut ids: Vec<&str> = o.out.lines().map(|l| l.split('\t').nth(5).unwrap()).collect();
+    ids.sort();
+    assert_eq!(ids, ["C", "I"]);
+}
+
+#[test]
 fn machine_mode_stack_max_depth_zero_is_todays_rule() {
     let (ready, lc, recs) = machine_fixture();
     let o = run(

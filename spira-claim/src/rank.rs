@@ -381,6 +381,8 @@ pub enum Verdict {
     Held(HoldKind),
     Snoozed(i64),
     Blocked(String),
+    /// Carried by this open integration bead.
+    Carried(String),
     TooDeep { depth: u32, max: u32 },
     /// A REWORK row whose gate-red stack the claim would repeat: the machine refuses it.
     StackUnchanged,
@@ -394,6 +396,35 @@ pub fn stack_cap(cand: &ReadyRow, incident_label: &str, stack_max_depth: u32) ->
     } else {
         stack_max_depth
     }
+}
+
+/// `integrations` records, one line per integration bead: `<id> <member>...`.
+pub type Integrations = Vec<(String, Vec<String>)>;
+
+/// The records of every repo the `rows` belong to, read from `<queue_dir>/<repo>/integrations`.
+pub fn load_integrations(queue_dir: &std::path::Path, rows: &[ReadyRow]) -> Integrations {
+    let repos: BTreeSet<&str> = rows.iter().filter_map(|r| r.label_value("repo:")).collect();
+    repos
+        .into_iter()
+        .flat_map(|repo| std::fs::read_to_string(queue_dir.join(repo).join("integrations")).unwrap_or_default().lines().map(str::to_string).collect::<Vec<_>>())
+        .filter_map(|l| {
+            let mut it = l.split_whitespace().map(str::to_string);
+            Some((it.next()?, it.collect()))
+        })
+        .collect()
+}
+
+/// The ids whose lifecycle row `lc` should hold before [`carrier`] is asked.
+pub fn integration_ids(ints: &Integrations) -> Vec<String> {
+    ints.iter().map(|(id, _)| id.clone()).collect()
+}
+
+/// The open integration carrying `member`: one dwarf merges the members, so none is worked
+/// alone. An integration with no lifecycle row counts as open, as the round's own check does.
+pub fn carrier<'a>(member: &str, ints: &'a Integrations, lc: &HashMap<String, LifecycleRow>) -> Option<&'a str> {
+    ints.iter()
+        .find(|(id, ms)| ms.iter().any(|m| m == member) && lc.get(id).is_none_or(|r| !r.state.is_terminal()))
+        .map(|(id, _)| id.as_str())
 }
 
 pub fn claimable(
@@ -719,6 +750,17 @@ mod tests {
         r.issue_type = Some(ty.into());
         r.labels = vec![format!("repo:{repo}")];
         (id.into(), r)
+    }
+
+    #[test]
+    fn a_member_of_an_open_integration_is_carried_and_the_integration_is_not() {
+        let ints: Integrations = vec![("I".into(), vec!["A".into(), "B".into()])];
+        let open: HashMap<_, _> = [lcrow("I", BeadState::Ready, &[], 0)].into();
+        assert_eq!(carrier("A", &ints, &open), Some("I"));
+        assert_eq!(carrier("B", &ints, &open), Some("I"));
+        assert_eq!(carrier("I", &ints, &open), None);
+        let landed: HashMap<_, _> = [lcrow("I", BeadState::Landed, &[], 0)].into();
+        assert_eq!(carrier("A", &ints, &landed), None, "a landed integration carries nothing");
     }
 
     #[test]
