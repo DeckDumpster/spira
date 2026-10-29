@@ -70,6 +70,7 @@ echo 0 > "$COUNT_FILE"
 
 # mail stub: records "send" invocations.
 mkdir -p "$TMP/strand-home/runes"; ln -s "$HERE/conf.d" "$TMP/strand-home/conf.d"   # a SPIRA_HOME carries the registry
+ln -s "$HERE/conf.toml.d" "$TMP/strand-home/conf.toml.d"
 # SPIRA_RUNES_DIR is registered too: the complete fixture declares a non-empty bogus value,
 # which runes_dir_with() prefers over deriving <home>/runes, breaking strand's own
 # rune-partition roster probe (lib.sh's rune_partitions -> cmd_rune) for every SPIRA_HOME
@@ -122,7 +123,7 @@ echo 0 > "$COUNT_FILE"
 LOCKED_FIFO="$TMP/locked.fifo"; PROCEED_FIFO="$TMP/proceed.fifo"
 mkfifo "$LOCKED_FIFO" "$PROCEED_FIFO"
 
-BARRIER_HOME="$TMP/strand-home-barrier"; mkdir -p "$BARRIER_HOME/runes"; ln -s "$HERE/conf.d" "$BARRIER_HOME/conf.d"
+BARRIER_HOME="$TMP/strand-home-barrier"; mkdir -p "$BARRIER_HOME/runes"; ln -s "$HERE/conf.d" "$BARRIER_HOME/conf.d"; ln -s "$HERE/conf.toml.d" "$BARRIER_HOME/conf.toml.d"
 cat > "$BARRIER_HOME/mail" <<STUB
 #!/usr/bin/env bash
 [ "\${1:-}" = send ] || exit 0
@@ -226,7 +227,7 @@ printf 'starved\t-\tescalate\t1 bead(s) ready and no live dwarf; 0 of 3 dwarf sl
     > "$TMP/fixture-partition.tsv"
 
 ARGS_A="$TMP/mail-args-a"
-mkdir -p "$TMP/home-a/runes"; ln -s "$HERE/conf.d" "$TMP/home-a/conf.d"
+mkdir -p "$TMP/home-a/runes"; ln -s "$HERE/conf.d" "$TMP/home-a/conf.d"; ln -s "$HERE/conf.toml.d" "$TMP/home-a/conf.toml.d"
 tl_config SPIRA_RUNES_DIR="$TMP/home-a/runes"
 cat > "$TMP/home-a/mail" <<STUB
 #!/usr/bin/env bash

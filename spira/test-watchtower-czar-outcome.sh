@@ -56,7 +56,7 @@ lc_mirror_bd "$TMP/lc"
 # SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
 # <home>/conf.d, so a stub home needs the registry symlinked in or watchtower hangs/refuses
 # finding none (sfail round 2, pattern 1).
-WTCO_HOME="$TMP/wtco-home"; mkdir -p "$WTCO_HOME"; ln -s "$HERE/conf.d" "$WTCO_HOME/conf.d"
+WTCO_HOME="$TMP/wtco-home"; mkdir -p "$WTCO_HOME"; ln -s "$HERE/conf.d" "$WTCO_HOME/conf.d"; ln -s "$HERE/conf.toml.d" "$WTCO_HOME/conf.toml.d"
 wt_co() {   # wt_co [VAR=val ...]
     tl_config SPIRA_RUN="$TMP/run" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" \
         SPIRA_PATH="${SPIRA_PATH:-}"
