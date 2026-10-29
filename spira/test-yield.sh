@@ -164,6 +164,12 @@ want "marked inherited, not judged" "inherited, not judged" "$(cat "$TMP/innocen
 # A named shared red no longer yields BASE_FAIL; the record still files one the gate cannot judge.
 yield record repo spira/sp-innocent 76 base-red - test-boxreader.sh >/dev/null 2>&1
 
+yield record repo spira/sp-detail 75 harness-fault - phase:reentry "batch: KEY is not declared | VERDICT FAULT rc=2" >/dev/null 2>&1
+want "a record keeps the cause a harness fault was given" "detail=batch: KEY is not declared | VERDICT FAULT rc=2" "$(cat "$YDIR"/*sp-detail* 2>/dev/null)"
+yield record repo spira/sp-nodetail 76 base-red - test-boxreader.sh >/dev/null 2>&1
+if grep -q '^detail=' "$YDIR"/*sp-nodetail* 2>/dev/null; then bad "a record given no cause writes no detail line" "found one"; else ok "a record given no cause writes no detail line"; fi
+rm -f "$YDIR"/*sp-detail* "$YDIR"/*sp-nodetail*
+
 R="$(yield report)"
 is "it lands as a GATE FAULT on arrival" 1 "$(f "$R" YIELD_FAULT)"
 is "the defect column is untouched by it" 1 "$(f "$R" YIELD_DEFECT)"

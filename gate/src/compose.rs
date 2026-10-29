@@ -704,10 +704,12 @@ pub fn unproven(out: &str, required: &[String]) -> Vec<String> {
 /// gate string uses, on the revision under test, with **no `--deadline`** — the round named
 /// them, so a budget must not cut them (`SPIRA_GATE_TIMEOUT` still bounds the phase). The
 /// runner is the tree's own when its definition declares one, as in `engine::base_rerun_cmd`. The
-/// runner's harness faults (2, 3) are NO_VERDICT (75), as in the gate string.
+/// runner's harness faults (2, 3) are NO_VERDICT (75), as in the gate string. The runner reads the
+/// live config layers with the tree's config delta applied: it refuses a config missing a key
+/// the tree adds.
 pub fn reentry_command(suites: &[String]) -> String {
     format!(
-        "_b=0; \"${{SPIRA_TESTENV_BIN:-testenv}}\" --suites {} \"$SPIRA_GATE_BRANCH\" \"$SPIRA_GATE_REPO\" || _b=$?; case \"$_b\" in 2|3|127) exit 75;; *) exit \"$_b\";; esac",
+        "_t=\"$(release config-stage .)\" || {{ echo 'gate: cannot stage the tree config delta' >&2; exit 75; }}; _b=0; SPIRA_TOML=\"$_t\" \"${{SPIRA_TESTENV_BIN:-testenv}}\" --suites {} \"$SPIRA_GATE_BRANCH\" \"$SPIRA_GATE_REPO\" || _b=$?; case \"$_t\" in */release-config-*/layer*) rm -rf \"${{_t%%/layer*}}\";; esac; case \"$_b\" in 2|3|127) exit 75;; *) exit \"$_b\";; esac",
         suites.join(",")
     )
 }
@@ -1302,6 +1304,47 @@ cargo: test tests::x ... ok";
         let bin = "\"${SPIRA_TESTENV_BIN:-testenv}\" --suites";
         assert!(c.contains(bin), "{c}");
         assert!(crate::engine::base_rerun_cmd(&v(&["test-a.sh"])).contains(bin), "the re-entry and the base re-run invoke one binary");
+    }
+
+    fn run_reentry(release_body: &str) -> (Option<i32>, String) {
+        let t = testkit::TempDir::new("gate-reentry");
+        let bin = t.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let script = |name: &str, body: &str| {
+            let p = bin.join(name);
+            testkit::write_exe(&p, &format!("#!/bin/bash\n{body}\n"));
+            p
+        };
+        script("release", release_body);
+        let runner = script("runner", "echo \"runner toml=$SPIRA_TOML args=$*\"; exit 0");
+        let o = std::process::Command::new("bash")
+            .arg("-c")
+            .arg(reentry_command(&v(&["test-a.sh"])))
+            .env_clear()
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .env("SPIRA_TOML", "/live/layer.toml")
+            .env("SPIRA_TESTENV_BIN", runner)
+            .env("SPIRA_GATE_BRANCH", "b")
+            .env("SPIRA_GATE_REPO", "/r")
+            .current_dir(t.path())
+            .output()
+            .unwrap();
+        (o.status.code(), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)))
+    }
+
+    #[test]
+    fn the_reentry_runner_reads_the_live_config_with_the_trees_delta_applied() {
+        let (rc, out) = run_reentry("[ \"$1 $2\" = 'config-stage .' ] && echo /staged/layer0.toml:/staged/layer1.toml");
+        assert_eq!(rc, Some(0), "{out}");
+        assert!(out.contains("runner toml=/staged/layer0.toml:/staged/layer1.toml args=--suites test-a.sh b /r"), "{out}");
+    }
+
+    #[test]
+    fn a_tree_delta_that_cannot_be_staged_is_no_verdict_naming_why() {
+        let (rc, out) = run_reentry("echo 'release: no releases dir' >&2; exit 1");
+        assert_eq!(rc, Some(75), "{out}");
+        assert!(out.contains("release: no releases dir") && out.contains("cannot stage the tree config delta"), "{out}");
+        assert!(!out.contains("runner toml"), "the runner must not run on the unstaged config: {out}");
     }
 
     #[test]

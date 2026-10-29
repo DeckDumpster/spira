@@ -1884,6 +1884,7 @@ impl<'w, W: World> Trial<'w, W> {
                     );
                 } else {
                     let st = vd.status.to_string();
+                    let detail = if vd.reason == "harness-fault" { parse::fault_detail(&vd.msg) } else { String::new() };
                     w.yield_sh(
                         &y,
                         &self.s.run,
@@ -1895,6 +1896,7 @@ impl<'w, W: World> Trial<'w, W> {
                             &vd.reason,
                             &self.s.branch_tree,
                             &self.s.suite,
+                            &detail,
                         ],
                     );
                 }

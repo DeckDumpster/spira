@@ -2,7 +2,7 @@
 #
 # yield.sh — what the landing gate is WORTH, recorded beside what it costs.
 #
-#   yield.sh record <repo> <branch> <status> <reason> [tree] [suite]
+#   yield.sh record <repo> <branch> <status> <reason> [tree] [suite] [detail]
 #   yield.sh pass   <repo> <branch> [tree]
 #   yield.sh classify <branch|record> <DEFECT|GATE_FAULT|UNKNOWN> [why...]
 #   yield.sh report [--window <seconds>]      KEY=VALUE, for a pane or a sweep
@@ -167,7 +167,7 @@ prune() {
 # record — a gate refused a branch.
 # ---------------------------------------------------------------------------------------
 cmd_record() {
-    local repo="$1" br="$2" status="$3" reason="${4:--}" tree="${5:--}" suite="${6:--}"
+    local repo="$1" br="$2" status="$3" reason="${4:--}" tree="${5:--}" suite="${6:--}" detail="${7:-}"
     local outcome verdict by why f now
     outcome="$(spira_gate_outcome "$status")"
     [ "$outcome" = PASS ] && return 0
@@ -208,6 +208,7 @@ cmd_record() {
       printf 'verdict=%s\n' "$verdict"
       printf 'by=%s\n'      "$by"
       printf 'why=%s\n'     "$why"
+      [ -z "$detail" ] || printf 'detail=%s\n' "${detail//$'\n'/ | }"
     } > "$f.part" 2>/dev/null && mv -f "$f.part" "$f" 2>/dev/null
     prune
 }
