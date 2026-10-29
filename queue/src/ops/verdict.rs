@@ -344,6 +344,39 @@ fn settle_locked(w: &World, c: &Ctx, path: &Path) -> (i32, String) {
     (rc, out)
 }
 
+/// Re-run the branch's gate run; Err is why the forge was not asked or refused.
+fn rerun_gate(w: &World, c: &Ctx, path: &Path, branch: &str) -> Result<(), String> {
+    let Some(run) = w.forge.run_id(&c.s.forge, path, branch) else {
+        return Err(format!("no gate run found for {branch}"));
+    };
+    if w.forge.workflow_rerun(&c.s.forge, path, &run) {
+        Ok(())
+    } else {
+        Err(format!(
+            "the forge refused to re-run run {run} (its reason is in the forge line logged above)"
+        ))
+    }
+}
+
+/// A re-run that did not start is not an attempt: say why, and mail the operator once per head.
+fn rerun_could_not_start(w: &World, c: &Ctx, marker: &str, head: &str, what: &str, why: &str) {
+    let name = c.r.name.as_str();
+    w.err(format!(
+        "verdict {name}: {what}: re-run of the gate run could not start: {why}"
+    ));
+    let marker = c.queue_file(marker);
+    if std::fs::read_to_string(&marker).ok().as_deref() == Some(head) {
+        return;
+    }
+    let _ = std::fs::write(&marker, head);
+    w.lib.notify(
+        &c.s.mailbox,
+        name,
+        &format!("re-run of {what}'s gate run could not start: {why}"),
+        &format!("Re-run of {what}'s gate run could not start: {why}. The attempt was not counted; the record is left open."),
+    );
+}
+
 /// A publish run the gate says never tested the branch: re-run it within the infra budget.
 /// No fix-forward bead is filed for a fault; past the budget the operator is mailed once.
 fn publish_fault(w: &World, c: &Ctx, path: &Path, kv: &Kv, pr: &str) -> i32 {
@@ -355,11 +388,16 @@ fn publish_fault(w: &World, c: &Ctx, path: &Path, kv: &Kv, pr: &str) -> i32 {
         .unwrap_or(0);
     let max = c.s.verdict.infra_retries;
     if classify_fault_rerun(tries, max) {
-        if let Some(r) = w
-            .forge
-            .run_id(&c.s.forge, path, kv.get("branch").unwrap_or(""))
-        {
-            w.forge.workflow_rerun(&c.s.forge, path, &r);
+        if let Err(why) = rerun_gate(w, c, path, kv.get("branch").unwrap_or("")) {
+            rerun_could_not_start(
+                w,
+                c,
+                "publish-rerun-refused",
+                kv.get("head").unwrap_or(""),
+                &format!("PR {pr}"),
+                &why,
+            );
+            return OK;
         }
         let _ = write_atomic(&file, &format!("{}\n", tries + 1));
         w.out(format!(
@@ -1277,8 +1315,16 @@ fn harness_fault(w: &World, c: &Ctx, b: &Batch, out: &str) -> i32 {
         w.out(format!("verdict {name}: PR {pr} runner lost ({lost}, market {market}) — environment fault, no member charged"));
     }
     if classify_fault_rerun(retries, max) {
-        if let Some(r) = w.forge.run_id(&c.s.forge, b.path, &b.branch) {
-            w.forge.workflow_rerun(&c.s.forge, b.path, &r);
+        if let Err(why) = rerun_gate(w, c, b.path, &b.branch) {
+            rerun_could_not_start(
+                w,
+                c,
+                "batch-rerun-refused",
+                b.kv.get("head").unwrap_or(""),
+                &format!("PR {pr}"),
+                &why,
+            );
+            return OK;
         }
         w.out(format!(
             "verdict {name}: PR {pr} harness fault — re-running (attempt {}/{max})",
@@ -1665,13 +1711,7 @@ fn member_lint_reds(w: &World, b: &Batch, out: &str) -> Vec<(Member, Vec<String>
 /// A red forge-batch step is judged like a red VM-round suite: the Failed event opens the
 /// mending row and a mender bead names the member and the step. The member's red tip stays
 /// barred, so the next batch carries only a mended tip.
-fn call_forge_mender(
-    w: &World,
-    c: &Ctx,
-    b: &Batch,
-    faulty: &[(Member, Vec<String>)],
-    step: &str,
-) {
+fn call_forge_mender(w: &World, c: &Ctx, b: &Batch, faulty: &[(Member, Vec<String>)], step: &str) {
     let batch_id = b.kv.get("batch_id").unwrap_or("");
     if batch_id.is_empty() {
         return;

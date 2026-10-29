@@ -1044,7 +1044,7 @@ fn extract_build_errors(log: &str) -> Vec<String> {
 
 // ── run-id ───────────────────────────────────────────────────────────────────────────────
 
-pub fn run_id(gh: &dyn Gh, repo: &Path, branch: &str) -> Out {
+pub fn run_id(gh: &dyn Gh, repo: &Path, workflow: &str, branch: &str) -> Out {
     let r = gh.call(
         Some(repo),
         &[
@@ -1052,6 +1052,8 @@ pub fn run_id(gh: &dyn Gh, repo: &Path, branch: &str) -> Out {
             "list",
             "--branch",
             branch,
+            "--workflow",
+            workflow,
             "--json",
             "databaseId",
             "--limit",

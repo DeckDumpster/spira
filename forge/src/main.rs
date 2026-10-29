@@ -89,7 +89,7 @@ fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[String
         "pr-automerge" => pr_automerge(gh, repo, arg(args, 0), arg(args, 1)),
         "pr-arm-queue" => pr_arm_queue(gh, repo, arg(args, 0)),
         "check-status" => check_status(gh, proc, repo, workflow, arg(args, 1)),
-        "run-id" => run_id(gh, repo, arg(args, 0)),
+        "run-id" => run_id(gh, repo, workflow, arg(args, 0)),
         "runs-for-branch" => runs_for_branch(gh, repo, workflow, arg(args, 0)),
         "runs-queue-branches" => runs_queue_branches(gh, repo, workflow),
         "batch-ci-status" => batch_ci_status(gh, proc, repo, workflow, arg(args, 0)),

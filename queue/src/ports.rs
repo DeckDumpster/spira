@@ -414,7 +414,8 @@ pub trait Forge {
     /// `fail-lines <repo> <run> <suites>` → `fail-line: <suite>: <text>` lines (empty when it failed).
     fn fail_lines(&self, forge: &Path, repo: &Path, run: &str, suites: &str) -> String;
     fn run_cancel(&self, forge: &Path, repo: &Path, run: &str);
-    fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str);
+    /// `workflow-rerun <repo> <run>`: true when the forge accepted the re-run.
+    fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str) -> bool;
     /// `ami-runs <repo>`: the Round AMI runs not yet completed; None when the forge cannot be read.
     fn ami_runs(&self, forge: &Path, repo: &Path) -> Option<Vec<String>>;
     /// `ami-dispatch <repo> <ref>`: whether the forge accepted a new Round AMI run.

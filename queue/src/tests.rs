@@ -726,6 +726,8 @@ struct FForge {
     /// pr-merge-commit answer.
     merge_commit: RefCell<Option<String>>,
     run: RefCell<Option<String>>,
+    /// `workflow-rerun` answers false (the forge refused it).
+    rerun_refused: RefCell<bool>,
     meta: RefCell<String>,
     /// What `fail-lines` answers.
     fails: RefCell<String>,
@@ -834,10 +836,11 @@ impl Forge for FForge {
     fn run_cancel(&self, _: &Path, _: &Path, run: &str) {
         self.calls.borrow_mut().push(format!("run-cancel {run}"));
     }
-    fn workflow_rerun(&self, _: &Path, _: &Path, run: &str) {
+    fn workflow_rerun(&self, _: &Path, _: &Path, run: &str) -> bool {
         self.calls
             .borrow_mut()
             .push(format!("workflow-rerun {run}"));
+        !*self.rerun_refused.borrow()
     }
     fn ami_runs(&self, _: &Path, _: &Path) -> Option<Vec<String>> {
         self.calls.borrow_mut().push("ami-runs".into());

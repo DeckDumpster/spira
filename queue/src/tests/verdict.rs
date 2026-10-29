@@ -218,6 +218,60 @@ fn a_publish_harness_fault_reruns_within_the_budget_and_never_files_a_bead() {
 }
 
 #[test]
+fn a_refused_publish_rerun_is_not_counted_and_mails_once_per_head() {
+    let t = T::new(LandMode::QueueLocal);
+    publish_record(&t);
+    *t.forge.run.borrow_mut() = Some("77".into());
+    *t.forge.rerun_refused.borrow_mut() = true;
+    for _ in 0..3 {
+        t.forge
+            .status
+            .borrow_mut()
+            .push(Some("harness_fault\n".into()));
+        assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    }
+    assert!(!t.qfile("publish-fault-retries").exists());
+    assert!(!t.out().contains("re-running"), "{}", t.out());
+    assert!(t.err().contains("re-run of the gate run could not start"));
+    let mails = t
+        .lib
+        .calls
+        .borrow()
+        .iter()
+        .filter(|c| {
+            c.starts_with("notify spira re-run of PR 77's gate run could not start")
+        })
+        .count();
+    assert_eq!(mails, 1);
+}
+
+#[test]
+fn a_publish_fault_with_no_gate_run_is_not_counted_and_a_new_head_mails_again() {
+    let t = T::new(LandMode::QueueLocal);
+    publish_record(&t);
+    for _ in 0..2 {
+        t.forge.status.borrow_mut().push(Some("harness_fault\n".into()));
+        assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    }
+    assert!(!t.qfile("publish-fault-retries").exists());
+    assert_eq!(count(&t.forge.calls, "workflow-rerun"), 0);
+    let mails = |t: &T| {
+        t.lib
+            .calls
+            .borrow()
+            .iter()
+            .filter(|c| c.starts_with("notify spira re-run of PR 77's gate run could not start"))
+            .count()
+    };
+    assert_eq!(mails(&t), 1);
+    let rec = fs::read_to_string(t.qfile("publish")).unwrap();
+    fs::write(t.qfile("publish"), rec.replace("head=m3", "head=m4")).unwrap();
+    t.forge.status.borrow_mut().push(Some("harness_fault\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert_eq!(mails(&t), 2);
+}
+
+#[test]
 fn publish_with_a_missing_workflow_mapping_mails_once_per_head() {
     let t = T::new(LandMode::QueueLocal);
     publish_record(&t);
@@ -487,6 +541,56 @@ fn a_failed_status_call_is_pending_not_a_verdict() {
     assert_eq!(t.run(&["verdict", "spira"]), 0);
     assert!(t.out().contains("PR 12 pending"), "{}", t.out());
     assert!(!t.lc.has("abandon-batch"));
+}
+
+#[test]
+fn a_refused_batch_rerun_is_not_counted_and_mails_once_per_head() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    *t.forge.run.borrow_mut() = Some("77".into());
+    *t.forge.rerun_refused.borrow_mut() = true;
+    for _ in 0..3 {
+        t.forge
+            .status
+            .borrow_mut()
+            .push(Some("harness_fault\n".into()));
+        assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    }
+    assert!(!record(&t).contains("retries="), "{}", record(&t));
+    assert!(!t.out().contains("re-running"), "{}", t.out());
+    let mails = t
+        .lib
+        .calls
+        .borrow()
+        .iter()
+        .filter(|c| c.starts_with("notify spira re-run of PR 12's gate run could not start"))
+        .count();
+    assert_eq!(mails, 1);
+}
+
+#[test]
+fn a_batch_fault_with_no_gate_run_is_not_counted_and_a_new_head_mails_again() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    let mails = |t: &T| {
+        t.lib
+            .calls
+            .borrow()
+            .iter()
+            .filter(|c| c.starts_with("notify spira re-run of PR 12's gate run could not start"))
+            .count()
+    };
+    for _ in 0..2 {
+        t.forge.status.borrow_mut().push(Some("harness_fault\n".into()));
+        assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    }
+    assert!(!record(&t).contains("retries="));
+    assert_eq!(count(&t.forge.calls, "workflow-rerun"), 0);
+    assert_eq!(mails(&t), 1);
+    t.open_record(&record(&t).replace("head=h1", "head=h2"));
+    t.forge.status.borrow_mut().push(Some("harness_fault\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert_eq!(mails(&t), 2);
 }
 
 #[test]
