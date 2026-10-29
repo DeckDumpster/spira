@@ -337,6 +337,14 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_write_names_the_event_past_the_statement_clip() {
+        let ev = json!({"id": "e".repeat(250), "stream": "s", "kind": {"tag": "t", "body": ""}, "at": 1, "cause": null, "correlation": "c"});
+        let (code, body) = dispatch(&["append".to_string(), ev.to_string()], &Conn::unreachable());
+        assert_eq!(code, CANNOT_TELL);
+        assert!(body.contains(&format!("id={}", "e".repeat(250))) && body.contains("stream=s") && body.contains("id:250"), "{body}");
+    }
+
+    #[test]
     fn a_long_statement_is_clipped_to_the_limit_and_an_ellipsis() {
         let sql = append_sql(&json!({"id": "e", "stream": "s", "kind": {"tag": "t", "body": "x".repeat(10_000)}, "at": 1, "cause": null, "correlation": "c"})).unwrap();
         assert!(sql.len() > 10_000);
