@@ -1188,6 +1188,36 @@ pub fn batch_cause(dir: &Path) -> Option<String> {
     })
 }
 
+fn result_dirs(dir: &Path) -> Vec<PathBuf> {
+    let mut dirs = vec![dir.to_path_buf()];
+    if let Ok(rd) = fs::read_dir(dir) {
+        let mut subs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+        subs.sort();
+        dirs.extend(subs);
+    }
+    dirs
+}
+
+/// How many suites testenv recorded as `unreached` in `dir`.
+pub fn unreached_count(dir: &Path) -> usize {
+    result_dirs(dir)
+        .iter()
+        .filter_map(|d| fs::read_dir(d).ok())
+        .flat_map(|rd| rd.flatten().map(|e| e.path()).collect::<Vec<_>>())
+        .filter(|p| p.extension().is_some_and(|x| x == "result"))
+        .filter(|p| {
+            fs::read_to_string(p).is_ok_and(|t| t.split_whitespace().next() == Some("unreached"))
+        })
+        .count()
+}
+
+fn suite_cap_s(dir: &Path) -> Option<String> {
+    result_dirs(dir).iter().find_map(|d| {
+        let t = fs::read_to_string(d.join("runner.meta")).ok()?;
+        t.lines().find_map(|l| l.strip_prefix("suite_cap_s=").map(|v| v.trim().to_string()))
+    })
+}
+
 /// The executables directly in `dir` (the pulled `round-bins/`).
 fn executables(dir: &Path) -> Vec<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
@@ -2198,6 +2228,14 @@ fn after_batch(
     }
     let _ = fs::remove_dir_all(&bins);
 
+    if cause.as_deref().is_some_and(|c| c.starts_with("FAULT over-cap")) {
+        eprintln!(
+            "round-vm run: OVER-CAP: FAULT over-cap guard=testenv-suite-cap cap={}s unreached={} — testenv's suite cap fired; no member is implicated",
+            suite_cap_s(&results_dir).unwrap_or_else(|| "?".into()),
+            unreached_count(&results_dir),
+        );
+        return 124;
+    }
     if remote_rc != 0 {
         return exit_for_remote(remote_rc);
     }
@@ -3512,6 +3550,29 @@ mod tests {
         let kept = fs::read_to_string(a.results_dir.as_ref().unwrap().join(BATCH_FAULT_FILE)).unwrap();
         assert!(kept.contains("Failed to connect to bus: no medium found"), "{kept}");
         assert!(kept.contains("spira-x.service loaded failed failed"), "{kept}");
+    }
+
+    #[test]
+    fn a_testenv_over_cap_batch_exits_124_with_cause_over_cap_whatever_the_vm_exit_was() {
+        let fx = fixture();
+        let rec = FakeRecorder::default();
+        let mut remote = FakeRemote { rc: Ok(2), ..FakeRemote::green() };
+        let mut files = vec![
+            ("KEY/run.events", "1 phase suites\n2 verdict FAULT over-cap\n"),
+            ("KEY/test-a.sh.result", "ok 1 1 -\n"),
+            ("KEY/runner.meta", "suite_cap_s=600\n"),
+            ("KEY/unit-tests.out", "UNIT-TESTS-CAUSE: exit status 101 (signal: 9, SIGKILL: kill)\n"),
+        ];
+        for n in ["lc", "prebuilt", "claim-rank", "dwarf-brief"] {
+            files.push((Box::leak(format!("KEY/test-sim-{n}.sh.result").into_boxed_str()), "unreached 1 0 -\n"));
+        }
+        remote.files.insert("round-work/.runtime/spira/batch-results/", files);
+        let a = batch_args(&fx, "b-overcap");
+        assert_eq!(go_recorded(&fx, &remote, &a, &rec), 124);
+        let rows = pass_rows(&fx);
+        assert_eq!(rows.iter().find(|r| r["batch"] == "b-overcap").unwrap()["cause"], "over-cap");
+        assert!(a.results_dir.as_ref().unwrap().join(BATCH_FAULT_FILE).exists());
+        assert_eq!(unreached_count(a.results_dir.as_ref().unwrap()), 4);
     }
 
     #[test]
