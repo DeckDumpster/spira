@@ -3758,10 +3758,7 @@ fn land_local_publishes_the_rounds_tested_build_as_a_release_and_activates_it() 
     assert!(!t.err().contains("LAND DEPLOY FAILED"));
 }
 
-const _: () = assert!(
-    crate::ops::deploy::LAND_DRAIN_WAIT_SECS > 0
-        && crate::ops::deploy::LAND_DRAIN_WAIT_SECS < 15 * 60
-);
+const _: () = assert!(crate::ops::deploy::LAND_DRAIN_WAIT_SECS > 0 && crate::ops::deploy::LAND_DRAIN_WAIT_SECS < 15 * 60);
 
 #[test]
 fn land_local_falls_back_to_paths_release_when_the_bin_dir_has_none_and_says_so() {

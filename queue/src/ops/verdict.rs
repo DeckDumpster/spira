@@ -353,7 +353,7 @@ fn rerun_gate(w: &World, c: &Ctx, path: &Path, branch: &str) -> Result<(), Strin
         Ok(())
     } else {
         Err(format!(
-            "the forge refused to re-run run {run} (reason in the forge's log line above)"
+            "the forge refused to re-run run {run} (its reason is in the forge line logged above)"
         ))
     }
 }
@@ -372,8 +372,8 @@ fn rerun_could_not_start(w: &World, c: &Ctx, marker: &str, head: &str, what: &st
     w.lib.notify(
         &c.s.mailbox,
         name,
-        &format!("{what}: re-run of the gate run could not start"),
-        &format!("re-run of {what}'s gate run could not start: {why}. The attempt was not counted; the record is left open."),
+        &format!("re-run of {what}'s gate run could not start: {why}"),
+        &format!("Re-run of {what}'s gate run could not start: {why}. The attempt was not counted; the record is left open."),
     );
 }
 
@@ -394,7 +394,7 @@ fn publish_fault(w: &World, c: &Ctx, path: &Path, kv: &Kv, pr: &str) -> i32 {
                 c,
                 "publish-rerun-refused",
                 kv.get("head").unwrap_or(""),
-                &format!("publish PR {pr}"),
+                &format!("PR {pr}"),
                 &why,
             );
             return OK;
