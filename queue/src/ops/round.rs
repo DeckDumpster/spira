@@ -1564,6 +1564,38 @@ fn over_cap_why(err: &str, cap: u64) -> String {
     }
 }
 
+fn result_dirs(dir: &Path) -> Vec<PathBuf> {
+    let mut dirs = vec![dir.to_path_buf()];
+    if let Ok(rd) = fs::read_dir(dir) {
+        let mut subs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+        subs.sort();
+        dirs.extend(subs);
+    }
+    dirs
+}
+
+/// A pass cut off by a cap holds no verdict: testenv's own suite cap ends the batch
+/// `verdict FAULT over-cap`, whatever exit round-vm reports, and round-vm's guard exits 124/137.
+fn batch_over_cap(results: &Path, rc: i32, err: &str) -> bool {
+    let verdict = result_dirs(results)
+        .iter()
+        .find_map(|d| fs::read_to_string(d.join("run.events")).ok())
+        .and_then(|t| {
+            t.lines()
+                .filter_map(|l| l.split_once(' ').and_then(|(_, r)| r.strip_prefix("verdict ")))
+                .last()
+                .map(|v| v.trim().to_string())
+        });
+    verdict.as_deref() == Some("FAULT over-cap") || (matches!(rc, 124 | 137) && err.contains("OVER-CAP"))
+}
+
+fn suite_cap_s(results: &Path) -> Option<String> {
+    result_dirs(results).iter().find_map(|d| {
+        let t = fs::read_to_string(d.join("runner.meta")).ok()?;
+        t.lines().find_map(|l| l.strip_prefix("suite_cap_s=").map(|v| v.trim().to_string()))
+    })
+}
+
 /// The first compiler error in a failed build's output, with the `file:line` that follows it.
 fn first_build_error(err: &str) -> Option<String> {
     let mut lines = err.lines();
@@ -2095,6 +2127,69 @@ pub(super) fn certify(
             return FAIL;
         }
     };
+    let mut over = None;
+    let mut rc = certify_pass(w, label, &c, &path, batch, attest, attested_ran, rehead, &mut over);
+    while let Some(unreached) = over.take() {
+        let Ok(_g) = lock(w, label, &c) else {
+            return FAIL;
+        };
+        let Ok(mut kv) = load(w, label, &c, batch) else {
+            return FAIL;
+        };
+        let head = kv.get("head").unwrap_or("").to_string();
+        let first = kv
+            .get("over-cap")
+            .and_then(|v| v.split_once(':'))
+            .filter(|(h, _)| *h == head)
+            .and_then(|(_, n)| n.parse::<usize>().ok());
+        let Some(first) = first else {
+            set(&mut kv, "over-cap", &format!("{head}:{unreached}"));
+            if save(w, label, &c, &kv).is_err() {
+                return FAIL;
+            }
+            w.err(format!("queue.sh {label}: FAULT over-cap round={batch} head={head} unreached={unreached} — no member is implicated; re-certifying once"));
+            w.out(format!("fault=over-cap unreached={unreached}"));
+            drop(_g);
+            rc = certify_pass(w, label, &c, &path, batch, None, attested_ran, None, &mut over);
+            continue;
+        };
+        w.err(format!("queue.sh {label}: CAPACITY FAULT over-cap twice round={batch} head={head} unreached={first},{unreached} — no member is implicated, nobody is ejected; the round stays open"));
+        w.out(format!("fault=capacity unreached={first},{unreached}"));
+        if kv.get("capacity-paged") != Some(head.as_str()) {
+            let pass = w.lc.batch_pass(batch).map_or(0, |(n, _)| n);
+            let results = rounds_dir(&c).join(format!("{batch}.results"));
+            w.lib.notify(
+                &c.s.mailbox,
+                &c.r.name,
+                &format!("Round {batch} over-cap twice on {head}"),
+                &format!(
+                    "Round {batch} of {} hit testenv's suite cap on both passes of {head}: unreached {first} then {unreached}, suite_cap_s={}, passes {} and {pass}. No member is implicated and nobody was ejected; the round stays open. Capacity or the cap is the Concierge's to tune. Results: {}",
+                    c.r.name,
+                    suite_cap_s(&results).unwrap_or_else(|| "?".into()),
+                    pass.saturating_sub(1),
+                    results.display()
+                ),
+            );
+            set(&mut kv, "capacity-paged", &head);
+            let _ = save(w, label, &c, &kv);
+        }
+        return FAULT;
+    }
+    rc
+}
+
+#[allow(clippy::too_many_arguments)]
+fn certify_pass(
+    w: &World,
+    label: &str,
+    c: &Ctx,
+    path: &Path,
+    batch: &str,
+    attest: Option<&str>,
+    attested_ran: Option<usize>,
+    rehead: Option<&str>,
+    over: &mut Option<usize>,
+) -> i32 {
     let who = actor(w);
     if attest.is_some() && attested_ran.unwrap_or(0) == 0 {
         w.err(format!("queue.sh {label}: --attest needs --ran <n> with n > 0 — nothing ran; a vacuous pass is not a certificate"));
@@ -2102,10 +2197,10 @@ pub(super) fn certify(
     }
 
     let (head, wt, run_id) = {
-        let Ok(_g) = lock(w, label, &c) else {
+        let Ok(_g) = lock(w, label, c) else {
             return FAIL;
         };
-        let Ok(mut kv) = load(w, label, &c, batch) else {
+        let Ok(mut kv) = load(w, label, c, batch) else {
             return FAIL;
         };
         let wt = worktree_of(&kv);
@@ -2329,6 +2424,27 @@ pub(super) fn certify(
         let mut found = Vec::new();
         suite_statuses(&results, &mut found, 0);
         ran = found.len();
+        if batch_over_cap(&results, out.rc, &out.err) {
+            let unreached = found.iter().filter(|(_, s)| s == "unreached").count();
+            let cut = if out.err.contains("OVER-CAP") {
+                format!(" ({})", over_cap_why(&out.err, c.s.round_wall_secs))
+            } else {
+                String::new()
+            };
+            let why = format!("over-cap: FAULT over-cap unreached={unreached}{cut}");
+            warn_unrecorded(
+                w,
+                label,
+                batch,
+                "the incomplete pass",
+                pass_verdict_event(w, batch, &Verdict::Incomplete(&bounded_text(&why)), false),
+            );
+            if !cut.is_empty() {
+                w.err(format!("queue.sh {label}: {why}"));
+            }
+            *over = Some(unreached);
+            return FAULT;
+        }
         let fault = match out.rc {
             0 | 1 if found.is_empty() => Some("round-vm ran and left no verdicts — a fault of the round machinery, not of the candidates".to_string()),
             0 | 1 => unjudgeable(&wt, &found),
@@ -2401,10 +2517,10 @@ pub(super) fn certify(
         reds.dedup();
     }
 
-    let Ok(_g) = lock(w, label, &c) else {
+    let Ok(_g) = lock(w, label, c) else {
         return FAIL;
     };
-    let Ok(mut kv) = load(w, label, &c, batch) else {
+    let Ok(mut kv) = load(w, label, c, batch) else {
         return FAIL;
     };
     let already_green = reds.is_empty() && phase_of(w, batch) == "green";
@@ -2429,6 +2545,7 @@ pub(super) fn certify(
             return FAULT;
         }
         note_pass_end(&c, &pass_members(&c, batch), PassEnd::Judged);
+        kv.remove("over-cap");
         set(&mut kv, "red", &reds.join(","));
         if save(w, label, &c, &kv).is_err() {
             return FAIL;
@@ -2471,6 +2588,7 @@ pub(super) fn certify(
         return FAIL;
     }
     note_pass_end(&c, &pass_members(&c, batch), PassEnd::Judged);
+    kv.remove("over-cap");
     set(&mut kv, "ran", &ran.to_string());
     if save(w, label, &c, &kv).is_err() {
         return FAIL;

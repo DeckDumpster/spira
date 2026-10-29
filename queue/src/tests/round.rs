@@ -1390,11 +1390,12 @@ fn a_pass_whose_tests_overran_the_cap_is_a_fault_even_with_every_verdict_in() {
     );
     let batch = batch_of(&t);
     let err = "round-vm: OVER-CAP: guard=suites-cap elapsed=901s cap=900s — the suites and bare lane ran past the cap\nround-vm: UNIT-TESTS: PASS (3 test binaries)";
-    *t.scripts.round_vm.borrow_mut() = RunOut {
+    let over = RunOut {
         rc: 124,
         out: String::new(),
         err: err.into(),
     };
+    *t.scripts.round_vm_queue.borrow_mut() = vec![over.clone(), over];
     *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
     assert_eq!(t.run(&["round", "certify", &batch]), 4);
     assert!(
@@ -1406,6 +1407,76 @@ fn a_pass_whose_tests_overran_the_cap_is_a_fault_even_with_every_verdict_in() {
     assert!(!t
         .lc
         .has("event batch spira-20260929T010203Z CI_RUNNING 4 {\"PassGreen\""));
+}
+
+const OVER_CAP_EVENTS: &str = "1 phase suites\n2 verdict FAULT over-cap\n";
+const KILLED_UNIT: &str = "UNIT-TESTS-CAUSE: exit status 101 (signal: 9, SIGKILL: kill)\n";
+
+fn over_cap_world(t: &T, once: bool) -> String {
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a,sp-b"]), 0, "{}", t.err());
+    let capped = vec![
+        ("run.events".to_string(), OVER_CAP_EVENTS.to_string()),
+        ("unit-tests.out".to_string(), KILLED_UNIT.to_string()),
+        ("test-sim-claim-rank.sh.result".to_string(), "unreached 1 0 -\n".to_string()),
+        ("test-sim-dwarf-brief.sh.result".to_string(), "unreached 1 0 -\n".to_string()),
+    ];
+    *(if once { t.scripts.round_vm_files_once.borrow_mut() } else { t.scripts.round_vm_files.borrow_mut() }) = capped;
+    *t.scripts.round_vm_meta.borrow_mut() = "suite_cap_s=600\n".into();
+    *t.scripts.round_vm_results.borrow_mut() = vec![("test-a.sh".into(), "ok".into())];
+    batch_of(t)
+}
+
+fn no_attribution(t: &T) {
+    assert!(!t.lc.has("eject-member"), "{:?}", t.lc.calls.borrow());
+    assert!(!t.lc.calls.borrow().iter().any(|c| c.contains("PassRed")), "{:?}", t.lc.calls.borrow());
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.contains("mender") || c.contains("path-attribute")), "{:?}", t.scripts.calls.borrow());
+}
+
+#[test]
+fn an_over_cap_pass_with_a_killed_unit_test_ejects_nobody_and_recertifies_once() {
+    for first_rc in [2, 1] {
+        let t = round_world();
+        let batch = over_cap_world(&t, true);
+        *t.scripts.round_vm_queue.borrow_mut() = vec![
+            RunOut { rc: first_rc, out: String::new(), err: "libtest (signal: 9, SIGKILL: kill)\n".into() },
+            RunOut { rc: 0, out: String::new(), err: String::new() },
+        ];
+        let rc = t.run(&["round", "certify", &batch]);
+        assert_eq!(rc, 0, "rc {first_rc}: {}", t.err());
+        let vm = t.scripts.calls.borrow().iter().filter(|c| c.starts_with("round-vm")).count();
+        assert_eq!(vm, 2);
+        let calls = t.lc.calls.borrow().join("\n");
+        let inc = calls.find("PassIncomplete").expect("incomplete");
+        assert!(calls[inc..].contains("over-cap: FAULT over-cap unreached=2"), "{calls}");
+        assert!(inc < calls.rfind("PassStarted").unwrap() && calls.rfind("PassStarted").unwrap() < calls.find("PassGreen").unwrap(), "{calls}");
+        assert!(t.err().contains("FAULT over-cap round="), "{}", t.err());
+        assert!(t.err().contains("unreached="), "{}", t.err());
+        no_attribution(&t);
+    }
+}
+
+#[test]
+fn a_second_over_cap_on_the_same_head_is_a_capacity_fault_and_ejects_nobody() {
+    let t = round_world();
+    let batch = over_cap_world(&t, false);
+    let over = RunOut { rc: 2, out: String::new(), err: "libtest (signal: 9, SIGKILL: kill)\n".into() };
+    *t.scripts.round_vm_queue.borrow_mut() = vec![over.clone(), over.clone()];
+    assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
+    let vms = |t: &T| t.scripts.calls.borrow().iter().filter(|c| c.starts_with("round-vm")).count();
+    assert_eq!(vms(&t), 2);
+    assert!(t.err().contains(&format!("CAPACITY FAULT over-cap twice round={batch} head=")), "{}", t.err());
+    assert!(t.out().contains("fault=capacity unreached=2,2"), "{}", t.out());
+    let paged = |t: &T| t.lib.calls.borrow().iter().filter(|c| c.starts_with("notify") && c.contains(&format!("Round {batch} over-cap twice"))).count();
+    assert_eq!(paged(&t), 1);
+    assert!(!t.scripts.calls.borrow().iter().any(|c| c.starts_with("mail-operator")));
+    no_attribution(&t);
+
+    *t.scripts.round_vm_queue.borrow_mut() = vec![over];
+    assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
+    assert_eq!(vms(&t), 3, "one more pass, no re-run");
+    assert!(t.err().contains("CAPACITY FAULT over-cap twice"), "{}", t.err());
+    assert_eq!(paged(&t), 1, "paged once per (batch, head)");
+    no_attribution(&t);
 }
 
 #[test]
