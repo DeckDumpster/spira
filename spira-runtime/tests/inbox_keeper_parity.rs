@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use runtime::host::EffectRunner;
@@ -14,6 +14,8 @@ use runtime::{Engine, Executor, MemJournal, Outcome};
 use spira_runtime::watchers::inbox_keeper::InboxKeeper;
 use spira_runtime::world::World;
 use spira_runtime::Effects;
+
+static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
 const STALL: u64 = 0;
 const BACKOFF: u64 = 4321;
@@ -71,9 +73,11 @@ fn old_wakes(s: &Scenario) -> Vec<String> {
     set_inbox(d.path(), mtime(s, SystemTime::now()));
     let mut triage = decoy(s);
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/inbox-keeper.sh");
-    let path = format!("{}:/usr/bin:/bin", debug_dir().display());
+    fs::create_dir_all(d.path().join("bin")).unwrap();
+    testkit::write_exe(d.path().join("bin/sleep"), "#!/usr/bin/env bash\nkill -TERM \"$PPID\"\n");
+    let path = format!("{}:{}:/usr/bin:/bin", d.path().join("bin").display(), debug_dir().display());
     let mut child = Command::new("timeout")
-        .args(["2", "bash"])
+        .args(["300", "bash"])
         .arg(&script)
         .env_clear()
         .env("PATH", path)
@@ -128,6 +132,7 @@ fn new_wakes(s: &Scenario) -> Vec<String> {
 }
 
 fn same_wakes(s: Scenario) -> Vec<String> {
+    let _serial = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     assert!(debug_dir().join("spira-config").exists(), "build spira-config first: inbox-keeper.sh resolves its config through it");
     if !s.triage && triage_running() {
         eprintln!("skipped {}: an inbox-triage process is running on this box", s.name);
