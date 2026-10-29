@@ -145,6 +145,10 @@ impl Handler for RoundDuty {
         if !Self::answers_observe(view, ev) {
             return vec![];
         }
+        if ev.kind.tag == EFFECT_TIMED_OUT {
+            ctx.event().set("round_duty.skipped", "observe timed out");
+            return vec![];
+        }
         let carry = Self::carry(view, &ev.stream);
         let snap = match (ev.kind.tag.as_str(), serde_json::from_str::<Snapshot>(&ev.kind.body)) {
             (EFFECT_SUCCEEDED, Ok(s)) => s,
@@ -171,6 +175,28 @@ mod tests {
 
     fn snap(state: RoundState, certified: u64) -> Snapshot {
         Snapshot { certified, by_repo: "spira=1".into(), state, ..Snapshot::default() }
+    }
+
+    fn outcome(tag: EventKindTag) -> Vec<String> {
+        use runtime::ports::VirtualClock;
+        use runtime::{Engine, Executor, MemJournal, Outcome};
+        let clock = VirtualClock::new(1_800_000_000_000);
+        let mut e = Engine::open(MemJournal::new(), std::sync::Arc::new(clock.clone()), vec![cfg().registration()], 0).unwrap();
+        let (id, stream, kind) = RoundDuty::boot();
+        e.submit(id, stream, kind).unwrap();
+        e.run_until_idle().unwrap();
+        let observe = e.pending_effects().remove(0);
+        let out = if tag == EFFECT_TIMED_OUT { Outcome::TimedOut } else { Outcome::Failed("lifecycle did not answer for spira".into()) };
+        e.complete(&observe.key, out).unwrap();
+        e.run_until_idle().unwrap();
+        e.pending_effects().into_iter().filter(|p| p.spec.name == INBOX_APPEND).map(|p| p.spec.input).collect()
+    }
+
+    #[test]
+    fn a_timed_out_observe_says_nothing_and_a_failed_one_is_unknown() {
+        assert_eq!(outcome(EFFECT_TIMED_OUT), Vec::<String>::new(), "a stale observe left over from a restart read nothing of the world");
+        let said = outcome(EFFECT_FAILED);
+        assert!(said.len() == 1 && said[0].contains("ROUND STATE UNKNOWN"), "{said:?}");
     }
 
     #[test]
