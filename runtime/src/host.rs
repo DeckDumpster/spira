@@ -66,18 +66,18 @@ struct TurnOut {
 fn run_turn(mut t: Turn) -> TurnOut {
     let result = (|| {
         for s in t.subs.drain(..) {
-            t.engine.submit(&s.id, &s.stream, s.kind)?;
+            t.engine.submit(&s.id, &s.stream, s.kind)?; // loop-safe: runs on the offload pool
         }
         for d in t.done.drain(..) {
             match d {
                 Done::Started(key) => t.engine.note_attempt(&key),
                 Done::Outcome(key, o) => {
-                    t.engine.complete(&key, o)?;
+                    t.engine.complete(&key, o)?; // loop-safe: runs on the offload pool
                 }
                 Done::Spilled(..) => {}
             }
         }
-        t.engine.run_until_idle()
+        t.engine.run_until_idle() // loop-safe: runs on the offload pool
     })();
     let launch = t.engine.pending_effects().into_iter().filter(|p| !t.in_flight.contains(&p.key)).collect();
     let next_timer_at = t.engine.next_timer_at();
@@ -149,7 +149,7 @@ pub async fn serve_with(
             let turn = Turn { engine: e, subs: std::mem::take(&mut subs), done: std::mem::take(&mut done), in_flight: in_flight.clone() };
             let slot = Arc::new(Mutex::new(Some(turn)));
             let s = slot.clone();
-            let job = move || run_turn(s.lock().unwrap_or_else(|e| e.into_inner()).take().expect("the turn is put in the slot before it is offered"));
+            let job = move || run_turn(s.lock().unwrap_or_else(|e| e.into_inner()).take().expect("the turn is put in the slot before it is offered")); // loop-safe: the slot is uncontended; the pool takes it after the offer
             match workers.offload("engine.turn", None, job) {
                 Ok(handle) => {
                     backoff = BACKOFF_FIRST;
@@ -157,7 +157,7 @@ pub async fn serve_with(
                     running = Some(Running { handle, began: Instant::now(), overrun: false });
                 }
                 Err(sp) => {
-                    let t = slot.lock().unwrap_or_else(|e| e.into_inner()).take().expect("a refused turn never ran");
+                    let t = slot.lock().unwrap_or_else(|e| e.into_inner()).take().expect("a refused turn never ran"); // loop-safe: the job never ran, so nothing holds the slot
                     (engine, subs, done) = (Some(t.engine), t.subs, t.done);
                     spilled(&sp, &mut backoff, &mut retry_at);
                 }
