@@ -42,6 +42,8 @@ struct World {
     /// (no `claimable` key, so `stack::parse_proposal` reads it as "no stack", same as a
     /// test that never mentions stacking at all).
     stack_answer: Option<String>,
+    /// `spira-claim stack <id>`'s canned stdout for one id, ahead of `stack_answer`.
+    stack_answers: BTreeMap<String, String>,
     /// Makes the `spira-lc content-on-base` exec call refuse.
     fail_content_on_base: bool,
     /// `spira-lc holds <id>`'s answer, one hold kind a line.
@@ -245,7 +247,10 @@ impl Exec for FakeExec {
                     w.clock_skew.fetch_add(w.clock_step, std::sync::atomic::Ordering::SeqCst);
                     w.rejections.clone().unwrap_or_else(|| r#"{"rejections":0,"history":[]}"#.into())
                 }),
-                "stack" => Out::ok(self.0.lock().unwrap().stack_answer.clone().unwrap_or_else(|| "{}".into())),
+                "stack" => {
+                    let w = self.0.lock().unwrap();
+                    Out::ok(w.stack_answers.get(&args[1]).or(w.stack_answer.as_ref()).cloned().unwrap_or_else(|| "{}".into()))
+                }
                 _ => Out::ok("{}"),
             };
         }
@@ -689,6 +694,37 @@ fn a_release_without_model_bin_refuses_the_session() {
     let o = go(&f, "spira,plan", &extra, Mode::Claim, a, commits_and_closes());
     assert!(o.seen.is_empty(), "no session may start without model-bin");
     assert!(o.log.contains(spira_config::release_env::MODEL_BIN_OVERRIDE_ENV), "the refusal names its override: {}", o.log);
+}
+
+#[test]
+fn a_candidate_spira_claim_stack_calls_blocked_is_never_claimed_and_the_next_is() {
+    let f = fx("enf-stack-blocked");
+    seed(&f, "sp-first");
+    seed(&f, "sp-second");
+    {
+        let mut w = f.w.lock().unwrap();
+        w.stack_answers.insert("sp-first".into(), r#"{"claimable":false,"reason":"Blocked(\"sp-parent\")"}"#.into());
+        w.stack_answers.insert("sp-second".into(), r#"{"claimable":true,"stack":{},"stack_depth":0,"stack_max_depth":4}"#.into());
+    }
+    let mut a = BTreeMap::new();
+    a.insert("lc_bead_verified", Out::ok(""));
+    let o = go(&f, "spira,plan", &[], Mode::Claim, a, commits_and_closes());
+    assert!(o.log.contains("sp-first refused by spira-claim stack"), "{}", o.log);
+    let w = o.w.lock().unwrap();
+    let claimed: Vec<&str> = w.seam_calls.iter().filter(|c| c.0 == "lc_claim_bead").map(|c| c.1[0].as_str()).collect();
+    assert_eq!(claimed, ["sp-second"], "{}", o.log);
+}
+
+#[test]
+fn a_too_deep_stack_answer_still_goes_to_the_machine_for_the_refusal_of_record() {
+    let f = fx("enf-stack-toodeep");
+    seed(&f, "sp-deep");
+    f.w.lock().unwrap().stack_answer = Some(r#"{"claimable":false,"reason":"TooDeep","stack":{},"stack_depth":5,"stack_max_depth":4}"#.into());
+    let mut a = BTreeMap::new();
+    a.insert("lc_claim_bead", Out::fail(3, ""));
+    let o = go(&f, "spira,plan", &[], Mode::Claim, a, no_session());
+    let w = o.w.lock().unwrap();
+    assert!(w.seam_calls.iter().any(|c| c.0 == "lc_claim_bead" && c.1[0] == "sp-deep"), "{}", o.log);
 }
 
 #[test]

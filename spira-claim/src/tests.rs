@@ -1119,6 +1119,38 @@ fn enforced_counts_exclude_submitted_and_blocked_beads_and_keep_one_ready() {
     assert_eq!((bulk0.code, bulk0.out.as_str()), (0, "probe 0\n"), "{}", bulk0.err);
 }
 
+const FILED_READY: &str = r#"[{"id":"P","priority":1,"issue_type":"task","labels":["plan","repo:spira"]},
+    {"id":"P.2","priority":1,"issue_type":"task","parent":"P","labels":["plan","repo:spira"],
+     "dependencies":[{"issue_id":"P.2","depends_on_id":"P","type":"parent-child"}]}]"#;
+
+fn filed_child_ready(parent_state: &str) -> Outcome {
+    let lc = format!(r#"[{{"bead_id":"P","state":"{parent_state}","holds":"[]","tip":"t1"}},{{"bead_id":"P.2","state":"READY","holds":"[]"}}]"#);
+    enforced_count(FILED_READY, &lc, FILED_READY, &["rune-ready", "probe", "--json"])
+}
+
+#[test]
+fn a_filed_child_of_a_reworked_parent_is_not_ready_until_the_parent_lands() {
+    let held = filed_child_ready("REWORK");
+    assert_eq!(held.code, 0, "{}", held.err);
+    assert!(!held.out.contains("P.2"), "{}", held.out);
+    for st in ["LANDED", "DONE", "SUPERSEDED", "DROPPED"] {
+        let o = filed_child_ready(st);
+        assert_eq!(o.code, 0, "{st}: {}", o.err);
+        assert!(o.out.contains("P.2"), "{st}: {}", o.out);
+    }
+}
+
+#[test]
+fn cli_stack_refuses_a_filed_child_of_a_reworked_parent_as_blocked() {
+    let lc = tmp(r#"[{"bead_id":"P","state":"REWORK","holds":"[]","tip":"t1"},{"bead_id":"P.2","state":"READY","holds":"[]"}]"#);
+    let recs = tmp(r#"[{"id":"P","status":"open","issue_type":"task","labels":["repo:spira"]}]"#);
+    let bd_child = tmp_exe(&format!("#!/bin/sh\necho '{}'\n", r#"[{"id":"P.2","priority":1,"issue_type":"task","parent":"P","labels":["repo:spira"]}]"#));
+    let o = run_cfg(&["stack", "P.2", "--lifecycle", &lc, "--blocker-records", &recs], "", &[("SPIRA_BD", bd_child.as_str())], &[]);
+    assert_eq!(o.code, 3, "{}", o.err);
+    let v: serde_json::Value = serde_json::from_str(&o.out).unwrap();
+    assert_eq!((v["claimable"].clone(), v["reason"].clone()), (false.into(), "Blocked(\"P\")".into()), "{}", o.out);
+}
+
 #[test]
 fn enforced_counts_refuse_when_the_lifecycle_machine_cannot_answer() {
     let o = enforced_count(ENFORCE_READY, "not json", ENFORCE_RECS, &["rune-ready", "probe"]);
