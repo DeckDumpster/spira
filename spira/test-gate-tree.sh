@@ -163,24 +163,28 @@ GATELOG1B="$TMP/gate1b.log"
 # 2026-10-05). Set once, sequentially, before the two concurrent calls below (never from
 # inside a parallel rungate: tl_config writes the one shared override file).
 tl_config SPIRA_GATE_LOCK_WAIT=10
-# The lock is held here until the kernel shows a gate blocked on it (a "->" line in
-# /proc/locks), so a gate has waited by construction, however slowly either one starts.
+# The lock is held here until a gate has reached it. The gate runs gate-sweep.sh just
+# before its first lock attempt, so a planted sweep that drops an arrival file marks that
+# moment; the hold then outlasts the gate's 200ms retry, so a gate has waited by
+# construction, however slowly either one starts.
+ARRIVALS="$TMP/sweep-arrivals"; : > "$ARRIVALS"
+printf '#!/bin/bash\necho "$$" >> %s\n' "$ARRIVALS" > "$SH/gate-sweep.sh"
 LOCK1B="$RUN/worktree/.gate.$(basename "$REPO").$T1_KEY.lock"
-: > "$LOCK1B"
-LOCK1B_INO="$(stat -c %i "$LOCK1B")"
 exec 8>"$LOCK1B"
 flock -x 8
 ( exec 8>&-; rungate "spira/sp-t1" SPIRA_GATE_LOG="$GATELOG1B" > "$TMP/g1b1.out" 2>&1; echo $? > "$TMP/g1b1.rc" ) &
 ( exec 8>&-; rungate "spira/sp-t1" SPIRA_GATE_LOG="$GATELOG1B" > "$TMP/g1b2.out" 2>&1; echo $? > "$TMP/g1b2.rc" ) &
 for _ in $(seq 1 600); do
-    grep -q -- "-> FLOCK .*:$LOCK1B_INO " /proc/locks && break
+    [ -s "$ARRIVALS" ] && break
     sleep 0.05
 done
-grep -q -- "-> FLOCK .*:$LOCK1B_INO " /proc/locks \
-    && ok "a gate was blocked on the held tree lock" \
-    || bad "a gate was blocked on the held tree lock" "no waiter on inode $LOCK1B_INO in /proc/locks"
+[ -s "$ARRIVALS" ] \
+    && ok "a gate reached the held tree lock" \
+    || bad "a gate reached the held tree lock" "no gate ran its pre-lock sweep"
+sleep 1
 exec 8>&-
 wait
+rm -f "$SH/gate-sweep.sh"
 
 if label_self_overlaps "spira/sp-t1" "$EVENTS"; then
     bad "same-branch gates were serialised" "the two spira/sp-t1 command windows overlapped"
