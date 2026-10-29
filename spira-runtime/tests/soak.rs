@@ -122,10 +122,21 @@ fn store(root: &Path, toml: &Path, socket: &Path, seed: &str) -> Store {
         fs::write(&grants, fs::read_to_string(lifecycle.join("grants.sql")).unwrap().replace("@SPIRA_LC_PASSWORD@", RW).replace("@SPIRA_LC_RO_PASSWORD@", RO)).unwrap();
         let rows = root.join("seed.sql");
         fs::write(&rows, seed).unwrap();
-        for (verb, path) in [("admin-apply-ddl", lifecycle.join("schema.sql")), ("admin-migrate", lifecycle.join("migrations")), ("admin-apply-ddl", grants), ("admin-migrate", lifecycle.join("migrations")), ("admin-apply-ddl", rows)] {
+        let steps = release::lifecycle_store::steps(&lifecycle).expect("install's steps for the shipped lifecycle dir");
+        let mut plan: Vec<(&str, PathBuf)> = steps
+            .into_iter()
+            .map(|s| match s {
+                release::lifecycle_store::Step::Schema(p) => ("admin-apply-ddl", p),
+                release::lifecycle_store::Step::Migrations(p) | release::lifecycle_store::Step::ContentGrants(p) => ("admin-migrate", p),
+                release::lifecycle_store::Step::Grants => ("admin-apply-ddl", grants.clone()),
+            })
+            .collect();
+        plan.push(("admin-apply-ddl", rows));
+        for (verb, path) in plan {
             let (rc, out) = lc(&[verb.into(), path.display().to_string()], &admin);
             assert_eq!(rc, 0, "the lifecycle store does not build the way install builds it: {verb} {}: {out}", path.display());
         }
+
         let serve_log = root.join("spira-lc-serve.log");
         let log = fs::File::create(&serve_log).unwrap();
         // batch-job: the test's own spira-lc serve, killed by Proc::drop.

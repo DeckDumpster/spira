@@ -1952,6 +1952,7 @@ dependencies = [
 name = "spira-runtime"
 version = "1.0.0"
 dependencies = [
+ "release",
  "runtime",
  "serde",
  "serde_json",
