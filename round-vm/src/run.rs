@@ -443,6 +443,13 @@ releases = "$HOME/round-releases"
 home_repo = "spira"
 batch_maxpar = $maxpar
 $testenv_limits
+
+# home_repo names the repo; this section says where it is on the VM and what its base is
+# (origin/base, the mirror ref the lint already compares against). Without it testenv cannot
+# resolve the base and every pass faults reason=base-ref.
+[repo.spira]
+path = "$HOME/round-work"
+base = "origin/base"
 ROUNDCFG
 export SPIRA_TOML="$HOME/round-work/spira/testlib/complete.toml:$HOME/round-config.toml"
 SPIRA_TOML="$(target/release/release config-stage "$HOME/round-work")" || { echo "round-vm: cannot apply the head's config delta" >&2; exit 2; }
@@ -3133,6 +3140,16 @@ mod tests {
         let red = REMOTE_SCRIPT.find("LINT/FENCE RED before the suites").expect("the early exit");
         let exit = red + REMOTE_SCRIPT[red..].find("exit 1").unwrap();
         assert!(REMOTE_SCRIPT[red..exit].contains("kill \"$sampler_pid\""), "a live background sampler keeps ssh waiting after the script exits");
+    }
+
+    #[test]
+    fn the_round_config_places_the_home_repo_at_the_vm_checkout_with_its_base() {
+        let start = REMOTE_SCRIPT.find("<<ROUNDCFG").unwrap();
+        let end = start + REMOTE_SCRIPT[start..].find("\nROUNDCFG\n").unwrap();
+        let cfg = &REMOTE_SCRIPT[start..end];
+        let sec = cfg.find("[repo.spira]").expect("the round config declares where spira is on the VM");
+        assert!(cfg[sec..].contains("path = \"$HOME/round-work\""), "{cfg}");
+        assert!(cfg[sec..].contains("base = \"origin/base\""), "{cfg}");
     }
 
     #[test]
