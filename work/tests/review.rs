@@ -39,8 +39,9 @@ fn fixture(tag: &str, agent_body: &str) -> (testkit::TempDir, std::path::PathBuf
     testkit::write_exe(&agent, agent_body);
     let sock = d.join("sock");
     socket_answering(&sock, "Add the widget parser.\n");
-    std::fs::create_dir_all(d.join("conf.d")).unwrap();
-    std::fs::create_dir_all(d.join("conf.toml.d")).unwrap();
+    for sub in ["conf.d", "conf.toml.d"] {
+        std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira").join(sub), d.join(sub)).unwrap();
+    }
     let toml = spira_config::process::fixture_toml(&d, &[("SPIRA_LC_SOCKET", sock.to_str().unwrap()), ("SPIRA_AGENT", agent.to_str().unwrap()), ("SPIRA_RUN", d.join("run").to_str().unwrap())]);
     (d, repo, toml)
 }

@@ -624,7 +624,7 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
         let home = dir.join(HOME);
         std::fs::create_dir_all(&home).map_err(|e| e.to_string())?;
         std::fs::write(home.join(REGISTRY_ROWS), registry_rows(dir, repos)).map_err(|e| e.to_string())?;
-        std::fs::write(&file, base_config(&release, &home)?).map_err(|e| e.to_string())?;
+        std::fs::write(&file, base_config(repo, &home)?).map_err(|e| e.to_string())?;
         let t = Instant::now();
         let bd = steps.bd()?;
         let settings: Vec<(String, String)> = config_settings(dir, repos, &gh_bin).into_iter().chain(home_settings(dir, fixture, &bd)).chain(lc_settings(dir)).collect();

@@ -32,7 +32,7 @@ fn scan(dir: &Path, cfg: &Path, grace: &str) -> String {
         .arg(dir.join("testenv"))
         .env_clear()
         .env("SPIRA_TOML", cfg)
-        .env("SPIRA_HOME", dir)
+        .env("SPIRA_HOME", spira_config::process::fixture_release(dir, true).join("spira"))
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));

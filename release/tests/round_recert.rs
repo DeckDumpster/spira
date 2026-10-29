@@ -50,6 +50,7 @@ fn fixture(name: &str, phase: Option<&str>) -> Fixture {
         testkit::write_exe(release.join("bin").join(n), &body.replace("@S@", &state.display().to_string()));
     }
     fs::copy(env!("CARGO_BIN_EXE_round-recert"), release.join("bin/round-recert")).unwrap();
+    spira_config::process::fixture_release(&root, true);
     if let Some(p) = phase {
         fs::write(state.join("open"), "").unwrap();
         fs::write(state.join("phase"), p).unwrap();
@@ -64,7 +65,7 @@ fn fixture(name: &str, phase: Option<&str>) -> Fixture {
 fn recert(f: &Fixture, args: &[&str]) -> Output {
     let home = f.root.join("home");
     fs::create_dir_all(&home).unwrap();
-    testkit::retry_busy(|| Command::new(f.release.join("bin/round-recert")).env_clear().env("HOME", &home).env("SPIRA_TOML", &f.toml).args(args).output()).unwrap()
+    testkit::retry_busy(|| Command::new(f.release.join("bin/round-recert")).env_clear().env("HOME", &home).env("SPIRA_RELEASE", &f.release).env("SPIRA_TOML", &f.toml).args(args).output()).unwrap()
 }
 
 fn text(o: &Output) -> String {
@@ -195,7 +196,7 @@ fn the_argv_the_unit_is_started_with_reaches_the_drive_mode_of_the_real_release_
     let argv: Vec<&str> = run.split(' ').skip_while(|a| !a.ends_with("/bin/round-recert")).skip(1).collect();
     assert_eq!(argv.first(), Some(&"round-recert"), "{run}");
     let home = f.root.join("home");
-    let o = testkit::retry_busy(|| Command::new(f.release.join("bin/release")).env_clear().env("HOME", &home).env("SPIRA_TOML", &f.toml).args(&argv).output()).unwrap();
+    let o = testkit::retry_busy(|| Command::new(f.release.join("bin/release")).env_clear().env("HOME", &home).env("SPIRA_RELEASE", &f.release).env("SPIRA_TOML", &f.toml).args(&argv).output()).unwrap();
     assert!(!text(&o).contains("unknown flag --drive"), "{}", text(&o));
     assert!(text(&o).contains("round-recert: driving r-1"), "{}", text(&o));
 }

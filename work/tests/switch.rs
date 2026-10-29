@@ -34,8 +34,9 @@ fn work(sock: &Path, home: &Path, verb: &str) -> std::process::Output {
     // writes a complete fixture config file rather than setting the key directly. An empty
     // conf.d is enough: resolving SPIRA_LC_SOCKET itself needs no registry file, only a
     // conf.d directory that exists (spira-config's own `fixture_home_repo` test helper).
-    std::fs::create_dir_all(home.join("conf.d")).unwrap();
-    std::fs::create_dir_all(home.join("conf.toml.d")).unwrap();
+    for sub in ["conf.d", "conf.toml.d"] {
+        std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira").join(sub), home.join(sub)).unwrap();
+    }
     let toml = spira_config::process::fixture_toml(home, &[("SPIRA_LC_SOCKET", sock.to_str().unwrap())]);
     Command::new(env!("CARGO_BIN_EXE_work"))
         .arg(verb)

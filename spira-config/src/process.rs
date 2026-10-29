@@ -109,7 +109,10 @@ pub fn fixture_release(dir: &std::path::Path, with_conf_d: bool) -> std::path::P
     std::fs::create_dir_all(release.join("spira")).expect("the fixture release is created");
     let dirs: &[&str] = if with_conf_d { &["conf.d", "conf.toml.d"] } else { &["conf.toml.d"] };
     for d in dirs {
-        std::os::unix::fs::symlink(tree.join(d), release.join("spira").join(d)).expect("the registry is linked");
+        let link = release.join("spira").join(d);
+        if !link.exists() {
+            std::os::unix::fs::symlink(tree.join(d), &link).expect("the registry is linked");
+        }
     }
     release
 }
