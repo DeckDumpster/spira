@@ -44,12 +44,13 @@ impl Backend for DirBackend {
     fn put(&self, key: &str, value: &str) {
         let path = self.root.join(key);
         let Some(parent) = path.parent() else { return };
-        if fs::create_dir_all(parent).is_err() {
-            return;
+        if let Err(e) = fs::create_dir_all(parent) {
+            return report_once(&format!("resume: cannot create {}: {e}", parent.display()));
         }
         let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
-        if fs::write(&tmp, value).is_ok() {
-            let _ = fs::rename(&tmp, &path);
+        let written = fs::write(&tmp, value).and_then(|_| fs::rename(&tmp, &path));
+        if let Err(e) = written {
+            report_once(&format!("resume: cannot write {}: {e}", path.display()));
         }
     }
 }
@@ -160,6 +161,14 @@ pub struct Store {
     pending: Arc<Pending>,
 }
 
+/// The first failure to record a pass is said on stderr; the rest of the run stays quiet.
+fn report_once(msg: &str) {
+    static SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !SAID.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        eprintln!("{msg}");
+    }
+}
+
 fn safe(seg: &str) -> bool {
     !seg.is_empty() && !seg.contains(['/', '\n', ' ', '\r']) && seg != "." && seg != ".."
 }
@@ -231,12 +240,17 @@ impl Store {
     }
 
     pub fn record(&self, suite: &str) {
-        if let Some(key) = self.key(suite) {
-            let backend = self.backend.clone();
-            let body = self.body(suite);
-            let handle = std::thread::spawn(move || backend.put(&key, &body));
-            self.pending.0.lock().unwrap_or_else(|e| e.into_inner()).push(handle);
-        }
+        let Some(key) = self.key(suite) else {
+            report_once(&format!(
+                "resume: not recording {suite}: unsafe key segment (repo {:?}, tree {:?}, env {:?})",
+                self.repo, self.tree, self.env_key
+            ));
+            return;
+        };
+        let backend = self.backend.clone();
+        let body = self.body(suite);
+        let handle = std::thread::spawn(move || backend.put(&key, &body));
+        self.pending.0.lock().unwrap_or_else(|e| e.into_inner()).push(handle);
     }
 }
 
@@ -265,6 +279,16 @@ mod tests {
             profile: "debug".into(),
             artifacts_id: None,
         }
+    }
+
+    #[test]
+    fn a_dir_backend_that_cannot_create_its_root_records_nothing() {
+        let d = testkit::TempDir::new("resume-unwritable");
+        let blocker = d.path().join("blocker");
+        fs::write(&blocker, "a file where a directory must go").unwrap();
+        let backend = DirBackend { root: blocker.join("store") };
+        backend.put("r/t/e/s", "body");
+        assert!(!blocker.join("store").exists());
     }
 
     /// A backend over a fresh scratch space; `spec` is what a caller would configure.

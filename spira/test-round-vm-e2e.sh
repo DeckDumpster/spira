@@ -128,6 +128,19 @@ chmod +x "$TMP/fake-cargo"
 podman cp "$TMP/fake-cargo" "$VM_NAME:/usr/local/bin/cargo" # batch-job: container fixture call; image pulls and starts exceed 5 s
 podman exec "$VM_NAME" chmod +x /usr/local/bin/cargo # batch-job: container fixture call; image pulls and starts exceed 5 s
 
+# The stand-in runner for the resume drill: leaves one record in the VM's resume store and says
+# it resumed a suite, then exits red so the host keeps the store.
+cat > "$TMP/fake-testenv" <<'FAKETESTENV'
+#!/bin/sh
+rec="$HOME/round-resume/spira/e2etree/e2eenv/e2e-a.sh"
+if [ -e "$rec" ]; then touch "$HOME/round-resume-seen"; fi
+mkdir -p "$(dirname "$rec")"
+echo record > "$rec"
+echo "batch: resumed: e2e-a.sh passed in run/attempt local for this tree — not run again"
+exit 1
+FAKETESTENV
+chmod +x "$TMP/fake-testenv"
+
 # ── the stub Proxmox HTTPS API: a CA + a leaf cert it presents, so PVE_CACERT (the CA) is
 # usable as a rustls trust root the way HttpTransport::new expects — a bare self-signed leaf
 # added directly as a root fails rustls's own chain-building (CaUsedAsEndEntity).
@@ -246,5 +259,21 @@ ctx.verify_mode = ssl.CERT_NONE
 print(urllib.request.urlopen('https://127.0.0.1:$PVE_PORT/api2/json/nodes/pve/qemu', context=ctx, timeout=5).read().decode())
 " 2>/dev/null)"
 nowant "run: the leased VM was destroyed and verified gone" "\"vmid\": $VMID" "$qemu_list"
+
+# ── resume across re-runs: a red run keeps the VM's resume record and the runner output on the
+# host, and the next run of the same tree pushes the record back before its runner starts.
+podman cp "$TMP/fake-testenv" "$VM_NAME:/usr/local/bin/testenv" # batch-job: container fixture call; image pulls and starts exceed 5 s
+RESUME_RUN() {
+    env -i PATH="$PATH" SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_TOML="$SPIRA_TOML" SPIRA_ROUND_VM_SSH_TRIES=20 SPIRA_ROUND_VM_BOOT_POLL=1 \
+        "$BIN" run "$TREE_DIR" --suites e2e-a.sh --maxpar 2 --results-dir "$1" >"$TMP/$2.out" 2>"$TMP/$2.err" || true
+}
+RESUME_RUN "$TMP/red1" red1
+want "resume: the red run's host store holds the VM's record" "e2e-a.sh" "$(find "$STATE_DIR/resume/$TREE_SHA" -type f 2>/dev/null)"
+want "resume: the red run says what it holds" "RESUME: holding 1 record(s)" "$(cat "$TMP/red1.err")"
+want "resume: runner.out is kept with the results" "batch: resumed: e2e-a.sh" "$(cat "$TMP/red1/runner.out" 2>/dev/null)"
+podman exec "$VM_NAME" rm -rf /root/round-resume /root/round-resume-seen # batch-job: container fixture call; image pulls and starts exceed 5 s
+RESUME_RUN "$TMP/red2" red2
+want "resume: the re-run pushed the held record" "RESUME: pushed" "$(cat "$TMP/red2.err")"
+is "resume: the record was on the VM before its runner started" "yes" "$(podman exec "$VM_NAME" sh -c 'test -e /root/round-resume-seen && echo yes' 2>/dev/null)" # batch-job: container fixture call; image pulls and starts exceed 5 s
 
 tl_summary
