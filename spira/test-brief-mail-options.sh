@@ -60,6 +60,19 @@ PY
 # the briefs in one suite run, so re-parsing it per file bought nothing but forks.
 KNOWN_OPTS="$(cmd_send_opts)"
 
+echo
+echo "extractor — run_send's options were found in mail/src/main.rs"
+missing_known=""
+for want in --from --subject --kind --default --bead; do
+    grep -qxF -e "$want" <<<"$KNOWN_OPTS" || missing_known="${missing_known:+$missing_known }$want"
+done
+if [ -n "$KNOWN_OPTS" ] && [ -z "$missing_known" ]; then
+    ok "extractor found run_send's options"
+else
+    if [ -f "$MAIL_MAIN_RS" ]; then exists=exists; else exists="does not exist"; fi
+    bad "extractor found run_send's options — read $MAIL_MAIN_RS ($exists); missing: $missing_known; extracted: $(printf '%s' "$KNOWN_OPTS" | tr '\n' ' ')"
+fi
+
 # Returns 0 if all --flags in $1 are known cmd_send options; 1 otherwise.
 # Prints any unknown options to stdout.
 check_brief() {
@@ -68,7 +81,7 @@ check_brief() {
     local bad_opts="" opt
     while IFS= read -r opt; do
         [ -z "$opt" ] && continue
-        if ! printf '%s\n' "$known" | grep -qxF -e "$opt"; then
+        if ! grep -qxF -e "$opt" <<<"$known"; then
             bad_opts="${bad_opts:+$bad_opts }$opt"
         fi
     done < <(brief_send_opts "$f")
@@ -91,11 +104,11 @@ cat > "$T/fake-brief.md" <<'MD'
         --kind question --default "yes" --priority 2
 MD
 
-out="$(check_brief "$T/fake-brief.md" 2>/dev/null || true)"
+out="$(check_brief "$T/fake-brief.md" || true)"
 if printf '%s' "$out" | grep -qF -- '--priority'; then
     ok "checker finds --priority in a fake brief"
 else
-    bad "checker finds --priority in a fake brief — not detected (got: $out)"
+    bad "checker finds --priority in a fake brief — not detected (got: $out; known: $(printf '%s' "$KNOWN_OPTS" | tr '\n' ' '))"
 fi
 
 # ===========================================================================
@@ -109,11 +122,11 @@ cat > "$T/good-brief.md" <<'MD'
         --subject "a question" --kind question --default "yes" --bead sp-abc
 MD
 
-out="$(check_brief "$T/good-brief.md" 2>/dev/null || true)"
+out="$(check_brief "$T/good-brief.md" || true)"
 if [ -z "$out" ]; then
     ok "a brief with only known options passes"
 else
-    bad "a brief with only known options passes — got: $out"
+    bad "a brief with only known options passes — got: $out; known: $(printf '%s' "$KNOWN_OPTS" | tr '\n' ' '); brief: $(brief_send_opts "$T/good-brief.md" | tr '\n' ' ')"
 fi
 
 # ===========================================================================
@@ -125,11 +138,11 @@ for f in "$RUNES"/*.md; do
     [ -f "$f" ] || continue
     found_any=1
     name="$(basename "$f")"
-    out="$(check_brief "$f" 2>/dev/null || true)"
+    out="$(check_brief "$f" || true)"
     if [ -z "$out" ]; then
         ok "$name: all send options are valid"
     else
-        bad "$name: unknown options in send calls: $out"
+        bad "$name: unknown options in send calls: $out; known: $(printf '%s' "$KNOWN_OPTS" | tr '\n' ' '); brief: $(brief_send_opts "$f" | tr '\n' ' ')"
     fi
 done
 
