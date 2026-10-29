@@ -1737,7 +1737,7 @@ fn run_hold_sweep(cfg: &Config, pending: &mut PendingMap) {
     let breaker = match breaker {
         Ok(b) => Some(b),
         Err(e) => {
-            log_print(cfg, &format!("reconciler: holds: no-progress breaker unconfigured, breaker off, expired snoozes still lifted: {e}"));
+            log_print(cfg, &format!("reconciler: holds: no-progress breaker unconfigured, waits not lifted: {e}"));
             None
         }
     };
