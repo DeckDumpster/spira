@@ -491,3 +491,11 @@ Rust unit tests only, each well under a second, against a fake provider, a fake 
 transport, a fake remote and a fake alarm. They are derived from section 2: every
 guarantee G1-G8 and every live bug in 2.4 has a test named for it. Nothing in the test
 suite reaches a real hypervisor, ssh or rsync.
+
+## Build once per tree
+
+Before its release build the VM looks the tree up in the shared store by tree id, toolchain and
+profile (release DESIGN.md "artifacts") and on a hit unpacks the stored executables into
+`target/release` and skips cargo, logging `round-vm: artifacts: hit <key>`. After a build it
+stores the executables; an unreachable or refusing store costs speed, never the round. The
+unit-test build is separate and still compiles.

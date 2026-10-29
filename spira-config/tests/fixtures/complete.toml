@@ -371,6 +371,7 @@ identity_login_ttl_secs = "900"
 identity_login_url = ""
 sccache_dav_addr = "auto:9431"
 sccache_dav_max_gb = 40
+sccache_dav_artifact_days = 7
 sccache_dav_tailnet_addr = ""
 scope_label = "spira"
 self_window = "60"
