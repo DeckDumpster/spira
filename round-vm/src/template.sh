@@ -33,7 +33,7 @@ cat > "$work/template-config.toml" <<TEMPLATECFG
 [spira]
 run = "$work/.runtime/spira"
 releases = "$work/.runtime/releases"
-home_repo = "$work"
+home_repo = "spira"
 TEMPLATECFG
 export SPIRA_TOML="$work/spira-config/tests/fixtures/complete.toml:$work/template-config.toml"
 nix_bin=/nix/var/nix/profiles/default/bin

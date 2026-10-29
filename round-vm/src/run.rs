@@ -3133,10 +3133,13 @@ mod tests {
 
     #[test]
     fn the_round_config_names_the_home_repo_not_its_path() {
-        let cfg = REMOTE_SCRIPT.find("cat > \"$HOME/round-config.toml\"").unwrap();
-        let end = cfg + REMOTE_SCRIPT[cfg..].find("ROUNDCFG\nexport").unwrap();
-        let line = REMOTE_SCRIPT[cfg..end].lines().find(|l| l.starts_with("home_repo")).expect("declares home_repo");
-        assert!(!line.contains('/') && !line.contains("$HOME"), "a path as the repo name is an unsafe resume key segment: {line}");
+        let scripts = [("run.rs", REMOTE_SCRIPT, "ROUNDCFG\nexport"), ("template.sh", include_str!("template.sh"), "TEMPLATECFG\nexport")];
+        for (name, script, end) in scripts {
+            let cfg = script.find("home_repo").unwrap_or_else(|| panic!("{name} declares home_repo"));
+            let line = script[cfg..].lines().next().unwrap();
+            assert!(script[cfg..].contains(end), "{name}");
+            assert!(!line.contains('/') && !line.contains('$'), "a path as the repo name is an unsafe resume key segment ({name}): {line}");
+        }
     }
 
     #[test]
@@ -4057,7 +4060,7 @@ mod tests {
     fn the_remote_script_records_vm_wide_signals_beside_the_suite_times() {
         let sampler = REMOTE_SCRIPT.find("sampler_pid=$!").expect("a sampler is started");
         let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
-        let stop = REMOTE_SCRIPT.find("kill \"$sampler_pid\"").expect("and stopped");
+        let stop = REMOTE_SCRIPT.rfind("kill \"$sampler_pid\"").expect("and stopped");
         assert!(sampler < batch && batch < stop, "it brackets the suites");
         for f in ["vm-signals", "iowait_pct", "steal_pct", "io_psi_some_avg10", "disk_inflight", "tsd/vm-signals.jsonl"] {
             assert!(REMOTE_SCRIPT.contains(f), "{f}");
