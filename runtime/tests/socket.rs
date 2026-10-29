@@ -155,8 +155,8 @@ fn a_connect_to_a_socket_nobody_accepts_gives_up_within_the_deadline() {
         held.push(s);
         assert!(held.len() < 10_000, "the backlog never filled");
     }
-    let began = std::time::Instant::now();
-    let e = runtime::socket::lc_call(&path, &["journal", "cursor"]).unwrap_err();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || tx.send(runtime::socket::lc_call(&path, &["journal", "cursor"])).unwrap());
+    let e = rx.recv_timeout(std::time::Duration::from_secs(6)).expect("lc_call returns inside its deadline").unwrap_err(); // clock-safe: cap on the wait for lc_call to give up
     assert!(e.0.contains("not answering"), "{e}");
-    assert!(began.elapsed() < std::time::Duration::from_secs(6), "{:?}", began.elapsed());
 }
