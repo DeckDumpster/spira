@@ -41,7 +41,7 @@ impl Probe for GitProbe {
 
     fn merge(&self, tip: &str) -> Result<Merge, String> {
         let o = git(&self.repo)
-            .args(["merge-tree", "--write-tree", "--name-only", "--no-messages", &self.base_ref, tip])
+            .args(["-c", &format!("attr.tree={}", self.base_ref), "merge-tree", "--write-tree", "--name-only", "--no-messages", &self.base_ref, tip])
             .output()
             .map_err(|e| format!("git merge-tree: {e}"))?;
         let text = String::from_utf8_lossy(&o.stdout).into_owned();
@@ -130,6 +130,26 @@ mod tests {
         let clean = commit(&p, "g", "new\n", "spira: land sp-bead — adds g");
         let probe = GitProbe { repo: p.clone(), name: "alpha".into(), registered: vec!["alpha".into()], wiki: String::new(), identity_projects: String::new(), base_ref: "main".into(), work: p.join(".sift"), state: Box::new(|_| Ok("SUBMITTED".into())), shown: Box::new(|_| Ok(String::new())) };
         (d, probe, [conflict, clean, "x".into()])
+    }
+
+    #[test]
+    fn merge_honours_the_base_refs_union_attributes_not_the_checkouts() {
+        let d = testkit::TempDir::new("sift-union");
+        let p = d.path();
+        g(p, &["init", "-q", "-b", "stale"]);
+        commit(p, "keep", "x\n", "stale checkout has no attributes");
+        g(p, &["checkout", "-q", "-b", "main"]);
+        commit(p, ".gitattributes", "f merge=union\n", "union");
+        commit(p, "f", "base\n", "f");
+        g(p, &["checkout", "-q", "-b", "a", "main"]);
+        commit(p, "f", "base\nfrom a\n", "a");
+        g(p, &["checkout", "-q", "-b", "b", "main"]);
+        commit(p, "f", "base\nfrom b\n", "b");
+        g(p, &["checkout", "-q", "main"]);
+        g(p, &["merge", "-q", "--ff-only", "a"]);
+        g(p, &["checkout", "-q", "stale"]);
+        let probe = GitProbe { repo: p.to_path_buf(), name: "alpha".into(), registered: vec!["alpha".into()], wiki: String::new(), identity_projects: String::new(), base_ref: "main".into(), work: p.join(".sift"), state: Box::new(|_| Ok("SUBMITTED".into())), shown: Box::new(|_| Ok(String::new())) };
+        assert!(matches!(probe.merge("b"), Ok(Merge::Clean(_))));
     }
 
     #[test]
