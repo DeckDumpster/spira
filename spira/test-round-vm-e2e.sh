@@ -128,18 +128,30 @@ chmod +x "$TMP/fake-cargo"
 podman cp "$TMP/fake-cargo" "$VM_NAME:/usr/local/bin/cargo" # batch-job: container fixture call; image pulls and starts exceed 5 s
 podman exec "$VM_NAME" chmod +x /usr/local/bin/cargo # batch-job: container fixture call; image pulls and starts exceed 5 s
 
-# The stand-in runner for the resume drill: leaves one record in the VM's resume store and says
-# it resumed a suite, then exits red so the host keeps the store.
+# The resume drill's VM: an `aws` that keeps S3 objects under /root/fake-s3 and logs the credentials
+# file it was handed, and a runner that records K=3 passes through it (as testenv does) then dies red.
+# A pass that finds records already there says so, which is what a fresh VM's re-run must show.
+cat > "$TMP/fake-aws" <<'FAKEAWS'
+#!/bin/sh
+shift 2
+while [ "${1#--}" != "$1" ]; do case "$1" in --only-show-errors) shift;; *) shift 2;; esac; done
+echo "${AWS_SHARED_CREDENTIALS_FILE:-none}" >> "$HOME/aws-creds-seen"
+dst="$HOME/fake-s3/${2#s3://}"
+mkdir -p "$(dirname "$dst")"
+cat > "$dst"
+FAKEAWS
 cat > "$TMP/fake-testenv" <<'FAKETESTENV'
 #!/bin/sh
-rec="$HOME/round-resume/spira/e2etree/e2eenv/e2e-a.sh"
-if [ -e "$rec" ]; then touch "$HOME/round-resume-seen"; fi
-mkdir -p "$(dirname "$rec")"
-echo record > "$rec"
-echo "batch: resumed: e2e-a.sh passed in run/attempt local for this tree — not run again"
+case "${SPIRA_TESTENV_RESUME:-}" in s3://*) ;; *) echo "RESUME-UNSET" >&2; exit 2;; esac
+store="$HOME/fake-s3/${SPIRA_TESTENV_RESUME#s3://}/spira/e2etree/e2eenv"
+for s in e2e-a.sh e2e-b.sh e2e-c.sh; do
+    if [ -e "$store/$s" ]; then echo "batch: resumed: $s passed in run/attempt local for this tree — not run again"; continue; fi
+    printf 'pass\n' | aws s3 cp - "$SPIRA_TESTENV_RESUME/spira/e2etree/e2eenv/$s"
+    echo "ran $s"
+done
 exit 1
 FAKETESTENV
-chmod +x "$TMP/fake-testenv"
+chmod +x "$TMP/fake-testenv" "$TMP/fake-aws"
 
 # ── the stub Proxmox HTTPS API: a CA + a leaf cert it presents, so PVE_CACERT (the CA) is
 # usable as a rustls trust root the way HttpTransport::new expects — a bare self-signed leaf
@@ -192,7 +204,7 @@ tl_config SPIRA_RUN="$RUN_DIR" SPIRA_ROUND_VM_STATE_DIR="$STATE_DIR" SPIRA_PVE_E
     SPIRA_ROUND_VM_HOST_KEY="$TMP/client_key" SPIRA_ROUND_VM_HOST_ADDR=127.0.0.1 \
     SPIRA_ROUND_VM_MIRROR_PORT="$MIRROR_PORT" SPIRA_ROUND_VM_MAX_RETRIES=1 \
     SPIRA_ROUND_VM_RETRY_INTERVAL=0 SPIRA_ROUND_VM_VCPUS=4
-env -i PATH="$PATH" \
+env -i PATH="$PATH" SPIRA_HOME="${SPIRA_HOME:-}" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_ROUND_VM_SSH_TRIES=20 \
     SPIRA_ROUND_VM_BOOT_POLL=1 \
@@ -260,20 +272,29 @@ print(urllib.request.urlopen('https://127.0.0.1:$PVE_PORT/api2/json/nodes/pve/qe
 " 2>/dev/null)"
 nowant "run: the leased VM was destroyed and verified gone" "\"vmid\": $VMID" "$qemu_list"
 
-# ── resume across re-runs: a red run keeps the VM's resume record and the runner output on the
-# host, and the next run of the same tree pushes the record back before its runner starts.
+# ── resume across re-runs: a round records each pass to the S3 prefix as it passes, so a VM that
+# dies loses none, and the next pass for the tree on a fresh VM resumes exactly those.
 podman cp "$TMP/fake-testenv" "$VM_NAME:/usr/local/bin/testenv" # batch-job: container fixture call; image pulls and starts exceed 5 s
+podman cp "$TMP/fake-aws" "$VM_NAME:/usr/local/bin/aws" # batch-job: container fixture call; image pulls and starts exceed 5 s
+mkdir -p "$TMP/resume-creds"; printf '[default]\naws_access_key_id = scoped-fixture\n' > "$TMP/resume-creds/credentials"
+RESUME_URL="s3://e2e-bucket/e2e-prefix"
 RESUME_RUN() {
     env -i PATH="$PATH" SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_TOML="$SPIRA_TOML" SPIRA_ROUND_VM_SSH_TRIES=20 SPIRA_ROUND_VM_BOOT_POLL=1 \
+        SPIRA_ROUND_VM_RESUME_URL="$RESUME_URL" SPIRA_ROUND_VM_RESUME_CREDENTIALS="$TMP/resume-creds" \
         "$BIN" run "$TREE_DIR" --suites e2e-a.sh --maxpar 2 --results-dir "$1" >"$TMP/$2.out" 2>"$TMP/$2.err" || true
 }
+vm_sh() { podman exec "$VM_NAME" sh -c "$1" 2>/dev/null; } # batch-job: container fixture call; image pulls and starts exceed 5 s
+vm_sh 'rm -rf /root/fake-s3 /root/aws-creds-seen'
 RESUME_RUN "$TMP/red1" red1
-want "resume: the red run's host store holds the VM's record" "e2e-a.sh" "$(find "$STATE_DIR/resume/$TREE_SHA" -type f 2>/dev/null)"
-want "resume: the red run says what it holds" "RESUME: holding 1 record(s)" "$(cat "$TMP/red1.err")"
-want "resume: runner.out is kept with the results" "batch: resumed: e2e-a.sh" "$(cat "$TMP/red1/runner.out" 2>/dev/null)"
-podman exec "$VM_NAME" rm -rf /root/round-resume /root/round-resume-seen # batch-job: container fixture call; image pulls and starts exceed 5 s
+want "resume: the round says it records to the prefix" "RESUME: recording passed suites to $RESUME_URL" "$(cat "$TMP/red1.err")"
+is "resume: the red run left 3 records in the prefix" "3" "$(vm_sh 'find /root/fake-s3 -type f ! -name .probe | wc -l')"
+want "resume: the VM read the pushed credentials, not a command line" "round-resume-aws/credentials" "$(vm_sh 'cat /root/aws-creds-seen')"
+nowant "resume: no key rides the transcript" "scoped-fixture" "$(cat "$TMP/red1.err" "$TMP/red1.out")"
+want "resume: runner.out is kept with the results" "ran e2e-a.sh" "$(cat "$TMP/red1/runner.out" 2>/dev/null)"
+vm_sh 'rm -rf /root/round-work /root/round-resume-aws'
 RESUME_RUN "$TMP/red2" red2
-want "resume: the re-run pushed the held record" "RESUME: pushed" "$(cat "$TMP/red2.err")"
-is "resume: the record was on the VM before its runner started" "yes" "$(podman exec "$VM_NAME" sh -c 'test -e /root/round-resume-seen && echo yes' 2>/dev/null)" # batch-job: container fixture call; image pulls and starts exceed 5 s
+is "resume: the re-run skipped exactly the 3 recorded suites" "3" "$(grep -c 'batch: resumed:' "$TMP/red2/runner.out" 2>/dev/null)"
+nowant "resume: the re-run ran none of them again" "ran e2e" "$(cat "$TMP/red2/runner.out" 2>/dev/null)"
+is "resume: no store is kept on the host" "no" "$([ -e "$STATE_DIR/resume" ] && echo yes || echo no)"
 
 tl_summary

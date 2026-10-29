@@ -524,3 +524,5 @@ runtime_stall_limit
 runtime_round_duty_secs
 runtime_inbox_keeper_secs
 sccache_dav_artifact_days
+round_vm_resume_url
+round_vm_resume_credentials

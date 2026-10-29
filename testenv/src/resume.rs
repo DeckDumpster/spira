@@ -73,6 +73,22 @@ impl S3Backend {
     fn url(&self, key: &str) -> String {
         format!("{}/{key}", self.base)
     }
+
+    fn put_error(&self, key: &str, value: &str) -> Option<String> {
+        let url = self.url(key);
+        let fail = |why: String| Some(format!("resume: cannot write {url}: {why}"));
+        let Ok(mut child) = self.cmd(&["-", &url]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn() else {
+            return fail(format!("{} did not start", self.aws.display()));
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(value.as_bytes());
+        }
+        match child.wait_with_output() {
+            Ok(out) if out.status.success() => None,
+            Ok(out) => fail(String::from_utf8_lossy(&out.stderr).trim().to_string()),
+            Err(e) => fail(e.to_string()),
+        }
+    }
 }
 
 impl Backend for S3Backend {
@@ -99,14 +115,9 @@ impl Backend for S3Backend {
     }
 
     fn put(&self, key: &str, value: &str) {
-        let Ok(mut child) = self.cmd(&["-", &self.url(key)]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn()
-        else {
-            return;
-        };
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(value.as_bytes());
+        if let Some(err) = self.put_error(key, value) {
+            report_once(&err);
         }
-        let _ = child.wait();
     }
 }
 
@@ -396,6 +407,34 @@ mod tests {
         assert_eq!(s.passed("b"), None);
         assert_eq!(s.passed("c"), None, "a record filed under another suite's name");
         assert_eq!(s.passed("../a"), None);
+    }
+
+    #[test]
+    fn a_run_cut_after_k_passes_leaves_k_records_and_the_next_pass_skips_exactly_k() {
+        each(|b| {
+            let names: Vec<String> = (0..12).map(|n| format!("s{n}")).collect();
+            let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+            let i = inputs("t1", "img", &refs);
+            let cut = b.store(&i, "local");
+            for n in names.iter().take(7) {
+                cut.record(n);
+            }
+            cut.flush();
+            drop(cut);
+            let next = b.store(&i, "local");
+            let skipped = names.iter().filter(|n| next.passed(n).is_some()).count();
+            assert_eq!(skipped, 7, "{}", b.spec);
+        });
+    }
+
+    #[test]
+    fn a_refused_s3_write_is_said_with_its_cause() {
+        let d = testkit::TempDir::new("testenv-resume-denied");
+        let aws = d.path().join("aws");
+        testkit::write_exe(&aws, "#!/bin/sh\necho 'AccessDenied: no write to the prefix' >&2\nexit 1\n");
+        let b = S3Backend { aws, base: "s3://bkt/resume".into() };
+        let err = b.put_error("k", "v").expect("a refused write is an error");
+        assert!(err.contains("s3://bkt/resume/k") && err.contains("AccessDenied"), "{err}");
     }
 
     #[test]

@@ -16,7 +16,7 @@ use crate::spill::Rule;
 use crate::procs::{block_termination_signals, command};
 use crate::provider::Timing;
 use crate::pve::{HttpTransport, Pve};
-use crate::run::{parse_run_args, resume_dir, run, salvage_results, Host, GitHost, RunEnv, SshRemote};
+use crate::run::{parse_run_args, run, salvage_results, GitHost, RunEnv, SshRemote};
 use crate::schema::ProcId;
 
 pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>] [--on-red <command>]|status [--json]|warm|teardown|template [--adopt <vmid>]|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]|recipe-sha [--tree <dir>]|ami-for <recipe-sha>|template-check|ami-check|ami-prune|reap|ec2-probe [--dry-run]";
@@ -527,13 +527,9 @@ pub fn main_with(args: Vec<String>) -> i32 {
             let sig_results = run_args.as_ref().and_then(|a| a.results_dir.clone()).unwrap_or_else(|| cfg.run_dir.join("batch-results"));
             let sig_run_dir = cfg.run_dir.clone();
             let sig_scratch = cfg.state_dir.join(format!(".salvage.{}", me.pid));
-            let sig_resume = run_args.as_ref().filter(|a| a.ci_entry.is_none()).and_then(|a| {
-                let host = GitHost { state_dir: cfg.state_dir.clone(), mirror_port: cfg.mirror_port, listen: String::new(), also_listen: spill_listen() };
-                host.head(&a.tree_dir).ok().map(|(_, tree)| resume_dir(&cfg, &tree))
-            });
             block_termination_signals(move |sig| {
                 for vm in sig_pool.leased_to(me) {
-                    match salvage_results(&sig_remote, &vm.addr, &sig_results, &sig_scratch, Duration::from_secs(6), sig_resume.as_deref()) {
+                    match salvage_results(&sig_remote, &vm.addr, &sig_results, &sig_scratch, Duration::from_secs(6)) {
                         Some(n) => eprintln!("round-vm run: signal {sig}: salvaged {n} suite result(s) from {} before release", vm.handle),
                         None if real_attempt().ok().is_some_and(|a| matches!(a.provider.alive(&vm.handle), Ok(false))) => {
                             eprintln!("round-vm run: signal {sig}: {} is not running; nothing to re-pull, releasing it", vm.handle);
@@ -788,6 +784,8 @@ mod tests {
             host_pubkey: "/nonexistent/key.pub".into(),
             host_addr: None,
             cache_home: None,
+            resume_url: None,
+            resume_credentials: None,
             testenv_registry: None,
             vcpus: 1,
             mem_mib: 0,
