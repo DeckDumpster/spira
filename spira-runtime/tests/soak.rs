@@ -311,14 +311,14 @@ fn spira_runtime_serves_for_twenty_beats_against_the_production_store() {
             appended = true;
         }
         match fifo {
-            Fifo::Real if begun.elapsed() > SOAK / 5 => {
+            Fifo::Real if begun.elapsed() > SOAK / 5 => { // clock-safe: the stall phase is timed by design
                 // a log file that is a pipe nobody reads: the writer thread's open blocks
                 fs::rename(&log_file, &parked).unwrap();
                 let c = std::ffi::CString::new(log_file.to_str().unwrap()).unwrap();
                 assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0, "{}", std::io::Error::last_os_error());
                 fifo = Fifo::Stalled(Instant::now());
             }
-            Fifo::Stalled(since) if since.elapsed() > Duration::from_secs(10) => {
+            Fifo::Stalled(since) if since.elapsed() > Duration::from_secs(10) => { // clock-safe: the stall lasts 10 s by design
                 let _release = fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(&log_file).unwrap();
                 fs::remove_file(&log_file).unwrap();
                 fs::rename(&parked, &log_file).unwrap();
