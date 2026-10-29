@@ -140,7 +140,7 @@ fn a_released_lease_is_taken_at_the_next_epoch() {
 }
 
 const STREAMS: usize = 4;
-const STEPS: usize = 80;
+const STEPS: usize = 120;
 
 #[test]
 fn node_child() {

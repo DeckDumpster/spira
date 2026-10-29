@@ -97,3 +97,38 @@ mod ids {
         assert!(r.is_err() && inner.poisoned(&StreamKey("s".into())).unwrap().is_none(), "a fault propagates and quarantines nothing");
     }
 }
+
+mod cursor {
+    use runtime::ports::VirtualClock;
+    use runtime::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct Count(Arc<AtomicUsize>);
+    impl Handler for Count {
+        fn interests(&self) -> &[EventKindTag] {
+            &["ping"]
+        }
+        fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            vec![]
+        }
+    }
+
+    #[test]
+    fn a_cursor_write_lost_to_a_crash_replays_without_running_a_handler_twice() {
+        let mem = MemJournal::new();
+        let faulty = FaultyJournal::new(mem.clone());
+        let runs = Arc::new(AtomicUsize::new(0));
+        let open = |j: Arc<dyn Journal>| Engine::open(j, Arc::new(VirtualClock::new(1)), vec![Registration::new("count", Count(runs.clone()))], 0).unwrap();
+        let mut e = open(faulty.clone());
+        e.submit("p1", "s", EventKind::new("ping", "")).unwrap();
+        faulty.fail_next("set_cursor");
+        assert!(e.run_until_idle().is_err());
+        assert_eq!(mem.cursor().unwrap(), 0);
+        let mut again = open(mem.clone());
+        again.run_until_idle().unwrap();
+        assert_eq!(runs.load(Ordering::SeqCst), 1);
+        assert_eq!(mem.cursor().unwrap(), 1);
+    }
+}

@@ -85,6 +85,11 @@ pub struct Engine {
     attempts: BTreeMap<String, u32>,
     baseline: Vec<(String, Value)>,
     started: Instant,
+    cursor: Offset,
+    saved_cursor: Offset,
+    check_applied_below: Offset,
+    appended: bool,
+    poison_seen: BTreeMap<StreamKey, bool>,
 }
 
 fn mix(seed: u64, parts: &[&str]) -> u64 {
@@ -124,13 +129,21 @@ impl Engine {
             attempts: BTreeMap::new(),
             baseline: vec![],
             started: Instant::now(),
+            cursor: 0,
+            saved_cursor: 0,
+            check_applied_below: 0,
+            appended: false,
+            poison_seen: BTreeMap::new(),
         };
         let cursor = e.journal.cursor()?;
+        e.cursor = cursor;
+        e.saved_cursor = cursor;
         let mut from = 0;
         loop {
             let batch = e.journal.read_from(from, BATCH)?;
             let Some((last, _)) = batch.last() else { break };
             from = last + 1;
+            e.check_applied_below = from;
             for (off, ev) in batch {
                 if off < cursor {
                     e.projection.push(&ev);
@@ -251,9 +264,10 @@ impl Engine {
         }
     }
 
-    fn append_derived(&self, id: String, stream: &StreamKey, kind: EventKind, cause: &Event, at: u64) -> Result<Event> {
+    fn append_derived(&mut self, id: String, stream: &StreamKey, kind: EventKind, cause: &Event, at: u64) -> Result<Event> {
         let ev = Event { id: EventId(id), stream: stream.clone(), kind, at, cause: Some(cause.id.clone()), correlation: cause.correlation.clone() };
         self.journal.append(&ev)?;
+        self.appended = true;
         Ok(ev)
     }
 
@@ -282,12 +296,12 @@ impl Engine {
 
     fn dispatch(&mut self, ev: &Event, at: (Offset, Offset)) -> Result<()> {
         self.projection.push(ev);
-        if self.journal.poisoned(&ev.stream)?.is_some() {
+        if self.is_poisoned(&ev.stream)? {
             return Ok(());
         }
         for i in 0..self.regs.len() {
             let name = self.regs[i].name.clone();
-            if !self.regs[i].handler.interests().contains(&ev.kind.tag.as_str()) || self.journal.applied(&name, &ev.id)? {
+            if !self.regs[i].handler.interests().contains(&ev.kind.tag.as_str()) || (at.0 < self.check_applied_below && self.journal.applied(&name, &ev.id)?) {
                 continue;
             }
             let key = (ev.id.clone(), name.clone());
@@ -345,7 +359,17 @@ impl Engine {
         Ok(())
     }
 
-    fn quarantine(&self, ev: &Event, handler: &str, message: &str) -> Result<()> {
+    fn is_poisoned(&mut self, stream: &StreamKey) -> Result<bool> {
+        if let Some(p) = self.poison_seen.get(stream) {
+            return Ok(*p);
+        }
+        let p = self.journal.poisoned(stream)?.is_some();
+        self.poison_seen.insert(stream.clone(), p);
+        Ok(p)
+    }
+
+    fn quarantine(&mut self, ev: &Event, handler: &str, message: &str) -> Result<()> {
+        self.poison_seen.insert(ev.stream.clone(), true);
         self.journal.poison(&Poison { stream: ev.stream.clone(), event: ev.id.clone(), handler: handler.into(), message: message.into() })?;
         let w = self.unit("quarantine", Some(ev), None);
         w.set("handler", handler);
@@ -355,25 +379,50 @@ impl Engine {
         Ok(())
     }
 
-    /// Dispatch every journal event past the cursor; the number dispatched.
+    /// Dispatch every journal event past the cursor; the number dispatched. The cursor is read
+    /// once at open and written once per pump: a crash in between replays events whose
+    /// `applied` mark makes the replay a no-op.
     pub fn pump(&mut self) -> Result<usize> {
+        self.poison_seen.clear();
         let mut n = 0;
+        let run = self.pump_batches(&mut n);
+        let saved = self.save_cursor();
+        run.and(saved)?;
+        Ok(n)
+    }
+
+    fn pump_batches(&mut self, n: &mut usize) -> Result<()> {
         loop {
-            let from: Offset = self.journal.cursor()?;
-            let batch = self.journal.read_from(from, BATCH)?;
+            let batch = self.journal.read_from(self.cursor, BATCH)?;
             if batch.is_empty() {
-                return Ok(n);
+                return Ok(());
             }
+            let full = batch.len() == BATCH;
             let last = batch.last().map_or(0, |(o, _)| *o);
+            self.appended = false;
             for (off, ev) in batch {
-                self.dispatch(&ev, (off, last))?;
-                self.journal.set_cursor(off + 1)?;
-                n += 1;
+                if let Err(e) = self.dispatch(&ev, (off, last)) {
+                    self.check_applied_below = self.check_applied_below.max(last + 1);
+                    return Err(e);
+                }
+                self.cursor = off + 1;
+                *n += 1;
                 if let Some(k) = &self.kick {
                     k();
                 }
             }
+            if !full && !self.appended {
+                return Ok(());
+            }
         }
+    }
+
+    fn save_cursor(&mut self) -> Result<()> {
+        if self.cursor != self.saved_cursor {
+            self.journal.set_cursor(self.cursor)?;
+            self.saved_cursor = self.cursor;
+        }
+        Ok(())
     }
 
     /// Fire the schedule rows now due and time out the effects past their deadline.
@@ -389,7 +438,7 @@ impl Engine {
                 correlation: row.correlation.clone(),
             };
             match self.journal.append(&ev) {
-                Ok(_) => {}
+                Ok(_) => self.appended = true,
                 Err(e) if e.is_refused() => {
                     self.quarantine(&ev, "scheduler", &e.0)?;
                     eprintln!("runtime: schedule row {} quarantined, the journal refused its event: {}", row.id, e.0);
@@ -422,6 +471,7 @@ impl Executor for Engine {
             correlation: CorrelationId(id.into()),
         };
         self.journal.append(&ev)?;
+        self.appended = true;
         Ok(())
     }
 
@@ -429,7 +479,7 @@ impl Executor for Engine {
         loop {
             let fired = self.tick()?;
             let dispatched = self.pump()?;
-            if fired == 0 && dispatched == 0 {
+            if (fired == 0 && dispatched == 0) || self.next_timer_at().is_none_or(|t| t > self.clock.now_ms()) {
                 return Ok(());
             }
         }
@@ -450,6 +500,7 @@ impl Executor for Engine {
             correlation: p.correlation.clone(),
         };
         self.journal.append(&ev)?;
+        self.appended = true;
         self.pending.remove(key);
         let w = self.unit("effect", Some(&ev), None);
         w.set("effect.kind", p.spec.name.as_str());
