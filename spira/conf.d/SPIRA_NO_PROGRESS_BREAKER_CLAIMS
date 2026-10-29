@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=reconciler
+DOC=SPIRA_NO_PROGRESS_BREAKER_CLAIMS — the reconciler's no-progress breaker setting; production runs 4.
+SCHEMA=How many claims on one bead may end without progress (no Submit) inside the breaker window before the lifecycle stops re-calling it and asks the Concierge.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_NO_PROGRESS_BREAKER_CLAIMS:=4}"
+SPIRA_CONF_DEFAULT_EOF

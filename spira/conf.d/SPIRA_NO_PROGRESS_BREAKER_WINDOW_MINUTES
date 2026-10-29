@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=reconciler
+DOC=SPIRA_NO_PROGRESS_BREAKER_WINDOW_MINUTES — the reconciler's no-progress breaker setting; production runs 180.
+SCHEMA=Rolling window, in minutes, over which no-progress claim ends are counted by the no-progress breaker.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_NO_PROGRESS_BREAKER_WINDOW_MINUTES:=180}"
+SPIRA_CONF_DEFAULT_EOF

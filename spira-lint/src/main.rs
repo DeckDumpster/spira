@@ -122,8 +122,9 @@ fn real_main() -> ExitCode {
         let (name, render): (&str, fn(&Tree) -> Result<String, spira_lint::LintError>) = match only.as_deref() {
             Some("call-deadline") => ("call-deadline", spira_lint::rules::call_deadline::render_allow),
             Some("hash-iter-output") => ("hash-iter-output", spira_lint::rules::hash_iter_output::render_allow),
+            Some("config-key-registered") => ("config-key-registered", spira_lint::rules::config_key_registered::render_allow),
             _ => {
-                eprintln!("spira-lint: --emit-allow is only supported with --only call-deadline or --only hash-iter-output\n{USAGE}");
+                eprintln!("spira-lint: --emit-allow is only supported with --only call-deadline, hash-iter-output or config-key-registered\n{USAGE}");
                 return ExitCode::from(2);
             }
         };

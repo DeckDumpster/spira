@@ -16,16 +16,7 @@ pub struct ConfigEnvRead;
 const NAME: &str = "config-env-read";
 const EXCEPTIONS: &str = "spira-lint/config-env-read-exceptions";
 const OWN_SOURCE: &str = "spira-lint/src/rules/config_env_read.rs";
-const CONF_D: &str = "spira/conf.d/";
-
-fn registered_keys(tree: &Tree) -> BTreeSet<String> {
-    tree.entries
-        .iter()
-        .filter_map(|e| e.path.strip_prefix(CONF_D))
-        .filter(|k| !k.contains('/') && !k.is_empty())
-        .map(str::to_string)
-        .collect()
-}
+use crate::{registered_keys, CONF_D};
 
 fn call_re() -> &'static Regex {
     static CALL: OnceLock<Regex> = OnceLock::new();

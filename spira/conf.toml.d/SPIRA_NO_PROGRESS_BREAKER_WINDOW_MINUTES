@@ -1,4 +1,0 @@
-TYPE=u32
-GROUP=toml
-DOC=spira.toml-only key: no spira.conf spelling, not in conf.sh allowlist.
-SCHEMA=Rolling window, in minutes, over which no-progress claim ends are counted by the no-progress breaker. No default: unset refuses.
