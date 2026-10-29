@@ -704,9 +704,9 @@ pub fn unproven(out: &str, required: &[String]) -> Vec<String> {
 /// gate string uses, on the revision under test, with **no `--deadline`** — the round named
 /// them, so a budget must not cut them (`SPIRA_GATE_TIMEOUT` still bounds the phase). The
 /// runner is the tree's own when its definition declares one, as in `engine::base_rerun_cmd`. The
-/// runner's harness faults (2, 3) are NO_VERDICT (75), as in the gate string. The tree's runner
-/// refuses a config that lacks a key the tree's registry adds, so it reads the live layers with
-/// the tree's config delta applied (`release config-stage`), as the round VM does.
+/// runner's harness faults (2, 3) are NO_VERDICT (75), as in the gate string. The runner reads the
+/// live config layers with the tree's config delta applied: it refuses a config missing a key
+/// the tree adds.
 pub fn reentry_command(suites: &[String]) -> String {
     format!(
         "_t=\"$(release config-stage .)\" || {{ echo 'gate: cannot stage the tree config delta' >&2; exit 75; }}; _b=0; SPIRA_TOML=\"$_t\" \"${{SPIRA_TESTENV_BIN:-testenv}}\" --suites {} \"$SPIRA_GATE_BRANCH\" \"$SPIRA_GATE_REPO\" || _b=$?; case \"$_t\" in */release-config-*/layer*) rm -rf \"${{_t%%/layer*}}\";; esac; case \"$_b\" in 2|3|127) exit 75;; *) exit \"$_b\";; esac",
