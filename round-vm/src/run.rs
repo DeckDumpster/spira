@@ -440,7 +440,7 @@ cat > "$HOME/round-config.toml" <<ROUNDCFG
 [spira]
 run = "$HOME/round-work/.runtime/spira"   # where REMOTE_RESULTS pulls batch-results from
 releases = "$HOME/round-releases"
-home_repo = "$HOME/round-work"
+home_repo = "spira"
 batch_maxpar = $maxpar
 $testenv_limits
 ROUNDCFG
@@ -3121,6 +3121,14 @@ mod tests {
         let log = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
         let saw = fs::read_to_string(home.join("aws-saw")).unwrap_or_default();
         (log, saw)
+    }
+
+    #[test]
+    fn the_round_config_names_the_home_repo_not_its_path() {
+        let cfg = REMOTE_SCRIPT.find("cat > \"$HOME/round-config.toml\"").unwrap();
+        let end = cfg + REMOTE_SCRIPT[cfg..].find("ROUNDCFG\nexport").unwrap();
+        let line = REMOTE_SCRIPT[cfg..end].lines().find(|l| l.starts_with("home_repo")).expect("declares home_repo");
+        assert!(!line.contains('/') && !line.contains("$HOME"), "a path as the repo name is an unsafe resume key segment: {line}");
     }
 
     #[test]
