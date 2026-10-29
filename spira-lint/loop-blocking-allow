@@ -3,5 +3,5 @@
 #
 # SHRINK-ONLY. A count goes down as the call moves into `runtime::offload`; nothing is
 # raised for a NEW call.
-13 spira-runtime/src/main.rs sp-vvow3v
+12 spira-runtime/src/main.rs sp-vvow3v
 2 spira-runtime/src/notify.rs sp-vvow3v
