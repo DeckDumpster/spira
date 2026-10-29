@@ -323,7 +323,7 @@ fn book_of(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
 fn queue_shims(repo: &Path) -> (testkit::TempDir, String) {
     let bin = testkit::TempDir::new("law-submit-bin");
     let (calls, count) = (bin.join("calls"), bin.join("count"));
-    testkit::write_exe(bin.join("bead.sh"), &format!("#!/bin/sh\necho \"bead $*\" >> {c}\necho x >> {n}\necho \"{{\\\"id\\\":\\\"sp-law$(wc -l < {n} | tr -d ' ')\\\"}}\"\n", c = calls.display(), n = count.display()));
+    testkit::write_exe(bin.join("bead.sh"), &format!("#!/bin/sh\necho \"bead $*\" >> {c}\necho x >> {n}\nwhile [ $# -gt 0 ]; do [ \"$1\" = --body-file ] && cp \"$2\" {b}/body.$(wc -l < {n} | tr -d ' '); shift; done\necho \"{{\\\"id\\\":\\\"sp-law$(wc -l < {n} | tr -d ' ')\\\"}}\"\n", c = calls.display(), n = count.display(), b = bin.path().display()));
     testkit::write_exe(bin.join("queue"), &format!("#!/bin/sh\necho \"queue $*\" >> {c}\ngit -C {r} merge -q --ff-only \"$2\"\n", c = calls.display(), r = repo.display()));
     let path = format!("{}:{}", bin.path().display(), std::env::var("PATH").unwrap_or_default());
     (bin, path)
@@ -381,6 +381,25 @@ fn a_law_commit_is_filed_in_a_lane_the_repo_admits_and_is_submitted() {
     assert_eq!(log.matches("queue submit").count(), 2, "{log}");
     assert_eq!(log.matches("--for builder").count(), 2, "{log}");
     assert!(!log.contains("--for ops"), "{log}");
+}
+
+#[test]
+fn the_law_bead_body_passes_the_filing_validator_the_builder_persona_applies() {
+    let repo = fixture_repo("law-body");
+    let wt_root = testkit::TempDir::new("law-body-wt");
+    let (bin, path) = queue_shims(repo.path());
+    let _env = testkit::env(&[("PATH", Some(path.as_str()))]);
+    let toc = append(&parse_toc(TOC).unwrap(), 2, "law-four").unwrap();
+    let book = book_of(&[("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three."), ("law-four", "Do four.")]);
+    let (id, branch) = land(repo.path(), wt_root.path(), "enact", "law-four", &toc, &book).unwrap();
+    assert_eq!((id.as_str(), branch.as_str()), ("sp-law1", "spira/sp-law1"));
+    let runes = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+    let log = std::fs::read_to_string(bin.join("calls")).unwrap();
+    let persona = log.split("--for ").nth(1).and_then(|r| r.split_whitespace().next()).unwrap();
+    assert_eq!(spira_config::runes::rune_get(&runes, persona, "RUNE_REQUIRES_BUILD_SPEC", ""), "1", "{persona} takes no build-spec contract, so this test would prove nothing");
+    let body = std::fs::read_to_string(bin.join("body.1")).unwrap();
+    assert!(bead::has_build_spec(&body), "{body}");
+    assert!(body.contains("## Outcome") && body.contains("## Acceptance"), "{body}");
 }
 
 #[test]

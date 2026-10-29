@@ -21,3 +21,4 @@ spira-config = { path = "../spira-config" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+bead = { path = "../bead" }
