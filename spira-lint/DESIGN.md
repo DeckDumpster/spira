@@ -946,6 +946,17 @@ per key, path `spira/config-delta.toml`.
 **Refuses:** no base, no registry keys here or at the base, an unparseable delta.
 **Positive control:** `fence: config-delta checked <n> registry keys`.
 
+## Rule `config-registry-runtime`
+
+**Intent.** The config key registry is read at run time, so adding a key changes no compiled
+artifact. No `include_str!`/`include_bytes!` in any Rust source may name `conf.d`, `conf.toml.d`,
+`conf.key-history`, `complete.toml` or `config-delta.toml`, and no `build.rs` may name them
+alongside a `rerun-if-changed`: either one makes every dependent crate (and the gate's tool key)
+change with each added key. One finding per site.
+
+**Refuses:** no Rust source in scope. **Positive control:** `fence: config-registry-runtime
+checked <n> rust sources`.
+
 ## Rule `config-fixture`
 
 **Intent.** A registry key added under `spira/conf.d` or `spira/conf.toml.d` must also be a

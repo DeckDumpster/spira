@@ -73,7 +73,7 @@ while IFS='=' read -r rawkey rest; do
         COCKPIT_*) key="$rawkey" ;;
         *)         key="SPIRA_$rawkey" ;;
     esac
-    got_val="$(conf_val "$key" SPIRA_TOML="$CRATE/tests/fixtures/complete.toml:$FIXTURE")"
+    got_val="$(conf_val "$key" SPIRA_TOML="$HERE/testlib/complete.toml:$FIXTURE")"
     checked=$((checked+1))
     if [ "$got_val" != "$want_val" ]; then
         mismatch=$((mismatch+1))
@@ -174,7 +174,7 @@ echo "is unresolvable:"
 # not a config file exists — the BOOTSTRAP case above hits the exact same guard; this one
 # just sets SPIRA_TOML explicitly, to show the guard does not depend on there being no
 # config to read.
-if env -i PATH="/usr/bin:/bin" HOME="$T/home" SPIRA_TOML="$CRATE/tests/fixtures/complete.toml:$FIXTURE" \
+if env -i PATH="/usr/bin:/bin" HOME="$T/home" SPIRA_TOML="$HERE/testlib/complete.toml:$FIXTURE" \
     bash -c ". '$HARNESS/spira/conf.sh'" >"$T/unresolvable.out" 2>&1
 then
     bad "conf.sh refuses when spira-config is unresolvable and a config file exists" \

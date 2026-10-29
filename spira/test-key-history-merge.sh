@@ -13,7 +13,7 @@ H=spira/conf.key-history
 t="$(mktemp -d)"
 g() { git -C "$t" -c user.email=t@t -c user.name=t -c merge.conflictstyle=merge "$@"; }
 git init -q -b main "$t"
-mkdir -p "$t/spira-config/schema"
+mkdir -p "$t/spira"
 printf 'alpha\nbeta\n' > "$t/$H"
 g add -A; g commit -q -m base
 for k in one two; do

@@ -72,9 +72,9 @@ fn cmd_status() -> i32 {
         }
     };
     let spira = doc.as_ref().and_then(|d| d.spira.as_ref());
-    let ceiling = spira.and_then(|s| s.max_live_dwarves);
-    let pool = spira.and_then(|s| s.max_dwarves);
-    let lanes_cap = spira.and_then(|s| s.lanes_max_live);
+    let ceiling = spira.and_then(|s| s.get_u32("SPIRA_MAX_LIVE_DWARVES").ok().flatten());
+    let pool = spira.and_then(|s| s.get_u32("SPIRA_MAX_DWARVES").ok().flatten());
+    let lanes_cap = spira.and_then(|s| s.get_u32("SPIRA_LANES_MAX_LIVE").ok().flatten());
 
     let exe = env::current_exe().ok();
     let lib_sh = exe.as_deref().and_then(spira_world::locate_home).map(|h| h.join("lib.sh"));

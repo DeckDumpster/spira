@@ -7,7 +7,8 @@
 //! closure of the `bin` packages (normal and build dependencies, not dev), the workspace-wide
 //! build inputs (root `Cargo.toml`, `Cargo.lock`, the toolchain pin, `.cargo/`), the build
 //! recipe (profile and packages) — and any file a build script or an `include_*!` reads from
-//! outside those packages (spira-config's build script reads `spira/conf.d`).
+//! outside those packages. No registry file is among them: the config key registry is read at run
+//! time from the tree the tool runs against, so adding a key leaves every tool's key unchanged.
 //!
 //! The key has two parts. The BASE key hashes the recipe, the root inputs' git object ids and
 //! the closure packages' git tree ids, all read from the tree under test — known before any
