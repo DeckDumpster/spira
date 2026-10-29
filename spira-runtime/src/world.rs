@@ -14,6 +14,7 @@ use crate::watchers::inbox_keeper;
 use crate::forge::{slug, Forge};
 use crate::watchers::pr_notify::{self, RepoObs};
 use crate::watchers::asks;
+use crate::watchers::design_asks::{self, Page};
 use crate::watchers::round_duty::{RoundState, Snapshot};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -27,6 +28,7 @@ pub struct World {
     pub proc_dir: PathBuf,
     pub mail: PathBuf,
     pub ask_label: String,
+    pub wiki: PathBuf,
 }
 
 struct MapRow {
@@ -53,6 +55,32 @@ fn lane_stopped(run_dir: &Path, repo: &str, lane: &str) -> bool {
 
 fn kv_get(text: &str, key: &str) -> Option<String> {
     text.lines().find_map(|l| l.strip_prefix(key).and_then(|r| r.strip_prefix('=')).map(str::to_string))
+}
+
+/// A top-level frontmatter value, unquoted; empty when the page has none.
+fn frontmatter(text: &str, key: &str) -> String {
+    let mut lines = text.split('\n');
+    if lines.next() != Some("---") {
+        return String::new();
+    }
+    for l in lines.take_while(|l| *l != "---") {
+        if let Some(v) = l.strip_prefix(key).and_then(|r| r.strip_prefix(':')) {
+            return v.trim_start_matches([' ', '\t', '"', '\'']).trim_end_matches([' ', '\t', '"', '\'', '\r']).to_string();
+        }
+    }
+    String::new()
+}
+
+fn artifact_urls(text: &str) -> Vec<String> {
+    const PREFIX: &str = "https://claude.ai/artifact/";
+    text.match_indices(PREFIX)
+        .map(|(i, _)| {
+            let tail = &text[i + PREFIX.len()..];
+            let id: String = tail.chars().take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-')).collect();
+            format!("{PREFIX}{id}")
+        })
+        .filter(|u| u.len() > PREFIX.len())
+        .collect()
 }
 
 impl World {
@@ -187,29 +215,23 @@ impl World {
     }
 
     /// Mail files naming `id` as their work bead, in mailbox order: every `new/` then every `cur/`.
-    fn mail_for(&self, id: &str) -> Option<String> {
+    fn mails_for(&self, id: &str) -> Vec<String> {
         let mut boxes: Vec<PathBuf> = fs::read_dir(&self.mail).into_iter().flatten().flatten().map(|e| e.path()).collect();
         boxes.sort();
         let want = format!("X-Spira-Work-Bead: {id}");
-        let mut hit = None;
+        let mut hits = vec![];
         for sub in ["new", "cur"] {
             for b in &boxes {
                 let mut files: Vec<PathBuf> = fs::read_dir(b.join(sub)).into_iter().flatten().flatten().map(|e| e.path()).collect();
                 files.sort();
-                for f in files {
-                    if let Ok(text) = fs::read_to_string(&f) {
-                        if text.lines().any(|l| l == want) {
-                            hit = Some(text);
-                        }
-                    }
-                }
+                hits.extend(files.into_iter().filter_map(|f| fs::read_to_string(f).ok()).filter(|text| text.lines().any(|l| l == want)));
             }
         }
-        hit
+        hits
     }
 
     fn hold_line(&self, id: &str) -> String {
-        if let Some(text) = self.mail_for(id) {
+        if let Some(text) = self.mails_for(id).pop() {
             let header = |k: &str| text.lines().take_while(|l| !l.is_empty()).find_map(|l| l.strip_prefix(k)).unwrap_or("").to_string();
             return format!("NEW ASK HOLD {id}: {} | default: {} | message-id: {}", header("Subject: "), header("X-Spira-Default: "), header("Message-ID: "));
         }
@@ -229,14 +251,53 @@ impl World {
         format!("NEW ASK HOLD {id}: {q} | NO MAIL for the question; answer with spira-lc reply {id} seq:{seq}")
     }
 
+    fn open_asks_json(&self) -> Result<String, String> {
+        let [flag, filter] = status_args(Kind::Ask, Which::Open);
+        lc_call(&self.lc_socket, &["content", "list", "--label", &self.ask_label, &flag, &filter, "--limit", "0", "--json"]).map_err(|e| e.to_string())
+    }
+
     pub fn asks_snapshot(&self, input: &str) -> Result<String, String> {
         let seen: BTreeSet<String> = serde_json::from_str(input).unwrap_or_default();
-        let [status_flag, status_value] = status_args(Kind::Ask, Which::Open);
-        let listed = lc_call(&self.lc_socket, &["content", "list", "--label", &self.ask_label, &status_flag, &status_value, "--limit", "0", "--json"]).map_err(|e| e.to_string())?;
+        let listed = self.open_asks_json()?;
         let rows: Vec<Value> = serde_json::from_str(&listed).map_err(|e| format!("ask list unparsed: {e}"))?;
         let open = rows.iter().filter_map(|r| Some((r["id"].as_str()?.to_string(), r["title"].as_str()?.split_whitespace().collect::<Vec<_>>().join(" ")))).collect();
         let held = self.lc(&["list-held", "ask"]).unwrap_or_default().lines().map(str::trim).filter(|id| !id.is_empty() && !seen.contains(*id)).map(|id| (id.to_string(), self.hold_line(id))).collect();
         serde_json::to_string(&asks::Snapshot { open, held }).map_err(|e| e.to_string())
+    }
+
+    /// Every open ask's JSON, then the mail of every held ask; `None` when the store did not answer.
+    fn asks_text(&self) -> Option<String> {
+        let listed = self.open_asks_json().ok().filter(|j| j.starts_with('['))?;
+        let held = self.lc(&["list-held", "ask"]).unwrap_or_default();
+        let mails = held.lines().map(str::trim).filter(|id| !id.is_empty()).flat_map(|id| self.mails_for(id));
+        Some(std::iter::once(listed).chain(mails).collect::<Vec<_>>().join("\n"))
+    }
+
+    pub fn design_asks_snapshot(&self) -> Result<String, String> {
+        let failed = |why: String| serde_json::to_string(&design_asks::Snapshot { failure: Some(why), ..Default::default() }).map_err(|e| e.to_string());
+        if self.wiki.as_os_str().is_empty() {
+            return failed("SPIRA_WIKI is not set".into());
+        }
+        let brain = self.wiki.join("wiki/projects");
+        if !brain.is_dir() {
+            return failed(format!("{} is not a directory", brain.display()));
+        }
+        let Some(asks) = self.asks_text() else { return failed("the ask store could not be read".into()) };
+        let mut pages = vec![];
+        let mut projects: Vec<PathBuf> = fs::read_dir(&brain).into_iter().flatten().flatten().map(|e| e.path()).collect();
+        projects.sort();
+        for project in projects {
+            let mut files: Vec<PathBuf> = fs::read_dir(project.join("designs")).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "md") && !p.file_name().is_some_and(|n| n.as_encoded_bytes().starts_with(b"."))).collect();
+            files.sort();
+            for f in files {
+                let Ok(text) = fs::read_to_string(&f) else { continue };
+                let Ok(rel) = f.strip_prefix(&brain) else { continue };
+                let writer = ["bead", "session", "author"].iter().map(|k| frontmatter(&text, k)).find(|v| !v.is_empty()).unwrap_or_default();
+                let urls = artifact_urls(&text);
+                pages.push(Page { rel: format!("wiki/projects/{}", rel.display()), status: frontmatter(&text, "status"), writer, urls });
+            }
+        }
+        serde_json::to_string(&design_asks::Snapshot { failure: None, asks, pages }).map_err(|e| e.to_string())
     }
 
     pub fn inbox_append(&self, line: &str) -> Result<String, String> {

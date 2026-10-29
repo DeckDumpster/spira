@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds between spira-runtime observations of design pages that no open ask names.
+SCHEMA=Seconds between spira-runtime design-asks observations (unit: seconds; integer; default 600). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_DESIGN_ASKS_SECS:=600}"
+SPIRA_CONF_DEFAULT_EOF

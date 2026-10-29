@@ -200,9 +200,7 @@ testenv-cap|daemon|testenv-cap watch --interval 15|testenv-cap health
 brain-dirty|daemon|@SPIRA_HOME@/brain-dirty.sh watch --interval 600|@SPIRA_HOME@/brain-dirty.sh health
 runtime-watch|log|@SPIRA_RUN@/runtime-watch.log
 
-# DESIGN-ASKS tells the inbox of each design page in draft or in-review that no open ask names, once a day
-# per page, so a published design cannot wait on approval unseen.
-design-asks|daemon|@SPIRA_HOME@/design-asks.sh watch --interval 600|@SPIRA_HOME@/design-asks.sh health
+# DESIGN-ASKS has no row: spira-runtime hosts it as the design-asks handler (spira-runtime/src/watchers).
 
 # SKEW-REFRESH is the alarm for a checkout `skew refresh` keeps declining: skew appends one line
 # when the same repo has declined three passes running (naming the dirty tracked files and any stale
