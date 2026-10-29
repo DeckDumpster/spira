@@ -131,31 +131,35 @@ fn new_wakes(s: &Scenario) -> Vec<String> {
     wakes(d.path())
 }
 
-fn same_wakes(s: Scenario) -> Vec<String> {
+fn same_wakes(s: Scenario) -> Option<Vec<String>> {
     let _serial = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     assert!(debug_dir().join("spira-config").exists(), "build spira-config first: inbox-keeper.sh resolves its config through it");
     if !s.triage && triage_running() {
         eprintln!("skipped {}: an inbox-triage process is running on this box", s.name);
-        return vec![];
+        return None;
     }
     let old = old_wakes(&s);
     let new = new_wakes(&s);
     assert_eq!(new, old, "scenario {}: the handler and inbox-keeper.sh disagree", s.name);
-    old
+    Some(old)
 }
 
 #[test]
 fn a_stalled_monitor_with_events_waiting_is_woken_once() {
-    let w = same_wakes(Scenario { name: "wake", inbox_ahead: true, triage: false });
-    assert!(w.is_empty() && triage_running() || w.len() == 1 && w[0].contains("re-arm: Monitor inbox-triage"), "{w:?}");
+    let Some(w) = same_wakes(Scenario { name: "wake", inbox_ahead: true, triage: false }) else { return };
+    assert!(w.len() == 1 && w[0].contains("re-arm: Monitor inbox-triage"), "{w:?}");
 }
 
 #[test]
 fn an_inbox_older_than_the_last_sighting_wakes_nobody() {
-    assert!(same_wakes(Scenario { name: "old", inbox_ahead: false, triage: false }).is_empty());
+    if let Some(w) = same_wakes(Scenario { name: "old", inbox_ahead: false, triage: false }) {
+        assert!(w.is_empty(), "{w:?}");
+    }
 }
 
 #[test]
 fn a_running_monitor_wakes_nobody() {
-    assert!(same_wakes(Scenario { name: "alive", inbox_ahead: true, triage: true }).is_empty());
+    if let Some(w) = same_wakes(Scenario { name: "alive", inbox_ahead: true, triage: true }) {
+        assert!(w.is_empty(), "{w:?}");
+    }
 }
