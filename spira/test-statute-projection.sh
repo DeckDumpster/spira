@@ -234,8 +234,9 @@ want "and reminds not to leave a correction banner" "Do not leave a retired stat
 
 is "retire removes it from list" "0" \
    "$(run_rule list | grep -c 'law-sp-p0xyt-pair-canary$' || true)"
-is "and show on the retired slug now fails" "1" \
+is "and show on the retired slug answers with its pointer, not a gap" "0" \
    "$(run_rule show sp-p0xyt-pair-canary >/dev/null 2>&1; echo $?)"
+want "and the answer carries the retirement reason" "fixture" "$(run_rule show sp-p0xyt-pair-canary 2>&1)"
 
 # NEGATIVE CONTROL: retiring a slug that was never enacted is refused, and refused BEFORE
 # any bd write — the positive control above proves retire works at all, so a refusal here
