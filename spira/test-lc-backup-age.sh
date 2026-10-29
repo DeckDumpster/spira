@@ -32,3 +32,5 @@ wantrc "a never-backed-up database listed first is red" 1 $rc; want "the first-l
 wide="$(for i in $(seq 1500); do printf 'pad%04d_%060d ' "$i" 0; done)"
 DBS="gap fresh $wide"; out="$(lcb age)"; rc=$?
 wantrc "listed first of 100KB of status it is still red" 1 $rc; want "and still named" "gap: never" "$out"
+
+tl_summary
