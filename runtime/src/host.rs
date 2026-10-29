@@ -142,7 +142,7 @@ pub async fn serve_with(
                 k();
             }
         }
-        if next_timer.is_some_and(|t| t <= clock.now_ms()) {
+        if running.is_none() && next_timer.is_some_and(|t| t <= clock.now_ms()) {
             dirty = true;
         }
         if let Some(e) = engine.take_if(|_| running.is_none() && (dirty || !subs.is_empty() || !done.is_empty()) && Instant::now() >= retry_at) {
@@ -167,7 +167,7 @@ pub async fn serve_with(
             return Ok(());
         }
         let now = Instant::now();
-        let mut wait = next_timer.map_or(Duration::from_secs(3600), |t| Duration::from_millis(t.saturating_sub(clock.now_ms())));
+        let mut wait = next_timer.filter(|_| running.is_none()).map_or(Duration::from_secs(3600), |t| Duration::from_millis(t.saturating_sub(clock.now_ms())));
         if let Some(m) = max_sleep {
             wait = wait.min(m);
         }
