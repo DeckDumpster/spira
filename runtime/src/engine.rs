@@ -477,9 +477,9 @@ impl Executor for Engine {
 
     fn run_until_idle(&mut self) -> Result<()> {
         loop {
-            self.tick()?;
-            self.pump()?;
-            if self.next_timer_at().is_none_or(|t| t > self.clock.now_ms()) {
+            let fired = self.tick()?;
+            let dispatched = self.pump()?;
+            if (fired == 0 && dispatched == 0) || self.next_timer_at().is_none_or(|t| t > self.clock.now_ms()) {
                 return Ok(());
             }
         }
