@@ -332,11 +332,6 @@ tier = "T1"
 statement = "The broker refuses verbs outside its policy table, and refuses czar-only verbs from any other rune, without calling gh. Shadow mode records CZAR-WOULD. Act mode executes and audits. The read verbs shape gh argv exactly."
 
 [[use_case]]
-id = "UC-landing-merge-queue-56"
-tier = "T1"
-statement = "`pve.sh` refuses to make an HTTP call when credentials or the CA are missing. It always passes `--cacert` and never `--insecure`, and routes each verb to its API path."
-
-[[use_case]]
 id = "UC-landing-merge-queue-57"
 tier = "T2"
 statement = "When a bead with a GitHub ref lands, its issue is commented (short SHA + link) and closed once, with a marker. An unlanded bead's issue is never closed. Backfill decides landed-ness by ancestry of `spira: land <id>`. The unlanded scan asks once, logs refusals, and marks issues already closed on the forge."
