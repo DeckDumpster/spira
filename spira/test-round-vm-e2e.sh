@@ -107,52 +107,108 @@ podman exec -d "$VM_NAME" /usr/sbin/sshd -p "$SSH_PORT" -D # batch-job: containe
 
 ssh-keygen -t ed25519 -N '' -q -f "$TMP/client_key"
 
-# The round's own testenv is faked the same way its output contract is faked in every other
-# round-vm suite: a `cargo` on the VM's PATH that never builds anything, just writes the
-# files round-vm's REMOTE_SCRIPT (run.rs) pulls back — this is round-vm's OWN contract under
-# test, not testenv's, which is covered by testenv's own suites.
-cat > "$TMP/fake-cargo" <<'FAKECARGO'
+# THE VM'S TOOLCHAIN IS FAKED, ROUND-VM'S OWN SCRIPT IS NOT. REMOTE_SCRIPT (run.rs) runs whole
+# on the stand-in: the clone, the nix env, the build, the launcher release, the image check, the
+# unit run, the bare lane and the pulls. Only what those call out to is replaced — nix, cargo,
+# rustc, sccache, podman, the tree's own release/spira-config/lint binaries — and testenv, whose
+# batch behaviour is chosen per run by $HOME/testenv-mode (testenv's own suites cover testenv).
+CHANNEL="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$ROOT/rust-toolchain.toml" | head -1)"
+cat > "$TMP/vm-kit.sh" <<FAKEKIT
 #!/bin/sh
 set -eu
-mkdir -p .runtime/spira/batch-results .runtime/spira/tsd target/release
-TREE="$(git rev-parse HEAD^{tree})"
-printf 'green %s 30 - explicit 0\n' "$(date +%s)" > .runtime/spira/batch-results/e2e-a.sh.result
-printf 'green %s 12 - explicit 0\n' "$(date +%s)" > .runtime/spira/batch-results/e2e-b.sh.result
-printf 'key=KEY\ntree=%s\n' "$TREE" > .runtime/spira/batch-results/batch.meta
-printf 'build_wall_s=5\n' > .runtime/spira/batch-results/runner.meta
+mkdir -p /root/cache-home/bin /usr/local/bin
+w() { cat > "\$1"; chmod +x "\$1"; }
+w /root/cache-home/bin/rustc <<'X'
+#!/bin/sh
+case "\$1" in -vV) printf 'release: $CHANNEL\ncommit-hash: e2e\n' ;; *) echo "rustc $CHANNEL" ;; esac
+X
+w /root/cache-home/bin/sccache <<'X'
+#!/bin/sh
+exit 0
+X
+w /root/cache-home/bin/cargo <<'X'
+#!/bin/sh
+case "\$1" in
+build)
+    mkdir -p .runtime/spira/batch-results .runtime/spira/tsd target/release
+    for b in spira-config spira-lint lifecycle-guard release fakebin; do
+        printf '#!/bin/sh\n' > target/release/\$b
+        chmod +x target/release/\$b
+    done
+    cat > target/release/release <<'R'
+#!/bin/sh
+case "\$1" in
+config-stage) printf '%s' "\$SPIRA_TOML" ;;
+build)
+    shift; rels=""
+    while [ \$# -gt 0 ]; do [ "\$1" = --releases ] && rels="\$2"; shift; done
+    mkdir -p "\$rels/e2erel/bin" "\$rels/e2erel/spira"
+    cp "\$(dirname "\$0")/spira-config" "\$rels/e2erel/bin/spira-config"
+    echo e2erel ;;
+esac
+exit 0
+R
+    ;;
+test)
+    case "\$*" in
+    *--no-run*) echo "  Executable unittests src/lib.rs (target/unittest/deps/e2e-1)" ;;
+    *) echo "     Running unittests src/lib.rs (target/unittest/deps/e2e-1)"; echo "test result: ok. 1 passed; 0 failed" ;;
+    esac ;;
+esac
+exit 0
+X
+ln -sf /root/cache-home/bin/cargo /usr/local/bin/cargo
+w /usr/local/bin/podman <<'X'
+#!/bin/sh
+exit 0
+X
+w /usr/local/bin/nix <<'X'
+#!/bin/sh
+out=""
+while [ \$# -gt 0 ]; do [ "\$1" = -o ] && out="\$2"; shift; done
+mkdir -p /root/nix-env/bin
+for t in dolt bd; do printf '#!/bin/sh\necho %s e2e\n' "\$t" > /root/nix-env/bin/\$t; chmod +x /root/nix-env/bin/\$t; done
+ln -sfn /root/nix-env "\$out"
+X
+w /usr/local/bin/testenv <<'X'
+#!/bin/sh
+[ "\$1" = container ] && { echo e2etag; exit 0; }
+res=.runtime/spira/batch-results
+mkdir -p \$res .runtime/spira/tsd
+mode="\$(cat "\$HOME/testenv-mode" 2>/dev/null || echo green)"
+echo "batch: running 2 suite(s)"
+printf 'key=KEY\ntree=%s\n' "\$(git rev-parse HEAD^{tree})" > \$res/batch.meta
+printf 'build_wall_s=5\n' > \$res/runner.meta
 printf '{"family":"suite-timing","suite":"combined","rc":0}\n' > .runtime/spira/tsd/suite-timing.jsonl
-printf '#!/bin/sh\necho fake-binary\n' > target/release/fakebin
-chmod +x target/release/fakebin
-FAKECARGO
-chmod +x "$TMP/fake-cargo"
-podman cp "$TMP/fake-cargo" "$VM_NAME:/usr/local/bin/cargo" # batch-job: container fixture call; image pulls and starts exceed 5 s
-podman exec "$VM_NAME" chmod +x /usr/local/bin/cargo # batch-job: container fixture call; image pulls and starts exceed 5 s
-
-# The resume drill's VM: an `aws` that keeps S3 objects under /root/fake-s3 and logs the credentials
-# file it was handed, and a runner that records K=3 passes through it (as testenv does) then dies red.
-# A pass that finds records already there says so, which is what a fresh VM's re-run must show.
-cat > "$TMP/fake-aws" <<'FAKEAWS'
+case "\$mode" in green) ;; *)
+    case "\${SPIRA_TESTENV_RESUME:-}" in s3://*) ;; *) echo "RESUME-UNSET" >&2; exit 2;; esac
+    store="\$HOME/fake-s3/\${SPIRA_TESTENV_RESUME#s3://}/spira/e2etree/e2eenv"
+    for s in e2e-a.sh e2e-b.sh e2e-c.sh; do
+        if [ -e "\$store/\$s" ]; then echo "batch: resumed: \$s passed in run/attempt local for this tree — not run again"; continue; fi
+        printf 'pass\n' | aws s3 cp - "\$SPIRA_TESTENV_RESUME/spira/e2etree/e2eenv/\$s"
+        echo "ran \$s"
+        [ "\$mode" = hang ] && { echo "ok \$s" >> \$res/run.events; [ "\$s" = e2e-b.sh ] && exec sleep 600; }
+    done
+    exit 1 ;;
+esac
+printf 'green %s 30 - explicit 0\n' "\$(date +%s)" > \$res/e2e-a.sh.result
+printf 'green %s 12 - explicit 0\n' "\$(date +%s)" > \$res/e2e-b.sh.result
+exit 0
+X
+w /usr/local/bin/aws <<'X'
 #!/bin/sh
 shift 2
-while [ "${1#--}" != "$1" ]; do case "$1" in --only-show-errors) shift;; *) shift 2;; esac; done
-echo "${AWS_SHARED_CREDENTIALS_FILE:-none}" >> "$HOME/aws-creds-seen"
-if [ "$2" = - ]; then exec cat "$HOME/fake-s3/${1#s3://}"; fi
-dst="$HOME/fake-s3/${2#s3://}"
-mkdir -p "$(dirname "$dst")"
-cat > "$dst"
-FAKEAWS
-cat > "$TMP/fake-testenv" <<'FAKETESTENV'
-#!/bin/sh
-case "${SPIRA_TESTENV_RESUME:-}" in s3://*) ;; *) echo "RESUME-UNSET" >&2; exit 2;; esac
-store="$HOME/fake-s3/${SPIRA_TESTENV_RESUME#s3://}/spira/e2etree/e2eenv"
-for s in e2e-a.sh e2e-b.sh e2e-c.sh; do
-    if [ -e "$store/$s" ]; then echo "batch: resumed: $s passed in run/attempt local for this tree — not run again"; continue; fi
-    printf 'pass\n' | aws s3 cp - "$SPIRA_TESTENV_RESUME/spira/e2etree/e2eenv/$s"
-    echo "ran $s"
-done
-exit 1
-FAKETESTENV
-chmod +x "$TMP/fake-testenv" "$TMP/fake-aws"
+while [ "\${1#--}" != "\$1" ]; do case "\$1" in --only-show-errors) shift;; *) shift 2;; esac; done
+echo "\${AWS_SHARED_CREDENTIALS_FILE:-none}" >> "\$HOME/aws-creds-seen"
+if [ "\$2" = - ]; then exec cat "\$HOME/fake-s3/\${1#s3://}"; fi
+dst="\$HOME/fake-s3/\${2#s3://}"
+mkdir -p "\$(dirname "\$dst")"
+cat > "\$dst"
+X
+FAKEKIT
+chmod +x "$TMP/vm-kit.sh"
+podman cp "$TMP/vm-kit.sh" "$VM_NAME:/tmp/vm-kit.sh" # batch-job: container fixture call; image pulls and starts exceed 5 s
+podman exec "$VM_NAME" sh /tmp/vm-kit.sh || skip "could not install the fake VM toolchain" # batch-job: container fixture call; image pulls and starts exceed 5 s
 
 # ── the stub Proxmox HTTPS API: a CA + a leaf cert it presents, so PVE_CACERT (the CA) is
 # usable as a rustls trust root the way HttpTransport::new expects — a bare self-signed leaf
@@ -192,6 +248,13 @@ EOF
 TREE_DIR="$TMP/tree"
 mkdir -p "$TREE_DIR"
 echo "round-vm e2e fixture" > "$TREE_DIR/README"
+mkdir -p "$TREE_DIR/spira/testenv"
+cp "$ROOT/spira/testenv/Containerfile" "$TREE_DIR/spira/testenv/Containerfile"
+cp "$ROOT/spira/deps.toml" "$TREE_DIR/spira/deps.toml"
+cp "$ROOT/rust-toolchain.toml" "$TREE_DIR/rust-toolchain.toml"
+printf '#!/bin/sh\nexit 0\n' > "$TREE_DIR/spira/bare-suites.sh"
+printf '#!/bin/sh\nexit 0\n' > "$TREE_DIR/spira/boundary.sh"
+touch "$TREE_DIR/flake.nix"
 git -C "$TREE_DIR" init --quiet -b main
 git -C "$TREE_DIR" -c user.email=t@example.com -c user.name=t add -A
 git -C "$TREE_DIR" -c user.email=t@example.com -c user.name=t commit --quiet -m fixture
@@ -202,10 +265,10 @@ RUN_DIR="$TMP/run"
 rc=0
 tl_config SPIRA_RUN="$RUN_DIR" SPIRA_ROUND_VM_STATE_DIR="$STATE_DIR" SPIRA_PVE_ENV="$TMP/pve.env" \
     SPIRA_ROUND_VM_SSH_USER=root SPIRA_ROUND_VM_SSH_PORT="$SSH_PORT" \
-    SPIRA_ROUND_VM_HOST_KEY="$TMP/client_key" SPIRA_ROUND_VM_HOST_ADDR=127.0.0.1 \
+    SPIRA_ROUND_VM_HOST_KEY="$TMP/client_key" SPIRA_ROUND_VM_HOST_PUBKEY="$TMP/client_key.pub" SPIRA_ROUND_VM_HOST_ADDR=127.0.0.1 \
     SPIRA_ROUND_VM_MIRROR_PORT="$MIRROR_PORT" SPIRA_ROUND_VM_MAX_RETRIES=1 \
-    SPIRA_ROUND_VM_RETRY_INTERVAL=0 SPIRA_ROUND_VM_VCPUS=4
-env -i PATH="$PATH" SPIRA_HOME="${SPIRA_HOME:-}" \
+    SPIRA_ROUND_VM_RETRY_INTERVAL=0 SPIRA_ROUND_VM_VCPUS=4 SPIRA_ROUND_VM_CACHE_HOME=/root/cache-home
+env -i PATH="$PATH" SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_RELEASE="${SPIRA_RELEASE:-}" \
     SPIRA_TOML="$SPIRA_TOML" \
     SPIRA_ROUND_VM_SSH_TRIES=20 \
     SPIRA_ROUND_VM_BOOT_POLL=1 \
@@ -218,7 +281,7 @@ is "run: exits 0" "0" "$rc"
 # The vmid round-vm actually leased for this run — read back from its own stderr line
 # ("round-vm run: <handle> <addr> <mode>"), not assumed, since the stub hands out the next
 # free id rather than a fixed one.
-VMID="$(awk '{print $3}' "$TMP/run.err" | head -1)"
+VMID="$(awk '/^round-vm run: [0-9]/{print $3; exit}' "$TMP/run.err")"
 want "run: named the leased vmid on stderr" "round-vm run: " "$(cat "$TMP/run.err")"
 
 want "run: batch results for suite A landed" "e2e-a.sh.result" "$(ls "$RUN_DIR/batch-results" 2>/dev/null)"
@@ -275,17 +338,15 @@ nowant "run: the leased VM was destroyed and verified gone" "\"vmid\": $VMID" "$
 
 # ── resume across re-runs: a round records each pass to the S3 prefix as it passes, so a VM that
 # dies loses none, and the next pass for the tree on a fresh VM resumes exactly those.
-podman cp "$TMP/fake-testenv" "$VM_NAME:/usr/local/bin/testenv" # batch-job: container fixture call; image pulls and starts exceed 5 s
-podman cp "$TMP/fake-aws" "$VM_NAME:/usr/local/bin/aws" # batch-job: container fixture call; image pulls and starts exceed 5 s
 mkdir -p "$TMP/resume-creds"; printf '[default]\naws_access_key_id = scoped-fixture\n' > "$TMP/resume-creds/credentials"
 RESUME_URL="s3://e2e-bucket/e2e-prefix"
 RESUME_RUN() {
-    env -i PATH="$PATH" SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_TOML="$SPIRA_TOML" SPIRA_ROUND_VM_SSH_TRIES=20 SPIRA_ROUND_VM_BOOT_POLL=1 \
+    env -i PATH="$PATH" SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_TOML="$SPIRA_TOML" SPIRA_ROUND_VM_SSH_TRIES=20 SPIRA_ROUND_VM_BOOT_POLL=1 \
         SPIRA_ROUND_VM_RESUME_URL="$RESUME_URL" SPIRA_ROUND_VM_RESUME_CREDENTIALS="$TMP/resume-creds" \
         "$BIN" run "$TREE_DIR" --suites e2e-a.sh --maxpar 2 --results-dir "$1" >"$TMP/$2.out" 2>"$TMP/$2.err" || true
 }
 vm_sh() { podman exec "$VM_NAME" sh -c "$1" 2>/dev/null; } # batch-job: container fixture call; image pulls and starts exceed 5 s
-vm_sh 'rm -rf /root/fake-s3 /root/aws-creds-seen'
+vm_sh 'echo red > /root/testenv-mode; rm -rf /root/fake-s3 /root/aws-creds-seen'
 RESUME_RUN "$TMP/red1" red1
 want "resume: the round says it records to the prefix" "RESUME: recording passed suites to $RESUME_URL" "$(cat "$TMP/red1.err")"
 is "resume: the red run left 3 records in the prefix" "3" "$(vm_sh 'find /root/fake-s3 -type f ! -name .probe | wc -l')"
@@ -297,5 +358,26 @@ RESUME_RUN "$TMP/red2" red2
 is "resume: the re-run skipped exactly the 3 recorded suites" "3" "$(grep -c 'batch: resumed:' "$TMP/red2/runner.out" 2>/dev/null)"
 nowant "resume: the re-run ran none of them again" "ran e2e" "$(cat "$TMP/red2/runner.out" 2>/dev/null)"
 is "resume: no store is kept on the host" "no" "$([ -e "$STATE_DIR/resume" ] && echo yes || echo no)"
+
+# ── a SIGTERM mid-run: the passes recorded before the signal are in the prefix, so the next pass
+# for the tree on a fresh VM skips them (the acceptance drill, at e2e scale).
+vm_sh 'rm -rf /root/fake-s3 /root/round-work /root/round-resume-aws; echo hang > /root/testenv-mode'
+RESUME_RUN_BG() {
+    env -i PATH="$PATH" SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_TOML="$SPIRA_TOML" SPIRA_ROUND_VM_SSH_TRIES=20 SPIRA_ROUND_VM_BOOT_POLL=1 \
+        SPIRA_ROUND_VM_RESUME_URL="$RESUME_URL" SPIRA_ROUND_VM_RESUME_CREDENTIALS="$TMP/resume-creds" \
+        "$BIN" run "$TREE_DIR" --suites e2e-a.sh --maxpar 2 --results-dir "$1" >"$TMP/$2.out" 2>"$TMP/$2.err" &
+}
+RESUME_RUN_BG "$TMP/term1" term1
+TERM_PID=$!
+for _ in $(seq 1 120); do
+    [ "$(vm_sh 'find /root/fake-s3 -type f ! -name .probe | wc -l')" -ge 2 ] 2>/dev/null && break
+    sleep 1
+done
+kill -TERM "$TERM_PID" 2>/dev/null
+wait "$TERM_PID" 2>/dev/null
+vm_sh 'pkill -f "[s]leep 600"; for _ in $(seq 1 60); do pgrep -f "[b]ash -s --" >/dev/null || break; sleep 1; done; rm -rf /root/round-work /root/round-resume-aws; echo red > /root/testenv-mode'
+is "sigterm: the passes recorded before the signal are in the prefix" "2" "$(vm_sh 'find /root/fake-s3 -type f ! -name .probe | wc -l')"
+RESUME_RUN "$TMP/term2" term2
+is "sigterm: the re-run skipped exactly the suites recorded before the signal" "2" "$(grep -c 'batch: resumed: ' "$TMP/term2/runner.out" 2>/dev/null)" || tail -40 "$TMP/term2.err" >&2
 
 tl_summary

@@ -440,7 +440,7 @@ cat > "$HOME/round-config.toml" <<ROUNDCFG
 [spira]
 run = "$HOME/round-work/.runtime/spira"   # where REMOTE_RESULTS pulls batch-results from
 releases = "$HOME/round-releases"
-home_repo = "$HOME/round-work"
+home_repo = "spira"
 batch_maxpar = $maxpar
 $testenv_limits
 ROUNDCFG
@@ -592,6 +592,7 @@ if [ -n "$lint" ] && { [ "${lint_rc:-0}" -ne 0 ] || [ -n "$fence_fail" ]; }; the
     done
     echo "$(date +%s) verdict RED lint-or-fence" >> "$early/run.events"
     echo "round-vm: LINT/FENCE RED before the suites: no unit test or suite was run" >&2
+    kill "$sampler_pid" 2>/dev/null
     exit 1
 fi
 # THE WORKSPACE'S OWN UNIT TESTS, once per round (per Ryan 2026-10-05: no suite invokes cargo).
@@ -3128,6 +3129,24 @@ mod tests {
     }
 
     #[test]
+    fn an_early_lint_red_exit_stops_the_sampler_that_holds_the_ssh_channel_open() {
+        let red = REMOTE_SCRIPT.find("LINT/FENCE RED before the suites").expect("the early exit");
+        let exit = red + REMOTE_SCRIPT[red..].find("exit 1").unwrap();
+        assert!(REMOTE_SCRIPT[red..exit].contains("kill \"$sampler_pid\""), "a live background sampler keeps ssh waiting after the script exits");
+    }
+
+    #[test]
+    fn the_round_config_names_the_home_repo_not_its_path() {
+        let scripts = [("run.rs", REMOTE_SCRIPT, "ROUNDCFG\nexport"), ("template.sh", include_str!("template.sh"), "TEMPLATECFG\nexport")];
+        for (name, script, end) in scripts {
+            let cfg = script.find("home_repo").unwrap_or_else(|| panic!("{name} declares home_repo"));
+            let line = script[cfg..].lines().next().unwrap();
+            assert!(script[cfg..].contains(end), "{name}");
+            assert!(!line.contains('/') && !line.contains('$'), "a path as the repo name is an unsafe resume key segment ({name}): {line}");
+        }
+    }
+
+    #[test]
     fn a_vm_with_a_writable_resume_prefix_records_to_it_with_the_pushed_credentials() {
         let (log, saw) = run_resume_block("s3://bkt/pre", true, 0);
         assert!(log.contains("RESUME=s3://bkt/pre"), "{log}");
@@ -4045,7 +4064,7 @@ mod tests {
     fn the_remote_script_records_vm_wide_signals_beside_the_suite_times() {
         let sampler = REMOTE_SCRIPT.find("sampler_pid=$!").expect("a sampler is started");
         let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
-        let stop = REMOTE_SCRIPT.find("kill \"$sampler_pid\"").expect("and stopped");
+        let stop = REMOTE_SCRIPT.rfind("kill \"$sampler_pid\"").expect("and stopped");
         assert!(sampler < batch && batch < stop, "it brackets the suites");
         for f in ["vm-signals", "iowait_pct", "steal_pct", "io_psi_some_avg10", "disk_inflight", "tsd/vm-signals.jsonl"] {
             assert!(REMOTE_SCRIPT.contains(f), "{f}");
