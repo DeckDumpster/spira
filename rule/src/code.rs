@@ -483,15 +483,21 @@ pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, verb: &s
     let branch = format!("law/{}-{stamp}", key.trim_start_matches("law-"));
     let wt = wt_root.join(format!("rule-{verb}-{}-{stamp}", key.trim_start_matches("law-")));
     let wt_s = wt.display().to_string();
-    git_in(repo_path, &["worktree", "add", "-q", "-b", &branch, &wt_s, base.unwrap_or("HEAD")])?;
+    let base = base.map(str::to_string).or_else(|| {
+        let reg = spira_config::repos::Registry::from_env_checkout(std::env::vars().collect(), repo_path);
+        spira_config::repos::landref(&reg, &repo_path.display().to_string())
+    });
+    let base = base.ok_or_else(|| format!("rule: no landing ref resolves for {} — refusing to cut law/ from its checkout's HEAD", repo_path.display()))?;
+    git_in(repo_path, &["worktree", "add", "-q", "-b", &branch, &wt_s, &base])?;
     let done = (|| {
         write_law(&wt.join("law"), toc, pointers, book)?;
+        git_in(&wt, &["add", "-A", "--", "law"])?;
         let mut child = spira_config::bounded::bounded("git")
             .arg("-C")
             .arg(&wt)
             .args(["commit", "-q", "-F", "-"])
             .stdin(Stdio::piped())
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("rule: git commit: {e}"))?;
@@ -502,7 +508,7 @@ pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, verb: &s
         if out.status.success() {
             Ok(())
         } else {
-            Err(format!("rule: git commit: {}", String::from_utf8_lossy(&out.stderr).trim()))
+            Err(format!("rule: git commit: {} {}", String::from_utf8_lossy(&out.stdout).trim(), String::from_utf8_lossy(&out.stderr).trim()).trim_end().to_string())
         }
     })();
     let _ = git_in(repo_path, &["worktree", "remove", "--force", &wt_s]);

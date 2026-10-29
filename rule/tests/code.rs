@@ -703,3 +703,45 @@ fn enact_checks_every_line_and_the_sending_keys_phrase() {
     assert_eq!(out.status.code(), Some(1), "{err}");
     assert!(err.contains("\"sending_keys\" → \"hel_keys\""), "{err}"); // ffx-ok
 }
+
+#[test]
+fn commit_law_cuts_from_the_landing_ref_not_the_checkouts_head_and_reports_git_stdout() {
+    let repo = fixture_repo("law-commit-landref");
+    let git = |args: &[&str]| assert!(Command::new("git").arg("-C").arg(repo.path()).args(args).status().unwrap().success());
+    git(&["branch", "local/main"]);
+    git(&["checkout", "-q", "-b", "stale"]);
+    let toc = append(&parse_toc(TOC).unwrap(), 2, "law-four").unwrap();
+    let book = book_of(&[("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three."), ("law-four", "Do four.")]);
+    git(&["config", "user.name", "t"]);
+    git(&["config", "user.email", "t@t"]);
+    let stale_tree = testkit::TempDir::new("law-commit-landref-wt0");
+    let first = rule::code::commit_law(repo.path(), Some("local/main"), stale_tree.path(), "enact", "law-four", &toc, &Pointers::default(), &book).unwrap();
+    git(&["merge", "-q", "--ff-only", &first]);
+    git(&["branch", "-f", "local/main", "HEAD~1"]);
+    let wt_root = testkit::TempDir::new("law-commit-landref-wt");
+    let stale = rule::code::commit_law(repo.path(), Some("stale"), wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &book);
+    let err = stale.unwrap_err();
+    assert!(err.starts_with("rule: git commit:") && err.contains("nothing to commit"), "{err}");
+    let branch = rule::code::commit_law(repo.path(), Some("local/main"), wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &book).unwrap();
+    let parent = rule::code::git_in(repo.path(), &["rev-parse", &format!("{branch}~1")]).unwrap();
+    let landref = rule::code::git_in(repo.path(), &["rev-parse", "local/main"]).unwrap();
+    assert_eq!(parent, landref);
+    let touched = rule::code::git_in(repo.path(), &["show", "--name-only", "--format=", &branch]).unwrap();
+    assert!(touched.contains("law/toc.toml"), "{touched}");
+}
+
+#[test]
+fn commit_law_with_no_base_resolves_the_landing_ref_and_refuses_when_none_resolves() {
+    let repo = fixture_repo("law-commit-nobase");
+    let wt_root = testkit::TempDir::new("law-commit-nobase-wt");
+    let toc = append(&parse_toc(TOC).unwrap(), 2, "law-four").unwrap();
+    let book = book_of(&[("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three."), ("law-four", "Do four.")]);
+    let branch = rule::code::commit_law(repo.path(), None, wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &book).unwrap();
+    let parent = rule::code::git_in(repo.path(), &["rev-parse", &format!("{branch}~1")]).unwrap();
+    assert_eq!(parent, rule::code::git_in(repo.path(), &["rev-parse", "HEAD"]).unwrap());
+
+    let bare = testkit::TempDir::new("law-commit-nobase-empty");
+    assert!(Command::new("git").arg("-C").arg(bare.path()).args(["init", "-q"]).status().unwrap().success());
+    let err = rule::code::commit_law(bare.path(), None, wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &book).unwrap_err();
+    assert!(err.contains("no landing ref resolves"), "{err}");
+}
