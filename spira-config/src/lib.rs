@@ -352,6 +352,12 @@ pub struct SpiraToml {
     pub persona: BTreeMap<String, PersonaSection>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub publish: BTreeMap<String, PublishSection>,
+    /// Enum-valued keys whose value this release does not know (a newer release wrote it),
+    /// dropped from the document and kept here by dotted path. A reader that needs the key
+    /// refuses through [`repo_gate_mode`] and its like; every other reader never notices.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub unknown_values: BTreeMap<String, String>,
 }
 
 /// `[publish.<name>]` — where a `queue.local` repository's green work is published. `remote`
@@ -496,8 +502,12 @@ impl GateMode {
 }
 
 /// `[repo.<name>] gate_mode` of `doc`, the default when the repository or the key is absent.
-pub fn repo_gate_mode(doc: &SpiraToml, repo: &str) -> GateMode {
-    doc.repo.get(repo).map(RepoSection::gate_mode).unwrap_or_default()
+pub fn repo_gate_mode(doc: &SpiraToml, repo: &str) -> Result<GateMode, String> {
+    let path = format!("repo.{repo}.gate_mode");
+    if let Some(v) = doc.unknown_values.get(&path) {
+        return Err(format!("{path}: unknown value {v:?}; this release knows unit, suites, fences"));
+    }
+    Ok(doc.repo.get(repo).map(RepoSection::gate_mode).unwrap_or_default())
 }
 
 /// `append` keeps Claude Code's own coding guidance underneath the persona layer;
@@ -956,7 +966,8 @@ fn validate_value(mut root: toml::Value) -> Result<(SpiraToml, Vec<String>), Str
             }
         }
     }
-    let doc = loop {
+    let mut unknown_values = BTreeMap::new();
+    let mut doc = loop {
         let attempt: Result<SpiraToml, _> = serde_path_to_error::deserialize(root.clone());
         let e = match attempt {
             Ok(doc) => break doc,
@@ -964,6 +975,16 @@ fn validate_value(mut root: toml::Value) -> Result<(SpiraToml, Vec<String>), Str
         };
         let path = e.path().to_string();
         let msg = e.inner().to_string();
+        if let Some(value) = unknown_variant(&msg) {
+            let required = path.starts_with("repo.") && path.ends_with(".mode");
+            if !required && remove_at(&mut root, &path) {
+                warnings.push(format!(
+                    "{path}: unknown value {value:?} (written by a newer release?); ignored until a reader needs it"
+                ));
+                unknown_values.insert(path, value);
+                continue;
+            }
+        }
         match unknown_key_path(&path, &msg).and_then(|p| remove_key(&mut root, &p).then_some(p)) {
             Some(p) => warnings.push(format!(
                 "{p} is not known to this release (written by a newer release?) and ignored"
@@ -972,7 +993,41 @@ fn validate_value(mut root: toml::Value) -> Result<(SpiraToml, Vec<String>), Str
             None => return Err(format!("{path}: {msg}")),
         }
     };
+    doc.unknown_values = unknown_values;
     Ok((doc, warnings))
+}
+
+/// The value serde refused, from `unknown variant \`v\`, expected ...`.
+fn unknown_variant(msg: &str) -> Option<String> {
+    Some(msg.strip_prefix("unknown variant `")?.split("`, expected").next()?.to_string())
+}
+
+/// Removes the table key or array element at a serde path (`repo.r.gate_mode`, `repo.r.lanes[2]`).
+fn remove_at(root: &mut toml::Value, path: &str) -> bool {
+    let mut cur = root;
+    let mut segs = path.split('.').peekable();
+    while let Some(seg) = segs.next() {
+        let (name, idx) = match seg.split_once('[') {
+            Some((n, rest)) => (n, rest.trim_end_matches(']').parse::<usize>().ok()),
+            None => (seg, None),
+        };
+        let last = segs.peek().is_none();
+        if last && idx.is_none() {
+            return cur.as_table_mut().is_some_and(|t| t.remove(name).is_some());
+        }
+        let Some(next) = cur.get_mut(name) else { return false };
+        match idx {
+            Some(i) if last => {
+                return next.as_array_mut().is_some_and(|a| i < a.len() && { a.remove(i); true });
+            }
+            Some(i) => match next.get_mut(i) {
+                Some(v) => cur = v,
+                None => return false,
+            },
+            None => cur = next,
+        }
+    }
+    false
 }
 
 /// The dotted path of the key serde refused as an unknown field, from the error's path and
@@ -1573,8 +1628,8 @@ mod tests {
     }
 
     #[test]
-    fn bad_enum_names_its_path() {
-        let err = validate("[spira]\nid_prefix = \"sp\"\nczar_stage_deadlock = \"sometimes\"\n").unwrap_err();
+    fn a_wrongly_typed_enum_names_its_path() {
+        let err = validate("[spira]\nid_prefix = \"sp\"\nczar_stage_deadlock = 3\n").unwrap_err();
         assert!(err.starts_with("spira.czar_stage_deadlock"), "{err}");
     }
 
@@ -1707,6 +1762,21 @@ mod tests {
         }
         let sh = export_sh(&doc);
         assert!(!sh.contains("CPU_QUOTA"), "a retired key leaked into export --sh: {sh}");
+    }
+
+    #[test]
+    fn an_unknown_enum_value_loads_with_a_warning_and_refuses_only_its_reader() {
+        let doc_text = "[spira]\nid_prefix = \"sp\"\nczar_stage_deadlock = \"someday\"\n[repo.r]\npath = \"/p\"\nmode = \"push\"\nlanes = [\"plan\", \"future-lane\"]\ngate_mode = \"some-future-mode\"\n";
+        let (doc, w) = validate_with_warnings(doc_text).unwrap();
+        for k in ["repo.r.gate_mode", "repo.r.lanes[1]", "spira.czar_stage_deadlock"] {
+            assert!(w.iter().any(|m| m.starts_with(k)), "{k}: {w:?}");
+        }
+        assert_eq!(doc.repo["r"].lanes, vec![Lane::Plan]);
+        let err = repo_gate_mode(&doc, "r").unwrap_err();
+        assert!(err.contains("repo.r.gate_mode") && err.contains("some-future-mode"), "{err}");
+        assert_eq!(repo_gate_mode(&doc, "other").unwrap(), GateMode::Suites);
+        let err = validate("[repo.r]\npath = \"/p\"\nmode = \"teleport\"\n").unwrap_err();
+        assert!(err.contains("repo.r.mode") && err.contains("teleport"), "{err}");
     }
 
     #[test]
@@ -1864,8 +1934,8 @@ mod tests {
     #[test]
     fn gate_mode_defaults_to_suites_when_absent() {
         let doc = validate(REPO_R).unwrap();
-        assert_eq!(repo_gate_mode(&doc, "r"), GateMode::Suites);
-        assert_eq!(repo_gate_mode(&doc, "no-such-repo"), GateMode::Suites);
+        assert_eq!(repo_gate_mode(&doc, "r").unwrap(), GateMode::Suites);
+        assert_eq!(repo_gate_mode(&doc, "no-such-repo").unwrap(), GateMode::Suites);
         assert_eq!(get_path(&doc, "repo.r.gate_mode"), None);
     }
 
@@ -1873,7 +1943,7 @@ mod tests {
     fn gate_mode_reads_every_value() {
         for (v, want) in [("unit", GateMode::Unit), ("suites", GateMode::Suites), ("fences", GateMode::Fences)] {
             let doc = validate(&format!("{REPO_R}gate_mode = \"{v}\"\n")).unwrap();
-            assert_eq!(repo_gate_mode(&doc, "r"), want);
+            assert_eq!(repo_gate_mode(&doc, "r").unwrap(), want);
             assert_eq!(want.as_str(), v);
             assert_eq!(get_path(&doc, "repo.r.gate_mode").as_deref(), Some(v));
         }
@@ -1881,7 +1951,12 @@ mod tests {
 
     #[test]
     fn gate_mode_refuses_anything_else() {
-        for bad in ["\"Unit\"", "\"fast\"", "\"Fences\"", "\"fence\"", "\"\"", "true", "1"] {
+        for bad in ["\"Unit\"", "\"fast\"", "\"Fences\"", "\"fence\"", "\"\""] {
+            let doc = validate(&format!("{REPO_R}gate_mode = {bad}\n")).unwrap();
+            let err = repo_gate_mode(&doc, "r").unwrap_err();
+            assert!(err.contains("repo.r.gate_mode"), "{bad}: {err}");
+        }
+        for bad in ["true", "1"] {
             let err = validate(&format!("{REPO_R}gate_mode = {bad}\n")).unwrap_err();
             assert!(err.contains("repo.r.gate_mode"), "{bad}: {err}");
         }
@@ -1891,16 +1966,16 @@ mod tests {
     fn gate_mode_is_set_and_reverted_through_set_path() {
         let doc = validate(REPO_R).unwrap();
         let on = set_path(&doc, "repo.r.gate_mode", "unit").unwrap();
-        assert_eq!(repo_gate_mode(&on, "r"), GateMode::Unit);
+        assert_eq!(repo_gate_mode(&on, "r").unwrap(), GateMode::Unit);
         let text = toml::to_string_pretty(&on).unwrap();
         assert!(text.contains("gate_mode = \"unit\""), "{text}");
         assert!(set_path(&doc, "repo.r.gate_mode", "fast").is_err());
         let off = set_path(&on, "repo.r.gate_mode", "suites").unwrap();
-        assert_eq!(repo_gate_mode(&off, "r"), GateMode::Suites);
+        assert_eq!(repo_gate_mode(&off, "r").unwrap(), GateMode::Suites);
         let gone = unset_path(&on, "repo.r.gate_mode").unwrap();
-        assert_eq!(repo_gate_mode(&gone, "r"), GateMode::Suites);
+        assert_eq!(repo_gate_mode(&gone, "r").unwrap(), GateMode::Suites);
         let fences = set_path(&doc, "repo.r.gate_mode", "fences").unwrap();
-        assert_eq!(repo_gate_mode(&fences, "r"), GateMode::Fences);
+        assert_eq!(repo_gate_mode(&fences, "r").unwrap(), GateMode::Fences);
         assert!(toml::to_string_pretty(&fences).unwrap().contains("gate_mode = \"fences\""));
     }
 

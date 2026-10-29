@@ -366,7 +366,7 @@ impl World for Real {
         match spira_config::discover(None) {
             None => Ok(GateMode::Suites),
             Some(p) => {
-                spira_config::load(&p).map(|doc| spira_config::repo_gate_mode(&doc, repo_name))
+                spira_config::load(&p).and_then(|doc| spira_config::repo_gate_mode(&doc, repo_name))
             }
         }
     }
