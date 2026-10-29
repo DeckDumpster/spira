@@ -12,4 +12,10 @@ while IFS= read -r c; do [ -n "$c" ] && words+=(-p "$c"); done < "$LIST"
 [ "${#words[@]}" -gt 0 ] || { echo "unit-tests: the diff touches no crate — nothing to run"; exit 0; }
 jobs="$(nproc 2>/dev/null || echo 2)"
 cd "$ROOT" || exit 2
+BINS="$ROOT/target/unit-tests.bins"
+bins=()
+[ -f "$BINS" ] && while IFS= read -r c; do [ -n "$c" ] && bins+=(-p "$c"); done < "$BINS"
+if [ "${#bins[@]}" -gt 0 ]; then
+  cargo build "${bins[@]}" --bins -j "$jobs" || exit 1
+fi
 cargo test "${words[@]}" -j "$jobs" -- --test-threads="$jobs"

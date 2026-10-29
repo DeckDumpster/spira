@@ -4,6 +4,9 @@ version = "1.0.0"
 edition = "2021"
 description = "spira-runtime — the long-running service that hosts the loop's workflows: pinned config, wide events as OTLP logs, a heartbeat schedule, a loop-kicked systemd watchdog and stall quarantine."
 
+[package.metadata.spira]
+test-bins = ["spira-lc"]
+
 [lib]
 name = "spira_runtime"
 path = "src/lib.rs"
