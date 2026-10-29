@@ -122,7 +122,9 @@ fn the_release_is_found_from_the_executable_when_the_environment_names_none() {
     std::fs::create_dir_all(rel.join("spira")).unwrap();
     testkit::write_exe(rel.join("bin/nqmjx7-lint"), "#!/bin/sh\necho lint-ran\n");
     std::fs::copy(env!("CARGO_BIN_EXE_work"), rel.join("model-bin/work")).unwrap();
-    let out = Command::new(rel.join("model-bin/work")).arg("checks").current_dir(dir.path()).env_clear().env("PATH", "/usr/bin:/bin").output().unwrap();
+    // The binary was just copied by this process: another test thread's fork may still hold
+    // the write descriptor, so the exec is retried past ETXTBSY.
+    let out = testkit::retry_busy(|| Command::new(rel.join("model-bin/work")).arg("checks").current_dir(dir.path()).env_clear().env("PATH", "/usr/bin:/bin").output()).unwrap();
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert!(text.contains("lint-ran"), "{text}");
