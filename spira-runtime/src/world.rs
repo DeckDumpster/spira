@@ -1,15 +1,19 @@
 //! Where the watchers' snapshots come from: files under the run directory and the lifecycle
 //! store through spira-lc's socket. No process is launched.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use runtime::socket::lc_call;
+use spira_config::nonwork::{status_args, Kind, Which};
 use serde_json::Value;
 
 use crate::watchers::inbox_keeper;
+use crate::forge::{slug, Forge};
+use crate::watchers::pr_notify::{self, RepoObs};
+use crate::watchers::asks;
 use crate::watchers::round_duty::{RoundState, Snapshot};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -21,12 +25,15 @@ pub struct World {
     pub inbox: PathBuf,
     pub lc_socket: PathBuf,
     pub proc_dir: PathBuf,
+    pub mail: PathBuf,
+    pub ask_label: String,
 }
 
 struct MapRow {
     name: String,
     path: String,
     land: String,
+    base: String,
 }
 
 fn map_rows(text: &str) -> Vec<MapRow> {
@@ -34,7 +41,7 @@ fn map_rows(text: &str) -> Vec<MapRow> {
         .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
         .filter_map(|l| {
             let f: Vec<&str> = l.split('|').map(str::trim).collect();
-            (f.len() >= 3 && !f[0].is_empty()).then(|| MapRow { name: f[0].into(), path: f[1].into(), land: f[2].into() })
+            (f.len() >= 3 && !f[0].is_empty()).then(|| MapRow { name: f[0].into(), path: f[1].into(), land: f[2].into(), base: f.get(3).copied().unwrap_or("").into() })
         })
         .collect()
 }
@@ -148,6 +155,88 @@ impl World {
         });
         let inbox_mtime = fs::metadata(&self.inbox).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
         serde_json::to_string(&inbox_keeper::Snapshot { triage_alive: alive, inbox_mtime }).map_err(|e| e.to_string())
+    }
+
+    /// Every repository registered with a checkout, asked of its forge. A tracked PR that left
+    /// the open list and a merge awaiting its deploy are asked about by name, from `input`.
+    pub fn pr_snapshot(&self, forge: &Forge, input: &str) -> Result<String, String> {
+        let carry: pr_notify::Carry = serde_json::from_str(input).unwrap_or_default();
+        let rows = fs::read_to_string(&self.repo_map).map(|t| map_rows(&t)).map_err(|e| format!("{}: {e}", self.repo_map.display()))?;
+        let mut repos = vec![];
+        for r in rows.iter().filter(|r| Path::new(&r.path).join(".git").is_dir()) {
+            let Some(slug) = slug(Path::new(&r.path)) else { continue };
+            let prev = carry.repos.get(&r.name).cloned().unwrap_or_default();
+            let mut obs = RepoObs::default();
+            if let Some(open) = forge.open_prs(&slug) {
+                for n in prev.prs.keys().filter(|n| !open.iter().any(|(p, _)| p.number == **n)) {
+                    obs.finals.extend(forge.final_state(&slug, *n).map(|f| (*n, f)));
+                }
+                if r.land == "pr" {
+                    let heads: Vec<String> = open.iter().map(|(_, h)| h.clone()).collect();
+                    let base = r.base.strip_prefix("origin/").unwrap_or(&r.base);
+                    obs.strays = forge.stray_branches(&slug, if base.is_empty() { "main" } else { base }, &heads);
+                }
+                obs.open = Some(open.into_iter().map(|(p, _)| p).collect());
+            }
+            for d in &prev.deploys {
+                obs.runs.extend(forge.deploy_run(&slug, &d.sha).map(|run| (d.sha.clone(), run)));
+            }
+            repos.push((r.name.clone(), obs));
+        }
+        serde_json::to_string(&pr_notify::Snapshot { repos }).map_err(|e| e.to_string())
+    }
+
+    /// Mail files naming `id` as their work bead, in mailbox order: every `new/` then every `cur/`.
+    fn mail_for(&self, id: &str) -> Option<String> {
+        let mut boxes: Vec<PathBuf> = fs::read_dir(&self.mail).into_iter().flatten().flatten().map(|e| e.path()).collect();
+        boxes.sort();
+        let want = format!("X-Spira-Work-Bead: {id}");
+        let mut hit = None;
+        for sub in ["new", "cur"] {
+            for b in &boxes {
+                let mut files: Vec<PathBuf> = fs::read_dir(b.join(sub)).into_iter().flatten().flatten().map(|e| e.path()).collect();
+                files.sort();
+                for f in files {
+                    if let Ok(text) = fs::read_to_string(&f) {
+                        if text.lines().any(|l| l == want) {
+                            hit = Some(text);
+                        }
+                    }
+                }
+            }
+        }
+        hit
+    }
+
+    fn hold_line(&self, id: &str) -> String {
+        if let Some(text) = self.mail_for(id) {
+            let header = |k: &str| text.lines().take_while(|l| !l.is_empty()).find_map(|l| l.strip_prefix(k)).unwrap_or("").to_string();
+            return format!("NEW ASK HOLD {id}: {} | default: {} | message-id: {}", header("Subject: "), header("X-Spira-Default: "), header("Message-ID: "));
+        }
+        let last = self
+            .lc(&["history", id, "--machine", "bead"])
+            .and_then(|t| serde_json::from_str::<Vec<Value>>(&t).ok())
+            .and_then(|rows| {
+                rows.iter().rfind(|r| r["event"] == "Hold").map(|r| {
+                    let seq = r["seq"].as_str().map(str::to_string).unwrap_or_else(|| r["seq"].to_string());
+                    let hold: Value = r["evidence"].as_str().and_then(|e| serde_json::from_str(e).ok()).unwrap_or_default();
+                    let detail = hold["Hold"]["detail"].as_str().unwrap_or("").split_whitespace().collect::<Vec<_>>().join(" ");
+                    (seq, detail.chars().take(400).collect::<String>())
+                })
+            });
+        let (seq, q) = last.unwrap_or(("?".into(), String::new()));
+        let q = if q.is_empty() { "<no text recorded>".to_string() } else { q };
+        format!("NEW ASK HOLD {id}: {q} | NO MAIL for the question; answer with spira-lc reply {id} seq:{seq}")
+    }
+
+    pub fn asks_snapshot(&self, input: &str) -> Result<String, String> {
+        let seen: BTreeSet<String> = serde_json::from_str(input).unwrap_or_default();
+        let [status_flag, status_value] = status_args(Kind::Ask, Which::Open);
+        let listed = lc_call(&self.lc_socket, &["content", "list", "--label", &self.ask_label, &status_flag, &status_value, "--limit", "0", "--json"]).map_err(|e| e.to_string())?;
+        let rows: Vec<Value> = serde_json::from_str(&listed).map_err(|e| format!("ask list unparsed: {e}"))?;
+        let open = rows.iter().filter_map(|r| Some((r["id"].as_str()?.to_string(), r["title"].as_str()?.to_string()))).collect();
+        let held = self.lc(&["list-held", "ask"]).unwrap_or_default().lines().map(str::trim).filter(|id| !id.is_empty() && !seen.contains(*id)).map(|id| (id.to_string(), self.hold_line(id))).collect();
+        serde_json::to_string(&asks::Snapshot { open, held }).map_err(|e| e.to_string())
     }
 
     pub fn inbox_append(&self, line: &str) -> Result<String, String> {

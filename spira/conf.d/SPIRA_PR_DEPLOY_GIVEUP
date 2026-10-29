@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=gh
+DOC=Seconds pr-notify waits for a merge's deploy run to complete before it stops asking, so a repository with no deploy workflow is not polled forever.
+SCHEMA=Seconds pr-notify waits for a merge's deploy run (unit: seconds; integer; default 10800). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_PR_DEPLOY_GIVEUP:=10800}"
+SPIRA_CONF_DEFAULT_EOF

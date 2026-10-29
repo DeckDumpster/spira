@@ -647,7 +647,6 @@ SPIRA_PROD_ROOT install/src/bin/install.rs
 SPIRA_PROD_ROOT install/src/values.rs
 SPIRA_PROD_ROOT release/src/units.rs
 SPIRA_PROD_ROOT spira-lint/src/rules/script_callers.rs
-SPIRA_PR_DEPLOY_GIVEUP spira/pr-notify.sh
 SPIRA_PSI_DIR watchtower/src/main.rs
 SPIRA_QUARANTINE_CLEAN_RUNS spira-config/src/convert.rs
 SPIRA_QUEUE_ACTOR queue/src/ops/batch.rs

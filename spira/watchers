@@ -71,17 +71,7 @@
 # <file>` asks the question that discriminates: does this state name a single bead of OUR
 # prefix. Point it at whatever file the watcher keeps its own memory in.
 
-# PR-NOTIFY is a daemon: pr-notify.sh loops on its own (`watch`), scanning every repo in the
-# repo-map every 90s whatever its land mode, and prints transitions to stdout — which this
-# unit, like any other daemon row, appends to this watcher's own log. It used to be a `log`
-# row fed by a 30-minute external timer that only covered land=pr repos, which is why a
-# queue-mode batch PR could go red for ten minutes with nothing watching
-# (law-concierge-watches-every-registered-repo). `watchd drain pr-notify` delivers queued
-# findings; `watchd notify` escalates the actionable ones past SPIRA_NOTIFY_AGE. Every
-# transition is ALSO mailed straight to the concierge mailbox as it happens — the log line
-# is history, not the delivery, so it does not depend on a session holding a Monitor or on
-# the watch-notify escalation timer being armed.
-pr-notify|daemon|pr-notify.sh watch --interval 90|pr-notify.sh health
+# PR-NOTIFY has no row: spira-runtime hosts it as the pr-notify handler (spira-runtime/src/watchers).
 
 # THE VIEW FOLLOWER is the highest-consequence watcher here — it decides which window the
 # operator is looking at — and it is the hardest one to catch failing, because it acts on
@@ -140,11 +130,7 @@ queue-watch|daemon|queue-watch watch --run @SPIRA_RUN@ --db @SPIRA_DB@ --home @S
 
 # ROUND-DUTY has no row: spira-runtime hosts it as the round-duty handler (spira-runtime/src/watchers).
 
-# ASKS announces each bead newly carrying SPIRA_ASK_LABEL (NEW ASK <id>: <title>) into the log and
-# the Concierge inbox, then moves asks.cursor past what the inbox already delivered so watchd
-# notify does not re-escalate handled asks. Retire any overlay row named `asks`: a name is unique
-# across the manifest and the overlay's copy would refuse it.
-asks|daemon|@SPIRA_HOME@/asks.sh watch --interval 60|@SPIRA_HOME@/asks.sh health
+# ASKS has no row: spira-runtime hosts it as the asks handler (spira-runtime/src/watchers).
 
 supersede-duty|daemon|@SPIRA_HOME@/supersede-duty.sh watch --interval 60|@SPIRA_HOME@/supersede-duty.sh health
 

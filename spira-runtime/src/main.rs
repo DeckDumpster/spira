@@ -54,6 +54,7 @@ fn main() {
 }
 
 async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String> {
+    let mail_env = spira_runtime::operator_mail(mail::env::Env::load().map_err(|e| format!("mail environment: {e}"))?);
     let kick: Arc<dyn Fn() + Send + Sync> = {
         let n = notifier.clone();
         Arc::new(move || n.kick())
@@ -67,7 +68,7 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String
         let (settings, clock, sink) = (settings.clone(), clock.clone(), sink.clone());
         move || -> Result<runtime::Engine, String> {
             let mut engine = open_engine(&settings, journal, clock, Arc::new(FileMarker(settings.marker_path())), sink, vec![]).map_err(|e| e.to_string())?;
-            for (id, stream, kind) in [runtime::heartbeat::Heartbeat::boot(), spira_runtime::watchers::round_duty::RoundDuty::boot(), spira_runtime::watchers::inbox_keeper::InboxKeeper::boot()] {
+            for (id, stream, kind) in [runtime::heartbeat::Heartbeat::boot(), spira_runtime::watchers::round_duty::RoundDuty::boot(), spira_runtime::watchers::inbox_keeper::InboxKeeper::boot(), spira_runtime::watchers::pr_notify::PrNotify::boot(), spira_runtime::watchers::asks::Asks::boot()] {
                 runtime::Executor::submit(&mut engine, id, stream, kind).map_err(|e| e.to_string())?;
             }
             Ok(engine)
@@ -79,5 +80,5 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String
     let (_keep_open, rx) = mpsc::channel(1);
     notifier.ready();
     let opts = ServeOpts { kick: Some(kick), max_sleep_ms: max_sleep.map(|d| d.as_millis() as u64), sink: Some(sink), pool: None };
-    serve_with(engine, clock, Arc::new(Effects { heartbeat_url: settings.heartbeat_url.clone(), world: settings.world.clone() }), 4, rx, opts).await.map_err(|e| e.to_string())
+    serve_with(engine, clock, Arc::new(Effects { heartbeat_url: settings.heartbeat_url.clone(), world: settings.world.clone(), forge: settings.forge.clone(), mail: Some(Arc::new(mail_env)) }), 4, rx, opts).await.map_err(|e| e.to_string())
 }

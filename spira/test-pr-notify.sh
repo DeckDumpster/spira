@@ -21,8 +21,8 @@
 #      open list — and a gh call that fails leaves the tracked PR in place for a retry rather
 #      than guessing it away.
 #   6. BRANCHES WITH NO PR (T2: real git, stubbed gh) — pr-mode only; unchanged from before.
-#   7. THE MANIFEST ROW is a daemon now, not a log fed by an external timer — this is what
-#      lets `watchd status` show it active instead of external.
+#   7. THE MANIFEST HAS NO ROW: spira-runtime hosts the watcher (spira-runtime/tests/pr_notify_parity.rs
+#      holds this script and that handler to the same lines).
 #   8. NO TRANSITION IS MAILED to the concierge mailbox: the watchd log is its one source.
 #
 # THE CLASSIFIER (_PR_STATUS_PY) IS A PURE FUNCTION OF STDIN JSON, exercised directly; the
@@ -395,16 +395,11 @@ runb --show
 hasnt "branch with a PR is not reported" "$(cat "$TMP/out")" "⚠ BRANCH spira/test-bead"
 
 # ====================================================================================
-# 7. THE MANIFEST ROW IS A DAEMON, not a log fed by an external timer — this is what lets
-#    `watchd status` show pr-notify active instead of external, and what puts it on the
-#    same generic spira-watch@ rendering test-units-lint.sh already checks.
+# 7. THE MANIFEST HAS NO ROW — spira-runtime hosts pr-notify; a row here would run it twice.
 # ====================================================================================
 echo
 echo "the watchd manifest row"
-manifest_line="$(grep '^pr-notify|' "$HERE/watchers")"
-has   "pr-notify is a daemon row"                 "$manifest_line" "pr-notify|daemon|"
-has   "its target is the watch loop"              "$manifest_line" "pr-notify.sh watch"
-hasnt "it is no longer a log row fed by a timer"   "$manifest_line" "pr-notify|log|"
+grep -q '^pr-notify|' "$HERE/watchers"; is "watchers manifest has no pr-notify row: spira-runtime hosts it" "1" "$?"
 
 # ====================================================================================
 # 8. A REPO DROPPED FROM THE REPO-MAP GETS NO EVENTS, EVER — sp-iagac. A repository handed

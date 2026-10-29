@@ -2,11 +2,27 @@
 //! here is pure: what the world looks like arrives as the outcome of an observe effect, and
 //! what it has to say leaves as an `inbox.append` effect.
 
+pub mod asks;
 pub mod inbox_keeper;
+pub mod pr_notify;
 pub mod round_duty;
+
+use runtime::event::*;
+use serde::de::DeserializeOwned;
 
 pub const INBOX_APPEND: &str = "inbox.append";
 pub const CONCIERGE_WAKE: &str = "concierge.wake";
+
+/// The body of the latest `tag` event on `stream`, or the default before the first.
+pub fn carried<T: DeserializeOwned + Default>(view: &Projection, stream: &StreamKey, tag: EventKindTag) -> T {
+    view.events(stream).iter().rev().find(|e| e.kind.tag == tag).and_then(|e| serde_json::from_str(&e.kind.body).ok()).unwrap_or_default()
+}
+
+/// Whether `ev` is the outcome of the effect named `observe` that its stream requested.
+pub fn answers_observe(view: &Projection, ev: &Event, observe: &str) -> bool {
+    let Some(cause) = &ev.cause else { return false };
+    view.events(&ev.stream).iter().rev().find(|e| &e.id == cause && e.kind.tag == EFFECT_REQUESTED).and_then(|e| serde_json::from_str::<serde_json::Value>(&e.kind.body).ok()).is_some_and(|b| b["spec"]["name"] == observe)
+}
 
 /// `YYYY-MM-DDTHH:MM:SSZ` for a UTC epoch-seconds value.
 pub fn iso8601(secs: u64) -> String {

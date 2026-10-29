@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use runtime::event::*;
 use serde::{Deserialize, Serialize};
 
-use super::{iso8601, INBOX_APPEND};
+use super::{answers_observe, carried, iso8601, INBOX_APPEND};
 
 pub const STREAM: &str = "watch.round-duty";
 pub const TICK: EventKindTag = "round-duty.tick";
@@ -114,15 +114,6 @@ impl RoundDuty {
     pub fn boot() -> (&'static str, &'static str, EventKind) {
         ("round-duty/boot", STREAM, EventKind::new(TICK, ""))
     }
-
-    fn carry(view: &Projection, stream: &StreamKey) -> Carry {
-        view.events(stream).iter().rev().find(|e| e.kind.tag == STATE).and_then(|e| serde_json::from_str(&e.kind.body).ok()).unwrap_or_default()
-    }
-
-    fn answers_observe(view: &Projection, ev: &Event) -> bool {
-        let Some(cause) = &ev.cause else { return false };
-        view.events(&ev.stream).iter().rev().find(|e| &e.id == cause && e.kind.tag == EFFECT_REQUESTED).and_then(|e| serde_json::from_str::<serde_json::Value>(&e.kind.body).ok()).is_some_and(|b| b["spec"]["name"] == OBSERVE)
-    }
 }
 
 impl Handler for RoundDuty {
@@ -135,21 +126,21 @@ impl Handler for RoundDuty {
             return vec![];
         }
         if ev.kind.tag == TICK {
-            let known = Self::carry(view, &ev.stream).lines;
+            let known = carried::<Carry>(view, &ev.stream, STATE).lines;
             let input = serde_json::to_string(&known).unwrap_or_default();
             return vec![
                 Command::Effect(EffectSpec { name: OBSERVE.into(), input, deadline_ms: DEADLINE_MS }),
                 Command::Schedule { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
-        if !Self::answers_observe(view, ev) {
+        if !answers_observe(view, ev, OBSERVE) {
             return vec![];
         }
         if ev.kind.tag == EFFECT_TIMED_OUT {
             ctx.event().set("round_duty.skipped", "observe timed out");
             return vec![];
         }
-        let carry = Self::carry(view, &ev.stream);
+        let carry = carried::<Carry>(view, &ev.stream, STATE);
         let snap = match (ev.kind.tag.as_str(), serde_json::from_str::<Snapshot>(&ev.kind.body)) {
             (EFFECT_SUCCEEDED, Ok(s)) => s,
             _ => Snapshot { certified: carry.last_c.unwrap_or(0), lines: carry.lines.clone(), stopped: carry.last_stopped.clone(), ..Snapshot::default() },

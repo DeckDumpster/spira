@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds between spira-runtime asks observations of newly opened asks and ask holds.
+SCHEMA=Seconds between spira-runtime asks observations (unit: seconds; integer; default 60). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_ASKS_SECS:=60}"
+SPIRA_CONF_DEFAULT_EOF

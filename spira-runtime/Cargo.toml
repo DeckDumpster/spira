@@ -14,6 +14,7 @@ path = "src/main.rs"
 test = false
 
 [dependencies]
+mail = { path = "../mail" }
 runtime = { path = "../runtime" }
 spira-config = { path = "../spira-config" }
 spira-otel = { path = "../spira-otel" }
