@@ -14,9 +14,8 @@
 
 use std::collections::BTreeMap;
 
-use crate::{LandMode, Lane, Lease, OnOff, PersonaSection, RepoSection, SpiraSection, SpiraToml};
-
-include!(concat!(env!("OUT_DIR"), "/spira_convert.rs"));
+use crate::registry::{self, RegistryKey};
+use crate::{LandMode, Lane, Lease, PersonaSection, RepoSection, SpiraSection, SpiraToml};
 
 /// Everything that came from the inputs but had nowhere to go in the schema: an unknown
 /// `spira.conf` key, a row with an unknown land mode, a rune field this schema does not
@@ -62,36 +61,57 @@ pub fn read_conf(text: &str, home: &str) -> BTreeMap<String, String> {
     out
 }
 
-fn parse_u32(w: &mut ConvertWarnings, key: &str, val: &str) -> Option<u32> {
-    val.parse()
-        .map_err(|_| w.push(format!("spira.{key}: not an integer: {val:?}")))
-        .ok()
+fn parse_int(w: &mut ConvertWarnings, key: &str, val: &str, ty: &str) -> Option<toml::Value> {
+    let n = if ty == "u32" { val.parse::<u32>().map(i64::from).ok() } else { val.parse::<u64>().ok().and_then(|n| i64::try_from(n).ok()) };
+    if n.is_none() {
+        w.push(format!("spira.{key}: not an integer: {val:?}"));
+    }
+    n.map(toml::Value::Integer)
 }
 
-fn parse_u64(w: &mut ConvertWarnings, key: &str, val: &str) -> Option<u64> {
-    val.parse()
-        .map_err(|_| w.push(format!("spira.{key}: not an integer: {val:?}")))
-        .ok()
-}
-
-fn parse_bool01(w: &mut ConvertWarnings, key: &str, val: &str) -> Option<bool> {
-    match val {
-        "1" => Some(true),
-        "0" => Some(false),
-        other => {
-            w.push(format!("spira.{key}: not 0/1: {other:?}"));
-            None
+/// `val` as the value of registry key `rk`, or `None` with a warning when it is not one.
+fn conf_value(rk: &RegistryKey, val: &str, warnings: &mut ConvertWarnings) -> Option<toml::Value> {
+    let f = rk.field.as_str();
+    match rk.ty.as_str() {
+        "u32" | "u64" => parse_int(warnings, f, val, &rk.ty),
+        "bool" => match val {
+            "1" => Some(toml::Value::Boolean(true)),
+            "0" => Some(toml::Value::Boolean(false)),
+            other => {
+                warnings.push(format!("spira.{f}: not 0/1: {other:?}"));
+                None
+            }
+        },
+        "list" => Some(toml::Value::Array(val.split_whitespace().map(|v| toml::Value::String(v.to_string())).collect())),
+        "onoff" | "czar_stage" => {
+            let (words, shown) = if rk.ty == "onoff" { (["on", "off"], "on/off") } else { (["shadow", "act"], "shadow/act") };
+            if words.contains(&val) {
+                Some(toml::Value::String(val.to_string()))
+            } else {
+                warnings.push(format!("spira.{f}: not {shown}: {val:?}"));
+                None
+            }
         }
+        _ => Some(toml::Value::String(val.to_string())),
     }
 }
 
 /// Builds `[spira]` from the raw key/value pairs [`read_conf`] produced. The `KEY => field`
-/// mapping is generated from the config key registry ([`apply_spira_key`]); only the retired
+/// mapping is the config key registry's; only the retired
 /// keys are written out here. A key neither arm recognises is refused rather than dropped,
 /// because silently ignoring a key conf.sh accepts is how ~200 of them vanished (sp-9nljd).
 pub fn spira_section(
     raw: &BTreeMap<String, String>,
     warnings: &mut ConvertWarnings,
+) -> Result<SpiraSection, Vec<String>> {
+    spira_section_with(raw, warnings, registry::for_process().map_err(|e| vec![e])?)
+}
+
+/// [`spira_section`] against a registry the caller already holds.
+pub fn spira_section_with(
+    raw: &BTreeMap<String, String>,
+    warnings: &mut ConvertWarnings,
+    reg: &registry::Registry,
 ) -> Result<SpiraSection, Vec<String>> {
     let mut s = SpiraSection::default();
     let mut errors = Vec::new();
@@ -108,7 +128,7 @@ pub fn spira_section(
             )),
             "SPIRA_BATCHER_BIN" => {
                 if crate::batcher_bin_means_off(val) && !raw.contains_key("SPIRA_BATCHER_ENABLE") {
-                    s.batcher_enable = Some("0".into());
+                    s.0.insert("batcher_enable".into(), toml::Value::String("0".into()));
                     warnings.push(format!("spira.conf: {key} is retired (sp-gypjk); its non-batcher value is read as batcher_enable = \"0\""));
                 } else {
                     warnings.push(format!("spira.conf: {key} is retired (sp-gypjk: tools are invoked by name) and ignored — remove it"));
@@ -126,7 +146,11 @@ pub fn spira_section(
                 "spira.conf: {key} is retired (sp-gypjk: tools are invoked by name) and ignored — remove it"
             )),
             other => {
-                if !apply_spira_key(&mut s, other, val, warnings) {
+                if let Some(rk) = reg.get(other) {
+                    if let Some(v) = conf_value(rk, val, warnings) {
+                        s.0.insert(rk.field.clone(), v);
+                    }
+                } else {
                     errors.push(format!(
                         "spira.conf: unknown key {other}, refused (not in conf.sh's SPIRA_CONF_KEYS \
                          or a typo — declare the key in spira/conf.d)"
@@ -403,14 +427,10 @@ pub fn persona_section(
     warnings: &mut ConvertWarnings,
 ) -> (String, PersonaSection) {
     let mut vars = label_defaults();
-    if let Some(v) = &spira.scope_label {
-        vars.insert("SPIRA_SCOPE_LABEL".to_string(), v.clone());
-    }
-    if let Some(v) = &spira.ask_label {
-        vars.insert("SPIRA_ASK_LABEL".to_string(), v.clone());
-    }
-    if let Some(v) = &spira.ci_label {
-        vars.insert("SPIRA_CI_LABEL".to_string(), v.clone());
+    for key in ["SPIRA_SCOPE_LABEL", "SPIRA_ASK_LABEL", "SPIRA_CI_LABEL"] {
+        if let Some(v) = crate::said(spira.get_str(key)) {
+            vars.insert(key.to_string(), v);
+        }
     }
 
     let mut name = String::new();
@@ -523,9 +543,20 @@ pub fn convert(
     repo_map_text: &str,
     rune_texts: &[(&str, &str)],
 ) -> Result<(SpiraToml, ConvertWarnings), Vec<String>> {
+    convert_with(conf_text, home, repo_map_text, rune_texts, registry::for_process().map_err(|e| vec![e])?)
+}
+
+/// [`convert`] against a registry the caller already holds.
+pub fn convert_with(
+    conf_text: &str,
+    home: &str,
+    repo_map_text: &str,
+    rune_texts: &[(&str, &str)],
+    reg: &registry::Registry,
+) -> Result<(SpiraToml, ConvertWarnings), Vec<String>> {
     let mut warnings = ConvertWarnings::default();
     let raw = read_conf(conf_text, home);
-    let spira = spira_section(&raw, &mut warnings)?;
+    let spira = spira_section_with(&raw, &mut warnings, reg)?;
     let repo = repo_sections(repo_map_text, &mut warnings)?;
     let mut persona = BTreeMap::new();
     for (_path, text) in rune_texts {

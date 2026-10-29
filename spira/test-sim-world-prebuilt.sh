@@ -46,6 +46,9 @@ REPO="$T/repo"
 mkdir -p "$REPO/lifecycle"
 cp "$HERE/../lifecycle/schema.sql" "$REPO/lifecycle/"
 cp -r "$HERE/../lifecycle/migrations" "$REPO/lifecycle/"
+# The world's config base is read from the repo it seeds from (spira/sim/src/world.rs).
+mkdir -p "$REPO/spira/testlib"
+cp "$HERE/testlib/complete.toml" "$REPO/spira/testlib/"
 git -C "$REPO" init -q
 git -C "$REPO" add -A
 git -C "$REPO" -c user.name=t -c user.email=t@t.invalid commit -q -m seed || bail "fixture repo commit failed"

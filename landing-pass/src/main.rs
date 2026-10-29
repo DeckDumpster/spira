@@ -510,6 +510,7 @@ mod tests {
         let dir = testkit::TempDir::new("landing-pass-run-dir");
         let home = dir.join("home");
         fs::create_dir_all(home.join("conf.d")).unwrap();
+        fs::create_dir_all(home.join("conf.toml.d")).unwrap();
         let run_path = dir.join("the-run-dir");
         let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_RUN", run_path.to_str().unwrap())]);
 

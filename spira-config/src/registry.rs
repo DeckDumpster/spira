@@ -14,9 +14,10 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
+use std::sync::OnceLock;
 
 /// One `spira/conf.d/<KEY>` file, parsed.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RegistryKey {
     pub name: String,
     pub ty: String,
@@ -28,6 +29,22 @@ pub struct RegistryKey {
     /// markers, exactly as `conf-gen.sh`'s own `parse_one` reads it (comments and at most one
     /// `: "${KEY:=...}"` statement).
     pub default_body: String,
+    /// The `spira.toml` spelling under `[spira]`: `SPIRA_FOO` is `foo`, `COCKPIT_FOO` is `cockpit_foo`.
+    pub field: String,
+    /// Declared in `conf.toml.d`: a key only `spira.toml` carries.
+    pub toml_only: bool,
+    /// `MAX=`: the hard ceiling `validate` enforces on an integer value.
+    pub max: Option<f64>,
+    /// `SCHEMA=`: the key's description in the JSON Schema.
+    pub schema_doc: Option<String>,
+}
+
+/// Every TYPE a registry file may declare.
+pub const TYPES: &[&str] = &["string", "u32", "u64", "bool", "list", "onoff", "czar_stage"];
+
+/// The `spira.toml` field name of a registry key.
+pub fn field_of(key: &str) -> String {
+    key.strip_prefix("SPIRA_").unwrap_or(key).to_ascii_lowercase()
 }
 
 impl RegistryKey {
@@ -71,11 +88,50 @@ fn extract_braced(s: &str, start: usize) -> Option<&str> {
     None
 }
 
-pub fn embedded() -> Result<BTreeMap<String, RegistryKey>, String> {
-    EMBEDDED_CONF_D.iter().map(|(name, text)| Ok((name.to_string(), parse_one(name, text)?))).collect()
+/// The config key registry of one release: `<home>/conf.d` and `<home>/conf.toml.d`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Registry {
+    pub keys: BTreeMap<String, RegistryKey>,
 }
 
-include!(concat!(env!("OUT_DIR"), "/embedded_conf_d.rs"));
+impl Registry {
+    /// Reads both directories of `home`; a directory that cannot be read is a named refusal.
+    pub fn load(home: &Path) -> Result<Registry, String> {
+        let mut keys = load(&home.join("conf.d"))?;
+        for (name, mut key) in load(&home.join("conf.toml.d"))? {
+            key.toml_only = true;
+            if keys.insert(name.clone(), key).is_some() {
+                return Err(format!("{name} is declared in both conf.d and conf.toml.d"));
+            }
+        }
+        let mut fields = BTreeMap::new();
+        for k in keys.values() {
+            if let Some(other) = fields.insert(k.field.clone(), k.name.clone()) {
+                return Err(format!("{}: field {} is declared twice in the registry ({other})", k.name, k.field));
+            }
+        }
+        Ok(Registry { keys })
+    }
+
+    pub fn get(&self, key: &str) -> Option<&RegistryKey> {
+        self.keys.get(key)
+    }
+
+    pub fn by_field(&self, field: &str) -> Option<&RegistryKey> {
+        self.keys.values().find(|k| k.field == field)
+    }
+}
+
+/// This process's registry, read once from the release [`crate::resolve::locate_home_for_process`]
+/// finds. A refusal is not remembered: the next call looks again.
+pub fn for_process() -> Result<&'static Registry, String> {
+    static REGISTRY: OnceLock<Registry> = OnceLock::new();
+    if let Some(r) = REGISTRY.get() {
+        return Ok(r);
+    }
+    let loaded = Registry::load(&crate::resolve::locate_home_for_process()?)?;
+    Ok(REGISTRY.get_or_init(|| loaded))
+}
 
 /// Parses every file directly inside `dir` the way `conf-gen.sh`'s `parse_one` does: `TYPE=`,
 /// `GROUP=`, `DOC=` lines, then a `DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'` heredoc closed by a line
@@ -124,6 +180,8 @@ fn parse_one(name: &str, text: &str) -> Result<RegistryKey, String> {
     let mut group = String::new();
     let mut doc = String::new();
     let mut required = false;
+    let mut max = None;
+    let mut schema_doc = None;
     let mut body = String::new();
     let mut in_default = false;
     let mut closed = true;
@@ -146,6 +204,9 @@ fn parse_one(name: &str, text: &str) -> Result<RegistryKey, String> {
             doc = v.to_string();
         } else if let Some(v) = line.strip_prefix("SCHEMA=") {
             required = v.starts_with("REQUIRED:");
+            schema_doc = Some(v.trim().to_string());
+        } else if let Some(v) = line.strip_prefix("MAX=") {
+            max = Some(v.trim().parse::<f64>().map_err(|e| format!("{name}: MAX={v:?}: {e}"))?);
         } else if line == "DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'" {
             in_default = true;
             closed = false;
@@ -155,7 +216,21 @@ fn parse_one(name: &str, text: &str) -> Result<RegistryKey, String> {
     if !closed {
         return Err(format!("{name}: DEFAULT heredoc never closed (missing SPIRA_CONF_DEFAULT_EOF)"));
     }
-    Ok(RegistryKey { name: name.to_string(), ty, group, doc, required, default_body: body })
+    if !TYPES.contains(&ty.trim()) {
+        return Err(format!("{name}: TYPE={ty:?} is not one of {}", TYPES.join(" ")));
+    }
+    Ok(RegistryKey {
+        name: name.to_string(),
+        ty: ty.trim().to_string(),
+        group,
+        doc,
+        required,
+        default_body: body,
+        field: field_of(name),
+        toml_only: false,
+        max,
+        schema_doc,
+    })
 }
 
 /// The keys that carry a real default statement, in the same deterministic topological order
@@ -205,22 +280,35 @@ pub fn topo_order(registry: &BTreeMap<String, RegistryKey>) -> Result<Vec<String
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn the_embedded_registry_is_conf_d_itself() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d");
-        assert_eq!(super::embedded().unwrap(), super::load(&dir).unwrap());
+    fn real_home() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira")
     }
 
     #[test]
-    fn a_key_added_to_conf_d_is_known_to_the_embedded_registry() {
-        let dir = testkit::TempDir::new("spira-config-registry-drift");
-        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d");
-        for e in std::fs::read_dir(&src).unwrap().flatten() {
-            std::fs::copy(e.path(), dir.join(e.file_name())).unwrap();
-        }
-        assert_eq!(super::embedded().unwrap(), super::load(dir.path()).unwrap());
-        std::fs::write(dir.join("SPIRA_DRIFT_PROBE"), "TYPE=string\nGROUP=test\nDOC=x\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    # NO DEFAULT.\nSPIRA_CONF_DEFAULT_EOF\n").unwrap();
-        assert_ne!(super::embedded().unwrap(), super::load(dir.path()).unwrap(), "the comparison must be able to see a key conf.d gained");
+    fn loading_a_home_reads_conf_d_and_conf_toml_d() {
+        let reg = Registry::load(&real_home()).unwrap();
+        assert!(!reg.keys["SPIRA_CERTIFY_PAR"].toml_only);
+        assert!(reg.keys["SPIRA_HOTFIX_ALERT_HOURS"].toml_only, "positive control: a conf.toml.d key is read");
+        assert_eq!(reg.by_field("certify_par").unwrap().name, "SPIRA_CERTIFY_PAR");
+        assert_eq!(reg.keys["SPIRA_STACK_MAX_DEPTH"].max, Some(4.0));
+    }
+
+    #[test]
+    fn a_home_missing_either_directory_is_refused_by_path() {
+        let dir = testkit::TempDir::new("spira-config-registry-home");
+        let conf_d = dir.join("conf.d");
+        std::fs::create_dir_all(&conf_d).unwrap();
+        assert_eq!(Registry::load(dir.path()).unwrap_err(), format!("no config registry at {}", dir.join("conf.toml.d").display()));
+        std::fs::remove_dir(&conf_d).unwrap();
+        std::fs::create_dir_all(dir.join("conf.toml.d")).unwrap();
+        assert_eq!(Registry::load(dir.path()).unwrap_err(), format!("no config registry at {}", conf_d.display()));
+    }
+
+    #[test]
+    fn an_unknown_type_is_refused() {
+        let dir = testkit::TempDir::new("spira-config-registry-type");
+        std::fs::write(dir.join("SPIRA_X"), "TYPE=float\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\nSPIRA_CONF_DEFAULT_EOF\n").unwrap();
+        assert!(load(dir.path()).unwrap_err().contains("TYPE=\"float\""));
     }
 
     use super::*;
@@ -234,6 +322,10 @@ mod tests {
             doc: String::new(),
             required: false,
             default_body: body.to_string(),
+            field: field_of(name),
+            toml_only: false,
+            max: None,
+            schema_doc: None,
         }
     }
 
@@ -344,8 +436,8 @@ mod tests {
     }
 
     #[test]
-    fn topo_order_matches_the_reference_on_the_embedded_registry() {
-        let reg = embedded().unwrap();
+    fn topo_order_matches_the_reference_on_the_real_registry() {
+        let reg = load(&real_home().join("conf.d")).unwrap();
         let order = topo_order(&reg).unwrap();
         assert!(order.len() > 100, "positive control: the registry carries defaults");
         assert!(reg.values().any(|k| k.default_expr().is_some_and(|e| e.contains("$SPIRA_"))), "positive control: some default names another key");

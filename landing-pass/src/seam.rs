@@ -333,6 +333,7 @@ mod tests {
         // Declared config (the one source): the registry reads the map and home repo from
         // the SPIRA_TOML it resolves, never from the environment.
         std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d"), dir.join("conf.d")).unwrap();
+        std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.toml.d"), dir.join("conf.toml.d")).unwrap();
         let cfgdir = testkit::TempDir::new("lp-seam-registry-cfg");
         let toml = spira_config::process::fixture_toml(cfgdir.path(), &[("SPIRA_REPO_MAP", &map.display().to_string()), ("SPIRA_HOME_REPO", "spira")]);
         let env = testkit::env(&[("SPIRA_TOML", toml.to_str())]);

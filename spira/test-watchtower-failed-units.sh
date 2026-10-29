@@ -89,7 +89,7 @@ chmod +x "$BIN/journalctl"
 
 # SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
 # <home>/conf.d, so a stub home needs the registry symlinked in (sfail round 2, pattern 1).
-WT_HOME="$TMP/wt-home"; mkdir -p "$WT_HOME"; ln -s "$HERE/conf.d" "$WT_HOME/conf.d"
+WT_HOME="$TMP/wt-home"; mkdir -p "$WT_HOME"; ln -s "$HERE/conf.d" "$WT_HOME/conf.d"; ln -s "$HERE/conf.toml.d" "$WT_HOME/conf.toml.d"
 
 # wt_show -> the --show snapshot (touches nothing: no incident.sh, no state write)
 wt_show() {

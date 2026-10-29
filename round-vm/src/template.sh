@@ -35,7 +35,7 @@ run = "$work/.runtime/spira"
 releases = "$work/.runtime/releases"
 home_repo = "$work"
 TEMPLATECFG
-export SPIRA_TOML="$work/spira-config/tests/fixtures/complete.toml:$work/template-config.toml"
+export SPIRA_TOML="$work/spira/testlib/complete.toml:$work/template-config.toml"
 nix_bin=/nix/var/nix/profiles/default/bin
 if [ ! -x "$nix_bin/nix" ]; then
     echo "round-vm template: installing nix (multi-user)" >&2

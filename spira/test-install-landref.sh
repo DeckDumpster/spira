@@ -95,6 +95,7 @@ ln -s "$HERE/lib.sh"   "$FIXTURE/spira/lib.sh"
 # <home>/conf.d directly, so a fixture spira/ with none refuses config resolution
 # outright (sfail round 2, pattern 1).
 ln -s "$HERE/conf.d"   "$FIXTURE/spira/conf.d"
+ln -s "$HERE/conf.toml.d" "$FIXTURE/spira/conf.toml.d"
 
 # Unit binaries (sp-gypjk): the units ExecStart $FIXTURE/bin/<tool>, the release layout.
 . "$HERE/lib-test-install.sh"

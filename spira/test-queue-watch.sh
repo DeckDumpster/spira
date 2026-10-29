@@ -53,6 +53,7 @@ mkdir -p "$Q" "$FX"
 # SPIRA_HOME/--home IS THE HOME now (locate_home no longer searches): every binary reads
 # <home>/conf.d (sfail round 2, pattern 1).
 ln -s "$HERE/conf.d" "$FX/conf.d"
+ln -s "$HERE/conf.toml.d" "$FX/conf.toml.d"
 
 # A real base: an origin with main, and a checkout whose origin/main a tip can be an
 # ancestor of — "landed" is verified against the commit graph, never taken from the forge.

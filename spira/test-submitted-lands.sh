@@ -88,6 +88,7 @@ tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
 # derives conf.d from THIS --home and now REFUSES to start if it is missing (sp-1cdgq) --
 # a --home with no conf.d used to resolve silently to nothing instead of refusing.
 cp -r "$HERE/conf.d" "$SPIRA_HOME/"
+cp -r "$HERE/conf.toml.d" "$SPIRA_HOME/"
 find "$HERE" -maxdepth 1 \( -name '*.sh' -o -name '*.py' \) ! -name 'test-*.sh' -exec cp {} "$SPIRA_HOME/" \;
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 SPIRA_RUN="$TMP/run"; export SPIRA_RUN; mkdir -p "$SPIRA_RUN/worktree"; tl_config SPIRA_RUN="$SPIRA_RUN"

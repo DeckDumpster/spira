@@ -34,6 +34,7 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/home/mail"; chmod +x "$TMP/home/m
 # SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
 # <home>/conf.d directly, so this stub home needs the registry too.
 ln -s "$HERE/conf.d" "$TMP/home/conf.d"
+ln -s "$HERE/conf.toml.d" "$TMP/home/conf.toml.d"
 
 export STUB_BD_STATE="$TMP/state.json" STUB_BD_LOG="$TMP/bd.log"
 # sp-jgjvh: incident beads are work beads, so incident's dedup reads each one's state from

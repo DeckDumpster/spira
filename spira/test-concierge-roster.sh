@@ -75,6 +75,7 @@ ln -sfn "$CH" "$TMP/runes"
 # SPIRA_HOME="$TMP" in roster() IS the home now (locate_home no longer searches); every
 # binary (lib.sh sources conf.sh) reads <home>/conf.d, so the stub needs the registry.
 ln -sfn "$HERE/conf.d" "$TMP/conf.d"
+ln -sfn "$HERE/conf.toml.d" "$TMP/conf.toml.d"
 
 is "the task pool is the ordinary rune alone"        "worker"          "$(roster spira_task_runes)"
 is "the lane list is the ordinary lane rune alone"   "laner"           "$(roster spira_lane_runes)"

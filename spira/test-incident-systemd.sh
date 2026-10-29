@@ -29,6 +29,7 @@ mkdir -p "$TMP/home" "$TMP/run"
 # locate_home no longer searches: SPIRA_HOME IS the home, and every binary reads
 # <home>/conf.d for the registry.
 ln -s "$HERE/conf.d" "$TMP/home/conf.d"
+ln -s "$HERE/conf.toml.d" "$TMP/home/conf.toml.d"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/home/mail"; chmod +x "$TMP/home/mail"
 export STUB_BD_STATE="$TMP/state.json" STUB_BD_LOG="$TMP/bd.log"
 # sp-jgjvh: incident beads are work beads, so incident's dedup reads each one's state from

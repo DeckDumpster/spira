@@ -13,6 +13,7 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 mkdir -p "$T/runes" "$T/run" "$T/testrepo"
 ln -s "$HERE/conf.d" "$T/conf.d"
+ln -s "$HERE/conf.toml.d" "$T/conf.toml.d"
 tl_config SPIRA_RUNES_DIR="$T/runes"
 
 cat > "$T/runes/builder.rune" <<'RUNE'

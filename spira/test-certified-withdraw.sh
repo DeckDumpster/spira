@@ -36,7 +36,7 @@ timeout 5 git -C "$REPO" push -q origin main
 timeout 5 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$SH/"
 
 cat > "$SH/repo-map" <<RMAP
 $REPONAME | $REPO | queue | origin/main | | |

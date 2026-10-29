@@ -158,12 +158,12 @@ pub fn size_from_env(pool: Pool) -> u64 {
 /// The size the config document sets for `pool`, when it sets one.
 pub fn doc_size(pool: Pool, doc: &crate::SpiraToml) -> Option<u64> {
     let s = doc.spira.as_ref()?;
-    match pool {
-        Pool::Compile => s.compile_par,
-        Pool::Test => s.test_par,
-        Pool::Gate => s.certify_par,
-        Pool::Cold | Pool::Unit => None,
-    }
+    crate::said(match pool {
+        Pool::Compile => s.get_u32("SPIRA_COMPILE_PAR"),
+        Pool::Test => s.get_u32("SPIRA_TEST_PAR"),
+        Pool::Gate => s.get_u32("SPIRA_CERTIFY_PAR"),
+        Pool::Cold | Pool::Unit => Ok(None),
+    })
     .map(u64::from)
     .filter(|n| *n > 0)
 }

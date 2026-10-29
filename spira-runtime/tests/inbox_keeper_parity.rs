@@ -82,7 +82,7 @@ fn old_wakes(s: &Scenario) -> Vec<String> {
         .env_clear()
         .env("PATH", path)
         .env("HOME", d.path())
-        .env("SPIRA_TOML", format!("{}:{}", Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira-config/tests/fixtures/complete.toml").display(), d.path().join("layer.toml").display()))
+        .env("SPIRA_TOML", format!("{}:{}", Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/testlib/complete.toml").display(), d.path().join("layer.toml").display()))
         .env("SPIRA_REPO", d.path().join("repo"))
         .stdout(Stdio::null())
         .stderr(Stdio::null())

@@ -5,7 +5,8 @@
 use std::process::Command;
 use std::collections::BTreeMap;
 
-use spira_config::convert::convert;
+use spira_config::convert::convert_with;
+use spira_config::registry::Registry;
 use spira_config::export_sh;
 
 use crate::{Entry, Finding, LintError, Rule, Tree};
@@ -52,11 +53,11 @@ fn conf_keys_via_registry(root: &std::path::Path) -> Option<Vec<String>> {
 /// synthetic spira.conf, value `export --sh` must give back), read off the registry's TYPE.
 /// Any other key is a string field, and the key's own name is written and must come back
 /// byte-for-byte.
-pub fn typed_cases() -> BTreeMap<&'static str, (&'static str, &'static str)> {
-    spira_config::SPIRA_KEYS
-        .iter()
+pub fn typed_cases(reg: &Registry) -> BTreeMap<String, (&'static str, &'static str)> {
+    reg.keys
+        .values()
         .filter_map(|k| {
-            let case = match k.ty {
+            let case = match k.ty.as_str() {
                 "u32" => ("7", "7"),
                 "u64" => ("700", "700"),
                 "bool" => ("1", "true"),
@@ -65,7 +66,7 @@ pub fn typed_cases() -> BTreeMap<&'static str, (&'static str, &'static str)> {
                 "list" => ("alpha beta", "alpha beta"),
                 _ => return None,
             };
-            Some((k.key, case))
+            Some((k.name.clone(), case))
         })
         .collect()
 }
@@ -85,8 +86,8 @@ fn exported_map(sh: &str, keys: &[String]) -> BTreeMap<String, String> {
 }
 
 /// Each problem with carrying `keys` through convert and export, one message per key.
-pub fn round_trip(keys: &[String]) -> Vec<String> {
-    let typed = typed_cases();
+pub fn round_trip(keys: &[String], reg: &Registry) -> Vec<String> {
+    let typed = typed_cases(reg);
     let mut conf_text = String::new();
     let mut expected = BTreeMap::new();
     for key in keys {
@@ -94,7 +95,7 @@ pub fn round_trip(keys: &[String]) -> Vec<String> {
         conf_text.push_str(&format!("{key} = {conf_val}\n"));
         expected.insert(key.clone(), exported_val.to_string());
     }
-    let (doc, warnings) = match convert(&conf_text, "/opt/fixture-home", "", &[]) {
+    let (doc, warnings) = match convert_with(&conf_text, "/opt/fixture-home", "", &[], reg) {
         Ok(v) => v,
         Err(errors) => return errors.into_iter().map(|e| format!("convert refused: {e}")).collect(),
     };
@@ -132,7 +133,8 @@ impl Rule for ConfKeyRegistry {
         if keys.len() < 200 {
             return Err(refuse(&format!("SPIRA_CONF_KEYS parsed to {} keys, expected over 200 — reading the wrong thing", keys.len())));
         }
-        Ok(round_trip(&keys)
+        let reg = Registry::load(&tree.root.join("spira")).map_err(|e| refuse(&e))?;
+        Ok(round_trip(&keys, &reg)
             .into_iter()
             .map(|message| Finding { rule: NAME, path: CONF_SH.into(), line: None, message })
             .collect())
@@ -154,6 +156,10 @@ pub fn rules() -> Vec<Box<dyn crate::Rule>> {
 mod tests {
     use super::*;
 
+    fn real() -> Registry {
+        Registry::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira")).unwrap()
+    }
+
     fn keys(ks: &[&str]) -> Vec<String> {
         ks.iter().map(|s| s.to_string()).collect()
     }
@@ -167,15 +173,15 @@ mod tests {
 
     #[test]
     fn known_keys_survive_and_a_planted_unknown_key_is_named() {
-        assert!(round_trip(&keys(&["SPIRA_MAX_DWARVES", "SPIRA_CERTIFY_PAR"])).is_empty());
-        let got = round_trip(&keys(&["SPIRA_MAX_DWARVES", "SPIRA_TOTALLY_MADE_UP_TEST_KEY"]));
+        assert!(round_trip(&keys(&["SPIRA_MAX_DWARVES", "SPIRA_CERTIFY_PAR"]), &real()).is_empty());
+        let got = round_trip(&keys(&["SPIRA_MAX_DWARVES", "SPIRA_TOTALLY_MADE_UP_TEST_KEY"]), &real());
         assert!(!got.is_empty());
         assert!(got.iter().any(|m| m.contains("SPIRA_TOTALLY_MADE_UP_TEST_KEY")), "{got:?}");
     }
 
     #[test]
     fn a_secret_shaped_key_is_deliberately_not_exported() {
-        assert!(round_trip(&keys(&["SPIRA_BROKER_GH_TOKEN"])).is_empty());
+        assert!(round_trip(&keys(&["SPIRA_BROKER_GH_TOKEN"]), &real()).is_empty());
     }
 
     #[test]

@@ -45,7 +45,7 @@ cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" "$HERE/comm
    "$HERE/yield.sh" "$HERE/suite-covers.sh" "$SH/"
 # `skew` is a compiled binary now (sp-yyk47): reached via `$TOOLS` on PATH below, not
 # copied here.
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$SH/"
 
 git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
@@ -155,7 +155,7 @@ is "neither gate observed the other's branch" "" "$crossed"
 # --------------------------------------------------------------------------------------
 : > "$EVENTS"  # fresh: case 1's spira/sp-t1 window must not be mistaken for one of this pair
 GATELOG1B="$TMP/gate1b.log"
-# The complete fixture declares gate_lock_wait="0" (spira-config/tests/fixtures/complete.toml),
+# The complete fixture declares gate_lock_wait="0" (spira/testlib/complete.toml),
 # where conf.sh's old unset-env read resolved empty and fell back to 4x the gate timeout
 # (engine.rs's lock_wait default). A registered 0 now wins outright, so the waiter refuses
 # with lock-timeout after 0s instead of actually waiting out gate1's ~GATE_SECS hold — declare

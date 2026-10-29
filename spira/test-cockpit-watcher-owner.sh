@@ -105,6 +105,7 @@ FAKE_HOME="$TMP/spira-home"; mkdir -p "$FAKE_HOME"
 # locate_home no longer searches: SPIRA_HOME IS the home, and watchd (a compiled binary,
 # never sourcing the fake conf.sh stub below) reads <home>/conf.d for the registry.
 ln -s "$HERE/conf.d" "$FAKE_HOME/conf.d"
+ln -s "$HERE/conf.toml.d" "$FAKE_HOME/conf.toml.d"
 
 # conf.sh: provides watch_unit_name with a test-specific name.
 cat > "$FAKE_HOME/conf.sh" <<'CONFEOF'

@@ -37,6 +37,7 @@ tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
 # derives conf.d from THIS --home and now REFUSES to start if it is missing (sp-1cdgq) --
 # a --home with no conf.d used to resolve silently to nothing instead of refusing.
 cp -r "$HERE/conf.d" "$SPIRA_HOME/"
+cp -r "$HERE/conf.toml.d" "$SPIRA_HOME/"
 printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"   # the dwarf binary sources <home>/lib.sh; this is the real one, as dwarf.sh sourced it
 # conf.d/conf-gen.sh ALSO HAVE TO BE HERE, not just reachable through lib.sh's source chain:
 # the dwarf binary's own in-process config resolution (spira_config::resolve, wave 4.8)
@@ -46,7 +47,7 @@ printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"   # the dwarf binary sou
 # test-dwarf-resume.sh, ...); without it, every generic registry key — SPIRA_MAIL
 # among them — silently resolves to "" because its conf.d/SPIRA_MAIL file is never found,
 # so part (d) below created no mailbox for the stub to see.
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
+cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 SPIRA_RUN="$TMP/run"; export SPIRA_RUN; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
 SPIRA_MAIL="$TMP/mail"; export SPIRA_MAIL; tl_config SPIRA_MAIL="$SPIRA_MAIL"
 # The complete fixture declares mail_mute = true; this suite's assertions read the "new"

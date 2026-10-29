@@ -217,7 +217,7 @@ fn a_row_without_build_never_builds() {
 fn prime_names_a_reviewer_that_resolves_nowhere() {
     let dir = repo(None);
     let toml = spira_config::process::fixture_toml(dir.path(), &[("SPIRA_AGENT", "nqmjx7-no-claude")]);
-    let out = Command::new(env!("CARGO_BIN_EXE_work")).arg("prime").current_dir(dir.path()).env_clear().env("PATH", "/usr/bin:/bin").env("SPIRA_TOML", toml).env("SPIRA_HOME", dir.path()).output().unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_work")).arg("prime").current_dir(dir.path()).env_clear().env("PATH", "/usr/bin:/bin").env("SPIRA_TOML", toml).env("SPIRA_HOME", std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira")).output().unwrap();
     assert!(String::from_utf8_lossy(&out.stdout).contains("the reviewer \"nqmjx7-no-claude\""), "{}{}", String::from_utf8_lossy(&out.stdout).lines().last().unwrap_or(""), String::from_utf8_lossy(&out.stderr));
 }
 

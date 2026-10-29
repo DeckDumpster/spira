@@ -11,6 +11,7 @@ fn a_run_pushes_its_standard_metrics_to_the_configured_endpoint() {
     let home = dir.join("home");
     std::fs::create_dir(&home).expect("home dir");
     std::os::unix::fs::symlink(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/conf.d"), home.join("conf.d")).expect("conf.d link");
+    std::os::unix::fs::symlink(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/conf.toml.d"), home.join("conf.toml.d")).expect("conf.toml.d link");
     let toml = spira_config::process::fixture_toml(&dir, &[("SPIRA_METRICS_ENDPOINT", &sink.addr)]);
     let out = Command::new(env!("CARGO_BIN_EXE_groomer"))
         .args(Vec::<String>::new())

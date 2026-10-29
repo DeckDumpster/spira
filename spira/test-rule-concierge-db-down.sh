@@ -146,6 +146,7 @@ FX="$TMP/fx"; mkdir -p "$FX/runes"
 # SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
 # <home>/conf.d directly, so this fixture home needs one too (sfail round 2, pattern 1).
 ln -s "$HERE/conf.d" "$FX/conf.d"
+ln -s "$HERE/conf.toml.d" "$FX/conf.toml.d"
 cp "$HERE/runes/concierge.md" "$FX/runes/fx.md"
 ln -sf "$(command -v mail)" "$FX/mail"   # the real compiled binary, found on the suite's own PATH (mail is gone, sp-ooh1k)
 ln -sf "$HERE/bead.sh" "$FX/bead.sh"

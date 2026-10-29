@@ -369,7 +369,7 @@ struct Outcome {
 }
 
 /// Every key spira-config's own "every key declared" test fixture
-/// (`spira-config/tests/fixtures/complete.toml`, the same document
+/// (`spira/testlib/complete.toml`, the same document
 /// `spira_config::process::fixture_toml` writes from) declares, renamed `SPIRA_*`/
 /// `COCKPIT_*` — the same rename `spira_config::resolve`'s own (private) `toml_key_map`
 /// applies when it builds a toml-backed `Resolved`, replicated here (not called) because
@@ -383,13 +383,13 @@ struct Outcome {
 /// 2026-10-05: one source of config), which is a silent behaviour change for whichever one
 /// of this file's many fixtures does not also move onto this same base.
 pub(crate) fn complete_vars() -> BTreeMap<String, String> {
-    let doc = spira_config::validate(include_str!("../../spira-config/tests/fixtures/complete.toml")).expect("the complete fixture validates");
+    let doc = spira_config::validate(&spira_config::process::complete_fixture_text()).expect("the complete fixture validates");
     spira_config::spira_string_map(&doc)
         .into_iter()
         .map(|(k, v)| if k.starts_with("COCKPIT_") { (k, v) } else { (format!("SPIRA_{k}"), v) })
         .chain(std::iter::once((
             "SPIRA_TOML".to_string(),
-            concat!(env!("CARGO_MANIFEST_DIR"), "/../spira-config/tests/fixtures/complete.toml").to_string(),
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/testlib/complete.toml").to_string(),
         )))
         .collect()
 }

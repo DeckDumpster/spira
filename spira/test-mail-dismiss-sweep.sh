@@ -58,6 +58,7 @@ tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_MAIL_INDEX="$SPIRA_MAIL_INDEX" SPIRA_ID
 # written and the suite reads as "no decision bead filed". test-mail.sh's UC-17 fixture
 # already carries this same symlink for the same reason (sp-ivfu3); this fixture never did.
 ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
+ln -s "$HERE/conf.toml.d" "$SPIRA_HOME/conf.toml.d"
 
 MAIL=mail   # invoked by name on the suite's PATH (sp-gypjk)
 run() { "$MAIL" "$@"; }

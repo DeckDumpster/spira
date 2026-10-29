@@ -104,7 +104,7 @@ echo "3. END TO END: the real \`queue\` binary's publish-settle against this row
 # fields (mode/base/landref/publish) are resolved in-process from SPIRA_REPO_MAP.
 SH="$TMP/spira"; mkdir -p "$SH"
 cp -r "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null || true
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$SH/"
 ln -sf "$(command -v mail)" "$SH/mail" 2>/dev/null || true
 chmod +x "$SH"/*.sh 2>/dev/null || true
 

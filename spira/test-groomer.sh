@@ -42,6 +42,7 @@ NONE="$T/none.conf"
 # <home>/conf.d directly (sfail round 3, pattern 1).
 STUB_HOME="$T/home-stub"; mkdir -p "$STUB_HOME"
 ln -s "$HERE/conf.d" "$STUB_HOME/conf.d"
+ln -s "$HERE/conf.toml.d" "$STUB_HOME/conf.toml.d"
 
 # Build a stub bd that records its arguments and returns appropriate responses. The stub
 # is queried by checking the recorded argv file; each invocation appends a newline-delimited

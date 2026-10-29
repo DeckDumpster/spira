@@ -34,7 +34,7 @@ unset SPIRA_CONF 2>/dev/null || true
 SH="$TMP/spira"
 mkdir -p "$SH/hooks"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/branch-guard.sh" "$SH/"
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$SH/"
 cp "$HERE/hooks/pre-commit" "$SH/hooks/"
 
 # A bare remote plus a working checkout with main as its base branch.
@@ -300,7 +300,7 @@ mkdir -p "$HREPO/hooks"
 git init -q -b main "$HREPO"
 cp "$HERE/boundary" "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" \
    "$HERE/exclude.sh" "$HERE/branch-guard.sh" "$HREPO/"
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$HREPO/"
+cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$HREPO/"
 cp "$HERE/hooks/pre-commit" "$HREPO/hooks/pre-commit"
 mkdir -p "$HREPO/seedcrate/src"; printf "pub fn ok() {}\n" > "$HREPO/seedcrate/src/lib.rs"
 chmod +x "$HREPO/exclude.sh" "$HREPO/branch-guard.sh" "$HREPO/hooks/pre-commit"

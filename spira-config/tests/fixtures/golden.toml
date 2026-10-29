@@ -1,11 +1,11 @@
 [spira]
-cockpit_bottom_pct = 40
-cockpit_right_pct = 45
 ask_label = "fixture-ask-label"
 batch_maxpar = 8
 certify_par = 4
 certify_suites = "off"
 ci_label = "fixture-ci-label"
+cockpit_bottom_pct = 40
+cockpit_right_pct = 45
 czar_stage_deadlock = "shadow"
 db = "/opt/fixture-home/.local/share/spira/db"
 dolt_data = "/srv/beads"

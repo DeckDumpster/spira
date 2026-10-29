@@ -93,6 +93,15 @@ fn main() -> ExitCode {
 }
 
 fn run(argv: &[String], sink: &spira_otel::metrics::MetricsSink) -> u8 {
+    if argv.first().map(String::as_str) == Some("check-config") {
+        return spira_config::process::check_config_verb("store-persist", &[]) as u8;
+    }
+    if argv.first().map(String::as_str) == Some("run") {
+        if let Err(e) = spira_config::process::check_config(&[]) {
+            eprintln!("store-persist: {e}");
+            return 1;
+        }
+    }
     let cfg = match config() {
         Ok(c) => c,
         Err(e) => {

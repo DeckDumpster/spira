@@ -139,7 +139,7 @@ _TL_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # actually HAVE the branch its repo-map row names. Git's own env config, so it reaches every
 # git a suite runs (an `env -i` drops it — such a call names its branch itself).
 export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=init.defaultBranch GIT_CONFIG_VALUE_0=main
-_TL_CONF_BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/spira-config/tests/fixtures/complete.toml"
+_TL_CONF_BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/spira/testlib/complete.toml"
 [ -f "$_TL_CONF_BASE" ] || { echo "testlib: no complete fixture at $_TL_CONF_BASE" >&2; exit 1; }
 _TL_CONF_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tl-conf.XXXXXX")"
 _TL_CONF_OVERRIDE="$_TL_CONF_DIR/$(basename "${BASH_SOURCE[1]:-$0}" .sh).override.toml"
@@ -181,7 +181,7 @@ _tl_declare() {
                     *) echo "tl_config: $k is a bool, not '$v'" >&2; return 1 ;;
                 esac ;;
         esac
-        spira-config set "$d" "$v" "$file" >/dev/null \
+        SPIRA_HOME="$_TL_HERE" spira-config set "$d" "$v" "$file" >/dev/null \
             || { echo "tl_config: cannot declare $k" >&2; return 1; }
     done
 }
@@ -345,7 +345,7 @@ while os.getppid() == pp: time.sleep(0.5)
 copy_conf_registry() {
     local dest="${1:?copy_conf_registry needs a destination directory}"
     mkdir -p "$dest"
-    cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$dest/"
+    cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$dest/"
     # Generate now, so the fixture's first `source conf.sh` has nothing to regenerate and
     # prints nothing into a suite capturing a command's output with 2>&1 (sp-gt0ta).
     bash "$dest/conf-gen.sh" >/dev/null 2>&1 \

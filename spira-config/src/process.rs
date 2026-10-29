@@ -46,6 +46,34 @@ pub fn cfg(key: &str) -> Result<String, String> {
         .ok_or_else(|| format!("{key} is not a registered config key (spira/conf.d) — refusing"))
 }
 
+/// The startup self-check of a long-running binary: this process's registry loads (refusing with
+/// `no config registry at <path>`), its config resolves, and every key in `keys` is registered
+/// and resolves. `Ok` is a summary line for `check-config` to print after `ok`.
+pub fn check_config(keys: &[&str]) -> Result<String, String> {
+    let reg = crate::registry::for_process()?;
+    let resolved = config()?;
+    let bad: Vec<&str> = keys.iter().copied().filter(|k| reg.get(k).is_none() || !resolved.values.contains_key(*k)).collect();
+    if !bad.is_empty() {
+        return Err(format!("unregistered or unresolved config keys: {} — refusing", bad.join(", ")));
+    }
+    Ok(format!("{} registered keys, {} checked", reg.keys.len(), keys.len()))
+}
+
+/// The `check-config` verb of a long-running binary: prints `ok <summary>` and returns 0, or
+/// names the refusal on stderr under `who` and returns 1.
+pub fn check_config_verb(who: &str, keys: &[&str]) -> i32 {
+    match check_config(keys) {
+        Ok(summary) => {
+            println!("ok {summary}");
+            0
+        }
+        Err(e) => {
+            eprintln!("{who}: {e}");
+            1
+        }
+    }
+}
+
 /// The metrics endpoint components push to; `None` when config does not resolve or declares none.
 pub fn metrics_endpoint() -> Option<String> {
     cfg("SPIRA_METRICS_ENDPOINT").ok()
@@ -67,11 +95,32 @@ pub fn metrics_sink(service: &str) -> spira_otel::metrics::MetricsSink {
     spira_otel::metrics::MetricsSink::new(endpoint.as_deref(), service, std::time::Duration::from_millis(500))
 }
 
-/// A complete `spira.toml` for TESTS in any crate: every key declared (spira-config's
-/// `tests/fixtures/complete.toml`), with `declare`'s `SPIRA_<KEY>` pairs written as
+/// The complete fixture's text, read from the harness tree this crate was built in.
+pub fn complete_fixture_text() -> String {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/testlib/complete.toml");
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
+/// A release directory for a test: `<dir>/release/spira` linking this harness tree's
+/// `conf.toml.d`, and its `conf.d` when `with_conf_d`. Point `SPIRA_RELEASE` at the returned path.
+pub fn fixture_release(dir: &std::path::Path, with_conf_d: bool) -> std::path::PathBuf {
+    let tree = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+    let release = dir.join("release");
+    std::fs::create_dir_all(release.join("spira")).expect("the fixture release is created");
+    let dirs: &[&str] = if with_conf_d { &["conf.d", "conf.toml.d"] } else { &["conf.toml.d"] };
+    for d in dirs {
+        let link = release.join("spira").join(d);
+        if !link.exists() {
+            std::os::unix::fs::symlink(tree.join(d), &link).expect("the registry is linked");
+        }
+    }
+    release
+}
+
+/// A complete `spira.toml` for TESTS in any crate: every key declared (`spira/testlib/complete.toml`), with `declare`'s `SPIRA_<KEY>` pairs written as
 /// `spira.<key>`. Written to `<dir>/spira.toml`; point `SPIRA_TOML` at the returned path.
 pub fn fixture_toml(dir: &std::path::Path, declare: &[(&str, &str)]) -> std::path::PathBuf {
-    let mut d = crate::validate(include_str!("../tests/fixtures/complete.toml")).expect("the complete fixture validates");
+    let mut d = crate::validate(&complete_fixture_text()).expect("the complete fixture validates");
     for (k, v) in declare {
         let rest = k.strip_prefix("SPIRA_").unwrap_or(k);
         d = crate::set_path(&d, &format!("spira.{}", rest.to_ascii_lowercase()), v)

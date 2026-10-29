@@ -28,6 +28,7 @@ registry_count="$(printf '%s\n' "$registry_keys" | sed '/^$/d' | wc -l)"
 
 SCRATCH_SPIRA="$TMP/spira"; mkdir -p "$SCRATCH_SPIRA"
 cp -r "$HERE/conf.d" "$SCRATCH_SPIRA/conf.d"
+cp -r "$HERE/conf.toml.d" "$SCRATCH_SPIRA/conf.toml.d"
 cp "$HERE/conf-gen.sh" "$SCRATCH_SPIRA/conf-gen.sh"
 cp "$HERE/conf.sh" "$SCRATCH_SPIRA/conf.sh"
 

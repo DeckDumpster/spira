@@ -72,6 +72,7 @@ export SPIRA_HOME="$T" PATH="$T:$PATH"
 # `dwarf --escape` fixture uses.
 printf '. "%s/lib.sh"\n' "$HERE" > "$T/lib.sh"
 ln -s "$HERE/conf.d" "$T/conf.d"
+ln -s "$HERE/conf.toml.d" "$T/conf.toml.d"
 
 # THE DWARF IS A BINARY (dwarf.sh is gone): call_rune hands systemd-run the dwarf it finds
 # on PATH (sp-gypjk). The mock SPIRA_CALL never execs it.
@@ -211,6 +212,7 @@ ln -s "$HERE/runes" "$DSTUBS/runes"
 # THE SENTINEL IS A BINARY (sentinel.sh is gone): it sources lib.sh from SPIRA_HOME.
 for _s in lib.sh conf.sh suite-covers.sh; do ln -s "$HERE/$_s" "$DSTUBS/$_s"; done
 ln -s "$HERE/conf.d" "$DSTUBS/conf.d"
+ln -s "$HERE/conf.toml.d" "$DSTUBS/conf.toml.d"
 CALL_LOG="$T/d-called.log"
 printf '#!/bin/sh\necho called >> "%s"\n' "$CALL_LOG" > "$DSTUBS/mock-call"; chmod +x "$DSTUBS/mock-call"
 # SPIRA_CALL below is this mock, not systemd-run, so dwarf_count takes its pidfile

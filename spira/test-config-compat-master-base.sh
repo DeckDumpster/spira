@@ -55,7 +55,7 @@ timeout 5 git -C "$B_REPO" push -q origin master
 timeout 5 git -C "$B_REPO" fetch -q origin
 mkdir -p "$B_RUN/worktree" "$B_SH" "$B_QUEUEDIR/$B_REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$B_SH/"
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$B_SH/"
+cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$B_SH/"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$B_SH/mail"; chmod +x "$B_SH/mail"
 
 # Stub round-vm: batcher-cut's corpus step runs `round-vm run <worktree> --suites CSV
@@ -156,7 +156,7 @@ timeout 5 git -C "$V_REPO" push -q origin master
 timeout 5 git -C "$V_REPO" fetch -q origin
 mkdir -p "$V_RUN/worktree" "$V_SH" "$V_QUEUEDIR/$V_REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$V_SH/"
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$V_SH/"
+cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$V_SH/"
 
 V_FORGE_STATUS_FILE="$TMP/verdict-forge-status"
 cat > "$V_SH/forge-fixture.sh" <<FORGE

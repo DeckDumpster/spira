@@ -778,6 +778,7 @@ mod tests {
         env.insert("PATH".to_string(), d.path().display().to_string());
         let home = d.path().join("home");
         std::fs::create_dir_all(home.join("conf.d")).unwrap();
+        std::fs::create_dir_all(home.join("conf.toml.d")).unwrap();
         std::fs::write(home.join("conf.d/SPIRA_SCCACHE_DAV_ADDR"), conf_d_stub()).unwrap();
         let real = Real { home, env };
         // `sccache_show_stats` calls `self.sccache_dav_addr()`, which goes through

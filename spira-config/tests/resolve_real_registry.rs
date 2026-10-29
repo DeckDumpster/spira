@@ -24,7 +24,7 @@ fn every_real_registry_key_resolves_without_error() {
 
     // ONE SOURCE, EVERY KEY REQUIRED: the complete fixture spira.toml must declare every key
     // the real registry names — a key added to spira/conf.d without a declaration fails here.
-    let doc = spira_config::validate(include_str!("fixtures/complete.toml")).expect("the complete fixture validates");
+    let doc = spira_config::validate(&spira_config::process::complete_fixture_text()).expect("the complete fixture validates");
     let resolved = spira_config::resolve::resolve(spira_config::resolve::ResolveInput {
         env: &env,
         home: &home,

@@ -4,6 +4,15 @@ use std::sync::Arc;
 
 fn main() {
     let cmd = std::env::args().nth(1).unwrap_or_default();
+    if cmd == "check-config" {
+        std::process::exit(spira_config::process::check_config_verb("spira-submission", &[]));
+    }
+    if cmd.is_empty() || cmd == "serve" {
+        if let Err(e) = spira_config::process::check_config(&[]) {
+            eprintln!("spira-submission: {e}");
+            std::process::exit(1);
+        }
+    }
     if cmd == "provision" || cmd == "status" {
         let sink = metrics();
         std::process::exit(spira_otel::metrics::instrument(&sink, "spira-submission", &cmd, || operate(&cmd)));
@@ -44,7 +53,7 @@ fn main() {
             serve(listener, cfg, sink, std::sync::Arc::new(metrics()));
         }
         other => {
-            eprintln!("spira-submission: unknown subcommand {other:?} (serve | health | provision | status)");
+            eprintln!("spira-submission: unknown subcommand {other:?} (serve | health | provision | status | check-config)");
             std::process::exit(2);
         }
     }

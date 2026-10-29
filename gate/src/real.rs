@@ -373,7 +373,7 @@ impl World for Real {
     fn certify_par_live(&self) -> Option<u64> {
         let p = spira_config::discover(None)?;
         let doc = spira_config::load(&p).ok()?;
-        doc.spira.as_ref()?.certify_par.map(u64::from)
+        spira_config::said(doc.spira.as_ref()?.get_u32("SPIRA_CERTIFY_PAR")).map(u64::from)
     }
     fn cargo_metadata(&self, tree: &Path, path: &str, home: &str) -> Result<String, String> {
         // batch-job: cargo runs for as long as its work does
@@ -892,6 +892,9 @@ impl World for Real {
         for (k, v) in env {
             c.env(k, v);
         }
+        if let Some(home) = tree_home(tree) {
+            c.env("SPIRA_HOME", home);
+        }
         c.stdout(Stdio::from(wr)).stderr(Stdio::from(wr2));
         // Caught signals reset to their default at exec, so the trial does not inherit the
         // handler; every descriptor THIS PROCESS opened is close-on-exec (DESIGN.md). That
@@ -975,6 +978,14 @@ impl World for Real {
 }
 
 const NOVERDICT_RC: i32 = crate::engine::NOVERDICT;
+
+/// The tree's own `spira/` when it carries a key registry: the tools a trial builds from the tree
+/// read the registry of the tree they were built from, so a branch that adds a key and a reader
+/// of it passes its own gate. A tree with no registry (another repository's) keeps the release's.
+fn tree_home(tree: &Path) -> Option<PathBuf> {
+    let home = tree.join("spira");
+    home.join("conf.d").is_dir().then_some(home)
+}
 
 /// [`World::install_tools`] on the filesystem (sp-g9f3t). Copies, never links: a hard link
 /// into `target/dwarf` would change under the next build of a different tree.
@@ -1224,5 +1235,20 @@ mod tests {
         }
         assert!(!run.join(crate::target::WARM_DIR).exists(), "a gate built into {}: {line}", run.join(crate::target::WARM_DIR).display());
         assert!(!line.contains("warm target"), "{line}");
+    }
+
+    #[test]
+    fn a_trial_tool_reads_the_registry_of_the_tree_under_test_not_the_installed_release() {
+        use crate::ports::World;
+        let _l = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let t = testkit::TempDir::new("gate-real-tree-home");
+        let (with, without) = (t.path().join("with"), t.path().join("without"));
+        std::fs::create_dir_all(with.join("spira/conf.d")).unwrap();
+        std::fs::create_dir_all(&without).unwrap();
+        let real = super::Real::new(t.path().join("home"));
+        let env = vec![("SPIRA_RELEASE".to_string(), "/installed".to_string())];
+        let ask = |tree: &std::path::Path| real.run_gate(tree, &env, "30", "printf '%s|%s' \"${SPIRA_HOME-unset}\" \"$SPIRA_RELEASE\"").1;
+        assert_eq!(ask(&with), format!("{}|/installed", with.join("spira").display()));
+        assert_eq!(ask(&without), "unset|/installed", "a tree with no registry leaves the release's");
     }
 }

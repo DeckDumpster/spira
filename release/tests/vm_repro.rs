@@ -49,7 +49,7 @@ fn fixture(name: &str, files: &[(&str, &str)]) -> Fixture {
     let (repo, release, run) = (root.join("repo"), root.join("release"), root.join("run"));
     fs::create_dir_all(&repo).unwrap();
     fs::create_dir_all(release.join("bin")).unwrap();
-    fs::create_dir_all(release.join("spira")).unwrap();
+    spira_config::process::fixture_release(&root, true);
     testkit::write_exe(release.join("bin/cargo"), FAKE_CARGO);
     git(&repo, &["init", "-q", "-b", "main"]);
     fs::write(repo.join("README"), "x").unwrap();
@@ -66,7 +66,7 @@ fn fixture(name: &str, files: &[(&str, &str)]) -> Fixture {
     git(&repo, &["checkout", "-q", "main"]);
     let over = root.join("over.toml");
     fs::write(&over, format!("[spira]\nrun = \"{}\"\npath = \"\"\n", run.display())).unwrap();
-    let complete = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira-config/tests/fixtures/complete.toml");
+    let complete = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/testlib/complete.toml");
     let toml = format!("{}:{}", complete.display(), over.display());
     Fixture { _tmp: tmp, root, repo, release, run, toml }
 }

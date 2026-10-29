@@ -29,6 +29,7 @@ export SPIRA_HOME="$T" PATH="$T:$PATH"
 # for the registry — SPIRA_HOME is explicitly pinned to $T above, so it never falls back
 # to its own BASH_SOURCE location (which has one).
 ln -s "$HERE/conf.d" "$T/conf.d"
+ln -s "$HERE/conf.toml.d" "$T/conf.toml.d"
 tl_config SPIRA_RUN="$T/run" SPIRA_DB="$T/no-db"
 # Non-default label values to prove mode expansion reads conf vars, not literals.
 tl_config SPIRA_PLAN_LABEL="plan" SPIRA_INCIDENT_LABEL="incident" SPIRA_GROOMER_LABEL="groom" \

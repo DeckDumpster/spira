@@ -17,13 +17,18 @@ const USAGE: &str = "usage: spira-runtime serve|check-config";
 const LOG_QUEUE: usize = 1024;
 const NO_WATCHDOG_BOOT: Duration = Duration::from_secs(20);
 
+fn check() -> Result<(), String> {
+    spira_config::process::check_config(Settings::KEYS)?;
+    Ok(())
+}
+
 fn main() {
     let verb = std::env::args().nth(1);
     if std::env::args().count() != 2 || !matches!(verb.as_deref(), Some("serve" | "check-config")) {
         eprintln!("{USAGE}");
         std::process::exit(2);
     }
-    let settings = match Settings::load() {
+    let settings = match check().and_then(|()| Settings::load()) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("spira-runtime: {e}");

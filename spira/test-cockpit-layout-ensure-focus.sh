@@ -41,6 +41,7 @@ cp "$(command -v lc-view)" "$_FAKE_RELEASE/bin/lc-view"
 # than this suite's own tl_config layer (one source of config, per Ryan 2026-10-05).
 mkdir -p "$_FAKE_RELEASE/spira"
 ln -s "$HERE/conf.d" "$_FAKE_RELEASE/spira/conf.d"
+ln -s "$HERE/conf.toml.d" "$_FAKE_RELEASE/spira/conf.toml.d"
 
 command -v tmux >/dev/null 2>&1 || { echo "  SKIP  tmux is not on PATH"; exit 77; }
 

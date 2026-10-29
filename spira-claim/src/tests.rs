@@ -668,6 +668,7 @@ fn runes_home(runes: &[(&str, &str, &str)]) -> Tmp {
         std::fs::write(rdir.join(format!("{name}.rune")), format!("RUNE_LABELS=\"{labels}\"\nRUNE_EXCLUDE_LABELS=\"{exclude}\"\n")).unwrap();
     }
     std::os::unix::fs::symlink(std::path::Path::new(REAL_SPIRA_HOME).join("conf.d"), dir.join("conf.d")).unwrap();
+    std::os::unix::fs::symlink(std::path::Path::new(REAL_SPIRA_HOME).join("conf.toml.d"), dir.join("conf.toml.d")).unwrap();
     Tmp { path: dir.to_string_lossy().into_owned(), _dir: dir }
 }
 

@@ -51,7 +51,7 @@ timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/runes"
 tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SPIRA_HOME/"
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
+cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
 SPIRA_REPO_MAP="$TMP/repo-map"; tl_config SPIRA_REPO_MAP="$SPIRA_REPO_MAP"

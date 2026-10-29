@@ -267,7 +267,7 @@ DWARF_HOME="$TMP/dwarfhome"; mkdir -p "$DWARF_HOME/runes"
 # fixture declares its own /fixture/userhome/.../runes. Declare this suite's real one.
 tl_config SPIRA_RUNES_DIR="$DWARF_HOME/runes"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$DWARF_HOME/"
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$DWARF_HOME/"
+cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$DWARF_HOME/"
 cp -r "$HERE/actors" "$DWARF_HOME/" 2>/dev/null || true
 DWARF_RUN="$TMP/dwarfrun"; mkdir -p "$DWARF_RUN"
 DWARF_REPO_MAP="$TMP/repo-map"

@@ -170,14 +170,14 @@ fn resolve_process(
     let toml_path = std::path::PathBuf::from(spec);
     let doc = Some(crate::load(&toml_path)?);
     let conf_d = default_conf_d(home);
-    let registry = registry::embedded().map_err(|e| e.to_string())?;
+    let registry = registry::for_process()?;
     resolve_checked(ResolveInput {
         env,
         home,
         repo,
         toml: doc.as_ref(),
         conf_d: &conf_d,
-    }, &registry)
+    }, &registry.keys)
     .map_err(|e| e.to_string())
 }
 
@@ -301,7 +301,7 @@ pub fn suite_state_file() -> Result<String, String> {
         return Ok(v);
     }
     let configured = match crate::discover(None) {
-        Some(p) => crate::load(&p)?.spira.and_then(|s| s.suite_state_file),
+        Some(p) => crate::load(&p)?.spira.map(|s| s.get_str("SPIRA_SUITE_STATE_FILE")).transpose()?.flatten(),
         None => None,
     };
     Ok(configured.filter(|v| !v.is_empty()).unwrap_or_else(|| DEFAULT_SUITE_STATE_FILE.to_string()))
@@ -1020,12 +1020,15 @@ fn resolve_unchecked(input: ResolveInput<'_>, registry: &BTreeMap<String, regist
     }
     // Every other registered key — a PROCEDURAL stub already covered above, or a genuine
     // NO-DEFAULT key — resolves to env/toml or the empty string.
-    for key in registry.keys() {
+    for (key, rk) in registry {
         if known.contains_key(key) {
             continue;
         }
-        let value =
-            resolve_colon(key, env, &toml_map, ok_str!("")).map_err(ResolveError::Registry)?;
+        let value = if rk.toml_only {
+            seed(key, env, &toml_map).unwrap_or_default()
+        } else {
+            resolve_colon(key, env, &toml_map, ok_str!("")).map_err(ResolveError::Registry)?
+        };
         set!(key.as_str(), value);
     }
 
@@ -1281,7 +1284,12 @@ mod tests {
         let toml = crate::fixture_toml_file(ws.path(), &BTreeMap::new());
         let e = env(&[("HOME", "/h"), ("SPIRA_TOML", toml.to_str().unwrap())]);
         let direct = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: Some(&crate::fixture_doc(&BTreeMap::new())), conf_d: &Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d") }).unwrap();
-        let via_wrapper = resolve_for_process(&home, &repo, &e).unwrap();
+        let mut via_wrapper = resolve_for_process(&home, &repo, &e).unwrap();
+        for (key, rk) in &registry::for_process().unwrap().keys {
+            if rk.toml_only {
+                assert!(via_wrapper.values.remove(key).is_some(), "{key}: the process registry resolves toml-only keys");
+            }
+        }
         assert_eq!(direct, via_wrapper);
     }
 

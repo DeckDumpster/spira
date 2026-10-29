@@ -104,6 +104,7 @@ FIX="$TMP/fixture"; mkdir -p "$FIX/run/queue"
 # SPIRA_HOME="$FIX" below IS the home now (locate_home no longer searches); every binary
 # (cutover-deploy.sh sources conf.sh) reads <home>/conf.d, so the stub needs the registry.
 ln -s "$HERE/conf.d" "$FIX/conf.d"
+ln -s "$HERE/conf.toml.d" "$FIX/conf.toml.d"
 GITREPO="$TMP/gitrepo"
 git init -q -b main "$GITREPO"
 git -C "$GITREPO" config user.email test@example.invalid
@@ -213,6 +214,7 @@ echo "a unit-rendered environment alone authenticates as spira_lc:"
 # every other SPIRA_HOME="$FIX" call in this suite (one source of config, per Ryan 2026-10-05).
 mkdir -p "$FIX/spira"
 ln -s "$HERE/conf.d" "$FIX/spira/conf.d" 2>/dev/null || true
+ln -s "$HERE/conf.toml.d" "$FIX/spira/conf.toml.d" 2>/dev/null || true
 INSTALL_BIN="$(dirname "$(command -v render-unit)")"
 rendered="$("$INSTALL_BIN/render-unit" "$REPO/systemd/spira-sentinel.service" --home "$FIX" --repo "$REPO" --run "$FIX/run" \
     --db "$SPIRA_DB" --cockpit "$FIX/cockpit" --dolt /bin/true --prod "$FIX/spira" --instance prod \

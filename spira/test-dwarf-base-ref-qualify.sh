@@ -36,6 +36,7 @@ SPIRA_HOME="$TMP/spira"
 mkdir -p "$SPIRA_HOME/runes"
 find "$HERE" -maxdepth 1 -name '*.sh' ! -name 'test-*.sh' -exec cp {} "$SPIRA_HOME/" \;
 [ -d "$HERE/conf.d" ] && cp -R "$HERE/conf.d" "$SPIRA_HOME/conf.d"
+[ -d "$HERE/conf.toml.d" ] && cp -R "$HERE/conf.toml.d" "$SPIRA_HOME/conf.toml.d"
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
 export SPIRA_CONF="$TMP/no-such.conf"
 SPIRA_DB="$TMP/no-such.db"; tl_config SPIRA_DB="$SPIRA_DB"

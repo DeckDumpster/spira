@@ -68,7 +68,7 @@ impl Rules {
                     kind: ResolveKind::LineSetUnion,
                 },
                 ResolveRule {
-                    path: "spira-config/schema/spira-key-history.txt".into(),
+                    path: "spira/conf.key-history".into(),
                     kind: ResolveKind::LineSetUnion,
                 },
                 ResolveRule {

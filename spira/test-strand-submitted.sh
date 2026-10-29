@@ -48,6 +48,7 @@ for _s in lib.sh conf.sh suite-covers.sh; do ln -s "$HERE/$_s" "$TMP/home/$_s"; 
 # SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
 # <home>/conf.d directly, so the stub home needs the registry too.
 ln -s "$HERE/conf.d" "$TMP/home/conf.d"
+ln -s "$HERE/conf.toml.d" "$TMP/home/conf.toml.d"
 
 SUBMITTED=mysubmitted-nondefault
 

@@ -83,7 +83,7 @@ const BOX_CONFIG_PINS: &[(&str, &str)] = &[
     ("SPIRA_RUNES_DIR", "/nonexistent/spira-lint/runes"),
 ];
 /// The tree's complete fixture, relative to its `spira/schema.sh`.
-const TREE_FIXTURE: &str = "../spira-config/tests/fixtures/complete.toml";
+const TREE_FIXTURE: &str = "../spira/testlib/complete.toml";
 
 fn run_schema(schema: &std::path::Path, args: &[&str], extra_env: &[(&str, &str)]) -> Option<String> {
     // batch-job: this runs whatever its caller names, as long as that takes
@@ -161,6 +161,7 @@ fn exempt(path: &str) -> bool {
         || b == "conf.sh"
         // The complete config fixture IS a declaration of every key's value, labels included.
         || path.starts_with("spira-config/tests/fixtures/")
+        || path == "spira/testlib/complete.toml"
         // sp-g3uwp: spira/conf.d/<KEY> is conf.sh's own former defaults block, split one
         // file per key — the canonical place a label's default literal is declared, exactly
         // as conf.sh itself already was exempt for. conf.d.keys.generated.sh and

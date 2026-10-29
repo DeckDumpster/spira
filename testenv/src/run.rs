@@ -322,13 +322,13 @@ fn resolve_repo(arg: Option<&str>, deps: &Deps) -> Result<RepoRef, String> {
         }
         deps.config
             .and_then(|c| c.spira.as_ref())
-            .and_then(|s| s.home_repo.clone())
+            .and_then(|s| spira_config::said(s.get_str("SPIRA_HOME_REPO")))
     };
     if by_map.is_none() && home().is_none() && !path.join(".git").exists() {
         let home_name = deps
             .config
             .and_then(|c| c.spira.as_ref())
-            .and_then(|s| s.home_repo.clone());
+            .and_then(|s| spira_config::said(s.get_str("SPIRA_HOME_REPO")));
         if let Some((n, r)) = home_name.and_then(|n| cfg_repos?.get(&n).map(|r| (n, r))) {
             return Ok(RepoRef {
                 path: PathBuf::from(&r.path),

@@ -31,7 +31,7 @@ timeout 5 git -C "$REPO" push -q origin main
 timeout 5 git -C "$REPO" fetch -q origin
 
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$SH/"
 cp -r "$HERE/runes" "$SH/"
 # SPIRA_RUNES_DIR no longer derives from SPIRA_HOME (the fixture declares its own path) —
 # point it at this suite's own fixture runes explicitly.

@@ -355,6 +355,7 @@ fn the_db_root_is_testenvs_tmpfs_root_when_nested_and_the_worlds_own_otherwise()
 fn fixture_repo() -> testkit::TempDir {
     let d = testkit::TempDir::new("simsrc");
     std::fs::write(d.join("a"), "a").unwrap();
+    with_complete_fixture(d.path());
     for args in [vec!["init", "-q"], vec!["add", "-A"], vec!["commit", "-q", "-m", "s"]] {
         let st = std::process::Command::new("git")
             .arg("-C").arg(d.path()).args(args)
@@ -372,8 +373,16 @@ fn git_out(repo: &Path, args: &[&str]) -> String {
     String::from_utf8(o.stdout).unwrap()
 }
 
+/// The harness tree a world is built from carries the complete config fixture it starts its config from.
+fn with_complete_fixture(root: &Path) {
+    let dest = root.join("spira/testlib/complete.toml");
+    std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+    std::fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("../testlib/complete.toml"), dest).unwrap();
+}
+
 fn tree_repo(files: &[&str]) -> testkit::TempDir {
     let d = testkit::TempDir::new("simsrc");
+    with_complete_fixture(d.path());
     for f in files {
         let p = d.join(f);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();

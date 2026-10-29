@@ -16,7 +16,7 @@ pub struct FfxVocabulary {
 const NAME: &str = "ffx-vocabulary";
 const MODE_KEY: &str = "SPIRA_FFX_VOCABULARY_MODE";
 const SELF_PATH: &str = "spira-lint/src/rules/ffx_vocabulary.rs";
-const KEY_HISTORY_PATH: &str = "spira-config/schema/spira-key-history.txt";
+const KEY_HISTORY_PATH: &str = "spira/conf.key-history";
 const LINE_MARKER: &str = "ffx-ok";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

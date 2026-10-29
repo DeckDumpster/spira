@@ -42,14 +42,14 @@ pub(crate) mod test_support {
 
 fn usage() -> i32 {
     eprintln!(
-        "usage: cockpit-collect [once|history|sweep-temps|collect|merge|probe <name>]\n  (no args: same as once, no attach — attaching the operator to the concierge stays root cockpit.sh's job)"
+        "usage: cockpit-collect [once|history|sweep-temps|collect|merge|probe <name>|check-config]\n  (no args: same as once, no attach — attaching the operator to the concierge stays root cockpit.sh's job)"
     );
     1
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    const OPS: [&str; 8] = ["once", "history", "sweep-temps", "collect", "merge", "probe", "--supervised-run", "_probe_body_test"];
+    const OPS: [&str; 9] = ["once", "history", "sweep-temps", "collect", "merge", "probe", "--supervised-run", "_probe_body_test", "check-config"];
     let op = match args.get(1).map(String::as_str) {
         None => "once",
         Some(a) if OPS.contains(&a) => a,
@@ -62,6 +62,16 @@ fn main() {
 }
 
 fn run(args: &[String]) -> i32 {
+    match args.first().map(String::as_str) {
+        Some("check-config") => return spira_config::process::check_config_verb("cockpit-collect", &[]),
+        Some("--supervised-run") => {
+            if let Err(e) = spira_config::process::check_config(&[]) {
+                eprintln!("cockpit-collect: {e}");
+                return 1;
+            }
+        }
+        _ => {}
+    }
     match args.first().map(String::as_str) {
         Some("metrics") => return cmd_metrics(&args[1..]),
         Some("sparklines") => return cmd_sparklines(&args[1..]),

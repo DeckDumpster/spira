@@ -80,6 +80,7 @@ install_fixture_build() {
     # SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
     # <home>/conf.d directly, so a fixture spira/ with no conf.d refuses config resolution.
     [ -e "$fixture/spira/conf.d" ] || ln -sf "$_LIB_INSTALL_SELF/conf.d" "$fixture/spira/conf.d"
+    [ -e "$fixture/spira/conf.toml.d" ] || ln -sf "$_LIB_INSTALL_SELF/conf.toml.d" "$fixture/spira/conf.toml.d"
     printf '# empty — test fixture\n' > "$fixture/spira/watchers"
     printf '# empty\n' > "$fixture/spira/repo-map.example"
     install_fixture_release_stub "$fixture/spira"
@@ -217,6 +218,7 @@ mk_install_fixture() {
     # SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
     # <home>/conf.d directly, so a fixture spira/ with no conf.d refuses config resolution.
     [ -e "$spira/conf.d" ] || ln -sf "$_LIB_INSTALL_SELF/conf.d" "$spira/conf.d"
+    [ -e "$spira/conf.toml.d" ] || ln -sf "$_LIB_INSTALL_SELF/conf.toml.d" "$spira/conf.toml.d"
     printf '# empty\n' > "$spira/watchers"
     printf '# empty\n' > "$spira/repo-map.example"
     install_fixture_compose_stub "$spira"
@@ -290,6 +292,7 @@ tinstall_fixture() {   # tinstall_fixture <dir>
     # SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
     # <home>/conf.d directly, so a fixture spira/ with no conf.d refuses config resolution.
     [ -e "$dir/spira/conf.d" ] || ln -sf "$src/conf.d" "$dir/spira/conf.d"
+    [ -e "$dir/spira/conf.toml.d" ] || ln -sf "$src/conf.toml.d" "$dir/spira/conf.toml.d"
     printf '# empty — test fixture\n' > "$dir/spira/watchers"
     printf '# empty\n' > "$dir/spira/repo-map.example"
 }

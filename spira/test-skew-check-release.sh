@@ -46,6 +46,7 @@ mkdir -p "$REPO/spira"
 # SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
 # <home>/conf.d, so this stub home needs the registry (sfail round 2, pattern 1).
 ln -s "$HERE/conf.d" "$REPO/spira/conf.d"
+ln -s "$HERE/conf.toml.d" "$REPO/spira/conf.toml.d"
 printf '# boundary\n'        > "$REPO/spira/boundary"
 printf '#!/usr/bin/env bash\n' > "$REPO/spira/gate.sh"
 printf '#!/usr/bin/env bash\n' > "$REPO/spira/lib.sh"

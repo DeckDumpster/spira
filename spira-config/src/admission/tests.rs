@@ -511,7 +511,7 @@ fn the_pool_sizes_and_jitter_are_typed_config_keys_exported_to_the_shell() {
         [("SPIRA_COMPILE_PAR", "6"), ("SPIRA_TEST_PAR", "3"), ("SPIRA_CALL_JITTER", "0")].into_iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
     let s = crate::convert::spira_section(&vars, &mut w).unwrap();
     assert!(w.0.is_empty(), "{:?}", w.0);
-    assert_eq!((s.compile_par, s.test_par, s.call_jitter), (Some(6), Some(3), Some(0)));
+    assert_eq!((s.get_u32("SPIRA_COMPILE_PAR").unwrap(), s.get_u32("SPIRA_TEST_PAR").unwrap(), s.get_u64("SPIRA_CALL_JITTER").unwrap()), (Some(6), Some(3), Some(0)));
 }
 
 #[test]

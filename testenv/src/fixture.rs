@@ -497,7 +497,7 @@ impl<'a> Session<'a> {
         let mut env = self.user_env();
         env.extend([
             kv("CONFIGURE_OUT", self.config_toml()),
-            kv("CONFIGURE_FIXTURE", format!("{WORKSPACE}/spira-config/tests/fixtures/complete.toml")),
+            kv("CONFIGURE_FIXTURE", format!("{WORKSPACE}/spira/testlib/complete.toml")),
             kv("CONFIGURE_INSTANCE", &self.instance),
             kv("CONFIGURE_PROD", self.in_release("spira")),
             kv("CONFIGURE_RUN", self.batch_run()),

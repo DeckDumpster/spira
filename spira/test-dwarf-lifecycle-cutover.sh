@@ -285,7 +285,7 @@ git -C "$FREPO" add f; git -C "$FREPO" commit -qm seed; timeout 5 git -C "$FREPO
 export SPIRA_HOME="$TMP/spira-home"; mkdir -p "$SPIRA_HOME/runes"
 # work-env.sh is retired (sp-zpaq0): the dwarf binary builds its own restricted environment.
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$SPIRA_HOME/"
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
+cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 SPIRA_REPO_MAP="$TMP/repo-map"

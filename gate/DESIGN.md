@@ -746,8 +746,7 @@ the tree. `toolkey.rs` adds a shared store, `<run>/gate-tools/<repo>/<base>-<h>`
   workspace package in the normal+build dependency closure of the `bin` packages (cargo
   metadata; dev dependencies are not in a binary).
 * **Recorded inputs** (known only after a build): every other in-tree file the build read —
-  cargo's dep-info for each binary plus each build script's `rerun-if-changed` (spira-config's
-  reads `spira/conf.d`) — as `INPUTS` lines `<path>\t<object id>`; `<h>` hashes them. Paths
+  cargo's dep-info for each binary plus each build script's `rerun-if-changed` — as `INPUTS` lines `<path>\t<object id>`; `<h>` hashes them. Paths
   outside the tree (registry crates: `Cargo.lock`) and under `target/` (generated) are not
   recorded.
 * **Reuse:** when the tree-keyed directory is absent, the newest entry under the base key whose

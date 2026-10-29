@@ -90,7 +90,7 @@ git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" p
 # SPIRA_REPO = git root of HARNESS, matching the exported SPIRA_REPO above.
 export SPIRA_HOME="$HARNESS/spira-home"; mkdir -p "$SPIRA_HOME/runes"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$SPIRA_HOME/"
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
+cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 cp -r "$HERE/actors" "$SPIRA_HOME/" 2>/dev/null || true
 SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"; tl_config SPIRA_RUN="$SPIRA_RUN"
 # The complete fixture declares a non-empty SPIRA_RUNES_DIR ("/fixture/userhome/.../runes");

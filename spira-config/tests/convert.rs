@@ -42,24 +42,24 @@ fn converts_conf_repo_map_and_runes() {
     );
 
     let spira = doc.spira.clone().expect("[spira] present");
-    assert_eq!(spira.home_repo, Some("home".to_string()));
+    assert_eq!(spira.get_str("SPIRA_HOME_REPO").unwrap(), Some("home".to_string()));
     assert_eq!(
-        spira.db,
+        spira.get_str("SPIRA_DB").unwrap(),
         Some("/opt/fixture-home/.local/share/spira/db".to_string())
     );
     assert_eq!(
-        spira.run,
+        spira.get_str("SPIRA_RUN").unwrap(),
         Some("/opt/fixture-home/.local/state/spira".to_string())
     );
-    assert_eq!(spira.max_dwarves, Some(4));
-    assert_eq!(spira.runes, Some(vec!["builder".to_string(), "ops".to_string()]));
-    assert_eq!(spira.certify_suites, Some(spira_config::OnOff::Off));
+    assert_eq!(spira.get_u32("SPIRA_MAX_DWARVES").unwrap(), Some(4));
+    assert_eq!(spira.get_list("SPIRA_RUNES").unwrap(), Some(vec!["builder".to_string(), "ops".to_string()]));
+    assert_eq!(spira.get_str("SPIRA_CERTIFY_SUITES").unwrap(), Some("off".to_string()));
     assert_eq!(
-        spira.czar_stage_deadlock,
-        Some(spira_config::CzarStage::Shadow)
+        spira.get_str("SPIRA_CZAR_STAGE_DEADLOCK").unwrap(),
+        Some("shadow".to_string())
     );
     assert_eq!(
-        spira.mail_readers,
+        spira.get_str("SPIRA_MAIL_READERS").unwrap(),
         Some("concierge=/opt/spira/concierge.sh wake".to_string())
     );
 
@@ -433,7 +433,7 @@ fn rune_only_convert_preserves_existing_spira_scalars_and_repo_tables() {
     // risk, before the run that must preserve it.
     let before = spira_config::validate(&fs::read_to_string(&out).unwrap()).unwrap();
     assert_eq!(
-        before.spira.as_ref().unwrap().batch_mem_per_suite_mib,
+        before.spira.as_ref().unwrap().get_u32("SPIRA_BATCH_MEM_PER_SUITE_MIB").unwrap(),
         Some(256)
     );
     assert_eq!(before.repo.len(), 1);
@@ -455,11 +455,11 @@ fn rune_only_convert_preserves_existing_spira_scalars_and_repo_tables() {
     let after = spira_config::validate(&fs::read_to_string(&out).unwrap()).unwrap();
     let spira = after.spira.expect("[spira] survives a rune-only refresh");
     assert_eq!(
-        spira.batch_mem_per_suite_mib,
+        spira.get_u32("SPIRA_BATCH_MEM_PER_SUITE_MIB").unwrap(),
         Some(256),
         "a scalar [spira] key must survive a persona-only refresh"
     );
-    assert_eq!(spira.bd, Some("/custom/bd".to_string()));
+    assert_eq!(spira.get_str("SPIRA_BD").unwrap(), Some("/custom/bd".to_string()));
     assert_eq!(after.repo.len(), 1, "[repo.*] tables must survive too");
     assert!(after.repo.contains_key("alpha"));
     assert_eq!(
@@ -498,11 +498,11 @@ fn rune_only_convert_does_not_silently_wipe_scalar_spira_keys() {
     let after = spira_config::validate(&fs::read_to_string(&out).unwrap()).unwrap();
     let spira = after.spira.expect("[spira] survives a rune-only refresh");
     assert_eq!(
-        spira.batch_mem_per_suite_mib,
+        spira.get_u32("SPIRA_BATCH_MEM_PER_SUITE_MIB").unwrap(),
         Some(256),
         "shrink_reason cannot see this key, so a silent wipe would exit 0 with it gone"
     );
-    assert_eq!(spira.bd, Some("/custom/bd".to_string()));
+    assert_eq!(spira.get_str("SPIRA_BD").unwrap(), Some("/custom/bd".to_string()));
     fs::remove_dir_all(&dir).ok();
 }
 
@@ -532,7 +532,7 @@ fn retired_cpu_quota_keys_convert_with_a_warning() {
 fn retired_tool_path_keys_convert_with_a_warning() {
     let (doc, warnings) = convert("SPIRA_ID_PREFIX = sp\nSPIRA_BATCHER_BIN = /bin/true\nSPIRA_LC_BIN = /x/spira-lc\n", "/opt/fixture-home", "", &[])
         .expect("retired keys never refuse the convert");
-    assert_eq!(doc.spira.as_ref().unwrap().batcher_enable.as_deref(), Some("0"));
+    assert_eq!(doc.spira.as_ref().unwrap().get_str("SPIRA_BATCHER_ENABLE").unwrap().as_deref(), Some("0"));
     assert!(warnings.0.iter().any(|w| w.contains("SPIRA_LC_BIN is retired (sp-gypjk")), "{:?}", warnings.0);
 }
 
@@ -544,7 +544,7 @@ fn legacy_mail_mute_converts_to_the_typed_key() {
     let (doc, warnings) = convert("SPIRA_ID_PREFIX = sp\nSPIRA_MAIL_MUTE=1\n", "/opt/fixture-home", "", &[])
         .expect("a known key must not refuse the convert");
     assert!(warnings.0.is_empty(), "{:?}", warnings.0);
-    assert_eq!(doc.spira.as_ref().unwrap().mail_mute, Some(true));
+    assert_eq!(doc.spira.as_ref().unwrap().get_bool("SPIRA_MAIL_MUTE").unwrap(), Some(true));
 }
 
 #[test]
@@ -552,14 +552,14 @@ fn mail_mute_absent_by_default() {
     let (doc, warnings) =
         convert("SPIRA_ID_PREFIX = sp\nSPIRA_HOME_REPO=home\n", "/opt/fixture-home", "", &[]).expect("converts");
     assert!(warnings.0.is_empty(), "{:?}", warnings.0);
-    assert_eq!(doc.spira.as_ref().unwrap().mail_mute, None);
+    assert_eq!(doc.spira.as_ref().unwrap().get_bool("SPIRA_MAIL_MUTE").unwrap(), None);
 }
 
 #[test]
 fn mail_mute_bad_value_warns_not_a_spelling_the_key_accepts() {
     let (doc, warnings) = convert("SPIRA_ID_PREFIX = sp\nSPIRA_MAIL_MUTE=maybe\n", "/opt/fixture-home", "", &[])
         .expect("a bad value warns, it does not refuse the whole convert");
-    assert_eq!(doc.spira.as_ref().unwrap().mail_mute, None);
+    assert_eq!(doc.spira.as_ref().unwrap().get_bool("SPIRA_MAIL_MUTE").unwrap(), None);
     assert!(
         warnings.0.iter().any(|w| w.contains("mail_mute") && w.contains("maybe")),
         "{:?}",
@@ -578,7 +578,7 @@ fn a_legacy_goal_is_retired_with_a_warning() {
     assert!(warnings.0.iter().any(|w| w.contains("SPIRA_GOAL is retired (sp-k6m1m")), "{:?}", warnings.0);
     let rendered = toml::to_string_pretty(&doc).unwrap();
     assert!(!rendered.contains("goal"), "{rendered}");
-    assert_eq!(doc.spira.as_ref().unwrap().id_prefix.as_deref(), Some("sp"));
+    assert_eq!(doc.spira.as_ref().unwrap().get_str("SPIRA_ID_PREFIX").unwrap().as_deref(), Some("sp"));
 }
 
 #[test]
@@ -624,7 +624,7 @@ fn converts_a_pre_cutover_config_dir_once_and_never_overwrites() {
     let text = fs::read_to_string(&path).unwrap();
     let doc = spira_config::validate(&text).expect("the converted file validates");
     assert!(!doc.repo.is_empty(), "the repo-map rows became [repo.*] tables");
-    assert_eq!(doc.spira.unwrap().home_repo, Some("home".to_string()));
+    assert_eq!(doc.spira.unwrap().get_str("SPIRA_HOME_REPO").unwrap(), Some("home".to_string()));
 
     fs::write(&path, "[spira]\nhome_repo = \"edited\"\n").unwrap();
     assert_eq!(convert_legacy_dir(&dir, "/opt/fixture-home", &[]).unwrap(), LegacyOutcome::Present(path.clone()));
