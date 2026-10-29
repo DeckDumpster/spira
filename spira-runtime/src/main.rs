@@ -36,8 +36,10 @@ async fn serve() -> Result<(), String> {
     let mut engine = open_engine(&settings, journal, clock.clone(), Arc::new(FileMarker(settings.marker_path())), sink, kick.clone(), vec![]).map_err(|e| e.to_string())?;
     let (id, stream, kind) = runtime::heartbeat::Heartbeat::boot();
     runtime::Executor::submit(&mut engine, id, stream, kind).map_err(|e| e.to_string())?;
+    let (id, stream, kind) = spira_runtime::watchers::round_duty::RoundDuty::boot();
+    runtime::Executor::submit(&mut engine, id, stream, kind).map_err(|e| e.to_string())?;
     let (_keep_open, rx) = mpsc::channel(1);
     notifier.ready();
     let opts = ServeOpts { kick: Some(kick), max_sleep_ms: notifier.max_sleep().map(|d| d.as_millis() as u64) };
-    serve_with(engine, clock, Arc::new(Effects { heartbeat_url: settings.heartbeat_url.clone() }), 4, rx, opts).await.map_err(|e| e.to_string())
+    serve_with(engine, clock, Arc::new(Effects { heartbeat_url: settings.heartbeat_url.clone(), world: settings.world.clone() }), 4, rx, opts).await.map_err(|e| e.to_string())
 }

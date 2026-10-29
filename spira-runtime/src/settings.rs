@@ -5,6 +5,9 @@ use std::path::PathBuf;
 
 use spira_config::process::cfg;
 
+use crate::watchers::round_duty::RoundDuty;
+use crate::world::World;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
     pub heartbeat_url: String,
@@ -12,6 +15,8 @@ pub struct Settings {
     pub stall_limit: u32,
     pub run_dir: PathBuf,
     pub lc_socket: PathBuf,
+    pub round_duty: RoundDuty,
+    pub world: World,
 }
 
 fn num<T: std::str::FromStr + PartialOrd + Default>(key: &str, raw: &str) -> Result<T, String> {
@@ -28,11 +33,30 @@ impl Settings {
         if socket.is_empty() {
             return Err("SPIRA_LC_SOCKET is empty — the journal has no door to the store".into());
         }
+        let run_dir = PathBuf::from(get("SPIRA_RUN")?);
+        let secs = |key: &str| -> Result<u64, String> { num(key, &get(key)?) };
+        let round_duty = RoundDuty {
+            interval_ms: secs("SPIRA_RUNTIME_ROUND_DUTY_SECS")? * 1000,
+            min: secs("SPIRA_ROUND_MIN")?,
+            max_open: secs("SPIRA_ROUND_MAX_OPEN")?,
+            remind_secs: secs("SPIRA_ROUND_DUE_REMIND")?,
+            idle_cut_secs: secs("SPIRA_ROUND_IDLE_CUT")?,
+        };
+        let world = World {
+            queue_dir: PathBuf::from(get("SPIRA_QUEUE_DIR")?),
+            repo_map: PathBuf::from(get("SPIRA_REPO_MAP")?),
+            home_repo: PathBuf::from(get("SPIRA_REPO")?),
+            inbox: PathBuf::from(get("SPIRA_CONCIERGE_INBOX")?),
+            lc_socket: PathBuf::from(&socket),
+            run_dir: run_dir.clone(),
+        };
         Ok(Settings {
+            round_duty,
+            world,
             heartbeat_url: get("SPIRA_RUNTIME_HEARTBEAT_URL")?,
             heartbeat_secs: num("SPIRA_RUNTIME_HEARTBEAT_SECS", &get("SPIRA_RUNTIME_HEARTBEAT_SECS")?)?,
             stall_limit: num("SPIRA_RUNTIME_STALL_LIMIT", &get("SPIRA_RUNTIME_STALL_LIMIT")?)?,
-            run_dir: PathBuf::from(get("SPIRA_RUN")?),
+            run_dir,
             lc_socket: PathBuf::from(socket),
         })
     }
@@ -52,7 +76,7 @@ impl Settings {
 
     /// FNV-1a over the pinned values, so two records with one hash ran on one configuration.
     pub fn hash(&self) -> String {
-        let text = format!("{}\n{}\n{}\n{}\n{}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.run_dir.display(), self.lc_socket.display());
+        let text = format!("{}\n{}\n{}\n{}\n{}\n{:?}\n{:?}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.world);
         let h = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
         format!("{h:016x}")
     }
@@ -70,6 +94,8 @@ mod tests {
                 "SPIRA_RUNTIME_STALL_LIMIT" => "3",
                 "SPIRA_RUN" => "/r",
                 "SPIRA_LC_SOCKET" => "/d/sock",
+                "SPIRA_RUNTIME_ROUND_DUTY_SECS" | "SPIRA_ROUND_MIN" | "SPIRA_ROUND_MAX_OPEN" | "SPIRA_ROUND_DUE_REMIND" | "SPIRA_ROUND_IDLE_CUT" => "5",
+                "SPIRA_QUEUE_DIR" | "SPIRA_REPO_MAP" | "SPIRA_REPO" | "SPIRA_CONCIERGE_INBOX" => "/q",
                 _ => return Err(format!("{k} unknown")),
             }
             .to_string())

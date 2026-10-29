@@ -25,6 +25,8 @@ fn settings(url: &str, run: &std::path::Path) -> Settings {
             "SPIRA_RUNTIME_STALL_LIMIT" => "2".into(),
             "SPIRA_RUN" => run.display().to_string(),
             "SPIRA_LC_SOCKET" => "/unused".into(),
+            "SPIRA_RUNTIME_ROUND_DUTY_SECS" | "SPIRA_ROUND_MIN" | "SPIRA_ROUND_MAX_OPEN" | "SPIRA_ROUND_DUE_REMIND" | "SPIRA_ROUND_IDLE_CUT" => "5".into(),
+            "SPIRA_QUEUE_DIR" | "SPIRA_REPO_MAP" | "SPIRA_REPO" | "SPIRA_CONCIERGE_INBOX" => "/unused".into(),
             _ => return Err(k.to_string()),
         })
     };
@@ -52,7 +54,7 @@ fn stub_endpoint() -> (String, Arc<AtomicUsize>) {
 fn the_heartbeat_registration_is_part_of_the_service() {
     let d = testkit::TempDir::new("svc-reg");
     let names: Vec<_> = registrations(&settings("", d.path())).into_iter().map(|r| r.name).collect();
-    assert_eq!(names, [NAME], "removing the heartbeat registration removes the schedule");
+    assert_eq!(names, [NAME, "round-duty"], "removing a registration removes its schedule");
 }
 
 #[tokio::test]
@@ -67,7 +69,7 @@ async fn the_heartbeat_schedule_fires_and_pings_after_the_journal_advances() {
     engine.submit(id, stream, kind).unwrap();
     let (tx, rx) = mpsc::channel(4);
     tx.send(Submit { id: "other".into(), stream: "elsewhere".into(), kind: EventKind::new("anything", "") }).await.unwrap();
-    let host = tokio::spawn(serve_with(engine, Arc::new(WallClock), Arc::new(Effects { heartbeat_url: url }), 2, rx, ServeOpts::default()));
+    let host = tokio::spawn(serve_with(engine, Arc::new(WallClock), Arc::new(Effects { heartbeat_url: url, ..Effects::default() }), 2, rx, ServeOpts::default()));
     let end = Instant::now() + Duration::from_secs(8);
     while hits.load(Ordering::SeqCst) == 0 && Instant::now() < end { // clock-safe: cap on the wait for the first heartbeat ping
         tokio::time::sleep(Duration::from_millis(50)).await; // clock-safe: polls for the heartbeat ping counter

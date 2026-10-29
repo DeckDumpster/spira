@@ -121,5 +121,5 @@ echo none > "$TMP/qmode"
 out="$(WINBOX="$TMP" wrun watch --interval 1 --ticks 1)"
 want "a failed wake does not lose ROUND DUE from the log" "ROUND DUE" "$out"
 
-grep -q '^round-duty|daemon|' "$HERE/watchers"; is "watchers manifest carries the round-duty row" "0" "$?"
+grep -q '^round-duty|' "$HERE/watchers"; is "watchers manifest has no round-duty row: spira-runtime hosts it" "1" "$?"
 tl_summary

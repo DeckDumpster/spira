@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds between spira-runtime round-duty observations of the certified backlog and open rounds.
+SCHEMA=Seconds between spira-runtime round-duty observations (unit: seconds; integer; default 15). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_ROUND_DUTY_SECS:=15}"
+SPIRA_CONF_DEFAULT_EOF
