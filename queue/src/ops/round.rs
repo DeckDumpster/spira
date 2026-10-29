@@ -39,11 +39,18 @@ const PREEMPT_POLLS: u32 = 120;
 
 pub(super) const RECORD: &str = "round";
 pub(super) const BUILD_RED: &str = "workspace-build";
+pub(super) const LINT_RED: &str = "spira-lint";
+const FENCE_RED_PREFIX: &str = "fence-";
 pub(super) const UNIT_RED: &str = "unit-tests";
 /// Steps a round runs over its whole tree that are not testenv suites; only a green round proves them.
-pub const ROUND_STEPS: [&str; 2] = [BUILD_RED, UNIT_RED];
+pub const ROUND_STEPS: [&str; 3] = [BUILD_RED, LINT_RED, UNIT_RED];
 /// The round steps `testenv --suites <step>` cannot run for a tip.
-pub const ROUND_ONLY_STEPS: [&str; 1] = [BUILD_RED];
+pub const ROUND_ONLY_STEPS: [&str; 2] = [BUILD_RED, LINT_RED];
+
+/// A round step, or a base fence the round runs before its suites (`fence-<name>`).
+pub fn is_round_step(name: &str) -> bool {
+    ROUND_STEPS.contains(&name) || name.starts_with(FENCE_RED_PREFIX)
+}
 /// The one red a repository that judges itself reports: its testenv run as a whole.
 pub(super) const REPO_TESTENV_RED: &str = "testenv";
 pub(super) const LC_ACTOR: &str = "queue.sh";
@@ -1518,14 +1525,16 @@ pub fn suite_statuses(dir: &Path, found: &mut Vec<(String, String)>, depth: u32)
 }
 
 /// Names the suites whose verdict cannot be read: a word that is neither passing nor blocking
-/// (an empty file included), or a corpus suite with no result at all.
+/// (an empty file included), or a corpus suite with no result at all. A red lint or fence ends the
+/// pass before any suite runs, so it is the verdict and the missing suites are not a fault.
 pub(crate) fn unjudgeable(wt: &Path, found: &[(String, String)]) -> Option<String> {
     let mut bad: Vec<String> = found
         .iter()
         .filter(|(_, s)| !PASSING.contains(&s.as_str()) && !BLOCKING.contains(&s.as_str()))
         .map(|(n, s)| format!("{n} (verdict {s:?})"))
         .collect();
-    if let Ok(rd) = fs::read_dir(wt.join("spira")) {
+    let ended_early = found.iter().any(|(n, s)| s == "red" && (n == LINT_RED || n.starts_with(FENCE_RED_PREFIX)));
+    if let (Ok(rd), false) = (fs::read_dir(wt.join("spira")), ended_early) {
         for name in rd
             .flatten()
             .filter_map(|e| e.file_name().into_string().ok())
@@ -2738,7 +2747,7 @@ fn known_forced_suites(w: &World, label: &str, wt: &Path, suites: &str) -> Resul
     let unknown: Vec<&str> = named
         .iter()
         .copied()
-        .filter(|n| !ROUND_STEPS.contains(n) && !known.iter().any(|k| k == n))
+        .filter(|n| !is_round_step(n) && !known.iter().any(|k| k == n))
         .collect();
     if unknown.is_empty() {
         return Ok(());
