@@ -10,6 +10,7 @@ use std::process::{Command, Stdio};
 pub const USAGE: &str = "usage: release vm-repro <bead-id> [--suites a.sh,b.sh] [--repo R] [--deadline SECS] [--was VERDICT[:STEP]] [--release DIR]";
 
 pub const DEFAULT_DEADLINE_SECS: u64 = 600;
+const ROUND_WINDOW_DAYS: u64 = 14;
 pub const EXIT_RED: u8 = 1;
 pub const EXIT_FAULT: u8 = 3;
 
@@ -54,8 +55,9 @@ pub fn build_args() -> Vec<String> {
 /// The suites a repro runs. The sim lane's suites install in a second container, so a run with
 /// none of them misses that install; a run of only allowlisted suites proves nothing, since those
 /// skip in the container. A tree with no suite scripts (its tiers are declared elsewhere) is
-/// left to testenv. Returns the list to pass, `None` leaving testenv to select, and what was added.
-pub fn suites_for(tree: &Path, given: Option<&str>) -> (Option<String>, Vec<String>) {
+/// left to testenv. With no `given`, the suites the round recorded red (`red`) are the list. Returns
+/// the list to pass, `None` leaving testenv to select, and what was added.
+pub fn suites_for(tree: &Path, given: Option<&str>, red: &[String]) -> (Option<String>, Vec<String>) {
     let mut found: Vec<String> = fs::read_dir(tree.join("spira"))
         .into_iter()
         .flatten()
@@ -76,6 +78,16 @@ pub fn suites_for(tree: &Path, given: Option<&str>) -> (Option<String>, Vec<Stri
     let sim = |n: &str| is_sim_lane(&tree.join("spira").join(n));
     let mut list: Vec<String> = given.map(|g| g.split(',').filter(|x| !x.is_empty()).map(String::from).collect()).unwrap_or_default();
     let mut added = Vec::new();
+    if given.is_none() {
+        let (here, gone): (Vec<&String>, Vec<&String>) = red.iter().partition(|n| found.contains(n));
+        for n in &gone {
+            added.push(format!("skipped {n}: the round recorded it red but this tree has no such suite"));
+        }
+        if !here.is_empty() {
+            added.push(format!("defaulted to the round's red suites: {}", here.iter().map(|n| n.as_str()).collect::<Vec<_>>().join(",")));
+            list = here.into_iter().cloned().collect();
+        }
+    }
     if !list.iter().any(|n| sim(n)) {
         if let Some(n) = found.iter().find(|n| sim(n)) {
             added.push(format!("added {n}: the sim lane installs in a second container"));
@@ -93,6 +105,32 @@ pub fn suites_for(tree: &Path, given: Option<&str>) -> (Option<String>, Vec<Stri
 
 fn is_sim_lane(script: &Path) -> bool {
     fs::read_to_string(script).unwrap_or_default().lines().take_while(|l| !l.starts_with("set ")).any(|l| l.trim_end() == "# lane: sim" || l.starts_with("# lane: sim "))
+}
+
+/// The suites the newest round holding `bead` last recorded red, from `spira-lc list --batches`.
+pub fn red_in(batches: &str, bead: &str) -> Result<Vec<String>, String> {
+    let all: Vec<serde_json::Value> = serde_json::from_str(batches).map_err(|e| format!("unreadable batch list: {e}"))?;
+    let mine = all.iter().find(|b| b["members"].as_array().into_iter().flatten().any(|m| m["bead_id"] == bead));
+    let red = mine.and_then(|b| b["passes"].as_array()?.iter().rev().find(|p| p["verdict"] == "red"));
+    Ok(red.and_then(|p| p["red_suites"].as_array()).into_iter().flatten().filter_map(|s| s.as_str().map(String::from)).collect())
+}
+
+/// `red_in` over the batches `lc` reports, run under `env`.
+pub fn round_red(lc: &Path, env: &[(String, String)], bead: &str) -> Result<Vec<String>, String> {
+    // batch-job: one read of the lifecycle store, bounded at 30 s by timeout(1)
+    let out = Command::new("timeout")
+        .arg("30")
+        .arg(lc)
+        .args(["list", "--batches", "--window", &(ROUND_WINDOW_DAYS * 86400).to_string()])
+        .env_clear()
+        .envs(env.iter().cloned())
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run {}: {e}", lc.display()))?;
+    if !out.status.success() {
+        return Err(format!("{} list --batches failed ({}): {}", lc.display(), out.status, String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    red_in(&String::from_utf8_lossy(&out.stdout), bead)
 }
 
 /// The suite run, argv after `testenv`.
@@ -259,7 +297,24 @@ pub fn run(o: &Opts, ambient: &dyn Fn(&str) -> Option<String>) -> Result<Verdict
         return Ok(Verdict { line, code: EXIT_FAULT, report });
     }
 
-    let (suites, added) = suites_for(&tree.dir, o.suites.as_deref());
+    let mut added = Vec::new();
+    let red = if o.suites.is_some() {
+        Vec::new()
+    } else {
+        match round_red(&PathBuf::from(spira_config::release_env::tool("spira-lc")), &env, &o.bead) {
+            Ok(r) if r.is_empty() => {
+                added.push(format!("no red suites recorded for {} in the last {ROUND_WINDOW_DAYS} days; using the default selection", o.bead));
+                r
+            }
+            Ok(r) => r,
+            Err(e) => {
+                added.push(format!("could not read the round's red suites ({e}); using the default selection"));
+                Vec::new()
+            }
+        }
+    };
+    let (suites, more) = suites_for(&tree.dir, o.suites.as_deref(), &red);
+    added.extend(more);
     for a in &added {
         println!("vm-repro: {a}");
     }
@@ -470,22 +525,52 @@ mod tests {
     #[test]
     fn a_given_list_is_topped_up_with_a_sim_suite_and_one_off_the_allowlist() {
         let t = tree(&[("spira/test-a.sh", ""), ("spira/test-b.sh", "# lane: sim\nset -u\n"), ("spira/test-c.sh", ""), ("spira/skip-allowlist.tsv", "# x\ntest-a.sh\tr\tw\n")]);
-        assert_eq!(suites_for(t.path(), Some("test-a.sh")).0.as_deref(), Some("test-a.sh,test-b.sh,test-c.sh"));
-        assert_eq!(suites_for(t.path(), None).0.as_deref(), Some("test-b.sh,test-c.sh"));
-        assert!(suites_for(t.path(), Some("test-b.sh,test-c.sh")).1.is_empty());
+        assert_eq!(suites_for(t.path(), Some("test-a.sh"), &[]).0.as_deref(), Some("test-a.sh,test-b.sh,test-c.sh"));
+        assert_eq!(suites_for(t.path(), None, &[]).0.as_deref(), Some("test-b.sh,test-c.sh"));
+        assert!(suites_for(t.path(), Some("test-b.sh,test-c.sh"), &[]).1.is_empty());
+    }
+
+    #[test]
+    fn with_no_list_given_the_rounds_red_suites_are_the_list_and_a_given_list_wins() {
+        let t = tree(&[("spira/test-a.sh", ""), ("spira/test-b.sh", "# lane: sim\nset -u\n"), ("spira/test-c.sh", ""), ("spira/test-d.sh", ""), ("spira/skip-allowlist.tsv", "test-a.sh\tr\tw\n")]);
+        let red = ["test-a.sh".to_string(), "test-gone.sh".to_string()];
+        let (list, notes) = suites_for(t.path(), None, &red);
+        assert_eq!(list.as_deref(), Some("test-a.sh,test-b.sh,test-c.sh"));
+        assert!(notes.iter().any(|n| n.starts_with("skipped test-gone.sh")) && notes.iter().any(|n| n.starts_with("defaulted to the round's red suites: test-a.sh")), "{notes:?}");
+        assert_eq!(suites_for(t.path(), Some("test-d.sh"), &red).0.as_deref(), Some("test-d.sh,test-b.sh"));
+        assert_eq!(suites_for(t.path(), None, &["test-gone.sh".to_string()]).0.as_deref(), Some("test-b.sh,test-c.sh"));
+    }
+
+    const BATCHES: &str = r#"[{"batch_id":"new","members":[{"bead_id":"sp-x"}],"passes":[{"n":1,"verdict":"red","red_suites":["test-old.sh"]},{"n":2,"verdict":"red","red_suites":["test-a.sh","test-b.sh"]},{"n":3,"verdict":"green"}]},{"batch_id":"older","members":[{"bead_id":"sp-x"}],"passes":[{"n":1,"verdict":"red","red_suites":["test-stale.sh"]}]},{"batch_id":"other","members":[{"bead_id":"sp-y"}],"passes":[{"n":1,"verdict":"red","red_suites":["test-y.sh"]}]}]"#;
+
+    #[test]
+    fn the_red_suites_are_the_newest_rounds_last_red_pass_for_that_member() {
+        assert_eq!(red_in(BATCHES, "sp-x").unwrap(), ["test-a.sh", "test-b.sh"]);
+        assert_eq!(red_in(BATCHES, "sp-y").unwrap(), ["test-y.sh"]);
+        assert!(red_in(BATCHES, "sp-none").unwrap().is_empty());
+        assert!(red_in("not json", "sp-x").is_err());
+    }
+
+    #[test]
+    fn the_round_is_read_through_spira_lc_under_the_given_environment() {
+        let bin = testkit::TempDir::new("vm-repro-lc");
+        let lc = bin.path().join("spira-lc");
+        testkit::write_exe(&lc, &format!("#!/bin/sh\n[ \"$1 $2 $3\" = 'list --batches --window' ] && [ \"$MARK\" = 1 ] || exit 1\ncat <<'J'\n{BATCHES}\nJ\n"));
+        assert_eq!(round_red(&lc, &[("MARK".into(), "1".into())], "sp-x").unwrap(), ["test-a.sh", "test-b.sh"]);
+        assert!(round_red(&lc, &[], "sp-x").is_err());
     }
 
     #[test]
     fn a_lane_header_after_the_script_starts_is_not_a_lane() {
         let t = tree(&[("spira/test-a.sh", "set -u\n# lane: sim\n"), ("spira/test-b.sh", "")]);
-        assert_eq!(suites_for(t.path(), None).0.as_deref(), Some("test-a.sh"));
+        assert_eq!(suites_for(t.path(), None, &[]).0.as_deref(), Some("test-a.sh"));
     }
 
     #[test]
     fn a_tree_without_suite_scripts_is_left_to_testenv() {
         let t = tree(&[("README", "")]);
-        assert_eq!(suites_for(t.path(), None), (None, vec![]));
-        assert_eq!(suites_for(t.path(), Some("tier")).0.as_deref(), Some("tier"));
+        assert_eq!(suites_for(t.path(), None, &[]), (None, vec![]));
+        assert_eq!(suites_for(t.path(), Some("tier"), &[]).0.as_deref(), Some("tier"));
     }
 
     #[test]

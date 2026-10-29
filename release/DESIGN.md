@@ -634,11 +634,13 @@ anyone who sees a member red only on the VM and needs to know whether the build 
    --deadline 600 spira/<bead> <repo>`. `L` is `--suites`, topped up so it holds a sim-lane suite
    (its install runs in a second container, which a run without one never exercises) and a suite
    not on `spira/skip-allowlist.tsv` (those skip in the container); each addition is printed.
-   With no `--suites`, `L` is just those two. A tree with no `spira/test-*.sh` is left to testenv.
+   With no `--suites`, `L` is the suites the bead's newest round last recorded red (`PassRed`
+   `red_suites`, read with `spira-lc list --batches`; one the tree lacks is said and skipped),
+   topped up the same way; if none are recorded or the read fails (said), just those two. A tree with no `spira/test-*.sh` is left to testenv.
 4. Prints testenv's `VERDICT` line, the lanes and suites that actually executed, and one outcome:
    `REPRODUCED` (a failure; with `--was VERDICT[:STEP]`, the same verdict and step), `NOT REPRODUCED`
    (the same selection passed, or failed differently) or `NOTHING TESTED` (every suite skipped).
-   Defaulting to the round's red suites is sp-5vww8l.2. Keeps `build.log` and `testenv.log` in `$SPIRA_RUN/vm-repro/<bead>/`.
+   Keeps `build.log` and `testenv.log` in `$SPIRA_RUN/vm-repro/<bead>/`.
 5. Removes the worktree on every exit, and one left by a killed run before it starts.
 
 Exit `0` GREEN, `1` RED, `3` FAULT (a failed build is `VERDICT FAULT reason=build`), `2` usage.

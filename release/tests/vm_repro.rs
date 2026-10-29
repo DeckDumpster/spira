@@ -196,3 +196,43 @@ fn the_suites_cover_the_sim_lane_and_a_suite_off_the_skip_allowlist() {
     let t = fs::read_to_string(f.run.join("vm-repro/sp-fix/testenv.log")).unwrap();
     assert!(t.contains("--suites test-a-skips.sh,test-b-sim.sh,test-c-plain.sh --deadline"), "{t}");
 }
+
+fn tree_with_suites() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("spira/test-a-skips.sh", "#!/bin/bash\nset -uo pipefail\n"),
+        ("spira/test-b-sim.sh", "#!/bin/bash\n# lane: sim\nset -uo pipefail\n"),
+        ("spira/test-c-plain.sh", "#!/bin/bash\nset -uo pipefail\n"),
+        ("spira/skip-allowlist.tsv", "test-a-skips.sh\tskip:x\twhy\n"),
+    ]
+}
+
+#[test]
+fn without_suites_the_rounds_red_suites_are_run() {
+    let f = fixture("round-red", &tree_with_suites());
+    let batches = r#"[{"batch_id":"b","members":[{"bead_id":"sp-fix"}],"passes":[{"n":1,"verdict":"red","red_suites":["test-a-skips.sh"]}]}]"#;
+    testkit::write_exe(f.release.join("bin/spira-lc"), &format!("#!/bin/sh\n[ \"$1 $2\" = 'list --batches' ] || exit 1\ncat <<'J'\n{batches}\nJ\n"));
+    let o = vm_repro(&f, &[]);
+    let out = text(&o);
+    assert!(out.contains("defaulted to the round's red suites: test-a-skips.sh"), "{out}");
+    let t = fs::read_to_string(f.run.join("vm-repro/sp-fix/testenv.log")).unwrap();
+    assert!(t.contains("--suites test-a-skips.sh,test-b-sim.sh,test-c-plain.sh --deadline"), "{t}");
+}
+
+#[test]
+fn an_unreadable_round_is_said_and_the_default_selection_runs() {
+    let f = fixture("round-unreadable", &tree_with_suites());
+    testkit::write_exe(f.release.join("bin/spira-lc"), "#!/bin/sh\necho down >&2\nexit 3\n");
+    let o = vm_repro(&f, &[]);
+    let out = text(&o);
+    assert!(out.contains("could not read the round's red suites"), "{out}");
+    let t = fs::read_to_string(f.run.join("vm-repro/sp-fix/testenv.log")).unwrap();
+    assert!(t.contains("--suites test-b-sim.sh,test-c-plain.sh --deadline"), "{t}");
+}
+
+#[test]
+fn a_round_with_no_red_pass_is_said_and_the_default_selection_runs() {
+    let f = fixture("round-none", &tree_with_suites());
+    testkit::write_exe(f.release.join("bin/spira-lc"), "#!/bin/sh\necho '[]'\n");
+    let out = text(&vm_repro(&f, &[]));
+    assert!(out.contains("no red suites recorded for sp-fix in the last 14 days"), "{out}");
+}
