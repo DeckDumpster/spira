@@ -187,7 +187,7 @@ _lcb_measure() {
     return 0
 }
 
-_lcb_all_ok() { ! printf '%s\n' "$1" | grep -qv '^[^ ]*: ok '; }
+_lcb_all_ok() { ! grep -qv '^[^ ]*: ok ' <<<"$1"; }
 
 cmd_age() {
     local now=""
