@@ -70,7 +70,7 @@ if [ -n "$KNOWN_OPTS" ] && [ -z "$missing_known" ]; then
     ok "extractor found run_send's options"
 else
     if [ -f "$MAIL_MAIN_RS" ]; then exists=exists; else exists="does not exist"; fi
-    bad "extractor found run_send's options — read $MAIL_MAIN_RS ($exists); missing: ${missing_known:-all}; extracted: $(printf '%s' "$KNOWN_OPTS" | tr '\n' ' ')"
+    bad "extractor found run_send's options — read $MAIL_MAIN_RS ($exists); missing: $missing_known; extracted: $(printf '%s' "$KNOWN_OPTS" | tr '\n' ' ')"
 fi
 
 # Returns 0 if all --flags in $1 are known cmd_send options; 1 otherwise.
