@@ -56,7 +56,7 @@ struct Store {
 /// schema, migrations, grants.sql with both credentials substituted, migrations again for the
 /// content grants) applied as root, then `spira-lc serve` with the `spira_lc` credential.
 fn store(root: &Path, toml: &Path, socket: &Path, seed: &str) -> Store {
-    assert!(Command::new("dolt").arg("version").output().is_ok(), "dolt must be on PATH: a soak that skips proves nothing");
+    assert!(Command::new("dolt").arg("version").output().is_ok(), "dolt must be on PATH: a soak that skips proves nothing"); // STORE_DOOR_CONSIDERED="the soak builds its own private store; spira-lc cannot start the server it talks to"
     let bin = spira_lc_bin();
     let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
     let empty = root.join("empty-pw");
@@ -88,7 +88,7 @@ fn store(root: &Path, toml: &Path, socket: &Path, seed: &str) -> Store {
             (o.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)))
         };
         // batch-job: the test's own disposable sql-server, killed by Proc::drop.
-        let mut server = Proc(Command::new("dolt").args(["sql-server", "--config"]).arg(root.join("server.yaml")).current_dir(root).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap());
+        let mut server = Proc(Command::new("dolt").args(["sql-server", "--config"]).arg(root.join("server.yaml")).current_dir(root).stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap()); // STORE_DOOR_CONSIDERED="the test's own disposable server, not the lifecycle store"
         let admin: Vec<(String, String)> = [
             ("SPIRA_LC_USER", "root"),
             ("SPIRA_LC_PASSWORD_FILE", empty.to_str().unwrap()),
@@ -219,7 +219,7 @@ fn spira_runtime_serves_for_twenty_beats_against_the_production_store() {
     }
     fs::write(root.join("rows"), format!("spira | {} | queue.local | local/main | |\n", root.join("repo").display())).unwrap();
     fs::write(
-        run.join("queue/spira/round"),
+        run.join("queue").join("spira").join("round"), // the fixture writes the record the service never reads
         format!("batch_id={OPEN}\nrepo=spira\nhead=d7a5c242e3e62aa1dc1ffe5af88125e4635eb8e4\nbase=ffacdee2ae397f1918922f8eea231bb5ddf8b4aa\nmembers=sp-soak.1:a57ca1ca8b41391f1b932ab705362d43084c1a49\nworktree={}\nactor=ryan\nopened=1793243936\n", root.join("repo").display()),
     )
     .unwrap();
@@ -295,7 +295,7 @@ fn spira_runtime_serves_for_twenty_beats_against_the_production_store() {
         if let Some(st) = rt.0.try_wait().unwrap() {
             panic!("{}", diag(&format!("spira-runtime exited after {:?} (setup took {setup:?}): {st}", begun.elapsed())));
         }
-        if !appended && begun.elapsed() > SOAK / 2 {
+        if !appended && begun.elapsed() > SOAK / 2 { // clock-safe: the append lands mid-soak by design
             fs::OpenOptions::new().append(true).open(run.join("rounds/300.result")).unwrap().write_all(b"red sp-soak\n").unwrap();
             appended = true;
         }
