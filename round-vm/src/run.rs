@@ -589,6 +589,8 @@ suites_mark_stream() {
     done
 }
 suites_mark="$HOME/round-suites-mark"
+runner_out="$HOME/round-runner.out"
+: > "$runner_out"
 cap_fired="$HOME/round-cap-fired"
 rm -f "$suites_mark" "$cap_fired"
 t_suites=$(date +%s)
@@ -615,9 +617,9 @@ bare_after_setup "${bare_sel[@]}" --results "$bare_out" >&2 &
 bare_pid=$!
 # The suites run on the build above (--artifacts: testenv never runs cargo a second time).
 if [ -n "$suites" ]; then
-    testenv --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" round > >(suites_mark_stream) 2> >(suites_mark_stream >&2) &
+    testenv --mode parallel --artifacts "$HOME/round-work/target/release" --suites "$suites" round > >(suites_mark_stream | tee -a "$runner_out") 2> >(suites_mark_stream | tee -a "$runner_out" >&2) &
 else
-    testenv --mode parallel --artifacts "$HOME/round-work/target/release" round > >(suites_mark_stream) 2> >(suites_mark_stream >&2) &
+    testenv --mode parallel --artifacts "$HOME/round-work/target/release" round > >(suites_mark_stream | tee -a "$runner_out") 2> >(suites_mark_stream | tee -a "$runner_out" >&2) &
 fi
 testenv_pid=$!
 echo "$testenv_pid" > "$testenv_pidfile"
@@ -1974,6 +1976,7 @@ fn keep_after_lost_ssh(env: &RunEnv, vm: &Vm, results_dir: &Path, resume: Option
     let _pin = env.pool.pin_pull(&vm.handle);
     if let Some(dir) = resume {
         pull_resume(env.remote, &vm.addr, dir);
+        report_resume(dir, &dir.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default(), 0);
     }
     let scratch = env.cfg.state_dir.join(format!(".pulled-lost.{}", std::process::id()));
     let _ = fs::remove_dir_all(&scratch);
@@ -1985,15 +1988,19 @@ fn keep_after_lost_ssh(env: &RunEnv, vm: &Vm, results_dir: &Path, resume: Option
         eprintln!("round-vm run: INCOMPLETE: the batch's ssh dropped and the results pull failed");
     }
     let _ = fs::remove_dir_all(&scratch);
+    keep_runner_output(env.remote, env.cfg, &vm.addr, &env.cfg.state_dir.join(format!(".pulled-runner.{}", std::process::id())), results_dir);
 }
 
 /// A run cut by a signal still holds the verdicts its VM produced: pulls them into
 /// `results_dir` (results already there are kept) before the VM is released. Bounded by
 /// `within`, because the caller's kill-after is seconds away. Returns how many were new, or `None` when the pull itself failed or timed out.
-pub fn salvage_results(remote: &dyn Remote, addr: &str, results_dir: &Path, scratch: &Path, within: Duration) -> Option<usize> {
+pub fn salvage_results(remote: &dyn Remote, addr: &str, results_dir: &Path, scratch: &Path, within: Duration, resume: Option<&Path>) -> Option<usize> {
     let pulled = std::thread::scope(|sc| {
         let (tx, rx) = std::sync::mpsc::channel();
         sc.spawn(move || {
+            if let Some(dir) = resume {
+                pull_resume(remote, addr, dir);
+            }
             let _ = fs::remove_dir_all(scratch);
             let ok = remote.pull(addr, REMOTE_RESULTS, scratch).is_ok();
             let _ = tx.send(ok);
@@ -2013,7 +2020,7 @@ const TSD_DIR: &str = "round-work/.runtime/spira/tsd/";
 pub const REMOTE_RESUME: &str = "round-resume/";
 
 /// The host's copy of a tree's resume store.
-fn resume_dir(cfg: &Config, tree_sha: &str) -> PathBuf {
+pub fn resume_dir(cfg: &Config, tree_sha: &str) -> PathBuf {
     cfg.state_dir.join("resume").join(tree_sha)
 }
 
@@ -2033,6 +2040,48 @@ fn pull_resume(remote: &dyn Remote, addr: &str, dir: &Path) {
     if remote.pull(addr, REMOTE_RESUME, dir).is_err() {
         let _ = fs::remove_dir(dir);
     }
+}
+
+fn count_files(dir: &Path) -> usize {
+    let Ok(rd) = fs::read_dir(dir) else { return 0 };
+    rd.flatten().map(|e| if e.path().is_dir() { count_files(&e.path()) } else { 1 }).sum()
+}
+
+/// Says what the host holds for the tree after a pull; an empty store beside passing suites is the
+/// condition a resume that records nothing leaves, so it is said loudly.
+fn report_resume(dir: &Path, tree_sha: &str, passed: usize) {
+    let n = count_files(dir);
+    eprintln!("round-vm run: RESUME: holding {n} record(s) for {tree_sha}");
+    if n == 0 && passed > 0 {
+        eprintln!("round-vm run: RESUME: WARNING: {passed} suite(s) passed but the VM's resume store holds no record; a re-run of this tree skips nothing (see {RUNNER_OUT_FILE})");
+    }
+}
+
+fn passed_suites(leaf: Option<&Path>) -> usize {
+    let Some(leaf) = leaf else { return 0 };
+    let Ok(rd) = fs::read_dir(leaf) else { return 0 };
+    rd.flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "result"))
+        .filter_map(|e| fs::read_to_string(e.path()).ok())
+        .filter(|t| t.split_whitespace().next() == Some("ok"))
+        .count()
+}
+
+/// The whole stdout and stderr of the VM's testenv run, kept with the round's results.
+pub const REMOTE_RUNNER_OUT: &str = "round-runner.out";
+pub const RUNNER_OUT_FILE: &str = "runner.out";
+
+fn keep_runner_output(remote: &dyn Remote, cfg: &Config, addr: &str, scratch: &Path, results_dir: &Path) {
+    let _ = fs::remove_dir_all(scratch);
+    if pull_retry(remote, cfg, addr, REMOTE_RUNNER_OUT, scratch) {
+        let kept = fs::create_dir_all(results_dir).and_then(|_| fs::copy(scratch.join(REMOTE_RUNNER_OUT), results_dir.join(RUNNER_OUT_FILE)));
+        if let Err(e) = kept {
+            eprintln!("round-vm run: {RUNNER_OUT_FILE}: {e}");
+        }
+    } else {
+        eprintln!("round-vm run: the VM's runner output could not be pulled");
+    }
+    let _ = fs::remove_dir_all(scratch);
 }
 
 /// Where the VM's testenv writes the corpus's results.
@@ -2087,12 +2136,13 @@ fn after_batch(
     }
     let _pin = env.pool.pin_pull(&vm.handle);
     let remote = env.remote;
+    let held_resume = (args.ci_entry.is_none() && remote_rc != 0).then(|| resume_dir(cfg, tree_sha));
     if args.ci_entry.is_none() {
-        let dir = resume_dir(cfg, tree_sha);
-        if remote_rc == 0 {
-            let _ = fs::remove_dir_all(&dir);
-        } else {
-            pull_resume(remote, &vm.addr, &dir);
+        match &held_resume {
+            Some(dir) => pull_resume(remote, &vm.addr, dir),
+            None => {
+                let _ = fs::remove_dir_all(resume_dir(cfg, tree_sha));
+            }
         }
     }
     let timed = |what: &str, remote_path: &str, local: &Path| {
@@ -2109,6 +2159,12 @@ fn after_batch(
         (results_ok, tsd_pull.join().unwrap_or(false))
     });
     let leaf = results_leaf(&pulled);
+    if let Some(dir) = &held_resume {
+        report_resume(dir, tree_sha, passed_suites(leaf.as_deref()));
+    }
+    if args.ci_entry.is_none() {
+        keep_runner_output(remote, cfg, &vm.addr, &scratch("runner"), &results_dir);
+    }
     if pulled.join(FIXTURE_FAULT_FILE).is_file() {
         let _ = fs::create_dir_all(&results_dir);
         let _ = fs::copy(pulled.join(FIXTURE_FAULT_FILE), results_dir.join(FIXTURE_FAULT_FILE));
@@ -3292,6 +3348,8 @@ mod tests {
             ]);
             files.insert("round-work/.runtime/spira/tsd/", vec![("suite.jsonl", "{\"suite\":\"a\"}\n")]);
             files.insert(REMOTE_BINS, vec![("batcher", "bin")]);
+            files.insert(REMOTE_RESUME, vec![("spira/treesha/env/test-a.sh", "resume-record\n")]);
+            files.insert(REMOTE_RUNNER_OUT, vec![(REMOTE_RUNNER_OUT, "batch: resumed: test-a.sh passed in run/attempt local\n")]);
             files.insert("attr-results/j1/", vec![("K2/test-a.sh.result", "ok 1 2 - p e 0\n")]);
             files.insert("attr-results/j2/", vec![("K3/test-a.sh.result", "red 1 2 fp p e 1\n"), ("K3/batch.meta", "tree=t2\n")]);
             FakeRemote {
@@ -3747,18 +3805,45 @@ mod tests {
     }
 
     #[test]
+    fn a_signalled_run_carries_the_vms_resume_records_home() {
+        let fx = fixture();
+        let remote = FakeRemote::green();
+        let resume = fx.cfg.state_dir.join("resume").join("treesha");
+        let scratch = fx.cfg.state_dir.join(".salvage-resume");
+        salvage_results(&remote, "addr", &fx.cfg.run_dir.join("salvaged"), &scratch, Duration::from_secs(5), Some(&resume));
+        assert_eq!(count_files(&resume), 1, "the record a signalled run's VM held is on the host");
+    }
+
+    #[test]
+    fn the_vms_runner_output_is_kept_with_the_results() {
+        let fx = fixture();
+        let remote = FakeRemote::green();
+        let results = fx.cfg.run_dir.join("kept");
+        keep_runner_output(&remote, &fx.cfg, "addr", &fx.cfg.state_dir.join(".runner-test"), &results);
+        let kept = fs::read_to_string(results.join(RUNNER_OUT_FILE)).unwrap();
+        assert!(kept.contains("batch: resumed: test-a.sh"), "{kept}");
+    }
+
+    #[test]
+    fn the_remote_script_keeps_the_runner_output_beside_the_stream_mark() {
+        assert!(REMOTE_SCRIPT.contains(r#"runner_out="$HOME/round-runner.out""#));
+        assert_eq!(REMOTE_SCRIPT.matches(r#"tee -a "$runner_out""#).count(), 4, "stdout and stderr of both testenv invocations");
+        assert_eq!(REMOTE_RUNNER_OUT, "round-runner.out");
+    }
+
+    #[test]
     fn a_signalled_run_salvages_the_verdicts_its_vm_already_produced() {
         let fx = fixture();
         let remote = FakeRemote::green();
         let dest = fx.cfg.run_dir.join("salvaged");
         let scratch = fx.cfg.state_dir.join(".salvage-test");
-        let n = salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5));
+        let n = salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5), None);
         assert_eq!(n, Some(2));
         assert!(dest.join("test-a.sh.result").is_file());
         assert!(!scratch.exists(), "scratch is removed");
         let mut none = FakeRemote::green();
         none.files.clear();
-        assert_eq!(salvage_results(&none, "addr", &dest, &scratch, Duration::from_secs(5)), None, "an unreachable VM salvages nothing and says the pull failed");
+        assert_eq!(salvage_results(&none, "addr", &dest, &scratch, Duration::from_secs(5), None), None, "an unreachable VM salvages nothing and says the pull failed");
     }
 
     #[test]
@@ -3992,8 +4077,8 @@ mod tests {
         remote.fail_result_pulls.store(1, std::sync::atomic::Ordering::SeqCst);
         let dest = fx.cfg.run_dir.join("salvaged");
         let scratch = fx.cfg.state_dir.join(".salvage-fail");
-        assert_eq!(salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5)), None);
-        assert_eq!(salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5)), Some(2), "the re-pull recovers every result");
+        assert_eq!(salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5), None), None);
+        assert_eq!(salvage_results(&remote, "addr", &dest, &scratch, Duration::from_secs(5), None), Some(2), "the re-pull recovers every result");
     }
 
     #[test]
