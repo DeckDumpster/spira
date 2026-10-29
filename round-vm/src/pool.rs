@@ -1189,7 +1189,7 @@ mod tests {
     }
 
     #[test]
-    fn cold_acquire_provisions_leases_and_starts_exactly_one_background_provision() {
+    fn cold_acquire_provisions_and_leases_with_no_spare_beside_it() {
         let d = TempDir::new();
         let (fp, alarm, sp) = (
             FakeProvider::new(),
@@ -1209,13 +1209,17 @@ mod tests {
             )
             .unwrap();
         assert_eq!(mode, AcquireMode::Cold);
-        assert_eq!(sp.count(), 1);
+        assert_eq!(
+            sp.count(),
+            0,
+            "the leased VM is the hypervisor's one round VM: no spare beside it"
+        );
         let s = read_state(&pl.state_file()).unwrap();
         assert_eq!(s.leases.len(), 1);
         assert_eq!(s.leases[0].vm, vm);
         assert!(
-            s.provisioning.is_some(),
-            "the background provision is recorded"
+            s.provisioning.is_none(),
+            "no background provision beside a leased VM"
         );
         assert!(alarm.sent().is_empty());
     }
@@ -1237,6 +1241,10 @@ mod tests {
         };
         let (first, _) = pl.acquire(&deps, None).unwrap();
         pl.release(&first.handle, ProcId::current(), &f).unwrap();
+        assert!(
+            pl.ensure_spare(&sp).unwrap(),
+            "with nothing leased the spare starts"
+        );
         pl.provision_background(&f).unwrap();
         let ready = read_state(&pl.state_file())
             .unwrap()
@@ -1249,8 +1257,8 @@ mod tests {
         assert_eq!(second, ready);
         assert_eq!(
             sp.count(),
-            0,
-            "no warm spare is started beside a leased local VM"
+            1,
+            "only the spare started after the release; none beside a leased VM"
         );
         assert_eq!(
             fp.count("clone"),
@@ -1277,6 +1285,10 @@ mod tests {
         };
         let (first, _) = pl.acquire(&deps, None).unwrap();
         pl.release(&first.handle, ProcId::current(), &f).unwrap();
+        assert!(
+            pl.ensure_spare(&sp).unwrap(),
+            "with nothing leased the spare starts"
+        );
         pl.provision_background(&f).unwrap();
         let ready = read_state(&pl.state_file()).unwrap().ready.unwrap();
         fp.kill(&ready.handle);
@@ -1459,7 +1471,10 @@ mod tests {
             FakeAlarm::default(),
             FakeSpawner::default(),
         );
-        let pl = pool(&d, 1);
+        let pl = Pool {
+            acquire_deadline: Duration::from_millis(200),
+            ..pool(&d, 1)
+        };
         fp.plant("301", "round-301");
         fp.plant("302", "round-302");
         pl.with_state(|s| {
@@ -1502,7 +1517,7 @@ mod tests {
             },
             None,
         )
-        .unwrap();
+        .unwrap_err(); // a kept local lease is the one round VM: the acquire waits, reaping first
         assert!(fp.name("301").is_none());
         assert!(fp.name("302").is_some());
     }
@@ -1515,7 +1530,10 @@ mod tests {
             FakeAlarm::default(),
             FakeSpawner::default(),
         );
-        let pl = pool(&d, 1);
+        let pl = Pool {
+            acquire_deadline: Duration::from_millis(200),
+            ..pool(&d, 1)
+        };
         fp.plant("401", "round-401");
         fp.plant("402", "round-402");
         let old = now() - crate::schema::OWNERLESS_GRACE_SECS - 5;
@@ -1559,7 +1577,7 @@ mod tests {
             },
             None,
         )
-        .unwrap();
+        .unwrap_err(); // a kept local lease is the one round VM: the acquire waits, reaping first
         assert!(fp.name("401").is_none(), "ownerless past the grace");
         assert!(fp.name("402").is_some(), "ownerless but inside the grace");
     }
@@ -2302,6 +2320,10 @@ mod tests {
         };
         let (first, _) = pl.acquire(&deps, None).unwrap();
         pl.release(&first.handle, ProcId::current(), &f).unwrap();
+        assert!(
+            pl.ensure_spare(&sp).unwrap(),
+            "with nothing leased the spare starts"
+        );
         pl.provision_background(&f).unwrap();
         let ready = pl.with_state(|s| s.ready.clone()).unwrap().unwrap();
         assert_eq!(
@@ -2345,7 +2367,10 @@ mod tests {
                 && j["template"].is_null()
                 && j["doomed"].as_array().unwrap().is_empty()
         );
-        assert_eq!(j["provisioning"]["owner"], ProcId::current().to_string());
+        assert!(
+            j["provisioning"].is_null(),
+            "no spare is provisioned beside a leased VM"
+        );
         pl.release(&vm.handle, ProcId::current(), &f).unwrap();
         let j: serde_json::Value = serde_json::from_str(&pl.status_json().unwrap()).unwrap();
         assert!(
