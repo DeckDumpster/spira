@@ -199,3 +199,13 @@ fn the_argv_the_unit_is_started_with_reaches_the_drive_mode_of_the_real_release_
     assert!(!text(&o).contains("unknown flag --drive"), "{}", text(&o));
     assert!(text(&o).contains("round-recert: driving r-1"), "{}", text(&o));
 }
+
+#[test]
+fn a_unit_started_from_the_bare_round_recert_binary_drives_with_the_argv_it_was_given() {
+    let f = fixture("bare", Some("certifying"));
+    recert(&f, &["--batch", "r-1", "--repo", "spira"]);
+    let run = lines(&f, "runs").remove(0);
+    let argv: Vec<&str> = run.split(' ').skip_while(|a| !a.ends_with("/bin/round-recert")).skip(1).collect();
+    let o = recert(&f, &argv);
+    assert!(text(&o).contains("round-recert: driving r-1"), "{}", text(&o));
+}
