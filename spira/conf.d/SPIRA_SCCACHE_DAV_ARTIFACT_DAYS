@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=sccache
+DOC=RETENTION OF STORED ROUND BUILDS in days; sccache-dav removes an artifacts/<key>/ directory nothing has read or written for this long
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # RETENTION OF STORED ROUND BUILDS, in days. The artifact store keeps one tree's release
+    # executables under artifacts/<key>/ on the same store as the compilation cache; a GET
+    # marks one read, so a build still being fetched stays and an abandoned tree goes.
+    : "${SPIRA_SCCACHE_DAV_ARTIFACT_DAYS:=7}"
+SPIRA_CONF_DEFAULT_EOF

@@ -163,6 +163,7 @@ removed = ["spira.broker_enable", "spira.express_label", "spira.overlap_defer_la
 "spira.runtime_stall_limit" = 2
 "spira.runtime_round_duty_secs" = 15
 "spira.runtime_inbox_keeper_secs" = 60
+"spira.sccache_dav_artifact_days" = 7
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok

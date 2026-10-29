@@ -232,6 +232,21 @@ fn eviction_under_the_cap_deletes_nothing() {
     assert!(d.path().join("a/f").exists());
 }
 
+#[test]
+fn a_stored_build_nothing_has_touched_for_the_retention_is_removed_whole_and_a_fresh_one_stays() {
+    let d = scratch();
+    put_aged(d.path(), "artifacts/old/bin.tar", 100, 200_000);
+    put_aged(d.path(), "artifacts/old/MANIFEST", 10, 200_000);
+    put_aged(d.path(), "artifacts/half/bin.tar", 100, 200_000);
+    put_aged(d.path(), "artifacts/half/MANIFEST", 10, 5);
+    put_aged(d.path(), "a/b/c/cachekey", 10, 200_000);
+    let ev = sccache_dav::evict_artifacts_older_than(d.path(), std::time::Duration::from_secs(86400));
+    assert_eq!((ev.files, ev.bytes), (2, 110));
+    assert!(!d.path().join("artifacts/old").exists());
+    assert!(d.path().join("artifacts/half/bin.tar").exists(), "a build with a recent file is kept whole");
+    assert!(d.path().join("a/b/c/cachekey").exists(), "compilation cache entries are not artifacts");
+}
+
 #[tokio::test]
 async fn a_get_marks_the_entry_read_so_it_outlives_an_unread_newer_one() {
     let d = scratch();

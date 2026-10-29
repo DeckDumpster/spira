@@ -344,11 +344,72 @@ if ! start_sccache; then
     export RUSTC_WRAPPER=""
     sccache_mode="without sccache (fallback after two failed server starts)"
 fi
+# THE ARTIFACT STORE (release/src/artifacts.rs is the same protocol): the tree's release
+# executables are stored once, under tree + toolchain + profile, on the store the sccache above
+# already uses. A hit needs the manifest, written last, to meet the tarball's and every member's
+# checksum; anything else is a miss and the build runs as it always did.
+art_base="http://${host_addr}:9431/artifacts"
+art_get() { curl -sS --max-time 600 -o "$2" -w '%{http_code}' "$art_base/$1" 2>/dev/null || true; }
+art_put() { curl -sS -f --max-time 600 -o /dev/null -T "$2" "$art_base/$1"; }
+art_key() { printf '%s %s release-workspace\n' "$1" "$2" | sha256sum | cut -d' ' -f1; }
+art_fetch() {
+    local key="$1" dest="$2" w name sum listed
+    w="$(mktemp -d)"
+    if [ "$(art_get "$key/MANIFEST" "$w/MANIFEST")" != 200 ]; then
+        echo "round-vm: artifacts: miss $key (not stored)" >&2; rm -rf "$w"; return 1
+    fi
+    if ! grep -qx "key=$key" "$w/MANIFEST" || [ "$(art_get "$key/bin.tar" "$w/bin.tar")" != 200 ] \
+        || [ "$(stat -c %s "$w/bin.tar")" != "$(sed -n 's/^tarball_bytes=//p' "$w/MANIFEST")" ] \
+        || [ "$(sha256sum "$w/bin.tar" | cut -d' ' -f1)" != "$(sed -n 's/^tarball_sha256=//p' "$w/MANIFEST")" ]; then
+        echo "round-vm: artifacts: miss $key (no tarball meeting its manifest)" >&2; rm -rf "$w"; return 1
+    fi
+    mkdir "$w/bin"
+    if ! tar -xf "$w/bin.tar" -C "$w/bin"; then
+        echo "round-vm: artifacts: miss $key (tarball does not unpack)" >&2; rm -rf "$w"; return 1
+    fi
+    listed="$(sed -n 's/^file [0-9a-f]* //p' "$w/MANIFEST" | sort)"
+    if [ -z "$listed" ] || [ "$listed" != "$(find "$w/bin" -maxdepth 1 -type f -executable -printf '%f\n' | sort)" ]; then
+        echo "round-vm: artifacts: miss $key (members differ from the manifest)" >&2; rm -rf "$w"; return 1
+    fi
+    while read -r _ sum name; do
+        if [ "$(sha256sum "$w/bin/$name" | cut -d' ' -f1)" != "$sum" ]; then
+            echo "round-vm: artifacts: miss $key ($name does not match its checksum)" >&2; rm -rf "$w"; return 1
+        fi
+    done < <(grep '^file ' "$w/MANIFEST")
+    mkdir -p "$dest"
+    cp -p "$w"/bin/* "$dest"/
+    rm -rf "$w"
+    echo "round-vm: artifacts: hit $key" >&2
+}
+art_store() {
+    local key="$1" tree="$2" tc="$3" dir="$4" w names n
+    w="$(mktemp -d)"
+    names="$(find "$dir" -maxdepth 1 -type f -executable -printf '%f\n' | sort)"
+    [ -n "$names" ] || { rm -rf "$w"; return 1; }
+    # shellcheck disable=SC2086
+    tar -cf "$w/bin.tar" -C "$dir" $names || { rm -rf "$w"; return 1; }
+    {
+        printf 'key=%s\ntree=%s\ntoolchain=%s\ntarball_sha256=%s\ntarball_bytes=%s\n' "$key" "$tree" "$tc" "$(sha256sum "$w/bin.tar" | cut -d' ' -f1)" "$(stat -c %s "$w/bin.tar")"
+        for n in $names; do printf 'file %s %s\n' "$(sha256sum "$dir/$n" | cut -d' ' -f1)" "$n"; done
+    } > "$w/MANIFEST"
+    if art_put "$key/bin.tar" "$w/bin.tar" && art_put "$key/MANIFEST" "$w/MANIFEST"; then
+        echo "round-vm: artifacts: stored $key" >&2; rm -rf "$w"
+    else
+        echo "round-vm: artifacts: not stored $key (the store refused it)" >&2; rm -rf "$w"; return 1
+    fi
+}
+art_tree="$(git -C ~/round-work rev-parse 'HEAD^{tree}')"
+art_id="$(art_key "$art_tree" "$(rustc -vV | sed -n 's/^\(release\|commit-hash\): //p' | paste -sd' ')")"
 t0=$(date +%s)
-if ! cargo build -q --profile release --workspace --config profile.release.incremental=false; then
-    echo "round-vm: the round's workspace build failed, built $sccache_mode" >&2
-    tail -40 "$SCCACHE_ERROR_LOG" >&2 2>/dev/null || true
-    exit 4
+if art_fetch "$art_id" ~/round-work/target/release; then
+    echo "round-vm: used the stored build of this tree; cargo did not run" >&2
+else
+    if ! cargo build -q --profile release --workspace --config profile.release.incremental=false; then
+        echo "round-vm: the round's workspace build failed, built $sccache_mode" >&2
+        tail -40 "$SCCACHE_ERROR_LOG" >&2 2>/dev/null || true
+        exit 4
+    fi
+    art_store "$art_id" "$art_tree" "$(rustc -vV | sed -n 's/^\(release\|commit-hash\): //p' | paste -sd' ')" ~/round-work/target/release || true
 fi
 echo "round-vm: built the round in $(( $(date +%s) - t0 ))s" >&2
 # THE UNIT-TEST BINARIES COMPILE HERE, in the build phase and outside the suite clock; the unit
@@ -2578,6 +2639,78 @@ mod tests {
         std::process::Command::new("bash").arg("-c").arg(script).env_clear().env("HOME", home).env("PATH", "/usr/bin:/bin")
             .env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t")
             .output().unwrap()
+    }
+
+    fn art_fns() -> String {
+        let a = REMOTE_SCRIPT.find("art_key() {").unwrap();
+        let end = REMOTE_SCRIPT.find("art_tree=").unwrap();
+        REMOTE_SCRIPT[a..end].to_string()
+    }
+
+    /// The store's wire on a local directory; `body` runs after the functions are defined.
+    fn art_sh(dir: &std::path::Path, body: &str) -> (bool, String) {
+        let script = format!(
+            "set -uo pipefail\ncd {d}\nSTORE={d}/store\nart_get() {{ if cp \"$STORE/$1\" \"$2\" 2>/dev/null; then echo 200; else echo 404; fi; }}\n\
+             art_put() {{ mkdir -p \"$STORE/$(dirname \"$1\")\"; cp \"$2\" \"$STORE/$1\"; }}\n{fns}\n{body}",
+            d = dir.display(), fns = art_fns());
+        let out = sh(dir, &script);
+        (out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+    }
+
+    const ART_PUBLISHED: &str = "mkdir -p built && printf '#!/bin/sh\\necho one\\n' > built/one && printf '#!/bin/sh\\necho two\\n' > built/two && chmod +x built/one built/two && echo notbin > built/libx.rlib\n\
+         key=$(art_key t1 'deadbeef 1.99.0'); art_store \"$key\" t1 'deadbeef 1.99.0' built\n";
+
+    #[test]
+    fn the_artifact_key_is_the_one_the_release_producer_computes() {
+        let tmp = testkit::TempDir::new("art-key");
+        let (ok, text) = art_sh(tmp.path(), "art_key t1 'deadbeef 1.99.0'");
+        assert!(ok, "{text}");
+        assert_eq!(text.trim(), "55ff5d54bdd1a52763970e49c935c72df12820f8369f1e5d6ca4f4b1c2f56561");
+    }
+
+    #[test]
+    fn a_stored_build_is_fetched_by_the_next_pass_and_logs_a_hit() {
+        let tmp = testkit::TempDir::new("art-hit");
+        let (ok, text) = art_sh(tmp.path(), &format!("{ART_PUBLISHED}art_fetch \"$key\" got && cat got/one got/two; ls got"));
+        assert!(ok, "{text}");
+        assert!(text.contains("artifacts: stored 55ff5d54"), "{text}");
+        assert!(text.contains("artifacts: hit 55ff5d54"), "{text}");
+        assert!(text.contains("echo one") && text.contains("echo two"), "{text}");
+        assert!(!text.contains("libx.rlib"), "only executables are stored: {text}");
+    }
+
+    #[test]
+    fn a_different_key_misses_and_leaves_nothing_behind() {
+        let tmp = testkit::TempDir::new("art-miss");
+        let (ok, text) = art_sh(tmp.path(), &format!("{ART_PUBLISHED}art_fetch \"$(art_key t2 'deadbeef 1.99.0')\" got; echo rc=$?; ls got 2>&1; true"));
+        assert!(ok, "{text}");
+        assert!(text.contains("artifacts: miss") && text.contains("rc=1"), "{text}");
+        assert!(text.contains("No such file"), "{text}");
+    }
+
+    #[test]
+    fn a_damaged_upload_is_never_used() {
+        for (what, damage) in [
+            ("flipped byte", "printf X | dd of=\"$STORE/$key/bin.tar\" bs=1 seek=600 conv=notrunc 2>/dev/null"),
+            ("truncated tarball", "truncate -s 700 \"$STORE/$key/bin.tar\""),
+            ("tarball without manifest", "rm \"$STORE/$key/MANIFEST\""),
+            ("member checksum differs", "sed -i 's/^file [0-9a-f]* one$/file 0000 one/' \"$STORE/$key/MANIFEST\""),
+        ] {
+            let tmp = testkit::TempDir::new("art-bad");
+            let (ok, text) = art_sh(tmp.path(), &format!("{ART_PUBLISHED}{damage}\nart_fetch \"$key\" got; echo rc=$?; ls got 2>&1; true"));
+            assert!(ok, "{what}: {text}");
+            assert!(text.contains("rc=1") && text.contains("artifacts: miss") && !text.contains("hit"), "{what}: {text}");
+            assert!(text.contains("No such file"), "{what}: nothing was installed: {text}");
+        }
+    }
+
+    #[test]
+    fn the_build_is_skipped_on_a_hit_and_a_miss_stores_what_it_builds() {
+        let fetch = REMOTE_SCRIPT.find("if art_fetch \"$art_id\"").expect("fetched before building");
+        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        let store = REMOTE_SCRIPT.find("art_store \"$art_id\"").expect("a build is stored");
+        assert!(fetch < build && build < store);
+        assert!(REMOTE_SCRIPT[fetch..build].contains("\nelse\n"), "cargo runs only in the miss branch");
     }
 
     fn start_sccache_fn() -> String {

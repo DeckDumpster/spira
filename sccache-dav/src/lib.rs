@@ -323,6 +323,42 @@ pub fn evict_to_cap(root: &Path, cap_bytes: u64) -> Evicted {
     out
 }
 
+/// Removes every `artifacts/<key>/` directory under `root` whose newest file is older than
+/// `max_age` (the round artifact store, DESIGN.md "Artifact retention"). A GET refreshes what
+/// it reads, so a build still being fetched is newer than its upload.
+pub fn evict_artifacts_older_than(root: &Path, max_age: std::time::Duration) -> Evicted {
+    let mut out = Evicted::default();
+    let Some(cutoff) = SystemTime::now().checked_sub(max_age) else { return out };
+    let Ok(rd) = std::fs::read_dir(root.join("artifacts")) else { return out };
+    for e in rd.flatten() {
+        let dir = e.path();
+        let Ok(files) = std::fs::read_dir(&dir) else { continue };
+        let mut newest = SystemTime::UNIX_EPOCH;
+        let mut bytes = 0;
+        let mut n = 0;
+        for f in files.flatten() {
+            let Ok(m) = f.metadata() else { continue };
+            newest = newest.max(m.modified().unwrap_or(SystemTime::UNIX_EPOCH));
+            bytes += m.len();
+            n += 1;
+        }
+        if newest < cutoff && std::fs::remove_dir_all(&dir).is_ok() {
+            out.files += n;
+            out.bytes += bytes;
+        }
+    }
+    out
+}
+
+/// `SPIRA_SCCACHE_DAV_ARTIFACT_DAYS`, through the one door onto config; no default here.
+pub fn artifact_max_age_from_config() -> Result<std::time::Duration, String> {
+    let days = spira_config::process::cfg_parse::<u64>("SPIRA_SCCACHE_DAV_ARTIFACT_DAYS")?;
+    if days == 0 {
+        return Err("SPIRA_SCCACHE_DAV_ARTIFACT_DAYS = 0 would remove every stored build on every sweep".to_string());
+    }
+    Ok(std::time::Duration::from_secs(days.saturating_mul(86400)))
+}
+
 /// `SPIRA_SCCACHE_DAV_MAX_GB`, through the one door onto config; no default here.
 pub fn cap_bytes_from_config() -> Result<u64, String> {
     let gb = spira_config::process::cfg_parse::<u64>("SPIRA_SCCACHE_DAV_MAX_GB")?;

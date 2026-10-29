@@ -45,6 +45,13 @@ async fn main() {
             std::process::exit(2);
         }
     };
+    let artifact_age = match sccache_dav::artifact_max_age_from_config() {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("sccache-dav: {e}");
+            std::process::exit(2);
+        }
+    };
     let spec = std::env::var("SCCACHE_DAV_ADDR").unwrap_or_default();
     if spec.trim().starts_with(spira_config::hostaddr::AUTO) {
         let bound = cfg.addr.clone();
@@ -75,6 +82,12 @@ async fn main() {
         let mut tick = tokio::time::interval(sccache_dav::SWEEP_EVERY);
         loop {
             tick.tick().await;
+            let root = sweep_root.clone();
+            if let Ok(ev) = tokio::task::spawn_blocking(move || sccache_dav::evict_artifacts_older_than(&root, artifact_age)).await {
+                if ev.files > 0 {
+                    eprintln!("sccache-dav: removed {} files ({} bytes) of stored builds older than {}s", ev.files, ev.bytes, artifact_age.as_secs());
+                }
+            }
             let root = sweep_root.clone();
             if let Ok(ev) = tokio::task::spawn_blocking(move || sccache_dav::evict_to_cap(&root, cap)).await {
                 if ev.files > 0 {
