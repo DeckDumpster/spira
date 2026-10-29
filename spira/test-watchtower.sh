@@ -377,6 +377,7 @@ RUNE
 # sources $SPIRA_HOME/lib.sh, so the fixture home gets the real one.
 printf '. "%s/lib.sh"\n' "$HERE" > "$IWR_HOME/lib.sh"
 ln -sf "$HERE/conf.d" "$IWR_HOME/conf.d"
+ln -sf "$HERE/conf.toml.d" "$IWR_HOME/conf.toml.d"
 IWR_BIN="$TMP/iwr-bin"; mkdir -p "$IWR_BIN"
 _iwr_real_claim="$(command -v spira-claim)"
 cat > "$IWR_BIN/spira-claim" <<STUB

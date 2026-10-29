@@ -104,6 +104,7 @@ export SPIRA_HOME="$TMP"
 # binary reads <home>/conf.d to resolve its config schema at all, even when every value
 # is otherwise declared via tl_config — give this stub home the real registry.
 ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
+ln -s "$HERE/conf.toml.d" "$SPIRA_HOME/conf.toml.d"
 export SPIRA_HOME_REPO=fixture
 export SPIRA_REPO="$REPO"
 export SPIRA_REPO_DERIVED="$REPO"

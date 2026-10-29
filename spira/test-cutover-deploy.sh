@@ -104,6 +104,7 @@ FIX="$TMP/fixture"; mkdir -p "$FIX/run/queue"
 # SPIRA_HOME="$FIX" below IS the home now (locate_home no longer searches); every binary
 # (cutover-deploy.sh sources conf.sh) reads <home>/conf.d, so the stub needs the registry.
 ln -s "$HERE/conf.d" "$FIX/conf.d"
+ln -s "$HERE/conf.toml.d" "$FIX/conf.toml.d"
 GITREPO="$TMP/gitrepo"
 git init -q -b main "$GITREPO"
 git -C "$GITREPO" config user.email test@example.invalid

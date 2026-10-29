@@ -52,6 +52,7 @@ tl_config SPIRA_MAIL="$SPIRA_MAIL" SPIRA_ID_PREFIX="sp" SPIRA_RUN="$SPIRA_RUN" S
 # registry under SPIRA_HOME, where previously an explicit SPIRA_RUN short-circuited before
 # any registry read. Same fix as test-mail.sh's UC-17 fixture (sp-ivfu3).
 ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
+ln -s "$HERE/conf.toml.d" "$SPIRA_HOME/conf.toml.d"
 
 run() { mail "$@"; }
 

@@ -45,6 +45,7 @@ fa_setup() {   # fa_setup <tag> — build the fixture once
     # own in-process config registry derives conf.d from THIS --home and now REFUSES to
     # start if it is missing (sp-1cdgq) — every suite built on this shared fixture needs it.
     cp -r "$HERE/conf.d" "$FA_HOME/"
+    cp -r "$HERE/conf.toml.d" "$FA_HOME/"
     FA_RUN="$FA_TMP/run"; mkdir -p "$FA_RUN"
     FA_REPO_MAP="$FA_TMP/repo-map"
     export SPIRA_HOME="$FA_HOME"

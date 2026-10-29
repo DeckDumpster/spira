@@ -47,6 +47,7 @@ printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"   # the dwarf binary sou
 # despite being set in the environment: the jitter falls back to its 20s default regardless,
 # reopening sp-1cdgq's own regression through the config seam instead of the bash allowlist.
 cp -r "$HERE/conf.d" "$SPIRA_HOME/"
+cp -r "$HERE/conf.toml.d" "$SPIRA_HOME/"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_REPO_MAP="$TMP/repo-map"
 tl_config SPIRA_RUN="$SPIRA_RUN" SPIRA_REPO_MAP="$SPIRA_REPO_MAP"

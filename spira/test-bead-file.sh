@@ -29,6 +29,7 @@ mkdir -p "$T/runes" "$T/run"
 # SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
 # <home>/conf.d, so this stub home needs the registry (sfail round 2, pattern 1).
 ln -s "$HERE/conf.d" "$T/conf.d"
+ln -s "$HERE/conf.toml.d" "$T/conf.toml.d"
 # SPIRA_RUNES_DIR is registered and the fixture declares a fixed, nonexistent path — nothing
 # derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
 tl_config SPIRA_RUNES_DIR="$T/runes"

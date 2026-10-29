@@ -345,7 +345,7 @@ while os.getppid() == pp: time.sleep(0.5)
 copy_conf_registry() {
     local dest="${1:?copy_conf_registry needs a destination directory}"
     mkdir -p "$dest"
-    cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$dest/"
+    cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$dest/"
     # Generate now, so the fixture's first `source conf.sh` has nothing to regenerate and
     # prints nothing into a suite capturing a command's output with 2>&1 (sp-gt0ta).
     bash "$dest/conf-gen.sh" >/dev/null 2>&1 \

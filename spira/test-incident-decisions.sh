@@ -16,6 +16,7 @@ STUB_BD="$(command -v incident-stub-bd)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/home" "$TMP/run"
 ln -s "$HERE/conf.d" "$TMP/home/conf.d"
+ln -s "$HERE/conf.toml.d" "$TMP/home/conf.toml.d"
 
 export STUB_BD_STATE="$TMP/state.json" STUB_BD_LOG="$TMP/bd.log"
 lc_mirror_bd "$TMP/lc"

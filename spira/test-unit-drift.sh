@@ -167,7 +167,7 @@ echo "skew units — missing installer:"
 # exactly skew.sh's own `[ -z "$installer" ] || [ ! -x "$installer" ]` refusal.
 mkdir -p "$TMP/empty-spira"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$TMP/empty-spira/"
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$TMP/empty-spira/"
+cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$TMP/empty-spira/"
 tl_config SPIRA_DOLT_DATA=""
 out="$(env -i SPIRA_TOML="$SPIRA_TOML" PATH="$PATH" HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \

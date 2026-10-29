@@ -205,6 +205,7 @@ mkdir -p "$LANES_HOME/runes"
 # <home>/conf.d directly, so a synthetic runes with none refuses config resolution
 # outright (sfail round 2, pattern 1).
 ln -s "$HERE/conf.d" "$LANES_HOME/conf.d"
+ln -s "$HERE/conf.toml.d" "$LANES_HOME/conf.toml.d"
 cat > "$LANES_HOME/runes/worker.rune" <<'F'
 RUNE_NAME=worker
 RUNE_LABELS="spira,plan"

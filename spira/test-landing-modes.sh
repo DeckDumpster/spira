@@ -32,7 +32,7 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 RUN="$TMP/run"; SH="$TMP/spira"
 mkdir -p "$RUN/worktree" "$SH"
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 export EMITTED="$TMP/events"; : > "$EMITTED"
 export FORGE_LOG="$TMP/forge.log"; export FORGE_PRS="$TMP/forge.prs"

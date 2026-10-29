@@ -78,6 +78,7 @@ FX="$TMP/fx"; mkdir -p "$FX/runes"
 # binary reads <home>/conf.d to resolve its config schema at all — give this stub
 # runes the real registry.
 ln -s "$HERE/conf.d" "$FX/conf.d"
+ln -s "$HERE/conf.toml.d" "$FX/conf.toml.d"
 cp "$HERE/runes/concierge.md" "$FX/runes/fx.md"
 ln -sf "$(command -v mail)" "$FX/mail"   # the real compiled binary, found on the suite's own PATH (mail is gone, sp-ooh1k)
 ln -sf "$HERE/bead.sh" "$FX/bead.sh"
@@ -259,6 +260,7 @@ tmux -L "$HERE_SOCK" kill-server 2>/dev/null || true
 # gets this right via `mktemp -d`.
 mkdir -p "$TMP/empty-runes"
 ln -s "$HERE/conf.d" "$TMP/empty-runes/conf.d"
+ln -s "$HERE/conf.toml.d" "$TMP/empty-runes/conf.toml.d"
 # SPIRA_RUN/SPIRA_WIKI are registered keys (per Ryan 2026-10-05, ONE SOURCE OF CONFIG):
 # declare via tl_config, not the env prefixes below, which no process reads them from any
 # more. Same values for both calls, so one declaration covers them.
@@ -292,6 +294,7 @@ if ! systemctl --user status >/dev/null 2>&1 || ! command -v systemd-run >/dev/n
 else
     MT_TMP="$TMP/model-test"; mkdir -p "$MT_TMP/runes"
     ln -s "$HERE/conf.d" "$MT_TMP/conf.d"
+    ln -s "$HERE/conf.toml.d" "$MT_TMP/conf.toml.d"
     cp "$HARNESS/spira/runes/concierge.md" "$MT_TMP/runes/modeltest.md"
     sed -e 's|^RUNE_NAME=.*|RUNE_NAME=modeltest|' \
         -e 's|^RUNE_MODEL=.*|RUNE_MODEL=rune-declared-should-not-be-used|' \
@@ -465,6 +468,7 @@ echo "convergence — a live holder with no tty is HEADLESS, not convergence (D1
 CONV_PROJ="$(mktemp -d)"
 CONV_DIR="$(mktemp -d)"; mkdir -p "$CONV_DIR/bin"
 ln -s "$HERE/conf.d" "$CONV_DIR/conf.d"
+ln -s "$HERE/conf.toml.d" "$CONV_DIR/conf.toml.d"
 printf '#!/bin/sh\necho STUB_CLAUDE_RAN\n' > "$CONV_DIR/bin/claude"; chmod +x "$CONV_DIR/bin/claude"
 CONV_BRAIN="$(bash -c ". '$HERE/conf.sh' >/dev/null 2>&1; printf %s \"\${SPIRA_WIKI:-\$SPIRA_REPO}\"")"
 CONV_SID="conv-headless-$(date +%s)"
@@ -506,6 +510,7 @@ nowant "it does not advise an attach that cannot work"       "attach:  tmux"   "
 # "no brief at..." — proving this is a fallthrough and not a second accidental short-circuit.
 CONV_EMPTY="$(mktemp -d)"
 ln -s "$HERE/conf.d" "$CONV_EMPTY/conf.d"
+ln -s "$HERE/conf.toml.d" "$CONV_EMPTY/conf.toml.d"
 # SPIRA_RUN/SPIRA_TOKEN_PROJECTS unchanged from the tl_config declared above.
 conv_no_out="$(SPIRA_HOME="$CONV_EMPTY" \
     CONCIERGE_SOCKET="$CONV_SOCK" CONCIERGE_SESSION="$CONV_SOCK" \
@@ -531,6 +536,7 @@ os.waitpid(c,0)' 2>/dev/null; then
 LIVE_PROJ="$(mktemp -d)"
 LIVE_DIR="$(mktemp -d)"; mkdir -p "$LIVE_DIR/bin"
 ln -s "$HERE/conf.d" "$LIVE_DIR/conf.d"
+ln -s "$HERE/conf.toml.d" "$LIVE_DIR/conf.toml.d"
 printf '#!/bin/sh\necho STUB_CLAUDE_RAN\n' > "$LIVE_DIR/bin/claude"; chmod +x "$LIVE_DIR/bin/claude"
 LIVE_SID="conv-live-elsewhere-$(date +%s)"
 printf '%s\n%s\n' "$LIVE_SID" "$CONV_BRAIN" > "$LIVE_DIR/concierge-session"
@@ -605,6 +611,7 @@ echo "singleton — a bare, hand-started holder is detected by name, not by resu
 SH_SESS="stray-test-$$"
 SH_TMP="$TMP/stray"; mkdir -p "$SH_TMP"
 ln -s "$HERE/conf.d" "$SH_TMP/conf.d"
+ln -s "$HERE/conf.toml.d" "$SH_TMP/conf.toml.d"
 SH_FAKE="$SH_TMP/fakeclaude"
 printf '#!/bin/sh\nsleep 30\n' > "$SH_FAKE"; chmod +x "$SH_FAKE"
 

@@ -56,6 +56,7 @@ done
 # locate_home reads <home>/conf.d directly now (no search) — a fixture spira/ with none
 # refuses config resolution outright (sfail round 2, pattern 1).
 ln -s "$HERE/conf.d" "$FIXTURE/spira/conf.d"
+ln -s "$HERE/conf.toml.d" "$FIXTURE/spira/conf.toml.d"
 printf '# empty — test fixture\n' > "$FIXTURE/spira/watchers"
 printf '# empty\n' > "$FIXTURE/spira/repo-map.example"
 

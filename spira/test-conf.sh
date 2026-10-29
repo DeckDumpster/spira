@@ -43,6 +43,7 @@ ln -s "$HERE/conf.sh" "$HARNESS/spira/conf.sh"
 # SPIRA_HOME IS THE HOME NOW (locate_home no longer searches): every binary reads
 # <home>/conf.d directly, so this fixture needs one too (sfail round 3, pattern 1).
 ln -s "$HERE/conf.d" "$HARNESS/spira/conf.d"
+ln -s "$HERE/conf.toml.d" "$HARNESS/spira/conf.toml.d"
 printf '# empty\n' > "$HARNESS/spira/repo-map.example"
 printf '# empty\n' > "$HARNESS/spira/watchers"
 

@@ -42,7 +42,7 @@ git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" p
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/runes"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$SPIRA_HOME/"
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
+cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 # SPIRA_RUNES_DIR is registered and the fixture declares a fixed, nonexistent path — nothing
 # derives it from SPIRA_HOME any more (sfail round 2, pattern 6).
 tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"

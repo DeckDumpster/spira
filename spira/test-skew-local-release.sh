@@ -74,6 +74,7 @@ printf 'lfixq | %s | queue.local | local/main | | |\n' "$REPO" > "$RMAP"
 # REPO git fixture's own tracked spira/ stub, which is content under test, not config.
 SKEW_HOME="$TMP/skew-home"; mkdir -p "$SKEW_HOME"
 ln -s "$HERE/conf.d" "$SKEW_HOME/conf.d"
+ln -s "$HERE/conf.toml.d" "$SKEW_HOME/conf.toml.d"
 
 # ---------------------------------------------------------------------------
 # RELEASES: one release directory per commit, named by its sha (queue.local's own naming —
@@ -240,7 +241,7 @@ echo "refresh — no repo argument resolves the home repo's checkout via the rep
 # needs a real lib.sh (and the conf.sh it sources) to source at all, where skew.sh never did.
 FAKE_RELEASE_DIR="$TMP/fake-release-dir"; mkdir -p "$FAKE_RELEASE_DIR/spira"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$FAKE_RELEASE_DIR/spira/"
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$FAKE_RELEASE_DIR/spira/"
+cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$FAKE_RELEASE_DIR/spira/"
 
 reset_releases; reset_stub
 activate "$C2"   # running matches the tip — refresh should report "nothing to deploy"

@@ -32,6 +32,7 @@ printf '. "%s/lib.sh"\n' "$HERE" > "$T/lib.sh"
 # nothing instead of refusing. Without this, `dwarf --escape` below dies at config
 # resolution before it ever reaches escape.rs's own logic.
 cp -r "$HERE/conf.d" "$T/"
+cp -r "$HERE/conf.toml.d" "$T/"
 
 # A MINIMAL ENVIRONMENT, non-default everywhere so that assertions cannot pass by reading
 # literals out of conf.sh (law-gates-run-in-a-clean-environment). $T/bin goes FIRST so our

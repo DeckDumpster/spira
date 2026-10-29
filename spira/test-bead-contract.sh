@@ -25,6 +25,7 @@ mkdir -p "$T/runes"
 # SPIRA_HOME="$T" below IS the home now (locate_home no longer searches); every binary
 # reads <home>/conf.d, so the stub needs the real registry.
 ln -s "$HERE/conf.d" "$T/conf.d"
+ln -s "$HERE/conf.toml.d" "$T/conf.toml.d"
 
 # ---------------------------------------------------------------------------
 # FIXTURE RUNES. Two personas: one with labels, one deliberately label-less

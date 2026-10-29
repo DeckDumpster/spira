@@ -139,6 +139,7 @@ mkdir -p "$T/spira-home"
 # SPIRA_HOME IS THE HOME now (locate_home no longer searches): every binary reads
 # <home>/conf.d, so this stub home needs the registry (sfail round 2, pattern 1).
 ln -s "$HERE/conf.d" "$T/spira-home/conf.d"
+ln -s "$HERE/conf.toml.d" "$T/spira-home/conf.toml.d"
 REPOCHECKOUT="$T/repo-checkout"; mkdir -p "$REPOCHECKOUT/.git"
 REPOMAP="$T/repo-map"
 printf 'widgets | %s\n' "$REPOCHECKOUT" > "$REPOMAP"

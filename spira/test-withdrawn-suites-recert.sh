@@ -40,7 +40,7 @@ cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
    "$HERE/gate-sweep.sh" "$SH/"
 # `skew` is a compiled binary now (sp-yyk47): reached via `$BIN_DIR` on PATH below, not
 # copied here.
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$SH/"
 
 git init -q -b main "$REPO"
 mkdir -p "$REPO/spira"; printf '#!/bin/bash\n' > "$REPO/spira/test-x.sh"

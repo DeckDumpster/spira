@@ -34,6 +34,7 @@ export SPIRA_CONF=""   # prevent reading a real spira.conf
 # registry under SPIRA_HOME, where previously an explicit SPIRA_RUN short-circuited before
 # any registry read. Same fix as test-mail.sh's UC-17 fixture (sp-ivfu3).
 ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
+ln -s "$HERE/conf.toml.d" "$SPIRA_HOME/conf.toml.d"
 
 
 # mail.sh is gone (sp-ooh1k): `run_mail` below calls the compiled `mail` binary by bare

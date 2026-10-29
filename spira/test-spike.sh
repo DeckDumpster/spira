@@ -87,6 +87,7 @@ tl_config SPIRA_RUNES_DIR="$SPIRA_HOME/runes"
 # fixture uses.
 printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"
 ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
+ln -s "$HERE/conf.toml.d" "$SPIRA_HOME/conf.toml.d"
 # $SPIRA_HOME/dwarf is the LAUNCH TARGET `which("dwarf", PATH)` resolves to below — a bare
 # "exit 0" stands in for it, since nothing here ever execs it for real. Its "capacity
 # paused" branch is a leftover from when that question was a subprocess call this stub
@@ -244,7 +245,7 @@ timeout 5 git -C "$LREPO" push -q origin main
 timeout 5 git -C "$LREPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/confine.sh" "$SH/"
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$SH/"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/gate.sh"; chmod +x "$SH/gate.sh"
 printf 'home | %s | push | origin/main | |\n' "$LREPO" > "$SH/repo-map"
 # sp-mve9i: the landing pass reads a branch's hand-off from its lifecycle row, never bd

@@ -48,6 +48,7 @@ done
 # locate_home no longer searches: SPIRA_HOME IS the home, and every binary reads
 # <home>/conf.d for the registry.
 ln -s "$HERE/conf.d" "$LPHOME/conf.d"
+ln -s "$HERE/conf.toml.d" "$LPHOME/conf.toml.d"
 printf '# fixture watchers\n' > "$LPHOME/watchers"
 
 LPRUN="$TMP/lprun"; mkdir -p "$LPRUN"

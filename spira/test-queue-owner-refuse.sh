@@ -37,7 +37,7 @@ timeout 5 git -C "$REPO" push -q origin main
 timeout 5 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH" "$QUEUEDIR/$REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$SH/"
 # mail is a compiled binary now (sp-ooh1k), not a script beside these, and "$HERE/mail" is
 # the pre-existing kinds/ directory (spira/mail/kinds), not the tool — symlink the real
 # compiled binary in by name instead.
