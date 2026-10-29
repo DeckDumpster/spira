@@ -57,10 +57,10 @@ const SUN_PATH_MAX: usize = 107;
 const LC_READY_DEADLINE: Duration = Duration::from_secs(30); // batch-job: serve bind + first DB round trip
 const LC_STOP_DEADLINE: Duration = Duration::from_secs(5); // batch-job: serve exit after SIGTERM
 /// Every key declared: a process resolves its config only from a file that declares them all
-/// (spira-config/src/process.rs), so the world's config starts from the complete fixture and
-/// overrides each locator a world must own. Its `lc_socket` is empty (direct mode) and
-/// is always overwritten below.
-const CONFIG_BASE: &str = include_str!("../../../spira/testlib/complete.toml");
+/// (spira-config/src/process.rs), so the world's config starts from the complete fixture, read
+/// from the harness tree the world is built from, and overrides each locator a world must own.
+/// Its `lc_socket` is empty (direct mode) and is always overwritten below.
+const CONFIG_BASE_PATH: &str = "spira/testlib/complete.toml";
 
 /// One repository of a world: `<name>:<mode>[:<trunk>]`. The world's own repository (`sim`) is
 /// always present, `queue.local` unless named; any other name is a repository of its own,
@@ -428,7 +428,7 @@ impl Steps for ProcessSteps {
         // declared direct mode: a dead or absent socket is no longer a route to the store
         // (sp-yvyvzd), so these admin and probe reads name direct mode outright.
         if !toml.exists() {
-            std::fs::write(&toml, base_config(&world.join(HOME))).map_err(|e| format!("{}: {e}", toml.display()))?;
+            std::fs::write(&toml, base_config(release, &world.join(HOME))?).map_err(|e| format!("{}: {e}", toml.display()))?;
         }
         self.config_set(release, &toml, "spira.lc_password_file", &credential.display().to_string())?;
         self.config_set(release, &toml, "spira.lc_socket", "")?;
@@ -624,7 +624,7 @@ fn build(dir: &Path, repo: &Path, tree: &str, source: &ReleaseSource, steps: &dy
         let home = dir.join(HOME);
         std::fs::create_dir_all(&home).map_err(|e| e.to_string())?;
         std::fs::write(home.join(REGISTRY_ROWS), registry_rows(dir, repos)).map_err(|e| e.to_string())?;
-        std::fs::write(&file, base_config(&home)).map_err(|e| e.to_string())?;
+        std::fs::write(&file, base_config(&release, &home)?).map_err(|e| e.to_string())?;
         let t = Instant::now();
         let bd = steps.bd()?;
         let settings: Vec<(String, String)> = config_settings(dir, repos, &gh_bin).into_iter().chain(home_settings(dir, fixture, &bd)).chain(lc_settings(dir)).collect();
@@ -874,9 +874,11 @@ pub fn registry_rows(world: &Path, repos: &[RepoSpec]) -> String {
 
 /// The complete base with every path of the fixture's home moved under the world's `home`,
 /// and without the fixture's own `repo.spira`: a world registers only the repository it built.
-pub fn base_config(home: &Path) -> String {
+pub fn base_config(harness: &Path, home: &Path) -> Result<String, String> {
     let release = home.parent().unwrap_or(home).join("release");
-    let moved = CONFIG_BASE
+    let base_path = harness.join(CONFIG_BASE_PATH);
+    let base = std::fs::read_to_string(&base_path).map_err(|e| format!("{}: {e}", base_path.display()))?;
+    let moved = base
         .replace(&format!("{FIXTURE_HOME}/spira/spira-releases/current"), &release.display().to_string())
         .replace(FIXTURE_HOME, &home.display().to_string());
     let mut out = String::new();
@@ -890,7 +892,7 @@ pub fn base_config(home: &Path) -> String {
             out.push('\n');
         }
     }
-    out
+    Ok(out)
 }
 
 /// The workspace of a testdb fixture: where `bd` finds the bead store.

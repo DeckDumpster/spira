@@ -104,7 +104,15 @@ pub fn spira_section(
     raw: &BTreeMap<String, String>,
     warnings: &mut ConvertWarnings,
 ) -> Result<SpiraSection, Vec<String>> {
-    let reg = registry::for_process().map_err(|e| vec![e])?;
+    spira_section_with(raw, warnings, registry::for_process().map_err(|e| vec![e])?)
+}
+
+/// [`spira_section`] against a registry the caller already holds.
+pub fn spira_section_with(
+    raw: &BTreeMap<String, String>,
+    warnings: &mut ConvertWarnings,
+    reg: &registry::Registry,
+) -> Result<SpiraSection, Vec<String>> {
     let mut s = SpiraSection::default();
     let mut errors = Vec::new();
     for (key, val) in raw {
@@ -535,9 +543,20 @@ pub fn convert(
     repo_map_text: &str,
     rune_texts: &[(&str, &str)],
 ) -> Result<(SpiraToml, ConvertWarnings), Vec<String>> {
+    convert_with(conf_text, home, repo_map_text, rune_texts, registry::for_process().map_err(|e| vec![e])?)
+}
+
+/// [`convert`] against a registry the caller already holds.
+pub fn convert_with(
+    conf_text: &str,
+    home: &str,
+    repo_map_text: &str,
+    rune_texts: &[(&str, &str)],
+    reg: &registry::Registry,
+) -> Result<(SpiraToml, ConvertWarnings), Vec<String>> {
     let mut warnings = ConvertWarnings::default();
     let raw = read_conf(conf_text, home);
-    let spira = spira_section(&raw, &mut warnings)?;
+    let spira = spira_section_with(&raw, &mut warnings, reg)?;
     let repo = repo_sections(repo_map_text, &mut warnings)?;
     let mut persona = BTreeMap::new();
     for (_path, text) in rune_texts {

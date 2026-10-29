@@ -191,11 +191,11 @@ fn str_env(key: &str, default: &str) -> String {
 /// `spira/conf.d` alone), so it is read here exactly as before this migration: the
 /// environment first, then `spira.toml`'s `[spira]` table, never a bare ambient `CARGO_HOME`.
 fn cache_home_from_env_or_toml() -> Option<String> {
-    toml_only("SPIRA_ROUND_VM_CACHE_HOME", |s| s.round_vm_cache_home)
+    toml_only("SPIRA_ROUND_VM_CACHE_HOME")
 }
 
 /// A TOML-only key: the environment first, then `spira.toml`'s `[spira]` table; empty is unset.
-fn toml_only(env_key: &str, field: impl FnOnce(spira_config::SpiraSection) -> Option<String>) -> Option<String> {
+fn toml_only(env_key: &str) -> Option<String> {
     if let Ok(v) = std::env::var(env_key) {
         if !v.trim().is_empty() {
             return Some(v);
@@ -204,7 +204,7 @@ fn toml_only(env_key: &str, field: impl FnOnce(spira_config::SpiraSection) -> Op
     spira_config::discover(None)
         .and_then(|p| spira_config::load(&p).ok())
         .and_then(|doc| doc.spira)
-        .and_then(field)
+        .and_then(|s| s.get_str(env_key).ok().flatten())
         .filter(|v| !v.trim().is_empty())
 }
 
@@ -247,8 +247,8 @@ impl Config {
             // straight from the environment; defaults unchanged by this migration.
             spira_home: std::env::var("SPIRA_HOME").ok().filter(|v| !v.trim().is_empty()),
             cache_home: cache_home_from_env_or_toml(),
-            resume_url: toml_only("SPIRA_ROUND_VM_RESUME_URL", |s| s.round_vm_resume_url),
-            resume_credentials: toml_only("SPIRA_ROUND_VM_RESUME_CREDENTIALS", |s| s.round_vm_resume_credentials),
+            resume_url: toml_only("SPIRA_ROUND_VM_RESUME_URL"),
+            resume_credentials: toml_only("SPIRA_ROUND_VM_RESUME_CREDENTIALS"),
             setup_alarm_secs: num_env("SPIRA_ROUND_VM_SETUP_ALARM_SECS", 180)?,
             acquire_deadline_secs: num_env("SPIRA_ROUND_VM_ACQUIRE_DEADLINE", 3600)?,
             mailbox: str_env("SPIRA_ROUND_VM_MAIL_MAILBOX", "operator"),

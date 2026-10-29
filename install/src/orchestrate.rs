@@ -129,13 +129,16 @@ pub fn build_manifest(instance: &str, dolt_data_set: bool, dolt_durable_set: boo
     manifest::build(&manifest::Inputs { instance: instance.to_string(), dolt_data_set, dolt_durable_set, inotify_present, sccache_dav_addr_set, repo_is_git_checkout, lc_system_mode: spira_config::resolve::lc_system_mode(), watch_names })
 }
 
+fn configured_path() -> String {
+    let doc = spira_config::discover(None).and_then(|p| spira_config::load(&p).ok());
+    doc.and_then(|d| d.spira).and_then(|s| s.get_str("SPIRA_PATH").ok().flatten()).unwrap_or_default()
+}
+
 /// Where the installed unit directory and the release's own PATH tail live — resolved once,
 /// here, from `spira-config path-tail`'s own logic (in-process; DESIGN.md "Render" carries
 /// the same refusal spira-config's binary makes, now without a subprocess).
 pub fn path_tail() -> Result<String, String> {
-    let tail = std::env::var("SPIRA_PATH").ok().filter(|v| !v.trim().is_empty()).unwrap_or_else(|| {
-        spira_config::discover(None).and_then(|p| spira_config::load(&p).ok()).and_then(|d| d.spira).and_then(|s| s.path).unwrap_or_default()
-    });
+    let tail = std::env::var("SPIRA_PATH").ok().filter(|v| !v.trim().is_empty()).unwrap_or_else(configured_path);
     let refusals = spira_config::tail_refusals(&tail);
     if !refusals.is_empty() {
         return Err(refusals.join("; "));

@@ -155,7 +155,7 @@ impl Config {
                 .ok_or_else(|| format!("SPIRA_RELEASES_KEEP must be a whole number >= 1, got {:?}", reg.releases_keep))?,
         };
         let unit_dir = unit_dir_from_env(env)?;
-        let hotfix_alert_hours_toml = doc.and_then(|t| t.spira).and_then(|s| s.hotfix_alert_hours);
+        let hotfix_alert_hours_toml = doc.and_then(|t| t.spira).and_then(|s| s.get_u32("SPIRA_HOTFIX_ALERT_HOURS").ok().flatten());
         Ok(Config {
             releases,
             run,

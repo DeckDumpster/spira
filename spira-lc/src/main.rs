@@ -57,7 +57,11 @@ const REFUSED: i32 = 3;
 fn main() {
     spira_config::release_env::ensure_release_path();
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(|s| s.as_str()) == Some("check-config") {
+        std::process::exit(spira_config::process::check_config_verb("spira-lc", &[]));
+    }
     if args.first().map(|s| s.as_str()) == Some("serve") {
+        spira_config::process::check_config_or_exit("spira-lc", &[]);
         std::process::exit(serve::run(&args[1..]));
     }
 

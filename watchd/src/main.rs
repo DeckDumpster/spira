@@ -65,11 +65,13 @@ fn main() {
             commands::cmd_keys();
             0
         }
+        "check-config" => spira_config::process::check_config_verb("watchd", &[]),
         "exec" => {
             let Some(name) = rest.first() else {
                 eprintln!("usage: watchd exec <name>");
                 std::process::exit(2);
             };
+            spira_config::process::check_config_or_exit("watchd", &[]);
             let ctx = load_context();
             let rows = need_rows(&ctx);
             commands::cmd_exec(&rows, name, &ctx.run)

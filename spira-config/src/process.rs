@@ -67,6 +67,21 @@ pub fn check_config_or_exit(who: &str, keys: &[&str]) -> String {
     })
 }
 
+/// The `check-config` verb of a long-running binary: prints `ok <summary>` and returns 0, or
+/// names the refusal on stderr under `who` and returns 1.
+pub fn check_config_verb(who: &str, keys: &[&str]) -> i32 {
+    match check_config(keys) {
+        Ok(summary) => {
+            println!("ok {summary}");
+            0
+        }
+        Err(e) => {
+            eprintln!("{who}: {e}");
+            1
+        }
+    }
+}
+
 /// The metrics endpoint components push to; `None` when config does not resolve or declares none.
 pub fn metrics_endpoint() -> Option<String> {
     cfg("SPIRA_METRICS_ENDPOINT").ok()

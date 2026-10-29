@@ -245,7 +245,7 @@ impl Rule for ConfigLiteralFallback {
             let in_test = |at: usize| file_is_test || s.covers(at);
 
             let mut hits: Vec<(usize, String)> = Vec::new();
-            let registered = |k: &str| tree.entry(&format!("spira/conf.d/{k}")).is_some();
+            let registered = |k: &str| tree.entry(&format!("spira/conf.d/{k}")).is_some() || tree.entry(&format!("spira/conf.toml.d/{k}")).is_some();
             for h in scan(src, &registered) {
                 if !in_test(h.at) {
                     hits.push((h.at, format!("env::var(\"{}\").unwrap_or* with a literal or empty default — resolve it through spira_config instead", h.key)));

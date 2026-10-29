@@ -383,7 +383,7 @@ struct Outcome {
 /// 2026-10-05: one source of config), which is a silent behaviour change for whichever one
 /// of this file's many fixtures does not also move onto this same base.
 pub(crate) fn complete_vars() -> BTreeMap<String, String> {
-    let doc = spira_config::validate(include_str!("../../spira/testlib/complete.toml")).expect("the complete fixture validates");
+    let doc = spira_config::validate(&spira_config::process::complete_fixture_text()).expect("the complete fixture validates");
     spira_config::spira_string_map(&doc)
         .into_iter()
         .map(|(k, v)| if k.starts_with("COCKPIT_") { (k, v) } else { (format!("SPIRA_{k}"), v) })
