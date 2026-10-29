@@ -381,7 +381,7 @@ echo "cross-repo dedup — same ref, different repo: labels resolve to ONE incid
 # the caller declared.
 #
 # POSITIVE CONTROL: one filing with repo:brain creates a bead. A second filing of the same
-# title with repo:fixture-repo must find that bead and record a recurrence.
+# title with repo:fixture-repo must find that bead and leave exactly one open bead.
 _cross_title="cross repo dedup test"
 _cross_ref="incident:cross-repo-dedup-test"
 _cross_env() {
@@ -396,12 +396,12 @@ _cross_env() {
         SPIRA_HOME="$HERE" \
         SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         "$@" \
-        incident.sh file "$_cross_title" - >/dev/null 2>&1
+        incident.sh file "$_cross_title" - >/dev/null
 }
 printf 'first filer\n'  | _cross_env SPIRA_INCIDENT_REPO=brain
 printf 'second filer\n' | _cross_env SPIRA_INCIDENT_REPO=fixture-repo
-n="$(timeout 5 bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --json 2>/dev/null \
-  | python3 -c '
+open_json="$(timeout 5 bd -C "$SPIRA_DB" list --status open,in_progress --limit 0 --json 2>/dev/null)"
+n="$(printf '%s' "$open_json" | python3 -c '
 import sys, json
 target = sys.argv[1]; count = 0
 try: d = json.load(sys.stdin)
@@ -410,9 +410,19 @@ for i in (d if isinstance(d, list) else [d]):
     if i.get("external_ref") == target: count += 1
 print(count)
 ' "$_cross_ref")"
+if [ "$n" != 1 ]; then
+    echo "# intake log:"; sed 's/^/# /' "$ILOG"
+    echo "# open rows for $_cross_ref:"
+    printf '%s' "$open_json" | python3 -c '
+import sys, json
+try: d = json.load(sys.stdin)
+except Exception: print("unparseable bd output"); raise SystemExit(0)
+for i in (d if isinstance(d, list) else [d]):
+    if i.get("external_ref") == sys.argv[1]: print(json.dumps(i))
+' "$_cross_ref" | sed 's/^/# /'
+fi
+# recurrence logging is covered by the sequential case and run::tests::second_filing_is_a_recurrence_not_a_new_bead; flip-deleted r-auto-683
 is "same ref with different repo: labels resolves to one incident, not two" "1" "$n"
-recur_cross="$(grep -c 'recurred' "$ILOG" 2>/dev/null || true)"
-is "second cross-repo filer was recorded as a recurrence, not a new filing" "1" "$recur_cross"
 
 testdb_reset
 mkdir -p "$RUN"
