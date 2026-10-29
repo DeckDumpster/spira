@@ -535,6 +535,9 @@ pub fn main_with(args: Vec<String>) -> i32 {
                 for vm in sig_pool.leased_to(me) {
                     match salvage_results(&sig_remote, &vm.addr, &sig_results, &sig_scratch, Duration::from_secs(6), sig_resume.as_deref()) {
                         Some(n) => eprintln!("round-vm run: signal {sig}: salvaged {n} suite result(s) from {} before release", vm.handle),
+                        None if real_attempt().ok().is_some_and(|a| matches!(a.provider.alive(&vm.handle), Ok(false))) => {
+                            eprintln!("round-vm run: signal {sig}: {} is not running; nothing to re-pull, releasing it", vm.handle);
+                        }
                         None => {
                             eprintln!("round-vm run: signal {sig}: results pull from {} failed; keeping it for a re-pull (release it with `round-vm release {}`)", vm.handle, vm.handle);
                             let _ = sig_pool.hold(&vm.handle);

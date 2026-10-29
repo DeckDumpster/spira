@@ -13,7 +13,7 @@ use spira_config::scoped_stop;
 pub const PACE_OWNER: &str = "batcher";
 
 pub const CERTIFY_ENV_MARKER: &str = "queue round certify exited 4";
-pub const INFRA_MARKERS: &[&str] = &["NO RESULT", "OVER-CAP", "cannot check out", "certify rc=75", "left no verdicts", CERTIFY_ENV_MARKER];
+pub const INFRA_MARKERS: &[&str] = &["NO RESULT", "OVER-CAP", "cannot check out", "certify rc=75", "certify exited 75", "left no verdicts", CERTIFY_ENV_MARKER];
 pub const STALE_AMI_MARKER: &str = "round AMI is stale";
 pub const BACKOFF_SECS: u64 = 600;
 pub const STOP_AFTER: u32 = 2;
@@ -472,6 +472,7 @@ mod tests {
     #[test]
     fn the_matcher_could_have_found_a_marker() {
         assert_eq!(classify(&Err("x certify rc=75".into()), None, 0), Outcome::Infra);
+        assert_eq!(classify(&Err("queue round certify exited 75: INCOMPLETE reason=vm-lost".into()), None, 0), Outcome::Infra);
         assert_eq!(classify(&Err("fine".into()), None, 0), Outcome::Quiet);
     }
 }

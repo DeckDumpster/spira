@@ -5215,3 +5215,17 @@ fn faulted_passes_with_the_same_members_aboard_blame_none_of_them() {
     }
     assert!(!t.lib.has("bead_reopen"), "{:?}", t.lib.calls.borrow());
 }
+
+#[test]
+fn a_round_vm_lost_mid_pass_exits_75_incomplete_and_never_counts_against_a_member() {
+    let t = round_world();
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    *t.scripts.round_vm.borrow_mut() = RunOut { rc: 75, out: String::new(), err: "round-vm run: INCOMPLETE reason=vm-lost\n".into() };
+    for _ in 0..3 {
+        assert_eq!(t.run(&["round", "certify", &batch]), 75, "{}", t.err());
+        assert!(t.err().contains("reason=vm-lost"), "{}", t.err());
+    }
+    assert!(!t.lib.has("bead_reopen sp-a"), "a lost VM is not the member's fault: {:?}", t.lib.calls.borrow());
+    assert!(!t.out().contains("red-output="), "never named a red");
+}
