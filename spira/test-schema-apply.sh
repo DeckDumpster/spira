@@ -171,7 +171,7 @@ else
     want "and adds the generated column"    "_is_work"              "$o1"
     want "and adds the priority constraint" "spira_priority_range"  "$o1"
 
-    # schema-apply.sh ends in schema.sh check, so "apply succeeds" is what proves the checker passes.
+    # That the closing check passes is pinned deterministically in test-schema.sh (shimmed bd).
     o2="$(schema-apply.sh 2>&1)"
     want "second run reports types already exact"    "already exact"   "$o2"
     want "second run reports _is_work already there" "already present" "$o2"
