@@ -83,8 +83,11 @@ pub struct State {
     /// The claude session id this run launched or resumed (empty before launch).
     pub session_id: String,
     pub session_rc: i32,
-    /// The launcher call's own wall time; `None` when no session launched.
+    /// The launcher call's own wall time; `None` when no session launched, where
+    /// [`State::claimed_at`] stands in.
     pub session_wall_s: Option<i64>,
+    /// The clock at the claim; the wall time of a run that ended before any launch.
+    pub claimed_at: Option<i64>,
     /// The verdict's `committed`; false until the verdict block ran.
     pub committed: bool,
     /// The branch's tip (full hash), read right before the session starts (sp-1zxru-2).
@@ -225,7 +228,7 @@ impl<'a> Run<'a> {
     /// `ledger_done <rc> <status>`: the line, then tsd and the rapid-recur check.
     pub fn ledger_done(&self, rc: i32, status: &str) {
         let mut fields = ledger::session_result_fields(self.s.logf.as_deref(), &self.conf.trace_mark());
-        fields.fill_wall(self.s.session_wall_s);
+        fields.fill_wall(self.s.session_wall_s.or_else(|| self.s.claimed_at.map(|t| (self.now() - t).max(0))));
         self.ledger.done(self.now(), self.f(), &self.s.bead, rc, status, &fields);
         trace::tsd_dwarf_session(self.d.exec, &self.run_dir().display().to_string(), &self.s.bead, self.f(), rc, status, &fields);
         self.rapid_recur_check();
@@ -235,7 +238,8 @@ impl<'a> Run<'a> {
     /// lines for this bead are a setup loop that recurs identically on every retry
     /// (law-a-retry-must-change-an-input) — park with the ask label and `overseer` rather
     /// than keep re-calling into the same fault. Reads the ledger the `done` line above
-    /// just wrote.
+    /// just wrote. A `done` line's wall time is the launcher's, else claim-to-exit; only a
+    /// line with neither reads `?`, and that still counts.
     fn rapid_recur_check(&self) {
         let id = self.s.bead.clone();
         if id.is_empty() {
@@ -606,6 +610,7 @@ impl<'a> Run<'a> {
             return Err(0);
         };
         self.s.bead = c.id.clone();
+        self.s.claimed_at = Some(self.now());
         self.s.claimed = Some(c.row.clone());
         self.log(&format!("{who}: claimed {}", c.id));
         self.ledger.awake(self.now(), self.f(), &c.id);

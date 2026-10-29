@@ -450,7 +450,7 @@ mod tests {
         assert_eq!(rapid_recur_streak(&refs), 0, "three seven-minute deadline kills are not a setup loop");
         let setup = lines(None);
         let refs: Vec<&str> = setup.iter().map(String::as_str).collect();
-        assert_eq!(rapid_recur_streak(&refs), 3, "a session that never launched still streaks");
+        assert_eq!(rapid_recur_streak(&refs), 3, "no wall known still streaks");
         let mut f = crate::ledger::SessionFields { wall_s: Some(2), ..Default::default() };
         f.fill_wall(Some(430));
         assert_eq!(f.wall_s, Some(2), "a reported wall time is never overwritten");
