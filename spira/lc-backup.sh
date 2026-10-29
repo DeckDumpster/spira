@@ -4,7 +4,7 @@
 #
 #   lc-backup.sh run                 per database: snapshot locally, tar it, upload ONE object, stamp it
 #   lc-backup.sh age [--now EPOCH]   exit 0 when every database's newest good backup is younger than SPIRA_LC_BACKUP_MAX_AGE
-#   lc-backup.sh drill [--db NAME] [TARBALL]   per database: restore a snapshot into a scratch dir under SPIRA_RUN; row counts must equal live
+#   lc-backup.sh drill [--db NAME] [TARBALL]   per database: restore a snapshot into a scratch dir under SPIRA_RUN; row counts must equal live; exit 0 with a recorded DEFERRED verdict when the store stays busy past the cap
 #   lc-backup.sh watch [--interval S] [--ticks N]   watchd daemon: mails the crossing into and out of stale
 #   lc-backup.sh health              exit non-zero when the watch loop has stopped polling
 #   lc-backup.sh explain             after a failed run: put the log's last error line on stderr and in the journal
@@ -276,12 +276,19 @@ _lcb_drill_busy() {
     [ "$ms" -le "$SPIRA_LC_BACKUP_DRILL_BUDGET_MS" ] || echo "live store probe took ${ms}ms, over the ${SPIRA_LC_BACKUP_DRILL_BUDGET_MS}ms budget"
 }
 
+_lcb_record_deferral() {
+    local line db; line="$(cat)"; echo "$line"
+    for db in $(_lcb_dbs); do
+        mkdir -p "$(dirname "$(_lcb_verdict "$db")")" && printf '%s\n' "$line" > "$(dirname "$(_lcb_verdict "$db")")/drill.deferred"
+    done
+}
+
 _lcb_drill_wait_quiet() {
     local deadline why
     deadline=$(( $(date +%s) + SPIRA_LC_BACKUP_DRILL_WAIT_SECS ))
     while why="$(_lcb_drill_busy)"; [ -n "$why" ]; do
         if [ "$(date +%s)" -ge "$deadline" ]; then
-            echo "lc-backup: drill: DEFERRED past ${SPIRA_LC_BACKUP_DRILL_WAIT_SECS}s, never ran — $why" >&2
+            echo "lc-backup: drill: DEFERRED past ${SPIRA_LC_BACKUP_DRILL_WAIT_SECS}s, never ran — $why" | _lcb_record_deferral >&2
             return 1
         fi
         echo "lc-backup: drill: deferring — $why"
@@ -298,7 +305,7 @@ cmd_drill() {
         esac
     done
     [ -z "$tarball" ] || [ -n "$only" ] || only="$(_lcb_dbs | head -1)"
-    _lcb_drill_wait_quiet || return 1
+    _lcb_drill_wait_quiet || return 0
     for db in ${only:-$(_lcb_dbs)}; do _lcb_drill_db "$db" "$tarball" || rc=1; done
     return "$rc"
 }
