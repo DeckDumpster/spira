@@ -31,6 +31,10 @@ pub const FAULT: i32 = 4;
 /// certify's exit when `round preempt` stopped its pass: the verb, not certify, records that.
 pub const PREEMPTED: i32 = 5;
 
+/// round-vm's exit, and certify's, when the round VM died under the pass: no verdict, no member
+/// at fault, the pass is run again.
+pub const VM_LOST: i32 = 75;
+
 const PREEMPT_POLLS: u32 = 120;
 
 pub(super) const RECORD: &str = "round";
@@ -2065,6 +2069,13 @@ fn pass_members(c: &Ctx, batch: &str) -> Vec<String> {
     record_of(c, batch).map(|(_, kv)| kv.members().into_iter().map(|m| m.id).collect()).unwrap_or_default()
 }
 
+fn lost_vm_pass(w: &World, label: &str, batch: &str, err: &str) -> i32 {
+    let why = "vm-lost: the round VM died under the pass";
+    warn_unrecorded(w, label, batch, "the incomplete pass", pass_verdict_event(w, batch, &Verdict::Incomplete(why), false));
+    w.err(format!("queue.sh {label}: certify rc={VM_LOST}: INCOMPLETE reason={why}; the round is not judged\n{}", tail(err, 20)));
+    VM_LOST
+}
+
 /// The pass of `batch` ended without a verdict: remember it, and eject each member that has now
 /// been aboard for [`FAULTED_PASSES_RED`] such passes. When every member of a multi-member pass
 /// qualifies, nothing separates them from the host, so none is ejected. Returns [`FAULT`] either way.
@@ -2333,6 +2344,8 @@ fn certify_pass(
                 format!("{}{}", out.out, out.err),
             );
             reds.push(REPO_TESTENV_RED.into());
+        } else if out.rc == VM_LOST {
+            return lost_vm_pass(w, label, batch, &out.err);
         } else if out.rc != 0 {
             let why = if matches!(out.rc, 124 | 137) {
                 format!(
@@ -2444,6 +2457,9 @@ fn certify_pass(
             }
             *over = Some(unreached);
             return FAULT;
+        }
+        if out.rc == VM_LOST {
+            return lost_vm_pass(w, label, batch, &out.err);
         }
         let fault = match out.rc {
             0 | 1 if found.is_empty() => Some("round-vm ran and left no verdicts — a fault of the round machinery, not of the candidates".to_string()),

@@ -833,6 +833,7 @@ impl SshRemote {
             "-i", &self.key.to_string_lossy(), "-p", &self.port.to_string(),
             "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
             "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "LogLevel=ERROR",
+            "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -1826,6 +1827,11 @@ fn on_vm_run(
             batch.join().unwrap_or_else(|_| Err("the batch thread panicked".into()))
         });
         let remote_rc = match streamed {
+            Ok(255) if vm_lost(env, vm) => {
+                lose_vm(env, args, &mut progress);
+                progress.finish(&results_dir, VM_LOST_EXIT);
+                return VM_LOST_EXIT;
+            }
             Ok(255) => {
                 eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
                 progress.marks().lose("ssh dropped");
@@ -1885,6 +1891,10 @@ fn on_vm_run(
         }
         let _ = fs::remove_dir_all(&stream_scratch);
         let (code, usable) = match batch.join() {
+            Ok(Ok(255)) if vm_lost(env, vm) => {
+                lose_vm(env, args, &mut progress);
+                (VM_LOST_EXIT, false)
+            }
             Ok(Ok(255)) => {
                 eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
                 progress.marks().lose("ssh dropped");
@@ -1918,6 +1928,21 @@ fn on_vm_run(
         }
         code
     })
+}
+
+/// `run`'s exit when the VM died under the pass: no verdict, nothing to re-pull, retry the pass.
+pub const VM_LOST_EXIT: i32 = 75;
+
+/// Whether the hypervisor says `vm` is no longer running; a provider that cannot answer says no.
+fn vm_lost(env: &RunEnv, vm: &Vm) -> bool {
+    (env.deps.factory)().ok().is_some_and(|a| matches!(a.provider.alive(&vm.handle), Ok(false)))
+}
+
+/// The VM is gone, so its lease is not kept: `run_pass` releases it on the way out.
+fn lose_vm(env: &RunEnv, args: &RunArgs, progress: &mut crate::progress::Progress) {
+    eprintln!("round-vm run: INCOMPLETE reason=vm-lost: the VM stopped running under the pass");
+    progress.marks().lose("vm-lost");
+    record_incomplete(env, args, "vm-lost");
 }
 
 /// One streaming pass: every verdict the VM has so far lands in `results_dir`, so a run cut
@@ -3365,6 +3390,8 @@ mod tests {
         result_pulls: std::sync::atomic::AtomicUsize,
         /// how many results pulls fail before one succeeds
         fail_result_pulls: std::sync::atomic::AtomicUsize,
+        /// the VM is stopped under the batch, as a hard-stop would
+        kill_vm: Option<crate::testutil::FakeProvider>,
     }
     impl FakeRemote {
         fn green() -> FakeRemote {
@@ -3393,6 +3420,7 @@ mod tests {
                 hold_for_stream: false,
                 result_pulls: std::sync::atomic::AtomicUsize::new(0),
                 fail_result_pulls: std::sync::atomic::AtomicUsize::new(0),
+                kill_vm: None,
             }
         }
     }
@@ -3410,6 +3438,11 @@ mod tests {
                 wait_until(|| self.result_pulls.load(std::sync::atomic::Ordering::SeqCst) > 0);
             }
             self.batch_running.store(false, std::sync::atomic::Ordering::SeqCst);
+            if let Some(fp) = &self.kill_vm {
+                for vm in fp.live_vms() {
+                    crate::provider::Provider::stop(fp, &vm).unwrap();
+                }
+            }
             self.rc.clone()
         }
         fn run_attr(&self, _: &str, job: &crate::spool::AttrJob) -> Result<i32, String> {
@@ -4119,6 +4152,28 @@ mod tests {
         assert_eq!(go(&fx, &remote, &tree(&fx)), 2);
         assert!(fx.cfg.run_dir.join("batch-results/test-a.sh.result").is_file());
         assert_eq!(fx.fp.live_vms().len(), 1);
+    }
+
+    #[test]
+    fn a_vm_that_dies_under_the_batch_ends_the_pass_vm_lost_and_gives_up_its_lease() {
+        let fx = fixture();
+        let rec = FakeRecorder::default();
+        let remote = FakeRemote { rc: Ok(255), kill_vm: Some(fx.fp.clone()), ..FakeRemote::green() };
+        remote.fail_result_pulls.store(1000, std::sync::atomic::Ordering::SeqCst);
+        let a = RunArgs { results_dir: Some(fx.d.path().join("results")), suites: Some("test-a.sh".into()), round_batch: Some("r-9".into()), ..tree(&fx) };
+        assert_eq!(go_recorded(&fx, &remote, &a, &rec), VM_LOST_EXIT);
+        assert_eq!(*rec.calls.lock().unwrap().last().unwrap(), "incomplete r-9");
+        assert!(remote.result_pulls.load(std::sync::atomic::Ordering::SeqCst) <= 1, "no pull retries against a dead VM");
+        assert!(fx.fp.live_vms().is_empty(), "the dead VM is released: {:?}", fx.fp.live_vms());
+        let pool = Pool { state_dir: fx.cfg.state_dir.clone(), retry_interval: Duration::ZERO, max_retries: 1, wait_poll: Duration::ZERO, acquire_deadline: Duration::ZERO };
+        assert!(pool.leased_to(ProcId::current()).is_empty());
+        assert!(!pool.status_json().unwrap().contains("\"held\":true"), "no held lease remains");
+    }
+
+    #[test]
+    fn every_ssh_and_rsync_to_a_round_vm_carries_keepalives() {
+        let opts = SshRemote { user: "u".into(), port: 22, key: "k".into() }.ssh_opts().join(" ");
+        assert!(opts.contains("-o ServerAliveInterval=10 -o ServerAliveCountMax=3"), "{opts}");
     }
 
     #[test]
