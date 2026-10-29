@@ -59,7 +59,9 @@ pub enum Composition {
         touched: Vec<String>,
         crates: Vec<String>,
     },
-    /// The gate string with suites off: nothing buildable changed.
+    /// The gate string with suites off: nothing buildable changed. Under `gate_mode = fences`
+    /// every unforced trial composes this, and the string has lost its suites step
+    /// ([`without_suites`]).
     Fences,
 }
 
@@ -194,6 +196,14 @@ pub struct Forces {
     pub gate_all: bool,
 }
 
+/// `gate_mode = fences` in force and nothing forcing the whole sequence: the trial runs the
+/// fences and the build fence only — the gate string without its suites step, no unit
+/// phases, no re-entry suites. The engine reads this before the verdict key, since the
+/// string it hashes is the one that runs.
+pub fn fences_only(mode: GateMode, forces: &Forces) -> bool {
+    mode == GateMode::Fences && !forces.gate_all
+}
+
 /// THE DECISION (DESIGN.md "Composition").
 pub fn compose(
     mode: GateMode,
@@ -207,6 +217,11 @@ pub fn compose(
     }
     if forces.gate_all {
         return suites("gate-all");
+    }
+    // Fences mode asks nothing of the touched set: a script, a crate or a workspace input all
+    // run the fences and the build fence, and the full-suite round is the test gate.
+    if fences_only(mode, forces) {
+        return Composition::Fences;
     }
     let members = match members {
         Ok(m) => m,
@@ -459,6 +474,25 @@ fn chain_steps(cmd: &str) -> Option<Vec<String>> {
     let steps: Vec<String> = steps.into_iter().map(|s| s.trim().to_string()).collect();
     let ok = |s: &String| s.starts_with("bash ") || s.starts_with("\"$") || s.starts_with("{ ");
     (steps.len() > 1 && steps.iter().all(ok)).then_some(steps)
+}
+
+/// Whether a gate-string element is the suites step (the selector and the suite runner), not
+/// a fence.
+pub fn is_suites_step(step: &str) -> bool {
+    step_label(step) == "suites"
+}
+
+/// THE GATE STRING UNDER `gate_mode = fences`: the string with every suites step removed.
+/// A string that is not a plain `&&` chain of steps ([`chain_steps`]) is returned whole, with
+/// its suites off by the environment as before; one whose every element is a suites step
+/// becomes `true`.
+pub fn without_suites(cmd: &str) -> String {
+    let Some(steps) = chain_steps(cmd) else { return cmd.to_string() };
+    let kept: Vec<String> = steps.into_iter().filter(|s| !is_suites_step(s)).collect();
+    if kept.is_empty() {
+        return "true".into();
+    }
+    kept.join(" && ")
 }
 
 /// The unit a step reports under: the fence it runs, or `suites` for the selector's group.
@@ -967,6 +1001,41 @@ mod tests {
             "suites mode never needs the graph"
         );
         let _ = w;
+    }
+
+    #[test]
+    fn fences_mode_composes_fences_whatever_is_touched_and_needs_no_graph() {
+        let w = ws();
+        for paths in [
+            &["gate/src/x.rs"][..],
+            &["Cargo.lock"],
+            &["spira/lib.sh", "gate/src/x.rs"],
+            &["systemd/a.service"],
+            &["docs/a.md"],
+            &[],
+        ] {
+            assert_eq!(compose(GateMode::Fences, &Forces::default(), &ch(paths), Ok(&w)), Composition::Fences, "{paths:?}");
+        }
+        assert_eq!(compose(GateMode::Fences, &Forces::default(), &ch(&["gate/src/x.rs"]), Err("no cargo")), Composition::Fences);
+        assert!(fences_only(GateMode::Fences, &Forces::default()));
+        let all = Forces { gate_all: true };
+        assert!(!fences_only(GateMode::Fences, &all));
+        assert_eq!(compose(GateMode::Fences, &all, &ch(&["gate/src/x.rs"]), Ok(&w)).label(), "suites(gate-all)");
+        assert!(!fences_only(GateMode::Unit, &Forces::default()) && !fences_only(GateMode::Suites, &Forces::default()));
+    }
+
+    #[test]
+    fn without_suites_drops_the_suites_step_and_keeps_every_fence() {
+        let d = crate::def::parse(&std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate.steps")).unwrap()).unwrap();
+        let got = without_suites(&d.command());
+        assert_eq!(got, d.fences_only(&[]).command());
+        assert!(got.contains(BUILD_FENCE_STEP), "{got}");
+        assert!(!got.contains("SPIRA_SELECT_BIN") && !got.contains("SPIRA_TESTENV_BIN"), "{got}");
+        assert_eq!(chain_steps(&got).unwrap().len(), d.steps.len() - 1, "exactly one step dropped");
+        // A string it cannot split is left alone; one that is only suites runs `true`.
+        assert_eq!(without_suites("bash spira/fence.sh && run-suites"), "bash spira/fence.sh && run-suites");
+        assert_eq!(without_suites("{ \"$SPIRA_SELECT_BIN\" gate; } && { \"$SPIRA_TESTENV_BIN\" x; }"), "true");
     }
 
     #[test]

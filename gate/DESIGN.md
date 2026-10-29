@@ -230,8 +230,9 @@ and the branch tip resolved: `pass <key>` on 0, `infra <reason>` on 75/76, `red 
 `sha256("<repo> <T> <files_h> <cmd_h> <harness_h> suites=<S> bead=<B> ejected=<E>\n")`, where
 `T` is **the merged tree** (was: the branch's tree), `files_h`/`cmd_h` are sha256 of the
 changed-file list and of the gate string (under `gate_mode = "unit"`, of the gate string plus
-`\n# gate_mode=unit`, so a unit-mode PASS never answers for a suites-mode trial; suites mode
-hashes the string alone and its keys are unchanged), and `harness_h` is sha256 of `gate.sh`, `exclude.sh`,
+`\n# gate_mode=unit`, so a unit-mode PASS never answers for a suites-mode trial; under
+`gate_mode = "fences"`, of the string without its suites step plus `\n# gate_mode=fences`;
+suites mode hashes the string alone and its keys are unchanged), and `harness_h` is sha256 of `gate.sh`, `exclude.sh`,
 the resolved `skew` binary **and this binary** concatenated. Only a PASS is cached; a cached PASS younger than
 `SPIRA_VERDICT_TTL` (by its own `at=`) is returned before admission and before the lock, with
 its own meter row and `suites=` line.
@@ -343,7 +344,7 @@ the gate runs**, behind a typed per-repository switch.
 
 ### The switch
 
-`[repo.<name>] gate_mode = "unit" | "suites"` in `spira.toml`, typed and validated by
+`[repo.<name>] gate_mode = "unit" | "suites" | "fences"` in `spira.toml`, typed and validated by
 spira-config (`spira_config::GateMode`), read through the library (`discover` + `load`,
 law-config-through-the-cli-only). Absent means `suites`. No spira.toml in force reads as
 `suites`; one that does not validate is said on stderr and also reads as `suites`, the stronger
@@ -351,8 +352,45 @@ check — a typo must not buy a branch a cheaper gate.
 
 ```
 spira-config set repo.spira.gate_mode unit  <spira.toml>    # on
+spira-config set repo.spira.gate_mode fences <spira.toml>   # fences and build only
 spira-config set repo.spira.gate_mode suites <spira.toml>   # off (or: unset repo.spira.gate_mode)
 ```
+
+### Fences mode (2026-10-28)
+
+**Intent.** The full-suite VM round runs the whole suite corpus and the unit tests on the
+merged tree of every landing (law-landing-rounds-run-the-full-suite-on-a-vm), so the gate's
+own test phases buy earlier feedback, not coverage. When the gate's 300 s cap is what starves
+the certified pool — about half of unit-mode gates killed at the cap at
+`tools:94,fences:9,build:124,test:57`, rounds carrying 1–2 beads — `gate_mode = "fences"`
+certifies on **the fences and the build fence only** (approved by Ryan 2026-10-28).
+
+**Contract.** Under `fences` (and no `SPIRA_GATE_ALL=1`, `compose::fences_only`), the trial is
+tools + fences (with the build fence) + the re-entry suites when the bead has any:
+
+* every trial composes `fences`, whatever the branch touches (a script, a crate, a workspace
+  input alike); neither the touched set nor the workspace graph is read to decide it;
+* the definition runs without its suites step (`Def::fences_only`: every step
+  `compose::is_suites_step` names — the one reading `$SPIRA_SELECT_BIN`/`$SPIRA_TESTENV_BIN` —
+  is dropped, and every `bin` neither a remaining step nor the re-entry phase reads goes with
+  it), so the **tools** phase builds only the fences' binaries (spira-lint, lifecycle-guard;
+  plus the tree's testenv when re-entry suites may run), and the **fences** phase runs
+  the rest of the `&&` chain, `spira/build-fence.sh` (`cargo check --workspace --locked` of the
+  merged tree) included. A repository on a column string loses its suites elements the same
+  way (`compose::without_suites`) when the string is a plain `&&` chain of steps;
+* no unit build or test phase and no selected suites — `SPIRA_GATE_COVERED` stays empty for a
+  bead's certification;
+* **the re-entry suites still run** ("The re-entry check", sp-p3srm): the suites the round
+  named when it returned the bead, plus the suites the branch itself changed, by name, after
+  the fences. They exist only for a bead re-entering after a round red and are targeted;
+  skipping them would let a still-red bead burn a whole round, the cost this mode exists to
+  cut (Concierge decision, 2026-10-28). A fresh bead runs no suite at all;
+* the base trial composes the same: the landing ref's own definition, without its suites step;
+* the key carries `\n# gate_mode=fences`, so a fences PASS never answers for a unit or suites
+  trial.
+
+A fence red is still a `branch-red`; a unit test the branch breaks is the round's to find.
+`SPIRA_GATE_ALL=1` runs the string whole (`suites(gate-all)`), as in unit mode.
 
 ### The touched set and the touched crates
 
@@ -385,6 +423,9 @@ spira-config set repo.spira.gate_mode suites <spira.toml>   # off (or: unset rep
 | `unit`, the touched set or the graph unreadable | `suites(no-diff)` / `suites(no-metadata)` | the same — no guessing a cheaper gate |
 | `unit`, crates (± docs, config, suites) | `unit` | the gate string with **suites off** and **without the build fence** (below), then on the host: `cargo build --profile dwarf -j J --all-targets -p …` (build) and `cargo test --profile dwarf -j J -p … -- --test-threads=J` (test) |
 | `unit`, nothing buildable | `fences` | the gate string with **suites off** |
+| `fences`, a fresh bead | `fences` | the gate string **without its suites step** ("Fences mode") |
+| `fences`, a re-entering bead (named suites) or a changed suite | `fences+reentry` | the same, then the re-entry phase: exactly those suites |
+| `fences`, `SPIRA_GATE_ALL=1` | `suites(gate-all)` | the gate string, whole |
 
 "Suites off" is the gate command's environment: `SPIRA_GATE_SUITES=off` and
 `SPIRA_CERTIFY_ALWAYS_COVERS=` (empty). `gate-touched.sh` then runs its fences (tier budgets,

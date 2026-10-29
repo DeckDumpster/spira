@@ -4103,3 +4103,133 @@ fn a_base_trial_that_reports_a_harness_fault_is_no_verdict_not_base_fail() {
     assert_eq!(f.run(), NOVERDICT);
     assert!(!f.verdict_line().contains("BASE_FAIL") && !f.verdict_line().contains("base-red"), "{}", f.verdict_line());
 }
+
+// ------------------------------------------------- gate_mode = fences (fences and build only)
+
+/// The repository's own checked-in definition: what production runs.
+fn checked_in_steps() -> String {
+    std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate.steps")).unwrap()
+}
+
+/// A fences-mode fake on the checked-in definition, certifying bead sp-a (suites off and a
+/// bead: the case where every other mode still selects the covering suites).
+fn fences_fake(paths: &[&str]) -> Fake {
+    let steps = checked_in_steps();
+    let f = tree_owned(Some(&steps), Some(&steps));
+    *f.mode.borrow_mut() = Ok(GateMode::Fences);
+    *f.touched.borrow_mut() = Ok(paths.iter().map(|p| Changed { path: p.to_string(), exec: false }).collect());
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
+    f.put_var("SPIRA_GATE_SUITES", "off");
+    f
+}
+
+#[test]
+fn fences_mode_runs_the_fence_tools_the_fences_and_the_build_fence_and_no_test_or_suite() {
+    // A Rust crate, a workspace input and a script: no touched set forces anything here.
+    let f = fences_fake(&["gate/src/x.rs", "Cargo.lock", "spira/lib.sh"]);
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let cmds = f.cmds.borrow().clone();
+    assert_eq!(cmds.len(), 2, "the tools phase, then the fences: {cmds:?}");
+    // The tools phase builds what the fences read — not the selector, not the suite runner.
+    assert!(cmds[0].starts_with("cargo build --profile dwarf"), "{cmds:?}");
+    assert!(cmds[0].contains("-p spira-lint") && cmds[0].contains("-p lifecycle-guard"), "{}", cmds[0]);
+    assert!(!cmds[0].contains("suite-select") && !cmds[0].contains("testenv"), "{}", cmds[0]);
+    // The fences: the checked-in definition without its suites step, the build fence kept.
+    let want = crate::def::parse(&checked_in_steps()).unwrap().fences_only(&[]).command();
+    assert_eq!(cmds[1], want);
+    assert!(cmds[1].contains("bash spira/build-fence.sh"), "{}", cmds[1]);
+    assert!(cmds[1].contains("\"$SPIRA_LINT_BIN\"") && cmds[1].contains("\"$SPIRA_GUARD_BIN\""), "{}", cmds[1]);
+    for gone in ["SPIRA_SELECT_BIN", "SPIRA_TESTENV_BIN", "--suites"] {
+        assert!(!cmds[1].contains(gone), "{gone}: {}", cmds[1]);
+    }
+    assert!(!cmds.iter().any(|c| c.starts_with("cargo test")), "no unit test phase: {cmds:?}");
+    assert_eq!(f.env_of(1, "SPIRA_GATE_SUITES"), "off");
+    assert_eq!(f.env_of(1, "SPIRA_GATE_COVERED"), "", "a certification selects no covering suites");
+    assert_eq!(f.env_of(1, "SPIRA_TESTENV_BIN"), "", "the suite runner is not built or handed over");
+    assert!(f.stderr().contains("gate: composition=fences"), "{}", f.stderr());
+    assert!(meter(&f).contains(" compose=fences phases=tools:7,fences:7"), "{}", meter(&f));
+}
+
+#[test]
+fn fences_mode_a_planted_fence_violation_still_fails_the_gate_and_the_base_runs_the_same_mode() {
+    let f = fences_fake(&["gate/src/x.rs"]);
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "spira-lint: payload-argv-lint: violation at gate/src/x.rs:1".into()));
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=branch-red"), "{}", f.verdict_line());
+    let runs = gate_runs(&f);
+    let want = crate::def::parse(&checked_in_steps()).unwrap().fences_only(&[]).command();
+    assert_eq!(runs, [want.clone(), want], "the base trial composes fences mode too");
+    assert!(!f.cmds.borrow().iter().any(|c| c.starts_with("cargo test")));
+}
+
+#[test]
+fn fences_mode_a_unit_test_failure_on_the_branch_does_not_fail_it() {
+    let f = fences_fake(&["gate/src/x.rs"]);
+    f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (101, "test x ... FAILED".into()));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(!f.cmds.borrow().iter().any(|c| c.starts_with("cargo test")));
+    // Control: the same failure under unit mode runs its tests and is red on them.
+    let u = tree_owned(Some(STEPS), Some(STEPS));
+    *u.mode.borrow_mut() = Ok(GateMode::Unit);
+    *u.touched.borrow_mut() = Ok(vec![Changed { path: "gate/src/x.rs".into(), exec: false }]);
+    u.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (101, "test x ... FAILED".into()));
+    assert_eq!(u.run(), FAIL, "{}", u.stderr());
+    assert!(u.cmds.borrow().iter().any(|c| c.starts_with("cargo test")));
+}
+
+#[test]
+fn fences_mode_a_re_entering_bead_runs_exactly_its_named_suites_and_a_fresh_one_none() {
+    // sp-p3srm holds in fences mode: the round's named suites, and the suites the branch
+    // changed, run against the tree — through the tree's own suite runner, which the tools
+    // phase then builds.
+    let f = returned(fences_fake(&["gate/src/x.rs", "spira/test-c.sh"]), "test-b.sh");
+    *f.diff.borrow_mut() = Ok("gate/src/x.rs\nspira/test-c.sh".into());
+    f.files.borrow_mut().insert(PathBuf::from(format!("{GATE_TREE}/spira/test-c.sh")), "#!".into());
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let cmds = f.cmds.borrow().clone();
+    assert_eq!(cmds.len(), 3, "tools, fences, re-entry: {cmds:?}");
+    assert!(cmds[0].contains("-p testenv") && !cmds[0].contains("suite-select"), "{}", cmds[0]);
+    assert!(!cmds[1].contains("--suites") && !cmds[1].contains("SPIRA_SELECT_BIN"), "{}", cmds[1]);
+    assert!(cmds[2].contains("--suites test-b.sh,test-c.sh \"$SPIRA_GATE_BRANCH\""), "{}", cmds[2]);
+    assert!(f.env_of(2, "SPIRA_TESTENV_BIN").ends_with("/testenv"), "the tree's own runner");
+    assert!(!cmds.iter().any(|c| c.starts_with("cargo test")), "{cmds:?}");
+    assert!(meter(&f).contains("compose=fences+reentry phases=tools:7,fences:7,reentry:7"), "{}", meter(&f));
+    assert!(f.stderr().contains("gate PASS covered suites: test-b.sh,test-c.sh"), "{}", f.stderr());
+
+    // A named suite red again fails the bead before it rides a round.
+    let r = returned(fences_fake(&["gate/src/x.rs"]), "test-b.sh");
+    r.reentry_runs.borrow_mut().insert(MERGE_SHA.into(), (1, "  test-b.sh   RED     rc=1 after 4s\nVERDICT RED ran=1 red=1".into()));
+    assert_eq!(r.run(), FAIL, "{}", r.stderr());
+    assert!(r.verdict_line().contains("suite=test-b.sh"), "{}", r.verdict_line());
+
+    // A fresh bead (nothing named, no suite changed): no suite of any kind, no runner built.
+    let fresh = fences_fake(&["gate/src/x.rs"]);
+    *fresh.diff.borrow_mut() = Ok("gate/src/x.rs".into());
+    assert_eq!(fresh.run(), PASS, "{}", fresh.stderr());
+    let cmds = fresh.cmds.borrow().clone();
+    assert_eq!(cmds.len(), 2, "{cmds:?}");
+    assert!(!cmds.iter().any(|c| c.contains("--suites") || c.contains("-p testenv")), "{cmds:?}");
+    assert!(!meter(&fresh).contains("reentry"), "{}", meter(&fresh));
+}
+
+#[test]
+fn fences_mode_is_its_own_verdict_key_and_gate_all_runs_the_string_whole() {
+    let key = |f: &Fake| f.written.borrow().iter().find(|(p, _)| p.starts_with("/run/verdicts") && !p.to_string_lossy().contains("/trees/")).map(|(p, _)| p.clone());
+    let mut keys = Vec::new();
+    for m in [GateMode::Fences, GateMode::Unit, GateMode::Suites] {
+        let f = tree_owned(Some(STEPS), Some(STEPS));
+        *f.mode.borrow_mut() = Ok(m);
+        *f.touched.borrow_mut() = Ok(vec![Changed { path: "gate/src/x.rs".into(), exec: false }]);
+        assert_eq!(f.run(), PASS, "{m:?}: {}", f.stderr());
+        keys.push(key(&f).expect("a PASS is cached"));
+    }
+    assert!(keys[0] != keys[1] && keys[0] != keys[2], "{keys:?}");
+    // SPIRA_GATE_ALL=1 asks for the whole sequence, in any mode.
+    const WITH_SUITES: &str = "bin SPIRA_LINT_BIN spira-lint\nbin SPIRA_SELECT_BIN suite-select\nstep \"$SPIRA_LINT_BIN\"\nstep { \"$SPIRA_SELECT_BIN\" gate x; }\n";
+    let f = tree_owned(Some(WITH_SUITES), Some(WITH_SUITES));
+    *f.mode.borrow_mut() = Ok(GateMode::Fences);
+    f.put_var("SPIRA_GATE_ALL", "1");
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(gate_runs(&f)[0].contains("SPIRA_SELECT_BIN"), "{:?}", gate_runs(&f));
+    assert!(meter(&f).contains("compose=suites(gate-all)"), "{}", meter(&f));
+}
