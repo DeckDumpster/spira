@@ -6,6 +6,28 @@
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
 
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct SopMatch {
+    pub slug: String,
+    pub runs: bool,
+}
+
+/// Column 1 is the slug, column 4 `run` when the SOP declares `RUN:`. A line of four columns
+/// (symptom in the fourth) comes from an older `sop`, and counts as runnable so `sop show` decides.
+pub fn parse_match_output(out: &str) -> Vec<SopMatch> {
+    out.lines()
+        .filter_map(|l| {
+            let cols: Vec<&str> = l.splitn(5, '\t').collect();
+            let slug = cols[0];
+            if slug.is_empty() {
+                return None;
+            }
+            let runs = cols.len() < 5 || cols[3] == "run";
+            Some(SopMatch { slug: slug.to_string(), runs })
+        })
+        .collect()
+}
+
 pub trait Ops {
     /// `systemctl --user is-active <units…>` — ONE exec for every unit (the cost of
     /// `status` must not grow with the manifest). Returns one state string per unit, in
@@ -46,8 +68,8 @@ pub trait Ops {
     /// production watcher units).
     fn disable_now(&self, unit: &str);
 
-    /// `sop match`: the slug of every SOP whose `MATCH:` fires on the payload.
-    fn sop_match(&self, payload: &str) -> Result<Vec<String>, String>;
+    /// `sop match`: every SOP whose `MATCH:` fires on the payload, best first.
+    fn sop_match(&self, payload: &str) -> Result<Vec<SopMatch>, String>;
 
     /// `sop show <slug>`: the SOP's full text.
     fn sop_show(&self, slug: &str) -> Result<String, String>;
@@ -269,12 +291,12 @@ impl Ops for Real {
         let _ = systemctl_cmd(&self.systemctl).args(["disable", "--now", unit]).stdin(Stdio::null()).status();
     }
 
-    fn sop_match(&self, payload: &str) -> Result<Vec<String>, String> {
+    fn sop_match(&self, payload: &str) -> Result<Vec<SopMatch>, String> {
         let out = run_capture(spira_config::bounded::bounded_for("sop", "30").arg("match").arg("-"), payload)?;
         if out.0 != 0 {
             return Err(format!("sop match exited {}: {}", out.0, out.1.trim()));
         }
-        Ok(out.1.lines().filter_map(|l| l.split('\t').next()).filter(|k| !k.is_empty()).map(str::to_string).collect())
+        Ok(parse_match_output(&out.1))
     }
 
     fn sop_show(&self, slug: &str) -> Result<String, String> {
@@ -443,7 +465,7 @@ pub mod fake {
         fn disable_now(&self, unit: &str) {
             self.disabled.borrow_mut().push(unit.to_string());
         }
-        fn sop_match(&self, payload: &str) -> Result<Vec<String>, String> {
+        fn sop_match(&self, payload: &str) -> Result<Vec<SopMatch>, String> {
             Ok(self
                 .sops
                 .iter()
@@ -452,7 +474,7 @@ pub mod fake {
                         .and_then(|p| regex::Regex::new(&p).ok())
                         .is_some_and(|re| re.is_match(payload))
                 })
-                .map(|(k, _)| k.clone())
+                .map(|(k, text)| SopMatch { slug: k.clone(), runs: sop::run_spec::declares_run(text) })
                 .collect())
         }
         fn sop_show(&self, slug: &str) -> Result<String, String> {
@@ -494,6 +516,14 @@ pub mod fake {
 #[cfg(test)]
 mod real_tests {
     use super::*;
+
+    #[test]
+    fn match_output_reads_the_run_column_and_treats_a_legacy_line_as_runnable() {
+        let m = |slug: &str, runs| SopMatch { slug: slug.into(), runs };
+        assert_eq!(parse_match_output("sop-a\tMATCH\t1\trun\tsym\nsop-b\tMATCH\t1\t-\tsym\n"), vec![m("sop-a", true), m("sop-b", false)]);
+        assert_eq!(parse_match_output("sop-c\tMATCH\t1\tsym\n"), vec![m("sop-c", true)]);
+    }
+
     use testkit::TempDir;
 
     fn script(path: &std::path::Path, body: &str) {

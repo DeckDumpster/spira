@@ -154,7 +154,7 @@ pub fn cmd_notify(rows: &[Row], ops: &dyn Ops, ctx: &Context) -> Result<NotifyOu
             report.push_str(&format!("    ... and {} more — all of them: watchd drain {}\n", k - NOTIFY_MAX, r.name));
         }
         if let Some(t) = tried {
-            report.push_str(&format!("  tried before escalating: {t}\n"));
+            report.push_str(&format!("  {t}\n"));
         }
     }
 
@@ -202,7 +202,7 @@ pub fn cmd_page(rows: &[Row], ops: &dyn Ops, ctx: &Context, name: &str, text: &s
     if let Verdict::Escalate(note) = sop_run::attempt(ops, ctx, name, &key, &payload) {
         let tag = format!("[watch:{name}] {text}");
         let inbox_line = match note {
-            Some(n) => format!("{tag} (tried before escalating: {n})"),
+            Some(n) => format!("{tag} ({n})"),
             None => tag,
         };
         ops.inbox_append(&inbox_line).map_err(|e| format!("watchd page: the inbox refused the page, left unread on {name}: {e}"))?;
@@ -293,7 +293,7 @@ fn notify_health(rows: &[Row], ops: &dyn Ops, ctx: &Context) -> Result<NotifyOut
             report.push_str(&format!("  {}\n", lf.display()));
         }
         if let Some(t) = tried {
-            report.push_str(&format!("  tried before escalating: {t}\n"));
+            report.push_str(&format!("  {t}\n"));
         }
     }
 
@@ -563,6 +563,28 @@ mod tests {
         let ops = Fake::default();
         cmd_page(&rows, &ops, &c, "rounds-loop", UNDRIVEN, &fields).unwrap();
         assert_eq!(*ops.inbox.borrow(), vec![format!("[watch:rounds-loop] {UNDRIVEN}")]);
+        assert!(ops.tool_calls.borrow().is_empty());
+    }
+
+    const RUNBOOK: &str = "MATCH: ROUND OPEN .* with no driver\nSYMPTOM: s\nCHECK: c\nFIX: f";
+
+    #[test]
+    fn a_runbook_with_no_run_does_not_stop_a_page_from_running_the_runnable_sop() {
+        let d = TempDir::new("watchd-page");
+        let (c, rows, fields) = page_fixture(&d);
+        let ops = Fake { sops: vec![("sop-undriven".into(), UNDRIVEN_SOP.into()), ("sop-stale-worktree-ref-cleanup".into(), RUNBOOK.into())], ..Fake::default() };
+        cmd_page(&rows, &ops, &c, "rounds-loop", UNDRIVEN, &fields).unwrap();
+        assert_eq!(ops.tool_calls.borrow()[0].0, "finish-round");
+        assert!(ops.inbox.borrow().is_empty(), "{:?}", ops.inbox.borrow());
+    }
+
+    #[test]
+    fn a_page_only_a_runbook_matches_points_at_it_without_claiming_a_tool_was_tried() {
+        let d = TempDir::new("watchd-page");
+        let (c, rows, fields) = page_fixture(&d);
+        let ops = Fake { sops: vec![("sop-stale-worktree-ref-cleanup".into(), RUNBOOK.into())], ..Fake::default() };
+        cmd_page(&rows, &ops, &c, "rounds-loop", UNDRIVEN, &fields).unwrap();
+        assert_eq!(*ops.inbox.borrow(), vec![format!("[watch:rounds-loop] {UNDRIVEN} (runbooks that matched: sop-stale-worktree-ref-cleanup)")]);
         assert!(ops.tool_calls.borrow().is_empty());
     }
 
