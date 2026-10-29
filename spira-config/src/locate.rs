@@ -56,6 +56,12 @@ pub fn adopt_configure_default() {
     }
 }
 
+/// The `(name, value)` pin this process was started with, to hand to a child that does not
+/// inherit it (a transient systemd unit). `None` when unset or empty.
+pub fn pin_for_child() -> Option<(String, String)> {
+    env::var("SPIRA_TOML").ok().filter(|v| !v.is_empty()).map(|v| ("SPIRA_TOML".to_string(), v))
+}
+
 /// The search `conf.sh`'s `spira_toml_file` runs today: `explicit` if the caller already has
 /// one, else `$SPIRA_TOML` (exclusive — a pinned path that is not a file stops the search
 /// right here, it does not fall through), else

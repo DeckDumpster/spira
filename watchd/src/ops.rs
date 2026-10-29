@@ -289,8 +289,15 @@ impl Ops for Real {
         let Some(path) = release_bin_tool(program) else {
             return ToolRun::Unavailable(format!("{program} is not in the active release's bin/"));
         };
+        let Some(pin) = spira_config::locate::pin_for_child() else {
+            return ToolRun::Unavailable(format!("the config pin (SPIRA_TOML) is not set in watchd's environment; {program} would run without config"));
+        };
         let mut cmd = Command::new(&self.systemd_run);
-        cmd.args(["--user", "--collect", "--wait", "--pipe", "--quiet", "--"])
+        cmd.args(["--user", "--collect", "--wait", "--pipe", "--quiet"]).arg(format!("--setenv={}={}", pin.0, pin.1));
+        for (k, v) in spira_config::release_env::child_path_env_for_process() {
+            cmd.arg(format!("--setenv={k}={v}"));
+        }
+        cmd.arg("--")
             .args(["timeout", "--kill-after=5", &deadline_secs.to_string()])
             .arg(&path)
             .args(args);
@@ -512,7 +519,7 @@ mod real_tests {
     fn a_tool_in_the_release_bin_runs_and_returns_its_output_and_exit_code() {
         let d = TempDir::new("watchd-real");
         let real = fixture(&d, "echo \"got $1\"; exit 3");
-        let _env = testkit::env(&[("SPIRA_RELEASE", Some(d.join("rel").to_str().unwrap()))]);
+        let _env = testkit::env(&[("SPIRA_RELEASE", Some(d.join("rel").to_str().unwrap())), ("SPIRA_TOML", Some("/t/box-config"))]);
         match real.run_tool("stub", &["b9".to_string()], 10) {
             ToolRun::Exited { code, output } => {
                 assert_eq!(code, 3);
@@ -526,7 +533,7 @@ mod real_tests {
     fn a_tool_past_its_deadline_is_reported_as_timed_out() {
         let d = TempDir::new("watchd-real");
         let real = fixture(&d, "sleep 30");
-        let _env = testkit::env(&[("SPIRA_RELEASE", Some(d.join("rel").to_str().unwrap()))]);
+        let _env = testkit::env(&[("SPIRA_RELEASE", Some(d.join("rel").to_str().unwrap())), ("SPIRA_TOML", Some("/t/box-config"))]);
         assert!(matches!(real.run_tool("stub", &[], 1), ToolRun::TimedOut { .. }));
     }
 
@@ -534,8 +541,31 @@ mod real_tests {
     fn a_program_not_in_the_release_bin_never_starts() {
         let d = TempDir::new("watchd-real");
         let real = fixture(&d, "echo hi");
-        let _env = testkit::env(&[("SPIRA_RELEASE", Some(d.join("rel").to_str().unwrap()))]);
+        let _env = testkit::env(&[("SPIRA_RELEASE", Some(d.join("rel").to_str().unwrap())), ("SPIRA_TOML", Some("/t/box-config"))]);
         assert!(matches!(real.run_tool("sh", &[], 10), ToolRun::Unavailable(_)));
         assert!(matches!(real.run_tool("../systemd-run", &[], 10), ToolRun::Unavailable(_)));
+    }
+
+    #[test]
+    fn the_transient_unit_is_handed_watchds_spira_toml() {
+        let d = TempDir::new("watchd-real");
+        let mut real = fixture(&d, "true");
+        script(&d.join("systemd-run"), &format!("printf '%s\\n' \"$@\" > {}/argv", d.display()));
+        real.systemd_run = d.join("systemd-run").display().to_string();
+        let _env = testkit::env(&[("SPIRA_RELEASE", Some(d.join("rel").to_str().unwrap())), ("SPIRA_TOML", Some("/t/box-config"))]);
+        real.run_tool("stub", &[], 10);
+        let argv = std::fs::read_to_string(d.join("argv")).unwrap();
+        assert!(argv.lines().any(|l| l == "--setenv=SPIRA_TOML=/t/box-config"), "{argv}");
+    }
+
+    #[test]
+    fn without_spira_toml_a_tool_is_refused_naming_it() {
+        let d = TempDir::new("watchd-real");
+        let real = fixture(&d, "echo hi");
+        let _env = testkit::env(&[("SPIRA_RELEASE", Some(d.join("rel").to_str().unwrap())), ("SPIRA_TOML", None)]);
+        match real.run_tool("stub", &[], 10) {
+            ToolRun::Unavailable(why) => assert!(why.contains("SPIRA_TOML"), "{why}"),
+            _ => panic!("expected a refusal"),
+        }
     }
 }
