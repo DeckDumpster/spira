@@ -1,4 +1,0 @@
-TYPE=string
-GROUP=toml
-DOC=spira.toml-only key: no spira.conf spelling, not in conf.sh allowlist.
-SCHEMA=`s3://<bucket>/<prefix>` the round VMs record each passed suite to (SPIRA_TESTENV_RESUME on the VM), so a VM that dies loses nothing and the next pass for the tree resumes from the same prefix. Unset: no resume.
