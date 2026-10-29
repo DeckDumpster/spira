@@ -45,6 +45,8 @@ out="$(LOCALOK=0 lcb run)"; rc=$?; wantrc "same-disk file:// destination refused
 echo; echo "age — stale and fresh fixtures:"
 out="$(lcb age)"; want "never is named" never "$out"
 eval "$(sed -n '/^_lcb_all_ok()/p' "$HERE/lc-backup.sh")"
+declare -F _lcb_all_ok >/dev/null || bad "_lcb_all_ok was not extracted from lc-backup.sh"
+_lcb_all_ok "db0: ok 1s"; wantrc "the matcher accepts an all-ok list" 0 $?
 lines="$(yes 'db0: never' | head -20000)"
 green=0; for _ in $(seq 20); do _lcb_all_ok "$lines" && green=$((green+1)); done; wantrc "20000 never lines are never all-ok, in 20 of 20 runs" 0 "$green"
 printf '%s deadbeef\n' "$(( $(date +%s) - 5000 ))" > "$RUN/lc-backup.spira_lifecycle.ok"
