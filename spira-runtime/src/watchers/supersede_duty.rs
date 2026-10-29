@@ -485,6 +485,14 @@ mod tests {
     }
 
     #[test]
+    fn an_unreadable_hold_says_nothing_and_is_read_again_next_tick() {
+        let held = |id: &str, reading| Held { id: id.into(), version: "1".into(), reading };
+        let snap = Snapshot { held: vec![held("sp-a", Reading::Unreadable), held("sp-b", Reading::Skipped)] };
+        let (c, out) = decide(&Carry::default(), &snap);
+        assert!(out.is_empty() && c == Carry::default(), "{c:?} {out:?}");
+    }
+
+    #[test]
     fn a_failed_write_is_reported_once_and_silences_the_successor_line_after() {
         let snap = Snapshot {
             held: vec![request("sp-a", "sp-b", "WORKING", "LANDED")],

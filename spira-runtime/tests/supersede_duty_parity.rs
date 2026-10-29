@@ -272,16 +272,13 @@ fn same(name: &str, ticks: usize, prep: impl Fn(&Fixture)) -> Outcome2 {
     let f = Fixture::build(name);
     prep(&f);
     let old = old_run(&f, ticks);
-    assert!(
-        lines(&f.p("bd-calls"))
-            .iter()
-            .all(|c| c.starts_with("bd -C") || c.starts_with("bd supersede")),
-        "{:?}",
-        lines(&f.p("bd-calls"))
-    );
+    let bd = lines(&f.p("bd-calls"));
+    assert!(bd.iter().all(|c| c.contains(" supersede ")), "the oracle's only bd call is supersede: {bd:?}");
+    assert_eq!(bd.len(), old.1.iter().filter(|w| w.starts_with("supersede ")).count(), "one bd supersede per supersede the lifecycle took: {bd:?}");
     let g = Fixture::build(name);
     prep(&g);
     let new = new_run(&g, ticks);
+    assert!(lines(&g.p("bd-calls")).is_empty(), "the handler launches nothing");
     assert_eq!(
         new, old,
         "scenario {name}: the handler and supersede-duty.sh disagree"
@@ -358,4 +355,11 @@ fn a_failing_write_is_reported_once_across_repeated_ticks() {
 fn a_store_that_does_not_answer_says_nothing() {
     let (say, writes) = same("down", 2, |f| fs::remove_file(f.p("held.txt")).unwrap());
     assert!(say.is_empty() && writes.is_empty(), "{say:?} {writes:?}");
+}
+
+#[test]
+fn the_watchers_manifest_no_longer_carries_the_row() {
+    let manifest = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/watchers")).unwrap();
+    assert!(manifest.lines().any(|l| l.starts_with("dwarf-watch|")), "the scan must be able to see a row");
+    assert!(!manifest.lines().any(|l| l.starts_with("supersede-duty|")), "spira-runtime hosts supersede-duty");
 }
