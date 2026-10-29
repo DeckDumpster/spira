@@ -2241,7 +2241,7 @@ fn a_rework_bead_below_p0_does_not_hold_the_lanes() {
     assert!(f.sink.has("rework bead(s) waiting do not hold the lanes: sp-5vww8l"), "{}", f.sink.text());
     assert!(f.sink.has("ACT called a ops lane dwarf"), "{}", f.sink.text());
     assert_eq!(f.r.count(|s| s.prog == "slay.sh"), 0, "{}", f.sink.text());
-    assert!(!f.sink.has("called a builder dwarf"), "the lane's unit fills the fleet: {}", f.sink.text());
+    assert!(f.sink.has("ACT called a builder dwarf"), "the only slot goes to task work: {}", f.sink.text());
 }
 
 #[test]
