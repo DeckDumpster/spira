@@ -358,7 +358,7 @@ fn is_citation(paren: &str) -> bool {
     paren.starts_with("(per ") || paren.strip_prefix("(sp-").is_some_and(|r| r.split_once(':').is_some_and(|(id, _)| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')))
 }
 
-fn first_sentence(text: &str) -> String {
+pub fn first_sentence(text: &str) -> String {
     let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
     match flat.find(". ") {
         Some(i) => flat[..=i].to_string(),

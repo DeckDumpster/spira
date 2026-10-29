@@ -349,6 +349,12 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
         return 1;
     }
 
+    if let Some(m) = rule::vocabulary_refusal(&key, &text) {
+        eprintln!("{m}");
+        spira_otel::oneshot::event("spira_statute_refused", 1, &[("reason", "retired-vocabulary")]);
+        return 1;
+    }
+
     let (recall_code, recall_out, _) = run_bd(db, &["recall", &key]);
     if recall_code == 0 {
         println!("rule: '{key}' already exists — this enact overwrites it.");

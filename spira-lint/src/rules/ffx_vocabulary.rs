@@ -36,15 +36,59 @@ impl Mode {
 }
 
 /// Matched case-insensitively against one word of a name (words split at every non-alphanumeric
-/// and at camelCase joins). "summonses" is deliberately absent: it is the legal plural, not the verb.
-const TERMS: &[&str] = &[
-    "aeon", "aeons", "fayth", "fayths", "chamber", "chambers", "maechen", "auron", "summon", "summons", "summoned",
-    "summoning", "summoner", "summoners", "sphere", "spheres", "guardian", "guardians", "valefor", "ifrit", "ixion",
-    "shiva", "bahamut", "anima", "yojimbo", "cindy", "sandy", "mindy", "magus",
+/// and at camelCase joins), each with its replacement. "summonses" is deliberately absent: it is
+/// the legal plural, not the verb.
+const TERMS: &[(&str, &str)] = &[
+    ("aeon", "dwarf"),
+    ("aeons", "dwarves"),
+    ("fayth", "rune"),
+    ("fayths", "runes"),
+    ("chamber", "runes"),
+    ("chambers", "runes"),
+    ("maechen", "Mimir"),
+    ("auron", "Heimdall"),
+    ("summon", "call"),
+    ("summons", "calls"),
+    ("summoned", "called"),
+    ("summoning", "calling"),
+    ("summoner", "caller"),
+    ("summoners", "callers"),
+    ("sphere", "well"),
+    ("spheres", "wells"),
+    ("guardian", "warden"),
+    ("guardians", "wardens"),
+    ("valefor", "brokkr"),
+    ("ifrit", "eitri"),
+    ("ixion", "dvalin"),
+    ("shiva", "andvari"),
+    ("bahamut", "alviss"),
+    ("yojimbo", "fjalar"),
+    ("anima", "galar"),
+    ("cindy", "regin"),
+    ("sandy", "nordri"),
+    ("mindy", "austri"),
+    ("magus", NO_REPLACEMENT),
 ];
 
 /// Case-sensitive: "Sin" is the villain, "sin" is English.
-const CASED: &[&str] = &["Sin"];
+const CASED: &[(&str, &str)] = &[("Sin", "Fenrir")];
+
+const PHRASES: &[(&str, &str)] = &[("the Sending", "Hel"), ("sending_keys", "hel_keys")];
+
+const NO_REPLACEMENT: &str = "(none; rephrase)";
+
+/// What replaces a term `terms_in` returned.
+pub fn replacement(term: &str) -> &'static str {
+    TERMS.iter().chain(CASED).chain(PHRASES).find(|(t, _)| *t == term).map_or(NO_REPLACEMENT, |(_, r)| r)
+}
+
+/// The terms of one content line: none when the line carries the marker.
+pub fn line_terms(line: &str) -> Vec<String> {
+    if line.contains(LINE_MARKER) {
+        return Vec::new();
+    }
+    terms_in(line)
+}
 
 /// A base-side name as the rename cutover now spells it, so a name carried across the
 /// cutover is the same entry, not a new one.
@@ -97,9 +141,9 @@ pub fn terms_in(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     for (_, w) in words(text) {
         let lower = w.to_ascii_lowercase();
-        if TERMS.contains(&lower.as_str()) {
+        if TERMS.iter().any(|(t, _)| *t == lower) {
             out.push(lower);
-        } else if CASED.contains(&w) {
+        } else if CASED.iter().any(|(t, _)| *t == w) {
             out.push(w.to_string());
         }
     }
@@ -130,10 +174,7 @@ impl FfxVocabulary {
             }
             let text = String::from_utf8_lossy(src);
             for (i, line) in text.lines().enumerate() {
-                if line.contains(LINE_MARKER) {
-                    continue;
-                }
-                for t in terms_in(line) {
+                for t in line_terms(line) {
                     hits.push((e.path.clone(), i + 1, t));
                 }
             }
@@ -257,6 +298,17 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
         assert!(text.contains("ffx-vocabulary: src/all.txt:1:aeons\n") && text.contains("count aeon 1\n"), "{text}");
         assert!(text.contains("ffx-vocabulary: src/all.txt:1:Sin\n") && text.contains("the Sending"), "{text}");
         assert!(!text.contains("spikes") && !text.contains("tsv"), "{text}");
+    }
+
+    #[test]
+    fn replacement_answers_every_term() {
+        for t in terms_in(ALL) {
+            assert_eq!(replacement(&t) == NO_REPLACEMENT, t == "magus", "{t}");
+        }
+        assert_eq!(replacement("aeon"), "dwarf");
+        assert_eq!(replacement("Sin"), "Fenrir");
+        assert_eq!(replacement("the Sending"), "Hel");
+        assert_eq!(replacement("magus"), "(none; rephrase)");
     }
 
     #[test]

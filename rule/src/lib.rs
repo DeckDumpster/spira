@@ -14,6 +14,34 @@ pub fn slugify(raw: &str) -> String {
     format!("law-{}", raw.strip_prefix("law-").unwrap_or(raw))
 }
 
+/// The refusal for a slug or statute text holding a term spira-lint's `ffx-vocabulary` would flag
+/// in the projected files, or `None` when it is clean.
+pub fn vocabulary_refusal(key: &str, text: &str) -> Option<String> {
+    use spira_lint::rules::ffx_vocabulary::{line_terms, replacement, terms_in};
+    let mut terms = terms_in(key);
+    for line in text.lines() {
+        terms.extend(line_terms(line));
+    }
+    terms.extend(line_terms(&code::first_sentence(text)));
+    let mut seen: Vec<String> = Vec::new();
+    for t in terms {
+        if !seen.contains(&t) {
+            seen.push(t);
+        }
+    }
+    if seen.is_empty() {
+        return None;
+    }
+    let mut out = String::new();
+    for t in &seen {
+        out.push_str(&format!("  \"{t}\" → \"{}\"\n", replacement(t)));
+    }
+    out.push_str(&format!(
+        "rule: refusing — retired vocabulary in {key}; nothing written. Use the current terms above. A statute that must quote a retired term puts ffx-ok in its first sentence (spira-lint's ffx-vocabulary marker; it reaches every projection)."
+    ));
+    Some(out)
+}
+
 /// `wc -w` — whitespace-separated token count, the same measure the bash used for the
 /// ~130-word statute-length refusal.
 pub fn word_count(text: &str) -> usize {
@@ -160,7 +188,7 @@ pub fn word_limit_refusal(words: usize) -> String {
 
 /// `rule.sh`'s own doc-comment usage block (`sed -n '3,10p' "$0" | sed 's/^# \{0,1\}//'`),
 /// pinned verbatim since this binary has no bash header comment of its own to read.
-pub const USAGE: &str = "rule.sh — enact, amend, or retire a statute in one command.\n\n  rule.sh enact <slug> \"<statute text>\" (--tool <cmd> | --mechanism <bead> | --tool none --reason <why>) --part <n> [--dry-run]\n                                           write it, then synthesise it into the wiki\n  rule.sh code [--check] [--texts <dir>]   regenerate (or check) the law/ tree from law/toc.toml\n  rule.sh audit [--file --for <persona> --repo <name> --max N]\n                                           check every statute's named tools exist in the release\n  rule.sh retire <slug> --reason <why> [--replaced-by <slug> | --merged-into <slug>]\n                                           retire it, keeping its number and leaving a pointer\n  rule.sh list                             what is in force\n  rule.sh show <slug> | <N.M> | <§N.M>       one statute's full text; an old number or a retired slug follows its pointers\n\n`<slug>` is written without the `law-` prefix; it is added for you.";
+pub const USAGE: &str = "rule.sh — enact, amend, or retire a statute in one command.\n\n  rule.sh enact <slug> \"<statute text>\" (--tool <cmd> | --mechanism <bead> | --tool none --reason <why>) --part <n> [--dry-run]\n                                           write it, then synthesise it into the wiki;\n                                           refused if slug or text holds a retired term (ffx-ok in the first sentence quotes one)\n  rule.sh code [--check] [--texts <dir>]   regenerate (or check) the law/ tree from law/toc.toml\n  rule.sh audit [--file --for <persona> --repo <name> --max N]\n                                           check every statute's named tools exist in the release\n  rule.sh retire <slug> --reason <why> [--replaced-by <slug> | --merged-into <slug>]\n                                           retire it, keeping its number and leaving a pointer\n  rule.sh list                             what is in force\n  rule.sh show <slug> | <N.M> | <§N.M>       one statute's full text; an old number or a retired slug follows its pointers\n\n`<slug>` is written without the `law-` prefix; it is added for you.";
 
 /// One `list` line: `  {key:<44} {words:>3}w  {first 64 chars of the first sentence}`.
 pub fn list_line(key: &str, text: &str) -> String {

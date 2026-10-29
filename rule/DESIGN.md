@@ -119,6 +119,15 @@ call this binary makes, so the two are never observably different.
 - **`bd` is called by literal name**, not `$SPIRA_BD`, because that is what `rule.sh` did;
   widening it is a separate, untested change and out of scope for a parity port.
 
+## Retired vocabulary is refused before anything is written
+
+`enact` (which is also the amend, and includes `--dry-run`) exits 1 when the slug or the text holds a
+term spira-lint's `ffx-vocabulary` would flag, printing `"term" → "replacement"` per term. The check
+uses that rule's own table (`spira_lint::rules::ffx_vocabulary`), so an accepted statute projects
+`law/` and `spira/statutes/` files that pass the lint. A statute that must quote a retired term
+carries `ffx-ok` in its first sentence: only that sentence reaches each Part's `index.md`, where the
+lint fires. `retire` writes no text and is not checked.
+
 ## Pointers: a change to the book leaves one, never a gap
 
 A statute's slug is its identity; its `§Part.Section` is presentation, derived from
