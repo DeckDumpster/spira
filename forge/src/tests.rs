@@ -1258,6 +1258,30 @@ fn batch_ci_status_reports_queued_since_from_jobs() {
     assert!(out.lines.iter().any(|l| l.starts_with("queued-since:")));
 }
 
+#[test]
+fn run_id_picks_the_gate_run_not_the_newest_run_of_another_workflow() {
+    let gh = FakeGh::default();
+    fn list(wf: Option<&str>) -> Vec<&str> {
+        let mut a = vec!["run", "list", "--branch", "b"];
+        if let Some(w) = wf {
+            a.extend(["--workflow", w]);
+        }
+        a.extend([
+            "--json",
+            "databaseId",
+            "--limit",
+            "1",
+            "-q",
+            ".[0].databaseId",
+        ]);
+        a
+    }
+    gh.on(&list(None), 0, "9\n");
+    gh.on(&list(Some("Gate")), 0, "3\n");
+    let out = run_id(&gh, repo(), "Gate", "b");
+    assert_eq!(out.lines, vec!["3".to_string()]);
+}
+
 // ── dispatch requires a ref ──────────────────────────────────────────────────────────────
 
 #[test]

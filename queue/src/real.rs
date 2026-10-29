@@ -1360,8 +1360,8 @@ impl Forge for RealForge {
             .arg(run)
             .stderr(Stdio::null()));
     }
-    fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str) {
-        let _ = ok(Command::new(forge).arg("workflow-rerun").arg(repo).arg(run));
+    fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str) -> bool {
+        ok(Command::new(forge).arg("workflow-rerun").arg(repo).arg(run))
     }
     fn ami_runs(&self, forge: &Path, repo: &Path) -> Option<Vec<String>> {
         let text = stdout_of(Command::new(forge).arg("ami-runs").arg(repo))?;
