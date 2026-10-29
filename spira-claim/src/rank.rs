@@ -441,7 +441,9 @@ pub fn stack_plan(
         let ok = match lc.get(&bid) {
             None => rec.is_some_and(rowless_blocker_done),
             Some(row) => {
+                let is_parent = cand.parent.as_deref() == Some(bid.as_str());
                 let stackable = stack_max_depth > 0
+                    && !is_parent
                     && rec.is_some_and(|r| is_work(r) && r.label_value("repo:") == own_repo && own_repo.is_some());
                 match row.state {
                     BeadState::Landed | BeadState::Done => true,
@@ -995,11 +997,16 @@ mod tests {
     }
 
     #[test]
-    fn a_child_of_a_certified_parent_in_its_repo_stacks_on_it() {
+    fn a_child_stacks_on_a_certified_blocker_but_waits_for_a_certified_parent() {
         let bd: HashMap<_, _> = [bdrec("P", "open", "task", "spira")].into();
         let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("P", BeadState::Certified, &[], 0)].into();
-        assert_eq!(claimable(&row("B", 1, Some("P"), "t"), &lc, &bd, 4), Verdict::Claimable { depth: 1 });
-        assert_eq!(claimable(&row("B", 1, Some("P"), "t"), &lc, &bd, 0), Verdict::Blocked("P".into()));
+        let declared = blocked_on("B", "P");
+        assert_eq!(claimable(&declared, &lc, &bd, 4), Verdict::Claimable { depth: 1 });
+        assert_eq!(claimable(&declared, &lc, &bd, 0), Verdict::Blocked("P".into()));
+        for st in [BeadState::Certified, BeadState::InDelivery] {
+            let lc: HashMap<_, _> = [lcrow("B", BeadState::Ready, &[], 0), lcrow("P", st, &[], 0)].into();
+            assert_eq!(claimable(&row("B", 1, Some("P"), "t"), &lc, &bd, 4), Verdict::Blocked("P".into()), "{st:?}");
+        }
     }
 
     #[test]
