@@ -155,6 +155,19 @@ pub fn harness_fault_detail(out: &str) -> Option<String> {
     last
 }
 
+/// What a harness fault's output says about the cause, on one line for a yield record: the
+/// runner's own words (what it refused and why), without the passing steps, the fences' summary
+/// lines or the gate's restatement of the command.
+pub fn fault_detail(msg: &str) -> String {
+    const NOISE: &[&str] = &["gate: command:", "gate: phase ", "gate: VERDICT", "gate-step ok", "fence: "];
+    let kept: Vec<&str> = msg
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !NOISE.iter().any(|n| l.starts_with(n)))
+        .collect();
+    tail_bytes(&kept.join(" | "), 600)
+}
+
 /// The test runner's `VERDICT FAULT … reason=<word>` (its last line), when the suites step
 /// ended in a harness fault. testenv prints exactly one VERDICT line per run.
 pub fn testenv_fault_reason(out: &str) -> Option<String> {
@@ -432,6 +445,15 @@ mod tests {
         assert_eq!(bash_paths(cmd), ["spira/a.sh", "spira/d.sh", "spira/e.sh"]);
         assert!(bash_paths("").is_empty());
         assert!(bash_paths("cargo test").is_empty());
+    }
+
+    #[test]
+    fn fault_detail_keeps_the_runners_refusal_and_drops_the_passing_steps() {
+        let msg = "gate: g's own gate reported a harness fault (exit 75)\ngate: command: x && y\nfence: lint checked 3 files\ngate-step ok rc=0 :: lint\nbatch: KEY is not declared; refusing\nVERDICT FAULT rc=2 ran=0 reason=settings-refused\ngate: phase 'reentry' failed (exit 75): _b=0\ngate: VERDICT=NO_VERDICT reason=harness-fault";
+        let d = fault_detail(msg);
+        assert!(d.contains("KEY is not declared") && d.contains("reason=settings-refused"), "{d}");
+        assert!(!d.contains('\n') && !d.contains("fence:") && !d.contains("_b=0") && !d.contains("gate-step"), "{d}");
+        assert_eq!(fault_detail("gate: command: x"), "");
     }
 
     #[test]

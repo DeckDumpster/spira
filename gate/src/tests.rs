@@ -4213,6 +4213,34 @@ fn fences_mode_a_re_entering_bead_runs_exactly_its_named_suites_and_a_fresh_one_
 }
 
 #[test]
+fn fences_mode_a_branch_touching_one_suite_runs_that_suite_through_the_trees_runner() {
+    let f = fences_fake(&["spira/test-c.sh"]);
+    *f.diff.borrow_mut() = Ok("spira/test-c.sh".into());
+    f.files.borrow_mut().insert(PathBuf::from(format!("{GATE_TREE}/spira/test-c.sh")), "#!".into());
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "fences ok".into()));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let cmds = f.cmds.borrow().clone();
+    assert_eq!(cmds.len(), 3, "tools, fences, re-entry: {cmds:?}");
+    assert!(cmds[0].contains("-p testenv"), "{}", cmds[0]);
+    assert!(cmds[2].contains("--suites test-c.sh \"$SPIRA_GATE_BRANCH\""), "{}", cmds[2]);
+    assert!(f.env_of(2, "SPIRA_TESTENV_BIN").ends_with("/testenv"), "the tree's own runner");
+    assert!(!f.env_of(2, "SPIRA_GATE_REPO").is_empty());
+    assert!(cmds[2].contains("release config-stage ."), "the runner reads the tree's config delta: {}", cmds[2]);
+}
+
+#[test]
+fn a_harness_fault_record_carries_the_runners_words() {
+    let f = fences_fake(&["spira/test-c.sh"]);
+    *f.diff.borrow_mut() = Ok("spira/test-c.sh".into());
+    f.files.borrow_mut().insert(PathBuf::from(format!("{GATE_TREE}/spira/test-c.sh")), "#!".into());
+    f.reentry_runs.borrow_mut().insert(MERGE_SHA.into(), (75, "batch: SPIRA_X is not declared; refusing\nVERDICT FAULT rc=2 ran=0 reason=settings-refused".into()));
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    let y = f.yields.borrow().iter().find(|y| y.get(1).map(String::as_str) == Some("record")).cloned().expect("a record");
+    let detail = y.last().unwrap();
+    assert!(detail.contains("SPIRA_X is not declared") && !detail.contains('\n'), "{y:?}");
+}
+
+#[test]
 fn fences_mode_is_its_own_verdict_key_and_gate_all_runs_the_string_whole() {
     let key = |f: &Fake| f.written.borrow().iter().find(|(p, _)| p.starts_with("/run/verdicts") && !p.to_string_lossy().contains("/trees/")).map(|(p, _)| p.clone());
     let mut keys = Vec::new();
