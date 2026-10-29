@@ -119,3 +119,96 @@ fn a_hung_loop_stops_kicking_the_watchdog() {
     assert_eq!(&buf[..n1], b"WATCHDOG=1");
     assert!(rx.recv(&mut buf).is_err(), "no kick comes from a loop stuck in a handler");
 }
+
+/// A journal that refuses, as the store does, any append whose id starts with `bad`.
+struct Refusing(Arc<MemJournal>);
+
+impl Journal for Refusing {
+    fn append(&self, ev: &Event) -> runtime::Result<Offset> {
+        if ev.id.0.starts_with("sched/bad") {
+            return Err(RuntimeError::refused(format!("journal: append refused: event_id is {} chars (max 255); id={}", ev.id.0.len(), ev.id.0)));
+        }
+        self.0.append(ev)
+    }
+    fn read_from(&self, from: Offset, limit: usize) -> runtime::Result<Vec<(Offset, Event)>> {
+        self.0.read_from(from, limit)
+    }
+    fn applied(&self, handler: &str, id: &EventId) -> runtime::Result<bool> {
+        self.0.applied(handler, id)
+    }
+    fn mark_applied(&self, handler: &str, id: &EventId) -> runtime::Result<()> {
+        self.0.mark_applied(handler, id)
+    }
+    fn cursor(&self) -> runtime::Result<Offset> {
+        self.0.cursor()
+    }
+    fn set_cursor(&self, next: Offset) -> runtime::Result<()> {
+        self.0.set_cursor(next)
+    }
+    fn schedule(&self, row: &ScheduleRow) -> runtime::Result<()> {
+        self.0.schedule(row)
+    }
+    fn pending_schedules(&self) -> runtime::Result<Vec<ScheduleRow>> {
+        self.0.pending_schedules()
+    }
+    fn mark_fired(&self, row_id: &str) -> runtime::Result<()> {
+        self.0.mark_fired(row_id)
+    }
+    fn poison(&self, p: &Poison) -> runtime::Result<()> {
+        self.0.poison(p)
+    }
+    fn poisoned(&self, stream: &StreamKey) -> runtime::Result<Option<Poison>> {
+        self.0.poisoned(stream)
+    }
+}
+
+fn due_row(id: &str) -> ScheduleRow {
+    ScheduleRow {
+        id: id.into(),
+        at: 0,
+        stream: StreamKey(runtime::heartbeat::STREAM.into()),
+        kind: EventKind::new(runtime::heartbeat::HEARTBEAT, "0"),
+        cause: None,
+        correlation: CorrelationId("heartbeat/boot".into()),
+    }
+}
+
+async fn serve_over(d: &testkit::TempDir, journal: Arc<dyn Journal>, sink: Arc<MemSink>, armed: impl FnOnce()) -> tokio::task::JoinHandle<runtime::Result<()>> {
+    let s = settings("", d.path());
+    let mut engine = open_engine(&s, journal, Arc::new(WallClock), Arc::new(NullMarker), sink, Arc::new(|| {}), vec![]).unwrap();
+    let (id, stream, kind) = Heartbeat::boot();
+    engine.submit(id, stream, kind).unwrap();
+    armed();
+    let (tx, rx) = mpsc::channel(4);
+    std::mem::forget(tx);
+    tokio::spawn(serve_with(engine, Arc::new(WallClock), Arc::new(Effects::default()), 2, rx, ServeOpts::default()))
+}
+
+#[tokio::test]
+async fn a_due_row_the_journal_refuses_is_quarantined_and_the_service_keeps_serving() {
+    let d = testkit::TempDir::new("svc-refused");
+    let mem = MemJournal::new();
+    let id = format!("bad{}", "x".repeat(252));
+    mem.schedule(&due_row(&id)).unwrap();
+    let journal: Arc<dyn Journal> = Arc::new(Refusing(mem.clone()));
+    let sink = MemSink::new();
+    let host = serve_over(&d, journal, sink.clone(), || {}).await;
+    tokio::time::sleep(Duration::from_millis(400)).await; // clock-safe: lets the first loop turns run before asserting the service is still up
+    assert!(!host.is_finished(), "a refusal must not end the service: {:?}", host.is_finished());
+    let p = mem.poisoned(&StreamKey("runtime.heartbeat".into())).unwrap().expect("the stream is quarantined");
+    assert!(p.event.0.starts_with("sched/bad") && p.message.contains("refused"), "{p:?}");
+    assert!(mem.pending_schedules().unwrap().is_empty(), "the row is marked fired");
+    assert!(sink.records().iter().any(|r| r.iter().any(|(k, v)| k == "unit" && *v == Value::from("quarantine"))), "a quarantine wide event is emitted");
+    host.abort();
+}
+
+#[tokio::test]
+async fn a_fault_from_the_journal_still_ends_the_service() {
+    let d = testkit::TempDir::new("svc-fault");
+    let mem = MemJournal::new();
+    mem.schedule(&due_row("r")).unwrap();
+    let faulty = FaultyJournal::new(mem);
+    let host = serve_over(&d, faulty.clone(), MemSink::new(), || faulty.fail_next("append")).await;
+    let r = tokio::time::timeout(Duration::from_secs(5), host).await.expect("serve returns").unwrap(); // clock-safe: cap on the wait for serve to fail
+    assert!(r.is_err(), "a cannot-tell fault is fatal");
+}

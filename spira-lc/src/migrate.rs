@@ -310,6 +310,45 @@ fn last_select_alias(sql: &str) -> Option<String> {
     None
 }
 
+fn split_top_commas(list: &str) -> Vec<&str> {
+    let (mut parts, mut depth, mut quote, mut start) = (vec![], 0usize, None::<char>, 0);
+    for (i, c) in list.char_indices() {
+        match (quote, c) {
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '\'' | '"' | '`') => quote = Some(c),
+            (None, '(') => depth += 1,
+            (None, ')') => depth = depth.saturating_sub(1),
+            (None, ',') if depth == 0 => {
+                parts.push(list[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(list[start..].trim());
+    parts
+}
+
+/// `INSERT INTO t (c, ..) SELECT e, .. FROM s WHERE w [ON DUPLICATE KEY ..]` is applied when no
+/// row of `s` matching `w` lacks its `t` row. Source columns in `e` must be qualified `s.col`.
+fn insert_select_probe(sql: &str) -> Option<Probe> {
+    let rest = sql[keyword_at(sql, "INTO")? + 4..].trim_start();
+    let (open, close) = (rest.find('(')?, rest.find(')')?);
+    let table = plain_ident(rest[..open].trim())?;
+    let cols: Vec<String> = split_top_commas(&rest[open + 1..close]).into_iter().map(plain_ident).collect::<Option<_>>()?;
+    let after = &rest[close + 1..];
+    let (select, from, wh) = (keyword_at(after, "SELECT")?, keyword_at(after, "FROM")?, keyword_at(after, "WHERE")?);
+    let end = keyword_at(after, "ON").filter(|on| *on > wh).unwrap_or(after.len());
+    let exprs = split_top_commas(&after[select + 6..from]);
+    let source = plain_ident(after[from + 4..wh].trim())?;
+    if exprs.len() != cols.len() || select > from || from > wh {
+        return None;
+    }
+    let same: Vec<String> = cols.iter().zip(&exprs).map(|(c, e)| format!("{table}.{c} = {e}")).collect();
+    Some(Probe::NoRowMatches(format!("SELECT 1 FROM {source} WHERE ({}) AND NOT EXISTS (SELECT 1 FROM {table} WHERE {}) LIMIT 1", after[wh + 5..end].trim(), same.join(" AND "))))
+}
+
 fn plain_ident(tok: &str) -> Option<String> {
     let t = ident(tok);
     (!t.is_empty() && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')).then_some(t)
@@ -368,6 +407,7 @@ pub fn probe_for(st: &Stmt) -> Probe {
         ("UPDATE", _) if up(2) == "SET" => plain_ident(toks[1]).map_or(Probe::Unprobeable, |t| guarded(&t)),
         ("UPDATE", _) if up(2) == "JOIN" => plain_ident(toks[1]).map_or(Probe::Unprobeable, |t| joined(&t)),
         ("DELETE", "FROM") if toks.len() > 3 && up(3) == "WHERE" => plain_ident(toks[2]).map_or(Probe::Unprobeable, |t| guarded(&t)),
+        ("INSERT", "INTO") => insert_select_probe(sql).unwrap_or(Probe::Unprobeable),
         ("CREATE", "TABLE") => {
             let at = if up(2) == "IF" && up(3) == "NOT" && up(4) == "EXISTS" { 5 } else { 2 };
             toks.get(at).map(|t| t.split('(').next().unwrap_or("")).and_then(plain_ident).map_or(Probe::Unprobeable, Probe::Table)
@@ -841,6 +881,16 @@ mod tests {
     }
 
     #[test]
+    fn an_insert_select_is_probed_by_the_source_rows_the_target_lacks() {
+        let sql = "INSERT INTO runtime_applied (handler, event_id)\nSELECT 'heartbeat', runtime_event.event_id FROM runtime_event WHERE CHAR_LENGTH(runtime_event.event_id) = 255\nON DUPLICATE KEY UPDATE handler = handler";
+        assert_eq!(
+            probe_for(&Stmt::Plain(sql.into())),
+            Probe::NoRowMatches("SELECT 1 FROM runtime_event WHERE (CHAR_LENGTH(runtime_event.event_id) = 255) AND NOT EXISTS (SELECT 1 FROM runtime_applied WHERE runtime_applied.handler = 'heartbeat' AND runtime_applied.event_id = runtime_event.event_id) LIMIT 1".into())
+        );
+        assert_eq!(probe_for(&Stmt::Plain("INSERT INTO t (a) VALUES (1)".into())), Probe::Unprobeable, "a plain INSERT stays unprobeable");
+    }
+
+    #[test]
     fn comments_and_quoted_semicolons_do_not_split() {
         let s = split_statements("-- a; comment\nUPDATE t SET a = 'x;y' -- trailing; note\n WHERE b = 1;\n\n-- only a comment\n");
         assert_eq!(s.len(), 1, "{s:?}");
@@ -933,7 +983,7 @@ mod tests {
             if sql.starts_with("SELECT 1 FROM bead WHERE") || sql.starts_with("SELECT 1 FROM bead JOIN") {
                 return Ok(if st.stale_terminal_rows { vec![serde_json::json!({ "1": "1" })] } else { vec![] });
             }
-            if sql.starts_with("SELECT 1 FROM event WHERE") {
+            if sql.starts_with("SELECT 1 FROM event WHERE") || sql.starts_with("SELECT 1 FROM runtime_event WHERE") {
                 return Ok(vec![]);
             }
             Err(format!("fake: unexpected read {sql}"))

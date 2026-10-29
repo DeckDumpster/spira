@@ -185,3 +185,36 @@ fn a_failed_journal_call_names_the_verb_and_the_statement() {
     assert!(body.contains("statement: SELECT `next` FROM runtime_cursor"), "{body}");
     assert!(!body.contains("CannotTell(") && !body.contains(PASSWORD), "{body}");
 }
+
+#[test]
+fn an_over_length_event_or_row_is_refused_naming_it_and_stores_nothing() {
+    let Some(f) = fixture() else { return };
+    let long = format!("heartbeat/boot{}", "/heartbeat/0".repeat(21))[..266].to_string();
+    let ev = serde_json::json!({"id": long, "stream": "runtime.heartbeat", "kind": {"tag": "heartbeat", "body": "0"}, "at": 1, "cause": null, "correlation": "heartbeat/boot"}).to_string();
+    let (code, body) = f.journal(&["append", &ev]);
+    assert_eq!(code, 3, "{body}");
+    assert!(body.contains(&long) && body.contains("runtime.heartbeat") && body.contains("kind=heartbeat") && body.contains("event_id is 266 chars (max 255)"), "{body}");
+
+    let row_id = &long[..260];
+    let row = serde_json::json!({"id": row_id, "at": 1, "stream": "runtime.heartbeat", "kind": {"tag": "heartbeat", "body": "0"}, "cause": null, "correlation": "heartbeat/boot"}).to_string();
+    let (code, body) = f.journal(&["schedule", &row]);
+    assert_eq!(code, 3, "{body}");
+    assert!(body.contains(row_id) && body.contains("row_id is 260 chars (max 255)"), "{body}");
+
+    assert_eq!(f.ok(&["read", "0", "10"]), "[]", "no event row was stored");
+    assert_eq!(f.ok(&["due"]), "[]", "no schedule row was stored");
+}
+
+#[test]
+fn the_truncation_migration_marks_only_a_255_char_event_applied_and_is_idempotent() {
+    let Some(f) = fixture() else { return };
+    let cut = "x".repeat(255);
+    let seed = format!("USE spira_lifecycle;\nINSERT INTO runtime_event (event_id, stream, kind_tag, kind_body, at, correlation) VALUES ('{cut}', 's', 't', '', 1, 'c'), ('normal', 's', 't', '', 1, 'c');\n");
+    assert_eq!(f.sql_as_root(&seed).0, 0);
+    let migration = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../lifecycle/migrations/0032-runtime-truncated-ids.sql")).unwrap();
+    let run = format!("USE spira_lifecycle;\n{migration}");
+    assert_eq!(f.sql_as_root(&run).0, 0);
+    assert_eq!(f.sql_as_root(&run).0, 0, "a second application is a no-op");
+    assert_eq!(f.ok(&["applied", "heartbeat", &cut]), "1");
+    assert_eq!(f.ok(&["applied", "heartbeat", "normal"]), "0");
+}

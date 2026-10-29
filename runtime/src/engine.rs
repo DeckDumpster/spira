@@ -259,7 +259,7 @@ impl Engine {
 
     fn apply(&mut self, cmds: Vec<Command>, ev: &Event, handler: &str) -> Result<()> {
         for (i, cmd) in cmds.into_iter().enumerate() {
-            let id = format!("{}/{handler}/{i}", ev.id.0);
+            let id = derive_id(format!("{}/{handler}/{i}", ev.id.0));
             match cmd {
                 Command::Emit(kind) => {
                     self.append_derived(id, &ev.stream, kind, ev, ev.at)?;
@@ -320,6 +320,13 @@ impl Engine {
                     wide.set("commands.effect", count(|c| matches!(c, Command::Effect(_))));
                     wide.set("commands.schedule", count(|c| matches!(c, Command::Schedule { .. })));
                     let done = self.apply(cmds, ev, &name).and_then(|()| self.journal.mark_applied(&name, &ev.id));
+                    if matches!(&done, Err(e) if e.is_refused()) {
+                        let message = done.unwrap_err().0;
+                        wide.set("outcome", "refused");
+                        self.finish(&wide);
+                        self.quarantine(ev, &name, &message)?;
+                        return Ok(());
+                    }
                     wide.set("outcome", if done.is_ok() { "ok" } else { "error" });
                     self.finish(&wide);
                     done?;
@@ -374,14 +381,21 @@ impl Engine {
         let mut n = 0;
         for row in self.scheduler.pop_due(self.clock.as_ref()) {
             let ev = Event {
-                id: EventId(format!("sched/{}", row.id)),
+                id: EventId(derive_id(format!("sched/{}", row.id))),
                 stream: row.stream.clone(),
                 kind: row.kind.clone(),
                 at: row.at,
                 cause: row.cause.clone(),
                 correlation: row.correlation.clone(),
             };
-            self.journal.append(&ev)?;
+            match self.journal.append(&ev) {
+                Ok(_) => {}
+                Err(e) if e.is_refused() => {
+                    self.quarantine(&ev, "scheduler", &e.0)?;
+                    eprintln!("runtime: schedule row {} quarantined, the journal refused its event: {}", row.id, e.0);
+                }
+                Err(e) => return Err(e),
+            }
             self.journal.mark_fired(&row.id)?;
             n += 1;
         }
@@ -428,7 +442,7 @@ impl Executor for Engine {
     fn complete(&mut self, key: &str, outcome: Outcome) -> Result<bool> {
         let Some(p) = self.pending.get(key).cloned() else { return Ok(false) };
         let ev = Event {
-            id: EventId(format!("{key}/outcome")),
+            id: EventId(derive_id(format!("{key}/outcome"))),
             stream: p.stream.clone(),
             kind: EventKind::new(outcome.tag(), &outcome.detail()),
             at: self.clock.now_ms(),

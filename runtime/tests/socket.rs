@@ -118,3 +118,24 @@ fn no_dolt_launcher_is_reachable_from_the_library() {
         assert!(!spawns_dolt(&text), "{} launches dolt", f.path().display());
     }
 }
+
+#[test]
+fn exit_3_is_a_refusal_and_any_other_failure_is_a_fault() {
+    let dir = TempDir::new("socket-class");
+    let path = dir.join("class.sock");
+    let listener = UnixListener::bind(&path).unwrap();
+    std::thread::spawn(move || {
+        for (code, conn) in [3, 2].into_iter().zip(listener.incoming().flatten()) {
+            let mut line = String::new();
+            let _ = BufReader::new(&conn).read_line(&mut line);
+            let body = format!("exit {code}");
+            let mut conn: UnixStream = conn;
+            let _ = writeln!(conn, "{}", serde_json::json!({"exit_code": code, "len": body.len()}));
+            let _ = conn.write_all(body.as_bytes());
+        }
+    });
+    let refused = runtime::socket::lc_call(&path, &["journal", "x"]).unwrap_err();
+    assert!(refused.is_refused() && refused.0 == "exit 3", "{refused:?}");
+    let fault = runtime::socket::lc_call(&path, &["journal", "x"]).unwrap_err();
+    assert!(!fault.is_refused() && fault.0 == "exit 2", "{fault:?}");
+}
