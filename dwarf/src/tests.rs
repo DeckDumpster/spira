@@ -55,6 +55,9 @@ struct World {
     facts: String,
     /// `spira-claim rejections`' JSON answer; none answers a bead never rejected.
     rejections: Option<String>,
+    /// The injected clock's offset; `spira-claim rejections` (a pre-launch call) advances it by `clock_step`.
+    clock_skew: Arc<std::sync::atomic::AtomicI64>,
+    clock_step: i64,
     /// The disposition (status, note) the row carries per bead, as `spira-lc show` answers it.
     disposition: BTreeMap<String, (String, String)>,
     /// `gate-run.sh --status`' answer (exit code, text); `None` answers "no gate known" (rc 0).
@@ -237,7 +240,11 @@ impl Exec for FakeExec {
                 "epics" => Out::ok(r#"{"prio":{},"started":[]}"#),
                 "select" if args.contains(&"--top-tier".to_string()) => Out::ok(ids.iter().map(|i| format!("{i}||fixture|2|1|2\n")).collect::<String>()),
                 "select" => Out::ok(ids.iter().map(|i| format!("2\t1\t2\t1\tt\t{i}\t\n")).collect::<String>()),
-                "rejections" => Out::ok(self.0.lock().unwrap().rejections.clone().unwrap_or_else(|| r#"{"rejections":0,"history":[]}"#.into())),
+                "rejections" => Out::ok({
+                    let w = self.0.lock().unwrap();
+                    w.clock_skew.fetch_add(w.clock_step, std::sync::atomic::Ordering::SeqCst);
+                    w.rejections.clone().unwrap_or_else(|| r#"{"rejections":0,"history":[]}"#.into())
+                }),
                 "stack" => Out::ok(self.0.lock().unwrap().stack_answer.clone().unwrap_or_else(|| "{}".into())),
                 _ => Out::ok("{}"),
             };
@@ -485,7 +492,8 @@ fn go_as(rune_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], mode: Mo
     let exec = FakeExec(Arc::clone(&f.w));
     let launcher = FakeLauncher { w: Arc::clone(&f.w), seen: Mutex::new(vec![]), act };
     let sink = MemSink::default();
-    let clock = crate::util::now_epoch;
+    let skew = Arc::clone(&f.w.lock().unwrap().clock_skew);
+    let clock = || crate::util::now_epoch() + skew.load(std::sync::atomic::Ordering::SeqCst);
     let slept = std::sync::atomic::AtomicUsize::new(0);
     let sleep = |_: std::time::Duration| {
         slept.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -1831,6 +1839,37 @@ fn rapid_recur_does_not_park_a_bead_with_real_prior_runs() {
     assert_eq!(o.code, 1, "{}", o.log);
     let w = o.w.lock().unwrap();
     assert!(!w.labels.get("sp-rr2").is_some_and(|l| l.contains("needs-ryan")), "{:?}", w.labels.get("sp-rr2")); // literal-ok: fixture/fallback
+}
+
+fn seed_unknown_walls(f: &Fx, id: &str) {
+    std::fs::create_dir_all(&f.run).unwrap();
+    let line = |n: u8| format!("2026-09-27T00:00:0{n}Z done builder {id} rc=143 status=lapsed wall_s=?\n");
+    std::fs::write(f.run.join("dwarf-ledger.log"), format!("{}{}", line(0), line(1))).unwrap();
+}
+
+#[test]
+fn a_run_that_dies_before_launch_after_ten_minutes_is_not_a_sub_10s_call() {
+    let f = fx("rapidrecur-lapsed");
+    seed(&f, "sp-lapse");
+    seed_unknown_walls(&f, "sp-lapse");
+    let spec = rejected(&f, 5);
+    f.w.lock().unwrap().clock_step = 600;
+    let o = go(&f, "spira,plan", &[("SPIRA_TOML", spec.as_str())], Mode::Claim, BTreeMap::new(), commits_and_closes());
+    assert!(o.seen.is_empty(), "no session launched: {}", o.log);
+    assert!(ledger_lines(&o).iter().any(|l| l.contains("status=escalation-hold") && l.contains("wall_s=600")), "{:?}", ledger_lines(&o));
+    assert!(!o.log.contains("RAPID-RECUR"), "{}", o.log);
+}
+
+#[test]
+fn a_run_that_dies_seconds_after_claiming_still_parks() {
+    let f = fx("rapidrecur-quick");
+    seed(&f, "sp-quick");
+    seed_unknown_walls(&f, "sp-quick");
+    let spec = rejected(&f, 5);
+    f.w.lock().unwrap().clock_step = 2;
+    let o = go(&f, "spira,plan", &[("SPIRA_TOML", spec.as_str())], Mode::Claim, BTreeMap::new(), commits_and_closes());
+    assert!(ledger_lines(&o).iter().any(|l| l.contains("status=escalation-hold") && l.contains("wall_s=2")), "{:?}", ledger_lines(&o));
+    assert!(o.log.contains("RAPID-RECUR: 3"), "{}", o.log);
 }
 
 // A refusal because another process holds the worktree is a wait, not a setup loop.
