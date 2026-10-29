@@ -61,7 +61,10 @@ fn main() {
         std::process::exit(spira_config::process::check_config_verb("spira-lc", &[]));
     }
     if args.first().map(|s| s.as_str()) == Some("serve") {
-        spira_config::process::check_config_or_exit("spira-lc", &[]);
+        if let Err(e) = spira_config::process::check_config(&[]) {
+            eprintln!("spira-lc: {e}");
+            std::process::exit(1);
+        }
         std::process::exit(serve::run(&args[1..]));
     }
 

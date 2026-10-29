@@ -8,7 +8,10 @@ fn main() {
         std::process::exit(spira_config::process::check_config_verb("spira-submission", &[]));
     }
     if cmd.is_empty() || cmd == "serve" {
-        spira_config::process::check_config_or_exit("spira-submission", &[]);
+        if let Err(e) = spira_config::process::check_config(&[]) {
+            eprintln!("spira-submission: {e}");
+            std::process::exit(1);
+        }
     }
     if cmd == "provision" || cmd == "status" {
         let sink = metrics();

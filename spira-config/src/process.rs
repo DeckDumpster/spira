@@ -59,14 +59,6 @@ pub fn check_config(keys: &[&str]) -> Result<String, String> {
     Ok(format!("{} registered keys, {} checked", reg.keys.len(), keys.len()))
 }
 
-/// [`check_config`] as a binary's first act: on `Err`, the message on stderr under `who`, exit 1.
-pub fn check_config_or_exit(who: &str, keys: &[&str]) -> String {
-    check_config(keys).unwrap_or_else(|e| {
-        eprintln!("{who}: {e}");
-        std::process::exit(1);
-    })
-}
-
 /// The `check-config` verb of a long-running binary: prints `ok <summary>` and returns 0, or
 /// names the refusal on stderr under `who` and returns 1.
 pub fn check_config_verb(who: &str, keys: &[&str]) -> i32 {

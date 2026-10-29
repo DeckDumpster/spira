@@ -65,7 +65,10 @@ fn run(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         Some("check-config") => return spira_config::process::check_config_verb("cockpit-collect", &[]),
         Some("--supervised-run") => {
-            spira_config::process::check_config_or_exit("cockpit-collect", &[]);
+            if let Err(e) = spira_config::process::check_config(&[]) {
+                eprintln!("cockpit-collect: {e}");
+                return 1;
+            }
         }
         _ => {}
     }

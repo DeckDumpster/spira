@@ -122,7 +122,10 @@ fn main() {
     let r = match args.first().map(String::as_str) {
         Some("check-config") => std::process::exit(spira_config::process::check_config_verb("unit-run", &[])),
         Some("watch") => {
-            spira_config::process::check_config_or_exit("unit-run", &[]);
+            if let Err(e) = spira_config::process::check_config(&[]) {
+                eprintln!("unit-run: {e}");
+                std::process::exit(1);
+            }
             watch_cmd(args.iter().position(|a| a == "--family").and_then(|i| args.get(i + 1)).map_or(unit_run::FAMILY, String::as_str))
         }
         Some("ensure-accounting") => ensure_accounting(args.iter().position(|a| a == "--dir").and_then(|i| args.get(i + 1)).cloned()),

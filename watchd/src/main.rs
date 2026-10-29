@@ -71,7 +71,10 @@ fn main() {
                 eprintln!("usage: watchd exec <name>");
                 std::process::exit(2);
             };
-            spira_config::process::check_config_or_exit("watchd", &[]);
+            if let Err(e) = spira_config::process::check_config(&[]) {
+                eprintln!("watchd: {e}");
+                std::process::exit(1);
+            }
             let ctx = load_context();
             let rows = need_rows(&ctx);
             commands::cmd_exec(&rows, name, &ctx.run)

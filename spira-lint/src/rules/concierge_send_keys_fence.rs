@@ -53,6 +53,7 @@ fn in_scope(path: &str) -> bool {
     path != OWN_SOURCE
         && !base.starts_with("test-")
         && !path.contains("/tests/")
+        && !path.contains("/testlib/")
         && [".sh", ".rs", ".service", ".toml", ".timer"].iter().any(|x| base.ends_with(x))
 }
 

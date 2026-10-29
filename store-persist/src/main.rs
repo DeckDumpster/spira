@@ -97,7 +97,10 @@ fn run(argv: &[String], sink: &spira_otel::metrics::MetricsSink) -> u8 {
         return spira_config::process::check_config_verb("store-persist", &[]) as u8;
     }
     if argv.first().map(String::as_str) == Some("run") {
-        spira_config::process::check_config_or_exit("store-persist", &[]);
+        if let Err(e) = spira_config::process::check_config(&[]) {
+            eprintln!("store-persist: {e}");
+            return 1;
+        }
     }
     let cfg = match config() {
         Ok(c) => c,

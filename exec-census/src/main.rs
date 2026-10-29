@@ -7,6 +7,9 @@ use std::time::{Duration, Instant, SystemTime};
 const USAGE: &str = "usage: exec-census [--poll-ms N] [--window-s N] | check-config";
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("check-config") {
+        std::process::exit(spira_config::process::check_config_verb("exec-census", &[]));
+    }
     if let Err(e) = run() {
         eprintln!("{e}");
         std::process::exit(2);
@@ -14,9 +17,6 @@ fn main() {
 }
 
 fn run() -> Result<(), String> {
-    if std::env::args().nth(1).as_deref() == Some("check-config") {
-        std::process::exit(spira_config::process::check_config_verb("exec-census", &[]));
-    }
     spira_config::process::check_config(&[])?;
     let (mut poll_ms, mut window_s) = (50u64, 60u64);
     let mut args = std::env::args().skip(1);
