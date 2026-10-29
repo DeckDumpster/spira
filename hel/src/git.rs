@@ -49,7 +49,7 @@ impl Git<'_> {
     }
     /// merge-tree --write-tree exits 0: the merge is clean (no conflict).
     pub fn merges_clean(&self, base: &str, br: &str) -> bool {
-        self.ok(&["merge-tree", "--write-tree", base, br])
+        self.ok(&["-c", &format!("attr.tree={base}"), "merge-tree", "--write-tree", base, br])
     }
 
     /// <base> already holds every change <br> makes: an ancestor, or a merge whose tree is the
@@ -62,7 +62,7 @@ impl Git<'_> {
         if ahead == 0 {
             return false;
         }
-        let Some(merged) = self.out(&["merge-tree", "--write-tree", base, br]) else { return false };
+        let Some(merged) = self.out(&["-c", &format!("attr.tree={base}"), "merge-tree", "--write-tree", base, br]) else { return false };
         let merged = merged.lines().next().unwrap_or("").to_string();
         !merged.is_empty() && self.rev_parse(&format!("{base}^{{tree}}")).is_some_and(|t| t == merged)
     }
@@ -319,4 +319,40 @@ fn git_process_in(repo: &Path) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn union_repo(tag: &str) -> testkit::TempDir {
+        let d = testkit::TempDir::new(tag);
+        let p = d.path();
+        let g = |args: &[&str]| {
+            let o = std::process::Command::new("git").arg("-C").arg(p).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
+            assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        };
+        let commit = |file: &str, body: &str| {
+            std::fs::write(p.join(file), body).unwrap();
+            g(&["add", "-A"]);
+            g(&["commit", "-q", "-m", "c"]);
+        };
+        g(&["init", "-q", "-b", "stale"]);
+        commit("keep", "x\n");
+        g(&["checkout", "-q", "-b", "main"]);
+        commit(".gitattributes", "f merge=union\n");
+        commit("f", "base\n");
+        g(&["checkout", "-q", "-b", "b", "main"]);
+        commit("f", "base\nfrom b\n");
+        g(&["checkout", "-q", "main"]);
+        commit("f", "base\nfrom a\n");
+        g(&["checkout", "-q", "stale"]);
+        d
+    }
+
+    #[test]
+    fn merges_clean_honours_the_base_refs_union_attributes_not_the_checkouts() {
+        let d = union_repo("hel-union");
+        assert!(Git(d.path()).merges_clean("main", "b"));
+    }
 }
