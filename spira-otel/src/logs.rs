@@ -5,6 +5,7 @@
 use std::fs::{self, OpenOptions};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use opentelemetry_proto::tonic::collector::logs::v1::ExportLogsServiceRequest;
@@ -17,6 +18,13 @@ static DROPPED: AtomicU64 = AtomicU64::new(0);
 /// Records lost to a write error since this process started.
 pub fn dropped() -> u64 {
     DROPPED.load(Ordering::Relaxed)
+}
+
+static QUEUE_DROPPED: AtomicU64 = AtomicU64::new(0);
+
+/// Records refused by a full or closed `LogQueue` since this process started.
+pub fn queue_dropped() -> u64 {
+    QUEUE_DROPPED.load(Ordering::Relaxed)
 }
 
 /// An OTLP attribute value: a scalar or an array of one scalar type.
@@ -65,6 +73,22 @@ impl LogSink {
         LogSink { dir: dir.into(), service: service.to_string() }
     }
 
+    /// Moves the writes to one thread behind a queue of `cap` records.
+    pub fn queue(self, cap: usize) -> LogQueue {
+        let (tx, rx) = sync_channel::<(String, Vec<(String, Attr)>)>(cap);
+        let spawned = std::thread::Builder::new().name("otel-log-writer".into()).spawn(move || {
+            while let Ok((body, mut attrs)) = rx.recv() {
+                let lost = queue_dropped() + dropped();
+                attrs.push(("telemetry.dropped".into(), Attr::Int(i64::try_from(lost).unwrap_or(i64::MAX))));
+                self.emit(&body, &attrs);
+            }
+        });
+        if spawned.is_err() {
+            QUEUE_DROPPED.fetch_add(1, Ordering::Relaxed);
+        }
+        LogQueue { tx }
+    }
+
     /// Appends one record; a failure is counted, never returned.
     pub fn emit(&self, body: &str, attrs: &[(String, Attr)]) {
         if self.write(body, attrs, SystemTime::now()).is_err() {
@@ -97,6 +121,19 @@ impl LogSink {
                 scope_logs: vec![ScopeLogs { scope: Some(InstrumentationScope { name: "spira-otel".into(), ..Default::default() }), log_records: vec![record], ..Default::default() }],
                 ..Default::default()
             }],
+        }
+    }
+}
+
+/// A `LogSink` behind a bounded queue: `emit` never blocks, and a record it cannot take is counted.
+pub struct LogQueue {
+    tx: SyncSender<(String, Vec<(String, Attr)>)>,
+}
+
+impl LogQueue {
+    pub fn emit(&self, body: &str, attrs: &[(String, Attr)]) {
+        if let Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) = self.tx.try_send((body.into(), attrs.to_vec())) {
+            QUEUE_DROPPED.fetch_add(1, Ordering::Relaxed);
         }
     }
 }

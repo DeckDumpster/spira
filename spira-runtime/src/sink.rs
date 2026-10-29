@@ -1,9 +1,15 @@
 //! Wide events as OTLP log records through the collector's file receiver. Nothing here names a field.
 
 use runtime::{Fields, Value, WideSink};
-use spira_otel::logs::{Attr, LogSink};
+use spira_otel::logs::{Attr, LogQueue, LogSink};
 
-pub struct OtlpSink(pub LogSink);
+pub struct OtlpSink(LogQueue);
+
+impl OtlpSink {
+    pub fn new(sink: LogSink, cap: usize) -> OtlpSink {
+        OtlpSink(sink.queue(cap))
+    }
+}
 
 fn attr(v: &Value) -> Attr {
     match v {

@@ -12,6 +12,7 @@ pub mod file_journal;
 pub mod journal;
 pub mod lease;
 pub mod marker;
+pub mod offload;
 pub mod ports;
 pub mod scheduler;
 pub mod socket;

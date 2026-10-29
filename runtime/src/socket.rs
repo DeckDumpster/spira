@@ -40,10 +40,16 @@ impl SocketJournal {
     }
 }
 
+fn connect(path: &std::path::Path) -> std::io::Result<UnixStream> {
+    let sock = socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None)?;
+    sock.connect_timeout(&socket2::SockAddr::unix(path)?, DEADLINE)?;
+    Ok(std::os::fd::OwnedFd::from(sock).into())
+}
+
 /// One request to spira-lc's socket: the argv it would take on its command line.
 pub fn lc_call(path: &std::path::Path, argv: &[&str]) -> Result<String> {
     let down = |why: &dyn std::fmt::Display| RuntimeError::new(format!("cannot tell: spira-lc is not answering on {}: {why}", path.display()));
-    let stream = UnixStream::connect(path).map_err(|e| down(&e))?;
+    let stream = connect(path).map_err(|e| down(&e))?;
     stream.set_read_timeout(Some(DEADLINE)).and_then(|_| stream.set_write_timeout(Some(DEADLINE))).map_err(|e| down(&e))?;
     let request = serde_json::to_string(argv).map_err(|e| RuntimeError::new(e.to_string()))?;
     writeln!(&stream, "{request}").map_err(|e| down(&e))?;

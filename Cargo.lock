@@ -1527,6 +1527,7 @@ dependencies = [
  "lifecycle",
  "serde",
  "serde_json",
+ "socket2",
  "testkit",
  "tokio",
 ]
@@ -1957,6 +1958,7 @@ dependencies = [
 name = "spira-runtime"
 version = "1.0.0"
 dependencies = [
+ "libc",
  "release",
  "runtime",
  "serde",

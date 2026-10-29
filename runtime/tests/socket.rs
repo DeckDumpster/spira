@@ -139,3 +139,27 @@ fn exit_3_is_a_refusal_and_any_other_failure_is_a_fault() {
     let fault = runtime::socket::lc_call(&path, &["journal", "x"]).unwrap_err();
     assert!(!fault.is_refused() && fault.0 == "exit 2", "{fault:?}");
 }
+
+#[test]
+fn a_connect_to_a_socket_nobody_accepts_gives_up_within_the_deadline() {
+    let d = TempDir::new("lc-backlog");
+    let path = d.join("lc.sock");
+    let listener = socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None).expect("test setup: cannot create a socket");
+    listener.bind(&socket2::SockAddr::unix(&path).expect("test setup: socket path")).expect("test setup: bind");
+    listener.listen(1).expect("test setup: listen");
+    let mut held = vec![];
+    loop {
+        let s = socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None)
+            .unwrap_or_else(|e| panic!("test setup: out of descriptors after {} connects before the backlog filled: {e}", held.len()));
+        s.set_nonblocking(true).expect("test setup: nonblocking");
+        if s.connect(&socket2::SockAddr::unix(&path).unwrap()).is_err() {
+            break;
+        }
+        held.push(s);
+        assert!(held.len() < 64, "test setup: the backlog never filled");
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || tx.send(runtime::socket::lc_call(&path, &["journal", "cursor"])).unwrap());
+    let e = rx.recv_timeout(std::time::Duration::from_secs(6)).expect("lc_call returns inside its deadline").unwrap_err(); // clock-safe: cap on the wait for lc_call to give up
+    assert!(e.0.contains("not answering"), "{e}");
+}

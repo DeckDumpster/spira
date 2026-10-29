@@ -1,16 +1,18 @@
 //! sd_notify, sent only from the dispatch loop's own thread: a loop that hangs stops
-//! kicking, which is how systemd's watchdog sees a hang and not only a death.
+//! kicking, which is how systemd's watchdog sees a hang and not only a death. A send never blocks.
 
 use std::os::linux::net::SocketAddrExt;
 use std::os::unix::net::{SocketAddr, UnixDatagram};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 pub struct Notifier {
     dest: Option<SocketAddr>,
     sock: UnixDatagram,
     every: Option<Duration>,
-    last: Mutex<Option<Instant>>,
+    base: Instant,
+    last: AtomicU64,
+    dropped: AtomicU64,
 }
 
 impl Notifier {
@@ -24,7 +26,9 @@ impl Notifier {
             None => None,
         };
         let every = watchdog_usec.filter(|u| *u > 0).map(|u| Duration::from_micros(u / 3));
-        Ok(Notifier { dest, sock: UnixDatagram::unbound()?, every, last: Mutex::new(None) })
+        let sock = UnixDatagram::unbound()?;
+        sock.set_nonblocking(true)?;
+        Ok(Notifier { dest, sock, every, base: Instant::now(), last: AtomicU64::new(0), dropped: AtomicU64::new(0) })
     }
 
     pub fn from_env() -> std::io::Result<Notifier> {
@@ -38,8 +42,15 @@ impl Notifier {
 
     fn send(&self, msg: &str) {
         if let Some(d) = &self.dest {
-            let _ = self.sock.send_to_addr(msg.as_bytes(), d);
+            if self.sock.send_to_addr(msg.as_bytes(), d).is_err_and(|e| e.kind() == std::io::ErrorKind::WouldBlock) {
+                self.dropped.fetch_add(1, Ordering::Relaxed);
+            }
         }
+    }
+
+    /// Sends that found the socket full and were dropped.
+    pub fn kicks_dropped(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
     }
 
     pub fn ready(&self) {
@@ -49,9 +60,10 @@ impl Notifier {
     /// `WATCHDOG=1`, at most once per `max_sleep`; cheap enough to call after every event.
     pub fn kick(&self) {
         let Some(every) = self.every else { return };
-        let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
-        if last.is_none_or(|t| t.elapsed() >= every / 2) {
-            *last = Some(Instant::now());
+        let now = self.base.elapsed().as_nanos() as u64 + 1;
+        let last = self.last.load(Ordering::Relaxed);
+        if last == 0 || now - last >= (every / 2).as_nanos() as u64 {
+            self.last.store(now, Ordering::Relaxed);
             self.send("WATCHDOG=1");
         }
     }
@@ -81,6 +93,18 @@ mod tests {
         rx.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
         assert!(rx.recv(&mut buf).is_err(), "the second kick inside the window is dropped");
         assert_eq!(n.max_sleep(), Some(Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn a_full_socket_drops_the_kick_and_counts_it_without_blocking() {
+        let d = testkit::TempDir::new("notify-full");
+        let path = d.path().join("n.sock");
+        let _unread = UnixDatagram::bind(&path).unwrap();
+        let n = Notifier::new(path.to_str(), Some(3)).unwrap();
+        for _ in 0..20_000 {
+            n.kick();
+        }
+        assert!(n.kicks_dropped() > 0);
     }
 
     #[test]

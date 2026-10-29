@@ -23,6 +23,7 @@ tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
 ureq = { version = "2", default-features = false, features = ["tls"] }
 
 [dev-dependencies]
+libc = "0.2"
 testkit = { path = "../testkit" }
 release = { path = "../release" }
 

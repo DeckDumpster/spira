@@ -7,6 +7,7 @@
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::net::UnixDatagram;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -23,6 +24,13 @@ const SOAK: Duration = Duration::from_secs(25);
 const FORBIDDEN: &[&str] = &["journal:", "cannot tell", "refusing"];
 const OPEN: &str = "r-auto-691-1029T031850";
 const ABANDONED: &str = "r-auto-690-1029T020000";
+
+#[derive(Clone, Copy)]
+enum Fifo {
+    Real,
+    Stalled(Instant),
+    Restored,
+}
 
 struct Proc(Child);
 impl Drop for Proc {
@@ -291,6 +299,9 @@ fn spira_runtime_serves_for_twenty_beats_against_the_production_store() {
 
     let begun = Instant::now();
     let mut appended = false;
+    let log_file = spira_otel::dir_of(&run).join(format!("spira-runtime.logs.{}.jsonl", spira_otel::utc_date(std::time::SystemTime::now())));
+    let parked = log_file.with_extension("parked");
+    let mut fifo = Fifo::Real;
     while begun.elapsed() < SOAK { // clock-safe: the soak's wall time is the thing under test
         if let Some(st) = rt.0.try_wait().unwrap() {
             panic!("{}", diag(&format!("spira-runtime exited after {:?} (setup took {setup:?}): {st}", begun.elapsed())));
@@ -298,6 +309,22 @@ fn spira_runtime_serves_for_twenty_beats_against_the_production_store() {
         if !appended && begun.elapsed() > SOAK / 2 { // clock-safe: the append lands mid-soak by design
             fs::OpenOptions::new().append(true).open(run.join("rounds/300.result")).unwrap().write_all(b"red sp-soak\n").unwrap();
             appended = true;
+        }
+        match fifo {
+            Fifo::Real if begun.elapsed() > SOAK / 5 => { // clock-safe: the stall phase is timed by design
+                // a log file that is a pipe nobody reads: the writer thread's open blocks
+                fs::rename(&log_file, &parked).unwrap();
+                let c = std::ffi::CString::new(log_file.to_str().unwrap()).unwrap();
+                assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0, "{}", std::io::Error::last_os_error());
+                fifo = Fifo::Stalled(Instant::now());
+            }
+            Fifo::Stalled(since) if since.elapsed() > Duration::from_secs(10) => { // clock-safe: the stall lasts 10 s by design
+                let _release = fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(&log_file).unwrap();
+                fs::remove_file(&log_file).unwrap();
+                fs::rename(&parked, &log_file).unwrap();
+                fifo = Fifo::Restored;
+            }
+            _ => {}
         }
         std::thread::sleep(Duration::from_millis(200)); // clock-safe: poll interval for the process staying alive
     }
@@ -329,6 +356,7 @@ fn spira_runtime_serves_for_twenty_beats_against_the_production_store() {
     let worst = kicks.windows(2).map(|w| w[1] - w[0]).max().unwrap_or_default();
     assert!(worst < period, "{}", diag(&format!("a {worst:?} gap between watchdog kicks: systemd would have restarted the service (WatchdogSec {period:?})")));
 
+    assert!(matches!(fifo, Fifo::Restored), "{}", diag("the log-stall phase never completed"));
     let out = fs::read_to_string(&stderr_path).unwrap_or_default();
     let bad: Vec<&str> = out.lines().filter(|l| FORBIDDEN.iter().any(|f| l.contains(f))).collect();
     assert!(bad.is_empty(), "{}", diag(&format!("the runtime reported faults: {bad:?}")));
