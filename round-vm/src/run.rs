@@ -499,7 +499,12 @@ else
         export AWS_SHARED_CREDENTIALS_FILE="$HOME/round-resume-aws/credentials"
         [ ! -f "$HOME/round-resume-aws/config" ] || export AWS_CONFIG_FILE="$HOME/round-resume-aws/config"
     fi
-    if probe_err="$(printf probe | aws s3 cp --only-show-errors --cli-connect-timeout 5 --cli-read-timeout 15 - "${resume_url%/}/.probe" 2>&1)"; then
+    resume_probe() {
+        local obj="${resume_url%/}/.probe" cp="aws s3 cp --only-show-errors --cli-connect-timeout 5 --cli-read-timeout 15"
+        printf probe | $cp - "$obj" || return 1
+        [ "$($cp "$obj" -)" = probe ] || { echo "the probe object was written but does not read back" >&2; return 1; }
+    }
+    if probe_err="$(resume_probe 2>&1)"; then
         export SPIRA_TESTENV_RESUME="$resume_url"
         echo "round-vm: RESUME: recording passed suites to $resume_url" >&2
     else
@@ -3104,7 +3109,7 @@ mod tests {
         let bin = tmp.path().join("bin");
         fs::create_dir_all(&bin).unwrap();
         let stub = bin.join("aws");
-        testkit::write_exe(&stub, &format!("#!/bin/bash\necho \"CREDS=${{AWS_SHARED_CREDENTIALS_FILE:-}}\" > \"$HOME/aws-saw\"\n[ {aws_rc} -eq 0 ] || echo 'AccessDenied: no write to the prefix' >&2\nexit {aws_rc}\n"));
+        testkit::write_exe(&stub, &format!("#!/bin/bash\necho \"CREDS=${{AWS_SHARED_CREDENTIALS_FILE:-}}\" > \"$HOME/aws-saw\"\n[ {aws_rc} -eq 0 ] || {{ echo 'AccessDenied: no write to the prefix' >&2; exit {aws_rc}; }}\nif [ \"$8\" = - ]; then cat > \"$HOME/obj\"; else cat \"$HOME/obj\"; fi\n"));
         let script = format!("resume_url={}\n{}\necho \"RESUME=${{SPIRA_TESTENV_RESUME:-unset}}\"", shell_quote(url), resume_block());
         let out = std::process::Command::new("bash")
             .args(["-c", &script])
