@@ -381,8 +381,6 @@ pub enum Verdict {
     Held(HoldKind),
     Snoozed(i64),
     Blocked(String),
-    /// Carried by this open integration bead.
-    Carried(String),
     TooDeep { depth: u32, max: u32 },
     /// A REWORK row whose gate-red stack the claim would repeat: the machine refuses it.
     StackUnchanged,

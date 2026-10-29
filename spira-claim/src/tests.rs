@@ -517,6 +517,23 @@ fn cli_stack_reports_the_certified_prerequisites_tip() {
 }
 
 #[test]
+fn cli_stack_refuses_a_member_of_an_open_integration() {
+    let bd = tmp_exe("#!/bin/sh\necho '[{\"id\":\"A\",\"labels\":[\"repo:spira\"]}]'\n");
+    let lc = tmp(&serde_json::json!([
+        {"bead_id":"A","state":"REWORK","holds":"[]"},
+        {"bead_id":"I","state":"READY","holds":"[]"},
+    ]).to_string());
+    let recs = tmp("[]");
+    let queue = testkit::TempDir::new("spira-claim-queue");
+    std::fs::create_dir_all(queue.path().join("spira")).unwrap();
+    std::fs::write(queue.path().join("spira/integrations"), "I A B\n").unwrap();
+    let q = queue.path().to_string_lossy().into_owned();
+    let o = run_cfg(&["stack", "A", "--lifecycle", &lc, "--blocker-records", &recs], "", &[("SPIRA_BD", bd.as_str()), ("SPIRA_QUEUE_DIR", q.as_str())], &[]);
+    assert_eq!(o.code, 3, "{}", o.err);
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&o.out).unwrap()["reason"], "Carried");
+}
+
+#[test]
 fn cli_stack_past_the_ceiling_is_refused_but_still_names_the_attempted_depth() {
     let bd = tmp_exe(&format!("#!/bin/sh\necho '{}'\n", b_stacked_on_a()));
     let lc = tmp(&serde_json::json!([
