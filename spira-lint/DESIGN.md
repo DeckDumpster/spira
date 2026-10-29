@@ -158,6 +158,22 @@ shrink-only; a line without a reason or whose file no longer offends is refused.
 **Known limits.** Lexical: a key reached through a constant, a `get` closure or a computed name is
 not seen.
 
+## Rule `config-door`
+
+**Intent.** spira-config is the only door onto `spira.toml`; a crate that resolves its path or
+parses it diverges from the one that validates it. `spira/test-spira-config-only-door.sh` runs
+this rule, so the lint and the suite cannot disagree.
+
+**Scope.** Every `*/src/*.rs` outside `target/` and `spira-config/src/`; test code exempt
+(same classifier as `config-env-read`); the rule's own source is skipped, its patterns being the offences.
+
+**Violation.** `toml::from_str`, or `.join("spira.toml")`, `Path::new("spira.toml")`,
+`read_to_string("spira.toml")`, `File::open("spira.toml")`, `env::var(_os)("SPIRA_TOML")`.
+The finding names `spira_config::process::spec()` and `spira_config::load` as the way in.
+
+**Exemptions.** `EXEMPT_TOML_FROM_STR` in the rule: files whose `toml::from_str` parses another
+document. They stay barred from resolving the config path.
+
 ## Rule `config-key-registered`
 
 **Intent.** `spira_config::process::cfg` resolves only the keys in `spira/conf.d`; a key named
