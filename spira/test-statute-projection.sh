@@ -142,7 +142,7 @@ run_enact_wiki() {
 }
 run_retire_wiki() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_STATUTE_DIR="$STATUTE_DIR" SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$CL_HOOK" SPIRA_WIKI="$WIKI_CL"
-    rule_sh retire "$1" 2>&1
+    rule_sh retire "$1" --reason fixture 2>&1
 }
 
 # POSITIVE CONTROL: enact commits common-law.md itself and leaves the tree clean.
@@ -167,7 +167,7 @@ if [ $rc_cl_retire -eq 0 ]; then
 else
     bad "commit: retire exits 0" "rc=$rc_cl_retire output=$out_cl_retire"
 fi
-want "commit: retire's law/ commit reached the fixture's landing checkout" "[Reserved]" \
+want "commit: retire's law/ commit reached the fixture's landing checkout" "[Retired" \
     "$(cat "$LAW_FIX"/law/*/*law-sp-4fl2e-commit-test.md 2>/dev/null)"
 is "commit: retire leaves wiki checkout clean" "" \
     "$(git -C "$WIKI_CL" status --short --untracked-files=all 2>/dev/null)"
@@ -227,7 +227,7 @@ want "and names the way to see what is in force" "rule.sh list" "$(run_rule show
 
 # POSITIVE CONTROL FIRST: the statute is present, retire succeeds, and synth propagates
 # the same way it does for enact.
-out_retire="$(run_rule retire sp-p0xyt-pair-canary)"; rc_retire=$?
+out_retire="$(run_rule retire sp-p0xyt-pair-canary --reason fixture)"; rc_retire=$?
 is   "retire on a real statute exits 0"       "0" "$rc_retire"
 want "and says it forgot the key"             "forgot law-sp-p0xyt-pair-canary" "$out_retire"
 want "and reminds not to leave a correction banner" "Do not leave a retired statute" "$out_retire"
@@ -241,14 +241,15 @@ is "and show on the retired slug now fails" "1" \
 # any bd write — the positive control above proves retire works at all, so a refusal here
 # is the guard and not a broken command.
 is "retire on an unknown slug is refused" "1" \
-   "$(run_rule retire no-such-slug-abc >/dev/null 2>&1; echo $?)"
-want "and names the missing statute" "no statute" "$(run_rule retire no-such-slug-abc)"
+   "$(run_rule retire no-such-slug-abc --reason fixture >/dev/null 2>&1; echo $?)"
+want "and names the missing statute" "no statute" "$(run_rule retire no-such-slug-abc --reason fixture)"
+want "retire without --reason is refused and names the flag" "--reason" "$(run_rule retire sp-p0xyt-retire-hookfail 2>&1)"
 
 # retire with a failing synth hook: the write and the page are one operation, so the book
 # is rolled back and nothing is written.
 run_rule enact sp-p0xyt-retire-hookfail --tool none --reason fixture "Canary for the retire hook-failure path." >/dev/null 2>&1
 tl_config SPIRA_RUN="$TMP/run" SPIRA_STATUTE_DIR="$STATUTE_DIR" SPIRA_DB="$SPIRA_DB" SPIRA_WIKI_HOOK="$FAIL_HOOK"
-out_retire_fail="$(rule_sh retire sp-p0xyt-retire-hookfail 2>&1)"
+out_retire_fail="$(rule_sh retire sp-p0xyt-retire-hookfail --reason fixture 2>&1)"
 rc_retire_fail=$?
 is   "retire with a failing hook exits non-zero" "1" "$rc_retire_fail"
 want "and reports the rollback" "rolled back" "$out_retire_fail"
@@ -360,7 +361,7 @@ is     "audit exits 0 on findings" "0" "$rc_audit"
 want   "audit flags a statute naming a verb the script lacks" "law-tool-audit-bad: bead.sh nosuchverb" "$out_audit"
 want   "audit flags a statute naming a script the release lacks" "law-tool-audit-ghost: ghost-tool-zzz.sh" "$out_audit"
 nowant "audit passes a statute naming a real verb" "law-tool-audit-good" "$out_audit"
-for _k in tool-gate-mech tool-audit-bad tool-audit-ghost tool-audit-good; do run_rule retire "$_k" >/dev/null 2>&1; done
+for _k in tool-gate-mech tool-audit-bad tool-audit-ghost tool-audit-good; do run_rule retire "$_k" --reason fixture >/dev/null 2>&1; done
 
 # ==========================================================================
 echo
