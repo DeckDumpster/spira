@@ -853,6 +853,7 @@ mod from_env_tests {
         let d = testkit::TempDir::new("spira-config-store-from-toml");
         let home = d.path().join("repo/spira");
         std::fs::create_dir_all(home.join("conf.d")).unwrap();
+        std::fs::create_dir_all(home.join("conf.toml.d")).unwrap();
         let toml = crate::fixture_toml_file(d.path(), &[("SPIRA_SCCACHE_DAV_ADDR".to_string(), "10.9.8.7:9431".to_string())].into_iter().collect());
         let got = with_env(
             &[
@@ -871,6 +872,7 @@ mod from_env_tests {
         let d = testkit::TempDir::new("spira-config-addr-for-home");
         let home = d.path().join("repo/spira");
         std::fs::create_dir_all(home.join("conf.d")).unwrap();
+        std::fs::create_dir_all(home.join("conf.toml.d")).unwrap();
         let toml = crate::fixture_toml_file(d.path(), &[("SPIRA_SCCACHE_DAV_ADDR".to_string(), "10.9.8.7:9431".to_string())].into_iter().collect());
         let got = with_env(
             &[("SPIRA_HOME", None), ("SPIRA_REPO", Some(d.path().join("repo").to_str().unwrap())), ("SPIRA_TOML", Some(toml.to_str().unwrap())), (STORE_ADDR_ENV, None)],

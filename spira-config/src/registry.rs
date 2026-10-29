@@ -122,13 +122,15 @@ impl Registry {
     }
 }
 
-/// This process's registry, read once from the release [`crate::resolve::locate_home_for_process`] finds.
+/// This process's registry, read once from the release [`crate::resolve::locate_home_for_process`]
+/// finds. A refusal is not remembered: the next call looks again.
 pub fn for_process() -> Result<&'static Registry, String> {
-    static REGISTRY: OnceLock<Result<Registry, String>> = OnceLock::new();
-    REGISTRY
-        .get_or_init(|| Registry::load(&crate::resolve::locate_home_for_process()?))
-        .as_ref()
-        .map_err(|e| e.clone())
+    static REGISTRY: OnceLock<Registry> = OnceLock::new();
+    if let Some(r) = REGISTRY.get() {
+        return Ok(r);
+    }
+    let loaded = Registry::load(&crate::resolve::locate_home_for_process()?)?;
+    Ok(REGISTRY.get_or_init(|| loaded))
 }
 
 /// Parses every file directly inside `dir` the way `conf-gen.sh`'s `parse_one` does: `TYPE=`,

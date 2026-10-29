@@ -23,6 +23,7 @@ fn fixture(tag: &str) -> (testkit::TempDir, std::path::PathBuf, String, Env) {
     let rs = release.join("spira");
     std::fs::create_dir_all(&rs).unwrap();
     std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d"), rs.join("conf.d")).unwrap();
+    std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.toml.d"), rs.join("conf.toml.d")).unwrap();
     let mut env = Env::new();
     env.insert("HOME".into(), t.path().join("userhome").display().to_string());
     env.insert("SPIRA_RELEASE".into(), release.display().to_string());

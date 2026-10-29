@@ -890,6 +890,7 @@ mod tests {
         let release = t.path().join("spira-releases/deadbeef");
         std::fs::create_dir_all(&release).unwrap();
         std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d"), release.join("conf.d")).unwrap();
+        std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.toml.d"), release.join("conf.toml.d")).unwrap();
         let toml = crate::process::fixture_toml(t.path(), &[("SPIRA_REPO_MAP", &map.display().to_string()), ("SPIRA_HOME_REPO", "spira")]);
         let mut env = std::collections::BTreeMap::new();
         env.insert("HOME".to_string(), t.path().join("userhome").display().to_string());

@@ -479,6 +479,11 @@ mod host_from_env_tests {
         let t = testkit::TempDir::new("host-env-explicit");
         let run_dir = t.join("run");
         let elsewhere = t.join("process-home");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        let real = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("spira");
+        for d in ["conf.d", "conf.toml.d"] {
+            std::os::unix::fs::symlink(real.join(d), elsewhere.join(d)).unwrap();
+        }
         let _env = testkit::env(&[("SPIRA_HOME", elsewhere.to_str()), ("SPIRA_RUN", Some("/process/run"))]);
         let host = resolve_with(&t, &run_dir, &[]).expect("host values resolve");
         assert_ne!(host.home, elsewhere.display().to_string(), "the process SPIRA_HOME leaked into an explicit map");

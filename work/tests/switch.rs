@@ -35,6 +35,7 @@ fn work(sock: &Path, home: &Path, verb: &str) -> std::process::Output {
     // conf.d is enough: resolving SPIRA_LC_SOCKET itself needs no registry file, only a
     // conf.d directory that exists (spira-config's own `fixture_home_repo` test helper).
     std::fs::create_dir_all(home.join("conf.d")).unwrap();
+    std::fs::create_dir_all(home.join("conf.toml.d")).unwrap();
     let toml = spira_config::process::fixture_toml(home, &[("SPIRA_LC_SOCKET", sock.to_str().unwrap())]);
     Command::new(env!("CARGO_BIN_EXE_work"))
         .arg(verb)

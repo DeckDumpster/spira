@@ -2025,6 +2025,11 @@ mod tests {
             d.join("conf.d"),
         )
         .unwrap();
+        std::os::unix::fs::symlink(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.toml.d"),
+            d.join("conf.toml.d"),
+        )
+        .unwrap();
         fs::write(
             d.join("lib.sh"),
             r#"SPIRA_RUN=/run/x; SPIRA_RELEASES=; SPIRA_DB=/db

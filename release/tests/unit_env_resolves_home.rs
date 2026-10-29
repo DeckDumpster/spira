@@ -624,6 +624,7 @@ fn non_checkout_release_spira(release: &Path) -> PathBuf {
     let release_spira = release.join("spira");
     std::fs::create_dir_all(&release_spira).unwrap();
     std::os::unix::fs::symlink(workspace_root().join("spira/conf.d"), release_spira.join("conf.d")).unwrap();
+    std::os::unix::fs::symlink(workspace_root().join("spira/conf.toml.d"), release_spira.join("conf.toml.d")).unwrap();
     release_spira
 }
 

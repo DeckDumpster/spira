@@ -505,6 +505,7 @@ mod tests {
         let dir = testkit::TempDir::new("dwarf-conf-jitter");
         let home = dir.join("spira");
         std::fs::create_dir_all(home.join("conf.d")).unwrap();
+        std::fs::create_dir_all(home.join("conf.toml.d")).unwrap();
         std::fs::write(
             home.join("conf.d/SPIRA_CALL_JITTER"),
             "TYPE=string\nGROUP=call\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    # no default, matches the real registry entry\nSPIRA_CONF_DEFAULT_EOF\n",

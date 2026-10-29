@@ -1707,6 +1707,7 @@ fn resolve_repos_reads_the_registry_in_process_not_a_bash_probe() {
     // checkout itself, not an override of the home repo's root.
     assert!(std::process::Command::new("git").args(["init", "-q"]).arg(&home).status().unwrap().success());
     std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d"), home.join("conf.d")).unwrap();
+    std::os::unix::fs::symlink(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.toml.d"), home.join("conf.toml.d")).unwrap();
     let map = d.join("repo-map");
     std::fs::write(&map, "other|/nonexistent/other|queue.local||\n").unwrap();
     // SPIRA_REPO_MAP/SPIRA_HOME_REPO are registered keys now — the only way in is a real
@@ -1746,6 +1747,7 @@ fn resolve_repos_reads_the_registry_in_process_not_a_bash_probe() {
 fn probe_merges_resolved_config_into_vars_without_shelling_a_second_time() {
     let w = World::new("probe-merge");
     std::fs::create_dir_all(w.home.join("conf.d")).unwrap();
+    std::fs::create_dir_all(w.home.join("conf.toml.d")).unwrap();
     std::fs::write(
         w.home.join("conf.d/SPIRA_CI_PARK_MAX"),
         "TYPE=u32\nGROUP=queue\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_CI_PARK_MAX:=9}\"\nSPIRA_CONF_DEFAULT_EOF\n",
