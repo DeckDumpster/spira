@@ -35,7 +35,7 @@ fn debug_dir() -> PathBuf {
 fn build(s: &Scenario) -> testkit::TempDir {
     let d = testkit::TempDir::new(&format!("ik-{}", s.name));
     fs::create_dir_all(d.path().join("repo")).unwrap();
-    testkit::write_exe(&d.path().join("repo/concierge.sh"), &format!("#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> {}/wakes\n", d.path().display()));
+    testkit::write_exe(d.path().join("repo/concierge.sh"), &format!("#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> {}/wakes\n", d.path().display()));
     fs::write(
         d.path().join("layer.toml"),
         format!("[spira]\nconcierge_inbox = \"{0}/inbox\"\nconcierge_inbox_stall = {STALL}\nconcierge_inbox_backoff = {BACKOFF}\nrun = \"{0}/run\"\n", d.path().display()),
