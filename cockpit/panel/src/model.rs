@@ -816,7 +816,9 @@ pub fn suit_verdict(item: &Item, verdict: &str, cfg: &Cfg) -> Result<(), String>
             let slug = suit_slug(item)
                 .ok_or_else(|| "no statute:law-<slug> label on this bead".to_string())?;
             let rule = rule_sh()?;
-            run_verbose(&rule, &["retire", &slug], cfg)?;
+            let why = v[first.len()..].trim_start_matches(':').trim();
+            let why = if why.is_empty() { "retired on the operator's verdict" } else { why };
+            run_verbose(&rule, &["retire", &slug, "--reason", why], cfg)?;
             close_decision(&cfg.db, item, &format!("retire: law-{slug} retired"), cfg)?;
         }
         "amend" => {

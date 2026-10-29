@@ -4,7 +4,7 @@
 #
 #   rule.sh enact <slug> "<statute text>" --part <n> [--dry-run]   write it, file it in Part <n> of law/, synthesise the wiki
 #   rule.sh code [--check] [--texts <dir>]   regenerate (or check) the law/ tree from law/toc.toml
-#   rule.sh retire <slug>                    remove it
+#   rule.sh retire <slug> --reason <why> [--replaced-by <slug> | --merged-into <slug>]
 #   rule.sh list                             what is in force
 #   rule.sh show <slug>                      one statute's full text
 #
