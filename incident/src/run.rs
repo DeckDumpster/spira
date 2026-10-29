@@ -692,6 +692,24 @@ mod tests {
     }
 
     #[test]
+    fn a_second_filing_from_a_different_repo_is_a_recurrence_not_a_new_bead() {
+        let bd = FakeBd::new();
+        let mailer = FakeMailer { sent: RefCell::new(vec![]) };
+        let clock = FixedClock(1_000_000);
+        let known = vec!["spira".to_string(), "dumpstar".to_string()];
+        let mut log = vec![];
+        let mut c = cfg(&known);
+        c.repo_declared = Some("spira");
+        let FileOutcome::Filed(id1) = file_one(&bd, &mailer, &clock, &c, "incident:x", "x failed", b"payload", "spira,incident", &mut log) else { panic!("expected Filed") };
+        c.repo_declared = Some("dumpstar");
+        let FileOutcome::Filed(id2) = file_one(&bd, &mailer, &clock, &c, "incident:x", "x failed", b"payload", "spira,incident", &mut log) else { panic!("expected Filed") };
+        assert_eq!(id1, id2, "the other repo's filing must bump the same bead");
+        assert_eq!(bd.created.borrow().len(), 1, "one bead, not one per repo");
+        let recurred = log.iter().filter(|l| l.contains("incident:x recurred")).count();
+        assert_eq!(recurred, 1, "exactly one recurrence logged: {log:?}");
+    }
+
+    #[test]
     fn ten_unchanged_recurrences_leave_one_counter_line_and_no_per_tick_notes() {
         let bd = FakeBd::new();
         let mailer = FakeMailer { sent: RefCell::new(vec![]) };
