@@ -791,3 +791,10 @@ every checksum is met; a missing, partial or damaged one is a miss and the build
 (`release: artifacts: hit <key>`) and otherwise builds and stores. The round VM runs the same
 protocol from bash before its own cargo build (round-vm DESIGN.md); the key vector is pinned in
 both test suites. Retention is the store's (sccache-dav DESIGN.md "Artifact retention").
+
+The publish CI's build job runs the same bash (`round-vm/artifact-store.sh`, which the round VM's
+script includes) when the repository variable `ARTIFACT_STORE_URL` names a store that answers from
+the runner; a hosted runner that cannot reach the box builds as before and says why. `CurlDav` is
+tested over the real wire against an in-process `sccache-dav` (`release/tests/curl_dav.rs`), the
+VM's build section against a fake cargo that fails when it runs on a hit, and the workflow's
+steps by `spira/test-gate-stored-build.sh`.
