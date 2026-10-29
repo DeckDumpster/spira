@@ -8,6 +8,7 @@ pub mod brain_dirty;
 pub mod inbox_keeper;
 pub mod pr_notify;
 pub mod round_duty;
+pub mod supersede_duty;
 
 use runtime::event::*;
 use serde::de::DeserializeOwned;

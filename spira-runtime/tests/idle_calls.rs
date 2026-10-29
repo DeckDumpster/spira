@@ -7,7 +7,7 @@ use runtime::event::*;
 use runtime::journal::{Journal, Offset, Poison, ScheduleRow};
 use runtime::ports::{Clock, VirtualClock};
 use runtime::{Executor, MemJournal, Outcome, Result};
-use spira_runtime::watchers::{asks::Asks, design_asks::DesignAsks, inbox_keeper::InboxKeeper, pr_notify::PrNotify, round_duty::RoundDuty};
+use spira_runtime::watchers::{asks::Asks, design_asks::DesignAsks, supersede_duty::SupersedeDuty, inbox_keeper::InboxKeeper, pr_notify::PrNotify, round_duty::RoundDuty};
 use runtime::marker::NullMarker;
 use runtime::wide::NullSink;
 use spira_runtime::{open_engine, Settings};
@@ -138,7 +138,7 @@ fn ten_minutes(world: fn(&str, u64) -> String) -> Run {
     let clock = VirtualClock::new(1_800_000_000_000);
     let start = clock.now_ms();
     let mut e = open_engine(&production(), counting.clone(), Arc::new(clock.clone()), Arc::new(NullMarker), Arc::new(NullSink), vec![]).unwrap();
-    for (_, stream, kind) in [runtime::heartbeat::Heartbeat::boot(), RoundDuty::boot(), InboxKeeper::boot(), PrNotify::boot(), Asks::boot(), DesignAsks::boot()] {
+    for (_, stream, kind) in [runtime::heartbeat::Heartbeat::boot(), RoundDuty::boot(), InboxKeeper::boot(), PrNotify::boot(), Asks::boot(), DesignAsks::boot(), SupersedeDuty::boot()] {
         e.start(stream, kind);
     }
     let (mut wakes, mut polls) = (0, 0);

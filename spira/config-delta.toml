@@ -175,6 +175,24 @@ runtime_design_asks_secs = 600
 runtime_brain_dirty_secs = 600
 archivist_fail_retries = "5"
 archivist_fail_backoff = "600"
+"spira.mimir_remedy_label" = "mimir-remedy"
+"spira.runes_dir" = ""
+"spira.runes_overlay" = ""
+"spira.call_jitter" = 20
+"spira.call_lock_wait" = 30
+"spira.max_dwarves" = 4
+"spira.max_live_dwarves" = 2
+"spira.runes" = ["spike", "builder", "groomer", "mimir", "ops", "czar", "warden", "mender"]
+"spira.runtime_heartbeat_url" = ""
+"spira.runtime_heartbeat_secs" = 60
+"spira.runtime_stall_limit" = 2
+"spira.runtime_round_duty_secs" = 15
+"spira.runtime_inbox_keeper_secs" = 60
+"spira.sccache_dav_artifact_days" = 7
+"spira.round_vm_resume_url" = ""
+"spira.round_vm_resume_credentials" = ""
+"spira.runtime_asks_secs" = 60
+"spira.runtime_supersede_duty_secs" = 60
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok

@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds between spira-runtime supersede-duty passes over standing supersede-requests.
+SCHEMA=Seconds between spira-runtime supersede-duty passes (unit: seconds; integer; default 60). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_SUPERSEDE_DUTY_SECS:=60}"
+SPIRA_CONF_DEFAULT_EOF
