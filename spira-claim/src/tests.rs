@@ -1153,6 +1153,17 @@ fn cli_stack_refuses_a_filed_child_of_a_reworked_parent_as_blocked() {
 }
 
 #[test]
+fn cli_stack_proposes_no_stack_for_a_filed_child_of_a_certified_parent() {
+    let lc = tmp(r#"[{"bead_id":"P","state":"CERTIFIED","holds":"[]","tip":"t1"},{"bead_id":"P.2","state":"READY","holds":"[]"}]"#);
+    let recs = tmp(r#"[{"id":"P","status":"open","issue_type":"task","labels":["repo:spira"]}]"#);
+    let bd_child = tmp_exe(&format!("#!/bin/sh\necho '{}'\n", r#"[{"id":"P.2","priority":1,"issue_type":"task","parent":"P","labels":["repo:spira"]}]"#));
+    let o = run_cfg(&["stack", "P.2", "--lifecycle", &lc, "--blocker-records", &recs], "", &[("SPIRA_BD", bd_child.as_str()), ("SPIRA_STACK_MAX_DEPTH", "4")], &[]);
+    assert_eq!(o.code, 3, "{}", o.err);
+    let v: serde_json::Value = serde_json::from_str(&o.out).unwrap();
+    assert_eq!((v["claimable"].clone(), v["reason"].clone()), (false.into(), "Blocked(\"P\")".into()), "{}", o.out);
+}
+
+#[test]
 fn enforced_counts_refuse_when_the_lifecycle_machine_cannot_answer() {
     let o = enforced_count(ENFORCE_READY, "not json", ENFORCE_RECS, &["rune-ready", "probe"]);
     assert_eq!((o.code, o.out.as_str()), (1, "0"), "{}", o.err);
