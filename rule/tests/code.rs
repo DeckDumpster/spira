@@ -373,9 +373,30 @@ fn a_law_commit_is_filed_in_a_lane_the_repo_admits_and_is_submitted() {
     assert_eq!((id.as_str(), branch.as_str()), ("sp-law1", "spira/sp-law1"));
     let toc = parse_toc(TOC).unwrap();
     let book = book_of(&[("law-one", "Do one."), ("law-three", "Do three.")]);
-    land(repo.path(), wt_root.path(), "retire", "law-two", &toc, &book).unwrap();
+    let retired = land(repo.path(), wt_root.path(), "retire", "law-two", &toc, &book).unwrap();
+    assert_eq!(retired, ("sp-law2".to_string(), "spira/sp-law2".to_string()));
     let log = std::fs::read_to_string(bin.join("calls")).unwrap();
     assert_eq!(log.matches("queue submit").count(), 2, "{log}");
+    assert_eq!(log.matches("--for builder").count(), 2, "{log}");
+    assert!(!log.contains("--for ops"), "{log}");
+}
+
+#[test]
+fn a_filing_the_repo_refuses_fails_loudly_and_submits_nothing() {
+    let runes = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/runes");
+    let repo = fixture_repo("law-lane-refused");
+    let wt_root = testkit::TempDir::new("law-lane-refused-wt");
+    let (bin, path) = queue_shims(repo.path());
+    let map = bin.join("lane-table");
+    std::fs::write(&map, "fixture | /srv/fixture | push | origin/main | | | groom,spike\n").unwrap();
+    admitting_bead_sh(bin.path(), &map, &runes);
+    let _env = testkit::env(&[("PATH", Some(path.as_str()))]);
+    let toc = append(&parse_toc(TOC).unwrap(), 2, "law-four").unwrap();
+    let book = book_of(&[("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three."), ("law-four", "Do four.")]);
+    let err = land(repo.path(), wt_root.path(), "enact", "law-four", &toc, &book).unwrap_err();
+    assert!(err.contains("does not admit lane plan"), "{err}");
+    let log = std::fs::read_to_string(bin.join("calls")).unwrap_or_default();
+    assert!(!log.contains("queue submit"), "{log}");
 }
 
 fn land(repo: &Path, wt_root: &Path, verb: &str, key: &str, toc: &[rule::code::Part], book: &BTreeMap<String, String>) -> Result<(String, String), String> {
