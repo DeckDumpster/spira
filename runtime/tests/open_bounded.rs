@@ -152,3 +152,22 @@ fn an_effect_requested_before_the_cursor_is_still_pending_after_restart() {
     let e = Engine::open(j, Arc::new(VirtualClock::new(0)), vec![], 0).unwrap();
     assert!(e.pending_effects().is_empty(), "an outcome resolves the request");
 }
+
+#[test]
+fn a_restart_mid_stream_applies_nothing_twice() {
+    let j = MemJournal::new();
+    for i in 0..6 {
+        j.append(&note(i, "s")).unwrap();
+    }
+    let seen = Arc::new(Mutex::new(vec![]));
+    let regs = || vec![Registration::new("past", SeesPast(seen.clone()))];
+    let mut first = Engine::open(j.clone(), Arc::new(VirtualClock::new(0)), regs(), 0).unwrap();
+    first.run_until_idle().unwrap();
+    drop(first);
+    j.set_cursor(3).unwrap();
+    let mut second = Engine::open(j.clone(), Arc::new(VirtualClock::new(0)), regs(), 0).unwrap();
+    second.run_until_idle().unwrap();
+    assert_eq!(seen.lock().unwrap().len(), 6, "events before the saved cursor are not re-handled, and those past it already applied are skipped");
+    let seen_events = j.read_from(0, 100).unwrap().iter().filter(|(_, e)| e.kind.tag == "seen").count();
+    assert_eq!(seen_events, 6, "one derived event per note");
+}
