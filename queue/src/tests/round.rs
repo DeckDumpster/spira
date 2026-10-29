@@ -1528,7 +1528,13 @@ fn certify_faults_on_an_unreadable_or_missing_suite_verdict() {
 }
 
 #[test]
-fn certify_records_a_lint_red_that_ended_the_pass_before_any_suite_ran() {
+fn certify_records_a_lint_or_fence_red_that_ended_the_pass_before_any_suite_ran() {
+    for red in ["spira-lint", "fence-boundary"] {
+        a_pass_ended_early_by(red);
+    }
+}
+
+fn a_pass_ended_early_by(red: &str) {
     let t = round_world();
     assert_eq!(t.run(&["round", "open", "--members", "sp-a"]), 0, "{}", t.err());
     let batch = batch_of(&t);
@@ -1538,13 +1544,13 @@ fn certify_records_a_lint_red_that_ended_the_pass_before_any_suite_ran() {
         fs::write(spira.join(s), "").unwrap();
     }
     *t.scripts.round_vm.borrow_mut() = RunOut { rc: 1, out: String::new(), err: String::new() };
-    *t.scripts.round_vm_results.borrow_mut() = vec![("spira-lint".into(), "red".into())];
+    *t.scripts.round_vm_results.borrow_mut() = vec![(red.into(), "red".into())];
     assert_eq!(t.run(&["round", "certify", &batch]), 1, "{}", t.err());
-    assert!(t.out().contains("red=spira-lint"), "{}", t.out());
+    assert!(t.out().contains(&format!("red={red}")), "{}", t.out());
     assert!(!t.err().contains("not judged"), "{}", t.err());
     assert_eq!(round_phase(&t), "ATTRIBUTING");
     assert_eq!(
-        t.run(&["round", "eject", &batch, "sp-a", "--reason", "lint", "--red", "--suites", "spira-lint"]),
+        t.run(&["round", "eject", &batch, "sp-a", "--reason", "lint", "--red", "--suites", red]),
         0,
         "{}",
         t.err()

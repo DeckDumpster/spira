@@ -46,6 +46,11 @@ pub(super) const UNIT_RED: &str = "unit-tests";
 pub const ROUND_STEPS: [&str; 3] = [BUILD_RED, LINT_RED, UNIT_RED];
 /// The round steps `testenv --suites <step>` cannot run for a tip.
 pub const ROUND_ONLY_STEPS: [&str; 2] = [BUILD_RED, LINT_RED];
+
+/// A round step, or a base fence the round runs before its suites (`fence-<name>`).
+pub fn is_round_step(name: &str) -> bool {
+    ROUND_STEPS.contains(&name) || name.starts_with(FENCE_RED_PREFIX)
+}
 /// The one red a repository that judges itself reports: its testenv run as a whole.
 pub(super) const REPO_TESTENV_RED: &str = "testenv";
 pub(super) const LC_ACTOR: &str = "queue.sh";
@@ -2742,7 +2747,7 @@ fn known_forced_suites(w: &World, label: &str, wt: &Path, suites: &str) -> Resul
     let unknown: Vec<&str> = named
         .iter()
         .copied()
-        .filter(|n| !ROUND_STEPS.contains(n) && !known.iter().any(|k| k == n))
+        .filter(|n| !is_round_step(n) && !known.iter().any(|k| k == n))
         .collect();
     if unknown.is_empty() {
         return Ok(());
