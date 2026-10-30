@@ -81,7 +81,7 @@ impl Files {
     pub fn clear_noverdict(&self, branch: &str) {
         let _ = fs::remove_file(self.backoff_file(branch));
         let _ = fs::remove_file(self.dead_file(branch));
-        let _ = fs::remove_file(self.run.join("gate-exhaust").join(branch_key(branch)));
+        let _ = fs::remove_file(self.exhaust_file(branch));
         let key = branch_key(branch);
         if let Ok(rd) = fs::read_dir(self.run.join("noverdict")) {
             for e in rd.flatten() {
@@ -90,6 +90,15 @@ impl Files {
                 }
             }
         }
+    }
+
+    fn exhaust_file(&self, branch: &str) -> PathBuf {
+        self.run.join("gate-exhaust").join(branch_key(branch))
+    }
+
+    /// Forget a deferral: the branch is being gated again, so no marker may keep it from strand.
+    pub fn clear_round_deferral(&self, branch: &str) {
+        let _ = fs::remove_file(self.round_deferred_file(branch));
     }
 
     fn backoff_file(&self, branch: &str) -> PathBuf {
@@ -130,7 +139,7 @@ impl Files {
 
     /// Record a host-cause verdict on this exact tip; the reasons so far, a different tip starting again.
     pub fn note_exhaust(&self, branch: &str, tip: &str, reason: &str) -> Vec<String> {
-        let file = self.run.join("gate-exhaust").join(branch_key(branch));
+        let file = self.exhaust_file(branch);
         let text = fs::read_to_string(&file).unwrap_or_default();
         let mut lines = text.lines();
         let mut seen: Vec<String> = match lines.next() {

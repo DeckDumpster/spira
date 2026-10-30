@@ -517,6 +517,7 @@ impl<'a> Pass<'a> {
         let fix = is_base_fix(bead.external_ref.as_deref(), name);
         match q.enqueue(&GateJob::new(name, br, id, tip, fix).with_priority(bead.priority)) {
             Ok(true) => {
+                self.files.clear_round_deferral(br);
                 self.log(&format!("CHECK6 {id}: {br} queued for gate-worker at {tip}"));
             }
             Ok(false) => self.log(&format!("CHECK6 {id}: {br} is already with gate-worker at {tip}")),
