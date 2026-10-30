@@ -53,7 +53,7 @@ fn changes_compiled_registry(git: &dyn Git, work: &Path, base_fq: &str) -> bool 
 pub fn red(git: &dyn Git, exec: &dyn Exec, repo: &Path, work: &Path, branch: &str, base_fq: &str, strict: bool) -> Option<Red> {
     let head = git.git(work, &["rev-parse", "HEAD"]);
     let tip = if head.success() && !head.stdout.trim().is_empty() { head.stdout.trim().to_string() } else { branch.to_string() };
-    let mt = git.git(repo, &["merge-tree", "--write-tree", base_fq, &tip]);
+    let mt = git.git(repo, &["-c", &format!("attr.tree={base_fq}"), "merge-tree", "--write-tree", base_fq, &tip]);
     if mt.code == 1 {
         return Some(Red { harness: false, text: format!("{branch} does not rebase onto {base_fq} cleanly:\n{}", mt.text()) });
     }
@@ -81,7 +81,7 @@ pub fn current_digest(git: &dyn Git, repo: &Path, work: &Path, base_fq: &str, re
     if !head.success() || tip.is_empty() || judged != Some(tip) {
         return String::new();
     }
-    if digest.contains(" does not rebase onto ") && git.git(repo, &["merge-tree", "--write-tree", base_fq, tip]).code != 1 {
+    if digest.contains(" does not rebase onto ") && git.git(repo, &["-c", &format!("attr.tree={base_fq}"), "merge-tree", "--write-tree", base_fq, tip]).code != 1 {
         return String::new();
     }
     digest.to_string()
@@ -355,5 +355,21 @@ mod tests {
         let g = S(Mutex::new(vec![]));
         red(&g, &E(0, Mutex::new(vec![])), &w.join("."), &w.join("."), "spira/b", "base", false);
         assert!(g.0.lock().unwrap().iter().any(|c| c.contains(&"merge-tree".to_string()) && c.last().unwrap() == "abc123"));
+    }
+
+    struct CliGit;
+    impl Git for CliGit {
+        fn git(&self, dir: &Path, args: &[&str]) -> Out {
+            let o = std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
+            Out { code: o.status.code().unwrap_or(-1), stdout: String::from_utf8_lossy(&o.stdout).into_owned(), stderr: String::from_utf8_lossy(&o.stderr).into_owned() }
+        }
+    }
+
+    #[test]
+    fn the_rebase_check_honours_the_base_refs_union_attributes_not_the_checkouts() {
+        let d = testkit::union_repo("fast-tier-union");
+        let w = tree("union", false);
+        let r = red(&CliGit, &E(0, Mutex::new(vec![])), d.path(), &w, "b", "main", false);
+        assert!(r.is_none_or(|r| !r.text.contains("does not rebase")));
     }
 }

@@ -85,7 +85,7 @@ fn git_log_subjects(path: &str, branch: &str, n: u32) -> String {
 
 fn git_merges_cleanly(path: &str, base: &str, branch: &str) -> bool {
     spira_config::bounded::bounded("git")
-        .args(["-C", path, "merge-tree", "--write-tree", base, branch])
+        .args(["-C", path, "-c", &format!("attr.tree={base}"), "merge-tree", "--write-tree", base, branch])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -163,6 +163,14 @@ pub fn run(seam: &dyn Seam, db: &str, apply: bool, spira_claim_bin: &str) -> (i3
 mod tests {
     use super::*;
     use crate::seam::fake::FakeSeam;
+
+    #[test]
+    fn merge_check_honours_the_base_refs_union_attributes_not_the_checkouts() {
+        let d = testkit::union_repo("groomer-union");
+        let p = d.path().to_str().unwrap();
+        assert!(git_merges_cleanly(p, "main", "b"));
+        assert!(!git_merges_cleanly(p, "main", "nonesuch"));
+    }
 
     #[test]
     fn candidate_json_round_trips_the_shape_spira_claim_expects() {
