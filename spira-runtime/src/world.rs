@@ -272,10 +272,17 @@ impl World {
         Err(format!("spira-lc {} failed after {STORE_ATTEMPTS} attempts: {}", argv.join(" "), last.trim()))
     }
 
+    /// The beads the lifecycle holds on an ask, from the socket's `list` (the `list-held` caller verb is the CLI's composition of it).
+    fn held_asks(&self) -> Result<Vec<String>, String> {
+        let out = self.lc_named(&["list", "--live", "--hold", "ask"])?;
+        let rows: Vec<Value> = serde_json::from_str(&out).map_err(|e| format!("held asks unparsed: {e}"))?;
+        Ok(rows.iter().filter_map(|r| r["bead_id"].as_str().map(str::to_string)).collect())
+    }
+
     /// The open asks as a JSON list; lines before the list (a notice the store printed) are skipped.
     fn open_asks_json(&self) -> Result<String, String> {
         let [flag, filter] = status_args(Kind::Ask, Which::Open);
-        let argv = ["content", "list", "--label", &self.ask_label, &flag, &filter, "--limit", "0", "--json"];
+        let argv = ["content-rows", "--label", &self.ask_label, &flag, &filter, "--full"];
         let out = self.lc_named(&argv)?;
         let list = out.char_indices().filter(|&(i, c)| c == '[' && (i == 0 || out.as_bytes()[i - 1] == b'\n')).map(|(i, _)| &out[i..]).find(|rest| serde_json::from_str::<Vec<Value>>(rest).is_ok());
         match list {
@@ -289,15 +296,14 @@ impl World {
         let listed = self.open_asks_json()?;
         let rows: Vec<Value> = serde_json::from_str(&listed).map_err(|e| format!("ask list unparsed: {e}"))?;
         let open = rows.iter().filter_map(|r| Some((r["id"].as_str()?.to_string(), r["title"].as_str()?.split_whitespace().collect::<Vec<_>>().join(" ")))).collect();
-        let held = self.lc(&["list-held", "ask"]).unwrap_or_default().lines().map(str::trim).filter(|id| !id.is_empty() && !seen.contains(*id)).map(|id| (id.to_string(), self.hold_line(id))).collect();
+        let held = self.held_asks().unwrap_or_default().into_iter().filter(|id| !seen.contains(id)).map(|id| { let line = self.hold_line(&id); (id, line) }).collect();
         serde_json::to_string(&asks::Snapshot { open, held }).map_err(|e| e.to_string())
     }
 
     /// Every open ask's JSON, then the mail of every held ask.
     fn asks_text(&self) -> Result<String, String> {
         let listed = self.open_asks_json()?;
-        let held = self.lc_named(&["list-held", "ask"])?;
-        let mails = held.lines().map(str::trim).filter(|id| !id.is_empty()).flat_map(|id| self.mails_for(id));
+        let mails = self.held_asks()?.into_iter().flat_map(|id| self.mails_for(&id));
         Ok(std::iter::once(listed).chain(mails).collect::<Vec<_>>().join("\n"))
     }
 
