@@ -393,12 +393,31 @@ impl<A: Ec2Api> Ec2<A> {
     }
 }
 
-/// Instance user-data: join the tailnet as `hostname`, ephemeral and tagged. The key is never echoed.
+/// Attempts at `tailscale up` before the instance gives up; each waits its attempt number times
+/// [`TAILSCALE_BACKOFF_SECS`] after a failure. One failed `tailscale up` at boot left two round
+/// VMs logged out until round-vm destroyed them (2026-10-30, sp-lnqksp).
+pub const TAILSCALE_UP_TRIES: u32 = 10;
+pub const TAILSCALE_BACKOFF_SECS: u32 = 5;
+/// Seconds to wait for tailscaled to be active before the first `tailscale up`.
+pub const TAILSCALED_READY_SECS: u32 = 60;
+
+/// Instance user-data: wait for tailscaled, then join the tailnet as `hostname`, ephemeral and
+/// tagged, retrying with backoff until logged in. The key is never echoed.
 pub fn user_data(auth_key: &str, hostname: &str) -> String {
     format!(
-        "#!/bin/bash\nset +x\ntailscale up --auth-key={} --hostname={} --advertise-tags=tag:round-vm --accept-dns=false\n",
-        sh_quote(auth_key),
-        sh_quote(hostname)
+        "#!/bin/bash\nset +x\n\
+for _w in $(seq 1 {ready}); do systemctl is-active --quiet tailscaled && break; sleep 1; done\n\
+for _i in $(seq 1 {tries}); do\n\
+  tailscale up --auth-key={key} --hostname={host} --advertise-tags=tag:round-vm --accept-dns=false --timeout=60s && break\n\
+  echo \"round-vm: tailscale up attempt $_i of {tries} failed\" >&2\n\
+  sleep $((_i * {backoff}))\n\
+done\n\
+tailscale status >/dev/null 2>&1 || echo \"round-vm: tailscale never logged in after {tries} attempts\" >&2\n",
+        ready = TAILSCALED_READY_SECS,
+        tries = TAILSCALE_UP_TRIES,
+        backoff = TAILSCALE_BACKOFF_SECS,
+        key = sh_quote(auth_key),
+        host = sh_quote(hostname)
     )
 }
 
@@ -1002,6 +1021,16 @@ mod tests {
     fn user_data_quotes_the_key_and_joins_as_the_instance_name() {
         let u = user_data("tskey-a'b", "round-ec2-a");
         assert!(u.contains("--auth-key='tskey-a'\\''b'") && u.contains("--hostname='round-ec2-a'") && u.contains("tag:round-vm"), "{u}");
+    }
+
+    #[test]
+    fn user_data_waits_for_tailscaled_and_retries_tailscale_up_without_echoing_the_key() {
+        let u = user_data("tskey-secret", "round-ec2-a");
+        assert!(u.starts_with("#!/bin/bash\nset +x\n"), "{u}");
+        assert!(u.contains("systemctl is-active --quiet tailscaled"), "waits for tailscaled: {u}");
+        assert!(u.contains(&format!("for _i in $(seq 1 {TAILSCALE_UP_TRIES}); do")) && u.contains("&& break"), "retries: {u}");
+        assert_eq!(u.matches("tskey-secret").count(), 1, "the key appears once, in the tailscale up argv: {u}");
+        assert!(!u.contains("echo") || u.lines().filter(|l| l.contains("echo")).all(|l| !l.contains("tskey")), "{u}");
     }
 
     use crate::provider::{destroy_verified, provision, DestroyError, ProvisionSpec, Timing};
