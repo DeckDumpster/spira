@@ -456,6 +456,14 @@ impl World for Real {
         let meta = std::fs::metadata(repo.join(rel)).ok()?;
         Some(meta.modified().ok()?.elapsed().map(|d| d.as_secs()).unwrap_or(0))
     }
+    fn remove_index_lock(&self, repo: &Path) -> Result<(), String> {
+        let (ok, out) = self.git(repo, &["rev-parse", "--git-path", "index.lock"]);
+        let rel = out.trim();
+        if !ok || rel.is_empty() {
+            return Err("cannot resolve index.lock".into());
+        }
+        std::fs::remove_file(repo.join(rel)).map_err(|e| e.to_string())
+    }
     fn git_running_in(&self, repo: &Path) -> bool {
         let Ok(want) = std::fs::canonicalize(repo) else { return false };
         let Ok(procs) = std::fs::read_dir("/proc") else { return false };
