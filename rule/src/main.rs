@@ -1111,7 +1111,7 @@ mod statute_dir_tests {
     #[test]
     fn the_delta_rendered_toml_resolves() {
         let delta = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/config-delta.toml")).unwrap();
-        assert!(delta.contains("\"spira.statute_dir\" = \"\""));
+        assert!(delta.contains("\nstatute_dir = \"\""));
         let tmp = testkit::TempDir::new("rule-sd");
         let toml = spira_config::process::fixture_toml(tmp.path(), &[("SPIRA_STATUTE_DIR", ""), ("SPIRA_RUN", "/fx/run")]);
         let _env = testkit::env(&[("SPIRA_TOML", Some(toml.to_str().unwrap()))]);

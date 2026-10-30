@@ -44,7 +44,6 @@ impl Delta {
         let mut d = Delta::default();
         for (k, v) in top {
             match (k.as_str(), v) {
-                ("added", Value::Table(t)) => d.added = t.into_iter().collect(),
                 ("removed", Value::Array(a)) => {
                     for item in a {
                         let Value::String(s) = item else { return Err("removed must list key paths as strings".into()) };
@@ -65,9 +64,10 @@ impl Delta {
                         d.renamed.insert(from, to);
                     }
                 }
-                (other, _) => return Err(format!("unknown or mistyped entry {other:?}: only `added` (a table of key = value), `removed` (a list of keys) and `renamed` (persona.<old> = \"persona.<new>\", spira.<old> = \"spira.<new>\") are allowed")),
+                _ => {}
             }
         }
+        d.added = spira_config::leaf_paths(&spira_config::delta_added(text)?).into_iter().collect();
         spira_config::placeholder_paths(d.added.iter().map(|(k, v)| (k.as_str(), v)))?;
         for k in d.added.keys().chain(d.removed.iter()) {
             if k.split('.').any(str::is_empty) {
@@ -104,8 +104,8 @@ impl Delta {
         if !self.renamed.is_empty() {
             top.insert("renamed".into(), Value::Table(self.renamed.iter().map(|(k, v)| (k.clone(), Value::String(v.clone()))).collect()));
         }
-        if !self.added.is_empty() {
-            top.insert("added".into(), Value::Table(self.added.clone().into_iter().collect()));
+        for (k, v) in &self.added {
+            let _ = set(&mut top, k, v.clone());
         }
         toml::to_string_pretty(&Value::Table(top)).unwrap_or_default()
     }
@@ -130,7 +130,13 @@ pub fn load(rel: &Path) -> Result<Option<Delta>, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(format!("cannot read {}: {e}", p.display())),
     };
-    Delta::parse(&text).map(Some).map_err(|e| format!("{}: {e}", p.display()))
+    let d = Delta::parse(&text).map_err(|e| format!("{}: {e}", p.display()))?;
+    let home = rel.join("spira");
+    if home.join("testlib/complete.toml").is_file() {
+        let added = spira_config::delta_added(&text).map_err(|e| format!("{}: {e}", p.display()))?;
+        spira_config::check_delta(&home, &added).map_err(|e| format!("{}: {e}", p.display()))?;
+    }
+    Ok(Some(d))
 }
 
 pub fn undo_path(state: &Path, sha: &str) -> PathBuf {
@@ -141,10 +147,19 @@ pub fn undo_path(state: &Path, sha: &str) -> PathBuf {
 pub fn load_undo(state: &Path, sha: &str) -> Result<Option<Delta>, String> {
     let p = undo_path(state, sha);
     match fs::read_to_string(&p) {
-        Ok(t) => Delta::parse(&t).map(Some).map_err(|e| format!("{}: {e}", p.display())),
+        Ok(t) => Delta::parse(&t).or_else(|e| legacy_undo(&t).ok_or(e)).map(Some).map_err(|e| format!("{}: {e}", p.display())),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(format!("cannot read {}: {e}", p.display())),
     }
+}
+
+/// An undo record written before the delta took the config's own shape: its keys sat in an `[added]` table.
+fn legacy_undo(text: &str) -> Option<Delta> {
+    let Value::Table(mut top) = text.parse::<Value>().ok()? else { return None };
+    let Some(Value::Table(added)) = top.remove("added") else { return None };
+    let mut d = Delta::parse(&toml::to_string(&Value::Table(top)).ok()?).ok()?;
+    d.added = added.into_iter().collect();
+    Some(d)
 }
 
 pub fn save_undo(state: &Path, sha: &str, undo: &Delta) -> Result<(), String> {

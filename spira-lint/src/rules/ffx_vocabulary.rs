@@ -242,10 +242,8 @@ Line 0 is a hit in the path itself."
 /// The mode this release's config-delta adds, for a lint run before activation has declared the key.
 fn pending_mode(tree: &Tree) -> Option<Mode> {
     let delta = tree.text_of("spira/config-delta.toml")?;
-    delta.lines().find_map(|l| {
-        let (k, v) = l.split_once('=')?;
-        (k.trim().trim_matches('"') == "spira.ffx_vocabulary_mode").then(|| Mode::parse(v.trim().trim_matches('"')).ok()).flatten()
-    })
+    let added = spira_config::delta_added(&delta).ok()?;
+    Mode::parse(added.get("spira")?.get("ffx_vocabulary_mode")?.as_str()?).ok()
 }
 
 pub fn rules() -> Vec<Box<dyn Rule>> {
@@ -276,7 +274,7 @@ valefor ifrit ixion shiva bahamut anima yojimbo cindy sandy mindy magus";
     #[test]
     fn undeclared_key_takes_the_value_the_release_delta_adds() {
         let t = fixture();
-        t.write("spira/config-delta.toml", "[added]\n\"spira.ffx_vocabulary_mode\" = \"enforce\"\n");
+        t.write("spira/config-delta.toml", "[spira]\nffx_vocabulary_mode = \"enforce\"\n");
         let tr = tree(&t, &["src/all.txt", "spira/config-delta.toml"]);
         let r = FfxVocabulary::with_mode(Err("undeclared".into()));
         assert!(!r.check(&tr).unwrap().is_empty());

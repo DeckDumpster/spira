@@ -121,14 +121,18 @@ impl Rule for ConfigDelta {
         let text = std::fs::read_to_string(tree.root.join(DELTA)).unwrap_or_default();
         let (added, removed) =
             declared(&text).map_err(|e| LintError::Refused(format!("{DELTA} does not parse: {e}")))?;
+        let typed = spira_config::delta_added(&text).and_then(|a| spira_config::check_delta(&tree.root.join("spira"), &a));
         let (no_add, no_rm) = undeclared(&prior, &head, &added, &removed);
         let mut out = Vec::new();
+        if let Err(e) = typed {
+            out.push(Finding { rule: NAME, path: DELTA.into(), line: None, message: format!("{DELTA} does not load under the typed schema: {e}") });
+        }
         for k in no_add {
             out.push(Finding {
                 rule: NAME,
                 path: DELTA.into(),
                 line: None,
-                message: format!("registry key {k} is added but {DELTA} has no [added] entry for it"),
+                message: format!("registry key {k} is added but {DELTA} has no entry for it under its config table"),
             });
         }
         for k in no_rm {
@@ -158,7 +162,7 @@ impl Rule for ConfigDelta {
     }
 
     fn hint(&self) -> &'static str {
-        "a release that adds or drops a registry key must declare it in spira/config-delta.toml ([added] \"spira.<key>\" = <value>, or removed = [\"spira.<key>\"]); otherwise activation has nothing to apply and the new release refuses the config in force"
+        "a release that adds or drops a registry key must declare it in spira/config-delta.toml ([spira] <key> = <value>, or removed = [\"spira.<key>\"]); otherwise activation has nothing to apply and the new release refuses the config in force"
     }
 }
 
@@ -176,9 +180,11 @@ mod tests {
     fn repo() -> TempDir {
         let t = TempDir::new("cfgdelta");
         t.git_init();
-        t.write("spira/conf.d/SPIRA_ALPHA", "TYPE=string\n");
+        t.write("spira/conf.d/SPIRA_ALPHA", "TYPE=u32\n");
         t.write("spira/conf.d/SPIRA_BETA", "TYPE=string\n");
-        t.write(DELTA, "[added]\n\"spira.alpha\" = 1\n");
+        t.write("spira/conf.toml.d/.keep", "");
+        t.write("spira/testlib/complete.toml", "[spira]\nalpha = 1\nbeta = \"b\"\n");
+        t.write(DELTA, "[spira]\nalpha = 1\n");
         t.git(&["add", "."]);
         t.git(&["commit", "-qm", "base"]);
         t.git(&["tag", "base"]);
@@ -212,7 +218,7 @@ mod tests {
     fn an_added_key_with_an_entry_passes_including_toml_only() {
         let t = repo();
         t.write("spira/conf.toml.d/SPIRA_GAMMA_KEY", "TYPE=string\n");
-        t.write(DELTA, "[added]\n\"spira.alpha\" = 1\n\"spira.gamma_key\" = \"x\"\n");
+        t.write(DELTA, "[spira]\nalpha = 1\ngamma_key = \"x\"\n");
         assert_eq!(check(&t).0, Ok(vec![]));
     }
 
@@ -223,7 +229,7 @@ mod tests {
         let out = check(&t).0.unwrap();
         assert_eq!(out.len(), 1);
         assert!(out[0].message.contains("spira.beta"), "{out:?}");
-        t.write(DELTA, "removed = [\"spira.beta\"]\n[added]\n\"spira.alpha\" = 1\n");
+        t.write(DELTA, "removed = [\"spira.beta\"]\n[spira]\nalpha = 1\n");
         assert_eq!(check(&t).0, Ok(vec![]));
     }
 
@@ -237,7 +243,7 @@ mod tests {
         t.git(&["commit", "-qm", "base2"]);
         t.git(&["tag", "-f", "base"]);
         t.remove("spira/conf.d/SPIRA_MAX_AEONS"); // ffx-ok
-        t.write(DELTA, "removed = [\"spira.max_aeons\"]\n[added]\n\"spira.max_dwarves\" = 4\n"); // ffx-ok
+        t.write(DELTA, "removed = [\"spira.max_aeons\"]\n[spira]\nmax_dwarves = 4\n"); // ffx-ok
         t.git(&["add", "-A"]);
         t.git(&["rm", "-q", "--cached", "-r", "--ignore-unmatch", "spira/conf.d/SPIRA_BETA"]);
         let out = check(&t).0.unwrap();
@@ -252,11 +258,20 @@ mod tests {
         let t = repo();
         let control = check(&t).0;
         assert_eq!(control, Ok(vec![]));
-        t.write(DELTA, "[added]\n\"spira.alpha\" = \"/placeholder/run/x.json\"\n");
+        t.write(DELTA, "[spira]\nalpha = \"/placeholder/run/x.json\"\n");
         match check(&t).0 {
             Err(LintError::Refused(m)) => assert!(m.contains("placeholder path"), "{m}"),
             o => panic!("{o:?}"),
         }
+    }
+
+    #[test]
+    fn a_value_of_the_wrong_type_fails_the_lint_naming_the_key() {
+        let t = repo();
+        assert_eq!(check(&t).0, Ok(vec![]));
+        t.write(DELTA, "[spira]\nalpha = \"3600\"\n");
+        let out = check(&t).0.unwrap();
+        assert!(out.len() == 1 && out[0].message.contains("spira.alpha") && out[0].message.contains("u32"), "{out:?}");
     }
 
     #[test]

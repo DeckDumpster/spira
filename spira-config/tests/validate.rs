@@ -479,10 +479,10 @@ fn strict_validation_refuses_a_timer_partition_label_whose_persona_is_unrostered
 
 #[test]
 fn a_config_delta_naming_one_key_twice_is_refused_naming_the_key() {
-    let both = "[added]\n\"spira.dup_key\" = 1\n\"spira.dup_key\" = \"x\"\n";
+    let both = "[spira]\ndup_key = 1\ndup_key = \"x\"\n";
     let err = spira_config::parse_config_delta(both).unwrap_err();
-    assert!(err.contains("spira.dup_key"), "{err}");
-    let distinct = "[added]\n\"spira.one\" = 1\n\"spira.two\" = \"x\"\n";
+    assert!(err.contains("dup_key"), "{err}");
+    let distinct = "[spira]\none = 1\ntwo = \"x\"\n";
     assert_eq!(spira_config::parse_config_delta(distinct).unwrap().0.len(), 2);
 }
 
