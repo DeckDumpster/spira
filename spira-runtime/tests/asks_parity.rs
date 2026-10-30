@@ -56,7 +56,7 @@ impl Fixture {
 
     fn change_world(&self) {
         let long = "x".repeat(200);
-        self.set_asks(&[("sp-old", "already open"), ("sp-new", "decide X"), ("sp-long", &long), ("sp-quote", QUOTED_TITLE_JSON)]);
+        self.set_asks(&[("sp-old", "already open"), ("sp-new", "decide X"), ("sp-long", &long), ("sp-quote", QUOTED_TITLE_JSON), ("sp-ws", r"two\nlines\tand  tab")]);
         fs::write(self.p("held.txt"), "sp-held\nsp-nomail\n").unwrap();
     }
 
@@ -204,6 +204,7 @@ fn a_store_that_never_answers_announces_nothing() {
 #[test]
 fn a_title_with_a_quote_or_backslash_is_announced_as_its_text_not_its_json() {
     let r = same_rows("quoted", 3, true);
+    assert!(r.iter().any(|l| l.ends_with("NEW ASK sp-ws: two lines and tab")), "{r:?}");
     assert!(r.iter().any(|l| l.ends_with(r#"NEW ASK sp-quote: say "hi" in C:\dir"#)), "{r:?}");
 }
 

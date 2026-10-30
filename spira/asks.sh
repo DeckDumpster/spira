@@ -76,7 +76,7 @@ try: rows = json.load(sys.stdin)
 except Exception: sys.exit(0)
 for r in rows:
     if isinstance(r, dict) and isinstance(r.get("id"), str) and isinstance(r.get("title"), str):
-        print("%s\t%s" % (r["id"], r["title"]))' 2>/dev/null | cut -c1-170)
+        print("%s\t%s" % (r["id"], " ".join(r["title"].split())))' 2>/dev/null | cut -c1-170)
     while read -r id; do
         [ -n "$id" ] || continue
         [ -n "${_as_seen[$id]:-}" ] && continue
