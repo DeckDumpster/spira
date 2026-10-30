@@ -61,7 +61,7 @@ fi
 # D14), which is also where in_progress got included (sp-mp9s): a claimed trigger bead
 # leaves --status open, and a query scoped to open alone would file a duplicate on the
 # very next tick.
-if ! open_count="$(spira_open_trigger_count "$LABELS")"; then
+if ! open_count="$(spira_open_trigger_count "$LABELS" groom-trigger)"; then
     log "cannot count open triggers (spira-lc or bd unreadable) — refusing to file, retrying next pass"
     exit 0
 fi

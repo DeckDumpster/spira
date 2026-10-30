@@ -1811,7 +1811,8 @@ spira_lane_admitted() {
 }
 
 # spira_open_trigger_count <labels> -> count of open-or-in_progress beads carrying every
-# label in <labels> (comma-separated). Non-zero status, no stdout, when the count cannot be
+# label in <labels> (comma-separated); <caller> (default mimir-trigger) prefixes the failure
+# line so each trigger's log names itself. Non-zero status, no stdout, when the count cannot be
 # read: callers must refuse to file, never treat it as zero.
 # in_progress is included because a claimed trigger bead leaves --status open, and a dedup
 # query scoped to open alone would file a duplicate on the very next tick (sp-mp9s — the
@@ -1822,7 +1823,7 @@ spira_lane_admitted() {
 # already exported by conf.sh (`spira_config::resolve::EXPORT_KEYS`), so no re-threading is
 # needed here the way SPIRA_HOME needs it above.
 spira_open_trigger_count() {
-    mimir-trigger --home "${SPIRA_HOME:-}" open-trigger-count "$1"
+    mimir-trigger --home "${SPIRA_HOME:-}" open-trigger-count "$1" "${2:-}"
 }
 
 repo_gate() {            # repo_gate <name> -> the repo's own gate command, possibly empty

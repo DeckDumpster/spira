@@ -34,7 +34,7 @@ CALL_TIMEOUT="${SPIRA_WARDEN_CALL_TIMEOUT:-30}"
 count_open() {
     local n=1
     while [ "$n" -le "$ATTEMPTS" ]; do
-        if open_count="$(spira_open_trigger_count "$LABELS")"; then return 0; fi
+        if open_count="$(spira_open_trigger_count "$LABELS" warden-trigger)"; then return 0; fi
         log "cannot count open triggers (attempt $n/$ATTEMPTS)"
         [ "$n" -lt "$ATTEMPTS" ] && sleep $((BACKOFF * n))
         n=$((n + 1))

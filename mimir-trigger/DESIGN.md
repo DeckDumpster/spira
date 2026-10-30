@@ -28,7 +28,7 @@ would-file) the same single bead:
 mimir-trigger
 mimir-trigger [--home <spira-dir>] repo-lanes <repo-name>
 mimir-trigger [--home <spira-dir>] lane-admitted <lane>
-mimir-trigger [--home <spira-dir>] open-trigger-count <labels>
+mimir-trigger [--home <spira-dir>] open-trigger-count <labels> [<caller>]
 ```
 
 The bare form is the sweep (matches the bash: the script took no arguments). The three
