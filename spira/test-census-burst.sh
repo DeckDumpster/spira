@@ -15,6 +15,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 census_pipeline() { SPIRA_HOME="$HERE" census pipeline "$@"; }
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=60   # setup builds real git/dolt fixtures; a loaded VM doubles it
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"

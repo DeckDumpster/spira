@@ -35,6 +35,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=60   # setup builds real git/dolt fixtures; a loaded VM doubles it
 
 has()   { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "$2" ;; esac; }
 hasnt() { case "$2" in *"$3"*) bad "$1" "$2" ;; *) ok "$1" ;; esac; }

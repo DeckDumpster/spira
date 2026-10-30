@@ -14,6 +14,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=90   # setup builds real git/dolt fixtures; a loaded VM doubles it
 
 # testdb-mode: server — attempts_of/requeues_of read the events table via bd sql, which embedded mode refuses.
 export SPIRA_TESTDB_MODE=server

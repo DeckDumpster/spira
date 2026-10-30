@@ -13,6 +13,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=120   # setup builds real git/dolt fixtures; a loaded VM doubles it
 
 echo "test-gate-cap.sh"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM

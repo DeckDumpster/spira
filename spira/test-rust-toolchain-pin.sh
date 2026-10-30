@@ -10,6 +10,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=90   # setup builds real git/dolt fixtures; a loaded VM doubles it
 ROOT="$(cd "$HERE/.." && pwd)"
 
 pin="$(awk -F'"' '/^channel/{print $2; exit}' "$ROOT/rust-toolchain.toml" 2>/dev/null)"

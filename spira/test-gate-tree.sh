@@ -22,6 +22,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=180   # setup builds real git/dolt fixtures; a loaded VM doubles it
 # The tree's tools for a minimal-PATH run (sp-gypjk): where this suite's PATH finds the
 # tree's build, and the tree's own spira/.
 TOOLS="$(dirname "$(command -v spira-config)"):$HERE"

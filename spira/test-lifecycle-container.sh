@@ -33,6 +33,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=150   # setup builds real git/dolt fixtures; a loaded VM doubles it
 
 # Resolve cargo/rustc and dolt BEFORE conf.sh, which can overwrite PATH with the harness's
 # own tool directories — the testenv image puts cargo at /usr/local/cargo/bin, not under

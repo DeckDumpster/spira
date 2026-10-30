@@ -50,6 +50,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 CUT_PART="${CUT_PART:-main}"
 ROOT="$(cd "$HERE/.." && pwd -P)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=180   # setup builds real git/dolt fixtures; a loaded VM doubles it
 # batcher, tsd-write and the queue binary case L lands through (queue/DESIGN.md §7.4) are the
 # tree under test's own build, invoked by name on the suite's PATH (sp-gypjk).
 

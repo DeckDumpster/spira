@@ -21,6 +21,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=360   # RUN_LIMIT is 280 and the sim run is one case
 
 [ -n "${SPIRA_RELEASE:-}" ] || bail "SPIRA_RELEASE is not set: run via testenv --with-bins"
 SIM="$SPIRA_RELEASE/bin/sim"

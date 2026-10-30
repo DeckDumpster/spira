@@ -17,6 +17,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=150   # setup builds real git/dolt fixtures; a loaded VM doubles it
 . "$HERE/testlib/gate-fixture.sh"
 
 command -v flock >/dev/null 2>&1 || { echo "  SKIP  flock is not on PATH"; exit 77; }

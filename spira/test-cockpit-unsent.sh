@@ -34,6 +34,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=90   # setup builds real git/dolt fixtures; a loaded VM doubles it
 
 # Resolve cargo/dolt BEFORE conf.sh, same hazard as test-lifecycle-container.sh: conf.sh
 # can overwrite PATH with the harness's own tool directories. Needed only for the
