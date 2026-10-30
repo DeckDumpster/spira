@@ -2741,5 +2741,6 @@ fn install_tarball_finds_the_whole_key_registry_in_the_unpacked_tree() {
     assert!(home.join("conf.toml.d").is_dir());
     let reg = spira_config::registry::Registry::load(&home).unwrap();
     assert!(reg.keys.contains_key("SPIRA_HOTFIX_ALERT_HOURS"), "a conf.toml.d key must be found");
-    assert!(reg.keys.keys().any(|k| home.join("conf.d").join(k).is_file()), "a conf.d key must be found");
+    let source = spira_config::registry::Registry::load(&repo.join("spira")).unwrap();
+    assert_eq!(reg.keys.keys().collect::<Vec<_>>(), source.keys.keys().collect::<Vec<_>>(), "the unpacked registry is the source registry");
 }
