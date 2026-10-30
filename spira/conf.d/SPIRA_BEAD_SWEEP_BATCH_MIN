@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Minutes an open batch of a repo still covers that repo's CERTIFIED beads in the bead sweep.
+SCHEMA=Minutes an open batch of a repo still covers that repo's CERTIFIED beads in the bead sweep (unit: minutes; integer; default 180). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_BEAD_SWEEP_BATCH_MIN:=180}"
+SPIRA_CONF_DEFAULT_EOF

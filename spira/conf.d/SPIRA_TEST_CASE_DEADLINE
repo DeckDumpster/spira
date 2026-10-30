@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=suite
+DOC=Longest, in seconds, one test case of a shell suite may run before the suite is stopped and red
+SCHEMA=Longest seconds one shell-suite case may run (unit: seconds; integer; default 30). 0 disables.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_TEST_CASE_DEADLINE:=30}"
+SPIRA_CONF_DEFAULT_EOF

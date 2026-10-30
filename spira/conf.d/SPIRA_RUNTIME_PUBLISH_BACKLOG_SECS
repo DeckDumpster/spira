@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds between spira-runtime publish-backlog observations of every queue.local repo's unpublished range.
+SCHEMA=Seconds between spira-runtime publish-backlog observations (unit: seconds; integer; default 900). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS:=900}"
+SPIRA_CONF_DEFAULT_EOF

@@ -25,9 +25,9 @@ python3 -I - "$TMP/store.json" <<'PY'
 import json, sys
 beads = []
 for n in range(1500):
-    labels = ["spira", "plan", "incident"] + (["spira-poison"] if n % 500 == 7 else [])
+    labels = ["spira", "plan", "incident"] + (["spira-poison"] if n % 500 == 7 else []) + (["czar-trigger"] if n == 3 else [])
     beads.append({"id": "sp-%04d" % n, "title": "bead %d" % n, "status": "open", "issue_type": "task",
-                  "labels": labels, "external_ref": "ref-%d" % (n % 40), "created_at": "2026-10-01T00:00:00Z",
+                  "labels": labels, "external_ref": "incident:queue-loop-stalled" if n == 3 else "ref-%d" % (n % 40), "created_at": "2026-10-01T00:00:00Z",
                   "updated_at": "2026-10-01T00:00:00Z"})
 json.dump(beads, open(sys.argv[1], "w"))
 PY

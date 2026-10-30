@@ -13,6 +13,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=180   # slow cases: real git/dolt on a loaded VM
 # The queue binary (queue/DESIGN.md §7.4), invoked by name: the tree under test's build is
 # on the suite's PATH (sp-gypjk).
 

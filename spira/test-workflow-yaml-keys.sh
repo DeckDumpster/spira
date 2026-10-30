@@ -16,6 +16,8 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
 . "$HERE/testlib.sh"
 
+python3 -I -c "import yaml" 2>/dev/null || skip "python3 has no yaml module on this box"
+
 checker='
 import sys, yaml
 class L(yaml.SafeLoader): pass

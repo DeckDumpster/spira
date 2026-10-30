@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Minutes a SUBMITTED or CERTIFIED bead may wait for a round before the bead sweep raises it.
+SCHEMA=Minutes a SUBMITTED or CERTIFIED bead may wait for a round before the bead sweep raises it (unit: minutes; integer; default 120). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_BEAD_SWEEP_WAIT_MIN:=120}"
+SPIRA_CONF_DEFAULT_EOF

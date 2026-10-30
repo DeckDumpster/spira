@@ -26,7 +26,7 @@ rsk() {
 fresh() { rm -f "$TMP/run/watchd/round-spill-key.said" "$INBOX"; }
 
 now="$(date +%s)"
-echo "$((now + 5 * 86400))" > "$KEY.expires"
+echo "$((now + 5 * 86400 - 3600))" > "$KEY.expires"
 fresh
 is "off while spill is unset" "" "$(rsk '' pass)"
 nowant "a planted near expiry is not reported while spill is off" "ROUND SPILL KEY" "$(cat "$INBOX" 2>/dev/null)"
@@ -43,7 +43,7 @@ chmod +x "$TMP/stub/round-vm"
 rskp() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_ROUND_VM_SPILL=ec2-only \
         SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE="$KEY" SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS=9 \
-        SPIRA_ROUND_VM_EC2_PROBE_DEADLINE="${DL:-7}"
+        SPIRA_ROUND_VM_EC2_PROBE_DEADLINE="${DL:-7}" SPIRA_ROUND_VM_STATE_DIR=
     env -i PATH="$TMP/stub:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" bash "$HERE/round-spill-key.sh" "$@" 2>&1
 }
 echo "$((now + 30 * 86400))" > "$KEY.expires"
@@ -62,6 +62,7 @@ printf '#!/usr/bin/env bash\n[ "$1" = template-check ] && exit "${TC_RC:-0}"\n[ 
 is "a probe slower than the old 5s cap but inside the 7s deadline is quiet" "" "$(rskp pass)"
 nowant "a slow successful probe leaves no alarm" "ROUND SPILL LAUNCH" "$(cat "$INBOX" 2>/dev/null)"
 printf '#!/usr/bin/env bash\n[ "$1" = template-check ] && exit "${TC_RC:-0}"\n[ "$1" = status ] && exit 1\nsleep 5\nexit 0\n' > "$TMP/stub/round-vm"
+rm -f "$TMP/run/watchd/round-spill-key.latency"
 DL=1 out="$(rskp pass)"
 want "a probe past the deadline says it could not decide" "probe could not decide" "$out"
 nowant "a timeout is not reported as a refused launch" "cannot launch" "$(cat "$INBOX")"
@@ -97,7 +98,7 @@ is "a later successful launch supersedes an earlier refusal" "" "$(rskp pass)"
 mkdir -p "$TMP/state"
 printf '#!/usr/bin/env bash\n[ "$1" = template-check ] && exit "${TC_RC:-0}"\nsleep 30\n' > "$TMP/stub/round-vm"
 rskd() {
-    tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_ROUND_VM_SPILL=ec2-only SPIRA_ROUND_VM_STATE_DIR="$TMP/state" \
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_ROUND_VM_SPILL=ec2-only SPIRA_ROUND_VM_STATE_DIR="$TMP/state" SPIRA_ROUND_VM_EC2_LAUNCH_WINDOW=3600 \
         SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE="$KEY" SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS=9 SPIRA_ROUND_VM_EC2_PROBE_DEADLINE=1
     env -i PATH="$TMP/stub:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" bash "$HERE/round-spill-key.sh" "$@" 2>&1
 }
@@ -118,7 +119,7 @@ rm -f "$TMP/probe.log"
 printf '#!/usr/bin/env bash\n[ "$1" = template-check ] && exit "${TC_RC:-0}"\necho "FAILED at dry-run launch: aws ec2: UnauthorizedOperation" >&2; exit 1\n' > "$TMP/stub/round-vm"
 fresh
 want "a refused launch still quotes the AWS error" "cannot launch: FAILED at dry-run launch: aws ec2: UnauthorizedOperation" "$(rskp pass)"
-echo "$((now + 5 * 86400))" > "$KEY.expires"
+echo "$((now + 5 * 86400 - 3600))" > "$KEY.expires"
 
 fresh
 out="$(rsk ec2 pass)"

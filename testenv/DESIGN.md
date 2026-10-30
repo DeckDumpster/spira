@@ -299,9 +299,15 @@ fields ignore them.
 
 ### 3.5 `TapSummary` — `<suite>.tap.json`
 
-`{"plan":N|null,"passed":n,"failed":n,"skipped":n,"todo":n,"bail_out":str|null,"not_ok":[str]}`
+`{"plan":N|null,"passed":n,"failed":n,"skipped":n,"todo":n,"bail_out":str|null,"not_ok":[str],"cases":[{"n","name","status","ms","at"}]}`
 from TAP lines `1..N`, `ok N - d`, `not ok N - d`, `# SKIP`/`# TODO` directives and
 `Bail out! reason`. Informational: the verdict is the suite's exit status, not its TAP.
+
+`cases` has one entry per case: `ms` from the `#ms=<n>` line testlib.sh prints after it, `at`
+from a failing case's `# at <file>:<line>` line. testlib.sh judges each case: one that runs past
+`spira.test_case_deadline` is printed as the next `not ok` and the suite is killed; the first
+`not ok` ends the suite with a `Bail out!`. The suite's RED line and the `VERDICT RED` line name
+that first failing case (`first red: case <n> <name> at <file>:<line>`, `first=<suite>: ...`).
 
 ### 3.5a `jsonl_rows` — a suite's `results.jsonl` rows (sp-9gd4e)
 

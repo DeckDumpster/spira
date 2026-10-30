@@ -38,6 +38,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=180   # slow cases: real git/dolt on a loaded VM
 . "$HERE/podman-exec-diag.sh"
 iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "exit $2"; }
 # Exit 3 is "installed but not ready": no cockpit collector runs in this container.

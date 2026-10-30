@@ -2,6 +2,8 @@
 # test-sim-<scenario>.sh shards. Sourced after testlib.sh; defines sim_scenario_shard and
 # sim_fixture_repo.
 
+tl_config SPIRA_TEST_CASE_DEADLINE=180   # one case is a whole sim world
+
 sim_fixture_repo() {  # sim_fixture_repo <dir> — the harness tree as a one-commit repo
     local repo="$1" here
     here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"

@@ -291,4 +291,5 @@ SPIRA_TOML="$BAD" pb watch --ticks 1 >/dev/null
 pb health >/dev/null; rc=$?
 is   "9: the health probe fails while blind (the mailer reads the same broken toml)" "1" "$rc"
 
+grep -q '^publish-backlog|' "$HERE/watchers"; is "watchers manifest has no publish-backlog row: spira-runtime hosts it" "1" "$?"
 tl_summary

@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Minutes a CERTIFIED bead outside the home repo may wait for a batch before the bead sweep raises it.
+SCHEMA=Minutes a CERTIFIED bead outside the home repo may wait for a batch before the bead sweep raises it (unit: minutes; integer; default 10). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_BEAD_SWEEP_CERT_MIN:=10}"
+SPIRA_CONF_DEFAULT_EOF

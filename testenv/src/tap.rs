@@ -18,6 +18,41 @@ pub struct TapSummary {
     pub bail_out: Option<String>,
     /// Every `not ok` line that is not a TODO, verbatim (trimmed).
     pub not_ok: Vec<String>,
+    /// Every case in the order it ran, with how long it took.
+    #[serde(default)]
+    pub cases: Vec<TapCase>,
+}
+
+/// One TAP case. `ms` is testlib.sh's `#ms=<n>` line that follows the case; `at` is its
+/// `# at <file>:<line>` diagnostic. Either is `None` for output that does not carry it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TapCase {
+    pub n: u64,
+    pub name: String,
+    pub status: String,
+    pub ms: Option<u64>,
+    pub at: Option<String>,
+}
+
+impl TapSummary {
+    /// The first case that failed, as `case <n> <name> at <file>:<line>`: the one a red
+    /// is named by, since a suite stops at its first failing case.
+    pub fn first_failure(&self) -> Option<String> {
+        let c = self.cases.iter().find(|c| c.status == "not ok")?;
+        Some(match &c.at {
+            Some(at) => format!("case {} {} at {at}", c.n, c.name),
+            None => format!("case {} {}", c.n, c.name),
+        })
+    }
+}
+
+fn open_case(status: &str, rest: &str) -> TapCase {
+    let rest = rest.trim_start();
+    let digits = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+    let n = rest[..digits].parse().unwrap_or(0);
+    let name = rest[digits..].trim_start().strip_prefix("- ").unwrap_or(rest[digits..].trim_start());
+    let name = name.split_once(" # ").map_or(name, |(head, _)| head).trim_end();
+    TapCase { n, name: name.to_string(), status: status.to_string(), ms: None, at: None }
 }
 
 fn directive(desc: &str) -> Option<&'static str> {
@@ -56,7 +91,15 @@ pub fn parse(output: &str) -> TapSummary {
     let mut t = TapSummary::default();
     for raw in output.lines() {
         let line = raw.trim();
-        if let Some(rest) = line.strip_prefix("1..") {
+        if let Some(ms) = line.strip_prefix("#ms=") {
+            if let Some(c) = t.cases.last_mut() {
+                c.ms = ms.trim().parse().ok();
+            }
+        } else if let Some(at) = line.strip_prefix("# at ") {
+            if let Some(c) = t.cases.last_mut() {
+                c.at = Some(at.trim().to_string());
+            }
+        } else if let Some(rest) = line.strip_prefix("1..") {
             if let Ok(n) = rest.split_whitespace().next().unwrap_or("").parse() {
                 t.plan = Some(n);
             }
@@ -65,20 +108,36 @@ pub fn parse(output: &str) -> TapSummary {
         } else if let Some(rest) = line.strip_prefix("not ok") {
             if rest.is_empty() || rest.starts_with([' ', '\t']) {
                 match directive(rest) {
-                    Some("todo") => t.todo += 1,
-                    Some("skip") => t.skipped += 1,
+                    Some("todo") => {
+                        t.todo += 1;
+                        t.cases.push(open_case("todo", rest));
+                    }
+                    Some("skip") => {
+                        t.skipped += 1;
+                        t.cases.push(open_case("skip", rest));
+                    }
                     _ => {
                         t.failed += 1;
                         t.not_ok.push(line.to_string());
+                        t.cases.push(open_case("not ok", rest));
                     }
                 }
             }
         } else if let Some(rest) = line.strip_prefix("ok") {
             if rest.is_empty() || rest.starts_with([' ', '\t']) {
                 match directive(rest) {
-                    Some("skip") => t.skipped += 1,
-                    Some("todo") => t.todo += 1,
-                    _ => t.passed += 1,
+                    Some("skip") => {
+                        t.skipped += 1;
+                        t.cases.push(open_case("skip", rest));
+                    }
+                    Some("todo") => {
+                        t.todo += 1;
+                        t.cases.push(open_case("todo", rest));
+                    }
+                    _ => {
+                        t.passed += 1;
+                        t.cases.push(open_case("ok", rest));
+                    }
                 }
             }
         }
@@ -174,6 +233,9 @@ pub fn jsonl_rows(suite: &str, suite_source: &str, out_text: Option<&str>, fallb
         if out.lines().next() == Some("TAP version 14") {
             let mut rows = String::new();
             let mut pending: Option<Pending> = None;
+            // A bail-out straight after a failing case is that case stopping the suite, not a
+            // second result: it would otherwise count as a skip in gate-diag.
+            let mut after_fail = false;
             let emit = |rows: &mut String, p: Pending| {
                 rows.push_str(&format!(
                     "{{\"suite\":\"{}\",\"tier\":\"{}\",\"case\":\"{}\",\"status\":\"{}\",\"seconds\":{},\"uc\":{},\"detail\":\"{}\"}}\n",
@@ -188,6 +250,7 @@ pub fn jsonl_rows(suite: &str, suite_source: &str, out_text: Option<&str>, fallb
             };
             for line in out.lines() {
                 if let Some(case) = strip_case_prefix(line, "ok") {
+                    after_fail = false;
                     if let Some(p) = pending.take() {
                         emit(&mut rows, p);
                     }
@@ -196,6 +259,7 @@ pub fn jsonl_rows(suite: &str, suite_source: &str, out_text: Option<&str>, fallb
                     if let Some(p) = pending.take() {
                         emit(&mut rows, p);
                     }
+                    after_fail = true;
                     pending = Some(Pending { case, status: "fail", detail: String::new() });
                 } else if let Some(rest) = line.strip_prefix("# ") {
                     if let Some(p) = pending.as_mut() {
@@ -212,7 +276,9 @@ pub fn jsonl_rows(suite: &str, suite_source: &str, out_text: Option<&str>, fallb
                     if let Some(p) = pending.take() {
                         emit(&mut rows, p);
                     }
-                    emit(&mut rows, Pending { case: "(suite)".into(), status: "bail", detail: detail.to_string() });
+                    if !after_fail {
+                        emit(&mut rows, Pending { case: "(suite)".into(), status: "bail", detail: detail.to_string() });
+                    }
                 } else if let Some(p) = pending.take() {
                     emit(&mut rows, p);
                 }
@@ -303,7 +369,48 @@ mod tests {
         assert_eq!(skip_all_reason("1..1\nok 1 - a # SKIP not applicable\n"), None);
     }
 
+    #[test]
+    fn every_case_carries_its_duration_and_a_failure_its_location() {
+        let out = "TAP version 14\nok 1 - first\n#ms=12\nok 2 - slow # SKIP no dolt\n#ms=0\nnot ok 3 - broke\n# wanted x\n# at spira/test-x.sh:41\n#ms=2503\nBail out! case 3 failed: broke\n1..3\n";
+        let t = parse(out);
+        assert_eq!(t.cases.len(), 3);
+        assert_eq!(
+            t.cases[0],
+            TapCase { n: 1, name: "first".into(), status: "ok".into(), ms: Some(12), at: None }
+        );
+        assert_eq!((t.cases[1].status.as_str(), t.cases[1].name.as_str()), ("skip", "slow"));
+        assert_eq!(t.cases[2].ms, Some(2503));
+        assert_eq!(t.cases[2].at.as_deref(), Some("spira/test-x.sh:41"));
+        assert_eq!(t.first_failure().as_deref(), Some("case 3 broke at spira/test-x.sh:41"));
+        assert_eq!(t.bail_out.as_deref(), Some("case 3 failed: broke"));
+    }
+
+    #[test]
+    fn a_green_suite_names_no_failing_case() {
+        assert_eq!(parse("ok 1 - a\n#ms=1\nok 2 - b\n#ms=1\n").first_failure(), None);
+    }
+
+    #[test]
+    fn a_hung_case_is_the_first_failure() {
+        let t = parse("ok 1 - a\nok 2 - b\nnot ok 3 - case 3 exceeded its 30s deadline\n# at s.sh:9\nBail out! case 3 exceeded its 30s deadline\n");
+        assert_eq!(t.first_failure().as_deref(), Some("case 3 case 3 exceeded its 30s deadline at s.sh:9"));
+    }
+
+    #[test]
+    fn an_old_tap_json_without_cases_still_reads() {
+        let t: TapSummary = serde_json::from_str(r#"{"plan":1,"passed":1,"failed":0,"skipped":0,"todo":0,"bail_out":null,"not_ok":[]}"#).unwrap();
+        assert!(t.cases.is_empty());
+    }
+
     // --------------------------------------------------------------- jsonl_rows
+
+    #[test]
+    fn jsonl_rows_a_bail_out_after_a_failing_case_is_not_a_second_row() {
+        let out = "TAP version 14\nok 1 - a\n#ms=1\nnot ok 2 - b\n# at s.sh:3\n#ms=1\nBail out! case 2 failed: b\n";
+        let rows = jsonl_rows("t.sh", "", Some(out), "red", "1");
+        assert_eq!(rows.lines().count(), 2, "{rows}");
+        assert!(!rows.contains("\"status\":\"bail\""), "{rows}");
+    }
 
     #[test]
     fn jsonl_rows_one_row_per_tap_case_with_a_failure_detail() {

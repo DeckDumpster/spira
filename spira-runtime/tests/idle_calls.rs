@@ -7,7 +7,7 @@ use runtime::event::*;
 use runtime::journal::{Journal, Offset, Poison, ScheduleRow};
 use runtime::ports::{Clock, VirtualClock};
 use runtime::{Executor, MemJournal, Outcome, Result};
-use spira_runtime::watchers::{asks::Asks, design_asks::DesignAsks, supersede_duty::SupersedeDuty, inbox_keeper::InboxKeeper, pr_notify::PrNotify, round_duty::RoundDuty};
+use spira_runtime::watchers::{asks::Asks, bead_sweep::BeadSweep, design_asks::DesignAsks, supersede_duty::SupersedeDuty, inbox_keeper::InboxKeeper, pr_notify::PrNotify, publish_backlog::PublishBacklog, round_duty::RoundDuty};
 use runtime::marker::NullMarker;
 use runtime::wide::NullSink;
 use spira_runtime::{open_engine, Settings};
@@ -73,7 +73,7 @@ impl Journal for Counting {
     }
 }
 
-const PER_EVENT: u64 = 5;
+const PER_EVENT: u64 = 6;
 const IDLE_CALLS_PER_MINUTE: u64 = 12;
 
 /// The registration set the service builds from its shipped intervals, not a hand-copied one.
@@ -102,6 +102,16 @@ fn production() -> Settings {
             "SPIRA_CONCIERGE_INBOX_BACKOFF" => "3600".into(),
             "SPIRA_RUN" | "SPIRA_QUEUE_DIR" | "SPIRA_REPO_MAP" | "SPIRA_CONCIERGE_INBOX" | "SPIRA_LC_SOCKET" => "/unused".into(),
             "SPIRA_HOME_REPO" => "spira".into(),
+            "SPIRA_RUNTIME_BEAD_SWEEP_SECS" => "1800".into(),
+            "SPIRA_BEAD_SWEEP_HOLD_MIN" | "SPIRA_BEAD_SWEEP_WAIT_MIN" => "120".into(),
+            "SPIRA_BEAD_SWEEP_REWORK_MIN" => "20".into(),
+            "SPIRA_BEAD_SWEEP_CERT_MIN" => "10".into(),
+            "SPIRA_BEAD_SWEEP_BATCH_MIN" => "180".into(),
+            "SPIRA_SCOPED_STOP_REVIEW_SECS" => "86400".into(),
+            "SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS" => "900".into(),
+            "SPIRA_LOCAL_BACKLOG_COUNT" => "50".into(),
+            "SPIRA_LOCAL_BACKLOG_AGE" => "10800".into(),
+            "SPIRA_PUBLISH_REMOTE" => "origin".into(),
             _ => return Err(k.to_string()),
         })
     };
@@ -115,6 +125,8 @@ fn quiet_world(effect: &str, _poll: u64) -> String {
         spira_runtime::watchers::pr_notify::OBSERVE => r#"{"repos":[]}"#.into(),
         spira_runtime::watchers::asks::OBSERVE => r#"{"open":[],"held":[]}"#.into(),
         spira_runtime::watchers::supersede_duty::OBSERVE => r#"{"held":[]}"#.into(),
+        spira_runtime::watchers::bead_sweep::OBSERVE => r#"{"rows":[],"content":[],"terminal":[],"stops":[],"reserved":[],"carried":[],"solo_skipped":[],"pr_repos":[]}"#.into(),
+        spira_runtime::watchers::publish_backlog::OBSERVE => r#"{"repos":[]}"#.into(),
         _ => String::new(),
     }
 }
@@ -140,7 +152,7 @@ fn ten_minutes(world: fn(&str, u64) -> String) -> Run {
     let clock = VirtualClock::new(1_800_000_000_000);
     let start = clock.now_ms();
     let mut e = open_engine(&production(), counting.clone(), Arc::new(clock.clone()), Arc::new(NullMarker), Arc::new(NullSink), vec![]).unwrap();
-    for (_, stream, kind) in [runtime::heartbeat::Heartbeat::boot(), RoundDuty::boot(), InboxKeeper::boot(), PrNotify::boot(), Asks::boot(), DesignAsks::boot(), SupersedeDuty::boot()] {
+    for (_, stream, kind) in [runtime::heartbeat::Heartbeat::boot(), RoundDuty::boot(), InboxKeeper::boot(), PrNotify::boot(), Asks::boot(), DesignAsks::boot(), SupersedeDuty::boot(), BeadSweep::boot(), PublishBacklog::boot()] {
         e.start(stream, kind);
     }
     let (mut wakes, mut polls) = (0, 0);

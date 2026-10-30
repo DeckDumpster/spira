@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds between spira-runtime bead-sweep passes over every live bead.
+SCHEMA=Seconds between spira-runtime bead-sweep passes over every live bead (unit: seconds; integer; default 1800). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_BEAD_SWEEP_SECS:=1800}"
+SPIRA_CONF_DEFAULT_EOF

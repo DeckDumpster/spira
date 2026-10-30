@@ -16,6 +16,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=180   # slow cases: real git/dolt on a loaded VM
 
 export SPIRA_NO_LOOP_LABEL="no-loop"
 tl_config SPIRA_NO_LOOP_LABEL="no-loop"
