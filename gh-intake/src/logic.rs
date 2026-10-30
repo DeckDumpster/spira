@@ -136,7 +136,7 @@ fn ingest_repo(mut r: Report, http: &dyn Http, bd: &dyn Bd, mail: &dyn Mail, sta
         let url = format!("{}/repos/{}/issues?state=open&per_page=100&page={page}", cfg.api, cfg.repo);
         let (status, body) = match http.get(&url, 30) {
             Ok(v) => v,
-            Err(_) => return r.die(format!("could not reach {} — no issues were read", cfg.api)),
+            Err(e) => return r.die(format!("could not reach {} — no issues were read: {e}", cfg.api)),
         };
         if rate_limited(status, &body) {
             return defer_rate_limited(r, http, stamp, cfg);

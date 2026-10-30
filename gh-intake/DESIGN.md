@@ -24,15 +24,12 @@ Re-running never double-files: the external ref (`github:<repo>#<n>` /
 
 ## 2. What is deliberately NOT touched
 
-- **No credential, ever.** `Http::get` (`ports.rs`) has no parameter through which a token
-  could travel, and `real.rs`'s implementation never reads `GITHUB_TOKEN` or sets an
-  `Authorization:` header. `spira-lint`'s `gh-intake-lint` rule used to police exactly this
-  by scanning `spira/gh-intake.sh` for a mutating curl flag or a credential reference; it is
-  retired in this same change (spira-lint/DESIGN.md, "Rule `gh-intake-lint` — RETIRED") because
-  the property is now structural rather than scanned — there is no bash text left to carry
-  the regression the rule was watching for. `spira/test-gh-intake.sh`'s case 3 ("no credential
-  ever reaches the wire") checks it behaviourally instead: a stub HTTP server records every
-  header a real run sends and a canary `GITHUB_TOKEN` value that must never appear on the wire.
+- **No caller-chosen credential.** `Http::get` (`ports.rs`) has no parameter through which a
+  token could travel; `real.rs`'s `RealHttp` attaches the forge GitHub App installation token
+  (`broker token`, minted once per run, never logged) to every request, and never reads
+  `GITHUB_TOKEN` or any personal token. Unauthenticated calls share GitHub's 60/h per-IP
+  budget with everything on the host. `spira/test-gh-intake.sh` case 3 checks it
+  behaviourally: a stub HTTP server records every header a real run sends.
 - **`repo_root`**, unported: `spira/lib.sh` is last in the rewrite order (the inventory,
   group 4 — "leave lib.sh alone" is still Ryan's standing instruction). `RealRepo` shells
   out to `bash -c '. lib.sh; repo_root "$1"'`, the identical boundary gate-check's Rust port

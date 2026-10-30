@@ -326,7 +326,7 @@ fn dispatch() -> ExitCode {
         dry_run,
     };
 
-    let http = RealHttp;
+    let http = RealHttp::from_broker();
     let bd = RealBd { bd_bin, db: db.clone() };
     let repo_port = RealRepo { spira_home };
     let mail = RealMail { mail_bin };

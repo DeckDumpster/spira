@@ -4,14 +4,50 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-pub struct RealHttp;
+/// Mints the credential for one run; the Http port itself carries none (law-beads-is-never-public).
+pub type Mint = Box<dyn Fn() -> Result<String, String>>;
+
+pub struct RealHttp {
+    mint: Mint,
+    bearer: std::cell::OnceCell<Result<String, String>>,
+}
+
+impl RealHttp {
+    pub fn new(mint: Mint) -> Self {
+        RealHttp { mint, bearer: std::cell::OnceCell::new() }
+    }
+
+    /// The forge's App installation token, from `broker token`.
+    pub fn from_broker() -> Self {
+        Self::new(Box::new(|| {
+            let bin = spira_config::release_env::tool("broker");
+            let o = spira_config::bounded::bounded(&bin)
+                .arg("token")
+                .stdin(Stdio::null())
+                .stderr(Stdio::piped())
+                .output()
+                .map_err(|e| format!("{bin}: {e}"))?;
+            let tok = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if o.status.success() && !tok.is_empty() {
+                Ok(tok)
+            } else {
+                Err(format!("{bin} token exited {:?}: {}", o.status.code(), String::from_utf8_lossy(&o.stderr).trim()))
+            }
+        }))
+    }
+
+    fn bearer(&self) -> Result<&str, String> {
+        self.bearer.get_or_init(|| (self.mint)()).as_deref().map_err(|e| format!("no App token: {e}"))
+    }
+}
 
 impl Http for RealHttp {
     fn get(&self, url: &str, timeout_secs: u64) -> Result<(u16, Vec<u8>), String> {
         let agent = ureq::AgentBuilder::new()
             .timeout(Duration::from_secs(timeout_secs))
             .build();
-        match agent.get(url).call() {
+        let bearer = self.bearer()?;
+        match agent.get(url).set("Authorization", &format!("Bearer {bearer}")).call() {
             Ok(resp) => {
                 let status = resp.status();
                 let mut buf = Vec::new();
@@ -528,5 +564,62 @@ mod lifecycle_tests {
         assert!(parse_show(Some(2), b"").is_err());
         assert!(parse_show(None, b"").is_err());
         assert!(parse_show(Some(0), b"not json").is_err());
+    }
+}
+
+#[cfg(test)]
+mod http_tests {
+    use super::*;
+    use std::io::{BufRead, BufReader};
+    use std::net::TcpListener;
+
+    fn serve(n: usize) -> (String, std::thread::JoinHandle<Vec<Vec<String>>>) {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/x", l.local_addr().unwrap());
+        let h = std::thread::spawn(move || {
+            (0..n)
+                .map(|_| {
+                    let (mut c, _) = l.accept().unwrap();
+                    let mut r = BufReader::new(c.try_clone().unwrap());
+                    let mut head = Vec::new();
+                    loop {
+                        let mut line = String::new();
+                        r.read_line(&mut line).unwrap();
+                        if line.trim().is_empty() {
+                            break;
+                        }
+                        head.push(line.trim().to_string());
+                    }
+                    c.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+                    head
+                })
+                .collect()
+        });
+        (url, h)
+    }
+
+    #[test]
+    fn every_get_carries_the_minted_token_as_a_bearer() {
+        let (url, h) = serve(3);
+        let minted = std::rc::Rc::new(std::cell::Cell::new(0));
+        let m = minted.clone();
+        let http = RealHttp::new(Box::new(move || {
+            m.set(m.get() + 1);
+            Ok("tok-123".into())
+        }));
+        for _ in 0..3 {
+            assert_eq!(http.get(&url, 5).unwrap().0, 200);
+        }
+        for head in h.join().unwrap() {
+            assert!(head.iter().any(|l| l.eq_ignore_ascii_case("authorization: Bearer tok-123")), "{head:?}");
+        }
+        assert_eq!(minted.get(), 1, "one mint per run");
+    }
+
+    #[test]
+    fn a_failed_mint_refuses_the_poll_rather_than_going_unauthenticated() {
+        let http = RealHttp::new(Box::new(|| Err("no creds".into())));
+        let err = http.get("http://127.0.0.1:1/x", 5).unwrap_err();
+        assert!(err.contains("no App token") && err.contains("no creds"), "{err}");
     }
 }
