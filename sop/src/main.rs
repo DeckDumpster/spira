@@ -9,9 +9,11 @@ use std::process::ExitCode;
 
 const USAGE: &str = "sop — write, match, recall and synthesise a Standard Operating Procedure.
 
-  sop write <slug> [-|<file>]   write or amend sop-<slug>; text on stdin or from a file
+  sop write <slug> [--revive] [-|<file>]
+                                write or amend sop-<slug>; text on stdin or from a file;
+                                --revive to write over a retired slug
   sop show <slug>               one SOP's full text
-  sop list                      what is on the shelf
+  sop list [--retired]          what is on the shelf, or the retirement records
   sop match [-|<file>]          which SOPs match an incident payload
   sop validate <slug>           the write-time validator, body on stdin — no shelf, no bd
   sop applied <slug> --bead <id>|--pass <id> --check pass|fail --held yes|no|unknown [--why -|<file>]
@@ -20,7 +22,8 @@ const USAGE: &str = "sop — write, match, recall and synthesise a Standard Oper
                                  the applications ledger, oldest first
   sop digest                    one `<key> <hash>` line per SOP — what the shelf holds now
   sop ledger-init               create an empty applications ledger if there is none
-  sop retire <slug>             remove it
+  sop retire <slug> --reason <why>
+                                remove it, recording who, when and why
   sop synth                     regenerate wiki/notes/standard-operating-procedures.md
   sop lint                      validate every sop- key against the write validator
 ";
@@ -172,7 +175,14 @@ fn dispatch(args: &[String]) -> ExitCode {
                 print!("{USAGE}");
                 return ExitCode::from(1);
             };
-            let text = match slurp(args.get(2).map(String::as_str)) {
+            let revive = args[2..].iter().any(|a| a == "--revive");
+            let rest: Vec<&String> = args[2..].iter().filter(|a| *a != "--revive").collect();
+            if let Some(extra) = rest.iter().skip(1).chain(rest.iter().filter(|a| a.starts_with("--"))).next() {
+                eprintln!("sop: write: unexpected argument: {extra}");
+                return ExitCode::from(1);
+            }
+            let src = rest.first().map(|a| a.as_str());
+            let text = match slurp(src) {
                 Ok(t) => t,
                 Err(e) => {
                     eprintln!("sop: {e}");
@@ -180,7 +190,7 @@ fn dispatch(args: &[String]) -> ExitCode {
                 }
             };
             let env = build_env();
-            let r = logic::write(&bd, &proc, &env, key, &text);
+            let r = logic::write(&bd, &proc, &env, key, &text, revive);
             let code = print_report(&r);
             if r.code == 0 {
                 let out = match synth_out_path() {
@@ -194,7 +204,7 @@ fn dispatch(args: &[String]) -> ExitCode {
                 let sr = logic::synth(&bd, &clock, out.as_deref());
                 print_report(&sr);
                 if let (0, Some(o)) = (sr.code, out.as_deref()) {
-                    match sop::real::commit_page(o, &sop::shelf::slugify(key)) {
+                    match sop::real::commit_page(o, &format!("refactor: regenerate SOP shelf — {}", sop::shelf::slugify(key))) {
                         Ok(Some(m)) => println!("{m}"),
                         Ok(None) => {}
                         Err(e) => {
@@ -213,7 +223,14 @@ fn dispatch(args: &[String]) -> ExitCode {
             };
             print_report(&logic::show(&bd, key))
         }
-        "list" => print_report(&logic::list(&bd)),
+        "list" => match &args[1..] {
+            [] => print_report(&logic::list(&bd, false)),
+            [f] if f == "--retired" => print_report(&logic::list(&bd, true)),
+            [other, ..] => {
+                eprintln!("sop: list: unexpected argument: {other}");
+                ExitCode::from(1)
+            }
+        },
         "match" => {
             let payload = match slurp(args.get(1).map(String::as_str)) {
                 Ok(t) => t,
@@ -341,21 +358,37 @@ fn dispatch(args: &[String]) -> ExitCode {
                 print!("{USAGE}");
                 return ExitCode::from(1);
             };
-            let r = logic::retire(&bd, key);
+            let mut reason = "";
+            let mut i = 2;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--reason" if i + 1 < args.len() => {
+                        reason = args[i + 1].as_str();
+                        i += 2;
+                    }
+                    other => {
+                        eprintln!("sop: retire: unexpected argument: {other}");
+                        return ExitCode::from(1);
+                    }
+                }
+            }
+            let clock = match make_clock() {
+                Ok(c) => c,
+                Err(c) => return c,
+            };
+            let env = build_env();
+            let r = logic::retire(&bd, &clock, &env, key, reason);
             let code = print_report(&r);
             if r.code == 0 {
                 let out = match synth_out_path() {
                     Ok(o) => o,
                     Err(c) => return c,
                 };
-                let clock = match make_clock() {
-                    Ok(c) => c,
-                    Err(c) => return c,
-                };
                 let sr = logic::synth(&bd, &clock, out.as_deref());
                 print_report(&sr);
                 if let (0, Some(o)) = (sr.code, out.as_deref()) {
-                    match sop::real::commit_page(o, &sop::shelf::slugify(key)) {
+                    let subject = format!("refactor: retire SOP {} — {}", sop::shelf::slugify(key).trim_start_matches("sop-"), reason.trim());
+                    match sop::real::commit_page(o, &subject) {
                         Ok(Some(m)) => println!("{m}"),
                         Ok(None) => {}
                         Err(e) => {

@@ -241,7 +241,7 @@ fn wiki_worktree_root(spira_wiki: &str) -> Option<String> {
 
 /// Commits exactly the regenerated shelf page, then pulls --rebase and pushes when the
 /// repo has an upstream. `Ok(None)` when the page is not in a git repo or did not change.
-pub fn commit_page(out_path: &str, slug: &str) -> Result<Option<String>, String> {
+pub fn commit_page(out_path: &str, subject: &str) -> Result<Option<String>, String> {
     let path = std::path::Path::new(out_path);
     if !path.is_file() {
         return Ok(None);
@@ -270,7 +270,7 @@ pub fn commit_page(out_path: &str, slug: &str) -> Result<Option<String>, String>
         return Ok(None);
     }
     run(&["add", "--", &abs])?;
-    run(&["commit", "--only", "-m", &format!("refactor: regenerate SOP shelf — {slug}"), "--", &abs])?;
+    run(&["commit", "--only", "-m", subject, "--", &abs])?;
     if run(&["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]).is_ok() {
         run(&["pull", "--rebase", "--autostash"]).map_err(|e| format!("{e} (page committed locally, not pushed)"))?;
         run(&["push"]).map_err(|e| format!("{e} (page committed locally, not pushed)"))?;
@@ -344,13 +344,13 @@ mod vtime_tests {
         std::fs::write(&page, "page\n").unwrap();
         std::fs::write(repo.join("stray.txt"), "x").unwrap();
         let before = g(&repo, &["rev-list", "--count", "HEAD"]);
-        let r = commit_page(page.to_str().unwrap(), "sop-x").unwrap();
+        let r = commit_page(page.to_str().unwrap(), "refactor: regenerate SOP shelf — sop-x").unwrap();
         assert!(r.is_some());
         let after: usize = g(&repo, &["rev-list", "--count", "HEAD"]).parse().unwrap();
         assert_eq!(after, before.parse::<usize>().unwrap() + 1);
         assert_eq!(g(&repo, &["show", "--name-only", "--format=", "HEAD"]), "wiki/notes/standard-operating-procedures.md");
         assert_eq!(g(&repo, &["status", "--porcelain"]), "?? stray.txt");
-        assert!(commit_page(page.to_str().unwrap(), "sop-x").unwrap().is_none());
+        assert!(commit_page(page.to_str().unwrap(), "refactor: regenerate SOP shelf — sop-x").unwrap().is_none());
     }
 
     #[test]
@@ -370,7 +370,7 @@ mod vtime_tests {
         testkit::write_exe(&hook, "#!/bin/sh\nexit 1\n");
         let page = repo.join("p.md");
         std::fs::write(&page, "page\n").unwrap();
-        let e = commit_page(page.to_str().unwrap(), "sop-x").unwrap_err();
+        let e = commit_page(page.to_str().unwrap(), "refactor: regenerate SOP shelf — sop-x").unwrap_err();
         assert!(e.contains("failed"), "{e}");
     }
 }
