@@ -35,6 +35,12 @@ pub fn link_artifacts(worktree: &Path, profile: &str, warm: &Path) -> std::io::R
     let target = worktree.join("target");
     std::fs::create_dir_all(&target)?;
     let link = target.join(profile_dir(profile));
+    let dest = warm.join(profile_dir(profile));
+    if let (Ok(a), Ok(b)) = (std::fs::canonicalize(&dest), std::fs::canonicalize(&link)) {
+        if a == b {
+            return Ok(());
+        }
+    }
     match std::fs::symlink_metadata(&link) {
         Ok(m) if m.file_type().is_symlink() => std::fs::remove_file(&link)?,
         Ok(_) => std::fs::remove_dir_all(&link)?,
@@ -121,24 +127,6 @@ impl Builder for Cargo {
         profile: &str,
         deadline: Option<Instant>,
     ) -> Result<Duration, BuildError> {
-        let t0 = Instant::now();
-        // THE BUILD CACHE (sp-z61hj; spira-config/DESIGN-build-cache.md): every dependency
-        // is a cache read after its first build on this box; absent sccache refuses.
-        let wrapper = spira_config::build::wrapper_from_env().map_err(BuildError::NoCache)?;
-        if wrapper == spira_config::build::Wrapper::Off {
-            eprintln!("testenv: {}", wrapper.describe());
-        }
-        // THE SHARED STORE (sp-xtdqi): resolved in-process, same as `wrapper_from_env` —
-        // never the ambient `~/.cargo/config.toml` dependency this bead retires.
-        let store = spira_config::build::Store::from_env();
-        let stdout_to_stderr = {
-            use std::os::fd::AsFd;
-            std::io::stderr()
-                .as_fd()
-                .try_clone_to_owned()
-                .map(Stdio::from)
-                .unwrap_or_else(|_| Stdio::null())
-        };
         let warm = warm_target(
             std::env::var_os("CARGO_TARGET_DIR"),
             spira_config::process::cfg(spira_config::build::DWARF_WARM_BASE_ENV)
@@ -147,114 +135,141 @@ impl Builder for Cargo {
                 .map(PathBuf::from)
                 .as_deref(),
         );
-        let _ = clear_dangling_artifacts(worktree, profile);
-        if let Some(w) = &warm {
-            let _ = std::fs::create_dir_all(w.join(profile_dir(profile)));
-        }
-        let mut cargo_cmd = Command::new("cargo");
-        cargo_cmd
-            .args(["build", "--profile", profile, "--workspace"])
-            // One-shot: no incremental cache (a switch, not CARGO_INCREMENTAL, which would
-            // split the compilation cache's keys).
-            .args(spira_config::build::one_shot(profile))
-            .envs(wrapper.env(store.as_ref()))
-            .current_dir(worktree)
-            // cargo's default target dir, or the session's warm slot (linked below): both are
-            // stable paths, and <worktree>/target/<p> is the one place SPIRA_ARTIFACTS may point.
-            .env_remove("CARGO_TARGET_DIR")
-            // A caller's CARGO_INCREMENTAL would split the compilation cache (sccache hashes
-            // every CARGO_* variable); the one-shot switch above says the same thing.
-            .env_remove("CARGO_INCREMENTAL")
-            .env_remove("CARGO_BUILD_TARGET_DIR")
-            .env_remove("SPIRA_ARTIFACTS")
-            .stdin(Stdio::null())
-            .stdout(stdout_to_stderr)
-            // Its own process group, so a kill at the cutoff takes rustc with it.
-            .process_group(0);
-        if let Some(w) = &warm {
-            cargo_cmd.env("CARGO_TARGET_DIR", w);
-        }
-        // rustc's RUSTC_WRAPPER=sccache auto-starts sccache's own server on first use, a
-        // long-lived daemon that outlives this build; it must never inherit a caller's lock
-        // fd this process did not open itself (sp-ohwg7).
-        crate::util::close_inherited_fds(&mut cargo_cmd);
-        cargo_cmd.stderr(Stdio::piped());
-        let oom_before = cgroup_oom_kills();
-        let child = cargo_cmd.spawn();
-        let mut child = match child {
-            Ok(c) => c,
-            Err(_) => return Err(BuildError::NoCargo),
-        };
-        let tail = child.stderr.take().map(|mut e| {
-            std::thread::spawn(move || {
-                use std::io::{Read, Write};
-                let mut tail = String::new();
-                let mut buf = [0u8; 8192];
-                while let Ok(n) = e.read(&mut buf) {
-                    if n == 0 {
-                        break;
-                    }
-                    let _ = std::io::stderr().write_all(&buf[..n]);
-                    tail.push_str(&String::from_utf8_lossy(&buf[..n]));
-                    if tail.len() > STDERR_TAIL {
-                        let mut cut = tail.len() - STDERR_TAIL;
-                        while !tail.is_char_boundary(cut) {
-                            cut += 1;
-                        }
-                        tail.drain(..cut);
-                    }
-                }
-                tail
-            })
-        });
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(st)) => break st,
-                Ok(None) => {}
-                Err(_) => return Err(BuildError::NoCargo),
-            }
-            if deadline.is_some_and(|d| Instant::now() >= d) {
-                // SAFETY: signalling the process group of a child we spawned.
-                unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
-                let _ = child.wait();
-                return Err(BuildError::Deadline);
-            }
-            // TERM/INT/HUP mid-build (sp-tcarr): this loop otherwise only watches the
-            // deadline, so a signalled run sat here until cargo finished on its own —
-            // minutes, not the "stop launching, kill what is running" the signal asked for.
-            if cancelled() {
-                // SAFETY: signalling the process group of a child we spawned.
-                unsafe { libc::kill(-(child.id() as i32), libc::SIGTERM) };
-                let _ = child.wait();
-                return Err(BuildError::Cancelled);
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        };
-        let tail = tail.and_then(|t| t.join().ok()).unwrap_or_default();
-        if !status.success() {
-            use std::os::unix::process::ExitStatusExt;
-            if is_enospc(&tail) {
-                let at = warm.clone().unwrap_or_else(|| worktree.join("target"));
-                return Err(BuildError::NoSpace(at));
-            }
-            if is_oom(status.signal(), oom_before, cgroup_oom_kills())
-                || (tail.contains("signal: 9, SIGKILL") && is_oom(Some(libc::SIGKILL), oom_before, cgroup_oom_kills()))
-            {
-                return Err(BuildError::Oom);
-            }
-            return Err(BuildError::Failed(status.code().unwrap_or(1)));
-        }
-        if let Some(w) = &warm {
-            if link_artifacts(worktree, profile, w).is_err() {
-                return Err(BuildError::NoArtifacts(artifacts_dir(worktree, profile)));
-            }
-        }
-        let dir = artifacts_dir(worktree, profile);
-        if !dir.is_dir() {
-            return Err(BuildError::NoArtifacts(dir));
-        }
-        Ok(t0.elapsed())
+        build_in(worktree, profile, deadline, warm)
     }
+}
+
+fn build_in(
+    worktree: &Path,
+    profile: &str,
+    deadline: Option<Instant>,
+    warm: Option<PathBuf>,
+) -> Result<Duration, BuildError> {
+    let t0 = Instant::now();
+    // THE BUILD CACHE (sp-z61hj; spira-config/DESIGN-build-cache.md): every dependency
+    // is a cache read after its first build on this box; absent sccache refuses.
+    let wrapper = spira_config::build::wrapper_from_env().map_err(BuildError::NoCache)?;
+    if wrapper == spira_config::build::Wrapper::Off {
+        eprintln!("testenv: {}", wrapper.describe());
+    }
+    // THE SHARED STORE (sp-xtdqi): resolved in-process, same as `wrapper_from_env` —
+    // never the ambient `~/.cargo/config.toml` dependency this bead retires.
+    let store = spira_config::build::Store::from_env();
+    let stdout_to_stderr = {
+        use std::os::fd::AsFd;
+        std::io::stderr()
+            .as_fd()
+            .try_clone_to_owned()
+            .map(Stdio::from)
+            .unwrap_or_else(|_| Stdio::null())
+    };
+    let _ = clear_dangling_artifacts(worktree, profile);
+    if let Some(w) = &warm {
+        let _ = std::fs::create_dir_all(w.join(profile_dir(profile)));
+    }
+    let mut cargo_cmd = Command::new("cargo");
+    cargo_cmd
+        .args(["build", "--profile", profile, "--workspace"])
+        // One-shot: no incremental cache (a switch, not CARGO_INCREMENTAL, which would
+        // split the compilation cache's keys).
+        .args(spira_config::build::one_shot(profile))
+        .envs(wrapper.env(store.as_ref()))
+        .current_dir(worktree)
+        // cargo's default target dir, or the session's warm slot (linked below): both are
+        // stable paths, and <worktree>/target/<p> is the one place SPIRA_ARTIFACTS may point.
+        .env_remove("CARGO_TARGET_DIR")
+        // A caller's CARGO_INCREMENTAL would split the compilation cache (sccache hashes
+        // every CARGO_* variable); the one-shot switch above says the same thing.
+        .env_remove("CARGO_INCREMENTAL")
+        .env_remove("CARGO_BUILD_TARGET_DIR")
+        .env_remove("SPIRA_ARTIFACTS")
+        .stdin(Stdio::null())
+        .stdout(stdout_to_stderr)
+        // Its own process group, so a kill at the cutoff takes rustc with it.
+        .process_group(0);
+    if let Some(w) = &warm {
+        cargo_cmd.env("CARGO_TARGET_DIR", w);
+    }
+    // rustc's RUSTC_WRAPPER=sccache auto-starts sccache's own server on first use, a
+    // long-lived daemon that outlives this build; it must never inherit a caller's lock
+    // fd this process did not open itself (sp-ohwg7).
+    crate::util::close_inherited_fds(&mut cargo_cmd);
+    cargo_cmd.stderr(Stdio::piped());
+    let oom_before = cgroup_oom_kills();
+    let child = cargo_cmd.spawn();
+    let mut child = match child {
+        Ok(c) => c,
+        Err(_) => return Err(BuildError::NoCargo),
+    };
+    let tail = child.stderr.take().map(|mut e| {
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let mut tail = String::new();
+            let mut buf = [0u8; 8192];
+            while let Ok(n) = e.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                let _ = std::io::stderr().write_all(&buf[..n]);
+                tail.push_str(&String::from_utf8_lossy(&buf[..n]));
+                if tail.len() > STDERR_TAIL {
+                    let mut cut = tail.len() - STDERR_TAIL;
+                    while !tail.is_char_boundary(cut) {
+                        cut += 1;
+                    }
+                    tail.drain(..cut);
+                }
+            }
+            tail
+        })
+    });
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st,
+            Ok(None) => {}
+            Err(_) => return Err(BuildError::NoCargo),
+        }
+        if deadline.is_some_and(|d| Instant::now() >= d) {
+            // SAFETY: signalling the process group of a child we spawned.
+            unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
+            let _ = child.wait();
+            return Err(BuildError::Deadline);
+        }
+        // TERM/INT/HUP mid-build (sp-tcarr): this loop otherwise only watches the
+        // deadline, so a signalled run sat here until cargo finished on its own —
+        // minutes, not the "stop launching, kill what is running" the signal asked for.
+        if cancelled() {
+            // SAFETY: signalling the process group of a child we spawned.
+            unsafe { libc::kill(-(child.id() as i32), libc::SIGTERM) };
+            let _ = child.wait();
+            return Err(BuildError::Cancelled);
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let tail = tail.and_then(|t| t.join().ok()).unwrap_or_default();
+    if !status.success() {
+        use std::os::unix::process::ExitStatusExt;
+        if is_enospc(&tail) {
+            let at = warm.clone().unwrap_or_else(|| worktree.join("target"));
+            return Err(BuildError::NoSpace(at));
+        }
+        if is_oom(status.signal(), oom_before, cgroup_oom_kills())
+            || (tail.contains("signal: 9, SIGKILL") && is_oom(Some(libc::SIGKILL), oom_before, cgroup_oom_kills()))
+        {
+            return Err(BuildError::Oom);
+        }
+        return Err(BuildError::Failed(status.code().unwrap_or(1)));
+    }
+    if let Some(w) = &warm {
+        if link_artifacts(worktree, profile, w).is_err() {
+            return Err(BuildError::NoArtifacts(artifacts_dir(worktree, profile)));
+        }
+    }
+    let dir = artifacts_dir(worktree, profile);
+    if !dir.is_dir() {
+        return Err(BuildError::NoArtifacts(dir));
+    }
+    Ok(t0.elapsed())
 }
 
 #[cfg(test)]
@@ -347,6 +362,39 @@ mod tests {
         link_artifacts(&wt, "dwarf", &slot).unwrap();
         assert!(artifacts_dir(&wt, "dwarf").join("tool").is_file());
         assert!(!artifacts_dir(&wt, "dwarf").join("stale").exists());
+    }
+
+    #[test]
+    fn a_real_build_into_a_spilled_warm_slot_still_finds_its_artifacts() {
+        let d = testkit::TempDir::new("warm-spilled-build");
+        let wt = d.join("wt");
+        std::fs::create_dir_all(wt.join("src")).unwrap();
+        std::fs::write(wt.join("Cargo.toml"), "[package]\nname = \"spilled\"\nversion = \"0.1.0\"\nedition = \"2021\"\n").unwrap();
+        std::fs::write(wt.join("src/main.rs"), "fn main() {}\n").unwrap();
+        let base = d.join("warm-base");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(wt.join("target")).unwrap();
+        let slot = base.join("slot.1");
+        std::os::unix::fs::symlink(wt.join("target"), &slot).unwrap();
+        let warm = warm_target(Some(slot.clone().into()), Some(&base));
+        let built = build_in(&wt, "dev", None, warm);
+        assert!(built.is_ok(), "{built:?}");
+        assert!(artifacts_dir(&wt, "dev").join("spilled").is_file());
+    }
+
+    #[test]
+    fn artifacts_stay_when_the_warm_slot_is_spilled_onto_the_worktrees_own_target() {
+        let d = testkit::TempDir::new("warm-spilled");
+        let base = d.join("warm-base");
+        let wt = d.join("wt");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(wt.join("target").join("dwarf")).unwrap();
+        std::fs::write(wt.join("target").join("dwarf").join("tool"), "x").unwrap();
+        let slot = base.join("slot.1");
+        std::os::unix::fs::symlink(wt.join("target"), &slot).unwrap();
+        assert_eq!(warm_target(Some(slot.clone().into()), Some(&base)), Some(slot.clone()));
+        link_artifacts(&wt, "dwarf", &slot).unwrap();
+        assert!(artifacts_dir(&wt, "dwarf").join("tool").is_file());
     }
 
     #[test]
