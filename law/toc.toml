@@ -14,4 +14,5 @@ slugs = [
   "law-a-p0-in-spira-itself-is-built-by-hand",
   "law-operator-asked-transcript-reads-are-observation",
   "law-doomed-work-is-stopped-fixed-then-resumed",
+  "law-unit-tests-run-under-a-second",
 ]
