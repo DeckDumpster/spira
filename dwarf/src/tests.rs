@@ -2551,7 +2551,7 @@ fn a_groom_claim_with_no_ask_bead_is_refused_to_rework_and_poisoned() {
     assert_eq!(poison.1[1], "sp-g");
     assert!(poison.1[3].contains("sp-gc1"), "the hold names the unbacked bead: {:?}", poison.1);
     let rework = w.exec_calls.iter().find(|c| c.0 == "spira-lc" && c.1.first().map(String::as_str) == Some("event")).unwrap_or_else(|| panic!("no REWORK event: {:?}", w.exec_calls));
-    assert!(rework.1.contains(&"SUBMITTED".to_string()) && rework.1.iter().any(|a| a.contains("GateRed")), "{:?}", rework.1);
+    assert!(rework.1.contains(&"sp-g".to_string()) && rework.1.contains(&"SUBMITTED".to_string()) && rework.1.iter().any(|a| a.contains("GateRed") && a.contains("policy-violation") && a.contains("tip1")), "{:?}", rework.1);
     assert!(w.seam_calls.iter().any(|c| c.0 == "bead_reopen" && c.1[1] == "no-groom-ask"), "{:?}", w.seam_calls);
 }
 
