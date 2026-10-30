@@ -875,14 +875,14 @@ case "${1:-}" in
     *) for c in $(type -ap spira-lc); do [ "$c" -ef "$0" ] || exec "$c" "$@"; done; exit 2 ;;
 esac
 [ "$1" = create-bead ] && exit 0
-src="$(BD_IGNORE_SCHEMA_SKEW=1 "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --all --limit 0 --json 2>/dev/null | sed -n '/^[[{]/,$p')"
-printf '%s' "$src" | python3 -c '
+src="$(BD_IGNORE_SCHEMA_SKEW=1 "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --all --limit 0 --json)" || exit 2
+printf '%s' "$src" | sed -n '/^[[{]/,$p' | python3 -c '
 import json, os, sys
 args = sys.argv[1:]
 verb = args[0]
 run = os.environ.get("SPIRA_RUN") or "/nonexistent"
 try:
-    beads = json.loads(sys.stdin.read() or "[]")
+    beads = json.loads(sys.stdin.read())
 except ValueError:
     sys.exit(2)
 if isinstance(beads, dict):
@@ -1023,14 +1023,18 @@ holds = {}
 # State moves the events record (sp-swh8b8): a reopen is a lifecycle transition, which a row
 # derived from bd's status alone could never show.
 moved = {}
-def bd(args):
+def bd(args, strict=False):
     env = dict(os.environ, BD_IGNORE_SCHEMA_SKEW="1")
     o = subprocess.run([os.environ.get("SPIRA_BD") or "bd", "-C", os.environ.get("SPIRA_DB") or ".", *args, "--json"],
                        capture_output=True, text=True, env=env, timeout=30)
     t = o.stdout[o.stdout.find("[") if "[" in o.stdout else 0:]
     try:
-        v = json.loads(t or "[]")
+        if strict and o.returncode != 0:
+            raise ValueError("bd exit %d" % o.returncode)
+        v = json.loads(t if strict else t or "[]")
     except ValueError:
+        if strict:
+            raise
         return []
     return v if isinstance(v, list) else [v]
 def row(b):
@@ -1044,7 +1048,7 @@ def answer(args):
         hit = [b for b in bd(["show", args[1]]) if isinstance(b, dict) and b.get("id") == args[1]]
         return (0, json.dumps({"bead": row(hit[0]), "delivery": None})) if hit else (1, "{}")
     if args[:1] == ["list"]:
-        return 0, json.dumps([row(b) for b in bd(["list", "--all", "--limit", "0"]) if isinstance(b, dict) and b.get("id")])
+        return 0, json.dumps([row(b) for b in bd(["list", "--all", "--limit", "0"], strict=True) if isinstance(b, dict) and b.get("id")])
     if args[:2] == ["event", "bead"] and len(args) > 2 and "--kind" in args:
         kind = json.loads(args[args.index("--kind") + 1])
         bid = args[2]

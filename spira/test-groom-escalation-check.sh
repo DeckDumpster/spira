@@ -165,9 +165,9 @@ seed_trigger() {  # seed_trigger <id>
 }
 
 fresh() {    # fresh <id>
-    testdb_reset
+    testdb_reset || bail "fixture reset failed before seeding $1"
     : > "$GROOM_LOG"
-    seed_trigger "$1"
+    seed_trigger "$1" || bail "fixture seed of $1 is not visible"
 }
 
 rowstate() { SPIRA_RUN="$RUN" lc_row_state "$1"; }

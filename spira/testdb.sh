@@ -321,8 +321,33 @@ testdb_seed() {          # testdb_seed  < JSONL on stdin
     # batch-job: fixture import
     "${SPIRA_BD:-$TESTDB_BD}" -C "$SPIRA_DB" import "$f" >/dev/null 2>&1
     local rc=$?
+    [ "$rc" -eq 0 ] || { rm -f "$f"; echo "testdb_seed: bd import failed (rc=$rc)" >&2; return "$rc"; }
+    _testdb_seed_visible "$f"; rc=$?
     rm -f "$f"
     return $rc
+}
+
+# Every id the import carried is readable by a fresh bd process before the caller moves on: a
+# claim that runs next must not be the first reader to find a seed missing.
+_testdb_seed_visible() {   # _testdb_seed_visible <jsonl>
+    local _ids _try
+    _ids="$(python3 -c '
+import json, sys
+print(",".join(json.loads(l)["id"] for l in open(sys.argv[1]) if l.strip()))' "$1")" || return 1
+    [ -n "$_ids" ] || return 0
+    for _try in $(seq 1 "${TESTDB_SEED_TRIES:-5}"); do
+        if "${SPIRA_BD:-$TESTDB_BD}" -C "$SPIRA_DB" list --id "$_ids" --status all --limit 0 --json 2>/dev/null \
+            | python3 -c '
+import json, sys
+t = sys.stdin.read()
+got = {r["id"] for r in json.loads(t[t.find("["):])}
+sys.exit(0 if set(sys.argv[1].split(",")) <= got else 1)' "$_ids" 2>/dev/null; then
+            return 0
+        fi
+        [ "$_try" -lt "${TESTDB_SEED_TRIES:-5}" ] && sleep 1
+    done
+    echo "testdb_seed: imported but not visible to a fresh reader: $_ids" >&2
+    return 1
 }
 
 # testdb_restate <id> <status> [<assignee>] — re-declare one EXISTING row with a new status
