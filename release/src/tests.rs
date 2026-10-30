@@ -2702,3 +2702,21 @@ fn a_delta_value_of_the_wrong_type_is_refused_at_load_naming_the_key_and_file() 
     let e = config_delta::load(&rel).unwrap_err();
     assert!(e.contains("config-delta.toml") && e.contains("spira.local_backlog_ref_max_age") && e.contains("u32"), "{e}");
 }
+
+#[test]
+fn an_undo_record_in_the_old_added_shape_still_loads_for_a_rollback() {
+    let tmp = TempDir::new("legacy-undo");
+    let p = config_delta::undo_path(tmp.path(), "abc");
+    fs::create_dir_all(p.parent().unwrap()).unwrap();
+    fs::write(&p, "removed = [\"spira.k\"]\n[added]\n\"spira.old\" = 5\n").unwrap();
+    let d = config_delta::load_undo(tmp.path(), "abc").unwrap().unwrap();
+    assert_eq!(d.removed, vec!["spira.k".to_string()]);
+    assert_eq!(d.added.get("spira.old"), Some(&toml::Value::Integer(5)));
+}
+
+#[test]
+fn a_delta_with_a_nested_table_round_trips_through_render() {
+    let d = config_delta::Delta::parse("[persona.x]\nmodel = \"m\"\n[spira]\nk = 1\n").unwrap();
+    assert!(d.added.contains_key("persona.x.model") && d.added.contains_key("spira.k"));
+    assert_eq!(config_delta::Delta::parse(&d.render()).unwrap(), d);
+}
