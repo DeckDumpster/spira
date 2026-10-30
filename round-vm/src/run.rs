@@ -732,7 +732,7 @@ else
     unit_failed="$(printf '%s' "$unit_reds" | grep -c .)"
     {
         echo "UNIT-TESTS-CAUSE: $unit_cause after ${unit_secs}s; failures=$unit_failed"
-        printf 'test %s ... FAILED\n' $unit_reds
+        [ -z "$unit_reds" ] || printf 'test %s ... FAILED\n' $unit_reds
         grep -E -A8 '^ *(FAIL|TIMEOUT|SIG[A-Z]+|LEAK-FAIL|EXEC-FAIL) +\[|^error(\[|:)|panicked at' ~/round-unit-tests.log | head -400
         echo "--- last output of the log ---"
         tail -100 ~/round-unit-tests.log

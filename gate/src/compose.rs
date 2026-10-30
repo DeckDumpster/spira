@@ -568,7 +568,7 @@ pub fn unit_commands(crates: &[String], jobs: u64, deadline: &UnitDeadline) -> [
         (
             "test",
             format!(
-                "_nx=\"$(mktemp)\" && printf '%s\\n' '{}' > \"$_nx\" && cargo nextest run --config-file \"$_nx\" --fail-fast -E '{UNIT_TIER_FILTER}' --cargo-profile dwarf {} -j {jobs}{p}; _r=$?; rm -f \"$_nx\"; exit $_r",
+                "cargo nextest --version >/dev/null 2>&1 || {{ echo 'gate: cargo-nextest is not installed on this host (pin: round-vm/ami-setup.sh) — refusing to judge unit tests without it'; exit 1; }}; _nx=\"$(mktemp)\" && printf '%s\\n' '{}' > \"$_nx\" && cargo nextest run --config-file \"$_nx\" --fail-fast -E '{UNIT_TIER_FILTER}' --cargo-profile dwarf {} -j {jobs}{p}; _r=$?; rm -f \"$_nx\"; exit $_r",
                 deadline.profile(),
                 spira_config::build::one_shot_words("dwarf"),
             ),
