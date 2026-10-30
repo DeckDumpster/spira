@@ -39,6 +39,35 @@ impl Unpack for RealUnpack {
     }
 }
 
+/// The installing release's own tree, unpacked to a scratch directory for as long as this
+/// process runs: removed on drop.
+pub struct Scratch(PathBuf);
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// `spira/` of the release in `tarball`: the key registry (`conf.d`, `conf.toml.d`) and `runes/` a fresh box's config is read with.
+pub fn tarball_home(tarball: &Path) -> Result<(Scratch, PathBuf), String> {
+    let scratch = Scratch(std::env::temp_dir().join(format!("release-install-home-{}", std::process::id())));
+    std::fs::create_dir_all(&scratch.0).map_err(|e| format!("{}: {e}", scratch.0.display()))?;
+    // batch-job: tar reads one directory out of the tarball being installed
+    let st = std::process::Command::new("tar")
+        .arg("-xzf")
+        .arg(tarball)
+        .arg("-C")
+        .arg(&scratch.0)
+        .args(["--wildcards", "*/spira/conf.d/*", "*/spira/conf.toml.d/*", "*/spira/runes/*"])
+        .status()
+        .map_err(|e| format!("cannot run tar: {e}"))?;
+    if !st.success() {
+        return Err(format!("{} carries no spira/conf.d, spira/conf.toml.d or spira/runes ({st})", tarball.display()));
+    }
+    let top = std::fs::read_dir(&scratch.0).map_err(|e| e.to_string())?.flatten().next().ok_or("empty extraction")?.path();
+    Ok((scratch, top.join("spira")))
+}
+
 pub struct InstallOpts {
     pub dry_run: bool,
     pub settle: Duration,
