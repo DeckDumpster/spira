@@ -318,6 +318,13 @@ mod tests {
     }
 
     #[test]
+    fn the_runtime_window_fits_inside_one_stream_read() {
+        let src = include_str!("../../runtime/src/event.rs");
+        let window: u64 = src.split("pub const WINDOW: usize = ").nth(1).and_then(|r| r.split(';').next()).unwrap().trim().parse().unwrap();
+        assert!(window <= READ_MAX, "the runtime asks for {window}, a stream read returns {READ_MAX}");
+    }
+
+    #[test]
     fn an_event_missing_a_field_is_refused() {
         let mut e = ev();
         e.as_object_mut().unwrap().remove("stream");

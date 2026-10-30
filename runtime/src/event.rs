@@ -135,7 +135,7 @@ pub struct Projection {
 
 /// Events of one stream a handler is guaranteed to see: the newest `WINDOW`, however long the
 /// stream. The view holds up to twice that, trimmed in one move so a push stays cheap.
-pub const WINDOW: usize = 1024;
+pub const WINDOW: usize = 1000;
 
 impl Projection {
     pub fn push(&mut self, ev: &Event) {
