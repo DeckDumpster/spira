@@ -608,11 +608,12 @@ fn cmd_stack(a: &Args, env: &mut Env) -> Outcome {
         Err(e) => return Outcome::cannot_tell(format!("{bead}: blocker records: {e}")),
     };
     let mut one = vec![cand.clone()];
-    if let Err(e) = retain_uncarried(&mut one, &mut lc, a.get("--lifecycle").is_none().then_some(&st), &env.config.queue_dir) {
-        return Outcome::cannot_tell(format!("{bead}: integrations: {e}"));
-    }
-    if one.is_empty() {
-        let v = serde_json::json!({"claimable": false, "reason": "Carried"});
+    let carried = match retain_uncarried(&mut one, &mut lc, a.get("--lifecycle").is_none().then_some(&st), &env.config.queue_dir) {
+        Ok(d) => d,
+        Err(e) => return Outcome::cannot_tell(format!("{bead}: integrations: {e}")),
+    };
+    if let Some((_, carrier)) = carried.first() {
+        let v = serde_json::json!({"claimable": false, "reason": "Carried", "carrier": carrier});
         return Outcome { code: 3, out: format!("{v}\n"), err: String::new() };
     }
     match rank::stack_plan(&cand, &lc, &bd, rank::stack_cap(&cand, &env.config.incident_label, stack_max)) {
@@ -977,14 +978,21 @@ fn retain_uncarried(
     lc: &mut std::collections::HashMap<String, rank::LifecycleRow>,
     st: Option<&Store>,
     queue_dir: &str,
-) -> Result<(), String> {
+) -> Result<Vec<(String, String)>, String> {
     let ints = rank::load_integrations(std::path::Path::new(queue_dir), rows);
     if let Some(st) = st {
         let missing: Vec<String> = rank::integration_ids(&ints).into_iter().filter(|i| !lc.contains_key(i)).collect();
         lc.extend(st.lifecycle_of(&missing)?);
     }
-    rows.retain(|r| rank::carrier(&r.id, &ints, lc).is_none());
-    Ok(())
+    let mut dropped = Vec::new();
+    rows.retain(|r| match rank::carrier(&r.id, &ints, lc) {
+        Some(c) => {
+            dropped.push((r.id.clone(), c.to_string()));
+            false
+        }
+        None => true,
+    });
+    Ok(dropped)
 }
 
 /// Drops the beads a scoped stop keeps unclaimed: a reserved bead, and any bead of a repo
