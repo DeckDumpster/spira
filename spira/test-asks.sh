@@ -75,5 +75,5 @@ want "an ask hold line carries the message id" "m9@spira" "$hl"
 want "an unmailed ask hold line carries the question text" "no build spec: which repo?" "$hl"
 want "an unmailed ask hold line says no mail and how to answer" "spira-lc reply sp-nomail seq:7" "$hl"
 
-grep -q '^asks|daemon|' "$HERE/watchers"; is "watchers manifest carries the asks row" "0" "$?"
+grep -q '^asks|' "$HERE/watchers"; is "watchers manifest has no asks row: spira-runtime hosts it" "1" "$?"
 tl_summary

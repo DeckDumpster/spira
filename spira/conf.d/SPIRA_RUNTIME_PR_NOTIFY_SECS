@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds between spira-runtime pr-notify polls of every registered repository's forge.
+SCHEMA=Seconds between spira-runtime pr-notify forge polls (unit: seconds; integer; default 90). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_PR_NOTIFY_SECS:=90}"
+SPIRA_CONF_DEFAULT_EOF

@@ -163,6 +163,7 @@ fn new_rows(f: &Fixture, s: &Scenario, ticks: usize) -> Vec<String> {
         inbox: f.p("new-inbox"),
         proc_dir: PathBuf::from("/proc"),
         lc_socket: if s.status_fails { f.p("no-such.sock") } else { f.serve_lc() },
+        ..World::default()
     };
     let fx = Effects { world, ..Effects::default() };
     let clock = VirtualClock::new(1_800_000_000_000);
@@ -249,7 +250,7 @@ fn result_lines_are_relayed_once_and_a_verdictless_round_is_named() {
 fn the_migrated_handlers_launch_no_process() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files: Vec<_> = fs::read_dir(src.join("watchers")).unwrap().flatten().map(|e| e.path()).collect();
-    files.push(src.join("world.rs"));
+    files.extend([src.join("world.rs"), src.join("forge.rs")]);
     let mut checked = 0;
     for path in files {
         let text = fs::read_to_string(&path).unwrap();
