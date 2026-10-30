@@ -231,7 +231,7 @@ fn a_poison_another_process_wrote_is_noticed_after_the_recheck_interval_and_not_
     let after = *seen.lock().unwrap();
     step(&mut e, 330_000);
     assert_eq!(*seen.lock().unwrap(), after, "past the interval the stream is skipped");
-    assert!(after < 305, "the chain broke when the poison was seen: {after}");
+    assert!((299..=301).contains(&after), "the chain broke when the poison was seen: {after}");
 }
 
 struct Keeper {
