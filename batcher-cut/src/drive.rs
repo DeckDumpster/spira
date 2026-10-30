@@ -41,6 +41,9 @@ pub trait RoundRunner {
     fn start_main(&mut self, kind: MainKind, suites: &[String]) -> Result<(), String>;
     /// A harness fault of the main run is an error: the round is not judged.
     fn poll_main(&mut self) -> Result<MainPoll, String>;
+    /// Abandon the main run that is still going and release what it holds, so `start_main` can
+    /// run again.
+    fn stop_main(&mut self) -> Result<(), String>;
     /// Build the job's tree (round tree minus `job.removal`) and submit suite `job.suite` on it.
     fn launch(&mut self, job: &Job) -> Result<(), String>;
     fn poll_jobs(&mut self) -> Vec<(u64, JobResult)>;
@@ -78,6 +81,9 @@ pub trait RoundOps {
     /// `member` owns red `suite`; `rerun` is that suite rerun on the full round tree (`None`
     /// when the rerun faulted): green there means it flipped.
     fn escape(&mut self, member: &Member, suite: &str, rerun: Option<JobResult>);
+    /// The pass was stopped at a red `owner` alone owns; `unreached` are the suites it had not
+    /// reported.
+    fn preempted(&mut self, owner: &Id, unreached: &[String]);
     /// Waits for every mender of this red pass and decides the next pass once. `None` when no
     /// mender owns the pass, which leaves the owners to be ejected as before.
     fn settle_mending(&mut self, _: &Decision, _: &[Member]) -> Option<Result<Mended, String>> {
@@ -102,7 +108,17 @@ fn rerun_with_members<R: RoundRunner>(runner: &mut R, suite: &str, n: u64) -> Op
     }
 }
 
+/// A main run stopped at the first red a single member owns, instead of run out.
+pub struct Preempt {
+    pub owner: Id,
+    /// The suites the run had not reported when it was stopped.
+    pub unreached: Vec<String>,
+    /// Every suite that did not finish green: what the survivors still owe.
+    pub rerun: Vec<String>,
+}
+
 pub struct Settled {
+    pub preempt: Option<Preempt>,
     pub decision: Decision,
     pub end: MainEnd,
     /// When the main run ended and when the last red settled (runner clock).
@@ -126,19 +142,23 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
     runner.set_members(members);
     runner.start_main(kind, suites)?;
     let mut seen = std::collections::BTreeSet::new();
+    let mut green_suites = std::collections::BTreeSet::new();
     let mut main_end_at = None;
     loop {
         let poll = runner.poll_main()?;
         let now = runner.now();
         for (suite, green) in poll.results {
             if seen.insert(suite.clone()) {
+                if green {
+                    green_suites.insert(suite.clone());
+                }
                 let order = if green { vec![] } else { ops.suspects(&suite, &ids) };
                 a.on_main_result(&suite, green, &order, now);
             }
         }
         if let Some(end) = poll.done {
             if end == MainEnd::WorkspaceBuild {
-                return Ok(Settled { decision: Decision::default(), end, main_end_at: now, settled_at: now });
+                return Ok(Settled { preempt: None, decision: Decision::default(), end, main_end_at: now, settled_at: now });
             }
             if main_end_at.is_none() {
                 // Absence is never green: a selected suite with no result is red.
@@ -160,8 +180,19 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
                 a.on_job_result(job.id, JobResult::Fault, now);
             }
         }
+        if !a.main_done() {
+            if let Some((owner, owned)) = a.sole_owner() {
+                runner.stop_main()?;
+                let preempt = Preempt {
+                    owner,
+                    unreached: suites.iter().filter(|s| !seen.contains(*s)).cloned().collect(),
+                    rerun: suites.iter().filter(|s| !green_suites.contains(*s)).cloned().collect(),
+                };
+                return Ok(Settled { preempt: Some(preempt), decision: a.decision_of(&owned), end: MainEnd::Ran, main_end_at: now, settled_at: now });
+            }
+        }
         if a.settled() {
-            return Ok(Settled { decision: a.decision(), end: MainEnd::Ran, main_end_at: main_end_at.unwrap_or(now), settled_at: now });
+            return Ok(Settled { preempt: None, decision: a.decision(), end: MainEnd::Ran, main_end_at: main_end_at.unwrap_or(now), settled_at: now });
         }
         runner.wait();
     }
@@ -275,6 +306,7 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
             return Ok(RoundEnd::Blocked("the round's workspace failed to build".into()));
         }
         let d = s.decision;
+        let preempt = s.preempt;
         if !d.records.is_empty() {
             println!(
                 "batcher: iteration {iteration}: main run ended at +{}s, decision at +{}s",
@@ -336,7 +368,12 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
             }
             return Ok(RoundEnd::Land { members, attribution_secs: worst });
         }
-        if let Some(settled) = ops.settle_mending(&d, &members) {
+        if let Some(p) = &preempt {
+            println!("batcher: pass preempted at +{}s: {} alone owns {}; {} suite(s) unreached", s.settled_at.saturating_sub(t0), p.owner, d.owned_suites().join(","), p.unreached.len());
+            ops.preempted(&p.owner, &p.unreached);
+        }
+        let mended = if preempt.is_some() { None } else { ops.settle_mending(&d, &members) };
+        if let Some(settled) = mended {
             let m = settled?;
             if !m.unattributed.is_empty() {
                 println!("batcher: ALARM mender returns named no member: {}", m.unattributed.join(","));
@@ -382,7 +419,7 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
             }
         }
         let mut n = 0;
-        for m in &members {
+        for m in members.iter().filter(|_| preempt.is_none()) {
             for suite in d.owners.get(&m.id).into_iter().flatten() {
                 n += 1;
                 let rerun = rerun_with_members(runner, suite, n);
@@ -402,8 +439,10 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
         if members.is_empty() {
             return Ok(RoundEnd::Blocked("round emptied rebuilding the tree after ejection".into()));
         }
-        suites = d.owned_suites();
-        kind = MainKind::Verify;
+        (suites, kind) = match preempt {
+            Some(p) => (p.rerun, MainKind::Corpus),
+            None => (d.owned_suites(), MainKind::Verify),
+        };
     }
     Ok(RoundEnd::Blocked(format!("still ejecting after {bound} iterations")))
 }
@@ -451,6 +490,7 @@ pub(crate) mod tests {
         pub use_log: Vec<(u64, usize, usize)>,
         pub done_jobs: BTreeSet<u64>,
         pub bases: Vec<String>,
+        pub stopped: u32,
         pub on_base: Option<std::rc::Rc<std::cell::Cell<bool>>>,
     }
 
@@ -473,6 +513,7 @@ pub(crate) mod tests {
                 use_log: vec![],
                 done_jobs: BTreeSet::new(),
                 bases: vec![],
+                stopped: 0,
                 on_base: None,
             }
         }
@@ -532,6 +573,12 @@ pub(crate) mod tests {
             }
             Ok(p)
         }
+        fn stop_main(&mut self) -> Result<(), String> {
+            self.stopped += 1;
+            self.main.clear();
+            self.jobs.clear();
+            Ok(())
+        }
         fn launch(&mut self, job: &Job) -> Result<(), String> {
             self.first_launch.get_or_insert(self.t);
             let tree: BTreeSet<String> = self.members.iter().filter(|m| !job.removal.contains(m)).cloned().collect();
@@ -571,6 +618,7 @@ pub(crate) mod tests {
         pub recorded: Vec<(u32, Decision)>,
         pub deleted: Vec<Vec<String>>,
         pub escaped: Vec<(String, String, Option<JobResult>)>,
+        pub preempts: Vec<(String, Vec<String>)>,
         pub judged: Vec<(Vec<String>, Vec<String>)>,
         /// Base shas the base will move to, one per `base_moved` call; empty means it never moves.
         pub moves: Vec<String>,
@@ -628,6 +676,9 @@ pub(crate) mod tests {
             }
             Some(Ok(Mended { next: self.menders.remove(0), unattributed: vec![], suites: d.owned_suites() }))
         }
+        fn preempted(&mut self, owner: &Id, unreached: &[String]) {
+            self.preempts.push((owner.clone(), unreached.to_vec()));
+        }
         fn escape(&mut self, member: &Member, suite: &str, rerun: Option<JobResult>) {
             self.escaped.push((member.id.clone(), suite.to_string(), rerun));
         }
@@ -661,6 +712,65 @@ pub(crate) mod tests {
         assert!(rec.settled_before_main_end, "{rec:?} vs corpus end {main_end}");
         assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["test-00.sh".to_string()])]);
         assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>() == ["m1", "m3"]));
+    }
+
+    #[test]
+    fn a_red_one_member_alone_owns_preempts_the_pass_and_the_restart_runs_without_it() {
+        let mut f = Fake::new(breaks("m2", "test-00.sh"));
+        f.maxpar = 4;
+        f.dur.insert("test-00.sh".into(), 2);
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(40), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
+        assert_eq!(f.stopped, 1, "the first pass was stopped, not run out");
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["test-00.sh".to_string()])]);
+        assert_eq!(ops.rebuilt, vec![vec!["m1".to_string(), "m3".to_string()]]);
+        assert_eq!(f.main_kind.len(), 2);
+        let (kind, restart) = &f.main_kind[1];
+        assert_eq!(*kind, MainKind::Corpus);
+        assert!(restart.contains(&"test-00.sh".to_string()) && restart.contains(&"test-39.sh".to_string()));
+        assert!(restart.len() < 40, "suites that finished green are not run again");
+        let (owner, unreached) = &ops.preempts[0];
+        assert_eq!(owner, "m2");
+        assert!(unreached.contains(&"test-39.sh".to_string()) && !unreached.contains(&"test-00.sh".to_string()));
+        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>() == ["m1", "m3"]));
+    }
+
+    #[test]
+    fn a_red_that_also_fails_on_the_base_preempts_nothing_and_ejects_no_one() {
+        let mut f = Fake::new(|s, _| s == "test-00.sh");
+        f.maxpar = 4;
+        f.dur.insert("test-00.sh".into(), 2);
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(40), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
+        assert_eq!(f.stopped, 0);
+        assert!(ops.preempts.is_empty() && ops.ejected.is_empty());
+        assert_eq!(ops.incidents, vec![("base".to_string(), vec!["test-00.sh".to_string()])]);
+        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3));
+    }
+
+    #[test]
+    fn a_red_no_single_member_owns_preempts_nothing() {
+        let mut f = Fake::new(|s, tree| s == "test-00.sh" && tree.len() >= 2);
+        f.maxpar = 4;
+        f.dur.insert("test-00.sh".into(), 2);
+        let mut ops = Ops::default();
+        attribute_round(&mut f, &mut ops, &corpus(40), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
+        assert_eq!(f.stopped, 0);
+        assert!(ops.preempts.is_empty() && ops.ejected.is_empty());
+        assert_eq!(ops.judged.len(), 1, "an unattributed red goes to the judge, not to an eject");
+    }
+
+    #[test]
+    fn a_sole_owner_found_after_the_corpus_ended_is_ejected_and_only_its_suites_are_verified() {
+        let mut f = Fake::new(breaks("m2", "test-03.sh"));
+        f.maxpar = 4;
+        f.dur.insert("test-03.sh".into(), 1);
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
+        assert_eq!(f.stopped, 0);
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["test-03.sh".to_string()])]);
+        assert_eq!(f.main_kind[1], (MainKind::Verify, vec!["test-03.sh".into()]));
+        assert!(matches!(end, RoundEnd::Land { .. }));
     }
 
     #[test]
@@ -717,25 +827,35 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn owner_flake_and_base_are_told_apart() {
+    fn owner_and_base_are_told_apart() {
         let mut f = Fake::new(|s, tree| match s {
             "test-01.sh" => tree.contains("m3"),
             "test-02.sh" => true, // red on every tree, the base included
             _ => false,
         });
-        f.flaky.insert("test-04.sh".into());
         let mut ops = Ops::default();
         let end = attribute_round(&mut f, &mut ops, &corpus(8), three(), Budget { slots: 4, maxpar: 2 }).unwrap();
-        let d = &ops.recorded[0].1;
-        assert_eq!(d.owners.get("m3"), Some(&vec!["test-01.sh".to_string()]));
-        assert_eq!(d.base, vec!["test-02.sh".to_string()]);
-        assert_eq!(d.flaky, vec!["test-04.sh".to_string()]);
+        let all = |pick: fn(&Decision) -> Vec<String>| -> Vec<String> { ops.recorded.iter().flat_map(|(_, d)| pick(d)).collect() };
+        assert_eq!(ops.recorded[0].1.owners.get("m3"), Some(&vec!["test-01.sh".to_string()]));
+        assert_eq!(all(|d| d.base.clone()), vec!["test-02.sh".to_string()]);
         assert_eq!(ops.incidents, vec![("base".to_string(), vec!["test-02.sh".to_string()])]);
         assert!(matches!(end, RoundEnd::Land { .. }));
     }
 
     #[test]
-    fn every_owner_is_ejected_with_its_suites_and_the_survivors_rerun_only_those() {
+    fn a_flaky_red_preempts_nothing_and_ejects_no_one() {
+        let mut f = Fake::new(|_, _| false);
+        f.flaky.insert("test-04.sh".into());
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(8), three(), Budget { slots: 4, maxpar: 2 }).unwrap();
+        assert_eq!(f.stopped, 0);
+        assert!(ops.preempts.is_empty() && ops.ejected.is_empty());
+        assert_eq!(ops.recorded[0].1.flaky, vec!["test-04.sh".to_string()]);
+        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3));
+    }
+
+    #[test]
+    fn every_owner_is_ejected_with_its_suites_one_pass_at_a_time() {
         let mut f = Fake::new(|s, tree| match s {
             "test-01.sh" | "test-05.sh" => tree.contains("m1"),
             "test-03.sh" => tree.contains("m3"),
@@ -744,18 +864,11 @@ pub(crate) mod tests {
         let mut ops = Ops::default();
         let members = vec![member("m1"), member("m2"), member("m3"), member("m4")];
         let end = attribute_round(&mut f, &mut ops, &corpus(10), members, Budget { slots: 5, maxpar: 2 }).unwrap();
-        let mut ej = ops.ejected.clone();
+        let mut ej: Vec<String> = ops.ejected.iter().map(|(id, _)| id.clone()).collect();
         ej.sort();
-        assert_eq!(
-            ej,
-            vec![
-                ("m1".to_string(), vec!["test-01.sh".to_string(), "test-05.sh".to_string()]),
-                ("m3".to_string(), vec!["test-03.sh".to_string()]),
-            ]
-        );
-        assert_eq!(ops.rebuilt, vec![vec!["m2".to_string(), "m4".to_string()]]);
-        assert_eq!(f.main_kind.len(), 2);
-        assert_eq!(f.main_kind[1], (MainKind::Verify, vec!["test-01.sh".into(), "test-03.sh".into(), "test-05.sh".into()]));
+        assert_eq!(ej, vec!["m1".to_string(), "m3".to_string()]);
+        assert_eq!(ops.rebuilt.last(), Some(&vec!["m2".to_string(), "m4".to_string()]));
+        assert_eq!(f.stopped, 2, "each owner stopped the pass it was found in");
         assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 2));
     }
 
@@ -763,26 +876,25 @@ pub(crate) mod tests {
     fn a_red_pass_with_menders_takes_its_next_pass_from_their_outcomes_and_ejects_only_the_returned() {
         use batcher::mender::{Left, Next};
         let mut f = Fake::new(|s, tree| match s {
-            "test-01.sh" => tree.contains("m1"),
-            "test-03.sh" => tree.contains("m3"),
+            "test-03.sh" => tree.contains("m1") && tree.contains("m3"),
             _ => false,
         });
         let mut ops = Ops::default();
         let mended = Member { tip: "m1-mended".into(), ..member("m1") };
         ops.menders = vec![Next::Pass { members: vec![mended, member("m2")], left: vec![Left { id: "m3".into(), why: "returned".into() }], retry: false }];
-        let end = attribute_round(&mut f, &mut ops, &corpus(10), three(), Budget { slots: 5, maxpar: 2 }).unwrap();
+        let end = attribute_round(&mut f, &mut ops, &corpus(10), three(), Budget { slots: 8, maxpar: 2 }).unwrap();
         assert_eq!(ops.ejected[0], ("m3".to_string(), vec!["test-03.sh".to_string()]));
         assert_eq!(ops.rebuilt[0], vec!["m1".to_string(), "m2".to_string()]);
-        assert_eq!(f.main_kind[1], (MainKind::Verify, vec!["test-01.sh".into(), "test-03.sh".into()]));
+        assert_eq!(f.main_kind[1], (MainKind::Verify, vec!["test-03.sh".into()]));
         assert!(matches!(end, RoundEnd::Land { .. } | RoundEnd::Blocked(_)));
     }
 
     #[test]
     fn a_page_from_the_menders_stops_the_round() {
         use batcher::mender::Next;
-        let mut f = Fake::new(breaks("m1", "test-01.sh"));
+        let mut f = Fake::new(|s, tree| s == "test-01.sh" && tree.contains("m1") && tree.contains("m3"));
         let mut ops = Ops { menders: vec![Next::Stop { page: "box".into() }], ..Ops::default() };
-        let end = attribute_round(&mut f, &mut ops, &corpus(10), three(), Budget { slots: 5, maxpar: 2 }).unwrap();
+        let end = attribute_round(&mut f, &mut ops, &corpus(10), three(), Budget { slots: 8, maxpar: 2 }).unwrap();
         assert_eq!(end, RoundEnd::Blocked("box".into()));
         assert!(ops.ejected.is_empty());
         assert_eq!(ops.incidents.len(), 1);
@@ -893,6 +1005,9 @@ pub(crate) mod tests {
                 let mut p = self.0.poll_main()?;
                 p.results.retain(|(s, _)| s != "test-01.sh");
                 Ok(p)
+            }
+            fn stop_main(&mut self) -> Result<(), String> {
+                self.0.stop_main()
             }
             fn launch(&mut self, j: &Job) -> Result<(), String> {
                 self.0.launch(j)

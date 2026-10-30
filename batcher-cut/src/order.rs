@@ -39,6 +39,13 @@ pub fn longest_first(tree: &[String], history: &str) -> Ordered {
     Ordered { list, unmeasured: unmeasured.drain(..).cloned().collect() }
 }
 
+/// Suite-seconds `suites` would have taken, from their recorded mean wall times; a suite with
+/// no record counts as nothing.
+pub fn expected_secs(suites: &[String], history: &str) -> u64 {
+    let mean = mean_wall(history);
+    suites.iter().filter_map(|s| mean.get(s)).sum::<f64>().round() as u64
+}
+
 /// A list that does not name every suite in the tree is refused, naming what is missing.
 pub fn covers(tree: &[String], list: &[String]) -> Result<(), String> {
     let have: BTreeSet<&String> = list.iter().collect();
@@ -89,5 +96,12 @@ mod tests {
         let e = covers(&tree, &names(&["test-a.sh"])).unwrap_err();
         assert!(e.contains("test-b.sh"), "{e}");
         assert!(covers(&tree, &names(&["test-b.sh", "test-a.sh"])).is_ok());
+    }
+
+    #[test]
+    fn expected_secs_sums_the_mean_wall_of_the_named_suites_and_skips_the_unrecorded() {
+        let h = format!("{}{}{}", row("a.sh", 10), row("a.sh", 20), row("b.sh", 7));
+        assert_eq!(expected_secs(&names(&["a.sh", "b.sh", "never.sh"]), &h), 22);
+        assert_eq!(expected_secs(&[], &h), 0);
     }
 }

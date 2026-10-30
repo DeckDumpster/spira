@@ -345,3 +345,25 @@ fn a_dependent_s_install_fault_is_confirmed_by_removing_its_prerequisite_set() {
     });
     assert_eq!(got, InstallFault::Owner("m1".into()));
 }
+
+#[test]
+fn a_red_with_one_owner_and_no_rerun_outstanding_has_a_sole_owner() {
+    let shape = flat(&["m1", "m2", "m3"]);
+    let (a, _) = replay(Budget { slots: 6, maxpar: 2 }, shape, &[("s1", false, 1)], 50, 3, owned_by("m2"));
+    assert_eq!(a.sole_owner(), Some(("m2".to_string(), vec!["s1".to_string()])));
+}
+
+#[test]
+fn a_red_still_awaiting_reruns_has_no_sole_owner_yet() {
+    let shape = flat(&["m1", "m2", "m3"]);
+    let mut a = Attributor::new(Budget { slots: 6, maxpar: 2 }, shape.clone(), 10);
+    a.on_main_result("s1", false, &shape.members, 1);
+    assert_eq!(a.sole_owner(), None);
+}
+
+#[test]
+fn a_red_that_fails_on_the_base_has_no_sole_owner() {
+    let shape = flat(&["m1", "m2", "m3"]);
+    let (a, _) = replay(Budget { slots: 6, maxpar: 2 }, shape, &[("s1", false, 1)], 50, 3, |_| JobResult::Red);
+    assert_eq!(a.sole_owner(), None);
+}

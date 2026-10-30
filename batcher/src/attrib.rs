@@ -444,8 +444,25 @@ impl Attributor {
     }
 
     pub fn decision(&self) -> Decision {
+        self.decision_of(&self.reds)
+    }
+
+    /// The first member that alone owns a red whose reruns are all back, and every such red
+    /// it owns. A red still awaiting a rerun may yet name a second owner, so it is not sole.
+    pub fn sole_owner(&self) -> Option<(Id, Vec<String>)> {
+        let sole = |suite: &String| match &self.suites[suite] {
+            SuiteState { outstanding, settled: Some((Outcome::Owner(o), _)), .. } if outstanding.is_empty() && o.len() == 1 => Some(o[0].clone()),
+            _ => None,
+        };
+        let owner = self.reds.iter().find_map(sole)?;
+        let owned = self.reds.iter().filter(|s| sole(s).as_ref() == Some(&owner)).cloned().collect();
+        Some((owner, owned))
+    }
+
+    /// The decision restricted to `reds` (a subset of this run's reds, in red order).
+    pub fn decision_of(&self, reds: &[String]) -> Decision {
         let mut d = Decision::default();
-        for suite in &self.reds {
+        for suite in reds {
             let st = &self.suites[suite];
             let outcome = st.settled.as_ref().map(|(o, _)| o.clone());
             match &outcome {

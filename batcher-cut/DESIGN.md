@@ -112,6 +112,13 @@ corpus tail frees.
   `file_local_red_incident(..., "base")` path, deduped by incident.sh);
 - an unattributed red blocks the round and is filed as a judgement bead (`RoundOps::judge`).
 
+**Preemption.** A red that settles on exactly one member, with every rerun back, stops the
+corpus there instead of running it out: the member is ejected (stacked dependents with it),
+the tree rebuilt without it, and the corpus restarted on the suites that had not finished
+green. A base, flaky, unattributed or multi-owner red never preempts. The suite-seconds of the
+unreached suites (their recorded mean wall) go to the `round-preempt` TSD row as
+`saved_suite_secs`. Reds whose attribution was still running are judged afresh by the restart.
+
 **Record.** One TSD row per red, family `round-attribution`: `repo`, `round`, `iteration`,
 `suite`, `outcome` (`owner|flaky|base|unattributed`), `owner` (comma list, empty unless owner),
 `attribution_secs` (red landed → settled; empty, never `0`, for a red that never settled — `outcome` then reads `unsettled`), `reruns` (runs launched for S), `settled_before_corpus_end`
