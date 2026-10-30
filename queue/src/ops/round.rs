@@ -1037,7 +1037,22 @@ fn open(
             return USAGE;
         }
     };
-    let wanted = parse_members(&text);
+    let mut wanted: Vec<Member> = Vec::new();
+    for m in parse_members(&text) {
+        match wanted.iter_mut().find(|h| h.id == m.id) {
+            Some(h) if h.tip.starts_with(&m.tip) => {}
+            Some(h) if m.tip.starts_with(&h.tip) => h.tip = m.tip,
+            Some(h) => {
+                w.err(format!(
+                    "queue.sh {label}: {} is named at two tips ({} and {}) — a round holds one version of a bead; refused",
+                    m.id,
+                    h.tip, m.tip
+                ));
+                return USAGE;
+            }
+            None => wanted.push(m),
+        }
+    }
     if wanted.is_empty() {
         w.err(format!("queue.sh {label}: --members names no bead"));
         return USAGE;

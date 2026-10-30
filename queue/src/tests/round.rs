@@ -3854,6 +3854,44 @@ fn a_second_round_naming_a_member_of_an_open_round_is_refused_naming_it() {
 }
 
 #[test]
+fn a_duplicate_identical_member_pair_opens_one_member() {
+    let t = concurrent_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-a:ta,sp-b:tb", "--name", "r-1"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert_eq!(kv_of(&t, "round")["members"], "sp-a:ta sp-b:tb");
+}
+
+#[test]
+fn an_abbreviated_and_a_full_tip_of_one_id_are_one_member_at_the_longer() {
+    let t = concurrent_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:t,sp-b:tb,sp-a:ta,sp-a", "--name", "r-1"]),
+        0,
+        "{}",
+        t.err()
+    );
+    assert_eq!(kv_of(&t, "round")["members"], "sp-a:ta sp-b:tb");
+}
+
+#[test]
+fn one_id_at_two_tips_is_refused_naming_both() {
+    let t = concurrent_world();
+    assert_eq!(
+        t.run(&["round", "open", "--members", "sp-a:ta,sp-b:tb,sp-a:tz", "--name", "r-1"]),
+        2,
+        "{}",
+        t.err()
+    );
+    let e = t.err();
+    assert!(e.contains("sp-a") && e.contains("ta") && e.contains("tz"), "{e}");
+    assert!(!t.qfile("round.r-1").exists());
+}
+
+#[test]
 fn the_open_past_the_limit_is_refused() {
     let t = concurrent_world();
     assert_eq!(
