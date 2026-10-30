@@ -858,8 +858,13 @@ fn lock_is_stale(w: &dyn World, repo: &Path) -> Option<u64> {
 }
 
 fn clear_stale_index_lock(w: &dyn World, repo: &Path) {
-    let Some(age) = lock_is_stale(w, repo) else { return };
     let key = format!("skew.lock-clear-failed-{}", cksum(&repo.to_string_lossy()));
+    let Some(age) = lock_is_stale(w, repo) else {
+        if w.stamp_read(&key).as_deref() == Some("1") {
+            w.stamp_write(&key, "0");
+        }
+        return;
+    };
     match w.remove_index_lock(repo) {
         Ok(()) => {
             w.stamp_write(&key, "0");

@@ -1027,3 +1027,18 @@ fn refresh_success_resets_the_decline_streak() {
     refresh(&f, Some("/prod"));
     assert!(f.run_log.borrow().is_empty(), "two passes after a reset is not three in a row");
 }
+
+#[test]
+fn refresh_escalates_again_for_a_new_uncleared_lock_after_the_old_one_vanished() {
+    let f = declining_checkout();
+    *f.lock_remove_err.borrow_mut() = Some("Permission denied".into());
+    for _ in 0..2 {
+        *f.lock_age.borrow_mut() = Some(86_400);
+        refresh(&f, Some("/prod"));
+        refresh(&f, Some("/prod"));
+        *f.lock_age.borrow_mut() = None;
+        refresh(&f, Some("/prod"));
+    }
+    let rows = f.run_log.borrow().iter().filter(|r| r.1.contains("cannot remove stale index.lock")).count();
+    assert_eq!(rows, 2);
+}
