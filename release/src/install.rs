@@ -48,8 +48,7 @@ impl Drop for Scratch {
     }
 }
 
-/// `spira/` of the release in `tarball`, read out of it: its key registry (`conf.d` and `conf.toml.d`) and its personas
-/// (`runes/`) are what a fresh box's config is written against, and what this process reads that config with.
+/// `spira/` of the release in `tarball`: the key registry (`conf.d`, `conf.toml.d`) and `runes/` a fresh box's config is read with.
 pub fn tarball_home(tarball: &Path) -> Result<(Scratch, PathBuf), String> {
     let scratch = Scratch(std::env::temp_dir().join(format!("release-install-home-{}", std::process::id())));
     std::fs::create_dir_all(&scratch.0).map_err(|e| format!("{}: {e}", scratch.0.display()))?;
