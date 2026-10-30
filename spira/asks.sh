@@ -70,9 +70,13 @@ _as_tick() {
         [ -n "${_as_seen[$id]:-}" ] && continue
         _as_seen[$id]=1
         [ "$_as_seeded" -eq 1 ] && _as_say "NEW ASK $id: $title"
-    done < <(printf '%s' "$json" | tr -d '\n' \
-        | grep -oE '"id": *"[^"]+", *"title": *"([^"\\]|\\.)*"' \
-        | sed -E 's/^"id": *"([^"]+)", *"title": *"(.*)"$/\1\t\2/' | cut -c1-170)
+    done < <(printf '%s' "$json" | python3 -c '
+import sys, json
+try: rows = json.load(sys.stdin)
+except Exception: sys.exit(0)
+for r in rows:
+    if isinstance(r, dict) and isinstance(r.get("id"), str) and isinstance(r.get("title"), str):
+        print("%s\t%s" % (r["id"], " ".join(r["title"].split())))' 2>/dev/null | cut -c1-170)
     while read -r id; do
         [ -n "$id" ] || continue
         [ -n "${_as_seen[$id]:-}" ] && continue

@@ -234,7 +234,7 @@ impl World {
         let [status_flag, status_value] = status_args(Kind::Ask, Which::Open);
         let listed = lc_call(&self.lc_socket, &["content", "list", "--label", &self.ask_label, &status_flag, &status_value, "--limit", "0", "--json"]).map_err(|e| e.to_string())?;
         let rows: Vec<Value> = serde_json::from_str(&listed).map_err(|e| format!("ask list unparsed: {e}"))?;
-        let open = rows.iter().filter_map(|r| Some((r["id"].as_str()?.to_string(), r["title"].as_str()?.to_string()))).collect();
+        let open = rows.iter().filter_map(|r| Some((r["id"].as_str()?.to_string(), r["title"].as_str()?.split_whitespace().collect::<Vec<_>>().join(" ")))).collect();
         let held = self.lc(&["list-held", "ask"]).unwrap_or_default().lines().map(str::trim).filter(|id| !id.is_empty() && !seen.contains(*id)).map(|id| (id.to_string(), self.hold_line(id))).collect();
         serde_json::to_string(&asks::Snapshot { open, held }).map_err(|e| e.to_string())
     }

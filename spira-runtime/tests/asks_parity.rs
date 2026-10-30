@@ -17,6 +17,7 @@ use spira_runtime::world::World;
 use spira_runtime::Effects;
 
 const LABEL: &str = "ask-parity";
+const QUOTED_TITLE_JSON: &str = r#"say \"hi\" in C:\\dir"#;
 const HISTORY: &str = r#"[{"seq":"7","event":"Hold","applied":"1","evidence":"{\"Hold\":{\"kind\":\"manual\",\"detail\":\"no build spec:   which repo?\"}}"}]"#;
 
 struct Fixture {
@@ -55,7 +56,7 @@ impl Fixture {
 
     fn change_world(&self) {
         let long = "x".repeat(200);
-        self.set_asks(&[("sp-old", "already open"), ("sp-new", "decide X"), ("sp-long", &long)]);
+        self.set_asks(&[("sp-old", "already open"), ("sp-new", "decide X"), ("sp-long", &long), ("sp-quote", QUOTED_TITLE_JSON), ("sp-ws", r"two\nlines\tand  tab")]);
         fs::write(self.p("held.txt"), "sp-held\nsp-nomail\n").unwrap();
     }
 
@@ -198,4 +199,22 @@ fn a_title_is_cut_with_its_id_to_170_characters() {
 fn a_store_that_never_answers_announces_nothing() {
     let r = same_rows_with("down", 3, false, |f| fs::write(f.p("bdfail"), "").unwrap());
     assert!(r.is_empty(), "{r:?}");
+}
+
+#[test]
+fn a_title_with_a_quote_or_backslash_is_announced_as_its_text_not_its_json() {
+    let r = same_rows("quoted", 3, true);
+    assert!(r.iter().any(|l| l.ends_with("NEW ASK sp-ws: two lines and tab")), "{r:?}");
+    assert!(r.iter().any(|l| l.ends_with(r#"NEW ASK sp-quote: say "hi" in C:\dir"#)), "{r:?}");
+}
+
+#[test]
+fn the_last_mail_naming_a_bead_wins_with_every_cur_after_every_new() {
+    let r = same_rows_with("mailorder", 3, true, |f| {
+        fs::create_dir_all(f.p("mail/other/new")).unwrap();
+        let mail = |s: &str| format!("Subject: {s}\nX-Spira-Default: d\nX-Spira-Work-Bead: sp-held\nMessage-ID: <{s}@spira>\n\nbody\n");
+        fs::write(f.p("mail/concierge/cur/a0"), mail("cur-first")).unwrap();
+        fs::write(f.p("mail/other/new/z9"), mail("other-new-last")).unwrap();
+    });
+    assert!(r.iter().any(|l| l.contains("NEW ASK HOLD sp-held: cur-first |")), "{r:?}");
 }
