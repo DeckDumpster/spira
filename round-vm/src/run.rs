@@ -375,10 +375,10 @@ unit_env() {
         CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="$RUSTC_WRAPPER" SCCACHE_IGNORE_SERVER_IO_ERROR=1 \
         SCCACHE_WEBDAV_ENDPOINT="$SCCACHE_WEBDAV_ENDPOINT" SCCACHE_WEBDAV_KEY_PREFIX="$SCCACHE_WEBDAV_KEY_PREFIX" \
         GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
-        UNIT_COV_ENV="$unit_cov_env" bash -c 'eval "$UNIT_COV_ENV"; exec cargo "$@"' _ "$@"
+        UNIT_COV_ENV="$unit_cov_env" UNIT_NICE="${unit_nice:-0}" bash -c 'eval "$UNIT_COV_ENV"; exec nice -n "$UNIT_NICE" cargo "$@"' _ "$@"
 }
 unit_cargo() { unit_env test --profile unittest --workspace --config profile.unittest.incremental=false "$@"; }
-unit_nextest() { unit_env nextest run --config-file "$HOME/round-nextest.toml" --cargo-profile unittest --workspace --config profile.unittest.incremental=false "$@"; }
+unit_nextest() { unit_nice=10 unit_env nextest run --config-file "$HOME/round-nextest.toml" --cargo-profile unittest --workspace --config profile.unittest.incremental=false "$@"; }
 unit_cov_init() {
     unit_cov_env=""
     if [ -x "$CARGO_HOME/bin/cargo-llvm-cov" ]; then
@@ -2895,6 +2895,7 @@ mod tests {
         let body = &REMOTE_SCRIPT[f..f + 300];
         assert!(body.contains("--cargo-profile unittest --workspace --config profile.unittest.incremental=false"), "same profile and flags, so the compile is reused: {body}");
         assert!(body.contains("--config-file \"$HOME/round-nextest.toml\""), "{body}");
+        assert!(body.contains("unit_nice=10"), "the unit run yields CPU to the suites it overlaps: {body}");
     }
 
     #[test]
@@ -2927,7 +2928,7 @@ mod tests {
         let report = REMOTE_SCRIPT.find("cargo llvm-cov report --profile unittest --json --summary-only").unwrap();
         let waited = REMOTE_SCRIPT.find("wait \"$unit_pid\"; unit_rc=$?").unwrap();
         assert!(waited < report, "the report is read off the profile data after the unit run");
-        assert_eq!(REMOTE_SCRIPT.matches("exec cargo \"$@\"").count(), 1, "one definition of the cargo environment");
+        assert_eq!(REMOTE_SCRIPT.matches("exec nice -n \"$UNIT_NICE\" cargo \"$@\"").count(), 1, "one definition of the cargo environment");
     }
 
     #[test]
