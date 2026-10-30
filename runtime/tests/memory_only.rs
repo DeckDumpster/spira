@@ -99,3 +99,29 @@ fn an_event_this_engine_appended_is_read_at_once_whatever_the_poll_interval() {
     e.run_until_idle().unwrap();
     assert_eq!(*seen.lock().unwrap(), ["foreign"]);
 }
+
+struct Panicker;
+
+impl Handler for Panicker {
+    fn interests(&self) -> &[EventKindTag] {
+        &["tick"]
+    }
+
+    fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
+        panic!("a handler that always panics");
+    }
+}
+
+#[test]
+fn a_handler_that_panics_on_a_memory_only_event_does_not_wedge_the_pump() {
+    let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
+    let regs = vec![Registration::new("panicker", Panicker)];
+    let mut e = Engine::open(journal.clone(), Arc::new(clock.clone()), regs, 0).unwrap();
+    e.start("s", EventKind::new("tick", ""));
+    for _ in 0..20 {
+        if e.run_until_idle().is_ok() {
+            return;
+        }
+    }
+    panic!("the pump never went idle: the failing local event is retried forever");
+}
