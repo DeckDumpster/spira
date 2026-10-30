@@ -180,7 +180,7 @@ echo "batch: running 2 suite(s)"
 printf 'key=KEY\ntree=%s\n' "\$(git rev-parse HEAD^{tree})" > \$res/batch.meta
 printf 'build_wall_s=5\n' > \$res/runner.meta
 printf '{"family":"suite-timing","suite":"combined","rc":0}\n' > .runtime/spira/tsd/suite-timing.jsonl
-case "\$mode" in green) ;; *)
+case "\$mode" in green|drop) ;; *)
     case "\${SPIRA_TESTENV_RESUME:-}" in s3://*) ;; *) echo "RESUME-UNSET" >&2; exit 2;; esac
     store="\$HOME/fake-s3/\${SPIRA_TESTENV_RESUME#s3://}/spira/e2etree/e2eenv"
     for s in e2e-a.sh e2e-b.sh e2e-c.sh; do
@@ -193,6 +193,7 @@ case "\$mode" in green) ;; *)
 esac
 printf 'green %s 30 - explicit 0\n' "\$(date +%s)" > \$res/e2e-a.sh.result
 printf 'green %s 12 - explicit 0\n' "\$(date +%s)" > \$res/e2e-b.sh.result
+[ "\$mode" = drop ] && sleep 25
 exit 0
 X
 w /usr/local/bin/aws <<'X'
@@ -336,6 +337,44 @@ print(urllib.request.urlopen('https://127.0.0.1:$PVE_PORT/api2/json/nodes/pve/qe
 " 2>/dev/null)"
 nowant "run: the leased VM was destroyed and verified gone" "\"vmid\": $VMID" "$qemu_list"
 
+# ── the batch's ssh dies after every suite has finished: the runner is detached on the VM, so
+# `run` reconnects, takes the runner's own exit code and keeps ssh's reason. The session is
+# killed on the VM while the fake testenv sleeps after its results are written.
+vm_sh() { podman exec "$VM_NAME" sh -c "$1" 2>/dev/null; } # batch-job: container fixture call; image pulls and starts exceed 5 s
+vm_sh 'echo drop > /root/testenv-mode'
+env -i PATH="$PATH" SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_RELEASE="${SPIRA_RELEASE:-}" SPIRA_TOML="$SPIRA_TOML" SPIRA_ROUND_VM_SSH_TRIES=20 SPIRA_ROUND_VM_BOOT_POLL=1 \
+    "$BIN" run "$TREE_DIR" --suites e2e-a.sh,e2e-b.sh --maxpar 2 --results-dir "$TMP/drop1" >"$TMP/drop1.out" 2>"$TMP/drop1.err" &
+DROP_PID=$!
+for _ in $(seq 1 120); do
+    [ -n "$(vm_sh 'for d in /proc/[0-9]*; do tr "\0" " " < $d/cmdline 2>/dev/null | grep "^sleep 25" ; done')" ] && break
+    sleep 1
+done
+vm_sh 'for d in /proc/[0-9]*; do
+    c=$(tr "\0" " " < $d/cmdline 2>/dev/null) || continue
+    case "$c" in "bash -c script="*|"bash -c bash -c"*)
+        p=${d#/proc/}
+        while [ "$p" -gt 1 ]; do
+            case "$(tr "\0" " " < /proc/$p/cmdline 2>/dev/null)" in "sshd: "*) kill -9 "$p"; break;; esac
+            p=$(awk "/^PPid/{print \$2}" /proc/$p/status)
+        done ;;
+    esac
+done'
+DROP_RC=0
+wait "$DROP_PID" || DROP_RC=$?
+is "ssh drop: run exits with the runner's own code" "0" "$DROP_RC"
+nowant "ssh drop: the pass is not reported incomplete" "INCOMPLETE" "$(cat "$TMP/drop1.err")"
+want "ssh drop: the log names the drop and the recovery" "reconnected and the runner had finished with exit 0" "$(cat "$TMP/drop1.err")"
+[ -s "$TMP/drop1/ssh-batch.log" ] && ok "ssh drop: ssh's own diagnostics are kept" || bad "ssh drop: ssh's own diagnostics are kept" "$TMP/drop1/ssh-batch.log is empty or missing"
+DROP_VMID="$(awk '/^round-vm run: [0-9]/{print $3; exit}' "$TMP/drop1.err")"
+qemu_list="$(python3 -c "
+import ssl, urllib.request
+ctx = ssl.create_default_context()
+ctx.check_hostname = False
+ctx.verify_mode = ssl.CERT_NONE
+print(urllib.request.urlopen('https://127.0.0.1:$PVE_PORT/api2/json/nodes/pve/qemu', context=ctx, timeout=5).read().decode())
+" 2>/dev/null)"
+nowant "ssh drop: the VM was destroyed" "\"vmid\": $DROP_VMID" "$qemu_list"
+
 # ── resume across re-runs: a round records each pass to the S3 prefix as it passes, so a VM that
 # dies loses none, and the next pass for the tree on a fresh VM resumes exactly those.
 mkdir -p "$TMP/resume-creds"; printf '[default]\naws_access_key_id = scoped-fixture\n' > "$TMP/resume-creds/credentials"
@@ -345,7 +384,6 @@ RESUME_RUN() {
         SPIRA_ROUND_VM_RESUME_URL="$RESUME_URL" SPIRA_ROUND_VM_RESUME_CREDENTIALS="$TMP/resume-creds" \
         "$BIN" run "$TREE_DIR" --suites e2e-a.sh --maxpar 2 --results-dir "$1" >"$TMP/$2.out" 2>"$TMP/$2.err" || true
 }
-vm_sh() { podman exec "$VM_NAME" sh -c "$1" 2>/dev/null; } # batch-job: container fixture call; image pulls and starts exceed 5 s
 vm_sh 'echo red > /root/testenv-mode; rm -rf /root/fake-s3 /root/aws-creds-seen'
 RESUME_RUN "$TMP/red1" red1
 want "resume: the round says it records to the prefix" "RESUME: recording passed suites to $RESUME_URL" "$(cat "$TMP/red1.err")"
@@ -375,7 +413,7 @@ for _ in $(seq 1 120); do
 done
 kill -TERM "$TERM_PID" 2>/dev/null
 wait "$TERM_PID" 2>/dev/null
-vm_sh 'pkill -f "[s]leep 600"; for _ in $(seq 1 60); do pgrep -f "[b]ash -s --" >/dev/null || break; sleep 1; done; rm -rf /root/round-work /root/round-resume-aws; echo red > /root/testenv-mode'
+vm_sh 'pkill -f "[s]leep 600"; for _ in $(seq 1 60); do pgrep -f "[r]ound-script.sh" >/dev/null || break; sleep 1; done; rm -rf /root/round-work /root/round-resume-aws; echo red > /root/testenv-mode'
 is "sigterm: the passes recorded before the signal are in the prefix" "2" "$(vm_sh 'find /root/fake-s3 -type f ! -name .probe | wc -l')"
 RESUME_RUN "$TMP/term2" term2
 is "sigterm: the re-run skipped exactly the suites recorded before the signal" "2" "$(grep -c 'batch: resumed: ' "$TMP/term2/runner.out" 2>/dev/null)" || tail -40 "$TMP/term2.err" >&2
