@@ -414,3 +414,54 @@ fn a_lease_whose_owner_is_dead_does_not_hold_the_pass() {
     full(&fx, &["--round-wait", "1", "--round-poll", "1", "--start-deadline", "5"]);
     assert!(ran.exists());
 }
+
+fn planted_lock(fx: &Fx, age_secs: u64) -> std::path::PathBuf {
+    let repo = fx.d.path().join("repo");
+    let tree = fx.d.path().join("tree");
+    let g = |dir: &std::path::Path, a: &[&str]| assert!(Command::new("git").arg("-C").arg(dir).args(a).status().unwrap().success());
+    g(&repo, &["worktree", "add", "-q", "--detach", tree.to_str().unwrap()]);
+    let gd = String::from_utf8(Command::new("git").arg("-C").arg(&tree).args(["rev-parse", "--absolute-git-dir"]).output().unwrap().stdout).unwrap();
+    let lock = std::path::PathBuf::from(gd.trim()).join("index.lock");
+    let f = fs::File::create(&lock).unwrap();
+    f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age_secs)).unwrap();
+    lock
+}
+
+#[test]
+fn a_stale_index_lock_in_the_sweep_tree_is_removed_and_the_pass_proceeds() {
+    let fx = Fx::new();
+    fx.commit("1");
+    let lock = planted_lock(&fx, 30 * 3600);
+    let ran = round_vm_stub(&fx, r#"{"leases":[]}"#);
+    let (_, _, err) = full(&fx, &["--start-deadline", "5"]);
+    assert!(!lock.exists(), "{err}");
+    assert!(err.contains("removed stale") && err.contains("index.lock"), "{err}");
+    assert!(ran.exists(), "the pass reached the runner after recovering: {err}");
+}
+
+#[test]
+fn a_young_index_lock_is_refused_by_name_with_its_age() {
+    let fx = Fx::new();
+    fx.commit("1");
+    let lock = planted_lock(&fx, 5);
+    let ran = round_vm_stub(&fx, r#"{"leases":[]}"#);
+    let (_, _, err) = full(&fx, &["--start-deadline", "5"]);
+    assert!(lock.exists());
+    assert!(err.contains(lock.to_str().unwrap()) && err.contains("old"), "{err}");
+    assert!(!ran.exists());
+}
+
+#[test]
+fn an_old_index_lock_is_kept_while_a_git_process_runs_in_the_tree() {
+    let fx = Fx::new();
+    fx.commit("1");
+    let lock = planted_lock(&fx, 30 * 3600);
+    let mut holder = Command::new("git").arg("hash-object").arg("--stdin").current_dir(fx.d.path().join("tree")).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::null()).spawn().unwrap();
+    let ran = round_vm_stub(&fx, r#"{"leases":[]}"#);
+    let (_, _, err) = full(&fx, &["--start-deadline", "5"]);
+    drop(holder.stdin.take());
+    holder.wait().unwrap();
+    assert!(lock.exists(), "{err}");
+    assert!(err.contains(&format!("pid {}", holder.id())), "{err}");
+    assert!(!ran.exists());
+}
