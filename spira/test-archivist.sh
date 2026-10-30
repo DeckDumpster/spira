@@ -21,7 +21,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
-tl_config SPIRA_TEST_CASE_DEADLINE=90   # setup builds real git/dolt fixtures; a loaded VM doubles it
+tl_config SPIRA_TEST_CASE_DEADLINE=90
 ARC=archivist   # the SUT, by name on the suite's PATH (sp-gypjk)
 
 has() { case "$2" in *"$3"*) ok "$1" ;; *) bad "$1" "no [$3] in [$2]" ;; esac; }

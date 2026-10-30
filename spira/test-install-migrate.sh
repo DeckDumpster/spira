@@ -38,7 +38,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # The XDG_RUNTIME_DIR check below is a UID heuristic, not an identity check — it passes
 # on any host whose real user happens to have UID 1001 (sp-nxvjm). This is the guard.
 . "$HERE/testlib.sh"
-tl_config SPIRA_TEST_CASE_DEADLINE=120   # setup builds real git/dolt fixtures; a loaded VM doubles it
+tl_config SPIRA_TEST_CASE_DEADLINE=120
 iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "wanted exit 0, got $2"; }
 # before <label> <must-precede> <must-follow> <log>
 before() {

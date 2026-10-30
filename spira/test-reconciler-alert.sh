@@ -34,7 +34,7 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
 
 . "$HERE/testlib.sh"
-tl_config SPIRA_TEST_CASE_DEADLINE=60   # setup builds real git/dolt fixtures; a loaded VM doubles it
+tl_config SPIRA_TEST_CASE_DEADLINE=60
 
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM

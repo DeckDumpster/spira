@@ -23,7 +23,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
-tl_config SPIRA_TEST_CASE_DEADLINE=60   # setup builds real git/dolt fixtures; a loaded VM doubles it
+tl_config SPIRA_TEST_CASE_DEADLINE=60
 . "$HERE/testlib/lc-fixture.sh"
 
 TMP="$(mktemp -d)"

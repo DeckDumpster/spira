@@ -21,7 +21,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
-tl_config SPIRA_TEST_CASE_DEADLINE=60   # setup builds real git/dolt fixtures; a loaded VM doubles it
+tl_config SPIRA_TEST_CASE_DEADLINE=60
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

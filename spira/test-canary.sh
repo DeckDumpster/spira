@@ -33,7 +33,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
-tl_config SPIRA_TEST_CASE_DEADLINE=240   # setup builds real git/dolt fixtures; a loaded VM doubles it
+tl_config SPIRA_TEST_CASE_DEADLINE=240
 tl_subshell_safe
 
 # The stage finds every compiled binary (sentinel, strand, dwarf, landing-pass, spira-config)

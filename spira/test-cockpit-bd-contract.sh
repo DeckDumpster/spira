@@ -25,7 +25,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
-tl_config SPIRA_TEST_CASE_DEADLINE=210   # setup builds real git/dolt fixtures; a loaded VM doubles it
+tl_config SPIRA_TEST_CASE_DEADLINE=210
 # Resolved BEFORE testdb.sh, which sources conf.sh, which rebuilds PATH from SPIRA_PATH +
 # $HOME/.local/bin + /usr/local/bin + /usr/bin + /bin — dropping wherever this box's cargo
 # actually lives (gap #4's row below needs it after that rebuild has already happened).

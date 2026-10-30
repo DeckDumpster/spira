@@ -54,7 +54,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
 . "$HERE/testlib.sh"
-tl_config SPIRA_TEST_CASE_DEADLINE=150   # setup builds real git/dolt fixtures; a loaded VM doubles it
+tl_config SPIRA_TEST_CASE_DEADLINE=150
 lack() { [[ "$3" != *"$2"* ]] && ok "$1" || bad "$1: did not want [$2] in [$3]"; }
 
 # sp-8fsql: czar.sh (a one-line `exec czar-pass "$@"` shim) is retired; every caller invokes
