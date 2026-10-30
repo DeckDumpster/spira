@@ -17,6 +17,7 @@ use crate::watchers::asks;
 use crate::watchers::design_asks::{self, Page};
 use crate::wiki_git::git;
 use crate::watchers::brain_dirty;
+use crate::watchers::supersede_duty::{self, Act, Held, Reading, Verb};
 use crate::watchers::round_duty::{RoundState, Snapshot};
 
 const STORE_ATTEMPTS: u32 = 3;
@@ -361,6 +362,61 @@ impl World {
             }
         }
         serde_json::to_string(&snap).map_err(|e| e.to_string())
+    }
+
+    fn state_of(&self, id: &str) -> String {
+        self.lc(&["state", id]).map(|s| s.trim().to_string()).unwrap_or_default()
+    }
+
+    fn reading(&self, id: &str) -> Reading {
+        let Some(history) = self.lc(&["history", id, "--machine", "bead"]) else { return Reading::Unreadable };
+        match supersede_duty::request_in(&history) {
+            Err(_) => Reading::Unreadable,
+            Ok(None) => Reading::NotARequest,
+            Ok(Some(succ)) => {
+                let own = self.state_of(id);
+                let succ_state = if own.is_empty() || supersede_duty::terminal(&own) { String::new() } else { self.state_of(&succ) };
+                Reading::Request { succ, own, succ_state }
+            }
+        }
+    }
+
+    /// Every bead under a manual hold, read unless `input` says its version was already read as no request.
+    pub fn supersede_snapshot(&self, input: &str) -> Result<String, String> {
+        let known: BTreeMap<String, String> = serde_json::from_str(input).unwrap_or_default();
+        let listed = lc_call(&self.lc_socket, &["list", "--live", "--hold", "manual", "--snapshot"]).map_err(|e| e.to_string())?;
+        let rows: Vec<Value> = serde_json::from_str(&listed).map_err(|e| format!("held list unparsed: {e}"))?;
+        let text = |v: &Value| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string());
+        let held = rows
+            .iter()
+            .filter(|r| !r["bead_id"].is_null())
+            .map(|r| {
+                let (id, version) = (text(&r["bead_id"]), text(&r["version"]));
+                let reading = if known.get(&id) == Some(&version) { Reading::Skipped } else { self.reading(&id) };
+                Held { id, version, reading }
+            })
+            .collect();
+        serde_json::to_string(&supersede_duty::Snapshot { held }).map_err(|e| e.to_string())
+    }
+
+    /// One adjudication write through the lifecycle, then the evidence note on the bead.
+    pub fn supersede_act(&self, input: &str) -> Result<String, String> {
+        let act: Act = serde_json::from_str(input).map_err(|e| e.to_string())?;
+        let done = match act.verb {
+            Verb::Unhold => lc_call(&self.lc_socket, &["unhold", &act.id, "manual", supersede_duty::ACTOR]),
+            Verb::Supersede => lc_call(&self.lc_socket, &["supersede", &act.id, &act.succ, supersede_duty::ACTOR]),
+        };
+        if let Err(e) = done {
+            return if act.verb == Verb::Supersede && supersede_duty::terminal(&self.state_of(&act.id)) { Ok(supersede_duty::SETTLED.into()) } else { Err(e.to_string()) };
+        }
+        let mut flags = vec![];
+        if act.verb == Verb::Supersede && self.lc(&["bd-supersede", &act.id, &act.succ]).is_none() {
+            flags.push(supersede_duty::BD_FAILED);
+        }
+        if self.lc(&["bd-note", &act.id, &act.note]).is_none() {
+            flags.push(supersede_duty::NOTE_FAILED);
+        }
+        Ok(if flags.is_empty() { "done".into() } else { flags.join(" ") })
     }
 
     pub fn inbox_append(&self, line: &str) -> Result<String, String> {

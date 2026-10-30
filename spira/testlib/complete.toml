@@ -82,6 +82,7 @@ runtime_asks_secs = 60
 runtime_brain_dirty_secs = 600
 pr_deploy_giveup = 10800
 runtime_design_asks_secs = 600
+runtime_supersede_duty_secs = 60
 runes_overlay = "/fixture/userhome/.config/spira/runes"
 check5_max_file = "5"
 ci_label = "awaiting-ci"

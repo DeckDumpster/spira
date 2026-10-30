@@ -132,7 +132,7 @@ queue-watch|daemon|queue-watch watch --run @SPIRA_RUN@ --db @SPIRA_DB@ --home @S
 
 # ASKS has no row: spira-runtime hosts it as the asks handler (spira-runtime/src/watchers).
 
-supersede-duty|daemon|@SPIRA_HOME@/supersede-duty.sh watch --interval 60|@SPIRA_HOME@/supersede-duty.sh health
+# SUPERSEDE-DUTY has no row: spira-runtime hosts it as the supersede-duty handler (spira-runtime/src/watchers).
 
 # PERF-WATCH times the hot read paths (spira/perf-probes) from a CPU-fenced timer and appends one
 # alarm line per path over the limit, with the top callers lc-serve counted, and appends the same

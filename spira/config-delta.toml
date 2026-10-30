@@ -173,6 +173,7 @@ pr_deploy_giveup = 10800
 runtime_asks_secs = 60
 runtime_design_asks_secs = 600
 runtime_brain_dirty_secs = 600
+runtime_supersede_duty_secs = 60
 archivist_fail_retries = "5"
 archivist_fail_backoff = "600"
 
