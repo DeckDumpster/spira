@@ -99,10 +99,11 @@ pub fn cmd_content_rows(args: &[String], conn: &Conn) -> (i32, String) {
     let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1));
     let full = args.iter().any(|a| a == "--full");
     let open = args.iter().any(|a| a == "--open");
-    let found: Result<Vec<Value>, String> = match (flag("--ids"), flag("--external-contains")) {
-        (Some(ids), None) => fetch_with(conn, &ids.split(',').filter(|x| !x.is_empty()).collect::<Vec<_>>(), full, open),
-        (None, Some(needle)) => by_external_ref(conn, needle, full, open),
-        _ => Err("content-rows: exactly one of --ids <a,b,…> or --external-contains <text> is required".into()),
+    let found: Result<Vec<Value>, String> = match (flag("--ids"), flag("--external-contains"), flag("--label")) {
+        (Some(ids), None, None) => fetch_with(conn, &ids.split(',').filter(|x| !x.is_empty()).collect::<Vec<_>>(), full, open),
+        (None, Some(needle), None) => by_external_ref(conn, needle, full, open),
+        (None, None, Some(label)) => by_label(conn, label, flag("--status").map(String::as_str), full),
+        _ => Err("content-rows: exactly one of --ids <a,b,…>, --external-contains <text> or --label <label> [--status a,b] is required".into()),
     };
     match found {
         Ok(v) => (0, serde_json::to_string(&Value::Array(v)).unwrap()),
@@ -126,6 +127,22 @@ fn by_external_ref(conn: &Conn, needle: &str, full: bool, open: bool) -> Result<
     let found = conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"))?;
     let ids: Vec<&str> = found.iter().filter_map(|r| s(r, "id")).collect();
     fetch_with(conn, &ids, full, open)
+}
+
+/// The beads carrying `label`, narrowed to the comma-separated `statuses` when given.
+fn by_label(conn: &Conn, label: &str, statuses: Option<&str>, full: bool) -> Result<Vec<Value>, String> {
+    let cdb = content_db()?;
+    if label.is_empty() {
+        return Err("content-rows: --label needs a non-empty label".into());
+    }
+    let status = match statuses {
+        None => String::new(),
+        Some(list) => format!(" AND status IN ({})", list.split(',').filter(|x| !x.is_empty()).map(|x| format!("'{}'", rows::escape(x))).collect::<Vec<_>>().join(",")),
+    };
+    let sql = format!("SELECT id FROM {cdb}.issues WHERE id IN (SELECT issue_id FROM {cdb}.labels WHERE label = '{}'){status} ORDER BY id", rows::escape(label));
+    let found = conn.query(&sql).map_err(|e| format!("cannot tell: {e:?}"))?;
+    let ids: Vec<&str> = found.iter().filter_map(|r| s(r, "id")).collect();
+    fetch_with(conn, &ids, full, false)
 }
 
 fn fetch_with(conn: &Conn, ids: &[&str], full: bool, open: bool) -> Result<Vec<Value>, String> {

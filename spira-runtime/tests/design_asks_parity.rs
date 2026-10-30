@@ -74,13 +74,17 @@ impl Fixture {
                 BufReader::new(&stream).read_line(&mut line).unwrap();
                 let argv: Vec<String> = serde_json::from_str(&line).unwrap();
                 let once = root.join("bdfail-once");
-                let down = (root.join("bdfail").exists() || fs::remove_file(&once).is_ok()) && argv[0] == "content";
-                let file = match (argv[0].as_str(), argv.get(3).map(String::as_str)) {
-                    ("content", Some(l)) if argv[1] == "list" && l == LABEL && argv[4..6] == ["--status", "open"] => "asks.json",
-                    ("list-held", _) => "held.txt",
+                let down = (root.join("bdfail").exists() || fs::remove_file(&once).is_ok()) && argv[0] == "content-rows";
+                let file = match (argv[0].as_str(), argv.get(2).map(String::as_str)) {
+                    ("content-rows", Some(l)) if argv[1] == "--label" && l == LABEL && argv[3..5] == ["--status", "open"] => "asks.json",
+                    ("list", _) if argv[1..] == ["--live", "--hold", "ask"] => "held.txt",
                     _ => "",
                 };
-                let body = if down { "boom".into() } else { fs::read_to_string(root.join(file)).unwrap_or_default() };
+                let mut body = if down { "boom".into() } else { fs::read_to_string(root.join(file)).unwrap_or_default() };
+                if argv[0] == "list" && !down {
+                    let rows: Vec<_> = body.lines().map(|id| serde_json::json!({"bead_id": id})).collect();
+                    body = serde_json::to_string(&rows).unwrap();
+                }
                 let mut w = &stream;
                 writeln!(w, "{{\"exit_code\": {}, \"len\": {}}}", i32::from(down), body.len()).unwrap();
                 w.write_all(body.as_bytes()).unwrap();
@@ -228,7 +232,7 @@ fn a_failed_store_call_names_the_command_and_what_the_store_said() {
     fs::write(g.p("bdfail"), "").unwrap();
     let r = new_rows(&g, 1);
     assert_eq!(r.len(), 1, "{r:?}");
-    assert!(r[0].contains("spira-lc content list --label ask-parity"), "{r:?}");
+    assert!(r[0].contains("spira-lc content-rows --label ask-parity"), "{r:?}");
     assert!(r[0].contains("boom"), "{r:?}");
 }
 
