@@ -120,6 +120,11 @@ pub fn open_effects_sql() -> String {
     "SELECT r.seq, r.event_id, r.stream, r.kind_tag, r.kind_body, r.at, r.cause, r.correlation FROM runtime_event r WHERE r.kind_tag = 'effect.requested' AND NOT EXISTS (SELECT 1 FROM runtime_event o WHERE o.cause = r.event_id AND o.kind_tag IN ('effect.succeeded', 'effect.failed', 'effect.timed_out')) ORDER BY r.seq".into()
 }
 
+/// The newest `limit` events of a stream below `below`, newest first; `runtime_event_stream_idx` walks them backward.
+pub fn stream_sql(stream: &str, below: u64, limit: u64) -> String {
+    format!("SELECT seq, event_id, stream, kind_tag, kind_body, at, cause, correlation FROM runtime_event WHERE stream = {} AND seq < {below} ORDER BY seq DESC LIMIT {limit}", lit(stream))
+}
+
 pub fn schedule_sql(row: &Value) -> Result<String, String> {
     let kind = row.get("kind").ok_or("journal: row has no kind")?;
     check_widths("schedule", "row_id", row)?;
@@ -209,12 +214,14 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
             Ok(Value::Array(rows.iter().map(|r| json!([num(r, "seq"), event_of(r)])).collect()).to_string())
         }
         "stream" => {
-            let (stream, from, below) = (text_arg(a(1), "stream")?, arg_u64(a(2), "from")?, arg_u64(a(3), "below")?);
-            let rows = read(
-                conn,
-                &format!("SELECT seq, event_id, stream, kind_tag, kind_body, at, cause, correlation FROM runtime_event WHERE stream = {} AND seq >= {from} AND seq < {below} ORDER BY seq LIMIT {READ_MAX}", lit(stream)),
-            )?;
+            let (stream, below, limit) = (text_arg(a(1), "stream")?, arg_u64(a(2), "below")?, arg_u64(a(3), "limit")?.min(READ_MAX));
+            let mut rows = read(conn, &stream_sql(stream, below, limit))?;
+            rows.reverse();
             Ok(Value::Array(rows.iter().map(|r| json!([num(r, "seq"), event_of(r)])).collect()).to_string())
+        }
+        "end" => {
+            let rows = read(conn, "SELECT MAX(seq) AS top FROM runtime_event")?;
+            Ok(rows.first().and_then(|r| num(r, "top").as_u64()).map_or(0, |top| top + 1).to_string())
         }
         "open-effects" => {
             let rows = read(conn, &open_effects_sql())?;
@@ -284,7 +291,7 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
             let rows = read(conn, &format!("SELECT stream, event_id, handler, message FROM runtime_poison WHERE stream = {}", lit(text_arg(a(1), "stream")?)))?;
             Ok(rows.first().map_or("null".into(), |r| json!({ "stream": cell(r, "stream"), "event": cell(r, "event_id"), "handler": cell(r, "handler"), "message": cell(r, "message") }).to_string()))
         }
-        _ => Err(format!("journal: unknown op {op:?} (append|read|stream|open-effects|applied|mark-applied|cursor|set-cursor|schedule|due|mark-fired|poison|poisoned)")),
+        _ => Err(format!("journal: unknown op {op:?} (append|read|stream|end|open-effects|applied|mark-applied|cursor|set-cursor|schedule|due|mark-fired|poison|poisoned)")),
     }
 }
 

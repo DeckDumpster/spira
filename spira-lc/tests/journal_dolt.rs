@@ -112,12 +112,13 @@ fn fixture() -> Option<Fixture> {
                 break;
             }
             if f.sql_as_root("SELECT 1;\n").0 == 0 {
-                let ddl = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../lifecycle/migrations/0030-runtime-journal.sql")).unwrap();
+                let migrations = Path::new(env!("CARGO_MANIFEST_DIR")).join("../lifecycle/migrations");
+                let ddl = ["0030-runtime-journal.sql", "0034-runtime-event-read-indexes.sql"].map(|m| std::fs::read_to_string(migrations.join(m)).unwrap()).join("\n");
                 let setup = format!(
                     "CREATE DATABASE IF NOT EXISTS spira_lifecycle;\nCREATE USER 'spira_lc'@'%' IDENTIFIED BY '{PASSWORD}';\nGRANT ALL ON spira_lifecycle.* TO 'spira_lc'@'%';\nUSE spira_lifecycle;\n{ddl}"
                 );
                 let (code, out) = f.sql_as_root(&setup);
-                assert_eq!(code, 0, "the 0030 migration applies: {out}");
+                assert_eq!(code, 0, "the 0030 and 0034 migrations apply: {out}");
                 let serve = Command::new(env!("CARGO_BIN_EXE_spira-lc"))
                     .arg("serve")
                     .env_clear()
@@ -262,4 +263,90 @@ fn the_continuity_scan_seeks_the_applied_seq_index_over_200k_events() {
     let rows = dolt(CONTINUITY_SCAN);
     eprintln!("continuity scan over 200k events: {:?}", t.elapsed());
     assert_eq!(rows.lines().count(), 1 + 5000, "the 10% applied events past the cursor, plus the header");
+}
+
+const STREAM_TAIL: &str = "SELECT seq, event_id, stream, kind_tag, kind_body, at, cause, correlation FROM runtime_event WHERE stream = 's0' AND seq < 100000 ORDER BY seq DESC LIMIT 1000";
+const OPEN_EFFECTS: &str = "SELECT r.seq, r.event_id, r.stream, r.kind_tag, r.kind_body, r.at, r.cause, r.correlation FROM runtime_event r WHERE r.kind_tag = 'effect.requested' AND NOT EXISTS (SELECT 1 FROM runtime_event o WHERE o.cause = r.event_id AND o.kind_tag IN ('effect.succeeded', 'effect.failed', 'effect.timed_out')) ORDER BY r.seq";
+
+fn event(id: &str, stream: &str, tag: &str, cause: Option<&str>) -> String {
+    serde_json::json!({"id": id, "stream": stream, "kind": {"tag": tag, "body": ""}, "at": 1, "cause": cause, "correlation": "c"}).to_string()
+}
+
+fn seqs(body: &str) -> Vec<u64> {
+    let rows: Vec<(u64, serde_json::Value)> = serde_json::from_str(body).unwrap();
+    rows.into_iter().map(|(seq, _)| seq).collect()
+}
+
+#[test]
+fn stream_returns_the_newest_events_below_the_bound_oldest_first() {
+    let Some(f) = fixture() else { return };
+    let mut all = vec![];
+    for i in 0..8 {
+        let stream = if i % 2 == 0 { "even" } else { "odd" };
+        all.push((stream, f.ok(&["append", &event(&format!("e{i}"), stream, "t", None)]).parse::<u64>().unwrap()));
+    }
+    let even: Vec<u64> = all.iter().filter(|(s, _)| *s == "even").map(|(_, q)| *q).collect();
+    assert_eq!(seqs(&f.ok(&["stream", "even", "1000", "100"])), even);
+    assert_eq!(seqs(&f.ok(&["stream", "even", "1000", "2"])), even[2..], "a limit keeps the newest, in order");
+    assert_eq!(seqs(&f.ok(&["stream", "even", &even[2].to_string(), "100"])), even[..2], "the bound is exclusive");
+    assert_eq!(f.ok(&["stream", "absent", "1000", "100"]), "[]");
+    assert!(f.journal(&["stream", "even", "x", "100"]).0 == 3 && f.journal(&["stream", "", "1000", "100"]).0 == 3);
+}
+
+#[test]
+fn end_is_one_past_the_newest_sequence_number_and_zero_when_empty() {
+    let Some(f) = fixture() else { return };
+    assert_eq!(f.ok(&["end"]), "0");
+    let seq: u64 = f.ok(&["append", &event("e1", "s", "t", None)]).parse().unwrap();
+    assert_eq!(f.ok(&["end"]), (seq + 1).to_string());
+    let next: u64 = f.ok(&["append", &event("e2", "s", "t", None)]).parse().unwrap();
+    assert_eq!(f.ok(&["end"]), (next + 1).to_string());
+}
+
+#[test]
+fn open_effects_lists_requests_with_no_outcome_naming_them() {
+    let Some(f) = fixture() else { return };
+    for id in ["a", "b", "c", "d"] {
+        f.ok(&["append", &event(id, "s", "effect.requested", None)]);
+    }
+    f.ok(&["append", &event("a-out", "s", "effect.succeeded", Some("a"))]);
+    f.ok(&["append", &event("b-out", "s", "effect.failed", Some("b"))]);
+    f.ok(&["append", &event("c-note", "s", "note", Some("c"))]);
+    let rows: Vec<(u64, serde_json::Value)> = serde_json::from_str(&f.ok(&["open-effects"])).unwrap();
+    let ids: Vec<&str> = rows.iter().map(|(_, e)| e["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["c", "d"], "a non-outcome event naming a request does not resolve it");
+    f.ok(&["append", &event("d-out", "s", "effect.timed_out", Some("d"))]);
+    let rows: Vec<(u64, serde_json::Value)> = serde_json::from_str(&f.ok(&["open-effects"])).unwrap();
+    assert_eq!(rows.len(), 1);
+}
+
+#[test]
+fn the_stream_and_open_effect_queries_seek_the_0034_indexes() {
+    let Some(f) = fixture() else { return };
+    let port = f.env.iter().find(|(k, _)| k == "SPIRA_LC_PORT").unwrap().1.clone();
+    let dolt = |q: &str| {
+        // batch-job: one read against the test's private server.
+        let o = Command::new("dolt").args(["--host", "127.0.0.1", "--port", &port, "--user", "root", "--password", "", "--no-tls", "--use-db", "spira_lifecycle", "sql", "-r", "csv", "-q", q]).current_dir(&f.root).output().expect("dolt runs");
+        assert!(o.status.success(), "{q}: {}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    };
+    let seed = "USE spira_lifecycle;\n\
+         INSERT INTO runtime_event (event_id, stream, kind_tag, kind_body, at, cause, correlation) \
+         WITH RECURSIVE r (i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM r WHERE i < 99), c (j) AS (SELECT 0 UNION ALL SELECT j + 1 FROM c WHERE j < 499) \
+         SELECT CONCAT('e', i * 500 + j), CONCAT('s', i), IF(j % 50 = 0, 'effect.requested', 'heartbeat'), '', j, IF(j % 50 = 1, CONCAT('e', i * 500 + j - 1), NULL), 'c' FROM r CROSS JOIN c;\n";
+    let (code, out) = f.sql_as_root(seed);
+    assert_eq!(code, 0, "seeding 50k events: {out}");
+
+    let indexed = |plan: &str, index: &str| plan.contains(index);
+    let (stream_idx, cause_idx) = ("runtime_event_stream_idx", "runtime_event_cause_idx");
+    let drop = format!("USE spira_lifecycle;\nDROP INDEX {stream_idx} ON runtime_event;\nDROP INDEX {cause_idx} ON runtime_event;\n");
+    assert_eq!(f.sql_as_root(&drop).0, 0);
+    let (tail, open) = (dolt(&format!("EXPLAIN FORMAT=TREE {STREAM_TAIL}")), dolt(&format!("EXPLAIN FORMAT=TREE {OPEN_EFFECTS}")));
+    assert!(!indexed(&tail, stream_idx) && !indexed(&open, cause_idx), "positive control: without the indexes the plans name neither: {tail} {open}");
+
+    let migration = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../lifecycle/migrations/0034-runtime-event-read-indexes.sql")).unwrap();
+    assert_eq!(f.sql_as_root(&format!("USE spira_lifecycle;\n{migration}")).0, 0);
+    let (tail, open) = (dolt(&format!("EXPLAIN FORMAT=TREE {STREAM_TAIL}")), dolt(&format!("EXPLAIN FORMAT=TREE {OPEN_EFFECTS}")));
+    assert!(indexed(&tail, stream_idx), "the stream tail walks the (stream, seq) index: {tail}");
+    assert!(indexed(&open, cause_idx), "each open-effects probe seeks the (cause, kind_tag) index: {open}");
 }

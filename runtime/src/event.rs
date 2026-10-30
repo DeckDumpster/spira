@@ -133,9 +133,17 @@ pub struct Projection {
     streams: std::collections::BTreeMap<StreamKey, Vec<Event>>,
 }
 
+/// Events of one stream a handler is guaranteed to see: the newest `WINDOW`, however long the
+/// stream. The view holds up to twice that, trimmed in one move so a push stays cheap.
+pub const WINDOW: usize = 1024;
+
 impl Projection {
     pub fn push(&mut self, ev: &Event) {
-        self.streams.entry(ev.stream.clone()).or_default().push(ev.clone());
+        let seen = self.streams.entry(ev.stream.clone()).or_default();
+        seen.push(ev.clone());
+        if seen.len() >= 2 * WINDOW {
+            seen.drain(..seen.len() - WINDOW);
+        }
     }
 
     pub fn events(&self, stream: &StreamKey) -> &[Event] {

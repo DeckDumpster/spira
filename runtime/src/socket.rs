@@ -85,16 +85,12 @@ impl Journal for SocketJournal {
         self.json(&["read", &from.to_string(), &limit.to_string()])
     }
 
-    fn read_stream(&self, stream: &StreamKey, below: Offset) -> Result<Vec<(Offset, Event)>> {
-        let mut out: Vec<(Offset, Event)> = vec![];
-        let mut from = 0;
-        while from < below {
-            let page: Vec<(Offset, Event)> = self.json(&["stream", &stream.0, &from.to_string(), &below.to_string()])?;
-            let Some((last, _)) = page.last() else { break };
-            from = last + 1;
-            out.extend(page);
-        }
-        Ok(out)
+    fn read_stream(&self, stream: &StreamKey, below: Offset, limit: usize) -> Result<Vec<(Offset, Event)>> {
+        self.json(&["stream", &stream.0, &below.to_string(), &limit.to_string()])
+    }
+
+    fn end(&self) -> Result<Offset> {
+        Ok(self.number(&["end"])?.max(self.cursor()?))
     }
 
     fn unresolved_effects(&self) -> Result<Vec<(Offset, Event)>> {

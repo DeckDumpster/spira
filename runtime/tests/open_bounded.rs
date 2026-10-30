@@ -31,10 +31,13 @@ impl Journal for Counting {
         self.took(r.len());
         Ok(r)
     }
-    fn read_stream(&self, stream: &StreamKey, below: Offset) -> Result<Vec<(Offset, Event)>> {
-        let r = self.inner.read_stream(stream, below)?;
+    fn read_stream(&self, stream: &StreamKey, below: Offset, limit: usize) -> Result<Vec<(Offset, Event)>> {
+        let r = self.inner.read_stream(stream, below, limit)?;
         self.took(r.len());
         Ok(r)
+    }
+    fn end(&self) -> Result<Offset> {
+        self.inner.end()
     }
     fn unresolved_effects(&self) -> Result<Vec<(Offset, Event)>> {
         let r = self.inner.unresolved_effects()?;
@@ -115,11 +118,11 @@ fn open_reads_the_backlog_past_the_cursor_and_not_the_history_before_it() {
     j.append(&note(10_000, "even")).unwrap();
     let counting = Counting::new(j);
     Engine::open(counting.clone(), Arc::new(VirtualClock::new(0)), vec![], 0).unwrap();
-    assert_eq!(counting.rows.load(Ordering::SeqCst), 1);
+    assert_eq!(counting.rows.load(Ordering::SeqCst), 0, "the journal end is one call, not a page of the backlog");
 }
 
 #[test]
-fn a_stream_dispatched_after_restart_sees_its_whole_past() {
+fn a_stream_dispatched_after_restart_sees_its_recent_past() {
     let j = seeded(1000);
     j.append(&note(1000, "even")).unwrap();
     j.append(&note(1001, "fresh")).unwrap();
@@ -128,6 +131,31 @@ fn a_stream_dispatched_after_restart_sees_its_whole_past() {
     let mut e = Engine::open(j.clone(), Arc::new(VirtualClock::new(0)), regs, 0).unwrap();
     e.run_until_idle().unwrap();
     assert_eq!(*seen.lock().unwrap(), vec![501, 1], "the even stream held 500 events before the cursor, the fresh one none");
+}
+
+#[test]
+fn the_first_dispatch_of_a_long_stream_loads_a_window_not_its_past() {
+    let rows = 4 * WINDOW;
+    let j = seeded(rows);
+    j.append(&note(rows, "even")).unwrap();
+    let counting = Counting::new(j);
+    let seen = Arc::new(Mutex::new(vec![]));
+    let regs = vec![Registration::new("past", SeesPast(seen.clone()))];
+    let mut e = Engine::open(counting.clone(), Arc::new(VirtualClock::new(0)), regs, 0).unwrap();
+    e.run_until_idle().unwrap();
+    assert_eq!(*seen.lock().unwrap(), vec![WINDOW + 1]);
+    assert!(counting.rows.load(Ordering::SeqCst) <= WINDOW + 4, "read {} rows", counting.rows.load(Ordering::SeqCst));
+}
+
+#[test]
+fn a_projection_never_holds_more_than_twice_the_window_of_a_stream() {
+    let mut p = Projection::default();
+    for i in 0..5 * WINDOW {
+        p.push(&note(i, "s"));
+    }
+    let held = p.events(&StreamKey("s".into()));
+    assert!(held.len() >= WINDOW && held.len() < 2 * WINDOW, "{}", held.len());
+    assert_eq!(held.last().unwrap().id.0, format!("n{}", 5 * WINDOW - 1), "the newest events are the ones kept");
 }
 
 #[test]
