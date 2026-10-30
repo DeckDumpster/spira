@@ -167,7 +167,21 @@ for i, r in sorted(rows.items()):
     elif st == "CERTIFIED" and home not in labels and any(l in open_batch and (now - open_batch[l]) / 60 <= batch_min for l in labels):
         put("OK", "queued behind the open batch")
     elif st == "REWORK" and age > rework_min:
-        put("SUSPECT", f"UNCLAIMED REWORK over {rework_min}m ({why})")
+        # batch-job: one claimability read per REWORK row past the margin; bounded by the daemon row cadence
+        try:
+            p = subprocess.run(["timeout", "20", "spira-claim", "stack", i], capture_output=True, text=True)
+            ans = json.loads(p.stdout or "{}") if p.returncode in (0, 3) else {}
+            rc = p.returncode
+        except (ValueError, OSError):
+            ans, rc = {}, -1
+        if rc == 0 and ans.get("claimable") is True:
+            put("SUSPECT", f"UNCLAIMED REWORK over {rework_min}m ({why})")
+        elif rc == 3 and ans.get("reason") == "Carried":
+            put("OK", f"REWORK carried by integration {ans.get('carrier')}")
+        elif rc == 3 and ans.get("reason"):
+            put("SUSPECT", f"REWORK over {rework_min}m, not claimable: {ans['reason']} ({why})")
+        else:
+            put("SUSPECT", f"UNCLAIMED REWORK over {rework_min}m ({why}; claimability unknown: spira-claim stack rc={rc})")
     elif st == "CERTIFIED" and home not in labels and age > cert_min:
         put("SUSPECT", f"CERTIFIED outside {home}, no batch opened")
     elif st in ("SUBMITTED", "CERTIFIED") and (open_int := next((x for x, ms in carried.items() if i in ms and x in rows), None)):

@@ -531,6 +531,7 @@ fn cli_stack_refuses_a_member_of_an_open_integration() {
     let o = run_cfg(&["stack", "A", "--lifecycle", &lc, "--blocker-records", &recs], "", &[("SPIRA_BD", bd.as_str()), ("SPIRA_QUEUE_DIR", q.as_str())], &[]);
     assert_eq!(o.code, 3, "{}", o.err);
     assert_eq!(serde_json::from_str::<serde_json::Value>(&o.out).unwrap()["reason"], "Carried");
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&o.out).unwrap()["carrier"], "I");
 }
 
 #[test]

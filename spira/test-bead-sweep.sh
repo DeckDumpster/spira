@@ -28,6 +28,16 @@ case "$*" in
 esac
 STUB
 chmod +x "$TMP/bin/spira-lc"
+cat > "$TMP/bin/spira-claim" <<'STUB'
+#!/usr/bin/env bash
+[ "$1" = stack ] || exit 2
+if [ -e "$STUB_DIR/stack-$2.json" ]; then
+    cat "$STUB_DIR/stack-$2.json"
+    exit "$(cat "$STUB_DIR/stack-$2.rc")"
+fi
+echo '{"claimable":true}'
+STUB
+chmod +x "$TMP/bin/spira-claim"
 export STUB_DIR="$TMP/stub"; mkdir -p "$STUB_DIR"
 
 : > "$TMP/inbox"
@@ -78,6 +88,19 @@ for c in "SUSPECT sp-pois READY POISONED" "SUSPECT sp-ask READY ASK HOLD" "SUSPE
          "SUSPECT sp-rowless ROWLESS" "BLOCKED sp-blk" "ASK sp-askl"; do
     want "class: $c" "$c" "$out"
 done
+
+board "$(row sp-rwc REWORK "$OLD" '[]')" "$(row sp-rws REWORK "$OLD" '[]')" "$(row sp-rwx REWORK "$OLD" '[]')" -- \
+    "$(cont sp-rwc '["repo:widgets"]')" "$(cont sp-rws '["repo:widgets"]')" "$(cont sp-rwx '["repo:widgets"]')"
+echo '{"claimable":false,"reason":"Carried","carrier":"sp-int"}' > "$STUB_DIR/stack-sp-rwc.json"; echo 3 > "$STUB_DIR/stack-sp-rwc.rc"
+echo '{"claimable":false,"reason":"StackUnchanged"}' > "$STUB_DIR/stack-sp-rws.json"; echo 3 > "$STUB_DIR/stack-sp-rws.rc"
+echo '' > "$STUB_DIR/stack-sp-rwx.json"; echo 2 > "$STUB_DIR/stack-sp-rwx.rc"
+out="$(run --show)"
+want "a REWORK bead carried by an open integration is OK" "OK sp-rwc REWORK carried by integration sp-int" "$out"
+case "$out" in *SUSPECT\ sp-rwc*) bad=1 ;; *) bad=0 ;; esac
+is "a carried REWORK bead is not SUSPECT" "0" "$bad"
+want "an unclaimable REWORK bead names the reason" "SUSPECT sp-rws REWORK REWORK over 20m, not claimable: StackUnchanged" "$out"
+want "an unanswered claimability read is named" "claimability unknown: spira-claim stack rc=2" "$out"
+rm -f "$STUB_DIR"/stack-*
 
 FUT="$(date -u -d '+10 days' +%F)"; PAST="$(date -u -d '-3 days' +%F)"
 rrow() { row "$1" "$2" "$3" "$4" | sed "s/\"reason\":\"r\"/\"reason\":\"$5\"/"; }
