@@ -939,7 +939,7 @@ fn up_mounts_a_linked_worktrees_git_common_dir_at_its_host_path() {
     let run = f.calls_with("run");
     assert!(run[0]
         .windows(2)
-        .any(|w| w == ["--volume".to_string(), "/repo/.git:/repo/.git:ro,z".to_string()]));
+        .any(|w| w == ["--volume".to_string(), "/repo/.git:/repo/.git:ro".to_string()]));
 }
 
 #[test]
@@ -951,7 +951,7 @@ fn up_adds_no_git_mount_for_an_ordinary_clone() {
         Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1", "--checkout", "/wt"])),
         0
     );
-    assert!(!f.calls_with("run")[0].iter().any(|a| a.contains(".git")));
+    assert!(!f.calls_with("run")[0].iter().any(|a| a.ends_with(":ro")));
 }
 
 #[test]

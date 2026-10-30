@@ -877,7 +877,7 @@ impl Driver<'_> {
                 self.host
                     .linked_git_common_dir(Path::new(&checkout))
                     .into_iter()
-                    .flat_map(|p| [s("--volume"), format!("{}:{}:ro,z", p.display(), p.display())]),
+                    .flat_map(|p| [s("--volume"), format!("{}:{}:ro", p.display(), p.display())]),
             )
             .collect();
         let Some(network) = self.isolated_network() else {
