@@ -62,6 +62,7 @@ printf '#!/usr/bin/env bash\n[ "$1" = template-check ] && exit "${TC_RC:-0}"\n[ 
 is "a probe slower than the old 5s cap but inside the 7s deadline is quiet" "" "$(rskp pass)"
 nowant "a slow successful probe leaves no alarm" "ROUND SPILL LAUNCH" "$(cat "$INBOX" 2>/dev/null)"
 printf '#!/usr/bin/env bash\n[ "$1" = template-check ] && exit "${TC_RC:-0}"\n[ "$1" = status ] && exit 1\nsleep 5\nexit 0\n' > "$TMP/stub/round-vm"
+rm -f "$TMP/run/watchd/round-spill-key.latency"
 DL=1 out="$(rskp pass)"
 want "a probe past the deadline says it could not decide" "probe could not decide" "$out"
 nowant "a timeout is not reported as a refused launch" "cannot launch" "$(cat "$INBOX")"
