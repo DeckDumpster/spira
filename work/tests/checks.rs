@@ -176,6 +176,16 @@ fn a_build_row_runs_the_worktree_binary_even_when_the_release_holds_one() {
 }
 
 #[test]
+fn a_build_row_never_execs_a_binary_another_worktree_left_in_the_slot() {
+    let f = fixture(BUILD_ROW, "d=\"$CARGO_TARGET_DIR/debug\"\n[ -x \"$d/x-lint\" ] && exit 0\nmkdir -p \"$d\"\nprintf '#!/bin/sh\\necho worktree-lint\\n' > \"$d/x-lint\"\nchmod +x \"$d/x-lint\"\n");
+    std::fs::create_dir_all(f.target.join("debug")).unwrap();
+    testkit::write_exe(f.target.join("debug/x-lint"), "#!/bin/sh\necho other-branch-lint\n");
+    let (code, text) = run_fixture(&f, "checks");
+    assert_eq!(code, 0, "{text}");
+    assert!(text.contains("worktree-lint") && !text.contains("other-branch-lint"), "{text}");
+}
+
+#[test]
 fn a_failed_worktree_build_fails_the_row_and_never_runs_the_release_binary() {
     let f = fixture(BUILD_ROW, "echo 'error: could not compile' >&2\nexit 101\n");
     let (code, text) = run_fixture(&f, "checks");

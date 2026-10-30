@@ -536,10 +536,19 @@ fn checks(args: &[String]) -> i32 {
     }
 }
 
+/// A slot is reused across worktrees, and cargo may judge another branch's artifact fresh, so each
+/// worktree builds into its own subdirectory of it.
+fn worktree_dir_name(root: &std::path::Path) -> String {
+    let path = root.to_string_lossy();
+    let flat: String = path.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).collect();
+    format!("wt{flat}")
+}
+
 /// Build `package` from the worktree and return its binary. Inherits `RUSTC_WRAPPER`, the
-/// `SPIRA_ADMIT_*` and `SCCACHE_*` vars and `CARGO_TARGET_DIR`, so the build is admitted and warm.
+/// `SPIRA_ADMIT_*` and `SCCACHE_*` vars, so the build is admitted and warm.
 fn build_from_worktree(root: &std::path::Path, package: &str, dirs: &[std::path::PathBuf], budget_ms: u64) -> Result<std::path::PathBuf, String> {
-    let target = std::env::var_os("CARGO_TARGET_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| root.join("target"));
+    let slot = std::env::var_os("CARGO_TARGET_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| root.join("target"));
+    let target = slot.join(worktree_dir_name(root));
     let secs = budget_ms.div_ceil(1000).max(900).to_string();
     let built = spira_config::bounded::bounded_for("cargo", &secs)
         .args(["build", "-p", package, "--bin", package])
