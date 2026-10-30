@@ -72,14 +72,15 @@ _pb_arrival_ts() {
     return 1
 }
 
-# _pb_refresh_remote_ref <repo> <remote> <branch> — refresh refs/remotes/<remote>/<branch>. A
+# _pb_refresh_remote_ref <name> <repo> <remote> <branch> — refresh refs/remotes/<remote>/<branch>. A
 # failed or slow fetch is not blindness: the last fetched ref still answers "is there an
 # unpublished range", while it is no older than SPIRA_LOCAL_BACKLOG_REF_MAX_AGE. Age is the
 # mtime of a stamp written on each successful fetch: neither the ref's reflog (a no-op fetch
-# leaves it) nor FETCH_HEAD (a failed fetch rewrites it) says when the ref was last true. The cause goes
+# leaves it) nor FETCH_HEAD (a failed fetch rewrites it) says when the ref was last true; before
+# the first stamp, the ref file's own mtime, which can only overstate the age. The cause goes
 # to stderr, for the BLIND message; a fallback's note, with the ref's age, goes there too.
 _pb_refresh_remote_ref() {
-    local repo="$1" remote="$2" branch="$3" err rc stamp age why
+    local name="$1" repo="$2" remote="$3" branch="$4" err rc stamp age why
     err="$(timeout 5 git -C "$repo" fetch -q "$remote" "$branch" 2>&1)"; rc=$?
     stamp="$(_pb_state_file "$name.fetched")"
     if [ "$rc" -eq 0 ]; then
@@ -91,7 +92,7 @@ _pb_refresh_remote_ref() {
     if ! git -C "$repo" rev-parse -q --verify "refs/remotes/$remote/$branch" >/dev/null 2>&1; then
         echo "$why and no remote-tracking ref exists" >&2; return 1
     fi
-    age="$(stat -c %Y "$stamp" 2>/dev/null)"
+    age="$(stat -c %Y "$stamp" 2>/dev/null || stat -c %Y "$(git -C "$repo" rev-parse --absolute-git-dir)/refs/remotes/$remote/$branch" 2>/dev/null)"
     case "$age" in ''|*[!0-9]*) echo "$why and the remote-tracking ref has no readable age" >&2; return 1 ;; esac
     age=$(( $(date +%s) - age ))
     if [ "$age" -gt "$SPIRA_LOCAL_BACKLOG_REF_MAX_AGE" ]; then
@@ -114,7 +115,7 @@ _pb_backlog() {
     ref_remote "$base" "$repo" >/dev/null 2>&1 && return 1
     read -r remote branch < <(spira_publish_forge "$name" 2>/dev/null) || return 1
     [ -n "$remote" ] && [ -n "$branch" ] || return 1
-    _pb_refresh_remote_ref "$repo" "$remote" "$branch" || return 1
+    _pb_refresh_remote_ref "$name" "$repo" "$remote" "$branch" || return 1
     forge_sha="$(git -C "$repo" rev-parse -q --verify "refs/remotes/$remote/$branch" 2>/dev/null)" || return 1
     head_sha="$(git -C "$repo" rev-parse -q --verify "$base" 2>/dev/null)" || return 1
     count="$(git -C "$repo" rev-list --count "$forge_sha..$head_sha" 2>/dev/null)"
