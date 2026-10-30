@@ -552,7 +552,11 @@ fn build_from_worktree(root: &std::path::Path, package: &str, dirs: &[std::path:
     let target = slot.join(worktree_dir_name(root));
     let secs = budget_ms.div_ceil(1000).max(900).to_string();
     let path = target.join("debug").join(package);
-    let _ = std::fs::remove_file(&path);
+    match std::fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("cannot remove the stale {}: {e}", path.display())),
+    }
     let built = spira_config::bounded::bounded_for("cargo", &secs)
         .args(["build", "-p", package, "--bin", package])
         .env("PATH", work::trusted::join_path(dirs))

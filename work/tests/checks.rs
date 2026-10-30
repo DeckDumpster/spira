@@ -185,6 +185,47 @@ fn a_build_row_never_execs_a_binary_another_worktree_left_in_the_slot() {
     assert!(text.contains("worktree-lint") && !text.contains("other-branch-lint"), "{text}");
 }
 
+const REUSING_CARGO: &str = "d=\"$CARGO_TARGET_DIR/debug\"\n[ -x \"$d/x-lint\" ] && exit 0\nmkdir -p \"$d\"\nprintf '#!/bin/sh\\necho worktree-lint\\n' > \"$d/x-lint\"\nchmod +x \"$d/x-lint\"\n";
+
+fn built_path(text: &str) -> std::path::PathBuf {
+    let line = text.lines().find_map(|l| l.strip_prefix("built from worktree: ")).unwrap();
+    std::path::PathBuf::from(line)
+}
+
+#[test]
+fn two_worktrees_sharing_one_slot_build_into_different_directories() {
+    let a = fixture(BUILD_ROW, REUSING_CARGO);
+    let mut b = fixture(BUILD_ROW, REUSING_CARGO);
+    b.target = testkit::TempDir::new("unused");
+    let slot = a.target.path().to_path_buf();
+    let run = |f: &Fixture| {
+        let out = Command::new(env!("CARGO_BIN_EXE_work"))
+            .arg("checks")
+            .current_dir(f.dir.path())
+            .env_clear()
+            .env("PATH", format!("{}:/usr/bin:/bin", f.stubs.path().display()))
+            .env("CARGO_TARGET_DIR", &slot)
+            .env("SPIRA_RELEASE", f.rel.path())
+            .output()
+            .unwrap();
+        built_path(&format!("{}", String::from_utf8_lossy(&out.stdout)))
+    };
+    let (pa, pb) = (run(&a), run(&b));
+    assert_ne!(pa, pb);
+    assert!(pa.starts_with(&slot) && pb.starts_with(&slot));
+}
+
+#[test]
+fn a_binary_left_at_the_same_worktree_path_is_replaced_by_the_build() {
+    let f = fixture(BUILD_ROW, REUSING_CARGO);
+    let (_, text) = run_fixture(&f, "checks");
+    let bin = built_path(&text);
+    testkit::write_exe(&bin, "#!/bin/sh\necho previous-branch-lint\n");
+    let (code, text) = run_fixture(&f, "checks");
+    assert_eq!(code, 0, "{text}");
+    assert!(text.contains("worktree-lint") && !text.contains("previous-branch-lint"), "{text}");
+}
+
 #[test]
 fn a_failed_worktree_build_fails_the_row_and_never_runs_the_release_binary() {
     let f = fixture(BUILD_ROW, "echo 'error: could not compile' >&2\nexit 101\n");
