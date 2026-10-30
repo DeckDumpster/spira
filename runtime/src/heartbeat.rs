@@ -30,7 +30,7 @@ impl Handler for Heartbeat {
     }
 
     fn handle(&self, ctx: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
-        let own = view.events(&ev.stream).len() as u64;
+        let own = view.pushed(&ev.stream) as u64;
         let foreign = (view.total() as u64).saturating_sub(own);
         let seen: u64 = ev.kind.body.parse().unwrap_or(0);
         let advanced = foreign > seen;

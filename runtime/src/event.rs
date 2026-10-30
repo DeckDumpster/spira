@@ -131,19 +131,35 @@ impl Ctx {
 #[derive(Default, Clone, Debug)]
 pub struct Projection {
     streams: std::collections::BTreeMap<StreamKey, Vec<Event>>,
+    pushed: std::collections::BTreeMap<StreamKey, usize>,
 }
+
+/// Events of one stream a handler is guaranteed to see: the newest `WINDOW`, however long the
+/// stream. The view holds up to twice that, trimmed in one move so a push stays cheap.
+pub const WINDOW: usize = 1000;
 
 impl Projection {
     pub fn push(&mut self, ev: &Event) {
-        self.streams.entry(ev.stream.clone()).or_default().push(ev.clone());
+        *self.pushed.entry(ev.stream.clone()).or_default() += 1;
+        let seen = self.streams.entry(ev.stream.clone()).or_default();
+        seen.push(ev.clone());
+        if seen.len() >= 2 * WINDOW {
+            seen.drain(..seen.len() - WINDOW);
+        }
     }
 
     pub fn events(&self, stream: &StreamKey) -> &[Event] {
         self.streams.get(stream).map_or(&[], |v| v.as_slice())
     }
 
+    /// Events pushed over all streams; trimming a stream never lowers it.
     pub fn total(&self) -> usize {
-        self.streams.values().map(Vec::len).sum()
+        self.pushed.values().sum()
+    }
+
+    /// Events pushed on one stream; trimming never lowers it.
+    pub fn pushed(&self, stream: &StreamKey) -> usize {
+        self.pushed.get(stream).copied().unwrap_or(0)
     }
 
     pub fn count(&self, stream: &StreamKey, tag: &str) -> usize {

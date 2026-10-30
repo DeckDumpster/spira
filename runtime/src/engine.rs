@@ -123,8 +123,8 @@ fn panic_message(p: &(dyn std::any::Any + Send)) -> String {
 
 impl Engine {
     /// Rebuild from the journal without reading its history: the effects still waiting for an
-    /// outcome, the schedule rows not yet fired, and the end of the journal. A stream's past is
-    /// loaded when its first event past the cursor is dispatched.
+    /// outcome, the schedule rows not yet fired, and the end of the journal. A stream's newest
+    /// `WINDOW` events are loaded when its first event past the cursor is dispatched.
     pub fn open(journal: Arc<dyn Journal>, clock: Arc<dyn Clock>, regs: Vec<Registration>, seed: u64) -> Result<Self> {
         let mut e = Engine {
             journal,
@@ -162,13 +162,7 @@ impl Engine {
         for (_, ev) in e.journal.unresolved_effects()? {
             e.track_effect(&ev)?;
         }
-        let mut from = cursor;
-        loop {
-            let batch = e.journal.read_from(from, BATCH)?;
-            let Some((last, _)) = batch.last() else { break };
-            from = last + 1;
-        }
-        e.check_applied_below = from;
+        e.check_applied_below = e.journal.end()?;
         for row in e.journal.pending_schedules()? {
             e.scheduler.insert(row);
         }
@@ -357,7 +351,7 @@ impl Engine {
     fn dispatch(&mut self, ev: &Event, at: Option<(Offset, Offset)>) -> Result<()> {
         if let Some(at) = at {
             if !self.loaded.contains(&ev.stream) {
-                for (_, past) in self.journal.read_stream(&ev.stream, at.0)? {
+                for (_, past) in self.journal.read_stream(&ev.stream, at.0, WINDOW)? {
                     self.projection.push(&past);
                 }
                 self.loaded.insert(ev.stream.clone());

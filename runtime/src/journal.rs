@@ -86,10 +86,10 @@ pub trait Journal: Send + Sync {
     fn applied(&self, handler: &str, id: &EventId) -> Result<bool>;
     fn mark_applied(&self, handler: &str, id: &EventId) -> Result<()>;
     fn cursor(&self) -> Result<Offset>;
-    /// Events of `stream` at offsets below `below`, in order. The default scans the journal; a
-    /// store with an index on the stream answers without reading the rest.
-    fn read_stream(&self, stream: &StreamKey, below: Offset) -> Result<Vec<(Offset, Event)>> {
-        let mut out = vec![];
+    /// The newest `limit` events of `stream` at offsets below `below`, oldest first. The default
+    /// scans the journal; a store with an index on the stream answers without reading the rest.
+    fn read_stream(&self, stream: &StreamKey, below: Offset, limit: usize) -> Result<Vec<(Offset, Event)>> {
+        let mut out: Vec<(Offset, Event)> = vec![];
         let mut from = 0;
         while from < below {
             let batch = self.read_from(from, SCAN)?;
@@ -97,7 +97,18 @@ pub trait Journal: Send + Sync {
             from = last + 1;
             out.extend(batch.into_iter().filter(|(o, e)| *o < below && &e.stream == stream));
         }
+        out.drain(..out.len().saturating_sub(limit));
         Ok(out)
+    }
+    /// One past the offset of the newest event, or the cursor when the journal holds nothing
+    /// beyond it. The default pages the backlog; a store that knows its maximum answers in one call.
+    fn end(&self) -> Result<Offset> {
+        let mut from = self.cursor()?;
+        loop {
+            let batch = self.read_from(from, SCAN)?;
+            let Some((last, _)) = batch.last() else { return Ok(from) };
+            from = last + 1;
+        }
     }
     /// Every `effect.requested` event no outcome event names as its cause. The default scans the
     /// journal; a store that tracks open requests answers in their number, not the journal's.
@@ -194,10 +205,16 @@ impl Journal for MemJournal {
             .collect())
     }
 
-    fn read_stream(&self, stream: &StreamKey, below: Offset) -> Result<Vec<(Offset, Event)>> {
+    fn read_stream(&self, stream: &StreamKey, below: Offset, limit: usize) -> Result<Vec<(Offset, Event)>> {
         let m = self.lock();
         let offsets = m.by_stream.get(stream).map_or(&[][..], |v| v.as_slice());
-        Ok(offsets.iter().take_while(|o| **o < below).map(|o| (*o, m.events[*o as usize].clone())).collect())
+        let below = offsets.partition_point(|o| *o < below);
+        Ok(offsets[below.saturating_sub(limit)..below].iter().map(|o| (*o, m.events[*o as usize].clone())).collect())
+    }
+
+    fn end(&self) -> Result<Offset> {
+        let m = self.lock();
+        Ok((m.events.len() as Offset).max(m.cursor))
     }
 
     fn unresolved_effects(&self) -> Result<Vec<(Offset, Event)>> {
