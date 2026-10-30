@@ -150,7 +150,7 @@ impl Projection {
     }
 
     /// Push an event the journal does not hold, then drop the stream's oldest such events past
-    /// `keep`, except those `protect` names.
+    /// `keep`, except the newest of each kind (a handler's carried state) and those `protect` names.
     pub fn push_local(&mut self, ev: &Event, keep: usize, protect: impl Fn(&EventId) -> bool) {
         self.push(ev);
         self.local.insert(ev.id.clone());
@@ -159,9 +159,11 @@ impl Projection {
         if over == 0 {
             return;
         }
+        let mut newest = std::collections::BTreeSet::new();
+        let latest: std::collections::BTreeSet<EventId> = held.iter().rev().filter(|e| self.local.contains(&e.id) && newest.insert(e.kind.tag.clone())).map(|e| e.id.clone()).collect();
         let local = &mut self.local;
         held.retain(|e| {
-            if over == 0 || !local.contains(&e.id) || protect(&e.id) {
+            if over == 0 || !local.contains(&e.id) || latest.contains(&e.id) || protect(&e.id) {
                 return true;
             }
             over -= 1;

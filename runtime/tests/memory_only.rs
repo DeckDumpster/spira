@@ -174,7 +174,7 @@ fn memory_only_events_held_in_the_projection_stop_growing_and_keep_the_newest() 
         peak = peak.max(held(&e));
         clock.advance(1000);
     }
-    assert!(peak <= runtime::engine::LOCAL_KEEP, "{peak} events held");
+    assert!(peak <= runtime::engine::LOCAL_KEEP + 4, "{peak} events held");
     let kept = e.projection().events(&StreamKey("s".into()));
     assert!(kept.last().is_some_and(|ev| ev.kind.tag == "noted"), "the newest event survives");
 }
@@ -232,4 +232,41 @@ fn a_poison_another_process_wrote_is_noticed_after_the_recheck_interval_and_not_
     step(&mut e, 330_000);
     assert_eq!(*seen.lock().unwrap(), after, "past the interval the stream is skipped");
     assert!(after < 305, "the chain broke when the poison was seen: {after}");
+}
+
+struct Keeper {
+    read: Arc<Mutex<Vec<String>>>,
+}
+
+impl Handler for Keeper {
+    fn interests(&self) -> &[EventKindTag] {
+        &["boot", "chatter"]
+    }
+
+    fn handle(&self, _: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
+        match ev.kind.tag.as_str() {
+            "boot" => vec![Command::Note(EventKind::new("state", "carried"))],
+            _ => {
+                let state = view.events(&ev.stream).iter().rev().find(|e| e.kind.tag == "state").map(|e| e.kind.body.clone());
+                self.read.lock().unwrap().push(state.unwrap_or_default());
+                vec![]
+            }
+        }
+    }
+}
+
+#[test]
+fn the_newest_note_of_a_kind_outlives_any_amount_of_later_local_chatter() {
+    let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
+    let read = Arc::new(Mutex::new(vec![]));
+    let mut e = Engine::open(journal, Arc::new(clock), vec![Registration::new("keeper", Keeper { read: read.clone() })], 0).unwrap();
+    e.start("s", EventKind::new("boot", ""));
+    e.run_until_idle().unwrap();
+    for i in 0..(runtime::engine::LOCAL_KEEP * 3) {
+        e.start("s", EventKind::new("chatter", &i.to_string()));
+    }
+    e.run_until_idle().unwrap();
+    let read = read.lock().unwrap();
+    assert_eq!(read.len(), runtime::engine::LOCAL_KEEP * 3);
+    assert!(read.iter().all(|s| s == "carried"), "a handler's carried state was evicted");
 }
