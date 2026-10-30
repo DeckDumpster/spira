@@ -11,9 +11,7 @@ fn refuse(verb: &str, why: &str) -> Answer {
     Answer { code: REFUSED, stderr: format!("spira-lc {verb}: {why}\n"), ..Default::default() }
 }
 
-fn bead_id(s: &str) -> bool {
-    !s.is_empty() && !s.starts_with('-') && !s.chars().any(char::is_whitespace)
-}
+use crate::cutover::is_row_key as bead_id;
 
 fn call(verb: &str, args: &[&str], bd: &dyn Fn(&[&str]) -> Result<String, String>) -> Answer {
     match bd(args) {
@@ -75,7 +73,7 @@ mod tests {
     #[test]
     fn supersede_refuses_bad_ids_and_self_before_calling_bd() {
         let never = |_: &[&str]| -> Result<String, String> { panic!("bd must not run") };
-        for bad in [&["sp-a", "sp-a"][..], &["-x", "sp-b"], &["sp-a", ""], &["sp-a", "--force"], &["sp a", "sp-b"]] {
+        for bad in [&["sp-a", "sp-a"][..], &["-x", "sp-b"], &["sp-a", ""], &["sp-a", "--force"], &["sp a", "sp-b"], &["/etc/passwd", "sp-b"]] {
             assert_eq!(supersede(&v(bad), &never).code, REFUSED, "{bad:?}");
         }
         assert_eq!(supersede(&v(&["sp-a"]), &never).code, CANNOT_TELL);
