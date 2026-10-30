@@ -95,6 +95,7 @@ pub fn touched(before: &Snapshot, after: &Snapshot) -> Vec<String> {
 
 const VALIDATOR: &str = ".claude/skills/wiki-lint/frontmatter.py";
 const ALIAS_MAX: usize = 60;
+const ALIAS_COUNT_MAX: usize = 10;
 
 fn passes_schema(dir: &Path, path: &str) -> bool {
     Command::new("timeout")
@@ -114,38 +115,49 @@ fn alias_len(item: &str) -> usize {
     item.trim().trim_matches(|c| c == '"' || c == '\'').chars().count()
 }
 
-/// Drops block-list `aliases:` items longer than the schema allows; the key goes too if none remain.
-fn drop_long_aliases(text: &str) -> String {
-    let mut out: Vec<&str> = Vec::new();
-    let mut in_front = false;
-    let mut in_aliases = false;
-    let mut pending_key: Option<usize> = None;
+fn alias_item(line: &str) -> Option<&str> {
+    let bare = line.trim_end_matches('\n');
+    bare.trim_start().strip_prefix("- ").filter(|_| bare.starts_with([' ', '\t'])).map(str::trim)
+}
+
+/// Block-list `aliases:` items of a page's frontmatter, with the line each sits on.
+fn alias_lines(text: &str) -> (Option<usize>, Vec<(usize, String)>) {
+    let (mut in_front, mut in_aliases) = (false, false);
+    let (mut key, mut items) = (None, Vec::new());
     for (n, line) in text.split_inclusive('\n').enumerate() {
         let bare = line.trim_end_matches('\n');
         if n == 0 && bare == "---" {
             in_front = true;
         } else if in_front && bare == "---" {
-            in_front = false;
-            in_aliases = false;
+            break;
         } else if in_front && bare == "aliases:" {
-            in_aliases = true;
-            pending_key = Some(out.len());
+            (in_aliases, key) = (true, Some(n));
         } else if in_front && in_aliases {
-            if let Some(item) = bare.trim_start().strip_prefix("- ").filter(|_| bare.starts_with([' ', '\t'])) {
-                if alias_len(item) > ALIAS_MAX {
-                    continue;
-                }
-                pending_key = None;
-            } else {
-                in_aliases = false;
+            match alias_item(line) {
+                Some(item) => items.push((n, item.to_string())),
+                None => in_aliases = false,
             }
         }
-        out.push(line);
     }
-    if let Some(k) = pending_key {
-        out.remove(k);
+    (key, items)
+}
+
+/// Drops block-list `aliases:` items longer than the schema allows, then the newest beyond
+/// `ALIAS_COUNT_MAX` (those absent from `head`, last first, then the last of what remains);
+/// the key goes too if none remain.
+fn trim_aliases(text: &str, head: &str) -> String {
+    let (key, items) = alias_lines(text);
+    let (_, old) = alias_lines(head);
+    let mut kept: Vec<&(usize, String)> = items.iter().filter(|(_, i)| alias_len(i) <= ALIAS_MAX).collect();
+    while kept.len() > ALIAS_COUNT_MAX {
+        let at = kept.iter().rposition(|(_, i)| !old.iter().any(|(_, o)| o == i)).unwrap_or(kept.len() - 1);
+        kept.remove(at);
     }
-    out.concat()
+    let mut dropped: Vec<usize> = items.iter().map(|(n, _)| *n).filter(|n| !kept.iter().any(|(k, _)| k == n)).collect();
+    if kept.is_empty() {
+        dropped.extend(key);
+    }
+    text.split_inclusive('\n').enumerate().filter(|(n, _)| !dropped.contains(n)).map(|(_, l)| l).collect()
 }
 
 /// Splits `paths` into those the brain's pre-receive hook will accept (fixing an over-long alias
@@ -159,7 +171,8 @@ fn vet(dir: &Path, paths: &[String]) -> (Vec<String>, Vec<String>) {
             ok.push(p.clone());
             continue;
         }
-        let fixed = std::fs::read_to_string(dir.join(p)).map(|t| drop_long_aliases(&t));
+        let head = git(dir, &["show", &format!("HEAD:{p}")], None).unwrap_or_default();
+        let fixed = std::fs::read_to_string(dir.join(p)).map(|t| trim_aliases(&t, &head));
         let repaired = match fixed {
             Ok(t) => std::fs::write(dir.join(p), t).is_ok() && passes_schema(dir, p),
             Err(_) => false,
@@ -329,7 +342,7 @@ pub(crate) mod tests {
         assert!(err.contains("exit 128"), "{err}");
     }
 
-    const STUB_VALIDATOR: &str = "import sys,re\nt=open(sys.argv[1]).read()\nbad=[l for l in t.split('\\n') if re.match(r'^\\s+- ',l) and len(l.strip()[2:].strip('\"\\''))>60]\nsys.exit(1 if bad else 0)\n";
+    const STUB_VALIDATOR: &str = "import sys,re\nt=open(sys.argv[1]).read()\nbad=[l for l in t.split('\\n') if re.match(r'^\\s+- ',l) and len(l.strip()[2:].strip('\"\\''))>60]\nn=sum(1 for l in t.split('\\n') if re.match(r'^\\s+- ',l))\nsys.exit(1 if bad or n>10 else 0)\n";
 
     fn with_validator(brain: &Path) {
         std::fs::create_dir_all(brain.join(".claude/skills/wiki-lint")).unwrap();
@@ -351,6 +364,26 @@ pub(crate) mod tests {
         assert_eq!(commit_paths(&brain, &["wiki/notes/a.md".to_string()], "archivist: x\n").unwrap(), 1);
         let committed = git(&brain, &["show", "HEAD:wiki/notes/a.md"], None).unwrap();
         assert!(!committed.contains(&long) && committed.contains("short one"), "{committed}");
+    }
+
+    fn crowded(extra: usize) -> String {
+        let old: String = (0..9).map(|i| format!("  - syn{i}\n")).collect();
+        let new: String = (0..extra).map(|i| format!("  - keyword{i}\n")).collect();
+        format!("---\ntype: note\naliases:\n{old}{new}---\n\n# x\n")
+    }
+
+    #[test]
+    fn aliases_added_past_ten_are_dropped_and_the_existing_synonyms_kept() {
+        let (_root, brain) = fixture();
+        with_validator(&brain);
+        std::fs::write(brain.join("wiki/notes/a.md"), crowded(0)).unwrap();
+        commit_paths(&brain, &["wiki/notes/a.md".to_string()], "archivist: x\n").unwrap();
+        std::fs::write(brain.join("wiki/notes/a.md"), crowded(5)).unwrap();
+        assert_eq!(commit_paths(&brain, &["wiki/notes/a.md".to_string()], "archivist: y\n").unwrap(), 1);
+        let committed = git(&brain, &["show", "HEAD:wiki/notes/a.md"], None).unwrap();
+        assert_eq!(committed.matches("\n  - ").count(), 10, "{committed}");
+        assert!(committed.contains("syn8") && committed.contains("keyword0") && !committed.contains("keyword1"), "{committed}");
+        assert_eq!(porcelain(&brain), "");
     }
 
     #[test]
