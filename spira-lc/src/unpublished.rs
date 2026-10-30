@@ -11,6 +11,7 @@ use spira_config::repos::{self, Registry};
 
 use crate::git_evidence::{git_output, is_ancestor};
 
+// batch-job: a forge fetch (5s) plus the git reads after it
 pub const DEADLINE: Duration = Duration::from_secs(8);
 const FETCH_SECS: &str = "5";
 

@@ -23,6 +23,7 @@ use crate::watchers::publish_backlog::{self, Read};
 use crate::watchers::round_duty::{RoundState, Snapshot};
 
 const STORE_ATTEMPTS: u32 = 3;
+// batch-job: the verb's own 8s bound for a forge fetch, plus a second
 const UNPUBLISHED_WAIT: std::time::Duration = std::time::Duration::from_secs(9);
 const STORE_BACKOFF: std::time::Duration = std::time::Duration::from_millis(250);
 
