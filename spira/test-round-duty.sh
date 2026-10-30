@@ -116,4 +116,22 @@ out="$(WINBOX="$TMP" wrun watch --interval 1 --ticks 1)"
 want "a failed wake does not lose ROUND DUE from the log" "ROUND DUE" "$out"
 
 grep -q '^round-duty|' "$HERE/watchers"; is "watchers manifest has no round-duty row: spira-runtime hosts it" "1" "$?"
+
+# Result-line announcement: tick the watcher in-process, one tick per step, appending to the
+# results file between ticks — no sleeps, no clock window.
+rm -rf "$TMP/run/rounds"; mkdir -p "$TMP/run/rounds"
+echo open > "$TMP/qmode"; : > "$TMP/run/rounds/300.result"
+tick_out="$(tl_config SPIRA_RUN="$TMP/run" SPIRA_ROUND_MIN=1 SPIRA_REPO_MAP="$TMP/rows"
+    env -i PATH="$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" SPIRA_REPO="$TMP/repo" SD="$HERE" R="$TMP/run/rounds/300.result" bash -c '
+        cd "$SD" && . ./round-duty.sh
+        _rd_tick
+        printf "red sp-aaa\n" >> "$R"; _rd_tick
+        printf "round 300: no verdict from any VM\n" >> "$R"; _rd_tick
+        _rd_tick' 2>&1)"
+want "an appended result line is announced" "ROUND RESULT 300: red sp-aaa" "$tick_out"
+want "a verdict-less result line is announced" "ROUND RESULT 300: round 300: no verdict from any VM" "$tick_out"
+want "a verdict-less result raises ROUND NO VERDICTS" "ROUND NO VERDICTS 300:" "$tick_out"
+is "only the verdict-less line raises ROUND NO VERDICTS" "1" "$(grep -c 'ROUND NO VERDICTS' <<<"$tick_out")"
+is "each result line is announced once" "2" "$(grep -c 'ROUND RESULT' <<<"$tick_out")"
+
 tl_summary
