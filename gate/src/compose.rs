@@ -541,6 +541,10 @@ pub fn run_all(cmd: &str) -> String {
     s
 }
 
+/// What the unit tier leaves to rounds: tests named `e2e_*` run a sibling binary or drive a real
+/// store, server or repo (`e2e-test-marked` holds the naming).
+pub const UNIT_TIER_FILTER: &str = "not test(/(^|::)e2e_/)";
+
 /// The unit phases' commands, in order: build (the `dwarf` profile), then the tests.
 ///
 /// The build is `cargo build --all-targets` (sp-aprxm), not `cargo test --no-run`: the latter
@@ -564,7 +568,7 @@ pub fn unit_commands(crates: &[String], jobs: u64, deadline: &UnitDeadline) -> [
         (
             "test",
             format!(
-                "_nx=\"$(mktemp)\" && printf '%s\\n' '{}' > \"$_nx\" && cargo nextest run --config-file \"$_nx\" --fail-fast --cargo-profile dwarf {} -j {jobs}{p}; _r=$?; rm -f \"$_nx\"; exit $_r",
+                "_nx=\"$(mktemp)\" && printf '%s\\n' '{}' > \"$_nx\" && cargo nextest run --config-file \"$_nx\" --fail-fast -E '{UNIT_TIER_FILTER}' --cargo-profile dwarf {} -j {jobs}{p}; _r=$?; rm -f \"$_nx\"; exit $_r",
                 deadline.profile(),
                 spira_config::build::one_shot_words("dwarf"),
             ),
@@ -583,8 +587,8 @@ impl UnitDeadline {
     fn profile(&self) -> String {
         format!(
             "[profile.default]\nslow-timeout = {{ period = \"{}s\", terminate-after = {} }}",
-            self.slow_secs.max(1),
-            self.terminate_after.max(1)
+            self.slow_secs,
+            self.terminate_after
         )
     }
 }
@@ -1229,7 +1233,7 @@ mod tests {
             "cargo build --profile dwarf --config profile.dwarf.incremental=false -j 4 --workspace --bins && cargo build --profile dwarf --config profile.dwarf.incremental=false -j 4 --all-targets -p gate -p queue"
         );
         assert_eq!(t.0, "test");
-        assert!(t.1.contains("cargo nextest run --config-file \"$_nx\" --fail-fast --cargo-profile dwarf --config profile.dwarf.incremental=false -j 4 -p gate -p queue;"), "{}", t.1);
+        assert!(t.1.contains("cargo nextest run --config-file \"$_nx\" --fail-fast -E 'not test(/(^|::)e2e_/)' --cargo-profile dwarf --config profile.dwarf.incremental=false -j 4 -p gate -p queue;"), "{}", t.1);
         assert!(t.1.contains(r#"slow-timeout = { period = "3s", terminate-after = 7 }"#), "{}", t.1);
     }
 
@@ -1241,12 +1245,13 @@ mod tests {
         let fx = tmp.path().to_path_buf();
         std::fs::create_dir_all(fx.join("src")).unwrap();
         std::fs::write(fx.join("Cargo.toml"), "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[profile.dwarf]\ninherits = \"dev\"\n").unwrap();
-        std::fs::write(fx.join("src/lib.rs"), "#[cfg(test)] mod t {\n#[test] fn quick() {}\n#[test] fn hangs_past_its_deadline() { std::thread::sleep(std::time::Duration::from_secs(120)); }\n}\n").unwrap();
+        std::fs::write(fx.join("src/lib.rs"), "#[cfg(test)] mod t {\n#[test] fn quick() {}\n#[test] fn hangs_past_its_deadline() { std::thread::sleep(std::time::Duration::from_secs(120)); }\n#[test] fn e2e_hangs_too_but_is_not_run() { std::thread::sleep(std::time::Duration::from_secs(120)); }\n}\n").unwrap();
         let [_, t] = unit_commands(&[], 2, &UnitDeadline { slow_secs: 1, terminate_after: 1 });
         let out = std::process::Command::new("bash").args(["-c", &t.1]).current_dir(&fx).output().unwrap();
         let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
         assert!(!out.status.success(), "{said}");
         assert!(said.contains("hangs_past_its_deadline"), "{said}");
+        assert!(!said.contains("e2e_hangs_too_but_is_not_run"), "{said}");
     }
 
     // -------------------------------------------------------------- re-entry (sp-p3srm)

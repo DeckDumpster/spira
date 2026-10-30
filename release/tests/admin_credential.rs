@@ -36,7 +36,7 @@ fn lc(bin: &Path, args: &[String], env: &[(String, String)], extra: &[(&str, &st
 }
 
 #[test]
-fn a_fresh_servers_root_is_closed_and_admin_migrate_uses_the_provisioned_credential() {
+fn e2e_a_fresh_servers_root_is_closed_and_admin_migrate_uses_the_provisioned_credential() {
     let (Some(bin), true) = (spira_lc(), Command::new("dolt").arg("version").output().is_ok()) else {
         eprintln!("SKIP: dolt or a built spira-lc is not available");
         return;

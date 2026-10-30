@@ -206,48 +206,48 @@ fn same_rows(s: Scenario, ticks: usize) -> Vec<String> {
 }
 
 #[test]
-fn a_free_slot_with_certified_work_is_due() {
+fn e2e_a_free_slot_with_certified_work_is_due() {
     let r = same_rows(scenario("due"), 1);
     assert!(r.iter().any(|l| l.contains("ROUND DUE: 1 certified waiting [spira=1]")), "{r:?}");
     assert!(r.iter().all(|l| !l.contains("deckdumpster")), "{r:?}");
 }
 
 #[test]
-fn a_held_certified_bead_is_not_due() {
+fn e2e_a_held_certified_bead_is_not_due() {
     let r = same_rows(Scenario { certified_spira: r#"[{"bead_id": "sp-aaa", "holds": ["ask"]}]"#, ..scenario("held") }, 1);
     assert!(r.is_empty(), "{r:?}");
 }
 
 #[test]
-fn an_open_round_suppresses_due_unless_the_cap_allows_another() {
+fn e2e_an_open_round_suppresses_due_unless_the_cap_allows_another() {
     assert!(same_rows(Scenario { open: 1, ..scenario("capped") }, 1).is_empty());
     let r = same_rows(Scenario { open: 1, cap: 2, ..scenario("slot") }, 1);
     assert!(r.iter().any(|l| l.contains("1 of 2 rounds open")), "{r:?}");
 }
 
 #[test]
-fn a_stopped_lane_is_announced_and_never_due() {
+fn e2e_a_stopped_lane_is_announced_and_never_due() {
     let r = same_rows(Scenario { stopped: true, ..scenario("stopped") }, 1);
     assert!(r.iter().any(|l| l.contains("ROUNDS STOPPED ON PURPOSE: spira")), "{r:?}");
     assert!(r.iter().all(|l| !l.contains("ROUND DUE")), "{r:?}");
 }
 
 #[test]
-fn an_unanswered_round_status_is_unknown_and_pages_nothing() {
+fn e2e_an_unanswered_round_status_is_unknown_and_pages_nothing() {
     let r = same_rows(Scenario { status_fails: true, ..scenario("unknown") }, 1);
     assert!(r.iter().any(|l| l.contains("ROUND STATE UNKNOWN")), "{r:?}");
     assert!(r.iter().all(|l| !l.contains("ROUND DUE")), "{r:?}");
 }
 
 #[test]
-fn result_lines_are_relayed_once_and_a_verdictless_round_is_named() {
+fn e2e_result_lines_are_relayed_once_and_a_verdictless_round_is_named() {
     let r = same_rows(Scenario { open: 1, results: vec!["red sp-aaa", "round 300: no verdict from any VM"], ..scenario("results") }, 3);
     assert_eq!(r.iter().filter(|l| l.contains("ROUND RESULT 300: red sp-aaa")).count(), 1, "{r:?}");
     assert_eq!(r.iter().filter(|l| l.contains("ROUND NO VERDICTS 300")).count(), 1, "{r:?}");
 }
 
 #[test]
-fn the_migrated_handlers_launch_no_process() {
+fn e2e_the_migrated_handlers_launch_no_process() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files: Vec<_> = fs::read_dir(src.join("watchers")).unwrap().flatten().map(|e| e.path()).collect();
     files.extend([src.join("world.rs"), src.join("forge.rs")]);

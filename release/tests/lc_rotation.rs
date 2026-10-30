@@ -123,7 +123,7 @@ fn provisioned(f: &Fixture) -> release::lifecycle_store::Admin {
 }
 
 #[test]
-fn rotation_alters_every_host_variant_and_swaps_the_files_only_after_a_fresh_login() {
+fn e2e_rotation_alters_every_host_variant_and_swaps_the_files_only_after_a_fresh_login() {
     let Some(f) = fixture() else { return };
     let admin = provisioned(&f);
     let lines = rotate(&f.rw_file, &f.ro_file, &f.root, &admin, |a, e| f.run(a, e)).unwrap();
@@ -137,7 +137,7 @@ fn rotation_alters_every_host_variant_and_swaps_the_files_only_after_a_fresh_log
 }
 
 #[test]
-fn a_failed_new_password_probe_leaves_the_files_and_the_old_passwords_in_force() {
+fn e2e_a_failed_new_password_probe_leaves_the_files_and_the_old_passwords_in_force() {
     let Some(f) = fixture() else { return };
     let admin = provisioned(&f);
     let before = (std::fs::read_to_string(&f.rw_file).unwrap(), std::fs::read_to_string(&f.ro_file).unwrap());

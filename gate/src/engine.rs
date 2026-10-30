@@ -807,8 +807,8 @@ impl<'w, W: World> Trial<'w, W> {
         let Some(deadline) = key::digits(ctx.var("SPIRA_GATE_DEADLINE")) else {
             return v(NOVERDICT, "config", format!("gate: SPIRA_GATE_DEADLINE={:?} is not a number of seconds — refusing to run a gate with no wall-clock bound.", ctx.var("SPIRA_GATE_DEADLINE")));
         };
-        let (Some(slow_secs), Some(terminate_after)) = (key::digits(ctx.var("SPIRA_UNIT_TEST_SLOW_SECS")), key::digits(ctx.var("SPIRA_UNIT_TEST_TERMINATE_AFTER"))) else {
-            return v(NOVERDICT, "config", "gate: SPIRA_UNIT_TEST_SLOW_SECS and SPIRA_UNIT_TEST_TERMINATE_AFTER must be numbers — refusing to run unit tests with no per-test deadline.");
+        let (Some(slow_secs), Some(terminate_after)) = (key::digits(ctx.var("SPIRA_UNIT_TEST_SLOW_SECS")).filter(|n| *n > 0), key::digits(ctx.var("SPIRA_UNIT_TEST_TERMINATE_AFTER")).filter(|n| *n > 0)) else {
+            return v(NOVERDICT, "config", "gate: SPIRA_UNIT_TEST_SLOW_SECS and SPIRA_UNIT_TEST_TERMINATE_AFTER must be positive numbers — refusing to run unit tests with no per-test deadline.");
         };
         let unit_deadline = compose::UnitDeadline { slow_secs, terminate_after };
         let by_deadline = key::digits(&timeout).is_none_or(|t| deadline <= t);

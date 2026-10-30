@@ -2048,7 +2048,7 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
         "cargo build --profile dwarf --config profile.dwarf.incremental=false -j 8 --workspace --bins && cargo build --profile dwarf --config profile.dwarf.incremental=false -j 8 --all-targets -p queue -p spira-config"
     );
     assert!(
-        is_unit_test_cmd(&cmds[2]) && cmds[2].contains("--fail-fast --cargo-profile dwarf --config profile.dwarf.incremental=false -j 8 -p queue -p spira-config;"),
+        is_unit_test_cmd(&cmds[2]) && cmds[2].contains("--fail-fast -E 'not test(/(^|::)e2e_/)' --cargo-profile dwarf --config profile.dwarf.incremental=false -j 8 -p queue -p spira-config;"),
         "{}",
         cmds[2]
     );

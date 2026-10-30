@@ -1394,6 +1394,22 @@ carrying `clock-safe: <why>` is exempt: the clock there is only a cap on a wait 
 **Allow list.** `spira-lint/test-real-clock-allow`, `<count> <path>`, shrink-only; seeded with
 the counts when the rule landed. A count above what the file has is itself a finding.
 
+## Rule `e2e-test-marked`
+
+**Intent.** The gate's unit tier holds only unit tests: it builds the touched crates and runs
+`cargo nextest run -E 'not test(/(^|::)e2e_/)'`. A test that execs a sibling binary from the
+target directory needs the whole workspace built, so it is end-to-end and runs in rounds.
+
+**Scope.** Every `*.rs` except `target/` and `fixtures/`, judged in test code as `tmp-leak`
+defines it.
+
+**Violation.** In test code, a `current_exe()` followed within 160 bytes by `.parent()` (not
+deriving the profile name via `file_name`), or `Command::new` of a `target/<profile>/<bin>` path,
+in a file with a `#[test]` not named `e2e_*`. A file that names its own crate's binary string is
+exempt (`CARGO_BIN_EXE_*` is the unit-tier route to one's own binary). One finding per file.
+
+**Fix.** Name every `#[test]` in the file `e2e_*`.
+
 ## Rule `py-fstring-compat`
 
 Python in a suite must parse on the round VM's older python3. **Flags**, per line, inside an
