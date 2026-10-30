@@ -10,6 +10,7 @@ struct FakeBd {
     notes: RefCell<Vec<(String, String)>>,
     unreadable: RefCell<bool>,
     remember_err: RefCell<Option<String>>,
+    forget_fails: RefCell<Vec<String>>,
 }
 
 impl FakeBd {
@@ -30,6 +31,9 @@ impl Bd for FakeBd {
         self.shelf.borrow().get(key).cloned()
     }
     fn forget(&self, key: &str) -> bool {
+        if self.forget_fails.borrow().iter().any(|k| k == key) {
+            return false;
+        }
         if self.shelf.borrow_mut().remove(key).is_some() {
             self.forgotten.borrow_mut().push(key.to_string());
             true
@@ -461,6 +465,38 @@ fn retire_of_an_unreadable_shelf_writes_nothing() {
     assert_eq!(r.code, 1);
     assert!(r.err[0].contains("cannot read the shelf; nothing retired"));
     assert_eq!(bd.shelf.borrow().len(), 1);
+}
+
+#[test]
+fn a_failed_forget_rolls_the_record_back() {
+    let bd = FakeBd::default();
+    shelved(&bd);
+    bd.forget_fails.borrow_mut().push("sop-x".to_string());
+    let r = retire_x(&bd, "why");
+    assert_eq!(r.code, 1);
+    assert!(r.err[0].contains("could not remove sop-x; nothing retired"));
+    assert_eq!(bd.shelf.borrow().keys().collect::<Vec<_>>(), vec!["sop-x"]);
+}
+
+#[test]
+fn a_failed_record_forget_on_revive_is_named() {
+    let bd = FakeBd::default();
+    shelved(&bd);
+    retire_x(&bd, "why");
+    bd.forget_fails.borrow_mut().push("retired-sop-x".to_string());
+    let r = write(&bd, &FakeProc::default(), &env(), "x", GOOD, true);
+    assert_eq!(r.code, 1);
+    assert!(r.err[0].contains("retired-sop-x"), "{:?}", r.err);
+}
+
+#[test]
+fn write_on_an_unreadable_shelf_refuses_rather_than_skip_the_retired_guard() {
+    let bd = FakeBd::default();
+    *bd.unreadable.borrow_mut() = true;
+    let r = write(&bd, &FakeProc::default(), &env(), "x", GOOD, false);
+    assert_eq!(r.code, 1);
+    assert!(r.err[0].contains("cannot read the shelf"));
+    assert!(bd.shelf.borrow().is_empty());
 }
 
 #[test]

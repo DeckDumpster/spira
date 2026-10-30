@@ -37,8 +37,9 @@ pub struct Env {
 
 // ───────────────────────────── write ─────────────────────────────
 
-fn retired_record(bd: &dyn Bd, key: &str) -> Option<shelf::Retired> {
-    shelf::parse_retired(&bd.memories_json()?)?.remove(key)
+fn retired_record(bd: &dyn Bd, key: &str) -> Result<Option<shelf::Retired>, ()> {
+    let records = shelf::parse_retired(&bd.memories_json().ok_or(())?).ok_or(())?;
+    Ok(records.get(key).cloned())
 }
 
 fn who(rec: &shelf::Retired) -> String {
@@ -48,7 +49,9 @@ fn who(rec: &shelf::Retired) -> String {
 pub fn write(bd: &dyn Bd, proc: &dyn Proc, env: &Env, key: &str, text: &str, revive: bool) -> Report {
     let key = shelf::slugify(key);
     let mut r = Report::ok();
-    let record = retired_record(bd, &key);
+    let Ok(record) = retired_record(bd, &key) else {
+        return r.fail(1, format!("cannot read the shelf to check whether {key} was retired; nothing written"));
+    };
     if let (Some(rec), false) = (&record, revive) {
         return r.fail(1, format!("{key} was retired {}. Pass --revive to put it back on the shelf.", who(rec)));
     }
@@ -105,7 +108,7 @@ pub fn show(bd: &dyn Bd, key: &str) -> Report {
             r.say(text.trim_end().to_string());
             r
         }
-        None => match retired_record(bd, &key) {
+        None => match retired_record(bd, &key).ok().flatten() {
             Some(rec) => r.fail(1, format!("{key} is retired (by {} at {}): {}", rec.by, rec.at, rec.reason)),
             None => r.fail(1, format!("no such SOP: {key}")),
         },

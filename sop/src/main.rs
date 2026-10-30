@@ -176,7 +176,12 @@ fn dispatch(args: &[String]) -> ExitCode {
                 return ExitCode::from(1);
             };
             let revive = args[2..].iter().any(|a| a == "--revive");
-            let src = args[2..].iter().find(|a| *a != "--revive").map(String::as_str);
+            let rest: Vec<&String> = args[2..].iter().filter(|a| *a != "--revive").collect();
+            if let Some(extra) = rest.iter().skip(1).chain(rest.iter().filter(|a| a.starts_with("--"))).next() {
+                eprintln!("sop: write: unexpected argument: {extra}");
+                return ExitCode::from(1);
+            }
+            let src = rest.first().map(|a| a.as_str());
             let text = match slurp(src) {
                 Ok(t) => t,
                 Err(e) => {

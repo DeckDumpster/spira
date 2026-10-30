@@ -144,6 +144,13 @@ is "write over a retired slug is refused" "1" "$rc"
 want "the refusal names --revive" "--revive" "$out"
 out="$(printf '%s' "$GOOD" | run_sop write test-disk-full --revive - 2>&1)"; rc=$?
 is "write --revive succeeds" "0" "$rc"
+out="$(run_sop retire test-disk-full --reason 2>&1)"; rc=$?
+is "retire with --reason and no value exits 1" "1" "$rc"
+out="$(run_sop retire test-disk-full --why x 2>&1)"; rc=$?
+is "retire with an unknown flag exits 1" "1" "$rc"
+want "it says unexpected argument" "unexpected argument" "$out"
+out="$(printf '%s' "$GOOD" | run_sop write test-disk-full --reviv - 2>&1)"; rc=$?
+is "write with a misspelt flag exits 1" "1" "$rc"
 out="$(run_sop list --retired)"
 nowant "the record is gone after revive" "sop-test-disk-full" "$out"
 
