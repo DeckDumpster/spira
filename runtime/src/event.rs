@@ -145,7 +145,9 @@ impl Projection {
         let seen = self.streams.entry(ev.stream.clone()).or_default();
         seen.push(ev.clone());
         if seen.len() >= 2 * WINDOW {
-            seen.drain(..seen.len() - WINDOW);
+            for gone in seen.drain(..seen.len() - WINDOW) {
+                self.local.remove(&gone.id);
+            }
         }
     }
 
