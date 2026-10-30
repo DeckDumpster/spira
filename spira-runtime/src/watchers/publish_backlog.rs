@@ -95,11 +95,6 @@ impl PublishBacklog {
     fn carry(view: &Projection, stream: &StreamKey) -> Carry {
         view.events(stream).iter().rev().find(|e| e.kind.tag == STATE).and_then(|e| serde_json::from_str(&e.kind.body).ok()).unwrap_or_default()
     }
-
-    fn answers_observe(view: &Projection, ev: &Event) -> bool {
-        let Some(cause) = &ev.cause else { return false };
-        view.events(&ev.stream).iter().rev().find(|e| &e.id == cause && e.kind.tag == EFFECT_REQUESTED).and_then(|e| serde_json::from_str::<serde_json::Value>(&e.kind.body).ok()).is_some_and(|b| b["spec"]["name"] == OBSERVE)
-    }
 }
 
 impl Handler for PublishBacklog {
@@ -117,7 +112,7 @@ impl Handler for PublishBacklog {
                 Command::Schedule { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
-        if !Self::answers_observe(view, ev) {
+        if !super::answers_observe(view, ev, OBSERVE) {
             return vec![];
         }
         let Ok(snap) = serde_json::from_str::<Snapshot>(&ev.kind.body) else { return vec![] };
