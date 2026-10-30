@@ -161,6 +161,10 @@ fn verdict(text: &str) -> String {
     }
 }
 
+fn not_green_line(batch: &str, cert: &Out) -> String {
+    format!("round-recert: {batch} is not green: {} (certify rc={}) — round left open", verdict(&cert.text), cert.code.map_or("signal".into(), |c| c.to_string()))
+}
+
 /// The pass itself: certify, and land only on green. 0 landed, 1 anything else.
 pub fn drive(sys: &dyn Sys, batch: &str, repo: &str) -> u8 {
     let round = match status(sys, repo).and_then(|s| require_open(&s, repo, batch)) {
@@ -174,8 +178,7 @@ pub fn drive(sys: &dyn Sys, batch: &str, repo: &str) -> u8 {
     let cert = queue(sys, &["certify", batch, repo], CERTIFY_DEADLINE_SECS);
     println!("{}", tail(&cert.text, 4));
     if cert.code != Some(0) {
-        let how = verdict(&cert.text);
-        println!("round-recert: {batch} is not green: {how} (certify rc={}) — round left open", cert.code.map_or("signal".into(), |c| c.to_string()));
+        println!("{}", not_green_line(batch, &cert));
         return 1;
     }
     let land = queue(sys, &["land", batch, repo], LAND_DEADLINE_SECS);
@@ -352,6 +355,10 @@ mod tests {
         assert_eq!(verdict("round r is RED at e198ebb: unit-tests\n"), "RED: unit-tests");
         assert_eq!(verdict("red=unit-tests\n"), "RED: unit-tests");
         assert_eq!(verdict("timed out waiting\n"), "incomplete, no red named");
+        assert_eq!(verdict("red=\nround r is RED at abc: lint\n"), "RED: lint");
+        assert_eq!(verdict("red-output=/tmp/x\n"), "RED");
+        let line = not_green_line("r-1", &Out { code: Some(1), text: "red=unit-tests\n".into() });
+        assert!(line.contains("RED: unit-tests") && !line.contains("incomplete"), "{line}");
     }
 
     #[test]
