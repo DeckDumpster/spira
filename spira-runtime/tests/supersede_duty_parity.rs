@@ -91,10 +91,10 @@ impl Fixture {
                 "#!/usr/bin/env bash\ncase \"$1\" in\n  list) cat {root}/held.txt | while read -r id; do echo \"{{\\\"bead_id\\\":\\\"$id\\\",\\\"version\\\":\\\"v1\\\"}}\"; done | paste -sd, | sed 's/^/[/; s/$/]/' ;;\n  history) cat {root}/history/$2 ;;\n  state) [ -s {root}/state/$2 ] && cat {root}/state/$2 ;;\n  unhold|supersede) [ -e {root}/fail-$1 ] && exit 1; echo \"$*\" >> {root}/calls; grep -vx \"$2\" {root}/held.txt > {root}/held.tmp; mv {root}/held.tmp {root}/held.txt; [ $1 = supersede ] && echo SUPERSEDED > {root}/state/$2; exit 0 ;;\n  *) exit 1 ;;\nesac\n"
             ),
         );
-        testkit::write_exe(f.p("bin/bdq"), &format!("#!/usr/bin/env bash\n[ \"$1\" = note ] && echo \"note $2 $3\" >> {root}/calls\nexit 0\n"));
+        testkit::write_exe(f.p("bin/bdq"), &format!("#!/usr/bin/env bash\n[ -e {root}/fail-bd-note ] && exit 1\n[ \"$1\" = note ] && echo \"note $2 $3\" >> {root}/calls\nexit 0\n"));
         testkit::write_exe(
             f.p("bin/bd"),
-            &format!("#!/usr/bin/env bash\necho \"bd $*\" >> {root}/bd-calls\nexit 0\n"),
+            &format!("#!/usr/bin/env bash\necho \"bd $*\" >> {root}/bd-calls\n[ -e {root}/fail-bd-supersede ] && exit 1\nexit 0\n"),
         );
         fs::write(
             f.p("layer.toml"),
@@ -160,6 +160,7 @@ impl Fixture {
                         }
                         (0, String::new())
                     }
+                    "bd-note" if root.join("fail-bd-note").exists() => (1, "refused".into()),
                     "bd-supersede" => {
                         let mut calls = fs::OpenOptions::new()
                             .create(true)
@@ -167,7 +168,11 @@ impl Fixture {
                             .open(root.join("bd-calls"))
                             .unwrap();
                         writeln!(calls, "supersede {} --with {}", argv[1], argv[2]).unwrap();
-                        (0, String::new())
+                        if root.join("fail-bd-supersede").exists() {
+                            (1, "refused".into())
+                        } else {
+                            (0, String::new())
+                        }
                     }
                     "bd-note" => {
                         let mut calls = fs::OpenOptions::new()
@@ -394,6 +399,19 @@ fn a_failing_write_is_reported_once_across_repeated_ticks() {
         writes.iter().all(|w| !w.starts_with("unhold")),
         "{writes:?}"
     );
+}
+
+#[test]
+fn a_bd_supersede_that_fails_is_reported_and_not_retried() {
+    let (say, _) = same("bd-supersede-down", 3, |f| fs::write(f.p("fail-bd-supersede"), "").unwrap());
+    let failed = say.iter().filter(|l| l.ends_with("lifecycle row SUPERSEDED but bd supersede failed (not retried)")).count();
+    assert_eq!(failed, 1, "{say:?}");
+}
+
+#[test]
+fn an_evidence_note_that_fails_is_reported_and_the_request_still_settles() {
+    let (say, _) = same("bd-note-down", 2, |f| fs::write(f.p("fail-bd-note"), "").unwrap());
+    assert!(say.iter().any(|l| l.contains("NOTE FAILED sp-open")), "{say:?}");
 }
 
 #[test]
