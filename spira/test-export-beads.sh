@@ -41,6 +41,7 @@ is "no new commit when unchanged" 1 "$(git -C "$WIKI" rev-list --count HEAD)"
 age=$(( $(date +%s) - $(stat -c %Y "$OUT") ))
 [ "$age" -lt 60 ] && ok "unchanged pass refreshes the mtime the alarm reads" || bad "mtime not refreshed" "age=$age"
 
+printf '[{"id":"sp-b","title":"B","status":"open"},{"id":"sp-a","title":"A","status":"open"},{"id":"sp-c","title":"C","status":"open"}]' >"$TMP/content.json"
 printf 'sp-a\tLANDED\t\nsp-b\tLANDED\t\n' >"$TMP/state.tsv"; run >/dev/null
 is "state change commits" 2 "$(git -C "$WIKI" rev-list --count HEAD)"
 
