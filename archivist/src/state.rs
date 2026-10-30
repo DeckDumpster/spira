@@ -2,9 +2,10 @@
 //! line and `cockpit/health.sh`'s dashboard), both rendering
 //! `$SPIRA_RUN/archivist/<session>.state` as flat `key=value` lines:
 //!
-//!   state=sweeping|archiving|safe|failed|capacity|timeout
+//!   state=sweeping|archiving|safe|failed|capacity|timeout|retry
 //!   at_turn=<the session's turn count when this state was computed>
 //!   items_filed=<how many beads and notes were written>
+//!   retry_at=<epoch>   only on `retry` and a still-retrying `failed`; a `failed` without it is terminal
 //!
 //! `at_turn` is load-bearing, not bookkeeping: "safe to clear" describes the session as
 //! it was when the sweep read it, and both readers demote a stale verdict to "safe as of
@@ -20,6 +21,7 @@ pub enum State {
     Failed,
     Capacity,
     Timeout,
+    Retry,
 }
 
 impl State {
@@ -31,6 +33,7 @@ impl State {
             "failed" => State::Failed,
             "capacity" => State::Capacity,
             "timeout" => State::Timeout,
+            "retry" => State::Retry,
             _ => return None,
         })
     }
@@ -43,6 +46,7 @@ impl State {
             State::Failed => "failed",
             State::Capacity => "capacity",
             State::Timeout => "timeout",
+            State::Retry => "retry",
         }
     }
 }
@@ -71,6 +75,14 @@ pub fn render(state: State, at_turn: u64, items_filed: u64) -> String {
     format!("state={}\nat_turn={at_turn}\nitems_filed={items_filed}\n", state.as_str())
 }
 
+fn render_retry(state: State, at_turn: u64, items_filed: u64, retry_at: Option<i64>) -> String {
+    let base = render(state, at_turn, items_filed);
+    match retry_at {
+        Some(t) => format!("{base}retry_at={t}\n"),
+        None => base,
+    }
+}
+
 /// Read one `key=value` line's value out of a state file's already-read text.
 pub fn key(text: &str, key: &str) -> Option<String> {
     let prefix = format!("{key}=");
@@ -78,9 +90,13 @@ pub fn key(text: &str, key: &str) -> Option<String> {
 }
 
 pub fn write_state(dir: &Path, session: &str, state: State, at_turn: u64, items_filed: u64) -> std::io::Result<()> {
+    write_state_retry(dir, session, state, at_turn, items_filed, None)
+}
+
+pub fn write_state_retry(dir: &Path, session: &str, state: State, at_turn: u64, items_filed: u64, retry_at: Option<i64>) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let tmp = dir.join(format!(".{session}.{}", std::process::id()));
-    std::fs::write(&tmp, render(state, at_turn, items_filed))?;
+    std::fs::write(&tmp, render_retry(state, at_turn, items_filed, retry_at))?;
     std::fs::rename(&tmp, dir.join(format!("{session}.state")))
 }
 

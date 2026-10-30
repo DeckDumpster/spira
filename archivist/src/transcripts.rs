@@ -64,6 +64,12 @@ pub fn live_transcripts(projects: &Path, run: &Path, idle_secs: i64, now: i64) -
     out
 }
 
+/// The transcript of session `sid`, live or not — the forced `now` path sweeps a session
+/// the idle window has already passed over.
+pub fn find_transcript(projects: &Path, sid: &str) -> Option<PathBuf> {
+    std::fs::read_dir(projects).ok()?.flatten().map(|e| e.path()).filter(|p| p.is_dir()).map(|d| d.join(format!("{sid}.jsonl"))).find(|f| f.is_file())
+}
+
 /// The most recently written non-empty transcript under `projects` — the "now" mode's
 /// no-argument pick, "the one they are sitting in".
 pub fn newest_transcript(projects: &Path) -> Option<(String, PathBuf)> {

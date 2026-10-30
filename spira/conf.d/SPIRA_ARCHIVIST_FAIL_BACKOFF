@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=archivist
+DOC=SECONDS A FAILED SESSION WAITS BEFORE THE FIRST RETRY; doubled after each further consecutive failure.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # SECONDS A FAILED SESSION WAITS BEFORE THE FIRST RETRY; doubled after each further consecutive failure.
+    : "${SPIRA_ARCHIVIST_FAIL_BACKOFF:=600}"
+SPIRA_CONF_DEFAULT_EOF

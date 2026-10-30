@@ -290,12 +290,13 @@ if len(tail) >= 21:
 # it from "safe" to "safe as of N turns ago" — the operator can still act on it, but is never
 # told that unpersisted work is safe to throw away.
 akey = sid or (os.path.basename(tp).rsplit(".", 1)[0] if tp else "")
-arc_name, arc_behind, arc_filed = "", 0, "0"
+arc_name, arc_behind, arc_filed, arc_retry_at = "", 0, "0", 0
 try:
     with open(os.path.join(state_dir, "archivist", f"{akey}.state")) as fh:
         st = dict(l.strip().split("=", 1) for l in fh if "=" in l)
     arc_name = st.get("state", "")
     arc_filed = st.get("items_filed") or "0"
+    arc_retry_at = int(st.get("retry_at") or 0)
     arc_behind = max(0, turns - int(st.get("at_turn") or 0))
 except FileNotFoundError:
     # No file is a real state, not an error: the archivist has not run for this session.
@@ -662,8 +663,11 @@ elif arc_name == "safe":
         arc = f" \x1b[32m✓ safe to clear\x1b[0m \x1b[2m({arc_filed} filed)\x1b[0m"
     else:
         arc = f" \x1b[33m✓ safe as of {arc_behind}t ago\x1b[0m"
+elif arc_name in ("failed", "retry") and arc_retry_at:
+    retry_hhmm = time.strftime("%H:%M", time.localtime(arc_retry_at))
+    arc = f" \x1b[33m⏸ archive {'failed' if arc_name == 'failed' else 'deferred'}, will retry at {retry_hhmm}\x1b[0m"
 elif arc_name == "failed":
-    arc = " \x1b[31m! archive failed (run archivist now)\x1b[0m"
+    arc = f" \x1b[31m! archive failed for good (run: archivist now {akey})\x1b[0m"
 elif arc_name == "timeout":
     arc = " \x1b[33m⏸ archive timed out, retrying\x1b[0m"
 elif arc_name == "capacity":

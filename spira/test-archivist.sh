@@ -269,6 +269,23 @@ has "env mode shows skipped archivist state" "$out" "SP_CTX_ARCHIVIST=skipped"
 
 # ==========================================================================================
 echo
+echo "the status line says when a failed archive retries, and how to force a terminal one"
+# ==========================================================================================
+rm -rf "$T/run" "$T/home"
+mkdir -p "$T/home" "$T/run/archivist"
+status_line() {
+    tl_config SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects"
+    printf '{"session_id":"s-fail","cwd":"/tmp","context_window":{"total_input_tokens":1200,"current_usage":{"input_tokens":1200}}}' |
+        env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" SPIRA_TOML="$SPIRA_TOML" TZ=UTC \
+            SPIRA_NOW="$EPOCH" ctx-meter.sh 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g'
+}
+printf 'state=failed\nat_turn=1\nitems_filed=0\nretry_at=1750003600\n' > "$T/run/archivist/s-fail.state"
+has  "a retrying failure names the time it will retry" "$(status_line)" "will retry at 16:06"
+printf 'state=failed\nat_turn=1\nitems_filed=0\n' > "$T/run/archivist/s-fail.state"
+has  "a terminal failure names the command that forces a sweep" "$(status_line)" "archivist now s-fail"
+
+# ==========================================================================================
+echo
 echo "a turn=- cursor does not kill the sweep for other sessions (regression: sp-ci5cn)"
 # ==========================================================================================
 # Pre-fix: $(( ${turns:-0} - cov )) with cov="-" produced:

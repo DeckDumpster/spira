@@ -167,6 +167,8 @@ removed = ["spira.broker_enable", "spira.express_label", "spira.overlap_defer_la
 "spira.sccache_dav_artifact_days" = 7
 "spira.round_vm_resume_url" = ""
 "spira.round_vm_resume_credentials" = ""
+"spira.archivist_fail_retries" = "5"
+"spira.archivist_fail_backoff" = "600"
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok

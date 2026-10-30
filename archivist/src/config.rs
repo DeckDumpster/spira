@@ -19,6 +19,8 @@ pub struct Env {
     pub timeout: u64,
     pub per_pass: u32,
     pub timeout_retries: u32,
+    pub fail_retries: u32,
+    pub fail_backoff: u64,
 }
 
 /// The binary's config struct constructor — called once, at the top of `main`'s dispatch.
@@ -41,6 +43,8 @@ pub fn resolve() -> Result<Env, String> {
         timeout: spira_config::process::cfg_parse("SPIRA_ARCHIVIST_TIMEOUT")?,
         per_pass: spira_config::process::cfg_parse("SPIRA_ARCHIVIST_PER_PASS")?,
         timeout_retries: spira_config::process::cfg_parse("SPIRA_ARCHIVIST_TIMEOUT_RETRIES")?,
+        fail_retries: spira_config::process::cfg_parse("SPIRA_ARCHIVIST_FAIL_RETRIES")?,
+        fail_backoff: spira_config::process::cfg_parse("SPIRA_ARCHIVIST_FAIL_BACKOFF")?,
     })
 }
 
