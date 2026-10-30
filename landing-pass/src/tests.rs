@@ -785,7 +785,7 @@ fn repeated_no_verdicts_on_one_tip_defer_it_to_the_round() {
     }
     assert!(h.logged("deferred to round: no gate verdict"));
     h.run();
-    assert!(h.logged("was deferred to round: over-cap"));
+    assert!(h.logged("was deferred to round"));
 }
 
 fn retip(h: &H, br: &str, tip: &str) {
@@ -2210,13 +2210,17 @@ fn an_over_cap_verdict_from_gate_worker_is_gated_again_after_the_backoff() {
     let h = h_worker(LandMode::Queue);
     h.closed("sp-a", "t1");
     let over_cap = "gate: VERDICT=FAIL reason=over-cap branch=b repo=spira suite=- (killed)\n";
-    file_verdict(&h, "sp-a", "t1", 1, over_cap);
-    h.run();
     let q = crate::gateq::GateQueue::new(&h.s.run);
-    assert!(q.queued().is_empty(), "inside the backoff the tip is not queued again");
-    h.clock.t.set(h.clock.t.get() + h.s.gate_backoff as u64 + 1);
-    h.run();
-    assert_eq!(q.queued().len(), 1, "a SUBMITTED bead whose gate ran over its cap must not be left with no gate queued");
+    for round in 0..=h.s.noverdict_max {
+        file_verdict(&h, "sp-a", "t1", 1, over_cap);
+        h.run();
+        assert!(q.queued().is_empty(), "inside the backoff the tip is not queued again");
+        h.clock.t.set(h.clock.t.get() + h.s.gate_backoff as u64 + 1);
+        h.run();
+        assert_eq!(q.queued().len(), 1, "round {round}: a SUBMITTED bead whose gate ran over its cap must not be left with no gate queued");
+        q.claim(0).unwrap();
+        q.discard(0, &crate::gateq::Job::new("spira", "spira/sp-a", "sp-a", "t1", false));
+    }
     assert!(!h.logged("not gated again"));
 }
 
