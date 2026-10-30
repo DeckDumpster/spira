@@ -73,7 +73,8 @@ impl Fixture {
                 let mut line = String::new();
                 BufReader::new(&stream).read_line(&mut line).unwrap();
                 let argv: Vec<String> = serde_json::from_str(&line).unwrap();
-                let down = root.join("bdfail").exists() && argv[0] == "content";
+                let once = root.join("bdfail-once");
+                let down = (root.join("bdfail").exists() || fs::remove_file(&once).is_ok()) && argv[0] == "content";
                 let file = match (argv[0].as_str(), argv.get(3).map(String::as_str)) {
                     ("content", Some(l)) if argv[1] == "list" && l == LABEL && argv[4..6] == ["--status", "open"] => "asks.json",
                     ("list-held", _) => "held.txt",
@@ -229,6 +230,17 @@ fn a_failed_store_call_names_the_command_and_what_the_store_said() {
     assert_eq!(r.len(), 1, "{r:?}");
     assert!(r[0].contains("spira-lc content list --label ask-parity"), "{r:?}");
     assert!(r[0].contains("boom"), "{r:?}");
+}
+
+#[test]
+fn a_store_that_fails_once_and_then_answers_raises_nothing() {
+    let g = Fixture::build("restart");
+    g.design("covered", "status: draft\n", "");
+    g.asks(&format!("approve {DESIGNS}/covered.md"));
+    fs::write(g.p("bdfail-once"), "").unwrap();
+    let r = new_rows(&g, 1);
+    assert!(r.is_empty(), "{r:?}");
+    assert!(!g.p("bdfail-once").exists(), "the store was never asked");
 }
 
 #[test]

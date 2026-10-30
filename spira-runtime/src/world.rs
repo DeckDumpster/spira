@@ -277,8 +277,9 @@ impl World {
         let [flag, filter] = status_args(Kind::Ask, Which::Open);
         let argv = ["content", "list", "--label", &self.ask_label, &flag, &filter, "--limit", "0", "--json"];
         let out = self.lc_named(&argv)?;
-        match out.find("\n[").map(|i| i + 1).or_else(|| out.starts_with('[').then_some(0)) {
-            Some(i) => Ok(out[i..].to_string()),
+        let list = out.char_indices().filter(|&(i, c)| c == '[' && (i == 0 || out.as_bytes()[i - 1] == b'\n')).map(|(i, _)| &out[i..]).find(|rest| serde_json::from_str::<Vec<Value>>(rest).is_ok());
+        match list {
+            Some(rest) => Ok(rest.to_string()),
             None => Err(format!("spira-lc {} exited 0 but printed no JSON list: {:?}", argv.join(" "), out.chars().take(200).collect::<String>())),
         }
     }
