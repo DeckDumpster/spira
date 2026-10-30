@@ -100,6 +100,23 @@ fn an_event_this_engine_appended_is_read_at_once_whatever_the_poll_interval() {
     assert_eq!(*seen.lock().unwrap(), ["foreign"]);
 }
 
+#[test]
+fn a_foreign_event_read_before_a_restart_is_not_handled_again_after_it() {
+    let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
+    let (e, seen) = engine(&journal, &clock);
+    let mut e = e.with_foreign_poll(1_000);
+    let foreign = Event { id: EventId("f1".into()), stream: StreamKey("other".into()), kind: EventKind::new("foreign", ""), at: 0, cause: None, correlation: CorrelationId("f1".into()) };
+    journal.append(&foreign).unwrap();
+    clock.advance(1_000);
+    e.run_until_idle().unwrap();
+    assert_eq!(*seen.lock().unwrap(), ["foreign"]);
+    let (again, seen) = engine(&journal, &clock);
+    let mut again = again.with_foreign_poll(1_000);
+    clock.advance(5_000);
+    again.run_until_idle().unwrap();
+    assert!(seen.lock().unwrap().is_empty(), "a handled event is not redelivered to a restarted engine");
+}
+
 struct Panicker;
 
 impl Handler for Panicker {
