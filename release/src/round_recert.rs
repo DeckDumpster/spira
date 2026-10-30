@@ -146,6 +146,25 @@ fn tail(text: &str, n: usize) -> String {
     lines[lines.len().saturating_sub(n)..].join("\n")
 }
 
+/// What certify said about a pass that did not come out green: the red steps it named, or incomplete.
+fn verdict(text: &str) -> String {
+    let named = text.lines().find_map(|l| l.trim().strip_prefix("red=")).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).or_else(|| {
+        text.lines().find_map(|l| {
+            let rest = l.split_once(" is RED at ")?.1;
+            Some(rest.split_once(": ")?.1.trim().to_string()).filter(|s| !s.is_empty())
+        })
+    });
+    match named {
+        Some(steps) => format!("RED: {steps}"),
+        None if text.contains("red-output=") => "RED".to_string(),
+        None => "incomplete, no red named".to_string(),
+    }
+}
+
+fn not_green_line(batch: &str, cert: &Out) -> String {
+    format!("round-recert: {batch} is not green: {} (certify rc={}) — round left open", verdict(&cert.text), cert.code.map_or("signal".into(), |c| c.to_string()))
+}
+
 /// The pass itself: certify, and land only on green. 0 landed, 1 anything else.
 pub fn drive(sys: &dyn Sys, batch: &str, repo: &str) -> u8 {
     let round = match status(sys, repo).and_then(|s| require_open(&s, repo, batch)) {
@@ -159,8 +178,7 @@ pub fn drive(sys: &dyn Sys, batch: &str, repo: &str) -> u8 {
     let cert = queue(sys, &["certify", batch, repo], CERTIFY_DEADLINE_SECS);
     println!("{}", tail(&cert.text, 4));
     if cert.code != Some(0) {
-        let how = if cert.text.contains("red-output=") { "RED" } else { "incomplete, no red named" };
-        println!("round-recert: {batch} is not green: {how} (certify rc={}) — round left open", cert.code.map_or("signal".into(), |c| c.to_string()));
+        println!("{}", not_green_line(batch, &cert));
         return 1;
     }
     let land = queue(sys, &["land", batch, repo], LAND_DEADLINE_SECS);
@@ -328,6 +346,30 @@ mod tests {
         let red = Fake { answers: RefCell::new(vec![out(Some(1), "round is RED")]), slept: RefCell::new(vec![]) };
         assert_eq!(queue(&red, &["certify", "r", "spira"], 1).code, Some(1));
         assert!(red.slept.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_red_certify_names_its_red_step_and_only_a_verdictless_one_is_incomplete() {
+        let printed = "round r is RED at e198ebb: unit-tests lint\nred=unit-tests lint\nmender filed\n";
+        assert_eq!(verdict(printed), "RED: unit-tests lint");
+        assert_eq!(verdict("round r is RED at e198ebb: unit-tests\n"), "RED: unit-tests");
+        assert_eq!(verdict("red=unit-tests\n"), "RED: unit-tests");
+        assert_eq!(verdict("timed out waiting\n"), "incomplete, no red named");
+        assert_eq!(verdict("red=\nround r is RED at abc: lint\n"), "RED: lint");
+        assert_eq!(verdict("red-output=/tmp/x\n"), "RED");
+        let line = not_green_line("r-1", &Out { code: Some(1), text: "red=unit-tests\n".into() });
+        assert!(line.contains("RED: unit-tests") && !line.contains("incomplete"), "{line}");
+    }
+
+    #[test]
+    fn drive_leaves_a_round_with_a_named_red_open_and_fails() {
+        let out = |code, text: &str| Out { code, text: text.to_string() };
+        let fake = Fake {
+            answers: RefCell::new(vec![out(Some(0), "batch_id=r-1\nphase=certifying\nhead=aaa\nround=open\n"), out(Some(1), "red=unit-tests\n")]),
+            slept: RefCell::new(vec![]),
+        };
+        assert_eq!(drive(&fake, "r-1", "spira"), 1);
+        assert!(fake.answers.borrow().is_empty());
     }
 
     struct Recorder(RefCell<Vec<(String, Vec<String>)>>);
