@@ -206,8 +206,13 @@ fn provenance_cmd(args: &[String]) -> ExitCode {
                 match closeout::provenance_read(&d) {
                     Ok(rows) => {
                         blind = false;
-                        for line in closeout::provenance_news(&rows, &seen) {
-                            println!("gh-provenance: {line}");
+                        match closeout::provenance_news(&rows, &seen) {
+                            Ok(news) => {
+                                for line in news {
+                                    println!("gh-provenance: {line}");
+                                }
+                            }
+                            Err(e) => eprintln!("gh-provenance: {e}"),
                         }
                     }
                     Err(e) if !blind => {
