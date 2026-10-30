@@ -11,7 +11,8 @@ pub const CYCLE_PASSES: &str = "spira_bead_cycle_passes";
 
 #[derive(Debug, Default, PartialEq)]
 pub struct Cycle {
-    pub gate: i64,
+    pub gate_wait: i64,
+    pub gate_run: i64,
     pub wait_round: i64,
     pub round_passes: i64,
     pub land: i64,
@@ -21,12 +22,12 @@ pub struct Cycle {
 }
 
 impl Cycle {
-    pub fn seconds(&self) -> [(&'static str, i64); 5] {
-        [("gate", self.gate), ("wait_round", self.wait_round), ("round_passes", self.round_passes), ("land", self.land), ("rework", self.rework)]
+    pub fn seconds(&self) -> [(&'static str, i64); 6] {
+        [("gate_wait", self.gate_wait), ("gate_run", self.gate_run), ("wait_round", self.wait_round), ("round_passes", self.round_passes), ("land", self.land), ("rework", self.rework)]
     }
 
     pub fn total(&self) -> i64 {
-        self.gate + self.wait_round + self.round_passes + self.land + self.rework
+        self.gate_wait + self.gate_run + self.wait_round + self.round_passes + self.land + self.rework
     }
 }
 
@@ -38,10 +39,11 @@ fn text<'a>(v: &'a Value, k: &str) -> &'a str {
     v.get(k).and_then(Value::as_str).unwrap_or("")
 }
 
-/// `bead_events`: the bead's applied events in `seq` order. `batches`: for each batch the bead was
+/// `bead_events`: the bead's applied events in `seq` order. `gate_starts`: the epoch seconds of
+/// each gate-start fact. `batches`: for each batch the bead was
 /// a member of, that batch's pass events as `passes::fold` takes them. None until the bead has
 /// been submitted and landed.
-pub fn fold(bead_events: &[Value], batches: &[Vec<Value>]) -> Option<Cycle> {
+pub fn fold(bead_events: &[Value], gate_starts: &[i64], batches: &[Vec<Value>]) -> Option<Cycle> {
     let moves: Vec<(i64, &str)> = bead_events
         .iter()
         .filter(|e| text(e, "from_state") != text(e, "to_state"))
@@ -57,7 +59,11 @@ pub fn fold(bead_events: &[Value], batches: &[Vec<Value>]) -> Option<Cycle> {
         let ((from, state), (to, _)) = (w[0], w[1]);
         let span = to - from;
         match state {
-            "SUBMITTED" => c.gate += span,
+            "SUBMITTED" => {
+                let started = gate_starts.iter().copied().filter(|t| *t >= from && *t <= to).max().unwrap_or(to);
+                c.gate_wait += started - from;
+                c.gate_run += to - started;
+            }
             "CERTIFIED" => c.wait_round += span,
             "IN_DELIVERY" => {
                 let inside: Vec<(i64, i64)> = windows.iter().filter(|(s, e)| *s < to && *e > from).map(|(s, e)| ((*s).max(from), (*e).min(to))).collect();
@@ -117,7 +123,9 @@ fn read(conn: &Conn, id: &str) -> Option<Cycle> {
             conn.query(&format!("SELECT event, evidence, at FROM event WHERE machine = 'batch' AND applied = 1 AND lc_key = '{b}' AND event IN ({}) ORDER BY seq", passes::FETCHED)).ok()
         })
         .collect::<Vec<_>>();
-    fold(&beads, &batches)
+    let starts = conn.query(&format!("SELECT `at` FROM event WHERE machine = '{}' AND applied = 1 AND lc_key = '{key}' AND event = '{}' ORDER BY seq", crate::facts::MACHINE, crate::facts::GATE_START)).ok()?;
+    let starts: Vec<i64> = starts.iter().filter_map(|r| int(r, "at")).collect();
+    fold(&beads, &starts, &batches)
 }
 
 #[cfg(test)]
@@ -154,11 +162,12 @@ mod tests {
             pass("PassStarted", json!({"n": 2, "head": "c"}), 1600),
             pass("PassGreen", json!({"n": 2, "suites_s": 1, "build_s": 1}), 2200),
         ];
-        let c = fold(&bead, &[first, second]).expect("a landed bead folds");
+        let c = fold(&bead, &[110, 1040], &[first, second]).expect("a landed bead folds");
         assert_eq!(
             c,
             Cycle {
-                gate: 60 + 100,
+                gate_wait: 10 + 40,
+                gate_run: 50 + 60,
                 wait_round: 240 + 50 + 100 + 100,
                 round_passes: 200 + 900,
                 land: 50 + 100,
@@ -171,15 +180,29 @@ mod tests {
     }
 
     #[test]
+    fn a_gate_that_never_recorded_a_start_is_all_wait() {
+        let bead = vec![mv("WORKING", "SUBMITTED", 0), mv("SUBMITTED", "CERTIFIED", 40), mv("CERTIFIED", "LANDED", 50)];
+        let c = fold(&bead, &[], &[]).unwrap();
+        assert_eq!((c.gate_wait, c.gate_run), (40, 0));
+    }
+
+    #[test]
+    fn the_last_gate_start_in_a_stretch_splits_wait_from_run() {
+        let bead = vec![mv("WORKING", "SUBMITTED", 0), mv("SUBMITTED", "CERTIFIED", 100), mv("CERTIFIED", "LANDED", 110)];
+        let c = fold(&bead, &[20, 70, 500], &[]).unwrap();
+        assert_eq!((c.gate_wait, c.gate_run), (70, 30), "a start outside the stretch is ignored");
+    }
+
+    #[test]
     fn a_bead_that_has_not_landed_has_no_cycle() {
         let bead = vec![mv("WORKING", "SUBMITTED", 1), mv("SUBMITTED", "CERTIFIED", 5)];
-        assert_eq!(fold(&bead, &[]), None);
+        assert_eq!(fold(&bead, &[], &[]), None);
     }
 
     #[test]
     fn an_in_delivery_stretch_with_no_pass_is_all_waiting() {
         let bead = vec![mv("WORKING", "SUBMITTED", 0), mv("SUBMITTED", "CERTIFIED", 10), mv("CERTIFIED", "IN_DELIVERY", 20), mv("IN_DELIVERY", "LANDED", 50)];
-        let c = fold(&bead, &[]).unwrap();
+        let c = fold(&bead, &[], &[]).unwrap();
         assert_eq!((c.wait_round, c.round_passes, c.land, c.passes), (40, 0, 0, 0));
     }
 }

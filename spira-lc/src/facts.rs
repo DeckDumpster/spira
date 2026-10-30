@@ -11,9 +11,10 @@ const CANNOT_TELL: i32 = 2;
 const REFUSED: i32 = 3;
 
 /// Closed: a kind outside this list is refused, so a typo cannot start a new history.
-pub const KINDS: &[&str] = &["claimed", "requeued", "reopen", "reclaimed", "poison.cleared", "recurred", "lapsed", "session", "checkpointed", "fast-tier-red", "blind-rework", "rejection", "escalated", "no-progress", "__doctor_probe__"];
+pub const KINDS: &[&str] = &["claimed", "requeued", "reopen", "reclaimed", "poison.cleared", "recurred", "lapsed", "session", "checkpointed", "fast-tier-red", "blind-rework", "rejection", "escalated", "no-progress", "gate-start", "__doctor_probe__"];
 
 pub const MACHINE: &str = "fact";
+pub const GATE_START: &str = "gate-start";
 pub const CAUSE_MAX: usize = 200;
 pub const READ_MAX: usize = 120;
 /// Kinds whose cause is a multi-line digest rather than a one-line token.
@@ -183,6 +184,13 @@ pub fn cmd_facts_query(args: &[String], conn: &Conn) -> (i32, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_gate_start_kind_the_gate_sends_is_one_the_fact_verb_accepts() {
+        assert_eq!(GATE_START, "gate-start");
+        assert!(KINDS.contains(&GATE_START));
+        assert!(insert_sql("sp-a", GATE_START, "", "gate", 5).contains("'fact', 'sp-a', 'gate-start'"));
+    }
 
     #[test]
     fn the_insert_is_an_applied_fact_with_the_cause_as_evidence() {

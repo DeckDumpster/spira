@@ -609,6 +609,9 @@ impl<'w, W: World> Trial<'w, W> {
         self.s.waited_ms = w.now_ms().saturating_sub(t0_ms);
         self.s.waited = admission_waited + tree_waited;
         self.s.start = w.now();
+        if !self.s.bead.is_empty() {
+            w.lc_gate_start(&self.s.bead);
+        }
         if tree_waited > 0 {
             w.eprint(&format!("gate: waited {tree_waited}s for {}", tree.display()));
         }
