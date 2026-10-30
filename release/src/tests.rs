@@ -2720,3 +2720,25 @@ fn a_delta_with_a_nested_table_round_trips_through_render() {
     assert!(d.added.contains_key("persona.x.model") && d.added.contains_key("spira.k"));
     assert_eq!(config_delta::Delta::parse(&d.render()).unwrap(), d);
 }
+
+/// A tarball packed the way build-tarball.sh packs one (a versioned top directory holding the
+/// tracked `spira/` tree) must unpack, through install-tarball's own home extraction, to a
+/// home whose key registry loads — `conf.toml.d` included.
+#[test]
+fn install_tarball_finds_the_whole_key_registry_in_the_unpacked_tree() {
+    let sb = Sandbox::new();
+    let top = sb.p().join("pack/spira-daily");
+    fs::create_dir_all(top.join("spira")).unwrap();
+    let repo_spira = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+    for d in ["conf.d", "conf.toml.d", "runes"] {
+        let st = std::process::Command::new("cp").arg("-r").arg(repo_spira.join(d)).arg(top.join("spira").join(d)).status().unwrap();
+        assert!(st.success());
+    }
+    let tb = sb.p().join("spira-daily.tar.gz");
+    let st = std::process::Command::new("tar").arg("-czf").arg(&tb).arg("-C").arg(sb.p().join("pack")).arg("spira-daily").status().unwrap();
+    assert!(st.success());
+    let (_scratch, home) = install::tarball_home(&tb).unwrap();
+    let reg = spira_config::registry::Registry::load(&home).unwrap();
+    assert!(reg.keys.contains_key("SPIRA_HOTFIX_ALERT_HOURS"), "a conf.toml.d key must be found");
+    assert!(reg.keys.keys().any(|k| home.join("conf.d").join(k).is_file()), "a conf.d key must be found");
+}
