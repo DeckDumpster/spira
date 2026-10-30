@@ -230,6 +230,39 @@ is     "8b: still blind — no repeat mail (transitions, not state)" "0" "$(mail
 
 # ============================================================================
 echo
+echo "10 — a failed fetch measures against the remote-tracking ref; BLIND only when it is missing or too old"
+# ============================================================================
+clear_mail
+rm -rf "$RUN/watchd"
+git -C "$REPO" update-ref --create-reflog -m restored local/main "$(git -C "$REPO" rev-parse local/main)"
+timeout 5 git -C "$REPO" fetch -q origin main
+git -C "$REPO" remote set-url origin "$TMP/unreachable.git"
+publish_commit "after-fetch-broke"
+BKCOUNT=0 BKAGE=10800
+out="$(pb --show)"
+nowant "10a: a failed fetch with a fresh tracking ref is not BLIND" "BLIND" "$out"
+want   "10a: the backlog is still computed"                 "OVER fixlocal" "$out"
+want   "10a: the fallback names the ref's age"              "last fetched" "$out"
+
+clear_mail
+rm -rf "$RUN/watchd"
+touch -d '3 hours ago' "$REPO/.git/FETCH_HEAD"
+out="$(pb --show)"
+want "10b: a tracking ref older than the bound is BLIND"    "BLIND fixlocal" "$out"
+want "10b: the message carries the fetch exit status"       "exit " "$out"
+want "10b: and the fetch's own error"                       "unreachable.git" "$out"
+want "10b: and the age against the bound"                   "old (bound" "$out"
+
+clear_mail
+rm -rf "$RUN/watchd"
+git -C "$REPO" update-ref -d refs/remotes/origin/main
+out="$(pb --show)"
+want "10c: no tracking ref at all is BLIND"                 "BLIND fixlocal" "$out"
+want "10c: and says there is none"                          "no remote-tracking ref exists" "$out"
+git -C "$REPO" remote set-url origin "$REMOTE"
+
+# ============================================================================
+echo
 echo "9 — a spira.toml that does not parse alarms; the production-shaped gate value parses"
 # ============================================================================
 clear_mail
