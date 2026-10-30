@@ -727,7 +727,7 @@ fn a_cached_red_is_refused_until_a_reason_is_given() {
 
 #[test]
 fn a_first_check_of_a_tip_runs_its_suite_over_a_cached_red_when_given_a_repeat_reason_flag() {
-    let mut w = World::new("repeat-flag");
+    let w = World::new("repeat-flag");
     let rt = runtime();
     let b = FakeBuilder::new(None);
     assert_eq!(w.run(&rt, &b, &["--suites", "test-b.sh", "topic"], "", &w.root), 1);
