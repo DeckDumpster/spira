@@ -76,18 +76,22 @@ impl Handler for Asks {
         if ev.kind.tag == TICK {
             let input = serde_json::to_string(&carried::<Carry>(view, &ev.stream, STATE).seen).unwrap_or_default();
             return vec![
-                Command::Effect(EffectSpec { name: OBSERVE.into(), input, deadline_ms: DEADLINE_MS }),
-                Command::Schedule { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
+                Command::Probe(EffectSpec { name: OBSERVE.into(), input, deadline_ms: DEADLINE_MS }),
+                Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
         if !answers_observe(view, ev, OBSERVE) {
             return vec![];
         }
         let Ok(snap) = serde_json::from_str::<Snapshot>(&ev.kind.body) else { return vec![] };
-        let (next, say) = decide(&carried::<Carry>(view, &ev.stream, STATE), &snap);
+        let carry = carried::<Carry>(view, &ev.stream, STATE);
+        let (next, say) = decide(&carry, &snap);
         ctx.event().set("asks.said", say.len() as u64);
         let now = ev.at / 1000;
-        let mut cmds = vec![Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default()))];
+        let mut cmds = vec![];
+        if next != carry {
+            cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default())));
+        }
         for m in say {
             cmds.push(Command::Effect(EffectSpec { name: INBOX_APPEND.into(), input: format!("{} [watch:{NAME}] {m}", iso8601(now)), deadline_ms: DEADLINE_MS }));
         }

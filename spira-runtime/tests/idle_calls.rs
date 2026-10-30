@@ -6,8 +6,11 @@ use std::sync::{Arc, Mutex};
 use runtime::event::*;
 use runtime::journal::{Journal, Offset, Poison, ScheduleRow};
 use runtime::ports::{Clock, VirtualClock};
-use runtime::{Engine, Executor, MemJournal, Outcome, Result};
-use spira_runtime::watchers::{inbox_keeper::InboxKeeper, round_duty::RoundDuty};
+use runtime::{Executor, MemJournal, Outcome, Result};
+use spira_runtime::watchers::{asks::Asks, inbox_keeper::InboxKeeper, pr_notify::PrNotify, round_duty::RoundDuty};
+use runtime::marker::NullMarker;
+use runtime::wide::NullSink;
+use spira_runtime::{open_engine, Settings};
 
 struct Counting {
     inner: Arc<MemJournal>,
@@ -71,27 +74,75 @@ impl Journal for Counting {
 }
 
 const PER_EVENT: u64 = 5;
+const IDLE_CALLS_PER_MINUTE: u64 = 12;
 
-#[test]
-fn ten_idle_minutes_at_production_intervals_cost_a_few_store_calls_per_event() {
+/// The registration set the service builds from its shipped intervals, not a hand-copied one.
+fn production() -> Settings {
+    let get = |k: &str| -> std::result::Result<String, String> {
+        Ok(match k {
+            "SPIRA_RUNTIME_HEARTBEAT_URL" => "http://127.0.0.1:9/ping".into(),
+            "SPIRA_METRICS_ENDPOINT" => String::new(),
+            "SPIRA_RUNTIME_HEARTBEAT_SECS" | "SPIRA_RUNTIME_INBOX_KEEPER_SECS" => "60".into(),
+            "SPIRA_RUNTIME_PR_NOTIFY_SECS" => "90".into(),
+            "SPIRA_RUNTIME_ASKS_SECS" => "60".into(),
+            "SPIRA_PR_DEPLOY_GIVEUP" => "3600".into(),
+            "SPIRA_GH_API" => "http://127.0.0.1:9".into(),
+            "SPIRA_BROKER_GH_TOKEN" => String::new(),
+            "SPIRA_MAIL" | "SPIRA_ASK_LABEL" => "/unused".into(),
+            "SPIRA_RUNTIME_ROUND_DUTY_SECS" => "15".into(),
+            "SPIRA_RUNTIME_STALL_LIMIT" => "2".into(),
+            "SPIRA_ROUND_MIN" | "SPIRA_ROUND_MAX_OPEN" => "1".into(),
+            "SPIRA_ROUND_DUE_REMIND" | "SPIRA_CONCIERGE_INBOX_STALL" => "600".into(),
+            "SPIRA_ROUND_IDLE_CUT" => "900".into(),
+            "SPIRA_CONCIERGE_INBOX_BACKOFF" => "3600".into(),
+            "SPIRA_RUN" | "SPIRA_QUEUE_DIR" | "SPIRA_REPO_MAP" | "SPIRA_CONCIERGE_INBOX" | "SPIRA_LC_SOCKET" => "/unused".into(),
+            "SPIRA_HOME_REPO" => "spira".into(),
+            _ => return Err(k.to_string()),
+        })
+    };
+    Settings::from_lookup(&get).unwrap()
+}
+
+fn quiet_world(effect: &str, _poll: u64) -> String {
+    match effect {
+        spira_runtime::watchers::round_duty::OBSERVE => r#"{"certified":0,"by_repo":"","stopped":"","state":"none","open":0,"lines":{},"fresh":[]}"#.into(),
+        spira_runtime::watchers::inbox_keeper::OBSERVE => r#"{"triage_alive":true,"inbox_mtime":0}"#.into(),
+        spira_runtime::watchers::pr_notify::OBSERVE => r#"{"repos":[]}"#.into(),
+        spira_runtime::watchers::asks::OBSERVE => r#"{"open":[],"held":[]}"#.into(),
+        _ => String::new(),
+    }
+}
+
+/// A backlog that changes on every observation: every poll has something to journal.
+fn busy_world(effect: &str, poll: u64) -> String {
+    match effect {
+        spira_runtime::watchers::round_duty::OBSERVE => format!(r#"{{"certified":{},"by_repo":"","stopped":"","state":"none","open":0,"lines":{{}},"fresh":[]}}"#, poll + 1),
+        other => quiet_world(other, poll),
+    }
+}
+
+struct Run {
+    total: u64,
+    events: u64,
+    wakes: u64,
+    calls: BTreeMap<&'static str, u64>,
+}
+
+fn ten_minutes(world: fn(&str, u64) -> String) -> Run {
     let mem = MemJournal::new();
     let counting = Arc::new(Counting { inner: mem.clone(), calls: Mutex::new(BTreeMap::new()) });
     let clock = VirtualClock::new(1_800_000_000_000);
     let start = clock.now_ms();
-    let regs = vec![
-        runtime::heartbeat::Heartbeat { interval_ms: 60_000, ping_deadline_ms: 5_000 }.registration(),
-        RoundDuty { interval_ms: 15_000, min: 1, max_open: 1, remind_secs: 600, idle_cut_secs: 900 }.registration(),
-        InboxKeeper { interval_ms: 60_000, stall_secs: 600, backoff_secs: 3600 }.registration(),
-    ];
-    let mut e = Engine::open(counting.clone(), Arc::new(clock.clone()), regs, 0).unwrap();
-    for (id, stream, kind) in [runtime::heartbeat::Heartbeat::boot(), RoundDuty::boot(), InboxKeeper::boot()] {
-        e.submit(id, stream, kind).unwrap();
+    let mut e = open_engine(&production(), counting.clone(), Arc::new(clock.clone()), Arc::new(NullMarker), Arc::new(NullSink), vec![]).unwrap();
+    for (_, stream, kind) in [runtime::heartbeat::Heartbeat::boot(), RoundDuty::boot(), InboxKeeper::boot(), PrNotify::boot(), Asks::boot()] {
+        e.start(stream, kind);
     }
-    let mut wakes = 0;
+    let (mut wakes, mut polls) = (0, 0);
     while clock.now_ms() < start + 600_000 {
         e.run_until_idle().unwrap();
         for p in e.pending_effects() {
-            e.complete(&p.key, Outcome::Succeeded(String::new())).unwrap();
+            polls += 1;
+            e.complete(&p.key, Outcome::Succeeded(world(&p.spec.name, polls))).unwrap();
         }
         e.run_until_idle().unwrap();
         let Some(next) = e.next_timer_at() else { break };
@@ -100,7 +151,30 @@ fn ten_idle_minutes_at_production_intervals_cost_a_few_store_calls_per_event() {
     }
     let events = mem.read_from(0, 100_000).unwrap().len() as u64;
     let calls = counting.calls.lock().unwrap().clone();
-    let total = counting.total();
-    assert!(events > 40 && wakes > 40, "the simulation did not run: {events} events, {wakes} wakes");
-    assert!(total <= PER_EVENT * events, "{total} store calls for {events} events over {wakes} wakes ({}/event): {calls:?}", total / events);
+    Run { total: counting.total(), events, wakes, calls }
+}
+
+#[test]
+fn ten_idle_minutes_at_production_intervals_cost_a_dozen_store_calls_a_minute_at_most() {
+    let r = ten_minutes(quiet_world);
+    assert!(r.wakes >= 40, "the simulation did not run: {} wakes", r.wakes);
+    assert!(r.total <= IDLE_CALLS_PER_MINUTE * 10, "{} store calls in ten idle minutes ({}/min), {} journal events: {:?}", r.total, r.total / 10, r.events, r.calls);
+}
+
+#[test]
+fn a_world_that_changes_on_every_poll_costs_a_few_store_calls_per_journal_event() {
+    let r = ten_minutes(busy_world);
+    assert!(r.events > 40 && r.wakes >= 40, "the simulation did not run: {} events, {} wakes", r.events, r.wakes);
+    assert!(r.total <= PER_EVENT * r.events, "{} store calls for {} events over {} wakes ({}/event): {:?}", r.total, r.events, r.wakes, r.total / r.events, r.calls);
+}
+
+#[test]
+fn every_canned_observe_reply_parses_into_its_watchers_snapshot() {
+    use spira_runtime::watchers::{asks, inbox_keeper, pr_notify, round_duty};
+    let quiet = |effect| quiet_world(effect, 0);
+    serde_json::from_str::<round_duty::Snapshot>(&quiet(round_duty::OBSERVE)).expect("round-duty reply");
+    serde_json::from_str::<inbox_keeper::Snapshot>(&quiet(inbox_keeper::OBSERVE)).expect("inbox-keeper reply");
+    serde_json::from_str::<pr_notify::Snapshot>(&quiet(pr_notify::OBSERVE)).expect("pr-notify reply");
+    serde_json::from_str::<asks::Snapshot>(&quiet(asks::OBSERVE)).expect("asks reply");
+    serde_json::from_str::<round_duty::Snapshot>(&busy_world(round_duty::OBSERVE, 3)).expect("busy round-duty reply");
 }

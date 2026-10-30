@@ -68,8 +68,8 @@ async fn serve(settings: Settings, notifier: Arc<Notifier>) -> Result<(), String
         let (settings, clock, sink) = (settings.clone(), clock.clone(), sink.clone());
         move || -> Result<runtime::Engine, String> {
             let mut engine = open_engine(&settings, journal, clock, Arc::new(FileMarker(settings.marker_path())), sink, vec![]).map_err(|e| e.to_string())?;
-            for (id, stream, kind) in [runtime::heartbeat::Heartbeat::boot(), spira_runtime::watchers::round_duty::RoundDuty::boot(), spira_runtime::watchers::inbox_keeper::InboxKeeper::boot(), spira_runtime::watchers::pr_notify::PrNotify::boot(), spira_runtime::watchers::asks::Asks::boot()] {
-                runtime::Executor::submit(&mut engine, id, stream, kind).map_err(|e| e.to_string())?;
+            for (_, stream, kind) in [runtime::heartbeat::Heartbeat::boot(), spira_runtime::watchers::round_duty::RoundDuty::boot(), spira_runtime::watchers::inbox_keeper::InboxKeeper::boot(), spira_runtime::watchers::pr_notify::PrNotify::boot(), spira_runtime::watchers::asks::Asks::boot()] {
+                engine.start(stream, kind);
             }
             Ok(engine)
         }

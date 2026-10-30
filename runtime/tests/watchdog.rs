@@ -91,27 +91,34 @@ fn heartbeat_engine(journal: &Arc<dyn Journal>, clock: &VirtualClock) -> Engine 
     Engine::open(journal.clone(), Arc::new(clock.clone()), vec![Heartbeat { interval_ms: 1000, ping_deadline_ms: 500 }.registration()], 1).unwrap()
 }
 
-fn pings(journal: &Arc<dyn Journal>) -> usize {
-    journal.read_from(0, 1000).unwrap().iter().filter(|(_, e)| e.kind.tag == EFFECT_REQUESTED && e.kind.body.contains(PING)).count()
+/// Answers every ping the engine has asked for and returns how many there were.
+fn pings(e: &mut Engine) -> usize {
+    let asked: Vec<_> = e.pending_effects().into_iter().filter(|p| p.spec.name == PING).collect();
+    for p in &asked {
+        e.complete(&p.key, Outcome::Succeeded(String::new())).unwrap();
+    }
+    e.run_until_idle().unwrap();
+    asked.len()
 }
 
 #[test]
-fn the_heartbeat_pings_only_after_the_journal_has_advanced() {
+fn the_heartbeat_pings_only_after_the_engine_has_seen_other_events() {
     let (journal, clock): (Arc<dyn Journal>, _) = (MemJournal::new(), VirtualClock::new(0));
     let mut e = heartbeat_engine(&journal, &clock);
-    let (id, stream, kind) = Heartbeat::boot();
-    e.submit(id, stream, kind).unwrap();
+    let (_, stream, kind) = Heartbeat::boot();
+    e.start(stream, kind);
     e.run_until_idle().unwrap();
-    assert_eq!(pings(&journal), 0, "nothing else has happened: no ping");
+    assert_eq!(pings(&mut e), 0, "nothing else has happened: no ping");
 
     e.submit("other", "elsewhere", EventKind::new("anything", "")).unwrap();
     clock.advance(1000);
     e.run_until_idle().unwrap();
-    assert_eq!(pings(&journal), 1, "a foreign event advanced the journal");
+    assert_eq!(pings(&mut e), 1, "a foreign event advanced the journal");
 
     clock.advance(1000);
     e.run_until_idle().unwrap();
-    assert_eq!(pings(&journal), 1, "its own ping is not progress");
+    assert_eq!(pings(&mut e), 0, "its own ping is not progress");
+    assert_eq!(journal.read_from(0, 1000).unwrap().len(), 1, "an idle heartbeat writes nothing to the journal");
     assert_eq!(STREAM, "runtime.heartbeat");
     assert_eq!(HEARTBEAT, "heartbeat");
 }

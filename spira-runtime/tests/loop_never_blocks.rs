@@ -148,6 +148,19 @@ fn today_log(dir: &std::path::Path) -> std::path::PathBuf {
     dir.join(format!("spira-runtime.logs.{}.jsonl", spira_otel::utc_date(std::time::SystemTime::now())))
 }
 
+struct BeatCounter(Arc<AtomicUsize>);
+
+impl Handler for BeatCounter {
+    fn interests(&self) -> &[EventKindTag] {
+        &["heartbeat"]
+    }
+
+    fn handle(&self, _: &Ctx, _: &Projection, _: &Event) -> Vec<Command> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        vec![]
+    }
+}
+
 #[tokio::test]
 async fn a_stalled_telemetry_disk_does_not_stop_kicks_or_the_heartbeat() {
     let d = testkit::TempDir::new("lnb-disk");
@@ -159,9 +172,10 @@ async fn a_stalled_telemetry_disk_does_not_stop_kicks_or_the_heartbeat() {
     let (n, kicks) = notifier(&d);
     let mem = MemJournal::new();
     let sink: Arc<OtlpSink> = Arc::new(OtlpSink::new(spira_otel::logs::LogSink::new(s.otel_dir(), "spira-runtime"), 1));
-    let mut engine = open_engine(&s, mem.clone(), Arc::new(WallClock), Arc::new(NullMarker), sink.clone(), vec![]).unwrap();
-    let (id, stream, kind) = runtime::heartbeat::Heartbeat::boot();
-    engine.submit(id, stream, kind).unwrap();
+    let beats = Arc::new(AtomicUsize::new(0));
+    let mut engine = open_engine(&s, mem.clone(), Arc::new(WallClock), Arc::new(NullMarker), sink.clone(), vec![Registration::new("beats", BeatCounter(beats.clone()))]).unwrap();
+    let (_, stream, kind) = runtime::heartbeat::Heartbeat::boot();
+    engine.start(stream, kind);
     let dropped = spira_otel::logs::queue_dropped();
     let (tx, rx) = mpsc::channel(1);
     std::mem::forget(tx);
@@ -172,7 +186,7 @@ async fn a_stalled_telemetry_disk_does_not_stop_kicks_or_the_heartbeat() {
     assert!(!host.is_finished());
     host.abort();
     kicks.gaps_within(from, to, WINDOW).unwrap();
-    assert!(count_of(&mem, "heartbeat") >= 3, "the boot beat and at least two scheduled ones reach the journal");
+    assert!(beats.load(Ordering::SeqCst) >= 3, "the boot beat and at least two timed ones fire");
     assert!(spira_otel::logs::queue_dropped() > dropped, "a full telemetry queue drops and counts");
     let _ = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(&fifo);
 }

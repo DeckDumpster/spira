@@ -247,8 +247,8 @@ impl Handler for PrNotify {
         if ev.kind.tag == TICK {
             let input = serde_json::to_string(&carried::<Carry>(view, &ev.stream, STATE)).unwrap_or_default();
             return vec![
-                Command::Effect(EffectSpec { name: OBSERVE.into(), input, deadline_ms: OBSERVE_DEADLINE_MS }),
-                Command::Schedule { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
+                Command::Probe(EffectSpec { name: OBSERVE.into(), input, deadline_ms: OBSERVE_DEADLINE_MS }),
+                Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
         if !answers_observe(view, ev, OBSERVE) || ev.kind.tag != EFFECT_SUCCEEDED {
@@ -256,9 +256,13 @@ impl Handler for PrNotify {
         }
         let Ok(snap) = serde_json::from_str::<Snapshot>(&ev.kind.body) else { return vec![] };
         let now = ev.at / 1000;
-        let (next, say) = decide(self, &carried::<Carry>(view, &ev.stream, STATE), &snap, now);
+        let carry = carried::<Carry>(view, &ev.stream, STATE);
+        let (next, say) = decide(self, &carry, &snap, now);
         ctx.event().set("pr_notify.said", (say.lines.len() + say.notes.len()) as u64);
-        let mut cmds = vec![Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default()))];
+        let mut cmds = vec![];
+        if next != carry {
+            cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default())));
+        }
         for m in say.lines {
             cmds.push(Command::Effect(EffectSpec { name: INBOX_APPEND.into(), input: format!("{} [watch:{NAME}] {m}", iso8601(now)), deadline_ms: DEADLINE_MS }));
         }

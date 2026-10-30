@@ -34,7 +34,13 @@ pub struct Snapshot {
 pub struct Carry {
     pub last_seen: Option<u64>,
     pub last_wake: u64,
+    #[serde(default)]
+    pub persisted_seen: u64,
 }
+
+/// `last_seen` advances every tick but is journaled only this often per stall window, so a restart
+/// finds it at most a quarter-stall stale.
+const SEEN_SAVES_PER_STALL: u64 = 4;
 
 pub const WAKE_LINE: &str = "[inbox-keeper] events are waiting and no inbox monitor is running — re-arm: Monitor inbox-triage";
 
@@ -85,8 +91,8 @@ impl Handler for InboxKeeper {
         }
         if ev.kind.tag == TICK {
             return vec![
-                Command::Effect(EffectSpec { name: OBSERVE.into(), input: String::new(), deadline_ms: DEADLINE_MS }),
-                Command::Schedule { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
+                Command::Probe(EffectSpec { name: OBSERVE.into(), input: String::new(), deadline_ms: DEADLINE_MS }),
+                Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
         if !Self::answers_observe(view, ev) {
@@ -102,9 +108,17 @@ impl Handler for InboxKeeper {
         };
         let (next, say) = decide(self, &carry, &snap, now);
         ctx.event().set("inbox_keeper.woke", u64::from(say.is_some()));
-        let mut cmds = vec![Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default()))];
+        let mut cmds = vec![];
         if say.is_some() {
             cmds.push(Command::Effect(EffectSpec { name: CONCIERGE_WAKE.into(), input: WAKE_LINE.into(), deadline_ms: WAKE_DEADLINE_MS }));
+        }
+        let mut next = Carry { persisted_seen: carry.persisted_seen, ..next };
+        let behind = next.last_seen.unwrap_or(0).saturating_sub(carry.persisted_seen) >= self.stall_secs / SEEN_SAVES_PER_STALL;
+        if next.last_wake != carry.last_wake || behind {
+            next.persisted_seen = next.last_seen.unwrap_or(0);
+            cmds.push(Command::Emit(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default())));
+        } else if next != carry {
+            cmds.push(Command::Note(EventKind::new(STATE, &serde_json::to_string(&next).unwrap_or_default())));
         }
         cmds
     }

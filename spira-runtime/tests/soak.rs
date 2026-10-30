@@ -2,7 +2,8 @@
 //! registry, a private `dolt sql-server` built the way install builds the lifecycle store
 //! (schema, migrations, grants.sql), and `spira-lc serve` logged in as `spira_lc` — never root.
 //! The service must still be alive after twenty-odd beats and several round-duty ticks, with the
-//! journal advanced, the heartbeat URL pinged and the watchdog kicked inside its period.
+//! heartbeat URL pinged, the watchdog kicked inside its period and the journal left to what
+//! changed: a quiet poll writes nothing to it.
 
 use std::fs;
 use std::io::{Read, Write};
@@ -336,12 +337,12 @@ fn spira_runtime_serves_for_twenty_beats_against_the_production_store() {
 
     let events = journal(&socket).unwrap_or_else(|e| panic!("{}", diag(&format!("the journal does not read back through spira-lc: {e}"))));
     let count = |stream: &str, tag: &str| events.iter().filter(|e| e["stream"] == stream && e["kind"]["tag"] == tag).count();
-    let beats = count("runtime.heartbeat", "heartbeat");
-    let ticks = count("watch.round-duty", "round-duty.tick");
-    let summary = format!("setup {setup:?}; {} events, {beats} heartbeats, {ticks} round-duty ticks, {} pings", events.len(), pings.load(Ordering::SeqCst));
+    let polls = events.iter().filter(|e| e["kind"]["tag"] == "effect.requested" && e["kind"]["body"].as_str().is_some_and(|b| b.contains("observe") || b.contains("heartbeat.ping"))).count();
+    let summary = format!("setup {setup:?}; {} events, {polls} observe or ping requests, {} pings", events.len(), pings.load(Ordering::SeqCst));
     eprintln!("soak: {summary}");
-    assert!(beats >= 20, "{}", diag(&format!("fewer than 20 heartbeats reached the journal: {summary}")));
-    assert!(ticks >= 5, "{}", diag(&format!("fewer than 5 round-duty ticks reached the journal: {summary}")));
+    assert_eq!(polls, 0, "{}", diag(&format!("a poll or a ping was journaled: {summary}")));
+    assert_eq!(count("runtime.heartbeat", "heartbeat"), 0, "{}", diag(&format!("a beat was journaled: {summary}")));
+    assert!(count("watch.round-duty", "round-duty.state") >= 1, "{}", diag(&format!("the first observation of the world is journaled as state: {summary}")));
     assert!(pings.load(Ordering::SeqCst) >= 10, "{}", diag(&format!("the heartbeat URL was pinged fewer than 10 times: {summary}")));
     for stream in ["runtime.heartbeat", "watch.round-duty"] {
         let p = runtime::socket::lc_call(&socket, &["journal", "poisoned", stream]).map_err(|e| e.to_string());
@@ -363,6 +364,4 @@ fn spira_runtime_serves_for_twenty_beats_against_the_production_store() {
     let said = fs::read_to_string(&inbox).unwrap_or_default();
     assert!(said.contains("ROUND RESULT 300: red sp-soak"), "{}", diag("round-duty never relayed the result line to the inbox"));
     assert!(!said.contains("ROUND STATE UNKNOWN"), "{}", diag("round-duty called an open round's state unknown"));
-    let observed: Vec<Value> = events.iter().filter(|e| e["stream"] == "watch.round-duty" && e["kind"]["tag"] == "effect.succeeded").filter_map(|e| e["kind"]["body"].as_str().and_then(|b| serde_json::from_str(b).ok())).collect();
-    assert!(!observed.is_empty() && observed.iter().all(|s| s["state"] == "open" && s["open"] == 1), "{}", diag(&format!("the open round (and not the abandoned one) is what round-duty sees: {observed:?}")));
 }
