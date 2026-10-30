@@ -879,6 +879,9 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 new.state = BeadState::Submitted;
                 new.tip = Some(tip.clone());
                 new.gate_key = None;
+                new.holder = None;
+                new.persona = None;
+                new.lease_until = None;
                 new.version += 1;
                 Outcome::applied(new)
             }
@@ -1826,6 +1829,17 @@ mod tests {
         assert_eq!(out.row.version, r.version + 1);
         // Still refused from a state a round never takes.
         assert!(!apply(&row(BeadState::Rework), &ev(BeadState::Rework, 0, BeadEventKind::Deliver)).applied);
+    }
+
+    #[test]
+    fn a_submit_releases_the_holder_so_no_dead_holder_outlives_the_session() {
+        let mut r = row(BeadState::Working);
+        r.holder = Some("dwarf-1@1.2".into());
+        r.persona = Some("builder".into());
+        r.lease_until = Some(9_999_999_999);
+        let out = apply(&r, &ev(BeadState::Working, 0, BeadEventKind::Submit { tip: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into() }));
+        assert_eq!(out.row.state, BeadState::Submitted);
+        assert_eq!((out.row.holder, out.row.persona, out.row.lease_until), (None, None, None));
     }
 
     #[test]

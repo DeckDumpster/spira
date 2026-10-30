@@ -488,7 +488,7 @@ impl<'a> Pass<'a> {
             Err(f) => return f,
         };
         if self.files.deferred_to_round(br, &tip) {
-            self.log(&format!("CHECK6 {id}: {br} at {tip} was deferred to round: over-cap — not gated again"));
+            self.log(&format!("CHECK6 {id}: {br} at {tip} was deferred to round — not gated again"));
             return Flow::Next;
         }
         if self.s.gate_worker {
@@ -567,16 +567,13 @@ impl<'a> Pass<'a> {
                     self.log(&format!("CHECK6 {id}: held — the base fails its own gate (suite {})", g.suite));
                     self.base_fail(w, br, id, bead, &tip, &g);
                 }
-                GateOutcome::NoVerdict if reason == "over-cap" => {
-                    self.files.defer_to_round(br, &tip);
-                    self.log(&format!("CHECK6 {id}: {br} at {tip} deferred to round: over-cap"));
-                }
                 GateOutcome::NoVerdict if dead_run.is_none() => {
-                    if matches!(reason.as_str(), "scratch-short" | "died") {
+                    let host_cause = matches!(reason.as_str(), "scratch-short" | "died" | "over-cap");
+                    if host_cause {
                         self.files.back_off(br, &tip, self.clock.now());
                     }
                     self.lib.noverdict(id, br, name, &reason, g.outcome.word(), &g.out);
-                    if !moved && self.files.bump_infra(br, &tip) >= self.s.noverdict_max.max(1) {
+                    if !moved && self.files.bump_infra(br, &tip) >= self.s.noverdict_max.max(1) && !host_cause {
                         self.files.defer_to_round(br, &tip);
                         self.log(&format!("CHECK6 {id}: {br} at {tip} deferred to round: no gate verdict {} time(s) running", self.s.noverdict_max.max(1)));
                     }

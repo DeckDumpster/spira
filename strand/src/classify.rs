@@ -114,6 +114,8 @@ pub struct Partition<'a> {
     /// for it (sp-psztcc).
     pub held_ask: HashSet<String>,
     pub held_poison: HashSet<String>,
+    /// Beads whose lifecycle row is SUBMITTED with no gate queued, claimed or filed for them.
+    pub ungated: HashSet<String>,
     /// Live bead → the prerequisites its lifecycle row's stack names.
     pub stacked_on: HashMap<String, Vec<String>>,
     pub vocab: &'a Vocab,
@@ -186,7 +188,25 @@ impl<'a> Partition<'a> {
         }
         self.cycles(&members, &mut rows);
         self.stack_deadlocks(&members, &mut rows);
+        self.submitted_ungated(&mut rows);
         rows
+    }
+
+    // -- a SUBMITTED row nothing will gate: no queued job, and a round takes the row to
+    // IN_DELIVERY, so SUBMITTED means no open round holds it either.
+    fn submitted_ungated(&self, rows: &mut Vec<Row>) {
+        let mut ids: Vec<&String> = self.ungated.iter().collect();
+        ids.sort();
+        for id in ids {
+            let Some(b) = self.store.get(id).filter(|b| self.member(b)) else { continue };
+            rows.push(Row::new(
+                "submitted-ungated",
+                id,
+                Disposition::Escalate,
+                format!("SUBMITTED with no gate queued and no open round: {}", b.title.as_deref().unwrap_or("")),
+                format!("requeue its gate: queue submit spira/{id} <repo>; if its branch is bad, queue rework {id}"),
+            ));
+        }
     }
 
     // -- deferred without an escalation (law-filed-bead-queued-xor-escalated). Exempt when a
@@ -618,6 +638,9 @@ mod tests {
         run_stacked(s, ready, working, &HashMap::new(), facts)
     }
     fn run_stacked(s: &Store, ready: &[&str], working: &[&str], stacked_on: &HashMap<String, Vec<String>>, facts: &Facts) -> Vec<Row> {
+        run_all(s, ready, working, &[], stacked_on, facts)
+    }
+    fn run_all(s: &Store, ready: &[&str], working: &[&str], ungated: &[&str], stacked_on: &HashMap<String, Vec<String>>, facts: &Facts) -> Vec<Row> {
         let vocab = Vocab { ask: ASK.into(), ..Vocab::default() };
         let p = Partition {
             store: s,
@@ -626,6 +649,7 @@ mod tests {
             working: working.iter().map(|s| s.to_string()).collect(),
             held_ask: s.beads.iter().filter(|b| b.has(ASK)).map(|b| b.id.clone()).collect(),
             held_poison: s.beads.iter().filter(|b| b.has("spira-poison")).map(|b| b.id.clone()).collect(),
+            ungated: ungated.iter().map(|s| s.to_string()).collect(),
             stacked_on: stacked_on.clone(),
             vocab: &vocab,
             facts,
@@ -670,6 +694,15 @@ mod tests {
         assert!(run(&s, &["c"]).is_empty(), "claimable child, closed blocker: nothing");
         // Not claimable (is_blocked stale): the mechanical fix, never blocked-external.
         assert_eq!(kinds(&run(&s, &[])), vec![("stale-blocked".into(), "E".into())]);
+    }
+
+    #[test]
+    fn a_submitted_bead_with_no_gate_queued_is_stranded_and_a_queued_one_is_not() {
+        let s = store(vec![bead("sp-s", "open", &plan_with(&["spira-submitted"]), None, &[])]);
+        let f = Facts { live: 1, ..Facts::default() };
+        let found = kinds(&run_all(&s, &[], &[], &["sp-s"], &HashMap::new(), &f));
+        assert_eq!(found, vec![("submitted-ungated".to_string(), "sp-s".to_string())]);
+        assert!(run_all(&s, &[], &[], &[], &HashMap::new(), &f).is_empty(), "positive control: gate queued, nothing stranded");
     }
 
     #[test]

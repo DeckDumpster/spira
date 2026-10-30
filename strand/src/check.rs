@@ -43,6 +43,32 @@ fn world_state(run_dir: &std::path::Path) -> Option<&'static str> {
         .map(|(_, state)| state)
 }
 
+/// The beads with a gate job queued, claimed by a worker, or filed and awaiting the pass.
+/// None when the host has no gate-worker queue: its SUBMITTED beads are gated inline.
+fn gate_queued(run_dir: &Path) -> Option<std::collections::HashSet<String>> {
+    let root = run_dir.join("gate-worker");
+    if !root.is_dir() {
+        return None;
+    }
+    let mut dirs = vec![root.join("inbox"), root.join("done")];
+    if let Ok(rd) = fs::read_dir(root.join("claimed")) {
+        dirs.extend(rd.flatten().map(|e| e.path()));
+    }
+    let mut beads = std::collections::HashSet::new();
+    for d in dirs {
+        let Ok(rd) = fs::read_dir(d) else { continue };
+        for e in rd.flatten() {
+            let job: Option<serde_json::Value> = fs::read_to_string(e.path()).ok().and_then(|t| serde_json::from_str(&t).ok());
+            let job = job.as_ref();
+            let done = job.and_then(|j| j.get("job"));
+            if let Some(b) = done.or(job).and_then(|j| j.get("bead")).and_then(|b| b.as_str()) {
+                beads.insert(b.to_string());
+            }
+        }
+    }
+    Some(beads)
+}
+
 /// Classify every partition against the live store. Err means an input could not be read,
 /// and the caller must neither report "nothing stranded" nor rewrite the episode state (R7).
 pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
@@ -87,6 +113,10 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
     let working = ids(&|r| r.working());
     let held_ask = ids(&|r| r.held("ask"));
     let held_poison = ids(&|r| r.held("poison"));
+    let ungated: std::collections::HashSet<String> = match gate_queued(&run_dir) {
+        Some(queued) => lc_rows.iter().filter(|r| r.state == "SUBMITTED" && !queued.contains(&r.bead_id)).map(|r| r.bead_id.clone()).collect(),
+        None => Default::default(),
+    };
     let stacked_on: std::collections::HashMap<String, Vec<String>> = lc_rows
         .iter()
         .filter(|r| !r.terminal() && !r.stack.is_empty())
@@ -116,6 +146,7 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
             working: working.clone(),
             held_ask: held_ask.clone(),
             held_poison: held_poison.clone(),
+            ungated: ungated.clone(),
             stacked_on: stacked_on.clone(),
             vocab: &cfg.vocab,
             facts: &facts,
@@ -758,5 +789,26 @@ mod tests {
         assert!(!bdlog.exists(), "bd's ready query is nobody's ready set");
         let gone = cfg(&bd, "/nonexistent/spira-claim");
         assert!(probe::ready(&gone, "spira,plan", &[]).is_err(), "a refusal is never an empty set");
+    }
+}
+
+#[cfg(test)]
+mod gate_queued_tests {
+    use super::*;
+
+    #[test]
+    fn a_gate_queue_names_the_beads_in_inbox_claimed_and_done_and_no_queue_is_none() {
+        let run = testkit::TempDir::new("strand-gate-queued");
+        assert!(gate_queued(&run).is_none(), "no gate-worker directory: SUBMITTED beads are gated inline");
+        let root = run.join("gate-worker");
+        for d in ["inbox", "claimed/2", "done"] {
+            fs::create_dir_all(root.join(d)).unwrap();
+        }
+        let job = |b: &str| format!(r#"{{"repo":"r","branch":"spira/{b}","bead":"{b}","tip":"t","fix":false,"queued":1}}"#);
+        fs::write(root.join("inbox/a.json"), job("sp-a")).unwrap();
+        fs::write(root.join("claimed/2/b.json"), job("sp-b")).unwrap();
+        fs::write(root.join("done/c.json"), format!(r#"{{"job":{},"run":{{}}}}"#, job("sp-c"))).unwrap();
+        let q = gate_queued(&run).unwrap();
+        assert_eq!(q, ["sp-a", "sp-b", "sp-c"].iter().map(|s| s.to_string()).collect());
     }
 }
