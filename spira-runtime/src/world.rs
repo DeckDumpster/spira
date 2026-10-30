@@ -284,7 +284,7 @@ impl World {
         }
         let Some(asks) = self.asks_text() else { return failed("the ask store could not be read".into()) };
         let mut pages = vec![];
-        let mut projects: Vec<PathBuf> = fs::read_dir(&brain).into_iter().flatten().flatten().map(|e| e.path()).collect();
+        let mut projects: Vec<PathBuf> = fs::read_dir(&brain).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| !p.file_name().is_some_and(|n| n.as_encoded_bytes().starts_with(b"."))).collect();
         projects.sort();
         for project in projects {
             let mut files: Vec<PathBuf> = fs::read_dir(project.join("designs")).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "md") && !p.file_name().is_some_and(|n| n.as_encoded_bytes().starts_with(b"."))).collect();

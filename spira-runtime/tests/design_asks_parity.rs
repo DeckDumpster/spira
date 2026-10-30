@@ -249,3 +249,13 @@ fn only_the_git_log_fallback_for_a_writer_diverges_from_the_script() {
     assert!(old[0].contains("(written by draft the nowriter design)"), "{old:?}");
     assert!(new[0].contains("(written by unknown)"), "no door to git: {new:?}");
 }
+
+#[test]
+fn a_hidden_project_directory_is_not_read_for_designs() {
+    let r = same_rows("hidden", |f| {
+        let dir = f.p("brain/wiki/projects/.x/designs");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("p.md"), "---\nstatus: draft\nbead: sp-w\n---\n# x\n").unwrap();
+    });
+    assert!(r.is_empty(), "{r:?}");
+}
