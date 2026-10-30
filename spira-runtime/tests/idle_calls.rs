@@ -85,6 +85,7 @@ fn production() -> Settings {
             "SPIRA_RUNTIME_HEARTBEAT_SECS" | "SPIRA_RUNTIME_INBOX_KEEPER_SECS" => "60".into(),
             "SPIRA_RUNTIME_PR_NOTIFY_SECS" => "90".into(),
             "SPIRA_RUNTIME_ASKS_SECS" => "60".into(),
+            "SPIRA_RUNTIME_SUPERSEDE_DUTY_SECS" => "60".into(),
             "SPIRA_RUNTIME_DESIGN_ASKS_SECS" => "600".into(),
             "SPIRA_DESIGN_ASKS_REPEAT" => "86400".into(),
             "SPIRA_RUNTIME_BRAIN_DIRTY_SECS" => "600".into(),
@@ -113,6 +114,7 @@ fn quiet_world(effect: &str, _poll: u64) -> String {
         spira_runtime::watchers::inbox_keeper::OBSERVE => r#"{"triage_alive":true,"inbox_mtime":0}"#.into(),
         spira_runtime::watchers::pr_notify::OBSERVE => r#"{"repos":[]}"#.into(),
         spira_runtime::watchers::asks::OBSERVE => r#"{"open":[],"held":[]}"#.into(),
+        spira_runtime::watchers::supersede_duty::OBSERVE => r#"{"held":[]}"#.into(),
         _ => String::new(),
     }
 }
@@ -177,6 +179,7 @@ fn every_canned_observe_reply_parses_into_its_watchers_snapshot() {
     use spira_runtime::watchers::{asks, inbox_keeper, pr_notify, round_duty};
     let quiet = |effect| quiet_world(effect, 0);
     serde_json::from_str::<round_duty::Snapshot>(&quiet(round_duty::OBSERVE)).expect("round-duty reply");
+    serde_json::from_str::<spira_runtime::watchers::supersede_duty::Snapshot>(&quiet(spira_runtime::watchers::supersede_duty::OBSERVE)).expect("supersede-duty reply");
     serde_json::from_str::<inbox_keeper::Snapshot>(&quiet(inbox_keeper::OBSERVE)).expect("inbox-keeper reply");
     serde_json::from_str::<pr_notify::Snapshot>(&quiet(pr_notify::OBSERVE)).expect("pr-notify reply");
     serde_json::from_str::<asks::Snapshot>(&quiet(asks::OBSERVE)).expect("asks reply");

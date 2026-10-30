@@ -23,6 +23,8 @@ pub const ACTOR: &str = "supersede-duty";
 pub const SETTLED: &str = "terminal";
 /// What an act effect answers when the write took but the evidence note did not.
 pub const NOTE_FAILED: &str = "note-failed";
+/// What an act effect answers when the lifecycle row took but the bd-side supersede did not; it is not retried.
+pub const BD_FAILED: &str = "bd-failed";
 
 const OBSERVE_DEADLINE_MS: u64 = 30_000;
 const ACT_DEADLINE_MS: u64 = 10_000;
@@ -190,7 +192,11 @@ pub fn settle(carry: &Carry, act: &Act, outcome: Result<&str, ()>) -> (bool, Vec
         Ok(SETTLED) => (false, vec![]),
         Ok(detail) => {
             let mut say = vec![];
-            if detail == NOTE_FAILED {
+            let failed = |flag: &str| detail.split(' ').any(|f| f == flag);
+            if failed(BD_FAILED) {
+                say.push(format!("SUPERSEDE REQUEST {}: lifecycle row SUPERSEDED but bd supersede failed (not retried)", act.id));
+            }
+            if failed(NOTE_FAILED) {
                 say.push(format!("NOTE FAILED {}: {}", act.id, act.note));
             }
             say.push(act.done.clone());
@@ -271,12 +277,12 @@ impl Handler for SupersedeDuty {
         if ev.kind.tag == TICK {
             let input = serde_json::to_string(&carry.not_a_request).unwrap_or_default();
             return vec![
-                Command::Effect(EffectSpec {
+                Command::Probe(EffectSpec {
                     name: OBSERVE.into(),
                     input,
                     deadline_ms: OBSERVE_DEADLINE_MS,
                 }),
-                Command::Schedule {
+                Command::Timer {
                     at: ev.at + self.interval_ms,
                     kind: EventKind::new(TICK, ""),
                 },
@@ -294,10 +300,13 @@ impl Handler for SupersedeDuty {
                 let (next, out) = decide(&carry, &snap);
                 ctx.event()
                     .set("supersede_duty.held", snap.held.len() as u64);
-                let mut cmds = vec![Command::Emit(EventKind::new(
-                    STATE,
-                    &serde_json::to_string(&next.not_a_request).unwrap_or_default(),
-                ))];
+                let mut cmds = vec![];
+                if next.not_a_request != carry.not_a_request {
+                    cmds.push(Command::Emit(EventKind::new(
+                        STATE,
+                        &serde_json::to_string(&next.not_a_request).unwrap_or_default(),
+                    )));
+                }
                 for o in out {
                     cmds.push(match o {
                         Out::Say(m) => Self::inbox(now, &m),
@@ -486,8 +495,17 @@ mod tests {
 
     #[test]
     fn an_unreadable_hold_says_nothing_and_is_read_again_next_tick() {
-        let held = |id: &str, reading| Held { id: id.into(), version: "1".into(), reading };
-        let snap = Snapshot { held: vec![held("sp-a", Reading::Unreadable), held("sp-b", Reading::Skipped)] };
+        let held = |id: &str, reading| Held {
+            id: id.into(),
+            version: "1".into(),
+            reading,
+        };
+        let snap = Snapshot {
+            held: vec![
+                held("sp-a", Reading::Unreadable),
+                held("sp-b", Reading::Skipped),
+            ],
+        };
         let (c, out) = decide(&Carry::default(), &snap);
         assert!(out.is_empty() && c == Carry::default(), "{c:?} {out:?}");
     }
@@ -530,5 +548,27 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    #[test]
+    fn a_failed_bd_supersede_is_reported_once_and_not_retried() {
+        let (_, out) = decide(
+            &Carry::default(),
+            &Snapshot {
+                held: vec![request("sp-a", "sp-b", "WORKING", "LANDED")],
+            },
+        );
+        let (retry, say) = settle(
+            &Carry::default(),
+            only_act(&out),
+            Ok(&format!("{BD_FAILED} {NOTE_FAILED}")),
+        );
+        assert!(!retry);
+        assert!(
+            say[0].ends_with("bd supersede failed (not retried)"),
+            "{say:?}"
+        );
+        assert!(say[1].starts_with("NOTE FAILED"), "{say:?}");
+        assert_eq!(say.len(), 3);
     }
 }

@@ -1,8 +1,7 @@
 //! For one fixture world, supersede-duty.sh and the supersede-duty handler leave the same rows in
 //! the Concierge inbox and make the same writes. The script is the oracle: it runs unmodified
 //! against stubbed `spira-lc`, `bdq` and `bd`; the handler runs on a virtual clock against a fake
-//! spira-lc socket serving the same state. The one write the handler cannot make is `bd supersede`:
-//! spira-lc's socket has no door to it, so the oracle's record of it is set aside.
+//! spira-lc socket serving the same state, `bd-supersede` and `bd-note` doors included.
 
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -25,13 +24,33 @@ fn hold(cause: &str, detail: &str) -> String {
 }
 
 /// (bead, its state, its standing manual hold as (cause, detail))
-type Bead = (&'static str, &'static str, Option<(&'static str, &'static str)>);
+type Bead = (
+    &'static str,
+    &'static str,
+    Option<(&'static str, &'static str)>,
+);
 const WORLD: &[Bead] = &[
-    ("sp-land", "WORKING", Some(("supersede-request", "sp-succ-landed"))),
-    ("sp-open", "WORKING", Some(("supersede-request", "sp-succ-open"))),
+    (
+        "sp-land",
+        "WORKING",
+        Some(("supersede-request", "sp-succ-landed")),
+    ),
+    (
+        "sp-open",
+        "WORKING",
+        Some(("supersede-request", "sp-succ-open")),
+    ),
     ("sp-self", "REWORK", Some(("supersede-request", "sp-self"))),
-    ("sp-ghost", "WORKING", Some(("supersede-request", "sp-nowhere"))),
-    ("sp-done", "LANDED", Some(("supersede-request", "sp-succ-landed"))),
+    (
+        "sp-ghost",
+        "WORKING",
+        Some(("supersede-request", "sp-nowhere")),
+    ),
+    (
+        "sp-done",
+        "LANDED",
+        Some(("supersede-request", "sp-succ-landed")),
+    ),
     ("sp-ask", "WORKING", Some(("ask", "which repo?"))),
 ];
 
@@ -141,13 +160,22 @@ impl Fixture {
                         }
                         (0, String::new())
                     }
-                    "content" if argv[1..3] == ["comments", "add"] => {
+                    "bd-supersede" => {
+                        let mut calls = fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(root.join("bd-calls"))
+                            .unwrap();
+                        writeln!(calls, "supersede {} --with {}", argv[1], argv[2]).unwrap();
+                        (0, String::new())
+                    }
+                    "bd-note" => {
                         let mut calls = fs::OpenOptions::new()
                             .create(true)
                             .append(true)
                             .open(root.join("calls"))
                             .unwrap();
-                        writeln!(calls, "note {} {}", argv[3], argv[4]).unwrap();
+                        writeln!(calls, "note {} {}", argv[1], argv[2]).unwrap();
                         (0, String::new())
                     }
                     _ => (2, "no such door".into()),
@@ -164,6 +192,16 @@ impl Fixture {
 fn debug_dir() -> PathBuf {
     let exe = std::env::current_exe().unwrap();
     exe.parent().unwrap().parent().unwrap().to_path_buf()
+}
+
+fn bd_calls(f: &Fixture) -> Vec<String> {
+    lines(&f.p("bd-calls"))
+        .iter()
+        .map(|l| {
+            l.split_once(" supersede ")
+                .map_or(l.clone(), |(_, rest)| format!("supersede {rest}"))
+        })
+        .collect()
 }
 
 fn lines(path: &Path) -> Vec<String> {
@@ -272,13 +310,20 @@ fn same(name: &str, ticks: usize, prep: impl Fn(&Fixture)) -> Outcome2 {
     let f = Fixture::build(name);
     prep(&f);
     let old = old_run(&f, ticks);
-    let bd = lines(&f.p("bd-calls"));
-    assert!(bd.iter().all(|c| c.contains(" supersede ")), "the oracle's only bd call is supersede: {bd:?}");
-    assert_eq!(bd.len(), old.1.iter().filter(|w| w.starts_with("supersede ")).count(), "one bd supersede per supersede the lifecycle took: {bd:?}");
+    let bd = bd_calls(&f);
+    assert_eq!(
+        bd.len(),
+        old.1.iter().filter(|w| w.starts_with("supersede ")).count(),
+        "one bd supersede per supersede the lifecycle took: {bd:?}"
+    );
     let g = Fixture::build(name);
     prep(&g);
     let new = new_run(&g, ticks);
-    assert!(lines(&g.p("bd-calls")).is_empty(), "the handler launches nothing");
+    assert_eq!(
+        bd_calls(&g),
+        bd,
+        "scenario {name}: the bd-side supersedes differ"
+    );
     assert_eq!(
         new, old,
         "scenario {name}: the handler and supersede-duty.sh disagree"
@@ -359,7 +404,15 @@ fn a_store_that_does_not_answer_says_nothing() {
 
 #[test]
 fn the_watchers_manifest_no_longer_carries_the_row() {
-    let manifest = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/watchers")).unwrap();
-    assert!(manifest.lines().any(|l| l.starts_with("dwarf-watch|")), "the scan must be able to see a row");
-    assert!(!manifest.lines().any(|l| l.starts_with("supersede-duty|")), "spira-runtime hosts supersede-duty");
+    let manifest =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/watchers"))
+            .unwrap();
+    assert!(
+        manifest.lines().any(|l| l.starts_with("dwarf-watch|")),
+        "the scan must be able to see a row"
+    );
+    assert!(
+        !manifest.lines().any(|l| l.starts_with("supersede-duty|")),
+        "spira-runtime hosts supersede-duty"
+    );
 }

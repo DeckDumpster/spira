@@ -18,7 +18,6 @@ use crate::watchers::design_asks::{self, Page};
 use crate::wiki_git::git;
 use crate::watchers::brain_dirty;
 use crate::watchers::supersede_duty::{self, Act, Held, Reading, Verb};
-use spira_config::nonwork::{status_args, Kind, Which};
 use crate::watchers::round_duty::{RoundState, Snapshot};
 
 const STORE_ATTEMPTS: u32 = 3;
@@ -363,6 +362,8 @@ impl World {
             }
         }
         serde_json::to_string(&snap).map_err(|e| e.to_string())
+    }
+
     fn state_of(&self, id: &str) -> String {
         self.lc(&["state", id]).map(|s| s.trim().to_string()).unwrap_or_default()
     }
@@ -408,7 +409,14 @@ impl World {
         if let Err(e) = done {
             return if act.verb == Verb::Supersede && supersede_duty::terminal(&self.state_of(&act.id)) { Ok(supersede_duty::SETTLED.into()) } else { Err(e.to_string()) };
         }
-        Ok(if self.lc(&["content", "comments", "add", &act.id, &act.note]).is_some() { "done" } else { supersede_duty::NOTE_FAILED }.into())
+        let mut flags = vec![];
+        if act.verb == Verb::Supersede && self.lc(&["bd-supersede", &act.id, &act.succ]).is_none() {
+            flags.push(supersede_duty::BD_FAILED);
+        }
+        if self.lc(&["bd-note", &act.id, &act.note]).is_none() {
+            flags.push(supersede_duty::NOTE_FAILED);
+        }
+        Ok(if flags.is_empty() { "done".into() } else { flags.join(" ") })
     }
 
     pub fn inbox_append(&self, line: &str) -> Result<String, String> {
