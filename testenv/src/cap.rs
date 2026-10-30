@@ -1,7 +1,7 @@
 //! The wall-clock cap every testenv run carries, and the scan that backstops it.
 //!
-//! A run with `--deadline` is a gate tier and carries the gate cap; any other run carries the
-//! suite cap. At the cap the run cancels itself (killing its containers through the same path a
+//! A run with `--deadline` is a gate tier and carries the larger of the gate cap and its own
+//! deadline; any other run carries the suite cap. At the cap the run cancels itself (killing its containers through the same path a
 //! signal takes) and finishes `FAULT reason=over-cap`, naming what was running. `testenv-cap`
 //! scans live runs and kills any that outlive their cap plus [`GRACE`].
 
@@ -45,11 +45,30 @@ pub fn tripped() -> bool {
     OBSERVE_CAP.with(|o| o.get()) && TRIPPED.load(Ordering::SeqCst)
 }
 
-pub fn limit(suite_cap: u64, gate_cap: u64, deadline: Option<u64>) -> u64 {
+/// The wall-clock cap a run carries, and where it came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cap {
+    pub secs: u64,
+    pub source: &'static str,
+}
+
+pub fn limit(suite_cap: u64, gate_cap: u64, deadline: Option<u64>) -> Cap {
     match deadline {
-        Some(_) => gate_cap + SETTLE,
-        None => suite_cap,
+        Some(d) if d > gate_cap => Cap { secs: d + SETTLE, source: "--deadline plus settle" },
+        Some(_) => Cap { secs: gate_cap + SETTLE, source: "gate cap plus settle" },
+        None => Cap { secs: suite_cap, source: "suite cap" },
     }
+}
+
+pub fn deadline_of(argv: &[String]) -> Option<u64> {
+    let mut it = argv.iter().skip(1).take_while(|a| *a != "--");
+    while let Some(a) = it.next() {
+        let v = if a == "--deadline" { it.next().map(String::as_str) } else { a.strip_prefix("--deadline=") };
+        if let Some(v) = v {
+            return v.parse().ok();
+        }
+    }
+    None
 }
 
 pub fn phase(name: &str) {
@@ -84,8 +103,8 @@ fn describe() -> String {
     }
 }
 
-pub fn over_cap_line(what: &str, secs: u64) -> String {
-    format!("over-cap: {what} was still running at the {secs}s cap")
+pub fn over_cap_line(what: &str, secs: u64, source: &str) -> String {
+    format!("over-cap: {what} was still running at the {secs}s cap ({source})")
 }
 
 type Trip = Arc<Mutex<Option<(String, u64)>>>;
@@ -104,7 +123,9 @@ impl Armed {
     }
 }
 
-pub fn arm(limit: Duration) -> Armed {
+pub fn arm(cap: Cap) -> Armed {
+    let limit = Duration::from_secs(cap.secs);
+    let source = cap.source;
     let done = Arc::new(AtomicBool::new(false));
     let seen = done.clone();
     let trip: Trip = Arc::new(Mutex::new(None));
@@ -129,7 +150,7 @@ pub fn arm(limit: Duration) -> Armed {
         if wait(limit + UNWIND) {
             kill_descendants(std::process::id());
             crate::telemetry::push_over_cap(&crate::telemetry::sink(), "self");
-            println!("{}", over_cap_line(&what, limit.as_secs()));
+            println!("{}", over_cap_line(&what, limit.as_secs(), source));
             println!("VERDICT FAULT rc=2 ran=0 reason=over-cap");
             // SAFETY: a watchdog thread has no caller to return to; _exit skips atexit handlers, stdout is line-buffered and already flushed.
             unsafe { libc::_exit(2) };
@@ -194,7 +215,7 @@ pub fn breaches(procs: &[Proc], suite_cap: u64, gate_cap: u64, grace: u64, exe: 
         .filter(|p| is_run(&p.argv) && exe.is_none_or(|e| p.argv[0] == e))
         .filter_map(|p| {
             let gate = has_deadline(&p.argv);
-            let cap = limit(suite_cap, gate_cap, gate.then_some(0));
+            let cap = limit(suite_cap, gate_cap, gate.then(|| deadline_of(&p.argv).unwrap_or(0))).secs;
             (p.age_secs > cap + grace).then(|| Breach { proc: p.clone(), tier: if gate { "gate" } else { "suite" }, cap })
         })
         .collect()
@@ -248,8 +269,19 @@ mod tests {
 
     #[test]
     fn a_deadline_run_carries_the_gate_cap_and_any_other_the_suite_cap() {
-        assert_eq!(limit(900, 300, None), 900);
-        assert_eq!(limit(900, 300, Some(120)), 300 + SETTLE);
+        assert_eq!(limit(900, 300, None), Cap { secs: 900, source: "suite cap" });
+        assert_eq!(limit(900, 300, Some(120)), Cap { secs: 300 + SETTLE, source: "gate cap plus settle" });
+    }
+
+    #[test]
+    fn an_explicit_deadline_above_the_gate_cap_governs() {
+        assert_eq!(limit(900, 300, Some(600)), Cap { secs: 600 + SETTLE, source: "--deadline plus settle" });
+        assert_eq!(deadline_of(&["testenv".into(), "--deadline=600".into()]), Some(600));
+        assert_eq!(deadline_of(&["testenv".into(), "--deadline".into(), "600".into(), "b".into()]), Some(600));
+        let long = p(1, 640, &["testenv", "--deadline", "600", "b"]);
+        assert!(breaches(std::slice::from_ref(&long), 900, 300, GRACE, None).is_empty());
+        let over = p(2, 600 + SETTLE + GRACE + 1, &["testenv", "--deadline", "600", "b"]);
+        assert_eq!(breaches(&[over], 900, 300, GRACE, None)[0].cap, 630);
     }
 
     #[test]
