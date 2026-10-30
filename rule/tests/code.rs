@@ -314,6 +314,22 @@ fn commit_law_adds_the_section_on_its_own_branch_and_leaves_the_checkout_alone()
     assert!(std::fs::read_dir(wt_root.path()).unwrap().next().is_none(), "the worktree was left behind");
 }
 
+#[test]
+fn commit_law_commits_the_seed_text_so_the_branch_is_what_toc_toml_generates() {
+    let repo = fixture_repo("law-commit-seed");
+    let wt_root = testkit::TempDir::new("law-commit-seed-wt");
+    let toc = append(&parse_toc(TOC).unwrap(), 2, "law-four").unwrap();
+    let book = book_of(&[("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three."), ("law-four", "Do four. (per the operator, 2026-10-29: the case)")]);
+    let branch = rule::code::commit_law(repo.path(), None, wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &book).unwrap();
+    let seed = Command::new("git").arg("-C").arg(repo.path()).args(["show", &format!("{branch}:{}/law-four.txt", rule::code::SEEDS_DIR)]).output().unwrap();
+    assert!(seed.status.success(), "the new statute's seed text is committed with its section");
+    assert_eq!(String::from_utf8_lossy(&seed.stdout), "Do four.", "the seed ships without its case citation");
+    let co = testkit::TempDir::new("law-commit-seed-co");
+    let st = Command::new("git").arg("-C").arg(repo.path()).args(["worktree", "add", "-q", "--detach"]).arg(co.join("t")).arg(&branch).status().unwrap();
+    assert!(st.success());
+    assert!(rule::code::seed_drift(&co.join("t"), &toc, &Pointers::default()).is_empty(), "law/ on the branch is what toc.toml generates from its seeds");
+}
+
 fn book_of(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
     pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
 }
