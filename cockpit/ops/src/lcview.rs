@@ -82,11 +82,11 @@ pub fn repo_column(row: &serde_json::Value) -> Result<String, String> {
     }
 }
 
-fn text(v: &serde_json::Value) -> String {
+pub fn text(v: &serde_json::Value) -> String {
     v.as_str().unwrap_or("").into()
 }
 
-fn num(v: &serde_json::Value) -> Option<i64> {
+pub fn num(v: &serde_json::Value) -> Option<i64> {
     v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
 }
 

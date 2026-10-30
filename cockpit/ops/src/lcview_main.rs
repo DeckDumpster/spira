@@ -3,7 +3,7 @@
 //! commits (drift, cached by sha), `world status`, and the dwarf ceiling from config. Never runs `bd`.
 
 use cockpit_ops::lctui::{layout, parent_key, Frame, Mode, Ui};
-use cockpit_ops::lcview::{apply_verdicts, carry_forward, live_row, repo_column, verdicts_of, AskRow, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveDwarf, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
+use cockpit_ops::lcview::{num, text, apply_verdicts, carry_forward, live_row, repo_column, verdicts_of, AskRow, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveDwarf, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::process::Command;
@@ -45,10 +45,6 @@ fn world_plane() -> Result<String, String> {
     }
 }
 
-fn num(v: &serde_json::Value) -> Option<i64> {
-    v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-}
-
 fn read_tail(path: &std::path::Path) -> Option<Tail> {
     let mut f = std::fs::File::open(path).ok()?;
     let meta = f.metadata().ok()?;
@@ -65,10 +61,6 @@ fn lc_json(args: &[&str]) -> Result<Vec<serde_json::Value>, String> {
     run("spira-lc", args)
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| format!("{name}: {e}")))
         .map(|v| v.as_array().cloned().unwrap_or_default())
-}
-
-fn text(v: &serde_json::Value) -> String {
-    v.as_str().unwrap_or("").into()
 }
 
 fn gather_state_machine(s: &mut Snapshot) {
