@@ -26,7 +26,7 @@ rsk() {
 fresh() { rm -f "$TMP/run/watchd/round-spill-key.said" "$INBOX"; }
 
 now="$(date +%s)"
-echo "$((now + 5 * 86400))" > "$KEY.expires"
+echo "$((now + 5 * 86400 - 3600))" > "$KEY.expires"
 fresh
 is "off while spill is unset" "" "$(rsk '' pass)"
 nowant "a planted near expiry is not reported while spill is off" "ROUND SPILL KEY" "$(cat "$INBOX" 2>/dev/null)"
@@ -118,7 +118,7 @@ rm -f "$TMP/probe.log"
 printf '#!/usr/bin/env bash\n[ "$1" = template-check ] && exit "${TC_RC:-0}"\necho "FAILED at dry-run launch: aws ec2: UnauthorizedOperation" >&2; exit 1\n' > "$TMP/stub/round-vm"
 fresh
 want "a refused launch still quotes the AWS error" "cannot launch: FAILED at dry-run launch: aws ec2: UnauthorizedOperation" "$(rskp pass)"
-echo "$((now + 5 * 86400))" > "$KEY.expires"
+echo "$((now + 5 * 86400 - 3600))" > "$KEY.expires"
 
 fresh
 out="$(rsk ec2 pass)"
