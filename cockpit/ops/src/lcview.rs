@@ -51,6 +51,10 @@ pub struct Row {
     pub claimable: Option<bool>,
     #[serde(default)]
     pub blocker: Option<String>,
+    /// The dispatcher's verdict on this row and the pass that reached it, as the read model
+    /// carries them (`verdicts_of` assembles the pass).
+    #[serde(default)]
+    pub claim: Option<ClaimCols>,
     pub repo: String,
     #[serde(default)]
     pub tip: Option<String>,
@@ -60,6 +64,15 @@ pub struct Row {
     pub ejected_red_tip: Option<String>,
 }
 
+/// The `claim_*` columns of a lifecycle row.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ClaimCols {
+    pub verdict: String,
+    pub blocker: Option<String>,
+    pub runes: Vec<String>,
+    pub at: String,
+}
+
 /// The `repo` of a server bead row: the key must be present, and null means the bead has none.
 pub fn repo_column(row: &serde_json::Value) -> Result<String, String> {
     match row.get("repo") {
@@ -67,6 +80,80 @@ pub fn repo_column(row: &serde_json::Value) -> Result<String, String> {
         Some(serde_json::Value::Null) => Ok(String::new()),
         _ => Err(format!("bead row {} has no repo column", row["bead_id"].as_str().unwrap_or("?"))),
     }
+}
+
+pub fn text(v: &serde_json::Value) -> String {
+    v.as_str().unwrap_or("").into()
+}
+
+pub fn num(v: &serde_json::Value) -> Option<i64> {
+    v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+}
+
+/// One row of `spira-lc list --live --snapshot` as the pane keeps it.
+pub fn live_row(r: &serde_json::Value) -> Result<(Row, Meta), String> {
+    let repo = repo_column(r)?;
+    let id = text(&r["bead_id"]);
+    let holds: Vec<String> = r["holds"].as_str().and_then(|h| serde_json::from_str(h).ok()).unwrap_or_default();
+    let blocker = r["blocked_by"].as_array().and_then(|b| b.first()).and_then(|b| b.as_str()).map(String::from);
+    let state = text(&r["state"]);
+    let meta = Meta { title: text(&r["title"]), priority: num(&r["priority"]), ..Default::default() };
+    let row = Row {
+        id,
+        rework: state == "REWORK",
+        state,
+        holder: r["holder"].as_str().map(String::from),
+        holds,
+        reason: r["reason"].as_str().map(String::from),
+        updated_at: num(&r["updated_at"]).unwrap_or(0),
+        since: num(&r["since"]).or_else(|| num(&r["updated_at"])).unwrap_or(0),
+        lease_until: num(&r["lease_until"]),
+        persona: r["persona"].as_str().map(String::from),
+        claimable: None,
+        blocker,
+        claim: r["claim_at"].as_str().zip(r["claim_verdict"].as_str()).map(|(at, verdict)| ClaimCols {
+            verdict: verdict.to_string(),
+            blocker: r["claim_blocker"].as_str().map(String::from),
+            runes: r["claim_runes"].as_str().map(|v| v.split(',').filter(|x| !x.is_empty()).map(String::from).collect()).unwrap_or_default(),
+            at: at.to_string(),
+        }),
+        repo,
+        tip: r["tip"].as_str().map(String::from),
+        sifted_tip: r["sifted_tip"].as_str().map(String::from),
+        ejected_red_tip: r["ejected_red_tip"].as_str().map(String::from),
+    };
+    Ok((row, meta))
+}
+
+/// The dispatcher's last pass as the rows carry it: the verdicts stamped by the newest pass,
+/// so a row judged before it (and so since changed) is not mistaken for current. `Err` when
+/// there are READY or REWORK rows and none has been judged: the read model cannot say.
+pub fn verdicts_of(rows: &[Row]) -> Result<spira_claim::verdicts::VerdictFile, String> {
+    use spira_claim::verdicts::{Entry, Kind, VerdictFile};
+    let pool: Vec<&Row> = rows.iter().filter(|r| matches!(r.state.as_str(), "READY" | "REWORK")).collect();
+    let newest = pool.iter().filter_map(|r| r.claim.as_ref()).map(|c| c.at.as_str()).max();
+    let Some(newest) = newest else {
+        return if pool.is_empty() { Ok(VerdictFile { computed_at: String::new(), entries: Vec::new() }) } else { Err("no claim verdicts in the lifecycle read model yet".into()) };
+    };
+    let entries = pool
+        .iter()
+        .filter_map(|r| r.claim.as_ref().filter(|c| c.at == newest).and_then(|c| Some(Entry { id: r.id.clone(), verdict: Kind::from_word(&c.verdict)?, blocker: c.blocker.clone(), runes: c.runes.clone() })))
+        .collect();
+    Ok(VerdictFile { computed_at: newest.to_string(), entries })
+}
+
+/// Takes claimability and blockers from the dispatcher's last verdicts. A row the dispatcher
+/// judged keeps no blocker of its own: the verdict is the reason, or there is none.
+pub fn apply_verdicts(s: &mut Snapshot, f: &spira_claim::verdicts::VerdictFile) {
+    use spira_claim::verdicts::Kind;
+    let by_id: HashMap<&str, &spira_claim::verdicts::Entry> = f.entries.iter().map(|e| (e.id.as_str(), e)).collect();
+    for r in s.rows.iter_mut().filter(|r| matches!(r.state.as_str(), "READY" | "REWORK")) {
+        if let Some(e) = by_id.get(r.id.as_str()) {
+            r.blocker = e.blocker.clone();
+        }
+    }
+    s.claimable = Some(f.entries.iter().filter(|e| e.verdict == Kind::Claimable && !e.runes.is_empty()).map(|e| e.id.clone()).collect());
+    s.claimable_at = Some(f.computed_at.clone()).filter(|t| !t.is_empty());
 }
 
 /// One open ask, as `spira-lc list-asks` prints it; `title` is the bead table's mirror of it.
@@ -299,11 +386,13 @@ pub struct Snapshot {
     /// Why a round last ejected each bead, newest eject per bead (the batch's own reason).
     #[serde(default)]
     pub eject_why: BTreeMap<String, String>,
-    /// The ids the claim tool would claim right now (interim until the one claimable-set read,
-    /// sp-cuyg5f, serves both). `None` when it has not answered: NEXT then says it does not
-    /// know rather than guess, since a guess listed a blocked bead as claimable.
+    /// The ids the dispatcher's last pass judged claimable by some rune (`apply_verdicts`).
+    /// `None` when that pass is unreadable: NEXT then says it does not know rather than guess.
     #[serde(default)]
     pub claimable: Option<Vec<String>>,
+    /// When the dispatcher computed `claimable`; `None` while that is unknown.
+    #[serde(default)]
+    pub claimable_at: Option<String>,
     #[serde(default)]
     pub progress: Option<PassProgress>,
     /// Every VM round-vm holds, from its own pool record: leased to a live run, or idle and warm.
@@ -739,8 +828,11 @@ pub struct View {
     pub pipe: Vec<PipeLine>,
     pub rework_items: Vec<Item>,
     pub next_count: usize,
-    /// The claim tool did not answer, so NEXT is unknown, not empty.
+    /// The dispatcher's verdicts were unreadable, so NEXT is unknown, not empty.
     pub next_unknown: bool,
+    /// How old the dispatcher's verdicts are, e.g. `1m`; empty while unknown.
+    #[serde(default)]
+    pub next_age: String,
     pub next: Vec<Item>,
     pub blocked: Vec<Item>,
     pub recent: Vec<Item>,
@@ -893,7 +985,7 @@ fn state_machine(s: &Snapshot, on_base: &dyn Fn(&str) -> bool) -> Vec<SmState> {
         let mut red = false;
         if matches!(name, "READY" | "REWORK") {
             // Every bead in exactly one bucket, so the parts sum to the count, and "claimable"
-            // is the claim tool's own set, the same NEXT reads (per Ryan 2026-10-09).
+            // is the dispatcher's own verdict set, the same NEXT reads.
             let is_ask = |id: &str| !s.ask_label.is_empty() && s.meta.get(id).is_some_and(|m| m.labels.contains(&s.ask_label));
             let (mut claimable, mut ask, mut blocked, mut held, mut poison, mut landed, mut unclaimable) = (0, 0, 0, 0, 0, 0, 0);
             let mut blockers: BTreeMap<String, usize> = BTreeMap::new();
@@ -909,6 +1001,9 @@ fn state_machine(s: &Snapshot, on_base: &dyn Fn(&str) -> bool) -> Vec<SmState> {
                     }
                 } else if !r.holds.is_empty() {
                     held += 1;
+                } else if let Some(b) = r.blocker.as_deref().filter(|b| !b.is_empty()) {
+                    blocked += 1;
+                    *blockers.entry(b.to_string()).or_default() += 1;
                 } else if on_base(&r.id) {
                     landed += 1;
                 } else if s.claimable.as_ref().is_some_and(|ids| ids.contains(&r.id)) {
@@ -1180,6 +1275,7 @@ pub fn view(s: &Snapshot) -> View {
     };
 
     let ready: Vec<&Row> = s.rows.iter().filter(|r| r.state == "READY").collect();
+    let pool: Vec<&Row> = s.rows.iter().filter(|r| matches!(r.state.as_str(), "READY" | "REWORK")).collect();
     let ready_held = ready.iter().filter(|r| !r.holds.is_empty()).count();
     let mut v = View {
         clock: clock(s.now),
@@ -1401,7 +1497,7 @@ pub fn view(s: &Snapshot) -> View {
         })
         .collect();
     v.decide_error = s.asks_error.clone();
-    let mut nx: Vec<&Row> = ready
+    let mut nx: Vec<&Row> = pool
         .iter()
         .copied()
         .filter(|r| match &s.claimable {
@@ -1412,13 +1508,14 @@ pub fn view(s: &Snapshot) -> View {
         })
         .collect();
     nx.sort_by_key(|r| (!r.rework, s.meta.get(&r.id).and_then(|m| m.priority).unwrap_or(9), r.since));
-    v.blocked = ready
+    v.blocked = pool
         .iter()
         .filter(|r| blocked_row(r))
         .map(|r| item(r, r.since, format!("{} <- {}", r.id, r.blocker.as_deref().unwrap_or(""))))
         .collect();
     v.next_count = nx.len();
     v.next_unknown = s.claimable.is_none();
+    v.next_age = s.claimable_at.as_deref().and_then(spira_claim::verdicts::epoch).map(|t| age(s.now - t)).unwrap_or_default();
     v.next = nx.iter().take(12).map(|r| item(r, r.since, String::new())).collect();
 
     let claim_of = |r: &Row| -> String {
@@ -1444,8 +1541,8 @@ pub fn view(s: &Snapshot) -> View {
             (Some(_), None) => "no persona lane".into(),
         }
     };
-    for st in v.machine.iter_mut().filter(|st| st.name == "READY") {
-        let by_id: HashMap<&str, &Row> = ready.iter().map(|r| (r.id.as_str(), *r)).collect();
+    for st in v.machine.iter_mut().filter(|st| matches!(st.name.as_str(), "READY" | "REWORK")) {
+        let by_id: HashMap<&str, &Row> = pool.iter().map(|r| (r.id.as_str(), *r)).collect();
         for it in st.beads.iter_mut() {
             if let Some(r) = by_id.get(it.id.as_str()) {
                 it.claim = claim_of(r);
@@ -1621,7 +1718,9 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
             out.push(format!("  {D}… {} more{R}", v.rework_items.len() - REWORK_SHOWN));
         }
     }
-    out.push(format!("{B}NEXT{R}   {B}{}{R} claimable {D}(claim order: express, REWORK, then priority){R}", v.next_count));
+    let verdict_age = if v.next_age.is_empty() { String::new() } else { format!(" {D}as of {} ago{R}", v.next_age) };
+    let next_n = if v.next_unknown { "?".to_string() } else { v.next_count.to_string() };
+    out.push(format!("{B}NEXT{R}   {B}{next_n}{R} claimable{verdict_age} {D}(claim order: express, REWORK, then priority){R}"));
     for i in v.next.iter().take(NEXT_SHOWN) {
         out.push(format!("  {} {:<12} {}{}", i.prio, i.id, repo_tag(&i.repo), cut(&i.title, w.saturating_sub(21 + i.repo.len().max(1)))));
     }
@@ -1655,6 +1754,7 @@ pub fn render_html(v: &View, stale: Option<i64>, poll_s: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use spira_claim::verdicts::{Entry, Kind, VerdictFile};
 
     /// The page's visible text: tags dropped, entities decoded.
     fn page_text(v: &View) -> String {
@@ -1695,6 +1795,159 @@ mod tests {
         // READY/REWORK bead is claimable.
         let claimable = rows.iter().filter(|r| matches!(r.state.as_str(), "READY" | "REWORK") && r.holds.is_empty()).map(|r| r.id.clone()).collect();
         Snapshot { now: 100_000, release: "abc".into(), world: "plane work: RUNNING".into(), base: "local/main".into(), rows, ceiling: 6, claimable: Some(claimable), ..Default::default() }
+    }
+
+    fn frame_of(s: &Snapshot) -> String {
+        plain(&render(&view(s), 120))
+    }
+
+    /// A parent in delivery and its READY child, as `spira-lc list --live --snapshot` emits them.
+    fn child_of_a_parent_in_delivery() -> Snapshot {
+        let raw = [
+            r#"{"bead_id":"sp-p","state":"IN_DELIVERY","holds":"[]","repo":"spira","blocked_by":[]}"#,
+            r#"{"bead_id":"sp-p.1","state":"READY","holds":"[]","repo":"spira","blocked_by":[],"title":"the child"}"#,
+        ];
+        let mut s = Snapshot { now: 100_000, release: "abc".into(), base: "local/main".into(), ceiling: 6, ..Default::default() };
+        for r in raw {
+            let (row, meta) = live_row(&serde_json::from_str(r).unwrap()).unwrap();
+            s.meta.insert(row.id.clone(), meta);
+            s.rows.push(row);
+        }
+        s.claimable = Some(vec!["sp-p.1".into()]);
+        s
+    }
+
+    fn dispatcher_says(entries: &[(&str, Kind, Option<&str>, &[&str])]) -> VerdictFile {
+        VerdictFile {
+            computed_at: spira_claim::verdicts::stamp(99_940),
+            entries: entries
+                .iter()
+                .map(|(id, verdict, blocker, runes)| Entry { id: id.to_string(), verdict: *verdict, blocker: blocker.map(String::from), runes: runes.iter().map(|r| r.to_string()).collect() })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_child_of_an_in_delivery_parent_is_blocked_not_claimable() {
+        let mut s = child_of_a_parent_in_delivery();
+        apply_verdicts(&mut s, &dispatcher_says(&[("sp-p.1", Kind::Blocked, Some("sp-p"), &[])]));
+        let f = frame_of(&s);
+        for want in ["0 claimable", "blocked 1 ← sp-p", "sp-p.1 <- sp-p"] {
+            assert!(f.contains(want), "{want}:\n{f}");
+        }
+        let v = view(&s);
+        assert!(v.next.is_empty(), "{f}");
+        let claim = v.machine.iter().find(|m| m.name == "READY").unwrap().beads.iter().find(|b| b.id == "sp-p.1").unwrap().claim.clone();
+        assert_eq!(claim, "blocked: sp-p");
+    }
+
+    fn snapshot_of_raw(raw: &[&str]) -> Snapshot {
+        let mut s = Snapshot { now: 100_000, release: "abc".into(), base: "local/main".into(), ceiling: 6, ..Default::default() };
+        for r in raw {
+            let (row, meta) = live_row(&serde_json::from_str(r).unwrap()).unwrap();
+            s.meta.insert(row.id.clone(), meta);
+            s.rows.push(row);
+        }
+        s
+    }
+
+    #[test]
+    fn the_verdicts_ride_the_lifecycle_rows_into_the_frame() {
+        let mut s = snapshot_of_raw(&[
+            r#"{"bead_id":"sp-p","state":"IN_DELIVERY","holds":"[]","repo":"spira","blocked_by":[]}"#,
+            r#"{"bead_id":"sp-p.1","state":"READY","holds":"[]","repo":"spira","blocked_by":[],"claim_verdict":"blocked","claim_blocker":"sp-p","claim_runes":null,"claim_at":"1970-01-02T03:45:40Z"}"#,
+            r#"{"bead_id":"sp-free","state":"READY","holds":"[]","repo":"spira","blocked_by":[],"claim_verdict":"claimable","claim_blocker":null,"claim_runes":"builder","claim_at":"1970-01-02T03:45:40Z"}"#,
+            r#"{"bead_id":"sp-rw","state":"REWORK","holds":"[]","repo":"spira","blocked_by":[],"claim_verdict":"claimable","claim_blocker":null,"claim_runes":"builder,ops","claim_at":"1970-01-02T03:45:40Z"}"#,
+        ]);
+        let f = verdicts_of(&s.rows).unwrap();
+        apply_verdicts(&mut s, &f);
+        let frame = frame_of(&s);
+        assert!(frame.contains("2 claimable as of 60s ago"), "{frame}");
+        assert!(frame.contains("blocked 1 ← sp-p"), "{frame}");
+        assert!(frame.contains("sp-p.1 <- sp-p"), "{frame}");
+        assert_eq!(view(&s).next.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["sp-rw", "sp-free"], "REWORK first");
+    }
+
+    #[test]
+    fn rows_nobody_has_judged_leave_claimable_unknown_not_zero() {
+        let mut s = snapshot_of_raw(&[r#"{"bead_id":"sp-a","state":"READY","holds":"[]","repo":"spira","blocked_by":[]}"#]);
+        let err = verdicts_of(&s.rows).unwrap_err();
+        assert!(err.contains("no claim verdicts"), "{err}");
+        assert!(s.claimable.is_none());
+        s.errors.push(err);
+        let frame = frame_of(&s);
+        assert!(frame.contains("claimable unknown") && !frame.contains("0 claimable"), "{frame}");
+        assert!(frame.contains("no claim verdicts"), "an unreadable verdict names why: {frame}");
+    }
+
+    #[test]
+    fn only_the_newest_pass_speaks_for_a_row() {
+        let s = snapshot_of_raw(&[
+            r#"{"bead_id":"sp-old","state":"READY","holds":"[]","repo":"spira","claim_verdict":"claimable","claim_runes":"builder","claim_at":"1970-01-02T03:44:40Z"}"#,
+            r#"{"bead_id":"sp-new","state":"READY","holds":"[]","repo":"spira","claim_verdict":"claimable","claim_runes":"builder","claim_at":"1970-01-02T03:45:40Z"}"#,
+            r#"{"bead_id":"sp-gone","state":"WORKING","holds":"[]","repo":"spira","claim_verdict":"claimable","claim_runes":"builder","claim_at":"1970-01-02T03:50:00Z"}"#,
+        ]);
+        let f = verdicts_of(&s.rows).unwrap();
+        assert_eq!(f.entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), ["sp-new"], "{f:?}");
+        assert_eq!(f.computed_at, "1970-01-02T03:45:40Z", "a bead that left READY does not date the pass");
+    }
+
+    #[test]
+    fn with_nothing_ready_there_is_nothing_to_judge_and_claimable_is_zero() {
+        let mut s = snapshot_of_raw(&[r#"{"bead_id":"sp-w","state":"WORKING","holds":"[]","repo":"spira"}"#]);
+        let f = verdicts_of(&s.rows).unwrap();
+        apply_verdicts(&mut s, &f);
+        assert_eq!((s.claimable.clone(), s.claimable_at.clone()), (Some(vec![]), None));
+    }
+
+    #[test]
+    fn a_rework_bead_the_dispatcher_would_claim_counts_as_claimable() {
+        let mut s = snap(vec![row("sp-rw", "REWORK", 10)]);
+        s.rows[0].rework = true;
+        s.claimable = None;
+        apply_verdicts(&mut s, &dispatcher_says(&[("sp-rw", Kind::Claimable, None, &["builder"])]));
+        assert_eq!(view(&s).next_count, 1);
+        assert!(frame_of(&s).contains("1 claimable"), "{}", frame_of(&s));
+    }
+
+    #[test]
+    fn a_claimable_verdict_no_rune_takes_is_no_persona_lane_not_next() {
+        let mut s = snap(vec![row("sp-orphan", "READY", 10)]);
+        apply_verdicts(&mut s, &dispatcher_says(&[("sp-orphan", Kind::Claimable, None, &[])]));
+        let v = view(&s);
+        assert_eq!(v.next_count, 0);
+        assert_eq!(v.machine.iter().find(|m| m.name == "READY").unwrap().beads[0].claim, "no persona lane");
+    }
+
+    #[test]
+    fn beads_blocked_by_declared_edges_count_as_blocked_with_the_blocker_named() {
+        let mut s = snap(vec![row("sp-a", "READY", 10), row("sp-b", "READY", 11), row("sp-free", "READY", 12)]);
+        apply_verdicts(
+            &mut s,
+            &dispatcher_says(&[("sp-a", Kind::Blocked, Some("sp-dep"), &[]), ("sp-b", Kind::Blocked, Some("sp-dep"), &[]), ("sp-free", Kind::Claimable, None, &["builder"])]),
+        );
+        let f = frame_of(&s);
+        assert!(f.contains("READY") && f.contains("claimable 1 · blocked 2 ← sp-dep"), "{f}");
+        assert!(!f.contains("unclaimable"), "{f}");
+    }
+
+    #[test]
+    fn the_dispatcher_stacking_on_a_prerequisite_clears_the_pane_own_blocked_by() {
+        let mut s = snap(vec![row("sp-stack", "READY", 10)]);
+        s.rows[0].blocker = Some("sp-cert".into());
+        apply_verdicts(&mut s, &dispatcher_says(&[("sp-stack", Kind::Claimable, None, &["builder"])]));
+        assert_eq!(view(&s).next_count, 1);
+        assert_eq!(s.rows[0].blocker, None);
+    }
+
+    #[test]
+    fn the_head_shows_how_old_the_dispatchers_verdicts_are() {
+        let mut s = snap(vec![row("sp-a", "READY", 10)]);
+        apply_verdicts(&mut s, &dispatcher_says(&[("sp-a", Kind::Claimable, None, &["builder"])]));
+        assert_eq!(view(&s).next_age, "60s");
+        assert!(frame_of(&s).contains("1 claimable as of 60s ago"), "{}", frame_of(&s));
+        s.claimable_at = None;
+        assert_eq!(view(&s).next_age, "");
     }
 
     fn ready_fixture() -> Snapshot {

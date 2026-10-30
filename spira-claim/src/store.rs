@@ -205,6 +205,16 @@ impl Store {
         crate::rank::parse_lifecycle(&text)
     }
 
+    /// Hands one pass's verdicts to the lifecycle store, which keeps them on the bead rows.
+    pub fn lc_claim_verdicts(&self, file: &spira_claim::verdicts::VerdictFile) -> Result<(), String> {
+        let r = run_full(self.lc_cmd(&["claim-verdicts".to_string()]), self.timeout, Some(file.payload().as_bytes()))
+            .map_err(|e| format!("spira-lc claim-verdicts: {e}"))?;
+        match r.code {
+            0 => Ok(()),
+            c => Err(format!("spira-lc claim-verdicts: exit {c}: {}", r.stderr.lines().next().unwrap_or("no stderr"))),
+        }
+    }
+
     /// The machine's return-to-rework, through the one client of `spira-lc reopen`.
     pub fn lc_reopen(&self, id: &str, cause: &str, actor: &str) -> Result<(), String> {
         spira_config::lifecycle_row::reopen_with(&self.lc, id, cause, actor)

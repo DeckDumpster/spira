@@ -46,6 +46,7 @@ libc = "0.2"
 spira-config = { path = "../../spira-config" }
 bead = { path = "../../bead" }
 hel = { path = "../../hel" }
+spira-claim = { path = "../../spira-claim" }
 
 [dev-dependencies]
 testkit = { path = "../../testkit" }

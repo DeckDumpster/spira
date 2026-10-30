@@ -3,7 +3,7 @@
 //! commits (drift, cached by sha), `world status`, and the dwarf ceiling from config. Never runs `bd`.
 
 use cockpit_ops::lctui::{layout, parent_key, Frame, Mode, Ui};
-use cockpit_ops::lcview::{carry_forward, repo_column, AskRow, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveDwarf, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
+use cockpit_ops::lcview::{num, text, apply_verdicts, carry_forward, live_row, repo_column, verdicts_of, AskRow, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveDwarf, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::process::Command;
@@ -45,10 +45,6 @@ fn world_plane() -> Result<String, String> {
     }
 }
 
-fn num(v: &serde_json::Value) -> Option<i64> {
-    v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-}
-
 fn read_tail(path: &std::path::Path) -> Option<Tail> {
     let mut f = std::fs::File::open(path).ok()?;
     let meta = f.metadata().ok()?;
@@ -65,10 +61,6 @@ fn lc_json(args: &[&str]) -> Result<Vec<serde_json::Value>, String> {
     run("spira-lc", args)
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).map_err(|e| format!("{name}: {e}")))
         .map(|v| v.as_array().cloned().unwrap_or_default())
-}
-
-fn text(v: &serde_json::Value) -> String {
-    v.as_str().unwrap_or("").into()
 }
 
 fn gather_state_machine(s: &mut Snapshot) {
@@ -255,7 +247,6 @@ fn gather_menders(s: &mut Snapshot) {
 
 fn gather() -> Snapshot {
     let started = std::time::Instant::now();
-    let mut claimable: Vec<String> = Vec::new();
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let mut s = Snapshot { now, ..Default::default() };
     s.release = std::env::var("SPIRA_RELEASE")
@@ -278,44 +269,23 @@ fn gather() -> Snapshot {
     match lc_json(&["list", "--live", "--snapshot"]) {
         Ok(rows) => {
             for r in rows {
-                let repo = match repo_column(&r) {
-                    Ok(repo) => repo,
+                let (row, meta) = match live_row(&r) {
+                    Ok(x) => x,
                     Err(e) => {
                         s.errors.push(format!("spira-lc list --live: {e}"));
                         break;
                     }
                 };
-                let id = text(&r["bead_id"]);
                 if let (Some(pid), Some(ph)) = (r["holder"].as_str().and_then(holder_pid), r["dwarf_phase"].as_str()) {
                     phases.insert(pid, ph.to_string());
                 }
-                let holds: Vec<String> = r["holds"].as_str().and_then(|h| serde_json::from_str(h).ok()).unwrap_or_default();
-                let blocker = r["blocked_by"].as_array().and_then(|b| b.first()).and_then(|b| b.as_str()).map(String::from);
-                let state: String = text(&r["state"]);
-                if state == "READY" && holds.is_empty() && blocker.is_none() {
-                    claimable.push(id.clone());
-                }
-                s.meta.insert(id.clone(), Meta { title: text(&r["title"]), priority: num(&r["priority"]), ..Default::default() });
-                s.rows.push(Row {
-                    id,
-                    rework: state == "REWORK",
-                    state,
-                    holder: r["holder"].as_str().map(String::from),
-                    holds,
-                    reason: r["reason"].as_str().map(String::from),
-                    updated_at: num(&r["updated_at"]).unwrap_or(0),
-                    since: num(&r["since"]).or_else(|| num(&r["updated_at"])).unwrap_or(0),
-                    lease_until: num(&r["lease_until"]),
-                    persona: r["persona"].as_str().map(String::from),
-                    claimable: None,
-                    blocker,
-                    repo,
-                    tip: r["tip"].as_str().map(String::from),
-                    sifted_tip: r["sifted_tip"].as_str().map(String::from),
-                    ejected_red_tip: r["ejected_red_tip"].as_str().map(String::from),
-                });
+                s.meta.insert(row.id.clone(), meta);
+                s.rows.push(row);
             }
-            s.claimable = Some(claimable);
+            match verdicts_of(&s.rows) {
+                Ok(f) => apply_verdicts(&mut s, &f),
+                Err(e) => s.errors.push(e),
+            }
         }
         Err(e) => s.errors.push(e),
     }

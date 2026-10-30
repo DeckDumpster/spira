@@ -51,6 +51,11 @@ CREATE TABLE IF NOT EXISTS bead (
     sifted_tip  VARCHAR(64) NULL,
     -- The state the current claim was taken from (READY or REWORK), set only while WORKING; an un-claim returns the bead there. migrations/0027-claimed-from.sql for an existing database.
     claimed_from VARCHAR(16) NULL,
+    -- The dispatcher's last verdict on this bead and the pass that reached it (claim_at is that pass's ISO-8601 UTC stamp); migrations/0035-claim-verdict.sql for an existing database.
+    claim_verdict VARCHAR(16) NULL,
+    claim_blocker VARCHAR(64) NULL,
+    claim_runes   VARCHAR(255) NULL,
+    claim_at      VARCHAR(20) NULL,
     updated_at  BIGINT NOT NULL
 );
 
