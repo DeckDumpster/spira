@@ -1082,6 +1082,57 @@ fn bulk_ready_by_rune_cli_buckets_one_fetch_by_the_runes_roster() {
     assert_eq!(o.out, "builder 2\nops 1\n", "c is READY in the lifecycle: a stale spira-submitted label must not hide it");
 }
 
+/// `bulk-ready-by-rune` over `lc` rows and bd `recs`, with `SPIRA_RUN` a temp dir; returns it.
+fn bulk_with_run(lc: &str, recs: &str) -> (Outcome, testkit::TempDir) {
+    let home = runes_home(&[("builder", "spira,plan", "")]);
+    let runes = runes_path(&home);
+    let run = testkit::TempDir::new("spira-claim-run");
+    let bd = sh(&format!("echo '{recs}'"));
+    let path = fake_lc_path(lc);
+    let o = run_cfg(
+        &["bulk-ready-by-rune"],
+        "",
+        &[("SPIRA_BD", bd.as_str()), ("SPIRA_DB", ""), ("SPIRA_RUNES", "[]"), ("SPIRA_RUNES_DIR", &runes), ("SPIRA_RUN", run.to_str().unwrap())],
+        &[("SPIRA_HOME", Some(home.as_str())), ("PATH", Some(path.as_str())), ("SPIRA_READY_CACHE", None)],
+    );
+    (o, run)
+}
+
+const PARENT_RECS: &str = r#"[{"id":"sp-p","status":"open","issue_type":"task","labels":["spira","plan"]},
+    {"id":"sp-p.1","status":"open","issue_type":"task","parent":"sp-p","labels":["spira","plan"],
+     "dependencies":[{"issue_id":"sp-p.1","depends_on_id":"sp-p","type":"parent-child"}]},
+    {"id":"sp-free","status":"open","issue_type":"task","labels":["spira","plan"]}]"#;
+
+#[test]
+fn bulk_ready_by_rune_publishes_a_child_of_an_in_delivery_parent_as_blocked() {
+    let lc = r#"[{"bead_id":"sp-p","state":"IN_DELIVERY","holds":"[]","tip":"t1"},{"bead_id":"sp-p.1","state":"READY","holds":"[]"}]"#;
+    let (o, run) = bulk_with_run(lc, PARENT_RECS);
+    assert_eq!(o.out, "builder 0\n", "{}", o.err);
+    let f = spira_claim::verdicts::read(&run).unwrap();
+    let e = f.entries.iter().find(|e| e.id == "sp-p.1").expect("a verdict for the child");
+    assert_eq!((e.verdict, e.blocker.as_deref()), (spira_claim::verdicts::Kind::Blocked, Some("sp-p")));
+    assert!(spira_claim::verdicts::epoch(&f.computed_at).is_some(), "{}", f.computed_at);
+}
+
+#[test]
+fn bulk_ready_by_rune_publishes_the_runes_that_would_take_a_claimable_bead() {
+    let lc = r#"[{"bead_id":"sp-free","state":"READY","holds":"[]"},{"bead_id":"sp-held","state":"READY","holds":"[\"ask\"]"}]"#;
+    let recs = r#"[{"id":"sp-free","status":"open","issue_type":"task","labels":["spira","plan"]},{"id":"sp-held","status":"open","issue_type":"task","labels":["spira","plan"]}]"#;
+    let (o, run) = bulk_with_run(lc, recs);
+    assert_eq!(o.out, "builder 1\n", "{}", o.err);
+    let f = spira_claim::verdicts::read(&run).unwrap();
+    let by = |id: &str| f.entries.iter().find(|e| e.id == id).unwrap_or_else(|| panic!("{id} in {f:?}"));
+    assert_eq!((by("sp-free").verdict, by("sp-free").runes.clone()), (spira_claim::verdicts::Kind::Claimable, vec!["builder".to_string()]));
+    assert_eq!(by("sp-held").verdict, spira_claim::verdicts::Kind::Held);
+}
+
+#[test]
+fn bulk_ready_by_rune_publishes_nothing_when_the_machine_cannot_answer() {
+    let (o, run) = bulk_with_run("not json", PARENT_RECS);
+    assert_ne!(o.code, 0);
+    assert!(spira_claim::verdicts::read(&run).is_err());
+}
+
 #[test]
 fn bulk_ready_by_rune_cli_excludes_exactly_what_rune_ready_excludes() {
     // sp-85p8t: e (open children) and f (addressed to another rune) are never claimable by

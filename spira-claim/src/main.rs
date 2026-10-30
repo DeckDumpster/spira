@@ -20,6 +20,7 @@ use std::io::Read;
 use decide::{AskedStamp, Inputs, Thresholds};
 use events::EventRow;
 use rank::{EpicLookup, LifecycleRow, ReadyRow, Verdict};
+use spira_claim::verdicts;
 use store::{Config, Store};
 
 pub const USAGE: i32 = 1;
@@ -917,10 +918,15 @@ fn ready_cache_lookup(text: &str, me: &str) -> u64 {
 /// blockers), never for status or assignee — the same rule `select --blockers machine`
 /// applies. `Err` when the machine cannot answer: a count must refuse, not read 0.
 fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String> {
+    machine_judged(a, env).map(|(rows, _)| rows)
+}
+
+/// [`machine_claimable`] with the verdict of every READY/REWORK row it judged.
+fn machine_judged(a: &Args, env: &Env) -> Result<(Vec<rank::ReadyRow>, Vec<verdicts::Entry>), String> {
     let st = store(a, &env.config)?;
-    let rows = claimable_base(a, env, &st)?;
+    let (rows, entries) = judge_rows(a, env, &st)?;
     let express = if a.has("--express") { Some(st.express_ids()?) } else { None };
-    Ok(rows.into_iter().filter(|r| express.as_ref().is_none_or(|e| e.contains(&r.id))).collect())
+    Ok((rows.into_iter().filter(|r| express.as_ref().is_none_or(|e| e.contains(&r.id))).collect(), entries))
 }
 
 /// [`machine_claimable`] for the counting readers (`ready-count`): one computation per
@@ -938,13 +944,28 @@ fn ready_cache_key(a: &Args, env: &Env) -> String {
 }
 
 fn claimable_base(a: &Args, env: &Env, st: &Store) -> Result<Vec<rank::ReadyRow>, String> {
+    judge_rows(a, env, st).map(|(rows, _)| rows)
+}
+
+/// The dispatcher's one computation: the claimable rows, and a verdict for every READY/REWORK
+/// row the content store could describe. The rows are derived from the verdicts, so what is
+/// published and what is claimed cannot diverge.
+fn judge_rows(a: &Args, env: &Env, st: &Store) -> Result<(Vec<rank::ReadyRow>, Vec<verdicts::Entry>), String> {
+    use verdicts::Kind;
     let mut lc = st.lifecycle_in_states(&["READY", "REWORK"])?;
     let ids = ready::lifecycle_ready_ids(&lc);
     let want: BTreeSet<&str> = ids.iter().map(String::as_str).collect();
+    let mut entries: Vec<verdicts::Entry> = lc
+        .values()
+        .filter(|r| !want.contains(r.bead_id.as_str()))
+        .map(|r| entry(&r.bead_id, if r.holds.iter().any(|h| *h != lifecycle::bead::HoldKind::Wait) { Kind::Held } else { Kind::Snoozed }, None))
+        .collect();
     let mut rows = if ids.is_empty() { Vec::new() } else { st.content_by_ids(&ids)? };
     let mut bd = rank::index_rows(rows.clone());
     let (scope, no_loop) = (scope_label(a, env), no_loop_label(a, env));
-    rows.retain(|r| want.contains(r.id.as_str()) && ready::in_scope(r, &scope, &no_loop));
+    rows.retain(|r| want.contains(r.id.as_str()));
+    let (rows, out_of_scope): (Vec<_>, Vec<_>) = rows.into_iter().partition(|r| ready::in_scope(r, &scope, &no_loop));
+    entries.extend(out_of_scope.iter().map(|r| entry(&r.id, Kind::OutOfScope, None)));
     let wanted = rank::all_blockers(&rows);
     let blocker_rows: Vec<String> = wanted.iter().filter(|b| !lc.contains_key(*b)).cloned().collect();
     lc.extend(st.lifecycle_of(&blocker_rows)?);
@@ -961,13 +982,31 @@ fn claimable_base(a: &Args, env: &Env, st: &Store) -> Result<Vec<rank::ReadyRow>
     }
     rank::mark_stack_conflicts(&mut lc, std::path::Path::new(&env.config.run));
     let stack_max = env.config.stack_max_depth.min(rank::STACK_CEILING);
-    let mut rows: Vec<rank::ReadyRow> = rows
-        .into_iter()
-        .filter(|r| matches!(rank::claimable(r, &lc, &bd, rank::stack_cap(r, &env.config.incident_label, stack_max)), Verdict::Claimable { .. }))
-        .collect();
-    retain_unstopped(&mut rows, std::path::Path::new(&env.config.run));
-    retain_uncarried(&mut rows, &mut lc, Some(st), &env.config.queue_dir)?;
-    Ok(rows)
+    let mut claimable = Vec::new();
+    for r in rows {
+        let (kind, blocker) = match rank::claimable(&r, &lc, &bd, rank::stack_cap(&r, &env.config.incident_label, stack_max)) {
+            Verdict::Claimable { .. } => {
+                claimable.push(r);
+                continue;
+            }
+            Verdict::Held(_) => (Kind::Held, None),
+            Verdict::Snoozed(_) => (Kind::Snoozed, None),
+            Verdict::Blocked(b) => (Kind::Blocked, Some(b)),
+            Verdict::TooDeep { .. } => (Kind::TooDeep, None),
+            Verdict::StackUnchanged => (Kind::StackUnchanged, None),
+            Verdict::NoOwnRow | Verdict::OwnState(_) => continue,
+        };
+        entries.push(entry(&r.id, kind, blocker));
+    }
+    entries.extend(retain_unstopped(&mut claimable, std::path::Path::new(&env.config.run)).iter().map(|id| entry(id, Kind::Stopped, None)));
+    let carried = retain_uncarried(&mut claimable, &mut lc, Some(st), &env.config.queue_dir)?;
+    entries.extend(carried.into_iter().map(|(id, carrier)| entry(&id, Kind::Carried, Some(carrier))));
+    entries.extend(claimable.iter().map(|r| entry(&r.id, Kind::Claimable, None)));
+    Ok((claimable, entries))
+}
+
+fn entry(id: &str, verdict: verdicts::Kind, blocker: Option<String>) -> verdicts::Entry {
+    verdicts::Entry { id: id.to_string(), verdict, blocker, runes: Vec::new() }
 }
 
 /// Drops the members of an open integration: the integration is claimed and merges them, so
@@ -996,13 +1035,19 @@ fn retain_uncarried(
 }
 
 /// Drops the beads a scoped stop keeps unclaimed: a reserved bead, and any bead of a repo
-/// whose claims lane is stopped.
-fn retain_unstopped(rows: &mut Vec<rank::ReadyRow>, run: &std::path::Path) {
+/// whose claims lane is stopped. Returns the ids dropped.
+fn retain_unstopped(rows: &mut Vec<rank::ReadyRow>, run: &std::path::Path) -> Vec<String> {
     let reserved = spira_config::scoped_stop::reserved_ids(run);
+    let mut dropped = Vec::new();
     rows.retain(|r| {
-        !reserved.contains(&r.id)
-            && !r.label_value("repo:").is_some_and(|repo| spira_config::scoped_stop::stop_for(run, repo, "claims").is_some())
+        let stopped = reserved.contains(&r.id)
+            || r.label_value("repo:").is_some_and(|repo| spira_config::scoped_stop::stop_for(run, repo, "claims").is_some());
+        if stopped {
+            dropped.push(r.id.clone());
+        }
+        !stopped
     });
+    dropped
 }
 
 /// `rune-ready <rune>`: `rune_ready` (lib.sh:693). Exit code names which of FOUR things
@@ -1119,11 +1164,21 @@ fn cmd_bulk_ready_by_rune(a: &Args, env: &mut Env) -> Outcome {
     if parts.is_empty() {
         return Outcome { code: 0, out: String::new(), err: warnings.join("\n") };
     }
-    let rows = match machine_claimable(a, env) {
+    let (rows, mut entries) = match machine_judged(a, env) {
         Ok(r) => r,
         Err(e) => return Outcome::cannot_tell(format!("bulk-ready-by-rune: {}", first_line(&e))),
     };
-    let counts = ready::bucket(&rows, &parts, &queue_wait_label(env));
+    let queue_wait = queue_wait_label(env);
+    for e in entries.iter_mut().filter(|e| e.verdict == verdicts::Kind::Claimable) {
+        if let Some(row) = rows.iter().find(|r| r.id == e.id) {
+            e.runes = parts.iter().filter(|p| ready::in_any_partition(row, std::slice::from_ref(p), &queue_wait)).map(|p| p.name.clone()).collect();
+        }
+    }
+    let file = verdicts::VerdictFile { computed_at: verdicts::stamp(ready::now_epoch()), entries };
+    if let Err(e) = verdicts::write(std::path::Path::new(&env.config.run), &file) {
+        warnings.push(e);
+    }
+    let counts = ready::bucket(&rows, &parts, &queue_wait);
     Outcome {
         code: 0,
         out: counts.into_iter().fold(String::new(), |mut s, (name, n)| {
