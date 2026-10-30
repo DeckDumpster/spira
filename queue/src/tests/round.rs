@@ -2849,6 +2849,35 @@ fn a_mender_bead_carries_the_resolved_scope_label_though_the_process_env_lacks_i
 }
 
 #[test]
+fn a_mender_bead_gets_its_lifecycle_repo_at_creation() {
+    let mut t = round_world();
+    t.lib.s.verdict.mender_label = "mend-fixture".into();
+    *t.lc.batch_view.borrow_mut() = Some(("OPEN".into(), 0, 0, String::new()));
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    assert_eq!(t.run(&["round", "pass-start", &batch]), 0, "{}", t.err());
+    assert_eq!(
+        t.run(&["round", "failed", &batch, "--suite", "test-z.sh"]),
+        0,
+        "{}",
+        t.err()
+    );
+    let calls = t.lc.calls.borrow();
+    assert!(
+        calls
+            .iter()
+            .any(|c| c.starts_with("create-bead ") && c.ends_with(" --repo spira")),
+        "{calls:?}"
+    );
+    assert!(
+        !calls
+            .iter()
+            .any(|c| c.starts_with("create-bead ") && !c.contains("--repo")),
+        "{calls:?}"
+    );
+}
+
+#[test]
 fn each_red_suite_files_one_mender_lane_bead_carrying_its_output_pass_and_batch() {
     let mut t = round_world();
     t.lib.s.verdict.mender_label = "mend-fixture".into();
