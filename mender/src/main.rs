@@ -6,7 +6,7 @@ use std::process::Command;
 
 use mender::verbs::{self, World};
 
-const USAGE: &str = "mender start <spec> | pack <spec> | diff <spec> <bead> | bead <id> | members <spec> | failures <spec> | passes <spec> | verdicts <spec> | landing <spec> | triaged <spec> | diagnose <spec> (text on stdin) | outcome <spec> <mended|environment|flaky|return|unsure> [--checks <text>] (diagnosis on stdin)";
+const USAGE: &str = "mender start <spec> | pack <spec> | diff <spec> <bead> | bead <id> | members <spec> | failures <spec> | passes <spec> | verdicts <spec> | landing <spec> | triaged <spec> | diagnose <spec> (text on stdin) | outcome <spec> <mended|environment|flaky|return|unsure> [--checks <text>] [--ask <id>] (diagnosis on stdin)";
 
 struct Real;
 
@@ -44,6 +44,24 @@ fn stdin() -> String {
     s
 }
 
+fn outcome_flags<'a>(flags: &[&'a str]) -> Result<(Option<&'a str>, Option<&'a str>), String> {
+    let (mut checks, mut ask) = (None, None);
+    let mut it = flags.iter();
+    while let Some(flag) = it.next() {
+        let slot = match *flag {
+            "--checks" => &mut checks,
+            "--ask" => &mut ask,
+            other => return Err(format!("outcome: unknown flag {other:?}; usage: {USAGE}")),
+        };
+        let value = *it.next().ok_or_else(|| format!("outcome: {flag} needs a value"))?;
+        if value.trim().is_empty() {
+            return Err(format!("outcome: {flag} is empty"));
+        }
+        *slot = Some(value);
+    }
+    Ok((checks, ask))
+}
+
 fn run(args: &[String]) -> Result<String, String> {
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
     let w = Real;
@@ -59,8 +77,10 @@ fn run(args: &[String]) -> Result<String, String> {
         ["landing", spec] => verbs::landing(&w, spec),
         ["triaged", spec] => verbs::triaged(&w, spec),
         ["diagnose", spec] => verbs::diagnose(&w, spec, &stdin()),
-        ["outcome", spec, kind] => verbs::finish(&w, spec, kind, &stdin(), None),
-        ["outcome", spec, kind, "--checks", checks] => verbs::finish(&w, spec, kind, &stdin(), Some(checks)),
+        ["outcome", spec, kind, flags @ ..] => {
+            let (checks, ask) = outcome_flags(flags)?;
+            verbs::finish(&w, spec, kind, &stdin(), checks, ask)
+        }
         _ => Err(format!("usage: {USAGE}")),
     }
 }
@@ -79,5 +99,24 @@ fn main() {
     });
     if code != 0 {
         std::process::exit(code);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::outcome_flags;
+
+    #[test]
+    fn outcome_flags_take_checks_and_ask_in_either_order() {
+        assert_eq!(outcome_flags(&["--checks", "crate:x", "--ask", "a1"]).unwrap(), (Some("crate:x"), Some("a1")));
+        assert_eq!(outcome_flags(&["--ask", "a1", "--checks", "crate:x"]).unwrap(), (Some("crate:x"), Some("a1")));
+        assert_eq!(outcome_flags(&[]).unwrap(), (None, None));
+    }
+
+    #[test]
+    fn outcome_flags_refuse_a_missing_or_empty_value_and_an_unknown_flag() {
+        assert!(outcome_flags(&["--ask"]).is_err());
+        assert!(outcome_flags(&["--ask", " "]).is_err());
+        assert!(outcome_flags(&["--tips", "x"]).is_err());
     }
 }
