@@ -389,6 +389,15 @@ pub fn provenance_read(d: &Deps) -> Result<Vec<ProvRow>, String> {
     Ok(out)
 }
 
+/// The broken rows not already in `seen` (a file of the lines last reported). The file is
+/// rewritten to the broken rows now present, so a row that mends and breaks again is news.
+pub fn provenance_news(rows: &[ProvRow], seen: &Path) -> Vec<String> {
+    let before: std::collections::BTreeSet<String> = std::fs::read_to_string(seen).map(|t| t.lines().map(String::from).collect()).unwrap_or_default();
+    let now: Vec<String> = rows.iter().filter(|r| r.is_broken()).map(ProvRow::line).collect();
+    let _ = std::fs::write(seen, now.iter().map(|l| format!("{l}\n")).collect::<String>());
+    now.into_iter().filter(|l| !before.contains(l)).collect()
+}
+
 /// Posts the outcome of a settled, non-landing trail on the issue, and closes the issue when
 /// the outcome means the reporter's problem is gone. Once per bead: `gh-reported/<id>`.
 fn report_outcome(d: &Deps, ctx: &Ctx, id: &str, ext: &str, outcome: &ExternalOutcome, via: &[String]) -> Vec<String> {
@@ -1470,6 +1479,19 @@ mod tests {
         let log = gh_unlanded_scan(&d, &ctx(&tmp.path().join("run")), 2_000_000_000);
         assert!(gh.comments.borrow().is_empty() && gh.closes.borrow().is_empty());
         assert!(log.iter().any(|l| l.contains("asked operator")), "{log:?}");
+    }
+
+    #[test]
+    fn a_broken_row_is_reported_once_and_again_only_when_its_verdict_changes() {
+        let tmp = testkit::TempDir::new("gh-intake-prov-news");
+        let seen = tmp.path().join("seen");
+        let row = |why: &str| ProvRow { ext: "github:o/r#1".into(), bead: "sp-a".into(), state: "LANDED".into(), verdict: ProvVerdict::Broken(why.into()) };
+        assert_eq!(provenance_news(&[row("no commit")], &seen).len(), 1);
+        assert!(provenance_news(&[row("no commit")], &seen).is_empty(), "same row, second pass");
+        assert_eq!(provenance_news(&[row("no lifecycle row")], &seen).len(), 1, "changed verdict");
+        let settled = ProvRow { ext: "github:o/r#1".into(), bead: "sp-a".into(), state: "LANDED".into(), verdict: ProvVerdict::Open };
+        assert!(provenance_news(&[settled], &seen).is_empty());
+        assert_eq!(provenance_news(&[row("no lifecycle row")], &seen).len(), 1, "mended then broken again");
     }
 
     #[test]

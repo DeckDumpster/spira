@@ -156,13 +156,14 @@ fn backfill_cmd(args: &[String]) -> ExitCode {
 /// `watch` is the watcher row: one line per newly broken trail. `health` exits 0 when the read works.
 fn provenance_cmd(args: &[String]) -> ExitCode {
     let mode = args.first().map(String::as_str);
-    let (db, bd_bin, home, _run) = match closeout_env() {
+    let (db, bd_bin, home, run) = match closeout_env() {
         Ok(v) => v,
         Err(e) => {
             eprintln!("gh-intake: {e}");
             return ExitCode::from(1);
         }
     };
+    let seen = std::path::Path::new(&run).join("gh-provenance.seen");
     let (bd, gh, git, repo, mail) = ports(db, bd_bin, home);
     let lc = RealLifecycle::default();
     let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
@@ -200,17 +201,13 @@ fn provenance_cmd(args: &[String]) -> ExitCode {
                 eprintln!("usage: gh-intake provenance watch [--interval SECS]");
                 return ExitCode::from(2);
             }
-            let mut told: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
             let mut blind = false;
             loop {
                 match closeout::provenance_read(&d) {
                     Ok(rows) => {
                         blind = false;
-                        for r in rows.iter().filter(|r| r.is_broken()) {
-                            let line = r.line();
-                            if told.insert(line.clone()) {
-                                println!("gh-provenance: {line}");
-                            }
+                        for line in closeout::provenance_news(&rows, &seen) {
+                            println!("gh-provenance: {line}");
                         }
                     }
                     Err(e) if !blind => {
