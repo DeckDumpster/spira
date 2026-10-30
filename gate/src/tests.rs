@@ -2038,7 +2038,7 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
     // spira-config brings its dependent queue
     assert_eq!(
         cmds[1],
-        "cargo build --profile dwarf --config profile.dwarf.incremental=false -j 8 --all-targets -p queue -p spira-config -p spira-lc"
+        "cargo build --profile dwarf --config profile.dwarf.incremental=false -j 8 --workspace --bins && cargo build --profile dwarf --config profile.dwarf.incremental=false -j 8 --all-targets -p queue -p spira-config"
     );
     assert_eq!(
         cmds[2],

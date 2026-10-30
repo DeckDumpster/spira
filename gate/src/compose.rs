@@ -541,11 +541,6 @@ pub fn run_all(cmd: &str) -> String {
     s
 }
 
-/// Workspace binaries other crates' tests exec from the target directory (`spira-config`: every
-/// script resolves its settings through it; `spira-lc`: spira-runtime's soak drives the real one). The unit build builds them with the touched crates,
-/// as the round's whole-workspace build does; it does not run their tests.
-pub const TEST_EXEC_BINS: &[&str] = &["spira-config", "spira-lc"];
-
 /// The unit phases' commands, in order: build (the `dwarf` profile), then the tests.
 ///
 /// The build is `cargo build --all-targets` (sp-aprxm), not `cargo test --no-run`: the latter
@@ -553,17 +548,22 @@ pub const TEST_EXEC_BINS: &[&str] = &["spira-config", "spira-lc"];
 /// behind `#[cfg(not(test))]` (spira-claim's `main`) would go uncompiled once the build fence
 /// no longer runs in front of it. `--all-targets` builds every lib and bin both ways and the
 /// test harnesses; the test phase reuses those harnesses (same profile, same mode).
+///
+/// Every workspace binary is built first, as the round's build does: cargo builds another
+/// package's binary only when that package is built, and a test may exec one from the target dir.
 pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2] {
     let p = pkgs(crates);
-    let bins: String = TEST_EXEC_BINS.iter().filter(|b| !crates.iter().any(|c| c == *b)).map(|b| format!(" -p {b}")).collect();
+    let cfg = spira_config::build::one_shot_words("dwarf");
     [
         (
             "build",
-            format!("cargo build --profile dwarf {} -j {jobs} --all-targets{p}{bins}", spira_config::build::one_shot_words("dwarf")),
+            format!(
+                "cargo build --profile dwarf {cfg} -j {jobs} --workspace --bins && cargo build --profile dwarf {cfg} -j {jobs} --all-targets{p}"
+            ),
         ),
         (
             "test",
-            format!("cargo test --profile dwarf {} -j {jobs}{p} -- --test-threads={jobs}", spira_config::build::one_shot_words("dwarf")),
+            format!("cargo test --profile dwarf {cfg} -j {jobs}{p} -- --test-threads={jobs}"),
         ),
     ]
 }
@@ -1191,15 +1191,12 @@ mod tests {
     }
 
     #[test]
-    fn the_unit_build_builds_the_binaries_tests_exec_and_tests_only_the_crates() {
-        // spira-runtime's asks_parity runs asks.sh, which execs spira-config from the target
-        // dir: built only by the round's whole-workspace build, so every spira-runtime branch
-        // went red at the gate on "build spira-config first" (2026-10-30).
+    fn the_unit_build_builds_every_workspace_binary_and_tests_only_the_crates() {
         let [b, t] = unit_commands(&["spira-runtime".into()], 4);
-        assert!(b.1.ends_with(" -p spira-runtime -p spira-config -p spira-lc"), "{}", b.1);
-        assert!(!t.1.contains("spira-config"), "{}", t.1);
-        let [b, _] = unit_commands(&["spira-config".into()], 4);
-        assert_eq!(b.1.matches("-p spira-config").count(), 1, "{}", b.1);
+        let (bins, targets) = b.1.split_once(" && ").expect("two build invocations");
+        assert!(bins.ends_with(" --workspace --bins"), "{}", b.1);
+        assert!(targets.ends_with(" --all-targets -p spira-runtime"), "{}", b.1);
+        assert!(!t.1.contains("--workspace") && !t.1.contains("spira-config"), "{}", t.1);
     }
 
     #[test]
@@ -1208,7 +1205,7 @@ mod tests {
         assert_eq!(b.0, "build");
         assert_eq!(
             b.1,
-            "cargo build --profile dwarf --config profile.dwarf.incremental=false -j 4 --all-targets -p gate -p queue -p spira-config -p spira-lc"
+            "cargo build --profile dwarf --config profile.dwarf.incremental=false -j 4 --workspace --bins && cargo build --profile dwarf --config profile.dwarf.incremental=false -j 4 --all-targets -p gate -p queue"
         );
         assert_eq!(t.0, "test");
         assert_eq!(
