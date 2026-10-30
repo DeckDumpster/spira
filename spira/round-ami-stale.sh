@@ -29,11 +29,11 @@ cmd_pass() {
     case "${SPIRA_ROUND_VM_SPILL:-}" in ec2|ec2-always|ec2-only) ;; *) return 0 ;; esac
     local out rc line
     out="$(timeout 60 round-vm ami-check 2>&1)"; rc=$? # batch-job: AWS image listing, polled off the hot path
-    case "$rc" in
-        0) rm -f "$SAID"; return 0 ;;
-        1) line="$(printf '%s' "$out" | tail -n 1)" ;;
-        *) line="round AMI check could not read the images: $(printf '%s' "$out" | tail -n 1)" ;;
-    esac
+    line="$(printf '%s\n' "$out" | grep . | tail -n 1)"
+    [ "$rc" -eq 0 ] && { rm -f "$SAID"; return 0; }
+    if [ "$rc" -ne 1 ] || [ -z "$line" ]; then
+        line="round AMI check could not read the images: 'round-vm ami-check' exited $rc: $(printf '%s' "$out" | tr -s '[:space:]' ' ' | cut -c1-400)"
+    fi
     grep -qxF -- "$line" "$SAID" 2>/dev/null && return 0
     _ras_say "$line; EC2 rounds refuse the image until the Round AMI workflow builds one"
     mkdir -p "$(dirname "$SAID")" && printf '%s\n' "$line" > "$SAID"
