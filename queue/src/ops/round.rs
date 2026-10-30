@@ -1022,14 +1022,6 @@ fn changes_recipe(w: &World, repo: &Path, base: &str, tip: &str) -> bool {
     spira_config::recipe::touches(&changed)
 }
 
-fn tip_or_unpinned(tip: &str) -> &str {
-    if tip.is_empty() {
-        "unpinned"
-    } else {
-        tip
-    }
-}
-
 fn open(
     w: &World,
     repo: Option<&str>,
@@ -1047,14 +1039,14 @@ fn open(
     };
     let mut wanted: Vec<Member> = Vec::new();
     for m in parse_members(&text) {
-        match wanted.iter().find(|h| h.id == m.id) {
-            Some(h) if h.tip == m.tip => {}
+        match wanted.iter_mut().find(|h| h.id == m.id) {
+            Some(h) if h.tip.starts_with(&m.tip) => {}
+            Some(h) if m.tip.starts_with(&h.tip) => h.tip = m.tip,
             Some(h) => {
                 w.err(format!(
                     "queue.sh {label}: {} is named at two tips ({} and {}) — a round holds one version of a bead; refused",
                     m.id,
-                    tip_or_unpinned(&h.tip),
-                    tip_or_unpinned(&m.tip)
+                    h.tip, m.tip
                 ));
                 return USAGE;
             }
