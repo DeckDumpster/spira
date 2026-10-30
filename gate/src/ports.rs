@@ -110,6 +110,8 @@ pub trait World {
     /// `spira-lc certify <bead> <tip> <outcome> <detail> gate` (the machine reads its switch).
     /// Returns spira-lc's stderr when it refused (a tip the row does not hold), else empty.
     fn lc_certify(&self, bead: &str, tip: &str, outcome: &str, detail: &str) -> String;
+    /// `spira-lc fact <bead> --kind gate-start`: the gate holds its tree and begins running.
+    fn lc_gate_start(&self, bead: &str);
     /// sha256 of gate.sh, exclude.sh, the resolved `skew` binary and this binary, concatenated.
     fn harness_hash(&self) -> Option<String>;
 

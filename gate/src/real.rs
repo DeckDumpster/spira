@@ -621,6 +621,14 @@ impl World for Real {
             .map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string())
             .unwrap_or_default()
     }
+    fn lc_gate_start(&self, bead: &str) {
+        let _ = spira_config::bounded::bounded("spira-lc")
+            .args(["fact", bead, "--kind", "gate-start", "--actor", "gate"])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .stdout(Stdio::null())
+            .status();
+    }
     fn harness_hash(&self) -> Option<String> {
         let mut buf = Vec::new();
         for f in ["gate.sh", "exclude.sh"] {

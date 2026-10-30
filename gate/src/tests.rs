@@ -44,6 +44,7 @@ struct Fake {
     tsd: RefCell<Vec<String>>,
     yields: RefCell<Vec<Vec<String>>>,
     lc: RefCell<Vec<Vec<String>>>,
+    gate_starts: RefCell<Vec<String>>,
     lc_refusal: RefCell<String>,
     removed_trees: Cell<u32>,
     err: RefCell<Vec<String>>,
@@ -228,6 +229,7 @@ impl Fake {
             tsd: RefCell::new(Vec::new()),
             yields: RefCell::new(Vec::new()),
             lc: RefCell::new(Vec::new()),
+            gate_starts: RefCell::new(Vec::new()),
             lc_refusal: RefCell::new(String::new()),
             removed_trees: Cell::new(0),
             err: RefCell::new(Vec::new()),
@@ -441,6 +443,9 @@ impl World for Fake {
                 .collect(),
         );
         self.lc_refusal.borrow().clone()
+    }
+    fn lc_gate_start(&self, bead: &str) {
+        self.gate_starts.borrow_mut().push(bead.to_string());
     }
     fn harness_hash(&self) -> Option<String> {
         Some("harness".into())
@@ -4260,4 +4265,20 @@ fn fences_mode_is_its_own_verdict_key_and_gate_all_runs_the_string_whole() {
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     assert!(gate_runs(&f)[0].contains("SPIRA_SELECT_BIN"), "{:?}", gate_runs(&f));
     assert!(meter(&f).contains("compose=suites(gate-all)"), "{}", meter(&f));
+}
+
+#[test]
+fn a_gate_records_its_start_for_the_bead_once_it_holds_the_tree() {
+    let f = Fake::new();
+    f.put_var("SPIRA_GATE_BEAD", "sp-a");
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "test-a.sh ok".into()));
+    f.runs.borrow_mut().insert(BASE.into(), (0, String::new()));
+    f.run();
+    assert_eq!(*f.gate_starts.borrow(), ["sp-a".to_string()]);
+
+    let g = Fake::new();
+    g.runs.borrow_mut().insert(MERGE_SHA.into(), (0, "test-a.sh ok".into()));
+    g.runs.borrow_mut().insert(BASE.into(), (0, String::new()));
+    g.run();
+    assert!(g.gate_starts.borrow().is_empty(), "a gate with no bead has no fact to write");
 }

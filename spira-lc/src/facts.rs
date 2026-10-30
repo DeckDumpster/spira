@@ -11,9 +11,10 @@ const CANNOT_TELL: i32 = 2;
 const REFUSED: i32 = 3;
 
 /// Closed: a kind outside this list is refused, so a typo cannot start a new history.
-pub const KINDS: &[&str] = &["claimed", "requeued", "reopen", "reclaimed", "poison.cleared", "recurred", "lapsed", "session", "checkpointed", "fast-tier-red", "blind-rework", "rejection", "escalated", "no-progress", "__doctor_probe__"];
+pub const KINDS: &[&str] = &["claimed", "requeued", "reopen", "reclaimed", "poison.cleared", "recurred", "lapsed", "session", "checkpointed", "fast-tier-red", "blind-rework", "rejection", "escalated", "no-progress", "gate-start", "__doctor_probe__"];
 
 pub const MACHINE: &str = "fact";
+pub const GATE_START: &str = "gate-start";
 pub const CAUSE_MAX: usize = 200;
 pub const READ_MAX: usize = 120;
 /// Kinds whose cause is a multi-line digest rather than a one-line token.
