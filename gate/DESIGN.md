@@ -461,6 +461,8 @@ string as the branch trial. `gate-touched.sh` no longer calls `build-fence.sh` (
 sp-9uro3, a second call once the gate string named the fence itself); `doctor.sh` fails a row
 whose gate names no `build-fence.sh`.
 
+Doc-tests are not run: nextest has no doc-test mode, and the workspace carries none.
+
 **The build phase is `cargo build --all-targets`**, not `cargo test --no-run`: without
 integration tests (23 of the workspace's binary crates have none) the latter compiles a binary
 only under `cfg(test)`, so `#[cfg(not(test))]` code (spira-claim's `main`) would go uncompiled.

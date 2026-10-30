@@ -413,6 +413,8 @@ unit_stream() {
             if (st != "PASS" && st != "LEAK" && st != "FLAKY") { reds = reds " " n; printf "round-vm: UNIT-TEST %s %s (%d/%d)\n", n, st, k, total > "/dev/stderr"; fflush("/dev/stderr") }
             printf "%d %d%s\n", k, total, reds > prog; close(prog) }'
 }
+unit_test_count() { awk '/^ *Summary \[/ { print $4 }'; }
+unit_red_names() { awk '/^ *Summary \[/ { done = 1 } !done && /^ *(FAIL|TIMEOUT|SIG[A-Z]+|LEAK-FAIL|EXEC-FAIL) +\[/ { print $NF }'; }
 # The round's one source of config: the tree's complete fixture, with this VM's own paths
 # declared over it. Nothing here is searched for or defaulted.
 mkdir -p "$HOME/round-work/.runtime/spira"
@@ -716,7 +718,7 @@ if [ -n "$unit_cov_env" ]; then
 fi
 [ ! -s "$unit_hung" ] || [ "$unit_rc" -ne 0 ] || unit_rc=1
 if [ "$unit_rc" -eq 0 ]; then
-    echo "round-vm: UNIT-TESTS: PASS ($(awk '/^ *Summary \[/ { print $5 }' ~/round-unit-tests.log) tests)" >&2
+    echo "round-vm: UNIT-TESTS: PASS ($(unit_test_count < ~/round-unit-tests.log) tests)" >&2
 else
     echo "round-vm: UNIT-TESTS: FAIL (unit run rc=$unit_rc):" >&2
     grep -E -A3 '^ *(FAIL|TIMEOUT|SIG[A-Z]+|LEAK-FAIL|EXEC-FAIL) |^error(\[|:)|panicked at' ~/round-unit-tests.log | head -120 >&2
@@ -726,7 +728,7 @@ else
     mkdir -p "$leaf"
     if [ "$unit_rc" -gt 128 ]; then unit_cause="killed by signal $(( unit_rc - 128 ))"; else unit_cause="exit status $unit_rc"; fi
     [ ! -s "$unit_hung" ] || unit_cause="$unit_cause, hung past its guard"
-    unit_reds="$(awk '/^ *Summary \[/ { done = 1 } !done && /^ *(FAIL|TIMEOUT|SIG[A-Z]+|LEAK-FAIL|EXEC-FAIL) +\[/ { print $NF }' ~/round-unit-tests.log)"
+    unit_reds="$(unit_red_names < ~/round-unit-tests.log)"
     unit_failed="$(printf '%s' "$unit_reds" | grep -c .)"
     {
         echo "UNIT-TESTS-CAUSE: $unit_cause after ${unit_secs}s; failures=$unit_failed"
@@ -2893,6 +2895,19 @@ mod tests {
         let body = &REMOTE_SCRIPT[f..f + 300];
         assert!(body.contains("--cargo-profile unittest --workspace --config profile.unittest.incremental=false"), "same profile and flags, so the compile is reused: {body}");
         assert!(body.contains("--config-file \"$HOME/round-nextest.toml\""), "{body}");
+    }
+
+    #[test]
+    fn the_pass_record_counts_the_tests_and_names_each_red_once() {
+        let d = TempDir::new();
+        let log = "        PASS [   0.007s] (1/4) fx t::quick\n     TIMEOUT [   4.002s] (2/4) fx t::sleeper\n      SIGSEGV [   0.1s] (3/4) fx t::crash\n\
+                   \x20    Summary [   4.005s] 4 tests run: 1 passed, 2 failed\n     TIMEOUT [   4.002s] (2/4) fx t::sleeper\n";
+        fs::write(d.path().join("n.log"), log).unwrap();
+        let a = REMOTE_SCRIPT.find("unit_test_count() {").unwrap();
+        let b = REMOTE_SCRIPT.find("# The round's one source of config").unwrap();
+        let script = format!("{}\nunit_test_count < n.log; unit_red_names < n.log", &REMOTE_SCRIPT[a..b]);
+        let out = std::process::Command::new("bash").arg("-c").arg(&script).current_dir(d.path()).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "4\nt::sleeper\nt::crash\n");
     }
 
     #[test]

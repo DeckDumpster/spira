@@ -47,7 +47,10 @@ pub fn failed_tests(out: &str) -> Vec<String> {
 }
 
 fn nextest_red(l: &str) -> Option<&str> {
-    let rest = l.strip_prefix("FAIL ").or_else(|| l.strip_prefix("TIMEOUT "))?;
+    let (status, rest) = l.split_once(' ')?;
+    if !matches!(status, "FAIL" | "TIMEOUT" | "LEAK-FAIL" | "EXEC-FAIL") && !status.starts_with("SIG") {
+        return None;
+    }
     let after = rest.trim_start().strip_prefix('[')?.split_once(']')?.1;
     let mut words = after.split_whitespace().filter(|w| !(w.starts_with('(') && w.ends_with(')')));
     let (_binary, name) = (words.next()?, words.next()?);
