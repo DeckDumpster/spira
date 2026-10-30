@@ -137,6 +137,14 @@ out="$(SHIM_SLOW_TYPES=$((dl+1)) sc bash "$HERE/schema.sh" contract)"
 want "contract STORE shows cannot-tell" "custom types:    schema: cannot tell: types.custom timed out" "$out"
 
 echo
+echo "schema-apply.sh ends in a passing check on a store that is already correct"
+out="$(sc bash "$HERE/schema-apply.sh")"; rc=$?
+is "apply exits 0 when its closing check passes" 0 "$rc"
+want "apply reaches its closing check" "applied. verifying with schema.sh check" "$out"
+want "and the check's own verdict is in the output" "store matches the declaration" "$out"
+[ "$rc" = 0 ] || printf '%s\n' "$out" | sed 's/^/    /'
+
+echo
 echo "schema-apply.sh reports applied-not-verified for a cannot-tell"
 out="$(SHIM_SLOW_TYPES=$((dl+1)) sc bash "$HERE/schema-apply.sh")"; rc=$?
 is "apply exits 4" 4 "$rc"
