@@ -38,6 +38,7 @@ pub struct Answer<'a> {
     pub kind: Kind,
     pub diagnosis: &'a str,
     pub checks: Option<&'a str>,
+    pub ask: Option<&'a str>,
 }
 
 /// The diagnosis to record, or why the outcome cannot be recorded yet.
@@ -52,7 +53,7 @@ pub fn validate(a: &Answer) -> Result<String, String> {
             None => Err("mended: --checks must say what ran (each touched crate's `cargo test -p`, the suites naming touched non-Rust files) and that it passed; a failing check is a return".into()),
             Some(c) => Ok(format!("{d}\nchecks: {c}")),
         },
-        _ if a.checks.is_some() => Err("--checks belongs to mended alone".into()),
+        _ if a.checks.is_some() || a.ask.is_some() => Err("--checks and --ask belong to mended alone".into()),
         _ => Ok(d.to_string()),
     }
 }
@@ -74,7 +75,7 @@ mod tests {
     use super::*;
 
     fn a<'a>(kind: Kind, diagnosis: &'a str, checks: Option<&'a str>) -> Answer<'a> {
-        Answer { kind, diagnosis, checks }
+        Answer { kind, diagnosis, checks, ask: None }
     }
 
     #[test]

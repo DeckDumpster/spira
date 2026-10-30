@@ -6,7 +6,7 @@ use std::process::Command;
 
 use mender::verbs::{self, World};
 
-const USAGE: &str = "mender start <spec> | pack <spec> | diff <spec> <bead> | bead <id> | members <spec> | failures <spec> | passes <spec> | verdicts <spec> | landing <spec> | triaged <spec> | diagnose <spec> (text on stdin) | outcome <spec> <mended|environment|flaky|return|unsure> [--checks <text>] (diagnosis on stdin)";
+const USAGE: &str = "mender start <spec> | pack <spec> | diff <spec> <bead> | bead <id> | members <spec> | failures <spec> | passes <spec> | verdicts <spec> | landing <spec> | triaged <spec> | diagnose <spec> (text on stdin) | outcome <spec> <mended|environment|flaky|return|unsure> [--checks <text>] [--ask <id>] (diagnosis on stdin)";
 
 struct Real;
 
@@ -44,6 +44,20 @@ fn stdin() -> String {
     s
 }
 
+fn outcome_flags<'a>(flags: &[&'a str]) -> Result<(Option<&'a str>, Option<&'a str>), String> {
+    let (mut checks, mut ask) = (None, None);
+    let mut it = flags.iter();
+    while let Some(flag) = it.next() {
+        let slot = match *flag {
+            "--checks" => &mut checks,
+            "--ask" => &mut ask,
+            other => return Err(format!("outcome: unknown flag {other:?}; usage: {USAGE}")),
+        };
+        *slot = Some(*it.next().ok_or_else(|| format!("outcome: {flag} needs a value"))?);
+    }
+    Ok((checks, ask))
+}
+
 fn run(args: &[String]) -> Result<String, String> {
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
     let w = Real;
@@ -59,8 +73,10 @@ fn run(args: &[String]) -> Result<String, String> {
         ["landing", spec] => verbs::landing(&w, spec),
         ["triaged", spec] => verbs::triaged(&w, spec),
         ["diagnose", spec] => verbs::diagnose(&w, spec, &stdin()),
-        ["outcome", spec, kind] => verbs::finish(&w, spec, kind, &stdin(), None),
-        ["outcome", spec, kind, "--checks", checks] => verbs::finish(&w, spec, kind, &stdin(), Some(checks)),
+        ["outcome", spec, kind, flags @ ..] => {
+            let (checks, ask) = outcome_flags(flags)?;
+            verbs::finish(&w, spec, kind, &stdin(), checks, ask)
+        }
         _ => Err(format!("usage: {USAGE}")),
     }
 }

@@ -183,10 +183,10 @@ fn settled_state(row: &serde_json::Value) -> Option<&str> {
     row["state"].as_str().filter(|s| !matches!(*s, "WAITING" | "MENDING"))
 }
 
-pub fn finish(w: &dyn World, spec_path: &str, kind: &str, diagnosis: &str, checks: Option<&str>) -> Reply {
+pub fn finish(w: &dyn World, spec_path: &str, kind: &str, diagnosis: &str, checks: Option<&str>, ask: Option<&str>) -> Reply {
     let spec = load_spec(w, spec_path)?;
     let kind = Kind::parse(kind).ok_or_else(|| format!("{kind:?} is not an outcome: mended | environment | flaky | return | unsure"))?;
-    let text = outcome::validate(&Answer { kind, diagnosis, checks })?;
+    let text = outcome::validate(&Answer { kind, diagnosis, checks, ask })?;
     let row = target_row(w, &spec);
     if let Some(state) = row.as_ref().and_then(settled_state) {
         return Ok(format!("no-op: {} pass {} {} is already {state}; no event sent", spec.batch, spec.pass, spec.suite));
@@ -196,7 +196,7 @@ pub fn finish(w: &dyn World, spec_path: &str, kind: &str, diagnosis: &str, check
     }
     event(w, &spec, serde_json::json!({"Diagnosis": {"text": text}}))?;
     match kind {
-        Kind::Mended => mend(w, &spec, checks.unwrap_or("")),
+        Kind::Mended => mend(w, &spec, checks.unwrap_or(""), ask),
         _ => event(w, &spec, outcome::terminal_event(kind, &text)),
     }
 }
@@ -239,7 +239,7 @@ fn suites_naming(w: &dyn World, repo: &str, rev: &str, file: &str) -> Vec<String
 
 /// Takes each member's branch head as its mended tip and hands the machine the facts to
 /// assess; the machine, not the mender, decides whether the mend is taken.
-fn mend(w: &dyn World, spec: &Spec, checks: &str) -> Reply {
+fn mend(w: &dyn World, spec: &Spec, checks: &str, ask: Option<&str>) -> Reply {
     let beads: Vec<&str> = spec.members.iter().map(|m| m.bead.as_str()).collect();
     let recorded: serde_json::Map<String, serde_json::Value> =
         serde_json::from_str(&lc_ok(w, &["mending", "tips", "--beads", &beads.join(",")])?).map_err(|e| format!("spira-lc mending tips: {e}"))?;
@@ -288,7 +288,7 @@ fn mend(w: &dyn World, spec: &Spec, checks: &str) -> Reply {
         member_files,
         required_checks: required,
         checked: checks.split(|c: char| c == ',' || c.is_whitespace()).filter(|c| c.starts_with("crate:") || c.starts_with("suite:")).map(String::from).collect(),
-        ask: None,
+        ask: ask.map(String::from),
     };
     let (members, facts, fences) = (moves.join(","), serde_json::to_string(&facts).map_err(|e| e.to_string())?, serde_json::to_string(&fences).map_err(|e| e.to_string())?);
     let t = target(spec);
@@ -395,7 +395,7 @@ mod tests {
     #[test]
     fn an_outcome_stamps_triage_then_the_diagnosis_then_the_terminal_event() {
         let w = Fake::new();
-        finish(&w, "/spec", "return", "wrong approach at spira/lib.sh:12", None).unwrap();
+        finish(&w, "/spec", "return", "wrong approach at spira/lib.sh:12", None, None).unwrap();
         let calls: Vec<String> = w.lc_calls().into_iter().filter(|c| c.contains("mending event")).collect();
         assert_eq!(calls.len(), 3);
         assert!(calls[0].contains("TriageEnded") && calls[1].contains("Diagnosis") && calls[2].contains("\"Return\""), "{calls:?}");
@@ -419,7 +419,7 @@ mod tests {
     #[test]
     fn a_mended_outcome_goes_through_mending_mend_with_the_branch_head_as_the_tip() {
         let w = mend_world();
-        finish(&w, "/spec", "mended", "fixed", Some("crate:mender")).unwrap();
+        finish(&w, "/spec", "mended", "fixed", Some("crate:mender"), None).unwrap();
         let calls = w.lc_calls();
         assert!(!calls.iter().any(|c| c.contains("Mended")), "{calls:?}");
         let mend = calls.iter().find(|c| c.starts_with("lc mending mend ")).expect("mending mend was called");
@@ -429,10 +429,19 @@ mod tests {
     }
 
     #[test]
+    fn a_kept_mend_carries_its_ask_to_the_machine_so_a_mend_needing_one_is_taken() {
+        let w = mend_world();
+        finish(&w, "/spec", "mended", "fixed", Some("crate:mender"), Some("sp-ask1")).unwrap();
+        let calls = w.lc_calls();
+        let mend = calls.iter().find(|c| c.starts_with("lc mending mend ")).expect("mending mend was called");
+        assert!(mend.contains(r#""ask":"sp-ask1""#), "{mend}");
+    }
+
+    #[test]
     fn a_mended_outcome_with_no_moved_branch_sends_no_mend() {
         let mut w = mend_world();
         w.git_out.insert("rev-parse --verify refs/heads/spira/sp-a^{commit}".into(), "aaa".into());
-        assert!(finish(&w, "/spec", "mended", "fixed", Some("crate:mender")).unwrap_err().contains("no member branch has moved"));
+        assert!(finish(&w, "/spec", "mended", "fixed", Some("crate:mender"), None).unwrap_err().contains("no member branch has moved"));
         assert!(!w.lc_calls().iter().any(|c| c.starts_with("lc mending mend ")));
     }
 
@@ -443,7 +452,7 @@ mod tests {
             "mending list --batch r-9".into(),
             (0, r#"[{"pass":3,"suite":"test-x.sh","triage_ended_at":1700000000}]"#.into()),
         );
-        finish(&w, "/spec", "flaky", "passes on its own rerun in the history", None).unwrap();
+        finish(&w, "/spec", "flaky", "passes on its own rerun in the history", None, None).unwrap();
         let events: Vec<String> = w.lc_calls().into_iter().filter(|c| c.contains("mending event")).collect();
         assert_eq!(events.len(), 2);
         assert!(!events.iter().any(|c| c.contains("TriageEnded")), "{events:?}");
@@ -456,7 +465,7 @@ mod tests {
             "mending list --batch r-9".into(),
             (0, r#"[{"pass":3,"suite":"test-x.sh","state":"RETURNED","triage_ended_at":1}]"#.into()),
         );
-        let out = finish(&w, "/spec", "environment", "EAGAIN at output line 2", None).unwrap();
+        let out = finish(&w, "/spec", "environment", "EAGAIN at output line 2", None, None).unwrap();
         assert!(out.contains("no-op") && out.contains("RETURNED"), "{out}");
         assert!(!w.lc_calls().iter().any(|c| c.contains("mending event")), "{:?}", w.lc_calls());
     }
@@ -464,9 +473,9 @@ mod tests {
     #[test]
     fn a_refused_outcome_sends_nothing() {
         let w = Fake::new();
-        assert!(finish(&w, "/spec", "return", "no location given", None).is_err());
-        assert!(finish(&w, "/spec", "mended", "fixed", None).is_err());
-        assert!(finish(&w, "/spec", "fixed", "x", None).is_err());
+        assert!(finish(&w, "/spec", "return", "no location given", None, None).is_err());
+        assert!(finish(&w, "/spec", "mended", "fixed", None, None).is_err());
+        assert!(finish(&w, "/spec", "fixed", "x", None, None).is_err());
         assert!(w.lc_calls().is_empty());
     }
 
@@ -475,7 +484,7 @@ mod tests {
         let mut w = Fake::new();
         let kind = r#"{"Environment":{"at":0}}"#;
         w.lc_answers.insert(format!("mending event r-9 --pass 3 --suite test-x.sh --kind {kind} --actor mender"), (3, "refused: DeadlinePassed".into()));
-        let err = finish(&w, "/spec", "environment", "EAGAIN at output line 2", None).unwrap_err();
+        let err = finish(&w, "/spec", "environment", "EAGAIN at output line 2", None, None).unwrap_err();
         assert!(err.contains("DeadlinePassed"), "{err}");
     }
 
