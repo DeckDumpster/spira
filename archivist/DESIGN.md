@@ -39,10 +39,12 @@ propagates the archive run's exit code; an unknown subcommand exits 2.
 **A session is swept when its turn count has drifted past `SPIRA_ARCHIVIST_EVERY` turns
 since the last successful archive — never by context depth alone.** Cost is proportional
 to turns since the cursor, not to how deep the context is; context tells you the session
-is expensive, turns-since-cursor tells you work is uncovered. A session whose last run
-failed is not re-fired by drift alone (`failed` is excluded; `timeout` is not — a
-timed-out run may succeed on a later pass with a scaled timeout, up to
-`SPIRA_ARCHIVIST_TIMEOUT_RETRIES`).
+is expensive, turns-since-cursor tells you work is uncovered. A failed run is
+re-fired once its `retry_at` (a doubling wait from `SPIRA_ARCHIVIST_FAIL_BACKOFF`) has
+passed, up to `SPIRA_ARCHIVIST_FAIL_RETRIES` consecutive failures; the last is terminal
+(`failed` with no `retry_at`) and only `archivist now <session>` sweeps it. A commit
+refused because the wiki checkout is dirty is `retry`, uncounted. `timeout` is
+re-fired too, with a scaled timeout, up to `SPIRA_ARCHIVIST_TIMEOUT_RETRIES`.
 
 **No two archives run concurrently, even across entry points** (`sweep` and `now`): an
 archivist-wide flock plus a per-session flock, both released the instant the holding

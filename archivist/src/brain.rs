@@ -21,6 +21,10 @@ struct Git {
 
 impl Git {
     fn real() -> Git {
+        #[cfg(test)]
+        if let Some(program) = tests::GIT_PROGRAM.with(|p| p.borrow().clone()) {
+            return Git { program, local_deadline: LOCAL_DEADLINE_SECS.to_string() };
+        }
         Git { program: "git".to_string(), local_deadline: LOCAL_DEADLINE_SECS.to_string() }
     }
 }
@@ -216,6 +220,12 @@ fn commit_paths_with(g: &Git, dir: &Path, paths: &[String], subject: &str) -> Re
     if refused.is_empty() { Ok(paths.len()) } else { Err(refusal(&refused)) }
 }
 
+/// A `pull --rebase` refused because the checkout holds another writer's uncommitted
+/// changes. Transient: retried later, and the changes are never stashed or discarded here.
+pub fn is_dirty_checkout_refusal(err: &str) -> bool {
+    err.contains("cannot pull with rebase") || err.contains("You have unstaged changes") || err.contains("Your local changes would be overwritten")
+}
+
 fn refusal(refused: &[String]) -> String {
     format!("not committed, they violate the frontmatter schema: {}", refused.join(", "))
 }
@@ -223,6 +233,11 @@ fn refusal(refused: &[String]) -> String {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    thread_local! {
+        /// A stand-in for `git` that only this thread's `Git::real()` uses.
+        pub(crate) static GIT_PROGRAM: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    }
 
     pub(crate) fn sh(dir: &Path, args: &[&str]) {
         let st = Command::new("git").arg("-C").arg(dir).args(args).env("GIT_AUTHOR_NAME", "t").env("GIT_AUTHOR_EMAIL", "t@t").env("GIT_COMMITTER_NAME", "t").env("GIT_COMMITTER_EMAIL", "t@t").output().unwrap();
@@ -421,6 +436,12 @@ pub(crate) mod tests {
         let err = commit_paths(&brain, &["wiki/notes/a.md".to_string()], "archivist: x\n").unwrap_err();
         assert!(err.contains("wiki/notes/a.md"), "{err}");
         assert_eq!(head, git(&brain, &["rev-parse", "HEAD"], None).unwrap());
+    }
+
+    #[test]
+    fn the_dirty_checkout_refusal_is_recognised_and_other_failures_are_not() {
+        assert!(is_dirty_checkout_refusal("git pull --rebase failed: exit 128: error: cannot pull with rebase: You have unstaged changes."));
+        assert!(!is_dirty_checkout_refusal("could not read from remote repository"));
     }
 
     #[test]

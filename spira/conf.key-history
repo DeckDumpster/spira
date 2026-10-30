@@ -530,3 +530,5 @@ main_health_fence_deadline_secs
 runtime_pr_notify_secs
 pr_deploy_giveup
 runtime_asks_secs
+archivist_fail_retries
+archivist_fail_backoff

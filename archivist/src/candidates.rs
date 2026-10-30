@@ -21,13 +21,22 @@ pub struct Candidate {
 }
 
 /// THE TRIGGER IS TURNS SINCE THE LAST SWEEP, not the context band: cost is proportional
-/// to turns since the cursor, not to how deep the context is. A session whose last run
-/// FAILED is not re-fired — `covered` only advances on success, so without this gate a
-/// failure would re-trigger on every pass. `timeout` is deliberately not excluded: a
-/// timed-out run may succeed on a later pass with a scaled timeout (the retry budget in
-/// `run.rs::archive` enforces the ceiling).
-pub fn would_archive(drift: i64, every: u64, prev_state: Option<&str>) -> bool {
-    drift >= every as i64 && prev_state != Some("failed")
+/// to turns since the cursor, not to how deep the context is. `covered` only advances on
+/// success, so a failed session is re-fired only once its `retry_at` has passed — without
+/// the wait a failure would re-trigger on every pass. A `failed` state with no `retry_at`
+/// is terminal and is swept only by `archivist now`.
+pub fn would_archive(drift: i64, every: u64, prev_state: Option<&str>, retry_at: Option<i64>, now: i64) -> bool {
+    let waited = match prev_state {
+        Some("failed") => retry_at.is_some_and(|t| now >= t),
+        Some("retry") => retry_at.is_none_or(|t| now >= t),
+        _ => true,
+    };
+    drift >= every as i64 && waited
+}
+
+/// Seconds to wait after the `failures`-th consecutive failure: `base`, doubling each time.
+pub fn backoff_secs(base: u64, failures: u32) -> i64 {
+    (base.saturating_mul(1u64 << failures.saturating_sub(1).min(20))).min(i64::MAX as u64) as i64
 }
 
 /// Sort candidates by drift descending, so a limited per-pass budget is spent on the
@@ -43,19 +52,41 @@ mod tests {
 
     #[test]
     fn would_archive_requires_drift_at_or_above_the_threshold() {
-        assert!(!would_archive(4, 5, None));
-        assert!(would_archive(5, 5, None));
-        assert!(would_archive(6, 5, None));
+        assert!(!would_archive(4, 5, None, None, 0));
+        assert!(would_archive(5, 5, None, None, 0));
+        assert!(would_archive(6, 5, None, None, 0));
     }
 
     #[test]
-    fn a_previously_failed_session_is_never_refired_by_drift_alone() {
-        assert!(!would_archive(100, 5, Some("failed")));
+    fn a_failed_session_is_selected_once_its_backoff_has_elapsed() {
+        assert!(!would_archive(100, 5, Some("failed"), Some(1000), 999));
+        assert!(would_archive(100, 5, Some("failed"), Some(1000), 1000));
+    }
+
+    #[test]
+    fn a_failed_session_still_needs_qualifying_drift_after_the_backoff() {
+        assert!(!would_archive(4, 5, Some("failed"), Some(1000), 2000));
+    }
+
+    #[test]
+    fn a_terminal_failure_is_never_refired_by_drift_alone() {
+        assert!(!would_archive(100, 5, Some("failed"), None, i64::MAX));
+    }
+
+    #[test]
+    fn a_retry_state_waits_for_its_retry_at() {
+        assert!(!would_archive(100, 5, Some("retry"), Some(1000), 999));
+        assert!(would_archive(100, 5, Some("retry"), Some(1000), 1000));
+    }
+
+    #[test]
+    fn backoff_doubles_per_consecutive_failure() {
+        assert_eq!([1, 2, 3, 4].map(|n| backoff_secs(600, n)), [600, 1200, 2400, 4800]);
     }
 
     #[test]
     fn a_timed_out_session_is_still_a_candidate() {
-        assert!(would_archive(100, 5, Some("timeout")));
+        assert!(would_archive(100, 5, Some("timeout"), None, 0));
     }
 
     fn c(sid: &str, drift: i64) -> Candidate {

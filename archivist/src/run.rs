@@ -258,14 +258,19 @@ pub fn archive(seam: &dyn Seam, cfg: &Env, arc: &Path, sid: &str, tp: &Path, at:
 
     let items: u64 = state::read_state_key(arc, sid, "items_filed").and_then(|s| s.parse().ok()).unwrap_or(0);
 
-    if rc == 0 && matches!(committed, Some(Err(_))) {
-        let _ = state::write_state(arc, sid, State::Failed, at, items);
-        log(&format!("archivist: {sid} FAILED — its wiki pages are written but not committed; see {}", logf.display()));
+    if rc == 0 && matches!(&committed, Some(Err(e)) if brain::is_dirty_checkout_refusal(e)) {
+        let retry_at = now_epoch() + candidates::backoff_secs(cfg.fail_backoff, 1);
+        let _ = state::write_state_retry(arc, sid, State::Retry, at, items, Some(retry_at));
+        log(&format!("archivist: {sid} could not commit — the wiki checkout has another writer's changes; will retry"));
+        1
+    } else if rc == 0 && matches!(committed, Some(Err(_))) {
+        record_failure(cfg, arc, sid, at, items, "its wiki pages are written but not committed", &logf);
         1
     } else if rc == 0 {
         let _ = state::write_state(arc, sid, State::Safe, at, items);
         let _ = set_covered(arc, sid, at);
         let _ = std::fs::remove_file(&tc_file);
+        let _ = std::fs::remove_file(arc.join(format!("{sid}.fail_count")));
         log(&format!("archivist: {sid} safe to clear — {items} item(s) filed"));
         let _ = digest_send(seam, arc, &cfg.tz);
         0
@@ -273,8 +278,8 @@ pub fn archive(seam: &dyn Seam, cfg: &Env, arc: &Path, sid: &str, tp: &Path, at:
         let budget = cfg.timeout_retries;
         tc += 1;
         if tc >= budget {
-            let _ = state::write_state(arc, sid, State::Failed, at, items);
-            log(&format!("archivist: {sid} FAILED (timeout budget {budget} exhausted) — see {}", logf.display()));
+            let _ = std::fs::remove_file(&tc_file);
+            record_failure(cfg, arc, sid, at, items, &format!("timeout budget {budget} exhausted"), &logf);
         } else {
             let _ = std::fs::write(&tc_file, tc.to_string());
             let _ = state::write_state(arc, sid, State::Timeout, at, items);
@@ -287,9 +292,24 @@ pub fn archive(seam: &dyn Seam, cfg: &Env, arc: &Path, sid: &str, tp: &Path, at:
         log(&format!("archivist: {sid} deferred — the account refused the session, retrying when the window reopens"));
         ARC_RC_CAPACITY
     } else {
-        let _ = state::write_state(arc, sid, State::Failed, at, items);
-        log(&format!("archivist: {sid} FAILED rc={rc} after {items} item(s) — see {}", logf.display()));
+        record_failure(cfg, arc, sid, at, items, &format!("rc={rc} after {items} item(s)"), &logf);
         rc
+    }
+}
+
+/// A failed run is retried after a doubling wait; the `fail_retries`-th consecutive failure
+/// is terminal (no `retry_at`) and says which command forces the sweep.
+fn record_failure(cfg: &Env, arc: &Path, sid: &str, at: u64, items: u64, what: &str, logf: &Path) {
+    let count_file = arc.join(format!("{sid}.fail_count"));
+    let n: u32 = std::fs::read_to_string(&count_file).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0) + 1;
+    let _ = std::fs::write(&count_file, n.to_string());
+    if n >= cfg.fail_retries {
+        let _ = state::write_state(arc, sid, State::Failed, at, items);
+        log(&format!("archivist: {sid} FAILED for good after {n} consecutive failures ({what}) — see {}; force a sweep with: archivist now {sid}", logf.display()));
+    } else {
+        let retry_at = now_epoch() + candidates::backoff_secs(cfg.fail_backoff, n);
+        let _ = state::write_state_retry(arc, sid, State::Failed, at, items, Some(retry_at));
+        log(&format!("archivist: {sid} FAILED ({what}, failure {n}/{}) — will retry; see {}", cfg.fail_retries, logf.display()));
     }
 }
 
@@ -311,7 +331,8 @@ fn build_candidates(seam: &dyn Seam, cfg: &Env, arc: &Path, now: i64) -> Vec<Can
         let turns_n = numeric_logged(Some(&turns_raw), &format!("session {sid} turns"));
         let drift = turns_n as i64 - cov as i64;
         let prev_state = state::read_state_key(arc, &sid, "state");
-        let would = candidates::would_archive(drift, cfg.every, prev_state.as_deref());
+        let retry_at = state::read_state_key(arc, &sid, "retry_at").and_then(|t| t.parse().ok());
+        let would = candidates::would_archive(drift, cfg.every, prev_state.as_deref(), retry_at, now);
         let ctx_display = if ctx_raw.is_empty() { "-".to_string() } else { ctx_raw.clone() };
         let turns_display = if turns_raw.is_empty() { "-".to_string() } else { turns_raw.clone() };
         let ctx = if ctx_raw.is_empty() { "0".to_string() } else { ctx_raw };
@@ -387,7 +408,7 @@ fn forget_stale_sessions(cfg: &Env, arc: &Path, lines: &mut Vec<String>) {
         if transcript_exists(projects, &sid) {
             continue;
         }
-        for suffix in [".state", ".hwm", ".covered", ".filed", ".filed.lock", ".notified", ".lock", ".timeout_count"] {
+        for suffix in [".state", ".hwm", ".covered", ".filed", ".filed.lock", ".notified", ".lock", ".timeout_count", ".fail_count"] {
             let _ = std::fs::remove_file(arc.join(format!("{sid}{suffix}")));
         }
         let _ = std::fs::remove_file(Path::new(&cfg.run).join(format!("archivist-{sid}.log")));
@@ -414,16 +435,13 @@ pub fn now_cmd(seam: &dyn Seam, cfg: &Env, arc: &Path, arg: Option<&str>) -> i32
             let sid = tp.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
             (sid, tp)
         }
-        Some(a) => {
-            let live = transcripts::live_transcripts(projects, Path::new(&cfg.run), cfg.idle, now_epoch());
-            match live.into_iter().find(|(s, _)| s == a) {
-                Some((s, p)) => (s, p),
-                None => {
-                    eprintln!("archivist: no transcript for '{a}'");
-                    return 1;
-                }
+        Some(a) => match transcripts::find_transcript(projects, a) {
+            Some(p) => (a.to_string(), p),
+            None => {
+                eprintln!("archivist: no transcript for '{a}'");
+                return 1;
             }
-        }
+        },
         None => match transcripts::newest_transcript(projects) {
             Some(x) => x,
             None => {
@@ -558,6 +576,8 @@ mod tests {
             timeout: 900,
             per_pass: 1,
             timeout_retries: 3,
+            fail_retries: 3,
+            fail_backoff: 600,
         }
     }
 
@@ -878,6 +898,85 @@ mod tests {
         // a has more drift (50) than b (5), so a is archived and b is deferred.
         assert_eq!(seam.agent_calls.borrow().len(), 1);
         assert!(lines.iter().any(|l| l.contains("sess-b deferred")));
+    }
+
+    fn one_session_fixture(turns: &str) -> (testkit::TempDir, testkit::TempDir, testkit::TempDir, Env, FakeSeam) {
+        let dir = testkit::TempDir::new("archivist-run");
+        let projects = testkit::TempDir::new("archivist-projects");
+        std::fs::create_dir_all(projects.join("p")).unwrap();
+        std::fs::write(projects.join("p").join("sess-a.jsonl"), "x").unwrap();
+        let runes = testkit::TempDir::new("archivist-runes");
+        std::fs::write(runes.join("archivist.md"), "task").unwrap();
+        let mut c = cfg();
+        c.runes = runes.path().to_string_lossy().into_owned();
+        c.run = dir.path().to_string_lossy().into_owned();
+        c.token_projects = projects.path().to_string_lossy().into_owned();
+        c.every = 1;
+        let seam = FakeSeam::new();
+        let mut env = std::collections::HashMap::new();
+        env.insert("SP_CTX_NOW".into(), "10".into());
+        env.insert("SP_CTX_TURNS".into(), turns.into());
+        env.insert("SP_CTX_NEXT".into(), "warn".into());
+        seam.ctx_env.borrow_mut().insert(projects.join("p").join("sess-a.jsonl").to_string_lossy().into_owned(), env);
+        (dir, projects, runes, c, seam)
+    }
+
+    #[test]
+    fn a_failed_session_is_swept_again_once_its_backoff_has_elapsed() {
+        let (dir, _p, _r, c, seam) = one_session_fixture("50");
+        state::write_state_retry(&dir, "sess-a", State::Failed, 50, 0, Some(now_epoch() + 3600)).unwrap();
+        sweep(&seam, &c, &dir);
+        assert_eq!(seam.agent_calls.borrow().len(), 0, "still inside the backoff");
+
+        state::write_state_retry(&dir, "sess-a", State::Failed, 50, 0, Some(now_epoch() - 1)).unwrap();
+        sweep(&seam, &c, &dir);
+        assert_eq!(seam.agent_calls.borrow().len(), 1);
+        assert_eq!(state::read_state_key(&dir, "sess-a", "state"), Some("safe".into()));
+    }
+
+    #[test]
+    fn a_terminal_failure_is_not_swept_but_now_forces_it() {
+        let (dir, _p, _r, c, seam) = one_session_fixture("50");
+        state::write_state(&dir, "sess-a", State::Failed, 50, 0).unwrap();
+        sweep(&seam, &c, &dir);
+        assert_eq!(seam.agent_calls.borrow().len(), 0);
+        assert_eq!(now_cmd(&seam, &c, &dir, Some("sess-a")), 0);
+        assert_eq!(seam.agent_calls.borrow().len(), 1);
+        assert_eq!(state::read_state_key(&dir, "sess-a", "state"), Some("safe".into()));
+    }
+
+    #[test]
+    fn consecutive_failures_back_off_and_the_last_is_terminal() {
+        let (dir, _p, _r, mut c, seam) = one_session_fixture("50");
+        c.fail_retries = 2;
+        *seam.agent_rc.borrow_mut() = 3;
+        archive_past_lock_contention(&seam, &c, &dir);
+        assert_eq!(state::read_state_key(&dir, "sess-1", "state"), Some("failed".into()));
+        let first: i64 = state::read_state_key(&dir, "sess-1", "retry_at").expect("retrying").parse().unwrap();
+        assert!(first > now_epoch() + 500, "first wait is the configured base");
+        archive_past_lock_contention(&seam, &c, &dir);
+        assert_eq!(state::read_state_key(&dir, "sess-1", "state"), Some("failed".into()));
+        assert_eq!(state::read_state_key(&dir, "sess-1", "retry_at"), None, "the second consecutive failure is terminal");
+    }
+
+    #[test]
+    fn a_dirty_checkout_refusal_leaves_the_session_retryable_not_failed() {
+        let bin = testkit::TempDir::new("archivist-gitshim");
+        let real = String::from_utf8(std::process::Command::new("sh").args(["-c", "command -v git"]).output().unwrap().stdout).unwrap();
+        let shim = bin.join("git");
+        testkit::write_exe(
+            &shim,
+            &format!("#!/bin/sh\ncase \" $* \" in *\" pull \"*) echo 'error: cannot pull with rebase: You have unstaged changes.' >&2; exit 128;; esac\nexec {} \"$@\"\n", real.trim()),
+        );
+        brain::tests::GIT_PROGRAM.with(|p| *p.borrow_mut() = Some(shim.to_string_lossy().into_owned()));
+
+        let (rc, dir, _brain, _root) = brain_run(0, false);
+        brain::tests::GIT_PROGRAM.with(|p| *p.borrow_mut() = None);
+        assert_ne!(rc, 0);
+        assert_eq!(state::read_state_key(&dir, "sess-1", "state"), Some("retry".into()));
+        assert!(state::read_state_key(&dir, "sess-1", "retry_at").is_some());
+        assert!(!dir.join("sess-1.fail_count").exists(), "a busy checkout is not a counted failure");
+        assert_eq!(covered_raw(&dir, "sess-1"), None);
     }
 
     #[test]

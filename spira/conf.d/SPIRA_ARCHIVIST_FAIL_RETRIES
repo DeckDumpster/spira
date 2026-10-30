@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=archivist
+DOC=HOW MANY CONSECUTIVE FAILED RUNS A SESSION GETS BEFORE THE FAILURE IS TERMINAL. Each failure
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW MANY CONSECUTIVE FAILED RUNS A SESSION GETS BEFORE THE FAILURE IS TERMINAL. Each failure
+    # waits SPIRA_ARCHIVIST_FAIL_BACKOFF doubled per failure before the sweep tries it again; the
+    # last one stops retrying and the status line names the command that forces a sweep.
+    : "${SPIRA_ARCHIVIST_FAIL_RETRIES:=5}"
+SPIRA_CONF_DEFAULT_EOF
