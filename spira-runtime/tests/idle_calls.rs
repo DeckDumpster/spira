@@ -7,7 +7,7 @@ use runtime::event::*;
 use runtime::journal::{Journal, Offset, Poison, ScheduleRow};
 use runtime::ports::{Clock, VirtualClock};
 use runtime::{Executor, MemJournal, Outcome, Result};
-use spira_runtime::watchers::{inbox_keeper::InboxKeeper, round_duty::RoundDuty};
+use spira_runtime::watchers::{asks::Asks, inbox_keeper::InboxKeeper, pr_notify::PrNotify, round_duty::RoundDuty};
 use runtime::marker::NullMarker;
 use runtime::wide::NullSink;
 use spira_runtime::{open_engine, Settings};
@@ -81,7 +81,14 @@ fn production() -> Settings {
     let get = |k: &str| -> std::result::Result<String, String> {
         Ok(match k {
             "SPIRA_RUNTIME_HEARTBEAT_URL" => "http://127.0.0.1:9/ping".into(),
+            "SPIRA_METRICS_ENDPOINT" => String::new(),
             "SPIRA_RUNTIME_HEARTBEAT_SECS" | "SPIRA_RUNTIME_INBOX_KEEPER_SECS" => "60".into(),
+            "SPIRA_RUNTIME_PR_NOTIFY_SECS" => "90".into(),
+            "SPIRA_RUNTIME_ASKS_SECS" => "60".into(),
+            "SPIRA_PR_DEPLOY_GIVEUP" => "3600".into(),
+            "SPIRA_GH_API" => "http://127.0.0.1:9".into(),
+            "SPIRA_BROKER_GH_TOKEN" => String::new(),
+            "SPIRA_MAIL" | "SPIRA_ASK_LABEL" => "/unused".into(),
             "SPIRA_RUNTIME_ROUND_DUTY_SECS" => "15".into(),
             "SPIRA_RUNTIME_STALL_LIMIT" => "2".into(),
             "SPIRA_ROUND_MIN" | "SPIRA_ROUND_MAX_OPEN" => "1".into(),
@@ -100,6 +107,8 @@ fn quiet_world(effect: &str, _poll: u64) -> String {
     match effect {
         spira_runtime::watchers::round_duty::OBSERVE => r#"{"certified":0,"by_repo":"","stopped":"","state":"none","open":0,"lines":{},"fresh":[]}"#.into(),
         spira_runtime::watchers::inbox_keeper::OBSERVE => r#"{"triage_alive":true,"inbox_mtime":0}"#.into(),
+        spira_runtime::watchers::pr_notify::OBSERVE => r#"{"repos":[]}"#.into(),
+        spira_runtime::watchers::asks::OBSERVE => r#"{"open":[],"held":[]}"#.into(),
         _ => String::new(),
     }
 }
@@ -125,7 +134,7 @@ fn ten_minutes(world: fn(&str, u64) -> String) -> Run {
     let clock = VirtualClock::new(1_800_000_000_000);
     let start = clock.now_ms();
     let mut e = open_engine(&production(), counting.clone(), Arc::new(clock.clone()), Arc::new(NullMarker), Arc::new(NullSink), vec![]).unwrap();
-    for (_, stream, kind) in [runtime::heartbeat::Heartbeat::boot(), RoundDuty::boot(), InboxKeeper::boot()] {
+    for (_, stream, kind) in [runtime::heartbeat::Heartbeat::boot(), RoundDuty::boot(), InboxKeeper::boot(), PrNotify::boot(), Asks::boot()] {
         e.start(stream, kind);
     }
     let (mut wakes, mut polls) = (0, 0);
