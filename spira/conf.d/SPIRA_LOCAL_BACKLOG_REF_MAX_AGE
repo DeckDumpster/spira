@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=local
+DOC=Seconds old the remote-tracking ref may be when the backlog fetch fails before the watcher goes BLIND.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_LOCAL_BACKLOG_REF_MAX_AGE:=3600}"
+SPIRA_CONF_DEFAULT_EOF

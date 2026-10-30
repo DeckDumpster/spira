@@ -209,6 +209,7 @@ lc_unix_group = "spira"
 lc_unix_user = "spira-lc"
 local_backlog_age = 10800
 local_backlog_count = 50
+local_backlog_ref_max_age = 3600
 local_units = "/fixture/userhome/.config/spira/local-units.toml"
 loom_addr = "0.0.0.0:8788"
 loom_budget_ms = 1500
