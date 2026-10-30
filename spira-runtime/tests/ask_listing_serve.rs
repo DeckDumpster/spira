@@ -13,7 +13,7 @@ use spira_runtime::world::World;
 
 const RW: &str = "askRwSecretK4p9TqZ";
 const RO: &str = "askRoSecretW2m8ZcY";
-const LABEL: &str = "needs-ryan-fixture";
+const LABEL: &str = "ask-serve-fixture";
 const CONTENT_DB: &str = "sptest_content";
 
 struct Proc(Child);
@@ -40,7 +40,7 @@ INSERT INTO issues (id, title, priority, issue_type, status, created_at, updated
   ('sp-ask-open', 'approve the design', 1, 'task', 'open', '2026-10-30 08:00:00', '2026-10-30 08:00:00', 'see wiki/projects/zed/designs/x.md', ''),
   ('sp-ask-closed', 'old question', 1, 'task', 'closed', '2026-10-29 08:00:00', '2026-10-29 08:00:00', '', ''),
   ('sp-other-open', 'not an ask', 1, 'task', 'open', '2026-10-30 08:00:00', '2026-10-30 08:00:00', '', '');
-INSERT INTO labels (issue_id, label) VALUES ('sp-ask-open', 'needs-ryan-fixture'), ('sp-ask-closed', 'needs-ryan-fixture'), ('sp-other-open', 'other');
+INSERT INTO labels (issue_id, label) VALUES ('sp-ask-open', 'ask-serve-fixture'), ('sp-ask-closed', 'ask-serve-fixture'), ('sp-other-open', 'other');
 ";
 
 fn serve(root: &Path, socket: &Path) -> (Proc, Proc) {
