@@ -42,3 +42,29 @@ fn a_live_monitor_is_journaled_once_per_quarter_stall_not_once_per_tick() {
     assert!(gaps.iter().all(|g| *g >= STALL / 4), "{gaps:?}");
     assert!(saved.iter().all(|c| c.persisted_seen == c.last_seen.unwrap()), "a saved state records itself as persisted");
 }
+
+#[test]
+fn reopening_a_journaled_monitor_writes_no_state() {
+    let mem = MemJournal::new();
+    let clock = VirtualClock::new(1_800_000_000_000);
+    let keeper = || InboxKeeper { interval_ms: 60_000, stall_secs: STALL, backoff_secs: 3600 };
+    let mut e = Engine::open(mem.clone(), Arc::new(clock.clone()), vec![keeper().registration()], 0).unwrap();
+    let (_, stream, kind) = InboxKeeper::boot();
+    e.start(stream, kind);
+    for _ in 0..30 {
+        e.run_until_idle().unwrap();
+        for p in e.pending_effects() {
+            e.complete(&p.key, Outcome::Succeeded(r#"{"triage_alive":true,"inbox_mtime":0}"#.into())).unwrap();
+        }
+        e.run_until_idle().unwrap();
+        let Some(next) = e.next_timer_at() else { break };
+        clock.advance_to(next);
+    }
+    let before = journaled_states(&mem).len();
+    assert!(before >= 1, "nothing was journaled to restart from");
+    drop(e);
+
+    let mut again = Engine::open(mem.clone(), Arc::new(clock.clone()), vec![keeper().registration()], 0).unwrap();
+    again.run_until_idle().unwrap();
+    assert_eq!(journaled_states(&mem).len(), before, "reopening the journal must not write a state");
+}
