@@ -86,6 +86,7 @@ impl World for Real {
     fn open_trigger_count(&self, labels: &str) -> Result<u64, String> {
         // bd says which beads carry the labels; whether each is still open is the lifecycle
         // machine's answer (sp-mve9i), never bd's status.
+        let started = std::time::Instant::now();
         let out = spira_config::bounded::bounded(&self.bd)
             .arg("-C")
             .arg(&self.db)
@@ -95,7 +96,7 @@ impl World for Real {
             .output()
             .map_err(|e| format!("cannot run bd list: {e}"))?;
         if !out.status.success() {
-            return Err(format!("bd list exited {}", out.status));
+            return Err(format!("bd list exited {} after {}s", out.status, started.elapsed().as_secs()));
         }
         let ids = json_ids(&String::from_utf8_lossy(&out.stdout))
             .ok_or_else(|| "bd list output is not a JSON array".to_string())?;

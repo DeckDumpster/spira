@@ -130,6 +130,9 @@ out="$(BD_LIST_FAIL=1 run_trigger)"; rc=$?
 is "count failure exits 0" 0 "$rc"
 want "count retried" "attempt 3/3" "$out"
 lack "nothing filed" "create" "$(cat "$LOG")"
+want "helper failure line names the warden trigger" "warden-trigger: cannot count open triggers: bd list exited" "$out"
+lack "helper failure line is not misattributed to mimir" "mimir-trigger: cannot count" "$out"
+want "helper failure line carries the elapsed seconds" "after " "$(printf '%s\n' "$out" | grep 'bd list exited')"
 
 echo; echo "LABEL: configured non-default label is used"
 : > "$LOG"
