@@ -407,7 +407,7 @@ impl RoundRunner for VmRunner<'_> {
 
     fn stop_main(&mut self) -> Result<(), String> {
         let Some(mut child) = self.child.take() else { return Ok(()) };
-        let _ = Command::new("kill").arg("-TERM").arg(child.id().to_string()).status();
+        let _ = spira_config::bounded::bounded("kill").arg("-TERM").arg(child.id().to_string()).status();
         let mut waited = 0;
         while child.try_wait().map_err(|e| format!("round-vm: {e}"))?.is_none() {
             if waited >= STOP_SECS {
