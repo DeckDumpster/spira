@@ -24,6 +24,7 @@ serde_json = "1"
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+spira-claim = { path = "../spira-claim" }
 # The suite drives the endpoint over a real socket rather than calling the handler, so it
 # needs the stream helpers the server itself does not.
 tokio = { version = "1", features = ["io-util"] }

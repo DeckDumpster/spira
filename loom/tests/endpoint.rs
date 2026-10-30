@@ -631,6 +631,40 @@ fn now_snapshot() -> cockpit_ops::lcview::Snapshot {
 }
 
 #[tokio::test]
+async fn the_lifecycle_api_says_a_child_of_a_parent_in_delivery_is_blocked_as_the_pane_does() {
+    use cockpit_ops::lcview::{apply_verdicts, live_row, view, Snapshot};
+    use spira_claim::verdicts::{Entry, Kind, VerdictFile};
+    let now = now_s();
+    let mut snap = Snapshot { now, ..Default::default() };
+    for raw in [
+        r#"{"bead_id":"sp-p","state":"IN_DELIVERY","holds":"[]","repo":"spira","blocked_by":[]}"#,
+        r#"{"bead_id":"sp-p.1","state":"READY","holds":"[]","repo":"spira","blocked_by":[],"title":"the child"}"#,
+    ] {
+        let (row, meta) = live_row(&serde_json::from_str(raw).unwrap()).unwrap();
+        snap.meta.insert(row.id.clone(), meta);
+        snap.rows.push(row);
+    }
+    let file = VerdictFile {
+        computed_at: spira_claim::verdicts::stamp(now),
+        entries: vec![Entry { id: "sp-p.1".into(), verdict: Kind::Blocked, blocker: Some("sp-p".into()), runes: vec![] }],
+    };
+    apply_verdicts(&mut snap, &file);
+    let pane_claim = |v: &cockpit_ops::lcview::View| v.machine.iter().find(|m| m.name == "READY").unwrap().beads.iter().find(|b| b.id == "sp-p.1").unwrap().claim.clone();
+    assert_eq!(pane_claim(&view(&snap)), "blocked: sp-p");
+
+    let run = ops_run_dir();
+    write_snapshot(&run, &snap);
+    let addr = spawn(ops_cfg(run.to_str().unwrap())).await;
+    let (code, api) = get(addr, "/api/lifecycle").await;
+    assert_eq!(code, 200, "{api}");
+    let v: Value = serde_json::from_str(&api).expect("json");
+    let ready = v["view"]["machine"].as_array().unwrap().iter().find(|m| m["name"] == "READY").unwrap();
+    let bead = ready["beads"].as_array().unwrap().iter().find(|b| b["id"] == "sp-p.1").unwrap();
+    assert_eq!(bead["claim"], "blocked: sp-p", "{api}");
+    assert_eq!(v["view"]["next_count"], 0, "{api}");
+}
+
+#[tokio::test]
 async fn overview_shows_the_live_round_the_late_bead_the_failing_unit_and_what_landed() {
     let fx = units_fixture(&fixture_rows());
     let run = std::path::PathBuf::from(&fx.cfg.run);

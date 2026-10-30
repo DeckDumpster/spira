@@ -408,7 +408,8 @@ pub fn tree(v: &View) -> Vec<Node> {
             let m = if v.next_unknown { format!("{YEL}?{R}") } else { format!("{B}{}{R}", v.next_count) };
             let rest = st.detail.split(" · ").filter(|p| !p.starts_with("claimable ")).collect::<Vec<_>>().join(" · ");
             let rest = if rest.is_empty() { String::new() } else { format!("  {rest}") };
-            format!("{B}{:<12}{R}{B}{:>4}{R} ready · {m} claimable{rest}{}", st.name, st.count, dot(st.red))
+            let as_of = if v.next_age.is_empty() { String::new() } else { format!(" {D}({} ago){R}", v.next_age) };
+            format!("{B}{:<12}{R}{B}{:>4}{R} ready · {m} claimable{as_of}{rest}{}", st.name, st.count, dot(st.red))
         } else {
             format!("{c}{B}{:<12}{R}{B}{:>4}{R}{detail}{}", st.name, st.count, dot(st.red))
         };

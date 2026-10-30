@@ -3,7 +3,7 @@
 //! commits (drift, cached by sha), `world status`, and the dwarf ceiling from config. Never runs `bd`.
 
 use cockpit_ops::lctui::{layout, parent_key, Frame, Mode, Ui};
-use cockpit_ops::lcview::{carry_forward, repo_column, AskRow, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveDwarf, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
+use cockpit_ops::lcview::{apply_verdicts, carry_forward, live_row, repo_column, AskRow, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveDwarf, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::process::Command;
@@ -255,7 +255,6 @@ fn gather_menders(s: &mut Snapshot) {
 
 fn gather() -> Snapshot {
     let started = std::time::Instant::now();
-    let mut claimable: Vec<String> = Vec::new();
     let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let mut s = Snapshot { now, ..Default::default() };
     s.release = std::env::var("SPIRA_RELEASE")
@@ -278,44 +277,23 @@ fn gather() -> Snapshot {
     match lc_json(&["list", "--live", "--snapshot"]) {
         Ok(rows) => {
             for r in rows {
-                let repo = match repo_column(&r) {
-                    Ok(repo) => repo,
+                let (row, meta) = match live_row(&r) {
+                    Ok(x) => x,
                     Err(e) => {
                         s.errors.push(format!("spira-lc list --live: {e}"));
                         break;
                     }
                 };
-                let id = text(&r["bead_id"]);
                 if let (Some(pid), Some(ph)) = (r["holder"].as_str().and_then(holder_pid), r["dwarf_phase"].as_str()) {
                     phases.insert(pid, ph.to_string());
                 }
-                let holds: Vec<String> = r["holds"].as_str().and_then(|h| serde_json::from_str(h).ok()).unwrap_or_default();
-                let blocker = r["blocked_by"].as_array().and_then(|b| b.first()).and_then(|b| b.as_str()).map(String::from);
-                let state: String = text(&r["state"]);
-                if state == "READY" && holds.is_empty() && blocker.is_none() {
-                    claimable.push(id.clone());
-                }
-                s.meta.insert(id.clone(), Meta { title: text(&r["title"]), priority: num(&r["priority"]), ..Default::default() });
-                s.rows.push(Row {
-                    id,
-                    rework: state == "REWORK",
-                    state,
-                    holder: r["holder"].as_str().map(String::from),
-                    holds,
-                    reason: r["reason"].as_str().map(String::from),
-                    updated_at: num(&r["updated_at"]).unwrap_or(0),
-                    since: num(&r["since"]).or_else(|| num(&r["updated_at"])).unwrap_or(0),
-                    lease_until: num(&r["lease_until"]),
-                    persona: r["persona"].as_str().map(String::from),
-                    claimable: None,
-                    blocker,
-                    repo,
-                    tip: r["tip"].as_str().map(String::from),
-                    sifted_tip: r["sifted_tip"].as_str().map(String::from),
-                    ejected_red_tip: r["ejected_red_tip"].as_str().map(String::from),
-                });
+                s.meta.insert(row.id.clone(), meta);
+                s.rows.push(row);
             }
-            s.claimable = Some(claimable);
+            match read_verdicts() {
+                Ok(f) => apply_verdicts(&mut s, &f),
+                Err(e) => s.errors.push(e),
+            }
         }
         Err(e) => s.errors.push(e),
     }
@@ -420,6 +398,11 @@ fn gather() -> Snapshot {
 
 /// Write the snapshot loom serves (`/lifecycle`), atomically, so the phone page shows exactly
 /// what this pane just drew. A failure is printed in the frame's place, never swallowed.
+fn read_verdicts() -> Result<spira_claim::verdicts::VerdictFile, String> {
+    let run = spira_config::process::cfg("SPIRA_RUN").map_err(|e| format!("SPIRA_RUN does not resolve: {e}"))?;
+    spira_claim::verdicts::read(std::path::Path::new(run.trim()))
+}
+
 fn publish(s: &Snapshot) {
     let Ok(run) = spira_config::process::cfg("SPIRA_RUN") else {
         eprintln!("lc-view: SPIRA_RUN does not resolve — the phone page will go stale");
