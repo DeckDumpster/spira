@@ -383,6 +383,15 @@ mod tests {
     }
 
     #[test]
+    fn unpublished_is_served_without_the_store_and_waits_longer_than_a_store_call() {
+        let (reply, code) = ask(None, "[\"unpublished\"]\n");
+        assert_eq!(code, 2, "{reply}");
+        assert!(reply.contains("unpublished: usage"), "the verb answered, not the store: {reply}");
+        let argv = |v: &str| vec![v.to_string()];
+        assert!(super::request_deadline(&argv("unpublished")) > super::request_deadline(&argv("show")));
+    }
+
+    #[test]
     fn a_served_request_writes_one_span_and_a_dead_sink_changes_nothing() {
         let dir = testkit::TempDir::new("lc-serve-otel");
         let sink = spira_otel::Sink::new(dir.path(), "spira-lc", 14);
