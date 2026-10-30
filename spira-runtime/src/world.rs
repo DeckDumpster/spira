@@ -19,6 +19,9 @@ use crate::wiki_git::git;
 use crate::watchers::brain_dirty;
 use crate::watchers::round_duty::{RoundState, Snapshot};
 
+const STORE_ATTEMPTS: u32 = 3;
+const STORE_BACKOFF: std::time::Duration = std::time::Duration::from_millis(250);
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct World {
     pub run_dir: PathBuf,
@@ -253,9 +256,32 @@ impl World {
         format!("NEW ASK HOLD {id}: {q} | NO MAIL for the question; answer with spira-lc reply {id} seq:{seq}")
     }
 
+    /// One spira-lc call, retried so a store restart inside the tick is not an outage; an error
+    /// names the command and what the store said.
+    fn lc_named(&self, argv: &[&str]) -> Result<String, String> {
+        let mut last = String::new();
+        for attempt in 0..STORE_ATTEMPTS {
+            if attempt > 0 {
+                std::thread::sleep(STORE_BACKOFF);
+            }
+            match lc_call(&self.lc_socket, argv) {
+                Ok(out) => return Ok(out),
+                Err(e) => last = e.to_string(),
+            }
+        }
+        Err(format!("spira-lc {} failed after {STORE_ATTEMPTS} attempts: {}", argv.join(" "), last.trim()))
+    }
+
+    /// The open asks as a JSON list; lines before the list (a notice the store printed) are skipped.
     fn open_asks_json(&self) -> Result<String, String> {
         let [flag, filter] = status_args(Kind::Ask, Which::Open);
-        lc_call(&self.lc_socket, &["content", "list", "--label", &self.ask_label, &flag, &filter, "--limit", "0", "--json"]).map_err(|e| e.to_string())
+        let argv = ["content", "list", "--label", &self.ask_label, &flag, &filter, "--limit", "0", "--json"];
+        let out = self.lc_named(&argv)?;
+        let list = out.char_indices().filter(|&(i, c)| c == '[' && (i == 0 || out.as_bytes()[i - 1] == b'\n')).map(|(i, _)| &out[i..]).find(|rest| serde_json::from_str::<Vec<Value>>(rest).is_ok());
+        match list {
+            Some(rest) => Ok(rest.to_string()),
+            None => Err(format!("spira-lc {} exited 0 but printed no JSON list: {:?}", argv.join(" "), out.chars().take(200).collect::<String>())),
+        }
     }
 
     pub fn asks_snapshot(&self, input: &str) -> Result<String, String> {
@@ -267,12 +293,12 @@ impl World {
         serde_json::to_string(&asks::Snapshot { open, held }).map_err(|e| e.to_string())
     }
 
-    /// Every open ask's JSON, then the mail of every held ask; `None` when the store did not answer.
-    fn asks_text(&self) -> Option<String> {
-        let listed = self.open_asks_json().ok().filter(|j| j.starts_with('['))?;
-        let held = self.lc(&["list-held", "ask"]).unwrap_or_default();
+    /// Every open ask's JSON, then the mail of every held ask.
+    fn asks_text(&self) -> Result<String, String> {
+        let listed = self.open_asks_json()?;
+        let held = self.lc_named(&["list-held", "ask"])?;
         let mails = held.lines().map(str::trim).filter(|id| !id.is_empty()).flat_map(|id| self.mails_for(id));
-        Some(std::iter::once(listed).chain(mails).collect::<Vec<_>>().join("\n"))
+        Ok(std::iter::once(listed).chain(mails).collect::<Vec<_>>().join("\n"))
     }
 
     pub fn design_asks_snapshot(&self) -> Result<String, String> {
@@ -284,7 +310,10 @@ impl World {
         if !brain.is_dir() {
             return failed(format!("{} is not a directory", brain.display()));
         }
-        let Some(asks) = self.asks_text() else { return failed("the ask store could not be read".into()) };
+        let asks = match self.asks_text() {
+            Ok(a) => a,
+            Err(why) => return failed(format!("the ask store could not be read: {why}")),
+        };
         let mut pages = vec![];
         let mut projects: Vec<PathBuf> = fs::read_dir(&brain).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| !p.file_name().is_some_and(|n| n.as_encoded_bytes().starts_with(b"."))).collect();
         projects.sort();
