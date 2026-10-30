@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T1
-# covers: spira/metrics/grafana/** pilgrimage/src/** tsd/src/pass.rs spira-otel/src/** heimdall/src/main.rs inbox-triage/src/main.rs store-persist/src/main.rs queue/src/telemetry.rs landing-pass/src/telemetry.rs rebase-stale/src/telemetry.rs round-vm/src/telemetry.rs sccache-dav/src/telemetry.rs release/src/telemetry.rs habits/src/lib.rs exec-census/src/**
+# covers: spira/metrics/grafana/** pilgrimage/src/** tsd/src/pass.rs spira-otel/src/** heimdall/src/main.rs inbox-triage/src/main.rs store-persist/src/main.rs queue/src/telemetry.rs landing-pass/src/telemetry.rs rebase-stale/src/telemetry.rs round-vm/src/telemetry.rs sccache-dav/src/telemetry.rs release/src/telemetry.rs habits/src/lib.rs exec-census/src/** spira-lc/src/cycle.rs
 #
 # The provisioned Grafana dashboards parse, read their data source from a variable, carry no
 # annotations or text panels, and every cert-pass series they query is one the producer pushes.
@@ -60,7 +60,7 @@ is "exec-census.json queries only series exec-census pushes" "" "$(comm -13 <(pr
 
 ql="$(grep -o 'spira_[a-z_]*' "$DASH/queue-landing.json" | sed -E 's/_bucket$//' | sort -u)"
 undeclared=""
-for m in $ql; do grep -rqF "\"$m\"" "$ROOT"/{queue,landing-pass,rebase-stale}/src/telemetry.rs "$ROOT/spira-otel/src/metrics.rs" || undeclared="$undeclared $m"; done
+for m in $ql; do grep -rqF "\"$m\"" "$ROOT"/{queue,landing-pass,rebase-stale}/src/telemetry.rs "$ROOT/spira-otel/src/metrics.rs" "$ROOT/spira-lc/src/cycle.rs" || undeclared="$undeclared $m"; done
 is "queue-landing.json queries only series the components push" "" "$undeclared"
 [ -n "$ql" ] && ok "positive control: queue-landing series were found" || bad "no queue-landing series found"
 

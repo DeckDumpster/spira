@@ -770,6 +770,7 @@ pub fn cmd_land(args: &[String], conn: &Conn) -> (i32, String) {
             let all_ok = applied.iter().all(|a| *a);
             let summary = serde_json::json!({"batch_id": batch_id, "steps": steps.len(), "applied": applied});
             if all_ok {
+                crate::cycle::push_landed(conn, &members.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>());
                 (0, serde_json::to_string(&summary).unwrap())
             } else {
                 (REFUSED, serde_json::to_string(&summary).unwrap())

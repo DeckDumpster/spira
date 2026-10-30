@@ -20,6 +20,7 @@ mod churn;
 mod classify_cmd;
 mod content;
 mod continuity;
+mod cycle;
 mod content_rows;
 mod client;
 mod close_on_land;
