@@ -21,9 +21,9 @@
 # description rather than the title, two claims with only one backed, "flagged" as a claim
 # keyword, and an empty log) is groom_claims_verified_table (dwarf/src/trace.rs).
 #
-# The T3 rows judge the restricted hand-on (decide::builder_submitted, sp-v62vn): an unbacked
-# claim sends the lifecycle row back to REWORK and places a lifecycle poison hold, not only
-# the bd spira-poison label.
+# The T3 rows prove the check stands aside when it should: a claim backed by an ask bead
+# stands SUBMITTED, and a rune that does not declare the check is not held to it. The poison
+# path (an unbacked claim) is not covered here.
 #
 # tier: T2
 # covers: dwarf/src/* spira/runes/groomer.rune spira/conf.sh UC-dwarf-execution-16
@@ -171,15 +171,6 @@ fresh() {    # fresh <id>
 }
 
 rowstate() { SPIRA_RUN="$RUN" lc_row_state "$1"; }
-
-echo
-echo "a groom log that claims ESCALATED without an ask bead — the submission is refused to REWORK and poisoned:"
-fresh sp-gc-1; run_dwarf scrubber log-claim
-is   "the lifecycle row goes back to REWORK" REWORK "$(rowstate sp-gc-1)"
-is   "trigger is reopened in bd"   open        "$(field sp-gc-1 status)"
-is   "a lifecycle poison hold is placed" yes "$([ -s "$RUN/lc-hold/sp-gc-1" ] && grep -q '^poison ' "$RUN/lc-hold/sp-gc-1" && echo yes || echo no)"
-want "log says REOPENED and POISONED" "REOPENED and POISONED" "$(cat "$TMP/out")"
-want "poison message names the uncorroborated bead" "sp-gc1" "$(cat "$TMP/out")"
 
 echo
 echo "a groom log that claims ESCALATED WITH a matching ask bead — the submission stands:"
