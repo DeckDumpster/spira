@@ -474,6 +474,36 @@ pub fn git_in(dir: &Path, args: &[&str]) -> Result<String, String> {
     }
 }
 
+/// Where each statute's seed text lives in the tree: what `the_committed_tree_is_what_toc_toml_generates`
+/// generates law/ from.
+pub const SEEDS_DIR: &str = "spira/statutes";
+
+/// Writes the seed text of every statute the table of contents files, from the book, so the
+/// committed law/ is reproducible from the tree alone. The trailing citation is dropped, as
+/// law/ drops it: the case history stays in the store, and the shipped tree carries mechanism.
+pub fn write_seeds(wt: &Path, toc: &[Part], book: &BTreeMap<String, String>) -> Result<(), String> {
+    let dir = wt.join(SEEDS_DIR);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("rule: {}: {e}", dir.display()))?;
+    for slug in toc.iter().flat_map(|p| p.slugs.iter()) {
+        let f = dir.join(format!("{slug}.txt"));
+        match book.get(slug) {
+            Some(text) => std::fs::write(&f, without_citation(text)).map_err(|e| format!("rule: {}: {e}", f.display()))?,
+            // Retired: law/ renders it without its text, so its seed goes too.
+            None if f.exists() => std::fs::remove_file(&f).map_err(|e| format!("rule: {}: {e}", f.display()))?,
+            None => {}
+        }
+    }
+    Ok(())
+}
+
+/// law/ in this worktree against what toc.toml generates from its seeds and `pointers`: what
+/// the committed tree must reproduce.
+pub fn seed_drift(wt: &Path, toc: &[Part], pointers: &Pointers) -> Vec<String> {
+    let seeds = wt.join(SEEDS_DIR);
+    let text = |slug: &str| std::fs::read_to_string(seeds.join(format!("{slug}.txt"))).ok();
+    drift(&wt.join("law"), &generate(toc, pointers, text))
+}
+
 /// Regenerates `law/` in a short-lived worktree of `repo`, commits it on a branch of its own and
 /// removes the worktree. The caller's directory and the repo's own checkout are never touched.
 #[allow(clippy::too_many_arguments)]
@@ -491,7 +521,12 @@ pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, verb: &s
     git_in(repo_path, &["worktree", "add", "-q", "-b", &branch, &wt_s, &base])?;
     let done = (|| {
         write_law(&wt.join("law"), toc, pointers, book)?;
-        git_in(&wt, &["add", "-A", "--", "law"])?;
+        write_seeds(&wt, toc, book)?;
+        let drifted = seed_drift(&wt, toc, pointers);
+        if !drifted.is_empty() {
+            return Err(format!("rule: law/ would not be what toc.toml generates from spira/statutes: {drifted:?}"));
+        }
+        git_in(&wt, &["add", "-A", "--", "law", SEEDS_DIR])?;
         let mut child = spira_config::bounded::bounded("git")
             .arg("-C")
             .arg(&wt)
