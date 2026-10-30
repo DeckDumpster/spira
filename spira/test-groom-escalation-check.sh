@@ -23,7 +23,8 @@
 #
 # The T3 rows prove the check stands aside when it should: a claim backed by an ask bead
 # stands SUBMITTED, and a rune that does not declare the check is not held to it. The poison
-# path (an unbacked claim) is not covered here.
+# path (an unbacked claim) is dwarf::tests::a_groom_claim_with_no_ask_bead_is_refused_to_rework_and_poisoned,
+# in-process against fakes.
 #
 # tier: T2
 # covers: dwarf/src/* spira/runes/groomer.rune spira/conf.sh UC-dwarf-execution-16
