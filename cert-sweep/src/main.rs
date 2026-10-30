@@ -507,9 +507,39 @@ fn wait_for_round(f: &Flags) -> Result<bool, String> {
     }
 }
 
+/// No checkout outlives this; a lock older than it with no git holder was left by a dead process.
+const STALE_LOCK_SECS: u64 = 600;
+
+fn git_pid_in(tree: &Path) -> Option<u32> {
+    let tree = tree.canonicalize().ok()?;
+    fs::read_dir("/proc").ok()?.flatten().find_map(|e| {
+        let pid: u32 = e.file_name().to_str()?.parse().ok()?;
+        let comm = fs::read_to_string(e.path().join("comm")).ok()?;
+        let cwd = fs::read_link(e.path().join("cwd")).ok()?;
+        (comm.trim() == "git" && cwd.starts_with(&tree)).then_some(pid)
+    })
+}
+
+fn clear_stale_index_lock(tree: &str, max_age: u64) -> Result<(), String> {
+    let gitdir = git(tree, &["rev-parse", "--absolute-git-dir"])?;
+    let lock = Path::new(&gitdir).join("index.lock");
+    let Ok(meta) = fs::metadata(&lock) else { return Ok(()) };
+    let age = meta.modified().ok().and_then(|m| m.elapsed().ok()).map_or(0, |d| d.as_secs());
+    if let Some(pid) = git_pid_in(Path::new(tree)) {
+        return Err(format!("{} ({age}s old) may be held by live git pid {pid}; not touching it", lock.display()));
+    }
+    if age < max_age {
+        return Err(format!("{} exists, {age}s old with no live git process; younger than {max_age}s so not removed", lock.display()));
+    }
+    fs::remove_file(&lock).map_err(|e| format!("{} ({age}s old, stale): cannot remove: {e}", lock.display()))?;
+    eprintln!("cert-sweep: removed stale {} ({age}s old, no live git process)", lock.display());
+    Ok(())
+}
+
 fn run_on_vm(f: &Flags, run: &Path, repo: &str, tip: &str, picks: &[String], start: u64, seq: u64) -> Result<(Vec<Outcome>, String), String> {
     let tree = need(f, "tree")?;
     if Path::new(tree).join(".git").exists() {
+        clear_stale_index_lock(tree, STALE_LOCK_SECS)?;
         git(tree, &["checkout", "-q", "--detach", tip])?;
     } else {
         git(repo, &["worktree", "add", "-q", "--detach", tree, tip])?;
