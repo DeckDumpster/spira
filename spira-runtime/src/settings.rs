@@ -240,6 +240,21 @@ mod tests {
     }
 
     #[test]
+    fn each_publish_backlog_key_reaches_its_own_field() {
+        let base = lookup("7");
+        let distinct = move |k: &str| match k {
+            "SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS" => Ok("21".to_string()),
+            "SPIRA_LOCAL_BACKLOG_COUNT" => Ok("22".to_string()),
+            "SPIRA_LOCAL_BACKLOG_AGE" => Ok("23".to_string()),
+            "SPIRA_PUBLISH_REMOTE" => Ok("fork".to_string()),
+            _ => base(k),
+        };
+        let s = Settings::from_lookup(&distinct).unwrap();
+        assert_eq!((s.publish_backlog.interval_ms, s.publish_backlog.max_count, s.publish_backlog.max_age_secs), (21_000, 22, 23));
+        assert_eq!(s.world.publish_remote, "fork");
+    }
+
+    #[test]
     fn every_unresolved_key_is_named_at_once() {
         let base = lookup("7");
         let refusing = move |k: &str| if k == "SPIRA_HOME_REPO" || k == "SPIRA_QUEUE_DIR" { Err(format!("{k} refused")) } else { base(k) };

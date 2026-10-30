@@ -321,12 +321,6 @@ impl BeadSweep {
         view.events(stream).iter().rev().find(|e| e.kind.tag == STATE).and_then(|e| serde_json::from_str(&e.kind.body).ok()).unwrap_or_default()
     }
 
-    fn answered(view: &Projection, ev: &Event) -> Option<String> {
-        let cause = ev.cause.as_ref()?;
-        let requested = view.events(&ev.stream).iter().rev().find(|e| &e.id == cause && e.kind.tag == EFFECT_REQUESTED)?;
-        serde_json::from_str::<Value>(&requested.kind.body).ok()?["spec"]["name"].as_str().map(str::to_string)
-    }
-
     fn finish(&self, ctx: &Ctx, view: &Projection, ev: &Event, snap: &Snapshot, repaired: &[String]) -> Vec<Command> {
         let now = ev.at as f64 / 1000.0;
         let (next, say) = decide(self, &Self::carry(view, &ev.stream), snap, repaired, now);
@@ -354,7 +348,7 @@ impl Handler for BeadSweep {
                 Command::Schedule { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
-        match Self::answered(view, ev).as_deref() {
+        match super::answered_effect(view, ev).as_deref() {
             Some(OBSERVE) => {
                 let Ok(snap) = serde_json::from_str::<Snapshot>(&ev.kind.body) else { return vec![] };
                 let todo = rowless(self, &snap);

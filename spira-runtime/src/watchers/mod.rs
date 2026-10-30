@@ -23,10 +23,16 @@ pub fn carried<T: DeserializeOwned + Default>(view: &Projection, stream: &Stream
     view.events(stream).iter().rev().find(|e| e.kind.tag == tag).and_then(|e| serde_json::from_str(&e.kind.body).ok()).unwrap_or_default()
 }
 
+/// The name of the effect that `ev` is the outcome of, when its stream requested one.
+pub fn answered_effect(view: &Projection, ev: &Event) -> Option<String> {
+    let cause = ev.cause.as_ref()?;
+    let requested = view.events(&ev.stream).iter().rev().find(|e| &e.id == cause && e.kind.tag == EFFECT_REQUESTED)?;
+    serde_json::from_str::<serde_json::Value>(&requested.kind.body).ok()?["spec"]["name"].as_str().map(str::to_string)
+}
+
 /// Whether `ev` is the outcome of the effect named `observe` that its stream requested.
 pub fn answers_observe(view: &Projection, ev: &Event, observe: &str) -> bool {
-    let Some(cause) = &ev.cause else { return false };
-    view.events(&ev.stream).iter().rev().find(|e| &e.id == cause && e.kind.tag == EFFECT_REQUESTED).and_then(|e| serde_json::from_str::<serde_json::Value>(&e.kind.body).ok()).is_some_and(|b| b["spec"]["name"] == observe)
+    answered_effect(view, ev).is_some_and(|n| n == observe)
 }
 
 /// (year, month, day) of a count of days since 1970-01-01.
