@@ -43,6 +43,7 @@ case "$1 $2" in
         done
         n=$(( $(ls "$STORE"/*.title 2>/dev/null | wc -l) + 1 ))
         printf '%s' "$title" > "$STORE/$n.title"
+        printf 'https://github.com/acme/spira/issues/%s\n' "$n"
         printf '%s' "$labels" > "$STORE/$n.labels"
         cat > "$STORE/$n.body"
         exit 0 ;;
@@ -77,6 +78,21 @@ want "a repeat appends a comment" "COMMENT" "$(cat "$STORE/$N.body")"
 printf '  FAIL  brand new check: nope\n' > "$TMP/red2.log"
 run_report "$TMP/red2.log" >/dev/null 2>&1
 is "a different failure files its own issue" 3 "$(ls "$STORE"/*.title | wc -l)"
+
+rm -f "$STORE"/*
+printf '  FAIL  phase A: release install-tarball exits 0: rc=1\n  FAIL  phase A: sentinel boots: timeout\n  FAIL  phase A: release install-tarball exits 0: rc=2\n' > "$TMP/phaseA.log"
+run_report "$TMP/phaseA.log" >/dev/null 2>&1
+is "phase A checks file one issue per distinct check" 2 "$(ls "$STORE"/*.title | wc -l)"
+want "phase A title carries the check" "acceptance-daily: phase A: release install-tarball exits 0" "$(cat "$STORE"/*.title)"
+is "phase A first title" "acceptance-daily: phase A: release install-tarball exits 0" "$(cat "$STORE/1.title")"
+is "phase A second title" "acceptance-daily: phase A: sentinel boots" "$(cat "$STORE/2.title")"
+nowant "repeat lines of one check ride in its first issue, not a comment" "COMMENT" "$(cat "$STORE/1.body")"
+want "the repeat's detail rides in the first issue" "rc=2" "$(cat "$STORE/1.body")"
+
+rm -f "$STORE"/*
+{ for i in 1 2 3 4 5; do printf '  FAIL  dup: d%s\n' "$i"; done; printf '  FAIL  other: x\n'; } > "$TMP/dups.log"
+run_report "$TMP/dups.log" >/dev/null 2>&1
+is "repeats of one check do not use up the cap" 2 "$(ls "$STORE"/*.title | wc -l)"
 
 rm -f "$STORE"/*
 printf 'building…\nacceptance: container never came up\n' > "$TMP/novd.log"
