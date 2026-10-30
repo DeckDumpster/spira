@@ -23,7 +23,7 @@ cat > "$STUB" <<'STUB'
 printf '%s\n' "$*" >> "$BD_LOG_PATH"
 [ "${1:-}" = "-C" ] && shift 2
 case "${1:-}" in
-    list) [ -n "${BD_LIST_FAIL:-}" ] && exit 124; printf '%s\n' "${BD_LIST_OUTPUT:-[]}" ;;
+    list) [ -n "${BD_LIST_FAIL:-}" ] && { sleep 1; exit 124; }; printf '%s\n' "${BD_LIST_OUTPUT:-[]}" ;;
     create) [ -n "${BD_CREATE_FAIL:-}" ] && exit 1; echo sp-new1 ;;
 esac
 exit 0
@@ -132,7 +132,8 @@ want "count retried" "attempt 3/3" "$out"
 lack "nothing filed" "create" "$(cat "$LOG")"
 want "helper failure line names the warden trigger" "warden-trigger: cannot count open triggers: bd list exited" "$out"
 lack "helper failure line is not misattributed to mimir" "mimir-trigger: cannot count" "$out"
-want "helper failure line carries the elapsed seconds" "after " "$(printf '%s\n' "$out" | grep 'bd list exited')"
+hl="$(printf '%s\n' "$out" | grep 'bd list exited' | head -n 1)"
+[[ "$hl" =~ after\ [1-9][0-9]*s ]] && ok "helper failure line carries a measured elapsed time" || bad "helper failure line carries a measured elapsed time" "got [$hl]"
 
 echo; echo "LABEL: configured non-default label is used"
 : > "$LOG"
