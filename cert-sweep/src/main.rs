@@ -515,8 +515,12 @@ fn git_pid_in(tree: &Path) -> Option<u32> {
     fs::read_dir("/proc").ok()?.flatten().find_map(|e| {
         let pid: u32 = e.file_name().to_str()?.parse().ok()?;
         let comm = fs::read_to_string(e.path().join("comm")).ok()?;
+        if comm.trim() != "git" {
+            return None;
+        }
+        // Best effort: another user's git (unreadable cwd) or one run via GIT_DIR is not seen.
         let cwd = fs::read_link(e.path().join("cwd")).ok()?;
-        (comm.trim() == "git" && cwd.starts_with(&tree)).then_some(pid)
+        cwd.starts_with(&tree).then_some(pid)
     })
 }
 

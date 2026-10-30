@@ -450,3 +450,18 @@ fn a_young_index_lock_is_refused_by_name_with_its_age() {
     assert!(err.contains(lock.to_str().unwrap()) && err.contains("old"), "{err}");
     assert!(!ran.exists());
 }
+
+#[test]
+fn an_old_index_lock_is_kept_while_a_git_process_runs_in_the_tree() {
+    let fx = Fx::new();
+    fx.commit("1");
+    let lock = planted_lock(&fx, 30 * 3600);
+    let mut holder = Command::new("git").arg("hash-object").arg("--stdin").current_dir(fx.d.path().join("tree")).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::null()).spawn().unwrap();
+    let ran = round_vm_stub(&fx, r#"{"leases":[]}"#);
+    let (_, _, err) = full(&fx, &["--start-deadline", "5"]);
+    drop(holder.stdin.take());
+    holder.wait().unwrap();
+    assert!(lock.exists(), "{err}");
+    assert!(err.contains(&format!("pid {}", holder.id())), "{err}");
+    assert!(!ran.exists());
+}
