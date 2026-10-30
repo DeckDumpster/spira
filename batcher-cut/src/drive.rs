@@ -843,6 +843,18 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_flaky_red_preempts_nothing_and_ejects_no_one() {
+        let mut f = Fake::new(|_, _| false);
+        f.flaky.insert("test-04.sh".into());
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(8), three(), Budget { slots: 4, maxpar: 2 }).unwrap();
+        assert_eq!(f.stopped, 0);
+        assert!(ops.preempts.is_empty() && ops.ejected.is_empty());
+        assert_eq!(ops.recorded[0].1.flaky, vec!["test-04.sh".to_string()]);
+        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3));
+    }
+
+    #[test]
     fn every_owner_is_ejected_with_its_suites_one_pass_at_a_time() {
         let mut f = Fake::new(|s, tree| match s {
             "test-01.sh" | "test-05.sh" => tree.contains("m1"),
