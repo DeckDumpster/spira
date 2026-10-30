@@ -1066,6 +1066,8 @@ mod tests {
         st.users.insert("spira_lc_ro".into());
         st.indexes.insert("bead_dep_target_idx".into());
         st.indexes.insert("ask_state_idx".into());
+        st.indexes.insert("runtime_event_stream_idx".into());
+        st.indexes.insert("runtime_event_cause_idx".into());
         st.columns.insert(("ops_live".into(), "blocker".into()));
         st.columns.insert(("ops_edges".into(), "last_at".into()));
         for v in ["ops_live", "ops_recent", "ops_dwell"] {

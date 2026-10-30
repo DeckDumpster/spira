@@ -115,6 +115,11 @@ pub fn append_sql(ev: &Value) -> Result<String, String> {
     ))
 }
 
+/// Requests with no outcome event naming them as cause; `runtime_event_cause_idx` makes each probe a seek.
+pub fn open_effects_sql() -> String {
+    "SELECT r.seq, r.event_id, r.stream, r.kind_tag, r.kind_body, r.at, r.cause, r.correlation FROM runtime_event r WHERE r.kind_tag = 'effect.requested' AND NOT EXISTS (SELECT 1 FROM runtime_event o WHERE o.cause = r.event_id AND o.kind_tag IN ('effect.succeeded', 'effect.failed', 'effect.timed_out')) ORDER BY r.seq".into()
+}
+
 pub fn schedule_sql(row: &Value) -> Result<String, String> {
     let kind = row.get("kind").ok_or("journal: row has no kind")?;
     check_widths("schedule", "row_id", row)?;
@@ -203,6 +208,18 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
             )?;
             Ok(Value::Array(rows.iter().map(|r| json!([num(r, "seq"), event_of(r)])).collect()).to_string())
         }
+        "stream" => {
+            let (stream, from, below) = (text_arg(a(1), "stream")?, arg_u64(a(2), "from")?, arg_u64(a(3), "below")?);
+            let rows = read(
+                conn,
+                &format!("SELECT seq, event_id, stream, kind_tag, kind_body, at, cause, correlation FROM runtime_event WHERE stream = {} AND seq >= {from} AND seq < {below} ORDER BY seq LIMIT {READ_MAX}", lit(stream)),
+            )?;
+            Ok(Value::Array(rows.iter().map(|r| json!([num(r, "seq"), event_of(r)])).collect()).to_string())
+        }
+        "open-effects" => {
+            let rows = read(conn, &open_effects_sql())?;
+            Ok(Value::Array(rows.iter().map(|r| json!([num(r, "seq"), event_of(r)])).collect()).to_string())
+        }
         "applied" | "mark-applied" => {
             let (handler, id) = (text_arg(a(1), "handler")?, text_arg(a(2), "event id")?);
             if op == "mark-applied" {
@@ -267,7 +284,7 @@ fn run(args: &[String], conn: &Conn) -> Result<String, String> {
             let rows = read(conn, &format!("SELECT stream, event_id, handler, message FROM runtime_poison WHERE stream = {}", lit(text_arg(a(1), "stream")?)))?;
             Ok(rows.first().map_or("null".into(), |r| json!({ "stream": cell(r, "stream"), "event": cell(r, "event_id"), "handler": cell(r, "handler"), "message": cell(r, "message") }).to_string()))
         }
-        _ => Err(format!("journal: unknown op {op:?} (append|read|applied|mark-applied|cursor|set-cursor|schedule|due|mark-fired|poison|poisoned)")),
+        _ => Err(format!("journal: unknown op {op:?} (append|read|stream|open-effects|applied|mark-applied|cursor|set-cursor|schedule|due|mark-fired|poison|poisoned)")),
     }
 }
 

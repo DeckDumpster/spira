@@ -20,6 +20,11 @@ fn answer(j: &MemJournal, argv: &[String]) -> (i32, String) {
     match a(1) {
         "append" => ok(j.append(&serde_json::from_value(dec(a(2))).unwrap()).map(|o| o.to_string())),
         "read" => ok(j.read_from(a(2).parse().unwrap(), a(3).parse().unwrap()).map(|r| serde_json::to_string(&r).unwrap())),
+        "stream" => ok(j.read_stream(&StreamKey(a(2).into()), a(4).parse().unwrap()).map(|r| {
+            let from: u64 = a(3).parse().unwrap();
+            serde_json::to_string(&r.into_iter().filter(|(o, _)| *o >= from).take(1000).collect::<Vec<_>>()).unwrap()
+        })),
+        "open-effects" => ok(j.unresolved_effects().map(|r| serde_json::to_string(&r).unwrap())),
         "applied" => ok(j.applied(a(2), &EventId(a(3).into())).map(|b| (b as u8).to_string())),
         "mark-applied" => ok(j.mark_applied(a(2), &EventId(a(3).into())).map(|_| String::new())),
         "cursor" => ok(j.cursor().map(|o| o.to_string())),

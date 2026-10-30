@@ -2,7 +2,7 @@
 //! dispatch, then advance the cursor. Every id it writes is derived from the event that
 //! caused it, so a replay after a crash at any point appends nothing twice.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 use std::time::Instant;
@@ -91,6 +91,7 @@ pub struct Engine {
     check_applied_below: Offset,
     appended: bool,
     poison_seen: BTreeMap<StreamKey, bool>,
+    loaded: BTreeSet<StreamKey>,
 }
 
 fn mix(seed: u64, parts: &[&str]) -> u64 {
@@ -111,8 +112,9 @@ fn panic_message(p: &(dyn std::any::Any + Send)) -> String {
 }
 
 impl Engine {
-    /// Rebuild from the journal: the projection up to the cursor, the effects still waiting for
-    /// an outcome, and the schedule rows not yet fired.
+    /// Rebuild from the journal without reading its history: the effects still waiting for an
+    /// outcome, the schedule rows not yet fired, and the end of the journal. A stream's past is
+    /// loaded when its first event past the cursor is dispatched.
     pub fn open(journal: Arc<dyn Journal>, clock: Arc<dyn Clock>, regs: Vec<Registration>, seed: u64) -> Result<Self> {
         let mut e = Engine {
             journal,
@@ -135,23 +137,21 @@ impl Engine {
             check_applied_below: 0,
             appended: false,
             poison_seen: BTreeMap::new(),
+            loaded: BTreeSet::new(),
         };
         let cursor = e.journal.cursor()?;
         e.cursor = cursor;
         e.saved_cursor = cursor;
-        let mut from = 0;
+        for (_, ev) in e.journal.unresolved_effects()? {
+            e.track_effect(&ev)?;
+        }
+        let mut from = cursor;
         loop {
             let batch = e.journal.read_from(from, BATCH)?;
             let Some((last, _)) = batch.last() else { break };
             from = last + 1;
-            e.check_applied_below = from;
-            for (off, ev) in batch {
-                if off < cursor {
-                    e.projection.push(&ev);
-                }
-                e.track_effect(&ev)?;
-            }
         }
+        e.check_applied_below = from;
         for row in e.journal.pending_schedules()? {
             e.scheduler.insert(row);
         }
@@ -300,6 +300,12 @@ impl Engine {
     }
 
     fn dispatch(&mut self, ev: &Event, at: (Offset, Offset)) -> Result<()> {
+        if !self.loaded.contains(&ev.stream) {
+            for (_, past) in self.journal.read_stream(&ev.stream, at.0)? {
+                self.projection.push(&past);
+            }
+            self.loaded.insert(ev.stream.clone());
+        }
         self.projection.push(ev);
         if self.is_poisoned(&ev.stream)? {
             return Ok(());
