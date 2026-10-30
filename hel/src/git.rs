@@ -302,12 +302,16 @@ pub enum LockVerdict {
     Kept(String),
 }
 
-/// A holder seen twice, a beat apart: a process forked from the one that made the lock holds
-/// its descriptors until it execs, and is not a holder.
+/// A holder still there after a few looks: a process forked from the one that made the lock
+/// holds its descriptors until it execs, and is not a holder.
 fn holder_confirmed(lock: &Path) -> Option<u32> {
-    holder_of(Path::new("/proc"), lock)?;
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    holder_of(Path::new("/proc"), lock)
+    let mut holder = None;
+    for _ in 0..5 {
+        holder = holder_of(Path::new("/proc"), lock);
+        holder?;
+        std::thread::sleep(std::time::Duration::from_millis(40));
+    }
+    holder
 }
 
 /// A pid with `lock` open. A process whose descriptors cannot be read is a holder only if it
