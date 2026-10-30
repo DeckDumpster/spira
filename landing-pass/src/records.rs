@@ -81,6 +81,7 @@ impl Files {
     pub fn clear_noverdict(&self, branch: &str) {
         let _ = fs::remove_file(self.backoff_file(branch));
         let _ = fs::remove_file(self.dead_file(branch));
+        let _ = fs::remove_file(self.run.join("gate-exhaust").join(branch_key(branch)));
         let key = branch_key(branch);
         if let Ok(rd) = fs::read_dir(self.run.join("noverdict")) {
             for e in rd.flatten() {
@@ -125,6 +126,21 @@ impl Files {
     pub fn defer_to_round(&self, branch: &str, tip: &str) {
         let _ = fs::create_dir_all(self.run.join("gate-deferred"));
         let _ = atomic_write(&self.round_deferred_file(branch), &format!("{tip}\n"));
+    }
+
+    /// Record a host-cause verdict on this exact tip; the reasons so far, a different tip starting again.
+    pub fn note_exhaust(&self, branch: &str, tip: &str, reason: &str) -> Vec<String> {
+        let file = self.run.join("gate-exhaust").join(branch_key(branch));
+        let text = fs::read_to_string(&file).unwrap_or_default();
+        let mut lines = text.lines();
+        let mut seen: Vec<String> = match lines.next() {
+            Some(was) if was == tip => lines.map(str::to_string).collect(),
+            _ => Vec::new(),
+        };
+        seen.push(reason.to_string());
+        let _ = fs::create_dir_all(self.run.join("gate-exhaust"));
+        let _ = atomic_write(&file, &format!("{tip}\n{}\n", seen.join("\n")));
+        seen
     }
 
     /// Count a NO_VERDICT on this exact tip; a different tip starts again at 1.
