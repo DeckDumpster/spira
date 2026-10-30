@@ -120,20 +120,12 @@ mod tests {
         }
     }
 
-    struct CliGit;
-    impl Git for CliGit {
-        fn git(&self, dir: &Path, args: &[&str]) -> Out {
-            let o = std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
-            Out { code: o.status.code().unwrap_or(-1), stdout: String::from_utf8_lossy(&o.stdout).into_owned(), stderr: String::from_utf8_lossy(&o.stderr).into_owned() }
-        }
-    }
-
     #[test]
     fn stacked_base_honours_the_base_refs_union_attributes_not_the_checkouts() {
         let d = testkit::union_repo("stack-union");
         let mut stack = BTreeMap::new();
         stack.insert("sp-b".to_string(), "b".to_string());
-        assert!(build_stacked_base(&CliGit, d.path(), "main", &stack).is_ok());
+        assert!(build_stacked_base(&crate::ports::CliGit, d.path(), "main", &stack).is_ok());
     }
 
     fn fg(answers: Vec<Out>) -> FakeGit {

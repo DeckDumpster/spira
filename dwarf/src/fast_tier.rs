@@ -357,19 +357,16 @@ mod tests {
         assert!(g.0.lock().unwrap().iter().any(|c| c.contains(&"merge-tree".to_string()) && c.last().unwrap() == "abc123"));
     }
 
-    struct CliGit;
-    impl Git for CliGit {
-        fn git(&self, dir: &Path, args: &[&str]) -> Out {
-            let o = std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
-            Out { code: o.status.code().unwrap_or(-1), stdout: String::from_utf8_lossy(&o.stdout).into_owned(), stderr: String::from_utf8_lossy(&o.stderr).into_owned() }
-        }
-    }
-
     #[test]
     fn the_rebase_check_honours_the_base_refs_union_attributes_not_the_checkouts() {
         let d = testkit::union_repo("fast-tier-union");
         let w = tree("union", false);
-        let r = red(&CliGit, &E(0, Mutex::new(vec![])), d.path(), &w, "b", "main", false);
-        assert!(r.is_none_or(|r| !r.text.contains("does not rebase")));
+        let r = red(&crate::ports::CliGit, &E(0, Mutex::new(vec![])), d.path(), &w, "b", "main", false);
+        assert!(r.is_none(), "{:?}", r.map(|r| r.text));
+        let b = testkit::git(d.path(), &["rev-parse", "b"]);
+        let w = d.path();
+        testkit::git(w, &["checkout", "-q", "b"]);
+        let rec = with_tip("b does not rebase onto main cleanly:\nCONFLICT (content): Merge conflict in f", &b);
+        assert_eq!(current_digest(&crate::ports::CliGit, w, w, "main", &rec), "", "a conflict that union attributes resolve is stale");
     }
 }
