@@ -997,6 +997,11 @@ impl Lc for FLc {
     fn create_bead(&self, id: &str) {
         self.calls.borrow_mut().push(format!("create-bead {id}"));
     }
+    fn create_bead_in(&self, id: &str, repo: &str) {
+        self.calls
+            .borrow_mut()
+            .push(format!("create-bead {id} --repo {repo}"));
+    }
     fn cut(
         &self,
         id: &str,

@@ -203,7 +203,7 @@ pub(super) fn file(
         ));
         return None;
     };
-    w.lc.create_bead(&id);
+    w.lc.create_bead_in(&id, &c.r.name);
     let mut text = std::fs::read_to_string(c.queue_file(RECORD)).unwrap_or_default();
     text.push_str(&format!("{id} {list}\n"));
     if let Err(e) = write_atomic(&c.queue_file(RECORD), &text) {
