@@ -77,6 +77,10 @@ fn run_write_unrecorded(args: &[&str]) -> Result<String, String> {
     Ok(stdout)
 }
 
+pub fn write(args: &[&str]) -> Result<String, String> {
+    run_write(args)
+}
+
 /// A close whose bd call failed is still done when the bead reads closed afterwards: bd can
 /// exit non-zero after the write committed.
 fn settled(res: Result<(), String>, id: &str, still_open: impl FnOnce() -> Result<Vec<String>, String>) -> Result<(), String> {

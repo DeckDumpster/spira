@@ -45,6 +45,7 @@ mod repo_config;
 mod rows;
 mod serve;
 mod slow;
+mod store_write;
 mod snapshot;
 mod work;
 
@@ -128,6 +129,8 @@ fn main() {
         Some("drop-bead") => std::process::exit(emit(&args[1..], callers::drop_bead(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd))),
         Some("drop-row") => std::process::exit(emit(&args[1..], callers::drop_row(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd))),
         Some("reopen") => std::process::exit(emit(&args[1..], callers::reopen_cmd(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd))),
+        Some("bd-supersede") => std::process::exit(emit(&args[1..], store_write::supersede(&args[1..], &bd::write))),
+        Some("bd-note") => std::process::exit(emit(&args[1..], store_write::note(&args[1..], &bd::write))),
         Some("content") => {
             let ans = content::run(&args[1..], &|a| bd::run_stdin(a, None));
             std::process::exit(emit(&args[1..], ans))
