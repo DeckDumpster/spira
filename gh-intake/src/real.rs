@@ -4,14 +4,61 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-pub struct RealHttp;
+/// Mints the credential for one run; the Http port itself carries none (law-beads-is-never-public).
+pub type Mint = Box<dyn Fn() -> Result<String, String>>;
+
+pub struct RealHttp {
+    mint: Mint,
+    bearer: std::cell::OnceCell<Option<String>>,
+}
+
+impl RealHttp {
+    pub fn new(mint: Mint) -> Self {
+        RealHttp { mint, bearer: std::cell::OnceCell::new() }
+    }
+
+    /// The forge's App installation token, from `broker token`.
+    pub fn from_broker() -> Self {
+        Self::new(Box::new(|| {
+            let bin = spira_config::release_env::tool("broker");
+            let o = spira_config::bounded::bounded(&bin)
+                .arg("token")
+                .stdin(Stdio::null())
+                .stderr(Stdio::null())
+                .output()
+                .map_err(|e| format!("{bin}: {e}"))?;
+            let tok = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if o.status.success() && !tok.is_empty() {
+                Ok(tok)
+            } else {
+                Err(format!("{bin} token exited {:?}", o.status.code()))
+            }
+        }))
+    }
+
+    fn bearer(&self) -> Option<&str> {
+        self.bearer
+            .get_or_init(|| match (self.mint)() {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    eprintln!("gh-intake: no App token ({e}); polling unauthenticated at 60/h");
+                    None
+                }
+            })
+            .as_deref()
+    }
+}
 
 impl Http for RealHttp {
     fn get(&self, url: &str, timeout_secs: u64) -> Result<(u16, Vec<u8>), String> {
         let agent = ureq::AgentBuilder::new()
             .timeout(Duration::from_secs(timeout_secs))
             .build();
-        match agent.get(url).call() {
+        let mut req = agent.get(url);
+        if let Some(t) = self.bearer() {
+            req = req.set("Authorization", &format!("Bearer {t}"));
+        }
+        match req.call() {
             Ok(resp) => {
                 let status = resp.status();
                 let mut buf = Vec::new();
@@ -528,5 +575,63 @@ mod lifecycle_tests {
         assert!(parse_show(Some(2), b"").is_err());
         assert!(parse_show(None, b"").is_err());
         assert!(parse_show(Some(0), b"not json").is_err());
+    }
+}
+
+#[cfg(test)]
+mod http_tests {
+    use super::*;
+    use std::io::{BufRead, BufReader};
+    use std::net::TcpListener;
+
+    fn serve(n: usize) -> (String, std::thread::JoinHandle<Vec<Vec<String>>>) {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/x", l.local_addr().unwrap());
+        let h = std::thread::spawn(move || {
+            (0..n)
+                .map(|_| {
+                    let (mut c, _) = l.accept().unwrap();
+                    let mut r = BufReader::new(c.try_clone().unwrap());
+                    let mut head = Vec::new();
+                    loop {
+                        let mut line = String::new();
+                        r.read_line(&mut line).unwrap();
+                        if line.trim().is_empty() {
+                            break;
+                        }
+                        head.push(line.trim().to_string());
+                    }
+                    c.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+                    head
+                })
+                .collect()
+        });
+        (url, h)
+    }
+
+    #[test]
+    fn every_get_carries_the_minted_token_as_a_bearer() {
+        let (url, h) = serve(3);
+        let minted = std::rc::Rc::new(std::cell::Cell::new(0));
+        let m = minted.clone();
+        let http = RealHttp::new(Box::new(move || {
+            m.set(m.get() + 1);
+            Ok("tok-123".into())
+        }));
+        for _ in 0..3 {
+            assert_eq!(http.get(&url, 5).unwrap().0, 200);
+        }
+        for head in h.join().unwrap() {
+            assert!(head.iter().any(|l| l.eq_ignore_ascii_case("authorization: Bearer tok-123")), "{head:?}");
+        }
+        assert_eq!(minted.get(), 1, "one mint per run");
+    }
+
+    #[test]
+    fn a_failed_mint_still_polls_without_a_header() {
+        let (url, h) = serve(1);
+        let http = RealHttp::new(Box::new(|| Err("no creds".into())));
+        assert_eq!(http.get(&url, 5).unwrap().0, 200);
+        assert!(!h.join().unwrap()[0].iter().any(|l| l.to_ascii_lowercase().starts_with("authorization")));
     }
 }

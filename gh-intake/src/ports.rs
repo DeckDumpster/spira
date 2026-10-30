@@ -9,9 +9,9 @@
 
 use std::path::Path;
 
-/// GitHub's REST API, read-only. gh-intake.sh never set an `Authorization:` header and
-/// this stays true here: `Http` has no credential parameter anywhere in its signature
-/// (law-beads-is-never-public).
+/// GitHub's REST API, read-only. `Http` has no credential parameter anywhere in its
+/// signature: the real adapter attaches the forge App token itself, and no caller can
+/// choose to send anything else (law-beads-is-never-public).
 pub trait Http {
     /// GET `url` with a `timeout_secs` budget. `Ok((status, body))` on any HTTP response
     /// (including 4xx/5xx — the caller decides what a status means); `Err` only for a

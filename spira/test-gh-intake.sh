@@ -16,9 +16,8 @@
 #   2. it really execs `bd` (via SPIRA_BD) and `mail.sh` (via SPIRA_MAIL_BIN) as
 #      subprocesses, with the argv/stdin shape those stubs expect.
 #   3. --dry-run really makes no bd-create or mail calls.
-#   4. no credential ever reaches the wire: every request the stub server receives is
-#      checked for an Authorization header and for the canary token value
-#      (law-beads-is-never-public) — a real behavioural check, not a source grep.
+#   4. every request carries the forge App token (from `broker token`) as its bearer, and
+#      the ambient GITHUB_TOKEN canary never reaches the wire — a behavioural check.
 #
 # tier: T1
 # covers: gh-intake/src/*.rs systemd/spira-gh-intake.service systemd/spira-gh-intake.timer UC-dispatch-06
@@ -144,6 +143,8 @@ REPOCHECKOUT="$T/repo-checkout"; mkdir -p "$REPOCHECKOUT/.git"
 REPOMAP="$T/repo-map"
 printf 'widgets | %s\n' "$REPOCHECKOUT" > "$REPOMAP"
 
+printf '#!/usr/bin/env bash\n[ "$1" = token ] && echo stub-app-token\n' > "$T/broker"; chmod +x "$T/broker"
+
 run_intake() {
     tl_config SPIRA_DB=fixture SPIRA_BD="$T/bin_bd" SPIRA_REPO_MAP="$REPOMAP" \
         SPIRA_GH_INTAKE_REPO="acme/widgets" SPIRA_GH_INTAKE_BEAD_REPO="widgets" \
@@ -178,11 +179,11 @@ if [ -s "$CREATED" ]; then bad "no bead was actually created" "$(cat "$CREATED")
 if [ -s "$MAILLOG" ]; then bad "no mail was actually sent" "$(cat "$MAILLOG")"; else ok "no mail was actually sent"; fi
 
 echo
-echo "3. no credential ever reaches the wire"
-if grep -qi 'authorization' "$REQLOG"; then
-    bad "no request carries an Authorization header" "$(grep -i authorization "$REQLOG")"
+echo "3. only the forge App token reaches the wire"
+if [ -s "$REQLOG" ] && ! grep -qv 'Bearer stub-app-token' "$REQLOG"; then
+    ok "every request carries the App token as its bearer"
 else
-    ok "no request carries an Authorization header"
+    bad "every request carries the App token as its bearer" "$(grep -v 'Bearer stub-app-token' "$REQLOG")"
 fi
 if grep -q 'canary-token-must-never-be-sent' "$REQLOG"; then
     bad "the GITHUB_TOKEN canary never appears on the wire" "found in $REQLOG"
