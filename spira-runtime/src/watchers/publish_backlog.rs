@@ -108,8 +108,8 @@ impl Handler for PublishBacklog {
         }
         if ev.kind.tag == TICK {
             return vec![
-                Command::Effect(EffectSpec { name: OBSERVE.into(), input: String::new(), deadline_ms: DEADLINE_MS }),
-                Command::Schedule { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
+                Command::Probe(EffectSpec { name: OBSERVE.into(), input: String::new(), deadline_ms: DEADLINE_MS }),
+                Command::Timer { at: ev.at + self.interval_ms, kind: EventKind::new(TICK, "") },
             ];
         }
         if !super::answers_observe(view, ev, OBSERVE) {
