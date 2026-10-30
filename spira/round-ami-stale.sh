@@ -32,7 +32,7 @@ cmd_pass() {
     case "$rc" in
         0) rm -f "$SAID"; return 0 ;;
         1) line="$(printf '%s' "$out" | tail -n 1)" ;;
-        *) line="round AMI check could not read the images: $(printf '%s' "$out" | tail -n 1)" ;;
+        *) line="round AMI check could not read the images: 'round-vm ami-check' exited $rc: $(printf '%s' "$out" | tr -s '[:space:]' ' ' | cut -c1-400)" ;;
     esac
     grep -qxF -- "$line" "$SAID" 2>/dev/null && return 0
     _ras_say "$line; EC2 rounds refuse the image until the Round AMI workflow builds one"
