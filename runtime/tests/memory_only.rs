@@ -193,6 +193,44 @@ fn a_probe_still_waiting_keeps_its_request_in_the_projection() {
     assert!(e.projection().events(&StreamKey("s".into())).iter().any(|ev| ev.id.0 == waiting), "the unanswered request was evicted");
 }
 
+struct Cause {
+    found: Arc<Mutex<Option<bool>>>,
+}
+
+impl Handler for Cause {
+    fn interests(&self) -> &[EventKindTag] {
+        &["tick", EFFECT_SUCCEEDED]
+    }
+
+    fn handle(&self, _: &Ctx, view: &Projection, ev: &Event) -> Vec<Command> {
+        if ev.kind.tag == EFFECT_SUCCEEDED {
+            let cause = ev.cause.as_ref().unwrap();
+            *self.found.lock().unwrap() = Some(view.events(&ev.stream).iter().any(|e| &e.id == cause));
+            return vec![];
+        }
+        vec![Command::Probe(EffectSpec { name: "look".into(), input: String::new(), deadline_ms: 500 })]
+    }
+}
+
+#[test]
+fn a_late_outcome_still_finds_the_request_it_answers_in_the_projection() {
+    let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
+    let found = Arc::new(Mutex::new(None));
+    let mut e = Engine::open(journal.clone(), Arc::new(clock.clone()), vec![Registration::new("cause", Cause { found: found.clone() })], 0).unwrap();
+    e.start("s", EventKind::new("tick", ""));
+    e.run_until_idle().unwrap();
+    let waiting = e.pending_effects().remove(0).key;
+    e.start("s", EventKind::new("tick", ""));
+    e.run_until_idle().unwrap();
+    for i in 0..(runtime::engine::LOCAL_KEEP * 2) {
+        e.start("s", EventKind::new("other", &i.to_string()));
+        e.run_until_idle().unwrap();
+    }
+    e.complete(&waiting, Outcome::Succeeded(String::new())).unwrap();
+    e.run_until_idle().unwrap();
+    assert_eq!(*found.lock().unwrap(), Some(true));
+}
+
 struct Ticker {
     seen: Arc<Mutex<u32>>,
 }

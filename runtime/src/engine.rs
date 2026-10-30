@@ -338,7 +338,7 @@ impl Engine {
                     let deadline_at = ev.at.saturating_add(spec.deadline_ms);
                     let body = serde_json::to_string(&RequestBody { spec, deadline_at }).map_err(|e| RuntimeError::new(e.to_string()))?;
                     let req = self.local_event(&ev.stream, EventKind::new(EFFECT_REQUESTED, &body), ev.at, Some(ev));
-                    self.projection.push_local(&req, LOCAL_KEEP, |id| self.pending.contains_key(&id.0));
+                    self.projection.push_local(&req, LOCAL_KEEP, |id| self.pending.contains_key(&id.0) || self.local.iter().any(|q| q.cause.as_ref() == Some(id)));
                     self.memory_only.insert(req.id.0.clone());
                     self.track_effect(&req)?;
                 }
@@ -363,7 +363,7 @@ impl Engine {
         if at.is_some() {
             self.projection.push(ev);
         } else {
-            self.projection.push_local(ev, LOCAL_KEEP, |id| self.pending.contains_key(&id.0));
+            self.projection.push_local(ev, LOCAL_KEEP, |id| ev.cause.as_ref() == Some(id) || self.pending.contains_key(&id.0) || self.local.iter().any(|q| q.cause.as_ref() == Some(id)));
         }
         if self.is_poisoned(&ev.stream)? {
             return Ok(());
