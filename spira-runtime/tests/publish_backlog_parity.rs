@@ -205,26 +205,26 @@ fn same_rows(s: Scenario) -> Vec<String> {
 }
 
 #[test]
-fn a_backlog_under_both_thresholds_is_quiet() {
+fn e2e_a_backlog_under_both_thresholds_is_quiet() {
     assert!(same_rows(Scenario { name: "quiet", setup: |f| f.land("c1", 5, 5), ..QUIET }).is_empty());
 }
 
 #[test]
-fn crossing_the_count_threshold_is_announced_once_however_long_it_stays() {
+fn e2e_crossing_the_count_threshold_is_announced_once_however_long_it_stays() {
     let r = same_rows(Scenario { name: "count", count: 0, ticks: 3, setup: |f| f.land("c1", 5, 5), ..QUIET });
     assert_eq!(r.len(), 1, "{r:?}");
     assert!(r[0].starts_with("OVER fixlocal: 1 unpublished commit(s)"), "{r:?}");
 }
 
 #[test]
-fn catching_the_forge_up_clears_once() {
+fn e2e_catching_the_forge_up_clears_once() {
     let r = same_rows(Scenario { name: "clear", count: 0, ticks: 3, setup: |f| f.land("c1", 5, 5), change: Some(Fixture::publish), ..QUIET });
     assert!(r[0].starts_with("OVER fixlocal") && r[1].starts_with("CLEAR fixlocal: back under threshold (0 unpublished, oldest N"), "{r:?}");
     assert_eq!(r.len(), 2, "{r:?}");
 }
 
 #[test]
-fn an_unreadable_repo_map_is_blind_once_and_nothing_else() {
+fn e2e_an_unreadable_repo_map_is_blind_once_and_nothing_else() {
     let f = Fixture::build("nomap");
     fs::remove_file(f.p("rows")).unwrap();
     let s = Scenario { name: "nomap", ticks: 2, ..QUIET };
@@ -234,28 +234,28 @@ fn an_unreadable_repo_map_is_blind_once_and_nothing_else() {
 }
 
 #[test]
-fn an_old_arrival_alone_crosses() {
+fn e2e_an_old_arrival_alone_crosses() {
     let r = same_rows(Scenario { name: "age", count: 1000, age: 60, setup: |f| f.land("old", 90_000, 7_200), ..QUIET });
     assert_eq!(r.len(), 1, "{r:?}");
     assert!(r[0].starts_with("OVER fixlocal: 1 unpublished commit(s), oldest N"), "{r:?}");
 }
 
 #[test]
-fn age_is_when_the_commit_reached_the_landing_ref_not_when_it_was_authored() {
+fn e2e_age_is_when_the_commit_reached_the_landing_ref_not_when_it_was_authored() {
     assert!(same_rows(Scenario { name: "fresh", count: 1000, age: 10_800, setup: |f| f.land("authored long ago", 43_200, 60), ..QUIET }).is_empty());
     let r = same_rows(Scenario { name: "stale", count: 1000, age: 10_800, setup: |f| f.land("landed long ago", 43_200, 14_400), ..QUIET });
     assert_eq!(r.len(), 1, "{r:?}");
 }
 
 #[test]
-fn a_repo_that_publishes_on_merge_is_never_named() {
+fn e2e_a_repo_that_publishes_on_merge_is_never_named() {
     let r = same_rows(Scenario { name: "forge", count: 0, age: 0, setup: |f| f.land("c1", 5, 5), ..QUIET });
     assert!(r.iter().all(|l| !l.contains("fixforge")), "{r:?}");
     assert_eq!(r.len(), 1, "{r:?}");
 }
 
 #[test]
-fn a_landing_ref_whose_arrival_cannot_be_read_is_blind_once_never_clear() {
+fn e2e_a_landing_ref_whose_arrival_cannot_be_read_is_blind_once_never_clear() {
     let r = same_rows(Scenario { name: "blind", ticks: 2, setup: |f| { f.land("c1", 5, 5); fs::remove_file(f.p("repo/.git/logs/refs/heads/local/main")).unwrap(); }, ..QUIET });
     assert_eq!(r, ["BLIND fixlocal: the backlog watcher cannot measure — the unpublished range could not be computed"]);
 }
