@@ -120,7 +120,7 @@ cmd_pass() {
     _rsk_probe
     local file="$SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE" exp now days left
     [ -n "$file" ] || { _rsk_once "nofile" "ROUND SPILL KEY: SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE is not set"; return 0; }
-    exp="$(tr -d '[:space:]' < "$file.expires" 2>/dev/null)"
+    exp="$({ tr -d "[:space:]" < "$file.expires"; } 2>/dev/null)"
     case "$exp" in
         ''|*[!0-9]*) _rsk_once "unrecorded" "ROUND SPILL KEY: no expiry recorded in $file.expires; record the key's expiry (epoch seconds) beside it"; return 0 ;;
     esac
