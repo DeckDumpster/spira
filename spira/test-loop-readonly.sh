@@ -21,6 +21,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=90
 
 iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "exit $2"; }
 

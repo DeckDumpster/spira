@@ -29,6 +29,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=90
 . "$HERE/testdb.sh"
 testdb_require test-statute-projection
 testdb_up statute-proj || bail "testdb_up failed"

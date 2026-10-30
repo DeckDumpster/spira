@@ -39,6 +39,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=60
 
 . "$HERE/testlib/lc-fixture.sh"
 

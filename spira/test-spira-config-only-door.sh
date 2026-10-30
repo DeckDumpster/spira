@@ -4,6 +4,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=180
 ROOT="$(cd "$HERE/.." && pwd -P)"
 
 echo "test-spira-config-only-door.sh"

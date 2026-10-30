@@ -26,6 +26,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=90
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"

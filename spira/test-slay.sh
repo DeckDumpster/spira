@@ -24,6 +24,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=120
 SLAY="$HERE/../spira-world/src/bin/slay.rs"
 
 # T2 below proves slay.sh's release against a real spira-lc (the tree's, on PATH) and a

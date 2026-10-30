@@ -21,6 +21,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=90
 
 . "$HERE/testdb.sh"
 testdb_require test-mail-dwarf

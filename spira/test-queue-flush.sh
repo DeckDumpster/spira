@@ -11,6 +11,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=120
 . "$HERE/testlib/lc-fixture.sh"
 
 echo "test-queue-flush.sh"

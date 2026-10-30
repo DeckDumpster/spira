@@ -13,6 +13,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=330
 # THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
 # pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
 

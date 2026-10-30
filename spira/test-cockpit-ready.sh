@@ -17,6 +17,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=150
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

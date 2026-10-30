@@ -38,6 +38,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # sets rest and sources this file (split for wall time).
 PD_PART="${PD_PART:-main}"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=120
 
 # CLEAR ANY INHERITED SHARED FIXTURE before building our own. A dwarf session exports
 # TESTDB_SHARED=1 with temp dirs that may no longer exist on disk; running testdb_up

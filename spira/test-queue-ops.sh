@@ -9,6 +9,7 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=360
 . "$HERE/testlib/lc-fixture.sh"
 
 echo "test-queue-ops.sh"
