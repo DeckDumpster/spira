@@ -177,7 +177,10 @@ fn vet(dir: &Path, paths: &[String]) -> (Vec<String>, Vec<String>) {
             Ok(t) => std::fs::write(dir.join(p), t).is_ok() && passes_schema(dir, p),
             Err(_) => false,
         };
-        if repaired { ok.push(p.clone()) } else { refused.push(p.clone()) }
+        if repaired {
+            eprintln!("archivist: trimmed aliases on {p} to fit the frontmatter schema");
+            ok.push(p.clone())
+        } else { refused.push(p.clone()) }
     }
     (ok, refused)
 }
@@ -384,6 +387,27 @@ pub(crate) mod tests {
         assert_eq!(committed.matches("\n  - ").count(), 10, "{committed}");
         assert!(committed.contains("syn8") && committed.contains("keyword0") && !committed.contains("keyword1"), "{committed}");
         assert_eq!(porcelain(&brain), "");
+    }
+
+    #[test]
+    fn a_new_page_with_twelve_aliases_is_committed_with_ten() {
+        let (_root, brain) = fixture();
+        with_validator(&brain);
+        let aliases: String = (0..12).map(|i| format!("  - a{i}\n")).collect();
+        std::fs::write(brain.join("wiki/notes/n.md"), format!("---\naliases:\n{aliases}---\n# n\n")).unwrap();
+        commit_paths(&brain, &["wiki/notes/n.md".to_string()], "archivist: x\n").unwrap();
+        let committed = git(&brain, &["show", "HEAD:wiki/notes/n.md"], None).unwrap();
+        assert_eq!(committed.matches("\n  - ").count(), 10, "{committed}");
+        assert!(committed.contains("a9") && !committed.contains("a10"), "{committed}");
+    }
+
+    #[test]
+    fn eleven_inline_aliases_cannot_be_repaired_so_the_page_is_refused() {
+        let (_root, brain) = fixture();
+        with_validator(&brain);
+        std::fs::write(brain.join("wiki/notes/i.md"), "---\naliases: [a, b]\n  - z\n  - c\n  - d\n  - e\n  - f\n  - g\n  - h\n  - i\n  - j\n  - k\n  - l\n---\n").unwrap();
+        let err = commit_paths(&brain, &["wiki/notes/i.md".to_string()], "archivist: x\n").unwrap_err();
+        assert!(err.contains("wiki/notes/i.md"), "{err}");
     }
 
     #[test]
