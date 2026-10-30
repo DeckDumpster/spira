@@ -551,7 +551,7 @@ pub fn run_all(cmd: &str) -> String {
 ///
 /// Every workspace binary is built first, as the round's build does: cargo builds another
 /// package's binary only when that package is built, and a test may exec one from the target dir.
-pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2] {
+pub fn unit_commands(crates: &[String], jobs: u64, deadline: &UnitDeadline) -> [(&'static str, String); 2] {
     let p = pkgs(crates);
     let cfg = spira_config::build::one_shot_words("dwarf");
     [
@@ -563,9 +563,30 @@ pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2
         ),
         (
             "test",
-            format!("cargo test --profile dwarf {cfg} -j {jobs}{p} -- --test-threads={jobs}"),
+            format!(
+                "_nx=\"$(mktemp)\" && printf '%s\\n' '{}' > \"$_nx\"; cargo nextest run --config-file \"$_nx\" --fail-fast --cargo-profile dwarf {} -j {jobs}{p}; _r=$?; rm -f \"$_nx\"; exit $_r",
+                deadline.profile(),
+                spira_config::build::one_shot_words("dwarf"),
+            ),
         ),
     ]
+}
+
+/// One unit test's deadline (`SPIRA_UNIT_TEST_SLOW_SECS`, `SPIRA_UNIT_TEST_TERMINATE_AFTER`):
+/// nextest flags a test slow after `slow_secs` and kills it after `terminate_after` such periods.
+pub struct UnitDeadline {
+    pub slow_secs: u64,
+    pub terminate_after: u64,
+}
+
+impl UnitDeadline {
+    fn profile(&self) -> String {
+        format!(
+            "[profile.default]\nslow-timeout = {{ period = \"{}s\", terminate-after = {} }}",
+            self.slow_secs.max(1),
+            self.terminate_after.max(1)
+        )
+    }
 }
 
 /// The environment of the unit test phase: the gate's own, minus the release's directories on
@@ -1192,7 +1213,7 @@ mod tests {
 
     #[test]
     fn the_unit_build_builds_every_workspace_binary_and_tests_only_the_crates() {
-        let [b, t] = unit_commands(&["spira-runtime".into()], 4);
+        let [b, t] = unit_commands(&["spira-runtime".into()], 4, &DL);
         let (bins, targets) = b.1.split_once(" && ").expect("two build invocations");
         assert!(bins.ends_with(" --workspace --bins"), "{}", b.1);
         assert!(targets.ends_with(" --all-targets -p spira-runtime"), "{}", b.1);
@@ -1201,17 +1222,33 @@ mod tests {
 
     #[test]
     fn unit_commands_build_then_test_each_crate() {
-        let [b, t] = unit_commands(&["gate".into(), "queue".into()], 4);
+        let [b, t] = unit_commands(&["gate".into(), "queue".into()], 4, &DL);
         assert_eq!(b.0, "build");
         assert_eq!(
             b.1,
             "cargo build --profile dwarf --config profile.dwarf.incremental=false -j 4 --workspace --bins && cargo build --profile dwarf --config profile.dwarf.incremental=false -j 4 --all-targets -p gate -p queue"
         );
         assert_eq!(t.0, "test");
-        assert_eq!(
-            t.1,
-            "cargo test --profile dwarf --config profile.dwarf.incremental=false -j 4 -p gate -p queue -- --test-threads=4"
-        );
+        assert!(t.1.contains("cargo nextest run --config-file \"$_nx\" --fail-fast --cargo-profile dwarf --config profile.dwarf.incremental=false -j 4 -p gate -p queue;"), "{}", t.1);
+        assert!(t.1.contains(r#"slow-timeout = { period = "3s", terminate-after = 7 }"#), "{}", t.1);
+    }
+
+    const DL: UnitDeadline = UnitDeadline { slow_secs: 3, terminate_after: 7 };
+
+    #[test]
+    fn a_unit_test_that_outlives_its_deadline_fails_the_phase_naming_it() {
+        let tmp = testkit::TempDir::new("gate-unit-deadline");
+        let fx = tmp.path().to_path_buf();
+        std::fs::create_dir_all(fx.join("src")).unwrap();
+        std::fs::write(fx.join("Cargo.toml"), "[package]\nname = \"fx\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[profile.dwarf]\ninherits = \"dev\"\n").unwrap();
+        std::fs::write(fx.join("src/lib.rs"), "#[cfg(test)] mod t {\n#[test] fn quick() {}\n#[test] fn hangs_past_its_deadline() { std::thread::sleep(std::time::Duration::from_secs(120)); }\n}\n").unwrap();
+        let [_, t] = unit_commands(&[], 2, &UnitDeadline { slow_secs: 1, terminate_after: 1 });
+        let started = std::time::Instant::now();
+        let out = std::process::Command::new("bash").args(["-c", &t.1]).current_dir(&fx).output().unwrap();
+        let said = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(!out.status.success(), "{said}");
+        assert!(said.contains("hangs_past_its_deadline"), "{said}");
+        assert!(started.elapsed().as_secs() < 15, "{said}");
     }
 
     // -------------------------------------------------------------- re-entry (sp-p3srm)
@@ -1406,7 +1443,7 @@ cargo: test tests::x ... ok";
         );
         assert!(!g.contains("build-fence"));
         // …and its build phase is the compile check that replaces it: every target.
-        let [b, _] = unit_commands(&["tsd".into()], 4);
+        let [b, _] = unit_commands(&["tsd".into()], 4, &DL);
         assert!(
             b.1.starts_with("cargo build ") && b.1.contains("--all-targets"),
             "{}",
