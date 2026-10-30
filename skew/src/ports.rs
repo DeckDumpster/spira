@@ -116,6 +116,8 @@ pub trait World {
     fn run_log_append(&self, name: &str, line: &str);
     /// Seconds since the repo's `index.lock` was last modified; None when there is no lock.
     fn index_lock_age_secs(&self, repo: &Path) -> Option<u64>;
+    /// Removes the repo's `index.lock`.
+    fn remove_index_lock(&self, repo: &Path) -> Result<(), String>;
     /// True while a `git` process has `repo` as its working directory.
     fn git_running_in(&self, repo: &Path) -> bool;
 

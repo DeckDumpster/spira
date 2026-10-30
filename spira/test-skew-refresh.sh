@@ -184,6 +184,32 @@ STASH_COUNT="$(git -C "$REPO" stash list 2>/dev/null | wc -l | tr -d ' ')"
 
 # ===========================================================================
 echo
+echo "refresh — a stale index.lock with no live git is cleared, then the dirt is stashed:"
+# ===========================================================================
+
+reset_repo
+printf '# machine-written\n' >> "$REPO/tracked.txt"
+: > "$REPO/.git/index.lock"
+touch -d '2 days ago' "$REPO/.git/index.lock"
+
+RUN5L="$(mktemp -d "$TMP/run-XXXXX")"
+out5l="$(run_skew_cmd "$RUN5L" refresh "$REPO")"; rc5l=$?
+is   "stale lock: exits 0"                   "0"          "$rc5l"
+want "stale lock: says it removed the lock"  "removed stale index.lock" "$out5l"
+[ ! -e "$REPO/.git/index.lock" ] && ok "stale lock: file gone" || bad "stale lock: file gone" "still present"
+is   "stale lock: checkout advanced" "$AHEAD_COMMIT" "$(git -C "$REPO" rev-parse HEAD)"
+
+reset_repo
+printf '# machine-written\n' >> "$REPO/tracked.txt"
+: > "$REPO/.git/index.lock"
+RUN5F="$(mktemp -d "$TMP/run-XXXXX")"
+out5f="$(run_skew_cmd "$RUN5F" refresh "$REPO")"; rc5f=$?
+[ -e "$REPO/.git/index.lock" ] && ok "fresh lock: left in place" || bad "fresh lock: left in place" "was removed"
+is   "fresh lock: refresh declines" "1" "$rc5f"
+rm -f "$REPO/.git/index.lock"
+
+# ===========================================================================
+echo
 echo "refresh — release mode: fetch + release build/verify/activate + symlink flip:"
 # ===========================================================================
 # In release mode (SPIRA_RELEASES set and releases/current is a symlink), refresh

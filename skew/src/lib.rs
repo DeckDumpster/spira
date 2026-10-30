@@ -730,6 +730,8 @@ pub fn refresh(w: &dyn World, repo_arg: Option<&str>) -> i32 {
         return 0;
     }
 
+    clear_stale_index_lock(w, &repo);
+
     let mut dirty = w.dirty_tracked(&repo);
     if !dirty.is_empty() && dirty.lines().all(|l| l.starts_with(" D")) {
         match w.restore_deleted(&repo) {
@@ -851,12 +853,39 @@ fn dirty_files(porcelain: &str) -> String {
     porcelain.lines().map(|l| l.trim()).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(", ")
 }
 
-fn stale_lock_note(w: &dyn World, repo: &Path) -> String {
-    match w.index_lock_age_secs(repo) {
-        Some(age) if age > STALE_LOCK_SECS && !w.git_running_in(repo) => {
-            format!(" [STALE-INDEX-LOCK: index.lock is {age}s old and no git process is running in the repo; remove it by hand once confirmed]")
+fn lock_is_stale(w: &dyn World, repo: &Path) -> Option<u64> {
+    w.index_lock_age_secs(repo).filter(|age| *age > STALE_LOCK_SECS && !w.git_running_in(repo))
+}
+
+fn clear_stale_index_lock(w: &dyn World, repo: &Path) {
+    let key = format!("skew.lock-clear-failed-{}", cksum(&repo.to_string_lossy()));
+    let Some(age) = lock_is_stale(w, repo) else {
+        if w.stamp_read(&key).as_deref() == Some("1") {
+            w.stamp_write(&key, "0");
         }
-        _ => String::new(),
+        return;
+    };
+    match w.remove_index_lock(repo) {
+        Ok(()) => {
+            w.stamp_write(&key, "0");
+            w.out(&format!("skew: refresh: removed stale index.lock ({age}s old, no live git process)"));
+        }
+        Err(e) => {
+            if w.stamp_read(&key).as_deref() != Some("1") {
+                w.stamp_write(&key, "1");
+                w.run_log_append(
+                    REFRESH_ALARM_LOG,
+                    &format!("skew: refresh of {} cannot remove stale index.lock ({age}s old): {e}", repo.display()),
+                );
+            }
+        }
+    }
+}
+
+fn stale_lock_note(w: &dyn World, repo: &Path) -> String {
+    match lock_is_stale(w, repo) {
+        Some(age) => format!(" [STALE-INDEX-LOCK: index.lock is {age}s old and no git process is running in the repo; remove it by hand once confirmed]"),
+        None => String::new(),
     }
 }
 

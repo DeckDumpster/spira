@@ -52,6 +52,8 @@ pub struct Fake {
     pub stamps: RefCell<BTreeMap<String, String>>,
     pub written: RefCell<BTreeMap<PathBuf, (Vec<u8>, bool)>>,
     pub removed: RefCell<Vec<PathBuf>>,
+    pub lock_remove_err: RefCell<Option<String>>,
+    pub locks_removed: std::cell::Cell<u32>,
     pub stdout: RefCell<Vec<String>>,
     pub stderr: RefCell<Vec<String>>,
     pub changed: RefCell<BTreeMap<String, Vec<String>>>,
@@ -242,6 +244,14 @@ impl World for Fake {
     }
     fn index_lock_age_secs(&self, _repo: &Path) -> Option<u64> {
         *self.lock_age.borrow()
+    }
+    fn remove_index_lock(&self, _repo: &Path) -> Result<(), String> {
+        if let Some(e) = self.lock_remove_err.borrow().clone() {
+            return Err(e);
+        }
+        *self.lock_age.borrow_mut() = None;
+        self.locks_removed.set(self.locks_removed.get() + 1);
+        Ok(())
     }
     fn git_running_in(&self, _repo: &Path) -> bool {
         *self.git_live.borrow()
@@ -944,18 +954,53 @@ fn declining_checkout() -> Fake {
 fn refresh_decline_names_dirty_files_and_a_stale_lock_and_raises_a_row_on_the_third_pass() {
     let f = declining_checkout();
     *f.lock_age.borrow_mut() = Some(86_400);
+    *f.lock_remove_err.borrow_mut() = Some("Permission denied".into());
     for pass in 1..=3 {
         assert_eq!(refresh(&f, Some("/prod")), 1);
-        let rows = f.run_log.borrow().len();
+        let rows = f.run_log.borrow().iter().filter(|r| r.1.contains("consecutive")).count();
         assert_eq!(rows, if pass < 3 { 0 } else { 1 }, "pass {pass}");
     }
     let said = f.stdout_joined();
     assert!(said.contains("STALE-INDEX-LOCK"), "{said}");
     assert!(said.contains("M ci.yml, M CLAUDE.md"), "{said}");
     let log = f.run_log.borrow();
-    assert_eq!(log[0].0, REFRESH_ALARM_LOG);
-    assert!(log[0].1.contains("3 consecutive") && log[0].1.contains("/prod") && log[0].1.contains("STALE-INDEX-LOCK"), "{}", log[0].1);
-    assert!(f.removed.borrow().is_empty(), "the lock and the dirt are never touched");
+    let row = log.iter().find(|r| r.1.contains("3 consecutive")).unwrap();
+    assert_eq!(row.0, REFRESH_ALARM_LOG);
+    assert!(row.1.contains("/prod") && row.1.contains("STALE-INDEX-LOCK"), "{}", row.1);
+    assert!(f.removed.borrow().is_empty(), "the dirt is never touched");
+}
+
+#[test]
+fn refresh_clears_a_stale_lock_with_no_live_git_before_stashing() {
+    let f = declining_checkout();
+    *f.lock_age.borrow_mut() = Some(1_188_963);
+    refresh(&f, Some("/prod"));
+    assert_eq!(f.locks_removed.get(), 1);
+    assert!(f.stdout_joined().contains("removed stale index.lock"), "{}", f.stdout_joined());
+}
+
+#[test]
+fn refresh_leaves_a_fresh_or_owned_lock_alone() {
+    for (age, live) in [(30, false), (86_400, true)] {
+        let f = declining_checkout();
+        *f.lock_age.borrow_mut() = Some(age);
+        *f.git_live.borrow_mut() = live;
+        refresh(&f, Some("/prod"));
+        assert_eq!(f.locks_removed.get(), 0, "age {age} live {live}");
+    }
+}
+
+#[test]
+fn refresh_escalates_a_lock_it_cannot_clear_once_not_every_pass() {
+    let f = declining_checkout();
+    *f.lock_age.borrow_mut() = Some(86_400);
+    *f.lock_remove_err.borrow_mut() = Some("Permission denied".into());
+    for _ in 0..5 {
+        assert_eq!(refresh(&f, Some("/prod")), 1);
+    }
+    let rows: Vec<_> = f.run_log.borrow().iter().filter(|r| r.1.contains("cannot remove stale index.lock")).cloned().collect();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert!(rows[0].1.contains("Permission denied"));
 }
 
 #[test]
@@ -981,4 +1026,19 @@ fn refresh_success_resets_the_decline_streak() {
     refresh(&f, Some("/prod"));
     refresh(&f, Some("/prod"));
     assert!(f.run_log.borrow().is_empty(), "two passes after a reset is not three in a row");
+}
+
+#[test]
+fn refresh_escalates_again_for_a_new_uncleared_lock_after_the_old_one_vanished() {
+    let f = declining_checkout();
+    *f.lock_remove_err.borrow_mut() = Some("Permission denied".into());
+    for _ in 0..2 {
+        *f.lock_age.borrow_mut() = Some(86_400);
+        refresh(&f, Some("/prod"));
+        refresh(&f, Some("/prod"));
+        *f.lock_age.borrow_mut() = None;
+        refresh(&f, Some("/prod"));
+    }
+    let rows = f.run_log.borrow().iter().filter(|r| r.1.contains("cannot remove stale index.lock")).count();
+    assert_eq!(rows, 2);
 }
