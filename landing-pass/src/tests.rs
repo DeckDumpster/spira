@@ -2211,17 +2211,41 @@ fn an_over_cap_verdict_from_gate_worker_is_gated_again_after_the_backoff() {
     h.closed("sp-a", "t1");
     let over_cap = "gate: VERDICT=FAIL reason=over-cap branch=b repo=spira suite=- (killed)\n";
     let q = crate::gateq::GateQueue::new(&h.s.run);
-    for round in 0..=h.s.noverdict_max {
-        file_verdict(&h, "sp-a", "t1", 1, over_cap);
-        h.run();
-        assert!(q.queued().is_empty(), "inside the backoff the tip is not queued again");
+    file_verdict(&h, "sp-a", "t1", 1, over_cap);
+    h.run();
+    assert!(q.queued().is_empty(), "inside the backoff the tip is not queued again");
+    h.clock.t.set(h.clock.t.get() + h.s.gate_backoff as u64 + 1);
+    h.run();
+    assert_eq!(q.queued().len(), 1, "one over-cap is not yet proof the host cannot gate this tip");
+    assert!(!h.logged("not gated again"));
+}
+
+#[test]
+fn a_tip_whose_gate_is_killed_over_cap_twice_goes_to_a_round_and_is_not_gated_a_third_time() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    let over_cap = "gate: VERDICT=FAIL reason=over-cap branch=b repo=spira suite=- (killed)\n";
+    let q = crate::gateq::GateQueue::new(&h.s.run);
+    file_verdict(&h, "sp-a", "t1", 1, over_cap);
+    h.run();
+    h.clock.t.set(h.clock.t.get() + h.s.gate_backoff as u64 + 1);
+    h.run();
+    q.claim(0).unwrap();
+    q.discard(0, &crate::gateq::Job::new("spira", "spira/sp-a", "sp-a", "t1", false));
+    assert!(!h.lib.has("event gate.exhausted"));
+    file_verdict(&h, "sp-a", "t1", 1, over_cap);
+    h.run();
+    assert!(h.lib.has("event gate.exhausted sp-a"), "{:?}", h.lib.calls.borrow());
+    assert!(!h.lib.has("CERTIFIED"), "a round, not a gate PASS, certifies it");
+    for _ in 0..2 {
         h.clock.t.set(h.clock.t.get() + h.s.gate_backoff as u64 + 1);
         h.run();
-        assert_eq!(q.queued().len(), 1, "round {round}: a SUBMITTED bead whose gate ran over its cap must not be left with no gate queued");
-        q.claim(0).unwrap();
-        q.discard(0, &crate::gateq::Job::new("spira", "spira/sp-a", "sp-a", "t1", false));
+        assert!(q.queued().is_empty(), "an exhausted tip is not queued for a third gate");
     }
-    assert!(!h.logged("not gated again"));
+    assert!(h.logged("was deferred to round"));
+    retip(&h, "spira/sp-a", "t2");
+    h.run();
+    assert_eq!(q.queued().len(), 1, "a new tip is gated afresh");
 }
 
 #[test]

@@ -16,6 +16,9 @@ use std::path::{Path, PathBuf};
 /// Dead gates on one branch, with no gate dying elsewhere between, that make the branch the cause.
 const DEAD_GATES_RED: u32 = 2;
 
+/// Host-cause verdicts on one tip after which the round, not another gate, is its trial.
+const GATE_EXHAUSTED_AFTER: usize = 2;
+
 /// A NO_VERDICT that names no host-side cause: the gate ran the branch and never finished.
 fn is_dead_gate_reason(reason: &str) -> bool {
     matches!(reason, "died" | "timeout" | "unspecified")
@@ -514,6 +517,7 @@ impl<'a> Pass<'a> {
         let fix = is_base_fix(bead.external_ref.as_deref(), name);
         match q.enqueue(&GateJob::new(name, br, id, tip, fix).with_priority(bead.priority)) {
             Ok(true) => {
+                self.files.clear_round_deferral(br);
                 self.log(&format!("CHECK6 {id}: {br} queued for gate-worker at {tip}"));
             }
             Ok(false) => self.log(&format!("CHECK6 {id}: {br} is already with gate-worker at {tip}")),
@@ -576,6 +580,20 @@ impl<'a> Pass<'a> {
                     if !moved && self.files.bump_infra(br, &tip) >= self.s.noverdict_max.max(1) && !host_cause {
                         self.files.defer_to_round(br, &tip);
                         self.log(&format!("CHECK6 {id}: {br} at {tip} deferred to round: no gate verdict {} time(s) running", self.s.noverdict_max.max(1)));
+                    }
+                    if !moved && matches!(reason.as_str(), "over-cap" | "died") {
+                        let seen = self.files.note_exhaust(br, &tip, &reason);
+                        if seen.len() >= GATE_EXHAUSTED_AFTER {
+                            self.files.defer_to_round(br, &tip);
+                            let verdicts = seen.join(", ");
+                            self.log(&format!("CHECK6 {id}: {br} at {tip} gate-exhausted: {verdicts} — admissible to a round, not gated again"));
+                            self.lib.event(
+                                "gate.exhausted",
+                                id,
+                                &format!("{id} gate-exhausted at {tip} — the round certifies it"),
+                                &format!("{name}'s gate ended without a verdict on this tip {} times running: {verdicts}", seen.len()),
+                            );
+                        }
                     }
                 }
                 _ => {
