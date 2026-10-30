@@ -55,7 +55,9 @@ _file() {
         printf '%s\n' "$body" | _gh issue comment "$number" --repo "$_repo" --body-file - >/dev/null || return 1
         printf 'acceptance-daily-report: appended to #%s (%s)\n' "$number" "$title"
     else
-        printf '%s\n' "$body" | _gh issue create --repo "$_repo" --title "$title" --label "$LABEL" --label spira:acceptance --body-file - >/dev/null || return 1
+        number="$(printf '%s\n' "$body" | _gh issue create --repo "$_repo" --title "$title" --label "$LABEL" --label spira:acceptance --body-file -)" || return 1
+        number="${number##*/}"
+        case "$number" in ''|*[!0-9]*) ;; *) _open="$_open"$'\n'"$number"$'\t'"$title" ;; esac
         printf 'acceptance-daily-report: filed %s\n' "$title"
     fi
 }
@@ -70,7 +72,7 @@ else
     _n=0
     while IFS= read -r _line; do
         [ -n "$_line" ] || continue
-        _name="$(printf '%s' "$_line" | sed -E 's/^FAIL[[:space:]]+//; s/:.*$//')"
+        _name="$(printf '%s' "$_line" | sed -E 's/^FAIL[[:space:]]+//; s/^(phase [A-Za-z0-9]+: [^:]*).*$/\1/; t; s/:.*$//')"
         _n=$((_n + 1))
         [ "$_n" -le "$MAX_ISSUES" ] || continue
         _file "acceptance-daily: $_name" "$(printf '%s\n' "$_fails" | grep -F -- "FAIL  $_name:" || printf '%s' "$_line")" || _rc=1

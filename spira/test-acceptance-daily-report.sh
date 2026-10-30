@@ -43,6 +43,7 @@ case "$1 $2" in
         done
         n=$(( $(ls "$STORE"/*.title 2>/dev/null | wc -l) + 1 ))
         printf '%s' "$title" > "$STORE/$n.title"
+        printf 'https://github.com/acme/spira/issues/%s\n' "$n"
         printf '%s' "$labels" > "$STORE/$n.labels"
         cat > "$STORE/$n.body"
         exit 0 ;;
@@ -77,6 +78,14 @@ want "a repeat appends a comment" "COMMENT" "$(cat "$STORE/$N.body")"
 printf '  FAIL  brand new check: nope\n' > "$TMP/red2.log"
 run_report "$TMP/red2.log" >/dev/null 2>&1
 is "a different failure files its own issue" 3 "$(ls "$STORE"/*.title | wc -l)"
+
+rm -f "$STORE"/*
+printf '  FAIL  phase A: release install-tarball exits 0: rc=1\n  FAIL  phase A: sentinel boots: timeout\n  FAIL  phase A: release install-tarball exits 0: rc=2\n' > "$TMP/phaseA.log"
+run_report "$TMP/phaseA.log" >/dev/null 2>&1
+is "phase A checks file one issue per distinct check" 2 "$(ls "$STORE"/*.title | wc -l)"
+want "phase A title carries the check" "acceptance-daily: phase A: release install-tarball exits 0" "$(cat "$STORE"/*.title)"
+nowant "phase A title is never bare" "acceptance-daily: phase A"$'\n' "$(cat "$STORE"/*.title; echo)"
+want "same-run repeat comments on the issue it just filed" "COMMENT" "$(cat "$STORE/1.body")"
 
 rm -f "$STORE"/*
 printf 'building…\nacceptance: container never came up\n' > "$TMP/novd.log"
