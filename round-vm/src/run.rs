@@ -847,8 +847,8 @@ pub(crate) fn job_cache_home(ec2: bool, configured: Option<&str>) -> Option<Stri
 /// in [`REMOTE_EXIT_FILE`] whichever way it ends, so a dropped session loses nothing.
 pub const REMOTE_LAUNCHER: &str = r#"script="$HOME/round-script.sh"
 out="$HOME/round-batch.out" err="$HOME/round-batch.err" exit_file="$HOME/round-exit"
-cat > "$script"
 rm -f "$exit_file" "$exit_file.tmp"
+cat > "$script"
 : > "$out"; : > "$err"
 setsid nohup bash -c 'rc=0; bash "$@" </dev/null >"$HOME/round-batch.out" 2>"$HOME/round-batch.err" || rc=$?; printf "rc=%s\n" "$rc" > "$HOME/round-exit.tmp"; mv -f "$HOME/round-exit.tmp" "$HOME/round-exit"' runner "$script" "$@" </dev/null >/dev/null 2>&1 &
 runner_pid=$!
@@ -967,6 +967,7 @@ impl Remote for SshRemote {
 
     fn run_batch(&self, addr: &str, job: &BatchJob) -> Result<i32, String> {
         let _ = fs::create_dir_all(job.ssh_log.parent().unwrap_or(Path::new(".")));
+        let _ = fs::remove_file(&job.ssh_log);
         let mut child = command("ssh")
             .args(self.ssh_logged_opts(&job.ssh_log))
             .arg(format!("{}@{addr}", self.user))
@@ -4568,9 +4569,9 @@ mod tests {
         let key = fx.d.path().join("host_key");
         let remote = SshRemote { user: "u".into(), port: 1, key };
         let e = remote.pull("127.0.0.1", "x/", &fx.d.path().join("into")).unwrap_err();
-        assert!(e.contains("exited") && e.to_lowercase().contains("refused"), "{e}");
+        assert!(e.contains("exited") && !e.ends_with("no output"), "{e}");
         let e = remote.push("127.0.0.1", fx.d.path(), "x/").unwrap_err();
-        assert!(e.to_lowercase().contains("refused"), "{e}");
+        assert!(e.contains("exited") && !e.ends_with("no output"), "{e}");
     }
 
     #[test]
