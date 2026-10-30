@@ -12,11 +12,17 @@ pub struct Cfg {
     pub dwarf_max_secs: i64,
 }
 
+impl Cfg {
+    fn grace(&self, activated: Option<i64>, now: i64) -> Grace {
+        Grace { activated, now, dwarf_max_secs: self.dwarf_max_secs }
+    }
+}
+
 const DWARF_UNIT_PREFIX: &str = "spira-dwarf-";
 
-/// A dwarf that started before `activated` and is within `max_secs` of its start finishes on
-/// the release it was called from by design; it is not skew. A session renews its lease while
-/// it works, so `max_secs` here is the longest a healthy session runs, not a lease length.
+/// A dwarf that started before `activated` and is within `dwarf_max_secs` of its start finishes
+/// on the release it was called from by design; it is not skew. Sessions renew their lease while
+/// they work, so this bound is the longest a healthy session runs, and is wider than `Cfg::max_secs`.
 pub struct Grace {
     pub activated: Option<i64>,
     pub now: i64,
@@ -96,7 +102,7 @@ pub fn run(now: i64, run_dir: &Path, db: &str, home_repo: &str, incident_sh: &st
         return;
     };
     let show = String::from_utf8_lossy(&out.stdout);
-    let grace = Grace { activated: activation_time(&show), now, dwarf_max_secs: cfg.dwarf_max_secs };
+    let grace = cfg.grace(activation_time(&show), now);
     let counts = count_by_release(
         &show,
         |p| std::fs::canonicalize(p).ok().map(|c| c.to_string_lossy().into_owned()),
@@ -215,6 +221,14 @@ mod tests {
         let show = unit("spira-dwarf-builder-1.service", "A", 1000 - 100) + &unit("spira-watchd.service", "B", 1000);
         let grace = Grace { activated: Some(1000), now: 900 + 7200, dwarf_max_secs: 14400 };
         assert_eq!(count_by_release(&show, |_| None, &grace).len(), 1);
+    }
+
+    #[test]
+    fn the_configured_dwarf_bound_not_the_skew_window_excuses_a_dwarf() {
+        let show = unit("spira-dwarf-builder-1.service", "A", 900) + &unit("spira-watchd.service", "B", 1000);
+        let cfg = Cfg { systemctl: String::new(), max_secs: 3600, dwarf_max_secs: 9000 };
+        assert_eq!(count_by_release(&show, |_| None, &cfg.grace(Some(1000), 900 + 7200)).len(), 1);
+        assert_eq!(count_by_release(&show, |_| None, &cfg.grace(Some(1000), 900 + 9001)).len(), 2);
     }
 
     #[test]
