@@ -502,6 +502,10 @@ fn cmd_select(a: &Args, env: &mut Env) -> Outcome {
         };
         rows.retain(|r| matches!(rank::claimable(r, &lc, &bd, rank::stack_cap(r, &env.config.incident_label, stack_max)), Verdict::Claimable { .. }));
         retain_unstopped(&mut rows, std::path::Path::new(&env.config.run));
+        let fixture = a.get("--lifecycle").is_some();
+        if let Err(e) = retain_uncarried(&mut rows, &mut lc, (!fixture).then_some(&st), &env.config.queue_dir) {
+            return Outcome::cannot_tell(format!("{rune}: integrations: {e}"));
+        }
         machine_lc = Some(lc);
     }
 
@@ -603,6 +607,14 @@ fn cmd_stack(a: &Args, env: &mut Env) -> Outcome {
         Ok(r) => rank::index_rows(r),
         Err(e) => return Outcome::cannot_tell(format!("{bead}: blocker records: {e}")),
     };
+    let mut one = vec![cand.clone()];
+    if let Err(e) = retain_uncarried(&mut one, &mut lc, a.get("--lifecycle").is_none().then_some(&st), &env.config.queue_dir) {
+        return Outcome::cannot_tell(format!("{bead}: integrations: {e}"));
+    }
+    if one.is_empty() {
+        let v = serde_json::json!({"claimable": false, "reason": "Carried"});
+        return Outcome { code: 3, out: format!("{v}\n"), err: String::new() };
+    }
     match rank::stack_plan(&cand, &lc, &bd, rank::stack_cap(&cand, &env.config.incident_label, stack_max)) {
         Ok((stack, depth)) => {
             let v = serde_json::json!({"claimable": true, "stack": stack, "stack_depth": depth, "stack_max_depth": stack_max});
@@ -953,7 +965,26 @@ fn claimable_base(a: &Args, env: &Env, st: &Store) -> Result<Vec<rank::ReadyRow>
         .filter(|r| matches!(rank::claimable(r, &lc, &bd, rank::stack_cap(r, &env.config.incident_label, stack_max)), Verdict::Claimable { .. }))
         .collect();
     retain_unstopped(&mut rows, std::path::Path::new(&env.config.run));
+    retain_uncarried(&mut rows, &mut lc, Some(st), &env.config.queue_dir)?;
     Ok(rows)
+}
+
+/// Drops the members of an open integration: the integration is claimed and merges them, so
+/// a separate rebase of one is work the merge redoes. `st` fetches the integrations' own rows
+/// when `lc` lacks them; without it a missing row reads as open.
+fn retain_uncarried(
+    rows: &mut Vec<rank::ReadyRow>,
+    lc: &mut std::collections::HashMap<String, rank::LifecycleRow>,
+    st: Option<&Store>,
+    queue_dir: &str,
+) -> Result<(), String> {
+    let ints = rank::load_integrations(std::path::Path::new(queue_dir), rows);
+    if let Some(st) = st {
+        let missing: Vec<String> = rank::integration_ids(&ints).into_iter().filter(|i| !lc.contains_key(i)).collect();
+        lc.extend(st.lifecycle_of(&missing)?);
+    }
+    rows.retain(|r| rank::carrier(&r.id, &ints, lc).is_none());
+    Ok(())
 }
 
 /// Drops the beads a scoped stop keeps unclaimed: a reserved bead, and any bead of a repo
