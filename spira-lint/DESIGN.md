@@ -1405,8 +1405,9 @@ defines it.
 
 **Violation.** In test code, a `current_exe()` followed within 160 bytes by `.parent()` (not
 deriving the profile name via `file_name`), or `Command::new` of a `target/<profile>/<bin>` path,
-in a file with a `#[test]` not named `e2e_*`. A file that names its own crate's binary string is
-exempt (`CARGO_BIN_EXE_*` is the unit-tier route to one's own binary). One finding per file.
+in a file with a `#[test]` not named `e2e_*`. A file that names `CARGO_BIN_EXE_*` is exempt (the
+unit-tier route to one's own binary), as is a `current_exe()` lookup that joins its own crate's
+directory name (a crate's `src/` tests have no `CARGO_BIN_EXE_*`). One finding per file.
 
 **Fix.** Name every `#[test]` in the file `e2e_*`.
 

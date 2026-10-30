@@ -23,7 +23,7 @@ fn applies(path: &str) -> bool {
     path.ends_with(".rs") && !path.split('/').any(|c| c == "target" || c == "fixtures")
 }
 
-fn lookup_line(src: &[u8], regions: &[(usize, usize)], whole: bool) -> Option<usize> {
+fn lookup_line(path: &str, src: &[u8], regions: &[(usize, usize)], whole: bool) -> Option<usize> {
     static EXE: OnceLock<Regex> = OnceLock::new();
     static DIR: OnceLock<Regex> = OnceLock::new();
     let cl = rust::classify(src);
@@ -34,8 +34,17 @@ fn lookup_line(src: &[u8], regions: &[(usize, usize)], whole: bool) -> Option<us
     let exe = re(&EXE, r"current_exe\(\)[\s\S]{0,160}?\.parent\(\)");
     let dir = re(&DIR, r#"Command::new\([^;]*"[^"]*target/[a-z-]+/[A-Za-z]"#);
     let mut at: Vec<usize> = dir.find_iter(&text).map(|m| m.start()).filter(|a| code[*a] == b'C').collect();
+    // A crate's own `src/` tests cannot use CARGO_BIN_EXE_*, so its own binary beside the test exe is the unit-tier route there.
+    let own = format!(".join(\"{}\")", path.split('/').next().unwrap_or_default());
     if !reaches_own {
-        at.extend(exe.find_iter(&code).filter(|m| !code[m.start()..(m.end() + 120).min(code.len())].windows(9).any(|w| w == b"file_name")).map(|m| m.start()));
+        at.extend(
+            exe.find_iter(&code)
+                .filter(|m| {
+                    let after = &text[m.start()..(m.end() + 120).min(text.len())];
+                    !after.windows(9).any(|w| w == b"file_name") && !after.windows(own.len()).any(|w| w == own.as_bytes())
+                })
+                .map(|m| m.start()),
+        );
     }
     at.into_iter().filter(|a| in_test(*a)).min().map(|a| cl.line_of(a))
 }
@@ -64,7 +73,7 @@ impl Rule for E2eTestMarked {
         let mut out = Vec::new();
         for (e, s) in &shapes {
             let Some(src) = tree.content(e) else { continue };
-            let Some(line) = lookup_line(src, &s.regions, whole.contains(&e.path)) else { continue };
+            let Some(line) = lookup_line(&e.path, src, &s.regions, whole.contains(&e.path)) else { continue };
             if !every_test_is_marked(src) {
                 out.push(Finding { rule: NAME, path: e.path.clone(), line: Some(line), message: MESSAGE.to_string() });
             }
@@ -110,7 +119,8 @@ mod tests {
         t.write("a/tests/x.rs", "fn bin() -> std::path::PathBuf {\n    std::env::current_exe().unwrap().parent().unwrap().join(\"spira-lc\")\n}\n#[test]\nfn e2e_reads() { bin(); }\n");
         t.write("a/tests/own.rs", "#[test]\nfn runs_itself() { let _ = env!(\"CARGO_BIN_EXE_a\"); }\n");
         t.write("a/src/lib.rs", "pub fn f() { let _ = std::env::current_exe().unwrap().parent(); }\n");
-        assert_eq!(run(&t, &["a/tests/x.rs", "a/tests/own.rs", "a/src/lib.rs"]).unwrap(), Vec::<String>::new());
+        t.write("a/src/tests.rs", "#[test]\nfn runs_itself() { std::env::current_exe().unwrap().parent().unwrap().join(\"a\"); }\n");
+        assert_eq!(run(&t, &["a/tests/x.rs", "a/tests/own.rs", "a/src/lib.rs", "a/src/tests.rs"]).unwrap(), Vec::<String>::new());
     }
 
     #[test]
