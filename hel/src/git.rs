@@ -206,6 +206,7 @@ impl Git<'_> {
             return None;
         }
         let lock = lock_named_in(err)?;
+        let lock = lock.parent().and_then(|d| std::fs::canonicalize(d).ok()).map(|d| d.join(lock.file_name().unwrap_or_default())).unwrap_or(lock);
         let inside = [self.out(&["rev-parse", "--absolute-git-dir"]), self.git_common_dir().map(|p| p.to_string_lossy().into_owned())]
             .into_iter()
             .flatten()
@@ -220,7 +221,9 @@ impl Git<'_> {
         if let Some(pid) = holder_confirmed(&lock) {
             return Some(LockVerdict::Kept(format!("lock {} kept (age {age}s, held by pid {pid})", lock.display())));
         }
-        std::fs::remove_file(&lock).ok()?;
+        if let Err(e) = std::fs::remove_file(&lock) {
+            return Some(LockVerdict::Kept(format!("lock {} kept (age {age}s, no holder, but removal failed: {e})", lock.display())));
+        }
         Some(LockVerdict::Removed(format!("stale {} ({age}s, no holder) removed", lock.display())))
     }
 
@@ -369,6 +372,60 @@ mod tests {
         commit("f", "base\nfrom a\n");
         g(&["checkout", "-q", "stale"]);
         d
+    }
+
+    #[test]
+    fn holder_of_names_the_pid_with_the_lock_open_and_judges_unreadable_ones_by_being_a_live_git() {
+        let t = testkit::TempDir::new("hel-proc");
+        let proc = t.path().join("proc");
+        let lock = t.path().join("packed-refs.lock");
+        let mk = |pid: &str, comm: &str, cmdline: &str, fd_target: Option<&Path>| {
+            let d = proc.join(pid);
+            std::fs::create_dir_all(d.join("fd")).unwrap();
+            std::fs::write(d.join("comm"), comm).unwrap();
+            std::fs::write(d.join("cmdline"), cmdline).unwrap();
+            if let Some(t) = fd_target {
+                std::os::unix::fs::symlink(t, d.join("fd/3")).unwrap();
+            }
+        };
+        mk("10", "sleep\n", "sleep", Some(Path::new("/elsewhere")));
+        assert_eq!(holder_of(&proc, &lock), None);
+        mk("11", "sleep\n", "sleep", Some(&lock));
+        assert_eq!(holder_of(&proc, &lock), Some(11));
+        std::fs::remove_dir_all(proc.join("11")).unwrap();
+        // fd dir unreadable: a path that is a file, not a directory
+        let unreadable = |pid: &str, comm: &str, cmdline: &str| {
+            let d = proc.join(pid);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("comm"), comm).unwrap();
+            std::fs::write(d.join("cmdline"), cmdline).unwrap();
+        };
+        unreadable("12", "sleep\n", "sleep");
+        unreadable("13", "git\n", "");
+        assert_eq!(holder_of(&proc, &lock), None);
+        unreadable("14", "git\n", "git");
+        assert_eq!(holder_of(&proc, &lock), Some(14));
+    }
+
+    #[test]
+    fn a_lock_reached_through_a_symlinked_repo_path_is_still_seen_held() {
+        let t = testkit::TempDir::new("hel-symlink");
+        let real = t.path().join("real");
+        std::fs::create_dir_all(real.join(".git")).unwrap();
+        std::os::unix::fs::symlink(&real, t.path().join("link")).unwrap();
+        let g = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&real).args(args).status().unwrap().success());
+        std::fs::remove_dir_all(real.join(".git")).unwrap();
+        g(&["init", "-q"]);
+        let lock = real.join(".git/packed-refs.lock");
+        let f = std::fs::File::create(&lock).unwrap();
+        f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(7200)).unwrap();
+        let mut live = std::process::Command::new("sleep").arg("30").stdin(std::fs::File::open(&lock).unwrap()).spawn().unwrap();
+        let via_link = t.path().join("link/.git/packed-refs.lock");
+        let err = format!("error: Unable to create '{}': File exists.", via_link.display());
+        let v = Git(&t.path().join("link")).recover_stale_lock(&err, 600);
+        let _ = live.kill();
+        let _ = live.wait();
+        assert!(matches!(v, Some(LockVerdict::Kept(_))) && lock.exists());
     }
 
     #[test]
