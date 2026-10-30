@@ -749,19 +749,18 @@ fn a_base_fix_for_a_fence_red_base_certifies_on_a_fully_green_branch() {
 }
 
 #[test]
-fn an_over_cap_gate_is_deferred_to_the_round_once_and_never_mailed() {
+fn an_over_cap_gate_is_counted_as_a_no_verdict_and_gated_again_once_the_backoff_passes() {
     let h = H::new(LandMode::Queue);
     h.closed("sp-a", "t1");
     let out = "gate: VERDICT=FAIL reason=over-cap branch=b repo=spira suite=- (killed)\n";
     h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (1, out.into()));
     h.run();
-    assert!(h.logged("deferred to round: over-cap"));
-    assert!(!h.lib.has("noverdict"), "an over-cap branch is the round's, not a notice");
+    assert!(h.lib.has("noverdict sp-a spira over-cap"));
     assert!(!h.lib.has("reopen"));
     h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (0, "gate: VERDICT=PASS reason=ok branch=b repo=spira suite=-\n".into()));
+    h.clock.t.set(h.clock.t.get() + h.s.gate_backoff as u64 + 1);
     h.run();
-    assert!(h.logged("was deferred to round: over-cap — not gated again"));
-    assert!(!h.mailbox().contains("certified spira/sp-a"), "the second pass on the same tip did not gate");
+    assert!(h.mailbox().contains("certified spira/sp-a"), "the same tip was gated again");
 }
 
 #[test]
@@ -2204,6 +2203,21 @@ fn a_branch_already_queued_is_not_queued_twice() {
     h.run();
     assert_eq!(crate::gateq::GateQueue::new(&h.s.run).queued().len(), 1);
     assert!(h.logged("CHECK6 sp-a: spira/sp-a is already with gate-worker at t1"));
+}
+
+#[test]
+fn an_over_cap_verdict_from_gate_worker_is_gated_again_after_the_backoff() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    let over_cap = "gate: VERDICT=FAIL reason=over-cap branch=b repo=spira suite=- (killed)\n";
+    file_verdict(&h, "sp-a", "t1", 1, over_cap);
+    h.run();
+    let q = crate::gateq::GateQueue::new(&h.s.run);
+    assert!(q.queued().is_empty(), "inside the backoff the tip is not queued again");
+    h.clock.t.set(h.clock.t.get() + h.s.gate_backoff as u64 + 1);
+    h.run();
+    assert_eq!(q.queued().len(), 1, "a SUBMITTED bead whose gate ran over its cap must not be left with no gate queued");
+    assert!(!h.logged("not gated again"));
 }
 
 #[test]
