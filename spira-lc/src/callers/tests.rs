@@ -319,6 +319,7 @@ fn release_and_holder_dead_return_working_to_ready_and_refuse_elsewhere() {
     f.bead("sp-sub", BeadState::Submitted).holder = Some("dwarf-3".into());
     assert_eq!(go(&mut f, "holder-dead", &["sp-sub", "slay"]).code, APPLIED);
     assert_eq!(f.state("sp-sub"), "SUBMITTED");
+    assert_eq!(f.events.last().unwrap().5, r#""HolderDead""#);
 }
 
 #[test]
