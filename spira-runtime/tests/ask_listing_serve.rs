@@ -138,7 +138,7 @@ fn serve(root: &Path, socket: &Path) -> (Proc, Proc, PathBuf) {
 }
 
 #[test]
-fn the_open_asks_are_listed_through_a_real_lifecycle_socket() {
+fn e2e_the_open_asks_are_listed_through_a_real_lifecycle_socket() {
     let t = testkit::TempDir::new("ask-listing-serve");
     let socket = t.path().join("lc.sock");
     let (_server, _serve, toml) = serve(t.path(), &socket);
