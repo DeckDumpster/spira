@@ -26,7 +26,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::git::Git;
+use crate::git::{Git, LockVerdict};
 
 /// `date -u +%Y-%m-%dT%H:%M:%SZ`, duplicated from real.rs's own copy because both need it
 /// with no clock dependency injected (lib.sh's `date -u` is likewise a bare call).
@@ -448,17 +448,21 @@ fn lock_stale_secs() -> u64 {
     spira_config::process::cfg_parse::<u64>("SPIRA_GIT_LOCK_STALE_SECS").unwrap_or(0)
 }
 
-/// `branch -D`, and when it fails on a stale git lock, move the lock aside (logged) and
-/// retry once. A fresh lock or a live git in the repo is left alone and the error returned.
+/// `branch -D`, and when it fails on a stale git lock, remove the lock (logged) and
+/// retry once. A young lock or one a process holds open is reported and left, the error returned.
 fn delete_branch_recovering(g: &Git, br: &str, reaplog_path: &Path, id: &str, stale_secs: u64) -> String {
     let err = g.branch_delete_sanctioned(br);
     if !g.branch_exists(br) {
         return err;
     }
     match g.recover_stale_lock(&err, stale_secs) {
-        Some(note) => {
+        Some(LockVerdict::Removed(note)) => {
             reaplog(reaplog_path, "UNLOCKED", id, &note);
             g.branch_delete_sanctioned(br)
+        }
+        Some(LockVerdict::Kept(note)) => {
+            reaplog(reaplog_path, "LOCKED", id, &note);
+            err
         }
         None => err,
     }
@@ -778,26 +782,24 @@ mod tests {
     }
 
     #[test]
-    fn a_stale_packed_refs_lock_is_moved_aside_logged_and_the_delete_retried() {
+    fn a_stale_packed_refs_lock_is_removed_logged_and_the_delete_retried() {
         let (repo, lock) = locked_repo("spira/sp-stale", 7200);
         let log = tempdir().join("reap.log");
         let err = delete_branch_recovering(&Git(&repo), "spira/sp-stale", &log, "sp-stale", 600);
         assert!(!Git(&repo).branch_exists("spira/sp-stale"), "still there: {err}");
         assert!(!lock.exists());
         let said = std::fs::read_to_string(&log).unwrap();
-        assert!(said.contains("UNLOCKED") && said.contains("packed-refs.lock") && said.contains("age 7"), "{said}");
-        let kept = std::fs::read_dir(repo.join(".git")).unwrap().flatten().any(|e| e.file_name().to_string_lossy().starts_with("packed-refs.lock.stale-"));
-        assert!(kept, "the lock is moved aside, not deleted");
+        assert!(said.contains("UNLOCKED") && said.contains("packed-refs.lock") && said.contains("no holder) removed"), "{said}");
     }
 
     #[test]
-    fn a_lock_younger_than_the_threshold_is_left_alone() {
+    fn a_lock_younger_than_the_threshold_is_left_alone_and_reported() {
         let (repo, lock) = locked_repo("spira/sp-fresh", 5);
         let log = tempdir().join("reap.log");
         delete_branch_recovering(&Git(&repo), "spira/sp-fresh", &log, "sp-fresh", 600);
         assert!(Git(&repo).branch_exists("spira/sp-fresh"));
         assert!(lock.exists());
-        assert!(!log.exists());
+        assert!(std::fs::read_to_string(&log).unwrap().contains("under the 600s threshold"));
     }
 
     #[test]
@@ -809,9 +811,22 @@ mod tests {
     }
 
     #[test]
-    fn an_old_lock_is_left_alone_while_a_git_process_is_in_the_repo() {
+    fn an_old_lock_a_live_process_holds_open_is_left_alone_and_reported() {
         let (repo, lock) = locked_repo("spira/sp-live", 7200);
-        let mut live = std::process::Command::new("git")
+        let mut live = std::process::Command::new("sleep").arg("30").stdin(std::fs::File::open(&lock).unwrap()).spawn().unwrap();
+        let log = tempdir().join("reap.log");
+        delete_branch_recovering(&Git(&repo), "spira/sp-live", &log, "sp-live", 600);
+        let _ = live.kill();
+        let _ = live.wait();
+        assert!(Git(&repo).branch_exists("spira/sp-live"));
+        assert!(lock.exists());
+        assert!(std::fs::read_to_string(&log).unwrap().contains(&format!("held by pid {}", live.id())));
+    }
+
+    #[test]
+    fn an_old_lock_is_removed_while_an_unrelated_git_runs_in_the_repo() {
+        let (repo, lock) = locked_repo("spira/sp-busy", 7200);
+        let mut busy = std::process::Command::new("git")
             .current_dir(&repo)
             .args(["hash-object", "--stdin"])
             .stdin(std::process::Stdio::piped())
@@ -819,11 +834,10 @@ mod tests {
             .spawn()
             .unwrap();
         let log = tempdir().join("reap.log");
-        delete_branch_recovering(&Git(&repo), "spira/sp-live", &log, "sp-live", 600);
-        let _ = live.kill();
-        let _ = live.wait();
-        assert!(Git(&repo).branch_exists("spira/sp-live"));
-        assert!(lock.exists());
+        delete_branch_recovering(&Git(&repo), "spira/sp-busy", &log, "sp-busy", 600);
+        let _ = busy.kill();
+        let _ = busy.wait();
+        assert!(!Git(&repo).branch_exists("spira/sp-busy") && !lock.exists());
     }
 
     impl std::fmt::Debug for DestroyBranchErr {
