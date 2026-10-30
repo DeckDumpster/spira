@@ -9,22 +9,24 @@ use std::path::Path;
 pub struct Cfg {
     pub systemctl: String,
     pub max_secs: i64,
+    pub dwarf_max_secs: i64,
 }
 
 const DWARF_UNIT_PREFIX: &str = "spira-dwarf-";
 
 /// A dwarf that started before `activated` and is within `max_secs` of its start finishes on
-/// the release it was called from by design; it is not skew.
+/// the release it was called from by design; it is not skew. A session renews its lease while
+/// it works, so `max_secs` here is the longest a healthy session runs, not a lease length.
 pub struct Grace {
     pub activated: Option<i64>,
     pub now: i64,
-    pub max_secs: i64,
+    pub dwarf_max_secs: i64,
 }
 
 impl Grace {
     fn excuses(&self, id: &str, started: Option<i64>) -> bool {
         match (self.activated, started) {
-            (Some(act), Some(st)) => id.starts_with(DWARF_UNIT_PREFIX) && st < act && self.now - st <= self.max_secs,
+            (Some(act), Some(st)) => id.starts_with(DWARF_UNIT_PREFIX) && st < act && self.now - st <= self.dwarf_max_secs,
             _ => false,
         }
     }
@@ -94,7 +96,7 @@ pub fn run(now: i64, run_dir: &Path, db: &str, home_repo: &str, incident_sh: &st
         return;
     };
     let show = String::from_utf8_lossy(&out.stdout);
-    let grace = Grace { activated: activation_time(&show), now, max_secs: cfg.max_secs };
+    let grace = Grace { activated: activation_time(&show), now, dwarf_max_secs: cfg.dwarf_max_secs };
     let counts = count_by_release(
         &show,
         |p| std::fs::canonicalize(p).ok().map(|c| c.to_string_lossy().into_owned()),
@@ -133,7 +135,7 @@ pub fn run(now: i64, run_dir: &Path, db: &str, home_repo: &str, incident_sh: &st
 mod tests {
     use super::*;
 
-    const NO_GRACE: Grace = Grace { activated: None, now: 0, max_secs: 0 };
+    const NO_GRACE: Grace = Grace { activated: None, now: 0, dwarf_max_secs: 0 };
 
     const SHOW: &str = "Id=spira-dwarf-builder-1.service\nEnvironment=SPIRA_RELEASE=/r/aaa PATH=/r/aaa/bin\n\nId=spira-dwarf-ops-2.service\nEnvironment=\"SPIRA_RELEASE=/r/bbb\" PATH=/x\n\nId=spira-dwarf-ops-3.service\nEnvironment=SPIRA_RELEASE=/r/bbb\n\nId=spira-x.service\nEnvironment=\n";
 
@@ -179,7 +181,7 @@ mod tests {
     }
 
     fn releases_of(show: &str) -> usize {
-        let grace = Grace { activated: Some(1000), now: 1500, max_secs: 3600 };
+        let grace = Grace { activated: Some(1000), now: 1500, dwarf_max_secs: 3600 };
         count_by_release(show, |_| None, &grace).len()
     }
 
@@ -204,8 +206,21 @@ mod tests {
     #[test]
     fn an_dwarf_past_its_deadline_is_skew() {
         let show = unit("spira-dwarf-a-1.service", "A", 900) + &unit("spira-watchd.service", "B", 1000);
-        let grace = Grace { activated: Some(1000), now: 900 + 3601, max_secs: 3600 };
+        let grace = Grace { activated: Some(1000), now: 900 + 3601, dwarf_max_secs: 3600 };
         assert_eq!(count_by_release(&show, |_| None, &grace).len(), 2);
+    }
+
+    #[test]
+    fn a_dwarf_older_than_the_skew_window_but_within_the_dwarf_maximum_is_not_skew() {
+        let show = unit("spira-dwarf-builder-1.service", "A", 1000 - 100) + &unit("spira-watchd.service", "B", 1000);
+        let grace = Grace { activated: Some(1000), now: 900 + 7200, dwarf_max_secs: 14400 };
+        assert_eq!(count_by_release(&show, |_| None, &grace).len(), 1);
+    }
+
+    #[test]
+    fn a_service_on_an_older_release_is_skew_however_young() {
+        let show = unit("spira-watchd.service", "A", 990) + &unit("spira-sentinel.timer", "B", 1000);
+        assert_eq!(releases_of(&show), 2);
     }
 
     #[test]

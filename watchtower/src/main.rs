@@ -323,6 +323,7 @@ fn main() {
             let cfg = release_skew::Cfg {
                 systemctl: getenv("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()),
                 max_secs: getenv_i64("SPIRA_RELEASE_SKEW_MAX_SECS", 3600),
+                dwarf_max_secs: getenv_i64("SPIRA_RELEASE_SKEW_DWARF_MAX_SECS", 14400),
             };
             release_skew::run(
                 n,
