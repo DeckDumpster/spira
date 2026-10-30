@@ -1358,10 +1358,6 @@ impl<'w, W: World> Trial<'w, W> {
         let forces = Forces {
             gate_all: ctx.var("SPIRA_GATE_ALL") == "1",
         };
-        // Fences mode reads neither the touched set nor the workspace graph.
-        if compose::fences_only(mode, &forces) {
-            return Composition::Fences;
-        }
         let changed = match self.w.diff_raw(repo, base, rev) {
             Ok(c) => c,
             Err(e) => {

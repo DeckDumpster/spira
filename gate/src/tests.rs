@@ -4152,8 +4152,8 @@ fn fences_mode_runs_the_fence_tools_the_fences_and_the_build_fence_and_no_test_o
 
 #[test]
 fn fences_mode_a_planted_fence_violation_still_fails_the_gate_and_the_base_runs_the_same_mode() {
-    let f = fences_fake(&["gate/src/x.rs"]);
-    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "spira-lint: payload-argv-lint: violation at gate/src/x.rs:1".into()));
+    let f = fences_fake(&["docs/x.md"]);
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "spira-lint: payload-argv-lint: violation at docs/x.md:1".into()));
     assert_eq!(f.run(), FAIL, "{}", f.stderr());
     assert!(f.verdict_line().contains("reason=branch-red"), "{}", f.verdict_line());
     let runs = gate_runs(&f);
@@ -4163,18 +4163,18 @@ fn fences_mode_a_planted_fence_violation_still_fails_the_gate_and_the_base_runs_
 }
 
 #[test]
-fn fences_mode_a_unit_test_failure_on_the_branch_does_not_fail_it() {
+fn fences_mode_a_unit_test_failure_in_a_touched_crate_fails_the_branch_at_the_gate() {
+    // Fences mode runs the touched crates' unit tests after the fences: a broken unit test is
+    // red here, not in a round 15 minutes and a VM pass later (Ryan 2026-10-29).
     let f = fences_fake(&["gate/src/x.rs"]);
     f.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (101, "test x ... FAILED".into()));
-    assert_eq!(f.run(), PASS, "{}", f.stderr());
-    assert!(!f.cmds.borrow().iter().any(|c| c.starts_with("cargo test")));
-    // Control: the same failure under unit mode runs its tests and is red on them.
-    let u = tree_owned(Some(STEPS), Some(STEPS));
-    *u.mode.borrow_mut() = Ok(GateMode::Unit);
-    *u.touched.borrow_mut() = Ok(vec![Changed { path: "gate/src/x.rs".into(), exec: false }]);
-    u.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (101, "test x ... FAILED".into()));
-    assert_eq!(u.run(), FAIL, "{}", u.stderr());
-    assert!(u.cmds.borrow().iter().any(|c| c.starts_with("cargo test")));
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+    assert!(f.cmds.borrow().iter().any(|c| c.starts_with("cargo test")), "the touched crate's tests ran");
+    // Control: a branch touching no crate runs no unit tests and passes on the same fixture.
+    let d = fences_fake(&["docs/x.md"]);
+    d.unit_runs.borrow_mut().insert((MERGE_SHA.into(), "test"), (101, "test x ... FAILED".into()));
+    assert_eq!(d.run(), PASS, "{}", d.stderr());
+    assert!(!d.cmds.borrow().iter().any(|c| c.starts_with("cargo test")));
 }
 
 #[test]
@@ -4182,8 +4182,8 @@ fn fences_mode_a_re_entering_bead_runs_exactly_its_named_suites_and_a_fresh_one_
     // sp-p3srm holds in fences mode: the round's named suites, and the suites the branch
     // changed, run against the tree — through the tree's own suite runner, which the tools
     // phase then builds.
-    let f = returned(fences_fake(&["gate/src/x.rs", "spira/test-c.sh"]), "test-b.sh");
-    *f.diff.borrow_mut() = Ok("gate/src/x.rs\nspira/test-c.sh".into());
+    let f = returned(fences_fake(&["docs/x.md", "spira/test-c.sh"]), "test-b.sh");
+    *f.diff.borrow_mut() = Ok("docs/x.md\nspira/test-c.sh".into());
     f.files.borrow_mut().insert(PathBuf::from(format!("{GATE_TREE}/spira/test-c.sh")), "#!".into());
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     let cmds = f.cmds.borrow().clone();
@@ -4197,14 +4197,14 @@ fn fences_mode_a_re_entering_bead_runs_exactly_its_named_suites_and_a_fresh_one_
     assert!(f.stderr().contains("gate PASS covered suites: test-b.sh,test-c.sh"), "{}", f.stderr());
 
     // A named suite red again fails the bead before it rides a round.
-    let r = returned(fences_fake(&["gate/src/x.rs"]), "test-b.sh");
+    let r = returned(fences_fake(&["docs/x.md"]), "test-b.sh");
     r.reentry_runs.borrow_mut().insert(MERGE_SHA.into(), (1, "  test-b.sh   RED     rc=1 after 4s\nVERDICT RED ran=1 red=1".into()));
     assert_eq!(r.run(), FAIL, "{}", r.stderr());
     assert!(r.verdict_line().contains("suite=test-b.sh"), "{}", r.verdict_line());
 
     // A fresh bead (nothing named, no suite changed): no suite of any kind, no runner built.
-    let fresh = fences_fake(&["gate/src/x.rs"]);
-    *fresh.diff.borrow_mut() = Ok("gate/src/x.rs".into());
+    let fresh = fences_fake(&["docs/x.md"]);
+    *fresh.diff.borrow_mut() = Ok("docs/x.md".into());
     assert_eq!(fresh.run(), PASS, "{}", fresh.stderr());
     let cmds = fresh.cmds.borrow().clone();
     assert_eq!(cmds.len(), 2, "{cmds:?}");
