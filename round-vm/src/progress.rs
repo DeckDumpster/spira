@@ -186,12 +186,16 @@ impl Progress {
         p
     }
 
-    /// `argv` is run once per suite that goes red, with the suite's name appended; the pass
-    /// does not wait for it.
+    pub fn total(&self) -> usize {
+        self.total
+    }
+
     pub fn marks(&self) -> Marks {
         self.marks.clone()
     }
 
+    /// `argv` is run once per suite that goes red, with the suite's name appended; the pass
+    /// does not wait for it.
     pub fn on_red(mut self, argv: Option<Vec<String>>) -> Progress {
         self.on_red = argv.filter(|a| !a.is_empty());
         self

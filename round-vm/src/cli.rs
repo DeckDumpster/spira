@@ -535,7 +535,7 @@ pub fn main_with(args: Vec<String>) -> i32 {
                             eprintln!("round-vm run: signal {sig}: {} is not running; nothing to re-pull, releasing it", vm.handle);
                         }
                         None => {
-                            eprintln!("round-vm run: signal {sig}: results pull from {} failed; keeping it for a re-pull (release it with `round-vm release {}`)", vm.handle, vm.handle);
+                            eprintln!("round-vm run: signal {sig}: results pull from {} failed; holding it (release it with `round-vm release {}`)", vm.handle, vm.handle);
                             let _ = sig_pool.hold(&vm.handle);
                         }
                     }

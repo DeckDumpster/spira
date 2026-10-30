@@ -137,6 +137,8 @@ pub struct BatchJob {
     /// The head's image tag differs from what the template (or the landing ref) holds: the VM
     /// builds `localhost/spira-testenv:<tag>` as a declared setup step instead of refusing it.
     pub build_image: bool,
+    /// Where ssh's own diagnostics for this pass's connections are written.
+    pub ssh_log: PathBuf,
     /// The mirror ref holding this run's tree, and the commit it must resolve to.
     pub round_ref: String,
     pub round_sha: String,
@@ -153,6 +155,9 @@ pub trait Remote: Sync {
     fn pull(&self, addr: &str, remote_path: &str, local: &Path) -> Result<(), String>;
     /// Copies the local directory `local` into the remote `remote_path`.
     fn push(&self, addr: &str, local: &Path, remote_path: &str) -> Result<(), String>;
+    /// After the batch's ssh dropped: reconnects until the runner's exit code is recorded on the
+    /// VM and returns it, or `None` when `within` passes first. `Err`: the VM cannot be reached again.
+    fn await_exit(&self, addr: &str, within: Duration, ssh_log: &Path) -> Result<Option<i32>, String>;
     /// Runs one attribution rerun (DESIGN.md §2.2a); its testenv exit code (255: ssh).
     fn run_attr(&self, addr: &str, job: &crate::spool::AttrJob) -> Result<i32, String>;
 }
@@ -837,6 +842,39 @@ pub(crate) fn job_cache_home(ec2: bool, configured: Option<&str>) -> Option<Stri
     if ec2 { None } else { configured.map(str::to_string) }
 }
 
+/// The ssh session's side of a batch: it stages the script on the VM, starts it detached in its
+/// own session, then follows its output and exits with its code. The script's exit code lands
+/// in [`REMOTE_EXIT_FILE`] whichever way it ends, so a dropped session loses nothing.
+pub const REMOTE_LAUNCHER: &str = r#"script="$HOME/round-script.sh"
+out="$HOME/round-batch.out" err="$HOME/round-batch.err" exit_file="$HOME/round-exit"
+cat > "$script"
+rm -f "$exit_file" "$exit_file.tmp"
+: > "$out"; : > "$err"
+setsid nohup bash -c 'rc=0; bash "$@" </dev/null >"$HOME/round-batch.out" 2>"$HOME/round-batch.err" || rc=$?; printf "rc=%s\n" "$rc" > "$HOME/round-exit.tmp"; mv -f "$HOME/round-exit.tmp" "$HOME/round-exit"' runner "$script" "$@" </dev/null >/dev/null 2>&1 &
+runner_pid=$!
+tail -n +1 -F "$out" 2>/dev/null &
+tail_out=$!
+tail -n +1 -F "$err" >&2 2>/dev/null &
+tail_err=$!
+while [ ! -e "$exit_file" ]; do
+    if ! kill -0 "$runner_pid" 2>/dev/null && [ ! -e "$exit_file" ]; then
+        sleep 1
+        [ -e "$exit_file" ] || { echo "round-vm: the runner died without recording an exit code" >&2; kill "$tail_out" "$tail_err" 2>/dev/null; exit 137; }
+    fi
+    sleep 1
+done
+sleep 1
+kill "$tail_out" "$tail_err" 2>/dev/null
+rc="$(sed -n 's/^rc=//p' "$exit_file")"
+exit "${rc:-1}"
+"#;
+
+/// The runner's exit code on the VM, `rc=N`, relative to the VM user's home.
+pub const REMOTE_EXIT_FILE: &str = "round-exit";
+
+/// Where ssh's diagnostics for the batch's connections are kept, in the results dir.
+pub const SSH_LOG_FILE: &str = "ssh-batch.log";
+
 pub fn remote_command(job: &BatchJob) -> String {
     let mut args = vec![
         job.host_addr.clone(),
@@ -858,8 +896,20 @@ pub fn remote_command(job: &BatchJob) -> String {
     args.push(job.testenv_limits.clone());
     args.push(job.resume_url.clone().unwrap_or_default());
     let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
-    format!("bash -s -- {}", quoted.join(" "))
+    format!("bash -c {} launcher {}", shell_quote(REMOTE_LAUNCHER), quoted.join(" "))
 }
+
+/// The last diagnostic line ssh wrote to `log`: why a connection ended with exit 255.
+pub fn ssh_cause(log: &Path) -> String {
+    fs::read_to_string(log)
+        .ok()
+        .and_then(|t| t.lines().rev().map(str::trim).find(|l| !l.is_empty()).map(str::to_string))
+        .unwrap_or_else(|| "ssh wrote no diagnostic".to_string())
+}
+
+/// How often [`SshRemote::await_exit`] looks, and how long it tolerates an unreachable VM.
+const AWAIT_POLL: Duration = Duration::from_secs(5);
+const AWAIT_UNREACHABLE: Duration = Duration::from_secs(120);
 
 pub struct SshRemote {
     pub user: String,
@@ -881,6 +931,26 @@ impl SshRemote {
     }
 }
 
+impl SshRemote {
+    /// [`Self::ssh_opts`] with ssh's own diagnostics (a keepalive timeout is INFO) sent to `log`.
+    fn ssh_logged_opts(&self, log: &Path) -> Vec<String> {
+        let mut o = self.ssh_opts();
+        for v in o.iter_mut() {
+            if v == "LogLevel=ERROR" {
+                *v = "LogLevel=INFO".to_string();
+            }
+        }
+        o.extend(["-E".to_string(), log.to_string_lossy().into_owned()]);
+        o
+    }
+}
+
+fn rsync_said(stderr: &[u8]) -> String {
+    let t = String::from_utf8_lossy(stderr);
+    let t = t.trim();
+    if t.is_empty() { "no output".to_string() } else { t.lines().collect::<Vec<_>>().join(" | ") }
+}
+
 impl Remote for SshRemote {
     fn reachable(&self, addr: &str) -> bool {
         command("ssh")
@@ -896,8 +966,9 @@ impl Remote for SshRemote {
     }
 
     fn run_batch(&self, addr: &str, job: &BatchJob) -> Result<i32, String> {
+        let _ = fs::create_dir_all(job.ssh_log.parent().unwrap_or(Path::new(".")));
         let mut child = command("ssh")
-            .args(self.ssh_opts())
+            .args(self.ssh_logged_opts(&job.ssh_log))
             .arg(format!("{}@{addr}", self.user))
             .arg(remote_command(job))
             .stdin(Stdio::piped())
@@ -908,6 +979,40 @@ impl Remote for SshRemote {
         }
         let st = child.wait().map_err(|e| format!("ssh: {e}"))?;
         Ok(st.code().unwrap_or(255))
+    }
+
+    fn await_exit(&self, addr: &str, within: Duration, ssh_log: &Path) -> Result<Option<i32>, String> {
+        let deadline = Instant::now() + within;
+        let mut unreachable_since: Option<Instant> = None;
+        loop {
+            let out = command("ssh")
+                .args(self.ssh_logged_opts(ssh_log))
+                .arg(format!("{}@{addr}", self.user))
+                .arg(format!("if [ -e \"$HOME/{REMOTE_EXIT_FILE}\" ]; then cat \"$HOME/{REMOTE_EXIT_FILE}\"; else exit 3; fi"))
+                .stdin(Stdio::null())
+                .output()
+                .map_err(|e| format!("ssh: {e}"))?;
+            match out.status.code() {
+                Some(0) => {
+                    let text = String::from_utf8_lossy(&out.stdout);
+                    return match text.trim().strip_prefix("rc=").and_then(|n| n.parse::<i32>().ok()) {
+                        Some(rc) => Ok(Some(rc)),
+                        None => Err(format!("{REMOTE_EXIT_FILE} holds {:?}, not rc=N", text.trim())),
+                    };
+                }
+                Some(3) => unreachable_since = None,
+                _ => {
+                    let since = *unreachable_since.get_or_insert_with(Instant::now);
+                    if since.elapsed() >= AWAIT_UNREACHABLE {
+                        return Err(format!("ssh to {addr} cannot be restored: {}", ssh_cause(ssh_log)));
+                    }
+                }
+            }
+            if Instant::now() >= deadline {
+                return Ok(None);
+            }
+            std::thread::sleep(AWAIT_POLL.min(deadline.saturating_duration_since(Instant::now())));
+        }
     }
 
     fn run_attr(&self, addr: &str, job: &crate::spool::AttrJob) -> Result<i32, String> {
@@ -933,14 +1038,13 @@ impl Remote for SshRemote {
             .arg(format!("ssh {}", self.ssh_opts().join(" ")))
             .arg(format!("{}/", local.display()))
             .arg(format!("{}@{addr}:{remote_path}", self.user))
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
+            .stdin(Stdio::null())
+            .output()
             .map_err(|e| format!("rsync: {e}"))?;
-        if st.success() {
+        if st.status.success() {
             Ok(())
         } else {
-            Err(format!("rsync to {remote_path} exited {}", st.code().unwrap_or(-1)))
+            Err(format!("rsync to {remote_path} exited {}: {}", st.status.code().unwrap_or(-1), rsync_said(&st.stderr)))
         }
     }
 
@@ -952,14 +1056,13 @@ impl Remote for SshRemote {
             .arg(format!("ssh {}", self.ssh_opts().join(" ")))
             .arg(format!("{}@{addr}:{remote_path}", self.user))
             .arg(format!("{}/", local.display()))
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
+            .stdin(Stdio::null())
+            .output()
             .map_err(|e| format!("rsync: {e}"))?;
-        if st.success() {
+        if st.status.success() {
             Ok(())
         } else {
-            Err(format!("rsync {remote_path} exited {}", st.code().unwrap_or(-1)))
+            Err(format!("rsync {remote_path} exited {}: {}", st.status.code().unwrap_or(-1), rsync_said(&st.stderr)))
         }
     }
 }
@@ -1703,8 +1806,7 @@ fn run_pass(env: &RunEnv, args: &RunArgs, facts: &Mutex<Facts>) -> i32 {
     let keep = AtomicBool::new(false);
     let code = on_vm(env, args, &vm, mode, &host_addr, &commit_sha, &tree_sha, build_image, &round_ref, progress, results_dir, &keep);
     if keep.load(Ordering::SeqCst) {
-        let pulled = fs::read_dir(args.results_dir.clone().unwrap_or_else(|| cfg.run_dir.join("batch-results"))).map(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "result")).count()).unwrap_or(0);
-        eprintln!("round-vm run: INCOMPLETE: {pulled} results pulled; results not fully pulled; keeping VM {} at {} for a re-pull (release it with `round-vm release {}`)", vm.handle, vm.addr, vm.handle);
+        eprintln!("{}", held_vm_line(&vm.handle, &vm.addr));
         if let Err(e) = env.pool.hold(&vm.handle) {
             eprintln!("round-vm run: warning: could not hold {}: {e}", vm.handle);
         }
@@ -1841,6 +1943,7 @@ fn on_vm_run(
         build_image,
         round_ref: round_ref.to_string(),
         round_sha: commit_sha.to_string(),
+        ssh_log: results_dir.join(SSH_LOG_FILE),
         ci_entry: args.ci_entry.clone(),
         resume_url: args.ci_entry.is_none().then(|| cfg.resume_url.clone()).flatten(),
     };
@@ -1874,14 +1977,13 @@ fn on_vm_run(
                 progress.finish(&results_dir, VM_LOST_EXIT);
                 return VM_LOST_EXIT;
             }
-            Ok(255) => {
-                eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
-                progress.marks().lose("ssh dropped");
-                keep_after_lost_ssh(env, vm, &results_dir, keep);
-                record_incomplete(env, args, "the batch's ssh dropped");
-                progress.finish(&results_dir, 2);
-                return 2;
-            }
+            Ok(255) => match recover_dropped_ssh(env, args, vm, &job, &mut progress, &results_dir, keep) {
+                Some(rc) => rc,
+                None => {
+                    progress.finish(&results_dir, 2);
+                    return 2;
+                }
+            },
             Ok(rc) => rc,
             Err(e) => {
                 eprintln!("round-vm run: {e}");
@@ -1932,33 +2034,31 @@ fn on_vm_run(
             std::thread::sleep(Duration::from_millis(50));
         }
         let _ = fs::remove_dir_all(&stream_scratch);
-        let (code, usable) = match batch.join() {
+        let judged = match batch.join() {
             Ok(Ok(255)) if vm_lost(env, vm) => {
                 lose_vm(env, args, &mut progress);
-                (VM_LOST_EXIT, false)
+                Err(VM_LOST_EXIT)
             }
-            Ok(Ok(255)) => {
-                eprintln!("round-vm run: ssh to {} failed (exit 255)", vm.addr);
-                progress.marks().lose("ssh dropped");
-                keep_after_lost_ssh(env, vm, &results_dir, keep);
-                record_incomplete(env, args, "the batch's ssh dropped");
-                (2, false)
+            Ok(Ok(255)) => recover_dropped_ssh(env, args, vm, &job, &mut progress, &results_dir, keep).ok_or(2),
+            Ok(Ok(rc)) => Ok(rc),
+            Ok(Err(e)) => {
+                eprintln!("round-vm run: {e}");
+                Err(2)
             }
-            Ok(Ok(rc)) => {
+            Err(_) => {
+                eprintln!("round-vm run: the batch thread panicked");
+                Err(2)
+            }
+        };
+        let (code, usable) = match judged {
+            Ok(rc) => {
                 progress.update(&results_dir);
                 record_boundary(env, args, &mut progress, &mut refused);
                 progress.enter(&results_dir, "salvage", None);
                 let code = after_batch(env, args, vm, mode, commit_sha, tree_sha, maxpar, rc, t0.elapsed().as_secs(), keep);
                 (settle_boundary(env, args, &mut progress, &results_dir, &mut refused, code), true)
             }
-            Ok(Err(e)) => {
-                eprintln!("round-vm run: {e}");
-                (2, false)
-            }
-            Err(_) => {
-                eprintln!("round-vm run: the batch thread panicked");
-                (2, false)
-            }
+            Err(code) => (code, false),
         };
         progress.finish(&results_dir, code);
         publish_progress(env, args, &mut progress);
@@ -1970,6 +2070,26 @@ fn on_vm_run(
         }
         code
     })
+}
+
+/// The batch's ssh returned 255 on a VM that is still running. Reconnects and waits, within the
+/// pass's own budgets, for the runner's recorded exit code and returns it. `None`: the pass is
+/// incomplete, the VM is kept, and the cause is on every report.
+fn recover_dropped_ssh(env: &RunEnv, args: &RunArgs, vm: &Vm, job: &BatchJob, progress: &mut crate::progress::Progress, results_dir: &Path, keep: &AtomicBool) -> Option<i32> {
+    let cause = ssh_cause(&job.ssh_log);
+    let within = Duration::from_secs(job.cap_secs + job.post_guard_secs);
+    match env.remote.await_exit(&vm.addr, within, &job.ssh_log) {
+        Ok(Some(rc)) => {
+            eprintln!("round-vm run: ssh to {} dropped ({cause}); reconnected and the runner had finished with exit {rc}", vm.addr);
+            return Some(rc);
+        }
+        Ok(None) => eprintln!("round-vm run: ssh to {} failed (exit 255): {cause}; the runner recorded no exit within {}s", vm.addr, within.as_secs()),
+        Err(e) => eprintln!("round-vm run: ssh to {} failed (exit 255): {cause}; {e}", vm.addr),
+    }
+    progress.marks().lose(&format!("ssh dropped: {cause}"));
+    keep_after_lost_ssh(env, vm, results_dir, progress.total(), keep);
+    record_incomplete(env, args, &format!("the batch's ssh dropped: {cause}"));
+    None
 }
 
 /// `run`'s exit when the VM died under the pass: no verdict, nothing to re-pull, retry the pass.
@@ -2056,20 +2176,32 @@ fn keep_vm(env: &RunEnv, vm: &Vm, keep: &AtomicBool) {
 }
 
 /// The batch's ssh dropped, so what the VM holds is unknown: take what it has and keep the VM.
-fn keep_after_lost_ssh(env: &RunEnv, vm: &Vm, results_dir: &Path, keep: &AtomicBool) {
+fn keep_after_lost_ssh(env: &RunEnv, vm: &Vm, results_dir: &Path, expected: usize, keep: &AtomicBool) {
     keep_vm(env, vm, keep);
     let _pin = env.pool.pin_pull(&vm.handle);
     let scratch = env.cfg.state_dir.join(format!(".pulled-lost.{}", std::process::id()));
     let _ = fs::remove_dir_all(&scratch);
     if pull_retry(env.remote, env.cfg, &vm.addr, REMOTE_RESULTS, &scratch) {
         let n = stream_into(&scratch, results_dir).unwrap_or(0);
-        eprintln!("round-vm run: INCOMPLETE: the batch's ssh dropped; salvaged {n} results");
+        eprintln!("{}", incomplete_count_line(results_present(results_dir), expected, n));
         env.pool.mark_pulled(&vm.handle);
     } else {
         eprintln!("round-vm run: INCOMPLETE: the batch's ssh dropped and the results pull failed");
     }
     let _ = fs::remove_dir_all(&scratch);
     keep_runner_output(env.remote, env.cfg, &vm.addr, &env.cfg.state_dir.join(format!(".pulled-runner.{}", std::process::id())), results_dir);
+}
+
+fn incomplete_count_line(present: usize, expected: usize, new: usize) -> String {
+    format!("round-vm run: INCOMPLETE: {present} of {expected} suite results present ({new} new in the final pull)")
+}
+
+pub fn held_vm_line(handle: &str, addr: &str) -> String {
+    format!("round-vm run: INCOMPLETE: holding VM {handle} at {addr}; release it with `round-vm release {handle}`")
+}
+
+fn results_present(dir: &Path) -> usize {
+    fs::read_dir(dir).map(|d| d.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "result")).count()).unwrap_or(0)
 }
 
 /// A run cut by a signal still holds the verdicts its VM produced: pulls them into
@@ -3087,11 +3219,12 @@ mod tests {
             post_guard_secs: 600,
             lint: false,
             build_image: false,
+            ssh_log: PathBuf::from("ssh.log"),
             round_ref: "refs/rounds/7-abc".into(),
             round_sha: "abc".into(),
             ci_entry: Some("deploy/ci.sh all".into()),
         });
-        assert_eq!(cmd, "bash -s -- '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' ''");
+        assert_eq!(cmd, format!("bash -c {} launcher '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45' '900' '600' '' '' 'refs/rounds/7-abc' 'abc' 'deploy/ci.sh all' 'testenv_suite_cap = 600\n' ''", shell_quote(REMOTE_LAUNCHER)));
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -3189,7 +3322,7 @@ mod tests {
             host_addr: "h".into(), mirror_port: 1, suites: None, maxpar: 1, toolchain: None, cache_home: None,
             testenv_registry: None, resume_url: Some("s3://bkt/pre".into()), setup_alarm_secs: 1, cap_secs: 1,
             testenv_limits: "x".into(), post_guard_secs: 1, lint: false, build_image: false,
-            round_ref: "r".into(), round_sha: "s".into(), ci_entry: None,
+            ssh_log: PathBuf::from("ssh.log"), round_ref: "r".into(), round_sha: "s".into(), ci_entry: None,
         };
         assert!(remote_command(&job).ends_with("'x' 's3://bkt/pre'"));
         assert!(!REMOTE_SCRIPT.contains("AWS_SECRET_ACCESS_KEY"), "the script never carries a key");
@@ -3554,6 +3687,10 @@ mod tests {
         fail_result_pulls: std::sync::atomic::AtomicUsize,
         /// the VM is stopped under the batch, as a hard-stop would
         kill_vm: Option<crate::testutil::FakeProvider>,
+        /// the exit code the runner recorded on the VM, as a dropped session finds it
+        recorded_exit: Option<i32>,
+        /// what ssh logged for the batch connection before it dropped
+        ssh_log_text: Option<&'static str>,
     }
     impl FakeRemote {
         fn green() -> FakeRemote {
@@ -3582,6 +3719,8 @@ mod tests {
                 result_pulls: std::sync::atomic::AtomicUsize::new(0),
                 fail_result_pulls: std::sync::atomic::AtomicUsize::new(0),
                 kill_vm: None,
+                recorded_exit: None,
+                ssh_log_text: None,
             }
         }
     }
@@ -3599,12 +3738,18 @@ mod tests {
                 wait_until(|| self.result_pulls.load(std::sync::atomic::Ordering::SeqCst) > 0);
             }
             self.batch_running.store(false, std::sync::atomic::Ordering::SeqCst);
+            if let Some(text) = self.ssh_log_text {
+                fs::write(&job.ssh_log, text).unwrap();
+            }
             if let Some(fp) = &self.kill_vm {
                 for vm in fp.live_vms() {
                     crate::provider::Provider::stop(fp, &vm).unwrap();
                 }
             }
             self.rc.clone()
+        }
+        fn await_exit(&self, _: &str, _: Duration, _: &Path) -> Result<Option<i32>, String> {
+            Ok(self.recorded_exit)
         }
         fn run_attr(&self, _: &str, job: &crate::spool::AttrJob) -> Result<i32, String> {
             if self.hold_for_attr && job.job == "j1" {
@@ -3742,6 +3887,7 @@ mod tests {
     struct FakeRecorder {
         calls: Mutex<Vec<String>>,
         bodies: Mutex<Vec<(String, String)>>,
+        reasons: Mutex<Vec<String>>,
         refuse: bool,
         refuse_record: bool,
     }
@@ -3751,7 +3897,8 @@ mod tests {
             self.calls.lock().unwrap().push(format!("start {batch}"));
             Ok(())
         }
-        fn pass_incomplete(&self, batch: &str, _: Option<&str>, _: &str) -> Result<(), String> {
+        fn pass_incomplete(&self, batch: &str, _: Option<&str>, why: &str) -> Result<(), String> {
+            self.reasons.lock().unwrap().push(why.to_string());
             self.calls.lock().unwrap().push(format!("incomplete {batch}"));
             Ok(())
         }
@@ -4310,6 +4457,81 @@ mod tests {
     fn every_ssh_and_rsync_to_a_round_vm_carries_keepalives() {
         let opts = SshRemote { user: "u".into(), port: 22, key: "k".into() }.ssh_opts().join(" ");
         assert!(opts.contains("-o ServerAliveInterval=10 -o ServerAliveCountMax=3"), "{opts}");
+    }
+
+    #[test]
+    fn a_drop_after_the_runner_finished_green_is_judged_green_and_releases_the_vm() {
+        let fx = fixture();
+        let rec = FakeRecorder::default();
+        let remote = FakeRemote { rc: Ok(255), recorded_exit: Some(0), ..FakeRemote::green() };
+        assert_eq!(go_recorded(&fx, &remote, &batch_args(&fx, "b-drop-green"), &rec), 0);
+        assert!(!rec.calls.lock().unwrap().iter().any(|c| c.starts_with("incomplete")), "{:?}", rec.calls.lock().unwrap());
+        let rows = pass_rows(&fx);
+        assert_eq!(rows.iter().find(|r| r["batch"] == "b-drop-green").unwrap()["cause"], "green");
+        assert!(fx.fp.live_vms().is_empty(), "{:?}", fx.fp.live_vms());
+    }
+
+    #[test]
+    fn a_drop_after_the_runner_finished_red_is_judged_red() {
+        let fx = fixture();
+        let rec = FakeRecorder::default();
+        let mut remote = FakeRemote { rc: Ok(255), recorded_exit: Some(1), ..FakeRemote::green() };
+        remote.files.insert("round-work/.runtime/spira/batch-results/", vec![("KEY/test-a.sh.result", "red 1 30 fp p e 1\n"), ("KEY/test-b.sh.result", "ok 1 12 - p e 0\n"), ("KEY/batch.meta", "key=KEY\ntree=treesha\n")]);
+        let a = batch_args(&fx, "b-drop-red");
+        assert_eq!(go_recorded(&fx, &remote, &a, &rec), 1);
+        assert!(a.results_dir.as_ref().unwrap().join("test-a.sh.result").is_file());
+    }
+
+    #[test]
+    fn a_drop_with_no_recorded_exit_stays_incomplete_and_holds_the_vm() {
+        let fx = fixture();
+        let rec = FakeRecorder::default();
+        let remote = FakeRemote { rc: Ok(255), ..FakeRemote::green() };
+        assert_eq!(go_recorded(&fx, &remote, &batch_args(&fx, "b-drop-none"), &rec), 2);
+        assert_eq!(*rec.calls.lock().unwrap().last().unwrap(), "incomplete b-drop-none");
+        assert_eq!(fx.fp.live_vms().len(), 1);
+    }
+
+    #[test]
+    fn the_reason_ssh_gave_reaches_the_pass_record_and_the_incomplete_reason() {
+        let fx = fixture();
+        let rec = FakeRecorder::default();
+        let remote = FakeRemote { rc: Ok(255), ssh_log_text: Some("Authenticated to x\nTimeout, server 100.115.102.10 not responding.\n"), ..FakeRemote::green() };
+        let a = batch_args(&fx, "b-why");
+        assert_eq!(go_recorded(&fx, &remote, &a, &rec), 2);
+        let want = "Timeout, server 100.115.102.10 not responding.";
+        assert_eq!(*rec.reasons.lock().unwrap(), vec![format!("the batch's ssh dropped: {want}")]);
+        let rows = pass_rows(&fx);
+        let detail = rows.iter().find(|r| r["batch"] == "b-why").unwrap()["detail"].as_str().unwrap().to_string();
+        assert!(detail.contains(want), "{detail}");
+        assert!(a.results_dir.as_ref().unwrap().join(SSH_LOG_FILE).is_file());
+    }
+
+    #[test]
+    fn an_empty_ssh_log_says_ssh_wrote_no_diagnostic() {
+        let fx = fixture();
+        let log = fx.d.path().join("ssh.log");
+        assert_eq!(ssh_cause(&log), "ssh wrote no diagnostic");
+        fs::write(&log, "\n").unwrap();
+        assert_eq!(ssh_cause(&log), "ssh wrote no diagnostic");
+    }
+
+    #[test]
+    fn a_dropped_pass_reports_one_count_and_never_promises_a_re_pull() {
+        assert_eq!(incomplete_count_line(2, 2, 0), "round-vm run: INCOMPLETE: 2 of 2 suite results present (0 new in the final pull)");
+        let held = held_vm_line("h-1", "10.0.0.5");
+        assert!(held.contains("round-vm release h-1") && !held.contains("re-pull"), "{held}");
+    }
+
+    #[test]
+    fn a_failed_rsync_carries_what_rsync_or_ssh_said() {
+        let fx = fixture();
+        let key = fx.d.path().join("host_key");
+        let remote = SshRemote { user: "u".into(), port: 1, key };
+        let e = remote.pull("127.0.0.1", "x/", &fx.d.path().join("into")).unwrap_err();
+        assert!(e.contains("exited") && e.to_lowercase().contains("refused"), "{e}");
+        let e = remote.push("127.0.0.1", fx.d.path(), "x/").unwrap_err();
+        assert!(e.to_lowercase().contains("refused"), "{e}");
     }
 
     #[test]
