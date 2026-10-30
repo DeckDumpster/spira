@@ -761,3 +761,24 @@ fn commit_law_with_no_base_resolves_the_landing_ref_and_refuses_when_none_resolv
     let err = rule::code::commit_law(bare.path(), None, wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &book).unwrap_err();
     assert!(err.contains("no landing ref resolves"), "{err}");
 }
+
+#[test]
+fn a_worktree_add_that_fails_says_why_and_leaves_no_law_branch() {
+    let repo = fixture_repo("law-wt-fails");
+    let wt_root = testkit::TempDir::new("law-wt-fails-wt");
+    let shim = testkit::TempDir::new("law-wt-fails-git");
+    let real = Command::new("sh").args(["-c", "command -v git"]).output().unwrap();
+    let real = String::from_utf8_lossy(&real.stdout).trim().to_string();
+    testkit::write_exe(
+        shim.join("git"),
+        &format!("#!/bin/sh\nif [ \"$3 $4\" = \"worktree add\" ]; then {real} -C \"$2\" branch \"$7\" HEAD; echo 'fatal: disk on fire' >&2; exit 7; fi\nexec {real} \"$@\"\n"),
+    );
+    let path = format!("{}:{}", shim.path().display(), std::env::var("PATH").unwrap_or_default());
+    let _env = testkit::env(&[("PATH", Some(path.as_str()))]);
+    let toc = append(&parse_toc(TOC).unwrap(), 2, "law-four").unwrap();
+    let book = book_of(&[("law-one", "Do one."), ("law-two", "Do two."), ("law-three", "Do three."), ("law-four", "Do four.")]);
+    let err = rule::code::commit_law(repo.path(), Some("HEAD"), wt_root.path(), "enact", "law-four", &toc, &Pointers::default(), &book).unwrap_err();
+    assert!(err.contains("fatal: disk on fire") && err.contains("exit 7"), "{err}");
+    let branches = Command::new("git").arg("-C").arg(repo.path()).args(["branch", "--list", "law/*"]).output().unwrap();
+    assert!(String::from_utf8_lossy(&branches.stdout).trim().is_empty(), "stray branch: {}", String::from_utf8_lossy(&branches.stdout));
+}
