@@ -3,6 +3,7 @@
 //! what it has to say leaves as an `inbox.append` effect.
 
 pub mod asks;
+pub mod design_asks;
 pub mod inbox_keeper;
 pub mod pr_notify;
 pub mod round_duty;

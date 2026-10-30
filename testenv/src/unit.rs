@@ -122,10 +122,10 @@ mod tests {
     }
 
     #[test]
-    fn the_spira_runtime_manifest_declares_spira_lc_and_the_crates_that_launch_nothing_declare_none() {
+    fn the_spira_runtime_manifest_declares_spira_config_and_spira_lc_and_the_crates_that_launch_nothing_declare_none() {
         let meta = output(Command::new("cargo").current_dir(env!("CARGO_MANIFEST_DIR")).args(["metadata", "--format-version", "1", "--no-deps", "--offline"])).unwrap();
         let meta = String::from_utf8_lossy(&meta);
-        assert_eq!(test_bins(&meta, &["spira-runtime".into()]).unwrap(), ["spira-lc"]);
+        assert_eq!(test_bins(&meta, &["spira-runtime".into()]).unwrap(), ["spira-config", "spira-lc"]);
         assert!(test_bins(&meta, &["testenv".into()]).unwrap().is_empty());
     }
 }

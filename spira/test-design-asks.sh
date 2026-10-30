@@ -76,4 +76,5 @@ rm -rf "$BRAIN/wiki/projects"
 out="$(w bash "$G" pass)"; wantrc "a missing brain path fails the pass" 1 "$?"
 want "a missing brain path is said as a failure" "is not a directory" "$out"
 
+grep -q '^design-asks|' "$HERE/watchers"; is "watchers manifest has no design-asks row: spira-runtime hosts it" "1" "$?"
 tl_summary

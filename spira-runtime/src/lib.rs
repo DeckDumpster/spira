@@ -24,7 +24,7 @@ const FOREIGN_POLL_MS: u64 = 30_000;
 
 /// Every workflow the service hosts. The heartbeat is registered here and nowhere else.
 pub fn registrations(s: &Settings) -> Vec<Registration> {
-    vec![Heartbeat { interval_ms: s.heartbeat_secs * 1000, ping_deadline_ms: s.ping_deadline_ms() }.registration(), s.round_duty.clone().registration(), s.inbox_keeper.clone().registration(), s.pr_notify.clone().registration(), s.asks.clone().registration()]
+    vec![Heartbeat { interval_ms: s.heartbeat_secs * 1000, ping_deadline_ms: s.ping_deadline_ms() }.registration(), s.round_duty.clone().registration(), s.inbox_keeper.clone().registration(), s.pr_notify.clone().registration(), s.asks.clone().registration(), s.design_asks.clone().registration()]
 }
 
 pub fn open_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runtime::ports::Clock>, marker: Arc<dyn Marker>, sink: Arc<dyn WideSink>, extra: Vec<Registration>) -> runtime::Result<Engine> {
@@ -78,6 +78,7 @@ impl EffectRunner for Effects {
             watchers::pr_notify::OBSERVE => self.world.pr_snapshot(&self.forge, &spec.input),
             watchers::pr_notify::OPERATOR_NOTE => self.operator_note(&spec.input),
             watchers::asks::OBSERVE => self.world.asks_snapshot(&spec.input),
+            watchers::design_asks::OBSERVE => self.world.design_asks_snapshot(),
             watchers::INBOX_APPEND => self.world.inbox_append(&spec.input),
             other => Err(format!("no runner for effect {other}")),
         }

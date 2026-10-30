@@ -80,6 +80,7 @@ runtime_inbox_keeper_secs = 60
 runtime_pr_notify_secs = 90
 runtime_asks_secs = 60
 pr_deploy_giveup = 10800
+runtime_design_asks_secs = 600
 runes_overlay = "/fixture/userhome/.config/spira/runes"
 check5_max_file = "5"
 ci_label = "awaiting-ci"
