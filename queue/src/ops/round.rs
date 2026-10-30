@@ -480,7 +480,7 @@ pub(super) fn call_mender(
     let title = format!("mend {suite} red in pass {pass} of round {batch}");
     match w.lib.create_bug(&actor(w), &title, "1", &labels, &body) {
         Some(id) => {
-            w.lc.create_bead(&id);
+            w.lc.create_bead_in(&id, &c.r.name);
             let _ = write_atomic(&marker, &format!("{id}\n"));
             w.out(format!("queue.sh round failed: mender bead {id} filed for {suite} in pass {pass} of {batch}"));
         }
