@@ -47,7 +47,7 @@ _run <<'EOF'
 bad "case three"
 tl_summary
 EOF
-nowant "bad(): no detail means no diagnostic line printed" "# " "$_RUN_OUT"
+want   "bad(): no detail means the only diagnostic line is the case's location" "not ok 1 - case three"$'\n'"# at " "$_RUN_OUT"
 
 # --- is(): exact-string equality, pass and fail -----------------------------------
 _run <<'EOF'
@@ -133,7 +133,7 @@ bad "failed" "why"
 tl_summary
 EOF2
 case "$_RUN_OUT" in
-    *"ok 1 - slow"$'\n'"#ms="[3-9][0-9][0-9]$'\n'*"not ok 2 - failed"$'\n'"# why"$'\n'"#ms="[0-9]*) ok "ms: each case is followed by its elapsed milliseconds, after any failure detail" ;;
+    *"ok 1 - slow"$'\n'"#ms="[3-9][0-9][0-9]$'\n'*"not ok 2 - failed"$'\n'"# why"$'\n'"# at "*$'\n'"#ms="[0-9]*) ok "ms: each case is followed by its elapsed milliseconds, after any failure detail" ;;
     *) bad "ms: each case is followed by its elapsed milliseconds, after any failure detail" "$_RUN_OUT" ;;
 esac
 

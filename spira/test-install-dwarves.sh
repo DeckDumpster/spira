@@ -35,6 +35,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REAL_REPO="$(cd "$HERE/.." && pwd -P)"
 REAL_COCKPIT="$(cd "$HERE/../cockpit" && pwd -P)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=180   # slow cases: real git/dolt on a loaded VM
 . "$HERE/lib-test-install.sh"
 isz()    { wantrc "$1" 0 "$2"; }
 nonzero(){ [ "$2" != 0 ] && ok "$1" || bad "$1" "wanted non-zero exit, got 0"; }

@@ -1,0 +1,8 @@
+TYPE=u64
+GROUP=suite
+DOC=Longest, in seconds, one test case of a shell suite may run before the suite is stopped and red
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # A case is the work between one assertion and the next. A case past this deadline fails
+    # the suite there, naming it, so one hang cannot spend SPIRA_SUITE_TIMEOUT. 0 disables.
+    : "${SPIRA_TEST_CASE_DEADLINE:=30}"
+SPIRA_CONF_DEFAULT_EOF

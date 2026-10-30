@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Minutes a manual hold with no review-by date may stand before the bead sweep calls it stale.
+SCHEMA=Minutes a manual hold with no review-by date may stand before the bead sweep calls it stale (unit: minutes; integer; default 120). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_BEAD_SWEEP_HOLD_MIN:=120}"
+SPIRA_CONF_DEFAULT_EOF

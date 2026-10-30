@@ -95,15 +95,7 @@ mail-deliver|extern|mail-deliver|spira-mail-deliver.sh health
 
 # INBOX-KEEPER has no row: spira-runtime hosts it as the inbox-keeper handler (spira-runtime/src/watchers).
 
-# PUBLISH-BACKLOG is a daemon: it scans every repo-map row on a cadence and, for the ones in
-# queue.local mode, mails the concierge when local/main's unpublished commits cross
-# SPIRA_LOCAL_BACKLOG_COUNT or the oldest of them crosses SPIRA_LOCAL_BACKLOG_AGE — row 5 of
-# the local/main design. It exists because queue.local decouples landing from publishing: a
-# repo whose publish queue stalls looks perfectly healthy locally (beads keep closing on
-# local landings) while the forge silently falls behind. `watchd drain publish-backlog`
-# delivers queued crossings; only the crossing itself is mailed (TRANSITIONS, NOT STATE,
-# same as pr-notify), so a backlog stuck over threshold does not become a siren.
-publish-backlog|daemon|publish-backlog.sh watch --interval 900|publish-backlog.sh health
+# PUBLISH-BACKLOG has no row: spira-runtime hosts it as the publish-backlog handler (spira-runtime/src/watchers).
 
 # LC-BACKUP is the age alarm for the lifecycle store's off-box backup (lc-backup.sh, run by
 # lc-backup.timer): it alerts the operator on the crossing into stale, or into no destination at all.
@@ -164,12 +156,6 @@ event-continuity|log|@SPIRA_RUN@/event-continuity.log
 # ceiling: lc-serve appends one line per breach (re-alarmed every 15 minutes) and nothing else
 # writes the log. Brokered tool verbs (groom, queue, ...) and facts-query are batch jobs and exempt.
 lc-latency|log|@SPIRA_RUN@/lc-latency.log
-
-# BEAD-SWEEP classifies every live bead (OK, BLOCKED, HELD, ASK, SUSPECT) on a half-hour cadence
-# and raises each SUSPECT class — poison, unanswered ask hold, stale manual hold, rowless bead,
-# stale blocked edge, unclaimed rework, expired lease, certified with no batch — as an inbox line
-# the pass it first appears. Health is the last pass that could read the lifecycle.
-bead-sweep|daemon|@SPIRA_HOME@/bead-sweep.sh watch --interval 1800|@SPIRA_HOME@/bead-sweep.sh health
 
 # ROUND-SPILL-KEY warns SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS before the tailscale auth key spilled round
 # instances join the tailnet with expires (the expiry is recorded in <key file>.expires). It says

@@ -18,6 +18,8 @@ use crate::watchers::design_asks::{self, Page};
 use crate::wiki_git::git;
 use crate::watchers::brain_dirty;
 use crate::watchers::supersede_duty::{self, Act, Held, Reading, Verb};
+use crate::watchers::bead_sweep::{self, Bead, Repair, Repaired, Reservation, Row, Stop};
+use crate::watchers::publish_backlog::{self, Read};
 use crate::watchers::round_duty::{RoundState, Snapshot};
 
 const STORE_ATTEMPTS: u32 = 3;
@@ -35,6 +37,7 @@ pub struct World {
     pub mail: PathBuf,
     pub ask_label: String,
     pub wiki: PathBuf,
+    pub publish_remote: String,
 }
 
 struct MapRow {
@@ -57,6 +60,22 @@ fn map_rows(text: &str) -> Vec<MapRow> {
 fn lane_stopped(run_dir: &Path, repo: &str, lane: &str) -> bool {
     let Ok(text) = fs::read_to_string(run_dir.join("scoped-stops").join(format!("repo-{repo}.json"))) else { return false };
     serde_json::from_str::<Value>(&text).ok().and_then(|v| v["lanes"].as_array().map(|a| a.iter().any(|l| l == lane))).unwrap_or(false)
+}
+
+fn git_ref(git: &Path, name: &str) -> Option<String> {
+    let sha = |s: &str| (s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())).then(|| s.to_string());
+    if let Some(s) = fs::read_to_string(git.join(name)).ok().and_then(|t| sha(t.trim())) {
+        return Some(s);
+    }
+    fs::read_to_string(git.join("packed-refs")).ok()?.lines().find_map(|l| l.strip_suffix(name).and_then(|h| sha(h.trim_end())))
+}
+
+/// (new sha, unix seconds) of one reflog line: `old new Name <mail> secs tz<TAB>message`.
+fn reflog_entry(line: &str) -> Option<(&str, u64)> {
+    let head = line.split('\t').next()?;
+    let f: Vec<&str> = head.split_whitespace().collect();
+    let secs = f.get(f.len().checked_sub(2)?)?.parse().ok()?;
+    Some((f.get(1).copied()?, secs))
 }
 
 fn kv_get(text: &str, key: &str) -> Option<String> {
@@ -419,6 +438,145 @@ impl World {
         Ok(if flags.is_empty() { "done".into() } else { flags.join(" ") })
     }
 
+    fn lc_json(&self, argv: &[&str]) -> Result<Value, String> {
+        let text = lc_call(&self.lc_socket, argv).map_err(|e| e.to_string())?;
+        serde_json::from_str(&text).map_err(|e| format!("{} unparsed: {e}", argv[0]))
+    }
+
+    pub fn sweep_snapshot(&self) -> Result<String, String> {
+        let list = |states: &str| self.lc_json(&["list", "--state", states]);
+        let rows = list("READY,REWORK,SUBMITTED,CERTIFIED,WORKING,OPEN,IN_DELIVERY")?;
+        let [flag, filter] = status_args(Kind::Ask, Which::Live);
+        let content = self.lc_json(&["content", "list", &flag, &filter, "--json", "--limit", "0"])?;
+        let term = list("LANDED,DONE,DROPPED,SUPERSEDED")?;
+        let beads: Vec<Bead> = content.as_array().ok_or("content list is not an array")?.iter().filter_map(sweep_bead).collect();
+        let labels_of = |id: &str| beads.iter().find(|b| b.id == id).map(|b| b.labels.clone()).unwrap_or_default();
+        let rows: Vec<Row> = rows.as_array().ok_or("list is not an array")?.iter().filter_map(sweep_row).map(|mut r| {
+            let ours = r.holds.iter().any(|h| h == "manual") && !r.holds.iter().any(|h| h == "poison" || h == "ask") && !labels_of(&r.id).contains(&self.ask_label);
+            if ours && bead_sweep::review(&r.reason).is_none() {
+                r.hold_review = self.lc_json(&["history", &r.id, "--machine", "bead"]).ok().and_then(|h| bead_sweep::review_in_history(&h));
+            }
+            r
+        }).collect();
+        let terminal = term.as_array().ok_or("list is not an array")?.iter().filter_map(|r| Some((r["bead_id"].as_str()?.to_string(), r["state"].as_str()?.to_string()))).collect();
+        let (stops, reserved) = self.scoped_stops();
+        let pr_repos = fs::read_to_string(&self.repo_map).map(|t| map_rows(&t)).unwrap_or_default().into_iter().filter(|r| r.land == "pr").map(|r| r.name).collect();
+        let solo_skipped = fs::read_dir(self.run_dir.join("solo-skips")).into_iter().flatten().flatten().filter_map(|e| e.file_name().into_string().ok()).collect();
+        let snap = bead_sweep::Snapshot { rows, content: beads, terminal, stops, reserved, carried: self.integrations(), solo_skipped, pr_repos };
+        serde_json::to_string(&snap).map_err(|e| e.to_string())
+    }
+
+    fn scoped_stops(&self) -> (Vec<Stop>, Vec<Reservation>) {
+        let dir = self.run_dir.join("scoped-stops");
+        let mut files: Vec<PathBuf> = fs::read_dir(&dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
+        files.sort();
+        let (mut stops, mut reserved): (Vec<Stop>, Vec<Reservation>) = (vec![], vec![]);
+        for f in files {
+            let name = f.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let Some(v) = fs::read_to_string(&f).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) else { continue };
+            let text = |k: &str| v[k].as_str().unwrap_or("").to_string();
+            let since = v["since"].as_f64().unwrap_or(0.0);
+            if name.starts_with("repo-") {
+                let lanes = v["lanes"].as_array().map(|a| a.iter().filter_map(|l| l.as_str().map(str::to_string)).collect()).unwrap_or_default();
+                let s = Stop { repo: text("repo"), lanes, owner: text("owner"), until: text("until"), since };
+                match stops.iter().position(|o| o.repo == s.repo) {
+                    Some(i) => stops[i] = s,
+                    None => stops.push(s),
+                }
+            } else if name.starts_with("reserve-") {
+                let r = Reservation { bead: text("bead"), owner: text("owner"), reason: text("reason"), until: text("until"), since };
+                match reserved.iter().position(|o| o.bead == r.bead) {
+                    Some(i) => reserved[i] = r,
+                    None => reserved.push(r),
+                }
+            }
+        }
+        (stops, reserved)
+    }
+
+    /// Each repo's open integrations: a record line is the integration's id then its members.
+    fn integrations(&self) -> Vec<(String, Vec<String>)> {
+        let mut dirs: Vec<PathBuf> = fs::read_dir(&self.queue_dir).into_iter().flatten().flatten().map(|e| e.path()).collect();
+        dirs.sort();
+        let mut out: Vec<(String, Vec<String>)> = vec![];
+        for d in dirs {
+            for line in fs::read_to_string(d.join("integrations")).unwrap_or_default().lines() {
+                let mut f = line.split_whitespace().map(str::to_string);
+                let Some(id) = f.next() else { continue };
+                let members: Vec<String> = f.collect();
+                match out.iter().position(|(o, _)| *o == id) {
+                    Some(i) => out[i].1 = members,
+                    None => out.push((id, members)),
+                }
+            }
+        }
+        out
+    }
+
+    /// Gives each rowless bead the row it lacks; `create-bead` ignores a bead that already has one.
+    pub fn sweep_repair(&self, input: &str) -> Result<String, String> {
+        let Repair { snapshot, todo } = serde_json::from_str(input).map_err(|e| e.to_string())?;
+        let ids = todo
+            .iter()
+            .filter(|r| {
+                let priority = r.priority.to_string();
+                let mut argv = vec!["create-bead", &r.id, "--priority", &priority, "--title", &r.title];
+                if let Some(repo) = &r.repo {
+                    argv.extend(["--repo", repo]);
+                }
+                self.lc(&argv).is_some()
+            })
+            .map(|r| r.id.clone())
+            .collect();
+        serde_json::to_string(&Repaired { snapshot, ids }).map_err(|e| e.to_string())
+    }
+
+    /// Per queue.local repo, how far the forge trails the landing ref, read from ref files and the landing ref's reflog.
+    pub fn publish_backlog_snapshot(&self) -> Result<String, String> {
+        let rows = match fs::read_to_string(&self.repo_map) {
+            Ok(t) => map_rows(&t),
+            Err(e) => return serde_json::to_string(&publish_backlog::Snapshot { repos: vec![(publish_backlog::REPO_MAP_KEY.into(), Read::Blind(format!("the repo map is unreadable: {e}")))] }).map_err(|e| e.to_string()),
+        };
+        let mut repos = vec![];
+        for r in &rows {
+            if r.path.is_empty() {
+                repos.push((r.name.clone(), Read::Blind("the repo map has no checkout for it".into())));
+                continue;
+            }
+            let git = Path::new(&r.path).join(".git");
+            if !git.is_dir() || r.land != "queue.local" {
+                continue;
+            }
+            let read = self.unpublished(&git, &r.base).unwrap_or_else(|| Read::Blind("the unpublished range could not be computed".into()));
+            repos.push((r.name.clone(), read));
+        }
+        serde_json::to_string(&publish_backlog::Snapshot { repos }).map_err(|e| e.to_string())
+    }
+
+    /// `None` when a tip, or the arrival of the first update past the forge tip, cannot be read. The count is landing-ref
+    /// updates, a lower bound on commits; the forge tip is the last fetched one; the remote is the global publish remote.
+    fn unpublished(&self, git: &Path, base: &str) -> Option<Read> {
+        let remote = self.publish_remote.as_str();
+        if base.is_empty() || remote.is_empty() || remote == "none" {
+            return None;
+        }
+        let is_remote_ref = base.split_once('/').is_some_and(|(r, _)| fs::read_to_string(git.join("config")).is_ok_and(|c| c.contains(&format!("[remote \"{r}\"]"))));
+        if is_remote_ref {
+            return None;
+        }
+        let branch = base.strip_prefix("local/").unwrap_or(base);
+        let forge = git_ref(git, &format!("refs/remotes/{remote}/{branch}"))?;
+        let head = git_ref(git, &format!("refs/heads/{base}"))?;
+        if forge == head {
+            return Some(Read::Measured { count: 0, arrival: None });
+        }
+        let log = fs::read_to_string(git.join("logs/refs/heads").join(base)).ok()?;
+        let entries: Vec<(&str, u64)> = log.lines().filter_map(reflog_entry).collect();
+        let past = entries.iter().rposition(|(new, _)| *new == forge)? + 1;
+        let (_, arrival) = *entries.get(past)?;
+        Some(Read::Measured { count: (entries.len() - past) as u64, arrival: Some(arrival) })
+    }
+
     pub fn inbox_append(&self, line: &str) -> Result<String, String> {
         if let Some(dir) = self.inbox.parent() {
             fs::create_dir_all(dir).map_err(|e| e.to_string())?;
@@ -427,4 +585,44 @@ impl World {
         writeln!(f, "{line}").map_err(|e| e.to_string())?;
         Ok("appended".into())
     }
+}
+
+/// A JSON number, or a string of digits, as a float; anything else is zero.
+fn as_num(v: &Value) -> f64 {
+    v.as_f64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())).unwrap_or(0.0)
+}
+
+fn strings(v: &Value) -> Vec<String> {
+    let parsed = v.as_str().and_then(|s| serde_json::from_str::<Value>(s).ok());
+    parsed.as_ref().unwrap_or(v).as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default()
+}
+
+fn sweep_row(r: &Value) -> Option<Row> {
+    let since = [&r["since"], &r["updated_at"]].into_iter().map(as_num).find(|n| *n != 0.0);
+    Some(Row {
+        id: r["bead_id"].as_str()?.to_string(),
+        state: r["state"].as_str().unwrap_or("").to_string(),
+        holds: strings(&r["holds"]),
+        since,
+        blocked_by: strings(&r["blocked_by"]),
+        reason: r["reason"].as_str().unwrap_or("").to_string(),
+        lease_until: as_num(&r["lease_until"]),
+        holder: match &r["holder"] {
+            Value::Null => None,
+            Value::String(s) => Some(s.clone()),
+            other => Some(other.to_string()),
+        },
+        hold_review: None,
+    })
+}
+
+fn sweep_bead(b: &Value) -> Option<Bead> {
+    Some(Bead {
+        id: b["id"].as_str()?.to_string(),
+        labels: strings(&b["labels"]),
+        issue_type: b["issue_type"].as_str().map(str::to_string),
+        status: b["status"].as_str().unwrap_or("").to_string(),
+        priority: b["priority"].as_i64().unwrap_or(2),
+        title: b["title"].as_str().unwrap_or("").to_string(),
+    })
 }

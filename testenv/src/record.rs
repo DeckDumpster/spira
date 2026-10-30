@@ -321,6 +321,19 @@ pub fn suite_line(suite: &str, rec: &ResultRecord) -> String {
     format!("  {suite:<32} {tail}")
 }
 
+/// `suite_line`, and for a red suite the case that failed first: a suite stops at its first
+/// failing case, so that is the one to read.
+pub fn red_suite_line(suite: &str, rec: &ResultRecord, output: &str) -> String {
+    let line = suite_line(suite, rec);
+    if !matches!(rec.status, Status::Red | Status::QuarantinedRed) {
+        return line;
+    }
+    match crate::tap::parse(output).first_failure() {
+        Some(case) => format!("{line} — first red: {case}"),
+        None => line,
+    }
+}
+
 /// podman's own exec gave up waiting for conmon's exit file under load (sp-3azqi): the
 /// container is fine and the suite may well have finished (its output, if any, is kept
 /// verbatim), but podman's CLI never read back an exit status, so `rc` is its own 255, not

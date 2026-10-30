@@ -46,7 +46,7 @@ pub struct Finish {
     pub ran: usize,
     pub red: usize,
     pub reason: Option<&'static str>,
-    pub cached: Option<String>,
+    pub cached: Option<Box<str>>,
     pub selected_none: bool,
     /// `--deadline` runs that reached the suite phase: (deferred count, deadline secs).
     /// Renders ` deferred=<d> (deadline <S>s)` on GREEN and RED; None renders nothing (D7).
@@ -57,6 +57,8 @@ pub struct Finish {
     pub skipped: usize,
     /// Which container session a setup fault came from (`main` or `sim`).
     pub session: Option<&'static str>,
+    /// On RED: the first red suite and the case it stopped at, from its `.tap.json`.
+    pub first_red: Option<Box<str>>,
 }
 
 impl Finish {
@@ -71,6 +73,7 @@ impl Finish {
             deferred: None,
             skipped: 0,
             session: None,
+            first_red: None,
         }
     }
     fn in_session(self, session: &'static str) -> Self {
@@ -87,6 +90,7 @@ impl Finish {
             deferred: None,
             skipped: 0,
             session: None,
+            first_red: None,
         }
     }
     fn empty(skipped: usize) -> Self {
@@ -103,6 +107,7 @@ impl Finish {
             deferred: None,
             skipped: 0,
             session: None,
+            first_red: None,
         }
     }
 
@@ -136,8 +141,10 @@ impl Finish {
                 s
             }
             1 => format!(
-                "VERDICT RED ran={} red={}{deferred}{skipped}",
-                self.ran, self.red
+                "VERDICT RED ran={} red={}{deferred}{skipped}{}",
+                self.ran,
+                self.red,
+                self.first_red.as_deref().map(|c| format!(" first={c}")).unwrap_or_default()
             ),
             RC_EMPTY => format!(
                 "VERDICT EMPTY rc={RC_EMPTY} ran={} skipped={} — all {} selected suites skipped, nothing was tested",
@@ -151,6 +158,16 @@ impl Finish {
             ),
         }
     }
+}
+
+/// `<suite>: case <n> <name> at <file>:<line>` for the first of `reds` whose `.tap.json` names a
+/// failing case; `None` when none does (a timeout, a crash before the first assertion).
+fn first_red_case(results: &Path, reds: &[String]) -> Option<Box<str>> {
+    reds.iter().find_map(|suite| {
+        let text = fs::read_to_string(results.join(format!("{suite}.tap.json"))).ok()?;
+        let tap: crate::tap::TapSummary = serde_json::from_str(&text).ok()?;
+        Some(format!("{suite}: {}", tap.first_failure()?).into())
+    })
 }
 
 /// The harness copy this binary belongs to: its `spira/` holds the helper scripts.
@@ -1329,7 +1346,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         CacheDecision::Green { when } => {
             deps.log(&format!("tree already passed at {when} — key batch-{key}"));
             return Finish {
-                cached: Some(when),
+                cached: Some(when.into()),
                 ..Finish::green(0)
             };
         }
@@ -1834,6 +1851,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             deferred: None,
             skipped: skipped_count,
             session: None,
+            first_red: first_red_case(&results, &reds),
         };
     }
 
@@ -2391,6 +2409,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
             deferred: deferred_count,
             skipped: skipped.len(),
             session: None,
+            first_red: first_red_case(&results, &reds),
         };
     }
     if s.verdict_ttl > 0 {

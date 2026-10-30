@@ -12,6 +12,8 @@ use crate::watchers::asks::Asks;
 use crate::watchers::design_asks::DesignAsks;
 use crate::watchers::brain_dirty::BrainDirty;
 use crate::watchers::supersede_duty::SupersedeDuty;
+use crate::watchers::bead_sweep::BeadSweep;
+use crate::watchers::publish_backlog::PublishBacklog;
 use crate::watchers::round_duty::RoundDuty;
 use crate::world::World;
 
@@ -31,6 +33,8 @@ pub struct Settings {
     pub design_asks: DesignAsks,
     pub brain_dirty: BrainDirty,
     pub supersede_duty: SupersedeDuty,
+    pub bead_sweep: BeadSweep,
+    pub publish_backlog: PublishBacklog,
     pub world: World,
 }
 
@@ -62,6 +66,26 @@ impl Settings {
         "SPIRA_BRAIN_DIRTY_AGE",
         "SPIRA_WIKI",
         "SPIRA_RUNTIME_SUPERSEDE_DUTY_SECS",
+        "SPIRA_CONCIERGE_INBOX_STALL",
+        "SPIRA_CONCIERGE_INBOX_BACKOFF",
+        "SPIRA_RUNTIME_PR_NOTIFY_SECS",
+        "SPIRA_PR_DEPLOY_GIVEUP",
+        "SPIRA_GH_API",
+        "SPIRA_BROKER_GH_TOKEN",
+        "SPIRA_RUNTIME_ASKS_SECS",
+        "SPIRA_RUNTIME_BEAD_SWEEP_SECS",
+        "SPIRA_BEAD_SWEEP_HOLD_MIN",
+        "SPIRA_BEAD_SWEEP_REWORK_MIN",
+        "SPIRA_BEAD_SWEEP_CERT_MIN",
+        "SPIRA_BEAD_SWEEP_WAIT_MIN",
+        "SPIRA_BEAD_SWEEP_BATCH_MIN",
+        "SPIRA_SCOPED_STOP_REVIEW_SECS",
+        "SPIRA_MAIL",
+        "SPIRA_ASK_LABEL",
+        "SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS",
+        "SPIRA_LOCAL_BACKLOG_COUNT",
+        "SPIRA_LOCAL_BACKLOG_AGE",
+        "SPIRA_PUBLISH_REMOTE",
     ];
 
     pub fn load() -> Result<Settings, String> {
@@ -101,6 +125,22 @@ impl Settings {
         let design_asks = DesignAsks { interval_ms: secs("SPIRA_RUNTIME_DESIGN_ASKS_SECS")? * 1000, repeat_secs: secs("SPIRA_DESIGN_ASKS_REPEAT")? };
         let brain_dirty = BrainDirty { interval_ms: secs("SPIRA_RUNTIME_BRAIN_DIRTY_SECS")? * 1000, age_secs: secs("SPIRA_BRAIN_DIRTY_AGE")? };
         let supersede_duty = SupersedeDuty { interval_ms: secs("SPIRA_RUNTIME_SUPERSEDE_DUTY_SECS")? * 1000 };
+        let bead_sweep = BeadSweep {
+            interval_ms: secs("SPIRA_RUNTIME_BEAD_SWEEP_SECS")? * 1000,
+            ask_label: get("SPIRA_ASK_LABEL")?,
+            home_repo: home_repo.clone(),
+            hold_min: secs("SPIRA_BEAD_SWEEP_HOLD_MIN")?,
+            rework_min: secs("SPIRA_BEAD_SWEEP_REWORK_MIN")?,
+            cert_min: secs("SPIRA_BEAD_SWEEP_CERT_MIN")?,
+            wait_min: secs("SPIRA_BEAD_SWEEP_WAIT_MIN")?,
+            batch_min: secs("SPIRA_BEAD_SWEEP_BATCH_MIN")?,
+            stop_review_secs: secs("SPIRA_SCOPED_STOP_REVIEW_SECS")?,
+        };
+        let publish_backlog = PublishBacklog {
+            interval_ms: secs("SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS")? * 1000,
+            max_count: get("SPIRA_LOCAL_BACKLOG_COUNT")?.trim().parse().map_err(|_| "SPIRA_LOCAL_BACKLOG_COUNT must be a non-negative integer".to_string())?,
+            max_age_secs: get("SPIRA_LOCAL_BACKLOG_AGE")?.trim().parse().map_err(|_| "SPIRA_LOCAL_BACKLOG_AGE must be a non-negative integer".to_string())?,
+        };
         let world = World {
             proc_dir: PathBuf::from("/proc"),
             queue_dir: PathBuf::from(get("SPIRA_QUEUE_DIR")?),
@@ -111,6 +151,7 @@ impl Settings {
             mail: PathBuf::from(get("SPIRA_MAIL")?),
             ask_label: get("SPIRA_ASK_LABEL")?,
             wiki: PathBuf::from(get("SPIRA_WIKI")?),
+            publish_remote: get("SPIRA_PUBLISH_REMOTE")?,
             run_dir: run_dir.clone(),
         };
         Ok(Settings {
@@ -122,6 +163,8 @@ impl Settings {
             design_asks,
             brain_dirty,
             supersede_duty,
+            bead_sweep,
+            publish_backlog,
             world,
             heartbeat_url: get("SPIRA_RUNTIME_HEARTBEAT_URL")?,
             heartbeat_secs: num("SPIRA_RUNTIME_HEARTBEAT_SECS", &get("SPIRA_RUNTIME_HEARTBEAT_SECS")?)?,
@@ -147,7 +190,7 @@ impl Settings {
 
     /// FNV-1a over the pinned values, so two records with one hash ran on one configuration.
     pub fn hash(&self) -> String {
-        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.supersede_duty, self.world);
+        let text = format!("{}\n{}\n{}\n{:?}\n{}\n{}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{:?}", self.heartbeat_url, self.heartbeat_secs, self.stall_limit, self.metrics_endpoint, self.run_dir.display(), self.lc_socket.display(), self.round_duty, self.inbox_keeper, self.pr_notify, self.forge, self.asks, self.design_asks, self.brain_dirty, self.supersede_duty, self.bead_sweep, self.publish_backlog, self.world);
         let h = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3));
         format!("{h:016x}")
     }
@@ -168,8 +211,8 @@ mod tests {
                 "SPIRA_LC_SOCKET" => "/d/sock",
                 "SPIRA_GH_API" => "http://forge",
                 "SPIRA_BROKER_GH_TOKEN" => "",
-                "SPIRA_RUNTIME_INBOX_KEEPER_SECS" | "SPIRA_RUNTIME_PR_NOTIFY_SECS" | "SPIRA_RUNTIME_ASKS_SECS" | "SPIRA_RUNTIME_SUPERSEDE_DUTY_SECS" | "SPIRA_RUNTIME_DESIGN_ASKS_SECS" | "SPIRA_RUNTIME_BRAIN_DIRTY_SECS" | "SPIRA_BRAIN_DIRTY_AGE" | "SPIRA_DESIGN_ASKS_REPEAT" | "SPIRA_PR_DEPLOY_GIVEUP" | "SPIRA_CONCIERGE_INBOX_STALL" | "SPIRA_CONCIERGE_INBOX_BACKOFF" | "SPIRA_RUNTIME_ROUND_DUTY_SECS" | "SPIRA_ROUND_MIN" | "SPIRA_ROUND_MAX_OPEN" | "SPIRA_ROUND_DUE_REMIND" | "SPIRA_ROUND_IDLE_CUT" => "5",
-                "SPIRA_WIKI" | "SPIRA_MAIL" | "SPIRA_ASK_LABEL" | "SPIRA_QUEUE_DIR" | "SPIRA_REPO_MAP" | "SPIRA_CONCIERGE_INBOX" => "/q",
+                "SPIRA_RUNTIME_INBOX_KEEPER_SECS" | "SPIRA_RUNTIME_PR_NOTIFY_SECS" | "SPIRA_RUNTIME_ASKS_SECS" | "SPIRA_RUNTIME_SUPERSEDE_DUTY_SECS" | "SPIRA_RUNTIME_DESIGN_ASKS_SECS" | "SPIRA_RUNTIME_BRAIN_DIRTY_SECS" | "SPIRA_BRAIN_DIRTY_AGE" | "SPIRA_DESIGN_ASKS_REPEAT" | "SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS" | "SPIRA_LOCAL_BACKLOG_COUNT" | "SPIRA_LOCAL_BACKLOG_AGE" | "SPIRA_RUNTIME_BEAD_SWEEP_SECS" | "SPIRA_BEAD_SWEEP_HOLD_MIN" | "SPIRA_BEAD_SWEEP_REWORK_MIN" | "SPIRA_BEAD_SWEEP_CERT_MIN" | "SPIRA_BEAD_SWEEP_WAIT_MIN" | "SPIRA_BEAD_SWEEP_BATCH_MIN" | "SPIRA_SCOPED_STOP_REVIEW_SECS" | "SPIRA_PR_DEPLOY_GIVEUP" | "SPIRA_CONCIERGE_INBOX_STALL" | "SPIRA_CONCIERGE_INBOX_BACKOFF" | "SPIRA_RUNTIME_ROUND_DUTY_SECS" | "SPIRA_ROUND_MIN" | "SPIRA_ROUND_MAX_OPEN" | "SPIRA_ROUND_DUE_REMIND" | "SPIRA_ROUND_IDLE_CUT" => "5",
+                "SPIRA_WIKI" | "SPIRA_MAIL" | "SPIRA_ASK_LABEL" | "SPIRA_PUBLISH_REMOTE" | "SPIRA_QUEUE_DIR" | "SPIRA_REPO_MAP" | "SPIRA_CONCIERGE_INBOX" => "/q",
                 "SPIRA_HOME_REPO" => "spira",
                 _ => return Err(format!("{k} unknown")),
             }
@@ -182,6 +225,18 @@ mod tests {
         let conf_d = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d");
         let missing: Vec<&str> = Settings::KEYS.iter().copied().filter(|k| !conf_d.join(k).is_file()).collect();
         assert!(missing.is_empty(), "keys the runtime reads but spira/conf.d does not register: {missing:?}");
+    }
+
+    #[test]
+    fn each_bead_sweep_key_reaches_its_own_field() {
+        let base = lookup("7");
+        let distinct = move |k: &str| {
+            let n = ["SPIRA_RUNTIME_BEAD_SWEEP_SECS", "SPIRA_BEAD_SWEEP_HOLD_MIN", "SPIRA_BEAD_SWEEP_REWORK_MIN", "SPIRA_BEAD_SWEEP_CERT_MIN", "SPIRA_BEAD_SWEEP_WAIT_MIN", "SPIRA_BEAD_SWEEP_BATCH_MIN", "SPIRA_SCOPED_STOP_REVIEW_SECS"].iter().position(|x| *x == k);
+            n.map_or_else(|| base(k), |i| Ok((11 + i).to_string()))
+        };
+        let b = Settings::from_lookup(&distinct).unwrap().bead_sweep;
+        assert_eq!((b.interval_ms, b.hold_min, b.rework_min, b.cert_min, b.wait_min, b.batch_min, b.stop_review_secs), (11_000, 12, 13, 14, 15, 16, 17));
+        assert_eq!((b.ask_label.as_str(), b.home_repo.as_str()), ("/q", "spira"));
     }
 
     #[test]

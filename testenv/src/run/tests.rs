@@ -376,7 +376,7 @@ fn a_mixed_batch_reports_every_suite_and_a_red_verdict() {
     assert_eq!(rc, 1);
     // test-c.sh's skip-req is declared (spira/skip-allowlist.tsv, fixture): still green,
     // named in the skipped count (DESIGN.md §3.7).
-    assert_eq!(w.last(), "VERDICT RED ran=4 red=1 skipped=1");
+    assert_eq!(w.last(), "VERDICT RED ran=4 red=1 skipped=1 first=test-b.sh: case 1 b is broken");
     assert!(w.has_line(|l| {
         l.contains("spira: batch:")
             && l.contains("1 suite(s) skipped (declared")
@@ -1092,9 +1092,26 @@ fn verdict_lines() {
             deferred: None,
             skipped: 0,
             session: None,
+            first_red: None,
         }
         .verdict_line(),
         "VERDICT RED ran=5 red=2"
+    );
+    assert_eq!(
+        Finish {
+            rc: 1,
+            ran: 5,
+            red: 1,
+            reason: None,
+            cached: None,
+            selected_none: false,
+            deferred: None,
+            skipped: 0,
+            session: None,
+            first_red: Some("test-x.sh: case 3 b at spira/test-x.sh:9".into()),
+        }
+        .verdict_line(),
+        "VERDICT RED ran=5 red=1 first=test-x.sh: case 3 b at spira/test-x.sh:9"
     );
     assert_eq!(
         Finish {
@@ -1115,6 +1132,7 @@ fn verdict_lines() {
             deferred: Some((3, 60)),
             skipped: 0,
             session: None,
+            first_red: None,
         }
         .verdict_line(),
         "VERDICT RED ran=2 red=1 deferred=3 (deadline 60s)"
@@ -1138,6 +1156,7 @@ fn verdict_lines() {
             deferred: None,
             skipped: 3,
             session: None,
+            first_red: None,
         }
         .verdict_line(),
         "VERDICT RED ran=5 red=2 skipped=3"
@@ -1247,7 +1266,7 @@ fn a_red_that_finished_before_the_deadline_makes_the_verdict_red() {
         &w.root,
     );
     assert_eq!(rc, 1);
-    assert_eq!(w.last(), "VERDICT RED ran=1 red=1 deferred=1 (deadline 4s)");
+    assert_eq!(w.last(), "VERDICT RED ran=1 red=1 deferred=1 (deadline 4s) first=test-b.sh: case 1 b is broken");
     let key = w
         .results_dir()
         .file_name()

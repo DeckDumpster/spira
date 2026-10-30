@@ -169,8 +169,7 @@ run health >/dev/null; is "health passes after a good pass" "0" "$?"
 echo "ok 1 100 7" > "$TMP/run/watchd/bead-sweep.health"
 run health >/dev/null; is "health fails once the last pass is stale" "1" "$?"
 
-grep -q '^bead-sweep|daemon|' "$HERE/watchers" && ok=0 || ok=1
-is "watchers manifest carries the bead-sweep row" "0" "$ok"
+grep -q '^bead-sweep|' "$HERE/watchers"; is "watchers manifest has no bead-sweep row: spira-runtime hosts it" "1" "$?"
 
 
 printf 'prrepo | %s/pr | pr | origin/main | | |\n' "$TMP" > "$TMP/land-map"

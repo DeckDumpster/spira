@@ -11,5 +11,6 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
+tl_config SPIRA_TEST_CASE_DEADLINE=180   # slow cases: real git/dolt on a loaded VM
 . "$HERE/sim-scenario-lib.sh"
 sim_scenario_shard landstate-lifecycle-agree

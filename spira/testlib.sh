@@ -99,6 +99,11 @@ _TL_LAST_S=$SECONDS
 _TL_LAST_US="${EPOCHREALTIME/./}"
 _TL_SUITE="$(basename "${BASH_SOURCE[1]:-${0:-suite}}")"
 _TL_JSONL="${SPIRA_TESTLIB_JSONL:-}"
+_TL_SELF="${BASH_SOURCE[0]}"
+_TL_TOP=$$
+_TL_KEEP_GOING=0
+_TL_WATCH_DIR=""
+_TL_LOC=""
 
 # NO CALL JITTER IN SUITES (sp-1cdgq). dwarf sleeps a random 0..SPIRA_CALL_JITTER seconds
 # (default 20) before its session starts, so a batch called together does not start in
@@ -150,7 +155,10 @@ export SPIRA_TOML="$_TL_CONF_BASE:$_TL_CONF_OVERRIDE"
 # COCKPIT_FOO -> spira.cockpit_foo). Refuses on a key the schema does not know.
 # A value is given in its shell form and written in the key's registered TYPE: a list as
 # space- or comma-separated words, a bool as 1/0/true/false/yes/no/on/off.
-tl_config() { _tl_declare "$_TL_CONF_OVERRIDE" "$@"; }
+tl_config() {
+    _tl_declare "$_TL_CONF_OVERRIDE" "$@" || return
+    case " $* " in *" SPIRA_TEST_CASE_DEADLINE="*) _tl_arm ;; esac
+}
 
 # tl_layer KEY=value ... — config for ONE call: prints a SPIRA_TOML value (this suite's layers
 # plus a fresh layer holding just these keys), so nothing persists into the rest of the suite:
@@ -267,6 +275,114 @@ _tl_jsonl() {
         "$(_tl_json_escape "$detail")" >> "$_TL_JSONL"
 }
 
+# The watcher opens the suite's stdout only when it fires: a held copy would keep a
+# capturing parent waiting after the suite has ended.
+
+_tl_where() {   # the first caller outside this file, as file:line, into _TL_LOC
+    local i
+    for ((i = 1; i < ${#BASH_SOURCE[@]}; i++)); do
+        if [ "${BASH_SOURCE[i]}" != "$_TL_SELF" ]; then
+            _TL_LOC="${BASH_SOURCE[i]}:${BASH_LINENO[i-1]}"
+            return 0
+        fi
+    done
+    _TL_LOC="$0"
+}
+
+_tl_arm() {
+    local dl
+    dl="$(spira-config get spira.test_case_deadline 2>/dev/null)"
+    case "$dl" in ''|*[!0-9]*) echo "testlib: no case deadline: spira.test_case_deadline is unreadable ('$dl')" >&2; return 0 ;; esac
+    if [ -z "$_TL_WATCH_DIR" ]; then
+        _TL_WATCH_DIR="$_TL_CONF_DIR/watch"
+        mkdir -p "$_TL_WATCH_DIR"
+        _tl_touch 0 "$0"
+        printf '%s\n' "$dl" > "$_TL_WATCH_DIR/deadline"
+        ( _tl_watch "$_TL_TOP" "$_TL_WATCH_DIR" ) >/dev/null 2>&1 </dev/null &
+        disown $! 2>/dev/null
+    else
+        printf '%s\n' "$dl" > "$_TL_WATCH_DIR/deadline"
+        _tl_touch "$_TL_NUM" "$0"
+    fi
+}
+
+_tl_disarm() {
+    [ -z "$_TL_WATCH_DIR" ] || printf '0\n' > "$_TL_WATCH_DIR/deadline"
+}
+
+_tl_touch() {   # _tl_touch <cases-so-far> <where>: a case just ended; its successor's clock starts
+    [ -z "$_TL_WATCH_DIR" ] && return 0
+    printf '%s %s\n%s\n' "${EPOCHREALTIME/./}" "$1" "$2" > "$_TL_WATCH_DIR/state"
+}
+
+_tl_watch() {   # _tl_watch <suite-pid> <dir>
+    local top="$1" dir="$2" start_us n loc dl now
+    while kill -0 "$top" 2>/dev/null; do
+        dl=""; start_us=""
+        read -r dl < "$dir/deadline" 2>/dev/null
+        { read -r start_us n; read -r loc; } < "$dir/state" 2>/dev/null
+        if [ -n "$dl" ] && [ "$dl" -gt 0 ] && [ -n "$n" ]; then
+            now="${EPOCHREALTIME/./}"
+            if [ $(( now - start_us )) -ge $(( dl * 1000000 )) ]; then
+                _tl_hung "$top" "$dl" $(( n + 1 )) "$loc" "$start_us"
+                return
+            fi
+        fi
+        sleep 1
+    done
+}
+
+_tl_hung() {    # _tl_hung <suite-pid> <deadline> <case-number> <last-assertion-where> <case-start-us>
+    local top="$1" dl="$2" n="$3" loc="$4" start_us="$5" name
+    name="case $n exceeded its ${dl}s deadline"
+    printf 'not ok %s - %s\n# at %s\n#ms=%s\nBail out! %s\n' "$n" "$name" "$loc" "$(( (${EPOCHREALTIME/./} - start_us) / 1000 ))" "$name" > "/proc/$top/fd/1" 2>/dev/null
+    _tl_jsonl "$name" fail "last assertion at $loc"
+    # Gathered before the suite's shell is signalled: once it is gone its children are
+    # reparented and no longer found by their parent.
+    _TL_BELOW=()
+    _tl_collect_below "$top"
+    kill -TERM "$top" 2>/dev/null
+    [ "${#_TL_BELOW[@]}" -eq 0 ] || kill -KILL "${_TL_BELOW[@]}" 2>/dev/null
+    sleep 3
+    kill -KILL "$top" 2>/dev/null
+}
+
+_tl_collect_below() {   # every descendant of <pid> into _TL_BELOW, but not this watcher
+    local pid="$1" f s c
+    for f in /proc/[0-9]*/stat; do
+        s="$(<"$f")" 2>/dev/null || continue
+        s="${s##*) }"
+        set -- $s
+        [ "${2:-}" = "$pid" ] || continue
+        c="${f#/proc/}"; c="${c%/stat}"
+        [ "$c" = "$BASHPID" ] && continue
+        _TL_BELOW+=("$c")
+        _tl_collect_below "$c"
+    done
+}
+
+tl_keep_going() { _TL_KEEP_GOING=1; }
+
+_tl_totals() {
+    [ -n "$_TL_PLANNED" ] || printf '1..%s\n' "$_TL_NUM"
+    printf '\n%d passed, %d failed, %d skipped\n' "$_TL_PASS" "$_TL_FAIL" "$_TL_SKIP"
+    printf 'ASSERTIONS %d\n' "$((_TL_PASS + _TL_FAIL))"
+}
+
+# The first failing case ends the suite: what runs after it is spent on a verdict already
+# decided. From a subshell the suite's own shell is told to stop as well.
+_tl_stop() {
+    printf 'Bail out! case %s failed: %s\n' "$_TL_NUM" "$1"
+    _tl_totals
+    _tl_disarm
+    if [ "$BASHPID" = "$_TL_TOP" ]; then
+        _tl_counts_cleanup
+        exit 1
+    fi
+    kill -TERM "$_TL_TOP" 2>/dev/null
+    exit 1
+}
+
 ok() {
     _tl_init
     _tl_counts_load
@@ -275,6 +391,8 @@ ok() {
     _tl_case_ms
     _tl_jsonl "$1" pass
     _tl_counts_flush
+    _tl_where
+    _tl_touch "$_TL_NUM" "$_TL_LOC"
 }
 
 bad() {
@@ -283,9 +401,13 @@ bad() {
     _TL_NUM=$((_TL_NUM + 1)); _TL_FAIL=$((_TL_FAIL + 1))
     printf 'not ok %s - %s\n' "$_TL_NUM" "$1"
     [ -n "${2:-}" ] && printf '# %s\n' "$2"
+    _tl_where
+    printf '# at %s\n' "$_TL_LOC"
     _tl_case_ms
     _tl_jsonl "$1" fail "${2:-}"
     _tl_counts_flush
+    _tl_touch "$_TL_NUM" "$_TL_LOC"
+    [ "$_TL_KEEP_GOING" = 1 ] || _tl_stop "$1"
 }
 
 is() {      # is <name> <expected> <actual>
@@ -728,6 +850,7 @@ skip() {
     _TL_SKIP=$((_TL_SKIP + 1))
     printf '1..0 # SKIP %s\n' "$1"
     _tl_jsonl "(suite)" skip "$1"
+    _tl_disarm
     _tl_counts_cleanup
     exit 77
 }
@@ -738,6 +861,7 @@ bail() {
     _tl_init
     printf 'Bail out! %s\n' "$1"
     _tl_jsonl "(suite)" bail "$1"
+    _tl_disarm
     _tl_counts_cleanup
     exit 2
 }
@@ -749,11 +873,10 @@ bail() {
 tl_summary() {
     _tl_init
     _tl_counts_load
-    [ -n "$_TL_PLANNED" ] || printf '1..%s\n' "$_TL_NUM"
-    printf '\n%d passed, %d failed, %d skipped\n' "$_TL_PASS" "$_TL_FAIL" "$_TL_SKIP"
-    # suites.sh's setup-fault detector greps this exact line (`ASSERTIONS 0`) to tell a
+    _tl_disarm
+    # suites.sh's setup-fault detector greps the ASSERTIONS line (`ASSERTIONS 0`) to tell a
     # suite that failed before its first case from one whose cases actually ran and lost.
-    printf 'ASSERTIONS %d\n' "$((_TL_PASS + _TL_FAIL))"
+    _tl_totals
     _tl_counts_cleanup
     [ "$_TL_FAIL" -eq 0 ]
 }
@@ -1095,6 +1218,7 @@ fi
 # rather than lazily on first use: a suite that prints its own name (the common
 # convention this library inherits) does so after `. testlib.sh`, never before.
 _tl_init
+_tl_arm
 
 # tl_stub_ask_store <dir> — a bd and a spira-lc stand-in for suites whose `mail send` asks must
 # open a tracking bead: `list` finds no duplicate, `create` mints a fresh id, `create-ask` succeeds.

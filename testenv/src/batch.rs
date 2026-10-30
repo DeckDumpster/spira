@@ -264,7 +264,7 @@ impl Shared<'_> {
                 store.record(suite);
             }
         }
-        (self.hooks.line)(&record::suite_line(suite, &rec));
+        (self.hooks.line)(&record::red_suite_line(suite, &rec, output));
         for l in detail_lines(&rec, output) {
             (self.hooks.line)(&l);
         }
@@ -708,6 +708,12 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|l| l.trim() == "FAIL b"));
+            assert!(seen
+                .lines
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|l| l.starts_with("  test-b.sh") && l.ends_with("— first red: case 1 b broke")));
             o
         });
         assert!(!out.harness_fault());
@@ -742,6 +748,18 @@ mod tests {
     /// conmon exit-file-wait message, full passing TAP output ahead of it — exactly the
     /// shape the VM certification run hit for test-strand-reclaim-n.sh) records as Fault,
     /// never Red, and never blocks or quarantines like an ordinary suite defect would.
+    #[test]
+    fn tap_json_carries_a_duration_for_every_case() {
+        let tmp = tmpdir("tapms");
+        let dir = tmp.path().to_path_buf();
+        let out = "ok 1 - a\n#ms=4\nok 2 - b\n#ms=0\nnot ok 3 - case 3 exceeded its 1s deadline\n# at s.sh:7\n#ms=1003\nBail out! x\n";
+        let rec = ResultRecord::from_exit(1, 2, out, "t.sh", false, Mode::Parallel, Producer::Explicit, 0);
+        write_suite(&dir, "t.sh", &rec, out);
+        let tap: tap::TapSummary =
+            serde_json::from_str(&fs::read_to_string(dir.join("t.sh.tap.json")).unwrap()).unwrap();
+        assert_eq!(tap.cases.iter().map(|c| c.ms).collect::<Vec<_>>(), vec![Some(4), Some(0), Some(1003)]);
+    }
+
     #[test]
     fn podman_exec_wait_timeout_records_fault_not_red() {
         let rt = FakeRuntime::new();

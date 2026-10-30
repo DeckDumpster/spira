@@ -176,6 +176,14 @@ runtime_brain_dirty_secs = 600
 runtime_supersede_duty_secs = 60
 archivist_fail_retries = "5"
 archivist_fail_backoff = "600"
+test_case_deadline = 30
+runtime_bead_sweep_secs = 1800
+bead_sweep_hold_min = 120
+bead_sweep_rework_min = 20
+bead_sweep_cert_min = 10
+bead_sweep_wait_min = 120
+bead_sweep_batch_min = 180
+runtime_publish_backlog_secs = 900
 
 [renamed]
 "persona.maechen" = "persona.mimir" # ffx-ok

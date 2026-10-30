@@ -25,7 +25,7 @@ const FOREIGN_POLL_MS: u64 = 30_000;
 
 /// Every workflow the service hosts. The heartbeat is registered here and nowhere else.
 pub fn registrations(s: &Settings) -> Vec<Registration> {
-    vec![Heartbeat { interval_ms: s.heartbeat_secs * 1000, ping_deadline_ms: s.ping_deadline_ms() }.registration(), s.round_duty.clone().registration(), s.inbox_keeper.clone().registration(), s.pr_notify.clone().registration(), s.asks.clone().registration(), s.design_asks.clone().registration(), s.brain_dirty.clone().registration(), s.supersede_duty.clone().registration()]
+    vec![Heartbeat { interval_ms: s.heartbeat_secs * 1000, ping_deadline_ms: s.ping_deadline_ms() }.registration(), s.round_duty.clone().registration(), s.inbox_keeper.clone().registration(), s.pr_notify.clone().registration(), s.asks.clone().registration(), s.design_asks.clone().registration(), s.brain_dirty.clone().registration(), s.supersede_duty.clone().registration(), s.bead_sweep.clone().registration(), s.publish_backlog.clone().registration()]
 }
 
 pub fn open_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runtime::ports::Clock>, marker: Arc<dyn Marker>, sink: Arc<dyn WideSink>, extra: Vec<Registration>) -> runtime::Result<Engine> {
@@ -83,6 +83,9 @@ impl EffectRunner for Effects {
             watchers::brain_dirty::OBSERVE => self.world.brain_dirty_snapshot(),
             watchers::supersede_duty::OBSERVE => self.world.supersede_snapshot(&spec.input),
             watchers::supersede_duty::ACT => self.world.supersede_act(&spec.input),
+            watchers::bead_sweep::OBSERVE => self.world.sweep_snapshot(),
+            watchers::bead_sweep::REPAIR => self.world.sweep_repair(&spec.input),
+            watchers::publish_backlog::OBSERVE => self.world.publish_backlog_snapshot(),
             watchers::INBOX_APPEND => self.world.inbox_append(&spec.input),
             other => Err(format!("no runner for effect {other}")),
         }
