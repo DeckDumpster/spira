@@ -1,5 +1,5 @@
 //! The unpublished-backlog alarm for queue.local repos. Each tick asks the world, per repo, how
-//! many landref updates the forge has not seen and when the first of them arrived; the decision
+//! many commits the forge has not seen and when the first of them arrived; the decision
 //! over that and the last state each repo was in is `decide`, which does no IO. Only a crossing
 //! is announced, in either direction, and a tick that cannot measure says so once.
 
@@ -16,7 +16,7 @@ pub const STATE: EventKindTag = "publish-backlog.state";
 pub const OBSERVE: &str = "publish-backlog.observe";
 pub const NAME: &str = "publish-backlog";
 
-const DEADLINE_MS: u64 = 10_000;
+const DEADLINE_MS: u64 = 60_000;
 pub const REPO_MAP_KEY: &str = "_repo_map";
 
 #[derive(Clone, Debug, PartialEq, Eq)]

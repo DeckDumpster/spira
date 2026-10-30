@@ -48,9 +48,14 @@ fn connect(path: &std::path::Path) -> std::io::Result<UnixStream> {
 
 /// One request to spira-lc's socket: the argv it would take on its command line.
 pub fn lc_call(path: &std::path::Path, argv: &[&str]) -> Result<String> {
+    lc_call_within(path, argv, DEADLINE)
+}
+
+/// [`lc_call`] for a verb that does work of its own (a fetch) and so waits longer than a store read.
+pub fn lc_call_within(path: &std::path::Path, argv: &[&str], deadline: Duration) -> Result<String> {
     let down = |why: &dyn std::fmt::Display| RuntimeError::new(format!("cannot tell: spira-lc is not answering on {}: {why}", path.display()));
     let stream = connect(path).map_err(|e| down(&e))?;
-    stream.set_read_timeout(Some(DEADLINE)).and_then(|_| stream.set_write_timeout(Some(DEADLINE))).map_err(|e| down(&e))?;
+    stream.set_read_timeout(Some(deadline)).and_then(|_| stream.set_write_timeout(Some(deadline))).map_err(|e| down(&e))?;
     let request = serde_json::to_string(argv).map_err(|e| RuntimeError::new(e.to_string()))?;
     writeln!(&stream, "{request}").map_err(|e| down(&e))?;
 

@@ -313,6 +313,8 @@ fn request_deadline(argv: &[String]) -> Duration {
         Some("work") if argv.get(2).is_some_and(|v| crate::work::brokers_tool(v)) => TOOL_DEADLINE,
         // batch-job: census's aggregate, bounded at the query deadline.
         Some("work") | Some("facts-query") => crate::db::QUERY_DEADLINE,
+        // batch-job: a fetch from the forge, then git reads, for one repo.
+        Some("unpublished") => crate::unpublished::DEADLINE,
         _ => REQUEST_DEADLINE,
     }
 }

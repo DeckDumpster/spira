@@ -4,6 +4,8 @@
 //! the two runs are a few seconds apart.
 
 use std::fs;
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -69,6 +71,32 @@ impl Fixture {
         f
     }
 
+    /// A socket that answers each request by running the real `spira-lc` with the argv it was sent.
+    fn serve_lc(&self) -> PathBuf {
+        let sock = self.p("lc.sock");
+        let listener = UnixListener::bind(&sock).unwrap();
+        let (path, home, toml, repo) = (
+            format!("{}:/usr/bin:/bin", debug_dir().display()),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira"),
+            format!("{}:{}", Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/testlib/complete.toml").display(), self.p("layer.toml").display()),
+            self.p("repo"),
+        );
+        let root = self.dir.path().to_path_buf();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut line = String::new();
+                BufReader::new(&stream).read_line(&mut line).unwrap();
+                let argv: Vec<String> = serde_json::from_str(&line).unwrap();
+                let out = Command::new(debug_dir().join("spira-lc")).args(&argv).env_clear().env("PATH", &path).env("HOME", &root).env("SPIRA_TOML", &toml).env("SPIRA_HOME", &home).env("SPIRA_REPO", &repo).output().unwrap();
+                let body = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+                let mut w = &stream;
+                writeln!(w, "{{\"exit_code\": {}, \"len\": {}}}", out.status.code().unwrap(), body.len()).unwrap();
+                w.write_all(body.as_bytes()).unwrap();
+            }
+        });
+        sock
+    }
+
     fn layer(&self, count: u64, age: u64) {
         fs::write(
             self.p("layer.toml"),
@@ -131,7 +159,7 @@ fn old_rows(f: &Fixture, s: &Scenario) -> Vec<String> {
 }
 
 fn new_rows(f: &Fixture, s: &Scenario) -> Vec<String> {
-    let world = World { run_dir: f.p("run"), inbox: f.p("new-inbox"), repo_map: f.p("rows"), publish_remote: "origin".into(), ..World::default() };
+    let world = World { run_dir: f.p("run"), inbox: f.p("new-inbox"), repo_map: f.p("rows"), lc_socket: f.serve_lc(), ..World::default() };
     let fx = Effects { world, ..Effects::default() };
     let clock = VirtualClock::new(now() * 1000);
     let mut e = Engine::open(MemJournal::new(), Arc::new(clock.clone()), vec![PublishBacklog { interval_ms: 1000, max_count: s.count, max_age_secs: s.age }.registration()], 0).unwrap();
@@ -170,6 +198,7 @@ fn same_rows(s: Scenario) -> Vec<String> {
     let old = old_rows(&f, &s);
     let g = Fixture::build(s.name);
     (s.setup)(&g);
+    g.layer(s.count, s.age);
     let new = new_rows(&g, &s);
     assert_eq!(new, old, "scenario {}: the handler and publish-backlog.sh disagree", s.name);
     old
@@ -229,4 +258,18 @@ fn a_repo_that_publishes_on_merge_is_never_named() {
 fn a_landing_ref_whose_arrival_cannot_be_read_is_blind_once_never_clear() {
     let r = same_rows(Scenario { name: "blind", ticks: 2, setup: |f| { f.land("c1", 5, 5); fs::remove_file(f.p("repo/.git/logs/refs/heads/local/main")).unwrap(); }, ..QUIET });
     assert_eq!(r, ["BLIND fixlocal: the backlog watcher cannot measure — the unpublished range could not be computed"]);
+}
+
+#[test]
+fn a_multi_commit_backlog_is_counted_commit_by_commit_and_ages_from_its_oldest() {
+    let r = same_rows(Scenario { name: "multi", count: 2, age: 10_800, setup: |f| { f.land("c1", 400, 300); f.land("c2", 200, 200); f.land("c3", 100, 100); }, ..QUIET });
+    assert_eq!(r.len(), 1, "{r:?}");
+    assert!(r[0].starts_with("OVER fixlocal: 3 unpublished commit(s), oldest N"), "{r:?}");
+}
+
+#[test]
+fn partly_publishing_a_multi_commit_backlog_still_counts_what_is_left() {
+    let r = same_rows(Scenario { name: "partial", count: 1, ticks: 3, setup: |f| { f.land("c1", 400, 300); f.land("c2", 200, 200); f.land("c3", 100, 100); }, change: Some(|f| f.git("repo", &["push", "-q", "origin", "local/main~1:main"], None)), ..QUIET });
+    assert!(r[0].starts_with("OVER fixlocal: 3 unpublished commit(s)"), "{r:?}");
+    assert!(r[1].starts_with("CLEAR fixlocal: back under threshold (1 unpublished, oldest N"), "{r:?}");
 }

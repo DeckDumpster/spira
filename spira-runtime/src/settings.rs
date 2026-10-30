@@ -85,7 +85,6 @@ impl Settings {
         "SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS",
         "SPIRA_LOCAL_BACKLOG_COUNT",
         "SPIRA_LOCAL_BACKLOG_AGE",
-        "SPIRA_PUBLISH_REMOTE",
     ];
 
     pub fn load() -> Result<Settings, String> {
@@ -151,7 +150,6 @@ impl Settings {
             mail: PathBuf::from(get("SPIRA_MAIL")?),
             ask_label: get("SPIRA_ASK_LABEL")?,
             wiki: PathBuf::from(get("SPIRA_WIKI")?),
-            publish_remote: get("SPIRA_PUBLISH_REMOTE")?,
             run_dir: run_dir.clone(),
         };
         Ok(Settings {
@@ -212,7 +210,7 @@ mod tests {
                 "SPIRA_GH_API" => "http://forge",
                 "SPIRA_BROKER_GH_TOKEN" => "",
                 "SPIRA_RUNTIME_INBOX_KEEPER_SECS" | "SPIRA_RUNTIME_PR_NOTIFY_SECS" | "SPIRA_RUNTIME_ASKS_SECS" | "SPIRA_RUNTIME_SUPERSEDE_DUTY_SECS" | "SPIRA_RUNTIME_DESIGN_ASKS_SECS" | "SPIRA_RUNTIME_BRAIN_DIRTY_SECS" | "SPIRA_BRAIN_DIRTY_AGE" | "SPIRA_DESIGN_ASKS_REPEAT" | "SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS" | "SPIRA_LOCAL_BACKLOG_COUNT" | "SPIRA_LOCAL_BACKLOG_AGE" | "SPIRA_RUNTIME_BEAD_SWEEP_SECS" | "SPIRA_BEAD_SWEEP_HOLD_MIN" | "SPIRA_BEAD_SWEEP_REWORK_MIN" | "SPIRA_BEAD_SWEEP_CERT_MIN" | "SPIRA_BEAD_SWEEP_WAIT_MIN" | "SPIRA_BEAD_SWEEP_BATCH_MIN" | "SPIRA_SCOPED_STOP_REVIEW_SECS" | "SPIRA_PR_DEPLOY_GIVEUP" | "SPIRA_CONCIERGE_INBOX_STALL" | "SPIRA_CONCIERGE_INBOX_BACKOFF" | "SPIRA_RUNTIME_ROUND_DUTY_SECS" | "SPIRA_ROUND_MIN" | "SPIRA_ROUND_MAX_OPEN" | "SPIRA_ROUND_DUE_REMIND" | "SPIRA_ROUND_IDLE_CUT" => "5",
-                "SPIRA_WIKI" | "SPIRA_MAIL" | "SPIRA_ASK_LABEL" | "SPIRA_PUBLISH_REMOTE" | "SPIRA_QUEUE_DIR" | "SPIRA_REPO_MAP" | "SPIRA_CONCIERGE_INBOX" => "/q",
+                "SPIRA_WIKI" | "SPIRA_MAIL" | "SPIRA_ASK_LABEL" | "SPIRA_QUEUE_DIR" | "SPIRA_REPO_MAP" | "SPIRA_CONCIERGE_INBOX" => "/q",
                 "SPIRA_HOME_REPO" => "spira",
                 _ => return Err(format!("{k} unknown")),
             }
@@ -246,12 +244,10 @@ mod tests {
             "SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS" => Ok("21".to_string()),
             "SPIRA_LOCAL_BACKLOG_COUNT" => Ok("22".to_string()),
             "SPIRA_LOCAL_BACKLOG_AGE" => Ok("23".to_string()),
-            "SPIRA_PUBLISH_REMOTE" => Ok("fork".to_string()),
             _ => base(k),
         };
         let s = Settings::from_lookup(&distinct).unwrap();
         assert_eq!((s.publish_backlog.interval_ms, s.publish_backlog.max_count, s.publish_backlog.max_age_secs), (21_000, 22, 23));
-        assert_eq!(s.world.publish_remote, "fork");
     }
 
     #[test]
