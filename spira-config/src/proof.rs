@@ -82,6 +82,14 @@ pub fn proven(run: &Path, bead: &str, tip: &str, check: &str) -> bool {
     fs::read_to_string(dir.join("pass").join(tip).join(check)).is_ok_and(|t| t.lines().next() == Some("exit=0"))
 }
 
+/// A run of this check at exactly this tip is on record, whatever its exit.
+pub fn recorded(run: &Path, bead: &str, tip: &str, check: &str) -> bool {
+    if !valid_tip(tip) || !valid_check(check) {
+        return false;
+    }
+    bead_dir(run, bead).is_ok_and(|dir| dir.join("pass").join(tip).join(check).is_file())
+}
+
 pub fn unproven(run: &Path, bead: &str, tip: &str) -> Vec<String> {
     failing(run, bead).into_iter().filter(|c| !proven(run, bead, tip, c)).collect()
 }

@@ -1323,7 +1323,7 @@ fn run_recorded(args: &RunArgs, deps: &Deps, started: &std::cell::RefCell<Option
         prior.as_ref(),
         now_epoch(),
         s.verdict_ttl,
-        s.repeat_reason.as_deref(),
+        args.repeat_reason.as_deref().or(s.repeat_reason.as_deref()),
     ) {
         CacheDecision::Miss => {}
         CacheDecision::Green { when } => {

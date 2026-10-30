@@ -4350,6 +4350,19 @@ fn a_resubmit_check_that_did_not_run_is_reported_not_verified_never_as_still_fai
     t.scripts.suite_rc.borrow_mut().insert("test-x.sh".into(), 5);
     assert_eq!(t.run(&args), 1);
     assert!(!t.err().contains("still do not pass"), "{}", t.err());
+    t.scripts.suite_rc.borrow_mut().insert("test-x.sh".into(), 1);
+    assert_eq!(t.run(&args), 1);
+    assert!(!t.err().contains("still do not pass"), "a rc=1 FAULT is not a RED: {}", t.err());
+    let runs: Vec<String> = t
+        .scripts
+        .calls
+        .borrow()
+        .iter()
+        .filter(|c| c.starts_with("suite_run test-x.sh"))
+        .cloned()
+        .collect();
+    assert!(runs[0].ends_with("first=true"), "{runs:?}");
+    assert!(runs[1..].iter().all(|c| c.ends_with("first=false")), "{runs:?}");
 }
 
 #[test]

@@ -181,7 +181,8 @@ fn checks_proven(
             notes.push(format!("{check} has no green round recorded at {tip}; it passes only in a round that contains this tip"));
             continue;
         }
-        let (rc, out) = w.scripts.suite_run(&check, tip, repo);
+        let first_check = !proof::recorded(run, id, tip, &check);
+        let (rc, out) = w.scripts.suite_run(&check, tip, repo, first_check);
         if let Err(e) = proof::record_run(run, id, tip, &check, rc, &out) {
             w.err(format!(
                 "queue.sh {verb}: cannot record the run of {check}: {e} — refused"
@@ -195,7 +196,7 @@ fn checks_proven(
                 .map(str::trim)
                 .find(|l| !l.is_empty())
                 .unwrap_or("no output");
-            if rc == 1 {
+            if out.lines().any(|l| l.starts_with("VERDICT RED ")) {
                 failed.push(format!("{check} failed at {tip} (rc={rc}): {last}"));
             } else {
                 unverified.push(format!("{check} not verified at {tip} (rc={rc}): {last}"));

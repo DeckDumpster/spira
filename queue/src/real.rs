@@ -809,12 +809,14 @@ impl Lib for RealLib {
 
 pub const RESUBMIT_CHECK_REASON: &str = "resubmit check of a new tip, not a retry";
 
-/// A resubmit check is the first check of the tip it proves, so a red recorded for the same
-/// tree by an earlier ejection must not make testenv refuse it as a repeat.
-fn suite_run_command(check: &str, tip: &str, repo: &str) -> Command {
+/// The first resubmit check of a tip is not a retry of the red that ejected the bead; a second
+/// check of the same tip is, and keeps testenv's repeat guard.
+fn suite_run_command(check: &str, tip: &str, repo: &str, first_check: bool) -> Command {
     let mut c = Command::new(spira_config::release_env::tool("testenv"));
-    c.args(["--suites", check, tip, repo])
-        .env("SPIRA_VERDICT_REPEAT_CONSIDERED", RESUBMIT_CHECK_REASON);
+    if first_check {
+        c.args(["--repeat-reason", RESUBMIT_CHECK_REASON]);
+    }
+    c.args(["--suites", check, tip, repo]);
     c
 }
 
@@ -831,8 +833,8 @@ impl Scripts for RealScripts {
         }
         run_combined(c.arg(tip).arg(repo))
     }
-    fn suite_run(&self, check: &str, tip: &str, repo: &str) -> (i32, String) {
-        run_combined(&mut suite_run_command(check, tip, repo))
+    fn suite_run(&self, check: &str, tip: &str, repo: &str, first_check: bool) -> (i32, String) {
+        run_combined(&mut suite_run_command(check, tip, repo, first_check))
     }
     fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str) -> (i32, String) {
         run_combined(
@@ -1981,14 +1983,17 @@ impl Emit for StdEmit {
 mod tests {
 
     #[test]
-    fn a_resubmit_suite_check_carries_a_repeat_reason_testenv_accepts() {
-        let c = suite_run_command("test-x.sh", "t", "r");
-        let reason = c
-            .get_envs()
-            .find(|(k, _)| *k == "SPIRA_VERDICT_REPEAT_CONSIDERED")
-            .and_then(|(_, v)| v)
-            .unwrap();
-        assert!(reason.to_string_lossy().chars().count() >= 10);
+    fn a_resubmit_suite_check_passes_testenv_a_repeat_reason_flag() {
+        let args = |first| -> Vec<String> {
+            suite_run_command("test-x.sh", "t", "r", first)
+                .get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect()
+        };
+        let first = args(true);
+        let at = first.iter().position(|a| a == "--repeat-reason").unwrap();
+        assert!(first[at + 1].chars().count() >= 10);
+        assert!(!args(false).iter().any(|a| a == "--repeat-reason"));
     }
 
     #[test]

@@ -495,15 +495,15 @@ impl Scripts for FScripts {
             None => (0, String::new()),
         }
     }
-    fn suite_run(&self, check: &str, tip: &str, repo: &str) -> (i32, String) {
+    fn suite_run(&self, check: &str, tip: &str, repo: &str, first_check: bool) -> (i32, String) {
         self.calls
             .borrow_mut()
-            .push(format!("suite_run {check} {tip} {repo}"));
+            .push(format!("suite_run {check} {tip} {repo} first={first_check}"));
         if let Some(rc) = self.suite_rc.borrow().get(check) {
-            return (*rc, format!("VERDICT FAULT rc={rc} ran=0 reason=repeat-refused"));
+            return (*rc, format!("VERDICT FAULT rc={rc} ran=0 reason=preflight"));
         }
         if self.suite_red.borrow().iter().any(|c| c == check) {
-            (1, format!("{check}: 2 failed"))
+            (1, format!("{check}: 2 failed\nVERDICT RED ran=1 red={check}"))
         } else {
             (0, format!("{check}: all passed"))
         }
