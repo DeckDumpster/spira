@@ -4878,6 +4878,7 @@ fn integration_bugs(t: &T) -> Vec<String> {
 #[test]
 fn open_files_one_integration_with_both_members_context_instead_of_skipping_one() {
     let t = round_world();
+    *t.lib.bug_id.borrow_mut() = Some("sp-int".into());
     touches(&t, "ta", "child.rs");
     touches(&t, "tb", "other.rs");
     touches(&t, "tc", "child.rs");
@@ -4918,6 +4919,11 @@ fn open_files_one_integration_with_both_members_context_instead_of_skipping_one(
             && b.contains("paths: child.rs")
             && !b.contains("spira: land sp-b"),
         "{b}"
+    );
+    assert!(
+        t.lc.has("create-bead sp-int --repo spira"),
+        "{:?}",
+        t.lc.calls.borrow()
     );
     let o = t.out();
     assert!(

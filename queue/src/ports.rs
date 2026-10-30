@@ -471,6 +471,7 @@ pub trait Lc {
     /// `show-batch` → (pass, phase); phase is empty outside a CI_RUNNING pass.
     fn batch_pass(&self, batch_id: &str) -> Option<(u32, String)>;
     fn create_bead(&self, id: &str);
+    fn create_bead_in(&self, id: &str, repo: &str);
     /// `cut` → Ok(version) or Err((rc, output)).
     fn cut(
         &self,
