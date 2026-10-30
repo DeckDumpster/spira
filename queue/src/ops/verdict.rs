@@ -626,8 +626,11 @@ pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
         labels.push_str(&c.s.verdict.red_tracker_label);
     }
     let fid = amended.clone().or_else(|| {
-        w.lib
-            .create_bug(&actor, &title, &c.s.publish_red_priority, &labels, &body)
+        let id = w
+            .lib
+            .create_bug(&actor, &title, &c.s.publish_red_priority, &labels, &body)?;
+        w.lc.create_bead_in(&id, &c.r.name);
+        Some(id)
     });
     let fid_s = fid.clone().unwrap_or_else(|| "<create-failed>".into());
 

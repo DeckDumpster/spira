@@ -322,6 +322,7 @@ fn publish_red_files_one_fix_forward_and_marks_the_head() {
     assert!(bug.starts_with("create_bug queue.sh 1 spira,plan,repo:spira publish PR 77 red for spira: test-b.sh,test-a.sh\n"), "{bug}");
     assert!(bug.contains("Publish PR 77 red for spira (http://r/9).\n\nPublished range: f0..m3\nRed suites: test-b.sh,test-a.sh\n\nMembers in this publish: sp-a,sp-b\n\n"));
     assert!(bug.contains("Fix forward on local/main — the next publish carries the fix. Production was never rolled back and no member bead was reopened."));
+    assert!(t.lc.has("create-bead sp-fix1 --repo spira"), "{:?}", t.lc.calls.borrow());
     assert!(!t.qfile("publish").exists());
     assert_eq!(
         fs::read_to_string(t.qfile("publish-red")).unwrap(),
