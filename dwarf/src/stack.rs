@@ -59,7 +59,7 @@ pub fn build_stacked_base(git: &dyn Git, repo: &Path, base_fq: &str, stack: &BTr
     let mut cur = base_fq.to_string();
     let mut last_label = "the landing ref".to_string();
     for (prereq, tip) in stack {
-        let mt = git.git(repo, &["merge-tree", "--write-tree", &cur, tip]);
+        let mt = git.git(repo, &["-c", &format!("attr.tree={cur}"), "merge-tree", "--write-tree", &cur, tip]);
         let tree = mt.stdout.lines().next().unwrap_or("").trim().to_string();
         if !mt.success() || tree.is_empty() {
             return Err(Conflict { a: last_label, b: prereq.clone() });
@@ -119,6 +119,15 @@ mod tests {
             self.answers.lock().unwrap().remove(0)
         }
     }
+
+    #[test]
+    fn stacked_base_honours_the_base_refs_union_attributes_not_the_checkouts() {
+        let d = testkit::union_repo("stack-union");
+        let mut stack = BTreeMap::new();
+        stack.insert("sp-b".to_string(), "b".to_string());
+        assert!(build_stacked_base(&crate::ports::CliGit, d.path(), "main", &stack).is_ok());
+    }
+
     fn fg(answers: Vec<Out>) -> FakeGit {
         FakeGit { calls: std::sync::Mutex::new(vec![]), answers: std::sync::Mutex::new(answers) }
     }
@@ -137,7 +146,7 @@ mod tests {
         stack.insert("sp-a".to_string(), "tipA".to_string());
         assert_eq!(build_stacked_base(&git, &PathBuf::from("/r"), "origin/main", &stack), Ok("mergesha".into()));
         let calls = git.calls.lock().unwrap();
-        assert_eq!(calls[0], vec!["merge-tree", "--write-tree", "origin/main", "tipA"]);
+        assert_eq!(calls[0], vec!["-c", "attr.tree=origin/main", "merge-tree", "--write-tree", "origin/main", "tipA"]);
         assert_eq!(calls[1], vec!["commit-tree", "treeoid", "-p", "origin/main", "-p", "tipA", "-m", "stacked base: merge sp-a (tipA) onto origin/main"]);
     }
 

@@ -103,6 +103,17 @@ impl Git for RealGit<'_> {
     }
 }
 
+#[cfg(test)]
+pub struct CliGit;
+
+#[cfg(test)]
+impl Git for CliGit {
+    fn git(&self, dir: &Path, args: &[&str]) -> Out {
+        let o = std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
+        Out { code: o.status.code().unwrap_or(-1), stdout: String::from_utf8_lossy(&o.stdout).into_owned(), stderr: String::from_utf8_lossy(&o.stderr).into_owned() }
+    }
+}
+
 pub struct RealExec<'a> {
     pub env: &'a Env,
     pub timeout: Option<Duration>,

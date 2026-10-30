@@ -1025,27 +1025,22 @@ fn observe_disk(cfg: &Config) -> Vec<Check> {
 // file a second incident for the same fault, so it is deliberately not repeated.
 // ──────────────────────────────────────────────────────────────────────────────
 
-fn branch_mergeable(cfg: &Config, repo: &Path, base: &str, branch: &str) -> Option<bool> {
-    let repo_str = repo.to_string_lossy().to_string();
-    let mb_out = spira_config::bounded::bounded(&cfg.seams.git)
-        .args(["-C", &repo_str, "merge-base", base, branch])
+fn branch_mergeable(git: &str, repo: &Path, base: &str, branch: &str) -> Option<bool> {
+    let out = spira_config::bounded::bounded(git)
+        .arg("-C")
+        .arg(repo)
+        .args(["-c", &format!("attr.tree={base}"), "merge-tree", "--write-tree", "--no-messages", base, branch])
         .stderr(Stdio::null())
         .output()
         .ok()?;
-    if !mb_out.status.success() {
-        return None;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let first = text.lines().next().unwrap_or("");
+    let tree_id = first.len() >= 40 && first.bytes().all(|b| b.is_ascii_hexdigit());
+    match out.status.code() {
+        Some(0) if tree_id => Some(true),
+        Some(1) if tree_id => Some(false),
+        _ => None,
     }
-    let merge_base = String::from_utf8(mb_out.stdout).ok()?.trim().to_string();
-    if merge_base.is_empty() {
-        return None;
-    }
-    let mt_out = spira_config::bounded::bounded(&cfg.seams.git)
-        .args(["-C", &repo_str, "merge-tree", &merge_base, base, branch])
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&mt_out.stdout);
-    Some(!text.contains("<<<<<<<"))
 }
 
 fn observe_queue_mergeable(cfg: &Config) -> Vec<Check> {
@@ -1066,7 +1061,7 @@ fn observe_queue_mergeable(cfg: &Config) -> Vec<Check> {
             let branch = format!("spira/{id}");
             let branch = branch.as_str();
             let key = format!("queue-mergeable:{}:{}", repo_name, id);
-            let raw = match branch_mergeable(cfg, &repo_path, base, branch) {
+            let raw = match branch_mergeable(&cfg.seams.git, &repo_path, base, branch) {
                 None => RawStatus::Unobservable { reason: format!("cannot read {} in {}", branch, repo_name) },
                 Some(true) => RawStatus::Satisfied,
                 Some(false) => RawStatus::Gap {
@@ -1924,6 +1919,21 @@ fn stamp_pass(cfg: &Config) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn branch_mergeable_honours_the_base_refs_union_attributes_not_the_checkouts() {
+        let d = testkit::union_repo("reconciler-union");
+        assert_eq!(branch_mergeable("git", d.path(), "main", "b"), Some(true));
+        assert_eq!(branch_mergeable("git", d.path(), "main", "nonesuch"), None);
+        testkit::git(d.path(), &["checkout", "-q", "-b", "c", "main"]);
+        std::fs::write(d.path().join("keep"), "y\n").unwrap();
+        testkit::git(d.path(), &["add", "-A"]);
+        testkit::git(d.path(), &["commit", "-q", "-m", "c"]);
+        testkit::git(d.path(), &["checkout", "-q", "main"]);
+        std::fs::write(d.path().join("keep"), "z\n").unwrap();
+        testkit::git(d.path(), &["commit", "-qam", "m"]);
+        assert_eq!(branch_mergeable("git", d.path(), "main", "c"), Some(false));
+    }
+
     #[test]
     fn seams_resolve_release_tools_when_path_lacks_the_release_bin() {
         let dir = testkit::TempDir::new("seams-release");

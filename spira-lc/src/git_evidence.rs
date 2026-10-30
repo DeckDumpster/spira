@@ -76,7 +76,7 @@ pub fn content_on_base(repo: &Path, branch_or_tip: &str, base: &str) -> bool {
     if ahead == 0 {
         return false;
     }
-    let Some(merged) = git_output(repo, &["merge-tree", "--write-tree", base, branch_or_tip]) else {
+    let Some(merged) = git_output(repo, &["-c", &format!("attr.tree={base}"), "merge-tree", "--write-tree", base, branch_or_tip]) else {
         return false;
     };
     let merged_tree = merged.lines().next().unwrap_or("").trim();
@@ -169,6 +169,28 @@ mod tests {
     use super::*;
     use std::process::Command;
     use std::fs;
+
+    #[test]
+    fn content_on_base_merges_with_the_base_refs_union_attributes_not_the_checkouts() {
+        let d = testkit::TempDir::new("lc-union");
+        let p = d.path();
+        let commit = |body: &str, msg: &str| {
+            std::fs::write(p.join("f"), body).unwrap();
+            testkit::git(p, &["add", "-A"]);
+            testkit::git(p, &["commit", "-q", "-m", msg]);
+        };
+        testkit::git(p, &["init", "-q", "-b", "stale"]);
+        commit("x\n", "stale checkout has no attributes");
+        testkit::git(p, &["checkout", "-q", "-b", "main"]);
+        std::fs::write(p.join(".gitattributes"), "f merge=union\n").unwrap();
+        commit("base\nold\n", "union");
+        testkit::git(p, &["checkout", "-q", "-b", "gone", "main"]);
+        commit("base\n", "deletes old");
+        testkit::git(p, &["checkout", "-q", "main"]);
+        commit("base\nnew\n", "modifies old");
+        testkit::git(p, &["checkout", "-q", "stale"]);
+        assert!(content_on_base(p, "gone", "main"), "the union merge of a deleted line is a no-op on main");
+    }
 
     struct ScratchRepo {
         dir: testkit::TempDir,

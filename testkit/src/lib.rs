@@ -52,6 +52,39 @@ impl Deref for TempDir {
     }
 }
 
+/// Runs `git -C dir args` with a fixed identity; panics on failure. Returns trimmed stdout.
+pub fn git(dir: &Path, args: &[&str]) -> String {
+    let o = Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().expect("spawn git");
+    assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+    String::from_utf8_lossy(&o.stdout).trim().to_string()
+}
+
+/// A repo where `main` declares `f merge=union` and holds one side's edit of `f`, `b` holds
+/// the other side's, and the checked-out branch (`stale`) carries no attributes. `b` merges
+/// onto `main` clean only when the merge reads attributes from `main`'s tree.
+pub fn union_repo(tag: &str) -> TempDir {
+    let d = TempDir::new(tag);
+    let p = d.path();
+    let commit = |file: &str, body: &str| {
+        std::fs::write(p.join(file), body).unwrap();
+        git(p, &["add", "-A"]);
+        git(p, &["commit", "-q", "-m", file]);
+    };
+    git(p, &["init", "-q", "-b", "stale"]);
+    commit("keep", "x\n");
+    git(p, &["checkout", "-q", "-b", "main"]);
+    commit(".gitattributes", "f merge=union\n");
+    commit("f", "base\n");
+    git(p, &["checkout", "-q", "-b", "a", "main"]);
+    commit("f", "base\nfrom a\n");
+    git(p, &["checkout", "-q", "-b", "b", "main"]);
+    commit("f", "base\nfrom b\n");
+    git(p, &["checkout", "-q", "main"]);
+    git(p, &["merge", "-q", "--ff-only", "a"]);
+    git(p, &["checkout", "-q", "stale"]);
+    d
+}
+
 impl AsRef<Path> for TempDir {
     fn as_ref(&self) -> &Path {
         &self.0
