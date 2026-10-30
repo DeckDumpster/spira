@@ -159,6 +159,23 @@ fn a_projection_never_holds_more_than_twice_the_window_of_a_stream() {
 }
 
 #[test]
+fn trimming_a_busy_stream_never_lowers_what_the_heartbeat_counts() {
+    use runtime::heartbeat::{Heartbeat, HEARTBEAT};
+    let hb = Heartbeat { interval_ms: 1000, ping_deadline_ms: 500 };
+    let boot = Event { id: EventId("b".into()), stream: StreamKey("hb".into()), kind: EventKind::new(HEARTBEAT, &(2 * WINDOW - 1).to_string()), at: 1, cause: None, correlation: CorrelationId("c".into()) };
+    let mut p = Projection::default();
+    let mut last = 0;
+    for i in 0..5 * WINDOW {
+        p.push(&note(i, "busy"));
+        assert!(p.total() > last);
+        last = p.total();
+    }
+    p.push(&boot);
+    let cmds = hb.handle(&Ctx::new(1, 1), &p, &boot);
+    assert!(cmds.iter().any(|c| matches!(c, Command::Probe(_))), "foreign events past the trim still advance the heartbeat");
+}
+
+#[test]
 fn an_effect_requested_before_the_cursor_is_still_pending_after_restart() {
     let j = MemJournal::new();
     let req = Event {
