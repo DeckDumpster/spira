@@ -972,6 +972,16 @@ mod probe_tests {
     }
 
     #[test]
+    fn a_created_ask_opens_its_ask_row_naming_the_work_bead_it_holds() {
+        let t = testkit::TempDir::new("mail-ask-row-at-creation");
+        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok("")]);
+        let ask = SendArgs { bead: "sp-w1", ..ask_args() };
+        send(&bd, &ask_env(t.path()), &ask, ASK_BODY.into()).unwrap();
+        assert_eq!(*bd.ask_rows.borrow(), vec![("sp-new1".to_string(), "sp-w1".to_string())]);
+        assert!(!closed(&bd));
+    }
+
+    #[test]
     fn a_delivered_ask_names_its_bead_in_subject_and_first_body_line() {
         let t = testkit::TempDir::new("mail-ask-names-bead");
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::ok("sp-new1\n"), BdOut::ok("")]);

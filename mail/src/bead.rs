@@ -514,11 +514,12 @@ pub mod fake {
         pub responses: RefCell<Vec<BdOut>>,
         pub row_failures: std::cell::Cell<u32>,
         pub row_attempts: std::cell::Cell<u32>,
+        pub ask_rows: RefCell<Vec<(String, String)>>,
     }
 
     impl FakeBd {
         pub fn new(responses: Vec<BdOut>) -> FakeBd {
-            FakeBd { calls: RefCell::new(Vec::new()), responses: RefCell::new(responses), row_failures: std::cell::Cell::new(0), row_attempts: std::cell::Cell::new(0) }
+            FakeBd { calls: RefCell::new(Vec::new()), responses: RefCell::new(responses), row_failures: std::cell::Cell::new(0), row_attempts: std::cell::Cell::new(0), ask_rows: RefCell::new(Vec::new()) }
         }
         pub fn calls(&self) -> Vec<(Vec<String>, Option<String>)> {
             self.calls.borrow().clone()
@@ -526,7 +527,8 @@ pub mod fake {
     }
 
     impl Bd for FakeBd {
-        fn ensure_ask(&self, _id: &str, _work_bead: &str) -> Result<(), String> {
+        fn ensure_ask(&self, id: &str, work_bead: &str) -> Result<(), String> {
+            self.ask_rows.borrow_mut().push((id.into(), work_bead.into()));
             self.row_attempts.set(self.row_attempts.get() + 1);
             let left = self.row_failures.get();
             if left > 0 {
