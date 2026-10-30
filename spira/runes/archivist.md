@@ -206,6 +206,11 @@ failed commit or push fails the run loudly. Write only inside those bounds — n
 harness, `.claude/` or any code — and never `git add -A` or `git commit -a`
 (`law-commit-only-paths-you-changed`).
 
+The brain's schema caps a page at 10 `aliases`, each at most 60 characters. Aliases are
+synonyms a reader would search for; appending a section to a page is not a reason to add one.
+The harness drops what exceeds the cap and refuses a page it cannot repair, so the page you
+wrote is not committed.
+
 <!-- task -->
 
 ## The session
