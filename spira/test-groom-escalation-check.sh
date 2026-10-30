@@ -141,7 +141,7 @@ dwarf_fixture_agent "$BIN/claude" GROOM_LOG SPIRA_ASK_LABEL
 run_dwarf() {    # run_dwarf <rune> <act>
     printf '%s' "$2" > "$TMP/act"
     rm -rf "$RUN/worktree"
-    tl_config SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    tl_config SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${DWARF_BD:-$SPIRA_BD}" \
         SPIRA_REPO_MAP="$REPO_MAP" SPIRA_AGENT="$SPIRA_AGENT" SPIRA_RUNES_DIR="$HOMEDIR/runes" \
         SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}"
     env -i HOME="$HOME" PATH="$PATH" SPIRA_TOML="$SPIRA_TOML" TMP="$TMP" \
@@ -165,9 +165,9 @@ seed_trigger() {  # seed_trigger <id>
 }
 
 fresh() {    # fresh <id>
-    testdb_reset
+    testdb_reset || bail "fixture reset failed before seeding $1"
     : > "$GROOM_LOG"
-    seed_trigger "$1"
+    seed_trigger "$1" || bail "fixture seed of $1 is not visible"
 }
 
 rowstate() { SPIRA_RUN="$RUN" lc_row_state "$1"; }
@@ -186,5 +186,16 @@ fresh sp-gc-5; run_dwarf tiler log-claim
 is     "the hand-on stands SUBMITTED"  SUBMITTED "$(rowstate sp-gc-5)"
 nowant "trigger is not poisoned"  "spira-poison" "$(labels sp-gc-5)"
 nowant "check did not run at all" "groom-escalation-check" "$(cat "$TMP/out")"
+
+echo
+echo "a store that fails the claim's ready read — claim-error, never an idle dwarf:"
+printf '#!/usr/bin/env bash\ncase " $* " in *" list "*) echo "Error: database is locked" >&2; exit 1 ;; esac\nexec %q "$@"\n' "$SPIRA_BD" > "$TMP/bd-locked"
+chmod +x "$TMP/bd-locked"
+fresh sp-gc-7
+tl_config SPIRA_CLAIM_RETRIES=1 SPIRA_CLAIM_RETRY_DELAY_S=0
+DWARF_BD="$TMP/bd-locked" run_dwarf scrubber no-claim
+want   "the dwarf logs claim-error"  "claim-error" "$(cat "$TMP/out")"
+nowant "the dwarf does not report an empty queue"  "nothing ready to claim" "$(cat "$TMP/out")"
+is     "the bead is still READY, unclaimed"  READY "$(rowstate sp-gc-7)"
 
 tl_summary

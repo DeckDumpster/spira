@@ -237,10 +237,16 @@ fn run_canary_in(stage_root: &Path, env: &[(String, String)], prod: &ProdEnv, o:
     // Run the real sentinel (one pass). SPIRA_CALL's fake-call.sh runs `release
     // canary-worker` synchronously: it claims the bead through the machine, commits, and
     // submits the branch's tip.
-    log("running sentinel (one pass)");
-    let _ = staged(&mut Command::new(spira_config::release_env::tool("sentinel")), env).status();
-
-    let state = lc_state(env, &bead_id);
+    log("running sentinel");
+    let mut state = None;
+    for pass in 1..=SENTINEL_PASSES {
+        let _ = staged(&mut Command::new(spira_config::release_env::tool("sentinel")), env).status();
+        state = lc_state(env, &bead_id);
+        if !passed_over(state.as_deref()) {
+            break;
+        }
+        log(&format!("sentinel pass {pass} of {SENTINEL_PASSES} left the bead unclaimed (state={})", state.as_deref().unwrap_or("(unreadable)")));
+    }
     if !spira_config::lc_state::past_builder(state.as_deref().unwrap_or("")) {
         let msg = format!("sentinel pass did not hand the bead on: lifecycle state={}", state.as_deref().unwrap_or("(unreadable)"));
         log(&format!("FAIL: {msg}"));
@@ -272,6 +278,29 @@ fn run_canary_in(stage_root: &Path, env: &[(String, String)], prod: &ProdEnv, o:
         Some(commit) => {
             log(&format!("PASS — commit '{commit}' on origin/main in {}s", elapsed.as_secs()));
             Ok(CanaryResult { stage_root: stage_root.to_path_buf(), elapsed, commit })
+        }
+    }
+}
+
+/// A sentinel pass that could not read its ready set logs a claim-error and calls no one; the
+/// next pass is the retry. A bead left READY (or unreadable) after a pass was never claimed, so
+/// another pass is sound; a WORKING or REWORK bead was claimed and failed, which no pass repairs.
+const SENTINEL_PASSES: u32 = 3;
+
+fn passed_over(state: Option<&str>) -> bool {
+    matches!(state, None | Some("READY"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::passed_over;
+
+    #[test]
+    fn only_a_bead_nobody_claimed_earns_another_sentinel_pass() {
+        assert!(passed_over(Some("READY")));
+        assert!(passed_over(None));
+        for claimed in ["WORKING", "REWORK", "SUBMITTED"] {
+            assert!(!passed_over(Some(claimed)), "{claimed}");
         }
     }
 }
