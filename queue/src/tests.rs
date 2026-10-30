@@ -500,7 +500,11 @@ impl Scripts for FScripts {
             .borrow_mut()
             .push(format!("suite_run {check} {tip} {repo} first={first_check}"));
         if let Some(rc) = self.suite_rc.borrow().get(check) {
-            return (*rc, format!("VERDICT FAULT rc={rc} ran=0 reason=preflight"));
+            return (*rc, if *rc == 5 {
+                    "VERDICT EMPTY rc=5 ran=0 skipped=1".to_string()
+                } else {
+                    format!("VERDICT FAULT rc={rc} ran=0 reason=preflight")
+                });
         }
         if self.suite_red.borrow().iter().any(|c| c == check) {
             (1, format!("{check}: 2 failed\nVERDICT RED ran=1 red={check}"))

@@ -4366,6 +4366,30 @@ fn a_resubmit_check_that_did_not_run_is_reported_not_verified_never_as_still_fai
 }
 
 #[test]
+fn a_resubmit_runs_each_ejected_suite_as_a_first_check_of_the_new_tip_and_admits_it_when_it_passes() {
+    let t = rework_world(&["manual"]);
+    spira_config::proof::record_failing(&proof_run(&t), "sp-a", &["test-x.sh".to_string()])
+        .unwrap();
+    let tip_arg = format!("--tip={T_FIX}");
+    let args = [
+        "resubmit",
+        "sp-a",
+        &tip_arg,
+        "--by=concierge",
+        "--reason=hand-built fix",
+        "--evidence=npm test 1/0",
+        &ev_tip(),
+    ];
+    assert_eq!(t.run(&args), 0, "{}", t.err());
+    assert!(t
+        .scripts
+        .calls
+        .borrow()
+        .iter()
+        .any(|c| c == &format!("suite_run test-x.sh {T_FIX} spira first=true")));
+}
+
+#[test]
 fn an_eject_red_on_unit_tests_records_the_step_as_the_requirement() {
     let t = round_world();
     assert_eq!(
