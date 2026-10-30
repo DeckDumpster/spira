@@ -191,11 +191,9 @@ cat > "$STUB_BIN/git" <<'GEOF'
 #!/usr/bin/env bash
 case " $* " in
     *" --abbrev-ref "*) cat "$GIT_BRANCH_STATE"; exit 0 ;;
-    *" merge-base "*) echo "deadbeef"; exit 0 ;;
-    *" merge-tree "*)
-        if [ "$(cat "$MERGE_STATE")" = "conflict" ]; then
-            echo "<<<<<<< HEAD"
-        fi
+    *" merge-tree --write-tree "*)
+        echo "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+        [ "$(cat "$MERGE_STATE")" = "conflict" ] && exit 1
         exit 0
         ;;
 esac
