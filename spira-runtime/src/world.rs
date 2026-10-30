@@ -302,6 +302,32 @@ impl World {
         serde_json::to_string(&design_asks::Snapshot { failure: None, asks, pages }).map_err(|e| e.to_string())
     }
 
+    /// The wiki checkout's changed paths and their mtimes. A path that no longer exists has none
+    /// and is left out; an unset wiki observes nothing.
+    pub fn brain_dirty_snapshot(&self) -> Result<String, String> {
+        use std::os::unix::ffi::OsStrExt;
+        let wiki = self.wiki.display().to_string();
+        let mut snap = brain_dirty::Snapshot { wiki, ..Default::default() };
+        if !self.wiki.as_os_str().is_empty() {
+            let (code, _) = git(&self.wiki, &["rev-parse", "--git-dir"])?;
+            if code == Some(0) {
+                let (code, raw) = git(&self.wiki, &["status", "--porcelain", "-z", "--untracked-files=all"])?;
+                if code != Some(0) {
+                    return Err(format!("git status exited {code:?}"));
+                }
+                for path in brain_dirty::porcelain_paths(&raw) {
+                    let mtime = fs::metadata(self.wiki.join(std::ffi::OsStr::from_bytes(&path))).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
+                    if let Some(d) = mtime {
+                        snap.dirty.push((String::from_utf8_lossy(&path).into_owned(), d.as_secs()));
+                    }
+                }
+            } else {
+                snap.not_repo = true;
+            }
+        }
+        serde_json::to_string(&snap).map_err(|e| e.to_string())
+    }
+
     pub fn inbox_append(&self, line: &str) -> Result<String, String> {
         if let Some(dir) = self.inbox.parent() {
             fs::create_dir_all(dir).map_err(|e| e.to_string())?;
