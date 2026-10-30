@@ -167,3 +167,14 @@ fn a_world_that_changes_on_every_poll_costs_a_few_store_calls_per_journal_event(
     assert!(r.events > 40 && r.wakes >= 40, "the simulation did not run: {} events, {} wakes", r.events, r.wakes);
     assert!(r.total <= PER_EVENT * r.events, "{} store calls for {} events over {} wakes ({}/event): {:?}", r.total, r.events, r.wakes, r.total / r.events, r.calls);
 }
+
+#[test]
+fn every_canned_observe_reply_parses_into_its_watchers_snapshot() {
+    use spira_runtime::watchers::{asks, inbox_keeper, pr_notify, round_duty};
+    let quiet = |effect| quiet_world(effect, 0);
+    serde_json::from_str::<round_duty::Snapshot>(&quiet(round_duty::OBSERVE)).expect("round-duty reply");
+    serde_json::from_str::<inbox_keeper::Snapshot>(&quiet(inbox_keeper::OBSERVE)).expect("inbox-keeper reply");
+    serde_json::from_str::<pr_notify::Snapshot>(&quiet(pr_notify::OBSERVE)).expect("pr-notify reply");
+    serde_json::from_str::<asks::Snapshot>(&quiet(asks::OBSERVE)).expect("asks reply");
+    serde_json::from_str::<round_duty::Snapshot>(&busy_world(round_duty::OBSERVE, 3)).expect("busy round-duty reply");
+}
