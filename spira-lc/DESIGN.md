@@ -50,6 +50,11 @@ submitted, unclosed work bead citing the sha, marks the ledger LANDED, reaps the
 is what every landing path calls to close a landed bead (hel's seam directly; the queue still
 through lib.sh's one-line shim until sp-du6dl), in place of the landing pass's own subcommand.
 
+**Two verbs write only bd** (the supersede-duty handler's store half, after the row has moved):
+`bd-supersede <id> <succ>` runs `bd supersede <id> --with <succ>`, refusing (3) a self-supersede or a
+non-id; `bd-note <id> <text>` runs `bd note <id> <text>`, refusing an empty note. 0 done · 1 bd failed ·
+2 usage · 3 refused before bd ran. Neither reads or writes `spira_lifecycle`.
+
 **There is no switch.** `lifecycle_enforce` once gave every caller verb an off-answer that
 touched nothing; sp-v62vn retired the off mode, so every verb reaches the machine
 (tests/switch.rs proves it with a listener that counts connections). A config or environment
