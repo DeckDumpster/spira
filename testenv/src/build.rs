@@ -35,6 +35,12 @@ pub fn link_artifacts(worktree: &Path, profile: &str, warm: &Path) -> std::io::R
     let target = worktree.join("target");
     std::fs::create_dir_all(&target)?;
     let link = target.join(profile_dir(profile));
+    let dest = warm.join(profile_dir(profile));
+    if let (Ok(a), Ok(b)) = (std::fs::canonicalize(&dest), std::fs::canonicalize(&link)) {
+        if a == b {
+            return Ok(());
+        }
+    }
     match std::fs::symlink_metadata(&link) {
         Ok(m) if m.file_type().is_symlink() => std::fs::remove_file(&link)?,
         Ok(_) => std::fs::remove_dir_all(&link)?,
@@ -347,6 +353,21 @@ mod tests {
         link_artifacts(&wt, "dwarf", &slot).unwrap();
         assert!(artifacts_dir(&wt, "dwarf").join("tool").is_file());
         assert!(!artifacts_dir(&wt, "dwarf").join("stale").exists());
+    }
+
+    #[test]
+    fn artifacts_stay_when_the_warm_slot_is_spilled_onto_the_worktrees_own_target() {
+        let d = testkit::TempDir::new("warm-spilled");
+        let base = d.join("warm-base");
+        let wt = d.join("wt");
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::create_dir_all(wt.join("target").join("dwarf")).unwrap();
+        std::fs::write(wt.join("target").join("dwarf").join("tool"), "x").unwrap();
+        let slot = base.join("slot.1");
+        std::os::unix::fs::symlink(wt.join("target"), &slot).unwrap();
+        assert_eq!(warm_target(Some(slot.clone().into()), Some(&base)), Some(slot.clone()));
+        link_artifacts(&wt, "dwarf", &slot).unwrap();
+        assert!(artifacts_dir(&wt, "dwarf").join("tool").is_file());
     }
 
     #[test]
