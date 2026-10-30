@@ -338,16 +338,17 @@ fn the_stream_and_open_effect_queries_seek_the_0034_indexes() {
     assert_eq!(code, 0, "seeding 50k events: {out}");
 
     let indexed = |plan: &str, index: &str| plan.contains(index);
+    let (stream_cols, cause_cols) = ("[runtime_event.stream,runtime_event.seq]", "[runtime_event.cause,runtime_event.kind_tag]");
     let (stream_idx, cause_idx) = ("runtime_event_stream_idx", "runtime_event_cause_idx");
     let drop = format!("USE spira_lifecycle;\nDROP INDEX {stream_idx} ON runtime_event;\nDROP INDEX {cause_idx} ON runtime_event;\n");
     assert_eq!(f.sql_as_root(&drop).0, 0);
     let (tail, open) = (dolt(&format!("EXPLAIN FORMAT=TREE {STREAM_TAIL}")), dolt(&format!("EXPLAIN FORMAT=TREE {OPEN_EFFECTS}")));
-    assert!(!indexed(&tail, stream_idx) && !indexed(&open, cause_idx), "positive control: without the indexes the plans name neither: {tail} {open}");
+    assert!(!indexed(&tail, stream_cols) && !indexed(&open, cause_cols), "positive control: without the indexes the plans name neither: {tail} {open}");
 
     let migration = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../lifecycle/migrations/0034-runtime-event-read-indexes.sql")).unwrap();
     assert_eq!(f.sql_as_root(&format!("USE spira_lifecycle;\n{migration}")).0, 0);
     let (tail, open) = (dolt(&format!("EXPLAIN FORMAT=TREE {STREAM_TAIL}")), dolt(&format!("EXPLAIN FORMAT=TREE {OPEN_EFFECTS}")));
-    assert!(indexed(&tail, stream_idx), "the stream tail walks the (stream, seq) index: {tail}");
+    assert!(indexed(&tail, stream_cols), "the stream tail walks the (stream, seq) index: {tail}");
     assert!(!tail.contains("Sort"), "the newest-first LIMIT is served in index order, not sorted: {tail}");
-    assert!(indexed(&open, cause_idx), "each open-effects probe seeks the (cause, kind_tag) index: {open}");
+    assert!(indexed(&open, cause_cols), "each open-effects probe seeks the (cause, kind_tag) index: {open}");
 }
