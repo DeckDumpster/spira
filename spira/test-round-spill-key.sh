@@ -43,7 +43,7 @@ chmod +x "$TMP/stub/round-vm"
 rskp() {
     tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_ROUND_VM_SPILL=ec2-only \
         SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE="$KEY" SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS=9 \
-        SPIRA_ROUND_VM_EC2_PROBE_DEADLINE="${DL:-7}"
+        SPIRA_ROUND_VM_EC2_PROBE_DEADLINE="${DL:-7}" SPIRA_ROUND_VM_STATE_DIR=
     env -i PATH="$TMP/stub:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" bash "$HERE/round-spill-key.sh" "$@" 2>&1
 }
 echo "$((now + 30 * 86400))" > "$KEY.expires"
