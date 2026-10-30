@@ -46,6 +46,7 @@ normally sends the event.
 | `WORKING` | `Submit {tip}` | `SUBMITTED` | `work submit` (tip read from branch `spira/<id>`) |
 | `WORKING`, `READY` | `Done` | `DONE` | `work done`; filing and grooming paths |
 | `WORKING` | `Release` / `HolderDead` | `READY`, or `REWORK` if the claim was taken from `REWORK` | `sentinel` (lease expired), `dwarf` teardown |
+| `SUBMITTED` | `HolderDead` | `SUBMITTED` (clears holder, persona, lease: a row written before `Submit` cleared them) | `sentinel` |
 | `WORKING` | `Renew`, `Phase`, `Disposition` | `WORKING` | the holder only for `Renew`/`Phase` (phases `claimed`, `building`, `session`, `teardown`, forward only); teardown and watchdogs for `Disposition` (`lapsed` < `thrash` < `slain`; a weaker word never overwrites a stronger) |
 | `SUBMITTED` | `GatePass {tip, gate_key}` | `CERTIFIED` | `landing-pass` / `gate-worker` (per-branch gate); `batcher` (round) |
 | `SUBMITTED`, `CERTIFIED` | `GateRed {tip, reason}` | `REWORK` | gate, `sift`, round ejection |

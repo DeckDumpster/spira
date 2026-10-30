@@ -965,6 +965,16 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 new.version += 1;
                 Outcome::applied(new)
             }
+            // A row written before Submit cleared the holder keeps a dead one; reaping it
+            // leaves the state alone.
+            HolderDead => {
+                let mut new = row.clone();
+                new.holder = None;
+                new.persona = None;
+                new.lease_until = None;
+                new.version += 1;
+                Outcome::applied(new)
+            }
             // A round takes SUBMITTED beads directly (law-a-round-is-feature-first-then-catch-all):
             // the round's full suite on the merged tree is the certification, so a submitted tip
             // enters delivery without a per-bead gate first. The tip stays the submitted one.
@@ -1005,7 +1015,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 new.version += 1;
                 Outcome::applied(new)
             }
-            Claim { .. } | Release | HolderDead | Done { .. } | Delivered { .. }
+            Claim { .. } | Release | Done { .. } | Delivered { .. }
             | Returned { .. } | Requeued { .. }
             | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } | Phase { .. } | Disposition { .. } | Express | Unexpress | Sifted { .. } | Restack { .. } | Absolve { .. } | Resubmit { .. } => illegal(row, kind),
         },
@@ -1815,6 +1825,19 @@ mod tests {
             assert_eq!(out.row.state, BeadState::Ready);
             assert_eq!(out.row.holder, None);
         }
+    }
+
+    #[test]
+    fn holder_dead_clears_a_legacy_submitted_rows_holder_and_keeps_its_state() {
+        let mut r = row(BeadState::Submitted);
+        r.tip = Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into());
+        r.holder = Some("dwarf-1".into());
+        r.persona = Some("builder".into());
+        r.lease_until = Some(9);
+        let out = apply(&r, &ev(BeadState::Submitted, 0, BeadEventKind::HolderDead));
+        assert!(out.applied);
+        assert_eq!((out.row.state, out.row.holder, out.row.persona, out.row.lease_until), (BeadState::Submitted, None, None, None));
+        assert_eq!(out.row.tip, r.tip);
     }
 
     #[test]
