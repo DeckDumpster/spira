@@ -145,9 +145,10 @@ fn new_rows(f: &Fixture, ticks: usize) -> Vec<String> {
 }
 
 /// The script names the store by its path, which the runtime has none to name; fixture roots differ per run.
+/// The handler also says why the store failed, which the script never did.
 fn unnamed_store(f: &Fixture, rows: Vec<String>) -> Vec<String> {
     let root = f.dir.path().display().to_string();
-    rows.into_iter().map(|r| r.replace(&root, "ROOT")).map(|r| match (r.find("the ask store ("), r.find(") could not")) { (Some(a), Some(b)) => format!("{}the ask store{}", &r[..a], &r[b + 1..]), _ => r }).collect()
+    rows.into_iter().map(|r| r.replace(&root, "ROOT")).map(|r| match (r.find("could not be read: "), r.find("; designs")) { (Some(a), Some(b)) if a < b => format!("{}{}", &r[..a + "could not be read".len()], &r[b..]), _ => r }).map(|r| match (r.find("the ask store ("), r.find(") could not")) { (Some(a), Some(b)) => format!("{}the ask store{}", &r[..a], &r[b + 1..]), _ => r }).collect()
 }
 
 fn same_rows(name: &str, prep: impl Fn(&Fixture)) -> Vec<String> {
@@ -217,6 +218,27 @@ fn a_store_that_never_answers_is_a_failure_said_once_and_not_an_empty_brain() {
     });
     assert_eq!(r.len(), 1, "{r:?}");
     assert!(r[0].contains("DESIGN-ASKS FAILED: the ask store"), "{r:?}");
+}
+
+#[test]
+fn a_failed_store_call_names_the_command_and_what_the_store_said() {
+    let g = Fixture::build("cause");
+    g.design("unasked", "status: draft\nbead: sp-w\n", "");
+    fs::write(g.p("bdfail"), "").unwrap();
+    let r = new_rows(&g, 1);
+    assert_eq!(r.len(), 1, "{r:?}");
+    assert!(r[0].contains("spira-lc content list --label ask-parity"), "{r:?}");
+    assert!(r[0].contains("boom"), "{r:?}");
+}
+
+#[test]
+fn a_notice_before_the_ask_list_is_not_a_failure() {
+    let g = Fixture::build("notice");
+    g.design("unasked", "status: draft\nbead: sp-w\n", "");
+    fs::write(g.p("asks.json"), "warning: slow store\n[]").unwrap();
+    let r = new_rows(&g, 1);
+    assert_eq!(r.len(), 1, "{r:?}");
+    assert!(r[0].contains("DESIGN WITHOUT ASK"), "{r:?}");
 }
 
 #[test]
