@@ -43,7 +43,7 @@ INSERT INTO issues (id, title, priority, issue_type, status, created_at, updated
 INSERT INTO labels (issue_id, label) VALUES ('sp-ask-open', 'ask-serve-fixture'), ('sp-ask-closed', 'ask-serve-fixture'), ('sp-other-open', 'other');
 ";
 
-fn serve(root: &Path, socket: &Path) -> (Proc, Proc) {
+fn serve(root: &Path, socket: &Path) -> (Proc, Proc, PathBuf) {
     assert!(Command::new("dolt").arg("version").output().is_ok(), "dolt must be on PATH: a test that skips proves nothing"); // STORE_DOOR_CONSIDERED="the test builds its own private store"
     let bin = spira_lc_bin();
     let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
@@ -132,7 +132,7 @@ fn serve(root: &Path, socket: &Path) -> (Proc, Proc) {
             std::thread::sleep(Duration::from_millis(100)); // clock-safe: poll interval inside that cap
         }
         runtime::socket::lc_call(socket, &["journal", "cursor"]).unwrap_or_else(|e| panic!("serve never answered: {e}\n{}", fs::read_to_string(root.join("serve.log")).unwrap_or_default()));
-        return (server, serve);
+        return (server, serve, toml);
     }
     panic!("a fresh dolt server must start with root passwordless");
 }
@@ -141,7 +141,12 @@ fn serve(root: &Path, socket: &Path) -> (Proc, Proc) {
 fn the_open_asks_are_listed_through_a_real_lifecycle_socket() {
     let t = testkit::TempDir::new("ask-listing-serve");
     let socket = t.path().join("lc.sock");
-    let _store = serve(t.path(), &socket);
+    let (_server, _serve, toml) = serve(t.path(), &socket);
+    for args in [&["create-bead", "sp-held"][..], &["hold", "sp-held", "ask", "waiting on an answer", "fixture"]] {
+        // batch-job: one spira-lc call through the serve under test.
+        let o = Command::new(spira_lc_bin()).args(args).env_clear().env("SPIRA_TOML", &toml).env("SPIRA_HOME", Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira")).stdin(Stdio::null()).output().unwrap();
+        assert!(o.status.success(), "{args:?}: {}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+    }
     let wiki = t.path().join("wiki");
     fs::create_dir_all(wiki.join("wiki/projects")).unwrap();
     let world = World { lc_socket: socket, ask_label: LABEL.into(), wiki, run_dir: t.path().join("run"), ..World::default() };
@@ -151,5 +156,7 @@ fn the_open_asks_are_listed_through_a_real_lifecycle_socket() {
     let asks: Vec<Value> = serde_json::from_str(snap["asks"].as_str().unwrap().lines().next().unwrap()).unwrap();
     let ids: Vec<&str> = asks.iter().filter_map(|a| a["id"].as_str()).collect();
     assert_eq!(ids, ["sp-ask-open"], "only the open ask carrying the label is listed");
+    let announced: Value = serde_json::from_str(&world.asks_snapshot("[]").unwrap()).unwrap();
+    assert!(announced["held"].as_array().unwrap().iter().any(|h| h[0] == "sp-held"), "the held ask is listed: {announced}");
     assert!(asks[0]["description"].as_str().unwrap().contains("designs/x.md"), "the ask's text comes with it: {asks:?}");
 }
