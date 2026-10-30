@@ -541,6 +541,11 @@ pub fn run_all(cmd: &str) -> String {
     s
 }
 
+/// Workspace binaries other crates' tests exec from the target directory (`spira-config`: every
+/// script resolves its settings through it). The unit build builds them with the touched crates,
+/// as the round's whole-workspace build does; it does not run their tests.
+pub const TEST_EXEC_BINS: &[&str] = &["spira-config"];
+
 /// The unit phases' commands, in order: build (the `dwarf` profile), then the tests.
 ///
 /// The build is `cargo build --all-targets` (sp-aprxm), not `cargo test --no-run`: the latter
@@ -550,10 +555,11 @@ pub fn run_all(cmd: &str) -> String {
 /// test harnesses; the test phase reuses those harnesses (same profile, same mode).
 pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2] {
     let p = pkgs(crates);
+    let bins: String = TEST_EXEC_BINS.iter().filter(|b| !crates.iter().any(|c| c == *b)).map(|b| format!(" -p {b}")).collect();
     [
         (
             "build",
-            format!("cargo build --profile dwarf {} -j {jobs} --all-targets{p}", spira_config::build::one_shot_words("dwarf")),
+            format!("cargo build --profile dwarf {} -j {jobs} --all-targets{p}{bins}", spira_config::build::one_shot_words("dwarf")),
         ),
         (
             "test",
@@ -1185,12 +1191,24 @@ mod tests {
     }
 
     #[test]
+    fn the_unit_build_builds_the_binaries_tests_exec_and_tests_only_the_crates() {
+        // spira-runtime's asks_parity runs asks.sh, which execs spira-config from the target
+        // dir: built only by the round's whole-workspace build, so every spira-runtime branch
+        // went red at the gate on "build spira-config first" (2026-10-30).
+        let [b, t] = unit_commands(&["spira-runtime".into()], 4);
+        assert!(b.1.ends_with(" -p spira-runtime -p spira-config"), "{}", b.1);
+        assert!(!t.1.contains("spira-config"), "{}", t.1);
+        let [b, _] = unit_commands(&["spira-config".into()], 4);
+        assert_eq!(b.1.matches("-p spira-config").count(), 1, "{}", b.1);
+    }
+
+    #[test]
     fn unit_commands_build_then_test_each_crate() {
         let [b, t] = unit_commands(&["gate".into(), "queue".into()], 4);
         assert_eq!(b.0, "build");
         assert_eq!(
             b.1,
-            "cargo build --profile dwarf --config profile.dwarf.incremental=false -j 4 --all-targets -p gate -p queue"
+            "cargo build --profile dwarf --config profile.dwarf.incremental=false -j 4 --all-targets -p gate -p queue -p spira-config"
         );
         assert_eq!(t.0, "test");
         assert_eq!(
