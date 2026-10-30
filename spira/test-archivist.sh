@@ -282,6 +282,9 @@ status_line() {
 printf 'state=failed\nat_turn=1\nitems_filed=0\nretry_at=1750003600\n' > "$T/run/archivist/s-fail.state"
 has  "a retrying failure names the time it will retry" "$(status_line)" "will retry at 16:06"
 printf 'state=failed\nat_turn=1\nitems_filed=0\n' > "$T/run/archivist/s-fail.state"
+printf 'state=retry\nat_turn=1\nitems_filed=0\nretry_at=1750003600\n' > "$T/run/archivist/s-fail.state"
+has  "a deferred commit names the time it will retry" "$(status_line)" "deferred, will retry at 16:06"
+printf 'state=failed\nat_turn=1\nitems_filed=0\n' > "$T/run/archivist/s-fail.state"
 has  "a terminal failure names the command that forces a sweep" "$(status_line)" "archivist now s-fail"
 
 # ==========================================================================================

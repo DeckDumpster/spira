@@ -278,8 +278,8 @@ pub fn archive(seam: &dyn Seam, cfg: &Env, arc: &Path, sid: &str, tp: &Path, at:
         let budget = cfg.timeout_retries;
         tc += 1;
         if tc >= budget {
-            let _ = state::write_state(arc, sid, State::Failed, at, items);
-            log(&format!("archivist: {sid} FAILED (timeout budget {budget} exhausted) — see {}", logf.display()));
+            let _ = std::fs::remove_file(&tc_file);
+            record_failure(cfg, arc, sid, at, items, &format!("timeout budget {budget} exhausted"), &logf);
         } else {
             let _ = std::fs::write(&tc_file, tc.to_string());
             let _ = state::write_state(arc, sid, State::Timeout, at, items);
@@ -950,25 +950,13 @@ mod tests {
         let (dir, _p, _r, mut c, seam) = one_session_fixture("50");
         c.fail_retries = 2;
         *seam.agent_rc.borrow_mut() = 3;
-        let tp = Path::new("/tmp/sess-a.jsonl");
-        archive_past_lock_contention_for(&seam, &c, &dir, tp);
-        assert_eq!(state::read_state_key(&dir, "sess-a", "state"), Some("failed".into()));
-        let first: i64 = state::read_state_key(&dir, "sess-a", "retry_at").expect("retrying").parse().unwrap();
+        archive_past_lock_contention(&seam, &c, &dir);
+        assert_eq!(state::read_state_key(&dir, "sess-1", "state"), Some("failed".into()));
+        let first: i64 = state::read_state_key(&dir, "sess-1", "retry_at").expect("retrying").parse().unwrap();
         assert!(first > now_epoch() + 500, "first wait is the configured base");
-        archive_past_lock_contention_for(&seam, &c, &dir, tp);
-        assert_eq!(state::read_state_key(&dir, "sess-a", "state"), Some("failed".into()));
-        assert_eq!(state::read_state_key(&dir, "sess-a", "retry_at"), None, "the second consecutive failure is terminal");
-    }
-
-    fn archive_past_lock_contention_for(seam: &FakeSeam, c: &Env, dir: &Path, tp: &Path) -> i32 {
-        for _ in 0..200 {
-            let rc = archive(seam, c, dir, "sess-a", tp, 50, "10", "t", false);
-            if rc != 75 {
-                return rc;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(25));
-        }
-        75
+        archive_past_lock_contention(&seam, &c, &dir);
+        assert_eq!(state::read_state_key(&dir, "sess-1", "state"), Some("failed".into()));
+        assert_eq!(state::read_state_key(&dir, "sess-1", "retry_at"), None, "the second consecutive failure is terminal");
     }
 
     #[test]
