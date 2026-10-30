@@ -118,6 +118,13 @@ mod tests {
     }
 
     #[test]
+    fn an_ask_on_any_outcome_but_a_mend_is_refused() {
+        let with_ask = |kind| validate(&Answer { kind, diagnosis: "bad at x/y.rs:9", checks: None, ask: Some("a1") });
+        assert!(with_ask(Kind::Return).is_err());
+        assert!(with_ask(Kind::Flaky).is_err());
+    }
+
+    #[test]
     fn the_terminal_event_names_a_lifecycle_event_with_no_clock_of_its_own() {
         assert_eq!(terminal_event(Kind::Environment, "d"), json!({"Environment": {"at": 0}}));
         assert_eq!(terminal_event(Kind::Return, "d"), json!({"Return": {"at": 0, "diagnosis": "d"}}));
