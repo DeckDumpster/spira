@@ -524,6 +524,17 @@ impl drive::RoundOps for LiveOps<'_> {
         self.mending(batch, d, members).transpose()
     }
 
+    fn preempted(&mut self, owner: &batcher::core::Id, unreached: &[String]) {
+        let history = std::fs::read_to_string(tsd::family_path(&self.env.run, "suite-timing")).unwrap_or_default();
+        let saved = order::expected_secs(unreached, &history);
+        println!("batcher {}: round {} pass preempted; {owner} ejected; {saved} suite-seconds across {} unreached suites not run", self.repo.name, self.round, unreached.len());
+        io::tsd_append(
+            self.env,
+            "round-preempt",
+            &[("repo", self.repo.name.clone()), ("round", self.round.clone()), ("owner", owner.clone()), ("unreached_suites", unreached.len().to_string()), ("saved_suite_secs", saved.to_string())],
+        );
+    }
+
     fn escape(&mut self, member: &Member, suite: &str, rerun: Option<JobResult>) {
         let paths = self.changed.get(&member.id).cloned().unwrap_or_default().join(",");
         let evidence = format!("round {} evidence: {}", self.round, self.evidence);

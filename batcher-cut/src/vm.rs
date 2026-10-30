@@ -140,6 +140,26 @@ pub struct VmRunner<'a> {
     main: Main,
     jobs: BTreeMap<u64, (String, String)>,
     verify_n: u32,
+    corpus_runs: u32,
+}
+
+/// How long a stopped round-vm gets to destroy its VM before the runner gives up on it.
+const STOP_SECS: u64 = 300;
+
+/// Removes the results of `suites`, which are about to run again, so the old verdict is not
+/// read as the new one. A result is `<suite>.<ext>` at the top or one directory down.
+fn clear_results(results: &Path, suites: &[String]) {
+    let wanted: BTreeSet<&str> = suites.iter().map(String::as_str).collect();
+    let mut dirs = vec![results.to_path_buf()];
+    dirs.extend(fs::read_dir(results).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_dir()));
+    for dir in dirs {
+        for e in fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.rsplit_once('.').is_some_and(|(stem, _)| wanted.contains(stem)) && e.path().is_file() {
+                let _ = fs::remove_file(e.path());
+            }
+        }
+    }
 }
 
 impl<'a> VmRunner<'a> {
@@ -169,6 +189,7 @@ impl<'a> VmRunner<'a> {
             main: Main::None,
             jobs: BTreeMap::new(),
             verify_n: 0,
+            corpus_runs: 0,
         })
     }
 
@@ -349,7 +370,12 @@ impl RoundRunner for VmRunner<'_> {
                 if self.child.is_some() {
                     return Err("the corpus already ran for this round".into());
                 }
-                order::covers(&io::suites_in(&self.wt, "HEAD"), suites)?;
+                if self.corpus_runs == 0 {
+                    order::covers(&io::suites_in(&self.wt, "HEAD"), suites)?;
+                } else {
+                    clear_results(&self.results, suites);
+                }
+                self.corpus_runs += 1;
                 let err = fs::File::create(&self.stderr_path).map_err(|e| format!("{}: {e}", self.stderr_path.display()))?;
                 // batch-job: this runs whatever its caller names, as long as that takes
                 let mut cmd = Command::new("systemd-run");
@@ -375,6 +401,30 @@ impl RoundRunner for VmRunner<'_> {
                 self.request(&job, &branch, suites, "round")?;
                 self.main = Main::Verify { job, suites: suites.to_vec() };
             }
+        }
+        Ok(())
+    }
+
+    fn stop_main(&mut self) -> Result<(), String> {
+        let Some(mut child) = self.child.take() else { return Ok(()) };
+        let _ = Command::new("kill").arg("-TERM").arg(child.id().to_string()).status();
+        let mut waited = 0;
+        while child.try_wait().map_err(|e| format!("round-vm: {e}"))?.is_none() {
+            if waited >= STOP_SECS {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("round-vm did not stop within {STOP_SECS}s of TERM — killed; its VM may be left to the reaper"));
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            waited += 1;
+        }
+        self.child_rc = None;
+        self.install_failed = false;
+        self.main = Main::None;
+        self.jobs.clear();
+        let _ = fs::remove_dir_all(&self.spool);
+        for d in ["req", "res"] {
+            fs::create_dir_all(self.spool.join(d)).map_err(|e| format!("{}: {e}", self.spool.join(d).display()))?;
         }
         Ok(())
     }
