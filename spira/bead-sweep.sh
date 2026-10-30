@@ -177,7 +177,7 @@ for i, r in sorted(rows.items()):
         if rc == 0 and ans.get("claimable") is True:
             put("SUSPECT", f"UNCLAIMED REWORK over {rework_min}m ({why})")
         elif rc == 3 and ans.get("reason") == "Carried":
-            put("OK", f"REWORK carried by integration {ans.get('carrier')}")
+            put("OK", f"carried by integration {ans.get('carrier')}")
         elif rc == 3 and ans.get("reason"):
             put("SUSPECT", f"REWORK over {rework_min}m, not claimable: {ans['reason']} ({why})")
         else:
