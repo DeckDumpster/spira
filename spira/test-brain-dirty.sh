@@ -43,4 +43,6 @@ w health >/dev/null; wantrc "health fails before any poll" 1 "$?"
 w watch --interval 5 --ticks 1 >/dev/null
 w health >/dev/null; wantrc "health passes after a poll" 0 "$?"
 
+grep -q '^brain-dirty|' "$HERE/watchers"; is "watchers manifest has no brain-dirty row: spira-runtime hosts it" "1" "$?"
+
 tl_summary

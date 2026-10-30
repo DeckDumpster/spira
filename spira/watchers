@@ -194,10 +194,7 @@ warm-full|daemon|@SPIRA_HOME@/warm-full.sh watch --interval 120|@SPIRA_HOME@/war
 
 testenv-cap|daemon|testenv-cap watch --interval 15|testenv-cap health
 
-# BRAIN-DIRTY alarms on any path under the wiki checkout left uncommitted past SPIRA_BRAIN_DIRTY_AGE.
-# The archivist commits what it writes; this is the backstop for a failed commit or a writer that
-# never committed. One line per stale path, once.
-brain-dirty|daemon|@SPIRA_HOME@/brain-dirty.sh watch --interval 600|@SPIRA_HOME@/brain-dirty.sh health
+# BRAIN-DIRTY has no row: spira-runtime hosts it as the brain-dirty handler (spira-runtime/src/watchers).
 runtime-watch|log|@SPIRA_RUN@/runtime-watch.log
 
 # DESIGN-ASKS has no row: spira-runtime hosts it as the design-asks handler (spira-runtime/src/watchers).

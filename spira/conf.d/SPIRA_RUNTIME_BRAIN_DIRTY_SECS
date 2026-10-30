@@ -1,0 +1,7 @@
+TYPE=u64
+GROUP=runtime
+DOC=Seconds between spira-runtime observations of uncommitted paths under the wiki checkout.
+SCHEMA=Seconds between spira-runtime brain-dirty observations (unit: seconds; integer; default 600). Must be a positive integer.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RUNTIME_BRAIN_DIRTY_SECS:=600}"
+SPIRA_CONF_DEFAULT_EOF

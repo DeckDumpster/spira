@@ -4,6 +4,7 @@
 
 pub mod asks;
 pub mod design_asks;
+pub mod brain_dirty;
 pub mod inbox_keeper;
 pub mod pr_notify;
 pub mod round_duty;

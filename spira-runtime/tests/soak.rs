@@ -239,8 +239,13 @@ fn spira_runtime_serves_for_twenty_beats_against_the_production_store() {
     fs::write(&cred, RW).unwrap();
     let socket = root.join("lc.sock");
     let inbox = run.join("watchd/concierge-inbox.log");
+    let wiki = root.join("wiki");
+    fs::create_dir_all(&wiki).unwrap();
+    // batch-job: one git init on the fixture's own wiki; brain-dirty alarms on a wiki git does not own.
+    assert!(Command::new("git").arg("init").arg("-q").arg(&wiki).env_clear().env("PATH", std::env::var("PATH").unwrap_or_default()).status().unwrap().success());
     let (url, pings) = heartbeat_sink();
     let declare = [
+        ("SPIRA_WIKI", wiki.display().to_string()),
         ("SPIRA_RUN", run.display().to_string()),
         ("SPIRA_LC_SOCKET", socket.display().to_string()),
         ("SPIRA_LC_PASSWORD_FILE", cred.display().to_string()),
@@ -363,5 +368,6 @@ fn spira_runtime_serves_for_twenty_beats_against_the_production_store() {
     assert!(bad.is_empty(), "{}", diag(&format!("the runtime reported faults: {bad:?}")));
     let said = fs::read_to_string(&inbox).unwrap_or_default();
     assert!(said.contains("ROUND RESULT 300: red sp-soak"), "{}", diag("round-duty never relayed the result line to the inbox"));
+    assert!(!said.contains("BRAIN DIRTY"), "{}", diag("brain-dirty alarmed on a clean git wiki"));
     assert!(!said.contains("ROUND STATE UNKNOWN"), "{}", diag("round-duty called an open round's state unknown"));
 }

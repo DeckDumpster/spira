@@ -1,5 +1,5 @@
 //! Where the watchers' snapshots come from: files under the run directory and the lifecycle
-//! store through spira-lc's socket. No process is launched.
+//! store through spira-lc's socket. No process is launched here; the wiki's git is `wiki_git`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -15,6 +15,8 @@ use crate::forge::{slug, Forge};
 use crate::watchers::pr_notify::{self, RepoObs};
 use crate::watchers::asks;
 use crate::watchers::design_asks::{self, Page};
+use crate::wiki_git::git;
+use crate::watchers::brain_dirty;
 use crate::watchers::round_duty::{RoundState, Snapshot};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

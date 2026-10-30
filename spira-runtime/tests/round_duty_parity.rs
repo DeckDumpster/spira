@@ -251,6 +251,7 @@ fn the_migrated_handlers_launch_no_process() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files: Vec<_> = fs::read_dir(src.join("watchers")).unwrap().flatten().map(|e| e.path()).collect();
     files.extend([src.join("world.rs"), src.join("forge.rs")]);
+    assert!(src.join("wiki_git.rs").exists(), "wiki_git.rs is the one place a process may launch");
     let mut checked = 0;
     for path in files {
         let text = fs::read_to_string(&path).unwrap();
