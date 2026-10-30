@@ -23,15 +23,14 @@ fn applies(path: &str) -> bool {
     path.ends_with(".rs") && !path.split('/').any(|c| c == "target" || c == "fixtures")
 }
 
-fn lookup_line(src: &[u8], regions: &[(usize, usize)], whole: bool, own_crate: &str) -> Option<usize> {
+fn lookup_line(src: &[u8], regions: &[(usize, usize)], whole: bool) -> Option<usize> {
     static EXE: OnceLock<Regex> = OnceLock::new();
     static DIR: OnceLock<Regex> = OnceLock::new();
     let cl = rust::classify(src);
     let code = cl.code_only();
     let text = cl.without_comments();
     let in_test = |at: usize| whole || regions.iter().any(|(a, b)| *a <= at && at < *b);
-    let own = format!("\"{own_crate}\"");
-    let reaches_own = text.windows(own.len()).any(|w| w == own.as_bytes());
+    let reaches_own = text.windows(14).any(|w| w == b"CARGO_BIN_EXE_");
     let exe = re(&EXE, r"current_exe\(\)[\s\S]{0,160}?\.parent\(\)");
     let dir = re(&DIR, r#"Command::new\([^;]*"[^"]*target/[a-z-]+/[A-Za-z]"#);
     let mut at: Vec<usize> = dir.find_iter(&text).map(|m| m.start()).filter(|a| code[*a] == b'C').collect();
@@ -65,7 +64,7 @@ impl Rule for E2eTestMarked {
         let mut out = Vec::new();
         for (e, s) in &shapes {
             let Some(src) = tree.content(e) else { continue };
-            let Some(line) = lookup_line(src, &s.regions, whole.contains(&e.path), e.path.split('/').next().unwrap_or("")) else { continue };
+            let Some(line) = lookup_line(src, &s.regions, whole.contains(&e.path)) else { continue };
             if !every_test_is_marked(src) {
                 out.push(Finding { rule: NAME, path: e.path.clone(), line: Some(line), message: MESSAGE.to_string() });
             }
@@ -112,6 +111,13 @@ mod tests {
         t.write("a/tests/own.rs", "#[test]\nfn runs_itself() { let _ = env!(\"CARGO_BIN_EXE_a\"); }\n");
         t.write("a/src/lib.rs", "pub fn f() { let _ = std::env::current_exe().unwrap().parent(); }\n");
         assert_eq!(run(&t, &["a/tests/x.rs", "a/tests/own.rs", "a/src/lib.rs"]).unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn an_unrelated_crate_name_literal_does_not_exempt_a_sibling_lookup() {
+        let t = TempDir::new("e2e-literal");
+        t.write("a/tests/x.rs", "#[test]\nfn reads() {\n    let _ = \"a\";\n    std::env::current_exe().unwrap().parent().unwrap().join(\"spira-lc\");\n}\n");
+        assert_eq!(run(&t, &["a/tests/x.rs"]).unwrap(), vec![format!("e2e-test-marked: a/tests/x.rs:4: {MESSAGE}")]);
     }
 
     #[test]
