@@ -51,6 +51,10 @@ pub struct Row {
     pub claimable: Option<bool>,
     #[serde(default)]
     pub blocker: Option<String>,
+    /// The dispatcher's verdict on this row and the pass that reached it, as the read model
+    /// carries them (`verdicts_of` assembles the pass).
+    #[serde(default)]
+    pub claim: Option<ClaimCols>,
     pub repo: String,
     #[serde(default)]
     pub tip: Option<String>,
@@ -58,6 +62,15 @@ pub struct Row {
     pub sifted_tip: Option<String>,
     #[serde(default)]
     pub ejected_red_tip: Option<String>,
+}
+
+/// The `claim_*` columns of a lifecycle row.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ClaimCols {
+    pub verdict: String,
+    pub blocker: Option<String>,
+    pub runes: Vec<String>,
+    pub at: String,
 }
 
 /// The `repo` of a server bead row: the key must be present, and null means the bead has none.
@@ -98,12 +111,35 @@ pub fn live_row(r: &serde_json::Value) -> Result<(Row, Meta), String> {
         persona: r["persona"].as_str().map(String::from),
         claimable: None,
         blocker,
+        claim: r["claim_at"].as_str().zip(r["claim_verdict"].as_str()).map(|(at, verdict)| ClaimCols {
+            verdict: verdict.to_string(),
+            blocker: r["claim_blocker"].as_str().map(String::from),
+            runes: r["claim_runes"].as_str().map(|v| v.split(',').filter(|x| !x.is_empty()).map(String::from).collect()).unwrap_or_default(),
+            at: at.to_string(),
+        }),
         repo,
         tip: r["tip"].as_str().map(String::from),
         sifted_tip: r["sifted_tip"].as_str().map(String::from),
         ejected_red_tip: r["ejected_red_tip"].as_str().map(String::from),
     };
     Ok((row, meta))
+}
+
+/// The dispatcher's last pass as the rows carry it: the verdicts stamped by the newest pass,
+/// so a row judged before it (and so since changed) is not mistaken for current. `Err` when
+/// there are READY or REWORK rows and none has been judged: the read model cannot say.
+pub fn verdicts_of(rows: &[Row]) -> Result<spira_claim::verdicts::VerdictFile, String> {
+    use spira_claim::verdicts::{Entry, Kind, VerdictFile};
+    let pool: Vec<&Row> = rows.iter().filter(|r| matches!(r.state.as_str(), "READY" | "REWORK")).collect();
+    let newest = pool.iter().filter_map(|r| r.claim.as_ref()).map(|c| c.at.as_str()).max();
+    let Some(newest) = newest else {
+        return if pool.is_empty() { Ok(VerdictFile { computed_at: String::new(), entries: Vec::new() }) } else { Err("no claim verdicts in the lifecycle read model yet".into()) };
+    };
+    let entries = pool
+        .iter()
+        .filter_map(|r| r.claim.as_ref().filter(|c| c.at == newest).and_then(|c| Some(Entry { id: r.id.clone(), verdict: Kind::from_word(&c.verdict)?, blocker: c.blocker.clone(), runes: c.runes.clone() })))
+        .collect();
+    Ok(VerdictFile { computed_at: newest.to_string(), entries })
 }
 
 /// Takes claimability and blockers from the dispatcher's last verdicts. A row the dispatcher
@@ -117,7 +153,7 @@ pub fn apply_verdicts(s: &mut Snapshot, f: &spira_claim::verdicts::VerdictFile) 
         }
     }
     s.claimable = Some(f.entries.iter().filter(|e| e.verdict == Kind::Claimable && !e.runes.is_empty()).map(|e| e.id.clone()).collect());
-    s.claimable_at = Some(f.computed_at.clone());
+    s.claimable_at = Some(f.computed_at.clone()).filter(|t| !t.is_empty());
 }
 
 /// One open ask, as `spira-lc list-asks` prints it; `title` is the bead table's mirror of it.
@@ -1683,7 +1719,8 @@ pub fn render(v: &View, width: usize) -> Vec<String> {
         }
     }
     let verdict_age = if v.next_age.is_empty() { String::new() } else { format!(" {D}as of {} ago{R}", v.next_age) };
-    out.push(format!("{B}NEXT{R}   {B}{}{R} claimable{verdict_age} {D}(claim order: express, REWORK, then priority){R}", v.next_count));
+    let next_n = if v.next_unknown { "?".to_string() } else { v.next_count.to_string() };
+    out.push(format!("{B}NEXT{R}   {B}{next_n}{R} claimable{verdict_age} {D}(claim order: express, REWORK, then priority){R}"));
     for i in v.next.iter().take(NEXT_SHOWN) {
         out.push(format!("  {} {:<12} {}{}", i.prio, i.id, repo_tag(&i.repo), cut(&i.title, w.saturating_sub(21 + i.repo.len().max(1)))));
     }
@@ -1802,6 +1839,65 @@ mod tests {
         assert!(v.next.is_empty(), "{f}");
         let claim = v.machine.iter().find(|m| m.name == "READY").unwrap().beads.iter().find(|b| b.id == "sp-p.1").unwrap().claim.clone();
         assert_eq!(claim, "blocked: sp-p");
+    }
+
+    fn snapshot_of_raw(raw: &[&str]) -> Snapshot {
+        let mut s = Snapshot { now: 100_000, release: "abc".into(), base: "local/main".into(), ceiling: 6, ..Default::default() };
+        for r in raw {
+            let (row, meta) = live_row(&serde_json::from_str(r).unwrap()).unwrap();
+            s.meta.insert(row.id.clone(), meta);
+            s.rows.push(row);
+        }
+        s
+    }
+
+    #[test]
+    fn the_verdicts_ride_the_lifecycle_rows_into_the_frame() {
+        let mut s = snapshot_of_raw(&[
+            r#"{"bead_id":"sp-p","state":"IN_DELIVERY","holds":"[]","repo":"spira","blocked_by":[]}"#,
+            r#"{"bead_id":"sp-p.1","state":"READY","holds":"[]","repo":"spira","blocked_by":[],"claim_verdict":"blocked","claim_blocker":"sp-p","claim_runes":null,"claim_at":"1970-01-02T03:45:40Z"}"#,
+            r#"{"bead_id":"sp-free","state":"READY","holds":"[]","repo":"spira","blocked_by":[],"claim_verdict":"claimable","claim_blocker":null,"claim_runes":"builder","claim_at":"1970-01-02T03:45:40Z"}"#,
+            r#"{"bead_id":"sp-rw","state":"REWORK","holds":"[]","repo":"spira","blocked_by":[],"claim_verdict":"claimable","claim_blocker":null,"claim_runes":"builder,ops","claim_at":"1970-01-02T03:45:40Z"}"#,
+        ]);
+        let f = verdicts_of(&s.rows).unwrap();
+        apply_verdicts(&mut s, &f);
+        let frame = frame_of(&s);
+        assert!(frame.contains("2 claimable as of 60s ago"), "{frame}");
+        assert!(frame.contains("blocked 1 ← sp-p"), "{frame}");
+        assert!(frame.contains("sp-p.1 <- sp-p"), "{frame}");
+        assert_eq!(view(&s).next.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(), ["sp-rw", "sp-free"], "REWORK first");
+    }
+
+    #[test]
+    fn rows_nobody_has_judged_leave_claimable_unknown_not_zero() {
+        let mut s = snapshot_of_raw(&[r#"{"bead_id":"sp-a","state":"READY","holds":"[]","repo":"spira","blocked_by":[]}"#]);
+        let err = verdicts_of(&s.rows).unwrap_err();
+        assert!(err.contains("no claim verdicts"), "{err}");
+        assert!(s.claimable.is_none());
+        s.errors.push(err);
+        let frame = frame_of(&s);
+        assert!(frame.contains("claimable unknown") && !frame.contains("0 claimable"), "{frame}");
+        assert!(frame.contains("no claim verdicts"), "an unreadable verdict names why: {frame}");
+    }
+
+    #[test]
+    fn only_the_newest_pass_speaks_for_a_row() {
+        let s = snapshot_of_raw(&[
+            r#"{"bead_id":"sp-old","state":"READY","holds":"[]","repo":"spira","claim_verdict":"claimable","claim_runes":"builder","claim_at":"1970-01-02T03:44:40Z"}"#,
+            r#"{"bead_id":"sp-new","state":"READY","holds":"[]","repo":"spira","claim_verdict":"claimable","claim_runes":"builder","claim_at":"1970-01-02T03:45:40Z"}"#,
+            r#"{"bead_id":"sp-gone","state":"WORKING","holds":"[]","repo":"spira","claim_verdict":"claimable","claim_runes":"builder","claim_at":"1970-01-02T03:50:00Z"}"#,
+        ]);
+        let f = verdicts_of(&s.rows).unwrap();
+        assert_eq!(f.entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), ["sp-new"], "{f:?}");
+        assert_eq!(f.computed_at, "1970-01-02T03:45:40Z", "a bead that left READY does not date the pass");
+    }
+
+    #[test]
+    fn with_nothing_ready_there_is_nothing_to_judge_and_claimable_is_zero() {
+        let mut s = snapshot_of_raw(&[r#"{"bead_id":"sp-w","state":"WORKING","holds":"[]","repo":"spira"}"#]);
+        let f = verdicts_of(&s.rows).unwrap();
+        apply_verdicts(&mut s, &f);
+        assert_eq!((s.claimable.clone(), s.claimable_at.clone()), (Some(vec![]), None));
     }
 
     #[test]

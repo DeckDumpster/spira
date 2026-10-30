@@ -1,7 +1,7 @@
 //! spira-claim's public surface for OTHER crates to link against in-process: the
 //! `READY_ARGS_BASE` constant (wave 4.25, sp-obhv6, "READY_ARGS as one const") and the
-//! `verdicts` file the dispatcher publishes, so a reader asks what the dispatcher decided
-//! instead of re-deriving it. Everything else — the bead-attempt accounting, CHECK 4 poison
+//! `verdicts` the dispatcher hands the lifecycle store, so a reader asks what the dispatcher
+//! decided instead of re-deriving it. Everything else — the bead-attempt accounting, CHECK 4 poison
 //! decision, epic-first claim selection and `unpoison` — is CLI-internal; see DESIGN.md and
 //! `src/main.rs`. A caller that needs more shells into the `spira-claim` binary by bare name,
 //! same as `bdq`/`spira-lc`/`spira-config`.

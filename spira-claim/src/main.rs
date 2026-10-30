@@ -918,13 +918,13 @@ fn ready_cache_lookup(text: &str, me: &str) -> u64 {
 /// blockers), never for status or assignee — the same rule `select --blockers machine`
 /// applies. `Err` when the machine cannot answer: a count must refuse, not read 0.
 fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String> {
-    machine_judged(a, env).map(|(rows, _)| rows)
+    let st = store(a, &env.config)?;
+    machine_judged(a, env, &st).map(|(rows, _)| rows)
 }
 
 /// [`machine_claimable`] with the verdict of every READY/REWORK row it judged.
-fn machine_judged(a: &Args, env: &Env) -> Result<(Vec<rank::ReadyRow>, Vec<verdicts::Entry>), String> {
-    let st = store(a, &env.config)?;
-    let (rows, entries) = judge_rows(a, env, &st)?;
+fn machine_judged(a: &Args, env: &Env, st: &Store) -> Result<(Vec<rank::ReadyRow>, Vec<verdicts::Entry>), String> {
+    let (rows, entries) = judge_rows(a, env, st)?;
     let express = if a.has("--express") { Some(st.express_ids()?) } else { None };
     Ok((rows.into_iter().filter(|r| express.as_ref().is_none_or(|e| e.contains(&r.id))).collect(), entries))
 }
@@ -1164,7 +1164,11 @@ fn cmd_bulk_ready_by_rune(a: &Args, env: &mut Env) -> Outcome {
     if parts.is_empty() {
         return Outcome { code: 0, out: String::new(), err: warnings.join("\n") };
     }
-    let (rows, mut entries) = match machine_judged(a, env) {
+    let st = match store(a, &env.config) {
+        Ok(st) => st,
+        Err(e) => return Outcome::cannot_tell(format!("bulk-ready-by-rune: {}", first_line(&e))),
+    };
+    let (rows, mut entries) = match machine_judged(a, env, &st) {
         Ok(r) => r,
         Err(e) => return Outcome::cannot_tell(format!("bulk-ready-by-rune: {}", first_line(&e))),
     };
@@ -1175,7 +1179,7 @@ fn cmd_bulk_ready_by_rune(a: &Args, env: &mut Env) -> Outcome {
         }
     }
     let file = verdicts::VerdictFile { computed_at: verdicts::stamp(ready::now_epoch()), entries };
-    if let Err(e) = verdicts::write(std::path::Path::new(&env.config.run), &file) {
+    if let Err(e) = st.lc_claim_verdicts(&file) {
         warnings.push(e);
     }
     let counts = ready::bucket(&rows, &parts, &queue_wait);

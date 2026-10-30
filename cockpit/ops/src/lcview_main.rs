@@ -3,7 +3,7 @@
 //! commits (drift, cached by sha), `world status`, and the dwarf ceiling from config. Never runs `bd`.
 
 use cockpit_ops::lctui::{layout, parent_key, Frame, Mode, Ui};
-use cockpit_ops::lcview::{apply_verdicts, carry_forward, live_row, repo_column, AskRow, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveDwarf, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
+use cockpit_ops::lcview::{apply_verdicts, carry_forward, live_row, repo_column, verdicts_of, AskRow, VmRun, holder_pid, own_ids, render, tail_lines, view, LiveDwarf, MenderRow, PassProgress, View, BatchRow, DwellRow, EdgeRow, GraphEdge, Meta, Row, Snapshot, Tail, TAIL_BYTES};
 use std::collections::HashMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::process::Command;
@@ -290,7 +290,7 @@ fn gather() -> Snapshot {
                 s.meta.insert(row.id.clone(), meta);
                 s.rows.push(row);
             }
-            match read_verdicts() {
+            match verdicts_of(&s.rows) {
                 Ok(f) => apply_verdicts(&mut s, &f),
                 Err(e) => s.errors.push(e),
             }
@@ -398,11 +398,6 @@ fn gather() -> Snapshot {
 
 /// Write the snapshot loom serves (`/lifecycle`), atomically, so the phone page shows exactly
 /// what this pane just drew. A failure is printed in the frame's place, never swallowed.
-fn read_verdicts() -> Result<spira_claim::verdicts::VerdictFile, String> {
-    let run = spira_config::process::cfg("SPIRA_RUN").map_err(|e| format!("SPIRA_RUN does not resolve: {e}"))?;
-    spira_claim::verdicts::read(std::path::Path::new(run.trim()))
-}
-
 fn publish(s: &Snapshot) {
     let Ok(run) = spira_config::process::cfg("SPIRA_RUN") else {
         eprintln!("lc-view: SPIRA_RUN does not resolve — the phone page will go stale");

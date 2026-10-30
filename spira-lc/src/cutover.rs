@@ -188,7 +188,7 @@ pub fn inline_stdin_payload(args: Vec<String>) -> Vec<String> {
 }
 
 fn inline_payload_from(mut args: Vec<String>, input: &mut dyn std::io::Read) -> Vec<String> {
-    if args.first().map(String::as_str) == Some("batch-progress") && !args.iter().any(|a| a == "--json") {
+    if matches!(args.first().map(String::as_str), Some("batch-progress" | "claim-verdicts")) && !args.iter().any(|a| a == "--json") {
         let mut body = String::new();
         let _ = input.read_to_string(&mut body);
         args.push("--json".into());

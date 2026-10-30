@@ -872,6 +872,18 @@ is "leaving WORKING clears the phase and the disposition" "None None" "$(lc show
 lc disposition sp-lc-ph slain "late" slay >/dev/null 2>&1
 wantrc "a disposition outside WORKING is refused" 3 $?
 
+# ── the dispatcher's verdicts ride the bead row: written once per pass, read with the live rows ──
+verdict_of() { lc list --live | python3 -c 'import json,sys; b=[x for x in json.load(sys.stdin) if x["bead_id"]=="sp-lc-ph"][0]; print(b["claim_verdict"], b["claim_blocker"], b["claim_runes"], b["claim_at"])'; }
+is "a row nobody judged carries no verdict" "None None None None" "$(verdict_of)"
+printf '%s' '{"computed_at":"2026-10-30T22:20:00Z","entries":[{"id":"sp-lc-ph","verdict":"blocked","blocker":"sp-lc-parent"}]}' | lc claim-verdicts >/dev/null
+wantrc "a pass of verdicts is written" 0 $?
+is "list --live returns the verdict, its blocker and the pass stamp" "blocked sp-lc-parent None 2026-10-30T22:20:00Z" "$(verdict_of)"
+printf '%s' '{"computed_at":"2026-10-30T22:21:00Z","entries":[{"id":"sp-lc-ph","verdict":"claimable","runes":["builder","ops"]}]}' | lc claim-verdicts >/dev/null
+is "the next pass replaces the verdict whole" "claimable None builder,ops 2026-10-30T22:21:00Z" "$(verdict_of)"
+printf '%s' '{"computed_at":"yesterday","entries":[]}' | lc claim-verdicts >/dev/null 2>&1
+wantrc "a pass with a bad stamp is refused" 3 $?
+is "the refused pass left the verdict alone" "claimable None builder,ops 2026-10-30T22:21:00Z" "$(verdict_of)"
+
 
 # ── mid-pass failures: each red suite is a Failed event and a MENDING row; the machine expires the row ──
 certify sp-lc-m-1 a99c65e15e286c45e353db428bf9c3a0b4d89b41

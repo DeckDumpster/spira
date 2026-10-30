@@ -25,14 +25,14 @@ pub const WINDOW_SECS: i64 = 24 * 3600;
 const TERMINAL: [&str; 4] = ["LANDED", "SUPERSEDED", "DROPPED", "DONE"];
 pub(crate) const LIVE: [&str; 7] = ["OPEN", "READY", "WORKING", "SUBMITTED", "CERTIFIED", "IN_DELIVERY", "REWORK"];
 
-const BEAD_COLS: &str = "bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, since, express, dwarf_phase, disposition, disposition_note, ejected_red_tip, sifted_tip, updated_at, title, priority, repo";
+const BEAD_COLS: &str = "bead_id, state, tip, gate_key, holder, persona, lease_until, holds, reason, version, stack, stack_depth, since, express, dwarf_phase, disposition, disposition_note, ejected_red_tip, sifted_tip, updated_at, title, priority, repo, claim_verdict, claim_blocker, claim_runes, claim_at";
 const DELIVERY_COLS: &str = "bead_id, mode, state, batch_id, pr, merge_sha, version";
 
-pub(crate) const LIST_COLS: [&str; 21] =
-    ["bead_id", "state", "tip", "holder", "persona", "lease_until", "holds", "reason", "updated_at", "version", "stack", "stack_depth", "since", "express", "dwarf_phase", "disposition", "disposition_note", "ejected_red_tip", "title", "priority", "repo"];
-pub(crate) const FULL_LIST_COLS: [&str; 22] = [
+pub(crate) const LIST_COLS: [&str; 25] =
+    ["bead_id", "state", "tip", "holder", "persona", "lease_until", "holds", "reason", "updated_at", "version", "stack", "stack_depth", "since", "express", "dwarf_phase", "disposition", "disposition_note", "ejected_red_tip", "title", "priority", "repo", "claim_verdict", "claim_blocker", "claim_runes", "claim_at"];
+pub(crate) const FULL_LIST_COLS: [&str; 26] = [
     "bead_id", "state", "tip", "holder", "persona", "lease_until", "holds", "reason", "updated_at", "version", "stack", "stack_depth", "since", "express", "dwarf_phase", "disposition", "disposition_note",
-    "ejected_red_tip", "sifted_tip", "title", "priority", "repo",
+    "ejected_red_tip", "sifted_tip", "title", "priority", "repo", "claim_verdict", "claim_blocker", "claim_runes", "claim_at",
 ];
 const SHOW_COLS: [&str; 19] = [
     "bead_id", "state", "tip", "gate_key", "holder", "persona", "lease_until", "holds", "reason", "version", "stack", "stack_depth", "express", "dwarf_phase", "disposition", "disposition_note", "ejected_red_tip",

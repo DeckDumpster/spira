@@ -1,8 +1,8 @@
-//! The per-bead verdicts the dispatcher reached on its last pass, published for the readers
-//! that must not exec the claim tool: `<SPIRA_RUN>/claim/verdicts.json`.
+//! The per-bead verdicts the dispatcher reached on its last pass. The dispatcher hands them to
+//! `spira-lc claim-verdicts`, which stores them on the bead rows; a reader gets them back
+//! with the live rows, so it never execs the claim tool.
 
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -35,28 +35,18 @@ pub struct VerdictFile {
     pub entries: Vec<Entry>,
 }
 
-pub fn path(run_dir: &Path) -> PathBuf {
-    run_dir.join("claim").join("verdicts.json")
+impl Kind {
+    /// The kind a stored word names; `None` for a word this build does not know.
+    pub fn from_word(word: &str) -> Option<Kind> {
+        serde_json::from_value(serde_json::Value::String(word.to_string())).ok()
+    }
 }
 
-pub fn write(run_dir: &Path, file: &VerdictFile) -> Result<(), String> {
-    let dest = path(run_dir);
-    let dir = dest.parent().ok_or_else(|| format!("{} has no directory", dest.display()))?;
-    let text = serde_json::to_string(file).map_err(|e| e.to_string())?;
-    let tmp = dir.join(format!(".verdicts.{}.tmp", std::process::id()));
-    std::fs::create_dir_all(dir)
-        .and_then(|_| std::fs::write(&tmp, text))
-        .and_then(|_| std::fs::rename(&tmp, &dest))
-        .map_err(|e| {
-            let _ = std::fs::remove_file(&tmp);
-            format!("cannot write {}: {e}", dest.display())
-        })
-}
-
-pub fn read(run_dir: &Path) -> Result<VerdictFile, String> {
-    let p = path(run_dir);
-    let text = std::fs::read_to_string(&p).map_err(|e| format!("cannot read {}: {e}", p.display()))?;
-    serde_json::from_str(&text).map_err(|e| format!("{}: {e}", p.display()))
+impl VerdictFile {
+    /// The `spira-lc claim-verdicts` payload.
+    pub fn payload(&self) -> String {
+        serde_json::to_string(self).unwrap_or_default()
+    }
 }
 
 /// `YYYY-MM-DDTHH:MM:SSZ` for an epoch.
@@ -103,15 +93,21 @@ mod tests {
     }
 
     #[test]
-    fn a_written_file_reads_back_and_a_missing_one_says_why() {
-        let dir = testkit::TempDir::new("verdicts");
-        assert!(read(&dir).unwrap_err().contains("cannot read"));
+    fn a_kind_round_trips_through_the_word_the_store_keeps() {
+        for k in [Kind::Claimable, Kind::Blocked, Kind::Held, Kind::Snoozed, Kind::TooDeep, Kind::StackUnchanged, Kind::Carried, Kind::Stopped, Kind::OutOfScope] {
+            let word = serde_json::to_value(k).unwrap();
+            assert_eq!(Kind::from_word(word.as_str().unwrap()), Some(k), "{word}");
+        }
+        assert_eq!(Kind::from_word("a-future-kind"), None);
+    }
+
+    #[test]
+    fn the_payload_carries_the_stamp_and_every_entry() {
         let f = VerdictFile {
             computed_at: stamp(1_793_398_800),
             entries: vec![Entry { id: "sp-p.1".into(), verdict: Kind::Blocked, blocker: Some("sp-p".into()), runes: vec![] }],
         };
-        write(&dir, &f).unwrap();
-        assert_eq!(read(&dir).unwrap(), f);
-        assert!(std::fs::read_to_string(path(&dir)).unwrap().contains(r#""verdict":"blocked""#));
+        let v: serde_json::Value = serde_json::from_str(&f.payload()).unwrap();
+        assert_eq!((v["computed_at"].as_str(), v["entries"][0]["verdict"].as_str(), v["entries"][0]["blocker"].as_str()), (Some("2026-10-30T22:20:00Z"), Some("blocked"), Some("sp-p")));
     }
 }
