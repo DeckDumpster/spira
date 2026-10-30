@@ -504,8 +504,7 @@ pub fn seed_drift(wt: &Path, toc: &[Part], pointers: &Pointers) -> Vec<String> {
     drift(&wt.join("law"), &generate(toc, pointers, text))
 }
 
-/// A checkout outruns the 5s default on a loaded disk; the kill then leaves an empty stderr, so the
-/// exit status is part of the message.
+/// A checkout outruns the 5s default on a loaded disk; the kill leaves stderr empty, so the status is reported.
 const WORKTREE_ADD_SECS: &str = "120";
 
 fn add_worktree(repo_path: &Path, branch: &str, wt: &str, base: &str) -> Result<(), String> {
@@ -565,6 +564,9 @@ pub fn commit_law(repo_path: &Path, base: Option<&str>, wt_root: &Path, verb: &s
         }
     })();
     let _ = git_in(repo_path, &["worktree", "remove", "--force", &wt_s]);
+    if done.is_err() {
+        let _ = git_in(repo_path, &["branch", "-D", &branch]);
+    }
     done.map(|()| branch)
 }
 

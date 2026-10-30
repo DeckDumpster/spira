@@ -420,7 +420,7 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");
-            eprintln!("rule: {key} IS in force but law/ was not submitted — fix the cause and run `rule.sh code` from a worktree.");
+            eprintln!("rule: {key} IS in force but law/ was not submitted and no law/ branch remains — fix the cause and run `rule.sh code` from a worktree to submit it.");
             return 1;
         }
     };
@@ -432,7 +432,7 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
         }
         Err(e) => {
             eprintln!("{e}");
-            eprintln!("rule: {key} IS in force but law/ was not submitted — fix the cause and run `rule.sh code` from a worktree.");
+            eprintln!("rule: {key} IS in force but law/ was not submitted and no law/ branch remains — fix the cause and run `rule.sh code` from a worktree to submit it.");
             1
         }
     }
