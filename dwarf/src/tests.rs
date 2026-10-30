@@ -2528,3 +2528,39 @@ fn a_graph_only_rune_needs_no_warm_base() {
     assert_eq!(o.seen.len(), 1, "{}", o.log);
     assert!(!o.log.contains("is not a tmpfs"), "{}", o.log);
 }
+
+fn groom_claim_session(claim: &'static str) -> Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> {
+    let inner = commits_and_closes();
+    Box::new(move |spec, w, stop| {
+        let run = spec.log.parent().unwrap();
+        crate::run::append(&run.join("groom.log"), &format!("2026-10-30T00:00:00Z groom: pass complete. Actions: {claim}.\n"));
+        inner(spec, w, stop)
+    })
+}
+
+#[test]
+fn a_groom_claim_with_no_ask_bead_is_refused_to_rework_and_poisoned() {
+    let f = fx("groomunbacked");
+    seed(&f, "sp-g");
+    f.w.lock().unwrap().submitted_tip = Some(("tip1".into(), "7".into()));
+    let o = go(&f, "spira,plan", &[("RUNE_GROOM_ESCALATION_CHECK", "1")], Mode::Claim, BTreeMap::new(), groom_claim_session("ESCALATED sp-gc1"));
+    assert!(o.log.contains("sp-g REOPENED and POISONED — groom log claimed ESCALATED for sp-gc1"), "{}", o.log);
+    let w = o.w.lock().unwrap();
+    let poison = w.exec_calls.iter().find(|c| c.0 == "spira-lc" && c.1.first().map(String::as_str) == Some("hold") && c.1.get(2).map(String::as_str) == Some("poison"));
+    let poison = poison.unwrap_or_else(|| panic!("no poison hold: {:?}", w.exec_calls));
+    assert_eq!(poison.1[1], "sp-g");
+    assert!(poison.1[3].contains("sp-gc1"), "the hold names the unbacked bead: {:?}", poison.1);
+    let rework = w.exec_calls.iter().find(|c| c.0 == "spira-lc" && c.1.first().map(String::as_str) == Some("event")).unwrap_or_else(|| panic!("no REWORK event: {:?}", w.exec_calls));
+    assert!(rework.1.contains(&"SUBMITTED".to_string()) && rework.1.iter().any(|a| a.contains("GateRed")), "{:?}", rework.1);
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bead_reopen" && c.1[1] == "no-groom-ask"), "{:?}", w.seam_calls);
+}
+
+#[test]
+fn a_groom_claim_is_not_held_to_the_rule_by_a_rune_that_does_not_declare_it() {
+    let f = fx("groomundeclared");
+    seed(&f, "sp-g");
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), groom_claim_session("ESCALATED sp-gc1"));
+    assert!(!o.log.contains("POISONED"), "{}", o.log);
+    let w = o.w.lock().unwrap();
+    assert!(!w.exec_calls.iter().any(|c| c.1.get(2).map(String::as_str) == Some("poison")), "{:?}", w.exec_calls);
+}
