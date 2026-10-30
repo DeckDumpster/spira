@@ -3739,6 +3739,7 @@ mod tests {
             }
             self.batch_running.store(false, std::sync::atomic::Ordering::SeqCst);
             if let Some(text) = self.ssh_log_text {
+                fs::create_dir_all(job.ssh_log.parent().unwrap()).unwrap();
                 fs::write(&job.ssh_log, text).unwrap();
             }
             if let Some(fp) = &self.kill_vm {
@@ -4457,6 +4458,44 @@ mod tests {
     fn every_ssh_and_rsync_to_a_round_vm_carries_keepalives() {
         let opts = SshRemote { user: "u".into(), port: 22, key: "k".into() }.ssh_opts().join(" ");
         assert!(opts.contains("-o ServerAliveInterval=10 -o ServerAliveCountMax=3"), "{opts}");
+    }
+
+    fn launch(home: &Path, script: &str) -> std::process::Child {
+        use std::io::Write as _;
+        let mut c = std::process::Command::new("bash")
+            .args(["-c", REMOTE_LAUNCHER, "launcher", "a1", "", "a3"])
+            .env_clear()
+            .env("HOME", home)
+            .env("PATH", std::env::var("PATH").unwrap())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        c.stdin.take().unwrap().write_all(script.as_bytes()).unwrap();
+        c
+    }
+
+    #[test]
+    fn the_launcher_relays_the_scripts_stderr_and_exits_with_its_code() {
+        let home = TempDir::new();
+        let out = launch(home.path(), "echo \"args=$1|$2|$3\"; echo oops >&2; exit 7\n").wait_with_output().unwrap();
+        assert_eq!(out.status.code(), Some(7));
+        assert!(String::from_utf8_lossy(&out.stdout).contains("args=a1||a3"), "{out:?}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("oops"), "{out:?}");
+        assert_eq!(fs::read_to_string(home.path().join(REMOTE_EXIT_FILE)).unwrap(), "rc=7\n");
+    }
+
+    #[test]
+    fn a_script_started_by_the_launcher_outlives_a_killed_session_and_records_its_exit() {
+        let home = TempDir::new();
+        let mut c = launch(home.path(), "touch \"$HOME/started\"; sleep 2; exit 3\n");
+        wait_until(|| home.path().join("started").exists());
+        std::process::Command::new("kill").args(["-9", &c.id().to_string()]).status().unwrap();
+        let _ = c.wait();
+        assert!(!home.path().join(REMOTE_EXIT_FILE).exists(), "the script is still running");
+        wait_until(|| home.path().join(REMOTE_EXIT_FILE).exists());
+        assert_eq!(fs::read_to_string(home.path().join(REMOTE_EXIT_FILE)).unwrap(), "rc=3\n");
     }
 
     #[test]
