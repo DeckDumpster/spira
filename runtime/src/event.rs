@@ -132,6 +132,7 @@ impl Ctx {
 pub struct Projection {
     streams: std::collections::BTreeMap<StreamKey, Vec<Event>>,
     pushed: std::collections::BTreeMap<StreamKey, usize>,
+    local: std::collections::BTreeSet<EventId>,
 }
 
 /// Events of one stream a handler is guaranteed to see: the newest `WINDOW`, however long the
@@ -144,8 +145,33 @@ impl Projection {
         let seen = self.streams.entry(ev.stream.clone()).or_default();
         seen.push(ev.clone());
         if seen.len() >= 2 * WINDOW {
-            seen.drain(..seen.len() - WINDOW);
+            for gone in seen.drain(..seen.len() - WINDOW) {
+                self.local.remove(&gone.id);
+            }
         }
+    }
+
+    /// Push an event the journal does not hold, then drop the stream's oldest such events past
+    /// `keep`, except the newest of each kind (a handler's carried state) and those `protect` names.
+    pub fn push_local(&mut self, ev: &Event, keep: usize, protect: impl Fn(&EventId) -> bool) {
+        self.push(ev);
+        self.local.insert(ev.id.clone());
+        let held = self.streams.entry(ev.stream.clone()).or_default();
+        let mut over = held.iter().filter(|e| self.local.contains(&e.id)).count().saturating_sub(keep);
+        if over == 0 {
+            return;
+        }
+        let mut newest = std::collections::BTreeSet::new();
+        let latest: std::collections::BTreeSet<EventId> = held.iter().rev().filter(|e| self.local.contains(&e.id) && newest.insert(e.kind.tag.clone())).map(|e| e.id.clone()).collect();
+        let local = &mut self.local;
+        held.retain(|e| {
+            if over == 0 || !local.contains(&e.id) || latest.contains(&e.id) || protect(&e.id) {
+                return true;
+            }
+            over -= 1;
+            local.remove(&e.id);
+            false
+        });
     }
 
     pub fn events(&self, stream: &StreamKey) -> &[Event] {
