@@ -1,5 +1,5 @@
 //! Where the watchers' snapshots come from: files under the run directory and the lifecycle
-//! store through spira-lc's socket. No process is launched.
+//! store through spira-lc's socket. No process is launched here; the wiki's git is `wiki_git`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -15,6 +15,8 @@ use crate::forge::{slug, Forge};
 use crate::watchers::pr_notify::{self, RepoObs};
 use crate::watchers::asks;
 use crate::watchers::design_asks::{self, Page};
+use crate::wiki_git::git;
+use crate::watchers::brain_dirty;
 use crate::watchers::round_duty::{RoundState, Snapshot};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -298,6 +300,32 @@ impl World {
             }
         }
         serde_json::to_string(&design_asks::Snapshot { failure: None, asks, pages }).map_err(|e| e.to_string())
+    }
+
+    /// The wiki checkout's changed paths and their mtimes. A path that no longer exists has none
+    /// and is left out; an unset wiki observes nothing.
+    pub fn brain_dirty_snapshot(&self) -> Result<String, String> {
+        use std::os::unix::ffi::OsStrExt;
+        let wiki = self.wiki.display().to_string();
+        let mut snap = brain_dirty::Snapshot { wiki, ..Default::default() };
+        if !self.wiki.as_os_str().is_empty() {
+            let (code, _) = git(&self.wiki, &["rev-parse", "--git-dir"])?;
+            if code == Some(0) {
+                let (code, raw) = git(&self.wiki, &["status", "--porcelain", "-z", "--untracked-files=all"])?;
+                if code != Some(0) {
+                    return Err(format!("git status exited {code:?}"));
+                }
+                for path in brain_dirty::porcelain_paths(&raw) {
+                    let mtime = fs::metadata(self.wiki.join(std::ffi::OsStr::from_bytes(&path))).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok());
+                    if let Some(d) = mtime {
+                        snap.dirty.push((String::from_utf8_lossy(&path).into_owned(), d.as_secs()));
+                    }
+                }
+            } else {
+                snap.not_repo = true;
+            }
+        }
+        serde_json::to_string(&snap).map_err(|e| e.to_string())
     }
 
     pub fn inbox_append(&self, line: &str) -> Result<String, String> {

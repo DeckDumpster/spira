@@ -7,6 +7,7 @@ pub mod settings;
 pub mod sink;
 pub mod wake;
 pub mod watchers;
+pub mod wiki_git;
 pub mod world;
 
 use std::sync::Arc;
@@ -24,7 +25,7 @@ const FOREIGN_POLL_MS: u64 = 30_000;
 
 /// Every workflow the service hosts. The heartbeat is registered here and nowhere else.
 pub fn registrations(s: &Settings) -> Vec<Registration> {
-    vec![Heartbeat { interval_ms: s.heartbeat_secs * 1000, ping_deadline_ms: s.ping_deadline_ms() }.registration(), s.round_duty.clone().registration(), s.inbox_keeper.clone().registration(), s.pr_notify.clone().registration(), s.asks.clone().registration(), s.design_asks.clone().registration()]
+    vec![Heartbeat { interval_ms: s.heartbeat_secs * 1000, ping_deadline_ms: s.ping_deadline_ms() }.registration(), s.round_duty.clone().registration(), s.inbox_keeper.clone().registration(), s.pr_notify.clone().registration(), s.asks.clone().registration(), s.design_asks.clone().registration(), s.brain_dirty.clone().registration()]
 }
 
 pub fn open_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runtime::ports::Clock>, marker: Arc<dyn Marker>, sink: Arc<dyn WideSink>, extra: Vec<Registration>) -> runtime::Result<Engine> {
@@ -38,7 +39,7 @@ pub fn open_engine(s: &Settings, journal: Arc<dyn Journal>, clock: Arc<dyn runti
         .with_marker(marker)
 }
 
-/// Runs the effects the service's workflows ask for. HTTP goes to the heartbeat URL and the forge; the watchers read files and the lifecycle socket, and the operator's mail is delivered in-process.
+/// Runs the effects the service's workflows ask for. HTTP goes to the heartbeat URL and the forge; the watchers read files, the lifecycle socket and (brain-dirty) a bounded git on the wiki checkout, and the operator's mail is delivered in-process.
 #[derive(Default)]
 pub struct Effects {
     pub heartbeat_url: String,
@@ -79,6 +80,7 @@ impl EffectRunner for Effects {
             watchers::pr_notify::OPERATOR_NOTE => self.operator_note(&spec.input),
             watchers::asks::OBSERVE => self.world.asks_snapshot(&spec.input),
             watchers::design_asks::OBSERVE => self.world.design_asks_snapshot(),
+            watchers::brain_dirty::OBSERVE => self.world.brain_dirty_snapshot(),
             watchers::INBOX_APPEND => self.world.inbox_append(&spec.input),
             other => Err(format!("no runner for effect {other}")),
         }

@@ -41,7 +41,7 @@ fn stub_endpoint() -> (String, Arc<AtomicUsize>) {
 fn the_heartbeat_registration_is_part_of_the_service() {
     let d = testkit::TempDir::new("svc-reg");
     let names: Vec<_> = registrations(&settings("", d.path())).into_iter().map(|r| r.name).collect();
-    assert_eq!(names, [NAME, "round-duty", "inbox-keeper", "pr-notify", "asks", "design-asks"], "removing a registration removes its schedule");
+    assert_eq!(names, [NAME, "round-duty", "inbox-keeper", "pr-notify", "asks", "design-asks", "brain-dirty"], "removing a registration removes its schedule");
 }
 
 #[tokio::test]

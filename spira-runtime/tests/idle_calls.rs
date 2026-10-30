@@ -87,6 +87,8 @@ fn production() -> Settings {
             "SPIRA_RUNTIME_ASKS_SECS" => "60".into(),
             "SPIRA_RUNTIME_DESIGN_ASKS_SECS" => "600".into(),
             "SPIRA_DESIGN_ASKS_REPEAT" => "86400".into(),
+            "SPIRA_RUNTIME_BRAIN_DIRTY_SECS" => "600".into(),
+            "SPIRA_BRAIN_DIRTY_AGE" => "3600".into(),
             "SPIRA_PR_DEPLOY_GIVEUP" => "3600".into(),
             "SPIRA_GH_API" => "http://127.0.0.1:9".into(),
             "SPIRA_BROKER_GH_TOKEN" => String::new(),
