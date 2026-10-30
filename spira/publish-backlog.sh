@@ -75,19 +75,23 @@ _pb_arrival_ts() {
 # _pb_refresh_remote_ref <repo> <remote> <branch> — refresh refs/remotes/<remote>/<branch>. A
 # failed or slow fetch is not blindness: the last fetched ref still answers "is there an
 # unpublished range", while it is no older than SPIRA_LOCAL_BACKLOG_REF_MAX_AGE. Age is the
-# FETCH_HEAD mtime, since a no-op fetch leaves the ref's own reflog untouched. The cause goes
+# mtime of a stamp written on each successful fetch: neither the ref's reflog (a no-op fetch
+# leaves it) nor FETCH_HEAD (a failed fetch rewrites it) says when the ref was last true. The cause goes
 # to stderr, for the BLIND message; a fallback's note, with the ref's age, goes there too.
 _pb_refresh_remote_ref() {
-    local repo="$1" remote="$2" branch="$3" err rc fh age why
+    local repo="$1" remote="$2" branch="$3" err rc stamp age why
     err="$(timeout 5 git -C "$repo" fetch -q "$remote" "$branch" 2>&1)"; rc=$?
-    [ "$rc" -eq 0 ] && return 0
+    stamp="$(_pb_state_file "$name.fetched")"
+    if [ "$rc" -eq 0 ]; then
+        mkdir -p "$STATE_DIR"; : > "$stamp"
+        return 0
+    fi
     err="$(printf '%s' "$err" | tr '\n' ' ' | cut -c1-300)"
     why="fetch of $remote/$branch failed (exit $rc: ${err:-no stderr})"
     if ! git -C "$repo" rev-parse -q --verify "refs/remotes/$remote/$branch" >/dev/null 2>&1; then
         echo "$why and no remote-tracking ref exists" >&2; return 1
     fi
-    fh="$(git -C "$repo" rev-parse --path-format=absolute --git-path FETCH_HEAD 2>/dev/null)"
-    age="$(stat -c %Y "$fh" 2>/dev/null)"
+    age="$(stat -c %Y "$stamp" 2>/dev/null)"
     case "$age" in ''|*[!0-9]*) echo "$why and the remote-tracking ref has no readable age" >&2; return 1 ;; esac
     age=$(( $(date +%s) - age ))
     if [ "$age" -gt "$SPIRA_LOCAL_BACKLOG_REF_MAX_AGE" ]; then

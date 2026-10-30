@@ -245,8 +245,8 @@ want   "10a: the backlog is still computed"                 "OVER fixlocal" "$ou
 want   "10a: the fallback names the ref's age"              "last fetched" "$out"
 
 clear_mail
-rm -rf "$RUN/watchd"
-touch -d '3 hours ago' "$REPO/.git/FETCH_HEAD"
+touch -d '3 hours ago' "$RUN/watchd/publish-backlog-state/fixlocal.fetched"
+rm -f "$RUN/watchd/publish-backlog-state/fixlocal"
 out="$(pb --show)"
 want "10b: a tracking ref older than the bound is BLIND"    "BLIND fixlocal" "$out"
 want "10b: the message carries the fetch exit status"       "exit " "$out"
