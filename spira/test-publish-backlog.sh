@@ -236,6 +236,8 @@ clear_mail
 rm -rf "$RUN/watchd"
 git -C "$REPO" update-ref --create-reflog -m restored local/main "$(git -C "$REPO" rev-parse local/main)"
 timeout 5 git -C "$REPO" fetch -q origin main
+BKCOUNT=1000 BKAGE=10800 pb --show >/dev/null   # one good tick leaves the fetch stamp
+clear_mail
 git -C "$REPO" remote set-url origin "$TMP/unreachable.git"
 publish_commit "after-fetch-broke"
 BKCOUNT=0 BKAGE=10800
