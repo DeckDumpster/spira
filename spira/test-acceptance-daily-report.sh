@@ -84,8 +84,15 @@ printf '  FAIL  phase A: release install-tarball exits 0: rc=1\n  FAIL  phase A:
 run_report "$TMP/phaseA.log" >/dev/null 2>&1
 is "phase A checks file one issue per distinct check" 2 "$(ls "$STORE"/*.title | wc -l)"
 want "phase A title carries the check" "acceptance-daily: phase A: release install-tarball exits 0" "$(cat "$STORE"/*.title)"
-nowant "phase A title is never bare" "acceptance-daily: phase A"$'\n' "$(cat "$STORE"/*.title; echo)"
-want "same-run repeat comments on the issue it just filed" "COMMENT" "$(cat "$STORE/1.body")"
+is "phase A first title" "acceptance-daily: phase A: release install-tarball exits 0" "$(cat "$STORE/1.title")"
+is "phase A second title" "acceptance-daily: phase A: sentinel boots" "$(cat "$STORE/2.title")"
+nowant "repeat lines of one check ride in its first issue, not a comment" "COMMENT" "$(cat "$STORE/1.body")"
+want "the repeat's detail rides in the first issue" "rc=2" "$(cat "$STORE/1.body")"
+
+rm -f "$STORE"/*
+{ for i in 1 2 3 4 5; do printf '  FAIL  dup: d%s\n' "$i"; done; printf '  FAIL  other: x\n'; } > "$TMP/dups.log"
+run_report "$TMP/dups.log" >/dev/null 2>&1
+is "repeats of one check do not use up the cap" 2 "$(ls "$STORE"/*.title | wc -l)"
 
 rm -f "$STORE"/*
 printf 'building…\nacceptance: container never came up\n' > "$TMP/novd.log"
