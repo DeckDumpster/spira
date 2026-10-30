@@ -37,10 +37,24 @@ _rsk_once() {
 }
 
 _RSK_LAUNCHES='
-    ([.events[] | select(.vm | startswith("ec2-"))]) as $e
-    | ([$e[] | select(.to == "leased" and (.reason | contains("(provider: ec2)")) and .at >= $since) | .at] | max) as $ok
-    | ([$e | group_by(.vm)[] | select(all(.[]; .to != "leased") and any(.[]; .to == "destroyed" or .to == "doomed")) | last | select(.at >= $since)] | max_by(.at)) as $bad
-    | if $bad != null and ($ok == null or $bad.at > $ok) then "fail \($bad.reason)" elif $ok != null then "ok" else "none" end'
+import json, sys
+since = int(sys.argv[1])
+events = [e for e in json.load(sys.stdin)["events"] if e["vm"].startswith("ec2-")]
+oks = [e["at"] for e in events
+       if e["to"] == "leased" and "(provider: ec2)" in e["reason"] and e["at"] >= since]
+ok = max(oks) if oks else None
+bad = None
+for vm in sorted({e["vm"] for e in events}):
+    mine = [e for e in events if e["vm"] == vm]
+    if any(e["to"] == "leased" for e in mine) or not any(e["to"] in ("destroyed", "doomed") for e in mine):
+        continue
+    if mine[-1]["at"] >= since and (bad is None or mine[-1]["at"] > bad["at"]):
+        bad = mine[-1]
+if bad is not None and (ok is None or bad["at"] > ok):
+    print("fail " + bad["reason"])
+else:
+    print("ok" if ok is not None else "none")
+'
 
 _rsk_recent_launch() {
     local json file="${SPIRA_ROUND_VM_STATE_DIR:-}/pool.json"
@@ -49,7 +63,7 @@ _rsk_recent_launch() {
     else
         json="$(timeout 5 round-vm status --json 2>/dev/null)" || { echo none; return 0; }
     fi
-    printf '%s' "$json" | jq -r --argjson since "$(( $(date +%s) - SPIRA_ROUND_VM_EC2_LAUNCH_WINDOW ))" "$_RSK_LAUNCHES" 2>/dev/null || echo none
+    printf '%s' "$json" | python3 -I -c "$_RSK_LAUNCHES" "$(( $(date +%s) - SPIRA_ROUND_VM_EC2_LAUNCH_WINDOW ))" 2>/dev/null || echo none
 }
 
 _rsk_clear() {
