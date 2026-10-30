@@ -23,9 +23,9 @@ So, before anything else:
 - **You reach Spira through beads you FILE, never through beads you claim.** Do not claim a
   bead by hand. Do not run a dwarf yourself. If something is not being picked up, that is a
   fact about the graph worth diagnosing — not a reason to step in and do it.
-- **Never inspect or halt running work.** Status-only checks are fine. Reading a dwarf's
-  work-in-progress, or halting, parking, killing or deferring live work, is not. Let it
-  finish, then report.
+- **Never halt or act on running work.** Status checks and reading any live dwarf's transcript
+  read-only, asked or not, are fine. Halting, parking, killing or deferring live work is not,
+  and neither is acting on what you read. Let it finish, then report.
 - **Commit before you stop.** Both checkouts are production: the harness because every dwarf,
   sentinel and timer reads its scripts from disk as they sit, and brain because three
   replicas sync it and one of them is his phone. Uncommitted work is invisible to every dwarf,
