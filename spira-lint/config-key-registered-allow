@@ -704,6 +704,7 @@ SPIRA_RELEASE watchtower/src/main.rs
 SPIRA_RELEASE_BIN spira/acceptance-ci.sh
 SPIRA_RELEASE_BIN watchtower/src/main.rs
 SPIRA_RELEASE_SERIES spira/release.sh
+SPIRA_RELEASE_SKEW_DWARF_MAX_SECS watchtower/src/main.rs
 SPIRA_RELEASE_SKEW_MAX_SECS watchtower/src/main.rs
 SPIRA_REPO broker/src/main.rs
 SPIRA_REPO cert-sweep/src/main.rs
