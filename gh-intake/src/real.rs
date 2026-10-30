@@ -9,7 +9,7 @@ pub type Mint = Box<dyn Fn() -> Result<String, String>>;
 
 pub struct RealHttp {
     mint: Mint,
-    bearer: std::cell::OnceCell<Option<String>>,
+    bearer: std::cell::OnceCell<Result<String, String>>,
 }
 
 impl RealHttp {
@@ -24,28 +24,20 @@ impl RealHttp {
             let o = spira_config::bounded::bounded(&bin)
                 .arg("token")
                 .stdin(Stdio::null())
-                .stderr(Stdio::null())
+                .stderr(Stdio::piped())
                 .output()
                 .map_err(|e| format!("{bin}: {e}"))?;
             let tok = String::from_utf8_lossy(&o.stdout).trim().to_string();
             if o.status.success() && !tok.is_empty() {
                 Ok(tok)
             } else {
-                Err(format!("{bin} token exited {:?}", o.status.code()))
+                Err(format!("{bin} token exited {:?}: {}", o.status.code(), String::from_utf8_lossy(&o.stderr).trim()))
             }
         }))
     }
 
-    fn bearer(&self) -> Option<&str> {
-        self.bearer
-            .get_or_init(|| match (self.mint)() {
-                Ok(t) => Some(t),
-                Err(e) => {
-                    eprintln!("gh-intake: no App token ({e}); polling unauthenticated at 60/h");
-                    None
-                }
-            })
-            .as_deref()
+    fn bearer(&self) -> Result<&str, String> {
+        self.bearer.get_or_init(|| (self.mint)()).as_deref().map_err(|e| format!("no App token: {e}"))
     }
 }
 
@@ -54,11 +46,8 @@ impl Http for RealHttp {
         let agent = ureq::AgentBuilder::new()
             .timeout(Duration::from_secs(timeout_secs))
             .build();
-        let mut req = agent.get(url);
-        if let Some(t) = self.bearer() {
-            req = req.set("Authorization", &format!("Bearer {t}"));
-        }
-        match req.call() {
+        let bearer = self.bearer()?;
+        match agent.get(url).set("Authorization", &format!("Bearer {bearer}")).call() {
             Ok(resp) => {
                 let status = resp.status();
                 let mut buf = Vec::new();
@@ -628,10 +617,9 @@ mod http_tests {
     }
 
     #[test]
-    fn a_failed_mint_still_polls_without_a_header() {
-        let (url, h) = serve(1);
+    fn a_failed_mint_refuses_the_poll_rather_than_going_unauthenticated() {
         let http = RealHttp::new(Box::new(|| Err("no creds".into())));
-        assert_eq!(http.get(&url, 5).unwrap().0, 200);
-        assert!(!h.join().unwrap()[0].iter().any(|l| l.to_ascii_lowercase().starts_with("authorization")));
+        let err = http.get("http://127.0.0.1:1/x", 5).unwrap_err();
+        assert!(err.contains("no App token") && err.contains("no creds"), "{err}");
     }
 }
