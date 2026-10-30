@@ -336,7 +336,7 @@ import json, sys
 print(",".join(json.loads(l)["id"] for l in open(sys.argv[1]) if l.strip()))' "$1")" || return 1
     [ -n "$_ids" ] || return 0
     for _try in $(seq 1 "${TESTDB_SEED_TRIES:-5}"); do
-        if "${SPIRA_BD:-$TESTDB_BD}" -C "$SPIRA_DB" list --id "$_ids" --status all --limit 0 --json 2>/dev/null \
+        if timeout 5 "${SPIRA_BD:-$TESTDB_BD}" -C "$SPIRA_DB" list --id "$_ids" --status all --limit 0 --json 2>/dev/null \
             | python3 -c '
 import json, sys
 t = sys.stdin.read()
