@@ -31,6 +31,8 @@ struct Fake {
     /// What `symlinked_targets` answers, by the `dir` it is asked about; absent = none (an
     /// ordinary, non-symlinked `target/`).
     symlinked_targets: RefCell<BTreeMap<PathBuf, Vec<PathBuf>>>,
+    /// What `linked_git_common_dir` answers, by checkout; absent = an ordinary clone.
+    common_dirs: RefCell<BTreeMap<PathBuf, PathBuf>>,
     /// What `current_exe()` answers; `None` (the default) is the "cannot resolve" case.
     current_exe: RefCell<Option<PathBuf>>,
     /// What `build_spira_config` answers; `None` (the default) is "the build failed".
@@ -217,6 +219,9 @@ impl Host for Fake {
     }
     fn owner_dir(&self) -> PathBuf {
         PathBuf::from("/tmp")
+    }
+    fn linked_git_common_dir(&self, checkout: &Path) -> Option<PathBuf> {
+        self.common_dirs.borrow().get(checkout).cloned()
     }
     fn symlinked_targets(&self, dir: &Path) -> Vec<PathBuf> {
         self.symlinked_targets
@@ -919,6 +924,49 @@ fn up_also_mounts_a_checkouts_symlinked_target_directories() {
     );
     // Still named, same as always — the extra mount is additive, not a replacement.
     assert!(run[0].windows(2).any(|w| w == ["--volume".to_string(), "/wt:/workspace:z".to_string()]));
+}
+
+#[test]
+fn up_mounts_a_linked_worktrees_git_common_dir_at_its_host_path() {
+    let f = Fake::new();
+    booting(&f);
+    f.common_dirs.borrow_mut().insert("/wt".into(), "/repo/.git".into());
+    let c = conf("/h");
+    assert_eq!(
+        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1", "--checkout", "/wt"])),
+        0
+    );
+    let run = f.calls_with("run");
+    assert!(run[0]
+        .windows(2)
+        .any(|w| w == ["--volume".to_string(), "/repo/.git:/repo/.git:ro".to_string()]));
+}
+
+#[test]
+fn up_adds_no_git_mount_for_an_ordinary_clone() {
+    let f = Fake::new();
+    booting(&f);
+    let c = conf("/h");
+    assert_eq!(
+        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1", "--checkout", "/wt"])),
+        0
+    );
+    assert!(!f.calls_with("run")[0].iter().any(|a| a.ends_with(":ro")));
+}
+
+#[test]
+fn linked_git_common_dir_follows_the_dot_git_file_to_the_common_dir() {
+    let d = testkit::TempDir::new("testenv-linked-common");
+    let common = d.join("repo").join(".git");
+    let admin = common.join("worktrees").join("w");
+    std::fs::create_dir_all(&admin).unwrap();
+    std::fs::write(admin.join("commondir"), "../..\n").unwrap();
+    let wt = d.join("wt");
+    std::fs::create_dir_all(&wt).unwrap();
+    std::fs::write(wt.join(".git"), format!("gitdir: {}\n", admin.display())).unwrap();
+    assert_eq!(RealHost.linked_git_common_dir(&wt), Some(std::fs::canonicalize(&common).unwrap()));
+    std::fs::create_dir_all(d.join("clone").join(".git")).unwrap();
+    assert_eq!(RealHost.linked_git_common_dir(&d.join("clone")), None);
 }
 
 #[test]

@@ -102,6 +102,10 @@ pub trait Host {
     /// `dir` with no symlinked entries, or that does not exist — every ordinary (non-gate)
     /// worktree's `target/` is a real directory and this always reports nothing for one.
     fn symlinked_targets(&self, dir: &Path) -> Vec<PathBuf>;
+    /// The git common dir of `checkout` when it is a linked worktree (its `.git` is a file
+    /// pointing at `<common>/worktrees/<name>`), canonical; `None` for an ordinary clone,
+    /// whose `.git` directory is already inside the mount.
+    fn linked_git_common_dir(&self, checkout: &Path) -> Option<PathBuf>;
     fn err(&self, line: &str);
     fn out(&self, line: &str);
 }
@@ -869,6 +873,12 @@ impl Driver<'_> {
             .symlinked_targets(&target_dir)
             .into_iter()
             .flat_map(|p| [s("--volume"), format!("{}:{}:z", p.display(), p.display())])
+            .chain(
+                self.host
+                    .linked_git_common_dir(Path::new(&checkout))
+                    .into_iter()
+                    .flat_map(|p| [s("--volume"), format!("{}:{}:ro", p.display(), p.display())]),
+            )
             .collect();
         let Some(network) = self.isolated_network() else {
             self.err("testenv: cannot tell whether podman is rootless; refusing to start without network isolation");
@@ -1412,6 +1422,13 @@ impl Host for RealHost {
     }
     fn owner_dir(&self) -> PathBuf {
         PathBuf::from("/tmp")
+    }
+    fn linked_git_common_dir(&self, checkout: &Path) -> Option<PathBuf> {
+        let dot_git = std::fs::read_to_string(checkout.join(".git")).ok()?;
+        let gitdir = PathBuf::from(dot_git.trim().strip_prefix("gitdir:")?.trim());
+        let gitdir = if gitdir.is_absolute() { gitdir } else { checkout.join(gitdir) };
+        let common = std::fs::read_to_string(gitdir.join("commondir")).ok()?;
+        std::fs::canonicalize(gitdir.join(common.trim())).ok()
     }
     fn symlinked_targets(&self, dir: &Path) -> Vec<PathBuf> {
         let Ok(entries) = std::fs::read_dir(dir) else {
