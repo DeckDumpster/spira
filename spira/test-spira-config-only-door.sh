@@ -76,12 +76,13 @@ copy_sources() {
     (cd "$1" && find . -name target -prune -o -name '*.rs' -type f -print0 | tar --null -T - -cf -) | tar -xf - -C "$2"
 }
 
-PLANTED="$(mktemp -d)"; COPY="$(mktemp -d)"
+PLANTED="$(mktemp -d)"; COPY="$(mktemp -d)"; REAL=
 trap 'chmod -R u+rwx "$PLANTED" 2>/dev/null; rm -rf "$SCRATCH" "$PLANTED" "$COPY" "$REAL"' EXIT INT TERM
 mkdir -p "$PLANTED/c/src" "$PLANTED/target/unittest/deps/locked"
 echo 'fn main() {}' > "$PLANTED/c/src/main.rs"
 echo 'fn x() {}' > "$PLANTED/target/unittest/deps/locked/x.rs"
 chmod 000 "$PLANTED/target/unittest/deps/locked"
+ls "$PLANTED/target/unittest/deps/locked" >/dev/null 2>&1 && bail "the planted directory is readable (running as root?); the control cannot bite"
 copy_sources "$PLANTED" "$COPY"; rc=$?
 is "an unreadable directory under target/ does not fail the copy" 0 "$rc"
 [ -f "$COPY/c/src/main.rs" ] && [ ! -e "$COPY/target" ]; is "the copy holds the sources and no build output" 0 "$?"
