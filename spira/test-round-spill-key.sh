@@ -98,7 +98,7 @@ is "a later successful launch supersedes an earlier refusal" "" "$(rskp pass)"
 mkdir -p "$TMP/state"
 printf '#!/usr/bin/env bash\n[ "$1" = template-check ] && exit "${TC_RC:-0}"\nsleep 30\n' > "$TMP/stub/round-vm"
 rskd() {
-    tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_ROUND_VM_SPILL=ec2-only SPIRA_ROUND_VM_STATE_DIR="$TMP/state" \
+    tl_config SPIRA_RUN="$TMP/run" SPIRA_CONCIERGE_INBOX="$INBOX" SPIRA_ROUND_VM_SPILL=ec2-only SPIRA_ROUND_VM_STATE_DIR="$TMP/state" SPIRA_ROUND_VM_EC2_LAUNCH_WINDOW=3600 \
         SPIRA_ROUND_VM_EC2_TAILSCALE_KEY_FILE="$KEY" SPIRA_ROUND_VM_EC2_KEY_WARN_DAYS=9 SPIRA_ROUND_VM_EC2_PROBE_DEADLINE=1
     env -i PATH="$TMP/stub:$PATH" HOME="$TMP" SPIRA_TOML="$SPIRA_TOML" bash "$HERE/round-spill-key.sh" "$@" 2>&1
 }
