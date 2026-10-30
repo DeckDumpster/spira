@@ -320,7 +320,7 @@
       "id": 9,
       "type": "timeseries",
       "title": "bead cycle time by segment, median per day",
-      "description": "gate_wait: submitted until the gate holds its tree and starts; gate_run: start until the verdict. A bead whose gate recorded no start counts all as gate_wait.",
+      "description": "gate_wait: submitted until the gate holds its tree and starts; gate_run: start until the verdict. A bead whose gate recorded no start counts all as gate_wait; the older gate series is the sum of the two.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"
@@ -354,7 +354,7 @@
       "id": 10,
       "type": "timeseries",
       "title": "bead cycle time by segment, p90 per day",
-      "description": "gate_wait: submitted until the gate holds its tree and starts; gate_run: start until the verdict. A bead whose gate recorded no start counts all as gate_wait.",
+      "description": "gate_wait: submitted until the gate holds its tree and starts; gate_run: start until the verdict. A bead whose gate recorded no start counts all as gate_wait; the older gate series is the sum of the two.",
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_VM}"

@@ -186,6 +186,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_gate_start_kind_the_gate_sends_is_one_the_fact_verb_accepts() {
+        assert_eq!(GATE_START, "gate-start");
+        assert!(KINDS.contains(&GATE_START));
+        assert!(insert_sql("sp-a", GATE_START, "", "gate", 5).contains("'fact', 'sp-a', 'gate-start'"));
+    }
+
+    #[test]
     fn the_insert_is_an_applied_fact_with_the_cause_as_evidence() {
         let q = insert_sql("sp-a", "requeued", "gate-red", "harness", 1_000_000_000);
         assert!(q.contains("'fact', 'sp-a', 'requeued'"), "{q}");
