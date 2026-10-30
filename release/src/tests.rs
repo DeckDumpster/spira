@@ -1822,7 +1822,7 @@ fn cfg_text(w: &World) -> String {
     fs::read_to_string(w.cfg.toml_spec().unwrap()).unwrap()
 }
 
-const DELTA_BOTH: &str = "removed = [\"spira.old_key\"]\n[added]\n\"spira.new_key\" = 300\n";
+const DELTA_BOTH: &str = "removed = [\"spira.old_key\"]\n[spira]\nnew_key = 300\n";
 
 #[test]
 fn a_release_that_adds_and_drops_a_key_activates_over_the_other_with_no_hand_edit() {
@@ -1949,7 +1949,7 @@ fn a_renamed_delta_moves_the_persona_table_roster_and_lane_at_activation() {
 
 #[test]
 fn a_renamed_config_key_carries_the_operator_value_and_leaves_no_retired_key() {
-    let w = World::with_git(delta_git("[renamed]\n\"spira.max_live_old\" = \"spira.max_live_new\"\n\n[added]\n\"spira.max_live_new\" = 2\n"));
+    let w = World::with_git(delta_git("[renamed]\n\"spira.max_live_old\" = \"spira.max_live_new\"\n\n[spira]\nmax_live_new = 2\n"));
     file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\nmax_live_old = 7\n");
     build_with_schema(&w, A, &["max_live_old"], &["max_live_new"]);
     build_with_schema(&w, B, &["max_live_new"], &[]);
@@ -1968,7 +1968,7 @@ fn a_renamed_config_key_carries_the_operator_value_and_leaves_no_retired_key() {
 
 #[test]
 fn a_renamed_config_key_the_operator_never_set_takes_the_declared_default() {
-    let w = World::with_git(delta_git("[renamed]\n\"spira.max_live_old\" = \"spira.max_live_new\"\n\n[added]\n\"spira.max_live_new\" = 2\n"));
+    let w = World::with_git(delta_git("[renamed]\n\"spira.max_live_old\" = \"spira.max_live_new\"\n\n[spira]\nmax_live_new = 2\n"));
     file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\n");
     build_with_schema(&w, A, &[], &["max_live_new"]);
     build_with_schema(&w, B, &["max_live_new"], &[]);
@@ -1988,7 +1988,7 @@ fn a_rename_mixing_a_persona_and_a_config_key_is_refused() {
 #[test]
 fn verify_pre_activate_sees_the_config_with_the_delta_applied_and_leaves_the_files_alone() {
     let probe = "#!/bin/sh\nPATH=/usr/bin:/bin\ncat $(echo \"$SPIRA_TOML\" | tr : ' ') | grep -q new_key || { echo 'FAIL units: new_key is not declared' >&2; exit 1; }\nexit 0\n";
-    let mut g = delta_git("[added]\n\"spira.new_key\" = 300\n");
+    let mut g = delta_git("[spira]\nnew_key = 300\n");
     g.extra.push(("spira/pre-activate.sh".into(), probe.into(), true));
     let w = World::with_git(g);
     let before = "[spira]\nid_prefix = \"sp\"\nold_key = 1\n";
@@ -2011,7 +2011,7 @@ fn verify_pre_activate_sees_the_config_with_the_delta_applied_and_leaves_the_fil
 
 #[test]
 fn config_delta_that_leaves_a_required_key_unset_refuses_naming_it_and_changes_nothing() {
-    let w = World::with_git(delta_git("[added]\n\"spira.other\" = 1\n"));
+    let w = World::with_git(delta_git("[spira]\nother = 1\n"));
     let before = "[spira]\nid_prefix = \"sp\"\nold_key = 1\n";
     file(Path::new(&w.cfg.toml_spec().unwrap()), before);
     build_with_schema(&w, A, &["old_key"], &[]);
@@ -2113,7 +2113,7 @@ fn a_new_required_key_the_config_lacks_refuses_activation_naming_it_and_leaves_c
 
 #[test]
 fn a_new_required_key_the_delta_sets_does_not_refuse_activation() {
-    let mut g = delta_git("[added]\n\"spira.req_key\" = \"/dev/shm/x\"\n");
+    let mut g = delta_git("[spira]\nreq_key = \"/dev/shm/x\"\n");
     g.extra_only.push((B.to_string(), required_key().0, required_key().1));
     let w = World::with_git(g);
     let cfg = Path::new(&w.cfg.toml_spec().unwrap()).to_path_buf();
@@ -2144,7 +2144,7 @@ fn a_failed_switch_puts_the_config_back() {
 
 #[test]
 fn an_added_key_the_operator_already_set_keeps_the_operators_value() {
-    let w = World::with_git(delta_git("[added]\n\"spira.new_key\" = 300\n"));
+    let w = World::with_git(delta_git("[spira]\nnew_key = 300\n"));
     file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\nnew_key = 9\n");
     build_with_schema(&w, B, &["new_key"], &[]);
     let sc = FakeSystemctl::new(w.units());
@@ -2155,7 +2155,7 @@ fn an_added_key_the_operator_already_set_keeps_the_operators_value() {
 
 #[test]
 fn an_added_key_held_as_the_empty_string_takes_the_releases_value() {
-    let w = World::with_git(delta_git("[added]\n\"spira.new_key\" = \"240\"\n"));
+    let w = World::with_git(delta_git("[spira]\nnew_key = \"240\"\n"));
     file(Path::new(&w.cfg.toml_spec().unwrap()), "[spira]\nid_prefix = \"sp\"\nnew_key = \"\"\n");
     build_with_schema(&w, B, &["new_key"], &[]);
     let sc = FakeSystemctl::new(w.units());
@@ -2165,7 +2165,7 @@ fn an_added_key_held_as_the_empty_string_takes_the_releases_value() {
 
 #[test]
 fn a_malformed_config_delta_refuses_the_activation() {
-    for bad in ["[added]\n\"spira.x\" = 1\n[extra]\nk = 1\n", "removed = [\"spira.x\"]\n[added]\n\"spira.x\" = 1\n", "removed = [1]\n", "[added]\n\"spira..x\" = 1\n"] {
+    for bad in ["[added]\n\"spira.x\" = 1\n", "removed = [\"spira.x\"]\n[spira]\nx = 1\n", "removed = [1]\n", "[spira]\n\"\" = 1\n"] {
         assert!(config_delta::Delta::parse(bad).is_err(), "{bad}");
     }
     let w = World::with_git(delta_git("surprise = 1\n"));
@@ -2290,7 +2290,7 @@ fn config_for_a_tree_has_its_delta_applied_and_a_key_without_an_entry_stays_abse
     let spec = w.cfg.toml_spec().unwrap();
     file(Path::new(&spec), "[spira]\nid_prefix = \"sp\"\nold_key = 1\n");
     let tree = w.cfg.releases.join("head-tree");
-    file(&tree.join(config_delta::DELTA_PATH), "[added]\n\"spira.new_key\" = 7\n");
+    file(&tree.join(config_delta::DELTA_PATH), "[spira]\nnew_key = 7\n");
     let (dir, staged) = config_delta::staged_for_tree(&spec, &tree).unwrap().expect("the tree has a delta");
     let text = fs::read_to_string(&staged).unwrap();
     assert!(text.contains("new_key = 7") && !text.contains("other_key"), "{text}");
@@ -2335,7 +2335,7 @@ fn dolt_renders_from_the_install_locations_when_path_omits_it() {
 
 #[test]
 fn build_stages_the_candidates_delta_before_any_release_exists_and_without_one_stages_nothing() {
-    let w = World::with_git(delta_git("[added]\n\"spira.groom_gate_label\" = \"placeholder-gate\"\n"));
+    let w = World::with_git(delta_git("[spira]\ngroom_gate_label = \"placeholder-gate\"\n"));
     let before = "[spira]\nid_prefix = \"sp\"\n";
     let spec = w.cfg.toml_spec().unwrap();
     file(Path::new(&spec), before);
@@ -2566,10 +2566,10 @@ fn a_restart_past_the_units_own_budget_still_fails() {
 
 #[test]
 fn a_delta_naming_a_placeholder_path_is_refused_and_the_shipped_one_is_clean() {
-    let bad = "[added]\n\"spira.lc_snapshot\" = \"/placeholder/run/bead-snapshot.json\"\n";
+    let bad = "[spira]\nlc_snapshot = \"/placeholder/run/bead-snapshot.json\"\n";
     let err = config_delta::Delta::parse(bad).unwrap_err();
     assert!(err.contains("placeholder path"), "{err}");
-    let ok = config_delta::Delta::parse("[added]\n\"spira.lc_snapshot\" = \"/srv/run/bead-snapshot.json\"\n\"spira.groom_gate_label\" = \"placeholder-gate\"\n");
+    let ok = config_delta::Delta::parse("[spira]\nlc_snapshot = \"/srv/run/bead-snapshot.json\"\ngroom_gate_label = \"placeholder-gate\"\n");
     assert!(ok.is_ok(), "{ok:?}");
     let shipped = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../", "spira/config-delta.toml")).unwrap();
     let d = config_delta::Delta::parse(&shipped).unwrap();
@@ -2684,4 +2684,21 @@ fn the_manifest_round_trips_and_the_key_names_tree_and_toolchain() {
     assert_ne!(artifacts::key("t1", TC), artifacts::key("t2", TC));
     assert_ne!(artifacts::key("t1", TC), artifacts::key("t1", "1.100.0 def"));
     assert_eq!(artifacts::toolchain_id("rustc 1.99.0 (abc 2026)\nbinary: rustc\ncommit-hash: deadbeef\nrelease: 1.99.0\nhost: x\n"), "deadbeef 1.99.0");
+}
+
+#[test]
+fn a_delta_value_of_the_wrong_type_is_refused_at_load_naming_the_key_and_file() {
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+    let tmp = TempDir::new("delta-type");
+    let rel = tmp.path().to_path_buf();
+    let spira = rel.join("spira");
+    fs::create_dir_all(&spira).unwrap();
+    for d in ["conf.d", "conf.toml.d", "testlib"] {
+        let _ = std::os::unix::fs::symlink(shipped.join(d), spira.join(d));
+    }
+    fs::write(spira.join("config-delta.toml"), "[spira]\nlocal_backlog_ref_max_age = 3600\n").unwrap();
+    assert!(config_delta::load(&rel).unwrap().is_some(), "control: the integer form loads");
+    fs::write(spira.join("config-delta.toml"), "[spira]\nlocal_backlog_ref_max_age = \"3600\"\n").unwrap();
+    let e = config_delta::load(&rel).unwrap_err();
+    assert!(e.contains("config-delta.toml") && e.contains("spira.local_backlog_ref_max_age") && e.contains("u32"), "{e}");
 }

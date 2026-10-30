@@ -180,9 +180,15 @@ in its own tree, `spira/config-delta.toml`:
 
 ```toml
 removed = ["spira.old_key"]
-[added]
-"spira.new_key" = 300
+[spira]
+new_key = 300
 ```
+
+The delta is a fragment of `spira.toml` under the same schema: the tables and keys are written as
+there, merged onto the one source at activation, and loaded by `spira-config`'s typed loader
+over `spira/testlib/complete.toml` in the `config-delta` lint and when the release's delta is
+read, so a value of the wrong type is refused there, naming the key. `removed` and `renamed`
+stay lists because a merge cannot delete a key.
 
 A renamed config key is declared `[renamed]` with `"spira.old" = "spira.new"`, never as removed
 plus added: activation carries the operator's value to the new key and drops the old one, and

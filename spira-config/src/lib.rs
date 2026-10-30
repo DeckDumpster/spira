@@ -137,14 +137,61 @@ pub fn placeholder_paths<'a>(added: impl Iterator<Item = (&'a str, &'a toml::Val
     Ok(())
 }
 
-/// `(added, removed)` key paths a `config-delta.toml` declares: `[added]` table keys and the
-/// `removed` array.
+/// The part of a `config-delta.toml` written in `spira.toml`'s own shape: every top-level table
+/// but `renamed`. `removed` and `renamed` are the two things a merge cannot say.
+pub fn delta_added(text: &str) -> Result<toml::map::Map<String, toml::Value>, String> {
+    let toml::Value::Table(top) = text.parse::<toml::Value>().map_err(|e| e.to_string())? else {
+        return Err("not a TOML table".into());
+    };
+    let mut added = toml::map::Map::new();
+    for (k, v) in top {
+        match (k.as_str(), v) {
+            ("removed", _) | ("renamed", _) => {}
+            ("added", _) => return Err("[added] is gone: write the keys under their spira.toml tables, e.g. [spira] new_key = 300".into()),
+            (_, toml::Value::Table(t)) => {
+                added.insert(k, toml::Value::Table(t));
+            }
+            (other, _) => return Err(format!("unknown or mistyped entry {other:?}: only `removed`, `renamed` and spira.toml tables are allowed")),
+        }
+    }
+    Ok(added)
+}
+
+/// The dotted path and value of every leaf under `t`.
+pub fn leaf_paths(t: &toml::map::Map<String, toml::Value>) -> Vec<(String, toml::Value)> {
+    fn walk(prefix: &str, t: &toml::map::Map<String, toml::Value>, out: &mut Vec<(String, toml::Value)>) {
+        for (k, v) in t {
+            let path = if prefix.is_empty() { k.clone() } else { format!("{prefix}.{k}") };
+            match v {
+                toml::Value::Table(inner) => walk(&path, inner, out),
+                v => out.push((path, v.clone())),
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk("", t, &mut out);
+    out
+}
+
+/// Loads `added` merged over `<home>/testlib/complete.toml` with the typed loader and the
+/// registry of `<home>`: a value the key's type refuses is an error naming the key.
+pub fn check_delta(home: &Path, added: &toml::map::Map<String, toml::Value>) -> Result<(), String> {
+    let fixture = home.join("testlib/complete.toml");
+    let text = std::fs::read_to_string(&fixture).map_err(|e| format!("{}: {e}", fixture.display()))?;
+    let toml::Value::Table(mut merged) = text.parse::<toml::Value>().map_err(|e| format!("{}: {e}", fixture.display()))? else {
+        return Err(format!("{}: not a TOML table", fixture.display()));
+    };
+    union_into(&mut merged, added.clone());
+    validate_value(toml::Value::Table(merged), &registry::Registry::load(home)?).map(|_| ())
+}
+
+/// `(added, removed)` key paths a `config-delta.toml` declares: the leaves of its
+/// `spira.toml`-shaped tables and the `removed` array.
 pub fn parse_config_delta(text: &str) -> Result<(Vec<String>, Vec<String>), String> {
     let v: toml::Value = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
-    if let Some(t) = v.get("added").and_then(|a| a.as_table()) {
-        placeholder_paths(t.iter().map(|(k, v)| (k.as_str(), v)))?;
-    }
-    let added = v.get("added").and_then(|a| a.as_table()).map(|t| t.keys().cloned().collect()).unwrap_or_default();
+    let leaves = leaf_paths(&delta_added(text)?);
+    placeholder_paths(leaves.iter().map(|(k, v)| (k.as_str(), v)))?;
+    let added = leaves.into_iter().map(|(k, _)| k).collect();
     let removed = v
         .get("removed")
         .and_then(|a| a.as_array())

@@ -940,7 +940,7 @@ checked <n> packages`.
 `spira/config-delta.toml`; a key added or dropped without an entry passes every fixture (they
 carry the key) and fails at activation. The keys are the file names in `spira/conf.d` and
 `spira/conf.toml.d`, as `spira.<lowercased name without SPIRA_>`. Against the base's listing,
-an added key must be an `[added]` entry and a dropped one listed under `removed`. One finding
+an added key must have an entry under its `spira.toml` table and a dropped one be listed under `removed`; the delta is merged over `spira/testlib/complete.toml` and loaded by the typed loader, so a value of the wrong type is a finding naming the key. One finding
 per key, path `spira/config-delta.toml`.
 
 **Refuses:** no base, no registry keys here or at the base, an unparseable delta.

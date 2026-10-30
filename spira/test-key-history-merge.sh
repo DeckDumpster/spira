@@ -42,11 +42,11 @@ t2="$(mktemp -d)"
 g2() { git -C "$t2" -c user.email=t@t -c user.name=t -c merge.conflictstyle=merge "$@"; }
 git init -q -b main "$t2"
 mkdir -p "$t2/spira"
-printf '[added]\n"spira.alpha" = 1\n' > "$t2/$D"
+printf '[spira]\nalpha = 1\n' > "$t2/$D"
 g2 add -A; g2 commit -q -m base
 for k in one two; do
   g2 checkout -q -b "$k" main
-  echo "\"spira.key_$k\" = 1" >> "$t2/$D"
+  echo "key_$k = 1" >> "$t2/$D"
   g2 commit -q -am "add $k"
 done
 g2 checkout -q one
@@ -58,8 +58,8 @@ g2 add .gitattributes; g2 commit -q -m attrs
 g2 merge -q --no-edit two >/dev/null 2>&1; rc=$?
 is "with the repository's .gitattributes, delta additions merge cleanly" 0 "$rc"
 merged="$(g2 show HEAD:$D 2>/dev/null)"
-want "the delta merge keeps one's key" 'spira.key_one' "$merged"
-want "the delta merge keeps two's key" 'spira.key_two' "$merged"
+want "the delta merge keeps one's key" 'key_one' "$merged"
+want "the delta merge keeps two's key" 'key_two' "$merged"
 rm -rf "$t2"
 
 tl_summary
