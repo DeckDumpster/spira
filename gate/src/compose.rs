@@ -197,8 +197,8 @@ pub struct Forces {
 }
 
 /// `gate_mode = fences` in force and nothing forcing the whole sequence: the trial runs the
-/// fences and the build fence only — the gate string without its suites step, no unit
-/// phases, no re-entry suites. The engine reads this before the verdict key, since the
+/// fences, the build fence and the unit tests of the crates a branch touches — the gate string
+/// without its suites step. The engine reads this before the verdict key, since the
 /// string it hashes is the one that runs.
 pub fn fences_only(mode: GateMode, forces: &Forces) -> bool {
     mode == GateMode::Fences && !forces.gate_all
@@ -218,10 +218,15 @@ pub fn compose(
     if forces.gate_all {
         return suites("gate-all");
     }
-    // Fences mode asks nothing of the touched set: a script, a crate or a workspace input all
-    // run the fences and the build fence, and the full-suite round is the test gate.
+    // Fences mode: the fences and the build fence always run; a branch that touches crates also
+    // runs those crates' unit tests (and their dependents'), so a broken unit test is red at the
+    // gate rather than in a round. What unit mode would answer with suites or with every crate
+    // (a script, a workspace input, no metadata) stays fences-only: the full-suite round tests it.
     if fences_only(mode, forces) {
-        return Composition::Fences;
+        return match compose(GateMode::Unit, forces, changed, members) {
+            Composition::Unit { touched, crates } if touched.iter().all(|t| t != "*") => Composition::Unit { touched, crates },
+            _ => Composition::Fences,
+        };
     }
     let members = match members {
         Ok(m) => m,
@@ -1006,13 +1011,16 @@ mod tests {
     }
 
     #[test]
-    fn fences_mode_composes_fences_whatever_is_touched_and_needs_no_graph() {
+    fn fences_mode_composes_unit_tests_for_touched_crates_and_fences_for_the_rest() {
         let w = ws();
+        // A touched crate runs its (and its dependents') unit tests; what unit mode would answer
+        // with suites or with every crate stays fences-only (the round tests it).
+        assert!(matches!(compose(GateMode::Fences, &Forces::default(), &ch(&["gate/src/x.rs"]), Ok(&w)), Composition::Unit { .. }));
+        // A unit file is read by its reader crates: their tests run, as in unit mode.
+        assert!(matches!(compose(GateMode::Fences, &Forces::default(), &ch(&["systemd/a.service"]), Ok(&w)), Composition::Unit { .. }));
         for paths in [
-            &["gate/src/x.rs"][..],
-            &["Cargo.lock"],
+            &["Cargo.lock"][..],
             &["spira/lib.sh", "gate/src/x.rs"],
-            &["systemd/a.service"],
             &["docs/a.md"],
             &[],
         ] {
