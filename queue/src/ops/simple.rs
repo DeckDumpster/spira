@@ -174,12 +174,15 @@ fn checks_proven(
 ) -> bool {
     use spira_config::proof;
     let mut notes = Vec::new();
+    let mut failed = Vec::new();
+    let mut unverified = Vec::new();
     for check in proof::unproven(run, id, tip) {
         if super::round::ROUND_ONLY_STEPS.contains(&check.as_str()) || check.starts_with("fence-") {
             notes.push(format!("{check} has no green round recorded at {tip}; it passes only in a round that contains this tip"));
             continue;
         }
-        let (rc, out) = w.scripts.suite_run(&check, tip, repo);
+        let first_check = !proof::recorded(run, id, tip, &check);
+        let (rc, out) = w.scripts.suite_run(&check, tip, repo, first_check);
         if let Err(e) = proof::record_run(run, id, tip, &check, rc, &out) {
             w.err(format!(
                 "queue.sh {verb}: cannot record the run of {check}: {e} — refused"
@@ -187,20 +190,32 @@ fn checks_proven(
             return false;
         }
         if rc != 0 {
-            notes.push(format!(
-                "{check} failed at {tip} (rc={rc}): {}",
-                out.lines()
-                    .rev()
-                    .map(str::trim)
-                    .find(|l| !l.is_empty())
-                    .unwrap_or("no output")
-            ));
+            let last = out
+                .lines()
+                .rev()
+                .map(str::trim)
+                .find(|l| !l.is_empty())
+                .unwrap_or("no output");
+            if out.lines().any(|l| l.starts_with("VERDICT RED ")) {
+                failed.push(format!("{check} failed at {tip} (rc={rc}): {last}"));
+            } else {
+                unverified.push(format!("{check} not verified at {tip} (rc={rc}): {last}"));
+            }
         }
     }
-    if notes.is_empty() {
+    if notes.is_empty() && failed.is_empty() && unverified.is_empty() {
         return true;
     }
-    w.err(format!("queue.sh {verb}: {id} was ejected for failing checks that still do not pass at {tip} — refused:\n  {}", notes.join("\n  ")));
+    if !failed.is_empty() {
+        notes.extend(failed);
+        w.err(format!("queue.sh {verb}: {id} was ejected for failing checks that still do not pass at {tip} — refused:\n  {}", notes.join("\n  ")));
+        if !unverified.is_empty() {
+            w.err(format!("queue.sh {verb}: checks not verified:\n  {}", unverified.join("\n  ")));
+        }
+    } else {
+        notes.extend(unverified);
+        w.err(format!("queue.sh {verb}: {id} was ejected for checks that could not be verified at {tip} — refused:\n  {}", notes.join("\n  ")));
+    }
     false
 }
 

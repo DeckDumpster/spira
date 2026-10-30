@@ -725,6 +725,27 @@ fn a_cached_red_is_refused_until_a_reason_is_given() {
     assert!(v.contains("override_reason=the runner VM was destroyed mid-run"));
 }
 
+#[test]
+fn a_first_check_of_a_tip_runs_its_suite_over_a_cached_red_when_given_a_repeat_reason_flag() {
+    let w = World::new("repeat-flag");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    assert_eq!(w.run(&rt, &b, &["--suites", "test-b.sh", "topic"], "", &w.root), 1);
+    assert_eq!(w.run(&rt, &b, &["--suites", "test-b.sh", "topic"], "", &w.root), 2);
+    assert_eq!(
+        w.run(
+            &rt,
+            &b,
+            &["--repeat-reason", "resubmit check of a new tip", "--suites", "test-b.sh", "topic"],
+            "",
+            &w.root
+        ),
+        1
+    );
+    assert_eq!(b.calls.load(Ordering::SeqCst), 2);
+    assert!(w.has_line(|l| l.contains("repeat allowed — reason: resubmit check of a new tip")));
+}
+
 fn map_repo(w: &mut World) {
     let mut c = super::RunConfig::default();
     c.repo.insert(

@@ -807,6 +807,19 @@ impl Lib for RealLib {
 
 // -------------------------------------------------------------------------------- scripts
 
+pub const RESUBMIT_CHECK_REASON: &str = "resubmit check of a new tip, not a retry";
+
+/// The first resubmit check of a tip is not a retry of the red that ejected the bead; a second
+/// check of the same tip is, and keeps testenv's repeat guard.
+fn suite_run_command(check: &str, tip: &str, repo: &str, first_check: bool) -> Command {
+    let mut c = Command::new(spira_config::release_env::tool("testenv"));
+    if first_check {
+        c.args(["--repeat-reason", RESUBMIT_CHECK_REASON]);
+    }
+    c.args(["--suites", check, tip, repo]);
+    c
+}
+
 pub struct RealScripts {
     pub home: PathBuf,
 }
@@ -820,11 +833,8 @@ impl Scripts for RealScripts {
         }
         run_combined(c.arg(tip).arg(repo))
     }
-    fn suite_run(&self, check: &str, tip: &str, repo: &str) -> (i32, String) {
-        run_combined(
-            Command::new(spira_config::release_env::tool("testenv"))
-                .args(["--suites", check, tip, repo]),
-        )
+    fn suite_run(&self, check: &str, tip: &str, repo: &str, first_check: bool) -> (i32, String) {
+        run_combined(&mut suite_run_command(check, tip, repo, first_check))
     }
     fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str) -> (i32, String) {
         run_combined(
@@ -1971,6 +1981,20 @@ impl Emit for StdEmit {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_resubmit_suite_check_passes_testenv_a_repeat_reason_flag() {
+        let args = |first| -> Vec<String> {
+            suite_run_command("test-x.sh", "t", "r", first)
+                .get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect()
+        };
+        let first = args(true);
+        let at = first.iter().position(|a| a == "--repeat-reason").unwrap();
+        assert!(first[at + 1].chars().count() >= 10);
+        assert!(!args(false).iter().any(|a| a == "--repeat-reason"));
+    }
 
     #[test]
     fn the_on_red_hook_survives_a_replaced_binary_and_refuses_a_spaced_path() {

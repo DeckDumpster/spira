@@ -3,7 +3,7 @@
 
 use crate::record::Mode;
 
-pub const USAGE: &str = "usage: testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--artifacts <dir>] [--deadline <secs>] [--report [N]] <branch> [<repo-name>]";
+pub const USAGE: &str = "usage: testenv [--mode parallel|serial] [--suites <list|->] [--profile <p>] [--with-bins] [--artifacts <dir>] [--deadline <secs>] [--repeat-reason <why>] [--report [N]] <branch> [<repo-name>]";
 
 /// Where the explicit suite list comes from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +24,9 @@ pub struct RunArgs {
     /// `--artifacts DIR`: test these prebuilt executables, build nothing (DESIGN.md D8).
     /// As given; relative paths resolve against the caller's directory.
     pub artifacts: Option<String>,
+    /// `--repeat-reason WHY`: a first check of a tip is not a retry of a cached red; the
+    /// argument form of `SPIRA_VERDICT_REPEAT_CONSIDERED`, which it outranks.
+    pub repeat_reason: Option<String>,
     pub branch: String,
     pub repo: Option<String>,
 }
@@ -50,6 +53,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
     let mut report: Option<usize> = None;
     let mut deadline: Option<u64> = None;
     let mut artifacts: Option<String> = None;
+    let mut repeat_reason: Option<String> = None;
     let mut i = 0;
     let parse_deadline = |v: &str| -> Result<u64, UsageError> {
         v.parse::<u64>()
@@ -71,7 +75,8 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
     while i < args.len() {
         let a = args[i].as_str();
         match a {
-            "--mode" | "--suites" | "--profile" | "--deadline" | "--artifacts" => {
+            "--mode" | "--suites" | "--profile" | "--deadline" | "--artifacts"
+            | "--repeat-reason" => {
                 let v = args
                     .get(i + 1)
                     .cloned()
@@ -81,6 +86,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
                     "--suites" => set_suites(&mut suites, v)?,
                     "--deadline" => deadline = Some(parse_deadline(&v)?),
                     "--artifacts" => artifacts = Some(v),
+                    "--repeat-reason" => repeat_reason = Some(v),
                     _ => profile = Some(v),
                 }
                 i += 2;
@@ -199,6 +205,7 @@ pub fn parse(args: &[String]) -> Result<Invocation, UsageError> {
         with_bins,
         deadline,
         artifacts,
+        repeat_reason,
         branch,
         repo,
     }))
@@ -216,6 +223,15 @@ mod tests {
             Invocation::Run(r) => r,
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn repeat_reason_is_taken_from_its_flag() {
+        assert_eq!(
+            run(&["--repeat-reason", "first check of this tip", "b"]).repeat_reason.as_deref(),
+            Some("first check of this tip")
+        );
+        assert_eq!(run(&["b"]).repeat_reason, None);
     }
 
     #[test]

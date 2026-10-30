@@ -4329,6 +4329,67 @@ fn a_resubmit_is_refused_naming_an_ejected_suite_that_does_not_pass_at_the_new_t
 }
 
 #[test]
+fn a_resubmit_check_that_did_not_run_is_reported_not_verified_never_as_still_failing() {
+    let t = rework_world(&["manual"]);
+    spira_config::proof::record_failing(&proof_run(&t), "sp-a", &["test-x.sh".to_string()])
+        .unwrap();
+    t.scripts.suite_rc.borrow_mut().insert("test-x.sh".into(), 2);
+    let tip_arg = format!("--tip={T_FIX}");
+    let args = [
+        "resubmit",
+        "sp-a",
+        &tip_arg,
+        "--by=concierge",
+        "--reason=hand-built fix",
+        "--evidence=npm test 1/0",
+        &ev_tip(),
+    ];
+    assert_eq!(t.run(&args), 1);
+    assert!(t.err().contains("test-x.sh not verified at"), "{}", t.err());
+    assert!(!t.err().contains("still do not pass"), "{}", t.err());
+    t.scripts.suite_rc.borrow_mut().insert("test-x.sh".into(), 5);
+    assert_eq!(t.run(&args), 1);
+    assert!(!t.err().contains("still do not pass"), "{}", t.err());
+    t.scripts.suite_rc.borrow_mut().insert("test-x.sh".into(), 1);
+    assert_eq!(t.run(&args), 1);
+    assert!(!t.err().contains("still do not pass"), "a rc=1 FAULT is not a RED: {}", t.err());
+    let runs: Vec<String> = t
+        .scripts
+        .calls
+        .borrow()
+        .iter()
+        .filter(|c| c.starts_with("suite_run test-x.sh"))
+        .cloned()
+        .collect();
+    assert!(runs[0].ends_with("first=true"), "{runs:?}");
+    assert!(runs[1..].iter().all(|c| c.ends_with("first=false")), "{runs:?}");
+}
+
+#[test]
+fn a_resubmit_runs_each_ejected_suite_as_a_first_check_of_the_new_tip_and_admits_it_when_it_passes() {
+    let t = rework_world(&["manual"]);
+    spira_config::proof::record_failing(&proof_run(&t), "sp-a", &["test-x.sh".to_string()])
+        .unwrap();
+    let tip_arg = format!("--tip={T_FIX}");
+    let args = [
+        "resubmit",
+        "sp-a",
+        &tip_arg,
+        "--by=concierge",
+        "--reason=hand-built fix",
+        "--evidence=npm test 1/0",
+        &ev_tip(),
+    ];
+    assert_eq!(t.run(&args), 0, "{}", t.err());
+    assert!(t
+        .scripts
+        .calls
+        .borrow()
+        .iter()
+        .any(|c| c == &format!("suite_run test-x.sh {T_FIX} spira first=true")));
+}
+
+#[test]
 fn an_eject_red_on_unit_tests_records_the_step_as_the_requirement() {
     let t = round_world();
     assert_eq!(

@@ -437,6 +437,7 @@ struct FScripts {
     /// What `testenv lint` answers by tip (absent = pass); `verify` answers only for recorded tips.
     lint_red: RefCell<BTreeMap<String, String>>,
     suite_red: RefCell<Vec<String>>,
+    suite_rc: RefCell<BTreeMap<String, i32>>,
     /// Set once `release activate` ran; the store's fake reads it to begin its outage.
     activated: std::rc::Rc<Cell<bool>>,
     /// `release <sub>` exit status by subcommand (absent = 0), and the stderr line it prints.
@@ -494,12 +495,19 @@ impl Scripts for FScripts {
             None => (0, String::new()),
         }
     }
-    fn suite_run(&self, check: &str, tip: &str, repo: &str) -> (i32, String) {
+    fn suite_run(&self, check: &str, tip: &str, repo: &str, first_check: bool) -> (i32, String) {
         self.calls
             .borrow_mut()
-            .push(format!("suite_run {check} {tip} {repo}"));
+            .push(format!("suite_run {check} {tip} {repo} first={first_check}"));
+        if let Some(rc) = self.suite_rc.borrow().get(check) {
+            return (*rc, if *rc == 5 {
+                    "VERDICT EMPTY rc=5 ran=0 skipped=1".to_string()
+                } else {
+                    format!("VERDICT FAULT rc={rc} ran=0 reason=preflight")
+                });
+        }
         if self.suite_red.borrow().iter().any(|c| c == check) {
-            (1, format!("{check}: 2 failed"))
+            (1, format!("{check}: 2 failed\nVERDICT RED ran=1 red={check}"))
         } else {
             (0, format!("{check}: all passed"))
         }
