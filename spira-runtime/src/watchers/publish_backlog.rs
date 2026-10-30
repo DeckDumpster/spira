@@ -93,7 +93,7 @@ impl PublishBacklog {
     }
 
     fn carry(view: &Projection, stream: &StreamKey) -> Carry {
-        view.events(stream).iter().rev().find(|e| e.kind.tag == STATE).and_then(|e| serde_json::from_str(&e.kind.body).ok()).unwrap_or_default()
+        super::carried(view, stream, STATE)
     }
 }
 

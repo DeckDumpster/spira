@@ -744,10 +744,6 @@ mod tests {
                 && a.get(1).map(String::as_str) == Some("--install")));
     }
 
-    /// sp-3azqi: a suite whose podman exec lost its exit status (rc 255, the exact
-    /// conmon exit-file-wait message, full passing TAP output ahead of it — exactly the
-    /// shape the VM certification run hit for test-strand-reclaim-n.sh) records as Fault,
-    /// never Red, and never blocks or quarantines like an ordinary suite defect would.
     #[test]
     fn tap_json_carries_a_duration_for_every_case() {
         let tmp = tmpdir("tapms");
@@ -760,6 +756,10 @@ mod tests {
         assert_eq!(tap.cases.iter().map(|c| c.ms).collect::<Vec<_>>(), vec![Some(4), Some(0), Some(1003)]);
     }
 
+    /// sp-3azqi: a suite whose podman exec lost its exit status (rc 255, the exact
+    /// conmon exit-file-wait message, full passing TAP output ahead of it — exactly the
+    /// shape the VM certification run hit for test-strand-reclaim-n.sh) records as Fault,
+    /// never Red, and never blocks or quarantines like an ordinary suite defect would.
     #[test]
     fn podman_exec_wait_timeout_records_fault_not_red() {
         let rt = FakeRuntime::new();
