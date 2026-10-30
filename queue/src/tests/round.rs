@@ -4329,6 +4329,30 @@ fn a_resubmit_is_refused_naming_an_ejected_suite_that_does_not_pass_at_the_new_t
 }
 
 #[test]
+fn a_resubmit_check_that_did_not_run_is_reported_not_verified_never_as_still_failing() {
+    let t = rework_world(&["manual"]);
+    spira_config::proof::record_failing(&proof_run(&t), "sp-a", &["test-x.sh".to_string()])
+        .unwrap();
+    t.scripts.suite_rc.borrow_mut().insert("test-x.sh".into(), 2);
+    let tip_arg = format!("--tip={T_FIX}");
+    let args = [
+        "resubmit",
+        "sp-a",
+        &tip_arg,
+        "--by=concierge",
+        "--reason=hand-built fix",
+        "--evidence=npm test 1/0",
+        &ev_tip(),
+    ];
+    assert_eq!(t.run(&args), 1);
+    assert!(t.err().contains("test-x.sh not verified at"), "{}", t.err());
+    assert!(!t.err().contains("still do not pass"), "{}", t.err());
+    t.scripts.suite_rc.borrow_mut().insert("test-x.sh".into(), 5);
+    assert_eq!(t.run(&args), 1);
+    assert!(!t.err().contains("still do not pass"), "{}", t.err());
+}
+
+#[test]
 fn an_eject_red_on_unit_tests_records_the_step_as_the_requirement() {
     let t = round_world();
     assert_eq!(

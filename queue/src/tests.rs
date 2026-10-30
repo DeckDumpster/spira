@@ -437,6 +437,7 @@ struct FScripts {
     /// What `testenv lint` answers by tip (absent = pass); `verify` answers only for recorded tips.
     lint_red: RefCell<BTreeMap<String, String>>,
     suite_red: RefCell<Vec<String>>,
+    suite_rc: RefCell<BTreeMap<String, i32>>,
     /// Set once `release activate` ran; the store's fake reads it to begin its outage.
     activated: std::rc::Rc<Cell<bool>>,
     /// `release <sub>` exit status by subcommand (absent = 0), and the stderr line it prints.
@@ -498,6 +499,9 @@ impl Scripts for FScripts {
         self.calls
             .borrow_mut()
             .push(format!("suite_run {check} {tip} {repo}"));
+        if let Some(rc) = self.suite_rc.borrow().get(check) {
+            return (*rc, format!("VERDICT FAULT rc={rc} ran=0 reason=repeat-refused"));
+        }
         if self.suite_red.borrow().iter().any(|c| c == check) {
             (1, format!("{check}: 2 failed"))
         } else {
