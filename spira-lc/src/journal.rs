@@ -367,6 +367,14 @@ mod tests {
     }
 
     #[test]
+    fn the_dolt_suite_explains_the_statements_the_ops_send() {
+        let suite = include_str!("../tests/journal_dolt.rs");
+        for sql in [stream_sql("s0", 100000, 1000), open_effects_sql()] {
+            assert!(suite.contains(&format!("\"{sql}\"")), "tests/journal_dolt.rs must EXPLAIN exactly: {sql}");
+        }
+    }
+
+    #[test]
     fn a_dropped_connection_is_cannot_tell_and_a_bad_request_is_refused() {
         let conn = Conn::unreachable();
         let go = |v: &[&str]| dispatch(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>(), &conn);

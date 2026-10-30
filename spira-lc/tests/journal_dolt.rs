@@ -348,5 +348,6 @@ fn the_stream_and_open_effect_queries_seek_the_0034_indexes() {
     assert_eq!(f.sql_as_root(&format!("USE spira_lifecycle;\n{migration}")).0, 0);
     let (tail, open) = (dolt(&format!("EXPLAIN FORMAT=TREE {STREAM_TAIL}")), dolt(&format!("EXPLAIN FORMAT=TREE {OPEN_EFFECTS}")));
     assert!(indexed(&tail, stream_idx), "the stream tail walks the (stream, seq) index: {tail}");
+    assert!(!tail.contains("Sort"), "the newest-first LIMIT is served in index order, not sorted: {tail}");
     assert!(indexed(&open, cause_idx), "each open-effects probe seeks the (cause, kind_tag) index: {open}");
 }
