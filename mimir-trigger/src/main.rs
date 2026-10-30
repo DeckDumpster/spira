@@ -158,7 +158,7 @@ fn main() {
         }
         Some("open-trigger-count") => {
             let labels = sub_args.get(1).cloned().unwrap_or_default();
-            let caller = sub_args.get(2).filter(|c| !c.is_empty()).cloned().unwrap_or_else(|| "mimir-trigger".to_string());
+            let caller = sub_args.get(2).filter(|c| !c.is_empty()).cloned().unwrap_or_else(|| env!("CARGO_PKG_NAME").to_string());
             match world.open_trigger_count(&labels) {
                 Ok(n) => {
                     println!("{n}");
