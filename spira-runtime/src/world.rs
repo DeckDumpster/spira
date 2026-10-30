@@ -6,7 +6,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use runtime::socket::lc_call;
+use runtime::socket::{lc_call, lc_call_within};
 use spira_config::nonwork::{status_args, Kind, Which};
 use serde_json::Value;
 
@@ -23,6 +23,8 @@ use crate::watchers::publish_backlog::{self, Read};
 use crate::watchers::round_duty::{RoundState, Snapshot};
 
 const STORE_ATTEMPTS: u32 = 3;
+// batch-job: the verb's own 8s bound for a forge fetch, plus a second
+const UNPUBLISHED_WAIT: std::time::Duration = std::time::Duration::from_secs(9);
 const STORE_BACKOFF: std::time::Duration = std::time::Duration::from_millis(250);
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -37,7 +39,6 @@ pub struct World {
     pub mail: PathBuf,
     pub ask_label: String,
     pub wiki: PathBuf,
-    pub publish_remote: String,
 }
 
 struct MapRow {
@@ -60,22 +61,6 @@ fn map_rows(text: &str) -> Vec<MapRow> {
 fn lane_stopped(run_dir: &Path, repo: &str, lane: &str) -> bool {
     let Ok(text) = fs::read_to_string(run_dir.join("scoped-stops").join(format!("repo-{repo}.json"))) else { return false };
     serde_json::from_str::<Value>(&text).ok().and_then(|v| v["lanes"].as_array().map(|a| a.iter().any(|l| l == lane))).unwrap_or(false)
-}
-
-fn git_ref(git: &Path, name: &str) -> Option<String> {
-    let sha = |s: &str| (s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())).then(|| s.to_string());
-    if let Some(s) = fs::read_to_string(git.join(name)).ok().and_then(|t| sha(t.trim())) {
-        return Some(s);
-    }
-    fs::read_to_string(git.join("packed-refs")).ok()?.lines().find_map(|l| l.strip_suffix(name).and_then(|h| sha(h.trim_end())))
-}
-
-/// (new sha, unix seconds) of one reflog line: `old new Name <mail> secs tz<TAB>message`.
-fn reflog_entry(line: &str) -> Option<(&str, u64)> {
-    let head = line.split('\t').next()?;
-    let f: Vec<&str> = head.split_whitespace().collect();
-    let secs = f.get(f.len().checked_sub(2)?)?.parse().ok()?;
-    Some((f.get(1).copied()?, secs))
 }
 
 fn kv_get(text: &str, key: &str) -> Option<String> {
@@ -531,7 +516,7 @@ impl World {
         serde_json::to_string(&Repaired { snapshot, ids }).map_err(|e| e.to_string())
     }
 
-    /// Per queue.local repo, how far the forge trails the landing ref, read from ref files and the landing ref's reflog.
+    /// Per queue.local repo, how far the forge trails the landing ref, as `spira-lc unpublished` measures it.
     pub fn publish_backlog_snapshot(&self) -> Result<String, String> {
         let rows = match fs::read_to_string(&self.repo_map) {
             Ok(t) => map_rows(&t),
@@ -547,34 +532,22 @@ impl World {
             if !git.is_dir() || r.land != "queue.local" {
                 continue;
             }
-            let read = self.unpublished(&git, &r.base).unwrap_or_else(|| Read::Blind("the unpublished range could not be computed".into()));
+            let read = self.unpublished(&r.name).unwrap_or_else(|| Read::Blind("the unpublished range could not be computed".into()));
             repos.push((r.name.clone(), read));
         }
         serde_json::to_string(&publish_backlog::Snapshot { repos }).map_err(|e| e.to_string())
     }
 
-    /// `None` when a tip, or the arrival of the first update past the forge tip, cannot be read. The count is landing-ref
-    /// updates, a lower bound on commits; the forge tip is the last fetched one; the remote is the global publish remote.
-    fn unpublished(&self, git: &Path, base: &str) -> Option<Read> {
-        let remote = self.publish_remote.as_str();
-        if base.is_empty() || remote.is_empty() || remote == "none" {
-            return None;
-        }
-        let is_remote_ref = base.split_once('/').is_some_and(|(r, _)| fs::read_to_string(git.join("config")).is_ok_and(|c| c.contains(&format!("[remote \"{r}\"]"))));
-        if is_remote_ref {
-            return None;
-        }
-        let branch = base.strip_prefix("local/").unwrap_or(base);
-        let forge = git_ref(git, &format!("refs/remotes/{remote}/{branch}"))?;
-        let head = git_ref(git, &format!("refs/heads/{base}"))?;
-        if forge == head {
-            return Some(Read::Measured { count: 0, arrival: None });
-        }
-        let log = fs::read_to_string(git.join("logs/refs/heads").join(base)).ok()?;
-        let entries: Vec<(&str, u64)> = log.lines().filter_map(reflog_entry).collect();
-        let past = entries.iter().rposition(|(new, _)| *new == forge)? + 1;
-        let (_, arrival) = *entries.get(past)?;
-        Some(Read::Measured { count: (entries.len() - past) as u64, arrival: Some(arrival) })
+    /// `None` when the verb cannot measure the range.
+    fn unpublished(&self, name: &str) -> Option<Read> {
+        let out = lc_call_within(&self.lc_socket, &["unpublished", name], UNPUBLISHED_WAIT).ok()?;
+        let v: Value = serde_json::from_str(&out).ok()?;
+        let count = v["count"].as_u64()?;
+        let arrival = match (count, &v["oldest_arrival"]) {
+            (0, _) => None,
+            (_, a) => Some(a.as_u64()?),
+        };
+        Some(Read::Measured { count, arrival })
     }
 
     pub fn inbox_append(&self, line: &str) -> Result<String, String> {

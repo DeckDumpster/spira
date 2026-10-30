@@ -46,6 +46,7 @@ mod rows;
 mod serve;
 mod slow;
 mod store_write;
+mod unpublished;
 mod snapshot;
 mod work;
 
@@ -136,6 +137,11 @@ fn main() {
             std::process::exit(emit(&args[1..], ans))
         }
         Some("close-epic") => std::process::exit(emit(&args[1..], callers::close_epic(&args[1..], &mut Live { conn: None }, &mut bd::LiveBd))),
+        Some("unpublished") => {
+            let (code, out) = unpublished::run(&args[1..]);
+            spira_config::lc_call::print_answer(code, &out);
+            std::process::exit(code)
+        }
         Some("content-landed") if args.len() == 4 => {
             std::process::exit(if git_evidence::content_on_base(std::path::Path::new(&args[1]), &args[2], &args[3]) { 0 } else { 1 })
         }
@@ -259,6 +265,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("churn-facts") => churn::cmd_churn_facts(&args[1..], conn),
         Some("mend-watch") => mend_watch::run(&args[1..], conn),
         Some("pause-sweep") => pause_sweep::run(conn),
+        Some("unpublished") => unpublished::run(&args[1..]),
         // The attempt and poison history (facts.rs): appended facts, never a transition.
         Some("journal") => journal::dispatch(&args[1..], conn),
         Some("fact") => facts::cmd_fact(&args[1..], conn),

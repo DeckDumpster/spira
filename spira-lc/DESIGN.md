@@ -55,6 +55,14 @@ through lib.sh's one-line shim until sp-du6dl), in place of the landing pass's o
 non-id; `bd-note <id> <text>` runs `bd note <id> <text>`, refusing an empty note. 0 done · 1 bd failed ·
 2 usage · 3 refused before bd ran. Neither reads or writes `spira_lifecycle`.
 
+**One verb reads a repo's publish backlog.** `unpublished <repo>` fetches the repo's publish
+target (its per-repo `[publish.<name>]`, else the default remote and the land ref's branch), then
+prints `{"forge_tip","landing_tip","count","oldest_arrival"}`: `count` is `rev-list --count`
+of forge..landing, `oldest_arrival` the unix time of the first landing-ref reflog entry that
+contains the oldest unpublished commit (null at 0). A repo that is not queue.local, publishes
+nowhere, whose forge cannot be fetched or whose reflog cannot place the oldest commit is
+refused (2), never answered with a zero. The publish-backlog watcher calls it over the socket.
+
 **There is no switch.** `lifecycle_enforce` once gave every caller verb an off-answer that
 touched nothing; sp-v62vn retired the off mode, so every verb reaches the machine
 (tests/switch.rs proves it with a listener that counts connections). A config or environment

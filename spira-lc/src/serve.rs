@@ -313,6 +313,8 @@ fn request_deadline(argv: &[String]) -> Duration {
         Some("work") if argv.get(2).is_some_and(|v| crate::work::brokers_tool(v)) => TOOL_DEADLINE,
         // batch-job: census's aggregate, bounded at the query deadline.
         Some("work") | Some("facts-query") => crate::db::QUERY_DEADLINE,
+        // batch-job: a fetch from the forge, then git reads, for one repo.
+        Some("unpublished") => crate::unpublished::DEADLINE,
         _ => REQUEST_DEADLINE,
     }
 }
@@ -378,6 +380,15 @@ mod tests {
         (&client).read_to_string(&mut got).unwrap();
         let head: serde_json::Value = serde_json::from_str(got.lines().next().unwrap()).unwrap();
         (got, head["exit_code"].as_i64().unwrap() as i32)
+    }
+
+    #[test]
+    fn unpublished_is_served_without_the_store_and_waits_longer_than_a_store_call() {
+        let (reply, code) = ask(None, "[\"unpublished\"]\n");
+        assert_eq!(code, 2, "{reply}");
+        assert!(reply.contains("unpublished: usage"), "the verb answered, not the store: {reply}");
+        let argv = |v: &str| vec![v.to_string()];
+        assert!(super::request_deadline(&argv("unpublished")) > super::request_deadline(&argv("show")));
     }
 
     #[test]

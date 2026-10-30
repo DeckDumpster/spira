@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
+pub(crate) fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
     let out = spira_config::bounded::bounded("git").arg("-C").arg(repo).args(args).output().ok()?;
     if !out.status.success() {
         return None;

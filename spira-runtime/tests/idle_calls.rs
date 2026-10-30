@@ -111,7 +111,6 @@ fn production() -> Settings {
             "SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS" => "900".into(),
             "SPIRA_LOCAL_BACKLOG_COUNT" => "50".into(),
             "SPIRA_LOCAL_BACKLOG_AGE" => "10800".into(),
-            "SPIRA_PUBLISH_REMOTE" => "origin".into(),
             _ => return Err(k.to_string()),
         })
     };
