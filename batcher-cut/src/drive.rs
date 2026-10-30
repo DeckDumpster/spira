@@ -761,6 +761,19 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_sole_owner_found_after_the_corpus_ended_is_ejected_and_only_its_suites_are_verified() {
+        let mut f = Fake::new(breaks("m2", "test-03.sh"));
+        f.maxpar = 4;
+        f.dur.insert("test-03.sh".into(), 1);
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
+        assert_eq!(f.stopped, 0);
+        assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["test-03.sh".to_string()])]);
+        assert_eq!(f.main_kind[1], (MainKind::Verify, vec!["test-03.sh".into()]));
+        assert!(matches!(end, RoundEnd::Land { .. }));
+    }
+
+    #[test]
     fn a_settled_owner_s_suite_is_rerun_on_the_full_tree_before_it_is_ejected() {
         let mut f = Fake::new(breaks("m2", "test-00.sh"));
         f.maxpar = 4;

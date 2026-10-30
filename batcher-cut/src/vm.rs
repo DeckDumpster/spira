@@ -642,3 +642,24 @@ mod vtime_tests {
         assert_eq!(got, 1_900_000_000);
     }
 }
+
+#[cfg(test)]
+mod clear_results_tests {
+    use super::clear_results;
+    use std::fs;
+
+    #[test]
+    fn a_suite_about_to_rerun_loses_its_old_verdict_and_the_others_keep_theirs() {
+        let tmp = testkit::TempDir::new("clear-results");
+        let d = tmp.path().to_path_buf();
+        let sub = d.join("shard");
+        fs::create_dir_all(&sub).unwrap();
+        for f in ["a.sh.result", "a.sh.out", "b.sh.result"] {
+            fs::write(d.join(f), "red\n").unwrap();
+        }
+        fs::write(sub.join("a.sh.result"), "red\n").unwrap();
+        clear_results(&d, &["a.sh".to_string()]);
+        assert!(!d.join("a.sh.result").exists() && !d.join("a.sh.out").exists() && !sub.join("a.sh.result").exists());
+        assert!(d.join("b.sh.result").exists());
+    }
+}
