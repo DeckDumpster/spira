@@ -37,9 +37,21 @@ pub struct Env {
 
 // ───────────────────────────── write ─────────────────────────────
 
-pub fn write(bd: &dyn Bd, proc: &dyn Proc, env: &Env, key: &str, text: &str) -> Report {
+fn retired_record(bd: &dyn Bd, key: &str) -> Option<shelf::Retired> {
+    shelf::parse_retired(&bd.memories_json()?)?.remove(key)
+}
+
+fn who(rec: &shelf::Retired) -> String {
+    format!("by {} at {}: {}", rec.by, rec.at, rec.reason)
+}
+
+pub fn write(bd: &dyn Bd, proc: &dyn Proc, env: &Env, key: &str, text: &str, revive: bool) -> Report {
     let key = shelf::slugify(key);
     let mut r = Report::ok();
+    let record = retired_record(bd, &key);
+    if let (Some(rec), false) = (&record, revive) {
+        return r.fail(1, format!("{key} was retired {}. Pass --revive to put it back on the shelf.", who(rec)));
+    }
     if text.trim().is_empty() {
         return r.fail(1, "refusing — empty SOP");
     }
@@ -70,6 +82,12 @@ pub fn write(bd: &dyn Bd, proc: &dyn Proc, env: &Env, key: &str, text: &str) -> 
     }
     let words = text.split_whitespace().count();
     r.say(format!("wrote {key} ({words} words)"));
+    if let Some(rec) = record {
+        if !bd.forget(&shelf::retired_key(&key)) {
+            return r.fail(1, format!("wrote {key} but could not remove its retirement record {}", shelf::retired_key(&key)));
+        }
+        r.say(format!("revived {key} (retired {})", who(&rec)));
+    }
     match match_line(text) {
         Some(re) => r.say(format!("  matches: {re}")),
         None => r.say("  no MATCH: line — recall falls back to key tokens".to_string()),
@@ -87,17 +105,31 @@ pub fn show(bd: &dyn Bd, key: &str) -> Report {
             r.say(text.trim_end().to_string());
             r
         }
-        None => r.fail(1, format!("no such SOP: {key}")),
+        None => match retired_record(bd, &key) {
+            Some(rec) => r.fail(1, format!("{key} is retired (by {} at {}): {}", rec.by, rec.at, rec.reason)),
+            None => r.fail(1, format!("no such SOP: {key}")),
+        },
     }
 }
 
 // ───────────────────────────── list ─────────────────────────────
 
-pub fn list(bd: &dyn Bd) -> Report {
+pub fn list(bd: &dyn Bd, retired: bool) -> Report {
     let mut r = Report::ok();
     let Some(raw) = bd.memories_json() else {
         return r.fail(1, "cannot read the shelf (bd unreachable or timed out); refusing to report 0 SOPs".to_string());
     };
+    if retired {
+        let Some(records) = shelf::parse_retired(&raw) else {
+            return r.fail(1, "the shelf did not parse cleanly; refusing to report 0 retired SOPs");
+        };
+        for (k, rec) in &records {
+            let reason: String = rec.reason.chars().take(60).collect();
+            r.say(format!("  {k}  {}  {}  {reason}", rec.at, rec.by));
+        }
+        r.say(format!("{} retired SOP(s)", records.len()));
+        return r;
+    }
     let map = shelf::parse_or_empty(&raw);
     for (k, v) in &map {
         let words = v.split_whitespace().count();
@@ -369,13 +401,39 @@ pub fn ledger_init(ledger_path: &std::path::Path) -> Report {
 
 // ───────────────────────────── retire ─────────────────────────────
 
-pub fn retire(bd: &dyn Bd, key: &str) -> Report {
+pub fn retire(bd: &dyn Bd, clock: &dyn Clock, env: &Env, key: &str, reason: &str) -> Report {
     let key = shelf::slugify(key);
     let mut r = Report::ok();
-    if !bd.forget(&key) {
-        return r.fail(1, format!("no such SOP: {key}"));
+    let reason = reason.trim();
+    if reason.is_empty() {
+        return r.fail(
+            1,
+            "retire needs --reason <why>: a retirement nobody can explain is indistinguishable from a lost runbook",
+        );
     }
-    r.say(format!("retired {key}"));
+    let Some(raw) = bd.memories_json() else {
+        return r.fail(1, "cannot read the shelf; nothing retired");
+    };
+    let Some(live) = shelf::parse(&raw) else {
+        return r.fail(1, "the shelf did not parse cleanly; nothing retired");
+    };
+    let Some(text) = live.get(&key) else {
+        return match shelf::parse_retired(&raw).and_then(|mut m| m.remove(&key)) {
+            Some(rec) => r.fail(1, format!("no such SOP: {key} (already retired {})", who(&rec))),
+            None => r.fail(1, format!("no such SOP: {key}")),
+        };
+    };
+    let (epoch, at) = clock.now();
+    let rec = shelf::Retired { by: env.actor.clone(), at, epoch, reason: reason.to_string(), text: text.clone() };
+    let record_key = shelf::retired_key(&key);
+    if let Err(cause) = bd.remember(&record_key, &rec.to_json()) {
+        return r.fail(1, format!("failed to record the retirement of {key}: {cause}"));
+    }
+    if !bd.forget(&key) {
+        bd.forget(&record_key);
+        return r.fail(1, format!("could not remove {key}; nothing retired"));
+    }
+    r.say(format!("retired {key} by {} at {}: {reason}", rec.by, rec.at));
     r.say(String::new());
     r.say("Retire an SOP the way a statute is retired: remove it. Do not leave it standing".to_string());
     r.say("with a correction attached — that is a stale runbook with a warning label.".to_string());

@@ -125,11 +125,27 @@ is "lint of a clean shelf exits 0" "0" "$rc"
 want "lint reports all valid" "all valid" "$out"
 
 echo
-echo "6. retire removes it"
-out="$(run_sop retire test-disk-full)"; rc=$?
-is "retire exits 0" "0" "$rc"
+echo "6. retire removes it, records why, and guards the slug"
+out="$(run_sop retire test-disk-full 2>&1)"; rc=$?
+is "retire with no reason exits 1" "1" "$rc"
+want "it says a reason is needed" "--reason" "$out"
+out="$(run_sop retire test-disk-full --reason "superseded")"; rc=$?
+is "retire with a reason exits 0" "0" "$rc"
 out="$(run_sop list)"
 nowant "the retired key is gone" "sop-test-disk-full" "$out"
+out="$(run_sop show test-disk-full 2>&1)"; rc=$?
+is "show of a retired slug exits 1" "1" "$rc"
+want "show says retired" "retired" "$out"
+want "show says why" "superseded" "$out"
+out="$(run_sop list --retired)"
+want "list --retired names it" "sop-test-disk-full" "$out"
+out="$(printf '%s' "$GOOD" | run_sop write test-disk-full - 2>&1)"; rc=$?
+is "write over a retired slug is refused" "1" "$rc"
+want "the refusal names --revive" "--revive" "$out"
+out="$(printf '%s' "$GOOD" | run_sop write test-disk-full --revive - 2>&1)"; rc=$?
+is "write --revive succeeds" "0" "$rc"
+out="$(run_sop list --retired)"
+nowant "the record is gone after revive" "sop-test-disk-full" "$out"
 
 echo
 echo "7. synth resolves the WORKTREE root, never the shared checkout it hangs off"

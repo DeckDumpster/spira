@@ -85,7 +85,7 @@ const GOOD: &str = "SYMPTOM: disk is full\nCHECK: df -h\nFIX: clear /tmp\n";
 fn write_refuses_empty_text() {
     let bd = FakeBd::default();
     let proc = FakeProc::default();
-    let r = write(&bd, &proc, &env(), "x", "   ");
+    let r = write(&bd, &proc, &env(), "x", "   ", false);
     assert_eq!(r.code, 1);
     assert!(r.err.iter().any(|l| l.contains("empty SOP")));
 }
@@ -96,7 +96,7 @@ fn write_failure_surfaces_the_cause() {
     *bd.remember_err.borrow_mut() = Some("fence: blocked\nexit=3".to_string());
     let proc = FakeProc::default();
     let text = "SYMPTOM: s\nCHECK: c\nFIX: f\nESCALATE: e\nMATCH: m\nREF: r\n";
-    let r = write(&bd, &proc, &env(), "x", text);
+    let r = write(&bd, &proc, &env(), "x", text, false);
     assert_eq!(r.code, 1);
     assert!(r.err.iter().any(|l| l.contains("fence: blocked") && l.contains("exit=3")), "{:?}", r.err);
 }
@@ -105,7 +105,7 @@ fn write_failure_surfaces_the_cause() {
 fn write_refuses_missing_fields() {
     let bd = FakeBd::default();
     let proc = FakeProc::default();
-    let r = write(&bd, &proc, &env(), "x", "SYMPTOM: only this\n");
+    let r = write(&bd, &proc, &env(), "x", "SYMPTOM: only this\n", false);
     assert_eq!(r.code, 1);
     assert!(r.err.iter().any(|l| l.contains("missing required field: CHECK")));
     assert!(bd.shelf.borrow().is_empty());
@@ -116,7 +116,7 @@ fn write_refuses_operator_infrastructure() {
     let bd = FakeBd::default();
     let proc = FakeProc::default();
     *proc.inventory_hits.borrow_mut() = vec!["FIX: /opt/operator-secrets/whatever".to_string()];
-    let r = write(&bd, &proc, &env(), "x", GOOD);
+    let r = write(&bd, &proc, &env(), "x", GOOD, false);
     assert_eq!(r.code, 1);
     assert!(r.err.iter().any(|l| l.contains("operator infrastructure")));
     assert!(bd.shelf.borrow().is_empty());
@@ -126,7 +126,7 @@ fn write_refuses_operator_infrastructure() {
 fn write_stores_a_clean_sop_and_slugifies_the_key() {
     let bd = FakeBd::default();
     let proc = FakeProc::default();
-    let r = write(&bd, &proc, &env(), "disk-full", GOOD);
+    let r = write(&bd, &proc, &env(), "disk-full", GOOD, false);
     assert_eq!(r.code, 0, "{:?}", r.err);
     assert_eq!(bd.shelf.borrow().get("sop-disk-full").map(String::as_str), Some(GOOD));
     assert!(r.out.iter().any(|l| l.contains("wrote sop-disk-full")));
@@ -136,7 +136,7 @@ fn write_stores_a_clean_sop_and_slugifies_the_key() {
 fn write_is_idempotent_on_the_prefix() {
     let bd = FakeBd::default();
     let proc = FakeProc::default();
-    let r = write(&bd, &proc, &env(), "sop-disk-full", GOOD);
+    let r = write(&bd, &proc, &env(), "sop-disk-full", GOOD, false);
     assert_eq!(r.code, 0);
     assert_eq!(bd.shelf.borrow().len(), 1);
     assert!(bd.shelf.borrow().contains_key("sop-disk-full"));
@@ -158,7 +158,7 @@ fn show_prints_the_text_or_refuses() {
 fn list_counts_and_shows_symptom() {
     let bd = FakeBd::default();
     bd.seed("sop-a", GOOD);
-    let r = list(&bd);
+    let r = list(&bd, false);
     assert!(r.out.iter().any(|l| l.contains("sop-a") && l.contains("disk is full")));
     assert!(r.out.last().unwrap().contains("1 SOP(s) on the shelf"));
 }
@@ -358,15 +358,120 @@ fn ledger_init_creates_once_and_says_present_after() {
 
 // ───────────────────────────── retire / synth / lint / validate ─────────────────────────────
 
-#[test]
-fn retire_removes_and_reports_a_missing_key() {
-    let bd = FakeBd::default();
+fn shelved(bd: &FakeBd) {
     bd.seed("sop-x", GOOD);
-    let r = retire(&bd, "x");
-    assert_eq!(r.code, 0);
+}
+
+fn retire_x(bd: &FakeBd, reason: &str) -> Report {
+    retire(bd, &FakeClock, &env(), "x", reason)
+}
+
+#[test]
+fn retire_without_a_reason_removes_nothing() {
+    let bd = FakeBd::default();
+    shelved(&bd);
+    for reason in ["", "   "] {
+        let r = retire_x(&bd, reason);
+        assert_eq!(r.code, 1);
+        assert!(r.err.iter().any(|l| l.contains("--reason")), "{:?}", r.err);
+    }
+    assert!(bd.shelf.borrow().contains_key("sop-x"));
+    assert!(bd.shelf.borrow().keys().all(|k| !k.starts_with("retired-")));
+}
+
+#[test]
+fn retire_records_actor_time_reason_and_last_text() {
+    let bd = FakeBd::default();
+    shelved(&bd);
+    let r = retire_x(&bd, "superseded");
+    assert_eq!(r.code, 0, "{:?}", r.err);
+    assert_eq!(r.out[0], "retired sop-x by tester at 2026-09-30T00:00:00Z: superseded");
     assert!(!bd.shelf.borrow().contains_key("sop-x"));
-    let r2 = retire(&bd, "x");
-    assert_eq!(r2.code, 1);
+    let raw = bd.memories_json().unwrap();
+    let rec = &shelf::parse_retired(&raw).unwrap()["sop-x"];
+    assert_eq!(
+        (rec.by.as_str(), rec.at.as_str(), rec.epoch, rec.reason.as_str(), rec.text.as_str()),
+        ("tester", "2026-09-30T00:00:00Z", 1_790_812_800, "superseded", GOOD.trim())
+    );
+}
+
+#[test]
+fn a_retired_sop_leaves_every_reader_but_list_retired() {
+    let bd = FakeBd::default();
+    bd.seed("sop-x", "SYMPTOM: s\nCHECK: c\nFIX: f\nMATCH: test\n");
+    bd.seed("sop-y", GOOD);
+    assert!(match_cmd(&bd, "test").out.iter().any(|l| l.starts_with("sop-x")));
+    assert_eq!(retire_x(&bd, "stray").code, 0);
+    assert!(!list(&bd, false).out.join("\n").contains("sop-x"));
+    assert!(!match_cmd(&bd, "test").out.join("\n").contains("sop-x"));
+    assert!(!digest(&bd).out.join("\n").contains("sop-x"));
+    assert!(!lint(&bd, 250).out.join("\n").contains("sop-x"));
+    let l = list(&bd, true);
+    assert!(l.out[0].contains("sop-x") && l.out[0].contains("tester") && l.out[0].contains("stray"), "{:?}", l.out);
+    assert_eq!(l.out.last().unwrap(), "1 retired SOP(s)");
+}
+
+#[test]
+fn show_of_a_retired_slug_says_who_and_why() {
+    let bd = FakeBd::default();
+    shelved(&bd);
+    retire_x(&bd, "superseded");
+    let r = show(&bd, "x");
+    assert_eq!(r.code, 1);
+    let err = r.err.join("\n");
+    assert!(err.contains("retired") && err.contains("tester") && err.contains("superseded"), "{err}");
+    assert!(show(&bd, "never").err[0].contains("no such SOP"));
+}
+
+#[test]
+fn write_over_a_retired_slug_needs_revive() {
+    let bd = FakeBd::default();
+    shelved(&bd);
+    retire_x(&bd, "superseded");
+    let before = bd.shelf.borrow().clone();
+    let r = write(&bd, &FakeProc::default(), &env(), "x", GOOD, false);
+    assert_eq!(r.code, 1);
+    assert!(r.err[0].contains("--revive") && r.err[0].contains("superseded"), "{:?}", r.err);
+    assert_eq!(*bd.shelf.borrow(), before);
+    let r = write(&bd, &FakeProc::default(), &env(), "x", GOOD, true);
+    assert_eq!(r.code, 0, "{:?}", r.err);
+    assert!(r.out.iter().any(|l| l.starts_with("revived sop-x (retired by tester")), "{:?}", r.out);
+    assert!(bd.shelf.borrow().contains_key("sop-x"));
+    assert!(!bd.shelf.borrow().contains_key("retired-sop-x"));
+}
+
+#[test]
+fn a_second_retire_names_the_first() {
+    let bd = FakeBd::default();
+    shelved(&bd);
+    retire_x(&bd, "first reason");
+    let r = retire_x(&bd, "again");
+    assert_eq!(r.code, 1);
+    assert!(r.err[0].contains("already retired by tester") && r.err[0].contains("first reason"), "{:?}", r.err);
+    assert_eq!(retire_x(&bd, "").code, 1);
+    assert_eq!(retire(&bd, &FakeClock, &env(), "never", "r").err[0], "sop: no such SOP: sop-never");
+}
+
+#[test]
+fn retire_of_an_unreadable_shelf_writes_nothing() {
+    let bd = FakeBd::default();
+    shelved(&bd);
+    *bd.unreadable.borrow_mut() = true;
+    let r = retire_x(&bd, "why");
+    assert_eq!(r.code, 1);
+    assert!(r.err[0].contains("cannot read the shelf; nothing retired"));
+    assert_eq!(bd.shelf.borrow().len(), 1);
+}
+
+#[test]
+fn a_failed_record_write_leaves_the_sop_in_place() {
+    let bd = FakeBd::default();
+    shelved(&bd);
+    *bd.remember_err.borrow_mut() = Some("fence: blocked".to_string());
+    let r = retire_x(&bd, "why");
+    assert_eq!(r.code, 1);
+    assert!(r.err[0].contains("fence: blocked"));
+    assert!(bd.shelf.borrow().contains_key("sop-x"));
 }
 
 #[test]
