@@ -3,7 +3,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use runtime::ports::VirtualClock;
+use runtime::ports::{Clock, VirtualClock};
 use runtime::*;
 
 struct Poller {
@@ -141,4 +141,95 @@ fn a_handler_that_panics_on_a_memory_only_event_does_not_wedge_the_pump() {
         }
     }
     panic!("the pump never went idle: the failing local event is retried forever");
+}
+
+struct Noter;
+
+impl Handler for Noter {
+    fn interests(&self) -> &[EventKindTag] {
+        &["tick", EFFECT_SUCCEEDED]
+    }
+
+    fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+        match ev.kind.tag.as_str() {
+            "tick" => vec![
+                Command::Probe(EffectSpec { name: "look".into(), input: String::new(), deadline_ms: 500 }),
+                Command::Timer { at: ev.at + 1000, kind: EventKind::new("tick", "") },
+            ],
+            _ => vec![Command::Note(EventKind::new("noted", ""))],
+        }
+    }
+}
+
+#[test]
+fn memory_only_events_held_in_the_projection_stop_growing_and_keep_the_newest() {
+    let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
+    let mut e = Engine::open(journal.clone(), Arc::new(clock.clone()), vec![Registration::new("noter", Noter)], 0).unwrap();
+    e.start("s", EventKind::new("tick", ""));
+    let held = |e: &Engine| e.projection().events(&StreamKey("s".into())).len();
+    let mut peak = 0;
+    for _ in 0..(runtime::engine::LOCAL_KEEP * 3) {
+        e.run_until_idle().unwrap();
+        answer_probes(&mut e);
+        peak = peak.max(held(&e));
+        clock.advance(1000);
+    }
+    assert!(peak <= runtime::engine::LOCAL_KEEP, "{peak} events held");
+    let kept = e.projection().events(&StreamKey("s".into()));
+    assert!(kept.last().is_some_and(|ev| ev.kind.tag == "noted"), "the newest event survives");
+}
+
+#[test]
+fn a_probe_still_waiting_keeps_its_request_in_the_projection() {
+    let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
+    let mut e = Engine::open(journal.clone(), Arc::new(clock.clone()), vec![Registration::new("noter", Noter)], 0).unwrap();
+    e.start("s", EventKind::new("tick", ""));
+    e.run_until_idle().unwrap();
+    let waiting = e.pending_effects().remove(0).key;
+    for i in 0..(runtime::engine::LOCAL_KEEP * 2) {
+        e.start("s", EventKind::new("other", &i.to_string()));
+        e.run_until_idle().unwrap();
+    }
+    assert!(e.projection().events(&StreamKey("s".into())).iter().any(|ev| ev.id.0 == waiting), "the unanswered request was evicted");
+}
+
+struct Ticker {
+    seen: Arc<Mutex<u32>>,
+}
+
+impl Handler for Ticker {
+    fn interests(&self) -> &[EventKindTag] {
+        &["tick"]
+    }
+
+    fn handle(&self, _: &Ctx, _: &Projection, ev: &Event) -> Vec<Command> {
+        *self.seen.lock().unwrap() += 1;
+        vec![Command::Timer { at: ev.at + 1000, kind: EventKind::new("tick", "") }]
+    }
+}
+
+#[test]
+fn a_poison_another_process_wrote_is_noticed_after_the_recheck_interval_and_not_before() {
+    let (journal, clock) = (MemJournal::new(), VirtualClock::new(0));
+    let seen = Arc::new(Mutex::new(0));
+    let mut e = Engine::open(journal.clone(), Arc::new(clock.clone()), vec![Registration::new("ticker", Ticker { seen: seen.clone() })], 0).unwrap();
+    e.start("s", EventKind::new("tick", ""));
+    e.run_until_idle().unwrap();
+    let ev = Event { id: EventId("x".into()), stream: StreamKey("s".into()), kind: EventKind::new("tick", ""), at: 0, cause: None, correlation: CorrelationId("x".into()) };
+    journal.poison(&Poison { stream: StreamKey("s".into()), event: ev.id.clone(), handler: "other".into(), message: "m".into() }).unwrap();
+
+    let step = |e: &mut Engine, to: u64| {
+        while clock.now_ms() < to {
+            clock.advance(1000);
+            e.run_until_idle().unwrap();
+        }
+    };
+    let before = *seen.lock().unwrap();
+    step(&mut e, 200_000);
+    assert!(*seen.lock().unwrap() > before + 100, "the cached verdict holds inside the interval");
+    step(&mut e, 305_000);
+    let after = *seen.lock().unwrap();
+    step(&mut e, 330_000);
+    assert_eq!(*seen.lock().unwrap(), after, "past the interval the stream is skipped");
+    assert!(after < 305, "the chain broke when the poison was seen: {after}");
 }

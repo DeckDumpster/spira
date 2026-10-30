@@ -23,6 +23,9 @@ const BATCH: usize = 256;
 /// A stream's poison state is asked again after this long, or when the journal brings events.
 const POISON_RECHECK_MS: u64 = 300_000;
 
+/// Memory-only events a stream keeps in the projection; older ones are dropped.
+pub const LOCAL_KEEP: usize = 64;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
     Succeeded(String),
@@ -335,7 +338,7 @@ impl Engine {
                     let deadline_at = ev.at.saturating_add(spec.deadline_ms);
                     let body = serde_json::to_string(&RequestBody { spec, deadline_at }).map_err(|e| RuntimeError::new(e.to_string()))?;
                     let req = self.local_event(&ev.stream, EventKind::new(EFFECT_REQUESTED, &body), ev.at, Some(ev));
-                    self.projection.push(&req);
+                    self.projection.push_local(&req, LOCAL_KEEP, |id| self.pending.contains_key(&id.0));
                     self.memory_only.insert(req.id.0.clone());
                     self.track_effect(&req)?;
                 }
@@ -357,7 +360,11 @@ impl Engine {
                 self.loaded.insert(ev.stream.clone());
             }
         }
-        self.projection.push(ev);
+        if at.is_some() {
+            self.projection.push(ev);
+        } else {
+            self.projection.push_local(ev, LOCAL_KEEP, |id| self.pending.contains_key(&id.0));
+        }
         if self.is_poisoned(&ev.stream)? {
             return Ok(());
         }
