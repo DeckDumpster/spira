@@ -1523,7 +1523,7 @@ impl T {
             rounds_max: 1,
             publish_red_priority: "1".into(),
             publish_red_escalate_after: 3,
-            publish_defer_max: 3,
+            publish_defer_max: Some(3),
         };
         fs::create_dir_all(s.queue_dir.join("spira")).unwrap();
         let landref = match mode {
@@ -4912,6 +4912,18 @@ fn settle_runs_after_the_deferral_bound_while_local_passes_run_back_to_back() {
     assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
     assert_eq!(reruns(&t), 1, "{}", t.out());
     assert!(t.out().contains("deferred 3 ticks"), "{}", t.out());
+}
+
+#[test]
+fn settle_refuses_naming_the_key_when_the_deferral_bound_does_not_resolve() {
+    let mut t = T::new(LandMode::QueueLocal);
+    t.lib.s.publish_defer_max = None;
+    red_publish_awaiting_rerun(&t);
+    t.forge.status.borrow_mut().push(Some("harness_fault\n".into()));
+    live_progress(&t, "proxmox", 900);
+    assert_ne!(t.run(&["publish-settle"]), 0, "{}", t.out());
+    assert!(t.err().contains("SPIRA_PUBLISH_SETTLE_DEFER_MAX"), "{}", t.err());
+    assert_eq!(reruns(&t), 0);
 }
 
 #[test]

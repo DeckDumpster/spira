@@ -512,7 +512,11 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
             .and_then(|kv| kv.get("ticks").and_then(|t| t.parse::<usize>().ok()))
             .unwrap_or(0);
         if round_pass_holds_hypervisor(w, c) {
-            if deferred < c.s.publish_defer_max {
+            let Some(defer_max) = c.s.publish_defer_max else {
+                w.err(format!("queue.sh publish-settle {name}: SPIRA_PUBLISH_SETTLE_DEFER_MAX does not resolve from this release's config registry — refusing"));
+                return FAIL;
+            };
+            if deferred < defer_max {
                 let _ = records::write_atomic(&deferred_file, &format!("ticks={}\n", deferred + 1));
                 w.out(format!("{} publish-settle {name}: a round pass holds the hypervisor; deferring {action:?} to the next tick", w.clock.now()));
                 return OK;
