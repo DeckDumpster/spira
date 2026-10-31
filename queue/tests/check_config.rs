@@ -46,3 +46,13 @@ fn check_config_refuses_a_registry_missing_a_key_the_binary_reads_and_passes_a_c
     assert!(!out.status.success(), "a registry without {KEY} passed: {stderr}");
     assert!(stderr.contains(KEY), "{stderr}");
 }
+
+#[test]
+fn a_round_verb_does_not_refuse_for_a_registry_missing_the_defer_bound() {
+    let dir = testkit::TempDir::new("queue-round-verb-config");
+    let toml = spira_config::process::fixture_toml(&dir, &[]);
+    let partial = release_without(&dir.join("partial"), KEY);
+    let out = run(&["round", "abandon", "no-such-round"], &partial, &toml);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains(KEY), "abandon still resolves {KEY} eagerly: {stderr}");
+}
