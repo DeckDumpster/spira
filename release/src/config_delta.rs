@@ -525,6 +525,7 @@ impl Txn {
             return Err(self.refusal("cannot load the config with its declared changes applied", &out.stderr));
         }
         // `validate` is green on a config missing a registered key; only `resolve` refuses it.
+        // batch-job: the new binary's resolution of every key, bounded at 60 s by timeout(1).
         let mut cmd = Command::new("timeout");
         cmd.arg("60").arg(bin).args(["resolve", "--sh-all"]).env_clear().env("SPIRA_TOML", spec);
         cmd.envs(crate::activate::resolve_env(rel));
