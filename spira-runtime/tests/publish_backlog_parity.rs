@@ -275,7 +275,7 @@ fn e2e_partly_publishing_a_multi_commit_backlog_still_counts_what_is_left() {
 }
 
 #[test]
-fn a_repo_declared_to_publish_nowhere_is_skipped_never_blind() {
+fn e2e_a_repo_declared_to_publish_nowhere_is_skipped_never_blind() {
     let r = same_rows(Scenario {
         name: "nowhere",
         count: 0,
