@@ -191,6 +191,11 @@ id = "UC-instance-lifecycle-28"
 tier = "T2"
 statement = "legacy migration disables un-suffixed and `spira-watch@` units before their per-instance replacements are enabled; it never touches shared units, is silent on a clean box, and `--no-migrate-watchers` spares watchers"
 
+[use_case.uncovered]
+reason = "test-install-migrate.sh deleted by the 2026-10-31 test review (per Ryan): legacy un-suffixed unit migration is backward compat Ryan waived 2026-10-23; drop with the migration code (UC-instance-lifecycle-28); loses sole coverage of UC-instance-lifecycle-28"
+date = "2026-10-31"
+bead = "sp-9wa2vm"
+
 [[use_case]]
 id = "UC-instance-lifecycle-29"
 tier = "T1"

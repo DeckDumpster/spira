@@ -192,7 +192,7 @@ tier = "T2"
 statement = "`pilgrimage.sh check` announces a completed Spira-labelled epic once (a mail naming the epic, target and children) and then closes it. It skips epics that are unfinished or not Spira's. It defers the close while any live push-mode child branch lacks LANDED landstate, and pr-mode children are exempt."
 
 [use_case.uncovered]
-reason = "test-pilgrimage.sh exists and exercises this, but its # covers: line names no use case; the 2026-09-27 corpus audit flagged it ADD-USE-CASE rather than a tag onto this id"
+reason = "test-pilgrimage.sh exercised this, but its # covers: line named no use case, and it was deleted by sp-9wa2vm (2026-10-31 test review); the 2026-09-27 corpus audit flagged it ADD-USE-CASE rather than a tag onto this id"
 date = "2026-09-27"
 bead = "sp-qj8n"
 

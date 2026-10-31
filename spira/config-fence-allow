@@ -79,10 +79,8 @@ spira/test-conf-toml.sh
 spira/test-conf-writeback.sh
 spira/test-containment.sh
 spira/test-cross-repo.sh
-spira/test-cutover-deploy.sh
 spira/test-czar-pass.sh
 spira/test-deadlock-sweep.sh
-spira/test-deploy-preflight-new-unit.sh
 spira/test-deploy.sh
 spira/test-destroy-branch.sh
 spira/test-doctor-config-files.sh
@@ -115,8 +113,6 @@ spira/test-mimir-trigger.sh
 spira/test-mail-dwarf.sh
 spira/test-ops-closing.sh
 spira/test-park-unmapped.sh
-spira/test-pilgrimage.sh
-spira/test-pre-activate.sh
 spira/test-pr-notify.sh
 spira/test-pr-stall.sh
 spira/test-queue-flush.sh
