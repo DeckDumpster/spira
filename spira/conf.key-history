@@ -483,6 +483,7 @@ kit_sites
 kit_registry
 publish_red_priority
 publish_red_escalate_after
+publish_settle_defer_max
 cold_par
 scoped_stop_review_secs
 reflect_ledger

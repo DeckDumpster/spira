@@ -62,6 +62,9 @@ pub struct Settings {
     /// `SPIRA_PUBLISH_RED_ESCALATE_AFTER` (declared value): consecutive red publish PRs of one
     /// repo after which the operator is mailed once.
     pub publish_red_escalate_after: usize,
+    /// `SPIRA_PUBLISH_SETTLE_DEFER_MAX` (declared value): consecutive ticks a publish rerun or
+    /// supersede may defer to a local round pass before it runs anyway.
+    pub publish_defer_max: usize,
 }
 
 /// `SPIRA_QUEUE_CI_MAXSEC[_<NAME>]`, `SPIRA_QUEUE_CI_IDLE_SEC[_<NAME>]` (already resolved for

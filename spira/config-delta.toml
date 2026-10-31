@@ -12,6 +12,7 @@ round_certify_wall_secs = 900
 queue_rounds_max = 2
 publish_red_priority = 1
 publish_red_escalate_after = 3
+publish_settle_defer_max = 3
 cold_par = 1
 preflight_wall_secs = "240"
 flow_window_hours = "0.5"
