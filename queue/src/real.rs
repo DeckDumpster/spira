@@ -1371,6 +1371,7 @@ impl Forge for RealForge {
             .stderr(Stdio::null()));
     }
     fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str) -> Rerun {
+        // batch-job: the forge's own gh calls carry the deadline, as for every forge verb here
         let mut cmd = Command::new(forge);
         cmd.arg("workflow-rerun").arg(repo).arg(run);
         close_inherited_fds(&mut cmd);
