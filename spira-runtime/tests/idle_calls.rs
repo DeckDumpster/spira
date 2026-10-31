@@ -7,7 +7,7 @@ use runtime::event::*;
 use runtime::journal::{Journal, Offset, Poison, ScheduleRow};
 use runtime::ports::{Clock, VirtualClock};
 use runtime::{Executor, MemJournal, Outcome, Result};
-use spira_runtime::watchers::{asks::Asks, bead_sweep::BeadSweep, design_asks::DesignAsks, supersede_duty::SupersedeDuty, inbox_keeper::InboxKeeper, pr_notify::PrNotify, publish_backlog::PublishBacklog, round_duty::RoundDuty};
+use spira_runtime::watchers::{asks::Asks, bead_sweep::BeadSweep, design_asks::DesignAsks, supersede_duty::SupersedeDuty, inbox_keeper::InboxKeeper, pr_notify::PrNotify, publish_backlog::PublishBacklog, repo_events::RepoEvents, round_duty::RoundDuty};
 use runtime::marker::NullMarker;
 use runtime::wide::NullSink;
 use spira_runtime::{open_engine, Settings};
@@ -109,6 +109,7 @@ fn production() -> Settings {
             "SPIRA_BEAD_SWEEP_BATCH_MIN" => "180".into(),
             "SPIRA_SCOPED_STOP_REVIEW_SECS" => "86400".into(),
             "SPIRA_RUNTIME_PUBLISH_BACKLOG_SECS" => "900".into(),
+            "SPIRA_RUNTIME_REPO_EVENTS_SECS" => "45".into(),
             "SPIRA_LOCAL_BACKLOG_COUNT" => "50".into(),
             "SPIRA_LOCAL_BACKLOG_AGE" => "10800".into(),
             _ => return Err(k.to_string()),
@@ -126,6 +127,7 @@ fn quiet_world(effect: &str, _poll: u64) -> String {
         spira_runtime::watchers::supersede_duty::OBSERVE => r#"{"held":[]}"#.into(),
         spira_runtime::watchers::bead_sweep::OBSERVE => r#"{"rows":[],"content":[],"terminal":[],"stops":[],"reserved":[],"carried":[],"solo_skipped":[],"pr_repos":[]}"#.into(),
         spira_runtime::watchers::publish_backlog::OBSERVE => r#"{"repos":[]}"#.into(),
+        spira_runtime::watchers::repo_events::OBSERVE => r#"{"seed":[],"repos":[]}"#.into(),
         _ => String::new(),
     }
 }
@@ -151,7 +153,7 @@ fn ten_minutes(world: fn(&str, u64) -> String) -> Run {
     let clock = VirtualClock::new(1_800_000_000_000);
     let start = clock.now_ms();
     let mut e = open_engine(&production(), counting.clone(), Arc::new(clock.clone()), Arc::new(NullMarker), Arc::new(NullSink), vec![]).unwrap();
-    for (_, stream, kind) in [runtime::heartbeat::Heartbeat::boot(), RoundDuty::boot(), InboxKeeper::boot(), PrNotify::boot(), Asks::boot(), DesignAsks::boot(), SupersedeDuty::boot(), BeadSweep::boot(), PublishBacklog::boot()] {
+    for (_, stream, kind) in [runtime::heartbeat::Heartbeat::boot(), RoundDuty::boot(), InboxKeeper::boot(), PrNotify::boot(), Asks::boot(), DesignAsks::boot(), SupersedeDuty::boot(), BeadSweep::boot(), PublishBacklog::boot(), RepoEvents::boot()] {
         e.start(stream, kind);
     }
     let (mut wakes, mut polls) = (0, 0);
@@ -194,5 +196,6 @@ fn every_canned_observe_reply_parses_into_its_watchers_snapshot() {
     serde_json::from_str::<inbox_keeper::Snapshot>(&quiet(inbox_keeper::OBSERVE)).expect("inbox-keeper reply");
     serde_json::from_str::<pr_notify::Snapshot>(&quiet(pr_notify::OBSERVE)).expect("pr-notify reply");
     serde_json::from_str::<asks::Snapshot>(&quiet(asks::OBSERVE)).expect("asks reply");
+    serde_json::from_str::<spira_runtime::watchers::repo_events::Snapshot>(&quiet(spira_runtime::watchers::repo_events::OBSERVE)).expect("repo-events reply");
     serde_json::from_str::<round_duty::Snapshot>(&busy_world(round_duty::OBSERVE, 3)).expect("busy round-duty reply");
 }

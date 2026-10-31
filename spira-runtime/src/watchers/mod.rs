@@ -9,6 +9,7 @@ pub mod bead_sweep;
 pub mod inbox_keeper;
 pub mod pr_notify;
 pub mod publish_backlog;
+pub mod repo_events;
 pub mod round_duty;
 pub mod supersede_duty;
 

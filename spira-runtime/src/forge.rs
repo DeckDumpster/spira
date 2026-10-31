@@ -11,6 +11,7 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::watchers::pr_notify::{classify, Final, OpenPr, Run};
+use crate::watchers::repo_events;
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(5);
 const PAGE_SIZE: usize = 100;
@@ -68,13 +69,17 @@ fn epoch(stamp: &str) -> Option<u64> {
 
 impl Forge {
     fn get(&self, path: &str) -> Option<Value> {
+        self.try_get(path).ok()
+    }
+
+    fn try_get(&self, path: &str) -> Result<Value, String> {
         let mut req = ureq::AgentBuilder::new().timeout(CALL_TIMEOUT).build().get(&format!("{}{path}", self.api.trim_end_matches('/'))).set("Accept", "application/vnd.github+json").set("User-Agent", "spira-runtime");
         if !self.token.is_empty() {
             req = req.set("Authorization", &format!("Bearer {}", self.token));
         }
         let mut body = String::new();
-        req.call().ok()?.into_reader().take(16 << 20).read_to_string(&mut body).ok()?;
-        serde_json::from_str(&body).ok()
+        req.call().map_err(|e| e.to_string())?.into_reader().take(16 << 20).read_to_string(&mut body).map_err(|e| e.to_string())?;
+        serde_json::from_str(&body).map_err(|e| format!("{path}: {e}"))
     }
 
     /// A list the forge may have cut short at one page reads as not answered, never as the whole.
@@ -114,6 +119,20 @@ impl Forge {
         let r = runs["workflow_runs"].as_array()?.iter().find(|r| r["status"] == "completed")?;
         let secs = epoch(r["updated_at"].as_str()?).zip(epoch(r["created_at"].as_str()?)).map_or(0, |(u, c)| u.saturating_sub(c));
         Some(Run { conclusion: r["conclusion"].as_str().unwrap_or("unknown").to_string(), secs, url: text(r, "html_url") })
+    }
+
+    /// The newest finished workflow runs of a repository, newest first; the forge's reason when it
+    /// could not say, never an empty list.
+    pub fn completed_runs(&self, slug: &str) -> Result<Vec<repo_events::Run>, String> {
+        let v = self.try_get(&format!("/repos/{slug}/actions/runs?per_page=30"))?;
+        let runs = v["workflow_runs"].as_array().ok_or_else(|| format!("/repos/{slug}/actions/runs: no workflow_runs"))?;
+        Ok(runs
+            .iter()
+            .filter(|r| r["status"] == "completed")
+            .filter_map(|r| {
+                Some(repo_events::Run { id: r["id"].as_u64()?, workflow: text(r, "name"), conclusion: text(r, "conclusion"), branch: text(r, "head_branch"), event: text(r, "event"), title: repo_events::title_of(&text(r, "display_title")) })
+            })
+            .collect())
     }
 
     /// `spira/*` branches ahead of `base` that none of `open_heads` is the head of.

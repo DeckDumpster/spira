@@ -13,6 +13,7 @@ use serde_json::Value;
 use crate::watchers::inbox_keeper;
 use crate::forge::{slug, Forge};
 use crate::watchers::pr_notify::{self, RepoObs};
+use crate::watchers::repo_events;
 use crate::watchers::asks;
 use crate::watchers::design_asks::{self, Page};
 use crate::wiki_git::git;
@@ -222,6 +223,24 @@ impl World {
             repos.push((r.name.clone(), obs));
         }
         serde_json::to_string(&pr_notify::Snapshot { repos }).map_err(|e| e.to_string())
+    }
+
+    /// The finished runs of every repository registered with a checkout. Until a forge has answered,
+    /// the dedup keys the old script left in its state file are offered as the seed. A repository the forge
+    /// could not answer for carries its reason in the snapshot.
+    pub fn repo_events_snapshot(&self, forge: &Forge, input: &str) -> Result<String, String> {
+        let carry: repo_events::Carry = serde_json::from_str(input).unwrap_or_default();
+        let rows = fs::read_to_string(&self.repo_map).map(|t| map_rows(&t)).map_err(|e| format!("{}: {e}", self.repo_map.display()))?;
+        let seed = if !carry.seeded { fs::read_to_string(self.run_dir.join("watchd/repo-events.state")).unwrap_or_default().lines().filter(|l| l.starts_with("run|")).map(str::to_string).collect() } else { vec![] };
+        let mut repos: Vec<(String, Result<Vec<repo_events::Run>, String>)> = vec![];
+        for r in rows.iter().filter(|r| Path::new(&r.path).join(".git").is_dir()) {
+            let Some(slug) = slug(Path::new(&r.path)) else { continue };
+            if repos.iter().all(|(s, _)| *s != slug) {
+                let found = forge.completed_runs(&slug);
+                repos.push((slug, found));
+            }
+        }
+        serde_json::to_string(&repo_events::Snapshot { seed, repos }).map_err(|e| e.to_string())
     }
 
     /// Mail files naming `id` as their work bead, in mailbox order: every `new/` then every `cur/`.
