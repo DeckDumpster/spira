@@ -17,6 +17,5 @@ spira/test-bead-lint.sh
 spira/test-broker-allowlist-lint.sh
 spira/test-build-fence.sh
 spira/test-czar-lint.sh
-spira/test-plan-lint.sh
 spira/test-suite-state-fence.sh
 spira/test-units-lint.sh

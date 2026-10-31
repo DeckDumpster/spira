@@ -30,7 +30,8 @@ Every suite carries two header lines, read by `spira/suite-covers.sh`:
 `# covers:` mixes two kinds of token, both readable by the same line: a path
 glob (the existing convention — selects the suite when a matching file
 changes) and a UC id (`UC-<area>-NN` — ties the suite to a use case in an
-area page). `spira/test-plan-lint.sh` is what tells the two kinds apart.
+area page). `spira-lint`'s `plan-lint` and `plan-matrix` rules (`spira-lint/src/rules/plan_lint.rs`,
+`plan_matrix.rs`) are what tell the two kinds apart.
 
 ## Use case ids
 
@@ -98,8 +99,8 @@ Each arrives with its own bead, as `docs/test-plan/<area>.md` (prose) plus
 a `# covers:` UC id that names no use case in any `docs/test-plan/*.toml`
 catalogue (via `test-plan validate`, which also refuses a malformed
 catalogue file itself). It also fails every T0–T3 use
-case with no covering suite and no `uncovered` marker (`spira/test-plan-lint.sh` is
-this lint's own fence). Run `spira/plan-lint.sh --help` for exact invocation and exit
+case with no covering suite and no `uncovered` marker (`spira-lint`'s `plan-lint` and `plan-matrix` rules,
+`spira-lint/src/rules/plan_lint.rs` and `plan_matrix.rs`, are what gate it). Run `spira/plan-lint.sh --help` for exact invocation and exit
 codes.
 
 `spira/plan-lint.sh --orphans <base-ref>` is the other hard failure: a

@@ -13,8 +13,6 @@ spira-config/src/scratch.rs
 spira-lint/src/lib.rs
 spira/test-czar-pass.sh
 spira/test-gate-wait.sh
-spira/test-testenv-curl-bounds.sh
-spira/test-testenv-wait.sh
 testenv/src/reap.rs
 watchd/src/health.rs
 watchd/src/lock.rs
