@@ -264,6 +264,26 @@ if [ "$got" != "$round_sha" ]; then
     exit 2
 fi
 cd ~/round-work
+disk_out="$HOME/round-work/.runtime/spira/batch-results/disk-usage"
+mkdir -p "$(dirname "$disk_out")"
+disk_report() {
+    local phase="$1" label path bytes total=0 graph
+    graph="$(podman info --format '{{.Store.GraphRoot}}' 2>/dev/null || true)"
+    for label in round-work tmpdir podman-graphroot cargo-target; do
+        case "$label" in
+            round-work) path="$HOME/round-work" ;;
+            tmpdir) path="${TMPDIR:-/tmp}" ;;
+            podman-graphroot) path="$graph" ;;
+            cargo-target) path="$HOME/round-work/target" ;;
+        esac
+        if [ -z "$path" ] || [ ! -d "$path" ]; then bytes=0; else bytes="$(du -sxB1 "$path" 2>/dev/null | cut -f1)"; fi
+        case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
+        [ "$label" = cargo-target ] || total=$(( total + bytes ))
+        echo "round-vm: DISK $phase $label $bytes $path" | tee -a "$disk_out" >&2
+    done
+    echo "round-vm: DISK $phase total $total -" | tee -a "$disk_out" >&2
+}
+disk_report start
 nix_bin=/nix/var/nix/profiles/default/bin
 flake_ref="path:$HOME/round-work#spira-env"
 build_env() { PATH="$nix_bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" nix --extra-experimental-features 'nix-command flakes' build "$flake_ref" -o "$HOME/spira-env" >&2; }
@@ -566,6 +586,7 @@ disk_preflight() {
 disk_preflight || exit 3
 setup_secs=$(( $(date +%s) - t_start - unit_build_secs ))
 if [ -n "$registry" ]; then export SPIRA_TESTENV_REGISTRY="$registry"; fi
+disk_report build
 # Each passed suite is recorded to the resume prefix as it passes, so a VM that dies loses none.
 # A prefix the VM cannot write is named here, once, with the cause: a round that records nothing
 # otherwise looks the same as one that recorded everything until its re-run skips nothing.
@@ -862,6 +883,8 @@ if [ -n "$unit_cov_env" ]; then
         echo "round-vm: COVERAGE: lines unavailable (cargo llvm-cov report failed): $(printf '%s' "$unit_cargo_report" | tail -5)" >&2
     fi
 fi
+disk_report suites
+find "$HOME/round-work/target" \( -name '*.profraw' -o -name '*.profdata' \) -delete 2>/dev/null || true
 suites_secs=$suites_clock
 kill "$sampler_pid" 2>/dev/null; wait "$sampler_pid" 2>/dev/null
 echo "round-vm: setup ${setup_secs}s, suites ${suites_secs}s" >&2
@@ -2751,6 +2774,31 @@ mod tests {
         assert!(lane.contains("--results \"$bare_out\"") || REMOTE_SCRIPT[bare..corpus].contains("--results \"$bare_out\""), "its results are copied beside the corpus's once the corpus has written its own");
         assert!(lane.contains("[ \"$rc\" -eq 0 ] && rc=1"), "a red bare suite makes the round red");
         assert!(REMOTE_SCRIPT.contains("--selected \"$suites\"") && REMOTE_SCRIPT.contains("--suites all"));
+    }
+
+    #[test]
+    fn the_remote_script_reports_bytes_used_per_directory_at_start_build_and_suites() {
+        let a = REMOTE_SCRIPT.find("disk_report() {").expect("the disk report");
+        let start = REMOTE_SCRIPT.find("disk_report start").unwrap();
+        let func = &REMOTE_SCRIPT[a..start];
+        let build = REMOTE_SCRIPT.find("disk_report build").expect("reported after the build");
+        let suites = REMOTE_SCRIPT.find("disk_report suites").expect("reported after the suites");
+        let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
+        assert!(start < build && build < batch && batch < suites, "at start, after the build and after the suites");
+        for (label, path) in [("round-work", "\"$HOME/round-work\""), ("tmpdir", "\"${TMPDIR:-/tmp}\""), ("podman-graphroot", "\"$graph\""), ("cargo-target", "\"$HOME/round-work/target\"")] {
+            assert!(func.contains(&format!("{label}) path={path}")), "{label} is measured at {path}: {func}");
+        }
+        assert!(func.contains("[ ! -d \"$path\" ]; then bytes=0"), "an absent directory counts zero");
+        assert!(func.contains("[ \"$label\" = cargo-target ] || total=$(( total + bytes ))"), "cargo-target lies inside round-work and is not added twice");
+        assert!(func.contains("| tee -a \"$disk_out\" >&2"), "the stderr log and the results file carry the same lines");
+        assert!(REMOTE_SCRIPT.contains("disk_out=\"$HOME/round-work/.runtime/spira/batch-results/disk-usage\""), "the lines land in the pass's results");
+    }
+
+    #[test]
+    fn coverage_profiles_are_deleted_only_after_the_line_report_has_read_them() {
+        let report = REMOTE_SCRIPT.find("cargo llvm-cov report").expect("the line report");
+        let delete = REMOTE_SCRIPT.find("-name '*.profraw' -o -name '*.profdata' \\) -delete").expect("profiles deleted once reported");
+        assert!(report < delete);
     }
 
     #[test]
