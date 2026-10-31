@@ -28,7 +28,7 @@ pub fn tmux(program: &Path, args: &[&str], deadline: Duration) -> Result<String,
     }
 }
 
-fn bounded(mut cmd: Command, deadline: Duration) -> Result<(Option<i32>, Vec<u8>), String> {
+pub fn bounded(mut cmd: Command, deadline: Duration) -> Result<(Option<i32>, Vec<u8>), String> {
     use std::io::Read;
     let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|e| format!("spawn: {e}"))?;
     let mut out = child.stdout.take().ok_or("no stdout pipe")?;

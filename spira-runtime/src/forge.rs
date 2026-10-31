@@ -6,13 +6,14 @@ use std::fmt;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::Duration;
 
 use serde_json::Value;
 
 use crate::watchers::pr_notify::{classify, Final, OpenPr, Run};
 use crate::watchers::repo_events;
+use crate::wiki_git::bounded;
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(5);
 const PAGE_SIZE: usize = 100;
@@ -80,13 +81,13 @@ impl Forge {
             return Ok(self.token.clone());
         }
         let mut gh = Command::new(if self.gh.is_empty() { "gh" } else { &self.gh });
-        gh.args(["auth", "token"]).stdin(Stdio::null()).stderr(Stdio::null());
+        gh.args(["auth", "token"]);
         if !self.gh_config_dir.is_empty() {
             gh.env("GH_CONFIG_DIR", &self.gh_config_dir);
         }
-        let out = gh.output().map_err(|e| format!("{NO_CREDENTIAL}: gh: {e}"))?;
-        let token = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if out.status.success() && !token.is_empty() {
+        let (code, out) = bounded(gh, CALL_TIMEOUT).map_err(|e| format!("{NO_CREDENTIAL}: gh: {e}"))?;
+        let token = String::from_utf8_lossy(&out).trim().to_string();
+        if code == Some(0) && !token.is_empty() {
             Ok(token)
         } else {
             Err(format!("{NO_CREDENTIAL}: SPIRA_BROKER_GH_TOKEN is empty and gh has no login"))

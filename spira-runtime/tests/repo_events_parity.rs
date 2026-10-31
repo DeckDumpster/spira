@@ -322,8 +322,7 @@ fn pr_notify_still_says_every_pr_transition_the_script_said() {
 
 fn gh_stub(dir: &Path, token: &str) -> String {
     let path = dir.join("gh");
-    fs::write(&path, format!("#!/bin/sh\n[ \"$1 $2\" = \"auth token\" ] && [ \"$GH_CONFIG_DIR\" = /conf/dir ] && echo {token}\n")).unwrap();
-    Command::new("chmod").arg("+x").arg(&path).status().unwrap();
+    testkit::write_exe(&path, &format!("#!/bin/sh\n[ \"$1 $2\" = \"auth token\" ] && [ \"$GH_CONFIG_DIR\" = /conf/dir ] && echo {token}\n"));
     path.display().to_string()
 }
 
