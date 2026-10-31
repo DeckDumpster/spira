@@ -202,6 +202,8 @@ pub struct FakeSystemctl {
     pub enabled_now: std::cell::RefCell<Vec<String>>,
     pub disabled_now: std::cell::RefCell<Vec<String>>,
     pub disabled: std::cell::RefCell<Vec<String>>,
+    pub single_queries: std::cell::Cell<u32>,
+    pub batched_queries: std::cell::Cell<u32>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -224,10 +226,22 @@ impl Systemctl for FakeSystemctl {
         Ok(())
     }
     fn is_active(&self, unit: &str) -> bool {
+        self.single_queries.set(self.single_queries.get() + 1);
         self.units.borrow().get(unit).map(|u| u.active).unwrap_or(false)
     }
     fn is_enabled(&self, unit: &str) -> Option<String> {
+        self.single_queries.set(self.single_queries.get() + 1);
         self.units.borrow().get(unit).and_then(|u| u.enabled.clone())
+    }
+    fn is_active_many(&self, units: &[String]) -> Vec<bool> {
+        self.batched_queries.set(self.batched_queries.get() + 1);
+        let m = self.units.borrow();
+        units.iter().map(|u| m.get(u).map(|u| u.active).unwrap_or(false)).collect()
+    }
+    fn is_enabled_many(&self, units: &[String]) -> Vec<Option<String>> {
+        self.batched_queries.set(self.batched_queries.get() + 1);
+        let m = self.units.borrow();
+        units.iter().map(|u| m.get(u).and_then(|u| u.enabled.clone())).collect()
     }
     fn enable(&self, unit: &str) -> Result<(), String> {
         self.units.borrow_mut().entry(unit.to_string()).or_default().enabled = Some("enabled".into());
@@ -320,7 +334,7 @@ mod tests {
 
     #[test]
     fn many_units_are_asked_about_in_one_call_and_keep_their_own_answers() {
-        let (_d, sc, log) = stub("case \"$2\" in is-enabled) ;; esac; case \"$2\" in is-active) printf 'active\\ninactive\\n';; is-enabled) printf 'enabled\\ndisabled\\n';; esac");
+        let (_d, sc, log) = stub("case \"$2\" in is-active) printf 'active\\ninactive\\n';; is-enabled) printf 'enabled\\ndisabled\\n';; esac");
         let u = names(&["a.service", "b.service"]);
         assert_eq!(sc.is_active_many(&u), vec![true, false]);
         assert_eq!(sc.is_enabled_many(&u), vec![Some("enabled".into()), Some("disabled".into())]);
