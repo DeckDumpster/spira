@@ -203,6 +203,13 @@ mod tests {
     }
 
     #[test]
+    fn a_carry_from_before_blind_since_existed_still_decodes_and_sights_without_a_duration() {
+        let old: Carry = serde_json::from_str(r#"{"standing":{"r":"Blind"}}"#).unwrap();
+        let (_, say) = watcher().decide(&old, &snap(measured(0, 0)), NOW);
+        assert_eq!(say, ["SIGHTED r: the backlog watcher can measure again"]);
+    }
+
+    #[test]
     fn a_sighted_line_says_how_long_the_watcher_was_blind() {
         let w = watcher();
         let (c, _) = w.decide(&Carry::default(), &snap(Read::Blind("fetch timed out".into())), NOW);
