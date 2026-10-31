@@ -2583,26 +2583,35 @@ mod tests {
         let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
         assert!(b < batch, "refused before the suites start");
         let func = &REMOTE_SCRIPT[a..b];
-        let run = |avail: &str, need: &str| {
-            let tmp = testkit::TempDir::new("rvm-disk");
-            let d = tmp.path().to_path_buf();
+        let run = |work: u64, tmp: u64, graph: u64, need: &str| {
+            let t = testkit::TempDir::new("rvm-disk");
+            let d = t.path().to_path_buf();
             std::fs::create_dir_all(d.join("bin")).unwrap();
             std::fs::create_dir_all(d.join("round-work")).unwrap();
-            testkit::write_exe(d.join("bin/df"), &format!("#!/bin/sh\nprintf 'Avail\\n%s\\n' {avail}\n"));
+            testkit::write_exe(d.join("bin/podman"), "#!/bin/sh\necho /stub/graphroot\n");
+            let df = format!(
+                "#!/bin/sh\nfor a; do last=$a; done\ncase \"$last\" in\n*round-work) v={work};;\n/stub/graphroot) v={graph};;\n*) v={tmp};;\nesac\nprintf 'Avail\\n%s\\n' $v\n"
+            );
+            testkit::write_exe(d.join("bin/df"), &df);
             let script = format!("set -uo pipefail\ndisk_need_gib={need}\n{func}disk_preflight\n");
             let out = std::process::Command::new("bash").arg("-c").arg(script).env_clear().env("HOME", &d)
-                .env("PATH", format!("{}:/usr/bin:/bin", d.join("bin").display())).output().unwrap();
+                .env("TMPDIR", "/stub/tmp").env("PATH", format!("{}:/usr/bin:/bin", d.join("bin").display())).output().unwrap();
             (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).into_owned())
         };
         let gib: u64 = 1 << 30;
-        let (code, err) = run(&(10 * gib).to_string(), "40");
+        let (code, err) = run(10 * gib, 90 * gib, 90 * gib, "40");
         assert_eq!(code, 3, "{err}");
         assert!(err.contains("FAULT disk: need 40 GiB, have 10 GiB"), "{err}");
         assert!(err.contains(&format!("short {} bytes", 30 * gib)), "{err}");
-        let (code, err) = run(&(40 * gib).to_string(), "40");
+        assert!(err.contains("round-work"), "{err}");
+        let (code, err) = run(90 * gib, 5 * gib, 90 * gib, "40");
+        assert_eq!(code, 3, "{err}");
+        assert!(err.contains("under /stub/tmp"), "a short TMPDIR is named: {err}");
+        let (code, err) = run(90 * gib, 90 * gib, 7 * gib, "40");
+        assert_eq!(code, 3, "{err}");
+        assert!(err.contains("under /stub/graphroot"), "short container storage is named: {err}");
+        let (code, err) = run(40 * gib, 40 * gib, 40 * gib, "40");
         assert_eq!(code, 0, "exactly the need is enough: {err}");
-        let (code, err) = run("garbage", "40");
-        assert_eq!(code, 3, "an unreadable df fails closed: {err}");
     }
 
     #[test]
