@@ -359,6 +359,36 @@ fn without_a_static_token_gh_auth_token_under_the_configured_config_dir_supplies
 }
 
 #[test]
+fn a_gh_that_runs_but_has_no_login_is_no_credential_and_no_call_is_made() {
+    let mut f = Fixture::build_with("gh-nologin", &["widgets"], RepoEvents { interval_ms: INTERVAL_MS }.registration(), RepoEvents::boot(), "repo-events", |api, root| {
+        let gh = root.join("gh");
+        testkit::write_exe(&gh, "#!/bin/sh\nexit 1\n");
+        Forge { api, token: String::new(), gh: gh.display().to_string(), gh_config_dir: String::new() }
+    });
+    let said = f.tick();
+    assert_eq!(said.len(), 1, "{said:?}");
+    assert!(said[0].contains("no forge credential"), "{said:?}");
+    assert!(f.requests.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_token_gh_rotates_between_ticks_is_sent_on_the_next_call() {
+    let mut f = Fixture::build_with("gh-rotate", &["widgets"], RepoEvents { interval_ms: INTERVAL_MS }.registration(), RepoEvents::boot(), "repo-events", |api, root| {
+        let (gh, tok) = (root.join("gh"), root.join("tok"));
+        std::fs::write(&tok, "first\n").unwrap();
+        testkit::write_exe(&gh, &format!("#!/bin/sh\ncat {}\n", tok.display()));
+        Forge { api, token: String::new(), gh: gh.display().to_string(), gh_config_dir: String::new() }
+    });
+    f.tick();
+    let tok = f.dir.path().join("tok");
+    std::fs::write(tok, "second\n").unwrap();
+    f.tick();
+    let sent = f.requests.lock().unwrap().clone();
+    assert_eq!(sent.first().map(String::as_str), Some("Bearer first"));
+    assert_eq!(sent.last().map(String::as_str), Some("Bearer second"));
+}
+
+#[test]
 fn a_repository_whose_forge_failed_until_now_does_not_announce_its_old_runs() {
     let mut f = Fixture::repo_events(&["widgets", "gadgets"]);
     f.set("gadgets", |r| r.down = true);
