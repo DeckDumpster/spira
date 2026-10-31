@@ -142,3 +142,14 @@ fn a_divergence_alert_reaches_the_tests_own_mailbox_never_the_hosts() {
     let own = fs::read_to_string(f.t.dir.join("run/mail-log")).unwrap_or_default();
     assert!(own.contains("divergence") && own.contains("someone else"), "{own}");
 }
+
+#[test]
+fn notify_refuses_when_the_mail_on_path_is_not_test_owned() {
+    let _serial = crate::testutil::serial();
+    let bin = crate::testutil::tmpdir("host-mail");
+    testkit::write_exe(bin.join("mail"), "#!/bin/sh\ncat >/dev/null\n");
+    let path = format!("{}:/usr/bin:/bin", bin.display());
+    let _env = testkit::env(&[("PATH", Some(&path))]);
+    let r = std::panic::catch_unwind(|| crate::ops::helpers::notify("concierge", "x", "s", "b"));
+    assert!(r.is_err(), "a host mail wrapper was accepted as test-owned");
+}

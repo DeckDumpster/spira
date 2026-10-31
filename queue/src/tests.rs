@@ -372,7 +372,7 @@ impl Lib for FLib {
             testkit::write_exe(
                 bin.join("mail"),
                 &format!(
-                    "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {0}\n/bin/cat >> {0}\n",
+                    "#!/bin/sh\n# test-owned-mail\nprintf '%s\\n' \"$*\" >> {0}\n/bin/cat >> {0}\n",
                     self.s.run.join("mail-log").display()
                 ),
             );

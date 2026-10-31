@@ -2486,7 +2486,7 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         testkit::write_exe(
             bindir.join("mail"),
             &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\ncat >> {}\n",
+                "#!/bin/sh\n# test-owned-mail\nprintf '%s\\n' \"$*\" >> {}\ncat >> {}\n",
                 mail_log.display(),
                 mail_log.display()
             ),
@@ -2646,7 +2646,7 @@ esac
         testkit::write_exe(
             bindir.join("mail"),
             &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\n",
+                "#!/bin/sh\n# test-owned-mail\nprintf '%s\\n' \"$*\" >> {}\n",
                 mail_log.display()
             ),
         );
