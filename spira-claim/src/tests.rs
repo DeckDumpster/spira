@@ -981,20 +981,13 @@ fn rune_ready_cli_a_guarded_or_declared_literal_empty_never_refuses() {
 /// runes genuinely has no builder.rune", and skipped every rune every pass forever,
 /// silently (this bead's own repro).
 ///
-/// Per Ryan 2026-10-05, `dispatch` now loads `Config` (`store::load_config`, every
-/// registered key) BEFORE any verb runs, for every verb but `decide`. With `SPIRA_HOME`
-/// unset, that load fails first (`spira_config::process::cfg`'s own home-location) —
-/// before `cmd_rune_ready` ever reaches its own `rune_home()` check — but the
-/// Concierge's sp-hh599 decision keeps this bead's own contract intact at the dispatch
-/// boundary: a config-load failure is `Outcome::error` (rc 1), never `CANNOT_TELL` (rc 2,
-/// which every caller reads as "no rune / nothing there"). So rc 1 ("could not
-/// evaluate") and rc 2 ("no rune in the runes") stay the two distinct buckets this bead
-/// named, exactly as before — just reached one layer higher up, at config load rather than
-/// at `rune_home()` itself.
+/// With neither `SPIRA_HOME` nor `SPIRA_RELEASE` set, config load refuses before the verb runs:
+/// rc 1 ("could not evaluate"), never rc 2 ("no rune in the runes").
 #[test]
 fn rune_ready_cli_unresolvable_home_is_rc1_not_rc2_the_sp_hh599_defect() {
-    let o = run_cfg(&["rune-ready", "builder"], "", &[], &[("SPIRA_HOME", None)]);
+    let o = run_cfg(&["rune-ready", "builder"], "", &[], &[("SPIRA_HOME", None), ("SPIRA_RELEASE", None)]);
     assert_eq!((o.code, o.out.as_str()), (1, ""), "stderr: {}", o.err);
+    assert!(o.err.contains("neither SPIRA_HOME nor SPIRA_RELEASE is set"), "stderr: {}", o.err);
     assert!(!o.err.contains("no rune in the runes"), "stderr: {}", o.err);
 }
 
