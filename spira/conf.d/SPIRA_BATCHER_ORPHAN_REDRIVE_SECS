@@ -1,0 +1,6 @@
+TYPE=u64
+GROUP=batch
+DOC=SPIRA_BATCHER_ORPHAN_REDRIVE_SECS — Seconds an open round may go with no driver before the rounds loop re-drives it once with round-recert.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_BATCHER_ORPHAN_REDRIVE_SECS:=600}"
+SPIRA_CONF_DEFAULT_EOF

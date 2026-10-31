@@ -216,6 +216,7 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
         verdicts: gate::cert::verdicts_dir(env::var("SPIRA_VERDICTS").ok().as_deref(), &run),
         land_lock_attempts: env::var("SPIRA_BATCHER_LAND_LOCK_ATTEMPTS").ok().and_then(|v| v.parse().ok()).unwrap_or(10),
         land_lock_wait: std::time::Duration::from_secs(env::var("SPIRA_BATCHER_LAND_LOCK_WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(30)),
+        orphan_redrive_after: cfg_parse::<u64>("SPIRA_BATCHER_ORPHAN_REDRIVE_SECS")?,
         land_unpause: env::var("SPIRA_BATCHER_LAND_UNPAUSE").ok().filter(|v| !v.is_empty()).map(PathBuf::from),
     })
 }
@@ -1423,7 +1424,7 @@ fn paced_cut(env_: &Env, name: &str, one: &Opts) -> Result<(), String> {
     let repo = find_repo(env_, name)?;
     let inbox = PathBuf::from(cfg("SPIRA_CONCIERGE_INBOX")?);
     let stamp = utc_stamp;
-    let sm = pace::Seams { repo: name, now: now(), inbox: &inbox, stamp: &stamp };
+    let sm = pace::Seams { repo: name, now: now(), inbox: &inbox, stamp: &stamp, redrive_after: env_.orphan_redrive_after };
     let (fit, redrive, incident) = (
         |id: &str| io::round_certifiable(env_, &repo, id),
         |id: &str| io::redrive_round(&repo, id),
@@ -1748,7 +1749,7 @@ mod tests {
         let dir = testkit::TempDir::new("batcher-cut-env-for");
         let toml = spira_config::process::fixture_toml(
             &dir,
-            &[("SPIRA_BD", "bd-fixture"), ("SPIRA_FORGE", "forge-fixture"), ("SPIRA_BATCHER_WALL_SECS", "3600")],
+            &[("SPIRA_BD", "bd-fixture"), ("SPIRA_FORGE", "forge-fixture"), ("SPIRA_BATCHER_WALL_SECS", "3600"), ("SPIRA_BATCHER_ORPHAN_REDRIVE_SECS", "600")],
         );
         // The real, checked-in spira/conf.d (this crate's own repo layout: `batcher-cut/`
         // sits beside `spira/`) — `cfg`'s resolution needs a real registry to validate every

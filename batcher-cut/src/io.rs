@@ -98,6 +98,8 @@ pub struct Env {
     /// How many times `round_land` tries while another queue operation holds the repo's lock.
     pub land_lock_attempts: u32,
     pub land_lock_wait: Duration,
+    /// Seconds an open round may go undriven before the rounds loop re-drives it.
+    pub orphan_redrive_after: u64,
     /// The Concierge's cut-pause file; a landing clears it unless it starts with `hold:`. `None` is off.
     pub land_unpause: Option<PathBuf>,
 }
@@ -2033,7 +2035,7 @@ pub fn file_orphan_round_incident(env: &Env, repo: &Repo, batch: &str, why: &str
     let body = format!(
         "Round {batch} of {} has been open with no certify running for over {} s: {why}.\nThe rounds loop never re-cuts an open round. Reset the worktree to the round's head and run `round-recert --batch {batch} --repo {}`, or eject or abandon the round. Rounds stacked on it are refused at land until it ends.",
         repo.name,
-        crate::pace::ORPHAN_REDRIVE_AFTER_SECS,
+        env.orphan_redrive_after,
         repo.name
     );
     let tmp_dir = env.run.join("tmp");
@@ -2293,7 +2295,7 @@ pub fn head_on_base(repo: &Repo, head: &str) -> bool {
 /// that has not landed has the unlanded head as its one cause, whichever round asks next, so those
 /// share a key and incident.sh counts them as recurrences of one incident.
 pub fn land_unverified_key(repo: &Repo, head: &str, detail: &str) -> (String, String) {
-    if detail.contains(STACKED_REFUSAL) {
+    if STACKED_REFUSAL.iter().all(|m| detail.contains(m)) {
         return (
             format!("{}: rounds stacked on an unlanded round are refused at land", repo.name),
             format!("land-unverified:{}:stacked", repo.name),
@@ -2302,7 +2304,7 @@ pub fn land_unverified_key(repo: &Repo, head: &str, detail: &str) -> (String, St
     (format!("{}: round head {head} did not reach {}", repo.name, repo.base), format!("land-unverified:{}:{head}", repo.name))
 }
 
-const STACKED_REFUSAL: &str = ", which has not landed";
+const STACKED_REFUSAL: [&str; 2] = [" is stacked on round ", ", which has not landed"];
 
 /// Alarm for a round that did not land: the incident names the refusal line.
 pub fn file_land_unverified_incident(env: &Env, repo: &Repo, head: &str, detail: &str) -> Result<String, String> {
@@ -3604,6 +3606,28 @@ mod land_exit_tests {
     }
 
     #[test]
+    fn a_round_is_certifiable_only_while_its_worktree_stands_at_its_head() {
+        let d = testkit::TempDir::new("batcher-cut-certifiable");
+        let wt = d.join("wt");
+        fs::create_dir_all(&wt).unwrap();
+        let g = |args: &[&str]| {
+            let o = Command::new("git").arg("-C").arg(&wt).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
+            assert!(o.status.success(), "{args:?}: {}", String::from_utf8_lossy(&o.stderr));
+            String::from_utf8_lossy(&o.stdout).trim().to_string()
+        };
+        g(&["init", "-q", "-b", "main"]);
+        g(&["commit", "-q", "--allow-empty", "-m", "a"]);
+        let first = g(&["rev-parse", "HEAD"]);
+        let status = |head: &str| format!("round=open\nbatch_id=r1\nhead={head}\nworktree={}", wt.display());
+        let repo = repo_at(&d);
+        assert_eq!(round_certifiable(&argv_stub(&d, &status(&first)), &repo, "r1"), Ok(()));
+        g(&["commit", "-q", "--allow-empty", "-m", "b"]);
+        let err = round_certifiable(&argv_stub(&d, &status(&first)), &repo, "r1").unwrap_err();
+        assert!(err.contains("not at the round's head"), "{err}");
+        assert!(round_certifiable(&argv_stub(&d, &status(&first)), &repo, "r9").unwrap_err().contains("no open round r9"));
+    }
+
+    #[test]
     fn a_refusal_without_the_lock_is_final_and_alarms_with_its_line() {
         let d = testkit::TempDir::new("batcher-cut-land-refused");
         let e = stub_queue(&d, 0, 1, "queue.sh round land: not a fast-forward");
@@ -3911,6 +3935,7 @@ pub(crate) fn lifecycle_tests_env(dir: &Path) -> Env {
         verdicts: dir.join("verdicts"),
         land_lock_attempts: 3,
         land_lock_wait: Duration::from_millis(1),
+        orphan_redrive_after: 600,
         land_unpause: None,
     }
 }

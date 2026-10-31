@@ -1539,15 +1539,10 @@ pub fn suite_statuses(dir: &Path, found: &mut Vec<(String, String)>, depth: u32)
     }
 }
 
-/// The verdict the entry itself wrote to `ci.result`, which outranks how the run around it ended:
-/// the entry finished, so a fault after it is the machinery's, not the candidate's.
-fn ci_result_exit(results: &Path) -> Option<i32> {
-    let text = fs::read_to_string(results.join("ci.result")).ok()?;
-    match text.split_whitespace().next()? {
-        "ok" => Some(0),
-        "red" => Some(1),
-        _ => None,
-    }
+/// Whether the entry itself wrote an `ok` verdict to `ci.result`: it finished green, so a fault in
+/// the run around it is the machinery's, not the candidate's.
+fn ci_result_ok(results: &Path) -> bool {
+    fs::read_to_string(results.join("ci.result")).is_ok_and(|t| t.split_whitespace().next() == Some("ok"))
 }
 
 /// Names the suites whose verdict cannot be read: a word that is neither passing nor blocking
@@ -2374,8 +2369,8 @@ fn certify_pass(
             build_s: 0,
         };
         let mut out = out;
-        if let Some(rc) = ci_result_exit(&results) {
-            out.rc = rc;
+        if ci_result_ok(&results) {
+            out.rc = 0;
         }
         if out.rc == 1 {
             let _ = fs::write(

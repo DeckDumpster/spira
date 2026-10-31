@@ -1564,14 +1564,18 @@ fn publish_progress(env: &RunEnv, args: &RunArgs, progress: &mut crate::progress
 }
 
 /// The suites boundary, written the first time the pass is seen past its build. A refused write is
-/// kept so the pass ends a fault: a pass the batch row cannot follow is not one to certify.
+/// kept so the pass ends a fault: a pass the batch row cannot follow is not one to certify. A single
+/// ci_entry has no suites to follow: its certify writes the boundary with its verdict, so a refusal
+/// here must not turn a green gate into a fault.
 fn record_boundary(env: &RunEnv, args: &RunArgs, progress: &mut crate::progress::Progress, refused: &mut Option<String>) {
     let Some(batch) = args.round_batch.as_deref() else { return };
     publish_progress(env, args, progress);
     if progress.take_suites_began() {
         if let Err(e) = env.record.suites_started(batch, args.round_repo.as_deref()) {
             eprintln!("round-vm run: {e}");
-            refused.get_or_insert(e);
+            if args.ci_entry.is_none() {
+                refused.get_or_insert(e);
+            }
         }
     }
 }
@@ -4093,6 +4097,26 @@ mod tests {
         assert!(!marker.exists(), "a foreign round has one verdict and nothing to attribute");
         let v: Value = serde_json::from_str(&fs::read_to_string(fx.cfg.run_dir.join("round-progress.json")).unwrap()).unwrap();
         assert_eq!(v["verdict"].as_str(), Some("red"));
+    }
+
+    #[test]
+    fn a_foreign_round_that_exits_0_is_green_though_its_batch_row_refused_the_suites_boundary() {
+        let fx = fixture();
+        let rec = FakeRecorder { refuse: true, ..Default::default() };
+        let mut remote = FakeRemote::green();
+        remote.files.insert(
+            "round-work/.runtime/spira/batch-results/",
+            vec![("KEY/ci.result", "ok 1 129 - - - 0\n"), ("KEY/ci.out", "gate: ok\nround-vm: ci_entry exited 0\n"), ("KEY/batch.meta", "tree=treesha\n")],
+        );
+        remote.files.remove(REMOTE_BINS);
+        let a = RunArgs {
+            results_dir: Some(fx.d.path().join("results")),
+            round_batch: Some("r-9".into()),
+            round_repo: Some("cubby".into()),
+            ci_entry: Some("npm run check".into()),
+            ..tree(&fx)
+        };
+        assert_eq!(go_recorded(&fx, &remote, &a, &rec), 0);
     }
 
     #[test]
