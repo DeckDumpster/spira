@@ -14,8 +14,9 @@ pub const STATE: EventKindTag = "repo-events.state";
 pub const OBSERVE: &str = "repo-events.observe";
 pub const NAME: &str = "repo-events";
 
-/// The newest keys kept: older runs have left the window the forge lists.
-pub const KEEP: usize = 5000;
+/// The newest keys kept: older runs have left the window the forge lists (30 per repository).
+/// The carry rides one journal event, so the whole list must fit `kind_body`.
+pub const KEEP: usize = 600;
 const TITLE_CHARS: usize = 80;
 const OBSERVE_DEADLINE_MS: u64 = 60_000;
 const DEADLINE_MS: u64 = 10_000;
@@ -158,6 +159,18 @@ impl Handler for RepoEvents {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `runtime_event.kind_body` is a MySQL TEXT column: 65,535 bytes.
+    const KIND_BODY_MAX: usize = 65_535;
+
+    #[test]
+    fn a_full_carry_fits_the_journal_column() {
+        let slug = "DeckDumpster/remarkable-pipeline-extended";
+        let runs = (0..KEEP as u64).map(|i| format!("run|{slug}|{}|action_required", 90_000_000_000 + i)).collect();
+        let carry = Carry { seeded: true, runs, failed: vec![] };
+        let body = serde_json::to_string(&carry).unwrap();
+        assert!(body.len() < KIND_BODY_MAX, "a full carry is {} bytes; kind_body holds {KIND_BODY_MAX}", body.len());
+    }
 
     fn run(id: u64, wf: &str, concl: &str, br: &str) -> Run {
         Run { id, workflow: wf.into(), conclusion: concl.into(), branch: br.into(), event: "push".into(), title: format!("t{id}") }
