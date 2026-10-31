@@ -33,7 +33,7 @@ What the stub agent cannot do also bounds the table: the sim runs `sim call`, no
 
 ## The scenarios
 
-Existing nine (spira/sim/scenarios): `happy-path`, `certify-twice`, `resubmit-moved-tip`, `submit-from-other-cwd`, `conflicting-siblings`, `long-gate-interleaving`, `publish-then-cut`, `cut-in-bare-env`.
+Existing eight (spira/sim/scenarios): `happy-path`, `certify-twice`, `resubmit-moved-tip`, `submit-from-other-cwd`, `conflicting-siblings`, `long-gate-interleaving`, `publish-then-cut`, `cut-in-bare-env`.
 
 Proposed ten, each named by the suites that need it:
 
