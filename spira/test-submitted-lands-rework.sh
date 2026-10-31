@@ -33,9 +33,10 @@
 # of 3) now read the lifecycle row it stood for; case 2's "reopened <id>" line is replaced
 # by REWORK plus a real re-claim (see case 2's note).
 #
-# SPLIT FOR WALL TIME: this file runs case 2 of the four below; the others are
-# test-submitted-lands.sh (1), test-submitted-lands-rework.sh (2) and
-# test-submitted-lands-hel-certified.sh (3, 4). The shared fixture is testlib/sl-fixture.sh.
+# SPLIT FOR WALL TIME: one file per slice of the four cases — test-submitted-lands.sh (1),
+# test-submitted-lands-rework.sh (2, up to the red gate's REWORK), test-submitted-lands-reclaim.sh
+# (2, the re-claim, from a seeded REWORK row) and test-submitted-lands-hel-certified.sh (3, 4).
+# The shared fixture is testlib/sl-fixture.sh.
 #
 # defect: sp-qsona (acceptance phase A stage 5)
 # tier: T3
@@ -78,10 +79,5 @@ is     "the red gate moves the row to REWORK, which the ready set claims" REWORK
 nowant "the red branch is not landed"                                     "landed spira/sp-sl2" "$out"
 nowant "and nothing of it reaches the base"                               "sp-sl2" "$(on_base)"
 is     "the bead is open"                                                 open "$(field sp-sl2 status)"
-# CLAIMABLE AGAIN, proven by claiming it: a REWORK row a dwarf could not take would strand
-# the bead — open, excluded from every claim, never landed.
-run_dwarf
-is   "the next dwarf claims it again and its submit applies"               0 "$(cat "$TMP/submit.rc" 2>/dev/null || echo missing)"
-is   "the row is SUBMITTED once more"                                     SUBMITTED "$(lcfix_state sp-sl2)"
-is   "at the new tip"                                                     "$(branch_tip sp-sl2)" "$(lcfix_tip sp-sl2)"
 
+tl_summary

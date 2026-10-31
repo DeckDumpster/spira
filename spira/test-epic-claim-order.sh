@@ -4,7 +4,9 @@
 # rank ready beads by min(epic priority, bead priority), then a started epic before an unstarted
 # one at equal priority, then the bead's own priority, then resumable-before-fresh, then
 # oldest. Covers epic_parent_lookup/epic_rank_rows (lib.sh) directly; dwarf's wiring of them
-# into the actual claim (T6/T8) is test-epic-claim-dwarf.sh, split off for wall time.
+# into the actual claim is test-epic-claim-dwarf.sh (T6) and test-epic-claim-rank-failure.sh (T8);
+# the oversized ready set is test-epic-claim-argv-limit.sh (T7). The fixture is
+# testlib/epic-claim-fixture.sh.
 #
 # THE DEFECT THIS FIXES. `bd ready --claim` orders by bead priority alone, so a bead ejected
 # back to ready from the epic being delivered competes on its own P-number with every
@@ -20,8 +22,6 @@
 # `bd children` and the labels/status/parent fields they return actually contain, which a
 # stub would be a second, driftable opinion of (law-prefer-the-real-dependency).
 #
-# T7 (sp-o4trx): a ready set past MAX_ARG_STRLEN (128 KiB) still ranks every bead.
-#
 # defect: sp-ns46j sp-o4trx
 # tier: T3
 # covers: spira/lib.sh dwarf/src/* spira-claim/*
@@ -30,64 +30,11 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 tl_config SPIRA_TEST_CASE_DEADLINE=90
 
+ECL_SUITE=test-epic-claim-order
 # shellcheck disable=SC1090
-. "$HERE/testdb.sh"
-testdb_require test-epic-claim-order
-TMP="$(mktemp -d)"
-trap 'testdb_drop; rm -rf "$TMP"' EXIT
-trap 'testdb_drop; rm -rf "$TMP"; exit 130' INT
-trap 'testdb_drop; rm -rf "$TMP"; exit 143' TERM
-testdb_up epicclaimorder || { echo "test-epic-claim-order.sh: could not build a fixture database"; exit 1; }
-# sp-mve9i: an epic is "started" by its children's lifecycle rows, never bd status. With no
-# lifecycle store here, a stand-in spira-lc on PATH (spira-claim runs it by name) tells the
-# fixture's bd story in lifecycle terms: closed → LANDED, in_progress → WORKING, open → READY.
-lc_mirror_bd "$TMP/lc-mirror"
-export PATH="$TMP/lc-mirror:$PATH" SPIRA_LC_BIN
-
-export SPIRA_HOME="$HERE"
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
-export SPIRA_CONF="$TMP/no-such.conf"
-tl_config SPIRA_RUN="$SPIRA_RUN"
-# round 2 fix: the complete fixture declares scope_label="spira" as its base value, so
-# builder.rune's RUNE_LABELS (resolved against the real config, not this shell's unset
-# $SPIRA_SCOPE_LABEL) would require a "spira" label bead()'s seeded beads never carry —
-# nothing would ever be ready. Declare the empty scope this suite has always meant.
-tl_config SPIRA_SCOPE_LABEL=""
-# shellcheck disable=SC1090
-. "$HERE/lib.sh"
+. "$HERE/testlib/epic-claim-fixture.sh"
 
 echo "test-epic-claim-order.sh"
-
-seed() { testdb_reset; testdb_seed; }   # seed <<JSONL ... JSONL, after a clean slate
-
-# epic <id> <priority>            -> one open epic bead
-# closed_child <id> <parent>      -> one CLOSED child, makes <parent> "started"
-# bead <id> <parent-or-""> <prio> -> one ready (open, plan-labelled, unparented-or-childed) task
-epic()         { printf '{"id":"%s","title":"epic","status":"open","issue_type":"epic","priority":%s,"labels":[],"updated_at":"2026-09-04T00:00:00Z"}\n' "$1" "$2"; }
-closed_child() { printf '{"id":"%s","title":"done child","status":"closed","issue_type":"task","priority":2,"labels":[],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"%s","type":"parent-child"}]}\n' "$1" "$1" "$2"; }
-bead() {
-    local id="$1" parent="$2" prio="$3" deps="" labels="\"plan\",\"repo:fixture\""
-    [ -n "$parent" ] && deps=",\"dependencies\":[{\"issue_id\":\"$id\",\"depends_on_id\":\"$parent\",\"type\":\"parent-child\"}]"
-    [ -n "${SPIRA_SCOPE_LABEL:-}" ] && labels="\"$SPIRA_SCOPE_LABEL\",$labels"
-    printf '{"id":"%s","title":"t","status":"open","issue_type":"task","priority":%s,"labels":[%s],"updated_at":"2026-09-04T00:00:00Z"%s}\n' "$id" "$prio" "$labels" "$deps"
-}
-
-# ranked_ids -> the ready set's own ids (READY_ARGS shape, plan label), ranked best-first.
-ranked_ids() {
-    local ready_json epic_lookup
-    ready_json="$(bdjson ready --limit 0 --exclude-type epic,event -u --label plan)"
-    [ -n "$ready_json" ] || ready_json="[]"
-    epic_lookup="$(epic_parent_lookup "$ready_json")"
-    epic_rank_rows "$ready_json" "$epic_lookup" "" | cut -f6
-}
-# rank_row <id> -> that bead's own TSV row (eprio estarted bprio resumable age id epic_id)
-rank_row() {
-    local id="$1" ready_json epic_lookup
-    ready_json="$(bdjson ready --limit 0 --exclude-type epic,event -u --label plan)"
-    [ -n "$ready_json" ] || ready_json="[]"
-    epic_lookup="$(epic_parent_lookup "$ready_json")"
-    epic_rank_rows "$ready_json" "$epic_lookup" "" | awk -F'\t' -v id="$id" '$6 == id'
-}
 
 # ==========================================================================================
 echo
@@ -200,48 +147,5 @@ is "exactly one 'bd list --id ...' call resolves every epic's own priority (5 be
 children_calls="$(grep -c '^-C .*children ' "$CALL_LOG" 2>/dev/null || echo 0)"
 is "the 'started' check is one 'bd children' call per DISTINCT epic (2), not per bead (5)" \
     "2" "$children_calls"
-
-# ==========================================================================================
-echo
-echo "T7: a ready set past MAX_ARG_STRLEN (128 KiB) still ranks every bead (sp-o4trx)"
-# ==========================================================================================
-# THE CLIFF THIS REPRODUCES. epic_parent_lookup/epic_rank_rows used to pass the whole
-# ready-set JSON to python3 -c as a single argv element. At 142 real ready beads that
-# argument exceeded the kernel's per-argument limit (MAX_ARG_STRLEN, 128 KiB): the exec died
-# "Argument list too long" (rc 126), both functions printed nothing, and every builder dwarf
-# read the empty ranked list as "nothing ready to claim" for an hour (572 idle calls
-# against 142 ready beads). Every other fixture in this suite uses a handful of beads, so
-# none of them ever reached the threshold — this one must.
-big_desc="$(python3 -c 'print("x" * 900)')"
-N=120
-{
-    epic sp-ebig 0
-    closed_child sp-ebig-done sp-ebig
-    for i in $(seq 1 "$N"); do
-        printf '{"id":"sp-big%03d","title":"t","status":"open","issue_type":"task","priority":%d,"labels":["plan","repo:fixture"],"updated_at":"2026-09-04T00:00:00Z","description":"%s","dependencies":[{"issue_id":"sp-big%03d","depends_on_id":"sp-ebig","type":"parent-child"}]}\n' \
-            "$i" "$((i % 5))" "$big_desc" "$i"
-    done
-} > "$TMP/t7.jsonl"
-seed < "$TMP/t7.jsonl"
-
-t7_ready_json="$(bdjson ready --limit 0 --exclude-type epic,event -u --label plan)"
-t7_size=${#t7_ready_json}
-# 0. POSITIVE CONTROL. The case below is only meaningful if the payload is actually past
-#    the limit; a fixture that shrank under it would pass against the broken code.
-[ "$t7_size" -gt 131072 ] && ok "fixture ready-set JSON is past the 128 KiB limit ($t7_size bytes)" \
-                          || bad "fixture ready-set JSON is only $t7_size bytes — not testing the cliff"
-
-t7_order="$(ranked_ids)"
-t7_count="$(printf '%s\n' "$t7_order" | grep -c .)"
-is "every one of $N beads past the argv limit is ranked (none dropped by an E2BIG exec)" \
-    "$N" "$t7_count"
-
-t7_lookup_rc=0
-epic_lookup="$(epic_parent_lookup "$t7_ready_json")" || t7_lookup_rc=$?
-is "epic_parent_lookup succeeds (rc=0) against the oversized ready set" "0" "$t7_lookup_rc"
-
-t7_rank_rc=0
-epic_rank_rows "$t7_ready_json" "$epic_lookup" "" >/dev/null || t7_rank_rc=$?
-is "epic_rank_rows succeeds (rc=0) against the oversized ready set" "0" "$t7_rank_rc"
 
 tl_summary

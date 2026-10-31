@@ -33,9 +33,10 @@
 # of 3) now read the lifecycle row it stood for; case 2's "reopened <id>" line is replaced
 # by REWORK plus a real re-claim (see case 2's note).
 #
-# SPLIT FOR WALL TIME: this file runs case 3 and 4 of the four below; the others are
-# test-submitted-lands.sh (1), test-submitted-lands-rework.sh (2) and
-# test-submitted-lands-hel-certified.sh (3, 4). The shared fixture is testlib/sl-fixture.sh.
+# SPLIT FOR WALL TIME: one file per slice of the four cases — test-submitted-lands.sh (1),
+# test-submitted-lands-rework.sh (2, up to the red gate's REWORK), test-submitted-lands-reclaim.sh
+# (2, the re-claim, from a seeded REWORK row) and test-submitted-lands-hel-certified.sh (3, 4).
+# The shared fixture is testlib/sl-fixture.sh.
 #
 # defect: sp-qsona (acceptance phase A stage 5)
 # tier: T3
