@@ -51,6 +51,7 @@ pub struct World {
     pub metrics_endpoint: Option<String>,
     pub scope_label: String,
     pub desired_dir: PathBuf,
+    pub export_bin: String,
 }
 
 struct MapRow {
@@ -489,7 +490,10 @@ impl World {
         if logged <= exported {
             return Ok(());
         }
-        let bin = "tsd-lifecycle-export";
+        let bin = self.export_bin.as_str();
+        if bin.is_empty() {
+            return Err("bead-stage is behind the lifecycle log and no exporter is configured".into());
+        }
         let out = spira_config::bounded::bounded(bin).arg("lifecycle").stdin(std::process::Stdio::null()).output().map_err(|e| format!("{bin}: {e}"))?;
         if out.status.success() {
             return Ok(());

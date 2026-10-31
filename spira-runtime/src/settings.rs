@@ -242,6 +242,7 @@ impl Settings {
             metrics_endpoint: Some(get("SPIRA_METRICS_ENDPOINT")?).filter(|e| !e.trim().is_empty()),
             scope_label: get("SPIRA_SCOPE_LABEL")?,
             desired_dir: PathBuf::from(get("SPIRA_DESIRED_DIR")?),
+            export_bin: "tsd-lifecycle-export".into(),
             ..World::default()
         };
         Ok(Settings {
@@ -415,6 +416,24 @@ mod tests {
         };
         let s = Settings::from_lookup(&distinct).unwrap();
         assert_eq!((s.publish_backlog.interval_ms, s.publish_backlog.max_count, s.publish_backlog.max_age_secs), (21_000, 22, 23));
+    }
+
+    #[test]
+    fn each_reconciler_flow_key_reaches_its_own_field() {
+        let base = lookup("7");
+        let keys = ["SPIRA_RUNTIME_RECONCILER_FLOW_SECS", "SPIRA_FLOW_WINDOW_HOURS", "SPIRA_FLOW_BASELINE_HOURS", "SPIRA_FLOW_GRACE_SECS", "SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS", "SPIRA_FLOW_REWORK_WINDOW_HOURS", "SPIRA_FLOW_SENTINEL_PERIOD_SECS", "SPIRA_SCOPE_LABEL", "SPIRA_DESIRED_DIR"];
+        let distinct = move |k: &str| keys.iter().position(|x| *x == k).map_or_else(|| base(k), |i| Ok(if i >= 7 { format!("/v{i}") } else { (31 + i).to_string() }));
+        let s = Settings::from_lookup(&distinct).unwrap();
+        let f = &s.reconciler_flow;
+        assert_eq!((f.interval_ms, f.window_hours, f.baseline_hours, f.grace_secs, f.unobservable_grace_secs, f.rework_window_hours, f.sentinel_timer_secs), (31_000, 32.0, 33.0, 34, 35, 36.0, 37));
+        assert_eq!((s.world.scope_label.as_str(), s.world.desired_dir.to_str(), s.world.export_bin.as_str()), ("/v7", Some("/v8"), "tsd-lifecycle-export"));
+    }
+
+    #[test]
+    fn a_window_that_is_not_a_positive_number_of_hours_is_refused() {
+        let base = lookup("7");
+        let zero = move |k: &str| if k == "SPIRA_FLOW_WINDOW_HOURS" { Ok("0".to_string()) } else { base(k) };
+        assert!(Settings::from_lookup(&zero).unwrap_err().contains("SPIRA_FLOW_WINDOW_HOURS"));
     }
 
     #[test]
