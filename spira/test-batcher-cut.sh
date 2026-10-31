@@ -408,6 +408,36 @@ echo "test-batcher-cut.sh ($CUT_PART)"
 testdb_reset
 
 
+local_land_fixture() {
+    [ -d "$TMP/local-land-repo" ] && return 0
+    LREPO="$TMP/local-land-repo"
+    git init -q -b trunk "$LREPO"
+    # One suite in the tree, as every real repository has: the round's corpus step (the stub
+    # round-vm, which is what installs the round's target/release under STUB_INSTALL_BINS) only
+    # runs when the round's own tree names a suite — an empty corpus never builds bins at all.
+    mkdir -p "$LREPO/spira"
+    : > "$LREPO/spira/test-local.sh"
+    git -C "$LREPO" add -A
+    git -C "$LREPO" commit -q -m base
+    git -C "$LREPO" branch local/main trunk
+    LRELEASES="$TMP/local-releases"; mkdir -p "$LRELEASES"
+
+    cat > "$SH/repo-map" <<RMAP
+$REPONAME | $REPO  | queue       | origin/main | | |
+locland   | $LREPO | queue.local | local/main  | | |
+RMAP
+
+    cut_local() {
+        tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" \
+            SPIRA_QUEUE_DIR="$QUEUEDIR" \
+            SPIRA_QUEUE_BATCH_WAIT="${SPIRA_QUEUE_BATCH_WAIT_OVERRIDE:-999999}" \
+            SPIRA_RELEASES="$LRELEASES" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
+        PATH="$SH:$PATH" SPIRA_HOME="$SH" \
+        STUB_INSTALL_BINS="${STUB_INSTALL_BINS:-}" \
+            batcher cut locland --round-vm "$SH/round-vm-stub.sh" 2>&1
+    }
+}
+
 if cut_runs A; then
 
 # =============================================================================
@@ -994,32 +1024,7 @@ if cut_runs L; then
 echo
 echo "L. queue.local: a round lands locally via queue land-local — no push, no PR:"
 
-LREPO="$TMP/local-land-repo"
-git init -q -b trunk "$LREPO"
-# One suite in the tree, as every real repository has: the round's corpus step (the stub
-# round-vm, which is what installs the round's target/release under STUB_INSTALL_BINS) only
-# runs when the round's own tree names a suite — an empty corpus never builds bins at all.
-mkdir -p "$LREPO/spira"
-: > "$LREPO/spira/test-local.sh"
-git -C "$LREPO" add -A
-git -C "$LREPO" commit -q -m base
-git -C "$LREPO" branch local/main trunk
-LRELEASES="$TMP/local-releases"; mkdir -p "$LRELEASES"
-
-cat > "$SH/repo-map" <<RMAP
-$REPONAME | $REPO  | queue       | origin/main | | |
-locland   | $LREPO | queue.local | local/main  | | |
-RMAP
-
-cut_local() {
-    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" \
-        SPIRA_QUEUE_DIR="$QUEUEDIR" \
-        SPIRA_QUEUE_BATCH_WAIT="${SPIRA_QUEUE_BATCH_WAIT_OVERRIDE:-999999}" \
-        SPIRA_RELEASES="$LRELEASES" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
-    PATH="$SH:$PATH" SPIRA_HOME="$SH" \
-    STUB_INSTALL_BINS="${STUB_INSTALL_BINS:-}" \
-        batcher cut locland --round-vm "$SH/round-vm-stub.sh" 2>&1
-}
+local_land_fixture
 
 # L1 — missing --with-bins corpus: terminal_ready refuses before land-local is ever called,
 # nothing changes.
@@ -1082,6 +1087,7 @@ if cut_runs Np; then
 echo
 echo "N. pacing parity: pool of one, no batch open, cuts despite a year-long queue_batch_wait:"
 
+local_land_fixture
 plant sp-cnaa1
 git -C "$LREPO" worktree add -q -b spira/sp-cnaa1 "$RUN/worktree/sp-cnaa1" trunk
 printf 'n\n' > "$RUN/worktree/sp-cnaa1/n.txt"
@@ -1113,6 +1119,7 @@ if cut_runs M; then
 echo
 echo "M. stacked dependents: closure, topological order, every member reaches LANDED:"
 
+local_land_fixture
 # A -> B -> C: a straight chain, each bead's branch built on the previous bead's own tip, the
 # same shape a real stacked worktree gets once bead 3 (dwarf base = landing ref + stack) lands.
 git -C "$LREPO" worktree add -q -b spira/sp-cmaa1 "$RUN/worktree/sp-cmaa1" local/main
