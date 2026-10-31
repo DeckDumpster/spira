@@ -17,7 +17,11 @@ pub fn slugify(raw: &str) -> String {
 /// The refusal for statute text the `inventory` fence of spira-lint would refuse in the
 /// projected files, or `None` when it is clean.
 pub fn inventory_refusal(text: &str) -> Option<String> {
-    let hit = spira_lint::rules::inventory::PATTERNS.iter().filter_map(|p| regex::Regex::new(p).ok()).find_map(|re| re.find(text).map(|m| m.as_str().to_string()))?;
+    let re = match spira_lint::rules::inventory::pattern_re(&[]) {
+        Ok(re) => re,
+        Err(e) => return Some(format!("rule: refusing — spira-lint's inventory patterns do not compile ({e}), so the text cannot be checked against the fence.")),
+    };
+    let hit = String::from_utf8_lossy(re.find(text.as_bytes())?.as_bytes()).into_owned();
     Some(format!("rule: refusing — the text holds {hit:?}, which spira-lint's inventory fence refuses in the shipped law/ tree. Cite the mechanism, not the case: drop the provenance, then enact again."))
 }
 

@@ -1581,7 +1581,6 @@ name = "rule"
 version = "0.1.0"
 dependencies = [
  "bead",
- "regex",
  "serde_json",
  "spira-config",
  "spira-lint",
