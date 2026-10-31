@@ -522,6 +522,19 @@ mod tests {
     }
 
     #[test]
+    fn a_stranded_round_is_filed_and_paged_once_however_many_passes_follow() {
+        let t = dir("orphan-once");
+        let (d, calls) = (t.path(), Calls::default());
+        let moved = || Err("the worktree is at d7aa8f08, not 07da4601".to_string());
+        for k in 0..6 {
+            orphan_pass(d, 1000 + k * WAIT, "b-1", false, moved(), &calls);
+        }
+        let c = calls.borrow();
+        assert_eq!(c.iter().filter(|x| x.starts_with("incident")).count(), 1, "{c:?}");
+        assert_eq!(inbox(d).matches("ROUND OPEN a b-1").count(), 1);
+    }
+
+    #[test]
     fn a_driver_seen_resets_the_orphan_wait() {
         let t = dir("orphan-driven");
         let (d, calls) = (t.path(), Calls::default());
