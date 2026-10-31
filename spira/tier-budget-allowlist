@@ -26,7 +26,6 @@
 # 33 of those were over 60s outright, together holding 38% of measured suite-seconds — the
 # scale that makes a hard, unratcheted cutover impossible on day one.
 test-acceptance-ci.sh	T1	15.0
-test-acceptance-prev-tag.sh	T1	12.5
 test-acceptance-ready.sh	T1	5.0
 test-activate.sh	T1	4.0
 test-dwarf-decision-blocked.sh	T1	33.0
@@ -73,7 +72,6 @@ test-build-bd-release.sh	T1	2.0
 test-builder-qa-proposed.sh	T1	4.0
 test-cadence-tool.sh	T1	2.0
 test-cadence.sh	T1	1.5
-test-canary.sh	T1	33.0
 test-capacity-probe.sh	T1	3.5
 test-census-reopen.sh	T1	78.5
 test-census-tz-boundary.sh	T1	65.0
@@ -249,7 +247,6 @@ test-ref-guard.sh	T1	3.0
 test-release-acceptance.sh	T1	2.0
 test-release-workflow.sh	T1	1.5
 test-release.sh	T1	2.0
-test-released-defects.sh	T1	7.5
 test-render-memories.sh	T1	9.0
 test-requeue.sh	T1	30.5
 test-rollback.sh	T1	2.0
@@ -314,7 +311,6 @@ test-watchtower-throttle.sh	T1	11.0
 test-watchtower.sh	T1	143.0
 test-wiki-add-fence.sh	T1	1.5
 test-work-services-exclusion.sh	T1	2.5
-test-workspace-dist.sh	T1	2.0
 test-worktree-absent.sh	T1	2.0
 test-world-drain-deadline.sh	T1	3.0
 test-world-drain.sh	T1	3.0
