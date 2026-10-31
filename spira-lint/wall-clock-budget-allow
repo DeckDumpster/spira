@@ -12,7 +12,6 @@ spira-config/src/lc_call.rs
 spira-config/src/scratch.rs
 spira-lint/src/lib.rs
 spira/test-czar-pass.sh
-spira/test-gate-cap.sh
 spira/test-gate-wait.sh
 spira/test-mail-deliver.sh
 spira/test-mail.sh
