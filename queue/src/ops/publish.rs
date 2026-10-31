@@ -87,7 +87,7 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
     };
     let push_mode = c.r.publish_mode == PublishMode::Push;
     let pfile = c.queue_file("publish");
-    if let Some(kv) = records::read_kv(&pfile).ok().flatten().filter(|_| !push_mode) {
+    if let Ok(Some(kv)) = records::read_kv(&pfile) {
         w.err(format!(
             "queue.sh publish: a publish PR is already open for {name} (pr={}) — settle it first",
             kv.get("pr").unwrap_or("")
@@ -187,7 +187,7 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
             return FAIL;
         }
     };
-    if members.is_empty() && !push_mode {
+    if members.is_empty() {
         w.err(format!("queue.sh publish: {name} has new commits on {base} but no land commit (spira: land <id>) in range — refusing"));
         return FAIL;
     }

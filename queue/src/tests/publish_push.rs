@@ -96,3 +96,26 @@ fn pr_mode_still_opens_a_forge_pr_for_the_same_fixture() {
     );
     assert_ne!(git(&f.remote, &["rev-parse", "main"]), git(&f.repo, &["rev-parse", "local/main"]));
 }
+
+#[test]
+fn push_mode_keeps_the_land_commit_guard() {
+    let f = fixture(PublishMode::Push);
+    git(&f.repo, &["commit", "-q", "--amend", "--allow-empty", "-m", "an unmarked commit"]);
+    let head = git(&f.repo, &["rev-parse", "local/main"]);
+    full_suite_passed(&f.t, &head);
+    let before = git(&f.remote, &["rev-parse", "main"]);
+    assert_ne!(f.t.run_on(&RealGit, &["publish"]), 0);
+    assert!(f.t.err().contains("no land commit"), "{}", f.t.err());
+    assert_eq!(git(&f.remote, &["rev-parse", "main"]), before);
+}
+
+#[test]
+fn push_mode_refuses_while_a_publish_pr_record_is_still_open() {
+    let f = fixture(PublishMode::Push);
+    fs::create_dir_all(f.t.qfile("publish").parent().unwrap()).unwrap();
+    fs::write(f.t.qfile("publish"), "pr=5\nhead=h\n").unwrap();
+    let before = git(&f.remote, &["rev-parse", "main"]);
+    assert_ne!(f.t.run_on(&RealGit, &["publish"]), 0);
+    assert!(f.t.err().contains("already open"), "{}", f.t.err());
+    assert_eq!(git(&f.remote, &["rev-parse", "main"]), before);
+}

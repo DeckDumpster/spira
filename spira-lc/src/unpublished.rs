@@ -1,6 +1,7 @@
 //! `unpublished <repo>` — a queue.local repo's unpublished range, measured against a forge tip
 //! fetched now. Prints `{"forge_tip","landing_tip","count","oldest_arrival"}`; `oldest_arrival` is
 //! when the oldest unpublished commit reached the landing ref (its reflog), null at count 0.
+//! A repo declared to publish nowhere answers `{"declared_unpublished":true}`: nothing to measure, not a blindness.
 //! Exit 2, naming why, for anything it cannot measure — never a zero it did not read.
 
 use std::collections::BTreeMap;
@@ -36,7 +37,10 @@ fn measure(name: &str) -> Result<serde_json::Value, String> {
     if repos::ref_remote(&base, Some(&path)).is_some() {
         return Err(format!("{base} is a remote-tracking ref, not a queue.local base"));
     }
-    let (remote, branch) = repos::publish_forge(&reg, name, &env).ok_or("it publishes nowhere")?;
+    if repos::publishes_nowhere(&reg, name, &env) {
+        return Ok(serde_json::json!({ "declared_unpublished": true }));
+    }
+    let (remote, branch) = repos::publish_forge(&reg, name, &env).ok_or("it has no resolvable publish target")?;
     fetch(repo, &remote, &branch)?;
     let forge_tip = rev(repo, &format!("refs/remotes/{remote}/{branch}"))?;
     let landing_tip = rev(repo, &base)?;
