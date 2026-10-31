@@ -36,9 +36,9 @@
 # the pass this suite can reach, and reaping a branch from inside it reproduces the real
 # sequence exactly rather than approximating it.
 #
-# SPLIT FOR WALL TIME: the cases after the positive control live in test-landing-reaped.sh (the
-# reap and push-race routes, and the bulk scan) and test-landing-stale-dup.sh (a bead changed
-# mid-gate, and the parallel duplicate). The shared fixture is testlib/landing-fixture.sh.
+# SPLIT FOR WALL TIME: the other cases live in test-landing-reaped.sh (the reap and push-race
+# routes), test-landing-scan.sh (the bulk scan, an absent bead, a bead with no repo: label) and
+# test-landing-stale-dup.sh (a bead changed mid-gate, and the parallel duplicate). The shared fixture is testlib/landing-fixture.sh.
 #
 # defect: sp-q9i sp-9194o
 # tier: T3
@@ -133,36 +133,5 @@ want "a branch that truly conflicts is reopened"   "reopened sp-clash" "$out"
 is   "and its bead goes back to open"              open "$(status_of sp-clash)"
 want "and the note names the file that collided"   "shared.txt" "$(notes_of sp-clash)"
 drop_branch sp-clash
-
-# --------------------------------------------------------------------------------------
-# A BRANCH WHOSE BEAD IS ABSENT FROM THE DATABASE
-#
-# A branch named spira/<id> with no bead in the store must be treated exactly as a bdjson
-# show that returned nothing: skipped as non-closed, never landed, never errored.
-# --------------------------------------------------------------------------------------
-seed
-git -C "$REPO" worktree add -q -b "spira/sp-ghost" "$RUN/worktree/sp-ghost" main
-printf 'ghost\n' > "$RUN/worktree/sp-ghost/ghost.txt"
-git -C "$RUN/worktree/sp-ghost" add -A
-git -C "$RUN/worktree/sp-ghost" commit -q -m "feat: sp-ghost — work"
-# sp-ghost has a branch but NO bead in the database.
-out="$(landing)"
-want "an absent bead is skipped as non-closed" "spira/sp-ghost not landed — its bead is -" "$out"
-nowant "and is never landed"                   "landed spira/sp-ghost" "$out"
-git -C "$REPO" worktree remove --force "$RUN/worktree/sp-ghost" >/dev/null 2>&1
-git -C "$REPO" branch -D spira/sp-ghost >/dev/null 2>&1
-
-# --------------------------------------------------------------------------------------
-# THE REPO: LABEL FALLS BACK TO THE SWEPT REPOSITORY
-#
-# A bead with no repo: label must be treated as belonging to the repository being swept,
-# not rejected as unroutable.
-# --------------------------------------------------------------------------------------
-seed; branch sp-nolabel
-# The branch helper creates a bead with empty labels. Verify landing treats it as
-# belonging to the fixture repo.
-out="$(landing)"
-want "a bead with no repo: label still lands" "landed spira/sp-nolabel" "$out"
-drop_branch sp-nolabel
 
 tl_summary

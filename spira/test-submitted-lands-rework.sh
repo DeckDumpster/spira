@@ -34,7 +34,7 @@
 # by REWORK plus a real re-claim (see case 2's note).
 #
 # SPLIT FOR WALL TIME: one file per slice of the four cases — test-submitted-lands.sh (1),
-# test-submitted-lands-rework.sh (2, up to the red gate's REWORK), test-submitted-lands-reclaim.sh
+# test-submitted-lands-rework.sh (2, the red gate, from a seeded SUBMITTED row), test-submitted-lands-reclaim.sh
 # (2, the re-claim, from a seeded REWORK row) and test-submitted-lands-hel-certified.sh (3, 4).
 # The shared fixture is testlib/sl-fixture.sh.
 #
@@ -69,8 +69,16 @@ echo "test-submitted-lands-rework.sh"
 echo
 echo "2. a submitted bead whose gate is RED goes back to the builders — claimable again:"
 # ======================================================================================
-testdb_reset; seed sp-sl2
-run_dwarf
+# The row is seeded as `work submit` leaves it (SUBMITTED at the branch tip, the bead open);
+# the model's own submit through the dwarf is test-submitted-lands.sh case 1.
+testdb_reset
+timeout 5 git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" branch -q -f spira/sp-sl2 origin/main
+timeout 5 git -C "$REPO" worktree add -q "$TMP/wt2" spira/sp-sl2
+printf 'two\n' > "$TMP/wt2/two.txt"
+timeout 5 git -C "$TMP/wt2" add -A; timeout 5 git -C "$TMP/wt2" commit -qm "sp-sl2: the work"
+timeout 5 git -C "$REPO" worktree remove --force "$TMP/wt2"
+seed sp-sl2 SUBMITTED "$(branch_tip sp-sl2)"
 is   "setup: submitted" SUBMITTED "$(lcfix_state sp-sl2)"
 gate_fail
 out="$(landing)"

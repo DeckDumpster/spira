@@ -102,39 +102,5 @@ is     "and its bead stays closed"                         closed "$(status_of s
 want   "and the retry says it could not attempt a rebase"  "the retry could not attempt a rebase of spira/sp-raced" "$out"
 want   "naming the reason rather than a file list"         "(no-branch)" "$out"
 drop_branch sp-raced
-# --------------------------------------------------------------------------------------
-# THE BULK SCAN: one query not N
-#
-# The scan was the whole cost of a quiet pass, growing linearly with the branch count.
-# A counting shim around bd proves the scan issues one show per repository, not one per
-# branch.
-# --------------------------------------------------------------------------------------
-echo
-seed; branch sp-cnt1; branch sp-cnt2; branch sp-cnt3
-cat > "$TMP/bd-counter.sh" <<'SHIM'
-#!/usr/bin/env bash
-# Count bd show invocations by appending to a log. bdq prepends -C <db> before the
-# subcommand, so match anywhere in the args rather than on $1.
-case "$*" in *" show "*|*" show") printf '%s\n' "$*" >> "${BD_CALL_LOG:?}" ;; esac
-exec "$BD_REAL" "$@"
-SHIM
-chmod +x "$TMP/bd-counter.sh"
-export BD_CALL_LOG="$TMP/bd-calls.log" BD_REAL="${SPIRA_BD:-bd}"
-SPIRA_BD="$TMP/bd-counter.sh"   # shell var only: landing()'s own tl_config read picks this up
-landing >/dev/null 2>&1
-SPIRA_BD="$BD_REAL"; unset BD_CALL_LOG BD_REAL
-show_calls="$(grep -c '^show' "$TMP/bd-calls.log" 2>/dev/null || echo 0)"
-# One bulk show for the scan, plus one re-read per branch that reaches the gate (three
-# here). The scan must not grow with the branch count — three branches and eleven must
-# both start with one show.
-want "three branches land with one scan query plus per-branch re-reads" \
-     "show" "$(head -1 "$TMP/bd-calls.log" 2>/dev/null)"
-# The first call is the bulk scan; it carries all three IDs on one line.
-first_call="$(head -1 "$TMP/bd-calls.log" 2>/dev/null)"
-want "the scan carries all ids in one call" "sp-cnt1" "$first_call"
-want "including the second"                 "sp-cnt2" "$first_call"
-want "and the third"                        "sp-cnt3" "$first_call"
-drop_branch sp-cnt1; drop_branch sp-cnt2; drop_branch sp-cnt3
-rm -f "$TMP/bd-calls.log"
 
 tl_summary

@@ -34,7 +34,7 @@
 # by REWORK plus a real re-claim (see case 2's note).
 #
 # SPLIT FOR WALL TIME: one file per slice of the four cases — test-submitted-lands.sh (1),
-# test-submitted-lands-rework.sh (2, up to the red gate's REWORK), test-submitted-lands-reclaim.sh
+# test-submitted-lands-rework.sh (2, the red gate, from a seeded SUBMITTED row), test-submitted-lands-reclaim.sh
 # (2, the re-claim, from a seeded REWORK row) and test-submitted-lands-hel-certified.sh (3, 4).
 # The shared fixture is testlib/sl-fixture.sh.
 #
