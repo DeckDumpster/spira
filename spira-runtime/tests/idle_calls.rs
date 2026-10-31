@@ -92,7 +92,7 @@ fn production() -> Settings {
             "SPIRA_BRAIN_DIRTY_AGE" => "3600".into(),
             "SPIRA_PR_DEPLOY_GIVEUP" => "3600".into(),
             "SPIRA_GH_API" => "http://127.0.0.1:9".into(),
-            "SPIRA_BROKER_GH_TOKEN" => String::new(),
+            "SPIRA_BROKER_GH_TOKEN" | "SPIRA_BROKER_GH_CONFIG_DIR" | "SPIRA_GH" => String::new(),
             "SPIRA_MAIL" | "SPIRA_ASK_LABEL" | "SPIRA_WIKI" => "/unused".into(),
             "SPIRA_RUNTIME_ROUND_DUTY_SECS" => "15".into(),
             "SPIRA_RUNTIME_STALL_LIMIT" => "2".into(),

@@ -28,7 +28,17 @@ pub fn tmux(program: &Path, args: &[&str], deadline: Duration) -> Result<String,
     }
 }
 
-pub fn bounded(mut cmd: Command, deadline: Duration) -> Result<(Option<i32>, Vec<u8>), String> {
+/// `gh auth token` under `config_dir` (when set); the exit code and stdout.
+pub fn gh_auth_token(gh: &str, config_dir: &str, deadline: Duration) -> Result<(Option<i32>, Vec<u8>), String> {
+    let mut cmd = Command::new(gh);
+    cmd.args(["auth", "token"]);
+    if !config_dir.is_empty() {
+        cmd.env("GH_CONFIG_DIR", config_dir);
+    }
+    bounded(cmd, deadline)
+}
+
+fn bounded(mut cmd: Command, deadline: Duration) -> Result<(Option<i32>, Vec<u8>), String> {
     use std::io::Read;
     let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|e| format!("spawn: {e}"))?;
     let mut out = child.stdout.take().ok_or("no stdout pipe")?;

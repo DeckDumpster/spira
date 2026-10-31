@@ -6,14 +6,13 @@ use std::fmt;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
-use std::process::Command;
 use std::time::Duration;
 
 use serde_json::Value;
 
 use crate::watchers::pr_notify::{classify, Final, OpenPr, Run};
 use crate::watchers::repo_events;
-use crate::wiki_git::bounded;
+use crate::wiki_git::gh_auth_token;
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(5);
 const PAGE_SIZE: usize = 100;
@@ -80,12 +79,7 @@ impl Forge {
         if !self.token.is_empty() {
             return Ok(self.token.clone());
         }
-        let mut gh = Command::new(if self.gh.is_empty() { "gh" } else { &self.gh });
-        gh.args(["auth", "token"]);
-        if !self.gh_config_dir.is_empty() {
-            gh.env("GH_CONFIG_DIR", &self.gh_config_dir);
-        }
-        let (code, out) = bounded(gh, CALL_TIMEOUT).map_err(|e| format!("{NO_CREDENTIAL}: gh: {e}"))?;
+        let (code, out) = gh_auth_token(if self.gh.is_empty() { "gh" } else { &self.gh }, &self.gh_config_dir, CALL_TIMEOUT).map_err(|e| format!("{NO_CREDENTIAL}: gh: {e}"))?;
         let token = String::from_utf8_lossy(&out).trim().to_string();
         if code == Some(0) && !token.is_empty() {
             Ok(token)
