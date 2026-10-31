@@ -201,6 +201,14 @@ mod tests {
     }
 
     #[test]
+    fn a_forge_with_no_credential_answers_nothing_and_does_not_connect() {
+        let forge = Forge { api: "http://127.0.0.1:1".into(), gh: "/nonexistent/gh".into(), ..Forge::default() };
+        assert!(forge.credential().unwrap_err().starts_with(NO_CREDENTIAL));
+        assert_eq!(forge.open_prs("a/b"), None);
+        assert!(forge.completed_runs("a/b").unwrap_err().starts_with(NO_CREDENTIAL));
+    }
+
+    #[test]
     fn stamps_convert_to_epoch_seconds() {
         assert_eq!(epoch("2026-10-28T05:45:43Z"), Some(1_793_166_343));
         assert_eq!(epoch("2000-02-29T00:00:00Z"), Some(951_782_400));

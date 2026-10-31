@@ -263,6 +263,13 @@ mod tests {
     }
 
     #[test]
+    fn the_gh_config_dir_key_reaches_the_forge() {
+        let base = lookup("7");
+        let dir = move |k: &str| if k == "SPIRA_BROKER_GH_CONFIG_DIR" { Ok("/gh/conf".to_string()) } else { base(k) };
+        assert_eq!(Settings::from_lookup(&dir).unwrap().forge.gh_config_dir, "/gh/conf");
+    }
+
+    #[test]
     fn each_bead_sweep_key_reaches_its_own_field() {
         let base = lookup("7");
         let distinct = move |k: &str| {
