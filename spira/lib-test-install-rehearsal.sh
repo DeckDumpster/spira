@@ -136,7 +136,7 @@ _reh_bin="$(dirname "$(command -v spira-install 2>/dev/null)")"
 [ -d "$_reh_bin" ] || bail "spira-install is not on PATH (the tree's build provides it)"
 tar -C "$_reh_bin" --exclude=sentinel --exclude=queue --exclude=dwarf --exclude=spira-supervise --exclude=landing-pass --exclude=reconciler-flow --exclude=hel -cf - . > /tmp/spira-reh-bin.tar
 # batch-job: streaming the tree's release bin/ into the rehearsal container
-podman exec -i --user spirauser "$CNAME" tar -C /tmp/spira-prod/bin -xf - < /tmp/spira-reh-bin.tar >&2
+timeout 120 podman exec -i --user spirauser "$CNAME" tar -C /tmp/spira-prod/bin -xf - < /tmp/spira-reh-bin.tar >&2
 iszero "the tree's release bin/ is staged in the container" "$?"
 
 # The release bin/ above carries the tree's own spira-config (the image has none: testenv/
