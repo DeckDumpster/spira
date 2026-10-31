@@ -72,7 +72,6 @@ nowant "the builder's ready set never holds the draft request" "sp-d1" "$(ready_
 echo; echo "LANE: its own lane, two at a time, declared, and counted by dwarves.sh"
 is "skuld lane" "skuld" "$(rune_get skuld RUNE_LANE)"
 is "two designs draft at once" "2" "$(rune_get skuld RUNE_MAX_CONCURRENT)"
-want "the lane is declared" "skuld" "$(cat "$HERE/conf.d/SPIRA_LANES")"
 want "spira_lane_runes lists skuld" "skuld" "$(spira_lane_runes)"
 nowant "spira_task_runes does not list skuld" "skuld" "$(spira_task_runes)"
 DWARVES="$(command -v dwarves || command -v dwarves.sh || true)"

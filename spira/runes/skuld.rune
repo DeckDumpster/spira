@@ -23,8 +23,8 @@ RUNE_LEASE_MINUTES=45
 RUNE_HEARTBEAT_SECONDS=30
 
 # Reads the repository checkout and the wiki, and writes drafts as notes on its own bead:
-# no Edit or Write, no git writes, and no bead.sh, so it cannot file what it drafts.
-RUNE_TOOLS="Bash(work note*),Bash(work show*),Bash(rule.sh list*),Bash(rule.sh show *),Bash(*/rule.sh list*),Bash(*/rule.sh show *),Bash(git log*),Bash(git show*),Bash(git grep*),Bash(git status*),Bash(git diff*),Bash(git ls-tree*),Bash(git for-each-ref*),Bash(git rev-parse*),Bash(git -C * log*),Bash(git -C * show*),Bash(git -C * grep*),Bash(git -C * status*),Bash(git -C * diff*),Bash(git -C * ls-tree*),Bash(git -C * for-each-ref*),Bash(git -C * rev-parse*),Bash(cat *),Bash(head *),Bash(tail *),Bash(ls *),Bash(grep *),Bash(wc *),Read,Glob,Grep,TodoWrite"
+# no Edit or Write, no git log or diff (their --output writes files), and no bead.sh.
+RUNE_TOOLS="Bash(work note*),Bash(work show*),Bash(rule.sh list*),Bash(rule.sh show *),Bash(*/rule.sh list*),Bash(*/rule.sh show *),Bash(git show*),Bash(git grep*),Bash(git status*),Bash(git ls-tree*),Bash(git for-each-ref*),Bash(git rev-parse*),Bash(git -C * show*),Bash(git -C * grep*),Bash(git -C * status*),Bash(git -C * ls-tree*),Bash(git -C * for-each-ref*),Bash(git -C * rev-parse*),Bash(cat *),Bash(head *),Bash(tail *),Bash(ls *),Bash(grep *),Bash(wc *),Read,Glob,Grep,TodoWrite"
 RUNE_PROJECT_INSTRUCTIONS=none
 
 RUNE_SYSTEM_PROMPT=replace
