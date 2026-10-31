@@ -1,7 +1,7 @@
 epoch = 1800000000
 horizon = 2400000
 goal = "sp-ct01:LANDED"
-real_actors = ["sentinel-call", "sentinel-landing", "sift"]
+real_actors = ["sentinel-landing", "sift"]
 
 [[actor]]
 name = "gate-worker"
@@ -10,6 +10,13 @@ first = 20000
 every = 30000
 duration_min = 2000
 duration_max = 10000
+
+[[actor]]
+name = "submit-call"
+command = "sentinel --call-only"
+first = 1000
+duration_min = 1000
+duration_max = 2500
 
 [[step]]
 at = 0
@@ -25,19 +32,19 @@ claim = "sp-ct01"
 script = ["commit out/a.txt", "submit"]
 
 [[step]]
-at = 800000
+at = 205000
 command = "sh spira/sim/scenarios/steps/recertify.sh sp-ct01"
 
 [[step]]
-at = 860000
+at = 215000
 command = "sh spira/sim/scenarios/steps/recertify.sh sp-ct01"
 
 [[step]]
-at = 920000
+at = 225000
 command = "sh spira/sim/scenarios/steps/recertify.sh sp-ct01"
 
 [[step]]
-at = 1000000
+at = 230000
 command = 'spira-config set spira.batcher_enable 1 "$SPIRA_TOML"'
 
 [[invariant]]
@@ -47,6 +54,10 @@ sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit NOT IN (
 [[expect]]
 name = "certified_before_the_round"
 sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-ct01' AND lc_state = 'CERTIFIED' AND lc_tip = branch_tip"
+
+[[expect]]
+name = "certified_by_the_gate_before_the_round"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-ct01' AND lc_state = 'CERTIFIED' AND lc_tip = branch_tip AND (landstate IS NULL OR landstate = 'CERTIFIED')"
 
 [[expect]]
 name = "repeat_verdict_accepted"

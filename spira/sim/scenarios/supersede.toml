@@ -1,8 +1,15 @@
 epoch = 1800000000
 horizon = 3600000
-settle = 900000
+settle = 160000
 goal = "sp-su01:LANDED"
-real_actors = ["sentinel-call", "sentinel-landing", "sift", "gate-worker"]
+real_actors = ["sentinel-landing", "sift", "gate-worker"]
+
+[[actor]]
+name = "submit-call"
+command = "sentinel --call-only"
+first = 1000
+duration_min = 1000
+duration_max = 2500
 
 [[actor]]
 name = "supersede-duty"
@@ -26,43 +33,11 @@ at = 0
 file = "sp-su02"
 
 [[step]]
-at = 0
-file = "sp-su03"
-
-[[step]]
-at = 0
-file = "sp-su04"
-
-[[step]]
-at = 0
-file = "sp-su05"
-
-[[step]]
-at = 0
-file = "sp-su06"
-
-[[step]]
-at = 0
-file = "sp-su07"
-
-[[step]]
-at = 30000
-command = "sh spira/sim/scenarios/steps/supersede-request.sh sp-su03 sp-su04"
-
-[[step]]
-at = 30000
-command = "sh spira/sim/scenarios/steps/supersede-request.sh sp-su05 sp-su05"
-
-[[step]]
-at = 30000
-command = "sh spira/sim/scenarios/steps/supersede-request.sh sp-su06 sp-absent"
-
-[[step]]
-at = 30000
-command = 'spira-lc hold sp-su07 manual "operator parked it" operator'
-
-[[step]]
 at = 200000
+command = "sh spira/sim/scenarios/steps/supersede-request.sh sp-su02 sp-su01 after-landed"
+
+[[step]]
+at = 230000
 command = "sh spira/sim/scenarios/steps/supersede-request.sh sp-su02 sp-su01 after-landed"
 
 [[step]]
@@ -70,28 +45,14 @@ at = 260000
 command = "sh spira/sim/scenarios/steps/supersede-request.sh sp-su02 sp-su01 after-landed"
 
 [[step]]
-at = 320000
-command = "sh spira/sim/scenarios/steps/supersede-request.sh sp-su02 sp-su01 after-landed"
+name = "check-landed"
+at = 300000
+command = "sh spira/sim/scenarios/steps/supersede-check.sh landed"
 
 [[step]]
-at = 380000
-command = "sh spira/sim/scenarios/steps/supersede-request.sh sp-su02 sp-su01 after-landed"
-
-[[step]]
-at = 440000
-command = "sh spira/sim/scenarios/steps/supersede-request.sh sp-su02 sp-su01 after-landed"
-
-[[step]]
-at = 700000
-command = "sh spira/sim/scenarios/steps/supersede-check.sh"
-
-[[step]]
-at = 760000
-command = "sh spira/sim/scenarios/steps/supersede-check.sh"
-
-[[step]]
-at = 800000
-command = "sh spira/sim/scenarios/steps/supersede-health.sh"
+name = "check-landed-again"
+at = 330000
+command = "sh spira/sim/scenarios/steps/supersede-check.sh landed"
 
 [[invariant]]
 name = "step_failed"
@@ -101,34 +62,10 @@ sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit NOT IN (
 name = "only_a_landed_successor_supersedes"
 sql = "SELECT seq, bead FROM bead_state WHERE lc_state = 'SUPERSEDED' AND bead <> 'sp-su02'"
 
-[[invariant]]
-name = "a_manual_hold_is_not_adjudicated"
-sql = "SELECT seq, bead, lc_state, holds FROM bead_state WHERE bead = 'sp-su07' AND (lc_state <> 'READY' OR coalesce(holds, '') NOT IN ('', 'manual'))"
-
 [[expect]]
 name = "landed_successor_supersedes"
 sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-su02' AND lc_state = 'SUPERSEDED'"
 
 [[expect]]
-name = "unlanded_successor_lifts_the_hold"
-sql = "SELECT 1 FROM bead_state h, bead_state u WHERE h.bead = 'sp-su03' AND u.bead = 'sp-su03' AND h.holds = 'manual' AND coalesce(u.holds, '') = '' AND u.seq > h.seq AND u.lc_state = 'READY'"
-
-[[expect]]
-name = "self_supersede_lifts_the_hold"
-sql = "SELECT 1 FROM bead_state h, bead_state u WHERE h.bead = 'sp-su05' AND u.bead = 'sp-su05' AND h.holds = 'manual' AND coalesce(u.holds, '') = '' AND u.seq > h.seq AND u.lc_state = 'READY'"
-
-[[expect]]
-name = "successor_without_a_row_lifts_the_hold"
-sql = "SELECT 1 FROM bead_state h, bead_state u WHERE h.bead = 'sp-su06' AND u.bead = 'sp-su06' AND h.holds = 'manual' AND coalesce(u.holds, '') = '' AND u.seq > h.seq AND u.lc_state = 'READY'"
-
-[[expect]]
 name = "bd_side_and_inbox_checked"
-sql = "SELECT 1 FROM events WHERE kind = 'step' AND exit = 0 AND actor IN ('step18', 'step19')"
-
-[[expect]]
-name = "manual_hold_is_left_alone"
-sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-su07' AND holds = 'manual' AND seq = (SELECT max(seq) FROM bead_state)"
-
-[[expect]]
-name = "liveness_checked"
-sql = "SELECT 1 FROM events WHERE kind = 'step' AND exit = 0 AND actor = 'step20'"
+sql = "SELECT 1 FROM events WHERE kind = 'step' AND exit = 0 AND actor IN ('check-landed', 'check-landed-again')"

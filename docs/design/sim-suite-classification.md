@@ -33,7 +33,7 @@ What the stub agent cannot do also bounds the table: the sim runs `sim call`, no
 
 ## The scenarios
 
-Existing nine (spira/sim/scenarios): `happy-path`, `certify-twice`, `resubmit-moved-tip`, `submit-from-other-cwd`, `conflicting-siblings`, `long-gate-interleaving`, `landstate-lifecycle-agree`, `publish-then-cut`, `cut-in-bare-env`.
+Existing nine (spira/sim/scenarios): `happy-path`, `certify-twice`, `resubmit-moved-tip`, `submit-from-other-cwd`, `conflicting-siblings`, `long-gate-interleaving`, `publish-then-cut`, `cut-in-bare-env`.
 
 Proposed ten, each named by the suites that need it:
 
@@ -65,7 +65,7 @@ The first five are what batch 2 needs; the other five are worth building only on
 | test-queue-publish | publish-then-cut | ? |
 | test-certify | certify-twice, resubmit-moved-tip | 89 |
 | test-certified-withdraw | resubmit-moved-tip | 18 |
-| test-lifecycle-cert | certify-twice, landstate-lifecycle-agree | ? |
+| test-lifecycle-cert | certify-twice | ? |
 | test-landing-queue-early | long-gate-interleaving | 56 |
 | test-landing-rebase | conflicting-siblings | 64 |
 
@@ -355,12 +355,12 @@ Every `spira/test-*.sh` on `local/main`, by name. Scenario `new:` names refer to
 | lc-hold | no | - | ? | lifecycle store, schema and read models against a real Dolt: the store is the sim world's dependency, not its subject |
 | lc-list-timing | no | - | ? | lifecycle store, schema and read models against a real Dolt: the store is the sim world's dependency, not its subject |
 | lib-callers-defined | no | - | ? | gate engine, selector or test-infrastructure logic: tests the tooling, not the loop it guards |
-| lifecycle-cert | replaceable | certify-twice, landstate-lifecycle-agree | ? | certify/resubmit events on a real lifecycle store |
+| lifecycle-cert | replaceable | certify-twice | ? | certify/resubmit events on a real lifecycle store |
 | lifecycle-classify | no | - | ? | lifecycle store, schema and read models against a real Dolt: the store is the sim world's dependency, not its subject |
 | lifecycle-consistency-read | no | - | ? | lifecycle store, schema and read models against a real Dolt: the store is the sim world's dependency, not its subject |
 | lifecycle-container | no | - | ? | lifecycle store, schema and read models against a real Dolt: the store is the sim world's dependency, not its subject |
-| lifecycle-cutover | partly | landstate-lifecycle-agree, conflicting-siblings | ? | batch cascades cut/land/settle/abandon; real-Dolt grants stay container |
-| lifecycle-delivery-cutover | partly | landstate-lifecycle-agree + new:forge-batch | ? | pr/push delivery machines; push-mode wiring stays bash |
+| lifecycle-cutover | partly | certify-twice, conflicting-siblings | ? | batch cascades cut/land/settle/abandon; real-Dolt grants stay container |
+| lifecycle-delivery-cutover | partly | certify-twice + new:forge-batch | ? | pr/push delivery machines; push-mode wiring stays bash |
 | lifecycle-guard-gate | no | - | ? | lifecycle store, schema and read models against a real Dolt: the store is the sim world's dependency, not its subject |
 | lifecycle-migrate | no | - | ? | lifecycle store, schema and read models against a real Dolt: the store is the sim world's dependency, not its subject |
 | lifecycle-stack-migration | no | - | ? | lifecycle store, schema and read models against a real Dolt: the store is the sim world's dependency, not its subject |

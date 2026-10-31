@@ -65,3 +65,37 @@ sim_scenario_shard() {  # sim_scenario_shard <scenario name>
     is "no world serve outlives its run" 0 "$(pgrep -fc "$t/sim-run-" || true)"
     tl_summary
 }
+
+sim_controls_setup() {  # sim_controls_setup — T, REPO, SIM and NOLOC for a suite that runs planted-defect scenarios
+    [ -n "${SPIRA_RELEASE:-}" ] || bail "SPIRA_RELEASE is not set: run via testenv --with-bins"
+    SIM="$SPIRA_RELEASE/bin/sim"
+    [ -x "$SIM" ] || bail "no sim in the staged release: $SIM"
+    T="$(mktemp -d)"
+    trap sim_controls_cleanup EXIT
+    REPO="$T/repo"
+    sim_fixture_repo "$REPO"
+    NOLOC=(-u SPIRA_RUN -u SPIRA_DB -u SPIRA_LC_PASSWORD_FILE -u SPIRA_LC_SOCKET -u SPIRA_LC_HOST -u SPIRA_LC_PORT -u SPIRA_LC_USER -u SPIRA_HOME -u SPIRA_WORK_BEAD_ID)
+}
+
+sim_controls_cleanup() {
+    local w
+    for w in "$T"/sim-run-*; do [ -d "$w" ] && timeout 60 "$SIM" world down "$w" >/dev/null 2>&1; done # batch-job: world teardown stops a whole scratch world
+    rm -rf "$T"
+}
+
+sim_controls_run() {  # sim_controls_run <label> <scenario file> — seed 3; result in $T/res.<label>.{out,rc}
+    # batch-job: a whole simulated run, world up included; 280 s is a hang guard, not a budget
+    (cd "$REPO" && timeout 280 env "${NOLOC[@]}" TMPDIR="$T" SPIRA_SIM_RELEASE="$SPIRA_RELEASE" SPIRA_IN_TESTENV=1 "$SIM" run "$2" --seed 3 >"$T/res.$1.out" 2>&1)
+    echo "$?" >"$T/res.$1.rc"
+}
+
+sim_controls_no_serve() {  # sim_controls_no_serve — every world of this suite is down and none of its serves is left
+    local w left
+    for w in "$T"/sim-run-*; do [ -d "$w" ] && timeout 60 "$SIM" world down "$w" >/dev/null 2>&1; done # batch-job: world teardown stops a whole scratch world
+    for _ in $(seq 50); do
+        left="$(pgrep -fc "$T/sim-run-" || true)"
+        [ "$left" = 0 ] && break
+        sleep 0.1
+    done
+    is "no world serve outlives its run" 0 "$left"
+}

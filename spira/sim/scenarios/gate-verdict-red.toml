@@ -1,0 +1,78 @@
+epoch = 1800000000
+horizon = 3000000
+goal = "sp-gv01:LANDED"
+
+# Each act runs once, at the virtual time its predecessor finished, not on the timers' cadence.
+
+[[actor]]
+name = "gate-worker"
+command = "gate-worker run"
+first = 20000
+every = 30000
+duration_min = 2000
+duration_max = 10000
+
+[[step]]
+at = 0
+command = 'spira-config set spira.batcher_enable 0 "$SPIRA_TOML"'
+
+[[step]]
+at = 0
+command = "sh spira/sim/scenarios/steps/gate-mode.sh sp-gv01 fail-once"
+
+[[step]]
+at = 0
+file = "sp-gv01"
+
+[[step]]
+at = 0
+claim = "sp-gv01"
+script = ["commit out/gv01.txt", "submit", "call", "commit out/gv01b.txt", "submit"]
+
+[[step]]
+at = 1000
+command = "sentinel --call-only"
+
+[[step]]
+at = 10000
+command = "landing-pass land"
+
+[[step]]
+at = 25000
+command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv01 REWORK pass"
+
+[[step]]
+at = 35000
+command = "sh spira/sim/scenarios/steps/gate-verdicts.sh sp-gv01 REWORK pass"
+
+[[step]]
+at = 30000
+command = "sentinel --call-only"
+
+[[step]]
+at = 40000
+command = "landing-pass land"
+
+[[step]]
+at = 55000
+command = 'spira-config set spira.batcher_enable 1 "$SPIRA_TOML"'
+
+[[step]]
+at = 56000
+command = "batcher sifts"
+
+[[step]]
+at = 60000
+command = "landing-pass land"
+
+[[invariant]]
+name = "step_failed"
+sql = "SELECT seq, actor, exit FROM events WHERE kind = 'step' AND exit NOT IN (0, 3)"
+
+[[expect]]
+name = "red_gate_returned_it"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-gv01' AND lc_state = 'REWORK'"
+
+[[expect]]
+name = "red_then_pass_landed"
+sql = "SELECT 1 FROM bead_state WHERE bead = 'sp-gv01' AND lc_state = 'LANDED'"
