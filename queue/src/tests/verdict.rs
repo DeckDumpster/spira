@@ -238,9 +238,7 @@ fn a_refused_publish_rerun_is_not_counted_and_mails_once_per_head() {
         .calls
         .borrow()
         .iter()
-        .filter(|c| {
-            c.starts_with("notify spira re-run of PR 77's gate run could not start")
-        })
+        .filter(|c| c.starts_with("notify spira re-run of PR 77's gate run could not start"))
         .count();
     assert_eq!(mails, 1);
 }
@@ -252,10 +250,9 @@ fn a_publish_run_decided_red_on_an_unchanged_tree_is_settled_not_rerun_forever()
     *t.forge.run.borrow_mut() = Some("77".into());
     *t.forge.rerun_decided.borrow_mut() =
         Some("run 77 concluded failure on tree m3, same harness: no input changed".into());
-    t.forge
-        .status
-        .borrow_mut()
-        .push(Some("harness_fault\nfailed-step: Run suites\nfail-evidence: boom\n".into()));
+    t.forge.status.borrow_mut().push(Some(
+        "harness_fault\nfailed-step: Run suites\nfail-evidence: boom\n".into(),
+    ));
     assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
     assert_eq!(count(&t.forge.calls, "workflow-rerun 77"), 1);
     assert!(has_call(&t.forge.calls, "pr-close 77"));
@@ -271,7 +268,10 @@ fn a_publish_run_decided_red_on_an_unchanged_tree_is_settled_not_rerun_forever()
             .iter()
             .find(|c| c.starts_with(&format!("comment {id} ")))
             .unwrap_or_else(|| panic!("no note on {id}: {lib:?}"));
-        assert!(note.contains("no input changed") && note.contains("boom"), "{note}");
+        assert!(
+            note.contains("no input changed") && note.contains("boom"),
+            "{note}"
+        );
     }
     assert!(lib.iter().any(|c| c.starts_with("create_bug")));
 }
@@ -281,7 +281,10 @@ fn a_publish_fault_with_no_gate_run_is_not_counted_and_a_new_head_mails_again() 
     let t = T::new(LandMode::QueueLocal);
     publish_record(&t);
     for _ in 0..2 {
-        t.forge.status.borrow_mut().push(Some("harness_fault\n".into()));
+        t.forge
+            .status
+            .borrow_mut()
+            .push(Some("harness_fault\n".into()));
         assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
     }
     assert!(!t.qfile("publish-fault-retries").exists());
@@ -297,7 +300,10 @@ fn a_publish_fault_with_no_gate_run_is_not_counted_and_a_new_head_mails_again() 
     assert_eq!(mails(&t), 1);
     let rec = fs::read_to_string(t.qfile("publish")).unwrap();
     fs::write(t.qfile("publish"), rec.replace("head=m3", "head=m4")).unwrap();
-    t.forge.status.borrow_mut().push(Some("harness_fault\n".into()));
+    t.forge
+        .status
+        .borrow_mut()
+        .push(Some("harness_fault\n".into()));
     assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
     assert_eq!(mails(&t), 2);
 }
@@ -353,7 +359,11 @@ fn publish_red_files_one_fix_forward_and_marks_the_head() {
     assert!(bug.starts_with("create_bug queue.sh 1 spira,plan,repo:spira publish PR 77 red for spira: test-b.sh,test-a.sh\n"), "{bug}");
     assert!(bug.contains("Publish PR 77 red for spira (http://r/9).\n\nPublished range: f0..m3\nRed suites: test-b.sh,test-a.sh\n\nMembers in this publish: sp-a,sp-b\n\n"));
     assert!(bug.contains("Fix forward on local/main — the next publish carries the fix. Production was never rolled back and no member bead was reopened."));
-    assert!(t.lc.has("create-bead sp-fix1 --repo spira"), "{:?}", t.lc.calls.borrow());
+    assert!(
+        t.lc.has("create-bead sp-fix1 --repo spira"),
+        "{:?}",
+        t.lc.calls.borrow()
+    );
     assert!(!t.qfile("publish").exists());
     assert_eq!(
         fs::read_to_string(t.qfile("publish-red")).unwrap(),
@@ -601,6 +611,35 @@ fn a_refused_batch_rerun_is_not_counted_and_mails_once_per_head() {
 }
 
 #[test]
+fn a_batch_run_decided_red_on_an_unchanged_tree_is_closed_not_rerun_forever() {
+    let t = T::new(LandMode::Queue);
+    lc_batch(&t);
+    *t.forge.run.borrow_mut() = Some("77".into());
+    *t.forge.rerun_decided.borrow_mut() =
+        Some("run 77 concluded failure on tree h1, same harness: no input changed".into());
+    t.forge.status.borrow_mut().push(Some(
+        "harness_fault\nfailed-step: Run suites\nfail-evidence: boom\n".into(),
+    ));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert_eq!(count(&t.forge.calls, "workflow-rerun 77"), 1);
+    assert!(has_call(&t.forge.calls, "pr-close 12"));
+    assert!(t.lc.has("abandon-batch spira-1"));
+    assert!(!t.qfile("open").exists());
+    assert!(!t.qfile("batch-rerun-refused").exists());
+    assert!(!t.err().contains("could not start"), "{}", t.err());
+    let lib = t.lib.calls.borrow();
+    assert!(!lib.iter().any(|c| c.starts_with("notify spira re-run")));
+    let notes: Vec<_> = lib.iter().filter(|c| c.starts_with("comment ")).collect();
+    assert!(!notes.is_empty(), "{lib:?}");
+    for note in notes {
+        assert!(
+            note.contains("no input changed") && note.contains("boom"),
+            "{note}"
+        );
+    }
+}
+
+#[test]
 fn a_batch_fault_with_no_gate_run_is_not_counted_and_a_new_head_mails_again() {
     let t = T::new(LandMode::Queue);
     lc_batch(&t);
@@ -613,14 +652,20 @@ fn a_batch_fault_with_no_gate_run_is_not_counted_and_a_new_head_mails_again() {
             .count()
     };
     for _ in 0..2 {
-        t.forge.status.borrow_mut().push(Some("harness_fault\n".into()));
+        t.forge
+            .status
+            .borrow_mut()
+            .push(Some("harness_fault\n".into()));
         assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
     }
     assert!(!record(&t).contains("retries="));
     assert_eq!(count(&t.forge.calls, "workflow-rerun"), 0);
     assert_eq!(mails(&t), 1);
     t.open_record(&record(&t).replace("head=h1", "head=h2"));
-    t.forge.status.borrow_mut().push(Some("harness_fault\n".into()));
+    t.forge
+        .status
+        .borrow_mut()
+        .push(Some("harness_fault\n".into()));
     assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
     assert_eq!(mails(&t), 2);
 }
@@ -943,7 +988,9 @@ fn red_calls_judgement_once_with_the_suites_and_the_run() {
         "{j}"
     );
     assert!(record(&t).ends_with("judgement=sp-j1\n"));
-    assert!(t.out().contains("verdict spira: PR 12 red (test-b.sh,test-a.sh) — batcher-owned, called judgement (sp-j1)"));
+    assert!(t.out().contains(
+        "verdict spira: PR 12 red (test-b.sh,test-a.sh) — batcher-owned, called judgement (sp-j1)"
+    ));
     // the PR and its members are left exactly as they are
     assert!(
         !has_call(&t.forge.calls, "pr-close")
@@ -1458,11 +1505,7 @@ fn a_pytest_failure_with_no_annotations_is_a_test_red_not_a_setup_red() {
         .borrow()
         .iter()
         .any(|c| c.starts_with("workflow-rerun")));
-    assert!(
-        t.out().contains("called judgement (sp-j3)"),
-        "{}",
-        t.out()
-    );
+    assert!(t.out().contains("called judgement (sp-j3)"), "{}", t.out());
 }
 
 #[test]
