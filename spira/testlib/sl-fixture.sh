@@ -98,7 +98,7 @@ exit 0
 SHIM
 chmod +x "$BIN/claude"
 
-B() { bd -C "$SPIRA_DB" "$@"; } # batch-job: fixture bd call against the suite's throwaway store
+B() { bd -C "$SPIRA_DB" "$@"; } # batch-job: STORE_DOOR_CONSIDERED="a fixture call against the suite's own throwaway store"
 field() { B show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]

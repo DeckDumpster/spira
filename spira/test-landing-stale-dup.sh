@@ -5,7 +5,7 @@
 # Split off test-landing.sh for wall time; the shared fixture is testlib/landing-fixture.sh.
 #
 # defect: sp-q9i sp-9194o
-# tier: T3
+# tier: T2
 # covers: landing-pass/* spira/lib.sh UC-landing-merge-queue-13 UC-landing-merge-queue-15 UC-landing-merge-queue-17 UC-landing-merge-queue-22 UC-landing-merge-queue-23
 # timeout: 300
 set -uo pipefail
