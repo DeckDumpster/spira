@@ -180,7 +180,8 @@ mod tests {
     fn a_full_carry_fits_the_journal_column() {
         let slug = "DeckDumpster/remarkable-pipeline-extended";
         let runs = (0..KEEP as u64).map(|i| format!("run|{slug}|{}|action_required", 90_000_000_000 + i)).collect();
-        let carry = Carry { seeded: true, runs, adopted: vec![], failed: vec![] };
+        let adopted = (0..12).map(|_| slug.to_string()).collect();
+        let carry = Carry { seeded: true, runs, adopted, failed: vec![] };
         let body = serde_json::to_string(&carry).unwrap();
         assert!(body.len() < KIND_BODY_MAX, "a full carry is {} bytes; kind_body holds {KIND_BODY_MAX}", body.len());
     }
