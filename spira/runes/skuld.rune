@@ -1,0 +1,33 @@
+# skuld.rune — Skuld, the scribe: turns an intent and an approved design into bead bodies,
+# written back as notes on its request bead. Woken by a drafting request, never by plan work.
+
+RUNE_NAME=skuld
+RUNE_DESC="Skuld — drafts work items from an intent and a design, and never files them"
+
+# The partition is the draft label alone: a skuld that matched the plan label would be a
+# second builder.
+RUNE_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_SKULD_LABEL"
+RUNE_EXCLUDE_LABELS="$SPIRA_CI_LABEL"
+
+RUNE_MEMORY_PREFIXES="law-"
+RUNE_STATUTE_CORE="law-escalate-decisions-not-problems,law-absence-needs-a-positive-control,law-a-regression-test-must-be-seen-to-fail"
+
+# SEED ONLY: the live value is persona.skuld.model, resolved by lib.sh's persona_model.
+RUNE_MODEL=claude-opus-5-5
+
+RUNE_LANE=skuld
+RUNE_MAX_CONCURRENT=2
+
+RUNE_TIMEOUT_SECONDS=2400
+RUNE_LEASE_MINUTES=45
+RUNE_HEARTBEAT_SECONDS=30
+
+# Reads the repository checkout and the wiki, and writes drafts as notes on its own bead:
+# no Edit or Write, no git writes, and no bead.sh, so it cannot file what it drafts.
+RUNE_TOOLS="Bash(work note*),Bash(work show*),Bash(rule.sh*),Bash(*/rule.sh*),Bash(git log*),Bash(git show*),Bash(git grep*),Bash(git status*),Bash(git diff*),Bash(git ls-tree*),Bash(git for-each-ref*),Bash(git rev-parse*),Bash(git -C * log*),Bash(git -C * show*),Bash(git -C * grep*),Bash(git -C * status*),Bash(git -C * diff*),Bash(git -C * ls-tree*),Bash(git -C * for-each-ref*),Bash(git -C * rev-parse*),Bash(cat *),Bash(head *),Bash(tail *),Bash(ls*),Bash(grep *),Bash(wc *),Read,Glob,Grep,TodoWrite"
+RUNE_PROJECT_INSTRUCTIONS=none
+
+RUNE_SYSTEM_PROMPT=replace
+
+# The states a bead claimed by this rune may leave WORKING for; spira-lc refuses any other.
+RUNE_WORKING_EXITS="DONE ask park hold"

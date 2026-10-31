@@ -1056,6 +1056,24 @@ fn a_ready_lane_spills_over_a_full_fleet_and_nothing_is_refilled_while_over() {
 }
 
 #[test]
+fn the_shipped_skuld_rune_spills_over_a_full_fleet_within_the_lane_allowance() {
+    let caps = [("SPIRA_MAX_LIVE_DWARVES", "4"), ("SPIRA_LANES_MAX_LIVE", "1"), ("SPIRA_LANES", "ops skuld"), ("SPIRA_SKULD_LABEL", "fixdraft")];
+    let skuld = include_str!("../../spira/runes/skuld.rune");
+    let l = ladder("sk-spill", TASK, LANE, &[("builder", 4)], &[("skuld", 1), ("builder", 1)]);
+    std::fs::write(l.w.home.join("runes/skuld.rune"), skuld).unwrap();
+    assert!(l.call("skuld", None, &caps), "{}", l.sink.text());
+    assert!(l.sink.has("may spill over the ceiling"), "{}", l.sink.text());
+
+    let l = ladder("sk-builder", TASK, LANE, &[("builder", 4)], &[("skuld", 1), ("builder", 1)]);
+    std::fs::write(l.w.home.join("runes/skuld.rune"), skuld).unwrap();
+    assert!(!l.call("builder", None, &caps), "positive control: a builder gets no spill");
+
+    let l = ladder("sk-bound", TASK, LANE, &[("builder", 4), ("skuld", 2)], &[("skuld", 1)]);
+    std::fs::write(l.w.home.join("runes/skuld.rune"), skuld).unwrap();
+    assert!(!l.call("skuld", None, &caps), "the lane allowance bounds the spill: {}", l.sink.text());
+}
+
+#[test]
 fn the_fleet_ceiling_refuses_whatever_the_persona_and_names_the_count() {
     let ceiling = [("SPIRA_MAX_LIVE_DWARVES", "3")];
     let l = ladder("fc-below", ELASTIC, SOLO, &[("builder", 2)], &[("ops", 1)]);

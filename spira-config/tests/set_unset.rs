@@ -217,7 +217,7 @@ fn rename_persona_moves_table_roster_and_lane_and_still_validates() {
     let text = fs::read_to_string(&toml).unwrap();
     assert!(!text.contains("maechen"), "{text}"); // ffx-ok
     assert!(text.contains("[persona.mimir.lease]"));
-    assert_eq!(String::from_utf8_lossy(&spira_config(&["get", "spira.lanes", f]).stdout).trim(), "ops groomer mimir czar warden mender pilgrimage");
+    assert_eq!(String::from_utf8_lossy(&spira_config(&["get", "spira.lanes", f]).stdout).trim(), "ops groomer mimir czar warden mender pilgrimage skuld");
     assert!(spira_config(&["validate", f]).status.success());
     assert_eq!(backups_in(&dir).len(), 1);
 
