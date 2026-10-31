@@ -359,6 +359,7 @@ round_vm_maxpar = ""
 round_vm_max_retries = "0"
 round_vm_mirror_port = "9430"
 round_vm_mem_mib = 0
+round_vm_disk_need_gib = 40
 round_vm_spill = "ec2-always"
 round_vm_spill_wait_secs = 30
 round_vm_warm_idle_secs = 1800

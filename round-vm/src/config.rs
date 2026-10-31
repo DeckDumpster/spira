@@ -264,7 +264,7 @@ impl Config {
             cap_secs: must_cfg_parse("SPIRA_ROUND_CERTIFY_WALL_SECS")?,
             testenv_limits: testenv_limits()?,
             post_guard_secs: num_env("SPIRA_ROUND_VM_POST_GUARD_SECS", 600)?,
-            disk_need_gib: num_env("SPIRA_ROUND_VM_DISK_NEED_GIB", 40)?,
+            disk_need_gib: must_cfg_parse("SPIRA_ROUND_VM_DISK_NEED_GIB")?,
             vm_budget_secs: num_env("SPIRA_ROUND_VM_PHASE_VM_SECS", 300)?,
             build_budget_secs: num_env("SPIRA_ROUND_VM_PHASE_BUILD_SECS", 600)?,
         }))
