@@ -596,7 +596,7 @@ fn oracle_book(f: &Fixture) -> Book {
 }
 
 #[test]
-fn the_handler_and_the_binary_make_the_same_remedies_mails_and_state_over_three_passes() {
+fn e2e_the_handler_and_the_binary_make_the_same_remedies_mails_and_state_over_three_passes() {
     assert!(debug_dir().join("reconciler").exists(), "build reconciler first: it is the oracle");
     let old = Fixture::build("old", Scenario::Broken);
     let new = Fixture::build("new", Scenario::Broken);
@@ -644,7 +644,7 @@ fn the_handler_and_the_binary_make_the_same_remedies_mails_and_state_over_three_
 }
 
 #[test]
-fn ten_ticks_with_every_invariant_satisfied_journal_nothing_and_launch_none_of_the_replaced_programs() {
+fn e2e_ten_ticks_with_every_invariant_satisfied_journal_nothing_and_launch_none_of_the_replaced_programs() {
     assert!(debug_dir().join("reconciler").exists(), "build reconciler first: it is the positive control");
 
     // Positive control: the counter sees the launches the oracle makes in the same world.
@@ -701,7 +701,7 @@ fn mail_requests(host: &Host) -> usize {
 }
 
 #[test]
-fn a_suspension_that_falls_due_is_reminded_once_and_a_reminder_that_does_not_go_is_sent_again() {
+fn e2e_a_suspension_that_falls_due_is_reminded_once_and_a_reminder_that_does_not_go_is_sent_again() {
     let f = Fixture::build("remind", Scenario::Quiet);
     suspend_due(&f);
     let mut host = Host::start(&f, &f.stubs("h"));
@@ -726,7 +726,7 @@ fn a_suspension_that_falls_due_is_reminded_once_and_a_reminder_that_does_not_go_
 }
 
 #[test]
-fn an_escalation_that_does_not_go_is_forgotten_so_the_next_pass_sends_it_again() {
+fn e2e_an_escalation_that_does_not_go_is_forgotten_so_the_next_pass_sends_it_again() {
     let f = Fixture::build("alert-down", Scenario::Broken);
     let mut host = Host::start(&f, &f.stubs("h"));
     host.fx.mail = None;
@@ -739,7 +739,7 @@ fn an_escalation_that_does_not_go_is_forgotten_so_the_next_pass_sends_it_again()
 }
 
 #[test]
-fn a_halted_world_is_stamped_and_left_alone() {
+fn e2e_a_halted_world_is_stamped_and_left_alone() {
     let f = Fixture::build("halted", Scenario::Broken);
     fs::write(f.p("run/world.halted"), "").unwrap();
     let bin = f.stubs("h");
