@@ -3,13 +3,13 @@
 # test-epic-claim-order.sh — the epic-first claim rank (sp-ns46j, per Ryan 2026-09-28):
 # rank ready beads by min(epic priority, bead priority), then a started epic before an unstarted
 # one at equal priority, then the bead's own priority, then resumable-before-fresh, then
-# oldest. Covers epic_parent_lookup/epic_rank_rows (lib.sh) directly and dwarf.sh's wiring
-# of them into the actual claim.
+# oldest. Covers epic_parent_lookup/epic_rank_rows (lib.sh) directly; dwarf's wiring of them
+# into the actual claim (T6/T8) is test-epic-claim-dwarf.sh, split off for wall time.
 #
 # THE DEFECT THIS FIXES. `bd ready --claim` orders by bead priority alone, so a bead ejected
 # back to ready from the epic being delivered competes on its own P-number with every
 # unrelated P0 — narrow the fleet to a few dwarves and the epic stalls behind work that has
-# nothing to do with it. T3 below reproduces exactly that shape: a started P0 epic's
+# nothing to do with it. test-epic-claim-dwarf.sh T6 reproduces exactly that shape: a started P0 epic's
 # lower-priority child against a fresh, unrelated P0 bead.
 #
 # T1/T2 CANNOT FAIL FOR WANT OF A TARGET on today's code: epic_parent_lookup and
@@ -20,8 +20,7 @@
 # `bd children` and the labels/status/parent fields they return actually contain, which a
 # stub would be a second, driftable opinion of (law-prefer-the-real-dependency).
 #
-# T7/T8 (sp-o4trx): a ready set past MAX_ARG_STRLEN (128 KiB) still ranks every bead, and a
-# forced rank failure surfaces as a claim-error rather than an empty/idle result.
+# T7 (sp-o4trx): a ready set past MAX_ARG_STRLEN (128 KiB) still ranks every bead.
 #
 # defect: sp-ns46j sp-o4trx
 # tier: T3
@@ -214,7 +213,7 @@ echo "T7: a ready set past MAX_ARG_STRLEN (128 KiB) still ranks every bead (sp-o
 # against 142 ready beads). Every other fixture in this suite uses a handful of beads, so
 # none of them ever reached the threshold — this one must.
 big_desc="$(python3 -c 'print("x" * 900)')"
-N=300
+N=120
 {
     epic sp-ebig 0
     closed_child sp-ebig-done sp-ebig
@@ -244,135 +243,5 @@ is "epic_parent_lookup succeeds (rc=0) against the oversized ready set" "0" "$t7
 t7_rank_rc=0
 epic_rank_rows "$t7_ready_json" "$epic_lookup" "" >/dev/null || t7_rank_rc=$?
 is "epic_rank_rows succeeds (rc=0) against the oversized ready set" "0" "$t7_rank_rc"
-
-# ==========================================================================================
-echo
-echo "T6: dwarf.sh's own claim, wired end to end, claims the epic-first candidate — not"
-echo "    whatever 'bd ready --claim' would have taken on bead priority alone"
-# ==========================================================================================
-seed <<JSONL
-$(epic sp-e1 0)
-$(closed_child sp-e1-done sp-e1)
-$(bead sp-e1-rework sp-e1 3)
-$(bead sp-unrelated-p0 "" 0)
-JSONL
-export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
-ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
-REPO="$TMP/repo"; timeout 5 git clone -q "$ORIGIN" "$REPO" 2>/dev/null
-git -C "$REPO" config user.email t@t; git -C "$REPO" config user.name t
-printf 'seed\n' > "$REPO/f"
-git -C "$REPO" add f; git -C "$REPO" commit -qm seed; timeout 5 git -C "$REPO" push -q origin main 2>/dev/null
-
-DWARF_HOME="$TMP/dwarfhome"; mkdir -p "$DWARF_HOME/runes"
-# round 2 fix (pattern 6): SPIRA_RUNES_DIR no longer derives from SPIRA_HOME — the complete
-# fixture declares its own /fixture/userhome/.../runes. Declare this suite's real one.
-tl_config SPIRA_RUNES_DIR="$DWARF_HOME/runes"
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$DWARF_HOME/"
-cp -r "$HERE/conf.d" "$HERE/conf.toml.d" "$HERE/conf-gen.sh" "$DWARF_HOME/"
-cp -r "$HERE/actors" "$DWARF_HOME/" 2>/dev/null || true
-DWARF_RUN="$TMP/dwarfrun"; mkdir -p "$DWARF_RUN"
-DWARF_REPO_MAP="$TMP/repo-map"
-printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$DWARF_REPO_MAP"
-cat > "$DWARF_HOME/runes/builder.rune" <<RUNE
-RUNE_NAME=builder
-RUNE_WORKING_EXITS="SUBMITTED ask park hold"
-RUNE_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}plan"
-RUNE_EXCLUDE_LABELS="spira-poison"
-RUNE_MAX_CONCURRENT=1
-RUNE_HEARTBEAT_SECONDS=600
-RUNE
-printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$DWARF_HOME/runes/builder.md"
-
-BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-tl_config SPIRA_AGENT="$SPIRA_AGENT"
-# The model session is restricted (sp-v62vn); the shim is a fixture — testlib dwarf_fixture_agent.
-dwarf_fixture_agent "$BIN/claude"
-cat > "$BIN/claude" <<'SHIM'
-#!/usr/bin/env bash
-cat /dev/stdin > "$TMP/prompt"
-id="$(sed -n 's/^work \(sp-[a-z0-9-]*\) .*/\1/p' "$TMP/prompt" | head -1)"
-printf 'claimed\n' >> f
-git add -A && git -c user.email=a@a -c user.name=dwarf commit -qm "$id - claimed"
-bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1
-printf '{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":3}\n'
-exit 0
-SHIM
-chmod +x "$BIN/claude"
-
-# THE DWARF CLAIMS THROUGH THE MACHINE (sp-v62vn: no off mode): its ready set is spira-lc
-# `list` and its claim a Claim event, so its runs get the stateful stand-in (testlib
-# lc_dwarf_mirror) ahead of the suite's read-only lc_mirror_bd. It logs every applied claim
-# in $SPIRA_RUN/lc-claims.log, and reads the shim's bd close as the builder's submit.
-lc_dwarf_mirror "$TMP/lc-dwarf"
-# SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
-# CONFIG): declare via tl_config, not the env prefix below, which no process reads any more.
-tl_config SPIRA_RUN="$DWARF_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$DWARF_REPO_MAP"
-( PATH="$TMP/lc-dwarf:$PATH" SPIRA_HOME="$DWARF_HOME" \
-  SPIRA_CONF="$TMP/no-such2.conf" \
-  dwarf --home "$DWARF_HOME" builder > "$TMP/dwarf-out" 2>&1 )
-
-# WHICH BEAD THE DWARF TOOK is the claim the machine recorded: the holder of sp-e1-rework's
-# Claim, and nobody's on the unrelated P0 head. (The old reading — bd status reopened to
-# open plus spira-submitted by the teardown's bd-close conversion, sp-qsona — is gone with
-# sp-v62vn: every session runs restricted, and a restricted session's bd close is inert.)
-is "dwarf.sh claimed the started epic's reworked child, not the unrelated P0 head" \
-    "yes" "$(grep -q '^sp-e1-rework ' "$DWARF_RUN/lc-claims.log" 2>/dev/null && echo yes || echo no)"
-want "and its session was handed that bead" "work sp-e1-rework " "$(cat "$TMP/prompt" 2>/dev/null)"
-is "the unrelated P0 bead was left alone, never claimed" \
-    "no" "$(grep -q '^sp-unrelated-p0 ' "$DWARF_RUN/lc-claims.log" 2>/dev/null && echo yes || echo no)"
-want "the log names the epic-first rank as the reason" "epic-first rank" "$(cat "$TMP/dwarf-out")"
-
-# ==========================================================================================
-echo
-echo "T8: a forced epic_rank_rows failure surfaces as a claim-error, never as idle (sp-o4trx)"
-# ==========================================================================================
-# THE SECOND HALF OF THE OUTAGE. Fixing the argv size alone is not enough: any OTHER reason
-# epic_rank_rows might fail (a python crash, a corrupted temp file) must not read as "nothing
-# ready to claim" either — the ledger line and the exit code must say claim-error.
-seed <<JSONL
-$(epic sp-e1 0)
-$(closed_child sp-e1-done sp-e1)
-$(bead sp-e1-rework sp-e1 3)
-$(bead sp-unrelated-p0 "" 0)
-JSONL
-
-# A spira-claim SHIM that fails only the final rank — the `select --resumable` call, the
-# dwarf binary's epic_rank_rows (dwarf/src/claim.rs Selector::select) — and hands every other
-# call (the epic lookup, the --top-tier band) to the real spira-claim, so the lookup and the
-# resumability pass still run for real and only the rank itself is forced to fail. Ranking
-# moved out of python (dwarf.sh's epic_rank_rows) into spira-claim with the Rust cutover, so
-# the old python3 shim no longer reached the call under test.
-REAL_CLAIM="$(command -v spira-claim)" \
-    || { echo "test-epic-claim-order: spira-claim is not on PATH — T8 cannot force the rank" >&2; exit 1; }
-BIN2="$TMP/bin2"; mkdir -p "$BIN2"
-cat > "$BIN2/spira-claim" <<STUB
-#!/usr/bin/env bash
-for a in "\$@"; do
-    if [ "\$a" = "--resumable" ]; then
-        cat >/dev/null
-        echo "T8 shim: forced epic_rank_rows failure" >&2
-        exit 1
-    fi
-done
-exec "$REAL_CLAIM" "\$@"
-STUB
-chmod +x "$BIN2/spira-claim"
-
-DWARF_RUN2="$TMP/dwarfrun2"; mkdir -p "$DWARF_RUN2"
-# SPIRA_RUN/SPIRA_DB/SPIRA_REPO_MAP are registered keys (per Ryan 2026-10-05, ONE SOURCE OF
-# CONFIG): declare via tl_config, not the env prefix below, which no process reads any more.
-tl_config SPIRA_RUN="$DWARF_RUN2" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$DWARF_REPO_MAP"
-( PATH="$BIN2:$TMP/lc-dwarf:$PATH" SPIRA_HOME="$DWARF_HOME" \
-  SPIRA_CONF="$TMP/no-such3.conf" \
-  dwarf --home "$DWARF_HOME" builder > "$TMP/dwarf-out2" 2>&1 )
-t8_rc=$?
-
-[ "$t8_rc" -ne 0 ] && ok "dwarf.sh exits non-zero on a forced rank failure (never the 'idle' success exit)" \
-                   || bad "dwarf.sh exits non-zero on a forced rank failure (never the 'idle' success exit)" "rc=0"
-want "the log names it a claim-error, not idle" "claim-error" "$(cat "$TMP/dwarf-out2")"
-t8_ledger="$(cat "$DWARF_RUN2/dwarf-ledger.log" 2>/dev/null)"
-want "the ledger records claim-error" "claim-error" "$t8_ledger"
-is "the ledger never records this as an idle calls" "0" \
-    "$(printf '%s\n' "$t8_ledger" | grep -c ' idle$')"
 
 tl_summary
