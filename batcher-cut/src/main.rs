@@ -216,6 +216,7 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Result<Env, String> {
         verdicts: gate::cert::verdicts_dir(env::var("SPIRA_VERDICTS").ok().as_deref(), &run),
         land_lock_attempts: env::var("SPIRA_BATCHER_LAND_LOCK_ATTEMPTS").ok().and_then(|v| v.parse().ok()).unwrap_or(10),
         land_lock_wait: std::time::Duration::from_secs(env::var("SPIRA_BATCHER_LAND_LOCK_WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(30)),
+        orphan_redrive_after: cfg_parse::<u64>("SPIRA_BATCHER_ORPHAN_REDRIVE_SECS")?,
         land_unpause: env::var("SPIRA_BATCHER_LAND_UNPAUSE").ok().filter(|v| !v.is_empty()).map(PathBuf::from),
     })
 }
@@ -1423,8 +1424,14 @@ fn paced_cut(env_: &Env, name: &str, one: &Opts) -> Result<(), String> {
     let repo = find_repo(env_, name)?;
     let inbox = PathBuf::from(cfg("SPIRA_CONCIERGE_INBOX")?);
     let stamp = utc_stamp;
-    let sm = pace::Seams { repo: name, now: now(), inbox: &inbox, stamp: &stamp };
-    pace::paced(&pace::Files::new(&env_.run, name), &sm, || io::open_round_id(env_, &repo), |id| io::certify_driven(env_, name, id), || io::read_local_verdict(env_, name), || cut(one))
+    let sm = pace::Seams { repo: name, now: now(), inbox: &inbox, stamp: &stamp, redrive_after: env_.orphan_redrive_after };
+    let (fit, redrive, incident) = (
+        |id: &str| io::round_certifiable(env_, &repo, id),
+        |id: &str| io::redrive_round(&repo, id),
+        |id: &str, why: &str| io::file_orphan_round_incident(env_, &repo, id, why),
+    );
+    let orphans = pace::Orphans { fit: &fit, redrive: &redrive, incident: &incident };
+    pace::paced(&pace::Files::new(&env_.run, name), &sm, || io::open_round_id(env_, &repo), |id| io::certify_driven(env_, name, id), || io::read_local_verdict(env_, name), &orphans, || cut(one))
 }
 
 /// One scheduler pass over the repo map. `Pass::Local` is the harness's VM rounds, run one repo
@@ -1742,7 +1749,7 @@ mod tests {
         let dir = testkit::TempDir::new("batcher-cut-env-for");
         let toml = spira_config::process::fixture_toml(
             &dir,
-            &[("SPIRA_BD", "bd-fixture"), ("SPIRA_FORGE", "forge-fixture"), ("SPIRA_BATCHER_WALL_SECS", "3600")],
+            &[("SPIRA_BD", "bd-fixture"), ("SPIRA_FORGE", "forge-fixture"), ("SPIRA_BATCHER_WALL_SECS", "3600"), ("SPIRA_BATCHER_ORPHAN_REDRIVE_SECS", "737")],
         );
         // The real, checked-in spira/conf.d (this crate's own repo layout: `batcher-cut/`
         // sits beside `spira/`) — `cfg`'s resolution needs a real registry to validate every
@@ -1760,6 +1767,7 @@ mod tests {
         assert_eq!(env_.bd, "bd-fixture", "a registered key's declared value must reach Env, not a Rust-level default");
         assert_eq!(env_.forge, PathBuf::from("forge-fixture"));
         assert_eq!(env_.wall_secs, 3600);
+        assert_eq!(env_.orphan_redrive_after, 737, "the orphan wait comes from the configured key, not a literal");
     }
 }
 

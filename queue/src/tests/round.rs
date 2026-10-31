@@ -4750,6 +4750,52 @@ fn a_testenv_fault_on_an_own_testenv_repo_is_not_judged() {
 }
 
 #[test]
+fn a_single_ci_entry_pass_whose_ci_result_is_ok_is_green_whatever_the_run_exit_after_it() {
+    let t = round_world();
+    *t.scripts.repo_testenv.borrow_mut() = RunOut {
+        rc: 2,
+        out: String::new(),
+        err: "round-vm run: pass record could not be written".into(),
+    };
+    *t.scripts.repo_ci_status.borrow_mut() = Some("ok".into());
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    declare_own_testenv(&t);
+    assert_eq!(t.run(&["round", "certify", &batch]), 0, "{}", t.err());
+    assert_eq!(round_phase(&t), "GREEN");
+}
+
+#[test]
+fn a_red_ci_result_does_not_turn_a_faulted_run_into_a_judged_round() {
+    let t = round_world();
+    *t.scripts.repo_testenv.borrow_mut() = RunOut {
+        rc: 2,
+        out: String::new(),
+        err: "round-vm run: fault".into(),
+    };
+    *t.scripts.repo_ci_status.borrow_mut() = Some("red".into());
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    declare_own_testenv(&t);
+    assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
+}
+
+#[test]
+fn an_ok_ci_result_does_not_turn_a_failing_run_exit_into_a_green_round() {
+    let t = round_world();
+    *t.scripts.repo_testenv.borrow_mut() = RunOut {
+        rc: 3,
+        out: String::new(),
+        err: "round-vm run: fault".into(),
+    };
+    *t.scripts.repo_ci_status.borrow_mut() = Some("ok".into());
+    assert_eq!(t.run(&["round", "open", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let batch = batch_of(&t);
+    declare_own_testenv(&t);
+    assert_eq!(t.run(&["round", "certify", &batch]), 4, "{}", t.err());
+}
+
+#[test]
 fn an_own_testenv_repo_with_no_ci_entry_is_not_judged_and_runs_nothing() {
     let t = round_world();
     assert_eq!(

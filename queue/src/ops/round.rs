@@ -1483,7 +1483,7 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
         "phase={}",
         phase_of(w, kv.get("batch_id").unwrap_or(""))
     ));
-    for k in ["batch_id", "repo", "head", "base", "members"] {
+    for k in ["batch_id", "repo", "head", "base", "members", "worktree"] {
         w.out(format!("{k}={}", kv.get(k).unwrap_or("")));
     }
     if let Some(red) = kv.get("red").filter(|r| !r.is_empty()) {
@@ -1496,7 +1496,7 @@ fn status(w: &World, repo: Option<&str>) -> i32 {
             "round{n}=open\nround{n}_phase={}",
             phase_of(w, kv.get("batch_id").unwrap_or(""))
         ));
-        for k in ["batch_id", "repo", "head", "base", "members"] {
+        for k in ["batch_id", "repo", "head", "base", "members", "worktree"] {
             w.out(format!("round{n}_{k}={}", kv.get(k).unwrap_or("")));
         }
         if let Some(red) = kv.get("red").filter(|r| !r.is_empty()) {
@@ -1537,6 +1537,12 @@ pub fn suite_statuses(dir: &Path, found: &mut Vec<(String, String)>, depth: u32)
             found.push((suite.to_string(), status));
         }
     }
+}
+
+/// Whether the entry itself wrote an `ok` verdict to `ci.result`: it finished green, so a fault in
+/// the run around it is the machinery's, not the candidate's.
+fn ci_result_ok(results: &Path) -> bool {
+    fs::read_to_string(results.join("ci.result")).is_ok_and(|t| t.split_whitespace().next() == Some("ok"))
 }
 
 /// Names the suites whose verdict cannot be read: a word that is neither passing nor blocking
@@ -2362,6 +2368,10 @@ fn certify_pass(
             suites_s: wall,
             build_s: 0,
         };
+        let mut out = out;
+        if ci_result_ok(&results) && out.rc == 2 {
+            out.rc = 0;
+        }
         if out.rc == 1 {
             let _ = fs::write(
                 results.join(format!("{REPO_TESTENV_RED}.out")),

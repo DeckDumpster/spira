@@ -98,6 +98,8 @@ pub struct Env {
     /// How many times `round_land` tries while another queue operation holds the repo's lock.
     pub land_lock_attempts: u32,
     pub land_lock_wait: Duration,
+    /// Seconds an open round may go undriven before the rounds loop re-drives it.
+    pub orphan_redrive_after: u64,
     /// The Concierge's cut-pause file; a landing clears it unless it starts with `hold:`. `None` is off.
     pub land_unpause: Option<PathBuf>,
 }
@@ -1987,6 +1989,81 @@ pub fn open_round_id(env: &Env, repo: &Repo) -> Result<Option<String>, String> {
     Ok(Some(verb_value(&run.out, "batch_id").unwrap_or_default()))
 }
 
+/// `Ok` when `batch`'s worktree still stands at the round's head, which is all `queue round certify`
+/// needs of it; otherwise why a certify would be refused. One batcher worktree serves every round
+/// of a repo, so a later round moves it off an earlier one.
+pub fn round_certifiable(env: &Env, repo: &Repo, batch: &str) -> Result<(), String> {
+    let run = round_verb(env, &["status", &repo.name], "")?;
+    if run.code != Some(0) {
+        return Err(verb_failed("queue round status", &run));
+    }
+    let (head, worktree) = round_head_and_worktree(&run.out, batch).ok_or_else(|| format!("queue round status names no open round {batch}"))?;
+    let at = git_head(Path::new(&worktree)).ok_or_else(|| format!("the round worktree {worktree:?} has no readable head"))?;
+    if at == head {
+        Ok(())
+    } else {
+        Err(format!("the round worktree {worktree} is at {at}, not at the round's head {head}"))
+    }
+}
+
+fn git_head(dir: &Path) -> Option<String> {
+    let o = spira_config::bounded::bounded("git").arg("-C").arg(dir).args(["rev-parse", "HEAD"]).output().ok()?;
+    o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|h| !h.is_empty())
+}
+
+fn round_head_and_worktree(out: &str, batch: &str) -> Option<(String, String)> {
+    let prefixes = std::iter::once(String::new()).chain((2..).map(|n| format!("round{n}_")));
+    for prefix in prefixes {
+        if verb_value(out, &format!("{prefix}batch_id"))? == batch {
+            return Some((verb_value(out, &format!("{prefix}head"))?, verb_value(out, &format!("{prefix}worktree"))?));
+        }
+    }
+    None
+}
+
+/// `round-recert --batch <id> --repo <repo>`: starts the round's driver in its own unit and returns.
+pub fn redrive_round(repo: &Repo, batch: &str) -> Result<(), String> {
+    let out = run(spira_config::bounded::bounded_for(spira_config::release_env::tool("round-recert"), "60").args(["--batch", batch, "--repo", &repo.name]), "round-recert")?;
+    println!("{}", out.trim());
+    Ok(())
+}
+
+/// One incident for a round that sits open with nothing to drive it, keyed by the round so a
+/// pass that finds it again is a recurrence of the same incident.
+pub fn file_orphan_round_incident(env: &Env, repo: &Repo, batch: &str, why: &str) -> Result<String, String> {
+    let title = format!("{}: round {batch} sits open with no driver", repo.name);
+    let body = format!(
+        "Round {batch} of {} has been open with no certify running for over {} s: {why}.\nThe rounds loop never re-cuts an open round. Reset the worktree to the round's head and run `round-recert --batch {batch} --repo {}`, or eject or abandon the round. Rounds stacked on it are refused at land until it ends.",
+        repo.name,
+        env.orphan_redrive_after,
+        repo.name
+    );
+    let tmp_dir = env.run.join("tmp");
+    fs::create_dir_all(&tmp_dir).map_err(|e| format!("{}: {e}", tmp_dir.display()))?;
+    let tmp = tmp_dir.join(format!("round-orphan-{}-{}.txt", repo.name, now()));
+    fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    let out = run(
+        Command::new("incident.sh")
+            .arg("file")
+            .arg(&title)
+            .arg(&tmp)
+            .env("SPIRA_INCIDENT_TYPE", "bug")
+            .env("SPIRA_INCIDENT_PRIORITY", "1")
+            .env("SPIRA_INCIDENT_ACTOR", "batcher")
+            .env("SPIRA_INCIDENT_REPO", &repo.name)
+            .env("SPIRA_INCIDENT_REF", format!("round-orphan:{}:{batch}", repo.name))
+            .env("SPIRA_INCIDENT_CAUSE", "round-orphan"),
+        "incident.sh file",
+    );
+    let _ = fs::remove_file(&tmp);
+    let out = out?;
+    let id = out.lines().rev().find(|l| !l.trim().is_empty()).map(|l| l.trim().to_string()).unwrap_or_default();
+    if id.is_empty() {
+        return Err(format!("incident.sh file: no id returned: {out}"));
+    }
+    Ok(id)
+}
+
 /// The repo's local verdict as `write_local_verdict` recorded it: (verdict, at).
 pub fn read_local_verdict(env: &Env, repo: &str) -> Option<(String, u64)> {
     let kv = parse_kv(&fs::read_to_string(env.queue_dir.join(repo).join("local-verdict")).ok()?);
@@ -2214,9 +2291,28 @@ pub fn head_on_base(repo: &Repo, head: &str) -> bool {
     )
 }
 
+/// The (title, ref) an unlanded round is filed under. A refusal because the round is stacked on one
+/// that has not landed has the unlanded head as its one cause, whichever round asks next, so those
+/// share a key and incident.sh counts them as recurrences of one incident.
+pub fn land_unverified_key(repo: &Repo, head: &str, detail: &str) -> (String, String) {
+    if let Some(parent) = stacked_parent(detail) {
+        return (
+            format!("{}: rounds stacked on unlanded round {parent} are refused at land", repo.name),
+            format!("land-unverified:{}:stacked:{parent}", repo.name),
+        );
+    }
+    (format!("{}: round head {head} did not reach {}", repo.name, repo.base), format!("land-unverified:{}:{head}", repo.name))
+}
+
+fn stacked_parent(detail: &str) -> Option<&str> {
+    let rest = detail.split(" is stacked on round ").nth(1)?;
+    let (parent, _) = rest.split_once(", which has not landed")?;
+    (!parent.is_empty() && !parent.contains(char::is_whitespace)).then_some(parent)
+}
+
 /// Alarm for a round that did not land: the incident names the refusal line.
 pub fn file_land_unverified_incident(env: &Env, repo: &Repo, head: &str, detail: &str) -> Result<String, String> {
-    let title = format!("{}: round head {head} did not reach {}", repo.name, repo.base);
+    let (title, incident_ref) = land_unverified_key(repo, head, detail);
     let body = format!(
         "queue land-local did not land round head {head} on {}: {detail}\nNo member was landed by this round; the batcher reported the round as refused. Find why land-local refused (its stderr is in the batcher log) before the next round.",
         repo.base
@@ -2234,7 +2330,7 @@ pub fn file_land_unverified_incident(env: &Env, repo: &Repo, head: &str, detail:
             .env("SPIRA_INCIDENT_PRIORITY", "1")
             .env("SPIRA_INCIDENT_ACTOR", "batcher")
             .env("SPIRA_INCIDENT_REPO", &repo.name)
-            .env("SPIRA_INCIDENT_REF", format!("land-unverified:{}:{head}", repo.name))
+            .env("SPIRA_INCIDENT_REF", incident_ref)
             .env("SPIRA_INCIDENT_CAUSE", "land-unverified"),
         "incident.sh file",
     );
@@ -3496,6 +3592,47 @@ mod land_exit_tests {
     }
 
     #[test]
+    fn rounds_stacked_on_one_unlanded_head_share_one_incident_key() {
+        let d = testkit::TempDir::new("batcher-cut-stacked-key");
+        let repo = repo_at(&d);
+        let refusal = |parent: &str| format!("refused: queue.sh round land: round r3 is stacked on round {parent}, which has not landed — land {parent} first; nothing changed");
+        let keys: Vec<_> = [("h1", "r1"), ("h2", "r1"), ("h3", "r2")].iter().map(|(h, p)| land_unverified_key(&repo, h, &refusal(p))).collect();
+        assert_eq!(keys[0], keys[1], "{keys:?}");
+        assert_ne!(keys[0], keys[2], "a second unlanded head is a second incident: {keys:?}");
+        assert_ne!(land_unverified_key(&repo, "h1", "refused: not a fast-forward"), land_unverified_key(&repo, "h2", "refused: not a fast-forward"), "positive control: other refusals stay one incident per head");
+    }
+
+    #[test]
+    fn a_rounds_head_and_worktree_are_read_from_whichever_open_round_status_lists_it() {
+        let out = "round=open\nbatch_id=r1\nhead=aaa\nworktree=/w\nround2=open\nround2_batch_id=r2\nround2_head=bbb\nround2_worktree=/w2\n";
+        assert_eq!(round_head_and_worktree(out, "r2"), Some(("bbb".into(), "/w2".into())));
+        assert_eq!(round_head_and_worktree(out, "r1"), Some(("aaa".into(), "/w".into())));
+        assert_eq!(round_head_and_worktree(out, "r3"), None);
+    }
+
+    #[test]
+    fn a_round_is_certifiable_only_while_its_worktree_stands_at_its_head() {
+        let d = testkit::TempDir::new("batcher-cut-certifiable");
+        let wt = d.join("wt");
+        fs::create_dir_all(&wt).unwrap();
+        let g = |args: &[&str]| {
+            let o = Command::new("git").arg("-C").arg(&wt).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
+            assert!(o.status.success(), "{args:?}: {}", String::from_utf8_lossy(&o.stderr));
+            String::from_utf8_lossy(&o.stdout).trim().to_string()
+        };
+        g(&["init", "-q", "-b", "main"]);
+        g(&["commit", "-q", "--allow-empty", "-m", "a"]);
+        let first = g(&["rev-parse", "HEAD"]);
+        let status = |head: &str| format!("round=open\nbatch_id=r1\nhead={head}\nworktree={}", wt.display());
+        let repo = repo_at(&d);
+        assert_eq!(round_certifiable(&argv_stub(&d, &status(&first)), &repo, "r1"), Ok(()));
+        g(&["commit", "-q", "--allow-empty", "-m", "b"]);
+        let err = round_certifiable(&argv_stub(&d, &status(&first)), &repo, "r1").unwrap_err();
+        assert!(err.contains("not at the round's head"), "{err}");
+        assert!(round_certifiable(&argv_stub(&d, &status(&first)), &repo, "r9").unwrap_err().contains("no open round r9"));
+    }
+
+    #[test]
     fn a_refusal_without_the_lock_is_final_and_alarms_with_its_line() {
         let d = testkit::TempDir::new("batcher-cut-land-refused");
         let e = stub_queue(&d, 0, 1, "queue.sh round land: not a fast-forward");
@@ -3803,6 +3940,7 @@ pub(crate) fn lifecycle_tests_env(dir: &Path) -> Env {
         verdicts: dir.join("verdicts"),
         land_lock_attempts: 3,
         land_lock_wait: Duration::from_millis(1),
+        orphan_redrive_after: 600,
         land_unpause: None,
     }
 }
