@@ -839,6 +839,9 @@ fn run_batch_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &s
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
     };
     if let batch::BatchEventKind::Failed { suite, n } = &kind {
+        if let Err(e) = mending::check_widths(key, *n, suite) {
+            return e;
+        }
         match mending::fetch(conn, key, *n, suite) {
             Ok(Some(_)) => return (0, format!("already recorded: {suite} failed in pass {n}")),
             Ok(None) => {}
