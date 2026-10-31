@@ -246,6 +246,37 @@ fn a_refused_publish_rerun_is_not_counted_and_mails_once_per_head() {
 }
 
 #[test]
+fn a_publish_run_decided_red_on_an_unchanged_tree_is_settled_not_rerun_forever() {
+    let t = T::new(LandMode::QueueLocal);
+    publish_record(&t);
+    *t.forge.run.borrow_mut() = Some("77".into());
+    *t.forge.rerun_decided.borrow_mut() =
+        Some("run 77 concluded failure on tree m3, same harness: no input changed".into());
+    t.forge
+        .status
+        .borrow_mut()
+        .push(Some("harness_fault\nfailed-step: Run suites\nfail-evidence: boom\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert_eq!(count(&t.forge.calls, "workflow-rerun 77"), 1);
+    assert!(has_call(&t.forge.calls, "pr-close 77"));
+    assert!(!t.qfile("publish").exists());
+    assert!(t.qfile("publish-red").exists());
+    assert!(!t.err().contains("could not start"), "{}", t.err());
+    assert!(!t.qfile("publish-fault-retries").exists());
+    assert!(!t.qfile("publish-rerun-refused").exists());
+    let lib = t.lib.calls.borrow();
+    assert!(!lib.iter().any(|c| c.starts_with("notify spira re-run")));
+    for id in ["sp-a", "sp-b"] {
+        let note = lib
+            .iter()
+            .find(|c| c.starts_with(&format!("comment {id} ")))
+            .unwrap_or_else(|| panic!("no note on {id}: {lib:?}"));
+        assert!(note.contains("no input changed") && note.contains("boom"), "{note}");
+    }
+    assert!(lib.iter().any(|c| c.starts_with("create_bug")));
+}
+
+#[test]
 fn a_publish_fault_with_no_gate_run_is_not_counted_and_a_new_head_mails_again() {
     let t = T::new(LandMode::QueueLocal);
     publish_record(&t);

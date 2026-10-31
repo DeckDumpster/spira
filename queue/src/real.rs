@@ -1372,8 +1372,26 @@ impl Forge for RealForge {
             .arg(run)
             .stderr(Stdio::null()));
     }
-    fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str) -> bool {
-        ok(Command::new(forge).arg("workflow-rerun").arg(repo).arg(run))
+    fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str) -> Rerun {
+        // batch-job: the forge's own gh calls carry the deadline, as for every forge verb here
+        let mut cmd = Command::new(forge);
+        cmd.arg("workflow-rerun").arg(repo).arg(run);
+        close_inherited_fds(&mut cmd);
+        let Ok(o) = cmd.stdin(Stdio::null()).output() else {
+            return Rerun::Failed;
+        };
+        let err = String::from_utf8_lossy(&o.stderr);
+        eprint!("{err}");
+        match o.status.code() {
+            Some(0) => Rerun::Started,
+            Some(3) => Rerun::Decided(
+                err.lines()
+                    .find_map(|l| l.strip_prefix("forge: workflow-rerun refused: "))
+                    .unwrap_or("the forge refused the re-run")
+                    .to_string(),
+            ),
+            _ => Rerun::Failed,
+        }
     }
     fn ami_runs(&self, forge: &Path, repo: &Path) -> Option<Vec<String>> {
         let text = stdout_of(Command::new(forge).arg("ami-runs").arg(repo))?;
@@ -2011,6 +2029,28 @@ mod tests {
         assert_eq!(on_red_cmd("/my dir/queue", "b1", "repo"), None);
     }
     use super::*;
+
+    fn forge_script(body: &str) -> (testkit::TempDir, PathBuf) {
+        let dir = crate::testutil::tmpdir("forge-rerun");
+        let f = dir.path().join("forge");
+        testkit::write_exe(&f, &format!("#!/bin/sh\n{body}\n"));
+        (dir, f)
+    }
+
+    #[test]
+    fn a_forge_refusal_of_a_decided_run_is_told_apart_from_a_failed_call() {
+        let (dir, f) = forge_script(
+            "echo 'forge: workflow-rerun refused: run 9 concluded failure, no input changed' >&2; exit 3",
+        );
+        assert_eq!(
+            RealForge.workflow_rerun(&f, dir.path(), "9"),
+            Rerun::Decided("run 9 concluded failure, no input changed".into())
+        );
+        let (dir, f) = forge_script("exit 1");
+        assert_eq!(RealForge.workflow_rerun(&f, dir.path(), "9"), Rerun::Failed);
+        let (dir, f) = forge_script("exit 0");
+        assert_eq!(RealForge.workflow_rerun(&f, dir.path(), "9"), Rerun::Started);
+    }
 
     /// This tree's real `spira/` dir (where `conf.d` actually lives) — `$SPIRA_HOME` for any
     /// test that reaches `spira_config::resolve::locate_home`/`resolve_for_process` (directly,

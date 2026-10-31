@@ -380,6 +380,15 @@ pub struct RunOut {
     pub err: String,
 }
 
+/// What the forge said to a `workflow-rerun`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Rerun {
+    Started,
+    /// The run is already decided on an unchanged tree; a rerun can only repeat it. Carries the forge's reason.
+    Decided(String),
+    Failed,
+}
+
 pub trait Forge {
     /// `pr-preflight <repo> <head>`: every check `pr-create` would refuse on, before anything is pushed.
     fn pr_preflight(&self, forge: &Path, repo: &Path, head: &str) -> Result<(), String>;
@@ -416,8 +425,8 @@ pub trait Forge {
     /// `fail-lines <repo> <run> <suites>` → `fail-line: <suite>: <text>` lines (empty when it failed).
     fn fail_lines(&self, forge: &Path, repo: &Path, run: &str, suites: &str) -> String;
     fn run_cancel(&self, forge: &Path, repo: &Path, run: &str);
-    /// `workflow-rerun <repo> <run>`: true when the forge accepted the re-run.
-    fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str) -> bool;
+    /// `workflow-rerun <repo> <run>`.
+    fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str) -> Rerun;
     /// `ami-runs <repo>`: the Round AMI runs not yet completed; None when the forge cannot be read.
     fn ami_runs(&self, forge: &Path, repo: &Path) -> Option<Vec<String>>;
     /// `ami-dispatch <repo> <ref>`: whether the forge accepted a new Round AMI run.

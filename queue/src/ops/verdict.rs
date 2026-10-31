@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use super::{idents, landing_log, owner_refused, require_lc, resolve, Ctx, World, FAIL, OK, USAGE};
 use crate::lock::{self, Acquire, Guard};
 use crate::model::{LandMode, Member};
-use crate::ports::ref_branch;
+use crate::ports::{ref_branch, Rerun};
 use crate::records::{self, write_atomic, Kv};
 
 /// The publish settle's answer: red is left for the unlocked half (§2.1).
@@ -320,7 +320,7 @@ fn settle_locked(w: &World, c: &Ctx, path: &Path) -> (i32, String) {
         }
         "red" => RED,
         "harness_fault" if tagged(&out, "missing-workflow: ").is_empty() => {
-            publish_fault(w, c, path, &kv, &pr)
+            publish_fault(w, c, path, &kv, &pr, &out)
         }
         s => {
             if let Some(&missing) = tagged(&out, "missing-workflow: ").first() {
@@ -344,22 +344,37 @@ fn settle_locked(w: &World, c: &Ctx, path: &Path) -> (i32, String) {
     (rc, out)
 }
 
+/// Why a re-run did not start.
+enum NoRerun {
+    /// The run is decided on an unchanged tree: the forge's reason.
+    Decided(String),
+    Other(String),
+}
+
+impl std::fmt::Display for NoRerun {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NoRerun::Decided(why) | NoRerun::Other(why) => f.write_str(why),
+        }
+    }
+}
+
 /// Re-run the branch's gate run; Err is why the forge was not asked or refused.
-fn rerun_gate(w: &World, c: &Ctx, path: &Path, branch: &str) -> Result<(), String> {
+fn rerun_gate(w: &World, c: &Ctx, path: &Path, branch: &str) -> Result<(), NoRerun> {
     let Some(run) = w.forge.run_id(&c.s.forge, path, branch) else {
-        return Err(format!("no gate run found for {branch}"));
+        return Err(NoRerun::Other(format!("no gate run found for {branch}")));
     };
-    if w.forge.workflow_rerun(&c.s.forge, path, &run) {
-        Ok(())
-    } else {
-        Err(format!(
+    match w.forge.workflow_rerun(&c.s.forge, path, &run) {
+        Rerun::Started => Ok(()),
+        Rerun::Decided(why) => Err(NoRerun::Decided(why)),
+        Rerun::Failed => Err(NoRerun::Other(format!(
             "the forge refused to re-run run {run} (its reason is in the forge line logged above)"
-        ))
+        ))),
     }
 }
 
 /// A re-run that did not start is not an attempt: say why, and mail the operator once per head.
-fn rerun_could_not_start(w: &World, c: &Ctx, marker: &str, head: &str, what: &str, why: &str) {
+fn rerun_could_not_start(w: &World, c: &Ctx, marker: &str, head: &str, what: &str, why: &NoRerun) {
     let name = c.r.name.as_str();
     w.err(format!(
         "verdict {name}: {what}: re-run of the gate run could not start: {why}"
@@ -377,9 +392,33 @@ fn rerun_could_not_start(w: &World, c: &Ctx, marker: &str, head: &str, what: &st
     );
 }
 
+/// The forge says the run is decided on an unchanged tree, so it will not run again: record the
+/// cause on each member and hand the PR to the red settlement, which closes it and files the
+/// fix-forward bead. Left open it would block every later publish.
+fn publish_decided_red(w: &World, c: &Ctx, kv: &Kv, pr: &str, out: &str, reason: &str) -> i32 {
+    let name = c.r.name.as_str();
+    let evidence = failure_evidence(out).trim().replace('\n', " | ");
+    let note = format!(
+        "Publish PR {pr} red, rerun refused (no input changed).{} Closed; fix-forward bead follows. Forge: {reason}",
+        if evidence.is_empty() {
+            String::new()
+        } else {
+            format!(" Cause: {evidence}.")
+        }
+    );
+    let note = crate::ident::bounded_text(&note);
+    for m in kv.members().into_iter().filter(|m| !m.id.is_empty()) {
+        w.lib.comment(&m.id, &note);
+    }
+    w.out(format!(
+        "verdict {name}: publish PR {pr} gate run is red on an unchanged tree ({reason}) — settling as red"
+    ));
+    RED
+}
+
 /// A publish run the gate says never tested the branch: re-run it within the infra budget.
 /// No fix-forward bead is filed for a fault; past the budget the operator is mailed once.
-fn publish_fault(w: &World, c: &Ctx, path: &Path, kv: &Kv, pr: &str) -> i32 {
+fn publish_fault(w: &World, c: &Ctx, path: &Path, kv: &Kv, pr: &str, out: &str) -> i32 {
     let name = c.r.name.as_str();
     let file = c.queue_file("publish-fault-retries");
     let tries: u64 = std::fs::read_to_string(&file)
@@ -389,6 +428,9 @@ fn publish_fault(w: &World, c: &Ctx, path: &Path, kv: &Kv, pr: &str) -> i32 {
     let max = c.s.verdict.infra_retries;
     if classify_fault_rerun(tries, max) {
         if let Err(why) = rerun_gate(w, c, path, kv.get("branch").unwrap_or("")) {
+            if let NoRerun::Decided(reason) = &why {
+                return publish_decided_red(w, c, kv, pr, out, reason);
+            }
             rerun_could_not_start(
                 w,
                 c,
