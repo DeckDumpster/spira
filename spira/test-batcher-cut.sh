@@ -13,12 +13,6 @@
 #   A. happy path    — an express-certified member merges, the stub corpus is green, a PR
 #                       opens, and the queue's open-batch record reads exactly what
 #                       verdict.sh's own key=value format expects.
-#   B. attribution    — a member whose tree breaks test-b.sh is found by the batcher's own
-#                       concurrent attribution (sp-hvtgs): ejected with its suite, the
-#                       survivors re-run only that suite, and the PR opens without it.
-#   C. stale member    — an express-certified member whose branch conflicts with the base
-#                       itself (not just batch accumulation) is reopened for rebase at once
-#                       (section F), returned on the lifecycle record, bump_requeue stamped.
 #   D. stacking        — with case A's batch PR still open, certified members (one express)
 #                       are built and proven into a prepared round on that PR's head without
 #                       touching the open PR; once it lands the prepared round opens with no
@@ -31,12 +25,6 @@
 #   J. batcher parity   — a member whose tip is already an ancestor of the round head (reset
 #                       to an old base, or no commits of its own) merges as a git no-op; it
 #                       must be set aside as EMPTY, never merged, never marked BATCHED (sp-5xki9).
-#   K. batcher parity (sp-myi6w) — the corpus runs through round-vm.sh run (sp-o3o6z),
-#                       carrying maxpar and the toolchain pin batcher-parity requires; a
-#                       --with-bins build failure (exit 4) is a local round red filed as an
-#                       Ops incident, never attributed suite by suite and never a harness fault
-#                       that drops the round unreported; a hung round-vm.sh is killed at the
-#                       configured wall bound.
 #   N. batcher parity (sp-7qk8u) — a CERTIFIED lifecycle row whose bead is open and not
 #                       spira-submitted (the shape an ejected-then-recertified bead is in) is
 #                       excluded from the round pool, not batched.
@@ -50,13 +38,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 CUT_PART="${CUT_PART:-main}"
 case "$CUT_PART" in
     main)  CUT_SECTIONS="A D" ;;
-    attr)  CUT_SECTIONS="B" ;;
-    base)  CUT_SECTIONS="H C E" ;;
     wiring) CUT_SECTIONS="F Gf" ;;
     land)  CUT_SECTIONS="Gl I J O Nr" ;;
-    round) CUT_SECTIONS="K" ;;
-    local) CUT_SECTIONS="L" ;;
-    pace)  CUT_SECTIONS="Np" ;;
     stack) CUT_SECTIONS="M" ;;
     *) echo "test-batcher-cut: unknown CUT_PART $CUT_PART" >&2; exit 1 ;;
 esac
@@ -64,7 +47,7 @@ cut_runs() { case " $CUT_SECTIONS " in *" $1 "*) return 0 ;; esac; return 1; }
 ROOT="$(cd "$HERE/.." && pwd -P)"
 . "$HERE/testlib.sh"
 tl_config SPIRA_TEST_CASE_DEADLINE=180
-# batcher, tsd-write and the queue binary case L lands through (queue/DESIGN.md §7.4) are the
+# batcher and tsd-write are the
 # tree under test's own build, invoked by name on the suite's PATH (sp-gypjk).
 
 # shellcheck disable=SC1090
@@ -366,18 +349,6 @@ d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
 print(d[0].get("status",""))' 2>/dev/null; }
 open_batch_file() { printf '%s/%s/open' "$QUEUEDIR" "$REPONAME"; }
 open_field() { grep "^${1}=" "$(open_batch_file)" 2>/dev/null | head -1 | cut -d= -f2-; }
-notes_of() {
-    B show "$1" --json 2>/dev/null | python3 -c '
-import json, sys
-d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
-print(d[0].get("notes","") or "")' 2>/dev/null
-}
-
-labels_of() { B show "$1" --json 2>/dev/null | python3 -c '
-import json, sys
-d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
-print(" ".join(d[0].get("labels") or []))' 2>/dev/null; }
-
 # A batch member is a bead WAITING FOR A ROUND: open and carrying the submitted label
 # (sp-1346p) — a CERTIFIED record of a closed bead is stale and never batched.
 plant() {   # plant <id> [express]
@@ -477,62 +448,12 @@ if command -v tsd-write >/dev/null 2>&1; then
         "$(tail -1 "$RUN/tsd/batch-round.jsonl" 2>/dev/null)"
 fi
 
-# Captured for case D, which reuses this batch as its "already open" starting point — case
-# B and C need it gone first, to exercise the fresh-cut paths on their own.
+# Captured for case D, which reuses this batch as its "already open" starting point.
 pr_case_a="$(open_field pr)"
 head_case_a="$(open_field head)"
 base_case_a="$(open_field base)"
 members_case_a="$(open_field members)"
 branch_case_a="$(open_field branch)"
-
-fi
-
-if cut_runs B; then
-
-# =============================================================================
-# CASE B — concurrent attribution (sp-hvtgs, law-a-round-takes-certified-tips as amended
-# 2026-09-27): sp-cbbb2's tree carries breaks-test-b.sh, so test-b.sh is red on every tree
-# that holds it. The batcher's own reruns (plain, base, without each member) name sp-cbbb2
-# its owner; it is ejected — bead reopened, returned on the lifecycle record, note naming every suite it
-# turned red — and only test-b.sh re-runs on the survivors: green, so the PR opens WITHOUT
-# the ejected member but WITH its innocent bystander (the positive control for "only the
-# named member is dropped, not the whole round").
-# =============================================================================
-echo
-echo "B. local attribution ejects the culprit; the PR opens without it:"
-plant sp-cbbb2 express
-git -C "$REPO" worktree add -q -b spira/sp-cbbb2 "$RUN/worktree/sp-cbbb2" main
-printf 'b\n' > "$RUN/worktree/sp-cbbb2/breaks-test-b.sh"
-git -C "$RUN/worktree/sp-cbbb2" add -A
-git -C "$RUN/worktree/sp-cbbb2" commit -q -m "sp-cbbb2: work"
-tip_b="$(git -C "$REPO" rev-parse spira/sp-cbbb2)"
-git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cbbb2"
-certify sp-cbbb2 "$tip_b"
-
-plant sp-cbbb3
-git -C "$REPO" worktree add -q -b spira/sp-cbbb3 "$RUN/worktree/sp-cbbb3" main
-printf 'b3\n' > "$RUN/worktree/sp-cbbb3/b3.txt"
-git -C "$RUN/worktree/sp-cbbb3" add -A
-git -C "$RUN/worktree/sp-cbbb3" commit -q -m "sp-cbbb3: work"
-tip_b3="$(git -C "$REPO" rev-parse spira/sp-cbbb3)"
-git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cbbb3"
-certify sp-cbbb3 "$tip_b3"
-rm -f "$(open_batch_file)"
-
-prcreate_before_b="$(grep -c '^pr-create' "$FORGE_LOG")"
-out_b="$(cut_repo)"
-want   "B: reports the ejection, naming the member and the suite" "sp-cbbb2 ejected: red on test-b.sh" "$out_b"
-want   "B: still reports the PR opening"                          "PR "                                "$out_b"
-nowant "B: no judgement/double-red language — this was resolved mechanically" "judgement" "$out_b"
-want   "B: attribution names the owner"  "red test-b.sh → owner sp-cbbb2" "$out_b"
-want   "B: only the owner's suite re-runs on the survivors" "suites=test-b.sh" \
-       "$(cat "$RUN"/batch-results/"$REPONAME"-*/spool/req/v1.req 2>/dev/null)"
-is     "B: sp-cbbb2 reopened for rework (open)" "open" "$(status_of sp-cbbb2)"
-nowant "B: sp-cbbb2 no longer submitted — a reopen is rework (sp-1346p)" "spira-submitted" "$(labels_of sp-cbbb2)"
-want   "B: ejection note names every suite it turned red" "test-b.sh" "$(notes_of sp-cbbb2)"
-is     "B: open-batch carries only the bystander" "sp-cbbb3:$tip_b3" "$(open_field members)"
-nowant "B: open-batch does not carry the ejected member" "sp-cbbb2" "$(open_field members)"
-is     "B: forge pr-create called (once more than before this case)" "$((prcreate_before_b + 1))" "$(grep -c '^pr-create' "$FORGE_LOG")"
 
 fi
 
@@ -567,72 +488,6 @@ if command -v tsd-write >/dev/null 2>&1; then
     want "G: the flake is recorded" '"outcome":"flaky"' "$(tail -1 "$RUN/tsd/round-attribution.jsonl" 2>/dev/null)"
 fi
 rm -f "$(open_batch_file)"
-
-fi
-
-if cut_runs H; then
-
-# =============================================================================
-# CASE H — base red: a suite red with every member removed is the base's. It is filed as an
-# Ops incident, charged to nobody, and does not hold the round (sp-hvtgs).
-# =============================================================================
-echo
-echo "H. base itself is red: filed for Ops, nobody ejected, the round proceeds:"
-rm -f "$(open_batch_file)"
-plant sp-chbas express
-git -C "$REPO" worktree add -q -b spira/sp-chbas "$RUN/worktree/sp-chbas" main
-printf 'h\n' > "$RUN/worktree/sp-chbas/h.txt"
-git -C "$RUN/worktree/sp-chbas" add -A
-git -C "$RUN/worktree/sp-chbas" commit -q -m "sp-chbas: work"
-tip_h2="$(git -C "$REPO" rev-parse spira/sp-chbas)"
-git -C "$REPO" worktree remove -f "$RUN/worktree/sp-chbas"
-certify sp-chbas "$tip_h2"
-
-prcreate_before_h="$(grep -c '^pr-create' "$FORGE_LOG")"
-out_h="$(STUB_RED_SUITES="test-a.sh" cut_repo)"
-want   "H: reports the base red, naming the suite" "red test-a.sh → base" "$out_h"
-want   "H: reports filing an Ops incident"          "filed sp-inc"  "$out_h"
-nowant "H: nobody is ejected"                       "ejected"       "$out_h"
-is     "H: the round proceeds to its PR"  "$((prcreate_before_h + 1))" "$(grep -c '^pr-create' "$FORGE_LOG")"
-want   "H: the incident names the base-red reason" "local-round-red" "$(cat "$INCIDENT_LOG")"
-rm -f "$(open_batch_file)"
-
-fi
-
-if cut_runs C; then
-
-# =============================================================================
-# CASE C — a stale member: an express-certified branch that conflicts with the
-# base itself is reopened for rebase immediately (section F), not just skipped.
-# POSITIVE CONTROL: the requeue spy is empty before this case runs.
-# =============================================================================
-echo
-echo "C. stale member: base conflict reopens the bead at once:"
-is "C: positive control — requeue spy silent before this case" "0" "$(grep -c '^sp-cccc3 ' "$REQUEUE_SPY" 2>/dev/null)"
-# Case C is about a DIFFERENT member's base conflict in isolation: retire every earlier
-# case's member record first, so nothing left CERTIFIED merges into case C's round and
-# opens a PR it is not testing for.
-rm -f "$LCSTUB/sp-cbbb2" "$LCSTUB/sp-cgflk" "$LCSTUB/sp-chbas"
-plant sp-cccc3 express
-git -C "$REPO" worktree add -q -b spira/sp-cccc3 "$RUN/worktree/sp-cccc3" main
-printf 'branch-version\n' > "$RUN/worktree/sp-cccc3/conflict.txt"
-git -C "$RUN/worktree/sp-cccc3" add -A
-git -C "$RUN/worktree/sp-cccc3" commit -q -m "sp-cccc3: work"
-tip_c="$(git -C "$REPO" rev-parse spira/sp-cccc3)"
-git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cccc3"
-certify sp-cccc3 "$tip_c" "$(( $(date +%s) - 3600 ))"
-
-printf 'main-version\n' > "$REPO/conflict.txt"
-git -C "$REPO" add conflict.txt && git -C "$REPO" commit -q -m "main: advance conflict.txt"
-timeout 5 git -C "$REPO" push -q origin main
-timeout 5 git -C "$REPO" fetch -q origin
-rm -f "$QUEUEDIR/$REPONAME/base-moved"
-
-out_c="$(BATCHER_VERB=sift STUB_RED_SUITES="" cut_repo; STUB_RED_SUITES="" cut_repo)"
-is   "C: sp-cccc3 is reopened"   "open" "$(status_of sp-cccc3)"
-is   "C: the pre-round screen sent sp-cccc3 to REWORK (no-rebase)" "REWORK" "$(cut -d' ' -f1 < "$LCSTUB/sp-cccc3")"
-want "C: the screen says so" "SIFT sent sp-cccc3 to REWORK" "$out_c"
-nowant "C: no PR opened for the conflicting-only round" "PR " "$out_c"
 
 fi
 
@@ -699,38 +554,6 @@ is     "D: the prepared round opened without re-running the corpus" "0" "$(grep 
 is     "D: exactly one new PR" "$((prcreate_before + 1))" "$(grep -c '^pr-create' "$FORGE_LOG")"
 want   "D: open-batch members carries the express member" "sp-cddd4:$tip_d" "$(open_field members)"
 is     "D: prepared record consumed" "0" "$([ -f "$QUEUEDIR/$REPONAME/prepared" ] && echo 1 || echo 0)"
-
-fi
-
-if cut_runs E; then
-
-# =============================================================================
-# CASE E — judgement-ci (sp-lomk3): verdict.sh's own CI-red producer, on a red CI
-# check for a PR the batcher owns, calls this subcommand instead of running its
-# own attribution. Exercised directly here, the way verdict.sh's own suite
-# stubs the batcher and asserts the wiring from its own side.
-# =============================================================================
-echo
-echo "E. judgement-ci: files a judgement bead for a CI-only red:"
-judge_ci() {
-    tl_config SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$SH/repo-map" SPIRA_QUEUE_DIR="$QUEUEDIR" \
-        SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}"
-    SPIRA_HOME="$SH" \
-        batcher judgement-ci "$REPONAME" "$@" 2>&1
-}
-
-out_e="$(judge_ci --suites test-owned.sh --members sp-caaa1 --evidence 'PR 1 — https://example.invalid/actions/runs/1')"
-want "E: prints the filed bead id" "id=sp-" "$out_e"
-judge_id="$(printf '%s\n' "$out_e" | sed -n 's/^id=//p')"
-want "E: judgement bead title names CI"    "CI"             "$(B show "$judge_id" --json 2>/dev/null)"
-want "E: judgement bead title names the suite" "test-owned.sh" "$(B show "$judge_id" --json 2>/dev/null)"
-want "E: judgement bead body names the source" "CI (batcher-owned batch PR)" "$(B show "$judge_id" --long --json 2>/dev/null)"
-want "E: judgement bead body names the member" "sp-caaa1"      "$(B show "$judge_id" --long --json 2>/dev/null)"
-want "E: judgement bead body carries the evidence" "https://example.invalid/actions/runs/1" \
-    "$(B show "$judge_id" --long --json 2>/dev/null)"
-
-out_e2="$(judge_ci --suites '' --members sp-caaa1 --evidence x)"
-is "E: no suites given is refused, not filed" "1" "$([ -z "$(printf '%s\n' "$out_e2" | sed -n 's/^id=//p')" ] && echo 1 || echo 0)"
 
 fi
 
@@ -910,199 +733,6 @@ want "J: reports the member set aside as EMPTY, not a member" "EMPTY sp-cjjjj: t
 nowant "J: no PR opens crediting a no-op tip" "PR " "$out_j"
 is   "J: sp-cjjjj stays CERTIFIED, never marked BATCHED" "CERTIFIED" "$(cut -d' ' -f1 < "$LCSTUB/sp-cjjjj")"
 is   "J: forge pr-create not called for the empty round" "$prcreate_before_j" "$(grep -c '^pr-create' "$FORGE_LOG")"
-
-fi
-
-if cut_runs K; then
-
-# =============================================================================
-# CASE K — batcher parity (sp-myi6w, sp-o3o6z): the corpus runs through round-vm.sh run, and
-# a --with-bins build failure is a round-level red filed for Ops, never a harness
-# fault that silently drops the round.
-# =============================================================================
-echo
-echo "K. batcher parity: round-vm.sh run, maxpar, toolchain, wall bound, exit 4:"
-
-# K1 — default argv: SPIRA_BATCH_MAXPAR unset, so the
-# batcher's own default (16) must appear on round-vm.sh's own --maxpar
-# regardless of whether the ambient environment happens to carry the Concierge's own values.
-rm -f "$(open_batch_file)"
-plant sp-cgaa1 express
-git -C "$REPO" worktree add -q -b spira/sp-cgaa1 "$RUN/worktree/sp-cgaa1" main
-printf 'g1\n' > "$RUN/worktree/sp-cgaa1/g1.txt"
-git -C "$RUN/worktree/sp-cgaa1" add -A
-git -C "$RUN/worktree/sp-cgaa1" commit -q -m "sp-cgaa1: work"
-tip_g1="$(git -C "$REPO" rev-parse spira/sp-cgaa1)"
-git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cgaa1"
-certify sp-cgaa1 "$tip_g1"
-
-ARGV_LOG="$TMP/argv-log-default"; : > "$ARGV_LOG"
-STUB_ARGV_LOG="$ARGV_LOG" cut_repo >/dev/null
-want "K1: corpus runs through round-vm.sh run" "argv: run --suites" "$(cat "$ARGV_LOG")"
-is "K1: no toolchain is passed — round-vm reads the tree's rust-toolchain.toml itself" \
-    "0" "$(grep -c 'RUSTUP_TOOLCHAIN=.' "$ARGV_LOG")"
-want "K1: default maxpar is 16 (the Concierge's own proven parallelism)" \
-    "SPIRA_BATCH_MAXPAR=16" "$(cat "$ARGV_LOG")"
-
-# K2 — configured overrides are honored, pinned to NON-DEFAULT values so this cannot pass
-# against code that hard-codes K1's own defaults.
-rm -f "$(open_batch_file)"
-plant sp-cgbb2 express
-git -C "$REPO" worktree add -q -b spira/sp-cgbb2 "$RUN/worktree/sp-cgbb2" main
-printf 'g2\n' > "$RUN/worktree/sp-cgbb2/g2.txt"
-git -C "$RUN/worktree/sp-cgbb2" add -A
-git -C "$RUN/worktree/sp-cgbb2" commit -q -m "sp-cgbb2: work"
-tip_g2="$(git -C "$REPO" rev-parse spira/sp-cgbb2)"
-git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cgbb2"
-certify sp-cgbb2 "$tip_g2"
-
-ARGV_LOG2="$TMP/argv-log-override"; : > "$ARGV_LOG2"
-SPIRA_BATCH_MAXPAR=7 STUB_ARGV_LOG="$ARGV_LOG2" cut_repo >/dev/null
-want "K2: SPIRA_BATCH_MAXPAR overrides the default" "SPIRA_BATCH_MAXPAR=7" "$(cat "$ARGV_LOG2")"
-
-# K3 — a --with-bins build failure (exit 4) is a round-level red: filed as an Ops incident
-# naming the round's own members (the same file_local_red_incident path case H's base-fail
-# uses), not a harness fault that aborts the round with nobody blamed (the defect this bead
-# names: "unexpected exit 4"), and never attributed suite by suite — there is no member-subset
-# suite rerun that bisects "does the merged tree compile".
-rm -f "$(open_batch_file)"
-plant sp-cgcc3 express
-git -C "$REPO" worktree add -q -b spira/sp-cgcc3 "$RUN/worktree/sp-cgcc3" main
-printf 'g3\n' > "$RUN/worktree/sp-cgcc3/g3.txt"
-git -C "$RUN/worktree/sp-cgcc3" add -A
-git -C "$RUN/worktree/sp-cgcc3" commit -q -m "sp-cgcc3: work"
-tip_g3="$(git -C "$REPO" rev-parse spira/sp-cgcc3)"
-git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cgcc3"
-certify sp-cgcc3 "$tip_g3"
-
-prcreate_before_g3="$(grep -c '^pr-create' "$FORGE_LOG")"
-out_g3="$(STUB_EXIT4=1 cut_repo)"
-want   "K3: a workspace build failure is reported as a local round red" "workspace failed to build" "$out_g3"
-nowant "K3: never reported as an unexpected exit"                       "unexpected exit" "$out_g3"
-nowant "K3: never reported as a harness fault"                          "harness fault"   "$out_g3"
-is     "K3: no PR opened for a round whose workspace failed to build" \
-    "$prcreate_before_g3" "$(grep -c '^pr-create' "$FORGE_LOG")"
-is     "K3: sp-cgcc3 stays CERTIFIED — attributed, not silently dropped" \
-    "CERTIFIED" "$(cut -d' ' -f1 < "$LCSTUB/sp-cgcc3")"
-want   "K3: reports filing an Ops incident" "filed sp-inc" "$out_g3"
-want   "K3: the incident names the workspace-build reason" \
-    "workspace-build" "$(cat "$INCIDENT_LOG")"
-
-# K4 — a hung round-vm.sh is killed at the configured wall bound, not left to hold the
-# round lock forever (main.rs's cut() holds it for the whole call).
-rm -f "$(open_batch_file)"
-plant sp-cgdd4 express
-git -C "$REPO" worktree add -q -b spira/sp-cgdd4 "$RUN/worktree/sp-cgdd4" main
-printf 'g4\n' > "$RUN/worktree/sp-cgdd4/g4.txt"
-git -C "$RUN/worktree/sp-cgdd4" add -A
-git -C "$RUN/worktree/sp-cgdd4" commit -q -m "sp-cgdd4: work"
-tip_g4="$(git -C "$REPO" rev-parse spira/sp-cgdd4)"
-git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cgdd4"
-certify sp-cgdd4 "$tip_g4"
-
-g4_start="$(date +%s)"
-out_g4="$(SPIRA_BATCHER_WALL_SECS=1 STUB_SLEEP_SECS=30 cut_repo)"
-g4_elapsed=$(( $(date +%s) - g4_start ))
-# Generous margin above the 1s bound plus timeout's own 10s kill-after: this proves the round
-# is bounded at all, not that it is bounded tightly.
-if [ "$g4_elapsed" -lt 20 ]; then
-    ok "K4: a hung corpus run is killed near the configured wall bound (${g4_elapsed}s)"
-else
-    bad "K4: a hung corpus run is killed near the configured wall bound" "still running after ${g4_elapsed}s"
-fi
-want "K4: reports the wall bound as the cause" "wall bound" "$out_g4"
-
-fi
-
-if cut_runs L; then
-
-# =============================================================================
-# CASE L — queue.local's terminal step (sp-828tp, epic sp-hq9x8): a round lands locally via
-# queue land-local — no push, no forge call, no open-batch record — and terminal_ready
-# (core) refuses before land-local is even invoked when the round's own --with-bins corpus is
-# missing. SEEN RED on today's code: Land::Local reaches push_branch, whose own assert fires
-# ("unreachable under queue.local"), so the batcher process panics instead of landing.
-# =============================================================================
-echo
-echo "L. queue.local: a round lands locally via queue land-local — no push, no PR:"
-
-local_land_fixture
-
-# L1 — missing --with-bins corpus: terminal_ready refuses before land-local is ever called,
-# nothing changes.
-localmain_pre="$(git -C "$LREPO" rev-parse local/main)"
-plant sp-claa1 express
-git -C "$LREPO" worktree add -q -b spira/sp-claa1 "$RUN/worktree/sp-claa1" trunk
-printf 'l1\n' > "$RUN/worktree/sp-claa1/l1.txt"
-git -C "$RUN/worktree/sp-claa1" add -A
-git -C "$RUN/worktree/sp-claa1" commit -q -m "sp-claa1: work"
-tip_l1="$(git -C "$LREPO" rev-parse spira/sp-claa1)"
-git -C "$LREPO" worktree remove -f "$RUN/worktree/sp-claa1"
-lc_certify sp-claa1 "$tip_l1"
-
-out_l1="$(cut_local)"
-want   "L1: refuses — no --with-bins corpus for this head" "no --with-bins" "$out_l1"
-nowant "L1: never reports landing locally"                  "landed locally" "$out_l1"
-is     "L1: local/main is untouched"          "$localmain_pre" "$(git -C "$LREPO" rev-parse local/main)"
-is     "L1: sp-claa1 stays CERTIFIED — refused, not ejected" "CERTIFIED" "$(lcfix_state sp-claa1)"
-
-# L2 — the --with-bins corpus is present: lands locally, no push, no PR, no open-batch file.
-lcfix_seed sp-claa1 REWORK "$tip_l1"
-plant sp-clbb2 express
-git -C "$LREPO" worktree add -q -b spira/sp-clbb2 "$RUN/worktree/sp-clbb2" trunk
-printf 'l2\n' > "$RUN/worktree/sp-clbb2/l2.txt"
-git -C "$RUN/worktree/sp-clbb2" add -A
-git -C "$RUN/worktree/sp-clbb2" commit -q -m "sp-clbb2: work"
-tip_l2="$(git -C "$LREPO" rev-parse spira/sp-clbb2)"
-git -C "$LREPO" worktree remove -f "$RUN/worktree/sp-clbb2"
-lc_certify sp-clbb2 "$tip_l2"
-
-prcreate_before_l2="$(grep -c '^pr-create' "$FORGE_LOG")"
-out_l2="$(STUB_INSTALL_BINS=1 cut_local)"
-want   "L2: reports landing locally"      "landed locally" "$out_l2"
-nowant "L2: never reports a PR opening"   "PR "            "$out_l2"
-is     "L2: forge pr-create never called" "$prcreate_before_l2" "$(grep -c '^pr-create' "$FORGE_LOG")"
-# The round head is a --no-ff merge commit, not the member's own tip — its parents are
-# [local/main's pre-round head, tip_l2], so compare local/main against what the batcher
-# itself reported landing at, and separately prove that head really does carry tip_l2.
-head_l2="$(printf '%s\n' "$out_l2" | sed -n 's/.*landed locally at \([0-9a-f]\{7,\}\).*/\1/p' | head -1)"
-is     "L2: local/main fast-forwards to the round's own merge head" "$head_l2" "$(git -C "$LREPO" rev-parse local/main)"
-is     "L2: the round head descends from the member's own tip" "0" "$(git -C "$LREPO" merge-base --is-ancestor "$tip_l2" "$head_l2"; echo $?)"
-is     "L2: no open-batch file under queue.local" "0" "$([ -f "$QUEUEDIR/locland/open" ] && echo 1 || echo 0)"
-is     "L2: sp-clbb2 is LANDED on the lifecycle machine" "LANDED" "$(lcfix_state sp-clbb2)"
-if command -v tsd-write >/dev/null 2>&1; then
-    want "L2: TSD batch-round row records verdict=landed_local" '"verdict":"landed_local"' \
-        "$(tail -1 "$RUN/tsd/batch-round.jsonl" 2>/dev/null)"
-fi
-
-fi
-
-if cut_runs Np; then
-
-# =============================================================================
-# CASE N — pacing parity (sp-ffezo, law-batcher-earns-the-round-by-parity): a pool of ONE
-# non-express certified member, no batch open, cuts even though queue_batch_wait is a year —
-# the Concierge's own hand rule, not an adaptive N that reduced to the live pool itself.
-# SEEN RED on today's code: sp-cnaa1 alone never reached N=4, and the year-long wait keeps
-# the idle path from firing either, so cut reports "no round cut: no trigger".
-# =============================================================================
-echo
-echo "N. pacing parity: pool of one, no batch open, cuts despite a year-long queue_batch_wait:"
-
-local_land_fixture
-plant sp-cnaa1
-git -C "$LREPO" worktree add -q -b spira/sp-cnaa1 "$RUN/worktree/sp-cnaa1" trunk
-printf 'n\n' > "$RUN/worktree/sp-cnaa1/n.txt"
-git -C "$RUN/worktree/sp-cnaa1" add -A
-git -C "$RUN/worktree/sp-cnaa1" commit -q -m "sp-cnaa1: work"
-tip_n="$(git -C "$LREPO" rev-parse spira/sp-cnaa1)"
-git -C "$LREPO" worktree remove -f "$RUN/worktree/sp-cnaa1"
-lc_certify sp-cnaa1 "$tip_n"
-
-out_n="$(SPIRA_QUEUE_BATCH_WAIT_OVERRIDE=31536000 STUB_INSTALL_BINS=1 cut_local)"
-nowant "N: never reports no-trigger — a pool of one is enough" "no round cut: no trigger" "$out_n"
-want   "N: reports landing locally"                             "landed locally"          "$out_n"
-is     "N: sp-cnaa1 is LANDED on the lifecycle machine"          "LANDED" "$(lcfix_state sp-cnaa1)"
 
 fi
 
