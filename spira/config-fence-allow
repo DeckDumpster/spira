@@ -148,7 +148,6 @@ spira/tsd-ingest.sh
 # NAMED EXCEPTION CLASS (not cutover debt): a test whose job is to police the spira-config
 # door must name the file it polices. sp-a8gna's brief allows "a short named exception list,
 # e.g. spira-config's own tests"; this is that class. Round 122 (Concierge), sp-cx0mj x sp-a8gna.
-spira/test-spira-config-only-door.sh
 
 # THE RUST CUTOVER CRATES (2026-09-29). Each names spira.toml or repo-map in a comment, a
 # log line kept byte-identical with the script it replaced (sentinel CHECK5, testenv), or a
